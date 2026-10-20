@@ -71,6 +71,7 @@ add_library(ftapi STATIC
 	Ogg.cpp
 	GameAudio.cpp
 	Jingles.cpp
+	SoundEffects.cpp
 	Music.cpp
 	Presets.cpp
 	Tools.cpp
@@ -83,6 +84,7 @@ add_library(ftapi STATIC
 	${TRANSCRIBE}/Take.cpp
 	${TRANSCRIBE}/Harmony.cpp
 	${TRANSCRIBE}/TextModule.cpp
+	${TRANSCRIBE}/SoundEffect.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ftapi PUBLIC xiph)

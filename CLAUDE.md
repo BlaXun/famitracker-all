@@ -33,7 +33,10 @@ tracks as looping OGG files through the `export_for_game` tool
 `CSoundGen`, which notes the sample where each row starts
 (`GetRenderMarks`), and libvorbis encodes (`Source/libvorbis`,
 `Source/libogg`). The jingles that `make_jingle` writes as tracks of their
-own are scores in `Source/Api/Jingles.cpp`.
+own are scores in `Source/Api/Jingles.cpp`. The sound effects of
+`make_sound_effect`, tracks at speed 1 that halt, are built a tick at a time
+in `Source/Api/SoundEffects.cpp` or made from a voice recording, and turned
+into instruments, by `Source/Transcribe/SoundEffect.cpp`.
 
 ## What this repository is
 

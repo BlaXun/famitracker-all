@@ -35,6 +35,7 @@
 #include "../Png.h"
 #include "../Presets.h"
 #include "../Song.h"
+#include "../SoundEffects.h"
 #include "../Tools.h"
 
 #include <algorithm>
@@ -295,9 +296,11 @@ public:
 			Next = std::max(Next, Info.Instruments[i].Index + 1);
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
+		Made[Next] = Sound;
 		return Next;
 	}
 
+	std::map<int, Preset> Made;		// instrument -> the preset it was made from
 	std::map<int, int> Vrc7Patches;	// instrument -> patch
 
 	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) override
@@ -2747,6 +2750,220 @@ void TestExpansion()
 	CHECK(Pal.Info.FrameRate == 60);
 }
 
+const PresetSequence *SequenceOf(const Preset &Sound, int Type)
+{
+	for (size_t i = 0; i < Sound.Sequences2A03.size(); ++i)
+		if (Sound.Sequences2A03[i].Type == Type)
+			return &Sound.Sequences2A03[i];
+	return 0;
+}
+
+// Whether FamiTracker can hold the instrument made for a sound effect's layer
+bool Holdable(const transcribe::SfxLayer &Layer)
+{
+	const transcribe::SfxInstrument I = transcribe::ToInstrument(Layer, false);
+	const bool Noise = Layer.channel == transcribe::SfxChannel::Noise;
+	bool Ok = !I.volume.empty() && I.volume.size() <= 252 && I.volume.back() == 0 && I.arpeggio.size() <= 252 &&
+		I.pitch.size() <= 252 && !I.duty.empty() == (Layer.channel == transcribe::SfxChannel::Pulse || !I.duty.empty());
+	for (size_t i = 0; i < I.volume.size(); ++i)
+		Ok = Ok && I.volume[i] >= 0 && I.volume[i] <= 15;
+	Ok = Ok && (Noise ? I.note >= 0 && I.note <= 15 : I.note >= 9 && I.note <= 95);
+	for (size_t i = 0; i < I.arpeggio.size(); ++i)
+		Ok = Ok && (I.fixedArpeggio ? I.arpeggio[i] >= 0 && I.arpeggio[i] <= 15 : I.note + I.arpeggio[i] >= 0 && I.note + I.arpeggio[i] <= 95);
+	for (size_t i = 0; i < I.pitch.size(); ++i)
+		Ok = Ok && I.pitch[i] >= -128 && I.pitch[i] <= 127;
+	for (size_t i = 0; i < I.duty.size(); ++i)
+		Ok = Ok && I.duty[i] >= 0 && I.duty[i] <= (Noise ? 1 : 3);
+	// The arpeggio sets the period anew each tick the pitch sequence moves it from there
+	Ok = Ok && (I.pitch.empty() || I.arpeggio.size() == I.pitch.size());
+	return Ok;
+}
+
+// The pitch heard around a time in a rendering, in Hz (0 when there's none)
+double PitchAround(const std::vector<transcribe::PitchFrame> &Frames, double Time)
+{
+	std::vector<double> Found;
+	for (size_t i = 0; i < Frames.size(); ++i)
+		if (std::fabs(Frames[i].time - Time) <= 0.012 && Frames[i].frequency > 0.0 && Frames[i].aperiodicity < 0.3)
+			Found.push_back(Frames[i].frequency);
+	if (Found.empty())
+		return 0.0;
+	std::sort(Found.begin(), Found.end());
+	return Found[Found.size() / 2];
+}
+
+void TestSoundEffects()
+{
+	// Every kind and its variants, also changed far, make instruments FamiTracker can hold
+	const std::vector<SoundEffectKind> &Kinds = SoundEffectKinds();
+	CHECK(Kinds.size() >= 20);
+	for (size_t k = 0; k < Kinds.size(); ++k) {
+		for (int Variant = 1; Variant <= 9; ++Variant) {
+			for (int Far = 0; Far < 3; ++Far) {
+				SoundEffectChanges Changes;
+				Changes.Variant = Variant;
+				Changes.Semitones = Far == 0 ? 0 : (Far == 1 ? 24 : -24);
+				Changes.LengthPercent = Far == 0 ? 100 : (Far == 1 ? 400 : 25);
+				Changes.VolumePercent = Far == 0 ? 100 : (Far == 1 ? 200 : 10);
+				const transcribe::SoundEffect Effect = ChangeSoundEffect(Kinds[k].Make(), Changes);
+				bool Ok = !Effect.layers.empty() && Effect.length() > 0 && Effect.length() <= 300;
+				for (size_t l = 0; l < Effect.layers.size(); ++l)
+					Ok = Ok && Holdable(Effect.layers[l]);
+				Check(Ok, Kinds[k].Name.c_str(), __LINE__);
+			}
+		}
+		CHECK(FindSoundEffect(Kinds[k].Name) == &Kinds[k]);
+	}
+	CHECK(FindSoundEffect("pew") != 0 && FindSoundEffect("pew")->Name == "laser");
+	CHECK(FindSoundEffect("Boing") != 0 && FindSoundEffect("Boing")->Name == "bounce");
+	CHECK(FindSoundEffect("kssh") != 0 && FindSoundEffect("kssh")->Name == "explosion");
+	CHECK(FindSoundEffect("power up") != 0 && FindSoundEffect("power up")->Name == "power-up");
+	CHECK(FindSoundEffect("nope") == 0 && FindSoundEffect("") == 0);
+	CHECK_EQ(VariantText(1), std::string());
+	CHECK_EQ(VariantText(2), std::string("3 semitones higher, 15% shorter, another pulse duty"));
+	CHECK_EQ(VariantText(3), std::string("3 semitones lower, 20% longer"));
+
+	// Pitches between notes: the arpeggio picks the nearest note, the pitch sequence the period from it
+	transcribe::SfxLayer Bend;
+	Bend.volume = { 15, 15, 15 };
+	Bend.pitch = { 45.0, 45.5, 46.0 };
+	transcribe::SfxInstrument I = transcribe::ToInstrument(Bend, false);
+	CHECK(I.note == 45 && I.volume == std::vector<int>({ 15, 15, 15, 0 }) && I.duty == std::vector<int>({ 2 }) && !I.fixedArpeggio);
+	CHECK(I.arpeggio == std::vector<int>({ 0, 1, 1 }) && I.pitch.size() == 3 && I.pitch[0] == 0 && I.pitch[2] == 0);
+	CHECK(I.pitch[1] > 3 && I.pitch[1] < 12);	// half a semitone below A#3: a longer period
+	Bend.pitch = { 45.0 };
+	I = transcribe::ToInstrument(Bend, false);
+	CHECK(I.arpeggio.empty() && I.pitch.empty());	// one note needs neither
+	transcribe::SfxLayer Hiss;
+	Hiss.channel = transcribe::SfxChannel::Noise;
+	Hiss.volume = { 12, 8, 4 };
+	Hiss.pitch = { 12, 10, 8 };
+	Hiss.duty = { 1 };
+	I = transcribe::ToInstrument(Hiss, false);
+	CHECK(I.note == 12 && I.fixedArpeggio && I.arpeggio == std::vector<int>({ 12, 10, 8 }) && I.duty == std::vector<int>({ 1 }));
+
+	// Played as the 2A03 plays them
+	transcribe::SoundEffect Tone;
+	transcribe::SfxLayer A;
+	A.volume.assign(20, 12);
+	A.pitch = { 45.0 };
+	Tone.layers.push_back(A);
+	std::vector<transcribe::PitchFrame> Frames = transcribe::TrackPitch(transcribe::RenderEffect(Tone, 44100, false), transcribe::PitchOptions());
+	CHECK(std::fabs(PitchAround(Frames, 0.15) - 440.0) < 4.0);
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(Tone, 44100, true), transcribe::PitchOptions());
+	CHECK(std::fabs(PitchAround(Frames, 0.15) - 440.0) < 4.0);	// PAL's table is in tune too
+	Tone.layers[0].channel = transcribe::SfxChannel::Triangle;
+	Tone.layers[0].pitch = { 57.0 };
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(Tone, 44100, false), transcribe::PitchOptions());
+	CHECK(std::fabs(PitchAround(Frames, 0.15) - 440.0) < 4.0);	// the triangle sounds an octave below what's written
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(FindSoundEffect("jump")->Make(), 44100, false), transcribe::PitchOptions());
+	CHECK(PitchAround(Frames, 0.03) > 250.0 && PitchAround(Frames, 0.2) > PitchAround(Frames, 0.03) * 1.6);	// it rises
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(FindSoundEffect("laser")->Make(), 44100, false), transcribe::PitchOptions());
+	CHECK(PitchAround(Frames, 0.05) > PitchAround(Frames, 0.19) * 1.6 && PitchAround(Frames, 0.19) > 0.0);	// it falls
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(FindSoundEffect("explosion")->Make(), 44100, false), transcribe::PitchOptions());
+	int Pitched = 0, Sounding = 0;
+	for (size_t i = 0; i < Frames.size(); ++i) {
+		if (Frames[i].rms < 0.01)
+			continue;
+		++Sounding;
+		Pitched += Frames[i].aperiodicity < 0.2 ? 1 : 0;
+	}
+	CHECK(Sounding > 50 && Pitched * 4 < Sounding);	// noise
+
+	// The tool: a track of its own that halts, its instrument named after it
+	FakeSong Song;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"jump\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"SFX Jump\": the jump sound (a quick rising blip for jumping), 0.27 s long, on 2A03 Pulse 1 with "
+		"\"SFX Jump\" (03).");
+	CHECK_HAS(Result.Text, "audio_play_sound(snd_sfx_jump, 0, false)");
+	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "SFX Jump" && Song.Info.Speed == 1 && Song.Info.Tempo == 150);
+	CHECK(Song.Rows[0][0].Pitch() == 38 && Song.Rows[0][0].Instrument == 3);
+	CHECK(Song.Rows[0][16].Note == NOTE_HALT && EffectAt(Song.Rows[0][16], EFF_HALT) == 0);
+	bool Quiet = true;
+	for (size_t c = 1; c < Song.Rows.size(); ++c)
+		for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+			Quiet = Quiet && Song.Rows[c][r].IsEmpty();
+	CHECK(Quiet);
+	const Preset &Jump = Song.Made[3];
+	CHECK(Jump.Name == "SFX Jump" && SequenceOf(Jump, SEQUENCE_VOLUME) != 0 && SequenceOf(Jump, SEQUENCE_VOLUME)->Items.size() == 17);
+	CHECK(SequenceOf(Jump, SEQUENCE_ARPEGGIO) != 0 && SequenceOf(Jump, SEQUENCE_ARPEGGIO)->Setting == SEQUENCE_ABSOLUTE);
+	CHECK(SequenceOf(Jump, SEQUENCE_DUTY) != 0 && SequenceOf(Jump, SEQUENCE_DUTY)->Items == std::vector<int>({ 2 }));
+	CHECK(SequenceOf(Jump, SEQUENCE_ARPEGGIO)->Items.back() >= 13);	// up more than an octave
+
+	// It plays once in the game
+	std::string Text = Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Jump\"]}")).Text;
+	CHECK_HAS(Text, "- SFX Jump.ogg: 0.3 s");
+	CHECK_HAS(Text, "plays once (the song halts)");
+
+	// Another take gets its own name and instruments; two parts on two channels
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"jump\", \"variant\": 3}"));
+	CHECK_HAS(Result.Text, "Made track 3 \"SFX Jump 2\"");
+	CHECK_HAS(Result.Text, "with \"SFX Jump 2\" (04)");
+	CHECK_HAS(Result.Text, "Variant 3: 3 semitones lower, 20% longer.");
+	CHECK(Song.Rows[0][0].Pitch() == 35);
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"treasure\"}"));
+	CHECK_HAS(Result.Text, "on 2A03 Pulse 1 with \"SFX Chest\" (05), 2A03 Pulse 2 with \"SFX Chest (pulse 2)\" (06).");
+	CHECK(Song.Rows[1][3].HasNote() && Song.Rows[1][3].Instrument == 6);	// the echo, three ticks later
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"kssh\", \"name\": \"Bomb\"}"));
+	CHECK_HAS(Result.Text, "Made track 5 \"Bomb\": the explosion sound");
+	CHECK_HAS(Result.Text, "on 2A03 Noise with \"Bomb\" (07), 2A03 Triangle with \"Bomb (triangle)\" (08).");
+	CHECK(SequenceOf(Song.Made[7], SEQUENCE_ARPEGGIO) != 0 && SequenceOf(Song.Made[7], SEQUENCE_ARPEGGIO)->Setting == SEQUENCE_FIXED);
+	CHECK(Song.Rows[3][0].HasNote() && Song.Rows[3][0].Pitch() == 9 && Song.Rows[2][0].Pitch() == 30);	// crackling: 8, up 1
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"semitones\": 12, \"length_percent\": 50, \"volume_percent\": 60}"));
+	CHECK_HAS(Result.Text, "Changed: 12 semitones, 50% of the length, 60% of the volume.");
+	CHECK(Song.Rows[0][0].Pitch() == 71 && Song.Made[9].Sequences2A03[0].Items[0] == 7);
+
+	// From a recording of the user's voice: "pew", falling from 800 to 300 Hz
+	{
+		transcribe::Audio Pew;
+		Pew.sampleRate = 44100;
+		double Phase = 0.0;
+		for (int i = 0; i < 13230; ++i) {
+			const double x = i / 13230.0;
+			Phase += 2.0 * 3.14159265358979 * 800.0 * std::pow(300.0 / 800.0, x) / 44100.0;
+			Pew.samples.push_back(static_cast<float>(0.4 * (1.0 - 0.7 * x) * (std::sin(Phase) + 0.5 * std::sin(2.0 * Phase) +
+				0.3 * std::sin(3.0 * Phase))));
+		}
+		std::string Error;
+		CHECK(transcribe::WriteWav("pew.wav", Pew, &Error));
+		Tools.Call("select_track", Parse("{\"track\": 1}"));
+		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\"}"));
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "\"SFX Pew\" from the recording (pew.wav): the voice's pitch and loudness on a pulse, as sung.");
+		CHECK_HAS(Result.Text, "It's 0.28 s long, on 2A03 Pulse 1 with \"SFX Pew\"");
+		CHECK_HAS(Result.Text, "audio_play_sound(snd_sfx_pew, 0, false)");
+		const int Note = Song.Rows[0][0].Pitch();
+		CHECK(Note >= 53 && Note <= 56);	// 800 Hz is about G-4 (55)
+		const Preset &Voice = Song.Made[Song.Rows[0][0].Instrument];
+		CHECK(SequenceOf(Voice, SEQUENCE_ARPEGGIO) != 0 && SequenceOf(Voice, SEQUENCE_ARPEGGIO)->Items.back() <= -14);	// it falls
+		CHECK(SequenceOf(Voice, SEQUENCE_PITCH) != 0);	// with the steps between notes
+		Tools.Call("select_track", Parse("{\"track\": 1}"));
+		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\", \"octaves\": 1, \"name\": \"Zap\"}"));
+		CHECK_HAS(Result.Text, "Made track 8 \"Zap\" from the recording (pew.wav): the voice's pitch and loudness on a pulse, 1 "
+			"octave higher.");
+		CHECK(Song.Rows[0][0].Pitch() == Note + 12);
+		std::remove("pew.wav");
+		CHECK(Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\", \"kind\": \"jump\"}")).IsError);
+		CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"recording\": \"/mnt/c/Takes/pew.wav\"}")).Text,
+			"The recording C:\\Takes\\pew.wav couldn't be read");
+	}
+
+	// Mistakes
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"moo\"}")).Text, "There's no \"moo\" sound. The kinds: jump, land, coin");
+	CHECK(Tools.Call("make_sound_effect", Parse("{}")).IsError);
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"name\": \"Bomb\"}")).Text, "There's a track called \"Bomb\"");
+	CHECK(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"variant\": 12}")).IsError);
+	Song.Busy = true;
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\"}")).Text, "A dialog is open");
+	Song.Busy = false;
+	while (Song.Tracks.size() < 64)
+		Song.Tracks.push_back(Song.Tracks[0]);
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\"}")).Text, "64 tracks");
+}
+
 void TestMmc5()
 {
 	// An MMC5 song: two more pulses, which play the 2A03's instruments and presets
@@ -3439,6 +3656,7 @@ int main()
 	TestJingles();
 	TestExpansion();
 	TestMmc5();
+	TestSoundEffects();
 	TestTiming2();
 	TestLoops();
 	TestOgg();

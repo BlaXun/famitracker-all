@@ -1266,6 +1266,9 @@
     <ClCompile Include="Source\Api\Jingles.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\SoundEffects.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1309,6 +1312,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Jingles.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\SoundEffects.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">
@@ -1382,6 +1388,12 @@
     <ClCompile Include="Source\Transcribe\Harmony.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Transcribe\SoundEffect.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Transcribe\SoundEffect.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\Clips.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

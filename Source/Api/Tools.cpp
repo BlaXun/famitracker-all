@@ -27,6 +27,7 @@
 #include "Picture.h"
 #include "Presets.h"
 #include "Song.h"
+#include "SoundEffects.h"
 #include "../Transcribe/Transcribe.h"
 
 #include <algorithm>
@@ -3022,6 +3023,257 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 	return WithRemarks(S, Result, Warnings);
 }
 
+// Sound effects, as tracks of their own
+
+// A name no track or instrument has yet: "SFX Jump", "SFX Jump 2"
+std::string FreeSoundName(const SongInfo &Song, const std::string &Base)
+{
+	for (int n = 1; ; ++n) {
+		const std::string Candidate = n == 1 ? Base : Format("%s %d", Base.c_str(), n);
+		const std::string Lower = Lowercase(Candidate);
+		bool Taken = false;
+		for (size_t t = 0; t < Song.TrackNames.size(); ++t)
+			Taken = Taken || Lowercase(Song.TrackNames[t]) == Lower;
+		for (size_t i = 0; i < Song.Instruments.size(); ++i) {
+			const std::string Name = Lowercase(Song.Instruments[i].Name);
+			Taken = Taken || Name == Lower || Name.compare(0, Lower.size() + 2, Lower + " (") == 0;
+		}
+		if (!Taken)
+			return Candidate;
+	}
+}
+
+PresetSequence SoundSequence(int Type, const std::vector<int> &Items, int Setting = SEQUENCE_ABSOLUTE)
+{
+	PresetSequence S;
+	S.Type = Type;
+	S.Items = Items;
+	S.Loop = -1;
+	S.Release = -1;
+	S.Setting = Setting;
+	return S;
+}
+
+// Writes a sound effect as a track of its own at speed 1, a row a tick: a
+// 2A03 instrument for each layer whose sequences shape it, its note where the
+// layer starts, a halt where it ends and C00 after the last. Its number from
+// 0; Parts says which channels play what.
+int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const std::string &Name, std::string &Parts)
+{
+	if (Effect.layers.empty() || Effect.length() <= 0)
+		throw Problem("The sound effect is empty.");
+	if (S.Song.Tracks >= 64)
+		throw Problem("The module already has 64 tracks, FamiTracker's most; the user can remove one in Module > Module properties.");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+
+	// The channels: the 2A03's pulses (then the MMC5's, which play the same
+	// instruments), its triangle and noise
+	std::vector<int> Pulses;
+	int Triangle = -1, Noise = -1;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const ChannelInfo &Info = S.Channel(c);
+		if (InstrumentChip(Info) != "2A03")
+			continue;
+		if (Info.Kind == KIND_PULSE)
+			Pulses.push_back(c);
+		else if (Info.Kind == KIND_TRIANGLE && Triangle < 0)
+			Triangle = c;
+		else if (Info.Kind == KIND_NOISE && Noise < 0)
+			Noise = c;
+	}
+	std::vector<int> Used(Effect.layers.size(), -1);
+	size_t NextPulse = 0;
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		switch (Effect.layers[l].channel) {
+		case transcribe::SfxChannel::Pulse:
+			if (NextPulse < Pulses.size())
+				Used[l] = Pulses[NextPulse++];
+			break;
+		case transcribe::SfxChannel::Triangle:
+			Used[l] = Triangle;
+			Triangle = -1;
+			break;
+		case transcribe::SfxChannel::Noise:
+			Used[l] = Noise;
+			Noise = -1;
+			break;
+		}
+		if (Used[l] < 0)
+			throw Problem("The song has no free 2A03 channel for a part of this sound.");
+	}
+
+	// An instrument for each layer, named after the track
+	const bool Pal = S.Song.FrameRate == 50;
+	const int Rows = Effect.length() + 1;
+	std::vector<std::vector<Cell> > Channels(static_cast<size_t>(S.ChannelCount()), std::vector<Cell>(static_cast<size_t>(Rows)));
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		const transcribe::SfxLayer &Layer = Effect.layers[l];
+		const transcribe::SfxInstrument Shape = transcribe::ToInstrument(Layer, Pal);
+		const ChannelInfo &Info = S.Channel(Used[l]);
+		Preset Sound;
+		Sound.Name = l == 0 ? Name : Name + " (" + Lowercase(Info.Name) + ")";
+		Sound.Description = "a sound effect";
+		Sound.Drum = Layer.channel == transcribe::SfxChannel::Noise;
+		Sound.Vrc7Patch = 0;
+		Sound.Sequences2A03.push_back(SoundSequence(SEQUENCE_VOLUME, Shape.volume));
+		if (!Shape.arpeggio.empty())
+			Sound.Sequences2A03.push_back(SoundSequence(SEQUENCE_ARPEGGIO, Shape.arpeggio, Shape.fixedArpeggio ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE));
+		if (!Shape.pitch.empty())
+			Sound.Sequences2A03.push_back(SoundSequence(SEQUENCE_PITCH, Shape.pitch));
+		if (!Shape.duty.empty())
+			Sound.Sequences2A03.push_back(SoundSequence(SEQUENCE_DUTY, Shape.duty));
+		std::string Error;
+		const int Instrument = S.Host().AddInstrument(Sound, "2A03", false, Error);
+		if (Instrument < 0)
+			throw Problem(Error.empty() ? "The sound effect's instrument couldn't be added." : Error);
+		S.Refresh();
+
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(Used[l])];
+		const size_t Start = static_cast<size_t>(std::max(0, Layer.start));
+		if (Start >= Cells.size())
+			continue;
+		Cells[Start].SetPitch(Shape.note);
+		Cells[Start].Instrument = static_cast<unsigned char>(Instrument);
+		const size_t End = Start + Shape.volume.size() - 1;	// where its volume reaches 0
+		if (End < Cells.size())
+			Cells[End].Note = NOTE_HALT;
+		Parts += Format("%s%s with %s", Parts.empty() ? "" : ", ", Info.FullName().c_str(), InstrumentLabel(S.Song, Instrument).c_str());
+	}
+	AddEffect(Channels[static_cast<size_t>(Used[0])][static_cast<size_t>(Rows - 1)], EFF_HALT, 0, S.Channel(Used[0]).EffectColumns);
+
+	// A row a tick: speed 1 at the tempo that makes a row of the speed's ticks
+	const int Tempo = std::max(std::max(32, S.Song.SplitPoint), std::min(255, DefaultTempo(S.Song.FrameRate)));
+	std::string Error;
+	const int Track = S.Host().AddTrack(Name, Channels, 1, Tempo, Error);
+	if (Track < 0)
+		throw Problem("The sound effect couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	return Track;
+}
+
+// A WSL path to a Windows drive as Windows writes it: /mnt/c/Users/... is C:\Users\...
+std::string WindowsPath(const std::string &Path)
+{
+	if (Path.size() >= 7 && Path.compare(0, 5, "/mnt/") == 0 && std::isalpha(static_cast<unsigned char>(Path[5])) && Path[6] == '/') {
+		std::string Out = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(Path[5])))) + ":" + Path.substr(6);
+		std::replace(Out.begin(), Out.end(), '/', '\\');
+		return Out;
+	}
+	return Path;
+}
+
+std::string SoundChanges(const SoundEffectChanges &Changes)
+{
+	if (Changes.Semitones == 0 && Changes.LengthPercent == 100 && Changes.VolumePercent == 100)
+		return std::string();
+	return Format(" Changed: %d semitones, %d%% of the length, %d%% of the volume.", Changes.Semitones, Changes.LengthPercent,
+		Changes.VolumePercent);
+}
+
+// A sound effect from a recording of the user's voice ("pew", "boing", "kssh")
+std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Path)
+{
+	transcribe::Audio Audio;
+	std::string Error;
+	const std::string File = WindowsPath(Path);
+	if (!transcribe::ReadWav(File, Audio, &Error))
+		throw Problem("The recording " + File + " couldn't be read: " + Error + " Give the path of a WAV file on the user's "
+			"computer as Windows writes it, like C:\\Users\\Name\\Documents\\pew.wav.");
+	transcribe::VoiceEffectOptions Options;
+	Options.pal = S.Song.FrameRate == 50;
+	if (Arg(Args, "octaves") != 0) {
+		Options.fitOctave = false;
+		Options.octaves = IntArg(Args, "octaves", 0, -4, 4);
+	}
+	Options.noise = BoolArg(Args, "noise", true);
+	transcribe::SoundEffect Effect;
+	transcribe::VoiceEffectInfo Info;
+	if (!transcribe::VoiceToEffect(Audio, Options, Effect, &Info, &Error))
+		throw Problem(Error);
+	SoundEffectChanges Changes;
+	Changes.Semitones = IntArg(Args, "semitones", 0, -24, 24);
+	Changes.LengthPercent = IntArg(Args, "length_percent", 100, 25, 400);
+	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
+	Effect = ChangeSoundEffect(Effect, Changes);
+
+	// Named after the file: pew.wav makes "SFX Pew"
+	std::string Base = File.substr(File.find_last_of("/\\") == std::string::npos ? 0 : File.find_last_of("/\\") + 1);
+	if (Base.find('.') != std::string::npos)
+		Base = Base.substr(0, Base.rfind('.'));
+	if (Base.empty())
+		Base = "Voice";
+	Base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Base[0])));
+	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Base);
+	if (Name.empty())
+		throw Problem("The sound effect's name can't be empty.");
+	for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
+		if (Lowercase(S.Song.TrackNames[t]) == Lowercase(Name))
+			throw Problem(Format("There's a track called \"%s\" already; give another name.", Name.c_str()));
+
+	std::string Parts;
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts);
+	std::string How;
+	if (Info.pitched)
+		How = Info.octaves == 0 ? "the voice's pitch and loudness on a pulse, as sung" : Format("the voice's pitch and loudness on a pulse, %s "
+			"%s", Plural(std::abs(Info.octaves), "octave", "octaves").c_str(), Info.octaves > 0 ? "higher" : "lower");
+	if (Info.noisy)
+		How += std::string(How.empty() ? "" : ", and ") + "its breathy and hissy part on the noise channel";
+	return WithRemarks(S, Format("Made track %d \"%s\" from the recording (%s): %s. It's %.2f s long, on %s.%s%s It plays at speed 1 "
+		"(a row a tick) and halts at its end (C00), so export_for_game saves it as a sound that plays once (in GameMaker: "
+		"audio_play_sound(%s, 0, false)). Its instruments' sequences hold the shape, so the user can smooth it in FamiTracker's "
+		"instrument editor. FamiTracker shows the new track now: play it for the user. octaves moves the pitch by whole octaves, "
+		"and noise: false leaves the noise out. FamiTracker can't undo adding a track.", Track + 1, Name.c_str(), File.c_str(),
+		How.c_str(), Effect.length() / static_cast<double>(std::max(1, S.Song.FrameRate)), Parts.c_str(),
+		Info.cut ? Format(" The recording was longer than %s, so it ends there.", Format("%.1f s", transcribe::SFX_MAX_TICKS /
+		static_cast<double>(std::max(1, S.Song.FrameRate))).c_str()).c_str() : "", SoundChanges(Changes).c_str(),
+		GameMakerName(Name + ".ogg").c_str()));
+}
+
+std::string MakeSoundEffectTool(Session &S, const Json &Args)
+{
+	if (Arg(Args, "recording") != 0) {
+		if (Arg(Args, "kind") != 0)
+			throw Problem("Give kind or recording, not both.");
+		return VoiceSoundEffect(S, Args, StringArg(Args, "recording"));
+	}
+	const std::string Kind = StringArg(Args, "kind");
+	if (Kind.empty())
+		throw Problem("Say which sound with kind (" + SoundEffectNames() + "), or give a recording of the user's voice.");
+	const SoundEffectKind *pKind = FindSoundEffect(Kind);
+	if (pKind == 0)
+		throw Problem(Format("There's no \"%s\" sound. The kinds: %s. For something else, start from the nearest one and change "
+			"it with semitones, length_percent or a variant.", Kind.c_str(), SoundEffectNames().c_str()));
+	SoundEffectChanges Changes;
+	Changes.Variant = IntArg(Args, "variant", 1, 1, 9);
+	Changes.Semitones = IntArg(Args, "semitones", 0, -24, 24);
+	Changes.LengthPercent = IntArg(Args, "length_percent", 100, 25, 400);
+	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
+	const transcribe::SoundEffect Effect = ChangeSoundEffect(pKind->Make(), Changes);
+	std::string Title = pKind->Name;
+	Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
+	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Title);
+	if (Name.empty())
+		throw Problem("The sound effect's name can't be empty.");
+	for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
+		if (Lowercase(S.Song.TrackNames[t]) == Lowercase(Name))
+			throw Problem(Format("There's a track called \"%s\" already; give another name.", Name.c_str()));
+
+	std::string Parts;
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts);
+	std::string Changed;
+	if (Changes.Variant > 1)
+		Changed += Format(" Variant %d: %s.", Changes.Variant, VariantText(Changes.Variant).c_str());
+	Changed += SoundChanges(Changes);
+	return WithRemarks(S, Format("Made track %d \"%s\": the %s sound (%s), %s long, on %s.%s It plays at speed 1 (a row a tick) and halts at its "
+		"end (C00), so export_for_game saves it as a sound that plays once (in GameMaker: audio_play_sound(%s, 0, false)). Its "
+		"instruments' sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the new "
+		"track now: play it for the user. For other takes, make another with variant 2, 3..., semitones, length_percent or "
+		"volume_percent. FamiTracker can't undo adding a track: the user removes one in Module > Module properties.",
+		Track + 1, Name.c_str(), pKind->Name.c_str(), pKind->Use.c_str(), Format("%.2f s", Effect.length() / static_cast<double>(
+		std::max(1, S.Song.FrameRate))).c_str(), Parts.c_str(), Changed.c_str(), GameMakerName(Name + ".ogg").c_str()));
+}
+
 // Tracks by number (from 1) or name
 int TrackArg(Session &S, const Json &Args, const char *Name)
 {
@@ -4308,6 +4560,39 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			false);
 	}
 
+	{
+		std::vector<std::string> Kinds;
+		std::string Uses;
+		for (size_t i = 0; i < SoundEffectKinds().size(); ++i) {
+			Kinds.push_back(SoundEffectKinds()[i].Name);
+			Uses += Format("%s%s (%s)", i == 0 ? "" : "; ", SoundEffectKinds()[i].Name.c_str(), SoundEffectKinds()[i].Use.c_str());
+		}
+		AddTool("make_sound_effect", "Make a sound effect",
+			"Makes a sound effect for a game as a new track in the module, the NES's way: a pulse, the triangle and the noise "
+			"channel moving their volume, pitch and duty 60 times a second, through instruments whose sequences shape the sound. "
+			"It halts at its end, so export_for_game saves it as a sound that plays once. FamiTracker then shows the new track: "
+			"play it for the user, and offer other takes (variant 2, 3..., semitones, length_percent, volume_percent) to choose "
+			"from. It can also turn a recording of the user's voice into one. Suggest keeping sound effects in a module of their "
+			"own, apart from the music. Kinds: " + Uses + ". Other "
+			"words for them work too (\"pew\", \"boing\", \"kssh\", \"menu\"). Adding a track can't be undone in FamiTracker.",
+			Schema()
+				.Add("kind", EnumProp("What it's for.", Kinds))
+				.Add("recording", Prop("string", "Instead of a kind: a WAV file of the user's voice (\"pew\", \"boing\", \"kssh\") "
+					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav. Its pitch and loudness play on a pulse, its "
+					"breathy and hissy part on the noise channel."))
+				.Add("octaves", Prop("integer", "With a recording: whole octaves to move its pitch, -4 to 4. Default: so its "
+					"middle lands near E-4."))
+				.Add("noise", Prop("boolean", "With a recording: its unpitched part on the noise channel (default true)."))
+				.Add("name", Prop("string", "The new track's name, which the exported file and the GameMaker sound are named "
+					"after. Default: \"SFX\" and the kind or the recording's file name, like \"SFX Jump\"."))
+				.Add("variant", Prop("integer", "1 as designed; 2-9 other takes: higher or lower, shorter or longer, every other "
+					"one with another pulse duty."))
+				.Add("semitones", Prop("integer", "Higher (positive) or lower, -24 to 24 (noise moves a step for 3)."))
+				.Add("length_percent", Prop("integer", "Its length, 25-400 (100 as designed)."))
+				.Add("volume_percent", Prop("integer", "Its volume, 10-200 (100 as designed; the loudest is 15).")),
+			false);
+	}
+
 	AddTool("check_loop", "Check the loop",
 		"How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam "
 		"where the end goes back to the loop's start: notes hanging over it, effects, instruments, volumes or tempo that differ "
@@ -4411,6 +4696,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "look_at_song") Result.Text = LookTool(S, Args, Result.Image);
 		else if (Name == "make_version") Result.Text = MakeVersionTool(S, Args);
 		else if (Name == "make_jingle") Result.Text = MakeJingleTool(S, Args);
+		else if (Name == "make_sound_effect") Result.Text = MakeSoundEffectTool(S, Args);
 		else if (Name == "select_track") Result.Text = SelectTrackTool(S, Args);
 		else if (Name == "set_expansion") Result.Text = SetExpansionTool(S, Args);
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
@@ -4451,8 +4737,9 @@ std::string ToolSet::Instructions()
 		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
 		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
 		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
-		"complete, item found...) is make_jingle. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion first (it asks "
-		"before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
+		"complete, item found...) is make_jingle, and a sound effect (jump, coin, menu blip, \"pew\"...) make_sound_effect. "
+		"For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion first (it asks before clearing notes on the old "
+		"chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
 		"brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the user what you "
 		"changed and why.";
 }

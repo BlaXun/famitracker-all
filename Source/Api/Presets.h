@@ -38,12 +38,16 @@ const int SEQUENCE_ARPEGGIO = 1;
 const int SEQUENCE_PITCH = 2;
 const int SEQUENCE_HIPITCH = 3;
 const int SEQUENCE_DUTY = 4;
+// Arpeggio settings as arp_setting_t: semitones from the note, or notes of their own
+const int SEQUENCE_ABSOLUTE = 0;
+const int SEQUENCE_FIXED = 1;
 
 struct PresetSequence {
 	int Type;
 	std::vector<int> Items;
 	int Loop;		// -1: none
 	int Release;	// -1: none. Held there while the note lasts, the rest plays on release (===)
+	int Setting;	// arpeggio: SEQUENCE_ABSOLUTE or SEQUENCE_FIXED
 };
 
 struct Preset {

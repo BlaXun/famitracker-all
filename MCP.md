@@ -84,6 +84,8 @@ Some things to try:
 - "Export the day and night versions for my game."
 - "Let's make a VRC7 song." / "Give the melody a piano sound."
 - "Make it faster, speed 5." / "Set the tempo to 100 BPM."
+- "Make a jump sound and three coin sounds to choose from." / "Turn my
+  recording pew.wav into a sound effect."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
 clashes, range), looks at a picture of the notes, and plays it for you, then
@@ -127,6 +129,7 @@ anything; close the dialog and ask again.
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
+| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip and 22 more kinds, or a recording of your voice ("pew", "boing", "kssh"). See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
@@ -279,6 +282,40 @@ note (or the one you name). You can ask for another tempo, other
 instruments, channels, or no drums or harmony. Since the jingle is the
 selected track afterwards, Claude can change its notes like any other part.
 
+## Sound effects
+
+Ask for a sound effect ("a jump sound", "three coin sounds to choose from")
+and Claude adds it as a new track, made the NES's way: a pulse, the triangle
+or the noise channel moving its volume, pitch and duty 60 times a second. The
+track plays at speed 1, a row a tick, and halts at its end (`C00`), so the
+export for games saves it as a sound that plays once:
+`audio_play_sound(snd_sfx_jump, 0, false)`. Each part is an instrument whose
+sequences shape the sound, named after the track ("SFX Jump"), so you can
+change it in the instrument editor.
+
+| Kind | For |
+|---|---|
+| jump, land, fall | jumping, landing, falling into a pit |
+| coin, pickup, power-up, chest | coins and gems, items, upgrades, opening a chest |
+| hurt, stomp, laser, explosion | taking damage, landing on an enemy, shooting ("pew"), a blast ("kssh") |
+| bounce, warp, whoosh, splash, door, footstep, break | a spring ("boing"), teleporting, dashing, water, doors, steps, breaking a pot |
+| select, confirm, cancel, error, text | menus, OK, back, something that can't be done, dialogue letters |
+| message, heal | chat messages and notifications, healing |
+
+Every kind has variants (variant 2, 3, ... are a little higher or lower,
+shorter or longer, some with another duty), and Claude can move a sound by
+semitones, stretch it, or make it softer.
+
+Claude can also turn **a recording of your voice** into a sound effect: give
+it the path of a WAV file ("C:\Users\Me\Documents\pew.wav"). Where your
+voice has a pitch, a pulse follows it, sliding between notes, moved by whole
+octaves so it sits where NES sound effects do; the breathy and hissy rest
+plays on the noise channel, brighter for "sss" than for a breath. Silence
+before and after is left out, and a sound can last up to 4.2 seconds.
+
+Keep sound effects in a module of their own ("Sound effects.ftm"), so your
+music file stays clean; Claude works on whichever module is open.
+
 ## Music for your game: looping OGG files
 
 **File > Export for games (OGG)...** saves the selected track, or all of them
@@ -354,7 +391,7 @@ editor; they're muted again afterwards.
 ## Not yet
 
 - Recording ideas from a phone page into the clips.
-- Sound effects, and instruments for the FDS and N163.
+- Instruments for the FDS and N163.
 
 ## For developers
 
@@ -366,9 +403,16 @@ editor; they're muted again afterwards.
   rows, and following the song through its jumps, skips and halts),
   `Presets` (also the VRC7's patches), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the
-  jingles' scores, in semitones from the key note and sixteenth notes), and
+  jingles' scores, in semitones from the key note and sixteenth notes),
+  `SoundEffects` (the sound effect kinds, built a tick at a time), and
   `Tools` (the tools, against the `SongHost` interface in `Song.h`). Tool
   results can carry an image after their text.
+- `Source/Transcribe/SoundEffect.cpp`: sound effects as layers of per-tick
+  values and as FamiTracker instruments (each tick an absolute arpeggio picks
+  the nearest note and the pitch sequence moves the period to the pitch
+  between notes; the noise uses a fixed arpeggio), `RenderEffect` (the 2A03
+  played through those sequences, for the tests) and `VoiceToEffect` (a
+  recording's loudness, pitch and zero crossings, tick by tick).
   ```
   cmake -S Source/Api -B build/api
   cmake --build build/api

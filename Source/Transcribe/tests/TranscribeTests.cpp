@@ -22,6 +22,7 @@
 // Tests for the transcription engine, on synthesized audio with known notes.
 
 #include "Transcribe.h"
+#include "SoundEffect.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1716,6 +1717,170 @@ void TestBackingCells()
 	CHECK(text.find("INSTVRC6   5     5  -1  -1  -1   1 \"Chords\"") != std::string::npos);
 }
 
+// ---------------------------------------------------------------------------
+// Sound effects from a voice
+// ---------------------------------------------------------------------------
+
+// A voice sliding from one pitch to another, fading, with a voice's overtones
+void Slide(Synth &s, double from, double to, double seconds, double amp)
+{
+	const int n = int(seconds * RATE), harmonics = 5;
+	double norm = 0.0;
+	for (int h = 1; h <= harmonics; ++h) norm += 1.0 / h;
+	for (int i = 0; i < n; ++i) {
+		const double x = double(i) / n;
+		s.phase += 2.0 * PI * from * std::pow(to / from, x) / RATE;
+		double v = 0.0;
+		for (int h = 1; h <= harmonics; ++h) v += std::sin(h * s.phase) / h;
+		s.audio.samples.push_back(float(amp * (1.0 - 0.8 * x) * std::min(1.0, i / (0.005 * RATE)) * v / norm));
+	}
+}
+
+// A fading hiss: bright (high-passed, "sss") or dull (low-passed, a breath)
+void Hiss(Synth &s, double seconds, double amp, bool bright)
+{
+	const int n = int(seconds * RATE);
+	double prev = 0.0, low = 0.0;
+	for (int i = 0; i < n; ++i) {
+		const double w = Noise();
+		double v;
+		if (bright) { v = w - prev; prev = w; }
+		else { low += 0.06 * (w - low); v = low * 5.0; }
+		s.audio.samples.push_back(float(amp * v * std::exp(-double(i) / (0.25 * RATE))));
+	}
+}
+
+const SfxLayer *LayerOf(const SoundEffect &effect, SfxChannel channel)
+{
+	for (size_t i = 0; i < effect.layers.size(); ++i)
+		if (effect.layers[i].channel == channel)
+			return &effect.layers[i];
+	return nullptr;
+}
+
+double NoteOf(double frequency) { return 12.0 * std::log2(frequency / 440.0) + 45.0; }
+
+void TestVoiceEffects()
+{
+	VoiceEffectOptions options;
+	SoundEffect effect;
+	VoiceEffectInfo info;
+	std::string problem;
+
+	// "pew": a falling voice after a puff of breath; silence around it is left out
+	{
+		Synth s;
+		s.Silence(0.2);
+		Hiss(s, 0.025, 0.3, true);
+		Slide(s, 800.0, 300.0, 0.3, 0.5);
+		s.Silence(0.2);
+		CHECK(VoiceToEffect(s.audio, options, effect, &info, &problem));
+		const SfxLayer *p = LayerOf(effect, SfxChannel::Pulse);
+		CHECK(p != nullptr && info.pitched);
+		if (p != nullptr) {
+			CHECK(p->start <= 3 && p->length() >= 15 && p->length() <= 21);
+			// The middle of the slide (about 490 Hz, A#3) lands near E-4 without moving
+			CHECK(info.octaves == 0);
+			const double t1 = (p->start + 3) / 60.0 - 0.025, t2 = (p->start + p->length() - 3) / 60.0 - 0.025;
+			CHECK_NEAR(p->pitchAt(3), NoteOf(800.0 * std::pow(300.0 / 800.0, t1 / 0.3)), 1.0);
+			CHECK_NEAR(p->pitchAt(p->length() - 3), NoteOf(800.0 * std::pow(300.0 / 800.0, t2 / 0.3)), 1.0);
+			CHECK(p->volume[2] > p->volume[size_t(p->length() - 2)] && p->volume[2] >= 10);
+			// Played back, it falls
+			const std::vector<PitchFrame> frames = TrackPitch(RenderEffect(effect, RATE, false), PitchOptions());
+			double early = 0.0, late = 0.0;
+			for (const PitchFrame &f : frames) {
+				if (f.frequency > 0.0 && std::fabs(f.time - 0.08) < 0.01) early = f.frequency;
+				if (f.frequency > 0.0 && std::fabs(f.time - 0.25) < 0.01) late = f.frequency;
+			}
+			CHECK(early > late * 1.5 && late > 250.0);
+		}
+		CHECK(info.seconds > 0.28 && info.seconds < 0.4 && !info.cut);
+		// The puff of breath before it, on the noise channel, and nothing after
+		const SfxLayer *n = LayerOf(effect, SfxChannel::Noise);
+		CHECK(n != nullptr && info.noisy);
+		if (n != nullptr)
+			CHECK(n->start == 0 && n->length() <= 3 && n->pitchAt(0) >= 9);
+	}
+
+	// "kssh": a hiss without a pitch goes on the noise channel; a dull one sounds darker
+	int brightIndex = 0, dullIndex = 0;
+	{
+		Synth s;
+		s.Silence(0.05);
+		Hiss(s, 0.5, 0.5, true);
+		s.Silence(0.05);
+		CHECK(VoiceToEffect(s.audio, options, effect, &info, &problem));
+		const SfxLayer *n = LayerOf(effect, SfxChannel::Noise);
+		CHECK(n != nullptr && !info.pitched && info.noisy && effect.layers.size() == 1);
+		if (n != nullptr) {
+			brightIndex = int(n->pitchAt(2));
+			CHECK(brightIndex >= 9);
+			CHECK(n->volume[2] > n->volume[size_t(n->length() - 3)] && n->length() > 20);
+		}
+		Synth d;
+		Hiss(d, 0.5, 0.5, false);
+		CHECK(VoiceToEffect(d.audio, options, effect, &info, &problem));
+		n = LayerOf(effect, SfxChannel::Noise);
+		CHECK(n != nullptr);
+		if (n != nullptr)
+			dullIndex = int(n->pitchAt(2));
+		CHECK(dullIndex + 3 <= brightIndex);
+		// Without the noise channel there's nothing to play
+		VoiceEffectOptions quiet = options;
+		quiet.noise = false;
+		CHECK(!VoiceToEffect(s.audio, quiet, effect, &info, &problem) && problem.find("no pitch") != std::string::npos);
+	}
+
+	// "boing": up, then a wobble
+	{
+		Synth s;
+		s.Glide(180.0, 270.0, 0.07, 0.5);
+		s.Tone(270.0, 0.4, 0.5, true, 100.0, 7.0, 4);
+		CHECK(VoiceToEffect(s.audio, options, effect, &info, &problem));
+		const SfxLayer *p = LayerOf(effect, SfxChannel::Pulse);
+		CHECK(p != nullptr && info.octaves == 1);	// 270 Hz (C#3) moves up an octave
+		if (p != nullptr) {
+			CHECK(p->pitchAt(5) > p->pitchAt(0) + 4.0);
+			double low = 1e9, high = -1e9;
+			for (int t = 10; t < p->length() - 4; ++t) {
+				low = std::min(low, p->pitchAt(t));
+				high = std::max(high, p->pitchAt(t));
+			}
+			CHECK(high - low > 1.2 && high - low < 3.0);	// a 100-cent vibrato, 2 semitones from low to high
+		}
+	}
+
+	// Octaves as asked; PAL's ticks are longer
+	{
+		Synth s;
+		s.Tone(440.0, 0.3, 0.5, true, 0.0, 0.0, 3);
+		VoiceEffectOptions asked = options;
+		asked.fitOctave = false;
+		asked.octaves = 1;
+		CHECK(VoiceToEffect(s.audio, asked, effect, &info, &problem));
+		const SfxLayer *p = LayerOf(effect, SfxChannel::Pulse);
+		CHECK(p != nullptr && info.octaves == 1);
+		if (p != nullptr)
+			CHECK_NEAR(p->pitchAt(5), 57.0, 0.3);	// A-4
+		const int ntsc = effect.length();
+		asked.pal = true;
+		CHECK(VoiceToEffect(s.audio, asked, effect, &info, &problem));
+		CHECK(effect.length() < ntsc && std::abs(effect.length() * 6 - ntsc * 5) <= 6);
+	}
+
+	// Long recordings end where a layer can't go on; silence has nothing
+	{
+		Synth s;
+		s.Tone(330.0, 5.0, 0.4, true, 0.0, 0.0, 3);
+		CHECK(VoiceToEffect(s.audio, options, effect, &info, &problem));
+		CHECK(info.cut && effect.length() == SFX_MAX_TICKS);
+		Synth q;
+		q.Silence(0.5);
+		CHECK(!VoiceToEffect(q.audio, options, effect, &info, &problem) && !problem.empty());
+		CHECK(!VoiceToEffect(Audio(), options, effect, &info, &problem));
+	}
+}
+
 int main()
 {
 	TestGridAndNames();
@@ -1745,6 +1910,7 @@ int main()
 	TestBars();
 	TestChooseChords();
 	TestBackingCells();
+	TestVoiceEffects();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

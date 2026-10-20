@@ -36,6 +36,7 @@ PresetSequence Sequence(int Type, const std::vector<int> &Items, int Loop = -1, 
 	S.Items = Items;
 	S.Loop = Loop;
 	S.Release = Release;
+	S.Setting = SEQUENCE_ABSOLUTE;
 	return S;
 }
 

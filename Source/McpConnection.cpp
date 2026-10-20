@@ -68,6 +68,7 @@ static_assert(ftapi::EFF_COUNT == EF_COUNT && ftapi::EFF_ARPEGGIO == EF_ARPEGGIO
 	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE, "effects");
 static_assert(ftapi::SEQUENCE_VOLUME == SEQ_VOLUME && ftapi::SEQUENCE_ARPEGGIO == SEQ_ARPEGGIO && ftapi::SEQUENCE_PITCH == SEQ_PITCH &&
 	ftapi::SEQUENCE_HIPITCH == SEQ_HIPITCH && ftapi::SEQUENCE_DUTY == SEQ_DUTYCYCLE, "sequences");
+static_assert(ftapi::SEQUENCE_ABSOLUTE == ARP_SETTING_ABSOLUTE && ftapi::SEQUENCE_FIXED == ARP_SETTING_FIXED, "arpeggio settings");
 
 namespace {
 
@@ -901,6 +902,8 @@ public:
 				pSequence->SetLoopPoint(static_cast<unsigned int>(Seq.Loop));
 			if (Seq.Release >= 0)
 				pSequence->SetReleasePoint(static_cast<unsigned int>(Seq.Release));
+			if (Seq.Type == ftapi::SEQUENCE_ARPEGGIO)
+				pSequence->SetSetting(static_cast<unsigned int>(Seq.Setting));
 			if (VRC6) {
 				static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqEnable(Seq.Type, 1);
 				static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqIndex(Seq.Type, Slot);

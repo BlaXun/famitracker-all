@@ -555,6 +555,7 @@
     <ClCompile Include="Source\Api\Ogg.cpp" />
     <ClCompile Include="Source\Api\GameAudio.cpp" />
     <ClCompile Include="Source\Api\Jingles.cpp" />
+    <ClCompile Include="Source\Api\SoundEffects.cpp" />
     <ClCompile Include="Source\McpSocket.cpp" />
     <ClCompile Include="Source\McpConnection.cpp" />
     <ClCompile Include="Source\ChipSwitch.cpp" />
@@ -570,6 +571,7 @@
     <ClInclude Include="Source\Api\Ogg.h" />
     <ClInclude Include="Source\Api\GameAudio.h" />
     <ClInclude Include="Source\Api\Jingles.h" />
+    <ClInclude Include="Source\Api\SoundEffects.h" />
     <ClInclude Include="Source\McpSocket.h" />
     <ClInclude Include="Source\McpConnection.h" />
     <ClInclude Include="Source\ChipSwitch.h" />
@@ -595,6 +597,8 @@
     <ClCompile Include="Source\BackingDlg.cpp" />
     <ClInclude Include="Source\BackingDlg.h" />
     <ClCompile Include="Source\Transcribe\Harmony.cpp" />
+    <ClCompile Include="Source\Transcribe\SoundEffect.cpp" />
+    <ClInclude Include="Source\Transcribe\SoundEffect.h" />
     <ClCompile Include="Source\Clips.cpp" />
     <ClInclude Include="Source\Clips.h" />
     <ClCompile Include="Source\ClipsDlg.cpp" />
