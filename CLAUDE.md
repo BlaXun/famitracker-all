@@ -2,10 +2,11 @@
 
 Guidance for working in this repository. This is the `recorder` branch, made
 from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
-audio-to-notes recorder described in `RECORDER.md`. The overall plan is in
-`ROADMAP.md`. Unless a section says
-otherwise, everything below describes the 0.4.6 code as found on `master` and
-was checked against that source.
+audio-to-notes recorder described in `RECORDER.md`: the engine in
+`Source/Transcribe/`, the `wav2ftm` tool, and Edit > Insert recording in
+`Source/InsertRecording.cpp`. The overall plan is in `ROADMAP.md`. Unless a
+section says otherwise, everything below describes the 0.4.6 code as found on
+`master` and was checked against that source.
 
 ## What this repository is
 
