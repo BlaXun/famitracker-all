@@ -114,10 +114,10 @@ jobs:
 
           $tests = @()
           if (Test-Path transcribe-test.log) {
-            $tests = Get-Content transcribe-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed|end-to-end' }
+            $tests = @(Get-Content transcribe-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed|end-to-end' })
           }
           if (Test-Path api-test.log) {
-            $tests += Get-Content api-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed' } | ForEach-Object { "Claude Code connection: $_" }
+            $tests += @(Get-Content api-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed' } | ForEach-Object { "Claude Code connection: $_" })
           }
           $text = @('## Toolchain and binary') + $info + @('', '## Transcription engine tests') + $tests + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
           $text = $text -join "`n"

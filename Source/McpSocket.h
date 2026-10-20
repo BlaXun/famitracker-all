@@ -32,11 +32,20 @@ struct HttpResponse;
 }
 
 // What the window gets in lParam; it fills in the response and returns 1
-// (0: it couldn't answer, the client gets "busy")
+// (0: it couldn't answer, the client gets "busy"). The listener stops waiting
+// after a while, but the window may still get to it later, so the exchange
+// lives until both are done with it:
+//
+//	if (BeginMcpExchange(pExchange))	// false: nobody waits for the answer
+//		Result = Answer(pExchange);
+//	EndMcpExchange(pExchange);			// always, exactly once
 struct mcp_exchange_t {
 	const ftapi::HttpRequest *pRequest;
 	ftapi::HttpResponse *pResponse;
 };
+
+bool BeginMcpExchange(mcp_exchange_t *pExchange);
+void EndMcpExchange(mcp_exchange_t *pExchange);
 
 class CMcpSocketServer
 {
@@ -49,6 +58,8 @@ public:
 	bool Start(int Port, void *hWindow, unsigned int Message, char *pError, int ErrorSize);
 	// Closes the listener and every connection, and waits for the thread. Sent
 	// messages are still answered meanwhile, so call it on the window's thread.
+	// A thread still stuck after a few seconds (a client that doesn't read its
+	// answer) is left to end by itself, with state of its own.
 	void Stop();
 	bool IsRunning() const;
 	int GetPort() const;

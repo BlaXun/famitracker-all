@@ -510,11 +510,9 @@ public:
 
 	bool WriteSong(const std::vector<ftapi::ChannelCells> &Parts, int First, int LinkClipId, std::string &Error)
 	{
-		CFamiTrackerDoc *pDoc = Doc();
-		if (pDoc == NULL) {
-			Error = "No song is open in FamiTracker.";
+		if (!CanChange(Error))
 			return false;
-		}
+		CFamiTrackerDoc *pDoc = Doc();
 		const int Length = static_cast<int>(pDoc->GetPatternLength(Track()));
 		std::vector<std::vector<stChanNote> > Cells(Parts.size());
 		std::vector<song_part_t> Raw;
@@ -544,6 +542,8 @@ public:
 	bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<ftapi::Cell> > &Columns,
 		std::string &Error)
 	{
+		if (!CanChange(Error))
+			return false;
 		CFamiTrackerDoc *pDoc = Doc();
 		CClipLibrary *pClips = pDoc != NULL ? pDoc->GetClips() : NULL;
 		if (pClips == NULL || Columns.empty() || Columns[0].empty()) {
@@ -572,11 +572,9 @@ public:
 
 	int AddInstrument(const ftapi::Preset &Sound, const std::string &Chip, bool Sawtooth, std::string &Error)
 	{
-		CFamiTrackerDoc *pDoc = Doc();
-		if (pDoc == NULL) {
-			Error = "No song is open in FamiTracker.";
+		if (!CanChange(Error))
 			return -1;
-		}
+		CFamiTrackerDoc *pDoc = Doc();
 		const bool VRC6 = Chip == "VRC6";
 		const inst_type_t Type = VRC6 ? INST_VRC6 : INST_2A03;
 		const int ChipType = VRC6 ? SNDCHIP_VRC6 : SNDCHIP_NONE;
@@ -635,6 +633,8 @@ public:
 
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &Error)
 	{
+		if (!CanChange(Error))
+			return false;
 		if (!m_pMain->AddAction(new CMcpTempoAction(Speed, Tempo))) {
 			Error = "The tempo couldn't be changed.";
 			return false;
@@ -680,6 +680,8 @@ public:
 
 	bool Undo(std::string &Message)
 	{
+		if (!CanChange(Message))
+			return false;
 		m_pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
 		Message = "Undid the last change in the song (like Ctrl+Z); Ctrl+Y in FamiTracker brings it back.";
 		return true;
@@ -687,11 +689,9 @@ public:
 
 	bool Save(const std::string &CopyName, std::string &Message)
 	{
-		CFamiTrackerDoc *pDoc = Doc();
-		if (pDoc == NULL) {
-			Message = "No song is open in FamiTracker.";
+		if (!CanChange(Message))
 			return false;
-		}
+		CFamiTrackerDoc *pDoc = Doc();
 		const CString Path = pDoc->GetPathName();
 		if (Path.IsEmpty()) {
 			Message = "The song hasn't been saved yet. Ask the user to save it (File > Save As) so it has a place.";
@@ -760,13 +760,18 @@ private:
 	static LRESULT CALLBACK WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 	{
 		CMcpLink *pLink = reinterpret_cast<CMcpLink*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
-		if (pLink != NULL) {
-			if (Message == WM_MCP_REQUEST)
-				return pLink->Answer(reinterpret_cast<mcp_exchange_t*>(lParam));
-			if (Message == WM_TIMER && wParam == PLAY_TIMER) {
-				pLink->CheckPlayback();
-				return 0;
-			}
+		if (Message == WM_MCP_REQUEST) {
+			// The listener may have stopped waiting; the exchange lives until both let go
+			mcp_exchange_t *pExchange = reinterpret_cast<mcp_exchange_t*>(lParam);
+			LRESULT Result = 0;
+			if (pLink != NULL && BeginMcpExchange(pExchange))
+				Result = pLink->Answer(pExchange);
+			EndMcpExchange(pExchange);
+			return Result;
+		}
+		if (pLink != NULL && Message == WM_TIMER && wParam == PLAY_TIMER) {
+			pLink->CheckPlayback();
+			return 0;
 		}
 		return DefWindowProc(hWnd, Message, wParam, lParam);
 	}

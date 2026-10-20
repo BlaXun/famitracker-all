@@ -449,7 +449,7 @@ void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpe
 			Tempo = t;
 		}
 	}
-	if (BestError < 0.5)
+	if (BestError <= std::max(0.5, Bpm * 0.01))	// within 1%: a new speed would change how effects sound
 		return;
 	for (int s = 1; s <= MaxSpeed; ++s) {
 		for (int t = MinTempo; t <= 255; ++t) {

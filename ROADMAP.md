@@ -121,7 +121,15 @@ when ready.
   3. Sound effects by voice ("pew", "boing", "kssh"), exported like the
      music, and chords by name ("C G Am F") or strummed on a guitar.
   4. AI arranging over MCP (the `api` branch).
-- **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
+- **`api` (first version done; see `MCP.md` on that branch):** FamiTracker
+  is the MCP server itself, speaking Streamable HTTP on `127.0.0.1` with an
+  access token, opt-in in File > Connect Claude Code. Its 17 tools read the
+  song in musical terms, write parts, add instruments from presets,
+  transpose and change mode, set the tempo, add chords and a bass line, an
+  echo and vibrato, change a mood in one go, check the song, and play it.
+  Next: exporting a looping OGG, the phone page, other tracks, presets for
+  the other chips.
+  The plan it started from: a local HTTP/JSON API to the running FamiTracker,
   bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
   instruments, play/stop and save/export, and run requests on the UI thread
   through the undo system. A separate MCP server would wrap it for agentic

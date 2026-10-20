@@ -115,6 +115,12 @@ Json ChannelProp(const char *Description)
 	return P;
 }
 
+// Words or a number, like vibrato's "slow" or 3
+Json LevelProp(const char *Description)
+{
+	return ChannelProp(Description);
+}
+
 Json BarProp(const char *Description)
 {
 	Json P = Prop("integer", Description);
@@ -1185,33 +1191,172 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 
 // Changing notes that are there
 
-// Each channel's cells over [First, End), changed by Edit(channel, cells,
-// row of the first), then committed together
-template <class EditFunction>
-std::string ChangeCells(Session &S, const std::vector<int> &Channels, int First, int End, bool AsClip, const std::string &ClipName,
-	const std::string &What, std::vector<std::string> &Warnings, EditFunction Edit)
-{
-	const bool DirectChange = Direct(S, AsClip);
-	std::vector<Change> Changes;
-	bool EffectsLost = false;
-	for (size_t i = 0; i < Channels.size(); ++i) {
-		const int Channel = Channels[i];
-		const std::vector<Cell> &Old = S.Cells(Channel);
-		Change C;
-		C.Channel = Channel;
-		for (int r = First; r < End; ++r)
-			C.Cells.push_back(r < static_cast<int>(Old.size()) ? Old[r] : Cell());
-		if (!Edit(Channel, C.Cells))
-			continue;	// nothing changed in this one
-		if (DirectChange && !KeepFollowing(Old, First, End, C.Cells, S.Channel(Channel).EffectColumns))
-			EffectsLost = true;
-		Changes.push_back(C);
+// A working copy of the channels a change touches, from the song's first row
+// on. Steps change it one after the other; at the end it is compared with the
+// song, and what differs becomes one clip or one undoable change.
+class Draft {
+public:
+	explicit Draft(Session &S) : m_S(S) {}
+
+	std::vector<Cell> &Cells(int Channel)
+	{
+		std::map<int, std::vector<Cell> >::iterator it = m_Work.find(Channel);
+		if (it == m_Work.end())
+			it = m_Work.insert(std::make_pair(Channel, m_S.Cells(Channel))).first;
+		return it->second;
 	}
-	if (EffectsLost)
-		Warnings.push_back("Some effects didn't fit in the channels' visible effect columns and were left out.");
-	if (Changes.empty())
-		throw Problem("Nothing to change there: no notes in those bars.");
-	return Commit(S, Changes, First, AsClip, ClipName, What);
+
+	// Cells from Row on; the channel grows past the song's end when needed
+	void Put(int Channel, int Row, const std::vector<Cell> &Part)
+	{
+		std::vector<Cell> &Work = Cells(Channel);
+		if (Work.size() < Row + Part.size())
+			Work.resize(Row + Part.size());
+		std::copy(Part.begin(), Part.end(), Work.begin() + Row);
+	}
+
+	std::vector<NoteInfo> Notes(int Channel)
+	{
+		return ReadNotes(Cells(Channel), m_S.Channel(Channel).EffectColumns);
+	}
+
+	// What changed: the rows from the first changed one (or RangeFirst, when
+	// that's earlier) to the last, in every channel that changed. Direct
+	// changes also keep the notes after it playing as before. False when
+	// nothing changed.
+	bool Collect(int RangeFirst, bool DirectChange, std::vector<Change> &Changes, int &First, std::vector<std::string> &Warnings)
+	{
+		int Low = -1, High = -1;
+		std::vector<int> Changed;
+		for (std::map<int, std::vector<Cell> >::const_iterator it = m_Work.begin(); it != m_Work.end(); ++it) {
+			const std::vector<Cell> &Old = m_S.Cells(it->first), &New = it->second;
+			const size_t Rows = std::max(Old.size(), New.size());
+			bool Any = false;
+			for (size_t r = 0; r < Rows; ++r) {
+				const Cell a = r < Old.size() ? Old[r] : Cell();
+				const Cell b = r < New.size() ? New[r] : Cell();
+				if (a != b) {
+					if (Low < 0 || static_cast<int>(r) < Low)
+						Low = static_cast<int>(r);
+					High = std::max(High, static_cast<int>(r));
+					Any = true;
+				}
+			}
+			if (Any)
+				Changed.push_back(it->first);
+		}
+		if (High < 0)
+			return false;
+		First = std::min(Low, std::max(0, RangeFirst));
+		const int End = High + 1;
+		bool Lost = false;
+		for (size_t i = 0; i < Changed.size(); ++i) {
+			const std::vector<Cell> &New = m_Work[Changed[i]];
+			Change C;
+			C.Channel = Changed[i];
+			for (int r = First; r < End; ++r)
+				C.Cells.push_back(r < static_cast<int>(New.size()) ? New[r] : Cell());
+			if (DirectChange && !KeepFollowing(m_S.Cells(C.Channel), First, End, C.Cells, m_S.Channel(C.Channel).EffectColumns))
+				Lost = true;
+			Changes.push_back(C);
+		}
+		if (Lost)
+			Warnings.push_back("Some effects didn't fit in the channels' visible effect columns and were left out.");
+		return true;
+	}
+
+private:
+	Session &m_S;
+	std::map<int, std::vector<Cell> > m_Work;
+};
+
+// Moves the notes that start in Cells[First, End) to Map(pitch); arpeggios
+// (0xy) on their rows follow when MoveChords. True if anything moved.
+template <class MapFunction>
+bool MapPitches(std::vector<Cell> &Cells, int First, int End, int Columns, MapFunction Map, bool MoveChords, int &Count,
+	int &Skipped, std::map<int, int> *pMoves)
+{
+	int Original = -1;	// the playing note's pitch before
+	bool Changed = false;
+	for (int r = std::max(0, First); r < End && r < static_cast<int>(Cells.size()); ++r) {
+		Cell &C = Cells[r];
+		if (C.HasNote()) {
+			Original = C.Pitch();
+			const int Moved = Map(Original);
+			if (Moved < 0 || Moved >= PITCHES) {
+				++Skipped;
+				Original = -1;
+				continue;
+			}
+			if (pMoves != 0)
+				(*pMoves)[Original % 12] = Moved - Original;
+			Changed = Changed || Moved != Original;
+			C.SetPitch(Moved);
+			++Count;
+		}
+		else if (C.IsEnd())
+			Original = -1;
+		if (!MoveChords || Original < 0)
+			continue;
+		for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k) {
+			if (C.Effect[k] != EFF_ARPEGGIO || C.Param[k] == 0)
+				continue;
+			const int Root = Map(Original);
+			const int x = Map(Original + (C.Param[k] >> 4)) - Root, y = Map(Original + (C.Param[k] & 15)) - Root;
+			if (x >= 0 && x <= 15 && y >= 0 && y <= 15 && C.Param[k] != ((x << 4) | y)) {
+				C.Param[k] = static_cast<unsigned char>((x << 4) | y);
+				Changed = true;
+			}
+		}
+	}
+	return Changed;
+}
+
+// The notes that start in Cells[First, End) get Instrument; how many there are
+int SetInstruments(std::vector<Cell> &Cells, int First, int End, int Instrument)
+{
+	int Count = 0;
+	for (int r = std::max(0, First); r < End && r < static_cast<int>(Cells.size()); ++r) {
+		if (Cells[r].HasNote()) {
+			Cells[r].Instrument = static_cast<unsigned char>(Instrument);
+			++Count;
+		}
+	}
+	return Count;
+}
+
+// Vibrato 4xy on the notes that start in [First, End) and last MinRows or
+// more, Delay rows in, with 400 on the note's last row; the vibrato a note
+// had goes first. Depth 0 only takes it off. How many notes it changed.
+int ApplyVibrato(std::vector<Cell> &Cells, const std::vector<NoteInfo> &Notes, int First, int End, int Speed, int Depth,
+	int MinRows, int Delay, int Columns, bool &Lost)
+{
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End)
+			continue;
+		const int Last = std::min(N.Row + N.Rows, static_cast<int>(Cells.size())) - 1;
+		for (int r = N.Row; r <= Last; ++r) {
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				if (Cells[r].Effect[k] == EFF_VIBRATO) {
+					Cells[r].Effect[k] = EFF_NONE;
+					Cells[r].Param[k] = 0;
+				}
+			}
+		}
+		if (Depth == 0) {
+			++Count;
+			continue;
+		}
+		if (N.Rows < MinRows || N.Row + Delay >= Last)
+			continue;
+		if (!AddEffect(Cells[N.Row + Delay], EFF_VIBRATO, (Speed << 4) | Depth, Columns) ||
+			!AddEffect(Cells[Last], EFF_VIBRATO, 0, Columns))
+			Lost = true;
+		++Count;
+	}
+	return Count;
 }
 
 std::vector<int> ChannelsArg(Session &S, const Json &Args, const char *Name)
@@ -1244,22 +1389,60 @@ std::string SetInstrumentTool(Session &S, const Json &Args)
 	int From, To;
 	BarRange(S, Args, From, To);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
-	int Count = 0;
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	Draft D(S);
+	const int Count = SetInstruments(D.Cells(Channel), First, End, Instrument);
+	if (Count == 0)
+		throw Problem(Format("%s has no notes in %s.", S.Channel(Channel).FullName().c_str(), RangeText(From, To).c_str()));
+	std::vector<Change> Changes;
 	std::vector<std::string> Warnings;
+	int Start;
+	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem(Format("Those notes already play %s.", InstrumentLabel(S.Song, Instrument).c_str()));
 	const std::string What = Format("%s on %s, %s", InstrumentLabel(S.Song, Instrument).c_str(), S.Channel(Channel).FullName().c_str(),
 		RangeText(From, To).c_str());
-	const std::string Result = ChangeCells(S, std::vector<int>(1, Channel), First, End, BoolArg(Args, "as_clip", false),
-		StringArg(Args, "clip_name"), What, Warnings,
-		[&](int, std::vector<Cell> &Cells) {
-			for (size_t r = 0; r < Cells.size(); ++r) {
-				if (Cells[r].HasNote()) {
-					Cells[r].Instrument = static_cast<unsigned char>(Instrument);
-					++Count;
-				}
-			}
-			return Count > 0;
-		});
-	return WithRemarks(S, Result + Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+}
+
+// to_key and to_mode, from the key the notes are in (key, or found)
+bool KeyChangeArgs(Session &S, const Json &Args, int First, int End, Key &FromKey, Key &ToKey)
+{
+	if (Arg(Args, "to_key") == 0 && Arg(Args, "to_mode") == 0)
+		return false;
+	bool Found;
+	FromKey = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found)
+		throw Problem("There are no notes to find the key from; give key.");
+	ToKey = FromKey;
+	if (Arg(Args, "to_key") != 0) {
+		const std::string Text = StringArg(Args, "to_key");
+		if (!ParseKey(Text, ToKey))
+			throw Problem(Format("to_key: \"%s\" isn't a key. Write it like \"A minor\" or \"F# dorian\".", Text.c_str()));
+	}
+	if (Arg(Args, "to_mode") != 0) {
+		const std::string Text = StringArg(Args, "to_mode");
+		if (!ParseMode(Text, ToKey.Mode))
+			throw Problem(Format("to_mode: \"%s\" isn't a mode. Modes: major, dorian, phrygian, lydian, mixolydian, minor, locrian, "
+				"harmonic minor.", Text.c_str()));
+	}
+	if (ToKey.Tonic == FromKey.Tonic && ToKey.Mode == FromKey.Mode)
+		throw Problem("The notes are already in " + KeyName(FromKey) + (Arg(Args, "key") != 0 ? "" :
+			" (found from the notes; give key if that's wrong)") + ". Pick another to_mode or to_key.");
+	return true;
+}
+
+std::string MovesText(const std::map<int, int> &Moves, const Key &FromKey, const Key &ToKey)
+{
+	std::string Summary;
+	for (std::map<int, int>::const_iterator it = Moves.begin(); it != Moves.end(); ++it) {
+		if (it->second == 0)
+			continue;
+		if (!Summary.empty())
+			Summary += ", ";
+		Summary += NoteClassName(it->first, FromKey) + " to " + NoteClassName(it->first + it->second, ToKey);
+	}
+	return Summary;
 }
 
 std::string TransposeTool(Session &S, const Json &Args)
@@ -1269,37 +1452,13 @@ std::string TransposeTool(Session &S, const Json &Args)
 	BarRange(S, Args, From, To);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const bool BySemitones = Arg(Args, "semitones") != 0;
-	const bool ByKey = Arg(Args, "to_key") != 0 || Arg(Args, "to_mode") != 0;
+	Key FromKey, ToKey;
+	const bool ByKey = KeyChangeArgs(S, Args, First, End, FromKey, ToKey);
 	if (BySemitones == ByKey)
 		throw Problem("Give either semitones, or to_key or to_mode.");
 	const int Semitones = IntArg(Args, "semitones", 0, -48, 48);
-
-	Key FromKey, ToKey;
-	std::string What;
-	if (ByKey) {
-		bool Found;
-		FromKey = KeyArg(S, Args, "key", First, End, Found);
-		if (!Found)
-			throw Problem("There are no notes to find the key from; give key.");
-		ToKey = FromKey;
-		if (Arg(Args, "to_key") != 0) {
-			const std::string Text = StringArg(Args, "to_key");
-			if (!ParseKey(Text, ToKey))
-				throw Problem(Format("to_key: \"%s\" isn't a key. Write it like \"A minor\" or \"F# dorian\".", Text.c_str()));
-		}
-		if (Arg(Args, "to_mode") != 0) {
-			const std::string Text = StringArg(Args, "to_mode");
-			if (!ParseMode(Text, ToKey.Mode))
-				throw Problem(Format("to_mode: \"%s\" isn't a mode. Modes: major, dorian, phrygian, lydian, mixolydian, minor, locrian, harmonic minor.",
-					Text.c_str()));
-		}
-		if (ToKey.Tonic == FromKey.Tonic && ToKey.Mode == FromKey.Mode)
-			throw Problem("The notes are already in " + KeyName(FromKey) + (Arg(Args, "key") != 0 ? "" : " (found from the notes; give key if "
-				"that's wrong)") + ". Pick another to_mode or to_key.");
-		What = "from " + KeyName(FromKey) + " to " + KeyName(ToKey);
-	}
-	else
-		What = Format("%s %s", Semitones >= 0 ? "up" : "down", Plural(std::abs(Semitones), "semitone", "semitones").c_str());
+	const std::string How = ByKey ? "from " + KeyName(FromKey) + " to " + KeyName(ToKey) :
+		Format("%s %s", Semitones >= 0 ? "up" : "down", Plural(std::abs(Semitones), "semitone", "semitones").c_str());
 
 	std::vector<int> Melodic;
 	for (size_t i = 0; i < Channels.size(); ++i)
@@ -1312,66 +1471,35 @@ std::string TransposeTool(Session &S, const Json &Args)
 		throw Problem("Noise and DPCM have no notes to transpose; pick melodic channels.");
 	}
 
+	const bool AsClip = BoolArg(Args, "as_clip", false);
 	int Count = 0, Skipped = 0;
-	std::vector<std::string> Warnings;
 	std::map<int, int> Moves;	// pitch class -> semitones moved, for the summary
-	auto Map = [&](int Pitch) { return BySemitones ? Pitch + Semitones : MapToKey(Pitch, FromKey, ToKey); };
-	const std::string Result = ChangeCells(S, Melodic, First, End, BoolArg(Args, "as_clip", false), StringArg(Args, "clip_name"),
-		Format("%s, %s, %s", What.c_str(), Plural(static_cast<int>(Melodic.size()), "channel", "channels").c_str(), RangeText(From, To).c_str()),
-		Warnings,
-		[&](int Channel, std::vector<Cell> &Cells) {
-			const int Columns = S.Channel(Channel).EffectColumns;
-			int Original = -1;	// the playing note's pitch before
-			bool Changed = false;
-			for (size_t r = 0; r < Cells.size(); ++r) {
-				Cell &C = Cells[r];
-				if (C.HasNote()) {
-					Original = C.Pitch();
-					const int Moved = Map(Original);
-					if (Moved < 0 || Moved >= PITCHES) {
-						++Skipped;
-						continue;
-					}
-					if (!BySemitones)
-						Moves[Original % 12] = Moved - Original;
-					Changed = Changed || Moved != Original;
-					C.SetPitch(Moved);
-					++Count;
-				}
-				else if (C.IsEnd())
-					Original = -1;
-				// An arpeggiated chord keeps fitting the key: its notes move too
-				if (!BySemitones && Original >= 0) {
-					for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k) {
-						if (C.Effect[k] != EFF_ARPEGGIO || C.Param[k] == 0)
-							continue;
-						const int Root = Map(Original);
-						const int x = Map(Original + (C.Param[k] >> 4)) - Root, y = Map(Original + (C.Param[k] & 15)) - Root;
-						if (x >= 0 && x <= 15 && y >= 0 && y <= 15 && C.Param[k] != ((x << 4) | y)) {
-							C.Param[k] = static_cast<unsigned char>((x << 4) | y);
-							Changed = true;
-						}
-					}
-				}
-			}
-			return Changed;
-		});
-	std::string Summary;
-	if (!BySemitones) {
-		for (std::map<int, int>::const_iterator it = Moves.begin(); it != Moves.end(); ++it) {
-			if (it->second == 0)
-				continue;
-			if (!Summary.empty())
-				Summary += ", ";
-			Summary += NoteClassName(it->first, FromKey) + " to " + NoteClassName(it->first + it->second, ToKey);
-		}
-		if (!Summary.empty())
-			Summary = " Notes moved: " + Summary + ".";
+	Draft D(S);
+	for (size_t i = 0; i < Melodic.size(); ++i) {
+		const int Columns = S.Channel(Melodic[i]).EffectColumns;
+		if (ByKey)
+			MapPitches(D.Cells(Melodic[i]), First, End, Columns, [&](int Pitch) { return MapToKey(Pitch, FromKey, ToKey); }, true, Count,
+				Skipped, &Moves);
+		else
+			MapPitches(D.Cells(Melodic[i]), First, End, Columns, [&](int Pitch) { return Pitch + Semitones; }, false, Count, Skipped, 0);
 	}
+	std::vector<std::string> Warnings;
 	if (Skipped > 0)
 		Warnings.push_back(Format("%s would have left FamiTracker's range (C-0 to B-7) and stayed as they were.",
 			Plural(Skipped, "note", "notes").c_str()));
-	return WithRemarks(S, Result + Format(" (%s)", Plural(Count, "note", "notes").c_str()) + Summary, Warnings);
+	std::vector<Change> Changes;
+	int Start;
+	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem(Skipped > 0 ? "Every note would have left FamiTracker's range (C-0 to B-7); nothing moved." :
+			ByKey ? "Nothing moved: those notes are the same in both keys." : "Nothing moved: give semitones other than 0.");
+	const std::string What = Format("%s, %s, %s", How.c_str(), Plural(static_cast<int>(Changes.size()), "channel", "channels").c_str(),
+		RangeText(From, To).c_str());
+	std::string Result = Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s)", Plural(Count, "note", "notes").c_str());
+	const std::string Summary = ByKey ? MovesText(Moves, FromKey, ToKey) : std::string();
+	if (!Summary.empty())
+		Result += " Notes moved: " + Summary + ".";
+	return WithRemarks(S, Result, Warnings);
 }
 
 std::string SetTempoTool(Session &S, const Json &Args)
@@ -1569,60 +1697,74 @@ bool SameKind(const ChannelInfo &a, const ChannelInfo &b)
 	return a.Kind == b.Kind && InstrumentChip(a) == InstrumentChip(b);
 }
 
-std::string AddEchoTool(Session &S, const Json &Args)
+// A channel for an echo of Source over [First, End): one of the same kind
+// with nothing there, else another melodic one with nothing there; -1 if none
+int EchoTarget(Session &S, int Source, int First, int End)
 {
-	const int Source = ChannelArg(S, Args, "channel");
-	if (!IsMelodic(S.Channel(Source)))
-		throw Problem("The echo copies a melodic channel's notes.");
-	int From, To;
-	BarRange(S, Args, From, To);
-	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
-	bool Exact;
-	const int Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 3.0 / S.Time.RowsPerBeat, 0.01, 16.0), Exact);
-	const int Volume = IntArg(Args, "volume", 5, 1, 15);
-	const bool AsClip = BoolArg(Args, "as_clip", false);
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == Source || !IsMelodic(S.Channel(c)) || IsBass(S.Channel(c)) != IsBass(S.Channel(Source)))
+				continue;
+			if (Pass == 0 && !SameKind(S.Channel(c), S.Channel(Source)))
+				continue;
+			if (!HasNotesIn(S, c, First, End))
+				return c;
+		}
+	}
+	return -1;
+}
 
-	int Target;
+// The echo settings from an object (add_echo's arguments, or change_mood's echo)
+struct EchoPlan {
+	int Source, Target, Delay, Volume, Instrument;
+};
+
+EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
+{
+	EchoPlan Plan;
+	Plan.Source = ChannelArg(S, Args, "channel");
+	if (!IsMelodic(S.Channel(Plan.Source)))
+		throw Problem("The echo copies a melodic channel's notes.");
+	bool Exact;
+	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 3.0 / S.Time.RowsPerBeat, 0.01, 16.0), Exact);
+	Plan.Volume = IntArg(Args, "volume", 5, 1, 15);
 	if (Arg(Args, "to_channel") != 0) {
-		Target = ChannelArg(S, Args, "to_channel");
-		if (Target == Source || !IsMelodic(S.Channel(Target)))
-			throw Problem("to_channel needs another melodic channel.");
+		Plan.Target = ChannelArg(S, Args, "to_channel");
+		if (Plan.Target == Plan.Source || !IsMelodic(S.Channel(Plan.Target)))
+			throw Problem("The echo's to_channel needs another melodic channel.");
 	}
 	else {
-		Target = -1;
-		for (int Pass = 0; Pass < 2 && Target < 0; ++Pass) {
-			for (int c = 0; c < S.ChannelCount() && Target < 0; ++c) {
-				if (c == Source || !IsMelodic(S.Channel(c)) || IsBass(S.Channel(c)) != IsBass(S.Channel(Source)))
-					continue;
-				if (Pass == 0 && !SameKind(S.Channel(c), S.Channel(Source)))
-					continue;
-				if (!HasNotesIn(S, c, First + Delay, End + Delay))
-					Target = c;
-			}
-		}
-		if (Target < 0)
+		Plan.Target = EchoTarget(S, Plan.Source, First + Plan.Delay, End + Plan.Delay);
+		if (Plan.Target < 0)
 			throw Problem("No free channel for the echo in those bars; name one with to_channel (its notes there are replaced).");
 	}
-	const int Explicit = Arg(Args, "instrument") != 0 ? InstrumentArg(S, Args, "instrument", Target, NO_INSTRUMENT) : NO_INSTRUMENT;
-	const bool Fits = InstrumentChip(S.Channel(Target)) == InstrumentChip(S.Channel(Source));
-	if (Explicit == NO_INSTRUMENT && !Fits)
-		throw Problem(Format("%s needs %s instruments; give one with instrument (a preset works).", S.Channel(Target).FullName().c_str(),
-			InstrumentChip(S.Channel(Target)).c_str()));
+	Plan.Instrument = Arg(Args, "instrument") != 0 ? InstrumentArg(S, Args, "instrument", Plan.Target, NO_INSTRUMENT) : NO_INSTRUMENT;
+	if (Plan.Instrument == NO_INSTRUMENT && InstrumentChip(S.Channel(Plan.Target)) != InstrumentChip(S.Channel(Plan.Source)))
+		throw Problem(Format("%s needs %s instruments; give the echo an instrument (a preset works).",
+			S.Channel(Plan.Target).FullName().c_str(), InstrumentChip(S.Channel(Plan.Target)).c_str()));
+	return Plan;
+}
 
+// The echo of the source's notes that start in [First, End) in the draft:
+// Delay rows later on the target, quieter (Volume at full loudness, following
+// the original's), replacing what the target plays there. It stops at the
+// song's end rather than making the song longer (which would change where it
+// loops). How many notes.
+int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings)
+{
+	const int Stop = std::min(End + Plan.Delay, std::max(End, S.Time.TotalRows()));
+	const std::vector<NoteInfo> Played = D.Notes(Plan.Source);
 	std::vector<PartNote> Notes;
-	const std::vector<NoteInfo> &Played = S.Notes(Source);
 	for (size_t i = 0; i < Played.size(); ++i) {
 		const NoteInfo &N = Played[i];
-		if (N.Row < First || N.Row >= End)
+		if (N.Row < First || N.Row >= End || N.Row + Plan.Delay >= Stop)
 			continue;
 		PartNote E;
-		E.Row = N.Row + Delay;
-		E.Rows = std::min(N.Rows, End + Delay - E.Row);
-		if (E.Rows < 1 || E.Row + E.Rows > S.MaxRows())
-			continue;
+		E.Row = N.Row + Plan.Delay;
+		E.Rows = std::min(N.Rows, Stop - E.Row);
 		E.Pitch = N.Pitch;
-		E.Instrument = Explicit != NO_INSTRUMENT ? Explicit : N.Instrument;
-		E.Volume = std::max(1, (N.Volume * Volume + 7) / 15);	// quieter, following the loudness
+		E.Instrument = Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument : N.Instrument;
+		E.Volume = std::max(1, (N.Volume * Plan.Volume + 7) / 15);
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
 			if (N.Effects[e].first == 0)
 				E.Effects.push_back(N.Effects[e].second);
@@ -1632,20 +1774,38 @@ std::string AddEchoTool(Session &S, const Json &Args)
 		Notes.push_back(E);
 	}
 	if (Notes.empty())
-		throw Problem(Format("%s has no notes in %s to echo.", S.Channel(Source).FullName().c_str(), RangeText(From, To).c_str()));
+		return 0;
 	for (size_t i = 0; i + 1 < Notes.size(); ++i)
 		Notes[i].Rows = std::min(Notes[i].Rows, Notes[i + 1].Row - Notes[i].Row);
+	if (HasNotesIn(S, Plan.Target, First + Plan.Delay, Stop))
+		Warnings.push_back(Format("%s's own notes in those bars were replaced by the echo.", S.Channel(Plan.Target).FullName().c_str()));
+	PartOptions Options = OptionsFor(S, Plan.Target, false);
+	Options.KeepFollowing = false;	// the draft's comparison with the song takes care of what follows
+	Options.StopAtEnd = Stop < End + Plan.Delay;	// at the song's end, the last row ends it
+	std::vector<Cell> Out;
+	BuildPart(D.Cells(Plan.Target), First + Plan.Delay, Stop, Notes, Options, Out, Warnings);
+	D.Put(Plan.Target, First + Plan.Delay, Out);
+	return static_cast<int>(Notes.size());
+}
+
+std::string AddEchoTool(Session &S, const Json &Args)
+{
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const EchoPlan Plan = EchoArgs(S, Args, First, End);
 	std::vector<std::string> Warnings;
-	if (HasNotesIn(S, Target, First + Delay, End + Delay))
-		Warnings.push_back(Format("%s's own notes in those bars were replaced by the echo.", S.Channel(Target).FullName().c_str()));
-	const int TargetEnd = std::min(End + Delay, S.MaxRows());
-	Change C;
-	C.Channel = Target;
-	BuildPart(S.Cells(Target), First + Delay, TargetEnd, Notes, OptionsFor(S, Target, Direct(S, AsClip)), C.Cells, Warnings);
-	std::vector<Change> Changes(1, C);
-	const std::string What = Format("an echo of %s on %s, %s later at volume %d, %s", S.Channel(Source).FullName().c_str(),
-		S.Channel(Target).FullName().c_str(), S.Time.Length(Delay).c_str(), Volume, RangeText(From, To).c_str());
-	return WithRemarks(S, Commit(S, Changes, First + Delay, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+	Draft D(S);
+	if (MakeEcho(S, D, Plan, First, End, Warnings) == 0)
+		throw Problem(Format("%s has no notes in %s to echo.", S.Channel(Plan.Source).FullName().c_str(), RangeText(From, To).c_str()));
+	std::vector<Change> Changes;
+	int Start;
+	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem("The echo is already there.");
+	const std::string What = Format("an echo of %s on %s, %s later at volume %d, %s", S.Channel(Plan.Source).FullName().c_str(),
+		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume, RangeText(From, To).c_str());
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
 int LevelArg(const Json &Args, const char *Name, int Default, const char *const *Words, const int *Values, int Count)
@@ -1662,77 +1822,253 @@ int LevelArg(const Json &Args, const char *Name, int Default, const char *const 
 	return IntArg(Args, Name, Default, 0, 15);
 }
 
-std::string AddVibratoTool(Session &S, const Json &Args)
+// The vibrato settings from an object (add_vibrato's arguments, or change_mood's vibrato)
+struct VibratoPlan {
+	int Channel, Speed, Depth, MinRows, Delay;
+};
+
+VibratoPlan VibratoArgs(Session &S, const Json &Args)
 {
-	const int Channel = ChannelArg(S, Args, "channel");
-	if (!IsMelodic(S.Channel(Channel)))
-		throw Problem("Vibrato is for melodic channels.");
-	int From, To;
-	BarRange(S, Args, From, To);
-	const int First = S.Time.BarStart(From);
-	int End = S.Time.BarEnd(To);
 	static const char *const SPEEDS[] = { "slow", "medium", "fast" };
 	static const int SPEED_VALUES[] = { 3, 5, 8 };
 	static const char *const DEPTHS[] = { "none", "gentle", "medium", "strong" };
 	static const int DEPTH_VALUES[] = { 0, 2, 4, 7 };
-	const int Speed = std::max(1, LevelArg(Args, "speed", 5, SPEEDS, SPEED_VALUES, 3));
-	const int Depth = LevelArg(Args, "depth", 2, DEPTHS, DEPTH_VALUES, 4);
+	VibratoPlan Plan;
+	Plan.Channel = ChannelArg(S, Args, "channel");
+	if (!IsMelodic(S.Channel(Plan.Channel)))
+		throw Problem("Vibrato is for melodic channels.");
+	Plan.Speed = std::max(1, LevelArg(Args, "speed", 5, SPEEDS, SPEED_VALUES, 3));
+	Plan.Depth = LevelArg(Args, "depth", 2, DEPTHS, DEPTH_VALUES, 4);
 	bool Exact;
-	const int MinRows = S.Time.BeatsToRows(NumberArg(Args, "min_beats", 1.0, 0.01, 64.0), Exact);
-	const int Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 0.25, 0.01, 16.0), Exact);
-	const int Columns = S.Channel(Channel).EffectColumns;
+	Plan.MinRows = S.Time.BeatsToRows(NumberArg(Args, "min_beats", 1.0, 0.01, 64.0), Exact);
+	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 0.25, 0.01, 16.0), Exact);
+	return Plan;
+}
 
-	// Notes that start in the bars, to their ends
-	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
-	for (size_t i = 0; i < Notes.size(); ++i)
-		if (Notes[i].Row >= First && Notes[i].Row < End)
-			End = std::max(End, Notes[i].Row + Notes[i].Rows);
-	End = std::min(End, S.Time.TotalRows());
-	int Count = 0;
+// Vibrato in the draft; how many notes it changed
+int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost)
+{
+	const int Columns = S.Channel(Plan.Channel).EffectColumns;
+	std::vector<Cell> &Cells = D.Cells(Plan.Channel);
+	const int Count = ApplyVibrato(Cells, D.Notes(Plan.Channel), First, End, Plan.Speed, Plan.Depth, Plan.MinRows, Plan.Delay,
+		Columns, Lost);
+	if (Plan.Depth == 0 && First < static_cast<int>(Cells.size())) {
+		// A vibrato still on from before the bars stops too
+		const ChannelState State = StateAt(Cells, First, Columns);
+		if (State.Sticky[EFF_VIBRATO] != 0 && !HasEffect(Cells[First], EFF_VIBRATO, Columns) && !AddEffect(Cells[First], EFF_VIBRATO, 0, Columns))
+			Lost = true;
+	}
+	return Count;
+}
+
+std::string AddVibratoTool(Session &S, const Json &Args)
+{
+	const VibratoPlan Plan = VibratoArgs(S, Args);
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const bool AsClip = BoolArg(Args, "as_clip", false);
 	bool Lost = false;
+	Draft D(S);
+	const int Count = MakeVibrato(S, D, Plan, First, End, Lost);
 	std::vector<std::string> Warnings;
-	const std::string What = Depth == 0 ? Format("vibrato taken off %s, %s", S.Channel(Channel).FullName().c_str(), RangeText(From, To).c_str()) :
-		Format("vibrato 4%X%X on the longer notes of %s, %s", Speed, Depth, S.Channel(Channel).FullName().c_str(), RangeText(From, To).c_str());
-	const std::string Result = ChangeCells(S, std::vector<int>(1, Channel), First, End, BoolArg(Args, "as_clip", false),
-		StringArg(Args, "clip_name"), What, Warnings,
-		[&](int, std::vector<Cell> &Cells) {
-			for (size_t i = 0; i < Notes.size(); ++i) {
-				const NoteInfo &N = Notes[i];
-				if (N.Row < First || N.Row >= S.Time.BarEnd(To))
-					continue;
-				const int Last = std::min(N.Row + N.Rows, End) - 1;
-				// The note's vibrato as it was goes
-				for (int r = N.Row; r <= Last; ++r) {
-					Cell &C = Cells[r - First];
-					for (int k = 0; k < EFFECT_COLUMNS; ++k) {
-						if (C.Effect[k] == EFF_VIBRATO) {
-							C.Effect[k] = EFF_NONE;
-							C.Param[k] = 0;
-						}
-					}
-				}
-				if (Depth == 0) {
-					++Count;
-					continue;
-				}
-				if (N.Rows < MinRows || N.Row + Delay >= Last)
-					continue;
-				if (!AddEffect(Cells[N.Row + Delay - First], EFF_VIBRATO, (Speed << 4) | Depth, Columns) ||
-					!AddEffect(Cells[Last - First], EFF_VIBRATO, 0, Columns))
-					Lost = true;
-				++Count;
-			}
-			if (Depth == 0) {
-				// A vibrato still on from before the bars stops too
-				const ChannelState State = StateAt(S.Cells(Channel), First, Columns);
-				if (State.Sticky[EFF_VIBRATO] != 0 && !AddEffect(Cells[0], EFF_VIBRATO, 0, Columns))
-					Lost = true;
-			}
-			return Count > 0;
-		});
 	if (Lost)
 		Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
-	return WithRemarks(S, Result + Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+	std::vector<Change> Changes;
+	int Start;
+	if (Count == 0 || !D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem(Plan.Depth == 0 ? "There's no vibrato to take off there." :
+			Format("No notes there are long enough for vibrato (at least %s).", S.Time.Length(Plan.MinRows).c_str()));
+	const std::string What = Plan.Depth == 0 ?
+		Format("vibrato taken off %s, %s", S.Channel(Plan.Channel).FullName().c_str(), RangeText(From, To).c_str()) :
+		Format("vibrato 4%X%X on the longer notes of %s, %s", Plan.Speed, Plan.Depth, S.Channel(Plan.Channel).FullName().c_str(),
+			RangeText(From, To).c_str());
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+}
+
+// Moods: several changes at once, so they arrive together
+
+std::string ChangeMoodTool(Session &S, const Json &Args)
+{
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const bool DirectChange = Direct(S, AsClip);
+
+	// Everything is read first, so a mistake in one part changes nothing
+	Key FromKey, ToKey;
+	const bool ByKey = KeyChangeArgs(S, Args, First, End, FromKey, ToKey);
+
+	std::vector<std::pair<int, int> > Moves;	// channel, semitones
+	if (const Json *pMoves = Arg(Args, "moves")) {
+		if (!pMoves->IsArray())
+			throw Problem("moves should be a list like [{\"channel\": \"Triangle\", \"semitones\": -12}].");
+		for (size_t i = 0; i < pMoves->Size(); ++i) {
+			const Json &Move = pMoves->At(i);
+			if (!Move.IsObject() || Arg(Move, "channel") == 0 || Arg(Move, "semitones") == 0)
+				throw Problem("Each move needs a channel and semitones, like {\"channel\": \"Triangle\", \"semitones\": -12}.");
+			const int Channel = ChannelArg(S, Move, "channel");
+			if (!IsMelodic(S.Channel(Channel)))
+				throw Problem(Format("%s has no notes to move up or down.", S.Channel(Channel).FullName().c_str()));
+			Moves.push_back(std::make_pair(Channel, IntArg(Move, "semitones", 0, -48, 48)));
+		}
+	}
+
+	const Json *pVibrato = Arg(Args, "vibrato");
+	if (pVibrato != 0 && !pVibrato->IsObject())
+		throw Problem("vibrato should be like {\"channel\": \"VRC6 Pulse 1\", \"speed\": \"slow\", \"depth\": \"strong\"}.");
+	VibratoPlan Vibrato = VibratoPlan();
+	if (pVibrato != 0)
+		Vibrato = VibratoArgs(S, *pVibrato);
+
+	const Json *pSounds = Arg(Args, "sounds");
+	if (pSounds != 0) {
+		if (!pSounds->IsArray())
+			throw Problem("sounds should be a list like [{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"warm pad\"}].");
+		for (size_t i = 0; i < pSounds->Size(); ++i) {
+			const Json &Sound = pSounds->At(i);
+			if (!Sound.IsObject() || Arg(Sound, "channel") == 0 || Arg(Sound, "instrument") == 0)
+				throw Problem("Each sound needs a channel and an instrument, like {\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"warm pad\"}.");
+			ChannelArg(S, Sound, "channel");
+		}
+	}
+	const Json *pEcho = Arg(Args, "echo");
+	if (pEcho != 0 && !pEcho->IsObject())
+		throw Problem("echo should be like {\"channel\": \"VRC6 Pulse 1\"}.");
+
+	const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	double Bpm = 0.0;
+	if (Arg(Args, "bpm") != 0)
+		Bpm = NumberArg(Args, "bpm", 0.0, 10.0, 1000.0);
+	else if (Arg(Args, "tempo_percent") != 0)
+		Bpm = Now * NumberArg(Args, "tempo_percent", 100.0, 20.0, 300.0) / 100.0;
+
+	// Instruments last, since presets are added to the song
+	std::vector<std::pair<int, int> > Sounds;	// channel, instrument
+	for (size_t i = 0; pSounds != 0 && i < pSounds->Size(); ++i) {
+		const int Channel = ChannelArg(S, pSounds->At(i), "channel");
+		Sounds.push_back(std::make_pair(Channel, InstrumentArg(S, pSounds->At(i), "instrument", Channel, NO_INSTRUMENT)));
+	}
+	EchoPlan Echo = EchoPlan();
+	if (pEcho != 0)
+		Echo = EchoArgs(S, *pEcho, First, End);
+
+	std::vector<std::string> Done, Warnings;
+	Draft D(S);
+
+	// 1. Key or mode, for every melodic channel
+	if (ByKey) {
+		int Count = 0, Skipped = 0;
+		bool Changed = false;
+		std::map<int, int> Moved;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, First, End) &&
+				MapPitches(D.Cells(c), First, End, S.Channel(c).EffectColumns, [&](int Pitch) { return MapToKey(Pitch, FromKey, ToKey); },
+					true, Count, Skipped, &Moved))
+				Changed = true;
+		}
+		if (Changed) {
+			const std::string Summary = MovesText(Moved, FromKey, ToKey);
+			Done.push_back("from " + KeyName(FromKey) + " to " + KeyName(ToKey) + (Summary.empty() ? "" : " (" + Summary + ")"));
+		}
+		else if (Skipped == 0)
+			Warnings.push_back("The notes stayed as they were in " + KeyName(ToKey) + ": the notes that differ from " + KeyName(FromKey) +
+				" aren't played in those bars.");
+		if (Skipped > 0)
+			Warnings.push_back(Format("%s would have left FamiTracker's range (C-0 to B-7) and stayed as they were.",
+				Plural(Skipped, "note", "notes").c_str()));
+	}
+
+	// 2. Parts moved up or down
+	for (size_t i = 0; i < Moves.size(); ++i) {
+		const int Channel = Moves[i].first, Semitones = Moves[i].second;
+		const ChannelInfo &Info = S.Channel(Channel);
+		int Count = 0, Skipped = 0;
+		if (Semitones != 0 && MapPitches(D.Cells(Channel), First, End, Info.EffectColumns, [&](int Pitch) { return Pitch + Semitones; },
+			false, Count, Skipped, 0)) {
+			const int Size = std::abs(Semitones);
+			Done.push_back(Format("%s %s %s", Info.FullName().c_str(), Semitones > 0 ? "up" : "down",
+				(Size % 12 == 0 ? Plural(Size / 12, "octave", "octaves") : Plural(Size, "semitone", "semitones")).c_str()));
+		}
+		if (Skipped > 0)
+			Warnings.push_back(Format("On %s, %s would have left FamiTracker's range (C-0 to B-7) and stayed as they were.",
+				Info.FullName().c_str(), Plural(Skipped, "note", "notes").c_str()));
+	}
+
+	// 3. Sounds
+	for (size_t i = 0; i < Sounds.size(); ++i) {
+		std::vector<Cell> &Cells = D.Cells(Sounds[i].first);
+		const std::vector<Cell> Before(Cells);
+		SetInstruments(Cells, First, End, Sounds[i].second);
+		if (Cells != Before)
+			Done.push_back(S.Channel(Sounds[i].first).FullName() + " played by " + InstrumentLabel(S.Song, Sounds[i].second));
+	}
+
+	// 4. Vibrato
+	if (pVibrato != 0) {
+		const std::vector<Cell> Before(D.Cells(Vibrato.Channel));
+		bool Lost = false;
+		MakeVibrato(S, D, Vibrato, First, End, Lost);
+		if (D.Cells(Vibrato.Channel) != Before)
+			Done.push_back(Vibrato.Depth == 0 ? "no vibrato on " + S.Channel(Vibrato.Channel).FullName() :
+				Format("vibrato 4%X%X on %s", Vibrato.Speed, Vibrato.Depth, S.Channel(Vibrato.Channel).FullName().c_str()));
+		if (Lost)
+			Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
+	}
+
+	// 5. An echo of the part as it is now
+	if (pEcho != 0) {
+		if (MakeEcho(S, D, Echo, First, End, Warnings) > 0)
+			Done.push_back(Format("an echo of %s on %s", S.Channel(Echo.Source).FullName().c_str(), S.Channel(Echo.Target).FullName().c_str()));
+		else
+			Warnings.push_back(Format("%s has no notes there to echo.", S.Channel(Echo.Source).FullName().c_str()));
+	}
+
+	// 6. The tempo
+	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
+	if (Bpm > 0.0)
+		ChooseSpeedTempo(Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
+	const bool NewTempo = Speed != S.Song.Speed || Tempo != S.Song.Tempo;
+	const std::string NewBpm = FormatNumber(std::floor(BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat) * 10 + 0.5) / 10);
+
+	std::vector<Change> Changes;
+	int Start = First;
+	const bool NotesChanged = D.Collect(First, DirectChange, Changes, Start, Warnings);
+	if (!NotesChanged && !NewTempo)
+		throw Problem(WithRemarks(S, Format("Nothing changed in %s. Give at least one of to_mode, to_key, moves, sounds, vibrato, "
+			"echo, bpm or tempo_percent, for bars that have notes.", RangeText(From, To).c_str()), Warnings));
+
+	std::string Result;
+	if (NotesChanged) {
+		std::string What;
+		for (size_t i = 0; i < Done.size(); ++i)
+			What += (i == 0 ? "" : (i + 1 == Done.size() ? " and " : ", ")) + Done[i];
+		const std::string Mood = StringArg(Args, "mood");
+		std::string ClipName = StringArg(Args, "clip_name");
+		if (ClipName.empty())
+			ClipName = "Claude: " + (Mood.empty() ? std::string("new mood") : Mood) + ", " + RangeText(From, To);
+		Result = Commit(S, Changes, Start, AsClip, ClipName, What + ", " + RangeText(From, To));
+	}
+	if (NewTempo) {
+		if (!Result.empty())
+			Result += " ";
+		std::string Why;
+		if (DirectChange && S.Host().CanChange(Why)) {
+			std::string Error;
+			if (S.Host().SetSpeedTempo(Speed, Tempo, Error))
+				Result += Format("The tempo is now %s BPM (speed %d, tempo %d), its own Ctrl+Z step.", NewBpm.c_str(), Speed, Tempo);
+			else
+				Warnings.push_back("The tempo couldn't be changed: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+		}
+		else if (DirectChange)
+			Warnings.push_back("The tempo couldn't be changed: " + Why);
+		else
+			Result += Format("Meant to play at %s BPM: suggest the user sets speed %d and tempo %d in FamiTracker's toolbar (now %d "
+				"and %d), since the tempo changes only with direct changes.", NewBpm.c_str(), Speed, Tempo, S.Song.Speed, S.Song.Tempo);
+	}
+	return WithRemarks(S, Result, Warnings);
 }
 
 // Checks
@@ -2058,12 +2394,64 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"end. Gentle sounds expressive; slow and strong sounds wobbly, dreamy or underwater. depth \"none\" takes vibrato off.",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
-			.Add("speed", ChannelProp("slow, medium, fast, or 1-15 (default medium)."))
-			.Add("depth", ChannelProp("none, gentle, medium, strong, or 0-15 (default gentle)."))
+			.Add("speed", LevelProp("slow, medium, fast, or 1-15 (default medium)."))
+			.Add("depth", LevelProp("none, gentle, medium, strong, or 0-15 (default gentle)."))
 			.Add("min_beats", Prop("number", "Only notes at least this long, in beats (default 1)."))
 			.Add("delay_beats", Prop("number", "Start this long after the note begins (default 0.25 beat)."))
 			.Range().ClipChoice(),
 		false, true);
+
+	{
+		Schema Move;
+		Move.Add("channel", ChannelProp("Channel name or number."), true)
+			.Add("semitones", Prop("integer", "Up (positive) or down (negative); -12 is an octave lower."), true);
+		Json Moves = Prop("array", "Parts moved up or down, like [{\"channel\": \"Triangle\", \"semitones\": -12}].");
+		Moves.Set("items", Move.Get());
+
+		Schema Sound;
+		Sound.Add("channel", ChannelProp("Channel name or number."), true)
+			.Add("instrument", Prop("string", "Instrument name or number from get_song, or a preset (added)."), true);
+		Json Sounds = Prop("array", "New sounds for parts, like [{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"warm pad\"}].");
+		Sounds.Set("items", Sound.Get());
+
+		Schema Vibrato;
+		Vibrato.Add("channel", ChannelProp("Channel name or number."), true)
+			.Add("speed", LevelProp("slow, medium, fast, or 1-15 (default medium)."))
+			.Add("depth", LevelProp("none, gentle, medium, strong, or 0-15 (default gentle)."))
+			.Add("min_beats", Prop("number", "Only notes at least this long, in beats (default 1)."))
+			.Add("delay_beats", Prop("number", "Start this long after the note begins (default 0.25 beat)."));
+		Json VibratoProp = Vibrato.Get();
+		VibratoProp.Set("description", "Vibrato on one part's longer notes, as add_vibrato.");
+
+		Schema Echo;
+		Echo.Add("channel", ChannelProp("Channel to echo."), true)
+			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind."))
+			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows)."))
+			.Add("volume", Prop("integer", "Echo volume 1-15 (default 5), scaled with the original's loudness."))
+			.Add("instrument", Prop("string", "Instrument for the echo. Default: the original's."));
+		Json EchoProp = Echo.Get();
+		EchoProp.Set("description", "An echo of one part (as changed by the steps before it), as add_echo.");
+
+		AddTool("change_mood", "Change the mood",
+			"Changes the mood of some bars in one go: another key or mode for every melodic channel, parts moved up or down, new "
+			"sounds, vibrato on a part, an echo of a part (in that order), and the tempo. All of it arrives together: one clip "
+			"to try, or with direct changes one Ctrl+Z step (the tempo is a second one). Use it rather than several separate "
+			"tools whenever a mood needs more than one change, since separate clips each start from the original song. Darker, "
+			"for example: to_mode minor, the bass an octave lower, a softer lead sound, tempo_percent 85.",
+			Schema()
+				.Add("mood", Prop("string", "The mood in a few words (\"darker\", \"underwater\"), for the clip's name."))
+				.Add("to_mode", EnumProp("The mode to change into, keeping the tonic.", Modes))
+				.Add("to_key", Prop("string", "The key to change into, like \"A minor\" or \"F dorian\"."))
+				.Add("key", Prop("string", "The key the notes are in now. Default: found from the notes."))
+				.Add("moves", Moves)
+				.Add("sounds", Sounds)
+				.Add("vibrato", VibratoProp)
+				.Add("echo", EchoProp)
+				.Add("bpm", Prop("number", "New tempo in beats per minute."))
+				.Add("tempo_percent", Prop("number", "New tempo as a percentage of the current one (85 is 15% slower)."))
+				.Range().ClipChoice(),
+			false, true);
+	}
 
 	AddTool("check_song", "Check the song",
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
@@ -2112,6 +2500,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
+		else if (Name == "change_mood") Result.Text = ChangeMoodTool(S, Args);
 		else if (Name == "check_song") Result.Text = CheckTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
@@ -2141,10 +2530,12 @@ std::string ToolSet::Instructions()
 		"By default your changes arrive as clips the user listens to and places (Edit > Clips); if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing and "
 		"use play so the user can listen, then ask them. "
-		"Moods combine the tools: darker = transpose to_mode minor or phrygian, about 10-20% slower (set_tempo), lower parts, "
-		"rounder or softer sounds (warm pad, soft lead), fewer notes; happier = to_mode major or lydian, a bit faster, brighter "
-		"sounds (bright lead, bell, pluck), arpeggiated chords; underwater = slower, add_vibrato slow and strong on the lead, "
-		"add_echo, soft round sounds (soft lead, warm pad), a lower register. Tell the user what you changed and why.";
+		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "
+		"each start from the original): darker = to_mode minor or phrygian, about 10-20% slower, parts an octave lower, rounder "
+		"or softer sounds (warm pad, soft lead); happier = to_mode major or lydian, a bit faster, brighter sounds (bright lead, "
+		"bell, pluck), and add_chords_and_bass if there are no chords; underwater = slower, a slow and strong vibrato on the "
+		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
+		"with write_notes for that. Tell the user what you changed and why.";
 }
 
 }	// namespace ftapi

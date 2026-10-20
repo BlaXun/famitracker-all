@@ -1088,6 +1088,19 @@ void TestEchoAndVibrato()
 	CHECK(Song.Rows[6][11].Pitch() == 52);
 	CHECK(Song.Rows[6][19].Note == NOTE_RELEASE);
 	CHECK_HAS(Run(Song, "add_echo", "{\"channel\": 1}").Text, "has no notes");
+	{
+		// At the song's end the echo stops: the song doesn't grow (which would move its loop)
+		FakeSong Tail;
+		Tail.Info.DirectChanges = true;
+		Tail.Put(5, 120, "G-4", 0);
+		Tail.Put(5, 124, "A-4");
+		Tail.Put(5, 126, "B-4");	// starts too late for an echo before the end
+		CHECK(!Run(Tail, "add_echo", "{\"channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK_EQ(Tail.Rows[6].size(), static_cast<size_t>(128));
+		CHECK_EQ(Notes(Tail, 6), std::string("123:G-4 127:A-4 "));
+		CHECK_HAS(Run(Tail, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"from_bar\": 8}").Text,
+			"The echo is already there");
+	}
 
 	Song.Put(0, 0, "C-4", 2);
 	Song.Put(0, 2, "D-4");
@@ -1105,6 +1118,93 @@ void TestEchoAndVibrato()
 	CHECK(!Result.IsError);
 	CHECK(!HasEffectAt(Song, 0, 17, EFF_VIBRATO, 0x37));
 	CHECK(Run(Song, "add_vibrato", "{\"channel\": \"noise\"}").IsError);
+}
+
+// change_mood: every step on one working copy, so they arrive together
+void TestMood()
+{
+	FakeSong Song;
+	const char *const MELODY[] = { "C-4", "D-4", "E-4", "F-4", "G-4", "A-4", "B-4", "C-5" };
+	for (int i = 0; i < 8; ++i)
+		Song.Put(5, i * 4, MELODY[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Song.End(5, 32, NOTE_RELEASE);
+	Song.Put(2, 0, "C-3", 1);
+	Song.End(2, 32);
+	const std::vector<std::vector<Cell> > Before = Song.Rows;
+	const std::string Underwater = "{\"mood\": \"underwater\", \"key\": \"C major\", \"to_mode\": \"minor\", "
+		"\"moves\": [{\"channel\": \"Triangle\", \"semitones\": -12}], "
+		"\"sounds\": [{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"warm pad\"}], "
+		"\"vibrato\": {\"channel\": \"VRC6 Pulse 1\", \"speed\": \"slow\", \"depth\": \"strong\"}, "
+		"\"echo\": {\"channel\": \"VRC6 Pulse 1\"}, \"tempo_percent\": 80, \"to_bar\": 2}";
+
+	// As a clip (the default): one clip with all of it, the song as it was
+	ToolResult Result = Run(Song, "change_mood", Underwater);
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows == Before);
+	CHECK(Song.Info.Tempo == 150 && Song.TempoUndo.empty());
+	CHECK_EQ(Song.Clips.size(), static_cast<size_t>(1));
+	CHECK_EQ(Song.Clips[0].Name, std::string("Claude: underwater, bars 1-2"));
+	CHECK_HAS(Result.Text, "from C major to C minor (E to Eb, A to Ab, B to Bb), 2A03 Triangle down 1 octave, VRC6 Pulse 1 played by "
+		"\"Warm pad\" (03), vibrato 437 on VRC6 Pulse 1 and an echo of VRC6 Pulse 1 on VRC6 Pulse 2, bars 1-2");
+	CHECK_HAS(Result.Text, "put the pattern cursor on 2A03 Triangle at bar 1 beat 1");
+	CHECK_HAS(Result.Text, "Meant to play at 120 BPM: suggest the user sets speed 6 and tempo 120");
+	const std::vector<std::vector<Cell> > &Clip = Song.Clips[0].Columns;
+	CHECK_EQ(Clip.size(), static_cast<size_t>(5));	// Triangle to VRC6 Pulse 2
+	CHECK(Song.Clips[0].Sources[0] == 2 && Song.Clips[0].Sources[4] == 6);
+	CHECK(Clip[0][0].Pitch() == 24);	// the bass an octave lower
+	CHECK(Clip[3][8].Pitch() == 51 && Clip[3][8].Instrument == 3);	// E-4 became D#4, played by the pad
+	CHECK(Clip[3][1].Effect[0] == EFF_VIBRATO && Clip[3][1].Param[0] == 0x37);
+	CHECK(Clip[1][0].IsEmpty() && Clip[2][0].IsEmpty());	// noise and DPCM come along as they are
+	CHECK(Clip[4][3].Pitch() == 48 && Clip[4][3].Instrument == 3 && Clip[4][3].Volume == 5);	// the echo of the changed part
+	CHECK(Clip[4][11].Pitch() == 51);
+	CHECK(Clip[4][4].Effect[0] == EFF_VIBRATO && Clip[4][4].Param[0] == 0x37);
+	CHECK(Clip[4].size() == 36 && Clip[4][35].Note == NOTE_RELEASE);
+
+	// Directly: one undoable change for the notes, another for the tempo
+	Song.Info.DirectChanges = true;
+	Result = Run(Song, "change_mood", Underwater);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Changed the song: from C major to C minor");
+	CHECK_HAS(Result.Text, "The tempo is now 120 BPM (speed 6, tempo 120), its own Ctrl+Z step.");
+	CHECK_EQ(Song.Writes, 1);
+	CHECK(Song.Info.Tempo == 120 && Song.TempoUndo.size() == 1);
+	CHECK_EQ(Notes(Song, 5, 0, 33), std::string("0:C-4 4:D-4 8:D#4 12:F-4 16:G-4 20:G#4 24:A#4 28:C-5 32:=== "));
+	CHECK(Song.Rows[2][0].Pitch() == 24 && Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][35].Note == NOTE_RELEASE);
+	CHECK_EQ(Song.Clips.size(), static_cast<size_t>(1));
+	CHECK(Run(Song, "undo", "{}").Text == "Undid it.");
+	CHECK(Song.Rows == Before);	// one Ctrl+Z takes all of the notes back
+
+	// Mistakes change nothing, not even the instruments
+	const size_t Instruments = Song.Info.Instruments.size();
+	Result = Run(Song, "change_mood", "{\"sounds\": [{\"channel\": 6, \"instrument\": \"bell\"}], \"moves\": [{\"channel\": \"noise\", \"semitones\": 1}]}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "2A03 Noise has no notes to move up or down");
+	CHECK_EQ(Song.Info.Instruments.size(), Instruments);
+	CHECK_HAS(Run(Song, "change_mood", "{\"moves\": [{\"channel\": 3}]}").Text, "Each move needs a channel and semitones");
+	CHECK_HAS(Run(Song, "change_mood", "{\"sounds\": {\"channel\": 6}}").Text, "sounds should be a list");
+	CHECK_HAS(Run(Song, "change_mood", "{\"vibrato\": [1]}").Text, "vibrato should be like");
+	CHECK_HAS(Run(Song, "change_mood", "{\"key\": \"C minor\", \"to_mode\": \"minor\"}").Text, "already in C minor");
+	Result = Run(Song, "change_mood", "{\"key\": \"C major\", \"to_mode\": \"mixolydian\", \"to_bar\": 1}");
+	CHECK(Result.IsError);	// C major and C mixolydian differ in B, which bar 1 doesn't play
+	CHECK_HAS(Result.Text, "Nothing changed in bar 1");
+	CHECK_HAS(Result.Text, "The notes stayed as they were in C mixolydian");
+	CHECK_HAS(Run(Song, "change_mood", "{}").Text, "Nothing changed in bars 1-8");
+	CHECK(Song.Rows == Before && Song.Writes == 1);
+
+	// An echo of nothing is a remark, the rest still happens
+	Result = Run(Song, "change_mood", "{\"moves\": [{\"channel\": \"VRC6 Pulse 1\", \"semitones\": 12}], \"echo\": {\"channel\": \"Pulse 2\"}, "
+		"\"to_bar\": 2}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 up 1 octave");
+	CHECK_HAS(Result.Text, "2A03 Pulse 2 has no notes there to echo");
+	CHECK(Song.Rows[5][0].Pitch() == 60);
+
+	// The tempo alone, as a clip: a suggestion
+	FakeSong Plain;
+	Result = Run(Plain, "change_mood", "{\"bpm\": 120}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "suggest the user sets speed 6 and tempo 120");
+	CHECK(Plain.Clips.empty() && Plain.Info.Tempo == 150);
 }
 
 void TestCheck()
@@ -1372,6 +1472,9 @@ void TestSession()
 	CHECK_HAS(Call("add_vibrato", "{\"channel\":\"VRC6 Pulse 1\",\"speed\":\"slow\",\"depth\":\"strong\"}"), "vibrato 437");
 	CHECK_HAS(Call("add_echo", "{\"channel\":\"VRC6 Pulse 1\"}"), "an echo of VRC6 Pulse 1 on VRC6 Pulse 2");
 	CHECK_HAS(Call("set_tempo", "{\"bpm\":110}"), "Tempo set to 110 BPM");
+	CHECK_HAS(Call("change_mood", "{\"mood\":\"darker\",\"to_mode\":\"phrygian\",\"moves\":[{\"channel\":\"Triangle\",\"semitones\":-12}],"
+		"\"sounds\":[{\"channel\":\"VRC6 Pulse 1\",\"instrument\":\"warm pad\"}],\"tempo_percent\":85}"),
+		"The tempo is now 93 BPM (speed 6, tempo 93)");
 	CHECK_HAS(Call("play", "{\"from_bar\":1,\"bars\":2}"), "Playing for the user from bar 1 for 2 bars");
 	CHECK_HAS(Call("read_notes", "{\"channel\":\"VRC6 Pulse 1\",\"to_bar\":2}"), "bar 1 beat 1: D#4");
 }
@@ -1397,6 +1500,7 @@ int main()
 	TestTempoTool();
 	TestBacking();
 	TestEchoAndVibrato();
+	TestMood();
 	TestCheck();
 	TestPlayback();
 	TestProtocol();

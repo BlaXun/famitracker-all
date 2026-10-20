@@ -96,28 +96,74 @@ ftapi::HttpResponse Malformed(int Status)
 	return Response;
 }
 
+enum { EXCHANGE_WAITING, EXCHANGE_ANSWERING, EXCHANGE_ABANDONED };
+
+// A request on its way to the window, shared by the listener and the window
+struct Exchange : mcp_exchange_t {
+	ftapi::HttpRequest Request;
+	ftapi::HttpResponse Response;
+	volatile LONG References;	// the listener's and the window's
+	volatile LONG State;
+
+	explicit Exchange(const ftapi::HttpRequest &From) : Request(From), References(2), State(EXCHANGE_WAITING)
+	{
+		pRequest = &Request;
+		pResponse = &Response;
+	}
+};
+
+void Release(Exchange *pExchange)
+{
+	if (InterlockedDecrement(&pExchange->References) == 0)
+		delete pExchange;
+}
+
+// Who frees a server's state: the server object, or the thread when Stop()
+// stopped waiting for it
+enum { OWNER_SERVER, OWNER_THREAD, OWNER_FINISHED };
+
 }	// namespace
 
+bool BeginMcpExchange(mcp_exchange_t *pExchange)
+{
+	Exchange *p = static_cast<Exchange*>(pExchange);
+	return InterlockedCompareExchange(&p->State, EXCHANGE_ANSWERING, EXCHANGE_WAITING) == EXCHANGE_WAITING;
+}
+
+void EndMcpExchange(mcp_exchange_t *pExchange)
+{
+	Release(static_cast<Exchange*>(pExchange));
+}
+
 struct CMcpSocketServer::Impl {
-	SOCKET Listener;
+	SOCKET Listener;			// the thread's once it runs
 	HANDLE hThread;
 	HWND hWindow;
 	UINT Message;
 	int Port;
 	volatile LONG Stopping;
-	bool WinsockStarted;
+	volatile LONG Owner;
 
-	Impl() : Listener(INVALID_SOCKET), hThread(NULL), hWindow(NULL), Message(0), Port(0), Stopping(0), WinsockStarted(false) {}
+	Impl() : Listener(INVALID_SOCKET), hThread(NULL), hWindow(NULL), Message(0), Port(0), Stopping(0), Owner(OWNER_SERVER) {}
 
 	// The UI thread answers, or the client hears it's busy
 	ftapi::HttpResponse Answer(const ftapi::HttpRequest &Request)
 	{
-		ftapi::HttpResponse Response;
-		mcp_exchange_t Exchange = { &Request, &Response };
-		DWORD_PTR Result = 0;
-		if (Stopping || !SendMessageTimeout(hWindow, Message, 0, reinterpret_cast<LPARAM>(&Exchange), SMTO_NORMAL | SMTO_ABORTIFHUNG,
-			ANSWER_MS, &Result) || Result == 0)
+		if (Stopping)
 			return Busy();
+		Exchange *pExchange = new Exchange(Request);
+		DWORD_PTR Result = 0;
+		const LRESULT Sent = SendMessageTimeout(hWindow, Message, 0, reinterpret_cast<LPARAM>(static_cast<mcp_exchange_t*>(pExchange)),
+			SMTO_NORMAL | SMTO_ABORTIFHUNG, ANSWER_MS, &Result);
+		const DWORD Error = Sent == 0 ? GetLastError() : 0;
+		ftapi::HttpResponse Response = Busy();
+		if (Sent != 0 && Result != 0)
+			Response = pExchange->Response;	// answered: the window is done with it
+		else if (InterlockedCompareExchange(&pExchange->State, EXCHANGE_ABANDONED, EXCHANGE_WAITING) == EXCHANGE_WAITING &&
+			Error == ERROR_INVALID_WINDOW_HANDLE)
+			Release(pExchange);	// it never reached the window and never will: the window's share
+		// Otherwise the window may still be answering, or get it later and see that nobody waits
+		Release(pExchange);
 		return Response;
 	}
 
@@ -199,11 +245,18 @@ struct CMcpSocketServer::Impl {
 			closesocket(Connections[i]->Socket);
 			delete Connections[i];
 		}
+		closesocket(Listener);
+		Listener = INVALID_SOCKET;
+		WSACleanup();
 	}
 
 	static unsigned __stdcall ThreadProc(void *pParam)
 	{
-		static_cast<Impl*>(pParam)->Run();
+		Impl *pImpl = static_cast<Impl*>(pParam);
+		pImpl->Run();
+		// Stop() stopped waiting and left the state to this thread
+		if (InterlockedCompareExchange(&pImpl->Owner, OWNER_FINISHED, OWNER_SERVER) == OWNER_THREAD)
+			delete pImpl;
 		return 0;
 	}
 };
@@ -220,8 +273,8 @@ CMcpSocketServer::~CMcpSocketServer()
 
 bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char *pError, int ErrorSize)
 {
-	Impl &d = *m_pImpl;
 	Stop();
+	Impl &d = *m_pImpl;
 	if (Port < 1 || Port > 65535) {
 		std::snprintf(pError, static_cast<size_t>(ErrorSize), "The port should be from 1 to 65535.");
 		return false;
@@ -231,23 +284,22 @@ bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char
 		std::snprintf(pError, static_cast<size_t>(ErrorSize), "Windows networking couldn't be started.");
 		return false;
 	}
-	d.WinsockStarted = true;
-	d.Listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (d.Listener == INVALID_SOCKET) {
+	const SOCKET Listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (Listener == INVALID_SOCKET) {
 		std::snprintf(pError, static_cast<size_t>(ErrorSize), "A network socket couldn't be opened (error %d).", WSAGetLastError());
-		Stop();
+		WSACleanup();
 		return false;
 	}
 	// Nobody else may take the port while it's ours
 	const BOOL Exclusive = TRUE;
-	setsockopt(d.Listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&Exclusive), sizeof(Exclusive));
+	setsockopt(Listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&Exclusive), sizeof(Exclusive));
 	sockaddr_in Address;
 	ZeroMemory(&Address, sizeof(Address));
 	Address.sin_family = AF_INET;
 	Address.sin_port = htons(static_cast<u_short>(Port));
 	Address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);	// this computer only
-	if (bind(d.Listener, reinterpret_cast<const sockaddr*>(&Address), sizeof(Address)) == SOCKET_ERROR ||
-		listen(d.Listener, SOMAXCONN) == SOCKET_ERROR) {
+	if (bind(Listener, reinterpret_cast<const sockaddr*>(&Address), sizeof(Address)) == SOCKET_ERROR ||
+		listen(Listener, SOMAXCONN) == SOCKET_ERROR) {
 		const int Code = WSAGetLastError();
 		if (Code == WSAEADDRINUSE)
 			std::snprintf(pError, static_cast<size_t>(ErrorSize), "Port %d is already in use, maybe by another FamiTracker. Pick another port.", Port);
@@ -255,54 +307,55 @@ bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char
 			std::snprintf(pError, static_cast<size_t>(ErrorSize), "Windows doesn't let programs use port %d. Pick another port.", Port);
 		else
 			std::snprintf(pError, static_cast<size_t>(ErrorSize), "Port %d couldn't be opened (error %d). Pick another port.", Port, Code);
-		Stop();
+		closesocket(Listener);
+		WSACleanup();
 		return false;
 	}
+	d.Listener = Listener;
 	d.hWindow = static_cast<HWND>(hWindow);
 	d.Message = Message;
 	d.Port = Port;
 	d.Stopping = 0;
+	d.Owner = OWNER_SERVER;
 	unsigned ThreadId = 0;
 	d.hThread = reinterpret_cast<HANDLE>(_beginthreadex(NULL, 0, &Impl::ThreadProc, &d, 0, &ThreadId));
 	if (d.hThread == NULL) {
 		std::snprintf(pError, static_cast<size_t>(ErrorSize), "The connection's thread couldn't be started.");
-		Stop();
+		closesocket(Listener);
+		d.Listener = INVALID_SOCKET;
+		d.Port = 0;
+		WSACleanup();
 		return false;
 	}
-	return true;
+	return true;	// from here on the thread closes the listener and cleans up Winsock
 }
 
 void CMcpSocketServer::Stop()
 {
 	Impl &d = *m_pImpl;
+	if (d.hThread == NULL)
+		return;
 	InterlockedExchange(&d.Stopping, 1);
-	if (d.hThread != NULL) {
-		// The thread may be waiting for this thread to answer a request: keep
-		// answering (the window says it's closing) until the thread is done
-		const ULONGLONG Until = GetTickCount64() + 5000;
-		for (;;) {
-			const DWORD Result = MsgWaitForMultipleObjects(1, &d.hThread, FALSE, 100, QS_SENDMESSAGE);
-			if (Result == WAIT_OBJECT_0 || Result == WAIT_FAILED || GetTickCount64() > Until)
-				break;
-			if (Result == WAIT_OBJECT_0 + 1) {
-				MSG Message;
-				PeekMessage(&Message, NULL, 0, 0, PM_NOREMOVE);	// delivers sent messages
-			}
+	// The thread may be waiting for this thread to answer a request: keep
+	// answering (the window says it's closing) until the thread is done
+	const ULONGLONG Until = GetTickCount64() + 5000;
+	for (;;) {
+		const DWORD Result = MsgWaitForMultipleObjects(1, &d.hThread, FALSE, 100, QS_SENDMESSAGE);
+		if (Result == WAIT_OBJECT_0 || Result == WAIT_FAILED || GetTickCount64() > Until)
+			break;
+		if (Result == WAIT_OBJECT_0 + 1) {
+			MSG Message;
+			PeekMessage(&Message, NULL, 0, 0, PM_NOREMOVE);	// delivers sent messages
 		}
-		if (WaitForSingleObject(d.hThread, 0) == WAIT_OBJECT_0)
-			CloseHandle(d.hThread);
-		// else: still stuck after 5 seconds; it ends with the program
-		d.hThread = NULL;
 	}
-	if (d.Listener != INVALID_SOCKET) {
-		closesocket(d.Listener);
-		d.Listener = INVALID_SOCKET;
-	}
-	if (d.WinsockStarted) {
-		WSACleanup();
-		d.WinsockStarted = false;
-	}
+	const bool Ended = WaitForSingleObject(d.hThread, 0) == WAIT_OBJECT_0;
+	CloseHandle(d.hThread);	// only lets go of the handle; a thread still running goes on
+	d.hThread = NULL;
 	d.Port = 0;
+	// Still stuck (sending to a client that doesn't read): it keeps its state,
+	// frees it when it ends, and this server starts afresh
+	if (!Ended && InterlockedCompareExchange(&d.Owner, OWNER_THREAD, OWNER_SERVER) == OWNER_SERVER)
+		m_pImpl = new Impl();
 }
 
 bool CMcpSocketServer::IsRunning() const
