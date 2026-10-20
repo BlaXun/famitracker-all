@@ -271,6 +271,7 @@ public:
 	afx_msg void OnFileExportForGames();
 	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnInstrumentLibrary();
+	afx_msg void OnEditDrumGrid();
 	afx_msg void OnEnSongNameChange();
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();

@@ -731,6 +731,24 @@
 // View > Clips panel (ClipsPanel.cpp)
 #define ID_VIEW_CLIPSPANEL              33164
 
+// Edit > Drum grid (DrumGridDlg.cpp)
+#define IDD_DRUM_GRID                   334
+#define IDC_DRUM_PREV                   1405
+#define IDC_DRUM_BAR                    1406
+#define IDC_DRUM_NEXT                   1407
+#define IDC_DRUM_WHERE                  1408
+#define IDC_DRUM_GRID                   1409
+#define IDC_DRUM_BEAT1                  1410
+#define IDC_DRUM_BEAT2                  1411
+#define IDC_DRUM_BEAT3                  1412
+#define IDC_DRUM_BEAT4                  1413
+#define IDC_DRUM_CLEAR                  1414
+#define IDC_DRUM_PLAY                   1415
+#define IDC_DRUM_COPYNEXT               1416
+#define IDC_DRUM_COPYALL                1417
+#define IDC_DRUM_STATUS                 1418
+#define ID_EDIT_DRUMGRID                33165
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

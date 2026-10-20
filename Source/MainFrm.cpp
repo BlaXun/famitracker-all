@@ -51,6 +51,7 @@
 #include "FrameEditor.h"
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
+#include "DrumGridDlg.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -174,6 +175,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
+	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -1690,6 +1692,11 @@ void CMainFrame::OnEditVoiceEffect()
 void CMainFrame::OnInstrumentLibrary()
 {
 	ShowInstrumentLibrary(this);
+}
+
+void CMainFrame::OnEditDrumGrid()
+{
+	ShowDrumGrid(this);
 }
 
 void CMainFrame::OnFileGeneralsettings()

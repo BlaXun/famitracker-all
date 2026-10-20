@@ -596,6 +596,10 @@
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
+    <ClCompile Include="Source\DrumGrid.cpp" />
+    <ClInclude Include="Source\DrumGrid.h" />
+    <ClCompile Include="Source\DrumGridDlg.cpp" />
+    <ClInclude Include="Source\DrumGridDlg.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />

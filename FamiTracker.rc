@@ -129,6 +129,7 @@ BEGIN
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Drum grid...",                ID_EDIT_DRUMGRID
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
         MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
@@ -256,6 +257,7 @@ BEGIN
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Drum grid...",                ID_EDIT_DRUMGRID
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
         MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
@@ -559,6 +561,7 @@ BEGIN
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Ready-made sounds to listen to and add: leads, plucks, pads, basses and drums\nInstrument library"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
+    ID_EDIT_DRUMGRID        "Put drums on the noise channel a bar at a time, on a grid of steps, or pick a ready-made beat\nDrum grid"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -1922,6 +1925,30 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_DRUM_GRID DIALOGEX 0, 0, 420, 214
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Drum grid"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "The drums on the noise channel, a bar at a time: a column for each row, a line for each drum. The noise channel plays one drum at a time.",IDC_STATIC,7,7,406,18
+    PUSHBUTTON      "<",IDC_DRUM_PREV,7,29,18,14
+    CTEXT           "",IDC_DRUM_BAR,27,32,64,8
+    PUSHBUTTON      ">",IDC_DRUM_NEXT,93,29,18,14
+    LTEXT           "",IDC_DRUM_WHERE,118,32,200,8
+    LTEXT           "",IDC_DRUM_GRID,7,48,406,90,WS_BORDER
+    LTEXT           "Beats:",IDC_STATIC,7,148,26,8
+    PUSHBUTTON      "",IDC_DRUM_BEAT1,36,145,56,14
+    PUSHBUTTON      "",IDC_DRUM_BEAT2,96,145,76,14
+    PUSHBUTTON      "",IDC_DRUM_BEAT3,176,145,56,14
+    PUSHBUTTON      "",IDC_DRUM_BEAT4,236,145,56,14
+    PUSHBUTTON      "Clear the bar",IDC_DRUM_CLEAR,296,145,62,14
+    PUSHBUTTON      "Play from this bar",IDC_DRUM_PLAY,7,166,80,14
+    PUSHBUTTON      "Copy to the next bar",IDC_DRUM_COPYNEXT,92,166,86,14
+    PUSHBUTTON      "Copy to every bar",IDC_DRUM_COPYALL,182,166,80,14
+    LTEXT           "",IDC_DRUM_STATUS,7,186,346,22
+    PUSHBUTTON      "Close",IDCANCEL,363,192,50,14
 END
 
 IDD_INSTRUMENT_LIBRARY DIALOGEX 0, 0, 300, 240

@@ -1,6 +1,7 @@
 # Tests for application code that can run outside Windows: the clip library
-# (Source/Clips.cpp), the piano roll's note editing (Source/NoteEdit.cpp) and
-# switching the expansion chip (Source/ChipSwitch.cpp), against working
+# (Source/Clips.cpp), the piano roll's note editing (Source/NoteEdit.cpp),
+# switching the expansion chip (Source/ChipSwitch.cpp) and the drum grid
+# (Source/DrumGrid.cpp), against working
 # stand-ins for the MFC and document pieces they use (standins/). Linux and
 # macOS:
 #   cmake -S Source/Tests -B build/tests
@@ -18,7 +19,7 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 # The sources include "stdafx.h" from their own folder first, so they are
 # compiled from copies next to the stand-ins
 set(STAGE ${CMAKE_CURRENT_BINARY_DIR}/stage)
-foreach(file Clips.cpp Clips.h NoteEdit.cpp NoteEdit.h ChipSwitch.cpp ChipSwitch.h)
+foreach(file Clips.cpp Clips.h NoteEdit.cpp NoteEdit.h ChipSwitch.cpp ChipSwitch.h DrumGrid.cpp DrumGrid.h)
 	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../${file} ${STAGE}/${file} COPYONLY)
 endforeach()
 foreach(file stdafx.h FamiTracker.h FamiTrackerDoc.h DocumentFile.h)
@@ -40,3 +41,8 @@ add_executable(chipswitch_tests ChipSwitchTests.cpp)
 target_include_directories(chipswitch_tests PRIVATE ${STAGE})
 target_compile_options(chipswitch_tests PRIVATE -Wno-subobject-linkage)
 add_test(NAME chipswitch_tests COMMAND chipswitch_tests)
+
+add_executable(drumgrid_tests DrumGridTests.cpp)
+target_include_directories(drumgrid_tests PRIVATE ${STAGE})
+target_compile_options(drumgrid_tests PRIVATE -Wno-subobject-linkage)
+add_test(NAME drumgrid_tests COMMAND drumgrid_tests)

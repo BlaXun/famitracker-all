@@ -1379,6 +1379,18 @@
     <ClCompile Include="Source\VoiceEffectDlg.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\DrumGrid.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\DrumGrid.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\DrumGridDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\DrumGridDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\ClipsPanel.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
