@@ -102,6 +102,48 @@ struct Synth {
 		}
 	}
 
+	// Singing, legato: syllables that follow each other without a pause. Each
+	// can scoop into its pitch and fall away at its end; between two of them the
+	// consonant ("la-la") dips the loudness by dipDb: 30 ms down, 30 ms there, 30 ms
+	// back up.
+	struct Syllable {
+		double midi = 57.0, seconds = 0.3;
+		double scoop = 0.0, scoopSeconds = 0.0;	// starts this many semitones off and slides to the pitch
+		double fall = 0.0, fallSeconds = 0.0;	// slides this many semitones off at the end
+		double vibratoCents = 0.0, tremoloDb = 0.0, vibratoHz = 5.5;
+	};
+	void Sing(const std::vector<Syllable> &syllables, double dipDb, double amp = 0.4)
+	{
+		const int harmonics = 6;
+		double norm = 0.0;
+		for (int h = 1; h <= harmonics; ++h) norm += 1.0 / h;
+		const double hold = 0.015, ramp = 0.030;	// half the consonant on each side
+		for (size_t k = 0; k < syllables.size(); ++k) {
+			const Syllable &syl = syllables[k];
+			const int n = int(syl.seconds * RATE);
+			for (int i = 0; i < n; ++i) {
+				const double t = double(i) / RATE, left = syl.seconds - t;
+				double midi = syl.midi + syl.vibratoCents / 100.0 * std::sin(2.0 * PI * syl.vibratoHz * t);
+				if (t < syl.scoopSeconds)
+					midi += syl.scoop * (1.0 - t / syl.scoopSeconds);
+				if (left < syl.fallSeconds)
+					midi += syl.fall * (1.0 - left / syl.fallSeconds);
+				phase += 2.0 * PI * MidiToFrequency(midi) / RATE;
+				double db = syl.tremoloDb * std::sin(2.0 * PI * syl.vibratoHz * t);
+				if (k > 0)
+					db -= dipDb * std::min(1.0, std::max(0.0, 1.0 - (t - hold) / ramp));
+				if (k + 1 < syllables.size())
+					db -= dipDb * std::min(1.0, std::max(0.0, 1.0 - (left - hold) / ramp));
+				double g = std::pow(10.0, db / 20.0);
+				if (k == 0) g *= std::min(1.0, t / 0.01);
+				if (k + 1 == syllables.size()) g *= std::min(1.0, left / 0.02);
+				double v = 0.0;
+				for (int h = 1; h <= harmonics; ++h) v += std::sin(h * phase) / h;
+				audio.samples.push_back(float(amp * g * v / norm));
+			}
+		}
+	}
+
 	// Room noise over the whole recording.
 	void AddNoise(double amp)
 	{
@@ -128,6 +170,13 @@ struct Synth {
 std::vector<Note> Transcribe(const Audio &audio)
 {
 	return SegmentNotes(TrackPitch(audio, PitchOptions()), NoteOptions());
+}
+
+std::vector<Note> TranscribeSinging(const Audio &audio, bool syllables = true)
+{
+	NoteOptions options = NoteOptionsFor(Source::Voice);
+	options.syllables = syllables;
+	return SegmentNotes(TrackPitch(audio, PitchOptionsFor(Source::Voice)), options);
 }
 
 std::vector<GridNote> ToRows(std::vector<Note> notes, int shift = 0, int tempo = 150)
@@ -400,6 +449,124 @@ void TestNoteLengths()
 
 // A quieter note keeps its fade-out, even below the silence gate that the loudest
 // note sets for the whole recording.
+// Singing with syllables ("la la laaa, luli luli luuu~~~"): each syllable is a
+// note, even on the same pitch, while the voice's scoops, glides, drifts and
+// vibrato stay inside the notes.
+void TestSyllables()
+{
+	typedef Synth::Syllable Syl;
+	auto syl = [](double midi, double seconds) { Syl s; s.midi = midi; s.seconds = seconds; return s; };
+	CHECK(NoteOptionsFor(Source::Voice).syllables);
+	CHECK(!NoteOptionsFor(Source::Whistle).syllables && !NoteOptionsFor(Source::Taps).syllables);
+	{
+		// "la la laaa" on one pitch: three notes (without syllables, one long note)
+		Synth s;
+		s.Silence(0.3);
+		s.Sing({ syl(57, 0.3), syl(57, 0.3), syl(57, 0.45) }, 10.0);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 3);
+		if (notes.size() == 3) {
+			CHECK(notes[0].midi == 57 && notes[1].midi == 57 && notes[2].midi == 57);
+			CHECK_NEAR(notes[0].start, 0.3, 0.03);
+			CHECK_NEAR(notes[1].start, 0.6, 0.03);
+			CHECK_NEAR(notes[2].start, 0.9, 0.03);
+			CHECK_NEAR(notes[2].end, 1.35, 0.04);
+		}
+		CHECK(TranscribeSinging(s.audio, false).size() == 1);
+	}
+	{
+		// A softer "la la" (7 dB between the syllables) on a high note: two notes
+		Synth s;
+		s.Silence(0.3);
+		s.Sing({ syl(67, 0.25), syl(67, 0.35) }, 7.0, 0.25);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 2);
+		if (notes.size() == 2)
+			CHECK_NEAR(notes[1].start, 0.55, 0.03);
+	}
+	{
+		// "laaa" scooping up into its note and falling off at the end: one note
+		Synth s;
+		Syl a = syl(57, 0.6);
+		a.scoop = -2.5;
+		a.scoopSeconds = 0.07;
+		a.fall = -1.5;
+		a.fallSeconds = 0.09;
+		s.Silence(0.3);
+		s.Sing({ a }, 10.0);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 1);
+		if (notes.size() == 1) {
+			CHECK(notes[0].midi == 57);
+			CHECK_NEAR(notes[0].end - notes[0].start, 0.6, 0.05);
+		}
+	}
+	{
+		// "la li lu luuu~~~": four syllables on three pitches, the last one long,
+		// with vibrato and a swell in its loudness
+		Synth s;
+		Syl last = syl(60, 1.0);
+		last.vibratoCents = 40.0;
+		last.tremoloDb = 1.5;
+		s.Silence(0.3);
+		s.Sing({ syl(57, 0.25), syl(59, 0.25), syl(60, 0.25), last }, 10.0);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 4);
+		if (notes.size() == 4) {
+			CHECK(notes[0].midi == 57 && notes[1].midi == 59 && notes[2].midi == 60 && notes[3].midi == 60);
+			CHECK_NEAR(notes[3].start, 1.05, 0.03);
+			CHECK_NEAR(notes[3].end, 2.05, 0.04);
+		}
+	}
+	{
+		// One syllable gliding up a fourth, then held: one note, on the held pitch
+		Synth s;
+		Syl a = syl(60, 0.55);
+		a.scoop = -5.0;
+		a.scoopSeconds = 0.2;
+		s.Silence(0.3);
+		s.Sing({ a }, 10.0);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 1);
+		if (notes.size() == 1)
+			CHECK(notes[0].midi == 60);
+	}
+	{
+		// One syllable on two held pitches ("la-a", no consonant between): two notes
+		Synth s;
+		s.Silence(0.3);
+		s.Sing({ syl(57, 0.3), syl(59, 0.3) }, 0.0);
+		s.Silence(0.3);
+		const std::vector<Note> notes = TranscribeSinging(s.audio);
+		CHECK(notes.size() == 2);
+		if (notes.size() == 2)
+			CHECK(notes[0].midi == 57 && notes[1].midi == 59);
+	}
+	{
+		// A held note that only gets a little quieter (3 dB) for a moment: one note
+		Synth s;
+		s.Silence(0.3);
+		s.Sing({ syl(55, 0.4), syl(55, 0.4) }, 3.0);
+		s.Silence(0.3);
+		CHECK(TranscribeSinging(s.audio).size() == 1);
+	}
+	{
+		// Two syllables with a pause between them stay two notes
+		Synth s;
+		s.Silence(0.3);
+		s.Sing({ syl(62, 0.3) }, 10.0);
+		s.Silence(0.1);
+		s.Sing({ syl(62, 0.3) }, 10.0);
+		s.Silence(0.3);
+		CHECK(TranscribeSinging(s.audio).size() == 2);
+	}
+}
+
 void TestQuietEdges()
 {
 	Synth s;
@@ -1552,6 +1719,7 @@ int main()
 	TestPitchAccuracy();
 	TestNoteLengths();
 	TestQuietEdges();
+	TestSyllables();
 	TestMelodies();
 	TestQuantizeRules();
 	TestExpression();

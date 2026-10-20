@@ -115,12 +115,12 @@ bool Load(const std::string &path, Audio &audio)
 }
 
 // Whistle/hum/sing -> rows. targetMidi picks the octave unless transpose is given.
-bool TranscribeMelody(const Audio &audio, const std::string &path, const PitchOptions &pitch, const char *part,
-	int targetMidi, const int *transpose, const Settings &settings, const ExpressionOptions &expression,
+bool TranscribeMelody(const Audio &audio, const std::string &path, const PitchOptions &pitch, const NoteOptions &noteOptions,
+	const char *part, int targetMidi, const int *transpose, const Settings &settings, const ExpressionOptions &expression,
 	std::vector<GridNote> &rows)
 {
 	const std::vector<PitchFrame> frames = TrackPitch(audio, pitch);
-	std::vector<Note> notes = SegmentNotes(frames, NoteOptions());
+	std::vector<Note> notes = SegmentNotes(frames, noteOptions);
 	DescribeExpression(notes, frames, expression);
 	if (notes.empty()) {
 		std::fprintf(stderr, "wav2ftm: no notes found in %s (is the recording loud enough?)\n", path.c_str());
@@ -382,11 +382,12 @@ int main(int argc, char **argv)
 		const bool low = (channel == 2 || channel == 7);	// triangle and sawtooth suit bass lines
 		const PitchOptions pitch = mode == "whistle" ? PitchOptionsFor(Source::Whistle) :
 			(mode == "hum" ? PitchOptionsFor(Source::Voice) : PitchOptions());
+		const NoteOptions noteOptions = mode == "hum" ? NoteOptionsFor(Source::Voice) : NoteOptions();
 		ExpressionOptions expression = settings.expression;
 		if (low)
 			expression.gentleVibrato = false;	// no added vibrato on a bass line
-		if (!TranscribeMelody(mainAudio, input, pitch, "melody", low ? 48 : 67, haveTranspose ? &transpose : nullptr,
-				settings, expression, lead.notes))
+		if (!TranscribeMelody(mainAudio, input, pitch, noteOptions, "melody", low ? 48 : 67,
+				haveTranspose ? &transpose : nullptr, settings, expression, lead.notes))
 			return 1;
 		parts.push_back(lead);
 		addSource("melody", input);
@@ -411,7 +412,8 @@ int main(int argc, char **argv)
 		ExpressionOptions expression = settings.expression;
 		expression.gentleVibrato = false;
 		if (!Load(bassFile, audio) ||
-			!TranscribeMelody(audio, bassFile, PitchOptionsFor(Source::Voice), "bass", 48, nullptr, settings, expression, bass.notes))
+			!TranscribeMelody(audio, bassFile, PitchOptionsFor(Source::Voice), NoteOptionsFor(Source::Voice), "bass", 48,
+				nullptr, settings, expression, bass.notes))
 			return 1;
 		parts.push_back(bass);
 		addSource("bass", bassFile);

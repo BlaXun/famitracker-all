@@ -165,8 +165,15 @@ void DescribeExpression(std::vector<Note> &notes, const std::vector<PitchFrame> 
 
 	// 1. Slides: short pieces whose pitch glides straight into the next note
 	//    (a scoop up to a whistled note, say) become a slide into that note. A
-	//    short note that holds its pitch stays a note: that's a melody, not a slide.
-	if (options.slides) {
+	//    short note that holds its pitch stays a note: that's a melody, not a slide,
+	//    and so is a sung syllable of its own.
+	if (!options.slides) {
+		for (size_t m = 0; m < notes.size(); ++m) {
+			notes[m].slideSemitones = 0;
+			notes[m].slideSeconds = 0.0;
+		}
+	}
+	else {
 		std::vector<bool> folded(notes.size(), false);
 		for (size_t m = 0; m < notes.size(); ++m) {
 			Note &target = notes[m];
@@ -175,7 +182,7 @@ void DescribeExpression(std::vector<Note> &notes, const std::vector<PitchFrame> 
 				continue;
 			size_t first = m;
 			double side = 0.0;
-			while (first > 0 && !folded[first - 1]) {
+			while (first > 0 && !folded[first - 1] && !notes[first].articulated) {
 				const Note &lead = notes[first - 1];
 				const double leadLength = lead.end - lead.start;
 				const double offset = lead.pitch - target.pitch;
@@ -198,8 +205,9 @@ void DescribeExpression(std::vector<Note> &notes, const std::vector<PitchFrame> 
 			if (first < m) {
 				const Note &lead = notes[first];
 				target.slideSemitones = int(std::lround(lead.pitch - target.pitch));
-				target.slideSeconds = target.start - lead.start;
+				target.slideSeconds = target.start + target.slideSeconds - lead.start;	// to where it holds its pitch
 				target.start = lead.start;
+				target.articulated = lead.articulated;
 				for (size_t k = first; k < m; ++k)
 					folded[k] = true;
 			}

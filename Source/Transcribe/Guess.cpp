@@ -92,6 +92,13 @@ PitchOptions PitchOptionsFor(Source source)
 	return options;
 }
 
+NoteOptions NoteOptionsFor(Source source)
+{
+	NoteOptions options;
+	options.syllables = source == Source::Voice;
+	return options;
+}
+
 const char *SourceName(Source source)
 {
 	switch (source) {

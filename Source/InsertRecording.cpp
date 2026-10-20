@@ -769,11 +769,10 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		What.Format(_T("%d drum hits"), static_cast<int>(Cells.size()));
 	}
 	else {
-		// Whistling, humming and singing become a melody
-		const transcribe::PitchOptions Pitch =
-			transcribe::PitchOptionsFor(Kind == RECORDING_WHISTLE ? transcribe::Source::Whistle : transcribe::Source::Voice);
-		const std::vector<transcribe::PitchFrame> Frames = transcribe::TrackPitch(Audio, Pitch);
-		std::vector<transcribe::Note> Notes = transcribe::SegmentNotes(Frames, transcribe::NoteOptions());
+		// Whistling, humming and singing become a melody; sung syllables ("la la la") become notes of their own
+		const transcribe::Source Heard = Kind == RECORDING_WHISTLE ? transcribe::Source::Whistle : transcribe::Source::Voice;
+		const std::vector<transcribe::PitchFrame> Frames = transcribe::TrackPitch(Audio, transcribe::PitchOptionsFor(Heard));
+		std::vector<transcribe::Note> Notes = transcribe::SegmentNotes(Frames, transcribe::NoteOptionsFor(Heard));
 		if (Notes.empty()) {
 			Message = _T("No notes were found in the recording. Is it loud enough?");
 			return false;

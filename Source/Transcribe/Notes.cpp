@@ -160,6 +160,9 @@ std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const Note
 		size_t first, last;	// frame indices, inclusive
 		double pitch;		// median pitch
 		int midi;			// rounded pitch
+		bool articulated = false;	// starts a syllable
+		double scoopPitch = 0.0;	// a scoop into the note: from this pitch...
+		size_t heldFirst = 0;		// ...until this frame (0: none)
 	};
 	std::vector<Segment> segments;
 
@@ -225,6 +228,168 @@ std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const Note
 		}
 	}
 
+	// 5b. Singing: syllables. The consonant between two sung syllables ("la-la")
+	//     dips the loudness while the pitch may carry on, so each dip starts a
+	//     new note, even on the same pitch. Inside a syllable the voice often
+	//     scoops into the note, glides between pitches or drifts off at the end;
+	//     those pieces become part of the note they lead into or come from.
+	if (options.syllables && !joined.empty()) {
+		std::vector<double> level(n), soft(n);
+		for (size_t f = 0; f < n; ++f)
+			level[f] = frames[f].rms > 1e-9 ? 20.0 * std::log10(frames[f].rms) : -120.0;
+		for (size_t f = 0; f < n; ++f) {
+			const size_t a = f > 0 ? f - 1 : 0, b = std::min(n - 1, f + 1);
+			double sum = 0.0;
+			for (size_t k = a; k <= b; ++k)
+				sum += level[k];
+			soft[f] = sum / double(b - a + 1);
+		}
+
+		// Dips: at least syllableDipDb below the loudest moment within 150 ms on
+		// either side, and 80 ms apart (the deepest wins)
+		const size_t span = std::max<size_t>(2, size_t(std::lround(0.15 / hop)));
+		const size_t apart = std::max<size_t>(1, size_t(std::lround(0.08 / hop)));
+		std::vector<size_t> dips;
+		for (size_t f = 1; f + 1 < n; ++f) {
+			if (!(soft[f] <= soft[f - 1] && soft[f] < soft[f + 1]))
+				continue;
+			double left = soft[f], right = soft[f];
+			for (size_t k = (f > span ? f - span : 0); k < f; ++k)
+				left = std::max(left, soft[k]);
+			for (size_t k = f + 1; k <= std::min(n - 1, f + span); ++k)
+				right = std::max(right, soft[k]);
+			if (std::min(left, right) - soft[f] < options.syllableDipDb)
+				continue;
+			if (!dips.empty() && f - dips.back() < apart) {
+				if (soft[f] < soft[dips.back()])
+					dips.back() = f;
+				continue;
+			}
+			dips.push_back(f);
+		}
+
+		auto repitch = [&](Segment &seg) {
+			seg.pitch = Median(std::vector<double>(smooth.begin() + seg.first, smooth.begin() + seg.last + 1));
+			seg.midi = int(std::lround(seg.pitch));
+		};
+		auto frameCount = [](const Segment &seg) { return seg.last - seg.first + 1; };
+
+		// Cut the notes at the dips
+		std::vector<Segment> pieces;
+		for (size_t j = 0; j < joined.size(); ++j) {
+			Segment rest = joined[j];
+			for (size_t d = 0; d < dips.size(); ++d) {
+				if (dips[d] <= rest.first || dips[d] > rest.last)
+					continue;
+				Segment left = rest;
+				left.last = dips[d] - 1;
+				repitch(left);
+				pieces.push_back(left);
+				rest.first = dips[d];
+			}
+			if (rest.first != joined[j].first)
+				repitch(rest);
+			pieces.push_back(rest);
+		}
+
+		// Two pieces are one syllable when no dip comes between them, nor a consonant
+		// or a pause (15 ms without a pitch), and they are at most 100 ms apart (a
+		// glide too quick to be a note of its own)
+		const size_t joinFrames = size_t(std::lround(0.1 / hop));
+		const size_t breakFrames = std::max<size_t>(1, size_t(std::lround(0.015 / hop)));
+		auto sameSyllable = [&](const Segment &a, const Segment &b) {
+			if (b.first > a.last + 1 + joinFrames)
+				return false;
+			size_t unpitched = 0;
+			for (size_t k = a.last + 1; k < b.first; ++k)
+				if (!voiced[k] && ++unpitched >= breakFrames)
+					return false;
+			for (size_t d = 0; d < dips.size(); ++d)
+				if (dips[d] > a.last && dips[d] <= b.first)
+					return false;
+			return true;
+		};
+
+		// A glide: its pitch ends at least 1.5 semitones from where it starts
+		auto glides = [&](const Segment &seg) {
+			const size_t count = frameCount(seg), quarter = std::max<size_t>(2, count / 4);
+			if (count < 2 * quarter)
+				return false;
+			const double head = Median(std::vector<double>(smooth.begin() + seg.first, smooth.begin() + seg.first + quarter));
+			const double tail = Median(std::vector<double>(smooth.begin() + seg.last + 1 - quarter, smooth.begin() + seg.last + 1));
+			return std::fabs(tail - head) >= 1.5;
+		};
+		// A piece that isn't a held note joins one next to it: a glide from up to an
+		// octave away, anything else from up to 5 semitones away
+		auto joins = [&](const Segment &piece, const Segment &note) {
+			return std::fabs(piece.pitch - note.pitch) < (glides(piece) ? 12.0 : 5.0);
+		};
+
+		const size_t heldFrames = size_t(std::lround(0.12 / hop));
+		const size_t minFrames = std::max<size_t>(1, size_t(std::lround(options.minNoteSeconds / hop)));
+		std::vector<Segment> merged;
+		size_t a = 0;
+		while (a < pieces.size()) {
+			size_t b = a + 1;
+			while (b < pieces.size() && sameSyllable(pieces[b - 1], pieces[b]))
+				++b;
+
+			// Held notes: at least 120 ms on one pitch; if there are none, the
+			// syllable's longest piece
+			std::vector<char> held(b - a, 0);
+			size_t first = b, longest = a;
+			for (size_t j = a; j < b; ++j) {
+				held[j - a] = frameCount(pieces[j]) >= heldFrames && !glides(pieces[j]);
+				if (held[j - a] && first == b)
+					first = j;
+				if (frameCount(pieces[j]) > frameCount(pieces[longest]))
+					longest = j;
+			}
+			if (first == b) {
+				first = longest;
+				held[longest - a] = 1;
+			}
+
+			// Pieces before the first held note scoop into it...
+			Segment note = pieces[first];
+			size_t lead = first;
+			while (lead > a && joins(pieces[lead - 1], note)) {
+				--lead;
+				note.first = pieces[lead].first;
+				note.scoopPitch = pieces[lead].pitch;
+				note.heldFirst = pieces[first].first;
+			}
+			const size_t before = merged.size();
+			for (size_t j = a; j < lead; ++j)
+				if (frameCount(pieces[j]) >= minFrames)
+					merged.push_back(pieces[j]);
+			merged.push_back(note);
+			merged[before].articulated = true;
+			bool fromHeld = true;	// the last note holds a pitch
+
+			// ...and later ones drift or glide from the held note before them
+			for (size_t j = first + 1; j < b; ++j) {
+				const Segment &piece = pieces[j];
+				if (held[j - a]) {
+					if (fromHeld && merged.back().midi == piece.midi)
+						merged.back().last = piece.last;	// back to the same pitch
+					else
+						merged.push_back(piece);
+					fromHeld = true;
+				}
+				else if (fromHeld && joins(piece, merged.back())) {
+					merged.back().last = piece.last;
+				}
+				else if (frameCount(piece) >= minFrames) {
+					merged.push_back(piece);
+					fromHeld = false;
+				}
+			}
+			a = b;
+		}
+		joined.swap(merged);
+	}
+
 	// 6. Give each note the quieter start and end of its tone. The silence gate above is
 	//    set by the loudest moment of the whole recording, so on its own it cuts the
 	//    fade-in and the decaying tail of every quieter note, and the note sounds cut short.
@@ -280,11 +445,17 @@ std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const Note
 	}
 
 	for (size_t j = 0; j < joined.size(); ++j) {
+		const Segment &seg = joined[j];
 		Note note;
-		note.start = frames[joined[j].first].time - hop / 2.0;
-		note.end = frames[joined[j].last].time + hop / 2.0;
-		note.pitch = joined[j].pitch;
-		note.midi = joined[j].midi;
+		note.start = frames[seg.first].time - hop / 2.0;
+		note.end = frames[seg.last].time + hop / 2.0;
+		note.pitch = seg.pitch;
+		note.midi = seg.midi;
+		note.articulated = seg.articulated;
+		if (seg.heldFirst > seg.first && std::fabs(seg.scoopPitch - seg.pitch) >= 0.8) {
+			note.slideSemitones = int(std::lround(seg.scoopPitch - seg.pitch));
+			note.slideSeconds = frames[seg.heldFirst].time - hop / 2.0 - note.start;
+		}
 		notes.push_back(note);
 	}
 	return notes;
@@ -412,7 +583,13 @@ std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid,
 	bool havePending = false;
 	for (size_t i = 0; i < notes.size(); ++i) {
 		const Note &n = notes[i];
-		const int row = std::max(0, int(std::lround(n.start * rate)) - offset);
+		int row = std::max(0, int(std::lround(n.start * rate)) - offset);
+		if (havePending && row <= pending.row && n.articulated) {
+			// A syllable of its own: on the next row, if the note after it leaves room
+			const int next = i + 1 < notes.size() ? int(std::lround(notes[i + 1].start * rate)) - offset : row + 2;
+			if (next > pending.row + 1)
+				row = pending.row + 1;
+		}
 		if (havePending) {
 			if (row <= pending.row) {
 				// Two notes on one row (say, a quick slide into a note): they become one

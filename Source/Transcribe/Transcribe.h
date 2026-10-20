@@ -128,6 +128,12 @@ struct NoteOptions {
 	double edgeAperiodicity = 0.35;	// ...still this periodic,
 	double edgeDb = -30.0;			// ...no further than this below the note's loudest frame,
 	double edgeNoiseMarginDb = 6.0;	// ...and at least this far above the noise floor.
+	// Singing with syllables ("la la laaa"): a dip in loudness of at least
+	// syllableDipDb between two syllables starts a new note, even on the same
+	// pitch, and a short drift of the pitch inside a syllable stays part of
+	// its note.
+	bool syllables = false;
+	double syllableDipDb = 6.0;
 };
 
 struct Note {
@@ -135,6 +141,7 @@ struct Note {
 	double end = 0.0;		// seconds
 	double pitch = 0.0;		// MIDI note number (69 = A4 = 440 Hz), fractional
 	int midi = 0;			// rounded pitch, after any octave fit or scale snap
+	bool articulated = false;	// starts a sung syllable of its own (NoteOptions::syllables)
 
 	// How it was played (DescribeExpression)
 	double level = 0.0;			// dB, the note's median frame level
@@ -147,6 +154,10 @@ struct Note {
 };
 
 std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const NoteOptions &options);
+
+// Note options for what a recording holds: singing and humming split notes at
+// syllables (NoteOptions::syllables), whistling and taps use the defaults.
+NoteOptions NoteOptionsFor(Source source);
 
 double FrequencyToMidi(double frequency);
 
@@ -189,6 +200,9 @@ struct GridNote {
 	int vibratoRow = 0;			// rows after the first row where the vibrato begins
 };
 
+// Two notes that land on the same row become one, unless the second starts a
+// sung syllable (Note::articulated): that one moves to the next row when it is
+// free, so quick "la-la"s keep a note each.
 struct QuantizeOptions {
 	bool alignToStart = true;		// shift everything so the first note lands on row 0
 	double minRestSeconds = 0.15;	// a shorter break between two notes is held through
@@ -216,7 +230,9 @@ struct ExpressionOptions {
 
 // Fills in each note's level, volume, slide and vibrato from the pitch frames
 // it was segmented from. Short notes that lead straight into a longer one,
-// rising or falling towards it, are folded into it as a slide.
+// rising or falling towards it, are folded into it as a slide, unless the
+// longer one starts a syllable of its own. A scoop that SegmentNotes already
+// made part of a note stays its slide; with slides off, notes have none.
 void DescribeExpression(std::vector<Note> &notes, const std::vector<PitchFrame> &frames, const ExpressionOptions &options);
 
 // Which period formula a channel uses, for effect speeds and depths

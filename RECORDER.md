@@ -25,7 +25,8 @@ become reusable clips.
   - YIN pitch tracking from 70 Hz to 4.2 kHz, covering a low hum up to a high
     whistle.
   - Note segmentation. It bridges dropouts of up to 40 ms and keeps vibrato and
-    short glides inside one note.
+    short glides inside one note. Singing gets a note per syllable ("la la
+    laaa"), even on one pitch.
   - Octave fit, scale snap, and row quantization using FamiTracker's own tempo
     math.
   - Tap detection, sorting hits into kick, snare and hi-hat by brightness.
@@ -35,9 +36,11 @@ become reusable clips.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 422 checks, mostly on synthesized audio, covering:
+- [x] Tests: 446 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
+  - sung syllables: repeated ones on one pitch, scoops, glides and drifts
+    inside a syllable, vibrato and swells that are not syllables,
   - repeated notes and glides, slides, loudness and vibrato,
   - octave fit and scales,
   - taps,
@@ -55,6 +58,11 @@ become reusable clips.
   hard cuts, and two notes on one row lost the second one's length. All four
   are fixed. Before, 11 of 40 notes in that recording stopped more than 50 ms
   before the whistle did; now, counting the release fade, none do.
+  Round two, 11 seconds of "la la la" singing: repeated syllables on one
+  pitch became one long note, and scoops and drifts inside a syllable became
+  extra short notes (47 notes in all). Syllables are now notes of their own
+  and scoops are slides (35 notes, one per syllable); whistled recordings
+  come out exactly as before.
 - [x] Edit > Insert recording (WAV) in FamiTracker, also in the pattern
   editor's right-click menu (`Source/InsertRecording.cpp`). A dialog
   (`InsertRecordingDlg.cpp`) asks what the recording holds, preselected with
@@ -186,13 +194,26 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
      6 dB above the noise floor (the 10th percentile of frame levels). The
      loudest moment of a recording sets the gate for everything, so without
      this, quieter notes lose their fade-out.
+
+     Singing and humming also split at syllables (`NoteOptions::syllables`).
+     The consonant between two syllables dips the loudness, so a dip of at
+     least 6 dB below the loudest moment within 150 ms on both sides starts a
+     new note, even when the pitch carries on. A stretch of 15 ms or more
+     without a pitch (a consonant or a breath) also ends a syllable. Inside
+     a syllable, a held note is at least 120 ms on one pitch; shorter pieces
+     and glides (moving 1.5 semitones or more from start to end) join the
+     held note next to them: before it they are a scoop, kept as a slide
+     into the note, after it a drift. A second held pitch in the same
+     syllable ("la-a") stays a note of its own.
   3. `OctaveShiftFor` moves the median note to G4 (MIDI 67) for leads, or to
      C3 (MIDI 48) for the triangle and sawtooth, which usually play bass.
   4. `SnapToScale`, then `Quantize`. A note starts on its nearest row and
      keeps its rounded duration, so a 180 ms note is 2 rows wherever it
      starts. A break shorter than `minRestSeconds` (150 ms) is held through,
      notes that touch always join up, and two notes that land on one row
-     merge into one note at the longer one's pitch.
+     merge into one note at the longer one's pitch, unless the second starts
+     a sung syllable: that one moves to the next row if it is free. Slides
+     are only folded in within a syllable.
 - **Pitch names:** FamiTracker's note index is MIDI − 24, so `A-3` is 440 Hz.
 - **Rows per second:** `F * floor(24T/S) / (60F - (24T mod S))`, the same
   formula as `CSoundGen`'s tempo accumulator.
