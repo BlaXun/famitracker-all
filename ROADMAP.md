@@ -63,6 +63,9 @@ which plays the tracks as OGG files.
 
 ## 5. Piano roll
 
+Next after the recorder's clips (see Feature branches): a horizontal view,
+time left to right and pitch bottom to top, where clips can also be placed.
+
 - **v1:** one channel at a time. Draw, erase and resize notes with the mouse,
   with scale lock (pick a key and scale, off-scale rows are dimmed and notes
   snap), a playback cursor and undo.
@@ -98,10 +101,12 @@ when ready.
   this order:
   1. Expression (done): loudness, slides into notes and vibrato from the
      performance, and a richer lead sound.
-  2. Harmony backing (next): find the key, pick chords that fit the melody
-     bar by bar, and write a bass line and arpeggiated chords. Takes recorded
-     against the click give them a beat to land on.
+  2. Harmony backing (done): find the key, pick chords that fit the melody
+     bar by bar, and write a bass line and arpeggiated chords.
   3. AI arranging over MCP, through the `api` branch below.
+
+  The order from here: clips (save takes and pattern selections, place them
+  as copies or linked), then the piano roll (step 5), then AI arranging.
 - **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
   bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
   instruments, play/stop and save/export, and run requests on the UI thread
