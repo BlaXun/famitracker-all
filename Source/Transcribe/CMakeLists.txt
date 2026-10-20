@@ -14,7 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
 	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")	# static CRT, like FamiTracker
-	add_compile_options(/W3 /D_CRT_SECURE_NO_WARNINGS)
+	add_compile_options(/W3)
 else()
 	add_compile_options(-Wall -Wextra)
 endif()

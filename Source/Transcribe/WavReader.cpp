@@ -41,6 +41,17 @@ typedef std::unique_ptr<FILE, FileCloser> FilePtr;
 uint32_t ReadU32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (uint32_t(p[3]) << 24); }
 uint16_t ReadU16(const unsigned char *p) { return uint16_t(p[0] | (p[1] << 8)); }
 
+// fopen_s where the CRT deprecates fopen (MSVC), plain fopen elsewhere.
+FILE *OpenFile(const std::string &path, const char *mode)
+{
+#ifdef _MSC_VER
+	FILE *f = nullptr;
+	return fopen_s(&f, path.c_str(), mode) == 0 ? f : nullptr;
+#else
+	return std::fopen(path.c_str(), mode);
+#endif
+}
+
 bool Fail(std::string *error, const std::string &message)
 {
 	if (error)
@@ -56,7 +67,7 @@ const uint16_t FORMAT_EXTENSIBLE = 0xFFFE;
 
 bool ReadWav(const std::string &path, Audio &out, std::string *error)
 {
-	FilePtr file(std::fopen(path.c_str(), "rb"));
+	FilePtr file(OpenFile(path, "rb"));
 	if (!file)
 		return Fail(error, "cannot open " + path);
 
@@ -152,7 +163,7 @@ bool ReadWav(const std::string &path, Audio &out, std::string *error)
 
 bool WriteWav(const std::string &path, const Audio &audio, std::string *error)
 {
-	FilePtr file(std::fopen(path.c_str(), "wb"));
+	FilePtr file(OpenFile(path, "wb"));
 	if (!file)
 		return Fail(error, "cannot create " + path);
 
