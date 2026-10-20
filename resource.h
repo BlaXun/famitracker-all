@@ -686,6 +686,10 @@
 #define IDC_MCP_COMMAND                 1374
 #define IDC_MCP_COPY                    1375
 #define IDC_MCP_NEWTOKEN                1376
+#define IDC_MCP_WINDOWS                 1377
+#define IDC_MCP_WSL                     1378
+#define IDC_MCP_WHERE                   1379
+#define IDC_MCP_HINT                    1380
 #define ID_FILE_CONNECTCLAUDE           33160
 
 // Next default values for new objects

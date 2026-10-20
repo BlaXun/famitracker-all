@@ -22,6 +22,8 @@
 // Tests for the Claude Code connection's core: JSON, HTTP framing, the MCP
 // protocol, the musical helpers and every tool, against a song in memory.
 
+#include "../Bridge.h"
+#include "../BridgeSocket.h"
 #include "../Http.h"
 #include "../Json.h"
 #include "../Mcp.h"
@@ -30,11 +32,30 @@
 #include "../Song.h"
 #include "../Tools.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 using namespace ftapi;
 
@@ -1484,6 +1505,351 @@ void TestSession()
 	CHECK_HAS(Call("read_notes", "{\"channel\":\"VRC6 Pulse 1\",\"to_bar\":2}"), "bar 1 beat 1: D#4");
 }
 
+// The connection for Claude Code in WSL (famitracker-mcp): lines in, HTTP to
+// FamiTracker, lines out
+
+std::string HeaderOf(const HttpRequest &Request, const char *pName)
+{
+	const std::string *pValue = Request.Header(pName);
+	return pValue != 0 ? *pValue : std::string("(none)");
+}
+
+// A line through the bridge and FamiTracker's endpoint, as bytes both ways
+std::string ThroughEndpoint(const std::string &Line, ToolSet &Tools, const McpConfig &Config, const std::string &Token)
+{
+	BridgeMessage Message;
+	if (!BridgeRequest(Line, Config.Port, Token, Message))
+		return "(blank)";
+	const std::string Bytes = FormatHttpRequest(Message.Request);
+	HttpRequestParser Parser;
+	if (Parser.Feed(Bytes.data(), Bytes.size()) != HttpRequestParser::COMPLETE)
+		return "(unreadable request)";
+	const HttpRequest Request = Parser.Take();
+	const std::string Wire = FormatHttpResponse(HandleMcp(Request, Config, Tools), Request.KeepAlive());
+	HttpResponse Answer;
+	if (ReadHttpResponse(Wire, false, Answer) != RESPONSE_COMPLETE)
+		return "(unreadable answer)";
+	return BridgeAnswer(Message, Answer);
+}
+
+// One line, ending in a line break: what Claude Code reads
+bool OneLine(const std::string &Text)
+{
+	return !Text.empty() && Text.find('\n') == Text.size() - 1 && Text.find('\r') == std::string::npos;
+}
+
+const char MODERN_META[] = "\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}";
+
+void TestBridge()
+{
+	// Lines become requests
+	BridgeMessage Message;
+	CHECK(!BridgeRequest("", 46600, "t", Message));
+	CHECK(!BridgeRequest(" \t\r", 46600, "t", Message));
+	const std::string Initialize = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\","
+		"\"capabilities\":{},\"clientInfo\":{\"name\":\"claude-code\",\"version\":\"2.0\"}}}";
+	CHECK(BridgeRequest(Initialize + "\r", 46601, "secret", Message));
+	CHECK(Message.Readable && Message.WantsAnswer && Message.Id == Json(1));
+	CHECK_EQ(Message.Request.Method, std::string("POST"));
+	CHECK_EQ(Message.Request.Target, std::string("/mcp"));
+	CHECK_EQ(Message.Request.Body, Initialize);
+	CHECK_EQ(HeaderOf(Message.Request, "Host"), std::string("127.0.0.1:46601"));
+	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("Bearer secret"));
+	CHECK_EQ(HeaderOf(Message.Request, "Content-Type"), std::string("application/json"));
+	CHECK_EQ(HeaderOf(Message.Request, "Connection"), std::string("close"));
+	CHECK_EQ(HeaderOf(Message.Request, "MCP-Protocol-Version"), std::string("(none)"));
+	const std::string Bytes = FormatHttpRequest(Message.Request);
+	CHECK_EQ(Bytes.compare(0, 22, "POST /mcp HTTP/1.1\r\nHo"), 0);
+	char Length[48];
+	std::snprintf(Length, sizeof(Length), "\r\nContent-Length: %d\r\n\r\n{", static_cast<int>(Initialize.size()));
+	Check(Contains(Bytes, Length), "the length before the body", __LINE__);
+	CHECK(BridgeRequest(Initialize, 46600, "", Message));
+	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("(none)"));
+
+	// The 2026-07-28 protocol: the headers say what the body says
+	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\","
+		"\"arguments\":{},") + MODERN_META + "}}", 46600, "t", Message));
+	CHECK(Message.WantsAnswer && Message.Id == Json("x"));
+	CHECK_EQ(HeaderOf(Message.Request, "MCP-Protocol-Version"), std::string("2026-07-28"));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Method"), std::string("tools/call"));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Name"), std::string("get_song"));
+	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"caf\\u00e9 x\",") +
+		MODERN_META + "}}", 46600, "t", Message));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Name"), std::string("=?base64?Y2Fmw6kgeA==?="));
+	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"resources/read\",\"params\":{\"uri\":\"=?base64?x\",") +
+		MODERN_META + "}}", 46600, "t", Message));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Name"), std::string("=?base64?PT9iYXNlNjQ/eA==?="));
+	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{") + MODERN_META + "}}",
+		46600, "t", Message));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Method"), std::string("tools/list"));
+	CHECK_EQ(HeaderOf(Message.Request, "Mcp-Name"), std::string("(none)"));
+	// Nothing in a value ends the head early
+	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"a\\r\\nX-Injected: 1\",\"params\":{") + MODERN_META + "}}",
+		46600, "t", Message));
+	CHECK_LACKS(FormatHttpRequest(Message.Request), "\r\nX-Injected");
+
+	// Notifications and Claude Code's own answers wait for nothing
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}", 46600, "t", Message));
+	CHECK(Message.Readable && !Message.WantsAnswer);
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{}}", 46600, "t", Message));
+	CHECK(Message.Readable && !Message.WantsAnswer);
+	CHECK(BridgeRequest("{nope", 46600, "t", Message));
+	CHECK(!Message.Readable && !Message.WantsAnswer);
+
+	// Through FamiTracker's endpoint
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	std::string Out = ThroughEndpoint(Initialize, Tools, Config, "secret");
+	CHECK(OneLine(Out));
+	Json Answer = Parse(Out);
+	CHECK(Answer.Get("id") != 0 && *Answer.Get("id") == Json(1));
+	CHECK(Answer.Get("result") != 0 && Answer.Get("result")->Get("protocolVersion") != 0 &&
+		Answer.Get("result")->Get("protocolVersion")->String() == "2025-06-18");
+	CHECK_EQ(ThroughEndpoint("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}", Tools, Config, "secret"), std::string());
+	Out = ThroughEndpoint("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}", Tools, Config, "secret");
+	Answer = Parse(Out);
+	CHECK(OneLine(Out) && Answer.Get("result") != 0 && Answer.Get("result")->Get("tools")->Size() == Tools.List().size());
+	Out = ThroughEndpoint("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\",\"arguments\":{}}}",
+		Tools, Config, "secret");
+	CHECK(OneLine(Out));
+	CHECK_HAS(Out, "\"isError\":false");
+	CHECK_HAS(Out, "VRC6 Pulse 1");
+	Out = ThroughEndpoint(std::string("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"server/discover\",\"params\":{") + MODERN_META + "}}",
+		Tools, Config, "secret");
+	CHECK_HAS(Out, "\"supportedVersions\":[\"2026-07-28\"]");
+	Out = ThroughEndpoint(std::string("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\","
+		"\"arguments\":{},") + MODERN_META + "}}", Tools, Config, "secret");
+	CHECK_HAS(Out, "\"resultType\":\"complete\"");
+	CHECK_HAS(Out, "\"isError\":false");
+	// A name sent in base64 still matches: the tool is unknown, the headers fine
+	Out = ThroughEndpoint(std::string("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"caf\\u00e9\","
+		"\"arguments\":{},") + MODERN_META + "}}", Tools, Config, "secret");
+	CHECK_HAS(Out, "Unknown tool");
+	CHECK_LACKS(Out, "Mcp-Name");
+	// Refused before it was read: still the answer to that request
+	for (int Wrong = 0; Wrong < 2; ++Wrong) {
+		Out = ThroughEndpoint("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}", Tools, Config, Wrong == 0 ? "nope" : "");
+		Answer = Parse(Out);
+		CHECK(OneLine(Out) && Answer.Get("id") != 0 && *Answer.Get("id") == Json(7));
+		CHECK_HAS(Out, "access token");
+	}
+	// A line that isn't JSON gets its parse error
+	Out = ThroughEndpoint("{nope", Tools, Config, "secret");
+	CHECK(OneLine(Out));
+	CHECK_HAS(Out, "\"id\":null");
+	CHECK_HAS(Out, "-32700");
+	CHECK_EQ(ThroughEndpoint("{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{}}", Tools, Config, "secret"), std::string());
+	CHECK_EQ(ThroughEndpoint("", Tools, Config, "secret"), std::string("(blank)"));
+
+	// Answers that aren't JSON-RPC become errors for the request
+	HttpResponse NotFound;
+	NotFound.Status = 404;
+	NotFound.ContentType = "text/plain; charset=utf-8";
+	NotFound.Body = "FamiTracker's MCP endpoint is /mcp.\n";
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}", 46600, "t", Message));
+	Out = BridgeAnswer(Message, NotFound);
+	CHECK(OneLine(Out));
+	CHECK_HAS(Out, "\"id\":3");
+	CHECK_HAS(Out, "HTTP 404 Not Found: FamiTracker's MCP endpoint is /mcp.");
+	HttpResponse Empty;
+	Empty.Status = 202;
+	CHECK_HAS(BridgeAnswer(Message, Empty), "HTTP 202 Accepted.");
+	Out = BridgeFailure(Message, "FamiTracker isn't running.");
+	CHECK(OneLine(Out));
+	CHECK_HAS(Out, "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32000,\"message\":\"FamiTracker isn't running.\"}}");
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\"}", 46600, "t", Message));
+	CHECK_EQ(BridgeAnswer(Message, NotFound), std::string());
+	CHECK_EQ(BridgeAnswer(Message, Empty), std::string());
+	CHECK_EQ(BridgeFailure(Message, "FamiTracker isn't running."), std::string());
+
+	// Responses read as their bytes arrive
+	HttpResponse Response;
+	Response.ContentType = "application/json";
+	Response.Body = "{\"a\":1}";
+	const std::string Wire = FormatHttpResponse(Response, false);
+	HttpResponse Read;
+	bool Waits = true;
+	for (size_t Size = 0; Size < Wire.size(); ++Size)
+		Waits = Waits && ReadHttpResponse(Wire.substr(0, Size), false, Read) == RESPONSE_NEED_MORE;
+	CHECK(Waits);
+	CHECK_EQ(ReadHttpResponse(Wire, false, Read), RESPONSE_COMPLETE);
+	CHECK(Read.Status == 200 && Read.ContentType == "application/json" && Read.Body == "{\"a\":1}");
+	CHECK_EQ(ReadHttpResponse(Wire, true, Read), RESPONSE_COMPLETE);
+	CHECK_EQ(ReadHttpResponse(Wire.substr(0, Wire.size() - 1), true, Read), RESPONSE_BAD);
+	CHECK_EQ(ReadHttpResponse("HTTP/1.1 100 Continue\r\n\r\n" + Wire, false, Read), RESPONSE_COMPLETE);
+	CHECK(Read.Status == 200 && Read.Body == "{\"a\":1}");
+	const std::string Unsized = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nX-Other:  yes \r\n\r\nhello";
+	CHECK_EQ(ReadHttpResponse(Unsized, false, Read), RESPONSE_NEED_MORE);
+	CHECK_EQ(ReadHttpResponse(Unsized, true, Read), RESPONSE_COMPLETE);
+	CHECK(Read.Body == "hello" && Read.ContentType == "text/plain" && Read.Headers.size() == 1 && Read.Headers[0].second == "yes");
+	CHECK_EQ(ReadHttpResponse("HTTP/1.1 204 No Content\r\n\r\n", false, Read), RESPONSE_COMPLETE);
+	CHECK(Read.Status == 204 && Read.Body.empty());
+	CHECK_EQ(ReadHttpResponse("HTTP/1.1 503\r\nContent-Length: 2\r\n\r\nno", false, Read), RESPONSE_COMPLETE);
+	CHECK(Read.Status == 503 && Read.Body == "no");
+	const char *const BROKEN[] = {
+		"HTTP/1.1 2x0 OK\r\n\r\n", "FTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 2000 OK\r\n\r\n", "HTTP/1.1 200 OK\r\nBroken\r\n\r\n",
+		"HTTP/1.1 200 OK\r\n: x\r\n\r\n", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nno\r\n0\r\n\r\n",
+		"HTTP/1.1 200 OK\r\nContent-Length: x\r\n\r\n", "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab" };
+	for (size_t i = 0; i < sizeof(BROKEN) / sizeof(BROKEN[0]); ++i)
+		Check(ReadHttpResponse(BROKEN[i], false, Read) == RESPONSE_BAD, BROKEN[i], __LINE__);
+	CHECK_EQ(ReadHttpResponse("HTTP/1.1 200 OK\r\n" + std::string(70000, 'x'), false, Read), RESPONSE_BAD);
+	CHECK_EQ(ReadHttpResponse("", true, Read), RESPONSE_BAD);
+
+	// The setup command for WSL
+	CHECK_EQ(WslAddCommand("C:\\Users\\Me\\FamiTracker\\famitracker-mcp.exe"),
+		std::string("claude mcp remove --scope user famitracker >/dev/null 2>&1; claude mcp add --transport stdio --scope user "
+		"famitracker -- \"$(wslpath 'C:\\Users\\Me\\FamiTracker\\famitracker-mcp.exe')\""));
+	CHECK_HAS(WslAddCommand("C:\\Users\\O'Neil\\FT\\famitracker-mcp.exe"), "$(wslpath 'C:\\Users\\O'\\''Neil\\FT\\famitracker-mcp.exe')");
+}
+
+// FamiTracker's endpoint on a free port of 127.0.0.1, on a thread of its own,
+// one request per connection (as famitracker-mcp asks)
+#ifdef _WIN32
+typedef SOCKET test_socket_t;
+const test_socket_t NO_TEST_SOCKET = INVALID_SOCKET;
+void CloseTestSocket(test_socket_t Socket) { closesocket(Socket); }
+#else
+typedef int test_socket_t;
+const test_socket_t NO_TEST_SOCKET = -1;
+void CloseTestSocket(test_socket_t Socket) { close(Socket); }
+#endif
+
+class TestEndpoint {
+public:
+	TestEndpoint(ToolSet &Tools, const McpConfig &Config) : m_Tools(Tools), m_Config(Config), m_Listener(NO_TEST_SOCKET), m_iPort(0),
+		m_bStop(false), m_iAnswered(0) {}
+	~TestEndpoint() { Stop(); }
+
+	bool Start()
+	{
+#ifdef _WIN32
+		WSADATA Data;
+		if (WSAStartup(MAKEWORD(2, 2), &Data) != 0)
+			return false;
+#endif
+		m_Listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (m_Listener == NO_TEST_SOCKET)
+			return false;
+		sockaddr_in Address;
+		std::memset(&Address, 0, sizeof(Address));
+		Address.sin_family = AF_INET;
+		Address.sin_port = 0;	// any free port
+		Address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		socklen_t Size = sizeof(Address);
+		if (bind(m_Listener, reinterpret_cast<const sockaddr*>(&Address), sizeof(Address)) != 0 || listen(m_Listener, 8) != 0 ||
+			getsockname(m_Listener, reinterpret_cast<sockaddr*>(&Address), &Size) != 0)
+			return false;
+		m_iPort = ntohs(Address.sin_port);
+		m_Thread = std::thread(&TestEndpoint::Run, this);
+		return true;
+	}
+
+	void Stop()
+	{
+		m_bStop = true;
+		if (m_Thread.joinable())
+			m_Thread.join();
+		if (m_Listener != NO_TEST_SOCKET) {
+			CloseTestSocket(m_Listener);
+			m_Listener = NO_TEST_SOCKET;
+		}
+	}
+
+	int Port() const { return m_iPort; }
+	int Answered() const { return m_iAnswered; }
+
+private:
+	void Run()
+	{
+		while (!m_bStop) {
+			fd_set Readable;
+			FD_ZERO(&Readable);
+			FD_SET(m_Listener, &Readable);
+			timeval Wait = { 0, 20000 };
+			if (select(static_cast<int>(m_Listener) + 1, &Readable, 0, 0, &Wait) <= 0)
+				continue;
+			const test_socket_t Client = accept(m_Listener, 0, 0);
+			if (Client == NO_TEST_SOCKET)
+				continue;
+			HttpRequestParser Parser;
+			HttpRequestParser::Result Result = HttpRequestParser::NEED_MORE;
+			char Buffer[4096];
+			while (Result == HttpRequestParser::NEED_MORE) {
+				const long Count = static_cast<long>(recv(Client, Buffer, static_cast<int>(sizeof(Buffer)), 0));
+				if (Count <= 0)
+					break;
+				Result = Parser.Feed(Buffer, static_cast<size_t>(Count));
+			}
+			if (Result == HttpRequestParser::COMPLETE) {
+				const std::string Bytes = FormatHttpResponse(HandleMcp(Parser.Take(), m_Config, m_Tools), false);
+				for (size_t Sent = 0; Sent < Bytes.size(); ) {
+					const long Count = static_cast<long>(send(Client, Bytes.data() + Sent, static_cast<int>(Bytes.size() - Sent), 0));
+					if (Count <= 0)
+						break;
+					Sent += static_cast<size_t>(Count);
+				}
+				++m_iAnswered;
+			}
+			CloseTestSocket(Client);
+		}
+	}
+
+	ToolSet &m_Tools;
+	McpConfig m_Config;
+	test_socket_t m_Listener;
+	int m_iPort;
+	std::atomic<bool> m_bStop;
+	std::atomic<int> m_iAnswered;
+	std::thread m_Thread;
+};
+
+// famitracker-mcp's side over real sockets
+void TestBridgeSockets()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Token = "t";
+	TestEndpoint Endpoint(Tools, Config);
+	if (!Endpoint.Start()) {
+		Check(false, "the test endpoint couldn't start", __LINE__);
+		return;
+	}
+	const int Port = Endpoint.Port();
+	auto Exchange = [&](const std::string &Line, std::string &Error) {
+		BridgeMessage Message;
+		BridgeRequest(Line, Port, "t", Message);
+		HttpResponse Answer;
+		const BridgeExchangeResult Result = BridgeExchange(Port, FormatHttpRequest(Message.Request), 5000, Answer, Error);
+		return Result == EXCHANGE_ANSWERED ? BridgeAnswer(Message, Answer) : "(" + Error + ")";
+	};
+	std::string Error;
+	std::string Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}", Error);
+	CHECK(OneLine(Out));
+	CHECK_HAS(Out, "\"protocolVersion\":\"2025-11-25\"");
+	CHECK_HAS(Out, "\"name\":\"famitracker\"");
+	// The tool list is longer than one read
+	Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}", Error);
+	CHECK(OneLine(Out) && Out.size() > 16384);
+	CHECK_HAS(Out, "\"name\":\"write_notes\"");
+	// So is a long request
+	Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"params\":{\"padding\":\"" + std::string(200000, 'x') + "\"}}", Error);
+	CHECK_EQ(Out, std::string("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}\n"));
+	CHECK_EQ(Endpoint.Answered(), 3);
+	Endpoint.Stop();
+
+	// Nobody listens: FamiTracker isn't running
+	BridgeMessage Message;
+	BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"ping\"}", Port, "t", Message);
+	HttpResponse Answer;
+	CHECK_EQ(BridgeExchange(Port, FormatHttpRequest(Message.Request), 5000, Answer, Error), EXCHANGE_UNREACHABLE);
+	CHECK_HAS(Error, "Nothing listens on 127.0.0.1:");
+}
+
 }	// namespace
 
 int main()
@@ -1510,6 +1876,8 @@ int main()
 	TestPlayback();
 	TestProtocol();
 	TestSession();
+	TestBridge();
+	TestBridgeSockets();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

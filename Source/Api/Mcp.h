@@ -51,4 +51,9 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 // What a client runs to connect: claude mcp add ...
 std::string ClaudeAddCommand(const McpConfig &Config);
 
+// What Claude Code in WSL runs to connect through famitracker-mcp.exe (see
+// Bridge.h), given where that is on Windows. Running it again replaces the
+// earlier setup.
+std::string WslAddCommand(const std::string &HelperPath);
+
 }	// namespace ftapi

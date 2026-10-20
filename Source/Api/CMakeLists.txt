@@ -1,5 +1,6 @@
 # The Claude Code connection's core (MCP over HTTP, the tools in musical terms)
-# with its tests. Builds on Linux, macOS and Windows without MFC:
+# with its tests, and famitracker-mcp, the connection for Claude Code in WSL.
+# Builds on Linux, macOS and Windows without MFC:
 #   cmake -S Source/Api -B build/api
 #   cmake --build build/api --config Release
 #   ctest --test-dir build/api -C Release --output-on-failure
@@ -25,6 +26,8 @@ add_library(ftapi STATIC
 	Json.cpp
 	Http.cpp
 	Mcp.cpp
+	Bridge.cpp
+	BridgeSocket.cpp
 	Music.cpp
 	Presets.cpp
 	Tools.cpp
@@ -39,8 +42,18 @@ add_library(ftapi STATIC
 	${TRANSCRIBE}/TextModule.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(WIN32)
+	target_link_libraries(ftapi PUBLIC ws2_32 advapi32)
+endif()
 
+# Claude Code in WSL starts this Windows program, which passes its messages
+# to FamiTracker on Windows' 127.0.0.1 (Bridge.h)
+add_executable(famitracker-mcp tools/famitracker-mcp.cpp)
+target_link_libraries(famitracker-mcp PRIVATE ftapi)
+
+# The tests run FamiTracker's endpoint on a thread to try the bridge over sockets
+find_package(Threads REQUIRED)
 enable_testing()
 add_executable(api_tests tests/ApiTests.cpp)
-target_link_libraries(api_tests PRIVATE ftapi)
+target_link_libraries(api_tests PRIVATE ftapi Threads::Threads)
 add_test(NAME api_tests COMMAND api_tests)

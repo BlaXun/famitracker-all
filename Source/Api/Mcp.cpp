@@ -483,4 +483,15 @@ std::string ClaudeAddCommand(const McpConfig &Config)
 	return Command;
 }
 
+std::string WslAddCommand(const std::string &HelperPath)
+{
+	// wslpath turns the Windows path into WSL's, wherever its drives are
+	std::string Quoted = "'";
+	for (size_t i = 0; i < HelperPath.size(); ++i)
+		Quoted += HelperPath[i] == '\'' ? std::string("'\\''") : std::string(1, HelperPath[i]);
+	Quoted += "'";
+	return "claude mcp remove --scope user famitracker >/dev/null 2>&1; "
+		"claude mcp add --transport stdio --scope user famitracker -- \"$(wslpath " + Quoted + ")\"";
+}
+
 }	// namespace ftapi

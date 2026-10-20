@@ -20,6 +20,7 @@ date="$(git show -s --format=%cs "$sha")"
 exe="$(find "$dist" -name FamiTracker.exe -print -quit)"
 pdb="$(find "$dist" -name FamiTracker.pdb -print -quit)"
 wav2ftm="$(find "$dist" -name wav2ftm.exe -print -quit)"
+bridge="$(find "$dist" -name famitracker-mcp.exe -print -quit)"
 if [ -z "$exe" ]; then
 	echo "FamiTracker.exe not found under $dist" >&2
 	exit 1
@@ -33,6 +34,10 @@ contents="FamiTracker.exe"
 if [ -n "$wav2ftm" ]; then
 	cp "$wav2ftm" "$work/$folder/"
 	contents="FamiTracker.exe and wav2ftm.exe"
+fi
+if [ -n "$bridge" ]; then
+	cp "$bridge" "$work/$folder/"
+	contents="${contents/ and /, } and famitracker-mcp.exe"
 fi
 
 {
@@ -55,11 +60,16 @@ fi
 		echo "                  (wav2ftm --help), then open the result in FamiTracker"
 		echo "                  with File > Import Text."
 	fi
+	if [ -n "$bridge" ]; then
+		echo "famitracker-mcp.exe"
+		echo "                  Connects Claude Code running in WSL to FamiTracker. Keep"
+		echo "                  it next to FamiTracker.exe; Claude Code starts it by itself."
+	fi
 	if [ "$branch" = "api" ] || [ "$branch" = "recorder" ]; then
 		echo
-		echo "File > Connect Claude Code lets Claude Code on this computer work on the"
-		echo "open song: switch it on there and run the command it shows once. See"
-		echo "MCP.md in the source for what Claude can do and how to ask."
+		echo "File > Connect Claude Code lets Claude Code on this computer, in Windows or"
+		echo "in WSL, work on the open song: switch it on there and run the command it"
+		echo "shows once. See MCP.md in the source for what Claude can do and how to ask."
 	fi
 	echo
 	echo "These programs are not code-signed. If Windows SmartScreen warns on first"

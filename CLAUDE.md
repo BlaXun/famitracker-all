@@ -22,7 +22,11 @@ File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 the tools are in `Source/Api/` (portable, tested on Linux), the Winsock
 listener in `Source/McpSocket.cpp`, and the glue to the document, the
 settings and the dialog in `Source/McpConnection.cpp`, which writes changes
-with `WriteSongParts` in `InsertRecording.cpp`.
+with `WriteSongParts` in `InsertRecording.cpp`. Claude Code in WSL connects
+through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
+in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
+that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
+project and ships next to FamiTracker.exe.
 
 ## What this repository is
 
@@ -123,7 +127,8 @@ replaced the VS2008 project:
     `build-<branch>`) using `.github/scripts/publish-build.sh`.
     `beginner-friendly` is marked Latest; `recorder` and `api` are
     pre-releases. Each release has a zip with `FamiTracker.exe` (plus
-    `wav2ftm.exe` on recorder and api) and a debug-symbols zip. These tags
+    `wav2ftm.exe` on recorder and api, and `famitracker-mcp.exe` on
+    recorder) and a debug-symbols zip. These tags
     are build pointers and get deleted and recreated; never use them for
     real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
@@ -163,9 +168,10 @@ The application has no test suite of its own. What exists:
   `Source/Tests` and `build/tests`; CI runs them in the Linux job. The
   stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
-  framing, the MCP protocol and every tool against a song in memory
-  (`tests/ApiTests.cpp`). Same three commands with `Source/Api` and
-  `build/api`; CI runs it on Linux and with MSVC.
+  framing, the MCP protocol and every tool against a song in memory, and
+  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
+  commands with `Source/Api` and `build/api`; CI runs it on Linux and with
+  MSVC.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or

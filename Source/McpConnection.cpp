@@ -73,6 +73,7 @@ const int ACT_MCP_TEMPO = 0x1100;		// action ID, away from the others
 const UINT WM_MCP_REQUEST = WM_APP + 0x3C1;
 const UINT_PTR PLAY_TIMER = 1;
 const TCHAR WINDOW_CLASS[] = _T("FamiTrackerClaudeCode");
+const TCHAR WSL_HELPER[] = _T("famitracker-mcp.exe");	// for Claude Code in WSL (Api/Bridge.h)
 
 // Text between the API (UTF-8) and FamiTracker (the ANSI code page)
 std::string Utf8(LPCSTR pText)
@@ -240,6 +241,7 @@ struct mcp_settings_t {
 	int Port;
 	CString Token;
 	bool DirectChanges;
+	bool Wsl;			// the dialog shows the setup for Claude Code in WSL
 };
 
 // The connection: settings, listener, and the song for the tools
@@ -252,6 +254,7 @@ public:
 		m_Settings.Enabled = false;
 		m_Settings.Port = DEFAULT_PORT;
 		m_Settings.DirectChanges = false;
+		m_Settings.Wsl = false;
 	}
 
 	~CMcpLink()
@@ -302,6 +305,36 @@ public:
 		Config.Port = Port;
 		Config.Token = std::string(static_cast<LPCSTR>(CStringA(Token)));
 		return CString(ftapi::ClaudeAddCommand(Config).c_str());
+	}
+
+	// Claude Code in WSL starts famitracker-mcp.exe from FamiTracker's
+	// folder, which reads the port and the access code from the settings
+	CString WslCommand() const
+	{
+		return CString(ftapi::WslAddCommand(std::string(static_cast<LPCSTR>(CStringA(HelperPath())))).c_str());
+	}
+
+	static CString HelperPath()
+	{
+		TCHAR Path[MAX_PATH];
+		const DWORD Length = GetModuleFileName(NULL, Path, MAX_PATH);
+		if (Length == 0 || Length >= MAX_PATH)
+			return WSL_HELPER;
+		const CString Program(Path);
+		return Program.Left(Program.ReverseFind(_T('\\')) + 1) + WSL_HELPER;
+	}
+
+	static bool HelperFound()
+	{
+		const DWORD Attributes = GetFileAttributes(HelperPath());
+		return Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+	}
+
+	// Only the dialog's choice: nothing to start or stop
+	void RememberWsl(bool Wsl)
+	{
+		m_Settings.Wsl = Wsl;
+		theApp.WriteProfileInt(SECTION, _T("Claude Code in WSL"), Wsl ? 1 : 0);
 	}
 
 	// From the dialog: saves the settings and starts or stops listening
@@ -747,6 +780,7 @@ private:
 			theApp.WriteProfileString(SECTION, _T("Token"), m_Settings.Token);
 		}
 		m_Settings.DirectChanges = theApp.GetProfileInt(SECTION, _T("Direct changes"), 0) != 0;
+		m_Settings.Wsl = theApp.GetProfileInt(SECTION, _T("Claude Code in WSL"), 0) != 0;
 	}
 
 	void SaveSettings()
@@ -755,6 +789,7 @@ private:
 		theApp.WriteProfileInt(SECTION, _T("Port"), m_Settings.Port);
 		theApp.WriteProfileString(SECTION, _T("Token"), m_Settings.Token);
 		theApp.WriteProfileInt(SECTION, _T("Direct changes"), m_Settings.DirectChanges ? 1 : 0);
+		theApp.WriteProfileInt(SECTION, _T("Claude Code in WSL"), m_Settings.Wsl ? 1 : 0);
 	}
 
 	static LRESULT CALLBACK WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
@@ -841,6 +876,8 @@ protected:
 
 private:
 	int Port() const;
+	bool Wsl() const;
+	CString CurrentCommand() const;		// empty while the port isn't valid
 	void ShowCommand();
 
 	CMcpLink *m_pLink;
@@ -850,6 +887,8 @@ private:
 BEGIN_MESSAGE_MAP(CConnectClaudeDlg, CDialog)
 	ON_EN_CHANGE(IDC_MCP_PORT, OnChange)
 	ON_BN_CLICKED(IDC_MCP_ENABLE, OnChange)
+	ON_BN_CLICKED(IDC_MCP_WINDOWS, OnChange)
+	ON_BN_CLICKED(IDC_MCP_WSL, OnChange)
 	ON_BN_CLICKED(IDC_MCP_COPY, OnCopy)
 	ON_BN_CLICKED(IDC_MCP_NEWTOKEN, OnNewToken)
 END_MESSAGE_MAP()
@@ -861,6 +900,7 @@ BOOL CConnectClaudeDlg::OnInitDialog()
 	m_sToken = Settings.Token;
 	CheckDlgButton(IDC_MCP_ENABLE, Settings.Enabled ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_MCP_DIRECT, Settings.DirectChanges ? BST_CHECKED : BST_UNCHECKED);
+	CheckRadioButton(IDC_MCP_WINDOWS, IDC_MCP_WSL, Settings.Wsl ? IDC_MCP_WSL : IDC_MCP_WINDOWS);
 	SetDlgItemInt(IDC_MCP_PORT, static_cast<UINT>(Settings.Port), FALSE);
 	static_cast<CEdit*>(GetDlgItem(IDC_MCP_PORT))->SetLimitText(5);
 	SetDlgItemText(IDC_MCP_STATUS, m_pLink->Status());
@@ -875,10 +915,38 @@ int CConnectClaudeDlg::Port() const
 	return (Valid && Value >= 1024 && Value <= 65535) ? static_cast<int>(Value) : 0;
 }
 
+bool CConnectClaudeDlg::Wsl() const
+{
+	return IsDlgButtonChecked(IDC_MCP_WSL) == BST_CHECKED;
+}
+
+CString CConnectClaudeDlg::CurrentCommand() const
+{
+	if (Wsl())
+		return m_pLink->WslCommand();	// the helper finds the port by itself
+	const int Value = Port();
+	return Value > 0 ? m_pLink->Command(Value, m_sToken) : CString();
+}
+
 void CConnectClaudeDlg::ShowCommand()
 {
-	const int Value = Port();
-	SetDlgItemText(IDC_MCP_COMMAND, Value > 0 ? m_pLink->Command(Value, m_sToken) : CString(_T("(Pick a port from 1024 to 65535.)")));
+	const CString Command = CurrentCommand();
+	SetDlgItemText(IDC_MCP_COMMAND, Command.IsEmpty() ? CString(_T("(Pick a port from 1024 to 65535.)")) : Command);
+	if (!Wsl()) {
+		SetDlgItemText(IDC_MCP_WHERE, _T("Run this in a terminal (PowerShell or Command Prompt):"));
+		SetDlgItemText(IDC_MCP_HINT, _T("It needs Claude Code installed. The access code in the command keeps other programs and web pages out. ")
+			_T("Then start claude in any folder and ask, for example: \"make the atmosphere darker\" or \"add a bass line\"."));
+	}
+	else {
+		SetDlgItemText(IDC_MCP_WHERE, _T("Run this in your WSL terminal, where you start claude:"));
+		if (CMcpLink::HelperFound())
+			SetDlgItemText(IDC_MCP_HINT, _T("Claude Code in WSL then starts famitracker-mcp.exe from FamiTracker's folder, which passes its requests ")
+				_T("on to FamiTracker here: no network setup, and new access codes work without connecting again. ")
+				_T("Then start claude and ask, for example: \"add a bass line\"."));
+		else
+			SetDlgItemText(IDC_MCP_HINT, _T("famitracker-mcp.exe is missing from FamiTracker's folder. It comes in the same zip as FamiTracker.exe: ")
+				_T("put it next to FamiTracker.exe, then run the command."));
+	}
 }
 
 void CConnectClaudeDlg::OnChange()
@@ -888,10 +956,9 @@ void CConnectClaudeDlg::OnChange()
 
 void CConnectClaudeDlg::OnCopy()
 {
-	const int Value = Port();
-	if (Value == 0)
+	const CStringA Text(CurrentCommand());
+	if (Text.IsEmpty())
 		return;
-	const CStringA Text(m_pLink->Command(Value, m_sToken));
 	if (!OpenClipboard())
 		return;
 	EmptyClipboard();
@@ -908,14 +975,17 @@ void CConnectClaudeDlg::OnCopy()
 			GlobalFree(hMemory);
 	}
 	CloseClipboard();
-	SetDlgItemText(IDC_MCP_STATUS, _T("Copied. Paste it into a terminal and press Enter."));
+	SetDlgItemText(IDC_MCP_STATUS, Wsl() ? _T("Copied. Paste it into your WSL terminal and press Enter.") :
+		_T("Copied. Paste it into a terminal and press Enter."));
+	m_pLink->RememberWsl(Wsl());
 }
 
 void CConnectClaudeDlg::OnNewToken()
 {
 	m_sToken = NewToken();
 	ShowCommand();
-	SetDlgItemText(IDC_MCP_STATUS, _T("New access code: after OK, connect again with the new command (claude mcp remove famitracker first)."));
+	SetDlgItemText(IDC_MCP_STATUS, Wsl() ? _T("New access code: Claude Code in WSL uses it after OK, without connecting again.") :
+		_T("New access code: after OK, connect again with the new command (claude mcp remove famitracker first)."));
 }
 
 void CConnectClaudeDlg::OnOK()
@@ -923,6 +993,7 @@ void CConnectClaudeDlg::OnOK()
 	mcp_settings_t Settings;
 	Settings.Enabled = IsDlgButtonChecked(IDC_MCP_ENABLE) == BST_CHECKED;
 	Settings.DirectChanges = IsDlgButtonChecked(IDC_MCP_DIRECT) == BST_CHECKED;
+	Settings.Wsl = Wsl();
 	Settings.Port = Port();
 	Settings.Token = m_sToken;
 	if (Settings.Port == 0) {

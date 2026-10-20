@@ -1853,7 +1853,7 @@ BEGIN
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
 END
 
-IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 300, 246
+IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 300, 276
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Connect Claude Code"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1864,13 +1864,17 @@ BEGIN
     EDITTEXT        IDC_MCP_PORT,45,52,40,14,ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "",IDC_MCP_STATUS,92,52,201,16
     CONTROL         "Let Claude change the song directly (Ctrl+Z undoes each change). Otherwise its ideas arrive as clips you listen to and place with Edit > Clips.",IDC_MCP_DIRECT,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,7,74,286,20
-    GROUPBOX        "Connect once: run this in a terminal (PowerShell or Command Prompt)",IDC_STATIC,7,101,286,112
-    EDITTEXT        IDC_MCP_COMMAND,14,115,272,34,ES_MULTILINE | ES_READONLY | NOT WS_TABSTOP
-    PUSHBUTTON      "Copy",IDC_MCP_COPY,14,154,50,14
-    PUSHBUTTON      "New access code",IDC_MCP_NEWTOKEN,70,154,72,14
-    LTEXT           "It needs Claude Code installed. The access code in the command keeps other programs and web pages out. Then start claude in any folder and ask, for example: ""make the atmosphere darker"" or ""add a bass line"".",IDC_STATIC,14,174,272,34
-    DEFPUSHBUTTON   "OK",IDOK,188,225,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,243,225,50,14
+    GROUPBOX        "Connect once",IDC_STATIC,7,101,286,142
+    LTEXT           "Claude Code runs in:",IDC_STATIC,14,116,68,8
+    CONTROL         "Windows",IDC_MCP_WINDOWS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,84,115,48,10
+    CONTROL         "WSL (Linux on Windows)",IDC_MCP_WSL,"Button",BS_AUTORADIOBUTTON,136,115,110,10
+    LTEXT           "",IDC_MCP_WHERE,14,131,272,8,WS_GROUP
+    EDITTEXT        IDC_MCP_COMMAND,14,142,272,40,ES_MULTILINE | ES_READONLY | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_MCP_COPY,14,187,50,14,WS_GROUP
+    PUSHBUTTON      "New access code",IDC_MCP_NEWTOKEN,70,187,72,14
+    LTEXT           "",IDC_MCP_HINT,14,206,272,32
+    DEFPUSHBUTTON   "OK",IDOK,188,255,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,255,50,14
 END
 
 IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199

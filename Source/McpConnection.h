@@ -28,10 +28,13 @@ class CMainFrame;
 // in Api/Tools.cpp, the protocol in Api/Mcp.cpp; see MCP.md).
 //
 // Off until the user switches it on. It listens on 127.0.0.1 only, and every
-// request needs the access token from the command the dialog shows. Requests
-// arrive on the listener's thread (McpSocket.cpp) and are answered here on
-// the UI thread, where every change goes through the undo system. By default
-// Claude's ideas become clips; a setting lets it change the song directly.
+// request needs the access token from the command the dialog shows. Claude
+// Code in WSL connects through famitracker-mcp.exe (Api/Bridge.h), which WSL
+// runs on Windows, where it reaches 127.0.0.1 and reads the access token from
+// the settings. Requests arrive on the listener's thread (McpSocket.cpp) and
+// are answered here on the UI thread, where every change goes through the
+// undo system. By default Claude's ideas become clips; a setting lets it
+// change the song directly.
 class CMcpConnection
 {
 public:

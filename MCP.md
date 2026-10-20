@@ -1,13 +1,15 @@
 # Claude Code in FamiTracker
 
-On the `api` branch, FamiTracker can let [Claude Code](https://claude.com/claude-code)
+On the `recorder` and `api` branches, FamiTracker can let [Claude Code](https://claude.com/claude-code)
 work on the song you have open: read it, write parts, change the key, the
 tempo or the sounds, check it for clashes and play it for you. You ask in
 plain words ("make the atmosphere darker"); Claude works in bars, beats, note
 names and instruments, not hex rows.
 
 It works over MCP (the Model Context Protocol). FamiTracker itself is the
-MCP server, so there is nothing else to install besides Claude Code.
+MCP server, so there is nothing else to install besides Claude Code. Claude
+Code in WSL connects through `famitracker-mcp.exe`, which comes in the same
+zip (see [Claude Code in WSL](#claude-code-in-wsl)).
 
 ## Connecting, once
 
@@ -17,8 +19,9 @@ MCP server, so there is nothing else to install besides Claude Code.
    "On: Claude Code can connect at 127.0.0.1:46600".
 4. Decide how Claude's changes arrive (see below). Leave **Let Claude change
    the song directly** off to start with.
-5. Press **Copy**, open PowerShell or Command Prompt, paste and press Enter.
-   The command looks like this, with your own access code:
+5. With **Claude Code runs in: Windows** picked, press **Copy**, open
+   PowerShell or Command Prompt, paste and press Enter. The command looks
+   like this, with your own access code:
 
    ```
    claude mcp add --transport http --scope user famitracker http://127.0.0.1:46600/mcp --header "Authorization: Bearer 1f3a..."
@@ -29,6 +32,36 @@ MCP server, so there is nothing else to install besides Claude Code.
 From then on, start `claude` in any folder while FamiTracker is running.
 `/mcp` in Claude Code shows "famitracker" as connected. FamiTracker remembers
 the setting and starts listening whenever it starts.
+
+## Claude Code in WSL
+
+Claude Code in WSL (Linux on Windows) can't reach FamiTracker at 127.0.0.1:
+WSL has a network of its own. It connects through `famitracker-mcp.exe`
+instead, which comes in the same zip as FamiTracker.exe and stays next to it.
+WSL runs Windows programs on Windows, so the helper reaches FamiTracker there:
+no firewall rule, no mirrored networking, nothing to redo after a reboot.
+
+1. In FamiTracker: **File > Connect Claude Code...**, tick **Let Claude Code
+   connect** and pick **Claude Code runs in: WSL**.
+2. Press **Copy**, paste into your WSL terminal and press Enter. The command
+   looks like this, with the folder FamiTracker is in:
+
+   ```
+   claude mcp remove --scope user famitracker >/dev/null 2>&1; claude mcp add --transport stdio --scope user famitracker -- "$(wslpath 'C:\Users\you\FamiTracker\famitracker-mcp.exe')"
+   ```
+
+   It replaces an earlier `famitracker` setup, such as the Windows command
+   run in WSL.
+3. Press OK in FamiTracker, then start `claude` in WSL.
+
+Claude Code starts the helper by itself. The helper reads the port and the
+access code from FamiTracker's settings whenever Claude asks something, so a
+new access code or port needs no new setup. If FamiTracker moves to another
+folder, run the dialog's command again. It needs WSL's Windows interop, which
+is on unless `/etc/wsl.conf` turns it off (`[interop] enabled=false`).
+
+With mirrored networking (`networkingMode=mirrored` in `.wslconfig`), WSL
+shares 127.0.0.1 with Windows, and the Windows command works in WSL too.
 
 ## Asking
 
@@ -116,11 +149,15 @@ Ask for a version as a clip or a saved copy to compare it with the original.
 ## Safety
 
 - FamiTracker only listens on 127.0.0.1, so other computers can't reach it.
+  Claude Code in WSL comes through `famitracker-mcp.exe`, a Windows program
+  that connects to 127.0.0.1 like any other; nothing is opened to WSL's
+  network.
 - Every request needs the access code from the command. Web pages are turned
   away (FamiTracker checks where a request comes from), and so is anything
   without the code.
 - **New access code** in the dialog makes the old command stop working. Run
-  `claude mcp remove famitracker`, then the new command.
+  `claude mcp remove famitracker`, then the new command. In WSL there's
+  nothing to do: the helper reads the new code.
 - Untick **Let Claude Code connect** to turn it off.
 
 ## When something goes wrong
@@ -133,6 +170,15 @@ Ask for a version as a clip or a saved copy to compare it with the original.
 - **"the access token is missing or wrong"**: the command was made with an
   older access code. Remove and add it again with the current command.
 - **"A dialog is open in FamiTracker"**: close it and ask again.
+- **In WSL, "FamiTracker isn't running, or it doesn't listen on port 46600"**:
+  start FamiTracker, check that **Let Claude Code connect** is ticked, then
+  `/mcp` in Claude Code to reconnect.
+- **In WSL, the server fails to start** ("no such file", "exec format
+  error"): `famitracker-mcp.exe` isn't where the command says (did
+  FamiTracker move?), or WSL's Windows interop is off. Run the dialog's
+  command again.
+- **The Windows command in WSL connects to nothing**: that's WSL's own
+  127.0.0.1. Pick **WSL** in the dialog and run that command instead.
 
 ## Not yet
 
@@ -160,6 +206,16 @@ Ask for a version as a clip or a saved copy to compare it with the original.
   modes).
 - `Source/McpSocket.cpp`: the listener thread (Winsock, no MFC). It frames
   HTTP requests and hands each to the UI thread with `SendMessageTimeout`.
+- `Source/Api/Bridge.cpp` and `Source/Api/tools/famitracker-mcp.cpp`: the
+  connection for Claude Code in WSL, an MCP server over stdio. Each JSON-RPC
+  line becomes the HTTP request Claude Code would send (with the protocol
+  headers the endpoint checks) and each answer a line; an answer refused
+  before it was read (a wrong access code) still goes to its request.
+  `BridgeSocket.cpp` sends it to 127.0.0.1 (Winsock, or BSD sockets for the
+  tests). On Windows it reads the port and the access code from
+  `HKEY_CURRENT_USER\Software\FamiTracker\Claude Code` for every message;
+  `--port` and `--token` override them. The tests also run it against the
+  endpoint over real sockets.
 - `Source/McpConnection.cpp`: `SongHost` over the open document, the
   message-only window that answers on the UI thread, the settings (registry
   section "Claude Code") and the dialog. Song changes go through

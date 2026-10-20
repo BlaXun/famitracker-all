@@ -64,6 +64,15 @@ jobs:
           path: build/transcribe/Release/wav2ftm.exe
           if-no-files-found: error
 
+      # Claude Code in WSL starts it to reach FamiTracker (Source/Api/Bridge.h)
+      - name: Upload famitracker-mcp.exe
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: famitracker-mcp-Win32
+          path: build/api/Release/famitracker-mcp.exe
+          if-no-files-found: error
+
       # Publishes compiler diagnostics, toolchain details and facts about the built exe
       # as a check run named "Build report (<config> Win32)", readable through the
       # GitHub checks API (gh api repos/<owner>/<repo>/commits/<sha>/check-runs).
@@ -189,6 +198,13 @@ jobs:
         with:
           name: wav2ftm-Win32
           path: dist/wav2ftm
+
+      - name: Download famitracker-mcp.exe (recorder and api branches)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: famitracker-mcp-Win32
+          path: dist/famitracker-mcp
 
       - name: Package and publish
         env:
