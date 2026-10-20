@@ -37,7 +37,7 @@ class ToolSet;
 
 struct McpConfig {
 	int Port;
-	std::string Token;			// required as "Authorization: Bearer <token>"; empty: none
+	std::string Token;			// required as "Authorization: Bearer <token>"; without one, nothing is answered
 	std::string Version;		// FamiTracker's, for serverInfo
 
 	McpConfig() : Port(0) {}

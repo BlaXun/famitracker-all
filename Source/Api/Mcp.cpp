@@ -423,7 +423,9 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 		Response.Headers.push_back(std::make_pair(std::string("Allow"), std::string("POST")));
 		return Response;
 	}
-	if (!Config.Token.empty() && !TokenMatches(Request.Header("Authorization"), Config.Token))
+	if (Config.Token.empty())
+		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker has no access token set, so it answers nothing.");
+	if (!TokenMatches(Request.Header("Authorization"), Config.Token))
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker refused the request: the access token is missing or wrong. "
 			"File > Connect Claude Code in FamiTracker shows the command that connects with the right one.");
 	const std::string *pType = Request.Header("Content-Type");

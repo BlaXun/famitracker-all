@@ -1400,6 +1400,11 @@ void TestProtocol()
 	// Who may ask
 	CHECK_EQ(HandleMcp(Post("{}", ""), Config, Tools).Status, 403);
 	CHECK_EQ(HandleMcp(Post("{}", "wrong"), Config, Tools).Status, 403);
+	{
+		McpConfig Open = Config;	// without a token nothing is answered, not everything
+		Open.Token.clear();
+		CHECK_EQ(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", ""), Open, Tools).Status, 403);
+	}
 	HttpRequest Lowercase = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", "");
 	Lowercase.Headers.push_back(std::make_pair(std::string("authorization"), std::string("bearer   secret")));
 	CHECK_EQ(HandleMcp(Lowercase, Config, Tools).Status, 200);
