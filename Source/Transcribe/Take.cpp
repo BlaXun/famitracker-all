@@ -30,8 +30,8 @@
 
 namespace transcribe {
 
-const double ClickTrack::HIGH_HZ = 1760.0;
-const double ClickTrack::LOW_HZ = 1320.0;
+const double ClickTrack::HIGH_HZ = 1046.5;
+const double ClickTrack::LOW_HZ = 784.0;
 const double ClickTrack::SECONDS = 0.040;
 
 namespace {
@@ -107,7 +107,11 @@ long long ClickTrack::StartSample() const
 
 bool ClickTrack::Clicks(int beat) const
 {
-	return beat >= 0 && (beat < countIn || clickAlong);
+	if (beat < 0)
+		return false;
+	if (beat < countIn)
+		return true;
+	return clickAlong && (!barsOnly || beatsPerBar <= 0 || beat % beatsPerBar == 0);
 }
 
 void ClickTrack::Render(long long from, float *out, int count) const
@@ -118,8 +122,8 @@ void ClickTrack::Render(long long from, float *out, int count) const
 		return;
 
 	const long long length = (long long)std::llround(SECONDS * sampleRate);
-	const long long attack = std::max(1LL, (long long)std::llround(0.001 * sampleRate));
-	const double decay = 0.010 * sampleRate;	// samples
+	const long long attack = std::max(1LL, (long long)std::llround(0.0015 * sampleRate));	// no hard edge
+	const double decay = 0.007 * sampleRate;	// samples: short, so it taps rather than beeps
 
 	// The first beat whose click may reach into the block
 	const double first = (double(from - length) / sampleRate - leadSeconds) / beatSeconds;

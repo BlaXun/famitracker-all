@@ -302,11 +302,14 @@ struct ClickTrack {
 	double beatSeconds = 0.5;
 	int beatsPerBar = 4;		// the first beat of each bar clicks higher
 	int countIn = 4;			// beats before row 0, a whole number of bars
-	bool clickAlong = true;		// keep clicking after the count-in
-	double level = 0.4;			// peak level of an accented click, 0-1
+	bool clickAlong = true;		// keep clicking after the count-in...
+	bool barsOnly = false;		// ...on the first beat of each bar only
+	double level = 0.25;		// peak level of an accented click, 0-1
 
-	static const double HIGH_HZ;	// 1760 Hz, the first beat of a bar
-	static const double LOW_HZ;		// 1320 Hz, the other beats
+	// A soft wooden "tock" rather than a beep: a tone that fades within a
+	// few milliseconds, a fifth lower on the beats between bar starts
+	static const double HIGH_HZ;	// 1046.5 Hz (C6), the first beat of a bar
+	static const double LOW_HZ;		// 784 Hz (G5), the other beats
 	static const double SECONDS;	// length of one click (40 ms)
 
 	long long BeatSample(int beat) const;	// where a beat's click starts

@@ -1874,7 +1874,7 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
 END
 
-IDD_RECORD DIALOGEX 0, 0, 262, 275
+IDD_RECORD DIALOGEX 0, 0, 262, 292
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Record from microphone"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1893,18 +1893,21 @@ BEGIN
     CONTROL         "",IDC_REC_LEVEL,"msctls_progress32",WS_BORDER,62,131,130,10
     LTEXT           "",IDC_REC_LEVELTEXT,197,132,58,8
     LTEXT           "Click:",IDC_STATIC,7,150,50,8
-    COMBOBOX        IDC_REC_CLICK,62,148,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_REC_CLICK,62,148,130,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "",IDC_REC_TEMPO,197,150,58,8
-    LTEXT           "Delay:",IDC_STATIC,7,167,50,8
-    LTEXT           "",IDC_REC_DELAY,62,167,130,8
-    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,164,58,14
-    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,183,248,10
-    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,196,248,10
-    LTEXT           "",IDC_REC_STATUS,7,212,248,26
-    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,240,248,8
-    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,254,76,14
-    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,254,50,14
-    PUSHBUTTON      "Close",IDCANCEL,205,254,50,14
+    LTEXT           "Volume:",IDC_STATIC,7,167,50,8
+    CONTROL         "",IDC_REC_CLICKVOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,58,164,138,14
+    LTEXT           "",IDC_REC_CLICKVOLUMETEXT,197,167,58,8
+    LTEXT           "Delay:",IDC_STATIC,7,184,50,8
+    LTEXT           "",IDC_REC_DELAY,62,184,130,8
+    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,181,58,14
+    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,200,248,10
+    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,213,248,10
+    LTEXT           "",IDC_REC_STATUS,7,229,248,26
+    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,257,248,8
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,271,76,14
+    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,271,50,14
+    PUSHBUTTON      "Close",IDCANCEL,205,271,50,14
 END
 
 IDD_BACKING DIALOGEX 0, 0, 262, 180

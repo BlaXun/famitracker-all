@@ -67,6 +67,8 @@ const int NOT_MEASURED = -100000;		// m_iDelayMs before Test timing has measured
 const int TEST_TAPS = 8;				// clicks to tap along to in Test timing
 const double TEST_BEAT = 0.6;			// seconds between them (100 BPM)
 LPCTSTR SECTION = _T("Recorder");		// registry section for the dialog's options
+const int CLICK_VOLUME = 50;			// percent, at first
+const double LOUDEST_CLICK = 0.5;		// the click's peak level at 100%
 
 transcribe::Grid SongGrid(CFamiTrackerDoc *pDoc, unsigned int Track)
 {
@@ -223,7 +225,8 @@ CRecordDlg::CRecordDlg(CFamiTrackerView *pView) :
 	m_fLevel(-60.0f),
 	m_iLoudTicks(0),
 	m_iQuietTicks(0),
-	m_iTick(0)
+	m_iTick(0),
+	m_iPreviewTicks(0)
 {
 }
 
@@ -245,6 +248,7 @@ BEGIN_MESSAGE_MAP(CRecordDlg, CDialog)
 	ON_BN_CLICKED(IDC_REC_VOICE, &CRecordDlg::OnKindChanged)
 	ON_BN_CLICKED(IDC_REC_DRUMS, &CRecordDlg::OnKindChanged)
 	ON_CBN_SELCHANGE(IDC_REC_DEVICE, &CRecordDlg::OnDeviceChanged)
+	ON_WM_HSCROLL()
 END_MESSAGE_MAP()
 
 BOOL CRecordDlg::OnInitDialog()
@@ -254,12 +258,20 @@ BOOL CRecordDlg::OnInitDialog()
 	m_cChannel.SubclassDlgItem(IDC_REC_CHANNEL, this);
 	m_cDevice.SubclassDlgItem(IDC_REC_DEVICE, this);
 	m_cClick.SubclassDlgItem(IDC_REC_CLICK, this);
+	m_cClickVolume.SubclassDlgItem(IDC_REC_CLICKVOLUME, this);
 	m_cLevel.SubclassDlgItem(IDC_REC_LEVEL, this);
 	m_cLevel.SetRange(0, 100);
+	m_cClickVolume.SetRange(5, 100);
+	m_cClickVolume.SetPageSize(10);
 
-	m_cClick.AddString(_T("Count in, then click along"));
-	m_cClick.AddString(_T("Count in only"));
-	m_cClick.AddString(_T("No count-in, no click"));
+	static const struct { LPCTSTR Text; click_t Mode; } CLICKS[] = {
+		{ _T("Count in, then click every beat"), CLICK_ALONG },
+		{ _T("Count in, then click once a bar"), CLICK_BARS },
+		{ _T("Count in only"), CLICK_COUNT_IN },
+		{ _T("No count-in, no click"), CLICK_NONE },
+	};
+	for (size_t i = 0; i < sizeof(CLICKS) / sizeof(CLICKS[0]); ++i)
+		m_cClick.SetItemData(m_cClick.AddString(CLICKS[i].Text), static_cast<DWORD_PTR>(CLICKS[i].Mode));
 
 	LoadOptions();
 	FillChannels();
@@ -321,7 +333,12 @@ void CRecordDlg::LoadOptions()
 	const int Kind = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Kind"), 0));
 	CheckRadioButton(IDC_REC_AUTO, IDC_REC_DRUMS, KINDS[(Kind >= 0 && Kind < 4) ? Kind : 0]);
 	const int Click = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Click"), CLICK_ALONG));
-	m_cClick.SetCurSel((Click >= CLICK_ALONG && Click <= CLICK_NONE) ? Click : CLICK_ALONG);
+	m_cClick.SetCurSel(0);
+	for (int i = 0; i < m_cClick.GetCount(); ++i)
+		if (static_cast<int>(m_cClick.GetItemData(i)) == Click)
+			m_cClick.SetCurSel(i);
+	m_cClickVolume.SetPos(static_cast<int>(theApp.GetProfileInt(SECTION, _T("Click volume"), CLICK_VOLUME)));
+	ShowClickVolume();
 	CheckDlgButton(IDC_REC_PLAYSONG, theApp.GetProfileInt(SECTION, _T("Play song"), 1) ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_REC_EXPRESSION, theApp.GetProfileInt(SECTION, _T("Expression"), 1) ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_REC_ASCLIP, theApp.GetProfileInt(SECTION, _T("As clip"), 0) ? BST_CHECKED : BST_UNCHECKED);
@@ -340,7 +357,8 @@ void CRecordDlg::SaveOptions() const
 	else if (IsDlgButtonChecked(IDC_REC_DRUMS))
 		Kind = 3;
 	theApp.WriteProfileInt(SECTION, _T("Kind"), Kind);
-	theApp.WriteProfileInt(SECTION, _T("Click"), m_cClick.GetCurSel());
+	theApp.WriteProfileInt(SECTION, _T("Click"), ClickMode());
+	theApp.WriteProfileInt(SECTION, _T("Click volume"), m_cClickVolume.GetPos());
 	theApp.WriteProfileInt(SECTION, _T("Play song"), IsDlgButtonChecked(IDC_REC_PLAYSONG) == BST_CHECKED ? 1 : 0);
 	theApp.WriteProfileInt(SECTION, _T("Expression"), IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED ? 1 : 0);
 	theApp.WriteProfileInt(SECTION, _T("As clip"), IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED ? 1 : 0);
@@ -399,7 +417,7 @@ void CRecordDlg::EnableOptions(bool Enable)
 {
 	static const int IDS[] = {
 		IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_CHANNEL, IDC_REC_EXPRESSION,
-		IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_ASCLIP, IDC_REC_FROMFILE
+		IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_CLICKVOLUME, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_ASCLIP, IDC_REC_FROMFILE
 	};
 	for (size_t i = 0; i < sizeof(IDS) / sizeof(IDS[0]); ++i)
 		GetDlgItem(IDS[i])->EnableWindow(Enable ? TRUE : FALSE);
@@ -503,6 +521,8 @@ void CRecordDlg::OnTest()
 	Take.Click.beatsPerBar = 4;
 	Take.Click.countIn = TEST_TAPS;
 	Take.Click.clickAlong = false;
+	Take.Click.level = ClickLevel();
+	m_iPreviewTicks = 0;
 	Take.PlaySong = false;
 	Take.SongPlaying = false;
 	Take.SongStart = -1;
@@ -539,6 +559,53 @@ void CRecordDlg::OnDeviceChanged()
 		OpenDevice();
 }
 
+CRecordDlg::click_t CRecordDlg::ClickMode() const
+{
+	const int Item = m_cClick.GetCurSel();
+	return Item != CB_ERR ? static_cast<click_t>(m_cClick.GetItemData(Item)) : CLICK_ALONG;
+}
+
+double CRecordDlg::ClickLevel() const
+{
+	return LOUDEST_CLICK * m_cClickVolume.GetPos() / 100.0;
+}
+
+void CRecordDlg::ShowClickVolume()
+{
+	CString Text;
+	Text.Format(_T("%d%%"), m_cClickVolume.GetPos());
+	SetDlgItemText(IDC_REC_CLICKVOLUMETEXT, Text);
+}
+
+void CRecordDlg::PreviewClick()
+{
+	// Two clicks, the first of a bar and another, at the volume just set
+	if (m_iState != STATE_IDLE)
+		return;
+	transcribe::ClickTrack Click;
+	Click.sampleRate = SAMPLE_RATE;
+	Click.leadSeconds = 0.05;
+	Click.beatSeconds = 0.4;
+	Click.beatsPerBar = 2;
+	Click.countIn = 2;
+	Click.clickAlong = false;
+	Click.level = ClickLevel();
+	std::string Error;
+	if (m_pClick->Open(Click, Error))
+		m_iPreviewTicks = 1000 / TIMER_MS;	// a second
+}
+
+void CRecordDlg::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar *pScrollBar)
+{
+	if (pScrollBar != NULL && pScrollBar->GetSafeHwnd() == m_cClickVolume.GetSafeHwnd()) {
+		ShowClickVolume();
+		if (nSBCode == TB_ENDTRACK)	// let go of, or moved with the keys: play it
+			PreviewClick();
+		return;
+	}
+	CDialog::OnHScroll(nSBCode, nPos, pScrollBar);
+}
+
 void CRecordDlg::OnTimer(UINT_PTR nIDEvent)
 {
 	if (nIDEvent != TMR_POLL) {
@@ -548,6 +615,8 @@ void CRecordDlg::OnTimer(UINT_PTR nIDEvent)
 	const long long Before = m_pInput->Received();
 	const float Peak = m_pInput->Poll(m_iState != STATE_IDLE ? &m_pTake->Samples : NULL);
 	m_pClick->Poll();
+	if (m_iPreviewTicks > 0 && --m_iPreviewTicks == 0 && m_iState == STATE_IDLE)
+		m_pClick->Close();	// the volume preview is over
 	ShowLevel(m_pInput->Received() != Before ? Peak : -1.0f);
 
 	if (m_iState == STATE_COUNT_IN)
@@ -591,7 +660,8 @@ void CRecordDlg::StartTake()
 	Take.Row = pEditor->GetRow();
 
 	// The click, at the song's tempo: a beat is a row highlight
-	const int Click = m_cClick.GetCurSel();
+	const click_t Click = ClickMode();
+	m_iPreviewTicks = 0;
 	const double Rows = RowsPerSecond(m_pDocument, Track);
 	const transcribe::Beat Beat = SongBeat(m_pDocument, Track);
 	Take.Click = transcribe::ClickTrack();
@@ -599,7 +669,9 @@ void CRecordDlg::StartTake()
 	Take.Click.beatSeconds = Beat.rows / Rows;
 	Take.Click.beatsPerBar = Beat.perBar;
 	Take.Click.countIn = (Click == CLICK_NONE) ? 0 : Beat.countIn;
-	Take.Click.clickAlong = (Click == CLICK_ALONG);
+	Take.Click.clickAlong = (Click == CLICK_ALONG || Click == CLICK_BARS);
+	Take.Click.barsOnly = (Click == CLICK_BARS);
+	Take.Click.level = ClickLevel();
 
 	Take.Samples.clear();
 	Take.Skews.clear();

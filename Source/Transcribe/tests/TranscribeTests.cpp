@@ -1194,7 +1194,7 @@ void TestClickTrack()
 		float peak = 0.0f;
 		for (long long i = click.BeatSample(k); i < click.BeatSample(k) + length; ++i)
 			peak = std::max(peak, std::fabs(whole[size_t(i)]));
-		CHECK(peak > (k == 0 ? 0.3f : 0.2f));	// the bar's first click is the loudest
+		CHECK(peak > float(click.level) * (k == 0 ? 0.75f : 0.5f));	// the bar's first click is the loudest
 		CHECK(peak <= float(click.level) + 1e-6f);
 	}
 
@@ -1207,8 +1207,13 @@ void TestClickTrack()
 				++n;
 		return n;
 	};
-	CHECK(std::abs(crossings(0) - 35) <= 1);	// 1760 Hz
-	CHECK(std::abs(crossings(1) - 26) <= 1);	// 1320 Hz
+	CHECK(std::abs(crossings(0) - 21) <= 1);	// 1046.5 Hz
+	CHECK(std::abs(crossings(1) - 16) <= 1);	// 784 Hz
+
+	// Clicking once a bar after the count-in
+	click.clickAlong = true;
+	click.barsOnly = true;
+	CHECK(click.Clicks(1) && click.Clicks(4) && !click.Clicks(5) && !click.Clicks(7) && click.Clicks(8));
 }
 
 void TestBeatFor()

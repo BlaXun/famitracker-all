@@ -514,6 +514,8 @@
 #define IDC_CLIPNAME_PROMPT             1343
 #define IDC_CLIPNAME_EDIT               1344
 #define IDC_REC_ASCLIP                  1345
+#define IDC_REC_CLICKVOLUME             1346
+#define IDC_REC_CLICKVOLUMETEXT         1347
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -681,7 +683,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        326
 #define _APS_NEXT_COMMAND_VALUE         33133
-#define _APS_NEXT_CONTROL_VALUE         1346
+#define _APS_NEXT_CONTROL_VALUE         1348
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

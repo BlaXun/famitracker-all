@@ -57,6 +57,7 @@ protected:
 	afx_msg void OnFromFile();
 	afx_msg void OnKindChanged();
 	afx_msg void OnDeviceChanged();
+	afx_msg void OnHScroll(UINT nSBCode, UINT nPos, CScrollBar *pScrollBar);
 
 	DECLARE_MESSAGE_MAP()
 
@@ -67,10 +68,11 @@ private:
 		STATE_RECORDING,
 		STATE_TEST			// clicking for taps, to measure the delay
 	};
-	enum click_t {
-		CLICK_ALONG,		// count in, then click along
+	enum click_t {			// kept in the registry: add new ones at the end
+		CLICK_ALONG,		// count in, then click every beat
 		CLICK_COUNT_IN,		// count in only
-		CLICK_NONE
+		CLICK_NONE,
+		CLICK_BARS			// count in, then click the first beat of each bar
 	};
 
 	recording_kind_t SelectedKind(bool &Auto) const;
@@ -84,6 +86,10 @@ private:
 	void ShowLevel(float Peak);
 	void ShowDelay();
 	double Delay() const;
+	click_t ClickMode() const;
+	double ClickLevel() const;
+	void ShowClickVolume();
+	void PreviewClick();
 
 	void StartTake();
 	void StartSong();
@@ -105,6 +111,7 @@ private:
 	CComboBox m_cChannel;
 	CComboBox m_cDevice;
 	CComboBox m_cClick;
+	CSliderCtrl m_cClickVolume;
 	CProgressCtrl m_cLevel;
 
 	state_t m_iState;
@@ -115,5 +122,6 @@ private:
 	int m_iLoudTicks;			// ticks left to show "too loud"
 	int m_iQuietTicks;			// ticks in a row without sound
 	int m_iTick;
+	int m_iPreviewTicks;		// timer ticks until the click heard while setting its volume stops
 	CString m_sResult;
 };

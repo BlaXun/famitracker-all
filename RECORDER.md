@@ -38,7 +38,7 @@ clips to place again, as copies or linked.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 446 checks, mostly on synthesized audio, covering:
+- [x] Tests: 447 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - sung syllables: repeated ones on one pitch, scoops, glides and drifts
@@ -102,8 +102,11 @@ clips to place again, as copies or linked.
   - Pick what you'll record, the channel and the microphone. A level meter
     shows what the microphone hears, with "Too loud!" and "No sound?" hints.
   - The click counts in one bar at the song's tempo (a beat is the first row
-    highlight, a bar the second), then clicks along. It can also count in
-    only, or not click at all.
+    highlight, a bar the second), then clicks along on every beat or once a
+    bar. It can also count in only, or not click at all. The click is a
+    short, soft "tock" (C6 on a bar's first beat, G5 on the others, fading
+    within a few milliseconds), and its volume slider plays it when you let
+    go, so you can hear the level before recording.
   - "Play the song along" plays the song from the cursor while you record,
     starting so its first row sounds with the downbeat. The channel being
     recorded stays quiet, so an earlier take doesn't play along.
@@ -342,8 +345,8 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
     `3 3 3 3 3 3 2 2 2 2 2 2`.
   - Expression goes into the volume column and the first effect column.
 - **Takes recorded in FamiTracker** (`Take.cpp`):
-  - The click is a 40 ms decaying tone: 1760 Hz on the first beat of a bar,
-    1320 Hz on the others.
+  - The click is a decaying tone (1.5 ms rise, 7 ms decay, cut at 40 ms):
+    1046.5 Hz (C6) on the first beat of a bar, 784 Hz (G5) on the others.
   - The click and the microphone are separate Windows streams (`waveOut`,
     `waveIn`). While the click plays, the two sample counts are read together
     every 10 ms; their median difference says where each click falls in the
