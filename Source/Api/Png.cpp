@@ -100,11 +100,12 @@ void PutMatch(BitWriter &Out, int Length, int Distance)
 	Out.Put(static_cast<unsigned long>(Distance - DISTANCE_BASE[Code]), DISTANCE_EXTRA[Code]);
 }
 
+const int WINDOW = 32768, MIN_MATCH = 3, MAX_MATCH = 258, MAX_CHAIN = 96;
+const int HASH_SIZE = 1 << 15;
+
 // One deflate block with the fixed codes, matches found through hash chains
 std::string Deflate(const std::string &Data)
 {
-	const int WINDOW = 32768, MIN_MATCH = 3, MAX_MATCH = 258, MAX_CHAIN = 96;
-	const int HASH_SIZE = 1 << 15;
 	const unsigned char *p = reinterpret_cast<const unsigned char*>(Data.data());
 	const int Size = static_cast<int>(Data.size());
 	std::vector<int> Head(HASH_SIZE, -1), Previous(WINDOW, -1);

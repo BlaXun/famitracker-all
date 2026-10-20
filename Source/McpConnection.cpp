@@ -29,6 +29,7 @@
 // Standard and API headers come before stdafx.h, whose DEBUG_NEW macro would
 // otherwise rewrite the placement new inside the standard library.
 #include <algorithm>
+#include <map>
 #include <string>
 #include <vector>
 #include "Api/Http.h"
@@ -423,6 +424,8 @@ public:
 		Info.Track = static_cast<int>(Track);
 		Info.Tracks = static_cast<int>(pDoc->GetTrackCount());
 		Info.TrackName = Utf8(pDoc->GetTrackTitle(Track));
+		for (unsigned int t = 0; t < pDoc->GetTrackCount(); ++t)
+			Info.TrackNames.push_back(Utf8(pDoc->GetTrackTitle(t)));
 		Info.FrameRate = static_cast<int>(pDoc->GetFrameRate());
 		Info.Speed = static_cast<int>(pDoc->GetSongSpeed(Track));
 		Info.Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
@@ -525,6 +528,82 @@ public:
 			}
 		}
 		return true;
+	}
+
+	bool SelectTrack(int Track, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (!CanChange(Error))
+			return false;
+		if (Track < 0 || Track >= static_cast<int>(pDoc->GetTrackCount())) {
+			Error = "There's no such track.";
+			return false;
+		}
+		m_pMain->SelectTrack(static_cast<unsigned int>(Track));
+		return true;
+	}
+
+	// The new track's patterns: one per different content in each channel,
+	// so frames that play the same share it
+	int AddTrack(const std::string &Name, const std::vector<std::vector<ftapi::Cell> > &Channels, int Speed, int Tempo, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc->GetTrackCount() >= MAX_TRACKS) {
+			Error = "The module already has 64 tracks, FamiTracker's most.";
+			return -1;
+		}
+		const unsigned int Source = Track();
+		const unsigned int Length = pDoc->GetPatternLength(Source);
+		size_t Rows = Length;
+		for (size_t c = 0; c < Channels.size(); ++c)
+			Rows = std::max(Rows, Channels[c].size());
+		const unsigned int Frames = static_cast<unsigned int>(std::min<size_t>(MAX_FRAMES, (Rows + Length - 1) / Length));
+		const unsigned int ChannelCount = pDoc->GetAvailableChannels();
+
+		pDoc->LockDocument();
+		const int New = pDoc->AddTrack();
+		if (New >= 0) {
+			const unsigned int Added = static_cast<unsigned int>(New);
+			pDoc->SetTrackTitle(Added, Ansi(Name));
+			pDoc->SetPatternLength(Added, Length);
+			pDoc->SetFrameCount(Added, Frames);
+			pDoc->SetSongSpeed(Added, static_cast<unsigned int>(Speed));
+			pDoc->SetSongTempo(Added, static_cast<unsigned int>(Tempo));
+			for (unsigned int c = 0; c < ChannelCount; ++c) {
+				pDoc->SetEffColumns(Added, c, pDoc->GetEffColumns(Source, c));
+				std::map<std::string, unsigned int> Patterns;
+				std::vector<stChanNote> Notes(Length);
+				for (unsigned int f = 0; f < Frames; ++f) {
+					for (unsigned int r = 0; r < Length; ++r) {
+						const size_t Row = static_cast<size_t>(f) * Length + r;
+						Notes[r] = ToNote(c < Channels.size() && Row < Channels[c].size() ? Channels[c][Row] : ftapi::Cell());
+					}
+					const std::string Content(reinterpret_cast<const char*>(&Notes[0]), Notes.size() * sizeof(stChanNote));
+					std::map<std::string, unsigned int>::const_iterator Found = Patterns.find(Content);
+					unsigned int Pattern;
+					if (Found != Patterns.end())
+						Pattern = Found->second;
+					else {
+						Pattern = static_cast<unsigned int>(Patterns.size());
+						Patterns[Content] = Pattern;
+						for (unsigned int r = 0; r < Length; ++r)
+							pDoc->SetDataAtPattern(Added, Pattern, c, r, &Notes[r]);
+					}
+					pDoc->SetPatternAtFrame(Added, f, c, Pattern);
+				}
+			}
+		}
+		pDoc->UnlockDocument();
+		if (New < 0) {
+			Error = "FamiTracker couldn't add a track.";
+			return -1;
+		}
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_TRACK);	// the track box lists it
+		m_pMain->SelectTrack(static_cast<unsigned int>(New));
+		return New;
 	}
 
 	bool CanChange(std::string &Why)

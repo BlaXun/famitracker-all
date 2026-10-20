@@ -98,8 +98,17 @@ public:
 		std::vector<std::vector<Cell> > Columns;
 	};
 
+	// The module's tracks; the selected one plays from Rows and Info
+	struct StoredTrack {
+		std::string Name;
+		int Speed, Tempo;
+		std::vector<std::vector<Cell> > Rows;
+	};
+
 	SongInfo Info;
-	std::vector<std::vector<Cell> > Rows;	// per channel
+	std::vector<std::vector<Cell> > Rows;	// per channel, the selected track's
+	std::vector<StoredTrack> Tracks;
+	int Current;
 	std::vector<Clip> Clips;
 	std::vector<std::vector<std::vector<Cell> > > History;
 	std::vector<std::pair<int, int> > TempoUndo;
@@ -107,9 +116,11 @@ public:
 	bool Busy, Stopped;
 	std::string Saved;
 
-	explicit FakeSong(int Frames = 2) : Writes(0), LastLink(-2), PlayFirst(-1), PlayRows(-1), NextClipId(1), Busy(false), Stopped(false)
+	explicit FakeSong(int Frames = 2) : Current(0), Writes(0), LastLink(-2), PlayFirst(-1), PlayRows(-1), NextClipId(1), Busy(false),
+		Stopped(false)
 	{
 		Info.Title = "Test song";
+		Info.TrackName = "Town";
 		Info.FileName = "test.ftm";
 		Info.PatternLength = 64;
 		Info.Frames = Frames;
@@ -131,6 +142,23 @@ public:
 		AddInstrumentInfo(0, "Lead", "VRC6", true);
 		AddInstrumentInfo(1, "Bass", "2A03", true);
 		AddInstrumentInfo(2, "Square", "2A03", false);
+		StoredTrack First;
+		First.Name = Info.TrackName;
+		Tracks.push_back(First);
+	}
+
+	// The selected track goes back into Tracks, Track comes out
+	void Switch(int Track)
+	{
+		Tracks[Current].Name = Info.TrackName;
+		Tracks[Current].Speed = Info.Speed;
+		Tracks[Current].Tempo = Info.Tempo;
+		Tracks[Current].Rows = Rows;
+		Current = Track;
+		Info.TrackName = Tracks[Track].Name;
+		Info.Speed = Tracks[Track].Speed;
+		Info.Tempo = Tracks[Track].Tempo;
+		Rows = Tracks[Track].Rows;
 	}
 
 	void AddInstrumentInfo(int Index, const char *Name, const char *Chip, bool Releases)
@@ -167,6 +195,11 @@ public:
 	bool GetSong(SongInfo &Out, std::string &) override
 	{
 		Info.Frames = static_cast<int>(Rows[0].size()) / Info.PatternLength;
+		Info.Track = Current;
+		Info.Tracks = static_cast<int>(Tracks.size());
+		Info.TrackNames.clear();
+		for (size_t t = 0; t < Tracks.size(); ++t)
+			Info.TrackNames.push_back(static_cast<int>(t) == Current ? Info.TrackName : Tracks[t].Name);
 		Info.Clips.clear();
 		for (size_t i = 0; i < Clips.size(); ++i) {
 			ClipInfo C;
@@ -264,6 +297,38 @@ public:
 		Info.Speed = Speed;
 		Info.Tempo = Tempo;
 		return true;
+	}
+
+	bool SelectTrack(int Track, std::string &Error) override
+	{
+		if (Track < 0 || Track >= static_cast<int>(Tracks.size())) {
+			Error = "No such track.";
+			return false;
+		}
+		Switch(Track);
+		return true;
+	}
+
+	int AddTrack(const std::string &Name, const std::vector<std::vector<Cell> > &Channels, int Speed, int Tempo, std::string &Error) override
+	{
+		if (Tracks.size() >= 64) {
+			Error = "The module has 64 tracks, FamiTracker's most.";
+			return -1;
+		}
+		StoredTrack Track;
+		Track.Name = Name;
+		Track.Speed = Speed;
+		Track.Tempo = Tempo;
+		size_t Length = 64;
+		for (size_t c = 0; c < Channels.size(); ++c)
+			Length = std::max(Length, (Channels[c].size() + 63) / 64 * 64);
+		Track.Rows = Channels;
+		Track.Rows.resize(Rows.size());
+		for (size_t c = 0; c < Track.Rows.size(); ++c)
+			Track.Rows[c].resize(Length);
+		Tracks.push_back(Track);
+		Switch(static_cast<int>(Tracks.size()) - 1);
+		return Current;
 	}
 
 	bool Play(int First, int Count, std::string &) override
@@ -1866,6 +1931,112 @@ void TestPicture()
 	}
 }
 
+// Versions as tracks of their own
+
+int InstrumentIndex(const FakeSong &Song, const char *Name)
+{
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Name == Name)
+			return Song.Info.Instruments[i].Index;
+	return -1;
+}
+
+bool HasEffectNear(const std::vector<Cell> &Cells, int First, int End, int Effect)
+{
+	for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r)
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			if (Cells[static_cast<size_t>(r)].Effect[k] == Effect && Cells[static_cast<size_t>(r)].Param[k] != 0)
+				return true;
+	return false;
+}
+
+void TestVersions()
+{
+	FakeSong Song;
+	// A melody with long notes, chords as an arpeggio, a bass, drums on and between the beats
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 8, "E-4");
+	Song.Put(5, 16, "G-4", NO_INSTRUMENT, 12);
+	Song.Put(5, 32, "E-4");
+	Song.End(5, 48, NOTE_RELEASE);
+	Song.Put(0, 0, "C-3", 2);
+	Song.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][0].Param[0] = 0x47;
+	Song.End(0, 64);
+	Song.Put(2, 0, "C-2", 1);
+	for (int Row = 0; Row < 64; Row += 2)
+		Song.Put(3, Row, Row % 4 == 0 ? "kick" : "hihat", 2);
+	// Speed and tempo commands at the start
+	Song.Rows[3][0].Effect[0] = EFF_SPEED;
+	Song.Rows[3][0].Param[0] = 6;
+	Song.Rows[3][0].Effect[1] = EFF_SPEED;
+	Song.Rows[3][0].Param[1] = 150;
+	const std::vector<std::vector<Cell> > Day = Song.Rows;
+
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_version", Parse("{\"version\": \"night\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"Town (night)\" from track 1 \"Town\", which stays as it was.");
+	CHECK_HAS(Result.Text, "120 BPM instead of 150 (speed 6, tempo 120; 1 tempo command in the patterns changed too)");
+	CHECK_HAS(Result.Text, "volumes at 75%");
+	CHECK_HAS(Result.Text, "sparser drums (16 hits left out, the rest softer)");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 played by \"Soft lead\"");
+	CHECK_HAS(Result.Text, "2A03 Pulse 1 played by \"Soft chords\"");
+	CHECK_HAS(Result.Text, "vibrato 432 on VRC6 Pulse 1");
+	CHECK_HAS(Result.Text, "an echo of VRC6 Pulse 1 on VRC6 Pulse 2");
+	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "Town (night)");
+	CHECK(Song.Info.Speed == 6 && Song.Info.Tempo == 120);
+	// The day version is as it was
+	CHECK(Song.Tracks[0].Rows == Day && Song.Tracks[0].Speed == 6 && Song.Tracks[0].Tempo == 150);
+	// The night version: quieter, other sounds, fewer and softer drums, slower tempo command
+	const std::vector<std::vector<Cell> > &Night = Song.Rows;
+	CHECK_EQ(Night[5][0].Volume, 11);			// 15 at 75%
+	CHECK_EQ(Night[5][16].Volume, 9);			// 12 at 75%
+	CHECK(Night[5][0].Instrument == InstrumentIndex(Song, "Soft lead"));
+	CHECK(Night[0][0].Instrument == InstrumentIndex(Song, "Soft chords") && Night[0][0].Param[0] == 0x47);
+	CHECK(Night[2][0].Volume == NO_VOLUME && Night[2][0].Pitch() == Day[2][0].Pitch());	// the triangle has no volume
+	CHECK(Night[3][0].HasNote() && !Night[3][2].HasNote() && Night[3][4].HasNote() && !Night[3][6].HasNote());
+	CHECK_EQ(Night[3][0].Volume, 9);			// the drums at 60%
+	CHECK(Night[3][0].Param[0] == 6 && Night[3][0].Param[1] == 120);
+	CHECK(HasEffectNear(Night[5], 0, 8, EFF_VIBRATO));
+	CHECK(Night[6][3].HasNote() && Night[6][3].Pitch() == Day[5][0].Pitch());	// the echo, 3 rows later
+	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "Tracks: 1 \"Town\", 2 \"Town (night)\" (selected)");
+
+	// Switching tracks
+	CHECK_HAS(Tools.Call("select_track", Parse("{\"track\": 1}")).Text, "Track 1 \"Town\" is selected");
+	CHECK(Song.Current == 0 && Song.Rows == Day && Song.Info.Tempo == 150);
+	CHECK(!Tools.Call("select_track", Parse("{\"track\": \"night\"}")).IsError && Song.Current == 1);
+	CHECK(!Tools.Call("select_track", Parse("{\"track\": \"town\"}")).IsError && Song.Current == 0);
+	CHECK_HAS(Tools.Call("select_track", Parse("{\"track\": 5}")).Text, "There's no track 5. The tracks: 1 \"Town\", 2 \"Town (night)\".");
+	CHECK(Tools.Call("select_track", Parse("{\"track\": \"rain\"}")).IsError);
+	CHECK(Tools.Call("select_track", Parse("{}")).IsError);
+
+	// Another version changes only what it's given; names stay unique
+	Result = Tools.Call("make_version", Parse("{\"version\": \"tense\", \"to_mode\": \"minor\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 3 \"Town (tense)\" from track 1 \"Town\"");
+	CHECK_HAS(Result.Text, "from C major to C minor");
+	CHECK(Song.Info.Tempo == 150 && Song.Rows[5][8].Pitch() == Day[5][8].Pitch() - 1 && Song.Rows[3][2].HasNote());
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false, \"vibrato\": false, \"sounds\": false, "
+		"\"drums\": \"off\", \"tempo_percent\": 90}"));
+	CHECK_HAS(Result.Text, "Made track 4 \"Town (night 2)\"");
+	CHECK_HAS(Result.Text, "no drums");
+	CHECK_LACKS(Result.Text, "echo");
+	CHECK_LACKS(Result.Text, "vibrato");
+	CHECK(!Song.Rows[3][0].HasNote() && Song.Rows[5][0].Instrument == 0 && Song.Info.Tempo == 135);
+	// A version of a version keeps one bracket
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"rain\"}")).Text, "\"Town (rain)\"");
+	CHECK(Tools.Call("make_version", Parse("{}")).IsError);
+	CHECK(Tools.Call("make_version", Parse("{\"version\": \"night\", \"drums\": \"loud\"}")).IsError);
+	Song.Busy = true;
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "A dialog is open");
+	Song.Busy = false;
+	while (Song.Tracks.size() < 64)
+		Song.Tracks.push_back(Song.Tracks[0]);
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "64 tracks");
+}
+
 // The connection for Claude Code in WSL (famitracker-mcp): lines in, HTTP to
 // FamiTracker, lines out
 
@@ -2242,6 +2413,7 @@ int main()
 	TestFlow();
 	TestPng();
 	TestPicture();
+	TestVersions();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

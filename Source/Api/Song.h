@@ -71,6 +71,7 @@ struct SongInfo {
 	bool Modified;
 	int Track, Tracks;		// from 0
 	std::string TrackName;
+	std::vector<std::string> TrackNames;	// every track's, in order
 	int FrameRate;			// engine ticks a second (60 NTSC, 50 PAL)
 	int Speed, Tempo, SplitPoint;
 	int PatternLength, Frames, MaxFrames;
@@ -119,6 +120,17 @@ public:
 	virtual int AddInstrument(const Preset &Sound, const std::string &Chip, bool Sawtooth, std::string &Error) = 0;
 	// Undoable
 	virtual bool SetSpeedTempo(int Speed, int Tempo, std::string &Error) = 0;
+
+	// Tracks (FamiTracker's songs in one module). The tools work on the
+	// selected one; this selects another (from 0).
+	virtual bool SelectTrack(int Track, std::string &Error) = 0;
+	// A new track after the others, named Name, playing every channel's cells
+	// (Channels in channel order, from the first row) at Speed and Tempo, with
+	// the selected track's pattern length and effect columns. It becomes the
+	// selected track. Its number from 0, or -1 with the reason. FamiTracker
+	// can't undo it: the user removes a track in Module > Module properties.
+	virtual int AddTrack(const std::string &Name, const std::vector<std::vector<Cell> > &Channels, int Speed, int Tempo,
+		std::string &Error) = 0;
 
 	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
 	virtual void Stop() = 0;

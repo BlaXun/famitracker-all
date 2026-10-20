@@ -76,6 +76,8 @@ Some things to try:
 - "Add an echo to the melody."
 - "Check the song for notes that clash."
 - "Play bars 1 to 4."
+- "Make a night version of this song." / "Make the night version a bit less
+  slow and keep the drums."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
 clashes, range), looks at a picture of the notes, and plays it for you, then
@@ -117,6 +119,8 @@ anything; close the dialog and ask again.
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
+| `make_version` | Another version of the selected track as a new track: a night version, calm or tense music for a game state, an area's variant. The original stays as it was |
+| `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched |
 | `play`, `stop` | Plays bars for you |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -147,6 +151,31 @@ make separate clips, each starting from the original song.
   soft round sounds, a lower register.
 
 Ask for a version as a clip or a saved copy to compare it with the original.
+
+## Day and night versions
+
+Ask for a night version and Claude adds it as a new track in the same file,
+named like "Town (night)", next to the day version, which stays as it was.
+The two share the module's instruments, and FamiTracker shows the new track
+afterwards (switch with the track box in the toolbar).
+
+The night version is, unless you ask for something else:
+
+- 20% slower (tempo commands in the patterns slow down too),
+- quieter (every channel's volume at 75%),
+- with sparser, softer drums (only the hits on the beats, at 60%),
+- with a soft lead for the melody and soft chords for arpeggio chords,
+- and with a slow, gentle vibrato and an echo on the melody (no second echo
+  when the song already has one).
+
+Say what you want different, in words: "keep the drums", "only 10% slower",
+"no echo", "the melody an octave lower", "in dorian". Claude can also change
+the night version afterwards with the other tools, since it's the selected
+track. Other versions (tense, rain, underwater) change only what you ask
+for.
+
+Adding a track can't be undone with Ctrl+Z in FamiTracker; remove a version
+you don't want in **Module > Module properties**.
 
 ## Safety
 
