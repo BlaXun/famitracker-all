@@ -342,7 +342,7 @@ struct CClipsPanelWnd::Impl {
 		CardRects.clear();
 		int Y = SY(HEADER_HEIGHT) + SY(MARGIN) - Scroll;
 		for (size_t i = 0; i < Cards.size(); ++i) {
-			CardRects.push_back(CRect(SX(MARGIN), Y, std::max(SX(MARGIN) + SX(60), Client.right - SX(MARGIN)), Y + SY(CARD_HEIGHT)));
+			CardRects.push_back(CRect(SX(MARGIN), Y, std::max(SX(MARGIN) + SX(60), static_cast<int>(Client.right) - SX(MARGIN)), Y + SY(CARD_HEIGHT)));
 			Y += SY(CARD_HEIGHT) + SY(CARD_GAP);
 		}
 		Content = Y + Scroll + (Cards.empty() ? SY(120) : SY(70));
@@ -421,7 +421,7 @@ struct CClipsPanelWnd::Impl {
 				dc.FillSolidRect(X1, Y - 1, std::max(2, static_cast<int>(Step)), 3, Colour);
 				continue;
 			}
-			const int X2 = std::max(X1 + 2, Box.left + static_cast<int>((Note.Row + Note.Rows) * Step) - 1);
+			const int X2 = std::max(X1 + 2, static_cast<int>(Box.left) + static_cast<int>((Note.Row + Note.Rows) * Step) - 1);
 			const int Y = Box.bottom - 3 - ((Note.Pitch - Low) * Inner) / Span;
 			dc.FillSolidRect(X1, std::max(static_cast<int>(Box.top) + 1, Y - 1), X2 - X1, 3, Colour);
 		}
