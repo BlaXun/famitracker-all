@@ -130,7 +130,9 @@ clips to place again, as copies or linked.
 - [x] Clips (`Clips.cpp`, `ClipsDlg.cpp`; see Clips below): a take, a WAV
   file or the selection in the pattern editor kept with the song, placed at
   the cursor as a copy or linked. The clip editor gives notes another
-  instrument and transposes them.
+  instrument and transposes them. Placing a clip or a backing replaces the
+  notes and effects there, but the song's speed changes, jumps, skips and
+  halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay.
 - [x] Piano roll (`PianoRoll.cpp`, `NoteEdit.cpp`; see Piano roll below):
   View > Piano roll shows the song's notes on a grid under the pattern
   editor, time from left to right, and follows playback and the cursor.

@@ -72,7 +72,7 @@ anything; close the dialog and ask again.
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes and the chords that fit the melody bar by bar |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat) |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel |
 | `set_instrument` | Gives a channel's notes another instrument or preset |

@@ -113,6 +113,12 @@ bool IsExpressionEffect(unsigned char Effect)
 	return Effect == EF_SLIDE_UP || Effect == EF_SLIDE_DOWN || Effect == EF_VIBRATO || Effect == EF_PORTAMENTO;
 }
 
+// Effects that steer the whole song: speed and tempo, jumps, skips and halts
+bool IsSongEffect(unsigned char Effect)
+{
+	return Effect == EF_SPEED || Effect == EF_JUMP || Effect == EF_SKIP || Effect == EF_HALT;
+}
+
 // Does any frame of the track other than Frame play Pattern in Channel?
 bool UsedElsewhere(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned int Channel, unsigned int Frame, unsigned int Pattern)
 {
@@ -381,9 +387,12 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	// Write the cells. Rows between them are cleared in the channel (note,
 	// instrument and volume). Effects stay, except earlier slides and vibrato
 	// in the first effect column, which would play over the new notes; a
-	// replacing part clears every effect column.
+	// replacing part clears the effect columns too, except effects that steer
+	// the song (speed, jumps, skips and halts), so its loop keeps working. A
+	// new effect whose column holds one of those goes in a free column.
 	for (size_t p = 0; p < m_Parts.size(); ++p) {
 		const RecordedPart &Part = m_Parts[p];
+		const int Shown = static_cast<int>(pDoc->GetEffColumns(m_iTrack, Part.Channel)) + 1;	// the columns that play
 		size_t Next = 0;
 		for (int r = 0; r < Part.Rows; ++r) {
 			const unsigned int Position = m_iRow + static_cast<unsigned int>(r);
@@ -410,6 +419,8 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 			}
 			if (Part.Replace) {
 				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+					if (IsSongEffect(Note.EffNumber[c]))
+						continue;
 					Note.EffNumber[c] = EF_NONE;
 					Note.EffParam[c] = 0;
 				}
@@ -425,10 +436,20 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 				Note.Instrument = Cell.Instrument;
 				Note.Vol = Cell.Vol;
 				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
-					if (Cell.Effect[c] != EF_NONE) {
-						Note.EffNumber[c] = Cell.Effect[c];
-						Note.EffParam[c] = Cell.EffectParam[c];
+					if (Cell.Effect[c] == EF_NONE)
+						continue;
+					int Column = c;
+					if (IsSongEffect(Note.EffNumber[Column])) {
+						Column = -1;
+						for (int k = 0; k < Shown && k < MAX_EFFECT_COLUMNS && Column < 0; ++k) {
+							if (Note.EffNumber[k] == EF_NONE)
+								Column = k;
+						}
+						if (Column < 0)
+							continue;	// no room: the song's effect wins
 					}
+					Note.EffNumber[Column] = Cell.Effect[c];
+					Note.EffParam[Column] = Cell.EffectParam[c];
 				}
 			}
 			else {
