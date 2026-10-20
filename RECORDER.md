@@ -138,7 +138,9 @@ clips to place again, as copies or linked.
   editor, time from left to right, and follows playback and the cursor.
   Notes are drawn, painted as a melody with the mouse, moved, copied, made
   longer or shorter and erased, kept in a key if one is picked; clips are
-  placed with the mouse. Every change is undoable.
+  placed with the mouse. Effects are shown on the notes and put on them from
+  a menu: vibrato, tremolo, chords, slides, glides, bends and fades. Every
+  change is undoable.
 - [ ] Next, more natural input, built on the recorder:
   - start from a groove: pick a mood (overworld, battle, dungeon, boss,
     jingle), a tempo and a key, get a few bars of drums, bass and chords, and
@@ -283,6 +285,7 @@ The buttons along the top:
   (clicking a note picks its instrument there too). "Give the selected
   notes" changes theirs. An instrument for another chip is skipped for the
   instrument the channel already plays.
+- Effects: effects for the selected notes (see Effects below).
 - Clips: place a clip with the mouse (as a copy, or linked when "Place
   linked copies" is ticked), save the selected notes as a clip
   (Ctrl+Shift+C), or open Edit > Clips.
@@ -312,6 +315,41 @@ Editing, in the bright channel:
 - Notes can go one frame past the end of the song; the song gets the frame,
   and a note that sounded on to the old end still ends there.
 - Ctrl+Z undoes each change (one drag, one key) and Ctrl+Y redoes it.
+
+Effects:
+
+- The Effects button, the E key or a double-click on a note opens a menu of
+  effects for the selected notes (E and the double-click select the note
+  under the mouse when none is). Each item shows the effect it writes, so
+  the pattern editor's effect column becomes familiar:
+  - Vibrato, gentle (`452`), medium (`454`) or strong (`467`), starting just
+    after the note does.
+  - Tremolo, the volume wobbling: gentle (`753`) or strong (`777`).
+  - Chord, as an arpeggio (`0xy`): major, minor, a power chord, an octave,
+    sus4, sus2, diminished, augmented, or with a key picked the key's own
+    chord on each note.
+  - Slide into the note from a semitone, 2, 3 or 5 below, an octave below,
+    or 1 or 2 above (`Qxy`, `Rxy`); the note still lands where it was.
+  - Glide from the note before, quick, medium or slow (portamento, `3xx`).
+  - Bend at the end: down a semitone or two, a fall of an octave, or up a
+    semitone, half a beat before the note ends.
+  - Fade out over the note's second half, quick, medium or slow (`Axy`); the
+    next note gets its volume back.
+  - Remove all effects (but the song-wide ones).
+
+  Each group also has a "No ..." item to take that effect off. Drums get
+  only tremolo and fades, the triangle no volume effects, and DPCM none.
+- The effect goes on the notes chosen only: the notes after them sound as
+  before (a vibrato or chord they would take over is switched off on their
+  first row, or set again there). When an effect column is full, the menu's
+  message says so: add a column with the small arrow at the channel's name
+  in the pattern editor.
+- Effects are drawn on the notes: vibrato as a wave, tremolo dotted along the
+  top, a chord's other notes as thin bars in their lanes, a glide as a line
+  from the note before, a bend as a line to where it goes, a fade as a
+  wedge, other effects as a small mark on their row. Hovering a note lists
+  its effects in words, including ones it takes over from an earlier note.
+- Ctrl+Z undoes each one.
 
 How edits keep the song sounding right:
 

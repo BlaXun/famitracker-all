@@ -170,7 +170,8 @@ The application has no test suite of its own. What exists:
   and the `BF CLIPS` block read back, cut short at every byte.
   `NoteEditTests.cpp` covers the piano roll's edits: notes making way,
   releases and halts, volumes and instruments kept, switch-off effects,
-  song-wide effects staying, copy and paste. Same three commands with
+  song-wide effects staying, copy and paste, and the effects the piano roll
+  shows on notes and puts on them (lasting ones kept for the notes after). Same three commands with
   `Source/Tests` and `build/tests`; CI runs them in the Linux job. The
   stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP

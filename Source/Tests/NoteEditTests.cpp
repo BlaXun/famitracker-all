@@ -366,6 +366,258 @@ static void TestInstrument()
 	CHECK_EQ(Heard(ch), "2 15, 1 15, 3 15");
 }
 
+// The pattern editor's letter for an effect
+static char Letter(int effect)
+{
+	switch (effect) {
+	case EF_ARPEGGIO: return '0';
+	case EF_PORTA_UP: return '1';
+	case EF_PORTA_DOWN: return '2';
+	case EF_PORTAMENTO: return '3';
+	case EF_VIBRATO: return '4';
+	case EF_TREMOLO: return '7';
+	case EF_VOLUME_SLIDE: return 'A';
+	case EF_DELAY: return 'G';
+	case EF_PITCH: return 'P';
+	case EF_SLIDE_UP: return 'Q';
+	case EF_SLIDE_DOWN: return 'R';
+	case EF_NOTE_CUT: return 'S';
+	case EF_DUTY_CYCLE: return 'V';
+	}
+	return '?';
+}
+
+// "452 2-8 R22 10" per effect at work while a note sounds: the effect, and the rows it works on
+// (one row: just that one)
+static std::string Effects(const CChannelNotes &ch, int index)
+{
+	std::vector<CChannelNotes::EffectSpan> spans;
+	ch.GetEffects(index, spans);
+	std::string s;
+	for (size_t i = 0; i < spans.size(); ++i) {
+		char b[32];
+		if (spans[i].To == spans[i].From + 1)
+			std::snprintf(b, sizeof b, "%s%c%02X %d", s.empty() ? "" : " ", Letter(spans[i].Number), spans[i].Param, spans[i].From);
+		else
+			std::snprintf(b, sizeof b, "%s%c%02X %d-%d", s.empty() ? "" : " ", Letter(spans[i].Number), spans[i].Param, spans[i].From,
+				spans[i].To);
+		s += b;
+	}
+	return s;
+}
+
+static void TestEffectsShown()
+{
+	CChannelNotes ch = Channel(48);
+	ch.SetCell(0, With(Cell(C, 4, 0), 0, EF_ARPEGGIO, 0x47));		// a chord...
+	ch.SetCell(2, With(Cell(NONE), 1, EF_VIBRATO, 0x52));			// ...and vibrato from its third row
+	ch.SetCell(4, Cell(D, 4));										// the next note takes both over
+	ch.SetCell(8, With(Cell(E, 4), 0, EF_ARPEGGIO, 0x00));			// the chord stops
+	ch.SetCell(10, With(Cell(NONE), 0, EF_SLIDE_DOWN, 0x22));		// a bend down
+	ch.SetCell(12, With(With(Cell(F, 4), 0, EF_SLIDE_UP, 0x31), 1, EF_VIBRATO, 0x00));	// slides in, no vibrato
+	ch.SetCell(16, With(Cell(RELEASE), 0, EF_DELAY, 0x02));		// not part of the note
+	ch.SetCell(20, With(With(Cell(G, 4), 0, EF_PORTAMENTO, 0x06), 1, EF_DUTY_CYCLE, 0x01));	// glides in
+	ch.SetCell(24, With(Cell(A, 4), 0, EF_VOLUME_SLIDE, 0x02));	// glides too, and fades
+	ch.SetCell(28, With(Cell(HALT), 1, EF_SPEED, 0x05));
+	CHECK_EQ(Notes(ch), "C-4 0-4> D-4 4-8> E-4 8-12> F#4 12-16= G-4 20-24> A-4 24-28-");
+	CHECK_EQ(Effects(ch, 0), "047 0-4 452 2-4");
+	CHECK_EQ(Effects(ch, 1), "047 4-8 452 4-8");
+	CHECK_EQ(Effects(ch, 2), "452 8-12 R22 10");
+	CHECK_EQ(Effects(ch, 3), "Q31 12");
+	CHECK_EQ(Effects(ch, 4), "306 20-24 V01 20");
+	CHECK_EQ(Effects(ch, 5), "306 24-28 A02 24-28");
+	CHECK_EQ(Effects(ch, 6), "");	// no such note
+	// Which ones a note took over from an earlier one
+	std::vector<CChannelNotes::EffectSpan> spans;
+	ch.GetEffects(0, spans);
+	CHECK(spans.size() == 2 && !spans[0].Carried && !spans[1].Carried);
+	ch.GetEffects(1, spans);
+	CHECK(spans.size() == 2 && spans[0].Carried && spans[1].Carried);
+	ch.GetEffects(4, spans);
+	CHECK(spans.size() == 2 && !spans[0].Carried);
+	ch.GetEffects(5, spans);
+	CHECK(spans.size() == 2 && spans[0].Carried && !spans[1].Carried);
+
+	// A new note ends a slide that isn't its own; effects in columns that don't play don't count
+	CChannelNotes s = Channel(16, 1);
+	s.SetCell(0, With(Cell(C, 4, 0), 0, EF_PORTA_UP, 0x10));
+	s.SetCell(2, With(Cell(NONE), 0, EF_SLIDE_UP, 0x41));
+	s.SetCell(4, With(Cell(D, 4), 1, EF_VIBRATO, 0x44));
+	CHECK_EQ(Effects(s, 0), "110 0-2 Q41 2");
+	CHECK_EQ(Effects(s, 1), "");
+}
+
+static void TestSetLasting()
+{
+	// Vibrato on the second of three notes, from its second row: the third doesn't take it over
+	CChannelNotes ch = Channel(32);
+	ch.SetCell(0, Cell(C, 4, 0));
+	ch.SetCell(4, Cell(D, 4));
+	ch.SetCell(8, Cell(E, 4));
+	ch.SetCell(12, Cell(HALT));
+	const int second[] = { 4 }, third[] = { 8 }, first[] = { 0 };
+	const unsigned char gentle[] = { 0x52 }, off[] = { 0x00 };
+	const int one[] = { 1 }, none[] = { 0 };
+	CHECK(ch.SetLasting(second, 1, EF_VIBRATO, gentle, one));
+	CHECK(HasEffect(ch, 5, EF_VIBRATO, 0x52) && HasEffect(ch, 8, EF_VIBRATO, 0x00) && !HasEffect(ch, 4, EF_VIBRATO, 0x00));
+	CHECK_EQ(Effects(ch, 1), "452 5-8");
+	CHECK_EQ(Effects(ch, 2), "");
+	CHECK_EQ(Notes(ch), "C-4 0-4> D-4 4-8> E-4 8-12-");
+
+	// On the last note too: it starts without (the one before had it), and stops at its end, so it
+	// doesn't go on into the song's loop
+	CHECK(ch.SetLasting(third, 1, EF_VIBRATO, gentle, one));
+	CHECK(HasEffect(ch, 8, EF_VIBRATO, 0x00) && HasEffect(ch, 9, EF_VIBRATO, 0x52) && HasEffect(ch, 12, EF_VIBRATO, 0x00));
+	CHECK_EQ(Effects(ch, 2), "452 9-12");
+
+	// Taken off the second: the third keeps its own
+	CHECK(ch.SetLasting(second, 1, EF_VIBRATO, off, none));
+	CHECK(!HasEffect(ch, 5, EF_VIBRATO, 0x52));
+	CHECK_EQ(Effects(ch, 1), "");
+	CHECK_EQ(Effects(ch, 2), "452 9-12");
+
+	// A note in the middle of one that came from earlier: switched off on it, back on for the next
+	CChannelNotes v = Channel(32);
+	v.SetCell(0, With(Cell(C, 4, 0), 0, EF_TREMOLO, 0x63));
+	v.SetCell(4, Cell(D, 4));
+	v.SetCell(8, Cell(E, 4));
+	CHECK(v.SetLasting(second, 1, EF_TREMOLO, off, none));
+	CHECK(HasEffect(v, 4, EF_TREMOLO, 0x00) && HasEffect(v, 8, EF_TREMOLO, 0x63));
+	CHECK_EQ(Effects(v, 1), "");
+	CHECK_EQ(Effects(v, 2), "763 8-32");
+
+	// A chord per note, on two notes in a row; the note after them plays without
+	CChannelNotes c = Channel(32, 1);
+	c.SetCell(0, Cell(C, 4, 0));
+	c.SetCell(4, Cell(D, 4));
+	c.SetCell(8, Cell(E, 4));
+	c.SetCell(12, Cell(HALT));
+	const int two[] = { 4, 0 };
+	const unsigned char chords[] = { 0x37, 0x47 };	// D minor, C major
+	const int zero[] = { 0, 0 };
+	CHECK(c.SetLasting(two, 2, EF_ARPEGGIO, chords, zero));
+	CHECK(HasEffect(c, 0, EF_ARPEGGIO, 0x47) && HasEffect(c, 4, EF_ARPEGGIO, 0x37) && HasEffect(c, 8, EF_ARPEGGIO, 0x00));
+	CHECK_EQ(Effects(c, 1), "037 4-8");
+	CHECK_EQ(Effects(c, 2), "");
+
+	// A chord on a note that slid in: it plays where it landed instead
+	CChannelNotes q = Channel(16);
+	q.SetCell(0, With(Cell(C, 4, 0), 0, EF_SLIDE_UP, 0x32));	// lands on D-4
+	q.SetCell(8, Cell(HALT));
+	CHECK(q.SetLasting(first, 1, EF_ARPEGGIO, chords, none));
+	CHECK(At(q, 0).Note == D && !HasEffect(q, 0, EF_SLIDE_UP, 0x32) && HasEffect(q, 0, EF_ARPEGGIO, 0x37) && HasEffect(q, 8, EF_ARPEGGIO, 0x00));
+	CHECK_EQ(Notes(q), "D-4 0-8-");
+
+	// Gliding into the second note; the third doesn't glide
+	CChannelNotes g = Channel(32);
+	g.SetCell(0, Cell(C, 4, 0));
+	g.SetCell(4, Cell(G, 4));
+	g.SetCell(8, Cell(E, 4));
+	g.SetCell(12, Cell(HALT));
+	const unsigned char glide[] = { 0x06 };
+	CHECK(g.SetLasting(second, 1, EF_PORTAMENTO, glide, one));	// a delay doesn't apply to it
+	CHECK(HasEffect(g, 4, EF_PORTAMENTO, 0x06) && HasEffect(g, 8, EF_PORTAMENTO, 0x00));
+	CHECK_EQ(Effects(g, 1), "306 4-8");
+
+	// Fading out over the second half: the next note gets back the volume it had
+	CChannelNotes f = Channel(32, 1);
+	f.SetCell(0, Cell(C, 4, 0, 12));
+	f.SetCell(8, Cell(D, 4));
+	f.SetCell(16, Cell(HALT));
+	const unsigned char fade[] = { 0x02 };
+	const int half[] = { 4 };
+	CHECK(f.SetLasting(first, 1, EF_VOLUME_SLIDE, fade, half));
+	CHECK(HasEffect(f, 4, EF_VOLUME_SLIDE, 0x02) && HasEffect(f, 8, EF_VOLUME_SLIDE, 0x00) && At(f, 8).Vol == 12);
+	CHECK_EQ(Effects(f, 0), "A02 4-8");
+
+	// No room: one effect column, and the next note's is taken; the rest is done
+	CChannelNotes full = Channel(16, 1);
+	full.SetCell(0, Cell(C, 4, 0));
+	full.SetCell(4, With(Cell(D, 4), 0, EF_DUTY_CYCLE, 0x02));
+	full.SetCell(8, Cell(HALT));
+	CHECK(!full.SetLasting(first, 1, EF_VIBRATO, gentle, none));
+	CHECK(HasEffect(full, 0, EF_VIBRATO, 0x52) && HasEffect(full, 4, EF_DUTY_CYCLE, 0x02));
+
+	// Kinds that aren't put on notes this way, and notes that aren't there, change nothing
+	CChannelNotes same = ch;
+	CHECK(ch.SetLasting(first, 1, EF_DUTY_CYCLE, gentle, none) && ch.SetLasting(first, 1, EF_SPEED, gentle, none));
+	const int nowhere[] = { 3 };
+	CHECK(ch.SetLasting(nowhere, 1, EF_VIBRATO, gentle, none));
+	int a = 0, b = 0;
+	CHECK(!ch.Compare(same, a, b));
+}
+
+static void TestSlidesAndBends()
+{
+	// Sliding into the second note from below: it starts lower and still lands on E-4; the chord the
+	// first note had can't go on through a slide
+	CChannelNotes s = Channel(16);
+	s.SetCell(0, With(Cell(C, 4, 0), 0, EF_ARPEGGIO, 0x47));
+	s.SetCell(4, Cell(E, 4));
+	s.SetCell(8, Cell(HALT));
+	const int e[] = { 4 };
+	CHECK(s.SetSlideIn(e, 1, 2, 3));
+	CHECK_EQ(Notes(s), "C-4 0-4> E-4 4-8-");
+	CHECK(At(s, 4).Note == D && At(s, 4).Octave == 4 && HasEffect(s, 4, EF_SLIDE_UP, 0x32));
+	CHECK_EQ(Effects(s, 1), "Q32 4");
+
+	// From above, then none: it plays where it landed, still without the chord
+	CHECK(s.SetSlideIn(e, 1, -1, 3));
+	CHECK(At(s, 4).Note == F && HasEffect(s, 4, EF_SLIDE_DOWN, 0x31) && !HasEffect(s, 4, EF_SLIDE_UP, 0x32));
+	CHECK(s.SetSlideIn(e, 1, 0, 3));
+	CHECK(At(s, 4).Note == E && !HasEffect(s, 4, EF_SLIDE_DOWN, 0x31) && HasEffect(s, 4, EF_ARPEGGIO, 0x00));
+	CHECK_EQ(Effects(s, 1), "");
+	CHECK_EQ(Notes(s), "C-4 0-4> E-4 4-8-");
+
+	// A slide can't start below the lowest note
+	CChannelNotes low = Channel(8);
+	low.SetCell(0, Cell(Cs, 0, 0));
+	const int at0[] = { 0 };
+	CHECK(low.SetSlideIn(at0, 1, 5, 2));
+	CHECK(At(low, 0).Note == C && At(low, 0).Octave == 0 && HasEffect(low, 0, EF_SLIDE_UP, 0x21));
+
+	// Bends two rows before the end; a note of one row has no room for one
+	CChannelNotes b = Channel(32);
+	b.SetCell(0, Cell(C, 4, 0));
+	b.SetCell(8, Cell(D, 4));
+	b.SetCell(9, Cell(HALT));
+	const int both[] = { 0, 8 };
+	CHECK(b.SetBend(both, 2, -2, 4, 2));
+	CHECK(HasEffect(b, 6, EF_SLIDE_DOWN, 0x42) && At(b, 8).EffNumber[0] == EF_NONE && At(b, 8).EffNumber[1] == EF_NONE);
+	CHECK_EQ(Effects(b, 0), "R42 6");
+	CHECK(b.SetBend(both, 2, 1, 2, 2));
+	CHECK(HasEffect(b, 6, EF_SLIDE_UP, 0x21) && !HasEffect(b, 6, EF_SLIDE_DOWN, 0x42));
+	CHECK(b.SetBend(both, 2, 0, 4, 2));
+	CHECK_EQ(Effects(b, 0), "");
+}
+
+static void TestClearEffects()
+{
+	CChannelNotes x = Channel(32, 3);
+	x.SetCell(0, With(With(Cell(C, 4, 0), 0, EF_VIBRATO, 0x44), 1, EF_DUTY_CYCLE, 0x01));
+	x.SetCell(4, With(With(Cell(D, 4), 0, EF_SLIDE_UP, 0x32), 2, EF_SPEED, 0x04));	// lands on E-4
+	x.SetCell(6, With(Cell(NONE), 0, EF_NOTE_CUT, 0x03));
+	x.SetCell(8, Cell(E, 4));
+	x.SetCell(12, Cell(HALT));
+	CHECK_EQ(Effects(x, 1), "444 4-8 Q32 4 S03 6");
+
+	// The middle note: plain, where it landed; the vibrato that came from the first is switched off
+	// for it and back on for the last, the speed stays
+	const int mid[] = { 4 };
+	CHECK(x.ClearEffects(mid, 1));
+	CHECK(At(x, 4).Note == E && HasEffect(x, 4, EF_SPEED, 0x04) && HasEffect(x, 4, EF_VIBRATO, 0x00) && !HasEffect(x, 6, EF_NOTE_CUT, 0x03));
+	CHECK(HasEffect(x, 8, EF_VIBRATO, 0x44));
+	CHECK_EQ(Effects(x, 1), "");
+	CHECK_EQ(Effects(x, 2), "444 8-12");
+	CHECK_EQ(Notes(x), "C-4 0-4> E-4 4-8> E-4 8-12-");
+
+	// The first: its duty goes, so the next note gets it, which it had taken over
+	const int head[] = { 0 };
+	CHECK(x.ClearEffects(head, 1));
+	CHECK(!HasEffect(x, 0, EF_DUTY_CYCLE, 0x01) && !HasEffect(x, 0, EF_VIBRATO, 0x44) && HasEffect(x, 4, EF_DUTY_CYCLE, 0x01));
+	CHECK_EQ(Effects(x, 0), "");
+}
+
 static void TestCompare()
 {
 	CChannelNotes a = Channel(32), b = Channel(32);
@@ -388,6 +640,10 @@ int main()
 	TestColumns();
 	TestCopyPaste();
 	TestInstrument();
+	TestEffectsShown();
+	TestSetLasting();
+	TestSlidesAndBends();
+	TestClearEffects();
 	TestCompare();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;

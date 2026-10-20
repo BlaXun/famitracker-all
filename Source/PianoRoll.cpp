@@ -94,7 +94,7 @@ const transcribe::Scale SCALE_KINDS[SCALES] = {
 };
 
 // The buttons along the top
-enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_GRID, BUTTON_KEY, BUTTON_INSTRUMENT, BUTTON_CLIPS, BUTTON_CLOSE };
+enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_GRID, BUTTON_KEY, BUTTON_INSTRUMENT, BUTTON_EFFECTS, BUTTON_CLIPS, BUTTON_CLOSE };
 
 // Menu items (TrackPopupMenu returns them; they are never sent as commands)
 const UINT MENU_CHANNEL = 100;			// + channel
@@ -108,6 +108,7 @@ const UINT MENU_CLIP = 1000;			// + clip
 const UINT MENU_CLIP_LINKED = 2000;
 const UINT MENU_CLIP_SAVE = 2001;
 const UINT MENU_CLIP_MANAGE = 2002;
+const UINT MENU_EFFECT = 3000;			// + index into EFFECT_CHOICES
 
 struct RollNote {
 	int Start;			// rows from the start of the song
@@ -116,7 +117,103 @@ struct RollNote {
 	int Written;		// the pitch in the cell (a Qxy or Rxy slide starts there)
 	int Instrument;		// -1 when none was set yet
 	bool Released;		// ends on a release (===)
+	std::vector<CChannelNotes::EffectSpan> Effects;	// what works while it sounds
 };
+
+// Effects the Effects menu puts on notes
+enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR };
+enum effect_group_t { GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, EFFECT_GROUPS, GROUP_NONE = EFFECT_GROUPS };
+const TCHAR *const GROUP_NAMES[EFFECT_GROUPS] = {
+	_T("Vibrato"), _T("Tremolo (the volume wobbles)"), _T("Chord (arpeggio)"), _T("Slide into the note"), _T("Glide from the note before"),
+	_T("Bend at the end"), _T("Fade out")
+};
+struct EffectChoice {
+	int Group;				// effect_group_t
+	int Action;				// effect_action_t
+	unsigned char Number;	// the lasting effect (FX_LASTING)
+	int Value;				// its parameter; semitones for slides and bends (up from below, or up; negative: from above, or down)
+	int Speed;				// slides and bends, 1-15
+	const TCHAR *Name;
+};
+const EffectChoice EFFECT_CHOICES[] = {
+	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x52, 0, _T("Gentle") },
+	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x54, 0, _T("Medium") },
+	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x67, 0, _T("Strong") },
+	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x00, 0, _T("No vibrato") },
+	{ GROUP_TREMOLO, FX_LASTING, EF_TREMOLO, 0x53, 0, _T("Gentle") },
+	{ GROUP_TREMOLO, FX_LASTING, EF_TREMOLO, 0x77, 0, _T("Strong") },
+	{ GROUP_TREMOLO, FX_LASTING, EF_TREMOLO, 0x00, 0, _T("No tremolo") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x47, 0, _T("Major") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x37, 0, _T("Minor") },
+	{ GROUP_CHORD, FX_KEY_CHORD, EF_ARPEGGIO, 0x00, 0, _T("The key's chord on each note") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x70, 0, _T("Power chord (a fifth)") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0xC0, 0, _T("Octave") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x57, 0, _T("Sus4") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x27, 0, _T("Sus2") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x36, 0, _T("Diminished") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x48, 0, _T("Augmented") },
+	{ GROUP_CHORD, FX_LASTING, EF_ARPEGGIO, 0x00, 0, _T("No chord") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 1, 3, _T("From a semitone below") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 2, 3, _T("From 2 semitones below") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 3, 3, _T("From 3 semitones below") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 5, 4, _T("From 5 semitones below") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 12, 6, _T("From an octave below") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, -1, 3, _T("From a semitone above") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, -2, 3, _T("From 2 semitones above") },
+	{ GROUP_SLIDE, FX_SLIDE_IN, 0, 0, 0, _T("No slide") },
+	{ GROUP_GLIDE, FX_LASTING, EF_PORTAMENTO, 0x0C, 0, _T("Quick") },
+	{ GROUP_GLIDE, FX_LASTING, EF_PORTAMENTO, 0x06, 0, _T("Medium") },
+	{ GROUP_GLIDE, FX_LASTING, EF_PORTAMENTO, 0x03, 0, _T("Slow") },
+	{ GROUP_GLIDE, FX_LASTING, EF_PORTAMENTO, 0x00, 0, _T("No glide") },
+	{ GROUP_BEND, FX_BEND, 0, -1, 2, _T("Down a semitone") },
+	{ GROUP_BEND, FX_BEND, 0, -2, 2, _T("Down 2 semitones") },
+	{ GROUP_BEND, FX_BEND, 0, -12, 5, _T("Fall an octave") },
+	{ GROUP_BEND, FX_BEND, 0, 1, 2, _T("Up a semitone") },
+	{ GROUP_BEND, FX_BEND, 0, 0, 0, _T("No bend") },
+	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x04, 0, _T("Quick") },
+	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x02, 0, _T("Medium") },
+	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x01, 0, _T("Slow") },
+	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x00, 0, _T("No fade") },
+	{ GROUP_NONE, FX_CLEAR, 0, 0, 0, _T("Remove all effects") },
+};
+const int EFFECT_CHOICE_COUNT = sizeof(EFFECT_CHOICES) / sizeof(EFFECT_CHOICES[0]);
+
+// The effect a choice writes, as the pattern editor shows it ("452", "Q32"); empty for none
+CString EffectCode(const EffectChoice &Choice)
+{
+	CString Code;
+	switch (Choice.Action) {
+	case FX_LASTING:
+		if (Choice.Value != 0)
+			Code.Format(_T("%c%02X"), EFF_CHAR[Choice.Number - 1], Choice.Value);
+		break;
+	case FX_SLIDE_IN:
+	case FX_BEND:
+		if (Choice.Value != 0)
+			Code.Format(_T("%c%X%X"), Choice.Value > 0 ? _T('Q') : _T('R'), Choice.Speed, std::min(15, std::abs(Choice.Value)));
+		break;
+	}
+	return Code;
+}
+
+// A chord's name from an arpeggio's two notes above the root
+CString ChordName(int Param)
+{
+	switch (Param) {
+	case 0x47: return _T("major");
+	case 0x37: return _T("minor");
+	case 0x70: case 0x07: return _T("power chord");
+	case 0xC0: case 0x0C: return _T("octave");
+	case 0x57: return _T("sus4");
+	case 0x27: return _T("sus2");
+	case 0x36: return _T("diminished");
+	case 0x48: return _T("augmented");
+	case 0x49: return _T("major sixth");
+	case 0x38: return _T("first inversion");
+	case 0x59: return _T("second inversion");
+	}
+	return CString();
+}
 
 bool IsBlackKey(int Pitch)
 {
@@ -241,6 +338,7 @@ std::vector<RollNote> RollNotes(const CChannelNotes &Channel, int Rows)
 		Shown.Written = Note.Written;
 		Shown.Instrument = Note.Instrument;
 		Shown.Released = Note.Released;
+		Channel.GetEffects(i, Shown.Effects);
 		Out.push_back(Shown);
 	}
 	return Out;
@@ -302,7 +400,7 @@ struct CPianoRollWnd::Impl {
 
 	// What the mouse or a key is doing to the notes
 	enum drag_t { DRAG_NONE, DRAG_KEYS, DRAG_RULER, DRAG_DRAW, DRAG_MOVE, DRAG_RESIZE, DRAG_ERASE, DRAG_SELECT, DRAG_PAINT };
-	enum edit_t { EDIT_NONE, EDIT_ADD, EDIT_REMOVE, EDIT_RESIZE, EDIT_MOVE, EDIT_PAINT, EDIT_PASTE, EDIT_INSTRUMENT };
+	enum edit_t { EDIT_NONE, EDIT_ADD, EDIT_REMOVE, EDIT_RESIZE, EDIT_MOVE, EDIT_PAINT, EDIT_PASTE, EDIT_INSTRUMENT, EDIT_EFFECT };
 	drag_t Drag;
 	CPoint DragFrom;
 	bool DragMoved;		// further than DRAG_DISTANCE
@@ -329,6 +427,8 @@ struct CPianoRollWnd::Impl {
 	int StrokeLast;
 	int PasteRow;
 	int GiveInstrument;
+	int ChosenEffect;	// into EFFECT_CHOICES
+	mutable bool EffectFits;	// the effects fitted in the effect columns
 	CRect Band;			// selecting with Ctrl+drag
 
 	// Copied notes
@@ -359,7 +459,7 @@ struct CPianoRollWnd::Impl {
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
-		GiveInstrument(-1), HasCopied(false), PlacingClip(-1), PlaceRow(-1), BackSize(0, 0)
+		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), HasCopied(false), PlacingClip(-1), PlaceRow(-1), BackSize(0, 0)
 	{
 	}
 
@@ -994,9 +1094,241 @@ struct CPianoRollWnd::Impl {
 			if (!Selection.empty())
 				Notes_.SetInstrument(&Selection[0], static_cast<int>(Selection.size()), GiveInstrument);
 			break;
+		case EDIT_EFFECT:
+			if (!Selection.empty())
+				EffectFits = PutEffect(Notes_);
+			break;
 		case EDIT_NONE:
 			break;
 		}
+	}
+
+	// Effects
+
+	int BeatRows() const { return Beat > 0 ? Beat : 4; }
+
+	// The chord of the key on a note, as an arpeggio's two notes above it: its third and fifth in
+	// the key's scale (a pentatonic key's from its major or minor); a major chord outside the key
+	unsigned char KeyChord(int Pitch) const
+	{
+		if (!KeyApplies() || !InKey(Pitch))
+			return 0x47;
+		const transcribe::Scale Kind = (KeyScale == SCALE_MINOR || KeyScale == SCALE_MINOR_PENTATONIC) ?
+			transcribe::Scale::Minor : transcribe::Scale::Major;
+		int Steps[2] = { 0, 0 };
+		int Above = Pitch;
+		for (int Step = 1; Step <= 4; ++Step) {
+			do
+				++Above;
+			while (transcribe::SnapToScale(Above, KeyRoot, Kind) != Above);
+			if (Step == 2)
+				Steps[0] = Above - Pitch;
+			if (Step == 4)
+				Steps[1] = Above - Pitch;
+		}
+		return static_cast<unsigned char>((std::min(15, Steps[0]) << 4) | std::min(15, Steps[1]));
+	}
+
+	// The chosen effect on the selected notes; false if some didn't fit in the effect columns
+	bool PutEffect(CChannelNotes &Notes_) const
+	{
+		const EffectChoice &Choice = EFFECT_CHOICES[ChosenEffect];
+		const int Count = static_cast<int>(Selection.size());
+		switch (Choice.Action) {
+		case FX_LASTING:
+		case FX_KEY_CHORD: {
+			std::vector<unsigned char> Params(Selection.size(), static_cast<unsigned char>(Choice.Value));
+			std::vector<int> Delays(Selection.size(), 0);
+			for (size_t k = 0; k < Selection.size(); ++k) {
+				const int Index = Notes_.FindNote(Selection[k]);
+				if (Index < 0)
+					continue;
+				const CChannelNotes::Note &Note = Notes_.GetNote(Index);
+				const int Rows = Note.End - Note.Start;
+				if (Choice.Number == EF_VIBRATO || Choice.Number == EF_TREMOLO)
+					Delays[k] = Rows >= 2 ? std::max(1, BeatRows() / 4) : 0;	// it starts once the note has begun
+				else if (Choice.Number == EF_VOLUME_SLIDE)
+					Delays[k] = Rows / 2;		// the second half fades
+				if (Choice.Action == FX_KEY_CHORD)
+					Params[k] = KeyChord(Note.Pitch);
+			}
+			return Notes_.SetLasting(&Selection[0], Count, Choice.Number, &Params[0], &Delays[0]);
+		}
+		case FX_SLIDE_IN:
+			return Notes_.SetSlideIn(&Selection[0], Count, Choice.Value, Choice.Speed);
+		case FX_BEND:
+			return Notes_.SetBend(&Selection[0], Count, Choice.Value, Choice.Speed, std::max(1, BeatRows() / 2));
+		case FX_CLEAR:
+			return Notes_.ClearEffects(&Selection[0], Count);
+		}
+		return true;
+	}
+
+	// Which effects suit the bright channel: none for samples, no pitch effects for drums, nothing
+	// with the volume for the triangle (it has none)
+	bool EffectFitsChannel(int Group) const
+	{
+		if (IsDPCM(Channel) || Channel >= static_cast<int>(ChanIDs.size()))
+			return false;
+		if (IsNoise(Channel))
+			return Group == GROUP_TREMOLO || Group == GROUP_FADE || Group == GROUP_NONE;
+		if (ChanIDs[static_cast<size_t>(Channel)] == CHANID_TRIANGLE)
+			return Group != GROUP_TREMOLO && Group != GROUP_FADE;
+		return true;
+	}
+
+	// The Effects menu, at Point (screen coordinates), for the selected notes
+	void EffectsMenu(CPoint Point)
+	{
+		if (Dirty)
+			Read();
+		if (Notes.empty())
+			return;
+		const bool Any = !Selection.empty() && !IsDPCM(Channel);
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		if (IsDPCM(Channel))
+			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("The DPCM channel plays samples, without effects"));
+		else if (Selection.empty())
+			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("Select notes first: click one, or Ctrl+drag around some"));
+		else {
+			CString Text;
+			Text.Format(_T("For the %s selected:"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
+			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Text);
+		}
+		Menu.AppendMenu(MF_SEPARATOR);
+		for (int Group = 0; Group < EFFECT_GROUPS; ++Group) {
+			CMenu Choices;
+			Choices.CreatePopupMenu();
+			for (int i = 0; i < EFFECT_CHOICE_COUNT; ++i) {
+				const EffectChoice &Choice = EFFECT_CHOICES[i];
+				if (Choice.Group != Group)
+					continue;
+				const bool Off = Choice.Action != FX_KEY_CHORD && Choice.Value == 0;
+				if (Off)
+					Choices.AppendMenu(MF_SEPARATOR);
+				CString Item = Choice.Name;
+				UINT Flags = MF_STRING;
+				if (Choice.Action == FX_KEY_CHORD && !KeyApplies()) {
+					Item += _T(" (pick a key first)");
+					Flags |= MF_GRAYED;
+				}
+				const CString Code = EffectCode(Choice);
+				if (!Code.IsEmpty())
+					Item += _T("\t") + Code;
+				Choices.AppendMenu(Flags, MENU_EFFECT + i, Item);
+			}
+			CString Name = GROUP_NAMES[Group];
+			if (Any && !EffectFitsChannel(Group))
+				Name += IsNoise(Channel) ? _T(" (not for drums)") : _T(" (the triangle has no volume)");
+			Menu.AppendMenu(MF_POPUP | (Any && EffectFitsChannel(Group) ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(Choices.Detach()), Name);
+		}
+		Menu.AppendMenu(MF_SEPARATOR);
+		for (int i = 0; i < EFFECT_CHOICE_COUNT; ++i) {
+			if (EFFECT_CHOICES[i].Group == GROUP_NONE)
+				Menu.AppendMenu(MF_STRING | (Any ? 0 : MF_GRAYED), MENU_EFFECT + i, EFFECT_CHOICES[i].Name);
+		}
+		const int Choice = static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			Point.x, Point.y, pWnd));
+		if (Choice >= static_cast<int>(MENU_EFFECT) && Choice < static_cast<int>(MENU_EFFECT) + EFFECT_CHOICE_COUNT)
+			ApplyEffect(Choice - static_cast<int>(MENU_EFFECT));
+	}
+
+	void ApplyEffect(int Index)
+	{
+		if (Selection.empty() || Index < 0 || Index >= EFFECT_CHOICE_COUNT)
+			return;
+		const EffectChoice &Choice = EFFECT_CHOICES[Index];
+		BeginEdit(EDIT_EFFECT);
+		ChosenEffect = Index;
+		EffectFits = true;
+		Recompute();
+		int First = 0, Last = 0;
+		const bool Changed = After.Compare(Before, First, Last);
+		const bool Fitted = EffectFits;
+		if (!Commit(Selection.front()))
+			return;
+		CString Text;
+		const CString Notes_ = Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"));
+		const CString Code = EffectCode(Choice);
+		if (!Changed)
+			Text.Format(_T("The %s had that already."), static_cast<LPCTSTR>(Notes_));
+		else if (Choice.Group == GROUP_NONE)
+			Text.Format(_T("Took the effects off %s. Ctrl+Z puts them back."), static_cast<LPCTSTR>(Notes_));
+		else
+			Text.Format(_T("%s: %s%s%s%s on %s. Ctrl+Z undoes it."), GROUP_NAMES[Choice.Group], Choice.Name,
+				Code.IsEmpty() ? _T("") : _T(" ("), static_cast<LPCTSTR>(Code), Code.IsEmpty() ? _T("") : _T(")"), static_cast<LPCTSTR>(Notes_));
+		if (!Fitted)
+			Text += _T(" Some effects didn't fit: add an effect column with the small arrow at the channel's name in the pattern editor.");
+		else if (Choice.Action == FX_BEND && Choice.Value != 0)
+			Text += _T(" (Notes of one row are too short to bend.)");
+		Say(Text);
+	}
+
+	// What works on a note, in words: "vibrato 452 after 1 row, chord 047 (major)"
+	CString EffectsText(const RollNote &Note) const
+	{
+		CString Text;
+		for (size_t i = 0; i < Note.Effects.size(); ++i) {
+			const CChannelNotes::EffectSpan &Span = Note.Effects[i];
+			if (IsSlideEffect(Span.Number) && Span.From == Note.Start)
+				continue;	// the slide into it is told already
+			CString Code, Part;
+			if (Span.Number > EF_NONE && Span.Number < EF_COUNT)
+				Code.Format(_T("%c%02X"), EFF_CHAR[Span.Number - 1], Span.Param);
+			const bool Carried = Span.From == Note.Start && Span.Carried;
+			switch (Span.Number) {
+			case EF_VIBRATO:
+				Part = _T("vibrato ") + Code;
+				break;
+			case EF_TREMOLO:
+				Part = _T("tremolo ") + Code;
+				break;
+			case EF_ARPEGGIO: {
+				Part = _T("chord ") + Code;
+				const CString Name = ChordName(Span.Param);
+				if (!Name.IsEmpty())
+					Part += _T(" (") + Name + _T(")");
+				break;
+			}
+			case EF_PORTAMENTO:
+				Part = (Span.From == Note.Start ? _T("glides in ") : _T("glide ")) + Code;
+				break;
+			case EF_PORTA_UP:
+				Part = _T("pitch rising ") + Code;
+				break;
+			case EF_PORTA_DOWN:
+				Part = _T("pitch falling ") + Code;
+				break;
+			case EF_VOLUME_SLIDE:
+				Part = ((Span.Param & 0x0F) != 0 ? _T("fades out ") : _T("fades in ")) + Code;
+				break;
+			case EF_SLIDE_UP:
+			case EF_SLIDE_DOWN:
+				Part.Format(_T("bends %s %d %s %s"), Span.Number == EF_SLIDE_UP ? _T("up") : _T("down"), Span.Param & 0x0F,
+					(Span.Param & 0x0F) == 1 ? _T("semitone") : _T("semitones"), static_cast<LPCTSTR>(Code));
+				break;
+			default:
+				Part = Code;
+				break;
+			}
+			if (Carried)
+				Part += _T(" from an earlier note");
+			else if (Span.From > Note.Start && !IsSlideEffect(Span.Number) && Span.To > Span.From + 1) {
+				CString After;
+				After.Format(_T(" after %s"), static_cast<LPCTSTR>(Plural(Span.From - Note.Start, _T("row"), _T("rows"))));
+				Part += After;
+			}
+			if (!Text.IsEmpty())
+				Text += _T(", ");
+			Text += Part;
+		}
+		return Text;
+	}
+
+	static bool IsSlideEffect(unsigned char Number)
+	{
+		return Number == EF_SLIDE_UP || Number == EF_SLIDE_DOWN;
 	}
 
 	// Works the edit out again on the channel as it was, for the picture
@@ -1358,11 +1690,23 @@ struct CPianoRollWnd::Impl {
 
 	void DoubleClick(CPoint Point, UINT Flags)
 	{
-		// On another channel's note: that channel is edited from now on, even with Shift held
+		// On another channel's note: that channel is edited from now on, even with Shift held. On one of
+		// the bright channel's notes: the Effects menu for it
 		int HitChannel = -1, HitIndex = -1;
 		Layout();
-		if (Drag == DRAG_NONE && PlacingClip < 0 && HitNote(Point, HitChannel, HitIndex) && HitChannel != Channel)
+		const bool Hit = Drag == DRAG_NONE && PlacingClip < 0 && HitNote(Point, HitChannel, HitIndex);
+		if (Hit && HitChannel != Channel)
 			GoTo(HitChannel, Notes[static_cast<size_t>(HitChannel)][static_cast<size_t>(HitIndex)].Start);
+		else if (Hit && (Flags & (MK_CONTROL | MK_SHIFT)) == 0 && !OnEnd(Point, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)])) {
+			const int Start = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)].Start;
+			if (!Contains(Selection, Start))
+				Selection.assign(1, Start);
+			pWnd->Invalidate(FALSE);
+			pWnd->UpdateWindow();
+			CPoint Screen = Point;
+			pWnd->ClientToScreen(&Screen);
+			EffectsMenu(Screen);
+		}
 		else
 			MouseDown(Point, Flags, false);
 	}
@@ -1517,6 +1861,23 @@ struct CPianoRollWnd::Impl {
 		case 'B':
 			if (!Ctrl && !Shift && !Alt) {
 				SetTool(TOOL_PAINT);
+				Done = true;
+			}
+			break;
+		case 'E':
+			if (!Ctrl && !Shift && !Alt) {
+				// The Effects menu where the mouse is, for the selected notes or the one under it
+				CPoint Mouse;
+				::GetCursorPos(&Mouse);
+				CPoint Inside = Mouse;
+				pWnd->ScreenToClient(&Inside);
+				Layout();
+				int HitChannel = -1, HitIndex = -1;
+				if (Selection.empty() && HitNote(Inside, HitChannel, HitIndex) && HitChannel == Channel)
+					Selection.assign(1, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)].Start);
+				pWnd->Invalidate(FALSE);
+				pWnd->UpdateWindow();
+				EffectsMenu(Mouse);
 				Done = true;
 			}
 			break;
@@ -1851,6 +2212,9 @@ struct CPianoRollWnd::Impl {
 				Main()->PostMessage(WM_COMMAND, ID_EDIT_CLIPS);
 			break;
 		}
+		case BUTTON_EFFECTS:
+			EffectsMenu(Below(Id));
+			break;
 		case BUTTON_CLOSE:
 			Main()->PostMessage(WM_COMMAND, ID_VIEW_PIANOROLL);
 			break;
@@ -1940,13 +2304,13 @@ struct CPianoRollWnd::Impl {
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
 		if (!Selection.empty()) {
 			Text.Format(_T("%s selected   |   Drag to move (Shift: copy), arrows to move, Shift+arrows: octave, Delete, ")
-				_T("Ctrl+C / Ctrl+V, Esc: none"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
+				_T("Ctrl+C / Ctrl+V, E: effects, Esc: none"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
 			return Text;
 		}
 		if (Tool == TOOL_PAINT)
 			return _T("Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.");
 		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
-			_T("length. Right-click erases. Ctrl+drag selects. Ctrl+Z undoes.");
+			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. Ctrl+Z undoes.");
 	}
 
 	CString NoteText(int Which, const RollNote &Note) const
@@ -1965,6 +2329,9 @@ struct CPianoRollWnd::Impl {
 			Text += _T(", instrument ");
 			Text += InstrumentText(Note.Instrument);
 		}
+		const CString Effects = EffectsText(Note);
+		if (!Effects.IsEmpty())
+			Text += _T(", ") + Effects;
 		if (Bar > 0) {
 			const int InFrame = Note.Start % static_cast<int>(Length);
 			const int BarsPerFrame = (static_cast<int>(Length) + Bar - 1) / Bar;
@@ -2050,7 +2417,88 @@ struct CPianoRollWnd::Impl {
 			Name = Name.Left(21) + _T("...");
 		Text.Format(_T("Instrument: %s"), static_cast<LPCTSTR>(Name));
 		DrawButton(dc, BUTTON_INSTRUMENT, Text, X, Right, false, true);
+		DrawButton(dc, BUTTON_EFFECTS, _T("Effects"), X, Right, false, true);
 		DrawButton(dc, BUTTON_CLIPS, PlacingClip >= 0 ? _T("Placing a clip") : _T("Clips"), X, Right, PlacingClip >= 0, true);
+	}
+
+	// What works on a note, drawn on it with the pen selected: vibrato as a wave, tremolo dotted along
+	// its top, a chord's other notes as thin bars in their lanes, a glide as a line from the note before,
+	// a fade as a wedge, a bend as a line to where it goes, other effects as small marks on their rows
+	void DrawEffects(CDC &dc, const std::vector<RollNote> &List, size_t Index, const CRect &Rect, COLORREF Edge, COLORREF Full,
+		COLORREF Back_) const
+	{
+		const RollNote &Note = List[Index];
+		const int KeyH = KeyHeight(), Middle = Rect.top + Rect.Height() / 2;
+		for (size_t s = 0; s < Note.Effects.size(); ++s) {
+			const CChannelNotes::EffectSpan &Span = Note.Effects[s];
+			const int X1 = std::max(static_cast<int>(Rect.left), RowX(Span.From));
+			const int X2 = std::max(X1 + 1, std::min(static_cast<int>(Rect.right), RowX(Span.To)));
+			switch (Span.Number) {
+			case EF_VIBRATO: {
+				const int Swing = std::max(1, (Rect.Height() - 3) / 3), Step = std::max(2, SX(3));
+				bool Up = true;
+				dc.MoveTo(X1, Middle);
+				for (int X = X1 + Step; X <= X2; X += Step, Up = !Up)
+					dc.LineTo(X, Up ? Middle - Swing : Middle + Swing);
+				break;
+			}
+			case EF_TREMOLO:
+				for (int X = X1 + 1; X < X2; X += std::max(3, SX(4)))
+					dc.FillSolidRect(X, Rect.top + 1, std::max(1, SX(2)), std::max(1, SY(2)), Edge);
+				break;
+			case EF_ARPEGGIO: {
+				const int Above[2] = { Span.Param >> 4, Span.Param & 0x0F };
+				for (int k = 0; k < 2; ++k) {
+					if (Above[k] == 0 || Note.Pitch + Above[k] >= PITCHES)
+						continue;
+					const int Top = PitchTop(Note.Pitch + Above[k]);
+					dc.FillSolidRect(X1, Top + KeyH / 4, X2 - X1, std::max(1, KeyH - 2 * (KeyH / 4)), Mix(Back_, Full, 0.5));
+				}
+				break;
+			}
+			case EF_PORTAMENTO:
+				if (Span.From == Note.Start && Index > 0) {
+					// From the note before into this one
+					const RollNote &Earlier = List[Index - 1];
+					dc.MoveTo(std::min(RowX(Earlier.End) - 1, static_cast<int>(Rect.left)), PitchTop(Earlier.Pitch) + KeyH / 2);
+					dc.LineTo(Rect.left + std::max(2, std::min(2 * RowWidth(), Rect.Width() / 2)), Middle);
+				}
+				break;
+			case EF_PORTA_UP:
+			case EF_PORTA_DOWN:
+				dc.MoveTo(X1, Middle);
+				dc.LineTo(X2, Span.Number == EF_PORTA_UP ? Rect.top : Rect.bottom - 1);
+				break;
+			case EF_VOLUME_SLIDE: {
+				// The note thins out as it fades (or in as it grows)
+				const bool Down = (Span.Param & 0x0F) != 0;
+				const int Width = X2 - X1, Height = Rect.Height() - 2;
+				for (int X = X1; X < X2; X += 2) {
+					const double Part = double(X - X1) / Width;
+					const int Covered = static_cast<int>((Down ? Part : 1.0 - Part) * Height + 0.5);
+					if (Covered > 0)
+						dc.FillSolidRect(X, Rect.top + 1, std::min(2, X2 - X), Covered, Mix(Full, Back_, 0.6));
+				}
+				break;
+			}
+			case EF_SLIDE_UP:
+			case EF_SLIDE_DOWN:
+				if (Span.From > Note.Start) {
+					// A bend: from its row to the lane it goes to
+					const int Semitones = Span.Param & 0x0F;
+					const int To = std::max(0, std::min(PITCHES - 1, Note.Pitch + (Span.Number == EF_SLIDE_UP ? Semitones : -Semitones)));
+					const int X = RowX(Span.From);
+					dc.MoveTo(X, Middle);
+					dc.LineTo(std::max(X + RowWidth(), static_cast<int>(Rect.right)), PitchTop(To) + KeyH / 2);
+				}
+				break;
+			default: {
+				const int Size = std::max(2, std::min(KeyH / 2, SX(4)));
+				dc.FillSolidRect(RowX(Span.From) + 1, Rect.top + 1, Size, Size, Mix(Edge, RGB(255, 255, 255), 0.65));
+				break;
+			}
+			}
+		}
 	}
 
 	void Draw(CDC &dc)
@@ -2122,7 +2570,7 @@ struct CPianoRollWnd::Impl {
 		if (StopX < Grid.right)
 			dc.FillSolidRect(StopX, Grid.top, Grid.right - StopX, Grid.Height(), Past);
 
-		// Notes: the other channels faint, then the bright one
+		// Notes: the other channels faint, then the bright one, with its effects
 		for (int Pass = 0; Pass < 2; ++Pass) {
 			for (size_t c = 0; c < Notes.size(); ++c) {
 				const bool Bright = static_cast<int>(c) == Channel;
@@ -2131,6 +2579,8 @@ struct CPianoRollWnd::Impl {
 				const COLORREF Full = ChannelColor(ChanIDs[c], static_cast<int>(c));
 				const COLORREF Fill = Bright ? Full : Mix(Back_, Full, 0.38);
 				const COLORREF Edge = Bright ? Mix(Full, RGB(0, 0, 0), 0.45) : Mix(Back_, Full, 0.55);
+				CPen EffectPen(PS_SOLID, 1, Edge);
+				CPen *pOldPen = dc.SelectObject(&EffectPen);
 				const std::vector<RollNote> &List = Visible(static_cast<int>(c));
 				const std::vector<int> &Chosen = (Bright && Previewing) ? Marked : Selection;
 				const int Sounding = (Playing && PlayRow >= 0 && !(Bright && Previewing)) ? NoteAt(List, PlayRow) : -1;
@@ -2151,6 +2601,8 @@ struct CPianoRollWnd::Impl {
 						dc.FillSolidRect(Rect.left, std::min(From, To), std::max(1, SX(2)), std::abs(To - From) + 1, Edge);
 						dc.FillSolidRect(Rect.left - SX(3), From, SX(4), std::max(1, SY(2)), Edge);
 					}
+					if (Bright && !Note.Effects.empty() && Rect.Height() >= 4)
+						DrawEffects(dc, List, i, Rect, Edge, Full, Back_);
 					if (Bright && Keyed && !InKey(Note.Pitch))
 						Outline(dc, Rect, OffKey);
 					if (Selected)
@@ -2158,6 +2610,7 @@ struct CPianoRollWnd::Impl {
 					else if (static_cast<int>(c) == HoverChannel && static_cast<int>(i) == HoverNote)
 						Outline(dc, Rect, Picked);
 				}
+				dc.SelectObject(pOldPen);
 			}
 		}
 

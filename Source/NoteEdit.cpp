@@ -24,6 +24,7 @@
 // Standard headers come before stdafx.h, whose DEBUG_NEW macro would
 // otherwise rewrite the placement new inside the standard library.
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <utility>
 #include <vector>
@@ -124,6 +125,106 @@ int Clamp(int Value, int Low, int High)
 	return std::max(Low, std::min(High, Value));
 }
 
+// Effects that change the pitch through the channel's one pitch effect: the last of them on a row
+// replaces the one before (an arpeggio stops when a slide starts)
+bool IsPitchEffect(unsigned char Number)
+{
+	switch (Number) {
+	case EF_ARPEGGIO:
+	case EF_PORTAMENTO:
+	case EF_PORTA_UP:
+	case EF_PORTA_DOWN:
+	case EF_SLIDE_UP:
+	case EF_SLIDE_DOWN:
+		return true;
+	}
+	return false;
+}
+
+bool IsSlide(unsigned char Number)
+{
+	return Number == EF_SLIDE_UP || Number == EF_SLIDE_DOWN;
+}
+
+// Effects that go on from row to row, until another one changes them
+bool IsLasting(unsigned char Number)
+{
+	switch (Number) {
+	case EF_ARPEGGIO:
+	case EF_PORTAMENTO:
+	case EF_PORTA_UP:
+	case EF_PORTA_DOWN:
+	case EF_VIBRATO:
+	case EF_TREMOLO:
+	case EF_VOLUME_SLIDE:
+	case EF_DUTY_CYCLE:
+	case EF_PITCH:
+		return true;
+	}
+	return false;
+}
+
+// The lasting effects in force, as the channel handlers keep them from row to row (rows and notes
+// don't reset them, releases and halts neither)
+struct Lasting {
+	unsigned char Pitch;		// EF_ARPEGGIO, EF_PORTAMENTO, EF_PORTA_UP, EF_PORTA_DOWN, a slide, or EF_NONE
+	unsigned char PitchParam;
+	unsigned char Vibrato, Tremolo, VolumeSlide;
+	unsigned char Duty, FinePitch;
+
+	Lasting() : Pitch(EF_NONE), PitchParam(0), Vibrato(0), Tremolo(0), VolumeSlide(0), Duty(0), FinePitch(0x80)
+	{
+	}
+
+	// The pitch effect at work, EF_NONE for none (an arpeggio or portamento with 00 does nothing)
+	unsigned char PitchOn() const
+	{
+		return PitchParam != 0 ? Pitch : static_cast<unsigned char>(EF_NONE);
+	}
+
+	bool SamePitch(const Lasting &Other) const
+	{
+		return PitchOn() == Other.PitchOn() && (PitchOn() == EF_NONE || PitchParam == Other.PitchParam);
+	}
+
+	bool operator==(const Lasting &Other) const
+	{
+		return SamePitch(Other) && Vibrato == Other.Vibrato && Tremolo == Other.Tremolo && VolumeSlide == Other.VolumeSlide &&
+			Duty == Other.Duty && FinePitch == Other.FinePitch;
+	}
+	bool operator!=(const Lasting &Other) const { return !(*this == Other); }
+
+	// The parameter of one lasting effect
+	unsigned char Get(unsigned char Number) const
+	{
+		switch (Number) {
+		case EF_VIBRATO: return Vibrato;
+		case EF_TREMOLO: return Tremolo;
+		case EF_VOLUME_SLIDE: return VolumeSlide;
+		case EF_DUTY_CYCLE: return Duty;
+		case EF_PITCH: return FinePitch;
+		}
+		return PitchOn() == Number ? PitchParam : 0;
+	}
+
+	void Set(unsigned char Number, unsigned char Param)
+	{
+		switch (Number) {
+		case EF_VIBRATO: Vibrato = Param; break;
+		case EF_TREMOLO: Tremolo = Param; break;
+		case EF_VOLUME_SLIDE: VolumeSlide = Param; break;
+		case EF_DUTY_CYCLE: Duty = Param; break;
+		case EF_PITCH: FinePitch = Param; break;
+		default:
+			if (IsPitchEffect(Number)) {
+				Pitch = Number;
+				PitchParam = Param;
+			}
+			break;
+		}
+	}
+};
+
 }	// namespace
 
 struct CChannelNotes::Impl {
@@ -134,8 +235,10 @@ struct CChannelNotes::Impl {
 	Sounds Hints;						// a copy's notes: how they sounded where they were copied from
 	mutable std::vector<Note> Notes;	// read from the cells when asked for
 	mutable bool Parsed;
+	mutable std::vector<std::vector<EffectSpan> > Spans;	// per note, worked out when asked for
+	mutable bool SpansParsed;
 
-	Impl() : Columns(1), Lowest(0), Highest(TOP_PITCH), Parsed(false)
+	Impl() : Columns(1), Lowest(0), Highest(TOP_PITCH), Parsed(false), SpansParsed(false)
 	{
 		std::fill(Release, Release + MAX_INSTRUMENTS, false);
 	}
@@ -167,6 +270,7 @@ struct CChannelNotes::Impl {
 		if (Parsed)
 			return;
 		Parsed = true;
+		SpansParsed = false;
 		Notes.clear();
 		int Instrument = -1, Volume = FULL_VOLUME;
 		bool Open = false;
@@ -486,6 +590,206 @@ struct CChannelNotes::Impl {
 				Volume = Cell.Vol;
 		}
 		Parsed = false;
+	}
+
+	// Effects on notes
+
+	// The lasting effects after a row, from those before it: its effects in column order, then a new
+	// note ends a slide that isn't its own (as the 2A03 and VRC6 channels do)
+	void Step(Lasting &State, const stChanNote &Cell) const
+	{
+		bool Slides = false;
+		for (int i = 0; i < Columns; ++i) {
+			const unsigned char Number = Cell.EffNumber[i];
+			if (IsPitchEffect(Number) || IsLasting(Number))
+				State.Set(Number, Cell.EffParam[i]);
+			Slides = Slides || IsSlide(Number);
+		}
+		if (IsNote(Cell) && !Slides && IsSlide(State.Pitch)) {
+			State.Pitch = EF_NONE;
+			State.PitchParam = 0;
+		}
+	}
+
+	// The lasting effects in force where each note starts, after its first row (by where it starts),
+	// and coming into it (before its first row)
+	void LastingNow(std::map<int, Lasting> &After, std::map<int, Lasting> *pComing = NULL) const
+	{
+		Parse();
+		After.clear();
+		Lasting State;
+		size_t n = 0;
+		for (int r = 0; r < Rows() && n < Notes.size(); ++r) {
+			if (Notes[n].Start == r && pComing != NULL)
+				(*pComing)[r] = State;
+			Step(State, Cells[static_cast<size_t>(r)]);
+			if (Notes[n].Start == r)
+				After[r] = State, ++n;
+		}
+	}
+
+	// Sets an effect on a row: one of that kind there gets Param, or it goes in a free column
+	bool SetEffect(int Row, unsigned char Number, unsigned char Param)
+	{
+		stChanNote &Cell = CellAt(Row);
+		Parsed = false;
+		for (int i = 0; i < Columns; ++i) {
+			if (Cell.EffNumber[i] == Number) {
+				Cell.EffParam[i] = Param;
+				return true;
+			}
+		}
+		return AddEffect(Row, Number, Param, -1);
+	}
+
+	// Takes the effects that Which picks out of a row's playing columns
+	template <class Pick>
+	void RemoveEffects(int Row, Pick Which)
+	{
+		stChanNote &Cell = CellAt(Row);
+		for (int i = 0; i < Columns; ++i) {
+			if (Cell.EffNumber[i] != EF_NONE && Which(Cell.EffNumber[i])) {
+				Cell.EffNumber[i] = EF_NONE;
+				Cell.EffParam[i] = 0;
+			}
+		}
+		Parsed = false;
+	}
+
+	// Writes on a row what makes the lasting effects after it Want instead of Now: false if they didn't fit
+	bool MakeLasting(int Row, const Lasting &Now, const Lasting &Want)
+	{
+		bool Fits = true;
+		if (!Now.SamePitch(Want)) {
+			if (Want.PitchOn() != EF_NONE)
+				Fits = SetEffect(Row, Want.Pitch, Want.PitchParam) && Fits;
+			else if (!IsSlide(Now.PitchOn()))	// a slide on the row is the note's own and stays
+				Fits = SetEffect(Row, Now.PitchOn(), 0) && Fits;
+		}
+		const unsigned char OTHERS[] = { EF_VIBRATO, EF_TREMOLO, EF_VOLUME_SLIDE, EF_DUTY_CYCLE, EF_PITCH };
+		for (size_t i = 0; i < sizeof(OTHERS); ++i) {
+			if (Now.Get(OTHERS[i]) != Want.Get(OTHERS[i]))
+				Fits = SetEffect(Row, OTHERS[i], Want.Get(OTHERS[i])) && Fits;
+		}
+		return Fits;
+	}
+
+	// After an effect edit: where each note starts, the lasting effects are those in Want (by where it
+	// starts), set on its first row where they aren't. False if some didn't fit.
+	bool KeepLasting(const std::map<int, Lasting> &Want)
+	{
+		bool Fits = true;
+		Lasting State;
+		for (int r = 0; r < Rows(); ++r) {
+			Lasting After = State;
+			Step(After, Cells[static_cast<size_t>(r)]);
+			const std::map<int, Lasting>::const_iterator It = Want.find(r);
+			if (It != Want.end() && IsNote(Cells[static_cast<size_t>(r)]) && After != It->second) {
+				Fits = MakeLasting(r, After, It->second) && Fits;
+				After = State;
+				Step(After, Cells[static_cast<size_t>(r)]);
+			}
+			State = After;
+		}
+		Parsed = false;
+		return Fits;
+	}
+
+	// The notes named, each once, in time order
+	std::vector<Note> Named(const int *pStarts, int Count) const
+	{
+		std::vector<Note> Out;
+		for (int k = 0; k < Count; ++k) {
+			const int Index = Find(pStarts[k]);
+			bool Twice = false;
+			for (size_t m = 0; m < Out.size(); ++m)
+				Twice = Twice || Out[m].Start == pStarts[k];
+			if (Index >= 0 && !Twice)
+				Out.push_back(Notes[static_cast<size_t>(Index)]);
+		}
+		std::sort(Out.begin(), Out.end(), [](const Note &First, const Note &Second) { return First.Start < Second.Start; });
+		return Out;
+	}
+
+	// A note's cell plays another pitch (it lands where its slide takes it)
+	void SetWritten(int Row, int Pitch)
+	{
+		stChanNote &Cell = CellAt(Row);
+		Pitch = Clamp(Pitch, Lowest, Highest);
+		Cell.Note = static_cast<unsigned char>(Pitch % 12 + 1);
+		Cell.Octave = static_cast<unsigned char>(Pitch / 12);
+		Parsed = false;
+	}
+
+	// What works while each note sounds (see GetEffects)
+	void ParseSpans() const
+	{
+		Parse();
+		if (SpansParsed)
+			return;
+		SpansParsed = true;
+		Spans.assign(Notes.size(), std::vector<EffectSpan>());
+		const unsigned char KINDS[] = { EF_NONE, EF_VIBRATO, EF_TREMOLO, EF_VOLUME_SLIDE };	// EF_NONE: the pitch effect
+		const size_t COUNT = sizeof(KINDS);
+		Lasting State;
+		size_t n = 0;
+		int Open[COUNT];	// per kind, the span still going on in the note, -1 for none
+		std::fill(Open, Open + COUNT, -1);
+		for (int r = 0; r < Rows(); ++r) {
+			const stChanNote &Cell = Cells[static_cast<size_t>(r)];
+			Lasting After = State;
+			Step(After, Cell);
+			while (n < Notes.size() && Notes[n].End <= r)
+				++n;
+			if (n < Notes.size() && Notes[n].Start <= r) {
+				std::vector<EffectSpan> &Out = Spans[n];
+				const bool First = Notes[n].Start == r;
+				for (size_t k = 0; k < COUNT; ++k) {
+					// What this kind does now, and did on the row before
+					unsigned char Number = KINDS[k], Param = 0, WasNumber = KINDS[k], WasParam = 0;
+					if (Number == EF_NONE) {
+						Number = IsSlide(After.PitchOn()) ? static_cast<unsigned char>(EF_NONE) : After.PitchOn();
+						Param = After.PitchParam;
+						WasNumber = IsSlide(State.PitchOn()) ? static_cast<unsigned char>(EF_NONE) : State.PitchOn();
+						WasParam = State.PitchParam;
+					}
+					else {
+						Param = After.Get(Number);
+						WasParam = State.Get(Number);
+						if (Param == 0)
+							Number = EF_NONE;
+						if (WasParam == 0)
+							WasNumber = EF_NONE;
+					}
+					if (!First && Number == WasNumber && (Number == EF_NONE || Param == WasParam))
+						continue;
+					if (!First && Open[k] >= 0)
+						Out[static_cast<size_t>(Open[k])].To = r;
+					Open[k] = -1;
+					if (Number != EF_NONE) {
+						// Taken over when the note's first row doesn't set it
+						bool Set = false;
+						for (int i = 0; i < Columns; ++i)
+							Set = Set || (KINDS[k] == EF_NONE ? IsPitchEffect(Cell.EffNumber[i]) : Cell.EffNumber[i] == KINDS[k]);
+						const EffectSpan Span = { Number, Param, r, Notes[n].End, First && !Set };
+						Open[k] = static_cast<int>(Out.size());
+						Out.push_back(Span);
+					}
+				}
+				// The other effects on the row: slides, the duty and fine pitch where they're set, and the rest
+				for (int i = 0; i < Columns; ++i) {
+					const unsigned char Number = Cell.EffNumber[i];
+					if (Number == EF_NONE || IsSongEffect(Number) || (IsLasting(Number) && Number != EF_DUTY_CYCLE && Number != EF_PITCH))
+						continue;
+					const EffectSpan Span = { Number, Cell.EffParam[i], r, r + 1, false };
+					Out.push_back(Span);
+				}
+			}
+			State = After;
+		}
+		for (size_t i = 0; i < Spans.size(); ++i)
+			std::stable_sort(Spans[i].begin(), Spans[i].end(),
+				[](const EffectSpan &First, const EffectSpan &Second) { return First.From < Second.From; });
 	}
 };
 
@@ -820,4 +1124,172 @@ bool CChannelNotes::Compare(const CChannelNotes &Other, int &First, int &Last) c
 		}
 	}
 	return First >= 0;
+}
+
+void CChannelNotes::GetEffects(int Index, std::vector<EffectSpan> &Out) const
+{
+	const Impl &d = *m_pImpl;
+	d.ParseSpans();
+	Out.clear();
+	if (Index >= 0 && Index < static_cast<int>(d.Spans.size()))
+		Out = d.Spans[static_cast<size_t>(Index)];
+}
+
+bool CChannelNotes::SetLasting(const int *pStarts, int Count, unsigned char Number, const unsigned char *pParams, const int *pDelays)
+{
+	Impl &d = *m_pImpl;
+	if (!IsLasting(Number) || Number == EF_DUTY_CYCLE || Number == EF_PITCH || Number == EF_PORTA_UP || Number == EF_PORTA_DOWN)
+		return true;
+	d.Parse();
+	std::map<int, Lasting> Want;
+	d.LastingNow(Want);
+	const std::vector<Note> Targets = d.Named(pStarts, Count);
+	const bool Pitch = IsPitchEffect(Number);
+	bool Fits = true;
+	std::vector<int> Louder;	// notes after a volume slide, to get their volume written
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const Note &Which = Targets[t];
+		unsigned char Param = 0;
+		int Delay = 0;
+		for (int k = 0; k < Count; ++k) {
+			if (pStarts[k] == Which.Start) {
+				Param = pParams[k];
+				Delay = Number == EF_PORTAMENTO ? 0 : Clamp(pDelays[k], 0, Which.End - Which.Start - 1);
+			}
+		}
+		// What it had of the kind goes; an arpeggio or portamento replaces any pitch effect on its first
+		// row, a slide into it included (it plays where it landed)
+		const bool HasEnd = d.EndsOnCell(Which);
+		for (int r = Which.Start; r <= Which.End && r < d.Rows(); ++r) {
+			if (r < Which.End || HasEnd)
+				d.RemoveEffects(r, [Number](unsigned char Other) { return Other == Number; });
+		}
+		if (Pitch) {
+			d.RemoveEffects(Which.Start, IsPitchEffect);
+			if (Which.Written != Which.Pitch)
+				d.SetWritten(Which.Start, Which.Pitch);
+		}
+		Lasting &Start = Want[Which.Start];
+		Start.Set(Number, Delay == 0 ? Param : static_cast<unsigned char>(0));
+		if (Pitch && Param == 0) {
+			Start.Pitch = EF_NONE;
+			Start.PitchParam = 0;
+		}
+		if (Param != 0)		// on its own row even when the note before has the same, so it goes where the note goes
+			Fits = d.SetEffect(Which.Start + Delay, Number, Param) && Fits;
+		if (Number == EF_VOLUME_SLIDE && Param != 0)
+			Louder.push_back(Which.End);
+	}
+	Fits = d.KeepLasting(Want) && Fits;
+
+	// The last note doesn't carry it on past the channel's end (into a loop's start); the note after a
+	// volume slide gets the volume it plays at, which the slide changed
+	d.Parse();
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const int Index = d.Find(Targets[t].Start);
+		if (Index < 0 || static_cast<size_t>(Index) + 1 != d.Notes.size())
+			continue;
+		const Note &Last = d.Notes[static_cast<size_t>(Index)];
+		unsigned char Param = 0;
+		for (int k = 0; k < Count; ++k)
+			if (pStarts[k] == Last.Start)
+				Param = pParams[k];
+		if (Param != 0 && d.EndsOnCell(Last))
+			Fits = d.SetEffect(Last.End, Number, 0) && Fits;
+	}
+	for (size_t i = 0; i < Louder.size(); ++i) {
+		for (size_t n = 0; n < d.Notes.size(); ++n) {	// the first note from where the faded one ended
+			if (d.Notes[n].Start >= Louder[i]) {
+				stChanNote &Cell = d.CellAt(d.Notes[n].Start);
+				if (Cell.Vol >= MAX_VOLUME)
+					Cell.Vol = static_cast<unsigned char>(d.Notes[n].Volume);
+				break;
+			}
+		}
+	}
+	d.Parsed = false;
+	return Fits;
+}
+
+bool CChannelNotes::SetSlideIn(const int *pStarts, int Count, int Semitones, int Speed)
+{
+	Impl &d = *m_pImpl;
+	d.Parse();
+	std::map<int, Lasting> Want;
+	d.LastingNow(Want);
+	const std::vector<Note> Targets = d.Named(pStarts, Count);
+	const int Size = std::min(15, std::abs(Semitones));
+	const int Fast = Clamp(Speed, 1, 15);
+	bool Fits = true;
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const Note &Which = Targets[t];
+		// From below goes up to it, from above down
+		const int From = Clamp(Which.Pitch + (Semitones > 0 ? -Size : Size), d.Lowest, d.Highest);
+		const int Slide = std::abs(Which.Pitch - From);
+		d.RemoveEffects(Which.Start, Slide > 0 ? IsPitchEffect : IsSlide);
+		d.SetWritten(Which.Start, Slide > 0 ? From : Which.Pitch);
+		Lasting &Start = Want[Which.Start];
+		if (Slide > 0) {
+			const unsigned char Number = static_cast<unsigned char>(From < Which.Pitch ? EF_SLIDE_UP : EF_SLIDE_DOWN);
+			Fits = d.AddEffect(Which.Start, Number, static_cast<unsigned char>((Fast << 4) | Slide), -1) && Fits;
+			Start.Pitch = Number;
+			Start.PitchParam = static_cast<unsigned char>((Fast << 4) | Slide);
+		}
+		else if (IsSlide(Start.PitchOn())) {
+			Start.Pitch = EF_NONE;
+			Start.PitchParam = 0;
+		}
+	}
+	Fits = d.KeepLasting(Want) && Fits;
+	return Fits;
+}
+
+bool CChannelNotes::SetBend(const int *pStarts, int Count, int Semitones, int Speed, int Before)
+{
+	Impl &d = *m_pImpl;
+	d.Parse();
+	std::map<int, Lasting> Want;
+	d.LastingNow(Want);
+	const std::vector<Note> Targets = d.Named(pStarts, Count);
+	const int Size = std::min(15, std::abs(Semitones));
+	bool Fits = true;
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const Note &Which = Targets[t];
+		if (Which.End - Which.Start < 2)
+			continue;	// no room after its first row
+		for (int r = Which.Start + 1; r < Which.End; ++r)
+			d.RemoveEffects(r, IsSlide);
+		if (Size > 0) {
+			const int Row = std::max(Which.Start + 1, Which.End - std::max(1, Before));
+			Fits = d.SetEffect(Row, static_cast<unsigned char>(Semitones > 0 ? EF_SLIDE_UP : EF_SLIDE_DOWN),
+				static_cast<unsigned char>((Clamp(Speed, 1, 15) << 4) | Size)) && Fits;
+		}
+	}
+	Fits = d.KeepLasting(Want) && Fits;
+	return Fits;
+}
+
+bool CChannelNotes::ClearEffects(const int *pStarts, int Count)
+{
+	Impl &d = *m_pImpl;
+	d.Parse();
+	std::map<int, Lasting> Want, Coming;
+	d.LastingNow(Want, &Coming);
+	const std::vector<Note> Targets = d.Named(pStarts, Count);
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const Note &Which = Targets[t];
+		const bool HasEnd = d.EndsOnCell(Which);
+		for (int r = Which.Start; r <= Which.End && r < d.Rows(); ++r) {
+			if (r < Which.End || HasEnd)
+				d.RemoveEffects(r, [](unsigned char Number) { return !IsSongEffect(Number); });
+		}
+		if (Which.Written != Which.Pitch)
+			d.SetWritten(Which.Start, Which.Pitch);
+		// Nothing lasting works on it any more, but the duty and fine pitch it came in with
+		Lasting None;
+		None.Duty = Coming[Which.Start].Duty;
+		None.FinePitch = Coming[Which.Start].FinePitch;
+		Want[Which.Start] = None;
+	}
+	return d.KeepLasting(Want);
 }
