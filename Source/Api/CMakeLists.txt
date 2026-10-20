@@ -7,7 +7,7 @@
 
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
-project(ftapi CXX)
+project(ftapi C CXX)
 
 set(CMAKE_CXX_STANDARD 14)	# FamiTracker itself builds as C++14
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,44 @@ else()
 	add_compile_options(-Wall -Wextra)
 endif()
 
+# libogg and libvorbis (BSD licensed, Source/libogg and Source/libvorbis as
+# released), for the OGG export; their own warnings are left to them
+set(XIPH ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_library(xiph STATIC
+	${XIPH}/libogg/src/bitwise.c
+	${XIPH}/libogg/src/framing.c
+	${XIPH}/libvorbis/lib/analysis.c
+	${XIPH}/libvorbis/lib/bitrate.c
+	${XIPH}/libvorbis/lib/block.c
+	${XIPH}/libvorbis/lib/codebook.c
+	${XIPH}/libvorbis/lib/envelope.c
+	${XIPH}/libvorbis/lib/floor0.c
+	${XIPH}/libvorbis/lib/floor1.c
+	${XIPH}/libvorbis/lib/info.c
+	${XIPH}/libvorbis/lib/lookup.c
+	${XIPH}/libvorbis/lib/lpc.c
+	${XIPH}/libvorbis/lib/lsp.c
+	${XIPH}/libvorbis/lib/mapping0.c
+	${XIPH}/libvorbis/lib/mdct.c
+	${XIPH}/libvorbis/lib/psy.c
+	${XIPH}/libvorbis/lib/registry.c
+	${XIPH}/libvorbis/lib/res0.c
+	${XIPH}/libvorbis/lib/sharedbook.c
+	${XIPH}/libvorbis/lib/smallft.c
+	${XIPH}/libvorbis/lib/synthesis.c
+	${XIPH}/libvorbis/lib/vorbisenc.c
+	${XIPH}/libvorbis/lib/vorbisfile.c
+	${XIPH}/libvorbis/lib/window.c
+)
+target_include_directories(xiph PUBLIC ${XIPH}/libogg/include ${XIPH}/libvorbis/include PRIVATE ${XIPH}/libvorbis/lib)
+if(MSVC)
+	target_compile_options(xiph PRIVATE /w)
+	target_compile_definitions(xiph PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+	target_compile_options(xiph PRIVATE -w)
+	target_link_libraries(xiph PUBLIC m)
+endif()
+
 # The harmony code (keys, chords, bass lines) comes from the transcription engine
 set(TRANSCRIBE ${CMAKE_CURRENT_SOURCE_DIR}/../Transcribe)
 add_library(ftapi STATIC
@@ -30,6 +68,8 @@ add_library(ftapi STATIC
 	BridgeSocket.cpp
 	Png.cpp
 	Picture.cpp
+	Ogg.cpp
+	GameAudio.cpp
 	Music.cpp
 	Presets.cpp
 	Tools.cpp
@@ -44,6 +84,7 @@ add_library(ftapi STATIC
 	${TRANSCRIBE}/TextModule.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ftapi PUBLIC xiph)
 if(WIN32)
 	target_link_libraries(ftapi PUBLIC ws2_32 advapi32)
 endif()

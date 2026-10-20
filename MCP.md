@@ -78,6 +78,8 @@ Some things to try:
 - "Play bars 1 to 4."
 - "Make a night version of this song." / "Make the night version a bit less
   slow and keep the drums."
+- "Does the song loop cleanly?" / "Let bars 1-4 be an intro and loop the rest."
+- "Export the day and night versions for my game."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
 clashes, range), looks at a picture of the notes, and plays it for you, then
@@ -121,6 +123,9 @@ anything; close the dialog and ask again.
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
 | `make_version` | Another version of the selected track as a new track: a night version, calm or tense music for a game state, an area's variant. The original stays as it was |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
+| `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
+| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched |
 | `play`, `stop` | Plays bars for you |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -177,6 +182,43 @@ for.
 Adding a track can't be undone with Ctrl+Z in FamiTracker; remove a version
 you don't want in **Module > Module properties**.
 
+## Music for your game: looping OGG files
+
+**File > Export for games (OGG)...** saves the selected track, or all of them
+(day and night versions together), as OGG files next to the song, named
+after the tracks: "Town.ogg", "Town (night).ogg". Ask Claude for it too
+("export the music for my game").
+
+Each file plays the song's intro once (the bars before where it loops), then
+the loop, cut so it repeats without a seam:
+
+- FamiTracker renders the song past its second time through the loop and
+  notes the exact sample where every row starts.
+- If the loop starts the same way both times (no note, effect, instrument or
+  volume from the intro hanging over), the file is the intro and the loop
+  once. Otherwise it holds the loop twice and loops the second time, which
+  starts the way every repeat does. `check_loop` tells you which, and why.
+- The loop points move together by up to 2 ms to where the waves meet, so
+  the jump doesn't click; the loop keeps its exact length.
+
+GameMaker (2023.2 or newer) loops a sound between two points. The dialog and
+Claude's reply give the code, for example:
+
+```
+audio_sound_loop_start(snd_town_night, 12.800000);
+audio_sound_loop_end(snd_town_night, 38.400000);
+audio_play_sound(snd_town_night, 0, true);
+```
+
+Add each file as a sound with that name (snd_ and the file name). The loop
+points are also in the files as `LOOPSTART`, `LOOPLENGTH` and `LOOPEND`
+comments (in samples), which RPG Maker and other engines read. A song that
+ends with a halt (`Cxx`) plays once, like a jingle.
+
+The song has to be saved, since the files go next to it; files of the same
+names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
+files.
+
 ## Safety
 
 - FamiTracker only listens on 127.0.0.1, so other computers can't reach it.
@@ -213,9 +255,8 @@ you don't want in **Module > Module properties**.
 
 ## Not yet
 
-- Exporting a looping OGG for game engines (FamiTracker 0.4.6 exports WAV).
 - Recording ideas from a phone page into the clips.
-- Other tracks than the selected one, and presets for FDS, N163, VRC7 and 5B.
+- Jingles, sound effects, and presets for FDS, N163, VRC7 and 5B.
 
 ## For developers
 
@@ -237,6 +278,13 @@ you don't want in **Module > Module properties**.
   the requests real clients send. The protocol was also checked against the
   official MCP TypeScript SDK clients (1.x, and 2.x in both negotiation
   modes).
+- `Source/Api/GameAudio.cpp`, `Ogg.cpp` and `Music.cpp` (`TimeRows`): the
+  export for games. `TimeRows` counts the ticks of every row as `CSoundGen`
+  plays them; `CutForGame` finds the loop in a render from the rows' sample
+  positions (`CSoundGen::GetRenderMarks`, recorded while rendering); `Ogg`
+  encodes with libvorbis (`Source/libvorbis`, `Source/libogg`, BSD licensed,
+  as released). The tests render with a stand-in synthesizer and decode the
+  files again.
 - `Source/McpSocket.cpp`: the listener thread (Winsock, no MFC). It frames
   HTTP requests and hands each to the UI thread with `SendMessageTimeout`.
 - `Source/Api/Bridge.cpp` and `Source/Api/tools/famitracker-mcp.cpp`: the

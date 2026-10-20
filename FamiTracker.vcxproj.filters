@@ -5,6 +5,9 @@
       <UniqueIdentifier>{1EAE9630-D6A4-5FDB-92A6-F548D8A6CBD0}</UniqueIdentifier>
       <Extensions>cpp;c;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
+    <Filter Include="Ogg Vorbis (libogg, libvorbis)">
+      <UniqueIdentifier>{581E61D4-CED3-52B6-A273-4802D3E486A4}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\Dialog Boxes">
       <UniqueIdentifier>{4987F43B-E498-5E16-8E9E-98B037498959}</UniqueIdentifier>
     </Filter>
@@ -1254,6 +1257,12 @@
     <ClCompile Include="Source\Api\Picture.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Ogg.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\GameAudio.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1285,6 +1294,12 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Picture.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Ogg.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\GameAudio.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">
@@ -1379,5 +1394,76 @@
     <ClInclude Include="Source\NoteEdit.h">
       <Filter>Piano roll</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\libogg\src\bitwise.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libogg\src\framing.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\analysis.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\bitrate.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\block.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\codebook.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\envelope.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\floor0.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\floor1.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\info.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lookup.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lpc.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lsp.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\mapping0.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\mdct.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\psy.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\registry.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\res0.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\sharedbook.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\smallft.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\synthesis.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\vorbisenc.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\window.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

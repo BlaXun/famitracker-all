@@ -20,7 +20,9 @@
 */
 
 #include "Tools.h"
+#include "GameAudio.h"
 #include "Music.h"
+#include "Ogg.h"
 #include "Picture.h"
 #include "Presets.h"
 #include "Song.h"
@@ -2489,6 +2491,533 @@ std::string SelectTrackTool(Session &S, const Json &Args)
 		static_cast<size_t>(Track) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(Track)].c_str() : "");
 }
 
+// Loops
+
+SongFlow Flow(Session &S);
+
+// The chord the song sounds in rows [First, End): the triad whose notes sound
+// longest there (every melodic channel, with arpeggios), the bass note at the
+// start counting extra for its root. False when nothing sounds.
+bool SoundingChord(Session &S, int First, int End, int &Root, bool &Minor)
+{
+	double Weight[12] = { 0 };
+	int Bass = -1, BassPitch = 1000;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		int Arpeggio = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			for (size_t e = 0; e < N.Effects.size(); ++e)
+				if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
+					Arpeggio = N.Effects[e].second.second;
+			const int From = std::max(First, N.Row), To = std::min(End, N.Row + N.Rows);
+			if (To <= From)
+				continue;
+			const double Rows = To - From;
+			Weight[N.Pitch % 12] += Rows;
+			if (Arpeggio != 0) {
+				Weight[(N.Pitch + (Arpeggio >> 4)) % 12] += Rows;
+				Weight[(N.Pitch + (Arpeggio & 15)) % 12] += Rows;
+			}
+			if (N.Row <= First + S.Time.RowsPerBeat && N.Pitch < BassPitch) {
+				BassPitch = N.Pitch;
+				Bass = N.Pitch % 12;
+			}
+		}
+	}
+	double Best = 0.0;
+	Root = -1;
+	for (int r = 0; r < 12; ++r)
+		for (int m = 0; m < 2; ++m) {
+			const int Third = (r + (m ? 3 : 4)) % 12, Fifth = (r + 7) % 12;
+			double Score = Weight[r] + Weight[Third] + 0.8 * Weight[Fifth];
+			for (int p = 0; p < 12; ++p)
+				if (p != r && p != Third && p != Fifth)
+					Score -= 0.5 * Weight[p];
+			if (r == Bass)
+				Score += 0.5 * (End - First);
+			if (Score > Best) {
+				Best = Score;
+				Root = r;
+				Minor = m != 0;
+			}
+		}
+	return Root >= 0;
+}
+
+// "G (V)", "Am (vi)", "F#" when it isn't in the key
+std::string ChordLabel(int Root, bool Minor, const Key &K)
+{
+	static const char *const MAJOR[7] = { "I", "ii", "iii", "IV", "V", "vi", "vii" };
+	static const char *const MINOR[7] = { "i", "ii", "III", "iv", "v", "VI", "VII" };
+	std::string Name = NoteClassName(Root, K) + (Minor ? "m" : "");
+	const int *pSteps = ModeSteps(K.Mode);
+	const bool KeyMinor = K.Mode == MODE_MINOR;
+	for (int d = 0; d < 7; ++d)
+		if ((K.Tonic + pSteps[d]) % 12 == Root) {
+			std::string Numeral = KeyMinor ? MINOR[d] : MAJOR[d];
+			// The numeral's case says major or minor
+			const bool NumeralMinor = Numeral[0] == 'i' || Numeral[0] == 'v';
+			if (KeyMinor && d == 4 && !Minor)
+				Numeral = "V";
+			else if (NumeralMinor != Minor)
+				return Name;
+			return Name + " (" + Numeral + ")";
+		}
+	return Name;
+}
+
+std::string SecondsText(double Seconds)
+{
+	return FormatNumber(std::floor(Seconds * 10 + 0.5) / 10) + " s";
+}
+
+std::string EffectName(int Effect)
+{
+	switch (Effect) {
+	case EFF_ARPEGGIO: return "arpeggio";
+	case EFF_VIBRATO: return "vibrato";
+	case EFF_TREMOLO: return "tremolo";
+	case EFF_VOLUME_SLIDE: return "volume slide";
+	case EFF_PORTAMENTO: return "portamento";
+	case EFF_PORTA_UP: return "pitch slide up";
+	case EFF_PORTA_DOWN: return "pitch slide down";
+	default: return std::string("effect ") + EffectLetter(Effect);
+	}
+}
+
+// What differs between the loop's start the first time (from the intro, or
+// the song's start) and on repeat (from the loop's end): notes hanging over,
+// instruments, volumes, effects still on, speed and tempo. Rows: the song's
+// rows in playing order with the loop twice; First and Second: where the loop
+// starts in them.
+std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<Cell> > &Cells, const std::vector<int> &Columns,
+	const std::vector<TimedRow> &Rows, size_t First, size_t Second, int LoopRow)
+{
+	std::vector<std::string> Seams;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const ChannelInfo &Info = S.Channel(c);
+		std::vector<Cell> Played;
+		for (size_t i = 0; i < Rows.size(); ++i)
+			Played.push_back(Cells[static_cast<size_t>(c)][static_cast<size_t>(Rows[i].Row)]);
+		const int Cols = Columns[static_cast<size_t>(c)];
+		const ChannelState Before = StateAt(Played, static_cast<int>(First), Cols);
+		const ChannelState Again = StateAt(Played, static_cast<int>(Second), Cols);
+		const Cell &Start = Played[Second];
+		const std::vector<NoteInfo> Notes = ReadNotes(Played, Cols);
+		auto SoundingAt = [&](int Index) -> const NoteInfo* {
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Row < Index && Notes[i].Row + Notes[i].Rows > Index)
+					return &Notes[i];
+			return 0;
+		};
+		if (!Start.HasNote() && !Start.IsEnd()) {
+			const NoteInfo *pFirst = SoundingAt(static_cast<int>(First)), *pAgain = SoundingAt(static_cast<int>(Second));
+			const int PitchFirst = pFirst != 0 ? pFirst->Pitch : -1, PitchAgain = pAgain != 0 ? pAgain->Pitch : -1;
+			if (PitchFirst != PitchAgain && pAgain != 0) {
+				// When the loop's own first note comes
+				std::string Until = "for the whole loop";
+				for (size_t i = 0; i < Notes.size(); ++i)
+					if (Notes[i].Row > static_cast<int>(Second)) {
+						Until = "until " + S.Time.Position(Rows[static_cast<size_t>(Notes[i].Row)].Row);
+						break;
+					}
+				Seams.push_back(Format("%s: %s from the loop's end keeps sounding into %s on repeat (%s), where the first time %s. "
+					"Put a note, release (===) or halt (---) there.", Info.FullName().c_str(), PitchText(Info, PitchAgain).c_str(),
+					S.Time.Position(LoopRow).c_str(), Until.c_str(),
+					PitchFirst < 0 ? "nothing sounds" : (PitchText(Info, PitchFirst) + " from the intro does").c_str()));
+			}
+			else if (PitchFirst != PitchAgain && pFirst != 0)
+				Seams.push_back(Format("%s: the first time, %s from the intro sounds into %s; on repeat, nothing does.",
+					Info.FullName().c_str(), PitchText(Info, PitchFirst).c_str(), S.Time.Position(LoopRow).c_str()));
+		}
+		if (!IsMelodic(Info) && Info.Kind != KIND_NOISE)
+			continue;
+		if (Start.Instrument == NO_INSTRUMENT && Before.Instrument != Again.Instrument && Before.Instrument != NO_INSTRUMENT &&
+			Again.Instrument != NO_INSTRUMENT && !Start.IsEnd())
+			Seams.push_back(Format("%s: the loop starts with %s the first time and %s on repeat; set the instrument on its first note.",
+				Info.FullName().c_str(), InstrumentLabel(S.Song, Before.Instrument).c_str(), InstrumentLabel(S.Song, Again.Instrument).c_str()));
+		if (Start.Volume == NO_VOLUME && Before.Volume != Again.Volume && Info.Kind != KIND_TRIANGLE)
+			Seams.push_back(Format("%s: the loop starts at volume %d the first time and %d on repeat; set the volume on its first note.",
+				Info.FullName().c_str(), Before.Volume, Again.Volume));
+		for (int e = 1; e < EFF_COUNT; ++e) {
+			if (!IsStickyEffect(e) || Before.Sticky[e] == Again.Sticky[e] || HasEffect(Start, e, Cols))
+				continue;
+			const int On = Again.Sticky[e] != 0 ? Again.Sticky[e] : Before.Sticky[e];
+			Seams.push_back(Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
+				"set it at %s (%c00 turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
+				Again.Sticky[e] != 0 ? "still on" : "off", Again.Sticky[e] != 0 ? "gets" : "lacks", S.Time.Position(LoopRow).c_str(),
+				EffectLetter(e)));
+		}
+	}
+
+	// Speed and tempo as the loop starts, both times
+	int SpeedFirst = S.Song.Speed, TempoFirst = S.Song.Tempo, Speed = S.Song.Speed, Tempo = S.Song.Tempo;
+	bool StartSets = false;
+	for (size_t i = 0; i <= Second; ++i) {
+		if (i == First) {
+			SpeedFirst = Speed;
+			TempoFirst = Tempo;
+		}
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const Cell &C = Cells[static_cast<size_t>(c)][static_cast<size_t>(Rows[i].Row)];
+			for (int k = 0; k < Columns[static_cast<size_t>(c)]; ++k)
+				if (C.Effect[k] == EFF_SPEED) {
+					if (i == Second)
+						StartSets = true;
+					else if (C.Param[k] >= S.Song.SplitPoint)
+						Tempo = C.Param[k];
+					else
+						Speed = std::max(1, static_cast<int>(C.Param[k]));
+				}
+		}
+	}
+	if (!StartSets && (Speed != SpeedFirst || Tempo != TempoFirst))
+		Seams.push_back(Format("The loop starts at speed %d, tempo %d the first time and speed %d, tempo %d on repeat; put the "
+			"speed and tempo (Fxx) on its first row.", SpeedFirst, TempoFirst, Speed, Tempo));
+
+	return Seams;
+}
+
+// "bar 8" when the row ends its bar, else "bar 8 beat 3"
+std::string EndPosition(const Session &S, int LastRow)
+{
+	const int Bar = S.Time.BarOf(LastRow);
+	if (S.Time.BarEnd(Bar) == LastRow + 1)
+		return Format("bar %d", Bar);
+	return S.Time.Position(LastRow);
+}
+
+std::string CheckLoopTool(Session &S, const Json &)
+{
+	const int PL = S.Time.PatternLength;
+	const SongFlow F = Flow(S);
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	int EndTick = 0;
+	const std::vector<TimedRow> Rows = TimeRows(Cells, Columns, F, PL, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint,
+		S.Song.FrameRate, 2, EndTick);
+	if (Rows.empty())
+		throw Problem("The song has no rows.");
+	const double Rate = std::max(1, S.Song.FrameRate);
+	const int LastRow = F.EndRow(PL) - 1;
+
+	if (F.Halts())
+		return Format("The song plays once and stops after %s (a halt, Cxx): %s. That suits a jingle or an ending; music that "
+			"repeats loops instead (set_loop sets where).", EndPosition(S, LastRow).c_str(), SecondsText(EndTick / Rate).c_str());
+
+	// Where the loop starts the first time and the second
+	size_t First = Rows.size(), Second = Rows.size();
+	for (size_t i = 0; i < Rows.size(); ++i)
+		if (Rows[i].LoopStart) {
+			if (First == Rows.size())
+				First = i;
+			else if (Second == Rows.size())
+				Second = i;
+		}
+	if (First == Rows.size() || Second == Rows.size())
+		throw Problem("The song's loop couldn't be followed.");
+	const int LoopRow = F.LoopRow(PL);
+	std::string Text;
+	const double LoopSeconds = (Rows[Second].Tick - Rows[First].Tick) / Rate;
+	if (First == 0)
+		Text = Format("The whole song loops: %s, %s, then back to bar 1.", RangeText(1, S.Time.BarOf(LastRow)).c_str(),
+			SecondsText(LoopSeconds).c_str());
+	else
+		Text = Format("Bars 1-%d play once as an intro (%s), then %s loop (%s): after %s it goes back to %s.",
+			S.Time.BarOf(LoopRow) - 1, SecondsText(Rows[First].Tick / Rate).c_str(),
+			RangeText(S.Time.BarOf(LoopRow), S.Time.BarOf(LastRow)).c_str(), SecondsText(LoopSeconds).c_str(),
+			EndPosition(S, LastRow).c_str(), S.Time.Position(LoopRow).c_str());
+	const int LoopRows = F.LoopRows();
+	if (LoopRows % std::max(1, S.Time.RowsPerBar) != 0)
+		Text += Format(" The loop is %s long, not whole bars; whole bars repeat more steadily.", S.Time.Length(LoopRows).c_str());
+
+	const std::vector<std::string> Seams = SeamProblems(S, Cells, Columns, Rows, First, Second, LoopRow);
+
+	if (Seams.empty())
+		Text += "\nThe seam is clean: every channel starts the loop the same way both times.";
+	else {
+		Text += "\nAt the seam (the loop's end into its start):";
+		for (size_t i = 0; i < Seams.size(); ++i)
+			Text += "\n- " + Seams[i];
+	}
+
+	// How it sounds going round: the chords, the melody's step
+	Key K;
+	if (FindKey(S, 0, S.Time.TotalRows(), K)) {
+		const int EndBar = S.Time.BarOf(LastRow), StartBar = S.Time.BarOf(LoopRow);
+		int EndRoot, StartRoot;
+		bool EndMinor = false, StartMinor = false;
+		if (SoundingChord(S, S.Time.BarStart(EndBar), LastRow + 1, EndRoot, EndMinor) &&
+			SoundingChord(S, LoopRow, std::min(S.Time.BarEnd(StartBar), S.Time.TotalRows()), StartRoot, StartMinor)) {
+			const std::string EndChord = ChordLabel(EndRoot, EndMinor, K), StartChord = ChordLabel(StartRoot, StartMinor, K);
+			Text += Format("\nIn %s, the loop ends on %s and starts on %s", KeyName(K).c_str(), EndChord.c_str(), StartChord.c_str());
+			const int Step = ((StartRoot - EndRoot) % 12 + 12) % 12;
+			if (EndRoot == StartRoot && EndMinor == StartMinor)
+				Text += ": the same chord; a V or IV in the last bar leads back more smoothly.";
+			else if (Step == 5 || Step == 7 || (EndRoot - K.Tonic + 12) % 12 == 7)
+				Text += ": the end leads back into the start.";
+			else
+				Text += ".";
+		}
+		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		if (Melody >= 0) {
+			int Last = -1, Next = -1;
+			for (size_t i = 0; i < Rows.size(); ++i) {
+				const Cell &C = Cells[static_cast<size_t>(Melody)][static_cast<size_t>(Rows[i].Row)];
+				if (!C.HasNote())
+					continue;
+				if (i < Second)
+					Last = C.Pitch();
+				else {
+					Next = C.Pitch();
+					break;
+				}
+			}
+			if (Last >= 0 && Next >= 0) {
+				const int Leap = std::abs(Next - Last);
+				Text += Format(" The melody (%s) goes from %s at the end to %s at the start: %s.", S.Channel(Melody).FullName().c_str(),
+					PitchName(Last).c_str(), PitchName(Next).c_str(),
+					Leap == 0 ? "the same note" : Leap <= 2 ? "a step" : Leap <= 7 ? Format("a leap of %d semitones", Leap).c_str() :
+					Format("a big leap of %d semitones; a smaller one sounds smoother", Leap).c_str());
+			}
+		}
+	}
+	return Text;
+}
+
+// Sets where the song loops: a jump (Bxx) after to_bar back to from_bar,
+// which starts a frame; jumps and halts that would end it earlier go
+std::string SetLoopTool(Session &S, const Json &Args)
+{
+	const int PL = S.Time.PatternLength, Bars = S.Time.BarCount();
+	const int From = IntArg(Args, "from_bar", 1, 1, Bars);
+	const int To = IntArg(Args, "to_bar", Bars, 1, Bars);
+	const int LoopRow = S.Time.BarStart(From);
+	if (LoopRow % PL != 0) {
+		std::string Starts;
+		for (int Bar = 1; Bar <= Bars; Bar += S.Time.BarsPerFrame())
+			Starts += (Starts.empty() ? "" : ", ") + FormatNumber(Bar);
+		throw Problem(Format("A loop starts where a frame starts: bar %s (a frame is %s).", Starts.c_str(),
+			Plural(S.Time.BarsPerFrame(), "bar", "bars").c_str()));
+	}
+	if (To < From)
+		throw Problem("to_bar comes before from_bar.");
+	if (!S.Song.DirectChanges)
+		throw Problem(Format("Setting the loop changes the song, which needs direct changes. The user can do it: a B%02X effect on "
+			"the last row of bar %d (frame %02X, row %02X) jumps back to bar %d.", LoopRow / PL, To, (S.Time.BarEnd(To) - 1) / PL,
+			(S.Time.BarEnd(To) - 1) % PL, From));
+	const int EndRow = S.Time.BarEnd(To) - 1;
+
+	Draft D(S);
+	int Removed = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		std::vector<Cell> &Cells = D.Cells(c);
+		const int Cols = S.Channel(c).EffectColumns;
+		for (size_t r = 0; r < Cells.size(); ++r)
+			for (int k = 0; k < Cols; ++k)
+				if (Cells[r].Effect[k] == EFF_JUMP || Cells[r].Effect[k] == EFF_HALT) {
+					Cells[r].Effect[k] = EFF_NONE;
+					Cells[r].Param[k] = 0;
+					++Removed;
+				}
+	}
+	// The jump, unless the song goes back to its start by itself
+	const bool Natural = LoopRow == 0 && EndRow == S.Time.TotalRows() - 1;
+	if (!Natural) {
+		bool Placed = false;
+		for (int c = 0; c < S.ChannelCount() && !Placed; ++c)
+			Placed = AddEffect(D.Cells(c)[static_cast<size_t>(EndRow)], EFF_JUMP, LoopRow / PL, S.Channel(c).EffectColumns);
+		if (!Placed)
+			throw Problem(Format("No channel has a free effect column on the last row of bar %d for the jump; show another effect "
+				"column in FamiTracker.", To));
+	}
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = 0;
+	if (!D.Collect(0, true, Changes, Start, Warnings))
+		return Format("The song already loops from bar %d after bar %d.", From, To);
+	std::string What = From == 1 ? Format("the song loops from bar 1 after bar %d", To) :
+		Format("bars 1-%d play once as an intro, then bars %d-%d loop", From - 1, From, To);
+	if (!Natural)
+		What += Format(" (B%02X on the last row of bar %d)", LoopRow / PL, To);
+	if (Removed > 0)
+		What += Format("; %s that ended it elsewhere went", Plural(Removed, "jump or halt", "jumps and halts").c_str());
+	if (EndRow + 1 < S.Time.TotalRows())
+		Warnings.push_back(Format("Bars after %d don't play now.", To));
+	return WithRemarks(S, Commit(S, Changes, Start, false, "", What), Warnings);
+}
+
+// Music for games: each track as a looping OGG
+
+// The track's file name: its own name, or the song's for one called "New song"
+std::string TrackFileName(const Session &S, int Track, std::vector<std::string> &Taken)
+{
+	std::string Name = static_cast<size_t>(Track) < S.Song.TrackNames.size() ? Trim(S.Song.TrackNames[static_cast<size_t>(Track)]) : "";
+	if (Name.empty() || Lowercase(Name) == "new song") {
+		Name = Trim(S.Song.Title);
+		if (Name.empty()) {
+			Name = S.Song.FileName;
+			const size_t Dot = Name.rfind('.');
+			if (Dot != std::string::npos)
+				Name = Name.substr(0, Dot);
+		}
+		if (S.Song.Tracks > 1)
+			Name += Format(" %d", Track + 1);
+	}
+	const std::string Base = SafeFileName(Name);
+	std::string File = Base + ".ogg";
+	for (int n = 2; std::find(Taken.begin(), Taken.end(), Lowercase(File)) != Taken.end(); ++n)
+		File = Format("%s %d.ogg", Base.c_str(), n);
+	Taken.push_back(Lowercase(File));
+	return File;
+}
+
+// One track rendered, cut where it loops, encoded and saved next to the song
+std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::string> &Taken, std::string &Code)
+{
+	const int PL = S.Time.PatternLength;
+	const SongFlow F = Flow(S);
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	int EndTick = 0;
+	const std::vector<TimedRow> Rows = TimeRows(Cells, Columns, F, PL, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint,
+		S.Song.FrameRate, 2, EndTick);
+	if (Rows.empty())
+		throw Problem("The track has no rows.");
+	const double Rate = std::max(1, S.Song.FrameRate);
+	bool Clean = true;
+	if (!F.Halts()) {
+		size_t First = Rows.size(), Second = Rows.size();
+		for (size_t i = 0; i < Rows.size(); ++i)
+			if (Rows[i].LoopStart) {
+				if (First == Rows.size())
+					First = i;
+				else if (Second == Rows.size())
+					Second = i;
+			}
+		if (Second < Rows.size())
+			Clean = SeamProblems(S, Cells, Columns, Rows, First, Second, F.LoopRow(PL)).empty();
+	}
+
+	// A little more than the loop twice, so the third time it starts is there too
+	std::vector<float> Samples;
+	std::vector<std::pair<int, long long> > Marks;
+	int SampleRate = 0;
+	std::string Error;
+	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, Samples, SampleRate, Marks, Error))
+		throw Problem("The track couldn't be rendered: " + Error);
+	GameCut Cut;
+	if (!CutForGame(Samples, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error))
+		throw Problem("The track couldn't be cut for a game: " + Error);
+
+	const std::string File = TrackFileName(S, Track, Taken);
+	OggComments Comments;
+	Comments.push_back(std::make_pair(std::string("TITLE"), File.substr(0, File.size() - 4)));
+	if (!S.Song.Title.empty())
+		Comments.push_back(std::make_pair(std::string("ALBUM"), S.Song.Title));
+	if (!S.Song.Author.empty())
+		Comments.push_back(std::make_pair(std::string("ARTIST"), S.Song.Author));
+	if (Cut.Loops) {
+		// The loop in samples, as RPG Maker and other engines read it
+		Comments.push_back(std::make_pair(std::string("LOOPSTART"), Format("%lld", Cut.LoopStart)));
+		Comments.push_back(std::make_pair(std::string("LOOPLENGTH"), Format("%lld", Cut.Length() - Cut.LoopStart)));
+		Comments.push_back(std::make_pair(std::string("LOOPEND"), Format("%lld", Cut.Length())));
+	}
+	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
+	const std::vector<float> Kept(Samples.begin() + Cut.Begin, Samples.begin() + Cut.End);
+	std::string Bytes;
+	if (!EncodeOgg(Kept, SampleRate, Quality, Comments, Bytes, Error))
+		throw Problem(Error);
+	std::string Path;
+	if (!S.Host().SaveFile(File, Bytes, Path, Error))
+		throw Problem(Error);
+
+	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
+	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
+	if (!Cut.Loops)
+		Text += ", plays once (the song halts).";
+	else if (Cut.LoopStart == 0)
+		Text += ", loops as a whole.";
+	else
+		Text += Format(", the first %s once, then the loop from %s to the end.%s", SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
+			SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
+			Cut.SecondPass ? " The loop is the song's second time through, since the first starts differently (check_loop says why)." : "");
+	Code += (Code.empty() ? "" : "\n") + GameMakerCode(GameMakerName(File), Cut, SampleRate);
+	return Text;
+}
+
+std::string ExportTool(Session &S, const Json &Args)
+{
+	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
+	std::vector<int> Tracks;
+	const Json *pTracks = Arg(Args, "tracks");
+	if (pTracks == 0 || (pTracks->IsString() && Lowercase(Trim(pTracks->String())) == "this"))
+		Tracks.push_back(S.Song.Track);
+	else if (pTracks->IsString() && Lowercase(Trim(pTracks->String())) == "all") {
+		for (int t = 0; t < S.Song.Tracks; ++t)
+			Tracks.push_back(t);
+	}
+	else {
+		std::vector<Json> Items;
+		if (pTracks->IsArray())
+			Items = pTracks->Items();
+		else
+			Items.push_back(*pTracks);
+		for (size_t i = 0; i < Items.size(); ++i) {
+			Json One = Json::MakeObject();
+			One.Set("track", Items[i]);
+			Tracks.push_back(TrackArg(S, One, "track"));
+		}
+	}
+	if (S.Song.FileName.empty())
+		throw Problem("The song hasn't been saved yet, and the files go next to it. Ask the user to save it (File > Save As).");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+
+	const int Selected = S.Song.Track;
+	int Current = Selected;
+	std::vector<std::string> Taken, Lines;
+	std::string Code;
+	std::string Error;
+	for (size_t i = 0; i < Tracks.size(); ++i) {
+		if (Tracks[i] != Current) {
+			if (!S.Host().SelectTrack(Tracks[i], Error)) {
+				Lines.push_back(Format("Track %d: %s", Tracks[i] + 1, Error.c_str()));
+				continue;
+			}
+			Current = Tracks[i];
+		}
+		Session Track(S.Host());
+		try {
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Taken, Code));
+		}
+		catch (const Problem &P) {
+			Lines.push_back(Format("Track %d: %s", Tracks[i] + 1, P.Text.c_str()));
+		}
+	}
+	if (Current != Selected)
+		S.Host().SelectTrack(Selected, Error);
+
+	std::string Text = Format("Saved next to %s:", S.Song.FileName.c_str());
+	for (size_t i = 0; i < Lines.size(); ++i)
+		Text += "\n- " + Lines[i];
+	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
+		"points are in seconds.\n" + Code;
+	return Text;
+}
+
 // Checks
 
 std::string CheckTool(Session &S, const Json &Args)
@@ -3040,6 +3569,29 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			false);
 	}
 
+	AddTool("check_loop", "Check the loop",
+		"How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam "
+		"where the end goes back to the loop's start: notes hanging over it, effects, instruments, volumes or tempo that differ "
+		"between the first time and the repeats, the chords and the melody's step across it. Run it before exporting music "
+		"for a game.",
+		Schema(), true, false, true);
+
+	AddTool("set_loop", "Set the loop",
+		"Sets where the song loops: after to_bar it jumps back to from_bar (a Bxx effect), which has to start a frame; bars "
+		"before from_bar then play once as an intro. Jumps and halts elsewhere go. Needs direct changes; undoable.",
+		Schema().Add("from_bar", BarProp("Where the loop starts; it has to start a frame. Default 1 (no intro)."))
+			.Add("to_bar", BarProp("The loop's last bar. Default: the song's last bar.")),
+		false, true);
+
+	AddTool("export_for_game", "Export music for a game",
+		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
+		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
+		"gives). A song that halts plays once. Run check_loop first. Takes a while for long songs.",
+		Schema()
+			.Add("tracks", ChannelListProp("\"this\" (default: the selected track), \"all\", or tracks by number or name."))
+			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes.")),
+		false);
+
 	AddTool("select_track", "Switch tracks",
 		"Selects another track (song) of the module in FamiTracker, by number or name; the other tools work on the selected "
 		"one. get_song lists the tracks.",
@@ -3108,6 +3660,9 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "look_at_song") Result.Text = LookTool(S, Args, Result.Image);
 		else if (Name == "make_version") Result.Text = MakeVersionTool(S, Args);
 		else if (Name == "select_track") Result.Text = SelectTrackTool(S, Args);
+		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
+		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
+		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
 			S.Host().Stop();

@@ -572,6 +572,62 @@ SongFlow FollowSong(const std::vector<std::vector<Cell> > &Channels, const std::
 	}
 }
 
+std::vector<TimedRow> TimeRows(const std::vector<std::vector<Cell> > &Channels, const std::vector<int> &EffectColumns,
+	const SongFlow &Flow, int PatternLength, int Speed, int Tempo, int SplitPoint, int FrameRate, int Passes, int &EndTick)
+{
+	std::vector<TimedRow> Out;
+	int Accumulator = 0, Tick = 0;
+	int Decrement = 0, Remainder = 0;
+	auto Setup = [&]() {
+		Speed = std::max(1, Speed);
+		Decrement = (Tempo * 24) / Speed;
+		Remainder = (Tempo * 24) % Speed;
+	};
+	Setup();
+	const int Steps = static_cast<int>(Flow.Steps.size());
+	const int Loops = Flow.Halts() ? 1 : std::max(1, Passes);
+	const int LoopStep = Flow.Halts() ? Steps : Flow.LoopStep;
+	for (int Pass = 0; Pass < Loops; ++Pass) {
+		for (int s = Pass == 0 ? 0 : LoopStep; s < Steps; ++s) {
+			const FlowStep &Step = Flow.Steps[static_cast<size_t>(s)];
+			for (int r = Step.FirstRow; r < Step.EndRow; ++r) {
+				const int Row = Step.Frame * PatternLength + r;
+				TimedRow Timed;
+				Timed.Row = Row;
+				Timed.Tick = Tick;
+				Timed.Pass = s < LoopStep ? 0 : Pass;
+				Timed.LoopStart = s == LoopStep && r == Step.FirstRow;
+				Out.push_back(Timed);
+				// Speed and tempo commands take effect on their row
+				for (size_t c = 0; c < Channels.size(); ++c) {
+					if (Row >= static_cast<int>(Channels[c].size()))
+						continue;
+					const Cell &C = Channels[c][static_cast<size_t>(Row)];
+					const int Columns = c < EffectColumns.size() ? std::max(1, std::min(EFFECT_COLUMNS, EffectColumns[c])) : 1;
+					for (int k = 0; k < Columns; ++k)
+						if (C.Effect[k] == EFF_SPEED) {
+							const int Value = std::max(1, static_cast<int>(C.Param[k]));
+							if (Value >= SplitPoint)
+								Tempo = Value;
+							else
+								Speed = Value;
+							Setup();
+						}
+				}
+				// The ticks until the next row
+				do {
+					if (Accumulator <= 0)
+						Accumulator += 60 * FrameRate - Remainder;
+					Accumulator -= Decrement;
+					++Tick;
+				} while (Accumulator > 0 && Decrement > 0);
+			}
+		}
+	}
+	EndTick = Tick;
+	return Out;
+}
+
 int ModeCount()
 {
 	return MODE_COUNT;

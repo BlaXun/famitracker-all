@@ -167,6 +167,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_COPYDATA()
 	ON_COMMAND(ID_FILE_GENERALSETTINGS, OnFileGeneralsettings)
 	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
+	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -1662,6 +1663,12 @@ void CMainFrame::OnFileConnectClaude()
 {
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->ShowDialog();
+}
+
+void CMainFrame::OnFileExportForGames()
+{
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->ShowGameExport();
 }
 
 void CMainFrame::OnFileGeneralsettings()

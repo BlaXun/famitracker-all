@@ -48,7 +48,7 @@ namespace {
 
 const int MAX_CONNECTIONS = 16;
 const ULONGLONG IDLE_MS = 120000;		// a connection nobody uses for this long is closed
-const UINT ANSWER_MS = 30000;			// how long the UI thread may take to answer
+const UINT ANSWER_MS = 600000;			// how long the UI thread may take to answer (an export for games renders)
 const int SEND_TIMEOUT_MS = 10000;
 
 struct Connection {

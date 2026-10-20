@@ -692,6 +692,16 @@
 #define IDC_MCP_HINT                    1380
 #define ID_FILE_CONNECTCLAUDE           33160
 
+// File > Export for games (McpConnection.cpp)
+#define IDD_GAME_EXPORT                 331
+#define IDC_GAME_THIS                   1381
+#define IDC_GAME_ALL                    1382
+#define IDC_GAME_QUALITY                1383
+#define IDC_GAME_RESULT                 1384
+#define IDC_GAME_COPY                   1385
+#define IDC_GAME_EXPORT                 1386
+#define ID_FILE_EXPORTFORGAMES          33161
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -25,6 +25,7 @@
 //
 
 #include <afxmt.h>		// Synchronization objects
+#include <afxtempl.h>	// CArray
 #include "WaveFile.h"
 #include "Common.h"
 
@@ -164,6 +165,15 @@ public:
 	void		 GetRenderStat(int &Frame, int &Time, bool &Done, int &FramesToRender, int &Row, int &RowCount) const;
 	bool		 IsRendering() const;	
 	bool		 IsBackgroundTask() const;
+
+	// The sample where each row began in the last rendering, in playing order
+	// (the export for games cuts loops there). Read it once rendering is done.
+	struct render_mark_t {
+		int Frame;
+		int Row;
+		unsigned __int64 Sample;
+	};
+	void		 GetRenderMarks(CArray<render_mark_t> &Marks) const;
 
 	// Sample previewing
 	void		 PreviewSample(CDSample *pSample, int Offset, int Pitch);
@@ -351,6 +361,8 @@ private:
 	int					m_iRenderTrack;
 	unsigned int		m_iRenderRowCount;
 	int					m_iRenderRow;
+	unsigned __int64	m_iRenderedSamples;					// written to the file
+	CArray<render_mark_t> m_RenderMarks;
 
 	int					m_iTempoDecrement;
 	int					m_iTempoRemainder;

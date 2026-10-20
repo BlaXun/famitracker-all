@@ -26,6 +26,7 @@
 // FamiTracker document; the tests implement it in memory.
 
 #include <string>
+#include <utility>
 #include <vector>
 #include "Music.h"
 
@@ -131,6 +132,15 @@ public:
 	// can't undo it: the user removes a track in Module > Module properties.
 	virtual int AddTrack(const std::string &Name, const std::vector<std::vector<Cell> > &Channels, int Speed, int Tempo,
 		std::string &Error) = 0;
+
+	// For games: a track (from 0) played from its start for Seconds as audio
+	// (mono, -1 to 1), with the sample where each row began, as song rows in
+	// playing order
+	virtual bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
+	// Writes a file next to the song (FileName has no folders), replacing one
+	// of that name; the path written comes back in Path
+	virtual bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
 
 	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
 	virtual void Stop() = 0;

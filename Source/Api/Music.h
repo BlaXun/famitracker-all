@@ -161,6 +161,20 @@ struct SongFlow {
 SongFlow FollowSong(const std::vector<std::vector<Cell> > &Channels, const std::vector<int> &EffectColumns, int PatternLength,
 	int Frames);
 
+// When rows play, in engine ticks from the start (FrameRate a second): the
+// flow's rows in order, the intro once and the loop Passes times (a song that
+// halts plays once), each as long as speed and tempo make it, Fxx changing
+// them on the way, the way CSoundGen counts. EndTick is when the next row
+// would start.
+struct TimedRow {
+	int Row;			// song row
+	int Tick;			// when it starts
+	int Pass;			// 0 for the intro and the first time through the loop, then 1, 2...
+	bool LoopStart;		// the loop's first row
+};
+std::vector<TimedRow> TimeRows(const std::vector<std::vector<Cell> > &Channels, const std::vector<int> &EffectColumns,
+	const SongFlow &Flow, int PatternLength, int Speed, int Tempo, int SplitPoint, int FrameRate, int Passes, int &EndTick);
+
 // Keys and modes
 struct Key {
 	int Tonic;		// 0 = C ... 11 = B

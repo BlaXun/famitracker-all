@@ -264,6 +264,7 @@ public:
 	afx_msg void OnTimer(UINT nIDEvent);
 	afx_msg void OnFileGeneralsettings();
 	afx_msg void OnFileConnectClaude();
+	afx_msg void OnFileExportForGames();
 	afx_msg void OnEnSongNameChange();
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();

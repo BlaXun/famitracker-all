@@ -29,6 +29,7 @@
 // Standard and API headers come before stdafx.h, whose DEBUG_NEW macro would
 // otherwise rewrite the placement new inside the standard library.
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -39,6 +40,7 @@
 #include "Api/Presets.h"
 #include "Api/Song.h"
 #include "Api/Tools.h"
+#include "Transcribe/Transcribe.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -249,7 +251,8 @@ struct mcp_settings_t {
 class CMcpLink : public ftapi::SongHost
 {
 public:
-	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_iPlayFirst(0),
+	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
+		m_pProgress(NULL), m_iPlayFirst(0),
 		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0)
 	{
 		m_Settings.Enabled = false;
@@ -606,6 +609,145 @@ public:
 		return New;
 	}
 
+	// Waits a little, keeping the windows going
+	static void Pump(DWORD Milliseconds)
+	{
+		MsgWaitForMultipleObjects(0, NULL, FALSE, Milliseconds, QS_ALLINPUT);
+		MSG Message;
+		while (PeekMessage(&Message, NULL, 0, 0, PM_REMOVE)) {
+			if (Message.message == WM_QUIT) {
+				PostQuitMessage(static_cast<int>(Message.wParam));
+				return;
+			}
+			TranslateMessage(&Message);
+			DispatchMessage(&Message);
+		}
+	}
+
+	// FamiTracker's own WAV rendering into a temporary file, read back with
+	// the sample where each row began
+	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CSoundGen *pSound = theApp.GetSoundGenerator();
+		if (pDoc == NULL || pSound == NULL) {
+			Error = "FamiTracker isn't ready.";
+			return false;
+		}
+		if (Track < 0 || Track >= static_cast<int>(pDoc->GetTrackCount())) {
+			Error = "There's no such track.";
+			return false;
+		}
+		if (pSound->IsRendering()) {
+			Error = "FamiTracker is rendering something else.";
+			return false;
+		}
+		TCHAR Folder[MAX_PATH], File[MAX_PATH];
+		if (GetTempPath(MAX_PATH, Folder) == 0 || GetTempFileName(Folder, _T("ftg"), 0, File) == 0) {
+			Error = "No temporary file could be made for the rendering.";
+			return false;
+		}
+		const int Limit = static_cast<int>(std::ceil(Seconds));
+		CWaitCursor Wait;
+		const BOOL Enabled = m_pMain->IsWindowEnabled();
+		m_pMain->EnableWindow(FALSE);	// nothing changes the song while it renders
+		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track) != false;
+		if (Started) {
+			// It starts on the sound thread a moment later and runs to its end
+			Started = false;
+			const ULONGLONG Since = GetTickCount64();
+			for (;;) {
+				const bool Rendering = pSound->IsRendering();
+				if (Rendering)
+					Started = true;
+				else if (Started || GetTickCount64() - Since > 5000)
+					break;
+				int Frame = 0, Time = 0, Frames = 0, Row = 0, Rows = 0;
+				bool Done = false;
+				pSound->GetRenderStat(Frame, Time, Done, Frames, Row, Rows);
+				CString Text;
+				Text.Format(_T("Rendering \"%s\" for the game: %d of %d seconds..."), pDoc->GetTrackTitle(static_cast<unsigned int>(Track)).GetString(),
+					std::min(Time, Limit), Limit);
+				if (m_pProgress != NULL)
+					m_pProgress->SetWindowText(Text);
+				m_pMain->SetMessageText(Text);
+				Pump(50);
+			}
+		}
+		m_pMain->EnableWindow(Enabled);
+		m_pMain->SetMessageText(_T(""));
+
+		CArray<CSoundGen::render_mark_t> Raw;
+		pSound->GetRenderMarks(Raw);
+		transcribe::Audio Audio;
+		std::string Problem;
+		const bool Read = Started && transcribe::ReadWav(std::string(static_cast<LPCSTR>(CStringA(File))), Audio, &Problem);
+		DeleteFile(File);
+		if (!Read) {
+			Error = Started ? "The rendering couldn't be read: " + Problem : "FamiTracker didn't start rendering.";
+			return false;
+		}
+		Samples.swap(Audio.samples);
+		SampleRate = Audio.sampleRate;
+		const int Length = static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(Track)));
+		Marks.clear();
+		for (INT_PTR i = 0; i < Raw.GetCount(); ++i)
+			Marks.push_back(std::make_pair(Raw[i].Frame * Length + Raw[i].Row, static_cast<long long>(Raw[i].Sample)));
+		return true;
+	}
+
+	bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL ? pDoc->GetPathName() : CString();
+		if (Song.IsEmpty()) {
+			Error = "The song hasn't been saved yet, so there's no folder for the files.";
+			return false;
+		}
+		const CString Full = Song.Left(Song.ReverseFind(_T('\\')) + 1) + Ansi(FileName);
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("wb")) != 0 || pFile == NULL) {
+			Error = "Couldn't write " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		const size_t Written = fwrite(Bytes.data(), 1, Bytes.size(), pFile);
+		const bool Closed = fclose(pFile) == 0;
+		if (Written != Bytes.size() || !Closed) {
+			DeleteFile(Full);
+			Error = "Couldn't write all of " + Utf8(Full) + " (is the disk full?).";
+			return false;
+		}
+		Path = Utf8(Full);
+		return true;
+	}
+
+	// File > Export for games: the export_for_game tool, for the dialog
+	CString ExportForGames(bool All, double Quality, CWnd *pProgress)
+	{
+		if (m_bBusy)
+			return _T("FamiTracker is busy with Claude Code; try again in a moment.");
+		m_bBusy = true;
+		m_bOwnDialog = true;
+		m_pProgress = pProgress;
+		ftapi::Json Args = ftapi::Json::MakeObject();
+		Args.Set("tracks", All ? "all" : "this");
+		Args.Set("quality", Quality);
+		ftapi::ToolResult Result;
+		try {
+			Result = m_Tools.Call("export_for_game", Args);
+		}
+		catch (...) {
+			Result.Text = "The export failed.";
+		}
+		m_pProgress = NULL;
+		m_bOwnDialog = false;
+		m_bBusy = false;
+		CString Text = Ansi(Result.Text);
+		Text.Replace(_T("\n"), _T("\r\n"));
+		return Text;
+	}
+
 	bool CanChange(std::string &Why)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
@@ -613,7 +755,7 @@ public:
 			Why = "No song is open in FamiTracker.";
 			return false;
 		}
-		if (!m_pMain->IsWindowEnabled()) {
+		if (!m_bOwnDialog && !m_pMain->IsWindowEnabled()) {
 			Why = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
 			return false;
 		}
@@ -932,6 +1074,8 @@ private:
 	CString m_sLastError;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
 	bool m_bStopping;
+	bool m_bOwnDialog;	// working for File > Export for games, whose dialog may change the song
+	CWnd *m_pProgress;	// where a rendering's progress shows, or NULL
 	int m_iPlayFirst, m_iPlayEnd;
 	bool m_bPlayStarted;
 	int m_iPlayTicks;
@@ -1089,6 +1233,107 @@ void CConnectClaudeDlg::OnOK()
 	CDialog::OnOK();
 }
 
+// File > Export for games
+
+class CGameExportDlg : public CDialog
+{
+public:
+	CGameExportDlg(CMcpLink *pLink, CWnd *pParent) : CDialog(IDD_GAME_EXPORT, pParent), m_pLink(pLink), m_bWorking(false) {}
+
+protected:
+	virtual BOOL OnInitDialog();
+	virtual void OnCancel();
+	afx_msg void OnExport();
+	afx_msg void OnCopy();
+
+	DECLARE_MESSAGE_MAP()
+
+private:
+	CMcpLink *m_pLink;
+	bool m_bWorking;
+};
+
+BEGIN_MESSAGE_MAP(CGameExportDlg, CDialog)
+	ON_BN_CLICKED(IDC_GAME_EXPORT, OnExport)
+	ON_BN_CLICKED(IDC_GAME_COPY, OnCopy)
+END_MESSAGE_MAP()
+
+namespace {
+const TCHAR GAME_SECTION[] = _T("Game export");
+const double QUALITIES[] = { 0.3, 0.6, 0.9 };
+const LPCTSTR QUALITY_NAMES[] = { _T("Smaller files"), _T("Normal (for chiptunes)"), _T("Best") };
+}
+
+BOOL CGameExportDlg::OnInitDialog()
+{
+	CDialog::OnInitDialog();
+	const bool All = theApp.GetProfileInt(GAME_SECTION, _T("All tracks"), 1) != 0;
+	CheckRadioButton(IDC_GAME_THIS, IDC_GAME_ALL, All ? IDC_GAME_ALL : IDC_GAME_THIS);
+	CComboBox *pQuality = static_cast<CComboBox*>(GetDlgItem(IDC_GAME_QUALITY));
+	for (int i = 0; i < 3; ++i)
+		pQuality->AddString(QUALITY_NAMES[i]);
+	pQuality->SetCurSel(std::max(0, std::min(2, static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Quality"), 1)))));
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(static_cast<CFrameWnd*>(AfxGetMainWnd())->GetActiveDocument());
+	CString Text;
+	if (pDoc == NULL || pDoc->GetPathName().IsEmpty())
+		Text = _T("Save the song first: the OGG files go next to it.");
+	else
+		Text.Format(_T("The files go next to the song, in %s, named after the tracks (\"%s.ogg\"). Files of those names are replaced.\r\n\r\n")
+			_T("Run Claude Code's check_loop first, or listen to where the song jumps back: a note or effect that hangs over the seam ")
+			_T("makes the exported loop longer (it then repeats the second time through)."), pDoc->GetPathName().Left(pDoc->GetPathName().ReverseFind(_T('\\'))).GetString(),
+			pDoc->GetTrackTitle(0).GetString());
+	SetDlgItemText(IDC_GAME_RESULT, Text);
+	return TRUE;
+}
+
+void CGameExportDlg::OnExport()
+{
+	if (m_bWorking)
+		return;
+	m_bWorking = true;
+	const bool All = IsDlgButtonChecked(IDC_GAME_ALL) == BST_CHECKED;
+	const int Quality = std::max(0, static_cast<CComboBox*>(GetDlgItem(IDC_GAME_QUALITY))->GetCurSel());
+	theApp.WriteProfileInt(GAME_SECTION, _T("All tracks"), All ? 1 : 0);
+	theApp.WriteProfileInt(GAME_SECTION, _T("Quality"), Quality);
+	const int Buttons[] = { IDC_GAME_EXPORT, IDC_GAME_COPY, IDCANCEL, IDC_GAME_THIS, IDC_GAME_ALL, IDC_GAME_QUALITY };
+	for (int i = 0; i < 6; ++i)
+		GetDlgItem(Buttons[i])->EnableWindow(FALSE);
+	const CString Result = m_pLink->ExportForGames(All, QUALITIES[std::min(Quality, 2)], GetDlgItem(IDC_GAME_RESULT));
+	for (int i = 0; i < 6; ++i)
+		GetDlgItem(Buttons[i])->EnableWindow(TRUE);
+	SetDlgItemText(IDC_GAME_RESULT, Result);
+	m_bWorking = false;
+}
+
+void CGameExportDlg::OnCopy()
+{
+	CString Text;
+	GetDlgItemText(IDC_GAME_RESULT, Text);
+	if (Text.IsEmpty() || !OpenClipboard())
+		return;
+	EmptyClipboard();
+	const CStringA Bytes(Text);
+	HGLOBAL hMemory = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(Bytes.GetLength() + 1));
+	if (hMemory != NULL) {
+		char *pTarget = static_cast<char*>(GlobalLock(hMemory));
+		if (pTarget != NULL) {
+			memcpy(pTarget, static_cast<LPCSTR>(Bytes), static_cast<size_t>(Bytes.GetLength() + 1));
+			GlobalUnlock(hMemory);
+			if (SetClipboardData(CF_TEXT, hMemory) == NULL)
+				GlobalFree(hMemory);
+		}
+		else
+			GlobalFree(hMemory);
+	}
+	CloseClipboard();
+}
+
+void CGameExportDlg::OnCancel()
+{
+	if (!m_bWorking)
+		CDialog::OnCancel();
+}
+
 // CMcpConnection
 
 struct CMcpConnection::Impl {
@@ -1117,5 +1362,11 @@ void CMcpConnection::Stop()
 void CMcpConnection::ShowDialog()
 {
 	CConnectClaudeDlg Dialog(&m_pImpl->Link, AfxGetMainWnd());
+	Dialog.DoModal();
+}
+
+void CMcpConnection::ShowGameExport()
+{
+	CGameExportDlg Dialog(&m_pImpl->Link, AfxGetMainWnd());
 	Dialog.DoModal();
 }

@@ -100,6 +100,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Create NSF...\tCtrl+E",      ID_FILE_CREATE_NSF
         MENUITEM "Create WAV...",               ID_FILE_CREATEWAV
+        MENUITEM "Export for &games (OGG)...",  ID_FILE_EXPORTFORGAMES
         MENUITEM SEPARATOR
         MENUITEM "Import text...",              ID_FILE_IMPORTTEXT
         MENUITEM "Export text...",              ID_FILE_EXPORTTEXT
@@ -1875,6 +1876,22 @@ BEGIN
     LTEXT           "",IDC_MCP_HINT,14,206,272,32
     DEFPUSHBUTTON   "OK",IDOK,188,255,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,243,255,50,14
+END
+
+IDD_GAME_EXPORT DIALOGEX 0, 0, 320, 232
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Export for games"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Saves tracks as OGG files for a game, next to the song. Each plays its intro once, then loops without a seam; the loop points come with the GameMaker code that plays it.",IDC_STATIC,7,7,306,26
+    CONTROL         "This track",IDC_GAME_THIS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,7,38,70,10
+    CONTROL         "All tracks (day and night versions together)",IDC_GAME_ALL,"Button",BS_AUTORADIOBUTTON,80,38,200,10
+    LTEXT           "Quality:",IDC_STATIC,7,56,30,8,WS_GROUP
+    COMBOBOX        IDC_GAME_QUALITY,40,54,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_GAME_RESULT,7,74,306,128,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_GAME_COPY,7,211,50,14
+    DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,211,50,14
+    PUSHBUTTON      "Close",IDCANCEL,263,211,50,14
 END
 
 IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199

@@ -24,10 +24,12 @@
 
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
+#include "../GameAudio.h"
 #include "../Http.h"
 #include "../Json.h"
 #include "../Mcp.h"
 #include "../Music.h"
+#include "../Ogg.h"
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
@@ -35,6 +37,7 @@
 #include "../Tools.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -110,13 +113,15 @@ public:
 	std::vector<StoredTrack> Tracks;
 	int Current;
 	std::vector<Clip> Clips;
+	std::map<std::string, std::string> Files;	// saved next to the song
+	int RenderLatency;							// samples of silence before the song starts
 	std::vector<std::vector<std::vector<Cell> > > History;
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
 	bool Busy, Stopped;
 	std::string Saved;
 
-	explicit FakeSong(int Frames = 2) : Current(0), Writes(0), LastLink(-2), PlayFirst(-1), PlayRows(-1), NextClipId(1), Busy(false),
+	explicit FakeSong(int Frames = 2) : Current(0), RenderLatency(400), Writes(0), LastLink(-2), PlayFirst(-1), PlayRows(-1), NextClipId(1), Busy(false),
 		Stopped(false)
 	{
 		Info.Title = "Test song";
@@ -329,6 +334,69 @@ public:
 		Tracks.push_back(Track);
 		Switch(static_cast<int>(Tracks.size()) - 1);
 		return Current;
+	}
+
+	// Plays the song as square waves, a little like the 2A03: each channel's
+	// note at its volume, the noise channel from a free-running noise
+	// generator, 8000 samples a second
+	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
+	{
+		if (Track != Current) {
+			Error = "Only the selected track renders here.";
+			return false;
+		}
+		SampleRate = 8000;
+		Samples.assign(static_cast<size_t>(RenderLatency), 0.0f);
+		Marks.clear();
+		std::vector<int> Columns;
+		for (size_t c = 0; c < Rows.size(); ++c)
+			Columns.push_back(Info.Channels[c].EffectColumns);
+		const SongFlow Flow = FollowSong(Rows, Columns, Info.PatternLength, static_cast<int>(Rows[0].size()) / Info.PatternLength);
+		int EndTick = 0;
+		const std::vector<TimedRow> Timed = TimeRows(Rows, Columns, Flow, Info.PatternLength, Info.Speed, Info.Tempo, Info.SplitPoint,
+			Info.FrameRate, 6, EndTick);
+		const long long Total = static_cast<long long>(Seconds * SampleRate) + RenderLatency;
+		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15);
+		std::vector<double> Phase(Rows.size(), 0.0);
+		unsigned int Noise = 1;
+		for (size_t i = 0; i < Timed.size() && static_cast<long long>(Samples.size()) < Total; ++i) {
+			Marks.push_back(std::make_pair(Timed[i].Row, static_cast<long long>(Samples.size())));
+			for (size_t c = 0; c < Rows.size(); ++c) {
+				const Cell &C = Rows[c][static_cast<size_t>(Timed[i].Row)];
+				if (C.HasNote())
+					Pitch[c] = C.Pitch();
+				else if (C.IsEnd())
+					Pitch[c] = -1;
+				if (C.Volume != NO_VOLUME)
+					Volume[c] = C.Volume;
+			}
+			const long long Until = RenderLatency + (i + 1 < Timed.size() ? Timed[i + 1].Tick : EndTick) * SampleRate / Info.FrameRate;
+			while (static_cast<long long>(Samples.size()) < std::min(Until, Total)) {
+				double Sum = 0.0;
+				for (size_t c = 0; c < Rows.size(); ++c) {
+					if (Pitch[c] < 0)
+						continue;
+					if (Info.Channels[c].Kind == KIND_NOISE) {
+						Noise = (Noise >> 1) | (((Noise ^ (Noise >> 1)) & 1u) << 14);
+						Sum += (Noise & 1u ? 0.05 : -0.05) * Volume[c] / 15.0;
+						continue;
+					}
+					const double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
+					Phase[c] = std::fmod(Phase[c] + Frequency / SampleRate, 1.0);
+					Sum += (Phase[c] < 0.5 ? 0.05 : -0.05) * Volume[c] / 15.0;
+				}
+				Samples.push_back(static_cast<float>(Sum));
+			}
+		}
+		return true;
+	}
+
+	bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &) override
+	{
+		Files[FileName] = Bytes;
+		Path = "C:\\Music\\" + FileName;
+		return true;
 	}
 
 	bool Play(int First, int Count, std::string &) override
@@ -2053,6 +2121,268 @@ void TestVersions()
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "64 tracks");
 }
 
+// Loops for games
+
+void TestTiming2()
+{
+	// 6 ticks a row at speed 6, tempo 150; F03 halves it; tempo 120 alternates 8 and 7
+	std::vector<std::vector<Cell> > C(1, std::vector<Cell>(32));
+	std::vector<int> Columns(1, 1);
+	SongFlow F = FollowSong(C, Columns, 16, 2);
+	int End = 0;
+	std::vector<TimedRow> Rows = TimeRows(C, Columns, F, 16, 6, 150, 32, 60, 1, End);
+	CHECK(Rows.size() == 32 && Rows[1].Tick == 6 && Rows[31].Tick == 186 && End == 192);
+	C[0][4].Effect[0] = EFF_SPEED;
+	C[0][4].Param[0] = 3;
+	Rows = TimeRows(C, Columns, F, 16, 6, 150, 32, 60, 1, End);
+	CHECK(Rows[4].Tick == 24 && Rows[5].Tick == 27 && End == 24 + 28 * 3);
+	C[0][4].Param[0] = 120;
+	Rows = TimeRows(C, Columns, F, 16, 6, 150, 32, 60, 1, End);
+	CHECK(Rows[5].Tick - Rows[4].Tick == 8 && Rows[6].Tick - Rows[5].Tick == 7 && Rows[7].Tick - Rows[6].Tick == 8);
+	// Passes through the loop
+	C[0][4].Effect[0] = EFF_NONE;
+	C[0][31].Effect[0] = EFF_JUMP;
+	C[0][31].Param[0] = 1;
+	F = FollowSong(C, Columns, 16, 2);
+	Rows = TimeRows(C, Columns, F, 16, 6, 150, 32, 60, 3, End);
+	CHECK(Rows.size() == 16 + 3 * 16 && End == 64 * 6);
+	CHECK(Rows[16].LoopStart && Rows[16].Row == 16 && Rows[16].Pass == 0 && Rows[32].LoopStart && Rows[32].Pass == 1 && Rows[48].Pass == 2);
+	CHECK(!Rows[0].LoopStart && Rows[15].Pass == 0);
+	// A song that halts plays once
+	C[0][31].Effect[0] = EFF_HALT;
+	F = FollowSong(C, Columns, 16, 2);
+	Rows = TimeRows(C, Columns, F, 16, 6, 150, 32, 60, 3, End);
+	CHECK(Rows.size() == 32 && End == 192);
+}
+
+void TestLoops()
+{
+	FakeSong Song;		// 8 bars, 4 a frame, 0.1 s a row
+	Song.Info.DirectChanges = true;
+	// The melody, ending on G with vibrato still on
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 16, "E-4");
+	Song.Put(5, 32, "G-4");
+	Song.Put(5, 64, "E-4");
+	Song.Put(5, 96, "D-4");
+	Song.Put(5, 112, "G-4");
+	Song.Rows[5][112].Effect[0] = EFF_VIBRATO;
+	Song.Rows[5][112].Param[0] = 0x43;
+	// The bass: C, then G at the end
+	Song.Put(2, 0, "C-2", 1);
+	Song.Put(2, 112, "G-1");
+	// A pad on Pulse 2 that starts in bar 2 and sounds over the end
+	Song.Put(1, 16, "C-3", 2);
+	Song.Put(1, 112, "B-2");
+
+	ToolSet Tools(Song);
+	std::string Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "The whole song loops: bars 1-8, 12.8 s, then back to bar 1.");
+	CHECK_HAS(Text, "2A03 Pulse 2: B-2 from the loop's end keeps sounding into bar 1 beat 1 on repeat (until bar 2 beat 1), where the first time nothing sounds.");
+	CHECK_HAS(Text, "VRC6 Pulse 1: vibrato 443 is still on at the loop's end");
+	CHECK_LACKS(Text, "2A03 Triangle:");
+	CHECK_HAS(Text, "In C major, the loop ends on G (V) and starts on C (I): the end leads back into the start.");
+	CHECK_HAS(Text, "The melody (VRC6 Pulse 1) goes from G-4 at the end to C-4 at the start: a leap of 7 semitones.");
+
+	// An intro: bars 1-4 once, then bars 5-8
+	CHECK(Tools.Call("set_loop", Parse("{\"from_bar\": 3}")).IsError);
+	Text = Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).Text;
+	CHECK_HAS(Text, "bars 1-4 play once as an intro, then bars 5-8 loop (B01 on the last row of bar 8)");
+	CHECK(HasEffectAt(Song, 0, 127, EFF_JUMP, 1));
+	Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "Bars 1-4 play once as an intro (6.4 s), then bars 5-8 loop (6.4 s): after bar 8 it goes back to bar 5 beat 1.");
+	// The pad's B-2 and the bass's G now hang into bar 5 on repeat, where the intro's notes sound the first time
+	CHECK_HAS(Text, "2A03 Pulse 2: B-2 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-3 from the intro does.");
+	CHECK_HAS(Text, "2A03 Triangle: G-1 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-2 from the intro does.");
+	CHECK_HAS(Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).Text, "already loops");
+	// Back to the whole song: the jump goes
+	Text = Tools.Call("set_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "the song loops from bar 1 after bar 8; 1 jump or halt that ended it elsewhere went");
+	CHECK(!HasEffectAt(Song, 0, 127, EFF_JUMP, 1));
+
+	// A song that stops
+	Song.Rows[0][63].Effect[0] = EFF_HALT;
+	CHECK_HAS(Tools.Call("check_loop", Parse("{}")).Text, "The song plays once and stops after bar 4 (a halt, Cxx): 6.4 s.");
+	// Ending the loop earlier: the bars after it don't play
+	Text = Tools.Call("set_loop", Parse("{\"to_bar\": 6}")).Text;
+	CHECK_HAS(Text, "B00 on the last row of bar 6");
+	CHECK_HAS(Text, "Bars after 6 don't play now.");
+	CHECK(HasEffectAt(Song, 0, 95, EFF_JUMP, 0) && !HasEffectAt(Song, 0, 63, EFF_HALT, 0));
+	// Without direct changes it says how
+	Song.Info.DirectChanges = false;
+	CHECK_HAS(Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).Text, "B01 effect on the last row of bar 8 (frame 01, row 3F)");
+}
+
+// OGG files for games
+
+void TestOgg()
+{
+	// A tone comes back as it went in, with its comments
+	std::vector<float> Tone;
+	for (int i = 0; i < 44100; ++i)
+		Tone.push_back(static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / 44100.0)));
+	OggComments Comments;
+	Comments.push_back(std::make_pair(std::string("TITLE"), std::string("Town (night)")));
+	Comments.push_back(std::make_pair(std::string("LOOPSTART"), std::string("1234")));
+	std::string File, Error;
+	CHECK(EncodeOgg(Tone, 44100, 0.6f, Comments, File, Error));
+	CHECK(File.compare(0, 4, "OggS") == 0 && File.size() > 2000 && File.size() < 40000);
+	std::vector<float> Back;
+	int Rate = 0, Channels = 0;
+	OggComments Read;
+	CHECK(DecodeOgg(File, Back, Rate, Channels, Read, Error));
+	CHECK(Rate == 44100 && Channels == 1 && Back.size() == Tone.size());
+	double Error2 = 0.0, Power = 0.0;
+	for (size_t i = 0; i < std::min(Back.size(), Tone.size()); ++i) {
+		Error2 += (Back[i] - Tone[i]) * (Back[i] - Tone[i]);
+		Power += Tone[i] * Tone[i];
+	}
+	CHECK(Error2 < Power * 0.001);	// 30 dB or better
+	CHECK(Read.size() == 2 && Read[0].first == "TITLE" && Read[0].second == "Town (night)" && Read[1].second == "1234");
+	// The same audio makes the same file
+	std::string Again;
+	CHECK(EncodeOgg(Tone, 44100, 0.6f, Comments, Again, Error) && Again == File);
+	// Nothing at all is a file too; junk isn't
+	CHECK(EncodeOgg(std::vector<float>(), 48000, 0.6f, OggComments(), File, Error));
+	CHECK(DecodeOgg(File, Back, Rate, Channels, Read, Error) && Back.empty() && Rate == 48000);
+	CHECK(!DecodeOgg("not an ogg", Back, Rate, Channels, Read, Error));
+	CHECK(!EncodeOgg(Tone, 1000, 0.6f, OggComments(), File, Error));
+
+	CHECK_EQ(GameMakerName("Town (night).ogg"), std::string("snd_town_night"));
+	CHECK_EQ(GameMakerName("Boss Theme 2.ogg"), std::string("snd_boss_theme_2"));
+	CHECK_EQ(GameMakerName("???.ogg"), std::string("snd_music"));
+	CHECK_EQ(SafeFileName("a/b:c?"), std::string("a b c"));
+	CHECK_EQ(SafeFileName(" Town. "), std::string("Town"));
+	CHECK_EQ(SafeFileName("con"), std::string("con music"));
+	CHECK_EQ(SafeFileName("..."), std::string("music"));
+}
+
+// The seconds GameMaker code gives a function for a sound: "audio_sound_loop_start(snd_town, 6.400000)"
+double CodeSeconds(const std::string &Text, const std::string &Call)
+{
+	const size_t At = Text.find(Call);
+	if (At == std::string::npos)
+		return -1.0;
+	return std::atof(Text.c_str() + At + Call.size());
+}
+
+bool Near(double a, double b, double Within)
+{
+	return std::fabs(a - b) <= Within;
+}
+
+void TestCut()
+{
+	// A tone with a quiet moment just after each of the loop's starts: the seam moves there
+	std::vector<float> Render;
+	for (int i = 0; i < 24000; ++i) {
+		const bool Quiet = (i >= 1110 && i < 1140) || (i >= 9123 && i < 9153);
+		Render.push_back(Quiet ? 0.0f : static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / 8000.0)));
+	}
+	std::vector<TimedRow> Rows(3);
+	Rows[0].Row = 0;
+	Rows[1].Row = 16;
+	Rows[1].LoopStart = true;
+	Rows[2].Row = 16;
+	Rows[2].LoopStart = true;
+	std::vector<std::pair<int, long long> > Marks;
+	Marks.push_back(std::make_pair(0, 100LL));
+	Marks.push_back(std::make_pair(16, 1100LL));
+	Marks.push_back(std::make_pair(16, 9113LL));
+	GameCut Cut;
+	std::string Error;
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error));
+	CHECK(Cut.Loops && !Cut.SecondPass && Cut.Begin == 100);
+	CHECK_EQ(Cut.End - (Cut.LoopStart + Cut.Begin), 8013LL);		// the loop keeps its length
+	CHECK_EQ(Cut.LoopStart, 1016LL);								// 16 samples later, in the quiet
+	CHECK(std::fabs(Render[1100] - Render[9113]) > 0.2 && Render[static_cast<size_t>(Cut.Begin + Cut.LoopStart)] == 0.0f &&
+		Render[static_cast<size_t>(Cut.End)] == 0.0f);
+	// Where the waves meet already, nothing moves
+	Render.clear();
+	for (int i = 0; i < 24000; ++i)
+		Render.push_back(static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / 8000.0)));
+	Marks[2].second = 9100;
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error) && Cut.LoopStart == 1000 && Cut.End == 9100);
+	// Rows that don't fit, a render too short, a song that halts
+	Marks[1].first = 15;
+	CHECK(!CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error));
+	Marks[1].first = 16;
+	Marks.pop_back();
+	CHECK(!CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error));
+	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error) && !Cut.Loops && Cut.Begin == 100 && Cut.End == 24000);
+}
+
+std::string Comment(const OggComments &Comments, const char *pKey)
+{
+	for (size_t i = 0; i < Comments.size(); ++i)
+		if (Comments[i].first == pKey)
+			return Comments[i].second;
+	return "(none)";
+}
+
+void TestExport()
+{
+	// Bars 1-4 an intro, bars 5-8 the loop; the bass's last note hangs over the seam
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 64, "E-4");
+	Song.Put(5, 96, "G-4");
+	Song.Put(2, 0, "C-2", 1);
+	Song.Put(2, 112, "G-1");
+	Song.Rows[0][127].Effect[0] = EFF_JUMP;
+	Song.Rows[0][127].Param[0] = 1;
+	ToolSet Tools(Song);
+	std::string Text = Tools.Call("export_for_game", Parse("{}")).Text;
+	CHECK_HAS(Text, "Saved next to test.ftm:\n- Town.ogg: 19.2 s");
+	// The bass's G-1 hangs into the loop's start on repeat: the loop is the second time through
+	CHECK_HAS(Text, "the first 12.8 s once, then the loop from 12.8 s to the end. The loop is the song's second time through");
+	// The loop points, within the 2 ms they may move to where the waves meet
+	CHECK(Near(CodeSeconds(Text, "audio_sound_loop_start(snd_town, "), 12.8, 0.002));
+	CHECK(Near(CodeSeconds(Text, "audio_sound_loop_end(snd_town, ") - CodeSeconds(Text, "audio_sound_loop_start(snd_town, "), 6.4, 0.0001));
+	CHECK_HAS(Text, "\naudio_play_sound(snd_town, 0, true);");
+	CHECK(Song.Files.count("Town.ogg") == 1);
+	std::vector<float> Samples;
+	int Rate = 0, Channels = 0;
+	OggComments Comments;
+	std::string Error;
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Samples, Rate, Channels, Comments, Error));
+	const long long Start = std::atoll(Comment(Comments, "LOOPSTART").c_str());
+	CHECK(Rate == 8000 && Near(static_cast<double>(Samples.size()), 153600.0, 16.0));		// 19.2 s
+	CHECK(std::llabs(Start - 102400) <= 16 && Comment(Comments, "LOOPLENGTH") == "51200");
+	CHECK(std::atoll(Comment(Comments, "LOOPEND").c_str()) == Start + 51200 && static_cast<long long>(Samples.size()) == Start + 51200);
+	CHECK(Comment(Comments, "TITLE") == "Town" && Comment(Comments, "ALBUM") == "Test song");
+
+	// With the bass ending before the loop comes round, the first time through will do
+	Song.End(2, 120);
+	Song.Put(2, 64, "C-2");
+	Text = Tools.Call("export_for_game", Parse("{}")).Text;
+	CHECK_HAS(Text, "- Town.ogg: 12.8 s");
+	CHECK(Near(CodeSeconds(Text, "audio_sound_loop_start(snd_town, "), 6.4, 0.002));
+	CHECK(Near(CodeSeconds(Text, "audio_sound_loop_end(snd_town, "), 12.8, 0.002));
+	CHECK_LACKS(Text, "second time through");
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Samples, Rate, Channels, Comments, Error) && Near(static_cast<double>(Samples.size()), 102400.0, 16.0));
+
+	// Every track: the day version and the night one, slower, as their own files
+	CHECK(!Tools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false}")).IsError);
+	Text = Tools.Call("export_for_game", Parse("{\"tracks\": \"all\"}")).Text;
+	CHECK_HAS(Text, "- Town.ogg: 12.8 s");
+	CHECK_HAS(Text, "- Town (night).ogg: 16 s");
+	CHECK(Near(CodeSeconds(Text, "audio_sound_loop_end(snd_town_night, "), 16.0, 0.002));
+	CHECK(Song.Current == 1);	// the selection is back where it was
+	CHECK(Song.Files.count("Town (night).ogg") == 1);
+
+	// A song that halts plays once; an unsaved song has no place for the files
+	Song.Switch(0);
+	Song.Rows[0][127].Effect[0] = EFF_HALT;
+	Song.Rows[0][127].Param[0] = 0;
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [1]}")).Text, ", plays once (the song halts).\n");
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [1]}")).Text, "audio_play_sound(snd_town, 0, false);");
+	CHECK(Tools.Call("export_for_game", Parse("{\"tracks\": [5]}")).IsError);
+	Song.Info.FileName.clear();
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{}")).Text, "hasn't been saved yet");
+}
+
 // The connection for Claude Code in WSL (famitracker-mcp): lines in, HTTP to
 // FamiTracker, lines out
 
@@ -2430,6 +2760,11 @@ int main()
 	TestPng();
 	TestPicture();
 	TestVersions();
+	TestTiming2();
+	TestLoops();
+	TestOgg();
+	TestCut();
+	TestExport();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

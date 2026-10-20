@@ -52,7 +52,7 @@ using namespace ftapi;
 namespace {
 
 const int DEFAULT_PORT = 46600;
-const int TIMEOUT_MS = 60000;	// FamiTracker answers within 30 seconds or says it's busy
+const int TIMEOUT_MS = 660000;	// FamiTracker answers within 10 minutes (an export for games renders) or says it's busy
 
 // Where FamiTracker listens
 struct Target {

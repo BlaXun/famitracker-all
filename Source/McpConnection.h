@@ -44,6 +44,7 @@ public:
 	void Start(CMainFrame *pMainFrame);	// when the main window is up: listens if switched on
 	void Stop();						// before the main window goes
 	void ShowDialog();					// File > Connect Claude Code
+	void ShowGameExport();				// File > Export for games, which uses the export_for_game tool
 
 private:
 	struct Impl;

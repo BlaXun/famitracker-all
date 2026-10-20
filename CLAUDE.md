@@ -26,7 +26,12 @@ with `WriteSongParts` in `InsertRecording.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
-project and ships next to FamiTracker.exe.
+project and ships next to FamiTracker.exe. File > Export for games saves
+tracks as looping OGG files through the `export_for_game` tool
+(`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with
+`CSoundGen`, which notes the sample where each row starts
+(`GetRenderMarks`), and libvorbis encodes (`Source/libvorbis`,
+`Source/libogg`).
 
 ## What this repository is
 
@@ -367,6 +372,9 @@ NSF export still uses the 2A03 driver. Touch points:
 
 ## Gotchas
 
+- **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
+  (BSD licensed) keep upstream's files and LF line endings; both builds turn
+  their warnings off, and only `libogg/include/ogg/config_types.h` is ours.
 - **Case-insensitive filesystem assumed.** 20 distinct `#include` paths, on 31
   lines, differ in case from the files they name (`"apu/apu.h"`, `"FDS.h"` for
   `APU/FDS.H`, `"fft\fft.h"`, ...), and several files have upper-case
