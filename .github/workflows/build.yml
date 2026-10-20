@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -26,14 +27,8 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Show toolchain
-        shell: pwsh
-        run: |
-          msbuild -version
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -format text | Select-String -Pattern "displayName|installationVersion"
-
       - name: Build
-        run: msbuild FamiTracker.sln /m /nologo /v:minimal /p:Configuration=${{ matrix.configuration }} /p:Platform=x86
+        run: msbuild FamiTracker.sln /m /nologo /v:minimal /p:Configuration=${{ matrix.configuration }} /p:Platform=x86 "-flp:LogFile=msbuild.log;Verbosity=minimal"
 
       - name: Upload FamiTracker.exe
         uses: actions/upload-artifact@v4
@@ -43,3 +38,66 @@ jobs:
             build/Win32/${{ matrix.configuration }}/FamiTracker.exe
             build/Win32/${{ matrix.configuration }}/FamiTracker.pdb
           if-no-files-found: error
+
+      # Publishes compiler diagnostics, toolchain details and facts about the built exe
+      # as a check run named "Build report (<config> Win32)", readable through the
+      # GitHub checks API (gh api repos/<owner>/<repo>/commits/<sha>/check-runs).
+      - name: Publish build report
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          $exe = "build/Win32/$env:CONFIGURATION/FamiTracker.exe"
+          $diag = @()
+          if (Test-Path msbuild.log) {
+            $diag = Get-Content msbuild.log |
+              Where-Object { $_ -match ':\s+(fatal )?(error|warning) [A-Z]+[0-9]+' } |
+              ForEach-Object { (($_ -replace '^\s*\d+>', '') -replace '\s+\[[^\]]+\]\s*$', '').Trim() } |
+              Sort-Object -Unique
+          }
+          $errors = @($diag | Where-Object { $_ -match ':\s+(fatal )?error ' }).Count
+          $warnings = @($diag | Where-Object { $_ -match ':\s+warning ' }).Count
+          $byCode = $diag | ForEach-Object { if ($_ -match ':\s+(?:fatal )?(?:error|warning) ([A-Z]+[0-9]+)') { $Matches[1] } } |
+            Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Count) x $($_.Name)" }
+
+          $info = @()
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $info += "Visual Studio: $(& $vswhere -latest -products * -property displayName) $(& $vswhere -latest -products * -property installationVersion)"
+          $tools = Get-ChildItem "$vs\VC\Tools\MSVC" | Sort-Object Name | Select-Object -Last 1
+          $info += "MSVC tools: $($tools.Name)"
+          if (Test-Path $exe) {
+            $info += "FamiTracker.exe: $((Get-Item $exe).Length) bytes"
+            $dumpbin = Join-Path $tools.FullName 'bin\Hostx64\x86\dumpbin.exe'
+            if (Test-Path $dumpbin) {
+              $deps = & $dumpbin /nologo /dependents $exe | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+              $info += "DLL dependencies: $($deps -join ', ')"
+              $info += & $dumpbin /nologo /headers $exe | Where-Object { $_ -match ' machine | subsystem' } | ForEach-Object { $_.Trim() }
+            }
+            $mt = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter mt.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName | Select-Object -Last 1
+            if ($mt) {
+              & $mt.FullName -nologo "-inputresource:$exe;#1" -out:embedded.manifest | Out-Null
+              if (Test-Path embedded.manifest) { $info += 'Embedded manifest:'; $info += Get-Content embedded.manifest }
+            }
+          } else {
+            $info += 'FamiTracker.exe: missing'
+          }
+
+          $text = @('## Toolchain and binary') + $info + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
+          $text = $text -join "`n"
+          if ($text.Length -gt 60000) { $text = $text.Substring(0, 60000) + "`n... (truncated)" }
+          $body = @{
+            name       = "Build report ($env:CONFIGURATION Win32)"
+            head_sha   = $env:GITHUB_SHA
+            status     = 'completed'
+            conclusion = 'neutral'
+            output     = @{
+              title   = "$errors errors, $warnings warnings"
+              summary = "MSBuild diagnostics and binary details for $env:CONFIGURATION Win32."
+              text    = $text
+            }
+          } | ConvertTo-Json -Depth 5
+          $body | gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input - | Out-Null
