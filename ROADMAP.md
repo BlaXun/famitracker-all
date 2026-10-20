@@ -6,10 +6,12 @@ which plays the tracks as OGG files.
 
 ## Principles
 
-- **Keep the `.ftm` format unchanged.** The piano roll is another view of the
+- **Keep songs readable everywhere.** The piano roll is another view of the
   same pattern data, profiles live in program settings, and presets are
   ordinary `.fti` files. Songs must keep opening in vanilla FamiTracker,
-  0CC/Dn-FamiTracker and FamiStudio.
+  0CC/Dn-FamiTracker and FamiStudio. The one addition to the `.ftm` file is
+  the recorder's clips, in a block of their own (`BF CLIPS`) that other
+  versions skip; there, linked copies are ordinary notes.
 - **Stay in the UI and export layers.** The NSF driver is binary-only in this
   repo (see CLAUDE.md), so no feature may need new driver commands.
 - **Full FamiTracker stays one click away** through a "Show everything" option.
@@ -63,12 +65,15 @@ which plays the tracks as OGG files.
 
 ## 5. Piano roll
 
-Next after the recorder's clips (see Feature branches): a horizontal view,
-time left to right and pitch bottom to top, where clips can also be placed.
+Next, now that the recorder's clips are done (see Feature branches): a
+horizontal view, time left to right and pitch bottom to top, where clips can
+also be placed. First a view that follows playback, then editing.
 
 - **v1:** one channel at a time. Draw, erase and resize notes with the mouse,
   with scale lock (pick a key and scale, off-scale rows are dimmed and notes
-  snap), a playback cursor and undo.
+  snap), a playback cursor and undo. Drawing a melody's shape in one stroke,
+  snapped to the key and the beat, gives people who can't hum in tune a way
+  in too.
 - **v2:** ghost notes from other channels (FL Studio style), and a chord helper
   that spreads a chord across free channels or turns it into a `0xy`
   arpeggio. Mood starters lay down chords, bass and drums for moods like
@@ -105,15 +110,39 @@ when ready.
      bar by bar, and write a bass line and arpeggiated chords.
   3. AI arranging over MCP, through the `api` branch below.
 
-  The order from here: clips (save takes and pattern selections, place them
-  as copies or linked), then the piano roll (step 5), then AI arranging.
+  Clips are done: takes and pattern selections kept with the song, placed as
+  copies or linked, with a clip editor. The order from here:
+  1. The piano roll (step 5).
+  2. More natural input, built on the recorder: start from a groove (pick a
+     mood, tempo and key, get a few bars of drums, bass and chords, and sing
+     the melody over them); re-sing just a selection (the song plays a bar
+     before, the take replaces only those rows); tap the tempo instead of
+     setting speed and tempo.
+  3. Sound effects by voice ("pew", "boing", "kssh"), exported like the
+     music, and chords by name ("C G Am F") or strummed on a guitar.
+  4. AI arranging over MCP (the `api` branch).
 - **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
   bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
   instruments, play/stop and save/export, and run requests on the UI thread
   through the undo system. A separate MCP server would wrap it for agentic
   workflows, such as asking an assistant to arrange a recorded melody ("add
   chords and a bass line, cozy village style"). A first version could use
-  whole-song text export/import plus transport controls.
+  whole-song text export/import plus transport controls. Decided so far:
+  - The client is Claude Code on the same PC.
+  - Claude works in musical terms: bars, beats, note names, instruments, and
+    the key and chords from the recorder's harmony code, not hex rows. It
+    writes notes, adds instruments from sound presets ("soft flute lead",
+    "plucky bass", "noise snare"), sets the tempo, plays a range and exports
+    a looping OGG.
+  - It can't hear, so it gets checks: notes outside the key, clashes between
+    channels, notes outside a channel's range, parts too busy or too empty.
+  - By default its ideas arrive as clips to listen to and place; a setting
+    lets it change the song directly, always undoable.
+  - Mood changes ("make it darker", "happier", "like an underwater theme")
+    combine tools that work reliably on their own: change the key or mode,
+    the tempo, the sounds, add an echo channel or vibrato. The result is a
+    clip or a new version of the song to compare.
+  - A small page on the phone records ideas over Wi-Fi into the clips.
 - **`nsf-import` (planned):** pull instruments, and optionally songs, out of
   NSF files.
   - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
