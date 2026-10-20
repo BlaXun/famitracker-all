@@ -1,9 +1,9 @@
 # Recorder: whistle, hum or tap, and get notes
 
 Branch `recorder`, made from `beginner-friendly`. Record a melody (whistle,
-hum, sing) or a rhythm (finger taps, beatbox) and get FamiTracker notes, then
-add chords and a bass line that fit it. Next, recordings and selections
-become reusable clips.
+hum, sing) or a rhythm (finger taps, beatbox) and get FamiTracker notes, add
+chords and a bass line that fit it, and keep takes and pieces of the song as
+clips to place again, as copies or linked.
 
 ## Requirements
 
@@ -13,8 +13,10 @@ become reusable clips.
   Breaks shorter than 150 ms between two notes are held through, the way a
   musician would write them. `TestNoteLengths`, `TestQuietEdges` and
   `TestQuantizeRules` cover this.
-- Output stays plain FamiTracker pattern data. There are no new `.ftm` blocks,
-  so songs open in any FamiTracker.
+- Output stays plain FamiTracker pattern data, so songs open in any
+  FamiTracker. The one addition is the song's clips, saved in a block of
+  their own (`BF CLIPS`) that other versions skip; there, linked copies are
+  ordinary notes.
 
 ## Status
 
@@ -122,14 +124,34 @@ become reusable clips.
     click lines up with them. Chords change once a bar, or up to twice.
   - It covers the bars the melody plays in and replaces what the two channels
     had there; Ctrl+Z undoes it.
-- [ ] Clips, next:
-  - save a take, or a selection in the pattern editor, as a clip,
-  - place a clip at the cursor as a copy, or linked: editing any linked copy
-    changes all of them,
-  - a list of the song's clips, like the instrument list.
-- [ ] Then the piano roll (ROADMAP.md, step 5), and after it AI arranging over
-  MCP: the `api` branch (ROADMAP.md) lets an MCP server read and edit the
-  open song, so an assistant can arrange it.
+- [x] Clips (`Clips.cpp`, `ClipsDlg.cpp`; see Clips below): a take, a WAV
+  file or the selection in the pattern editor kept with the song, placed at
+  the cursor as a copy or linked. The clip editor gives notes another
+  instrument and transposes them.
+- [ ] Next: the piano roll (ROADMAP.md, step 5), where melodies can also be
+  drawn with the mouse.
+- [ ] Then more natural input, built on the recorder:
+  - start from a groove: pick a mood (overworld, battle, dungeon, boss,
+    jingle), a tempo and a key, get a few bars of drums, bass and chords, and
+    sing the melody over them;
+  - re-sing just a selection: the song plays a bar before, and the take
+    replaces only the selected rows;
+  - tap the tempo instead of setting speed and tempo numbers;
+  - sound effects by voice ("pew", "boing", "kssh"), exported like the music;
+  - chords by name ("C G Am F") or strummed on a guitar.
+- [ ] Then AI arranging over MCP, on the `api` branch (ROADMAP.md): a local
+  server in FamiTracker that Claude Code connects to. Claude reads the song in
+  musical terms (bars, beats, note names, key and chords), writes notes, adds
+  instruments from sound presets, sets the tempo, plays a range and exports a
+  looping OGG. It can't hear, so it gets checks instead: notes outside the
+  key, clashes between channels, notes out of range, parts too busy or too
+  empty. By default its ideas arrive as clips to listen to and place; a
+  setting lets it change the song directly, always undoable. Requests like
+  "write drums for my melody", "three variations of this hook", "an 8-bar
+  intro", and mood changes: "darker" (minor, lower, slower, rounder sounds),
+  "happier" (major, brighter, bouncier), "underwater" (slow 3/4 sway, soft
+  sounds, wobbly vibrato, rippling arpeggios, an echo channel). Ideas can
+  also come from the phone: a small page records over Wi-Fi into the clips.
 - [ ] Turn a recorded sound into a DPCM sample with the existing WAV import.
 
 ## Recording in FamiTracker
@@ -149,6 +171,59 @@ takes the clicks out of drum takes, but a song playing along can still end up
 in a melody. If the notes come out late, press Test timing once and tap
 along. If the meter says "No sound?", check that Windows' privacy settings let
 apps use the microphone.
+
+## Clips
+
+A clip is a piece of pattern data kept with the song, to place again: a
+recorded take, a WAV file, or rows selected in the pattern editor (several
+channels at once if the selection spans them).
+
+- **Make one:** select rows and use Edit > Save selection as clip
+  (Ctrl+Shift+C), or tick "Save as a clip" in the Record or Insert recording
+  dialog: the take becomes a clip ("Take 1", or the WAV file's name) instead
+  of going into the song.
+- **Edit > Clips** (Ctrl+Shift+V, or the clips button next to the
+  microphone) lists them. "Place a copy" or "Place linked" puts the picked
+  clip in at the cursor: its first channel on the cursor's channel, the rest
+  to the right, from the cursor row on, running into the following frames
+  and adding frames at the end of the song when needed. What those channels
+  had there is replaced; Ctrl+Z undoes it. Double-click places a copy.
+- **A copy** is plain notes. **A linked copy** stays the clip: edit any note
+  of it in the song and the clip changes, and with it every other linked
+  copy. A linked copy whose notes are all deleted stops being linked rather
+  than emptying the others, and anything written over a linked copy (a take,
+  chords, another clip) ends its link there. Unlink copies turns all of a
+  clip's linked copies into plain notes.
+- **Edit...** opens the clip editor: the clip's notes in a list. Pick an
+  instrument and give it to the selected notes or all of them, or transpose
+  by a semitone or an octave (the selected notes, or all when none are
+  selected). OK saves the clip, and its linked copies in the song follow,
+  as one Ctrl+Z.
+- **Duplicate...** makes a new clip from one: a copy to change on its own,
+  leaving the original and its linked copies alone. Rename and Delete do
+  what they say; deleting leaves its linked copies in the song as notes.
+
+How linking works: a linked copy remembers its cells by pattern and row in
+each channel (by channel ID), not by frame, so it keeps working when frames
+are moved, inserted or removed. Placing a linked copy gives every frame it
+touches a pattern of its own. After every edit (and undo and redo),
+FamiTracker compares each linked copy with its clip; the one that changed
+becomes the clip and the others follow. A link is dropped when its channel,
+track or rows are gone (a shorter pattern length, a removed expansion chip).
+
+The song's clips are saved in the module's `BF CLIPS` block, version 1:
+
+- the number of clips; per clip its ID, name (NUL-terminated), channels,
+  rows, the channel ID each column came from, and its cells a column at a
+  time (note, octave, volume, instrument, then effect number and parameter
+  per effect column);
+- the next free ID; the number of linked copies; per copy its ID, clip ID,
+  track and segments: channel ID, pattern, first pattern row, clip column,
+  first clip row and row count.
+
+Loading checks every count and value against FamiTracker's limits; a damaged
+block leaves the clips out and the song still loads. Other FamiTracker
+versions skip the block, and lose the clips if they save the song.
 
 ## Using wav2ftm today
 

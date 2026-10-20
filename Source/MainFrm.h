@@ -92,6 +92,7 @@ public:
 	bool	AddAction(CAction *pAction);
 	CAction *GetLastAction(int Filter) const;
 	void	ResetUndo();
+	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 
 	bool	ChangeAllPatterns() const;
 

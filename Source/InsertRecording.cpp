@@ -40,12 +40,14 @@
 #include "PatternEditor.h"
 #include "TrackerChannel.h"
 #include "Action.h"
+#include "Clips.h"
 #include "InsertRecording.h"
 
 namespace {
 
-// Action ID, well away from the CPatternAction and CFrameAction values
+// Action IDs, well away from the CPatternAction and CFrameAction values
 const int ACT_INSERT_RECORDING = 0x1000;
+const int ACT_EDIT_CLIP = 0x1001;
 
 // Volume envelopes, the same as wav2ftm writes (Transcribe/TextModule.cpp).
 // Both hold at 10 on their release point for as long as the note lasts, then
@@ -73,8 +75,8 @@ struct RecordedCell {
 	unsigned char Octave;
 	unsigned char Instrument;
 	unsigned char Vol;
-	unsigned char Effect;		// effect_t in the first effect column, EF_NONE for none
-	unsigned char EffectParam;
+	unsigned char Effect[MAX_EFFECT_COLUMNS];		// effect_t, EF_NONE for none
+	unsigned char EffectParam[MAX_EFFECT_COLUMNS];
 };
 
 RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol, int Effect = EF_NONE, int EffectParam = 0)
@@ -85,8 +87,23 @@ RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol, in
 	Cell.Octave = static_cast<unsigned char>(Octave);
 	Cell.Instrument = static_cast<unsigned char>(Instrument);
 	Cell.Vol = static_cast<unsigned char>(Vol);
-	Cell.Effect = static_cast<unsigned char>(Effect);
-	Cell.EffectParam = static_cast<unsigned char>(EffectParam);
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+		Cell.Effect[c] = EF_NONE;
+		Cell.EffectParam[c] = 0;
+	}
+	Cell.Effect[0] = static_cast<unsigned char>(Effect);
+	Cell.EffectParam[0] = static_cast<unsigned char>(EffectParam);
+	return Cell;
+}
+
+// A pattern cell as it is, at Row
+RecordedCell CellOf(int Row, const stChanNote &Note)
+{
+	RecordedCell Cell = MakeCell(Row, Note.Note, Note.Octave, Note.Instrument, Note.Vol);
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+		Cell.Effect[c] = Note.EffNumber[c];
+		Cell.EffectParam[c] = Note.EffParam[c];
+	}
 	return Cell;
 }
 
@@ -199,16 +216,19 @@ struct RecordedPart {
 // Writes channels' cells from a frame and row on. Every frame a channel's part
 // touches first gets a pattern of its own in that channel, so frames that
 // played the same pattern stay as they were. Frames past the end of the song
-// are added.
+// are added. Linked copies of clips that get written over become plain notes.
 class CInsertRecordingAction : public CAction
 {
 public:
 	CInsertRecordingAction(const std::vector<RecordedPart> &Parts, int Frame, int Row) :
 		CAction(ACT_INSERT_RECORDING), m_Parts(Parts),
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
-		m_iOldFrameCount(0)
+		m_iOldFrameCount(0), m_iLinkClip(-1)
 	{
 	}
+
+	// What's written is a linked copy of this clip (by ID)
+	void LinkTo(int ClipId) { m_iLinkClip = ClipId; }
 
 	bool SaveState(CMainFrame *pMainFrm);
 	void Undo(CMainFrame *pMainFrm);
@@ -234,6 +254,8 @@ private:
 	unsigned int m_iOldFrameCount;
 	std::vector<Reassigned> m_Reassigned;
 	std::map<PatternKey, std::vector<stChanNote> > m_Backup;	// a pattern's rows before the insert
+	int m_iLinkClip;	// clip ID, -1 for no link
+	CClipLinkState m_LinksBefore;
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
@@ -304,6 +326,12 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		}
 	}
 
+	// Linked copies written over aren't linked any more
+	CClipLibrary *pClips = pDoc->GetClips();
+	pClips->SaveLinks(m_LinksBefore);
+	for (size_t p = 0; p < m_Parts.size(); ++p)
+		pClips->UnlinkArea(pDoc, m_iTrack, m_iFrame, m_iRow, static_cast<int>(m_Parts[p].Channel), m_Parts[p].Rows);
+
 	// Write the cells. Rows between them are cleared in the channel (note,
 	// instrument and volume). Effects stay, except earlier slides and vibrato
 	// in the first effect column, which would play over the new notes; a
@@ -335,9 +363,11 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 				Note.Octave = Cell.Octave;
 				Note.Instrument = Cell.Instrument;
 				Note.Vol = Cell.Vol;
-				if (Cell.Effect != EF_NONE) {
-					Note.EffNumber[0] = Cell.Effect;
-					Note.EffParam[0] = Cell.EffectParam;
+				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+					if (Cell.Effect[c] != EF_NONE) {
+						Note.EffNumber[c] = Cell.Effect[c];
+						Note.EffParam[c] = Cell.EffectParam[c];
+					}
 				}
 			}
 			else {
@@ -351,6 +381,10 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	}
 
 	pDoc->UnlockDocument();
+
+	// A linked copy: its patterns are its own now
+	if (m_iLinkClip >= 0 && !m_Parts.empty())
+		pClips->AddLink(pDoc, pClips->FindIndex(m_iLinkClip), m_iTrack, m_iFrame, m_iRow, static_cast<int>(m_Parts.front().Channel));
 	Finish(pMainFrm, pDoc, pEditor);
 }
 
@@ -360,6 +394,8 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
 	CPatternEditor *pEditor = pView->GetPatternEditor();
 	const unsigned int Length = pDoc->GetPatternLength(m_iTrack);
+
+	pDoc->GetClips()->RestoreLinks(m_LinksBefore);
 
 	pDoc->LockDocument();
 	for (std::map<PatternKey, std::vector<stChanNote> >::const_iterator it = m_Backup.begin(); it != m_Backup.end(); ++it) {
@@ -373,6 +409,91 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 
 	Finish(pMainFrm, pDoc, pEditor);
 }
+
+// A clip edited in the clip editor, written into its linked copies. Undo puts
+// the copies' patterns back, and the clip follows them (CMainFrame::SyncClips).
+class CEditClipAction : public CAction
+{
+public:
+	CEditClipAction(int ClipId, const stChanNote *pCells, int Count) :
+		CAction(ACT_EDIT_CLIP), m_iClipId(ClipId), m_Cells(pCells, pCells + Count)
+	{
+	}
+
+	bool SaveState(CMainFrame *pMainFrm)
+	{
+		// The patterns of every linked copy, as they are
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		const CClipLibrary *pClips = pDoc->GetClips();
+		const int Index = pClips->FindIndex(m_iClipId);
+		for (int i = 0; i < pClips->GetLinkSegmentCount(Index); ++i) {
+			Place Where;
+			if (!pClips->GetLinkSegment(pDoc, Index, i, Where.Track, Where.Channel, Where.Pattern) || m_Backup.count(Where) != 0)
+				continue;
+			const unsigned int Length = pDoc->GetPatternLength(Where.Track);
+			std::vector<stChanNote> &Rows = m_Backup[Where];
+			Rows.resize(Length);
+			for (unsigned int r = 0; r < Length; ++r)
+				pDoc->GetDataAtPattern(Where.Track, Where.Pattern, static_cast<unsigned int>(Where.Channel), r, &Rows[r]);
+		}
+		Redo(pMainFrm);
+		return true;
+	}
+
+	void Redo(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		CClipLibrary *pClips = pDoc->GetClips();
+		const int Index = pClips->FindIndex(m_iClipId);
+		if (Index < 0)
+			return;	// deleted since
+		const int Columns = pClips->GetColumns(Index), Rows = pClips->GetRows(Index);
+		if (static_cast<size_t>(Columns) * static_cast<size_t>(Rows) == m_Cells.size()) {
+			for (int c = 0; c < Columns; ++c)
+				for (int r = 0; r < Rows; ++r)
+					pClips->SetCell(Index, c, r, m_Cells[static_cast<size_t>(c) * static_cast<size_t>(Rows) + static_cast<size_t>(r)]);
+		}
+		pClips->PushToLinks(pDoc, Index);
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
+	}
+
+	void Undo(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		pDoc->LockDocument();
+		for (std::map<Place, std::vector<stChanNote> >::const_iterator it = m_Backup.begin(); it != m_Backup.end(); ++it) {
+			const Place &Where = it->first;
+			if (Where.Track >= pDoc->GetTrackCount() || Where.Channel >= static_cast<int>(pDoc->GetAvailableChannels()))
+				continue;
+			const unsigned int Length = std::min(pDoc->GetPatternLength(Where.Track), static_cast<unsigned int>(it->second.size()));
+			for (unsigned int r = 0; r < Length; ++r)
+				pDoc->SetDataAtPattern(Where.Track, Where.Pattern, static_cast<unsigned int>(Where.Channel), r, &it->second[r]);
+		}
+		pDoc->UnlockDocument();
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
+	}
+
+private:
+	struct Place {
+		unsigned int Track;
+		int Channel;
+		unsigned int Pattern;
+		bool operator<(const Place &Other) const
+		{
+			if (Track != Other.Track)
+				return Track < Other.Track;
+			if (Channel != Other.Channel)
+				return Channel < Other.Channel;
+			return Pattern < Other.Pattern;
+		}
+	};
+
+	int m_iClipId;
+	std::vector<stChanNote> m_Cells;	// the edited clip
+	std::map<Place, std::vector<stChanNote> > m_Backup;	// the linked copies' patterns before
+};
 
 void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc, CPatternEditor *pEditor) const
 {
@@ -671,7 +792,7 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 }
 
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
-	CString &Message)
+	CString &Message, LPCTSTR ClipName)
 {
 	transcribe::Audio Audio;
 	if (!ReadRecording(Path, Audio, Message))
@@ -679,11 +800,12 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CPatternEditor *pEditor = pView->GetPatternEditor();
 	const transcribe::TakeTiming Timing;	// the first note lands on the cursor row
-	return InsertTake(pMainFrm, Audio, Timing, Kind, Channel, Expression, pEditor->GetFrame(), pEditor->GetRow(), Message);
+	return InsertTake(pMainFrm, Audio, Timing, Kind, Channel, Expression, pEditor->GetFrame(), pEditor->GetRow(), Message,
+		ClipName);
 }
 
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
-	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message)
+	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message, LPCTSTR ClipName)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
@@ -842,6 +964,35 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 			Cells.push_back(ToCell(Line[i], Instrument, Release ? RELEASE : HALT, MAX_VOLUME));
 		Rows = Cells.back().Row + 1;
 		What.Format(_T("%d notes"), static_cast<int>(Melody.size()));
+	}
+
+	if (ClipName != NULL) {
+		// Kept as a clip instead of going into the song
+		CClipLibrary *pClips = pDoc->GetClips();
+		const int Index = pClips->Add(ClipName, 1, Rows);
+		if (Index < 0) {
+			Message = _T("There are too many clips already. Delete some in Edit > Clips first.");
+			return false;
+		}
+		pClips->SetSource(Index, 0, ChanID);
+		for (size_t i = 0; i < Cells.size(); ++i) {
+			const RecordedCell &Cell = Cells[i];
+			stChanNote Note;
+			Note.Note = Cell.Note;
+			Note.Octave = Cell.Octave;
+			Note.Vol = Cell.Vol;
+			Note.Instrument = Cell.Instrument;
+			for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+				Note.EffNumber[c] = Cell.Effect[c];
+				Note.EffParam[c] = Cell.EffectParam[c];
+			}
+			pClips->SetCell(Index, 0, Cell.Row, Note);
+		}
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
+		Message.Format(_T("Saved %s as the clip \"%s\" (%d rows). Edit > Clips places it in the song."), static_cast<LPCTSTR>(What),
+			ClipName, Rows);
+		return true;
 	}
 
 	// Room: the song has at most MAX_FRAMES frames
@@ -1017,4 +1168,145 @@ bool AddBacking(CMainFrame *pMainFrm, const backing_choice_t &Choice, CString &M
 	Message.Format(_T("Added %s, in %s: %s Ctrl+Z undoes it."), static_cast<LPCTSTR>(Where), static_cast<LPCTSTR>(Key),
 		static_cast<LPCTSTR>(ChordsText(Plan)));
 	return true;
+}
+
+// Clips
+
+bool SaveSelectionAsClip(CMainFrame *pMainFrm, LPCTSTR Name, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	CPatternEditor *pEditor = pView->GetPatternEditor();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	if (!pEditor->IsSelecting()) {
+		Message = _T("Select the rows to keep in the pattern editor first.");
+		return false;
+	}
+	const CSelection Selection = pEditor->GetSelection();
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	const int First = std::max(0, Selection.GetChanStart());
+	const int Last = std::min(Channels - 1, Selection.GetChanEnd());
+	const int Top = std::max(0, Selection.GetRowStart());
+	const int Bottom = std::min(Length - 1, Selection.GetRowEnd());
+	if (Last < First || Bottom < Top) {
+		Message = _T("Select the rows to keep in the pattern editor first.");
+		return false;
+	}
+
+	CClipLibrary *pClips = pDoc->GetClips();
+	const int Index = pClips->Add(Name, Last - First + 1, Bottom - Top + 1);
+	if (Index < 0) {
+		Message = _T("There are too many clips already. Delete some in Edit > Clips first.");
+		return false;
+	}
+	const unsigned int Frame = static_cast<unsigned int>(pEditor->GetFrame());
+	for (int c = First; c <= Last; ++c) {
+		pClips->SetSource(Index, c - First, pDoc->GetChannelType(c));
+		for (int r = Top; r <= Bottom; ++r) {
+			stChanNote Note;
+			pDoc->GetNoteData(Track, Frame, static_cast<unsigned int>(c), static_cast<unsigned int>(r), &Note);
+			pClips->SetCell(Index, c - First, r - Top, Note);
+		}
+	}
+	pDoc->SetModifiedFlag();
+
+	CString Which;
+	if (Last == First)
+		Which = RecordingChannelName(pDoc, First);
+	else
+		Which.Format(_T("%d channels"), Last - First + 1);
+	Message.Format(_T("Saved %d rows of %s as the clip \"%s\". Edit > Clips places it."), Bottom - Top + 1,
+		static_cast<LPCTSTR>(Which), Name);
+	return true;
+}
+
+bool PlaceClip(CMainFrame *pMainFrm, int Index, bool Linked, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	CPatternEditor *pEditor = pView->GetPatternEditor();
+	CClipLibrary *pClips = pDoc->GetClips();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	if (Index < 0 || Index >= pClips->GetCount()) {
+		Message = _T("Pick a clip first.");
+		return false;
+	}
+
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const unsigned int Frame = static_cast<unsigned int>(pEditor->GetFrame());
+	const unsigned int Row = static_cast<unsigned int>(pEditor->GetRow());
+	const int Channel = pEditor->GetChannel();
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+
+	// Room: the song has at most MAX_FRAMES frames
+	int Rows = pClips->GetRows(Index);
+	unsigned int LastFrame = Frame + (Row + static_cast<unsigned int>(Rows) - 1) / Length;
+	bool Cut = false;
+	if (LastFrame >= MAX_FRAMES) {
+		Rows = static_cast<int>((MAX_FRAMES - Frame) * Length - Row);
+		LastFrame = MAX_FRAMES - 1;
+		Cut = true;
+	}
+
+	// One part per column, replacing what the channel had over those rows
+	std::vector<RecordedPart> Parts;
+	for (int c = 0; c < pClips->GetColumns(Index) && Channel + c < Channels; ++c) {
+		RecordedPart Part;
+		Part.Channel = static_cast<unsigned int>(Channel + c);
+		Part.Rows = Rows;
+		Part.Replace = true;
+		for (int r = 0; r < Rows; ++r) {
+			stChanNote Note;
+			pClips->GetCell(Index, c, r, Note);
+			if (!IsEmptyCell(Note))
+				Part.Cells.push_back(CellOf(r, Note));
+		}
+		Parts.push_back(Part);
+	}
+	if (Parts.empty() || Rows < 1) {
+		Message = _T("The clip doesn't fit there.");
+		return false;
+	}
+	for (size_t p = 0; p < Parts.size(); ++p) {
+		if (!EnoughPatterns(pDoc, Track, Parts[p].Channel, Frame, LastFrame)) {
+			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+				static_cast<LPCTSTR>(RecordingChannelName(pDoc, static_cast<int>(Parts[p].Channel))));
+			return false;
+		}
+	}
+
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(Parts, static_cast<int>(Frame), static_cast<int>(Row));
+	if (Linked)
+		pAction->LinkTo(pClips->GetId(Index));
+	if (!pMainFrm->AddAction(pAction)) {
+		Message = _T("The clip couldn't be placed.");
+		return false;
+	}
+
+	Message.Format(_T("Placed the clip \"%s\" %s at frame %02X, row %02X. Ctrl+Z undoes it."),
+		static_cast<LPCTSTR>(pClips->GetName(Index)), Linked ? _T("linked") : _T("as a copy"), Frame, Row);
+	if (static_cast<int>(Parts.size()) < pClips->GetColumns(Index))
+		Message += _T(" Its last channels didn't fit to the right of the cursor.");
+	if (Cut)
+		Message += _T(" Its end didn't fit: a song has at most 128 frames.");
+	return true;
+}
+
+void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, int Count)
+{
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+	CClipLibrary *pClips = pDoc->GetClips();
+	if (Index < 0 || Index >= pClips->GetCount() || Count != pClips->GetColumns(Index) * pClips->GetRows(Index))
+		return;
+	if (pClips->GetLinkCount(Index) > 0) {
+		// The song changes too: undoable
+		pMainFrm->AddAction(new CEditClipAction(pClips->GetId(Index), pCells, Count));
+		return;
+	}
+	const int Rows = pClips->GetRows(Index);
+	for (int c = 0; c < pClips->GetColumns(Index); ++c)
+		for (int r = 0; r < Rows; ++r)
+			pClips->SetCell(Index, c, r, pCells[c * Rows + r]);
+	pDoc->SetModifiedFlag();
 }

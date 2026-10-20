@@ -50,6 +50,7 @@
 #include "PatternEditor.h"
 #include "FrameEditor.h"
 #include "APU/APU.h"
+#include "Clips.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -416,7 +417,7 @@ bool CMainFrame::CreateToolbars()
 	rbi1.fMask		= RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_SIZE;
 	rbi1.fStyle		= RBBS_NOGRIPPER;
 	rbi1.hwndChild	= m_wndToolBar;
-	rbi1.cxMinChild	= SX(577);	// 554, plus 23 for the microphone button
+	rbi1.cxMinChild	= SX(600);	// 554, plus 23 each for the microphone and clips buttons
 	rbi1.cyMinChild	= SY(22);
 	rbi1.cx			= SX(496);
 
@@ -2341,6 +2342,7 @@ bool CMainFrame::AddAction(CAction *pAction)
 	}
 
 	m_pActionHandler->Push(pAction);
+	SyncClips();
 
 	return true;
 }
@@ -2365,8 +2367,10 @@ void CMainFrame::OnEditUndo()
 
 	CAction *pAction = m_pActionHandler->PopUndo();
 
-	if (pAction != NULL)
+	if (pAction != NULL) {
 		pAction->Undo(this);
+		SyncClips();
+	}
 }
 
 void CMainFrame::OnEditRedo()
@@ -2375,8 +2379,23 @@ void CMainFrame::OnEditRedo()
 
 	CAction *pAction = m_pActionHandler->PopRedo();
 
-	if (pAction != NULL)
+	if (pAction != NULL) {
 		pAction->Redo(this);
+		SyncClips();
+	}
+}
+
+void CMainFrame::SyncClips()
+{
+	// A linked copy of a clip that was edited becomes the clip, and the other
+	// linked copies follow
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+	if (pDoc == NULL || pDoc->GetClips() == NULL)
+		return;
+	if (pDoc->GetClips()->Sync(pDoc)) {
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
+	}
 }
 
 void CMainFrame::OnUpdateEditUndo(CCmdUI *pCmdUI)
@@ -2532,6 +2551,7 @@ void CMainFrame::OnEditRemoveUnusedPatterns()
 		return;
 
 	pDoc->RemoveUnusedPatterns();
+	SyncClips();	// links into the removed patterns go
 	pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
 }
 

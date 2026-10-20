@@ -207,6 +207,9 @@
 #define IDD_INSERT_RECORDING            320
 #define IDD_RECORD                      321
 #define IDD_BACKING                     322
+#define IDD_CLIPS                       323
+#define IDD_CLIP_EDIT                   324
+#define IDD_CLIP_NAME                   325
 #define IDC_INSTRUMENTS                 1001
 #define IDC_INSTSETTINGS                1002
 #define IDC_INSTNAME                    1005
@@ -490,6 +493,27 @@
 #define IDC_BACK_BASS                   1322
 #define IDC_BACK_CHANGES                1323
 #define IDC_BACK_PREVIEW                1324
+#define IDC_CLIP_LIST                   1325
+#define IDC_CLIP_PLACE                  1326
+#define IDC_CLIP_PLACELINKED            1327
+#define IDC_CLIP_EDIT                   1328
+#define IDC_CLIP_DUPLICATE              1329
+#define IDC_CLIP_RENAME                 1330
+#define IDC_CLIP_UNLINK                 1331
+#define IDC_CLIP_DELETE                 1332
+#define IDC_CLIP_INFO                   1333
+#define IDC_CLIPED_NOTES                1334
+#define IDC_CLIPED_INSTRUMENT           1335
+#define IDC_CLIPED_SETSELECTED          1336
+#define IDC_CLIPED_SETALL               1337
+#define IDC_CLIPED_DOWN12               1338
+#define IDC_CLIPED_DOWN1                1339
+#define IDC_CLIPED_UP1                  1340
+#define IDC_CLIPED_UP12                 1341
+#define IDC_CLIPED_INFO                 1342
+#define IDC_CLIPNAME_PROMPT             1343
+#define IDC_CLIPNAME_EDIT               1344
+#define IDC_REC_ASCLIP                  1345
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -633,6 +657,8 @@
 #define ID_EDIT_INSERTRECORDING         33127
 #define ID_EDIT_RECORD                  33128
 #define ID_EDIT_ADDBACKING              33129
+#define ID_EDIT_SAVECLIP                33130
+#define ID_EDIT_CLIPS                   33131
 #define ID_INSTRUMENT_ADD_2A03          36864
 #define ID_INSTRUMENT_ADD_FDS           36865
 #define ID_INSTRUMENT_ADD_MMC5          36866
@@ -652,9 +678,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        323
-#define _APS_NEXT_COMMAND_VALUE         33130
-#define _APS_NEXT_CONTROL_VALUE         1325
+#define _APS_NEXT_RESOURCE_VALUE        326
+#define _APS_NEXT_COMMAND_VALUE         33132
+#define _APS_NEXT_CONTROL_VALUE         1346
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

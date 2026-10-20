@@ -1284,5 +1284,17 @@
     <ClCompile Include="Source\Transcribe\Harmony.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Clips.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Clips.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\ClipsDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\ClipsDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

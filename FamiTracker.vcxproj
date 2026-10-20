@@ -467,6 +467,10 @@
     <ClCompile Include="Source\BackingDlg.cpp" />
     <ClInclude Include="Source\BackingDlg.h" />
     <ClCompile Include="Source\Transcribe\Harmony.cpp" />
+    <ClCompile Include="Source\Clips.cpp" />
+    <ClInclude Include="Source\Clips.h" />
+    <ClCompile Include="Source\ClipsDlg.cpp" />
+    <ClInclude Include="Source\ClipsDlg.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

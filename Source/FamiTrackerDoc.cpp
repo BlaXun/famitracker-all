@@ -46,6 +46,7 @@
 #include "TrackerChannel.h"
 #include "MainFrm.h"
 #include "DocumentFile.h"
+#include "Clips.h"
 #include "Settings.h"
 #include "SoundGen.h"
 #include "ChannelMap.h"
@@ -80,6 +81,7 @@ static const char *FILE_BLOCK_PATTERNS		= "PATTERNS";
 static const char *FILE_BLOCK_DSAMPLES		= "DPCM SAMPLES";
 static const char *FILE_BLOCK_HEADER		= "HEADER";
 static const char *FILE_BLOCK_COMMENTS		= "COMMENTS";
+static const char *FILE_BLOCK_CLIPS			= "BF CLIPS";	// beginner-friendly: clips (Clips.cpp)
 
 // VRC6
 static const char *FILE_BLOCK_SEQUENCES_VRC6 = "SEQUENCES_VRC6";
@@ -193,7 +195,8 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_bFileLoadFailed(false), 
 	m_iRegisteredChannels(0), 
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
-	m_bDisplayComment(false)
+	m_bDisplayComment(false),
+	m_pClipLibrary(new CClipLibrary())
 {
 	// Initialize document object
 
@@ -215,6 +218,8 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 CFamiTrackerDoc::~CFamiTrackerDoc()
 {
 	// Clean up
+	delete m_pClipLibrary;
+	m_pClipLibrary = NULL;
 
 	// DPCM samples
 	for (int i = 0; i < MAX_DSAMPLES; ++i) {
@@ -380,6 +385,9 @@ void CFamiTrackerDoc::DeleteContents()
 	for (int i = 0; i < MAX_DSAMPLES; ++i) {
 		m_DSamples[i].Clear();
 	}
+
+	// Clips
+	m_pClipLibrary->Clear();
 
 	// Instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -753,6 +761,8 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 	if (!WriteBlock_DSamples(pDocFile))
 		return false;
 	if (!WriteBlock_Comments(pDocFile))
+		return false;
+	if (!m_pClipLibrary->IsEmpty() && !m_pClipLibrary->Write(pDocFile))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1603,6 +1613,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		}
 		else if (!strcmp(BlockID, FILE_BLOCK_COMMENTS)) {
 			ErrorFlag = ReadBlock_Comments(&DocumentFile);
+		}
+		else if (!strcmp(BlockID, FILE_BLOCK_CLIPS)) {
+			m_pClipLibrary->Read(&DocumentFile);	// damaged clips are left out; the song still loads
 		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
@@ -3644,6 +3657,7 @@ void CFamiTrackerDoc::ClearPatterns(unsigned int Track)
 
 	CPatternData *pTrack = GetTrack(Track);
 	pTrack->ClearEverything();
+	m_pClipLibrary->DropLinks(Track);
 
 	SetModifiedFlag();
 }
@@ -4013,6 +4027,7 @@ void CFamiTrackerDoc::RemoveTrack(unsigned int Track)
 	ASSERT(m_pTracks[Track] != NULL);
 
 	delete m_pTracks[Track];
+	m_pClipLibrary->TrackRemoved(Track);
 
 	// Move down all other tracks
 	for (unsigned int i = Track; i < m_iTrackCount - 1; ++i) {
@@ -4059,6 +4074,8 @@ void CFamiTrackerDoc::MoveTrackDown(unsigned int Track)
 
 void CFamiTrackerDoc::SwapTracks(unsigned int Track1, unsigned int Track2)
 {
+	m_pClipLibrary->TracksSwapped(Track1, Track2);
+
 	CString Temp = m_sTrackNames[Track1];
 	m_sTrackNames[Track1] = m_sTrackNames[Track2];
 	m_sTrackNames[Track2] = Temp;

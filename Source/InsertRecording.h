@@ -27,6 +27,7 @@
 
 class CMainFrame;
 class CFamiTrackerDoc;
+struct stChanNote;
 namespace transcribe { struct Audio; struct TakeTiming; }
 
 // What a recording holds
@@ -53,13 +54,25 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 // Ctrl+Z undoes it.
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
-// success Message says what was inserted.
+// success Message says what was inserted. With a ClipName, the notes are kept
+// as a new clip of that name instead of going into the song.
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
-	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message);
+	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message, LPCTSTR ClipName = NULL);
 
 // The same for the WAV file at Path, its first note on the cursor row.
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
-	CString &Message);
+	CString &Message, LPCTSTR ClipName = NULL);
+
+// Clips (Clips.h): saving the selection in the pattern editor as a new clip,
+// and placing a clip at the cursor (its first column on the cursor's channel,
+// from the cursor row on) as a copy or linked, as one undoable action. Both
+// return false with the reason in Message.
+bool SaveSelectionAsClip(CMainFrame *pMainFrm, LPCTSTR Name, CString &Message);
+bool PlaceClip(CMainFrame *pMainFrm, int Index, bool Linked, CString &Message);
+
+// The clip editor's changes: clip Index gets these cells (all of them, a column
+// at a time) and its linked copies in the song follow, which Ctrl+Z undoes.
+void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, int Count);
 
 // Edit > Add chords and bass line: chords and a bass line that fit the melody
 // in one channel, written into two others, over the bars the melody covers

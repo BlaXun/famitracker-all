@@ -96,6 +96,7 @@ struct stSequence {
 // External classes
 class CTrackerChannel;
 class CDocumentFile;
+class CClipLibrary;
 
 //
 // I'll try to organize this class, things are quite messy right now!
@@ -247,6 +248,9 @@ public:
 	void			SetHighlight(int First, int Second);
 	int				GetFirstHighlight() const;
 	int				GetSecondHighlight() const;
+
+	// Clips kept with the song (Clips.h)
+	CClipLibrary	*GetClips() const { return m_pClipLibrary; }
 
 	// Track management functions
 	int				AddTrack();
@@ -445,6 +449,7 @@ private:
 
 	// Patterns and song data
 	CPatternData	*m_pTracks[MAX_TRACKS];						// List of all tracks
+	CClipLibrary	*m_pClipLibrary;							// Clips and their linked copies
 	CString			m_sTrackNames[MAX_TRACKS];
 
 	unsigned int	m_iTrackCount;								// Number of tracks added

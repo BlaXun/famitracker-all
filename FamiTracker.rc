@@ -60,6 +60,7 @@ BEGIN
     BUTTON      ID_TRACKER_STOP
     BUTTON      ID_TRACKER_EDIT
     BUTTON      ID_EDIT_RECORD
+    BUTTON      ID_EDIT_CLIPS
     SEPARATOR
     BUTTON      ID_PREV_SONG
     BUTTON      ID_NEXT_SONG
@@ -124,6 +125,8 @@ BEGIN
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
+        MENUITEM "Clips...",                    ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -245,6 +248,8 @@ BEGIN
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
+        MENUITEM "Clips...",                    ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -543,6 +548,8 @@ BEGIN
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
+    ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
+    ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"
@@ -1842,7 +1849,7 @@ BEGIN
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
 END
 
-IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 186
+IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Insert recording"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1858,12 +1865,13 @@ BEGIN
     LTEXT           "Channel:",IDC_STATIC,7,113,40,8
     COMBOBOX        IDC_REC_CHANNEL,52,111,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,129,236,10
-    LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,146,236,16
-    DEFPUSHBUTTON   "Insert",IDOK,138,165,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,193,165,50,14
+    CONTROL         "Save it as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,142,236,10
+    LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
+    DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
 END
 
-IDD_RECORD DIALOGEX 0, 0, 262, 262
+IDD_RECORD DIALOGEX 0, 0, 262, 275
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Record from microphone"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1888,11 +1896,12 @@ BEGIN
     LTEXT           "",IDC_REC_DELAY,62,167,130,8
     PUSHBUTTON      "Test timing",IDC_REC_TEST,197,164,58,14
     CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,183,248,10
-    LTEXT           "",IDC_REC_STATUS,7,199,248,26
-    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,227,248,8
-    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,241,76,14
-    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,241,50,14
-    PUSHBUTTON      "Close",IDCANCEL,205,241,50,14
+    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,196,248,10
+    LTEXT           "",IDC_REC_STATUS,7,212,248,26
+    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,240,248,8
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,254,76,14
+    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,254,50,14
+    PUSHBUTTON      "Close",IDCANCEL,205,254,50,14
 END
 
 IDD_BACKING DIALOGEX 0, 0, 262, 180
@@ -1915,6 +1924,56 @@ BEGIN
     LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,143,248,16
     DEFPUSHBUTTON   "Add",IDOK,150,160,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,205,160,50,14
+END
+
+IDD_CLIPS DIALOGEX 0, 0, 300, 207
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Clips"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Clips kept with this song:",IDC_STATIC,7,7,218,8
+    CONTROL         "",IDC_CLIP_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,18,218,128
+    DEFPUSHBUTTON   "Place a copy",IDC_CLIP_PLACE,231,18,62,14
+    PUSHBUTTON      "Place linked",IDC_CLIP_PLACELINKED,231,35,62,14
+    PUSHBUTTON      "Edit...",IDC_CLIP_EDIT,231,57,62,14
+    PUSHBUTTON      "Duplicate...",IDC_CLIP_DUPLICATE,231,74,62,14
+    PUSHBUTTON      "Rename...",IDC_CLIP_RENAME,231,91,62,14
+    PUSHBUTTON      "Unlink copies",IDC_CLIP_UNLINK,231,113,62,14
+    PUSHBUTTON      "Delete",IDC_CLIP_DELETE,231,130,62,14
+    LTEXT           "",IDC_CLIP_INFO,7,152,286,32
+    PUSHBUTTON      "Close",IDCANCEL,243,186,50,14
+END
+
+IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Edit clip"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_CLIPED_INFO,7,7,306,16
+    CONTROL         "",IDC_CLIPED_NOTES,"SysListView32",LVS_REPORT | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,27,306,122
+    LTEXT           "Instrument:",IDC_STATIC,7,158,44,8
+    COMBOBOX        IDC_CLIPED_INSTRUMENT,52,156,130,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "For selected notes",IDC_CLIPED_SETSELECTED,187,155,66,14
+    PUSHBUTTON      "For all notes",IDC_CLIPED_SETALL,258,155,55,14
+    LTEXT           "Transpose:",IDC_STATIC,7,178,44,8
+    PUSHBUTTON      "-1 octave",IDC_CLIPED_DOWN12,52,175,50,14
+    PUSHBUTTON      "-1 semitone",IDC_CLIPED_DOWN1,105,175,56,14
+    PUSHBUTTON      "+1 semitone",IDC_CLIPED_UP1,164,175,56,14
+    PUSHBUTTON      "+1 octave",IDC_CLIPED_UP12,223,175,50,14
+    LTEXT           "Transpose changes the selected notes, or all of them when none are selected. Shift+click or Ctrl+click picks several notes.",IDC_STATIC,7,194,306,16
+    DEFPUSHBUTTON   "OK",IDOK,208,212,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,263,212,50,14
+END
+
+IDD_CLIP_NAME DIALOGEX 0, 0, 220, 64
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Clip name"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_CLIPNAME_PROMPT,7,7,206,8
+    EDITTEXT        IDC_CLIPNAME_EDIT,7,19,206,14,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,108,43,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,163,43,50,14
 END
 
 IDD_PROPERTIES DIALOGEX 0, 0, 213, 259

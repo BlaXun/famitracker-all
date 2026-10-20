@@ -41,6 +41,8 @@
 #include "InsertRecordingDlg.h"
 #include "RecordDlg.h"
 #include "BackingDlg.h"
+#include "Clips.h"
+#include "ClipsDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -118,6 +120,9 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
 	ON_COMMAND(ID_EDIT_RECORD, OnEditRecord)
 	ON_COMMAND(ID_EDIT_ADDBACKING, OnEditAddBacking)
+	ON_COMMAND(ID_EDIT_SAVECLIP, OnEditSaveClip)
+	ON_COMMAND(ID_EDIT_CLIPS, OnEditClips)
+	ON_UPDATE_COMMAND_UI(ID_EDIT_SAVECLIP, OnUpdateEditSaveClip)
 	ON_COMMAND(ID_EDIT_INSTRUMENTMASK, OnEditInstrumentMask)
 	ON_COMMAND(ID_EDIT_VOLUMEMASK, OnEditVolumeMask)
 	ON_COMMAND(ID_EDIT_INTERPOLATE, OnEditInterpolate)
@@ -929,10 +934,12 @@ void CFamiTrackerView::OnEditInsertRecording()
 		return;
 
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	const CString ClipName = GetDocument()->GetClips()->NewName(FileDialog.GetFileTitle(), false);
 	bool Inserted;
 	{
 		CWaitCursor Wait;
-		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Dialog.GetExpression(), Message);
+		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Dialog.GetExpression(), Message,
+			Dialog.GetAsClip() ? static_cast<LPCTSTR>(ClipName) : NULL);
 	}
 
 	if (Inserted)
@@ -971,6 +978,39 @@ void CFamiTrackerView::OnEditAddBacking()
 		pMainFrm->SetMessageText(Message);
 	else
 		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnEditSaveClip()
+{
+	// Keep the selected rows as a clip (see Clips.h)
+	if (!m_pPatternEditor->IsSelecting()) {
+		AfxMessageBox(_T("Select the rows to keep first: drag over them in the pattern editor, or hold Shift and use the ")
+			_T("arrow keys."), MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+	CClipNameDlg Dialog(_T("Save selection as clip"), _T("Name of the new clip:"),
+		GetDocument()->GetClips()->NewName(_T("Clip"), true), this);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	CString Message;
+	if (SaveSelectionAsClip(pMainFrm, Dialog.GetName(), Message))
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnUpdateEditSaveClip(CCmdUI *pCmdUI)
+{
+	pCmdUI->Enable(m_pPatternEditor->IsSelecting() ? 1 : 0);
+}
+
+void CFamiTrackerView::OnEditClips()
+{
+	// The song's clips: place, edit, duplicate, rename, delete
+	CClipsDlg Dialog(this);
+	if (Dialog.DoModal() == IDOK)
+		GetParentFrame()->SetMessageText(Dialog.GetResult());
 }
 
 void CFamiTrackerView::OnEditDelete()

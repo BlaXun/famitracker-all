@@ -77,7 +77,8 @@ CInsertRecordingDlg::CInsertRecordingDlg(const CFamiTrackerDoc *pDoc, LPCTSTR Pa
 	m_iKind(Guess),
 	m_iChannel(-1),
 	m_iMelodyChannel(DefaultRecordingChannel(pDoc, CursorChannel)),
-	m_bExpression(true)
+	m_bExpression(true),
+	m_bAsClip(false)
 {
 }
 
@@ -144,6 +145,7 @@ void CInsertRecordingDlg::OnOK()
 	m_iKind = SelectedKind();
 	m_iChannel = PickedRecordingChannel(m_cChannel);
 	m_bExpression = IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED;
+	m_bAsClip = IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED;
 	CDialog::OnOK();
 }
 
@@ -160,4 +162,9 @@ int CInsertRecordingDlg::GetChannel() const
 bool CInsertRecordingDlg::GetExpression() const
 {
 	return m_bExpression;
+}
+
+bool CInsertRecordingDlg::GetAsClip() const
+{
+	return m_bAsClip;
 }

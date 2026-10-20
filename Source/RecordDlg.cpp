@@ -52,6 +52,7 @@
 #include "Settings.h"
 #include "InsertRecording.h"
 #include "InsertRecordingDlg.h"
+#include "Clips.h"
 #include "RecordDlg.h"
 
 namespace {
@@ -149,11 +150,12 @@ struct stRecordTake
 	bool AutoKind;
 	int Channel;
 	bool Expression;
+	bool AsClip;	// kept as a clip instead of going into the song
 	int Frame;
 	int Row;
 
 	stRecordTake() : Offset(0), SongStart(-1), PlaySong(false), SongPlaying(false), MutedChannel(0), WasMuted(false),
-		Kind(RECORDING_WHISTLE), AutoKind(true), Channel(0), Expression(true), Frame(0), Row(0)
+		Kind(RECORDING_WHISTLE), AutoKind(true), Channel(0), Expression(true), AsClip(false), Frame(0), Row(0)
 	{
 	}
 
@@ -322,6 +324,7 @@ void CRecordDlg::LoadOptions()
 	m_cClick.SetCurSel((Click >= CLICK_ALONG && Click <= CLICK_NONE) ? Click : CLICK_ALONG);
 	CheckDlgButton(IDC_REC_PLAYSONG, theApp.GetProfileInt(SECTION, _T("Play song"), 1) ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_REC_EXPRESSION, theApp.GetProfileInt(SECTION, _T("Expression"), 1) ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_REC_ASCLIP, theApp.GetProfileInt(SECTION, _T("As clip"), 0) ? BST_CHECKED : BST_UNCHECKED);
 	m_sDevice = theApp.GetProfileString(SECTION, _T("Microphone"), _T(""));
 	if (theApp.GetProfileInt(SECTION, _T("Delay measured"), 0) != 0)
 		m_iDelayMs = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Delay ms"), 0));
@@ -340,6 +343,7 @@ void CRecordDlg::SaveOptions() const
 	theApp.WriteProfileInt(SECTION, _T("Click"), m_cClick.GetCurSel());
 	theApp.WriteProfileInt(SECTION, _T("Play song"), IsDlgButtonChecked(IDC_REC_PLAYSONG) == BST_CHECKED ? 1 : 0);
 	theApp.WriteProfileInt(SECTION, _T("Expression"), IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED ? 1 : 0);
+	theApp.WriteProfileInt(SECTION, _T("As clip"), IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED ? 1 : 0);
 	theApp.WriteProfileString(SECTION, _T("Microphone"), m_sDevice);
 }
 
@@ -395,7 +399,7 @@ void CRecordDlg::EnableOptions(bool Enable)
 {
 	static const int IDS[] = {
 		IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_CHANNEL, IDC_REC_EXPRESSION,
-		IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_FROMFILE
+		IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_ASCLIP, IDC_REC_FROMFILE
 	};
 	for (size_t i = 0; i < sizeof(IDS) / sizeof(IDS[0]); ++i)
 		GetDlgItem(IDS[i])->EnableWindow(Enable ? TRUE : FALSE);
@@ -578,6 +582,7 @@ void CRecordDlg::StartTake()
 	Take.Kind = SelectedKind(Take.AutoKind);
 	Take.Channel = PickedRecordingChannel(m_cChannel);
 	Take.Expression = IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED;
+	Take.AsClip = IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED;
 	Take.PlaySong = IsDlgButtonChecked(IDC_REC_PLAYSONG) == BST_CHECKED;
 
 	// The take goes in at the cursor
@@ -770,7 +775,9 @@ void CRecordDlg::FinishTake()
 
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
 	CString Message;
-	if (!InsertTake(pMainFrm, Audio, Timing, Kind, Take.Channel, Take.Expression, Take.Frame, Take.Row, Message)) {
+	const CString ClipName = m_pDocument->GetClips()->NewName(_T("Take"), true);
+	if (!InsertTake(pMainFrm, Audio, Timing, Kind, Take.Channel, Take.Expression, Take.Frame, Take.Row, Message,
+			Take.AsClip ? static_cast<LPCTSTR>(ClipName) : NULL)) {
 		Message += _T(" Press Record to try again.");
 		SetStatus(Message);
 		return;

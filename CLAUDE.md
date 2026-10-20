@@ -5,12 +5,14 @@ from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
 audio-to-notes recorder described in `RECORDER.md`: the engine in
 `Source/Transcribe/`, the `wav2ftm` tool, Edit > Insert recording in
 `Source/InsertRecording.cpp`, Edit > Record from microphone in
-`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), and Edit >
+`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), Edit >
 Add chords and bass line in `Source/BackingDlg.cpp` (chords from
-`Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`). The overall
-plan is in `ROADMAP.md`. Unless a section says otherwise, everything below
-describes the 0.4.6 code as found on `master` and was checked against that
-source.
+`Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`), and clips
+in `Source/Clips.cpp` (the song's clips and linked copies, saved in a
+`BF CLIPS` block) with Edit > Clips and the clip editor in
+`Source/ClipsDlg.cpp`. The overall plan is in `ROADMAP.md`. Unless a section
+says otherwise, everything below describes the 0.4.6 code as found on
+`master` and was checked against that source.
 
 ## What this repository is
 
@@ -131,7 +133,7 @@ replaced the VS2008 project:
 
 ## Testing and verification
 
-There are no automated tests. What exists:
+The application has no test suite of its own. What exists:
 
 - **CI build:** every push compiles Win32 Release and Debug (see Building).
 - **Transcription engine** (`Source/Transcribe/`): plain C++14 that builds and
@@ -139,6 +141,13 @@ There are no automated tests. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
+- **Clips** (`Source/Clips.cpp`): `Source/Tests` builds it on Linux against
+  working stand-ins for the MFC and document pieces it uses
+  (`Source/Tests/standins/`) and runs `ClipsTests.cpp`: linked copies
+  following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
+  block read back, cut short at every byte. Same three commands with
+  `Source/Tests` and `build/tests`; CI runs it in the Linux job. The stand-ins
+  must keep the real headers' signatures.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or
