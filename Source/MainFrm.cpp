@@ -150,7 +150,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pInstrumentList);
 	SAFE_RELEASE(m_pVisualizerWnd);
 	SAFE_RELEASE(m_pActionHandler);
-	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, which owned it
+	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -1577,6 +1577,9 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
 			KillTimer(TMR_WELCOME);
+			// The piano roll comes back if it was open last time
+			if (CPianoRollBar::WasOpen())
+				ShowPianoRoll(true);
 			break;
 		// Check sound player
 		case TMR_AUDIO_CHECK:
@@ -1999,24 +2002,29 @@ void CMainFrame::OnUpdateViewControlpanel(CCmdUI *pCmdUI)
 
 void CMainFrame::OnViewPianoRoll()
 {
-	// Opens the piano roll (see PianoRoll.h), or hides it when it's open
-	if (m_pPianoRoll == NULL) {
-		m_pPianoRoll = new CPianoRollWnd();
+	ShowPianoRoll(m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowPianoRoll(bool Show)
+{
+	// The piano roll docked under the pattern editor (see PianoRoll.h), made the first time
+	if (Show && m_pPianoRoll == NULL) {
+		m_pPianoRoll = new CPianoRollBar();
 		if (!m_pPianoRoll->Create(this)) {
 			delete m_pPianoRoll;
 			m_pPianoRoll = NULL;
 			return;
 		}
 	}
-	if (m_pPianoRoll->IsShown())
-		m_pPianoRoll->SendMessage(WM_CLOSE);	// hides it
-	else
-		m_pPianoRoll->Show();
-}
-
-void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
-{
-	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsShown() ? 1 : 0);
+	if (m_pPianoRoll == NULL)
+		return;
+	ShowControlBar(m_pPianoRoll, Show ? TRUE : FALSE, FALSE);
+	m_pPianoRoll->Opened(Show);
 }
 
 void CMainFrame::SongChanged()

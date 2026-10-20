@@ -41,7 +41,7 @@ enum {
 
 class CVisualizerWnd;
 class CInstrumentFileTree;
-class CPianoRollWnd;
+class CPianoRollBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
@@ -95,6 +95,7 @@ public:
 	void	ResetUndo();
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
+	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 
 	bool	ChangeAllPatterns() const;
 
@@ -177,7 +178,7 @@ private:  // control bar embedded members
 
 	CInstrumentFileTree	*m_pInstrumentFileTree;
 
-	CPianoRollWnd		*m_pPianoRoll;			// View > Piano roll, created when first opened
+	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 
 	// State variables
 	int					m_iOctave;					// Selected octave

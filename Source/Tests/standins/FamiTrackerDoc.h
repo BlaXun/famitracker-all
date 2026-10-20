@@ -20,14 +20,18 @@
 */
 
 // Stand-in for FamiTrackerDoc.h: the limits, the pattern cell and a song in
-// memory with the document functions Clips.cpp calls
+// memory with the document functions Clips.cpp calls (NoteEdit.cpp needs only
+// the cell and the enums)
 #pragma once
 #include <vector>
 #include <map>
 const int MAX_INSTRUMENTS = 64; const int MAX_PATTERN = 128; const int MAX_FRAMES = 128; const int MAX_VOLUME = 0x10;
 const int MAX_EFFECT_COLUMNS = 4; const int MAX_CHANNELS = 28; const int OCTAVE_RANGE = 8; const int MAX_TRACKS = 64; const int MAX_PATTERN_LENGTH = 256;
 enum note_t { NONE = 0, C, Cs, D, Ds, E, F, Fs, G, Gs, A, As, B, RELEASE, HALT };
-enum effect_t { EF_NONE = 0, EF_SPEED, EF_JUMP, EF_SKIP, EF_HALT, EF_VOLUME, EF_PORTAMENTO, EF_PORTAOFF, EF_SWEEPUP, EF_SWEEPDOWN, EF_ARPEGGIO, EF_VIBRATO, EF_COUNT = 28 };
+enum effect_t { EF_NONE = 0, EF_SPEED, EF_JUMP, EF_SKIP, EF_HALT, EF_VOLUME, EF_PORTAMENTO, EF_PORTAOFF, EF_SWEEPUP, EF_SWEEPDOWN, EF_ARPEGGIO,
+	EF_VIBRATO, EF_TREMOLO, EF_PITCH, EF_DELAY, EF_DAC, EF_PORTA_UP, EF_PORTA_DOWN, EF_DUTY_CYCLE, EF_SAMPLE_OFFSET, EF_SLIDE_UP, EF_SLIDE_DOWN,
+	EF_VOLUME_SLIDE, EF_NOTE_CUT, EF_RETRIGGER, EF_DELAYED_VOLUME, EF_FDS_MOD_DEPTH, EF_FDS_MOD_SPEED_HI, EF_FDS_MOD_SPEED_LO, EF_DPCM_PITCH,
+	EF_SUNSOFT_ENV_LO, EF_SUNSOFT_ENV_HI, EF_SUNSOFT_ENV_TYPE, EF_COUNT };
 struct stChanNote { unsigned char Note; unsigned char Octave; unsigned char Vol; unsigned char Instrument; unsigned char EffNumber[MAX_EFFECT_COLUMNS]; unsigned char EffParam[MAX_EFFECT_COLUMNS]; };
 class CClipLibrary;
 // A song in memory: tracks of frames, each frame a pattern per channel

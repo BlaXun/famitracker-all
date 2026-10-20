@@ -74,6 +74,17 @@ bool PlaceClip(CMainFrame *pMainFrm, int Index, bool Linked, CString &Message);
 // at a time) and its linked copies in the song follow, which Ctrl+Z undoes.
 void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, int Count);
 
+// The piano roll's edits: Count cells written into Channel exactly as given,
+// from Row on (counting rows from the start of the song, frame * pattern
+// length + row), as one undoable action. Frames are added at the end of the
+// song when the cells run past it, and a frame that changes gets a pattern of
+// its own first if another frame plays the same one. Linked copies of clips
+// stay linked, so the clip and its other copies follow the edit. The cursor
+// goes to CursorRow (-1: the first row written). Returns false, with the
+// reason in Message, when nothing was written.
+bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNote *pCells, int Count, int CursorRow,
+	CString &Message);
+
 // Edit > Add chords and bass line: chords and a bass line that fit the melody
 // in one channel, written into two others, over the bars the melody covers
 // (bars and beats as the row highlight shows them).

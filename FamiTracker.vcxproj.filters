@@ -1305,5 +1305,11 @@
     <ClInclude Include="Source\PianoRoll.h">
       <Filter>Piano roll</Filter>
     </ClInclude>
+    <ClCompile Include="Source\NoteEdit.cpp">
+      <Filter>Piano roll</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\NoteEdit.h">
+      <Filter>Piano roll</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

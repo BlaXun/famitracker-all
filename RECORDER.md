@@ -131,13 +131,13 @@ clips to place again, as copies or linked.
   file or the selection in the pattern editor kept with the song, placed at
   the cursor as a copy or linked. The clip editor gives notes another
   instrument and transposes them.
-- [x] Piano roll, part 1 (`PianoRoll.cpp`; see Piano roll below): View >
-  Piano roll shows the song's notes on a grid, time from left to right,
-  follows playback and the cursor, and moves the cursor to a clicked note.
-- [ ] Next: editing in the piano roll (draw, move, resize and erase notes,
-  scale lock, placing clips), where melodies can also be drawn with the
-  mouse.
-- [ ] Then more natural input, built on the recorder:
+- [x] Piano roll (`PianoRoll.cpp`, `NoteEdit.cpp`; see Piano roll below):
+  View > Piano roll shows the song's notes on a grid under the pattern
+  editor, time from left to right, and follows playback and the cursor.
+  Notes are drawn, painted as a melody with the mouse, moved, copied, made
+  longer or shorter and erased, kept in a key if one is picked; clips are
+  placed with the mouse. Every change is undoable.
+- [ ] Next, more natural input, built on the recorder:
   - start from a groove: pick a mood (overworld, battle, dungeon, boss,
     jingle), a tempo and a key, get a few bars of drums, bass and chords, and
     sing the melody over them;
@@ -235,30 +235,93 @@ versions skip the block, and lose the clips if they save the song.
 ## Piano roll
 
 View > Piano roll (Ctrl+Shift+P, or the toolbar button next to the clips
-button) opens a window showing the song's notes on a grid: time from left to
-right, pitch from bottom to top, with a keyboard on the left.
+button) shows the song's notes under the pattern editor: time from left to
+right, pitch from bottom to top, with a keyboard on the left. Drag the line
+along its top to make it taller or shorter; the × in its top right corner,
+or View > Piano roll again, hides it. It comes back when FamiTracker starts
+if it was open when FamiTracker closed, and remembers its height and zoom.
+
+Showing the song:
 
 - The ruler counts bars from the second row highlight (a bar), with thinner
   lines for beats (the first highlight) and rows, and the strongest lines
   where a frame starts.
-- Every channel's notes are drawn, each channel in its own colour: the
-  cursor's channel bright, the others faint. A note lasts until the next
-  note, release or halt in its channel, the way it plays.
+- Every channel's notes are drawn, each channel in its own colour: the one
+  being edited (the pattern editor cursor's channel) bright, the others
+  faint. A note lasts until the next note, release or halt in its channel,
+  the way it plays. A note that slides into its pitch (`Qxy`, `Rxy`) sits at
+  the pitch it lands on, with a tick where it starts.
 - It follows the song: the play position runs across while playing (paging
   ahead in follow mode, the note sounding lights up, and so does its key),
   and the pattern editor's cursor shows as a line.
-- Clicking a note moves the pattern editor's cursor to it (and makes its
-  channel the bright one); clicking an empty spot or the ruler moves the
-  cursor to that row. Clicking a key plays it on the cursor's channel with
-  the selected instrument; slide over the keys to hear more.
 - Wheel: up and down; Shift+wheel: sideways; Ctrl+wheel: zoom in and out
   around the mouse. The arrow keys, Page Up/Down, Home and End scroll too.
   Hovering a note shows its name, length, instrument and bar in the status
-  line.
-- Closing the window only hides it; its place and zoom are remembered.
+  line along the bottom, which also says what the mouse can do.
 
-Editing comes next: drawing notes with the mouse, moving and resizing them,
-scale lock, and placing clips in it.
+The buttons along the top:
+
+- The channel being edited (also: click a faint note, or move the pattern
+  editor's cursor to another channel).
+- Draw or Paint melody (keys D and B).
+- Grid: what new notes snap to: a row, half a beat, a beat, two beats or a
+  bar. Hold Alt for single rows.
+- Key: none, one picked from a list (major, minor and their pentatonic
+  scales), or "Find the key from the song's notes". With a key, lanes
+  outside it are darker, its notes are marked on the keyboard, new and moved
+  notes stay in it (Alt lets them out), notes outside it get a red outline,
+  and the arrow keys move notes by notes of the key.
+- Instrument: the one new notes get, the same as the instrument list
+  (clicking a note picks its instrument there too). "Give the selected
+  notes" changes theirs. An instrument for another chip is skipped for the
+  instrument the channel already plays.
+- Clips: place a clip with the mouse (as a copy, or linked when "Place
+  linked copies" is ticked), save the selected notes as a clip
+  (Ctrl+Shift+C), or open Edit > Clips.
+
+Editing, in the bright channel:
+
+- Draw: click to add a note a grid step long, or drag to make it longer;
+  dragging up and down changes its pitch while drawing. It ends with a
+  release (`===`) when its instrument fades out on one, otherwise a halt
+  (`---`).
+- Paint melody: drag, and a note goes on every grid step at the pitch under
+  the mouse; steps of the same pitch join into a longer note. A way to sketch
+  a melody's shape without singing in tune, kept in key when a key is set.
+- Drag a note to move it (with any other selected notes); Shift+drag copies
+  them. Drag its right end to make it longer or shorter: it can't run past
+  the next note.
+- Right-click erases a note; right-drag erases every note it passes.
+- Click selects a note, Ctrl+click adds or removes one, Ctrl+drag selects
+  the notes in a box, Ctrl+A selects all of them, Esc none.
+- With notes selected: Delete erases them; Up and Down move them a semitone
+  (a note of the key, with a key), Shift+Up and Shift+Down an octave; Left and
+  Right a grid step (Alt: a row); Ctrl+C, Ctrl+X and Ctrl+V copy, cut and
+  paste them, at the mouse (or the pattern editor's cursor).
+- A note put where others are replaces them: notes starting under it make
+  way, and one sounding into it ends where it starts.
+- Notes can go one frame past the end of the song; the song gets the frame,
+  and a note that sounded on to the old end still ends there.
+- Ctrl+Z undoes each change (one drag, one key) and Ctrl+Y redoes it.
+
+How edits keep the song sounding right:
+
+- A note takes its cells with it: its instrument and volume, the effects on
+  its rows, and its release or halt. Effects that steer the whole song (`Fxx`,
+  `Bxx`, `Dxx`, `Cxx`) stay on their rows.
+- Notes an edit doesn't touch keep sounding the same: when the volume or
+  instrument they took over from an earlier note would change, it is written
+  into their own cell. Moved and pasted notes keep how they sounded too.
+- Effects that switch something off (`000`, `400`, `700`, `A00`, `100`,
+  `200`, `300`) go where a note now ends when it is cut short or removed, so
+  a vibrato or arpeggio doesn't run on.
+- A frame that plays the same pattern as another frame gets a pattern of its
+  own before its notes change, so the other frame stays as it was. A note
+  inside a linked copy of a clip is edited there, and the clip and its other
+  copies follow.
+- The cells are written with the same undoable action as recordings
+  (`WriteChannelRows` in `InsertRecording.cpp`); `NoteEdit.cpp` works them
+  out and is tested on Linux (`Source/Tests/NoteEditTests.cpp`).
 
 ## Using wav2ftm today
 

@@ -10,8 +10,11 @@ Add chords and bass line in `Source/BackingDlg.cpp` (chords from
 `Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`), clips in
 `Source/Clips.cpp` (the song's clips and linked copies, saved in a `BF CLIPS`
 block) with Edit > Clips and the clip editor in `Source/ClipsDlg.cpp`, and
-View > Piano roll in `Source/PianoRoll.cpp` (told about edits through
-`CMainFrame::SongChanged`). The overall plan is in `ROADMAP.md`. Unless a
+View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under the
+pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
+edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
+action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
+`ROADMAP.md`. Unless a
 section says otherwise, everything below describes the 0.4.6 code as found on
 `master` and was checked against that source.
 
@@ -142,13 +145,16 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips** (`Source/Clips.cpp`): `Source/Tests` builds it on Linux against
-  working stand-ins for the MFC and document pieces it uses
-  (`Source/Tests/standins/`) and runs `ClipsTests.cpp`: linked copies
-  following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
-  block read back, cut short at every byte. Same three commands with
-  `Source/Tests` and `build/tests`; CI runs it in the Linux job. The stand-ins
-  must keep the real headers' signatures.
+- **Clips and note editing** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`):
+  `Source/Tests` builds them on Linux against working stand-ins for the MFC
+  and document pieces they use (`Source/Tests/standins/`). `ClipsTests.cpp`
+  covers linked copies following edits, unlinking, undo snapshots, tracks,
+  and the `BF CLIPS` block read back, cut short at every byte.
+  `NoteEditTests.cpp` covers the piano roll's edits: notes making way,
+  releases and halts, volumes and instruments kept, switch-off effects,
+  song-wide effects staying, copy and paste. Same three commands with
+  `Source/Tests` and `build/tests`; CI runs them in the Linux job. The
+  stand-ins must keep the real headers' signatures.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or

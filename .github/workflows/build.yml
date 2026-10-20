@@ -138,8 +138,8 @@ jobs:
       - name: Test
         run: ctest --test-dir build/transcribe --output-on-failure
 
-      # The clip library against stand-ins for MFC (Source/Tests)
-      - name: Clips tests
+      # The clip library and the piano roll's note editing against stand-ins for MFC (Source/Tests)
+      - name: Clips and note editing tests
         run: |
           cmake -S Source/Tests -B build/tests -DCMAKE_BUILD_TYPE=Release
           cmake --build build/tests -j 4

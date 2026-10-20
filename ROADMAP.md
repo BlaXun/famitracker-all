@@ -65,9 +65,11 @@ which plays the tracks as OGG files.
 
 ## 5. Piano roll
 
-Next, now that the recorder's clips are done (see Feature branches): a
-horizontal view, time left to right and pitch bottom to top, where clips can
-also be placed. First a view that follows playback, then editing.
+Done on the `recorder` branch (see `RECORDER.md` there): a horizontal view
+under the pattern editor, time left to right and pitch bottom to top, that
+follows playback, with drawing, painting a melody, moving, copying,
+resizing and erasing notes, a key that new notes snap to, and clips placed
+with the mouse. What was planned for it:
 
 - **v1:** one channel at a time. Draw, erase and resize notes with the mouse,
   with scale lock (pick a key and scale, off-scale rows are dimmed and notes
@@ -110,17 +112,18 @@ when ready.
      bar by bar, and write a bass line and arpeggiated chords.
   3. AI arranging over MCP, through the `api` branch below.
 
-  Clips are done: takes and pattern selections kept with the song, placed as
-  copies or linked, with a clip editor. The order from here:
-  1. The piano roll (step 5).
-  2. More natural input, built on the recorder: start from a groove (pick a
+  Clips and the piano roll are done: takes and pattern selections kept with
+  the song, placed as copies or linked, with a clip editor; notes drawn,
+  painted and moved in a piano roll under the pattern editor. The order from
+  here (the MCP connection was started early, on the `api` branch):
+  1. More natural input, built on the recorder: start from a groove (pick a
      mood, tempo and key, get a few bars of drums, bass and chords, and sing
      the melody over them); re-sing just a selection (the song plays a bar
      before, the take replaces only those rows); tap the tempo instead of
      setting speed and tempo.
-  3. Sound effects by voice ("pew", "boing", "kssh"), exported like the
+  2. Sound effects by voice ("pew", "boing", "kssh"), exported like the
      music, and chords by name ("C G Am F") or strummed on a guitar.
-  4. AI arranging over MCP (the `api` branch).
+  3. AI arranging over MCP (the `api` branch).
 - **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
   bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
   instruments, play/stop and save/export, and run requests on the UI thread

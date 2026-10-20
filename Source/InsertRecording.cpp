@@ -211,7 +211,36 @@ struct RecordedPart {
 	std::vector<RecordedCell> Cells;	// sorted by row
 	int Rows;							// rows written, counted from the start row
 	bool Replace;						// clear the effect columns too, not just earlier slides and vibrato
+	bool Exact = false;					// a cell for every row, written as it is (the piano roll)
 };
+
+bool SameCell(const stChanNote &Note, const RecordedCell &Cell)
+{
+	if (Note.Note != Cell.Note || Note.Octave != Cell.Octave || Note.Instrument != Cell.Instrument || Note.Vol != Cell.Vol)
+		return false;
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+		if (Note.EffNumber[c] != Cell.Effect[c] || Note.EffParam[c] != Cell.EffectParam[c])
+			return false;
+	}
+	return true;
+}
+
+// Does an exact part, written from Row of Frame on, change anything in frame f (one the song has)?
+bool ChangesFrame(const CFamiTrackerDoc *pDoc, unsigned int Track, const RecordedPart &Part, unsigned int Frame,
+	unsigned int Row, unsigned int f)
+{
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	for (int r = 0; r < Length; ++r) {
+		const int Index = static_cast<int>(f - Frame) * Length + r - static_cast<int>(Row);
+		if (Index < 0 || Index >= Part.Rows || static_cast<size_t>(Index) >= Part.Cells.size())
+			continue;
+		stChanNote Note;
+		pDoc->GetNoteData(Track, f, Part.Channel, static_cast<unsigned int>(r), &Note);
+		if (!SameCell(Note, Part.Cells[static_cast<size_t>(Index)]))
+			return true;
+	}
+	return false;
+}
 
 // Writes channels' cells from a frame and row on. Every frame a channel's part
 // touches first gets a pattern of its own in that channel, so frames that
@@ -223,12 +252,24 @@ public:
 	CInsertRecordingAction(const std::vector<RecordedPart> &Parts, int Frame, int Row) :
 		CAction(ACT_INSERT_RECORDING), m_Parts(Parts),
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
-		m_iOldFrameCount(0), m_iLinkClip(-1)
+		m_iOldFrameCount(0), m_iLinkClip(-1), m_bKeepLinks(false),
+		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row))
 	{
 	}
 
 	// What's written is a linked copy of this clip (by ID)
 	void LinkTo(int ClipId) { m_iLinkClip = ClipId; }
+
+	// An edit of the notes there rather than something new: linked copies of clips written over
+	// stay linked, and the clip follows the edit (CMainFrame::SyncClips)
+	void KeepLinks() { m_bKeepLinks = true; }
+
+	// Where the cursor goes afterwards, instead of the start
+	void PlaceCursor(int Frame, int Row)
+	{
+		m_iCursorFrame = static_cast<unsigned int>(Frame);
+		m_iCursorRow = static_cast<unsigned int>(Row);
+	}
 
 	bool SaveState(CMainFrame *pMainFrm);
 	void Undo(CMainFrame *pMainFrm);
@@ -256,6 +297,9 @@ private:
 	std::map<PatternKey, std::vector<stChanNote> > m_Backup;	// a pattern's rows before the insert
 	int m_iLinkClip;	// clip ID, -1 for no link
 	CClipLinkState m_LinksBefore;
+	bool m_bKeepLinks;
+	unsigned int m_iCursorFrame;
+	unsigned int m_iCursorRow;
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
@@ -302,13 +346,15 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	}
 	const unsigned int Frames = pDoc->GetFrameCount(m_iTrack);
 
-	// One pattern per touched frame in each channel
+	// One pattern per touched frame in each channel (for an exact part, per frame it changes)
 	m_Reassigned.clear();
 	m_Backup.clear();
 	for (size_t p = 0; p < m_Parts.size(); ++p) {
 		const unsigned int Channel = m_Parts[p].Channel;
 		const unsigned int PartLast = LastFrame(m_Parts[p], Length);
 		for (unsigned int f = m_iFrame; f <= PartLast && f < Frames; ++f) {
+			if (m_Parts[p].Exact && f < m_iOldFrameCount && !ChangesFrame(pDoc, m_iTrack, m_Parts[p], m_iFrame, m_iRow, f))
+				continue;
 			unsigned int Pattern = pDoc->GetPatternAtFrame(m_iTrack, f, Channel);
 			if (UsedElsewhere(pDoc, m_iTrack, Channel, f, Pattern)) {
 				const int Free = FindFreePattern(pDoc, m_iTrack, Channel);
@@ -326,10 +372,10 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		}
 	}
 
-	// Linked copies written over aren't linked any more
+	// Linked copies written over aren't linked any more (unless the notes there are being edited)
 	CClipLibrary *pClips = pDoc->GetClips();
 	pClips->SaveLinks(m_LinksBefore);
-	for (size_t p = 0; p < m_Parts.size(); ++p)
+	for (size_t p = 0; p < m_Parts.size() && !m_bKeepLinks; ++p)
 		pClips->UnlinkArea(pDoc, m_iTrack, m_iFrame, m_iRow, static_cast<int>(m_Parts[p].Channel), m_Parts[p].Rows);
 
 	// Write the cells. Rows between them are cleared in the channel (note,
@@ -347,6 +393,21 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 			const unsigned int Row = Position % Length;
 			stChanNote Note;
 			pDoc->GetNoteData(m_iTrack, Frame, Part.Channel, Row, &Note);
+			if (Part.Exact) {
+				if (static_cast<size_t>(r) < Part.Cells.size() && !SameCell(Note, Part.Cells[static_cast<size_t>(r)])) {
+					const RecordedCell &Cell = Part.Cells[static_cast<size_t>(r)];
+					Note.Note = Cell.Note;
+					Note.Octave = Cell.Octave;
+					Note.Instrument = Cell.Instrument;
+					Note.Vol = Cell.Vol;
+					for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+						Note.EffNumber[c] = Cell.Effect[c];
+						Note.EffParam[c] = Cell.EffectParam[c];
+					}
+					pDoc->SetNoteData(m_iTrack, Frame, Part.Channel, Row, &Note);
+				}
+				continue;
+			}
 			if (Part.Replace) {
 				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
 					Note.EffNumber[c] = EF_NONE;
@@ -497,10 +558,10 @@ private:
 
 void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc, CPatternEditor *pEditor) const
 {
-	pEditor->MoveToFrame(static_cast<int>(m_iFrame));
+	pEditor->MoveToFrame(static_cast<int>(std::min(m_iCursorFrame, pDoc->GetFrameCount(m_iTrack) - 1)));
 	if (!m_Parts.empty())
 		pEditor->MoveToChannel(static_cast<int>(m_Parts.front().Channel));
-	pEditor->MoveToRow(static_cast<int>(m_iRow));
+	pEditor->MoveToRow(static_cast<int>(m_iCursorRow));
 	pEditor->MoveToColumn(0);	// the note column
 	pEditor->InvalidateCursor();
 
@@ -511,9 +572,10 @@ void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc,
 
 // Free patterns for a part written in Channel over frames Frame-LastFrame:
 // one for each frame added at the end of the song, and one for each touched
-// frame whose pattern another frame plays too
+// frame whose pattern another frame plays too. With pChanges, only the frames
+// it marks (from Frame on) are touched.
 bool EnoughPatterns(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned int Channel, unsigned int Frame,
-	unsigned int LastFrame)
+	unsigned int LastFrame, const std::vector<bool> *pChanges = NULL)
 {
 	const unsigned int FrameCount = pDoc->GetFrameCount(Track);
 	std::vector<unsigned int> Playing(FrameCount);
@@ -521,6 +583,8 @@ bool EnoughPatterns(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned in
 		Playing[f] = pDoc->GetPatternAtFrame(Track, f, Channel);
 	unsigned int Needed = (LastFrame >= FrameCount) ? LastFrame + 1 - FrameCount : 0;
 	for (unsigned int f = Frame; f <= LastFrame && f < FrameCount; ++f) {
+		if (pChanges != NULL && (f - Frame >= pChanges->size() || !(*pChanges)[f - Frame]))
+			continue;
 		for (unsigned int g = 0; g < FrameCount; ++g) {
 			if (g != f && Playing[g] == Playing[f]) {
 				++Needed;
@@ -1309,4 +1373,54 @@ void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, in
 		for (int r = 0; r < Rows; ++r)
 			pClips->SetCell(Index, c, r, pCells[c * Rows + r]);
 	pDoc->SetModifiedFlag();
+}
+
+// The piano roll
+
+bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNote *pCells, int Count, int CursorRow,
+	CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	if (Channel < 0 || Channel >= static_cast<int>(pDoc->GetAvailableChannels()) || Row < 0 || Count < 1 || Length < 1) {
+		Message = _T("There's nothing to change there.");
+		return false;
+	}
+	const unsigned int Frame = static_cast<unsigned int>(Row / Length);
+	const unsigned int LastFrame = static_cast<unsigned int>((Row + Count - 1) / Length);
+	if (LastFrame >= MAX_FRAMES) {
+		Message = _T("That's past the end: a song has at most 128 frames.");
+		return false;
+	}
+
+	RecordedPart Part;
+	Part.Channel = static_cast<unsigned int>(Channel);
+	Part.Rows = Count;
+	Part.Replace = true;
+	Part.Exact = true;
+	for (int i = 0; i < Count; ++i)
+		Part.Cells.push_back(CellOf(i, pCells[i]));
+
+	// Free patterns for the frames that change, if they share their pattern with another frame
+	std::vector<bool> Changes;
+	for (unsigned int f = Frame; f <= LastFrame; ++f)
+		Changes.push_back(f >= pDoc->GetFrameCount(Track) ||
+			ChangesFrame(pDoc, Track, Part, Frame, static_cast<unsigned int>(Row % Length), f));
+	if (!EnoughPatterns(pDoc, Track, Part.Channel, Frame, LastFrame, &Changes)) {
+		Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+			static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)));
+		return false;
+	}
+
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(std::vector<RecordedPart>(1, Part), static_cast<int>(Frame), Row % Length);
+	pAction->KeepLinks();
+	if (CursorRow >= 0)
+		pAction->PlaceCursor(CursorRow / Length, CursorRow % Length);
+	if (!pMainFrm->AddAction(pAction)) {
+		Message = _T("The notes couldn't be changed.");
+		return false;
+	}
+	return true;
 }
