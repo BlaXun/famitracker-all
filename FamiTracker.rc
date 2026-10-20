@@ -59,6 +59,9 @@ BEGIN
     BUTTON      ID_TRACKER_PLAYPATTERN
     BUTTON      ID_TRACKER_STOP
     BUTTON      ID_TRACKER_EDIT
+    BUTTON      ID_EDIT_RECORD
+    BUTTON      ID_EDIT_CLIPS
+    BUTTON      ID_VIEW_PIANOROLL
     SEPARATOR
     BUTTON      ID_PREV_SONG
     BUTTON      ID_NEXT_SONG
@@ -97,11 +100,13 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Create NSF...\tCtrl+E",      ID_FILE_CREATE_NSF
         MENUITEM "Create WAV...",               ID_FILE_CREATEWAV
+        MENUITEM "Export for &games (OGG)...",  ID_FILE_EXPORTFORGAMES
         MENUITEM SEPARATOR
         MENUITEM "Import text...",              ID_FILE_IMPORTTEXT
         MENUITEM "Export text...",              ID_FILE_EXPORTTEXT
         MENUITEM SEPARATOR
         MENUITEM "&Configuration",              ID_FILE_GENERALSETTINGS
+        MENUITEM "Connect &Claude Code...",     ID_FILE_CONNECTCLAUDE
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1
         MENUITEM SEPARATOR
@@ -119,6 +124,13 @@ BEGIN
         MENUITEM "&Delete\tDel",                ID_EDIT_DELETE
         MENUITEM SEPARATOR
         MENUITEM "Select &All\tCtrl+A",         ID_EDIT_SELECTALL
+        MENUITEM SEPARATOR
+        MENUITEM "Record from microphone...",   ID_EDIT_RECORD
+        MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
+        MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
+        MENUITEM "Clips...",                    ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -206,6 +218,7 @@ BEGIN
         MENUITEM "&Toolbar",                    ID_VIEW_TOOLBAR
         MENUITEM "&Status Bar",                 ID_VIEW_STATUS_BAR
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
+        MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -237,6 +250,11 @@ BEGIN
         MENUITEM "&Paste",                      ID_EDIT_PASTE
         MENUITEM "&Delete",                     ID_POPUP_DELETE
         MENUITEM "Select &All",                 ID_EDIT_SELECTALL
+        MENUITEM "Record from microphone...",   ID_EDIT_RECORD
+        MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
+        MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
+        MENUITEM "Clips...",                    ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -532,6 +550,13 @@ BEGIN
     ID_EDIT_CUT             "Cut the selection and put it on the Clipboard\nCut"
     ID_EDIT_FIND            "Find the specified text\nFind"
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
+    ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
+    ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
+    ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
+    ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
+    ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
+    ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
+    ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"
@@ -1829,6 +1854,201 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,139,23,50,14
     CONTROL         "",IDC_SPEED_SLD,"msctls_trackbar32",WS_TABSTOP,7,7,101,16
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
+END
+
+IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 300, 276
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Connect Claude Code"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Claude Code can work on the song open here: read it, write parts, change the key, the tempo or the sounds, check it for clashes and play it for you. It connects to FamiTracker on this computer only.",IDC_STATIC,7,7,286,26
+    CONTROL         "Let Claude Code connect",IDC_MCP_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,38,140,10
+    LTEXT           "Port:",IDC_STATIC,19,55,24,8
+    EDITTEXT        IDC_MCP_PORT,45,52,40,14,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "",IDC_MCP_STATUS,92,52,201,16
+    CONTROL         "Let Claude change the song directly (Ctrl+Z undoes each change). Otherwise its ideas arrive as clips you listen to and place with Edit > Clips.",IDC_MCP_DIRECT,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,7,74,286,20
+    GROUPBOX        "Connect once",IDC_STATIC,7,101,286,142
+    LTEXT           "Claude Code runs in:",IDC_STATIC,14,116,68,8
+    CONTROL         "Windows",IDC_MCP_WINDOWS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,84,115,48,10
+    CONTROL         "WSL (Linux on Windows)",IDC_MCP_WSL,"Button",BS_AUTORADIOBUTTON,136,115,110,10
+    LTEXT           "",IDC_MCP_WHERE,14,131,272,8,WS_GROUP
+    EDITTEXT        IDC_MCP_COMMAND,14,142,272,40,ES_MULTILINE | ES_READONLY | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_MCP_COPY,14,187,50,14,WS_GROUP
+    PUSHBUTTON      "New access code",IDC_MCP_NEWTOKEN,70,187,72,14
+    LTEXT           "",IDC_MCP_HINT,14,206,272,32
+    DEFPUSHBUTTON   "OK",IDOK,188,255,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,255,50,14
+END
+
+IDD_GAME_EXPORT DIALOGEX 0, 0, 320, 232
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Export for games"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Saves tracks as OGG files for a game, next to the song. Each plays its intro once, then loops without a seam; the loop points come with the GameMaker code that plays it.",IDC_STATIC,7,7,306,26
+    CONTROL         "This track",IDC_GAME_THIS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,7,38,70,10
+    CONTROL         "All tracks (day and night versions together)",IDC_GAME_ALL,"Button",BS_AUTORADIOBUTTON,80,38,200,10
+    LTEXT           "Quality:",IDC_STATIC,7,56,30,8,WS_GROUP
+    COMBOBOX        IDC_GAME_QUALITY,40,54,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_GAME_RESULT,7,74,306,128,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_GAME_COPY,7,211,50,14
+    DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,211,50,14
+    PUSHBUTTON      "Close",IDCANCEL,263,211,50,14
+END
+
+IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Insert recording"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Recording:",IDC_STATIC,7,9,42,8
+    LTEXT           "",IDC_REC_FILE,52,9,191,8,SS_PATHELLIPSIS
+    GROUPBOX        "What did you record?",IDC_STATIC,7,24,236,78
+    CONTROL         "Let FamiTracker decide",IDC_REC_AUTO,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,15,38,92,10
+    CONTROL         "Whistling",IDC_REC_WHISTLE,"Button",BS_AUTORADIOBUTTON,15,53,200,10
+    CONTROL         "Humming or singing",IDC_REC_VOICE,"Button",BS_AUTORADIOBUTTON,15,68,200,10
+    CONTROL         "Finger taps or beatboxing (drums)",IDC_REC_DRUMS,"Button",BS_AUTORADIOBUTTON,15,83,200,10
+    LTEXT           "",IDC_REC_DETECTED,109,39,128,8
+    LTEXT           "Channel:",IDC_STATIC,7,113,40,8
+    COMBOBOX        IDC_REC_CHANNEL,52,111,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,129,236,10
+    CONTROL         "Save it as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,142,236,10
+    LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
+    DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_VOICE_EFFECT DIALOGEX 0, 0, 280, 228
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Sound effect from your voice"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Make a sound into the microphone, like ""pew"", ""boing"" or ""kssh"": the pitch and loudness of your voice go on a pulse channel, its breathy and noisy parts on the noise channel.",IDC_STATIC,7,7,266,26
+    LTEXT           "Microphone:",IDC_STATIC,7,40,46,8
+    COMBOBOX        IDC_VOICE_DEVICE,56,38,217,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Level:",IDC_STATIC,7,56,46,8
+    CONTROL         "",IDC_VOICE_LEVEL,"msctls_progress32",WS_BORDER,56,55,150,10
+    LTEXT           "",IDC_VOICE_LEVELTEXT,211,56,62,8
+    DEFPUSHBUTTON   "Record",IDC_VOICE_RECORD,56,71,60,14
+    PUSHBUTTON      "Open a WAV file...",IDC_VOICE_OPEN,121,71,76,14
+    LTEXT           "",IDC_VOICE_STATUS,7,91,266,42
+    LTEXT           "Pitch:",IDC_STATIC,7,141,46,8
+    COMBOBOX        IDC_VOICE_PITCH,56,139,150,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Breathy and noisy parts on the noise channel",IDC_VOICE_NOISE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,56,156,217,10
+    LTEXT           "Name:",IDC_STATIC,7,173,46,8
+    EDITTEXT        IDC_VOICE_NAME,56,171,150,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "Listen",IDC_VOICE_LISTEN,56,189,60,14
+    PUSHBUTTON      "Your recording",IDC_VOICE_TAKE,121,189,64,14
+    PUSHBUTTON      "Add to the song",IDC_VOICE_ADD,148,207,70,14
+    PUSHBUTTON      "Close",IDCANCEL,223,207,50,14
+END
+
+IDD_RECORD DIALOGEX 0, 0, 262, 292
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Record from microphone"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "What will you record?",IDC_STATIC,7,7,248,64
+    CONTROL         "Let FamiTracker decide",IDC_REC_AUTO,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,15,19,200,10
+    CONTROL         "Whistling",IDC_REC_WHISTLE,"Button",BS_AUTORADIOBUTTON,15,32,200,10
+    CONTROL         "Humming or singing",IDC_REC_VOICE,"Button",BS_AUTORADIOBUTTON,15,45,200,10
+    CONTROL         "Finger taps or beatboxing (drums)",IDC_REC_DRUMS,"Button",BS_AUTORADIOBUTTON,15,58,200,10
+    LTEXT           "Channel:",IDC_STATIC,7,81,50,8
+    COMBOBOX        IDC_REC_CHANNEL,62,79,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,96,248,10
+    LTEXT           "Microphone:",IDC_STATIC,7,116,50,8
+    COMBOBOX        IDC_REC_DEVICE,62,114,193,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Level:",IDC_STATIC,7,132,50,8
+    CONTROL         "",IDC_REC_LEVEL,"msctls_progress32",WS_BORDER,62,131,130,10
+    LTEXT           "",IDC_REC_LEVELTEXT,197,132,58,8
+    LTEXT           "Click:",IDC_STATIC,7,150,50,8
+    COMBOBOX        IDC_REC_CLICK,62,148,130,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_REC_TEMPO,197,150,58,8
+    LTEXT           "Volume:",IDC_STATIC,7,167,50,8
+    CONTROL         "",IDC_REC_CLICKVOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,58,164,138,14
+    LTEXT           "",IDC_REC_CLICKVOLUMETEXT,197,167,58,8
+    LTEXT           "Delay:",IDC_STATIC,7,184,50,8
+    LTEXT           "",IDC_REC_DELAY,62,184,130,8
+    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,181,58,14
+    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,200,248,10
+    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,213,248,10
+    LTEXT           "",IDC_REC_STATUS,7,229,248,26
+    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,257,248,8
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,271,76,14
+    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,271,50,14
+    PUSHBUTTON      "Close",IDCANCEL,205,271,50,14
+END
+
+IDD_BACKING DIALOGEX 0, 0, 262, 180
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add chords and a bass line"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Melody:",IDC_STATIC,7,9,60,8
+    COMBOBOX        IDC_BACK_MELODY,72,7,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Key:",IDC_STATIC,7,27,60,8
+    COMBOBOX        IDC_BACK_KEY,72,25,130,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chords:",IDC_STATIC,7,45,60,8
+    COMBOBOX        IDC_BACK_CHORDS,72,43,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "as arpeggios",IDC_STATIC,207,45,48,8
+    LTEXT           "Bass line:",IDC_STATIC,7,63,60,8
+    COMBOBOX        IDC_BACK_BASS,72,61,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chord changes:",IDC_STATIC,7,81,60,8
+    COMBOBOX        IDC_BACK_CHANGES,72,79,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_BACK_PREVIEW,7,99,248,42
+    LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,143,248,16
+    DEFPUSHBUTTON   "Add",IDOK,150,160,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,205,160,50,14
+END
+
+IDD_CLIPS DIALOGEX 0, 0, 300, 207
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Clips"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Clips kept with this song:",IDC_STATIC,7,7,218,8
+    CONTROL         "",IDC_CLIP_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,18,218,128
+    DEFPUSHBUTTON   "Place a copy",IDC_CLIP_PLACE,231,18,62,14
+    PUSHBUTTON      "Place linked",IDC_CLIP_PLACELINKED,231,35,62,14
+    PUSHBUTTON      "Edit...",IDC_CLIP_EDIT,231,57,62,14
+    PUSHBUTTON      "Duplicate...",IDC_CLIP_DUPLICATE,231,74,62,14
+    PUSHBUTTON      "Rename...",IDC_CLIP_RENAME,231,91,62,14
+    PUSHBUTTON      "Unlink copies",IDC_CLIP_UNLINK,231,113,62,14
+    PUSHBUTTON      "Delete",IDC_CLIP_DELETE,231,130,62,14
+    LTEXT           "",IDC_CLIP_INFO,7,152,286,32
+    PUSHBUTTON      "Close",IDCANCEL,243,186,50,14
+END
+
+IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Edit clip"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_CLIPED_INFO,7,7,306,16
+    CONTROL         "",IDC_CLIPED_NOTES,"SysListView32",LVS_REPORT | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,27,306,122
+    LTEXT           "Instrument:",IDC_STATIC,7,158,44,8
+    COMBOBOX        IDC_CLIPED_INSTRUMENT,52,156,130,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "For selected notes",IDC_CLIPED_SETSELECTED,187,155,66,14
+    PUSHBUTTON      "For all notes",IDC_CLIPED_SETALL,258,155,55,14
+    LTEXT           "Transpose:",IDC_STATIC,7,178,44,8
+    PUSHBUTTON      "-1 octave",IDC_CLIPED_DOWN12,52,175,50,14
+    PUSHBUTTON      "-1 semitone",IDC_CLIPED_DOWN1,105,175,56,14
+    PUSHBUTTON      "+1 semitone",IDC_CLIPED_UP1,164,175,56,14
+    PUSHBUTTON      "+1 octave",IDC_CLIPED_UP12,223,175,50,14
+    LTEXT           "Transpose changes the selected notes, or all of them when none are selected. Shift+click or Ctrl+click picks several notes.",IDC_STATIC,7,194,306,16
+    DEFPUSHBUTTON   "OK",IDOK,208,212,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,263,212,50,14
+END
+
+IDD_CLIP_NAME DIALOGEX 0, 0, 220, 64
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Clip name"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_CLIPNAME_PROMPT,7,7,206,8
+    EDITTEXT        IDC_CLIPNAME_EDIT,7,19,206,14,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,108,43,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,163,43,50,14
 END
 
 IDD_PROPERTIES DIALOGEX 0, 0, 213, 259

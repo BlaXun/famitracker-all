@@ -62,7 +62,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)Source\libogg\include;$(ProjectDir)Source\libvorbis\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
@@ -445,6 +445,170 @@
     <None Include="Texts\FastTracker effects.txt" />
     <None Include="gpl.txt" />
     <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <!-- libogg and libvorbis (BSD licensed) for the OGG export, as released; their own warnings stay off -->
+  <ItemGroup>
+    <ClCompile Include="Source\libogg\src\bitwise.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="Source\libogg\src\framing.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\analysis.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\bitrate.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\block.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\codebook.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\envelope.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\floor0.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\floor1.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\info.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lookup.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lpc.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\lsp.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\mapping0.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\mdct.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\psy.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\registry.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\res0.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\sharedbook.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\smallft.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\synthesis.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\vorbisenc.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\vorbisfile.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\window.c">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\libvorbis\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Api\Json.cpp" />
+    <ClCompile Include="Source\Api\Http.cpp" />
+    <ClCompile Include="Source\Api\Mcp.cpp" />
+    <ClCompile Include="Source\Api\Music.cpp" />
+    <ClCompile Include="Source\Api\Presets.cpp" />
+    <ClCompile Include="Source\Api\Tools.cpp" />
+    <ClCompile Include="Source\Api\Png.cpp" />
+    <ClCompile Include="Source\Api\Picture.cpp" />
+    <ClCompile Include="Source\Api\Ogg.cpp" />
+    <ClCompile Include="Source\Api\GameAudio.cpp" />
+    <ClCompile Include="Source\Api\Jingles.cpp" />
+    <ClCompile Include="Source\Api\SoundEffects.cpp" />
+    <ClCompile Include="Source\McpSocket.cpp" />
+    <ClCompile Include="Source\McpConnection.cpp" />
+    <ClCompile Include="Source\ChipSwitch.cpp" />
+    <ClInclude Include="Source\Api\Json.h" />
+    <ClInclude Include="Source\Api\Http.h" />
+    <ClInclude Include="Source\Api\Mcp.h" />
+    <ClInclude Include="Source\Api\Music.h" />
+    <ClInclude Include="Source\Api\Presets.h" />
+    <ClInclude Include="Source\Api\Song.h" />
+    <ClInclude Include="Source\Api\Tools.h" />
+    <ClInclude Include="Source\Api\Png.h" />
+    <ClInclude Include="Source\Api\Picture.h" />
+    <ClInclude Include="Source\Api\Ogg.h" />
+    <ClInclude Include="Source\Api\GameAudio.h" />
+    <ClInclude Include="Source\Api\Jingles.h" />
+    <ClInclude Include="Source\Api\SoundEffects.h" />
+    <ClInclude Include="Source\McpSocket.h" />
+    <ClInclude Include="Source\McpConnection.h" />
+    <ClInclude Include="Source\ChipSwitch.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Transcribe\WavReader.cpp" />
+    <ClCompile Include="Source\Transcribe\PitchTracker.cpp" />
+    <ClCompile Include="Source\Transcribe\Notes.cpp" />
+    <ClCompile Include="Source\Transcribe\Hits.cpp" />
+    <ClCompile Include="Source\Transcribe\TextModule.cpp" />
+    <ClInclude Include="Source\Transcribe\Transcribe.h" />
+    <ClCompile Include="Source\InsertRecording.cpp" />
+    <ClInclude Include="Source\InsertRecording.h" />
+    <ClCompile Include="Source\InsertRecordingDlg.cpp" />
+    <ClInclude Include="Source\InsertRecordingDlg.h" />
+    <ClCompile Include="Source\Transcribe\Guess.cpp" />
+    <ClCompile Include="Source\Transcribe\Expression.cpp" />
+    <ClCompile Include="Source\MicRecorder.cpp" />
+    <ClInclude Include="Source\MicRecorder.h" />
+    <ClCompile Include="Source\RecordDlg.cpp" />
+    <ClInclude Include="Source\RecordDlg.h" />
+    <ClCompile Include="Source\VoiceEffectDlg.cpp" />
+    <ClInclude Include="Source\VoiceEffectDlg.h" />
+    <ClCompile Include="Source\Transcribe\Take.cpp" />
+    <ClCompile Include="Source\BackingDlg.cpp" />
+    <ClInclude Include="Source\BackingDlg.h" />
+    <ClCompile Include="Source\Transcribe\Harmony.cpp" />
+    <ClCompile Include="Source\Transcribe\SoundEffect.cpp" />
+    <ClInclude Include="Source\Transcribe\SoundEffect.h" />
+    <ClCompile Include="Source\Clips.cpp" />
+    <ClInclude Include="Source\Clips.h" />
+    <ClCompile Include="Source\ClipsDlg.cpp" />
+    <ClInclude Include="Source\ClipsDlg.h" />
+    <ClCompile Include="Source\PianoRoll.cpp" />
+    <ClInclude Include="Source\PianoRoll.h" />
+    <ClCompile Include="Source\NoteEdit.cpp" />
+    <ClInclude Include="Source\NoteEdit.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

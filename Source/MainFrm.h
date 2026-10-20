@@ -41,9 +41,11 @@ enum {
 
 class CVisualizerWnd;
 class CInstrumentFileTree;
+class CPianoRollBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
+class CMcpConnection;
 
 class CMainFrame : public CFrameWnd
 {
@@ -92,6 +94,9 @@ public:
 	bool	AddAction(CAction *pAction);
 	CAction *GetLastAction(int Filter) const;
 	void	ResetUndo();
+	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
+	void	SongChanged();	// the song's notes changed: the piano roll reads them again
+	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 
 	bool	ChangeAllPatterns() const;
 
@@ -172,7 +177,11 @@ private:  // control bar embedded members
 
 	int					m_iFrameEditorPos;
 
+	CMcpConnection		*m_pMcpConnection;		// File > Connect Claude Code
+
 	CInstrumentFileTree	*m_pInstrumentFileTree;
+
+	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 
 	// State variables
 	int					m_iOctave;					// Selected octave
@@ -244,6 +253,7 @@ public:
 	afx_msg void OnUpdateNextSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdatePrevSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCopy(CCmdUI *pCmdUI);
@@ -253,6 +263,9 @@ public:
 	afx_msg void OnUpdateSelectionEnabled(CCmdUI *pCmdUI);
 	afx_msg void OnTimer(UINT nIDEvent);
 	afx_msg void OnFileGeneralsettings();
+	afx_msg void OnFileConnectClaude();
+	afx_msg void OnFileExportForGames();
+	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnEnSongNameChange();
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();
@@ -286,6 +299,7 @@ public:
 	afx_msg void OnClickedFollow();
 	afx_msg void OnToggleFollow();
 	afx_msg void OnViewControlpanel();
+	afx_msg void OnViewPianoRoll();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
 	afx_msg void OnSelectPatternEditor();

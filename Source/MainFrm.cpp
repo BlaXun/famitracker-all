@@ -49,7 +49,10 @@
 #include "FrameAction.h"
 #include "PatternEditor.h"
 #include "FrameEditor.h"
+#include "McpConnection.h"
 #include "APU/APU.h"
+#include "Clips.h"
+#include "PianoRoll.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -123,7 +126,9 @@ CMainFrame::CMainFrame() :
 	m_pInstrumentList(NULL),
 	m_pActionHandler(NULL),
 	m_iFrameEditorPos(FRAME_EDIT_POS_TOP),
+	m_pMcpConnection(NULL),
 	m_pInstrumentFileTree(NULL),
+	m_pPianoRoll(NULL),
 	m_iInstrument(0),
 	m_iTrack(0),
 	m_iOctave(3)
@@ -147,6 +152,8 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pInstrumentList);
 	SAFE_RELEASE(m_pVisualizerWnd);
 	SAFE_RELEASE(m_pActionHandler);
+	SAFE_RELEASE(m_pMcpConnection);
+	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -159,6 +166,9 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_DESTROY()
 	ON_WM_COPYDATA()
 	ON_COMMAND(ID_FILE_GENERALSETTINGS, OnFileGeneralsettings)
+	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
+	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
+	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -211,6 +221,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_TRACKER_DPCM, OnTrackerDPCM)
 	ON_COMMAND(ID_TRACKER_DISPLAYREGISTERSTATE, OnTrackerDisplayRegisterState)
 	ON_COMMAND(ID_VIEW_CONTROLPANEL, OnViewControlpanel)
+	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
 	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
@@ -281,6 +292,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_PREV_SONG, OnUpdatePrevSong)
 	ON_UPDATE_COMMAND_UI(ID_TRACKER_SWITCHTOTRACKINSTRUMENT, OnUpdateTrackerSwitchToInstrument)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CONTROLPANEL, OnUpdateViewControlpanel)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -386,6 +398,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	}
 #endif
 
+	// Claude Code, if the user switched it on (File > Connect Claude Code)
+	m_pMcpConnection = new CMcpConnection();
+	m_pMcpConnection->Start(this);
+
 	return 0;
 }
 
@@ -416,7 +432,7 @@ bool CMainFrame::CreateToolbars()
 	rbi1.fMask		= RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_SIZE;
 	rbi1.fStyle		= RBBS_NOGRIPPER;
 	rbi1.hwndChild	= m_wndToolBar;
-	rbi1.cxMinChild	= SX(554);
+	rbi1.cxMinChild	= SX(623);	// 554, plus 23 each for the microphone, clips and piano roll buttons
 	rbi1.cyMinChild	= SY(22);
 	rbi1.cx			= SX(496);
 
@@ -1571,6 +1587,9 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
 			KillTimer(TMR_WELCOME);
+			// The piano roll comes back if it was open last time
+			if (CPianoRollBar::WasOpen())
+				ShowPianoRoll(true);
 			break;
 		// Check sound player
 		case TMR_AUDIO_CHECK:
@@ -1639,6 +1658,24 @@ void CMainFrame::OnUpdateFramesEdit(CCmdUI *pCmdUI)
 			pCmdUI->SetText(MakeIntString(static_cast<CFamiTrackerDoc*>(GetActiveDocument())->GetFrameCount(m_iTrack)));
 		}
 	}	
+}
+
+void CMainFrame::OnFileConnectClaude()
+{
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->ShowDialog();
+}
+
+void CMainFrame::OnFileExportForGames()
+{
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->ShowGameExport();
+}
+
+void CMainFrame::OnEditVoiceEffect()
+{
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->ShowVoiceEffect();
 }
 
 void CMainFrame::OnFileGeneralsettings()
@@ -1991,6 +2028,39 @@ void CMainFrame::OnUpdateViewControlpanel(CCmdUI *pCmdUI)
 	pCmdUI->SetCheck(m_wndControlBar.IsVisible());
 }
 
+void CMainFrame::OnViewPianoRoll()
+{
+	ShowPianoRoll(m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowPianoRoll(bool Show)
+{
+	// The piano roll docked under the pattern editor (see PianoRoll.h), made the first time
+	if (Show && m_pPianoRoll == NULL) {
+		m_pPianoRoll = new CPianoRollBar();
+		if (!m_pPianoRoll->Create(this)) {
+			delete m_pPianoRoll;
+			m_pPianoRoll = NULL;
+			return;
+		}
+	}
+	if (m_pPianoRoll == NULL)
+		return;
+	ShowControlBar(m_pPianoRoll, Show ? TRUE : FALSE, FALSE);
+	m_pPianoRoll->Opened(Show);
+}
+
+void CMainFrame::SongChanged()
+{
+	if (m_pPianoRoll != NULL)
+		m_pPianoRoll->SongChanged();
+}
+
 void CMainFrame::OnUpdateHighlight(CCmdUI *pCmdUI)
 {
 	// TODO remove static variables
@@ -2122,6 +2192,9 @@ void CMainFrame::OnShowWindow(BOOL bShow, UINT nStatus)
 void CMainFrame::OnDestroy()
 {
 	TRACE("FrameWnd: Destroying main frame window\n");
+
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->Stop();	// no more requests from Claude Code
 
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	
@@ -2341,6 +2414,8 @@ bool CMainFrame::AddAction(CAction *pAction)
 	}
 
 	m_pActionHandler->Push(pAction);
+	SyncClips();
+	SongChanged();
 
 	return true;
 }
@@ -2365,8 +2440,11 @@ void CMainFrame::OnEditUndo()
 
 	CAction *pAction = m_pActionHandler->PopUndo();
 
-	if (pAction != NULL)
+	if (pAction != NULL) {
 		pAction->Undo(this);
+		SyncClips();
+		SongChanged();
+	}
 }
 
 void CMainFrame::OnEditRedo()
@@ -2375,8 +2453,24 @@ void CMainFrame::OnEditRedo()
 
 	CAction *pAction = m_pActionHandler->PopRedo();
 
-	if (pAction != NULL)
+	if (pAction != NULL) {
 		pAction->Redo(this);
+		SyncClips();
+		SongChanged();
+	}
+}
+
+void CMainFrame::SyncClips()
+{
+	// A linked copy of a clip that was edited becomes the clip, and the other
+	// linked copies follow
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+	if (pDoc == NULL || pDoc->GetClips() == NULL)
+		return;
+	if (pDoc->GetClips()->Sync(pDoc)) {
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
+	}
 }
 
 void CMainFrame::OnUpdateEditUndo(CCmdUI *pCmdUI)
@@ -2532,6 +2626,7 @@ void CMainFrame::OnEditRemoveUnusedPatterns()
 		return;
 
 	pDoc->RemoveUnusedPatterns();
+	SyncClips();	// links into the removed patterns go
 	pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
 }
 

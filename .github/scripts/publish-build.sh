@@ -20,6 +20,7 @@ date="$(git show -s --format=%cs "$sha")"
 exe="$(find "$dist" -name FamiTracker.exe -print -quit)"
 pdb="$(find "$dist" -name FamiTracker.pdb -print -quit)"
 wav2ftm="$(find "$dist" -name wav2ftm.exe -print -quit)"
+bridge="$(find "$dist" -name famitracker-mcp.exe -print -quit)"
 if [ -z "$exe" ]; then
 	echo "FamiTracker.exe not found under $dist" >&2
 	exit 1
@@ -34,16 +35,43 @@ if [ -n "$wav2ftm" ]; then
 	cp "$wav2ftm" "$work/$folder/"
 	contents="FamiTracker.exe and wav2ftm.exe"
 fi
+if [ -n "$bridge" ]; then
+	cp "$bridge" "$work/$folder/"
+	contents="${contents/ and /, } and famitracker-mcp.exe"
+fi
 
 {
 	echo "FamiTracker, $branch branch, build $short ($date)"
 	echo
 	echo "FamiTracker.exe   The tracker. 32-bit Windows, no installation needed."
 	if [ -n "$wav2ftm" ]; then
+		echo "                  The microphone button on the toolbar records a whistle,"
+		echo "                  hum, song or finger taps straight into the song, Edit >"
+		echo "                  Add chords and bass line fits a backing to a melody, and"
+		echo "                  the clips button next to it keeps takes and selections"
+		echo "                  as clips to place again, as copies or linked. The piano"
+		echo "                  roll button shows the song's notes under the pattern"
+		echo "                  editor, where notes are drawn, painted and moved with the"
+		echo "                  mouse."
+	fi
+	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"
 		echo "                  into a FamiTracker text file. Run it from a command prompt"
 		echo "                  (wav2ftm --help), then open the result in FamiTracker"
 		echo "                  with File > Import Text."
+	fi
+	if [ -n "$bridge" ]; then
+		echo "famitracker-mcp.exe"
+		echo "                  Connects Claude Code running in WSL to FamiTracker. Keep"
+		echo "                  it next to FamiTracker.exe; Claude Code starts it by itself."
+	fi
+	if [ "$branch" = "api" ] || [ "$branch" = "recorder" ]; then
+		echo
+		echo "File > Connect Claude Code lets Claude Code on this computer, in Windows or"
+		echo "in WSL, work on the open song: switch it on there and run the command it"
+		echo "shows once. See MCP.md in the source for what Claude can do and how to ask."
+		echo "File > Export for games saves tracks as OGG files that loop without a seam,"
+		echo "with the GameMaker code that plays them."
 	fi
 	echo
 	echo "These programs are not code-signed. If Windows SmartScreen warns on first"

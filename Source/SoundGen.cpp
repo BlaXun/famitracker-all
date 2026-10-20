@@ -108,6 +108,7 @@ CSoundGen::CSoundGen() :
 	m_pDocument(NULL),
 	m_pTrackerView(NULL),
 	m_bRendering(false),
+	m_iRenderedSamples(0),
 	m_bPlaying(false),
 	m_bHaltRequest(false),
 	m_pPreviewSample(NULL),
@@ -728,6 +729,7 @@ bool CSoundGen::PlayBuffer()
 	if (m_bRendering) {
 		// Output to file
 		m_wfWaveFile.WriteWave(m_pAccumBuffer, m_iBufSizeBytes);
+		m_iRenderedSamples += m_iBufSizeSamples;
 		m_iBufferPtr = 0;
 	}
 	else {
@@ -1054,6 +1056,14 @@ void CSoundGen::RunFrame()
 				m_iTempoFrames = 0;
 //			}
 			m_bUpdateRow = true;
+			if (m_bRendering) {
+				// Where this row's sound begins in the file
+				render_mark_t Mark;
+				Mark.Frame = m_iPlayFrame;
+				Mark.Row = m_iPlayRow;
+				Mark.Sample = m_iRenderedSamples + m_iBufferPtr;
+				m_RenderMarks.Add(Mark);
+			}
 			ReadPatternRow();
 			++m_iRenderRow;
 		}
@@ -1481,6 +1491,11 @@ void CSoundGen::GetRenderStat(int &Frame, int &Time, bool &Done, int &FramesToRe
 	Row = m_iRenderRow;
 }
 
+void CSoundGen::GetRenderMarks(CArray<render_mark_t> &Marks) const
+{
+	Marks.Copy(m_RenderMarks);
+}
+
 bool CSoundGen::IsRendering() const
 {
 	return m_bRendering;
@@ -1823,6 +1838,9 @@ void CSoundGen::OnResetPlayer(WPARAM wParam, LPARAM lParam)
 void CSoundGen::OnStartRender(WPARAM wParam, LPARAM lParam)
 {
 	ResetBuffer();
+	m_iRenderedSamples = 0;
+	m_RenderMarks.RemoveAll();
+	m_RenderMarks.SetSize(0, 4096);
 	m_bRequestRenderStop = false;
 	m_bRendering = true;
 	m_iDelayedStart = 5;	// Wait 5 frames until player starts

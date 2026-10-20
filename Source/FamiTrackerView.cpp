@@ -37,6 +37,12 @@
 #include "TrackerChannel.h"
 #include "Clipboard.h"
 #include "APU/APU.h"
+#include "InsertRecording.h"
+#include "InsertRecordingDlg.h"
+#include "RecordDlg.h"
+#include "BackingDlg.h"
+#include "Clips.h"
+#include "ClipsDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -111,6 +117,12 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_WM_MENUCHAR()
 	ON_WM_SYSKEYDOWN()
 	ON_COMMAND(ID_EDIT_PASTEMIX, OnEditPastemix)
+	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
+	ON_COMMAND(ID_EDIT_RECORD, OnEditRecord)
+	ON_COMMAND(ID_EDIT_ADDBACKING, OnEditAddBacking)
+	ON_COMMAND(ID_EDIT_SAVECLIP, OnEditSaveClip)
+	ON_COMMAND(ID_EDIT_CLIPS, OnEditClips)
+	ON_UPDATE_COMMAND_UI(ID_EDIT_SAVECLIP, OnUpdateEditSaveClip)
 	ON_COMMAND(ID_EDIT_INSTRUMENTMASK, OnEditInstrumentMask)
 	ON_COMMAND(ID_EDIT_VOLUMEMASK, OnEditVolumeMask)
 	ON_COMMAND(ID_EDIT_INTERPOLATE, OnEditInterpolate)
@@ -894,6 +906,113 @@ void CFamiTrackerView::OnEditPastemix()
 	}
 }
 
+void CFamiTrackerView::OnEditInsertRecording()
+{
+	// Turn a WAV recording into notes at the cursor (see InsertRecording.cpp)
+	CFileDialog FileDialog(TRUE, _T("wav"), NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
+		_T("WAV recordings (*.wav)|*.wav|All files (*.*)|*.*||"), this);
+	if (FileDialog.DoModal() != IDOK)
+		return;
+
+	theApp.StopPlayer();
+	const CString Path = FileDialog.GetPathName();
+
+	// Guess what it holds, then let the user confirm or pick the kind and channel
+	recording_kind_t Guess = RECORDING_WHISTLE;
+	CString GuessText, Message;
+	bool Read;
+	{
+		CWaitCursor Wait;
+		Read = GuessRecording(Path, Guess, GuessText, Message);
+	}
+	if (!Read) {
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+	CInsertRecordingDlg Dialog(GetDocument(), Path, Guess, GuessText, m_pPatternEditor->GetChannel(), this);
+	if (Dialog.DoModal() != IDOK)
+		return;
+
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	const CString ClipName = GetDocument()->GetClips()->NewName(FileDialog.GetFileTitle(), false);
+	bool Inserted;
+	{
+		CWaitCursor Wait;
+		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Dialog.GetExpression(), Message,
+			Dialog.GetAsClip() ? static_cast<LPCTSTR>(ClipName) : NULL);
+	}
+
+	if (Inserted)
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnEditRecord()
+{
+	// Record from the microphone into the song (see RecordDlg.cpp). The
+	// recorder plays the song itself when asked to.
+	theApp.StopPlayerAndWait();
+	CRecordDlg Dialog(this);
+	const INT_PTR Result = Dialog.DoModal();
+	if (Result == IDOK)
+		GetParentFrame()->SetMessageText(Dialog.GetResult());
+	else if (Result == IDC_REC_FROMFILE)
+		OnEditInsertRecording();
+}
+
+void CFamiTrackerView::OnEditAddBacking()
+{
+	// Chords and a bass line for a melody (see InsertRecording.cpp)
+	CBackingDlg Dialog(this);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	CString Message;
+	bool Added;
+	{
+		CWaitCursor Wait;
+		Added = AddBacking(pMainFrm, Dialog.GetChoice(), Message);
+	}
+	if (Added)
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnEditSaveClip()
+{
+	// Keep the selected rows as a clip (see Clips.h)
+	if (!m_pPatternEditor->IsSelecting()) {
+		AfxMessageBox(_T("Select the rows to keep first: drag over them in the pattern editor, or hold Shift and use the ")
+			_T("arrow keys."), MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+	CClipNameDlg Dialog(_T("Save selection as clip"), _T("Name of the new clip:"),
+		GetDocument()->GetClips()->NewName(_T("Clip"), true), this);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	CString Message;
+	if (SaveSelectionAsClip(pMainFrm, Dialog.GetName(), Message))
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnUpdateEditSaveClip(CCmdUI *pCmdUI)
+{
+	pCmdUI->Enable(m_pPatternEditor->IsSelecting() ? 1 : 0);
+}
+
+void CFamiTrackerView::OnEditClips()
+{
+	// The song's clips: place, edit, duplicate, rename, delete
+	CClipsDlg Dialog(this);
+	if (Dialog.DoModal() == IDOK)
+		GetParentFrame()->SetMessageText(Dialog.GetResult());
+}
+
 void CFamiTrackerView::OnEditDelete()
 {
 	AddAction(new CPatternAction(CPatternAction::ACT_EDIT_DELETE));
@@ -1150,6 +1269,7 @@ void CFamiTrackerView::OnUpdate(CView* /*pSender*/, LPARAM lHint, CObject* /*pHi
 	// Called when the document has changed
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
 	ASSERT_VALID(pMainFrm);
+	pMainFrm->SongChanged();	// the piano roll reads the notes again
 
 	// Handle new flags
 	switch (lHint) {
@@ -1225,6 +1345,7 @@ void CFamiTrackerView::TrackChanged(unsigned int Track)
 		theApp.ResetPlayer();
 
 	pMainFrm->ResetUndo();
+	pMainFrm->SongChanged();
 
 	m_pPatternEditor->ResetCursor();
 	m_pPatternEditor->InvalidatePatternData();

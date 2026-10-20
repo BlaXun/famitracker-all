@@ -204,6 +204,12 @@
 #define IDS_MIDI_MESSAGE_OFF            317
 #define IDI_RIGHT                       317
 #define IDR_SEQUENCE_POPUP              319
+#define IDD_INSERT_RECORDING            320
+#define IDD_RECORD                      321
+#define IDD_BACKING                     322
+#define IDD_CLIPS                       323
+#define IDD_CLIP_EDIT                   324
+#define IDD_CLIP_NAME                   325
 #define IDC_INSTRUMENTS                 1001
 #define IDC_INSTSETTINGS                1002
 #define IDC_INSTNAME                    1005
@@ -462,6 +468,54 @@
 #define IDC_SLIDER_N163                 1284
 #define IDC_SLIDER8                     1285
 #define IDC_SLIDER_S5B                  1285
+#define IDC_REC_FILE                    1300
+#define IDC_REC_AUTO                    1301
+#define IDC_REC_WHISTLE                 1302
+#define IDC_REC_VOICE                   1303
+#define IDC_REC_DRUMS                   1304
+#define IDC_REC_DETECTED                1305
+#define IDC_REC_CHANNEL                 1306
+#define IDC_REC_EXPRESSION              1307
+#define IDC_REC_DEVICE                  1308
+#define IDC_REC_LEVEL                   1309
+#define IDC_REC_LEVELTEXT               1310
+#define IDC_REC_CLICK                   1311
+#define IDC_REC_TEMPO                   1312
+#define IDC_REC_PLAYSONG                1313
+#define IDC_REC_STATUS                  1314
+#define IDC_REC_RECORD                  1315
+#define IDC_REC_FROMFILE                1316
+#define IDC_REC_DELAY                   1317
+#define IDC_REC_TEST                    1318
+#define IDC_BACK_MELODY                 1319
+#define IDC_BACK_KEY                    1320
+#define IDC_BACK_CHORDS                 1321
+#define IDC_BACK_BASS                   1322
+#define IDC_BACK_CHANGES                1323
+#define IDC_BACK_PREVIEW                1324
+#define IDC_CLIP_LIST                   1325
+#define IDC_CLIP_PLACE                  1326
+#define IDC_CLIP_PLACELINKED            1327
+#define IDC_CLIP_EDIT                   1328
+#define IDC_CLIP_DUPLICATE              1329
+#define IDC_CLIP_RENAME                 1330
+#define IDC_CLIP_UNLINK                 1331
+#define IDC_CLIP_DELETE                 1332
+#define IDC_CLIP_INFO                   1333
+#define IDC_CLIPED_NOTES                1334
+#define IDC_CLIPED_INSTRUMENT           1335
+#define IDC_CLIPED_SETSELECTED          1336
+#define IDC_CLIPED_SETALL               1337
+#define IDC_CLIPED_DOWN12               1338
+#define IDC_CLIPED_DOWN1                1339
+#define IDC_CLIPED_UP1                  1340
+#define IDC_CLIPED_UP12                 1341
+#define IDC_CLIPED_INFO                 1342
+#define IDC_CLIPNAME_PROMPT             1343
+#define IDC_CLIPNAME_EDIT               1344
+#define IDC_REC_ASCLIP                  1345
+#define IDC_REC_CLICKVOLUME             1346
+#define IDC_REC_CLICKVOLUMETEXT         1347
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -602,6 +656,12 @@
 #define ID_HELP_FAQ                     33122
 #define ID_POPUP_CLONESEQUENCE          33125
 #define ID_TRACKER_DISPLAYREGISTERSTATE 33126
+#define ID_EDIT_INSERTRECORDING         33127
+#define ID_EDIT_RECORD                  33128
+#define ID_EDIT_ADDBACKING              33129
+#define ID_EDIT_SAVECLIP                33130
+#define ID_EDIT_CLIPS                   33131
+#define ID_VIEW_PIANOROLL               33132
 #define ID_INSTRUMENT_ADD_2A03          36864
 #define ID_INSTRUMENT_ADD_FDS           36865
 #define ID_INSTRUMENT_ADD_MMC5          36866
@@ -617,13 +677,54 @@
 #define ID_INDICATOR_TIME               53253
 #define ID_INDICATOR_POS                53254
 
+// File > Connect Claude Code (McpConnection.cpp)
+#define IDD_CONNECT_CLAUDE              330
+#define IDC_MCP_ENABLE                  1370
+#define IDC_MCP_PORT                    1371
+#define IDC_MCP_STATUS                  1372
+#define IDC_MCP_DIRECT                  1373
+#define IDC_MCP_COMMAND                 1374
+#define IDC_MCP_COPY                    1375
+#define IDC_MCP_NEWTOKEN                1376
+#define IDC_MCP_WINDOWS                 1377
+#define IDC_MCP_WSL                     1378
+#define IDC_MCP_WHERE                   1379
+#define IDC_MCP_HINT                    1380
+#define ID_FILE_CONNECTCLAUDE           33160
+
+// File > Export for games (McpConnection.cpp)
+#define IDD_GAME_EXPORT                 331
+#define IDC_GAME_THIS                   1381
+#define IDC_GAME_ALL                    1382
+#define IDC_GAME_QUALITY                1383
+#define IDC_GAME_RESULT                 1384
+#define IDC_GAME_COPY                   1385
+#define IDC_GAME_EXPORT                 1386
+#define ID_FILE_EXPORTFORGAMES          33161
+
+// Edit > Sound effect from your voice (VoiceEffectDlg.cpp)
+#define IDD_VOICE_EFFECT                332
+#define IDC_VOICE_DEVICE                1387
+#define IDC_VOICE_LEVEL                 1388
+#define IDC_VOICE_LEVELTEXT             1389
+#define IDC_VOICE_RECORD                1390
+#define IDC_VOICE_OPEN                  1391
+#define IDC_VOICE_STATUS                1392
+#define IDC_VOICE_PITCH                 1393
+#define IDC_VOICE_NOISE                 1394
+#define IDC_VOICE_NAME                  1395
+#define IDC_VOICE_LISTEN                1396
+#define IDC_VOICE_TAKE                  1397
+#define IDC_VOICE_ADD                   1398
+#define ID_EDIT_VOICEEFFECT             33162
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        320
-#define _APS_NEXT_COMMAND_VALUE         33127
-#define _APS_NEXT_CONTROL_VALUE         1280
+#define _APS_NEXT_RESOURCE_VALUE        326
+#define _APS_NEXT_COMMAND_VALUE         33133
+#define _APS_NEXT_CONTROL_VALUE         1348
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

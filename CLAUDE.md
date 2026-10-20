@@ -1,10 +1,45 @@
 # CLAUDE.md
 
-Guidance for working in this repository. This is the `beginner-friendly`
-branch: FamiTracker 0.4.6 with a modernized build, plus beginner features in
-progress. The plan and its status are in `ROADMAP.md`. Unless a section says
-otherwise, everything below describes the 0.4.6 code as found on `master` and
-was checked against that source.
+Guidance for working in this repository. This is the `recorder` branch, made
+from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
+audio-to-notes recorder described in `RECORDER.md`: the engine in
+`Source/Transcribe/`, the `wav2ftm` tool, Edit > Insert recording in
+`Source/InsertRecording.cpp`, Edit > Record from microphone in
+`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), Edit >
+Add chords and bass line in `Source/BackingDlg.cpp` (chords from
+`Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`), clips in
+`Source/Clips.cpp` (the song's clips and linked copies, saved in a `BF CLIPS`
+block) with Edit > Clips and the clip editor in `Source/ClipsDlg.cpp`, and
+View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under the
+pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
+edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
+action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
+`ROADMAP.md`. Unless a section says otherwise, everything below describes the
+0.4.6 code as found on `master` and was checked against that source.
+
+File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
+(see `MCP.md`; built on the `api` branch and merged here). The protocol and
+the tools are in `Source/Api/` (portable, tested on Linux), the Winsock
+listener in `Source/McpSocket.cpp`, and the glue to the document, the
+settings and the dialog in `Source/McpConnection.cpp`, which writes changes
+with `WriteSongParts` in `InsertRecording.cpp` and switches expansion chips
+with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
+through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
+in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
+that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
+project and ships next to FamiTracker.exe. File > Export for games saves
+tracks as looping OGG files through the `export_for_game` tool
+(`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with
+`CSoundGen`, which notes the sample where each row starts
+(`GetRenderMarks`), and libvorbis encodes (`Source/libvorbis`,
+`Source/libogg`). The jingles that `make_jingle` writes as tracks of their
+own are scores in `Source/Api/Jingles.cpp`. The sound effects of
+`make_sound_effect`, tracks at speed 1 that halt, are built a tick at a time
+in `Source/Api/SoundEffects.cpp` or made from a voice recording, and turned
+into instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound
+effect from your voice (`Source/VoiceEffectDlg.cpp`) records a take, which
+`transcribe::VoiceTake` ends when the sound is over, and adds it with that
+tool through `CMcpLink`.
 
 ## What this repository is
 
@@ -100,13 +135,15 @@ replaced the VS2008 project:
     `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
   - Job logs and artifact downloads can be blocked in sandboxed sessions; the
     report doesn't need them.
-  - After a green build of `beginner-friendly` or `recorder`, the `publish` job
-    replaces that branch's rolling GitHub release (tag `build-<branch>`)
-    using `.github/scripts/publish-build.sh`. `beginner-friendly` is marked
-    Latest and `recorder` is a pre-release. Each release has a zip with
-    `FamiTracker.exe` (plus `wav2ftm.exe` on recorder) and a debug-symbols
-    zip. These tags are build pointers and get deleted and recreated; never
-    use them for real releases.
+  - After a green build of `beginner-friendly`, `recorder` or `api`, the
+    `publish` job replaces that branch's rolling GitHub release (tag
+    `build-<branch>`) using `.github/scripts/publish-build.sh`.
+    `beginner-friendly` is marked Latest; `recorder` and `api` are
+    pre-releases. Each release has a zip with `FamiTracker.exe` (plus
+    `wav2ftm.exe` on recorder and api, and `famitracker-mcp.exe` on
+    recorder) and a debug-symbols zip. These tags
+    are build pointers and get deleted and recreated; never use them for
+    real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
@@ -125,9 +162,34 @@ replaced the VS2008 project:
 
 ## Testing and verification
 
-There are no automated tests. What exists:
+The application has no test suite of its own. What exists:
 
 - **CI build:** every push compiles Win32 Release and Debug (see Building).
+- **Transcription engine** (`Source/Transcribe/`): plain C++14 that builds and
+  tests on Linux with `cmake -S Source/Transcribe -B build/transcribe`,
+  `cmake --build build/transcribe` and
+  `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
+  Linux and with MSVC, and lists the result in the Release build report.
+- **Clips, note editing and chip switching** (`Source/Clips.cpp`,
+  `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`): `Source/Tests` builds them
+  on Linux against working stand-ins for the MFC and document pieces they
+  use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
+  following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
+  block read back, cut short at every byte. `NoteEditTests.cpp` covers the
+  piano roll's edits: notes making way, releases and halts, volumes and
+  instruments kept, switch-off effects, song-wide effects staying, copy and
+  paste, and the effects the piano roll shows on notes and puts on them
+  (lasting ones kept for the notes after). `ChipSwitchTests.cpp` covers the
+  notes counted on the channels a chip switch clears, the channels emptied,
+  and their song-wide effects moved to the last channel with patterns of
+  their own where frames share one. Same three commands with `Source/Tests`
+  and `build/tests`; CI runs them in the Linux job. The stand-ins must keep
+  the real headers' signatures.
+- **Claude Code connection** (`Source/Api`): JSON, HTTP
+  framing, the MCP protocol and every tool against a song in memory, and
+  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
+  commands with `Source/Api` and `build/api`; CI runs it on Linux and with
+  MSVC.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or
@@ -323,6 +385,9 @@ NSF export still uses the 2A03 driver. Touch points:
 
 ## Gotchas
 
+- **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
+  (BSD licensed) keep upstream's files and LF line endings; both builds turn
+  their warnings off, and only `libogg/include/ogg/config_types.h` is ours.
 - **Case-insensitive filesystem assumed.** 20 distinct `#include` paths, on 31
   lines, differ in case from the files they name (`"apu/apu.h"`, `"FDS.h"` for
   `APU/FDS.H`, `"fft\fft.h"`, ...), and several files have upper-case
@@ -341,9 +406,10 @@ NSF export still uses the 2A03 driver. Touch points:
   must account for it.
 - **Precompiled headers:** PCH is off. 37 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 22 never include it: all of `APU/`, plus
-  `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`, `resampler/`, `ExportTest/`
-  and the `CustomExporter*` files. Turning PCH on breaks them.
+  standard headers), and 29 never include it: all of `APU/` and
+  `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
+  `resampler/`, `ExportTest/` and the `CustomExporter*` files. Turning PCH on
+  breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
 - **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the
