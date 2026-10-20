@@ -48,6 +48,7 @@
 #include "DocumentFile.h"
 #include "Clips.h"
 #include "Settings.h"
+#include "Profile.h"
 #include "SoundGen.h"
 #include "ChannelMap.h"
 #include "APU/APU.h"
@@ -291,6 +292,10 @@ BOOL CFamiTrackerDoc::OnNewDocument()
 		return FALSE;
 
 	CreateEmpty();
+
+	// The game music profile's template: the VRC6 chip, a tempo and instruments (Profile.h)
+	if (ProfileSongTemplate())
+		ApplySongTemplate(this);
 
 	return TRUE;
 }

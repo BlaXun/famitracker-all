@@ -169,6 +169,12 @@ void CSettings::SetupSettings()
 	SETTING_INT("Mixer", "FDS", 0, &ChipLevels.iLevelFDS);
 	SETTING_INT("Mixer", "N163", 0, &ChipLevels.iLevelN163);
 	SETTING_INT("Mixer", "S5B", 0, &ChipLevels.iLevelS5B);
+
+	// Profile (Profile.h): -1 until the first start asks
+	SETTING_INT("Profile", "Profile", -1, &Profile.iProfile);
+	SETTING_BOOL("Profile", "Song template", true, &Profile.bTemplate);
+	SETTING_BOOL("Profile", "BPM", true, &Profile.bBPM);
+	SETTING_BOOL("Profile", "Fewer menu items", true, &Profile.bFewerMenus);
 }
 
 template<class T> void CSettings::AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable)

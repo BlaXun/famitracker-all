@@ -229,6 +229,9 @@ BEGIN
             MENUITEM "Top",                         ID_FRAMEEDITOR_TOP, CHECKED
             MENUITEM "Left",                        ID_FRAMEEDITOR_LEFT
         END
+        MENUITEM SEPARATOR
+        MENUITEM "Profile...",                  ID_VIEW_PROFILE
+        MENUITEM "Show everything",             ID_VIEW_SHOWEVERYTHING
     END
     POPUP "&Help"
     BEGIN
@@ -562,6 +565,8 @@ BEGIN
     ID_INSTRUMENT_LIBRARY   "Ready-made sounds to listen to and add: leads, plucks, pads, basses and drums\nInstrument library"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_DRUMGRID        "Put drums on the noise channel a bar at a time, on a grid of steps, or pick a ready-made beat\nDrum grid"
+    ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
+    ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -1343,17 +1348,17 @@ STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_TRANSPARENT | WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Song settings",IDC_STATIC,7,5,78,71
-    LTEXT           "Speed",IDC_STATIC,13,17,29,10
+    GROUPBOX        "Song settings",IDC_SONG_SETTINGS,7,5,78,71
+    LTEXT           "Speed",IDC_SPEED_LABEL,13,17,29,10
     EDITTEXT        IDC_SPEED,43,15,38,12,ES_AUTOHSCROLL | ES_READONLY | ES_NUMBER
     CONTROL         "",IDC_SPEED_SPIN,"msctls_updown32",UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS,81,15,11,13
-    LTEXT           "Tempo",IDC_STATIC,13,31,29,10
+    LTEXT           "Tempo",IDC_TEMPO_LABEL,13,31,29,10
     EDITTEXT        IDC_TEMPO,43,29,38,12,ES_AUTOHSCROLL | ES_READONLY
     CONTROL         "",IDC_TEMPO_SPIN,"msctls_updown32",UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS,81,28,11,13
-    LTEXT           "Rows",IDC_STATIC,13,45,29,10
+    LTEXT           "Rows",IDC_ROWS_LABEL,13,45,29,10
     EDITTEXT        IDC_ROWS,43,43,38,12,ES_AUTOHSCROLL | ES_READONLY | ES_WANTRETURN
     CONTROL         "",IDC_ROWS_SPIN,"msctls_updown32",UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS,81,43,11,13
-    LTEXT           "Frames",IDC_STATIC,13,59,29,10
+    LTEXT           "Frames",IDC_FRAMES_LABEL,13,59,29,10
     EDITTEXT        IDC_FRAMES,43,57,38,12,ES_AUTOHSCROLL | ES_READONLY
     CONTROL         "",IDC_FRAME_SPIN,"msctls_updown32",UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS,81,58,11,13
     GROUPBOX        "Edit settings",IDC_STATIC,7,78,78,43,0,WS_EX_TRANSPARENT
@@ -1925,6 +1930,23 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_PROFILE DIALOGEX 0, 0, 300, 200
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Profile"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "How much of FamiTracker to show. Songs stay ordinary FamiTracker songs whichever you choose.",IDC_STATIC,7,7,286,18
+    CONTROL         "VRC6 game music: a simpler FamiTracker for writing music for a game",IDC_PROFILE_GAME,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,7,29,286,10
+    CONTROL         "Everything: all of FamiTracker, as it has always been",IDC_PROFILE_EVERYTHING,"Button",BS_AUTORADIOBUTTON,7,43,286,10
+    GROUPBOX        "What ""VRC6 game music"" changes",IDC_STATIC,7,59,286,110
+    CONTROL         "",IDC_PROFILE_TEMPLATE,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_GROUP | WS_TABSTOP,14,72,272,28
+    CONTROL         "BPM in place of speed and tempo, in the song settings",IDC_PROFILE_BPM,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,14,104,272,18
+    CONTROL         "Fewer menu items: the technical and rarely used ones are hidden (their shortcut keys still work)",IDC_PROFILE_MENUS,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,14,126,272,20
+    LTEXT           "View > Show everything switches it all off at once, and back.",IDC_STATIC,14,152,272,10
+    DEFPUSHBUTTON   "OK",IDOK,186,178,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,178,50,14
 END
 
 IDD_DRUM_GRID DIALOGEX 0, 0, 420, 214

@@ -749,6 +749,21 @@
 #define IDC_DRUM_STATUS                 1418
 #define ID_EDIT_DRUMGRID                33165
 
+// View > Profile and View > Show everything (Profile.cpp); the song settings' labels and box (MainFrm.cpp)
+#define IDD_PROFILE                     335
+#define IDC_PROFILE_GAME                1419
+#define IDC_PROFILE_EVERYTHING          1420
+#define IDC_PROFILE_TEMPLATE            1421
+#define IDC_PROFILE_BPM                 1422
+#define IDC_PROFILE_MENUS               1423
+#define IDC_SONG_SETTINGS               1424
+#define IDC_SPEED_LABEL                 1425
+#define IDC_TEMPO_LABEL                 1426
+#define IDC_ROWS_LABEL                  1427
+#define IDC_FRAMES_LABEL                1428
+#define ID_VIEW_PROFILE                 33166
+#define ID_VIEW_SHOWEVERYTHING          33167
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

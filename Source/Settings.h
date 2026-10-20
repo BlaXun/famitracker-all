@@ -189,6 +189,14 @@ public:
 
 	CString InstrumentMenuPath;
 
+	// View > Profile (Profile.h)
+	struct {
+		int		iProfile;			// profile_t: PROFILE_UNSET until the first start asks
+		bool	bTemplate;			// new songs from the game music template
+		bool	bBPM;				// BPM in place of speed and tempo
+		bool	bFewerMenus;		// rarely used menu items hidden
+	} Profile;
+
 private:
 	template<class T> void AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable);
 	void AddSetting(CSettingBase *pSetting);

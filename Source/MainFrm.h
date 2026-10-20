@@ -99,6 +99,7 @@ public:
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
+	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
 	bool	ChangeAllPatterns() const;
 
@@ -122,6 +123,13 @@ private:
 	void	SetTempo(int Tempo);
 	void	SetRowCount(int Count);
 	void	SetFrameCount(int Count);
+
+	// The profile's BPM in place of speed and tempo, and fewer menu items (Profile.h)
+	void	RebuildMainMenu(bool Fewer);
+	void	LayoutSongSettings(bool BPM);
+	double	CurrentBPM() const;
+	CString	BPMText() const;
+	void	SetBPM(int Bpm);
 
 	// Instrument list operations
 	void	NewInstrument(int ChipType);
@@ -185,6 +193,13 @@ private:  // control bar embedded members
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
+
+	// The profile as shown (Profile.h)
+	bool				m_bFewerMenus;
+	bool				m_bBPM;					// the tempo box shows BPM, the speed box is hidden
+	bool				m_bSongRectsKept;
+	CRect				m_rcSongSettings[13];	// where the song settings were, as the dialog had them
+	CString				m_strTempoLabel;
 
 	// State variables
 	int					m_iOctave;					// Selected octave
@@ -272,6 +287,9 @@ public:
 	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnInstrumentLibrary();
 	afx_msg void OnEditDrumGrid();
+	afx_msg void OnViewProfile();
+	afx_msg void OnViewShowEverything();
+	afx_msg void OnUpdateViewShowEverything(CCmdUI *pCmdUI);
 	afx_msg void OnEnSongNameChange();
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();

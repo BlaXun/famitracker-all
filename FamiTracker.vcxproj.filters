@@ -1391,6 +1391,12 @@
     <ClInclude Include="Source\DrumGridDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\Profile.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Profile.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\ClipsPanel.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

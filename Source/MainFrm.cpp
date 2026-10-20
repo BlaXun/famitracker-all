@@ -52,6 +52,7 @@
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
 #include "DrumGridDlg.h"
+#include "Profile.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -133,6 +134,9 @@ CMainFrame::CMainFrame() :
 	m_pInstrumentFileTree(NULL),
 	m_pPianoRoll(NULL),
 	m_pClipsBar(NULL),
+	m_bFewerMenus(false),
+	m_bBPM(false),
+	m_bSongRectsKept(false),
 	m_iInstrument(0),
 	m_iTrack(0),
 	m_iOctave(3)
@@ -176,6 +180,9 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
+	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
+	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_SHOWEVERYTHING, OnUpdateViewShowEverything)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -389,6 +396,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_wndOctaveBar.SetDlgItemInt(IDC_HIGHLIGHT2, CFamiTrackerDoc::DEFAULT_SECOND_HIGHLIGHT, 0);
 
 	UpdateMenus();
+
+	// The profile's menus and song settings (Profile.h)
+	ApplyProfile();
 
 	// Setup saved frame editor position
 	SetFrameEditorPosition(theApp.GetSettings()->FrameEditPos);
@@ -746,7 +756,7 @@ void CMainFrame::SetTempo(int Tempo)
 	pDoc->SetSongTempo(m_iTrack, Tempo);
 	theApp.GetSoundGenerator()->ResetTempo();
 
-	if (m_wndDialogBar.GetDlgItemInt(IDC_TEMPO) != Tempo)
+	if (!m_bBPM && m_wndDialogBar.GetDlgItemInt(IDC_TEMPO) != Tempo)	// (the BPM shows there otherwise)
 		m_wndDialogBar.SetDlgItemInt(IDC_TEMPO, Tempo, FALSE);
 }
 
@@ -1273,6 +1283,10 @@ void CMainFrame::OnDeltaposSpeedSpin(NMHDR *pNMHDR, LRESULT *pResult)
 
 void CMainFrame::OnDeltaposTempoSpin(NMHDR *pNMHDR, LRESULT *pResult)
 {
+	if (m_bBPM) {
+		SetBPM(static_cast<int>(CurrentBPM() + 0.5) - ((NMUPDOWN*)pNMHDR)->iDelta);
+		return;
+	}
 	int NewTempo = CFamiTrackerDoc::GetDoc()->GetSongTempo(m_iTrack) - ((NMUPDOWN*)pNMHDR)->iDelta;
 	SetTempo(NewTempo);
 }
@@ -1601,6 +1615,14 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowPianoRoll(true);
 			if (CClipsBar::WasOpen())
 				ShowClipsPanel(true);
+			// The first time: a simpler FamiTracker for game music? Then the
+			// untouched new song starts again from the template.
+			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
+				ApplyProfile();
+				CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+				if (pDoc != NULL && !pDoc->IsModified() && pDoc->GetPathName().IsEmpty() && ProfileSongTemplate())
+					SendMessage(WM_COMMAND, ID_FILE_NEW);
+			}
 			break;
 		// Check sound player
 		case TMR_AUDIO_CHECK:
@@ -1641,8 +1663,14 @@ void CMainFrame::OnUpdateSpeedEdit(CCmdUI *pCmdUI)
 void CMainFrame::OnUpdateTempoEdit(CCmdUI *pCmdUI)
 {
 	if (!m_pLockedEditTempo->IsEditable()) {
-		if (m_pLockedEditTempo->Update())
-			SetTempo(m_pLockedEditTempo->GetValue());
+		if (m_pLockedEditTempo->Update()) {
+			if (m_bBPM)
+				SetBPM(m_pLockedEditTempo->GetValue());
+			else
+				SetTempo(m_pLockedEditTempo->GetValue());
+		}
+		else if (m_bBPM)
+			pCmdUI->SetText(BPMText());
 		else {
 			pCmdUI->SetText(MakeIntString(static_cast<CFamiTrackerDoc*>(GetActiveDocument())->GetSongTempo(m_iTrack)));
 		}
@@ -1697,6 +1725,150 @@ void CMainFrame::OnInstrumentLibrary()
 void CMainFrame::OnEditDrumGrid()
 {
 	ShowDrumGrid(this);
+}
+
+// Profiles (Profile.h)
+
+void CMainFrame::ApplyProfile()
+{
+	const bool Fewer = ProfileFewerMenus();
+	if (Fewer != m_bFewerMenus)
+		RebuildMainMenu(Fewer);
+	const bool BPM = ProfileBPM();
+	if (BPM != m_bBPM)
+		LayoutSongSettings(BPM);
+}
+
+// The main menu again from the resource, the rarely used items left out if
+// Fewer. The bar stays the same menu, which MFC keeps as the frame's own.
+void CMainFrame::RebuildMainMenu(bool Fewer)
+{
+	CMenu *pBar = GetMenu();
+	CMenu Fresh;
+	if (pBar == NULL || !Fresh.LoadMenu(IDR_MAINFRAME))
+		return;
+#ifndef _DEBUG
+	Fresh.RemoveMenu(ID_MODULE_CHANNELS, MF_BYCOMMAND);	// as InitInstance leaves it
+#endif
+	if (Fewer)
+		RemoveAdvancedMenuItems(&Fresh);
+	while (pBar->GetMenuItemCount() > 0)
+		pBar->DeleteMenu(0, MF_BYPOSITION);
+	const int Count = static_cast<int>(Fresh.GetMenuItemCount());
+	for (int i = 0; i < Count; ++i) {
+		CString Title;
+		Fresh.GetMenuString(static_cast<UINT>(i), Title, MF_BYPOSITION);
+		pBar->AppendMenu(MF_POPUP | MF_STRING, reinterpret_cast<UINT_PTR>(Fresh.GetSubMenu(i)->GetSafeHmenu()), Title);
+	}
+	while (Fresh.GetMenuItemCount() > 0)
+		Fresh.RemoveMenu(0, MF_BYPOSITION);		// the submenus are the bar's now
+	Fresh.DestroyMenu();
+	m_bFewerMenus = Fewer;
+	UpdateMenus();		// the shortcut keys
+	DrawMenuBar();
+}
+
+// BPM in place of speed and tempo: the speed row hides, the tempo row shows
+// the BPM, and the rows below move up into the gap
+void CMainFrame::LayoutSongSettings(bool BPM)
+{
+	static const UINT IDS[] = {
+		IDC_SONG_SETTINGS, IDC_SPEED_LABEL, IDC_SPEED, IDC_SPEED_SPIN, IDC_TEMPO_LABEL, IDC_TEMPO, IDC_TEMPO_SPIN,
+		IDC_ROWS_LABEL, IDC_ROWS, IDC_ROWS_SPIN, IDC_FRAMES_LABEL, IDC_FRAMES, IDC_FRAME_SPIN
+	};
+	const int Count = static_cast<int>(sizeof(IDS) / sizeof(IDS[0]));
+	static_assert(sizeof(IDS) / sizeof(IDS[0]) == sizeof(m_rcSongSettings) / sizeof(m_rcSongSettings[0]), "one place for each");
+	for (int i = 0; i < Count; ++i)
+		if (m_wndDialogBar.GetDlgItem(IDS[i]) == NULL)
+			return;
+	if (!m_bSongRectsKept) {
+		for (int i = 0; i < Count; ++i) {
+			m_wndDialogBar.GetDlgItem(IDS[i])->GetWindowRect(&m_rcSongSettings[i]);
+			m_wndDialogBar.ScreenToClient(&m_rcSongSettings[i]);
+		}
+		m_wndDialogBar.GetDlgItemText(IDC_TEMPO_LABEL, m_strTempoLabel);
+		m_bSongRectsKept = true;
+	}
+	const int Row = m_rcSongSettings[5].top - m_rcSongSettings[2].top;	// from the speed box to the tempo box
+	for (int i = 0; i < Count; ++i) {
+		CWnd *pWnd = m_wndDialogBar.GetDlgItem(IDS[i]);
+		CRect Rect = m_rcSongSettings[i];
+		const bool Speed = IDS[i] == IDC_SPEED_LABEL || IDS[i] == IDC_SPEED || IDS[i] == IDC_SPEED_SPIN;
+		if (BPM && IDS[i] == IDC_SONG_SETTINGS)
+			Rect.bottom -= Row;
+		else if (BPM && !Speed)
+			Rect.OffsetRect(0, -Row);
+		pWnd->MoveWindow(&Rect, FALSE);
+		pWnd->ShowWindow(BPM && Speed ? SW_HIDE : SW_SHOW);
+	}
+	m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, BPM ? CString(_T("BPM")) : m_strTempoLabel);
+	m_bBPM = BPM;
+	const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());	// none yet in OnCreate
+	if (pDoc != NULL)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPM ? BPMText() : MakeIntString(pDoc->GetSongTempo(m_iTrack)));
+	m_wndDialogBar.RedrawWindow(NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+double CMainFrame::CurrentBPM() const
+{
+	const CFamiTrackerDoc *pDoc = static_cast<const CFamiTrackerDoc*>(const_cast<CMainFrame*>(this)->GetActiveDocument());
+	if (pDoc == NULL)
+		return 0.0;
+	const unsigned int Track = static_cast<unsigned int>(m_iTrack);
+	return SongBPM(static_cast<int>(pDoc->GetSongSpeed(Track)), static_cast<int>(pDoc->GetSongTempo(Track)),
+		static_cast<int>(pDoc->GetFrameRate()), pDoc->GetFirstHighlight());
+}
+
+CString CMainFrame::BPMText() const
+{
+	const double Bpm = CurrentBPM();
+	const int Whole = static_cast<int>(Bpm + 0.5);
+	CString Text;
+	if (Bpm - Whole > -0.05 && Bpm - Whole < 0.05)
+		Text.Format(_T("%d"), Whole);
+	else
+		Text.Format(_T("%.1f"), Bpm);
+	return Text;
+}
+
+void CMainFrame::SetBPM(int Bpm)
+{
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+	if (pDoc == NULL)
+		return;
+	Bpm = std::max(20, std::min(400, Bpm));
+	const unsigned int Track = static_cast<unsigned int>(m_iTrack);
+	int Speed = static_cast<int>(pDoc->GetSongSpeed(Track)), Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
+	SpeedTempoForBPM(Bpm, pDoc->GetFirstHighlight(), static_cast<int>(pDoc->GetFrameRate()), Speed, pDoc->GetSpeedSplitPoint(),
+		Speed, Tempo);
+	SetSpeed(Speed);
+	SetTempo(Tempo);
+	m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPMText());
+	pDoc->SetModifiedFlag();
+}
+
+void CMainFrame::OnViewProfile()
+{
+	if (ShowProfileDialog(this)) {
+		ApplyProfile();
+		SetMessageText(ProfileSongTemplate() ? _T("Profile changed. New songs (File > New) start from the game music template.") :
+			_T("Profile changed."));
+	}
+}
+
+void CMainFrame::OnViewShowEverything()
+{
+	CSettings *pSettings = theApp.GetSettings();
+	const bool Everything = pSettings->Profile.iProfile == PROFILE_GAME_MUSIC;
+	pSettings->Profile.iProfile = Everything ? PROFILE_EVERYTHING : PROFILE_GAME_MUSIC;
+	ApplyProfile();
+	SetMessageText(Everything ? _T("All of FamiTracker shows. Untick View > Show everything for the game music profile again.") :
+		_T("The game music profile: View > Profile says what it changes."));
+}
+
+void CMainFrame::OnUpdateViewShowEverything(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(theApp.GetSettings()->Profile.iProfile != PROFILE_GAME_MUSIC ? 1 : 0);
 }
 
 void CMainFrame::OnFileGeneralsettings()

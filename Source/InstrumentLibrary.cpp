@@ -53,7 +53,7 @@ int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR N
 	return -1;
 }
 
-int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error)
+int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error, bool Notify)
 {
 	const inst_type_t Type = VRC6 ? INST_VRC6 : INST_2A03;
 	const int ChipType = VRC6 ? SNDCHIP_VRC6 : SNDCHIP_NONE;
@@ -102,7 +102,8 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 	if (pInstrument != NULL)
 		pInstrument->Release();
 	pDoc->SetModifiedFlag();
-	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+	if (Notify)
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 	return Index;
 }
 

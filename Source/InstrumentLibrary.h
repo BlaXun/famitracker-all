@@ -36,7 +36,8 @@ int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR N
 // A preset as a 2A03 (also for the MMC5) or VRC6 instrument named after it
 // ("Soft lead"; on the sawtooth "Bass (saw)", without a duty sequence), or
 // the one of that name already there: its index, or -1 with the reason
-int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error);
+int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error,
+	bool Notify = true);
 
 // A VRC7 instrument playing one of the chip's sounds (patch 1-15), named
 // Name, or the one of that name already there
