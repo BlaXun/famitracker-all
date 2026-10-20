@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Packages this run's Windows build and replaces the branch's rolling GitHub
+# release (tag build-<branch>). Called by the "publish" job in build.yml.
+#
+# Environment:
+#   BRANCH, GITHUB_SHA, GITHUB_REPOSITORY  set by the workflow
+#   GH_TOKEN                               token with contents: write
+#   DIST     where the artifacts were downloaded (default: dist)
+#   DRY_RUN  1 = print the gh commands instead of running them
+set -euo pipefail
+
+dist="${DIST:-dist}"
+branch="${BRANCH:?BRANCH is required}"
+sha="${GITHUB_SHA:?GITHUB_SHA is required}"
+repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+tag="build-${branch}"
+short="$(git rev-parse --short "$sha")"
+date="$(git show -s --format=%cs "$sha")"
+
+exe="$(find "$dist" -name FamiTracker.exe -print -quit)"
+pdb="$(find "$dist" -name FamiTracker.pdb -print -quit)"
+wav2ftm="$(find "$dist" -name wav2ftm.exe -print -quit)"
+if [ -z "$exe" ]; then
+	echo "FamiTracker.exe not found under $dist" >&2
+	exit 1
+fi
+
+work="$(mktemp -d)"
+folder="FamiTracker-$branch"
+mkdir -p "$work/$folder"
+cp "$exe" "$work/$folder/"
+contents="FamiTracker.exe"
+if [ -n "$wav2ftm" ]; then
+	cp "$wav2ftm" "$work/$folder/"
+	contents="FamiTracker.exe and wav2ftm.exe"
+fi
+
+{
+	echo "FamiTracker, $branch branch, build $short ($date)"
+	echo
+	echo "FamiTracker.exe   The tracker. 32-bit Windows, no installation needed."
+	if [ -n "$wav2ftm" ]; then
+		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"
+		echo "                  into a FamiTracker text file. Run it from a command prompt"
+		echo "                  (wav2ftm --help), then open the result in FamiTracker"
+		echo "                  with File > Import Text."
+	fi
+	echo
+	echo "These programs are not code-signed. If Windows SmartScreen warns on first"
+	echo "launch, choose \"More info\", then \"Run anyway\"."
+	echo
+	echo "Source: https://github.com/$repo/tree/$sha"
+} | sed 's/$/\r/' > "$work/$folder/README.txt"
+
+zip_main="$work/FamiTracker-$branch-win32.zip"
+zip_symbols="$work/FamiTracker-$branch-win32-symbols.zip"
+(cd "$work" && zip -q -9 -r "$zip_main" "$folder")
+assets=("$zip_main")
+if [ -n "$pdb" ]; then
+	(cd "$(dirname "$pdb")" && zip -q -9 "$zip_symbols" "$(basename "$pdb")")
+	assets+=("$zip_symbols")
+fi
+
+notes="$work/notes.md"
+{
+	echo "Automatic build of the \`$branch\` branch at $short ($date), replaced on every push to the branch."
+	echo
+	echo "- **$(basename "$zip_main")**: $contents for 32-bit Windows. Unzip and run."
+	if [ -n "$pdb" ]; then
+		echo "- **$(basename "$zip_symbols")**: debug symbols, only needed to analyse crashes."
+	fi
+	echo
+	echo "The programs are not code-signed, so Windows SmartScreen may warn on first launch: choose \"More info\", then \"Run anyway\"."
+	echo
+	echo "Recent changes:"
+	git log -10 --format='- %s (%h)' "$sha"
+} > "$notes"
+
+flags=(--target "$sha" --title "Latest build: $branch" --notes-file "$notes")
+if [ "$branch" = "beginner-friendly" ]; then
+	flags+=(--latest)
+else
+	flags+=(--prerelease)
+fi
+
+run() {
+	if [ "${DRY_RUN:-}" = 1 ]; then echo "+ $*"; else "$@"; fi
+}
+run gh release delete "$tag" --repo "$repo" --cleanup-tag --yes || true
+run gh release create "$tag" --repo "$repo" "${flags[@]}" "${assets[@]}"
+echo "Published $tag at $short: ${assets[*]##*/}"
