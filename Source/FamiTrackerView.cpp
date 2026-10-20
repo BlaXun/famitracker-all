@@ -3399,3 +3399,27 @@ bool CFamiTrackerView::IsDragging() const
 {
 	return m_bDragSource;
 }
+
+bool CFamiTrackerView::ShowClipDrop(const CPoint &ScreenPoint, int Channels, int Rows, bool Scroll, int &Channel, int &Row)
+{
+	CPoint Point = ScreenPoint;
+	ScreenToClient(&Point);
+	if (::WindowFromPoint(ScreenPoint) != GetSafeHwnd()) {
+		HideClipDrop();
+		return false;
+	}
+	// (Scrolling may have moved the pattern even when there's nothing to show)
+	const bool Shown = m_pPatternEditor->ShowClipDrop(Point, Channels, Rows, Scroll, Channel, Row);
+	if (!Shown && m_pPatternEditor->HideClipDrop())
+		m_pPatternEditor->InvalidatePatternData();
+	InvalidateCursor();
+	return Shown;
+}
+
+void CFamiTrackerView::HideClipDrop()
+{
+	if (m_pPatternEditor->HideClipDrop()) {
+		m_pPatternEditor->InvalidatePatternData();
+		InvalidateCursor();
+	}
+}

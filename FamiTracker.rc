@@ -1875,7 +1875,7 @@ BEGIN
     LTEXT           "Port:",IDC_STATIC,19,55,24,8
     EDITTEXT        IDC_MCP_PORT,45,52,40,14,ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "",IDC_MCP_STATUS,92,52,201,16
-    CONTROL         "Let Claude change the song directly (Ctrl+Z undoes each change). Otherwise its ideas arrive as clips you listen to and place with Edit > Clips.",IDC_MCP_DIRECT,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,7,74,286,20
+    CONTROL         "Let Claude change the song directly (Ctrl+Z undoes each change). Otherwise its ideas arrive as clips you listen to and place from the clips panel.",IDC_MCP_DIRECT,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,7,74,286,20
     GROUPBOX        "Connect once",IDC_STATIC,7,101,286,142
     LTEXT           "Claude Code runs in:",IDC_STATIC,14,116,68,8
     CONTROL         "Windows",IDC_MCP_WINDOWS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,84,115,48,10

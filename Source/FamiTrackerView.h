@@ -121,6 +121,11 @@ public:
 	void		 BeginDragData(int ChanOffset, int RowOffset);
 	bool		 IsDragging() const;
 
+	// A clip dragged from the clips panel: where it would go, shaded (CPatternEditor::ShowClipDrop),
+	// for a point on the screen; false when it isn't over this frame's rows
+	bool		 ShowClipDrop(const CPoint &ScreenPoint, int Channels, int Rows, bool Scroll, int &Channel, int &Row);
+	void		 HideClipDrop();
+
 	// Update methods
 	void		 TrackChanged(unsigned int Track);
 

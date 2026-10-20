@@ -140,6 +140,7 @@ CPatternEditor::CPatternEditor() :
 	m_bCurrentlySelecting(false),
 	m_bDragStart(false),
 	m_bDragging(false),
+	m_bClipDrop(false),
 	m_bFullRowSelect(false),
 	m_bMouseActive(false),
 	m_iChannelPushed(-1),
@@ -376,7 +377,7 @@ void CPatternEditor::DrawScreen(CDC *pDC, CFamiTrackerView *pView)
 	}
 
 	// Drag & drop
-	if (m_bDragging) {
+	if (m_bDragging || m_bClipDrop) {
 		bDrawPattern = true;
 		bQuickRedraw = false;
 	}
@@ -1222,7 +1223,7 @@ void CPatternEditor::DrawRow(CDC *pDC, int Row, int Line, int Frame, bool bPrevi
 			}
 
 			// Dragging
-			if (m_bDragging && !bPreview) {
+			if ((m_bDragging || m_bClipDrop) && !bPreview) {
 				if (IsInRange(m_selDrag, i, Row, j)) {
 					pDC->FillSolidRect(SelStart - COLUMN_SPACING, 0, SELECT_WIDTH[j], m_iRowHeight, DragColor);
 				}
@@ -3464,6 +3465,67 @@ void CPatternEditor::BeginDrag(const CPatternClipData *pClipData)
 void CPatternEditor::EndDrag()
 {
 	m_bDragging = false;
+}
+
+// Clips dragged in from the clips panel
+
+bool CPatternEditor::ShowClipDrop(const CPoint &point, int Channels, int Rows, bool Scroll, int &Channel, int &Row)
+{
+	if (!IsOverPattern(point) || IsInsideRowColumn(point) || m_iRowHeight <= 0)
+		return false;
+
+	if (Scroll) {
+		// Close to an edge, the pattern moves that way: the cursor with it, which keeps it in view
+		const int EDGE = 20;
+		const int Line = (point.y - HEADER_HEIGHT) / m_iRowHeight;
+		const int ChannelCount = GetChannelCount();
+		bool Moved = false;
+		if (m_iLinesFullVisible >= 6 && Line >= m_iLinesFullVisible - 2 && m_cpCursorPos.m_iRow < m_iPatternLength - 1) {
+			++m_cpCursorPos.m_iRow;
+			++m_iCenterRow;
+			Moved = true;
+		}
+		else if (m_iLinesFullVisible >= 6 && Line < 2 && m_cpCursorPos.m_iRow > 0) {
+			--m_cpCursorPos.m_iRow;
+			--m_iCenterRow;
+			Moved = true;
+		}
+		if (point.x > m_iWinWidth - EDGE && m_iFirstChannel + m_iChannelsFullVisible < ChannelCount) {
+			++m_iFirstChannel;
+			if (m_cpCursorPos.m_iChannel < m_iFirstChannel)
+				++m_cpCursorPos.m_iChannel;
+			InvalidateBackground();
+			Moved = true;
+		}
+		else if (point.x < ROW_COLUMN_WIDTH + EDGE && m_iFirstChannel > 0) {
+			--m_iFirstChannel;
+			if (m_cpCursorPos.m_iChannel >= m_iFirstChannel + m_iChannelsFullVisible)
+				--m_cpCursorPos.m_iChannel;
+			InvalidateBackground();
+			Moved = true;
+		}
+		if (Moved)
+			InvalidateCursor();
+	}
+
+	if (!IsInsidePattern(point))
+		return false;
+	const CCursorPos Pos = GetCursorAtPoint(point);
+	if (Pos.m_iRow < 0 || Pos.m_iRow >= m_iPatternLength || Pos.m_iChannel < 0 || Pos.m_iChannel >= GetChannelCount())
+		return false;
+	Channel = Pos.m_iChannel;
+	Row = Pos.m_iRow;
+	m_selDrag.m_cpStart = CCursorPos(Row, Channel, 0);
+	m_selDrag.m_cpEnd = CCursorPos(Row + std::max(1, Rows) - 1, Channel + std::max(1, Channels) - 1, 15);
+	m_bClipDrop = true;
+	return true;
+}
+
+bool CPatternEditor::HideClipDrop()
+{
+	const bool Was = m_bClipDrop;
+	m_bClipDrop = false;
+	return Was;
 }
 
 bool CPatternEditor::PerformDrop(const CPatternClipData *pClipData, bool bCopy, bool bCopyMix)

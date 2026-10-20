@@ -53,6 +53,7 @@ protected:
 	afx_msg void OnCaptureChanged(CWnd *pWnd);
 	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags);
 	afx_msg void OnDestroy();
 
 	DECLARE_MESSAGE_MAP()

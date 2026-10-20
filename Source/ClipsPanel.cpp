@@ -29,6 +29,7 @@
 #include <vector>
 #include "stdafx.h"
 #include "FamiTracker.h"
+#include "Settings.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
@@ -62,6 +63,8 @@ const UINT_PTR TMR_POLL = 1;			// looks at the clips again
 const UINT POLL_MS = 400;
 const UINT_PTR TMR_PLAY = 2;			// plays a clip
 const UINT PLAY_MS = 10;
+const UINT_PTR TMR_DRAG = 3;			// scrolls the pattern while a clip is dragged to its edge
+const UINT DRAG_MS = 70;
 const int DRAG_DISTANCE = 5;
 
 // Colours
@@ -143,8 +146,11 @@ struct CClipsPanelWnd::Impl {
 	bool PressedPlay;
 	CPoint PressPoint;
 	bool Dragging;
-	bool Dropping;						// over the pattern editor, the cursor follows
-	int StartFrame, StartRow, StartChannel;	// the cursor before the drag
+	bool Dropping;						// over the pattern editor, which shades where it would go
+	CPoint DragPoint;					// on the screen
+	int DropChannel, DropRow;
+	bool DropLinked;
+	int StartFrame, StartRow, StartChannel;	// the cursor before the drag (scrolling moves it)
 
 	// Playing
 	int PlayId;							// clip ID, -1 while nothing plays
@@ -156,7 +162,8 @@ struct CClipsPanelWnd::Impl {
 	CFont Font, BoldFont, SmallFont;
 
 	Impl(CClipsPanelWnd *p) : pWnd(p), Stale(true), Scroll(0), Content(0), Selected(-1), Hover(-1), HoverPlay(false),
-		Pressed(-1), PressedPlay(false), Dragging(false), Dropping(false), StartFrame(0), StartRow(0), StartChannel(0),
+		Pressed(-1), PressedPlay(false), Dragging(false), Dropping(false), DropChannel(-1), DropRow(-1), DropLinked(false),
+		StartFrame(0), StartRow(0), StartChannel(0),
 		PlayId(-1), PlayStart(0), RowsPerSecond(10.0), PlayedRows(0)
 	{
 	}
@@ -525,27 +532,6 @@ struct CClipsPanelWnd::Impl {
 
 	// Putting clips in
 
-	bool PatternCell(const CPoint &Screen, int &Channel, int &Row) const
-	{
-		CFamiTrackerView *pView = View();
-		CFamiTrackerDoc *pDoc = Doc();
-		if (pView == NULL || pDoc == NULL || ::WindowFromPoint(Screen) != pView->GetSafeHwnd())
-			return false;
-		CPoint Point = Screen;
-		pView->ScreenToClient(&Point);
-		CPatternEditor *pEditor = pView->GetPatternEditor();
-		if (!pEditor->IsOverPattern(Point) || !pEditor->IsInsidePattern(Point) || pEditor->IsInsideRowColumn(Point))
-			return false;
-		const CCursorPos Position = pEditor->GetCellAtPoint(Point);
-		const int Length = static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(Main()->GetSelectedTrack())));
-		if (Position.m_iRow < 0 || Position.m_iRow >= Length || Position.m_iChannel < 0 ||
-			Position.m_iChannel >= static_cast<int>(pDoc->GetAvailableChannels()))
-			return false;
-		Channel = Position.m_iChannel;
-		Row = Position.m_iRow;
-		return true;
-	}
-
 	void MoveCursor(int Channel, int Row) const
 	{
 		CFamiTrackerView *pView = View();
@@ -575,51 +561,81 @@ struct CClipsPanelWnd::Impl {
 		CFamiTrackerView *pView = View();
 		Dragging = true;
 		Dropping = false;
+		DropChannel = DropRow = -1;
 		if (pView != NULL) {
 			StartFrame = static_cast<int>(pView->GetSelectedFrame());
 			StartRow = static_cast<int>(pView->GetSelectedRow());
 			StartChannel = static_cast<int>(pView->GetSelectedChannel());
 		}
+		pWnd->SetTimer(TMR_DRAG, DRAG_MS, NULL);
 	}
 
-	void Drag(const CPoint &Screen)
+	static CString RowText(int Row)
 	{
-		int Channel, Row;
-		if (PatternCell(Screen, Channel, Row)) {
-			// The cursor shows where it goes
-			MoveCursor(Channel, Row);
-			Dropping = true;
-			CString Text;
-			const CFamiTrackerDoc *pDoc = Doc();
-			Text.Format(_T("Let go to put \"%s\" in here: %s, row %d. Hold Ctrl to link it."),
-				static_cast<LPCTSTR>(Cards[static_cast<size_t>(Pressed)].Name), pDoc->GetChannel(Channel)->GetChannelName(), Row);
-			Status(Text);
-		}
-		else {
-			if (Dropping)
-				CancelDrop();
-			Status(_T("Drag the clip into the pattern editor, where it should start."));
-		}
+		CString Text;
+		Text.Format(theApp.GetSettings()->General.bRowInHex ? _T("%02X") : _T("%d"), Row);
+		return Text;
 	}
 
+	// The pattern editor shades where the clip would go (and scrolls, close to its edges); the
+	// status bar says it in words
+	void Drag(const CPoint &Screen, bool Scroll)
+	{
+		DragPoint = Screen;
+		CFamiTrackerView *pView = View();
+		const CFamiTrackerDoc *pDoc = Doc();
+		if (Pressed < 0 || Pressed >= static_cast<int>(Cards.size()) || pView == NULL || pDoc == NULL)
+			return;
+		const card_t &Card = Cards[static_cast<size_t>(Pressed)];
+		const bool Linked = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+		int Channel = -1, Row = -1;
+		const bool Over = pView->ShowClipDrop(Screen, Card.Columns, Card.Rows, Scroll, Channel, Row);
+		if (Over == Dropping && (!Over || (Channel == DropChannel && Row == DropRow && Linked == DropLinked)))
+			return;		// says the same as before
+		Dropping = Over;
+		DropChannel = Channel;
+		DropRow = Row;
+		DropLinked = Linked;
+		CString Text;
+		if (!Over)
+			Text = _T("Drag the clip into the pattern editor: where it starts, the row and the channel.");
+		else if (Linked)
+			Text.Format(_T("Let go to put a linked copy of \"%s\" here: %s, row %s. Linked copies change together."),
+				static_cast<LPCTSTR>(Card.Name), pDoc->GetChannel(Channel)->GetChannelName(), static_cast<LPCTSTR>(RowText(Row)));
+		else
+			Text.Format(_T("Let go to put \"%s\" here: %s, row %s. Hold Ctrl for a linked copy, Esc to stop."),
+				static_cast<LPCTSTR>(Card.Name), pDoc->GetChannel(Channel)->GetChannelName(), static_cast<LPCTSTR>(RowText(Row)));
+		Status(Text);
+	}
+
+	// Nothing shaded, and the cursor back where it was if scrolling moved it
 	void CancelDrop()
 	{
+		pWnd->KillTimer(TMR_DRAG);
 		CFamiTrackerView *pView = View();
-		if (Dropping && pView != NULL) {
-			pView->SelectFrame(static_cast<unsigned int>(StartFrame));
-			MoveCursor(StartChannel, StartRow);
+		if (pView != NULL) {
+			pView->HideClipDrop();
+			if (static_cast<int>(pView->GetSelectedFrame()) != StartFrame || static_cast<int>(pView->GetSelectedRow()) != StartRow ||
+				static_cast<int>(pView->GetSelectedChannel()) != StartChannel) {
+				pView->SelectFrame(static_cast<unsigned int>(StartFrame));
+				MoveCursor(StartChannel, StartRow);
+			}
 		}
 		Dropping = false;
 	}
 
 	void EndDrag(const CPoint &Screen, bool Linked)
 	{
-		int Channel, Row;
 		const int Card = Pressed;
 		Dragging = false;
-		if (PatternCell(Screen, Channel, Row)) {
-			MoveCursor(Channel, Row);
+		pWnd->KillTimer(TMR_DRAG);
+		CFamiTrackerView *pView = View();
+		int Channel = -1, Row = -1;
+		if (pView != NULL && Card >= 0 && Card < static_cast<int>(Cards.size()) &&
+			pView->ShowClipDrop(Screen, Cards[static_cast<size_t>(Card)].Columns, Cards[static_cast<size_t>(Card)].Rows, false, Channel, Row)) {
+			pView->HideClipDrop();
 			Dropping = false;
+			MoveCursor(Channel, Row);
 			Place(Card, Linked);
 		}
 		else {
@@ -870,6 +886,7 @@ BEGIN_MESSAGE_MAP(CClipsPanelWnd, CWnd)
 	ON_WM_CAPTURECHANGED()
 	ON_WM_SETCURSOR()
 	ON_WM_TIMER()
+	ON_WM_KEYDOWN()
 	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
@@ -984,7 +1001,7 @@ void CClipsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 		if (m_pImpl->Dragging) {
 			CPoint Screen = point;
 			ClientToScreen(&Screen);
-			m_pImpl->Drag(Screen);
+			m_pImpl->Drag(Screen, false);
 			::SetCursor(::LoadCursor(NULL, m_pImpl->Dropping ? IDC_HAND : IDC_NO));
 		}
 		return;
@@ -1056,6 +1073,7 @@ void CClipsPanelWnd::OnCaptureChanged(CWnd *pWnd)
 	if (m_pImpl->Dragging) {
 		m_pImpl->Dragging = false;
 		m_pImpl->CancelDrop();
+		m_pImpl->Status(_T(""));
 	}
 	m_pImpl->Pressed = -1;
 	CWnd::OnCaptureChanged(pWnd);
@@ -1082,6 +1100,14 @@ void CClipsPanelWnd::OnTimer(UINT_PTR nIDEvent)
 		m_pImpl->Tick();
 		return;
 	}
+	if (nIDEvent == TMR_DRAG) {
+		// Held close to the pattern editor's edge, it keeps scrolling
+		if (m_pImpl->Dragging && GetCapture() == this)
+			m_pImpl->Drag(m_pImpl->DragPoint, true);
+		else
+			KillTimer(TMR_DRAG);
+		return;
+	}
 	if (nIDEvent == TMR_POLL) {
 		// The mouse left: nothing lights up
 		CPoint Point;
@@ -1102,9 +1128,20 @@ void CClipsPanelWnd::OnTimer(UINT_PTR nIDEvent)
 	CWnd::OnTimer(nIDEvent);
 }
 
+void CClipsPanelWnd::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
+{
+	// Esc stops a drag: nothing changes
+	if (nChar == VK_ESCAPE && m_pImpl->Dragging && GetCapture() == this) {
+		ReleaseCapture();
+		return;
+	}
+	CWnd::OnKeyDown(nChar, nRepCnt, nFlags);
+}
+
 void CClipsPanelWnd::OnDestroy()
 {
 	KillTimer(TMR_POLL);
+	KillTimer(TMR_DRAG);
 	m_pImpl->StopPlaying();
 	CWnd::OnDestroy();
 }

@@ -1539,7 +1539,7 @@ void TestMood()
 	CHECK_EQ(Song.Clips[0].Name, std::string("Claude: underwater, bars 1-2"));
 	CHECK_HAS(Result.Text, "from C major to C minor (E to Eb, A to Ab, B to Bb), 2A03 Triangle down 1 octave, VRC6 Pulse 1 played by "
 		"\"Warm pad\" (03), vibrato 437 on VRC6 Pulse 1 and an echo of VRC6 Pulse 1 on VRC6 Pulse 2, bars 1-2");
-	CHECK_HAS(Result.Text, "put the pattern cursor on 2A03 Triangle at bar 1 beat 1");
+	CHECK_HAS(Result.Text, "dragging the card to 2A03 Triangle at bar 1 beat 1");
 	CHECK_HAS(Result.Text, "Meant to play at 120 BPM: suggest the user sets speed 6 and tempo 120");
 	const std::vector<std::vector<Cell> > &Clip = Song.Clips[0].Columns;
 	CHECK_EQ(Clip.size(), static_cast<size_t>(5));	// Triangle to VRC6 Pulse 2

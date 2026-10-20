@@ -1056,7 +1056,7 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		CClipLibrary *pClips = pDoc->GetClips();
 		const int Index = pClips->Add(ClipName, 1, Rows);
 		if (Index < 0) {
-			Message = _T("There are too many clips already. Delete some in Edit > Clips first.");
+			Message = _T("There are too many clips already. Delete some first: right-click them in the clips panel.");
 			return false;
 		}
 		pClips->SetSource(Index, 0, ChanID);
@@ -1075,7 +1075,7 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		}
 		pDoc->SetModifiedFlag();
 		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
-		Message.Format(_T("Saved %s as the clip \"%s\" (%d rows). Edit > Clips places it in the song."), static_cast<LPCTSTR>(What),
+		Message.Format(_T("Saved %s as the clip \"%s\" (%d rows). Drag it from the clips panel into the song."), static_cast<LPCTSTR>(What),
 			ClipName, Rows);
 		return true;
 	}
@@ -1282,7 +1282,7 @@ bool SaveSelectionAsClip(CMainFrame *pMainFrm, LPCTSTR Name, CString &Message)
 	CClipLibrary *pClips = pDoc->GetClips();
 	const int Index = pClips->Add(Name, Last - First + 1, Bottom - Top + 1);
 	if (Index < 0) {
-		Message = _T("There are too many clips already. Delete some in Edit > Clips first.");
+		Message = _T("There are too many clips already. Delete some first: right-click them in the clips panel.");
 		return false;
 	}
 	const unsigned int Frame = static_cast<unsigned int>(pEditor->GetFrame());
@@ -1301,8 +1301,8 @@ bool SaveSelectionAsClip(CMainFrame *pMainFrm, LPCTSTR Name, CString &Message)
 		Which = RecordingChannelName(pDoc, First);
 	else
 		Which.Format(_T("%d channels"), Last - First + 1);
-	Message.Format(_T("Saved %d rows of %s as the clip \"%s\". Edit > Clips places it."), Bottom - Top + 1,
-		static_cast<LPCTSTR>(Which), Name);
+	Message.Format(_T("Saved %d %s of %s as the clip \"%s\". Drag it from the clips panel to where it goes, or double-click it."),
+		Bottom - Top + 1, Bottom == Top ? _T("row") : _T("rows"), static_cast<LPCTSTR>(Which), Name);
 	return true;
 }
 

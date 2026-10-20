@@ -130,7 +130,13 @@ public:
 	bool IsInsidePattern(const CPoint &point) const;
 	bool IsInsideRowColumn(const CPoint &point) const;
 	int GetChannelAtPoint(int PointX) const;
-	CCursorPos GetCellAtPoint(const CPoint &point) const { return GetCursorAtPoint(point); }	// the row may be in another frame
+	// A clip dragged in from the clips panel (ClipsPanel.cpp, through CFamiTrackerView::ShowClipDrop):
+	// the cells it would cover, Channels wide and Rows long from the cell under the point, are shaded
+	// as in a drag and drop, and the cursor stays where it is. With Scroll, a point close to an edge
+	// moves the pattern a row or a channel that way (the cursor with it), so calling it on a timer
+	// keeps it scrolling. False, showing nothing, when the point isn't on a row of this frame.
+	bool ShowClipDrop(const CPoint &point, int Channels, int Rows, bool Scroll, int &Channel, int &Row);
+	bool HideClipDrop();		// true if it showed one
 
 	// Edit: Copy & paste, selection
 	CPatternClipData *CopyEntire() const;
@@ -361,6 +367,7 @@ private:
 	bool	m_bCurrentlySelecting;	// TODO remove this
 	bool	m_bDragStart;			// Indicates that drag & drop is being initiated
 	bool	m_bDragging;			// Drag & drop is active
+	bool	m_bClipDrop;			// A clip from the clips panel is dragged over, m_selDrag shows where
 	bool	m_bFullRowSelect;		// Enable full row selection
 
 	// Mouse

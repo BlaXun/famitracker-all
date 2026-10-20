@@ -2016,7 +2016,7 @@ struct CPianoRollWnd::Impl {
 			return;
 		const int Index = pClips->Add(Dialog.GetName(), 1, Clip.GetRows());
 		if (Index < 0) {
-			Say(_T("There are too many clips already. Delete some in Edit > Clips first."));
+			Say(_T("There are too many clips already. Delete some first: right-click them in the clips panel."));
 			return;
 		}
 		pClips->SetSource(Index, 0, ChanIDs[static_cast<size_t>(Channel)]);

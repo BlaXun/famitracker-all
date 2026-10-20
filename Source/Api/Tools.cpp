@@ -801,8 +801,8 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		std::string Error;
 		if (!S.Host().AddClip(Name, Sources, Columns, Error))
 			throw Problem(Error.empty() ? "The clip couldn't be saved." : Error);
-		Result = Format("Saved as the clip \"%s\" (%s). For the user to hear it: Edit > Clips, select it, put the pattern "
-			"cursor on %s at %s and press \"Place a copy\"; Ctrl+Z takes it out again.", Name.c_str(), What.c_str(),
+		Result = Format("Saved as the clip \"%s\" (%s). It shows in the clips panel beside the song: the play button on its "
+			"card plays it, and dragging the card to %s at %s puts it there; Ctrl+Z takes it out again.", Name.c_str(), What.c_str(),
 			S.Channel(Low).FullName().c_str(), PositionText(S, First).c_str());
 		if (!S.Song.DirectChanges)
 			Result += " (Changes arrive as clips: the user hasn't allowed direct changes in File > Connect Claude Code.)";
@@ -928,8 +928,8 @@ std::string SongOverview(Session &S, const Json &Args)
 	}
 	Text += Song.DirectChanges ?
 		"Changes: direct. Your edits change the song, each one undoable with Ctrl+Z.\n" :
-		"Changes: as clips. Your edits are saved as clips for the user to listen to and place (Edit > Clips); "
-		"they can allow direct changes in File > Connect Claude Code.\n";
+		"Changes: as clips. Your edits are saved as clips for the user to listen to and place from the clips panel "
+		"beside the song; they can allow direct changes in File > Connect Claude Code.\n";
 	if (Song.Playing && Song.PlayRow >= 0)
 		Text += "Playing, now at " + T.Position(Song.PlayRow) + ".\n";
 	Text += "Instrument presets: " + PresetList() + ".";
@@ -1156,8 +1156,8 @@ std::string WriteNotes(Session &S, const Json &Args)
 std::string PlaceClipTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
-		throw Problem("Placing clips changes the song, and the user hasn't allowed direct changes. Ask them to place it with "
-			"Edit > Clips, or to allow direct changes in File > Connect Claude Code.");
+		throw Problem("Placing clips changes the song, and the user hasn't allowed direct changes. Ask them to drag it from "
+			"the clips panel into the song, or to allow direct changes in File > Connect Claude Code.");
 	const Json *pClip = Arg(Args, "clip");
 	if (pClip == 0)
 		throw Problem("Say which clip (its name or number).");
@@ -4326,8 +4326,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("place_clip", "Place a clip",
 		"Places one of the song's clips at a bar: its first column on the given channel, further columns on the channels to "
-		"its right. As a copy, or linked (linked copies change together). Needs direct changes; otherwise the user places "
-		"clips with Edit > Clips.",
+		"its right. As a copy, or linked (linked copies change together). Needs direct changes; otherwise the user drags "
+		"clips into the song from the clips panel.",
 		Schema()
 			.Add("clip", ChannelProp("The clip's name or number from get_song."), true)
 			.Add("channel", ChannelProp("Channel for its first column."), true)
@@ -4705,7 +4705,7 @@ std::string ToolSet::Instructions()
 		"These tools work on the song open in the user's FamiTracker (NES music: 2A03 channels, often with the VRC6 expansion). "
 		"Think in bars and beats (both count from 1) and note names with FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz. "
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
-		"By default your changes arrive as clips the user listens to and places (Edit > Clips); if the user allowed direct "
+		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
 		"look at the result with look_at_song, and use play so the user can listen, then ask them. "
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "

@@ -910,7 +910,7 @@ public:
 		const int Rows = static_cast<int>(Columns[0].size());
 		const int Index = pClips->Add(Unique, static_cast<int>(Columns.size()), Rows);
 		if (Index < 0) {
-			Error = "The song has too many clips already; the user can delete some in Edit > Clips.";
+			Error = "The song has too many clips already; the user can delete some in the clips panel.";
 			return false;
 		}
 		for (size_t c = 0; c < Columns.size(); ++c) {
