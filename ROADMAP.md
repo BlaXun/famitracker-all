@@ -84,3 +84,28 @@ which plays the tracks as OGG files.
   tutorials need no recompile.
 - Annotated example songs, since module comments can already pop up when a
   file is opened.
+
+## Feature branches
+
+Larger ideas get their own branch made from `beginner-friendly` and merge back
+when ready.
+
+- **`recorder` (in progress):** whistle, hum or tap into a microphone or WAV
+  file and get notes whose length matches the sound. Recordings and pattern
+  selections become reusable clips. See `RECORDER.md` on that branch.
+- **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
+  bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
+  instruments, play/stop and save/export, and run requests on the UI thread
+  through the undo system. A separate MCP server would wrap it for agentic
+  workflows. A first version could use whole-song text export/import plus
+  transport controls.
+- **`nsf-import` (planned):** pull instruments, and optionally songs, out of
+  NSF files.
+  - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
+    0.3.6). It plays the NSF in an emulator and reads the chip registers every
+    frame.
+  - Turn each note's volume, duty and pitch movement into FamiTracker
+    macros.
+  - Where the source sound can't be reproduced on NSF + VRC6, use the closest
+    match.
+  - VRC6 game rips give real VRC6 instruments.
