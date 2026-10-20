@@ -87,9 +87,18 @@ replaced the VS2008 project:
 - Link libraries: `Dbghelp winmm comctl32 dsound dxguid Version`, all from the
   Windows SDK. Boost and the DirectX SDK are no longer needed.
 - **CI:** `.github/workflows/build.yml` builds Win32 Release and Debug on
-  GitHub's Windows runners and uploads `FamiTracker.exe` as an artifact. From
-  a Linux session this is the only way to compile: push, then check the run
-  with `gh run list` and `gh run view <id> --log-failed`.
+  `windows-latest` and uploads `FamiTracker.exe` as an artifact. In October
+  2026 that runner had Visual Studio 2026 (MSVC 14.51).
+  - Each configuration also gets a check run, "Build report (<config> Win32)",
+    with every compiler and linker diagnostic, the toolchain, the exe's DLL
+    dependencies and its embedded manifest.
+  - From a Linux session CI is the only way to compile. Push, wait for
+    `gh run list --branch <branch>`, then read the report with
+    `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
+  - Job logs and artifact downloads can be blocked in sandboxed sessions; the
+    report doesn't need them.
+- The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
+  Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
   environment variables. There, `Debug|x64` and `Release|x64` point the linker
   at `Lib\x86`; only the two `Release 64` configurations use `Lib\x64`.

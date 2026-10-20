@@ -19,6 +19,7 @@
 */
 
 #include "stdafx.h"
+#include <VersionHelpers.h>
 #include "Exception.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -190,16 +191,8 @@ BOOL CFamiTrackerApp::InitInstance()
 	
 	AddDocTemplate(pDocTemplate);
 
-	// Determine windows version
-    OSVERSIONINFO osvi;
-
-    ZeroMemory(&osvi, sizeof(OSVERSIONINFO));
-    osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-
-    GetVersionEx(&osvi);
-
 	// Work-around to enable file type registration in windows vista/7
-	if (osvi.dwMajorVersion >= 6) { 
+	if (IsWindowsVistaOrGreater()) {
 		HKEY HKCU;
 		long res_reg = ::RegOpenKey(HKEY_CURRENT_USER, _T("Software\\Classes"), &HKCU);
 		if(res_reg == ERROR_SUCCESS)

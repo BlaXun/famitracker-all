@@ -2403,7 +2403,8 @@ void CMainFrame::UpdateMenu(CMenu *pMenu)
 {
 	CAccelerator *pAccel = theApp.GetAccelerator();
 
-	for (UINT i = 0; i < pMenu->GetMenuItemCount(); ++i) {
+	const int Count = pMenu->GetMenuItemCount();		// -1 on failure
+	for (int i = 0; i < Count; ++i) {
 		UINT state = pMenu->GetMenuState(i, MF_BYPOSITION);
 		if (state & MF_POPUP) {
 			// Update sub menu

@@ -23,7 +23,11 @@ which plays the tracks as OGG files.
   Windows SDK instead of the DirectX SDK.
 - [x] GitHub Actions workflow (`.github/workflows/build.yml`) that builds Win32
   Release and Debug and uploads `FamiTracker.exe`.
-- [ ] Green Release and Debug builds on CI.
+- [x] Green Release and Debug builds on CI, with a "Build report" check run
+  listing all diagnostics. The exe links MFC and the CRT statically and
+  depends only on Windows system DLLs.
+- [x] Warning-free at `/W3`. The fixes: driver table pragmas scoped,
+  `GetVersionEx` replaced, and a signed menu-count loop.
 - [ ] x64 build.
 
 ## 2. OGG export with loop points

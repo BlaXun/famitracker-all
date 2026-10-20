@@ -27,7 +27,10 @@
 // Change this for new versions
 const char DRIVER_ID[] = "NSF-driver v2.11";
 
-#pragma warning( disable : 4309 ) // disable warning 4309: 'initializing' : truncation of constant value
+// The caller tables below store bytes above 0x7F in 'char'; the bit patterns are what matter.
+// Silence truncation (C4309) and narrowing (C4838) warnings for these tables only.
+#pragma warning( push )
+#pragma warning( disable : 4309 4838 )
 
 const unsigned short NSF_CALLER_SIZE = 128;	// bytes
 
@@ -53,6 +56,8 @@ const char NSF_CALLER_BIN_VRC6[] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xBF,0xFF,0x80,0xFF,0xC2,0xFF
 };
+
+#pragma warning( pop )
 
 //
 // The driver binaries
