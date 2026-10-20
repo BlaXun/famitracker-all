@@ -18,18 +18,14 @@ which plays the tracks as OGG files.
 
 ## Where things stand
 
-Most of the work so far is on the `recorder` branch (see Feature branches),
-whose build is the `build-recorder` pre-release: recording, clips, the piano
-roll, the export for games, sound effects and the Claude Code connection.
-The `beginner-friendly` build, the "Latest" download, has only the
-foundation.
+Everything built so far is in the `beginner-friendly` build, the "Latest"
+download (`build-beginner-friendly`): the foundation, recording, clips, the
+piano roll, the export for games, sound effects and the Claude Code
+connection. Most of it was built on the `recorder` branch (see Feature
+branches) and merged in October 2026.
 
-Next, in this order:
-
-1. **Merge `recorder` into `beginner-friendly`**, so the "Latest" download
-   has everything.
-2. The steps below that make FamiTracker itself simpler (3, 4, then 6),
-   which haven't been started.
+Next: the steps below that make FamiTracker itself simpler (3, 4, then 6),
+which haven't been started.
 
 ## 1. Foundation
 
@@ -52,9 +48,8 @@ Next, in this order:
 
 ## 2. OGG export with loop points
 
-Done on the `recorder` branch (see `MCP.md` there): **File > Export for games
-(OGG)** saves the selected track, or all of them, as OGG files next to the
-song.
+Done (see `MCP.md`): **File > Export for games (OGG)** saves the selected
+track, or all of them, as OGG files next to the song.
 
 - FamiTracker renders the song past its second time through the loop and
   notes the sample where every row starts (`CSoundGen::GetRenderMarks`).
@@ -74,7 +69,7 @@ song.
   pads, noise kick/snare/hat) with names, short descriptions and
   click-to-preview. Use `CFamiTrackerDoc::LoadInstrument` to load and
   `CSoundGen::QueueNote` to preview. The presets themselves exist for Claude
-  Code (`Source/Api/Presets.cpp` on `recorder`: 13 for the 2A03, MMC5 and
+  Code (`Source/Api/Presets.cpp`: 13 for the 2A03, MMC5 and
   VRC6, plus the VRC7's 15 built-in sounds), but FamiTracker's own UI can't
   browse or preview them yet.
 - Drum lane: a 16-step grid that writes notes to the noise channel.
@@ -92,13 +87,12 @@ song.
 
 ## 5. Piano roll
 
-Done on the `recorder` branch (see `RECORDER.md` there): a horizontal view
-under the pattern editor, time left to right and pitch bottom to top, that
-follows playback. It shows every channel's notes with the edited one bright,
-and draws, paints a melody, moves, copies, resizes and erases notes, keeps
-new notes in a key, places clips with the mouse, and puts effects on notes
-(vibrato, tremolo, chords as arpeggios, slides, glides, bends and fades).
-Every change is one Ctrl+Z.
+Done (see `RECORDER.md`): a horizontal view under the pattern editor, time
+left to right and pitch bottom to top, that follows playback. It shows every
+channel's notes with the edited one bright, and draws, paints a melody, moves,
+copies, resizes and erases notes, keeps new notes in a key, places clips with
+the mouse, and puts effects on notes (vibrato, tremolo, chords as arpeggios,
+slides, glides, bends and fades). Every change is one Ctrl+Z.
 
 Still open from the plan:
 
@@ -120,10 +114,10 @@ Still open from the plan:
 Larger ideas get their own branch made from `beginner-friendly` and merge back
 when ready.
 
-- **`recorder` (in progress, not merged back yet):** whistle, hum or tap and
-  get notes whose length matches the sound, recorded in FamiTracker (a
-  toolbar button, with a count-in and click at the song's tempo) or from a
-  WAV file. See `RECORDER.md` on that branch. Done:
+- **`recorder` (merged into `beginner-friendly` in October 2026):** whistle,
+  hum or tap and get notes whose length matches the sound, recorded in
+  FamiTracker (a toolbar button, with a count-in and click at the song's
+  tempo) or from a WAV file. See `RECORDER.md`. Done:
   - Expression: loudness, slides into notes and vibrato from the
     performance, and a richer lead sound. Sung syllables ("la la la") become
     notes of their own.
@@ -139,7 +133,8 @@ when ready.
     the NES would), and Claude Code's `make_sound_effect` (25 kinds with
     variants, or a recording).
 
-  Still to do, in this order:
+  Still to do, in this order, on a branch made from `beginner-friendly`
+  again:
   1. More natural input: start from a groove (pick a mood, tempo and key,
      get a few bars of drums, bass and chords, and sing the melody over
      them); re-sing just a selection (the song plays a bar before, the take
@@ -147,7 +142,8 @@ when ready.
      tempo.
   2. Chords by name ("C G Am F") or strummed on a guitar.
   3. A small page on the phone that records ideas over Wi-Fi into the clips.
-- **`api` (merged into `recorder`, where it continues; see `MCP.md`):**
+- **`api` (merged into `recorder`, and with it into `beginner-friendly`;
+  see `MCP.md`):**
   FamiTracker is the MCP server itself, speaking Streamable HTTP on
   `127.0.0.1` with an access token, opt-in in File > Connect Claude Code.
   Claude Code in WSL connects through `famitracker-mcp.exe`. Claude works in

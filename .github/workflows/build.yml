@@ -192,14 +192,14 @@ jobs:
           name: FamiTracker-Release-Win32
           path: dist/FamiTracker
 
-      - name: Download wav2ftm.exe (recorder branch)
+      - name: Download wav2ftm.exe
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: wav2ftm-Win32
           path: dist/wav2ftm
 
-      - name: Download famitracker-mcp.exe (recorder and api branches)
+      - name: Download famitracker-mcp.exe (not built on api)
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:

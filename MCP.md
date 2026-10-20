@@ -1,10 +1,10 @@
 # Claude Code in FamiTracker
 
-On the `recorder` and `api` branches, FamiTracker can let [Claude Code](https://claude.com/claude-code)
-work on the song you have open: read it, write parts, change the key, the
-tempo or the sounds, check it for clashes and play it for you. You ask in
-plain words ("make the atmosphere darker"); Claude works in bars, beats, note
-names and instruments, not hex rows.
+FamiTracker can let [Claude Code](https://claude.com/claude-code) work on the
+song you have open: read it, write parts, change the key, the tempo or the
+sounds, check it for clashes and play it for you. You ask in plain words
+("make the atmosphere darker"); Claude works in bars, beats, note names and
+instruments, not hex rows.
 
 It works over MCP (the Model Context Protocol). FamiTracker itself is the
 MCP server, so there is nothing else to install besides Claude Code. Claude

@@ -52,7 +52,8 @@ fi
 		echo "                  as clips to place again, as copies or linked. The piano"
 		echo "                  roll button shows the song's notes under the pattern"
 		echo "                  editor, where notes are drawn, painted and moved with the"
-		echo "                  mouse."
+		echo "                  mouse. Edit > Sound effect from your voice turns a \"pew\""
+		echo "                  or a \"boing\" into a sound effect for a game."
 	fi
 	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"
@@ -65,13 +66,14 @@ fi
 		echo "                  Connects Claude Code running in WSL to FamiTracker. Keep"
 		echo "                  it next to FamiTracker.exe; Claude Code starts it by itself."
 	fi
-	if [ "$branch" = "api" ] || [ "$branch" = "recorder" ]; then
+	if [ -n "$bridge" ]; then
 		echo
 		echo "File > Connect Claude Code lets Claude Code on this computer, in Windows or"
 		echo "in WSL, work on the open song: switch it on there and run the command it"
 		echo "shows once. See MCP.md in the source for what Claude can do and how to ask."
-		echo "File > Export for games saves tracks as OGG files that loop without a seam,"
-		echo "with the GameMaker code that plays them."
+		echo "File > Export for games saves tracks as OGG files that loop without a seam"
+		echo "(jingles and sound effects play once), with the GameMaker code that plays"
+		echo "them."
 	fi
 	echo
 	echo "These programs are not code-signed. If Windows SmartScreen warns on first"

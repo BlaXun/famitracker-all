@@ -1,9 +1,10 @@
 # Recorder: whistle, hum or tap, and get notes
 
-Branch `recorder`, made from `beginner-friendly`. Record a melody (whistle,
-hum, sing) or a rhythm (finger taps, beatbox) and get FamiTracker notes, add
-chords and a bass line that fit it, and keep takes and pieces of the song as
-clips to place again, as copies or linked.
+Built on the `recorder` branch and merged into `beginner-friendly`, whose
+build is the "Latest" download. Record a melody (whistle, hum, sing) or a
+rhythm (finger taps, beatbox) and get FamiTracker notes, add chords and a bass
+line that fit it, and keep takes and pieces of the song as clips to place
+again, as copies or linked.
 
 ## Requirements
 

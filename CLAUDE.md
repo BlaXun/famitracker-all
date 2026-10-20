@@ -1,12 +1,13 @@
 # CLAUDE.md
 
-Guidance for working in this repository. This is the `recorder` branch, made
-from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
-audio-to-notes recorder described in `RECORDER.md`: the engine in
+Guidance for working in this repository. This is the `beginner-friendly`
+branch: FamiTracker 0.4.6 with a modernized build, plus the beginner features,
+most of them built on the `recorder` branch and merged here in October 2026.
+The audio-to-notes recorder is described in `RECORDER.md`: the engine in
 `Source/Transcribe/`, the `wav2ftm` tool, Edit > Insert recording in
 `Source/InsertRecording.cpp`, Edit > Record from microphone in
-`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), Edit >
-Add chords and bass line in `Source/BackingDlg.cpp` (chords from
+`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), Edit > Add
+chords and bass line in `Source/BackingDlg.cpp` (chords from
 `Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`), clips in
 `Source/Clips.cpp` (the song's clips and linked copies, saved in a `BF CLIPS`
 block) with Edit > Clips and the clip editor in `Source/ClipsDlg.cpp`, and
@@ -18,28 +19,27 @@ action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
 0.4.6 code as found on `master` and was checked against that source.
 
 File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
-(see `MCP.md`; built on the `api` branch and merged here). The protocol and
-the tools are in `Source/Api/` (portable, tested on Linux), the Winsock
-listener in `Source/McpSocket.cpp`, and the glue to the document, the
-settings and the dialog in `Source/McpConnection.cpp`, which writes changes
-with `WriteSongParts` in `InsertRecording.cpp` and switches expansion chips
-with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
+(see `MCP.md`; built on the `api` branch and merged into `recorder`, then
+here). The protocol and the tools are in `Source/Api/` (portable, tested on
+Linux), the Winsock listener in `Source/McpSocket.cpp`, and the glue to the
+document, the settings and the dialog in `Source/McpConnection.cpp`, which
+writes changes with `WriteSongParts` in `InsertRecording.cpp` and switches
+expansion chips with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
 project and ships next to FamiTracker.exe. File > Export for games saves
 tracks as looping OGG files through the `export_for_game` tool
-(`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with
-`CSoundGen`, which notes the sample where each row starts
-(`GetRenderMarks`), and libvorbis encodes (`Source/libvorbis`,
-`Source/libogg`). The jingles that `make_jingle` writes as tracks of their
-own are scores in `Source/Api/Jingles.cpp`. The sound effects of
-`make_sound_effect`, tracks at speed 1 that halt, are built a tick at a time
-in `Source/Api/SoundEffects.cpp` or made from a voice recording, and turned
-into instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound
-effect from your voice (`Source/VoiceEffectDlg.cpp`) records a take, which
-`transcribe::VoiceTake` ends when the sound is over, and adds it with that
-tool through `CMcpLink`.
+(`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with `CSoundGen`,
+which notes the sample where each row starts (`GetRenderMarks`), and libvorbis
+encodes (`Source/libvorbis`, `Source/libogg`). The jingles that `make_jingle`
+writes as tracks of their own are scores in `Source/Api/Jingles.cpp`. The
+sound effects of `make_sound_effect`, tracks at speed 1 that halt, are built a
+tick at a time in `Source/Api/SoundEffects.cpp` or made from a voice
+recording, and turned into instruments, by
+`Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
+(`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
+ends when the sound is over, and adds it with that tool through `CMcpLink`.
 
 ## What this repository is
 
@@ -139,11 +139,11 @@ replaced the VS2008 project:
     `publish` job replaces that branch's rolling GitHub release (tag
     `build-<branch>`) using `.github/scripts/publish-build.sh`.
     `beginner-friendly` is marked Latest; `recorder` and `api` are
-    pre-releases. Each release has a zip with `FamiTracker.exe` (plus
-    `wav2ftm.exe` on recorder and api, and `famitracker-mcp.exe` on
-    recorder) and a debug-symbols zip. These tags
-    are build pointers and get deleted and recreated; never use them for
-    real releases.
+    pre-releases. Each release has a zip with `FamiTracker.exe`, plus
+    `wav2ftm.exe` and `famitracker-mcp.exe` when the branch builds them
+    (`api` has no `famitracker-mcp.exe`), and a debug-symbols zip. These
+    tags are build pointers and get deleted and recreated; never use them
+    for real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
