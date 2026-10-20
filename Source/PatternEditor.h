@@ -130,6 +130,7 @@ public:
 	bool IsInsidePattern(const CPoint &point) const;
 	bool IsInsideRowColumn(const CPoint &point) const;
 	int GetChannelAtPoint(int PointX) const;
+	CCursorPos GetCellAtPoint(const CPoint &point) const { return GetCursorAtPoint(point); }	// the row may be in another frame
 
 	// Edit: Copy & paste, selection
 	CPatternClipData *CopyEntire() const;

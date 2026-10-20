@@ -54,6 +54,7 @@
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
+#include "ClipsPanel.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -130,6 +131,7 @@ CMainFrame::CMainFrame() :
 	m_pMcpConnection(NULL),
 	m_pInstrumentFileTree(NULL),
 	m_pPianoRoll(NULL),
+	m_pClipsBar(NULL),
 	m_iInstrument(0),
 	m_iTrack(0),
 	m_iOctave(3)
@@ -155,6 +157,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pActionHandler);
 	SAFE_RELEASE(m_pMcpConnection);
 	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
+	SAFE_RELEASE(m_pClipsBar);
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -224,6 +227,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_TRACKER_DISPLAYREGISTERSTATE, OnTrackerDisplayRegisterState)
 	ON_COMMAND(ID_VIEW_CONTROLPANEL, OnViewControlpanel)
 	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
+	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
@@ -295,6 +299,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_TRACKER_SWITCHTOTRACKINSTRUMENT, OnUpdateTrackerSwitchToInstrument)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CONTROLPANEL, OnUpdateViewControlpanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -1589,9 +1594,11 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
 			KillTimer(TMR_WELCOME);
-			// The piano roll comes back if it was open last time
+			// The piano roll and the clips panel come back if they were open last time
 			if (CPianoRollBar::WasOpen())
 				ShowPianoRoll(true);
+			if (CClipsBar::WasOpen())
+				ShowClipsPanel(true);
 			break;
 		// Check sound player
 		case TMR_AUDIO_CHECK:
@@ -2060,12 +2067,48 @@ void CMainFrame::ShowPianoRoll(bool Show)
 		return;
 	ShowControlBar(m_pPianoRoll, Show ? TRUE : FALSE, FALSE);
 	m_pPianoRoll->Opened(Show);
+	if (m_pClipsBar != NULL) {
+		// The clips panel stays laid out last: beside the pattern editor, above the piano roll
+		m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		RecalcLayout();
+	}
+}
+
+void CMainFrame::OnViewClipsPanel()
+{
+	ShowClipsPanel(m_pClipsBar == NULL || !m_pClipsBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewClipsPanel(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pClipsBar != NULL && m_pClipsBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowClipsPanel(bool Show, bool Focus)
+{
+	// The song's clips along the right of the main window (see ClipsPanel.h), made the first time
+	if (Show && m_pClipsBar == NULL) {
+		m_pClipsBar = new CClipsBar();
+		if (!m_pClipsBar->Create(this)) {
+			delete m_pClipsBar;
+			m_pClipsBar = NULL;
+			return;
+		}
+	}
+	if (m_pClipsBar == NULL)
+		return;
+	ShowControlBar(m_pClipsBar, Show ? TRUE : FALSE, FALSE);
+	m_pClipsBar->Opened(Show);
+	if (Show && Focus)
+		m_pClipsBar->Focus();
 }
 
 void CMainFrame::SongChanged()
 {
 	if (m_pPianoRoll != NULL)
 		m_pPianoRoll->SongChanged();
+	if (m_pClipsBar != NULL)
+		m_pClipsBar->SongChanged();
 }
 
 void CMainFrame::OnUpdateHighlight(CCmdUI *pCmdUI)

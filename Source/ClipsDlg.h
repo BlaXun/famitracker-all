@@ -47,47 +47,6 @@ private:
 	CString m_sName;
 };
 
-// Edit > Clips: the song's clips. Places one at the cursor as a copy or
-// linked, and opens the clip editor; duplicates, renames, unlinks and
-// deletes clips.
-class CClipsDlg : public CDialog
-{
-	DECLARE_DYNAMIC(CClipsDlg)
-
-public:
-	CClipsDlg(CFamiTrackerView *pView);
-
-	enum { IDD = IDD_CLIPS };
-
-	CString GetResult() const;	// what was placed, for the status bar
-
-protected:
-	virtual BOOL OnInitDialog();
-	afx_msg void OnPlace();
-	afx_msg void OnPlaceLinked();
-	afx_msg void OnEditClip();
-	afx_msg void OnDuplicate();
-	afx_msg void OnRename();
-	afx_msg void OnUnlink();
-	afx_msg void OnDelete();
-	afx_msg void OnItemChanged(NMHDR *pNMHDR, LRESULT *pResult);
-	afx_msg void OnDoubleClick(NMHDR *pNMHDR, LRESULT *pResult);
-
-	DECLARE_MESSAGE_MAP()
-
-private:
-	int Selected() const;			// -1 when no clip is picked
-	void FillList(int Select);
-	void UpdateButtons();
-	void SetInfo(LPCTSTR Note);		// a note on the last change, then how clips work
-	void Place(bool Linked);
-
-	CFamiTrackerView *m_pView;
-	CFamiTrackerDoc *m_pDocument;
-	CListCtrl m_cList;
-	CString m_sResult;
-};
-
 // The clip editor: the clip's notes in a list. The selected notes, or all of
 // them, can get another instrument, and move up or down by semitones or
 // octaves. The clip changes on OK, and its linked copies in the song with it.

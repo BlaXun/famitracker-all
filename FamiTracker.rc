@@ -130,7 +130,7 @@ BEGIN
         MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
-        MENUITEM "Clips...",                    ID_EDIT_CLIPS
+        MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -221,6 +221,7 @@ BEGIN
         MENUITEM "&Status Bar",                 ID_VIEW_STATUS_BAR
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
         MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
+        MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -256,7 +257,7 @@ BEGIN
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
-        MENUITEM "Clips...",                    ID_EDIT_CLIPS
+        MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -559,7 +560,8 @@ BEGIN
     ID_INSTRUMENT_LIBRARY   "Ready-made sounds to listen to and add: leads, plucks, pads, basses and drums\nInstrument library"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
-    ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
+    ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
+    ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
@@ -2019,24 +2021,6 @@ BEGIN
     LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,143,248,16
     DEFPUSHBUTTON   "Add",IDOK,150,160,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,205,160,50,14
-END
-
-IDD_CLIPS DIALOGEX 0, 0, 300, 207
-STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Clips"
-FONT 8, "MS Shell Dlg", 400, 0, 0x1
-BEGIN
-    LTEXT           "Clips kept with this song:",IDC_STATIC,7,7,218,8
-    CONTROL         "",IDC_CLIP_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,7,18,218,128
-    DEFPUSHBUTTON   "Place a copy",IDC_CLIP_PLACE,231,18,62,14
-    PUSHBUTTON      "Place linked",IDC_CLIP_PLACELINKED,231,35,62,14
-    PUSHBUTTON      "Edit...",IDC_CLIP_EDIT,231,57,62,14
-    PUSHBUTTON      "Duplicate...",IDC_CLIP_DUPLICATE,231,74,62,14
-    PUSHBUTTON      "Rename...",IDC_CLIP_RENAME,231,91,62,14
-    PUSHBUTTON      "Unlink copies",IDC_CLIP_UNLINK,231,113,62,14
-    PUSHBUTTON      "Delete",IDC_CLIP_DELETE,231,130,62,14
-    LTEXT           "",IDC_CLIP_INFO,7,152,286,32
-    PUSHBUTTON      "Close",IDCANCEL,243,186,50,14
 END
 
 IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230

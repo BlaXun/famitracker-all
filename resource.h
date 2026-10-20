@@ -728,6 +728,9 @@
 #define IDC_LIB_STATUS                  1404
 #define ID_INSTRUMENT_LIBRARY           33163
 
+// View > Clips panel (ClipsPanel.cpp)
+#define ID_VIEW_CLIPSPANEL              33164
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

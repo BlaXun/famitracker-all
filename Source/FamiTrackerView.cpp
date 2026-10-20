@@ -1007,10 +1007,8 @@ void CFamiTrackerView::OnUpdateEditSaveClip(CCmdUI *pCmdUI)
 
 void CFamiTrackerView::OnEditClips()
 {
-	// The song's clips: place, edit, duplicate, rename, delete
-	CClipsDlg Dialog(this);
-	if (Dialog.DoModal() == IDOK)
-		GetParentFrame()->SetMessageText(Dialog.GetResult());
+	// The song's clips are in the clips panel, beside the pattern editor
+	static_cast<CMainFrame*>(GetParentFrame())->ShowClipsPanel(true, true);
 }
 
 void CFamiTrackerView::OnEditDelete()

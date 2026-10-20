@@ -42,6 +42,7 @@ enum {
 class CVisualizerWnd;
 class CInstrumentFileTree;
 class CPianoRollBar;
+class CClipsBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
@@ -97,6 +98,7 @@ public:
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
+	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 
 	bool	ChangeAllPatterns() const;
 
@@ -182,6 +184,7 @@ private:  // control bar embedded members
 	CInstrumentFileTree	*m_pInstrumentFileTree;
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
+	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
 
 	// State variables
 	int					m_iOctave;					// Selected octave
@@ -254,6 +257,7 @@ public:
 	afx_msg void OnUpdatePrevSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCopy(CCmdUI *pCmdUI);
@@ -301,6 +305,7 @@ public:
 	afx_msg void OnToggleFollow();
 	afx_msg void OnViewControlpanel();
 	afx_msg void OnViewPianoRoll();
+	afx_msg void OnViewClipsPanel();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
 	afx_msg void OnSelectPatternEditor();

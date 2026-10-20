@@ -2198,7 +2198,7 @@ struct CPianoRollWnd::Impl {
 			Menu.AppendMenu(MF_SEPARATOR);
 			Menu.AppendMenu(MF_STRING | (LinkedClips ? MF_CHECKED : 0), MENU_CLIP_LINKED, _T("Place linked copies (they change with the clip)"));
 			Menu.AppendMenu(MF_STRING | (Selection.empty() ? MF_GRAYED : 0), MENU_CLIP_SAVE, _T("Save the selected notes as a clip...\tCtrl+Shift+C"));
-			Menu.AppendMenu(MF_STRING, MENU_CLIP_MANAGE, _T("All clips..."));
+			Menu.AppendMenu(MF_STRING, MENU_CLIP_MANAGE, _T("Show the clips panel"));
 			const int Choice = PopUp(Menu, Id);
 			if (Choice >= static_cast<int>(MENU_CLIP) && Choice < static_cast<int>(MENU_CLIP_LINKED))
 				StartPlacing(Choice - static_cast<int>(MENU_CLIP));

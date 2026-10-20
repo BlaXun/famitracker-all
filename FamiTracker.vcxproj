@@ -595,6 +595,8 @@
     <ClInclude Include="Source\RecordDlg.h" />
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
+    <ClCompile Include="Source\ClipsPanel.cpp" />
+    <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />
     <ClCompile Include="Source\Transcribe\Take.cpp" />
