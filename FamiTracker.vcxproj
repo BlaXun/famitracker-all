@@ -453,6 +453,8 @@
     <ClCompile Include="Source\Transcribe\Hits.cpp" />
     <ClCompile Include="Source\Transcribe\TextModule.cpp" />
     <ClInclude Include="Source\Transcribe\Transcribe.h" />
+    <ClCompile Include="Source\InsertRecording.cpp" />
+    <ClInclude Include="Source\InsertRecording.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

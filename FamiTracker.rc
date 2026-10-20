@@ -120,6 +120,8 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Select &All\tCtrl+A",         ID_EDIT_SELECTALL
         MENUITEM SEPARATOR
+        MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
             MENUITEM "Decrease Note\tCtrl+F1",      ID_TRANSPOSE_DECREASENOTE
@@ -237,6 +239,7 @@ BEGIN
         MENUITEM "&Paste",                      ID_EDIT_PASTE
         MENUITEM "&Delete",                     ID_POPUP_DELETE
         MENUITEM "Select &All",                 ID_EDIT_SELECTALL
+        MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -532,6 +535,7 @@ BEGIN
     ID_EDIT_CUT             "Cut the selection and put it on the Clipboard\nCut"
     ID_EDIT_FIND            "Find the specified text\nFind"
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
+    ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"

@@ -37,6 +37,7 @@
 #include "TrackerChannel.h"
 #include "Clipboard.h"
 #include "APU/APU.h"
+#include "InsertRecording.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -111,6 +112,7 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_WM_MENUCHAR()
 	ON_WM_SYSKEYDOWN()
 	ON_COMMAND(ID_EDIT_PASTEMIX, OnEditPastemix)
+	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
 	ON_COMMAND(ID_EDIT_INSTRUMENTMASK, OnEditInstrumentMask)
 	ON_COMMAND(ID_EDIT_VOLUMEMASK, OnEditVolumeMask)
 	ON_COMMAND(ID_EDIT_INTERPOLATE, OnEditInterpolate)
@@ -892,6 +894,30 @@ void CFamiTrackerView::OnEditPastemix()
 		pAction->SetPaste(pClipData);
 		AddAction(pAction);
 	}
+}
+
+void CFamiTrackerView::OnEditInsertRecording()
+{
+	// Turn a WAV recording into notes at the cursor (see InsertRecording.cpp)
+	CFileDialog FileDialog(TRUE, _T("wav"), NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
+		_T("WAV recordings (*.wav)|*.wav|All files (*.*)|*.*||"), this);
+	if (FileDialog.DoModal() != IDOK)
+		return;
+
+	theApp.StopPlayer();
+
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	CString Message;
+	bool Inserted;
+	{
+		CWaitCursor Wait;	// a few seconds for a long recording
+		Inserted = InsertRecording(pMainFrm, FileDialog.GetPathName(), Message);
+	}
+
+	if (Inserted)
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
 }
 
 void CFamiTrackerView::OnEditDelete()

@@ -50,6 +50,18 @@ recordings and selections become reusable clips.
   hard cuts, and two notes on one row lost the second one's length. All four
   are fixed. Before, 11 of 40 notes in that recording stopped more than 50 ms
   before the whistle did; now, counting the release fade, none do.
+- [x] Edit > Insert recording (WAV) in FamiTracker, also in the pattern
+  editor's right-click menu (`Source/InsertRecording.cpp`). It writes the
+  notes into the open song at the cursor, in the cursor's channel: drums on
+  the noise channel, a melody anywhere else (not DPCM). It uses the song's
+  speed and tempo, and runs on into the following frames, adding frames at
+  the end of the song if needed. A touched frame whose pattern other frames
+  also play first gets a copy of its own, so the rest of the song doesn't
+  change. It adds Lead, Bass, Kick, Snare and Hi-hat instruments the first
+  time and reuses them after that; on VRC7, FDS and N163 channels it uses
+  the selected instrument. Notes end with `===` when the instrument has a
+  release, otherwise with `---`. One Ctrl+Z undoes all of it, except that
+  added instruments stay (instrument edits aren't undoable in 0.4.6).
 - [ ] Record dialog in FamiTracker:
   - microphone input via `waveIn` (winmm),
   - count-in and metronome at the song's tempo,
@@ -95,7 +107,7 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
      loudest moment of a recording sets the gate for everything, so without
      this, quieter notes lose their fade-out.
   3. `OctaveShiftFor` moves the median note to G4 (MIDI 67) for leads, or to
-     G3 (MIDI 55) for the triangle and sawtooth.
+     C3 (MIDI 48) for the triangle and sawtooth, which usually play bass.
   4. `SnapToScale`, then `Quantize`. A note starts on its nearest row and
      keeps its rounded duration, so a 180 ms note is 2 rows wherever it
      starts. A break shorter than `minRestSeconds` (150 ms) is held through,

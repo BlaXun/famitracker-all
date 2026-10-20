@@ -281,7 +281,7 @@ int main(int argc, char **argv)
 		MelodyPart lead;
 		lead.channel = channel;
 		const bool low = (channel == 2 || channel == 7);	// triangle and sawtooth suit bass lines
-		if (!TranscribeMelody(input, "melody", low ? 55 : 67, haveTranspose ? &transpose : nullptr, settings, lead.notes))
+		if (!TranscribeMelody(input, "melody", low ? 48 : 67, haveTranspose ? &transpose : nullptr, settings, lead.notes))
 			return 1;
 		parts.push_back(lead);
 		addSource("melody", input);
