@@ -30,21 +30,23 @@ chips, with NSF/NES export. This repo is a fork of `HertzDevil/famitracker-all`.
 | Release | Commit | Layout at that point |
 |---|---|---|
 | 0.2.2 | `f0a8e52` | Flat root; APU emulation in `player/`; VS2003 project |
-| 0.2.4, 0.2.5 | `f40e5fd`, `d21d7d0` | `Source/` (.cpp), `Include/` (.h), `sound driver/` (SoundGen, APU) |
+| 0.2.4, 0.2.5 | `f40e5fd`, `d21d7d0` | `Source/` (.cpp), `Include/` (.h), `sound driver/` (SoundGen, APU); `FFT/` at root from 0.2.5 |
 | 0.2.6, 0.2.7, 0.2.9, 0.3.0 | `6a62a32`, `28fe1a2`, `a7cce05`, `41cb122` | `Source/`, `Source/APU/`, headers in `Include/`, `FFT/` at root; VS2008 project from 0.2.9 |
 | 0.3.5, 0.3.6, 0.3.7 | `42fdd43`, `17a64a7`, `d7928f0` | Headers move into `Source/`; `Source/drivers/`, `Source/Blip_Buffer/` |
 | 0.4.0, 0.4.1, 0.4.2, 0.4.3, 0.4.4, 0.4.6 | `2063ad9`, `8bbe96c`, `8913aaf`, `01ce364`, `95a43e5`, `5fb684d` | `Source/FFT/`; `version.h`, `config.h`, `changelog.txt` at root |
 
-Files moved between these layouts, so a plain `git diff` across a boundary
-shows deletions and additions. To compare one file across a move, name both
-blobs: `git diff a7cce05:Include/FamiTrackerDoc.h 42fdd43:Source/FamiTrackerDoc.h`.
+Files moved between these layouts. `git diff` between two releases detects
+most moves as renames (64 between 0.2.9 and 0.3.5). To compare one file across
+a move, name both blobs:
+`git diff a7cce05:Include/FamiTrackerDoc.h 42fdd43:Source/FamiTrackerDoc.h`.
 
 ## Community fork branches
 
 Upstream has nine more branches, each a single commit on top of an official
 release. If they are missing here, run
 `git remote add upstream https://github.com/HertzDevil/famitracker-all && git fetch upstream`.
-`git diff <branch>^ <branch>` shows exactly what a mod changes.
+Then `git diff upstream/<branch>^ upstream/<branch>` shows exactly what a mod
+changes.
 
 | Branch | Based on | Contents |
 |---|---|---|
@@ -56,10 +58,11 @@ release. If they are missing here, run
 | `arp-scheme` | 0.4.2 | Arpeggio scheme sequence mode; ships rebuilt NSF driver headers |
 | `fds-seq` | 0.4.6 | FDS instruments with regular sequences and up to 16 waves; rebuilt FDS driver |
 | `lc` | 0.4.6 | Localization engine (`lang/`); VS2015 `.vcxproj` |
-| `sneven` | 0.4.6 | SnevenTracker: SN76489 replaces the 2A03, expansion chips removed; VS2015 `.vcxproj` |
+| `sneven` | 0.4.6 | SnevenTracker test build: SN76489 replaces the 2A03, expansion chips removed; NSF export still uses the 2A03 driver; `.vcxproj` mixing the `v100` and `v140` toolsets |
 
-HertzDevil's own forks (`arp-scheme`, `fds-seq`, `sneven`) mark every changed
-line with `// // //` so they stay diffable against vanilla.
+HertzDevil's own forks (`arp-scheme`, `fds-seq`, `sneven`) tag most changed
+blocks with `// // //`, which makes their changes easy to find. Not every hunk
+carries the marker, so `git diff` remains the complete list.
 
 ## Building
 
@@ -128,10 +131,12 @@ There are no automated tests. What exists:
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or
-  `.txt`; any other extension goes to a custom exporter plugin. Exporting
-  `.txt` and `.nsf` before and after a change and diffing the results is the
-  practical regression check, but note the text-import caveat under Known
-  pre-existing bugs.
+  `.txt`. Any other extension goes to the first custom exporter plugin,
+  whatever extension that plugin handles, and that path passes
+  `CFamiTrackerDoc::GetDoc()`, which needs the main window; a command-line
+  export runs before the window exists. Exporting `.txt` and `.nsf` before and
+  after a change and diffing the results is the practical regression check,
+  but note the text-import caveat under Known pre-existing bugs.
 - **`EXPORT_TEST` builds:** `/verify` compares the tracker's register writes
   with the NSF driver running in `ExportTest.dll`. That DLL is not in this
   repo.
@@ -154,7 +159,7 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   - Each track (song) is a `CPatternData` (`PatternData.h`): a frame list,
     patterns per channel, rows of `stChanNote`.
   - Instruments: `Instrument*.cpp`, base class `CInstrument`, one subclass per
-    chip.
+    chip, except that MMC5 uses `CInstrument2A03`.
   - Sequences (macros, `CSequence`) are stored per chip in
     `m_pSequences2A03/VRC6/N163/S5B`; FDS sequences live inside
     `CInstrumentFDS`.
@@ -166,25 +171,26 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   `CPatternEditor` (`PatternEditor.cpp`), which draws the pattern grid into
   off-screen DCs. `CMainFrame` hosts the frame editor (`FrameEditor.cpp`), the
   instrument list, the toolbars and the undo stack. Instruments are edited in
-  `CInstrumentEditDlg`, with one `InstrumentEditor*` panel per chip; sequence
-  editing is in `SequenceEditor`, `GraphEditor`, `SizeEditor` and
-  `SequenceSetting`.
+  `CInstrumentEditDlg` with `InstrumentEditor*` panels: one per chip, two for
+  2A03 (plus DPCM), FDS (plus envelope) and N163 (plus wave). Sequence editing
+  is in `SequenceEditor`, `GraphEditor`, `SizeEditor` and `SequenceSetting`.
 - **Playback:** `CSoundGen` (`SoundGen.cpp`, a `CWinThread`) runs the player
   and drives one `CChannelHandler` subclass per channel (`Channels2A03.cpp`,
   `ChannelsVRC6.cpp`, and so on). Handlers run effects and instrument
   sequences, then write chip registers through
-  `WriteRegister`/`WriteExternalRegister` into `CAPU` (`APU/`). The mixer
-  (`APU/Mixer.cpp`) uses Blip_Buffer plus emu2413 (VRC7) and emu2149 (5B) to
-  produce samples, which `CDSound`/`CDSoundChannel` (`DirectSound.cpp`) play.
+  `WriteRegister`/`WriteExternalRegister` into `CAPU` (`APU/`). VRC7 and 5B
+  run emu2413 and emu2149 inside `APU/VRC7.cpp` and `APU/S5B.cpp`; the mixer
+  (`APU/Mixer.cpp`) mixes everything with Blip_Buffer, and
+  `CDSound`/`CDSoundChannel` (`DirectSound.cpp`) play the result.
 - **NSF export:**
   - `CCompiler` (`Compiler.cpp`) builds a list of `CChunk` objects;
     `CPatternCompiler` turns patterns into driver bytecode (`command_t`).
   - `ChunkRenderBinary` writes binary output and `ChunkRenderText` writes ca65
     assembly.
   - The 6502 driver ships only as prebuilt byte arrays with relocation tables
-    in `Source/drivers/drv_*.h`, selected in `Driver.h`. No driver assembly
-    source exists in any commit, so new driver commands cannot be added from
-    this repo.
+    in `Source/drivers/drv_*.h`, packaged in `Driver.h` and chosen per chip in
+    `CCompiler::CompileData`. No driver assembly source exists in any commit,
+    so new driver commands cannot be added from this repo.
   - `drivers/config.h` hard-codes each binary's vibrato-table offset and has
     to change whenever a binary does (the `arp-scheme` fork shows this).
 - **Other:**
@@ -197,15 +203,22 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
 
 ## Threading rules
 
-- There are two threads: the MFC UI thread and `CSoundGen`, which runs at
-  `THREAD_PRIORITY_TIME_CRITICAL`.
+- The two main threads are the MFC UI thread and `CSoundGen`, which runs at
+  `THREAD_PRIORITY_TIME_CRITICAL`. Two more run code: the visualizer's worker
+  thread (`CVisualizerWnd`, which draws with `GetDC()` off the UI thread) and
+  the MIDI input callback (`CMIDI::MidiInProc`, on a system thread).
 - UI to sound: `PostThreadMessage(WM_USER_*)` through the wrappers in
   `SoundGen.h` (`StartPlayer`, `StopPlayer`, `WriteAPU`, `PreviewSample`, ...).
 - Sound to UI: `PostMessage` to the view (`WM_USER_PLAYER`,
   `WM_USER_NOTE_EVENT`).
+- Some calls cross threads directly, without a message or lock: the UI thread
+  calls `CSoundGen::LoadMachineSettings`, and the sound thread calls
+  `CMainFrame::GetSelectedInstrument()` (through `GetDefaultInstrument`),
+  `CVisualizerWnd::FlushSamples` and `ReportAudioProblem`, which calls
+  `Invalidate()`.
 - The sound loop is `CSoundGen::OnIdle`:
-  1. `LockDocument(0)`, non-blocking; the tick is skipped if the UI holds the
-     lock.
+  1. `LockDocument(0)`, non-blocking. If the UI holds the lock, the player and
+     channel updates are skipped for that tick; `UpdateAPU` still runs.
   2. `RunFrame`, `PlayChannelNotes`, `UpdatePlayer`, `UpdateChannels`.
   3. Unlock, then `UpdateAPU`. Waiting on the DirectSound buffer is what paces
      the loop.
@@ -235,8 +248,11 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
 
   Old files must keep loading. `ReorderSequences`, `ConvertSequences` and the
   FDS octave transpose show the existing compatibility code.
-- **`ASSERT_FILE_DATA`** asserts in Debug but makes the read function return
-  `true` (error) in Release.
+- **`ASSERT_FILE_DATA`** asserts in Debug; in Release it makes the enclosing
+  function return `true`. In `ReadBlock_*` that means error, but the macro is
+  also used inside the instruments' `Load` functions, where `true` means
+  success, so a failed check there reports success and loading continues out
+  of step.
 - **Serialized enums:** append only, never reorder `effect_t`, `inst_type_t`,
   `sequence_t`, `SNDCHIP_*` or `chan_id_t`. Patterns are stored by channel
   index. On load, the index-to-channel mapping is rebuilt from the chip in
@@ -244,7 +260,9 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   scrambles existing modules.
 - **Channel index vs. channel ID:**
   - Document and pattern APIs take the channel index: the column in the
-    current module, `0..GetChannelCount()-1`.
+    current module, `0..GetAvailableChannels()-1`. `GetChannelCount()` counts
+    registered channels, which always include all 8 N163 channels even when
+    the module uses fewer.
   - Sound code uses `chan_id_t` (`APU/Types.h`). Convert with
     `GetChannelType(index)`.
   - `CHANNELS` (29, the `chan_id_t` count) differs from `MAX_CHANNELS` (28,
@@ -254,9 +272,10 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   13 is release and 14 is halt.
 - **Effect letters:** `EFF_CHAR[]` is indexed by `effect - 1`. FDS and 5B
   reuse the letters H, I and J.
-- **Instrument files (`.fti`):** `"FTI"` plus `INST_VERSION` "2.4", written by
-  each `CInstrument*::SaveFile/LoadFile`. Inside modules, instruments use
-  `Store/Load`.
+- **Instrument files (`.fti`):** `"FTI"` plus `INST_VERSION` "2.4".
+  `CFamiTrackerDoc::SaveInstrument`/`LoadInstrument` write and read the header,
+  version, type byte and name; each `CInstrument*::SaveFile/LoadFile` handles
+  the data after that. Inside modules, instruments use `Store/Load`.
 - **Linear pitch:** `m_bLinearPitch` is not saved (TODO in
   `WriteBlock_Parameters`).
 
@@ -291,8 +310,9 @@ matching `Config*.cpp` page.
 **Add a dialog or control:** edit `FamiTracker.rc` and `resource.h` by hand
 and keep IDs unique. Help topic IDs are in `hlp/HTMLDefines.h`.
 
-**Add a sound chip:** the `sneven` diff against `5fb684d` is a complete chip
-swap to study. Touch points:
+**Add a sound chip:** the `sneven` diff against `5fb684d` swaps the 2A03 for
+an SN76489 and is the closest example to study, though only a test build: its
+NSF export still uses the 2A03 driver. Touch points:
 - `APU/Types.h`.
 - An `APU/` emulator plus dispatch in `CAPU` and `CMixer`.
 - A `Channels*.cpp` handler.
@@ -303,25 +323,27 @@ swap to study. Touch points:
 
 ## Gotchas
 
-- **Case-insensitive filesystem assumed.** 18 distinct `#include` paths differ
-  in case from the files they name (`"apu/apu.h"`, `"FDS.h"` for `APU/FDS.H`,
-  ...), and several files have upper-case extensions (`APU/APU.CPP`,
-  `APU/VRC6.H`). Search with `-i`, and don't fix case outside a deliberate
-  portability change.
+- **Case-insensitive filesystem assumed.** 20 distinct `#include` paths, on 31
+  lines, differ in case from the files they name (`"apu/apu.h"`, `"FDS.h"` for
+  `APU/FDS.H`, `"fft\fft.h"`, ...), and several files have upper-case
+  extensions (`APU/APU.CPP`, `APU/VRC6.H`). Search with `-i`, and don't fix
+  case outside a deliberate portability change.
 - **CRLF line endings** everywhere except `gpl.txt`, `hlp/gpl.txt`,
   `Source/Blip_Buffer/Blip_Buffer.h`, `Source/resampler/resample.hpp`,
-  `resample.inl`, `sinc.cpp` and `sinc.hpp`. There is no `.gitattributes`, so
-  keep CRLF when editing. Shell scripts (`.github/scripts/*.sh`) are the
-  deliberate exception: they must stay LF, since bash chokes on `\r`.
+  `resample.inl`, `sinc.cpp`, `sinc.hpp` and `resample.cpp` (LF apart from one
+  line). There is no `.gitattributes`, so keep CRLF when editing. Shell scripts
+  (`.github/scripts/*.sh`) are the deliberate exception: they must stay LF,
+  since bash chokes on `\r`.
 - **Resource encoding:** `FamiTracker.rc` is Windows-1252
   (`#pragma code_page(1252)`). Never convert it to UTF-8.
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies
   to every file that includes it. Placement new or a custom `operator new`
   must account for it.
-- **Precompiled headers:** PCH is off. `Compiler.cpp`, `FamiTrackerView.cpp`
-  and `APU/APU.CPP` include standard headers before `stdafx.h`, and several
-  `APU/` and `CustomExporter*` files never include it. Turning PCH on breaks
-  them.
+- **Precompiled headers:** PCH is off. 37 `.cpp` files include other headers
+  before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
+  standard headers), and 22 never include it: all of `APU/`, plus
+  `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`, `resampler/`, `ExportTest/`
+  and the `CustomExporter*` files. Turning PCH on breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
 - **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the
@@ -331,7 +353,8 @@ swap to study. Touch points:
   module is refused.
 - **File associations:** Release builds register the `.ftm` file type on every
   start (per-user on Vista and later); Debug builds don't.
-- **Dead code:** `ConfigWindow.cpp/.h` exist but are not in the project.
+- **Dead code:** `ConfigWindow.cpp` is not in the project, though `MainFrm.cpp`
+  still includes `ConfigWindow.h`.
 - **Licensing:** Blip_Buffer is LGPL. `ReadMe.txt` says the FFT code (Reliable
   Software) is not GPL and the YM2413/YM2149 emulators may not be either. Keep
   that in mind before redistributing.
@@ -344,9 +367,10 @@ Point these out rather than silently fixing them inside archive commits.
   `CFamiTrackerView::EditEffNumberColumn` and in text import loop up to
   `EF_COUNT`, but `EFF_CHAR` has `EF_COUNT - 1` entries. When no letter
   matches, they read one element past the end.
-- **Text import loses chip effects:** it resolves letters through the common
-  table only, so FDS and 5B `Hxx`/`Ixx`/`Jxx` come back as 2A03 effects (`Hxx`
-  becomes sweep up). Such modules don't round-trip through `.txt`.
+- **Text import loses chip effects:** it takes the first matching letter in
+  `EFF_CHAR`, so FDS and 5B `Hxx` and `Ixx` come back as the 2A03 sweep effects,
+  and 5B `Jxx` becomes the FDS modulation-speed effect (FDS `Jxx` survives).
+  Such modules don't round-trip through `.txt`.
 - **No bounds checks on load:** `CDocumentFile::GetBlockInt`, `GetBlockChar`,
   `GetBlock` and `ReadString` don't check the block size, so a corrupt `.ftm`
   can read past the buffer.
