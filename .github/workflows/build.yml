@@ -1,0 +1,45 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.configuration }} (Win32)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          msbuild -version
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -format text | Select-String -Pattern "displayName|installationVersion"
+
+      - name: Build
+        run: msbuild FamiTracker.sln /m /nologo /v:minimal /p:Configuration=${{ matrix.configuration }} /p:Platform=x86
+
+      - name: Upload FamiTracker.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: FamiTracker-${{ matrix.configuration }}-Win32
+          path: |
+            build/Win32/${{ matrix.configuration }}/FamiTracker.exe
+            build/Win32/${{ matrix.configuration }}/FamiTracker.pdb
+          if-no-files-found: error

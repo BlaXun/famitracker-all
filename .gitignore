@@ -1,0 +1,16 @@
+# Build output
+build/
+Debug/
+Release/
+x64/
+
+# Visual Studio state
+.vs/
+*.user
+*.aps
+*.ncb
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb

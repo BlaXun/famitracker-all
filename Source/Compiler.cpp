@@ -18,7 +18,7 @@
 ** must bear this legend.
 */
 
-#include <boost/scoped_array.hpp>
+#include <memory>
 #include <map>
 #include <vector>
 #include "stdafx.h"
@@ -272,7 +272,7 @@ void CCompiler::ExportNSF(LPCTSTR lpszFileName, int MachineType)
 	m_iInitAddress = m_iDriverAddress + 8;
 
 	// Load driver
-	boost::scoped_array<char> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
+	std::unique_ptr<char[]> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
 	char *pDriver = pDriverPtr.get();
 
 	// Patch driver binary
@@ -432,7 +432,7 @@ void CCompiler::ExportNES(LPCTSTR lpszFileName, bool EnablePAL)
 	m_iInitAddress = m_iDriverAddress + 8;
 
 	// Load driver
-	boost::scoped_array<char> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
+	std::unique_ptr<char[]> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
 	char *pDriver = pDriverPtr.get();
 
 	// Patch driver binary
@@ -554,7 +554,7 @@ void CCompiler::ExportPRG(LPCTSTR lpszFileName, bool EnablePAL)
 	m_iInitAddress = m_iDriverAddress + 8;
 
 	// Load driver
-	boost::scoped_array<char> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
+	std::unique_ptr<char[]> pDriverPtr(LoadDriver(m_pDriverData, m_iDriverAddress));
 	char *pDriver = pDriverPtr.get();
 
 	// Patch driver binary
