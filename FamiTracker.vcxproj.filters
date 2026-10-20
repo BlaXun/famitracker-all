@@ -1379,6 +1379,12 @@
     <ClCompile Include="Source\VoiceEffectDlg.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\InstrumentLibrary.cpp">
+      <Filter>Source Files\Dialog Boxes\Instrument</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\InstrumentLibrary.h">
+      <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Source\VoiceEffectDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>

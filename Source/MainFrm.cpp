@@ -50,6 +50,7 @@
 #include "PatternEditor.h"
 #include "FrameEditor.h"
 #include "McpConnection.h"
+#include "InstrumentLibrary.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -169,6 +170,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
 	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
+	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -1678,6 +1680,11 @@ void CMainFrame::OnEditVoiceEffect()
 		m_pMcpConnection->ShowVoiceEffect();
 }
 
+void CMainFrame::OnInstrumentLibrary()
+{
+	ShowInstrumentLibrary(this);
+}
+
 void CMainFrame::OnFileGeneralsettings()
 {
 	CString Title;
@@ -2291,6 +2298,8 @@ void CMainFrame::OnNewInstrumentMenu(NMHDR* pNotifyStruct, LRESULT* result)
 		menu.AppendMenu(MF_STRING, ID_INSTRUMENT_ADD_N163, _T("New Namco instrument"));
 	if (Chip & SNDCHIP_S5B)
 		menu.AppendMenu(MF_STRING, ID_INSTRUMENT_ADD_S5B, _T("New Sunsoft instrument"));
+	menu.AppendMenu(MF_SEPARATOR);
+	menu.AppendMenu(MF_STRING, ID_INSTRUMENT_LIBRARY, _T("From the instrument library..."));
 
 	switch (SelectedChip) {
 		case SNDCHIP_NONE:

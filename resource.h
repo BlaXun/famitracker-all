@@ -718,6 +718,16 @@
 #define IDC_VOICE_ADD                   1398
 #define ID_EDIT_VOICEEFFECT             33162
 
+// Instrument > Instrument library (InstrumentLibrary.cpp)
+#define IDD_INSTRUMENT_LIBRARY          333
+#define IDC_LIB_FOR                     1399
+#define IDC_LIB_LIST                    1400
+#define IDC_LIB_TEXT                    1401
+#define IDC_LIB_LISTEN                  1402
+#define IDC_LIB_ADD                     1403
+#define IDC_LIB_STATUS                  1404
+#define ID_INSTRUMENT_LIBRARY           33163
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

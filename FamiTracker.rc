@@ -175,6 +175,8 @@ BEGIN
     END
     POPUP "&Instrument"
     BEGIN
+        MENUITEM "Instrument library...",       ID_INSTRUMENT_LIBRARY
+        MENUITEM SEPARATOR
         MENUITEM "New instrument",              ID_INSTRUMENT_NEW
         MENUITEM "Remove instrument",           ID_INSTRUMENT_REMOVE
         MENUITEM "Clone instrument",            ID_INSTRUMENT_CLONE
@@ -303,6 +305,7 @@ BEGIN
     POPUP "Instrument"
     BEGIN
         MENUITEM "Add",                         ID_INSTRUMENT_NEW
+        MENUITEM "Add from the library...",     ID_INSTRUMENT_LIBRARY
         MENUITEM "Remove",                      ID_INSTRUMENT_REMOVE
         MENUITEM SEPARATOR
         MENUITEM "&Load from file...",          ID_INSTRUMENT_LOAD
@@ -553,6 +556,7 @@ BEGIN
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
+    ID_INSTRUMENT_LIBRARY   "Ready-made sounds to listen to and add: leads, plucks, pads, basses and drums\nInstrument library"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
@@ -1916,6 +1920,22 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_INSTRUMENT_LIBRARY DIALOGEX 0, 0, 300, 240
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Instrument library"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Ready-made sounds: pick the channel they're for, then click one to hear it. Add to the song keeps it as an instrument, which you can change later in the instrument editor.",IDC_STATIC,7,7,286,26
+    LTEXT           "Sounds for:",IDC_STATIC,7,40,44,8
+    COMBOBOX        IDC_LIB_FOR,54,38,150,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "",IDC_LIB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,7,56,286,104
+    LTEXT           "",IDC_LIB_TEXT,7,164,286,26
+    PUSHBUTTON      "Listen",IDC_LIB_LISTEN,7,194,60,14
+    DEFPUSHBUTTON   "Add to the song",IDC_LIB_ADD,72,194,72,14
+    LTEXT           "",IDC_LIB_STATUS,7,214,230,24
+    PUSHBUTTON      "Close",IDCANCEL,243,218,50,14
 END
 
 IDD_VOICE_EFFECT DIALOGEX 0, 0, 280, 228

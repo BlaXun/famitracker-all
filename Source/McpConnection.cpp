@@ -54,6 +54,7 @@
 #include "ChipSwitch.h"
 #include "Clips.h"
 #include "InsertRecording.h"
+#include "InstrumentLibrary.h"
 #include "McpSocket.h"
 #include "McpConnection.h"
 #include "VoiceEffectDlg.h"
@@ -926,56 +927,10 @@ public:
 	{
 		if (!CanChange(Error))
 			return -1;
-		CFamiTrackerDoc *pDoc = Doc();
-		const bool VRC6 = Chip == "VRC6";
-		const inst_type_t Type = VRC6 ? INST_VRC6 : INST_2A03;
-		const int ChipType = VRC6 ? SNDCHIP_VRC6 : SNDCHIP_NONE;
-		if (VRC6 && !pDoc->ExpansionEnabled(SNDCHIP_VRC6)) {
-			Error = "This song has no VRC6 channels.";
-			return -1;
-		}
-		const CString Name = Ansi(Sound.InstrumentName(Sawtooth));
-		const int Existing = FindInstrument(Type, Name);
-		if (Existing >= 0)
-			return Existing;
-		const int Index = pDoc->AddInstrument(Name, ChipType);
-		if (Index == INVALID_INSTRUMENT) {
-			Error = "There are no free instrument slots left (a song has at most 64).";
-			return -1;
-		}
-		CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Index));	// retained
-		const std::vector<ftapi::PresetSequence> &Sequences = VRC6 ? Sound.SequencesVRC6 : Sound.Sequences2A03;
-		for (size_t s = 0; s < Sequences.size() && pInstrument != NULL; ++s) {
-			const ftapi::PresetSequence &Seq = Sequences[s];
-			if (Sawtooth && Seq.Type == ftapi::SEQUENCE_DUTY)
-				continue;	// on the sawtooth the duty's low bit adds to the volume, which would never fade out
-			const int Slot = VRC6 ? pDoc->GetFreeSequenceVRC6(Seq.Type) : pDoc->GetFreeSequence(Seq.Type);
-			if (Slot < 0)
-				continue;	// all taken: the sound is plainer
-			CSequence *pSequence = pDoc->GetSequence(ChipType, static_cast<unsigned int>(Slot), Seq.Type);
-			pSequence->Clear();
-			for (size_t k = 0; k < Seq.Items.size(); ++k)
-				pSequence->SetItem(static_cast<int>(k), static_cast<signed char>(Seq.Items[k]));
-			pSequence->SetItemCount(static_cast<unsigned int>(Seq.Items.size()));
-			if (Seq.Loop >= 0)
-				pSequence->SetLoopPoint(static_cast<unsigned int>(Seq.Loop));
-			if (Seq.Release >= 0)
-				pSequence->SetReleasePoint(static_cast<unsigned int>(Seq.Release));
-			if (Seq.Type == ftapi::SEQUENCE_ARPEGGIO)
-				pSequence->SetSetting(static_cast<unsigned int>(Seq.Setting));
-			if (VRC6) {
-				static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqEnable(Seq.Type, 1);
-				static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqIndex(Seq.Type, Slot);
-			}
-			else {
-				static_cast<CInstrument2A03*>(pInstrument)->SetSeqEnable(Seq.Type, 1);
-				static_cast<CInstrument2A03*>(pInstrument)->SetSeqIndex(Seq.Type, Slot);
-			}
-		}
-		if (pInstrument != NULL)
-			pInstrument->Release();
-		pDoc->SetModifiedFlag();
-		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+		CString Problem;
+		const int Index = AddPresetInstrument(Doc(), Sound, Chip == "VRC6", Sawtooth, Problem);
+		if (Index < 0)
+			Error = Utf8(Problem);
 		return Index;
 	}
 
@@ -983,32 +938,10 @@ public:
 	{
 		if (!CanChange(Error))
 			return -1;
-		CFamiTrackerDoc *pDoc = Doc();
-		if (!pDoc->ExpansionEnabled(SNDCHIP_VRC7)) {
-			Error = "This song has no VRC7 channels.";
-			return -1;
-		}
-		if (Patch < 1 || Patch > 15) {
-			Error = "The VRC7's patches are 1-15.";
-			return -1;
-		}
-		const CString Text = Ansi(Name);
-		const int Existing = FindInstrument(INST_VRC7, Text);
-		if (Existing >= 0)
-			return Existing;
-		const int Index = pDoc->AddInstrument(Text, SNDCHIP_VRC7);
-		if (Index == INVALID_INSTRUMENT) {
-			Error = "There are no free instrument slots left (a song has at most 64).";
-			return -1;
-		}
-		CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Index));	// retained
-		if (pInstrument != NULL) {
-			if (pInstrument->GetType() == INST_VRC7)
-				static_cast<CInstrumentVRC7*>(pInstrument)->SetPatch(static_cast<unsigned int>(Patch));
-			pInstrument->Release();
-		}
-		pDoc->SetModifiedFlag();
-		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+		CString Problem;
+		const int Index = AddVrc7PatchInstrument(Doc(), Patch, Ansi(Name), Problem);
+		if (Index < 0)
+			Error = Utf8(Problem);
 		return Index;
 	}
 
@@ -1173,22 +1106,6 @@ private:
 	unsigned int Track() const
 	{
 		return static_cast<unsigned int>(std::max(0, m_pMain->GetSelectedTrack()));
-	}
-
-	// The instrument of that type and name, -1 if there's none
-	int FindInstrument(inst_type_t Type, const CString &Name) const
-	{
-		CFamiTrackerDoc *pDoc = Doc();
-		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
-			if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)) || pDoc->GetInstrumentType(static_cast<unsigned int>(i)) != Type)
-				continue;
-			char Existing[CInstrument::INST_NAME_MAX];
-			pDoc->GetInstrumentName(static_cast<unsigned int>(i), Existing);
-			Existing[CInstrument::INST_NAME_MAX - 1] = 0;
-			if (Name == Existing)
-				return i;
-		}
-		return -1;
 	}
 
 	// The channels switching to the chip Flag empties (ftapi::SongHost::ExpansionNotes): the

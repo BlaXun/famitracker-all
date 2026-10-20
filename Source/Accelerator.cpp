@@ -99,6 +99,7 @@ const stAccelEntry CAccelerator::DEFAULT_TABLE[] = {
 	{_T("Clips"),						MOD_CONTROL | MOD_SHIFT,	'V',	ID_EDIT_CLIPS},
 	{_T("Piano roll"),					MOD_CONTROL | MOD_SHIFT,	'P',	ID_VIEW_PIANOROLL},
 	{_T("Sound effect from your voice"),	MOD_NONE,		0,				ID_EDIT_VOICEEFFECT},
+	{_T("Instrument library"),			MOD_CONTROL | MOD_SHIFT,	'L',	ID_INSTRUMENT_LIBRARY},
 };
 
 const int CAccelerator::ACCEL_COUNT = sizeof(CAccelerator::DEFAULT_TABLE) / sizeof(stAccelEntry);
