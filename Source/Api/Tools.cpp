@@ -320,6 +320,19 @@ std::string ChannelList(const Session &S)
 	return List;
 }
 
+// "2A03 Pulse 2 and VRC6 Sawtooth", "" when the user hears every channel
+std::string MutedChannels(const Session &S)
+{
+	std::vector<std::string> Names;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Muted)
+			Names.push_back(S.Channel(c).FullName());
+	std::string List;
+	for (size_t i = 0; i < Names.size(); ++i)
+		List += (i == 0 ? "" : (i + 1 == Names.size() ? " and " : ", ")) + Names[i];
+	return List;
+}
+
 std::string PositionText(const Session &S, int Row)
 {
 	return Format("%s (frame %02X, row %02X)", S.Time.Position(Row).c_str(), Row / S.Time.PatternLength,
@@ -823,7 +836,7 @@ std::string SongOverview(Session &S, const Json &Args)
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Channel = S.Channel(c);
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
-		Text += Format("  %d %s: ", c + 1, Channel.FullName().c_str());
+		Text += Format("  %d %s%s: ", c + 1, Channel.FullName().c_str(), Channel.Muted ? " (muted, the user doesn't hear it)" : "");
 		if (Notes.empty()) {
 			Text += "empty\n";
 			continue;
@@ -3013,6 +3026,9 @@ std::string ExportTool(Session &S, const Json &Args)
 	std::string Text = Format("Saved next to %s:", S.Song.FileName.c_str());
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += "\n- " + Lines[i];
+	const std::string Muted = MutedChannels(S);
+	if (!Muted.empty())
+		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
 	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
 		"points are in seconds.\n" + Code;
 	return Text;
@@ -3306,8 +3322,13 @@ std::string PlayTool(Session &S, const Json &Args)
 	std::string Error;
 	if (!S.Host().Play(First, Rows, Error))
 		throw Problem(Error.empty() ? "FamiTracker couldn't play." : Error);
-	return Format("Playing for the user from bar %d%s. You can't hear it yourself; ask the user how it sounds.", From,
+	std::string Text = Format("Playing for the user from bar %d%s. You can't hear it yourself; ask the user how it sounds.", From,
 		Bars > 0 ? Format(" for %s", Plural(Bars, "bar", "bars").c_str()).c_str() : " to the end");
+	const std::string Muted = MutedChannels(S);
+	if (!Muted.empty())
+		Text += " The user has muted " + Muted + " in FamiTracker, so that doesn't play; clicking a channel's name "
+			"above its column switches it back on.";
+	return Text;
 }
 
 std::string UndoTool(Session &S, const Json &)

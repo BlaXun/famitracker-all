@@ -40,8 +40,9 @@ struct ChannelInfo {
 	int Kind;				// channel_kind
 	int ChanId;				// FamiTracker's channel ID (chan_id_t)
 	int EffectColumns;		// visible effect columns, 1-4
+	bool Muted;				// muted in FamiTracker, so the user doesn't hear it play
 
-	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1) {}
+	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false) {}
 	std::string FullName() const { return Chip + " " + Name; }	// "VRC6 Pulse 1"
 };
 
@@ -135,7 +136,7 @@ public:
 
 	// For games: a track (from 0) played from its start for Seconds as audio
 	// (mono, -1 to 1), with the sample where each row began, as song rows in
-	// playing order
+	// playing order. Every channel plays, muted ones too.
 	virtual bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
 		std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
 	// Writes a file next to the song (FileName has no folders), replacing one

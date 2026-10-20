@@ -217,7 +217,8 @@ ends with a halt (`Cxx`) plays once, like a jingle.
 
 The song has to be saved, since the files go next to it; files of the same
 names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
-files.
+files. Every channel is in the files, also the ones muted in the pattern
+editor; they're muted again afterwards.
 
 ## Safety
 

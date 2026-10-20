@@ -446,6 +446,7 @@ public:
 		}
 
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+		const CFamiTrackerView *pView = CFamiTrackerView::GetView();
 		for (int c = 0; c < Channels; ++c) {
 			ftapi::ChannelInfo Channel;
 			Channel.Name = Utf8(pDoc->GetChannel(c)->GetChannelName());
@@ -453,6 +454,7 @@ public:
 			Channel.ChanId = pDoc->GetChannelType(c);
 			Channel.Kind = KindOf(Channel.ChanId);
 			Channel.EffectColumns = static_cast<int>(pDoc->GetEffColumns(Track, static_cast<unsigned int>(c))) + 1;
+			Channel.Muted = pView != NULL && pView->IsChannelMuted(static_cast<unsigned int>(c));
 			Info.Channels.push_back(Channel);
 		}
 		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -652,6 +654,16 @@ public:
 		CWaitCursor Wait;
 		const BOOL Enabled = m_pMain->IsWindowEnabled();
 		m_pMain->EnableWindow(FALSE);	// nothing changes the song while it renders
+
+		// A game gets the whole song: muted channels play too, and are muted
+		// again afterwards (the sound thread reads the mutes in PlayerGetNote)
+		CFamiTrackerView *pView = CFamiTrackerView::GetView();
+		std::vector<bool> Muted;
+		for (unsigned int c = 0; pView != NULL && c < pDoc->GetAvailableChannels(); ++c) {
+			Muted.push_back(pView->IsChannelMuted(c));
+			pView->SetChannelMute(static_cast<int>(c), false);
+		}
+
 		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track) != false;
 		if (Started) {
 			// It starts on the sound thread a moment later and runs to its end
@@ -674,6 +686,12 @@ public:
 				m_pMain->SetMessageText(Text);
 				Pump(50);
 			}
+		}
+		if (std::find(Muted.begin(), Muted.end(), true) != Muted.end()) {
+			for (size_t c = 0; c < Muted.size(); ++c)
+				pView->SetChannelMute(static_cast<int>(c), Muted[c]);
+			pView->GetPatternEditor()->InvalidateHeader();
+			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
 		}
 		m_pMain->EnableWindow(Enabled);
 		m_pMain->SetMessageText(_T(""));

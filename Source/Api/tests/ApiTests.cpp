@@ -1395,6 +1395,15 @@ void TestPlayback()
 	CHECK(Song.PlayFirst == 16 && Song.PlayRows == 32);
 	CHECK(!Run(Song, "play", "{}").IsError);
 	CHECK(Song.PlayFirst == 0 && Song.PlayRows == 0);
+	CHECK_LACKS(Run(Song, "play", "{}").Text, "muted");
+	CHECK_LACKS(Run(Song, "get_song", "{}").Text, "muted");
+	// Channels the user muted: Claude knows they aren't heard
+	Song.Info.Channels[1].Muted = true;
+	Song.Info.Channels[7].Muted = true;
+	CHECK_HAS(Run(Song, "play", "{}").Text, "The user has muted 2A03 Pulse 2 and VRC6 Sawtooth in FamiTracker, so that doesn't play;");
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "\n  2 2A03 Pulse 2 (muted, the user doesn't hear it): ");
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "\n  1 2A03 Pulse 1: ");
+	Song.Info.Channels[1].Muted = Song.Info.Channels[7].Muted = false;
 	CHECK(!Run(Song, "stop", "{}").IsError && Song.Stopped);
 	CHECK_HAS(Run(Song, "undo", "{}").Text, "hasn't allowed direct changes");
 	CHECK_HAS(Run(Song, "save_song", "{\"copy_name\": \"Darker\"}").Text, "Saved Darker.ftm");
@@ -2352,6 +2361,11 @@ void TestExport()
 	CHECK(std::llabs(Start - 102400) <= 16 && Comment(Comments, "LOOPLENGTH") == "51200");
 	CHECK(std::atoll(Comment(Comments, "LOOPEND").c_str()) == Start + 51200 && static_cast<long long>(Samples.size()) == Start + 51200);
 	CHECK(Comment(Comments, "TITLE") == "Town" && Comment(Comments, "ALBUM") == "Test song");
+	CHECK_LACKS(Text, "muted");
+	// A muted channel is in the game's file all the same
+	Song.Info.Channels[2].Muted = true;
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{}")).Text, "\nEvery channel is in the files, the muted 2A03 Triangle too.\n");
+	Song.Info.Channels[2].Muted = false;
 
 	// With the bass ending before the loop comes round, the first time through will do
 	Song.End(2, 120);
