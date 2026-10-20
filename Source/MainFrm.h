@@ -101,6 +101,12 @@ public:
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
+	// Help > Tutorials (Tutorial.h): where a part of the window is on the
+	// screen ("pattern", "button" with a command, "menu" with its name, ...),
+	// and the clips panel or piano roll opened for a step about it
+	bool	GetTutorialRect(LPCTSTR Part, LPCTSTR Name, UINT Command, CRect &Rect);
+	void	ShowTutorialPart(LPCTSTR Part);
+
 	bool	ChangeAllPatterns() const;
 
 // Overrides
@@ -287,6 +293,8 @@ public:
 	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnInstrumentLibrary();
 	afx_msg void OnEditDrumGrid();
+	afx_msg void OnHelpTutorials();
+	virtual BOOL OnCommand(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnViewProfile();
 	afx_msg void OnViewShowEverything();
 	afx_msg void OnUpdateViewShowEverything(CCmdUI *pCmdUI);

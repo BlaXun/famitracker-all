@@ -53,6 +53,7 @@
 #include "InstrumentLibrary.h"
 #include "DrumGridDlg.h"
 #include "Profile.h"
+#include "Tutorial.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -180,6 +181,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
+	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
 	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_SHOWEVERYTHING, OnUpdateViewShowEverything)
@@ -1845,6 +1847,99 @@ void CMainFrame::SetBPM(int Bpm)
 	SetTempo(Tempo);
 	m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPMText());
 	pDoc->SetModifiedFlag();
+}
+
+// Help > Tutorials (Tutorial.h)
+
+void CMainFrame::OnHelpTutorials()
+{
+	ShowTutorials(this);
+}
+
+BOOL CMainFrame::OnCommand(WPARAM wParam, LPARAM lParam)
+{
+	// A running tutorial may be waiting for this menu item, button or shortcut
+	TutorialCommand(LOWORD(wParam));
+	return CFrameWnd::OnCommand(wParam, lParam);
+}
+
+bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRect &Rect)
+{
+	const CString Part(pPart);
+	Rect.SetRectEmpty();
+	CWnd *pWnd = NULL;
+	if (Part == _T("window"))
+		pWnd = this;
+	else if (Part == _T("pattern"))
+		pWnd = GetActiveView();
+	else if (Part == _T("frames"))
+		pWnd = m_pFrameEditor;
+	else if (Part == _T("instruments"))
+		pWnd = m_pInstrumentList;
+	else if (Part == _T("song-settings"))
+		pWnd = m_wndDialogBar.GetDlgItem(IDC_SONG_SETTINGS);
+	else if (Part == _T("octave"))
+		pWnd = m_wndOctaveBar.GetDlgItem(IDC_OCTAVE);
+	else if (Part == _T("toolbar"))
+		pWnd = &m_wndToolBar;
+	else if (Part == _T("status-bar"))
+		pWnd = &m_wndStatusBar;
+	else if (Part == _T("clips"))
+		pWnd = m_pClipsBar;
+	else if (Part == _T("piano-roll"))
+		pWnd = m_pPianoRoll;
+	else if (Part == _T("song-info")) {
+		// The title, author and copyright boxes together
+		static const UINT BOXES[] = { IDC_SONG_NAME, IDC_SONG_ARTIST, IDC_SONG_COPYRIGHT };
+		for (size_t i = 0; i < sizeof(BOXES) / sizeof(BOXES[0]); ++i) {
+			CWnd *pBox = m_wndDialogBar.GetDlgItem(BOXES[i]);
+			if (pBox == NULL || !pBox->IsWindowVisible())
+				return false;
+			CRect Box;
+			pBox->GetWindowRect(&Box);
+			Rect.UnionRect(&Rect, &Box);
+		}
+		return true;
+	}
+	else if (Part == _T("button")) {
+		// On the main toolbar or the instrument toolbar
+		CToolBar *const BARS[] = { &m_wndToolBar, &m_wndInstToolBar };
+		for (size_t i = 0; i < sizeof(BARS) / sizeof(BARS[0]); ++i) {
+			const int Index = Command != 0 ? BARS[i]->CommandToIndex(Command) : -1;
+			if (Index >= 0 && BARS[i]->IsWindowVisible()) {
+				BARS[i]->GetItemRect(Index, &Rect);
+				BARS[i]->ClientToScreen(&Rect);
+				return true;
+			}
+		}
+		return false;
+	}
+	else if (Part == _T("menu")) {
+		// A menu on the menu bar, by its name
+		CMenu *pMenu = GetMenu();
+		const int Count = pMenu != NULL ? static_cast<int>(pMenu->GetMenuItemCount()) : 0;
+		for (int i = 0; i < Count; ++i) {
+			CString Title;
+			pMenu->GetMenuString(static_cast<UINT>(i), Title, MF_BYPOSITION);
+			Title.Remove(_T('&'));
+			if (Title.CompareNoCase(pName) == 0)
+				return ::GetMenuItemRect(m_hWnd, pMenu->GetSafeHmenu(), static_cast<UINT>(i), &Rect) != FALSE;
+		}
+		return false;
+	}
+	if (pWnd == NULL || pWnd->GetSafeHwnd() == NULL || !pWnd->IsWindowVisible())
+		return false;
+	pWnd->GetWindowRect(&Rect);
+	return true;
+}
+
+void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
+{
+	const CString Part(pPart);
+	if (Part == _T("clips") && (m_pClipsBar == NULL || !m_pClipsBar->IsVisible()))
+		ShowClipsPanel(true);
+	else if (Part == _T("piano-roll") && (m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible()))
+		ShowPianoRoll(true);
 }
 
 void CMainFrame::OnViewProfile()

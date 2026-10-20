@@ -1,0 +1,31 @@
+; Help > Tutorials. The format is in Source/TutorialScript.h.
+
+title: Music for your game
+about: Make a song loop, and save it as OGG files that GameMaker plays. About three minutes.
+
+step
+show: window
+text: This tutorial gets a song ready for a game: a loop that plays on without a gap, saved as OGG files for GameMaker or any other engine.
+
+step
+show: song-settings
+text: The song settings: speed and tempo (or BPM) set how fast the song plays, Rows how long each frame is, and Frames how many frames the song has.
+
+step
+show: frames
+text: After its last frame, a song starts again from the first. To loop back to another frame instead, put the effect Bxx (jump to frame xx) on the last row. A song meant to play once, like a jingle, ends with C00 (halt).
+
+step
+show: menu File
+text: When the song is ready, File > Export for games (OGG) saves it, or all of the tracks, as OGG files next to the song, with the loop points in them.
+wait: command export-for-games
+
+step
+show: window
+text: The export shows the GameMaker code that loops the music (audio_sound_loop_start and audio_sound_loop_end), and other engines can read the loop points from the files.
+
+  Sound effects work the same way: Edit > Sound effect from your voice records a "pew" or a "boing" and turns it into an NES sound.
+
+step
+show: window
+text: Good luck with your game's music!

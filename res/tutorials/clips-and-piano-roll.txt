@@ -1,0 +1,40 @@
+; Help > Tutorials. The format is in Source/TutorialScript.h.
+
+title: Clips and the piano roll
+about: Keep pieces of music as clips to put in again anywhere, and draw notes in the piano roll. About five minutes.
+
+step
+show: pattern
+text: Clips are pieces of music kept with the song, to put in again wherever you like: a riff, a drum fill, a whole chorus.
+
+  If the song has no notes yet, type a few first (space switches editing on, and the bottom row of letters plays the white keys).
+
+step
+show: pattern
+text: Select some notes: drag over them with the mouse, or hold Shift and use the arrow keys. Select across several channels to keep them together.
+
+step
+show: menu Edit
+text: Save the selection as a clip: Edit > Save selection as clip (or Ctrl+Shift+C), and give it a name.
+wait: clip
+
+step
+show: clips
+text: Your clip is in the clips panel. Its play button plays it, and right-clicking it shows what else it can do.
+
+  Drag it into the pattern editor to put a copy in: the place it'll go is shaded until you let go. Hold Ctrl as you let go for a linked copy: change one, and the others change with it.
+
+step
+show: button piano-roll
+text: Now the piano roll: press its button (or View > Piano roll, Ctrl+Shift+P).
+wait: command piano-roll
+
+step
+show: piano-roll
+text: The piano roll shows the notes as bars: time from left to right, pitch from bottom to top, the keys on the left. The channel you're in is bright.
+
+  Click to put a note in, drag a note to move it, or drag its end to make it longer; right-clicking a note erases it. Double-click a note for effects like vibrato or a slide. Ctrl+Z undoes any change.
+
+step
+show: window
+text: Clips, the piano roll and the pattern editor all show the same notes, so use whichever feels easiest.

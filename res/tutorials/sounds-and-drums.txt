@@ -1,0 +1,47 @@
+; Help > Tutorials. The format is in Source/TutorialScript.h.
+
+title: Sounds and drums
+about: Pick instruments from the library, and put drums in with the drum grid. About five minutes.
+
+step
+show: instruments
+text: Every note plays with an instrument: a sound with its own character, how it starts, fades out and wobbles. This list holds the song's instruments.
+
+step
+show: menu Instrument
+text: Open the instrument library: Instrument > Instrument library (or Ctrl+Shift+L). It lists ready-made sounds for each kind of channel in the song.
+wait: command instrument-library
+
+step
+show: window
+text: In the library, click a sound to hear it, and press Add to keep the one you like. Add a sound, then close the library.
+wait: instrument
+
+step
+show: instruments
+text: Your new instrument is in the list. Click an instrument to choose it: the notes you type from now on play with it, and double-clicking one opens it for changing its sound.
+
+step
+show: menu Edit
+text: Now some drums. The NES plays them on the Noise channel, and the drum grid makes that easy: open Edit > Drum grid (or Ctrl+Shift+D).
+wait: command drum-grid
+
+step
+show: window
+text: The drum grid shows a bar of the Noise channel: a line for each drum, a column for each row. Click the steps to put a kick, a snare or a hi-hat on them, or press one of the beats to fill the bar at once.
+
+  "Copy to every bar" repeats it all through the song. Close the grid when you're done.
+
+step
+show: button play
+text: Play the song to hear the drums with your notes.
+wait: play
+
+step
+show: button stop
+text: And stop it again.
+wait: stop
+
+step
+show: window
+text: Two more things to try: Edit > Add chords and bass line writes a backing that fits the melody you typed, and Edit > Record from microphone turns your humming or whistling into notes.

@@ -764,6 +764,17 @@
 #define ID_VIEW_PROFILE                 33166
 #define ID_VIEW_SHOWEVERYTHING          33167
 
+// Help > Tutorials (Tutorial.cpp) and the built-in tutorials (res/tutorials, RCDATA)
+#define IDD_TUTORIALS                   336
+#define IDC_TUTORIAL_LIST               1429
+#define IDC_TUTORIAL_ABOUT              1430
+#define IDC_TUTORIAL_FOLDER             1431
+#define ID_HELP_TUTORIALS               33168
+#define IDR_TUTORIAL_FIRST              340
+#define IDR_TUTORIAL_SOUNDS             341
+#define IDR_TUTORIAL_CLIPS              342
+#define IDR_TUTORIAL_GAME               343
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

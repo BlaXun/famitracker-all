@@ -1,0 +1,63 @@
+; Help > Tutorials: the first one. The format is in Source/TutorialScript.h.
+
+title: Your first tune
+about: Write a few notes with the computer keyboard, play them and save the song. About five minutes.
+
+step
+show: window
+text: Welcome! This tutorial shows the basics of FamiTracker: writing notes, playing them and saving the song.
+
+  The bright frame shows where to look, and the tutorial goes on by itself once you've done what it says. Close stops it at any time.
+
+step
+show: pattern
+text: This is the pattern editor, where songs are written. It reads from top to bottom: each row is a moment in time, a sixteenth note.
+
+  Each column is a channel, one of the NES's voices: Pulse 1 and Pulse 2, Triangle, Noise for drums and DPCM for samples. The VRC6 chip adds three more.
+
+step
+show: pattern
+text: To write notes, switch editing on: press the space bar. The cursor's row turns red while editing is on, and pressing space again switches it off.
+wait: edit-mode
+
+step
+show: pattern
+text: Now play notes on your computer keyboard. The bottom row of letters is a piano's white keys: Z is C, X is D, C is E, V is F, B is G, N is A and M is B. The row above has the black keys: S, D, G, H and J.
+
+  Each key writes a note and moves the cursor down a row. Type four notes or more. (Delete takes one away.)
+wait: notes 4
+
+step
+show: octave
+text: The octave box sets how high the keys play: a higher number, higher notes. The row of letters with Q, W and E plays an octave above the bottom row.
+
+step
+show: button play
+text: Press Play (or Enter) to hear your notes. The song plays from the top, and the pattern editor follows it.
+wait: play
+
+step
+show: button stop
+text: Press Stop (or Enter again) when you've heard enough.
+wait: stop
+
+step
+show: instruments
+text: These are the song's instruments, the sounds the notes play with. A note plays with the instrument chosen here when you typed it, and its number shows next to the note: red if the song has no such instrument yet.
+
+  Instrument > Instrument library has ready-made sounds to listen to and add.
+
+step
+show: frames
+text: This is the frame list, the song's order. Each line is a frame: a page of patterns, one per channel, played one after the other. Module > Insert frame (or the Frames number in the song settings) makes the song longer.
+
+step
+show: button save
+text: Last, save your song: press Save (or Ctrl+S) and give it a name. FamiTracker songs end in .ftm.
+wait: saved
+
+step
+show: window
+text: That's it: you've written, played and saved a song!
+
+  Help > Tutorials has more: sounds and drums, clips and the piano roll, and getting the music into your game.

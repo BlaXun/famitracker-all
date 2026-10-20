@@ -1397,6 +1397,18 @@
     <ClInclude Include="Source\Profile.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\Tutorial.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Tutorial.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\TutorialScript.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\TutorialScript.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\ClipsPanel.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

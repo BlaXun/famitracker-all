@@ -1,7 +1,8 @@
 # Tests for application code that can run outside Windows: the clip library
 # (Source/Clips.cpp), the piano roll's note editing (Source/NoteEdit.cpp),
-# switching the expansion chip (Source/ChipSwitch.cpp) and the drum grid
-# (Source/DrumGrid.cpp), against working
+# switching the expansion chip (Source/ChipSwitch.cpp), the drum grid
+# (Source/DrumGrid.cpp) and reading tutorials (Source/TutorialScript.cpp,
+# with the built-in ones in res/tutorials), against working
 # stand-ins for the MFC and document pieces they use (standins/). Linux and
 # macOS:
 #   cmake -S Source/Tests -B build/tests
@@ -46,3 +47,9 @@ add_executable(drumgrid_tests DrumGridTests.cpp)
 target_include_directories(drumgrid_tests PRIVATE ${STAGE})
 target_compile_options(drumgrid_tests PRIVATE -Wno-subobject-linkage)
 add_test(NAME drumgrid_tests COMMAND drumgrid_tests)
+
+# Plain C++: compiled from where it is
+add_executable(tutorial_tests TutorialScriptTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../TutorialScript.cpp)
+target_include_directories(tutorial_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(tutorial_tests PRIVATE TUTORIALS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/tutorials")
+add_test(NAME tutorial_tests COMMAND tutorial_tests)

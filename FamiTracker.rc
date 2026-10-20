@@ -235,6 +235,8 @@ BEGIN
     END
     POPUP "&Help"
     BEGIN
+        MENUITEM "&Tutorials...",               ID_HELP_TUTORIALS
+        MENUITEM SEPARATOR
         MENUITEM "&Help Topics\tF1",            ID_HELP_FINDER
         MENUITEM "Effect table",                ID_HELP_EFFECTTABLE
         MENUITEM "FAQ",                         ID_HELP_FAQ
@@ -567,6 +569,7 @@ BEGIN
     ID_EDIT_DRUMGRID        "Put drums on the noise channel a bar at a time, on a grid of steps, or pick a ready-made beat\nDrum grid"
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
+    ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -836,7 +839,7 @@ BEGIN
     IDS_SONG_DELETE         "Do you want to delete this song? There is no undo for this action."
     IDS_SOUND_FAIL          "It appears the current sound settings aren't working, change settings and try again."
     IDS_UNDERRUN_MESSAGE    "Warning: Audio buffer underrun, increase the audio buffer size!"
-    IDS_WELCOME_VER_FORMAT  "Welcome to FamiTracker %1, press F1 for help"
+    IDS_WELCOME_VER_FORMAT  "Welcome to FamiTracker %1. New here? Help > Tutorials shows you around, and F1 opens the help."
     IDS_DPCM_IMPORT_INVALID_WAVEFILE 
                             "Cannot load this sample, file is invalid or incompatible. (Only uncompressed PCM is supported.)"
     IDS_INST_FILE_ERROR     "Could not load instrument file! Check that you have the most recent version of FamiTracker."
@@ -939,6 +942,16 @@ IDB_KEY_WHITE_MARK      BITMAP                  "res\\key_white_pressed.bmp"
 IDB_TOOLBAR_256         BITMAP                  "res\\MainToolbar-256.bmp"
 IDB_TOOLBAR_INST_256    BITMAP                  "res\\InstrumentToolbar-256.bmp"
 IDB_ABOUT               BITMAP                  "res\\About.bmp"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RCDATA: the built-in tutorials (Tutorial.cpp, Help > Tutorials)
+//
+
+IDR_TUTORIAL_FIRST      RCDATA                  "res\\tutorials\\first-tune.txt"
+IDR_TUTORIAL_SOUNDS     RCDATA                  "res\\tutorials\\sounds-and-drums.txt"
+IDR_TUTORIAL_CLIPS      RCDATA                  "res\\tutorials\\clips-and-piano-roll.txt"
+IDR_TUTORIAL_GAME       RCDATA                  "res\\tutorials\\game-music.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1930,6 +1943,19 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_TUTORIALS DIALOGEX 0, 0, 280, 196
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Tutorials"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "A tutorial points at the parts of FamiTracker one at a time, says what they're for, and goes on when you've done what it says. FamiTracker works as usual meanwhile.",IDC_STATIC,7,7,266,26
+    LISTBOX         IDC_TUTORIAL_LIST,7,36,266,70,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_TUTORIAL_ABOUT,7,110,266,28
+    LTEXT           "",IDC_TUTORIAL_FOLDER,7,142,266,26
+    DEFPUSHBUTTON   "Start",IDOK,166,175,50,14
+    PUSHBUTTON      "Close",IDCANCEL,223,175,50,14
 END
 
 IDD_PROFILE DIALOGEX 0, 0, 300, 200

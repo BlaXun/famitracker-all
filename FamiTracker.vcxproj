@@ -602,6 +602,10 @@
     <ClInclude Include="Source\DrumGridDlg.h" />
     <ClCompile Include="Source\Profile.cpp" />
     <ClInclude Include="Source\Profile.h" />
+    <ClCompile Include="Source\Tutorial.cpp" />
+    <ClInclude Include="Source\Tutorial.h" />
+    <ClCompile Include="Source\TutorialScript.cpp" />
+    <ClInclude Include="Source\TutorialScript.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />
