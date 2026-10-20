@@ -90,15 +90,17 @@ which plays the tracks as OGG files.
 Larger ideas get their own branch made from `beginner-friendly` and merge back
 when ready.
 
-- **`recorder` (in progress):** whistle, hum or tap into a microphone or WAV
-  file and get notes whose length matches the sound. Recordings and pattern
-  selections become reusable clips. See `RECORDER.md` on that branch. Making
-  the result sound more natural and harmonic goes in this order:
+- **`recorder` (in progress):** whistle, hum or tap and get notes whose
+  length matches the sound, either recorded in FamiTracker (a toolbar button,
+  with a count-in and click at the song's tempo) or from a WAV file.
+  Recordings and pattern selections become reusable clips. See `RECORDER.md`
+  on that branch. Making the result sound more natural and harmonic goes in
+  this order:
   1. Expression (done): loudness, slides into notes and vibrato from the
      performance, and a richer lead sound.
-  2. Harmony backing: find the key, pick chords that fit the melody bar by
-     bar, and write a bass line and arpeggiated chords. Recording against a
-     metronome lets them land on the beat.
+  2. Harmony backing (next): find the key, pick chords that fit the melody
+     bar by bar, and write a bass line and arpeggiated chords. Takes recorded
+     against the click give them a beat to land on.
   3. AI arranging over MCP, through the `api` branch below.
 - **`api` (planned):** a local HTTP/JSON API to the running FamiTracker,
   bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
