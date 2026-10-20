@@ -16,7 +16,24 @@ which plays the tracks as OGG files.
   repo (see CLAUDE.md), so no feature may need new driver commands.
 - **Full FamiTracker stays one click away** through a "Show everything" option.
 
-## 1. Foundation (in progress)
+## Where things stand
+
+Most of the work so far is on the `recorder` branch (see Feature branches),
+whose build is the `build-recorder` pre-release: recording, clips, the piano
+roll, the export for games and the Claude Code connection. The
+`beginner-friendly` build, the "Latest" download, has only the foundation.
+
+Next, in this order:
+
+1. **Sound effects** for the game: by voice ("pew", "boing", "kssh") and
+   from Claude Code, exported like the music (as OGG files that play once,
+   with the GameMaker code).
+2. **Merge `recorder` into `beginner-friendly`**, so the "Latest" download
+   has everything.
+3. The steps below that make FamiTracker itself simpler (3, 4, then 6),
+   which haven't been started.
+
+## 1. Foundation
 
 - [x] `FamiTracker.vcxproj`/`.sln` for current Visual Studio. The toolset
   follows the installed Visual Studio; MFC stays static with the MBCS
@@ -30,29 +47,41 @@ which plays the tracks as OGG files.
   depends only on Windows system DLLs.
 - [x] Warning-free at `/W3`. The fixes: driver table pragmas scoped,
   `GetVersionEx` replaced, and a signed menu-count loop.
-- [ ] x64 build.
+- [x] Rolling GitHub releases: a green build of `beginner-friendly`,
+  `recorder` or `api` replaces that branch's `build-<branch>` release.
+- [ ] x64 build. The project has x64 configurations, but CI builds Win32
+  only. Low priority: the 32-bit build runs on 64-bit Windows.
 
 ## 2. OGG export with loop points
 
-- Render each song to OGG Vorbis alongside the existing WAV export
-  (`CSoundGen::RenderToFile`, `CWaveFile`, `CCreateWaveDlg`,
-  `CWavProgressDlg`). Rendering is currently mono WAV only.
-- Find the loop from the song's `Bxx` jump target, and record a
-  sample-accurate loop start and end. Render far enough past the loop that
-  effect and sequence state has settled.
-- Show and copy the GameMaker calls `audio_sound_loop_start` and
-  `audio_sound_loop_end` (GameMaker 2023.2 and later; confirm the units in the
-  manual).
+Done on the `recorder` branch (see `MCP.md` there): **File > Export for games
+(OGG)** saves the selected track, or all of them, as OGG files next to the
+song.
 
-## 3. Sounds before settings
+- FamiTracker renders the song past its second time through the loop and
+  notes the sample where every row starts (`CSoundGen::GetRenderMarks`).
+- The loop is found from the song's jumps, skips and halts (`Bxx`, `Dxx`,
+  `Cxx`). The file holds the intro and the loop once, or the loop twice when
+  the first pass starts differently (a note or effect from the intro hanging
+  over). The loop points move together by up to 2 ms to where the waves
+  meet, so the jump doesn't click.
+- The dialog and Claude Code give the GameMaker code
+  (`audio_sound_loop_start` and `audio_sound_loop_end`, GameMaker 2023.2 and
+  later), and the files carry `LOOPSTART`/`LOOPLENGTH` comments for other
+  engines. A song that ends with a halt (`Cxx`) plays once, like a jingle.
+
+## 3. Sounds before settings (not started)
 
 - Instrument library: curated `.fti` presets (VRC6 saw bass, pulse leads and
   pads, noise kick/snare/hat) with names, short descriptions and
   click-to-preview. Use `CFamiTrackerDoc::LoadInstrument` to load and
-  `CSoundGen::QueueNote` to preview.
+  `CSoundGen::QueueNote` to preview. The presets themselves exist for Claude
+  Code (`Source/Api/Presets.cpp` on `recorder`: 13 for the 2A03, MMC5 and
+  VRC6, plus the VRC7's 15 built-in sounds), but FamiTracker's own UI can't
+  browse or preview them yet.
 - Drum lane: a 16-step grid that writes notes to the noise channel.
 
-## 4. Profiles
+## 4. Profiles (not started)
 
 - A profile bundles a module template (chip, tempo, rows, effect columns,
   highlights), the set of visible UI and starter instruments.
@@ -67,25 +96,18 @@ which plays the tracks as OGG files.
 
 Done on the `recorder` branch (see `RECORDER.md` there): a horizontal view
 under the pattern editor, time left to right and pitch bottom to top, that
-follows playback, with drawing, painting a melody, moving, copying,
-resizing and erasing notes, a key that new notes snap to, and clips placed
-with the mouse. What was planned for it:
+follows playback. It shows every channel's notes with the edited one bright,
+and draws, paints a melody, moves, copies, resizes and erases notes, keeps
+new notes in a key, places clips with the mouse, and puts effects on notes
+(vibrato, tremolo, chords as arpeggios, slides, glides, bends and fades).
+Every change is one Ctrl+Z.
 
-- **v1:** one channel at a time. Draw, erase and resize notes with the mouse,
-  with scale lock (pick a key and scale, off-scale rows are dimmed and notes
-  snap), a playback cursor and undo. Drawing a melody's shape in one stroke,
-  snapped to the key and the beat, gives people who can't hum in tune a way
-  in too.
-- **v2:** ghost notes from other channels (FL Studio style), and a chord helper
-  that spreads a chord across free channels or turns it into a `0xy`
-  arpeggio. Mood starters lay down chords, bass and drums for moods like
-  "cozy town" or "boss fight".
-- **Implementation notes:**
-  - It is a new view beside `CPatternEditor`, and all edits go through
-    `CPatternAction` so undo works.
-  - A note's length is the number of rows until the next note, release or halt
-    in that channel.
-  - Each channel plays one note at a time.
+Still open from the plan:
+
+- A chord helper that spreads a chord across free channels (a chord as a
+  `0xy` arpeggio on one note is done).
+- Mood starters that lay down chords, bass and drums for moods like "cozy
+  town" or "boss fight" (see "start from a groove" under the recorder).
 
 ## 6. Tutorials (last, once the UI stops changing)
 
@@ -100,61 +122,54 @@ with the mouse. What was planned for it:
 Larger ideas get their own branch made from `beginner-friendly` and merge back
 when ready.
 
-- **`recorder` (in progress):** whistle, hum or tap and get notes whose
-  length matches the sound, either recorded in FamiTracker (a toolbar button,
-  with a count-in and click at the song's tempo) or from a WAV file.
-  Recordings and pattern selections become reusable clips. See `RECORDER.md`
-  on that branch. Making the result sound more natural and harmonic goes in
-  this order:
-  1. Expression (done): loudness, slides into notes and vibrato from the
-     performance, and a richer lead sound.
-  2. Harmony backing (done): find the key, pick chords that fit the melody
-     bar by bar, and write a bass line and arpeggiated chords.
-  3. AI arranging over MCP, through the `api` branch below.
+- **`recorder` (in progress, not merged back yet):** whistle, hum or tap and
+  get notes whose length matches the sound, recorded in FamiTracker (a
+  toolbar button, with a count-in and click at the song's tempo) or from a
+  WAV file. See `RECORDER.md` on that branch. Done:
+  - Expression: loudness, slides into notes and vibrato from the
+    performance, and a richer lead sound. Sung syllables ("la la la") become
+    notes of their own.
+  - Harmony backing: find the key, pick chords that fit the melody bar by
+    bar, and write a bass line and arpeggiated chords.
+  - Clips: takes and pattern selections kept with the song, placed as copies
+    or linked, with a clip editor.
+  - The piano roll (step 5) and the export for games (step 2).
+  - The Claude Code connection, merged from `api` (below).
 
-  Clips and the piano roll are done: takes and pattern selections kept with
-  the song, placed as copies or linked, with a clip editor; notes drawn,
-  painted and moved in a piano roll under the pattern editor. The order from
-  here (the MCP connection was started early, on the `api` branch):
-  1. More natural input, built on the recorder: start from a groove (pick a
-     mood, tempo and key, get a few bars of drums, bass and chords, and sing
-     the melody over them); re-sing just a selection (the song plays a bar
-     before, the take replaces only those rows); tap the tempo instead of
-     setting speed and tempo.
-  2. Sound effects by voice ("pew", "boing", "kssh"), exported like the
-     music, and chords by name ("C G Am F") or strummed on a guitar.
-  3. AI arranging over MCP: the first version is done (below); more tools
-     next.
-- **`api` (first version done and merged into `recorder`; see `MCP.md`):** FamiTracker
-  is the MCP server itself, speaking Streamable HTTP on `127.0.0.1` with an
-  access token, opt-in in File > Connect Claude Code. Its 17 tools read the
-  song in musical terms, write parts, add instruments from presets,
-  transpose and change mode, set the tempo, add chords and a bass line, an
-  echo and vibrato, change a mood in one go, check the song, and play it.
-  Next: exporting a looping OGG, the phone page, other tracks, presets for
-  the other chips.
-  The plan it started from: a local HTTP/JSON API to the running FamiTracker,
-  bound to `127.0.0.1` and opt-in. It would cover song info, pattern cells,
-  instruments, play/stop and save/export, and run requests on the UI thread
-  through the undo system. A separate MCP server would wrap it for agentic
-  workflows, such as asking an assistant to arrange a recorded melody ("add
-  chords and a bass line, cozy village style"). A first version could use
-  whole-song text export/import plus transport controls. Decided so far:
-  - The client is Claude Code on the same PC.
-  - Claude works in musical terms: bars, beats, note names, instruments, and
-    the key and chords from the recorder's harmony code, not hex rows. It
-    writes notes, adds instruments from sound presets ("soft flute lead",
-    "plucky bass", "noise snare"), sets the tempo, plays a range and exports
-    a looping OGG.
-  - It can't hear, so it gets checks: notes outside the key, clashes between
-    channels, notes outside a channel's range, parts too busy or too empty.
-  - By default its ideas arrive as clips to listen to and place; a setting
-    lets it change the song directly, always undoable.
-  - Mood changes ("make it darker", "happier", "like an underwater theme")
-    combine tools that work reliably on their own: change the key or mode,
-    the tempo, the sounds, add an echo channel or vibrato. The result is a
-    clip or a new version of the song to compare.
-  - A small page on the phone records ideas over Wi-Fi into the clips.
+  Still to do, in this order:
+  1. Sound effects by voice ("pew", "boing", "kssh"), exported like the
+     music (see Where things stand).
+  2. More natural input: start from a groove (pick a mood, tempo and key,
+     get a few bars of drums, bass and chords, and sing the melody over
+     them); re-sing just a selection (the song plays a bar before, the take
+     replaces only those rows); tap the tempo instead of setting speed and
+     tempo.
+  3. Chords by name ("C G Am F") or strummed on a guitar.
+  4. A small page on the phone that records ideas over Wi-Fi into the clips.
+- **`api` (merged into `recorder`, where it continues; see `MCP.md`):**
+  FamiTracker is the MCP server itself, speaking Streamable HTTP on
+  `127.0.0.1` with an access token, opt-in in File > Connect Claude Code.
+  Claude Code in WSL connects through `famitracker-mcp.exe`. Claude works in
+  musical terms (bars, beats, note names, instruments, keys and chords), can't
+  hear, so it gets checks and a picture of the notes, and its ideas arrive as
+  clips unless the user lets it change the song directly, always undoable.
+  Its 25 tools:
+  - read and write parts, presets, transpose and change mode, chords and a
+    bass line, echo, vibrato, moods ("darker", "happier", "underwater") in
+    one go, checks, a picture of the notes, play;
+  - versions of a song as new tracks (night, tense for battles, and others)
+    and jingles (level up, victory, item, new quest, discovery, rest, defeat,
+    danger), on any track of the module;
+  - checking and setting the loop, and the export for games;
+  - switching the expansion chip (it asks first when notes would be
+    cleared), with the VRC7's built-in sounds by name;
+  - speed and tempo from a BPM (rows of even length first) or as
+    FamiTracker's own numbers.
+
+  Ideas not built yet: sound effects, instruments described in words, FDS
+  and N163 instruments, a soundtrack guide (main motif, house sounds, keys
+  per area), song sections, named versions to compare, listening help (loop,
+  solo, mute), and recording through Claude.
 - **`nsf-import` (planned):** pull instruments, and optionally songs, out of
   NSF files.
   - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
@@ -165,3 +180,8 @@ when ready.
   - Where the source sound can't be reproduced on NSF + VRC6, use the closest
     match.
   - VRC6 game rips give real VRC6 instruments.
+
+## Open questions
+
+- Some recordings "don't sound correct" (maybe background noise). Waiting
+  for a sample take from `Documents\FamiTracker recordings` to diagnose.
