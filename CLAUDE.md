@@ -1,8 +1,9 @@
 # CLAUDE.md
 
-Guidance for working in this repository. This is the `beginner-friendly`
-branch: FamiTracker 0.4.6 with a modernized build, plus beginner features in
-progress. The plan and its status are in `ROADMAP.md`. Unless a section says
+Guidance for working in this repository. This is the `recorder` branch, made
+from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
+audio-to-notes recorder described in `RECORDER.md`. The overall plan is in
+`ROADMAP.md`. Unless a section says
 otherwise, everything below describes the 0.4.6 code as found on `master` and
 was checked against that source.
 
@@ -118,6 +119,11 @@ replaced the VS2008 project:
 There are no automated tests. What exists:
 
 - **CI build:** every push compiles Win32 Release and Debug (see Building).
+- **Transcription engine** (`Source/Transcribe/`): plain C++14 that builds and
+  tests on Linux with `cmake -S Source/Transcribe -B build/transcribe`,
+  `cmake --build build/transcribe` and
+  `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
+  Linux and with MSVC, and lists the result in the Release build report.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or

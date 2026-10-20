@@ -446,6 +446,14 @@
     <None Include="gpl.txt" />
     <None Include="ReadMe.txt" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Transcribe\WavReader.cpp" />
+    <ClCompile Include="Source\Transcribe\PitchTracker.cpp" />
+    <ClCompile Include="Source\Transcribe\Notes.cpp" />
+    <ClCompile Include="Source\Transcribe\Hits.cpp" />
+    <ClCompile Include="Source\Transcribe\TextModule.cpp" />
+    <ClInclude Include="Source\Transcribe\Transcribe.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

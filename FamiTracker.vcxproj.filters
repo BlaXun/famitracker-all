@@ -243,6 +243,9 @@
     <Filter Include="HTML">
       <UniqueIdentifier>{4E08F399-67EB-5CB8-B355-D7B6B45E3CC3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Recorder">
+      <UniqueIdentifier>{7814030B-35CE-5CEF-9CED-EF6650C58345}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Exception.cpp">
@@ -1219,5 +1222,25 @@
     <None Include="Texts\FastTracker effects.txt" />
     <None Include="gpl.txt" />
     <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Transcribe\WavReader.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Transcribe\PitchTracker.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Transcribe\Notes.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Transcribe\Hits.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Transcribe\TextModule.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Transcribe\Transcribe.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

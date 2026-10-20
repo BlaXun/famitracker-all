@@ -39,6 +39,22 @@ jobs:
             build/Win32/${{ matrix.configuration }}/FamiTracker.pdb
           if-no-files-found: error
 
+      - name: Build and test the transcription engine
+        if: matrix.configuration == 'Release'
+        shell: bash
+        run: |
+          cmake -S Source/Transcribe -B build/transcribe -A Win32 2>&1 | tee transcribe-build.log
+          cmake --build build/transcribe --config Release 2>&1 | tee -a transcribe-build.log
+          ctest --test-dir build/transcribe -C Release --output-on-failure 2>&1 | tee transcribe-test.log
+
+      - name: Upload wav2ftm.exe
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wav2ftm-Win32
+          path: build/transcribe/Release/wav2ftm.exe
+          if-no-files-found: error
+
       # Publishes compiler diagnostics, toolchain details and facts about the built exe
       # as a check run named "Build report (<config> Win32)", readable through the
       # GitHub checks API (gh api repos/<owner>/<repo>/commits/<sha>/check-runs).
@@ -51,8 +67,9 @@ jobs:
         run: |
           $exe = "build/Win32/$env:CONFIGURATION/FamiTracker.exe"
           $diag = @()
-          if (Test-Path msbuild.log) {
-            $diag = Get-Content msbuild.log |
+          $logs = @('msbuild.log', 'transcribe-build.log') | Where-Object { Test-Path $_ }
+          if ($logs) {
+            $diag = Get-Content $logs |
               Where-Object { $_ -match ':\s+(fatal )?(error|warning) [A-Z]+[0-9]+' } |
               ForEach-Object { (($_ -replace '^\s*\d+>', '') -replace '\s+\[[^\]]+\]\s*$', '').Trim() } |
               Sort-Object -Unique
@@ -86,7 +103,11 @@ jobs:
             $info += 'FamiTracker.exe: missing'
           }
 
-          $text = @('## Toolchain and binary') + $info + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
+          $tests = @()
+          if (Test-Path transcribe-test.log) {
+            $tests = Get-Content transcribe-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed|end-to-end' }
+          }
+          $text = @('## Toolchain and binary') + $info + @('', '## Transcription engine tests') + $tests + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
           $text = $text -join "`n"
           if ($text.Length -gt 60000) { $text = $text.Substring(0, 60000) + "`n... (truncated)" }
           $body = @{
@@ -101,3 +122,17 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5
           $body | gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input - | Out-Null
+
+  transcribe-linux:
+    name: Transcription engine (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -S Source/Transcribe -B build/transcribe -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/transcribe -j 4
+
+      - name: Test
+        run: ctest --test-dir build/transcribe --output-on-failure
