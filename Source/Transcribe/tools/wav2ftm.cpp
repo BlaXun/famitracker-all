@@ -50,6 +50,9 @@ void Usage()
 		"  --key K --scale S     snap notes to a scale, e.g. --key C --scale pentatonic\n"
 		"                        (scales: chromatic, major, minor, pentatonic, minor-pentatonic)\n"
 		"  --transpose N         shift by N semitones instead of the automatic octave choice\n"
+		"  --min-rest MS         breaks shorter than this many milliseconds are held through,\n"
+		"                        so the note lasts until the next one (default: 150; 0 keeps\n"
+		"                        every break as a rest)\n"
 		"  --pattern-length N    rows per pattern, 16-256 (default: 64)\n"
 		"  --keep-silence        keep leading silence instead of starting at row 0\n"
 		"  --title TEXT          song title (default: input file name)\n"
@@ -84,7 +87,7 @@ const char *DrumName(Drum d)
 int main(int argc, char **argv)
 {
 	std::string mode = "melody", input, output, title, keyName, scaleName;
-	int bpm = 150, channel = -1, transpose = 0, patternLength = 64;
+	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150;
 	bool haveTranspose = false, keepSilence = false, print = false;
 	Expansion expansion = Expansion::VRC6;
 
@@ -111,6 +114,7 @@ int main(int argc, char **argv)
 		else if (a == "--scale") scaleName = next("--scale");
 		else if (a == "--transpose") { if (!ParseInt(next("--transpose"), transpose)) { std::fprintf(stderr, "wav2ftm: --transpose needs a number\n"); return 2; } haveTranspose = true; }
 		else if (a == "--pattern-length") { if (!ParseInt(next("--pattern-length"), patternLength)) { std::fprintf(stderr, "wav2ftm: --pattern-length needs a number\n"); return 2; } }
+		else if (a == "--min-rest") { if (!ParseInt(next("--min-rest"), minRestMs)) { std::fprintf(stderr, "wav2ftm: --min-rest needs a number of milliseconds\n"); return 2; } }
 		else if (a == "--keep-silence") keepSilence = true;
 		else if (a == "--title") title = next("--title");
 		else if (a == "--print") print = true;
@@ -133,6 +137,10 @@ int main(int argc, char **argv)
 	}
 	if (patternLength < 16 || patternLength > 256) {
 		std::fprintf(stderr, "wav2ftm: --pattern-length must be between 16 and 256\n");
+		return 2;
+	}
+	if (minRestMs < 0 || minRestMs > 5000) {
+		std::fprintf(stderr, "wav2ftm: --min-rest must be between 0 and 5000 milliseconds\n");
 		return 2;
 	}
 	if (channel < 0)
@@ -184,11 +192,20 @@ int main(int argc, char **argv)
 		Transpose(notes, shift);
 		if (scale != Scale::Chromatic)
 			SnapToScale(notes, root, scale);
-		melody = Quantize(notes, options.grid, !keepSilence);
+		QuantizeOptions quantize;
+		quantize.alignToStart = !keepSilence;
+		quantize.minRestSeconds = minRestMs / 1000.0;
+		melody = Quantize(notes, options.grid, quantize);
 		if (print) {
-			std::printf("%zu notes (shifted %+d semitones):\n", notes.size(), shift);
-			for (size_t i = 0; i < melody.size(); ++i)
-				std::printf("  row %4d  %s  %3d rows\n", melody[i].row, FamiTrackerNoteName(melody[i].midi).c_str(), melody[i].length);
+			std::printf("%zu notes (shifted %+d semitones):\n", melody.size(), shift);
+			for (size_t i = 0; i < melody.size(); ++i) {
+				const int end = melody[i].row + melody[i].length;
+				const int rest = (i + 1 < melody.size() ? melody[i + 1].row : end) - end;
+				std::printf("  row %4d  %s  %3d rows", melody[i].row, FamiTrackerNoteName(melody[i].midi).c_str(), melody[i].length);
+				if (rest > 0)
+					std::printf(", then %d rows rest", rest);
+				std::printf("\n");
+			}
 		}
 	}
 	else {

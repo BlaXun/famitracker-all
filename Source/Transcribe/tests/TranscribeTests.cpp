@@ -90,6 +90,24 @@ struct Synth {
 
 	void Silence(double seconds) { audio.samples.resize(audio.samples.size() + size_t(seconds * RATE), 0.0f); }
 
+	// Continues the current tone with an exponential decay (time constant tau), the
+	// way a whistle or hum fades out.
+	void Decay(double freq, double seconds, double amp, double tau)
+	{
+		const int n = int(seconds * RATE);
+		for (int i = 0; i < n; ++i) {
+			phase += 2.0 * PI * freq / RATE;
+			audio.samples.push_back(float(amp * std::exp(-double(i) / (tau * RATE)) * std::sin(phase)));
+		}
+	}
+
+	// Room noise over the whole recording.
+	void AddNoise(double amp)
+	{
+		for (float &v : audio.samples)
+			v += float(amp * Noise());
+	}
+
 	// A 40 ms decaying noise burst: bright = high-passed (tap with a nail),
 	// dark = low-passed (tap with the finger pad).
 	void Tap(bool bright, double amp = 0.8)
@@ -116,7 +134,7 @@ std::vector<GridNote> ToRows(std::vector<Note> notes, int shift = 0, int tempo =
 	Transpose(notes, shift);
 	Grid grid;
 	grid.tempo = tempo;
-	return Quantize(notes, grid, true);
+	return Quantize(notes, grid, QuantizeOptions());
 }
 
 // Text of the given channel's cell on a ROW line ("ROW 05 : c0 : c1 ...").
@@ -277,6 +295,31 @@ void TestNoteLengths()
 	}
 }
 
+// A quieter note keeps its fade-out, even below the silence gate that the loudest
+// note sets for the whole recording.
+void TestQuietEdges()
+{
+	Synth s;
+	s.Silence(0.3);
+	s.Tone(MidiToFrequency(81), 0.5, 0.5);	// loud: sets the gate at about -44 dBFS
+	s.Silence(0.4);
+	const double quietStart = s.audio.Duration();
+	s.Tone(MidiToFrequency(84), 0.4, 0.03, false);	// about 24 dB quieter...
+	const double toneEnd = s.audio.Duration();
+	s.Decay(MidiToFrequency(84), 0.4, 0.03, 0.040);	// ...fading out with a 40 ms time constant
+	s.Silence(0.3);
+	s.AddNoise(0.0006);	// room noise, about -69 dBFS
+	const std::vector<Note> notes = Transcribe(s.audio);
+	CHECK(notes.size() == 2);
+	if (notes.size() == 2) {
+		CHECK_NEAR(notes[1].start, quietStart, 0.02);
+		// The gate alone would end the note about 50 ms into the fade
+		CHECK(notes[1].end > toneEnd + 0.08);
+		CHECK(notes[1].end < toneEnd + 0.16);
+		CHECK(notes[1].midi == 84);
+	}
+}
+
 void TestMelodies()
 {
 	{
@@ -339,11 +382,53 @@ void TestQuantizeRules()
 	notes[1].start = 0.30; notes[1].end = 0.60; notes[1].midi = 62;
 	notes[2].start = 0.31; notes[2].end = 0.40; notes[2].midi = 64;	// same row as the previous, shorter
 	Grid grid;
-	const std::vector<GridNote> rows = Quantize(notes, grid, true);
+	const std::vector<GridNote> rows = Quantize(notes, grid, QuantizeOptions());
 	CHECK(rows.size() == 2);
 	if (rows.size() == 2) {
 		CHECK(rows[0].row == 0 && rows[0].length == 3);	// cut where the next note starts
 		CHECK(rows[1].row == 3 && rows[1].midi == 62);
+	}
+	{
+		// A note keeps its rounded duration: 180 ms is 2 rows, even though it
+		// starts late in one row and ends early in another
+		std::vector<Note> n(2);
+		n[0].start = 0.00; n[0].end = 0.20; n[0].midi = 60;
+		n[1].start = 0.56; n[1].end = 0.74; n[1].midi = 62;
+		const std::vector<GridNote> r = Quantize(n, grid, QuantizeOptions());
+		CHECK(r.size() == 2);
+		if (r.size() == 2)
+			CHECK(r[1].row == 6 && r[1].length == 2);
+	}
+	{
+		// A short break is held through, a longer one stays a rest
+		std::vector<Note> n(3);
+		n[0].start = 0.00; n[0].end = 0.32; n[0].midi = 60;	// 100 ms break
+		n[1].start = 0.42; n[1].end = 0.80; n[1].midi = 64;	// 300 ms break
+		n[2].start = 1.10; n[2].end = 1.50; n[2].midi = 67;
+		std::vector<GridNote> r = Quantize(n, grid, QuantizeOptions());
+		CHECK(r.size() == 3);
+		if (r.size() == 3) {
+			CHECK(r[0].row == 0 && r[0].length == 4);	// held until the next note
+			CHECK(r[1].row == 4 && r[1].length == 4);	// 0.38 s, then a rest
+			CHECK(r[2].row == 11 && r[2].length == 4);
+		}
+		QuantizeOptions keep;
+		keep.minRestSeconds = 0.0;
+		r = Quantize(n, grid, keep);
+		CHECK(r.size() == 3);
+		if (r.size() == 3)
+			CHECK(r[0].length == 3);	// 0.32 s, and the break stays
+	}
+	{
+		// Two notes on one row (a quick slide) become one note spanning both,
+		// at the pitch of the longer one
+		std::vector<Note> n(2);
+		n[0].start = 0.00; n[0].end = 0.04; n[0].midi = 58;
+		n[1].start = 0.04; n[1].end = 0.50; n[1].midi = 60;
+		const std::vector<GridNote> r = Quantize(n, grid, QuantizeOptions());
+		CHECK(r.size() == 1);
+		if (r.size() == 1)
+			CHECK(r[0].row == 0 && r[0].length == 5 && r[0].midi == 60);
 	}
 }
 
@@ -425,6 +510,8 @@ void TestTextModule()
 	CHECK(text.find("EXPANSION       1\n") != std::string::npos);
 	CHECK(text.find("COLUMNS : 1 1 1 1 1 1 1 1\n") != std::string::npos);
 	CHECK(text.find("INSTVRC6   0") != std::string::npos);
+	// The lead holds at 10 (release point 5) until the note release fades it out
+	CHECK(text.find("MACROVRC6   0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 	CHECK(text.find("INST2A03   1") != std::string::npos);
 	CHECK(text.find("TRACK  16   6 150") != std::string::npos);
 	CHECK(text.find("ORDER 00 : 00 00 00 00 00 00 00 00\n") != std::string::npos);
@@ -432,9 +519,9 @@ void TestTextModule()
 
 	CHECK(CellOf(text, 0, 0, 5) == "A-3 00 . ...");
 	CHECK(CellOf(text, 0, 4, 5) == "C-4 00 . ...");	// next note starts where the first ends: no note-off
-	CHECK(CellOf(text, 0, 6, 5) == "--- .. . ...");	// note-off after the 2-row note
+	CHECK(CellOf(text, 0, 6, 5) == "=== .. . ...");	// note release after the 2-row note
 	CHECK(CellOf(text, 0, 8, 5) == "G-3 00 . ...");
-	CHECK(CellOf(text, 0, 11, 5) == "--- .. . ...");
+	CHECK(CellOf(text, 0, 11, 5) == "=== .. . ...");
 	CHECK(CellOf(text, 0, 7, 5) == "... .. . ...");
 	CHECK(CellOf(text, 0, 0, 3) == "4-# 01 F ...");	// kick on the noise channel
 	CHECK(CellOf(text, 0, 2, 3) == "A-# 02 C ...");	// snare
@@ -449,11 +536,12 @@ void TestTextModule()
 	o2.melodyChannel = 0;
 	const std::string text2 = WriteTextModule(later, std::vector<GridHit>(), o2);
 	CHECK(ValidateTextModule(text2, &error));
-	CHECK(text2.find("ORDER 03 : 03 00 00 00 00\n") != std::string::npos);	// note-off on row 48 = frame 3
+	CHECK(text2.find("ORDER 03 : 03 00 00 00 00\n") != std::string::npos);	// release on row 48 = frame 3
 	CHECK(CellOf(text2, 2, 8, 0) == "A-3 00 . ...");
-	CHECK(CellOf(text2, 3, 0, 0) == "--- .. . ...");
+	CHECK(CellOf(text2, 3, 0, 0) == "=== .. . ...");
 	CHECK(text2.find("INST2A03   0     0  -1  -1  -1   0") != std::string::npos);
 	CHECK(text2.find("MACROVRC6") == std::string::npos);
+	CHECK(text2.find("MACRO       0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 
 	// The validator rejects what FamiTracker's importer would reject
 	std::string bad = text;
@@ -493,7 +581,7 @@ void TestEndToEnd()
 
 	Transpose(notes, OctaveShiftFor(notes, 67));
 	TextModuleOptions o;
-	const std::vector<GridNote> rows = Quantize(notes, o.grid, true);
+	const std::vector<GridNote> rows = Quantize(notes, o.grid, QuantizeOptions());
 	CHECK(rows.size() == 3);
 	if (rows.size() == 3) {
 		CHECK(FamiTrackerNoteName(rows[0].midi) == "G-3");
@@ -513,6 +601,7 @@ int main()
 	TestScales();
 	TestPitchAccuracy();
 	TestNoteLengths();
+	TestQuietEdges();
 	TestMelodies();
 	TestQuantizeRules();
 	TestHits();

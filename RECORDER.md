@@ -7,9 +7,11 @@ recordings and selections become reusable clips.
 ## Requirements
 
 - **A note lasts as long as the sound that made it.** A long hum becomes a long
-  note, ended by a note-off (`---`) where the hum stops. The default lead
-  instrument's volume envelope holds its last value, so long notes stay
-  audible. `TestNoteLengths` covers this.
+  note. The lead instrument holds its volume until a note release (`===`) where
+  the sound stops, then fades out over about 80 ms instead of stopping dead.
+  Breaks shorter than 150 ms between two notes are held through, the way a
+  musician would write them. `TestNoteLengths`, `TestQuietEdges` and
+  `TestQuantizeRules` cover this.
 - Output stays plain FamiTracker pattern data. There are no new `.ftm` blocks,
   so songs open in any FamiTracker.
 
@@ -30,9 +32,9 @@ recordings and selections become reusable clips.
     `CTextExport::ImportFile`.
 - [x] `wav2ftm` command-line tool. CI builds it as the `wav2ftm-Win32`
   artifact.
-- [x] Tests: 157 checks on synthesized audio covering:
+- [x] Tests: 174 checks on synthesized audio covering:
   - pitch of hums and whistles,
-  - note lengths,
+  - note lengths, quiet note endings, rounding to rows and short breaks,
   - repeated notes and glides,
   - octave fit and scales,
   - taps,
@@ -40,7 +42,12 @@ recordings and selections become reusable clips.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
-- [ ] Tuning on real phone recordings.
+- [ ] Tuning on real recordings. Round one, a 34-second whistle: notes sounded
+  cut short. Quiet note endings were lost under the silence gate, rounding
+  start and end separately cost up to 80 ms per note, short breaks became
+  hard cuts, and two notes on one row lost the second one's length. All four
+  are fixed. Before, 11 of 40 notes in that recording stopped more than 50 ms
+  before the whistle did; now, counting the release fade, none do.
 - [ ] Record dialog in FamiTracker:
   - microphone input via `waveIn` (winmm),
   - count-in and metronome at the song's tempo,
@@ -59,6 +66,7 @@ wav2ftm --print whistle.wav whistle.txt                 melody on VRC6 pulse 1
 wav2ftm --mode drums --bpm 120 taps.wav taps.txt        rhythm on the noise channel
 wav2ftm --key C --scale pentatonic hum.wav hum.txt      snap to a scale
 wav2ftm --channel 7 bassline.wav bass.txt               VRC6 sawtooth, bass register
+wav2ftm --min-rest 0 staccato.wav staccato.txt          keep every break as a rest
 ```
 
 Then, in FamiTracker: File > Import Text. Convert phone recordings in other
@@ -70,10 +78,19 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   1. `TrackPitch` runs YIN with a 20 ms window and a 5 ms hop.
   2. `SegmentNotes` treats frames more than 35 dB below the loudest frame as
      silence. It starts a new note when the pitch moves at least 0.6
-     semitones for at least 35 ms.
+     semitones for at least 35 ms. Each note then takes back the quieter
+     start and end of its own tone: neighbouring frames that are still
+     pitched, within a semitone, no more than 30 dB below the note's peak and
+     6 dB above the noise floor (the 10th percentile of frame levels). The
+     loudest moment of a recording sets the gate for everything, so without
+     this, quieter notes lose their fade-out.
   3. `OctaveShiftFor` moves the median note to G4 (MIDI 67) for leads, or to
      G3 (MIDI 55) for the triangle and sawtooth.
-  4. `SnapToScale`, then `Quantize`.
+  4. `SnapToScale`, then `Quantize`. A note starts on its nearest row and
+     keeps its rounded duration, so a 180 ms note is 2 rows wherever it
+     starts. A break shorter than `minRestSeconds` (150 ms) is held through,
+     notes that touch always join up, and two notes that land on one row
+     merge into one note at the longer one's pitch.
 - **Pitch names:** FamiTracker's note index is MIDI − 24, so `A-3` is 440 Hz.
 - **Rows per second:** `F * floor(24T/S) / (60F - (24T mod S))`, the same
   formula as `CSoundGen`'s tempo accumulator.
@@ -87,6 +104,9 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   - Titles are cut to 31 characters, because FamiTracker copies them with
     `strcpy_s` into 32 bytes.
   - `ValidateTextModule` runs on every write.
+  - The Lead instrument's volume macro is `15 14 13 12 11 10 7 4 2 0` with
+    the release point on item 5: it holds at 10 while the note lasts, and the
+    `===` at the note's end plays `7 4 2 0`.
 - **Speed:** about 4x faster than real time, since YIN costs window × lag
   operations per frame. An FFT-based difference function would speed this up
   if needed.

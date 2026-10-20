@@ -33,7 +33,7 @@
 //   ReadWav -> DetectHits -> ClassifyHits -> QuantizeHits
 //
 // A note keeps the length of the sound that produced it: a long hum becomes a
-// long note, ended by a note-off where the hum stops.
+// long note, ended by a note release where the hum stops.
 //
 
 #include <string>
@@ -92,6 +92,11 @@ struct NoteOptions {
 	double maxGapSeconds = 0.040;	// shorter dropouts inside a note are bridged
 	double changeSemitones = 0.6;	// pitch must move this far to start a new note...
 	double changeSeconds = 0.035;	// ...for at least this long (keeps vibrato and glides together)
+	// A note keeps the quieter start and end of its tone (fade-in, decaying tail), even
+	// below the silence gate, while those frames are
+	double edgeAperiodicity = 0.35;	// ...still this periodic,
+	double edgeDb = -30.0;			// ...no further than this below the note's loudest frame,
+	double edgeNoiseMarginDb = 6.0;	// ...and at least this far above the noise floor.
 };
 
 struct Note {
@@ -132,14 +137,22 @@ struct Grid {
 
 struct GridNote {
 	int row = 0;		// first row
-	int length = 1;		// rows until the note-off (or the next note)
+	int length = 1;		// rows until the note ends (release) or the next note starts
 	int midi = 0;
 };
 
-// Rounds note starts and ends to rows. Keeps one note at a time: a note that
-// would overlap the next one is cut where the next one starts. With
-// alignToStart, the first note lands on row 0.
-std::vector<GridNote> Quantize(const std::vector<Note> &notes, const Grid &grid, bool alignToStart);
+struct QuantizeOptions {
+	bool alignToStart = true;		// shift everything so the first note lands on row 0
+	double minRestSeconds = 0.15;	// a shorter break between two notes is held through
+									// (the first note lasts until the second starts);
+									// 0 keeps every break as a rest
+};
+
+// Puts notes on rows. A note starts on its nearest row and keeps its rounded
+// duration, so a short note doesn't lose half its length to rounding. One note
+// plays at a time: a note that would overlap the next one ends where the next
+// one starts.
+std::vector<GridNote> Quantize(const std::vector<Note> &notes, const Grid &grid, const QuantizeOptions &options);
 
 // ---------------------------------------------------------------------------
 // Percussive hits (finger taps, beatboxing)

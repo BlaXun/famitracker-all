@@ -42,6 +42,10 @@ const int SAWTOOTH_CHANNEL = 7;
 const int MAX_FRAMES = 128;
 const int MAX_PATTERN_LENGTH = 256;
 
+// Lead volume envelope: a small attack accent, a sustain level of 10 at item 5
+// (the release point), then the release fade.
+const char LEAD_VOLUME[] = "15 14 13 12 11 10 7 4 2 0";
+
 // Effect letters, as EFF_CHAR in FamiTrackerTypes.h (index = effect - 1).
 const char EFFECT_LETTERS[] = "FBDCE3\0HI047PGZ12VYQRASX\0HIJWHIJ";
 const int EFFECT_LETTER_COUNT = 32;
@@ -117,9 +121,11 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 		const int off = n.row + n.length;
 		const bool nextStartsHere = (i + 1 < melody.size() && melody[i + 1].row == off);
 		if (!nextStartsHere) {
-			Cell halt;
-			halt.note = "---";	// note-off where the sound stopped
-			melodyCells[off] = halt;
+			// Note release where the sound stopped: the Lead instrument fades out
+			// over a few frames, like the end of a whistle, instead of the hard cut of ---.
+			Cell release;
+			release.note = "===";
+			melodyCells[off] = release;
 		}
 		lastRow = std::max(lastRow, off);
 	}
@@ -166,11 +172,12 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 	out << Padded("VIBRATO", 15) << " 1\n";
 	out << Padded("SPLIT", 15) << " 32\n\n";
 
-	// Macros: a sustaining lead (holds its last volume, so long notes stay long)
-	// and three short drum envelopes.
+	// Macros: a sustaining lead and three short drum envelopes. The lead's volume
+	// holds at 10 (the release point, item 5) for as long as the note lasts, so long
+	// notes stay long; a note release (===) then fades it out with 7 4 2 0.
 	out << "# Macros\n";
 	if (haveMelody && !melodyOnVrc6) {
-		out << "MACRO       0   0  -1  -1   0 : 15 14 13 12 11 10\n";
+		out << "MACRO       0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
 		out << "MACRO       4   0  -1  -1   0 : 1\n";	// 25% duty
 	}
 	if (haveDrums) {
@@ -179,7 +186,7 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 		out << "MACRO       0   3  -1  -1   0 : 10 6 3 1 0\n";
 	}
 	if (haveMelody && melodyOnVrc6) {
-		out << "MACROVRC6   0   0  -1  -1   0 : 15 14 13 12 11 10\n";
+		out << "MACROVRC6   0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
 		out << "MACROVRC6   4   0  -1  -1   0 : 3\n";	// 4/16 duty on the VRC6 pulses
 	}
 	out << "\n";

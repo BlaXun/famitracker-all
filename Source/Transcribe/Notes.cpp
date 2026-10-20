@@ -156,15 +156,23 @@ std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const Note
 	const size_t changeFrames = std::max<size_t>(1, size_t(std::lround(options.changeSeconds / hop)));
 	const size_t referenceFrames = std::max<size_t>(4, size_t(std::lround(0.2 / hop)));
 
+	struct Segment {
+		size_t first, last;	// frame indices, inclusive
+		double pitch;		// median pitch
+		int midi;			// rounded pitch
+	};
+	std::vector<Segment> segments;
+
 	auto emit = [&](size_t first, size_t last) {
+		if (double(last - first + 1) * hop + 1e-9 < options.minNoteSeconds)
+			return;
 		std::vector<double> values(smooth.begin() + first, smooth.begin() + last + 1);
-		Note note;
-		note.start = frames[first].time - hop / 2.0;
-		note.end = frames[last].time + hop / 2.0;
-		note.pitch = Median(values);
-		note.midi = int(std::lround(note.pitch));
-		if (note.end - note.start + 1e-9 >= options.minNoteSeconds)
-			notes.push_back(note);
+		Segment s;
+		s.first = first;
+		s.last = last;
+		s.pitch = Median(values);
+		s.midi = int(std::lround(s.pitch));
+		segments.push_back(s);
 	};
 
 	size_t i = 0;
@@ -203,19 +211,83 @@ std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const Note
 	}
 
 	// 5. Join touching notes that ended up on the same semitone
-	std::vector<Note> joined;
-	for (size_t j = 0; j < notes.size(); ++j) {
-		if (!joined.empty() && joined.back().midi == notes[j].midi && notes[j].start - joined.back().end < hop * 1.5) {
-			Note &prev = joined.back();
-			const double a = prev.end - prev.start, b = notes[j].end - notes[j].start;
-			prev.pitch = (prev.pitch * a + notes[j].pitch * b) / (a + b);
-			prev.end = notes[j].end;
+	std::vector<Segment> joined;
+	for (size_t j = 0; j < segments.size(); ++j) {
+		const Segment &s = segments[j];
+		if (!joined.empty() && joined.back().midi == s.midi && s.first <= joined.back().last + 2) {
+			Segment &prev = joined.back();
+			const double a = double(prev.last - prev.first + 1), b = double(s.last - s.first + 1);
+			prev.pitch = (prev.pitch * a + s.pitch * b) / (a + b);
+			prev.last = s.last;
 		}
 		else {
-			joined.push_back(notes[j]);
+			joined.push_back(s);
 		}
 	}
-	return joined;
+
+	// 6. Give each note the quieter start and end of its tone. The silence gate above is
+	//    set by the loudest moment of the whole recording, so on its own it cuts the
+	//    fade-in and the decaying tail of every quieter note, and the note sounds cut short.
+	//    Frames next to a note still belong to it while they are pitched, within a
+	//    semitone of the note's edge, above the noise floor and not far below the note's
+	//    own peak. A tail never runs into the next note.
+	if (!joined.empty()) {
+		std::vector<double> level(n);
+		for (size_t f = 0; f < n; ++f)
+			level[f] = frames[f].rms > 1e-9 ? 20.0 * std::log10(frames[f].rms) : -120.0;
+		std::vector<double> sorted(level);
+		const size_t tenth = sorted.size() / 10;
+		std::nth_element(sorted.begin(), sorted.begin() + tenth, sorted.end());
+		const double noiseFloor = sorted[tenth];
+
+		auto midiAt = [&](size_t k) { return FrequencyToMidi(frames[k].frequency); };
+		const size_t edgeFrames = std::max<size_t>(1, size_t(std::lround(0.05 / hop)));
+
+		for (size_t s = 0; s < joined.size(); ++s) {
+			Segment &seg = joined[s];
+			const size_t coreFirst = seg.first, coreLast = seg.last;
+			double peak = -120.0;
+			for (size_t k = coreFirst; k <= coreLast; ++k)
+				peak = std::max(peak, level[k]);
+			const double edgeGate = std::max(noiseFloor + options.edgeNoiseMarginDb, peak + options.edgeDb);
+			auto belongs = [&](size_t k, double reference) {
+				return frames[k].frequency > 0.0 && frames[k].aperiodicity <= options.edgeAperiodicity &&
+					level[k] >= edgeGate && std::fabs(midiAt(k) - reference) < 1.0;
+			};
+
+			// Backwards, up to where the previous note (already extended) ends
+			const size_t lowest = s > 0 ? joined[s - 1].last + 1 : 0;
+			double reference = Median(std::vector<double>(smooth.begin() + coreFirst,
+				smooth.begin() + std::min(coreLast, coreFirst + edgeFrames - 1) + 1));
+			size_t k = coreFirst;
+			while (k > lowest && belongs(k - 1, reference)) {
+				--k;
+				reference = 0.8 * reference + 0.2 * midiAt(k);	// follow a slow drift
+			}
+			seg.first = k;
+
+			// Forwards, up to where the next note starts
+			const size_t highest = s + 1 < joined.size() ? joined[s + 1].first - 1 : n - 1;
+			reference = Median(std::vector<double>(smooth.begin() + (coreLast + 1 > coreFirst + edgeFrames ? coreLast + 1 - edgeFrames : coreFirst),
+				smooth.begin() + coreLast + 1));
+			k = coreLast;
+			while (k < highest && belongs(k + 1, reference)) {
+				++k;
+				reference = 0.8 * reference + 0.2 * midiAt(k);
+			}
+			seg.last = k;
+		}
+	}
+
+	for (size_t j = 0; j < joined.size(); ++j) {
+		Note note;
+		note.start = frames[joined[j].first].time - hop / 2.0;
+		note.end = frames[joined[j].last].time + hop / 2.0;
+		note.pitch = joined[j].pitch;
+		note.midi = joined[j].midi;
+		notes.push_back(note);
+	}
+	return notes;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +368,7 @@ double Grid::RowsPerSecond() const
 	return double(frameRate) * decrement / (60.0 * frameRate - remainder);
 }
 
-std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid, bool alignToStart)
+std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid, const QuantizeOptions &options)
 {
 	std::vector<GridNote> result;
 	const double rate = grid.RowsPerSecond();
@@ -306,30 +378,56 @@ std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid,
 	std::vector<Note> notes(input);
 	std::stable_sort(notes.begin(), notes.end(), [](const Note &a, const Note &b) { return a.start < b.start; });
 
-	const int offset = alignToStart ? int(std::lround(notes.front().start * rate)) : 0;
-	for (size_t i = 0; i < notes.size(); ++i) {
-		const int startRow = int(std::lround(notes[i].start * rate)) - offset;
-		int endRow = int(std::lround(notes[i].end * rate)) - offset;
-		if (endRow <= startRow)
-			endRow = startRow + 1;
-		GridNote g;
-		g.row = std::max(0, startRow);
-		g.length = std::max(1, endRow - g.row);
-		g.midi = notes[i].midi;
+	// Touching notes always join up, whatever minRestSeconds says
+	const double minRest = std::max(options.minRestSeconds, 1e-6);
+	const int offset = options.alignToStart ? int(std::lround(notes.front().start * rate)) : 0;
 
-		if (!result.empty()) {
-			GridNote &prev = result.back();
-			if (g.row <= prev.row) {
-				// Two notes on one row: keep the longer one
-				if (g.length > prev.length)
-					prev = g;
+	// The note waiting for its length, which depends on when the next one starts
+	struct Pending {
+		int row;
+		int midi;
+		double start, end;	// seconds, spanning every note merged into it
+		double longest;		// duration of the note that chose the pitch
+	};
+	auto length = [&](const Pending &p) { return std::max(1, int(std::lround((p.end - p.start) * rate))); };
+
+	Pending pending = Pending();
+	bool havePending = false;
+	for (size_t i = 0; i < notes.size(); ++i) {
+		const Note &n = notes[i];
+		const int row = std::max(0, int(std::lround(n.start * rate)) - offset);
+		if (havePending) {
+			if (row <= pending.row) {
+				// Two notes on one row (say, a quick slide into a note): they become one
+				// note spanning both, at the pitch of the longer one.
+				if (n.end - n.start > pending.longest) {
+					pending.midi = n.midi;
+					pending.longest = n.end - n.start;
+				}
+				pending.end = std::max(pending.end, n.end);
 				continue;
 			}
-			if (g.row < prev.row + prev.length)
-				prev.length = g.row - prev.row;	// one note at a time per channel
+			GridNote g;
+			g.row = pending.row;
+			g.midi = pending.midi;
+			g.length = length(pending);
+			// A short break is held through; an overlap is cut (one note at a time)
+			if (n.start - pending.end < minRest || g.row + g.length > row)
+				g.length = row - g.row;
+			result.push_back(g);
 		}
-		result.push_back(g);
+		pending.row = row;
+		pending.midi = n.midi;
+		pending.start = n.start;
+		pending.end = n.end;
+		pending.longest = n.end - n.start;
+		havePending = true;
 	}
+	GridNote last;
+	last.row = pending.row;
+	last.midi = pending.midi;
+	last.length = length(pending);
+	result.push_back(last);
 	return result;
 }
 
