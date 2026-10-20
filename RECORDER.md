@@ -34,8 +34,8 @@ recordings and selections become reusable clips.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 200 checks on synthesized audio covering:
-  - pitch of hums and whistles,
+- [x] Tests: 208 checks on synthesized audio covering:
+  - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - repeated notes and glides,
   - octave fit and scales,
@@ -52,9 +52,12 @@ recordings and selections become reusable clips.
   are fixed. Before, 11 of 40 notes in that recording stopped more than 50 ms
   before the whistle did; now, counting the release fade, none do.
 - [x] Edit > Insert recording (WAV) in FamiTracker, also in the pattern
-  editor's right-click menu (`Source/InsertRecording.cpp`). It writes the
-  notes into the open song at the cursor, in the cursor's channel: drums on
-  the noise channel, a melody anywhere else (not DPCM). It uses the song's
+  editor's right-click menu (`Source/InsertRecording.cpp`). A dialog
+  (`InsertRecordingDlg.cpp`) asks what the recording holds, preselected with
+  FamiTracker's guess (whistling, humming or singing, taps or beatboxing), and
+  which channel it goes on: the cursor's channel for a melody, the noise
+  channel for drums. It writes the notes into the open song from the cursor
+  row on. It uses the song's
   speed and tempo, and runs on into the following frames, adding frames at
   the end of the song if needed. A touched frame whose pattern other frames
   also play first gets a copy of its own, so the rest of the song doesn't
@@ -78,7 +81,8 @@ recordings and selections become reusable clips.
 
 ```
 wav2ftm --print whistle.wav whistle.txt                 melody on VRC6 pulse 1
-wav2ftm --mode drums --bpm 120 taps.wav taps.txt        rhythm on the noise channel
+wav2ftm --bpm 120 taps.wav taps.txt                     taps are recognised: drums
+wav2ftm --mode hum humming.wav melody.txt               say what it is instead
 wav2ftm --key C --scale pentatonic hum.wav hum.txt      snap to a scale
 wav2ftm --channel 7 bassline.wav bass.txt               VRC6 sawtooth, bass register
 wav2ftm --min-rest 0 staccato.wav staccato.txt          keep every break as a rest
@@ -97,6 +101,13 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
 
 ## How it works
 
+- **What a recording holds** (`GuessSource`, `--mode auto`): taps and
+  beatboxing are pitched less than half the time they sound; whistling and
+  humming nearly all the time. A whistle is an almost pure tone (under 10% of
+  its energy in overtones 2-5, measured with Goertzel filters), a voice is rich
+  in overtones; very high melodies (median from 900 Hz) count as whistling.
+  Whistling is then tracked at 300-4200 Hz and a voice at 70-1100 Hz, which
+  keeps out octave mistakes. `--mode melody` keeps the full 70-4200 Hz.
 - **Melody:**
   1. `TrackPitch` runs YIN with a 20 ms window and a 5 ms hop.
   2. `SegmentNotes` treats frames more than 35 dB below the loudest frame as

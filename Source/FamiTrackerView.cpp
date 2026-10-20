@@ -38,6 +38,7 @@
 #include "Clipboard.h"
 #include "APU/APU.h"
 #include "InsertRecording.h"
+#include "InsertRecordingDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -905,13 +906,29 @@ void CFamiTrackerView::OnEditInsertRecording()
 		return;
 
 	theApp.StopPlayer();
+	const CString Path = FileDialog.GetPathName();
+
+	// Guess what it holds, then let the user confirm or pick the kind and channel
+	recording_kind_t Guess = RECORDING_WHISTLE;
+	CString GuessText, Message;
+	bool Read;
+	{
+		CWaitCursor Wait;
+		Read = GuessRecording(Path, Guess, GuessText, Message);
+	}
+	if (!Read) {
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+	CInsertRecordingDlg Dialog(GetDocument(), Path, Guess, GuessText, m_pPatternEditor->GetChannel(), this);
+	if (Dialog.DoModal() != IDOK)
+		return;
 
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
-	CString Message;
 	bool Inserted;
 	{
-		CWaitCursor Wait;	// a few seconds for a long recording
-		Inserted = InsertRecording(pMainFrm, FileDialog.GetPathName(), Message);
+		CWaitCursor Wait;
+		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Message);
 	}
 
 	if (Inserted)

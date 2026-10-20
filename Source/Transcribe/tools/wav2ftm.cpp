@@ -44,7 +44,9 @@ void Usage()
 		"A note lasts as long as the sound that made it. Give several recordings to\n"
 		"get them all in one song: a melody, a drum part and a bass line.\n"
 		"\n"
-		"  --mode melody|drums   whistle/hum/sing a melody, or tap/beatbox a rhythm (default: melody)\n"
+		"  --mode MODE           what the recording holds: auto (default: wav2ftm decides),\n"
+		"                        whistle, hum (humming or singing), melody (any pitch range)\n"
+		"                        or drums (finger taps, beatboxing)\n"
 		"  --drums FILE          add a drum part from a recording of taps or beatboxing\n"
 		"  --bass FILE           add a bass line from a recording (hum it), on the VRC6 sawtooth,\n"
 		"                        or on the triangle with --expansion none\n"
@@ -107,13 +109,10 @@ bool Load(const std::string &path, Audio &audio)
 }
 
 // Whistle/hum/sing -> rows. targetMidi picks the octave unless transpose is given.
-bool TranscribeMelody(const std::string &path, const char *part, int targetMidi, const int *transpose,
-	const Settings &settings, std::vector<GridNote> &rows)
+bool TranscribeMelody(const Audio &audio, const std::string &path, const PitchOptions &pitch, const char *part,
+	int targetMidi, const int *transpose, const Settings &settings, std::vector<GridNote> &rows)
 {
-	Audio audio;
-	if (!Load(path, audio))
-		return false;
-	std::vector<Note> notes = SegmentNotes(TrackPitch(audio, PitchOptions()), NoteOptions());
+	std::vector<Note> notes = SegmentNotes(TrackPitch(audio, pitch), NoteOptions());
 	if (notes.empty()) {
 		std::fprintf(stderr, "wav2ftm: no notes found in %s (is the recording loud enough?)\n", path.c_str());
 		return false;
@@ -138,11 +137,8 @@ bool TranscribeMelody(const std::string &path, const char *part, int targetMidi,
 }
 
 // Taps/beatboxing -> drum hits on rows.
-bool TranscribeDrums(const std::string &path, const Settings &settings, std::vector<GridHit> &rows)
+bool TranscribeDrums(const Audio &audio, const std::string &path, const Settings &settings, std::vector<GridHit> &rows)
 {
-	Audio audio;
-	if (!Load(path, audio))
-		return false;
 	std::vector<Hit> hits = DetectHits(audio, HitOptions());
 	if (hits.empty()) {
 		std::fprintf(stderr, "wav2ftm: no hits found in %s (is the recording loud enough?)\n", path.c_str());
@@ -162,7 +158,7 @@ bool TranscribeDrums(const std::string &path, const Settings &settings, std::vec
 
 int main(int argc, char **argv)
 {
-	std::string mode = "melody", title, keyName, scaleName, drumsFile, bassFile;
+	std::string mode = "auto", title, keyName, scaleName, drumsFile, bassFile;
 	std::vector<std::string> positional;
 	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150;
 	bool haveTranspose = false, keepSilence = false, print = false;
@@ -214,12 +210,10 @@ int main(int argc, char **argv)
 		Usage();
 		return 2;
 	}
-	if (mode != "melody" && mode != "drums") {
-		std::fprintf(stderr, "wav2ftm: --mode must be melody or drums\n");
-		return 2;
-	}
-	if (mode == "drums" && !input.empty() && !drumsFile.empty()) {
-		std::fprintf(stderr, "wav2ftm: two drum recordings; give one with --drums\n");
+	if (mode == "sing" || mode == "voice")
+		mode = "hum";
+	if (mode != "auto" && mode != "whistle" && mode != "hum" && mode != "melody" && mode != "drums") {
+		std::fprintf(stderr, "wav2ftm: --mode must be auto, whistle, hum, melody or drums\n");
 		return 2;
 	}
 	if (bpm < 32 || bpm > 255) {
@@ -234,7 +228,25 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "wav2ftm: --min-rest must be between 0 and 5000 milliseconds\n");
 		return 2;
 	}
-	const bool haveMelody = !input.empty() && mode == "melody";
+	// The main recording: find out what it holds when the mode doesn't say
+	Audio mainAudio;
+	if (!input.empty()) {
+		if (!Load(input, mainAudio))
+			return 1;
+		if (mode == "auto") {
+			const SourceGuess guess = GuessSource(mainAudio);
+			mode = guess.source == Source::Taps ? "drums" : (guess.source == Source::Whistle ? "whistle" : "hum");
+			if (guess.source == Source::Taps)
+				std::printf("Heard %s.\n", SourceName(guess.source));
+			else
+				std::printf("Heard %s (median pitch %.0f Hz).\n", SourceName(guess.source), guess.medianFrequency);
+		}
+	}
+	if (mode == "drums" && !input.empty() && !drumsFile.empty()) {
+		std::fprintf(stderr, "wav2ftm: two drum recordings; give one with --drums\n");
+		return 2;
+	}
+	const bool haveMelody = !input.empty() && mode != "drums";
 	if (channel < 0)
 		channel = (expansion == Expansion::VRC6) ? 5 : 0;
 	const bool validChannel = channel == 0 || channel == 1 || channel == 2 || (expansion == Expansion::VRC6 && channel >= 5 && channel <= 7);
@@ -281,23 +293,33 @@ int main(int argc, char **argv)
 		MelodyPart lead;
 		lead.channel = channel;
 		const bool low = (channel == 2 || channel == 7);	// triangle and sawtooth suit bass lines
-		if (!TranscribeMelody(input, "melody", low ? 48 : 67, haveTranspose ? &transpose : nullptr, settings, lead.notes))
+		const PitchOptions pitch = mode == "whistle" ? PitchOptionsFor(Source::Whistle) :
+			(mode == "hum" ? PitchOptionsFor(Source::Voice) : PitchOptions());
+		if (!TranscribeMelody(mainAudio, input, pitch, "melody", low ? 48 : 67, haveTranspose ? &transpose : nullptr,
+				settings, lead.notes))
 			return 1;
 		parts.push_back(lead);
 		addSource("melody", input);
 	}
-	const std::string drumsPath = (mode == "drums" && !input.empty()) ? input : drumsFile;
-	if (!drumsPath.empty()) {
-		if (!TranscribeDrums(drumsPath, settings, drums))
+	if (mode == "drums" && !input.empty()) {
+		if (!TranscribeDrums(mainAudio, input, settings, drums))
 			return 1;
-		addSource("drums", drumsPath);
+		addSource("drums", input);
+	}
+	if (!drumsFile.empty()) {
+		Audio audio;
+		if (!Load(drumsFile, audio) || !TranscribeDrums(audio, drumsFile, settings, drums))
+			return 1;
+		addSource("drums", drumsFile);
 	}
 	if (!bassFile.empty()) {
 		MelodyPart bass;
 		bass.channel = bassChannel;
 		bass.instrument = 4;
 		bass.name = "Bass";
-		if (!TranscribeMelody(bassFile, "bass", 48, nullptr, settings, bass.notes))
+		Audio audio;
+		if (!Load(bassFile, audio) ||
+			!TranscribeMelody(audio, bassFile, PitchOptionsFor(Source::Voice), "bass", 48, nullptr, settings, bass.notes))
 			return 1;
 		parts.push_back(bass);
 		addSource("bass", bassFile);

@@ -25,12 +25,35 @@
 // into notes at the pattern cursor, in the song that is open. See RECORDER.md.
 
 class CMainFrame;
+class CFamiTrackerDoc;
 
-// Transcribes the WAV file at Path and writes the notes into the cursor's
-// channel, starting at the cursor row and running on into the following
-// frames (frames are added at the end of the song when needed). The noise
-// channel gets drums, any other channel a melody. One Ctrl+Z undoes it.
+// What a recording holds
+enum recording_kind_t {
+	RECORDING_WHISTLE,		// a melody, listened for at 300-4200 Hz
+	RECORDING_VOICE,		// humming or singing, 70-1100 Hz
+	RECORDING_DRUMS			// finger taps or beatboxing
+};
+
+// Reads the WAV file at Path and guesses what it holds. Description says it
+// in words ("whistling"). Returns false, with the reason in Message, when the
+// file can't be read.
+bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message);
+
+// Transcribes the WAV file at Path as Kind and writes the notes into Channel
+// (drums always into the noise channel), starting at the cursor's frame and
+// row and running on into the following frames; frames are added at the end
+// of the song when needed. One Ctrl+Z undoes it.
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
 // success Message says what was inserted.
-bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, CString &Message);
+bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, CString &Message);
+
+// A channel's name with its chip, e.g. "VRC6 Pulse 1", for messages and lists
+CString RecordingChannelName(const CFamiTrackerDoc *pDoc, int Channel);
+
+// Can a melody go on this channel? (Not on noise or DPCM.)
+bool IsMelodyChannel(const CFamiTrackerDoc *pDoc, int Channel);
+
+// Is this a bass channel (triangle or sawtooth)? A melody there is placed an
+// octave or so lower, around C3.
+bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);

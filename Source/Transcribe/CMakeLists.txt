@@ -22,6 +22,7 @@ endif()
 add_library(transcribe STATIC
 	WavReader.cpp
 	PitchTracker.cpp
+	Guess.cpp
 	Notes.cpp
 	Hits.cpp
 	TextModule.cpp

@@ -36,6 +36,7 @@
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
 #include "PatternEditor.h"
+#include "TrackerChannel.h"
 #include "Action.h"
 #include "InsertRecording.h"
 
@@ -168,9 +169,10 @@ int FindOrAddInstrument(CFamiTrackerDoc *pDoc, const char *pName, int Chip, cons
 class CInsertRecordingAction : public CAction
 {
 public:
-	CInsertRecordingAction(const std::vector<RecordedCell> &Cells, int Rows) :
+	CInsertRecordingAction(const std::vector<RecordedCell> &Cells, int Rows, int Channel) :
 		CAction(ACT_INSERT_RECORDING), m_Cells(Cells), m_iRows(Rows),
-		m_iTrack(0), m_iFrame(0), m_iChannel(0), m_iRow(0), m_iColumn(0), m_iOldFrameCount(0)
+		m_iTrack(0), m_iFrame(0), m_iChannel(static_cast<unsigned int>(Channel)), m_iRow(0), m_iColumn(0),
+		m_iOldFrameCount(0)
 	{
 	}
 
@@ -208,9 +210,8 @@ bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
 
 	m_iTrack = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
 	m_iFrame = static_cast<unsigned int>(pEditor->GetFrame());
-	m_iChannel = static_cast<unsigned int>(pEditor->GetChannel());
 	m_iRow = static_cast<unsigned int>(pEditor->GetRow());
-	m_iColumn = pEditor->GetColumn();
+	m_iColumn = 0;	// the note column of the channel written to
 
 	Redo(pMainFrm);
 	return true;
@@ -329,29 +330,93 @@ void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc,
 	pMainFrm->UpdateControls();
 }
 
-}	// namespace
-
-bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, CString &Message)
+bool ReadRecording(LPCTSTR Path, transcribe::Audio &Audio, CString &Message)
 {
-	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
-	CFamiTrackerDoc *pDoc = pView->GetDocument();
-	CPatternEditor *pEditor = pView->GetPatternEditor();
-	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
-	const int Channel = pEditor->GetChannel();
-	const int ChanID = pDoc->GetChannelType(Channel);
-
-	if (ChanID == CHANID_DPCM) {
-		Message = _T("A recording can't go on the DPCM channel. Click into another channel first.");
-		return false;
-	}
-
-	transcribe::Audio Audio;
 	std::string Error;
 	if (!transcribe::ReadWav(std::string(static_cast<LPCSTR>(CStringA(Path))), Audio, &Error)) {
 		Message = _T("The recording couldn't be read: ");
 		Message += CString(Error.c_str());
 		return false;
 	}
+	return true;
+}
+
+}	// namespace
+
+CString RecordingChannelName(const CFamiTrackerDoc *pDoc, int Channel)
+{
+	CString Chip;
+	switch (pDoc->GetChipType(Channel)) {
+	case SNDCHIP_NONE: Chip = _T("2A03"); break;
+	case SNDCHIP_VRC6: Chip = _T("VRC6"); break;
+	case SNDCHIP_VRC7: Chip = _T("VRC7"); break;
+	case SNDCHIP_FDS: Chip = _T("FDS"); break;
+	case SNDCHIP_MMC5: Chip = _T("MMC5"); break;
+	case SNDCHIP_N163: Chip = _T("N163"); break;
+	case SNDCHIP_S5B: Chip = _T("5B"); break;
+	}
+	CString Name = Chip;
+	if (!Name.IsEmpty())
+		Name += _T(" ");
+	Name += pDoc->GetChannel(Channel)->GetChannelName();
+	return Name;
+}
+
+bool IsMelodyChannel(const CFamiTrackerDoc *pDoc, int Channel)
+{
+	const int ChanID = pDoc->GetChannelType(Channel);
+	return ChanID != CHANID_NOISE && ChanID != CHANID_DPCM;
+}
+
+bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel)
+{
+	const int ChanID = pDoc->GetChannelType(Channel);
+	return ChanID == CHANID_TRIANGLE || ChanID == CHANID_VRC6_SAWTOOTH;
+}
+
+bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message)
+{
+	transcribe::Audio Audio;
+	if (!ReadRecording(Path, Audio, Message))
+		return false;
+	const transcribe::SourceGuess Guess = transcribe::GuessSource(Audio);
+	switch (Guess.source) {
+	case transcribe::Source::Whistle: Kind = RECORDING_WHISTLE; break;
+	case transcribe::Source::Voice: Kind = RECORDING_VOICE; break;
+	case transcribe::Source::Taps: Kind = RECORDING_DRUMS; break;
+	}
+	Description = CString(transcribe::SourceName(Guess.source));
+	return true;
+}
+
+bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	CPatternEditor *pEditor = pView->GetPatternEditor();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+
+	// Drums always go on the noise channel
+	if (Kind == RECORDING_DRUMS) {
+		Channel = -1;
+		for (int i = 0; i < static_cast<int>(pDoc->GetAvailableChannels()); ++i) {
+			if (pDoc->GetChannelType(i) == CHANID_NOISE)
+				Channel = i;
+		}
+	}
+	if (Channel < 0 || Channel >= static_cast<int>(pDoc->GetAvailableChannels())) {
+		Message = _T("This song has no channel for that recording.");
+		return false;
+	}
+	const int ChanID = pDoc->GetChannelType(Channel);
+	if (ChanID == CHANID_DPCM || (Kind != RECORDING_DRUMS && ChanID == CHANID_NOISE)) {
+		Message = _T("A melody can't go on the noise or DPCM channel. Pick another channel.");
+		return false;
+	}
+
+	transcribe::Audio Audio;
+	if (!ReadRecording(Path, Audio, Message))
+		return false;
 
 	// Rows at the song's speed and tempo, as CSoundGen plays them
 	transcribe::Grid Grid;
@@ -365,7 +430,7 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, CString &Message)
 	int Rows = 0;
 	CString What;
 
-	if (ChanID == CHANID_NOISE) {
+	if (Kind == RECORDING_DRUMS) {
 		// Taps and beatboxing become drums
 		std::vector<transcribe::Hit> Hits = transcribe::DetectHits(Audio, transcribe::HitOptions());
 		if (Hits.empty()) {
@@ -402,13 +467,14 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, CString &Message)
 	}
 	else {
 		// Whistling, humming and singing become a melody
-		std::vector<transcribe::Note> Notes =
-			transcribe::SegmentNotes(transcribe::TrackPitch(Audio, transcribe::PitchOptions()), transcribe::NoteOptions());
+		const transcribe::PitchOptions Pitch =
+			transcribe::PitchOptionsFor(Kind == RECORDING_WHISTLE ? transcribe::Source::Whistle : transcribe::Source::Voice);
+		std::vector<transcribe::Note> Notes = transcribe::SegmentNotes(transcribe::TrackPitch(Audio, Pitch), transcribe::NoteOptions());
 		if (Notes.empty()) {
 			Message = _T("No notes were found in the recording. Is it loud enough?");
 			return false;
 		}
-		const bool Low = (ChanID == CHANID_TRIANGLE || ChanID == CHANID_VRC6_SAWTOOTH);	// bass channels
+		const bool Low = IsBassChannel(pDoc, Channel);
 		transcribe::Transpose(Notes, transcribe::OctaveShiftFor(Notes, Low ? 48 : 67));
 		const std::vector<transcribe::GridNote> Melody = transcribe::Quantize(Notes, Grid, transcribe::QuantizeOptions());
 
@@ -502,14 +568,16 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, CString &Message)
 		return false;
 	}
 
-	CInsertRecordingAction *pAction = new CInsertRecordingAction(Cells, Rows);
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(Cells, Rows, Channel);
 	if (!pMainFrm->AddAction(pAction)) {
 		Message = _T("The recording couldn't be inserted.");
 		return false;
 	}
 	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
 
-	Message.Format(_T("Inserted %s over %d rows. Ctrl+Z undoes it."), static_cast<LPCTSTR>(What), Rows);
+	const CString ChannelName = RecordingChannelName(pDoc, Channel);
+	Message.Format(_T("Inserted %s on %s over %d rows. Ctrl+Z undoes it."), static_cast<LPCTSTR>(What),
+		static_cast<LPCTSTR>(ChannelName), Rows);
 	if (Cut)
 		Message += _T(" The end didn't fit: a song has at most 128 frames.");
 	return true;

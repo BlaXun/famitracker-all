@@ -572,6 +572,42 @@ void TestHits()
 	}
 }
 
+void TestGuessSource()
+{
+	struct Case { const char *name; double freq; int harmonics; double noise; Source expected; };
+	const Case cases[] = {
+		{ "whistle", 1500.0, 1, 0.02, Source::Whistle },
+		{ "low whistle", 700.0, 1, 0.02, Source::Whistle },
+		{ "hum", 150.0, 6, 0.01, Source::Voice },
+		{ "high voice", 650.0, 5, 0.01, Source::Voice },
+	};
+	for (const Case &c : cases) {
+		Synth s;
+		s.Silence(0.2);
+		for (int i = 0; i < 4; ++i) {
+			s.Tone(c.freq * std::pow(2.0, i / 12.0), 0.4, 0.4, true, 15.0, 5.5, c.harmonics, c.noise);
+			s.Silence(0.1);
+		}
+		const SourceGuess guess = GuessSource(s.audio);
+		if (guess.source != c.expected)
+			std::printf("  case '%s': guessed %s (pitched %.2f, %.0f Hz, overtones %.3f)\n", c.name, SourceName(guess.source),
+				guess.pitchedShare, guess.medianFrequency, guess.overtoneShare);
+		CHECK(guess.source == c.expected);
+	}
+	{
+		Synth s;
+		s.Silence(0.3);
+		for (int i = 0; i < 8; ++i) {
+			s.Tap(i % 2 == 1);
+			s.Silence(0.25 - 0.040);
+		}
+		CHECK(GuessSource(s.audio).source == Source::Taps);
+	}
+	CHECK(PitchOptionsFor(Source::Whistle).minFrequency >= 300.0);
+	CHECK(PitchOptionsFor(Source::Voice).maxFrequency <= 1100.0);
+	CHECK(std::string(SourceName(Source::Voice)) == "humming or singing");
+}
+
 void TestWavRoundTrip()
 {
 	Synth s;
@@ -772,6 +808,7 @@ int main()
 	TestMelodies();
 	TestQuantizeRules();
 	TestHits();
+	TestGuessSource();
 	TestWavRoundTrip();
 	TestTextModule();
 	TestEndToEnd();

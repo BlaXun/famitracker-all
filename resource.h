@@ -204,6 +204,7 @@
 #define IDS_MIDI_MESSAGE_OFF            317
 #define IDI_RIGHT                       317
 #define IDR_SEQUENCE_POPUP              319
+#define IDD_INSERT_RECORDING            320
 #define IDC_INSTRUMENTS                 1001
 #define IDC_INSTSETTINGS                1002
 #define IDC_INSTNAME                    1005
@@ -462,6 +463,13 @@
 #define IDC_SLIDER_N163                 1284
 #define IDC_SLIDER8                     1285
 #define IDC_SLIDER_S5B                  1285
+#define IDC_REC_FILE                    1300
+#define IDC_REC_AUTO                    1301
+#define IDC_REC_WHISTLE                 1302
+#define IDC_REC_VOICE                   1303
+#define IDC_REC_DRUMS                   1304
+#define IDC_REC_DETECTED                1305
+#define IDC_REC_CHANNEL                 1306
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -622,9 +630,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        320
+#define _APS_NEXT_RESOURCE_VALUE        321
 #define _APS_NEXT_COMMAND_VALUE         33128
-#define _APS_NEXT_CONTROL_VALUE         1280
+#define _APS_NEXT_CONTROL_VALUE         1307
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

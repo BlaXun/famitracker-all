@@ -81,6 +81,34 @@ struct PitchFrame {
 std::vector<PitchFrame> TrackPitch(const Audio &audio, const PitchOptions &options);
 
 // ---------------------------------------------------------------------------
+// What a recording holds
+// ---------------------------------------------------------------------------
+
+enum class Source { Whistle, Voice, Taps };	// Voice: humming or singing
+
+// Pitch range to listen in: 300-4200 Hz for whistling, 70-1100 Hz for a
+// voice. A narrower range avoids octave mistakes. Taps get the full range.
+PitchOptions PitchOptionsFor(Source source);
+
+const char *SourceName(Source source);	// "whistling", "humming or singing", ...
+
+struct NoteOptions;
+
+struct SourceGuess {
+	Source source = Source::Whistle;
+	double pitchedShare = 0.0;		// share of the sounding frames that have a pitch
+	double medianFrequency = 0.0;	// Hz, over the pitched frames
+	double overtoneShare = 0.0;		// energy in overtones 2-5: ~0 for a whistle, 0.3+ for a voice
+};
+
+// Guesses what a recording holds. Sounds that are pitched less than half the
+// time are taps. Otherwise an almost pure tone (overtone share under 0.1, from
+// 300 Hz up) or a median pitch from 900 Hz up is whistling, and the rest a
+// voice. The frames come from TrackPitch with the default (full) range.
+SourceGuess GuessSource(const Audio &audio, const std::vector<PitchFrame> &frames, const NoteOptions &options);
+SourceGuess GuessSource(const Audio &audio);
+
+// ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------
 

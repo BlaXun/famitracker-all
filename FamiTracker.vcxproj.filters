@@ -1248,5 +1248,14 @@
     <ClInclude Include="Source\InsertRecording.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\InsertRecordingDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\InsertRecordingDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\Transcribe\Guess.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
