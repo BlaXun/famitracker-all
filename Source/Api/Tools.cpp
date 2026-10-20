@@ -4453,7 +4453,8 @@ std::string ToolSet::Instructions()
 		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
 		"complete, item found...) is make_jingle. For a VRC6 or VRC7 song, switch the chip with set_expansion first (it asks "
 		"before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
-		"brass...). Tell the user what you changed and why.";
+		"brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the user what you "
+		"changed and why.";
 }
 
 }	// namespace ftapi
