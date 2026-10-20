@@ -95,9 +95,10 @@ asks how it sounds.
 
 - **As clips (default).** Claude's ideas are saved as clips, named
   "Claude: ...". The reply says where one goes, for example "on VRC6 Pulse 1
-  at bar 5". To hear it: **Edit > Clips**, select it, put the pattern cursor
-  there and press **Place a copy**. Ctrl+Z takes it out again. Clips you don't
-  want can be deleted in the same dialog.
+  at bar 5". To hear it, press the play button on its card in the clips
+  panel beside the song; to use it, drag the card there in the pattern
+  editor. Ctrl+Z takes it out again. Right-click a clip you don't want to
+  delete it.
 - **Directly.** With **Let Claude change the song directly** ticked, Claude
   writes into the song. Every change is one step of Ctrl+Z (Ctrl+Y redoes it).
   Claude can then also set the tempo, place clips and undo. Instruments it

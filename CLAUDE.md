@@ -10,9 +10,11 @@ The audio-to-notes recorder is described in `RECORDER.md`: the engine in
 chords and bass line in `Source/BackingDlg.cpp` (chords from
 `Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`), clips in
 `Source/Clips.cpp` (the song's clips and linked copies, saved in a `BF CLIPS`
-block) with Edit > Clips and the clip editor in `Source/ClipsDlg.cpp`, and
-View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under the
-pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
+block), shown in the clips panel docked along the right of the window
+(`Source/ClipsPanel.cpp`; a clip dragged over the pattern editor is shaded by
+`CPatternEditor::ShowClipDrop`) with the clip editor in `Source/ClipsDlg.cpp`,
+and View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under
+the pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
 edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
 action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
 `ROADMAP.md`. Unless a section says otherwise, everything below describes the
@@ -40,6 +42,19 @@ recording, and turned into instruments, by
 `Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
 (`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
 ends when the sound is over, and adds it with that tool through `CMcpLink`.
+
+The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
+Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the
+presets of `Source/Api/Presets.cpp`), Edit > Drum grid in
+`Source/DrumGridDlg.cpp` (the arithmetic in `Source/DrumGrid.cpp`), View >
+Profile in `Source/Profile.cpp` (kept in `CSettings::Profile`; its template
+fills new songs in `CFamiTrackerDoc::OnNewDocument`, and
+`CMainFrame::ApplyProfile` rebuilds the main menu and lays the song settings
+out for BPM), and Help > Tutorials in `Source/Tutorial.cpp`, which plays the
+tutorials of `res/tutorials` (built in as RCDATA, read by
+`Source/TutorialScript.cpp`) and hears about commands through
+`CMainFrame::OnCommand`. New work goes to the `next` branch first; once its
+build has been tried, `beginner-friendly` is fast-forwarded to it.
 
 ## What this repository is
 
@@ -135,11 +150,11 @@ replaced the VS2008 project:
     `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
   - Job logs and artifact downloads can be blocked in sandboxed sessions; the
     report doesn't need them.
-  - After a green build of `beginner-friendly`, `recorder` or `api`, the
-    `publish` job replaces that branch's rolling GitHub release (tag
+  - After a green build of `beginner-friendly`, `next`, `recorder` or `api`,
+    the `publish` job replaces that branch's rolling GitHub release (tag
     `build-<branch>`) using `.github/scripts/publish-build.sh`.
-    `beginner-friendly` is marked Latest; `recorder` and `api` are
-    pre-releases. Each release has a zip with `FamiTracker.exe`, plus
+    `beginner-friendly` is marked Latest; the others are pre-releases. Each
+    release has a zip with `FamiTracker.exe`, plus
     `wav2ftm.exe` and `famitracker-mcp.exe` when the branch builds them
     (`api` has no `famitracker-mcp.exe`), and a debug-symbols zip. These
     tags are build pointers and get deleted and recreated; never use them
@@ -170,10 +185,11 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips, note editing and chip switching** (`Source/Clips.cpp`,
-  `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`): `Source/Tests` builds them
-  on Linux against working stand-ins for the MFC and document pieces they
-  use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
+- **Clips, note editing, chip switching, the drum grid and tutorials**
+  (`Source/Clips.cpp`, `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`,
+  `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`): `Source/Tests` builds
+  them on Linux against working stand-ins for the MFC and document pieces
+  they use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
   following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
   block read back, cut short at every byte. `NoteEditTests.cpp` covers the
   piano roll's edits: notes making way, releases and halts, volumes and
@@ -182,9 +198,12 @@ The application has no test suite of its own. What exists:
   (lasting ones kept for the notes after). `ChipSwitchTests.cpp` covers the
   notes counted on the channels a chip switch clears, the channels emptied,
   and their song-wide effects moved to the last channel with patterns of
-  their own where frames share one. Same three commands with `Source/Tests`
-  and `build/tests`; CI runs them in the Linux job. The stand-ins must keep
-  the real headers' signatures.
+  their own where frames share one. `DrumGridTests.cpp` covers reading the
+  drums off a bar, putting them on and off, and the ready-made beats.
+  `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
+  the errors, and the built-in tutorials, which must stay ASCII. Same three
+  commands with `Source/Tests` and `build/tests`; CI runs them in the Linux
+  job. The stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
   the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
@@ -205,7 +224,12 @@ The application has no test suite of its own. What exists:
 - **In a Linux session:** verify by reading call sites, searching
   case-insensitively (see Gotchas). Pure logic such as enums, tables and
   arithmetic can be checked by pasting the snippet into a scratch `.cpp` and
-  compiling it with `g++`.
+  compiling it with `g++`. The release zip of a branch (`build-<branch>`,
+  downloaded with `gh api` from the releases' REST endpoints) also runs under
+  Wine: `wine32` on Xvfb, with a PulseAudio null sink so DirectSound starts
+  and a Wine virtual desktop so windows get focus. `xdotool` clicks and types
+  and ImageMagick's `import` takes screenshots, enough to try dialogs and
+  drags; drags need the mouse moved in steps.
 
 ## Architecture (0.4.6)
 

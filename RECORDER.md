@@ -239,26 +239,41 @@ recorded take, a WAV file, or rows selected in the pattern editor (several
 channels at once if the selection spans them).
 
 - **Make one:** select rows and use Edit > Save selection as clip
-  (Ctrl+Shift+C), or tick "Save as a clip" in the Record or Insert recording
-  dialog: the take becomes a clip ("Take 1", or the WAV file's name) instead
-  of going into the song.
-- **Edit > Clips** (Ctrl+Shift+V, or the clips button next to the
-  microphone) lists them. "Place a copy" or "Place linked" puts the picked
-  clip in at the cursor: its first channel on the cursor's channel, the rest
-  to the right, from the cursor row on, running into the following frames
-  and adding frames at the end of the song when needed. What those channels
-  had there is replaced; Ctrl+Z undoes it. Double-click places a copy.
+  (Ctrl+Shift+C, or "+ Save selection" at the top of the clips panel), or
+  tick "Save as a clip" in the Record or Insert recording dialog: the take
+  becomes a clip ("Take 1", or the WAV file's name) instead of going into the
+  song.
+- **The clips panel** (`Source/ClipsPanel.cpp`), docked along the right of
+  the main window, shows the song's clips at all times: a card for each, with
+  its name, a picture of its notes (a colour per channel, drums as dots), its
+  channels, length and linked copies, and a play button that plays it on its
+  channels at the song's tempo. View > Clips panel shows or hides it (it
+  comes back when FamiTracker starts if it was open), Edit > Clips
+  (Ctrl+Shift+V, or the clips button next to the microphone) brings it up,
+  and its left edge drags to make it wider.
+- **Putting one in:** drag a card into the pattern editor. While dragging,
+  cells it will cover are shaded, as many channels and rows as the clip has,
+  and the cursor stays where it was; held near the editor's edge, the
+  pattern scrolls a row or a channel at a time. Let go to put a copy in, or
+  hold Ctrl as you let go for a linked copy; Esc stops the drag. Its first
+  channel goes on the channel under the mouse, the rest to the right, from
+  that row on, running into the following frames and adding frames at the
+  end of the song when needed. What those channels had there is replaced;
+  Ctrl+Z undoes it. Double-clicking a card puts a copy in at the cursor.
+- **Right-click a card** for the rest: put it in at the cursor (as a copy or
+  linked), listen, edit its notes, rename, duplicate, unlink its copies,
+  delete, or save the selection as a new clip.
 - **A copy** is plain notes. **A linked copy** stays the clip: edit any note
   of it in the song and the clip changes, and with it every other linked
   copy. A linked copy whose notes are all deleted stops being linked rather
   than emptying the others, and anything written over a linked copy (a take,
   chords, another clip) ends its link there. Unlink copies turns all of a
   clip's linked copies into plain notes.
-- **Edit...** opens the clip editor: the clip's notes in a list. Pick an
-  instrument and give it to the selected notes or all of them, or transpose
-  by a semitone or an octave (the selected notes, or all when none are
-  selected). OK saves the clip, and its linked copies in the song follow,
-  as one Ctrl+Z.
+- **Edit its notes...** opens the clip editor: the clip's notes in a list.
+  Pick an instrument and give it to the selected notes or all of them, or
+  transpose by a semitone or an octave (the selected notes, or all when none
+  are selected). OK saves the clip, and its linked copies in the song
+  follow, as one Ctrl+Z.
 - **Duplicate...** makes a new clip from one: a copy to change on its own,
   leaving the original and its linked copies alone. Rename and Delete do
   what they say; deleting leaves its linked copies in the song as notes.
@@ -331,7 +346,7 @@ The buttons along the top:
 - Effects: effects for the selected notes (see Effects below).
 - Clips: place a clip with the mouse (as a copy, or linked when "Place
   linked copies" is ticked), save the selected notes as a clip
-  (Ctrl+Shift+C), or open Edit > Clips.
+  (Ctrl+Shift+C), or show the clips panel.
 
 Editing, in the bright channel:
 

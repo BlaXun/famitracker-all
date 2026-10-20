@@ -24,8 +24,12 @@ piano roll, the export for games, sound effects and the Claude Code
 connection. Most of it was built on the `recorder` branch (see Feature
 branches) and merged in October 2026.
 
-Next: the steps below that make FamiTracker itself simpler (3, 4, then 6),
-which haven't been started.
+The steps that make FamiTracker itself simpler followed in October 2026,
+through the `next` branch (its build is the `build-next` pre-release, and
+`beginner-friendly` moves up to it once it's been tried): the instrument
+library and the drum grid (3), profiles (4), tutorials (6), and the clips
+panel, which keeps the song's clips in sight beside the pattern editor.
+What's left of the plan is listed under each step.
 
 ## 1. Foundation
 
@@ -63,27 +67,49 @@ track, or all of them, as OGG files next to the song.
   later), and the files carry `LOOPSTART`/`LOOPLENGTH` comments for other
   engines. A song that ends with a halt (`Cxx`) plays once, like a jingle.
 
-## 3. Sounds before settings (not started)
+## 3. Sounds before settings
 
-- Instrument library: curated `.fti` presets (VRC6 saw bass, pulse leads and
-  pads, noise kick/snare/hat) with names, short descriptions and
-  click-to-preview. Use `CFamiTrackerDoc::LoadInstrument` to load and
-  `CSoundGen::QueueNote` to preview. The presets themselves exist for Claude
-  Code (`Source/Api/Presets.cpp`: 13 for the 2A03, MMC5 and
-  VRC6, plus the VRC7's 15 built-in sounds), but FamiTracker's own UI can't
-  browse or preview them yet.
-- Drum lane: a 16-step grid that writes notes to the noise channel.
+Done:
 
-## 4. Profiles (not started)
+- **Instrument > Instrument library** (Ctrl+Shift+L, also under the
+  new-instrument button; `Source/InstrumentLibrary.cpp`): the sound presets
+  of `Source/Api/Presets.cpp` (13 for the 2A03, MMC5 and VRC6, plus the
+  VRC7's 15 built-in sounds) for the kinds of channel the song has, with what
+  each is for. Clicking a sound plays it with FamiTracker's own engine: it
+  goes into the song as an instrument while it's tried, one at a time,
+  playing a short phrase (or a beat, for drums), and comes out again unless
+  Add keeps it.
+- **Edit > Drum grid** (Ctrl+Shift+D; `Source/DrumGridDlg.cpp`, with the
+  arithmetic in `Source/DrumGrid.cpp`, tested on Linux): the noise channel a
+  bar at a time, a line each for a kick, a snare, a hi-hat and an open
+  hi-hat and a column for each row. Clicking a step puts a drum on or takes
+  it off and plays it; dragging along a line fills the empty steps. Ready-made
+  beats fill a bar, which can be copied to the next bar or to every bar. Bars
+  and beats follow the row highlights, the step playing lights up (and in
+  follow mode the grid turns to the bar playing), each change is one Ctrl+Z
+  (which works inside the grid too), and the drums' instruments are made
+  from the presets the first time they're needed.
 
-- A profile bundles a module template (chip, tempo, rows, effect columns,
-  highlights), the set of visible UI and starter instruments.
-- The default profile, "VRC6 game music", turns VRC6 on, keeps one effect
-  column, hides DPCM and the advanced menus, and shows BPM instead of
-  speed/tempo.
-- Users can customize a profile with a checklist, and "Show everything"
-  restores the full UI. Settings live in `CSettings`; menus and toolbars are
-  set up in `CMainFrame`.
+## 4. Profiles
+
+Done (`Source/Profile.cpp`), and opt-in: the first start asks once, and
+View > Profile changes it later. A profile says how much of FamiTracker
+shows; the songs themselves stay ordinary modules.
+
+- "VRC6 game music" makes three changes, each of which can be switched off
+  in View > Profile: new songs start with the VRC6 chip, 120 BPM and eight
+  instruments from the presets (a lead, chords, a bass, a kick, a snare, a
+  hi-hat, a pad and a sawtooth bass); BPM shows in place of speed and tempo
+  in the song settings (typing or stepping a BPM picks the speed and tempo,
+  as Claude Code does); and rarely used menu items are hidden (text import
+  and export, the masks, expand and shrink, the register and DPCM displays,
+  NTSC and PAL, the engine speed and a few more; their shortcuts still
+  work).
+- "Everything" is FamiTracker as it was, and View > Show everything switches
+  between the two.
+
+Not done from the plan: hiding the DPCM channel (the pattern editor has no
+way to hide a channel) and choosing the starter instruments.
 
 ## 5. Piano roll
 
@@ -101,13 +127,26 @@ Still open from the plan:
 - Mood starters that lay down chords, bass and drums for moods like "cozy
   town" or "boss fight" (see "start from a groove" under the recorder).
 
-## 6. Tutorials (last, once the UI stops changing)
+## 6. Tutorials
 
-- A coach-mark overlay that dims the window, highlights the next control and
-  advances when the user acts. Steps are stored in a data file, so new
-  tutorials need no recompile.
-- Annotated example songs, since module comments can already pop up when a
-  file is opened.
+Done: Help > Tutorials (`Source/Tutorial.cpp`) shows FamiTracker a step at a
+time. The window dims except for the part a step is about, which gets a
+yellow frame, and a note beside it says what to do. The step goes on when
+the user has done it (switched editing on, typed notes, played, stopped,
+added an instrument or a clip, saved, used a menu item or button) or
+presses Next, and the frame turns green for a moment first. The dimming lets
+the mouse through and the note never takes the keyboard, so FamiTracker
+works as usual meanwhile.
+
+Tutorials are text files of steps (the format is in
+`Source/TutorialScript.h`, read by plain C++ that `Source/Tests` checks,
+built-in tutorials included). Four come with FamiTracker, from
+`res/tutorials`: your first tune, sounds and drums, clips and the piano
+roll, and music for your game. More can go in a `Tutorials` folder next to
+FamiTracker.exe, with no rebuild.
+
+Still open: annotated example songs, since module comments can already pop
+up when a file is opened.
 
 ## Feature branches
 
