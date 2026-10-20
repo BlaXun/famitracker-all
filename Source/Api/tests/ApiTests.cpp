@@ -2747,6 +2747,48 @@ void TestExpansion()
 	CHECK(Pal.Info.FrameRate == 60);
 }
 
+void TestMmc5()
+{
+	// An MMC5 song: two more pulses, which play the 2A03's instruments and presets
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chip\": \"mmc5\"}"));
+	CHECK_HAS(Result.Text, "The song uses the MMC5 now: 2 more channels (MMC5 Pulse 1, MMC5 Pulse 2) besides the 2A03's five. Two more "
+		"pulses; the 2A03 presets work on them.");
+	CHECK(Song.Info.Channels.size() == 7 && Song.Info.Channels[5].Kind == KIND_PULSE && Song.Info.Channels[6].Chip == "MMC5");
+	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "MMC5 Pulse 2");
+
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"MMC5 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"E-4\", \"beats\": 2},"
+		"{\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added the instrument \"Soft lead\" (03) (2A03) from the preset \"soft lead\"");
+	CHECK(Song.Rows[5][0].Instrument == 3 && Song.Rows[5][16].Pitch() == 55);
+	// The song's 2A03 instruments play on it too, but not the VRC6's
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"MMC5 Pulse 2\", \"instrument\": \"Square\", \"notes\": ["
+		"{\"bar\": 3, \"pitch\": \"C-3\", \"beats\": 4}]}")).IsError);
+	CHECK(Song.Rows[6][32].Instrument == 2);
+	CHECK_HAS(Tools.Call("write_notes", Parse("{\"channel\": \"MMC5 Pulse 2\", \"instrument\": \"Lead\", \"notes\": ["
+		"{\"bar\": 3, \"pitch\": \"C-3\", \"beats\": 4}]}")).Text, "\"Lead\" is a VRC6 instrument; MMC5 Pulse 2 needs a 2A03 one");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"pluck\", \"chip\": \"MMC5\"}")).Text, "(2A03 instrument");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"bell\", \"channel\": \"MMC5 Pulse 2\"}")).Text, "(2A03 instrument");
+
+	// Chords, an echo, checks and versions use its pulses like the 2A03's
+	Result = Tools.Call("add_chords_and_bass", Parse("{\"melody_channel\": \"MMC5 Pulse 1\", \"to_bar\": 2}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Chords:");
+	Result = Tools.Call("add_echo", Parse("{\"channel\": \"MMC5 Pulse 1\", \"to_bar\": 2}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "an echo of MMC5 Pulse 1 on");
+	Song.Put(6, 48, "G#0", 2);
+	CHECK_HAS(Tools.Call("check_song", Parse("{}")).Text, "MMC5 Pulse 2 bar 4 beat 1 is below A-0, the lowest note its pulse can play");
+	CHECK(!Tools.Call("make_version", Parse("{\"version\": \"night\"}")).IsError);
+	Result = Tools.Call("make_jingle", Parse("{\"kind\": \"coin\"}"));
+	CHECK(Result.IsError);	// not a jingle kind; the real ones work
+	CHECK(!Tools.Call("make_jingle", Parse("{\"kind\": \"item\"}")).IsError);
+}
+
 void TestTiming2()
 {
 	// 6 ticks a row at speed 6, tempo 150; F03 halves it; tempo 120 alternates 8 and 7
@@ -3396,6 +3438,7 @@ int main()
 	TestJingleScores();
 	TestJingles();
 	TestExpansion();
+	TestMmc5();
 	TestTiming2();
 	TestLoops();
 	TestOgg();

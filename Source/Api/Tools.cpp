@@ -3754,7 +3754,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			}
 			std::string Range;
 			if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && N.Pitch < 9)
-				Range = "below A-0, the lowest note a 2A03 pulse can play";
+				Range = "below A-0, the lowest note its pulse can play";
 			else if (Info.Kind == KIND_TRIANGLE && N.Pitch > 72)
 				Range = "above C-6, thin and shrill on the triangle";
 			else if (N.Pitch > 84)
@@ -4451,7 +4451,7 @@ std::string ToolSet::Instructions()
 		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
 		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
 		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
-		"complete, item found...) is make_jingle. For a VRC6 or VRC7 song, switch the chip with set_expansion first (it asks "
+		"complete, item found...) is make_jingle. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion first (it asks "
 		"before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
 		"brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the user what you "
 		"changed and why.";

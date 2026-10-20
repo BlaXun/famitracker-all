@@ -173,10 +173,10 @@ effects along with it.
 
 ## Expansion chips
 
-Ask for "a VRC6 song" or "a VRC7 song" and Claude switches the expansion chip
-with `set_expansion`, as **Module > Module properties** does. FamiTracker plays
-one expansion chip at a time, so the old chip's channels go and the new chip's
-take their place, in every track:
+Ask for "a VRC6 song", "a VRC7 song" or "an MMC5 song" and Claude switches
+the expansion chip with `set_expansion`, as **Module > Module properties**
+does. FamiTracker plays one expansion chip at a time, so the old chip's
+channels go and the new chip's take their place, in every track:
 
 - When the old chip's channels have notes, Claude asks you first, since
   they're cleared and FamiTracker can't undo switching chips (Module >
@@ -186,6 +186,11 @@ take their place, in every track:
   channels move to the song's last channel, so the song still loops the way
   it did.
 - Expansion chips play on NTSC machines, so a PAL song becomes NTSC.
+
+The **VRC6** adds two pulses and a sawtooth, and the **MMC5** two more pulses
+(FamiTracker has no MMC5 sample channel). The presets work on all of them:
+the MMC5's pulses play the 2A03's instruments, so they also take chords,
+echoes and the parts of versions and jingles like the 2A03's pulses.
 
 The **VRC7** has six FM channels with 15 sounds built in: bell, guitar,
 piano, flute, clarinet, rattling bell, trumpet, reed organ, soft bell,
