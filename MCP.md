@@ -82,6 +82,8 @@ Some things to try:
   quest."
 - "Does the song loop cleanly?" / "Let bars 1-4 be an intro and loop the rest."
 - "Export the day and night versions for my game."
+- "Let's make a VRC7 song." / "Give the melody a piano sound."
+- "Make it faster, speed 5." / "Set the tempo to 100 BPM."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
 clashes, range), looks at a picture of the notes, and plays it for you, then
@@ -114,10 +116,10 @@ anything; close the dialog and ask again.
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
-| `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel |
+| `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, or one of the VRC7's own sounds |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
-| `set_tempo` | Sets the tempo in BPM (direct changes only; undoable) |
+| `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `add_chords_and_bass` | Fits chords to the melody and writes them as an arpeggio, plus a bass line |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
@@ -126,6 +128,7 @@ anything; close the dialog and ask again.
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
+| `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
@@ -136,13 +139,62 @@ anything; close the dialog and ask again.
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
 chords, warm pad, bass, plucky bass, kick, snare, hi-hat, open hi-hat. Each
-is built for the 2A03 (also MMC5 channels) and the VRC6.
+is built for the 2A03 (also MMC5 channels) and the VRC6. VRC7 channels play
+the chip's own sounds instead (see [Expansion chips](#expansion-chips)).
 
 Notes are written the way FamiTracker shows them: C-4, C#4 (Db4 works too).
 FamiTracker's octave numbers are one lower than in most music software: C-3
 is middle C and A-3 is 440 Hz. Bars and beats count from 1, as the row
 highlight shows them (the first highlight is a beat, the second a bar).
 Claude works on the track that's selected.
+
+## Speed and tempo
+
+FamiTracker counts time in ticks, 60 a second (50 for PAL). The **speed** is
+how many ticks a row lasts, and the **tempo** stretches that: at tempo 150
+(125 for PAL) a row lasts exactly the speed's ticks. Most FamiTracker songs
+keep tempo 150 and change the speed. At 4 rows a beat:
+
+| Speed | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|
+| BPM at tempo 150 | 300 | 225 | 180 | 150 | 128.6 | 112.5 | 100 | 90 |
+
+Ask for a BPM and Claude picks the speed and tempo. Every row then lasts the
+same number of ticks when that's possible within 1% of the BPM, usually by
+changing the speed at tempo 150. Other BPMs need another tempo, and then rows
+take turns being a tick longer: 120 BPM at speed 6 and tempo 120 alternates
+rows of 7 and 8 ticks. You can't hear it in most songs, but Claude says so
+and names the even choices nearby. Ask for a speed or a tempo ("speed 5",
+"tempo 150") and Claude sets exactly that. When the song changes its speed
+with `Fxx` effects, a BPM changes the tempo only, since those effects would
+set the speed back. Night and tense versions pick their tempo the same way,
+unless the song has `Fxx` effects: then they scale the tempo, and the tempo
+effects along with it.
+
+## Expansion chips
+
+Ask for "a VRC6 song" or "a VRC7 song" and Claude switches the expansion chip
+with `set_expansion`, as **Module > Module properties** does. FamiTracker plays
+one expansion chip at a time, so the old chip's channels go and the new chip's
+take their place, in every track:
+
+- When the old chip's channels have notes, Claude asks you first, since
+  they're cleared and FamiTracker can't undo switching chips (Module >
+  Module properties switches back, without the notes). Save a copy first if
+  you might want them.
+- Speed changes, loops and ends (`Fxx`, `Bxx`, `Dxx`, `Cxx`) on those
+  channels move to the song's last channel, so the song still loops the way
+  it did.
+- Expansion chips play on NTSC machines, so a PAL song becomes NTSC.
+
+The **VRC7** has six FM channels with 15 sounds built in: bell, guitar,
+piano, flute, clarinet, rattling bell, trumpet, reed organ, soft bell,
+xylophone, vibraphone, brass, bass guitar, synthesizer and chorus. Claude
+adds them as instruments by name ("a piano for the melody", "brass chords"),
+and a preset's name picks the sound most like it: "soft lead" is the flute,
+"bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
+which lets the sound fade the way the chip does. The FDS and N163 need
+wavetable instruments, which you make in FamiTracker's instrument editor.
 
 ## Moods
 
@@ -297,7 +349,7 @@ editor; they're muted again afterwards.
 ## Not yet
 
 - Recording ideas from a phone page into the clips.
-- Sound effects, and presets for FDS, N163, VRC7 and 5B.
+- Sound effects, and instruments for the FDS and N163.
 
 ## For developers
 
@@ -307,11 +359,11 @@ editor; they're muted again afterwards.
   2025-03-26 to 2025-11-25, Host, Origin and token checks), `Music` (cells,
   note names, bars and beats, keys and modes, writing a part into a range of
   rows, and following the song through its jumps, skips and halts),
-  `Presets`, `Picture` and `Png` (the piano-roll picture, a palette PNG with
-  its own small deflate), `Jingles` (the jingles' scores, in semitones from
-  the key note and sixteenth notes), and `Tools` (the tools, against the
-  `SongHost` interface in `Song.h`). Tool results can carry an image after
-  their text.
+  `Presets` (also the VRC7's patches), `Picture` and `Png` (the piano-roll
+  picture, a palette PNG with its own small deflate), `Jingles` (the
+  jingles' scores, in semitones from the key note and sixteenth notes), and
+  `Tools` (the tools, against the `SongHost` interface in `Song.h`). Tool
+  results can carry an image after their text.
   ```
   cmake -S Source/Api -B build/api
   cmake --build build/api
@@ -344,3 +396,9 @@ editor; they're muted again afterwards.
   message-only window that answers on the UI thread, the settings (registry
   section "Claude Code") and the dialog. Song changes go through
   `WriteSongParts` in `InsertRecording.cpp`, one undoable action each.
+- `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
+  `SelectExpansionChip`: counting the notes on the channels that go,
+  emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and
+  `Cxx` to the last channel (a free effect column on the row; a frame whose
+  pattern other frames play differently gets its own). `Source/Tests`
+  checks it against the stand-in document.

@@ -434,28 +434,75 @@ double BeatsPerMinute(int Speed, int Tempo, int FrameRate, int RowsPerBeat)
 	return RowsPerMinute(Speed, Tempo, FrameRate) / std::max(1, RowsPerBeat);
 }
 
-void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo)
+bool EvenRows(int Speed, int Tempo, int FrameRate)
+{
+	// CSoundGen adds 60 * FrameRate - Remainder at each row and takes
+	// Decrement off each tick: when that comes out even, every row does
+	if (Tempo <= 0 || Speed <= 0 || FrameRate <= 0)
+		return false;
+	const int Decrement = (Tempo * 24) / Speed;
+	const int Remainder = (Tempo * 24) % Speed;
+	return Decrement > 0 && (60 * FrameRate - Remainder) % Decrement == 0;
+}
+
+int DefaultTempo(int FrameRate)
+{
+	return FrameRate * 5 / 2;
+}
+
+void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo,
+	int FixedSpeed, int FixedTempo)
 {
 	const int MaxSpeed = std::max(1, std::min(31, SplitPoint - 1));
 	const int MinTempo = std::max(32, SplitPoint);
-	double BestError = 1e9;
-	Speed = std::max(1, std::min(CurrentSpeed, MaxSpeed));
-	Tempo = 150;
-	// The current speed first, when it gets close
-	for (int t = MinTempo; t <= 255; ++t) {
-		const double Error = std::fabs(BeatsPerMinute(Speed, t, FrameRate, RowsPerBeat) - Bpm);
-		if (Error < BestError) {
-			BestError = Error;
-			Tempo = t;
-		}
-	}
-	if (BestError <= std::max(0.5, Bpm * 0.01))	// within 1%: a new speed would change how effects sound
-		return;
-	for (int s = 1; s <= MaxSpeed; ++s) {
-		for (int t = MinTempo; t <= 255; ++t) {
-			const double Error = std::fabs(BeatsPerMinute(s, t, FrameRate, RowsPerBeat) - Bpm);
-			if (Error < BestError - 1e-9) {
-				BestError = Error;
+	const int FirstSpeed = FixedSpeed > 0 ? std::min(FixedSpeed, MaxSpeed) : 1;
+	const int LastSpeed = FixedSpeed > 0 ? FirstSpeed : MaxSpeed;
+	const int FirstTempo = FixedTempo > 0 ? std::max(MinTempo, std::min(255, FixedTempo)) : MinTempo;
+	const int LastTempo = FixedTempo > 0 ? FirstTempo : 255;
+	const double Close = std::max(0.5, Bpm * 0.01);
+	const int Default = DefaultTempo(FrameRate);
+
+	// Lower is better, compared in this order
+	struct Score {
+		bool Far;			// not within 1%
+		bool Uneven, OtherTempo, OtherSpeed;	// within 1% only
+		double Error;
+		bool Slower;		// a tie rounds up
+		int Distance;		// from the default tempo
+	};
+	const auto Better = [](const Score &a, const Score &b) {
+		if (a.Far != b.Far)
+			return !a.Far;
+		if (!a.Far && a.Uneven != b.Uneven)
+			return !a.Uneven;
+		if (!a.Far && a.OtherTempo != b.OtherTempo)
+			return !a.OtherTempo;
+		if (!a.Far && a.OtherSpeed != b.OtherSpeed)
+			return !a.OtherSpeed;
+		if (std::fabs(a.Error - b.Error) > 1e-9)
+			return a.Error < b.Error;
+		if (a.Slower != b.Slower)
+			return !a.Slower;
+		return a.Distance < b.Distance;
+	};
+	bool Found = false;
+	Score Best = Score();
+	Speed = FirstSpeed;
+	Tempo = FirstTempo;
+	for (int s = FirstSpeed; s <= LastSpeed; ++s) {
+		for (int t = FirstTempo; t <= LastTempo; ++t) {
+			const double Played = BeatsPerMinute(s, t, FrameRate, RowsPerBeat);
+			Score Here;
+			Here.Error = std::fabs(Played - Bpm);
+			Here.Far = Here.Error > Close;
+			Here.Uneven = !EvenRows(s, t, FrameRate);
+			Here.OtherTempo = t != Default;
+			Here.OtherSpeed = s != CurrentSpeed;
+			Here.Slower = Played < Bpm;
+			Here.Distance = std::abs(t - Default);
+			if (!Found || Better(Here, Best)) {
+				Found = true;
+				Best = Here;
 				Speed = s;
 				Tempo = t;
 			}

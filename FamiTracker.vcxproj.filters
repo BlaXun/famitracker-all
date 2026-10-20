@@ -1272,6 +1272,9 @@
     <ClCompile Include="Source\McpConnection.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\ChipSwitch.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClInclude Include="Source\Api\Json.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
@@ -1312,6 +1315,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpConnection.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\ChipSwitch.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
   </ItemGroup>

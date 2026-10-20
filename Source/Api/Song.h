@@ -120,6 +120,20 @@ public:
 	// The preset as an instrument for a chip ("2A03" or "VRC6"), or the one of
 	// that name and chip already there: its index, -1 with the reason
 	virtual int AddInstrument(const Preset &Sound, const std::string &Chip, bool Sawtooth, std::string &Error) = 0;
+	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
+	// name already there: its index, -1 with the reason
+	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;
+
+	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
+	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their
+	// place; a new N163 channel count clears the N163 channels past it. ExpansionNotes counts the
+	// notes on the channels that would be cleared, in every track (Tracks: the ones they're in, from
+	// 0). SetExpansion clears them in every track and switches; channels that come in start empty.
+	// The effects on the cleared channels that steer the song (speed and tempo, loops, skips, ends)
+	// move to the song's last channel: Moved of them, and Lost found no free effect column there.
+	// FamiTracker can't undo it.
+	virtual int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks) = 0;
+	virtual bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
 	// Undoable
 	virtual bool SetSpeedTempo(int Speed, int Tempo, std::string &Error) = 0;
 

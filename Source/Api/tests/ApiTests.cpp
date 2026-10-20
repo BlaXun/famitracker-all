@@ -37,6 +37,7 @@
 #include "../Song.h"
 #include "../Tools.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -295,6 +296,164 @@ public:
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
 		return Next;
+	}
+
+	std::map<int, int> Vrc7Patches;	// instrument -> patch
+
+	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) override
+	{
+		if (Info.Expansion != "VRC7") {
+			Error = "This song has no VRC7 channels.";
+			return -1;
+		}
+		int Next = 0;
+		for (size_t i = 0; i < Info.Instruments.size(); ++i) {
+			if (Info.Instruments[i].Name == Name && Info.Instruments[i].Chip == "VRC7")
+				return Info.Instruments[i].Index;
+			Next = std::max(Next, Info.Instruments[i].Index + 1);
+		}
+		AddInstrumentInfo(Next, Name.c_str(), "VRC7", false);	// FamiTracker's VRC7 instruments don't release
+		Vrc7Patches[Next] = Patch;
+		return Next;
+	}
+
+	// An expansion chip's channels as FamiTracker names them
+	static std::vector<ChannelInfo> ChipChannels(const std::string &Chip, int Namco)
+	{
+		std::vector<ChannelInfo> Out;
+		auto Add = [&](const std::string &Name, int Kind, int Id) {
+			ChannelInfo Channel;
+			Channel.Name = Name;
+			Channel.Chip = Chip;
+			Channel.Kind = Kind;
+			Channel.ChanId = Id;
+			Out.push_back(Channel);
+		};
+		if (Chip == "VRC6") {
+			Add("Pulse 1", KIND_PULSE, 5);
+			Add("Pulse 2", KIND_PULSE, 6);
+			Add("Sawtooth", KIND_SAWTOOTH, 7);
+		}
+		else if (Chip == "MMC5") {
+			Add("Pulse 1", KIND_PULSE, 8);
+			Add("Pulse 2", KIND_PULSE, 9);
+		}
+		else if (Chip == "N163") {
+			for (int i = 0; i < Namco; ++i)
+				Add("Namco " + std::to_string(i + 1), KIND_OTHER, 11 + i);
+		}
+		else if (Chip == "FDS")
+			Add("FDS", KIND_OTHER, 19);
+		else if (Chip == "VRC7") {
+			for (int i = 0; i < 6; ++i)
+				Add("FM Channel " + std::to_string(i + 1), KIND_FM, 20 + i);
+		}
+		return Out;
+	}
+
+	// The channels switching to Chip clears (see SongHost)
+	std::vector<size_t> Leaving(const std::string &Chip, int Namco) const
+	{
+		std::vector<size_t> Out;
+		int Kept = 0;
+		for (size_t c = 0; c < Info.Channels.size(); ++c) {
+			if (Info.Channels[c].Chip == "2A03")
+				continue;
+			if (Chip == Info.Expansion && (Chip != "N163" || Kept++ < Namco))
+				continue;
+			Out.push_back(c);
+		}
+		return Out;
+	}
+
+	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Found) override
+	{
+		Found.clear();
+		const std::vector<size_t> Going = Leaving(Chip, Channels);
+		int Total = 0;
+		for (size_t t = 0; t < Tracks.size(); ++t) {
+			const std::vector<std::vector<Cell> > &Cells = static_cast<int>(t) == Current ? Rows : Tracks[t].Rows;
+			int Count = 0;
+			for (size_t i = 0; i < Going.size(); ++i) {
+				for (size_t r = 0; Going[i] < Cells.size() && r < Cells[Going[i]].size(); ++r)
+					Count += Cells[Going[i]][r].HasNote() ? 1 : 0;
+			}
+			if (Count > 0)
+				Found.push_back(static_cast<int>(t));
+			Total += Count;
+		}
+		return Total;
+	}
+
+	bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &) override
+	{
+		Moved = Lost = 0;
+		Switch(Current);	// the selected track's cells into Tracks
+		const std::vector<size_t> Going = Leaving(Chip, Channels);
+		// The effects that steer the song, from the channels that go
+		struct Steering { size_t Track, Row; unsigned char Number, Param; };
+		std::vector<Steering> Effects;
+		for (size_t t = 0; t < Tracks.size(); ++t) {
+			for (size_t i = 0; i < Going.size(); ++i) {
+				const std::vector<Cell> &Cells = Tracks[t].Rows[Going[i]];
+				for (size_t r = 0; r < Cells.size(); ++r)
+					for (int k = 0; k < Info.Channels[Going[i]].EffectColumns && k < EFFECT_COLUMNS; ++k)
+						if (IsSongEffect(Cells[r].Effect[k]))
+							Effects.push_back(Steering{ t, r, Cells[r].Effect[k], Cells[r].Param[k] });
+			}
+		}
+		// The 2A03's channels and the ones that stay, then the new chip's
+		std::vector<ChannelInfo> Next;
+		std::vector<int> From;
+		for (size_t c = 0; c < Info.Channels.size(); ++c) {
+			if (Info.Channels[c].Chip == "2A03" || (Info.Channels[c].Chip == Chip && std::find(Going.begin(), Going.end(), c) == Going.end())) {
+				Next.push_back(Info.Channels[c]);
+				From.push_back(static_cast<int>(c));
+			}
+		}
+		const std::vector<ChannelInfo> Added = ChipChannels(Chip, Channels);
+		for (size_t i = Next.size() - 5; i < Added.size(); ++i) {
+			Next.push_back(Added[i]);
+			From.push_back(-1);
+		}
+		for (size_t t = 0; t < Tracks.size(); ++t) {
+			const size_t Size = Tracks[t].Rows[0].size();
+			std::vector<std::vector<Cell> > Cells;
+			for (size_t c = 0; c < Next.size(); ++c)
+				Cells.push_back(From[c] >= 0 ? Tracks[t].Rows[static_cast<size_t>(From[c])] : std::vector<Cell>(Size));
+			Tracks[t].Rows.swap(Cells);
+		}
+		Info.Channels = Next;
+		// They move to the last channel, each in a free effect column
+		ChannelInfo &Last = Info.Channels.back();
+		for (size_t e = 0; e < Effects.size(); ++e) {
+			Cell &C = Tracks[Effects[e].Track].Rows.back()[Effects[e].Row];
+			int Free = -1;
+			bool There = false;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				if (C.Effect[k] == Effects[e].Number && C.Param[k] == Effects[e].Param)
+					There = true;
+				else if (C.Effect[k] == EFF_NONE && Free < 0)
+					Free = k;
+			}
+			if (There) {
+				++Moved;
+				continue;
+			}
+			if (Free < 0) {
+				++Lost;
+				continue;
+			}
+			C.Effect[Free] = Effects[e].Number;
+			C.Param[Free] = Effects[e].Param;
+			Last.EffectColumns = std::max(Last.EffectColumns, Free + 1);
+			++Moved;
+		}
+		Info.Expansion = Chip;
+		if (!Chip.empty())
+			Info.FrameRate = 60;
+		Rows = Tracks[Current].Rows;
+		return true;
 	}
 
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &) override
@@ -698,16 +857,49 @@ void TestTempo()
 	CHECK(RowsPerMinute(6, 150, 60) == 600.0);
 	CHECK(BeatsPerMinute(6, 150, 60, 4) == 150.0);
 	CHECK(BeatsPerMinute(6, 120, 60, 4) == 120.0);
+	// Even rows: at tempo 150 (125 for PAL) the speed is the ticks a row; speed 6 at tempo 180 has rows of 5
+	CHECK(EvenRows(6, 150, 60) && EvenRows(7, 150, 60) && EvenRows(6, 180, 60) && EvenRows(6, 125, 50) && EvenRows(6, 150, 50));
+	CHECK(!EvenRows(6, 120, 60) && !EvenRows(6, 128, 60) && !EvenRows(0, 150, 60));
+	CHECK(DefaultTempo(60) == 150 && DefaultTempo(50) == 125);
 	int Speed = 0, Tempo = 0;
+	// Another speed at tempo 150, for even rows
+	ChooseSpeedTempo(180.0, 4, 60, 6, 32, Speed, Tempo);
+	CHECK(Speed == 5 && Tempo == 150);
+	ChooseSpeedTempo(100.0, 4, 60, 6, 32, Speed, Tempo);
+	CHECK(Speed == 9 && Tempo == 150);
+	ChooseSpeedTempo(127.5, 4, 60, 6, 32, Speed, Tempo);	// 128.6 BPM is within 1%
+	CHECK(Speed == 7 && Tempo == 150);
+	ChooseSpeedTempo(150.0, 4, 60, 3, 32, Speed, Tempo);	// tempo 150 rather than speed 3 at tempo 75
+	CHECK(Speed == 6 && Tempo == 150);
+	// No even rows near 120 BPM (7.5 ticks a row): the speed stays, the tempo changes
 	ChooseSpeedTempo(120.0, 4, 60, 6, 32, Speed, Tempo);
 	CHECK(Speed == 6 && Tempo == 120);
-	ChooseSpeedTempo(90.0, 4, 60, 6, 32, Speed, Tempo);
-	CHECK(Speed == 6 && Tempo == 90);
+	ChooseSpeedTempo(135.0, 4, 60, 6, 32, Speed, Tempo);
+	CHECK(Speed == 6 && Tempo == 135);
+	ChooseSpeedTempo(160.0, 4, 60, 3, 32, Speed, Tempo);
+	CHECK(Speed == 3 && Tempo == 80);
+	ChooseSpeedTempo(172.5, 4, 60, 6, 32, Speed, Tempo);	// a tie rounds up
+	CHECK(Speed == 6 && Tempo == 173);
+	// 3 rows a beat
+	ChooseSpeedTempo(100.0, 3, 60, 6, 32, Speed, Tempo);
+	CHECK(Speed == 12 && Tempo == 150);
+	// A speed or tempo that has to stay
+	ChooseSpeedTempo(180.0, 4, 60, 6, 32, Speed, Tempo, 6);
+	CHECK(Speed == 6 && Tempo == 180);
+	ChooseSpeedTempo(90.0, 4, 60, 6, 32, Speed, Tempo, 0, 150);
+	CHECK(Speed == 10 && Tempo == 150);
+	ChooseSpeedTempo(120.0, 4, 60, 6, 32, Speed, Tempo, 0, 150);	// as close as speeds get
+	CHECK((Speed == 7 || Speed == 8) && Tempo == 150);
 	// Too slow for speed 6 (tempo can't go below 32): another speed
 	ChooseSpeedTempo(20.0, 4, 60, 6, 32, Speed, Tempo);
-	CHECK(Speed != 6 && std::abs(BeatsPerMinute(Speed, Tempo, 60, 4) - 20.0) < 0.5);
-	// PAL plays the same BPM with the same speed and tempo
+	CHECK(Speed != 6 && std::abs(BeatsPerMinute(Speed, Tempo, 60, 4) - 20.0) < 0.5 && EvenRows(Speed, Tempo, 60));
+	// The old split point (speeds up to 20) keeps speeds below it
+	ChooseSpeedTempo(36.0, 4, 60, 6, 21, Speed, Tempo);
+	CHECK(Speed <= 20 && Tempo >= 32 && std::abs(BeatsPerMinute(Speed, Tempo, 60, 4) - 36.0) < 0.5);
+	// PAL: the same BPM with the same speed and tempo; its default tempo is 125
 	CHECK(BeatsPerMinute(6, 150, 50, 4) == 150.0);
+	ChooseSpeedTempo(150.0, 4, 50, 6, 32, Speed, Tempo);
+	CHECK(Speed == 5 && Tempo == 125);
 }
 
 void TestKeys()
@@ -1194,12 +1386,44 @@ void TestTempoTool()
 	Song.Info.DirectChanges = true;
 	ToolResult Result = Run(Song, "set_tempo", "{\"bpm\": 120}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "Tempo set to 120 BPM (speed 6, tempo 120); it was 150 BPM");
+	CHECK_HAS(Result.Text, "Tempo set to 120 BPM (speed 6, tempo 120); it was 150 BPM (speed 6, tempo 150). One Ctrl+Z undoes it.");
+	CHECK_HAS(Result.Text, "Its rows last 7 or 8 ticks, so the rhythm isn't quite even. Even rows nearby: 128.6 BPM (speed 7, tempo 150) "
+		"or 112.5 BPM (speed 8, tempo 150).");
 	CHECK(Song.Info.Speed == 6 && Song.Info.Tempo == 120);
+	// Where rows can be even, the speed changes at tempo 150
+	Result = Run(Song, "set_tempo", "{\"bpm\": 180}");
+	CHECK_HAS(Result.Text, "Tempo set to 180 BPM (speed 5, tempo 150); it was 120 BPM (speed 6, tempo 120).");
+	CHECK_LACKS(Result.Text, "isn't quite even");
+	CHECK(Song.Info.Speed == 5 && Song.Info.Tempo == 150);
+	// FamiTracker's own numbers, as the user names them
+	Result = Run(Song, "set_tempo", "{\"speed\": 8}");
+	CHECK_HAS(Result.Text, "Tempo set to 112.5 BPM (speed 8, tempo 150)");
+	CHECK(Song.Info.Speed == 8 && Song.Info.Tempo == 150);
+	Result = Run(Song, "set_tempo", "{\"speed\": 3, \"tempo\": 75}");
+	CHECK_HAS(Result.Text, "150 BPM (speed 3, tempo 75)");
+	CHECK(Song.Info.Speed == 3 && Song.Info.Tempo == 75);
+	Result = Run(Song, "set_tempo", "{\"tempo\": 125}");
+	CHECK(Song.Info.Speed == 3 && Song.Info.Tempo == 125);
+	CHECK_HAS(Result.Text, "Its rows last 3 or 4 ticks");
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 150, \"speed\": 6}").Text, "(speed 6, tempo 150)");
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 90, \"tempo\": 150}").Text, "(speed 10, tempo 150)");
+	CHECK_HAS(Run(Song, "set_tempo", "{\"speed\": 10}").Text, "The song plays at 90 BPM (speed 10, tempo 150) already.");
+	CHECK_HAS(Run(Song, "set_tempo", "{\"speed\": 40}").Text, "speed");
+	CHECK(Run(Song, "set_tempo", "{\"tempo\": 20}").IsError);
+	CHECK(Run(Song, "set_tempo", "{\"bpm\": 120, \"speed\": 6, \"tempo\": 120}").IsError);
+	CHECK(Run(Song, "set_tempo", "{}").IsError);
+	// The song's own speed commands would set the speed back: then only the tempo changes
 	Song.Rows[2][70].Effect[0] = EFF_SPEED;
 	Song.Rows[2][70].Param[0] = 0x05;
-	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 100}").Text, "F05 effect at bar 5 beat 2.5 on 2A03 Triangle");
-	CHECK(Run(Song, "set_tempo", "{}").IsError);
+	Result = Run(Song, "set_tempo", "{\"bpm\": 100}");
+	CHECK_HAS(Result.Text, "F05 effect at bar 5 beat 2.5 on 2A03 Triangle");
+	CHECK(Song.Info.Speed == 10 && Song.Info.Tempo == 167);
+	CHECK_LACKS(Result.Text, "Even rows nearby");
+	// Tempo commands: a note on them
+	Song.Rows[2][70].Param[0] = 0x96;
+	Result = Run(Song, "set_tempo", "{\"bpm\": 180}");
+	CHECK_HAS(Result.Text, "Tempo set to 180 BPM (speed 5, tempo 150)");
+	CHECK_HAS(Result.Text, "F96 effect at bar 5 beat 2.5");
 }
 
 void TestBacking()
@@ -1647,7 +1871,7 @@ void TestSession()
 	CHECK_HAS(Call("set_tempo", "{\"bpm\":110}"), "Tempo set to 110 BPM");
 	CHECK_HAS(Call("change_mood", "{\"mood\":\"darker\",\"to_mode\":\"phrygian\",\"moves\":[{\"channel\":\"Triangle\",\"semitones\":-12}],"
 		"\"sounds\":[{\"channel\":\"VRC6 Pulse 1\",\"instrument\":\"warm pad\"}],\"tempo_percent\":85}"),
-		"The tempo is now 93 BPM (speed 6, tempo 93)");
+		"The tempo is now 94 BPM (speed 6, tempo 94)");
 	CHECK_HAS(Call("play", "{\"from_bar\":1,\"bars\":2}"), "Playing for the user from bar 1 for 2 bars");
 	CHECK_HAS(Call("read_notes", "{\"channel\":\"VRC6 Pulse 1\",\"to_bar\":2}"), "bar 1 beat 1: D#4");
 }
@@ -2419,6 +2643,110 @@ void TestJingles()
 
 // Loops for games
 
+void TestExpansion()
+{
+	// A VRC6 song: notes on the VRC6's channels, the loop on the sawtooth
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(7, 16, "C-2", 0);
+	Song.Put(0, 0, "E-4", 2);
+	Song.Rows[7][127].Effect[0] = EFF_JUMP;
+	ToolSet Tools(Song);
+
+	// Notes on the channels that go: the user is asked first
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chip\": \"VRC7\"}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "The song has 2 notes on the VRC6's channels (track 1 \"Town\"). Switching to the VRC7 clears those channels");
+	CHECK_HAS(Result.Text, "call set_expansion again with confirm: true");
+	CHECK(Song.Info.Expansion == "VRC6" && Song.Rows[5][0].HasNote());
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"vrc7\", \"confirm\": true}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC7 now: 6 more channels (VRC7 FM Channel 1, VRC7 FM Channel 2, VRC7 FM Channel 3, "
+		"VRC7 FM Channel 4, VRC7 FM Channel 5, VRC7 FM Channel 6) besides the 2A03's five.");
+	CHECK_HAS(Result.Text, "piano");
+	CHECK_HAS(Result.Text, "Cleared 2 notes on the channels that went.");
+	CHECK_HAS(Result.Text, "Moved 1 effect that steers the song (speed, loops, ends) from the channels that went to VRC7 FM Channel 6.");
+	CHECK_HAS(Result.Text, "FamiTracker can't undo switching chips");
+	CHECK(Song.Info.Expansion == "VRC7" && Song.Info.Channels.size() == 11 && Song.Info.Channels[5].Kind == KIND_FM);
+	CHECK(Song.Rows[10][127].Effect[0] == EFF_JUMP && !Song.Rows[5][0].HasNote() && !Song.Rows[7][16].HasNote());
+	CHECK(Song.Rows[0][0].HasNote());	// the 2A03's stay
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"VRC7\"}")).Text, "The song uses the VRC7 already.");
+	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "VRC7 FM Channel 6");
+
+	// The VRC7's own sounds by name; a preset's name picks the one most like it
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"FM Channel 1\", \"instrument\": \"piano\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 1}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added the instrument \"Piano\" (03) (VRC7 patch 3, piano)");
+	const int Piano = InstrumentIndex(Song, "Piano");
+	CHECK(Piano == 3 && Song.Vrc7Patches[Piano] == 3);
+	CHECK(Song.Rows[5][0].Instrument == Piano && Song.Rows[5][4].Pitch() == 52 && Song.Rows[5][8].Note == NOTE_HALT);
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"FM Channel 2\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"G-4\", \"beats\": 2}]}"));
+	CHECK_HAS(Result.Text, "Added the instrument \"Flute\" (04) (VRC7 patch 4");
+	CHECK(Song.Rows[6][0].Instrument == 4 && Song.Vrc7Patches[4] == 4);
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"FM Channel 3\", \"instrument\": \"Piano\", \"notes\": ["
+		"{\"bar\": 2, \"pitch\": \"C-3\", \"beats\": 4}]}"));
+	CHECK(!Result.IsError && Song.Rows[7][16].Instrument == Piano);	// the one there already
+	CHECK_LACKS(Result.Text, "Added the instrument");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"horn\", \"chip\": \"vrc7\"}")).Text,
+		"Added \"Brass\" (05) (VRC7 instrument, patch 12: brass section");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"choir\", \"channel\": \"FM Channel 4\"}")).Text, "patch 15");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"kazoo\", \"channel\": \"FM Channel 4\"}")).Text, "No VRC7 sound called \"kazoo\"");
+	CHECK_HAS(Tools.Call("write_notes", Parse("{\"channel\": \"FM Channel 4\", \"instrument\": \"snare\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}]}")).Text, "drum for the noise channel");
+	// VRC6 sounds aren't for the VRC7 any more
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"soft lead\", \"chip\": \"VRC6\"}")).Text, "no VRC6 channels");
+
+	// Back to the VRC6: three FM channels go, and the loop moves to the sawtooth
+	Song.Rows[10][127] = Cell();
+	Song.Rows[9][63].Effect[0] = EFF_HALT;	// on FM Channel 5
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"VRC6\", \"confirm\": true}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Cleared 4 notes on the channels that went.");
+	CHECK_HAS(Result.Text, "Moved 1 effect that steers the song (speed, loops, ends) from the channels that went to VRC6 Sawtooth.");
+	CHECK(Song.Info.Channels.size() == 8 && Song.Info.Channels[7].Kind == KIND_SAWTOOTH && Song.Rows[7][63].Effect[0] == EFF_HALT);
+	CHECK(!Song.Rows[5][0].HasNote());
+
+	// Nothing to lose: no question, and no expansion chip at all
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"none\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses no expansion chip now: just the 2A03's five channels.");
+	CHECK_HAS(Result.Text, "from the channels that went to 2A03 DPCM");
+	CHECK(Song.Info.Channels.size() == 5 && Song.Info.Expansion.empty() && Song.Rows[4][63].Effect[0] == EFF_HALT);
+
+	// The N163: its channel count, and asking only about the channels that go
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 8}"));
+	CHECK_HAS(Result.Text, "The song uses the N163 now: 8 more channels");
+	CHECK_HAS(Result.Text, "Wavetable channels");
+	Song.Put(12, 0, "C-4");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 8}")).Text, "already");
+	CHECK(!Tools.Call("set_expansion", Parse("{\"chip\": \"Namco\", \"n163_channels\": 8}")).IsError);
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 4}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "The song has 1 note on the N163 channels after Namco 4");
+	CHECK_HAS(Result.Text, "Switching to 4 N163 channels removes those channels in every track, and FamiTracker can't undo it.");
+	Song.Rows[12][0] = Cell();
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 4}"));
+	CHECK(!Result.IsError && Song.Info.Channels.size() == 9 && Song.Info.Channels[8].Name == "Namco 4");
+
+	// Mistakes
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"5B\"}")).Text, "Sunsoft 5B");
+	CHECK(Tools.Call("set_expansion", Parse("{\"chip\": \"SID\"}")).IsError);
+	CHECK(Tools.Call("set_expansion", Parse("{}")).IsError);
+	Song.Busy = true;
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"VRC6\"}")).Text, "A dialog is open");
+	Song.Busy = false;
+
+	// A PAL song becomes NTSC
+	FakeSong Pal;
+	Pal.Info.FrameRate = 50;
+	ToolSet PalTools(Pal);
+	CHECK_HAS(PalTools.Call("set_expansion", Parse("{\"chip\": \"VRC7\"}")).Text, "so the song is NTSC now");
+	CHECK(Pal.Info.FrameRate == 60);
+}
+
 void TestTiming2()
 {
 	// 6 ticks a row at speed 6, tempo 150; F03 halves it; tempo 120 alternates 8 and 7
@@ -3067,6 +3395,7 @@ int main()
 	TestTenseVersions();
 	TestJingleScores();
 	TestJingles();
+	TestExpansion();
 	TestTiming2();
 	TestLoops();
 	TestOgg();

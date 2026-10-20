@@ -20,8 +20,8 @@
 */
 
 // Stand-in for FamiTrackerDoc.h: the limits, the pattern cell and a song in
-// memory with the document functions Clips.cpp calls (NoteEdit.cpp needs only
-// the cell and the enums)
+// memory with the document functions Clips.cpp and ChipSwitch.cpp call
+// (NoteEdit.cpp needs only the cell and the enums)
 #pragma once
 #include <vector>
 #include <map>
@@ -37,7 +37,7 @@ class CClipLibrary;
 // A song in memory: tracks of frames, each frame a pattern per channel
 class CFamiTrackerDoc {
 public:
-	struct Track { std::vector<std::vector<unsigned>> frames; std::map<std::pair<unsigned, unsigned>, std::vector<stChanNote>> patterns; };
+	struct Track { std::vector<std::vector<unsigned>> frames; std::map<std::pair<unsigned, unsigned>, std::vector<stChanNote>> patterns; std::map<unsigned, unsigned> columns; };
 	std::vector<Track> tracks;
 	std::vector<int> chanIDs;
 	unsigned length = 16;
@@ -55,6 +55,17 @@ public:
 	void GetDataAtPattern(unsigned t, unsigned p, unsigned c, unsigned r, stChanNote *pData) const {
 		auto it = tracks[t].patterns.find({c, p}); *pData = (it == tracks[t].patterns.end()) ? Empty() : it->second[r]; }
 	void SetDataAtPattern(unsigned t, unsigned p, unsigned c, unsigned r, const stChanNote *pData) { ++writes; Pattern(t, c, p)[r] = *pData; }
+	// For ChipSwitch.cpp
+	void GetNoteData(unsigned t, unsigned f, unsigned c, unsigned r, stChanNote *pData) const { GetDataAtPattern(t, GetPatternAtFrame(t, f, c), c, r, pData); }
+	void SetPatternAtFrame(unsigned t, unsigned f, unsigned c, unsigned p) { tracks[t].frames[f][c] = p; }
+	void ClearPattern(unsigned t, unsigned f, unsigned c) { tracks[t].patterns.erase({c, tracks[t].frames[f][c]}); }
+	bool IsPatternEmpty(unsigned t, unsigned c, unsigned p) const {
+		auto it = tracks[t].patterns.find({c, p}); if (it == tracks[t].patterns.end()) return true;
+		for (unsigned r = 0; r < length; ++r) { const stChanNote &n = it->second[r];
+			if (n.Note != NONE || n.Vol != MAX_VOLUME || n.Instrument != MAX_INSTRUMENTS || n.EffNumber[0] || n.EffNumber[1] || n.EffNumber[2] || n.EffNumber[3]) return false; }
+		return true; }
+	unsigned GetEffColumns(unsigned t, unsigned c) const { auto it = tracks[t].columns.find(c); return it == tracks[t].columns.end() ? 0 : it->second; }
+	void SetEffColumns(unsigned t, unsigned c, unsigned n) { tracks[t].columns[c] = n; }
 	BOOL LockDocument() const { ++locks; return TRUE; }
 	BOOL UnlockDocument() const { --locks; return TRUE; }
 	mutable int locks = 0;

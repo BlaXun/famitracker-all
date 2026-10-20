@@ -50,6 +50,7 @@
 #include "SoundGen.h"
 #include "TrackerChannel.h"
 #include "Action.h"
+#include "ChipSwitch.h"
 #include "Clips.h"
 #include "InsertRecording.h"
 #include "McpSocket.h"
@@ -179,8 +180,27 @@ int KindOf(int ChanID)
 	case CHANID_NOISE: return ftapi::KIND_NOISE;
 	case CHANID_DPCM: return ftapi::KIND_DPCM;
 	case CHANID_VRC6_SAWTOOTH: return ftapi::KIND_SAWTOOTH;
+	case CHANID_VRC7_CH1: case CHANID_VRC7_CH2: case CHANID_VRC7_CH3: case CHANID_VRC7_CH4: case CHANID_VRC7_CH5:
+	case CHANID_VRC7_CH6:
+		return ftapi::KIND_FM;
 	}
 	return ftapi::KIND_OTHER;
+}
+
+// The expansion chip by the API's name ("" for none); false if it isn't one FamiTracker switches to
+bool ChipFlag(const std::string &Chip, unsigned char &Flag)
+{
+	const struct { const char *pName; unsigned char Flag; } CHIPS[] = {
+		{ "", SNDCHIP_NONE }, { "VRC6", SNDCHIP_VRC6 }, { "VRC7", SNDCHIP_VRC7 }, { "FDS", SNDCHIP_FDS },
+		{ "MMC5", SNDCHIP_MMC5 }, { "N163", SNDCHIP_N163 },
+	};
+	for (size_t i = 0; i < sizeof(CHIPS) / sizeof(CHIPS[0]); ++i) {
+		if (Chip == CHIPS[i].pName) {
+			Flag = CHIPS[i].Flag;
+			return true;
+		}
+	}
+	return false;
 }
 
 // 32 hex digits from the system's random numbers
@@ -855,15 +875,9 @@ public:
 			return -1;
 		}
 		const CString Name = Ansi(Sound.InstrumentName(Sawtooth));
-		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
-			if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)) || pDoc->GetInstrumentType(static_cast<unsigned int>(i)) != Type)
-				continue;
-			char Existing[CInstrument::INST_NAME_MAX];
-			pDoc->GetInstrumentName(static_cast<unsigned int>(i), Existing);
-			Existing[CInstrument::INST_NAME_MAX - 1] = 0;
-			if (Name == Existing)
-				return i;
-		}
+		const int Existing = FindInstrument(Type, Name);
+		if (Existing >= 0)
+			return Existing;
 		const int Index = pDoc->AddInstrument(Name, ChipType);
 		if (Index == INVALID_INSTRUMENT) {
 			Error = "There are no free instrument slots left (a song has at most 64).";
@@ -901,6 +915,98 @@ public:
 		pDoc->SetModifiedFlag();
 		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 		return Index;
+	}
+
+	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CFamiTrackerDoc *pDoc = Doc();
+		if (!pDoc->ExpansionEnabled(SNDCHIP_VRC7)) {
+			Error = "This song has no VRC7 channels.";
+			return -1;
+		}
+		if (Patch < 1 || Patch > 15) {
+			Error = "The VRC7's patches are 1-15.";
+			return -1;
+		}
+		const CString Text = Ansi(Name);
+		const int Existing = FindInstrument(INST_VRC7, Text);
+		if (Existing >= 0)
+			return Existing;
+		const int Index = pDoc->AddInstrument(Text, SNDCHIP_VRC7);
+		if (Index == INVALID_INSTRUMENT) {
+			Error = "There are no free instrument slots left (a song has at most 64).";
+			return -1;
+		}
+		CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Index));	// retained
+		if (pInstrument != NULL) {
+			if (pInstrument->GetType() == INST_VRC7)
+				static_cast<CInstrumentVRC7*>(pInstrument)->SetPatch(static_cast<unsigned int>(Patch));
+			pInstrument->Release();
+		}
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+		return Index;
+	}
+
+	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks)
+	{
+		Tracks.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		unsigned char Flag = SNDCHIP_NONE;
+		if (pDoc == NULL || !pDoc->IsFileLoaded() || !ChipFlag(Chip, Flag))
+			return 0;
+		return CountChannelNotes(pDoc, LeavingChannels(Flag, Channels), Tracks);
+	}
+
+	// As Module > Module properties does, after emptying the channels that go
+	// (ChipSwitch.h); the new chip's channels show one effect column
+	bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error)
+	{
+		Moved = Lost = 0;
+		if (!CanChange(Error))
+			return false;
+		unsigned char Flag = SNDCHIP_NONE;
+		if (!ChipFlag(Chip, Flag)) {
+			Error = "FamiTracker can't switch to that chip.";
+			return false;
+		}
+		CFamiTrackerDoc *pDoc = Doc();
+		const int Namco = std::max(1, std::min(8, Channels));
+		const std::vector<unsigned int> Going = LeavingChannels(Flag, Namco);
+		std::vector<unsigned int> Emptied = Going;	// with what earlier chips left past the channels shown
+		for (unsigned int c = pDoc->GetAvailableChannels(); c < MAX_CHANNELS; ++c)
+			Emptied.push_back(c);
+		Stop();
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();
+
+		std::vector<song_effect_t> Effects;
+		pDoc->LockDocument();
+		GatherSongEffects(pDoc, Going, Effects);
+		EmptyChannels(pDoc, Emptied);
+		pDoc->UnlockDocument();
+		if (Flag == SNDCHIP_N163)
+			pDoc->SetNamcoChannels(static_cast<unsigned int>(Namco));
+		pDoc->SelectExpansionChip(Flag);
+		pDoc->LockDocument();
+		for (unsigned int t = 0; t < pDoc->GetTrackCount(); ++t) {
+			for (size_t i = 0; i < Emptied.size(); ++i) {
+				if (Emptied[i] < static_cast<unsigned int>(pDoc->GetChannelCount()))	// SetEffColumns needs a channel there
+					pDoc->SetEffColumns(t, Emptied[i], 0);
+			}
+		}
+		if (!Effects.empty() && pDoc->GetAvailableChannels() > 0) {
+			Lost = PlaceSongEffects(pDoc, pDoc->GetAvailableChannels() - 1, Effects);
+			Moved = static_cast<int>(Effects.size()) - Lost;
+		}
+		pDoc->UnlockDocument();
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+		m_pMain->UpdateControls();
+		theApp.GetSoundGenerator()->DocumentPropertiesChanged(pDoc);
+		return true;
 	}
 
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &Error)
@@ -1005,6 +1111,40 @@ private:
 	unsigned int Track() const
 	{
 		return static_cast<unsigned int>(std::max(0, m_pMain->GetSelectedTrack()));
+	}
+
+	// The instrument of that type and name, -1 if there's none
+	int FindInstrument(inst_type_t Type, const CString &Name) const
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
+			if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)) || pDoc->GetInstrumentType(static_cast<unsigned int>(i)) != Type)
+				continue;
+			char Existing[CInstrument::INST_NAME_MAX];
+			pDoc->GetInstrumentName(static_cast<unsigned int>(i), Existing);
+			Existing[CInstrument::INST_NAME_MAX - 1] = 0;
+			if (Name == Existing)
+				return i;
+		}
+		return -1;
+	}
+
+	// The channels switching to the chip Flag empties (ftapi::SongHost::ExpansionNotes): the
+	// expansion chip's, or when only the N163's channel count changes, its channels past Namco
+	std::vector<unsigned int> LeavingChannels(unsigned char Flag, int Namco) const
+	{
+		std::vector<unsigned int> Out;
+		const CFamiTrackerDoc *pDoc = Doc();
+		const bool Same = Flag == pDoc->GetExpansionChip();
+		int Kept = 0;
+		for (unsigned int c = 0; c < pDoc->GetAvailableChannels(); ++c) {
+			if (pDoc->GetChipType(static_cast<int>(c)) == SNDCHIP_NONE)
+				continue;	// the 2A03's
+			if (Same && (Flag != SNDCHIP_N163 || Kept++ < Namco))
+				continue;
+			Out.push_back(c);
+		}
+		return Out;
 	}
 
 	void LoadSettings()

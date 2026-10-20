@@ -494,6 +494,24 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			pWrongChip = &I;
 		}
 	}
+	// VRC7 channels play the chip's own patches (a preset's name picks the one most like it)
+	if (Chip == "VRC7") {
+		const Vrc7Patch *pPatch = FindVrc7Patch(Wanted);
+		if (pPatch != 0 && pWrongChip != 0 && Squeezed(pPatch->Name) != Squeezed(Wanted))
+			pPatch = 0;	// the song's instrument of that name was meant
+		if (pPatch != 0) {
+			const size_t Before = S.Song.Instruments.size();
+			std::string Error;
+			const int Index = S.Host().AddVrc7Instrument(pPatch->Number, pPatch->InstrumentName(), Error);
+			if (Index < 0)
+				throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+			S.Refresh();
+			if (S.Song.Instruments.size() > Before)
+				S.Remarks.push_back(Format("Added the instrument %s (VRC7 patch %d, %s).", InstrumentLabel(S.Song, Index).c_str(),
+					pPatch->Number, pPatch->Description.c_str()));
+			return Index;
+		}
+	}
 	const Preset *pPreset = FindPreset(Wanted);
 	if (pPreset != 0 && pWrongChip != 0 && Squeezed(pPreset->Name) != Squeezed(Wanted))
 		pPreset = 0;	// the song's instrument of that name was meant, not a preset it's a nickname of
@@ -503,7 +521,7 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 		if (!pPreset->Drum && Info.Kind == KIND_NOISE)
 			throw Problem(Format("The noise channel needs a drum preset (kick, snare, hi-hat, open hi-hat), not \"%s\".", pPreset->Name.c_str()));
 		if (Chip != "2A03" && Chip != "VRC6")
-			throw Problem(Format("Presets are for 2A03, MMC5 and VRC6 channels; %s needs one of the song's %s instruments.",
+			throw Problem(Format("Presets are for 2A03, MMC5, VRC6 and VRC7 channels; %s needs one of the song's %s instruments.",
 				Info.FullName().c_str(), Chip.c_str()));
 		const size_t Before = S.Song.Instruments.size();
 		std::string Error;
@@ -539,6 +557,9 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			Names += ", ";
 		Names += "\"" + S.Song.Instruments[i].Name + "\"";
 	}
+	if (Chip == "VRC7")
+		throw Problem(Format("No instrument or VRC7 sound called \"%s\". VRC7 instruments in the song: %s. VRC7 sounds: %s (or a preset's "
+			"name, like \"soft lead\").", Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), Vrc7PatchList().c_str()));
 	throw Problem(Format("No instrument or preset called \"%s\". %s instruments in the song: %s. Presets: %s.", Wanted.c_str(),
 		Chip.c_str(), Names.empty() ? "none" : Names.c_str(), PresetList().c_str()));
 }
@@ -1196,17 +1217,13 @@ std::string PlaceClipTool(Session &S, const Json &Args)
 std::string AddInstrumentTool(Session &S, const Json &Args)
 {
 	const std::string Name = StringArg(Args, "preset");
-	const Preset *pPreset = FindPreset(Name);
-	if (pPreset == 0)
-		throw Problem(Format("No preset called \"%s\". Presets: %s.", Name.c_str(), PresetList().c_str()));
 	std::string Chip = "2A03";
 	bool Sawtooth = false;
+	int Channel = -1;
 	if (Arg(Args, "channel") != 0) {
-		const ChannelInfo &Info = S.Channel(ChannelArg(S, Args, "channel"));
-		Chip = InstrumentChip(Info);
-		Sawtooth = Info.Kind == KIND_SAWTOOTH;
-		if (pPreset->Drum && Info.Kind != KIND_NOISE)
-			throw Problem(Format("\"%s\" is a drum for the noise channel.", pPreset->Name.c_str()));
+		Channel = ChannelArg(S, Args, "channel");
+		Chip = InstrumentChip(S.Channel(Channel));
+		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
 	}
 	else if (Arg(Args, "chip") != 0) {
 		Chip = StringArg(Args, "chip");
@@ -1215,8 +1232,34 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 		if (Chip == "MMC5")
 			Chip = "2A03";
 	}
+
+	// The VRC7 plays its own patches
+	if (Chip == "VRC7") {
+		if (S.Song.Expansion.find("VRC7") == std::string::npos)
+			throw Problem("This song has no VRC7 channels; set_expansion switches it to the VRC7.");
+		const Vrc7Patch *pPatch = FindVrc7Patch(Name);
+		if (pPatch == 0)
+			throw Problem(Format("No VRC7 sound called \"%s\". VRC7 sounds: %s (or a preset's name, like \"soft lead\").", Name.c_str(),
+				Vrc7PatchList().c_str()));
+		const size_t Before = S.Song.Instruments.size();
+		std::string Error;
+		const int Index = S.Host().AddVrc7Instrument(pPatch->Number, pPatch->InstrumentName(), Error);
+		if (Index < 0)
+			throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+		S.Refresh();
+		return Format("%s %s (VRC7 instrument, patch %d: %s). Use it by that name in write_notes or set_instrument.",
+			S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(), pPatch->Number,
+			pPatch->Description.c_str());
+	}
+
+	const Preset *pPreset = FindPreset(Name);
+	if (pPreset == 0)
+		throw Problem(Format("No preset called \"%s\". Presets: %s; on VRC7 channels also: %s.", Name.c_str(), PresetList().c_str(),
+			Vrc7PatchList().c_str()));
+	if (Channel >= 0 && pPreset->Drum && S.Channel(Channel).Kind != KIND_NOISE)
+		throw Problem(Format("\"%s\" is a drum for the noise channel.", pPreset->Name.c_str()));
 	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels) and the VRC6.");
+		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels), the VRC6 and the VRC7.");
 	if (pPreset->Drum)
 		Chip = "2A03";
 	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
@@ -1545,26 +1588,102 @@ std::string TransposeTool(Session &S, const Json &Args)
 	return WithRemarks(S, Result, Warnings);
 }
 
+// The song's speed and tempo commands (Fxx) in the effect columns that play:
+// speeds below the split point, tempos from it on
+void SpeedCommands(Session &S, bool &Speeds, bool &Tempos)
+{
+	Speeds = Tempos = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<Cell> &Cells = S.Cells(c);
+		for (size_t r = 0; r < Cells.size(); ++r) {
+			for (int k = 0; k < S.Channel(c).EffectColumns && k < EFFECT_COLUMNS; ++k) {
+				if (Cells[r].Effect[k] != EFF_SPEED)
+					continue;
+				if (std::max(1, static_cast<int>(Cells[r].Param[k])) >= S.Song.SplitPoint)
+					Tempos = true;
+				else
+					Speeds = true;
+			}
+		}
+	}
+}
+
+// The speed and tempo for a BPM (ChooseSpeedTempo). Speed commands in the
+// song would set another speed back, so then the speed stays and the tempo
+// changes.
+void SpeedTempoFor(Session &S, double Bpm, int RowsPerBeat, int &Speed, int &Tempo)
+{
+	bool Speeds = false, Tempos = false;
+	SpeedCommands(S, Speeds, Tempos);
+	ChooseSpeedTempo(Bpm, RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo, Speeds ? S.Song.Speed : 0);
+}
+
+// "120 BPM (speed 6, tempo 120)"
+std::string TempoText(const Session &S, int Speed, int Tempo)
+{
+	const double Bpm = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	return Format("%s BPM (speed %d, tempo %d)", FormatNumber(std::floor(Bpm * 10 + 0.5) / 10).c_str(), Speed, Tempo);
+}
+
+// When rows don't all last the same number of ticks: how long they last, and
+// (Nearby) the speeds at the default tempo that would be even around there
+std::string UnevenText(const Session &S, int Speed, int Tempo, bool Nearby)
+{
+	const double Rows = RowsPerMinute(Speed, Tempo, S.Song.FrameRate);
+	if (EvenRows(Speed, Tempo, S.Song.FrameRate) || Rows <= 0.0)
+		return std::string();
+	const double Ticks = 60.0 * S.Song.FrameRate / Rows;
+	const int Shorter = std::max(1, static_cast<int>(std::floor(Ticks))), Longer = Shorter + 1;
+	std::string Text = Format(" Its rows last %d or %d ticks, so the rhythm isn't quite even.", Shorter, Longer);
+	const int Default = DefaultTempo(S.Song.FrameRate);
+	if (!Nearby || Default < std::max(32, S.Song.SplitPoint) || Default > 255)
+		return Text;
+	std::vector<std::string> Even;
+	const int Speeds[] = { Shorter, Longer };
+	for (int i = 0; i < 2; ++i) {
+		if (Speeds[i] < S.Song.SplitPoint && Speeds[i] <= 31)
+			Even.push_back(TempoText(S, Speeds[i], Default));
+	}
+	if (!Even.empty())
+		Text += " Even rows nearby: " + Even[0] + (Even.size() > 1 ? " or " + Even[1] : std::string()) + ".";
+	return Text;
+}
+
 std::string SetTempoTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
 		throw Problem(Format("Changing the tempo changes the song, and the user hasn't allowed direct changes. Suggest the user sets "
 			"it with the speed and tempo boxes in FamiTracker's toolbar (now speed %d, tempo %d), or allows direct changes in "
 			"File > Connect Claude Code.", S.Song.Speed, S.Song.Tempo));
-	if (Arg(Args, "bpm") == 0)
-		throw Problem("Give the tempo as bpm, like {\"bpm\": 120}.");
-	const double Bpm = NumberArg(Args, "bpm", 0.0, 10.0, 1000.0);
-	int Speed, Tempo;
-	ChooseSpeedTempo(Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
-	const double Before = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
-	const double After = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	const bool ByBpm = Arg(Args, "bpm") != 0, BySpeed = Arg(Args, "speed") != 0, ByTempo = Arg(Args, "tempo") != 0;
+	if (!ByBpm && !BySpeed && !ByTempo)
+		throw Problem("Give the tempo as bpm, like {\"bpm\": 120}, or FamiTracker's speed and tempo, like {\"speed\": 5, \"tempo\": 150}.");
+	if (ByBpm && BySpeed && ByTempo)
+		throw Problem("Give bpm, or speed and tempo. With bpm, give at most one of speed and tempo: it stays, and the other is picked "
+			"for the bpm.");
+	const int MaxSpeed = std::max(1, std::min(31, S.Song.SplitPoint - 1)), MinTempo = std::max(32, S.Song.SplitPoint);
+	int Speed = BySpeed ? IntArg(Args, "speed", S.Song.Speed, 1, MaxSpeed) : S.Song.Speed;
+	int Tempo = ByTempo ? IntArg(Args, "tempo", S.Song.Tempo, MinTempo, 255) : S.Song.Tempo;
+	if (ByBpm) {
+		const double Bpm = NumberArg(Args, "bpm", 0.0, 10.0, 1000.0);
+		if (BySpeed || ByTempo)
+			ChooseSpeedTempo(Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo,
+				BySpeed ? Speed : 0, ByTempo ? Tempo : 0);
+		else
+			SpeedTempoFor(S, Bpm, S.Time.RowsPerBeat, Speed, Tempo);
+	}
+	bool Speeds = false, Tempos = false;
+	SpeedCommands(S, Speeds, Tempos);
+	const bool Nearby = !Speeds && !Tempos;	// with speed commands, other speeds wouldn't last
+	if (Speed == S.Song.Speed && Tempo == S.Song.Tempo)
+		return "The song plays at " + TempoText(S, Speed, Tempo) + " already." + UnevenText(S, Speed, Tempo, Nearby);
 	std::string Why, Error;
 	if (!S.Host().CanChange(Why))
 		throw Problem(Why);
 	if (!S.Host().SetSpeedTempo(Speed, Tempo, Error))
 		throw Problem(Error.empty() ? "The tempo couldn't be set." : Error);
-	std::string Text = Format("Tempo set to %s BPM (speed %d, tempo %d); it was %s BPM. One Ctrl+Z undoes it.",
-		FormatNumber(std::floor(After * 10 + 0.5) / 10).c_str(), Speed, Tempo, FormatNumber(std::floor(Before * 10 + 0.5) / 10).c_str());
+	std::string Text = "Tempo set to " + TempoText(S, Speed, Tempo) + "; it was " + TempoText(S, S.Song.Speed, S.Song.Tempo) +
+		". One Ctrl+Z undoes it." + UnevenText(S, Speed, Tempo, Nearby);
 	// Fxx effects change it again while playing
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const std::vector<Cell> &Cells = S.Cells(c);
@@ -1635,7 +1754,8 @@ int FreeChannel(Session &S, int First, int End, int Avoid, bool (*Fits)(const Ch
 
 bool IsChordChannel(const ChannelInfo &Channel)
 {
-	return Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5");
+	return (Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5")) ||
+		Channel.Kind == KIND_FM;
 }
 
 bool IsBassChannel(const ChannelInfo &Channel)
@@ -2112,7 +2232,7 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 	// 6. The tempo
 	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
 	if (Plan.Bpm > 0.0)
-		ChooseSpeedTempo(Plan.Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
+		SpeedTempoFor(S, Plan.Bpm, S.Time.RowsPerBeat, Speed, Tempo);
 	const bool NewTempo = Speed != S.Song.Speed || Tempo != S.Song.Tempo;
 	const std::string NewBpm = FormatNumber(std::floor(BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat) * 10 + 0.5) / 10);
 
@@ -2423,7 +2543,7 @@ int EchoOf(Session &S, int Melody)
 bool HasPresets(const ChannelInfo &Channel)
 {
 	const std::string Chip = InstrumentChip(Channel);
-	return (Chip == "2A03" || Chip == "VRC6") && Channel.Kind != KIND_NOISE && Channel.Kind != KIND_DPCM;
+	return (Chip == "2A03" || Chip == "VRC6" || Chip == "VRC7") && Channel.Kind != KIND_NOISE && Channel.Kind != KIND_DPCM;
 }
 
 std::string MakeVersionTool(Session &S, const Json &Args)
@@ -2569,9 +2689,16 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
 	if (Changes.Bpm > 0.0 && std::fabs(Changes.Bpm - Now) > 0.05) {
 		const double Factor = Changes.Bpm / Now;
-		Tempo = static_cast<int>(std::floor(S.Song.Tempo * Changes.Bpm / Now + 0.5));	// exact for round percentages
-		if (Tempo < std::max(32, S.Song.SplitPoint) || Tempo > 255)
+		bool Speeds = false, Tempos = false;
+		SpeedCommands(S, Speeds, Tempos);
+		if (!Speeds && !Tempos)
 			ChooseSpeedTempo(Changes.Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
+		else {
+			// The tempo and its commands in the patterns scale together, exactly for round percentages
+			Tempo = static_cast<int>(std::floor(S.Song.Tempo * Changes.Bpm / Now + 0.5));
+			if (Tempo < std::max(32, S.Song.SplitPoint) || Tempo > 255)
+				ChooseSpeedTempo(Changes.Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
+		}
 		int Commands = 0;
 		for (int c = 0; c < S.ChannelCount(); ++c)
 			Commands += ScaleTempoEffects(D.Cells(c), S.Channel(c).EffectColumns, S.Song.SplitPoint, Factor);
@@ -2709,6 +2836,9 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 		Lead = GuessMelodyChannel(S, 0, Total);
 		if (Lead >= 0 && IsBass(S.Channel(Lead)))
 			Lead = -1;
+		for (int c = 0; c < S.ChannelCount() && Lead < 0; ++c)	// the VRC7's first, in a VRC7 song
+			if (S.Channel(c).Kind == KIND_FM)
+				Lead = c;
 		for (int c = 0; c < S.ChannelCount() && Lead < 0; ++c)
 			if (S.Channel(c).Kind == KIND_PULSE)
 				Lead = c;
@@ -2724,10 +2854,10 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 			throw Problem("harmony_channel needs a melodic channel other than the lead's, or \"none\".");
 	}
 	else {
-		// A pulse channel: of the lead's chip and playing in the song if one is
+		// A pulse or FM channel: of the lead's chip and playing in the song if one is
 		int Best = -1;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
-			if (c == Lead || S.Channel(c).Kind != KIND_PULSE)
+			if (c == Lead || (S.Channel(c).Kind != KIND_PULSE && S.Channel(c).Kind != KIND_FM))
 				continue;
 			const int Score = (S.Channel(c).Chip == S.Channel(Lead).Chip ? 2 : 0) + (S.Notes(c).empty() ? 0 : 1);
 			if (Harmony < 0 || Score > Best) {
@@ -2934,6 +3064,103 @@ std::string SelectTrackTool(Session &S, const Json &Args)
 		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch tracks.") : Error);
 	return Format("Track %d \"%s\" is selected; the tools work on it now.", Track + 1,
 		static_cast<size_t>(Track) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(Track)].c_str() : "");
+}
+
+// The expansion chip
+
+// "the VRC7", "no expansion chip"
+std::string ChipText(const std::string &Chip)
+{
+	return Chip.empty() ? std::string("no expansion chip") : "the " + Chip;
+}
+
+std::string SetExpansionTool(Session &S, const Json &Args)
+{
+	std::string Chip;
+	const std::string Asked = StringArg(Args, "chip");
+	for (size_t i = 0; i < Asked.size(); ++i)
+		if (std::isalnum(static_cast<unsigned char>(Asked[i])))
+			Chip += static_cast<char>(std::toupper(static_cast<unsigned char>(Asked[i])));
+	if (Chip == "NONE" || Chip == "2A03" || Chip == "NES" || Chip == "OFF")
+		Chip.clear();
+	else if (Chip == "NAMCO" || Chip == "NAMCO163" || Chip == "N106")
+		Chip = "N163";
+	else if (Chip == "5B" || Chip == "S5B" || Chip == "SUNSOFT" || Chip == "SUNSOFT5B")
+		throw Problem("This FamiTracker doesn't play the Sunsoft 5B in songs.");
+	if (Asked.empty())
+		throw Problem("Say which chip with chip: none, VRC6, VRC7, FDS, MMC5 or N163.");
+	if (!Chip.empty() && Chip != "VRC6" && Chip != "VRC7" && Chip != "FDS" && Chip != "MMC5" && Chip != "N163")
+		throw Problem("chip should be none, VRC6, VRC7, FDS, MMC5 or N163 (FamiTracker plays one expansion chip at a time).");
+	const int Channels = IntArg(Args, "n163_channels", 4, 1, 8);
+	int Namco = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Namco += S.Channel(c).Chip == "N163" ? 1 : 0;
+	if (S.Song.Expansion == Chip && (Chip != "N163" || Namco == Channels))
+		return "The song uses " + ChipText(Chip) + " already.";
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+
+	// Notes on the channels that go need the user's word
+	const bool Fewer = Chip == "N163" && S.Song.Expansion == Chip;	// only the N163's channel count changes
+	std::vector<int> Tracks;
+	const int Notes = S.Host().ExpansionNotes(Chip, Channels, Tracks);
+	if (Notes > 0 && !BoolArg(Args, "confirm", false)) {
+		std::string Where;
+		for (size_t i = 0; i < Tracks.size(); ++i) {
+			const int t = Tracks[i];
+			Where += Format("%s%d \"%s\"", i == 0 ? "" : ", ", t + 1,
+				static_cast<size_t>(t) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(t)].c_str() : "");
+		}
+		const std::string Going = Fewer ? Format("the N163 channels after Namco %d", Channels) :
+			ChipText(S.Song.Expansion) + "'s channels";
+		const std::string Switching = Fewer ? Format("%d N163 channels removes those channels", Channels) :
+			ChipText(Chip) + " clears those channels";
+		throw Problem(Format("The song has %s on %s (track%s %s). Switching to %s in every track%s, and FamiTracker can't undo "
+			"it. Ask the user first; if they agree, call set_expansion again with confirm: true.", Plural(Notes, "note", "notes").c_str(),
+			Going.c_str(), Tracks.size() == 1 ? "" : "s", Where.c_str(), Switching.c_str(),
+			Fewer ? "" : ", since the new chip's channels take their place"));
+	}
+	const bool Pal = S.Song.FrameRate == 50;
+	std::string Error;
+	int Moved = 0, Lost = 0;
+	if (!S.Host().SetExpansion(Chip, Channels, Moved, Lost, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch the chip.") : Error);
+	S.Load();
+
+	std::string Added;
+	int Count = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!Chip.empty() && S.Channel(c).Chip == Chip) {
+			Added += (Count == 0 ? "" : ", ") + S.Channel(c).FullName();
+			++Count;
+		}
+	}
+	std::string Text = "The song uses " + ChipText(Chip) + " now";
+	Text += Count > 0 ? Format(": %s (%s) besides the 2A03's five.", Plural(Count, "more channel", "more channels").c_str(), Added.c_str()) :
+		": just the 2A03's five channels.";
+	if (Chip == "VRC6")
+		Text += " Two pulses and a sawtooth, a strong bass; the presets work on them.";
+	else if (Chip == "VRC7")
+		Text += " FM channels with the chip's built-in sounds: " + Vrc7PatchList() + ". Name one as an instrument in write_notes, "
+			"set_instrument or add_instrument (a preset's name picks the one most like it).";
+	else if (Chip == "MMC5")
+		Text += " Two more pulses; the 2A03 presets work on them.";
+	else if (Chip == "FDS" || Chip == "N163")
+		Text += " Wavetable channels: they need " + Chip + " instruments, which you can't make yet; the user makes one in "
+			"FamiTracker's instrument editor.";
+	if (Notes > 0)
+		Text += Format(" Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str());
+	if (Moved > 0 && S.ChannelCount() > 0)
+		Text += Format(" Moved %s that steer%s the song (speed, loops, ends) from the channels that went to %s.",
+			Plural(Moved, "effect", "effects").c_str(), Moved == 1 ? "s" : "", S.Channel(S.ChannelCount() - 1).FullName().c_str());
+	if (Lost > 0)
+		Text += Format(" %s that steered the song found no free effect column there and %s gone: check the loop with check_loop.",
+			Plural(Lost, "effect", "effects").c_str(), Lost == 1 ? "is" : "are");
+	if (Pal && !Chip.empty())
+		Text += " Expansion chips play on NTSC machines, so the song is NTSC now.";
+	Text += " FamiTracker can't undo switching chips: Module > Module properties switches back.";
+	return WithRemarks(S, Text);
 }
 
 // Loops
@@ -3802,6 +4029,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	std::vector<std::string> Chips;
 	Chips.push_back("2A03");
 	Chips.push_back("VRC6");
+	Chips.push_back("VRC7");
+	std::vector<std::string> Sounds = PresetNames();	// and the VRC7's
+	for (size_t i = 0; i < Vrc7Patches().size(); ++i)
+		if (std::find(Sounds.begin(), Sounds.end(), Vrc7Patches()[i].Name) == Sounds.end())
+			Sounds.push_back(Vrc7Patches()[i].Name);
 
 	Json NoteItem = Json::MakeObject();
 	{
@@ -3851,7 +4083,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("write_notes", "Write a part",
 		"Writes a part (melody, counter-melody, bass line, drums...) on one channel, replacing that channel's notes in the bars "
 		"it covers. Each note lasts its beats; a gap is a rest. Unless the user allowed direct changes, the part becomes a clip "
-		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets + ").",
+		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
+		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + ").",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("notes", NotesProp, true)
@@ -3874,10 +4107,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		false, true);
 
 	AddTool("add_instrument", "Add an instrument",
-		"Adds an instrument from a preset: " + Presets + ". 2A03 and VRC6 channels need their own: give the channel it's for. "
-		"An instrument of that name for that chip is reused. write_notes and set_instrument also take preset names directly.",
+		"Adds an instrument from a preset: " + Presets + ". 2A03, VRC6 and VRC7 channels need their own: give the channel it's "
+		"for. VRC7 channels play the chip's built-in sounds: " + Vrc7PatchList() + " (a preset's name picks the one most like "
+		"it). An instrument of that name for that chip is reused. write_notes and set_instrument also take these names directly.",
 		Schema()
-			.Add("preset", EnumProp("The sound.", PresetNames()), true)
+			.Add("preset", EnumProp("The sound.", Sounds), true)
 			.Add("channel", ChannelProp("The channel it's for (picks the chip)."))
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", Chips)),
 		false, false, true);
@@ -3903,10 +4137,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Range().ClipChoice(),
 		false, true);
 
-	AddTool("set_tempo", "Set the tempo",
-		"Sets the song's tempo in BPM (picks FamiTracker's speed and tempo). Slower feels calmer or sadder, faster brighter or "
-		"more urgent. Needs direct changes; undoable.",
-		Schema().Add("bpm", Prop("number", "Beats per minute."), true), false, false, true);
+	AddTool("set_tempo", "Set the speed and tempo",
+		"Sets the track's speed and tempo, as FamiTracker's toolbar boxes do. Give bpm and it picks them, rows of even length "
+		"first, mostly by changing the speed at tempo 150 as FamiTracker users do (at 4 rows a beat: speed 5 is 180 BPM, 6 is 150, "
+		"7 about 129, 8 112.5, 9 100). Or give FamiTracker's own speed (ticks a row, lower is faster) and tempo (150 usually; "
+		"higher is faster) when the user names them; with bpm too, the one given stays. Slower feels calmer or sadder, faster "
+		"brighter or more urgent. Needs direct changes; undoable.",
+		Schema()
+			.Add("bpm", Prop("number", "Beats per minute."))
+			.Add("speed", Prop("integer", "FamiTracker's speed: ticks a row, 1-31 (lower is faster)."))
+			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
+		false, false, true);
 
 	AddTool("add_chords_and_bass", "Add chords and a bass line",
 		"Fits chords to a melody bar by bar in its key and writes them as an arpeggio on a pulse channel, plus a bass line on "
@@ -4095,6 +4336,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"one. get_song lists the tracks.",
 		Schema().Add("track", ChannelProp("Track number (from 1) or name, like \"Town (night)\"."), true), false, false, true);
 
+	AddTool("set_expansion", "Switch the expansion chip",
+		"Switches the song's expansion sound chip, as Module > Module properties does: none (the 2A03's five channels only), "
+		"VRC6 (two more pulses and a sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 "
+		"(two more pulses), FDS or N163 (wavetables). Use it when the user asks for a VRC6 or VRC7 song, before writing. "
+		"FamiTracker plays one expansion chip at a time, for every track of the module: the old chip's channels are cleared, so "
+		"when they have notes this asks for confirm: true, which needs the user's OK. It can't be undone in FamiTracker.",
+		Schema()
+			.Add("chip", EnumProp("The chip.", std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163" }), true)
+			.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default 4; the more, the noisier on the hardware)."))
+			.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the old chip's channels.")),
+		false, true);
+
 	AddTool("check_song", "Check the song",
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars and unused channels. Run it after writing.",
@@ -4159,6 +4412,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "make_version") Result.Text = MakeVersionTool(S, Args);
 		else if (Name == "make_jingle") Result.Text = MakeJingleTool(S, Args);
 		else if (Name == "select_track") Result.Text = SelectTrackTool(S, Args);
+		else if (Name == "set_expansion") Result.Text = SetExpansionTool(S, Args);
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
 		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
@@ -4197,7 +4451,9 @@ std::string ToolSet::Instructions()
 		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
 		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
 		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
-		"complete, item found...) is make_jingle. Tell the user what you changed and why.";
+		"complete, item found...) is make_jingle. For a VRC6 or VRC7 song, switch the chip with set_expansion first (it asks "
+		"before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
+		"brass...). Tell the user what you changed and why.";
 }
 
 }	// namespace ftapi

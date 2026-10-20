@@ -22,7 +22,8 @@ File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 the tools are in `Source/Api/` (portable, tested on Linux), the Winsock
 listener in `Source/McpSocket.cpp`, and the glue to the document, the
 settings and the dialog in `Source/McpConnection.cpp`, which writes changes
-with `WriteSongParts` in `InsertRecording.cpp`. Claude Code in WSL connects
+with `WriteSongParts` in `InsertRecording.cpp` and switches expansion chips
+with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
@@ -163,17 +164,21 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips and note editing** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`):
-  `Source/Tests` builds them on Linux against working stand-ins for the MFC
-  and document pieces they use (`Source/Tests/standins/`). `ClipsTests.cpp`
-  covers linked copies following edits, unlinking, undo snapshots, tracks,
-  and the `BF CLIPS` block read back, cut short at every byte.
-  `NoteEditTests.cpp` covers the piano roll's edits: notes making way,
-  releases and halts, volumes and instruments kept, switch-off effects,
-  song-wide effects staying, copy and paste, and the effects the piano roll
-  shows on notes and puts on them (lasting ones kept for the notes after). Same three commands with
-  `Source/Tests` and `build/tests`; CI runs them in the Linux job. The
-  stand-ins must keep the real headers' signatures.
+- **Clips, note editing and chip switching** (`Source/Clips.cpp`,
+  `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`): `Source/Tests` builds them
+  on Linux against working stand-ins for the MFC and document pieces they
+  use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
+  following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
+  block read back, cut short at every byte. `NoteEditTests.cpp` covers the
+  piano roll's edits: notes making way, releases and halts, volumes and
+  instruments kept, switch-off effects, song-wide effects staying, copy and
+  paste, and the effects the piano roll shows on notes and puts on them
+  (lasting ones kept for the notes after). `ChipSwitchTests.cpp` covers the
+  notes counted on the channels a chip switch clears, the channels emptied,
+  and their song-wide effects moved to the last channel with patterns of
+  their own where frames share one. Same three commands with `Source/Tests`
+  and `build/tests`; CI runs them in the Linux job. The stand-ins must keep
+  the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
   the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three

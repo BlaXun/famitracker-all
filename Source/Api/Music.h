@@ -72,7 +72,7 @@ struct Cell {
 };
 
 // What a channel plays
-enum channel_kind { KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM, KIND_SAWTOOTH, KIND_OTHER };
+enum channel_kind { KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM, KIND_SAWTOOTH, KIND_OTHER, KIND_FM };	// KIND_FM: VRC7's
 
 // Names. Pitches are FamiTracker's: 0 = C-0 ... 95 = B-7, where C-3 is middle
 // C (MIDI 60) and A-3 is 440 Hz. Noise pitches are 0-15 (0-# to F-#).
@@ -128,9 +128,18 @@ struct Timing {
 // engine's frame rate; BPM with RowsPerBeat rows to a beat
 double RowsPerMinute(int Speed, int Tempo, int FrameRate);
 double BeatsPerMinute(int Speed, int Tempo, int FrameRate, int RowsPerBeat);
-// The speed and tempo (tempo 32-255, speed 1 to SplitPoint - 1) that come
-// closest to Bpm, keeping CurrentSpeed when it can get within half a BPM
-void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo);
+// Every row lasts the same number of ticks (frames of the engine) with this
+// speed and tempo, so the rhythm is even. At the default tempo, 2.5 times the
+// frame rate (150 for NTSC, 125 for PAL), the speed is the ticks a row.
+bool EvenRows(int Speed, int Tempo, int FrameRate);
+int DefaultTempo(int FrameRate);
+// The speed (1 to SplitPoint - 1) and tempo (32-255) for Bpm. Among those
+// within 1% of it, rows of even length come first, then the default tempo
+// with another speed (as FamiTracker users mostly change it), then the
+// current speed, then the closest; otherwise the closest of all. A tie rounds
+// up. FixedSpeed or FixedTempo, when not 0, has to stay.
+void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo,
+	int FixedSpeed = 0, int FixedTempo = 0);
 
 // How the song plays: from frame 0, each frame from the row it starts at
 // until a jump (Bxx), skip (Dxx) or halt (Cxx) ends it, or its last row,

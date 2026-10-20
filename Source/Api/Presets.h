@@ -23,7 +23,9 @@
 
 // Instrument presets for the Claude Code connection: sounds asked for by
 // name ("soft lead", "plucky bass", "snare"), built from sequences for the
-// 2A03 (also used by MMC5 channels) and for the VRC6.
+// 2A03 (also used by MMC5 channels) and for the VRC6, and the VRC7's sounds:
+// the 15 patches built into the chip ("piano", "brass"), which the presets
+// also have an equivalent among.
 
 #include <string>
 #include <vector>
@@ -50,6 +52,7 @@ struct Preset {
 	bool Drum;					// for the noise channel
 	std::vector<PresetSequence> Sequences2A03;
 	std::vector<PresetSequence> SequencesVRC6;	// the sawtooth leaves out the duty sequence
+	int Vrc7Patch;				// the VRC7 patch that sounds most like it, 0 for none (drums)
 
 	bool Releases() const;		// notes end with a release (===) rather than a halt (---)
 	std::string InstrumentName(bool Sawtooth) const;	// "Soft lead", "Bass (saw)"
@@ -58,5 +61,20 @@ struct Preset {
 const std::vector<Preset> &Presets();
 const Preset *FindPreset(const std::string &Name);	// by name or a common word for it ("flute", "pad")
 std::string PresetList();							// "soft lead, bright lead, ..."
+
+// A VRC7 patch, as FamiTracker's VRC7 instrument editor names it
+struct Vrc7Patch {
+	int Number;					// 1-15
+	std::string Name;			// "piano"
+	std::string Description;
+
+	std::string InstrumentName() const;	// "Piano"
+};
+
+const std::vector<Vrc7Patch> &Vrc7Patches();
+// A VRC7 sound asked for by name: a patch's ("piano", "brass"), a common word for one ("organ",
+// "choir"), or a preset's, which has an equivalent ("soft lead" is the flute); 0 if none
+const Vrc7Patch *FindVrc7Patch(const std::string &Name);
+std::string Vrc7PatchList();						// "bell, guitar, piano, ..."
 
 }	// namespace ftapi

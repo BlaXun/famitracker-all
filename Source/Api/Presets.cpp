@@ -48,6 +48,7 @@ Preset Melodic(const char *Name, const char *Description, const std::vector<int>
 	P.Name = Name;
 	P.Description = Description;
 	P.Drum = false;
+	P.Vrc7Patch = 0;
 	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
 	P.SequencesVRC6.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
 	if (!Arpeggio.empty()) {
@@ -65,6 +66,7 @@ Preset Drum(const char *Name, const char *Description, const std::vector<int> &V
 	P.Name = Name;
 	P.Description = Description;
 	P.Drum = true;
+	P.Vrc7Patch = 0;
 	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume));
 	return P;
 }
@@ -99,6 +101,46 @@ std::vector<Preset> MakePresets()
 	All.push_back(Drum("snare", "noise snare drum (\"snare\")", List({ 14, 11, 9, 7, 5, 3, 2, 1, 0 })));
 	All.push_back(Drum("hi-hat", "short closed hi-hat (\"hihat\")", List({ 10, 6, 3, 1, 0 })));
 	All.push_back(Drum("open hi-hat", "longer open hi-hat or crash (\"open hi-hat\")", List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 })));
+
+	// What sounds most like each on the VRC7
+	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
+		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
+		{ "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 },
+	};
+	for (size_t i = 0; i < All.size(); ++i)
+		for (size_t k = 0; k < sizeof(ON_VRC7) / sizeof(ON_VRC7[0]); ++k)
+			if (All[i].Name == ON_VRC7[k].Name)
+				All[i].Vrc7Patch = ON_VRC7[k].Patch;
+	return All;
+}
+
+std::vector<Vrc7Patch> MakeVrc7Patches()
+{
+	static const char *const PATCHES[][2] = {
+		{ "bell", "bright bell" },
+		{ "guitar", "plucked electric guitar" },
+		{ "piano", "piano" },
+		{ "flute", "soft flute; a gentle lead" },
+		{ "clarinet", "reedy clarinet; a woody lead" },
+		{ "rattling bell", "metallic, rattling bell" },
+		{ "trumpet", "trumpet; a bold lead" },
+		{ "reed organ", "reed organ; sustained chords" },
+		{ "soft bell", "soft bell, like a music box" },
+		{ "xylophone", "xylophone: short and woody" },
+		{ "vibraphone", "vibraphone" },
+		{ "brass", "brass section; bold chords or a lead" },
+		{ "bass guitar", "electric bass" },
+		{ "synthesizer", "synth lead" },
+		{ "chorus", "airy, choir-like pad" },
+	};
+	std::vector<Vrc7Patch> All;
+	for (size_t i = 0; i < sizeof(PATCHES) / sizeof(PATCHES[0]); ++i) {
+		Vrc7Patch P;
+		P.Number = static_cast<int>(i) + 1;
+		P.Name = PATCHES[i][0];
+		P.Description = PATCHES[i][1];
+		All.push_back(P);
+	}
 	return All;
 }
 
@@ -178,6 +220,60 @@ std::string PresetList()
 			Out += ", ";
 		Out += All[i].Name;
 	}
+	return Out;
+}
+
+std::string Vrc7Patch::InstrumentName() const
+{
+	std::string Out = Name;
+	if (!Out.empty())
+		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
+	return Out;
+}
+
+const std::vector<Vrc7Patch> &Vrc7Patches()
+{
+	static const std::vector<Vrc7Patch> All = MakeVrc7Patches();
+	return All;
+}
+
+const Vrc7Patch *FindVrc7Patch(const std::string &Name)
+{
+	static const char *const WORDS[][2] = {
+		{ "chime", "bell" }, { "glockenspiel", "bell" }, { "electricguitar", "guitar" }, { "keys", "piano" }, { "keyboard", "piano" },
+		{ "sax", "clarinet" }, { "saxophone", "clarinet" }, { "oboe", "clarinet" }, { "reed", "clarinet" }, { "horn", "brass" },
+		{ "trombone", "brass" }, { "organ", "reed organ" }, { "musicbox", "soft bell" }, { "celesta", "soft bell" },
+		{ "marimba", "xylophone" }, { "mallet", "xylophone" }, { "vibes", "vibraphone" }, { "bass", "bass guitar" },
+		{ "electricbass", "bass guitar" }, { "synth", "synthesizer" }, { "synthlead", "synthesizer" }, { "choir", "chorus" },
+		{ "voices", "chorus" }, { "strings", "chorus" }, { "pad", "chorus" },
+	};
+	const std::string Wanted = Simplified(Name);
+	if (Wanted.empty())
+		return 0;
+	const std::vector<Vrc7Patch> &All = Vrc7Patches();
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Simplified(All[i].Name) == Wanted)
+			return &All[i];
+	for (size_t w = 0; w < sizeof(WORDS) / sizeof(WORDS[0]); ++w) {
+		if (Wanted == WORDS[w][0]) {
+			for (size_t i = 0; i < All.size(); ++i)
+				if (All[i].Name == WORDS[w][1])
+					return &All[i];
+		}
+	}
+	// A preset's equivalent
+	const Preset *pPreset = FindPreset(Name);
+	if (pPreset != 0 && pPreset->Vrc7Patch >= 1 && pPreset->Vrc7Patch <= static_cast<int>(All.size()))
+		return &All[static_cast<size_t>(pPreset->Vrc7Patch - 1)];
+	return 0;
+}
+
+std::string Vrc7PatchList()
+{
+	std::string Out;
+	const std::vector<Vrc7Patch> &All = Vrc7Patches();
+	for (size_t i = 0; i < All.size(); ++i)
+		Out += (i == 0 ? "" : ", ") + All[i].Name;
 	return Out;
 }
 
