@@ -35,7 +35,8 @@ CInsertRecordingDlg::CInsertRecordingDlg(const CFamiTrackerDoc *pDoc, LPCTSTR Pa
 	m_sGuessText(GuessText),
 	m_iKind(Guess),
 	m_iChannel(-1),
-	m_iMelodyChannel(-1)
+	m_iMelodyChannel(-1),
+	m_bExpression(true)
 {
 	// A melody goes where the cursor is if it can, otherwise on the first VRC6
 	// pulse, otherwise on the first channel
@@ -74,6 +75,7 @@ BOOL CInsertRecordingDlg::OnInitDialog()
 	SetDlgItemText(IDC_REC_DETECTED, Detected);
 
 	CheckRadioButton(IDC_REC_AUTO, IDC_REC_DRUMS, IDC_REC_AUTO);
+	CheckDlgButton(IDC_REC_EXPRESSION, BST_CHECKED);
 	FillChannels();
 
 	return TRUE;
@@ -119,6 +121,7 @@ void CInsertRecordingDlg::FillChannels()
 	if (m_cChannel.GetCurSel() == CB_ERR && m_cChannel.GetCount() > 0)
 		m_cChannel.SetCurSel(0);
 	m_cChannel.EnableWindow(!Drums);
+	GetDlgItem(IDC_REC_EXPRESSION)->EnableWindow(!Drums);	// drums keep their loudness anyway
 }
 
 void CInsertRecordingDlg::OnKindChanged()
@@ -131,6 +134,7 @@ void CInsertRecordingDlg::OnOK()
 	m_iKind = SelectedKind();
 	const int Selected = m_cChannel.GetCurSel();
 	m_iChannel = (Selected != CB_ERR) ? static_cast<int>(m_cChannel.GetItemData(Selected)) : -1;
+	m_bExpression = IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED;
 	CDialog::OnOK();
 }
 
@@ -142,4 +146,9 @@ recording_kind_t CInsertRecordingDlg::GetKind() const
 int CInsertRecordingDlg::GetChannel() const
 {
 	return m_iChannel;
+}
+
+bool CInsertRecordingDlg::GetExpression() const
+{
+	return m_bExpression;
 }

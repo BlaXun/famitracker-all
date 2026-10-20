@@ -42,11 +42,14 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 // Transcribes the WAV file at Path as Kind and writes the notes into Channel
 // (drums always into the noise channel), starting at the cursor's frame and
 // row and running on into the following frames; frames are added at the end
-// of the song when needed. One Ctrl+Z undoes it.
+// of the song when needed. With Expression, a melody keeps how it was played:
+// louder notes play louder, slides into notes stay slides, and long notes get
+// vibrato. One Ctrl+Z undoes it.
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
 // success Message says what was inserted.
-bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, CString &Message);
+bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
+	CString &Message);
 
 // A channel's name with its chip, e.g. "VRC6 Pulse 1", for messages and lists
 CString RecordingChannelName(const CFamiTrackerDoc *pDoc, int Channel);

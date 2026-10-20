@@ -928,7 +928,7 @@ void CFamiTrackerView::OnEditInsertRecording()
 	bool Inserted;
 	{
 		CWaitCursor Wait;
-		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Message);
+		Inserted = InsertRecording(pMainFrm, Path, Dialog.GetKind(), Dialog.GetChannel(), Dialog.GetExpression(), Message);
 	}
 
 	if (Inserted)

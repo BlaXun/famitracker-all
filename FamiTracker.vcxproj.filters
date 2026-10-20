@@ -1257,5 +1257,8 @@
     <ClCompile Include="Source\Transcribe\Guess.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Transcribe\Expression.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

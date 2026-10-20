@@ -23,6 +23,7 @@ add_library(transcribe STATIC
 	WavReader.cpp
 	PitchTracker.cpp
 	Guess.cpp
+	Expression.cpp
 	Notes.cpp
 	Hits.cpp
 	TextModule.cpp

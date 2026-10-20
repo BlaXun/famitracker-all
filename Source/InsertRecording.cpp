@@ -46,10 +46,16 @@ namespace {
 const int ACT_INSERT_RECORDING = 0x1000;
 
 // Volume envelopes, the same as wav2ftm writes (Transcribe/TextModule.cpp).
-// The melody one holds at 10 (the release point, item 5) for as long as the
-// note lasts, then fades out on the note release.
-const signed char MELODY_VOLUME[] = { 15, 14, 13, 12, 11, 10, 7, 4, 2, 0 };
-const int MELODY_RELEASE = 5;
+// Both hold at 10 on their release point for as long as the note lasts, then
+// fade out on the note release. The lead swells in like a whistle; the bass
+// starts with a small accent.
+const signed char LEAD_VOLUME[] = { 11, 14, 15, 15, 14, 13, 12, 11, 10, 7, 4, 2, 0 };
+const int LEAD_RELEASE = 8;
+const signed char BASS_VOLUME[] = { 15, 14, 13, 12, 11, 10, 7, 4, 2, 0 };
+const int BASS_RELEASE = 5;
+// Lead duty cycle: 25% on the 2A03; on the VRC6 a slow shimmer between 4/16 and 3/16
+const signed char LEAD_DUTY_2A03[] = { 1 };
+const signed char LEAD_DUTY_VRC6[] = { 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2 };
 const signed char KICK_VOLUME[] = { 15, 12, 8, 5, 3, 1, 0 };
 const signed char SNARE_VOLUME[] = { 14, 11, 9, 7, 5, 3, 2, 1, 0 };
 const signed char HIHAT_VOLUME[] = { 10, 6, 3, 1, 0 };
@@ -60,9 +66,11 @@ struct RecordedCell {
 	unsigned char Octave;
 	unsigned char Instrument;
 	unsigned char Vol;
+	unsigned char Effect;		// effect_t in the first effect column, EF_NONE for none
+	unsigned char EffectParam;
 };
 
-RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol)
+RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol, int Effect = EF_NONE, int EffectParam = 0)
 {
 	RecordedCell Cell;
 	Cell.Row = Row;
@@ -70,7 +78,25 @@ RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol)
 	Cell.Octave = static_cast<unsigned char>(Octave);
 	Cell.Instrument = static_cast<unsigned char>(Instrument);
 	Cell.Vol = static_cast<unsigned char>(Vol);
+	Cell.Effect = static_cast<unsigned char>(Effect);
+	Cell.EffectParam = static_cast<unsigned char>(EffectParam);
 	return Cell;
+}
+
+// The effects the recorder writes: slides, vibrato and portamento
+bool IsExpressionEffect(unsigned char Effect)
+{
+	return Effect == EF_SLIDE_UP || Effect == EF_SLIDE_DOWN || Effect == EF_VIBRATO || Effect == EF_PORTAMENTO;
+}
+
+int EffectFromLetter(char Letter)
+{
+	switch (Letter) {
+	case 'Q': return EF_SLIDE_UP;
+	case 'R': return EF_SLIDE_DOWN;
+	case '4': return EF_VIBRATO;
+	}
+	return EF_NONE;
 }
 
 // Does any frame of the track other than Frame play Pattern in Channel?
@@ -131,9 +157,9 @@ int AddSequence(CFamiTrackerDoc *pDoc, inst_type_t Type, int SeqType, const sign
 
 // The instrument called pName for this chip, added if the song doesn't have
 // it yet. Inserting more recordings reuses it, so they all sound alike and can
-// be changed in one place. Duty is the duty-cycle value, or -1 for none.
+// be changed in one place. The duty sequence loops when it has several items.
 int FindOrAddInstrument(CFamiTrackerDoc *pDoc, const char *pName, int Chip, const signed char *pVolume, int VolumeCount,
-	int Release, int Duty)
+	int Release, const signed char *pDuty, int DutyCount)
 {
 	const inst_type_t Type = (Chip == SNDCHIP_VRC6) ? INST_VRC6 : INST_2A03;	// MMC5 uses 2A03 instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -153,11 +179,13 @@ int FindOrAddInstrument(CFamiTrackerDoc *pDoc, const char *pName, int Chip, cons
 	const int Volume = AddSequence(pDoc, Type, SEQ_VOLUME, pVolume, VolumeCount, Release);
 	if (Volume >= 0)
 		EnableSequence(pInstrument, SEQ_VOLUME, Volume);
-	if (Duty >= 0) {
-		const signed char Item = static_cast<signed char>(Duty);
-		const int Cycle = AddSequence(pDoc, Type, SEQ_DUTYCYCLE, &Item, 1, -1);
-		if (Cycle >= 0)
+	if (DutyCount > 0) {
+		const int Cycle = AddSequence(pDoc, Type, SEQ_DUTYCYCLE, pDuty, DutyCount, -1);
+		if (Cycle >= 0) {
+			if (DutyCount > 1)
+				pDoc->GetSequence((Type == INST_VRC6) ? SNDCHIP_VRC6 : SNDCHIP_NONE, Cycle, SEQ_DUTYCYCLE)->SetLoopPoint(0);
 			EnableSequence(pInstrument, SEQ_DUTYCYCLE, Cycle);
+		}
 	}
 	pInstrument->Release();
 	return Index;
@@ -267,7 +295,8 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	}
 
 	// Write the cells. Rows between them are cleared in this channel (note,
-	// instrument and volume); effects stay.
+	// instrument and volume). Effects stay, except earlier slides and vibrato
+	// in the first effect column, which would play over the new notes.
 	size_t Next = 0;
 	for (int r = 0; r < m_iRows; ++r) {
 		const unsigned int Position = m_iRow + static_cast<unsigned int>(r);
@@ -277,12 +306,20 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		const unsigned int Row = Position % Length;
 		stChanNote Note;
 		pDoc->GetNoteData(m_iTrack, Frame, m_iChannel, Row, &Note);
+		if (IsExpressionEffect(Note.EffNumber[0])) {
+			Note.EffNumber[0] = EF_NONE;
+			Note.EffParam[0] = 0;
+		}
 		if (Next < m_Cells.size() && m_Cells[Next].Row == r) {
 			const RecordedCell &Cell = m_Cells[Next++];
 			Note.Note = Cell.Note;
 			Note.Octave = Cell.Octave;
 			Note.Instrument = Cell.Instrument;
 			Note.Vol = Cell.Vol;
+			if (Cell.Effect != EF_NONE) {
+				Note.EffNumber[0] = Cell.Effect;
+				Note.EffParam[0] = Cell.EffectParam;
+			}
 		}
 		else {
 			Note.Note = NONE;
@@ -389,7 +426,8 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 	return true;
 }
 
-bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, CString &Message)
+bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
+	CString &Message)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
@@ -440,9 +478,9 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 		transcribe::ClassifyHits(Hits);
 		const std::vector<transcribe::GridHit> Drums = transcribe::QuantizeHits(Hits, Grid, true);
 
-		const int Kick = FindOrAddInstrument(pDoc, "Kick", SNDCHIP_NONE, KICK_VOLUME, int(sizeof(KICK_VOLUME)), -1, -1);
-		const int Snare = FindOrAddInstrument(pDoc, "Snare", SNDCHIP_NONE, SNARE_VOLUME, int(sizeof(SNARE_VOLUME)), -1, -1);
-		const int HiHat = FindOrAddInstrument(pDoc, "Hi-hat", SNDCHIP_NONE, HIHAT_VOLUME, int(sizeof(HIHAT_VOLUME)), -1, -1);
+		const int Kick = FindOrAddInstrument(pDoc, "Kick", SNDCHIP_NONE, KICK_VOLUME, int(sizeof(KICK_VOLUME)), -1, NULL, 0);
+		const int Snare = FindOrAddInstrument(pDoc, "Snare", SNDCHIP_NONE, SNARE_VOLUME, int(sizeof(SNARE_VOLUME)), -1, NULL, 0);
+		const int HiHat = FindOrAddInstrument(pDoc, "Hi-hat", SNDCHIP_NONE, HIHAT_VOLUME, int(sizeof(HIHAT_VOLUME)), -1, NULL, 0);
 		if (Kick == INVALID_INSTRUMENT || Snare == INVALID_INSTRUMENT || HiHat == INVALID_INSTRUMENT) {
 			Message = _T("There are no free instrument slots left for the drum sounds.");
 			return false;
@@ -469,21 +507,36 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 		// Whistling, humming and singing become a melody
 		const transcribe::PitchOptions Pitch =
 			transcribe::PitchOptionsFor(Kind == RECORDING_WHISTLE ? transcribe::Source::Whistle : transcribe::Source::Voice);
-		std::vector<transcribe::Note> Notes = transcribe::SegmentNotes(transcribe::TrackPitch(Audio, Pitch), transcribe::NoteOptions());
+		const std::vector<transcribe::PitchFrame> Frames = transcribe::TrackPitch(Audio, Pitch);
+		std::vector<transcribe::Note> Notes = transcribe::SegmentNotes(Frames, transcribe::NoteOptions());
 		if (Notes.empty()) {
 			Message = _T("No notes were found in the recording. Is it loud enough?");
 			return false;
 		}
 		const bool Low = IsBassChannel(pDoc, Channel);
+
+		// How it was played: loudness, slides into notes, vibrato (no added vibrato on a bass line)
+		transcribe::ExpressionOptions Options;
+		if (!Expression)
+			Options.dynamics = Options.slides = Options.vibrato = Options.gentleVibrato = false;
+		if (Low)
+			Options.gentleVibrato = false;
+		transcribe::DescribeExpression(Notes, Frames, Options);
+
 		transcribe::Transpose(Notes, transcribe::OctaveShiftFor(Notes, Low ? 48 : 67));
 		const std::vector<transcribe::GridNote> Melody = transcribe::Quantize(Notes, Grid, transcribe::QuantizeOptions());
 
 		int Instrument = INVALID_INSTRUMENT;
 		const int Chip = pDoc->GetChipType(Channel);
 		if (Chip == SNDCHIP_NONE || Chip == SNDCHIP_VRC6 || Chip == SNDCHIP_MMC5) {
-			const int Duty = Low ? -1 : (Chip == SNDCHIP_VRC6 ? 3 : 1);	// a 25% pulse
-			Instrument = FindOrAddInstrument(pDoc, Low ? "Bass" : "Lead", Chip, MELODY_VOLUME, int(sizeof(MELODY_VOLUME)),
-				MELODY_RELEASE, Duty);
+			if (Low)
+				Instrument = FindOrAddInstrument(pDoc, "Bass", Chip, BASS_VOLUME, int(sizeof(BASS_VOLUME)), BASS_RELEASE, NULL, 0);
+			else if (Chip == SNDCHIP_VRC6)
+				Instrument = FindOrAddInstrument(pDoc, "Lead", Chip, LEAD_VOLUME, int(sizeof(LEAD_VOLUME)), LEAD_RELEASE,
+					LEAD_DUTY_VRC6, int(sizeof(LEAD_DUTY_VRC6)));
+			else
+				Instrument = FindOrAddInstrument(pDoc, "Lead", Chip, LEAD_VOLUME, int(sizeof(LEAD_VOLUME)), LEAD_RELEASE,
+					LEAD_DUTY_2A03, int(sizeof(LEAD_DUTY_2A03)));
 			if (Instrument == INVALID_INSTRUMENT) {
 				Message = _T("There are no free instrument slots left for the recording.");
 				return false;
@@ -507,18 +560,25 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 			pInstrument->Release();
 		}
 
-		for (size_t i = 0; i < Melody.size(); ++i) {
-			const transcribe::GridNote &Note = Melody[i];
-			int Index = Note.midi - 24;	// FamiTracker's C-0 is MIDI note 24
-			if (Index < 0)
-				Index = 0;
-			if (Index > 95)
-				Index = 95;
-			Cells.push_back(MakeCell(Note.row, Index % 12 + 1, Index / 12, Instrument, MAX_VOLUME));
-			const int End = Note.row + Note.length;
-			if (i + 1 < Melody.size() && Melody[i + 1].row == End)
-				continue;	// the next note takes over
-			Cells.push_back(MakeCell(End, Release ? RELEASE : HALT, 0, MAX_INSTRUMENTS, MAX_VOLUME));
+		const transcribe::ChannelVoice Voice = ChanID == CHANID_TRIANGLE ? transcribe::ChannelVoice::Triangle :
+			(ChanID == CHANID_VRC6_SAWTOOTH ? transcribe::ChannelVoice::Sawtooth : transcribe::ChannelVoice::Pulse);
+		const std::vector<transcribe::MelodyCell> Line = transcribe::MelodyCells(Melody, Voice, Grid.frameRate);
+		for (size_t i = 0; i < Line.size(); ++i) {
+			const transcribe::MelodyCell &Cell = Line[i];
+			const int Effect = EffectFromLetter(Cell.effect);
+			if (Cell.kind == transcribe::MelodyCell::Note) {
+				int Index = Cell.midi - 24;	// FamiTracker's C-0 is MIDI note 24
+				if (Index < 0)
+					Index = 0;
+				if (Index > 95)
+					Index = 95;
+				Cells.push_back(MakeCell(Cell.row, Index % 12 + 1, Index / 12, Instrument,
+					Cell.volume >= 0 ? Cell.volume : MAX_VOLUME, Effect, Cell.effectParam));
+			}
+			else if (Cell.kind == transcribe::MelodyCell::Release)
+				Cells.push_back(MakeCell(Cell.row, Release ? RELEASE : HALT, 0, MAX_INSTRUMENTS, MAX_VOLUME));
+			else
+				Cells.push_back(MakeCell(Cell.row, NONE, 0, MAX_INSTRUMENTS, MAX_VOLUME, Effect, Cell.effectParam));
 		}
 		Rows = Cells.back().Row + 1;
 		What.Format(_T("%d notes"), static_cast<int>(Melody.size()));

@@ -39,6 +39,7 @@ public:
 
 	recording_kind_t GetKind() const;	// what was picked, with "Let FamiTracker decide" resolved
 	int GetChannel() const;				// channel index
+	bool GetExpression() const;			// keep loudness, slides and vibrato
 
 protected:
 	virtual BOOL OnInitDialog();
@@ -58,5 +59,6 @@ private:
 	recording_kind_t m_iKind;
 	int m_iChannel;
 	int m_iMelodyChannel;		// kept while drums are picked, for when the choice changes back
+	bool m_bExpression;
 	CComboBox m_cChannel;
 };

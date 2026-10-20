@@ -61,6 +61,7 @@ void Usage()
 		"                        so the note lasts until the next one (default: 150; 0 keeps\n"
 		"                        every break as a rest)\n"
 		"  --pattern-length N    rows per pattern, 16-256 (default: 64)\n"
+		"  --plain               plain notes: no loudness, slides or vibrato from the performance\n"
 		"  --keep-silence        keep leading silence instead of starting each recording at row 0;\n"
 		"                        use it when the recordings all start at the same moment\n"
 		"  --title TEXT          song title (default: input file name)\n"
@@ -93,6 +94,7 @@ const char *DrumName(Drum d)
 struct Settings {
 	Grid grid;
 	QuantizeOptions quantize;
+	ExpressionOptions expression;
 	Scale scale = Scale::Chromatic;
 	int root = 0;
 	bool print = false;
@@ -110,9 +112,12 @@ bool Load(const std::string &path, Audio &audio)
 
 // Whistle/hum/sing -> rows. targetMidi picks the octave unless transpose is given.
 bool TranscribeMelody(const Audio &audio, const std::string &path, const PitchOptions &pitch, const char *part,
-	int targetMidi, const int *transpose, const Settings &settings, std::vector<GridNote> &rows)
+	int targetMidi, const int *transpose, const Settings &settings, const ExpressionOptions &expression,
+	std::vector<GridNote> &rows)
 {
-	std::vector<Note> notes = SegmentNotes(TrackPitch(audio, pitch), NoteOptions());
+	const std::vector<PitchFrame> frames = TrackPitch(audio, pitch);
+	std::vector<Note> notes = SegmentNotes(frames, NoteOptions());
+	DescribeExpression(notes, frames, expression);
 	if (notes.empty()) {
 		std::fprintf(stderr, "wav2ftm: no notes found in %s (is the recording loud enough?)\n", path.c_str());
 		return false;
@@ -128,6 +133,12 @@ bool TranscribeMelody(const Audio &audio, const std::string &path, const PitchOp
 			const int end = rows[i].row + rows[i].length;
 			const int rest = (i + 1 < rows.size() ? rows[i + 1].row : end) - end;
 			std::printf("  row %4d  %s  %3d rows", rows[i].row, FamiTrackerNoteName(rows[i].midi).c_str(), rows[i].length);
+			if (rows[i].volume >= 0)
+				std::printf(", volume %X", rows[i].volume);
+			if (rows[i].slideSemitones != 0)
+				std::printf(", slides in from %s", FamiTrackerNoteName(rows[i].midi + rows[i].slideSemitones).c_str());
+			if (rows[i].vibratoHz > 0.0)
+				std::printf(", vibrato");
 			if (rest > 0)
 				std::printf(", then %d rows rest", rest);
 			std::printf("\n");
@@ -161,7 +172,7 @@ int main(int argc, char **argv)
 	std::string mode = "auto", title, keyName, scaleName, drumsFile, bassFile;
 	std::vector<std::string> positional;
 	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150;
-	bool haveTranspose = false, keepSilence = false, print = false;
+	bool haveTranspose = false, keepSilence = false, print = false, plain = false;
 	Expansion expansion = Expansion::VRC6;
 
 	for (int i = 1; i < argc; ++i) {
@@ -191,6 +202,7 @@ int main(int argc, char **argv)
 		else if (a == "--pattern-length") { if (!ParseInt(next("--pattern-length"), patternLength)) { std::fprintf(stderr, "wav2ftm: --pattern-length needs a number\n"); return 2; } }
 		else if (a == "--min-rest") { if (!ParseInt(next("--min-rest"), minRestMs)) { std::fprintf(stderr, "wav2ftm: --min-rest needs a number of milliseconds\n"); return 2; } }
 		else if (a == "--keep-silence") keepSilence = true;
+		else if (a == "--plain") plain = true;
 		else if (a == "--title") title = next("--title");
 		else if (a == "--print") print = true;
 		else if (!a.empty() && a[0] == '-') { std::fprintf(stderr, "wav2ftm: unknown option %s\n", a.c_str()); return 2; }
@@ -274,6 +286,12 @@ int main(int argc, char **argv)
 	settings.quantize.alignToStart = !keepSilence;
 	settings.quantize.minRestSeconds = minRestMs / 1000.0;
 	settings.print = print;
+	if (plain) {
+		settings.expression.dynamics = false;
+		settings.expression.slides = false;
+		settings.expression.vibrato = false;
+		settings.expression.gentleVibrato = false;
+	}
 
 	TextModuleOptions options;
 	options.expansion = expansion;
@@ -295,8 +313,11 @@ int main(int argc, char **argv)
 		const bool low = (channel == 2 || channel == 7);	// triangle and sawtooth suit bass lines
 		const PitchOptions pitch = mode == "whistle" ? PitchOptionsFor(Source::Whistle) :
 			(mode == "hum" ? PitchOptionsFor(Source::Voice) : PitchOptions());
+		ExpressionOptions expression = settings.expression;
+		if (low)
+			expression.gentleVibrato = false;	// no added vibrato on a bass line
 		if (!TranscribeMelody(mainAudio, input, pitch, "melody", low ? 48 : 67, haveTranspose ? &transpose : nullptr,
-				settings, lead.notes))
+				settings, expression, lead.notes))
 			return 1;
 		parts.push_back(lead);
 		addSource("melody", input);
@@ -318,8 +339,10 @@ int main(int argc, char **argv)
 		bass.instrument = 4;
 		bass.name = "Bass";
 		Audio audio;
+		ExpressionOptions expression = settings.expression;
+		expression.gentleVibrato = false;
 		if (!Load(bassFile, audio) ||
-			!TranscribeMelody(audio, bassFile, PitchOptionsFor(Source::Voice), "bass", 48, nullptr, settings, bass.notes))
+			!TranscribeMelody(audio, bassFile, PitchOptionsFor(Source::Voice), "bass", 48, nullptr, settings, expression, bass.notes))
 			return 1;
 		parts.push_back(bass);
 		addSource("bass", bassFile);

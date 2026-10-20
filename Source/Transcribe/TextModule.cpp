@@ -43,9 +43,20 @@ const int SAWTOOTH_CHANNEL = 7;
 const int MAX_FRAMES = 128;
 const int MAX_PATTERN_LENGTH = 256;
 
-// Lead volume envelope: a small attack accent, a sustain level of 10 at item 5
-// (the release point), then the release fade.
-const char LEAD_VOLUME[] = "15 14 13 12 11 10 7 4 2 0";
+// Volume envelopes. Both hold at 10 on their release point for as long as the
+// note lasts, then fade out on the note release (===). The lead swells in over
+// a few frames like a whistle; the bass starts with a small accent.
+const char LEAD_VOLUME[] = "11 14 15 15 14 13 12 11 10 7 4 2 0";	// release point: item 8
+const int LEAD_RELEASE = 8;
+const char BASS_VOLUME[] = "15 14 13 12 11 10 7 4 2 0";				// release point: item 5
+const int BASS_RELEASE = 5;
+const int LEAD_VOLUME_MACRO = 0;
+const int BASS_VOLUME_MACRO = 4;
+
+// Duty cycle of the lead: 25% on the 2A03 pulses; on the VRC6 pulses a slow
+// shimmer between 4/16 and 3/16, looping
+const char LEAD_DUTY_2A03[] = "1";
+const char LEAD_DUTY_VRC6[] = "3 3 3 3 3 3 2 2 2 2 2 2";
 
 // Effect letters, as EFF_CHAR in FamiTrackerTypes.h (index = effect - 1).
 const char EFFECT_LETTERS[] = "FBDCE3\0HI047PGZ12VYQRASX\0HIJWHIJ";
@@ -81,14 +92,24 @@ struct Cell {
 	std::string note = "...";
 	int instrument = -1;
 	int volume = -1;
+	char effect = 0;	// letter, 0 = none
+	int effectParam = 0;
 	std::string Text() const
 	{
 		std::string s = note;
 		s += instrument < 0 ? " .." : Format(" %02X", instrument);
 		s += volume < 0 ? " ." : Format(" %X", volume);
-		return s + " ...";	// one effect column, unused
+		if (effect == 0)
+			return s + " ...";
+		return s + " " + effect + Format("%02X", effectParam);
 	}
 };
+
+ChannelVoice VoiceOf(int channel)
+{
+	return channel == TRIANGLE_CHANNEL ? ChannelVoice::Triangle :
+		(channel == SAWTOOTH_CHANNEL ? ChannelVoice::Sawtooth : ChannelVoice::Pulse);
+}
 
 // Drum sounds on the noise channel: noise pitch (0-F) and instrument slot.
 int DrumNoisePitch(Drum d) { return d == Drum::Kick ? 0x4 : (d == Drum::Snare ? 0xA : 0xE); }
@@ -120,39 +141,43 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 	const int channels = ChannelCount(options.expansion);
 	const int length = std::max(1, std::min(MAX_PATTERN_LENGTH, options.patternLength));
 	const bool haveDrums = !drums.empty();
-	bool melodyOn2A03 = false, melodyOnVrc6 = false;	// any melody on that chip
-	bool pulseOn2A03 = false, pulseOnVrc6 = false;		// any on a pulse channel (needs a duty macro)
+	bool leadOn2A03 = false, leadOnVrc6 = false;	// a melody on a pulse channel of that chip
+	bool bassOn2A03 = false, bassOnVrc6 = false;	// one on the triangle or sawtooth
 	for (size_t p = 0; p < parts.size(); ++p) {
 		if (parts[p].notes.empty())
 			continue;
 		const int c = parts[p].channel;
-		(c >= 5 ? melodyOnVrc6 : melodyOn2A03) = true;
-		if (c != TRIANGLE_CHANNEL && c != SAWTOOTH_CHANNEL)
-			(c >= 5 ? pulseOnVrc6 : pulseOn2A03) = true;
+		const bool bass = VoiceOf(c) != ChannelVoice::Pulse;
+		if (c >= 5)
+			(bass ? bassOnVrc6 : leadOnVrc6) = true;
+		else
+			(bass ? bassOn2A03 : leadOn2A03) = true;
 	}
 
 	// Lay the cells out on one long row line per channel
 	std::map<int, std::map<int, Cell> > cells;	// channel -> absolute row -> cell
 	int lastRow = 0;
 	for (size_t p = 0; p < parts.size(); ++p) {
-		const std::vector<GridNote> &melody = parts[p].notes;
 		std::map<int, Cell> &line = cells[parts[p].channel];
+		const std::vector<MelodyCell> melody = MelodyCells(parts[p].notes, VoiceOf(parts[p].channel), options.grid.frameRate);
 		for (size_t i = 0; i < melody.size(); ++i) {
-			const GridNote &n = melody[i];
-			Cell c;
-			c.note = FamiTrackerNoteName(n.midi);
-			c.instrument = parts[p].instrument;
-			line[n.row] = c;
-			const int off = n.row + n.length;
-			const bool nextStartsHere = (i + 1 < melody.size() && melody[i + 1].row == off);
-			if (!nextStartsHere) {
-				// Note release where the sound stopped: the instrument fades out over a
-				// few frames, like the end of a whistle, instead of the hard cut of ---.
-				Cell release;
-				release.note = "===";
-				line[off] = release;
+			const MelodyCell &m = melody[i];
+			Cell &c = line[m.row];
+			if (m.kind == MelodyCell::Note) {
+				c.note = FamiTrackerNoteName(m.midi);
+				c.instrument = parts[p].instrument;
+				c.volume = m.volume;
 			}
-			lastRow = std::max(lastRow, off);
+			else if (m.kind == MelodyCell::Release) {
+				// Where the sound stopped: the instrument fades out over a few frames,
+				// like the end of a whistle, instead of the hard cut of ---
+				c.note = "===";
+			}
+			if (m.effect != 0) {
+				c.effect = m.effect;
+				c.effectParam = m.effectParam;
+			}
+			lastRow = std::max(lastRow, m.row);
 		}
 	}
 	for (size_t i = 0; i < drums.size(); ++i) {
@@ -198,24 +223,39 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 	out << Padded("VIBRATO", 15) << " 1\n";
 	out << Padded("SPLIT", 15) << " 32\n\n";
 
-	// Macros: a sustaining melody envelope per chip and three short drum envelopes.
-	// The melody volume holds at 10 (the release point, item 5) for as long as the
-	// note lasts, so long notes stay long; a note release (===) then fades it out
-	// with 7 4 2 0.
+	// Macros: sustaining melody envelopes (see LEAD_VOLUME) and three short drum
+	// envelopes
 	out << "# Macros\n";
-	if (melodyOn2A03)
-		out << "MACRO       0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
-	if (pulseOn2A03)
-		out << "MACRO       4   0  -1  -1   0 : 1\n";	// 25% duty
+	char macro[128];
+	if (leadOn2A03) {
+		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 0, LEAD_VOLUME_MACRO, -1, LEAD_RELEASE, 0, LEAD_VOLUME);
+		out << macro;
+	}
 	if (haveDrums) {
 		out << "MACRO       0   1  -1  -1   0 : 15 12 8 5 3 1 0\n";
 		out << "MACRO       0   2  -1  -1   0 : 14 11 9 7 5 3 2 1 0\n";
 		out << "MACRO       0   3  -1  -1   0 : 10 6 3 1 0\n";
 	}
-	if (melodyOnVrc6)
-		out << "MACROVRC6   0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
-	if (pulseOnVrc6)
-		out << "MACROVRC6   4   0  -1  -1   0 : 3\n";	// 4/16 duty on the VRC6 pulses
+	if (bassOn2A03) {
+		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 0, BASS_VOLUME_MACRO, -1, BASS_RELEASE, 0, BASS_VOLUME);
+		out << macro;
+	}
+	if (leadOn2A03) {
+		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 4, 0, -1, -1, 0, LEAD_DUTY_2A03);
+		out << macro;
+	}
+	if (leadOnVrc6) {
+		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 0, LEAD_VOLUME_MACRO, -1, LEAD_RELEASE, 0, LEAD_VOLUME);
+		out << macro;
+	}
+	if (bassOnVrc6) {
+		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 0, BASS_VOLUME_MACRO, -1, BASS_RELEASE, 0, BASS_VOLUME);
+		out << macro;
+	}
+	if (leadOnVrc6) {
+		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 4, 0, 0, -1, 0, LEAD_DUTY_VRC6);	// loops from item 0
+		out << macro;
+	}
 	out << "\n";
 
 	out << "# DPCM samples\n\n";
@@ -227,11 +267,11 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 		if (parts[p].notes.empty())
 			continue;
 		const int channel = parts[p].channel;
-		const bool noDuty = (channel == TRIANGLE_CHANNEL || channel == SAWTOOTH_CHANNEL);
+		const bool bass = VoiceOf(channel) != ChannelVoice::Pulse;	// no duty cycle there
 		char line[96];
 		std::snprintf(line, sizeof(line), "%-8s %3d   %3d %3d %3d %3d %3d %s\n",
-			channel >= 5 ? "INSTVRC6" : "INST2A03", parts[p].instrument, 0, -1, -1, -1, noDuty ? -1 : 0,
-			Quote(parts[p].name).c_str());
+			channel >= 5 ? "INSTVRC6" : "INST2A03", parts[p].instrument, bass ? BASS_VOLUME_MACRO : LEAD_VOLUME_MACRO,
+			-1, -1, -1, bass ? -1 : 0, Quote(parts[p].name).c_str());
 		instruments[parts[p].instrument] = line;
 	}
 	if (haveDrums) {

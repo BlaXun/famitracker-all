@@ -1835,7 +1835,7 @@ BEGIN
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
 END
 
-IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 170
+IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 186
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Insert recording"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1850,9 +1850,10 @@ BEGIN
     LTEXT           "",IDC_REC_DETECTED,109,39,128,8
     LTEXT           "Channel:",IDC_STATIC,7,113,40,8
     COMBOBOX        IDC_REC_CHANNEL,52,111,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,130,236,16
-    DEFPUSHBUTTON   "Insert",IDOK,138,149,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,193,149,50,14
+    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,129,236,10
+    LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,146,236,16
+    DEFPUSHBUTTON   "Insert",IDOK,138,165,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,193,165,50,14
 END
 
 IDD_PROPERTIES DIALOGEX 0, 0, 213, 259

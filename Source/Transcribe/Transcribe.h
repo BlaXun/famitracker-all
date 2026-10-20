@@ -132,6 +132,15 @@ struct Note {
 	double end = 0.0;		// seconds
 	double pitch = 0.0;		// MIDI note number (69 = A4 = 440 Hz), fractional
 	int midi = 0;			// rounded pitch, after any octave fit or scale snap
+
+	// How it was played (DescribeExpression)
+	double level = 0.0;			// dB, the note's median frame level
+	int volume = -1;			// volume column 0-15, -1 = none
+	int slideSemitones = 0;		// starts this far from midi and slides to it (negative: from below)
+	double slideSeconds = 0.0;	// how long the slide takes
+	double vibratoHz = 0.0;		// vibrato rate, 0 = none
+	double vibratoCents = 0.0;	// vibrato depth: half the peak-to-peak swing
+	double vibratoDelay = 0.0;	// seconds after the start where the vibrato begins
 };
 
 std::vector<Note> SegmentNotes(const std::vector<PitchFrame> &frames, const NoteOptions &options);
@@ -167,6 +176,14 @@ struct GridNote {
 	int row = 0;		// first row
 	int length = 1;		// rows until the note ends (release) or the next note starts
 	int midi = 0;
+
+	// Expression, carried over from the Note
+	int volume = -1;			// volume column 0-15, -1 = none
+	int slideSemitones = 0;		// starts this far from midi and slides to it
+	double slideSeconds = 0.0;
+	double vibratoHz = 0.0;		// 0 = none
+	double vibratoCents = 0.0;
+	int vibratoRow = 0;			// rows after the first row where the vibrato begins
 };
 
 struct QuantizeOptions {
@@ -181,6 +198,42 @@ struct QuantizeOptions {
 // plays at a time: a note that would overlap the next one ends where the next
 // one starts.
 std::vector<GridNote> Quantize(const std::vector<Note> &notes, const Grid &grid, const QuantizeOptions &options);
+
+// ---------------------------------------------------------------------------
+// Expression: keeping how a melody was played
+// ---------------------------------------------------------------------------
+
+struct ExpressionOptions {
+	bool dynamics = true;		// louder notes play louder (volume column, 3 dB a step)
+	bool slides = true;			// a quick slide into a note stays a slide (Qxy/Rxy)
+	bool vibrato = true;		// vibrato that was performed is kept (4xy)
+	bool gentleVibrato = true;	// long notes without one get a gentle, delayed vibrato
+	double gentleVibratoSeconds = 0.5;	// "long"
+};
+
+// Fills in each note's level, volume, slide and vibrato from the pitch frames
+// it was segmented from. Short notes that lead straight into a longer one,
+// rising or falling towards it, are folded into it as a slide.
+void DescribeExpression(std::vector<Note> &notes, const std::vector<PitchFrame> &frames, const ExpressionOptions &options);
+
+// Which period formula a channel uses, for effect speeds and depths
+enum class ChannelVoice { Pulse, Triangle, Sawtooth };
+
+// One pattern cell of a melody line
+struct MelodyCell {
+	enum Kind { Note, Release, Effect } kind = Note;	// Effect: an effect on an otherwise empty row
+	int row = 0;
+	int midi = 0;			// Note: the pitch to play (where a slide starts)
+	int volume = -1;		// 0-15, -1 = none
+	char effect = 0;		// FamiTracker effect letter ('Q', 'R' or '4'), 0 = none
+	int effectParam = 0;	// 0x00-0xFF
+};
+
+// Turns rows of notes into pattern cells, sorted by row: each note, its
+// slide (Qxy/Rxy on the note), its vibrato (4xy where it begins, 400 on the
+// note's last row) and a release where the sound stops before the next note.
+// frameRate is the engine speed (60 for NTSC).
+std::vector<MelodyCell> MelodyCells(const std::vector<GridNote> &notes, ChannelVoice voice, int frameRate);
 
 // ---------------------------------------------------------------------------
 // Percussive hits (finger taps, beatboxing)

@@ -470,6 +470,7 @@
 #define IDC_REC_DRUMS                   1304
 #define IDC_REC_DETECTED                1305
 #define IDC_REC_CHANNEL                 1306
+#define IDC_REC_EXPRESSION              1307
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -632,7 +633,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        321
 #define _APS_NEXT_COMMAND_VALUE         33128
-#define _APS_NEXT_CONTROL_VALUE         1307
+#define _APS_NEXT_CONTROL_VALUE         1308
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

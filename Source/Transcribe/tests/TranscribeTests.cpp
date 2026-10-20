@@ -535,6 +535,146 @@ void TestQuantizeRules()
 	}
 }
 
+// Pitch frames for DescribeExpression tests: 5 ms apart, pitch and level from functions of time
+template <class PitchAt, class RmsAt>
+std::vector<PitchFrame> MakeFrames(double seconds, PitchAt pitchAt, RmsAt rmsAt)
+{
+	std::vector<PitchFrame> frames;
+	for (double t = 0.0025; t < seconds; t += 0.005) {
+		PitchFrame f;
+		f.time = t;
+		f.frequency = pitchAt(t);
+		f.aperiodicity = f.frequency > 0.0 ? 0.05 : 1.0;
+		f.rms = rmsAt(t);
+		frames.push_back(f);
+	}
+	return frames;
+}
+
+Note MakeNote(double start, double end, double pitch)
+{
+	Note n;
+	n.start = start;
+	n.end = end;
+	n.pitch = pitch;
+	n.midi = int(std::lround(pitch));
+	return n;
+}
+
+void TestExpression()
+{
+	const auto steady = [](double) { return 0.1; };
+	{
+		// A scoop: the pitch glides up from 67 to 72 in 0.1 s (segmented into two short
+		// pieces) and holds. It becomes one note sliding up 4 semitones.
+		std::vector<Note> notes;
+		notes.push_back(MakeNote(0.00, 0.05, 68.25));
+		notes.push_back(MakeNote(0.05, 0.10, 70.75));
+		notes.push_back(MakeNote(0.10, 0.60, 72.0));
+		const auto scoop = [](double t) { return MidiToFrequency(t < 0.1 ? 67.0 + 50.0 * t : 72.0); };
+		ExpressionOptions o;
+		o.gentleVibrato = false;
+		DescribeExpression(notes, MakeFrames(0.7, scoop, steady), o);
+		CHECK(notes.size() == 1);
+		if (notes.size() == 1) {
+			CHECK(notes[0].midi == 72 && notes[0].slideSemitones == -4);
+			CHECK_NEAR(notes[0].start, 0.0, 1e-9);
+			CHECK_NEAR(notes[0].slideSeconds, 0.10, 1e-9);
+		}
+	}
+	{
+		// A short note that holds its pitch before the next one is part of the melody
+		std::vector<Note> notes;
+		notes.push_back(MakeNote(0.00, 0.12, 69.0));
+		notes.push_back(MakeNote(0.12, 0.60, 72.0));
+		const auto steps = [](double t) { return MidiToFrequency(t < 0.12 ? 69.0 : 72.0); };
+		DescribeExpression(notes, MakeFrames(0.7, steps, steady), ExpressionOptions());
+		CHECK(notes.size() == 2);
+	}
+	{
+		// A short note that doesn't touch the next one stays a note of its own
+		std::vector<Note> notes;
+		notes.push_back(MakeNote(0.00, 0.08, 69.0));
+		notes.push_back(MakeNote(0.15, 0.60, 72.0));
+		const std::vector<PitchFrame> frames = MakeFrames(0.7, [](double t) { return MidiToFrequency(t < 0.1 ? 69 : 72); }, steady);
+		DescribeExpression(notes, frames, ExpressionOptions());
+		CHECK(notes.size() == 2);
+		if (notes.size() == 2)
+			CHECK(notes[1].slideSemitones == 0);
+	}
+	{
+		// Louder notes play louder: 6 dB quieter is two steps down from F
+		std::vector<Note> notes;
+		notes.push_back(MakeNote(0.0, 0.3, 69.0));
+		notes.push_back(MakeNote(0.4, 0.7, 71.0));
+		const std::vector<PitchFrame> frames = MakeFrames(0.8, [](double) { return 440.0; },
+			[](double t) { return t < 0.35 ? 0.1 : 0.05; });
+		DescribeExpression(notes, frames, ExpressionOptions());
+		CHECK(notes.size() == 2);
+		if (notes.size() == 2) {
+			CHECK(notes[0].volume == 15);
+			CHECK(notes[1].volume == 13);
+		}
+		ExpressionOptions plain;
+		plain.dynamics = false;
+		DescribeExpression(notes, frames, plain);
+		CHECK(notes[0].volume == -1);
+	}
+	{
+		// A performed vibrato (30 cents at 5.5 Hz) is found; a steady long note gets the
+		// gentle one; a short note none
+		std::vector<Note> notes;
+		notes.push_back(MakeNote(0.0, 1.0, 69.0));
+		notes.push_back(MakeNote(1.1, 2.1, 72.0));
+		notes.push_back(MakeNote(2.2, 2.5, 74.0));
+		const std::vector<PitchFrame> frames = MakeFrames(2.6, [](double t) {
+			if (t < 1.0) return 440.0 * std::pow(2.0, 30.0 * std::sin(2.0 * PI * 5.5 * t) / 1200.0);
+			return MidiToFrequency(t < 2.15 ? 72 : 74);
+		}, steady);
+		DescribeExpression(notes, frames, ExpressionOptions());
+		CHECK(notes.size() == 3);
+		if (notes.size() == 3) {
+			CHECK_NEAR(notes[0].vibratoHz, 5.5, 0.5);
+			CHECK_NEAR(notes[0].vibratoCents, 30.0, 8.0);
+			CHECK_NEAR(notes[1].vibratoHz, 5.6, 1e-9);	// gentle
+			CHECK_NEAR(notes[1].vibratoDelay, 0.25, 1e-9);
+			CHECK(notes[2].vibratoHz == 0.0);
+		}
+	}
+	{
+		// Pattern cells: slide up 2 semitones over 0.1 s (Q22), vibrato 461 from row 3, 400 on
+		// the last row, release after
+		std::vector<GridNote> rows(1);
+		rows[0].row = 0;
+		rows[0].length = 8;
+		rows[0].midi = 72;
+		rows[0].volume = 13;
+		rows[0].slideSemitones = -2;
+		rows[0].slideSeconds = 0.1;
+		rows[0].vibratoHz = 5.6;
+		rows[0].vibratoCents = 12.0;
+		rows[0].vibratoRow = 3;
+		const std::vector<MelodyCell> cells = MelodyCells(rows, ChannelVoice::Pulse, 60);
+		CHECK(cells.size() == 4);
+		if (cells.size() == 4) {
+			CHECK(cells[0].kind == MelodyCell::Note && cells[0].row == 0 && cells[0].midi == 70 && cells[0].volume == 13);
+			CHECK(cells[0].effect == 'Q' && cells[0].effectParam == 0x22);
+			CHECK(cells[1].kind == MelodyCell::Effect && cells[1].row == 3 && cells[1].effect == '4' && cells[1].effectParam == 0x61);
+			CHECK(cells[2].kind == MelodyCell::Effect && cells[2].row == 7 && cells[2].effectParam == 0x00);
+			CHECK(cells[3].kind == MelodyCell::Release && cells[3].row == 8);
+		}
+		TextModuleOptions o;
+		o.patternLength = 16;
+		const std::string text = WriteTextModule(rows, std::vector<GridHit>(), o);
+		std::string error;
+		CHECK(ValidateTextModule(text, &error));
+		CHECK(CellOf(text, 0, 0, 5) == "A#3 00 D Q22");
+		CHECK(CellOf(text, 0, 3, 5) == "... .. . 461");
+		CHECK(CellOf(text, 0, 7, 5) == "... .. . 400");
+		CHECK(CellOf(text, 0, 8, 5) == "=== .. . ...");
+	}
+}
+
 void TestHits()
 {
 	{
@@ -649,8 +789,9 @@ void TestTextModule()
 	CHECK(text.find("EXPANSION       1\n") != std::string::npos);
 	CHECK(text.find("COLUMNS : 1 1 1 1 1 1 1 1\n") != std::string::npos);
 	CHECK(text.find("INSTVRC6   0") != std::string::npos);
-	// The lead holds at 10 (release point 5) until the note release fades it out
-	CHECK(text.find("MACROVRC6   0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+	// The lead swells in, holds at 10 (release point 8) until the note release fades it out
+	CHECK(text.find("MACROVRC6   0   0  -1   8   0 : 11 14 15 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+	CHECK(text.find("MACROVRC6   4   0   0  -1   0 : 3 3 3 3 3 3 2 2 2 2 2 2\n") != std::string::npos);	// duty shimmer, looping
 	CHECK(text.find("INST2A03   1") != std::string::npos);
 	CHECK(text.find("TRACK  16   6 150") != std::string::npos);
 	CHECK(text.find("ORDER 00 : 00 00 00 00 00 00 00 00\n") != std::string::npos);
@@ -680,7 +821,7 @@ void TestTextModule()
 	CHECK(CellOf(text2, 3, 0, 0) == "=== .. . ...");
 	CHECK(text2.find("INST2A03   0     0  -1  -1  -1   0") != std::string::npos);
 	CHECK(text2.find("MACROVRC6") == std::string::npos);
-	CHECK(text2.find("MACRO       0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+	CHECK(text2.find("MACRO       0   0  -1   8   0 : 11 14 15 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 
 	// A song from several recordings: lead on VRC6 pulse 1, bass on the sawtooth, drums
 	{
@@ -710,9 +851,9 @@ void TestTextModule()
 		CHECK(CellOf(song, 1, 8, 7) == "=== .. . ...");
 		CHECK(CellOf(song, 0, 4, 3) == "4-# 01 F ...");
 		CHECK(song.find("INSTVRC6   0     0  -1  -1  -1   0 \"Lead\"\n") != std::string::npos);
-		CHECK(song.find("INSTVRC6   4     0  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);	// no duty on the sawtooth
+		CHECK(song.find("INSTVRC6   4     4  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);	// bass envelope, no duty
 		CHECK(song.find("ORDER 01 : 00 00 00 01 00 01 00 01\n") != std::string::npos);
-		CHECK(song.find("MACROVRC6   4   0  -1  -1   0 : 3\n") != std::string::npos);
+		CHECK(song.find("MACROVRC6   0   4  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 	}
 	{
 		// 2A03 only: lead on pulse 1, bass on the triangle
@@ -728,9 +869,10 @@ void TestTextModule()
 		o4.patternLength = 16;
 		const std::string song = WriteTextModule(parts, std::vector<GridHit>(), o4);
 		CHECK(ValidateTextModule(song, &error));
-		CHECK(song.find("MACRO       0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+		CHECK(song.find("MACRO       0   0  -1   8   0 : 11 14 15 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+		CHECK(song.find("MACRO       0   4  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 		CHECK(song.find("MACRO       4   0  -1  -1   0 : 1\n") != std::string::npos);
-		CHECK(song.find("INST2A03   4     0  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);
+		CHECK(song.find("INST2A03   4     4  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);
 		CHECK(song.find("MACROVRC6") == std::string::npos);
 		CHECK(CellOf(song, 0, 0, 2) == "A-3 04 . ...");
 	}
@@ -742,7 +884,7 @@ void TestTextModule()
 		const std::string song = WriteTextModule(parts, std::vector<GridHit>(), TextModuleOptions());
 		CHECK(ValidateTextModule(song, &error));
 		CHECK(song.find("MACROVRC6   4") == std::string::npos);
-		CHECK(song.find("INSTVRC6   0     0  -1  -1  -1  -1 \"Lead\"\n") != std::string::npos);
+		CHECK(song.find("INSTVRC6   0     4  -1  -1  -1  -1 \"Lead\"\n") != std::string::npos);	// bass envelope on the sawtooth
 	}
 
 	// The validator rejects what FamiTracker's importer would reject
@@ -807,6 +949,7 @@ int main()
 	TestQuietEdges();
 	TestMelodies();
 	TestQuantizeRules();
+	TestExpression();
 	TestHits();
 	TestGuessSource();
 	TestWavRoundTrip();

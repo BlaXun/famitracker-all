@@ -368,6 +368,22 @@ double Grid::RowsPerSecond() const
 	return double(frameRate) * decrement / (60.0 * frameRate - remainder);
 }
 
+namespace {
+
+GridNote MakeGridNote(const Note &n, double rate)
+{
+	GridNote g;
+	g.volume = n.volume;
+	g.slideSemitones = n.slideSemitones;
+	g.slideSeconds = n.slideSeconds;
+	g.vibratoHz = n.vibratoHz;
+	g.vibratoCents = n.vibratoCents;
+	g.vibratoRow = n.vibratoHz > 0.0 ? std::max(1, int(std::lround(n.vibratoDelay * rate))) : 0;
+	return g;
+}
+
+}	// namespace
+
 std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid, const QuantizeOptions &options)
 {
 	std::vector<GridNote> result;
@@ -388,6 +404,7 @@ std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid,
 		int midi;
 		double start, end;	// seconds, spanning every note merged into it
 		double longest;		// duration of the note that chose the pitch
+		Note source;		// that note, for its expression
 	};
 	auto length = [&](const Pending &p) { return std::max(1, int(std::lround((p.end - p.start) * rate))); };
 
@@ -403,11 +420,12 @@ std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid,
 				if (n.end - n.start > pending.longest) {
 					pending.midi = n.midi;
 					pending.longest = n.end - n.start;
+					pending.source = n;
 				}
 				pending.end = std::max(pending.end, n.end);
 				continue;
 			}
-			GridNote g;
+			GridNote g = MakeGridNote(pending.source, rate);
 			g.row = pending.row;
 			g.midi = pending.midi;
 			g.length = length(pending);
@@ -421,9 +439,10 @@ std::vector<GridNote> Quantize(const std::vector<Note> &input, const Grid &grid,
 		pending.start = n.start;
 		pending.end = n.end;
 		pending.longest = n.end - n.start;
+		pending.source = n;
 		havePending = true;
 	}
-	GridNote last;
+	GridNote last = MakeGridNote(pending.source, rate);
 	last.row = pending.row;
 	last.midi = pending.midi;
 	last.length = length(pending);

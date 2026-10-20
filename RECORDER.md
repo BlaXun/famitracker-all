@@ -34,10 +34,10 @@ recordings and selections become reusable clips.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 208 checks on synthesized audio covering:
+- [x] Tests: 238 checks on synthesized audio covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
-  - repeated notes and glides,
+  - repeated notes and glides, slides, loudness and vibrato,
   - octave fit and scales,
   - taps,
   - the exact text cells, including songs with several parts.
@@ -66,6 +66,28 @@ recordings and selections become reusable clips.
   the selected instrument. Notes end with `===` when the instrument has a
   release, otherwise with `---`. One Ctrl+Z undoes all of it, except that
   added instruments stay (instrument edits aren't undoable in 0.4.6).
+- [x] Expression, so a melody keeps how it was played (`Expression.cpp`, on by
+  default; the Insert recording dialog has a checkbox, `wav2ftm --plain` turns
+  it off):
+  - loudness: each note gets a volume column value from its median level,
+    F for the loud notes and one step lower for every 3 dB quieter, never
+    below 6;
+  - slides: short pieces whose pitch glides into the next note (a scoop up to
+    a whistled note) become a slide into it, `Qxy` up or `Rxy` down, with the
+    speed worked out from the slide's length and the channel's period table;
+  - vibrato: a performed 4-8 Hz vibrato is measured and kept (`4xy`); other
+    notes of half a second and longer get a gentle delayed one (about 5.6 Hz,
+    12 cents, from a quarter second in), except on bass channels. `400` on the
+    note's last row stops it.
+  - richer sound: the lead swells in like a whistle (`11 14 15 15 14 13 12 11
+    10`), and on the VRC6 its duty cycle shimmers slowly between 4/16 and
+    3/16. The bass keeps the punchier envelope.
+- [ ] Harmony backing, next: find the melody's key, pick chords that fit it bar
+  by bar, and write a bass line on the sawtooth and the chords as fast
+  arpeggios on VRC6 Pulse 2. Recording against a metronome lets the chords
+  land on the beat, which ties in with the record dialog below.
+- [ ] AI arranging over MCP, after that: the `api` branch (ROADMAP.md) lets an
+  MCP server read and edit the open song, so an assistant can arrange it.
 - [ ] Record dialog in FamiTracker:
   - microphone input via `waveIn` (winmm),
   - count-in and metronome at the song's tempo,
@@ -86,6 +108,7 @@ wav2ftm --mode hum humming.wav melody.txt               say what it is instead
 wav2ftm --key C --scale pentatonic hum.wav hum.txt      snap to a scale
 wav2ftm --channel 7 bassline.wav bass.txt               VRC6 sawtooth, bass register
 wav2ftm --min-rest 0 staccato.wav staccato.txt          keep every break as a rest
+wav2ftm --plain whistle.wav plain.txt                   no loudness, slides or vibrato
 wav2ftm --drums taps.wav --bass hum.wav whistle.wav song.txt   all three in one song
 ```
 
@@ -138,9 +161,13 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   - Titles are cut to 31 characters, because FamiTracker copies them with
     `strcpy_s` into 32 bytes.
   - `ValidateTextModule` runs on every write.
-  - The Lead instrument's volume macro is `15 14 13 12 11 10 7 4 2 0` with
-    the release point on item 5: it holds at 10 while the note lasts, and the
-    `===` at the note's end plays `7 4 2 0`.
+  - The Lead instrument's volume macro is `11 14 15 15 14 13 12 11 10 7 4 2 0`
+    with the release point on item 8: it holds at 10 while the note lasts,
+    and the `===` at the note's end plays `7 4 2 0`. Melodies on the triangle
+    or sawtooth use the Bass envelope `15 14 13 12 11 10 7 4 2 0` (release
+    point 5, volume macro 4). On the VRC6 the lead's duty macro loops
+    `3 3 3 3 3 3 2 2 2 2 2 2`.
+  - Expression goes into the volume column and the first effect column.
 - **Speed:** YIN's difference function comes from an FFT cross-correlation
   plus running energy sums, giving the same values as the direct sum. A
   34-second recording takes about half a second, where the direct sum took
