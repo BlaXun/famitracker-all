@@ -1,8 +1,10 @@
 # CLAUDE.md
 
-Guidance for working in this repository. Unless a section says otherwise,
-everything below describes `master`, which is FamiTracker 0.4.6, and was checked
-against that source.
+Guidance for working in this repository. This is the `beginner-friendly`
+branch: FamiTracker 0.4.6 with a modernized build, plus beginner features in
+progress. The plan and its status are in `ROADMAP.md`. Unless a section says
+otherwise, everything below describes the 0.4.6 code as found on `master` and
+was checked against that source.
 
 ## What this repository is
 
@@ -61,25 +63,36 @@ line with `// // //` so they stay diffable against vanilla.
 
 ## Building
 
-Windows only. Nothing here builds or runs in a Linux container, and there is
-no CMake, Makefile or CI.
+Windows only; nothing builds or runs in a Linux container. This branch
+replaced the VS2008 project:
 
-- `FamiTracker.sln` and `FamiTracker.vcproj` are Visual Studio 2008 files;
-  newer Visual Studio versions convert them on open. The `lc` and `sneven`
-  branches carry VS2015 (`v140`) `.vcxproj` files for nearly identical 0.4.6
-  source.
-- MFC is linked statically with the Multi-Byte character set (not Unicode), so
-  the MFC MBCS libraries must be installed.
-- Precompiled headers are disabled in every configuration.
-- Environment variables: `DXSDK_DIR` for the DirectX SDK (`dsound.h`,
-  `dsound.lib`, `dxguid.lib`) and, from 0.4.6, `BOOST_DIR` for header-only
-  `scoped_ptr`/`scoped_array` used in `Compiler.cpp` and `FamiTrackerView.cpp`.
-  `BOOST_DIR` is on the include path of the Win32 Debug and Release
-  configurations only.
-- Link libraries: `Dbghelp winmm comctl32 dsound dxguid Version`.
-- Quirk: `Debug|x64` and `Release|x64` point the linker at `Lib\x86`. Only the
-  two `Release 64` configurations (both target x64) use `Lib\x64`, and they
-  lack `BOOST_DIR`.
+- Open `FamiTracker.sln` in Visual Studio 2022 or later with the "Desktop
+  development with C++" workload and the C++ MFC component. No environment
+  variables or extra SDKs are needed. From a command line,
+  `msbuild FamiTracker.sln /p:Configuration=Release /p:Platform=x86` writes
+  `build\Win32\Release\FamiTracker.exe`.
+- `FamiTracker.vcxproj` was generated from the old `FamiTracker.vcproj` (gone
+  on this branch, still on `master`) with the same file list. When you add a
+  source file, add it to both `FamiTracker.vcxproj` and
+  `FamiTracker.vcxproj.filters`.
+- Project settings:
+  - Toolset `$(DefaultPlatformToolset)`, i.e. whatever the installed Visual
+    Studio provides.
+  - Static MFC, Multi-Byte character set, C++14.
+  - Precompiled headers off.
+  - Conformance mode off, since the code relies on Microsoft extensions.
+  - SDL checks off.
+  - `GenerateManifest` off, because `FamiTracker.rc` already embeds
+    `res/FamiTracker.manifest`.
+- Link libraries: `Dbghelp winmm comctl32 dsound dxguid Version`, all from the
+  Windows SDK. Boost and the DirectX SDK are no longer needed.
+- **CI:** `.github/workflows/build.yml` builds Win32 Release and Debug on
+  GitHub's Windows runners and uploads `FamiTracker.exe` as an artifact. From
+  a Linux session this is the only way to compile: push, then check the run
+  with `gh run list` and `gh run view <id> --log-failed`.
+- On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
+  environment variables. There, `Debug|x64` and `Release|x64` point the linker
+  at `Lib\x86`; only the two `Release 64` configurations use `Lib\x64`.
 - Compile-time switches:
   - `TRANSPOSE_FDS` (defined in `FamiTrackerDoc.h`) and `SUPPORT_TRANSLATIONS`
     (defined in `FamiTracker.h`; loads `language.dll` if its version matches)
@@ -95,6 +108,7 @@ no CMake, Makefile or CI.
 
 There are no automated tests. What exists:
 
+- **CI build:** every push compiles Win32 Release and Debug (see Building).
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or
@@ -287,9 +301,10 @@ swap to study. Touch points:
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies
   to every file that includes it. Placement new or a custom `operator new`
   must account for it.
-- **Precompiled headers:** PCH is off. `Compiler.cpp` and `APU/APU.CPP`
-  include std or Boost headers before `stdafx.h`, and several `APU/` and
-  `CustomExporter*` files never include it. Turning PCH on breaks them.
+- **Precompiled headers:** PCH is off. `Compiler.cpp`, `FamiTrackerView.cpp`
+  and `APU/APU.CPP` include standard headers before `stdafx.h`, and several
+  `APU/` and `CustomExporter*` files never include it. Turning PCH on breaks
+  them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
 - **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the

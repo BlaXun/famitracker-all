@@ -1,0 +1,82 @@
+# Roadmap: beginner-friendly FamiTracker
+
+Branch `beginner-friendly`. The goal is a FamiTracker that someone with no
+music training can use to write VRC6 chiptune music for a GameMaker game,
+which plays the tracks as OGG files.
+
+## Principles
+
+- **Keep the `.ftm` format unchanged.** The piano roll is another view of the
+  same pattern data, profiles live in program settings, and presets are
+  ordinary `.fti` files. Songs must keep opening in vanilla FamiTracker,
+  0CC/Dn-FamiTracker and FamiStudio.
+- **Stay in the UI and export layers.** The NSF driver is binary-only in this
+  repo (see CLAUDE.md), so no feature may need new driver commands.
+- **Full FamiTracker stays one click away** through a "Show everything" option.
+
+## 1. Foundation (in progress)
+
+- [x] `FamiTracker.vcxproj`/`.sln` for current Visual Studio. The toolset
+  follows the installed Visual Studio; MFC stays static with the MBCS
+  character set.
+- [x] Boost replaced with `std::unique_ptr`. DirectSound now comes from the
+  Windows SDK instead of the DirectX SDK.
+- [x] GitHub Actions workflow (`.github/workflows/build.yml`) that builds Win32
+  Release and Debug and uploads `FamiTracker.exe`.
+- [ ] Green Release and Debug builds on CI.
+- [ ] x64 build.
+
+## 2. OGG export with loop points
+
+- Render each song to OGG Vorbis alongside the existing WAV export
+  (`CSoundGen::RenderToFile`, `CWaveFile`, `CCreateWaveDlg`,
+  `CWavProgressDlg`). Rendering is currently mono WAV only.
+- Find the loop from the song's `Bxx` jump target, and record a
+  sample-accurate loop start and end. Render far enough past the loop that
+  effect and sequence state has settled.
+- Show and copy the GameMaker calls `audio_sound_loop_start` and
+  `audio_sound_loop_end` (GameMaker 2023.2 and later; confirm the units in the
+  manual).
+
+## 3. Sounds before settings
+
+- Instrument library: curated `.fti` presets (VRC6 saw bass, pulse leads and
+  pads, noise kick/snare/hat) with names, short descriptions and
+  click-to-preview. Use `CFamiTrackerDoc::LoadInstrument` to load and
+  `CSoundGen::QueueNote` to preview.
+- Drum lane: a 16-step grid that writes notes to the noise channel.
+
+## 4. Profiles
+
+- A profile bundles a module template (chip, tempo, rows, effect columns,
+  highlights), the set of visible UI and starter instruments.
+- The default profile, "VRC6 game music", turns VRC6 on, keeps one effect
+  column, hides DPCM and the advanced menus, and shows BPM instead of
+  speed/tempo.
+- Users can customize a profile with a checklist, and "Show everything"
+  restores the full UI. Settings live in `CSettings`; menus and toolbars are
+  set up in `CMainFrame`.
+
+## 5. Piano roll
+
+- **v1:** one channel at a time. Draw, erase and resize notes with the mouse,
+  with scale lock (pick a key and scale, off-scale rows are dimmed and notes
+  snap), a playback cursor and undo.
+- **v2:** ghost notes from other channels (FL Studio style), and a chord helper
+  that spreads a chord across free channels or turns it into a `0xy`
+  arpeggio. Mood starters lay down chords, bass and drums for moods like
+  "cozy town" or "boss fight".
+- **Implementation notes:**
+  - It is a new view beside `CPatternEditor`, and all edits go through
+    `CPatternAction` so undo works.
+  - A note's length is the number of rows until the next note, release or halt
+    in that channel.
+  - Each channel plays one note at a time.
+
+## 6. Tutorials (last, once the UI stops changing)
+
+- A coach-mark overlay that dims the window, highlights the next control and
+  advances when the user acts. Steps are stored in a data file, so new
+  tutorials need no recompile.
+- Annotated example songs, since module comments can already pop up when a
+  file is opened.
