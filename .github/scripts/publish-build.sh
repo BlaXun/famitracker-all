@@ -40,6 +40,11 @@ fi
 	echo
 	echo "FamiTracker.exe   The tracker. 32-bit Windows, no installation needed."
 	if [ -n "$wav2ftm" ]; then
+		echo "                  The microphone button on the toolbar records a whistle,"
+		echo "                  hum or finger taps straight into the song, and Edit >"
+		echo "                  Add chords and bass line fits a backing to a melody."
+	fi
+	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"
 		echo "                  into a FamiTracker text file. Run it from a command prompt"
 		echo "                  (wav2ftm --help), then open the result in FamiTracker"

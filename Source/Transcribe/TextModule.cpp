@@ -52,6 +52,14 @@ const char BASS_VOLUME[] = "15 14 13 12 11 10 7 4 2 0";				// release point: ite
 const int BASS_RELEASE = 5;
 const int LEAD_VOLUME_MACRO = 0;
 const int BASS_VOLUME_MACRO = 4;
+// Chords (a backing's arpeggios) are softer: they hold at 6 under the melody
+const char CHORD_VOLUME[] = "10 9 8 8 7 7 6 6 4 2 1 0";				// release point: item 7
+const int CHORD_RELEASE = 7;
+const int CHORD_VOLUME_MACRO = 5;
+const int CHORD_DUTY_MACRO = 1;
+// and thin: 12.5% duty on either chip
+const char CHORD_DUTY_2A03[] = "0";
+const char CHORD_DUTY_VRC6[] = "1";
 
 // Duty cycle of the lead: 25% on the 2A03 pulses; on the VRC6 pulses a slow
 // shimmer between 4/16 and 3/16, looping
@@ -143,12 +151,15 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 	const bool haveDrums = !drums.empty();
 	bool leadOn2A03 = false, leadOnVrc6 = false;	// a melody on a pulse channel of that chip
 	bool bassOn2A03 = false, bassOnVrc6 = false;	// one on the triangle or sawtooth
+	bool chordsOn2A03 = false, chordsOnVrc6 = false;	// chords on a pulse channel
 	for (size_t p = 0; p < parts.size(); ++p) {
-		if (parts[p].notes.empty())
+		if (parts[p].notes.empty() && parts[p].cells.empty())
 			continue;
 		const int c = parts[p].channel;
 		const bool bass = VoiceOf(c) != ChannelVoice::Pulse;
-		if (c >= 5)
+		if (parts[p].chords && !bass)
+			(c >= 5 ? chordsOnVrc6 : chordsOn2A03) = true;
+		else if (c >= 5)
 			(bass ? bassOnVrc6 : leadOnVrc6) = true;
 		else
 			(bass ? bassOn2A03 : leadOn2A03) = true;
@@ -159,7 +170,8 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 	int lastRow = 0;
 	for (size_t p = 0; p < parts.size(); ++p) {
 		std::map<int, Cell> &line = cells[parts[p].channel];
-		const std::vector<MelodyCell> melody = MelodyCells(parts[p].notes, VoiceOf(parts[p].channel), options.grid.frameRate);
+		const std::vector<MelodyCell> melody = parts[p].cells.empty() ?
+			MelodyCells(parts[p].notes, VoiceOf(parts[p].channel), options.grid.frameRate) : parts[p].cells;
 		for (size_t i = 0; i < melody.size(); ++i) {
 			const MelodyCell &m = melody[i];
 			Cell &c = line[m.row];
@@ -240,8 +252,16 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 0, BASS_VOLUME_MACRO, -1, BASS_RELEASE, 0, BASS_VOLUME);
 		out << macro;
 	}
+	if (chordsOn2A03) {
+		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 0, CHORD_VOLUME_MACRO, -1, CHORD_RELEASE, 0, CHORD_VOLUME);
+		out << macro;
+	}
 	if (leadOn2A03) {
 		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 4, 0, -1, -1, 0, LEAD_DUTY_2A03);
+		out << macro;
+	}
+	if (chordsOn2A03) {
+		std::snprintf(macro, sizeof(macro), "MACRO     %3d %3d %3d %3d %3d : %s\n", 4, CHORD_DUTY_MACRO, -1, -1, 0, CHORD_DUTY_2A03);
 		out << macro;
 	}
 	if (leadOnVrc6) {
@@ -252,8 +272,16 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 0, BASS_VOLUME_MACRO, -1, BASS_RELEASE, 0, BASS_VOLUME);
 		out << macro;
 	}
+	if (chordsOnVrc6) {
+		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 0, CHORD_VOLUME_MACRO, -1, CHORD_RELEASE, 0, CHORD_VOLUME);
+		out << macro;
+	}
 	if (leadOnVrc6) {
 		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 4, 0, 0, -1, 0, LEAD_DUTY_VRC6);	// loops from item 0
+		out << macro;
+	}
+	if (chordsOnVrc6) {
+		std::snprintf(macro, sizeof(macro), "MACROVRC6 %3d %3d %3d %3d %3d : %s\n", 4, CHORD_DUTY_MACRO, -1, -1, 0, CHORD_DUTY_VRC6);
 		out << macro;
 	}
 	out << "\n";
@@ -264,14 +292,16 @@ std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vec
 	// lead), the drums 1-3.
 	std::map<int, std::string> instruments;
 	for (size_t p = 0; p < parts.size(); ++p) {
-		if (parts[p].notes.empty())
+		if (parts[p].notes.empty() && parts[p].cells.empty())
 			continue;
 		const int channel = parts[p].channel;
 		const bool bass = VoiceOf(channel) != ChannelVoice::Pulse;	// no duty cycle there
+		const bool chords = parts[p].chords && !bass;
+		const int volume = chords ? CHORD_VOLUME_MACRO : (bass ? BASS_VOLUME_MACRO : LEAD_VOLUME_MACRO);
+		const int duty = bass ? -1 : (chords ? CHORD_DUTY_MACRO : 0);
 		char line[96];
 		std::snprintf(line, sizeof(line), "%-8s %3d   %3d %3d %3d %3d %3d %s\n",
-			channel >= 5 ? "INSTVRC6" : "INST2A03", parts[p].instrument, bass ? BASS_VOLUME_MACRO : LEAD_VOLUME_MACRO,
-			-1, -1, -1, bass ? -1 : 0, Quote(parts[p].name).c_str());
+			channel >= 5 ? "INSTVRC6" : "INST2A03", parts[p].instrument, volume, -1, -1, -1, duty, Quote(parts[p].name).c_str());
 		instruments[parts[p].instrument] = line;
 	}
 	if (haveDrums) {

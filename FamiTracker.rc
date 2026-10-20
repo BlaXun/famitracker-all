@@ -123,6 +123,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -243,6 +244,7 @@ BEGIN
         MENUITEM "Select &All",                 ID_EDIT_SELECTALL
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
         MENUITEM SEPARATOR
         POPUP "Transpose"
         BEGIN
@@ -540,6 +542,7 @@ BEGIN
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
+    ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"
@@ -1890,6 +1893,28 @@ BEGIN
     PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,241,76,14
     DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,241,50,14
     PUSHBUTTON      "Close",IDCANCEL,205,241,50,14
+END
+
+IDD_BACKING DIALOGEX 0, 0, 262, 180
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add chords and a bass line"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Melody:",IDC_STATIC,7,9,60,8
+    COMBOBOX        IDC_BACK_MELODY,72,7,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Key:",IDC_STATIC,7,27,60,8
+    COMBOBOX        IDC_BACK_KEY,72,25,130,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chords:",IDC_STATIC,7,45,60,8
+    COMBOBOX        IDC_BACK_CHORDS,72,43,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "as arpeggios",IDC_STATIC,207,45,48,8
+    LTEXT           "Bass line:",IDC_STATIC,7,63,60,8
+    COMBOBOX        IDC_BACK_BASS,72,61,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chord changes:",IDC_STATIC,7,81,60,8
+    COMBOBOX        IDC_BACK_CHANGES,72,79,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_BACK_PREVIEW,7,99,248,42
+    LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,143,248,16
+    DEFPUSHBUTTON   "Add",IDOK,150,160,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,205,160,50,14
 END
 
 IDD_PROPERTIES DIALOGEX 0, 0, 213, 259

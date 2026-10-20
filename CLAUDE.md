@@ -4,8 +4,10 @@ Guidance for working in this repository. This is the `recorder` branch, made
 from `beginner-friendly`: FamiTracker 0.4.6 with a modernized build, plus the
 audio-to-notes recorder described in `RECORDER.md`: the engine in
 `Source/Transcribe/`, the `wav2ftm` tool, Edit > Insert recording in
-`Source/InsertRecording.cpp`, and Edit > Record from microphone in
-`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`). The overall
+`Source/InsertRecording.cpp`, Edit > Record from microphone in
+`Source/RecordDlg.cpp` (audio I/O in `Source/MicRecorder.cpp`), and Edit >
+Add chords and bass line in `Source/BackingDlg.cpp` (chords from
+`Source/Transcribe/Harmony.cpp`, written by `InsertRecording.cpp`). The overall
 plan is in `ROADMAP.md`. Unless a section says otherwise, everything below
 describes the 0.4.6 code as found on `master` and was checked against that
 source.

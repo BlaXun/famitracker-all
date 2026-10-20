@@ -50,6 +50,10 @@ void Usage()
 		"  --drums FILE          add a drum part from a recording of taps or beatboxing\n"
 		"  --bass FILE           add a bass line from a recording (hum it), on the VRC6 sawtooth,\n"
 		"                        or on the triangle with --expansion none\n"
+		"  --backing             add chords that fit the melody, as arpeggios on VRC6 pulse 2 (or a\n"
+		"                        free 2A03 pulse), and a bass line on the sawtooth (or the triangle),\n"
+		"                        unless --bass brings one; the key comes from --key/--scale if given\n"
+		"  --bar ROWS            rows per bar for the backing's chords (default: 16, 4 beats of 4 rows)\n"
 		"  --bpm N               tempo, 4 rows per beat, 32-255 (default: 150)\n"
 		"  --expansion vrc6|none sound chip (default: vrc6)\n"
 		"  --channel N           melody channel: 0-2 = 2A03 pulse 1/pulse 2/triangle,\n"
@@ -165,14 +169,73 @@ bool TranscribeDrums(const Audio &audio, const std::string &path, const Settings
 	return true;
 }
 
+// Chords and a bass line for the melody, on channels the song leaves free
+void AddBacking(std::vector<MelodyPart> &parts, const Key &key, int patternLength, int barRows, Expansion expansion,
+	bool addBass, bool print)
+{
+	const std::vector<MelodyNote> melody = MelodyOf(parts.front().notes);
+	const std::vector<Bar> bars = MelodyBars(melody, patternLength, barRows);
+	HarmonyOptions harmony;
+	harmony.rowsPerBeat = 4;
+	const std::vector<ChordSpan> chords = ChooseChords(melody, bars, key, harmony);
+
+	auto taken = [&parts](int channel) {
+		for (size_t i = 0; i < parts.size(); ++i)
+			if (parts[i].channel == channel)
+				return true;
+		return false;
+	};
+	const int chordChoices[] = { expansion == Expansion::VRC6 ? 6 : 1, 1, 0 };
+	for (int i = 0; i < 3; ++i) {
+		if (!taken(chordChoices[i])) {
+			MelodyPart part;
+			part.channel = chordChoices[i];
+			part.instrument = 5;
+			part.name = "Chords";
+			part.chords = true;
+			part.cells = ArpeggioCells(chords, bars);
+			parts.push_back(part);
+			break;
+		}
+	}
+	const int bassChoices[] = { expansion == Expansion::VRC6 ? 7 : 2, 2 };
+	for (int i = 0; i < 2 && addBass; ++i) {
+		if (!taken(bassChoices[i])) {
+			MelodyPart part;
+			part.channel = bassChoices[i];
+			part.instrument = 4;
+			part.name = "Bass";
+			part.cells = BassCells(chords, bars, harmony);
+			parts.push_back(part);
+			break;
+		}
+	}
+
+	std::printf("Key: %s\nChords:", KeyName(key).c_str());
+	for (size_t b = 0; b < bars.size(); ++b) {
+		std::printf(" |");
+		for (size_t c = 0; c < chords.size(); ++c) {
+			const int from = std::max(chords[c].row, bars[b].row);
+			const int to = std::min(chords[c].row + chords[c].length, bars[b].row + bars[b].length);
+			if (from < to && (from == bars[b].row || from == chords[c].row))
+				std::printf(" %s", ChordName(chords[c].chord, key).c_str());
+		}
+	}
+	std::printf(" |\n");
+	if (print) {
+		for (size_t c = 0; c < chords.size(); ++c)
+			std::printf("  row %4d  %-5s %3d rows\n", chords[c].row, ChordName(chords[c].chord, key).c_str(), chords[c].length);
+	}
+}
+
 }	// namespace
 
 int main(int argc, char **argv)
 {
 	std::string mode = "auto", title, keyName, scaleName, drumsFile, bassFile;
 	std::vector<std::string> positional;
-	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150;
-	bool haveTranspose = false, keepSilence = false, print = false, plain = false;
+	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150, barRows = 16;
+	bool haveTranspose = false, keepSilence = false, print = false, plain = false, backing = false;
 	Expansion expansion = Expansion::VRC6;
 
 	for (int i = 1; i < argc; ++i) {
@@ -203,6 +266,8 @@ int main(int argc, char **argv)
 		else if (a == "--min-rest") { if (!ParseInt(next("--min-rest"), minRestMs)) { std::fprintf(stderr, "wav2ftm: --min-rest needs a number of milliseconds\n"); return 2; } }
 		else if (a == "--keep-silence") keepSilence = true;
 		else if (a == "--plain") plain = true;
+		else if (a == "--backing") backing = true;
+		else if (a == "--bar") { if (!ParseInt(next("--bar"), barRows)) { std::fprintf(stderr, "wav2ftm: --bar needs a number of rows\n"); return 2; } }
 		else if (a == "--title") title = next("--title");
 		else if (a == "--print") print = true;
 		else if (!a.empty() && a[0] == '-') { std::fprintf(stderr, "wav2ftm: unknown option %s\n", a.c_str()); return 2; }
@@ -238,6 +303,10 @@ int main(int argc, char **argv)
 	}
 	if (minRestMs < 0 || minRestMs > 5000) {
 		std::fprintf(stderr, "wav2ftm: --min-rest must be between 0 and 5000 milliseconds\n");
+		return 2;
+	}
+	if (barRows < 2 || barRows > 256) {
+		std::fprintf(stderr, "wav2ftm: --bar must be between 2 and 256 rows\n");
 		return 2;
 	}
 	// The main recording: find out what it holds when the mode doesn't say
@@ -346,6 +415,19 @@ int main(int argc, char **argv)
 			return 1;
 		parts.push_back(bass);
 		addSource("bass", bassFile);
+	}
+	if (backing) {
+		if (!haveMelody || parts.empty()) {
+			std::fprintf(stderr, "wav2ftm: --backing needs a melody to fit chords to\n");
+			return 2;
+		}
+		Key key = FindKey(MelodyOf(parts.front().notes));
+		if (!keyName.empty()) {
+			key.tonic = settings.root;
+			key.minor = settings.scale == Scale::Minor || settings.scale == Scale::MinorPentatonic;
+		}
+		AddBacking(parts, key, patternLength, barRows, expansion, bassFile.empty(), print);
+		sources += ", chords and bass in " + KeyName(key);
 	}
 	options.comment = "Transcribed by wav2ftm at " + std::to_string(bpm) + " BPM: " + sources;
 

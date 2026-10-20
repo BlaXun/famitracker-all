@@ -61,6 +61,38 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
 	CString &Message);
 
+// Edit > Add chords and bass line: chords and a bass line that fit the melody
+// in one channel, written into two others, over the bars the melody covers
+// (bars and beats as the row highlight shows them).
+struct backing_choice_t {
+	int MelodyChannel;
+	int ChordChannel;		// a pulse channel, -1 for no chords
+	int BassChannel;		// the triangle or sawtooth, -1 for no bass line
+	int KeyTonic;			// 0-11 (C-B), -1 to find the key
+	bool KeyMinor;
+	bool HalfBars;			// chords may change halfway through a bar
+};
+
+// Has the channel any notes?
+bool HasNotes(const CFamiTrackerDoc *pDoc, unsigned int Track, int Channel);
+
+// A key's name, e.g. "Bb major", "F# minor"
+CString KeyName(int Tonic, bool Minor);
+
+// What the backing would be: its key ("C minor"), its chords bar by bar
+// ("| C | F C | G | C |") and the frames it covers. Returns false, with the
+// reason in Message, when there is no melody to fit chords to.
+bool DescribeBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, CString &Key,
+	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message);
+
+// Writes the backing into the song as one undoable action, replacing what
+// the chord and bass channels played over those bars. Adds Chords and Bass
+// instruments the first time. Message says what was added, or why nothing was.
+bool AddBacking(CMainFrame *pMainFrm, const backing_choice_t &Choice, CString &Message);
+
+// Can chords go on this channel? (A 2A03, VRC6 or MMC5 pulse.)
+bool IsChordChannel(const CFamiTrackerDoc *pDoc, int Channel);
+
 // A channel's name with its chip, e.g. "VRC6 Pulse 1", for messages and lists
 CString RecordingChannelName(const CFamiTrackerDoc *pDoc, int Channel);
 

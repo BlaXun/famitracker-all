@@ -1281,6 +1281,269 @@ void TestTakeEndToEnd()
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Backing: key, chords, bass and arpeggios
+// ---------------------------------------------------------------------------
+
+std::vector<MelodyNote> Tune(const int *midis, const int *lengths, int count, int startRow = 0)
+{
+	std::vector<MelodyNote> melody;
+	int row = startRow;
+	for (int i = 0; i < count; ++i) {
+		MelodyNote n;
+		n.row = row;
+		n.length = lengths[i];
+		n.midi = midis[i];
+		melody.push_back(n);
+		row += lengths[i];
+	}
+	return melody;
+}
+
+// Does the chord sounding at row contain the pitch class?
+bool ChordHas(const std::vector<ChordSpan> &chords, int row, int pitchClass)
+{
+	for (size_t i = 0; i < chords.size(); ++i) {
+		if (row < chords[i].row || row >= chords[i].row + chords[i].length)
+			continue;
+		const Chord &c = chords[i].chord;
+		const int third = c.quality == Chord::Major ? 4 : 3, fifth = c.quality == Chord::Diminished ? 6 : 7;
+		const int pc = ((pitchClass % 12) + 12) % 12;
+		return pc == c.root || pc == (c.root + third) % 12 || pc == (c.root + fifth) % 12;
+	}
+	return false;
+}
+
+std::string Progression(const std::vector<ChordSpan> &chords, const Key &key)
+{
+	std::string s;
+	for (size_t i = 0; i < chords.size(); ++i)
+		s += (i ? " " : "") + ChordName(chords[i].chord, key);
+	return s;
+}
+
+void TestKeys()
+{
+	Key key;
+	CHECK(ParseKeyName("Am", key) && key.tonic == 9 && key.minor);
+	CHECK(ParseKeyName("Bb", key) && key.tonic == 10 && !key.minor);
+	CHECK(ParseKeyName("F#m", key) && key.tonic == 6 && key.minor);
+	CHECK(ParseKeyName("C major", key) && key.tonic == 0 && !key.minor);
+	CHECK(ParseKeyName("eb minor", key) && key.tonic == 3 && key.minor);
+	CHECK(!ParseKeyName("H", key) && !ParseKeyName("Cx", key) && !ParseKeyName("", key));
+
+	Key k;
+	k.tonic = 10;
+	CHECK(KeyName(k) == "Bb major");
+	k.tonic = 6;
+	CHECK(KeyName(k) == "F# major");
+	k.tonic = 2;
+	k.minor = true;
+	CHECK(KeyName(k) == "D minor");	// relative of F major: flats, but D has none
+	k.tonic = 9;
+	CHECK(KeyName(k) == "A minor");
+
+	k.tonic = 0;
+	k.minor = false;
+	std::string names;
+	const std::vector<Chord> major = KeyChords(k);
+	for (size_t i = 0; i < major.size(); ++i)
+		names += ChordName(major[i], k) + " ";
+	CHECK(names == "C Dm Em F G Am ");
+	k.tonic = 9;
+	k.minor = true;
+	names.clear();
+	const std::vector<Chord> minor = KeyChords(k);
+	for (size_t i = 0; i < minor.size(); ++i)
+		names += ChordName(minor[i], k) + " ";
+	CHECK(names == "Am Dm Em E F C G ");
+	k.tonic = 5;
+	k.minor = false;
+	Chord bb;
+	bb.root = 10;
+	CHECK(ChordName(bb, k) == "Bb");
+	Chord dim;
+	dim.root = 11;
+	dim.quality = Chord::Diminished;
+	CHECK(ChordName(dim, k) == "Bdim");
+
+	// Finding the key of a melody
+	const int scaleC[] = { 60, 62, 64, 65, 67, 69, 71, 72 };
+	const int quarters[] = { 4, 4, 4, 4, 4, 4, 4, 8 };
+	Key found = FindKey(Tune(scaleC, quarters, 8));
+	CHECK(found.tonic == 0 && !found.minor);
+	const int harmonicA[] = { 69, 71, 72, 74, 76, 77, 80, 81 };	// A minor with its raised 7th
+	found = FindKey(Tune(harmonicA, quarters, 8));
+	CHECK(found.tonic == 9 && found.minor);
+	const int twinkleG[] = { 67, 67, 74, 74, 76, 76, 74, 72, 72, 71, 71, 69, 69, 67 };
+	const int twinkleLengths[] = { 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8 };
+	found = FindKey(Tune(twinkleG, twinkleLengths, 14));
+	CHECK(found.tonic == 7 && !found.minor);
+	CHECK(FindKey(std::vector<MelodyNote>()).tonic == 0);
+}
+
+void TestBars()
+{
+	std::vector<Bar> bars = SongBars(0, 128, 64, 16);
+	CHECK(bars.size() == 8);
+	CHECK(bars.size() == 8 && bars[0].row == 0 && bars[7].row == 112 && bars[7].length == 16);
+	bars = SongBars(10, 70, 64, 16);	// the bars that rows 10-69 touch
+	CHECK(bars.size() == 5 && bars[0].row == 0 && bars[4].row == 64);
+	bars = SongBars(0, 100, 50, 16);	// a bar restarts with every pattern
+	CHECK(bars.size() == 8);
+	CHECK(bars.size() == 8 && bars[3].row == 48 && bars[3].length == 2 && bars[4].row == 50);
+	CHECK(SongBars(0, 0, 64, 16).empty());
+
+	// A melody's bars; a pickup in the second half of a bar starts with the next
+	const int notes[] = { 60, 62, 64 };
+	const int lengths[] = { 4, 4, 24 };
+	bars = MelodyBars(Tune(notes, lengths, 3, 8), 64, 16);	// rows 8-39
+	CHECK(bars.size() == 3 && bars[0].row == 0);
+	bars = MelodyBars(Tune(notes, lengths, 3, 12), 64, 16);	// rows 12-43: a pickup
+	CHECK(bars.size() == 2 && bars[0].row == 16 && bars[1].row == 32);
+	CHECK(MelodyBars(std::vector<MelodyNote>(), 64, 16).empty());
+}
+
+void TestChooseChords()
+{
+	// Twinkle, twinkle in C: | C C G G | A A G- | F F E E | D D C- |
+	const int twinkle[] = { 60, 60, 67, 67, 69, 69, 67, 65, 65, 64, 64, 62, 62, 60 };
+	const int lengths[] = { 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8 };
+	const std::vector<MelodyNote> melody = Tune(twinkle, lengths, 14);
+	const Key key = FindKey(melody);
+	CHECK(key.tonic == 0 && !key.minor);
+	const std::vector<Bar> bars = SongBars(0, 64, 64, 16);
+	HarmonyOptions options;
+	const std::vector<ChordSpan> chords = ChooseChords(melody, bars, key, options);
+	std::printf("  twinkle: %s\n", Progression(chords, key).c_str());
+
+	// Starts and ends at home, and the chords hold the melody's long notes and downbeats
+	CHECK(!chords.empty() && chords.front().row == 0 && chords.front().chord.root == 0);
+	CHECK(!chords.empty() && chords.back().chord.root == 0 && chords.back().chord.quality == Chord::Major);
+	CHECK(chords.back().row + chords.back().length == 64);
+	for (size_t i = 0; i < melody.size(); ++i) {
+		if (melody[i].row % 8 == 0 || melody[i].length >= 8)
+			CHECK(ChordHas(chords, melody[i].row, melody[i].midi));
+	}
+	// The spans tile the bars
+	for (size_t i = 1; i < chords.size(); ++i)
+		CHECK(chords[i].row == chords[i - 1].row + chords[i - 1].length && chords[i].chord != chords[i - 1].chord);
+	// One chord a bar when asked
+	options.halfBars = false;
+	const std::vector<ChordSpan> whole = ChooseChords(melody, bars, key, options);
+	for (size_t i = 0; i < whole.size(); ++i)
+		CHECK(whole[i].row % 16 == 0 && whole[i].length % 16 == 0);
+
+	// A minor tune ends on its tonic chord, a minor chord
+	const int minorTune[] = { 69, 72, 76, 72, 74, 77, 76, 74, 72, 71, 68, 71, 69 };
+	const int minorLengths[] = { 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 16 };
+	const std::vector<MelodyNote> sad = Tune(minorTune, minorLengths, 13);
+	const Key minorKey = FindKey(sad);
+	CHECK(minorKey.tonic == 9 && minorKey.minor);
+	const std::vector<ChordSpan> sadChords = ChooseChords(sad, SongBars(0, 64, 64, 16), minorKey, HarmonyOptions());
+	std::printf("  minor tune: %s\n", Progression(sadChords, minorKey).c_str());
+	CHECK(!sadChords.empty() && sadChords.back().chord.root == 9 && sadChords.back().chord.quality == Chord::Minor);
+	CHECK(ChordHas(sadChords, 40, 68));	// the G# gets the E major chord
+	for (size_t i = 0; i < sad.size(); ++i)
+		if (sad[i].row % 16 == 0)
+			CHECK(ChordHas(sadChords, sad[i].row, sad[i].midi));
+
+	// No melody in a bar: the chord before carries on
+	std::vector<MelodyNote> gap = Tune(twinkle, lengths, 4);	// bar 1 only
+	MelodyNote end;
+	end.row = 48;
+	end.length = 16;
+	end.midi = 60;
+	gap.push_back(end);
+	const std::vector<ChordSpan> held = ChooseChords(gap, SongBars(0, 64, 64, 16), key, HarmonyOptions());
+	std::printf("  with a gap: %s\n", Progression(held, key).c_str());
+	CHECK(!held.empty() && held.front().chord.root == 0 && held.front().length >= 32);
+}
+
+void TestBackingCells()
+{
+	Key key;	// C major
+	const std::vector<Bar> bars = SongBars(0, 64, 64, 16);
+	std::vector<ChordSpan> chords;
+	const int roots[] = { 0, 5, 7, 0 };
+	for (int i = 0; i < 4; ++i) {
+		ChordSpan span;
+		span.row = 16 * i;
+		span.length = 16;
+		span.chord.root = roots[i];
+		chords.push_back(span);
+	}
+	HarmonyOptions options;
+	const std::vector<MelodyCell> bass = BassCells(chords, bars, options);
+	// Root on each bar, fifth halfway, as little movement as possible, a release at the end
+	const int bassRows[] = { 0, 8, 16, 24, 32, 40, 48, 56, 64 };
+	const int bassNotes[] = { 36, 43, 41, 48, 43, 50, 48, 55 };
+	CHECK(bass.size() == 9);
+	for (size_t i = 0; i < bass.size() && i < 9; ++i) {
+		CHECK(bass[i].row == bassRows[i]);
+		if (i < 8)
+			CHECK(bass[i].kind == MelodyCell::Note && bass[i].midi == bassNotes[i]);
+	}
+	CHECK(bass.size() == 9 && bass[8].kind == MelodyCell::Release);
+	for (size_t i = 0; i < bass.size(); ++i)
+		CHECK(bass[i].kind != MelodyCell::Note || (bass[i].midi >= 36 && bass[i].midi <= 55));
+
+	// Arpeggios: C in root position, then F as C-F-A (0x59, no jump), G as B-D-G (0x38), C again
+	const std::vector<MelodyCell> arp = ArpeggioCells(chords, bars);
+	CHECK(arp.size() == 5);
+	if (arp.size() == 5) {
+		CHECK(arp[0].row == 0 && arp[0].midi == 60 && arp[0].effect == '0' && arp[0].effectParam == 0x47);
+		CHECK(arp[1].row == 16 && arp[1].midi == 60 && arp[1].effectParam == 0x59);
+		CHECK(arp[2].row == 32 && arp[2].midi == 59 && arp[2].effectParam == 0x38);
+		CHECK(arp[3].row == 48 && arp[3].midi == 60 && arp[3].effectParam == 0x47);
+		CHECK(arp[4].row == 64 && arp[4].kind == MelodyCell::Release && arp[4].effect == '0' && arp[4].effectParam == 0);
+	}
+	// A chord over two bars is struck again on the second
+	std::vector<ChordSpan> long1(1);
+	long1[0].row = 0;
+	long1[0].length = 32;
+	const std::vector<MelodyCell> twice = ArpeggioCells(long1, SongBars(0, 32, 64, 16));
+	CHECK(twice.size() == 3 && twice[1].row == 16 && twice[1].midi == twice[0].midi);
+
+	// MelodyOf: volume becomes weight
+	std::vector<GridNote> grid(2);
+	grid[0].row = 0;
+	grid[0].length = 4;
+	grid[0].midi = 72;
+	grid[0].volume = 15;
+	grid[1].row = 4;
+	grid[1].length = 2;
+	grid[1].midi = 74;
+	grid[1].volume = 6;
+	const std::vector<MelodyNote> m = MelodyOf(grid);
+	CHECK(m.size() == 2 && m[0].weight == 1.0 && std::fabs(m[1].weight - 0.4) < 1e-9 && m[1].row == 4 && m[1].midi == 74);
+
+	// In a text module: chords on VRC6 pulse 2 and bass on the sawtooth
+	std::vector<MelodyPart> parts(3);
+	parts[0].channel = 5;
+	parts[0].notes = std::vector<GridNote>(1, grid[0]);
+	parts[1].channel = 7;
+	parts[1].instrument = 4;
+	parts[1].name = "Bass";
+	parts[1].cells = bass;
+	parts[2].channel = 6;
+	parts[2].instrument = 5;
+	parts[2].name = "Chords";
+	parts[2].cells = arp;
+	parts[2].chords = true;
+	TextModuleOptions options2;
+	const std::string text = WriteTextModule(parts, std::vector<GridHit>(), options2);
+	std::string error;
+	CHECK(ValidateTextModule(text, &error));
+	CHECK(CellOf(text, 0, 0, 6) == "C-3 05 . 047");
+	CHECK(CellOf(text, 0, 16, 6) == "C-3 05 . 059");
+	CHECK(CellOf(text, 1, 0, 6) == "=== .. . 000");
+	CHECK(CellOf(text, 0, 0, 7) == "C-1 04 . ...");
+	CHECK(text.find("MACROVRC6   0   5  -1   7   0 : 10 9 8 8 7 7 6 6 4 2 1 0") != std::string::npos);
+	CHECK(text.find("MACROVRC6   4   1  -1  -1   0 : 1") != std::string::npos);
+	CHECK(text.find("INSTVRC6   5     5  -1  -1  -1   1 \"Chords\"") != std::string::npos);
+}
+
 int main()
 {
 	TestGridAndNames();
@@ -1305,6 +1568,10 @@ int main()
 	TestPlaceNotes();
 	TestPlaceHits();
 	TestTakeEndToEnd();
+	TestKeys();
+	TestBars();
+	TestChooseChords();
+	TestBackingCells();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

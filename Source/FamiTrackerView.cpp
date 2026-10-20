@@ -40,6 +40,7 @@
 #include "InsertRecording.h"
 #include "InsertRecordingDlg.h"
 #include "RecordDlg.h"
+#include "BackingDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -116,6 +117,7 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_COMMAND(ID_EDIT_PASTEMIX, OnEditPastemix)
 	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
 	ON_COMMAND(ID_EDIT_RECORD, OnEditRecord)
+	ON_COMMAND(ID_EDIT_ADDBACKING, OnEditAddBacking)
 	ON_COMMAND(ID_EDIT_INSTRUMENTMASK, OnEditInstrumentMask)
 	ON_COMMAND(ID_EDIT_VOLUMEMASK, OnEditVolumeMask)
 	ON_COMMAND(ID_EDIT_INTERPOLATE, OnEditInterpolate)
@@ -950,6 +952,25 @@ void CFamiTrackerView::OnEditRecord()
 		GetParentFrame()->SetMessageText(Dialog.GetResult());
 	else if (Result == IDC_REC_FROMFILE)
 		OnEditInsertRecording();
+}
+
+void CFamiTrackerView::OnEditAddBacking()
+{
+	// Chords and a bass line for a melody (see InsertRecording.cpp)
+	CBackingDlg Dialog(this);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
+	CString Message;
+	bool Added;
+	{
+		CWaitCursor Wait;
+		Added = AddBacking(pMainFrm, Dialog.GetChoice(), Message);
+	}
+	if (Added)
+		pMainFrm->SetMessageText(Message);
+	else
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
 }
 
 void CFamiTrackerView::OnEditDelete()

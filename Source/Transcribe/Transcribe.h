@@ -361,6 +361,97 @@ struct TakeTiming {
 };
 
 // ---------------------------------------------------------------------------
+// Backing: a key, chords and a bass line for a melody
+// ---------------------------------------------------------------------------
+
+struct Key {
+	int tonic = 0;		// pitch class, 0 = C
+	bool minor = false;
+};
+
+std::string KeyName(const Key &key);	// "D major", "Bb major", "F# minor"
+bool ParseKeyName(const std::string &name, Key &key);	// "Am", "C", "F#m", "Bb minor"
+
+// A melody note to harmonize, on rows
+struct MelodyNote {
+	int row = 0;
+	int length = 1;			// rows
+	int midi = 60;
+	double weight = 1.0;	// how much it counts, 0-1 (louder notes count more)
+};
+
+// The melody of quantized notes: each note's pitch where it lands, its
+// volume as weight
+std::vector<MelodyNote> MelodyOf(const std::vector<GridNote> &notes);
+
+// The key that fits a melody best: the Krumhansl-Kessler key profiles against
+// the melody's pitch classes, weighted by length and loudness. The last note
+// and the first one count towards the keys they are the tonic of.
+Key FindKey(const std::vector<MelodyNote> &melody);
+
+struct Chord {
+	enum Quality { Major, Minor, Diminished };
+	int root = 0;		// pitch class
+	Quality quality = Major;
+	bool operator==(const Chord &other) const { return root == other.root && quality == other.quality; }
+	bool operator!=(const Chord &other) const { return !(*this == other); }
+};
+
+std::string ChordName(const Chord &chord, const Key &key);	// "C", "Am", "Bb", "F#m", "Bdim"
+
+// The chords of a key: I ii iii IV V vi in major; i iv v V VI III VII in minor
+std::vector<Chord> KeyChords(const Key &key);
+
+// A bar of the song: the rows from row to row + length - 1
+struct Bar {
+	int row = 0;
+	int length = 16;
+};
+
+// Bars as FamiTracker highlights them: one starts on the first row of every
+// pattern and every barRows rows after that. Rows count from the first row of
+// the song (frame * patternLength + row); the bars cover [firstRow, endRow).
+std::vector<Bar> SongBars(int firstRow, int endRow, int patternLength, int barRows);
+
+// The bars a melody covers, from the bar of its first note to the bar of its
+// last. A first note in the second half of its bar is a pickup: the bars
+// start with the next one.
+std::vector<Bar> MelodyBars(const std::vector<MelodyNote> &melody, int patternLength, int barRows);
+
+struct HarmonyOptions {
+	int rowsPerBeat = 4;
+	bool halfBars = true;	// a chord can change halfway through a bar of 2+ beats
+};
+
+struct ChordSpan {
+	int row = 0;
+	int length = 0;
+	Chord chord;
+};
+
+// Picks a chord of the key for each bar, or half bar: the one whose notes fit
+// the melody's notes best (long notes and notes on the beat count most, a
+// note a semitone above a chord tone clashes), preferring progressions that
+// sound like music (IV-V-I rather than V-IV) and starting and ending on the
+// tonic. Bars without melody keep the chord going. Neighbouring bars with the
+// same chord come back as one span.
+std::vector<ChordSpan> ChooseChords(const std::vector<MelodyNote> &melody, const std::vector<Bar> &bars,
+	const Key &key, const HarmonyOptions &options);
+
+// The bass line: the chord's root on every chord change and bar, and in bars
+// of four or more beats the fifth halfway through; a release where the chords
+// end. Around lowMidi-highMidi, moving as little as it can.
+std::vector<MelodyCell> BassCells(const std::vector<ChordSpan> &chords, const std::vector<Bar> &bars,
+	const HarmonyOptions &options, int lowMidi = 36, int highMidi = 55);
+
+// The chords on one channel, as the fast arpeggio of the 0xy effect: struck on
+// every chord change and bar, each voiced (root position or an inversion) as
+// close as it can to the one before, its lowest note around lowMidi-highMidi.
+// Where the chords end: a release with 000, so later notes don't arpeggiate.
+std::vector<MelodyCell> ArpeggioCells(const std::vector<ChordSpan> &chords, const std::vector<Bar> &bars,
+	int lowMidi = 53, int highMidi = 65);
+
+// ---------------------------------------------------------------------------
 // FamiTracker text module (File > Import Text in FamiTracker 0.4.6)
 // ---------------------------------------------------------------------------
 
@@ -390,6 +481,8 @@ struct MelodyPart {
 	int instrument = 0;		// instrument slot; 1-3 are taken by the drums
 	std::string name = "Lead";	// instrument name
 	std::vector<GridNote> notes;
+	std::vector<MelodyCell> cells;	// written as they are instead of notes (BassCells, ArpeggioCells)
+	bool chords = false;	// the soft, thin chord sound instead of the lead's
 };
 
 // Several melody parts, each on its own channel, plus drums on the noise channel.

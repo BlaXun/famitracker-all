@@ -206,6 +206,7 @@
 #define IDR_SEQUENCE_POPUP              319
 #define IDD_INSERT_RECORDING            320
 #define IDD_RECORD                      321
+#define IDD_BACKING                     322
 #define IDC_INSTRUMENTS                 1001
 #define IDC_INSTSETTINGS                1002
 #define IDC_INSTNAME                    1005
@@ -483,6 +484,12 @@
 #define IDC_REC_FROMFILE                1316
 #define IDC_REC_DELAY                   1317
 #define IDC_REC_TEST                    1318
+#define IDC_BACK_MELODY                 1319
+#define IDC_BACK_KEY                    1320
+#define IDC_BACK_CHORDS                 1321
+#define IDC_BACK_BASS                   1322
+#define IDC_BACK_CHANGES                1323
+#define IDC_BACK_PREVIEW                1324
 #define ID_TRACKER_PLAY                 32771
 #define ID_TRACKER_PLAYPATTERN          32775
 #define ID_TRACKER_STOP                 32776
@@ -625,6 +632,7 @@
 #define ID_TRACKER_DISPLAYREGISTERSTATE 33126
 #define ID_EDIT_INSERTRECORDING         33127
 #define ID_EDIT_RECORD                  33128
+#define ID_EDIT_ADDBACKING              33129
 #define ID_INSTRUMENT_ADD_2A03          36864
 #define ID_INSTRUMENT_ADD_FDS           36865
 #define ID_INSTRUMENT_ADD_MMC5          36866
@@ -644,9 +652,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        322
-#define _APS_NEXT_COMMAND_VALUE         33129
-#define _APS_NEXT_CONTROL_VALUE         1319
+#define _APS_NEXT_RESOURCE_VALUE        323
+#define _APS_NEXT_COMMAND_VALUE         33130
+#define _APS_NEXT_CONTROL_VALUE         1325
 #define _APS_NEXT_SYMED_VALUE           179
 #endif
 #endif

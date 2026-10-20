@@ -19,12 +19,14 @@
 ** must bear this legend.
 */
 
-// Edit > Insert recording and the Record dialog. The transcription engine in
-// Transcribe/ finds the notes; this file turns them into pattern cells and
-// writes them into the open song as one undoable action.
+// Edit > Insert recording, the Record dialog and Edit > Add chords and bass
+// line. The transcription engine in Transcribe/ finds the notes (and the
+// chords); this file turns them into pattern cells and writes them into the
+// open song as one undoable action.
 
 // Standard and engine headers come before stdafx.h, whose DEBUG_NEW macro
 // would otherwise rewrite the placement new inside the standard library.
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <string>
@@ -56,6 +58,11 @@ const int BASS_RELEASE = 5;
 // Lead duty cycle: 25% on the 2A03; on the VRC6 a slow shimmer between 4/16 and 3/16
 const signed char LEAD_DUTY_2A03[] = { 1 };
 const signed char LEAD_DUTY_VRC6[] = { 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2 };
+// Chords: soft and thin under the melody, holding at 6 (12.5% duty)
+const signed char CHORD_VOLUME[] = { 10, 9, 8, 8, 7, 7, 6, 6, 4, 2, 1, 0 };
+const int CHORD_RELEASE = 7;
+const signed char CHORD_DUTY_2A03[] = { 0 };
+const signed char CHORD_DUTY_VRC6[] = { 1 };
 const signed char KICK_VOLUME[] = { 15, 12, 8, 5, 3, 1, 0 };
 const signed char SNARE_VOLUME[] = { 14, 11, 9, 7, 5, 3, 2, 1, 0 };
 const signed char HIHAT_VOLUME[] = { 10, 6, 3, 1, 0 };
@@ -87,16 +94,6 @@ RecordedCell MakeCell(int Row, int Note, int Octave, int Instrument, int Vol, in
 bool IsExpressionEffect(unsigned char Effect)
 {
 	return Effect == EF_SLIDE_UP || Effect == EF_SLIDE_DOWN || Effect == EF_VIBRATO || Effect == EF_PORTAMENTO;
-}
-
-int EffectFromLetter(char Letter)
-{
-	switch (Letter) {
-	case 'Q': return EF_SLIDE_UP;
-	case 'R': return EF_SLIDE_DOWN;
-	case '4': return EF_VIBRATO;
-	}
-	return EF_NONE;
 }
 
 // Does any frame of the track other than Frame play Pattern in Channel?
@@ -191,16 +188,25 @@ int FindOrAddInstrument(CFamiTrackerDoc *pDoc, const char *pName, int Chip, cons
 	return Index;
 }
 
-// Writes one channel's cells from a frame and row on. Every frame it touches
-// first gets a pattern of its own in that channel, so frames that played the
-// same pattern stay as they were. Frames past the end of the song are added.
+// One channel's part of an insert
+struct RecordedPart {
+	unsigned int Channel;
+	std::vector<RecordedCell> Cells;	// sorted by row
+	int Rows;							// rows written, counted from the start row
+	bool Replace;						// clear the effect columns too, not just earlier slides and vibrato
+};
+
+// Writes channels' cells from a frame and row on. Every frame a channel's part
+// touches first gets a pattern of its own in that channel, so frames that
+// played the same pattern stay as they were. Frames past the end of the song
+// are added.
 class CInsertRecordingAction : public CAction
 {
 public:
-	CInsertRecordingAction(const std::vector<RecordedCell> &Cells, int Rows, int Channel, int Frame, int Row) :
-		CAction(ACT_INSERT_RECORDING), m_Cells(Cells), m_iRows(Rows),
-		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iChannel(static_cast<unsigned int>(Channel)),
-		m_iRow(static_cast<unsigned int>(Row)), m_iColumn(0), m_iOldFrameCount(0)
+	CInsertRecordingAction(const std::vector<RecordedPart> &Parts, int Frame, int Row) :
+		CAction(ACT_INSERT_RECORDING), m_Parts(Parts),
+		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
+		m_iOldFrameCount(0)
 	{
 	}
 
@@ -211,44 +217,47 @@ public:
 private:
 	struct Reassigned {
 		unsigned int Frame;
+		unsigned int Channel;
 		unsigned int OldPattern;
 		unsigned int NewPattern;
 	};
+	typedef std::pair<unsigned int, unsigned int> PatternKey;	// channel, pattern
 
-	void Backup(const CFamiTrackerDoc *pDoc, unsigned int Pattern);
+	unsigned int LastFrame(const RecordedPart &Part, unsigned int Length) const;
+	void Backup(const CFamiTrackerDoc *pDoc, unsigned int Channel, unsigned int Pattern);
 	void Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc, CPatternEditor *pEditor) const;
 
-	std::vector<RecordedCell> m_Cells;	// sorted by row
-	int m_iRows;						// rows covered, counted from the start row
-
+	std::vector<RecordedPart> m_Parts;
 	unsigned int m_iTrack;
 	unsigned int m_iFrame;
-	unsigned int m_iChannel;
 	unsigned int m_iRow;
-	int m_iColumn;
 	unsigned int m_iOldFrameCount;
 	std::vector<Reassigned> m_Reassigned;
-	std::map<unsigned int, std::vector<stChanNote> > m_Backup;	// pattern -> its rows before the insert
+	std::map<PatternKey, std::vector<stChanNote> > m_Backup;	// a pattern's rows before the insert
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
 {
 	m_iTrack = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
-	m_iColumn = 0;	// the note column of the channel written to
-
 	Redo(pMainFrm);
 	return true;
 }
 
-void CInsertRecordingAction::Backup(const CFamiTrackerDoc *pDoc, unsigned int Pattern)
+unsigned int CInsertRecordingAction::LastFrame(const RecordedPart &Part, unsigned int Length) const
 {
-	if (m_Backup.count(Pattern) != 0)
+	return m_iFrame + (m_iRow + static_cast<unsigned int>(std::max(1, Part.Rows)) - 1) / Length;
+}
+
+void CInsertRecordingAction::Backup(const CFamiTrackerDoc *pDoc, unsigned int Channel, unsigned int Pattern)
+{
+	const PatternKey Key(Channel, Pattern);
+	if (m_Backup.count(Key) != 0)
 		return;
 	const unsigned int Length = pDoc->GetPatternLength(m_iTrack);
-	std::vector<stChanNote> &Rows = m_Backup[Pattern];
+	std::vector<stChanNote> &Rows = m_Backup[Key];
 	Rows.resize(Length);
 	for (unsigned int r = 0; r < Length; ++r)
-		pDoc->GetDataAtPattern(m_iTrack, Pattern, m_iChannel, r, &Rows[r]);
+		pDoc->GetDataAtPattern(m_iTrack, Pattern, Channel, r, &Rows[r]);
 }
 
 void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
@@ -257,72 +266,88 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
 	CPatternEditor *pEditor = pView->GetPatternEditor();
 	const unsigned int Length = pDoc->GetPatternLength(m_iTrack);
-	const unsigned int LastFrame = m_iFrame + (m_iRow + static_cast<unsigned int>(m_iRows) - 1) / Length;
 
 	pDoc->LockDocument();
 
-	// Add frames at the end of the song when the recording runs past it
+	// Add frames at the end of the song when the insert runs past it
+	unsigned int Last = m_iFrame;
+	for (size_t p = 0; p < m_Parts.size(); ++p)
+		Last = std::max(Last, LastFrame(m_Parts[p], Length));
 	m_iOldFrameCount = pDoc->GetFrameCount(m_iTrack);
-	while (pDoc->GetFrameCount(m_iTrack) <= LastFrame) {
+	while (pDoc->GetFrameCount(m_iTrack) <= Last) {
 		if (!pDoc->InsertFrame(m_iTrack, pDoc->GetFrameCount(m_iTrack)))
 			break;	// MAX_FRAMES
 	}
 	const unsigned int Frames = pDoc->GetFrameCount(m_iTrack);
 
-	// One pattern per touched frame
+	// One pattern per touched frame in each channel
 	m_Reassigned.clear();
 	m_Backup.clear();
-	for (unsigned int f = m_iFrame; f <= LastFrame && f < Frames; ++f) {
-		unsigned int Pattern = pDoc->GetPatternAtFrame(m_iTrack, f, m_iChannel);
-		if (UsedElsewhere(pDoc, m_iTrack, m_iChannel, f, Pattern)) {
-			const int Free = FindFreePattern(pDoc, m_iTrack, m_iChannel);
-			if (Free >= 0) {
-				const unsigned int NewPattern = static_cast<unsigned int>(Free);
-				Backup(pDoc, NewPattern);
-				pDoc->CopyPattern(m_iTrack, Free, Pattern, m_iChannel);
-				pDoc->SetPatternAtFrame(m_iTrack, f, m_iChannel, NewPattern);
-				Reassigned Entry = { f, Pattern, NewPattern };
-				m_Reassigned.push_back(Entry);
-				Pattern = NewPattern;
+	for (size_t p = 0; p < m_Parts.size(); ++p) {
+		const unsigned int Channel = m_Parts[p].Channel;
+		const unsigned int PartLast = LastFrame(m_Parts[p], Length);
+		for (unsigned int f = m_iFrame; f <= PartLast && f < Frames; ++f) {
+			unsigned int Pattern = pDoc->GetPatternAtFrame(m_iTrack, f, Channel);
+			if (UsedElsewhere(pDoc, m_iTrack, Channel, f, Pattern)) {
+				const int Free = FindFreePattern(pDoc, m_iTrack, Channel);
+				if (Free >= 0) {
+					const unsigned int NewPattern = static_cast<unsigned int>(Free);
+					Backup(pDoc, Channel, NewPattern);
+					pDoc->CopyPattern(m_iTrack, Free, Pattern, Channel);
+					pDoc->SetPatternAtFrame(m_iTrack, f, Channel, NewPattern);
+					Reassigned Entry = { f, Channel, Pattern, NewPattern };
+					m_Reassigned.push_back(Entry);
+					Pattern = NewPattern;
+				}
 			}
+			Backup(pDoc, Channel, Pattern);
 		}
-		Backup(pDoc, Pattern);
 	}
 
-	// Write the cells. Rows between them are cleared in this channel (note,
+	// Write the cells. Rows between them are cleared in the channel (note,
 	// instrument and volume). Effects stay, except earlier slides and vibrato
-	// in the first effect column, which would play over the new notes.
-	size_t Next = 0;
-	for (int r = 0; r < m_iRows; ++r) {
-		const unsigned int Position = m_iRow + static_cast<unsigned int>(r);
-		const unsigned int Frame = m_iFrame + Position / Length;
-		if (Frame >= Frames)
-			break;
-		const unsigned int Row = Position % Length;
-		stChanNote Note;
-		pDoc->GetNoteData(m_iTrack, Frame, m_iChannel, Row, &Note);
-		if (IsExpressionEffect(Note.EffNumber[0])) {
-			Note.EffNumber[0] = EF_NONE;
-			Note.EffParam[0] = 0;
-		}
-		if (Next < m_Cells.size() && m_Cells[Next].Row == r) {
-			const RecordedCell &Cell = m_Cells[Next++];
-			Note.Note = Cell.Note;
-			Note.Octave = Cell.Octave;
-			Note.Instrument = Cell.Instrument;
-			Note.Vol = Cell.Vol;
-			if (Cell.Effect != EF_NONE) {
-				Note.EffNumber[0] = Cell.Effect;
-				Note.EffParam[0] = Cell.EffectParam;
+	// in the first effect column, which would play over the new notes; a
+	// replacing part clears every effect column.
+	for (size_t p = 0; p < m_Parts.size(); ++p) {
+		const RecordedPart &Part = m_Parts[p];
+		size_t Next = 0;
+		for (int r = 0; r < Part.Rows; ++r) {
+			const unsigned int Position = m_iRow + static_cast<unsigned int>(r);
+			const unsigned int Frame = m_iFrame + Position / Length;
+			if (Frame >= Frames)
+				break;
+			const unsigned int Row = Position % Length;
+			stChanNote Note;
+			pDoc->GetNoteData(m_iTrack, Frame, Part.Channel, Row, &Note);
+			if (Part.Replace) {
+				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+					Note.EffNumber[c] = EF_NONE;
+					Note.EffParam[c] = 0;
+				}
 			}
+			else if (IsExpressionEffect(Note.EffNumber[0])) {
+				Note.EffNumber[0] = EF_NONE;
+				Note.EffParam[0] = 0;
+			}
+			if (Next < Part.Cells.size() && Part.Cells[Next].Row == r) {
+				const RecordedCell &Cell = Part.Cells[Next++];
+				Note.Note = Cell.Note;
+				Note.Octave = Cell.Octave;
+				Note.Instrument = Cell.Instrument;
+				Note.Vol = Cell.Vol;
+				if (Cell.Effect != EF_NONE) {
+					Note.EffNumber[0] = Cell.Effect;
+					Note.EffParam[0] = Cell.EffectParam;
+				}
+			}
+			else {
+				Note.Note = NONE;
+				Note.Octave = 0;
+				Note.Instrument = static_cast<unsigned char>(MAX_INSTRUMENTS);
+				Note.Vol = static_cast<unsigned char>(MAX_VOLUME);
+			}
+			pDoc->SetNoteData(m_iTrack, Frame, Part.Channel, Row, &Note);
 		}
-		else {
-			Note.Note = NONE;
-			Note.Octave = 0;
-			Note.Instrument = static_cast<unsigned char>(MAX_INSTRUMENTS);
-			Note.Vol = static_cast<unsigned char>(MAX_VOLUME);
-		}
-		pDoc->SetNoteData(m_iTrack, Frame, m_iChannel, Row, &Note);
 	}
 
 	pDoc->UnlockDocument();
@@ -337,12 +362,12 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 	const unsigned int Length = pDoc->GetPatternLength(m_iTrack);
 
 	pDoc->LockDocument();
-	for (std::map<unsigned int, std::vector<stChanNote> >::const_iterator it = m_Backup.begin(); it != m_Backup.end(); ++it) {
+	for (std::map<PatternKey, std::vector<stChanNote> >::const_iterator it = m_Backup.begin(); it != m_Backup.end(); ++it) {
 		for (unsigned int r = 0; r < Length && r < it->second.size(); ++r)
-			pDoc->SetDataAtPattern(m_iTrack, it->first, m_iChannel, r, &it->second[r]);
+			pDoc->SetDataAtPattern(m_iTrack, it->first.second, it->first.first, r, &it->second[r]);
 	}
 	for (size_t i = m_Reassigned.size(); i-- > 0; )
-		pDoc->SetPatternAtFrame(m_iTrack, m_Reassigned[i].Frame, m_iChannel, m_Reassigned[i].OldPattern);
+		pDoc->SetPatternAtFrame(m_iTrack, m_Reassigned[i].Frame, m_Reassigned[i].Channel, m_Reassigned[i].OldPattern);
 	pDoc->SetFrameCount(m_iTrack, m_iOldFrameCount);
 	pDoc->UnlockDocument();
 
@@ -352,14 +377,233 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc, CPatternEditor *pEditor) const
 {
 	pEditor->MoveToFrame(static_cast<int>(m_iFrame));
-	pEditor->MoveToChannel(static_cast<int>(m_iChannel));
+	if (!m_Parts.empty())
+		pEditor->MoveToChannel(static_cast<int>(m_Parts.front().Channel));
 	pEditor->MoveToRow(static_cast<int>(m_iRow));
-	pEditor->MoveToColumn(m_iColumn);
+	pEditor->MoveToColumn(0);	// the note column
 	pEditor->InvalidateCursor();
 
 	pDoc->SetModifiedFlag();
 	pDoc->UpdateAllViews(NULL, UPDATE_FRAME);	// redraws the frame list and the patterns
 	pMainFrm->UpdateControls();
+}
+
+// Free patterns for a part written in Channel over frames Frame-LastFrame:
+// one for each frame added at the end of the song, and one for each touched
+// frame whose pattern another frame plays too
+bool EnoughPatterns(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned int Channel, unsigned int Frame,
+	unsigned int LastFrame)
+{
+	const unsigned int FrameCount = pDoc->GetFrameCount(Track);
+	std::vector<unsigned int> Playing(FrameCount);
+	for (unsigned int f = 0; f < FrameCount; ++f)
+		Playing[f] = pDoc->GetPatternAtFrame(Track, f, Channel);
+	unsigned int Needed = (LastFrame >= FrameCount) ? LastFrame + 1 - FrameCount : 0;
+	for (unsigned int f = Frame; f <= LastFrame && f < FrameCount; ++f) {
+		for (unsigned int g = 0; g < FrameCount; ++g) {
+			if (g != f && Playing[g] == Playing[f]) {
+				++Needed;
+				Playing[f] = MAX_PATTERN + f;	// from now on its own
+				break;
+			}
+		}
+	}
+	unsigned int Free = 0;
+	for (unsigned int p = 0; p < MAX_PATTERN; ++p) {
+		if (!UsedAnywhere(pDoc, Track, Channel, p) && pDoc->IsPatternEmpty(Track, Channel, p))
+			++Free;
+	}
+	return Needed <= Free;
+}
+
+// A pattern cell from a cell of the engine: notes, releases ending in Release
+// (=== or ---), effects in the first effect column
+RecordedCell ToCell(const transcribe::MelodyCell &Cell, int Instrument, int Release, int Volume)
+{
+	int Effect = EF_NONE;
+	switch (Cell.effect) {
+	case 'Q': Effect = EF_SLIDE_UP; break;
+	case 'R': Effect = EF_SLIDE_DOWN; break;
+	case '4': Effect = EF_VIBRATO; break;
+	case '0': Effect = EF_ARPEGGIO; break;
+	}
+	if (Cell.kind == transcribe::MelodyCell::Note) {
+		int Index = Cell.midi - 24;	// FamiTracker's C-0 is MIDI note 24
+		Index = std::max(0, std::min(95, Index));
+		const int Vol = Cell.volume >= 0 ? Cell.volume : Volume;
+		return MakeCell(Cell.row, Index % 12 + 1, Index / 12, Instrument, Vol, Effect, Cell.effectParam);
+	}
+	if (Cell.kind == transcribe::MelodyCell::Release)
+		return MakeCell(Cell.row, Release, 0, MAX_INSTRUMENTS, MAX_VOLUME, Effect, Cell.effectParam);
+	return MakeCell(Cell.row, NONE, 0, MAX_INSTRUMENTS, MAX_VOLUME, Effect, Cell.effectParam);
+}
+
+// The melody in a channel: each note lasts until the next note, release or
+// cut. A slide (Qxy, Rxy) counts at the pitch it lands on, and the volume
+// column (which carries on to later notes) sets how much a note counts.
+std::vector<transcribe::MelodyNote> ReadMelody(const CFamiTrackerDoc *pDoc, unsigned int Track, int Channel)
+{
+	std::vector<transcribe::MelodyNote> Melody;
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const unsigned int Frames = pDoc->GetFrameCount(Track);
+	int Volume = 15;
+	bool Sounding = false;
+	for (unsigned int f = 0; f < Frames; ++f) {
+		for (unsigned int r = 0; r < Length; ++r) {
+			stChanNote Note;
+			pDoc->GetNoteData(Track, f, static_cast<unsigned int>(Channel), r, &Note);
+			const int Row = static_cast<int>(f * Length + r);
+			if (Note.Vol < MAX_VOLUME)
+				Volume = Note.Vol;
+			if (Note.Note >= C && Note.Note <= B) {
+				if (Sounding)
+					Melody.back().length = std::max(1, Row - Melody.back().row);
+				transcribe::MelodyNote Played;
+				Played.row = Row;
+				Played.midi = Note.Octave * 12 + (Note.Note - C) + 24;	// C-0 is MIDI note 24
+				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+					if (Note.EffNumber[c] == EF_SLIDE_UP)
+						Played.midi += Note.EffParam[c] & 0x0F;
+					else if (Note.EffNumber[c] == EF_SLIDE_DOWN)
+						Played.midi -= Note.EffParam[c] & 0x0F;
+				}
+				Played.weight = std::max(0.3, Volume / 15.0);
+				Melody.push_back(Played);
+				Sounding = true;
+			}
+			else if (Note.Note == RELEASE || Note.Note == HALT) {
+				if (Sounding)
+					Melody.back().length = std::max(1, Row - Melody.back().row);
+				Sounding = false;
+			}
+		}
+	}
+	if (Sounding)
+		Melody.back().length = std::max(1, static_cast<int>(Frames * Length) - Melody.back().row);
+	return Melody;
+}
+
+// Chords for the melody in a channel
+struct BackingPlan {
+	transcribe::Key Key;
+	std::vector<transcribe::Bar> Bars;
+	std::vector<transcribe::ChordSpan> Chords;
+	transcribe::HarmonyOptions Options;
+};
+
+bool PlanBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, BackingPlan &Plan,
+	CString &Message)
+{
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	if (Choice.MelodyChannel < 0 || Choice.MelodyChannel >= Channels) {
+		Message = _T("Pick the channel with the melody.");
+		return false;
+	}
+	const std::vector<transcribe::MelodyNote> Melody = ReadMelody(pDoc, Track, Choice.MelodyChannel);
+	if (Melody.empty()) {
+		Message.Format(_T("%s has no notes to fit chords to."), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Choice.MelodyChannel)));
+		return false;
+	}
+	if (Choice.KeyTonic >= 0) {
+		Plan.Key.tonic = Choice.KeyTonic % 12;
+		Plan.Key.minor = Choice.KeyMinor;
+	}
+	else
+		Plan.Key = transcribe::FindKey(Melody);
+
+	// Beats and bars as the row highlight shows them
+	int Bar = pDoc->GetSecondHighlight();
+	if (Bar <= 0 || Bar > 256)
+		Bar = 16;
+	int Beat = pDoc->GetFirstHighlight();
+	if (Beat <= 0 || Beat > Bar)
+		Beat = std::max(1, Bar / 4);
+	Plan.Options.rowsPerBeat = Beat;
+	Plan.Options.halfBars = Choice.HalfBars;
+	Plan.Bars = transcribe::MelodyBars(Melody, static_cast<int>(pDoc->GetPatternLength(Track)), Bar);
+	Plan.Chords = transcribe::ChooseChords(Melody, Plan.Bars, Plan.Key, Plan.Options);
+	if (Plan.Bars.empty() || Plan.Chords.empty()) {
+		Message = _T("The melody is too short to fit chords to.");
+		return false;
+	}
+	return true;
+}
+
+// "| C | F C | G | C |", up to 32 bars
+CString ChordsText(const BackingPlan &Plan)
+{
+	CString Text;
+	for (size_t b = 0; b < Plan.Bars.size(); ++b) {
+		if (b == 32) {
+			Text += _T("| ...");
+			return Text;
+		}
+		Text += _T("|");
+		const int BarEnd = Plan.Bars[b].row + Plan.Bars[b].length;
+		for (size_t c = 0; c < Plan.Chords.size(); ++c) {
+			const transcribe::ChordSpan &Span = Plan.Chords[c];
+			const int From = std::max(Span.row, Plan.Bars[b].row);
+			if (From < std::min(Span.row + Span.length, BarEnd) && (From == Plan.Bars[b].row || From == Span.row)) {
+				Text += _T(" ");
+				Text += transcribe::ChordName(Span.chord, Plan.Key).c_str();
+			}
+		}
+		Text += _T(" ");
+	}
+	Text += _T("|");
+	return Text;
+}
+
+bool IsEmptyCell(const stChanNote &Note)
+{
+	if (Note.Note != NONE || Note.Instrument != MAX_INSTRUMENTS || Note.Vol != MAX_VOLUME)
+		return false;
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c)
+		if (Note.EffNumber[c] != EF_NONE)
+			return false;
+	return true;
+}
+
+// A backing channel's part: cells relative to Start, over Rows rows. The
+// release where the chords end goes on the row after the last bar when that
+// row is in the song and empty, otherwise on the last bar's last row.
+RecordedPart BackingPart(const CFamiTrackerDoc *pDoc, unsigned int Track, int Channel,
+	const std::vector<transcribe::MelodyCell> &Line, int Instrument, int Start, int Rows)
+{
+	RecordedPart Part;
+	Part.Channel = static_cast<unsigned int>(Channel);
+	Part.Rows = Rows;
+	Part.Replace = true;
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const int SongRows = static_cast<int>(pDoc->GetFrameCount(Track) * Length);
+	bool First = true;
+	for (size_t i = 0; i < Line.size(); ++i) {
+		RecordedCell Cell = ToCell(Line[i], Instrument, RELEASE, First ? 15 : MAX_VOLUME);	// the first note sets full volume
+		if (Line[i].kind == transcribe::MelodyCell::Note)
+			First = false;
+		Cell.Row -= Start;
+		if (Cell.Row >= Rows) {
+			// The release at the end
+			const int After = Start + Cell.Row;
+			stChanNote Next;
+			bool Free = After < SongRows;
+			if (Free) {
+				pDoc->GetNoteData(Track, static_cast<unsigned int>(After) / Length, Part.Channel, static_cast<unsigned int>(After) % Length, &Next);
+				Free = IsEmptyCell(Next);
+			}
+			if (Free) {
+				Cell.Row = Rows;
+				Part.Rows = Rows + 1;
+			}
+			else {
+				Cell.Row = Rows - 1;
+				if (!Part.Cells.empty() && Part.Cells.back().Row >= Cell.Row)
+					continue;	// a note of ours is there already
+			}
+		}
+		Part.Cells.push_back(Cell);
+	}
+	return Part;
 }
 
 bool ReadRecording(LPCTSTR Path, transcribe::Audio &Audio, CString &Message)
@@ -595,23 +839,8 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		const transcribe::ChannelVoice Voice = ChanID == CHANID_TRIANGLE ? transcribe::ChannelVoice::Triangle :
 			(ChanID == CHANID_VRC6_SAWTOOTH ? transcribe::ChannelVoice::Sawtooth : transcribe::ChannelVoice::Pulse);
 		const std::vector<transcribe::MelodyCell> Line = transcribe::MelodyCells(Melody, Voice, Grid.frameRate);
-		for (size_t i = 0; i < Line.size(); ++i) {
-			const transcribe::MelodyCell &Cell = Line[i];
-			const int Effect = EffectFromLetter(Cell.effect);
-			if (Cell.kind == transcribe::MelodyCell::Note) {
-				int Index = Cell.midi - 24;	// FamiTracker's C-0 is MIDI note 24
-				if (Index < 0)
-					Index = 0;
-				if (Index > 95)
-					Index = 95;
-				Cells.push_back(MakeCell(Cell.row, Index % 12 + 1, Index / 12, Instrument,
-					Cell.volume >= 0 ? Cell.volume : MAX_VOLUME, Effect, Cell.effectParam));
-			}
-			else if (Cell.kind == transcribe::MelodyCell::Release)
-				Cells.push_back(MakeCell(Cell.row, Release ? RELEASE : HALT, 0, MAX_INSTRUMENTS, MAX_VOLUME));
-			else
-				Cells.push_back(MakeCell(Cell.row, NONE, 0, MAX_INSTRUMENTS, MAX_VOLUME, Effect, Cell.effectParam));
-		}
+		for (size_t i = 0; i < Line.size(); ++i)
+			Cells.push_back(ToCell(Line[i], Instrument, Release ? RELEASE : HALT, MAX_VOLUME));
 		Rows = Cells.back().Row + 1;
 		What.Format(_T("%d notes"), static_cast<int>(Melody.size()));
 	}
@@ -634,33 +863,17 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		}
 	}
 
-	// Free patterns: one for each frame added at the end of the song, and one
-	// for each touched frame whose pattern another frame plays too
-	const unsigned int FrameCount = pDoc->GetFrameCount(Track);
-	std::vector<unsigned int> Playing(FrameCount);
-	for (unsigned int f = 0; f < FrameCount; ++f)
-		Playing[f] = pDoc->GetPatternAtFrame(Track, f, Channel);
-	unsigned int Needed = (LastFrame >= FrameCount) ? LastFrame + 1 - FrameCount : 0;
-	for (unsigned int f = Frame; f <= LastFrame && f < FrameCount; ++f) {
-		for (unsigned int g = 0; g < FrameCount; ++g) {
-			if (g != f && Playing[g] == Playing[f]) {
-				++Needed;
-				Playing[f] = MAX_PATTERN + f;	// from now on its own
-				break;
-			}
-		}
-	}
-	unsigned int Free = 0;
-	for (unsigned int p = 0; p < MAX_PATTERN; ++p) {
-		if (!UsedAnywhere(pDoc, Track, Channel, p) && pDoc->IsPatternEmpty(Track, Channel, p))
-			++Free;
-	}
-	if (Needed > Free) {
+	if (!EnoughPatterns(pDoc, Track, static_cast<unsigned int>(Channel), Frame, LastFrame)) {
 		Message = _T("This channel has run out of free patterns. Edit > Clean up > Remove unused patterns may make room.");
 		return false;
 	}
 
-	CInsertRecordingAction *pAction = new CInsertRecordingAction(Cells, Rows, Channel, StartFrame, StartRow);
+	RecordedPart Part;
+	Part.Channel = static_cast<unsigned int>(Channel);
+	Part.Cells = Cells;
+	Part.Rows = Rows;
+	Part.Replace = false;
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(std::vector<RecordedPart>(1, Part), StartFrame, StartRow);
 	if (!pMainFrm->AddAction(pAction)) {
 		Message = _T("The recording couldn't be inserted.");
 		return false;
@@ -672,5 +885,137 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		static_cast<LPCTSTR>(ChannelName), Rows);
 	if (Cut)
 		Message += _T(" The end didn't fit: a song has at most 128 frames.");
+	return true;
+}
+
+// Backing
+
+bool HasNotes(const CFamiTrackerDoc *pDoc, unsigned int Track, int Channel)
+{
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const unsigned int Frames = pDoc->GetFrameCount(Track);
+	for (unsigned int f = 0; f < Frames; ++f) {
+		for (unsigned int r = 0; r < Length; ++r) {
+			stChanNote Note;
+			pDoc->GetNoteData(Track, f, static_cast<unsigned int>(Channel), r, &Note);
+			if (Note.Note >= C && Note.Note <= B)
+				return true;
+		}
+	}
+	return false;
+}
+
+CString KeyName(int Tonic, bool Minor)
+{
+	transcribe::Key Key;
+	Key.tonic = ((Tonic % 12) + 12) % 12;
+	Key.minor = Minor;
+	return CString(transcribe::KeyName(Key).c_str());
+}
+
+bool IsChordChannel(const CFamiTrackerDoc *pDoc, int Channel)
+{
+	const int ChanID = pDoc->GetChannelType(Channel);
+	return ChanID == CHANID_SQUARE1 || ChanID == CHANID_SQUARE2 || ChanID == CHANID_VRC6_PULSE1 ||
+		ChanID == CHANID_VRC6_PULSE2 || ChanID == CHANID_MMC5_SQUARE1 || ChanID == CHANID_MMC5_SQUARE2;
+}
+
+bool DescribeBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, CString &Key,
+	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message)
+{
+	BackingPlan Plan;
+	if (!PlanBacking(pDoc, Track, Choice, Plan, Message))
+		return false;
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	Key = transcribe::KeyName(Plan.Key).c_str();
+	Chords = ChordsText(Plan);
+	FirstFrame = Plan.Bars.front().row / Length;
+	LastFrame = (Plan.Bars.back().row + Plan.Bars.back().length - 1) / Length;
+	return true;
+}
+
+bool AddBacking(CMainFrame *pMainFrm, const backing_choice_t &Choice, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+
+	if (Choice.ChordChannel < 0 && Choice.BassChannel < 0) {
+		Message = _T("Pick a channel for the chords or the bass line.");
+		return false;
+	}
+	if (Choice.ChordChannel >= Channels || (Choice.ChordChannel >= 0 && !IsChordChannel(pDoc, Choice.ChordChannel)) ||
+		Choice.ChordChannel == Choice.MelodyChannel) {
+		Message = _T("The chords need a pulse channel other than the melody's.");
+		return false;
+	}
+	if (Choice.BassChannel >= Channels || (Choice.BassChannel >= 0 && !IsBassChannel(pDoc, Choice.BassChannel)) ||
+		Choice.BassChannel == Choice.MelodyChannel) {
+		Message = _T("The bass line needs the triangle or the sawtooth, other than the melody's channel.");
+		return false;
+	}
+
+	BackingPlan Plan;
+	if (!PlanBacking(pDoc, Track, Choice, Plan, Message))
+		return false;
+
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const int Start = Plan.Bars.front().row;
+	const int Rows = Plan.Bars.back().row + Plan.Bars.back().length - Start;
+	const unsigned int Frame = static_cast<unsigned int>(Start) / Length;
+	const unsigned int Row = static_cast<unsigned int>(Start) % Length;
+
+	std::vector<RecordedPart> Parts;
+	if (Choice.ChordChannel >= 0) {
+		const int Chip = pDoc->GetChipType(Choice.ChordChannel);
+		const int Instrument = (Chip == SNDCHIP_VRC6) ?
+			FindOrAddInstrument(pDoc, "Chords", Chip, CHORD_VOLUME, int(sizeof(CHORD_VOLUME)), CHORD_RELEASE, CHORD_DUTY_VRC6, 1) :
+			FindOrAddInstrument(pDoc, "Chords", Chip, CHORD_VOLUME, int(sizeof(CHORD_VOLUME)), CHORD_RELEASE, CHORD_DUTY_2A03, 1);
+		if (Instrument == INVALID_INSTRUMENT) {
+			Message = _T("There are no free instrument slots left for the chords.");
+			return false;
+		}
+		Parts.push_back(BackingPart(pDoc, Track, Choice.ChordChannel, transcribe::ArpeggioCells(Plan.Chords, Plan.Bars),
+			Instrument, Start, Rows));
+	}
+	if (Choice.BassChannel >= 0) {
+		const int Chip = pDoc->GetChipType(Choice.BassChannel);
+		const int Instrument = FindOrAddInstrument(pDoc, "Bass", Chip, BASS_VOLUME, int(sizeof(BASS_VOLUME)), BASS_RELEASE, NULL, 0);
+		if (Instrument == INVALID_INSTRUMENT) {
+			Message = _T("There are no free instrument slots left for the bass line.");
+			return false;
+		}
+		Parts.push_back(BackingPart(pDoc, Track, Choice.BassChannel, transcribe::BassCells(Plan.Chords, Plan.Bars, Plan.Options),
+			Instrument, Start, Rows));
+	}
+
+	for (size_t p = 0; p < Parts.size(); ++p) {
+		const unsigned int LastFrame = Frame + (Row + static_cast<unsigned int>(Parts[p].Rows) - 1) / Length;
+		if (!EnoughPatterns(pDoc, Track, Parts[p].Channel, Frame, LastFrame)) {
+			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+				static_cast<LPCTSTR>(RecordingChannelName(pDoc, static_cast<int>(Parts[p].Channel))));
+			return false;
+		}
+	}
+
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(Parts, static_cast<int>(Frame), static_cast<int>(Row));
+	if (!pMainFrm->AddAction(pAction)) {
+		Message = _T("The chords couldn't be added.");
+		return false;
+	}
+	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
+
+	CString Where;
+	if (Choice.ChordChannel >= 0 && Choice.BassChannel >= 0)
+		Where.Format(_T("chords on %s and a bass line on %s"), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Choice.ChordChannel)),
+			static_cast<LPCTSTR>(RecordingChannelName(pDoc, Choice.BassChannel)));
+	else if (Choice.ChordChannel >= 0)
+		Where.Format(_T("chords on %s"), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Choice.ChordChannel)));
+	else
+		Where.Format(_T("a bass line on %s"), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Choice.BassChannel)));
+	const CString Key(transcribe::KeyName(Plan.Key).c_str());
+	Message.Format(_T("Added %s, in %s: %s Ctrl+Z undoes it."), static_cast<LPCTSTR>(Where), static_cast<LPCTSTR>(Key),
+		static_cast<LPCTSTR>(ChordsText(Plan)));
 	return true;
 }

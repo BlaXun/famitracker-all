@@ -1,8 +1,9 @@
 # Recorder: whistle, hum or tap, and get notes
 
 Branch `recorder`, made from `beginner-friendly`. Record a melody (whistle,
-hum, sing) or a rhythm (finger taps, beatbox) and get FamiTracker notes. Later,
-recordings and selections become reusable clips.
+hum, sing) or a rhythm (finger taps, beatbox) and get FamiTracker notes, then
+add chords and a bass line that fit it. Next, recordings and selections
+become reusable clips.
 
 ## Requirements
 
@@ -34,7 +35,7 @@ recordings and selections become reusable clips.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 323 checks on synthesized audio covering:
+- [x] Tests: 422 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - repeated notes and glides, slides, loudness and vibrato,
@@ -43,7 +44,8 @@ recordings and selections become reusable clips.
   - the exact text cells, including songs with several parts.
   - the FFT difference function against the direct sum,
   - the click, finding it in a take recorded on speakers and taking it out
-    of drum hits, measuring the delay of taps, and lining takes up with rows.
+    of drum hits, measuring the delay of taps, and lining takes up with rows,
+  - keys, bars, chords for known tunes, the bass line and the arpeggios.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -101,16 +103,25 @@ recordings and selections become reusable clips.
   - Test timing: tap along to eight clicks, and takes are lined up with how
     late the taps arrived (see How it works).
   - "From a WAV file..." switches to Insert recording.
-- [ ] Harmony backing, next: find the melody's key, pick chords that fit it bar
-  by bar, and write a bass line on the sawtooth and the chords as fast
-  arpeggios on VRC6 Pulse 2. Takes recorded against the click give the
-  chords a beat to land on.
-- [ ] AI arranging over MCP, after that: the `api` branch (ROADMAP.md) lets an
-  MCP server read and edit the open song, so an assistant can arrange it.
-- [ ] Clips:
-  - save a recording or a pattern selection as a clip,
-  - place clips with the mouse, either as a copy or linked,
-  - keep the library next to the song.
+- [x] Chords and a bass line (`Harmony.cpp`): Edit > Add chords and bass
+  line, also in the right-click menu, and `wav2ftm --backing`.
+  - Pick the channel with the melody; the key is found (or picked), and the
+    preview shows the chords bar by bar.
+  - The chords go on VRC6 Pulse 2 (without the VRC6: 2A03 Pulse 2) as fast
+    `0xy` arpeggios, with a soft, thin Chords instrument; the bass line goes
+    on the sawtooth (or the triangle) with the Bass instrument.
+  - Bars and beats follow the row highlight, so a take recorded against the
+    click lines up with them. Chords change once a bar, or up to twice.
+  - It covers the bars the melody plays in and replaces what the two channels
+    had there; Ctrl+Z undoes it.
+- [ ] Clips, next:
+  - save a take, or a selection in the pattern editor, as a clip,
+  - place a clip at the cursor as a copy, or linked: editing any linked copy
+    changes all of them,
+  - a list of the song's clips, like the instrument list.
+- [ ] Then the piano roll (ROADMAP.md, step 5), and after it AI arranging over
+  MCP: the `api` branch (ROADMAP.md) lets an MCP server read and edit the
+  open song, so an assistant can arrange it.
 - [ ] Turn a recorded sound into a DPCM sample with the existing WAV import.
 
 ## Recording in FamiTracker
@@ -141,6 +152,8 @@ wav2ftm --key C --scale pentatonic hum.wav hum.txt      snap to a scale
 wav2ftm --channel 7 bassline.wav bass.txt               VRC6 sawtooth, bass register
 wav2ftm --min-rest 0 staccato.wav staccato.txt          keep every break as a rest
 wav2ftm --plain whistle.wav plain.txt                   no loudness, slides or vibrato
+wav2ftm --backing whistle.wav song.txt                  add chords and a bass line
+wav2ftm --backing --key A --scale minor hum.wav song.txt   ...in A minor
 wav2ftm --drums taps.wav --bass hum.wav whistle.wav song.txt   all three in one song
 ```
 
@@ -223,6 +236,27 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
     half a row late counts: a take is more often late than early.
   - `RemoveClickHits` drops hits within 30 ms of a click that sound like the
     click and aren't twice as loud as the count-in clicks were.
+- **Chords and bass** (`Harmony.cpp`):
+  - The key: the melody's pitch classes, weighted by length and loudness,
+    against Krumhansl and Kessler's major and minor key profiles; the last
+    note (and a little, the first) counts towards the key it is the tonic of.
+  - The chords of a key: I ii iii IV V vi in major, i iv v V VI III VII in
+    minor (the major V for the raised seventh).
+  - Each bar, or half bar, scores every chord: melody notes that are chord
+    tones count for it, other notes of the key a little against it, notes
+    outside the key more, and a long note a semitone above a chord tone the
+    most. Notes on the first beat count 1.5 times, on other beats 1.2 times,
+    quick passing notes 0.6 times.
+  - A Viterbi pass picks the best path: changing chord costs 0.4 (0.6 more
+    halfway through a bar), and steps that lead somewhere get some of that
+    back (away from home to IV or ii, then to V, then home: V-I most), so
+    with no melody the chord just stays. It starts and ends on the tonic
+    when the melody allows.
+  - The bass plays the root on every chord and bar, and the fifth halfway
+    through bars of four beats or more, in C2-G3, moving as little as it can.
+    The arpeggios pick root position or an inversion (`047`, `038`, `059` for
+    major chords) whose lowest note is nearest the last chord's, in F3-F4,
+    struck on every chord and bar; a release with `000` ends them.
 - **Speed:** YIN's difference function comes from an FFT cross-correlation
   plus running energy sums, giving the same values as the direct sum. A
   34-second recording takes about half a second, where the direct sum took

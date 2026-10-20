@@ -27,6 +27,7 @@ add_library(transcribe STATIC
 	Notes.cpp
 	Hits.cpp
 	Take.cpp
+	Harmony.cpp
 	TextModule.cpp
 )
 target_include_directories(transcribe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
