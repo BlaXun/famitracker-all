@@ -1424,3 +1424,52 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 	}
 	return true;
 }
+
+// The Claude Code connection
+
+bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
+	CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	if (Count < 1 || Frame < 0 || Frame >= MAX_FRAMES || Row < 0 || Row >= Length) {
+		Message = _T("There's nothing to write there.");
+		return false;
+	}
+	std::vector<RecordedPart> Parts;
+	for (int p = 0; p < Count; ++p) {
+		const song_part_t &In = pParts[p];
+		if (In.Channel < 0 || In.Channel >= static_cast<int>(pDoc->GetAvailableChannels()) || In.Rows < 1 || In.pCells == NULL)
+			continue;
+		// At most MAX_FRAMES frames
+		const int Rows = std::min(In.Rows, (MAX_FRAMES - Frame) * Length - Row);
+		RecordedPart Part;
+		Part.Channel = static_cast<unsigned int>(In.Channel);
+		Part.Rows = Rows;
+		Part.Replace = true;
+		for (int r = 0; r < Rows; ++r)
+			if (!IsEmptyCell(In.pCells[r]))
+				Part.Cells.push_back(CellOf(r, In.pCells[r]));
+		const unsigned int LastFrame = static_cast<unsigned int>(Frame + (Row + Rows - 1) / Length);
+		if (!EnoughPatterns(pDoc, Track, Part.Channel, static_cast<unsigned int>(Frame), LastFrame)) {
+			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+				static_cast<LPCTSTR>(RecordingChannelName(pDoc, In.Channel)));
+			return false;
+		}
+		Parts.push_back(Part);
+	}
+	if (Parts.empty()) {
+		Message = _T("There's nothing to write there.");
+		return false;
+	}
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(Parts, Frame, Row);
+	if (LinkClipId >= 0)
+		pAction->LinkTo(LinkClipId);
+	if (!pMainFrm->AddAction(pAction)) {
+		Message = _T("The song couldn't be changed.");
+		return false;
+	}
+	return true;
+}

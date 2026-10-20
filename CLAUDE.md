@@ -14,9 +14,15 @@ View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under the
 pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
 edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
 action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
-`ROADMAP.md`. Unless a
-section says otherwise, everything below describes the 0.4.6 code as found on
-`master` and was checked against that source.
+`ROADMAP.md`. Unless a section says otherwise, everything below describes the
+0.4.6 code as found on `master` and was checked against that source.
+
+File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
+(see `MCP.md`; built on the `api` branch and merged here). The protocol and
+the tools are in `Source/Api/` (portable, tested on Linux), the Winsock
+listener in `Source/McpSocket.cpp`, and the glue to the document, the
+settings and the dialog in `Source/McpConnection.cpp`, which writes changes
+with `WriteSongParts` in `InsertRecording.cpp`.
 
 ## What this repository is
 
@@ -112,13 +118,14 @@ replaced the VS2008 project:
     `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
   - Job logs and artifact downloads can be blocked in sandboxed sessions; the
     report doesn't need them.
-  - After a green build of `beginner-friendly` or `recorder`, the `publish` job
-    replaces that branch's rolling GitHub release (tag `build-<branch>`)
-    using `.github/scripts/publish-build.sh`. `beginner-friendly` is marked
-    Latest and `recorder` is a pre-release. Each release has a zip with
-    `FamiTracker.exe` (plus `wav2ftm.exe` on recorder) and a debug-symbols
-    zip. These tags are build pointers and get deleted and recreated; never
-    use them for real releases.
+  - After a green build of `beginner-friendly`, `recorder` or `api`, the
+    `publish` job replaces that branch's rolling GitHub release (tag
+    `build-<branch>`) using `.github/scripts/publish-build.sh`.
+    `beginner-friendly` is marked Latest; `recorder` and `api` are
+    pre-releases. Each release has a zip with `FamiTracker.exe` (plus
+    `wav2ftm.exe` on recorder and api) and a debug-symbols zip. These tags
+    are build pointers and get deleted and recreated; never use them for
+    real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
@@ -155,6 +162,10 @@ The application has no test suite of its own. What exists:
   song-wide effects staying, copy and paste. Same three commands with
   `Source/Tests` and `build/tests`; CI runs them in the Linux job. The
   stand-ins must keep the real headers' signatures.
+- **Claude Code connection** (`Source/Api`): JSON, HTTP
+  framing, the MCP protocol and every tool against a song in memory
+  (`tests/ApiTests.cpp`). Same three commands with `Source/Api` and
+  `build/api`; CI runs it on Linux and with MSVC.
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or

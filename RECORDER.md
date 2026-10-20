@@ -146,7 +146,13 @@ clips to place again, as copies or linked.
   - tap the tempo instead of setting speed and tempo numbers;
   - sound effects by voice ("pew", "boing", "kssh"), exported like the music;
   - chords by name ("C G Am F") or strummed on a guitar.
-- [ ] Then AI arranging over MCP, on the `api` branch (ROADMAP.md): a local
+- [x] Claude Code connection, first version (`MCP.md`): File > Connect
+  Claude Code lets Claude Code read the song in musical terms, write parts
+  (as clips by default, or straight into the song, undoable), add sounds from
+  presets, transpose and change the mode, set the tempo, add chords and a
+  bass line, an echo or vibrato, change the mood in one go, check the song
+  and play it.
+- [ ] More for the Claude Code connection, from the plan: a local
   server in FamiTracker that Claude Code connects to. Claude reads the song in
   musical terms (bars, beats, note names, key and chords), writes notes, adds
   instruments from sound presets, sets the tempo, plays a range and exports a

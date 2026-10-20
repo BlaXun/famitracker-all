@@ -45,6 +45,7 @@ class CPianoRollBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
+class CMcpConnection;
 
 class CMainFrame : public CFrameWnd
 {
@@ -176,6 +177,8 @@ private:  // control bar embedded members
 
 	int					m_iFrameEditorPos;
 
+	CMcpConnection		*m_pMcpConnection;		// File > Connect Claude Code
+
 	CInstrumentFileTree	*m_pInstrumentFileTree;
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
@@ -260,6 +263,7 @@ public:
 	afx_msg void OnUpdateSelectionEnabled(CCmdUI *pCmdUI);
 	afx_msg void OnTimer(UINT nIDEvent);
 	afx_msg void OnFileGeneralsettings();
+	afx_msg void OnFileConnectClaude();
 	afx_msg void OnEnSongNameChange();
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();

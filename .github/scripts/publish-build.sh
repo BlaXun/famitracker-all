@@ -45,13 +45,21 @@ fi
 		echo "                  Add chords and bass line fits a backing to a melody, and"
 		echo "                  the clips button next to it keeps takes and selections"
 		echo "                  as clips to place again, as copies or linked. The piano"
-		echo "                  roll button shows the song's notes on a grid."
+		echo "                  roll button shows the song's notes under the pattern"
+		echo "                  editor, where notes are drawn, painted and moved with the"
+		echo "                  mouse."
 	fi
 	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"
 		echo "                  into a FamiTracker text file. Run it from a command prompt"
 		echo "                  (wav2ftm --help), then open the result in FamiTracker"
 		echo "                  with File > Import Text."
+	fi
+	if [ "$branch" = "api" ] || [ "$branch" = "recorder" ]; then
+		echo
+		echo "File > Connect Claude Code lets Claude Code on this computer work on the"
+		echo "open song: switch it on there and run the command it shows once. See"
+		echo "MCP.md in the source for what Claude can do and how to ask."
 	fi
 	echo
 	echo "These programs are not code-signed. If Windows SmartScreen warns on first"
