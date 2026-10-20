@@ -32,6 +32,9 @@
 //   ReadWav -> TrackPitch -> SegmentNotes -> (FitOctave, SnapToScale) -> Quantize
 //   ReadWav -> DetectHits -> ClassifyHits -> QuantizeHits
 //
+// A take recorded in FamiTracker against a click is lined up with PlaceNotes
+// or PlaceHits before quantizing.
+//
 // A note keeps the length of the sound that produced it: a long hum becomes a
 // long note, ended by a note release where the hum stops.
 //
@@ -270,6 +273,92 @@ struct GridHit {
 };
 
 std::vector<GridHit> QuantizeHits(const std::vector<Hit> &hits, const Grid &grid, bool alignToStart);
+
+// ---------------------------------------------------------------------------
+// Recording inside FamiTracker: the click, and lining a take up with rows
+// ---------------------------------------------------------------------------
+
+// The click that counts in and keeps time while recording. Beats are counted
+// from the first count-in click; row 0 of the take is beat countIn.
+struct ClickTrack {
+	int sampleRate = 44100;
+	double leadSeconds = 0.3;	// silence before the first click
+	double beatSeconds = 0.5;
+	int beatsPerBar = 4;		// the first beat of each bar clicks higher
+	int countIn = 4;			// beats before row 0, a whole number of bars
+	bool clickAlong = true;		// keep clicking after the count-in
+	double level = 0.4;			// peak level of an accented click, 0-1
+
+	static const double HIGH_HZ;	// 1760 Hz, the first beat of a bar
+	static const double LOW_HZ;		// 1320 Hz, the other beats
+	static const double SECONDS;	// length of one click (40 ms)
+
+	long long BeatSample(int beat) const;	// where a beat's click starts
+	double BeatTime(int beat) const;		// the same in seconds
+	long long StartSample() const;			// row 0: BeatSample(countIn)
+	bool Clicks(int beat) const;			// does this beat click?
+	// Writes samples [from, from + count) of the click track to out
+	void Render(long long from, float *out, int count) const;
+};
+
+// The beat for the click, from the song's row highlights (first: rows per
+// beat, second: rows per bar). A beat is kept between 0.25 and 1.5 seconds
+// by doubling or halving its rows.
+struct Beat {
+	int rows = 4;		// rows per beat
+	int perBar = 4;		// beats per bar
+	int countIn = 4;	// beats to count in: one bar, or two short ones
+};
+Beat BeatFor(double rowsPerSecond, int firstHighlight, int secondHighlight);
+
+// The click as the microphone heard it, when it plays on speakers rather
+// than headphones.
+struct ClickLeak {
+	bool heard = false;
+	double delay = 0.0;		// seconds after the expected times
+	double strength = 0.0;	// how loud, on the scale of Hit::strength
+};
+
+// Looks for the count-in clicks in a take. expected: when each click should
+// be heard, in seconds into the recording; each is looked for within
+// +-window seconds. The clicks count as heard when most of them are found,
+// sound like the click (a tone at HIGH_HZ or LOW_HZ) and agree on the delay.
+ClickLeak FindClickLeak(const Audio &audio, const std::vector<double> &expected, double window = 0.12);
+
+// Measures how late someone's taps along to clicks arrive in a recording,
+// sound system and all: for each expected click time (seconds into the
+// recording), the nearest hit within +-window. Returns false unless most of
+// the taps were found and they agree (the middle half within 60 ms).
+bool MeasureTapDelay(const Audio &audio, const std::vector<double> &expected, double window, double *delay);
+
+// Removes hits that are only the click leaking in: within tolerance of a
+// click (clickTimes, as expected; the leak's delay is added), sounding like
+// the click and not clearly louder than the count-in clicks were.
+void RemoveClickHits(std::vector<Hit> &hits, const Audio &audio, const std::vector<double> &clickTimes,
+	const ClickLeak &leak, double tolerance = 0.030);
+
+// The shift, in seconds, that lines onsets up with rows best: how late (or,
+// negative, how early) they sit on average, from 0.35 rows early to half a
+// row late. 0 when there are fewer than four onsets, when they don't agree,
+// or when they sit further early than that (which could as well be late).
+double RowOffset(const std::vector<double> &onsets, const std::vector<double> &weights, double rowsPerSecond);
+
+// Lines a take up with the rows: start (seconds into the recording) becomes
+// time 0, the row the take was recorded at. Notes and hits from before it
+// (the count-in) are dropped; ones that start just early (up to a row for a
+// note, half a row for a hit) start on row 0. With settle, everything also
+// moves by RowOffset, so notes played a little late land on their rows.
+// Returns that shift in seconds. Quantize afterwards with alignToStart off.
+double PlaceNotes(std::vector<Note> &notes, double start, const Grid &grid, bool settle);
+double PlaceHits(std::vector<Hit> &hits, double start, const Grid &grid, bool settle);
+
+// How a take lines up with the rows, for whoever turns it into notes
+struct TakeTiming {
+	bool lineUpFirstNote = true;	// no click and no song: the first note lands on row 0
+	double start = 0.0;				// otherwise: seconds into the take that land on row 0
+	ClickLeak leak;					// the click as the microphone heard it, if it did
+	std::vector<double> clicks;		// when the clicks after the count-in were expected (seconds)
+};
 
 // ---------------------------------------------------------------------------
 // FamiTracker text module (File > Import Text in FamiTracker 0.4.6)

@@ -939,6 +939,348 @@ void TestEndToEnd()
 
 }	// namespace
 
+// ---------------------------------------------------------------------------
+// Recording inside FamiTracker: click, leak, take timing
+// ---------------------------------------------------------------------------
+
+// Adds sound into audio at time (seconds), growing it as needed
+void MixAt(Audio &audio, double time, const std::vector<float> &sound, double gain = 1.0)
+{
+	const size_t at = size_t(std::lround(time * audio.sampleRate));
+	if (audio.samples.size() < at + sound.size())
+		audio.samples.resize(at + sound.size(), 0.0f);
+	for (size_t i = 0; i < sound.size(); ++i)
+		audio.samples[at + i] += float(gain * sound[i]);
+}
+
+std::vector<float> TapSound(bool bright, double amp)
+{
+	Synth s;
+	s.Tap(bright, amp);
+	return s.audio.samples;
+}
+
+// The click track as a microphone hears it: delayed and quieter
+Audio HeardClicks(const ClickTrack &click, double seconds, double delay, double gain)
+{
+	std::vector<float> rendered(size_t(seconds * click.sampleRate));
+	click.Render(0, rendered.data(), int(rendered.size()));
+	Audio audio;
+	audio.sampleRate = click.sampleRate;
+	MixAt(audio, delay, rendered, gain);
+	audio.samples.resize(size_t(seconds * click.sampleRate));
+	return audio;
+}
+
+ClickTrack TestClick(double beatSeconds, bool along)
+{
+	ClickTrack click;
+	click.sampleRate = RATE;
+	click.leadSeconds = 0.3;
+	click.beatSeconds = beatSeconds;
+	click.beatsPerBar = 4;
+	click.countIn = 4;
+	click.clickAlong = along;
+	return click;
+}
+
+std::vector<double> CountInTimes(const ClickTrack &click)
+{
+	std::vector<double> times;
+	for (int k = 0; k < click.countIn; ++k)
+		times.push_back(click.BeatTime(k));
+	return times;
+}
+
+void TestClickTrack()
+{
+	ClickTrack click = TestClick(0.5, false);
+	CHECK(click.BeatSample(0) == 13230);
+	CHECK(click.StartSample() == click.BeatSample(4));
+	CHECK_NEAR(click.BeatTime(4), 2.3, 1e-9);
+	CHECK(click.Clicks(0) && click.Clicks(3) && !click.Clicks(4) && !click.Clicks(-1));
+	click.clickAlong = true;
+	CHECK(click.Clicks(4) && click.Clicks(100));
+	click.clickAlong = false;
+
+	// Rendering in odd-sized blocks gives the same samples as all at once
+	const int total = 3 * RATE;
+	std::vector<float> whole(total), blocks(total);
+	click.Render(0, whole.data(), total);
+	for (int at = 0; at < total; at += 1013)
+		click.Render(at, blocks.data() + at, std::min(1013, total - at));
+	CHECK(whole == blocks);
+
+	// Sound right after each count-in beat and nowhere else
+	const long long length = std::llround(ClickTrack::SECONDS * RATE);
+	int stray = 0;
+	for (int i = 0; i < total; ++i) {
+		bool inClick = false;
+		for (int k = 0; k < 4; ++k)
+			if (i > click.BeatSample(k) && i < click.BeatSample(k) + length)
+				inClick = true;
+		if (!inClick && whole[i] != 0.0f)
+			++stray;
+	}
+	CHECK(stray == 0);
+	for (int k = 0; k < 4; ++k) {
+		float peak = 0.0f;
+		for (long long i = click.BeatSample(k); i < click.BeatSample(k) + length; ++i)
+			peak = std::max(peak, std::fabs(whole[size_t(i)]));
+		CHECK(peak > (k == 0 ? 0.3f : 0.2f));	// the bar's first click is the loudest
+		CHECK(peak <= float(click.level) + 1e-6f);
+	}
+
+	// The first beat of the bar is higher: count rising zero crossings over 20 ms
+	auto crossings = [&](int beat) {
+		int n = 0;
+		const long long from = click.BeatSample(beat) + 10, to = from + RATE / 50;
+		for (long long i = from; i < to; ++i)
+			if (whole[size_t(i - 1)] < 0.0f && whole[size_t(i)] >= 0.0f)
+				++n;
+		return n;
+	};
+	CHECK(std::abs(crossings(0) - 35) <= 1);	// 1760 Hz
+	CHECK(std::abs(crossings(1) - 26) <= 1);	// 1320 Hz
+}
+
+void TestBeatFor()
+{
+	Beat b = BeatFor(10.0, 4, 16);
+	CHECK(b.rows == 4 && b.perBar == 4 && b.countIn == 4);
+	b = BeatFor(10.0, 2, 8);	// 0.2 s is too quick: 4 rows a beat, 2 beats a bar
+	CHECK(b.rows == 4 && b.perBar == 2 && b.countIn == 4);
+	b = BeatFor(10.0, 3, 12);
+	CHECK(b.rows == 3 && b.perBar == 4 && b.countIn == 4);
+	b = BeatFor(10.0, 4, 12);	// three beats a bar
+	CHECK(b.rows == 4 && b.perBar == 3 && b.countIn == 3);
+	b = BeatFor(2.0, 8, 32);	// 4 s a beat is too slow: 2 rows (1 s)
+	CHECK(b.rows == 2 && b.perBar == 4 && b.countIn == 4);
+	b = BeatFor(10.0, 0, 0);
+	CHECK(b.rows == 4 && b.perBar == 4 && b.countIn == 4);
+}
+
+void TestClickLeak()
+{
+	const ClickTrack click = TestClick(0.4, true);
+	const std::vector<double> expected = CountInTimes(click);
+	{
+		// Speakers: the clicks arrive 45 ms late and quieter, over room noise
+		Audio audio = HeardClicks(click, 4.0, 0.045, 0.3);
+		for (float &v : audio.samples)
+			v += float(0.002 * Noise());
+		const ClickLeak leak = FindClickLeak(audio, expected);
+		CHECK(leak.heard);
+		CHECK_NEAR(leak.delay, 0.045, 0.004);
+		CHECK(leak.strength > 0.0);
+	}
+	{
+		// Headphones: only room noise
+		Audio audio;
+		audio.sampleRate = RATE;
+		audio.samples.resize(4 * RATE);
+		for (float &v : audio.samples)
+			v = float(0.002 * Noise());
+		CHECK(!FindClickLeak(audio, expected).heard);
+	}
+	{
+		// Tapping along to the count-in is not the click
+		Audio audio;
+		audio.sampleRate = RATE;
+		audio.samples.resize(4 * RATE);
+		for (size_t k = 0; k < expected.size(); ++k)
+			MixAt(audio, expected[k] + 0.03, TapSound(true, 0.6));
+		CHECK(!FindClickLeak(audio, expected).heard);
+	}
+	{
+		// One click heard out of four is not enough
+		Audio audio = HeardClicks(click, 4.0, 0.045, 0.3);
+		const size_t cut = size_t((expected[1] - 0.05) * RATE);
+		std::fill(audio.samples.begin() + std::ptrdiff_t(cut), audio.samples.end(), 0.0f);
+		CHECK(!FindClickLeak(audio, expected).heard);
+	}
+
+	// Drums on speakers: the clicks during the take are removed, taps stay,
+	// even one on a click
+	Audio audio = HeardClicks(click, 4.6, 0.045, 0.3);
+	const double start = click.BeatTime(4) + 0.045;
+	MixAt(audio, start + 0.4 + 0.01, TapSound(true, 0.8));	// on beat 5, with its click
+	MixAt(audio, start + 0.6 + 0.01, TapSound(false, 0.8));	// between beats 5 and 6
+	MixAt(audio, start + 1.4 + 0.01, TapSound(true, 0.8));	// on beat 8
+	const ClickLeak leak = FindClickLeak(audio, expected);
+	CHECK(leak.heard);
+	std::vector<Hit> hits = DetectHits(audio, HitOptions());
+	CHECK(hits.size() >= 11);	// 4 + 4 clicks before beat 8, and the taps
+	std::vector<double> along;
+	for (int k = click.countIn; k < 12; ++k)
+		along.push_back(click.BeatTime(k));
+	RemoveClickHits(hits, audio, along, leak);
+	Grid grid;	// 10 rows a second: 4 rows a beat
+	PlaceHits(hits, start, grid, false);
+	std::vector<GridHit> rows = QuantizeHits(hits, grid, false);
+	CHECK(rows.size() == 3);
+	if (rows.size() == 3)
+		CHECK(rows[0].row == 4 && rows[1].row == 6 && rows[2].row == 14);
+}
+
+void TestTapDelay()
+{
+	std::vector<double> expected;
+	for (int k = 0; k < 8; ++k)
+		expected.push_back(0.3 + 0.6 * k);
+	auto taps = [&](int count, double late, double jitter) {
+		Audio audio;
+		audio.sampleRate = RATE;
+		audio.samples.resize(6 * RATE);
+		for (int k = 0; k < count; ++k)
+			MixAt(audio, expected[size_t(k)] + late + jitter * ((k % 3) - 1), TapSound(k % 2 == 0, 0.7));
+		for (float &v : audio.samples)
+			v += float(0.002 * Noise());
+		return audio;
+	};
+	double delay = 0.0;
+	CHECK(MeasureTapDelay(taps(8, 0.110, 0.012), expected, 0.3, &delay));
+	CHECK_NEAR(delay, 0.110, 0.010);
+	CHECK(MeasureTapDelay(taps(8, -0.030, 0.010), expected, 0.3, &delay));	// a little ahead
+	CHECK_NEAR(delay, -0.030, 0.010);
+	CHECK(!MeasureTapDelay(taps(3, 0.110, 0.0), expected, 0.3, &delay));	// most taps missing
+	CHECK(!MeasureTapDelay(taps(8, 0.110, 0.080), expected, 0.3, &delay));	// all over the place
+}
+
+void TestRowOffset()
+{
+	std::vector<double> onsets, weights;
+	for (int k = 0; k < 8; ++k)
+		onsets.push_back(0.1 * k * 3 + 0.02 + 0.004 * ((k % 3) - 1));
+	CHECK_NEAR(RowOffset(onsets, weights, 10.0), 0.02, 0.004);
+	std::vector<double> early(onsets);
+	for (double &t : early)
+		t -= 0.04;	// 20 ms early
+	CHECK_NEAR(RowOffset(early, weights, 10.0), -0.02, 0.004);
+	std::vector<double> late(onsets);
+	for (double &t : late)
+		t += 0.025;	// 45 ms late
+	CHECK_NEAR(RowOffset(late, weights, 10.0), 0.045, 0.004);
+	std::vector<double> unclear(onsets);
+	for (double &t : unclear)
+		t += 0.04;	// 60 ms late is also 40 ms early: left alone
+	CHECK(RowOffset(unclear, weights, 10.0) == 0.0);
+	std::vector<double> spread(10);
+	for (int k = 0; k < 10; ++k)
+		spread[k] = 0.1 * k + 0.01 * k;	// all over the row
+	CHECK(RowOffset(spread, weights, 10.0) == 0.0);
+	CHECK(RowOffset(std::vector<double>(onsets.begin(), onsets.begin() + 3), weights, 10.0) == 0.0);
+}
+
+void TestPlaceNotes()
+{
+	Grid grid;	// 10 rows a second
+	const double start = 2.0;
+	const int rows[] = { 0, 4, 6, 8, 12 };
+	auto take = [&](double late) {
+		std::vector<Note> notes;
+		Note countIn;	// a sound during the count-in
+		countIn.start = 1.2;
+		countIn.end = 1.5;
+		countIn.midi = 60;
+		notes.push_back(countIn);
+		for (int i = 0; i < 5; ++i) {
+			Note n;
+			n.start = start + 0.1 * rows[i] + late + 0.008 * ((i % 3) - 1);
+			n.end = (i < 4 ? start + 0.1 * rows[i + 1] + late - 0.02 : n.start + 0.35);
+			n.midi = 60 + i;
+			notes.push_back(n);
+		}
+		return notes;
+	};
+
+	// Played 37-53 ms late: settling puts every note on its row
+	std::vector<Note> notes = take(0.045);
+	const double shift = PlaceNotes(notes, start, grid, true);
+	CHECK_NEAR(shift, 0.045, 0.006);
+	std::vector<GridNote> placed = Quantize(notes, grid, QuantizeOptions{ false, 0.15 });
+	CHECK(placed.size() == 5);
+	for (size_t i = 0; i < placed.size() && i < 5; ++i) {
+		CHECK(placed[i].row == rows[i]);
+		CHECK(placed[i].midi == 60 + int(i));
+	}
+
+	// Without settling, the note 53 ms late lands a row late
+	notes = take(0.045);
+	CHECK(PlaceNotes(notes, start, grid, false) == 0.0);
+	placed = Quantize(notes, grid, QuantizeOptions{ false, 0.15 });
+	CHECK(placed.size() == 5 && placed[1].row == 4 && placed[2].row == 7);
+
+	// A note that starts a little early starts on row 0; one well before is dropped
+	notes = take(0.0);
+	notes[1].start = start - 0.07;
+	notes.push_back(Note());
+	notes.back().start = start - 0.25;
+	notes.back().end = start - 0.12;
+	PlaceNotes(notes, start, grid, true);
+	placed = Quantize(notes, grid, QuantizeOptions{ false, 0.15 });
+	CHECK(placed.size() == 5 && placed[0].row == 0 && placed[0].midi == 60);
+}
+
+void TestPlaceHits()
+{
+	Grid grid;
+	const double start = 1.5;
+	std::vector<Hit> hits;
+	const int rows[] = { 0, 2, 4, 6, 8, 10, 12, 14 };
+	Hit early;
+	early.time = 0.9;	// count-in
+	early.strength = 1.0;
+	hits.push_back(early);
+	for (int i = 0; i < 8; ++i) {
+		Hit h;
+		h.time = start + 0.1 * rows[i] + 0.035 + 0.005 * ((i % 3) - 1);
+		h.strength = 0.5 + 0.05 * i;
+		hits.push_back(h);
+	}
+	const double shift = PlaceHits(hits, start, grid, true);
+	CHECK_NEAR(shift, 0.035, 0.006);
+	const std::vector<GridHit> placed = QuantizeHits(hits, grid, false);
+	CHECK(placed.size() == 8);
+	for (size_t i = 0; i < placed.size() && i < 8; ++i)
+		CHECK(placed[i].row == rows[i]);
+}
+
+// A whistled take recorded on speakers: count-in clicks in the recording, the
+// melody a little late. It lands on the right rows.
+void TestTakeEndToEnd()
+{
+	const ClickTrack click = TestClick(0.4, true);	// 4 rows a beat at 10 rows/s
+	const double heardDelay = 0.040, late = 0.025;
+	const int rows[] = { 0, 4, 8, 10, 12, 16 };
+	const int lengths[] = { 4, 4, 2, 2, 4, 8 };
+	const int midis[] = { 84, 86, 88, 86, 84, 91 };	// whistled, two octaves up
+
+	Audio audio = HeardClicks(click, 5.0, heardDelay, 0.25);
+	const double start = click.BeatTime(click.countIn) + heardDelay;
+	for (int i = 0; i < 6; ++i) {
+		Synth s;
+		s.Tone(MidiToFrequency(midis[i]), 0.1 * lengths[i] - 0.03, 0.5);
+		MixAt(audio, start + late + 0.1 * rows[i], s.audio.samples);
+	}
+	for (float &v : audio.samples)
+		v += float(0.001 * Noise());
+
+	const ClickLeak leak = FindClickLeak(audio, CountInTimes(click));
+	CHECK(leak.heard);
+	CHECK_NEAR(leak.delay, heardDelay, 0.004);
+
+	std::vector<Note> notes = SegmentNotes(TrackPitch(audio, PitchOptionsFor(Source::Whistle)), NoteOptions());
+	Grid grid;
+	PlaceNotes(notes, click.BeatTime(click.countIn) + leak.delay, grid, true);
+	const std::vector<GridNote> placed = Quantize(notes, grid, QuantizeOptions{ false, 0.15 });
+	CHECK(placed.size() == 6);
+	for (size_t i = 0; i < placed.size() && i < 6; ++i) {
+		CHECK(placed[i].row == rows[i]);
+		CHECK(placed[i].midi == midis[i]);
+	}
+}
+
 int main()
 {
 	TestGridAndNames();
@@ -955,6 +1297,14 @@ int main()
 	TestWavRoundTrip();
 	TestTextModule();
 	TestEndToEnd();
+	TestClickTrack();
+	TestBeatFor();
+	TestClickLeak();
+	TestTapDelay();
+	TestRowOffset();
+	TestPlaceNotes();
+	TestPlaceHits();
+	TestTakeEndToEnd();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

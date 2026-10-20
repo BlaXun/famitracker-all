@@ -39,6 +39,7 @@
 #include "APU/APU.h"
 #include "InsertRecording.h"
 #include "InsertRecordingDlg.h"
+#include "RecordDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -114,6 +115,7 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_WM_SYSKEYDOWN()
 	ON_COMMAND(ID_EDIT_PASTEMIX, OnEditPastemix)
 	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
+	ON_COMMAND(ID_EDIT_RECORD, OnEditRecord)
 	ON_COMMAND(ID_EDIT_INSTRUMENTMASK, OnEditInstrumentMask)
 	ON_COMMAND(ID_EDIT_VOLUMEMASK, OnEditVolumeMask)
 	ON_COMMAND(ID_EDIT_INTERPOLATE, OnEditInterpolate)
@@ -935,6 +937,19 @@ void CFamiTrackerView::OnEditInsertRecording()
 		pMainFrm->SetMessageText(Message);
 	else
 		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+}
+
+void CFamiTrackerView::OnEditRecord()
+{
+	// Record from the microphone into the song (see RecordDlg.cpp). The
+	// recorder plays the song itself when asked to.
+	theApp.StopPlayerAndWait();
+	CRecordDlg Dialog(this);
+	const INT_PTR Result = Dialog.DoModal();
+	if (Result == IDOK)
+		GetParentFrame()->SetMessageText(Dialog.GetResult());
+	else if (Result == IDC_REC_FROMFILE)
+		OnEditInsertRecording();
 }
 
 void CFamiTrackerView::OnEditDelete()

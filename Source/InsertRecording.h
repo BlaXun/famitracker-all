@@ -21,11 +21,13 @@
 
 #pragma once
 
-// Edit > Insert recording: turns a WAV recording (whistle, hum, finger taps)
-// into notes at the pattern cursor, in the song that is open. See RECORDER.md.
+// Turning a recording (whistle, hum, finger taps) into notes in the song that
+// is open: Edit > Insert recording for WAV files, and the Record dialog for
+// takes recorded in FamiTracker. See RECORDER.md.
 
 class CMainFrame;
 class CFamiTrackerDoc;
+namespace transcribe { struct Audio; struct TakeTiming; }
 
 // What a recording holds
 enum recording_kind_t {
@@ -34,20 +36,28 @@ enum recording_kind_t {
 	RECORDING_DRUMS			// finger taps or beatboxing
 };
 
-// Reads the WAV file at Path and guesses what it holds. Description says it
-// in words ("whistling"). Returns false, with the reason in Message, when the
-// file can't be read.
+// Guesses what a recording holds. Description says it in words ("whistling").
+void GuessRecording(const transcribe::Audio &Audio, recording_kind_t &Kind, CString &Description);
+
+// Reads the WAV file at Path and guesses what it holds. Returns false, with
+// the reason in Message, when the file can't be read.
 bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message);
 
-// Transcribes the WAV file at Path as Kind and writes the notes into Channel
-// (drums always into the noise channel), starting at the cursor's frame and
-// row and running on into the following frames; frames are added at the end
-// of the song when needed. With Expression, a melody keeps how it was played:
-// louder notes play louder, slides into notes stay slides, and long notes get
-// vibrato. One Ctrl+Z undoes it.
+// Transcribes a recording as Kind and writes the notes into Channel (drums
+// always into the noise channel), from row Row of frame Frame on and into the
+// following frames; frames are added at the end of the song when needed.
+// Timing says which moment of the recording lands on that row: its first note
+// (a WAV file), or the downbeat after a count-in (a take recorded against the
+// click). With Expression, a melody keeps how it was played: louder notes play
+// louder, slides into notes stay slides, and long notes get vibrato. One
+// Ctrl+Z undoes it.
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
 // success Message says what was inserted.
+bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
+	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message);
+
+// The same for the WAV file at Path, its first note on the cursor row.
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
 	CString &Message);
 

@@ -1260,5 +1260,20 @@
     <ClCompile Include="Source\Transcribe\Expression.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\MicRecorder.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\MicRecorder.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\RecordDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\RecordDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\Transcribe\Take.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

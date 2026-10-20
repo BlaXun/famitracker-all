@@ -59,6 +59,7 @@ BEGIN
     BUTTON      ID_TRACKER_PLAYPATTERN
     BUTTON      ID_TRACKER_STOP
     BUTTON      ID_TRACKER_EDIT
+    BUTTON      ID_EDIT_RECORD
     SEPARATOR
     BUTTON      ID_PREV_SONG
     BUTTON      ID_NEXT_SONG
@@ -120,6 +121,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Select &All\tCtrl+A",         ID_EDIT_SELECTALL
         MENUITEM SEPARATOR
+        MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM SEPARATOR
         POPUP "Transpose"
@@ -239,6 +241,7 @@ BEGIN
         MENUITEM "&Paste",                      ID_EDIT_PASTE
         MENUITEM "&Delete",                     ID_POPUP_DELETE
         MENUITEM "Select &All",                 ID_EDIT_SELECTALL
+        MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM SEPARATOR
         POPUP "Transpose"
@@ -536,6 +539,7 @@ BEGIN
     ID_EDIT_FIND            "Find the specified text\nFind"
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
+    ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"
@@ -1854,6 +1858,38 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,146,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,165,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,165,50,14
+END
+
+IDD_RECORD DIALOGEX 0, 0, 262, 262
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Record from microphone"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "What will you record?",IDC_STATIC,7,7,248,64
+    CONTROL         "Let FamiTracker decide",IDC_REC_AUTO,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,15,19,200,10
+    CONTROL         "Whistling",IDC_REC_WHISTLE,"Button",BS_AUTORADIOBUTTON,15,32,200,10
+    CONTROL         "Humming or singing",IDC_REC_VOICE,"Button",BS_AUTORADIOBUTTON,15,45,200,10
+    CONTROL         "Finger taps or beatboxing (drums)",IDC_REC_DRUMS,"Button",BS_AUTORADIOBUTTON,15,58,200,10
+    LTEXT           "Channel:",IDC_STATIC,7,81,50,8
+    COMBOBOX        IDC_REC_CHANNEL,62,79,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,96,248,10
+    LTEXT           "Microphone:",IDC_STATIC,7,116,50,8
+    COMBOBOX        IDC_REC_DEVICE,62,114,193,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Level:",IDC_STATIC,7,132,50,8
+    CONTROL         "",IDC_REC_LEVEL,"msctls_progress32",WS_BORDER,62,131,130,10
+    LTEXT           "",IDC_REC_LEVELTEXT,197,132,58,8
+    LTEXT           "Click:",IDC_STATIC,7,150,50,8
+    COMBOBOX        IDC_REC_CLICK,62,148,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_REC_TEMPO,197,150,58,8
+    LTEXT           "Delay:",IDC_STATIC,7,167,50,8
+    LTEXT           "",IDC_REC_DELAY,62,167,130,8
+    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,164,58,14
+    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,183,248,10
+    LTEXT           "",IDC_REC_STATUS,7,199,248,26
+    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,227,248,8
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,241,76,14
+    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,241,50,14
+    PUSHBUTTON      "Close",IDCANCEL,205,241,50,14
 END
 
 IDD_PROPERTIES DIALOGEX 0, 0, 213, 259

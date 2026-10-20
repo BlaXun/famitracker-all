@@ -25,6 +25,13 @@
 
 class CFamiTrackerDoc;
 
+// Channel lists for the recording dialogs. A melody can go on any channel but
+// noise and DPCM (bass channels are marked); drums only on the noise channel.
+// The list's item data is the channel index.
+int DefaultRecordingChannel(const CFamiTrackerDoc *pDoc, int CursorChannel);	// for a melody
+void FillRecordingChannels(CComboBox &List, const CFamiTrackerDoc *pDoc, bool Drums, int MelodyChannel);
+int PickedRecordingChannel(const CComboBox &List);	// -1 when there is none
+
 // Edit > Insert recording asks here what the recording holds (preselected
 // with FamiTracker's guess) and which channel it goes on.
 class CInsertRecordingDlg : public CDialog

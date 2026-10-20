@@ -24,6 +24,47 @@
 #include "FamiTrackerDoc.h"
 #include "InsertRecordingDlg.h"
 
+int DefaultRecordingChannel(const CFamiTrackerDoc *pDoc, int CursorChannel)
+{
+	// Where the cursor is if a melody can go there, otherwise the first VRC6
+	// pulse, otherwise the first channel
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	if (CursorChannel >= 0 && CursorChannel < Channels && IsMelodyChannel(pDoc, CursorChannel))
+		return CursorChannel;
+	for (int i = 0; i < Channels; ++i) {
+		if (pDoc->GetChannelType(i) == CHANID_VRC6_PULSE1)
+			return i;
+	}
+	return 0;
+}
+
+void FillRecordingChannels(CComboBox &List, const CFamiTrackerDoc *pDoc, bool Drums, int MelodyChannel)
+{
+	List.ResetContent();
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	for (int i = 0; i < Channels; ++i) {
+		const bool Fits = Drums ? (pDoc->GetChannelType(i) == CHANID_NOISE) : IsMelodyChannel(pDoc, i);
+		if (!Fits)
+			continue;
+		CString Name = RecordingChannelName(pDoc, i);
+		if (!Drums && IsBassChannel(pDoc, i))
+			Name += _T(" (bass)");
+		const int Item = List.AddString(Name);
+		List.SetItemData(Item, static_cast<DWORD_PTR>(i));
+		if (Drums || i == MelodyChannel)
+			List.SetCurSel(Item);
+	}
+	if (List.GetCurSel() == CB_ERR && List.GetCount() > 0)
+		List.SetCurSel(0);
+	List.EnableWindow(!Drums);
+}
+
+int PickedRecordingChannel(const CComboBox &List)
+{
+	const int Selected = List.GetCurSel();
+	return (Selected != CB_ERR) ? static_cast<int>(List.GetItemData(Selected)) : -1;
+}
+
 IMPLEMENT_DYNAMIC(CInsertRecordingDlg, CDialog)
 
 CInsertRecordingDlg::CInsertRecordingDlg(const CFamiTrackerDoc *pDoc, LPCTSTR Path, recording_kind_t Guess,
@@ -35,20 +76,9 @@ CInsertRecordingDlg::CInsertRecordingDlg(const CFamiTrackerDoc *pDoc, LPCTSTR Pa
 	m_sGuessText(GuessText),
 	m_iKind(Guess),
 	m_iChannel(-1),
-	m_iMelodyChannel(-1),
+	m_iMelodyChannel(DefaultRecordingChannel(pDoc, CursorChannel)),
 	m_bExpression(true)
 {
-	// A melody goes where the cursor is if it can, otherwise on the first VRC6
-	// pulse, otherwise on the first channel
-	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
-	if (CursorChannel >= 0 && CursorChannel < Channels && IsMelodyChannel(pDoc, CursorChannel))
-		m_iMelodyChannel = CursorChannel;
-	for (int i = 0; i < Channels && m_iMelodyChannel < 0; ++i) {
-		if (pDoc->GetChannelType(i) == CHANID_VRC6_PULSE1)
-			m_iMelodyChannel = i;
-	}
-	if (m_iMelodyChannel < 0)
-		m_iMelodyChannel = 0;
 }
 
 BEGIN_MESSAGE_MAP(CInsertRecordingDlg, CDialog)
@@ -95,32 +125,12 @@ recording_kind_t CInsertRecordingDlg::SelectedKind() const
 void CInsertRecordingDlg::FillChannels()
 {
 	// Keep the melody channel picked so far
-	const int Selected = m_cChannel.GetCurSel();
-	if (Selected != CB_ERR) {
-		const int Channel = static_cast<int>(m_cChannel.GetItemData(Selected));
-		if (IsMelodyChannel(m_pDocument, Channel))
-			m_iMelodyChannel = Channel;
-	}
+	const int Picked = PickedRecordingChannel(m_cChannel);
+	if (Picked >= 0 && IsMelodyChannel(m_pDocument, Picked))
+		m_iMelodyChannel = Picked;
 
-	// Drums: only the noise channel. A melody: any channel but noise and DPCM.
 	const bool Drums = (SelectedKind() == RECORDING_DRUMS);
-	m_cChannel.ResetContent();
-	const int Channels = static_cast<int>(m_pDocument->GetAvailableChannels());
-	for (int i = 0; i < Channels; ++i) {
-		const bool Fits = Drums ? (m_pDocument->GetChannelType(i) == CHANID_NOISE) : IsMelodyChannel(m_pDocument, i);
-		if (!Fits)
-			continue;
-		CString Name = RecordingChannelName(m_pDocument, i);
-		if (!Drums && IsBassChannel(m_pDocument, i))
-			Name += _T(" (bass)");
-		const int Item = m_cChannel.AddString(Name);
-		m_cChannel.SetItemData(Item, static_cast<DWORD_PTR>(i));
-		if (Drums || i == m_iMelodyChannel)
-			m_cChannel.SetCurSel(Item);
-	}
-	if (m_cChannel.GetCurSel() == CB_ERR && m_cChannel.GetCount() > 0)
-		m_cChannel.SetCurSel(0);
-	m_cChannel.EnableWindow(!Drums);
+	FillRecordingChannels(m_cChannel, m_pDocument, Drums, m_iMelodyChannel);
 	GetDlgItem(IDC_REC_EXPRESSION)->EnableWindow(!Drums);	// drums keep their loudness anyway
 }
 
@@ -132,8 +142,7 @@ void CInsertRecordingDlg::OnKindChanged()
 void CInsertRecordingDlg::OnOK()
 {
 	m_iKind = SelectedKind();
-	const int Selected = m_cChannel.GetCurSel();
-	m_iChannel = (Selected != CB_ERR) ? static_cast<int>(m_cChannel.GetItemData(Selected)) : -1;
+	m_iChannel = PickedRecordingChannel(m_cChannel);
 	m_bExpression = IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED;
 	CDialog::OnOK();
 }

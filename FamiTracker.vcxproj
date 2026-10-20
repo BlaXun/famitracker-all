@@ -459,6 +459,11 @@
     <ClInclude Include="Source\InsertRecordingDlg.h" />
     <ClCompile Include="Source\Transcribe\Guess.cpp" />
     <ClCompile Include="Source\Transcribe\Expression.cpp" />
+    <ClCompile Include="Source\MicRecorder.cpp" />
+    <ClInclude Include="Source\MicRecorder.h" />
+    <ClCompile Include="Source\RecordDlg.cpp" />
+    <ClInclude Include="Source\RecordDlg.h" />
+    <ClCompile Include="Source\Transcribe\Take.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

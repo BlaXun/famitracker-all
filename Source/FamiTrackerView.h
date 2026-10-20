@@ -337,6 +337,7 @@ public:
 	afx_msg void OnEditPaste();
 	afx_msg void OnEditPastemix();
 	afx_msg void OnEditInsertRecording();
+	afx_msg void OnEditRecord();
 	afx_msg void OnEditDelete();
 	afx_msg void OnEditInstrumentMask();
 	afx_msg void OnEditVolumeMask();

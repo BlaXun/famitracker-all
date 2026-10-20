@@ -416,7 +416,7 @@ bool CMainFrame::CreateToolbars()
 	rbi1.fMask		= RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_SIZE;
 	rbi1.fStyle		= RBBS_NOGRIPPER;
 	rbi1.hwndChild	= m_wndToolBar;
-	rbi1.cxMinChild	= SX(554);
+	rbi1.cxMinChild	= SX(577);	// 554, plus 23 for the microphone button
 	rbi1.cyMinChild	= SY(22);
 	rbi1.cx			= SX(496);
 

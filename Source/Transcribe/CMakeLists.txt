@@ -26,6 +26,7 @@ add_library(transcribe STATIC
 	Expression.cpp
 	Notes.cpp
 	Hits.cpp
+	Take.cpp
 	TextModule.cpp
 )
 target_include_directories(transcribe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

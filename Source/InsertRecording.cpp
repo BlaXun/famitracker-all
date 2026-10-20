@@ -19,9 +19,9 @@
 ** must bear this legend.
 */
 
-// Edit > Insert recording. The transcription engine in Transcribe/ finds the
-// notes; this file turns them into pattern cells and writes them into the
-// open song as one undoable action.
+// Edit > Insert recording and the Record dialog. The transcription engine in
+// Transcribe/ finds the notes; this file turns them into pattern cells and
+// writes them into the open song as one undoable action.
 
 // Standard and engine headers come before stdafx.h, whose DEBUG_NEW macro
 // would otherwise rewrite the placement new inside the standard library.
@@ -191,16 +191,16 @@ int FindOrAddInstrument(CFamiTrackerDoc *pDoc, const char *pName, int Chip, cons
 	return Index;
 }
 
-// Writes one channel's cells from the cursor on. Every frame it touches first
-// gets a pattern of its own in that channel, so frames that played the same
-// pattern stay as they were. Frames past the end of the song are added.
+// Writes one channel's cells from a frame and row on. Every frame it touches
+// first gets a pattern of its own in that channel, so frames that played the
+// same pattern stay as they were. Frames past the end of the song are added.
 class CInsertRecordingAction : public CAction
 {
 public:
-	CInsertRecordingAction(const std::vector<RecordedCell> &Cells, int Rows, int Channel) :
+	CInsertRecordingAction(const std::vector<RecordedCell> &Cells, int Rows, int Channel, int Frame, int Row) :
 		CAction(ACT_INSERT_RECORDING), m_Cells(Cells), m_iRows(Rows),
-		m_iTrack(0), m_iFrame(0), m_iChannel(static_cast<unsigned int>(Channel)), m_iRow(0), m_iColumn(0),
-		m_iOldFrameCount(0)
+		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iChannel(static_cast<unsigned int>(Channel)),
+		m_iRow(static_cast<unsigned int>(Row)), m_iColumn(0), m_iOldFrameCount(0)
 	{
 	}
 
@@ -233,12 +233,7 @@ private:
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
 {
-	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
-	CPatternEditor *pEditor = pView->GetPatternEditor();
-
 	m_iTrack = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
-	m_iFrame = static_cast<unsigned int>(pEditor->GetFrame());
-	m_iRow = static_cast<unsigned int>(pEditor->GetRow());
 	m_iColumn = 0;	// the note column of the channel written to
 
 	Redo(pMainFrm);
@@ -411,11 +406,8 @@ bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel)
 	return ChanID == CHANID_TRIANGLE || ChanID == CHANID_VRC6_SAWTOOTH;
 }
 
-bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message)
+void GuessRecording(const transcribe::Audio &Audio, recording_kind_t &Kind, CString &Description)
 {
-	transcribe::Audio Audio;
-	if (!ReadRecording(Path, Audio, Message))
-		return false;
 	const transcribe::SourceGuess Guess = transcribe::GuessSource(Audio);
 	switch (Guess.source) {
 	case transcribe::Source::Whistle: Kind = RECORDING_WHISTLE; break;
@@ -423,16 +415,40 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 	case transcribe::Source::Taps: Kind = RECORDING_DRUMS; break;
 	}
 	Description = CString(transcribe::SourceName(Guess.source));
+}
+
+bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message)
+{
+	transcribe::Audio Audio;
+	if (!ReadRecording(Path, Audio, Message))
+		return false;
+	GuessRecording(Audio, Kind, Description);
 	return true;
 }
 
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
 	CString &Message)
 {
+	transcribe::Audio Audio;
+	if (!ReadRecording(Path, Audio, Message))
+		return false;
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CPatternEditor *pEditor = pView->GetPatternEditor();
+	const transcribe::TakeTiming Timing;	// the first note lands on the cursor row
+	return InsertTake(pMainFrm, Audio, Timing, Kind, Channel, Expression, pEditor->GetFrame(), pEditor->GetRow(), Message);
+}
+
+bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
+	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message)
+{
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
-	CPatternEditor *pEditor = pView->GetPatternEditor();
 	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	if (StartFrame < 0 || StartFrame >= static_cast<int>(pDoc->GetFrameCount(Track)) ||
+		StartRow < 0 || StartRow >= static_cast<int>(pDoc->GetPatternLength(Track))) {
+		Message = _T("The place to insert at is outside the song.");
+		return false;
+	}
 
 	// Drums always go on the noise channel
 	if (Kind == RECORDING_DRUMS) {
@@ -451,10 +467,6 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 		Message = _T("A melody can't go on the noise or DPCM channel. Pick another channel.");
 		return false;
 	}
-
-	transcribe::Audio Audio;
-	if (!ReadRecording(Path, Audio, Message))
-		return false;
 
 	// Rows at the song's speed and tempo, as CSoundGen plays them
 	transcribe::Grid Grid;
@@ -475,8 +487,17 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 			Message = _T("No taps or beats were found in the recording. Is it loud enough?");
 			return false;
 		}
+		if (!Timing.lineUpFirstNote) {
+			// A take recorded against the click: the click itself is no drum
+			transcribe::RemoveClickHits(Hits, Audio, Timing.clicks, Timing.leak);
+			transcribe::PlaceHits(Hits, Timing.start, Grid, true);
+			if (Hits.empty()) {
+				Message = _T("No taps or beats were found after the count-in.");
+				return false;
+			}
+		}
 		transcribe::ClassifyHits(Hits);
-		const std::vector<transcribe::GridHit> Drums = transcribe::QuantizeHits(Hits, Grid, true);
+		const std::vector<transcribe::GridHit> Drums = transcribe::QuantizeHits(Hits, Grid, Timing.lineUpFirstNote);
 
 		const int Kick = FindOrAddInstrument(pDoc, "Kick", SNDCHIP_NONE, KICK_VOLUME, int(sizeof(KICK_VOLUME)), -1, NULL, 0);
 		const int Snare = FindOrAddInstrument(pDoc, "Snare", SNDCHIP_NONE, SNARE_VOLUME, int(sizeof(SNARE_VOLUME)), -1, NULL, 0);
@@ -523,8 +544,19 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 			Options.gentleVibrato = false;
 		transcribe::DescribeExpression(Notes, Frames, Options);
 
+		if (!Timing.lineUpFirstNote) {
+			// A take recorded against the click: the downbeat after the count-in is the start row
+			transcribe::PlaceNotes(Notes, Timing.start, Grid, true);
+			if (Notes.empty()) {
+				Message = _T("No notes were found after the count-in.");
+				return false;
+			}
+		}
+
 		transcribe::Transpose(Notes, transcribe::OctaveShiftFor(Notes, Low ? 48 : 67));
-		const std::vector<transcribe::GridNote> Melody = transcribe::Quantize(Notes, Grid, transcribe::QuantizeOptions());
+		transcribe::QuantizeOptions Rules;
+		Rules.alignToStart = Timing.lineUpFirstNote;
+		const std::vector<transcribe::GridNote> Melody = transcribe::Quantize(Notes, Grid, Rules);
 
 		int Instrument = INVALID_INSTRUMENT;
 		const int Chip = pDoc->GetChipType(Channel);
@@ -586,8 +618,8 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 
 	// Room: the song has at most MAX_FRAMES frames
 	const unsigned int Length = pDoc->GetPatternLength(Track);
-	const unsigned int Frame = static_cast<unsigned int>(pEditor->GetFrame());
-	const unsigned int Row = static_cast<unsigned int>(pEditor->GetRow());
+	const unsigned int Frame = static_cast<unsigned int>(StartFrame);
+	const unsigned int Row = static_cast<unsigned int>(StartRow);
 	unsigned int LastFrame = Frame + (Row + static_cast<unsigned int>(Rows) - 1) / Length;
 	bool Cut = false;
 	if (LastFrame >= MAX_FRAMES) {
@@ -628,7 +660,7 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 		return false;
 	}
 
-	CInsertRecordingAction *pAction = new CInsertRecordingAction(Cells, Rows, Channel);
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(Cells, Rows, Channel, StartFrame, StartRow);
 	if (!pMainFrm->AddAction(pAction)) {
 		Message = _T("The recording couldn't be inserted.");
 		return false;
