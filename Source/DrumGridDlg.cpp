@@ -89,7 +89,7 @@ private:
 	CDrumGridDlg *m_pDlg;
 	int m_iHoverLane, m_iHoverStep;
 	int m_iDragLane;					// the line being painted along, -1 for none
-	int m_iDragMode;					// the drum put on, or DRUM_NONE: taking them off
+	int m_iDragMode;					// the drum put on (on empty steps), or DRUM_NONE: taking them off
 	int m_iLastStep;
 	CFont m_Font;
 };
@@ -105,12 +105,13 @@ public:
 	int LaneAt(int Step) const;
 	int PlayingStep() const { return m_iPlaying; }
 	bool HasOther() const;
-	void PaintStep(int Step, int Lane, int Mode);
+	void PaintStep(int Step, int Lane, int Mode, bool Replace);
 	void Commit();
 	void Hint(LPCTSTR Text);
 
 protected:
 	virtual BOOL OnInitDialog();
+	virtual BOOL PreTranslateMessage(MSG *pMsg);
 	virtual void OnOK();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
@@ -302,7 +303,7 @@ void CDrumGridWnd::OnLButtonDown(UINT nFlags, CPoint point)
 	if (Lane == DRUM_OTHER)
 		m_iDragMode = DRUM_NONE;	// other notes can only be taken off
 	m_iLastStep = Step;
-	m_pDlg->PaintStep(Step, Lane, m_iDragMode);
+	m_pDlg->PaintStep(Step, Lane, m_iDragMode, true);
 	SetCapture();
 }
 
@@ -313,7 +314,7 @@ void CDrumGridWnd::OnMouseMove(UINT nFlags, CPoint point)
 		if (Step != m_iLastStep) {
 			const int From = std::min(Step, m_iLastStep), To = std::max(Step, m_iLastStep);
 			for (int s = From; s <= To; ++s)
-				m_pDlg->PaintStep(s, m_iDragLane, m_iDragMode);
+				m_pDlg->PaintStep(s, m_iDragLane, m_iDragMode, false);	// other drums stay
 			m_iLastStep = Step;
 		}
 		return;
@@ -332,7 +333,7 @@ void CDrumGridWnd::OnMouseMove(UINT nFlags, CPoint point)
 			else if (m_pDlg->LaneAt(Step) == Lane)
 				Text.Format(_T("Step %d: click to take the %s off."), Step + 1, static_cast<LPCTSTR>(CString(DrumName(Lane)).MakeLower()));
 			else
-				Text.Format(_T("Step %d: click to put a %s here, or drag along the line."), Step + 1,
+				Text.Format(_T("Step %d: click to put a %s here, or drag along the line to fill the empty steps."), Step + 1,
 					static_cast<LPCTSTR>(CString(DrumName(Lane)).MakeLower()));
 			m_pDlg->Hint(Text);
 		}
@@ -438,7 +439,7 @@ BOOL CDrumGridDlg::OnInitDialog()
 	for (int i = 0; i < 4; ++i)
 		SetDlgItemText(IDC_DRUM_BEAT1 + i, CString(BeatName(i)));
 	Load();
-	Status(_T("Click the steps to put drums on them, or drag along a line. Each change is one Ctrl+Z in the song."));
+	Status(_T("Click the steps to put drums on them, or drag along a line. Ctrl+Z undoes a change, Ctrl+Y does it again."));
 	SetTimer(TMR_FOLLOW, FOLLOW_MS, NULL);
 	return TRUE;
 }
@@ -536,18 +537,21 @@ void CDrumGridDlg::Preview(int Lane)
 	theApp.GetSoundGenerator()->QueueNote(m_iNoise, Note, NOTE_PRIO_2);
 }
 
-void CDrumGridDlg::PaintStep(int Step, int Lane, int Mode)
+// Mode: the drum put on, or DRUM_NONE to take Lane's off. Without Replace,
+// steps with another drum keep it (dragging along a line fills the gaps).
+void CDrumGridDlg::PaintStep(int Step, int Lane, int Mode, bool Replace)
 {
 	if (Step < 0 || Step >= Steps())
 		return;
 	stChanNote &Cell = m_Cells[static_cast<size_t>(Step)];
+	const int Now = DrumOf(Cell, m_Kit);
 	if (Mode == DRUM_NONE) {
-		if (DrumOf(Cell, m_Kit) != Lane)
+		if (Now != Lane)
 			return;		// only that line's drums come off
 		SetDrum(Cell, DRUM_NONE, m_Kit);
 	}
 	else {
-		if (DrumOf(Cell, m_Kit) == Mode || !EnsureDrum(Mode))
+		if (Now == Mode || (!Replace && Now != DRUM_NONE) || !EnsureDrum(Mode))
 			return;
 		SetDrum(Cell, Mode, m_Kit);
 		Preview(Mode);
@@ -579,7 +583,7 @@ void CDrumGridDlg::Beat(int Which)
 	Commit();
 	CString Text;
 	if (Which == BEAT_CLEAR)
-		Text = _T("No drums in this bar now. Ctrl+Z in the song brings them back.");
+		Text = _T("No drums in this bar now. Ctrl+Z brings them back.");
 	else
 		Text.Format(_T("The \"%s\" beat is in this bar. Copy it to the next bar or to every bar, or change steps by clicking."),
 			static_cast<LPCTSTR>(CString(BeatName(Which))));
@@ -621,9 +625,9 @@ void CDrumGridDlg::CopyTo(int First, int Last)
 	}
 	Load();
 	if (First == Last)
-		Message.Format(_T("Copied this bar's drums to bar %d. Ctrl+Z in the song undoes it."), First + 1);
+		Message.Format(_T("Copied this bar's drums to bar %d. Ctrl+Z undoes it."), First + 1);
 	else
-		Message = _T("Copied this bar's drums to every bar of the song. Ctrl+Z in the song undoes it.");
+		Message = _T("Copied this bar's drums to every bar of the song. Ctrl+Z undoes it.");
 	Status(Message);
 }
 
@@ -678,12 +682,20 @@ void CDrumGridDlg::OnTimer(UINT_PTR nIDEvent)
 		CDialog::OnTimer(nIDEvent);
 		return;
 	}
-	// The step the song plays, when it's in this bar
+	// The step the song plays, when it's in this bar; in follow mode the grid
+	// turns to the bar that plays
 	int Playing = -1;
 	if (theApp.IsPlaying()) {
 		CSoundGen *pSound = theApp.GetSoundGenerator();
 		if (pSound != NULL && pSound->GetPlayerTrack() == static_cast<int>(Track())) {
 			const int Row = pSound->GetPlayerFrame() * Length() + pSound->GetPlayerRow();
+			CFamiTrackerView *pView = CFamiTrackerView::GetView();
+			const int Bar = Row / m_iBarSteps;
+			if ((Row < BarStart() || Row >= BarStart() + Steps()) && Bar < m_iBars && pView != NULL && pView->GetFollowMode() &&
+				!m_bDirty && ::GetCapture() != m_Grid.GetSafeHwnd()) {
+				m_iBar = Bar;
+				Load();
+			}
 			if (Row >= BarStart() && Row < BarStart() + Steps())
 				Playing = Row - BarStart();
 		}
@@ -703,6 +715,21 @@ void CDrumGridDlg::OnTimer(UINT_PTR nIDEvent)
 void CDrumGridDlg::OnOK()
 {
 	// Enter doesn't close it
+}
+
+BOOL CDrumGridDlg::PreTranslateMessage(MSG *pMsg)
+{
+	// Ctrl+Z and Ctrl+Y undo and redo in the song, as they do outside
+	if (pMsg->message == WM_KEYDOWN && (pMsg->wParam == 'Z' || pMsg->wParam == 'Y') && (::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+		::GetCapture() != m_Grid.GetSafeHwnd()) {
+		const bool Undo = pMsg->wParam == 'Z';
+		m_pMainFrame->SendMessage(WM_COMMAND, Undo ? ID_EDIT_UNDO : ID_EDIT_REDO);
+		Load();
+		Status(Undo ? _T("Undone: the song is as it was before that change. Ctrl+Y does it again.") :
+			_T("Done again. Ctrl+Z undoes it."));
+		return TRUE;
+	}
+	return CDialog::PreTranslateMessage(pMsg);
 }
 
 void CDrumGridDlg::Hint(LPCTSTR Text)
