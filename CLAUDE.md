@@ -97,6 +97,13 @@ replaced the VS2008 project:
     `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
   - Job logs and artifact downloads can be blocked in sandboxed sessions; the
     report doesn't need them.
+  - After a green build of `beginner-friendly` or `recorder`, the `publish` job
+    replaces that branch's rolling GitHub release (tag `build-<branch>`)
+    using `.github/scripts/publish-build.sh`. `beginner-friendly` is marked
+    Latest and `recorder` is a pre-release. Each release has a zip with
+    `FamiTracker.exe` (plus `wav2ftm.exe` on recorder) and a debug-symbols
+    zip. These tags are build pointers and get deleted and recreated; never
+    use them for real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
@@ -304,7 +311,8 @@ swap to study. Touch points:
 - **CRLF line endings** everywhere except `gpl.txt`, `hlp/gpl.txt`,
   `Source/Blip_Buffer/Blip_Buffer.h`, `Source/resampler/resample.hpp`,
   `resample.inl`, `sinc.cpp` and `sinc.hpp`. There is no `.gitattributes`, so
-  keep CRLF when editing.
+  keep CRLF when editing. Shell scripts (`.github/scripts/*.sh`) are the
+  deliberate exception: they must stay LF, since bash chokes on `\r`.
 - **Resource encoding:** `FamiTracker.rc` is Windows-1252
   (`#pragma code_page(1252)`). Never convert it to UTF-8.
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies

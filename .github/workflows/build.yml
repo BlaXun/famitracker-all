@@ -2,6 +2,7 @@ name: Windows build
 
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -101,3 +102,36 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5
           $body | gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input - | Out-Null
+
+  # After a green build on the main working branches, replace that branch's
+  # rolling release (tag build-<branch>) with the new FamiTracker.exe.
+  publish:
+    name: Publish latest build
+    needs: build
+    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'recorder')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 30
+
+      - name: Download FamiTracker.exe
+        uses: actions/download-artifact@v4
+        with:
+          name: FamiTracker-Release-Win32
+          path: dist/FamiTracker
+
+      - name: Download wav2ftm.exe (recorder branch)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: wav2ftm-Win32
+          path: dist/wav2ftm
+
+      - name: Package and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: bash .github/scripts/publish-build.sh
