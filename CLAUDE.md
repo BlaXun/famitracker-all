@@ -36,7 +36,10 @@ tracks as looping OGG files through the `export_for_game` tool
 own are scores in `Source/Api/Jingles.cpp`. The sound effects of
 `make_sound_effect`, tracks at speed 1 that halt, are built a tick at a time
 in `Source/Api/SoundEffects.cpp` or made from a voice recording, and turned
-into instruments, by `Source/Transcribe/SoundEffect.cpp`.
+into instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound
+effect from your voice (`Source/VoiceEffectDlg.cpp`) records a take, which
+`transcribe::VoiceTake` ends when the sound is over, and adds it with that
+tool through `CMcpLink`.
 
 ## What this repository is
 

@@ -33,6 +33,8 @@
 
 namespace ftapi {
 
+struct SongInfo;
+
 struct SoundEffectKind {
 	std::string Name;			// "jump"
 	std::string Use;			// what it's for, in a few words
@@ -58,5 +60,14 @@ struct SoundEffectChanges {
 // each time, and every other one changes a pulse's duty.
 transcribe::SoundEffect ChangeSoundEffect(const transcribe::SoundEffect &Effect, const SoundEffectChanges &Changes);
 std::string VariantText(int Variant);	// "3 semitones higher, 15% shorter, another duty"; "" for 1
+
+// A sound effect's track and instruments share its name: "SFX Jump", with
+// "SFX Jump (pulse 2)" and so on for its other layers. FamiTracker reuses an
+// instrument when one has the name already, so a name is free when no track
+// and no instrument has it (or one of its layers' names), whatever the case.
+// FreeSoundName: Base, or Base with a number ("SFX Jump 2") when it's taken.
+// SoundNameProblem: why Name can't be used, or "" when it can.
+std::string FreeSoundName(const SongInfo &Song, const std::string &Base);
+std::string SoundNameProblem(const SongInfo &Song, const std::string &Name);
 
 }	// namespace ftapi

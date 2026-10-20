@@ -20,17 +20,15 @@ which plays the tracks as OGG files.
 
 Most of the work so far is on the `recorder` branch (see Feature branches),
 whose build is the `build-recorder` pre-release: recording, clips, the piano
-roll, the export for games and the Claude Code connection. The
-`beginner-friendly` build, the "Latest" download, has only the foundation.
+roll, the export for games, sound effects and the Claude Code connection.
+The `beginner-friendly` build, the "Latest" download, has only the
+foundation.
 
 Next, in this order:
 
-1. **Sound effects** for the game: by voice ("pew", "boing", "kssh") and
-   from Claude Code, exported like the music (as OGG files that play once,
-   with the GameMaker code).
-2. **Merge `recorder` into `beginner-friendly`**, so the "Latest" download
+1. **Merge `recorder` into `beginner-friendly`**, so the "Latest" download
    has everything.
-3. The steps below that make FamiTracker itself simpler (3, 4, then 6),
+2. The steps below that make FamiTracker itself simpler (3, 4, then 6),
    which haven't been started.
 
 ## 1. Foundation
@@ -135,17 +133,20 @@ when ready.
     or linked, with a clip editor.
   - The piano roll (step 5) and the export for games (step 2).
   - The Claude Code connection, merged from `api` (below).
+  - Sound effects for the game, each a track that plays once and exports
+    like the music: Edit > Sound effect from your voice ("pew", "boing",
+    "kssh" into the microphone; the take stops by itself and plays back as
+    the NES would), and Claude Code's `make_sound_effect` (25 kinds with
+    variants, or a recording).
 
   Still to do, in this order:
-  1. Sound effects by voice ("pew", "boing", "kssh"), exported like the
-     music (see Where things stand).
-  2. More natural input: start from a groove (pick a mood, tempo and key,
+  1. More natural input: start from a groove (pick a mood, tempo and key,
      get a few bars of drums, bass and chords, and sing the melody over
      them); re-sing just a selection (the song plays a bar before, the take
      replaces only those rows); tap the tempo instead of setting speed and
      tempo.
-  3. Chords by name ("C G Am F") or strummed on a guitar.
-  4. A small page on the phone that records ideas over Wi-Fi into the clips.
+  2. Chords by name ("C G Am F") or strummed on a guitar.
+  3. A small page on the phone that records ideas over Wi-Fi into the clips.
 - **`api` (merged into `recorder`, where it continues; see `MCP.md`):**
   FamiTracker is the MCP server itself, speaking Streamable HTTP on
   `127.0.0.1` with an access token, opt-in in File > Connect Claude Code.
@@ -153,7 +154,7 @@ when ready.
   musical terms (bars, beats, note names, instruments, keys and chords), can't
   hear, so it gets checks and a picture of the notes, and its ideas arrive as
   clips unless the user lets it change the song directly, always undoable.
-  Its 25 tools:
+  Its 26 tools:
   - read and write parts, presets, transpose and change mode, chords and a
     bass line, echo, vibrato, moods ("darker", "happier", "underwater") in
     one go, checks, a picture of the notes, play;
@@ -164,12 +165,13 @@ when ready.
   - switching the expansion chip (it asks first when notes would be
     cleared), with the VRC7's built-in sounds by name;
   - speed and tempo from a BPM (rows of even length first) or as
-    FamiTracker's own numbers.
+    FamiTracker's own numbers;
+  - sound effects for the game, from 25 kinds or a voice recording.
 
-  Ideas not built yet: sound effects, instruments described in words, FDS
-  and N163 instruments, a soundtrack guide (main motif, house sounds, keys
-  per area), song sections, named versions to compare, listening help (loop,
-  solo, mute), and recording through Claude.
+  Ideas not built yet: instruments described in words, FDS and N163
+  instruments, a soundtrack guide (main motif, house sounds, keys per area),
+  song sections, named versions to compare, listening help (loop, solo,
+  mute), and recording through Claude.
 - **`nsf-import` (planned):** pull instruments, and optionally songs, out of
   NSF files.
   - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on

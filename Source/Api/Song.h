@@ -156,6 +156,10 @@ public:
 	// Writes a file next to the song (FileName has no folders), replacing one
 	// of that name; the path written comes back in Path
 	virtual bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
+	// A file on the user's computer named as the tools are given it (UTF-8,
+	// with Windows' backslashes), as the C library opens it: FamiTracker turns
+	// it into the Windows code page it runs in
+	virtual std::string LocalPath(const std::string &Path) = 0;
 
 	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
 	virtual void Stop() = 0;

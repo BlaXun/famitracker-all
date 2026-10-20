@@ -38,7 +38,7 @@ clips to place again, as copies or linked.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 447 checks, mostly on synthesized audio, covering:
+- [x] Tests: 499 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - sung syllables: repeated ones on one pitch, scoops, glides and drifts
@@ -50,7 +50,9 @@ clips to place again, as copies or linked.
   - the FFT difference function against the direct sum,
   - the click, finding it in a take recorded on speakers and taking it out
     of drum hits, measuring the delay of taps, and lining takes up with rows,
-  - keys, bars, chords for known tunes, the bass line and the arpeggios.
+  - keys, bars, chords for known tunes, the bass line and the arpeggios,
+  - sound effects from a voice ("pew", "kssh", "boing"), and when a take of
+    one is over.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -141,6 +143,10 @@ clips to place again, as copies or linked.
   placed with the mouse. Effects are shown on the notes and put on them from
   a menu: vibrato, tremolo, chords, slides, glides, bends and fades. Every
   change is undoable.
+- [x] Sound effects from your voice (`VoiceEffectDlg.cpp`; see below): Edit >
+  Sound effect from your voice records "pew", "boing" or "kssh", stops by
+  itself when the sound is over, plays it as the NES would and adds it as a
+  track that plays once, for the export for games.
 - [ ] Next, more natural input, built on the recorder:
   - start from a groove: pick a mood (overworld, battle, dungeon, boss,
     jingle), a tempo and a key, get a few bars of drums, bass and chords, and
@@ -148,7 +154,6 @@ clips to place again, as copies or linked.
   - re-sing just a selection: the song plays a bar before, and the take
     replaces only the selected rows;
   - tap the tempo instead of setting speed and tempo numbers;
-  - sound effects by voice ("pew", "boing", "kssh"), exported like the music;
   - chords by name ("C G Am F") or strummed on a guitar.
 - [x] Claude Code connection, first version (`MCP.md`): File > Connect
   Claude Code lets Claude Code read the song in musical terms, write parts
@@ -188,6 +193,43 @@ takes the clicks out of drum takes, but a song playing along can still end up
 in a melody. If the notes come out late, press Test timing once and tap
 along. If the meter says "No sound?", check that Windows' privacy settings let
 apps use the microphone.
+
+## Sound effects from your voice
+
+Edit > Sound effect from your voice turns a sound you make into a sound
+effect for your game, a track of its own:
+
+1. Press Record and make the sound: "pew", "boing", "kssh", a whistle. The
+   take stops by itself once you've been quiet for a moment, or press Stop.
+2. FamiTracker says what it heard and plays it as the NES would. Your
+   voice's pitch and loudness go on a pulse channel, sliding between notes;
+   the breathy and noisy parts (a "k", an "sh", a puff of breath) go on the
+   noise channel, brighter for "sss" than for a breath. Listen plays it
+   again, and Your recording plays the take.
+3. Pitch moves it by whole octaves. "Where game sounds sit" puts its middle
+   near E-4, where NES sound effects often are; "As you made it" keeps your
+   pitch. Without "Breathy and noisy parts on the noise channel" it's a
+   pulse alone.
+4. Give it a name and press Add to the song (or Enter in the name box). The
+   new track plays at speed 1, a row a tick, and halts at its end, so File >
+   Export for games saves it as a sound that plays once
+   (`audio_play_sound(snd_sfx_pew, 0, false)` in GameMaker). Its
+   instruments, named after it, hold the shape in their sequences, so you can
+   smooth it in the instrument editor.
+
+Open a WAV file... uses a recording you have instead. Takes are kept in
+`Documents\FamiTracker recordings` as "Voice <date> <time>.wav", so Claude
+Code can make another version from one later. A sound effect lasts up to 4.2
+seconds (5 on PAL). Keep sound effects in a module of their own ("Sound
+effects.ftm"), so the music stays clean.
+
+Adding goes through Claude Code's `make_sound_effect` tool (see `MCP.md`),
+so the dialog and Claude make the same sound from a take; it works without
+Claude Code connected. A take begins when the sound rises 12 dB above the
+microphone's own noise, as the meter heard it just before (at least -34
+dBFS, at most -20); the first 0.15 s, where the click of the button is, are
+left out, and it ends after 0.4 s at 30 dB below its loudest
+(`transcribe::VoiceTake`).
 
 ## Clips
 

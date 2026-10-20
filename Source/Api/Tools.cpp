@@ -3025,24 +3025,6 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 
 // Sound effects, as tracks of their own
 
-// A name no track or instrument has yet: "SFX Jump", "SFX Jump 2"
-std::string FreeSoundName(const SongInfo &Song, const std::string &Base)
-{
-	for (int n = 1; ; ++n) {
-		const std::string Candidate = n == 1 ? Base : Format("%s %d", Base.c_str(), n);
-		const std::string Lower = Lowercase(Candidate);
-		bool Taken = false;
-		for (size_t t = 0; t < Song.TrackNames.size(); ++t)
-			Taken = Taken || Lowercase(Song.TrackNames[t]) == Lower;
-		for (size_t i = 0; i < Song.Instruments.size(); ++i) {
-			const std::string Name = Lowercase(Song.Instruments[i].Name);
-			Taken = Taken || Name == Lower || Name.compare(0, Lower.size() + 2, Lower + " (") == 0;
-		}
-		if (!Taken)
-			return Candidate;
-	}
-}
-
 PresetSequence SoundSequence(int Type, const std::vector<int> &Items, int Setting = SEQUENCE_ABSOLUTE)
 {
 	PresetSequence S;
@@ -3177,7 +3159,7 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	transcribe::Audio Audio;
 	std::string Error;
 	const std::string File = WindowsPath(Path);
-	if (!transcribe::ReadWav(File, Audio, &Error))
+	if (!transcribe::ReadWav(S.Host().LocalPath(File), Audio, &Error))
 		throw Problem("The recording " + File + " couldn't be read: " + Error + " Give the path of a WAV file on the user's "
 			"computer as Windows writes it, like C:\\Users\\Name\\Documents\\pew.wav.");
 	transcribe::VoiceEffectOptions Options;
@@ -3205,11 +3187,9 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 		Base = "Voice";
 	Base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Base[0])));
 	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Base);
-	if (Name.empty())
-		throw Problem("The sound effect's name can't be empty.");
-	for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
-		if (Lowercase(S.Song.TrackNames[t]) == Lowercase(Name))
-			throw Problem(Format("There's a track called \"%s\" already; give another name.", Name.c_str()));
+	const std::string Taken = SoundNameProblem(S.Song, Name);
+	if (!Taken.empty())
+		throw Problem(Taken);
 
 	std::string Parts;
 	const int Track = WriteSoundEffect(S, Effect, Name, Parts);
@@ -3253,11 +3233,9 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	std::string Title = pKind->Name;
 	Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Title);
-	if (Name.empty())
-		throw Problem("The sound effect's name can't be empty.");
-	for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
-		if (Lowercase(S.Song.TrackNames[t]) == Lowercase(Name))
-			throw Problem(Format("There's a track called \"%s\" already; give another name.", Name.c_str()));
+	const std::string Taken = SoundNameProblem(S.Song, Name);
+	if (!Taken.empty())
+		throw Problem(Taken);
 
 	std::string Parts;
 	const int Track = WriteSoundEffect(S, Effect, Name, Parts);

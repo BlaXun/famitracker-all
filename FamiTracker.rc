@@ -127,6 +127,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
+        MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
         MENUITEM "Clips...",                    ID_EDIT_CLIPS
@@ -551,6 +552,7 @@ BEGIN
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
+    ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
@@ -1914,6 +1916,31 @@ BEGIN
     LTEXT           "The notes start at the cursor row. Drums always go on the noise channel.",IDC_STATIC,7,159,236,16
     DEFPUSHBUTTON   "Insert",IDOK,138,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,193,178,50,14
+END
+
+IDD_VOICE_EFFECT DIALOGEX 0, 0, 280, 228
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Sound effect from your voice"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Make a sound into the microphone, like ""pew"", ""boing"" or ""kssh"": the pitch and loudness of your voice go on a pulse channel, its breathy and noisy parts on the noise channel.",IDC_STATIC,7,7,266,26
+    LTEXT           "Microphone:",IDC_STATIC,7,40,46,8
+    COMBOBOX        IDC_VOICE_DEVICE,56,38,217,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Level:",IDC_STATIC,7,56,46,8
+    CONTROL         "",IDC_VOICE_LEVEL,"msctls_progress32",WS_BORDER,56,55,150,10
+    LTEXT           "",IDC_VOICE_LEVELTEXT,211,56,62,8
+    DEFPUSHBUTTON   "Record",IDC_VOICE_RECORD,56,71,60,14
+    PUSHBUTTON      "Open a WAV file...",IDC_VOICE_OPEN,121,71,76,14
+    LTEXT           "",IDC_VOICE_STATUS,7,91,266,42
+    LTEXT           "Pitch:",IDC_STATIC,7,141,46,8
+    COMBOBOX        IDC_VOICE_PITCH,56,139,150,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Breathy and noisy parts on the noise channel",IDC_VOICE_NOISE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,56,156,217,10
+    LTEXT           "Name:",IDC_STATIC,7,173,46,8
+    EDITTEXT        IDC_VOICE_NAME,56,171,150,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "Listen",IDC_VOICE_LISTEN,56,189,60,14
+    PUSHBUTTON      "Your recording",IDC_VOICE_TAKE,121,189,64,14
+    PUSHBUTTON      "Add to the song",IDC_VOICE_ADD,148,207,70,14
+    PUSHBUTTON      "Close",IDCANCEL,223,207,50,14
 END
 
 IDD_RECORD DIALOGEX 0, 0, 262, 292

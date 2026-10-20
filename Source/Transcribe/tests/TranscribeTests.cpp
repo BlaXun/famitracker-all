@@ -1881,6 +1881,117 @@ void TestVoiceEffects()
 	}
 }
 
+// Feeds a recording to a take in pieces of the size the microphone hands
+// over; the second the take stopped at, or -1
+double FeedTake(VoiceTake &take, const Audio &audio, size_t piece = 882)
+{
+	for (size_t at = 0; at < audio.samples.size(); at += piece) {
+		const size_t n = std::min(piece, audio.samples.size() - at);
+		const VoiceTake::Status status = take.Add(&audio.samples[at], n);
+		if (status != VoiceTake::Status::Waiting && status != VoiceTake::Status::Sounding)
+			return double(at + n) / audio.sampleRate;
+	}
+	return -1.0;
+}
+
+void TestVoiceTake()
+{
+	// "pew" after half a second of a quiet room, with the click of the button
+	// at the start: it stops by itself 0.4 s after the sound, and keeps just it
+	{
+		Synth s;
+		s.Silence(0.04);
+		s.Tap(true, 0.9);
+		s.Silence(0.5);
+		const double begin = s.audio.Duration();
+		Slide(s, 800.0, 300.0, 0.3, 0.5);
+		const double end = s.audio.Duration();
+		s.Silence(1.5);
+		s.AddNoise(0.002);
+		VoiceTake take(RATE, 0.003);
+		const double stopped = FeedTake(take, s.audio);
+		CHECK(take.status() == VoiceTake::Status::Over && take.heard());
+		CHECK_NEAR(stopped, end + 0.4, 0.06);
+		const Audio sound = take.Sound();
+		CHECK_NEAR(sound.Duration(), end - begin + 0.1, 0.04);
+		float early = 0.0f;	// no click in it
+		for (size_t i = 0; i < size_t(0.03 * RATE) && i < sound.samples.size(); ++i)
+			early = std::max(early, std::fabs(sound.samples[i]));
+		CHECK(early < 0.4f);
+		SoundEffect effect;
+		VoiceEffectInfo info;
+		std::string problem;
+		CHECK(VoiceToEffect(sound, VoiceEffectOptions(), effect, &info, &problem) && info.pitched);
+		CHECK(info.seconds > 0.25 && info.seconds < 0.4);
+		// What comes after it stopped isn't kept
+		const float more[4] = { 0.5f, -0.5f, 0.5f, -0.5f };
+		CHECK(take.Add(more, 4) == VoiceTake::Status::Over && take.Sound().samples.size() == sound.samples.size());
+	}
+
+	// A short gap belongs to the sound: "pew pew" is one take
+	{
+		Synth s;
+		s.Silence(0.3);
+		Slide(s, 700.0, 350.0, 0.2, 0.5);
+		s.Silence(0.25);
+		Slide(s, 700.0, 350.0, 0.2, 0.5);
+		const double end = s.audio.Duration();
+		s.Silence(1.0);
+		VoiceTake take(RATE, 0.0);
+		CHECK_NEAR(FeedTake(take, s.audio, 441), end + 0.4, 0.06);
+		CHECK_NEAR(take.Sound().Duration(), 0.65 + 0.1, 0.04);
+	}
+
+	// A loud room needs a louder sound to begin; a sound that goes on ends
+	// at the longest a take can be
+	{
+		Synth s;
+		s.Silence(1.0);
+		s.AddNoise(0.02);
+		VoiceTake take(RATE, 0.025);
+		CHECK(FeedTake(take, s.audio) < 0.0 && take.status() == VoiceTake::Status::Waiting);
+		Synth t;
+		t.Tone(330.0, 7.0, 0.4, true, 0.0, 0.0, 3);
+		CHECK_NEAR(FeedTake(take, t.audio), 5.0, 0.03);	// from where the tone began
+		CHECK(take.status() == VoiceTake::Status::TooLong);
+		CHECK_NEAR(take.Sound().Duration(), 5.05, 0.03);
+		// A very noisy microphone doesn't need shouting into
+		VoiceTake noisy(RATE, 0.2);
+		Synth u;
+		u.Silence(0.2);
+		u.Tone(440.0, 0.3, 0.15);
+		FeedTake(noisy, u.audio);
+		CHECK(noisy.heard());
+	}
+
+	// Nothing heard: it gives up after a while
+	{
+		Synth s;
+		s.Silence(8.0);
+		s.AddNoise(0.003);
+		VoiceTake take(RATE, 0.003);
+		CHECK_NEAR(FeedTake(take, s.audio), 6.0, 0.03);
+		CHECK(take.status() == VoiceTake::Status::NothingHeard && !take.heard() && take.Sound().samples.empty());
+	}
+
+	// Stop pressed: during the sound it ends short of the button's click;
+	// before any sound, there's none
+	{
+		Synth s;
+		s.Silence(0.3);
+		s.Tone(440.0, 1.0, 0.4, false, 0.0, 0.0, 3);
+		VoiceTake take(RATE, 0.0);
+		CHECK(FeedTake(take, s.audio) < 0.0 && take.status() == VoiceTake::Status::Sounding);
+		CHECK(take.Stop() && take.status() == VoiceTake::Status::Over);
+		CHECK_NEAR(take.Sound().Duration(), 0.05 + 1.0 - 0.15 + 0.05, 0.02);
+		VoiceTake none(RATE, 0.0);
+		Synth q;
+		q.Silence(1.0);
+		FeedTake(none, q.audio);
+		CHECK(!none.Stop() && none.status() == VoiceTake::Status::NothingHeard);
+	}
+}
+
 int main()
 {
 	TestGridAndNames();
@@ -1911,6 +2022,7 @@ int main()
 	TestChooseChords();
 	TestBackingCells();
 	TestVoiceEffects();
+	TestVoiceTake();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

@@ -110,4 +110,58 @@ struct VoiceEffectInfo {
 bool VoiceToEffect(const Audio &audio, const VoiceEffectOptions &options, SoundEffect &effect, VoiceEffectInfo *info,
 	std::string *problem);
 
+// A take of a sound effect while the microphone records it, which says when
+// it's over, so the take stops by itself: the sound begins when the level
+// rises well above the microphone's own noise (ambient: its loudest sample
+// in the quietest moment just before), and it's over once it has stayed
+// quiet for a while, or gone on as long as a take can.
+class VoiceTake {
+public:
+	enum class Status {
+		Waiting,		// for the sound
+		Sounding,
+		Over,			// it has been quiet for a while since
+		TooLong,		// it went on for the longest a take can (it ends there)
+		NothingHeard	// no sound came
+	};
+	struct Settings {
+		double skip = 0.15;			// seconds left out at the start, where the click of the button can be heard
+		double quiet = 0.4;			// it's over after this long quiet
+		double wait = 6.0;			// no sound after this long: nothing heard
+		double longest = 5.0;		// seconds from its beginning to the end of a take that goes on
+		double margin = 0.05;		// kept before and after the sound
+	};
+
+	VoiceTake(int sampleRate, double ambient);
+	VoiceTake(int sampleRate, double ambient, const Settings &settings);
+
+	// The next samples (-1 to 1); the status after them. Once it's no longer
+	// Waiting or Sounding, what comes after is left out.
+	Status Add(const float *samples, size_t count);
+	// Stop was pressed: a sound that's going on ends here, short of the click
+	// of the button. True when there's a sound.
+	bool Stop();
+	Status status() const { return status_; }
+	bool heard() const { return start_ >= 0; }
+	// The sound with a moment before and after it (empty when nothing was heard)
+	Audio Sound() const;
+
+private:
+	void Block(float peak);
+
+	Settings settings_;
+	int rate_;
+	size_t blockSize_;			// samples per level reading (10 ms)
+	double startLevel_;		// the level a sound begins at
+	Status status_ = Status::Waiting;
+	std::vector<float> samples_;
+	size_t blocks_ = 0;			// level readings so far
+	float blockPeak_ = 0.0f;	// of the reading under way
+	size_t inBlock_ = 0;
+	float peak_ = 0.0f;			// the loudest reading since the sound began
+	long long start_ = -1;		// sample where it began
+	long long end_ = -1;		// sample where it ended, -1 while it goes on
+	long long quietFrom_ = -1;	// sample where the quiet at its end began
+};
+
 }	// namespace transcribe

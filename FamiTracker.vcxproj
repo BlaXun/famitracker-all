@@ -593,6 +593,8 @@
     <ClInclude Include="Source\MicRecorder.h" />
     <ClCompile Include="Source\RecordDlg.cpp" />
     <ClInclude Include="Source\RecordDlg.h" />
+    <ClCompile Include="Source\VoiceEffectDlg.cpp" />
+    <ClInclude Include="Source\VoiceEffectDlg.h" />
     <ClCompile Include="Source\Transcribe\Take.cpp" />
     <ClCompile Include="Source\BackingDlg.cpp" />
     <ClInclude Include="Source\BackingDlg.h" />

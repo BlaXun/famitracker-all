@@ -1376,6 +1376,12 @@
     <ClInclude Include="Source\RecordDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\VoiceEffectDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\VoiceEffectDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\Transcribe\Take.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

@@ -301,6 +301,13 @@ public:
 	}
 
 	std::map<int, Preset> Made;		// instrument -> the preset it was made from
+	std::vector<std::string> Opened;	// the files LocalPath was asked about
+
+	std::string LocalPath(const std::string &Path) override
+	{
+		Opened.push_back(Path);
+		return Path;
+	}
 	std::map<int, int> Vrc7Patches;	// instrument -> patch
 
 	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) override
@@ -2949,7 +2956,21 @@ void TestSoundEffects()
 		CHECK(Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\", \"kind\": \"jump\"}")).IsError);
 		CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"recording\": \"/mnt/c/Takes/pew.wav\"}")).Text,
 			"The recording C:\\Takes\\pew.wav couldn't be read");
+		CHECK(!Song.Opened.empty() && Song.Opened.back() == "C:\\Takes\\pew.wav");	// FamiTracker names it its way
 	}
+
+	// An instrument left from a sound whose track was removed: its name isn't
+	// free, or the new sound would play with the old instrument
+	Song.AddInstrumentInfo(40, "SFX Hurt (noise)", "2A03", false);
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"hurt\"}"));
+	CHECK_HAS(Result.Text, "Made track 9 \"SFX Hurt 2\"");
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"hurt\", \"name\": \"sfx hurt\"}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "There's an instrument called \"SFX Hurt (noise)\" already (from an earlier sound, perhaps)");
+	CHECK(FreeSoundName(Song.Info, "SFX Hurt") == "SFX Hurt 3" && FreeSoundName(Song.Info, "SFX Bonk") == "SFX Bonk");
+	CHECK(SoundNameProblem(Song.Info, "SFX Bonk").empty() && SoundNameProblem(Song.Info, "SFX Hurt (noise)") != "");
+	CHECK_HAS(SoundNameProblem(Song.Info, "SFX HURT 2"), "There's a track called \"SFX Hurt 2\" already");
+	CHECK_HAS(SoundNameProblem(Song.Info, " "), "can't be empty");
 
 	// Mistakes
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"moo\"}")).Text, "There's no \"moo\" sound. The kinds: jump, land, coin");

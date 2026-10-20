@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace transcribe {
 
@@ -509,6 +510,104 @@ bool VoiceToEffect(const Audio &audio, const VoiceEffectOptions &options, SoundE
 		}
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// A take from the microphone
+// ---------------------------------------------------------------------------
+
+VoiceTake::VoiceTake(int sampleRate, double ambient) : VoiceTake(sampleRate, ambient, Settings())
+{
+}
+
+VoiceTake::VoiceTake(int sampleRate, double ambient, const Settings &settings) :
+	settings_(settings),
+	rate_(std::max(1, sampleRate)),
+	blockSize_(static_cast<size_t>(std::max(1, rate_ / 100))),
+	// 12 dB above the microphone's noise, from -34 to -20 dBFS: a noisy
+	// microphone shouldn't need shouting into
+	startLevel_(std::min(0.1, std::max(0.02, 4.0 * std::max(0.0, ambient))))
+{
+}
+
+VoiceTake::Status VoiceTake::Add(const float *samples, size_t count)
+{
+	for (size_t i = 0; i < count && (status_ == Status::Waiting || status_ == Status::Sounding); ++i) {
+		samples_.push_back(samples[i]);
+		blockPeak_ = std::max(blockPeak_, std::fabs(samples[i]));
+		if (++inBlock_ == blockSize_) {
+			Block(blockPeak_);
+			blockPeak_ = 0.0f;
+			inBlock_ = 0;
+		}
+	}
+	return status_;
+}
+
+// A level reading: the loudest sample of the last 10 ms
+void VoiceTake::Block(float peak)
+{
+	const long long First = static_cast<long long>(blocks_ * blockSize_);
+	const long long End = First + static_cast<long long>(blockSize_);
+	++blocks_;
+	const double Seconds = static_cast<double>(End) / rate_;
+	if (status_ == Status::Waiting) {
+		if (Seconds > settings_.skip && peak >= startLevel_) {
+			status_ = Status::Sounding;
+			start_ = First;
+			peak_ = peak;
+		}
+		else if (Seconds >= settings_.wait)
+			status_ = Status::NothingHeard;
+		return;
+	}
+
+	// Quiet: 30 dB below the loudest so far, or near the microphone's noise
+	peak_ = std::max(peak_, peak);
+	if (peak < std::max(startLevel_ * 0.5, peak_ * 0.03)) {
+		if (quietFrom_ < 0)
+			quietFrom_ = First;
+		if (static_cast<double>(End - quietFrom_) / rate_ >= settings_.quiet) {
+			status_ = Status::Over;
+			end_ = quietFrom_;
+			return;
+		}
+	}
+	else
+		quietFrom_ = -1;
+	if (static_cast<double>(End - start_) / rate_ >= settings_.longest) {
+		status_ = Status::TooLong;
+		end_ = End;
+	}
+}
+
+bool VoiceTake::Stop()
+{
+	if (status_ == Status::Sounding) {
+		// The click of the button reaches the microphone at once
+		const long long Click = static_cast<long long>(samples_.size()) - static_cast<long long>(settings_.skip * rate_);
+		end_ = std::max(start_ + 1, quietFrom_ >= 0 ? std::min(quietFrom_, Click) : Click);
+		status_ = Status::Over;
+	}
+	else if (status_ == Status::Waiting)
+		status_ = Status::NothingHeard;
+	return heard();
+}
+
+Audio VoiceTake::Sound() const
+{
+	Audio Out;
+	Out.sampleRate = rate_;
+	if (start_ < 0)
+		return Out;
+	const long long Margin = static_cast<long long>(settings_.margin * rate_);
+	const long long Skip = static_cast<long long>(settings_.skip * rate_);
+	const long long Size = static_cast<long long>(samples_.size());
+	const long long From = std::max(std::min(Skip, start_), start_ - Margin);
+	const long long To = std::min(Size, end_ >= 0 ? end_ + Margin : Size);
+	if (To > From)
+		Out.samples.assign(samples_.begin() + static_cast<std::ptrdiff_t>(From), samples_.begin() + static_cast<std::ptrdiff_t>(To));
+	return Out;
 }
 
 }	// namespace transcribe

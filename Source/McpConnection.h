@@ -45,6 +45,7 @@ public:
 	void Stop();						// before the main window goes
 	void ShowDialog();					// File > Connect Claude Code
 	void ShowGameExport();				// File > Export for games, which uses the export_for_game tool
+	void ShowVoiceEffect();				// Edit > Sound effect from your voice, which uses make_sound_effect
 
 private:
 	struct Impl;

@@ -702,6 +702,22 @@
 #define IDC_GAME_EXPORT                 1386
 #define ID_FILE_EXPORTFORGAMES          33161
 
+// Edit > Sound effect from your voice (VoiceEffectDlg.cpp)
+#define IDD_VOICE_EFFECT                332
+#define IDC_VOICE_DEVICE                1387
+#define IDC_VOICE_LEVEL                 1388
+#define IDC_VOICE_LEVELTEXT             1389
+#define IDC_VOICE_RECORD                1390
+#define IDC_VOICE_OPEN                  1391
+#define IDC_VOICE_STATUS                1392
+#define IDC_VOICE_PITCH                 1393
+#define IDC_VOICE_NOISE                 1394
+#define IDC_VOICE_NAME                  1395
+#define IDC_VOICE_LISTEN                1396
+#define IDC_VOICE_TAKE                  1397
+#define IDC_VOICE_ADD                   1398
+#define ID_EDIT_VOICEEFFECT             33162
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

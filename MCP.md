@@ -312,6 +312,11 @@ voice has a pitch, a pulse follows it, sliding between notes, moved by whole
 octaves so it sits where NES sound effects do; the breathy and hissy rest
 plays on the noise channel, brighter for "sss" than for a breath. Silence
 before and after is left out, and a sound can last up to 4.2 seconds.
+FamiTracker can do this without Claude, too: Edit > Sound effect from your
+voice records the sound, plays it as the NES would and adds it with this
+same tool (see `RECORDER.md`). Its takes stay in
+`Documents\FamiTracker recordings`, so you can ask Claude for another
+version of one ("the last voice take, an octave lower").
 
 Keep sound effects in a module of their own ("Sound effects.ftm"), so your
 music file stays clean; Claude works on whichever module is open.
@@ -412,7 +417,8 @@ editor; they're muted again afterwards.
   the nearest note and the pitch sequence moves the period to the pitch
   between notes; the noise uses a fixed arpeggio), `RenderEffect` (the 2A03
   played through those sequences, for the tests) and `VoiceToEffect` (a
-  recording's loudness, pitch and zero crossings, tick by tick).
+  recording's loudness, pitch and zero crossings, tick by tick), and
+  `VoiceTake` (when a take from the microphone is over).
   ```
   cmake -S Source/Api -B build/api
   cmake --build build/api
@@ -444,7 +450,13 @@ editor; they're muted again afterwards.
 - `Source/McpConnection.cpp`: `SongHost` over the open document, the
   message-only window that answers on the UI thread, the settings (registry
   section "Claude Code") and the dialog. Song changes go through
-  `WriteSongParts` in `InsertRecording.cpp`, one undoable action each.
+  `WriteSongParts` in `InsertRecording.cpp`, one undoable action each. Paths
+  the tools are given (UTF-8) reach the C library in the Windows code page
+  (`SongHost::LocalPath`).
+- `Source/VoiceEffectDlg.cpp`: Edit > Sound effect from your voice. It
+  records with `CMicInput`, previews with `RenderEffect` through
+  `PlaySound`, and adds the track through `CVoiceEffectMaker`, which
+  `CMcpLink` implements with the `make_sound_effect` tool.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and

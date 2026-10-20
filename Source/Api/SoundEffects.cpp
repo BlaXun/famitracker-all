@@ -28,6 +28,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include "Music.h"
+#include "Song.h"
 
 namespace ftapi {
 
@@ -468,6 +470,57 @@ SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChange
 		Out.layers.push_back(Layer);
 	}
 	return Out;
+}
+
+// Names
+
+namespace {
+
+// What a sound effect called Name would clash with: a track of that name, or
+// an instrument of that name or of one of its layers ("SFX Jump (noise)")
+std::string NameClash(const SongInfo &Song, const std::string &Name, bool &Track)
+{
+	const std::string Lower = Lowercase(Name);
+	for (size_t t = 0; t < Song.TrackNames.size(); ++t) {
+		if (Lowercase(Song.TrackNames[t]) == Lower) {
+			Track = true;
+			return Song.TrackNames[t];
+		}
+	}
+	for (size_t i = 0; i < Song.Instruments.size(); ++i) {
+		const std::string Instrument = Lowercase(Song.Instruments[i].Name);
+		if (Instrument == Lower || Instrument.compare(0, Lower.size() + 2, Lower + " (") == 0) {
+			Track = false;
+			return Song.Instruments[i].Name;
+		}
+	}
+	return std::string();
+}
+
+}	// namespace
+
+std::string FreeSoundName(const SongInfo &Song, const std::string &Base)
+{
+	for (int n = 1; ; ++n) {
+		const std::string Candidate = n == 1 ? Base : Base + " " + std::to_string(n);
+		bool Track;
+		if (NameClash(Song, Candidate, Track).empty())
+			return Candidate;
+	}
+}
+
+std::string SoundNameProblem(const SongInfo &Song, const std::string &Name)
+{
+	if (Name.find_first_not_of(" \t") == std::string::npos)
+		return "The sound effect's name can't be empty.";
+	bool Track = false;
+	const std::string Clash = NameClash(Song, Name, Track);
+	if (Clash.empty())
+		return std::string();
+	if (Track)
+		return "There's a track called \"" + Clash + "\" already; give the sound another name.";
+	return "There's an instrument called \"" + Clash + "\" already (from an earlier sound, perhaps), and FamiTracker would play "
+		"the new sound with it; give the sound another name, or remove that instrument first.";
 }
 
 }	// namespace ftapi

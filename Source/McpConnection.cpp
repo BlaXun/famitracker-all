@@ -39,6 +39,7 @@
 #include "Api/Music.h"
 #include "Api/Presets.h"
 #include "Api/Song.h"
+#include "Api/SoundEffects.h"
 #include "Api/Tools.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
@@ -55,6 +56,7 @@
 #include "InsertRecording.h"
 #include "McpSocket.h"
 #include "McpConnection.h"
+#include "VoiceEffectDlg.h"
 #include "version.h"
 
 // The API's copies of FamiTracker's values must match
@@ -268,8 +270,9 @@ struct mcp_settings_t {
 	bool Wsl;			// the dialog shows the setup for Claude Code in WSL
 };
 
-// The connection: settings, listener, and the song for the tools
-class CMcpLink : public ftapi::SongHost
+// The connection: settings, listener, and the song for the tools (and for
+// Edit > Sound effect from your voice, which uses one)
+class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 {
 public:
 	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
@@ -761,6 +764,62 @@ public:
 		return true;
 	}
 
+	// Edit > Sound effect from your voice: make_sound_effect with the take
+	CString FreeSoundName(const CString &Base)
+	{
+		ftapi::SongInfo Info;
+		std::string Error;
+		if (!GetSong(Info, Error))
+			return Base;
+		return Ansi(ftapi::FreeSoundName(Info, Utf8(Base)));
+	}
+
+	int MakeSoundEffect(const CString &Path, CString &Name, bool FitOctave, int Octaves, bool Noise, CString &Error)
+	{
+		if (m_bBusy) {
+			Error = _T("FamiTracker is busy with Claude Code; try again in a moment.");
+			return -1;
+		}
+		m_bBusy = true;
+		m_bOwnDialog = true;
+		ftapi::Json Args = ftapi::Json::MakeObject();
+		Args.Set("recording", Utf8(Path));
+		if (!Name.IsEmpty())
+			Args.Set("name", Utf8(Name));
+		if (!FitOctave)
+			Args.Set("octaves", Octaves);
+		Args.Set("noise", Noise);
+		ftapi::ToolResult Result;
+		try {
+			Result = m_Tools.Call("make_sound_effect", Args);
+		}
+		catch (...) {
+			Result.Text = "The sound effect couldn't be made.";
+			Result.IsError = true;
+		}
+		m_bOwnDialog = false;
+		m_bBusy = false;
+		CFamiTrackerDoc *pDoc = Doc();
+		if (Result.IsError || pDoc == NULL) {
+			Error = Ansi(Result.Text);
+			return -1;
+		}
+		const unsigned int Made = Track();	// the new track is the selected one
+		Name = pDoc->GetTrackTitle(Made);
+		return static_cast<int>(Made);
+	}
+
+	void PlaySelectedTrack()
+	{
+		std::string Error;
+		Play(0, 0, Error);
+	}
+
+	std::string LocalPath(const std::string &Path)
+	{
+		return std::string(static_cast<LPCSTR>(CStringA(Ansi(Path))));
+	}
+
 	// File > Export for games: the export_for_game tool, for the dialog
 	CString ExportForGames(bool All, double Quality, CWnd *pProgress)
 	{
@@ -1235,7 +1294,8 @@ private:
 	CString m_sLastError;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
 	bool m_bStopping;
-	bool m_bOwnDialog;	// working for File > Export for games, whose dialog may change the song
+	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
+						// which may change the song
 	CWnd *m_pProgress;	// where a rendering's progress shows, or NULL
 	int m_iPlayFirst, m_iPlayEnd;
 	bool m_bPlayStarted;
@@ -1530,4 +1590,9 @@ void CMcpConnection::ShowGameExport()
 {
 	CGameExportDlg Dialog(&m_pImpl->Link, AfxGetMainWnd());
 	Dialog.DoModal();
+}
+
+void CMcpConnection::ShowVoiceEffect()
+{
+	ShowVoiceEffectDialog(&m_pImpl->Link, AfxGetMainWnd());
 }
