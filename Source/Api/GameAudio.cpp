@@ -46,7 +46,10 @@ bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vec
 		}
 	Out.Begin = std::max(0LL, std::min(Size, Marks[0].second));
 	if (Halts) {
+		// Up to the row with the halt, where the sound stops at once
 		Out.End = Size;
+		if (Marks.size() >= Rows.size())
+			Out.End = std::max(Out.Begin, std::min(Size, Marks[Rows.size() - 1].second));
 		return true;
 	}
 

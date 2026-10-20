@@ -52,8 +52,8 @@ struct GameCut {
 // it the same way both times (CleanSeam; the noise channel never sounds quite
 // the same), else the second time through. Its two ends move together by up
 // to 2 ms to where the waves match, so the jump back doesn't click. A song
-// that halts is kept to the render's end. False with the reason when the
-// render doesn't fit the song.
+// that halts is kept up to the row with the halt, where FamiTracker silences
+// it. False with the reason when the render doesn't fit the song.
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error);
 

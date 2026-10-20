@@ -31,7 +31,8 @@ tracks as looping OGG files through the `export_for_game` tool
 (`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with
 `CSoundGen`, which notes the sample where each row starts
 (`GetRenderMarks`), and libvorbis encodes (`Source/libvorbis`,
-`Source/libogg`).
+`Source/libogg`). The jingles that `make_jingle` writes as tracks of their
+own are scores in `Source/Api/Jingles.cpp`.
 
 ## What this repository is
 

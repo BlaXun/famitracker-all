@@ -21,6 +21,7 @@
 
 #include "Tools.h"
 #include "GameAudio.h"
+#include "Jingles.h"
 #include "Music.h"
 #include "Ogg.h"
 #include "Picture.h"
@@ -2200,7 +2201,7 @@ void KeepNoteSounds(std::vector<Cell> &Cells, const std::vector<NoteInfo> &Befor
 	}
 }
 
-enum drum_change { DRUMS_KEEP, DRUMS_SOFTER, DRUMS_SPARSER, DRUMS_HALF, DRUMS_OFF };
+enum drum_change { DRUMS_KEEP, DRUMS_SOFTER, DRUMS_SPARSER, DRUMS_HALF, DRUMS_OFF, DRUMS_BUSIER };
 
 // The noise channel calmer: quieter, without the hits between beats
 // (sparser), on beats 1 and 3 only (half), or none (off). How many hits went.
@@ -2234,6 +2235,109 @@ int ChangeDrums(Session &S, std::vector<Cell> &Cells, int Columns, int Change)
 	if (Change != DRUMS_OFF)
 		ScaleVolumes(Cells, 60);
 	return Removed;
+}
+
+// The noise channel busier: a soft hi-hat (instrument HiHat) on every
+// eighth-note offbeat it leaves empty, in the bars where it plays. How many
+// hits it added.
+int BusierDrums(Session &S, std::vector<Cell> &Cells, int Columns, int HiHat)
+{
+	const int Beat = S.Time.RowsPerBeat;
+	if (Beat < 2 || Beat % 2 != 0)
+		return 0;
+	const std::vector<NoteInfo> Before = ReadNotes(Cells, Columns);
+	std::set<int> Bars;
+	for (size_t i = 0; i < Before.size(); ++i)
+		Bars.insert(S.Time.BarOf(Before[i].Row));
+	int Added = 0;
+	for (std::set<int>::const_iterator it = Bars.begin(); it != Bars.end(); ++it) {
+		const int End = std::min(S.Time.BarEnd(*it), static_cast<int>(Cells.size()));
+		for (int Row = S.Time.BarStart(*it) + Beat / 2; Row < End; Row += Beat) {
+			Cell &C = Cells[static_cast<size_t>(Row)];
+			if (C.Note != NOTE_NONE)
+				continue;
+			int Pitch;
+			std::string Drum;
+			ParseNoisePitch("hi-hat", Pitch, Drum);
+			C.SetPitch(Pitch);
+			C.Instrument = static_cast<unsigned char>(HiHat);
+			C.Volume = 8;
+			++Added;
+		}
+	}
+	if (Added > 0)
+		KeepNoteSounds(Cells, Before, Columns);
+	return Added;
+}
+
+// A driving bass: each note struck again on every eighth note (every beat
+// when beats don't split in two), cut short just before, so it pulses. Notes
+// that slide stay as they are. How many notes changed.
+int DriveBass(Session &S, std::vector<Cell> &Cells, int Columns)
+{
+	const int Beat = S.Time.RowsPerBeat;
+	const int Step = (Beat % 2 == 0 && Beat >= 4) ? Beat / 2 : Beat;
+	if (Step < 2)
+		return 0;
+	const int Gap = std::max(1, Step / 4);
+	const std::vector<NoteInfo> Notes = ReadNotes(Cells, Columns);
+	int Changed = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		bool Slides = false;
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first;
+			Slides = Slides || Effect == EFF_PORTAMENTO || Effect == EFF_PORTA_UP || Effect == EFF_PORTA_DOWN ||
+				Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || Effect == EFF_SWEEPUP || Effect == EFF_SWEEPDOWN;
+		}
+		if (Slides || N.Rows <= Step)
+			continue;
+		int Last = N.Row;	// the latest strike
+		bool Any = false;
+		const int End = std::min(N.Row + N.Rows, static_cast<int>(Cells.size()));
+		for (int Row = N.Row + 1; Row < End; ++Row) {
+			if ((Row - S.Time.BarStart(S.Time.BarOf(Row))) % Step != 0 || Row - Gap <= Last)
+				continue;
+			Cell &Cut = Cells[static_cast<size_t>(Row - Gap)], &Strike = Cells[static_cast<size_t>(Row)];
+			if (Cut.Note != NOTE_NONE || Strike.Note != NOTE_NONE)
+				continue;
+			Cut.Note = NOTE_HALT;
+			Cut.Octave = 0;
+			Strike.SetPitch(N.Pitch);
+			Last = Row;
+			Any = true;
+		}
+		if (Any)
+			++Changed;
+	}
+	return Changed;
+}
+
+// What a version's name says about it: calm (night), tense (battle) or neither
+enum version_mood { MOOD_OTHER, MOOD_CALM, MOOD_TENSE };
+
+int VersionMood(const std::string &Version)
+{
+	static const char *const CALM[] = { "night", "calm", "evening", "sleep", "sleepy", "peaceful", "quiet", "relaxed" };
+	static const char *const TENSE[] = { "tense", "battle", "danger", "boss", "fight", "combat", "chase", "alarm", "panic" };
+	bool Calm = false, Tense = false;
+	std::string Word;
+	const std::string Text = Lowercase(Version) + " ";
+	for (size_t i = 0; i < Text.size(); ++i) {
+		const char c = Text[i];
+		if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			Word += c;
+			continue;
+		}
+		for (size_t w = 0; w < sizeof(CALM) / sizeof(CALM[0]); ++w)
+			Calm = Calm || Word == CALM[w];
+		for (size_t w = 0; w < sizeof(TENSE) / sizeof(TENSE[0]); ++w)
+			Tense = Tense || Word == TENSE[w];
+		Word.clear();
+	}
+	if (Calm == Tense)
+		return MOOD_OTHER;
+	return Calm ? MOOD_CALM : MOOD_TENSE;
 }
 
 // Tempo commands (Fxx from the split point up) at Factor; speed ones stay,
@@ -2332,8 +2436,8 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 	std::string Why;
 	if (!S.Host().CanChange(Why))
 		throw Problem(Why);
-	const std::string Kind = Lowercase(Version);
-	const bool Calm = Kind == "night" || Kind == "calm" || Kind == "evening";
+	const int Mood = VersionMood(Version);
+	const bool Calm = Mood == MOOD_CALM, Tense = Mood == MOOD_TENSE;
 	const std::string Name = Arg(Args, "name") != 0 ? StringArg(Args, "name") : VersionName(S.Song, Version);
 	if (Name.empty())
 		throw Problem("The version's name can't be empty.");
@@ -2388,14 +2492,40 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 			}
 		}
 	}
-	static const char *const DRUM_WORDS[] = { "keep", "softer", "sparser", "half", "off" };
-	const std::string DrumWord = Lowercase(StringArg(Args, "drums", Calm ? "sparser" : "keep"));
+	if (Tense) {
+		if (Arg(Args, "tempo_percent") == 0 && Arg(Args, "bpm") == 0)
+			Plan.Set("tempo_percent", 115);
+		if (Arg(Args, "to_mode") == 0 && Arg(Args, "to_key") == 0) {
+			bool Found;
+			const Key K = KeyArg(S, Args, "key", 0, Total, Found);
+			if (Found && ModeSteps(K.Mode)[2] == 4)		// a major third: major, lydian, mixolydian
+				Plan.Set("to_mode", "minor");
+			else if (Found)
+				Remarks.push_back("The song is in " + KeyName(K) + " already, so its mode stayed.");
+		}
+		if (Melody >= 0 && Arg(Args, "sounds") == 0 && HasPresets(S.Channel(Melody)) && !IsBass(S.Channel(Melody))) {
+			Json Sound = Json::MakeObject();
+			Sound.Set("channel", Melody + 1);
+			Sound.Set("instrument", "bright lead");
+			Json Sounds = Json::MakeArray();
+			Sounds.Push(Sound);
+			Plan.Set("sounds", Sounds);
+		}
+	}
+	const Json *pMode = Arg(Args, "to_mode");
+	if (Off(pMode) || (pMode != 0 && pMode->IsString() && Lowercase(Trim(pMode->String())) == "keep"))
+		Plan.Set("to_mode", Json());	// "keep" (or false) keeps the mode
+	static const char *const DRUM_WORDS[] = { "keep", "softer", "sparser", "half", "off", "busier" };
+	const std::string DrumWord = Lowercase(StringArg(Args, "drums", Calm ? "sparser" : (Tense ? "busier" : "keep")));
 	int Drums = -1;
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < 6; ++i)
 		if (DrumWord == DRUM_WORDS[i])
 			Drums = i;
 	if (Drums < 0)
-		throw Problem("drums should be keep, softer, sparser, half or off.");
+		throw Problem("drums should be keep, softer, sparser, half, off or busier.");
+	const std::string BassWord = Lowercase(StringArg(Args, "bass", Tense ? "driving" : "keep"));
+	if (BassWord != "keep" && BassWord != "driving")
+		throw Problem("bass should be keep or driving.");
 	const int VolumePercent = IntArg(Args, "volume_percent", Calm ? 75 : 100, 10, 100);
 	const MoodPlan Changes = ReadMoodPlan(S, Plan, 0, Total);
 
@@ -2411,9 +2541,19 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 		if (Changed > 0)
 			Done.push_back(Format("volumes at %d%%", VolumePercent));
 	}
+	for (int c = 0; c < S.ChannelCount() && BassWord == "driving"; ++c) {
+		if (IsBass(S.Channel(c)) && !S.Notes(c).empty() && DriveBass(S, D.Cells(c), S.Channel(c).EffectColumns) > 0)
+			Done.push_back("a driving bass on " + S.Channel(c).FullName() + " (struck again on every eighth note)");
+	}
 	for (int c = 0; c < S.ChannelCount() && Drums != DRUMS_KEEP; ++c) {
 		if (S.Channel(c).Kind != KIND_NOISE || S.Notes(c).empty())
 			continue;
+		if (Drums == DRUMS_BUSIER) {
+			const int Added = BusierDrums(S, D.Cells(c), S.Channel(c).EffectColumns, ResolveInstrument(S, "hi-hat", c));
+			if (Added > 0)
+				Done.push_back(Format("busier drums (%s between the beats)", Plural(Added, "hi-hat", "hi-hats").c_str()));
+			continue;
+		}
 		const int Removed = ChangeDrums(S, D.Cells(c), S.Channel(c).EffectColumns, Drums);
 		if (Drums == DRUMS_OFF)
 			Done.push_back("no drums");
@@ -2429,7 +2569,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
 	if (Changes.Bpm > 0.0 && std::fabs(Changes.Bpm - Now) > 0.05) {
 		const double Factor = Changes.Bpm / Now;
-		Tempo = static_cast<int>(S.Song.Tempo * Factor + 0.5);
+		Tempo = static_cast<int>(std::floor(S.Song.Tempo * Changes.Bpm / Now + 0.5));	// exact for round percentages
 		if (Tempo < std::max(32, S.Song.SplitPoint) || Tempo > 255)
 			ChooseSpeedTempo(Changes.Bpm, S.Time.RowsPerBeat, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
 		int Commands = 0;
@@ -2457,6 +2597,298 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 		"and the other tools work on it; select_track switches back. ", Track + 1, Name.c_str(), Day + 1, S.Song.TrackName.c_str());
 	Result += What.empty() ? std::string("It's a plain copy so far.") : "Changes: " + What + ".";
 	Result += " FamiTracker can't undo adding a track: the user removes one in Module > Module properties.";
+	return WithRemarks(S, Result, Warnings);
+}
+
+// Jingles, as tracks of their own
+
+std::string SecondsText(double Seconds);
+
+// A track name no track has yet: "Level up", "Level up 2"
+std::string FreeTrackName(const SongInfo &Song, const std::string &Name)
+{
+	for (int n = 1; ; ++n) {
+		const std::string Candidate = n == 1 ? Name : Format("%s %d", Name.c_str(), n);
+		bool Taken = false;
+		for (size_t t = 0; t < Song.TrackNames.size(); ++t)
+			Taken = Taken || Lowercase(Song.TrackNames[t]) == Lowercase(Candidate);
+		if (!Taken)
+			return Candidate;
+	}
+}
+
+// The middle one of a channel's pitches, Default when it has no notes
+int MiddlePitch(Session &S, int Channel, int Default)
+{
+	std::vector<int> Pitches;
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Pitches.push_back(Notes[i].Pitch);
+	if (Pitches.empty())
+		return Default;
+	std::nth_element(Pitches.begin(), Pitches.begin() + static_cast<std::ptrdiff_t>(Pitches.size() / 2), Pitches.end());
+	return Pitches[Pitches.size() / 2];
+}
+
+// The pitch for a jingle part's key note: its notes (on average, by how long
+// they sound) around Center, they and the Along part's within Low-High
+int PlaceKeyNote(const std::vector<JingleNote> &Part, const std::vector<JingleNote> &Along, int Tonic, int Center, int Low, int High)
+{
+	double Sum = 0.0, Weight = 0.0;
+	int Lowest = 0, Highest = 0;
+	for (size_t i = 0; i < Part.size(); ++i) {
+		Sum += static_cast<double>(Part[i].Degree) * Part[i].Steps;
+		Weight += Part[i].Steps;
+		Lowest = std::min(Lowest, Part[i].Degree);
+		Highest = std::max(Highest, Part[i].Degree);
+	}
+	for (size_t i = 0; i < Along.size(); ++i) {
+		Lowest = std::min(Lowest, Along[i].Degree);
+		Highest = std::max(Highest, Along[i].Degree);
+	}
+	const double Mean = Weight > 0.0 ? Sum / Weight : 0.0;
+	int Best = Tonic + 48;
+	double BestScore = 1e9;
+	for (int Octave = 0; Octave < 8; ++Octave) {
+		const int Base = Tonic + 12 * Octave;
+		const int Outside = std::max(0, Low - (Base + Lowest)) + std::max(0, Base + Highest - High);
+		const double Score = Outside * 100.0 + std::fabs(Base + Mean - Center);
+		if (Score < BestScore) {
+			BestScore = Score;
+			Best = Base;
+		}
+	}
+	return Best;
+}
+
+std::string MakeJingleTool(Session &S, const Json &Args)
+{
+	const std::string Kind = StringArg(Args, "kind");
+	if (Kind.empty())
+		throw Problem("Say which jingle with kind: " + JingleNames() + ".");
+	const Jingle *pJingle = FindJingle(Kind);
+	if (pJingle == 0)
+		throw Problem(Format("There's no \"%s\" jingle. The kinds: %s. For something else, start from the nearest one and change "
+			"it with write_notes.", Kind.c_str(), JingleNames().c_str()));
+	const Jingle &J = *pJingle;
+	if (S.Song.Tracks >= 64)
+		throw Problem("The module already has 64 tracks, FamiTracker's most; the user can remove one in Module > Module properties.");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const int Total = S.Time.TotalRows();
+
+	// The key note: as asked, or the song's; the jingle keeps its own mode
+	Key Used(0, J.Minor ? MODE_MINOR : MODE_MAJOR);
+	std::string KeyFrom = " (no notes to find a key from yet; give key for another)";
+	if (Arg(Args, "key") != 0) {
+		const std::string Text = StringArg(Args, "key");
+		Key Asked;
+		if (!ParseKey(Text, Asked))
+			throw Problem(Format("key: \"%s\" isn't a key. Write it like \"A\", \"F#\" or \"Bb minor\".", Text.c_str()));
+		Used.Tonic = Asked.Tonic;
+		KeyFrom = "";
+	}
+	else {
+		Key Found;
+		if (FindKey(S, 0, Total, Found)) {
+			Used.Tonic = Found.Tonic;
+			KeyFrom = " (the song is in " + KeyName(Found) + ")";
+		}
+	}
+
+	// The channels: as asked ("none" leaves a part out), or the song's own
+	auto Optional = [&](const char *Name) -> bool {
+		const Json *pValue = Arg(Args, Name);
+		return pValue != 0 && pValue->IsString() && Lowercase(Trim(pValue->String())) == "none";
+	};
+	int Lead = -1;
+	if (Arg(Args, "lead_channel") != 0)
+		Lead = ChannelArg(S, Args, "lead_channel");
+	else {
+		Lead = GuessMelodyChannel(S, 0, Total);
+		if (Lead >= 0 && IsBass(S.Channel(Lead)))
+			Lead = -1;
+		for (int c = 0; c < S.ChannelCount() && Lead < 0; ++c)
+			if (S.Channel(c).Kind == KIND_PULSE)
+				Lead = c;
+	}
+	if (Lead < 0 || !IsMelodic(S.Channel(Lead)))
+		throw Problem("The lead needs a melodic channel; give lead_channel.");
+	int Harmony = -1;
+	if (Optional("harmony_channel"))
+		Harmony = -1;
+	else if (Arg(Args, "harmony_channel") != 0) {
+		Harmony = ChannelArg(S, Args, "harmony_channel");
+		if (Harmony == Lead || !IsMelodic(S.Channel(Harmony)))
+			throw Problem("harmony_channel needs a melodic channel other than the lead's, or \"none\".");
+	}
+	else {
+		// A pulse channel: of the lead's chip and playing in the song if one is
+		int Best = -1;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == Lead || S.Channel(c).Kind != KIND_PULSE)
+				continue;
+			const int Score = (S.Channel(c).Chip == S.Channel(Lead).Chip ? 2 : 0) + (S.Notes(c).empty() ? 0 : 1);
+			if (Harmony < 0 || Score > Best) {
+				Harmony = c;
+				Best = Score;
+			}
+		}
+	}
+	int Bass = -1;
+	if (Optional("bass_channel"))
+		Bass = -1;
+	else if (Arg(Args, "bass_channel") != 0) {
+		Bass = ChannelArg(S, Args, "bass_channel");
+		if (Bass == Lead || Bass == Harmony || !IsMelodic(S.Channel(Bass)))
+			throw Problem("bass_channel needs a melodic channel other than the lead's and the harmony's, or \"none\".");
+	}
+	else {
+		// The song's bass channel: the triangle or sawtooth playing most
+		size_t Most = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == Lead || c == Harmony || !IsBass(S.Channel(c)))
+				continue;
+			if (Bass < 0 || S.Notes(c).size() > Most) {
+				Bass = c;
+				Most = S.Notes(c).size();
+			}
+		}
+	}
+	int Noise = -1;
+	if (BoolArg(Args, "drums", true) && !J.Drums.empty())
+		for (int c = 0; c < S.ChannelCount() && Noise < 0; ++c)
+			if (S.Channel(c).Kind == KIND_NOISE)
+				Noise = c;
+	const double Bpm = NumberArg(Args, "bpm", J.Bpm, 30.0, 300.0);
+	const std::string Name = Arg(Args, "name") != 0 ? StringArg(Args, "name") :
+		FreeTrackName(S.Song, std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(J.Name[0])))) + J.Name.substr(1));
+	if (Name.empty())
+		throw Problem("The jingle's name can't be empty.");
+
+	// The sounds: as asked; or what the channel plays in the song; or the
+	// lead's (Fallback, for the harmony); or a preset; or one of the song's
+	// instruments for the chip
+	auto Sound = [&](const char *ArgName, int Channel, const char *Preset, bool PresetFirst, int Fallback) -> int {
+		if (Arg(Args, ArgName) != 0)
+			return InstrumentArg(S, Args, ArgName, Channel, NO_INSTRUMENT);
+		const bool Presets = HasPresets(S.Channel(Channel));
+		if (PresetFirst && Presets)
+			return ResolveInstrument(S, Preset, Channel);
+		if (!S.Notes(Channel).empty()) {
+			const int Playing = InstrumentAt(S, Channel, S.Notes(Channel).front().Row);
+			if (Playing != NO_INSTRUMENT)
+				return Playing;
+		}
+		if (Fallback != NO_INSTRUMENT)
+			return Fallback;
+		if (Presets)
+			return ResolveInstrument(S, Preset, Channel);
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (S.Song.Instruments[i].Chip == InstrumentChip(S.Channel(Channel)))
+				return S.Song.Instruments[i].Index;
+		throw Problem(Format("%s has no instrument for the jingle: give %s (one of the song's %s instruments).",
+			S.Channel(Channel).FullName().c_str(), ArgName, InstrumentChip(S.Channel(Channel)).c_str()));
+	};
+	const int LeadSound = Sound("lead_instrument", Lead, J.LeadSound != 0 ? J.LeadSound : "bright lead", J.LeadSound != 0, NO_INSTRUMENT);
+	const int HarmonySound = Harmony < 0 ? NO_INSTRUMENT : Sound("harmony_instrument", Harmony, "soft chords", false,
+		InstrumentChip(S.Channel(Harmony)) == InstrumentChip(S.Channel(Lead)) ? LeadSound : NO_INSTRUMENT);
+	const int BassSound = Bass < 0 ? NO_INSTRUMENT : Sound("bass_instrument", Bass, "bass", false, NO_INSTRUMENT);
+	int DrumSounds[4] = { NO_INSTRUMENT, NO_INSTRUMENT, NO_INSTRUMENT, NO_INSTRUMENT };
+	static const char *const DRUMS[] = { "kick", "snare", "hi-hat", "open hi-hat" };
+	for (size_t i = 0; Noise >= 0 && i < J.Drums.size(); ++i)
+		if (DrumSounds[J.Drums[i].Drum] == NO_INSTRUMENT)
+			DrumSounds[J.Drums[i].Drum] = ResolveInstrument(S, DRUMS[J.Drums[i].Drum], Noise);
+
+	// The parts as cells: sixteenths on rows (one each unless the beat has
+	// more), then a halt
+	const int PerStep = S.Time.RowsPerBeat % 4 == 0 ? std::max(1, S.Time.RowsPerBeat / 4) : 1;
+	const int Rows = J.Steps * PerStep + 1;
+	std::vector<std::vector<Cell> > Channels(static_cast<size_t>(S.ChannelCount()), std::vector<Cell>(static_cast<size_t>(Rows)));
+	std::vector<std::string> Warnings;
+	auto Write = [&](int Channel, const std::vector<PartNote> &Notes, bool Crisp) {
+		PartOptions Options;
+		Options.EffectColumns = S.Channel(Channel).EffectColumns;
+		Options.Releases = Crisp ? std::vector<bool>(NO_INSTRUMENT, false) : ReleasingInstruments(S.Song);	// crisp: cut, not released
+		Options.KeepFollowing = false;
+		std::vector<Cell> Out;
+		BuildPart(std::vector<Cell>(static_cast<size_t>(Rows)), 0, Rows - 1, Notes, Options, Out, Warnings);
+		for (size_t r = 0; r < Out.size() && r + 1 < static_cast<size_t>(Rows); ++r)
+			Channels[static_cast<size_t>(Channel)][r] = Out[r];
+	};
+	auto Melodic = [&](int Channel, const std::vector<JingleNote> &Part, int KeyNote, int Instrument, int Volume) {
+		std::vector<PartNote> Notes;
+		bool Pulsing = true;	// only short notes, like a driving bass: each one cut off
+		for (size_t i = 0; i < Part.size(); ++i) {
+			Pulsing = Pulsing && Part[i].Steps <= 2;
+			PartNote N;
+			N.Row = Part[i].Step * PerStep;
+			N.Rows = Part[i].Steps * PerStep;
+			N.Pitch = KeyNote + Part[i].Degree;
+			while (N.Pitch < 0)
+				N.Pitch += 12;
+			while (N.Pitch >= PITCHES)
+				N.Pitch -= 12;
+			if (i == 0) {
+				N.Instrument = Instrument;
+				N.Volume = S.Channel(Channel).Kind == KIND_TRIANGLE ? -1 : Volume;
+			}
+			if (Part[i].Vibrato && Part[i].Steps > 4) {
+				N.LaterEffects.push_back(std::make_pair(4 * PerStep, std::make_pair(static_cast<int>(EFF_VIBRATO), 0x52)));
+				N.EndEffects.push_back(std::make_pair(static_cast<int>(EFF_VIBRATO), 0));
+			}
+			Notes.push_back(N);
+		}
+		Write(Channel, Notes, Pulsing);
+	};
+	const int LeadKey = PlaceKeyNote(J.Lead, J.Harmony, Used.Tonic, MiddlePitch(S, Lead, 48), 12, 84);
+	Melodic(Lead, J.Lead, LeadKey, LeadSound, J.LeadVolume);
+	if (Harmony >= 0)
+		Melodic(Harmony, J.Harmony, LeadKey, HarmonySound, J.HarmonyVolume);
+	if (Bass >= 0) {
+		const int Center = MiddlePitch(S, Bass, S.Channel(Bass).Kind == KIND_TRIANGLE ? 36 : 26);
+		Melodic(Bass, J.Bass, PlaceKeyNote(J.Bass, std::vector<JingleNote>(), Used.Tonic, Center, 9, 60), BassSound, 15);
+	}
+	if (Noise >= 0) {
+		std::vector<PartNote> Hits;
+		for (size_t i = 0; i < J.Drums.size(); ++i) {
+			PartNote N;
+			N.Row = J.Drums[i].Step * PerStep;
+			N.Rows = ((i + 1 < J.Drums.size() ? J.Drums[i + 1].Step : J.Steps) - J.Drums[i].Step) * PerStep;
+			std::string Drum;
+			ParseNoisePitch(DRUMS[J.Drums[i].Drum], N.Pitch, Drum);
+			N.Instrument = DrumSounds[J.Drums[i].Drum];
+			N.Volume = J.Drums[i].Volume;
+			Hits.push_back(N);
+		}
+		Write(Noise, Hits, false);
+	}
+	AddEffect(Channels[static_cast<size_t>(Lead)][static_cast<size_t>(Rows - 1)], EFF_HALT, 0, S.Channel(Lead).EffectColumns);
+
+	// Its tempo, then the track
+	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
+	ChooseSpeedTempo(Bpm, 4 * PerStep, S.Song.FrameRate, S.Song.Speed, S.Song.SplitPoint, Speed, Tempo);
+	const double Played = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, 4 * PerStep);
+	std::string Error;
+	const int Track = S.Host().AddTrack(Name, Channels, Speed, Tempo, Error);
+	if (Track < 0)
+		throw Problem("The jingle couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+
+	std::string Parts = Format("lead on %s with %s", S.Channel(Lead).FullName().c_str(), InstrumentLabel(S.Song, LeadSound).c_str());
+	if (Harmony >= 0)
+		Parts += Format(", harmony on %s with %s", S.Channel(Harmony).FullName().c_str(), InstrumentLabel(S.Song, HarmonySound).c_str());
+	if (Bass >= 0)
+		Parts += Format(", bass on %s with %s", S.Channel(Bass).FullName().c_str(), InstrumentLabel(S.Song, BassSound).c_str());
+	if (Noise >= 0)
+		Parts += ", drums on " + S.Channel(Noise).FullName();
+	std::string Result = Format("Made track %d \"%s\": the %s jingle, for %s. It's %s long, at %s BPM (speed %d, tempo %d), in %s%s. "
+		"Parts: %s. It ends with a halt (C00), so it plays once, and export_for_game saves it as a sound that doesn't loop. "
+		"FamiTracker shows the new track now, and the other tools work on it (select_track switches back): play it for the "
+		"user, and change it with write_notes. FamiTracker can't undo adding a track: the user removes one in Module > "
+		"Module properties.", Track + 1, Name.c_str(), J.Name.c_str(), J.Use.c_str(),
+		SecondsText(J.Steps / 4.0 * 60.0 / std::max(1.0, Played)).c_str(), FormatNumber(std::floor(Played * 10 + 0.5) / 10).c_str(),
+		Speed, Tempo, KeyName(Used).c_str(), KeyFrom.c_str(), Parts.c_str());
 	return WithRemarks(S, Result, Warnings);
 }
 
@@ -2948,7 +3380,13 @@ std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::s
 		Comments.push_back(std::make_pair(std::string("LOOPEND"), Format("%lld", Cut.Length())));
 	}
 	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
-	const std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	if (!Cut.Loops) {
+		// No click where it stops: the last 10 ms fade out
+		const size_t Fade = std::min(Kept.size(), static_cast<size_t>(SampleRate / 100));
+		for (size_t i = 0; i < Fade; ++i)
+			Kept[Kept.size() - 1 - i] *= static_cast<float>(i) / static_cast<float>(Fade);
+	}
 	std::string Bytes;
 	if (!EncodeOgg(Kept, SampleRate, Quality, Comments, Bytes, Error))
 		throw Problem(Error);
@@ -3563,12 +4001,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	{
 		Json Moves = Prop("array", "Parts moved up or down, e.g. [{\"channel\": \"Triangle\", \"semitones\": -12}].");
 		Json Sounds = Prop("array", "New sounds, e.g. [{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\"}]; false keeps every instrument.");
+		std::vector<std::string> KeepOrModes(1, "keep");
+		KeepOrModes.insert(KeepOrModes.end(), Modes.begin(), Modes.end());
 		AddTool("make_version", "Make a version",
 			"Makes another version of the selected track as a new track in the module, leaving the original as it was: a night "
 			"version, calm or tense music for a game state, an area's variant. FamiTracker then shows the new track and the other "
 			"tools work on it (select_track switches back). version \"night\" (or \"calm\") is slower, quieter and more "
 			"atmospheric by itself: tempo_percent 80, volume_percent 75, drums sparser, a soft lead and soft chords, slow gentle "
-			"vibrato and an echo on the melody; give any of those to change it (false turns vibrato, echo or sounds off). Other "
+			"vibrato and an echo on the melody. version \"tense\" (or \"battle\", \"danger\", \"boss\", \"chase\") is faster and "
+			"darker by itself: tempo_percent 115, to_mode minor when the song is in major, a bright lead on the melody, bass "
+			"driving and drums busier. Give any of those to change it (false turns vibrato, echo or sounds off; to_mode \"keep\" "
+			"keeps the mode). Other "
 			"versions change only what you give, with change_mood's options. Adding a track can't be undone in FamiTracker.",
 			Schema()
 				.Add("version", Prop("string", "What the version is: \"night\", \"calm\", \"tense\", \"rain\"... Its name is the track's "
@@ -3578,15 +4021,49 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("tempo_percent", Prop("number", "Tempo as a percentage of the original's (80 is 20% slower). Tempo commands in the patterns follow."))
 				.Add("bpm", Prop("number", "Tempo in beats per minute instead."))
 				.Add("volume_percent", Prop("integer", "Every channel's volumes at this percentage (10-100); the triangle has no volume."))
-				.Add("drums", EnumProp("The noise channel: keep, softer, sparser (only the hits on beats, softer), half (beats 1 and 3) or off.",
-					std::vector<std::string>{ "keep", "softer", "sparser", "half", "off" }))
-				.Add("to_mode", EnumProp("A mode to change into, keeping the tonic.", Modes))
+				.Add("drums", EnumProp("The noise channel: keep, softer, sparser (only the hits on beats, softer), half (beats 1 and 3), "
+					"off, or busier (soft hi-hats added between the beats).",
+					std::vector<std::string>{ "keep", "softer", "sparser", "half", "off", "busier" }))
+				.Add("bass", EnumProp("The triangle and sawtooth: keep, or driving (each note struck again on every eighth note, "
+					"cut short before the next).", std::vector<std::string>{ "keep", "driving" }))
+				.Add("to_mode", EnumProp("A mode to change into, keeping the tonic; \"keep\" keeps the mode.", KeepOrModes))
 				.Add("to_key", Prop("string", "A key to change into, like \"A minor\"."))
 				.Add("key", Prop("string", "The key the notes are in now. Default: found from the notes."))
 				.Add("moves", Moves)
 				.Add("sounds", Sounds)
 				.Add("vibrato", Prop("object", "Vibrato like add_vibrato's arguments, e.g. {\"channel\": \"VRC6 Pulse 1\", \"speed\": \"slow\", \"depth\": \"gentle\"}; false for none."))
 				.Add("echo", Prop("object", "An echo like add_echo's arguments, e.g. {\"channel\": \"VRC6 Pulse 1\"}; false for none.")),
+			false);
+	}
+
+	{
+		std::vector<std::string> Kinds;
+		std::string Uses;
+		for (size_t i = 0; i < Jingles().size(); ++i) {
+			Kinds.push_back(Jingles()[i].Name);
+			Uses += Format("%s%s (%s)", i == 0 ? "" : "; ", Jingles()[i].Name.c_str(), Jingles()[i].Use.c_str());
+		}
+		AddTool("make_jingle", "Make a jingle",
+			"Makes a jingle, a short tune a game plays once, as a new track in the module: a lead with a harmony line, a bass and "
+			"drums, in the song's key note, around its melody's register and with its sounds, at the jingle's own tempo. It ends "
+			"with a halt, so export_for_game saves it as a sound that doesn't loop. FamiTracker then shows the new track and the "
+			"other tools work on it (select_track switches back): play it for the user, and change notes with write_notes. "
+			"Kinds: " + Uses + ". Other words for them work too (\"quest complete\", \"game over\", \"inn\"). Adding a track "
+			"can't be undone in FamiTracker.",
+			Schema()
+				.Add("kind", EnumProp("What it's for.", Kinds), true)
+				.Add("key", Prop("string", "Its key note, like \"D\" (each kind keeps its mode: defeat and danger are minor, the "
+					"others major). Default: the song's key note."))
+				.Add("bpm", Prop("number", "Its tempo. Default: the kind's own (72 for rest to 150 for level up)."))
+				.Add("name", Prop("string", "The new track's name. Default: the kind's, like \"Level up\"."))
+				.Add("lead_channel", ChannelProp("The lead's channel. Default: the song's melody channel."))
+				.Add("harmony_channel", ChannelProp("The harmony line's channel, or \"none\". Default: another pulse channel."))
+				.Add("bass_channel", ChannelProp("The bass's channel, or \"none\". Default: the song's triangle or sawtooth."))
+				.Add("drums", Prop("boolean", "Drums on the noise channel, for the kinds that have them (default true)."))
+				.Add("lead_instrument", Prop("string", "The lead's instrument or preset. Default: the song's lead sound (a bell for "
+					"item and new quest, a soft lead for rest)."))
+				.Add("harmony_instrument", Prop("string", "The harmony's instrument or preset. Default: the channel's sound in the song."))
+				.Add("bass_instrument", Prop("string", "The bass's instrument or preset. Default: the song's bass sound.")),
 			false);
 	}
 
@@ -3680,6 +4157,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "check_song") Result.Text = CheckTool(S, Args);
 		else if (Name == "look_at_song") Result.Text = LookTool(S, Args, Result.Image);
 		else if (Name == "make_version") Result.Text = MakeVersionTool(S, Args);
+		else if (Name == "make_jingle") Result.Text = MakeJingleTool(S, Args);
 		else if (Name == "select_track") Result.Text = SelectTrackTool(S, Args);
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
 		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
@@ -3717,8 +4195,9 @@ std::string ToolSet::Instructions()
 		"or softer sounds (warm pad, soft lead); happier = to_mode major or lydian, a bit faster, brighter sounds (bright lead, "
 		"bell, pluck), and add_chords_and_bass if there are no chords; underwater = slower, a slow and strong vibrato on the "
 		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
-		"with write_notes for that. A night version (or another version of a song for a game state) is make_version, which adds "
-		"it as a new track and leaves the original as it was. Tell the user what you changed and why.";
+		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
+		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
+		"complete, item found...) is make_jingle. Tell the user what you changed and why.";
 }
 
 }	// namespace ftapi

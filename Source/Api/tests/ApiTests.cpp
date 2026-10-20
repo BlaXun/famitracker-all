@@ -26,6 +26,7 @@
 #include "../BridgeSocket.h"
 #include "../GameAudio.h"
 #include "../Http.h"
+#include "../Jingles.h"
 #include "../Json.h"
 #include "../Mcp.h"
 #include "../Music.h"
@@ -2105,11 +2106,12 @@ void TestVersions()
 	CHECK(Tools.Call("select_track", Parse("{}")).IsError);
 
 	// Another version changes only what it's given; names stay unique
-	Result = Tools.Call("make_version", Parse("{\"version\": \"tense\", \"to_mode\": \"minor\"}"));
+	Result = Tools.Call("make_version", Parse("{\"version\": \"underwater\", \"to_mode\": \"minor\"}"));
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "Made track 3 \"Town (tense)\" from track 1 \"Town\"");
+	CHECK_HAS(Result.Text, "Made track 3 \"Town (underwater)\" from track 1 \"Town\"");
 	CHECK_HAS(Result.Text, "from C major to C minor");
 	CHECK(Song.Info.Tempo == 150 && Song.Rows[5][8].Pitch() == Day[5][8].Pitch() - 1 && Song.Rows[3][2].HasNote());
+	CHECK(Song.Rows[2] == Day[2] && Song.Rows[3] == Day[3]);
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false, \"vibrato\": false, \"sounds\": false, "
 		"\"drums\": \"off\", \"tempo_percent\": 90}"));
@@ -2128,6 +2130,291 @@ void TestVersions()
 	while (Song.Tracks.size() < 64)
 		Song.Tracks.push_back(Song.Tracks[0]);
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "64 tracks");
+}
+
+void TestTenseVersions()
+{
+	FakeSong Song;
+	// A melody in C major, a bass of long notes, drums on the beats of bar 1
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 8, "E-4");
+	Song.Put(5, 16, "G-4");
+	Song.Put(5, 32, "E-4");
+	Song.End(5, 48, NOTE_RELEASE);
+	Song.Put(2, 0, "C-2", 1);
+	Song.Put(2, 32, "G-1");
+	Song.Rows[2][48].Effect[0] = EFF_SLIDE_DOWN;	// a note that slides isn't struck again
+	Song.Rows[2][48].Param[0] = 0x21;
+	Song.Put(2, 48, "C-2");
+	Song.End(2, 64);
+	Song.Put(3, 0, "kick", 2, 15);
+	Song.Put(3, 4, "snare");
+	Song.Put(3, 8, "kick");
+	Song.Put(3, 12, "snare");
+	const std::vector<std::vector<Cell> > Day = Song.Rows;
+
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_version", Parse("{\"version\": \"boss battle\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"Town (boss battle)\" from track 1 \"Town\"");
+	CHECK_HAS(Result.Text, "173 BPM instead of 150 (speed 6, tempo 173)");
+	CHECK_HAS(Result.Text, "from C major to C minor");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 played by \"Bright lead\"");
+	CHECK_HAS(Result.Text, "a driving bass on 2A03 Triangle (struck again on every eighth note)");
+	CHECK_HAS(Result.Text, "busier drums (4 hi-hats between the beats)");
+	CHECK_LACKS(Result.Text, "volumes at");
+	CHECK_LACKS(Result.Text, "vibrato");
+	CHECK_LACKS(Result.Text, "echo");
+	CHECK(Song.Tracks[0].Rows == Day);
+	const std::vector<std::vector<Cell> > &Battle = Song.Rows;
+	// The bass pulses in eighths: struck, cut, struck... up to the next note
+	const int C2 = Day[2][0].Pitch(), G1 = Day[2][32].Pitch();
+	CHECK(Battle[2][0].Pitch() == C2 && Battle[2][1].Note == NOTE_HALT && Battle[2][2].Pitch() == C2 && Battle[2][3].Note == NOTE_HALT);
+	CHECK(Battle[2][29].Note == NOTE_HALT && Battle[2][30].Pitch() == C2 && Battle[2][31].Note == NOTE_NONE);
+	CHECK(Battle[2][32].Pitch() == G1 && Battle[2][33].Note == NOTE_HALT && Battle[2][46].Pitch() == G1 && Battle[2][47].Note == NOTE_NONE);
+	CHECK(Battle[2][48].Pitch() == C2 && Battle[2][50].Note == NOTE_NONE && Battle[2][64].Note == NOTE_HALT);
+	CHECK(Battle[2][0].Instrument == 1 && Battle[2][2].Instrument == NO_INSTRUMENT);
+	// Hi-hats on the offbeats of bar 1 only, the snares still playing as before
+	const int HiHat = InstrumentIndex(Song, "Hi-hat");
+	CHECK(HiHat >= 0);
+	CHECK(Battle[3][2].Pitch() == 0xE && Battle[3][2].Instrument == HiHat && Battle[3][2].Volume == 8);
+	CHECK(Battle[3][14].Pitch() == 0xE && !Battle[3][18].HasNote() && !Battle[3][16].HasNote());
+	CHECK(Battle[3][4].Instrument == 2 && Battle[3][4].Volume == 15 && Battle[3][4].Pitch() == Day[3][4].Pitch());
+	CHECK(Battle[5][0].Instrument == InstrumentIndex(Song, "Bright lead") && Battle[5][8].Pitch() == Day[5][8].Pitch() - 1);
+
+	// Its parts can be left as they are
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_version", Parse("{\"version\": \"tense\", \"to_mode\": \"keep\", \"bass\": \"keep\", \"drums\": \"keep\", "
+		"\"sounds\": false, \"tempo_percent\": 100}"));
+	CHECK_HAS(Result.Text, "Made track 3 \"Town (tense)\"");
+	CHECK_HAS(Result.Text, "It's a plain copy so far.");
+	CHECK(Song.Rows == Day);
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"tense\", \"bass\": \"loud\"}")).Text, "bass should be keep or driving");
+	// Calm and tense words together: only what's given
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"calm before the battle\"}")).Text, "It's a plain copy so far.");
+
+	// A song in minor stays in its mode
+	FakeSong Minor;
+	Minor.Put(5, 0, "A-3", 0);
+	Minor.Put(5, 8, "C-4");
+	Minor.Put(5, 16, "E-4");
+	Minor.Put(5, 24, "A-3");
+	Minor.Put(5, 32, "B-3");
+	Minor.Put(5, 40, "C-4");
+	Minor.Put(5, 48, "A-3");
+	Minor.End(5, 64);
+	ToolSet MinorTools(Minor);
+	Result = MinorTools.Call("make_version", Parse("{\"version\": \"danger\"}"));
+	CHECK_HAS(Result.Text, "The song is in A minor already, so its mode stayed.");
+	CHECK_LACKS(Result.Text, "from A minor");
+	CHECK(Minor.Rows[5][8].Pitch() == Minor.Tracks[0].Rows[5][8].Pitch());
+}
+
+// Jingles
+
+const JingleNote *SoundingAt(const std::vector<JingleNote> &Part, int Step)
+{
+	for (size_t i = 0; i < Part.size(); ++i)
+		if (Part[i].Step <= Step && Step < Part[i].Step + Part[i].Steps)
+			return &Part[i];
+	return 0;
+}
+
+bool InOrder(const std::vector<JingleNote> &Part, int Steps)
+{
+	for (size_t i = 0; i < Part.size(); ++i) {
+		if (Part[i].Steps < 1 || Part[i].Step < 0 || Part[i].Step + Part[i].Steps > Steps)
+			return false;
+		if (i + 1 < Part.size() && Part[i].Step + Part[i].Steps > Part[i + 1].Step)
+			return false;
+	}
+	return true;
+}
+
+int EffectAt(const Cell &C, int Effect)
+{
+	for (int k = 0; k < EFFECT_COLUMNS; ++k)
+		if (C.Effect[k] == Effect)
+			return C.Param[k];
+	return -1;
+}
+
+void TestJingleScores()
+{
+	const std::vector<Jingle> &All = Jingles();
+	CHECK_EQ(All.size(), static_cast<size_t>(8));
+	CHECK_EQ(JingleNames(), std::string("level up, victory, item, new quest, discovery, rest, defeat, danger"));
+	for (size_t j = 0; j < All.size(); ++j) {
+		const Jingle &J = All[j];
+		const std::string Which = J.Name + ": ";
+		Check(FindJingle(J.Name) == &J, (Which + "found by name").c_str(), __LINE__);
+		for (size_t w = 0; w < J.Words.size(); ++w)
+			Check(FindJingle(J.Words[w]) == &J, (Which + "found as " + J.Words[w]).c_str(), __LINE__);
+		Check(!J.Lead.empty() && InOrder(J.Lead, J.Steps) && InOrder(J.Harmony, J.Steps) && InOrder(J.Bass, J.Steps),
+			(Which + "one note at a time, within its length").c_str(), __LINE__);
+		Check(J.Bpm >= 60.0 && J.Bpm <= 160.0 && J.Steps >= 8 && J.Steps <= 64 && J.LeadVolume > J.HarmonyVolume,
+			(Which + "tempo, length and volumes").c_str(), __LINE__);
+		for (size_t i = 0; i < J.Drums.size(); ++i)
+			Check(J.Drums[i].Step < J.Steps && (i == 0 || J.Drums[i - 1].Step < J.Drums[i].Step) && J.Drums[i].Volume >= 1 &&
+				J.Drums[i].Volume <= 15, (Which + "drums in order").c_str(), __LINE__);
+		// The harmony stays below the lead, a third, fourth, fifth, sixth or
+		// octave away (danger's minor thirds are dissonant on purpose: its
+		// tritones)
+		for (int Step = 0; Step < J.Steps; ++Step) {
+			const JingleNote *pLead = SoundingAt(J.Lead, Step), *pHarmony = SoundingAt(J.Harmony, Step);
+			if (pLead == 0 || pHarmony == 0)
+				continue;
+			const int Interval = pLead->Degree - pHarmony->Degree, Class = Interval % 12;
+			const bool Fits = Interval > 0 && (Class == 0 || Class == 3 || Class == 4 || Class == 5 || Class == 7 || Class == 8 || Class == 9);
+			char What[96];
+			std::snprintf(What, sizeof(What), "%sthe harmony %d semitones below the lead at step %d", Which.c_str(), Interval, Step);
+			Check(Fits, What, __LINE__);
+		}
+		// The last notes sound to near the end, which leaves time for their release
+		const JingleNote &Last = J.Lead.back();
+		Check(Last.Step + Last.Steps <= J.Steps && Last.Step + Last.Steps >= J.Steps - 4, (Which + "the ending").c_str(), __LINE__);
+	}
+	CHECK(FindJingle("Quest-Complete") == FindJingle("victory"));
+	CHECK(FindJingle("GAME OVER") != 0 && FindJingle("GAME OVER")->Name == "defeat");
+	CHECK(FindJingle("") == 0 && FindJingle("polka") == 0);
+	// No other name leads to two jingles
+	std::map<std::string, std::string> Owner;
+	bool Unique = true;
+	for (size_t j = 0; j < All.size(); ++j) {
+		std::vector<std::string> Names(All[j].Words);
+		Names.push_back(All[j].Name);
+		for (size_t w = 0; w < Names.size(); ++w) {
+			std::string Key;
+			for (size_t i = 0; i < Names[w].size(); ++i)
+				if (std::isalnum(static_cast<unsigned char>(Names[w][i])))
+					Key += static_cast<char>(std::tolower(static_cast<unsigned char>(Names[w][i])));
+			if (Owner.count(Key) && Owner[Key] != All[j].Name)
+				Unique = false;
+			Owner[Key] = All[j].Name;
+		}
+	}
+	CHECK(Unique);
+}
+
+void TestJingles()
+{
+	// A song in G major: the melody on VRC6 Pulse 1 around D-4, a bass on the triangle
+	FakeSong Song;
+	const char *const MELODY[] = { "G-3", "B-3", "D-4", "G-4", "F#4", "D-4", "G-3" };
+	for (int i = 0; i < 7; ++i)
+		Song.Put(5, i * 8, MELODY[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Song.End(5, 64);
+	Song.Put(2, 0, "G-2", 1);
+	Song.Put(2, 32, "D-2");
+	Song.End(2, 64);
+	const std::vector<std::vector<Cell> > Day = Song.Rows;
+
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_jingle", Parse("{\"kind\": \"level up\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"Level up\": the level up jingle, for a level up, a new skill or a power-up.");
+	CHECK_HAS(Result.Text, "It's 3.2 s long, at 150 BPM (speed 6, tempo 150), in G major (the song is in G major).");
+	CHECK_HAS(Result.Text, "Parts: lead on VRC6 Pulse 1 with \"Lead\" (00), harmony on VRC6 Pulse 2 with \"Lead\" (00), bass on "
+		"2A03 Triangle with \"Bass\" (01), drums on 2A03 Noise.");
+	CHECK_HAS(Result.Text, "It ends with a halt (C00), so it plays once");
+	CHECK_HAS(Result.Text, "from the preset \"kick\"");
+	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "Level up");
+	CHECK(Song.Tracks[0].Rows == Day && Song.Info.Speed == 6 && Song.Info.Tempo == 150);
+	const std::vector<std::vector<Cell> > &Up = Song.Rows;
+	// The lead around the melody's register: G major's chords climbing from G-3, ending on G-4
+	int Pitch = 0;
+	ParsePitch("G-3", Pitch);
+	CHECK(Up[5][0].Pitch() == Pitch && Up[5][0].Instrument == 0 && Up[5][0].Volume == 15);
+	CHECK(Up[5][1].Pitch() == Pitch + 4 && Up[5][3].Pitch() == Pitch + 12 && Up[5][4].Pitch() == Pitch + 5 && Up[5][11].Pitch() == Pitch + 19);
+	CHECK(Up[5][16].Pitch() == Pitch + 12 && Up[5][1].Instrument == NO_INSTRUMENT);
+	CHECK(EffectAt(Up[5][20], EFF_VIBRATO) == 0x52 && Up[5][28].IsEnd());
+	// The harmony below it, softer; the bass in the song's bass register
+	CHECK(Up[6][0].Pitch() == Pitch - 8 && Up[6][0].Volume == 10 && Up[6][12].Pitch() == Pitch + 5 && Up[6][16].Pitch() == Pitch + 4);
+	ParsePitch("G-2", Pitch);
+	CHECK(Up[2][0].Pitch() == Pitch && Up[2][0].Instrument == 1 && Up[2][0].Volume == NO_VOLUME);
+	CHECK(Up[2][4].Pitch() == Pitch + 5 && Up[2][8].Pitch() == Pitch + 7 && Up[2][16].Pitch() == Pitch);
+	// Drums: kicks, a snare roll getting louder, a crash
+	CHECK(Up[3][0].Pitch() == 4 && Up[3][0].Instrument == InstrumentIndex(Song, "Kick") && Up[3][0].Volume == 15);
+	CHECK(Up[3][12].Pitch() == 0xA && Up[3][12].Volume == 9 && Up[3][15].Volume == 15 && Up[3][16].Pitch() == 0xD);
+	// It halts after its last row, so it plays once
+	CHECK(EffectAt(Up[5][32], EFF_HALT) == 0);
+	std::vector<int> Columns;
+	for (size_t c = 0; c < Up.size(); ++c)
+		Columns.push_back(Song.Info.Channels[c].EffectColumns);
+	const SongFlow Flow = FollowSong(Up, Columns, 64, 1);
+	CHECK(Flow.Halts() && Flow.EndRow(64) == 33);
+	for (size_t c = 0; c < Up.size(); ++c)
+		for (size_t r = 33; r < Up[c].size(); ++r)
+			Check(Up[c][r].IsEmpty(), "nothing after the halt", __LINE__);
+
+	// As a sound for the game: it plays once
+	std::string Text = Tools.Call("export_for_game", Parse("{\"tracks\": [\"Level up\"]}")).Text;
+	CHECK_HAS(Text, "- Level up.ogg: 3.2 s");
+	CHECK_HAS(Text, "plays once (the song halts)");
+	CHECK_HAS(Text, "audio_play_sound(snd_level_up, 0, false);");
+	CHECK(Song.Current == 1);
+
+	// Another kind by another word for it; names stay unique
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_jingle", Parse("{\"kind\": \"Quest complete\"}"));
+	CHECK_HAS(Result.Text, "Made track 3 \"Victory\": the victory jingle");
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"levelup\"}")).Text, "Made track 4 \"Level up 2\"");
+	// An item sparkles on a bell, unless the lead is asked for
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_jingle", Parse("{\"kind\": \"treasure\"}"));
+	CHECK_HAS(Result.Text, "lead on VRC6 Pulse 1 with \"Bell\"");
+	CHECK_HAS(Result.Text, "from the preset \"bell\"");
+	bool Rings = true;		// the bell rings out until the halt
+	for (int r = 6; r < 16; ++r)
+		Rings = Rings && Song.Rows[5][r].Note == NOTE_NONE;
+	CHECK(Rings && Song.Rows[5][5].HasNote() && EffectAt(Song.Rows[5][16], EFF_HALT) == 0 && Song.Rows[6][12].IsEnd());
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"item\", \"lead_instrument\": \"Lead\"}")).Text,
+		"lead on VRC6 Pulse 1 with \"Lead\" (00)");
+
+	// A defeat in D minor, slower, without harmony or drums
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_jingle", Parse("{\"kind\": \"game over\", \"key\": \"D\", \"bpm\": 60, \"harmony_channel\": \"none\", "
+		"\"drums\": false, \"name\": \"Knocked out\"}"));
+	CHECK_HAS(Result.Text, "Made track 7 \"Knocked out\": the defeat jingle");
+	CHECK_HAS(Result.Text, "at 60 BPM");
+	CHECK_HAS(Result.Text, "in D minor. Parts: lead on VRC6 Pulse 1 with \"Lead\" (00), bass on 2A03 Triangle");
+	ParsePitch("A-4", Pitch);
+	CHECK(Song.Rows[5][0].Pitch() == Pitch && Song.Rows[5][2].Pitch() == Pitch - 1 && Song.Rows[5][6].Pitch() == Pitch - 4);
+	bool Empty = true;
+	for (size_t r = 0; r < Song.Rows[6].size(); ++r)
+		Empty = Empty && Song.Rows[6][r].IsEmpty() && Song.Rows[3][r].IsEmpty();
+	CHECK(Empty);
+	// Danger's bass pulses, each note cut off
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"alarm\"}")).Text, "Made track 8 \"Danger\"");
+	CHECK(Song.Rows[2][0].HasNote() && Song.Rows[2][1].Note == NOTE_HALT && Song.Rows[2][22].HasNote() && Song.Rows[2][23].Note == NOTE_HALT);
+	CHECK(Song.Rows[5][12].HasNote() && Song.Rows[5][24].Note == NOTE_RELEASE && EffectAt(Song.Rows[5][28], EFF_HALT) == 0);
+
+	// What it can't do
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{}")).Text, "Say which jingle with kind: level up, victory");
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"polka\"}")).Text, "There's no \"polka\" jingle.");
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"rest\", \"key\": \"H\"}")).Text, "isn't a key");
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"rest\", \"harmony_channel\": \"VRC6 Pulse 1\"}")).Text,
+		"harmony_channel needs a melodic channel other than the lead's");
+	CHECK(Tools.Call("make_jingle", Parse("{\"kind\": \"rest\", \"bass_channel\": \"Noise\"}")).IsError);
+	Song.Busy = true;
+	CHECK_HAS(Tools.Call("make_jingle", Parse("{\"kind\": \"rest\"}")).Text, "A dialog is open");
+	Song.Busy = false;
+
+	// An empty song: C major, the first pulse leads with a preset
+	FakeSong Empty2;
+	Empty2.Info.Instruments.clear();
+	ToolSet EmptyTools(Empty2);
+	Result = EmptyTools.Call("make_jingle", Parse("{\"kind\": \"rest\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "in C major (no notes to find a key from yet; give key for another)");
+	CHECK_HAS(Result.Text, "lead on 2A03 Pulse 1 with \"Soft lead\"");
+	CHECK_HAS(Result.Text, "harmony on 2A03 Pulse 2 with \"Soft lead\"");
+	CHECK_HAS(Result.Text, "bass on 2A03 Triangle with \"Bass\"");
+	CHECK_HAS(Result.Text, "It's 6.7 s long, at 72 BPM");
 }
 
 // Loops for games
@@ -2319,6 +2606,9 @@ void TestCut()
 	Marks.pop_back();
 	CHECK(!CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error));
 	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error) && !Cut.Loops && Cut.Begin == 100 && Cut.End == 24000);
+	// With the row that halts rendered, the sound ends where it starts
+	Rows.pop_back();
+	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error) && !Cut.Loops && Cut.Begin == 100 && Cut.End == 1100);
 }
 
 std::string Comment(const OggComments &Comments, const char *pKey)
@@ -2774,6 +3064,9 @@ int main()
 	TestPng();
 	TestPicture();
 	TestVersions();
+	TestTenseVersions();
+	TestJingleScores();
+	TestJingles();
 	TestTiming2();
 	TestLoops();
 	TestOgg();

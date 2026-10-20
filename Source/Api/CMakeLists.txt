@@ -70,6 +70,7 @@ add_library(ftapi STATIC
 	Picture.cpp
 	Ogg.cpp
 	GameAudio.cpp
+	Jingles.cpp
 	Music.cpp
 	Presets.cpp
 	Tools.cpp

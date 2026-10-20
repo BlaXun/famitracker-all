@@ -78,6 +78,8 @@ Some things to try:
 - "Play bars 1 to 4."
 - "Make a night version of this song." / "Make the night version a bit less
   slow and keep the drums."
+- "Make a battle version." / "Make a level-up jingle and one for finishing a
+  quest."
 - "Does the song loop cleanly?" / "Let bars 1-4 be an intro and loop the rest."
 - "Export the day and night versions for my game."
 
@@ -121,7 +123,8 @@ anything; close the dialog and ask again.
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
-| `make_version` | Another version of the selected track as a new track: a night version, calm or tense music for a game state, an area's variant. The original stays as it was |
+| `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
+| `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
@@ -176,11 +179,48 @@ The night version is, unless you ask for something else:
 Say what you want different, in words: "keep the drums", "only 10% slower",
 "no echo", "the melody an octave lower", "in dorian". Claude can also change
 the night version afterwards with the other tools, since it's the selected
-track. Other versions (tense, rain, underwater) change only what you ask
-for.
+track.
+
+A **tense version** (for a battle, danger, a boss or a chase) is, unless you
+ask for something else:
+
+- 15% faster,
+- in minor when the song is in major (a song in minor keeps its mode),
+- with a bright lead for the melody,
+- with a driving bass: each bass note struck again on every eighth note,
+  cut short before the next (notes that slide stay as they are),
+- and with busier drums: soft hi-hats between the beats the drums leave
+  empty.
+
+Other versions (rain, underwater, a dungeon) change only what you ask for.
 
 Adding a track can't be undone with Ctrl+Z in FamiTracker; remove a version
 you don't want in **Module > Module properties**.
+
+## Jingles
+
+Ask for a jingle ("make a level-up jingle", "a jingle for when a quest is
+done") and Claude adds it as a new track: a short tune with a lead, a
+harmony line below it, a bass and drums. It's in the song's key note, near
+its melody's register and with its sounds (the lead's instrument, the bass's),
+and it ends with a halt (`C00`), so the export for games saves it as a sound
+that plays once.
+
+| Kind | For | Length |
+|---|---|---|
+| level up | a level up, a new skill, a power-up | 3.2 s |
+| victory | a quest completed, a battle won, a stage cleared | 3.6 s |
+| item | an item, a treasure or a key found (on a bell) | 1.7 s |
+| new quest | a new quest, a message, a notification (two bell chimes) | 1.5 s |
+| discovery | a secret, a new area, a solved puzzle | 3.2 s |
+| rest | a rest at an inn, a save, healing (slow and soft) | 6.7 s |
+| defeat | a lost battle, a game over (minor) | 6.3 s |
+| danger | an alarm, a trap, a boss appearing (minor, unresolved) | 2.9 s |
+
+Defeat and danger are in minor and the others in major, on the song's key
+note (or the one you name). You can ask for another tempo, other
+instruments, channels, or no drums or harmony. Since the jingle is the
+selected track afterwards, Claude can change its notes like any other part.
 
 ## Music for your game: looping OGG files
 
@@ -257,7 +297,7 @@ editor; they're muted again afterwards.
 ## Not yet
 
 - Recording ideas from a phone page into the clips.
-- Jingles, sound effects, and presets for FDS, N163, VRC7 and 5B.
+- Sound effects, and presets for FDS, N163, VRC7 and 5B.
 
 ## For developers
 
@@ -268,8 +308,10 @@ editor; they're muted again afterwards.
   note names, bars and beats, keys and modes, writing a part into a range of
   rows, and following the song through its jumps, skips and halts),
   `Presets`, `Picture` and `Png` (the piano-roll picture, a palette PNG with
-  its own small deflate), and `Tools` (the tools, against the `SongHost`
-  interface in `Song.h`). Tool results can carry an image after their text.
+  its own small deflate), `Jingles` (the jingles' scores, in semitones from
+  the key note and sixteenth notes), and `Tools` (the tools, against the
+  `SongHost` interface in `Song.h`). Tool results can carry an image after
+  their text.
   ```
   cmake -S Source/Api -B build/api
   cmake --build build/api

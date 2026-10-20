@@ -554,6 +554,7 @@
     <ClCompile Include="Source\Api\Picture.cpp" />
     <ClCompile Include="Source\Api\Ogg.cpp" />
     <ClCompile Include="Source\Api\GameAudio.cpp" />
+    <ClCompile Include="Source\Api\Jingles.cpp" />
     <ClCompile Include="Source\McpSocket.cpp" />
     <ClCompile Include="Source\McpConnection.cpp" />
     <ClInclude Include="Source\Api\Json.h" />
@@ -567,6 +568,7 @@
     <ClInclude Include="Source\Api\Picture.h" />
     <ClInclude Include="Source\Api\Ogg.h" />
     <ClInclude Include="Source\Api\GameAudio.h" />
+    <ClInclude Include="Source\Api\Jingles.h" />
     <ClInclude Include="Source\McpSocket.h" />
     <ClInclude Include="Source\McpConnection.h" />
   </ItemGroup>
