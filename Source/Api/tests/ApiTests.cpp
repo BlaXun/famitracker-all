@@ -1861,6 +1861,22 @@ void TestPng()
 
 // The picture of the notes
 
+std::string Environment(const char *pName)
+{
+#ifdef _MSC_VER
+	char *pValue = 0;
+	size_t Size = 0;
+	if (_dupenv_s(&pValue, &Size, pName) != 0 || pValue == 0)
+		return std::string();
+	const std::string Value(pValue);
+	std::free(pValue);
+	return Value;
+#else
+	const char *pValue = std::getenv(pName);
+	return pValue != 0 ? std::string(pValue) : std::string();
+#endif
+}
+
 void TestPicture()
 {
 	FakeSong Song;
@@ -1904,9 +1920,9 @@ void TestPicture()
 	CHECK(CountColor(Image, 0, 155, 70) > 100);			// the loop's start
 	CHECK(CountColor(Image, 210, 30, 30) > 100);		// where it jumps back
 	CHECK(Result.Image.size() < 60000);
-	const char *pDirectory = std::getenv("FTAPI_PICTURES");
-	if (pDirectory != 0)
-		std::ofstream(std::string(pDirectory) + "/look_at_song.png", std::ios::binary) << Result.Image;
+	const std::string Directory = Environment("FTAPI_PICTURES");	// to look at it
+	if (!Directory.empty())
+		std::ofstream(Directory + "/look_at_song.png", std::ios::binary) << Result.Image;
 
 	// Fewer channels, other bars; in the protocol, as an image after the text
 	Result = Tools.Call("look_at_song", Parse("{\"from_bar\": 5, \"to_bar\": 6, \"channels\": [\"VRC6 Pulse 1\"]}"));
