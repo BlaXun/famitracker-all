@@ -48,6 +48,14 @@ jobs:
           cmake --build build/transcribe --config Release 2>&1 | tee -a transcribe-build.log
           ctest --test-dir build/transcribe -C Release --output-on-failure 2>&1 | tee transcribe-test.log
 
+      - name: Build and test the Claude Code connection's core
+        if: matrix.configuration == 'Release'
+        shell: bash
+        run: |
+          cmake -S Source/Api -B build/api -A Win32 2>&1 | tee api-build.log
+          cmake --build build/api --config Release 2>&1 | tee -a api-build.log
+          ctest --test-dir build/api -C Release --output-on-failure 2>&1 | tee api-test.log
+
       - name: Upload wav2ftm.exe
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@v4
@@ -68,7 +76,7 @@ jobs:
         run: |
           $exe = "build/Win32/$env:CONFIGURATION/FamiTracker.exe"
           $diag = @()
-          $logs = @('msbuild.log', 'transcribe-build.log') | Where-Object { Test-Path $_ }
+          $logs = @('msbuild.log', 'transcribe-build.log', 'api-build.log') | Where-Object { Test-Path $_ }
           if ($logs) {
             $diag = Get-Content $logs |
               Where-Object { $_ -match ':\s+(fatal )?(error|warning) [A-Z]+[0-9]+' } |
@@ -108,6 +116,9 @@ jobs:
           if (Test-Path transcribe-test.log) {
             $tests = Get-Content transcribe-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed|end-to-end' }
           }
+          if (Test-Path api-test.log) {
+            $tests += Get-Content api-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed' } | ForEach-Object { "Claude Code connection: $_" }
+          }
           $text = @('## Toolchain and binary') + $info + @('', '## Transcription engine tests') + $tests + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
           $text = $text -join "`n"
           if ($text.Length -gt 60000) { $text = $text.Substring(0, 60000) + "`n... (truncated)" }
@@ -138,6 +149,13 @@ jobs:
       - name: Test
         run: ctest --test-dir build/transcribe --output-on-failure
 
+      # The Claude Code connection's core: JSON, HTTP, MCP and the tools (Source/Api)
+      - name: Claude Code connection tests
+        run: |
+          cmake -S Source/Api -B build/api -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/api -j 4
+          ctest --test-dir build/api --output-on-failure
+
       # The clip library against stand-ins for MFC (Source/Tests)
       - name: Clips tests
         run: |
@@ -150,7 +168,7 @@ jobs:
   publish:
     name: Publish latest build
     needs: [build, transcribe-linux]
-    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'recorder')
+    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'recorder' || github.ref_name == 'api')
     runs-on: ubuntu-latest
     permissions:
       contents: write

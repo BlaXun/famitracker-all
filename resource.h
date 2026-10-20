@@ -677,6 +677,17 @@
 #define ID_INDICATOR_TIME               53253
 #define ID_INDICATOR_POS                53254
 
+// File > Connect Claude Code (McpConnection.cpp)
+#define IDD_CONNECT_CLAUDE              330
+#define IDC_MCP_ENABLE                  1370
+#define IDC_MCP_PORT                    1371
+#define IDC_MCP_STATUS                  1372
+#define IDC_MCP_DIRECT                  1373
+#define IDC_MCP_COMMAND                 1374
+#define IDC_MCP_COPY                    1375
+#define IDC_MCP_NEWTOKEN                1376
+#define ID_FILE_CONNECTCLAUDE           33160
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

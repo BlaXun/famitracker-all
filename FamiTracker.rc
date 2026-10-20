@@ -105,6 +105,7 @@ BEGIN
         MENUITEM "Export text...",              ID_FILE_EXPORTTEXT
         MENUITEM SEPARATOR
         MENUITEM "&Configuration",              ID_FILE_GENERALSETTINGS
+        MENUITEM "Connect &Claude Code...",     ID_FILE_CONNECTCLAUDE
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1
         MENUITEM SEPARATOR
@@ -1850,6 +1851,26 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,139,23,50,14
     CONTROL         "",IDC_SPEED_SLD,"msctls_trackbar32",WS_TABSTOP,7,7,101,16
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
+END
+
+IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 300, 246
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Connect Claude Code"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Claude Code can work on the song open here: read it, write parts, change the key, the tempo or the sounds, check it for clashes and play it for you. It connects to FamiTracker on this computer only.",IDC_STATIC,7,7,286,26
+    CONTROL         "Let Claude Code connect",IDC_MCP_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,38,140,10
+    LTEXT           "Port:",IDC_STATIC,19,55,24,8
+    EDITTEXT        IDC_MCP_PORT,45,52,40,14,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "",IDC_MCP_STATUS,92,52,201,16
+    CONTROL         "Let Claude change the song directly (Ctrl+Z undoes each change). Otherwise its ideas arrive as clips you listen to and place with Edit > Clips.",IDC_MCP_DIRECT,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | BS_TOP | WS_TABSTOP,7,74,286,20
+    GROUPBOX        "Connect once: run this in a terminal (PowerShell or Command Prompt)",IDC_STATIC,7,101,286,112
+    EDITTEXT        IDC_MCP_COMMAND,14,115,272,34,ES_MULTILINE | ES_READONLY | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_MCP_COPY,14,154,50,14
+    PUSHBUTTON      "New access code",IDC_MCP_NEWTOKEN,70,154,72,14
+    LTEXT           "It needs Claude Code installed. The access code in the command keeps other programs and web pages out. Then start claude in any folder and ask, for example: ""make the atmosphere darker"" or ""add a bass line"".",IDC_STATIC,14,174,272,34
+    DEFPUSHBUTTON   "OK",IDOK,188,225,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,225,50,14
 END
 
 IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199

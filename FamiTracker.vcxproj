@@ -447,6 +447,25 @@
     <None Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Source\Api\Json.cpp" />
+    <ClCompile Include="Source\Api\Http.cpp" />
+    <ClCompile Include="Source\Api\Mcp.cpp" />
+    <ClCompile Include="Source\Api\Music.cpp" />
+    <ClCompile Include="Source\Api\Presets.cpp" />
+    <ClCompile Include="Source\Api\Tools.cpp" />
+    <ClCompile Include="Source\McpSocket.cpp" />
+    <ClCompile Include="Source\McpConnection.cpp" />
+    <ClInclude Include="Source\Api\Json.h" />
+    <ClInclude Include="Source\Api\Http.h" />
+    <ClInclude Include="Source\Api\Mcp.h" />
+    <ClInclude Include="Source\Api\Music.h" />
+    <ClInclude Include="Source\Api\Presets.h" />
+    <ClInclude Include="Source\Api\Song.h" />
+    <ClInclude Include="Source\Api\Tools.h" />
+    <ClInclude Include="Source\McpSocket.h" />
+    <ClInclude Include="Source\McpConnection.h" />
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="Source\Transcribe\WavReader.cpp" />
     <ClCompile Include="Source\Transcribe\PitchTracker.cpp" />
     <ClCompile Include="Source\Transcribe\Notes.cpp" />

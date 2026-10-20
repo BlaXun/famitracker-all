@@ -115,3 +115,17 @@ bool IsMelodyChannel(const CFamiTrackerDoc *pDoc, int Channel);
 // Is this a bass channel (triangle or sawtooth)? A melody there is placed an
 // octave or so lower, around C3.
 bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);
+
+// The Claude Code connection (McpConnection.cpp): whole cells written into
+// channels from Row of Frame on, as one undoable action. Every row a part
+// covers is replaced (note, instrument, volume and all effect columns), and
+// frames are added at the end of the song when needed. With a LinkClipId (a
+// clip's ID, -1 for none), what's written is a linked copy of that clip, its
+// first column in the first part's channel. False with the reason in Message.
+struct song_part_t {
+	int Channel;
+	const stChanNote *pCells;	// Rows of them, from the first row on
+	int Rows;
+};
+bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
+	CString &Message);

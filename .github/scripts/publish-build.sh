@@ -53,6 +53,12 @@ fi
 		echo "                  (wav2ftm --help), then open the result in FamiTracker"
 		echo "                  with File > Import Text."
 	fi
+	if [ "$branch" = "api" ]; then
+		echo
+		echo "File > Connect Claude Code lets Claude Code on this computer work on the"
+		echo "open song: switch it on there and run the command it shows once. See"
+		echo "MCP.md in the source for what Claude can do and how to ask."
+	fi
 	echo
 	echo "These programs are not code-signed. If Windows SmartScreen warns on first"
 	echo "launch, choose \"More info\", then \"Run anyway\"."

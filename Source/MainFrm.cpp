@@ -49,6 +49,7 @@
 #include "FrameAction.h"
 #include "PatternEditor.h"
 #include "FrameEditor.h"
+#include "McpConnection.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -125,6 +126,7 @@ CMainFrame::CMainFrame() :
 	m_pInstrumentList(NULL),
 	m_pActionHandler(NULL),
 	m_iFrameEditorPos(FRAME_EDIT_POS_TOP),
+	m_pMcpConnection(NULL),
 	m_pInstrumentFileTree(NULL),
 	m_pPianoRoll(NULL),
 	m_iInstrument(0),
@@ -150,6 +152,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pInstrumentList);
 	SAFE_RELEASE(m_pVisualizerWnd);
 	SAFE_RELEASE(m_pActionHandler);
+	SAFE_RELEASE(m_pMcpConnection);
 	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, which owned it
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
@@ -163,6 +166,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_DESTROY()
 	ON_WM_COPYDATA()
 	ON_COMMAND(ID_FILE_GENERALSETTINGS, OnFileGeneralsettings)
+	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
@@ -391,6 +395,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		m_strTitle.Append(_T(" [Localization enabled]"));
 	}
 #endif
+
+	// Claude Code, if the user switched it on (File > Connect Claude Code)
+	m_pMcpConnection = new CMcpConnection();
+	m_pMcpConnection->Start(this);
 
 	return 0;
 }
@@ -1647,6 +1655,12 @@ void CMainFrame::OnUpdateFramesEdit(CCmdUI *pCmdUI)
 	}	
 }
 
+void CMainFrame::OnFileConnectClaude()
+{
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->ShowDialog();
+}
+
 void CMainFrame::OnFileGeneralsettings()
 {
 	CString Title;
@@ -2156,6 +2170,9 @@ void CMainFrame::OnShowWindow(BOOL bShow, UINT nStatus)
 void CMainFrame::OnDestroy()
 {
 	TRACE("FrameWnd: Destroying main frame window\n");
+
+	if (m_pMcpConnection != NULL)
+		m_pMcpConnection->Stop();	// no more requests from Claude Code
 
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	
