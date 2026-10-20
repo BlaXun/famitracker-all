@@ -2935,7 +2935,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::s
 		Comments.push_back(std::make_pair(std::string("LOOPEND"), Format("%lld", Cut.Length())));
 	}
 	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
-	const std::vector<float> Kept(Samples.begin() + Cut.Begin, Samples.begin() + Cut.End);
+	const std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
 	std::string Bytes;
 	if (!EncodeOgg(Kept, SampleRate, Quality, Comments, Bytes, Error))
 		throw Problem(Error);

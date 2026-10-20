@@ -656,12 +656,12 @@ public:
 		if (Started) {
 			// It starts on the sound thread a moment later and runs to its end
 			Started = false;
-			const ULONGLONG Since = GetTickCount64();
+			const DWORD Since = GetTickCount();
 			for (;;) {
 				const bool Rendering = pSound->IsRendering();
 				if (Rendering)
 					Started = true;
-				else if (Started || GetTickCount64() - Since > 5000)
+				else if (Started || GetTickCount() - Since > 5000)
 					break;
 				int Frame = 0, Time = 0, Frames = 0, Row = 0, Rows = 0;
 				bool Done = false;
