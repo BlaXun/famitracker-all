@@ -284,7 +284,8 @@ Editing, in the bright channel:
 - Draw: click to add a note a grid step long, or drag to make it longer;
   dragging up and down changes its pitch while drawing. It ends with a
   release (`===`) when its instrument fades out on one, otherwise a halt
-  (`---`).
+  (`---`). Clicking another channel's note edits that channel instead;
+  hold Shift to draw over it.
 - Paint melody: drag, and a note goes on every grid step at the pitch under
   the mouse; steps of the same pitch join into a longer note. A way to sketch
   a melody's shape without singing in tune, kept in key when a key is set.
