@@ -41,6 +41,7 @@ enum {
 
 class CVisualizerWnd;
 class CInstrumentFileTree;
+class CPianoRollWnd;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
@@ -93,6 +94,7 @@ public:
 	CAction *GetLastAction(int Filter) const;
 	void	ResetUndo();
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
+	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 
 	bool	ChangeAllPatterns() const;
 
@@ -175,6 +177,8 @@ private:  // control bar embedded members
 
 	CInstrumentFileTree	*m_pInstrumentFileTree;
 
+	CPianoRollWnd		*m_pPianoRoll;			// View > Piano roll, created when first opened
+
 	// State variables
 	int					m_iOctave;					// Selected octave
 	int					m_iInstrument;				// Selected instrument
@@ -245,6 +249,7 @@ public:
 	afx_msg void OnUpdateNextSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdatePrevSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCopy(CCmdUI *pCmdUI);
@@ -287,6 +292,7 @@ public:
 	afx_msg void OnClickedFollow();
 	afx_msg void OnToggleFollow();
 	afx_msg void OnViewControlpanel();
+	afx_msg void OnViewPianoRoll();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
 	afx_msg void OnSelectPatternEditor();

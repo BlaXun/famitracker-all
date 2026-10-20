@@ -51,6 +51,7 @@
 #include "FrameEditor.h"
 #include "APU/APU.h"
 #include "Clips.h"
+#include "PianoRoll.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -125,6 +126,7 @@ CMainFrame::CMainFrame() :
 	m_pActionHandler(NULL),
 	m_iFrameEditorPos(FRAME_EDIT_POS_TOP),
 	m_pInstrumentFileTree(NULL),
+	m_pPianoRoll(NULL),
 	m_iInstrument(0),
 	m_iTrack(0),
 	m_iOctave(3)
@@ -148,6 +150,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pInstrumentList);
 	SAFE_RELEASE(m_pVisualizerWnd);
 	SAFE_RELEASE(m_pActionHandler);
+	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, which owned it
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -212,6 +215,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_TRACKER_DPCM, OnTrackerDPCM)
 	ON_COMMAND(ID_TRACKER_DISPLAYREGISTERSTATE, OnTrackerDisplayRegisterState)
 	ON_COMMAND(ID_VIEW_CONTROLPANEL, OnViewControlpanel)
+	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
 	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
@@ -282,6 +286,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_PREV_SONG, OnUpdatePrevSong)
 	ON_UPDATE_COMMAND_UI(ID_TRACKER_SWITCHTOTRACKINSTRUMENT, OnUpdateTrackerSwitchToInstrument)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CONTROLPANEL, OnUpdateViewControlpanel)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -417,7 +422,7 @@ bool CMainFrame::CreateToolbars()
 	rbi1.fMask		= RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_SIZE;
 	rbi1.fStyle		= RBBS_NOGRIPPER;
 	rbi1.hwndChild	= m_wndToolBar;
-	rbi1.cxMinChild	= SX(600);	// 554, plus 23 each for the microphone and clips buttons
+	rbi1.cxMinChild	= SX(623);	// 554, plus 23 each for the microphone, clips and piano roll buttons
 	rbi1.cyMinChild	= SY(22);
 	rbi1.cx			= SX(496);
 
@@ -1992,6 +1997,34 @@ void CMainFrame::OnUpdateViewControlpanel(CCmdUI *pCmdUI)
 	pCmdUI->SetCheck(m_wndControlBar.IsVisible());
 }
 
+void CMainFrame::OnViewPianoRoll()
+{
+	// Opens the piano roll (see PianoRoll.h), or hides it when it's open
+	if (m_pPianoRoll == NULL) {
+		m_pPianoRoll = new CPianoRollWnd();
+		if (!m_pPianoRoll->Create(this)) {
+			delete m_pPianoRoll;
+			m_pPianoRoll = NULL;
+			return;
+		}
+	}
+	if (m_pPianoRoll->IsShown())
+		m_pPianoRoll->SendMessage(WM_CLOSE);	// hides it
+	else
+		m_pPianoRoll->Show();
+}
+
+void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsShown() ? 1 : 0);
+}
+
+void CMainFrame::SongChanged()
+{
+	if (m_pPianoRoll != NULL)
+		m_pPianoRoll->SongChanged();
+}
+
 void CMainFrame::OnUpdateHighlight(CCmdUI *pCmdUI)
 {
 	// TODO remove static variables
@@ -2343,6 +2376,7 @@ bool CMainFrame::AddAction(CAction *pAction)
 
 	m_pActionHandler->Push(pAction);
 	SyncClips();
+	SongChanged();
 
 	return true;
 }
@@ -2370,6 +2404,7 @@ void CMainFrame::OnEditUndo()
 	if (pAction != NULL) {
 		pAction->Undo(this);
 		SyncClips();
+		SongChanged();
 	}
 }
 
@@ -2382,6 +2417,7 @@ void CMainFrame::OnEditRedo()
 	if (pAction != NULL) {
 		pAction->Redo(this);
 		SyncClips();
+		SongChanged();
 	}
 }
 

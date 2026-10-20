@@ -659,6 +659,7 @@
 #define ID_EDIT_ADDBACKING              33129
 #define ID_EDIT_SAVECLIP                33130
 #define ID_EDIT_CLIPS                   33131
+#define ID_VIEW_PIANOROLL               33132
 #define ID_INSTRUMENT_ADD_2A03          36864
 #define ID_INSTRUMENT_ADD_FDS           36865
 #define ID_INSTRUMENT_ADD_MMC5          36866
@@ -679,7 +680,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        326
-#define _APS_NEXT_COMMAND_VALUE         33132
+#define _APS_NEXT_COMMAND_VALUE         33133
 #define _APS_NEXT_CONTROL_VALUE         1346
 #define _APS_NEXT_SYMED_VALUE           179
 #endif

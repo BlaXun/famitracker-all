@@ -61,6 +61,7 @@ BEGIN
     BUTTON      ID_TRACKER_EDIT
     BUTTON      ID_EDIT_RECORD
     BUTTON      ID_EDIT_CLIPS
+    BUTTON      ID_VIEW_PIANOROLL
     SEPARATOR
     BUTTON      ID_PREV_SONG
     BUTTON      ID_NEXT_SONG
@@ -214,6 +215,7 @@ BEGIN
         MENUITEM "&Toolbar",                    ID_VIEW_TOOLBAR
         MENUITEM "&Status Bar",                 ID_VIEW_STATUS_BAR
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
+        MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -550,6 +552,7 @@ BEGIN
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips: place one at the cursor as a copy or linked, edit, duplicate or delete them\nClips"
+    ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"

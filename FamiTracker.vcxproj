@@ -471,6 +471,8 @@
     <ClInclude Include="Source\Clips.h" />
     <ClCompile Include="Source\ClipsDlg.cpp" />
     <ClInclude Include="Source\ClipsDlg.h" />
+    <ClCompile Include="Source\PianoRoll.cpp" />
+    <ClInclude Include="Source\PianoRoll.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

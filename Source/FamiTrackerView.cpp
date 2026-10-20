@@ -1269,6 +1269,7 @@ void CFamiTrackerView::OnUpdate(CView* /*pSender*/, LPARAM lHint, CObject* /*pHi
 	// Called when the document has changed
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());
 	ASSERT_VALID(pMainFrm);
+	pMainFrm->SongChanged();	// the piano roll reads the notes again
 
 	// Handle new flags
 	switch (lHint) {
@@ -1344,6 +1345,7 @@ void CFamiTrackerView::TrackChanged(unsigned int Track)
 		theApp.ResetPlayer();
 
 	pMainFrm->ResetUndo();
+	pMainFrm->SongChanged();
 
 	m_pPatternEditor->ResetCursor();
 	m_pPatternEditor->InvalidatePatternData();

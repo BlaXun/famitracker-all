@@ -44,7 +44,8 @@ fi
 		echo "                  hum, song or finger taps straight into the song, Edit >"
 		echo "                  Add chords and bass line fits a backing to a melody, and"
 		echo "                  the clips button next to it keeps takes and selections"
-		echo "                  as clips to place again, as copies or linked."
+		echo "                  as clips to place again, as copies or linked. The piano"
+		echo "                  roll button shows the song's notes on a grid."
 	fi
 	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"

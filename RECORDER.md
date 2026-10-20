@@ -128,8 +128,12 @@ clips to place again, as copies or linked.
   file or the selection in the pattern editor kept with the song, placed at
   the cursor as a copy or linked. The clip editor gives notes another
   instrument and transposes them.
-- [ ] Next: the piano roll (ROADMAP.md, step 5), where melodies can also be
-  drawn with the mouse.
+- [x] Piano roll, part 1 (`PianoRoll.cpp`; see Piano roll below): View >
+  Piano roll shows the song's notes on a grid, time from left to right,
+  follows playback and the cursor, and moves the cursor to a clicked note.
+- [ ] Next: editing in the piano roll (draw, move, resize and erase notes,
+  scale lock, placing clips), where melodies can also be drawn with the
+  mouse.
 - [ ] Then more natural input, built on the recorder:
   - start from a groove: pick a mood (overworld, battle, dungeon, boss,
     jingle), a tempo and a key, get a few bars of drums, bass and chords, and
@@ -224,6 +228,34 @@ The song's clips are saved in the module's `BF CLIPS` block, version 1:
 Loading checks every count and value against FamiTracker's limits; a damaged
 block leaves the clips out and the song still loads. Other FamiTracker
 versions skip the block, and lose the clips if they save the song.
+
+## Piano roll
+
+View > Piano roll (Ctrl+Shift+P, or the toolbar button next to the clips
+button) opens a window showing the song's notes on a grid: time from left to
+right, pitch from bottom to top, with a keyboard on the left.
+
+- The ruler counts bars from the second row highlight (a bar), with thinner
+  lines for beats (the first highlight) and rows, and the strongest lines
+  where a frame starts.
+- Every channel's notes are drawn, each channel in its own colour: the
+  cursor's channel bright, the others faint. A note lasts until the next
+  note, release or halt in its channel, the way it plays.
+- It follows the song: the play position runs across while playing (paging
+  ahead in follow mode, the note sounding lights up, and so does its key),
+  and the pattern editor's cursor shows as a line.
+- Clicking a note moves the pattern editor's cursor to it (and makes its
+  channel the bright one); clicking an empty spot or the ruler moves the
+  cursor to that row. Clicking a key plays it on the cursor's channel with
+  the selected instrument; slide over the keys to hear more.
+- Wheel: up and down; Shift+wheel: sideways; Ctrl+wheel: zoom in and out
+  around the mouse. The arrow keys, Page Up/Down, Home and End scroll too.
+  Hovering a note shows its name, length, instrument and bar in the status
+  line.
+- Closing the window only hides it; its place and zoom are remembered.
+
+Editing comes next: drawing notes with the mouse, moving and resizing them,
+scale lock, and placing clips in it.
 
 ## Using wav2ftm today
 

@@ -246,6 +246,9 @@
     <Filter Include="Recorder">
       <UniqueIdentifier>{7814030B-35CE-5CEF-9CED-EF6650C58345}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Piano roll">
+      <UniqueIdentifier>{A4FE8CC8-B6A4-4184-BC2A-21DD6AB4C66C}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Exception.cpp">
@@ -1295,6 +1298,12 @@
     </ClCompile>
     <ClInclude Include="Source\ClipsDlg.h">
       <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\PianoRoll.cpp">
+      <Filter>Piano roll</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PianoRoll.h">
+      <Filter>Piano roll</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

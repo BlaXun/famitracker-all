@@ -97,6 +97,7 @@ const stAccelEntry CAccelerator::DEFAULT_TABLE[] = {
 	{_T("Record from microphone"),		MOD_CONTROL | MOD_SHIFT,	'R',	ID_EDIT_RECORD},
 	{_T("Save selection as clip"),		MOD_CONTROL | MOD_SHIFT,	'C',	ID_EDIT_SAVECLIP},
 	{_T("Clips"),						MOD_CONTROL | MOD_SHIFT,	'V',	ID_EDIT_CLIPS},
+	{_T("Piano roll"),					MOD_CONTROL | MOD_SHIFT,	'P',	ID_VIEW_PIANOROLL},
 };
 
 const int CAccelerator::ACCEL_COUNT = sizeof(CAccelerator::DEFAULT_TABLE) / sizeof(stAccelEntry);
