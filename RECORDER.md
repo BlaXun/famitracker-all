@@ -34,13 +34,14 @@ recordings and selections become reusable clips.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 195 checks on synthesized audio covering:
+- [x] Tests: 200 checks on synthesized audio covering:
   - pitch of hums and whistles,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - repeated notes and glides,
   - octave fit and scales,
   - taps,
   - the exact text cells, including songs with several parts.
+  - the FFT difference function against the direct sum.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -129,9 +130,10 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   - The Lead instrument's volume macro is `15 14 13 12 11 10 7 4 2 0` with
     the release point on item 5: it holds at 10 while the note lasts, and the
     `===` at the note's end plays `7 4 2 0`.
-- **Speed:** about 4x faster than real time, since YIN costs window × lag
-  operations per frame. An FFT-based difference function would speed this up
-  if needed.
+- **Speed:** YIN's difference function comes from an FFT cross-correlation
+  plus running energy sums, giving the same values as the direct sum. A
+  34-second recording takes about half a second, where the direct sum took
+  11 seconds.
 
 ## Building and testing the engine
 

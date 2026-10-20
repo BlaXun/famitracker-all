@@ -23,6 +23,7 @@
 
 #include "Transcribe.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -203,6 +204,108 @@ void TestScales()
 	notes[0].midi = 61;
 	SnapToScale(notes, 0, Scale::Major);
 	CHECK(notes[0].midi == 62);
+}
+
+// YIN with the direct difference function, as TrackPitch computed it before it
+// switched to an FFT cross-correlation. The two must agree.
+std::vector<PitchFrame> DirectYin(const Audio &audio, const PitchOptions &options)
+{
+	std::vector<PitchFrame> frames;
+	const int rate = audio.sampleRate;
+	const int tauMin = std::max(2, int(std::floor(rate / options.maxFrequency)));
+	const int tauMax = std::max(tauMin + 2, int(std::ceil(rate / options.minFrequency)));
+	const int window = std::max(tauMax, int(std::lround(options.windowSeconds * rate)));
+	const int hop = std::max(1, int(std::lround(options.hopSeconds * rate)));
+	const size_t span = size_t(window) + size_t(tauMax) + 1;
+	const std::vector<float> &x = audio.samples;
+	std::vector<double> diff(tauMax + 1), cmnd(tauMax + 1);
+	for (size_t start = 0; start + span <= x.size(); start += hop) {
+		const float *s = &x[start];
+		PitchFrame frame;
+		frame.time = (double(start) + window / 2.0) / rate;
+		double energy = 0.0;
+		for (int j = 0; j < window; ++j)
+			energy += double(s[j]) * s[j];
+		frame.rms = std::sqrt(energy / window);
+		if (frame.rms <= 1e-9) {
+			frames.push_back(frame);
+			continue;
+		}
+		for (int tau = 1; tau <= tauMax; ++tau) {
+			double sum = 0.0;
+			for (int j = 0; j < window; ++j) {
+				const double d = double(s[j]) - s[j + tau];
+				sum += d * d;
+			}
+			diff[tau] = sum;
+		}
+		cmnd[0] = 1.0;
+		double running = 0.0;
+		for (int tau = 1; tau <= tauMax; ++tau) {
+			running += diff[tau];
+			cmnd[tau] = running > 0.0 ? diff[tau] * tau / running : 1.0;
+		}
+		int best = -1;
+		for (int tau = tauMin; tau <= tauMax; ++tau) {
+			if (cmnd[tau] < options.threshold) {
+				while (tau + 1 <= tauMax && cmnd[tau + 1] < cmnd[tau])
+					++tau;
+				best = tau;
+				break;
+			}
+		}
+		if (best < 0) {
+			best = tauMin;
+			for (int tau = tauMin + 1; tau <= tauMax; ++tau)
+				if (cmnd[tau] < cmnd[best])
+					best = tau;
+		}
+		double refined = best;
+		if (best > tauMin && best < tauMax) {
+			const double a = cmnd[best - 1], b = cmnd[best], c = cmnd[best + 1];
+			const double denominator = a - 2.0 * b + c;
+			if (std::fabs(denominator) > 1e-12) {
+				const double shift = 0.5 * (a - c) / denominator;
+				if (shift > -1.0 && shift < 1.0)
+					refined += shift;
+			}
+		}
+		frame.aperiodicity = cmnd[best];
+		frame.frequency = refined > 0.0 ? rate / refined : 0.0;
+		frames.push_back(frame);
+	}
+	return frames;
+}
+
+void TestFastDifferenceFunction()
+{
+	// A hum, a whistle with vibrato and noise, a glide, then noise alone
+	Synth s;
+	s.Silence(0.1);
+	s.Tone(MidiToFrequency(50), 0.4, 0.4, true, 10.0, 5.0, 6, 0.01);
+	s.Tone(MidiToFrequency(88), 0.4, 0.3, true, 25.0, 5.5, 1, 0.03);
+	s.Glide(MidiToFrequency(60), MidiToFrequency(72), 0.3);
+	for (int i = 0; i < RATE / 5; ++i)
+		s.audio.samples.push_back(float(0.05 * Noise()));
+	const std::vector<PitchFrame> fast = TrackPitch(s.audio, PitchOptions());
+	const std::vector<PitchFrame> direct = DirectYin(s.audio, PitchOptions());
+	CHECK(fast.size() == direct.size());
+	double worstCents = 0.0, worstAperiodicity = 0.0, worstRms = 0.0;
+	int differentLag = 0;
+	for (size_t i = 0; i < fast.size() && i < direct.size(); ++i) {
+		worstAperiodicity = std::max(worstAperiodicity, std::fabs(fast[i].aperiodicity - direct[i].aperiodicity));
+		if (fast[i].frequency > 0.0 && direct[i].frequency > 0.0)
+			worstCents = std::max(worstCents, 1200.0 * std::fabs(std::log2(fast[i].frequency / direct[i].frequency)));
+		else if (fast[i].frequency != direct[i].frequency)
+			++differentLag;
+		worstRms = std::max(worstRms, std::fabs(fast[i].rms - direct[i].rms));
+	}
+	if (worstCents > 1e-6 || worstAperiodicity > 1e-9)
+		std::printf("  FFT vs direct: %g cents, aperiodicity %g\n", worstCents, worstAperiodicity);
+	CHECK(worstCents < 1e-6);
+	CHECK(worstAperiodicity < 1e-9);
+	CHECK(differentLag == 0);
+	CHECK(worstRms < 1e-9);
 }
 
 void TestPitchAccuracy()
@@ -662,6 +765,7 @@ int main()
 {
 	TestGridAndNames();
 	TestScales();
+	TestFastDifferenceFunction();
 	TestPitchAccuracy();
 	TestNoteLengths();
 	TestQuietEdges();

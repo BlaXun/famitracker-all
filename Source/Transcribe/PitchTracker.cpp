@@ -26,8 +26,60 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 
 namespace transcribe {
+
+namespace {
+
+typedef std::complex<double> Complex;
+
+// In-place iterative radix-2 FFT; size is a power of two. inverse = true
+// computes the unscaled inverse transform.
+class FFT {
+public:
+	explicit FFT(size_t size) : n_(size), twiddle_(size / 2), reversed_(size)
+	{
+		const double pi = 3.14159265358979323846;
+		for (size_t k = 0; k < n_ / 2; ++k)
+			twiddle_[k] = std::polar(1.0, -2.0 * pi * double(k) / double(n_));
+		size_t bits = 0;
+		while ((size_t(1) << bits) < n_)
+			++bits;
+		for (size_t i = 0; i < n_; ++i) {
+			size_t r = 0;
+			for (size_t b = 0; b < bits; ++b)
+				if (i & (size_t(1) << b))
+					r |= size_t(1) << (bits - 1 - b);
+			reversed_[i] = r;
+		}
+	}
+
+	void Transform(std::vector<Complex> &data, bool inverse) const
+	{
+		for (size_t i = 0; i < n_; ++i)
+			if (i < reversed_[i])
+				std::swap(data[i], data[reversed_[i]]);
+		for (size_t len = 2; len <= n_; len <<= 1) {
+			const size_t half = len / 2, step = n_ / len;
+			for (size_t start = 0; start < n_; start += len) {
+				for (size_t k = 0; k < half; ++k) {
+					const Complex w = inverse ? std::conj(twiddle_[k * step]) : twiddle_[k * step];
+					const Complex t = w * data[start + k + half];
+					data[start + k + half] = data[start + k] - t;
+					data[start + k] += t;
+				}
+			}
+		}
+	}
+
+private:
+	size_t n_;
+	std::vector<Complex> twiddle_;
+	std::vector<size_t> reversed_;
+};
+
+}	// namespace
 
 std::vector<PitchFrame> TrackPitch(const Audio &audio, const PitchOptions &options)
 {
@@ -48,6 +100,15 @@ std::vector<PitchFrame> TrackPitch(const Audio &audio, const PitchOptions &optio
 
 	std::vector<double> diff(tauMax + 1), cmnd(tauMax + 1);
 
+	// The difference function d(tau) = sum (x[j] - x[j+tau])^2 over the window
+	// expands to e(0) + e(tau) - 2 r(tau): two energies kept as running sums, and
+	// the cross-correlation r(tau), computed for all lags with one FFT pair.
+	size_t fftSize = 1;
+	while (fftSize < size_t(window) + size_t(tauMax) + 1)
+		fftSize <<= 1;
+	const FFT fft(fftSize);
+	std::vector<Complex> spectrum(fftSize);
+
 	for (size_t start = 0; start + span <= x.size(); start += hop) {
 		const float *s = &x[start];
 		PitchFrame frame;
@@ -63,15 +124,33 @@ std::vector<PitchFrame> TrackPitch(const Audio &audio, const PitchOptions &optio
 			continue;
 		}
 
-		// Step 2: difference function d(tau)
+		// Step 2: difference function d(tau). Window a = s[0, window) goes in the
+		// real part and the longer stretch b = s[0, window + tauMax] in the
+		// imaginary part; both spectra come out of one transform.
+		for (size_t j = 0; j < fftSize; ++j) {
+			const double re = j < size_t(window) ? double(s[j]) : 0.0;
+			const double im = j < span ? double(s[j]) : 0.0;
+			spectrum[j] = Complex(re, im);
+		}
+		fft.Transform(spectrum, false);
+		for (size_t k = 0; k <= fftSize / 2; ++k) {
+			const size_t mirror = (fftSize - k) % fftSize;
+			const Complex z = spectrum[k], zm = std::conj(spectrum[mirror]);
+			const Complex a = 0.5 * (z + zm), b = Complex(0.0, -0.5) * (z - zm);
+			const Complex product = std::conj(a) * b;	// cross-spectrum: r(tau) = sum a[j] b[j+tau]
+			spectrum[k] = product;
+			spectrum[mirror] = std::conj(product);
+		}
+		fft.Transform(spectrum, true);
+		double energy0 = 0.0;
+		for (int j = 0; j < window; ++j)
+			energy0 += double(s[j]) * s[j];
+		double energyTau = energy0;	// sum of s[j]^2 for j in [tau, tau + window)
 		diff[0] = 0.0;
 		for (int tau = 1; tau <= tauMax; ++tau) {
-			double sum = 0.0;
-			for (int j = 0; j < window; ++j) {
-				const double d = double(s[j]) - s[j + tau];
-				sum += d * d;
-			}
-			diff[tau] = sum;
+			energyTau += double(s[tau + window - 1]) * s[tau + window - 1] - double(s[tau - 1]) * s[tau - 1];
+			const double r = spectrum[size_t(tau)].real() / double(fftSize);
+			diff[tau] = std::max(0.0, energy0 + energyTau - 2.0 * r);
 		}
 
 		// Step 3: cumulative mean normalized difference d'(tau)
