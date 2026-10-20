@@ -235,7 +235,7 @@ BOOL CFamiTrackerApp::InitInstance()
 	}
 
 	// Move root key back to default
-	if (osvi.dwMajorVersion >= 6) { 
+	if (IsWindowsVistaOrGreater()) {
 		::RegOverridePredefKey(HKEY_CLASSES_ROOT, NULL);
 	}
 
