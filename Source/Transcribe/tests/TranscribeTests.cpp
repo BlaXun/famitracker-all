@@ -543,6 +543,69 @@ void TestTextModule()
 	CHECK(text2.find("MACROVRC6") == std::string::npos);
 	CHECK(text2.find("MACRO       0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
 
+	// A song from several recordings: lead on VRC6 pulse 1, bass on the sawtooth, drums
+	{
+		std::vector<MelodyPart> parts(2);
+		parts[0].channel = 5;
+		parts[0].notes.resize(1);
+		parts[0].notes[0].row = 0; parts[0].notes[0].length = 4; parts[0].notes[0].midi = 69;
+		parts[1].channel = 7;
+		parts[1].instrument = 4;
+		parts[1].name = "Bass";
+		parts[1].notes.resize(2);
+		parts[1].notes[0].row = 0; parts[1].notes[0].length = 8; parts[1].notes[0].midi = 45;
+		parts[1].notes[1].row = 20; parts[1].notes[1].length = 4; parts[1].notes[1].midi = 43;
+		std::vector<GridHit> beat(1);
+		beat[0].row = 4; beat[0].drum = Drum::Kick; beat[0].volume = 15;
+		TextModuleOptions o3;
+		o3.patternLength = 16;
+		const std::string song = WriteTextModule(parts, beat, o3);
+		const bool songValid = ValidateTextModule(song, &error);
+		if (!songValid) std::printf("  validator: %s\n", error.c_str());
+		CHECK(songValid);
+		CHECK(CellOf(song, 0, 0, 5) == "A-3 00 . ...");
+		CHECK(CellOf(song, 0, 4, 5) == "=== .. . ...");
+		CHECK(CellOf(song, 0, 0, 7) == "A-1 04 . ...");	// MIDI 45 on the sawtooth, instrument 04
+		CHECK(CellOf(song, 0, 8, 7) == "=== .. . ...");
+		CHECK(CellOf(song, 1, 4, 7) == "G-1 04 . ...");	// row 20 = frame 1, row 4
+		CHECK(CellOf(song, 1, 8, 7) == "=== .. . ...");
+		CHECK(CellOf(song, 0, 4, 3) == "4-# 01 F ...");
+		CHECK(song.find("INSTVRC6   0     0  -1  -1  -1   0 \"Lead\"\n") != std::string::npos);
+		CHECK(song.find("INSTVRC6   4     0  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);	// no duty on the sawtooth
+		CHECK(song.find("ORDER 01 : 00 00 00 01 00 01 00 01\n") != std::string::npos);
+		CHECK(song.find("MACROVRC6   4   0  -1  -1   0 : 3\n") != std::string::npos);
+	}
+	{
+		// 2A03 only: lead on pulse 1, bass on the triangle
+		std::vector<MelodyPart> parts(2);
+		parts[0].channel = 0;
+		parts[0].notes = melody;
+		parts[1].channel = 2;
+		parts[1].instrument = 4;
+		parts[1].name = "Bass";
+		parts[1].notes = melody;
+		TextModuleOptions o4;
+		o4.expansion = Expansion::None;
+		o4.patternLength = 16;
+		const std::string song = WriteTextModule(parts, std::vector<GridHit>(), o4);
+		CHECK(ValidateTextModule(song, &error));
+		CHECK(song.find("MACRO       0   0  -1   5   0 : 15 14 13 12 11 10 7 4 2 0\n") != std::string::npos);
+		CHECK(song.find("MACRO       4   0  -1  -1   0 : 1\n") != std::string::npos);
+		CHECK(song.find("INST2A03   4     0  -1  -1  -1  -1 \"Bass\"\n") != std::string::npos);
+		CHECK(song.find("MACROVRC6") == std::string::npos);
+		CHECK(CellOf(song, 0, 0, 2) == "A-3 04 . ...");
+	}
+	{
+		// Only the sawtooth plays: no duty macro is written
+		std::vector<MelodyPart> parts(1);
+		parts[0].channel = 7;
+		parts[0].notes = melody;
+		const std::string song = WriteTextModule(parts, std::vector<GridHit>(), TextModuleOptions());
+		CHECK(ValidateTextModule(song, &error));
+		CHECK(song.find("MACROVRC6   4") == std::string::npos);
+		CHECK(song.find("INSTVRC6   0     0  -1  -1  -1  -1 \"Lead\"\n") != std::string::npos);
+	}
+
 	// The validator rejects what FamiTracker's importer would reject
 	std::string bad = text;
 	bad.replace(bad.find("A-3 00"), 3, "A3 ");

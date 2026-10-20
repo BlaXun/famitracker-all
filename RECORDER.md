@@ -31,14 +31,16 @@ recordings and selections become reusable clips.
   - A FamiTracker text-module writer, plus a validator ported from
     `CTextExport::ImportFile`.
 - [x] `wav2ftm` command-line tool. CI builds it as the `wav2ftm-Win32`
-  artifact.
-- [x] Tests: 174 checks on synthesized audio covering:
+  artifact. Import Text always replaces the open song, so `wav2ftm` combines
+  a melody, a drum part and a bass line from separate recordings into one
+  song (`--drums`, `--bass`).
+- [x] Tests: 195 checks on synthesized audio covering:
   - pitch of hums and whistles,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - repeated notes and glides,
   - octave fit and scales,
   - taps,
-  - the exact text cells.
+  - the exact text cells, including songs with several parts.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -67,7 +69,15 @@ wav2ftm --mode drums --bpm 120 taps.wav taps.txt        rhythm on the noise chan
 wav2ftm --key C --scale pentatonic hum.wav hum.txt      snap to a scale
 wav2ftm --channel 7 bassline.wav bass.txt               VRC6 sawtooth, bass register
 wav2ftm --min-rest 0 staccato.wav staccato.txt          keep every break as a rest
+wav2ftm --drums taps.wav --bass hum.wav whistle.wav song.txt   all three in one song
 ```
+
+In a song from several recordings, each part starts at row 0 with its first
+sound, so start every recording on the first beat. With `--keep-silence`,
+each part keeps its timing from the start of its file instead, which lines
+the parts up if every recording starts at the same moment. The bass goes on
+the VRC6 sawtooth (the triangle with `--expansion none`), an octave or so
+below the melody, as instrument 04.
 
 Then, in FamiTracker: File > Import Text. Convert phone recordings in other
 formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.

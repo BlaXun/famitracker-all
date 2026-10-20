@@ -36,6 +36,7 @@ namespace transcribe {
 
 namespace {
 
+const int TRIANGLE_CHANNEL = 2;
 const int NOISE_CHANNEL = 3;
 const int DPCM_CHANNEL = 4;
 const int SAWTOOTH_CHANNEL = 7;
@@ -103,38 +104,63 @@ int ChannelCount(Expansion expansion)
 std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vector<GridHit> &drums,
 	const TextModuleOptions &options)
 {
+	std::vector<MelodyPart> parts;
+	if (!melody.empty()) {
+		MelodyPart lead;
+		lead.channel = options.melodyChannel;
+		lead.notes = melody;
+		parts.push_back(lead);
+	}
+	return WriteTextModule(parts, drums, options);
+}
+
+std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vector<GridHit> &drums,
+	const TextModuleOptions &options)
+{
 	const int channels = ChannelCount(options.expansion);
 	const int length = std::max(1, std::min(MAX_PATTERN_LENGTH, options.patternLength));
-	const bool melodyOnVrc6 = options.melodyChannel >= 5;
-	const bool haveMelody = !melody.empty();
 	const bool haveDrums = !drums.empty();
+	bool melodyOn2A03 = false, melodyOnVrc6 = false;	// any melody on that chip
+	bool pulseOn2A03 = false, pulseOnVrc6 = false;		// any on a pulse channel (needs a duty macro)
+	for (size_t p = 0; p < parts.size(); ++p) {
+		if (parts[p].notes.empty())
+			continue;
+		const int c = parts[p].channel;
+		(c >= 5 ? melodyOnVrc6 : melodyOn2A03) = true;
+		if (c != TRIANGLE_CHANNEL && c != SAWTOOTH_CHANNEL)
+			(c >= 5 ? pulseOnVrc6 : pulseOn2A03) = true;
+	}
 
 	// Lay the cells out on one long row line per channel
-	std::map<int, Cell> melodyCells, drumCells;
+	std::map<int, std::map<int, Cell> > cells;	// channel -> absolute row -> cell
 	int lastRow = 0;
-	for (size_t i = 0; i < melody.size(); ++i) {
-		const GridNote &n = melody[i];
-		Cell c;
-		c.note = FamiTrackerNoteName(n.midi);
-		c.instrument = 0;
-		melodyCells[n.row] = c;
-		const int off = n.row + n.length;
-		const bool nextStartsHere = (i + 1 < melody.size() && melody[i + 1].row == off);
-		if (!nextStartsHere) {
-			// Note release where the sound stopped: the Lead instrument fades out
-			// over a few frames, like the end of a whistle, instead of the hard cut of ---.
-			Cell release;
-			release.note = "===";
-			melodyCells[off] = release;
+	for (size_t p = 0; p < parts.size(); ++p) {
+		const std::vector<GridNote> &melody = parts[p].notes;
+		std::map<int, Cell> &line = cells[parts[p].channel];
+		for (size_t i = 0; i < melody.size(); ++i) {
+			const GridNote &n = melody[i];
+			Cell c;
+			c.note = FamiTrackerNoteName(n.midi);
+			c.instrument = parts[p].instrument;
+			line[n.row] = c;
+			const int off = n.row + n.length;
+			const bool nextStartsHere = (i + 1 < melody.size() && melody[i + 1].row == off);
+			if (!nextStartsHere) {
+				// Note release where the sound stopped: the instrument fades out over a
+				// few frames, like the end of a whistle, instead of the hard cut of ---.
+				Cell release;
+				release.note = "===";
+				line[off] = release;
+			}
+			lastRow = std::max(lastRow, off);
 		}
-		lastRow = std::max(lastRow, off);
 	}
 	for (size_t i = 0; i < drums.size(); ++i) {
 		Cell c;
 		c.note = Format("%X", DrumNoisePitch(drums[i].drum)) + "-#";
 		c.instrument = DrumInstrument(drums[i].drum);
 		c.volume = drums[i].volume;
-		drumCells[drums[i].row] = c;
+		cells[NOISE_CHANNEL][drums[i].row] = c;
 		lastRow = std::max(lastRow, drums[i].row);
 	}
 	const int frames = std::max(1, lastRow / length + 1);
@@ -172,34 +198,41 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 	out << Padded("VIBRATO", 15) << " 1\n";
 	out << Padded("SPLIT", 15) << " 32\n\n";
 
-	// Macros: a sustaining lead and three short drum envelopes. The lead's volume
-	// holds at 10 (the release point, item 5) for as long as the note lasts, so long
-	// notes stay long; a note release (===) then fades it out with 7 4 2 0.
+	// Macros: a sustaining melody envelope per chip and three short drum envelopes.
+	// The melody volume holds at 10 (the release point, item 5) for as long as the
+	// note lasts, so long notes stay long; a note release (===) then fades it out
+	// with 7 4 2 0.
 	out << "# Macros\n";
-	if (haveMelody && !melodyOnVrc6) {
+	if (melodyOn2A03)
 		out << "MACRO       0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
+	if (pulseOn2A03)
 		out << "MACRO       4   0  -1  -1   0 : 1\n";	// 25% duty
-	}
 	if (haveDrums) {
 		out << "MACRO       0   1  -1  -1   0 : 15 12 8 5 3 1 0\n";
 		out << "MACRO       0   2  -1  -1   0 : 14 11 9 7 5 3 2 1 0\n";
 		out << "MACRO       0   3  -1  -1   0 : 10 6 3 1 0\n";
 	}
-	if (haveMelody && melodyOnVrc6) {
+	if (melodyOnVrc6)
 		out << "MACROVRC6   0   0  -1   5   0 : " << LEAD_VOLUME << "\n";
+	if (pulseOnVrc6)
 		out << "MACROVRC6   4   0  -1  -1   0 : 3\n";	// 4/16 duty on the VRC6 pulses
-	}
 	out << "\n";
 
 	out << "# DPCM samples\n\n";
 
-	out << "# Instruments\n";
-	if (haveMelody) {
-		const int duty = (options.melodyChannel == SAWTOOTH_CHANNEL) ? -1 : 0;
+	// Instruments, in slot order: melody parts use their own slots (0 for the
+	// lead), the drums 1-3.
+	std::map<int, std::string> instruments;
+	for (size_t p = 0; p < parts.size(); ++p) {
+		if (parts[p].notes.empty())
+			continue;
+		const int channel = parts[p].channel;
+		const bool noDuty = (channel == TRIANGLE_CHANNEL || channel == SAWTOOTH_CHANNEL);
 		char line[96];
 		std::snprintf(line, sizeof(line), "%-8s %3d   %3d %3d %3d %3d %3d %s\n",
-			melodyOnVrc6 ? "INSTVRC6" : "INST2A03", 0, 0, -1, -1, -1, duty, Quote("Lead").c_str());
-		out << line;
+			channel >= 5 ? "INSTVRC6" : "INST2A03", parts[p].instrument, 0, -1, -1, -1, noDuty ? -1 : 0,
+			Quote(parts[p].name).c_str());
+		instruments[parts[p].instrument] = line;
 	}
 	if (haveDrums) {
 		const char *names[3] = { "Kick", "Snare", "Hi-hat" };
@@ -207,9 +240,12 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 			char line[96];
 			std::snprintf(line, sizeof(line), "%-8s %3d   %3d %3d %3d %3d %3d %s\n",
 				"INST2A03", d + 1, d + 1, -1, -1, -1, -1, Quote(names[d]).c_str());
-			out << line;
+			instruments[d + 1] = line;
 		}
 	}
+	out << "# Instruments\n";
+	for (std::map<int, std::string>::const_iterator it = instruments.begin(); it != instruments.end(); ++it)
+		out << it->second;
 	out << "\n";
 
 	out << "# Tracks\n\n";
@@ -226,10 +262,8 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 	// Channels with content get one pattern per frame; the rest stay on empty pattern 00.
 	for (int f = 0; f < frames; ++f) {
 		out << "ORDER " << Format("%02X", f) << " :";
-		for (int c = 0; c < channels; ++c) {
-			const bool used = (haveMelody && c == options.melodyChannel) || (haveDrums && c == NOISE_CHANNEL);
-			out << " " << Format("%02X", used ? f : 0);
-		}
+		for (int c = 0; c < channels; ++c)
+			out << " " << Format("%02X", cells.count(c) && !cells[c].empty() ? f : 0);
 		out << "\n";
 	}
 	out << "\n";
@@ -242,14 +276,10 @@ std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vect
 			out << "ROW " << Format("%02X", r);
 			for (int c = 0; c < channels; ++c) {
 				const Cell *cell = &empty;
-				if (haveMelody && c == options.melodyChannel) {
-					std::map<int, Cell>::const_iterator it = melodyCells.find(absolute);
-					if (it != melodyCells.end())
-						cell = &it->second;
-				}
-				else if (haveDrums && c == NOISE_CHANNEL) {
-					std::map<int, Cell>::const_iterator it = drumCells.find(absolute);
-					if (it != drumCells.end())
+				std::map<int, std::map<int, Cell> >::const_iterator line = cells.find(c);
+				if (line != cells.end()) {
+					std::map<int, Cell>::const_iterator it = line->second.find(absolute);
+					if (it != line->second.end())
 						cell = &it->second;
 				}
 				out << " : " << cell->Text();

@@ -214,6 +214,18 @@ int ChannelCount(Expansion expansion);
 std::string WriteTextModule(const std::vector<GridNote> &melody, const std::vector<GridHit> &drums,
 	const TextModuleOptions &options);
 
+// One melody line of a song made from several recordings (lead, bass, ...).
+struct MelodyPart {
+	int channel = 5;		// channel index, as TextModuleOptions::melodyChannel
+	int instrument = 0;		// instrument slot; 1-3 are taken by the drums
+	std::string name = "Lead";	// instrument name
+	std::vector<GridNote> notes;
+};
+
+// Several melody parts, each on its own channel, plus drums on the noise channel.
+std::string WriteTextModule(const std::vector<MelodyPart> &parts, const std::vector<GridHit> &drums,
+	const TextModuleOptions &options);
+
 // Checks text against the rules of FamiTracker 0.4.6's text importer
 // (CTextExport::ImportFile). Returns true if FamiTracker would accept it.
 bool ValidateTextModule(const std::string &text, std::string *error);

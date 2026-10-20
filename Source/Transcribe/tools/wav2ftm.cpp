@@ -38,23 +38,29 @@ void Usage()
 {
 	std::printf(
 		"Usage: wav2ftm [options] <input.wav> <output.txt>\n"
+		"       wav2ftm [options] [--drums taps.wav] [--bass hum.wav] [melody.wav] <output.txt>\n"
 		"\n"
-		"Turns a recording into a FamiTracker text module (File > Import Text).\n"
-		"A note lasts as long as the sound that made it.\n"
+		"Turns recordings into a FamiTracker text module (File > Import Text).\n"
+		"A note lasts as long as the sound that made it. Give several recordings to\n"
+		"get them all in one song: a melody, a drum part and a bass line.\n"
 		"\n"
 		"  --mode melody|drums   whistle/hum/sing a melody, or tap/beatbox a rhythm (default: melody)\n"
+		"  --drums FILE          add a drum part from a recording of taps or beatboxing\n"
+		"  --bass FILE           add a bass line from a recording (hum it), on the VRC6 sawtooth,\n"
+		"                        or on the triangle with --expansion none\n"
 		"  --bpm N               tempo, 4 rows per beat, 32-255 (default: 150)\n"
 		"  --expansion vrc6|none sound chip (default: vrc6)\n"
 		"  --channel N           melody channel: 0-2 = 2A03 pulse 1/pulse 2/triangle,\n"
 		"                        5-7 = VRC6 pulse 1/pulse 2/sawtooth (default: 5 with VRC6, else 0)\n"
 		"  --key K --scale S     snap notes to a scale, e.g. --key C --scale pentatonic\n"
 		"                        (scales: chromatic, major, minor, pentatonic, minor-pentatonic)\n"
-		"  --transpose N         shift by N semitones instead of the automatic octave choice\n"
+		"  --transpose N         shift the melody by N semitones instead of the automatic octave choice\n"
 		"  --min-rest MS         breaks shorter than this many milliseconds are held through,\n"
 		"                        so the note lasts until the next one (default: 150; 0 keeps\n"
 		"                        every break as a rest)\n"
 		"  --pattern-length N    rows per pattern, 16-256 (default: 64)\n"
-		"  --keep-silence        keep leading silence instead of starting at row 0\n"
+		"  --keep-silence        keep leading silence instead of starting each recording at row 0;\n"
+		"                        use it when the recordings all start at the same moment\n"
 		"  --title TEXT          song title (default: input file name)\n"
 		"  --print               list what was detected\n");
 }
@@ -82,11 +88,82 @@ const char *DrumName(Drum d)
 	return d == Drum::Kick ? "kick" : (d == Drum::Snare ? "snare" : "hi-hat");
 }
 
+struct Settings {
+	Grid grid;
+	QuantizeOptions quantize;
+	Scale scale = Scale::Chromatic;
+	int root = 0;
+	bool print = false;
+};
+
+bool Load(const std::string &path, Audio &audio)
+{
+	std::string error;
+	if (!ReadWav(path, audio, &error)) {
+		std::fprintf(stderr, "wav2ftm: %s\n", error.c_str());
+		return false;
+	}
+	return true;
+}
+
+// Whistle/hum/sing -> rows. targetMidi picks the octave unless transpose is given.
+bool TranscribeMelody(const std::string &path, const char *part, int targetMidi, const int *transpose,
+	const Settings &settings, std::vector<GridNote> &rows)
+{
+	Audio audio;
+	if (!Load(path, audio))
+		return false;
+	std::vector<Note> notes = SegmentNotes(TrackPitch(audio, PitchOptions()), NoteOptions());
+	if (notes.empty()) {
+		std::fprintf(stderr, "wav2ftm: no notes found in %s (is the recording loud enough?)\n", path.c_str());
+		return false;
+	}
+	const int shift = transpose ? *transpose : OctaveShiftFor(notes, targetMidi);
+	Transpose(notes, shift);
+	if (settings.scale != Scale::Chromatic)
+		SnapToScale(notes, settings.root, settings.scale);
+	rows = Quantize(notes, settings.grid, settings.quantize);
+	if (settings.print) {
+		std::printf("%s: %zu notes (shifted %+d semitones):\n", part, rows.size(), shift);
+		for (size_t i = 0; i < rows.size(); ++i) {
+			const int end = rows[i].row + rows[i].length;
+			const int rest = (i + 1 < rows.size() ? rows[i + 1].row : end) - end;
+			std::printf("  row %4d  %s  %3d rows", rows[i].row, FamiTrackerNoteName(rows[i].midi).c_str(), rows[i].length);
+			if (rest > 0)
+				std::printf(", then %d rows rest", rest);
+			std::printf("\n");
+		}
+	}
+	return true;
+}
+
+// Taps/beatboxing -> drum hits on rows.
+bool TranscribeDrums(const std::string &path, const Settings &settings, std::vector<GridHit> &rows)
+{
+	Audio audio;
+	if (!Load(path, audio))
+		return false;
+	std::vector<Hit> hits = DetectHits(audio, HitOptions());
+	if (hits.empty()) {
+		std::fprintf(stderr, "wav2ftm: no hits found in %s (is the recording loud enough?)\n", path.c_str());
+		return false;
+	}
+	const int classes = ClassifyHits(hits);
+	rows = QuantizeHits(hits, settings.grid, settings.quantize.alignToStart);
+	if (settings.print) {
+		std::printf("drums: %zu hits, %d kind(s) of sound:\n", hits.size(), classes);
+		for (size_t i = 0; i < rows.size(); ++i)
+			std::printf("  row %4d  %-6s volume %X\n", rows[i].row, DrumName(rows[i].drum), rows[i].volume);
+	}
+	return true;
+}
+
 }	// namespace
 
 int main(int argc, char **argv)
 {
-	std::string mode = "melody", input, output, title, keyName, scaleName;
+	std::string mode = "melody", title, keyName, scaleName, drumsFile, bassFile;
+	std::vector<std::string> positional;
 	int bpm = 150, channel = -1, transpose = 0, patternLength = 64, minRestMs = 150;
 	bool haveTranspose = false, keepSilence = false, print = false;
 	Expansion expansion = Expansion::VRC6;
@@ -102,6 +179,8 @@ int main(int argc, char **argv)
 		};
 		if (a == "--help" || a == "-h") { Usage(); return 0; }
 		else if (a == "--mode") mode = next("--mode");
+		else if (a == "--drums") drumsFile = next("--drums");
+		else if (a == "--bass") bassFile = next("--bass");
 		else if (a == "--bpm") { if (!ParseInt(next("--bpm"), bpm)) { std::fprintf(stderr, "wav2ftm: --bpm needs a number\n"); return 2; } }
 		else if (a == "--expansion") {
 			const std::string e = next("--expansion");
@@ -119,16 +198,28 @@ int main(int argc, char **argv)
 		else if (a == "--title") title = next("--title");
 		else if (a == "--print") print = true;
 		else if (!a.empty() && a[0] == '-') { std::fprintf(stderr, "wav2ftm: unknown option %s\n", a.c_str()); return 2; }
-		else if (input.empty()) input = a;
-		else if (output.empty()) output = a;
-		else { Usage(); return 2; }
+		else positional.push_back(a);
 	}
-	if (input.empty() || output.empty()) {
+
+	// <input> <output>, or just <output> when --drums/--bass bring the recordings
+	std::string input, output;
+	if (positional.size() == 2) {
+		input = positional[0];
+		output = positional[1];
+	}
+	else if (positional.size() == 1 && (!drumsFile.empty() || !bassFile.empty())) {
+		output = positional[0];
+	}
+	else {
 		Usage();
 		return 2;
 	}
 	if (mode != "melody" && mode != "drums") {
 		std::fprintf(stderr, "wav2ftm: --mode must be melody or drums\n");
+		return 2;
+	}
+	if (mode == "drums" && !input.empty() && !drumsFile.empty()) {
+		std::fprintf(stderr, "wav2ftm: two drum recordings; give one with --drums\n");
 		return 2;
 	}
 	if (bpm < 32 || bpm > 255) {
@@ -143,87 +234,78 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "wav2ftm: --min-rest must be between 0 and 5000 milliseconds\n");
 		return 2;
 	}
+	const bool haveMelody = !input.empty() && mode == "melody";
 	if (channel < 0)
 		channel = (expansion == Expansion::VRC6) ? 5 : 0;
 	const bool validChannel = channel == 0 || channel == 1 || channel == 2 || (expansion == Expansion::VRC6 && channel >= 5 && channel <= 7);
-	if (mode == "melody" && !validChannel) {
+	if (haveMelody && !validChannel) {
 		std::fprintf(stderr, "wav2ftm: --channel %d cannot play a melody with this expansion\n", channel);
 		return 2;
 	}
-	Scale scale = Scale::Chromatic;
-	int root = 0;
-	if (!scaleName.empty() && !ParseScale(scaleName, scale)) {
-		std::fprintf(stderr, "wav2ftm: unknown scale '%s'\n", scaleName.c_str());
-		return 2;
-	}
-	if (!keyName.empty() && !ParseKey(keyName, root)) {
-		std::fprintf(stderr, "wav2ftm: unknown key '%s'\n", keyName.c_str());
+	const int bassChannel = (expansion == Expansion::VRC6) ? 7 : 2;	// sawtooth, or the triangle
+	if (haveMelody && !bassFile.empty() && channel == bassChannel) {
+		std::fprintf(stderr, "wav2ftm: the melody and the bass would share channel %d; pick another --channel\n", channel);
 		return 2;
 	}
 
-	Audio audio;
-	std::string error;
-	if (!ReadWav(input, audio, &error)) {
-		std::fprintf(stderr, "wav2ftm: %s\n", error.c_str());
-		return 1;
+	Settings settings;
+	if (!scaleName.empty() && !ParseScale(scaleName, settings.scale)) {
+		std::fprintf(stderr, "wav2ftm: unknown scale '%s'\n", scaleName.c_str());
+		return 2;
 	}
+	if (!keyName.empty() && !ParseKey(keyName, settings.root)) {
+		std::fprintf(stderr, "wav2ftm: unknown key '%s'\n", keyName.c_str());
+		return 2;
+	}
+	settings.grid.tempo = bpm;	// speed 6 at 4 rows per beat: BPM = tempo * 6 / speed
+	settings.grid.speed = 6;
+	settings.quantize.alignToStart = !keepSilence;
+	settings.quantize.minRestSeconds = minRestMs / 1000.0;
+	settings.print = print;
 
 	TextModuleOptions options;
 	options.expansion = expansion;
 	options.melodyChannel = channel;
 	options.patternLength = patternLength;
-	options.grid.tempo = bpm;	// speed 6 at 4 rows per beat: BPM = tempo * 6 / speed
-	options.grid.speed = 6;
-	options.title = title.empty() ? BaseName(input) : title;
-	options.comment = "Transcribed from " + BaseName(input) + " by wav2ftm (" + mode + ", " + std::to_string(bpm) + " BPM)";
+	options.grid = settings.grid;
+	options.title = title.empty() ? BaseName(input.empty() ? output : input) : title;
 
-	std::vector<GridNote> melody;
+	std::vector<MelodyPart> parts;
 	std::vector<GridHit> drums;
+	std::string sources;
+	auto addSource = [&](const std::string &part, const std::string &file) {
+		sources += (sources.empty() ? "" : ", ") + part + " from " + BaseName(file);
+	};
 
-	if (mode == "melody") {
-		const std::vector<PitchFrame> frames = TrackPitch(audio, PitchOptions());
-		std::vector<Note> notes = SegmentNotes(frames, NoteOptions());
-		if (notes.empty()) {
-			std::fprintf(stderr, "wav2ftm: no notes found (is the recording loud enough?)\n");
-			return 1;
-		}
+	if (haveMelody) {
+		MelodyPart lead;
+		lead.channel = channel;
 		const bool low = (channel == 2 || channel == 7);	// triangle and sawtooth suit bass lines
-		const int shift = haveTranspose ? transpose : OctaveShiftFor(notes, low ? 55 : 67);
-		Transpose(notes, shift);
-		if (scale != Scale::Chromatic)
-			SnapToScale(notes, root, scale);
-		QuantizeOptions quantize;
-		quantize.alignToStart = !keepSilence;
-		quantize.minRestSeconds = minRestMs / 1000.0;
-		melody = Quantize(notes, options.grid, quantize);
-		if (print) {
-			std::printf("%zu notes (shifted %+d semitones):\n", melody.size(), shift);
-			for (size_t i = 0; i < melody.size(); ++i) {
-				const int end = melody[i].row + melody[i].length;
-				const int rest = (i + 1 < melody.size() ? melody[i + 1].row : end) - end;
-				std::printf("  row %4d  %s  %3d rows", melody[i].row, FamiTrackerNoteName(melody[i].midi).c_str(), melody[i].length);
-				if (rest > 0)
-					std::printf(", then %d rows rest", rest);
-				std::printf("\n");
-			}
-		}
-	}
-	else {
-		std::vector<Hit> hits = DetectHits(audio, HitOptions());
-		if (hits.empty()) {
-			std::fprintf(stderr, "wav2ftm: no hits found (is the recording loud enough?)\n");
+		if (!TranscribeMelody(input, "melody", low ? 55 : 67, haveTranspose ? &transpose : nullptr, settings, lead.notes))
 			return 1;
-		}
-		const int classes = ClassifyHits(hits);
-		drums = QuantizeHits(hits, options.grid, !keepSilence);
-		if (print) {
-			std::printf("%zu hits, %d kind(s) of sound:\n", hits.size(), classes);
-			for (size_t i = 0; i < drums.size(); ++i)
-				std::printf("  row %4d  %-6s volume %X\n", drums[i].row, DrumName(drums[i].drum), drums[i].volume);
-		}
+		parts.push_back(lead);
+		addSource("melody", input);
 	}
+	const std::string drumsPath = (mode == "drums" && !input.empty()) ? input : drumsFile;
+	if (!drumsPath.empty()) {
+		if (!TranscribeDrums(drumsPath, settings, drums))
+			return 1;
+		addSource("drums", drumsPath);
+	}
+	if (!bassFile.empty()) {
+		MelodyPart bass;
+		bass.channel = bassChannel;
+		bass.instrument = 4;
+		bass.name = "Bass";
+		if (!TranscribeMelody(bassFile, "bass", 48, nullptr, settings, bass.notes))
+			return 1;
+		parts.push_back(bass);
+		addSource("bass", bassFile);
+	}
+	options.comment = "Transcribed by wav2ftm at " + std::to_string(bpm) + " BPM: " + sources;
 
-	const std::string text = WriteTextModule(melody, drums, options);
+	std::string error;
+	const std::string text = WriteTextModule(parts, drums, options);
 	if (!ValidateTextModule(text, &error)) {
 		std::fprintf(stderr, "wav2ftm: internal error, generated module is invalid: %s\n", error.c_str());
 		return 1;
