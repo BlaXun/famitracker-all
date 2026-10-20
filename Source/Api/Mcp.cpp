@@ -259,6 +259,13 @@ bool CallTool(ToolSet &Tools, const Json &Params, Json &Out, int &ErrorCode, std
 	Text.Set("text", Called.Text);
 	Json Content = Json::MakeArray();
 	Content.Push(Text);
+	if (!Called.Image.empty()) {
+		Json Image = Json::MakeObject();
+		Image.Set("type", "image");
+		Image.Set("data", Base64Encode(Called.Image));
+		Image.Set("mimeType", "image/png");
+		Content.Push(Image);
+	}
 	Out = Json::MakeObject();
 	Out.Set("content", Content);
 	Out.Set("isError", Called.IsError);

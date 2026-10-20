@@ -465,6 +465,113 @@ void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpe
 
 // Keys
 
+int SongFlow::LoopRow(int PatternLength) const
+{
+	if (Halts() || LoopStep >= static_cast<int>(Steps.size()))
+		return -1;
+	return Steps[LoopStep].Frame * PatternLength + Steps[LoopStep].FirstRow;
+}
+
+int SongFlow::EndRow(int PatternLength) const
+{
+	if (Steps.empty())
+		return 0;
+	return Steps.back().Frame * PatternLength + Steps.back().EndRow;
+}
+
+int SongFlow::PlayedRows() const
+{
+	int Rows = 0;
+	for (size_t i = 0; i < Steps.size(); ++i)
+		Rows += Steps[i].EndRow - Steps[i].FirstRow;
+	return Rows;
+}
+
+int SongFlow::LoopRows() const
+{
+	if (Halts())
+		return 0;
+	int Rows = 0;
+	for (size_t i = static_cast<size_t>(LoopStep); i < Steps.size(); ++i)
+		Rows += Steps[i].EndRow - Steps[i].FirstRow;
+	return Rows;
+}
+
+std::vector<bool> SongFlow::Played(int TotalRows, int PatternLength) const
+{
+	std::vector<bool> Out(static_cast<size_t>(std::max(0, TotalRows)), false);
+	for (size_t i = 0; i < Steps.size(); ++i)
+		for (int r = Steps[i].FirstRow; r < Steps[i].EndRow; ++r) {
+			const int Row = Steps[i].Frame * PatternLength + r;
+			if (Row >= 0 && Row < TotalRows)
+				Out[static_cast<size_t>(Row)] = true;
+		}
+	return Out;
+}
+
+SongFlow FollowSong(const std::vector<std::vector<Cell> > &Channels, const std::vector<int> &EffectColumns, int PatternLength,
+	int Frames)
+{
+	SongFlow Flow;
+	if (PatternLength < 1 || Frames < 1)
+		return Flow;
+	std::vector<int> Started(static_cast<size_t>(Frames) * static_cast<size_t>(PatternLength), -1);	// step that started there
+	int Frame = 0, Row = 0;
+	for (;;) {
+		const size_t Start = static_cast<size_t>(Frame) * static_cast<size_t>(PatternLength) + static_cast<size_t>(Row);
+		if (Started[Start] >= 0) {
+			Flow.LoopStep = Started[Start];
+			return Flow;
+		}
+		Started[Start] = static_cast<int>(Flow.Steps.size());
+		FlowStep Step;
+		Step.Frame = Frame;
+		Step.FirstRow = Row;
+		Step.EndRow = PatternLength;
+		int NextFrame = Frame + 1 < Frames ? Frame + 1 : 0, NextRow = 0;
+		for (int r = Row; r < PatternLength; ++r) {
+			int Jump = -1, Skip = -1;
+			bool Halt = false;
+			const size_t SongRow = static_cast<size_t>(Frame) * static_cast<size_t>(PatternLength) + static_cast<size_t>(r);
+			for (size_t c = 0; c < Channels.size(); ++c) {
+				if (SongRow >= Channels[c].size())
+					continue;
+				const Cell &C = Channels[c][SongRow];
+				const int Columns = c < EffectColumns.size() ? std::max(1, std::min(EFFECT_COLUMNS, EffectColumns[c])) : 1;
+				for (int k = 0; k < Columns; ++k) {
+					// The last one read wins, as in CSoundGen::EvaluateGlobalEffects
+					if (C.Effect[k] == EFF_JUMP)
+						Jump = C.Param[k];
+					else if (C.Effect[k] == EFF_SKIP)
+						Skip = C.Param[k];
+					else if (C.Effect[k] == EFF_HALT)
+						Halt = true;
+				}
+			}
+			if (Halt) {
+				Step.EndRow = r + 1;
+				Flow.Steps.push_back(Step);
+				Flow.LoopStep = -1;
+				return Flow;
+			}
+			if (Jump >= 0) {	// a jump goes before a skip
+				Step.EndRow = r + 1;
+				NextFrame = std::min(Jump, Frames - 1);
+				NextRow = 0;
+				break;
+			}
+			if (Skip >= 0) {
+				Step.EndRow = r + 1;
+				NextRow = std::min(Skip, PatternLength - 1);
+				break;
+			}
+		}
+		Flow.Steps.push_back(Step);
+		Frame = NextFrame;
+		Row = NextRow;
+	}
+}
+
 int ModeCount()
 {
 	return MODE_COUNT;

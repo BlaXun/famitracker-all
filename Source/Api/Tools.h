@@ -46,6 +46,7 @@ struct ToolInfo {
 
 struct ToolResult {
 	std::string Text;
+	std::string Image;		// a PNG to go with the text (look_at_song), or empty
 	bool IsError;
 	ToolResult() : IsError(false) {}
 };

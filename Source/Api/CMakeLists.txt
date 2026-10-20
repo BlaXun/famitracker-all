@@ -28,6 +28,8 @@ add_library(ftapi STATIC
 	Mcp.cpp
 	Bridge.cpp
 	BridgeSocket.cpp
+	Png.cpp
+	Picture.cpp
 	Music.cpp
 	Presets.cpp
 	Tools.cpp

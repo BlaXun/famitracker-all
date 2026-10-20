@@ -78,7 +78,8 @@ Some things to try:
 - "Play bars 1 to 4."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
-clashes, range) and plays it for you, then asks how it sounds.
+clashes, range), looks at a picture of the notes, and plays it for you, then
+asks how it sounds.
 
 ## How changes arrive
 
@@ -116,6 +117,7 @@ anything; close the dialog and ask again.
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
+| `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched |
 | `play`, `stop` | Plays bars for you |
 | `undo` | Ctrl+Z (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions |
@@ -193,8 +195,10 @@ Ask for a version as a clip or a saved copy to compare it with the original.
   per-request metadata of 2026-07-28 and the initialize handshake of
   2025-03-26 to 2025-11-25, Host, Origin and token checks), `Music` (cells,
   note names, bars and beats, keys and modes, writing a part into a range of
-  rows), `Presets`, and `Tools` (the tools, against the `SongHost` interface
-  in `Song.h`).
+  rows, and following the song through its jumps, skips and halts),
+  `Presets`, `Picture` and `Png` (the piano-roll picture, a palette PNG with
+  its own small deflate), and `Tools` (the tools, against the `SongHost`
+  interface in `Song.h`). Tool results can carry an image after their text.
   ```
   cmake -S Source/Api -B build/api
   cmake --build build/api

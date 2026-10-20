@@ -28,6 +28,8 @@
 #include "../Json.h"
 #include "../Mcp.h"
 #include "../Music.h"
+#include "../Picture.h"
+#include "../Png.h"
 #include "../Presets.h"
 #include "../Song.h"
 #include "../Tools.h"
@@ -36,6 +38,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1505,6 +1509,363 @@ void TestSession()
 	CHECK_HAS(Call("read_notes", "{\"channel\":\"VRC6 Pulse 1\",\"to_bar\":2}"), "bar 1 beat 1: D#4");
 }
 
+// The song's flow: jumps, skips and halts
+
+void TestFlow()
+{
+	const int PL = 16;
+	auto Make = [](int Frames) { return std::vector<std::vector<Cell> >(2, std::vector<Cell>(static_cast<size_t>(Frames) * 16)); };
+	auto Put = [](std::vector<std::vector<Cell> > &C, int Channel, int Row, int Column, int Effect, int Param) {
+		C[Channel][Row].Effect[Column] = static_cast<unsigned char>(Effect);
+		C[Channel][Row].Param[Column] = static_cast<unsigned char>(Param);
+	};
+	std::vector<int> Columns(2, 2);
+
+	// Every frame, then back to the first
+	std::vector<std::vector<Cell> > C = Make(3);
+	SongFlow F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Steps.size() == 3 && F.LoopStep == 0 && !F.Halts());
+	CHECK(F.LoopRow(PL) == 0 && F.EndRow(PL) == 48 && F.PlayedRows() == 48 && F.LoopRows() == 48);
+
+	// An intro: B01 at the end jumps back to frame 1
+	Put(C, 1, 2 * PL + 15, 0, EFF_JUMP, 1);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Steps.size() == 3 && F.LoopStep == 1);
+	CHECK(F.LoopRow(PL) == 16 && F.EndRow(PL) == 48 && F.PlayedRows() == 48 && F.LoopRows() == 32);
+
+	// Jumping earlier in the frame: the rows after it never play
+	C = Make(3);
+	Put(C, 1, 2 * PL + 7, 0, EFF_JUMP, 1);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.EndRow(PL) == 40 && F.LoopRows() == 24);
+	std::vector<bool> Played = F.Played(48, PL);
+	CHECK(Played[39] && !Played[40] && !Played[47] && Played[16]);
+
+	// A skip starts the next frame later: D04 in frame 0
+	Put(C, 0, 11, 0, EFF_SKIP, 4);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Steps.size() == 4 && F.Steps[0].EndRow == 12 && F.Steps[1].Frame == 1 && F.Steps[1].FirstRow == 4);
+	// Frame 2 jumps to frame 1, which plays from its first row this time, then frame 2 again: that's the loop
+	CHECK(F.Steps[3].Frame == 1 && F.Steps[3].FirstRow == 0 && F.Steps[3].EndRow == 16 && F.LoopStep == 2);
+	CHECK_EQ(F.LoopRow(PL), 32);
+	Played = F.Played(48, PL);
+	CHECK(!Played[12] && Played[16] && Played[20]);
+
+	// A halt ends it
+	C = Make(3);
+	Put(C, 0, PL + 3, 1, EFF_HALT, 0);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Halts() && F.LoopRow(PL) == -1 && F.EndRow(PL) == 20 && F.LoopRows() == 0 && F.PlayedRows() == 20);
+	// ...but not from a column the channel doesn't show
+	Columns[0] = 1;
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(!F.Halts() && F.EndRow(PL) == 48);
+	Columns[0] = 2;
+
+	// A jump and a skip on one row: the jump goes first; past the last frame it goes to the last one
+	C = Make(3);
+	Put(C, 0, 5, 0, EFF_SKIP, 2);
+	Put(C, 1, 5, 0, EFF_JUMP, 9);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Steps.size() >= 2 && F.Steps[1].Frame == 2 && F.Steps[1].FirstRow == 0);
+	// The last one read wins
+	C = Make(3);
+	Put(C, 0, 47, 0, EFF_JUMP, 0);
+	Put(C, 1, 47, 1, EFF_JUMP, 1);
+	F = FollowSong(C, Columns, PL, 3);
+	CHECK(F.Steps.size() == 3 && F.LoopStep == 1);
+	CHECK(FollowSong(C, Columns, PL, 0).Steps.empty());
+}
+
+// PNG
+
+const int TEST_LENGTH_BASE[29] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
+	131, 163, 195, 227, 258 };
+const int TEST_LENGTH_EXTRA[29] = { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 };
+const int TEST_DISTANCE_BASE[30] = { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+	2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577 };
+const int TEST_DISTANCE_EXTRA[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
+	13, 13 };
+
+// Inflates a zlib stream of fixed-code blocks (what ZlibCompress writes);
+// false when it isn't one or its checksum is wrong
+bool Inflate(const std::string &Zlib, std::string &Out)
+{
+	Out.clear();
+	if (Zlib.size() < 7 || static_cast<unsigned char>(Zlib[0]) != 0x78 ||
+		((static_cast<unsigned char>(Zlib[0]) << 8) | static_cast<unsigned char>(Zlib[1])) % 31 != 0)
+		return false;
+	const size_t DataEnd = Zlib.size() - 4;
+	size_t Byte = 2;
+	int Bit = 0;
+	bool Short = false;
+	auto Bits = [&](int Count) {		// lowest bit first
+		long Value = 0;
+		for (int i = 0; i < Count; ++i) {
+			if (Byte >= DataEnd) {
+				Short = true;
+				return 0L;
+			}
+			Value |= static_cast<long>((static_cast<unsigned char>(Zlib[Byte]) >> Bit) & 1) << i;
+			if (++Bit == 8) {
+				Bit = 0;
+				++Byte;
+			}
+		}
+		return Value;
+	};
+	auto Code = [&](int Count) {		// a Huffman code, highest bit first
+		long Value = 0;
+		for (int i = 0; i < Count; ++i)
+			Value = (Value << 1) | Bits(1);
+		return Value;
+	};
+	for (bool Last = false; !Last; ) {
+		Last = Bits(1) != 0;
+		if (Bits(2) != 1 || Short)
+			return false;
+		for (;;) {
+			long Value = Code(7), Symbol;
+			if (Value <= 23)
+				Symbol = 256 + Value;
+			else {
+				Value = (Value << 1) | Bits(1);
+				if (Value >= 0x30 && Value <= 0xBF)
+					Symbol = Value - 0x30;
+				else if (Value >= 0xC0 && Value <= 0xC7)
+					Symbol = 280 + Value - 0xC0;
+				else {
+					Value = (Value << 1) | Bits(1);
+					if (Value < 0x190 || Value > 0x1FF)
+						return false;
+					Symbol = 144 + Value - 0x190;
+				}
+			}
+			if (Short)
+				return false;
+			if (Symbol < 256)
+				Out += static_cast<char>(Symbol);
+			else if (Symbol == 256)
+				break;
+			else {
+				const int L = static_cast<int>(Symbol - 257);
+				if (L > 28)
+					return false;
+				const long Length = TEST_LENGTH_BASE[L] + Bits(TEST_LENGTH_EXTRA[L]);
+				const long D = Code(5);
+				if (D > 29)
+					return false;
+				const long Distance = TEST_DISTANCE_BASE[D] + Bits(TEST_DISTANCE_EXTRA[D]);
+				if (Short || Distance > static_cast<long>(Out.size()))
+					return false;
+				for (long k = 0; k < Length; ++k)
+					Out += Out[Out.size() - static_cast<size_t>(Distance)];
+			}
+		}
+	}
+	if (Bit != 0)
+		++Byte;
+	if (Byte != DataEnd)
+		return false;
+	unsigned long Stored = 0;
+	for (int i = 0; i < 4; ++i)
+		Stored = (Stored << 8) | static_cast<unsigned char>(Zlib[DataEnd + static_cast<size_t>(i)]);
+	return Stored == Adler32(Out);
+}
+
+unsigned long BigEndian(const std::string &Data, size_t At)
+{
+	unsigned long Value = 0;
+	for (size_t i = 0; i < 4; ++i)
+		Value = (Value << 8) | static_cast<unsigned char>(Data[At + i]);
+	return Value;
+}
+
+// A PNG read back: its size, palette and pixels (palette indices); false if
+// it isn't one as EncodePng writes them
+struct DecodedPng {
+	int Width, Height;
+	std::vector<Rgb> Palette;
+	std::string Pixels;
+};
+
+bool DecodePng(const std::string &File, DecodedPng &Out)
+{
+	if (File.size() < 8 || File.compare(0, 8, std::string("\x89PNG\r\n\x1A\n", 8)) != 0)
+		return false;
+	std::string Data;
+	bool Ended = false;
+	for (size_t At = 8; At + 12 <= File.size() && !Ended; ) {
+		const size_t Length = BigEndian(File, At);
+		if (At + 12 + Length > File.size())
+			return false;
+		const std::string Type = File.substr(At + 4, 4);
+		const std::string Body = File.substr(At + 8, Length);
+		if (BigEndian(File, At + 8 + Length) != Crc32(Type + Body))
+			return false;
+		if (Type == "IHDR") {
+			Out.Width = static_cast<int>(BigEndian(Body, 0));
+			Out.Height = static_cast<int>(BigEndian(Body, 4));
+			if (Body[8] != 8 || Body[9] != 3)
+				return false;
+		}
+		else if (Type == "PLTE") {
+			for (size_t i = 0; i + 2 < Body.size(); i += 3) {
+				Rgb Color = { static_cast<unsigned char>(Body[i]), static_cast<unsigned char>(Body[i + 1]), static_cast<unsigned char>(Body[i + 2]) };
+				Out.Palette.push_back(Color);
+			}
+		}
+		else if (Type == "IDAT")
+			Data += Body;
+		else if (Type == "IEND")
+			Ended = true;
+		At += 12 + Length;
+	}
+	std::string Raw;
+	if (!Ended || !Inflate(Data, Raw) || Raw.size() != static_cast<size_t>(Out.Height) * (static_cast<size_t>(Out.Width) + 1))
+		return false;
+	Out.Pixels.clear();
+	for (int y = 0; y < Out.Height; ++y) {
+		const size_t Row = static_cast<size_t>(y) * (static_cast<size_t>(Out.Width) + 1);
+		if (Raw[Row] != 0)
+			return false;
+		Out.Pixels += Raw.substr(Row + 1, static_cast<size_t>(Out.Width));
+	}
+	return true;
+}
+
+// How many pixels have this color
+int CountColor(const DecodedPng &Image, int R, int G, int B)
+{
+	int Count = 0;
+	for (size_t i = 0; i < Image.Pixels.size(); ++i) {
+		const Rgb &C = Image.Palette[static_cast<unsigned char>(Image.Pixels[i])];
+		if (C.R == R && C.G == G && C.B == B)
+			++Count;
+	}
+	return Count;
+}
+
+void TestPng()
+{
+	CHECK_EQ(Crc32("123456789"), 0xCBF43926ul);
+	CHECK_EQ(Adler32("Wikipedia"), 0x11E60398ul);
+	CHECK_EQ(Base64Encode(""), std::string());
+	CHECK_EQ(Base64Encode("f"), std::string("Zg=="));
+	CHECK_EQ(Base64Encode("fo"), std::string("Zm8="));
+	CHECK_EQ(Base64Encode("foobar"), std::string("Zm9vYmFy"));
+
+	// Compression that comes back the same: nothing, a little, runs, noise,
+	// repeats far apart and more than the window holds
+	std::vector<std::string> Samples;
+	Samples.push_back(std::string());
+	Samples.push_back("a");
+	Samples.push_back("abcabcabcabcabcabcabcabcabcabcabcx");
+	Samples.push_back(std::string(100000, 'z'));
+	std::string Noise;
+	unsigned long Seed = 12345;
+	for (int i = 0; i < 70000; ++i) {
+		Seed = Seed * 1103515245ul + 12345ul;
+		Noise += static_cast<char>((Seed >> 16) & 0xFF);
+	}
+	Samples.push_back(Noise);
+	Samples.push_back(Noise.substr(0, 3000) + std::string(500, 'q') + Noise.substr(0, 3000) + Noise.substr(10000, 40000) +
+		Noise.substr(0, 3000));
+	std::string AllBytes;
+	for (int i = 0; i < 256; ++i)
+		AllBytes += static_cast<char>(i);
+	Samples.push_back(AllBytes + AllBytes + AllBytes);
+	for (size_t i = 0; i < Samples.size(); ++i) {
+		std::string Back;
+		Check(Inflate(ZlibCompress(Samples[i]), Back) && Back == Samples[i], "compressed data comes back", __LINE__);
+	}
+	CHECK(ZlibCompress(std::string(100000, 'z')).size() < 1000);
+
+	// A small image
+	std::vector<Rgb> Palette;
+	Rgb Black = { 0, 0, 0 }, Red = { 255, 0, 0 };
+	Palette.push_back(Black);
+	Palette.push_back(Red);
+	std::vector<unsigned char> Pixels(12, 0);
+	Pixels[5] = 1;
+	DecodedPng Image;
+	CHECK(DecodePng(EncodePng(4, 3, Pixels, Palette), Image));
+	CHECK(Image.Width == 4 && Image.Height == 3 && Image.Palette.size() == 2 && Image.Pixels.size() == 12);
+	CHECK(Image.Pixels[5] == 1 && Image.Pixels[4] == 0);
+}
+
+// The picture of the notes
+
+void TestPicture()
+{
+	FakeSong Song;
+	// A melody on VRC6 Pulse 1, the last note quiet
+	Song.Put(5, 0, "C-4", 0, 15);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4", NO_INSTRUMENT, 6);
+	Song.End(5, 16, NOTE_RELEASE);
+	// Chords as an arpeggio on Pulse 2, a bass on the triangle, drums
+	Song.Put(1, 0, "C-3", 2);
+	Song.Rows[1][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[1][0].Param[0] = 0x47;
+	Song.End(1, 16);
+	Song.Put(2, 0, "C-2", 1);
+	Song.Put(2, 8, "G-1");
+	Song.Put(3, 0, "kick");
+	Song.Put(3, 4, "hihat");
+	Song.Put(3, 8, "snare");
+	// An intro: the end jumps back to the second frame (bar 5)
+	Song.Rows[0][127].Effect[0] = EFF_JUMP;
+	Song.Rows[0][127].Param[0] = 1;
+
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("look_at_song", Parse("{}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Piano roll of bars 1-8");
+	CHECK_HAS(Result.Text, "blue = 2A03 Pulse 2, green = 2A03 Triangle, orange = VRC6 Pulse 1");
+	CHECK_HAS(Result.Text, "DRUMS strip below is 2A03 Noise (brown)");
+	CHECK_HAS(Result.Text, "arpeggio chord");
+	CHECK_HAS(Result.Text, "Green line: where the song loops back to (bar 5 beat 1)");
+	CHECK_HAS(Result.Text, "Nothing here on: 2A03 Pulse 1, 2A03 DPCM, VRC6 Pulse 2, VRC6 Sawtooth.");
+	DecodedPng Image;
+	CHECK(DecodePng(Result.Image, Image));
+	CHECK(Image.Width > 1000 && Image.Width < 1200 && Image.Height > 300 && Image.Height < 800);
+	CHECK(CountColor(Image, 255, 127, 14) > 100);		// the loud melody notes, orange
+	CHECK(CountColor(Image, 255, 185, 122) > 10);		// the quieter one, paler (orange at 55%)
+	CHECK(CountColor(Image, 31, 119, 180) > 50);		// the chord's root, blue
+	CHECK(CountColor(Image, 192, 217, 234) > 50);		// its other notes, faint blue
+	CHECK(CountColor(Image, 44, 160, 44) > 50);			// the bass, green
+	CHECK(CountColor(Image, 140, 86, 75) > 5);			// drum hits, brown
+	CHECK(CountColor(Image, 0, 155, 70) > 100);			// the loop's start
+	CHECK(CountColor(Image, 210, 30, 30) > 100);		// where it jumps back
+	CHECK(Result.Image.size() < 60000);
+	const char *pDirectory = std::getenv("FTAPI_PICTURES");
+	if (pDirectory != 0)
+		std::ofstream(std::string(pDirectory) + "/look_at_song.png", std::ios::binary) << Result.Image;
+
+	// Fewer channels, other bars; in the protocol, as an image after the text
+	Result = Tools.Call("look_at_song", Parse("{\"from_bar\": 5, \"to_bar\": 6, \"channels\": [\"VRC6 Pulse 1\"]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Piano roll of bars 5-6");
+	CHECK_HAS(Result.Text, "Nothing here on: VRC6 Pulse 1.");
+	CHECK(DecodePng(Result.Image, Image));
+	CHECK(Tools.Call("look_at_song", Parse("{\"from_bar\": 1, \"to_bar\": 40}")).IsError);
+	CHECK(Tools.Call("look_at_song", Parse("{\"from_bar\": 3, \"to_bar\": 2}")).IsError);
+	CHECK(Tools.Call("look_at_song", Parse("{\"channels\": \"nope\"}")).IsError);
+
+	McpConfig Config;
+	Config.Token = "t";
+	HttpRequest Request = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"look_at_song\",\"arguments\":{}}}", "t");
+	const Json Message = Parse(HandleMcp(Request, Config, Tools).Body);
+	const Json *pContent = Message.Get("result") != 0 ? Message.Get("result")->Get("content") : 0;
+	CHECK(pContent != 0 && pContent->Size() == 2);
+	if (pContent != 0 && pContent->Size() == 2) {
+		CHECK(pContent->At(0).Get("type")->String() == "text");
+		CHECK(pContent->At(1).Get("type")->String() == "image" && pContent->At(1).Get("mimeType")->String() == "image/png");
+		CHECK_EQ(pContent->At(1).Get("data")->String().compare(0, 8, "iVBORw0K"), 0);
+	}
+}
+
 // The connection for Claude Code in WSL (famitracker-mcp): lines in, HTTP to
 // FamiTracker, lines out
 
@@ -1878,6 +2239,9 @@ int main()
 	TestSession();
 	TestBridge();
 	TestBridgeSockets();
+	TestFlow();
+	TestPng();
+	TestPicture();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -132,6 +132,35 @@ double BeatsPerMinute(int Speed, int Tempo, int FrameRate, int RowsPerBeat);
 // closest to Bpm, keeping CurrentSpeed when it can get within half a BPM
 void ChooseSpeedTempo(double Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo);
 
+// How the song plays: from frame 0, each frame from the row it starts at
+// until a jump (Bxx), skip (Dxx) or halt (Cxx) ends it, or its last row,
+// then on to the next frame (after the last one, frame 0) as CSoundGen does.
+// It goes on until a frame starts where one started before, which is where
+// the song loops, or until a halt.
+struct FlowStep {
+	int Frame;
+	int FirstRow;		// in the frame; a skip in the frame before can start it later
+	int EndRow;			// in the frame: after the row with the jump, skip or halt, or the pattern length
+};
+
+struct SongFlow {
+	std::vector<FlowStep> Steps;	// in playing order
+	int LoopStep;		// where playing goes on after the last step; -1 when the song halts
+
+	SongFlow() : LoopStep(0) {}
+	bool Halts() const { return LoopStep < 0; }
+	int LoopRow(int PatternLength) const;	// song row where the loop starts, -1 when the song halts
+	int EndRow(int PatternLength) const;	// song row after the last one played before it loops or halts
+	int PlayedRows() const;					// rows from the start until the loop goes back (or the halt)
+	int LoopRows() const;					// rows in the loop, 0 when the song halts
+	std::vector<bool> Played(int TotalRows, int PatternLength) const;	// per song row: does it ever play
+};
+
+// Channels' cells from the song's first row, with each channel's visible
+// effect columns (CSoundGen only reads those)
+SongFlow FollowSong(const std::vector<std::vector<Cell> > &Channels, const std::vector<int> &EffectColumns, int PatternLength,
+	int Frames);
+
 // Keys and modes
 struct Key {
 	int Tonic;		// 0 = C ... 11 = B

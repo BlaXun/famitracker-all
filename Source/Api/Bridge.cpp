@@ -39,36 +39,6 @@ void AddHeader(HttpRequest &Request, const char *pName, const std::string &Value
 	Request.Headers.push_back(std::make_pair(std::string(pName), Value));
 }
 
-std::string Base64(const std::string &Data)
-{
-	static const char DIGITS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	std::string Out;
-	size_t i = 0;
-	for (; i + 2 < Data.size(); i += 3) {
-		const unsigned long Bits = (static_cast<unsigned long>(static_cast<unsigned char>(Data[i])) << 16) |
-			(static_cast<unsigned long>(static_cast<unsigned char>(Data[i + 1])) << 8) | static_cast<unsigned char>(Data[i + 2]);
-		Out += DIGITS[(Bits >> 18) & 63];
-		Out += DIGITS[(Bits >> 12) & 63];
-		Out += DIGITS[(Bits >> 6) & 63];
-		Out += DIGITS[Bits & 63];
-	}
-	if (i + 1 == Data.size()) {
-		const unsigned long Bits = static_cast<unsigned long>(static_cast<unsigned char>(Data[i])) << 16;
-		Out += DIGITS[(Bits >> 18) & 63];
-		Out += DIGITS[(Bits >> 12) & 63];
-		Out += "==";
-	}
-	else if (i + 2 == Data.size()) {
-		const unsigned long Bits = (static_cast<unsigned long>(static_cast<unsigned char>(Data[i])) << 16) |
-			(static_cast<unsigned long>(static_cast<unsigned char>(Data[i + 1])) << 8);
-		Out += DIGITS[(Bits >> 18) & 63];
-		Out += DIGITS[(Bits >> 12) & 63];
-		Out += DIGITS[(Bits >> 6) & 63];
-		Out += '=';
-	}
-	return Out;
-}
-
 // A name as an Mcp-Name header value: as it is when that's plain text, in
 // base64 otherwise, the way the protocol allows ("=?base64?...?=")
 std::string HeaderValue(const std::string &Text)
@@ -78,7 +48,7 @@ std::string HeaderValue(const std::string &Text)
 		const unsigned char c = static_cast<unsigned char>(Text[i]);
 		Plain = c >= 0x20 && c < 0x7F;
 	}
-	return Plain ? Text : "=?base64?" + Base64(Text) + "?=";
+	return Plain ? Text : "=?base64?" + Base64Encode(Text) + "?=";
 }
 
 // Nothing in a head line may end it early

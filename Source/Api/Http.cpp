@@ -346,4 +346,35 @@ std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive)
 	return Out;
 }
 
+std::string Base64Encode(const std::string &Bytes)
+{
+	static const char DIGITS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	std::string Out;
+	Out.reserve((Bytes.size() + 2) / 3 * 4);
+	size_t i = 0;
+	for (; i + 2 < Bytes.size(); i += 3) {
+		const unsigned long Bits = (static_cast<unsigned long>(static_cast<unsigned char>(Bytes[i])) << 16) |
+			(static_cast<unsigned long>(static_cast<unsigned char>(Bytes[i + 1])) << 8) | static_cast<unsigned char>(Bytes[i + 2]);
+		Out += DIGITS[(Bits >> 18) & 63];
+		Out += DIGITS[(Bits >> 12) & 63];
+		Out += DIGITS[(Bits >> 6) & 63];
+		Out += DIGITS[Bits & 63];
+	}
+	if (i + 1 == Bytes.size()) {
+		const unsigned long Bits = static_cast<unsigned long>(static_cast<unsigned char>(Bytes[i])) << 16;
+		Out += DIGITS[(Bits >> 18) & 63];
+		Out += DIGITS[(Bits >> 12) & 63];
+		Out += "==";
+	}
+	else if (i + 2 == Bytes.size()) {
+		const unsigned long Bits = (static_cast<unsigned long>(static_cast<unsigned char>(Bytes[i])) << 16) |
+			(static_cast<unsigned long>(static_cast<unsigned char>(Bytes[i + 1])) << 8);
+		Out += DIGITS[(Bits >> 18) & 63];
+		Out += DIGITS[(Bits >> 12) & 63];
+		Out += DIGITS[(Bits >> 6) & 63];
+		Out += '=';
+	}
+	return Out;
+}
+
 }	// namespace ftapi

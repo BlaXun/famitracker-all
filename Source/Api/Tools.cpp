@@ -21,6 +21,7 @@
 
 #include "Tools.h"
 #include "Music.h"
+#include "Picture.h"
 #include "Presets.h"
 #include "Song.h"
 #include "../Transcribe/Transcribe.h"
@@ -39,6 +40,7 @@ namespace ftapi {
 namespace {
 
 const int MAX_READ_BARS = 32;
+const int MAX_PICTURE_BARS = 32;
 const int MAX_LISTED = 15;
 
 // A tool's arguments or the song don't allow it: the reason goes back to Claude
@@ -112,6 +114,24 @@ Json ChannelProp(const char *Description)
 	Types.Push("integer");
 	P.Set("type", Types);
 	P.Set("description", Description);
+	return P;
+}
+
+// One channel, several in a list, or "all"
+Json ChannelListProp(const char *Description)
+{
+	Json P = ChannelProp(Description);
+	Json Types = Json::MakeArray();
+	Types.Push("array");
+	Types.Push("string");
+	Types.Push("integer");
+	P.Set("type", Types);
+	Json Item = Json::MakeObject();
+	Json ItemTypes = Json::MakeArray();
+	ItemTypes.Push("string");
+	ItemTypes.Push("integer");
+	Item.Set("type", ItemTypes);
+	P.Set("items", Item);
 	return P;
 }
 
@@ -2211,6 +2231,145 @@ std::string CheckTool(Session &S, const Json &Args)
 	return Text;
 }
 
+// A picture of the notes
+
+// How the song plays (jumps, skips, halts) from its cells
+SongFlow Flow(Session &S)
+{
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	return FollowSong(Cells, Columns, S.Time.PatternLength, S.Song.Frames);
+}
+
+// Each channel's color in pictures, the same in every one: melodic channels
+// take turns with the first eight, the noise and DPCM have their own
+int PictureColor(const Session &S, int Channel)
+{
+	if (S.Channel(Channel).Kind == KIND_NOISE)
+		return 8;
+	if (S.Channel(Channel).Kind == KIND_DPCM)
+		return 9;
+	int Melodic = 0;
+	for (int c = 0; c < Channel; ++c)
+		if (IsMelodic(S.Channel(c)))
+			++Melodic;
+	return Melodic % 8;
+}
+
+std::string LookTool(Session &S, const Json &Args, std::string &Image)
+{
+	const int Bars = S.Time.BarCount();
+	const int From = IntArg(Args, "from_bar", 1, 1, Bars);
+	const int To = IntArg(Args, "to_bar", std::min(Bars, From + 7), 1, Bars);
+	if (To < From)
+		throw Problem("to_bar comes before from_bar.");
+	if (To - From + 1 > MAX_PICTURE_BARS)
+		throw Problem(Format("Up to %d bars in one picture (8 to 16 are easiest to read).", MAX_PICTURE_BARS));
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+
+	std::vector<int> Wanted;
+	const Json *pChannels = Arg(Args, "channels");
+	if (pChannels != 0 && !(pChannels->IsString() && Lowercase(pChannels->String()) == "all")) {
+		if (pChannels->IsArray()) {
+			for (size_t i = 0; i < pChannels->Size(); ++i)
+				Wanted.push_back(ParseChannel(S, pChannels->At(i), "channels"));
+		}
+		else
+			Wanted.push_back(ParseChannel(S, *pChannels, "channels"));
+	}
+	else
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			Wanted.push_back(c);
+	std::sort(Wanted.begin(), Wanted.end());
+	Wanted.erase(std::unique(Wanted.begin(), Wanted.end()), Wanted.end());
+
+	std::vector<PictureChannel> Channels;
+	std::vector<std::string> Shown, Silent;
+	bool Chords = false;
+	std::string Strips;
+	for (size_t w = 0; w < Wanted.size(); ++w) {
+		const int c = Wanted[w];
+		const ChannelInfo &Info = S.Channel(c);
+		PictureChannel Channel;
+		Channel.Color = PictureColor(S, c);
+		Channel.Kind = Info.Kind;
+		Channel.Notes = S.Notes(c);
+		bool Sounds = false;
+		for (size_t i = 0; i < Channel.Notes.size(); ++i) {
+			const NoteInfo &Note = Channel.Notes[i];
+			if (Note.Row < End && Note.Row + Note.Rows > First) {
+				Sounds = true;
+				for (size_t e = 0; e < Note.Effects.size(); ++e)
+					if (Note.Effects[e].second.first == EFF_ARPEGGIO && Note.Effects[e].second.second != 0)
+						Chords = true;
+			}
+		}
+		if (!Sounds) {
+			Silent.push_back(Info.FullName());
+			continue;
+		}
+		if (Info.Kind == KIND_NOISE)
+			Strips += Format(" The DRUMS strip below is %s (%s): a solid block is a hit, higher is brighter noise "
+				"(kick low, hi-hat high), the faint bar after it lasts until the next hit.", Info.FullName().c_str(),
+				PictureColorName(Channel.Color));
+		else if (Info.Kind == KIND_DPCM)
+			Strips += Format(" The DPCM strip is %s: each block is a sample starting.", Info.FullName().c_str());
+		else
+			Shown.push_back(Format("%s = %s", PictureColorName(Channel.Color), Info.FullName().c_str()));
+		Channels.push_back(Channel);
+	}
+
+	PictureSpec Spec(S.Time);
+	Spec.First = First;
+	Spec.End = End;
+	const SongFlow Played = Flow(S);
+	Spec.Played = Played.Played(S.Time.TotalRows(), S.Time.PatternLength);
+	Spec.LoopRow = Played.LoopRow(S.Time.PatternLength);
+	Spec.EndRow = Played.EndRow(S.Time.PatternLength);
+	const Picture P = DrawNotes(Channels, Spec);
+	Image = P.Png();
+
+	std::string Text = Format("Piano roll of %s: time runs left to right, bars numbered on top (thin lines are beats, "
+		"dark double lines start a frame), pitch runs bottom to top with each C labeled (%s to %s shown; C-3 is middle C).",
+		RangeText(From, To).c_str(), PitchName(P.LowPitch).c_str(), PitchName(P.HighPitch).c_str());
+	if (!Shown.empty()) {
+		Text += " Colors: ";
+		for (size_t i = 0; i < Shown.size(); ++i)
+			Text += (i > 0 ? ", " : "") + Shown[i];
+		Text += ".";
+	}
+	Text += Strips;
+	Text += " A note lasts until the next one, a release or a halt in its channel; paler notes are quieter.";
+	if (Chords)
+		Text += " Thin faint bars above a note are the other notes of its arpeggio chord (0xy).";
+	const int LoopRow = Spec.LoopRow, EndRow = Spec.EndRow;
+	if (Played.Halts())
+		Text += Format(" The song stops after %s (red line).", S.Time.Position(EndRow - 1).c_str());
+	else if (LoopRow > 0 || EndRow < S.Time.TotalRows())
+		Text += Format(" Green line: where the song loops back to (%s); red line: where it jumps back, after %s.",
+			S.Time.Position(LoopRow).c_str(), S.Time.Position(EndRow - 1).c_str());
+	else
+		Text += " The song loops from its end back to bar 1 (green and red lines).";
+	bool Unplayed = false;
+	for (int r = First; r < End && !Unplayed; ++r)
+		Unplayed = !Spec.Played[static_cast<size_t>(r)];
+	if (Unplayed)
+		Text += " Hatched rows never play (skipped by a jump, skip or halt).";
+	if (!Silent.empty()) {
+		Text += " Nothing here on: ";
+		for (size_t i = 0; i < Silent.size(); ++i)
+			Text += (i > 0 ? ", " : "") + Silent[i];
+		Text += ".";
+	}
+	if (To < Bars)
+		Text += Format(" The song has %d bars.", Bars);
+	return Text;
+}
+
 std::string PlayTool(Session &S, const Json &Args)
 {
 	const int From = IntArg(Args, "from_bar", 1, 1, std::max(1, S.Time.BarCount()));
@@ -2350,7 +2509,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Moves notes by semitones, or into another key or mode by scale degree (C major to C minor sounds darker, to lydian "
 		"dreamier, to dorian bittersweet; to_key also moves the tonic). Arpeggiated chords follow. Noise and DPCM are left alone.",
 		Schema()
-			.Add("channels", ChannelProp("A channel, a list of channels, or \"all\" (default: every melodic channel)."))
+			.Add("channels", ChannelListProp("A channel, a list of channels, or \"all\" (default: every melodic channel)."))
 			.Add("semitones", Prop("integer", "Up (positive) or down (negative) by this many semitones; 12 is an octave."))
 			.Add("to_mode", EnumProp("The mode to change into, keeping the tonic.", Modes))
 			.Add("to_key", Prop("string", "The key to change into, like \"A minor\" or \"F dorian\"."))
@@ -2458,6 +2617,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"range, very busy bars, silent bars and unused channels. Run it after writing.",
 		Schema().Add("key", Prop("string", "Key to check against. Default: found from the notes.")).Range(), true, false, true);
 
+	AddTool("look_at_song", "Look at the notes",
+		"A picture of the song's notes for you to look at: a piano roll with time left to right (bars numbered on top) and "
+		"pitch bottom to top (each C labeled), each channel in its own color (the reply names them), drums and samples in "
+		"strips below, arpeggio chords as faint bars, the loop marked. Use it to see a melody's shape, gaps, crowded or empty "
+		"spots and how the parts fit together, and to check what you wrote. Up to 32 bars at once; 8 to 16 read best.",
+		Schema()
+			.Add("from_bar", BarProp("First bar (from 1). Default 1."))
+			.Add("to_bar", BarProp("Last bar, included. Default: 8 bars from from_bar."))
+			.Add("channels", ChannelListProp("A channel, a list of channels, or \"all\" (default: every channel).")),
+		true, false, true);
+
 	AddTool("play", "Play for the user",
 		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end. You can't hear it; ask the user.",
 		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end).")),
@@ -2502,6 +2672,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
 		else if (Name == "change_mood") Result.Text = ChangeMoodTool(S, Args);
 		else if (Name == "check_song") Result.Text = CheckTool(S, Args);
+		else if (Name == "look_at_song") Result.Text = LookTool(S, Args, Result.Image);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
 			S.Host().Stop();
@@ -2526,10 +2697,10 @@ std::string ToolSet::Instructions()
 	return
 		"These tools work on the song open in the user's FamiTracker (NES music: 2A03 channels, often with the VRC6 expansion). "
 		"Think in bars and beats (both count from 1) and note names with FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz. "
-		"Start with get_song, then read_notes for the parts you change. "
+		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"By default your changes arrive as clips the user listens to and places (Edit > Clips); if the user allowed direct "
-		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing and "
-		"use play so the user can listen, then ask them. "
+		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
+		"look at the result with look_at_song, and use play so the user can listen, then ask them. "
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "
 		"each start from the original): darker = to_mode minor or phrygian, about 10-20% slower, parts an octave lower, rounder "
 		"or softer sounds (warm pad, soft lead); happier = to_mode major or lydian, a bit faster, brighter sounds (bright lead, "

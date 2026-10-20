@@ -94,4 +94,7 @@ std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive);
 
 bool EqualsNoCase(const std::string &a, const char *b);
 
+// Base64 with padding (RFC 4648), for images in answers and Mcp-Name headers
+std::string Base64Encode(const std::string &Bytes);
+
 }	// namespace ftapi
