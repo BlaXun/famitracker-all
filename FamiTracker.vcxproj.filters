@@ -1462,6 +1462,9 @@
     <ClCompile Include="Source\libvorbis\lib\vorbisenc.c">
       <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\libvorbis\lib\vorbisfile.c">
+      <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\libvorbis\lib\window.c">
       <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
     </ClCompile>
