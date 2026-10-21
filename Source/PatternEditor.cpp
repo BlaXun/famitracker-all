@@ -141,6 +141,7 @@ CPatternEditor::CPatternEditor() :
 	m_bDragStart(false),
 	m_bDragging(false),
 	m_bClipDrop(false),
+	m_bEmptySong(false),
 	m_bFullRowSelect(false),
 	m_bMouseActive(false),
 	m_iChannelPushed(-1),
@@ -423,6 +424,7 @@ void CPatternEditor::DrawScreen(CDC *pDC, CFamiTrackerView *pView)
 		}
 		else {
 			// Perform a full redraw
+			m_bEmptySong = theApp.GetSettings()->bCellHints && IsSongEmpty();
 			PerformFullRedraw(m_pPatternDC);
 		}
 
@@ -936,6 +938,76 @@ void CPatternEditor::PrintRow(CDC *pDC, int Row, int Line, int Frame) const
 	else {
 		ClearRow(pDC, Line);
 	}
+
+	if (Row < 0 && Frame == 0)
+		DrawEmptySongHint(pDC, Row, Line);
+}
+
+// A song of one frame without notes or effects, as a new one is
+bool CPatternEditor::IsSongEmpty() const
+{
+	const unsigned int Track = static_cast<unsigned int>(GetSelectedTrack());
+	if (m_pDocument == NULL || !m_pDocument->IsFileLoaded() || m_pDocument->GetFrameCount(Track) != 1)
+		return false;
+	const unsigned int Channels = m_pDocument->GetAvailableChannels();
+	const unsigned int Rows = m_pDocument->GetPatternLength(Track);
+	for (unsigned int c = 0; c < Channels; ++c) {
+		for (unsigned int r = 0; r < Rows; ++r) {
+			stChanNote Note;
+			m_pDocument->GetNoteData(Track, 0, c, r, &Note);
+			if (Note.Note != NONE || Note.EffNumber[0] != EF_NONE)
+				return false;
+		}
+	}
+	return true;
+}
+
+// Drawn a line at a time, clipped, as the pattern area is: the lines above
+// the first row scroll in one by one
+void CPatternEditor::DrawEmptySongHint(CDC *pDC, int Row, int Line) const
+{
+	if (!m_bEmptySong || Row >= 0)
+		return;
+	int Width = 0;
+	for (int i = m_iFirstChannel; i < m_iFirstChannel + m_iChannelsVisible; ++i)
+		Width += m_iChannelWidths[i];
+	const int Left = ROW_COLUMN_WIDTH + 16;
+	const int Right = ROW_COLUMN_WIDTH + (Width < 640 ? Width : 640) - 16;
+	if (Right - Left < 200)
+		return;
+
+	const CString Text = m_pView->GetEditMode() ?
+		_T("Editing is on: type notes. Z X C V B N M play C D E F G A B, S D G H J the sharps between them, and Q W E R T Y U the octave above. ")
+		_T("Each note goes in at the cursor, which then moves down a row. Enter plays the song, and Space stops editing.") :
+		_T("This song is empty. Press Space to start editing (the corner turns red), then type notes: Z X C V B N M play C D E F G A B, ")
+		_T("S D G H J the sharps between them, and Q W E R T Y U the octave above. Enter plays the song. Help > Tutorials shows you around.");
+
+	CFont *pOldFont = pDC->SelectObject(const_cast<CFont*>(&m_fontHeader));
+	CRect Block(Left, 0, Right, 0);
+	pDC->DrawText(Text, &Block, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_CENTER);
+	// Its bottom half a row above the first row
+	const int Bottom = (Line - Row) * m_iRowHeight - m_iRowHeight / 2;
+	Block = CRect(Left, Bottom - Block.Height(), Right, Bottom);
+	const CRect LineRect(ROW_COLUMN_WIDTH, Line * m_iRowHeight, ROW_COLUMN_WIDTH + Width, (Line + 1) * m_iRowHeight);
+	CRect Overlap;
+	if (Overlap.IntersectRect(&Block, &LineRect)) {
+		const int Saved = pDC->SaveDC();
+		pDC->SetWindowOrg(0, 0);
+		pDC->IntersectClipRect(&LineRect);
+		// The lines between channels stay as they are (they are drawn once
+		// for the whole height, and scrolled)
+		int Separator = ROW_COLUMN_WIDTH;
+		for (int i = m_iFirstChannel; i < m_iFirstChannel + m_iChannelsVisible; ++i) {
+			Separator += m_iChannelWidths[i];
+			pDC->ExcludeClipRect(Separator - 1, LineRect.top, Separator, LineRect.bottom);
+		}
+		pDC->SetBkMode(TRANSPARENT);
+		const int Light = GetRValue(m_colEmptyBg) + GetGValue(m_colEmptyBg) + GetBValue(m_colEmptyBg);
+		pDC->SetTextColor(Light < 384 ? RGB(165, 168, 160) : RGB(90, 92, 96));
+		pDC->DrawText(Text, &Block, DT_WORDBREAK | DT_NOPREFIX | DT_CENTER);
+		pDC->RestoreDC(Saved);
+	}
+	pDC->SelectObject(pOldFont);
 }
 
 void CPatternEditor::MovePatternArea(CDC *pDC, int FromRow, int ToRow, int NumRows) const

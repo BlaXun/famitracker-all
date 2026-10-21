@@ -198,7 +198,8 @@ public:
 	} Profile;
 
 	// View > Explain what's under the cursor: the status bar says what the
-	// cell under the cursor does (CellHint.h), and when notes only play
+	// cell under the cursor does (CellHint.h), and when notes only play, and
+	// an empty song says how to begin (CPatternEditor::DrawEmptySongHint)
 	bool bCellHints;
 
 private:

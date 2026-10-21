@@ -1036,15 +1036,16 @@ void CMainFrame::SetIndicatorTime(int Min, int Sec, int MSec)
 }
 
 // Where the song plays, or the cursor is when it's stopped, as a musician
-// counts: bars of the second row highlight, beats of the first
+// counts: bars of the second row highlight, beats of the first (as the
+// pattern editor shows them)
 void CMainFrame::SetIndicatorPos(int Frame, int Row)
 {
 	CString String;
 	const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
 	int Bar = 0, Beat = 0;
 	if (pDoc != NULL && pDoc->IsFileLoaded() && m_iTrack >= 0 && m_iTrack < static_cast<int>(pDoc->GetTrackCount())) {
-		Bar = static_cast<int>(pDoc->GetSecondHighlight(m_iTrack));
-		Beat = static_cast<int>(pDoc->GetFirstHighlight(m_iTrack));
+		Bar = pDoc->GetSecondHighlight();
+		Beat = pDoc->GetFirstHighlight();
 	}
 	if (Bar > 0 && Beat > 0 && Frame >= 0 && Row >= 0) {
 		const int At = Frame * static_cast<int>(pDoc->GetPatternLength(m_iTrack)) + Row;
@@ -1890,6 +1891,10 @@ void CMainFrame::OnViewCellHints()
 	bool &Hints = theApp.GetSettings()->bCellHints;
 	Hints = !Hints;
 	SetMessageText(Hints ? _T("The status bar says what's under the cursor as it moves.") : _T("No more words for what's under the cursor."));
+	// An empty song's words on how to begin come or go
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+	if (pDoc != NULL)
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
 }
 
 void CMainFrame::OnUpdateViewCellHints(CCmdUI *pCmdUI)

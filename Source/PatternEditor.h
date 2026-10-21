@@ -208,6 +208,10 @@ private:
 	void ScrollPatternArea(CDC *pDC, int Rows) const;
 	void ClearRow(CDC *pDC, int Line) const;
 	void PrintRow(CDC *pDC, int Row, int Line, int Frame) const;
+	// A song without notes yet: how to begin, in the blank space above its
+	// first row, the part of it on Line (Row is above the first, so negative)
+	bool IsSongEmpty() const;
+	void DrawEmptySongHint(CDC *pDC, int Row, int Line) const;
 	void DrawRow(CDC *pDC, int Row, int Line, int Frame, bool bPreview) const;
 	void DrawCell(CDC *pDC, int PosX, int Column, int Channel, bool bInvert, stChanNote *pNoteData, RowColorInfo_t *pColorInfo) const;
 	void DrawChar(CDC *pDC, int x, int y, TCHAR c, COLORREF Color) const;
@@ -369,6 +373,7 @@ private:
 	bool	m_bDragStart;			// Indicates that drag & drop is being initiated
 	bool	m_bDragging;			// Drag & drop is active
 	bool	m_bClipDrop;			// A clip from the clips panel is dragged over, m_selDrag shows where
+	bool	m_bEmptySong;			// The song has no notes yet: DrawEmptySongHint says how to begin
 	bool	m_bFullRowSelect;		// Enable full row selection
 
 	// Mouse

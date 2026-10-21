@@ -572,7 +572,7 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
-    ID_VIEW_CELLHINTS       "Say in the status bar what the note, instrument, volume or effect under the cursor does\nExplain what's under the cursor"
+    ID_VIEW_CELLHINTS       "Say in the status bar what the note, instrument, volume or effect under the cursor does, and in an empty song how to begin\nExplain what's under the cursor"
     ID_VIEW_KEYBOARD        "A piano keyboard along the bottom with the computer keys that play each note on it\nKeyboard"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
