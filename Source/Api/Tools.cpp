@@ -3317,8 +3317,16 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Style = Style;
 		O.Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), -1);
 		O.RowsPerBeat = R;
-		// Just under the melody, a voice to a channel
+		// Just under the melody, a voice to a channel: under its middle, and under the low notes it often dips to,
+		// so the top voice doesn't blur it
 		int Top = MelodyNotes.empty() ? 50 : MiddleOf(MelodyNotes, 57) - 7;
+		if (!MelodyNotes.empty()) {
+			std::vector<int> Pitches;
+			for (size_t i = 0; i < MelodyNotes.size(); ++i)
+				Pitches.push_back(MelodyNotes[i].Pitch);
+			std::sort(Pitches.begin(), Pitches.end());
+			Top = std::min(Top, Pitches[Pitches.size() / 5] - 3);
+		}
 		Top = std::max(43, std::min(55, Top));
 		O.Low = Top - 10;
 		O.High = Top + 4;
