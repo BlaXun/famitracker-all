@@ -325,7 +325,7 @@ class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 public:
 	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
 		m_pProgress(NULL), m_iPlayFirst(0),
-		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0)
+		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false)
 	{
 		m_Settings.Enabled = false;
 		m_Settings.Port = DEFAULT_PORT;
@@ -454,29 +454,86 @@ public:
 		return 1;
 	}
 
-	// Stops playback after the asked bars
+	// Stops playback after the asked bars, or plays them again (a loop), and
+	// gives the user's mutes back once it's over
 	void CheckPlayback()
 	{
 		CSoundGen *pSound = theApp.GetSoundGenerator();
 		CFamiTrackerDoc *pDoc = Doc();
-		if (pSound == NULL || pDoc == NULL || !theApp.IsPlaying()) {
-			KillTimer(m_hWindow, PLAY_TIMER);
+		if (pSound == NULL || pDoc == NULL) {
+			EndPlayback();
 			return;
 		}
+		if (!theApp.IsPlaying()) {
+			if (!m_bPlayStarted && ++m_iPlayTicks <= 10)
+				return;	// the sound thread hasn't started it yet
+			EndPlayback();
+			return;
+		}
+		if (m_iPlayEnd <= m_iPlayFirst)
+			return;	// to the end: waiting for it to stop
 		const int Length = static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(pSound->GetPlayerTrack())));
 		const int Row = pSound->GetPlayerFrame() * Length + pSound->GetPlayerRow();
 		if (!m_bPlayStarted) {
 			if (Row >= m_iPlayFirst && Row < m_iPlayEnd)
 				m_bPlayStarted = true;
 			else if (++m_iPlayTicks > 40) {	// it never got there: leave it be
-				KillTimer(m_hWindow, PLAY_TIMER);
+				m_iPlayEnd = m_iPlayFirst;
 				return;
 			}
 		}
 		if (m_bPlayStarted && (Row >= m_iPlayEnd || Row < m_iPlayFirst)) {
-			theApp.StopPlayer();
-			KillTimer(m_hWindow, PLAY_TIMER);
+			if (m_bPlayLoop)
+				StartAt(m_iPlayFirst);
+			else {
+				theApp.StopPlayer();
+				EndPlayback();
+			}
 		}
+		else if (m_bPlayStarted && m_bPlayLoop && m_iPlayFirst % Length == 0 && m_iPlayEnd % Length == 0 &&
+			Row / Length == (m_iPlayEnd - 1) / Length && pSound->GetQueueFrame() == -1)
+			pSound->SetQueueFrame(m_iPlayFirst / Length);	// whole frames: back to the first without a gap
+	}
+
+	// Plays from a song row (stopping what plays)
+	void StartAt(int First)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CFamiTrackerView *pView = CFamiTrackerView::GetView();
+		if (pDoc == NULL || pView == NULL)
+			return;
+		const int Length = static_cast<int>(pDoc->GetPatternLength(Track()));
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();	// the cursor doesn't move while playing in follow mode
+		CSoundGen *pSound = theApp.GetSoundGenerator();
+		if (pSound != NULL)
+			pSound->SetQueueFrame(-1);
+		pView->SelectFrame(static_cast<unsigned int>(First / Length));
+		pView->GetPatternEditor()->MoveToRow(First % Length);
+		pView->GetPatternEditor()->InvalidateCursor();
+		theApp.StartPlayer(MODE_PLAY_CURSOR);
+		m_bPlayStarted = false;
+		m_iPlayTicks = 0;
+	}
+
+	// Playback for Claude is over: no loop, and the user's own mutes back
+	void EndPlayback()
+	{
+		if (m_hWindow != NULL)
+			KillTimer(m_hWindow, PLAY_TIMER);
+		CSoundGen *pSound = theApp.GetSoundGenerator();
+		if (pSound != NULL && m_bPlayLoop)
+			pSound->SetQueueFrame(-1);
+		m_bPlayLoop = false;
+		CFamiTrackerDoc *pDoc = Doc();
+		CFamiTrackerView *pView = CFamiTrackerView::GetView();
+		if (!m_UserMutes.empty() && pDoc != NULL && pView != NULL) {
+			for (unsigned int c = 0; c < m_UserMutes.size() && c < pDoc->GetAvailableChannels(); ++c)
+				pView->SetChannelMute(static_cast<int>(c), m_UserMutes[c]);
+			pView->GetPatternEditor()->InvalidateHeader();
+			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
+		}
+		m_UserMutes.clear();
 	}
 
 	// ftapi::SongHost
@@ -1293,7 +1350,7 @@ public:
 		return true;
 	}
 
-	bool Play(int First, int Rows, std::string &Error)
+	bool Play(const ftapi::PlayRequest &Request, std::string &Error)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
 		CFamiTrackerView *pView = CFamiTrackerView::GetView();
@@ -1302,31 +1359,35 @@ public:
 			return false;
 		}
 		const int Length = static_cast<int>(pDoc->GetPatternLength(Track()));
-		if (First < 0 || First >= Length * static_cast<int>(pDoc->GetFrameCount(Track()))) {
+		if (Request.First < 0 || Request.First >= Length * static_cast<int>(pDoc->GetFrameCount(Track()))) {
 			Error = "That bar is past the end of the song.";
 			return false;
 		}
 		if (theApp.IsPlaying())
-			theApp.StopPlayerAndWait();	// the cursor doesn't move while playing in follow mode
-		pView->SelectFrame(static_cast<unsigned int>(First / Length));
-		pView->GetPatternEditor()->MoveToRow(First % Length);
-		pView->GetPatternEditor()->InvalidateCursor();
-		theApp.StartPlayer(MODE_PLAY_CURSOR);
-		KillTimer(m_hWindow, PLAY_TIMER);
-		if (Rows > 0) {
-			m_iPlayFirst = First;
-			m_iPlayEnd = First + Rows;
-			m_bPlayStarted = false;
-			m_iPlayTicks = 0;
-			SetTimer(m_hWindow, PLAY_TIMER, 50, NULL);
+			theApp.StopPlayerAndWait();
+		EndPlayback();	// what an earlier call left: its loop, the mutes it set
+		// Channels silent this time; the user's own mutes are kept for afterwards
+		if (!Request.Muted.empty()) {
+			for (unsigned int c = 0; c < pDoc->GetAvailableChannels(); ++c) {
+				m_UserMutes.push_back(pView->IsChannelMuted(c));
+				pView->SetChannelMute(static_cast<int>(c), c < Request.Muted.size() && Request.Muted[c]);
+			}
+			pView->GetPatternEditor()->InvalidateHeader();
+			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
 		}
+		m_iPlayFirst = Request.First;
+		m_iPlayEnd = Request.Rows > 0 ? Request.First + Request.Rows : Request.First;
+		m_bPlayLoop = Request.Loop && Request.Rows > 0;
+		StartAt(Request.First);
+		if (Request.Rows > 0 || !m_UserMutes.empty())
+			SetTimer(m_hWindow, PLAY_TIMER, m_bPlayLoop ? 20 : 50, NULL);
 		return true;
 	}
 
 	void Stop()
 	{
-		KillTimer(m_hWindow, PLAY_TIMER);
 		theApp.StopPlayer();
+		EndPlayback();
 	}
 
 	bool Undo(std::string &Message)
@@ -1492,9 +1553,11 @@ private:
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
 						// which may change the song
 	CWnd *m_pProgress;	// where a rendering's progress shows, or NULL
-	int m_iPlayFirst, m_iPlayEnd;
+	int m_iPlayFirst, m_iPlayEnd;	// the rows played for Claude; End at First: to the end
 	bool m_bPlayStarted;
 	int m_iPlayTicks;
+	bool m_bPlayLoop;				// those rows over and over
+	std::vector<bool> m_UserMutes;	// the user's own mutes while Claude's playback mutes others, else empty
 };
 
 // The dialog

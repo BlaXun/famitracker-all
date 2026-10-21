@@ -177,7 +177,7 @@ anything; close the dialog and ask again.
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
-| `play`, `stop` | Plays bars for you |
+| `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions |
 

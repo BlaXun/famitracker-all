@@ -128,6 +128,8 @@ public:
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
 	SongWrite LastWrite;
+	bool PlayLoop = false;
+	std::vector<bool> PlayMuted;
 	bool Busy, Stopped;
 	std::string Saved;
 
@@ -715,10 +717,12 @@ public:
 		return true;
 	}
 
-	bool Play(int First, int Count, std::string &) override
+	bool Play(const PlayRequest &Request, std::string &) override
 	{
-		PlayFirst = First;
-		PlayRows = Count;
+		PlayFirst = Request.First;
+		PlayRows = Request.Rows;
+		PlayLoop = Request.Loop;
+		PlayMuted = Request.Muted;
 		return true;
 	}
 
@@ -2958,8 +2962,20 @@ void TestPlayback()
 	CHECK(!Run(Song, "play", "{\"from_bar\": 2, \"bars\": 2}").IsError);
 	CHECK(Song.PlayFirst == 16 && Song.PlayRows == 32);
 	CHECK(!Run(Song, "play", "{}").IsError);
-	CHECK(Song.PlayFirst == 0 && Song.PlayRows == 0);
+	CHECK(Song.PlayFirst == 0 && Song.PlayRows == 0 && !Song.PlayLoop && Song.PlayMuted.empty());
 	CHECK_LACKS(Run(Song, "play", "{}").Text, "muted");
+	// Listening closely: bars over and over, a part alone or the rest without it
+	std::string Text = Run(Song, "play", "{\"from_bar\": 5, \"bars\": 2, \"loop\": true}").Text;
+	CHECK_HAS(Text, "Playing bars 5-6 for the user over and over, until you call stop or the user stops it.");
+	CHECK(Song.PlayFirst == 64 && Song.PlayRows == 32 && Song.PlayLoop);
+	CHECK(!Run(Song, "play", "{\"from_bar\": 3, \"loop\": true}").IsError && Song.PlayFirst == 32 && Song.PlayRows == 96);
+	Text = Run(Song, "play", "{\"channels\": [\"Triangle\", \"Noise\"]}").Text;
+	CHECK_HAS(Text, "Only 2A03 Triangle and 2A03 Noise play; the user's own mutes come back when it stops.");
+	CHECK(Song.PlayMuted.size() == 8u && Song.PlayMuted[0] && !Song.PlayMuted[2] && !Song.PlayMuted[3] && Song.PlayMuted[7]);
+	Text = Run(Song, "play", "{\"mute\": \"VRC6 Pulse 1\"}").Text;
+	CHECK(Song.PlayMuted.size() == 8u && Song.PlayMuted[5] && !Song.PlayMuted[0]);
+	CHECK_HAS(Text, "Only 2A03 Pulse 1, 2A03 Pulse 2, 2A03 Triangle, 2A03 Noise, 2A03 DPCM, VRC6 Pulse 2 and VRC6 Sawtooth play");
+	CHECK_HAS(Run(Song, "play", "{\"channels\": \"Noise\", \"mute\": \"Noise\"}").Text, "That leaves no channel playing.");
 	CHECK_LACKS(Run(Song, "get_song", "{}").Text, "muted");
 	// Channels the user muted: Claude knows they aren't heard
 	Song.Info.Channels[1].Muted = true;

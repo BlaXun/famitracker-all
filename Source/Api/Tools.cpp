@@ -7177,19 +7177,57 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 	return Text;
 }
 
+// "Pulse 1, Triangle and Noise"
+std::string ChannelNames(const Session &S, const std::vector<int> &Channels)
+{
+	std::string Text;
+	for (size_t i = 0; i < Channels.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Channels.size() ? " and " : ", ") + S.Channel(Channels[i]).FullName();
+	return Text;
+}
+
 std::string PlayTool(Session &S, const Json &Args)
 {
 	const int From = IntArg(Args, "from_bar", 1, 1, std::max(1, S.Time.BarCount()));
 	const int Bars = IntArg(Args, "bars", 0, 0, S.MaxBars());
-	const int First = S.Time.BarStart(From);
-	const int Rows = Bars > 0 ? std::min(S.Time.TotalRows(), S.Time.BarEnd(From + Bars - 1)) - First : 0;
+	PlayRequest Request;
+	Request.First = S.Time.BarStart(From);
+	Request.Loop = BoolArg(Args, "loop", false);
+	Request.Rows = Bars > 0 || Request.Loop ? std::min(S.Time.TotalRows(), Bars > 0 ? S.Time.BarEnd(From + Bars - 1) : S.Time.TotalRows()) -
+		Request.First : 0;
+	// Channels on their own, or left out, this time
+	std::vector<int> Playing;
+	if (Arg(Args, "channels") != 0 || Arg(Args, "mute") != 0) {
+		Request.Muted.assign(static_cast<size_t>(S.ChannelCount()), Arg(Args, "channels") != 0);
+		if (Arg(Args, "channels") != 0) {
+			const std::vector<int> Solo = ChannelsArg(S, Args, "channels");
+			for (size_t i = 0; i < Solo.size(); ++i)
+				Request.Muted[static_cast<size_t>(Solo[i])] = false;
+		}
+		if (Arg(Args, "mute") != 0) {
+			const std::vector<int> Mute = ChannelsArg(S, Args, "mute");
+			for (size_t i = 0; i < Mute.size(); ++i)
+				Request.Muted[static_cast<size_t>(Mute[i])] = true;
+		}
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (!Request.Muted[static_cast<size_t>(c)])
+				Playing.push_back(c);
+		if (Playing.empty())
+			throw Problem("That leaves no channel playing.");
+	}
 	std::string Error;
-	if (!S.Host().Play(First, Rows, Error))
+	if (!S.Host().Play(Request, Error))
 		throw Problem(Error.empty() ? "FamiTracker couldn't play." : Error);
-	std::string Text = Format("Playing for the user from bar %d%s. You can't hear it yourself; ask the user how it sounds.", From,
+	const std::string What = Bars > 0 ? RangeText(From, From + Bars - 1) : Format("bar %d to the end", From);
+	std::string Text = Request.Loop ? Format("Playing %s for the user over and over, until you call stop or the user stops it.",
+		What.c_str()) : Format("Playing for the user from bar %d%s.", From,
 		Bars > 0 ? Format(" for %s", Plural(Bars, "bar", "bars").c_str()).c_str() : " to the end");
+	if (!Request.Muted.empty())
+		Text += Format(" Only %s %s; the user's own mutes come back when it stops.", ChannelNames(S, Playing).c_str(),
+			Playing.size() == 1 ? "plays" : "play");
+	Text += " You can't hear it yourself; ask the user how it sounds.";
 	const std::string Muted = MutedChannels(S);
-	if (!Muted.empty())
+	if (!Muted.empty() && Request.Muted.empty())
 		Text += " The user has muted " + Muted + " in FamiTracker, so that doesn't play; clicking a channel's name "
 			"above its column switches it back on.";
 	return Text;
@@ -8494,8 +8532,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("play", "Play for the user",
-		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end. You can't hear it; ask the user.",
-		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end).")),
+		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end; over and over (loop) for listening "
+		"closely, and with only some channels (channels) or without some (mute), to hear a part on its own or the rest without "
+		"it. The user's own mutes come back when it stops. You can't hear it; ask the user.",
+		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end)."))
+			.Add("loop", Prop("boolean", "Play them over and over until stop (default false)."))
+			.Add("channels", ChannelListProp("Only these channels play this time (the bass and drums, a lead alone)."))
+			.Add("mute", ChannelListProp("These channels don't play this time.")),
 		true);
 
 	AddTool("stop", "Stop playing", "Stops playback in FamiTracker.", Schema(), true, false, true);

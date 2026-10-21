@@ -243,8 +243,12 @@ when ready.
   as Insert frame does, so the frames after keep their patterns and linked
   clips.
 
+  Listening help: `play` loops bars until stopped, and plays only some
+  channels or leaves some out, giving the user's own mutes back when it
+  stops.
+
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
-  listening help (loop, solo, mute), and recording through Claude.
+  and recording through Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF
   files open as readable FamiTracker songs, and Claude learns from them.
   - Our own portable player core (a 6502, the NSF's bank switching, the 2A03

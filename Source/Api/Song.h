@@ -122,6 +122,16 @@ struct SongWrite {
 	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1) {}
 };
 
+// What SongHost::Play plays
+struct PlayRequest {
+	int First;                  // the song row it starts at
+	int Rows;                   // how many; 0 to the end
+	bool Loop;                  // those rows over and over, until it's stopped
+	std::vector<bool> Muted;    // per channel: silent this time (empty: as the user has them); the user's own mutes come
+								// back when it stops
+	PlayRequest() : First(0), Rows(0), Loop(false) {}
+};
+
 class SongHost {
 public:
 	virtual ~SongHost() {}
@@ -212,7 +222,7 @@ public:
 	// it; the tools first make sure the song has no unsaved changes.
 	virtual bool OpenText(const std::string &Text, std::string &Error) = 0;
 
-	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
+	virtual bool Play(const PlayRequest &Request, std::string &Error) = 0;
 	virtual void Stop() = 0;
 	virtual bool Undo(std::string &Message) = 0;
 	// Saves the song, or a copy of it next to it (CopyName: a file name)
