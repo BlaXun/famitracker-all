@@ -2131,6 +2131,18 @@ struct CPianoRollWnd::Impl {
 	bool ShowDrop(CPoint Point, int Index, bool Scroll)
 	{
 		Layout();
+		// The bright channel is the cursor's, at once (the clips panel puts the cursor back where it
+		// was if the drag scrolled the pattern editor on its way here)
+		CFamiTrackerView *pView = View();
+		if (pView != NULL && !Notes.empty()) {
+			const int Cursor = pView->GetPatternEditor()->GetChannel();
+			if (Cursor >= 0 && Cursor < static_cast<int>(Notes.size()) && Cursor != Channel) {
+				Channel = CursorChannel = Cursor;
+				Selection.clear();
+				PlacingClip = -1;
+				pWnd->Invalidate(FALSE);
+			}
+		}
 		if (Notes.empty() || Channel < 0 || Channel >= static_cast<int>(Notes.size()) || !Grid.PtInRect(Point)) {
 			HideDrop();
 			return false;
