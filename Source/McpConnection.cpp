@@ -1097,7 +1097,7 @@ public:
 	void PlaySelectedTrack()
 	{
 		std::string Error;
-		Play(0, 0, Error);
+		Play(ftapi::PlayRequest(), Error);	// from the start
 	}
 
 	std::string LocalPath(const std::string &Path)
