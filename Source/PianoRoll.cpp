@@ -83,7 +83,7 @@ const TCHAR *const KEY_NAMES[] = {
 	_T("C"), _T("C#"), _T("D"), _T("Eb"), _T("E"), _T("F"), _T("F#"), _T("G"), _T("Ab"), _T("A"), _T("Bb"), _T("B")
 };
 
-enum tool_t { TOOL_DRAW, TOOL_PAINT };
+enum tool_t { TOOL_DRAW, TOOL_PAINT, TOOL_SELECT };
 
 enum grid_t { GRID_ROW, GRID_HALF_BEAT, GRID_BEAT, GRID_TWO_BEATS, GRID_BAR, GRIDS };
 const TCHAR *const GRID_NAMES[GRIDS] = { _T("Row"), _T("Half a beat"), _T("Beat"), _T("Two beats"), _T("Bar") };
@@ -96,7 +96,8 @@ const transcribe::Scale SCALE_KINDS[SCALES] = {
 };
 
 // The buttons along the top
-enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_GRID, BUTTON_KEY, BUTTON_INSTRUMENT, BUTTON_EFFECTS, BUTTON_CLIPS, BUTTON_CLOSE };
+enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_INSTRUMENT, BUTTON_EFFECTS, BUTTON_CLIPS,
+	BUTTON_CLOSE };
 
 // Menu items (TrackPopupMenu returns them; they are never sent as commands)
 const UINT MENU_CHANNEL = 100;			// + channel
@@ -401,7 +402,7 @@ struct CPianoRollWnd::Impl {
 	DWORD MessageTime;	// ...and when it came
 
 	// What the mouse or a key is doing to the notes
-	enum drag_t { DRAG_NONE, DRAG_KEYS, DRAG_RULER, DRAG_DRAW, DRAG_MOVE, DRAG_RESIZE, DRAG_ERASE, DRAG_SELECT, DRAG_PAINT };
+	enum drag_t { DRAG_NONE, DRAG_KEYS, DRAG_RULER, DRAG_DRAW, DRAG_MOVE, DRAG_RESIZE, DRAG_ERASE, DRAG_SELECT, DRAG_PAINT, DRAG_RANGE };
 	enum edit_t { EDIT_NONE, EDIT_ADD, EDIT_REMOVE, EDIT_RESIZE, EDIT_MOVE, EDIT_PAINT, EDIT_PASTE, EDIT_INSTRUMENT, EDIT_EFFECT };
 	drag_t Drag;
 	CPoint DragFrom;
@@ -432,6 +433,8 @@ struct CPianoRollWnd::Impl {
 	int ChosenEffect;	// into EFFECT_CHOICES
 	mutable bool EffectFits;	// the effects fitted in the effect columns
 	CRect Band;			// selecting with Ctrl+drag
+	int RangeFrom, RangeTo;	// selecting whole rows along the ruler (the Select tool)
+	bool PatternSelecting;	// the pattern editor had a selection at the last look
 
 	// Copied notes
 	CChannelNotes Copied;
@@ -462,7 +465,8 @@ struct CPianoRollWnd::Impl {
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
-		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), HasCopied(false), PlacingClip(-1), PlaceRow(-1), PanelDrop(false), BackSize(0, 0)
+		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), HasCopied(false), PlacingClip(-1), PlaceRow(-1),
+		PanelDrop(false), BackSize(0, 0)
 	{
 	}
 
@@ -480,7 +484,8 @@ struct CPianoRollWnd::Impl {
 	{
 		const int SavedZoom = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Zoom"), DEFAULT_ZOOM));
 		Zoom = (SavedZoom >= 0 && SavedZoom < ZOOMS) ? SavedZoom : DEFAULT_ZOOM;
-		Tool = theApp.GetProfileInt(SECTION, _T("Tool"), TOOL_DRAW) == TOOL_PAINT ? TOOL_PAINT : TOOL_DRAW;
+		Tool = std::max(static_cast<int>(TOOL_DRAW), std::min(static_cast<int>(TOOL_SELECT),
+			static_cast<int>(theApp.GetProfileInt(SECTION, _T("Tool"), TOOL_DRAW))));
 		GridChoice = std::min(static_cast<int>(theApp.GetProfileInt(SECTION, _T("Grid"), GRID_BEAT)), GRIDS - 1);
 		KeyRoot = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Key"), static_cast<UINT>(-1)));
 		if (KeyRoot < -1 || KeyRoot > 11)
@@ -973,6 +978,13 @@ struct CPianoRollWnd::Impl {
 
 		// The cursor, whose channel is the bright one
 		const CPatternEditor *pEditor = pView->GetPatternEditor();
+		// One selection at a time: one made in the pattern editor ends the piano roll's
+		const bool PatternSelects = pEditor->IsSelecting();
+		if (PatternSelects && !PatternSelecting && !Selection.empty() && Drag == DRAG_NONE) {
+			Selection.clear();
+			Changed = true;
+		}
+		PatternSelecting = PatternSelects;
 		const int Frame = pEditor->GetFrame(), Row = pEditor->GetRow(), CursorCh = pEditor->GetChannel();
 		if (CursorCh != CursorChannel) {
 			const int Now = std::max(0, std::min(CursorCh, static_cast<int>(Notes.size()) - 1));
@@ -1193,7 +1205,7 @@ struct CPianoRollWnd::Impl {
 		if (IsDPCM(Channel))
 			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("The DPCM channel plays samples, without effects"));
 		else if (Selection.empty())
-			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("Select notes first: click one, or Ctrl+drag around some"));
+			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("Select notes first: click one, or drag around some with the Select tool (or Ctrl)"));
 		else {
 			CString Text;
 			Text.Format(_T("For the %s selected:"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
@@ -1453,7 +1465,9 @@ struct CPianoRollWnd::Impl {
 		}
 		if (Ruler.PtInRect(Point)) {
 			if (!Right) {
-				Drag = DRAG_RULER;
+				// The Select tool: dragging along the ruler selects the notes in those rows
+				Drag = Tool == TOOL_SELECT ? DRAG_RANGE : DRAG_RULER;
+				RangeFrom = RangeTo = std::max(0, std::min(RowAt(Point.x), EditRows() - 1));
 				GoTo(Channel, RowAt(Point.x));
 			}
 			return;
@@ -1467,14 +1481,14 @@ struct CPianoRollWnd::Impl {
 			EraseAt(Point);
 			return;
 		}
-		if (Ctrl) {
+		int HitChannel = -1, HitIndex = -1;
+		const bool OnNote = HitNote(Point, HitChannel, HitIndex);
+		if (Ctrl || (Tool == TOOL_SELECT && !OnNote)) {
+			// A box around notes selects them (the Select tool needs no Ctrl)
 			Drag = DRAG_SELECT;
 			Band = CRect(Point, Point);
 			return;
 		}
-
-		int HitChannel = -1, HitIndex = -1;
-		const bool OnNote = HitNote(Point, HitChannel, HitIndex);
 		if (OnNote && HitChannel == Channel) {
 			const RollNote Hit = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)];
 			if (OnEnd(Point, Hit)) {
@@ -1557,6 +1571,14 @@ struct CPianoRollWnd::Impl {
 		case DRAG_RULER:
 			GoTo(Channel, std::max(0, RowAt(Point.x)));
 			break;
+		case DRAG_RANGE: {
+			const int Row = std::max(0, std::min(RowAt(Point.x), EditRows() - 1));
+			if (DragMoved && Row != RangeTo) {
+				RangeTo = Row;
+				SelectRows(std::min(RangeFrom, RangeTo), std::max(RangeFrom, RangeTo) + 1);
+			}
+			break;
+		}
 		case DRAG_SELECT:
 			Band = CRect(std::min(DragFrom.x, Point.x), std::min(DragFrom.y, Point.y), std::max(DragFrom.x, Point.x) + 1,
 				std::max(DragFrom.y, Point.y) + 1);
@@ -1684,9 +1706,16 @@ struct CPianoRollWnd::Impl {
 			}
 			Band.SetRectEmpty();
 			break;
+		case DRAG_RANGE:
+			if (DragMoved)
+				SelectRows(std::min(RangeFrom, RangeTo), std::max(RangeFrom, RangeTo) + 1);
+			break;
 		default:
 			break;
 		}
+		// One selection at a time: the pattern editor's goes when the piano roll has one
+		if (!Selection.empty())
+			CancelPatternSelection();
 		EditKind = EDIT_NONE;
 		Previewing = false;
 	}
@@ -1735,6 +1764,28 @@ struct CPianoRollWnd::Impl {
 			return;
 		Erased.push_back(Start);
 		Recompute();
+	}
+
+	// The bright channel's notes that start in rows [From, To)
+	void SelectRows(int From, int To)
+	{
+		Selection.clear();
+		if (Channel < 0 || Channel >= static_cast<int>(Notes.size()))
+			return;
+		const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
+		for (size_t i = 0; i < List.size(); ++i)
+			if (List[i].Start >= From && List[i].Start < To)
+				Selection.push_back(List[i].Start);
+	}
+
+	void CancelPatternSelection()
+	{
+		CFamiTrackerView *pView = View();
+		if (pView != NULL && pView->GetPatternEditor()->IsSelecting()) {
+			pView->GetPatternEditor()->CancelSelection();
+			pView->Invalidate(FALSE);
+		}
+		PatternSelecting = false;
 	}
 
 	void SelectBand()
@@ -1817,6 +1868,8 @@ struct CPianoRollWnd::Impl {
 				const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
 				for (size_t i = 0; i < List.size(); ++i)
 					Selection.push_back(List[i].Start);
+				if (!Selection.empty())
+					CancelPatternSelection();
 				Done = true;
 			}
 			break;
@@ -1867,6 +1920,12 @@ struct CPianoRollWnd::Impl {
 				Done = true;
 			}
 			break;
+		case 'S':
+			if (!Ctrl && !Shift && !Alt) {
+				SetTool(TOOL_SELECT);
+				Done = true;
+			}
+			break;
 		case 'E':
 			if (!Ctrl && !Shift && !Alt) {
 				// The Effects menu where the mouse is, for the selected notes or the one under it
@@ -1899,7 +1958,7 @@ struct CPianoRollWnd::Impl {
 	void DeleteSelection()
 	{
 		if (Selection.empty()) {
-			Say(_T("Select notes to delete first: click one, or Ctrl+drag around some."));
+			Say(_T("Select notes to delete first: click one, or drag around some with the Select tool (or Ctrl)."));
 			return;
 		}
 		BeginEdit(EDIT_REMOVE);
@@ -1953,7 +2012,7 @@ struct CPianoRollWnd::Impl {
 	void CopySelection(bool Cut)
 	{
 		if (Selection.empty()) {
-			Say(_T("Select notes to copy first: click one, or Ctrl+drag around some."));
+			Say(_T("Select notes to copy first: click one, or drag around some with the Select tool (or Ctrl)."));
 			return;
 		}
 		CChannelNotes Cells;
@@ -2006,7 +2065,7 @@ struct CPianoRollWnd::Impl {
 	{
 		CFamiTrackerDoc *pDoc = Doc();
 		if (Selection.empty() || pDoc == NULL) {
-			Say(_T("Select the notes for the clip first: click one, or Ctrl+drag around some."));
+			Say(_T("Select the notes for the clip first: click one, or drag around some with the Select tool (or Ctrl)."));
 			return;
 		}
 		CChannelNotes Cells;
@@ -2030,7 +2089,7 @@ struct CPianoRollWnd::Impl {
 		}
 		pDoc->SetModifiedFlag();
 		CString Text;
-		Text.Format(_T("Saved %s as the clip \"%s\". The Clips button places it."),
+		Text.Format(_T("Saved %s as the clip \"%s\". It's in the clips panel: drag it to where it goes."),
 			static_cast<LPCTSTR>(Plural(Clip.GetNoteCount(), _T("note"), _T("notes"))), static_cast<LPCTSTR>(Dialog.GetName()));
 		Say(Text);
 	}
@@ -2175,6 +2234,9 @@ struct CPianoRollWnd::Impl {
 			break;
 		case BUTTON_PAINT:
 			SetTool(TOOL_PAINT);
+			break;
+		case BUTTON_SELECT:
+			SetTool(TOOL_SELECT);
 			break;
 		case BUTTON_GRID: {
 			CMenu Menu;
@@ -2364,6 +2426,7 @@ struct CPianoRollWnd::Impl {
 			Text.Format(_T("Painting a melody: %s"), static_cast<LPCTSTR>(Plural(static_cast<int>(PaintedNotes().size()), _T("note"), _T("notes"))));
 			return Text;
 		case DRAG_SELECT:
+		case DRAG_RANGE:
 			Text.Format(_T("%s selected"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
 			return Text;
 		case DRAG_ERASE:
@@ -2375,12 +2438,16 @@ struct CPianoRollWnd::Impl {
 			HoverNote < static_cast<int>(Visible(HoverChannel).size()))
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
 		if (!Selection.empty()) {
-			Text.Format(_T("%s selected   |   Drag to move (Shift: copy), arrows to move, Shift+arrows: octave, Delete, ")
-				_T("Ctrl+C / Ctrl+V, E: effects, Esc: none"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
+			Text.Format(_T("%s selected   |   Ctrl+Shift+C: save as a clip. Drag to move (Shift: copy), arrows to move, ")
+				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, Esc: none"),
+				static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
 			return Text;
 		}
 		if (Tool == TOOL_PAINT)
 			return _T("Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.");
+		if (Tool == TOOL_SELECT)
+			return _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
+				_T("Then Ctrl+Shift+C saves them as a clip.");
 		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
 			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. Ctrl+Z undoes.");
 	}
@@ -2478,6 +2545,7 @@ struct CPianoRollWnd::Impl {
 		X += SX(8);
 		DrawButton(dc, BUTTON_DRAW, _T("Draw"), X, Right, Tool == TOOL_DRAW, false);
 		DrawButton(dc, BUTTON_PAINT, _T("Paint melody"), X, Right, Tool == TOOL_PAINT, false);
+		DrawButton(dc, BUTTON_SELECT, _T("Select"), X, Right, Tool == TOOL_SELECT, false);
 		X += SX(8);
 		CString Text;
 		Text.Format(_T("Grid: %s"), GRID_NAMES[GridChoice]);
@@ -2705,9 +2773,11 @@ struct CPianoRollWnd::Impl {
 			dc.FillSolidRect(RowX(PlaceRow), Grid.top, std::max(1, SX(2)), Grid.Height(), Picked);
 		}
 
-		// Selecting with Ctrl+drag
+		// Selecting with Ctrl+drag (or the Select tool), or rows along the ruler
 		if (Drag == DRAG_SELECT && !Band.IsRectEmpty())
 			Outline(dc, Band, Cursor);
+		if (Drag == DRAG_RANGE && DragMoved)
+			Outline(dc, CRect(RowX(std::min(RangeFrom, RangeTo)), Grid.top, RowX(std::max(RangeFrom, RangeTo) + 1), Grid.bottom), Cursor);
 
 		// The cursor and the play position
 		if (CursorFrame >= 0 && CursorRow >= 0)
@@ -2883,6 +2953,17 @@ bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scro
 bool CPianoRollWnd::HideClipDrop()
 {
 	return GetSafeHwnd() != NULL && m_pImpl->HideDrop();
+}
+
+bool CPianoRollWnd::HasSelection() const
+{
+	return GetSafeHwnd() != NULL && m_pImpl->Shown && !m_pImpl->Selection.empty();
+}
+
+void CPianoRollWnd::SaveSelectionAsClip()
+{
+	m_pImpl->SaveSelectionAsClip();
+	Invalidate(FALSE);
 }
 
 BOOL CPianoRollWnd::PreTranslateMessage(MSG *pMsg)
