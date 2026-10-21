@@ -56,6 +56,17 @@ tutorials of `res/tutorials` (built in as RCDATA, read by
 `CMainFrame::OnCommand`. New work goes to the `next` branch first; once its
 build has been tried, `beginner-friendly` is fast-forwarded to it.
 
+The `visual-cues` branch, made from `next`, makes FamiTracker easier to read
+at a glance. The status bar says what the cell under the cursor does (the
+words from `Source/CellHint.cpp`, set by `CFamiTrackerView::UpdateCellHint`),
+an empty song says how to begin above its first row
+(`CPatternEditor::DrawEmptySongHint`), the pattern editor's corner shows a
+red EDIT badge while editing, the status bar's position is in bars and beats
+(`CMainFrame::SetIndicatorPos`), and View > Keyboard is a piano keyboard
+along the bottom with the computer key for each note (`Source/KeyboardBar.cpp`,
+playing through `CFamiTrackerView::PlayKeyboardNote`). View > Explain what's
+under the cursor (`CSettings::bCellHints`) turns the words off.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -150,15 +161,15 @@ replaced the VS2008 project:
     `gh api repos/BlaXun/famitracker-all/commits/<sha>/check-runs --jq '.check_runs[] | select(.name | startswith("Build report")) | .output.title, .output.text'`.
   - Job logs and artifact downloads can be blocked in sandboxed sessions; the
     report doesn't need them.
-  - After a green build of `beginner-friendly`, `next`, `recorder` or `api`,
-    the `publish` job replaces that branch's rolling GitHub release (tag
-    `build-<branch>`) using `.github/scripts/publish-build.sh`.
-    `beginner-friendly` is marked Latest; the others are pre-releases. Each
-    release has a zip with `FamiTracker.exe`, plus
-    `wav2ftm.exe` and `famitracker-mcp.exe` when the branch builds them
-    (`api` has no `famitracker-mcp.exe`), and a debug-symbols zip. These
-    tags are build pointers and get deleted and recreated; never use them
-    for real releases.
+  - After a green build of `beginner-friendly`, `next`, `visual-cues`,
+    `recorder` or `api`, the `publish` job replaces that branch's rolling
+    GitHub release (tag `build-<branch>`) using
+    `.github/scripts/publish-build.sh`. `beginner-friendly` is marked
+    Latest; the others are pre-releases. Each release has a zip with
+    `FamiTracker.exe`, plus `wav2ftm.exe` and `famitracker-mcp.exe` when the
+    branch builds them (`api` has no `famitracker-mcp.exe`), and a
+    debug-symbols zip. These tags are build pointers and get deleted and
+    recreated; never use them for real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
@@ -201,9 +212,11 @@ The application has no test suite of its own. What exists:
   their own where frames share one. `DrumGridTests.cpp` covers reading the
   drums off a bar, putting them on and off, and the ready-made beats.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
-  the errors, and the built-in tutorials, which must stay ASCII. Same three
-  commands with `Source/Tests` and `build/tests`; CI runs them in the Linux
-  job. The stand-ins must keep the real headers' signatures.
+  the errors, and the built-in tutorials, which must stay ASCII.
+  `CellHintTests.cpp` (on `visual-cues`) checks the words for notes, columns
+  and every effect. Same three commands with `Source/Tests` and
+  `build/tests`; CI runs them in the Linux job. The stand-ins must keep the
+  real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
   the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three

@@ -207,6 +207,25 @@ when ready.
   instruments, a soundtrack guide (main motif, house sounds, keys per area),
   song sections, named versions to compare, listening help (loop, solo,
   mute), and recording through Claude.
+- **`visual-cues` (October 2026, made from `next`; its build is the
+  `build-visual-cues` pre-release):** FamiTracker easier to read at a
+  glance, for people who don't read tracker notation yet. Done:
+  - The status bar says what the cell under the cursor is: a note and how
+    high it is, its instrument by name, the volume, or an effect and what
+    its number does ("452: vibrato, speed 5 and depth 2: gentle").
+  - An empty song says above its first row how to begin: Space to edit,
+    the letters that play each note, Enter to play.
+  - A red EDIT badge in the pattern editor's corner while editing, and plain
+    words when editing goes on or off, or when typed notes only play.
+  - The position in bars and beats instead of row and frame numbers.
+  - View > Keyboard: a piano keyboard along the bottom with the computer
+    key on each note, lighting up held notes and playing the ones clicked,
+    with the other main keys beside it.
+
+  Ideas for more: notes coloured by instrument, a channel's instrument
+  named in its header, the loop point drawn in the frame list, and warnings
+  in place (a note too high for the channel, an instrument for another
+  chip).
 - **`nsf-import` (planned):** pull instruments, and optionally songs, out of
   NSF files.
   - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
