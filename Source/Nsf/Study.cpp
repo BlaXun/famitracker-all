@@ -1037,7 +1037,9 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	// A compound meter's beat (6/8's) is three eighths rather than a triplet
 	const bool Compound = S.Meter.find("/8") != std::string::npos && std::atoi(S.Meter.c_str()) % 3 == 0;
 	auto IsVrc6 = [&](int c) { return (M.Expansion & EXP_VRC6) && c >= 5 && c <= 7; };
-	auto Instr = [&](int i) -> const Instrument * { return i >= 0 && i < int(M.Instruments.size()) ? &M.Instruments[i] : nullptr; };
+	auto Instr = [&](int i) -> const Instrument * {
+		return i >= 0 && i < int(M.Instruments.size()) && !M.Instruments[i].Unused ? &M.Instruments[i] : nullptr;
+	};
 
 	// The bass: the triangle, or else the lowest channel
 	std::vector<double> AvgPitch(Columns, 0);
