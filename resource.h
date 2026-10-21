@@ -782,7 +782,7 @@
 #define IDC_NSF_MUSIC                   1434
 #define IDC_NSF_ALL                     1435
 #define IDC_NSF_NONE                    1436
-#define ID_FILE_IMPORTNSF               33169
+#define ID_FILE_IMPORTNSF               33171
 
 // Next default values for new objects
 // 
