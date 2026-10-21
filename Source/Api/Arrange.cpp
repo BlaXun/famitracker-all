@@ -999,13 +999,23 @@ std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOption
 		if (O.Crash && ((b == 0 && O.PhraseStart == 0) || AfterFill))
 			Bar16.push_back(Hit(Bar.Row, CRASH_PITCH, 15, "crash"));
 
-		// One sound a row: the one that matters most
+		// One sound a row: the one that matters most. The noise channel plays
+		// one sound at a time, so no hi-hat for a beat after a crash, which it
+		// would cut off.
 		std::stable_sort(Bar16.begin(), Bar16.end(), [](const DrumHit &a, const DrumHit &b) {
 			return a.Row < b.Row || (a.Row == b.Row && Priority(a) > Priority(b));
 		});
-		for (size_t i = 0; i < Bar16.size(); ++i)
-			if (i == 0 || Bar16[i].Row != Bar16[i - 1].Row)
-				Hits.push_back(Bar16[i]);
+		int Crash = -1;
+		for (size_t i = 0; i < Bar16.size(); ++i) {
+			if (i > 0 && Bar16[i].Row == Bar16[i - 1].Row)
+				continue;
+			if (Bar16[i].Sound == "crash")
+				Crash = Bar16[i].Row;
+			else if (Crash >= 0 && Bar16[i].Row - Crash < std::max(1, O.RowsPerBeat) &&
+				(Bar16[i].Sound == "hi-hat" || Bar16[i].Sound == "open hi-hat"))
+				continue;
+			Hits.push_back(Bar16[i]);
+		}
 	}
 	return Hits;
 }
@@ -1033,6 +1043,15 @@ bool Rubs(int a, int b)
 {
 	const int d = Mod12(a - b);
 	return d == 1 || d == 11 || d == 2 || d == 10;
+}
+
+// A note a semitone from one of the chord's own (and not one itself): the
+// scale's C under an A major chord's C#, the harsh minor ninth
+bool ClashesWithChord(int Pitch, const Chord &C)
+{
+	if (C.HasPitchClass(Mod12(Pitch)))
+		return false;
+	return C.HasPitchClass(Mod12(Pitch + 1)) || C.HasPitchClass(Mod12(Pitch - 1));
 }
 
 }	// namespace
@@ -1071,6 +1090,24 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 					break;
 				}
 			}
+		}
+		if (O.Interval != HARMONY_OCTAVE_BELOW && pChord != 0 && ClashesWithChord(h, pChord->C)) {
+			// Between the beats too, not a semitone from the chord's notes: the
+			// chord's version of the degree (C# over A major, not the scale's C),
+			// a third or sixth from the melody where it can be
+			int Best = h, BestScore = -1;
+			for (int Step = -1; Step <= 1; Step += 2) {
+				const int Candidate = h + Step;
+				if (ClashesWithChord(Candidate, pChord->C) || Rubs(Candidate, p))
+					continue;
+				const int Gap = Mod12(p - Candidate);
+				const int Score = (Gap == 3 || Gap == 4 || Gap == 8 || Gap == 9 ? 2 : 0) + (pChord->C.HasPitchClass(Mod12(Candidate)) ? 1 : 0);
+				if (Score > BestScore) {
+					BestScore = Score;
+					Best = Candidate;
+				}
+			}
+			h = Best;
 		}
 		while (h < O.Low && h + 12 <= O.High)
 			h += 12;

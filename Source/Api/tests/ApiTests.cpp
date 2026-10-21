@@ -250,21 +250,73 @@ public:
 		return !Busy;
 	}
 
+	// As FamiTracker writes them (CInsertRecordingAction::Redo, which this
+	// follows): exact parts as they are; the others keep the song's own
+	// speed, jumps, skips and halts in their rows, with their effects around
+	// them in the columns that show
 	bool WriteSong(const std::vector<ChannelCells> &Parts, int First, int LinkClipId, std::string &) override
 	{
 		History.push_back(Rows);
+		const size_t Length = static_cast<size_t>(Info.PatternLength);
 		size_t Needed = Rows[0].size();
 		for (size_t p = 0; p < Parts.size(); ++p)
 			Needed = std::max(Needed, First + Parts[p].Cells.size());
-		Needed = (Needed + 63) / 64 * 64;
+		Needed = (Needed + Length - 1) / Length * Length;
 		for (size_t c = 0; c < Rows.size(); ++c)
 			Rows[c].resize(Needed);
-		for (size_t p = 0; p < Parts.size(); ++p)
-			for (size_t r = 0; r < Parts[p].Cells.size(); ++r)
-				Rows[Parts[p].Channel][First + r] = Parts[p].Cells[r];
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			const int Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
+			for (size_t r = 0; r < Parts[p].Cells.size(); ++r) {
+				Cell &Row = Rows[Parts[p].Channel][First + r];
+				const Cell &New = Parts[p].Cells[r];
+				if (Parts[p].Exact) {
+					Row = New;
+					continue;
+				}
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (!IsSongEffect(Row.Effect[k])) {
+						Row.Effect[k] = EFF_NONE;
+						Row.Param[k] = 0;
+					}
+				if (New.IsEmpty()) {
+					Row.Note = NOTE_NONE;
+					Row.Octave = 0;
+					Row.Instrument = NO_INSTRUMENT;
+					Row.Volume = NO_VOLUME;
+					continue;
+				}
+				Row.Note = New.Note;
+				Row.Octave = New.Octave;
+				Row.Instrument = New.Instrument;
+				Row.Volume = New.Volume;
+				for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+					if (New.Effect[k] == EFF_NONE || (IsSongEffect(New.Effect[k]) && HasSame(Row, New.Effect[k], New.Param[k])))
+						continue;
+					int Column = k;
+					if (IsSongEffect(Row.Effect[Column])) {
+						Column = -1;
+						for (int j = 0; j < Shown && j < EFFECT_COLUMNS && Column < 0; ++j)
+							if (Row.Effect[j] == EFF_NONE)
+								Column = j;
+						if (Column < 0)
+							continue;
+					}
+					Row.Effect[Column] = New.Effect[k];
+					Row.Param[Column] = New.Param[k];
+				}
+			}
+		}
 		++Writes;
 		LastLink = LinkClipId;
 		return true;
+	}
+
+	static bool HasSame(const Cell &C, int Effect, int Param)
+	{
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			if (C.Effect[k] == Effect && C.Param[k] == Param)
+				return true;
+		return false;
 	}
 
 	bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns, std::string &) override
@@ -1470,6 +1522,14 @@ void TestDesign()
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"chip\": \"VRC7\"}").Text, "built-in sounds");
 	Result = Run(Song, "design_instrument", "{\"name\": \"Shimmer\", \"kind\": \"chiptune\", \"arpeggio\": \"minor7\", \"arpeggio_frames\": 2}");
 	CHECK_HAS(Result.Text, "it arpeggiates 0, 3, 7, 10 semitones");
+	// The sawtooth and the triangle have no duty (and the triangle no volume): said so
+	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"motion\": \"open\"}");
+	CHECK_HAS(Result.Text, "a sawtooth that reaches");
+	CHECK_LACKS(Result.Text, "pulse");
+	CHECK_LACKS(Result.Text, "its tone opens");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Tri bass\", \"channel\": \"Triangle\", \"kind\": \"bass\"}");
+	CHECK_HAS(Result.Text, "a triangle");
+	CHECK_LACKS(Result.Text, "pulse");
 
 	// The classic articulations: a bloom, a duty click, held notes struck again
 	SoundDesign Bloom;
@@ -1558,6 +1618,46 @@ void WriteTestNsf(const std::string &Path)
 	Nsf.close();
 	std::ofstream M3u((Path.substr(0, Path.size() - 4) + ".m3u").c_str(), std::ios::binary);
 	M3u << "api_tests_study.nsf::NSF,1,Lava Run,0:00:40,,0:00:05\n";
+}
+
+// A ProTracker module written to Path: four bars in A minor with a bass, a
+// lead, and a kick and snare named as drums
+void WriteTestMod(const std::string &Path)
+{
+	std::vector<uint8_t> b(1084 + 1024, 0);
+	const char *Title = "Test Song";
+	std::memcpy(&b[0], Title, std::strlen(Title));
+	const char *Names[] = { "Bass", "Lead", "Kick", "Snare" };
+	for (int s = 0; s < 4; ++s)
+		std::memcpy(&b[20 + s * 30], Names[s], std::strlen(Names[s]));
+	b[950] = 1;
+	b[951] = 127;
+	b[952] = 0;
+	std::memcpy(&b[1080], "M.K.", 4);
+	static const int PERIODS[12] = { 856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453 };
+	auto Cell = [&](int Row, int Channel, int Sample, int Note, int Effect, int Param) {
+		const size_t At = 1084 + (static_cast<size_t>(Row) * 4 + Channel) * 4;
+		int Period = PERIODS[Note % 12];
+		for (int o = 0; o < Note / 12; ++o)
+			Period /= 2;
+		b[At] = static_cast<uint8_t>((Sample & 0xF0) | ((Period >> 8) & 15));
+		b[At + 1] = static_cast<uint8_t>(Period & 255);
+		b[At + 2] = static_cast<uint8_t>(((Sample & 15) << 4) | (Effect & 15));
+		b[At + 3] = static_cast<uint8_t>(Param);
+	};
+	static const int LEAD[8] = { 21, 24, 28, 26, 24, 23, 21, 19 };
+	for (int r = 0; r < 64; ++r) {
+		if (r % 4 == 0)
+			Cell(r, 0, 1, (r / 16) % 2 ? 4 : 9, 0, 0);
+		if (r % 8 == 0)
+			Cell(r, 1, 2, LEAD[r / 8], 4, 0x46);
+		if (r % 16 == 0 || r % 16 == 8)
+			Cell(r, 2, 3, 12, 0, 0);
+		if (r % 16 == 4 || r % 16 == 12)
+			Cell(r, 3, 4, 12, 0, 0);
+	}
+	std::ofstream Mod(Path.c_str(), std::ios::binary);
+	Mod.write(reinterpret_cast<const char *>(&b[0]), static_cast<std::streamsize>(b.size()));
 }
 
 void TestReferences()
@@ -1673,6 +1773,35 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "Imported 1 track of \"Tester Song\"");
 	CHECK_HAS(Result.Text, "It's open in FamiTracker as a new module");
 	CHECK_HAS(Song.OpenedText, "TRACK");
+
+	// study_module: a tracker module's study, kept like an NSF's, without sounds
+	const std::string ModPath = "api_tests_study.mod";
+	WriteTestMod(ModPath);
+	Result = Run(Song, "study_module", "{\"path\": \"" + ModPath + "\", \"tags\": \"upbeat\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Test Song: a MOD module of 4 channels, 1 order, 4 named instruments");
+	CHECK_HAS(Result.Text, "Reference \"test-song-mod\"");
+	CHECK_HAS(Result.Text, "Tempo: 125 BPM, 4 rows a beat (speed 6, tempo 125)");
+	CHECK_HAS(Result.Text, "Key: A minor");
+	CHECK_HAS(Result.Text, "Channel 2, the lead");
+	CHECK_HAS(Result.Text, "kick 'Kick'");
+	CHECK_HAS(Result.Text, "snare 'Snare'");
+	CHECK_HAS(Result.Text, "To write in its style for the NES");
+	CHECK(Song.Library.count("test-song-mod.json") == 1);
+	CHECK(ReadReferenceFile(Song.Library["test-song-mod.json"], Kept, Error));
+	CHECK(Kept.Sounds.empty() && Kept.Game.empty() && Kept.Track == 0);
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "mod") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "tracker-module") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "vibrato") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "upbeat") != Kept.Tags.end());
+	CHECK_HAS(Run(Song, "references", "{}").Text, "Modules and others:\n- test-song-mod: Test Song, 125 BPM, A minor");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"search\", \"query\": \"tracker module\"}").Text, "- test-song-mod");
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"test-song-mod\"}").Text, "its sounds are samples");
+	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"no_such_file.xm\"}").Text, "couldn't be read");
+	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"" + Path + "\"}").Text, "not a module");
+	CHECK_HAS(Run(Song, "study_module", "{}").Text, "Give the path of the module");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"test-song-mod\"}").Text, "Deleted the reference");
+	std::remove(ModPath.c_str());
 
 	// delete
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"tester-song-01\"}").Text, "Deleted the reference tester-song-01");
@@ -2223,6 +2352,11 @@ void TestArrange()
 			CHECK(H.Row >= 60 && H.Row < 64);	// the first fill: the last beat of bar 4, in toms
 	}
 	CHECK(Kicks > 10 && Snares == 6 && Toms == 4 && Crashes == 2 && Open == 2);
+	// No hi-hat for a beat after a crash: the noise channel would cut it off
+	for (size_t i = 0; i < Hits.size(); ++i)
+		if (Hits[i].Sound == "crash")
+			for (size_t j = i + 1; j < Hits.size() && Hits[j].Row < Hits[i].Row + 4; ++j)
+				CHECK(Hits[j].Sound != "hi-hat" && Hits[j].Sound != "open hi-hat");
 	CHECK(Hits.back().Row == 127 && Hits.back().Sound == "snare" && Hits.back().Volume == 15);	// the second fill: a snare roll
 	D.Intensity = 1;
 	D.FillEvery = 0;
@@ -2268,6 +2402,26 @@ void TestArrange()
 	H.Interval = HARMONY_THIRD_BELOW;
 	H.MinRows = 4;
 	CHECK(HarmonyPart(Melody, Chords, H).size() == 4);
+	// Between the beats, over a chord that alters the key's scale (A major in A
+	// minor): the chord's C#, not the scale's C, which would grate against it
+	{
+		const Key AMinorKey(9, MODE_MINOR);
+		const std::vector<ChordAt> Major = Progression("| A | Dm | E | Am |", AMinorKey);
+		std::vector<NoteInfo> Line;
+		Line.push_back(MelodyNote(0, 4, "A-4"));
+		Line.push_back(MelodyNote(5, 1, "E-4"));		// third below: C in the key, C# in the chord
+		Line.push_back(MelodyNote(6, 1, "D-4"));		// B: no clash with A major, stays
+		Line.push_back(MelodyNote(7, 1, "A-4"));		// F: a semitone over the chord's E, so F#, a third under A
+		HarmonyOptions Ha;
+		Ha.K = AMinorKey;
+		const std::vector<PartNote> Under = HarmonyPart(Line, Major, Ha);
+		CHECK(Under.size() == 4);
+		if (Under.size() == 4) {
+			CHECK_EQ(PitchName(Under[1].Pitch), std::string("C#4"));
+			CHECK_EQ(PitchName(Under[2].Pitch), std::string("B-3"));
+			CHECK_EQ(PitchName(Under[3].Pitch), std::string("F#4"));
+		}
+	}
 
 	// A counter-melody: under the melody, never a semitone from it, holding where it's busy
 	CounterOptions Counter;
@@ -2458,6 +2612,39 @@ void TestReview()
 	CHECK_HAS(Run(Song, "look_at_song", "{\"to_bar\": 4}").Text, "Chords heard (C major): |");
 	FakeSong Empty;
 	CHECK_HAS(Run(Empty, "review_arrangement", "{}").Text, "Nothing plays a melody");
+	{
+		// Vibrato built into the lead's instrument, or a 4xy still on from before, is vibrato
+		FakeSong Long;
+		for (int i = 0; i < 8; ++i)
+			Long.Put(5, i * 16, i % 2 ? "E-4" : "C-4", i == 0 ? 0 : NO_INSTRUMENT);
+		Long.End(5, 127, NOTE_RELEASE);
+		CHECK_HAS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+		Long.Info.Instruments[0].Vibrato = true;
+		CHECK_LACKS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+		Long.Info.Instruments[0].Vibrato = false;
+		Long.Rows[5][0].Effect[0] = EFF_VIBRATO;
+		Long.Rows[5][0].Param[0] = 0x42;
+		CHECK_LACKS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+	}
+	{
+		// The melody isn't its echo (a channel repeating it later), nor a quiet busy part
+		FakeSong Echoed;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4" };
+		for (int i = 0; i < 8; ++i) {
+			Echoed.Put(6, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+			Echoed.Put(0, i * 8 + 3, TUNE[i], i == 0 ? 2 : NO_INSTRUMENT, i == 0 ? 12 : -1);	// the echo, as loud
+		}
+		for (int Row = 0; Row < 64; Row += 2)
+			Echoed.Put(1, Row, Row % 4 ? "C-5" : "G-5", Row == 0 ? 2 : NO_INSTRUMENT, Row == 0 ? 3 : -1);	// busy, high, quiet
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{}").Text, "melody on VRC6 Pulse 2");
+		// A calm track floats: no drums asked of it (by name, or with style calm)
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{}").Text, "No drums");
+		CHECK_LACKS(Run(Echoed, "review_arrangement", "{\"style\": \"calm\"}").Text, "No drums");
+		Echoed.Info.TrackName = "Town (night)";
+		CHECK_LACKS(Run(Echoed, "review_arrangement", "{}").Text, "No drums");
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"any\"}").Text, "No drums");
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"loud\"}").Text, "style should be any or calm");
+	}
 }
 
 void TestStructure()
@@ -2503,6 +2690,24 @@ void TestStructure()
 	CHECK(!Result.IsError && Form.Rows[5][128].Pitch() == Form.Rows[5][0].Pitch() && Form.Rows[5][128].Instrument == 0);
 	CHECK(Form.Rows[5][128].Volume == 10 && HasEffectAt(Form, 5, 140, EFF_VIBRATO, 0x42));
 	CHECK(Form.Rows[3][128].HasNote());
+	{
+		// Bars that start silent: the copy ends the note playing where it goes
+		// (keeping a release that was there); bars a note rings into: struck again
+		FakeSong Hang(4);
+		Hang.Info.DirectChanges = true;
+		Hang.Put(5, 4, "C-4", 0);			// bar 1 starts silent
+		Hang.End(5, 12);
+		Hang.Put(5, 28, "G-4", 0);		// bar 2's note rings into bar 3
+		Hang.Put(5, 40, "A-4");
+		Hang.Put(5, 60, "B-4");			// rings into bar 5
+		Hang.End(5, 64, NOTE_RELEASE);
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 1, \"at_bar\": 5}").IsError);
+		CHECK(Hang.Rows[5][64].Note == NOTE_RELEASE && Hang.Rows[5][68].Pitch() == Hang.Rows[5][4].Pitch());
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 1, \"at_bar\": 7}").IsError);
+		CHECK(Hang.Rows[5][96].Note == NOTE_HALT);
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 3, \"at_bar\": 8}").IsError);
+		CHECK(Hang.Rows[5][112].Pitch() == Hang.Rows[5][28].Pitch() && Hang.Rows[5][112].Instrument == 0);
+	}
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1, \"to_bar\": 2, \"at_bar\": 2}").Text, "land on the bars it copies");
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1}").Text, "at_bar");
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 4, \"at_bar\": 12, \"channels\": [\"Pulse 1\"]}").Text, "no notes");
@@ -2579,6 +2784,22 @@ void TestEchoAndVibrato()
 		CHECK_EQ(Notes(Tail, 6), std::string("123:G-4 127:A-4 "));
 		CHECK_HAS(Run(Tail, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"from_bar\": 8}").Text,
 			"The echo is already there");
+	}
+	{
+		// An echo note that would grate a semitone against the melody is left
+		// out, or cut short where the melody moves against it
+		FakeSong Rub;
+		Rub.Info.DirectChanges = true;
+		Rub.Put(5, 0, "C-4", 0);
+		Rub.Put(5, 3, "B-3");		// the echo's C-4 would start against it: left out
+		Rub.Put(5, 8, "E-4");
+		Rub.Put(5, 13, "F-4");		// the echo's E-4 (from row 11) runs into it: cut short at row 13
+		Rub.End(5, 20, NOTE_RELEASE);
+		const ToolResult R = Run(Rub, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "Where the echo would grate a semitone against another part, 1 echo note was left out and 1 was cut short.");
+		CHECK(!Rub.Rows[6][3].HasNote() && Rub.Rows[6][6].Pitch() == Rub.Rows[5][3].Pitch() && Rub.Rows[6][11].Pitch() == 52);
+		CHECK(Rub.Rows[6][13].IsEnd() && Rub.Rows[6][16].Pitch() == 53);
 	}
 
 	Song.Put(0, 0, "C-4", 2);
@@ -3446,10 +3667,11 @@ void TestVersions()
 	CHECK_HAS(Result.Text, "Made track 2 \"Town (night)\" from track 1 \"Town\", which stays as it was.");
 	CHECK_HAS(Result.Text, "120 BPM instead of 150 (speed 6, tempo 120; 1 tempo command in the patterns changed too)");
 	CHECK_HAS(Result.Text, "volumes at 75%");
-	CHECK_HAS(Result.Text, "sparser drums (16 hits left out, the rest softer)");
+	CHECK_HAS(Result.Text, "the drums a soft pulse on each bar's first beat (28 hits left out)");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 down 1 octave");
 	CHECK_HAS(Result.Text, "VRC6 Pulse 1 played by \"Soft lead\"");
-	CHECK_HAS(Result.Text, "2A03 Pulse 1 played by \"Soft chords\"");
-	CHECK_HAS(Result.Text, "vibrato 432 on VRC6 Pulse 1");
+	CHECK_HAS(Result.Text, "2A03 Pulse 1 played by \"Warm pad\"");
+	CHECK_HAS(Result.Text, "vibrato 434 on VRC6 Pulse 1");
 	CHECK_HAS(Result.Text, "an echo of VRC6 Pulse 1 on VRC6 Pulse 2");
 	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "Town (night)");
 	CHECK(Song.Info.Speed == 6 && Song.Info.Tempo == 120);
@@ -3460,13 +3682,14 @@ void TestVersions()
 	CHECK_EQ(Night[5][0].Volume, 11);			// 15 at 75%
 	CHECK_EQ(Night[5][16].Volume, 9);			// 12 at 75%
 	CHECK(Night[5][0].Instrument == InstrumentIndex(Song, "Soft lead"));
-	CHECK(Night[0][0].Instrument == InstrumentIndex(Song, "Soft chords") && Night[0][0].Param[0] == 0x47);
+	CHECK(Night[0][0].Instrument == InstrumentIndex(Song, "Warm pad") && Night[0][0].Param[0] == 0x47);
 	CHECK(Night[2][0].Volume == NO_VOLUME && Night[2][0].Pitch() == Day[2][0].Pitch());	// the triangle has no volume
-	CHECK(Night[3][0].HasNote() && !Night[3][2].HasNote() && Night[3][4].HasNote() && !Night[3][6].HasNote());
-	CHECK_EQ(Night[3][0].Volume, 9);			// the drums at 60%
+	CHECK(Night[5][0].Pitch() == Day[5][0].Pitch() - 12 && Night[5][16].Pitch() == Day[5][16].Pitch() - 12);	// an octave lower
+	CHECK(Night[3][0].HasNote() && !Night[3][2].HasNote() && !Night[3][4].HasNote() && Night[3][16].HasNote());	// a pulse
+	CHECK_EQ(Night[3][0].Volume, 7);			// the drums at 45%
 	CHECK(Night[3][0].Param[0] == 6 && Night[3][0].Param[1] == 120);
 	CHECK(HasEffectNear(Night[5], 0, 8, EFF_VIBRATO));
-	CHECK(Night[6][3].HasNote() && Night[6][3].Pitch() == Day[5][0].Pitch());	// the echo, 3 rows later
+	CHECK(Night[6][6].HasNote() && Night[6][6].Pitch() == Day[5][0].Pitch() - 12 && Night[6][6].Volume == 3);	// the echo, 6 rows later
 	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "Tracks: 1 \"Town\", 2 \"Town (night)\" (selected)");
 
 	// Switching tracks
@@ -3503,6 +3726,84 @@ void TestVersions()
 	while (Song.Tracks.size() < 64)
 		Song.Tracks.push_back(Song.Tracks[0]);
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "64 tracks");
+}
+
+// A night version that's more than slower: lower, simpler, held, even, soft
+void TestNightVersion()
+{
+	FakeSong Song;
+	// A high melody with a sixteenth run, a cut note, halts and accents
+	Song.Put(5, 0, "C-5", 0, 10);
+	Song.Put(5, 2, "D-5");
+	Song.Put(5, 3, "E-5");			// a sixteenth between the eighths: left out
+	Song.Put(5, 4, "G-5");
+	Song.Rows[5][4].Effect[0] = EFF_NOTE_CUT;
+	Song.Rows[5][4].Param[0] = 2;		// cut short: legato takes it out
+	Song.Put(5, 8, "E-5", NO_INSTRUMENT, 15);	// an accent
+	Song.End(5, 11);				// a halt just before the next note: taken out
+	Song.Put(5, 12, "D-5", NO_INSTRUMENT, 10);
+	Song.Put(5, 16, "C-5");
+	Song.End(5, 20);				// a halt before a rest: softened to a release
+	Song.Put(5, 32, "C-5");
+	// Chords struck on every beat, cut short, then another chord
+	for (int Row = 0; Row < 32; Row += 4) {
+		Song.Put(0, Row, Row < 16 ? "C-3" : "A-2", 2);
+		Song.Rows[0][static_cast<size_t>(Row)].Effect[0] = EFF_ARPEGGIO;
+		Song.Rows[0][static_cast<size_t>(Row)].Param[0] = Row < 16 ? 0x47 : 0x37;
+		Song.End(0, Row + 2);
+	}
+	// A bass jumping octaves on the eighths
+	for (int Row = 0; Row < 32; Row += 2)
+		Song.Put(2, Row, Row % 4 == 0 ? (Row < 16 ? "C-2" : "A-1") : (Row < 16 ? "C-3" : "A-2"), 1);
+	// Drums on every eighth, and sampled ones on beats 1 and 3
+	for (int Row = 0; Row < 32; Row += 2) {
+		Song.Put(3, Row, Row % 4 == 0 ? "kick" : "hihat", 2);
+		if (Row % 8 == 0)
+			Song.Put(4, Row, "C-3", 2);
+	}
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"richer\", \"echo\": false}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "the melody's fast runs as their outline (1 short note left out, the notes before ring on)");
+	CHECK_HAS(Result.Text, "legato (");
+	CHECK_HAS(Result.Text, "even dynamics without accents (1 loud note brought down to the usual)");
+	CHECK_HAS(Result.Text, "the chords on 2A03 Pulse 1 held as a pad (6 strikes left out)");
+	CHECK_HAS(Result.Text, "richer chords on 2A03 Pulse 1 (major and minor triads as sevenths)");
+	CHECK_HAS(Result.Text, "the bass on 2A03 Triangle in long notes (12 notes left out)");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 down 1 octave");
+	CHECK_HAS(Result.Text, "the drums a soft pulse on each bar's first beat (14 hits left out)");
+	CHECK_HAS(Result.Text, "2 sampled hits on the DPCM channel left out");
+	const std::vector<std::vector<Cell> > &N = Song.Rows;
+	// The melody: an octave lower, the run's outline, held, even
+	CHECK(N[5][0].Pitch() == 48 + 12 - 12 && !N[5][3].HasNote() && N[5][2].HasNote() && N[5][4].HasNote());
+	CHECK(N[5][4].Effect[0] != EFF_NOTE_CUT);
+	CHECK(N[5][11].Note == NOTE_NONE && N[5][20].Note == NOTE_RELEASE);
+	CHECK(N[5][8].Volume == (10 * 75 + 50) / 100);		// the accent at the usual 10, then at 75%
+	// The chords: one strike a bar, richer
+	CHECK(N[0][0].HasNote() && !N[0][4].HasNote() && !N[0][8].HasNote() && N[0][16].HasNote() && !N[0][20].HasNote());
+	CHECK(N[0][2].Note != NOTE_HALT && N[0][0].Param[0] == 0x4B && N[0][16].Param[0] == 0x3A);
+	// The bass: the beat's note held through the half bar
+	CHECK(N[2][0].HasNote() && !N[2][2].HasNote() && !N[2][4].HasNote() && N[2][8].HasNote() && !N[2][12].HasNote() && N[2][16].HasNote());
+	// The drums: a pulse
+	CHECK(N[3][0].HasNote() && !N[3][4].HasNote() && !N[3][8].HasNote() && N[3][16].HasNote());
+	CHECK(N[4][0].HasNote() && !N[4][8].HasNote() && N[4][16].HasNote() && !N[4][24].HasNote());
+	// Each of them can stay as it was
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"melody\": \"keep\", \"chords\": \"keep\", \"bass\": \"keep\", "
+		"\"register\": \"keep\", \"legato\": false, \"drums\": \"keep\", \"echo\": false}"));
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "outline");
+	CHECK_LACKS(Result.Text, "legato");
+	CHECK_LACKS(Result.Text, "octave");
+	CHECK(Song.Rows[5][3].HasNote() && Song.Rows[0][4].HasNote() && Song.Rows[2][2].HasNote() && Song.Rows[3][2].HasNote());
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"lush\"}")).Text, "chords should be keep, held or richer");
+	// A fast song slows more than 20%: to 120 BPM
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Song.Info.Tempo = 180;
+	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false}"));
+	CHECK_HAS(Result.Text, "BPM instead of 180");
+	const double Bpm = Song.Info.Tempo * 6.0 / Song.Info.Speed;
+	CHECK(Bpm > 115 && Bpm < 125);
 }
 
 void TestTenseVersions()
@@ -3563,7 +3864,7 @@ void TestTenseVersions()
 	CHECK_HAS(Result.Text, "It's a plain copy so far.");
 	CHECK(Song.Rows == Day);
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
-	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"tense\", \"bass\": \"loud\"}")).Text, "bass should be keep or driving");
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"tense\", \"bass\": \"loud\"}")).Text, "bass should be keep, driving or long");
 	// Calm and tense words together: only what's given
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"calm before the battle\"}")).Text, "It's a plain copy so far.");
 
@@ -4233,7 +4534,7 @@ void TestLoops()
 	CHECK_HAS(Text, "bars 1-4 play once as an intro, then bars 5-8 loop (B01 on the last row of bar 8)");
 	CHECK(HasEffectAt(Song, 0, 127, EFF_JUMP, 1));
 	Text = Tools.Call("check_loop", Parse("{}")).Text;
-	CHECK_HAS(Text, "Bars 1-4 play once as an intro (6.4 s), then bars 5-8 loop (6.4 s): after bar 8 it goes back to bar 5 beat 1.");
+	CHECK_HAS(Text, "Bars 1-4 play once as an intro (6.4 s), then bars 5-8 loop (6.4 s): after bar 8 it goes back to bar 5.");
 	// The pad's B-2 and the bass's G now hang into bar 5 on repeat, where the intro's notes sound the first time
 	CHECK_HAS(Text, "2A03 Pulse 2: B-2 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-3 from the intro does.");
 	CHECK_HAS(Text, "2A03 Triangle: G-1 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-2 from the intro does.");
@@ -4254,6 +4555,100 @@ void TestLoops()
 	// Without direct changes it says how
 	Song.Info.DirectChanges = false;
 	CHECK_HAS(Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).Text, "B01 effect on the last row of bar 8 (frame 01, row 3F)");
+
+	// A song moved a frame later with copy_bars, from its end, to make room
+	// for an intro: the song's old jump stays where it was (the copies that
+	// don't play yet are named), until set_loop takes it away
+	{
+		FakeSong Moved(3);	// 12 bars
+		Moved.Info.DirectChanges = true;
+		for (int Bar = 0; Bar < 12; ++Bar)
+			Moved.Put(5, Bar * 16, Bar % 2 == 0 ? "C-4" : "G-4", 0);
+		Moved.Rows[1][191].Effect[1] = EFF_JUMP;	// after bar 12, back to bar 5
+		Moved.Rows[1][191].Param[1] = 1;
+		ToolSet Again(Moved);
+		Text = Again.Call("copy_bars", Parse("{\"from_bar\": 9, \"to_bar\": 12, \"at_bar\": 13}")).Text;
+		CHECK_HAS(Text, "Bars 13-16 don't play yet: the song goes back to bar 5 after bar 12, before them. set_loop with to_bar 16 "
+			"takes the loop on through them.");
+		CHECK(HasEffectAt(Moved, 1, 191, EFF_JUMP, 1) && !HasEffectAt(Moved, 1, 255, EFF_JUMP, 1));
+		Text = Again.Call("copy_bars", Parse("{\"from_bar\": 5, \"to_bar\": 8, \"at_bar\": 9}")).Text;
+		CHECK(!Contains(Text, "play yet") && Moved.Rows[5][128].Pitch() == Moved.Rows[5][64].Pitch());
+		CHECK(!Again.Call("copy_bars", Parse("{\"from_bar\": 1, \"to_bar\": 4, \"at_bar\": 5}")).IsError);
+		CHECK(HasEffectAt(Moved, 1, 191, EFF_JUMP, 1));	// the song's own jump, still
+		Text = Again.Call("set_loop", Parse("{\"from_bar\": 9, \"to_bar\": 16}")).Text;
+		CHECK_HAS(Text, "bars 1-8 play once as an intro, then bars 9-16 loop (B02 on the last row of bar 16); 1 jump or halt that "
+			"ended it elsewhere went");
+		CHECK_LACKS(Text, "FamiTracker's song");
+		CHECK(!HasEffectAt(Moved, 1, 191, EFF_JUMP, 1) && HasEffectAt(Moved, 0, 255, EFF_JUMP, 2));
+		CHECK_HAS(Again.Call("check_loop", Parse("{}")).Text, "after bar 16 it goes back to bar 9.");
+		CHECK_HAS(Again.Call("set_loop", Parse("{\"from_bar\": 9, \"to_bar\": 16}")).Text, "already loops");
+		// A halt before copies: they don't play either
+		Moved.Rows[3][63].Effect[0] = EFF_HALT;
+		CHECK_HAS(Again.Call("copy_bars", Parse("{\"from_bar\": 1, \"at_bar\": 17}")).Text,
+			"Bar 17 doesn't play yet: the song stops after bar 4 (a halt, Cxx), before it. set_loop with to_bar 17 makes it "
+			"play on through it.");
+	}
+	{
+		// set_loop says so when FamiTracker's song doesn't loop as asked: here a skip ends bar 16 early
+		FakeSong Skip(4);
+		Skip.Info.DirectChanges = true;
+		Skip.Put(5, 0, "C-4", 0);
+		Skip.Rows[3][240].Effect[0] = EFF_SKIP;
+		CHECK_HAS(Run(Skip, "set_loop", "{\"from_bar\": 5, \"to_bar\": 16}").Text,
+			"FamiTracker's song doesn't loop that way: after bar 16 beat 1 it goes back to bar 1. A skip (Dxx) at bar 16 beat 1 "
+			"ends that frame before the jump; set_loop leaves skips alone. check_loop shows how it plays.");
+	}
+
+	// Changes keep the song's speed and jumps where they are, once
+	{
+		FakeSong Steer(2);
+		Steer.Info.DirectChanges = true;
+		Steer.Put(5, 0, "C-4", 0);
+		Steer.Put(5, 32, "E-4");
+		Steer.Rows[5][0].Effect[0] = EFF_SPEED;
+		Steer.Rows[5][0].Param[0] = 5;
+		Steer.Rows[5][127].Effect[0] = EFF_JUMP;
+		Steer.Rows[5][127].Param[0] = 0;
+		CHECK(!Run(Steer, "transpose", "{\"semitones\": 2, \"channels\": [\"VRC6 Pulse 1\"]}").IsError);
+		CHECK(Steer.Rows[5][0].Pitch() == Steer.Rows[5][32].Pitch() - 4 && Steer.Rows[5][0].Effect[1] == EFF_NONE);
+		CHECK(HasEffectAt(Steer, 5, 0, EFF_SPEED, 5) && HasEffectAt(Steer, 5, 127, EFF_JUMP, 0));
+		// A clip placed there: its effects go around the song's, and a speed it has too goes in once
+		FakeSong::Clip Riff;
+		Riff.Name = "Riff";
+		Riff.Id = Steer.NextClipId++;
+		Riff.Sources.push_back(5);
+		Riff.Columns.push_back(std::vector<Cell>(128));
+		Riff.Columns[0][0].SetPitch(50);
+		Riff.Columns[0][0].Effect[0] = EFF_SPEED;
+		Riff.Columns[0][0].Param[0] = 5;
+		Riff.Columns[0][127].SetPitch(52);
+		Riff.Columns[0][127].Effect[0] = EFF_VIBRATO;
+		Riff.Columns[0][127].Param[0] = 0x42;
+		Steer.Clips.push_back(Riff);
+		CHECK(!Run(Steer, "place_clip", "{\"clip\": \"Riff\", \"channel\": \"VRC6 Pulse 1\", \"bar\": 1}").IsError);
+		CHECK(Steer.Rows[5][0].Pitch() == 50 && Steer.Rows[5][0].Effect[0] == EFF_SPEED && Steer.Rows[5][0].Effect[1] == EFF_NONE);
+		CHECK(Steer.Rows[5][127].Effect[0] == EFF_JUMP && HasEffectAt(Steer, 5, 127, EFF_VIBRATO, 0x42));
+		CHECK(Steer.Rows[5][32].IsEmpty());
+	}
+
+	// The song's speed, jumps and halts kept in a cell that changes
+	Cell Old, New;
+	Old.Effect[0] = EFF_JUMP;
+	Old.Param[0] = 2;
+	Old.Effect[2] = EFF_JUMP;		// twice (an older write): once is enough
+	Old.Param[2] = 2;
+	New.SetPitch(48);
+	New.Effect[0] = EFF_VIBRATO;
+	New.Param[0] = 0x31;
+	CHECK(KeepSongEffects(Old, New, 2));
+	CHECK(New.Effect[0] == EFF_JUMP && New.Param[0] == 2 && New.Effect[1] == EFF_VIBRATO && New.Effect[2] == EFF_NONE);
+	New.Effect[1] = EFF_VOLUME_SLIDE;	// no room for the vibrato now
+	New.Effect[0] = EFF_VIBRATO;
+	CHECK(!KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_JUMP && New.Effect[1] == EFF_VOLUME_SLIDE);
+	New = Cell();
+	New.Effect[1] = EFF_JUMP;		// the same one, in another column
+	New.Param[1] = 2;
+	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
 // OGG files for games
@@ -4819,6 +5214,7 @@ int main()
 	TestPng();
 	TestPicture();
 	TestVersions();
+	TestNightVersion();
 	TestTenseVersions();
 	TestJingleScores();
 	TestJingles();

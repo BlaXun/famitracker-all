@@ -35,7 +35,7 @@ namespace nsf {
 
 namespace {
 
-enum col_kind { C_PULSE, C_TRIANGLE, C_NOISE, C_DPCM, C_SAW, C_WAVE, C_FM };
+enum col_kind { C_PULSE, C_TRIANGLE, C_NOISE, C_DPCM, C_SAW, C_WAVE, C_FM, C_SAMPLE, C_DRUMS };	// C_SAMPLE, C_DRUMS: a tracker module's
 
 std::string Format(const char *Fmt, ...)
 #if defined(__GNUC__)
@@ -73,6 +73,12 @@ std::string Count(int n, const char *One, const char *Many)
 
 std::vector<int> ColumnKinds(const Module &M)
 {
+	if (!M.ChannelKinds.empty()) {
+		std::vector<int> Own;
+		for (size_t i = 0; i < M.ChannelKinds.size(); ++i)
+			Own.push_back(M.ChannelKinds[i] == LAYOUT_DRUMS ? C_DRUMS : C_SAMPLE);
+		return Own;
+	}
 	std::vector<int> k = { C_PULSE, C_PULSE, C_TRIANGLE, C_NOISE, C_DPCM };
 	if (M.Expansion & EXP_VRC6) {
 		k.push_back(C_PULSE);
@@ -94,7 +100,7 @@ std::vector<int> ColumnKinds(const Module &M)
 	return k;
 }
 
-bool Melodic(int Kind) { return Kind != C_NOISE && Kind != C_DPCM; }
+bool Melodic(int Kind) { return Kind != C_NOISE && Kind != C_DPCM && Kind != C_DRUMS; }
 
 // A note as the track plays it
 struct Played {
@@ -106,7 +112,10 @@ struct Played {
 	int Cut;			// Sxx: ticks, 0 for none
 	int Length;			// rows until the channel's next event
 	bool Sweep;			// Hxy or Ixy
-	Played() : Row(0), Note(0), Inst(-1), Volume(15), Arp(0), Duty(-1), Cut(0), Length(1), Sweep(false) {}
+	// Effects written in the patterns while it plays (tracker modules')
+	bool Vibrato, Glide, Bend, Fade, Tremolo;	// 4xy, 3xx, 1xx or 2xx, Axy, 7xy
+	Played() : Row(0), Note(0), Inst(-1), Volume(15), Arp(0), Duty(-1), Cut(0), Length(1), Sweep(false), Vibrato(false), Glide(false),
+		Bend(false), Fade(false), Tremolo(false) {}
 };
 
 // Each channel's notes, rows in playing order up to the end or the loop's end
@@ -115,6 +124,7 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 	const int Columns = M.ChannelCount();
 	std::vector<std::vector<Played> > Out(Columns);
 	std::vector<int> Inst(Columns, -1), Volume(Columns, 15), Arp(Columns, 0), Duty(Columns, -1);
+	std::vector<bool> Sounding(Columns, false);
 	TotalRows = 0;
 	LoopRow = -1;
 	std::vector<int> FrameStart(T.Frames.size(), 0);
@@ -129,7 +139,7 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 			for (int c = 0; c < Columns; ++c) {
 				const Cell &Cl = T.Patterns[c][T.Frames[f][c]][r];
 				int Cut = 0;
-				bool Sweep = false;
+				bool Sweep = false, Vibrato = false, Glide = false, Bend = false, Fade = false, Tremolo = false;
 				for (int e = 0; e < MAX_EFFECTS; ++e) {
 					const Effect &x = Cl.Effects[e];
 					switch (x.Letter) {
@@ -140,9 +150,23 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 						case 'V': Duty[c] = x.Param; break;
 						case 'S': Cut = x.Param; break;
 						case 'H': case 'I': Sweep = true; break;
+						case '4': Vibrato = (x.Param & 15) != 0; break;
+						case '3': Glide = x.Param != 0; break;
+						case '1': case '2': Bend = x.Param != 0; break;
+						case 'A': Fade = x.Param != 0; break;
+						case '7': Tremolo = (x.Param & 15) != 0; break;
 						default: break;
 					}
 				}
+				// What the effects do to the note playing, before a new one starts
+				auto Mark = [&](Played &n) {
+					n.Vibrato = n.Vibrato || Vibrato;
+					n.Bend = n.Bend || Bend;
+					n.Fade = n.Fade || Fade;
+					n.Tremolo = n.Tremolo || Tremolo;
+				};
+				if (Sounding[c] && !Out[c].empty() && Cl.Note == NOTE_NONE)
+					Mark(Out[c].back());
 				if (Cl.Instrument >= 0)
 					Inst[c] = Cl.Instrument;
 				if (Cl.Volume >= 0)
@@ -151,8 +175,10 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 					continue;
 				if (!Out[c].empty() && Out[c].back().Length < 0)
 					Out[c].back().Length = Row - Out[c].back().Row;
-				if (Cl.Note < 0)
+				if (Cl.Note < 0) {
+					Sounding[c] = false;
 					continue;	// a halt or a release ends the note before
+				}
 				Played p;
 				p.Row = Row;
 				p.Note = Cl.Note;
@@ -163,7 +189,10 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 				p.Cut = Cut;
 				p.Length = -1;
 				p.Sweep = Sweep;
+				p.Glide = Glide && Sounding[c];		// slid into from the note before (3xx)
+				Mark(p);
 				Out[c].push_back(p);
+				Sounding[c] = true;
 			}
 			if (EndRow) {
 				Rows = r + 1;
@@ -960,8 +989,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	S.Bpm = Report.Bpm;
 	S.RowsPerBeat = Report.RowsPerBeat > 0 ? Report.RowsPerBeat : 4;
 	S.TicksPerRow = Report.TicksPerRow;
+	S.Tracker = !M.ChannelKinds.empty();
+	S.Speed = Report.Speed;
+	S.Tempo = Report.Tempo;
 	const std::vector<int> Kinds = ColumnKinds(M);
-	const std::vector<std::string> Names = ModuleChannelNames(M.Expansion, M.N163Channels);
+	const std::vector<std::string> Names = ChannelNamesOf(M);
 	int TotalRows = 0, LoopRow = -1;
 	const std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow);
 	const int RowsPerBar = S.RowsPerBeat * 4;
@@ -988,6 +1020,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		for (int c = 0; c < Columns; ++c)
 			if (Melodic(Kinds[c]) && Notes[c].size() >= 8 && (Bass < 0 || AvgPitch[c] < AvgPitch[Bass]))
 				Bass = c;
+	if (Bass >= 0 && Kinds[Bass] == C_SAMPLE && AvgPitch[Bass] >= 50)
+		Bass = -1;		// a tracker module's lowest part, still high up: it has no bass
 
 	if (LoopRow >= 0) {
 		S.IntroBars = LoopRow > 0 ? std::max(1, (LoopRow + RowsPerBar / 2) / RowsPerBar) : 0;
@@ -1002,7 +1036,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	{
 		std::map<std::pair<int, std::string>, int> Index;
 		for (int c = 0; c < Columns; ++c) {
-			if (Kinds[c] != C_NOISE && Kinds[c] != C_DPCM)
+			if (Kinds[c] != C_NOISE && Kinds[c] != C_DPCM && Kinds[c] != C_DRUMS)
 				continue;
 			for (size_t i = 0; i < Notes[c].size(); ++i) {
 				const Played &p = Notes[c][i];
@@ -1011,7 +1045,9 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				V.Channel = c;
 				V.Dpcm = Kinds[c] == C_DPCM;
 				int Pitch = 15;
-				if (V.Dpcm) {
+				if (Kinds[c] == C_DRUMS)
+					V.Key = Format("i%d", p.Inst);		// a tracker module's drum: its instrument
+				else if (V.Dpcm) {
 					if (I)
 						for (size_t k = 0; k < I->Keys.size(); ++k)
 							if (I->Keys[k].Note == p.Note) {
@@ -1053,6 +1089,14 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			for (size_t i = 0; i < V.Rows.size(); ++i)
 				Hits += InLoop(V.Rows[i]);
 			const double PerBar = double(Hits) / LoopBarCount;
+			if (Kinds[V.Channel] == C_DRUMS) {
+				// What its name says, or a backbeat's snare
+				const Instrument *I = Instr(V.Insts.empty() ? -1 : V.Insts.begin()->first);
+				V.Name = I && !I->Drum.empty() ? I->Drum : "drum";
+				if (V.Name == "drum" && V.Backbeat >= 0)
+					V.Name = "snare";
+				continue;
+			}
 			if (V.DecayClass == 2)
 				V.Name = V.PitchClass == 2 ? "cymbal" : (V.PitchClass == 1 ? "open hi-hat or cymbal" : "long low noise");
 			else if (V.Backbeat >= 0 && (V.DecayClass == 1 || V.PitchClass >= 1))
@@ -1134,8 +1178,16 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Pitches.insert(Notes[c][i].Note);
 			Long += Notes[c][i].Length >= 2;
 		}
-		const double Score = double(Long + 1) * Pitches.size() * (AvgPitch[c] >= 36 ? 1.0 : 0.3) * (Kinds[c] == C_TRIANGLE ? 0.4 : 1.0) *
+		double Score = double(Long + 1) * Pitches.size() * (AvgPitch[c] >= 36 ? 1.0 : 0.3) * (Kinds[c] == C_TRIANGLE ? 0.4 : 1.0) *
 			(1.0 + (AvgPitch[c] - 40) / 40.0);
+		if (Kinds[c] == C_SAMPLE) {
+			// A tracker module's quiet parts are seldom the lead: its usual volume counts
+			std::vector<int> Volumes;
+			for (size_t i = 0; i < Notes[c].size(); ++i)
+				Volumes.push_back(Notes[c][i].Volume);
+			std::sort(Volumes.begin(), Volumes.end());
+			Score *= std::pow(std::max(1, Volumes[Volumes.size() / 2]) / 15.0, 2.0);
+		}
 		if (Score > LeadScore) {
 			LeadScore = Score;
 			Lead = c;
@@ -1178,7 +1230,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 
 	// --- Each channel: its role, register, rhythm and intervals, and its sounds ---
 	struct Traits { int Notes = 0, Click = 0, Bloom = 0, Swell = 0, Echo = 0, Restrike = 0, Stepped = 0, Pluck = 0, Scoop = 0,
-		Fall = 0, Vibrato = 0, Flick = 0, Chord = 0, Arp = 0, Cut = 0, Sweep = 0, Thump = 0, Tremolo = 0; };
+		Fall = 0, Vibrato = 0, Flick = 0, Chord = 0, Arp = 0, Cut = 0, Sweep = 0, Thump = 0, Tremolo = 0,
+		PatVibrato = 0, Glide = 0, Bend = 0, Fade = 0, PatTremolo = 0; };	// the last: effects written in the patterns
 	struct MacroSet { Macro M[SEQ_TYPES]; };
 	std::vector<Traits> Tr(Columns);
 	std::vector<std::string> Roles(Columns);
@@ -1241,6 +1294,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				++t.Cut;
 			if (p.Sweep)
 				++t.Sweep;
+			t.PatVibrato += p.Vibrato;
+			t.Glide += p.Glide;
+			t.Bend += p.Bend;
+			t.Fade += p.Fade;
+			t.PatTremolo += p.Tremolo;
 			const Instrument *I = Instr(p.Inst);
 			if (!I)
 				continue;
@@ -1291,13 +1349,15 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Role = "bass";
 		else if (t.Arp * 2 >= t.Notes || t.Chord * 2 >= t.Notes)
 			Role = "chords as arpeggios";
+		else if (Kinds[c] == C_SAMPLE && CommonLength >= RowsPerBar / 2)
+			Role = "held notes (a pad)";
 		else if (AvgPitch[c] < 34)
 			Role = "a low part";
 		else
 			Role = "a second part";
-		std::string Line = Format("%s, %s: %d notes from %s to %s, mostly %s to %s; most often %s long", Names[c].c_str(),
-			Role.c_str(), t.Notes, NoteName(Low).c_str(), NoteName(High).c_str(), NoteName(Mid1).c_str(), NoteName(Mid2).c_str(),
-			Count(CommonLength, "row", "rows").c_str());
+		std::string Line = Format("%s, %s: %s from %s to %s, mostly %s to %s; most often %s long", Names[c].c_str(),
+			Role.c_str(), Count(t.Notes, "note", "notes").c_str(), NoteName(Low).c_str(), NoteName(High).c_str(),
+			NoteName(Mid1).c_str(), NoteName(Mid2).c_str(), Count(CommonLength, "row", "rows").c_str());
 		// Rhythm
 		std::string Rhythm;
 		if (Off * 4 >= t.Notes)
@@ -1385,6 +1445,36 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Line += Format("; %s as fast arpeggio chords (0xy)", Percent(t.Arp, t.Notes).c_str());
 		if (t.Sweep > 0)
 			Line += Format("; the hardware sweep on %d notes", t.Sweep);
+		if (t.PatVibrato * 10 >= t.Notes)
+			Line += Format("; vibrato on %s of its notes (4xy)", Percent(t.PatVibrato, t.Notes).c_str());
+		if (t.Glide * 10 >= t.Notes)
+			Line += Format("; %s of its notes glide in from the one before (3xx)", Percent(t.Glide, t.Notes).c_str());
+		if (t.Bend * 10 >= t.Notes)
+			Line += Format("; pitch slides on %s of its notes (1xx, 2xx)", Percent(t.Bend, t.Notes).c_str());
+		if (t.Fade * 10 >= t.Notes)
+			Line += Format("; volume slides on %s of its notes (Axy)", Percent(t.Fade, t.Notes).c_str());
+		if (t.PatTremolo * 10 >= t.Notes)
+			Line += Format("; tremolo on %s of its notes (7xy)", Percent(t.PatTremolo, t.Notes).c_str());
+		if (Kinds[c] == C_SAMPLE) {
+			// A tracker module's channel: the instruments it plays, by name
+			std::map<int, int> Uses;
+			for (size_t i = 0; i < Notes[c].size(); ++i)
+				++Uses[Notes[c][i].Inst];
+			std::vector<std::pair<int, int> > ByUse;
+			for (std::map<int, int>::const_iterator it = Uses.begin(); it != Uses.end(); ++it)
+				ByUse.push_back(std::make_pair(it->second, it->first));
+			std::sort(ByUse.rbegin(), ByUse.rend());
+			std::vector<std::string> Used;
+			for (size_t k = 0; k < ByUse.size() && k < 4; ++k) {
+				const Instrument *I = Instr(ByUse[k].second);
+				if (I && ByUse[k].first * 10 >= t.Notes)
+					Used.push_back("'" + I->Name + "' (" + Percent(ByUse[k].first, t.Notes) + ")");
+			}
+			if (!Used.empty())
+				Line += "; its instruments: " + Join(Used, ", ");
+			S.Channels.push_back(Line + ".");
+			continue;	// sampled sounds: none to build again on a chip
+		}
 		S.Channels.push_back(Line + ".");
 
 		// Its sounds: the notes grouped by the character of their instruments
@@ -1580,6 +1670,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		Sum.Cut += Tr[c].Cut;
 		Sum.Fall += Tr[c].Fall;
 		Sum.Tremolo += Tr[c].Tremolo;
+		Sum.PatVibrato += Tr[c].PatVibrato;
+		Sum.Glide += Tr[c].Glide;
+		Sum.Bend += Tr[c].Bend;
+		Sum.Fade += Tr[c].Fade;
+		Sum.PatTremolo += Tr[c].PatTremolo;
 	}
 	auto Add = [&](int Uses, const std::string &Words) {
 		if (Uses > 0 && Uses * 20 >= MelodicNotes)
@@ -1599,12 +1694,46 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	Add(Sum.Arp, "chords played as fast arpeggios");
 	Add(Sum.Thump, "a triangle thump under the beat (the bass note starts higher and drops)");
 	Add(Sum.Cut, "staccato: notes cut short of the next one");
+	Add(Sum.PatVibrato, "vibrato written into the patterns (4xy)");
+	Add(Sum.Glide, "notes that glide into the next (3xx portamento)");
+	Add(Sum.Bend, "pitch slides up or down (1xx, 2xx)");
+	Add(Sum.Fade, "volume slides: notes that fade out or swell in (Axy)");
+	Add(Sum.PatTremolo, "tremolo written into the patterns (7xy)");
 	std::sort(Tricks.begin(), Tricks.end(), [](const Trick &a, const Trick &b) { return a.Notes > b.Notes; });
 	for (size_t i = 0; i < Tricks.size(); ++i)
 		S.Tricks.push_back(Tricks[i].Words);
+	if (PairTricks.size() > 8)
+		PairTricks.resize(8);		// many channels (a tracker module's): the first found
 	S.Tricks.insert(S.Tricks.end(), PairTricks.begin(), PairTricks.end());
 
 	// --- Drums: the voices of the noise channel and the samples, where they fall in the bar ---
+	for (size_t n = 0; n < Voices.size(); ++n) {
+		Voice &V = Voices[n];
+		if (Kinds[V.Channel] != C_DRUMS)
+			continue;
+		// A tracker module's drum: its kind and its instrument's name; one its
+		// name doesn't place, by where it falls
+		int Hits = 0, OnBeats = 0, Offbeats = 0;
+		for (size_t i = 0; i < V.Rows.size(); ++i) {
+			if (!InLoop(V.Rows[i]))
+				continue;
+			const int Pos = StepOf(V.Rows[i]);
+			++Hits;
+			OnBeats += Pos % StepsPerBeat == 0;
+			Offbeats += StepsPerBeat == 4 && Pos % 4 == 2;
+		}
+		if (V.Name == "drum" && Hits > 0) {
+			if (Hits >= 6 * LoopBarCount)
+				V.Name = "drum, steady eighths or faster";
+			else if (OnBeats * 2 >= Hits)
+				V.Name = "drum, kick-like";
+			else if (Offbeats * 2 >= Hits)
+				V.Name = "drum on the off-beats";
+		}
+		const Instrument *I = Instr(V.Insts.empty() ? -1 : V.Insts.begin()->first);
+		if (I && !I->Name.empty())
+			V.Name += " '" + I->Name + "'";
+	}
 	for (size_t n = 0; n < Voices.size(); ++n) {
 		Voice &V = Voices[n];
 		if (!V.Dpcm)
@@ -1635,7 +1764,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			V.Name += ", kick-like";
 	}
 	for (int c = 0; c < Columns; ++c) {
-		if ((Kinds[c] != C_NOISE && Kinds[c] != C_DPCM) || Notes[c].empty())
+		if ((Kinds[c] != C_NOISE && Kinds[c] != C_DPCM && Kinds[c] != C_DRUMS) || Notes[c].empty())
 			continue;
 		struct Kit { std::vector<int> Steps; std::vector<std::string> Grids; std::map<int, int> Insts; int Hits = 0; };
 		std::map<std::string, Kit> Kits;
@@ -1726,10 +1855,13 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 std::string DescribeStudy(const TrackStudy &S, bool Macros)
 {
 	std::string s = S.Name + "\n";
-	s += Format("  Tempo: %.0f BPM, %d rows a beat (rows of %.2g frames)", S.Bpm, S.RowsPerBeat, S.TicksPerRow);
+	if (S.Tracker)
+		s += Format("  Tempo: %.0f BPM, %d rows a beat (speed %d, tempo %d)", S.Bpm, S.RowsPerBeat, S.Speed, S.Tempo);
+	else
+		s += Format("  Tempo: %.0f BPM, %d rows a beat (rows of %.2g frames)", S.Bpm, S.RowsPerBeat, S.TicksPerRow);
 	if (S.LoopBars > 0)
-		s += S.IntroBars > 0 ? Format("; an intro of %s, then a loop of %d bars", Count(S.IntroBars, "bar", "bars").c_str(), S.LoopBars)
-			: Format("; a loop of %d bars", S.LoopBars);
+		s += S.IntroBars > 0 ? Format("; an intro of %s, then a loop of %s", Count(S.IntroBars, "bar", "bars").c_str(),
+			Count(S.LoopBars, "bar", "bars").c_str()) : Format("; a loop of %s", Count(S.LoopBars, "bar", "bars").c_str());
 	else
 		s += "; it plays once";
 	s += ".";

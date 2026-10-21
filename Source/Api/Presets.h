@@ -106,8 +106,10 @@ struct SoundDesign {
 // drum's noise pitches), pitch (vibrato that sums to nothing each cycle, or a
 // fall) and duty
 Preset DesignPreset(const SoundDesign &Design);
-// The design in words: "a 25% pulse that reaches 13 in 2 frames, ..."
-std::string DescribeDesign(const SoundDesign &Design, int FrameRate);
+// The design in words: "a 25% pulse that reaches 13 in 2 frames, ..." (Wave
+// "sawtooth" or "triangle" for those channels, which have no duty, and the
+// triangle no volume)
+std::string DescribeDesign(const SoundDesign &Design, int FrameRate, const std::string &Wave = "pulse");
 // A starting point by kind: lead, pad, pluck, bass, keys, bell, brass, strings, organ,
 // chiptune; kick, snare, hihat, open hihat, crash, tom. False if Kind isn't one.
 bool DesignOfKind(const std::string &Kind, SoundDesign &Out);

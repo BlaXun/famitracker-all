@@ -213,6 +213,14 @@ when ready.
   livelier presets, soundtrack notes kept beside the song, instructions that
   teach the craft, and recipes served as MCP prompts. 36 tools now.
 
+  Night versions that sound like night (asked for when one only came out
+  slower): `make_version` "night" lowers the parts that sit high, thins fast
+  runs to their outline, holds the notes into each other with even
+  dynamics, turns struck chords into a held pad (sevenths if asked), gives
+  the bass long notes, fades the drums to a soft pulse, and uses a swelling
+  lead, a slower and wider vibrato and a longer, softer echo, saying what
+  it changed.
+
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
   listening help (loop, solo, mute), and recording through Claude.
 - **`visual-cues` (October 2026, made from `next`; its build is the
@@ -265,7 +273,13 @@ when ready.
   A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
   encoded here) plays on the DPCM channel by name (`add_sample_drums`).
 
-  Next: music modules (MOD, XM, S3M, IT) as style references for new tracks.
+  Music modules as references (asked for in October 2026): `study_module`
+  studies a MOD, S3M, XM or IT file from its patterns alone and keeps it in
+  the same library, so Claude can write NES music in its style ("similar,
+  but not a copy": the tunes aren't kept, and its samples aren't read).
+  Drums are told by their instruments' names or by playing one note; an
+  instrument with a sample a key splits into its drums; the song is
+  followed through its breaks and jumps.
 
 ## Open questions
 

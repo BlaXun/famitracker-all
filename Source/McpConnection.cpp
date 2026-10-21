@@ -165,6 +165,49 @@ std::string ChipName(int Chip)
 	return "?";
 }
 
+// An instrument with vibrato built in: a pitch sequence that goes up and
+// down in its loop (2A03, VRC6 and N163 instruments)
+bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
+{
+	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	switch (pInstrument->GetType()) {
+	case INST_2A03: {
+		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	case INST_VRC6: {
+		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+		Chip = SNDCHIP_VRC6;
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	case INST_N163: {
+		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	default:
+		return false;
+	}
+	if (Enabled == 0)
+		return false;
+	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_PITCH);
+	if (pSeq == NULL)
+		return false;
+	const int Loop = static_cast<int>(pSeq->GetLoopPoint()), Count = static_cast<int>(pSeq->GetItemCount());
+	bool Up = false, Down = false;
+	for (int i = Loop; i >= 0 && i < Count; ++i) {
+		Up = Up || pSeq->GetItem(i) > 0;
+		Down = Down || pSeq->GetItem(i) < 0;
+	}
+	return Up && Down;
+}
+
 std::string InstrumentChip(inst_type_t Type)
 {
 	switch (Type) {
@@ -499,6 +542,7 @@ public:
 			CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(i));	// retained
 			if (pInstrument != NULL) {
 				Instrument.Releases = pInstrument->CanRelease();
+				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
 				pInstrument->Release();
 			}
 			Info.Instruments.push_back(Instrument);
@@ -1029,6 +1073,7 @@ public:
 			Part.Channel = Parts[p].Channel;
 			Part.pCells = &Cells[p][0];
 			Part.Rows = static_cast<int>(Cells[p].size());
+			Part.Exact = Parts[p].Exact;
 			Raw.push_back(Part);
 		}
 		if (Raw.empty()) {

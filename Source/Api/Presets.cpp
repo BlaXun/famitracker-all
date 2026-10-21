@@ -595,7 +595,7 @@ Preset DesignPreset(const SoundDesign &D)
 	return P;
 }
 
-std::string DescribeDesign(const SoundDesign &D, int FrameRate)
+std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::string &Wave)
 {
 	char Buffer[512];
 	const double Rate = FrameRate > 0 ? FrameRate : 60;
@@ -609,14 +609,30 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 	}
 	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%" };
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
+	const bool Pulse = Wave != "sawtooth" && Wave != "triangle";
 	std::string Out;
-	std::snprintf(Buffer, sizeof(Buffer), "a %s pulse that %s %d %s", DUTIES[Clamp(D.Duty, 0, 3)],
-		D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() : "reaches",
-		Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
-	Out = Buffer;
-	if (D.Click)
+	if (Wave == "triangle") {
+		// No volume: the envelope only starts the note and stops it at silence
+		if (Sustain == 0) {
+			std::snprintf(Buffer, sizeof(Buffer), "a triangle that sounds for about %d frames, then stops", std::max(4, D.Attack + D.Decay));
+			Out = Buffer;
+		}
+		else
+			Out = "a triangle at its one loudness, held until the next note or a release (===)";
+	}
+	else {
+		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Pulse ? (std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() :
+			"sawtooth", D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() :
+			"reaches", Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" :
+			(std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
+		Out = Buffer;
+	}
+	if (D.Click && Pulse)
 		Out += std::string(" after a ") + (D.Duty >= 1 ? "12.5%" : "50%") + " duty click on the first frame";
-	if (Sustain == 0)
+	Buffer[0] = 0;
+	if (Wave == "triangle")
+		;	// said above
+	else if (Sustain == 0)
 		std::snprintf(Buffer, sizeof(Buffer), ", then dies away over %d frames by itself", std::max(4, D.Decay));
 	else if (Sustain == Clamp(D.Peak, 1, 15))
 		std::snprintf(Buffer, sizeof(Buffer), ", holds, and fades over %d frames after a release (===)", D.Release);
@@ -624,17 +640,18 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 		std::snprintf(Buffer, sizeof(Buffer), ", settles to %d over %d frames, and fades over %d frames after a release (===)", Sustain,
 			D.Decay, D.Release);
 	Out += Buffer;
-	if (D.DecayStyle == DECAY_STEPS && D.Decay > 0 && Sustain < Clamp(D.Peak, 1, 15))
+	if (D.DecayStyle == DECAY_STEPS && D.Decay > 0 && Sustain < Clamp(D.Peak, 1, 15) && Wave != "triangle")
 		Out += " (stepping down a few levels at a time)";
-	if (D.Restrike >= 4 && Sustain > 0) {
+	if (D.Restrike >= 4 && Sustain > 0 && Wave != "triangle") {
 		std::snprintf(Buffer, sizeof(Buffer), "; struck again every %d frames while it holds", D.Restrike);
 		Out += Buffer;
 	}
-	if (D.Echo)
+	if (D.Echo && Wave != "triangle")
 		Out += "; a soft echo after it";
 	static const char *const MOTIONS[] = { "", "; its tone opens from thin on the attack", "; its tone shimmers to and fro",
 		"; its tone thins as it fades" };
-	Out += MOTIONS[Clamp(D.Motion, 0, 3)];
+	if (Pulse)
+		Out += MOTIONS[Clamp(D.Motion, 0, 3)];
 	if (D.AttackPitch == PITCH_BLIP)
 		Out += "; an octave blip on the attack";
 	else if (D.AttackPitch == PITCH_SCOOP)

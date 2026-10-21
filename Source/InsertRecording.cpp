@@ -119,6 +119,15 @@ bool IsSongEffect(unsigned char Effect)
 	return Effect == EF_SPEED || Effect == EF_JUMP || Effect == EF_SKIP || Effect == EF_HALT;
 }
 
+bool HoldsEffect(const stChanNote &Note, unsigned char Effect, unsigned char Param)
+{
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+		if (Note.EffNumber[c] == Effect && Note.EffParam[c] == Param)
+			return true;
+	}
+	return false;
+}
+
 // Does any frame of the track other than Frame play Pattern in Channel?
 bool UsedElsewhere(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned int Channel, unsigned int Frame, unsigned int Pattern)
 {
@@ -389,7 +398,8 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	// in the first effect column, which would play over the new notes; a
 	// replacing part clears the effect columns too, except effects that steer
 	// the song (speed, jumps, skips and halts), so its loop keeps working. A
-	// new effect whose column holds one of those goes in a free column.
+	// new effect whose column holds one of those goes in a free column, and
+	// one of those the row keeps already isn't written twice.
 	for (size_t p = 0; p < m_Parts.size(); ++p) {
 		const RecordedPart &Part = m_Parts[p];
 		const int Shown = static_cast<int>(pDoc->GetEffColumns(m_iTrack, Part.Channel)) + 1;	// the columns that play
@@ -436,7 +446,7 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 				Note.Instrument = Cell.Instrument;
 				Note.Vol = Cell.Vol;
 				for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
-					if (Cell.Effect[c] == EF_NONE)
+					if (Cell.Effect[c] == EF_NONE || (IsSongEffect(Cell.Effect[c]) && HoldsEffect(Note, Cell.Effect[c], Cell.EffectParam[c])))
 						continue;
 					int Column = c;
 					if (IsSongEffect(Note.EffNumber[Column])) {
@@ -1470,11 +1480,19 @@ bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, 
 		Part.Channel = static_cast<unsigned int>(In.Channel);
 		Part.Rows = Rows;
 		Part.Replace = true;
+		Part.Exact = In.Exact;
 		for (int r = 0; r < Rows; ++r)
-			if (!IsEmptyCell(In.pCells[r]))
+			if (Part.Exact || !IsEmptyCell(In.pCells[r]))
 				Part.Cells.push_back(CellOf(r, In.pCells[r]));
 		const unsigned int LastFrame = static_cast<unsigned int>(Frame + (Row + Rows - 1) / Length);
-		if (!EnoughPatterns(pDoc, Track, Part.Channel, static_cast<unsigned int>(Frame), LastFrame)) {
+		// An exact part needs patterns of its own only in the frames it changes
+		std::vector<bool> Changes;
+		if (Part.Exact) {
+			for (unsigned int f = static_cast<unsigned int>(Frame); f <= LastFrame; ++f)
+				Changes.push_back(f >= pDoc->GetFrameCount(Track) ||
+					ChangesFrame(pDoc, Track, Part, static_cast<unsigned int>(Frame), static_cast<unsigned int>(Row), f));
+		}
+		if (!EnoughPatterns(pDoc, Track, Part.Channel, static_cast<unsigned int>(Frame), LastFrame, Part.Exact ? &Changes : NULL)) {
 			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
 				static_cast<LPCTSTR>(RecordingChannelName(pDoc, In.Channel)));
 			return false;

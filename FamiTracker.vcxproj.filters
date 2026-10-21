@@ -1609,6 +1609,9 @@
     <ClCompile Include="Source\Nsf\Study.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Nsf\Tracker.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
     <ClCompile Include="Source\ImportNsfDlg.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
@@ -1637,6 +1640,9 @@
       <Filter>NSF importer</Filter>
     </ClInclude>
     <ClInclude Include="Source\Nsf\Study.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Tracker.h">
       <Filter>NSF importer</Filter>
     </ClInclude>
     <ClInclude Include="Source\ImportNsfDlg.h">

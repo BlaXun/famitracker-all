@@ -118,7 +118,10 @@ work, to reuse its ideas.
   delete it.
 - **Directly.** With **Let Claude change the song directly** ticked, Claude
   writes into the song. Every change is one step of Ctrl+Z (Ctrl+Y redoes it).
-  Claude can then also set the tempo, place clips and undo. Instruments it
+  Claude can then also set the tempo, place clips and undo. Changes leave
+  the song's speed changes, jumps and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`)
+  where they are, unless moving them is the change (`set_loop`); a clip
+  Claude places keeps the ones where it lands, as when you drag one. Instruments it
   adds from presets stay in the instrument list even when the notes are
   undone.
 
@@ -147,11 +150,12 @@ anything; close the dialog and ask again.
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
-| `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played |
+| `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
+| `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
@@ -166,7 +170,7 @@ anything; close the dialog and ask again.
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
-| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
+| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you |
@@ -323,6 +327,23 @@ You can tag references and keep notes with them ("the user loves this
 bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to
 look at the notes themselves.
 
+### Modules as references
+
+Music made in the PC trackers works too: give Claude a MOD, S3M, XM or IT
+file of yours, like "use song.xm in my Music folder as a reference for the
+boss theme". `study_module` reads only the module's patterns (its samples
+aren't read, and nothing of it goes into your song) and keeps a study in the
+same library: the tempo and form, the key and chords, each channel's role,
+register, rhythm and instruments by name, the bass's figure, the drums'
+grooves (the drums are told by their instruments' names, or by playing one
+note over and over; an instrument with a sample a key splits into its
+drums), the tricks between channels, and the techniques written into the
+patterns (arpeggios, vibrato, portamento, volume slides). A module has more
+channels than the NES, so Claude boils it down: the lead on a pulse or the
+sawtooth, harmony, pads and chords on the other pulse or as arpeggios, the
+bass on the triangle, the drums on the noise and the DPCM. The tunes stay
+the module's own: Claude writes new ones that sound like they belong to it.
+
 ## Moods
 
 Moods aren't magic; Claude combines changes that each do one thing reliably,
@@ -346,19 +367,29 @@ named like "Town (night)", next to the day version, which stays as it was.
 The two share the module's instruments, and FamiTracker shows the new track
 afterwards (switch with the track box in the toolbar).
 
-The night version is, unless you ask for something else:
+Night is much more than slower. The night version is, unless you ask for
+something else:
 
-- 20% slower (tempo commands in the patterns slow down too),
-- quieter (every channel's volume at 75%),
-- with sparser, softer drums (only the hits on the beats, at 60%),
-- with a soft lead for the melody and soft chords for arpeggio chords,
-- and with a slow, gentle vibrato and an echo on the melody (no second echo
-  when the song already has one).
+- lower: the parts that sat high (from C-4 up, not the bass) an octave down,
+- simpler: the melody's fast runs thinned to their outline (the short notes
+  between the eighths left out, the notes before ringing on),
+- legato: notes held into the next (no note cuts; a halt just before a note
+  goes, the others soften to releases), with even dynamics, no accents,
+- with chords held as a pad that swells in (a chord struck again in its bar
+  rings on instead; ask for "richer chords" to turn triads into sevenths),
+- with the bass in long notes (the notes on the beats, held),
+- with the drums a soft pulse on each bar's first beat (sampled drums on the
+  DPCM channel thin out the same way), or none if you ask,
+- with a soft lead that swells in for the melody and a warm pad for
+  arpeggio chords, a slower and wider vibrato starting later in the note,
+  and a longer, softer echo (no second echo when the song already has one),
+- 20% slower (tempo commands in the patterns slow down too) and quieter
+  (every channel's volume at 75%).
 
-Say what you want different, in words: "keep the drums", "only 10% slower",
-"no echo", "the melody an octave lower", "in dorian". Claude can also change
-the night version afterwards with the other tools, since it's the selected
-track.
+Claude says what it changed. Say what you want different, in words: "keep
+the drums", "only 10% slower", "no echo", "keep the melody as it is", "in
+dorian". Claude can also change the night version afterwards with the other
+tools, since it's the selected track.
 
 A **tense version** (for a battle, danger, a boss or a chase) is, unless you
 ask for something else:
@@ -601,7 +632,10 @@ editor; they're muted again afterwards.
   the built-in style guide. The library's files are read and written
   through `SongHost::ListLibrary`, `ReadLibrary`, `SaveLibrary` and
   `DeleteLibrary`; `import_nsf` opens its module with `SongHost::OpenText`,
-  which `ImportNsfDlg.cpp` (File > Import NSF) shares.
+  which `ImportNsfDlg.cpp` (File > Import NSF) shares. `study_module` reads
+  a tracker module with `Source/Nsf/Tracker.cpp` (MOD, S3M, XM and IT
+  patterns, followed through their breaks and jumps into a module of one
+  track with a channel layout of its own) and studies it with `Study.cpp`.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and
