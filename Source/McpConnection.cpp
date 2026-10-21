@@ -627,6 +627,10 @@ public:
 			if (pInstrument != NULL) {
 				Instrument.Releases = pInstrument->CanRelease();
 				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
+				if (pInstrument->GetType() == INST_N163) {
+					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
+					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();
+				}
 				pInstrument->Release();
 			}
 			Info.Instruments.push_back(Instrument);
@@ -1215,6 +1219,17 @@ public:
 			return -1;
 		CString Problem;
 		const int Index = AddPresetInstrument(Doc(), Sound, Chip == "VRC6", Sawtooth, Problem);
+		if (Index < 0)
+			Error = Utf8(Problem);
+		return Index;
+	}
+
+	int AddN163Instrument(const ftapi::WaveSound &Sound, int WavePos, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CString Problem;
+		const int Index = AddWaveSoundInstrument(Doc(), Sound, WavePos, Problem);
 		if (Index < 0)
 			Error = Utf8(Problem);
 		return Index;

@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 #include "Api/Presets.h"
+#include "Api/Wavetables.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -116,6 +117,68 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 	pDoc->SetModifiedFlag();
 	if (Notify)
 		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+	return Index;
+}
+
+int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound, int WavePos, CString &Error)
+{
+	if (!pDoc->ExpansionEnabled(SNDCHIP_N163)) {
+		Error = _T("This song has no N163 channels.");
+		return -1;
+	}
+	const CString Name(Sound.InstrumentName().c_str());
+	const int Existing = FindNamedInstrument(pDoc, INST_N163, Name);
+	if (Existing >= 0)
+		return Existing;
+	if (Sound.Waves.empty() || Sound.Waves.size() > static_cast<size_t>(CInstrumentN163::MAX_WAVE_COUNT) || WavePos < 0) {
+		Error = _T("That N163 sound can't be made.");
+		return -1;
+	}
+	CInstrument *pNew = theApp.GetChannelMap()->GetChipInstrument(SNDCHIP_N163);	// as for presets: no Setup()
+	if (pNew == NULL) {
+		Error = _T("FamiTracker has no N163 instruments.");
+		return -1;
+	}
+	pNew->SetName(Name);
+	const int Index = pDoc->AddInstrument(pNew);
+	if (Index == INVALID_INSTRUMENT) {
+		pNew->Release();
+		Error = _T("There are no free instrument slots left (a song has at most 64).");
+		return -1;
+	}
+	CInstrumentN163 *pInstrument = static_cast<CInstrumentN163*>(pDoc->GetInstrument(static_cast<unsigned int>(Index)));	// retained
+	if (pInstrument != NULL) {
+		// The waves, and where they go in the chip's memory
+		pInstrument->SetWaveSize(ftapi::N163_WAVE_SIZE);
+		pInstrument->SetWaveCount(static_cast<int>(Sound.Waves.size()));
+		pInstrument->SetWavePos(WavePos);
+		for (size_t w = 0; w < Sound.Waves.size(); ++w)
+			for (size_t i = 0; i < Sound.Waves[w].size() && i < static_cast<size_t>(ftapi::N163_WAVE_SIZE); ++i)
+				pInstrument->SetSample(static_cast<int>(w), static_cast<int>(i), std::max(0, std::min(15, Sound.Waves[w][i])));
+		// Its volume, arpeggio, pitch and which wave plays (the "duty" sequence)
+		for (size_t s = 0; s < Sound.Sequences.size(); ++s) {
+			const ftapi::PresetSequence &Seq = Sound.Sequences[s];
+			const int Slot = pDoc->GetFreeSequenceN163(Seq.Type);
+			if (Slot < 0)
+				continue;	// all taken: the sound is plainer
+			CSequence *pSequence = pDoc->GetSequenceN163(static_cast<unsigned int>(Slot), Seq.Type);
+			pSequence->Clear();
+			for (size_t k = 0; k < Seq.Items.size(); ++k)
+				pSequence->SetItem(static_cast<int>(k), static_cast<signed char>(Seq.Items[k]));
+			pSequence->SetItemCount(static_cast<unsigned int>(Seq.Items.size()));
+			if (Seq.Loop >= 0)
+				pSequence->SetLoopPoint(static_cast<unsigned int>(Seq.Loop));
+			if (Seq.Release >= 0)
+				pSequence->SetReleasePoint(static_cast<unsigned int>(Seq.Release));
+			if (Seq.Type == ftapi::SEQUENCE_ARPEGGIO)
+				pSequence->SetSetting(static_cast<unsigned int>(Seq.Setting));
+			pInstrument->SetSeqEnable(Seq.Type, 1);
+			pInstrument->SetSeqIndex(Seq.Type, Slot);
+		}
+		pInstrument->Release();
+	}
+	pDoc->SetModifiedFlag();
+	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 	return Index;
 }
 

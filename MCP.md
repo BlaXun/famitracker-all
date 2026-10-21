@@ -140,7 +140,7 @@ anything; close the dialog and ask again.
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
-| `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, or one of the VRC7's own sounds |
+| `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, or an N163 wave sound |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
@@ -245,8 +245,33 @@ xylophone, vibraphone, brass, bass guitar, synthesizer and chorus. Claude
 adds them as instruments by name ("a piano for the melody", "brass chords"),
 and a preset's name picks the sound most like it: "soft lead" is the flute,
 "bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
-which lets the sound fade the way the chip does. The FDS and N163 need
-wavetable instruments, which you make in FamiTracker's instrument editor.
+which lets the sound fade the way the chip does.
+
+The **N163** (Namco 163) adds 1 to 8 wavetable channels, 13 in all with the
+2A03's, and Claude draws their sounds: soft flute, drawbar organ, string
+ensemble, choir, brass section, electric piano, glass bell, harp, marimba,
+pulse sweep lead, growl bass and round bass. Each plays waves of its own one
+after the other, so its timbre moves as a note plays: the organ's upper
+drawbars turn like a rotating speaker, the strings and the choir shimmer,
+brass opens up from mellow to bright, the electric piano and the bell mellow
+as they fade, the lead's pulse narrows and widens smoothly, and the bass
+growls like a wah. A preset's name picks the sound most like it ("soft
+lead" is the flute, "bass" the round bass).
+
+- The waves are 16 samples long: FamiTracker 0.4.6 plays N163 notes in tune
+  at that length (a 32-sample wave sounds an octave lower than written).
+- All waves share the chip's 128 bytes of memory with the channels'
+  registers, 16 samples for each channel in use: with 6 channels there is
+  room for 10 sounds, with 8 for 8. Claude puts each new sound's wave where
+  no other N163 instrument's is, from the bottom up, and says how much room
+  is left.
+- The chip plays its channels in turn, which whines at a pitch that falls as
+  channels are added: up to 6 keep it above hearing (about 20 kHz), 7 and 8
+  bring it down to 17 and 15 kHz. FamiTracker plays it too, so it's in the
+  exports.
+
+The FDS needs a wavetable instrument, which you make in FamiTracker's
+instrument editor.
 
 ## Arrangements with depth
 

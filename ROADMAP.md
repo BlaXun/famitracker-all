@@ -251,8 +251,14 @@ when ready.
   track of its own before Claude tries something, and `compare_versions`
   plays the same bars of each, one after the other, for the user to pick.
 
-  Ideas not built yet: FDS and N163 instruments, and recording through
-  Claude.
+  N163 instruments (asked for: something more complex than the VRC6):
+  twelve wave sounds drawn for the N163's up to 8 channels, whose timbre
+  moves as a note plays (a rotating organ, shimmering strings and choir,
+  brass opening up, an electric piano and a bell that mellow, a sweeping
+  pulse lead, a growling bass), each wave placed in the chip's shared memory
+  where no other instrument's is.
+
+  Ideas not built yet: FDS instruments, and recording through Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF
   files open as readable FamiTracker songs, and Claude learns from them.
   - Our own portable player core (a 6502, the NSF's bank switching, the 2A03
