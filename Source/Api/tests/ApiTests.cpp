@@ -1816,11 +1816,8 @@ void WriteTestFtm(const std::string &Path)
 	}
 	End();
 	B += "END";
-	FILE *f = std::fopen(Path.c_str(), "wb");
-	if (f) {
-		std::fwrite(B.data(), 1, B.size(), f);
-		std::fclose(f);
-	}
+	std::ofstream Out(Path.c_str(), std::ios::binary);
+	Out.write(B.data(), static_cast<std::streamsize>(B.size()));
 }
 
 void WriteTestMidi(const std::string &Path)
@@ -2078,10 +2075,9 @@ void TestReferences()
 	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"" + FtmPath + "\", \"tracks\": \"3\"}").Text, "tracks:");
 	{
 		// A module cut short says why
-		FILE *f = std::fopen("api_tests_broken.ftm", "wb");
-		if (f) {
-			std::fwrite("FamiTracker Module\x40\x04\x00\x00PARAMS", 1, 28, f);
-			std::fclose(f);
+		{
+			std::ofstream Out("api_tests_broken.ftm", std::ios::binary);
+			Out.write("FamiTracker Module\x40\x04\x00\x00PARAMS", 28);
 		}
 		CHECK_HAS(Run(Song, "study_module", "{\"path\": \"api_tests_broken.ftm\"}").Text, "The FamiTracker module api_tests_broken.ftm "
 			"couldn't be read");
