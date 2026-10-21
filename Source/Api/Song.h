@@ -33,6 +33,7 @@
 namespace ftapi {
 
 struct Preset;
+struct DpcmKit;
 
 struct ChannelInfo {
 	std::string Name;		// "Pulse 1", "Sawtooth"
@@ -123,6 +124,10 @@ public:
 	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
 	// name already there: its index, -1 with the reason
 	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;
+	// A kit of samples (DpcmKit.h) as a 2A03 instrument for the DPCM channel, its samples added
+	// (or ones of the same name and size reused), or the 2A03 instrument of the kit's name already
+	// there: its index, -1 with the reason
+	virtual int AddDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
 
 	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
 	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their

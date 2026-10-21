@@ -77,6 +77,7 @@ add_library(ftapi STATIC
 	Music.cpp
 	Chords.cpp
 	Arrange.cpp
+	DpcmKit.cpp
 	Presets.cpp
 	References.cpp
 	StyleGuide.cpp

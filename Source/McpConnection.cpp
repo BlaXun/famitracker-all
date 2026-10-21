@@ -33,6 +33,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "Api/DpcmKit.h"
 #include "Api/Http.h"
 #include "Api/Json.h"
 #include "Api/Mcp.h"
@@ -1091,6 +1092,82 @@ public:
 		const int Index = AddVrc7PatchInstrument(Doc(), Patch, Ansi(Name), Problem);
 		if (Index < 0)
 			Error = Utf8(Problem);
+		return Index;
+	}
+
+	int AddDpcmKit(const ftapi::DpcmKit &Kit, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Name = Ansi(Kit.Name);
+		const int Existing = FindNamedInstrument(pDoc, INST_2A03, Name);
+		if (Existing >= 0)
+			return Existing;
+		// The samples: ones of the same name and size are reused
+		std::vector<int> Slots;
+		std::vector<int> Taken;
+		unsigned int Bytes = 0;
+		for (size_t s = 0; s < Kit.Samples.size(); ++s) {
+			const ftapi::DpcmSample &Sample = Kit.Samples[s];
+			int Slot = -1;
+			for (int i = 0; i < MAX_DSAMPLES && Slot < 0; ++i) {
+				const CDSample *pSample = pDoc->GetSample(static_cast<unsigned int>(i));
+				if (pSample->GetSize() == Sample.Data.size() && CString(pSample->GetName()) == Ansi(Sample.Name))
+					Slot = i;
+			}
+			if (Slot < 0) {
+				Bytes += static_cast<unsigned int>(Sample.Data.size());
+				for (int i = 0; i < MAX_DSAMPLES && Slot < 0; ++i)
+					if (!pDoc->IsSampleUsed(static_cast<unsigned int>(i)) && pDoc->GetSample(static_cast<unsigned int>(i))->GetSize() == 0 &&
+						std::find(Taken.begin(), Taken.end(), i) == Taken.end())
+						Slot = i;
+				if (Slot < 0) {
+					Error = "There's no room for more DPCM samples (a song has at most 64).";
+					return -1;
+				}
+				Taken.push_back(Slot);
+			}
+			Slots.push_back(Slot);
+		}
+		if (pDoc->GetTotalSampleSize() + Bytes > static_cast<unsigned int>(MAX_SAMPLE_SPACE)) {
+			Error = "The song's DPCM samples would take more room than FamiTracker has.";
+			return -1;
+		}
+		CInstrument *pNew = theApp.GetChannelMap()->GetChipInstrument(SNDCHIP_NONE);
+		if (pNew == NULL) {
+			Error = "FamiTracker has no 2A03 instruments.";
+			return -1;
+		}
+		pNew->SetName(Name);
+		const int Index = pDoc->AddInstrument(pNew);
+		if (Index == INVALID_INSTRUMENT) {
+			pNew->Release();
+			Error = "There are no free instrument slots left (a song has at most 64).";
+			return -1;
+		}
+		for (size_t s = 0; s < Kit.Samples.size(); ++s) {
+			CDSample *pSample = pDoc->GetSample(static_cast<unsigned int>(Slots[s]));
+			if (std::find(Taken.begin(), Taken.end(), Slots[s]) == Taken.end())
+				continue;	// reused
+			const std::vector<unsigned char> &Data = Kit.Samples[s].Data;
+			pSample->Allocate(static_cast<unsigned int>(Data.size()), reinterpret_cast<const char*>(&Data[0]));
+			pSample->SetName(static_cast<LPCSTR>(CStringA(Ansi(Kit.Samples[s].Name))));
+		}
+		CInstrument2A03 *pInstrument = static_cast<CInstrument2A03*>(pDoc->GetInstrument(static_cast<unsigned int>(Index)));	// retained
+		if (pInstrument != NULL) {
+			for (size_t k = 0; k < Kit.Keys.size(); ++k) {
+				const ftapi::DpcmKey &Key = Kit.Keys[k];
+				const int Octave = Key.Pitch / 12, Note = Key.Pitch % 12;
+				pInstrument->SetSample(Octave, Note, static_cast<char>(Slots[static_cast<size_t>(Key.Sample)] + 1));
+				pInstrument->SetSamplePitch(Octave, Note, static_cast<char>(Key.Rate & 15));
+				pInstrument->SetSampleLoop(Octave, Note, false);
+				pInstrument->SetSampleDeltaValue(Octave, Note, static_cast<char>(Key.Delta));
+			}
+			pInstrument->Release();
+		}
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 		return Index;
 	}
 

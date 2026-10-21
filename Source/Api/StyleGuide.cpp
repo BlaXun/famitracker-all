@@ -58,7 +58,8 @@ const Section SECTIONS[] = {
 		"(0 0 +2 0 0 +4 0 0 ...), or a riff doubled with a pulse an octave up.\n"
 		"- Drums on the DPCM: a short kick sample on the beats with pushes (x... xx.. x... xx..) and a longer snare sample "
 		"either on 2 and 4 or on every 'and' (..x. ..x. ..x. ..x.), which doubles the drive; the noise adds a crack or a hat. "
-		"Without samples: add_drums with a busy groove, a snare on the 'and's.\n"
+		"add_sample_drums gives the DPCM channel a kit (write_notes plays kick and snare there by name); add_drums keeps the "
+		"hats on the noise.\n"
 		"- Harmony: long minor pedals (i for 4-8 bars) that then move by VI-III-VII; phrygian neighbours (i-bII-i); "
 		"mixolydian vamps (I-bVII); sus4 chords; chords climbing by whole steps (bVI-bVII-I) into the loop's peak." },
 	{ "capcom", "Capcom action (Mega Man 2-5, Little Nemo)", "megaman mega man rockman nemo ducktales capcom action",
@@ -131,7 +132,8 @@ const Section SECTIONS[] = {
 		"kick on the beats, a snare on every 'and'); half-time with the snare on 3 for heavy parts; hats only on the "
 		"offbeats for light ones.\n"
 		"- Samples (DPCM): Konami and Nintendo use a short kick and a longer snare on the DPCM channel, with the noise "
-		"adding hats; they sound fuller than noise alone.\n"
+		"adding hats; they sound fuller than noise alone. add_sample_drums adds a kit made for this (kick, snare, two toms), "
+		"which write_notes plays by name on the DPCM channel; samples that start from silence keep the triangle loud.\n"
 		"- Fills every 4 or 8 bars: sixteenth snares, or the hats dropping out for a bar before a section. add_drums adds "
 		"fills." },
 	{ "harmony", "Harmony and color", "harmony chords progression key mode minor major modal dorian phrygian mixolydian",

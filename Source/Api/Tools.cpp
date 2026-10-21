@@ -22,6 +22,7 @@
 #include "Tools.h"
 #include "Arrange.h"
 #include "Chords.h"
+#include "DpcmKit.h"
 #include "GameAudio.h"
 #include "Jingles.h"
 #include "Music.h"
@@ -499,6 +500,24 @@ void BarRange(const Session &S, const Json &Args, int &From, int &To, bool PastE
 	To = IntArg(Args, "to_bar", std::max(From, S.Time.BarCount()), 1, Last);
 	if (To < From)
 		throw Problem("to_bar comes before from_bar.");
+}
+
+// The sampled drum kit's instrument (DpcmKit.h), added with its samples when
+// the song has none
+int SampleDrumsInstrument(Session &S)
+{
+	const DpcmKit &Kit = SampleDrums();
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(Kit.Name) && S.Song.Instruments[i].Chip == "2A03")
+			return S.Song.Instruments[i].Index;
+	std::string Error;
+	const int Index = S.Host().AddDpcmKit(Kit, Error);
+	if (Index < 0)
+		throw Problem("The sampled drums couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	S.Refresh();
+	S.Remarks.push_back(Format("Added the instrument %s: sampled drums for the DPCM channel (kick on C-3, snare on D-3, low tom on "
+		"F-3, high tom on A-3).", InstrumentLabel(S.Song, Index).c_str()));
+	return Index;
 }
 
 // An instrument for notes on a channel: one in the song (by name, or by its
@@ -1120,8 +1139,7 @@ std::string WriteNotes(Session &S, const Json &Args)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
 	const ChannelInfo &Info = S.Channel(Channel);
-	if (Info.Kind == KIND_DPCM)
-		throw Problem("The DPCM channel plays samples; write notes on another channel.");
+	const bool Dpcm = Info.Kind == KIND_DPCM;
 	const Json *pNotes = Arg(Args, "notes");
 	if (pNotes == 0 || !pNotes->IsArray())
 		throw Problem("notes should be a list of notes like {\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}.");
@@ -1168,9 +1186,20 @@ std::string WriteNotes(Session &S, const Json &Args)
 		Note.Rows = Rows;
 		const std::string Pitch = StringArg(Item, "pitch");
 		if (Pitch.empty())
-			throw Problem(Which + " needs a pitch, like \"C-4\" or \"F#3\"" + (Noise ? " (on the noise channel: kick, snare, hihat or 0-# to F-#)." : "."));
+			throw Problem(Which + " needs a pitch, like \"C-4\" or \"F#3\"" + (Noise ? " (on the noise channel: kick, snare, hihat or 0-# to F-#)." :
+				(Dpcm ? " (on the DPCM channel: kick, snare, low tom or high tom, from add_sample_drums)." : ".")));
 		std::string Drum;
-		if (Noise) {
+		if (Dpcm) {
+			const DpcmKey *pKey = FindSampleDrum(Pitch);
+			if (pKey != 0) {
+				Note.Pitch = pKey->Pitch;
+				Drum = "sample drums";
+			}
+			else if (!ParsePitch(Pitch, Note.Pitch))
+				throw Problem(Format("%s: \"%s\" isn't a drum or a key. On the DPCM channel: kick, snare, low tom or high tom (the "
+					"sampled drums of add_sample_drums), or the key a sample is on, like C-3.", Which.c_str(), Pitch.c_str()));
+		}
+		else if (Noise) {
 			if (!ParseNoisePitch(Pitch, Note.Pitch, Drum))
 				throw Problem(Format("%s: \"%s\" isn't a noise sound. Use kick, snare, hihat, open hihat or a noise pitch 0-# to F-#.",
 					Which.c_str(), Pitch.c_str()));
@@ -1182,6 +1211,8 @@ std::string WriteNotes(Session &S, const Json &Args)
 			Note.Instrument = InstrumentArg(S, Item, "instrument", Channel, NO_INSTRUMENT);
 		else if (DefaultInstrument != NO_INSTRUMENT)
 			Note.Instrument = DefaultInstrument;
+		else if (Drum == "sample drums")
+			Note.Instrument = SampleDrumsInstrument(S);
 		else if (!Drum.empty())
 			Note.Instrument = ResolveInstrument(S, Drum, Channel);
 		if (Arg(Item, "volume") != 0)
@@ -1229,6 +1260,10 @@ std::string WriteNotes(Session &S, const Json &Args)
 		throw Problem(Format("A note starts before from_bar %d.", From));
 	if (LastRow > End)
 		End = LastRow;
+	// A sample plays to its end: hits ring until the next one, rather than being cut
+	if (Dpcm)
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Rows = (i + 1 < Notes.size() ? Notes[i + 1].Row : End) - Notes[i].Row;
 
 	// The instrument when none was named: what the channel played with
 	const int Playing = InstrumentAt(S, Channel, First);
@@ -6459,6 +6494,33 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 	return Out + " Use it with write_notes or set_instrument.";
 }
 
+std::string AddSampleDrumsTool(Session &S, const Json &)
+{
+	const DpcmKit &Kit = SampleDrums();
+	const size_t Before = S.Song.Instruments.size();
+	const int Index = SampleDrumsInstrument(S);
+	S.Remarks.clear();
+	int Bytes = 0;
+	for (size_t i = 0; i < Kit.Samples.size(); ++i)
+		Bytes += static_cast<int>(Kit.Samples[i].Data.size());
+	std::string Keys;
+	for (size_t i = 0; i < Kit.Keys.size(); ++i) {
+		Cell At;
+		At.SetPitch(Kit.Keys[i].Pitch);
+		Keys += (i == 0 ? "" : (i + 1 == Kit.Keys.size() ? " and " : ", ")) + Kit.Keys[i].Drum + " on " + PitchName(At.Pitch());
+	}
+	int Dpcm = -1;
+	for (int c = 0; c < S.ChannelCount() && Dpcm < 0; ++c)
+		if (S.Channel(c).Kind == KIND_DPCM)
+			Dpcm = c;
+	return Format("%s %s: %s (%s of samples). Play them with write_notes on %s, by name: {\"pitch\": \"kick\"}, "
+		"\"snare\", \"low tom\", \"high tom\"; each hit rings until the next. Keep the hi-hats on the noise channel, and "
+		"keep the samples to the kick and snare (and toms in fills): that's the punch of the classic soundtracks.",
+		S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(), Keys.c_str(),
+		Bytes >= 1024 ? Format("%.1f KB", Bytes / 1024.0).c_str() : Format("%d bytes", Bytes).c_str(),
+		Dpcm >= 0 ? S.Channel(Dpcm).FullName().c_str() : "the DPCM channel");
+}
+
 std::string ImportNsfTool(Session &S, const Json &Args)
 {
 	if (S.Song.Modified)
@@ -6547,7 +6609,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Writes a part (melody, counter-melody, bass line, drums...) on one channel, replacing that channel's notes in the bars "
 		"it covers. Each note lasts its beats; a gap is a rest. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
-		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + ").",
+		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "). Drums on the noise channel by name (kick, "
+		"snare, hihat); on the DPCM channel the sampled drums of add_sample_drums (kick, snare, low tom, high tom).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("notes", NotesProp, true)
@@ -7111,6 +7174,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 
+	AddTool("add_sample_drums", "Add sampled drums",
+		"Adds a drum kit of samples for the DPCM channel, made for FamiTracker: a punchy kick, a snare and two toms, as one "
+		"instrument (\"Sample drums\"). Then write_notes on the DPCM channel plays them by name (kick, snare, low tom, high "
+		"tom). A sampled kick and snare under the noise channel's hi-hats is how many classic NES soundtracks get their punch "
+		"(Konami's, Nintendo's). The samples start from silence, so the triangle stays loud.",
+		Schema(), false, false, true);
+
 	AddTool("import_nsf", "Open an NSF's tracks",
 		"Opens tracks of an NSF file in FamiTracker as a new module, a track each, with the patterns, instruments and drums "
 		"worked out from the music, to look at closely or play. It replaces the open song, so that must be saved first.",
@@ -7198,6 +7268,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "references") Result.Text = ReferencesTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
+		else if (Name == "add_sample_drums") Result.Text = AddSampleDrumsTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
 		else if (Name == "change_mood") Result.Text = ChangeMoodTool(S, Args);
@@ -7284,7 +7355,9 @@ std::string ToolSet::Instructions()
 		"harmony, bass, drums), the rhythm grids and bass figures, the drum grooves, the tricks and the sounds. Take the craft, "
 		"not the tunes: write your own melodies, motifs and chord progressions, and never copy a reference's notes or its exact "
 		"progression. reference_sound gives a song a reference's instrument as it was (its duty click, bloom, echo, vibrato); "
-		"design_instrument makes your own in the same spirit. Tell the user which references you leaned on and how.";
+		"design_instrument makes your own in the same spirit; add_sample_drums gives the DPCM channel a sampled kick, snare "
+		"and toms (write_notes plays them by name) for the punch of those soundtracks. Tell the user which references you "
+		"leaned on and how.";
 }
 
 const std::vector<PromptInfo> &ToolSet::Prompts()

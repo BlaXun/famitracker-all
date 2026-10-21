@@ -26,6 +26,7 @@
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../Chords.h"
+#include "../DpcmKit.h"
 #include "../GameAudio.h"
 #include "../Http.h"
 #include "../Jingles.h"
@@ -580,6 +581,21 @@ public:
 			return false;
 		Bytes = it->second;
 		return true;
+	}
+
+	std::vector<std::string> Kits;	// the kits of samples added
+
+	int AddDpcmKit(const DpcmKit &Kit, std::string &) override
+	{
+		int Next = 0;
+		for (size_t i = 0; i < Info.Instruments.size(); ++i) {
+			if (Info.Instruments[i].Name == Kit.Name && Info.Instruments[i].Chip == "2A03")
+				return Info.Instruments[i].Index;
+			Next = std::max(Next, Info.Instruments[i].Index + 1);
+		}
+		AddInstrumentInfo(Next, Kit.Name.c_str(), "2A03", false);
+		Kits.push_back(Kit.Name);
+		return Next;
 	}
 
 	std::map<std::string, std::string> Library;		// the reference library's files
@@ -1306,7 +1322,8 @@ void TestWriteNotes()
 		CHECK_HAS(Run(Song, "write_notes", "{\"channel\": 1, \"instrument\": \"Lead\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", "
 			"\"beats\": 1}]}").Text, "is a VRC6 instrument; 2A03 Pulse 1 needs a 2A03 one");
 		CHECK_HAS(Run(Song, "write_notes", "{\"channel\": 1, \"instrument\": \"kick\", \"notes\": []}").Text, "drum for the noise");
-		CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"dpcm\", \"notes\": []}").Text, "DPCM channel plays samples");
+		CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"dpcm\", \"notes\": [{\"bar\": 1, \"pitch\": \"bongo\", \"beats\": 1}]}").Text,
+			"On the DPCM channel: kick, snare, low tom or high tom");
 		CHECK(Song.Clips.empty());
 		// Overlaps are shortened, with a note about it
 		const ToolResult Overlap = Run(Song, "write_notes", "{\"channel\": 1, \"instrument\": \"Square\", \"notes\": ["
@@ -1663,6 +1680,62 @@ void TestReferences()
 	CHECK_HAS(Run(Song, "references", "{}").Text, "The reference library is empty");
 	std::remove(Path.c_str());
 	std::remove("api_tests_study.m3u");
+}
+
+void TestSampleDrums()
+{
+	// The kit: each sample the DMC's own length, back to silence at its end, deep or bright as its drum
+	const DpcmKit &Kit = SampleDrums();
+	CHECK(Kit.Samples.size() == 4 && Kit.Keys.size() == 4);
+	for (size_t i = 0; i < Kit.Samples.size(); ++i) {
+		const std::vector<unsigned char> &Data = Kit.Samples[i].Data;
+		CHECK(Data.size() % 16 == 1 && Data.size() > 300 && Data.size() < 1200);
+		const std::vector<int> Levels = DecodeDpcm(Data, 0);
+		int Peak = 0;
+		for (size_t k = 0; k < Levels.size(); ++k)
+			Peak = std::max(Peak, Levels[k]);
+		CHECK(Peak >= 40 && Peak <= 100 && Levels.back() <= 4);
+	}
+	CHECK(FindSampleDrum("Kick") == &Kit.Keys[0] && FindSampleDrum("bass drum") == &Kit.Keys[0] && FindSampleDrum("snare") == &Kit.Keys[1] &&
+		FindSampleDrum("tom") == &Kit.Keys[2] && FindSampleDrum("hi tom") == &Kit.Keys[3] && FindSampleDrum("cowbell") == 0);
+	CHECK(Kit.Keys[0].Pitch == 36 && Kit.Keys[1].Pitch == 38 && Kit.Keys[0].Rate == 15 && Kit.Keys[0].Delta == 0);
+	// Encoding follows a wave within the DMC's steps of 2, and holds its level in the padding
+	std::vector<double> Ramp;
+	for (int i = 0; i < 100; ++i)
+		Ramp.push_back(i < 50 ? i * 2.0 : 100.0);
+	const std::vector<unsigned char> Encoded = EncodeDpcm(Ramp, 0);
+	const std::vector<int> Back = DecodeDpcm(Encoded, 0);
+	CHECK(Encoded.size() == 17 && Back[48] >= 96 && Back[48] <= 100 && std::abs(Back.back() - 100) <= 2);
+
+	// The tool, and write_notes on the DPCM channel by name
+	FakeSong Song;
+	ToolResult Result = Run(Song, "add_sample_drums", "{}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Sample drums\" (03): kick on C-3, snare on D-3, low tom on F-3 and high tom on A-3 (2.6 KB of samples)");
+	CHECK_HAS(Run(Song, "add_sample_drums", "{}").Text, "The song already has \"Sample drums\" (03)");
+	CHECK(Song.Kits.size() == 1);
+	FakeSong Fresh;
+	Result = Run(Fresh, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"kick\", "
+		"\"beats\": 0.25}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"snare\", \"beats\": 0.25}, {\"bar\": 1, \"beat\": 3, "
+		"\"pitch\": \"kick\", \"beats\": 0.25}]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added the instrument \"Sample drums\" (03)");
+	CHECK(Fresh.Kits.size() == 1);
+	int Dpcm = -1;
+	for (size_t c = 0; c < Fresh.Info.Channels.size(); ++c)
+		if (Fresh.Info.Channels[c].Kind == KIND_DPCM)
+			Dpcm = static_cast<int>(c);
+	CHECK(Dpcm >= 0);
+	if (Dpcm >= 0) {
+		const std::vector<Cell> &Rows = Fresh.Clips.empty() ? Fresh.Rows[static_cast<size_t>(Dpcm)] : Fresh.Clips.back().Columns[0];
+		CHECK(Rows.size() >= 9 && Rows[0].Pitch() == 36 && Rows[0].Instrument == 3 && Rows[4].Pitch() == 38 && Rows[8].Pitch() == 36);
+		bool Cut = false;
+		for (size_t r = 1; r < 8 && r < Rows.size(); ++r)
+			Cut = Cut || Rows[r].IsEnd();
+		CHECK(!Cut);		// the hits ring to the next
+	}
+	CHECK_HAS(Run(Fresh, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"cowbell\", "
+		"\"beats\": 1}]}").Text, "isn't a drum or a key");
 }
 
 void TestInstruments()
@@ -4725,6 +4798,7 @@ int main()
 	TestInstruments();
 	TestDesign();
 	TestReferences();
+	TestSampleDrums();
 	TestTranspose();
 	TestTempoTool();
 	TestBacking();

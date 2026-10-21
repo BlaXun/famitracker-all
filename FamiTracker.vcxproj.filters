@@ -1555,6 +1555,12 @@
     <ClCompile Include="Source\libvorbis\lib\window.c">
       <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\DpcmKit.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Api\DpcmKit.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
     <ClCompile Include="Source\Api\References.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>

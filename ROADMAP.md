@@ -240,8 +240,10 @@ when ready.
     Nintendo soundtracks. `design_instrument` learned the articulations those
     soundtracks are made of.
 
-  Next: a DPCM drum kit of our own (sampled kick and snare), and music
-  modules (MOD, XM, S3M, IT) as style references for new tracks.
+  A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
+  encoded here) plays on the DPCM channel by name (`add_sample_drums`).
+
+  Next: music modules (MOD, XM, S3M, IT) as style references for new tracks.
 
 ## Open questions
 
