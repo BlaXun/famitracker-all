@@ -336,7 +336,7 @@ The buttons along the top:
 
 - The channel being edited (also: click a faint note, or move the pattern
   editor's cursor to another channel).
-- Draw or Paint melody (keys D and B).
+- Draw, Paint melody or Select (keys D, B and S).
 - Grid: what new notes snap to: a row, half a beat, a beat, two beats or a
   bar. Hold Alt for single rows.
 - Key: none, one picked from a list (major, minor and their pentatonic
@@ -368,7 +368,14 @@ Editing, in the bright channel:
   the next note.
 - Right-click erases a note; right-drag erases every note it passes.
 - Click selects a note, Ctrl+click adds or removes one, Ctrl+drag selects
-  the notes in a box, Ctrl+A selects all of them, Esc none.
+  the notes in a box, Ctrl+A selects all of them, Esc none. With the Select
+  tool, a plain drag selects the notes in a box, dragging along the ruler
+  selects the notes that start in those rows (whole bars, say), and a click
+  on an empty spot selects none.
+- The selected notes become a clip with Ctrl+Shift+C, the Clips button, or
+  Edit > Save selection as clip and the clips panel's "+ Save selection"
+  (which take the piano roll's notes when the pattern editor has no
+  selection: a selection made in one ends the other's).
 - With notes selected: Delete erases them; Up and Down move them a semitone
   (a note of the key, with a key), Shift+Up and Shift+Down an octave; Left and
   Right a grid step (Alt: a row); Ctrl+C, Ctrl+X and Ctrl+V copy, cut and

@@ -59,6 +59,12 @@ public:
 	bool ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row);
 	bool HideClipDrop();					// true if it showed one
 
+	// Notes selected in the piano roll, which Edit > Save selection as clip
+	// (and the clips panel's + Save selection) keeps when the pattern editor
+	// has no selection: there is one selection at a time
+	bool HasSelection() const;
+	void SaveSelectionAsClip();				// asks for a name
+
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:

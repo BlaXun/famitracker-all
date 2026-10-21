@@ -43,6 +43,7 @@
 #include "BackingDlg.h"
 #include "Clips.h"
 #include "ClipsDlg.h"
+#include "PianoRoll.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -984,8 +985,14 @@ void CFamiTrackerView::OnEditSaveClip()
 {
 	// Keep the selected rows as a clip (see Clips.h)
 	if (!m_pPatternEditor->IsSelecting()) {
+		// Or the notes selected in the piano roll
+		CPianoRollWnd *pRoll = static_cast<CMainFrame*>(GetParentFrame())->GetPianoRollWnd();
+		if (pRoll != NULL && pRoll->HasSelection()) {
+			pRoll->SaveSelectionAsClip();
+			return;
+		}
 		AfxMessageBox(_T("Select the rows to keep first: drag over them in the pattern editor, or hold Shift and use the ")
-			_T("arrow keys."), MB_OK | MB_ICONINFORMATION);
+			_T("arrow keys. In the piano roll, the Select tool selects notes."), MB_OK | MB_ICONINFORMATION);
 		return;
 	}
 	CClipNameDlg Dialog(_T("Save selection as clip"), _T("Name of the new clip:"),
@@ -1002,7 +1009,8 @@ void CFamiTrackerView::OnEditSaveClip()
 
 void CFamiTrackerView::OnUpdateEditSaveClip(CCmdUI *pCmdUI)
 {
-	pCmdUI->Enable(m_pPatternEditor->IsSelecting() ? 1 : 0);
+	CPianoRollWnd *pRoll = static_cast<CMainFrame*>(GetParentFrame())->GetPianoRollWnd();
+	pCmdUI->Enable(m_pPatternEditor->IsSelecting() || (pRoll != NULL && pRoll->HasSelection()) ? 1 : 0);
 }
 
 void CFamiTrackerView::OnEditClips()
