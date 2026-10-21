@@ -651,6 +651,7 @@
     <ClCompile Include="Source\Nsf\Study.cpp" />
     <ClCompile Include="Source\Nsf\Tracker.cpp" />
     <ClCompile Include="Source\Nsf\MidiFile.cpp" />
+    <ClCompile Include="Source\Nsf\FtmFile.cpp" />
     <ClCompile Include="Source\ImportNsfDlg.cpp" />
     <ClInclude Include="Source\Nsf\Cpu6502.h" />
     <ClInclude Include="Source\Nsf\NsfFile.h" />
@@ -663,6 +664,7 @@
     <ClInclude Include="Source\Nsf\Study.h" />
     <ClInclude Include="Source\Nsf\Tracker.h" />
     <ClInclude Include="Source\Nsf\MidiFile.h" />
+    <ClInclude Include="Source\Nsf\FtmFile.h" />
     <ClInclude Include="Source\ImportNsfDlg.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

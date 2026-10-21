@@ -1,7 +1,7 @@
 # The NSF importer: the library (a 6502, the sound chips' registers, the
-# player, the conversion to a FamiTracker module), the nsf2ftm tool and the
-# tests. Builds on Linux, macOS and Windows independently of the MFC
-# application:
+# player, the conversion to a FamiTracker module, and FamiTracker modules
+# read), the nsf2ftm and ftm2txt tools and the tests. Builds on Linux, macOS
+# and Windows independently of the MFC application:
 #   cmake -S Source/Nsf -B build/nsf
 #   cmake --build build/nsf --config Release
 #   ctest --test-dir build/nsf -C Release --output-on-failure
@@ -33,11 +33,16 @@ add_library(nsf STATIC
 	Study.cpp
 	Tracker.cpp
 	MidiFile.cpp
+	FtmFile.cpp
 )
 target_include_directories(nsf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(nsf2ftm tools/nsf2ftm.cpp)
 target_link_libraries(nsf2ftm PRIVATE nsf)
+
+# A FamiTracker module as FamiTracker's text, to compare with its own export
+add_executable(ftm2txt tools/ftm2txt.cpp)
+target_link_libraries(ftm2txt PRIVATE nsf)
 
 enable_testing()
 add_executable(nsf_tests tests/NsfTests.cpp)
@@ -46,3 +51,6 @@ add_test(NAME nsf_tests COMMAND nsf_tests)
 add_executable(tracker_tests tests/TrackerTests.cpp)
 target_link_libraries(tracker_tests PRIVATE nsf)
 add_test(NAME tracker_tests COMMAND tracker_tests)
+add_executable(ftm_tests tests/FtmTests.cpp)
+target_link_libraries(ftm_tests PRIVATE nsf)
+add_test(NAME ftm_tests COMMAND ftm_tests)
