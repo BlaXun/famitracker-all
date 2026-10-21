@@ -308,26 +308,10 @@ std::string ModuleReferenceId(const std::string &Title, const std::string &Forma
 
 namespace {
 void AddTechniqueTags(Reference &R);
-}
 
-Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStudy &Study, const std::string &Source,
-	const std::string &Date)
+// A study's sounds as the reference keeps them (the VRC7's patches aren't sequences: left out)
+void AddStudySounds(Reference &R, const nsf::TrackStudy &Study)
 {
-	Reference R;
-	R.Game = ValidUtf8(File.Title);
-	R.Composer = ValidUtf8(File.Artist);
-	R.Copyright = ValidUtf8(File.Copyright);
-	R.Track = Track + 1;
-	R.Id = ReferenceId(File.Title, R.Track);
-	R.Title = ValidUtf8(Study.Name.empty() ? Format("Track %d", R.Track) : Study.Name);
-	R.Source = Source;
-	R.Added = Date;
-	R.Chips = File.ChipNames();
-	R.Bpm = Study.Bpm;
-	R.Key = Study.Key;
-	R.LoopBars = Study.LoopBars;
-	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
-
 	for (size_t i = 0; i < Study.Sounds.size(); ++i) {
 		const nsf::StudySound &s = Study.Sounds[i];
 		if (s.Kind == nsf::INST_VRC7)
@@ -352,6 +336,41 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 		}
 		R.Sounds.push_back(Sd);
 	}
+}
+
+// Tags for the tempo, the mode and the chips
+void AddMusicTags(Reference &R)
+{
+	if (R.Bpm > 0)
+		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
+	if (Contains(R.Key, "minor"))
+		AddTag(R.Tags, "minor");
+	else if (Contains(R.Key, "major"))
+		AddTag(R.Tags, "major");
+	const std::vector<std::string> Chips = Words(R.Chips);
+	for (size_t i = 0; i < Chips.size(); ++i)
+		AddTag(R.Tags, Chips[i]);
+}
+}
+
+Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStudy &Study, const std::string &Source,
+	const std::string &Date)
+{
+	Reference R;
+	R.Game = ValidUtf8(File.Title);
+	R.Composer = ValidUtf8(File.Artist);
+	R.Copyright = ValidUtf8(File.Copyright);
+	R.Track = Track + 1;
+	R.Id = ReferenceId(File.Title, R.Track);
+	R.Title = ValidUtf8(Study.Name.empty() ? Format("Track %d", R.Track) : Study.Name);
+	R.Source = Source;
+	R.Added = Date;
+	R.Chips = File.ChipNames();
+	R.Bpm = Study.Bpm;
+	R.Key = Study.Key;
+	R.LoopBars = Study.LoopBars;
+	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
+	AddStudySounds(R, Study);
 
 	// Tags to find it by: the maker, the tempo, the mode, the chips and the techniques
 	const std::string Maker = Lowercase(File.Copyright + " " + File.Artist);
@@ -363,15 +382,39 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 		if (Want.find(' ') != std::string::npos ? Contains(Maker, MAKERS[i]) : std::find(In.begin(), In.end(), Want) != In.end())
 			AddTag(R.Tags, Want);
 	}
-	if (R.Bpm > 0)
-		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
-	if (Contains(R.Key, "minor"))
-		AddTag(R.Tags, "minor");
-	else if (Contains(R.Key, "major"))
-		AddTag(R.Tags, "major");
-	const std::vector<std::string> Chips = Words(R.Chips);
-	for (size_t i = 0; i < Chips.size(); ++i)
-		AddTag(R.Tags, Chips[i]);
+	AddMusicTags(R);
+	AddTechniqueTags(R);
+	return R;
+}
+
+Reference MakeFtmReference(const nsf::Module &M, int Track, const nsf::TrackStudy &Study, const std::string &Source,
+	const std::string &Date)
+{
+	Reference R;
+	std::string Name = Source.substr(Source.find_last_of("\\/") == std::string::npos ? 0 : Source.find_last_of("\\/") + 1);
+	if (Name.find('.') != std::string::npos)
+		Name = Name.substr(0, Name.find_last_of('.'));
+	R.Game = ValidUtf8(M.Title.empty() ? Name : M.Title);
+	R.Composer = ValidUtf8(M.Author);
+	R.Copyright = ValidUtf8(M.Copyright);
+	R.Track = Track + 1;
+	// A track keeps FamiTracker's name for a new one ("New song") when the module has one track: the module's title then
+	const std::string TrackName = Track >= 0 && Track < static_cast<int>(M.Tracks.size()) ? M.Tracks[static_cast<size_t>(Track)].Name : "";
+	R.Title = ValidUtf8(TrackName.empty() || (Lowercase(TrackName) == "new song" && M.Tracks.size() == 1) ? R.Game : TrackName);
+	R.Id = Slug(R.Game, "module") + "-ftm" + (M.Tracks.size() > 1 ? Format("-%02d", R.Track) : std::string());
+	R.Source = Source;
+	R.Added = Date;
+	static const char *const NAMES[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163" };
+	for (int i = 0; i < 5; ++i)
+		if (M.Expansion & (1 << i))
+			R.Chips += (R.Chips.empty() ? "" : ", ") + std::string(NAMES[i]);
+	R.Bpm = Study.Bpm;
+	R.Key = Study.Key;
+	R.LoopBars = Study.LoopBars;
+	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
+	AddStudySounds(R, Study);
+	AddTag(R.Tags, "famitracker");
+	AddMusicTags(R);
 	AddTechniqueTags(R);
 	return R;
 }

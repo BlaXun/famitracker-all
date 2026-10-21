@@ -41,6 +41,7 @@ namespace nsf {
 struct NsfFile;
 struct TrackStudy;
 struct TrackerSong;
+struct Module;
 }
 
 namespace ftapi {
@@ -94,6 +95,13 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 // General MIDI's)
 std::string ModuleReferenceId(const std::string &Title, const std::string &Format);
 Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStudy &Study, const std::string &Source,
+	const std::string &Date);
+
+// A reference from the study of track Track (from 0) of a FamiTracker module
+// (.ftm) at Source: its title (or the file's name) as the game, the track's
+// name as the title, its author as the composer, its chips, and its sounds
+// with their sequences as written, tagged "famitracker"
+Reference MakeFtmReference(const nsf::Module &M, int Track, const nsf::TrackStudy &Study, const std::string &Source,
 	const std::string &Date);
 
 // As the library keeps it: indented JSON

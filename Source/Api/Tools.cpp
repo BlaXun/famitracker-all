@@ -34,6 +34,7 @@
 #include "SoundEffects.h"
 #include "Effects.h"
 #include "Wavetables.h"
+#include "../Nsf/FtmFile.h"
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
@@ -9050,16 +9051,102 @@ std::string StudyNsfTool(Session &S, const Json &Args)
 	return Out + Left;
 }
 
-// A tracker module (MOD, S3M, XM, IT) studied from its pattern data, or a
-// MIDI file from its notes, kept in the library
+// A FamiTracker module (.ftm) studied a track at a time from its own
+// patterns and instruments, each kept in the library with its sounds
+std::string StudyFtm(Session &S, const Json &Args, const std::string &Path, const nsf::Module &M, const nsf::FtmInfo &Info)
+{
+	std::vector<int> Tracks;
+	std::string Error;
+	if (!nsf::ParseTrackList(StringArg(Args, "tracks"), static_cast<int>(M.Tracks.size()), Tracks, Error))
+		throw Problem("tracks: " + Error);
+	std::string Left;
+	if (static_cast<int>(Tracks.size()) > MAX_STUDIED) {
+		Left = Format(" %d more tracks weren't studied this time: name them with tracks (\"%d-%d\").",
+			static_cast<int>(Tracks.size()) - MAX_STUDIED, Tracks[MAX_STUDIED] + 1, Tracks.back() + 1);
+		Tracks.resize(MAX_STUDIED);
+	}
+	const bool Keep = BoolArg(Args, "save", true);
+	const std::vector<std::string> Tags = TagsArg(Args, "tags");
+	const std::string Notes = StringArg(Args, "notes");
+	const std::string Date = Today();
+	std::vector<Reference> Made;
+	std::string Folder;
+	for (size_t i = 0; i < Tracks.size(); ++i) {
+		const nsf::TrackStudy Study = nsf::StudyTrack(M, Tracks[i], nsf::FtmTrackReport(M, Info, Tracks[i]));
+		Reference R = MakeFtmReference(M, Tracks[i], Study, Path, Date);
+		if (Keep) {
+			// Studied again: what the user tagged and noted stays
+			std::string Old, Why;
+			Reference Before;
+			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why)) {
+				for (size_t t = 0; t < Before.Tags.size(); ++t)
+					if (std::find(R.Tags.begin(), R.Tags.end(), Before.Tags[t]) == R.Tags.end())
+						R.Tags.push_back(Before.Tags[t]);
+				R.Notes = Before.Notes;
+			}
+			for (size_t t = 0; t < Tags.size(); ++t)
+				if (std::find(R.Tags.begin(), R.Tags.end(), Tags[t]) == R.Tags.end())
+					R.Tags.push_back(Tags[t]);
+			if (!Notes.empty())
+				R.Notes = R.Notes.empty() ? Notes : R.Notes + " " + Notes;
+			std::string Written;
+			SaveReference(S, R, Written);
+			if (Folder.empty()) {
+				const size_t Slash = Written.find_last_of("\\/");
+				Folder = Slash == std::string::npos ? Written : Written.substr(0, Slash);
+			}
+		}
+		else if (!Notes.empty())
+			R.Notes = Notes;
+		Made.push_back(R);
+	}
+	if (Made.empty())
+		throw Problem("The module has no tracks to study.");
+	std::string Out = Format("FamiTracker module %s%s, %s:\n", M.Title.empty() ? "" : ("\"" + ValidUtf8(M.Title) + "\"").c_str(),
+		M.Author.empty() ? "" : (" by " + ValidUtf8(M.Author)).c_str(), Plural(static_cast<int>(M.Tracks.size()), "track", "tracks").c_str());
+	if (Made.size() <= 3) {
+		for (size_t i = 0; i < Made.size(); ++i)
+			Out += (i ? "\n" : "") + ReferenceText(Made[i]);
+	}
+	else {
+		for (size_t i = 0; i < Made.size(); ++i)
+			Out += "- " + ReferenceLine(Made[i]) + "\n";
+		Out += "references with action \"show\" and an id gives a whole study, with its sounds.";
+	}
+	if (!Info.Problems.empty()) {
+		Out += "\nRead with remarks:";
+		for (size_t i = 0; i < Info.Problems.size(); ++i)
+			Out += (i ? "; " : " ") + ValidUtf8(Info.Problems[i]);
+		Out += ".";
+	}
+	Out += Keep ? "\nKept in the reference library" + (Folder.empty() ? std::string() : " (" + Folder + ")") + ": references finds "
+		"them again, and reference_sound gives a song their sounds." : std::string("\nNot kept (save was false).");
+	Out += "\nTo write in its style: take its craft (the tempo and swing, how the channels share the parts, the echoes, the chords "
+		"as arpeggio instruments, the mix's volumes and the sounds' shapes), not its melodies or its exact progressions.";
+	return Out + Left;
+}
+
+// A tracker module (MOD, S3M, XM, IT) studied from its pattern data, a MIDI
+// file from its notes, or a FamiTracker module a track at a time, kept in the library
 std::string StudyModuleTool(Session &S, const Json &Args)
 {
 	const std::string Path = WindowsPath(StringArg(Args, "path"));
 	if (Path.empty())
-		throw Problem("Give the path of the module (\"path\"): a MOD, S3M, XM or IT file, or a MIDI file, on the user's computer, "
-			"as Windows writes it, like C:\\Users\\Name\\Music\\song.xm or song.mid.");
-	nsf::TrackerSong Song;
+		throw Problem("Give the path of the module (\"path\"): a MOD, S3M, XM or IT file, a MIDI file, or a FamiTracker module "
+			"(.ftm), on the user's computer, as Windows writes it, like C:\\Users\\Name\\Music\\song.xm or song.ftm.");
 	std::string Error;
+	{
+		// A FamiTracker module of its own: by its name, else by what it starts with
+		const std::string Local = S.Host().LocalPath(Path);
+		nsf::Module M;
+		nsf::FtmInfo Info;
+		const bool Named = Lowercase(Path).size() > 4 && Lowercase(Path).substr(Lowercase(Path).size() - 4) == ".ftm";
+		if (nsf::ReadFtmFile(Local, M, Info, Error))
+			return StudyFtm(S, Args, Path, M, Info);
+		if (Named)
+			throw Problem("The FamiTracker module " + Path + " couldn't be read: " + Error + ".");
+	}
+	nsf::TrackerSong Song;
 	if (!nsf::ReadTrackerFile(S.Host().LocalPath(Path), Song, Error))
 		throw Problem("The file " + Path + " couldn't be read: " + Error + ". Give the path of a MOD, S3M, XM or IT file, or a "
 			"MIDI file, as Windows writes it.");
@@ -10093,12 +10180,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"grooves (drums told by their instruments' names, or General MIDI's drum keys), the tricks between channels and the "
 		"techniques written into the patterns (arpeggios, vibrato, portamento, volume slides). A MIDI file's parts become "
 		"channels of a note at a time (a piano's chords spread over several), named after its tracks or its General MIDI "
-		"instruments, and its bars follow its meter (3/4, 6/8...). Use it when the user wants music like a module or MIDI file "
-		"of theirs: the study is for writing something of your own in its style, never a copy of its notes, and its many "
-		"channels boil down to the NES's few.",
+		"instruments, and its bars follow its meter (3/4, 6/8...). A FamiTracker module (.ftm, 0.2 to 0.4.6) is studied a "
+		"track at a time from its own patterns and instruments, as written: its speed and tempo (and a swing or lilt from "
+		"speeds that alternate), its echoes (also an echo in places), chords as arpeggio instruments, delays (Gxx), duty "
+		"changes (Vxx), detune (Pxx), the DPCM level (Zxx), each channel's volumes, and its sounds with their sequences, which "
+		"reference_sound brings into a song. Use it when the user wants music like a module or MIDI file of theirs: the study "
+		"is for writing something of your own in its style, never a copy of its notes, and a module's many channels boil "
+		"down to the NES's few.",
 		Schema()
-			.Add("path", Prop("string", "The module or MIDI file, as Windows writes it: C:\\Users\\Name\\Music\\song.xm or "
-				"song.mid."), true)
+			.Add("path", Prop("string", "The module or MIDI file, as Windows writes it: C:\\Users\\Name\\Music\\song.xm, "
+				"song.mid or song.ftm."), true)
+			.Add("tracks", Prop("string", "A FamiTracker module's tracks: numbers from 1 like \"1,3-5\" (default all, at most 24)."))
 			.Add("tags", WordListProp("Words to find it by later, like [\"chiptune\", \"upbeat\"]."))
 			.Add("notes", Prop("string", "A note to keep with it, like \"the user wants a NES track that feels like this\"."))
 			.Add("save", Prop("boolean", "Keep it in the library (default true).")),

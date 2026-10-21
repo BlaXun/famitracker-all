@@ -60,7 +60,9 @@ struct TrackReport {
 	int Dropped;			// notes too short to keep, on a row another note took
 	std::vector<std::string> Channels;	// "Pulse 1: 120 notes, lead", ...
 	std::vector<std::string> Problems;
-	TrackReport() : TicksPerRow(0), RowsPerBeat(4), BeatsPerBar(4), FirstBarRow(-1), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Notes(0), Delayed(0), Dropped(0) {}
+	bool Written;			// a FamiTracker module's own track: its tempo is the speed and tempo written in it
+	TrackReport() : TicksPerRow(0), RowsPerBeat(4), BeatsPerBar(4), FirstBarRow(-1), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Notes(0), Delayed(0), Dropped(0),
+		Written(false) {}
 };
 
 struct ConvertReport {

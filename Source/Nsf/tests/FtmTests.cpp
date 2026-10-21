@@ -33,6 +33,7 @@
 #include "../Module.h"
 #include "../Study.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -1261,6 +1262,46 @@ void TestBroken()
 
 }	// namespace
 
+// The vibrato style and split point kept and written; a track's tempo and
+// beat for the study, from its speed, tempo and highlights
+void TestSettingsAndReport()
+{
+	auto Make = [](int Vibrato, int Split, int First, int Second, int Speed, int Tempo) {
+		Writer w;
+		Params(w, 0, 5, 0, 0, Vibrato, 1, Split, First, Second);
+		Info(w, "Settings", "", "");
+		Header(w, { "Main" }, { { 0, 0, 0, 0, 0 } });
+		w.Begin("INSTRUMENTS", 6).Int(0).End();
+		Sequences6(w, "SEQUENCES", std::vector<Seq>());
+		Frames3(w, { { Speed, Tempo, 64, { { 0, 0, 0, 0, 0 } } } });
+		w.Begin("PATTERNS", 5).End();
+		return w.Finish();
+	};
+	Module M;
+	FtmInfo Info;
+	std::string Error;
+	CHECK(ParseFtm(Make(0, 21, 8, 32, 3, 150), M, Info, Error));
+	CHECK(M.VibratoStyle == 0 && M.SplitPoint == 21);
+	CHECK(Has(WriteText(M), "VIBRATO         0\nSPLIT           21\n"));
+	// Speed 3 at tempo 150 is 1200 rows a minute: a beat of 8 rows, as the highlight says, is 150 BPM
+	TrackReport R = FtmTrackReport(M, Info, 0);
+	CHECK(R.Written && R.Speed == 3 && R.Tempo == 150 && R.RowsPerBeat == 8 && R.BeatsPerBar == 4 && R.FirstBarRow == 0);
+	CHECK(std::fabs(R.Bpm - 150.0) < 0.01 && std::fabs(R.TicksPerRow - 3.0) < 0.01);
+	// A highlight every 4 rows there would make 300 BPM: a beat of 8 rows instead
+	CHECK(ParseFtm(Make(1, 32, 4, 16, 3, 150), M, Info, Error));
+	R = FtmTrackReport(M, Info, 0);
+	CHECK(R.RowsPerBeat == 8 && std::fabs(R.Bpm - 150.0) < 0.01 && M.VibratoStyle == 1 && M.SplitPoint == 32);
+	// Bars of three beats when the second highlight is three of the first
+	CHECK(ParseFtm(Make(1, 32, 4, 12, 6, 150), M, Info, Error));
+	R = FtmTrackReport(M, Info, 0);
+	CHECK(R.RowsPerBeat == 4 && R.BeatsPerBar == 3 && std::fabs(R.Bpm - 150.0) < 0.01);
+	// Slow: speed 12 is 75 BPM at 4 rows a beat; a track that isn't there gives the defaults
+	CHECK(ParseFtm(Make(1, 32, 4, 16, 12, 150), M, Info, Error));
+	R = FtmTrackReport(M, Info, 0);
+	CHECK(R.RowsPerBeat == 4 && std::fabs(R.Bpm - 75.0) < 0.01);
+	CHECK(FtmTrackReport(M, Info, 5).Written && FtmTrackReport(M, Info, 5).Bpm == 0);
+}
+
 int main(int argc, char **argv)
 {
 	// With a folder: the modules built here written to it, to look at
@@ -1287,6 +1328,7 @@ int main(int argc, char **argv)
 	TestOldFdsInstruments();
 	TestOtherFiles();
 	TestBroken();
+	TestSettingsAndReport();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures ? 1 : 0;
 }

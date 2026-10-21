@@ -97,9 +97,15 @@ of MOD, S3M, XM and IT files (never their samples), and
 `Source/Nsf/MidiFile.cpp` the notes of MIDI files (each part on channels of a
 note at a time, the drums a channel per kind, the meter kept so the study
 counts its bars), into a module of one track whose channels are its own
-(`Module::ChannelNames` and `ChannelKinds`), which only a study reads. `nsf2ftm`
-(`Source/Nsf/tools`) runs the importer from a command line, studies
-modules with `-study`, and ships next to FamiTracker.exe.
+(`Module::ChannelNames` and `ChannelKinds`), which only a study reads.
+FamiTracker's own modules are read by `Source/Nsf/FtmFile.cpp` as 0.4.6's
+`OpenDocumentNew` reads them (every block version, with its conversions for
+old files, every read checked against its block), into a `Module` that
+`WriteText` writes as File > Export text does; `study_module` studies each
+track (`FtmTrackReport` gives its tempo and beat) and keeps its sounds.
+`nsf2ftm` (`Source/Nsf/tools`) runs the importer from a command line, studies
+modules with `-study`, and ships next to FamiTracker.exe; `ftm2txt` writes a
+module's text.
 
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the
@@ -502,7 +508,7 @@ NSF export still uses the 2A03 driver. Touch points:
   must account for it.
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 64 never include it: all of `APU/`, `Api/`, `Nsf/`
+  standard headers), and 65 never include it: all of `APU/`, `Api/`, `Nsf/`
   and `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
   `McpSocket.cpp`, `TutorialScript.cpp`, `resampler/`, `ExportTest/` and the
   `CustomExporter*` files. Turning PCH on breaks them.

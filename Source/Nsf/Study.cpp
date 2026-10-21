@@ -114,17 +114,31 @@ struct Played {
 	int Length;			// rows until the channel's next event
 	bool Sweep;			// Hxy or Ixy
 	// Effects written in the patterns while it plays (tracker modules')
-	bool Vibrato, Glide, Bend, Fade, Tremolo;	// 4xy, 3xx, 1xx or 2xx, Axy, 7xy
+	bool Vibrato, Glide, Bend, Fade, Tremolo;	// 4xy, 3xx, 1xx, 2xx, Qxy or Rxy, Axy, 7xy
+	// and FamiTracker modules' own
+	bool Delayed;		// Gxx: started a few frames after its row
+	int Fine;			// Pxx in effect, 0x80 in tune
+	bool DutyCmd;		// a Vxx on its row
 	Played() : Row(0), Note(0), Inst(-1), Volume(15), Arp(0), Duty(-1), Cut(0), Length(1), Sweep(false), Vibrato(false), Glide(false),
-		Bend(false), Fade(false), Tremolo(false) {}
+		Bend(false), Fade(false), Tremolo(false), Delayed(false), Fine(0x80), DutyCmd(false) {}
 };
 
-// Each channel's notes, rows in playing order up to the end or the loop's end
-std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, int &TotalRows, int &LoopRow)
+// What a track's rows do besides the notes, in playing order
+struct TrackUse {
+	std::vector<std::pair<int, int> > Speeds;	// a row, and the speed (ticks a row) it sets with Fxx
+	std::map<int, int> Dac;						// Zxx levels written, and how often
+	std::vector<int> FrameRows;					// each row's place in its frame (beats count from a frame's start)
+};
+
+// Each channel's notes, rows in playing order up to the end or the loop's end.
+// Wraps: the track plays its frames again from the first after its last, as
+// FamiTracker does (a module's own track), rather than ending there.
+std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, int &TotalRows, int &LoopRow, bool Wraps, TrackUse &Use)
 {
 	const int Columns = M.ChannelCount();
 	std::vector<std::vector<Played> > Out(Columns);
-	std::vector<int> Inst(Columns, -1), Volume(Columns, 15), Arp(Columns, 0), Duty(Columns, -1);
+	std::vector<int> Inst(Columns, -1), Volume(Columns, 15), Arp(Columns, 0), Duty(Columns, -1), Fine(Columns, 0x80);
+	Use = TrackUse();
 	std::vector<bool> Sounding(Columns, false);
 	TotalRows = 0;
 	LoopRow = -1;
@@ -137,10 +151,12 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 		for (int r = 0; r < T.PatternLength; ++r) {
 			bool EndRow = false;
 			const int Row = TotalRows + r;
+			Use.FrameRows.push_back(r);
 			for (int c = 0; c < Columns; ++c) {
 				const Cell &Cl = T.Patterns[c][T.Frames[f][c]][r];
 				int Cut = 0;
-				bool Sweep = false, Vibrato = false, Glide = false, Bend = false, Fade = false, Tremolo = false;
+				bool Sweep = false, Vibrato = false, Glide = false, Bend = false, Fade = false, Tremolo = false, Delayed = false,
+					DutyCmd = false;
 				for (int e = 0; e < MAX_EFFECTS; ++e) {
 					const Effect &x = Cl.Effects[e];
 					switch (x.Letter) {
@@ -148,14 +164,22 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 						case 'B': EndRow = true; Jump = x.Param; break;
 						case 'C': EndRow = true; Stop = true; break;
 						case '0': Arp[c] = x.Param; break;
-						case 'V': Duty[c] = x.Param; break;
+						case 'V': Duty[c] = x.Param; DutyCmd = true; break;
 						case 'S': Cut = x.Param; break;
 						case 'H': case 'I': Sweep = true; break;
 						case '4': Vibrato = (x.Param & 15) != 0; break;
 						case '3': Glide = x.Param != 0; break;
 						case '1': case '2': Bend = x.Param != 0; break;
+						case 'Q': case 'R': Bend = (x.Param & 15) != 0; break;
 						case 'A': Fade = x.Param != 0; break;
 						case '7': Tremolo = (x.Param & 15) != 0; break;
+						case 'G': Delayed = x.Param > 0; break;
+						case 'P': Fine[c] = x.Param; break;
+						case 'Z': ++Use.Dac[x.Param]; break;
+						case 'F':
+							if (x.Param > 0 && x.Param < M.SplitPoint)
+								Use.Speeds.push_back(std::make_pair(Row, x.Param));
+							break;
 						default: break;
 					}
 				}
@@ -191,6 +215,9 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 				p.Length = -1;
 				p.Sweep = Sweep;
 				p.Glide = Glide && Sounding[c];		// slid into from the note before (3xx)
+				p.Delayed = Delayed;
+				p.Fine = Fine[c];
+				p.DutyCmd = DutyCmd;
 				Mark(p);
 				Out[c].push_back(p);
 				Sounding[c] = true;
@@ -207,6 +234,8 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 		}
 		if (Stop)
 			break;
+		if (Wraps && f + 1 == T.Frames.size())
+			LoopRow = 0;
 	}
 	for (int c = 0; c < Columns; ++c)
 		if (!Out[c].empty() && Out[c].back().Length < 0)
@@ -1012,6 +1041,74 @@ std::string DescribeSound(const Macro Macros[SEQ_TYPES], bool Vrc6, int Note, bo
 	return Join(w, "; ");
 }
 
+// The speeds a track's Fxx set, in words, when the rows where they change
+// follow a pattern that repeats every few rows: 4 4 2 2 is a swing (long
+// rows, then short ones, half a beat each), 3 4 a tempo between speeds 3 and
+// 4. "" when the speed seldom changes, or not in a pattern.
+std::string SpeedPattern(const TrackUse &Use, int TotalRows, int Start, int RowsPerBeat)
+{
+	const std::vector<std::pair<int, int> > &Speeds = Use.Speeds;
+	if (Speeds.size() < 8 || TotalRows <= 0 || int(Use.FrameRows.size()) < TotalRows)
+		return "";
+	// Each row's speed, in playing order
+	std::vector<int> Ticks(size_t(TotalRows), Start);
+	size_t k = 0;
+	int Now = Start;
+	for (int r = 0; r < TotalRows; ++r) {
+		while (k < Speeds.size() && Speeds[k].first <= r)
+			Now = Speeds[k++].second;
+		Ticks[size_t(r)] = Now;
+	}
+	const int First = std::max(0, Speeds.front().first), Last = std::min(TotalRows, Speeds.back().first + 1);
+	const int Span = Last - First;
+	if (Span < 16 || Span * 4 < TotalRows)
+		return "";	// only in a short part of the track
+	for (int P = 2; P <= 2 * RowsPerBeat && P <= 16; ++P) {
+		// The commonest speed at each place in the pattern, counted from each frame's start as its beats
+		// are, and how many rows keep to it
+		std::vector<std::map<int, int> > At(static_cast<size_t>(P));
+		for (int r = First; r < Last; ++r)
+			++At[size_t(Use.FrameRows[size_t(r)] % P)][Ticks[size_t(r)]];
+		std::vector<int> From(static_cast<size_t>(P), Start);
+		int Match = 0;
+		for (int q = 0; q < P; ++q) {
+			int Best = 0;
+			for (std::map<int, int>::const_iterator it = At[size_t(q)].begin(); it != At[size_t(q)].end(); ++it)
+				if (it->second > Best) {
+					Best = it->second;
+					From[size_t(q)] = it->first;
+				}
+			Match += Best;
+		}
+		const std::set<int> Distinct(From.begin(), From.end());
+		if (Distinct.size() < 2 || Match * 100 < Span * 85)
+			continue;
+		std::string Text;
+		int Total = 0;
+		for (int i = 0; i < P; ++i) {
+			Text += (i ? " " : "") + Format("%d", From[size_t(i)]);
+			Total += From[size_t(i)];
+		}
+		const std::string Share = Percent(Span, TotalRows);
+		// Long rows for half the pattern, then short ones: a swing
+		const int Half = P / 2;
+		bool Halves = P % 2 == 0;
+		for (int i = 1; i < P && Halves; ++i)
+			Halves = From[size_t(i)] == From[size_t(i < Half ? 0 : Half)];
+		const char *Unit = P == RowsPerBeat ? "eighths" : P * 2 == RowsPerBeat ? "sixteenths" : 0;
+		if (Halves && Unit && From[0] != From[size_t(Half)]) {
+			const int Long = From[0], Short = From[size_t(Half)];
+			const int Swing = int(100.0 * Long / (Long + Short) + 0.5);
+			return Format("a swing on the %s from speeds that alternate (Fxx: %s ticks a row, then %d), so the off-beats come %s "
+				"(a %d%% swing, through %s of the track)", Unit, Format("%d", Long).c_str(), Short, Long > Short ? "late" : "early",
+				Swing, Share.c_str());
+		}
+		return Format("speeds that repeat in a pattern of %s (Fxx: %s), %.3g ticks a row on average: a tempo between two speeds, "
+			"with a lilt (through %s of the track)", Count(P, "row", "rows").c_str(), Text.c_str(), double(Total) / P, Share.c_str());
+	}
+	return "";
+}
+
 TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report)
 {
 	TrackStudy S;
@@ -1024,13 +1121,14 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	S.BeatsPerBar = Report.BeatsPerBar > 0 ? Report.BeatsPerBar : 4;
 	S.Meter = Report.Meter;
 	S.TicksPerRow = Report.TicksPerRow;
-	S.Tracker = !M.ChannelKinds.empty();
+	S.Tracker = !M.ChannelKinds.empty() || Report.Written;
 	S.Speed = Report.Speed;
 	S.Tempo = Report.Tempo;
 	const std::vector<int> Kinds = ColumnKinds(M);
 	const std::vector<std::string> Names = ChannelNamesOf(M);
 	int TotalRows = 0, LoopRow = -1;
-	const std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow);
+	TrackUse Use;
+	const std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow, Report.Written, Use);
 	const int RowsPerBar = S.RowsPerBeat * S.BeatsPerBar;
 	const int Columns = int(Notes.size());
 	const int StepsPerBeat = StepsInBeat(S.RowsPerBeat, S.BeatsPerBar), Steps = StepsPerBeat * S.BeatsPerBar;
@@ -1242,7 +1340,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	// Echoes: a channel that repeats another a little later. The lead is the
 	// one echoed, not its echo.
 	struct EchoFound { int Echoer, Source, Delay, Hits; };
-	std::vector<EchoFound> Echoes;
+	std::vector<EchoFound> Echoes, InPlaces;	// echoes, and parts that echo another some of the time
 	for (int a = 0; a < Columns; ++a)
 		for (int b = a + 1; b < Columns; ++b) {
 			if (!Melodic(Kinds[a]) || !Melodic(Kinds[b]) || Notes[a].size() < 8 || Notes[b].size() < 8)
@@ -1268,6 +1366,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			}
 			if (Best.Hits * 2 >= int(Notes[Best.Echoer].size()))
 				Echoes.push_back(Best);
+			else if (Best.Hits * 10 >= int(Notes[Best.Echoer].size()) * 3 && Best.Hits >= 16)
+				InPlaces.push_back(Best);
 		}
 	for (size_t i = 0; i < Echoes.size(); ++i)
 		if (Echoes[i].Echoer == Lead)
@@ -1276,7 +1376,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	// --- Each channel: its role, register, rhythm and intervals, and its sounds ---
 	struct Traits { int Notes = 0, Click = 0, Bloom = 0, Swell = 0, Echo = 0, Restrike = 0, Stepped = 0, Pluck = 0, Scoop = 0,
 		Fall = 0, Vibrato = 0, Flick = 0, Chord = 0, Arp = 0, Cut = 0, Sweep = 0, Thump = 0, Tremolo = 0,
-		PatVibrato = 0, Glide = 0, Bend = 0, Fade = 0, PatTremolo = 0; };	// the last: effects written in the patterns
+		PatVibrato = 0, Glide = 0, Bend = 0, Fade = 0, PatTremolo = 0, Delayed = 0, Detuned = 0, DutyCmd = 0; };
+		// the last: effects written in the patterns
 	struct MacroSet { Macro M[SEQ_TYPES]; };
 	std::vector<Traits> Tr(Columns);
 	std::vector<std::string> Roles(Columns);
@@ -1344,6 +1445,9 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			t.Bend += p.Bend;
 			t.Fade += p.Fade;
 			t.PatTremolo += p.Tremolo;
+			t.Delayed += p.Delayed;
+			t.Detuned += p.Fine != 0x80 && p.Fine != 0;
+			t.DutyCmd += p.DutyCmd && Kinds[c] == C_PULSE;
 			const Instrument *I = Instr(p.Inst);
 			if (!I)
 				continue;
@@ -1495,7 +1599,18 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		if (t.Glide * 10 >= t.Notes)
 			Line += Format("; %s of its notes glide in from the one before (3xx)", Percent(t.Glide, t.Notes).c_str());
 		if (t.Bend * 10 >= t.Notes)
-			Line += Format("; pitch slides on %s of its notes (1xx, 2xx)", Percent(t.Bend, t.Notes).c_str());
+			Line += Format("; pitch slides on %s of its notes (1xx, 2xx, Qxy, Rxy)", Percent(t.Bend, t.Notes).c_str());
+		if (t.Chord * 10 >= t.Notes && t.Arp * 5 < t.Notes)
+			Line += Format("; %s of its notes are chords from arpeggio instruments (the chord's notes looping)",
+				Percent(t.Chord, t.Notes).c_str());
+		if (t.Delayed * 20 >= t.Notes && t.Delayed >= 4)
+			Line += Format("; %s of its notes start a few frames after their row (Gxx)", Percent(t.Delayed, t.Notes).c_str());
+		if (t.Detuned * 10 >= t.Notes && t.Detuned >= 4)
+			Line += Format("; %s of its notes a little off true pitch (Pxx), a chorus against another part",
+				Percent(t.Detuned, t.Notes).c_str());
+		if (t.DutyCmd * 10 >= t.Notes && t.DutyCmd >= 4)
+			Line += Format("; its duty changed note by note on %s of its notes (Vxx), so the timbre moves through the phrase",
+				Percent(t.DutyCmd, t.Notes).c_str());
 		if (t.Fade * 10 >= t.Notes)
 			Line += Format("; volume slides on %s of its notes (Axy)", Percent(t.Fade, t.Notes).c_str());
 		if (t.PatTremolo * 10 >= t.Notes)
@@ -1640,6 +1755,12 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		PairTricks.push_back(Format("an echo: %s repeats %s's notes %s later (%s of its notes)", Names[e.Echoer].c_str(),
 			Names[e.Source].c_str(), Count(e.Delay, "row", "rows").c_str(), Percent(e.Hits, int(Notes[e.Echoer].size())).c_str()));
 	}
+	for (size_t i = 0; i < InPlaces.size(); ++i) {
+		const EchoFound &e = InPlaces[i];
+		PairTricks.push_back(Format("an echo in places: %s repeats %s's notes %s later in some sections, and plays a part of its own "
+			"in others (%s of its notes)", Names[e.Echoer].c_str(), Names[e.Source].c_str(), Count(e.Delay, "row", "rows").c_str(),
+			Percent(e.Hits, int(Notes[e.Echoer].size())).c_str()));
+	}
 	for (int a = 0; a < Columns; ++a) {
 		for (int b = a + 1; b < Columns; ++b) {
 			if (!Melodic(Kinds[a]) || !Melodic(Kinds[b]) || Notes[a].size() < 8 || Notes[b].size() < 8)
@@ -1747,6 +1868,24 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	std::sort(Tricks.begin(), Tricks.end(), [](const Trick &a, const Trick &b) { return a.Notes > b.Notes; });
 	for (size_t i = 0; i < Tricks.size(); ++i)
 		S.Tricks.push_back(Tricks[i].Words);
+	{
+		// Speeds set in a pattern that repeats (Fxx): a swing, or a tempo between two speeds
+		const std::string Speeds = SpeedPattern(Use, TotalRows, std::max(1, T.Speed), S.RowsPerBeat);
+		if (!Speeds.empty())
+			S.Tricks.push_back(Speeds);
+		// The DPCM level written (Zxx), which softens the triangle and the noise
+		int Levels = 0, Most = 0, Level = 0;
+		for (std::map<int, int>::const_iterator it = Use.Dac.begin(); it != Use.Dac.end(); ++it) {
+			Levels += it->first > 0 ? it->second : 0;
+			if (it->first > 0 && it->second > Most) {
+				Most = it->second;
+				Level = it->first;
+			}
+		}
+		if (Levels >= 4)
+			S.Tricks.push_back(Format("the DPCM level set with Zxx, mostly Z%02X (%d times), so the triangle and the noise play "
+				"softer", Level, Levels));
+	}
 	if (PairTricks.size() > 8)
 		PairTricks.resize(8);		// many channels (a tracker module's): the first found
 	S.Tricks.insert(S.Tricks.end(), PairTricks.begin(), PairTricks.end());

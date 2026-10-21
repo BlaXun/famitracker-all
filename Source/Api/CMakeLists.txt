@@ -105,6 +105,7 @@ add_library(ftapi STATIC
 	${NSF}/Study.cpp
 	${NSF}/Tracker.cpp
 	${NSF}/MidiFile.cpp
+	${NSF}/FtmFile.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ftapi PUBLIC xiph)

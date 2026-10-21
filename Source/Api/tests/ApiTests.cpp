@@ -1758,6 +1758,71 @@ void WriteTestMod(const std::string &Path)
 }
 
 // A MIDI file of a waltz: 150 BPM in 3/4, eight bars of a flute, a bass and drums
+// A FamiTracker 0.4.6 module, written block by block as CDocumentFile writes
+// one: a melody on Pulse 1 (a 12.5% click into 50%), its echo 2 rows later on
+// Pulse 2 at volume 4, a bass on the triangle, a swing from speeds 6 and 3,
+// and the DPCM level Z30 every bar
+void WriteTestFtm(const std::string &Path)
+{
+	std::string B;
+	size_t SizeAt = 0;
+	auto U8 = [&](int v) { B += char(v & 0xFF); };
+	auto Int = [&](long v) { for (int i = 0; i < 4; ++i) U8(int((static_cast<unsigned long>(v) >> (8 * i)) & 0xFF)); };
+	auto Fixed = [&](const std::string &s, size_t n) { for (size_t i = 0; i < n; ++i) U8(i < s.size() ? s[i] : 0); };
+	auto Begin = [&](const char *Id, int Version) { Fixed(Id, 16); Int(Version); SizeAt = B.size(); Int(0); };
+	auto End = [&]() {
+		const unsigned long Size = static_cast<unsigned long>(B.size() - SizeAt - 4);
+		for (int i = 0; i < 4; ++i)
+			B[SizeAt + static_cast<size_t>(i)] = char((Size >> (8 * i)) & 0xFF);
+	};
+	B = "FamiTracker Module";
+	Int(0x0440);
+	Begin("PARAMS", 6); U8(0); Int(5); Int(0); Int(0); Int(1); Int(4); Int(16); Int(32); End();
+	Begin("INFO", 1); Fixed("Api Swing", 32); Fixed("Tester", 32); Fixed("2026", 32); End();
+	Begin("HEADER", 3); U8(0); B += std::string("New song") + '\0';
+	for (int c = 0; c < 5; ++c) { U8(c); U8(c == 4 ? 1 : 0); }
+	End();
+	Begin("INSTRUMENTS", 6); Int(1); Int(0); U8(1); Int(5);
+	U8(1); U8(0); U8(0); U8(0); U8(0); U8(0); U8(0); U8(0); U8(1); U8(1);	// volume 0, duty 1
+	for (int k = 0; k < 96; ++k) { U8(0); U8(0); U8(0xFF); }
+	Int(4); B += "Lead";
+	End();
+	Begin("SEQUENCES", 6); Int(2);
+	Int(0); Int(0); U8(6); Int(-1); U8(15); U8(13); U8(12); U8(11); U8(10); U8(8);	// volume
+	Int(1); Int(4); U8(2); Int(-1); U8(0); U8(2);										// duty: a 12.5% click into 50%
+	Int(-1); Int(0); Int(-1); Int(0);
+	End();
+	Begin("FRAMES", 3); Int(2); Int(6); Int(150); Int(64);
+	for (int f = 0; f < 2; ++f) for (int c = 0; c < 5; ++c) U8(0);
+	End();
+	Begin("PATTERNS", 5);
+	// Pulse 1: a note every 4 rows; Pulse 2: the same 2 rows later, soft; the triangle: a note a bar
+	static const int MELODY[16] = { 1, 5, 8, 12, 10, 8, 5, 3, 1, 3, 5, 6, 8, 6, 5, 3 };
+	for (int c = 0; c < 3; ++c) {
+		const int Count = c == 2 ? 4 : 16;
+		Int(0); Int(c); Int(0); Int(Count);
+		for (int i = 0; i < Count; ++i) {
+			Int(c == 2 ? i * 16 : i * 4 + (c == 1 ? 2 : 0));
+			U8(c == 2 ? (i % 2 == 0 ? 1 : 8) : MELODY[i]); U8(c == 2 ? 2 : 4); U8(0); U8(c == 1 ? 4 : 0x10);
+			U8(0); U8(0);
+		}
+	}
+	// DPCM: the swing (F06 on the beat, F03 half a beat later) and Z30 every bar
+	Int(0); Int(4); Int(0); Int(32);
+	for (int r = 0; r < 64; r += 2) {
+		Int(r); U8(0); U8(0); U8(0x40); U8(0x10);
+		U8(1); U8(r % 4 == 0 ? 6 : 3);
+		U8(r % 16 == 0 ? 15 : 0); U8(r % 16 == 0 ? 0x30 : 0);
+	}
+	End();
+	B += "END";
+	FILE *f = std::fopen(Path.c_str(), "wb");
+	if (f) {
+		std::fwrite(B.data(), 1, B.size(), f);
+		std::fclose(f);
+	}
+}
+
 void WriteTestMidi(const std::string &Path)
 {
 	struct Ev { unsigned long Tick; int Order; std::vector<uint8_t> Data; };
@@ -1990,6 +2055,40 @@ void TestReferences()
 	std::remove("untitled waltz.mid");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"api-waltz-midi\"}").Text, "Deleted the reference");
 	std::remove(MidiPath.c_str());
+
+	// study_module: a FamiTracker module, studied from its own patterns and instruments, kept with its sounds
+	const std::string FtmPath = "api_tests_study.ftm";
+	WriteTestFtm(FtmPath);
+	Result = Run(Song, "study_module", "{\"path\": \"" + FtmPath + "\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "FamiTracker module \"Api Swing\" by Tester, 1 track:");
+	CHECK_HAS(Result.Text, "Reference \"api-swing-ftm\"");
+	CHECK_HAS(Result.Text, "(speed 6, tempo 150); a loop of 8 bars");
+	CHECK_HAS(Result.Text, "a swing on the eighths from speeds that alternate (Fxx: 6 ticks a row, then 3), so the off-beats come late "
+		"(a 67% swing");
+	CHECK_HAS(Result.Text, "an echo: Pulse 2 repeats Pulse 1's notes 2 rows later");
+	CHECK_HAS(Result.Text, "the DPCM level set with Zxx, mostly Z30");
+	CHECK_HAS(Result.Text, "50% duty after a 12.5% click");
+	CHECK_HAS(Result.Text, "reference_sound gives a song their sounds");
+	CHECK(ReadReferenceFile(Song.Library["api-swing-ftm.json"], Kept, Error));
+	CHECK(!Kept.Sounds.empty() && Kept.Game == "Api Swing" && Kept.Title == "Api Swing" && Kept.Composer == "Tester" && Kept.Track == 1);
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "famitracker") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "echo-channel") != Kept.Tags.end());
+	CHECK(!Run(Song, "reference_sound", "{\"reference\": \"api-swing-ftm\"}").IsError);
+	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"" + FtmPath + "\", \"tracks\": \"3\"}").Text, "tracks:");
+	{
+		// A module cut short says why
+		FILE *f = std::fopen("api_tests_broken.ftm", "wb");
+		if (f) {
+			std::fwrite("FamiTracker Module\x40\x04\x00\x00PARAMS", 1, 28, f);
+			std::fclose(f);
+		}
+		CHECK_HAS(Run(Song, "study_module", "{\"path\": \"api_tests_broken.ftm\"}").Text, "The FamiTracker module api_tests_broken.ftm "
+			"couldn't be read");
+		std::remove("api_tests_broken.ftm");
+	}
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"api-swing-ftm\"}").Text, "Deleted the reference");
+	std::remove(FtmPath.c_str());
 
 	// delete
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"tester-song-01\"}").Text, "Deleted the reference tester-song-01");

@@ -40,6 +40,7 @@
 // as Windows-1252 (FamiTracker writes it in the Windows code page) into
 // UTF-8.
 
+#include "Convert.h"
 #include "Module.h"
 
 #include <cstdint>
@@ -69,5 +70,11 @@ bool IsFtm(const std::vector<uint8_t> &Bytes);
 // reads or is damaged
 bool ParseFtm(const std::vector<uint8_t> &Bytes, Module &Out, FtmInfo &Info, std::string &Error);
 bool ReadFtmFile(const std::string &Path, Module &Out, FtmInfo &Info, std::string &Error);
+
+// Track Track (from 0) as the study takes it (Study.h): its name, its tempo
+// from the speed and tempo it starts with (rows a minute are 24 * tempo /
+// speed, at the module's frame rate), its beat and bar from the row
+// highlights the composer set (4 and 16 unless they say otherwise)
+TrackReport FtmTrackReport(const Module &M, const FtmInfo &Info, int Track);
 
 }	// namespace nsf

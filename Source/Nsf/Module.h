@@ -138,6 +138,8 @@ struct Module {
 	int FrameRate;			// engine speed, 0 for the machine's
 	int Expansion;			// expansion_t
 	int N163Channels;
+	int VibratoStyle;		// 1: 4xy bends up and down (0.3.5 on), 0: down only, as old modules play it
+	int SplitPoint;			// Fxx below it set the speed, from it the tempo (32; 21 in modules before 0.4.0)
 	std::vector<Macro> Macros[3][SEQ_TYPES];	// [macro_chip][type]
 	std::vector<std::vector<uint8_t> > Samples;
 	std::vector<std::string> SampleNames;
@@ -149,7 +151,7 @@ struct Module {
 	std::vector<std::string> ChannelNames;
 	std::vector<int> ChannelKinds;
 
-	Module() : Machine(0), FrameRate(0), Expansion(EXP_NONE), N163Channels(0) {}
+	Module() : Machine(0), FrameRate(0), Expansion(EXP_NONE), N163Channels(0), VibratoStyle(1), SplitPoint(32) {}
 	int ChannelCount() const;
 	// The macro's index in its chip's list, added when it's new
 	int AddMacro(int Chip, int Type, const Macro &M);

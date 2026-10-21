@@ -225,7 +225,7 @@ std::string WriteText(const Module &M)
 
 	Out << "# Global settings\n";
 	std::snprintf(Line, sizeof(Line), "%-15s %d\n%-15s %d\n%-15s %d\n%-15s %d\n%-15s %d\n\n", "MACHINE", M.Machine,
-		"FRAMERATE", M.FrameRate, "EXPANSION", M.Expansion, "VIBRATO", 1, "SPLIT", 32);
+		"FRAMERATE", M.FrameRate, "EXPANSION", M.Expansion, "VIBRATO", M.VibratoStyle, "SPLIT", M.SplitPoint);
 	Out << Line;
 	if (M.Expansion & EXP_N163) {
 		std::snprintf(Line, sizeof(Line), "# Namco 163 global settings\n%-15s %d\n\n", "N163CHANNELS", std::max(1, M.N163Channels));

@@ -1601,6 +1601,8 @@ bool Document::MakeModule(Module &Out, FtmInfo &Info, std::string &Error)
 	Info.SplitPoint = SignedWord(m_SplitPoint);
 	Info.VibratoStyle = m_Vibrato;
 	Info.EngineSpeed = SignedWord(m_EngineSpeed);
+	M.VibratoStyle = m_Vibrato != 0 ? 1 : 0;
+	M.SplitPoint = Info.SplitPoint;
 	std::swap(Out, M);
 	return true;
 }
@@ -1668,6 +1670,35 @@ bool ReadFtmFile(const std::string &Path, Module &Out, FtmInfo &Info, std::strin
 	}
 	std::fclose(f);
 	return ParseFtm(Bytes, Out, Info, Error);
+}
+
+TrackReport FtmTrackReport(const Module &M, const FtmInfo &Info, int TrackIndex)
+{
+	TrackReport R;
+	R.Written = true;
+	if (TrackIndex < 0 || TrackIndex >= int(M.Tracks.size()))
+		return R;
+	const Track &T = M.Tracks[size_t(TrackIndex)];
+	R.Name = T.Name;
+	R.Speed = T.Speed;
+	R.Tempo = T.Tempo;
+	// FamiTracker's tempo is beats a minute at speed 6 and 4 rows a beat
+	const double Rate = M.FrameRate > 0 ? double(M.FrameRate) : (M.Machine == 1 ? 50.0 : 60.0);
+	const double RowsPerMinute = T.Speed > 0 && T.Tempo > 0 ? 24.0 * T.Tempo / T.Speed : 0.0;
+	R.TicksPerRow = RowsPerMinute > 0 ? Rate * 60.0 / RowsPerMinute : double(DEFAULT_SPEED);
+	// A beat as the first highlight marks it, unless that makes the music faster than 200 BPM or slower
+	// than 60 (many modules are written at speed 3 with a highlight every 4 rows, a beat in 8), and a
+	// bar of three beats when the second highlight says so, else of four (it often marks half bars)
+	int Beat = Info.FirstHighlight >= 2 && Info.FirstHighlight <= 16 ? Info.FirstHighlight : 4;
+	while (RowsPerMinute > 0 && RowsPerMinute / Beat > 200.0 && Beat < 32)
+		Beat *= 2;
+	while (RowsPerMinute > 0 && RowsPerMinute / Beat < 60.0 && Beat % 2 == 0 && Beat > 2)
+		Beat /= 2;
+	R.RowsPerBeat = Beat;
+	R.BeatsPerBar = Info.SecondHighlight == 3 * Info.FirstHighlight ? 3 : 4;
+	R.FirstBarRow = 0;	// the highlights count from a frame's first row
+	R.Bpm = RowsPerMinute / R.RowsPerBeat;
+	return R;
 }
 
 }	// namespace nsf
