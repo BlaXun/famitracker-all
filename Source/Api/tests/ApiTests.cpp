@@ -4552,11 +4552,13 @@ void TestSoundEffects()
 		CHECK_HAS(Result.Text, "Made track 8 \"Zap\" from the recording (pew.wav): the voice's pitch and loudness on a pulse, 1 "
 			"octave higher.");
 		CHECK(Song.Rows[0][0].Pitch() == Note + 12);
-		// The newest take recorded in FamiTracker
-		Song.LatestTake = "pew.wav";
+		// The newest take recorded in FamiTracker, named without its time
+		CHECK(transcribe::WriteWav("Voice 2026-10-21 18-30-00.wav", Pew, &Error));
+		Song.LatestTake = "Voice 2026-10-21 18-30-00.wav";
 		Tools.Call("select_track", Parse("{\"track\": 1}"));
-		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"Latest\", \"name\": \"Zap 2\"}"));
-		CHECK_HAS(Result.Text, "\"Zap 2\" from the recording (pew.wav)");
+		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"Latest\"}"));
+		CHECK_HAS(Result.Text, "\"SFX Voice\" from the recording (Voice 2026-10-21 18-30-00.wav)");
+		std::remove("Voice 2026-10-21 18-30-00.wav");
 		Song.LatestTake.clear();
 		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"latest\"}"));
 		CHECK(Result.IsError);

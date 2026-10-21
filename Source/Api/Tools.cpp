@@ -5645,10 +5645,21 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	const bool Shortened = FitSoundEffect(Effect, MaxSoundTicks(false), Changes);
 	Effect = ChangeSoundEffect(Effect, Changes);
 
-	// Named after the file: pew.wav makes "SFX Pew"
+	// Named after the file: pew.wav makes "SFX Pew", and a take FamiTracker
+	// kept ("Voice 2026-10-21 18-30-00.wav") "SFX Voice"
 	std::string Base = File.substr(File.find_last_of("/\\") == std::string::npos ? 0 : File.find_last_of("/\\") + 1);
 	if (Base.find('.') != std::string::npos)
 		Base = Base.substr(0, Base.rfind('.'));
+	if (Base.size() > 20) {
+		static const char TIME[] = " 0000-00-00 00-00-00";
+		bool Taken = true;
+		for (size_t i = 0; i < 20; ++i) {
+			const char c = Base[Base.size() - 20 + i];
+			Taken = Taken && (TIME[i] == '0' ? std::isdigit(static_cast<unsigned char>(c)) != 0 : c == TIME[i]);
+		}
+		if (Taken)
+			Base.resize(Base.size() - 20);
+	}
 	if (Base.empty())
 		Base = "Voice";
 	Base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Base[0])));
