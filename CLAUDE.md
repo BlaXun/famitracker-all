@@ -54,6 +54,19 @@ recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
 and `SaveFile`.
 
+File > Import NSF (`Source/ImportNsfDlg.cpp`) opens an NSF's tracks as a
+new module through the NSF importer in `Source/Nsf/` (portable: a 6502,
+the chips' registers, the player that records and finds loops, the
+conversion to a module in FamiTracker's text format, which
+`CTextExport::ImportText` reads, and `Study.cpp`, which describes a track
+for a composer). Claude Code's `study_nsf` keeps those studies in a
+reference library, JSON files in Documents\FamiTracker references
+(`Source/Api/References.cpp`, through `SongHost::ListLibrary` and its
+siblings), with `references`, `reference_sound` and `import_nsf`, and a
+built-in style guide in `Source/Api/StyleGuide.cpp`. `nsf2ftm`
+(`Source/Nsf/tools`) runs the importer from a command line and ships next
+to FamiTracker.exe.
+
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the
 presets of `Source/Api/Presets.cpp`), Edit > Drum grid in
@@ -165,8 +178,8 @@ replaced the VS2008 project:
     the `publish` job replaces that branch's rolling GitHub release (tag
     `build-<branch>`) using `.github/scripts/publish-build.sh`.
     `beginner-friendly` is marked Latest; the others are pre-releases. Each
-    release has a zip with `FamiTracker.exe`, plus
-    `wav2ftm.exe` and `famitracker-mcp.exe` when the branch builds them
+    release has a zip with `FamiTracker.exe`, plus `wav2ftm.exe`,
+    `famitracker-mcp.exe` and `nsf2ftm.exe` when the branch builds them
     (`api` has no `famitracker-mcp.exe`), and a debug-symbols zip. These
     tags are build pointers and get deleted and recreated; never use them
     for real releases.
@@ -220,6 +233,12 @@ The application has no test suite of its own. What exists:
   the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC.
+- **NSF importer** (`Source/Nsf`): the 6502, files and playlists, loops,
+  rows, notes, instruments and studies, on NSFs the tests build with their
+  own 6502 program (`tests/TestNsf.h`). Same three commands with
+  `Source/Nsf` and `build/nsf`; CI runs it on Linux and with MSVC. For
+  fidelity, convert real NSFs and compare FamiTracker's playback of the
+  result with the NSF (`Simulate.h`).
 - **Headless export:** `FamiTracker song.ftm -export out.<ext> [log.txt] [dpcm.bin]`.
   The module path must come before `-export`. The output extension picks the
   format: `.nsf`, `.nes`, `.bin` (plus the DPCM file), `.prg`, `.asm` or
@@ -439,12 +458,12 @@ NSF export still uses the 2A03 driver. Touch points:
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies
   to every file that includes it. Placement new or a custom `operator new`
   must account for it.
-- **Precompiled headers:** PCH is off. 37 `.cpp` files include other headers
+- **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 29 never include it: all of `APU/` and
-  `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
-  `resampler/`, `ExportTest/` and the `CustomExporter*` files. Turning PCH on
-  breaks them.
+  standard headers), and 59 never include it: all of `APU/`, `Api/`, `Nsf/`
+  and `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
+  `McpSocket.cpp`, `TutorialScript.cpp`, `resampler/`, `ExportTest/` and the
+  `CustomExporter*` files. Turning PCH on breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
 - **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the
