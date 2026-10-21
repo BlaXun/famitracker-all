@@ -798,14 +798,74 @@ bool FindKey(Session &S, int First, int End, Key &Out)
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			if (!IsMelodic(S.Channel(c)))
 				continue;
-			const std::vector<transcribe::MelodyNote> Part = MelodyOf(S.Notes(c), Pass == 0 ? First : 0,
-				Pass == 0 ? End : S.Time.TotalRows());
+			const int From = Pass == 0 ? First : 0, To = Pass == 0 ? End : S.Time.TotalRows();
+			const std::vector<transcribe::MelodyNote> Part = MelodyOf(S.Notes(c), From, To);
 			All.insert(All.end(), Part.begin(), Part.end());
+			// The chords arpeggios sound (0xy, or the instrument's own) count too, a little less
+			const std::vector<NoteInfo> &Notes = S.Notes(c);
+			int Arpeggio = 0;
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				const NoteInfo &N = Notes[i];
+				for (size_t e = 0; e < N.Effects.size(); ++e)
+					if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
+						Arpeggio = N.Effects[e].second.second;
+				if (N.Row < From || N.Row >= To)
+					continue;
+				const std::vector<int> Above = ChordAbove(S, N, Arpeggio);
+				for (size_t a = 0; a < Above.size(); ++a) {
+					transcribe::MelodyNote M;
+					M.row = N.Row;
+					M.length = std::max(1, N.Rows);
+					M.midi = N.Pitch + Above[a] + 24;
+					M.weight = 0.7 * std::max(0.3, N.Volume / 15.0);
+					All.push_back(M);
+				}
+			}
 		}
 		if (All.size() >= 4 || (Pass == 1 && !All.empty())) {
 			std::sort(All.begin(), All.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
 			const transcribe::Key K = transcribe::FindKey(All);
 			Out = Key(K.tonic, K.minor ? MODE_MINOR : MODE_MAJOR);
+			// A key the notes keep leaving (the G naturals of a song heard as F# minor) gives way to one they
+			// fit, the one whose tonic chord sounds most: progressions that circle the tonic without
+			// landing on it (IVmaj7 V7 iii7 vi7) fool the profile of the notes alone
+			double Weight[12] = { 0 }, Total = 0.0;
+			for (size_t i = 0; i < All.size(); ++i) {
+				const double w = All[i].length * All[i].weight;
+				Weight[(All[i].midi % 12 + 12) % 12] += w;
+				Total += w;
+			}
+			auto Outside = [&](const Key &Candidate) {
+				double Off = 0.0;
+				const int *pSteps = ModeSteps(Candidate.Mode);
+				for (int pc = 0; pc < 12; ++pc) {
+					bool In = false;	// the scale itself (a minor key's raised seventh would favour it over its relative major)
+					for (int s = 0; s < 7; ++s)
+						In = In || (Candidate.Tonic + pSteps[s]) % 12 == pc;
+					if (!In)
+						Off += Weight[pc];
+				}
+				return Off / std::max(Total, 1e-9);
+			};
+			const double Own = Outside(Out);
+			double Least = Own;
+			for (int t = 0; t < 12; ++t)
+				for (int m = 0; m < 2; ++m)
+					Least = std::min(Least, Outside(Key(t, m ? MODE_MINOR : MODE_MAJOR)));
+			if (Own > Least + 0.04 && Own > 1.5 * Least) {
+				double BestTriad = -1.0;
+				for (int t = 0; t < 12; ++t)
+					for (int m = 0; m < 2; ++m) {
+						const Key Candidate(t, m ? MODE_MINOR : MODE_MAJOR);
+						if (Outside(Candidate) > Least + 1e-9)
+							continue;
+						const double Triad = 1.5 * Weight[t] + Weight[(t + (m ? 3 : 4)) % 12] + Weight[(t + 7) % 12];
+						if (Triad > BestTriad) {
+							BestTriad = Triad;
+							Out = Candidate;
+						}
+					}
+			}
 			return true;
 		}
 	}
@@ -2787,8 +2847,13 @@ void RubWarnings(const Session &S, const std::vector<ChordAt> &Chords, const std
 	for (size_t i = 0; i < Chords.size(); ++i) {
 		const ChordAt &A = Chords[i];
 		const std::vector<int> Classes = A.C.PitchClasses();
+		// A melody note that is itself one of the chord's (the C# of a Dmaj7) is its color, not a rub
+		std::vector<NoteInfo> Outside;
+		for (size_t m = 0; m < Melody.size(); ++m)
+			if (!A.C.HasPitchClass(Melody[m].Pitch % 12))
+				Outside.push_back(Melody[m]);
 		for (size_t t = 0; t < Classes.size(); ++t) {
-			if (MelodyRub(Melody, A.Row, A.Row + A.Rows, Classes[t], S.Time.RowsPerBeat) < 1.0)
+			if (MelodyRub(Outside, A.Row, A.Row + A.Rows, Classes[t], S.Time.RowsPerBeat) < 1.0)
 				continue;
 			if (Count < 4)
 				Places += Format("%sbar %d (%s)", Count == 0 ? "" : ", ", S.Time.BarOf(A.Row), ChordName(A.C, K).c_str());
@@ -3163,6 +3228,18 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		PartNote E = Notes[i];
 		int CutAt = E.Row + E.Rows;
+		// A note the harmony sounds as the echo starts (the F# of a Gmaj7 over its G bass) doesn't rub
+		bool Sounded = false;
+		for (size_t k = 0; k < Others.size() && !Sounded; ++k) {
+			const Other &o = Others[k];
+			if (o.Row <= E.Row && E.Row < o.End && o.Pitches.size() > 1)
+				for (size_t p = 0; p < o.Pitches.size(); ++p)
+					Sounded = Sounded || (E.Pitch - o.Pitches[p]) % 12 == 0;
+		}
+		if (Sounded) {
+			Out.push_back(E);
+			continue;
+		}
 		for (size_t k = 0; k < Others.size(); ++k) {
 			const Other &o = Others[k];
 			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
@@ -3541,12 +3618,22 @@ VibratoPlan VibratoArgs(Session &S, const Json &Args)
 }
 
 // Vibrato in the draft; how many notes it changed
-int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost)
+int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost, bool SkipBuiltIn = false)
 {
 	const int Columns = S.Channel(Plan.Channel).EffectColumns;
 	std::vector<Cell> &Cells = D.Cells(Plan.Channel);
-	const int Count = ApplyVibrato(Cells, D.Notes(Plan.Channel), First, End, Plan.Speed, Plan.Depth, Plan.MinRows, Plan.Delay,
-		Columns, Lost);
+	std::vector<NoteInfo> Notes = D.Notes(Plan.Channel);
+	if (SkipBuiltIn) {
+		// Notes whose instrument has a vibrato of its own keep just that one
+		std::vector<NoteInfo> Plain;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
+			if (pInfo == 0 || !pInfo->Vibrato)
+				Plain.push_back(Notes[i]);
+		}
+		Notes = Plain;
+	}
+	const int Count = ApplyVibrato(Cells, Notes, First, End, Plan.Speed, Plan.Depth, Plan.MinRows, Plan.Delay, Columns, Lost);
 	if (Plan.Depth == 0 && First < static_cast<int>(Cells.size())) {
 		// A vibrato still on from before the bars stops too
 		const ChannelState State = StateAt(Cells, First, Columns);
@@ -3934,7 +4021,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		Plan.MinRows = S.Time.RowsPerBeat * 3 / 2;
 		Plan.Delay = std::max(1, S.Time.RowsPerBeat / 2);
 		bool Lost = false;
-		const int Count = MakeVibrato(S, D, Plan, First, End, Lost);
+		const int Count = MakeVibrato(S, D, Plan, First, End, Lost, true);
 		if (Lost)
 			Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
 		if (Count > 0)

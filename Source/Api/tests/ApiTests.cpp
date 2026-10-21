@@ -6146,6 +6146,39 @@ void TestLushChords()
 		CHECK(Minor.Rows[0][0].Instrument == Named("Lush add9") && Minor.Rows[0][32].Instrument == Named("Lush maj7"));
 	}
 
+	{
+		// The chord's own notes in the melody aren't rubs: C# over Dmaj7 is its seventh
+		FakeSong Color;
+		Color.Info.DirectChanges = true;
+		Color.Put(5, 0, "C#4", 0);
+		Color.End(5, 16, NOTE_RELEASE);
+		Result = Run(Color, "add_chords_and_bass", "{\"chords\": \"Dmaj7\", \"chord_style\": \"lush\", \"key\": \"D major\", "
+			"\"to_bar\": 1, \"melody_channel\": \"VRC6 Pulse 1\"}");
+		CHECK(!Result.IsError && Result.Text.find("rubs a semitone") == std::string::npos);
+		// An echo note of the chord over its bass root stays (F# over Gmaj7's G)
+		FakeSong Over;
+		Over.Info.DirectChanges = true;
+		Over.Put(5, 0, "F#4", 0);
+		Over.Put(5, 8, "D-4");
+		Over.End(5, 16, NOTE_RELEASE);
+		CHECK(!Run(Over, "add_chords_and_bass", "{\"chords\": \"Gmaj7\", \"chord_style\": \"lush\", \"key\": \"G major\", "
+			"\"to_bar\": 1, \"melody_channel\": \"VRC6 Pulse 1\", \"bass_style\": \"roots\"}").IsError);
+		CHECK(Over.Rows[2][0].HasNote() && Over.Rows[2][0].Pitch() % 12 == 7);
+		Result = Run(Over, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"delay_beats\": 1}");
+		CHECK(Result.Text.find("left out") == std::string::npos && Over.Rows[6][4].Pitch() == Over.Rows[5][0].Pitch());
+		// polish leaves a vibrato built into the instrument alone
+		FakeSong Sung;
+		Sung.Info.DirectChanges = true;
+		CHECK(!Run(Sung, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"singing lead\", \"notes\": ["
+			"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"E-4\", \"beats\": 4}]}").IsError);
+		Sung.Info.Instruments.back().Vibrato = true;	// as FamiTracker reports the preset's pitch sequence
+		Result = Run(Sung, "polish", "{\"touches\": [\"vibrato\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+		bool Vibrato = false;
+		for (int r = 0; r < 32; ++r)
+			Vibrato = Vibrato || Sung.Rows[5][r].Effect[0] == EFF_VIBRATO || Sung.Rows[5][r].Effect[1] == EFF_VIBRATO;
+		CHECK(!Vibrato);
+	}
+
 	// A VRC7 song: lush chords go on a 2A03 pulse; an FM channel can't play them
 	FakeSong Fm;
 	Fm.Info.DirectChanges = true;
@@ -6164,6 +6197,12 @@ void TestLushChords()
 	CHECK_HAS(Result.Text, "Chords: | Fmaj7 | G7 | Em7 | Am7 |");
 	CHECK_HAS(Result.Text, "lush chord instruments");
 	CHECK(Groove.Rows[0][0].HasNote() && Groove.Rows[0][8].HasNote() && Groove.Rows[0][0].Volume == 6);
+	// A melody over lush chords: the key heard from both (the chords' sevenths too)
+	FakeSong Heard(4);
+	Heard.Info.DirectChanges = true;
+	CHECK(!Run(Heard, "make_groove", "{\"mood\": \"nostalgic\", \"key\": \"D major\", \"bars\": 16}").IsError);
+	CHECK(!Run(Heard, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"singing lead\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"F#4\", \"beats\": 1.5}, {\"bar\": 1, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"D-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"B-3\", \"beats\": 1}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"C#4\", \"beats\": 1.5}, {\"bar\": 2, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"A-4\", \"beats\": 2}, {\"bar\": 3, \"beat\": 1, \"pitch\": \"E-4\", \"beats\": 1.5}, {\"bar\": 3, \"beat\": 2.5, \"pitch\": \"F#4\", \"beats\": 0.5}, {\"bar\": 3, \"beat\": 3, \"pitch\": \"C#5\", \"beats\": 1.5}, {\"bar\": 3, \"beat\": 4.5, \"pitch\": \"B-4\", \"beats\": 0.5}, {\"bar\": 4, \"beat\": 1, \"pitch\": \"A-4\", \"beats\": 2}, {\"bar\": 4, \"beat\": 3, \"pitch\": \"F#4\", \"beats\": 1}, {\"bar\": 5, \"beat\": 1, \"pitch\": \"F#4\", \"beats\": 1.5}, {\"bar\": 5, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 5, \"beat\": 3, \"pitch\": \"D-4\", \"beats\": 1}, {\"bar\": 5, \"beat\": 4, \"pitch\": \"B-3\", \"beats\": 1}, {\"bar\": 6, \"beat\": 1, \"pitch\": \"C#4\", \"beats\": 1.5}, {\"bar\": 6, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 6, \"beat\": 3, \"pitch\": \"A-4\", \"beats\": 2}, {\"bar\": 7, \"beat\": 1, \"pitch\": \"E-4\", \"beats\": 1.5}, {\"bar\": 7, \"beat\": 2.5, \"pitch\": \"F#4\", \"beats\": 0.5}, {\"bar\": 7, \"beat\": 3, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 7, \"beat\": 4, \"pitch\": \"C#5\", \"beats\": 1}, {\"bar\": 8, \"beat\": 1, \"pitch\": \"D-5\", \"beats\": 3}, {\"bar\": 9, \"beat\": 1, \"pitch\": \"B-4\", \"beats\": 1}, {\"bar\": 9, \"beat\": 2, \"pitch\": \"D-5\", \"beats\": 1}, {\"bar\": 9, \"beat\": 3, \"pitch\": \"F#5\", \"beats\": 1.5}, {\"bar\": 9, \"beat\": 4.5, \"pitch\": \"E-5\", \"beats\": 0.5}, {\"bar\": 10, \"beat\": 1, \"pitch\": \"C#5\", \"beats\": 1.5}, {\"bar\": 10, \"beat\": 2.5, \"pitch\": \"B-4\", \"beats\": 0.5}, {\"bar\": 10, \"beat\": 3, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 10, \"beat\": 4, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 11, \"beat\": 1, \"pitch\": \"F#4\", \"beats\": 1.5}, {\"bar\": 11, \"beat\": 2.5, \"pitch\": \"A-4\", \"beats\": 0.5}, {\"bar\": 11, \"beat\": 3, \"pitch\": \"C#5\", \"beats\": 1}, {\"bar\": 11, \"beat\": 4, \"pitch\": \"E-5\", \"beats\": 1}, {\"bar\": 12, \"beat\": 1, \"pitch\": \"F#5\", \"beats\": 2}, {\"bar\": 12, \"beat\": 3, \"pitch\": \"D-5\", \"beats\": 1}, {\"bar\": 13, \"beat\": 1, \"pitch\": \"F#4\", \"beats\": 1.5}, {\"bar\": 13, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 13, \"beat\": 3, \"pitch\": \"D-4\", \"beats\": 1}, {\"bar\": 13, \"beat\": 4, \"pitch\": \"B-3\", \"beats\": 1}, {\"bar\": 14, \"beat\": 1, \"pitch\": \"C#4\", \"beats\": 1.5}, {\"bar\": 14, \"beat\": 2.5, \"pitch\": \"E-4\", \"beats\": 0.5}, {\"bar\": 14, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 14, \"beat\": 4, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 15, \"beat\": 1, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 15, \"beat\": 2, \"pitch\": \"C#5\", \"beats\": 1}, {\"bar\": 15, \"beat\": 3, \"pitch\": \"E-5\", \"beats\": 1.5}, {\"bar\": 15, \"beat\": 4.5, \"pitch\": \"C#5\", \"beats\": 0.5}, {\"bar\": 16, \"beat\": 1, \"pitch\": \"D-5\", \"beats\": 3}]}").IsError);
+	CHECK_HAS(Run(Heard, "review_arrangement", "{}").Text, "bars 1-16 in D major");
 }
 
 void TestSwing()
