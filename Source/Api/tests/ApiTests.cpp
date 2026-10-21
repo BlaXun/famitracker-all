@@ -6118,6 +6118,34 @@ void TestLushChords()
 		CHECK(!Result.IsError && Result.Text.find("left out") == std::string::npos && Rub.Rows[6][4].Pitch() == Rub.Rows[5][0].Pitch());
 	}
 
+	// Into another mode: the chords move with the key and get the instruments for their new shapes
+	{
+		FakeSong Minor;
+		Minor.Info.DirectChanges = true;
+		CHECK(!Run(Minor, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"chord_style\": \"lush\", "
+			"\"key\": \"C major\", \"bass_channel\": \"none\"}").IsError);
+		Result = Run(Minor, "transpose", "{\"to_mode\": \"minor\", \"key\": \"C major\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "4 lush chords now play the instrument for the chord's new shape");
+		auto Named = [&](const char *Name) {
+			for (size_t i = 0; i < Minor.Info.Instruments.size(); ++i)
+				if (Minor.Info.Instruments[i].Name == Name)
+					return Minor.Info.Instruments[i].Index;
+			return -1;
+		};
+		CHECK(Named("Lush m(add9)") >= 0 && Named("Lush maj9") >= 0 && Named("Lush m7") >= 0);
+		CHECK(Minor.Rows[0][0].Pitch() % 12 == 0 && Minor.Rows[0][0].Instrument == Named("Lush m(add9)"));
+		CHECK(Minor.Rows[0][16].Pitch() % 12 == 8 && Minor.Rows[0][16].Instrument == Named("Lush maj9"));
+		CHECK(Minor.Rows[0][32].Instrument == Named("Lush m7") && Minor.Rows[0][48].Pitch() % 12 == 7);
+		CHECK(Minor.Rows[0][48].Instrument == NO_INSTRUMENT || Minor.Rows[0][48].Instrument == Named("Lush m7"));
+		const PresetSequence *pMinor9 = SequenceOf(Minor.Made[static_cast<int>(Named("Lush m(add9)"))], SEQUENCE_ARPEGGIO);
+		CHECK(pMinor9 != 0 && pMinor9->Items == std::vector<int>({ 0, 0, 3, 3, 7, 7, 14, 14 }));
+		// Back again
+		Result = Run(Minor, "transpose", "{\"to_mode\": \"major\", \"key\": \"C minor\"}");
+		CHECK_HAS(Result.Text, "lush chords now play the instrument");
+		CHECK(Minor.Rows[0][0].Instrument == Named("Lush add9") && Minor.Rows[0][32].Instrument == Named("Lush maj7"));
+	}
+
 	// A VRC7 song: lush chords go on a 2A03 pulse; an FM channel can't play them
 	FakeSong Fm;
 	Fm.Info.DirectChanges = true;

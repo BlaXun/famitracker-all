@@ -2050,6 +2050,8 @@ std::string MovesText(const std::map<int, int> &Moves, const Key &FromKey, const
 	return Summary;
 }
 
+int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, const Key &FromKey, const Key &ToKey, int &Unknown);
+
 std::string TransposeTool(Session &S, const Json &Args)
 {
 	std::vector<int> Channels = ChannelsArg(S, Args, "channels");
@@ -2080,15 +2082,24 @@ std::string TransposeTool(Session &S, const Json &Args)
 	int Count = 0, Skipped = 0;
 	std::map<int, int> Moves;	// pitch class -> semitones moved, for the summary
 	Draft D(S);
+	int Revoiced = 0, Unknown = 0;
 	for (size_t i = 0; i < Melodic.size(); ++i) {
 		const int Columns = S.Channel(Melodic[i]).EffectColumns;
-		if (ByKey)
+		if (ByKey) {
 			MapPitches(D.Cells(Melodic[i]), First, End, Columns, [&](int Pitch) { return MapToKey(Pitch, FromKey, ToKey); }, true, Count,
 				Skipped, &Moves);
+			Revoiced += RevoiceLushChords(S, D, Melodic[i], First, End, FromKey, ToKey, Unknown);
+		}
 		else
 			MapPitches(D.Cells(Melodic[i]), First, End, Columns, [&](int Pitch) { return Pitch + Semitones; }, false, Count, Skipped, 0);
 	}
 	std::vector<std::string> Warnings;
+	if (Revoiced > 0)
+		S.Remarks.push_back(Format("%s now play%s the instrument for the chord's new shape.",
+			Plural(Revoiced, "lush chord", "lush chords").c_str(), Revoiced == 1 ? "s" : ""));
+	if (Unknown > 0)
+		Warnings.push_back(Format("%s played by arpeggio instruments of the song's own keep their shapes, which may not fit %s.",
+			Plural(Unknown, "chord", "chords").c_str(), KeyName(ToKey).c_str()));
 	if (Skipped > 0)
 		Warnings.push_back(Format("%s would have left FamiTracker's range (C-0 to B-7) and stayed as they were.",
 			Plural(Skipped, "note", "notes").c_str()));
@@ -2602,6 +2613,26 @@ std::string LushName(const Preset &Sound, const std::vector<int> &Notes, int Pat
 	return Name;
 }
 
+// The lush chord instrument for a shape: Sound's with the shape looping as
+// its arpeggio, Frames frames a note, named by LushName; added when the song
+// has none of that name (its label goes into Added and Count counts it)
+int LushInstrument(Session &S, const std::string &Chip, bool Sawtooth, const Preset &Sound, const std::vector<int> &Shape, int Pattern,
+	int Frames, std::string &Added, int &Count)
+{
+	const Preset P = WithArpeggio(Sound, Shape, Frames, LushName(Sound, Shape, Pattern, Frames));
+	const size_t Before = S.Song.Instruments.size();
+	std::string Error;
+	const int Index = S.Host().AddInstrument(P, Chip, Sawtooth, Error);
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	if (S.Song.Instruments.size() > Before) {
+		Added += (Count == 0 ? "" : ", ") + InstrumentLabel(S.Song, Index);
+		++Count;
+	}
+	return Index;
+}
+
 // Lush chords' instruments: Sound's (a preset) with each chord's notes
 // looping as its arpeggio, Frames frames a note, one instrument a chord
 // shape, added when first needed and played by the notes with that shape
@@ -2624,25 +2655,118 @@ void LushInstruments(Session &S, int Channel, const std::string &Sound, int Patt
 		if (Notes[i].Arpeggio.empty())
 			continue;
 		std::map<std::vector<int>, int>::const_iterator Found = Made.find(Notes[i].Arpeggio);
-		if (Found == Made.end()) {
-			const Preset P = WithArpeggio(*pSound, Notes[i].Arpeggio, Frames, LushName(*pSound, Notes[i].Arpeggio, Pattern, Frames));
-			const size_t Before = S.Song.Instruments.size();
-			std::string Error;
-			const int Index = S.Host().AddInstrument(P, Chip, Sawtooth, Error);
-			if (Index < 0)
-				throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
-			S.Refresh();
-			if (S.Song.Instruments.size() > Before) {
-				Added += (Count == 0 ? "" : ", ") + InstrumentLabel(S.Song, Index);
-				++Count;
-			}
-			Found = Made.insert(std::make_pair(Notes[i].Arpeggio, Index)).first;
-		}
+		if (Found == Made.end())
+			Found = Made.insert(std::make_pair(Notes[i].Arpeggio, LushInstrument(S, Chip, Sawtooth, *pSound, Notes[i].Arpeggio, Pattern,
+				Frames, Added, Count))).first;
 		Notes[i].Instrument = Found->second;
 	}
 	if (Count > 0)
 		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from the preset \"%s\"): %s.", Count, Count == 1 ? "" : "s",
 			Chip.c_str(), pSound->Name.c_str(), Added.c_str()));
+}
+
+// A lush chord's instrument's name (LushName) read back: its preset, pattern
+// and frames; false for other instruments
+bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern, int &Frames)
+{
+	std::string Rest = Lowercase(Trim(Name));
+	Frames = 2;
+	const size_t Comma = Rest.rfind(", ");
+	if (Comma != std::string::npos) {
+		int n = 0;
+		if (std::sscanf(Rest.c_str() + Comma + 2, "%d frame", &n) != 1 || n < 1 || n > 6)
+			return false;
+		Frames = n;
+		Rest.erase(Comma);
+	}
+	Pattern = BROKEN_UP;
+	const size_t Space = Rest.rfind(' ');
+	if (Space == std::string::npos)
+		return false;
+	for (size_t p = 0; p < BrokenPatterns().size(); ++p)
+		if (p != BROKEN_UP && Rest.compare(Space + 1, std::string::npos, BrokenPatterns()[p].Name) == 0) {
+			Pattern = static_cast<int>(p);
+			Rest.erase(Space);
+			break;
+		}
+	if (Rest.compare(0, 5, "lush ") == 0 && Rest.size() > 5) {
+		pSound = FindPreset("lush chords");
+		return pSound != 0;
+	}
+	const std::vector<Preset> &All = Presets();
+	for (size_t i = 0; i < All.size(); ++i) {
+		const std::string Prefix = Lowercase(All[i].Name) + " ";
+		if (!All[i].Drum && Rest.size() > Prefix.size() && Rest.compare(0, Prefix.size(), Prefix) == 0) {
+			pSound = &All[i];
+			return true;
+		}
+	}
+	return false;
+}
+
+// Lush chords a key change moved (the cells in the draft moved by MapToKey):
+// each chord's notes moved as the key moves them, and the chord given the
+// lush instrument for its new shape (made when the song has none). How many
+// chords changed instruments; Unknown counts those played by arpeggio
+// instruments that aren't the lush style's, which keep their shapes.
+int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, const Key &FromKey, const Key &ToKey, int &Unknown)
+{
+	const std::string Chip = InstrumentChip(S.Channel(Channel));
+	if (Chip != "2A03" && Chip != "VRC6")
+		return 0;
+	const std::vector<Cell> Old = S.Cells(Channel);
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	const bool Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+	int Instrument = StateAt(Old, std::max(0, First), S.Channel(Channel).EffectColumns).Instrument;	// as the song had it
+	int Playing = Instrument;	// as the draft has it
+	int Changed = 0, Count = 0;
+	std::string Added;
+	const Preset *pSoundAdded = 0;
+	for (int r = std::max(0, First); r < End && r < static_cast<int>(Old.size()) && r < static_cast<int>(Cells.size()); ++r) {
+		if (Old[r].Instrument != NO_INSTRUMENT && !Old[r].IsEnd())
+			Instrument = Old[r].Instrument;
+		if (Cells[r].Instrument != NO_INSTRUMENT && !Cells[r].IsEnd())
+			Playing = Cells[r].Instrument;
+		if (!Old[r].HasNote() || !Cells[r].HasNote())
+			continue;
+		int Wanted = Instrument;
+		const std::vector<int> Above = InstrumentChord(S, Instrument);
+		if (!Above.empty()) {
+			const int OldRoot = Old[r].Pitch(), NewRoot = Cells[r].Pitch();
+			std::vector<int> Tones(1, 0);
+			bool Same = true;
+			for (size_t a = 0; a < Above.size(); ++a) {
+				const int Moved = MapToKey(OldRoot + Above[a], FromKey, ToKey) - NewRoot;
+				Same = Same && Moved == Above[a];
+				Tones.push_back((Moved % 12 + 12) % 12);
+			}
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, Instrument);
+			const Preset *pSound = 0;
+			int Pattern = BROKEN_UP, Frames = 2;
+			if (Same)
+				Wanted = Instrument;
+			else if (pInfo == 0 || !ParseLushName(pInfo->Name, pSound, Pattern, Frames))
+				++Unknown;
+			else {
+				std::sort(Tones.begin(), Tones.end());
+				Tones.erase(std::unique(Tones.begin(), Tones.end()), Tones.end());
+				const int Before = Count;
+				Wanted = LushInstrument(S, Chip, Sawtooth, *pSound, LushShape(Chord(NewRoot % 12, Tones), Pattern), Pattern, Frames, Added,
+					Count);
+				if (Count > Before)
+					pSoundAdded = pSound;
+				++Changed;
+			}
+		}
+		if (Wanted != Playing) {
+			Cells[r].Instrument = static_cast<unsigned char>(Wanted);
+			Playing = Wanted;
+		}
+	}
+	if (Count > 0)
+		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from the preset \"%s\"): %s.", Count, Count == 1 ? "" : "s",
+			Chip.c_str(), pSoundAdded != 0 ? pSoundAdded->Name.c_str() : "lush chords", Added.c_str()));
+	return Changed;
 }
 
 // An instrument for a part: the one named by the argument, else the preset
@@ -4972,12 +5096,21 @@ void ApplyMoodPlan(Session &S, Draft &D, const MoodPlan &Plan, int First, int En
 		bool Changed = false;
 		std::map<int, int> Moved;
 		const Key FromKey = Plan.FromKey, ToKey = Plan.ToKey;
+		int Revoiced = 0, Unknown = 0;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			if (IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, First, End) &&
 				MapPitches(D.Cells(c), First, End, S.Channel(c).EffectColumns, [&](int Pitch) { return MapToKey(Pitch, FromKey, ToKey); },
-					true, Count, Skipped, &Moved))
+					true, Count, Skipped, &Moved)) {
 				Changed = true;
+				Revoiced += RevoiceLushChords(S, D, c, First, End, FromKey, ToKey, Unknown);
+			}
 		}
+		if (Revoiced > 0)
+			S.Remarks.push_back(Format("%s now play%s the instrument for the chord's new shape.",
+				Plural(Revoiced, "lush chord", "lush chords").c_str(), Revoiced == 1 ? "s" : ""));
+		if (Unknown > 0)
+			Warnings.push_back(Format("%s played by arpeggio instruments of the song's own keep their shapes, which may not fit %s.",
+				Plural(Unknown, "chord", "chords").c_str(), KeyName(ToKey).c_str()));
 		if (Changed) {
 			const std::string Summary = MovesText(Moved, FromKey, ToKey);
 			Done.push_back("from " + KeyName(FromKey) + " to " + KeyName(ToKey) + (Summary.empty() ? "" : " (" + Summary + ")"));
