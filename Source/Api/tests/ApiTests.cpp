@@ -571,6 +571,15 @@ public:
 		return true;
 	}
 
+	bool ReadFile(const std::string &FileName, std::string &Bytes, std::string &) override
+	{
+		std::map<std::string, std::string>::const_iterator it = Files.find(FileName);
+		if (it == Files.end())
+			return false;
+		Bytes = it->second;
+		return true;
+	}
+
 	bool Play(int First, int Count, std::string &) override
 	{
 		PlayFirst = First;
@@ -2121,6 +2130,99 @@ void TestReview()
 	CHECK_HAS(Run(Song, "look_at_song", "{\"to_bar\": 4}").Text, "Chords heard (C major): |");
 	FakeSong Empty;
 	CHECK_HAS(Run(Empty, "review_arrangement", "{}").Text, "Nothing plays a melody");
+}
+
+void TestStructure()
+{
+	// A groove for a mood: chords, bass and drums in one change, in the mood's mode
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "make_groove", "{\"mood\": \"battle\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a battle groove: stabs (eighths) chords on 2A03 Pulse 1, a driving bass on 2A03 Triangle and driving drums on 2A03 Noise, bars 1-8, in A minor");
+	CHECK_HAS(Result.Text, "Chords: | Am | F | G | Am | Am | F | G | Am |");
+	CHECK_HAS(Result.Text, "The mood suits about 165 BPM");
+	CHECK_HAS(Result.Text, "Next: a melody in A minor over these chords on 2A03 Pulse 2");
+	CHECK_EQ(Song.Writes, 1);
+	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[2][0].HasNote() && Song.Rows[3][0].HasNote());
+	CHECK(!Song.Rows[0][128].HasNote());	// eight bars, no more
+	// Another mood by another word, in the song's key note; one without drums
+	Result = Run(Song, "make_groove", "{\"mood\": \"village\", \"from_bar\": 9, \"bars\": 4, \"chord_channel\": \"VRC6 Pulse 1\", "
+		"\"bass_channel\": \"Sawtooth\", \"drum_channel\": \"none\"}");
+	CHECK_HAS(Result.Text, "a town groove: broken (updown) chords on VRC6 Pulse 1 and a root_fifth bass on VRC6 Sawtooth, bars 9-12, in A major");
+	CHECK_HAS(Result.Text, "Chords: | Amaj7 | F#m7 | Dmaj7 | E7 |");
+	CHECK_HAS(Run(Song, "make_groove", "{\"mood\": \"disco inferno\"}").Text, "Moods: town, overworld, battle");
+	CHECK(!Run(Song, "make_groove", "{\"mood\": \"sad\", \"key\": \"E minor\", \"from_bar\": 13, \"bars\": 2}").IsError);
+
+	// Copying bars: every channel, twice, the copy starting as the original played
+	FakeSong Form(4);
+	Form.Info.DirectChanges = true;
+	Form.Put(5, 0, "C-4", 0, 10);
+	Form.Put(5, 8, "E-4");
+	Form.Put(5, 16, "G-4", 2);
+	Form.Put(3, 0, "kick", 3);
+	Form.Rows[5][12].Effect[0] = EFF_VIBRATO;
+	Form.Rows[5][12].Param[0] = 0x42;
+	Form.Rows[0][28].Effect[0] = EFF_JUMP;	// the song's own jump stays put
+	Form.Rows[0][28].Param[0] = 0;
+	Result = Run(Form, "copy_bars", "{\"from_bar\": 2, \"to_bar\": 2, \"at_bar\": 5, \"times\": 2, \"semitones\": 2}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "bar 2 copied to bars 5-6 (2 times), 2 semitones up");
+	CHECK(Form.Rows[5][64].Pitch() == Form.Rows[5][16].Pitch() + 2 && Form.Rows[5][80].Pitch() == Form.Rows[5][64].Pitch());
+	CHECK(Form.Rows[5][64].Instrument == 2);
+	CHECK(Form.Rows[0][76].Effect[0] != EFF_JUMP && Form.Rows[0][28].Effect[0] == EFF_JUMP);
+	Result = Run(Form, "copy_bars", "{\"from_bar\": 1, \"at_bar\": 9}");
+	CHECK(!Result.IsError && Form.Rows[5][128].Pitch() == Form.Rows[5][0].Pitch() && Form.Rows[5][128].Instrument == 0);
+	CHECK(Form.Rows[5][128].Volume == 10 && HasEffectAt(Form, 5, 140, EFF_VIBRATO, 0x42));
+	CHECK(Form.Rows[3][128].HasNote());
+	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1, \"to_bar\": 2, \"at_bar\": 2}").Text, "land on the bars it copies");
+	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1}").Text, "at_bar");
+	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 4, \"at_bar\": 12, \"channels\": [\"Pulse 1\"]}").Text, "no notes");
+
+	// Varying a part
+	FakeSong Tune;
+	Tune.Info.DirectChanges = true;
+	const char *const MELODY[] = { "C-4", "E-4", "G-4", "E-4", "C-4", "D-4", "E-4", "G-4" };
+	for (int i = 0; i < 8; ++i)
+		Tune.Put(5, i * 4, MELODY[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Tune.End(5, 32, NOTE_RELEASE);
+	Result = Run(Tune, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, \"to_bar\": 2}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 passing and neighbour notes added, bars 1-2");
+	CHECK_EQ(Notes(Tune, 5, 0, 8), std::string("0:C-4 2:D-4 4:E-4 6:F-4 "));
+	Result = Run(Tune, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"octave_up\", \"from_bar\": 2, \"to_bar\": 2}");
+	CHECK_EQ(Notes(Tune, 5, 16, 32), std::string("16:C-5 20:D-5 24:E-5 26:F-5 28:G-5 "));	// with the passing note embellish added
+	Result = Run(Tune, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"ending\", \"from_bar\": 2, \"to_bar\": 2}");
+	CHECK_HAS(Notes(Tune, 5, 28, 34), "28:C-6 ");	// the nearest tonic to G-5
+	CHECK_HAS(Run(Tune, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"jazzier\", \"from_bar\": 1}").Text, "variation: embellish");
+	CHECK_HAS(Run(Tune, "vary_part", "{\"channel\": \"Noise\", \"variation\": \"simplify\", \"from_bar\": 1}").Text, "melodic parts");
+	FakeSong Busy;
+	Busy.Info.DirectChanges = true;
+	for (int i = 0; i < 8; ++i)
+		Busy.Put(5, i * 2, i % 2 == 0 ? "C-4" : "D-4", i == 0 ? 0 : NO_INSTRUMENT);
+	Busy.End(5, 16, NOTE_RELEASE);
+	CHECK(!Run(Busy, "vary_part", "{\"channel\": 6, \"variation\": \"simplify\", \"from_bar\": 1, \"to_bar\": 1}").IsError);
+	CHECK_EQ(Notes(Busy, 5, 0, 16), std::string("0:C-4 4:C-4 8:C-4 12:C-4 "));
+	FakeSong Held;
+	Held.Info.DirectChanges = true;
+	Held.Put(5, 0, "C-4", 0);
+	Held.Put(5, 8, "E-4");
+	Held.End(5, 16, NOTE_RELEASE);
+	CHECK(!Run(Held, "vary_part", "{\"channel\": 6, \"variation\": \"syncopate\", \"from_bar\": 1, \"to_bar\": 1}").IsError);
+	CHECK_EQ(Notes(Held, 5, 0, 17), std::string("0:C-4 6:E-4 16:=== "));
+
+	// The soundtrack's notes: none, then added to, read back, and named in get_song
+	FakeSong Game;
+	CHECK_HAS(Run(Game, "soundtrack_notes", "{}").Text, "There are no soundtrack notes yet");
+	CHECK_LACKS(Run(Game, "get_song", "{}").Text, "Soundtrack notes");
+	CHECK_HAS(Run(Game, "soundtrack_notes", "{\"action\": \"add\", \"text\": \"likes bright leads with vibrato\"}").Text, "Added to the soundtrack notes");
+	Run(Game, "soundtrack_notes", "{\"action\": \"add\", \"text\": \"the forest is in D dorian at 120 BPM\"}");
+	Result = Run(Game, "soundtrack_notes", "{\"action\": \"read\"}");
+	CHECK_HAS(Result.Text, "- likes bright leads with vibrato\r\n- the forest is in D dorian at 120 BPM");
+	CHECK_HAS(Run(Game, "get_song", "{}").Text, "Soundtrack notes: \"Soundtrack notes.txt\" next to the song");
+	CHECK(!Run(Game, "soundtrack_notes", "{\"action\": \"replace\", \"text\": \"start over\"}").IsError);
+	CHECK_EQ(Game.Files["Soundtrack notes.txt"], std::string("start over\r\n"));
+	CHECK_HAS(Run(Game, "soundtrack_notes", "{\"action\": \"shout\", \"text\": \"x\"}").Text, "read, add or replace");
 }
 
 void TestEchoAndVibrato()
@@ -4232,13 +4334,13 @@ private:
 			}
 			if (Result == HttpRequestParser::COMPLETE) {
 				const std::string Bytes = FormatHttpResponse(HandleMcp(Parser.Take(), m_Config, m_Tools), false);
+				++m_iAnswered;	// before the answer goes out: the client may check as soon as it has it
 				for (size_t Sent = 0; Sent < Bytes.size(); ) {
 					const long Count = static_cast<long>(send(Client, Bytes.data() + Sent, static_cast<int>(Bytes.size() - Sent), 0));
 					if (Count <= 0)
 						break;
 					Sent += static_cast<size_t>(Count);
 				}
-				++m_iAnswered;
 			}
 			CloseTestSocket(Client);
 		}
@@ -4321,6 +4423,7 @@ int main()
 	TestArrange();
 	TestArrangingTools();
 	TestReview();
+	TestStructure();
 	TestEchoAndVibrato();
 	TestMood();
 	TestCheck();
