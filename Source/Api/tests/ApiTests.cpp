@@ -2517,6 +2517,51 @@ void TestProtocol()
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}"), Config, Tools);
 	CHECK(Body(Response).Get("result")->IsObject());
 
+	// Recipes as prompts: listed, and filled in with their arguments
+	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}"),
+		Config, Tools);
+	Message = Body(Response);
+	CHECK(Message.Get("result")->Get("capabilities")->Get("prompts") != 0);
+	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "review_arrangement");
+	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/list\"}"), Config, Tools);
+	const Json Listed = Body(Response);
+	const Json *pPrompts = Listed.Get("result")->Get("prompts");
+	CHECK(pPrompts != 0 && pPrompts->Size() == ToolSet::Prompts().size() && pPrompts->Size() >= 4);
+	CHECK(pPrompts->At(0).Get("name")->String() == "compose_track" && pPrompts->At(0).Get("arguments")->At(0).Get("required")->Bool());
+	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\","
+		"\"arguments\":{\"idea\":\"a snowy village at night\",\"bars\":\"24\"}}}"), Config, Tools);
+	Message = Body(Response);
+	const Json *pMessages = Message.Get("result")->Get("messages");
+	CHECK(pMessages != 0 && pMessages->Size() == 1 && pMessages->At(0).Get("role")->String() == "user");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "for this: a snowy village at night.");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
+	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\"}}"),
+		Config, Tools);
+	CHECK_EQ(ErrorCode(Response), -32602);
+	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"prompts/get\",\"params\":{\"name\":\"sing\"}}"), Config, Tools);
+	CHECK_EQ(ErrorCode(Response), -32602);
+	for (size_t i = 0; i < ToolSet::Prompts().size(); ++i) {
+		std::string Text, Error;
+		Json Arguments = Json::MakeObject();
+		for (size_t a = 0; a < ToolSet::Prompts()[i].Arguments.size(); ++a)
+			Arguments.Set(ToolSet::Prompts()[i].Arguments[a].Name, "4");
+		CHECK(ToolSet::PromptText(ToolSet::Prompts()[i].Name, Arguments, Text, Error) && !Text.empty());
+		// Every tool a recipe names exists
+		size_t At = 0;
+		while ((At = Text.find('_', At)) != std::string::npos) {
+			size_t From = At, To = At;
+			while (From > 0 && (std::islower(static_cast<unsigned char>(Text[From - 1])) || Text[From - 1] == '_'))
+				--From;
+			while (To < Text.size() && (std::islower(static_cast<unsigned char>(Text[To])) || Text[To] == '_'))
+				++To;
+			const std::string Word = Text.substr(From, To - From);
+			const bool Argument = Word == "as_clip" || Word == "clip_name" || Word == "from_bar" || Word == "to_bar" ||
+				Word == "chord_style" || Word == "bass_style";
+			Check(Argument || Tools.Has(Word), ("the recipe's tool exists: " + Word).c_str(), __LINE__);
+			At = To;
+		}
+	}
+
 	// Per-request metadata (2026-07-28)
 	Response = HandleMcp(ModernPost("server/discover", ""), Config, Tools);
 	CHECK_EQ(Response.Status, 200);
@@ -2528,6 +2573,14 @@ void TestProtocol()
 	Message = Body(Response);
 	CHECK(Message.Get("result")->Get("tools")->Size() == Tools.List().size());
 	CHECK(Message.Get("result")->Get("ttlMs") != 0 && Message.Get("result")->Get("cacheScope")->String() == "private");
+	Response = HandleMcp(ModernPost("prompts/list", ""), Config, Tools);
+	CHECK(Body(Response).Get("result")->Get("prompts")->Size() == ToolSet::Prompts().size());
+	CHECK(Body(Response).Get("result")->Get("resultType")->String() == "complete");
+	Response = HandleMcp(ModernPost("prompts/get", "\"name\":\"deepen_track\",\"arguments\":{\"bars\":\"9-16\"}", "deepen_track"),
+		Config, Tools);
+	CHECK_HAS(Body(Response).Get("result")->Get("messages")->At(0).Get("content")->Get("text")->String(), "in bars 9-16");
+	Response = HandleMcp(ModernPost("prompts/get", "\"name\":\"deepen_track\"", "polish"), Config, Tools);
+	CHECK_EQ(Response.Status, 400);	// the header names another
 	Response = HandleMcp(ModernPost("tools/call", "\"name\":\"get_song\",\"arguments\":{}", "get_song"), Config, Tools);
 	Message = Body(Response);
 	CHECK(Message.Get("result")->Get("resultType")->String() == "complete");

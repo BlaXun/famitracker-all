@@ -44,6 +44,20 @@ struct ToolInfo {
 	bool Idempotent;
 };
 
+// A recipe the client offers as a command (an MCP prompt): a task in steps
+struct PromptArgument {
+	std::string Name;
+	std::string Description;
+	bool Required;
+};
+
+struct PromptInfo {
+	std::string Name;
+	std::string Title;
+	std::string Description;
+	std::vector<PromptArgument> Arguments;
+};
+
 struct ToolResult {
 	std::string Text;
 	std::string Image;		// a PNG to go with the text (look_at_song), or empty
@@ -59,8 +73,13 @@ public:
 	bool Has(const std::string &Name) const;
 	ToolResult Call(const std::string &Name, const Json &Arguments);
 
-	// For the client: how to use the tools
+	// For the client: how to use the tools, and how to write music that doesn't sound plain
 	static std::string Instructions();
+	// Recipes: compose a track, give it depth, offer versions, study one
+	static const std::vector<PromptInfo> &Prompts();
+	// A prompt's message with its arguments filled in; false with the reason
+	// when there's no such prompt or a required argument is missing
+	static bool PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error);
 
 private:
 	SongHost &m_Host;

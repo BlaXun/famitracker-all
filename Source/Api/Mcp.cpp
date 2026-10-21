@@ -276,9 +276,71 @@ Json Capabilities()
 {
 	Json Tools = Json::MakeObject();
 	Tools.Set("listChanged", false);
+	Json Prompts = Json::MakeObject();
+	Prompts.Set("listChanged", false);
 	Json Capabilities = Json::MakeObject();
 	Capabilities.Set("tools", Tools);
+	Capabilities.Set("prompts", Prompts);
 	return Capabilities;
+}
+
+// The recipes, as prompts/list gives them
+Json PromptsJson()
+{
+	Json List = Json::MakeArray();
+	const std::vector<PromptInfo> &Prompts = ToolSet::Prompts();
+	for (size_t i = 0; i < Prompts.size(); ++i) {
+		Json P = Json::MakeObject();
+		P.Set("name", Prompts[i].Name);
+		P.Set("title", Prompts[i].Title);
+		P.Set("description", Prompts[i].Description);
+		Json Arguments = Json::MakeArray();
+		for (size_t a = 0; a < Prompts[i].Arguments.size(); ++a) {
+			Json Argument = Json::MakeObject();
+			Argument.Set("name", Prompts[i].Arguments[a].Name);
+			Argument.Set("description", Prompts[i].Arguments[a].Description);
+			Argument.Set("required", Prompts[i].Arguments[a].Required);
+			Arguments.Push(Argument);
+		}
+		P.Set("arguments", Arguments);
+		List.Push(P);
+	}
+	return List;
+}
+
+// prompts/get: the recipe's message; false with the error's code and text
+bool GetPrompt(const Json &Params, Json &Out, int &Code, std::string &Text)
+{
+	const Json *pName = Params.Get("name");
+	if (pName == 0 || !pName->IsString()) {
+		Code = INVALID_PARAMS;
+		Text = "prompts/get needs a name.";
+		return false;
+	}
+	const Json *pArguments = Params.Get("arguments");
+	std::string Message, Error;
+	if (!ToolSet::PromptText(pName->String(), pArguments != 0 ? *pArguments : Json::MakeObject(), Message, Error)) {
+		Code = INVALID_PARAMS;
+		Text = Error;
+		return false;
+	}
+	std::string Description;
+	const std::vector<PromptInfo> &Prompts = ToolSet::Prompts();
+	for (size_t i = 0; i < Prompts.size(); ++i)
+		if (Prompts[i].Name == pName->String())
+			Description = Prompts[i].Description;
+	Json Content = Json::MakeObject();
+	Content.Set("type", "text");
+	Content.Set("text", Message);
+	Json Item = Json::MakeObject();
+	Item.Set("role", "user");
+	Item.Set("content", Content);
+	Json Messages = Json::MakeArray();
+	Messages.Push(Item);
+	Out = Json::MakeObject();
+	Out.Set("description", Description);
+	Out.Set("messages", Messages);
+	return true;
 }
 
 Json SupportedVersions()
@@ -345,16 +407,23 @@ HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet
 		Out.Set("ttlMs", CACHE_MS);
 		Out.Set("cacheScope", "private");
 	}
-	else if (Method == "tools/call") {
+	else if (Method == "tools/call" || Method == "prompts/get") {
 		int Code;
 		std::string Text;
-		if (!CallTool(Tools, Params, Out, Code, Text))
+		if (Method == "tools/call" ? !CallTool(Tools, Params, Out, Code, Text) : !GetPrompt(Params, Out, Code, Text))
 			return Failure(200, Id, Code, Text);
 		Json Ordered = Json::MakeObject();
 		Ordered.Set("resultType", "complete");
 		for (size_t i = 0; i < Out.Members().size(); ++i)
 			Ordered.Set(Out.Members()[i].first, Out.Members()[i].second);
 		Out = Ordered;
+	}
+	else if (Method == "prompts/list") {
+		Out = Json::MakeObject();
+		Out.Set("resultType", "complete");
+		Out.Set("prompts", PromptsJson());
+		Out.Set("ttlMs", CACHE_MS);
+		Out.Set("cacheScope", "private");
 	}
 	else
 		return Failure(404, Id, METHOD_NOT_FOUND, "Method not found: " + Method);
@@ -394,6 +463,19 @@ HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet
 		int Code;
 		std::string Text;
 		if (!CallTool(Tools, Params, Out, Code, Text))
+			return Failure(200, Id, Code, Text);
+		return Result(Id, Out);
+	}
+	if (Method == "prompts/list") {
+		Json Out = Json::MakeObject();
+		Out.Set("prompts", PromptsJson());
+		return Result(Id, Out);
+	}
+	if (Method == "prompts/get") {
+		Json Out;
+		int Code;
+		std::string Text;
+		if (!GetPrompt(Params, Out, Code, Text))
 			return Failure(200, Id, Code, Text);
 		return Result(Id, Out);
 	}

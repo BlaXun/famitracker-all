@@ -6734,19 +6734,161 @@ std::string ToolSet::Instructions()
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
-		"look at the result with look_at_song, and use play so the user can listen, then ask them. "
+		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them.\n"
+		"Write music that sounds composed, not generated. Users notice plain tracks: one chord a bar held as an arpeggio, a bass "
+		"on roots, no drums, one note length, sections pasted unchanged.\n"
+		"- Plan first: the mood gives the key and mode (major or lydian bright; minor, dorian sad or mysterious; phrygian or "
+		"harmonic minor for danger), the tempo and a form of 16 to 32 bars or more with an A part and a contrasting B (A A B A, "
+		"intro A B A'). Game music is heard for minutes, so it needs somewhere to go. Read soundtrack_notes when get_song "
+		"mentions them, and keep to the user's taste.\n"
+		"- Layers: an NES arrangement has four or five: melody (a pulse), chords (the other pulse), bass (triangle), drums "
+		"(noise), and a second line (a counter-melody, a harmony or an echo) where the melody leaves room. make_groove starts a "
+		"backing for a mood; add_chords_and_bass plays chords you choose (\"| Am7 | Fmaj7 | C | G7sus4 G7 |\" or \"i VI III VII\") "
+		"in a style; choose its chord_style, rhythm or pattern, color and bass_style for the mood, since the defaults are the "
+		"plainest. add_drums adds a groove with fills; add_counter_melody and add_harmony add the second line.\n"
+		"- Melody: a motif of two to four notes with a rhythm you'd recognize, repeated and developed (moved up a step, "
+		"inverted, extended); phrases of two or four bars that breathe (a held note or a rest at the end); chord tones on "
+		"strong beats and steps between them; one high point in each section; long and short notes mixed (dotted rhythms, "
+		"syncopation). Not a scale run, not eighth notes without a rest.\n"
+		"- Harmony with direction: tonic, subdominant, dominant, home; a B part on other chords (IV, vi, the relative key); "
+		"sevenths, added ninths and suspensions resolving into V (color sevenths or rich); chords changing about once a bar, "
+		"not every beat. Bass: walking for towns and jazz, octaves for action, syncopated for pop, arpeggio for adventure. "
+		"Drums: lighter in calm parts, busier toward a climax, a fill at each phrase end.\n"
+		"- Expression: polish adds accents and a vibrato that comes in on long notes; add_echo gives space; change a sound or "
+		"the duty between sections; instruments with life (the singing lead, strings and brass presets, or design_instrument "
+		"for a sound described in words).\n"
+		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
+		"busier drums, another chord style).\n"
+		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
+		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
+		"the user tells you they like or don't in soundtrack_notes.\n"
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "
 		"each start from the original): darker = to_mode minor or phrygian, about 10-20% slower, parts an octave lower, rounder "
 		"or softer sounds (warm pad, soft lead); happier = to_mode major or lydian, a bit faster, brighter sounds (bright lead, "
-		"bell, pluck), and add_chords_and_bass if there are no chords; underwater = slower, a slow and strong vibrato on the "
-		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
-		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
-		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
-		"complete, item found...) is make_jingle, and a sound effect (jump, coin, menu blip, \"pew\"...) make_sound_effect. "
-		"For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion first (it asks before clearing notes on the old "
-		"chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
-		"brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the user what you "
-		"changed and why.";
+		"bell, pluck); underwater = slower, a slow and strong vibrato on the lead, an echo, soft round sounds, a lower register. "
+		"A night version (or another version of a song for a game state, like a tense one for a battle) is make_version, which "
+		"adds it as a new track; a jingle (level up, quest complete, item found...) is make_jingle, and a sound effect (jump, "
+		"coin, menu blip, \"pew\"...) make_sound_effect. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
+		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
+		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
+		"user what you changed and why.";
+}
+
+const std::vector<PromptInfo> &ToolSet::Prompts()
+{
+	static std::vector<PromptInfo> PROMPTS;
+	if (PROMPTS.empty()) {
+		PromptInfo P;
+		P.Name = "compose_track";
+		P.Title = "Compose a track";
+		P.Description = "Compose a track for a game scene or a mood, step by step, with the depth of a real arrangement.";
+		PromptArgument Idea = { "idea", "What it's for: a place, a scene or a mood, like \"a snowy mountain village at night\".", true };
+		PromptArgument Bars = { "bars", "How long, in bars (default 32).", false };
+		P.Arguments.push_back(Idea);
+		P.Arguments.push_back(Bars);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "deepen_track";
+		P.Title = "Give the track more depth";
+		P.Description = "Review the song as an arranger would and work through what makes it sound plain.";
+		PromptArgument Where = { "bars", "Which bars, like \"9-16\" (default: the whole song).", false };
+		P.Arguments.push_back(Where);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "make_versions";
+		P.Title = "Offer versions to choose from";
+		P.Description = "Make two or three versions of a part as clips, so the user can listen and pick.";
+		PromptArgument Part = { "part", "What to try versions of: the chords, the bass, the drums, the melody's sound, a section...", true };
+		PromptArgument Count = { "count", "How many (default 3).", false };
+		P.Arguments.push_back(Part);
+		P.Arguments.push_back(Count);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "study_track";
+		P.Title = "Study a track";
+		P.Description = "Explain what makes the open track work (form, harmony, melody, bass, drums, sounds), to reuse its ideas.";
+		PromptArgument Track = { "track", "The track's number or name (default: the selected one).", false };
+		P.Arguments.push_back(Track);
+		PROMPTS.push_back(P);
+	}
+	return PROMPTS;
+}
+
+bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error)
+{
+	auto Value = [&](const char *Key, const std::string &Default) {
+		const Json *pValue = Arguments.IsObject() ? Arguments.Get(Key) : 0;
+		if (pValue == 0 || !pValue->IsString() || Trim(pValue->String()).empty())
+			return Default;
+		return Trim(pValue->String());
+	};
+	if (Name == "compose_track") {
+		const std::string Idea = Value("idea", "");
+		if (Idea.empty()) {
+			Error = "compose_track needs the idea: what the track is for.";
+			return false;
+		}
+		Text = "Compose a track in FamiTracker for this: " + Idea + ". Make it sound composed by a person, with depth. "
+			"Work through these steps with the FamiTracker tools:\n"
+			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them.\n"
+			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
+			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
+			"3. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you choose and a chord_style, "
+			"color and bass_style that fit (not the defaults). Set the tempo with set_tempo.\n"
+			"4. Write the melody with write_notes, phrase by phrase: a short motif with a rhythm you'd recognize, repeated and "
+			"developed; phrases of two or four bars that end on a held note or a rest; chord tones on strong beats; one high point "
+			"in each section; long and short notes mixed.\n"
+			"5. Build the form: copy_bars for repeats and make each repeat different (vary_part, a counter-melody or harmony only "
+			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar).\n"
+			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
+			"beat, polish; give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument).\n"
+			"7. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
+			"8. check_loop and set_loop so it loops cleanly, then play it for me and ask what I'd change. Keep what I like in "
+			"soundtrack_notes.";
+		return true;
+	}
+	if (Name == "deepen_track") {
+		const std::string Bars = Value("bars", "");
+		Text = "Give the FamiTracker song more depth" + (Bars.empty() ? std::string() : " in bars " + Bars) + ", the way an "
+			"arranger would:\n"
+			"1. get_song and review_arrangement" + (Bars.empty() ? std::string() : " (from_bar and to_bar for those bars)") + ".\n"
+			"2. Work through its list in order, one change at a time: missing layers first (chords, bass, drums, a second line), "
+			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then expression (polish, an "
+			"echo, a sound that changes between sections). Keep my melody unless the review points at it.\n"
+			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
+			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
+		return true;
+	}
+	if (Name == "make_versions") {
+		const std::string Part = Value("part", "");
+		if (Part.empty()) {
+			Error = "make_versions needs the part to try versions of.";
+			return false;
+		}
+		Text = "Make " + Value("count", "3") + " versions of " + Part + " in the FamiTracker song for me to choose from. Make each "
+			"one a clip (as_clip true, with a clip_name that says what's different, like \"Chords: broken, rolling\"), changing "
+			"one thing at a time: a chord style or rhythm, a bass style, a groove or how busy it is, a color, a sound. Then tell "
+			"me how they differ and that each clip card's play button plays it, ask which I like, and put my choice in the song "
+			"(place_clip when direct changes are allowed). Note what I chose with soundtrack_notes.";
+		return true;
+	}
+	if (Name == "study_track") {
+		const std::string Track = Value("track", "");
+		Text = std::string("Study ") + (Track.empty() ? "the selected track" : "track " + Track + " (select_track first)") +
+			" in FamiTracker as an arranger would, and explain what makes it work so its ideas can go into new music:\n"
+			"1. get_song, review_arrangement, and look_at_song for a few sections.\n"
+			"2. read_notes for each part over a phrase or two.\n"
+			"3. Describe the form (sections, repeats and how they change), the harmony (progressions, colors, how often chords "
+			"change), the melody (motifs, phrase lengths, range, rhythm), the bass and drums (patterns, fills), how the parts share "
+			"the channels (who plays what, registers, call and response), the effects and sounds, and the tempo and feel.\n"
+			"4. End with a short list of techniques to reuse, and offer to keep them in soundtrack_notes.";
+		return true;
+	}
+	Error = "No prompt called \"" + Name + "\".";
+	return false;
 }
 
 }	// namespace ftapi
