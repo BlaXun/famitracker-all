@@ -42,6 +42,17 @@ recording, and turned into instruments, by
 `Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
 (`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
 ends when the sound is over, and adds it with that tool through `CMcpLink`.
+Arranging is in `Source/Api/Chords.cpp` (chords read from names and degrees,
+progressions on bars, colors, chords heard in the notes) and
+`Source/Api/Arrange.cpp` (chord parts in styles, bass lines, drum grooves
+with fills, a harmony voice, a counter-melody), used by
+`add_chords_and_bass`, `make_groove`, `add_drums`, `add_harmony`,
+`add_counter_melody` and `review_arrangement`; `design_instrument` turns words
+into sequences with `DesignPreset` in `Presets.cpp`. The server's
+instructions (`ToolSet::Instructions`) teach the arranging craft, and the
+recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
+reads and writes a text file next to the song through `SongHost::ReadFile`
+and `SaveFile`.
 
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the

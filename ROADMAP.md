@@ -203,20 +203,34 @@ when ready.
     FamiTracker's own numbers;
   - sound effects for the game, from 25 kinds or a voice recording.
 
-  Ideas not built yet: instruments described in words, FDS and N163
-  instruments, a soundtrack guide (main motif, house sounds, keys per area),
-  song sections, named versions to compare, listening help (loop, solo,
-  mute), and recording through Claude.
-- **`nsf-import` (planned):** pull instruments, and optionally songs, out of
-  NSF files.
-  - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
-    0.3.6). It plays the NSF in an emulator and reads the chip registers every
-    frame.
-  - Turn each note's volume, duty and pitch movement into FamiTracker
-    macros.
-  - Where the source sound can't be reproduced on NSF + VRC6, use the closest
-    match.
-  - VRC6 game rips give real VRC6 instruments.
+  In October 2026, on `next`, arrangements with depth, because tracks often
+  came out plain: chords by name or degree and in styles (held or rhythmic
+  arpeggios, stabs, broken chords, guide tones) with sevenths or richer
+  colors, bass lines in styles (walking, octaves, syncopated...), drums with
+  grooves and fills, a harmony voice, a counter-melody, finishing touches,
+  grooves to start from by mood, repeating and varying sections, a review
+  that scores the arrangement's depth, instruments described in words with
+  livelier presets, soundtrack notes kept beside the song, instructions that
+  teach the craft, and recipes served as MCP prompts. 36 tools now.
+
+  Ideas not built yet: FDS and N163 instruments, named versions to compare,
+  listening help (loop, solo, mute), and recording through Claude.
+- **NSF import (next, asked for in October 2026):** open NSF files as
+  readable FamiTracker songs, so the user and Claude can study real NES
+  tracks.
+  - Our own portable player core (a 6502, the NSF's bank switching, the 2A03
+    and the expansion chips' registers, the frame counter's envelopes,
+    length counters and sweeps), tested on Linux, rather than the archived
+    `nsf-importer` fork (NSF Importer 0.1 on 0.3.6), which writes every frame
+    as a row: faithful but unreadable.
+  - From the registers, music: the rows and speed found from when notes
+    start, notes on rows, fast chord flickers as `0xy` and wobbles as `4xy`,
+    instruments rebuilt from each note's volume, duty and pitch shapes, the
+    loop found and set.
+  - Every track of the NSF as a track of one module, or the ones picked;
+    2A03 first, then VRC6, MMC5 and N163; DPCM drums later.
+  - An `import_nsf` tool for Claude, and a way to study what makes a track
+    work.
 
 ## Open questions
 
