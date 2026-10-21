@@ -251,8 +251,14 @@ when ready.
   track of its own before Claude tries something, and `compare_versions`
   plays the same bars of each, one after the other, for the user to pick.
 
-  Ideas not built yet: FDS and N163 instruments, and recording through
-  Claude.
+  N163 instruments (asked for: something more complex than the VRC6):
+  twelve wave sounds drawn for the N163's up to 8 channels, whose timbre
+  moves as a note plays (a rotating organ, shimmering strings and choir,
+  brass opening up, an electric piano and a bell that mellow, a sweeping
+  pulse lead, a growling bass), each wave placed in the chip's shared memory
+  where no other instrument's is.
+
+  Ideas not built yet: FDS instruments, and recording through Claude.
 - **`visual-cues` (October 2026, made from `next`; its build is the
   `build-visual-cues` pre-release):** FamiTracker easier to read at a
   glance, for people who don't read tracker notation yet. Done:

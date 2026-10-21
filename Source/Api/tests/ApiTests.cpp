@@ -42,6 +42,7 @@
 #include "../Song.h"
 #include "../SoundEffects.h"
 #include "../Tools.h"
+#include "../Wavetables.h"
 #include "../../Nsf/tests/TestNsf.h"
 
 #include <algorithm>
@@ -383,6 +384,26 @@ public:
 	}
 
 	std::map<int, Preset> Made;		// instrument -> the preset it was made from
+	std::map<int, WaveSound> MadeWaves;	// N163 instrument -> its sound
+
+	int AddN163Instrument(const WaveSound &Sound, int WavePos, std::string &Error) override
+	{
+		if (Info.Expansion != "N163") {
+			Error = "This song has no N163 channels.";
+			return -1;
+		}
+		int Next = 0;
+		for (size_t i = 0; i < Info.Instruments.size(); ++i) {
+			if (Info.Instruments[i].Name == Sound.InstrumentName() && Info.Instruments[i].Chip == "N163")
+				return Info.Instruments[i].Index;
+			Next = std::max(Next, Info.Instruments[i].Index + 1);
+		}
+		AddInstrumentInfo(Next, Sound.InstrumentName().c_str(), "N163", Sound.Releases());
+		Info.Instruments.back().WavePos = WavePos;
+		Info.Instruments.back().WaveSize = N163_WAVE_SIZE;
+		MadeWaves[Next] = Sound;
+		return Next;
+	}
 	std::vector<std::string> Opened;	// the files LocalPath was asked about
 
 	std::string LocalPath(const std::string &Path) override
@@ -4998,6 +5019,103 @@ void TestLoops()
 	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
+// The N163: wave sounds, and where their waves go
+void TestWaveSounds()
+{
+	// Every sound: waves of 16 samples (in tune) of 0-15, at most 16; its wave sequence only plays waves it has
+	const std::vector<WaveSound> &All = WaveSounds();
+	CHECK(All.size() >= 12u);
+	for (size_t i = 0; i < All.size(); ++i) {
+		const WaveSound &W = All[i];
+		bool Fine = !W.Waves.empty() && W.Waves.size() <= static_cast<size_t>(N163_MAX_WAVES) && !W.Description.empty();
+		int Low = 15, High = 0;
+		for (size_t w = 0; w < W.Waves.size(); ++w) {
+			Fine = Fine && W.Waves[w].size() == static_cast<size_t>(N163_WAVE_SIZE);
+			for (size_t k = 0; k < W.Waves[w].size(); ++k) {
+				Low = std::min(Low, W.Waves[w][k]);
+				High = std::max(High, W.Waves[w][k]);
+			}
+		}
+		Fine = Fine && Low >= 0 && High <= 15 && High - Low >= 12;	// they fill the range: loud enough
+		bool Volume = false;
+		for (size_t s = 0; s < W.Sequences.size(); ++s) {
+			const PresetSequence &Seq = W.Sequences[s];
+			Fine = Fine && !Seq.Items.empty() && Seq.Items.size() <= 252u;
+			if (Seq.Type == SEQUENCE_VOLUME)
+				Volume = true;
+			if (Seq.Type == SEQUENCE_DUTY)
+				for (size_t k = 0; k < Seq.Items.size(); ++k)
+					Fine = Fine && Seq.Items[k] >= 0 && Seq.Items[k] < static_cast<int>(W.Waves.size());
+		}
+		Check(Fine && Volume, W.Name.c_str(), __LINE__);
+		CHECK(FindWaveSound(W.Name) == &W);
+	}
+	// Asked for by a word, or by a preset's name, which picks the one most like it
+	CHECK(FindWaveSound("Bell") != 0 && FindWaveSound("Bell")->Name == "glass bell");
+	CHECK(FindWaveSound("soft lead") != 0 && FindWaveSound("soft lead")->Name == "soft flute");
+	CHECK(FindWaveSound("e-piano") != 0 && FindWaveSound("e-piano")->Name == "electric piano");
+	CHECK(FindWaveSound("kazoo") == 0 && FindWaveSound("") == 0);
+	CHECK(FindWaveSound("glass bell")->InstrumentName() == "Glass bell" && !FindWaveSound("glass bell")->Releases());
+	CHECK(FindWaveSound("choir")->Releases());
+	// The organ shimmers: its wave sequence loops through four waves
+	const WaveSound &Organ = *FindWaveSound("organ");
+	CHECK(Organ.Waves.size() == 4u && Organ.Waves[0] != Organ.Waves[2]);
+
+	// The chip's memory: 16 samples of registers a channel, waves from the bottom up
+	CHECK(N163WaveMemory(1) == 240 && N163WaveMemory(6) == 160 && N163WaveMemory(8) == 128 && N163WaveMemory(12) == 128);
+	std::vector<std::pair<int, int> > Used;
+	CHECK(FindWavePlace(16, 160, Used) == 0);
+	Used.push_back(std::make_pair(0, 16));
+	Used.push_back(std::make_pair(32, 32));		// a 32-sample wave someone made in FamiTracker
+	CHECK(FindWavePlace(16, 160, Used) == 16);
+	Used.push_back(std::make_pair(16, 16));
+	CHECK(FindWavePlace(16, 160, Used) == 64);
+	CHECK(FindWavePlace(16, 64, Used) == -1);
+
+	// In a song with N163 channels
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Expansion = "N163";
+	for (int c = 5; c < 8; ++c) {
+		Song.Info.Channels[c].Name = "Namco " + std::to_string(c - 4);
+		Song.Info.Channels[c].Chip = "N163";
+		Song.Info.Channels[c].Kind = KIND_OTHER;
+	}
+	Song.Info.Instruments.clear();
+	std::string Text = Run(Song, "add_instrument", "{\"preset\": \"glass bell\", \"channel\": \"Namco 1\"}").Text;
+	CHECK_HAS(Text, "Added \"Glass bell\" (00) (N163 instrument: a glassy bell: a hollow, metallic ring that mellows as it dies "
+		"away; its wave takes samples 0-15 of the N163's 208, which have room for 12 more sounds).");
+	CHECK(Song.Info.Instruments[0].WavePos == 0 && Song.MadeWaves[0].Name == "glass bell");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"bell\", \"chip\": \"N163\"}").Text, "The song already has \"Glass bell\" (00)");
+	// In write_notes by name: added, its wave in a place of its own
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Namco 2\", \"instrument\": \"string ensemble\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-4\", \"beats\": 4}]}").IsError);
+	CHECK(Song.Info.Instruments.size() == 2u && Song.Info.Instruments[1].Chip == "N163" && Song.Info.Instruments[1].WavePos == 16);
+	CHECK(Song.Rows[6][0].Instrument == 1);
+	// A preset's name on an N163 channel picks the N163 sound most like it
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Namco 3\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-2\", \"beats\": 4}]}").IsError && Song.Info.Instruments.back().Name == "Round bass");
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"Namco 3\", \"instrument\": \"kazoo\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-2\", \"beats\": 4}]}").Text, "N163 sounds: soft flute, drawbar organ");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"kazoo\", \"chip\": \"N163\"}").Text, "No N163 sound called \"kazoo\"");
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "N163 sounds (for the Namco channels): soft flute");
+	// When the memory is full, it says how to make room
+	for (int i = 0; i < 10; ++i) {
+		InstrumentInfo Wave;
+		Wave.Index = 10 + i;
+		Wave.Name = "Wave " + std::to_string(i);
+		Wave.Chip = "N163";
+		Wave.WavePos = 48 + 16 * i;
+		Wave.WaveSize = 16;
+		Song.Info.Instruments.push_back(Wave);
+	}
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "The N163's wave memory is full: with 3 "
+		"channels it holds 208 samples, and the song's N163 instruments take them all. Fewer N163 channels make room");
+	// Not without N163 channels
+	FakeSong Plain;
+	CHECK_HAS(Run(Plain, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
+}
+
 // Versions to compare
 void TestKeptVersions()
 {
@@ -5768,6 +5886,7 @@ int main()
 	TestLoops();
 	TestBars();
 	TestKeptVersions();
+	TestWaveSounds();
 	TestOgg();
 	TestCut();
 	TestExport();

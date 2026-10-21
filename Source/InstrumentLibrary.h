@@ -28,7 +28,7 @@
 // before it goes into the song. Include after FamiTrackerDoc.h.
 
 class CMainFrame;
-namespace ftapi { struct Preset; }
+namespace ftapi { struct Preset; struct WaveSound; }
 
 // The instrument of that type and name, -1 if there's none
 int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR Name);
@@ -42,6 +42,11 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 // A VRC7 instrument playing one of the chip's sounds (patch 1-15), named
 // Name, or the one of that name already there
 int AddVrc7PatchInstrument(CFamiTrackerDoc *pDoc, int Patch, LPCTSTR Name, CString &Error);
+
+// An N163 instrument playing a wave sound (Api/Wavetables.h), its waves at
+// WavePos (samples) of the chip's memory, or the N163 one of that name
+// already there: its index, or -1 with the reason
+int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound, int WavePos, CString &Error);
 
 // Removes an instrument, and the sequences it used that no other instrument uses
 void RemoveInstrumentAndSequences(CFamiTrackerDoc *pDoc, unsigned int Index);

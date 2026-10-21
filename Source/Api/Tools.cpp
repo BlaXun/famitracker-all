@@ -33,6 +33,7 @@
 #include "Song.h"
 #include "SoundEffects.h"
 #include "Effects.h"
+#include "Wavetables.h"
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
@@ -523,6 +524,47 @@ int SampleDrumsInstrument(Session &S)
 	return Index;
 }
 
+// An N163 sound as an instrument, or the N163 one of its name already there:
+// its wave goes where no other N163 instrument's is. Where says where (empty
+// when it was there already).
+int AddWaveInstrument(Session &S, const WaveSound &Sound, std::string &Where)
+{
+	const std::string Name = Lowercase(Sound.InstrumentName());
+	std::vector<std::pair<int, int> > Used;
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
+		const InstrumentInfo &I = S.Song.Instruments[i];
+		if (I.Chip != "N163")
+			continue;
+		if (Lowercase(I.Name) == Name) {
+			Where.clear();
+			return I.Index;
+		}
+		if (I.WaveSize > 0)
+			Used.push_back(std::make_pair(I.WavePos, I.WaveSize));
+	}
+	int Channels = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
+	const int Memory = N163WaveMemory(Channels);
+	const int Place = FindWavePlace(N163_WAVE_SIZE, Memory, Used);
+	if (Place < 0)
+		throw Problem(Format("The N163's wave memory is full: with %d channels it holds %d samples, and the song's N163 instruments "
+			"take them all. Fewer N163 channels make room (set_expansion), or use one of the song's N163 instruments.", Channels,
+			Memory));
+	std::string Error;
+	const int Index = S.Host().AddN163Instrument(Sound, Place, Error);
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	Used.push_back(std::make_pair(Place, N163_WAVE_SIZE));
+	int Room = 0;
+	for (std::vector<std::pair<int, int> > More(Used); FindWavePlace(N163_WAVE_SIZE, Memory, More) >= 0; ++Room)
+		More.push_back(std::make_pair(FindWavePlace(N163_WAVE_SIZE, Memory, More), N163_WAVE_SIZE));
+	Where = Format("its wave takes samples %d-%d of the N163's %d, which have room for %d more %s", Place, Place + N163_WAVE_SIZE - 1,
+		Memory, Room, Room == 1 ? "sound" : "sounds");
+	return Index;
+}
+
 // An instrument for notes on a channel: one in the song (by name, or by its
 // number as FamiTracker shows it), or a preset, which is added
 int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
@@ -556,6 +598,19 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			if (S.Song.Instruments.size() > Before)
 				S.Remarks.push_back(Format("Added the instrument %s (VRC7 patch %d, %s).", InstrumentLabel(S.Song, Index).c_str(),
 					pPatch->Number, pPatch->Description.c_str()));
+			return Index;
+		}
+	}
+	// N163 channels play wave sounds drawn for them (a preset's name picks the one most like it)
+	if (Chip == "N163") {
+		const WaveSound *pSound = FindWaveSound(Wanted);
+		if (pSound != 0) {
+			const size_t Before = S.Song.Instruments.size();
+			std::string Where;
+			const int Index = AddWaveInstrument(S, *pSound, Where);
+			if (S.Song.Instruments.size() > Before)
+				S.Remarks.push_back(Format("Added the instrument %s (N163: %s; %s).", InstrumentLabel(S.Song, Index).c_str(),
+					pSound->Description.c_str(), Where.c_str()));
 			return Index;
 		}
 	}
@@ -607,6 +662,9 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 	if (Chip == "VRC7")
 		throw Problem(Format("No instrument or VRC7 sound called \"%s\". VRC7 instruments in the song: %s. VRC7 sounds: %s (or a preset's "
 			"name, like \"soft lead\").", Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), Vrc7PatchList().c_str()));
+	if (Chip == "N163")
+		throw Problem(Format("No instrument or N163 sound called \"%s\". N163 instruments in the song: %s. N163 sounds: %s.",
+			Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), WaveSoundList().c_str()));
 	throw Problem(Format("No instrument or preset called \"%s\". %s instruments in the song: %s. Presets: %s.", Wanted.c_str(),
 		Chip.c_str(), Names.empty() ? "none" : Names.c_str(), PresetList().c_str()));
 }
@@ -1102,6 +1160,8 @@ std::string SongOverview(Session &S, const Json &Args)
 	if (Song.Playing && Song.PlayRow >= 0)
 		Text += "Playing, now at " + T.Position(Song.PlayRow) + ".\n";
 	Text += "Instrument presets: " + PresetList() + ".";
+	if (Song.Expansion == "N163")
+		Text += " N163 sounds (for the Namco channels): " + WaveSoundList() + ".";
 	return Text;
 }
 
@@ -1442,6 +1502,21 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 		return Format("%s %s (VRC7 instrument, patch %d: %s). Use it by that name in write_notes or set_instrument.",
 			S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(), pPatch->Number,
 			pPatch->Description.c_str());
+	}
+
+	// The N163 plays wave sounds drawn for it
+	if (Chip == "N163") {
+		if (S.Song.Expansion != "N163")
+			throw Problem("This song has no N163 channels; set_expansion switches it to the N163.");
+		const WaveSound *pSound = FindWaveSound(Name);
+		if (pSound == 0)
+			throw Problem(Format("No N163 sound called \"%s\". N163 sounds: %s.", Name.c_str(), WaveSoundList().c_str()));
+		const size_t Before = S.Song.Instruments.size();
+		std::string Where;
+		const int Index = AddWaveInstrument(S, *pSound, Where);
+		return Format("%s %s (N163 instrument: %s%s). Use it by that name in write_notes or set_instrument.",
+			S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(),
+			pSound->Description.c_str(), Where.empty() ? "" : ("; " + Where).c_str());
 	}
 
 	const Preset *pPreset = FindPreset(Name);
@@ -5990,9 +6065,14 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 			"set_instrument or add_instrument (a preset's name picks the one most like it).";
 	else if (Chip == "MMC5")
 		Text += " Two more pulses; the 2A03 presets work on them.";
-	else if (Chip == "FDS" || Chip == "N163")
-		Text += " Wavetable channels: they need " + Chip + " instruments, which you can't make yet; the user makes one in "
-			"FamiTracker's instrument editor.";
+	else if (Chip == "N163")
+		Text += " Wavetable channels that play N163 sounds: " + WaveSoundList() + ". Their waves are drawn for them and can change "
+			"as a note plays (a shimmer, brass opening up, a bell mellowing); add_instrument, write_notes and set_instrument take "
+			"their names. Up to 6 channels keep the chip's switching whine above hearing (about 20 kHz); 7 or 8 bring it down to "
+			"17 or 15 kHz.";
+	else if (Chip == "FDS")
+		Text += " A wavetable channel: it needs an FDS instrument, which you can't make yet; the user makes one in FamiTracker's "
+			"instrument editor.";
 	if (Notes > 0)
 		Text += Format(" Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str());
 	if (Moved > 0 && S.ChannelCount() > 0)
@@ -7868,10 +7948,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	Chips.push_back("2A03");
 	Chips.push_back("VRC6");
 	Chips.push_back("VRC7");
-	std::vector<std::string> Sounds = PresetNames();	// and the VRC7's
+	Chips.push_back("N163");
+	std::vector<std::string> Sounds = PresetNames();	// and the VRC7's and the N163's
 	for (size_t i = 0; i < Vrc7Patches().size(); ++i)
 		if (std::find(Sounds.begin(), Sounds.end(), Vrc7Patches()[i].Name) == Sounds.end())
 			Sounds.push_back(Vrc7Patches()[i].Name);
+	for (size_t i = 0; i < WaveSounds().size(); ++i)
+		if (std::find(Sounds.begin(), Sounds.end(), WaveSounds()[i].Name) == Sounds.end())
+			Sounds.push_back(WaveSounds()[i].Name);
 
 	Json NoteItem = Json::MakeObject();
 	{
@@ -7922,7 +8006,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Writes a part (melody, counter-melody, bass line, drums...) on one channel, replacing that channel's notes in the bars "
 		"it covers. Each note lasts its beats; a gap is a rest. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
-		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "). Drums on the noise channel by name (kick, "
+		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "; on N163 channels the N163 sounds: " + WaveSoundList() +
+		"). Drums on the noise channel by name (kick, "
 		"snare, hihat); on the DPCM channel the sampled drums of add_sample_drums (kick, snare, low tom, high tom).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
@@ -7948,7 +8033,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("add_instrument", "Add an instrument",
 		"Adds an instrument from a preset: " + Presets + ". 2A03, VRC6 and VRC7 channels need their own: give the channel it's "
 		"for. VRC7 channels play the chip's built-in sounds: " + Vrc7PatchList() + " (a preset's name picks the one most like "
-		"it). An instrument of that name for that chip is reused. write_notes and set_instrument also take these names directly.",
+		"it). N163 channels play wave sounds drawn for them, whose timbre can move as a note plays: " + WaveSoundList() + ". An "
+		"instrument of that name for that chip is reused. write_notes and set_instrument also take these names directly.",
 		Schema()
 			.Add("preset", EnumProp("The sound.", Sounds), true)
 			.Add("channel", ChannelProp("The channel it's for (picks the chip)."))
@@ -8470,7 +8556,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"when they have notes this asks for confirm: true, which needs the user's OK. It can't be undone in FamiTracker.",
 		Schema()
 			.Add("chip", EnumProp("The chip.", std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163" }), true)
-			.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default 4; the more, the noisier on the hardware)."))
+			.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default 4). Up to 6 keep the chip's switching whine above "
+				"hearing; each takes 16 samples of its wave memory, leaving room for 16 minus that many sounds."))
 			.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the old chip's channels.")),
 		false, true);
 
@@ -8790,7 +8877,10 @@ std::string ToolSet::Instructions()
 		"the duty between sections; instruments with life (the singing lead, strings and brass presets, or design_instrument "
 		"for a sound described in words). The effects tool explains FamiTracker 0.4.6's effects and the techniques made with "
 		"them (swing with Gxx, a chorus with Pxx, staccato with Sxx, a kick on the triangle); only 0.4.6's effects play, so "
-		"none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers.\n"
+		"none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers. With the N163 (set_expansion), up to 8 more channels play wave "
+		"sounds whose timbre moves (an organ's rotating shimmer, strings and a choir that swell, brass opening up, an electric "
+		"piano and a bell that mellow, a pulse lead that sweeps, a bass that growls): rich chords spread over several channels, "
+		"each voice its own note.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"

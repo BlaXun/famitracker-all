@@ -34,6 +34,7 @@ namespace ftapi {
 
 struct Preset;
 struct DpcmKit;
+struct WaveSound;
 
 struct ChannelInfo {
 	std::string Name;		// "Pulse 1", "Sawtooth"
@@ -53,8 +54,9 @@ struct InstrumentInfo {
 	std::string Chip;		// "2A03", "VRC6", ...
 	bool Releases;			// fades out on a release (===)
 	bool Vibrato;			// vibrato built in: its pitch sequence goes up and down in a loop
+	int WavePos, WaveSize;	// an N163 instrument's place and length in the chip's wave memory (samples); -1 otherwise
 
-	InstrumentInfo() : Index(0), Releases(false), Vibrato(false) {}
+	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1) {}
 };
 
 struct ClipInfo {
@@ -168,6 +170,9 @@ public:
 	// The preset as an instrument for a chip ("2A03" or "VRC6"), or the one of
 	// that name and chip already there: its index, -1 with the reason
 	virtual int AddInstrument(const Preset &Sound, const std::string &Chip, bool Sawtooth, std::string &Error) = 0;
+	// An N163 instrument playing a wave sound (Wavetables.h), its waves at WavePos (samples) of the chip's
+	// memory, named after it, or the N163 one of that name already there: its index, -1 with the reason
+	virtual int AddN163Instrument(const WaveSound &Sound, int WavePos, std::string &Error) = 0;
 	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
 	// name already there: its index, -1 with the reason
 	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;
