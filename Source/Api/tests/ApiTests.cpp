@@ -2750,7 +2750,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato or separate");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades or scoops");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -6431,6 +6431,36 @@ void TestVoicedChords()
 	CHECK_HAS(Result.Text, "voices chords on 2A03 Pulse 1, 2A03 Pulse 2 and VRC6 Pulse 1");
 }
 
+void TestFadesAndScoops()
+{
+	// Fades: a held note slides down from halfway through, the next one gets its volume back
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0, 12);
+	Song.Put(5, 16, "E-4");
+	Song.Put(5, 20, "G-4");
+	Song.End(5, 24, NOTE_RELEASE);
+	ToolResult Result = Run(Song, "polish", "{\"touches\": [\"fades\"], \"channels\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "fades on 1 held note (a volume slide from halfway through, A0y, the next note at its own volume) on VRC6 Pulse 1");
+	CHECK(Song.Rows[5][8].Effect[0] == EFF_VOLUME_SLIDE && Song.Rows[5][8].Param[0] == 0x02);
+	CHECK(Song.Rows[5][16].Effect[0] == EFF_VOLUME_SLIDE && Song.Rows[5][16].Param[0] == 0 && Song.Rows[5][16].Volume == 12);
+	CHECK(Song.Rows[5][20].Effect[0] == EFF_NONE);	// a short note: no fade
+	// Scoops: a held note after a leap up slides into place from below
+	FakeSong Leap;
+	Leap.Info.DirectChanges = true;
+	Leap.Put(5, 0, "C-4", 0);
+	Leap.Put(5, 4, "G-4");
+	Leap.Put(5, 12, "A-4");
+	Leap.End(5, 16, NOTE_RELEASE);
+	Result = Run(Leap, "polish", "{\"touches\": [\"scoops\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(Result.Text, "1 scoop after leaps up on VRC6 Pulse 1");
+	CHECK(Leap.Rows[5][4].Pitch() == 53 && Leap.Rows[5][4].Effect[0] == EFF_SLIDE_UP && Leap.Rows[5][4].Param[0] == 0x62);
+	CHECK(Leap.Rows[5][12].Pitch() == 57 && Leap.Rows[5][12].Effect[0] == EFF_NONE);	// a step, not a leap
+	// Read back as written: the note and its slide
+	CHECK_HAS(Run(Leap, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bar 1 beat 2: F-4, 2 beats, effects Q62");
+}
+
 int main()
 {
 	TestJson();
@@ -6491,6 +6521,7 @@ int main()
 	TestMix();
 	TestVrc7Custom();
 	TestVoicedChords();
+	TestFadesAndScoops();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

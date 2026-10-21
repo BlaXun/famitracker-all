@@ -70,9 +70,10 @@ std::vector<EffectInfo> MakeReference()
 		"Wobbles the volume: x is how fast, y how deep.", "channels with a volume (not the triangle or the DPCM)", "until 700",
 		"744 a gentle shimmer on pads and organs, 7A8 a fast throb." });
 	All.push_back({ "Axy", "volume slide",
-		"Slides the volume: A0y up, Ax0 down, by x or y eighths of a step a tick (one of them, the other 0).",
+		"Slides the volume: A0y down, Ax0 up, by y or x eighths of a step a tick (one of them, the other 0).",
 		"channels with a volume (not the triangle or the DPCM)", "until A00",
-		"A20-A40 fade a held note out, A02-A04 swell one in (start it soft, at volume 3 or so); a fade at the end of a song." });
+		"A01-A04 fade a held note out (give the next note its volume, since the slide leaves the channel quieter), A10-A40 "
+		"swell one in (start it soft, at volume 3 or so); a fade at the end of a song." });
 	All.push_back({ "Gxx", "note delay",
 		"Holds this row's note back xx ticks, less than the speed (the ticks a row lasts).", "every channel", "this row only",
 		"a swing for one part (G02 or G03 on its off-beats at speed 6; set_swing swings the whole song), flams and rolls on "
@@ -153,7 +154,7 @@ std::vector<Technique> MakeTechniques()
 		"Cut notes short with Sxx: S02-S04 make plucky, bouncing notes; an arpeggio chord (037) with S03 sounds gated. A halt (---) "
 		"or release (===) a row after the note does the same on the row grid." });
 	All.push_back({ "fades and swells", "fade, swell, crescendo, decrescendo, volume slide, axy",
-		"A held note fades out with Ax0 (A20 slowly, A80 quickly) and swells in with A0y from a soft start (volume 3, A02-A04); "
+		"A held note fades out with A0y (A01 slowly, A08 quickly) and swells in with Ax0 from a soft start (volume 3, A10-A40); "
 		"end with A00. The volume column on later notes does it a note at a time." });
 	All.push_back({ "tremolo", "7xy, shimmer, throb",
 		"7xy shakes the volume: 744 a gentle shimmer on pads, 7A8 a fast throb; 700 stops it. Not on the triangle, which has no "
@@ -248,7 +249,7 @@ std::string ChannelProblem(const ChannelInfo &C, int Effect, int Param, int Spee
 		if (C.Kind == KIND_DPCM)
 			return "The DPCM channel plays samples at their own loudness, so 7xy and Axy don't reach it.";
 		if (Effect == EFF_VOLUME_SLIDE && x != 0 && y != 0)
-			return "Axy slides one way at a time: A0y up, Ax0 down.";
+			return "Axy slides one way at a time: A0y down, Ax0 up.";
 		break;
 	case EFF_SWEEPUP: case EFF_SWEEPDOWN:
 		if (!Is2A03Pulse(C))

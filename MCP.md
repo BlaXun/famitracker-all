@@ -365,8 +365,10 @@ avoid that, and gives it tools for each layer:
   and crashes.
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel.
-- **Finishing touches**: `polish`; `make_groove` starts a whole backing for
-  a mood; `copy_bars` and `vary_part` build a form whose repeats change,
+- **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
+  between repeated triangle notes; when asked, fades on held notes, `A0y`
+  from halfway through, and scoops into held notes after a leap up);
+  `make_groove` starts a whole backing for a mood; `copy_bars` and `vary_part` build a form whose repeats change,
   and `insert_bars` and `remove_bars` make room for a section or cut one.
 
 `review_arrangement` listens the way an arranger would and scores the depth

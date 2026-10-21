@@ -4014,6 +4014,87 @@ int Accents(Session &S, Draft &D, int Channel, int First, int End)
 
 // Repeated notes that run into each other on the triangle sound as one (it
 // has no attack): each gets a halt on its last row. How many.
+// Fades on a channel's held notes (two beats or more): a volume slide down
+// (A0y) from halfway through, to about a third of the note's loudness by its
+// end, and the next note given its own volume back (A00 stops the slide).
+// How many notes; Lost when an effect column was full.
+int AddFades(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
+{
+	const int R = S.Time.RowsPerBeat;
+	const int Columns = S.Channel(Channel).EffectColumns;
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	const int Ticks = std::max(1, S.Song.Speed);	// a row's ticks
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End || N.Rows < 2 * R || N.Volume < 3)
+			continue;
+		bool Shaped = false;	// a slide or tremolo of its own
+		for (size_t e = 0; e < N.Effects.size(); ++e)
+			Shaped = Shaped || N.Effects[e].second.first == EFF_VOLUME_SLIDE || N.Effects[e].second.first == EFF_TREMOLO;
+		if (Shaped)
+			continue;
+		const int From = N.Row + N.Rows / 2;
+		const int Rows = N.Row + N.Rows - From;
+		// Two thirds of the loudness in eighths of a step, over the rows left
+		const int Down = std::max(1, std::min(4, (N.Volume * 2 * 8 / 3 + Rows * Ticks - 1) / (Rows * Ticks)));
+		if (From >= static_cast<int>(Cells.size()) || !AddEffect(Cells[static_cast<size_t>(From)], EFF_VOLUME_SLIDE, Down, Columns)) {
+			Lost = true;
+			continue;
+		}
+		// The next note, or the row after this one's end: the slide stops, the volume comes back
+		const int After = N.Row + N.Rows;
+		if (After < static_cast<int>(Cells.size())) {
+			Cell &Next = Cells[static_cast<size_t>(After)];
+			if (!HasEffect(Next, EFF_VOLUME_SLIDE, Columns) && !AddEffect(Next, EFF_VOLUME_SLIDE, 0, Columns))
+				Lost = true;
+			if (Next.HasNote() && Next.Volume == NO_VOLUME)
+				Next.Volume = static_cast<unsigned char>(i + 1 < Notes.size() ? Notes[i + 1].Volume : N.Volume);
+		}
+		++Count;
+	}
+	return Count;
+}
+
+// Scoops into a channel's held notes that come after a leap up: the note
+// written a semitone or two lower, sliding up into it at once (Q61, Q62),
+// at most one every two bars. How many; Lost when an effect column was full.
+int AddScoops(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
+{
+	const int R = S.Time.RowsPerBeat;
+	const int Columns = S.Channel(Channel).EffectColumns;
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	int Count = 0, Last = -1000;
+	for (size_t i = 1; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i], &Before = Notes[i - 1];
+		if (N.Row < First || N.Row >= End || N.Rows < R || N.Row - Last < 2 * S.Time.RowsPerBar)
+			continue;
+		const int Leap = N.Pitch - Before.Pitch;
+		if (Leap < 3 || N.Row - (Before.Row + Before.Rows) > R || N.Pitch < 3)
+			continue;
+		bool Sliding = false;
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first;
+			Sliding = Sliding || Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || Effect == EFF_PORTAMENTO || Effect == EFF_PORTA_UP ||
+				Effect == EFF_PORTA_DOWN || Effect == EFF_ARPEGGIO;
+		}
+		if (Sliding)
+			continue;
+		Cell &C = Cells[static_cast<size_t>(N.Row)];
+		const int Below = Leap >= 5 ? 2 : 1;
+		if (!AddEffect(C, EFF_SLIDE_UP, 0x60 | Below, Columns)) {
+			Lost = true;
+			continue;
+		}
+		C.SetPitch(N.Pitch - Below);
+		Last = N.Row;
+		++Count;
+	}
+	return Count;
+}
+
 int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
 {
 	const std::vector<NoteInfo> Notes = D.Notes(Channel);
@@ -4057,8 +4138,8 @@ std::string PolishTool(Session &S, const Json &Args)
 			Words.push_back(pWhat->String());
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
-			if (Word != "accents" && Word != "vibrato" && Word != "separate")
-				throw Problem("touches: accents, vibrato or separate.");
+			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops")
+				throw Problem("touches: accents, vibrato, separate, fades or scoops.");
 			What.insert(Word);
 		}
 	}
@@ -4096,6 +4177,35 @@ std::string PolishTool(Session &S, const Json &Args)
 		if (Count > 0)
 			Done.push_back(Format("a gentle vibrato that comes in after half a beat on %s of %s", Plural(Count, "long note", "long notes").c_str(),
 				S.Channel(Melody).FullName().c_str()));
+	}
+	if (What.count("fades")) {
+		std::string List;
+		int Total = 0;
+		bool Lost = false;
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (!IsMelodic(S.Channel(c)) || S.Channel(c).Kind == KIND_TRIANGLE)
+				continue;
+			const int Count = AddFades(S, D, c, First, End, Lost);
+			if (Count > 0) {
+				List += (List.empty() ? "" : ", ") + S.Channel(c).FullName();
+				Total += Count;
+			}
+		}
+		if (Lost)
+			Warnings.push_back("Some held notes had no free effect column for a fade (show more effect columns in FamiTracker).");
+		if (Total > 0)
+			Done.push_back(Format("fades on %s (a volume slide from halfway through, A0y, the next note at its own volume) on %s",
+				Plural(Total, "held note", "held notes").c_str(), List.c_str()));
+	}
+	if (What.count("scoops") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
+		bool Lost = false;
+		const int Count = AddScoops(S, D, Melody, First, End, Lost);
+		if (Lost)
+			Warnings.push_back("Some notes had no free effect column for a scoop (show more effect columns in FamiTracker).");
+		if (Count > 0)
+			Done.push_back(Format("%s after leaps up on %s (written a semitone or two low, sliding up with Q6y)",
+				Plural(Count, "scoop", "scoops").c_str(), S.Channel(Melody).FullName().c_str()));
 	}
 	if (What.count("separate")) {
 		for (size_t i = 0; i < Channels.size(); ++i) {
@@ -9204,19 +9314,24 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 		Json Touches = Prop("array", "Which touches: accents (a bar's first note loudest, beats a step softer, the notes between "
 			"them softer still), vibrato (a gentle vibrato that comes in half a beat into the melody's notes of 1.5 beats or "
-			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one). Default: all three.");
+			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one); and when asked, fades "
+			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
+			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
+			"bars). Default: accents, vibrato and separate.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
 		TouchNames.Push("accents");
 		TouchNames.Push("vibrato");
 		TouchNames.Push("separate");
+		TouchNames.Push("fades");
+		TouchNames.Push("scoops");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
 			"Gives parts the small things that make them sound played rather than typed: accents, a delayed vibrato on the "
-			"melody's long notes, and gaps between repeated triangle notes. Channels that already shape their volumes keep them. "
-			"Run it after the parts are written.",
+			"melody's long notes, and gaps between repeated triangle notes; fades on held notes and scoops into notes after "
+			"leaps when asked. Channels that already shape their volumes keep them. Run it after the parts are written.",
 			Schema()
 				.Add("touches", Touches)
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
