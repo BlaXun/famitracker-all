@@ -583,8 +583,38 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			pWrongChip = &I;
 		}
 	}
-	// VRC7 channels play the chip's own patches (a preset's name picks the one most like it)
+	// VRC7 channels play the chip's own patches (a preset's name picks the one most like it), or a
+	// custom patch of this connection's design
 	if (Chip == "VRC7") {
+		const Vrc7Custom *pCustom = FindVrc7Custom(Wanted);
+		if (pCustom != 0 && pWrongChip != 0 && Squeezed(pCustom->Name) != Squeezed(Wanted))
+			pCustom = 0;	// the song's instrument of that name was meant
+		if (pCustom != 0) {
+			// Other custom patches the song plays already: the chip holds one at a time
+			std::string Others;
+			for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
+				const InstrumentInfo &I = S.Song.Instruments[i];
+				const Vrc7Custom *pOther = I.Chip == "VRC7" ? FindVrc7Custom(I.Name) : 0;
+				if (pOther != 0 && pOther != pCustom)
+					Others += (Others.empty() ? "" : ", ") + InstrumentLabel(S.Song, I.Index);
+			}
+			const size_t Before = S.Song.Instruments.size();
+			std::string Error;
+			const std::vector<int> Regs(pCustom->Regs, pCustom->Regs + 8);
+			const int Index = S.Host().AddVrc7CustomInstrument(Regs, pCustom->InstrumentName(), Error);
+			if (Index < 0)
+				throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+			S.Refresh();
+			if (S.Song.Instruments.size() > Before) {
+				S.Remarks.push_back(Format("Added the instrument %s (a VRC7 custom patch: %s).", InstrumentLabel(S.Song, Index).c_str(),
+					pCustom->Description.c_str()));
+				if (!Others.empty())
+					S.Remarks.push_back("The VRC7 holds one custom patch at a time, and " + Others + " plays another: where two "
+						"channels play both at once, both sound like the one struck last. Keep custom patches to different "
+						"sections, or give one part a built-in sound.");
+			}
+			return Index;
+		}
 		const Vrc7Patch *pPatch = FindVrc7Patch(Wanted);
 		if (pPatch != 0 && pWrongChip != 0 && Squeezed(pPatch->Name) != Squeezed(Wanted))
 			pPatch = 0;	// the song's instrument of that name was meant
@@ -661,7 +691,8 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 	}
 	if (Chip == "VRC7")
 		throw Problem(Format("No instrument or VRC7 sound called \"%s\". VRC7 instruments in the song: %s. VRC7 sounds: %s (or a preset's "
-			"name, like \"soft lead\").", Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), Vrc7PatchList().c_str()));
+			"name, like \"soft lead\"); custom ones: %s.", Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), Vrc7PatchList().c_str(),
+			Vrc7CustomList().c_str()));
 	if (Chip == "N163")
 		throw Problem(Format("No instrument or N163 sound called \"%s\". N163 instruments in the song: %s. N163 sounds: %s.",
 			Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), WaveSoundList().c_str()));

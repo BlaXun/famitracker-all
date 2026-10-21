@@ -176,6 +176,9 @@ public:
 	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
 	// name already there: its index, -1 with the reason
 	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;
+	// A VRC7 instrument playing the chip's custom patch (patch 0) set to Regs (its 8 registers), named
+	// Name, or the VRC7 one of that name already there: its index, -1 with the reason
+	virtual int AddVrc7CustomInstrument(const std::vector<int> &Regs, const std::string &Name, std::string &Error) = 0;
 	// A kit of samples (DpcmKit.h) as a 2A03 instrument for the DPCM channel, its samples added
 	// (or ones of the same name and size reused), or the 2A03 instrument of the kit's name already
 	// there: its index, -1 with the reason

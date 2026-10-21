@@ -1261,6 +1261,21 @@ public:
 		return Index;
 	}
 
+	int AddVrc7CustomInstrument(const std::vector<int> &Regs, const std::string &Name, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		if (Regs.size() != 8) {
+			Error = "A VRC7 custom patch has 8 registers.";
+			return -1;
+		}
+		CString Problem;
+		const int Index = ::AddVrc7CustomInstrument(Doc(), &Regs[0], Ansi(Name), Problem);
+		if (Index < 0)
+			Error = Utf8(Problem);
+		return Index;
+	}
+
 	int AddDpcmKit(const ftapi::DpcmKit &Kit, std::string &Error)
 	{
 		if (!CanChange(Error))

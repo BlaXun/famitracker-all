@@ -412,6 +412,18 @@ public:
 		return Path;
 	}
 	std::map<int, int> Vrc7Patches;	// instrument -> patch
+	std::map<int, std::vector<int> > Vrc7Regs;	// instrument -> its custom patch's registers
+
+	int AddVrc7CustomInstrument(const std::vector<int> &Regs, const std::string &Name, std::string &Error) override
+	{
+		const size_t Before = Info.Instruments.size();
+		const int Index = AddVrc7Instrument(1, Name, Error);
+		if (Index >= 0 && Info.Instruments.size() > Before) {
+			Vrc7Patches[Index] = 0;
+			Vrc7Regs[Index] = Regs;
+		}
+		return Index;
+	}
 
 	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) override
 	{
@@ -6205,6 +6217,41 @@ void TestMix()
 	CHECK(Run(Loud, "review_arrangement", "{}").Text.find("Mix:") == std::string::npos);
 }
 
+void TestVrc7Custom()
+{
+	// The VRC7's custom patch, from sounds of this connection's design
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	const size_t Before = Song.Info.Instruments.size();
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"FM Channel 1\", \"instrument\": \"rhodes\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(a VRC7 custom patch: a bright, bell-like attack that mellows");
+	CHECK(Song.Info.Instruments.size() == Before + 1);
+	const int Ep = Song.Info.Instruments.back().Index;
+	CHECK(Song.Info.Instruments.back().Name == "Electric piano" && Song.Vrc7Patches[Ep] == 0);
+	CHECK(Song.Vrc7Regs[Ep] == std::vector<int>({ 0x01, 0x01, 0x48, 0x01, 0xF7, 0xF2, 0x95, 0x23 }));
+	CHECK(Song.Rows[5][0].Instrument == Ep);
+	// Again by its name: the same instrument
+	Result = Run(Song, "write_notes", "{\"channel\": \"FM Channel 1\", \"instrument\": \"electric piano\", \"notes\": ["
+		"{\"bar\": 2, \"pitch\": \"D-4\", \"beats\": 2}]}");
+	CHECK(Song.Info.Instruments.size() == Before + 1 && Song.Rows[5][16].Instrument == Ep);
+	// A second custom patch: the chip holds one at a time, which the reply says
+	Result = Run(Song, "write_notes", "{\"channel\": \"FM Channel 2\", \"instrument\": \"fm pad\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-3\", \"beats\": 4}]}");
+	CHECK_HAS(Result.Text, "The VRC7 holds one custom patch at a time, and \"Electric piano\"");
+	CHECK(Song.Vrc7Regs[Song.Info.Instruments.back().Index] == std::vector<int>({ 0x21, 0x61, 0x64, 0x01, 0x52, 0x42, 0x12, 0x13 }));
+	// The built-in sounds still come by name
+	Result = Run(Song, "write_notes", "{\"channel\": \"FM Channel 3\", \"instrument\": \"piano\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"G-3\", \"beats\": 4}]}");
+	CHECK(!Result.IsError && Song.Vrc7Patches[Song.Info.Instruments.back().Index] == 3);
+	CHECK(Result.Text.find("custom patch") == std::string::npos);
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FM Channel 1\", \"instrument\": \"kazoo\", \"notes\": ["
+		"{\"bar\": 3, \"pitch\": \"C-4\", \"beats\": 1}]}").Text,
+		"custom ones: electric piano, soft electric piano, glass bell, fm pad, fm bass, wooden mallet");
+}
+
 int main()
 {
 	TestJson();
@@ -6263,6 +6310,7 @@ int main()
 	TestLushChords();
 	TestSwing();
 	TestMix();
+	TestVrc7Custom();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

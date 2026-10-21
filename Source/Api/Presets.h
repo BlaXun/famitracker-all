@@ -134,4 +134,21 @@ const std::vector<Vrc7Patch> &Vrc7Patches();
 const Vrc7Patch *FindVrc7Patch(const std::string &Name);
 std::string Vrc7PatchList();						// "bell, guitar, piano, ..."
 
+// A VRC7 sound of this connection's own design, for the chip's custom patch
+// (patch 0): its 8 registers (the modulator's and carrier's multipliers and
+// envelope types, the modulation level, feedback, attack, decay, sustain and
+// release). The chip holds one custom patch at a time, so channels playing
+// two different ones at once both sound like the one struck last.
+struct Vrc7Custom {
+	std::string Name;			// "electric piano"
+	std::string Description;
+	int Regs[8];
+
+	std::string InstrumentName() const;	// "Electric piano"
+};
+
+const std::vector<Vrc7Custom> &Vrc7Customs();
+const Vrc7Custom *FindVrc7Custom(const std::string &Name);	// by name or a common word for it ("rhodes", "epiano")
+std::string Vrc7CustomList();						// "electric piano, soft electric piano, ..."
+
 }	// namespace ftapi

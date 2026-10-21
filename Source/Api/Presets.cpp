@@ -219,6 +219,36 @@ std::vector<Vrc7Patch> MakeVrc7Patches()
 	return All;
 }
 
+// Measured with emu2413 as FamiTracker plays it (a C-3 struck, held, released)
+std::vector<Vrc7Custom> MakeVrc7Customs()
+{
+	struct Design { const char *Name; const char *Description; int Regs[8]; };
+	static const Design DESIGNS[] = {
+		{ "electric piano", "a bright, bell-like attack that mellows within a fifth of a second into a warm tone, fading over two "
+			"seconds: comping chords and soft leads", { 0x01, 0x01, 0x48, 0x01, 0xF7, 0xF2, 0x95, 0x23 } },
+		{ "soft electric piano", "the electric piano with a gentler attack: rounder, for quiet chords under a melody",
+			{ 0x01, 0x01, 0x50, 0x00, 0xF6, 0xF2, 0x85, 0x23 } },
+		{ "glass bell", "a glassy bell whose high partials ring and fade slowly into a pure tone: chimes, music boxes, night",
+			{ 0x05, 0x01, 0x56, 0x00, 0xF4, 0xF2, 0xF3, 0x21 } },
+		{ "fm pad", "a warm pad that swells in over a fifth of a second and holds, with a gentle vibrato: long chords",
+			{ 0x21, 0x61, 0x64, 0x01, 0x52, 0x42, 0x12, 0x13 } },
+		{ "fm bass", "a bass with a plucked, bright start that settles into a round, held body", { 0x00, 0x21, 0x50, 0x05, 0xF6,
+			0xF4, 0xF6, 0x26 } },
+		{ "wooden mallet", "a soft, woody mallet that dies away within a second: marimba-like riffs and arpeggios",
+			{ 0x03, 0x01, 0x5A, 0x00, 0xF9, 0xF5, 0xF7, 0x34 } },
+	};
+	std::vector<Vrc7Custom> All;
+	for (size_t i = 0; i < sizeof(DESIGNS) / sizeof(DESIGNS[0]); ++i) {
+		Vrc7Custom C;
+		C.Name = DESIGNS[i].Name;
+		C.Description = DESIGNS[i].Description;
+		for (int r = 0; r < 8; ++r)
+			C.Regs[r] = DESIGNS[i].Regs[r];
+		All.push_back(C);
+	}
+	return All;
+}
+
 std::string Simplified(const std::string &Text)
 {
 	std::string Out;
@@ -325,6 +355,52 @@ std::string Vrc7Patch::InstrumentName() const
 	std::string Out = Name;
 	if (!Out.empty())
 		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
+	return Out;
+}
+
+std::string Vrc7Custom::InstrumentName() const
+{
+	std::string Out = Name;
+	if (!Out.empty())
+		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
+	return Out;
+}
+
+const std::vector<Vrc7Custom> &Vrc7Customs()
+{
+	static const std::vector<Vrc7Custom> All = MakeVrc7Customs();
+	return All;
+}
+
+const Vrc7Custom *FindVrc7Custom(const std::string &Name)
+{
+	static const char *const WORDS[][2] = {
+		{ "epiano", "electric piano" }, { "rhodes", "electric piano" }, { "ep", "electric piano" }, { "fmpiano", "electric piano" },
+		{ "softepiano", "soft electric piano" }, { "softrhodes", "soft electric piano" }, { "softep", "soft electric piano" },
+		{ "glassbells", "glass bell" }, { "fmbell", "glass bell" }, { "fmsynthpad", "fm pad" }, { "fmbassguitar", "fm bass" },
+		{ "woodenmallets", "wooden mallet" }, { "woodmallet", "wooden mallet" },
+	};
+	const std::string Wanted = Simplified(Name);
+	if (Wanted.empty())
+		return 0;
+	const std::vector<Vrc7Custom> &All = Vrc7Customs();
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Simplified(All[i].Name) == Wanted)
+			return &All[i];
+	for (size_t w = 0; w < sizeof(WORDS) / sizeof(WORDS[0]); ++w)
+		if (Wanted == WORDS[w][0])
+			for (size_t i = 0; i < All.size(); ++i)
+				if (All[i].Name == WORDS[w][1])
+					return &All[i];
+	return 0;
+}
+
+std::string Vrc7CustomList()
+{
+	std::string Out;
+	const std::vector<Vrc7Custom> &All = Vrc7Customs();
+	for (size_t i = 0; i < All.size(); ++i)
+		Out += (i == 0 ? "" : ", ") + All[i].Name;
 	return Out;
 }
 

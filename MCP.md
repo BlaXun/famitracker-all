@@ -288,6 +288,18 @@ and a preset's name picks the sound most like it: "soft lead" is the flute,
 "bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
 which lets the sound fade the way the chip does.
 
+The chip also has one custom patch, whose 8 registers set two FM operators
+(their frequency ratio, the modulation level, feedback and envelopes).
+Claude has six of its own design, measured with the same emulator
+FamiTracker plays: electric piano (a bright, bell-like attack that mellows
+into a warm tone, for comping chords), soft electric piano, glass bell, fm
+pad (swells in and holds, with a gentle vibrato), fm bass and wooden
+mallet. Ask for them by name ("rhodes" and "epiano" work too). The chip
+holds one custom patch at a time, so two channels playing different custom
+patches at once both sound like the one struck last; Claude says so when a
+song gets a second one. Two channels playing the same custom patch are
+fine, which is how an electric piano comps chords across them.
+
 The **N163** (Namco 163) adds 1 to 8 wavetable channels, 13 in all with the
 2A03's, and Claude draws their sounds: soft flute, drawbar organ, string
 ensemble, choir, brass section, electric piano, glass bell, harp, marimba,
