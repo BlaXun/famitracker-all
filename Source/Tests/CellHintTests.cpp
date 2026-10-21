@@ -67,8 +67,8 @@ void TestNotes()
 	CHECK(Has(DescribeCell(Note(C, 3), 0, HINT_PULSE, false, ""), "with the instrument the channel has."));
 	CHECK(Has(DescribeCell(Note(C, 3, 5), 0, HINT_PULSE, false, ""), "with instrument 05, which the song doesn't have."));
 	// An instrument for another chip
-	CHECK(Has(DescribeCell(Note(C, 3, 6), 0, HINT_PULSE, true, "Warm pad", 0x20, "VRC6", "2A03"),
-		"with instrument 06 \"Warm pad\", which is for the VRC6: this channel needs a 2A03 instrument."));
+	CHECK(DescribeCell(Note(C, 3, 6), 0, HINT_PULSE, true, "Warm pad", 0x20, "VRC6", "2A03") ==
+		"C-3: its instrument, 06 \"Warm pad\", is for the VRC6, so it shows in red: this channel needs a 2A03 instrument.");
 	CHECK(DescribeCell(Note(C, 3, 2), 0, HINT_PULSE, true, "Bass", 0x20, "2A03", "2A03").find("needs") == std::string::npos);
 	CHECK(DescribeCell(Note(C, 3, 2), 0, HINT_PULSE, true, "Bass", 0x20, "VRC6", "").find("needs") == std::string::npos);
 	CHECK(Has(DescribeCell(Note(E, 0, 3), 0, HINT_NOISE, true, "Kick"), "4-#: noise at pitch 4 of 0-F"));

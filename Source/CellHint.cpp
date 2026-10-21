@@ -227,6 +227,10 @@ std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kin
 			return "---: a halt. The note stops here.";
 		if (Cell.Note < C || Cell.Note > B)
 			return "No note on this row.";
+		// That first, as it's why the note may not sound
+		if (HasInstrument && WrongChip)
+			return HintNoteName(Cell.Note, Cell.Octave, Kind) + Format(": its instrument, %02X \"", Cell.Instrument) + InstrumentName +
+				"\", is for the " + InstrumentChip + ", so it shows in red: this channel needs a " + ChannelChip + " instrument.";
 		std::string Text = HintNoteName(Cell.Note, Cell.Octave, Kind) + ": ";
 		if (Kind == HINT_NOISE)
 			Text += Format("noise at pitch %X of 0-F (the higher, the brighter)", (Cell.Octave * 12 + Cell.Note - 1) & 0x0F);
@@ -239,11 +243,8 @@ std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kin
 		}
 		if (!HasInstrument)
 			Text += ", with the instrument the channel has";
-		else if (InstrumentExists) {
+		else if (InstrumentExists)
 			Text += Format(", with instrument %02X \"", Cell.Instrument) + InstrumentName + "\"";
-			if (WrongChip)
-				Text += ", which is for the " + InstrumentChip + ": this channel needs a " + ChannelChip + " instrument";
-		}
 		else
 			Text += Format(", with instrument %02X, which the song doesn't have", Cell.Instrument);
 		if (Cell.Volume >= 0 && Cell.Volume < MAX_VOLUME)
