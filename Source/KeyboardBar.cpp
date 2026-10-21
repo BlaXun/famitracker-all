@@ -29,6 +29,8 @@
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
+#include "Settings.h"
+#include "Accelerator.h"
 #include "KeyboardBar.h"
 
 namespace {
@@ -37,9 +39,11 @@ LPCTSTR SECTION = _T("Keyboard");		// registry: open
 
 // Sizes at 96 DPI (scaled with SX and SY)
 const int HEIGHT = 60;
-const int LABEL_WIDTH = 92;
-const int KEY_WIDTH = 30;				// a white key, at most
+const int LABEL_WIDTH = 100;
+const int KEY_WIDTH = 36;				// a white key, at most
 const int MARGIN = 4;
+const int TIPS_GAP = 28;				// between the keys and the tips beside them
+const int TIP_WIDTH = 210;				// a column of tips
 
 const int SEMITONES = 29;				// C up to E two octaves higher
 const int WHITE_SEMITONES[] = { 0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24, 26, 28 };
@@ -85,6 +89,22 @@ int WhiteIndex(int Semitone)
 		if (WHITE_SEMITONES[i] == Semitone)
 			return i;
 	return -1;
+}
+
+// A command's key as set in Configuration > Shortcuts, empty for none
+CString ShortcutName(UINT Command)
+{
+	CString Text;
+	if (!theApp.GetAccelerator()->GetShortcutString(Command, Text))
+		return CString();
+	Text.Trim();		// it comes after a tab, for menus
+	return Text;
+}
+
+// A key's name, empty for none
+CString KeyName(int Key)
+{
+	return Key != 0 ? CString(theApp.GetAccelerator()->GetVKeyName(Key)) : CString();
 }
 
 }	// namespace
@@ -238,7 +258,13 @@ void CKeyboardBar::OnPaint()
 	Memory.SelectObject(&m_SmallFont);
 	Memory.SetTextColor(LABEL_DIM);
 	Label = CRect(SX(8), SY(MARGIN + 23), SX(LABEL_WIDTH - 6), Client.bottom - SY(MARGIN));
-	Memory.DrawText(_T("the letters on the keys play them"), &Label, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+	// How to change it
+	const CString Down = ShortcutName(ID_CMD_OCTAVE_PREVIOUS), Up = ShortcutName(ID_CMD_OCTAVE_NEXT);
+	if (!Down.IsEmpty() && !Up.IsEmpty())
+		Text.Format(_T("%s and %s change it"), static_cast<LPCTSTR>(Down), static_cast<LPCTSTR>(Up));
+	else
+		Text = _T("the Octave box changes it");
+	Memory.DrawText(Text, &Label, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
 	// White keys, then black ones over them
 	for (int Pass = 0; Pass < 2; ++Pass) {
@@ -266,15 +292,58 @@ void CKeyboardBar::OnPaint()
 			Memory.SetTextColor(Black ? LETTER_LIGHT : LETTER_DARK);
 			CRect Bottom(Key.left, Key.bottom - SY(18), Key.right, Key.bottom - SY(2));
 			Memory.DrawText(Letter, 1, &Bottom, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
-			// and the octave on each C
+			// and the octave on each C, beside its black key
 			if (s % 12 == 0) {
 				CString Name;
 				Name.Format(_T("C%d"), Octave + s / 12);
 				Memory.SelectObject(&m_SmallFont);
 				Memory.SetTextColor(NOTE_NAME);
-				CRect Top(Key.left, Key.top + SY(2), Key.right, Key.top + SY(15));
+				const int Covered = KeyRect(s + 1).Width() / 2;
+				CRect Top(Key.left, Key.top + SY(2), Key.right - Covered, Key.top + SY(15));
 				Memory.DrawText(Name, &Top, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 			}
+		}
+	}
+
+	// Beside the keys, where there's room: the other keys that matter most
+	const CRect Last = KeyRect(SEMITONES - 1);
+	const int TipsLeft = Last.right + SX(TIPS_GAP);
+	const int Columns = (static_cast<int>(Client.right) - SX(MARGIN) - TipsLeft) / SX(TIP_WIDTH);
+	if (Columns > 0) {
+		const CSettings *pSettings = theApp.GetSettings();
+		struct tip_t {
+			CString Key;
+			LPCTSTR What;
+		};
+		const tip_t Tips[] = {
+			{ ShortcutName(ID_TRACKER_EDIT), _T("editing on or off") },
+			{ ShortcutName(ID_TRACKER_TOGGLE_PLAY), _T("play or stop") },
+			{ CString(_T("Ctrl+Z")), _T("undo") },
+			{ KeyName(pSettings->Keys.iKeyNoteCut), _T("stop the note (---)") },
+			{ KeyName(pSettings->Keys.iKeyNoteRelease), _T("let the note fade (===)") },
+			{ ShortcutName(ID_INSTRUMENT_EDIT), _T("change the instrument") },
+		};
+		const int Rows = 3;
+		const int LineHeight = (Client.Height() - 2 * SY(MARGIN)) / Rows;
+		int Shown = 0;
+		for (size_t i = 0; i < sizeof(Tips) / sizeof(Tips[0]); ++i) {
+			if (Tips[i].Key.IsEmpty())
+				continue;
+			const int Column = Shown / Rows;
+			if (Column >= Columns)
+				break;
+			const int x = TipsLeft + Column * SX(TIP_WIDTH);
+			const int y = SY(MARGIN) + (Shown % Rows) * LineHeight;
+			Memory.SelectObject(&m_Font);
+			Memory.SetTextColor(LABEL);
+			CRect KeyText(x, y, x + SX(TIP_WIDTH), y + LineHeight);
+			Memory.DrawText(Tips[i].Key, &KeyText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			const int KeyWidth = Memory.GetTextExtent(Tips[i].Key).cx;
+			Memory.SelectObject(&m_SmallFont);
+			Memory.SetTextColor(LABEL_DIM);
+			CRect WhatText(x + KeyWidth + SX(8), y, x + SX(TIP_WIDTH) - SX(6), y + LineHeight);
+			Memory.DrawText(Tips[i].What, &WhatText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+			++Shown;
 		}
 	}
 
