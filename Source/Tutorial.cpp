@@ -671,8 +671,8 @@ void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
 		const CRect Work(Monitor.rcWork);
 		const CSize Size = Note.Size();
 		const int Gap = SX(GAP);
-		const int Top = std::max(static_cast<int>(Work.top), std::min(static_cast<int>(Dialog.top), static_cast<int>(Work.bottom) - Size.cy));
-		const int Left = std::max(static_cast<int>(Work.left), std::min(static_cast<int>(Dialog.left), static_cast<int>(Work.right) - Size.cx));
+		const int Top = std::max(static_cast<int>(Work.top), std::min(static_cast<int>(Dialog.top), static_cast<int>(Work.bottom - Size.cy)));
+		const int Left = std::max(static_cast<int>(Work.left), std::min(static_cast<int>(Dialog.left), static_cast<int>(Work.right - Size.cx)));
 		const CRect Tries[] = {
 			CRect(CPoint(Dialog.right + Gap, Top), Size),
 			CRect(CPoint(Dialog.left - Gap - Size.cx, Top), Size),
@@ -759,7 +759,7 @@ void CTutorialBubble::Tick()
 		if (Time - m_dwDone >= DONE_MS)
 			Go(m_iStep + 1);
 	}
-	else if (Now.Wait != WAIT_NEXT && Time - m_dwBegan >= SHOW_AT_LEAST_MS && Done()) {
+	else if (Step().Wait != WAIT_NEXT && Time - m_dwBegan >= SHOW_AT_LEAST_MS && Done()) {
 		m_dwDone = Time;
 		Invalidate(FALSE);
 	}
