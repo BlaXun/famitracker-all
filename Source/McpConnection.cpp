@@ -52,6 +52,7 @@
 #include "PatternEditor.h"
 #include "SoundGen.h"
 #include "TrackerChannel.h"
+#include "ChannelMap.h"
 #include "Action.h"
 #include "ChipSwitch.h"
 #include "Clips.h"
