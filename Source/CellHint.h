@@ -57,8 +57,13 @@ struct hint_cell_t {
 // What the cursor is on: 0 the note, 1 the instrument, 2 the volume, 3-6 the
 // effect columns. InstrumentName is the instrument's when the song has it
 // (InstrumentExists). SplitPoint is the song's speed/tempo split (Fxx).
+// InstrumentChip is the chip the instrument is for ("2A03", "VRC6"...) and
+// ChannelChip the one whose instruments the channel plays (the MMC5's play
+// the 2A03's): when both are given and differ, the words say the instrument
+// can't play there, which is why the pattern shows its number in red.
 std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kind, bool InstrumentExists,
-	const std::string &InstrumentName, int SplitPoint = 0x20);
+	const std::string &InstrumentName, int SplitPoint = 0x20, const std::string &InstrumentChip = std::string(),
+	const std::string &ChannelChip = std::string());
 
 // An effect with its parameter: "4: vibrato ..." (the code first, as the
 // pattern shows it, then what it does)

@@ -66,6 +66,11 @@ void TestNotes()
 	CHECK(Has(DescribeCell(Note(C, 3), 0, HINT_TRIANGLE, false, ""), "which the triangle plays an octave lower"));
 	CHECK(Has(DescribeCell(Note(C, 3), 0, HINT_PULSE, false, ""), "with the instrument the channel has."));
 	CHECK(Has(DescribeCell(Note(C, 3, 5), 0, HINT_PULSE, false, ""), "with instrument 05, which the song doesn't have."));
+	// An instrument for another chip
+	CHECK(Has(DescribeCell(Note(C, 3, 6), 0, HINT_PULSE, true, "Warm pad", 0x20, "VRC6", "2A03"),
+		"with instrument 06 \"Warm pad\", which is for the VRC6: this channel needs a 2A03 instrument."));
+	CHECK(DescribeCell(Note(C, 3, 2), 0, HINT_PULSE, true, "Bass", 0x20, "2A03", "2A03").find("needs") == std::string::npos);
+	CHECK(DescribeCell(Note(C, 3, 2), 0, HINT_PULSE, true, "Bass", 0x20, "VRC6", "").find("needs") == std::string::npos);
 	CHECK(Has(DescribeCell(Note(E, 0, 3), 0, HINT_NOISE, true, "Kick"), "4-#: noise at pitch 4 of 0-F"));
 	CHECK(Has(DescribeCell(Note(RELEASE, 0), 0, HINT_PULSE, false, ""), "a release"));
 	CHECK(Has(DescribeCell(Note(HALT, 0), 0, HINT_PULSE, false, ""), "a halt"));
@@ -76,6 +81,8 @@ void TestColumns()
 {
 	CHECK(Has(DescribeCell(Note(C, 3, 2), 1, HINT_PULSE, true, "Bass"), "Instrument 02: \"Bass\""));
 	CHECK(Has(DescribeCell(Note(C, 3, 0x3F), 1, HINT_PULSE, false, ""), "Instrument 3F isn't in the song"));
+	CHECK(Has(DescribeCell(Note(C, 3, 6), 1, HINT_SAWTOOTH, true, "Bright lead", 0x20, "2A03", "VRC6"),
+		"Instrument 06: \"Bright lead\", for the 2A03, so it shows in red: this channel needs a VRC6 instrument."));
 	CHECK(Has(DescribeCell(Note(C, 3), 1, HINT_PULSE, false, ""), "No instrument here"));
 	CHECK(Has(DescribeCell(Note(C, 3, 2, 0xA), 2, HINT_PULSE, true, "x"), "Volume A of F"));
 	CHECK(Has(DescribeCell(Note(C, 3, 2, 0), 2, HINT_PULSE, true, "x"), "silent"));

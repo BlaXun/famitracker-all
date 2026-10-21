@@ -455,10 +455,31 @@ void CFamiTrackerView::UpdateCellHint()
 	}
 	const bool Exists = Note.Instrument < MAX_INSTRUMENTS && pDoc->IsInstrumentUsed(Note.Instrument);
 	char Name[CInstrument::INST_NAME_MAX] = { 0 };
-	if (Exists)
+	// The chip the instrument is for, and the one whose instruments the channel plays
+	std::string InstrumentChip, ChannelChip;
+	if (Exists) {
 		pDoc->GetInstrumentName(Note.Instrument, Name);
+		switch (pDoc->GetInstrumentType(Note.Instrument)) {
+		case INST_2A03: InstrumentChip = "2A03"; break;
+		case INST_VRC6: InstrumentChip = "VRC6"; break;
+		case INST_VRC7: InstrumentChip = "VRC7"; break;
+		case INST_FDS: InstrumentChip = "FDS"; break;
+		case INST_N163: InstrumentChip = "N163"; break;
+		case INST_S5B: InstrumentChip = "5B"; break;
+		default: break;
+		}
+		switch (pDoc->GetChannel(Channel)->GetChip()) {
+		case SNDCHIP_NONE: case SNDCHIP_MMC5: ChannelChip = "2A03"; break;
+		case SNDCHIP_VRC6: ChannelChip = "VRC6"; break;
+		case SNDCHIP_VRC7: ChannelChip = "VRC7"; break;
+		case SNDCHIP_FDS: ChannelChip = "FDS"; break;
+		case SNDCHIP_N163: ChannelChip = "N163"; break;
+		case SNDCHIP_S5B: ChannelChip = "5B"; break;
+		default: break;
+		}
+	}
 	Name[CInstrument::INST_NAME_MAX - 1] = 0;
-	CString Text(DescribeCell(Cell, Column, Kind, Exists, Name, pDoc->GetSpeedSplitPoint()).c_str());
+	CString Text(DescribeCell(Cell, Column, Kind, Exists, Name, pDoc->GetSpeedSplitPoint(), InstrumentChip, ChannelChip).c_str());
 	if (!m_bEditEnable && Column == 0 && Note.Note == NONE)
 		Text += _T(" Press Space to start editing, then type notes: Z X C V B N M are C D E F G A B.");
 

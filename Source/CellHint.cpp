@@ -216,9 +216,10 @@ std::string DescribeEffect(int Effect, int Param, hint_channel_t Kind, int Split
 }
 
 std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kind, bool InstrumentExists,
-	const std::string &InstrumentName, int SplitPoint)
+	const std::string &InstrumentName, int SplitPoint, const std::string &InstrumentChip, const std::string &ChannelChip)
 {
 	const bool HasInstrument = Cell.Instrument >= 0 && Cell.Instrument < MAX_INSTRUMENTS;
+	const bool WrongChip = InstrumentExists && !InstrumentChip.empty() && !ChannelChip.empty() && InstrumentChip != ChannelChip;
 	if (Column == 0) {
 		if (Cell.Note == RELEASE)
 			return "===: a release. The note fades out the way its instrument ends.";
@@ -238,8 +239,11 @@ std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kin
 		}
 		if (!HasInstrument)
 			Text += ", with the instrument the channel has";
-		else if (InstrumentExists)
+		else if (InstrumentExists) {
 			Text += Format(", with instrument %02X \"", Cell.Instrument) + InstrumentName + "\"";
+			if (WrongChip)
+				Text += ", which is for the " + InstrumentChip + ": this channel needs a " + ChannelChip + " instrument";
+		}
 		else
 			Text += Format(", with instrument %02X, which the song doesn't have", Cell.Instrument);
 		if (Cell.Volume >= 0 && Cell.Volume < MAX_VOLUME)
@@ -249,6 +253,10 @@ std::string DescribeCell(const hint_cell_t &Cell, int Column, hint_channel_t Kin
 	if (Column == 1) {
 		if (!HasInstrument)
 			return "No instrument here: a note keeps the instrument its channel has.";
+		if (WrongChip)
+			return Format("Instrument %02X: \"", Cell.Instrument) + InstrumentName + "\", for the " + InstrumentChip +
+				", so it shows in red: this channel needs a " + ChannelChip + " instrument. Choose one in the instrument list and type "
+				"the note again.";
 		if (InstrumentExists)
 			return Format("Instrument %02X: \"", Cell.Instrument) + InstrumentName + "\". The instrument list chooses the one new notes get.";
 		return Format("Instrument %02X isn't in the song, so it shows in red: add it in the instrument list, or choose another.",
