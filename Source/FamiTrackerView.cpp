@@ -1375,6 +1375,9 @@ void CFamiTrackerView::OnUpdate(CView* /*pSender*/, LPARAM lHint, CObject* /*pHi
 	case UPDATE_PATTERN:
 		m_pPatternEditor->InvalidatePatternData();
 		RedrawPatternEditor();
+		// The frame list shows where the song jumps (Bxx) and halts (Cxx)
+		GetFrameEditor()->InvalidateFrameData();
+		RedrawFrameEditor();
 		break;
 	// Frame data has been edited
 	case UPDATE_FRAME:

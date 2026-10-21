@@ -43,6 +43,37 @@
 const TCHAR CFrameEditor::DEFAULT_FONT[] = _T("System");
 const TCHAR CFrameEditor::CLIPBOARD_ID[] = _T("FamiTracker Frames");
 
+namespace {
+
+// Where each frame goes on to (visual cues): the frame its first jump (Bxx)
+// leads to, LOOP_HALT for a halt (Cxx) first, or LOOP_NONE, as playback
+// finds them, row by row
+const int LOOP_NONE = -1;
+const int LOOP_HALT = -2;
+
+void FindJumps(const CFamiTrackerDoc *pDoc, int Track, int FrameCount, int ChannelCount, int *pJumps)
+{
+	const int Rows = static_cast<int>(pDoc->GetPatternLength(Track));
+	for (int f = 0; f < FrameCount; ++f) {
+		pJumps[f] = LOOP_NONE;
+		for (int r = 0; r < Rows && pJumps[f] == LOOP_NONE; ++r) {
+			for (int c = 0; c < ChannelCount; ++c) {
+				stChanNote Note;
+				pDoc->GetNoteData(Track, f, c, r, &Note);
+				const int Columns = std::min(static_cast<int>(pDoc->GetEffColumns(Track, c)) + 1, MAX_EFFECT_COLUMNS);
+				for (int e = 0; e < Columns; ++e) {
+					if (Note.EffNumber[e] == EF_JUMP)
+						pJumps[f] = std::min(static_cast<int>(Note.EffParam[e]), FrameCount - 1);
+					else if (Note.EffNumber[e] == EF_HALT)
+						pJumps[f] = LOOP_HALT;
+				}
+			}
+		}
+	}
+}
+
+}	// namespace
+
 IMPLEMENT_DYNAMIC(CFrameEditor, CWnd)
 
 CFrameEditor::CFrameEditor(CMainFrame *pMainFrm) :
@@ -344,6 +375,44 @@ void CFrameEditor::DrawFrameEditor(CDC *pDC)
 		}
 
 		Frame++;
+	}
+
+	// Where the song goes on (visual cues): a bracket after the frame numbers
+	// from a frame with a jump (Bxx) to the frame it jumps to, or from the
+	// last frame back to the first when the song has neither jumps nor
+	// halts; a frame with a halt (Cxx) gets a red stop mark
+	const int PatternRows = static_cast<int>(pDoc->GetPatternLength(Track));
+	if (FrameCount > 1 && FrameCount <= MAX_FRAMES && FrameCount * ChannelCount * PatternRows <= 250000) {
+		int Jumps[MAX_FRAMES];
+		FindJumps(pDoc, Track, FrameCount, ChannelCount, Jumps);
+		bool Any = false;
+		for (int f = 0; f < FrameCount; ++f)
+			Any |= Jumps[f] != LOOP_NONE;
+		if (!Any)
+			Jumps[FrameCount - 1] = 0;
+		const COLORREF LoopColour = RGB(240, 180, 40);
+		const COLORREF StopColour = RGB(225, 60, 50);
+		CBrush LoopBrush(LoopColour);
+		CPen LoopPen(PS_SOLID, 1, LoopColour);
+		CBrush *pOldBrush = m_dcBack.SelectObject(&LoopBrush);
+		CPen *pOldPen = m_dcBack.SelectObject(&LoopPen);
+		const int Line = SX(ROW_COLUMN_WIDTH - 3);
+		for (int f = 0; f < FrameCount; ++f) {
+			if (Jumps[f] == LOOP_NONE)
+				continue;
+			const int From = SY((f - FirstVisibleFrame) * ROW_HEIGHT + 3 + ROW_HEIGHT / 2);
+			if (Jumps[f] == LOOP_HALT) {
+				m_dcBack.FillSolidRect(Line - SX(3), From - SY(2), SX(4), SY(4), StopColour);
+				continue;
+			}
+			const int To = SY((Jumps[f] - FirstVisibleFrame) * ROW_HEIGHT + 3 + ROW_HEIGHT / 2);
+			m_dcBack.FillSolidRect(Line, std::min(From, To), SX(1), (To > From ? To - From : From - To) + 1, LoopColour);
+			m_dcBack.FillSolidRect(Line - SX(3), From, SX(3), 1, LoopColour);
+			POINT Head[3] = { { Line - SX(3), To }, { Line, To - SY(3) }, { Line, To + SY(3) } };
+			m_dcBack.Polygon(Head, 3);
+		}
+		m_dcBack.SelectObject(pOldBrush);
+		m_dcBack.SelectObject(pOldPen);
 	}
 
 	if (m_DropTarget.IsDragging()) {
