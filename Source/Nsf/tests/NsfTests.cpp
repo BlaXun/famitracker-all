@@ -150,6 +150,15 @@ void TestFiles()
 	CHECK(std::fabs(f.PlayRate() - 60.0) < 0.05);
 	CHECK(f.Chips == 0 && !f.Pal && !f.Bankswitched);
 
+	// The rippers' placeholders for an unknown artist or copyright
+	std::vector<uint8_t> Unknown = Bytes;
+	std::memset(&Unknown[0x2E], 0, 32);
+	std::memcpy(&Unknown[0x2E], "<?>", 3);
+	std::memset(&Unknown[0x4E], 0, 32);
+	std::memcpy(&Unknown[0x4E], "1990 Konami ", 12);
+	CHECK(ParseNsf(Unknown, f, Error));
+	CHECK(f.Artist.empty() && f.Copyright == "1990 Konami");
+
 	// Not an NSF, cut short
 	std::vector<uint8_t> Bad(Bytes.begin(), Bytes.begin() + 40);
 	CHECK(!ParseNsf(Bad, f, Error));

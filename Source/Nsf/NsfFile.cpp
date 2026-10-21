@@ -46,6 +46,23 @@ std::string Field(const uint8_t *p, size_t Size)
 	return std::string(reinterpret_cast<const char *>(p), n);
 }
 
+// A title, an artist or a copyright, "" for the rippers' placeholders for
+// unknown ones ("<?>", "?", "<unknown>")
+std::string Known(const std::string &Text)
+{
+	size_t First = 0, Last = Text.size();
+	while (First < Last && Text[First] == ' ')
+		++First;
+	while (Last > First && Text[Last - 1] == ' ')
+		--Last;
+	std::string s = Text.substr(First, Last - First), Lower;
+	for (size_t i = 0; i < s.size(); ++i)
+		Lower += static_cast<char>(std::tolower(static_cast<unsigned char>(s[i])));
+	if (Lower == "<?>" || Lower == "?" || Lower == "<unknown>" || Lower == "unknown")
+		return std::string();
+	return s;
+}
+
 // NUL-separated strings in a chunk
 std::vector<std::string> Strings(const uint8_t *p, size_t Size)
 {
@@ -71,9 +88,9 @@ bool ReadMetadataChunk(const char *Id, const uint8_t *p, size_t Size, NsfFile &O
 		Out.TrackNames = Strings(p, Size);
 	else if (!std::memcmp(Id, "auth", 4)) {
 		const std::vector<std::string> s = Strings(p, Size);
-		if (s.size() > 0 && !s[0].empty()) Out.Title = s[0];
-		if (s.size() > 1 && !s[1].empty()) Out.Artist = s[1];
-		if (s.size() > 2 && !s[2].empty()) Out.Copyright = s[2];
+		if (s.size() > 0 && !Known(s[0]).empty()) Out.Title = Known(s[0]);
+		if (s.size() > 1 && !Known(s[1]).empty()) Out.Artist = Known(s[1]);
+		if (s.size() > 2 && !Known(s[2]).empty()) Out.Copyright = Known(s[2]);
 		if (s.size() > 3) Out.Ripper = s[3];
 	}
 	else if (!std::memcmp(Id, "time", 4)) {
@@ -206,9 +223,9 @@ bool ParseNsf(const std::vector<uint8_t> &Bytes, NsfFile &Out, std::string &Erro
 		Out.LoadAddress = Word(p + 8);
 		Out.InitAddress = Word(p + 0x0A);
 		Out.PlayAddress = Word(p + 0x0C);
-		Out.Title = Field(p + 0x0E, 32);
-		Out.Artist = Field(p + 0x2E, 32);
-		Out.Copyright = Field(p + 0x4E, 32);
+		Out.Title = Known(Field(p + 0x0E, 32));
+		Out.Artist = Known(Field(p + 0x2E, 32));
+		Out.Copyright = Known(Field(p + 0x4E, 32));
 		if (Word(p + 0x6E) != 0)
 			Out.SpeedNtsc = Word(p + 0x6E);
 		for (int i = 0; i < 8; ++i) {
