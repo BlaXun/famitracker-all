@@ -719,7 +719,7 @@ public:
 	bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &) override
 	{
 		Library[Name] = Bytes;
-		Path = "C:\\Users\\Me\\Documents\\FamiTracker references\\" + Name;
+		Path = "C:\\Games\\FamiTracker\\References\\" + Name;
 		return true;
 	}
 
@@ -1764,7 +1764,7 @@ void TestReferences()
 	Result = Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tags\": [\"Lava\", \"test\"], \"notes\": \"made for the tests\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Lava Run from Tester Song (track 1), by Tester. Reference \"tester-song-01\"");
-	CHECK_HAS(Result.Text, "Kept in the reference library (C:\\Users\\Me\\Documents\\FamiTracker references)");
+	CHECK_HAS(Result.Text, "Kept in the reference library (C:\\Games\\FamiTracker\\References)");
 	CHECK_HAS(Result.Text, "Pulse 1, the lead");
 	CHECK(Song.Library.count("tester-song-01.json") == 1);
 	Reference Kept;

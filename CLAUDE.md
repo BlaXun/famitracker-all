@@ -72,10 +72,12 @@ the chips' registers, the player that records and finds loops, the
 conversion to a module in FamiTracker's text format, which
 `CTextExport::ImportText` reads, and `Study.cpp`, which describes a track
 for a composer). Claude Code's `study_nsf` keeps those studies in a
-reference library, JSON files in Documents\FamiTracker references
-(`Source/Api/References.cpp`, through `SongHost::ListLibrary` and its
-siblings), with `references`, `reference_sound` and `import_nsf`, and a
-built-in style guide in `Source/Api/StyleGuide.cpp`. `study_module` does
+reference library, JSON files in the `References` folder next to
+FamiTracker.exe (`Source/Api/References.cpp`, through `SongHost::ListLibrary`
+and its siblings; `CMcpLink::LibraryFolder` moves references from the old
+Documents\FamiTracker references into it, and falls back to Documents where
+FamiTracker's folder can't be written), with `references`, `reference_sound`
+and `import_nsf`, and a built-in style guide in `Source/Api/StyleGuide.cpp`. `study_module` does
 the same for tracker modules: `Source/Nsf/Tracker.cpp` reads the patterns
 of MOD, S3M, XM and IT files (never their samples) into a module of one
 track whose channels are its own (`Module::ChannelNames` and

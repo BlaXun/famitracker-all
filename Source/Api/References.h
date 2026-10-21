@@ -23,7 +23,7 @@
 
 // The user's reference library for the Claude Code connection: tracks of NSF
 // files that study_nsf studied (Source/Nsf/Study.h), kept as JSON files in the
-// library folder (Documents\FamiTracker references), so that new music can
+// library folder (References, next to FamiTracker.exe), so that new music can
 // lean on how they're made. A reference holds the study in words (tempo and
 // form, the harmony, each channel's role, register and rhythm, the drums'
 // grooves, the tricks between channels, how the sounds are shaped) and the

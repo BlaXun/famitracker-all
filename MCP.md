@@ -361,9 +361,13 @@ traded) and the techniques in the sounds (duty clicks, attacks that bloom,
 echoes in the envelope, decays in steps, scoops, pitch flicks, vibrato
 with its delay, triangle thumps), with the main sounds' envelopes.
 
-Each study is kept as a reference in a library of yours,
-`Documents\FamiTracker references` (a JSON file each), for every song and
-every session. When you ask for music "like Bucky O'Hare", "in a Mega Man
+Each study is kept as a reference in a library of yours, the `References`
+folder next to FamiTracker.exe (a JSON file each), for every song and every
+session, so it moves with FamiTracker. References kept in
+`Documents\FamiTracker references`, where the library used to be, move into
+it by themselves, and so does a `FamiTracker references` folder unpacked next
+to FamiTracker.exe. Where FamiTracker's folder can't be written (under
+Program Files), the library stays in Documents. When you ask for music "like Bucky O'Hare", "in a Mega Man
 style" or "lean on the references", Claude searches the library
 (`references`) and plans from what it finds, and `reference_sound` brings
 in a reference's instrument exactly. The melodies aren't kept: Claude

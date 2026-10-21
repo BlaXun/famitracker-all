@@ -221,8 +221,9 @@ public:
 	// it into the Windows code page it runs in
 	virtual std::string LocalPath(const std::string &Path) = 0;
 
-	// The reference library (References.h): files in a folder of the user's,
-	// Documents\FamiTracker references, shared by every song. Names have no
+	// The reference library (References.h): files in the References folder
+	// next to FamiTracker.exe (Documents\FamiTracker references where
+	// FamiTracker's folder can't be written), shared by every song. Names have no
 	// folders. Listing gives the names of the files in it (none when there's no
 	// folder yet); reading is false when there's no such file (Error empty) or
 	// it can't be read (Error says why); saving makes the folder when needed
