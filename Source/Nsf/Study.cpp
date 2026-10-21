@@ -929,7 +929,8 @@ std::string DescribeSound(const Macro Macros[SEQ_TYPES], bool Vrc6, int Note, bo
 		// The period's motion
 		const PitchShape p = PitchOf(Macros[SEQ_PITCH]);
 		if (p.Vibrato) {
-			std::string s = Format("vibrato after %s, a %d-frame cycle", Count(p.Delay, "frame", "frames").c_str(), p.Period);
+			std::string s = Format("vibrato after %s, %s %d-frame cycle", Count(p.Delay, "frame", "frames").c_str(),
+				p.Period == 8 || p.Period == 11 || p.Period == 18 ? "an" : "a", p.Period);
 			const double c = Cents(Triangle, Sawtooth, Note, p.Depth);
 			if (c > 0)
 				s += Format(", about %d cents either way", int(c + 0.5));

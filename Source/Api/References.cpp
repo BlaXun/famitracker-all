@@ -502,7 +502,8 @@ std::string ReferenceLine(const Reference &R)
 	if (!R.Key.empty())
 		What.push_back(R.Key);
 	if (R.LoopBars > 0)
-		What.push_back(Format("a %d-bar loop", R.LoopBars));
+		What.push_back(Format("%s %d-bar loop", R.LoopBars == 8 || R.LoopBars == 11 || R.LoopBars == 18 || (R.LoopBars >= 80 && R.LoopBars <= 89) ? "an" : "a",
+			R.LoopBars));
 	if (!What.empty())
 		Out += ", " + Join(What, ", ");
 	if (!R.Tags.empty())
