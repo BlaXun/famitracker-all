@@ -59,6 +59,9 @@ fi
 		echo "                  puts drums in a bar at a time, and Edit > Sound effect"
 		echo "                  from your voice turns a \"pew\" or a \"boing\" into a"
 		echo "                  sound effect for a game."
+		echo "                  View > Keyboard shows the computer keys that play each"
+		echo "                  note, and the status bar says what the note, instrument,"
+		echo "                  volume or effect under the cursor does."
 	fi
 	if [ -n "$wav2ftm" ]; then
 		echo "wav2ftm.exe       Turns a WAV recording of a whistle, hum or finger taps"

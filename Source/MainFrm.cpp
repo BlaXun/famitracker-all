@@ -58,6 +58,7 @@
 #include "Clips.h"
 #include "PianoRoll.h"
 #include "ClipsPanel.h"
+#include "KeyboardBar.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -72,10 +73,7 @@ static UINT indicators[] =
 	ID_INDICATOR_RATE,
 	ID_INDICATOR_TEMPO,
 	ID_INDICATOR_TIME,
-	ID_INDICATOR_POS,
-	ID_INDICATOR_CAPS,
-	ID_INDICATOR_NUM,
-	ID_INDICATOR_SCRL,
+	ID_INDICATOR_POS,		// bars and beats; Caps Lock and the like have made way for them
 };
 
 // Timers
@@ -135,6 +133,7 @@ CMainFrame::CMainFrame() :
 	m_pInstrumentFileTree(NULL),
 	m_pPianoRoll(NULL),
 	m_pClipsBar(NULL),
+	m_pKeyboardBar(NULL),
 	m_bFewerMenus(false),
 	m_bBPM(false),
 	m_bSongRectsKept(false),
@@ -164,6 +163,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pMcpConnection);
 	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
 	SAFE_RELEASE(m_pClipsBar);
+	SAFE_RELEASE(m_pKeyboardBar);
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -182,6 +182,10 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
+	ON_COMMAND(ID_VIEW_CELLHINTS, OnViewCellHints)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_CELLHINTS, OnUpdateViewCellHints)
+	ON_COMMAND(ID_VIEW_KEYBOARD, OnViewKeyboard)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_KEYBOARD, OnUpdateViewKeyboard)
 	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_SHOWEVERYTHING, OnUpdateViewShowEverything)
@@ -1031,11 +1035,27 @@ void CMainFrame::SetIndicatorTime(int Min, int Sec, int MSec)
 	}
 }
 
+// Where the song plays, or the cursor is when it's stopped, as a musician
+// counts: bars of the second row highlight, beats of the first
 void CMainFrame::SetIndicatorPos(int Frame, int Row)
 {
 	CString String;
-	String.Format(_T("%02i / %02i"), Row, Frame);
-	m_wndStatusBar.SetPaneText(7, String);
+	const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+	int Bar = 0, Beat = 0;
+	if (pDoc != NULL && pDoc->IsFileLoaded() && m_iTrack >= 0 && m_iTrack < static_cast<int>(pDoc->GetTrackCount())) {
+		Bar = static_cast<int>(pDoc->GetSecondHighlight(m_iTrack));
+		Beat = static_cast<int>(pDoc->GetFirstHighlight(m_iTrack));
+	}
+	if (Bar > 0 && Beat > 0 && Frame >= 0 && Row >= 0) {
+		const int At = Frame * static_cast<int>(pDoc->GetPatternLength(m_iTrack)) + Row;
+		String.Format(_T("Bar %d, beat %d"), At / Bar + 1, (At % Bar) / Beat + 1);
+	}
+	else
+		String.Format(_T("%02i / %02i"), Row, Frame);
+	CString Now;
+	m_wndStatusBar.GetPaneText(7, Now);
+	if (Now != String)
+		m_wndStatusBar.SetPaneText(7, String);
 }
 
 void CMainFrame::OnSize(UINT nType, int cx, int cy)
@@ -1622,6 +1642,8 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowPianoRoll(true);
 			if (CClipsBar::WasOpen())
 				ShowClipsPanel(true);
+			if (CKeyboardBar::WasOpen())
+				ShowKeyboard(true);
 			// The first time: a simpler FamiTracker for game music? Then the
 			// untouched new song starts again from the template.
 			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
@@ -1859,6 +1881,51 @@ void CMainFrame::SetBPM(int Bpm)
 void CMainFrame::OnHelpTutorials()
 {
 	ShowTutorials(this);
+}
+
+// View > Explain what's under the cursor (CellHint.h)
+
+void CMainFrame::OnViewCellHints()
+{
+	bool &Hints = theApp.GetSettings()->bCellHints;
+	Hints = !Hints;
+	SetMessageText(Hints ? _T("The status bar says what's under the cursor as it moves.") : _T("No more words for what's under the cursor."));
+}
+
+void CMainFrame::OnUpdateViewCellHints(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(theApp.GetSettings()->bCellHints ? 1 : 0);
+}
+
+// View > Keyboard (KeyboardBar.h)
+
+void CMainFrame::OnViewKeyboard()
+{
+	ShowKeyboard(m_pKeyboardBar == NULL || !m_pKeyboardBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewKeyboard(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pKeyboardBar != NULL && m_pKeyboardBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowKeyboard(bool Show)
+{
+	if (Show && m_pKeyboardBar == NULL) {
+		m_pKeyboardBar = new CKeyboardBar();
+		if (!m_pKeyboardBar->Create(this)) {
+			delete m_pKeyboardBar;
+			m_pKeyboardBar = NULL;
+			return;
+		}
+		// Laid out just after the status bar: along the bottom of the window,
+		// under the piano roll and the clips panel
+		m_pKeyboardBar->SetWindowPos(&m_wndStatusBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	if (m_pKeyboardBar == NULL)
+		return;
+	ShowControlBar(m_pKeyboardBar, Show ? TRUE : FALSE, FALSE);
+	m_pKeyboardBar->Opened(Show);
 }
 
 BOOL CMainFrame::OnCommand(WPARAM wParam, LPARAM lParam)

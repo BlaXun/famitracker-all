@@ -175,6 +175,9 @@ void CSettings::SetupSettings()
 	SETTING_BOOL("Profile", "Song template", true, &Profile.bTemplate);
 	SETTING_BOOL("Profile", "BPM", true, &Profile.bBPM);
 	SETTING_BOOL("Profile", "Fewer menu items", true, &Profile.bFewerMenus);
+
+	// Visual cues
+	SETTING_BOOL("Visual cues", "Explain the cursor's cell", true, &bCellHints);
 }
 
 template<class T> void CSettings::AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable)

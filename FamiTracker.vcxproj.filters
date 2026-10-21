@@ -1409,6 +1409,18 @@
     <ClInclude Include="Source\TutorialScript.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\CellHint.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\CellHint.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\KeyboardBar.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\KeyboardBar.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\ClipsPanel.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

@@ -197,6 +197,10 @@ public:
 		bool	bFewerMenus;		// rarely used menu items hidden
 	} Profile;
 
+	// View > Explain what's under the cursor: the status bar says what the
+	// cell under the cursor does (CellHint.h), and when notes only play
+	bool bCellHints;
+
 private:
 	template<class T> void AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable);
 	void AddSetting(CSettingBase *pSetting);

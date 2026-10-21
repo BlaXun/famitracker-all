@@ -137,6 +137,7 @@ public:
 	// keeps it scrolling. False, showing nothing, when the point isn't on a row of this frame.
 	bool ShowClipDrop(const CPoint &point, int Channels, int Rows, bool Scroll, int &Channel, int &Row);
 	bool HideClipDrop();		// true if it showed one
+	bool IsClipDropShown() const { return m_bClipDrop; }
 
 	// Edit: Copy & paste, selection
 	CPatternClipData *CopyEntire() const;

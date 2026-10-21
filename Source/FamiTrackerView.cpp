@@ -20,6 +20,8 @@
 
 #include <memory>
 #include <cmath>
+#include <string>
+#include "CellHint.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -223,6 +225,11 @@ CFamiTrackerView::CFamiTrackerView() :
 	m_iKeyboardNote(-1),
 	m_nDropEffect(DROPEFFECT_NONE),
 	m_bDragSource(false),
+	m_iHintFrame(-1),
+	m_iHintRow(-1),
+	m_iHintChannel(-1),
+	m_iHintColumn(-1),
+	m_dwOnlyPlayHint(0),
 	m_pPatternEditor(new CPatternEditor())
 {
 	memset(m_bMuteChannels, 0, sizeof(bool) * MAX_CHANNELS);
@@ -407,6 +414,62 @@ void CFamiTrackerView::InvalidateCursor()
 	m_pPatternEditor->InvalidateCursor();
 	RedrawPatternEditor();
 	RedrawFrameEditor();
+	UpdateCellHint();
+}
+
+// What the cell under the cursor does, in words in the status bar, when the
+// cursor or the cell changes (not while playing: the cursor follows the song)
+void CFamiTrackerView::UpdateCellHint()
+{
+	CFamiTrackerDoc *pDoc = GetDocument();
+	CMainFrame *pMainFrame = static_cast<CMainFrame*>(GetParentFrame());
+	if (!theApp.GetSettings()->bCellHints || theApp.IsPlaying() || pDoc == NULL || !pDoc->IsFileLoaded() || pMainFrame == NULL ||
+		m_pPatternEditor->IsClipDropShown())
+		return;
+	const int Track = pMainFrame->GetSelectedTrack();
+	const int Frame = m_pPatternEditor->GetFrame(), Row = m_pPatternEditor->GetRow();
+	const int Channel = m_pPatternEditor->GetChannel();
+	const int Column = CPatternEditor::GetSelectColumn(m_pPatternEditor->GetColumn());
+	if (Channel < 0 || Channel >= static_cast<int>(pDoc->GetAvailableChannels()) || Track < 0 || Row < 0 || Frame < 0)
+		return;
+
+	stChanNote Note;
+	pDoc->GetNoteData(Track, Frame, Channel, Row, &Note);
+	hint_cell_t Cell;
+	Cell.Note = Note.Note;
+	Cell.Octave = Note.Octave;
+	Cell.Instrument = Note.Instrument;
+	Cell.Volume = Note.Vol;
+	for (int i = 0; i < MAX_EFFECT_COLUMNS; ++i) {
+		Cell.Effect[i] = Note.EffNumber[i];
+		Cell.Param[i] = Note.EffParam[i];
+	}
+	hint_channel_t Kind = HINT_OTHER;
+	switch (pDoc->GetChannelType(Channel)) {
+	case CHANID_SQUARE1: case CHANID_SQUARE2: case CHANID_MMC5_SQUARE1: case CHANID_MMC5_SQUARE2: Kind = HINT_PULSE; break;
+	case CHANID_VRC6_PULSE1: case CHANID_VRC6_PULSE2: Kind = HINT_VRC6_PULSE; break;
+	case CHANID_TRIANGLE: Kind = HINT_TRIANGLE; break;
+	case CHANID_NOISE: Kind = HINT_NOISE; break;
+	case CHANID_DPCM: Kind = HINT_DPCM; break;
+	case CHANID_VRC6_SAWTOOTH: Kind = HINT_SAWTOOTH; break;
+	}
+	const bool Exists = Note.Instrument < MAX_INSTRUMENTS && pDoc->IsInstrumentUsed(Note.Instrument);
+	char Name[CInstrument::INST_NAME_MAX] = { 0 };
+	if (Exists)
+		pDoc->GetInstrumentName(Note.Instrument, Name);
+	Name[CInstrument::INST_NAME_MAX - 1] = 0;
+	CString Text(DescribeCell(Cell, Column, Kind, Exists, Name, pDoc->GetSpeedSplitPoint()).c_str());
+	if (!m_bEditEnable && Column == 0 && Note.Note == NONE)
+		Text += _T(" Press Space to start editing, then type notes: Z X C V B N M are C D E F G A B.");
+
+	if (Text == m_strCellHint && Frame == m_iHintFrame && Row == m_iHintRow && Channel == m_iHintChannel && Column == m_iHintColumn)
+		return;		// said already
+	m_strCellHint = Text;
+	m_iHintFrame = Frame;
+	m_iHintRow = Row;
+	m_iHintChannel = Channel;
+	m_iHintColumn = Column;
+	pMainFrame->SetMessageText(Text);
 }
 
 void CFamiTrackerView::InvalidateHeader()
@@ -758,6 +821,11 @@ void CFamiTrackerView::PeriodicUpdate()
 
 			int Frame = pSoundGen->GetPlayerFrame();
 			int Row = pSoundGen->GetPlayerRow();
+			if (!theApp.IsPlaying()) {
+				// Stopped: where the cursor is
+				Frame = m_pPatternEditor->GetFrame();
+				Row = m_pPatternEditor->GetRow();
+			}
 
 			pMainFrm->SetIndicatorPos(Frame, Row);
 
@@ -1024,6 +1092,7 @@ void CFamiTrackerView::OnTrackerEdit()
 		GetParentFrame()->SetMessageText(IDS_EDIT_MODE);
 	else
 		GetParentFrame()->SetMessageText(IDS_NORMAL_MODE);
+	m_strCellHint.Empty();		// the cell's words again when the cursor moves
 	
 	m_pPatternEditor->InvalidateBackground();
 	m_pPatternEditor->InvalidateHeader();
@@ -2702,6 +2771,24 @@ bool CFamiTrackerView::DoRelease() const
 	return pInstrument->CanRelease();
 }
 
+bool CFamiTrackerView::IsNoteHeld(int MidiNote) const
+{
+	return MidiNote >= 0 && MidiNote < 128 && m_iAutoArpNotes[MidiNote] == 1;
+}
+
+void CFamiTrackerView::PlayKeyboardNote(int MidiNote, bool Pressed)
+{
+	if (MidiNote < 0 || MidiNote >= 128)
+		return;
+	const int Channel = m_pPatternEditor->GetChannel();
+	if (Pressed)
+		TriggerMIDINote(Channel, MidiNote, 0x7F, m_bEditEnable);
+	else if (DoRelease())
+		ReleaseMIDINote(Channel, MidiNote, false);
+	else
+		CutMIDINote(Channel, MidiNote, false);
+}
+
 void CFamiTrackerView::HandleKeyboardNote(char nChar, bool Pressed) 
 {
 	// Play a note from the keyboard
@@ -2721,6 +2808,11 @@ void CFamiTrackerView::HandleKeyboardNote(char nChar, bool Pressed)
 				return;
 			TriggerMIDINote(Channel, Note, 0x7F, m_bEditEnable);
 			LastNote = Note;
+			// Notes that only play, not written: why (now and then)
+			if (!m_bEditEnable && theApp.GetSettings()->bCellHints && ::GetTickCount() - m_dwOnlyPlayHint > 5000) {
+				m_dwOnlyPlayHint = ::GetTickCount();
+				GetParentFrame()->SetMessageText(_T("Editing is off, so the notes you type only play. Press Space to write them into the song."));
+			}
 		}
 	}
 	else {

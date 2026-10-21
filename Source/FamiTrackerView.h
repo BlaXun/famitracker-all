@@ -132,6 +132,12 @@ public:
 	// Auto-arpeggio
 	int			 GetAutoArpeggio(unsigned int Channel);
 
+	// View > Keyboard (KeyboardBar.h): whether a note is held (from the keys,
+	// MIDI or the keyboard strip), and a note played from the strip: written
+	// into the song while editing, as a typed one is
+	bool		 IsNoteHeld(int MidiNote) const;
+	void		 PlayKeyboardNote(int MidiNote, bool Pressed);
+
 //
 // Private functions
 //
@@ -151,6 +157,9 @@ private:
 	void	RedrawFrameEditor();
 
 	void	PeriodicUpdate();
+
+	// The status bar's words for the cell under the cursor (CellHint.h)
+	void	UpdateCellHint();
 
 	// Instruments
 	void		 SetInstrument(int Instrument);
@@ -295,6 +304,11 @@ private:
 	// MIDI
 	unsigned int		m_iLastMIDINote;
 	unsigned int		m_iActiveNotes[MAX_CHANNELS];
+
+	// Visual cues: what the status bar last said about a cell, and where
+	CString				m_strCellHint;
+	int					m_iHintFrame, m_iHintRow, m_iHintChannel, m_iHintColumn;
+	DWORD				m_dwOnlyPlayHint;						// when it last said typed notes only play
 
 	// Drawing
 	CPatternEditor		*m_pPatternEditor;						// Pointer to the pattern editor object

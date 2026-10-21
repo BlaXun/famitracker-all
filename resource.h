@@ -775,6 +775,12 @@
 #define IDR_TUTORIAL_CLIPS              342
 #define IDR_TUTORIAL_GAME               343
 
+// View > Explain what's under the cursor (CellHint.cpp, FamiTrackerView.cpp)
+#define ID_VIEW_CELLHINTS               33169
+
+// View > Keyboard (KeyboardBar.cpp)
+#define ID_VIEW_KEYBOARD                33170
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -1423,6 +1423,21 @@ void CPatternEditor::DrawHeader(CDC *pDC)
 	// Corner box
 	pDC->Draw3dRect(0, HEADER_CHAN_START, ROW_COLUMN_WIDTH, HEADER_CHAN_HEIGHT, STATIC_COLOR_SCHEME.FRAME_LIGHT, STATIC_COLOR_SCHEME.FRAME_DARK);
 
+	// Editing: a red dot and "EDIT" in it, as on a recorder, so it's plain
+	// whether typed notes go into the song
+	if (m_pView->GetEditMode()) {
+		CBrush RedBrush(RGB(225, 40, 40));
+		CPen RedPen(PS_SOLID, 1, RGB(160, 20, 20));
+		CBrush *pOldBrush = pDC->SelectObject(&RedBrush);
+		CPen *pOldPen = pDC->SelectObject(&RedPen);
+		pDC->Ellipse(ROW_COLUMN_WIDTH / 2 - 5, HEADER_CHAN_START + 5, ROW_COLUMN_WIDTH / 2 + 6, HEADER_CHAN_START + 16);
+		pDC->SelectObject(pOldBrush);
+		pDC->SelectObject(pOldPen);
+		pDC->SetTextColor(RGB(190, 25, 25));
+		CRect Label(1, HEADER_CHAN_START + 18, ROW_COLUMN_WIDTH - 1, HEADER_CHAN_START + HEADER_CHAN_HEIGHT - 3);
+		pDC->DrawText(_T("EDIT"), &Label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+	}
+
 	for (int i = 0; i < m_iChannelsVisible; ++i) {
 
 		const int Channel = i + m_iFirstChannel;

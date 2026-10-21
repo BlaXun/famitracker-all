@@ -223,6 +223,7 @@ BEGIN
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
         MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
+        MENUITEM "Keyboard",                    ID_VIEW_KEYBOARD
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -230,6 +231,7 @@ BEGIN
             MENUITEM "Left",                        ID_FRAMEEDITOR_LEFT
         END
         MENUITEM SEPARATOR
+        MENUITEM "Explain what's under the cursor", ID_VIEW_CELLHINTS
         MENUITEM "Profile...",                  ID_VIEW_PROFILE
         MENUITEM "Show everything",             ID_VIEW_SHOWEVERYTHING
     END
@@ -570,6 +572,8 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
+    ID_VIEW_CELLHINTS       "Say in the status bar what the note, instrument, volume or effect under the cursor does\nExplain what's under the cursor"
+    ID_VIEW_KEYBOARD        "A piano keyboard along the bottom with the computer keys that play each note on it\nKeyboard"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -861,7 +865,7 @@ BEGIN
     ID_INDICATOR_RATE       "000 Hz"
     ID_INDICATOR_TEMPO      "000.00 BPM"
     ID_INDICATOR_TIME       "00:00:00 "
-    ID_INDICATOR_POS        "00 / 00    "
+    ID_INDICATOR_POS        "Bar 000, beat 00"
 END
 
 STRINGTABLE 
@@ -879,8 +883,8 @@ BEGIN
     IDS_WAVE_PROGRESS_ELAPSED_FORMAT "Elapsed time: %1"
     IDS_DSOUND_ERROR        "DirectX: DirectSound error!"
     IDS_DSOUND_BUFFER_ERROR "DirectX: DirectSound error: Could not create buffer!"
-    IDS_EDIT_MODE           "Changed to edit mode"
-    IDS_NORMAL_MODE         "Changed to normal mode"
+    IDS_EDIT_MODE           "Editing: the notes you type go into the song (the red EDIT corner shows it). Space stops editing."
+    IDS_NORMAL_MODE         "Not editing: the notes you type only play. Space starts editing again."
     IDS_MIDI_MESSAGE_ON_FORMAT 
                             "MIDI message: Note on (note = %1, octave = %2, velocity = %3)"
     IDS_MIDI_MESSAGE_OFF    "MIDI message: Note off"

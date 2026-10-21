@@ -606,6 +606,10 @@
     <ClInclude Include="Source\Tutorial.h" />
     <ClCompile Include="Source\TutorialScript.cpp" />
     <ClInclude Include="Source\TutorialScript.h" />
+    <ClCompile Include="Source\CellHint.cpp" />
+    <ClInclude Include="Source\CellHint.h" />
+    <ClCompile Include="Source\KeyboardBar.cpp" />
+    <ClInclude Include="Source\KeyboardBar.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />

@@ -43,6 +43,7 @@ class CVisualizerWnd;
 class CInstrumentFileTree;
 class CPianoRollBar;
 class CClipsBar;
+class CKeyboardBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
@@ -99,6 +100,7 @@ public:
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
+	void	ShowKeyboard(bool Show);	// along the bottom of the window (KeyboardBar.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
@@ -199,6 +201,7 @@ private:  // control bar embedded members
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
+	CKeyboardBar		*m_pKeyboardBar;		// View > Keyboard, along the bottom; created when first shown
 
 	// The profile as shown (Profile.h)
 	bool				m_bFewerMenus;
@@ -294,6 +297,10 @@ public:
 	afx_msg void OnInstrumentLibrary();
 	afx_msg void OnEditDrumGrid();
 	afx_msg void OnHelpTutorials();
+	afx_msg void OnViewCellHints();
+	afx_msg void OnUpdateViewCellHints(CCmdUI *pCmdUI);
+	afx_msg void OnViewKeyboard();
+	afx_msg void OnUpdateViewKeyboard(CCmdUI *pCmdUI);
 	virtual BOOL OnCommand(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnViewProfile();
 	afx_msg void OnViewShowEverything();
