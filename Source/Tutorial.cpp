@@ -346,6 +346,7 @@ private:
 	bool m_bMoved;					// dragged aside: it stays there for this step
 	CRect m_LastSpot, m_LastWindow;
 	CRect m_DialogRect;				// a dialog open in front of FamiTracker, empty for none
+	bool m_bWasFront;				// FamiTracker was the active program at the last tick
 
 	// Where the step began
 	DWORD m_dwBegan, m_dwDone;		// m_dwDone: when it was found done, 0 until then
@@ -383,6 +384,7 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_iPressed(-1),
 	m_bTracking(false),
 	m_bMoved(false),
+	m_bWasFront(false),
 	m_dwBegan(0),
 	m_dwDone(0),
 	m_iNotes(0),
@@ -709,6 +711,11 @@ void CTutorialBubble::Tick()
 	DWORD Process = 0;
 	::GetWindowThreadProcessId(::GetForegroundWindow(), &Process);
 	const bool Front = Process == ::GetCurrentProcessId();
+	// Coming back to FamiTracker, or closing a dialog, raises its window,
+	// and on Wine that window can then cover the note and the dimming,
+	// which go back on top
+	bool Raise = Front && !m_bWasFront;
+	m_bWasFront = Front;
 
 	CWnd *pDialog = OpenDialog();
 	if (pDialog != NULL)
@@ -718,6 +725,7 @@ void CTutorialBubble::Tick()
 			// The dialog closed: the note goes back beside the part shown
 			m_DialogRect.SetRectEmpty();
 			m_LastSpot = CRect(-1, -1, -1, -1);
+			Raise = true;
 		}
 
 		// The part the step shows, framed
@@ -733,9 +741,10 @@ void CTutorialBubble::Tick()
 			Place(Spot);
 		CRect Note;
 		GetWindowRect(&Note);
-		bool Raise = false;
-		if (HasSpot)
-			Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, Front ? NULL : this);
+		if (HasSpot) {
+			if (m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, Front ? NULL : this))
+				Raise = true;
+		}
 		else
 			m_Overlay.Hide();
 		m_LastSpot = Spot;
