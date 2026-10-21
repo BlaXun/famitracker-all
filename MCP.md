@@ -364,19 +364,29 @@ named like "Town (night)", next to the day version, which stays as it was.
 The two share the module's instruments, and FamiTracker shows the new track
 afterwards (switch with the track box in the toolbar).
 
-The night version is, unless you ask for something else:
+Night is much more than slower. The night version is, unless you ask for
+something else:
 
-- 20% slower (tempo commands in the patterns slow down too),
-- quieter (every channel's volume at 75%),
-- with sparser, softer drums (only the hits on the beats, at 60%),
-- with a soft lead for the melody and soft chords for arpeggio chords,
-- and with a slow, gentle vibrato and an echo on the melody (no second echo
-  when the song already has one).
+- lower: the parts that sat high (from C-4 up, not the bass) an octave down,
+- simpler: the melody's fast runs thinned to their outline (the short notes
+  between the eighths left out, the notes before ringing on),
+- legato: notes held into the next (no note cuts; a halt just before a note
+  goes, the others soften to releases), with even dynamics, no accents,
+- with chords held as a pad that swells in (a chord struck again in its bar
+  rings on instead; ask for "richer chords" to turn triads into sevenths),
+- with the bass in long notes (the notes on the beats, held),
+- with the drums a soft pulse on each bar's first beat (sampled drums on the
+  DPCM channel thin out the same way), or none if you ask,
+- with a soft lead that swells in for the melody and a warm pad for
+  arpeggio chords, a slower and wider vibrato starting later in the note,
+  and a longer, softer echo (no second echo when the song already has one),
+- 20% slower (tempo commands in the patterns slow down too) and quieter
+  (every channel's volume at 75%).
 
-Say what you want different, in words: "keep the drums", "only 10% slower",
-"no echo", "the melody an octave lower", "in dorian". Claude can also change
-the night version afterwards with the other tools, since it's the selected
-track.
+Claude says what it changed. Say what you want different, in words: "keep
+the drums", "only 10% slower", "no echo", "keep the melody as it is", "in
+dorian". Claude can also change the night version afterwards with the other
+tools, since it's the selected track.
 
 A **tense version** (for a battle, danger, a boss or a chase) is, unless you
 ask for something else:

@@ -3515,10 +3515,11 @@ void TestVersions()
 	CHECK_HAS(Result.Text, "Made track 2 \"Town (night)\" from track 1 \"Town\", which stays as it was.");
 	CHECK_HAS(Result.Text, "120 BPM instead of 150 (speed 6, tempo 120; 1 tempo command in the patterns changed too)");
 	CHECK_HAS(Result.Text, "volumes at 75%");
-	CHECK_HAS(Result.Text, "sparser drums (16 hits left out, the rest softer)");
+	CHECK_HAS(Result.Text, "the drums a soft pulse on each bar's first beat (28 hits left out)");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 down 1 octave");
 	CHECK_HAS(Result.Text, "VRC6 Pulse 1 played by \"Soft lead\"");
-	CHECK_HAS(Result.Text, "2A03 Pulse 1 played by \"Soft chords\"");
-	CHECK_HAS(Result.Text, "vibrato 432 on VRC6 Pulse 1");
+	CHECK_HAS(Result.Text, "2A03 Pulse 1 played by \"Warm pad\"");
+	CHECK_HAS(Result.Text, "vibrato 434 on VRC6 Pulse 1");
 	CHECK_HAS(Result.Text, "an echo of VRC6 Pulse 1 on VRC6 Pulse 2");
 	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "Town (night)");
 	CHECK(Song.Info.Speed == 6 && Song.Info.Tempo == 120);
@@ -3529,13 +3530,14 @@ void TestVersions()
 	CHECK_EQ(Night[5][0].Volume, 11);			// 15 at 75%
 	CHECK_EQ(Night[5][16].Volume, 9);			// 12 at 75%
 	CHECK(Night[5][0].Instrument == InstrumentIndex(Song, "Soft lead"));
-	CHECK(Night[0][0].Instrument == InstrumentIndex(Song, "Soft chords") && Night[0][0].Param[0] == 0x47);
+	CHECK(Night[0][0].Instrument == InstrumentIndex(Song, "Warm pad") && Night[0][0].Param[0] == 0x47);
 	CHECK(Night[2][0].Volume == NO_VOLUME && Night[2][0].Pitch() == Day[2][0].Pitch());	// the triangle has no volume
-	CHECK(Night[3][0].HasNote() && !Night[3][2].HasNote() && Night[3][4].HasNote() && !Night[3][6].HasNote());
-	CHECK_EQ(Night[3][0].Volume, 9);			// the drums at 60%
+	CHECK(Night[5][0].Pitch() == Day[5][0].Pitch() - 12 && Night[5][16].Pitch() == Day[5][16].Pitch() - 12);	// an octave lower
+	CHECK(Night[3][0].HasNote() && !Night[3][2].HasNote() && !Night[3][4].HasNote() && Night[3][16].HasNote());	// a pulse
+	CHECK_EQ(Night[3][0].Volume, 7);			// the drums at 45%
 	CHECK(Night[3][0].Param[0] == 6 && Night[3][0].Param[1] == 120);
 	CHECK(HasEffectNear(Night[5], 0, 8, EFF_VIBRATO));
-	CHECK(Night[6][3].HasNote() && Night[6][3].Pitch() == Day[5][0].Pitch());	// the echo, 3 rows later
+	CHECK(Night[6][6].HasNote() && Night[6][6].Pitch() == Day[5][0].Pitch() - 12 && Night[6][6].Volume == 3);	// the echo, 6 rows later
 	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "Tracks: 1 \"Town\", 2 \"Town (night)\" (selected)");
 
 	// Switching tracks
@@ -3572,6 +3574,77 @@ void TestVersions()
 	while (Song.Tracks.size() < 64)
 		Song.Tracks.push_back(Song.Tracks[0]);
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\"}")).Text, "64 tracks");
+}
+
+// A night version that's more than slower: lower, simpler, held, even, soft
+void TestNightVersion()
+{
+	FakeSong Song;
+	// A high melody with a sixteenth run, a cut note, halts and accents
+	Song.Put(5, 0, "C-5", 0, 10);
+	Song.Put(5, 2, "D-5");
+	Song.Put(5, 3, "E-5");			// a sixteenth between the eighths: left out
+	Song.Put(5, 4, "G-5");
+	Song.Rows[5][4].Effect[0] = EFF_NOTE_CUT;
+	Song.Rows[5][4].Param[0] = 2;		// cut short: legato takes it out
+	Song.Put(5, 8, "E-5", NO_INSTRUMENT, 15);	// an accent
+	Song.End(5, 11);				// a halt just before the next note: taken out
+	Song.Put(5, 12, "D-5", NO_INSTRUMENT, 10);
+	Song.Put(5, 16, "C-5");
+	Song.End(5, 20);				// a halt before a rest: softened to a release
+	Song.Put(5, 32, "C-5");
+	// Chords struck on every beat, cut short, then another chord
+	for (int Row = 0; Row < 32; Row += 4) {
+		Song.Put(0, Row, Row < 16 ? "C-3" : "A-2", 2);
+		Song.Rows[0][static_cast<size_t>(Row)].Effect[0] = EFF_ARPEGGIO;
+		Song.Rows[0][static_cast<size_t>(Row)].Param[0] = Row < 16 ? 0x47 : 0x37;
+		Song.End(0, Row + 2);
+	}
+	// A bass jumping octaves on the eighths
+	for (int Row = 0; Row < 32; Row += 2)
+		Song.Put(2, Row, Row % 4 == 0 ? (Row < 16 ? "C-2" : "A-1") : (Row < 16 ? "C-3" : "A-2"), 1);
+	// Drums on every eighth, and sampled ones on beats 1 and 3
+	for (int Row = 0; Row < 32; Row += 2) {
+		Song.Put(3, Row, Row % 4 == 0 ? "kick" : "hihat", 2);
+		if (Row % 8 == 0)
+			Song.Put(4, Row, "C-3", 2);
+	}
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"richer\", \"echo\": false}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "the melody's fast runs as their outline (1 short note left out, the notes before ring on)");
+	CHECK_HAS(Result.Text, "legato (");
+	CHECK_HAS(Result.Text, "even dynamics without accents (1 loud note brought down to the usual)");
+	CHECK_HAS(Result.Text, "the chords on 2A03 Pulse 1 held as a pad (6 strikes left out)");
+	CHECK_HAS(Result.Text, "richer chords on 2A03 Pulse 1 (major and minor triads as sevenths)");
+	CHECK_HAS(Result.Text, "the bass on 2A03 Triangle in long notes (12 notes left out)");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 down 1 octave");
+	CHECK_HAS(Result.Text, "the drums a soft pulse on each bar's first beat (14 hits left out)");
+	CHECK_HAS(Result.Text, "2 sampled hits on the DPCM channel left out");
+	const std::vector<std::vector<Cell> > &N = Song.Rows;
+	// The melody: an octave lower, the run's outline, held, even
+	CHECK(N[5][0].Pitch() == 48 + 12 - 12 && !N[5][3].HasNote() && N[5][2].HasNote() && N[5][4].HasNote());
+	CHECK(N[5][4].Effect[0] != EFF_NOTE_CUT);
+	CHECK(N[5][11].Note == NOTE_NONE && N[5][20].Note == NOTE_RELEASE);
+	CHECK(N[5][8].Volume == (10 * 75 + 50) / 100);		// the accent at the usual 10, then at 75%
+	// The chords: one strike a bar, richer
+	CHECK(N[0][0].HasNote() && !N[0][4].HasNote() && !N[0][8].HasNote() && N[0][16].HasNote() && !N[0][20].HasNote());
+	CHECK(N[0][2].Note != NOTE_HALT && N[0][0].Param[0] == 0x4B && N[0][16].Param[0] == 0x3A);
+	// The bass: the beat's note held through the half bar
+	CHECK(N[2][0].HasNote() && !N[2][2].HasNote() && !N[2][4].HasNote() && N[2][8].HasNote() && !N[2][12].HasNote() && N[2][16].HasNote());
+	// The drums: a pulse
+	CHECK(N[3][0].HasNote() && !N[3][4].HasNote() && !N[3][8].HasNote() && N[3][16].HasNote());
+	CHECK(N[4][0].HasNote() && !N[4][8].HasNote() && N[4][16].HasNote() && !N[4][24].HasNote());
+	// Each of them can stay as it was
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"melody\": \"keep\", \"chords\": \"keep\", \"bass\": \"keep\", "
+		"\"register\": \"keep\", \"legato\": false, \"drums\": \"keep\", \"echo\": false}"));
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "outline");
+	CHECK_LACKS(Result.Text, "legato");
+	CHECK_LACKS(Result.Text, "octave");
+	CHECK(Song.Rows[5][3].HasNote() && Song.Rows[0][4].HasNote() && Song.Rows[2][2].HasNote() && Song.Rows[3][2].HasNote());
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"lush\"}")).Text, "chords should be keep, held or richer");
 }
 
 void TestTenseVersions()
@@ -3632,7 +3705,7 @@ void TestTenseVersions()
 	CHECK_HAS(Result.Text, "It's a plain copy so far.");
 	CHECK(Song.Rows == Day);
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
-	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"tense\", \"bass\": \"loud\"}")).Text, "bass should be keep or driving");
+	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"tense\", \"bass\": \"loud\"}")).Text, "bass should be keep, driving or long");
 	// Calm and tense words together: only what's given
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"calm before the battle\"}")).Text, "It's a plain copy so far.");
 
@@ -4888,6 +4961,7 @@ int main()
 	TestPng();
 	TestPicture();
 	TestVersions();
+	TestNightVersion();
 	TestTenseVersions();
 	TestJingleScores();
 	TestJingles();

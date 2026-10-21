@@ -213,6 +213,14 @@ when ready.
   livelier presets, soundtrack notes kept beside the song, instructions that
   teach the craft, and recipes served as MCP prompts. 36 tools now.
 
+  Night versions that sound like night (asked for when one only came out
+  slower): `make_version` "night" lowers the parts that sit high, thins fast
+  runs to their outline, holds the notes into each other with even
+  dynamics, turns struck chords into a held pad (sevenths if asked), gives
+  the bass long notes, fades the drums to a soft pulse, and uses a swelling
+  lead, a slower and wider vibrato and a longer, softer echo, saying what
+  it changed.
+
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
   listening help (loop, solo, mute), and recording through Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF
