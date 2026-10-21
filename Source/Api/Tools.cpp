@@ -2703,6 +2703,7 @@ int EchoTarget(Session &S, int Source, int First, int End)
 // The echo settings from an object (add_echo's arguments, or change_mood's echo)
 struct EchoPlan {
 	int Source, Target, Delay, Volume, Instrument;
+	int Detune;		// fine pitch steps up (+) or down (-), 0 for none
 };
 
 EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
@@ -2713,7 +2714,8 @@ EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
 		throw Problem("The echo copies a melodic channel's notes.");
 	bool Exact;
 	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 3.0 / S.Time.RowsPerBeat, 0.01, 16.0), Exact);
-	Plan.Volume = IntArg(Args, "volume", 5, 1, 15);
+	Plan.Volume = IntArg(Args, "volume", 6, 1, 15);
+	Plan.Detune = IntArg(Args, "detune", 0, -8, 8);
 	if (Arg(Args, "to_channel") != 0) {
 		Plan.Target = ChannelArg(S, Args, "to_channel");
 		if (Plan.Target == Plan.Source || !IsMelodic(S.Channel(Plan.Target)))
@@ -2842,6 +2844,11 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 			Shortened > 0 ? (Plural(Shortened, "was", "were") + " cut short").c_str() : ""));
 	if (Notes.empty())
 		return 0;
+	if (Plan.Detune != 0) {
+		// A little off the melody's pitch, so the two shimmer where they overlap; back in tune after
+		Notes.front().Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80 + Plan.Detune));
+		Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
+	}
 	if (HasNotesIn(S, Plan.Target, First + Plan.Delay, Stop))
 		Warnings.push_back(Format("%s's own notes in those bars were replaced by the echo.", S.Channel(Plan.Target).FullName().c_str()));
 	PartOptions Options = OptionsFor(S, Plan.Target, false);
@@ -2868,8 +2875,9 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("The echo is already there.");
-	const std::string What = Format("an echo of %s on %s, %s later at volume %d, %s", S.Channel(Plan.Source).FullName().c_str(),
-		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume, RangeText(From, To).c_str());
+	const std::string What = Format("an echo of %s on %s, %s later at volume %d%s, %s", S.Channel(Plan.Source).FullName().c_str(),
+		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume,
+		Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(), RangeText(From, To).c_str());
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
@@ -4080,7 +4088,7 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 			if (Part[r].Volume == NO_VOLUME && State.Volume != 15)
 				Part[r].Volume = static_cast<unsigned char>(State.Volume);
 			for (int e = 0; e < EFF_COUNT; ++e)
-				if (State.Sticky[e] != 0 && !HasEffect(Part[r], e, Columns))
+				if (State.Sticky[e] != StickyOff(e) && !HasEffect(Part[r], e, Columns))
 					AddEffect(Part[r], e, State.Sticky[e], Columns);
 			break;
 		}
@@ -6359,11 +6367,11 @@ std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<
 		for (int e = 1; e < EFF_COUNT; ++e) {
 			if (!IsStickyEffect(e) || Before.Sticky[e] == Again.Sticky[e] || HasEffect(Start, e, Cols))
 				continue;
-			const int On = Again.Sticky[e] != 0 ? Again.Sticky[e] : Before.Sticky[e];
+			const bool StillOn = Again.Sticky[e] != StickyOff(e);
+			const int On = StillOn ? Again.Sticky[e] : Before.Sticky[e];
 			Seams.push_back(Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
-				"set it at %s (%c00 turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
-				Again.Sticky[e] != 0 ? "still on" : "off", Again.Sticky[e] != 0 ? "gets" : "lacks", S.Time.Position(LoopRow).c_str(),
-				EffectLetter(e)));
+				"set it at %s (%c%02X turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
+				StillOn ? "still on" : "off", StillOn ? "gets" : "lacks", S.Time.Position(LoopRow).c_str(), EffectLetter(e), StickyOff(e)));
 		}
 	}
 
@@ -8381,12 +8389,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("add_echo", "Add an echo",
 		"Copies a channel's notes onto a free channel, a little later and quieter: the classic NES echo. Makes a part sound "
-		"spacious, dreamy or underwater.",
+		"spacious, dreamy or underwater. The echo follows the original's dynamics (volume 6 is about 40% of each note's "
+		"loudness, as atmospheric chiptune mixes it), plays the same instrument and octave, and can be detuned a step or two "
+		"so it shimmers against the melody where they overlap.",
 		Schema()
 			.Add("channel", ChannelProp("Channel to echo."), true)
 			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind."))
-			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows)."))
-			.Add("volume", Prop("integer", "Echo volume 1-15 (default 5), scaled with the original's loudness."))
+			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows; a beat is the other common choice)."))
+			.Add("volume", Prop("integer", "Echo volume 1-15 at the original's full loudness (default 6, about 40%), scaled with "
+				"each note's own."))
+			.Add("detune", Prop("integer", "Fine pitch steps, -8 to 8 (default 0): 1 or -1 (P81, P7F) give a subtle chorus with "
+				"the melody, more sounds out of tune. Back in tune (P80) after the echo."))
 			.Add("instrument", Prop("string", "Instrument for the echo. Default: the original's."))
 			.Range().ClipChoice(),
 		false, true);

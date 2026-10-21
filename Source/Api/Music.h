@@ -88,11 +88,13 @@ bool ParseEffect(const std::string &Text, int &Effect, int &Param);	// "421", "Q
 std::string Lowercase(const std::string &Text);
 std::string FormatNumber(double Value);		// "1", "1.5", "0.25"
 
-// Effects that keep working after their row until turned off with a 00
-// parameter: arpeggio, portamento up and down, portamento, vibrato, tremolo
-// and volume slide. Speed, jump, skip and halt steer the song instead of the
-// channel; those stay where they are when notes are written.
+// Effects that keep working after their row until turned off: arpeggio,
+// portamento up and down, portamento, vibrato, tremolo and volume slide (with
+// a 00 parameter), and fine pitch (with P80). Speed, jump, skip and halt
+// steer the song instead of the channel; those stay where they are when
+// notes are written.
 bool IsStickyEffect(int Effect);
+int StickyOff(int Effect);	// the parameter that turns a sticky effect off: 0x80 for fine pitch, 0 for the others
 bool IsSongEffect(int Effect);
 
 // Bars and beats as FamiTracker's row highlight shows them: a bar starts on

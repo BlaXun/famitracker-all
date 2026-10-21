@@ -2915,11 +2915,43 @@ void TestEchoAndVibrato()
 	Song.End(5, 16, NOTE_RELEASE);
 	ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "an echo of VRC6 Pulse 1 on VRC6 Pulse 2, 0.75 beats later at volume 5");
-	CHECK(Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][3].Instrument == 0 && Song.Rows[6][3].Volume == 4);
+	CHECK_HAS(Result.Text, "an echo of VRC6 Pulse 1 on VRC6 Pulse 2, 0.75 beats later at volume 6");
+	CHECK(Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][3].Instrument == 0 && Song.Rows[6][3].Volume == 5);	// 40% of 12
 	CHECK(Song.Rows[6][11].Pitch() == 52);
 	CHECK(Song.Rows[6][19].Note == NOTE_RELEASE);
 	CHECK_HAS(Run(Song, "add_echo", "{\"channel\": 1}").Text, "has no notes");
+	{
+		// Detuned a step: sharp from its first note, in tune again where it ends, so what follows plays as before
+		FakeSong Wide;
+		Wide.Info.DirectChanges = true;
+		Wide.Put(5, 0, "C-4", 0, 12);
+		Wide.Put(5, 8, "E-4");
+		Wide.End(5, 16, NOTE_RELEASE);
+		Wide.Put(6, 32, "G-4", 0);
+		Result = Run(Wide, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, "
+			"\"delay_beats\": 1, \"detune\": 1}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "later at volume 6 detuned P81, bar 1");
+		CHECK(Wide.Rows[6][4].Pitch() == 48 && Wide.Rows[6][4].Effect[0] == EFF_PITCH && Wide.Rows[6][4].Param[0] == 0x81);
+		CHECK(Wide.Rows[6][12].Pitch() == 52 && Wide.Rows[6][12].Effect[0] == EFF_NONE);
+		CHECK(Wide.Rows[6][20].Note == NOTE_RELEASE && Wide.Rows[6][20].Effect[0] == EFF_PITCH && Wide.Rows[6][20].Param[0] == 0x80);
+		CHECK(Wide.Rows[6][32].Pitch() == 55 && Wide.Rows[6][32].Effect[0] == EFF_NONE);
+		CHECK_HAS(Run(Wide, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"detune\": 9}").Text, "detune");
+		// A detune still on where a part is written goes off there
+		std::vector<Cell> Old(32);
+		Old[0].SetPitch(48);
+		Old[0].Effect[0] = EFF_PITCH;
+		Old[0].Param[0] = 0x7E;
+		std::vector<PartNote> One(1);
+		One[0].Row = 8;
+		One[0].Rows = 4;
+		One[0].Pitch = 50;
+		std::vector<Cell> Out;
+		std::vector<std::string> Warnings;
+		BuildPart(Old, 8, 16, One, PartOptions(), Out, Warnings);
+		CHECK(Out[0].Effect[0] == EFF_PITCH && Out[0].Param[0] == 0x80);
+		CHECK(StateAt(Old, 4, 1).Sticky[EFF_PITCH] == 0x7E && ChannelState().Sticky[EFF_PITCH] == 0x80);
+	}
 	{
 		// At the song's end the echo stops: the song doesn't grow (which would move its loop)
 		FakeSong Tail;
@@ -3003,7 +3035,7 @@ void TestMood()
 	CHECK(Clip[3][8].Pitch() == 51 && Clip[3][8].Instrument == 3);	// E-4 became D#4, played by the pad
 	CHECK(Clip[3][1].Effect[0] == EFF_VIBRATO && Clip[3][1].Param[0] == 0x37);
 	CHECK(Clip[1][0].IsEmpty() && Clip[2][0].IsEmpty());	// noise and DPCM come along as they are
-	CHECK(Clip[4][3].Pitch() == 48 && Clip[4][3].Instrument == 3 && Clip[4][3].Volume == 5);	// the echo of the changed part
+	CHECK(Clip[4][3].Pitch() == 48 && Clip[4][3].Instrument == 3 && Clip[4][3].Volume == 6);	// the echo of the changed part
 	CHECK(Clip[4][11].Pitch() == 51);
 	CHECK(Clip[4][4].Effect[0] == EFF_VIBRATO && Clip[4][4].Param[0] == 0x37);
 	CHECK(Clip[4].size() == 36 && Clip[4][35].Note == NOTE_RELEASE);
