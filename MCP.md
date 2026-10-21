@@ -120,7 +120,8 @@ work, to reuse its ideas.
   writes into the song. Every change is one step of Ctrl+Z (Ctrl+Y redoes it).
   Claude can then also set the tempo, place clips and undo. Changes leave
   the song's speed changes, jumps and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`)
-  where they are, unless moving them is the change (`set_loop`); a clip
+  where they are, unless moving them is the change (`set_loop`,
+  `insert_bars`, `remove_bars`); a clip
   Claude places keeps the ones where it lands, as when you drag one. Instruments it
   adds from presets stay in the instrument list even when the notes are
   undone.
@@ -151,6 +152,8 @@ anything; close the dialog and ask again.
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
+| `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
+| `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -270,7 +273,8 @@ avoid that, and gives it tools for each layer:
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel.
 - **Finishing touches**: `polish`; `make_groove` starts a whole backing for
-  a mood; `copy_bars` and `vary_part` build a form whose repeats change.
+  a mood; `copy_bars` and `vary_part` build a form whose repeats change,
+  and `insert_bars` and `remove_bars` make room for a section or cut one.
 
 `review_arrangement` listens the way an arranger would and scores the depth
 out of 10, with what would help most and the tool for each. Claude runs it
@@ -646,7 +650,9 @@ editor; they're muted again afterwards.
 - `Source/McpConnection.cpp`: `SongHost` over the open document, the
   message-only window that answers on the UI thread, the settings (registry
   section "Claude Code") and the dialog. Song changes go through
-  `WriteSongParts` in `InsertRecording.cpp`, one undoable action each. Paths
+  `WriteSongParts` in `InsertRecording.cpp`, one undoable action each, which
+  can first put whole frames into the frame list or take them out
+  (`insert_bars`, `remove_bars`); Undo puts the frame list back. Paths
   the tools are given (UTF-8) reach the C library in the Windows code page
   (`SongHost::LocalPath`).
 - `Source/VoiceEffectDlg.cpp`: Edit > Sound effect from your voice. It

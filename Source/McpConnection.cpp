@@ -1061,7 +1061,7 @@ public:
 		return true;
 	}
 
-	bool WriteSong(const std::vector<ftapi::ChannelCells> &Parts, int First, int LinkClipId, std::string &Error)
+	bool WriteSong(const std::vector<ftapi::ChannelCells> &Parts, const ftapi::SongWrite &Write, std::string &Error)
 	{
 		if (!CanChange(Error))
 			return false;
@@ -1081,12 +1081,13 @@ public:
 			Part.Exact = Parts[p].Exact;
 			Raw.push_back(Part);
 		}
-		if (Raw.empty()) {
+		if (Raw.empty() && Write.MoveBy == 0) {
 			Error = "There was nothing to write.";
 			return false;
 		}
 		CString Message;
-		if (!WriteSongParts(m_pMain, &Raw[0], static_cast<int>(Raw.size()), First / Length, First % Length, LinkClipId, Message)) {
+		if (!WriteSongParts(m_pMain, Raw.empty() ? NULL : &Raw[0], static_cast<int>(Raw.size()), Write.First / Length,
+			Write.First % Length, Write.LinkClipId, Write.MoveFrame, Write.MoveBy, Write.Cursor, Message)) {
 			Error = Utf8(Message);
 			return false;
 		}

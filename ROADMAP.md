@@ -236,6 +236,13 @@ when ready.
   `Oxx` of later versions) or that the channel can't play, saying what to
   use instead.
 
+  The song's form, as the user works mostly through Claude Code:
+  `insert_bars` and `remove_bars` put empty bars in or take bars out
+  anywhere, in every channel, and the loop's jump and the song's end move
+  with the music. Whole frames go into or out of FamiTracker's frame list,
+  as Insert frame does, so the frames after keep their patterns and linked
+  clips.
+
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
   listening help (loop, solo, mute), and recording through Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF
