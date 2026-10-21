@@ -2159,6 +2159,204 @@ std::string SetTempoTool(Session &S, const Json &Args)
 	return Text;
 }
 
+// Swing
+
+// The speed a row plays at: the last speed command (Fxx under the split
+// point) before it in the song's rows, else the track's speed
+int SpeedBefore(Session &S, int Row)
+{
+	for (int r = Row - 1; r >= 0; --r) {
+		int Speed = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Cell> &Cells = S.Cells(c);
+			if (r >= static_cast<int>(Cells.size()))
+				continue;
+			for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k) {
+				const int Param = std::max(1, static_cast<int>(Cells[r].Param[k]));
+				if (Cells[r].Effect[k] == EFF_SPEED && Param < S.Song.SplitPoint)
+					Speed = Param;	// a later channel's wins on its row, as FamiTracker reads them
+			}
+		}
+		if (Speed > 0)
+			return Speed;
+	}
+	return S.Song.Speed;
+}
+
+// The speeds of a swing: A for the first of each pair of units, B for the
+// second, A + B twice Speed so the beat keeps its length; the pair whose A
+// share is nearest Share (A == B == Speed when none is nearer than straight)
+void SwingSpeeds(int Speed, int MaxSpeed, double Share, int &A, int &B)
+{
+	A = B = Speed;
+	double Best = std::fabs(Share - 0.5);
+	for (int a = Speed + 1; a <= MaxSpeed && 2 * Speed - a >= 1; ++a) {
+		const double Miss = std::fabs(Share - static_cast<double>(a) / (2 * Speed));
+		if (Miss < Best - 1e-9) {
+			Best = Miss;
+			A = a;
+			B = 2 * Speed - a;
+		}
+	}
+}
+
+std::string SetSwingTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Swing changes the song's speed every half beat, which needs direct changes; the user can allow them in "
+			"File > Connect Claude Code.");
+	// How much: the long unit's share of each pair
+	double Share = 0.5;
+	const Json *pAmount = Arg(Args, "amount");
+	if (pAmount == 0)
+		throw Problem("Give amount: none, light, medium, hard (triplet), or a percentage from 50 (straight) to 75.");
+	if (pAmount->IsNumber())
+		Share = NumberArg(Args, "amount", 50.0, 50.0, 80.0) / 100.0;
+	else {
+		const std::string Word = Squeezed(StringArg(Args, "amount"));
+		if (Word == "none" || Word == "straight" || Word == "off" || Word == "even")
+			Share = 0.5;
+		else if (Word == "light" || Word == "subtle" || Word == "gentle" || Word == "lazy")
+			Share = 0.58;
+		else if (Word == "medium" || Word == "normal")
+			Share = 0.625;
+		else if (Word == "hard" || Word == "triplet" || Word == "triplets" || Word == "shuffle" || Word == "heavy" || Word == "full")
+			Share = 2.0 / 3.0;
+		else
+			throw Problem("amount: none, light, medium, hard (triplet), or a percentage from 50 (straight) to 75.");
+	}
+	const std::string UnitWord = Squeezed(StringArg(Args, "unit", "eighths"));
+	const int R = S.Time.RowsPerBeat;
+	int Parts;
+	if (UnitWord == "eighths" || UnitWord == "eighth" || UnitWord == "8ths" || UnitWord == "halfbeats")
+		Parts = 2;
+	else if (UnitWord == "sixteenths" || UnitWord == "sixteenth" || UnitWord == "16ths" || UnitWord == "quarterbeats")
+		Parts = 4;
+	else
+		throw Problem("unit: eighths (half beats, the usual swing) or sixteenths (quarter beats).");
+	if (R % Parts != 0)
+		throw Problem(Format("A beat here is %s, which doesn't split into %s; swing needs beats that do (row highlight %d is %d "
+			"rows a beat).", Plural(R, "row", "rows").c_str(), Parts == 2 ? "halves" : "quarters", R, R));
+	const int Unit = R / Parts;
+	int From = 1, To = S.Time.BarCount();
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
+	const int Split = S.Song.SplitPoint;
+
+	// The speed the rows play at on average there now (a swing there comes out as its middle)
+	long long Ticks = 0;
+	{
+		int Speed = SpeedBefore(S, First);
+		std::vector<int> Set(static_cast<size_t>(End - First), 0);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Cell> &Cells = S.Cells(c);
+			for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r)
+				for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+					if (Cells[r].Effect[k] == EFF_SPEED && std::max(1, static_cast<int>(Cells[r].Param[k])) < Split)
+						Set[static_cast<size_t>(r - First)] = std::max(1, static_cast<int>(Cells[r].Param[k]));
+		}
+		for (int r = First; r < End; ++r) {
+			if (Set[static_cast<size_t>(r - First)] != 0)
+				Speed = Set[static_cast<size_t>(r - First)];
+			Ticks += Speed;
+		}
+	}
+	const int Base = std::max(1, static_cast<int>((Ticks + (End - First) / 2) / std::max(1, End - First)));
+	int A, B;
+	SwingSpeeds(Base, std::min(31, Split - 1), Share, A, B);
+	std::string Fits;	// the swings the speed's ticks allow
+	for (int a = Base + 1; a <= std::min(31, Split - 1) && 2 * Base - a >= 1; ++a)
+		Fits += (Fits.empty() ? "" : ", ") + Format("%d%%", static_cast<int>(std::floor(100.0 * a / (2 * Base) + 0.5)));
+	if (A == B && Share > 0.5)
+		throw Problem(Fits.empty() ? Format("At speed %d a beat can't swing: its rows have too few ticks to split unevenly. A higher "
+			"speed (with a higher tempo to keep the BPM) can.", Base) :
+			Format("At speed %d a beat can't swing that little; the swings that fit are %s.", Base, Fits.c_str()));
+	const int After = End < S.Time.TotalRows() ? SpeedBefore(S, End + 1) : -1;	// what plays after the bars, as it was
+
+	// The speed commands there go; the swing's come in, on the channel that has
+	// the song's speed commands (else the last one), or another with room
+	int Home = S.ChannelCount() - 1;
+	for (int c = S.ChannelCount() - 1; c >= 0; --c) {
+		bool Has = false;
+		for (size_t r = 0; r < S.Cells(c).size() && !Has; ++r)
+			for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+				Has = Has || S.Cells(c)[r].Effect[k] == EFF_SPEED;
+		if (Has) {
+			Home = c;
+			break;
+		}
+	}
+	Draft D(S);
+	int Removed = 0, Lost = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		std::vector<Cell> &Cells = D.Cells(c);
+		for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r)
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				if (Cells[r].Effect[k] == EFF_SPEED && std::max(1, static_cast<int>(Cells[r].Param[k])) < Split) {
+					Cells[r].Effect[k] = EFF_NONE;
+					Cells[r].Param[k] = 0;
+					++Removed;
+				}
+	}
+	auto Put = [&](int Row, int Speed) {
+		if (AddEffect(D.Cells(Home)[static_cast<size_t>(Row)], EFF_SPEED, Speed, S.Channel(Home).EffectColumns))
+			return;
+		for (int c = S.ChannelCount() - 1; c >= 0; --c)
+			if (c != Home && AddEffect(D.Cells(c)[static_cast<size_t>(Row)], EFF_SPEED, Speed, S.Channel(c).EffectColumns))
+				return;
+		++Lost;
+	};
+	int Written = 0;
+	if (A != B) {
+		for (int r = First; r < End; ++r) {
+			const int Bar = S.Time.BarOf(r), InBar = r - S.Time.BarStart(Bar);
+			if ((InBar % R) % Unit != 0)
+				continue;
+			Put(r, ((InBar % R) / Unit) % 2 == 0 ? A : B);
+			++Written;
+		}
+	}
+	else if (SpeedBefore(S, First) != Base) {
+		Put(First, Base);
+		++Written;
+	}
+	if (After > 0) {
+		// The rows after play at the speed they did
+		bool Own = false;
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				Own = Own || (D.Cells(c)[static_cast<size_t>(End)].Effect[k] == EFF_SPEED &&
+					std::max(1, static_cast<int>(D.Cells(c)[static_cast<size_t>(End)].Param[k])) < Split);
+		if (!Own && (A != B ? B : Base) != After)
+			Put(End, After);
+	}
+	if (Lost > 0)
+		throw Problem(Format("%s had no free effect column for the swing's speed changes; show another effect column in "
+			"FamiTracker (on %s, say).", Plural(Lost, "row", "rows").c_str(), S.Channel(Home).FullName().c_str()));
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = First;
+	const std::string Where = RangeText(From, To);
+	if (!D.Collect(First, true, Changes, Start, Warnings))
+		return A == B ? "The song plays straight there already (no swing), " + Where + "." :
+			Format("The song swings that way there already (F%02X and F%02X), %s.", A, B, Where.c_str());
+	std::string What;
+	if (A == B)
+		What = Format("swing taken off, %s: straight at speed %d", Where.c_str(), Base);
+	else
+		What = Format("a %d%% swing on the %s, %s: speed %d then %d (F%02X, F%02X) in turn, which averages the speed it had (%d), "
+			"so the tempo stays", static_cast<int>(std::floor(100.0 * A / (A + B) + 0.5)), Parts == 2 ? "eighths" : "sixteenths",
+			Where.c_str(), A, B, A, B, Base);
+	std::string Text = Commit(S, Changes, Start, false, "", What);
+	if (A != B && std::fabs(static_cast<double>(A) / (A + B) - Share) > 0.03)
+		Text += Format(" At speed %d the swings that fit are %s; a higher speed (with a higher tempo to keep the BPM) splits "
+			"the beat finer.", Base, Fits.c_str());
+	if (Removed > Written && A != B)
+		Warnings.push_back(Format("%s there went for the swing's.", Plural(Removed, "speed change", "speed changes").c_str()));
+	return WithRemarks(S, Text, Warnings);
+}
+
 int FreeChannel(Session &S, int First, int End, int Avoid, bool (*Fits)(const ChannelInfo &))
 {
 	for (int Pass = 0; Pass < 2; ++Pass) {
@@ -8260,6 +8458,21 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
 		false, false, true);
 
+	AddTool("set_swing", "Swing the rhythm",
+		"Makes the rhythm swing the way FamiTracker 0.4.6 can: the speed changes every half beat (Fxx), longer then shorter, "
+		"so every channel's off-beat notes come late together, and notes written later swing too. The two speeds average the "
+		"speed the song had, so the tempo stays. light is about 58%, medium 62%, hard a triplet feel (67%); the speed's ticks "
+		"decide which fit (speed 6: 58% or 67%; the reply says). none takes it off. unit sixteenths swings quarter beats "
+		"instead (hip-hop, lo-fi). The speed changes go where the song's are, else on the last channel. Needs direct changes; "
+		"undoable. set_tempo with another speed afterwards needs set_swing again.",
+		Schema()
+			.Add("amount", Prop("string", "none, light, medium, hard (triplet), or a percentage, 50 (straight) to 75."), true)
+			.Add("unit", EnumProp("What swings: eighths (half beats, default) or sixteenths.",
+				std::vector<std::string>{ "eighths", "sixteenths" }))
+			.Add("from_bar", BarProp("First bar (default 1)."))
+			.Add("to_bar", BarProp("Last bar (default the song's last).")),
+		false, false, true);
+
 	{
 		Json Chords = Prop("string", "");
 		Json Types = Json::MakeArray();
@@ -8947,6 +9160,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
+		else if (Name == "set_swing") Result.Text = SetSwingTool(S, Args);
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
 		else if (Name == "add_drums") Result.Text = AddDrumsTool(S, Args);
 		else if (Name == "add_harmony") Result.Text = AddHarmonyTool(S, Args);

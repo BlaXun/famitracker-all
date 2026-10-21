@@ -4898,7 +4898,9 @@ void TestEffects()
 	CHECK(EffectsText("q", "", 0, Text) && Contains(Text, "Qxy note slide up: Slides from the note up y semitones"));
 	CHECK(EffectsText("Hxy", "", 0, Text) && Contains(Text, "Hxy hardware sweep up") && Contains(Text, "On the FDS channel, Hxx is its modulator"));
 	CHECK(EffectsText("H", "", &Fds, Text) && Contains(Text, "Hxx FDS modulation depth") && !Contains(Text, "sweep"));
-	CHECK(EffectsText("", "swing", 0, Text) && Contains(Text, "Swing: Delay every off-beat note"));
+	CHECK(EffectsText("", "swing", 0, Text) && Contains(Text, "Swing: Alternate the speed every half beat") && Contains(Text, "set_swing"));
+	CHECK(EffectsText("", "jazz chords", 0, Text) && Contains(Text, "Lush chords: For chords of four or more notes"));
+	CHECK(EffectsText("", "mixing", 0, Text) && Contains(Text, "Quiet mixing: Pulses well under full volume"));
 	CHECK(EffectsText("", "shuffle", 0, Text) && Contains(Text, "Swing:"));
 	CHECK(EffectsText("", "Triangle Kick", 0, Text) && Contains(Text, "Triangle kick:"));
 	CHECK(!EffectsText("", "moonwalk", 0, Text) && Contains(Text, "No technique \"moonwalk\". The techniques: echo"));
@@ -6071,6 +6073,68 @@ void TestLushChords()
 	CHECK(Groove.Rows[0][0].HasNote() && Groove.Rows[0][8].HasNote() && Groove.Rows[0][0].Volume == 6);
 }
 
+void TestSwing()
+{
+	// Eighths at speed 6: 8 then 4 (a triplet feel), a speed change every half beat on the last channel
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	ToolResult Result = Run(Song, "set_swing", "{\"amount\": \"hard\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a 67% swing on the eighths, bars 1-8: speed 8 then 4 (F08, F04) in turn, which averages the speed it had (6)");
+	CHECK(Song.Rows[7][0].Effect[0] == EFF_SPEED && Song.Rows[7][0].Param[0] == 8);
+	CHECK(Song.Rows[7][2].Effect[0] == EFF_SPEED && Song.Rows[7][2].Param[0] == 4);
+	CHECK(Song.Rows[7][1].Effect[0] == EFF_NONE && Song.Rows[7][4].Param[0] == 8 && Song.Rows[7][126].Param[0] == 4);
+	// Lighter: swung again around the same speed
+	Result = Run(Song, "set_swing", "{\"amount\": \"light\"}");
+	CHECK_HAS(Result.Text, "a 58% swing on the eighths, bars 1-8: speed 7 then 5");
+	CHECK(Song.Rows[7][0].Param[0] == 7 && Song.Rows[7][2].Param[0] == 5);
+	CHECK_HAS(Run(Song, "set_swing", "{\"amount\": \"medium\"}").Text, "swings that way there already (F07 and F05)");
+	// Sixteenths in one bar: every row; the bar after starts as it did
+	Result = Run(Song, "set_swing", "{\"amount\": 67, \"unit\": \"sixteenths\", \"from_bar\": 2, \"to_bar\": 2}");
+	CHECK_HAS(Result.Text, "a 67% swing on the sixteenths, bar 2");
+	CHECK(Song.Rows[7][16].Param[0] == 8 && Song.Rows[7][17].Param[0] == 4 && Song.Rows[7][18].Param[0] == 8 && Song.Rows[7][32].Param[0] == 7);
+	// Off again: the track's speed plays
+	Result = Run(Song, "set_swing", "{\"amount\": \"none\"}");
+	CHECK_HAS(Result.Text, "swing taken off, bars 1-8: straight at speed 6");
+	CHECK(Song.Rows[7][0].Effect[0] == EFF_NONE && Song.Rows[7][2].Effect[0] == EFF_NONE && Song.Rows[7][17].Effect[0] == EFF_NONE);
+	CHECK_HAS(Run(Song, "set_swing", "{\"amount\": \"none\"}").Text, "plays straight there already");
+
+	// Speed 3 splits a beat coarsely: a hard swing fits, a light one doesn't
+	FakeSong Fast;
+	Fast.Info.DirectChanges = true;
+	Fast.Info.Speed = 3;
+	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"light\"}").Text,
+		"At speed 3 a beat can't swing that little; the swings that fit are 67%, 83%.");
+	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"hard\"}").Text, "speed 4 then 2");
+	FakeSong Slowest;
+	Slowest.Info.DirectChanges = true;
+	Slowest.Info.Speed = 1;
+	CHECK_HAS(Run(Slowest, "set_swing", "{\"amount\": \"hard\"}").Text, "At speed 1 a beat can't swing");
+
+	// The song's own speed command: replaced there, and played again after the bars, on its channel
+	FakeSong Mid;
+	Mid.Info.DirectChanges = true;
+	Mid.Rows[0][0].Effect[0] = EFF_SPEED;
+	Mid.Rows[0][0].Param[0] = 5;
+	Result = Run(Mid, "set_swing", "{\"amount\": \"hard\", \"to_bar\": 1}");
+	CHECK_HAS(Result.Text, "a 70% swing on the eighths, bar 1: speed 7 then 3");
+	CHECK_HAS(Result.Text, "the swings that fit are 60%, 70%, 80%, 90%");
+	CHECK(Mid.Rows[0][0].Param[0] == 7 && Mid.Rows[0][2].Param[0] == 3 && Mid.Rows[0][16].Effect[0] == EFF_SPEED && Mid.Rows[0][16].Param[0] == 5);
+	CHECK(Mid.Rows[7][0].Effect[0] == EFF_NONE);
+
+	// Beats that don't halve; no direct changes; no amount
+	FakeSong Three;
+	Three.Info.DirectChanges = true;
+	Three.Info.FirstHighlight = 3;
+	Three.Info.SecondHighlight = 12;
+	CHECK_HAS(Run(Three, "set_swing", "{\"amount\": \"light\"}").Text, "doesn't split into halves");
+	FakeSong Ask;
+	CHECK_HAS(Run(Ask, "set_swing", "{\"amount\": \"light\"}").Text, "needs direct changes");
+	CHECK_HAS(Run(Song, "set_swing", "{}").Text, "Give amount");
+	CHECK_HAS(Run(Song, "set_swing", "{\"amount\": \"wobbly\"}").Text, "amount: none, light");
+}
+
 int main()
 {
 	TestJson();
@@ -6127,6 +6191,7 @@ int main()
 	TestCut();
 	TestExport();
 	TestLushChords();
+	TestSwing();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

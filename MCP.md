@@ -145,6 +145,7 @@ anything; close the dialog and ask again.
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
+| `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off (direct changes only; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it |
@@ -217,6 +218,18 @@ with `Fxx` effects, a BPM changes the tempo only, since those effects would
 set the speed back. Night and tense versions pick their tempo the same way,
 unless the song has `Fxx` effects: then they scale the tempo, and the tempo
 effects along with it.
+
+**Swing** (`set_swing`) works the way FamiTracker 0.4.6 composers do it: the
+speed changes every half beat, longer then shorter, so the rows themselves
+swing and every channel's off-beat notes come late together, notes written
+later too. The two speeds average the old one, so the tempo stays: at speed
+6, `F08` and `F04` in turn is a triplet feel (67%) and `F07` and `F05` a light
+one (58%). The speed's ticks decide which swings fit, and Claude says which
+when the one asked for doesn't; `unit` sixteenths swings quarter beats
+instead, and `none` takes it off. The speed changes go on the channel that
+has the song's speed effects, else the last one. Change the speed with
+`set_tempo` afterwards and the swing needs setting again; a BPM keeps the
+speed and changes the tempo, which keeps the swing.
 
 ## Expansion chips
 
