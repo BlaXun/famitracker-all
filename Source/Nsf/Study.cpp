@@ -1549,7 +1549,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				continue;
 			const int Pos = StepOf(V.Rows[i]);
 			++Hits;
-			OnBeats += Pos == 0 || Pos == 2 * StepsPerBeat;
+			OnBeats += Pos % StepsPerBeat == 0;
 			Backbeats += Pos == StepsPerBeat || Pos == 3 * StepsPerBeat;
 			Offbeats += StepsPerBeat == 4 && Pos % 4 == 2;
 		}
@@ -1561,7 +1561,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			V.Name += ", snare-like (on beats 2 and 4)";
 		else if (Offbeats * 2 >= Hits)
 			V.Name += ", on the off-beats (the 'and' of each beat)";
-		else if (OnBeats * 3 >= Hits)
+		else if (OnBeats * 2 >= Hits)
 			V.Name += ", kick-like";
 	}
 	for (int c = 0; c < Columns; ++c) {
