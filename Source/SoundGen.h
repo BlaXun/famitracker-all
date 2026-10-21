@@ -174,6 +174,9 @@ public:
 		unsigned __int64 Sample;
 	};
 	void		 GetRenderMarks(CArray<render_mark_t> &Marks) const;
+	// Renders finished so far. A short one (a sound effect) can start and
+	// finish between two looks at IsRendering; this count still moves.
+	long		 GetRenderCount() const;
 
 	// Sample previewing
 	void		 PreviewSample(CDSample *pSample, int Offset, int Pitch);
@@ -353,6 +356,7 @@ private:
 
 	// Rendering
 	bool				m_bRendering;
+	volatile LONG		m_iRenderCount;
 	bool				m_bRequestRenderStop;
 	render_end_t		m_iRenderEndWhen;
 	unsigned int		m_iRenderEndParam;

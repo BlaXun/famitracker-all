@@ -108,6 +108,7 @@ CSoundGen::CSoundGen() :
 	m_pDocument(NULL),
 	m_pTrackerView(NULL),
 	m_bRendering(false),
+	m_iRenderCount(0),
 	m_iRenderedSamples(0),
 	m_bPlaying(false),
 	m_bHaltRequest(false),
@@ -1476,6 +1477,7 @@ void CSoundGen::StopRendering()
 	m_iPlayFrame = 0;
 	m_iPlayRow = 0;
 	m_wfWaveFile.CloseFile();
+	InterlockedIncrement(&m_iRenderCount);
 
 	MakeSilent();
 	ResetBuffer();
@@ -1499,6 +1501,11 @@ void CSoundGen::GetRenderMarks(CArray<render_mark_t> &Marks) const
 bool CSoundGen::IsRendering() const
 {
 	return m_bRendering;
+}
+
+long CSoundGen::GetRenderCount() const
+{
+	return m_iRenderCount;
 }
 
 bool CSoundGen::IsBackgroundTask() const
