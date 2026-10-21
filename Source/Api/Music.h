@@ -79,7 +79,8 @@ enum channel_kind { KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM, KIND_SAWTO
 std::string PitchName(int Pitch);			// "C-4", "C#4"
 std::string NoisePitchName(int Pitch);		// "4-#"
 bool ParsePitch(const std::string &Text, int &Pitch);	// "C-4", "C4", "c#4", "Db4", "Bb-3"
-// Noise: "kick", "snare", "hihat" (Drum is then "kick", "snare" or "hi-hat"), "4-#", "A-#", "noise 10"
+// Noise: "kick", "snare", "hihat", "open hihat", "crash", "high tom", "mid tom", "low tom" (Drum is then the
+// preset that plays it: "kick", "snare", "hi-hat", "open hi-hat", "crash" or "tom"), "4-#", "A-#", "noise 10"
 bool ParseNoisePitch(const std::string &Text, int &Pitch, std::string &Drum);
 char EffectLetter(int Effect);				// 0 for none
 std::string EffectText(int Effect, int Param);	// "421", "Q31"

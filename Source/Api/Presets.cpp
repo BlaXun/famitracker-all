@@ -101,7 +101,11 @@ std::vector<Preset> MakePresets()
 	All.push_back(Drum("kick", "noise kick drum (play it as \"kick\" on the noise channel)", List({ 15, 12, 8, 5, 3, 1, 0 })));
 	All.push_back(Drum("snare", "noise snare drum (\"snare\")", List({ 14, 11, 9, 7, 5, 3, 2, 1, 0 })));
 	All.push_back(Drum("hi-hat", "short closed hi-hat (\"hihat\")", List({ 10, 6, 3, 1, 0 })));
-	All.push_back(Drum("open hi-hat", "longer open hi-hat or crash (\"open hi-hat\")", List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 })));
+	All.push_back(Drum("open hi-hat", "longer open hi-hat (\"open hi-hat\")", List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 })));
+	All.push_back(Drum("crash", "crash cymbal that rings out, for the first beat of a new part (\"crash\")",
+		List({ 15, 14, 13, 12, 11, 10, 9, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0 })));
+	All.push_back(Drum("tom", "tom for fills, pitched by its note (\"high tom\", \"mid tom\", \"low tom\")",
+		List({ 15, 13, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 })));
 
 	// What sounds most like each on the VRC7
 	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
@@ -192,8 +196,9 @@ const Preset *FindPreset(const std::string &Name)
 		{ "warmpad", "warm pad" }, { "strings", "warm pad" }, { "bassline", "bass" }, { "softbass", "bass" },
 		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
 		{ "snaredrum", "snare" }, { "clap", "snare" }, { "hihat", "hi-hat" }, { "hat", "hi-hat" },
-		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "crash", "open hi-hat" },
-		{ "cymbal", "open hi-hat" },
+		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "cymbal", "crash" },
+		{ "crashcymbal", "crash" }, { "toms", "tom" }, { "hightom", "tom" }, { "midtom", "tom" }, { "lowtom", "tom" },
+		{ "floortom", "tom" },
 	};
 	const std::string Wanted = Simplified(Name);
 	if (Wanted.empty())

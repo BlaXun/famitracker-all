@@ -278,6 +278,10 @@ int DrumPitch(const std::string &Name)
 		return 0xA;
 	if (Name == "open hi-hat")
 		return 0xD;
+	if (Name == "crash")
+		return 0xC;
+	if (Name == "tom")
+		return 0x7;
 	return 0xE;
 }
 

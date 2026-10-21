@@ -239,9 +239,20 @@ bool ParseNoisePitch(const std::string &Input, int &Pitch, std::string &Drum)
 		Drum = "hi-hat";
 		return true;
 	}
-	if (Text == "open hi-hat" || Text == "open hihat" || Text == "open hat" || Text == "crash" || Text == "cymbal") {
+	if (Text == "open hi-hat" || Text == "open hihat" || Text == "open hat") {
 		Pitch = 0xD;
 		Drum = "open hi-hat";
+		return true;
+	}
+	if (Text == "crash" || Text == "cymbal" || Text == "crash cymbal") {
+		Pitch = 0xC;
+		Drum = "crash";
+		return true;
+	}
+	if (Text == "tom" || Text == "high tom" || Text == "hi tom" || Text == "mid tom" || Text == "middle tom" || Text == "low tom" ||
+		Text == "floor tom") {
+		Pitch = Text.compare(0, 3, "low") == 0 || Text.compare(0, 5, "floor") == 0 ? 0x5 : Text.compare(0, 3, "mid") == 0 ? 0x7 : 0x9;
+		Drum = "tom";
 		return true;
 	}
 	if (Text.compare(0, 5, "noise") == 0)

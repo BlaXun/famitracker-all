@@ -1245,6 +1245,12 @@
     <ClCompile Include="Source\Api\Music.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Chords.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\Arrange.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Presets.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1288,6 +1294,12 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Music.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Chords.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Arrange.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Presets.h">
