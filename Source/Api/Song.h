@@ -93,10 +93,17 @@ struct SongInfo {
 		Playing(false), PlayRow(-1) {}
 };
 
-// Cells to write into a channel from a row on
+// Cells to write into a channel from a row on. Exact cells are the rows as
+// they're to be, the song's speed, jumps, skips and halts among them, and are
+// written as they are. Otherwise (a clip placed) the song's own speed, jumps,
+// skips and halts in those rows stay where they are and the cells' effects go
+// around them, as when the user drags a clip into the song.
 struct ChannelCells {
 	int Channel;
 	std::vector<Cell> Cells;
+	bool Exact;
+
+	ChannelCells() : Channel(0), Exact(false) {}
 };
 
 class SongHost {
@@ -113,8 +120,9 @@ public:
 	// False with the reason when the song can't be changed right now
 	virtual bool CanChange(std::string &Why) = 0;
 	// One undoable change (Ctrl+Z): each part's cells replace its channel's
-	// rows from First on, frames are added when they run past the end. With a
-	// clip ID, what's written is a linked copy of that clip.
+	// rows from First on (ChannelCells says what becomes of the song's speed,
+	// jumps and halts there), frames are added when they run past the end.
+	// With a clip ID, what's written is a linked copy of that clip.
 	virtual bool WriteSong(const std::vector<ChannelCells> &Parts, int First, int LinkClipId, std::string &Error) = 0;
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,

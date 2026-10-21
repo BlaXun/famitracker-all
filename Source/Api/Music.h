@@ -278,4 +278,11 @@ bool KeepFollowing(const std::vector<Cell> &Old, int First, int End, std::vector
 bool AddEffect(Cell &Target, int Effect, int Param, int EffectColumns);
 bool HasEffect(const Cell &Target, int Effect, int EffectColumns);
 
+// The song's speed, jumps, skips and halts in Old (a row as it is) stay in
+// New (what goes there instead), each in its own column: an effect New has in
+// that column moves to a free one of the visible columns, or is left out when
+// none is free. New's own effects of those kinds stay too, but one Old has
+// already goes in once. False when an effect of New's was left out.
+bool KeepSongEffects(const Cell &Old, Cell &New, int EffectColumns);
+
 }	// namespace ftapi

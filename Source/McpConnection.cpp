@@ -1073,6 +1073,7 @@ public:
 			Part.Channel = Parts[p].Channel;
 			Part.pCells = &Cells[p][0];
 			Part.Rows = static_cast<int>(Cells[p].size());
+			Part.Exact = Parts[p].Exact;
 			Raw.push_back(Part);
 		}
 		if (Raw.empty()) {

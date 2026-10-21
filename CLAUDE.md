@@ -25,8 +25,10 @@ File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 here). The protocol and the tools are in `Source/Api/` (portable, tested on
 Linux), the Winsock listener in `Source/McpSocket.cpp`, and the glue to the
 document, the settings and the dialog in `Source/McpConnection.cpp`, which
-writes changes with `WriteSongParts` in `InsertRecording.cpp` and switches
-expansion chips with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
+writes changes with `WriteSongParts` in `InsertRecording.cpp` (exactly as the
+tools worked them out; only a clip placed keeps the song's own speed, jumps
+and halts where it lands, as dragging one does) and switches expansion chips
+with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
@@ -236,7 +238,9 @@ The application has no test suite of its own. What exists:
   framing, the MCP protocol and every tool against a song in memory, and
   the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
-  MSVC.
+  MSVC. The song in memory (`FakeSong`) writes changes the way
+  `CInsertRecordingAction::Redo` does; keep the two in step, since a
+  difference between them hides bugs from the tests.
 - **NSF importer** (`Source/Nsf`): the 6502, files and playlists, loops,
   rows, notes, instruments and studies, on NSFs the tests build with their
   own 6502 program (`tests/TestNsf.h`); and tracker modules

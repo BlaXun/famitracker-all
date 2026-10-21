@@ -250,21 +250,73 @@ public:
 		return !Busy;
 	}
 
+	// As FamiTracker writes them (CInsertRecordingAction::Redo, which this
+	// follows): exact parts as they are; the others keep the song's own
+	// speed, jumps, skips and halts in their rows, with their effects around
+	// them in the columns that show
 	bool WriteSong(const std::vector<ChannelCells> &Parts, int First, int LinkClipId, std::string &) override
 	{
 		History.push_back(Rows);
+		const size_t Length = static_cast<size_t>(Info.PatternLength);
 		size_t Needed = Rows[0].size();
 		for (size_t p = 0; p < Parts.size(); ++p)
 			Needed = std::max(Needed, First + Parts[p].Cells.size());
-		Needed = (Needed + 63) / 64 * 64;
+		Needed = (Needed + Length - 1) / Length * Length;
 		for (size_t c = 0; c < Rows.size(); ++c)
 			Rows[c].resize(Needed);
-		for (size_t p = 0; p < Parts.size(); ++p)
-			for (size_t r = 0; r < Parts[p].Cells.size(); ++r)
-				Rows[Parts[p].Channel][First + r] = Parts[p].Cells[r];
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			const int Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
+			for (size_t r = 0; r < Parts[p].Cells.size(); ++r) {
+				Cell &Row = Rows[Parts[p].Channel][First + r];
+				const Cell &New = Parts[p].Cells[r];
+				if (Parts[p].Exact) {
+					Row = New;
+					continue;
+				}
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (!IsSongEffect(Row.Effect[k])) {
+						Row.Effect[k] = EFF_NONE;
+						Row.Param[k] = 0;
+					}
+				if (New.IsEmpty()) {
+					Row.Note = NOTE_NONE;
+					Row.Octave = 0;
+					Row.Instrument = NO_INSTRUMENT;
+					Row.Volume = NO_VOLUME;
+					continue;
+				}
+				Row.Note = New.Note;
+				Row.Octave = New.Octave;
+				Row.Instrument = New.Instrument;
+				Row.Volume = New.Volume;
+				for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+					if (New.Effect[k] == EFF_NONE || (IsSongEffect(New.Effect[k]) && HasSame(Row, New.Effect[k], New.Param[k])))
+						continue;
+					int Column = k;
+					if (IsSongEffect(Row.Effect[Column])) {
+						Column = -1;
+						for (int j = 0; j < Shown && j < EFFECT_COLUMNS && Column < 0; ++j)
+							if (Row.Effect[j] == EFF_NONE)
+								Column = j;
+						if (Column < 0)
+							continue;
+					}
+					Row.Effect[Column] = New.Effect[k];
+					Row.Param[Column] = New.Param[k];
+				}
+			}
+		}
 		++Writes;
 		LastLink = LinkClipId;
 		return true;
+	}
+
+	static bool HasSame(const Cell &C, int Effect, int Param)
+	{
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			if (C.Effect[k] == Effect && C.Param[k] == Param)
+				return true;
+		return false;
 	}
 
 	bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns, std::string &) override
@@ -4482,7 +4534,7 @@ void TestLoops()
 	CHECK_HAS(Text, "bars 1-4 play once as an intro, then bars 5-8 loop (B01 on the last row of bar 8)");
 	CHECK(HasEffectAt(Song, 0, 127, EFF_JUMP, 1));
 	Text = Tools.Call("check_loop", Parse("{}")).Text;
-	CHECK_HAS(Text, "Bars 1-4 play once as an intro (6.4 s), then bars 5-8 loop (6.4 s): after bar 8 it goes back to bar 5 beat 1.");
+	CHECK_HAS(Text, "Bars 1-4 play once as an intro (6.4 s), then bars 5-8 loop (6.4 s): after bar 8 it goes back to bar 5.");
 	// The pad's B-2 and the bass's G now hang into bar 5 on repeat, where the intro's notes sound the first time
 	CHECK_HAS(Text, "2A03 Pulse 2: B-2 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-3 from the intro does.");
 	CHECK_HAS(Text, "2A03 Triangle: G-1 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the first time C-2 from the intro does.");
@@ -4503,6 +4555,100 @@ void TestLoops()
 	// Without direct changes it says how
 	Song.Info.DirectChanges = false;
 	CHECK_HAS(Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).Text, "B01 effect on the last row of bar 8 (frame 01, row 3F)");
+
+	// A song moved a frame later with copy_bars, from its end, to make room
+	// for an intro: the song's old jump stays where it was (the copies that
+	// don't play yet are named), until set_loop takes it away
+	{
+		FakeSong Moved(3);	// 12 bars
+		Moved.Info.DirectChanges = true;
+		for (int Bar = 0; Bar < 12; ++Bar)
+			Moved.Put(5, Bar * 16, Bar % 2 == 0 ? "C-4" : "G-4", 0);
+		Moved.Rows[1][191].Effect[1] = EFF_JUMP;	// after bar 12, back to bar 5
+		Moved.Rows[1][191].Param[1] = 1;
+		ToolSet Again(Moved);
+		Text = Again.Call("copy_bars", Parse("{\"from_bar\": 9, \"to_bar\": 12, \"at_bar\": 13}")).Text;
+		CHECK_HAS(Text, "Bars 13-16 don't play yet: the song goes back to bar 5 after bar 12, before them. set_loop with to_bar 16 "
+			"takes the loop on through them.");
+		CHECK(HasEffectAt(Moved, 1, 191, EFF_JUMP, 1) && !HasEffectAt(Moved, 1, 255, EFF_JUMP, 1));
+		Text = Again.Call("copy_bars", Parse("{\"from_bar\": 5, \"to_bar\": 8, \"at_bar\": 9}")).Text;
+		CHECK(!Contains(Text, "play yet") && Moved.Rows[5][128].Pitch() == Moved.Rows[5][64].Pitch());
+		CHECK(!Again.Call("copy_bars", Parse("{\"from_bar\": 1, \"to_bar\": 4, \"at_bar\": 5}")).IsError);
+		CHECK(HasEffectAt(Moved, 1, 191, EFF_JUMP, 1));	// the song's own jump, still
+		Text = Again.Call("set_loop", Parse("{\"from_bar\": 9, \"to_bar\": 16}")).Text;
+		CHECK_HAS(Text, "bars 1-8 play once as an intro, then bars 9-16 loop (B02 on the last row of bar 16); 1 jump or halt that "
+			"ended it elsewhere went");
+		CHECK_LACKS(Text, "FamiTracker's song");
+		CHECK(!HasEffectAt(Moved, 1, 191, EFF_JUMP, 1) && HasEffectAt(Moved, 0, 255, EFF_JUMP, 2));
+		CHECK_HAS(Again.Call("check_loop", Parse("{}")).Text, "after bar 16 it goes back to bar 9.");
+		CHECK_HAS(Again.Call("set_loop", Parse("{\"from_bar\": 9, \"to_bar\": 16}")).Text, "already loops");
+		// A halt before copies: they don't play either
+		Moved.Rows[3][63].Effect[0] = EFF_HALT;
+		CHECK_HAS(Again.Call("copy_bars", Parse("{\"from_bar\": 1, \"at_bar\": 17}")).Text,
+			"Bar 17 doesn't play yet: the song stops after bar 4 (a halt, Cxx), before it. set_loop with to_bar 17 makes it "
+			"play on through it.");
+	}
+	{
+		// set_loop says so when FamiTracker's song doesn't loop as asked: here a skip ends bar 16 early
+		FakeSong Skip(4);
+		Skip.Info.DirectChanges = true;
+		Skip.Put(5, 0, "C-4", 0);
+		Skip.Rows[3][240].Effect[0] = EFF_SKIP;
+		CHECK_HAS(Run(Skip, "set_loop", "{\"from_bar\": 5, \"to_bar\": 16}").Text,
+			"FamiTracker's song doesn't loop that way: after bar 16 beat 1 it goes back to bar 1. A skip (Dxx) at bar 16 beat 1 "
+			"ends that frame before the jump; set_loop leaves skips alone. check_loop shows how it plays.");
+	}
+
+	// Changes keep the song's speed and jumps where they are, once
+	{
+		FakeSong Steer(2);
+		Steer.Info.DirectChanges = true;
+		Steer.Put(5, 0, "C-4", 0);
+		Steer.Put(5, 32, "E-4");
+		Steer.Rows[5][0].Effect[0] = EFF_SPEED;
+		Steer.Rows[5][0].Param[0] = 5;
+		Steer.Rows[5][127].Effect[0] = EFF_JUMP;
+		Steer.Rows[5][127].Param[0] = 0;
+		CHECK(!Run(Steer, "transpose", "{\"semitones\": 2, \"channels\": [\"VRC6 Pulse 1\"]}").IsError);
+		CHECK(Steer.Rows[5][0].Pitch() == Steer.Rows[5][32].Pitch() - 4 && Steer.Rows[5][0].Effect[1] == EFF_NONE);
+		CHECK(HasEffectAt(Steer, 5, 0, EFF_SPEED, 5) && HasEffectAt(Steer, 5, 127, EFF_JUMP, 0));
+		// A clip placed there: its effects go around the song's, and a speed it has too goes in once
+		FakeSong::Clip Riff;
+		Riff.Name = "Riff";
+		Riff.Id = Steer.NextClipId++;
+		Riff.Sources.push_back(5);
+		Riff.Columns.push_back(std::vector<Cell>(128));
+		Riff.Columns[0][0].SetPitch(50);
+		Riff.Columns[0][0].Effect[0] = EFF_SPEED;
+		Riff.Columns[0][0].Param[0] = 5;
+		Riff.Columns[0][127].SetPitch(52);
+		Riff.Columns[0][127].Effect[0] = EFF_VIBRATO;
+		Riff.Columns[0][127].Param[0] = 0x42;
+		Steer.Clips.push_back(Riff);
+		CHECK(!Run(Steer, "place_clip", "{\"clip\": \"Riff\", \"channel\": \"VRC6 Pulse 1\", \"bar\": 1}").IsError);
+		CHECK(Steer.Rows[5][0].Pitch() == 50 && Steer.Rows[5][0].Effect[0] == EFF_SPEED && Steer.Rows[5][0].Effect[1] == EFF_NONE);
+		CHECK(Steer.Rows[5][127].Effect[0] == EFF_JUMP && HasEffectAt(Steer, 5, 127, EFF_VIBRATO, 0x42));
+		CHECK(Steer.Rows[5][32].IsEmpty());
+	}
+
+	// The song's speed, jumps and halts kept in a cell that changes
+	Cell Old, New;
+	Old.Effect[0] = EFF_JUMP;
+	Old.Param[0] = 2;
+	Old.Effect[2] = EFF_JUMP;		// twice (an older write): once is enough
+	Old.Param[2] = 2;
+	New.SetPitch(48);
+	New.Effect[0] = EFF_VIBRATO;
+	New.Param[0] = 0x31;
+	CHECK(KeepSongEffects(Old, New, 2));
+	CHECK(New.Effect[0] == EFF_JUMP && New.Param[0] == 2 && New.Effect[1] == EFF_VIBRATO && New.Effect[2] == EFF_NONE);
+	New.Effect[1] = EFF_VOLUME_SLIDE;	// no room for the vibrato now
+	New.Effect[0] = EFF_VIBRATO;
+	CHECK(!KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_JUMP && New.Effect[1] == EFF_VOLUME_SLIDE);
+	New = Cell();
+	New.Effect[1] = EFF_JUMP;		// the same one, in another column
+	New.Param[1] = 2;
+	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
 // OGG files for games

@@ -250,6 +250,7 @@ public:
 			throw Problem(Error.empty() ? "No song is open in FamiTracker." : Error);
 		Time = Timing(Song.PatternLength, Song.Frames, Song.FirstHighlight, Song.SecondHighlight);
 		m_Cache.clear();
+		m_Notes.clear();
 	}
 
 	// After instruments were added; the cells stay as they are
@@ -904,6 +905,7 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 			ChannelCells Part;
 			Part.Channel = Changes[i].Channel;
 			Part.Cells = Changes[i].Cells;
+			Part.Exact = true;	// worked out from the song's cells, its speed, jumps and halts among them
 			Parts.push_back(Part);
 		}
 		std::string Error;
@@ -1485,6 +1487,31 @@ public:
 	std::vector<NoteInfo> Notes(int Channel)
 	{
 		return ReadNotes(Cells(Channel), m_S.Channel(Channel).EffectColumns);
+	}
+
+	// A channel as the draft has it, without taking it into the draft
+	const std::vector<Cell> &View(int Channel)
+	{
+		std::map<int, std::vector<Cell> >::const_iterator it = m_Work.find(Channel);
+		return it != m_Work.end() ? it->second : m_S.Cells(Channel);
+	}
+
+	// How the song plays with the draft in (jumps, skips and halts), and
+	// the rows it then has
+	SongFlow Flow(int &TotalRows)
+	{
+		std::vector<std::vector<Cell> > Channels;
+		std::vector<int> Columns;
+		size_t Rows = 0;
+		for (int c = 0; c < m_S.ChannelCount(); ++c) {
+			Channels.push_back(View(c));
+			Columns.push_back(m_S.Channel(c).EffectColumns);
+			Rows = std::max(Rows, Channels.back().size());
+		}
+		const int Length = std::max(1, m_S.Time.PatternLength);
+		const int Frames = static_cast<int>((Rows + Length - 1) / Length);
+		TotalRows = Frames * Length;
+		return FollowSong(Channels, Columns, Length, Frames);
 	}
 
 	// What changed: the rows from the first changed one (or RangeFirst, when
@@ -3790,6 +3817,9 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 
 // copy_bars: a section again, later (A A B A)
 
+std::string EndPosition(const Session &S, int LastRow);
+std::string StartPosition(const Session &S, int Row);
+
 std::string CopyBarsTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -3819,6 +3849,7 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 
 	Draft D(S);
 	int Notes = 0;
+	bool Crowded = false;
 	for (size_t i = 0; i < Channels.size(); ++i) {
 		const int c = Channels[i];
 		const ChannelInfo &Info = S.Channel(c);
@@ -3880,6 +3911,10 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 				Copy[0].Note = static_cast<unsigned char>(Ends ? Here[Row].Note : StartEnd);
 				Copy[0].Octave = 0;
 			}
+			// The song's own speed, jumps and halts there stay
+			for (size_t r = 0; r < Copy.size() && Row + r < Song.size(); ++r)
+				if (!KeepSongEffects(Song[Row + r], Copy[r], Columns))
+					Crowded = true;
 			D.Put(c, static_cast<int>(Row), Copy);
 		}
 	}
@@ -3890,6 +3925,37 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(Dest, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("Those bars already hold the same notes.");
+	if (Crowded)
+		Warnings.push_back("Some copied effects found no free effect column beside the song's speed, jump and halt effects there "
+			"and were left out (show another effect column in FamiTracker).");
+	// Copies the song never gets to: after its loop's jump back, or its halt
+	if (Direct(S, AsClip)) {
+		int Total = 0;
+		const SongFlow After = D.Flow(Total);
+		const std::vector<bool> Played = After.Played(Total, S.Time.PatternLength);
+		int Low = -1, High = -1;
+		for (int r = Dest; r < Dest + Length * Times; ++r)
+			if (r >= Total || !Played[static_cast<size_t>(r)]) {
+				Low = Low < 0 ? r : Low;
+				High = r;
+			}
+		if (Low >= 0) {
+			const int LastPlayed = After.EndRow(S.Time.PatternLength) - 1;
+			std::string Bars = RangeText(S.Time.BarOf(Low), S.Time.BarOf(High));
+			Bars[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Bars[0])));
+			const bool One = S.Time.BarOf(Low) == S.Time.BarOf(High);
+			const char *Verb = One ? "doesn't" : "don't", *Them = One ? "it" : "them";
+			if (After.Halts())
+				Warnings.push_back(Format("%s %s play yet: the song stops after %s (a halt, Cxx), before %s. set_loop with "
+					"to_bar %d makes it play on through %s.", Bars.c_str(), Verb, EndPosition(S, LastPlayed).c_str(), Them,
+					S.Time.BarOf(High), Them));
+			else
+				Warnings.push_back(Format("%s %s play yet: the song goes back to %s after %s, before %s. set_loop with "
+					"to_bar %d takes the loop on through %s.", Bars.c_str(), Verb,
+					StartPosition(S, After.LoopRow(S.Time.PatternLength)).c_str(), EndPosition(S, LastPlayed).c_str(), Them,
+					S.Time.BarOf(High), Them));
+		}
+	}
 	const int Last = At + Times * (To - From + 1) - 1;
 	std::string What = RangeText(From, To) + " copied to " + RangeText(At, Last);
 	if (Times > 1)
@@ -5896,6 +5962,15 @@ std::string EndPosition(const Session &S, int LastRow)
 	return S.Time.Position(LastRow);
 }
 
+// "bar 5" when the row starts its bar, else "bar 5 beat 3"
+std::string StartPosition(const Session &S, int Row)
+{
+	const int Bar = S.Time.BarOf(Row);
+	if (S.Time.BarStart(Bar) == Row)
+		return Format("bar %d", Bar);
+	return S.Time.Position(Row);
+}
+
 std::string CheckLoopTool(Session &S, const Json &)
 {
 	const int PL = S.Time.PatternLength;
@@ -5939,7 +6014,7 @@ std::string CheckLoopTool(Session &S, const Json &)
 		Text = Format("Bars 1-%d play once as an intro (%s), then %s loop (%s): after %s it goes back to %s.",
 			S.Time.BarOf(LoopRow) - 1, SecondsText(Rows[First].Tick / Rate).c_str(),
 			RangeText(S.Time.BarOf(LoopRow), S.Time.BarOf(LastRow)).c_str(), SecondsText(LoopSeconds).c_str(),
-			EndPosition(S, LastRow).c_str(), S.Time.Position(LoopRow).c_str());
+			EndPosition(S, LastRow).c_str(), StartPosition(S, LoopRow).c_str());
 	const int LoopRows = F.LoopRows();
 	if (LoopRows % std::max(1, S.Time.RowsPerBar) != 0)
 		Text += Format(" The loop is %s long, not whole bars; whole bars repeat more steadily.", S.Time.Length(LoopRows).c_str());
@@ -6021,6 +6096,9 @@ std::string SetLoopTool(Session &S, const Json &Args)
 			(S.Time.BarEnd(To) - 1) % PL, From));
 	const int EndRow = S.Time.BarEnd(To) - 1;
 
+	// The song's jumps and halts go (in the effect columns that play), but
+	// for the one the loop needs
+	const bool Natural = LoopRow == 0 && EndRow == S.Time.TotalRows() - 1;	// the song goes back to its start by itself
 	Draft D(S);
 	int Removed = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
@@ -6029,13 +6107,12 @@ std::string SetLoopTool(Session &S, const Json &Args)
 		for (size_t r = 0; r < Cells.size(); ++r)
 			for (int k = 0; k < Cols; ++k)
 				if (Cells[r].Effect[k] == EFF_JUMP || Cells[r].Effect[k] == EFF_HALT) {
+					if (Natural || static_cast<int>(r) != EndRow || Cells[r].Effect[k] != EFF_JUMP || Cells[r].Param[k] != LoopRow / PL)
+						++Removed;
 					Cells[r].Effect[k] = EFF_NONE;
 					Cells[r].Param[k] = 0;
-					++Removed;
 				}
 	}
-	// The jump, unless the song goes back to its start by itself
-	const bool Natural = LoopRow == 0 && EndRow == S.Time.TotalRows() - 1;
 	if (!Natural) {
 		bool Placed = false;
 		for (int c = 0; c < S.ChannelCount() && !Placed; ++c)
@@ -6057,7 +6134,31 @@ std::string SetLoopTool(Session &S, const Json &Args)
 		What += Format("; %s that ended it elsewhere went", Plural(Removed, "jump or halt", "jumps and halts").c_str());
 	if (EndRow + 1 < S.Time.TotalRows())
 		Warnings.push_back(Format("Bars after %d don't play now.", To));
-	return WithRemarks(S, Commit(S, Changes, Start, false, "", What), Warnings);
+	const std::string Done = Commit(S, Changes, Start, false, "", What);
+
+	// What the song does now, as FamiTracker has it
+	S.Load();
+	const SongFlow After = Flow(S);
+	if (After.Halts())
+		Warnings.push_back(Format("FamiTracker's song still stops after %s (a halt, Cxx); check_loop shows how it plays.",
+			EndPosition(S, After.EndRow(PL) - 1).c_str()));
+	else if (After.LoopRow(PL) != LoopRow || After.EndRow(PL) - 1 != EndRow) {
+		std::string Text = Format("FamiTracker's song doesn't loop that way: after %s it goes back to %s.",
+			EndPosition(S, After.EndRow(PL) - 1).c_str(), StartPosition(S, After.LoopRow(PL)).c_str());
+		// A skip in the loop's last frame, before the jump, ends the frame first
+		int Skip = -1;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Cell> &Cells = S.Cells(c);
+			for (int r = EndRow / PL * PL; r < EndRow && r < static_cast<int>(Cells.size()); ++r)
+				if (HasEffect(Cells[static_cast<size_t>(r)], EFF_SKIP, S.Channel(c).EffectColumns) && (Skip < 0 || r < Skip))
+					Skip = r;
+		}
+		if (Skip >= 0)
+			Text += Format(" A skip (Dxx) at %s ends that frame before the jump; set_loop leaves skips alone.",
+				S.Time.Position(Skip).c_str());
+		Warnings.push_back(Text + " check_loop shows how it plays.");
+	}
+	return WithRemarks(S, Done, Warnings);
 }
 
 // Music for games: each track as a looping OGG
@@ -7596,7 +7697,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("copy_bars", "Repeat bars",
 		"Copies bars to another place in the song, for a song's form (A A B A, a verse coming back): every channel by "
 		"default, a number of times, moved up or down if asked. The copy plays with the instruments and volumes the "
-		"original did; the song's own jumps and ends stay where they are. Vary the repeat afterwards (vary_part, a "
+		"original did. The song's own speed changes, jumps and ends stay where they are, so copies past the end of its loop "
+		"don't play until set_loop moves the loop (the reply says so). Vary the repeat afterwards (vary_part, a "
 		"counter-melody, busier drums) so it doesn't sound pasted.",
 		Schema()
 			.Add("from_bar", BarProp("First bar to copy."), true)

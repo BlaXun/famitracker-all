@@ -118,7 +118,10 @@ work, to reuse its ideas.
   delete it.
 - **Directly.** With **Let Claude change the song directly** ticked, Claude
   writes into the song. Every change is one step of Ctrl+Z (Ctrl+Y redoes it).
-  Claude can then also set the tempo, place clips and undo. Instruments it
+  Claude can then also set the tempo, place clips and undo. Changes leave
+  the song's speed changes, jumps and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`)
+  where they are, unless moving them is the change (`set_loop`); a clip
+  Claude places keeps the ones where it lands, as when you drag one. Instruments it
   adds from presets stay in the instrument list even when the notes are
   undone.
 
@@ -147,7 +150,7 @@ anything; close the dialog and ask again.
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
-| `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played |
+| `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -167,7 +170,7 @@ anything; close the dialog and ask again.
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
-| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
+| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you |

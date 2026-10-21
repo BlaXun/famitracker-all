@@ -929,6 +929,41 @@ bool AddEffect(Cell &Target, int Effect, int Param, int EffectColumns)
 	return false;
 }
 
+bool KeepSongEffects(const Cell &Old, Cell &New, int EffectColumns)
+{
+	const int Columns = std::max(1, std::min(EFFECT_COLUMNS, EffectColumns));
+	bool Keep[EFFECT_COLUMNS];
+	for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+		Keep[k] = IsSongEffect(Old.Effect[k]);
+		for (int j = 0; j < EFFECT_COLUMNS && Keep[k]; ++j) {
+			const bool InNew = New.Effect[j] == Old.Effect[k] && New.Param[j] == Old.Param[k];
+			const bool Twice = j < k && Keep[j] && Old.Effect[j] == Old.Effect[k] && Old.Param[j] == Old.Param[k];
+			if (InNew || Twice)
+				Keep[k] = false;
+		}
+	}
+	bool Fits = true;
+	for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+		if (!Keep[k])
+			continue;
+		if (New.Effect[k] != EFF_NONE) {
+			int Free = -1;
+			for (int j = 0; j < Columns && Free < 0; ++j)
+				if (!Keep[j] && New.Effect[j] == EFF_NONE)
+					Free = j;
+			if (Free >= 0) {
+				New.Effect[Free] = New.Effect[k];
+				New.Param[Free] = New.Param[k];
+			}
+			else
+				Fits = false;
+		}
+		New.Effect[k] = Old.Effect[k];
+		New.Param[k] = Old.Param[k];
+	}
+	return Fits;
+}
+
 // Writing notes
 
 void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vector<PartNote> &Notes,

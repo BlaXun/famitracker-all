@@ -128,15 +128,19 @@ bool IsMelodyChannel(const CFamiTrackerDoc *pDoc, int Channel);
 bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);
 
 // The Claude Code connection (McpConnection.cpp): whole cells written into
-// channels from Row of Frame on, as one undoable action. Every row a part
-// covers is replaced (note, instrument, volume and all effect columns), and
-// frames are added at the end of the song when needed. With a LinkClipId (a
-// clip's ID, -1 for none), what's written is a linked copy of that clip, its
-// first column in the first part's channel. False with the reason in Message.
+// channels from Row of Frame on, as one undoable action, and frames added at
+// the end of the song when needed. An exact part's rows become its cells as
+// they are (note, instrument, volume and all effect columns). Every other
+// part's rows are replaced too, but for the song's own speed, jumps, skips
+// and halts there, which stay, the part's effects going around them (as a
+// clip dragged into the song does). With a LinkClipId (a clip's ID, -1 for
+// none), what's written is a linked copy of that clip, its first column in
+// the first part's channel. False with the reason in Message.
 struct song_part_t {
 	int Channel;
 	const stChanNote *pCells;	// Rows of them, from the first row on
 	int Rows;
+	bool Exact;
 };
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
 	CString &Message);
