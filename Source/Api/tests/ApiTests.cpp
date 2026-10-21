@@ -2107,7 +2107,7 @@ void TestReview()
 	CHECK_HAS(Result.Text, "The bass mostly holds roots");
 	CHECK_HAS(Result.Text, "The melody keeps one or two note lengths");
 	CHECK_HAS(Result.Text, "The melody never rests");
-	CHECK_HAS(Result.Text, "repeat the four bars before them in every part");
+	CHECK_HAS(Result.Text, "repeat the bars four before them in every part");
 	CHECK_HAS(Result.Text, "Length: 16 bars");
 	const std::string Before = Result.Text;
 	const int Plain = std::atoi(Before.substr(Before.find(": ") + 2).c_str());

@@ -3232,7 +3232,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 			if (!Print.empty() && Print == BarPrint(All, Bars[b - 4].Row, Bars[b - 4].Row + Bars[b - 4].Rows))
 				Repeats.push_back(S.Time.BarOf(Bars[b].Row));
 		}
-		if (!Repeats.empty())
+		if (Repeats.size() == 1)
+			Line += Format("; bar %d repeats the bar four before it", Repeats[0]);
+		else if (!Repeats.empty())
 			Line += "; bars " + BarList(Repeats) + " repeat the bars four before them";
 		Lines.push_back(Line + ".");
 		if (Lengths.size() <= 2 && Tune.size() >= 8)
@@ -3322,7 +3324,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Copies.push_back(S.Time.BarOf(Bars[b].Row));
 	}
 	if (!Copies.empty()) {
-		Lines.push_back("Bars " + BarList(Copies) + " repeat the four bars before them in every part.");
+		Lines.push_back(Copies.size() == 1 ? Format("Bar %d repeats the bar four before it in every part.", Copies[0]) :
+			"Bars " + BarList(Copies) + " repeat the bars four before them in every part.");
 		Tip(1.0, "A repeat with nothing new is where a loop starts to sound like a loop: change one or two layers the "
 			"second time (a counter-melody, drums one step busier, chords in another style, the melody an octave up).");
 	}

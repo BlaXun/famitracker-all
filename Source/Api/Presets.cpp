@@ -563,7 +563,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
 	std::string Out;
 	std::snprintf(Buffer, sizeof(Buffer), "a %s pulse that reaches %d %s", DUTIES[Clamp(D.Duty, 0, 3)], Clamp(D.Peak, 1, 15),
-		D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + " frames in").c_str());
+		D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
 	Out = Buffer;
 	if (Sustain == 0)
 		std::snprintf(Buffer, sizeof(Buffer), ", then dies away over %d frames by itself", std::max(4, D.Decay));
