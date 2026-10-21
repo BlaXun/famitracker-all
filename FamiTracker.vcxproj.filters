@@ -1612,7 +1612,7 @@
     <ClCompile Include="Source\Nsf\Tracker.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
-    <ClCompile Include="Source\Nsf\Midi.cpp">
+    <ClCompile Include="Source\Nsf\MidiFile.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
     <ClCompile Include="Source\ImportNsfDlg.cpp">
@@ -1648,7 +1648,7 @@
     <ClInclude Include="Source\Nsf\Tracker.h">
       <Filter>NSF importer</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Nsf\Midi.h">
+    <ClInclude Include="Source\Nsf\MidiFile.h">
       <Filter>NSF importer</Filter>
     </ClInclude>
     <ClInclude Include="Source\ImportNsfDlg.h">

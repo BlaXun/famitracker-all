@@ -23,12 +23,12 @@
 
 // Music modules from the PC trackers (MOD, S3M, XM and IT), read for their
 // pattern data alone: the notes, the instruments' names, the speed and the
-// order the patterns play in. The samples aren't read. MIDI files are read as
-// such a song too (Midi.h). The song becomes a Module of one track (Module.h)
-// with a layout of its own: a channel for the notes each of the module's
-// channels plays, and one for its drums, so that a study (Study.h) can
-// describe how the music is made, for Claude to write music of its own in
-// that style rather than to copy it.
+// order the patterns play in. The samples aren't read. MIDI files are read
+// as such a song too (MidiFile.h). The song becomes a Module of one track
+// (Module.h) with a layout of its own: a channel for the notes each of the
+// module's channels plays, and one for its drums, so that a study (Study.h)
+// can describe how the music is made, for Claude to write music of its own
+// in that style rather than to copy it.
 
 #include "Convert.h"
 #include "Module.h"
@@ -85,7 +85,7 @@ struct TrackerSong {
 };
 
 // MOD (ProTracker and its 1-32 channel kin), S3M, XM, IT or a MIDI file
-// (Midi.h), by what the bytes say they are; false with the reason when
+// (MidiFile.h), by what the bytes say they are; false with the reason when
 // they're none of them or broken
 bool ParseTracker(const std::vector<uint8_t> &Bytes, TrackerSong &Out, std::string &Error);
 bool ReadTrackerFile(const std::string &Path, TrackerSong &Out, std::string &Error);

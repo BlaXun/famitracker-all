@@ -20,7 +20,7 @@
 */
 
 #include "Tracker.h"
-#include "Midi.h"
+#include "MidiFile.h"
 
 #include <algorithm>
 #include <cctype>

@@ -23,10 +23,10 @@
 // built here byte by byte, their notes, instruments and effects, files cut
 // short at every length, drums told by their names, the song followed
 // through its breaks and jumps, and a study of the result. MIDI files
-// (Midi.h) too: parts spread over channels, drums by kind, meters, grids,
+// (MidiFile.h) too: parts spread over channels, drums by kind, meters, grids,
 // tempo changes and loops.
 
-#include "../Midi.h"
+#include "../MidiFile.h"
 #include "../Study.h"
 #include "../Tracker.h"
 

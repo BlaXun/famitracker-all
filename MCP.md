@@ -730,8 +730,8 @@ editor; they're muted again afterwards.
   a tracker module with `Source/Nsf/Tracker.cpp` (MOD, S3M, XM and IT
   patterns, followed through their breaks and jumps into a module of one
   track with a channel layout of its own), or a MIDI file with
-  `Source/Nsf/Midi.cpp` (read into the same kind of song, with its meter
-  and channel names), and studies it with `Study.cpp`.
+  `Source/Nsf/MidiFile.cpp` (read into the same kind of song, with its
+  meter and channel names), and studies it with `Study.cpp`.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and

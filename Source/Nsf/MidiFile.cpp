@@ -19,7 +19,7 @@
 ** must bear this legend.
 */
 
-#include "Midi.h"
+#include "MidiFile.h"
 
 #include <algorithm>
 #include <cctype>

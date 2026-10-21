@@ -79,11 +79,11 @@ Documents\FamiTracker references into it, and falls back to Documents where
 FamiTracker's folder can't be written), with `references`, `reference_sound`
 and `import_nsf`, and a built-in style guide in `Source/Api/StyleGuide.cpp`. `study_module` does
 the same for tracker modules: `Source/Nsf/Tracker.cpp` reads the patterns
-of MOD, S3M, XM and IT files (never their samples), and `Source/Nsf/Midi.cpp`
-the notes of MIDI files (each part on channels of a note at a time, the
-drums a channel per kind, the meter kept so the study counts its bars), into
-a module of one track whose channels are its own (`Module::ChannelNames` and
-`ChannelKinds`), which only a study reads. `nsf2ftm`
+of MOD, S3M, XM and IT files (never their samples), and
+`Source/Nsf/MidiFile.cpp` the notes of MIDI files (each part on channels of a
+note at a time, the drums a channel per kind, the meter kept so the study
+counts its bars), into a module of one track whose channels are its own
+(`Module::ChannelNames` and `ChannelKinds`), which only a study reads. `nsf2ftm`
 (`Source/Nsf/tools`) runs the importer from a command line, studies
 modules with `-study`, and ships next to FamiTracker.exe.
 
@@ -471,6 +471,10 @@ NSF export still uses the 2A03 driver. Touch points:
   `APU/FDS.H`, `"fft\fft.h"`, ...), and several files have upper-case
   extensions (`APU/APU.CPP`, `APU/VRC6.H`). Search with `-i`, and don't fix
   case outside a deliberate portability change.
+- **One folder for object files:** the project compiles every `.cpp` into
+  one folder, so two files of the same name (in any case) in different
+  folders overwrite each other's `.obj`: MSB8027, then unresolved
+  externals. Name new files apart (`Nsf/MidiFile.cpp` beside `MIDI.cpp`).
 - **CRLF line endings** everywhere except `gpl.txt`, `hlp/gpl.txt`,
   `Source/Blip_Buffer/Blip_Buffer.h`, `Source/resampler/resample.hpp`,
   `resample.inl`, `sinc.cpp`, `sinc.hpp` and `resample.cpp` (LF apart from one

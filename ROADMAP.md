@@ -296,8 +296,8 @@ when ready.
   followed through its breaks and jumps.
 
   MIDI files as references (asked for on 21 October 2026): `study_module`
-  reads `.mid`, `.midi` and `.rmi` files too (`Source/Nsf/Midi.cpp`). The
-  notes go on a grid of 4, 6, 8 or 12 rows a beat, whichever they start
+  reads `.mid`, `.midi` and `.rmi` files too (`Source/Nsf/MidiFile.cpp`).
+  The notes go on a grid of 4, 6, 8 or 12 rows a beat, whichever they start
   on; each part spreads over channels of a note at a time, the highest note
   on the first so a melody stays whole; the drums go on a channel for each
   kind, named after General MIDI's drums. The study counts bars in the
