@@ -57,7 +57,16 @@ progressions on bars, colors, chords heard in the notes) and
 with fills, a harmony voice, a counter-melody), used by
 `add_chords_and_bass`, `make_groove`, `add_drums`, `add_harmony`,
 `add_counter_melody` and `review_arrangement`; `design_instrument` turns words
-into sequences with `DesignPreset` in `Presets.cpp`. `Source/Api/Effects.cpp`
+into sequences with `DesignPreset` in `Presets.cpp`. Lush chords are
+`LushShape` in `Arrange.cpp` (a chord's notes in arpeggio order) made into
+instruments by `LushInstruments` in `Tools.cpp` (`WithArpeggio` in
+`Presets.cpp`); FamiTracker reports each instrument's looping arpeggio
+(`InstrumentInfo::Arpeggio`), which `ChordAbove` and `SoundsChord` in
+`Tools.cpp` count as chords. `set_swing` alternates speed effects every
+half beat, `mix` scales each part's volume column by its role and sets the
+DPCM level (`Zxx`), and `Vrc7Customs` in `Presets.cpp` are VRC7 custom
+patches of our own design (`AddVrc7CustomInstrument` in
+`InstrumentLibrary.cpp`). `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
 from the 0.4.6 channel handlers. `Source/Api/Wavetables.cpp` draws the N163's
