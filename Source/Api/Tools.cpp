@@ -2733,10 +2733,12 @@ bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern,
 	Frames = 2;
 	const size_t Comma = Rest.rfind(", ");
 	if (Comma != std::string::npos) {
-		int n = 0;
-		if (std::sscanf(Rest.c_str() + Comma + 2, "%d frame", &n) != 1 || n < 1 || n > 6)
+		const char *pFrom = Rest.c_str() + Comma + 2;
+		char *pAfter = 0;
+		const long n = std::strtol(pFrom, &pAfter, 10);
+		if (pAfter == pFrom || std::string(pAfter).compare(0, 6, " frame") != 0 || n < 1 || n > 6)
 			return false;
-		Frames = n;
+		Frames = static_cast<int>(n);
 		Rest.erase(Comma);
 	}
 	Pattern = BROKEN_UP;
