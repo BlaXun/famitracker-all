@@ -141,6 +141,9 @@ std::vector<Preset> MakePresets()
 		List({ 2, 3, 4, 5, 6, 7, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), 8, 2, 7));
 	All.push_back(Melodic("bass", "sustained bass for the triangle, the VRC6 sawtooth or a pulse",
 		List({ 15, 15, 14, 13, 12, 12, 10, 8, 6, 4, 2, 0 }), 5, 2, 7));
+	All.push_back(Melodic("thump bass", "punchy bass: each note starts an octave up for a frame and drops into place, a thump "
+		"that gives the triangle (which has no volume to accent with) an attack; sharper on a pulse or the sawtooth",
+		List({ 15, 15, 14, 13, 12, 12, 10, 8, 6, 4, 2, 0 }), 5, 2, 7, List({ 12, 0 })));
 	All.push_back(Melodic("plucky bass", "short, bouncy bass notes that decay by themselves",
 		List({ 15, 15, 14, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), -1, 2, 7));
 	All.push_back(Singing("singing lead", "expressive lead (25% duty) with a vibrato that comes in after a third of a second, "
@@ -179,7 +182,8 @@ std::vector<Preset> MakePresets()
 	// What sounds most like each on the VRC7
 	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
 		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
-		{ "lush chords", 11 }, { "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 }, { "strings", 15 }, { "brass", 12 },
+		{ "lush chords", 11 }, { "warm pad", 15 }, { "bass", 13 }, { "thump bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 },
+		{ "strings", 15 }, { "brass", 12 },
 		{ "organ", 8 },
 	};
 	for (size_t i = 0; i < All.size(); ++i)
@@ -315,7 +319,8 @@ const Preset *FindPreset(const std::string &Name)
 		{ "warmpad", "warm pad" }, { "violin", "strings" }, { "violins", "strings" }, { "bassline", "bass" }, { "softbass", "bass" },
 		{ "vibratolead", "singing lead" }, { "singinglead", "singing lead" }, { "vocal", "singing lead" }, { "voice", "singing lead" },
 		{ "horn", "brass" }, { "horns", "brass" }, { "trumpet", "brass" }, { "keys", "organ" },
-		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
+		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "punchybass", "thump bass" }, { "blipbass", "thump bass" },
+		{ "thumpbass", "thump bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
 		{ "snaredrum", "snare" }, { "clap", "snare" }, { "hihat", "hi-hat" }, { "hat", "hi-hat" },
 		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "cymbal", "crash" },
 		{ "crashcymbal", "crash" }, { "toms", "tom" }, { "hightom", "tom" }, { "midtom", "tom" }, { "lowtom", "tom" },

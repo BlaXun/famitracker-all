@@ -186,8 +186,10 @@ anything; close the dialog and ask again.
 | `save_song` | Saves the song, or a copy next to it to compare versions |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
-chords, warm pad, bass, plucky bass, singing lead (a vibrato that comes in by
-itself), strings, brass, organ, kick, snare, hi-hat, open hi-hat, crash, tom.
+chords, lush chords, warm pad, bass, thump bass (an octave blip into each
+note, the punch a triangle bass can't get from volume), plucky bass, singing
+lead (a vibrato that comes in by itself), strings, brass, organ, kick, snare,
+hi-hat, open hi-hat, crash, tom.
 Each is built for the 2A03 (also MMC5 channels) and the VRC6. VRC7 channels
 play the chip's own sounds instead (see [Expansion chips](#expansion-chips)).
 
