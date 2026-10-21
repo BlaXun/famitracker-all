@@ -627,19 +627,70 @@ std::string Commonest(const std::vector<std::string> &Figures, int &Bars)
 	return Best;
 }
 
+// How bright a DPCM sample sounds: the RMS frequency of the levels it plays
+// (smoothed over 8 steps, which takes out the DMC's own up-down ripple) at the
+// rate of its pitch, in Hz. A kick is a low swing (around 120 Hz), a snare's
+// noise puts it higher (250 Hz and up), a bongo or a clap brighter still.
+double SampleBrightness(const std::vector<uint8_t> &Data, int Pitch)
+{
+	static const int PERIODS[16] = { 428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54 };
+	const double Rate = 1789773.0 / PERIODS[std::max(0, std::min(15, Pitch))];
+	std::vector<double> Smooth;
+	int Level = 64;
+	double Sum = 0;
+	std::vector<int> Last(8, 0);
+	size_t n = 0;
+	for (size_t i = 0; i < Data.size(); ++i)
+		for (int Bit = 0; Bit < 8; ++Bit, ++n) {
+			if ((Data[i] >> Bit) & 1) {
+				if (Level <= 125)
+					Level += 2;
+			}
+			else if (Level >= 2)
+				Level -= 2;
+			Sum += Level - Last[n % 8];
+			Last[n % 8] = Level;
+			if (n >= 7)
+				Smooth.push_back(Sum / 8);
+		}
+	if (Smooth.size() < 16)
+		return 0;
+	double Mean = 0;
+	for (size_t i = 0; i < Smooth.size(); ++i)
+		Mean += Smooth[i];
+	Mean /= Smooth.size();
+	double X2 = 0, D2 = 0;
+	for (size_t i = 0; i < Smooth.size(); ++i) {
+		X2 += (Smooth[i] - Mean) * (Smooth[i] - Mean);
+		if (i > 0)
+			D2 += (Smooth[i] - Smooth[i - 1]) * (Smooth[i] - Smooth[i - 1]);
+	}
+	if (X2 <= 0)
+		return 0;
+	const double TwoPi = 6.283185307179586;
+	return Rate / TwoPi * std::sqrt((D2 / (Smooth.size() - 1)) / (X2 / Smooth.size()));
+}
+
+// A sample's sound in words, from its brightness
+const char *SampleSound(double Bright)
+{
+	return Bright < 180 ? "a low thump" : (Bright < 500 ? "a mid-range hit" : "a bright hit");
+}
+
 // A drum voice: one sample, or one kind of noise hit
 struct Voice {
 	int Channel;
 	std::string Key;		// what tells it apart on its channel
 	bool Dpcm;
 	int Sample;				// DPCM: the sample, -1 when unknown
+	double Bright;			// DPCM: how bright the sample sounds (SampleBrightness), 0 when unknown
 	int PitchClass;			// noise: 0 low, 1 middle, 2 high
 	int DecayClass;			// noise: 0 short (5 frames or less), 1 medium, 2 long or held
 	std::vector<int> Rows;	// its hits, in playing order
 	std::map<int, int> Insts;
 	std::string Name;		// "snare", "hi-hat", ...
 	int Backbeat;			// the first of two rows a bar it falls on, half a bar apart; -1 for none
-	Voice() : Channel(0), Dpcm(false), Sample(-1), PitchClass(0), DecayClass(0), Backbeat(-1) {}
+	Voice() : Channel(0), Dpcm(false), Sample(-1), Bright(0), PitchClass(0), DecayClass(0), Backbeat(-1) {}
 };
 
 // The first of two places a bar, half a bar apart, that a voice falls on
@@ -690,7 +741,9 @@ int BarPhase(const std::vector<std::vector<Played> > &Notes, const std::vector<i
 		}
 	}
 	// The snare: the noise's, or else the longest of two or more samples (a
-	// snare's tail is longer than a kick's)
+	// snare's tail is longer than a kick's). Telling them apart by how bright
+	// they sound (SampleBrightness) did worse on the tracks studied: a tom or a
+	// second snare can be as bright, and the bar line then moves.
 	int Longest = -1, Samples = 0;
 	for (size_t v = 0; v < Voices.size(); ++v)
 		if (Voices[v].Dpcm && Voices[v].Sample >= 0) {
@@ -956,11 +1009,14 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				Voice V;
 				V.Channel = c;
 				V.Dpcm = Kinds[c] == C_DPCM;
+				int Pitch = 15;
 				if (V.Dpcm) {
 					if (I)
 						for (size_t k = 0; k < I->Keys.size(); ++k)
-							if (I->Keys[k].Note == p.Note)
+							if (I->Keys[k].Note == p.Note) {
 								V.Sample = I->Keys[k].Sample;
+								Pitch = I->Keys[k].Pitch;
+							}
 					V.Key = V.Sample >= 0 ? Format("s%d", V.Sample) : Format("k%d", p.Note);
 				}
 				else {
@@ -976,6 +1032,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				if (it == Index.end()) {
 					n = int(Voices.size());
 					Index[Id] = n;
+					if (V.Dpcm && V.Sample >= 0 && V.Sample < int(M.Samples.size()))
+						V.Bright = SampleBrightness(M.Samples[V.Sample], Pitch);
 					Voices.push_back(V);
 				}
 				else
@@ -1561,8 +1619,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Backbeats += Pos == StepsPerBeat || Pos == 3 * StepsPerBeat;
 			Offbeats += StepsPerBeat == 4 && Pos % 4 == 2;
 		}
-		V.Name = V.Sample >= 0 && V.Sample < int(M.Samples.size()) ? Format("sample %d (%d bytes)", V.Sample, int(M.Samples[V.Sample].size()))
-			: "a sample";
+		if (V.Sample >= 0 && V.Sample < int(M.Samples.size()))
+			V.Name = V.Bright > 0 ? Format("sample %d (%d bytes, %s)", V.Sample, int(M.Samples[V.Sample].size()), SampleSound(V.Bright))
+				: Format("sample %d (%d bytes)", V.Sample, int(M.Samples[V.Sample].size()));
+		else
+			V.Name = "a sample";
 		if (Hits == 0 || (V.Sample >= 0 && V.Sample < int(M.Samples.size()) && M.Samples[V.Sample].size() < 17))
 			continue;
 		if (Backbeats * 2 >= Hits)
