@@ -41,6 +41,10 @@ const std::vector<StyleInfo> &ChordStyles()
 			"calm and RPG music and ballads", "brokenchords|arpeggios|flowing|harp|picked" },
 		{ "guide", "one long note a chord on its third or seventh, moving by the smallest steps: a quiet pad line under a "
 			"busy melody", "guidetones|pad|sustain|long|line" },
+		{ "lush", "each chord an instrument of its own whose arpeggio loops through four or more of its notes, two frames "
+			"each, so sevenths and ninths ring (plain chords get them: color rich by default); held like arpeggio, softly "
+			"(volume 6) under the melody: lush, jazzy and atmospheric, on 2A03, MMC5 or VRC6 pulses",
+			"lusharp|jazzarp|jazzy|atmospheric|instrumentarp|instrumentarpeggio|slowarp|sevenths" },
 	};
 	return STYLES;
 }
@@ -585,7 +589,9 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 		return Out;
 	}
 
-	// The 0xy arpeggio, held or struck short on a rhythm
+	// The 0xy arpeggio, held or struck short on a rhythm; lush chords are held
+	// on a root, the arpeggio in the instrument
+	const bool Lush = O.Style == CHORDS_LUSH;
 	const bool Held = O.Style != CHORDS_STABS;
 	const int Rhythm = O.Rhythm >= 0 ? O.Rhythm : (Held ? RHYTHM_BARS : RHYTHM_OFFBEATS);
 	std::vector<std::pair<int, const BarSpan *> > Hits;
@@ -624,6 +630,8 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 			// Neighbouring segments of one chord sound the same
 			if (s > 0 && Voiced[s - 1] && Segs[s - 1].pChord == pSeg->pChord)
 				Voicings[s] = Voicings[s - 1];
+			else if (Lush)
+				Voicings[s].Base = NearestPitch(pSeg->pChord->C.Root, HasPrevious ? Previous.Base : Middle, Low, High);
 			else
 				Voicings[s] = ArpeggioVoicing(pSeg->pChord->C, HasPrevious ? &Previous : 0, Middle, Low, High, O.RootInBass);
 			Voiced[s] = true;
@@ -637,12 +645,82 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 			Rows = std::max(1, std::min((Next - Row + 1) / 2, std::max(1, R / 2)));
 		const size_t b = static_cast<size_t>(Hits[h].second - &Bars[0]);
 		PartNote N = MakeNote(Row, Rows, Voicings[s].Base, VolumeAt(Row, *Hits[h].second, Least[b]));
-		N.Effects.push_back(std::make_pair(static_cast<int>(EFF_ARPEGGIO), Voicings[s].Param()));
+		if (Lush)
+			N.Arpeggio = LushShape(pSeg->pChord->C, O.Pattern);
+		else
+			N.Effects.push_back(std::make_pair(static_cast<int>(EFF_ARPEGGIO), Voicings[s].Param()));
 		Out.push_back(N);
 	}
 	TidyPart(Out, First, End);
-	if (!Out.empty())
+	if (!Out.empty() && !Lush)
 		Out.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_ARPEGGIO), 0));	// 000: the arpeggio stops
+	return Out;
+}
+
+std::vector<int> LushShape(const Chord &C, int Pattern)
+{
+	const bool Third = C.Has(3) || C.Has(4);
+	const bool Seventh = C.Has(10) || C.Has(11);
+	std::vector<int> Up;
+	for (size_t i = 0; i < C.Tones.size(); ++i) {
+		int Tone = Mod12(C.Tones[i]);
+		if ((Tone == 1 || Tone == 2 || Tone == 5) && Third)
+			Tone += 12;		// a ninth or an eleventh over the third
+		else if (Tone == 9 && Seventh)
+			Tone += 12;		// a thirteenth over the seventh (without one it's a sixth, or a diminished seventh)
+		else if ((Tone == 6 || Tone == 8) && C.Has(7))
+			Tone += 12;		// a sharp eleventh or a flat thirteenth over the fifth
+		Up.push_back(Tone);
+	}
+	std::sort(Up.begin(), Up.end());
+	Up.erase(std::unique(Up.begin(), Up.end()), Up.end());
+	if (Up.empty() || Up[0] != 0)
+		Up.insert(Up.begin(), 0);
+	if (Up.size() < 3 && Up.back() < 12)
+		Up.push_back(12);	// a power chord, or a lone root: the octave too
+	const size_t n = Up.size();
+	std::vector<int> Out;
+	switch (Pattern) {
+	case BROKEN_DOWN:
+		Out.assign(Up.rbegin(), Up.rend());
+		break;
+	case BROKEN_UPDOWN:
+		Out = Up;
+		for (size_t i = n - 1; i-- > 1; )
+			Out.push_back(Up[i]);
+		break;
+	case BROKEN_ALBERTI:
+		for (size_t i = 0; i < n; i += 2)
+			Out.push_back(Up[i]);
+		for (size_t i = 1; i < n; i += 2)
+			Out.push_back(Up[i]);
+		break;
+	case BROKEN_ROLLING: {
+		// The root and fifth below, the rest an octave up; a tone that would
+		// land a semitone from another is left out (a third under a ninth)
+		std::vector<int> Spread;
+		for (size_t i = 0; i < n; ++i)
+			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
+				Spread.push_back(Up[i]);
+		for (size_t i = 0; i < n; ++i) {
+			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
+				continue;
+			const int Raised = Up[i] + 12;
+			bool Rubs = false;
+			for (size_t k = 0; k < Spread.size(); ++k)
+				Rubs = Rubs || std::abs(Spread[k] - Raised) <= 1;
+			if (!Rubs || Spread.size() < 3)
+				Spread.push_back(Raised);
+		}
+		std::sort(Spread.begin(), Spread.end());
+		Spread.erase(std::unique(Spread.begin(), Spread.end()), Spread.end());
+		Out = Spread;
+		break;
+	}
+	default:
+		Out = Up;
+		break;
+	}
 	return Out;
 }
 

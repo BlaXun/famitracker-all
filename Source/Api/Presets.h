@@ -66,6 +66,10 @@ const std::vector<Preset> &Presets();
 const Preset *FindPreset(const std::string &Name);	// by name or a common word for it ("flute", "pad")
 std::string PresetList();							// "soft lead, bright lead, ..."
 
+// Base with Notes (semitones from the note played) looping as its arpeggio,
+// Frames frames each, in place of an arpeggio it had; named Name
+Preset WithArpeggio(const Preset &Base, const std::vector<int> &Notes, int Frames, const std::string &Name);
+
 // A sound described in words (design_instrument), made into a preset
 enum duty_motion { DUTY_STILL, DUTY_SWEEP, DUTY_WOBBLE, DUTY_FADE };
 enum attack_pitch { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP, PITCH_FLICK, PITCH_THUMP };

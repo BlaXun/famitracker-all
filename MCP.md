@@ -146,7 +146,7 @@ anything; close the dialog and ask again.
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
-| `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert): chords, bass and drums, each played as that mood usually is |
+| `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
@@ -287,8 +287,16 @@ avoid that, and gives it tools for each layer:
   rich (add9, maj7, m9, a V7sus4 that resolves) where the melody doesn't rub
   against them. Played as an `arpeggio` (the 0xy shimmer, held or struck on a
   rhythm), `stabs` (short hits: offbeats, eighths, tresillo, charleston,
-  waltz...), `broken` chords (up, down, updown, alberti, rolling) or a
-  `guide` line (one long note a chord on its third or seventh).
+  waltz...), `broken` chords (up, down, updown, alberti, rolling), a
+  `guide` line (one long note a chord on its third or seventh), or `lush`
+  chords: an instrument for each chord whose arpeggio loops through four or
+  more of its notes, two frames each (`arp_frames`), so sevenths and ninths
+  ring, played softly (volume 6) and colored rich unless asked otherwise.
+  Their instruments ("Lush maj7", "Lush m9") are made from a preset's sound
+  (lush chords by default) when first needed; `pattern` turns their
+  arpeggios down, up and back, leaping (alberti) or spread over two octaves
+  (rolling). They need a 2A03, MMC5 or VRC6 pulse, since VRC7 instruments
+  have no arpeggios.
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
   approach notes into each chord), syncopated, arpeggio, driving, pedal. On
   the triangle it sits where it sounds like a bass (the triangle plays an

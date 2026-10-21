@@ -23,7 +23,8 @@
 
 // Parts for the arranging tools of the Claude Code connection, as notes to
 // write: chords in one of several styles (the 0xy arpeggio held or struck on
-// a rhythm, broken chords, a guide-tone line), bass lines (from plain roots
+// a rhythm, broken chords, a guide-tone line, lush chords that instruments'
+// arpeggios play), bass lines (from plain roots
 // to walking and octave basses), drums with grooves, variations and fills, a
 // harmony voice and a counter-melody that moves where the melody rests.
 // Pitches are FamiTracker's (C-3 is middle C; noise 0-15), rows count from
@@ -45,7 +46,7 @@ struct StyleInfo {
 	const char *Aliases;		// other words for it, separated by "|"
 };
 
-enum chord_style { CHORDS_ARPEGGIO, CHORDS_STABS, CHORDS_BROKEN, CHORDS_GUIDE };
+enum chord_style { CHORDS_ARPEGGIO, CHORDS_STABS, CHORDS_BROKEN, CHORDS_GUIDE, CHORDS_LUSH };
 enum chord_rhythm { RHYTHM_BARS, RHYTHM_BEATS, RHYTHM_OFFBEATS, RHYTHM_EIGHTHS, RHYTHM_HALF, RHYTHM_TRESILLO, RHYTHM_CHARLESTON,
 	RHYTHM_WALTZ };
 enum broken_pattern { BROKEN_UP, BROKEN_DOWN, BROKEN_UPDOWN, BROKEN_ALBERTI, BROKEN_ROLLING };
@@ -72,8 +73,8 @@ std::string StyleList(const std::vector<StyleInfo> &Styles);		// "arpeggio (...)
 // Chords on one channel
 struct ChordPartOptions {
 	int Style;			// chord_style
-	int Rhythm;			// chord_rhythm; -1 for the style's own (arpeggio: bars, stabs: offbeats)
-	int Pattern;		// broken_pattern
+	int Rhythm;			// chord_rhythm; -1 for the style's own (arpeggio and lush: bars, stabs: offbeats)
+	int Pattern;		// broken_pattern: the order of broken chords' notes, and of lush chords' (LushShape)
 	int StepRows;		// broken: rows a note; 0 for half a beat
 	int RowsPerBeat;
 	int Low, High;		// where each chord's lowest note goes
@@ -81,7 +82,19 @@ struct ChordPartOptions {
 	bool RootInBass;	// a bass line plays the roots, so voicings may leave them out
 	ChordPartOptions();
 };
+// Lush chords are held like the arpeggio's, each note at its chord's root,
+// its Arpeggio the chord's LushShape: the tool makes the instruments.
 std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const ChordPartOptions &Options);
+
+// A lush chord: its notes as semitones above the root, in the order an
+// instrument's arpeggio plays them. Root position and close, with a ninth,
+// eleventh or thirteenth an octave up where a third or a seventh is there to
+// carry the chord (a suspended second or fourth stays where it is); a power
+// chord gets its octave. Pattern (broken_pattern): up; down; updown (up and
+// back, the ends once); alberti, leaping (every other note, then the ones
+// between); rolling, spread (the root and fifth where they are, the others an
+// octave up, and a third that would rub a semitone against a ninth left out).
+std::vector<int> LushShape(const Chord &C, int Pattern);
 
 // The 0xy arpeggio for a chord: three of its tones, the lowest (Base) within
 // [Low, High] near Near, and X and Y semitones above it (X < Y <= 15), led

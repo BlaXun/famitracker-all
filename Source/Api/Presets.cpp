@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <initializer_list>
 
@@ -133,6 +134,9 @@ std::vector<Preset> MakePresets()
 		List({ 15, 13, 11, 10, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1, 0 }), -1, 1, 2, List({ 12, 0 })));
 	All.push_back(Melodic("soft chords", "quiet, thin pad for chords and arpeggios under a melody (12.5% duty)",
 		List({ 4, 6, 7, 8, 8, 7, 5, 4, 3, 2, 1, 0 }), 5, 0, 1));
+	All.push_back(Melodic("lush chords", "steady 25% tone that settles a little and holds, for lush chords (their arpeggios "
+		"are added to it); full in the instrument, so the volume column sets how soft it plays",
+		List({ 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 11, 10, 9, 7, 5, 3, 2, 1, 0 }), 11, 1, 3));
 	All.push_back(Melodic("warm pad", "slow, round and dark pad (50% duty); good for calm, sad or underwater moods",
 		List({ 2, 3, 4, 5, 6, 7, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), 8, 2, 7));
 	All.push_back(Melodic("bass", "sustained bass for the triangle, the VRC6 sawtooth or a pulse",
@@ -175,7 +179,7 @@ std::vector<Preset> MakePresets()
 	// What sounds most like each on the VRC7
 	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
 		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
-		{ "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 }, { "strings", 15 }, { "brass", 12 },
+		{ "lush chords", 11 }, { "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 }, { "strings", 15 }, { "brass", 12 },
 		{ "organ", 8 },
 	};
 	for (size_t i = 0; i < All.size(); ++i)
@@ -228,6 +232,24 @@ std::string Simplified(const std::string &Text)
 
 }	// namespace
 
+Preset WithArpeggio(const Preset &Base, const std::vector<int> &Notes, int Frames, const std::string &Name)
+{
+	Preset P = Base;
+	P.Name = Name;
+	PresetSequence Arpeggio = Sequence(SEQUENCE_ARPEGGIO, std::vector<int>(), 0);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Arpeggio.Items.insert(Arpeggio.Items.end(), static_cast<size_t>(std::max(1, Frames)), Notes[i]);
+	std::vector<PresetSequence> *Lists[2] = { &P.Sequences2A03, &P.SequencesVRC6 };
+	for (int l = 0; l < 2; ++l) {
+		std::vector<PresetSequence> &List = *Lists[l];
+		for (size_t s = List.size(); s-- > 0; )
+			if (List[s].Type == SEQUENCE_ARPEGGIO)
+				List.erase(List.begin() + static_cast<std::ptrdiff_t>(s));
+		List.push_back(Arpeggio);
+	}
+	return P;
+}
+
 bool Preset::Releases() const
 {
 	for (size_t i = 0; i < Sequences2A03.size(); ++i)
@@ -259,6 +281,7 @@ const Preset *FindPreset(const std::string &Name)
 		{ "square", "bright lead" }, { "thinlead", "thin lead" }, { "nasal", "thin lead" }, { "harp", "pluck" },
 		{ "guitar", "pluck" }, { "pluckylead", "pluck" }, { "chime", "bell" }, { "glockenspiel", "bell" },
 		{ "chords", "soft chords" }, { "softchords", "soft chords" }, { "arpeggio", "soft chords" }, { "pad", "warm pad" },
+		{ "lush", "lush chords" }, { "jazzchords", "lush chords" },
 		{ "warmpad", "warm pad" }, { "violin", "strings" }, { "violins", "strings" }, { "bassline", "bass" }, { "softbass", "bass" },
 		{ "vibratolead", "singing lead" }, { "singinglead", "singing lead" }, { "vocal", "singing lead" }, { "voice", "singing lead" },
 		{ "horn", "brass" }, { "horns", "brass" }, { "trumpet", "brass" }, { "keys", "organ" },

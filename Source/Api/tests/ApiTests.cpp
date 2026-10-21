@@ -5943,6 +5943,102 @@ void TestBridgeSockets()
 
 }	// namespace
 
+void TestLushChords()
+{
+	const Key C(0, MODE_MAJOR);
+	// The shapes: root position and close, ninths and up an octave where a third carries the chord
+	ftapi::Chord Q;
+	CHECK(ParseChord("Cmaj7", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 4, 7, 11 }));
+	CHECK(LushShape(Q, BROKEN_DOWN) == std::vector<int>({ 11, 7, 4, 0 }) && LushShape(Q, BROKEN_UPDOWN) == std::vector<int>({ 0, 4, 7, 11, 7, 4 }));
+	CHECK(LushShape(Q, BROKEN_ALBERTI) == std::vector<int>({ 0, 7, 4, 11 }) && LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 16, 23 }));
+	CHECK(ParseChord("Am9", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 3, 7, 10, 14 }));
+	CHECK(LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 14, 22 }));	// the third would rub against the ninth
+	CHECK(ParseChord("Cadd9", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 4, 7, 14 }));
+	CHECK(ParseChord("Csus2", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 2, 7 }));
+	CHECK(ParseChord("G7sus4", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 5, 7, 10 }));
+	CHECK(ParseChord("C6", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 4, 7, 9 }));
+	CHECK(ParseChord("C13", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 4, 7, 10, 14, 21 }));
+	CHECK(ParseChord("Bdim7", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 3, 6, 9 }));
+	CHECK(ParseChord("Bm7b5", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 3, 6, 10 }));
+	CHECK(ParseChord("E5", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 7, 12 }));
+	CHECK(ParseChord("Dm", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 3, 7 }));
+
+	// The part: held on each chord's root, near the one before, the arpeggio left to the instrument
+	std::vector<ChordAt> Chords = Progression("| C | Am7 | Fmaj7 | Dm7 G7 |");
+	ChordPartOptions O;
+	O.Style = CHORDS_LUSH;
+	O.Low = 31;
+	O.High = 43;
+	O.Volume = 6;
+	std::vector<PartNote> Part = ChordPart(Chords, FourFour(4), O);
+	CHECK(Part.size() == 5 && Part[0].Row == 0 && Part[0].Rows == 16 && Part[0].Volume == 6);
+	CHECK(Part[0].Pitch == 36 && Part[1].Pitch == 33 && Part[2].Pitch == 41 && Part[3].Pitch == 38 && Part[4].Pitch == 43);
+	for (size_t i = 0; i < Part.size(); ++i)
+		CHECK(Part[i].Effects.empty() && Part[i].EndEffects.empty());
+	CHECK(Part[1].Arpeggio == std::vector<int>({ 0, 3, 7, 10 }) && Part[4].Arpeggio == std::vector<int>({ 0, 4, 7, 10 }));
+	O.Rhythm = RHYTHM_HALF;
+	CHECK(ChordPart(Chords, FourFour(4), O).size() == 8);
+
+	// The tool: plain chords get color (rich), an instrument a shape, two frames a note, soft
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"chord_style\": \"lush\", "
+		"\"key\": \"C major\", \"bass_channel\": \"none\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "lush chords on 2A03 Pulse 1, bars 1-4, in C major");
+	CHECK_HAS(Result.Text, "Chords: | Cadd9 | Am9 | Fmaj7 | G7 |");
+	CHECK_HAS(Result.Text, "Added 4 lush chord instruments (2A03, from the preset \"lush chords\"): \"Lush add9\" (03), "
+		"\"Lush m9\" (04), \"Lush maj7\" (05), \"Lush 7\" (06).");
+	const PresetSequence *pArp = SequenceOf(Song.Made[3], SEQUENCE_ARPEGGIO);
+	CHECK(pArp != 0 && pArp->Items == std::vector<int>({ 0, 0, 4, 4, 7, 7, 14, 14 }) && pArp->Loop == 0 && pArp->Setting == SEQUENCE_ABSOLUTE);
+	CHECK(SequenceOf(Song.Made[3], SEQUENCE_VOLUME) != 0 && SequenceOf(Song.Made[3], SEQUENCE_DUTY) != 0);
+	CHECK(Song.Made[3].SequencesVRC6.size() == Song.Made[3].Sequences2A03.size());
+	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[0][0].Pitch() % 12 == 0 && Song.Rows[0][0].Instrument == 3 && Song.Rows[0][0].Volume == 6);
+	CHECK(Song.Rows[0][16].Instrument == 4 && Song.Rows[0][16].Pitch() % 12 == 9 && Song.Rows[0][48].Instrument == 6);
+	bool Arpeggio = false;
+	for (int r = 0; r < 64; ++r)
+		Arpeggio = Arpeggio || Song.Rows[0][r].Effect[0] == EFF_ARPEGGIO || Song.Rows[0][r].Effect[1] == EFF_ARPEGGIO;
+	CHECK(!Arpeggio);
+	// Again: the instruments are there already
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am |\", \"chord_style\": \"lush\", \"key\": \"C major\", "
+		"\"bass_channel\": \"none\", \"from_bar\": 5, \"to_bar\": 6}");
+	CHECK(!Result.IsError && Result.Text.find("lush chord instrument") == std::string::npos && Song.Rows[0][64].Instrument == 3);
+	// Slower, another order, another sound: instruments of their own
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"Fmaj7\", \"chord_style\": \"lush\", \"pattern\": \"down\", "
+		"\"arp_frames\": 3, \"chord_instrument\": \"pluck\", \"key\": \"C major\", \"bass_channel\": \"none\", \"from_bar\": 7, \"to_bar\": 7}");
+	CHECK_HAS(Result.Text, "lush (down) chords on 2A03 Pulse 1");
+	CHECK_HAS(Result.Text, "\"Pluck maj7 down, 3 frames\" (07)");
+	pArp = SequenceOf(Song.Made[7], SEQUENCE_ARPEGGIO);
+	CHECK(pArp != 0 && pArp->Items == std::vector<int>({ 11, 11, 11, 7, 7, 7, 4, 4, 4, 0, 0, 0 }));
+	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"kazoo\", "
+		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "made from a preset's sound");
+	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"snare\", "
+		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "\"snare\" isn't one");
+	// Plain when asked
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"color\": \"plain\", "
+		"\"key\": \"C major\", \"bass_channel\": \"none\", \"from_bar\": 8, \"to_bar\": 8}");
+	CHECK_HAS(Result.Text, "\"Lush major\"");
+
+	// A VRC7 song: lush chords go on a 2A03 pulse; an FM channel can't play them
+	FakeSong Fm;
+	Fm.Info.DirectChanges = true;
+	CHECK(!Run(Fm, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	CHECK_HAS(Run(Fm, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_channel\": \"FM Channel 1\", "
+		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "chord_channel needs a 2A03, MMC5 or VRC6 pulse channel");
+	Result = Run(Fm, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"key\": \"C major\", \"bass_channel\": \"none\"}");
+	CHECK_HAS(Result.Text, "lush chords on 2A03 Pulse 1");
+
+	// The nostalgic groove plays lush chords
+	FakeSong Groove(4);
+	Groove.Info.DirectChanges = true;
+	Result = Run(Groove, "make_groove", "{\"mood\": \"wistful\", \"bars\": 4}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a nostalgic groove: lush (half) chords on 2A03 Pulse 1");
+	CHECK_HAS(Result.Text, "Chords: | Fmaj7 | G7 | Em7 | Am7 |");
+	CHECK_HAS(Result.Text, "lush chord instruments");
+	CHECK(Groove.Rows[0][0].HasNote() && Groove.Rows[0][8].HasNote() && Groove.Rows[0][0].Volume == 6);
+}
+
 int main()
 {
 	TestJson();
@@ -5998,6 +6094,7 @@ int main()
 	TestOgg();
 	TestCut();
 	TestExport();
+	TestLushChords();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

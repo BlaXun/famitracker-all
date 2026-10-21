@@ -243,6 +243,8 @@ struct PartNote {
 	std::vector<std::pair<int, int> > Effects;	// on its first row
 	std::vector<std::pair<int, std::pair<int, int> > > LaterEffects;	// row offset, (effect, param)
 	std::vector<std::pair<int, int> > EndEffects;	// on the release or halt that ends it, if it gets one
+	std::vector<int> Arpeggio;	// a lush chord's notes, semitones above Pitch, for an instrument's arpeggio to loop
+								// through (the tool that writes the part makes the instrument); empty for none
 	PartNote() : Row(0), Rows(1), Pitch(0), Instrument(NO_INSTRUMENT), Volume(-1) {}
 };
 

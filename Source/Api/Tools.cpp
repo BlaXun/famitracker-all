@@ -2178,6 +2178,12 @@ bool IsChordChannel(const ChannelInfo &Channel)
 		Channel.Kind == KIND_FM;
 }
 
+// A channel for lush chords: a pulse whose instruments can have arpeggios
+bool IsLushChordChannel(const ChannelInfo &Channel)
+{
+	return Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5");
+}
+
 bool IsBassChannel(const ChannelInfo &Channel)
 {
 	return IsBass(Channel);
@@ -2279,6 +2285,8 @@ void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vect
 	Top = std::max(36, std::min(48, Top));
 	if (O.Style == CHORDS_BROKEN && O.Pattern == BROKEN_ROLLING)
 		Top -= 5;
+	else if (O.Style == CHORDS_LUSH)
+		Top -= O.Pattern == BROKEN_ROLLING ? 7 : 3;	// the arpeggio climbs an octave and more above its root
 	O.High = Written(Info, Top);
 	O.Low = O.High - 12;
 }
@@ -2311,6 +2319,73 @@ std::vector<PartNote> DrumNotes(Session &S, int Channel, const std::vector<DrumH
 	}
 	TidyPart(Notes, First, End);
 	return Notes;
+}
+
+// A lush chord instrument's name: the sound's, the chord's ("maj7", "m9",
+// "major"), and the pattern and frames when they aren't the usual ones:
+// "Lush maj7", "Pluck m7 down", "Lush m9, 3 frames"
+std::string LushName(const Preset &Sound, const std::vector<int> &Notes, int Pattern, int Frames)
+{
+	std::vector<int> Tones;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Tones.push_back((Notes[i] % 12 + 12) % 12);
+	std::sort(Tones.begin(), Tones.end());
+	Tones.erase(std::unique(Tones.begin(), Tones.end()), Tones.end());
+	std::string Quality = ChordName(Chord(0, Tones), Key(0, MODE_MAJOR)).substr(1);
+	if (Quality.empty())
+		Quality = "major";
+	else if (Quality == "m")
+		Quality = "minor";
+	std::string Name = Sound.Name == "lush chords" ? std::string("lush") : Sound.Name;
+	Name += " " + Quality;
+	if (Pattern != BROKEN_UP)
+		Name += std::string(" ") + BrokenPatterns()[static_cast<size_t>(Pattern)].Name;
+	if (Frames != 2)
+		Name += Format(", %d frame%s", Frames, Frames == 1 ? "" : "s");
+	return Name;
+}
+
+// Lush chords' instruments: Sound's (a preset) with each chord's notes
+// looping as its arpeggio, Frames frames a note, one instrument a chord
+// shape, added when first needed and played by the notes with that shape
+void LushInstruments(Session &S, int Channel, const std::string &Sound, int Pattern, int Frames, std::vector<PartNote> &Notes)
+{
+	const std::string Chip = InstrumentChip(S.Channel(Channel));
+	const std::string ChannelName = S.Channel(Channel).FullName();
+	const bool Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+	if (Chip != "2A03" && Chip != "VRC6")
+		throw Problem(Format("Lush chords are instruments with arpeggios, which %s can't play; give them a pulse channel "
+			"(2A03, MMC5 or VRC6), or choose another chord_style.", ChannelName.c_str()));
+	const Preset *pSound = FindPreset(Sound);
+	if (pSound == 0 || pSound->Drum)
+		throw Problem(Format("Lush chords are made from a preset's sound (lush chords, soft chords, pluck, bell, warm pad...); "
+			"\"%s\" isn't one.", Sound.c_str()));
+	std::map<std::vector<int>, int> Made;
+	std::string Added;
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		if (Notes[i].Arpeggio.empty())
+			continue;
+		std::map<std::vector<int>, int>::const_iterator Found = Made.find(Notes[i].Arpeggio);
+		if (Found == Made.end()) {
+			const Preset P = WithArpeggio(*pSound, Notes[i].Arpeggio, Frames, LushName(*pSound, Notes[i].Arpeggio, Pattern, Frames));
+			const size_t Before = S.Song.Instruments.size();
+			std::string Error;
+			const int Index = S.Host().AddInstrument(P, Chip, Sawtooth, Error);
+			if (Index < 0)
+				throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+			S.Refresh();
+			if (S.Song.Instruments.size() > Before) {
+				Added += (Count == 0 ? "" : ", ") + InstrumentLabel(S.Song, Index);
+				++Count;
+			}
+			Found = Made.insert(std::make_pair(Notes[i].Arpeggio, Index)).first;
+		}
+		Notes[i].Instrument = Found->second;
+	}
+	if (Count > 0)
+		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from the preset \"%s\"): %s.", Count, Count == 1 ? "" : "s",
+			Chip.c_str(), pSound->Name.c_str(), Added.c_str()));
 }
 
 // An instrument for a part: the one named by the argument, else the preset
@@ -2429,6 +2504,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	const int R = S.Time.RowsPerBeat;
 	const std::vector<std::string> Progression = ProgressionArg(Args, "chords");
 	const bool Given = !Progression.empty();
+	const int Style = StyleArg(Args, "chord_style", ChordStyles(), CHORDS_ARPEGGIO);
+	const int BassStyle = StyleArg(Args, "bass_style", BassStyles(), BASS_ROOT_FIFTH);
 
 	// The melody: the chords are fitted to it, or with chords given it colors
 	// them (then only a channel that plays in the bars counts as one)
@@ -2494,7 +2571,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		throw Problem(Format("Every %s already plays in those bars. Name one with %s (its notes there are replaced), or \"none\".",
 			Kind, Name));
 	};
-	const int ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");
+	const int ChordChannel = Style == CHORDS_LUSH ? Pick("chord_channel", IsLushChordChannel, "a 2A03, MMC5 or VRC6 pulse channel") :
+		Pick("chord_channel", IsChordChannel, "a pulse channel");
 	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth");
 	if (ChordChannel < 0 && BassChannel < 0)
 		throw Problem("There's no channel for chords or a bass line.");
@@ -2526,7 +2604,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			throw Problem("The melody is too short to fit chords to.");
 	}
 	chord_color Color;
-	if (!ParseColor(StringArg(Args, "color", "plain"), Color))
+	if (!ParseColor(StringArg(Args, "color", Style == CHORDS_LUSH ? "rich" : "plain"), Color))
 		throw Problem("color: plain (triads), sevenths or rich.");
 	ColorChords(Chords, MelodyNotes, K, R, Color);
 	if (Given && !MelodyNotes.empty())
@@ -2534,8 +2612,6 @@ std::string AddBackingTool(Session &S, const Json &Args)
 
 	std::vector<Change> Changes;
 	std::string Where;
-	const int Style = StyleArg(Args, "chord_style", ChordStyles(), CHORDS_ARPEGGIO);
-	const int BassStyle = StyleArg(Args, "bass_style", BassStyles(), BASS_ROOT_FIFTH);
 	if (ChordChannel >= 0) {
 		const ChannelInfo &Info = S.Channel(ChordChannel);
 		ChordPartOptions O;
@@ -2548,23 +2624,33 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.RootInBass = BassChannel >= 0;
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = c != ChordChannel && IsBass(S.Channel(c)) && HasNotesIn(S, c, First, End);
-		const int DefaultVolume = Style == CHORDS_STABS ? 11 : Style == CHORDS_BROKEN ? 10 : 15;
+		const int DefaultVolume = Style == CHORDS_STABS ? 11 : Style == CHORDS_BROKEN ? 10 : Style == CHORDS_LUSH ? 6 : 15;
 		O.Volume = IntArg(Args, "chord_volume", DefaultVolume, 1, 15);
-		const char *Sound = Style == CHORDS_GUIDE ? "warm pad" : Style == CHORDS_ARPEGGIO ? "soft chords" : "pluck";
-		const int Instrument = PartInstrument(S, Args, "chord_instrument", ChordChannel, Sound);
+		const char *Sound = Style == CHORDS_GUIDE ? "warm pad" : Style == CHORDS_ARPEGGIO ? "soft chords" :
+			Style == CHORDS_LUSH ? "lush chords" : "pluck";
 		std::vector<PartNote> Notes = ChordPart(Chords, Spans, O);
-		for (size_t i = 0; i < Notes.size(); ++i)
-			Notes[i].Instrument = Instrument;
+		if (Style == CHORDS_LUSH) {
+			const Json *pSound = Arg(Args, "chord_instrument");
+			if (pSound != 0 && !pSound->IsString())
+				throw Problem("chord_instrument: lush chords are made from a preset's sound, named like \"lush chords\" or \"pluck\".");
+			LushInstruments(S, ChordChannel, StringArg(Args, "chord_instrument", Sound), O.Pattern, IntArg(Args, "arp_frames", 2, 1, 6),
+				Notes);
+		}
+		else {
+			const int Instrument = PartInstrument(S, Args, "chord_instrument", ChordChannel, Sound);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Notes[i].Instrument = Instrument;
+		}
 		Change C;
 		C.Channel = ChordChannel;
 		BuildPart(S.Cells(ChordChannel), First, End, Notes, OptionsFor(S, ChordChannel, DirectChange), C.Cells, Warnings);
 		Changes.push_back(C);
 		std::string Kind = ChordStyles()[static_cast<size_t>(Style)].Name;
-		if (Style == CHORDS_BROKEN)
+		if (Style == CHORDS_BROKEN || (Style == CHORDS_LUSH && O.Pattern != BROKEN_UP))
 			Kind += std::string(" (") + BrokenPatterns()[static_cast<size_t>(O.Pattern)].Name + ")";
-		else if (O.Rhythm >= 0)
+		if (Style != CHORDS_BROKEN && O.Rhythm >= 0)
 			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(O.Rhythm)].Name + ")";
-		Where = Kind + " chords on " + Info.FullName();
+		Where = Kind + " chords on " + S.Channel(ChordChannel).FullName();
 	}
 	if (BassChannel >= 0) {
 		const ChannelInfo &Info = S.Channel(BassChannel);
@@ -3734,6 +3820,9 @@ const Mood MOODS[] = {
 		CHORDS_STABS, RHYTHM_BEATS, BROKEN_UP, BASS_ROOT_FIFTH, GROOVE_MARCH, 2, 110, "pluck" },
 	{ "desert", "exotic|sand|bazaar|ancient", "a desert or an exotic place", true, "| i | bII | i | V |", "plain", CHORDS_BROKEN,
 		-1, BROKEN_UPDOWN, BASS_PEDAL, GROOVE_HALF_TIME, 1, 100, "pluck" },
+	{ "nostalgic", "atmospheric|wistful|bittersweet|memories|memory|sentimental|longing|lush|warm|hometown",
+		"nostalgic and warm: lush, jazzy chords ringing softly under the melody", false, "| IVmaj7 | V | iii7 | vi7 |", "rich",
+		CHORDS_LUSH, RHYTHM_HALF, BROKEN_UP, BASS_SYNCOPATED, GROOVE_BASIC, 1, 96, "lush chords" },
 };
 
 const Mood *FindMood(const std::string &Name)
@@ -3805,7 +3894,13 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	struct Local {
 		static bool IsNoise(const ChannelInfo &Info) { return Info.Kind == KIND_NOISE; }
 	};
-	const int ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");
+	// Lush chords need a pulse; on another channel (a VRC7 one) they're held as the 0xy arpeggio
+	int ChordChannel = Pick("chord_channel", M.Style == CHORDS_LUSH ? IsLushChordChannel : IsChordChannel, "a pulse channel");
+	int ChordStyle = M.Style;
+	if (M.Style == CHORDS_LUSH && ChordChannel < 0 && Arg(Args, "chord_channel") == 0) {
+		ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");
+		ChordStyle = CHORDS_ARPEGGIO;
+	}
 	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth");
 	const int DrumChannel = M.Groove >= 0 ? Pick("drum_channel", Local::IsNoise, "the noise channel") : -1;
 	if (ChordChannel < 0 && BassChannel < 0 && DrumChannel < 0)
@@ -3824,24 +3919,28 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	std::vector<std::string> Warnings, Parts;
 	if (ChordChannel >= 0) {
 		ChordPartOptions O;
-		O.Style = M.Style;
+		O.Style = ChordStyle;
 		O.Rhythm = M.Rhythm;
 		O.Pattern = M.Pattern;
 		O.StepRows = std::max(1, R / 2);
 		O.RowsPerBeat = R;
 		O.RootInBass = BassChannel >= 0;
-		O.Volume = M.Style == CHORDS_STABS ? 11 : M.Style == CHORDS_BROKEN ? 10 : 15;
+		O.Volume = ChordStyle == CHORDS_STABS ? 11 : ChordStyle == CHORDS_BROKEN ? 10 : ChordStyle == CHORDS_LUSH ? 6 : 15;
 		ChordRegister(O, S.Channel(ChordChannel), std::vector<NoteInfo>());
-		const int Instrument = ResolveInstrument(S, M.ChordSound, ChordChannel);
 		std::vector<PartNote> Notes = ChordPart(Chords, Bars, O);
-		for (size_t i = 0; i < Notes.size(); ++i)
-			Notes[i].Instrument = Instrument;
+		if (ChordStyle == CHORDS_LUSH)
+			LushInstruments(S, ChordChannel, M.ChordSound, O.Pattern, 2, Notes);
+		else {
+			const int Instrument = ResolveInstrument(S, ChordStyle == M.Style ? M.ChordSound : "soft chords", ChordChannel);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Notes[i].Instrument = Instrument;
+		}
 		Change C;
 		C.Channel = ChordChannel;
 		BuildPart(S.Cells(ChordChannel), First, End, Notes, OptionsFor(S, ChordChannel, DirectChange), C.Cells, Warnings);
 		Changes.push_back(C);
-		std::string Kind = ChordStyles()[static_cast<size_t>(M.Style)].Name;
-		if (M.Style == CHORDS_BROKEN)
+		std::string Kind = ChordStyles()[static_cast<size_t>(ChordStyle)].Name;
+		if (ChordStyle == CHORDS_BROKEN)
 			Kind += std::string(" (") + BrokenPatterns()[static_cast<size_t>(M.Pattern)].Name + ")";
 		else if (M.Rhythm >= 0)
 			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(M.Rhythm)].Name + ")";
@@ -8171,9 +8270,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"Writes chords on a pulse channel and a bass line on the triangle or sawtooth: chords fitted to a melody bar by bar "
 			"in its key, or the progression you give (no melody needed then). Choose how they're played; the defaults are the "
 			"plainest (triads held as an arpeggio, root and fifth in the bass), and most songs want more. chord_style: " +
-			StyleList(ChordStyles()) + ". rhythm (arpeggio and stabs): " + StyleList(ChordRhythms()) + ". pattern (broken): " +
+			StyleList(ChordStyles()) + ". rhythm (arpeggio, stabs and lush): " + StyleList(ChordRhythms()) + ". pattern (broken, "
+			"and the order of a lush chord's arpeggio, where alberti leaps and rolling spreads it over two octaves): " +
 			StyleList(BrokenPatterns()) + ". bass_style: " + StyleList(BassStyles()) + ". color adds sevenths (\"sevenths\") "
-			"or richer tones (\"rich\": add9, maj7, m9, a V7sus4 resolving) where the melody allows. Free channels are "
+			"or richer tones (\"rich\": add9, maj7, m9, a V7sus4 resolving) where the melody allows. Lush chords are "
+			"instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\"), added when first needed. Free channels are "
 			"picked unless named. The reply lists the chords by name and as degrees.",
 			Schema()
 				.Add("chords", Chords)
@@ -8181,18 +8282,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
 				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
 				.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
-				.Add("color", EnumProp("plain (triads, default), sevenths, or rich.", std::vector<std::string>{ "plain", "sevenths", "rich" }))
+				.Add("color", EnumProp("plain (triads; the default but for lush), sevenths, or rich (the default for lush).",
+					std::vector<std::string>{ "plain", "sevenths", "rich" }))
 				.Add("chord_style", EnumProp("How the chords are played (default arpeggio).", StyleNames(ChordStyles())))
-				.Add("rhythm", EnumProp("When arpeggio or stabs chords are struck (arpeggio: bars, stabs: offbeats by default).",
-					StyleNames(ChordRhythms())))
-				.Add("pattern", EnumProp("The order of a broken chord's notes (default up).", StyleNames(BrokenPatterns())))
+				.Add("rhythm", EnumProp("When arpeggio, stabs or lush chords are struck (arpeggio and lush: bars, stabs: offbeats by "
+					"default).", StyleNames(ChordRhythms())))
+				.Add("pattern", EnumProp("The order of a broken chord's notes, or of a lush chord's arpeggio (default up).",
+					StyleNames(BrokenPatterns())))
 				.Add("notes_per_beat", Prop("integer", "Broken chords: notes a beat, 1-4 (default 2)."))
+				.Add("arp_frames", Prop("integer", "Lush chords: frames each note of a chord's arpeggio lasts, 1-6 (default 2; 3 or 4 "
+					"slower and dreamier, 1 a buzz)."))
 				.Add("bass_style", EnumProp("How the bass line moves (default root_fifth).", StyleNames(BassStyles())))
 				.Add("half_bars", Prop("boolean", "Fitted chords may change halfway through a bar (default true)."))
 				.Add("chord_instrument", Prop("string", "Instrument or preset for the chords (default: soft chords for arpeggio, "
-					"pluck for stabs and broken, warm pad for guide)."))
+					"pluck for stabs and broken, warm pad for guide). Lush chords are made from a preset's sound (default lush chords; "
+					"pluck, bell or soft chords work too)."))
 				.Add("chord_volume", Prop("integer", "The chords' volume, 1-15 (default 15 for arpeggio and guide, 11 for stabs, "
-					"10 for broken); beats a step softer than a bar's first note."))
+					"10 for broken, 6 for lush); beats a step softer than a bar's first note."))
 				.Add("bass_instrument", Prop("string", "Instrument or preset for the bass (default \"bass\")."))
 				.Range().ClipChoice(),
 			false, true);
