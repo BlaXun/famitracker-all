@@ -38,10 +38,11 @@ tracks as looping OGG files through the `export_for_game` tool
 which notes the sample where each row starts (`GetRenderMarks`), and libvorbis
 encodes (`Source/libvorbis`, `Source/libogg`). The jingles that `make_jingle`
 writes as tracks of their own are scores in `Source/Api/Jingles.cpp`. The
-sound effects of `make_sound_effect`, tracks at speed 1 that halt, are built a
-tick at a time in `Source/Api/SoundEffects.cpp` or made from a voice
-recording, and turned into instruments, by
-`Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
+sound effects of `make_sound_effect`, tracks at speed 1 that halt (or loop,
+for ambience), are built a tick at a time in `Source/Api/SoundEffects.cpp`,
+from layers described in words (`DesignSoundEffect`, which the kinds from
+nature use too), or made from a voice recording, and turned into
+instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
 (`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
 ends when the sound is over, and adds it with that tool through `CMcpLink`.
 Arranging is in `Source/Api/Chords.cpp` (chords read from names and degrees,
@@ -50,7 +51,10 @@ progressions on bars, colors, chords heard in the notes) and
 with fills, a harmony voice, a counter-melody), used by
 `add_chords_and_bass`, `make_groove`, `add_drums`, `add_harmony`,
 `add_counter_melody` and `review_arrangement`; `design_instrument` turns words
-into sequences with `DesignPreset` in `Presets.cpp`. The server's
+into sequences with `DesignPreset` in `Presets.cpp`. `Source/Api/Effects.cpp`
+holds the `effects` tool's reference to 0.4.6's effects and techniques, and
+the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
+from the 0.4.6 channel handlers. The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
@@ -486,7 +490,7 @@ NSF export still uses the 2A03 driver. Touch points:
   must account for it.
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 60 never include it: all of `APU/`, `Api/`, `Nsf/`
+  standard headers), and 62 never include it: all of `APU/`, `Api/`, `Nsf/`
   and `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
   `McpSocket.cpp`, `TutorialScript.cpp`, `resampler/`, `ExportTest/` and the
   `CustomExporter*` files. Turning PCH on breaks them.

@@ -169,8 +169,9 @@ when ready.
   - Sound effects for the game, each a track that plays once and exports
     like the music: Edit > Sound effect from your voice ("pew", "boing",
     "kssh" into the microphone; the take stops by itself and plays back as
-    the NES would), and Claude Code's `make_sound_effect` (25 kinds with
-    variants, or a recording).
+    the NES would), and Claude Code's `make_sound_effect` (34 kinds with
+    variants, ambience that loops, sounds described in words, or a
+    recording).
 
   Still to do, in this order, on a branch made from `beginner-friendly`
   again:
@@ -201,7 +202,8 @@ when ready.
     cleared), with the VRC7's built-in sounds by name;
   - speed and tempo from a BPM (rows of even length first) or as
     FamiTracker's own numbers;
-  - sound effects for the game, from 25 kinds or a voice recording.
+  - sound effects for the game, from 34 kinds, described in words or from a
+    voice recording; ambience loops.
 
   In October 2026, on `next`, arrangements with depth, because tracks often
   came out plain: chords by name or degree and in styles (held or rhythmic
@@ -220,6 +222,19 @@ when ready.
   the bass long notes, fades the drums to a soft pulse, and uses a swelling
   lead, a slower and wider vibrato and a longer, softer echo, saying what
   it changed.
+
+  Sound effects described in words (asked for: "a bird flying away", "a
+  heavy wind"): `make_sound_effect` builds them from layers on the 2A03's
+  channels (slides, hits and swells, repeats, gusts, flutters, crackle and
+  drops), and has nine more kinds from nature and machines: wind, rain,
+  fire, thunder, birds, wings, an engine, an alarm and a heartbeat. Ambience
+  loops seamlessly in the export for games.
+
+  FamiTracker 0.4.6's effects (asked: does Claude know them all?): the
+  `effects` tool explains each one and the classic techniques made with
+  them, and `write_notes` refuses effects 0.4.6 doesn't have (the `Lxx` and
+  `Oxx` of later versions) or that the channel can't play, saying what to
+  use instead.
 
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
   listening help (loop, solo, mute), and recording through Claude.

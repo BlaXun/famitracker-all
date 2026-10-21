@@ -74,6 +74,7 @@ add_library(ftapi STATIC
 	GameAudio.cpp
 	Jingles.cpp
 	SoundEffects.cpp
+	Effects.cpp
 	Music.cpp
 	Chords.cpp
 	Arrange.cpp
