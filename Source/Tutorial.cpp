@@ -61,7 +61,7 @@ const COLORREF BUBBLE_BACK = RGB(255, 251, 234);
 const COLORREF BUBBLE_BORDER = RGB(214, 150, 20);
 const COLORREF TEXT_COLOUR = RGB(30, 32, 40);
 const COLORREF TEXT_DIM = RGB(120, 110, 90);
-const COLORREF BUTTON_BACK = RGB(255, 255, 255);
+const COLORREF BUTTON_FILL = RGB(255, 255, 255);	// (BUTTON_BACK is the Back button)
 const COLORREF BUTTON_HOT = RGB(255, 233, 160);
 const COLORREF BUTTON_MAIN = RGB(240, 180, 40);
 const COLORREF BUTTON_BORDER = RGB(200, 170, 110);
@@ -190,7 +190,7 @@ class CTutorialOverlay : public CWnd
 public:
 	CTutorialOverlay() : m_Colour(RING_COLOUR) {}
 	bool Create(CWnd *pOwner);
-	void Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow);	// screen coordinates
+	bool Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow);	// screen coordinates; true if it changed
 	void Hide();
 
 private:
@@ -205,12 +205,12 @@ bool CTutorialOverlay::Create(CWnd *pOwner)
 		CRect(0, 0, 1, 1), pOwner, 0) != FALSE;
 }
 
-void CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow)
+bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow)
 {
 	if (GetSafeHwnd() == NULL || Window.IsRectEmpty())
-		return;
+		return false;
 	if (Window == m_Window && Spot == m_Spot && Colour == m_Colour && IsWindowVisible())
-		return;
+		return false;
 	m_Window = Window;
 	m_Spot = Spot;
 	m_Colour = Colour;
@@ -231,7 +231,7 @@ void CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Col
 	if (hBitmap == NULL || pBits == NULL) {
 		::DeleteDC(hMemory);
 		::ReleaseDC(NULL, hScreen);
-		return;
+		return false;
 	}
 	HGDIOBJ hOld = ::SelectObject(hMemory, hBitmap);
 
@@ -269,6 +269,7 @@ void CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Col
 		ShowWindow(SW_SHOWNOACTIVATE);
 	if (pBelow != NULL)
 		SetWindowPos(pBelow, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);	// under the note
+	return true;
 }
 
 void CTutorialOverlay::Hide()
@@ -639,21 +640,25 @@ void CTutorialBubble::Tick()
 		!Spot.IsRectEmpty();
 	if (!HasSpot)
 		Spot.SetRectEmpty();
+	bool Raise = false;
 	if (HasSpot)
-		m_Overlay.Show(Window, Spot, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
+		Raise = m_Overlay.Show(Window, Spot, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
 	else
 		m_Overlay.Hide();
 	if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
 		Place(Spot);
 	m_LastSpot = Spot;
 	m_LastWindow = Window;
-	if (!IsWindowVisible())
+	if (!IsWindowVisible()) {
 		ShowWindow(SW_SHOWNOACTIVATE);
+		Raise = true;
+	}
 
-	// Above a dialog the step opened, while FamiTracker is the active program
+	// Above the dimming, and above a dialog the step opened, while
+	// FamiTracker is the active program (not above other programs)
 	DWORD Process = 0;
 	::GetWindowThreadProcessId(::GetForegroundWindow(), &Process);
-	if (!m_pMainFrame->IsWindowEnabled() && Process == ::GetCurrentProcessId())
+	if ((Raise || !m_pMainFrame->IsWindowEnabled()) && Process == ::GetCurrentProcessId())
 		SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
 	// Done: the frame turns green for a moment, then the next step
@@ -731,7 +736,7 @@ void CTutorialBubble::OnPaint()
 		if (i == BUTTON_BACK && m_iStep == 0)
 			continue;
 		const bool Main = i == BUTTON_NEXT && (Step().Wait == WAIT_NEXT || LastStep());
-		COLORREF Back = Main ? BUTTON_MAIN : BUTTON_BACK;
+		COLORREF Back = Main ? BUTTON_MAIN : BUTTON_FILL;
 		if (i == m_iHot)
 			Back = Main ? RGB(250, 200, 70) : BUTTON_HOT;
 		CBrush Brush(Back);
@@ -871,10 +876,8 @@ BOOL CTutorialsDlg::OnInitDialog()
 	for (size_t i = 0; i < m_List.size(); ++i)
 		pList->AddString(m_List[i].Problem.IsEmpty() ? m_List[i].Name : m_List[i].Name + _T(" (can't be read)"));
 	pList->SetCurSel(0);
-	CString Folder;
-	Folder.Format(_T("More tutorials can go in %s (see the ones in res\\tutorials of the source for the format)."),
-		static_cast<LPCTSTR>(TutorialFolder()));
-	SetDlgItemText(IDC_TUTORIAL_FOLDER, Folder);
+	SetDlgItemText(IDC_TUTORIAL_FOLDER, _T("More tutorials can go in a folder called Tutorials next to FamiTracker.exe, as text ")
+		_T("files written like the ones in res\\tutorials of FamiTracker's source."));
 	OnSelChange();
 	return TRUE;
 }

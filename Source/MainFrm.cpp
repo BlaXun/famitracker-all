@@ -1478,6 +1478,11 @@ void CMainFrame::OnUpdateSBTempo(CCmdUI *pCmdUI)
 		if (Highlight == 0)
 			Highlight = 4;
 		float BPM = (pSoundGen->GetTempo() * 4.0f) / float(Highlight);
+		// Stopped, the song's own speed and tempo: the player's are the defaults
+		// until it first plays, whatever the song has (a template's 120 BPM)
+		const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
+		if (!theApp.IsPlaying() && pDoc != NULL && pDoc->GetSongSpeed(m_iTrack) > 0)
+			BPM = (pDoc->GetSongTempo(m_iTrack) * 6.0f / pDoc->GetSongSpeed(m_iTrack)) * 4.0f / float(Highlight);
 		CString String;
 		String.Format(_T("%.2f BPM"), BPM);
 		pCmdUI->Enable();
