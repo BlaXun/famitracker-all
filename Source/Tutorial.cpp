@@ -689,6 +689,10 @@ void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
 		}
 	}
 	SetWindowPos(pDialog, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	// The dialog on top again, as it should be already (Wine only moves a
+	// window up on the screen when it goes to the very top)
+	if (Front)
+		pDialog->SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void CTutorialBubble::Tick()
@@ -731,7 +735,7 @@ void CTutorialBubble::Tick()
 		GetWindowRect(&Note);
 		bool Raise = false;
 		if (HasSpot)
-			Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
+			Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, Front ? NULL : this);
 		else
 			m_Overlay.Hide();
 		m_LastSpot = Spot;
@@ -740,9 +744,13 @@ void CTutorialBubble::Tick()
 			ShowWindow(SW_SHOWNOACTIVATE);
 			Raise = true;
 		}
-		// Above the dimming
-		if (Raise && Front)
+		// The dimming over FamiTracker and the note above it, raised in that
+		// order: each to the very top, which Wine needs to restack a window
+		if (Raise && Front) {
+			if (m_Overlay.GetSafeHwnd() != NULL && m_Overlay.IsWindowVisible())
+				m_Overlay.SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 			SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		}
 	}
 
 	// Done: the frame turns green for a moment, then the next step
