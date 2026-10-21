@@ -2748,6 +2748,68 @@ std::vector<PartNote> DrumNotes(Session &S, int Channel, const std::vector<DrumH
 	return Notes;
 }
 
+// The drum kit asked for: the noise channel's (false), or sampled kick, snare
+// and toms (true)
+bool SampledKitArg(const Json &Args)
+{
+	const std::string Kit = Squeezed(StringArg(Args, "kit", "noise"));
+	if (Kit == "noise" || Kit == "synth" || Kit == "noisechannel")
+		return false;
+	if (Kit == "samples" || Kit == "sampled" || Kit == "sample" || Kit == "dpcm" || Kit == "sampledrums")
+		return true;
+	throw Problem("kit: noise (every drum on the noise channel) or samples (a sampled kick, snare and toms on the DPCM channel).");
+}
+
+// The song's DPCM channel, for sampled drums
+int DpcmChannel(Session &S)
+{
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind == KIND_DPCM)
+			return c;
+	throw Problem("The song has no DPCM channel for sampled drums.");
+}
+
+// A drum part's changes: the noise channel's hits, and the sampled ones on the
+// DPCM channel (Dpcm, -1 for none), which play the kit of add_sample_drums.
+// Where says where they went.
+void DrumChanges(Session &S, int Noise, int Dpcm, const std::vector<DrumHit> &Hits, int First, int End, int Loudest, bool DirectChange,
+	std::vector<Change> &Changes, std::string &Where, std::vector<std::string> &Warnings)
+{
+	std::vector<DrumHit> NoiseHits, Sampled;
+	for (size_t i = 0; i < Hits.size(); ++i)
+		(Hits[i].Sampled && Dpcm >= 0 ? Sampled : NoiseHits).push_back(Hits[i]);
+	Change C;
+	C.Channel = Noise;
+	BuildPart(S.Cells(Noise), First, End, DrumNotes(S, Noise, NoiseHits, First, End, Loudest), OptionsFor(S, Noise, DirectChange), C.Cells,
+		Warnings);
+	Changes.push_back(C);
+	Where = " on " + S.Channel(Noise).FullName();
+	if (Dpcm < 0 || Sampled.empty())
+		return;
+	const int Kit = SampleDrumsInstrument(S);
+	std::vector<PartNote> Notes;
+	for (size_t i = 0; i < Sampled.size(); ++i) {
+		const DrumHit &H = Sampled[i];
+		const DpcmKey *pKey = FindSampleDrum(H.Sound == "tom" ? (H.Pitch >= 8 ? "high tom" : "low tom") : H.Sound);
+		if (pKey == 0)
+			continue;
+		PartNote N;
+		N.Row = H.Row;
+		N.Rows = (i + 1 < Sampled.size() ? Sampled[i + 1].Row : End) - H.Row;	// each rings until the next
+		N.Pitch = pKey->Pitch;
+		N.Instrument = Kit;
+		Notes.push_back(N);
+	}
+	TidyPart(Notes, First, End);
+	if (HasNotesIn(S, Dpcm, First, End))
+		Warnings.push_back(S.Channel(Dpcm).FullName() + "'s notes in those bars were replaced by the sampled drums.");
+	Change D;
+	D.Channel = Dpcm;
+	BuildPart(S.Cells(Dpcm), First, End, Notes, OptionsFor(S, Dpcm, DirectChange), D.Cells, Warnings);
+	Changes.push_back(D);
+	Where = ": sampled kick and snare on " + S.Channel(Dpcm).FullName() + ", hi-hats on " + S.Channel(Noise).FullName();
+}
+
 // A lush chord instrument's name: the sound's, the chord's ("maj7", "m9",
 // "major"), and the pattern and frames when they aren't the usual ones:
 // "Lush maj7", "Pluck m7 down", "Lush m9, 3 frames"
@@ -3785,7 +3847,7 @@ std::string MixTool(Session &S, const Json &Args)
 	}
 
 	// The level at the start and where the loop comes back
-	std::string DacText;
+	std::string DacText, DacWarning;
 	if (Dac >= 0) {
 		int Dpcm = -1;
 		for (int c = 0; c < S.ChannelCount(); ++c)
@@ -3798,7 +3860,19 @@ std::string MixTool(Session &S, const Json &Args)
 		const int Loop = Flow_.LoopRow(S.Time.PatternLength);
 		if (Loop > First && Loop < End)
 			Rows.push_back(Loop);
+		// And on every sample the channel plays: a sample can start from a level of its own (the sampled drums
+		// start from silence) and leave the channel there, which would undo the level until the loop comes round
+		std::vector<int> Hits;
+		if (Dac > 0) {
+			const std::vector<NoteInfo> Played = NotesIn(S.Notes(Dpcm), First, End);
+			for (size_t i = 0; i < Played.size(); ++i)
+				if (std::find(Rows.begin(), Rows.end(), Played[i].Row) == Rows.end())
+					Hits.push_back(Played[i].Row);
+		}
+		const size_t Marks = Rows.size();
+		Rows.insert(Rows.end(), Hits.begin(), Hits.end());
 		std::vector<Cell> &Cells = D.Cells(Dpcm);
+		int Missed = 0;
 		for (size_t i = 0; i < Rows.size(); ++i) {
 			Cell &C = Cells[static_cast<size_t>(Rows[i])];
 			bool Placed = false;
@@ -3807,14 +3881,23 @@ std::string MixTool(Session &S, const Json &Args)
 					C.Param[k] = static_cast<unsigned char>(Dac);
 					Placed = true;
 				}
-			if (!Placed && !AddEffect(C, EFF_DAC, Dac, S.Channel(Dpcm).EffectColumns))
+			if (!Placed && !AddEffect(C, EFF_DAC, Dac, S.Channel(Dpcm).EffectColumns)) {
+				if (i >= Marks) {
+					++Missed;
+					continue;
+				}
 				throw Problem(Format("The DPCM channel has no free effect column at %s for the level; show another one in FamiTracker.",
 					S.Time.Position(Rows[i]).c_str()));
+			}
 		}
+		if (Missed > 0)
+			DacWarning = Format("%s had no free effect column for the level (show another one in FamiTracker), so the level "
+				"goes back to the sample's own after %s.", Plural(Missed, "sample", "samples").c_str(), Missed == 1 ? "it" : "them");
 		const int Share = static_cast<int>(std::floor(100.0 * TriangleShare(Dac) + 0.5));
-		DacText = Format("the DPCM level Z%02X at %s%s, so the triangle and the noise play at about %d%%", Dac,
-			S.Time.Position(First).c_str(), Rows.size() > 1 ? (" and where the loop starts (" + S.Time.Position(Rows[1]) + ")").c_str() : "",
-			Share);
+		DacText = Format("the DPCM level Z%02X at %s%s%s, so the triangle and the noise play at about %d%%", Dac,
+			S.Time.Position(First).c_str(), Marks > 1 ? (" and where the loop starts (" + S.Time.Position(Rows[1]) + ")").c_str() : "",
+			Hits.empty() ? "" : (" and with each of its " + Plural(static_cast<int>(Hits.size()), "sample", "samples") +
+				" (which would reset it)").c_str(), Share);
 		if (HasNotesIn(S, Dpcm, 0, S.Time.TotalRows()) && Dac > 0x40)
 			DacText += " (samples on the DPCM channel start from that level: at a high one they have less room and can clip; "
 				"Z30-Z40 suits songs with samples)";
@@ -3822,6 +3905,8 @@ std::string MixTool(Session &S, const Json &Args)
 
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings;
+	if (!DacWarning.empty())
+		Warnings.push_back(DacWarning);
 	int Start = First;
 	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" : "the mix";
 	What += ", " + RangeText(From, To) + ": ";
@@ -3982,21 +4067,21 @@ std::string AddDrumsTool(Session &S, const Json &Args)
 	O.FillEvery = IntArg(Args, "fill_every", 4, 0, 64);
 	O.PhraseStart = O.FillEvery > 0 ? (From - 1) % O.FillEvery : 0;
 	O.Crash = BoolArg(Args, "crash", true);
+	O.Samples = SampledKitArg(Args);
 	O.RowsPerBeat = R;
+	const int Dpcm = O.Samples ? DpcmChannel(S) : -1;
 	const std::vector<DrumHit> Hits = DrumPart(SongBarSpans(S, First, End), O);
 	if (Hits.empty())
 		throw Problem("There are no beats in those bars.");
-	const std::vector<PartNote> Notes = DrumNotes(S, Channel, Hits, First, End, IntArg(Args, "volume", 15, 1, 15));
 	std::vector<std::string> Warnings;
 	if (HasNotesIn(S, Channel, First, End))
 		Warnings.push_back(S.Channel(Channel).FullName() + "'s drums in those bars were replaced.");
-	Change C;
-	C.Channel = Channel;
-	BuildPart(S.Cells(Channel), First, End, Notes, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
-	std::vector<Change> Changes(1, C);
+	std::vector<Change> Changes;
+	std::string Where;
+	DrumChanges(S, Channel, Dpcm, Hits, First, End, IntArg(Args, "volume", 15, 1, 15), Direct(S, AsClip), Changes, Where, Warnings);
 	static const char *const INTENSITY[] = { "", "light", "", "busy" };
 	std::string What = std::string(INTENSITY[O.Intensity]) + (O.Intensity == 2 ? "" : " ") + Grooves()[static_cast<size_t>(O.Groove)].Name +
-		" drums on " + S.Channel(Channel).FullName();
+		" drums" + Where;
 	What += O.FillEvery > 0 ? Format(", a fill every %d bars", O.FillEvery) : std::string(", no fills");
 	What += ", " + RangeText(From, To);
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
@@ -4557,7 +4642,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		throw Problem(Format("Nothing plays a melody in %s yet. Write one with write_notes (or ask for a backing with "
 			"add_chords_and_bass and chords) first.", RangeText(From, To).c_str()));
 	const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
-	int Bass = -1, Drums = -1;
+	int Bass = -1, Drums = -1, Samples = -1;
 	std::vector<int> Chords, Voices, Echoes, Playing;
 	std::vector<std::string> Free;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
@@ -4575,8 +4660,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Drums = c;
 			continue;
 		}
-		if (Info.Kind == KIND_DPCM)
+		if (Info.Kind == KIND_DPCM) {
+			Samples = c;
 			continue;
+		}
 		if (IsBass(Info) && Bass < 0) {
 			Bass = c;
 			continue;
@@ -4614,7 +4701,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 	if (Bass >= 0)
 		Parts += "; bass on " + S.Channel(Bass).FullName();
 	if (Drums >= 0)
-		Parts += "; drums on " + S.Channel(Drums).FullName();
+		Parts += "; drums on " + S.Channel(Drums).FullName() + (Samples >= 0 ? " with samples on " + S.Channel(Samples).FullName() : "");
+	else if (Samples >= 0)
+		Parts += "; samples on " + S.Channel(Samples).FullName();
 	if (!Voices.empty())
 		Parts += "; another line on " + Names(Voices);
 	if (!Echoes.empty())
@@ -4732,6 +4821,18 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Tip(1.0, "The drums never change where a phrase ends: add_drums with fill_every 4 (or 8) adds fills and crashes.");
 		else if (Most * 10 >= BarCount * 9 && BarCount >= 8 && !Calm)
 			Tip(1.0, "The drums repeat one bar almost all the way: add_drums varies every other bar and fills phrase ends.");
+		// Every drum on the noise, one at a time
+		int Struck = 0;
+		for (size_t i = 0; i < Notes.size() && Samples < 0; ++i) {
+			const InstrumentInfo *pInfo = Notes[i].Row >= First && Notes[i].Row < End ? FindInstrument(S.Song, Notes[i].Instrument) : 0;
+			const std::string Name = pInfo == 0 ? std::string() : Lowercase(pInfo->Name);
+			if (Name.find("kick") != std::string::npos || Name.find("snare") != std::string::npos)
+				++Struck;
+		}
+		if (Samples < 0 && Struck >= 2 * BarCount && !Calm)
+			Tip(0.5, "Every drum plays on the noise channel, one at a time, so the hi-hats drop out under the kicks and snares: "
+				"add_drums with kit samples puts a sampled kick and snare on the DPCM channel, punchier, and leaves the noise to "
+				"the hi-hats.");
 	}
 
 	// The melody
@@ -4998,6 +5099,7 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	const int To = std::min(S.MaxBars(), From + IntArg(Args, "bars", 8, 1, 64) - 1);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+	const bool Sampled = SampledKitArg(Args);
 
 	// The key: as given, else the song's key note in the mood's mode
 	Key K;
@@ -5103,12 +5205,10 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		O.FillEvery = 4;
 		O.PhraseStart = (From - 1) % 4;
 		O.RowsPerBeat = R;
-		Change C;
-		C.Channel = DrumChannel;
-		BuildPart(S.Cells(DrumChannel), First, End, DrumNotes(S, DrumChannel, DrumPart(Bars, O), First, End, 15),
-			OptionsFor(S, DrumChannel, DirectChange), C.Cells, Warnings);
-		Changes.push_back(C);
-		Parts.push_back(std::string(Grooves()[static_cast<size_t>(M.Groove)].Name) + " drums on " + S.Channel(DrumChannel).FullName());
+		O.Samples = Sampled;
+		std::string Where;
+		DrumChanges(S, DrumChannel, Sampled ? DpcmChannel(S) : -1, DrumPart(Bars, O), First, End, 15, DirectChange, Changes, Where, Warnings);
+		Parts.push_back(std::string(Grooves()[static_cast<size_t>(M.Groove)].Name) + " drums" + Where);
 	}
 	std::string Summary;
 	for (size_t i = 0; i < Parts.size(); ++i)
@@ -9005,8 +9105,8 @@ std::string StudyModuleTool(Session &S, const Json &Args)
 	Out += "\nTo write in its style for the NES: keep its tempo and feel, form, chord movement, rhythms and groove, and boil its "
 		"channels down to the NES's: its lead on a pulse (or the VRC6 sawtooth for a big lead), its harmony, pads or chords on "
 		"the other pulse (held, or as 0xy arpeggios), its bass on the triangle, its drums on the noise channel with a sampled "
-		"kick and snare on the DPCM (add_sample_drums). Write melodies and progressions of your own: the " + What + " is for "
-		"its craft, not its tunes.";
+		"kick and snare on the DPCM (add_drums with kit samples). Write melodies and progressions of your own: the " + What +
+		" is for its craft, not its tunes.";
 	return Out;
 }
 
@@ -9499,6 +9599,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					"0 for none)."))
 				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
 				.Add("volume", Prop("integer", "The loudest hit's volume, 1-15 (default 15); the others follow."))
+				.Add("kit", EnumProp("noise (default): every drum on the noise channel, one at a time. samples: a sampled kick "
+					"and snare (and toms in fills) on the DPCM channel, from add_sample_drums's kit, so the noise keeps the hi-hats "
+					"where they'd give way: punchier, as many classic NES soundtracks do.",
+					std::vector<std::string>{ "noise", "samples" }))
 				.Add("channel", ChannelProp("The noise channel (default: the song's)."))
 				.Add("from_bar", BarProp("First bar. Default: where the song's parts start."))
 				.Add("to_bar", BarProp("Last bar. Default: where they end."))
@@ -9915,6 +10019,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
 				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
 				.Add("drum_channel", ChannelProp("The noise channel, or \"none\" for no drums. Default: it, when free."))
+				.Add("kit", EnumProp("The drums: noise (default) or samples (a sampled kick and snare on the DPCM channel, the "
+					"hi-hats on the noise), as add_drums.", std::vector<std::string>{ "noise", "samples" }))
 				.ClipChoice(),
 			false, true);
 	}
@@ -10043,7 +10149,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Adds a drum kit of samples for the DPCM channel, made for FamiTracker: a punchy kick, a snare and two toms, as one "
 		"instrument (\"Sample drums\"). Then write_notes on the DPCM channel plays them by name (kick, snare, low tom, high "
 		"tom). A sampled kick and snare under the noise channel's hi-hats is how many classic NES soundtracks get their punch "
-		"(Konami's, Nintendo's). The samples start from silence, so the triangle stays loud.",
+		"(Konami's, Nintendo's); add_drums and make_groove with kit samples write a whole drum part that way. The samples "
+		"start from silence, so the triangle stays loud (mix keeps a softer DPCM level on each of them).",
 		Schema(), false, false, true);
 
 	AddTool("import_nsf", "Open an NSF's tracks",
@@ -10225,8 +10332,9 @@ std::string ToolSet::Instructions()
 		"a beat later, volume 6, detune 1), chords as lush arpeggio instruments with sevenths and ninths (add_chords_and_bass "
 		"chord_style lush; make_groove nostalgic; on the VRC7, chord_style voices with its electric piano across FM "
 		"channels), a swing from alternating speeds (set_swing), a vibrato that waits on long notes, fades on held notes and "
-		"scoops after leaps (polish touches fades and scoops), a bouncing bass (touch staccato), and VRC6 bells and pianos or "
-		"VRC7 electric pianos. references action guide topic atmospheric has the numbers.\n"
+		"scoops after leaps (polish touches fades and scoops), a bouncing bass (touch staccato), a sampled kick and snare "
+		"under the noise channel's hi-hats (add_drums or make_groove with kit samples), and VRC6 bells and pianos or VRC7 "
+		"electric pianos. references action guide topic atmospheric has the numbers.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"
@@ -10257,9 +10365,9 @@ std::string ToolSet::Instructions()
 		"harmony, bass, drums), the rhythm grids and bass figures, the drum grooves, the tricks and the sounds. Take the craft, "
 		"not the tunes: write your own melodies, motifs and chord progressions, and never copy a reference's notes or its exact "
 		"progression. reference_sound gives a song a reference's instrument as it was (its duty click, bloom, echo, vibrato); "
-		"design_instrument makes your own in the same spirit; add_sample_drums gives the DPCM channel a sampled kick, snare "
-		"and toms (write_notes plays them by name) for the punch of those soundtracks. Tell the user which references you "
-		"leaned on and how.";
+		"design_instrument makes your own in the same spirit; add_drums with kit samples (or add_sample_drums and write_notes) "
+		"gives the DPCM channel a sampled kick, snare and toms for the punch of those soundtracks. Tell the user which "
+		"references you leaned on and how.";
 }
 
 const std::vector<PromptInfo> &ToolSet::Prompts()

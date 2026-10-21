@@ -365,7 +365,11 @@ avoid that, and gives it tools for each layer:
 - **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,
   breakbeat, calm, driving, waltz; light, normal or busy; an open hi-hat into
   every other bar, fills that take turns (toms, a snare roll, kick and snare)
-  and crashes.
+  and crashes. With `kit` samples (also in `make_groove`) the kick, the snare
+  and the fills' toms are the sampled drums of `add_sample_drums` on the DPCM
+  channel, and the noise channel keeps the hi-hats on the rows where it would
+  otherwise give them up to a kick or a snare; `mix` writes its DPCM level on
+  each sample, which would otherwise start it from silence.
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps

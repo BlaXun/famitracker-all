@@ -1035,7 +1035,8 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 
 // Drums
 
-DrumOptions::DrumOptions() : Groove(GROOVE_BASIC), Intensity(2), FillEvery(4), PhraseStart(0), Crash(true), RowsPerBeat(4)
+DrumOptions::DrumOptions() : Groove(GROOVE_BASIC), Intensity(2), FillEvery(4), PhraseStart(0), Crash(true), Samples(false),
+	RowsPerBeat(4)
 {
 }
 
@@ -1071,6 +1072,7 @@ DrumHit Hit(int Row, int Pitch, int Volume, const char *Sound)
 	H.Pitch = Pitch;
 	H.Volume = Clamp(Volume, 1, 15);
 	H.Sound = Sound;
+	H.Sampled = false;
 	return H;
 }
 
@@ -1199,15 +1201,20 @@ std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOption
 		if (O.Crash && ((b == 0 && O.PhraseStart == 0) || AfterFill))
 			Bar16.push_back(Hit(Bar.Row, CRASH_PITCH, 15, "crash"));
 
-		// One sound a row: the one that matters most. The noise channel plays
-		// one sound at a time, so no hi-hat for a beat after a crash, which it
-		// would cut off.
+		// Sampled drums: the kick, the snare (its ghost notes stay soft on the
+		// noise) and the toms
+		if (O.Samples)
+			for (size_t i = 0; i < Bar16.size(); ++i)
+				Bar16[i].Sampled = Bar16[i].Sound == "kick" || Bar16[i].Sound == "tom" || (Bar16[i].Sound == "snare" && Bar16[i].Volume >= 9);
+		// One sound a row on each channel: the one that matters most. The
+		// noise channel plays one sound at a time, so no hi-hat for a beat
+		// after a crash, which it would cut off.
 		std::stable_sort(Bar16.begin(), Bar16.end(), [](const DrumHit &a, const DrumHit &b) {
-			return a.Row < b.Row || (a.Row == b.Row && Priority(a) > Priority(b));
+			return a.Row < b.Row || (a.Row == b.Row && (a.Sampled != b.Sampled ? a.Sampled : Priority(a) > Priority(b)));
 		});
 		int Crash = -1;
 		for (size_t i = 0; i < Bar16.size(); ++i) {
-			if (i > 0 && Bar16[i].Row == Bar16[i - 1].Row)
+			if (i > 0 && Bar16[i].Row == Bar16[i - 1].Row && Bar16[i].Sampled == Bar16[i - 1].Sampled)
 				continue;
 			if (Bar16[i].Sound == "crash")
 				Crash = Bar16[i].Row;

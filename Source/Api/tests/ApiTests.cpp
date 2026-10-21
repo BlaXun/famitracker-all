@@ -2053,6 +2053,51 @@ void TestSampleDrums()
 	}
 	CHECK_HAS(Run(Fresh, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"cowbell\", "
 		"\"beats\": 1}]}").Text, "isn't a drum or a key");
+
+	// add_drums with the sampled kit: the kick and snare on the DPCM channel, the hi-hats kept on the noise where they'd give way
+	FakeSong Kit2;
+	Kit2.Info.DirectChanges = true;
+	Result = Run(Kit2, "add_drums", "{\"groove\": \"basic\", \"kit\": \"samples\", \"from_bar\": 1, \"to_bar\": 4}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "basic drums: sampled kick and snare on 2A03 DPCM, hi-hats on 2A03 Noise, a fill every 4 bars, bars 1-4");
+	CHECK_HAS(Result.Text, "Added the instrument \"Sample drums\" (06)");
+	CHECK(Kit2.Rows[4][0].Pitch() == 36 && Kit2.Rows[4][0].Instrument == 6 && Kit2.Rows[4][4].Pitch() == 38 && Kit2.Rows[4][8].Pitch() == 36);
+	CHECK(Kit2.Rows[3][4].HasNote() && Kit2.Rows[3][4].Pitch() == 0xE && Kit2.Rows[3][8].Pitch() == 0xE);	// hats under the snare and kick
+	CHECK(Kit2.Rows[3][0].Pitch() == 0xC && !Kit2.Rows[3][2].HasNote());	// the crash, and no hat to cut it short
+	{
+		// Ghost snares stay soft on the noise; the fill's toms are sampled
+		bool HighTom = false, LowTom = false;
+		for (int r = 48; r < 64; ++r) {
+			HighTom = HighTom || Kit2.Rows[4][r].Pitch() == 45;
+			LowTom = LowTom || Kit2.Rows[4][r].Pitch() == 41;
+		}
+		CHECK(HighTom && LowTom);
+	}
+	CHECK_HAS(Run(Kit2, "add_drums", "{\"kit\": \"cowbells\", \"from_bar\": 1}").Text, "kit: noise");
+	// A groove with it; the mix holds its level through every sample
+	FakeSong Groove;
+	Groove.Info.DirectChanges = true;
+	Result = Run(Groove, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 4, \"kit\": \"samples\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "drums: sampled kick and snare on 2A03 DPCM, hi-hats on 2A03 Noise");
+	Result = Run(Groove, "mix", "{}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "the DPCM level Z30 at bar 1 beat 1 and with each of its ");
+	CHECK_HAS(Result.Text, "samples (which would reset it)");
+	int Hits = 0, Held = 0;
+	for (size_t r = 0; r < Groove.Rows[4].size(); ++r) {
+		if (!Groove.Rows[4][r].HasNote())
+			continue;
+		++Hits;
+		Held += Groove.Rows[4][r].Effect[0] == EFF_DAC && Groove.Rows[4][r].Param[0] == 0x30 ? 1 : 0;
+	}
+	CHECK(Hits >= 8 && Held == Hits);
+	CHECK_HAS(Run(Groove, "review_arrangement", "{}").Text, "drums on 2A03 Noise with samples on 2A03 DPCM");
+	// Every drum on the noise: the review suggests the samples
+	FakeSong Noisy;
+	Noisy.Info.DirectChanges = true;
+	CHECK(!Run(Noisy, "make_groove", "{\"mood\": \"upbeat\", \"key\": \"C major\", \"bars\": 8}").IsError);
+	CHECK_HAS(Run(Noisy, "review_arrangement", "{}").Text, "add_drums with kit samples puts a sampled kick and snare on the DPCM channel");
 }
 
 void TestInstruments()

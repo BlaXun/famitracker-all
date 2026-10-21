@@ -131,12 +131,14 @@ struct BassOptions {
 };
 std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const BassOptions &Options);
 
-// Drums on the noise channel
+// Drums on the noise channel, or with their kick, snare and toms sampled on
+// the DPCM channel
 struct DrumHit {
 	int Row;
-	int Pitch;			// noise 0-15
+	int Pitch;			// noise 0-15 (a tom's: high 9, middle 7, low 5)
 	int Volume;
 	std::string Sound;	// the preset that plays it: kick, snare, hi-hat, open hi-hat, crash or tom
+	bool Sampled;		// a sample on the DPCM channel plays it (Samples)
 };
 struct DrumOptions {
 	int Groove;			// groove
@@ -144,6 +146,7 @@ struct DrumOptions {
 	int FillEvery;		// a fill ends every so many bars; 0 for none
 	int PhraseStart;	// bars of the phrase before the first one, so fills land where phrases end
 	bool Crash;			// a crash where the drums start and after each fill
+	bool Samples;		// kicks, snares (not ghost notes) and toms sampled: the noise keeps the hi-hats on those rows
 	int RowsPerBeat;
 	DrumOptions();
 };
