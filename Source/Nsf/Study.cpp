@@ -689,22 +689,30 @@ int BarPhase(const std::vector<std::vector<Played> > &Notes, const std::vector<i
 			Beat[p.Row % RowsPerBeat] += std::min(w, 1.5);
 		}
 	}
+	// The snare: the noise's, or else the longest of two or more samples (a
+	// snare's tail is longer than a kick's)
+	int Longest = -1, Samples = 0;
 	for (size_t v = 0; v < Voices.size(); ++v)
+		if (Voices[v].Dpcm && Voices[v].Sample >= 0) {
+			++Samples;
+			if (Longest < 0 || SampleSizes[Voices[v].Sample] > SampleSizes[Voices[Longest].Sample])
+				Longest = int(v);
+		}
+	// The other drums mark the beats (a snare can sit between them)
+	for (size_t v = 0; v < Voices.size(); ++v) {
+		if (Voices[v].Name == "snare" || (Samples >= 2 && int(v) == Longest))
+			continue;
 		for (size_t i = 0; i < Voices[v].Rows.size(); ++i)
-			Beat[Voices[v].Rows[i] % RowsPerBeat] += 1;
+			Beat[Voices[v].Rows[i] % RowsPerBeat] += 2;
+	}
 	const int Half = RowsPerBar / 2;
 	const int Default = LoopRow > 0 ? LoopRow % RowsPerBar : 0;
 	auto ScoreAt = [&](int ph) { return W[ph] + 0.5 * W[(ph + Half) % RowsPerBar]; };
-	// A backbeat: the noise snare, or else the longest sample on two places a
-	// bar (a snare's tail is longer than a kick's)
+	// A backbeat: the snare on two places a bar, half a bar apart
 	int Back = -1;
 	for (size_t v = 0; v < Voices.size() && Back < 0; ++v)
 		if (Voices[v].Backbeat >= 0 && Voices[v].Name == "snare")
 			Back = Voices[v].Backbeat;
-	int Longest = -1;
-	for (size_t v = 0; v < Voices.size() && Back < 0; ++v)
-		if (Voices[v].Dpcm && Voices[v].Sample >= 0 && (Longest < 0 || SampleSizes[Voices[v].Sample] > SampleSizes[Voices[Longest].Sample]))
-			Longest = int(v);
 	if (Back < 0 && Longest >= 0)
 		Back = Voices[Longest].Backbeat;
 	if (Back >= 0) {
