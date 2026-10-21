@@ -23,9 +23,13 @@
 // text. The same conversion FamiTracker's File > Import NSF does.
 //
 //   nsf2ftm music.nsf music.txt [-tracks 1,3-5] [-seconds 600] [-list]
+//
+// It also studies tracker modules (MOD, S3M, XM, IT) for how they're made,
+// from their pattern data: nsf2ftm song.xm -study
 
 #include "../Import.h"
 #include "../Study.h"
+#include "../Tracker.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -39,10 +43,12 @@ int main(int argc, char **argv)
 			"  nsf2ftm music.nsf music.txt [-tracks 1,3-5] [-seconds 600]\n"
 			"  nsf2ftm music.nsf -study [-tracks 1,3-5] [-seconds 600]\n"
 			"  nsf2ftm music.nsf -survey\n"
-			"  nsf2ftm music.nsf -list\n\n"
+			"  nsf2ftm music.nsf -list\n"
+			"  nsf2ftm song.xm -study\n\n"
 			"Tracks count from 1; all of them by default. Open the text in FamiTracker\n"
 			"with File > Import text. -study says how each track is made instead,\n"
-			"-survey which tracks are music.\n");
+			"-survey which tracks are music. A tracker module (MOD, S3M, XM or IT) can\n"
+			"only be studied.\n");
 		return 1;
 	}
 	const std::string In = argv[1];
@@ -70,8 +76,24 @@ int main(int argc, char **argv)
 	nsf::NsfFile File;
 	std::string Error;
 	if (!nsf::ReadNsfFile(In, File, Error)) {
-		std::fprintf(stderr, "nsf2ftm: %s\n", Error.c_str());
-		return 2;
+		// A tracker module, to study
+		nsf::TrackerSong Song;
+		std::string TrackerError;
+		if (!nsf::ReadTrackerFile(In, Song, TrackerError)) {
+			std::fprintf(stderr, "nsf2ftm: %s\n", Error.c_str());
+			return 2;
+		}
+		std::printf("%s\n", nsf::DescribeTracker(Song).c_str());
+		if (!Study)
+			return 0;
+		nsf::Module M;
+		nsf::TrackReport Report;
+		if (!nsf::TrackerToModule(Song, M, Report, TrackerError)) {
+			std::fprintf(stderr, "nsf2ftm: %s\n", TrackerError.c_str());
+			return 3;
+		}
+		std::printf("\n%s", nsf::DescribeStudy(nsf::StudyTrack(M, 0, Report)).c_str());
+		return 0;
 	}
 	std::printf("%s\n", nsf::DescribeNsf(File).c_str());
 	if (Survey) {

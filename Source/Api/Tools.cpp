@@ -35,6 +35,7 @@
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
+#include "../Nsf/Tracker.h"
 #include "../Transcribe/Transcribe.h"
 
 #include <algorithm>
@@ -6370,6 +6371,58 @@ std::string StudyNsfTool(Session &S, const Json &Args)
 	return Out + Left;
 }
 
+// A tracker module (MOD, S3M, XM, IT) studied from its pattern data, kept in the library
+std::string StudyModuleTool(Session &S, const Json &Args)
+{
+	const std::string Path = WindowsPath(StringArg(Args, "path"));
+	if (Path.empty())
+		throw Problem("Give the path of the module (\"path\"): a MOD, S3M, XM or IT file on the user's computer, as Windows "
+			"writes it, like C:\\Users\\Name\\Music\\song.xm.");
+	nsf::TrackerSong Song;
+	std::string Error;
+	if (!nsf::ReadTrackerFile(S.Host().LocalPath(Path), Song, Error))
+		throw Problem("The module " + Path + " couldn't be read: " + Error + ". Give the path of a MOD, S3M, XM or IT file as "
+			"Windows writes it.");
+	nsf::Module M;
+	nsf::TrackReport Report;
+	if (!nsf::TrackerToModule(Song, M, Report, Error))
+		throw Problem("The module " + Path + " couldn't be studied: " + Error + ".");
+	const nsf::TrackStudy Study = nsf::StudyTrack(M, 0, Report);
+	Reference R = MakeModuleReference(Song, Study, Path, Today());
+	const bool Keep = BoolArg(Args, "save", true);
+	const std::vector<std::string> Tags = TagsArg(Args, "tags");
+	const std::string Notes = StringArg(Args, "notes");
+	std::string Written;
+	if (Keep) {
+		// Studied again: what the user tagged and noted stays
+		std::string Old, Why;
+		Reference Before;
+		if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why)) {
+			for (size_t t = 0; t < Before.Tags.size(); ++t)
+				if (std::find(R.Tags.begin(), R.Tags.end(), Before.Tags[t]) == R.Tags.end())
+					R.Tags.push_back(Before.Tags[t]);
+			R.Notes = Before.Notes;
+		}
+		for (size_t t = 0; t < Tags.size(); ++t)
+			if (std::find(R.Tags.begin(), R.Tags.end(), Tags[t]) == R.Tags.end())
+				R.Tags.push_back(Tags[t]);
+		if (!Notes.empty())
+			R.Notes = R.Notes.empty() ? Notes : R.Notes + " " + Notes;
+		SaveReference(S, R, Written);
+	}
+	else if (!Notes.empty())
+		R.Notes = Notes;
+	std::string Out = ValidUtf8(nsf::DescribeTracker(Song)) + "\n" + ReferenceText(R);
+	Out += Keep ? "Kept in the reference library" + (Written.empty() ? std::string() : " (" + Written + ")") + ": references finds "
+		"it again." : std::string("Not kept (save was false).");
+	Out += "\nTo write in its style for the NES: keep its tempo and feel, form, chord movement, rhythms and groove, and boil its "
+		"channels down to the NES's: its lead on a pulse (or the VRC6 sawtooth for a big lead), its harmony, pads or chords on "
+		"the other pulse (held, or as 0xy arpeggios), its bass on the triangle, its drums on the noise channel with a sampled "
+		"kick and snare on the DPCM (add_sample_drums). Write melodies and progressions of your own: the module is for its "
+		"craft, not its tunes.";
+	return Out;
+}
+
 std::string ReferencesTool(Session &S, const Json &Args)
 {
 	const std::string Action = Lowercase(StringArg(Args, "action", "list"));
@@ -6380,14 +6433,16 @@ std::string ReferencesTool(Session &S, const Json &Args)
 		const std::vector<Reference> All = ReadLibrary(S, &Broken);
 		std::string Out;
 		if (All.empty())
-			Out = "The reference library is empty. study_nsf studies tracks of NSF files the user has and keeps them here.";
+			Out = "The reference library is empty. study_nsf studies tracks of NSF files the user has and keeps them here; "
+				"study_module studies their MOD, S3M, XM and IT modules.";
 		else {
 			Out = Format("%s in the library:\n", Plural(static_cast<int>(All.size()), "reference", "references").c_str());
 			std::string Game = "\x01";
 			for (size_t i = 0; i < All.size(); ++i) {
 				if (All[i].Game != Game) {
 					Game = All[i].Game;
-					Out += (Game.empty() ? std::string("Other") : Game) + (All[i].Composer.empty() ? std::string() : " (" + All[i].Composer + ")") + ":\n";
+					Out += (Game.empty() ? std::string("Modules and others") : Game) + (All[i].Composer.empty() ? std::string() : " (" +
+					All[i].Composer + ")") + ":\n";
 				}
 				Out += "- " + ReferenceLine(All[i]) + "\n";
 			}
@@ -6414,7 +6469,8 @@ std::string ReferencesTool(Session &S, const Json &Args)
 		std::sort(Found.begin(), Found.end());
 		std::string Out;
 		if (Found.empty())
-			Out = All.empty() ? "The reference library is empty (study_nsf adds to it)." : "No reference matches \"" + Query + "\".";
+			Out = All.empty() ? "The reference library is empty (study_nsf and study_module add to it)." :
+				"No reference matches \"" + Query + "\".";
 		else {
 			Out = Format("References for \"%s\", best first:\n", Query.c_str());
 			for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i)
@@ -6454,6 +6510,9 @@ std::string ReferencesTool(Session &S, const Json &Args)
 std::string ReferenceSoundTool(Session &S, const Json &Args)
 {
 	const Reference R = FindReference(S, StringArg(Args, "reference"));
+	if (R.Sounds.empty() && std::find(R.Tags.begin(), R.Tags.end(), "tracker-module") != R.Tags.end())
+		throw Problem("The reference " + R.Id + " is a tracker module's: its sounds are samples, which the NES's chips can't play. "
+			"design_instrument makes sounds in their spirit (its study names its instruments and what they play).");
 	if (R.Sounds.empty())
 		throw Problem("The reference " + R.Id + " has no sounds to use.");
 	const int Number = IntArg(Args, "sound", 1, 1, static_cast<int>(R.Sounds.size()));
@@ -7145,8 +7204,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("save", Prop("boolean", "Keep them in the library (default true).")),
 		false);
 
+	AddTool("study_module", "Study a tracker module",
+		"Studies a music module from a PC tracker that the user has (MOD, S3M, XM or IT) for how it's made, from its pattern "
+		"data alone (its samples aren't read), and keeps it as a reference in the user's library, as study_nsf does for NSF "
+		"tracks: tempo and form, key and the chords bar by bar, each channel's role, register, rhythm (its commonest bar as a "
+		"grid), intervals and instruments by name, the bass's figure, the drums' grooves (drums told by their instruments' "
+		"names), the tricks between channels and the techniques written into the patterns (arpeggios, vibrato, portamento, "
+		"volume slides). Use it when the user wants music like a module of theirs: the study is for writing something of "
+		"your own in its style, never a copy of its notes, and its many channels boil down to the NES's few.",
+		Schema()
+			.Add("path", Prop("string", "The module file, as Windows writes it: C:\\Users\\Name\\Music\\song.xm."), true)
+			.Add("tags", WordListProp("Words to find it by later, like [\"chiptune\", \"upbeat\"]."))
+			.Add("notes", Prop("string", "A note to keep with it, like \"the user wants a NES track that feels like this\"."))
+			.Add("save", Prop("boolean", "Keep it in the library (default true).")),
+		false);
+
 	AddTool("references", "The reference library",
-		"The user's library of studied tracks (study_nsf adds to it) and the built-in guide to the classic NES styles "
+		"The user's library of studied tracks (study_nsf and study_module add to it) and the built-in guide to the classic NES styles "
 		"(Konami, Capcom, Nintendo: grooves, bass figures, sounds, tricks). When the user wants music like a game, a composer "
 		"or a reference, or in a style, search here first and lean on what you find: its tempo and feel, form, harmonic color, "
 		"how the channels share the parts, rhythm grids, drum grooves, tricks and sounds. Write your own melodies and chord "
@@ -7265,6 +7339,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "vary_part") Result.Text = VaryPartTool(S, Args);
 		else if (Name == "soundtrack_notes") Result.Text = SoundtrackNotesTool(S, Args);
 		else if (Name == "study_nsf") Result.Text = StudyNsfTool(S, Args);
+		else if (Name == "study_module") Result.Text = StudyModuleTool(S, Args);
 		else if (Name == "references") Result.Text = ReferencesTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
@@ -7347,8 +7422,9 @@ std::string ToolSet::Instructions()
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
 		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
 		"user what you changed and why.\n"
-		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have; references lists, "
-		"shows and searches them), and references action guide is a built-in guide to the classic NES styles. When the user "
+		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
+		"MOD, S3M, XM and IT modules; references lists, shows and searches them), and references action guide is a built-in "
+		"guide to the classic NES styles. When the user "
 		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man...), or says to use the "
 		"references, search the library and the guide first and plan from what you find: the tempo and feel, the form, the "
 		"harmonic color (modes, borrowed chords, how often chords change), how the channels share the parts (lead, echo, "

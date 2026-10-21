@@ -243,7 +243,13 @@ when ready.
   A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
   encoded here) plays on the DPCM channel by name (`add_sample_drums`).
 
-  Next: music modules (MOD, XM, S3M, IT) as style references for new tracks.
+  Music modules as references (asked for in October 2026): `study_module`
+  studies a MOD, S3M, XM or IT file from its patterns alone and keeps it in
+  the same library, so Claude can write NES music in its style ("similar,
+  but not a copy": the tunes aren't kept, and its samples aren't read).
+  Drums are told by their instruments' names or by playing one note; an
+  instrument with a sample a key splits into its drums; the song is
+  followed through its breaks and jumps.
 
 ## Open questions
 

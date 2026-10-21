@@ -1560,6 +1560,46 @@ void WriteTestNsf(const std::string &Path)
 	M3u << "api_tests_study.nsf::NSF,1,Lava Run,0:00:40,,0:00:05\n";
 }
 
+// A ProTracker module written to Path: four bars in A minor with a bass, a
+// lead, and a kick and snare named as drums
+void WriteTestMod(const std::string &Path)
+{
+	std::vector<uint8_t> b(1084 + 1024, 0);
+	const char *Title = "Test Song";
+	std::memcpy(&b[0], Title, std::strlen(Title));
+	const char *Names[] = { "Bass", "Lead", "Kick", "Snare" };
+	for (int s = 0; s < 4; ++s)
+		std::memcpy(&b[20 + s * 30], Names[s], std::strlen(Names[s]));
+	b[950] = 1;
+	b[951] = 127;
+	b[952] = 0;
+	std::memcpy(&b[1080], "M.K.", 4);
+	static const int PERIODS[12] = { 856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453 };
+	auto Cell = [&](int Row, int Channel, int Sample, int Note, int Effect, int Param) {
+		const size_t At = 1084 + (static_cast<size_t>(Row) * 4 + Channel) * 4;
+		int Period = PERIODS[Note % 12];
+		for (int o = 0; o < Note / 12; ++o)
+			Period /= 2;
+		b[At] = static_cast<uint8_t>((Sample & 0xF0) | ((Period >> 8) & 15));
+		b[At + 1] = static_cast<uint8_t>(Period & 255);
+		b[At + 2] = static_cast<uint8_t>(((Sample & 15) << 4) | (Effect & 15));
+		b[At + 3] = static_cast<uint8_t>(Param);
+	};
+	static const int LEAD[8] = { 21, 24, 28, 26, 24, 23, 21, 19 };
+	for (int r = 0; r < 64; ++r) {
+		if (r % 4 == 0)
+			Cell(r, 0, 1, (r / 16) % 2 ? 4 : 9, 0, 0);
+		if (r % 8 == 0)
+			Cell(r, 1, 2, LEAD[r / 8], 4, 0x46);
+		if (r % 16 == 0 || r % 16 == 8)
+			Cell(r, 2, 3, 12, 0, 0);
+		if (r % 16 == 4 || r % 16 == 12)
+			Cell(r, 3, 4, 12, 0, 0);
+	}
+	std::ofstream Mod(Path.c_str(), std::ios::binary);
+	Mod.write(reinterpret_cast<const char *>(&b[0]), static_cast<std::streamsize>(b.size()));
+}
+
 void TestReferences()
 {
 	// Ids, the file read back, a sound as a preset for either chip
@@ -1673,6 +1713,35 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "Imported 1 track of \"Tester Song\"");
 	CHECK_HAS(Result.Text, "It's open in FamiTracker as a new module");
 	CHECK_HAS(Song.OpenedText, "TRACK");
+
+	// study_module: a tracker module's study, kept like an NSF's, without sounds
+	const std::string ModPath = "api_tests_study.mod";
+	WriteTestMod(ModPath);
+	Result = Run(Song, "study_module", "{\"path\": \"" + ModPath + "\", \"tags\": \"upbeat\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Test Song: a MOD module of 4 channels, 1 order, 4 named instruments");
+	CHECK_HAS(Result.Text, "Reference \"test-song-mod\"");
+	CHECK_HAS(Result.Text, "Tempo: 125 BPM, 4 rows a beat (speed 6, tempo 125)");
+	CHECK_HAS(Result.Text, "Key: A minor");
+	CHECK_HAS(Result.Text, "Channel 2, the lead");
+	CHECK_HAS(Result.Text, "kick 'Kick'");
+	CHECK_HAS(Result.Text, "snare 'Snare'");
+	CHECK_HAS(Result.Text, "To write in its style for the NES");
+	CHECK(Song.Library.count("test-song-mod.json") == 1);
+	CHECK(ReadReferenceFile(Song.Library["test-song-mod.json"], Kept, Error));
+	CHECK(Kept.Sounds.empty() && Kept.Game.empty() && Kept.Track == 0);
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "mod") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "tracker-module") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "vibrato") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "upbeat") != Kept.Tags.end());
+	CHECK_HAS(Run(Song, "references", "{}").Text, "Modules and others:\n- test-song-mod: Test Song, 125 BPM, A minor");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"search\", \"query\": \"tracker module\"}").Text, "- test-song-mod");
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"test-song-mod\"}").Text, "its sounds are samples");
+	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"no_such_file.xm\"}").Text, "couldn't be read");
+	CHECK_HAS(Run(Song, "study_module", "{\"path\": \"" + Path + "\"}").Text, "not a module");
+	CHECK_HAS(Run(Song, "study_module", "{}").Text, "Give the path of the module");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"test-song-mod\"}").Text, "Deleted the reference");
+	std::remove(ModPath.c_str());
 
 	// delete
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"tester-song-01\"}").Text, "Deleted the reference tester-song-01");

@@ -643,6 +643,7 @@
     <ClCompile Include="Source\Nsf\Import.cpp" />
     <ClCompile Include="Source\Nsf\Simulate.cpp" />
     <ClCompile Include="Source\Nsf\Study.cpp" />
+    <ClCompile Include="Source\Nsf\Tracker.cpp" />
     <ClCompile Include="Source\ImportNsfDlg.cpp" />
     <ClInclude Include="Source\Nsf\Cpu6502.h" />
     <ClInclude Include="Source\Nsf\NsfFile.h" />
@@ -653,6 +654,7 @@
     <ClInclude Include="Source\Nsf\Import.h" />
     <ClInclude Include="Source\Nsf\Simulate.h" />
     <ClInclude Include="Source\Nsf\Study.h" />
+    <ClInclude Include="Source\Nsf\Tracker.h" />
     <ClInclude Include="Source\ImportNsfDlg.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

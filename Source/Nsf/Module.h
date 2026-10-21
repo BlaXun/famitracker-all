@@ -34,6 +34,10 @@ namespace nsf {
 // FamiTracker's expansion chip numbers (SNDCHIP_*)
 enum expansion_t { EXP_NONE = 0, EXP_VRC6 = 1, EXP_VRC7 = 2, EXP_FDS = 4, EXP_MMC5 = 8, EXP_N163 = 16 };
 
+// The channels of a module with a layout of its own (a tracker module's, for
+// a study): notes, or drums
+enum layout_kind { LAYOUT_MELODIC, LAYOUT_DRUMS };
+
 // Macro (sequence) types and arpeggio settings
 enum seq_type { SEQ_VOLUME, SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH, SEQ_DUTY, SEQ_TYPES };
 enum arp_setting { ARP_ABSOLUTE = 0, ARP_FIXED = 1, ARP_RELATIVE = 2 };
@@ -77,6 +81,8 @@ struct Instrument {
 	int ModRate, ModDepth, ModDelay;
 	int WaveSize, WavePos;		// N163
 	std::vector<std::vector<int> > Waves;
+	std::string Drum;			// a tracker module's drum (Tracker.h): "kick", "snare", "hi-hat", "cymbal", "tom",
+								// "percussion", or "drum" when its name doesn't say; "" for notes
 	Instrument() : Kind(INST_2A03), Patch(1), ModRate(0), ModDepth(0), ModDelay(0), WaveSize(32), WavePos(0)
 	{
 		for (int i = 0; i < 8; ++i)
@@ -131,6 +137,11 @@ struct Module {
 	std::vector<std::string> SampleNames;
 	std::vector<Instrument> Instruments;
 	std::vector<Track> Tracks;
+	// A layout of its own in place of the chips' channels (a tracker module's,
+	// Tracker.h): a name and a layout_kind for each channel. Such a module is
+	// for studying; it isn't written as FamiTracker text.
+	std::vector<std::string> ChannelNames;
+	std::vector<int> ChannelKinds;
 
 	Module() : Machine(0), FrameRate(0), Expansion(EXP_NONE), N163Channels(0) {}
 	int ChannelCount() const;
@@ -140,6 +151,8 @@ struct Module {
 
 // The channel names of a module's columns, for the text and reports
 std::vector<std::string> ModuleChannelNames(int Expansion, int N163Channels);
+// The module's channel names: its own layout's, or its chips'
+std::vector<std::string> ChannelNamesOf(const Module &M);
 
 // FamiTracker's text format; ASCII only (other characters become '?')
 std::string WriteText(const Module &M);

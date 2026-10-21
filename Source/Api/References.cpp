@@ -24,6 +24,7 @@
 #include "Music.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
+#include "../Nsf/Tracker.h"
 
 #include <algorithm>
 #include <cctype>
@@ -279,21 +280,34 @@ size_t CountOf(const std::string &Text, const std::string &Word)
 
 }	// namespace
 
+// "Bucky O'Hare" -> "bucky-o-hare": letters and digits, at most 32
+std::string Slug(const std::string &Text, const char *Otherwise)
+{
+	std::string Out;
+	for (size_t i = 0; i < Text.size() && Out.size() < 32; ++i) {
+		const unsigned char c = static_cast<unsigned char>(Text[i]);
+		if (c < 0x80 && std::isalnum(c))
+			Out += static_cast<char>(std::tolower(c));
+		else if (!Out.empty() && Out[Out.size() - 1] != '-')
+			Out += '-';
+	}
+	while (!Out.empty() && Out[Out.size() - 1] == '-')
+		Out.erase(Out.size() - 1);
+	return Out.empty() ? std::string(Otherwise) : Out;
+}
+
 std::string ReferenceId(const std::string &Game, int Track)
 {
-	std::string Slug;
-	for (size_t i = 0; i < Game.size() && Slug.size() < 32; ++i) {
-		const unsigned char c = static_cast<unsigned char>(Game[i]);
-		if (c < 0x80 && std::isalnum(c))
-			Slug += static_cast<char>(std::tolower(c));
-		else if (!Slug.empty() && Slug[Slug.size() - 1] != '-')
-			Slug += '-';
-	}
-	while (!Slug.empty() && Slug[Slug.size() - 1] == '-')
-		Slug.erase(Slug.size() - 1);
-	if (Slug.empty())
-		Slug = "nsf";
-	return Slug + Format("-%02d", Track);
+	return Slug(Game, "nsf") + Format("-%02d", Track);
+}
+
+std::string ModuleReferenceId(const std::string &Title, const std::string &Format)
+{
+	return Slug(Title, "module") + "-" + Lowercase(Format);
+}
+
+namespace {
+void AddTechniqueTags(Reference &R);
 }
 
 Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStudy &Study, const std::string &Source,
@@ -358,6 +372,15 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 	const std::vector<std::string> Chips = Words(R.Chips);
 	for (size_t i = 0; i < Chips.size(); ++i)
 		AddTag(R.Tags, Chips[i]);
+	AddTechniqueTags(R);
+	return R;
+}
+
+namespace {
+
+// Tags for the techniques its study found
+void AddTechniqueTags(Reference &R)
+{
 	const std::string Text = Lowercase(R.Study);
 	struct { const char *Found, *Tag; } const TECHNIQUES[] = {
 		{ "duty click", "duty-click" }, { "bloom", "bloom" }, { "swell in slowly", "swells" },
@@ -370,10 +393,43 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 		{ "syncopated", "syncopated" }, { "octave jumps", "octave-jumps" }, { "x.xx x.xx", "gallop" },
 		{ "snare-like (on beats 2 and 4)", "backbeat" }, { "on the off-beats", "offbeat-snare" }, { "dpcm:", "dpcm-drums" },
 		{ "hardware sweep", "sweep" },
+		// Tracker modules'
+		{ "written into the patterns (4xy)", "vibrato" }, { "glide into the next", "portamento" }, { "volume slides", "volume-slides" },
+		{ "held notes (a pad)", "pads" }, { "(drums):", "drums" }, { " drums:", "drums" },
 	};
 	for (size_t i = 0; i < sizeof(TECHNIQUES) / sizeof(TECHNIQUES[0]); ++i)
 		if (Contains(Text, TECHNIQUES[i].Found))
 			AddTag(R.Tags, TECHNIQUES[i].Tag);
+}
+
+}	// namespace
+
+Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStudy &Study, const std::string &Source,
+	const std::string &Date)
+{
+	Reference R;
+	// The title, or else the file's name
+	std::string Name = Source.substr(Source.find_last_of("\\/") == std::string::npos ? 0 : Source.find_last_of("\\/") + 1);
+	if (Name.find('.') != std::string::npos)
+		Name = Name.substr(0, Name.find_last_of('.'));
+	R.Title = ValidUtf8(Song.Title.empty() ? Name : Song.Title);
+	R.Id = ModuleReferenceId(R.Title, Song.Format);
+	R.Track = 0;
+	R.Source = Source;
+	R.Added = Date;
+	R.Bpm = Study.Bpm;
+	R.Key = Study.Key;
+	R.LoopBars = Study.LoopBars;
+	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
+	AddTag(R.Tags, Lowercase(Song.Format));
+	AddTag(R.Tags, "tracker-module");
+	if (R.Bpm > 0)
+		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
+	if (Contains(R.Key, "minor"))
+		AddTag(R.Tags, "minor");
+	else if (Contains(R.Key, "major"))
+		AddTag(R.Tags, "major");
+	AddTechniqueTags(R);
 	return R;
 }
 

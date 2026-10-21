@@ -31,6 +31,7 @@ add_library(nsf STATIC
 	Import.cpp
 	Simulate.cpp
 	Study.cpp
+	Tracker.cpp
 )
 target_include_directories(nsf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -41,3 +42,6 @@ enable_testing()
 add_executable(nsf_tests tests/NsfTests.cpp)
 target_link_libraries(nsf_tests PRIVATE nsf)
 add_test(NAME nsf_tests COMMAND nsf_tests)
+add_executable(tracker_tests tests/TrackerTests.cpp)
+target_link_libraries(tracker_tests PRIVATE nsf)
+add_test(NAME tracker_tests COMMAND tracker_tests)

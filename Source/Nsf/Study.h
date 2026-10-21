@@ -59,6 +59,8 @@ struct TrackStudy {
 	double Bpm;
 	int RowsPerBeat;
 	double TicksPerRow;
+	bool Tracker;						// a tracker module's song (Tracker.h): its tempo is Speed and Tempo
+	int Speed, Tempo;
 	int FirstBarRow;					// rows before the first bar line (a pickup)
 	int IntroBars, LoopBars;			// the intro plays once; LoopBars 0 when it doesn't loop
 	std::string Form;					// the lead's four-bar phrases: "A A B A'"
@@ -69,7 +71,8 @@ struct TrackStudy {
 	std::vector<std::string> Drums;		// the kit and the groove
 	std::vector<std::string> Tricks;	// techniques found, most used first
 	std::vector<StudySound> Sounds;		// by channel, most used first
-	TrackStudy() : Bpm(0), RowsPerBeat(4), TicksPerRow(6), FirstBarRow(0), IntroBars(0), LoopBars(0), LoopStartBar(-1) {}
+	TrackStudy() : Bpm(0), RowsPerBeat(4), TicksPerRow(6), Tracker(false), Speed(6), Tempo(125), FirstBarRow(0), IntroBars(0), LoopBars(0),
+		LoopStartBar(-1) {}
 };
 
 // Studies track Track of a converted module, with what the conversion said about it

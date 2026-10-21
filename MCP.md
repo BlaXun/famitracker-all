@@ -152,6 +152,7 @@ anything; close the dialog and ask again.
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
+| `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
@@ -322,6 +323,23 @@ Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks.
 You can tag references and keep notes with them ("the user loves this
 bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to
 look at the notes themselves.
+
+### Modules as references
+
+Music made in the PC trackers works too: give Claude a MOD, S3M, XM or IT
+file of yours, like "use song.xm in my Music folder as a reference for the
+boss theme". `study_module` reads only the module's patterns (its samples
+aren't read, and nothing of it goes into your song) and keeps a study in the
+same library: the tempo and form, the key and chords, each channel's role,
+register, rhythm and instruments by name, the bass's figure, the drums'
+grooves (the drums are told by their instruments' names, or by playing one
+note over and over; an instrument with a sample a key splits into its
+drums), the tricks between channels, and the techniques written into the
+patterns (arpeggios, vibrato, portamento, volume slides). A module has more
+channels than the NES, so Claude boils it down: the lead on a pulse or the
+sawtooth, harmony, pads and chords on the other pulse or as arpeggios, the
+bass on the triangle, the drums on the noise and the DPCM. The tunes stay
+the module's own: Claude writes new ones that sound like they belong to it.
 
 ## Moods
 
@@ -601,7 +619,10 @@ editor; they're muted again afterwards.
   the built-in style guide. The library's files are read and written
   through `SongHost::ListLibrary`, `ReadLibrary`, `SaveLibrary` and
   `DeleteLibrary`; `import_nsf` opens its module with `SongHost::OpenText`,
-  which `ImportNsfDlg.cpp` (File > Import NSF) shares.
+  which `ImportNsfDlg.cpp` (File > Import NSF) shares. `study_module` reads
+  a tracker module with `Source/Nsf/Tracker.cpp` (MOD, S3M, XM and IT
+  patterns, followed through their breaks and jumps into a module of one
+  track with a channel layout of its own) and studies it with `Study.cpp`.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and

@@ -63,9 +63,13 @@ for a composer). Claude Code's `study_nsf` keeps those studies in a
 reference library, JSON files in Documents\FamiTracker references
 (`Source/Api/References.cpp`, through `SongHost::ListLibrary` and its
 siblings), with `references`, `reference_sound` and `import_nsf`, and a
-built-in style guide in `Source/Api/StyleGuide.cpp`. `nsf2ftm`
-(`Source/Nsf/tools`) runs the importer from a command line and ships next
-to FamiTracker.exe.
+built-in style guide in `Source/Api/StyleGuide.cpp`. `study_module` does
+the same for tracker modules: `Source/Nsf/Tracker.cpp` reads the patterns
+of MOD, S3M, XM and IT files (never their samples) into a module of one
+track whose channels are its own (`Module::ChannelNames` and
+`ChannelKinds`), which only a study reads. `nsf2ftm`
+(`Source/Nsf/tools`) runs the importer from a command line, studies
+modules with `-study`, and ships next to FamiTracker.exe.
 
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the
@@ -235,7 +239,9 @@ The application has no test suite of its own. What exists:
   MSVC.
 - **NSF importer** (`Source/Nsf`): the 6502, files and playlists, loops,
   rows, notes, instruments and studies, on NSFs the tests build with their
-  own 6502 program (`tests/TestNsf.h`). Same three commands with
+  own 6502 program (`tests/TestNsf.h`); and tracker modules
+  (`tests/TrackerTests.cpp`, on MOD, S3M, XM and IT files built byte by
+  byte, cut short and corrupted). Same three commands with
   `Source/Nsf` and `build/nsf`; CI runs it on Linux and with MSVC. For
   fidelity, convert real NSFs and compare FamiTracker's playback of the
   result with the NSF (`Simulate.h`).
@@ -460,7 +466,7 @@ NSF export still uses the 2A03 driver. Touch points:
   must account for it.
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 59 never include it: all of `APU/`, `Api/`, `Nsf/`
+  standard headers), and 60 never include it: all of `APU/`, `Api/`, `Nsf/`
   and `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
   `McpSocket.cpp`, `TutorialScript.cpp`, `resampler/`, `ExportTest/` and the
   `CustomExporter*` files. Turning PCH on breaks them.

@@ -155,6 +155,8 @@ bool Cell::operator==(const Cell &o) const
 
 int Module::ChannelCount() const
 {
+	if (!ChannelNames.empty())
+		return int(ChannelNames.size());
 	int n = 5;
 	if (Expansion & EXP_VRC6) n += 3;
 	if (Expansion & EXP_MMC5) n += 2;
@@ -195,6 +197,11 @@ std::vector<std::string> ModuleChannelNames(int Expansion, int N163Channels)
 		for (int i = 0; i < 6; ++i)
 			Names.push_back("FM " + std::to_string(i + 1));
 	return Names;
+}
+
+std::vector<std::string> ChannelNamesOf(const Module &M)
+{
+	return M.ChannelNames.empty() ? ModuleChannelNames(M.Expansion, M.N163Channels) : M.ChannelNames;
 }
 
 std::string WriteText(const Module &M)
