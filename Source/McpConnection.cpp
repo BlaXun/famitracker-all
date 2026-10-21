@@ -929,8 +929,25 @@ public:
 		return true;
 	}
 
-	// The reference library: Documents\FamiTracker references (Api/References.h)
-	CString LibraryFolder(bool Create)
+	// FamiTracker.exe's folder, without a backslash at the end
+	static CString ExeFolder()
+	{
+		TCHAR Path[MAX_PATH];
+		const DWORD Length = GetModuleFileName(NULL, Path, MAX_PATH);
+		if (Length == 0 || Length >= MAX_PATH)
+			return CString();
+		const CString Full(Path);
+		return Full.Left(Full.ReverseFind(_T('\\')));
+	}
+
+	static bool IsFolder(const CString &Path)
+	{
+		const DWORD Attributes = GetFileAttributes(Path);
+		return Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	}
+
+	// Where the reference library was before it moved next to FamiTracker.exe
+	static CString DocumentsLibrary(bool Create)
 	{
 		TCHAR Documents[MAX_PATH];
 		if (FAILED(SHGetFolderPath(NULL, CSIDL_PERSONAL | (Create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, Documents)))
@@ -940,6 +957,50 @@ public:
 		if (Create)
 			CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
 		return Folder;
+	}
+
+	// The references in From move to To (one of the same name there stays), and
+	// From goes once it's empty
+	static void MoveReferences(const CString &From, const CString &To)
+	{
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = FindFirstFile(From + _T("\\*.json"), &Found);
+		if (hFind != INVALID_HANDLE_VALUE) {
+			do {
+				if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+					MoveFile(From + _T("\\") + Found.cFileName, To + _T("\\") + Found.cFileName);	// fails when To has it
+			} while (FindNextFile(hFind, &Found));
+			FindClose(hFind);
+		}
+		RemoveDirectory(From);	// only when empty
+	}
+
+	// The reference library (Api/References.h): the References folder next to
+	// FamiTracker.exe, so it goes wherever FamiTracker goes. References kept in
+	// Documents\FamiTracker references (where the library was before) or in a
+	// "FamiTracker references" folder next to the exe (the zip of studies,
+	// unpacked there) move into it. Where FamiTracker's folder can't be
+	// written (Program Files), the library stays in Documents.
+	CString LibraryFolder(bool Create)
+	{
+		const CString Exe = ExeFolder();
+		const CString Old = DocumentsLibrary(false);
+		if (!Exe.IsEmpty()) {
+			const CString Beside = Exe + _T("\\References"), Unpacked = Exe + _T("\\FamiTracker references");
+			const bool OldThere = !Old.IsEmpty() && IsFolder(Old), UnpackedThere = IsFolder(Unpacked);
+			if (!IsFolder(Beside) && (Create || OldThere || UnpackedThere))
+				CreateDirectory(Beside, NULL);	// fails where FamiTracker's folder can't be written
+			if (IsFolder(Beside)) {
+				if (OldThere)
+					MoveReferences(Old, Beside);
+				if (UnpackedThere)
+					MoveReferences(Unpacked, Beside);
+				return Beside;
+			}
+			if (!OldThere && !Create)
+				return Beside;	// nothing kept yet: the first goes next to FamiTracker if it can
+		}
+		return Create ? DocumentsLibrary(true) : Old;
 	}
 
 	static bool PlainName(const std::string &Name)
@@ -952,7 +1013,7 @@ public:
 		Names.clear();
 		const CString Folder = LibraryFolder(false);
 		if (Folder.IsEmpty()) {
-			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			Error = "FamiTracker couldn't find a folder for the reference library.";
 			return false;
 		}
 		WIN32_FIND_DATA Found;
@@ -997,7 +1058,7 @@ public:
 		}
 		const CString Folder = LibraryFolder(true);
 		if (Folder.IsEmpty()) {
-			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			Error = "FamiTracker couldn't find a folder for the reference library.";
 			return false;
 		}
 		const CString Full = Folder + _T("\\") + Ansi(Name);
