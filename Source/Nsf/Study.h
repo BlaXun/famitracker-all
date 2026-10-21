@@ -58,6 +58,8 @@ struct TrackStudy {
 	std::string Name;
 	double Bpm;
 	int RowsPerBeat;
+	int BeatsPerBar;					// 4, unless the music says (a MIDI file's meter)
+	std::string Meter;					// "3/4", "6/8", when the music says
 	double TicksPerRow;
 	bool Tracker;						// a tracker module's song (Tracker.h): its tempo is Speed and Tempo
 	int Speed, Tempo;
@@ -71,7 +73,7 @@ struct TrackStudy {
 	std::vector<std::string> Drums;		// the kit and the groove
 	std::vector<std::string> Tricks;	// techniques found, most used first
 	std::vector<StudySound> Sounds;		// by channel, most used first
-	TrackStudy() : Bpm(0), RowsPerBeat(4), TicksPerRow(6), Tracker(false), Speed(6), Tempo(125), FirstBarRow(0), IntroBars(0), LoopBars(0),
+	TrackStudy() : Bpm(0), RowsPerBeat(4), BeatsPerBar(4), TicksPerRow(6), Tracker(false), Speed(6), Tempo(125), FirstBarRow(0), IntroBars(0), LoopBars(0),
 		LoopStartBar(-1) {}
 };
 

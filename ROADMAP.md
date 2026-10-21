@@ -300,11 +300,11 @@ when ready.
   - Studies: what makes a track work, in words a composer uses (form,
     harmony, each channel's role and rhythm grid, bass figures, drum grooves,
     tricks between channels, the sounds' articulations), kept in a
-    reference library in Documents for every session (`study_nsf`,
-    `references`, `reference_sound`), without the melodies; and a built-in
-    guide to the classic NES styles from studies of Konami, Capcom and
-    Nintendo soundtracks. `design_instrument` learned the articulations those
-    soundtracks are made of.
+    reference library next to FamiTracker.exe for every session
+    (`study_nsf`, `references`, `reference_sound`), without the melodies;
+    and a built-in guide to the classic NES styles from studies of Konami,
+    Capcom and Nintendo soundtracks. `design_instrument` learned the
+    articulations those soundtracks are made of.
 
   A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
   encoded here) plays on the DPCM channel by name (`add_sample_drums`).
@@ -317,7 +317,27 @@ when ready.
   instrument with a sample a key splits into its drums; the song is
   followed through its breaks and jumps.
 
+  MIDI files as references (asked for on 21 October 2026): `study_module`
+  reads `.mid`, `.midi` and `.rmi` files too (`Source/Nsf/MidiFile.cpp`).
+  The notes go on a grid of 4, 6, 8 or 12 rows a beat, whichever they start
+  on; each part spreads over channels of a note at a time, the highest note
+  on the first so a melody stays whole; the drums go on a channel for each
+  kind, named after General MIDI's drums. The study counts bars in the
+  file's meter (3/4, and 6/8 as two beats of three eighths), takes the tempo
+  the file keeps longest, loops where RPG Maker's controller 111, EMIDI or
+  `loopStart` say, and leaves out grace notes. A track named "Melody",
+  "Lead" or "Soprano" is the lead.
+
+  The user's files next to FamiTracker.exe (asked for on 21 October 2026):
+  the reference library (`References`) and the recordings of Record from
+  microphone and Sound effect from your voice (`Recordings`) are folders
+  next to FamiTracker.exe, so they move with it (`Source/AppFolders.cpp`).
+  The old folders in Documents move there by themselves, to another drive
+  too; where FamiTracker's folder can't be written, they stay in Documents.
+  `make_sound_effect` takes the recording `"latest"` for the newest take.
+
 ## Open questions
 
 - Some recordings "don't sound correct" (maybe background noise). Waiting
-  for a sample take from `Documents\FamiTracker recordings` to diagnose.
+  for a sample take from the `Recordings` folder next to FamiTracker.exe
+  (`Documents\FamiTracker recordings` before 21 October 2026) to diagnose.

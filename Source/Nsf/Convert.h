@@ -48,6 +48,9 @@ struct TrackReport {
 	std::string Name;
 	double TicksPerRow;		// as found in the music
 	int RowsPerBeat;
+	int BeatsPerBar;		// 4, unless the music says (a MIDI file's meter)
+	int FirstBarRow;		// where the bars start when the music says, else -1 (found by the study)
+	std::string Meter;		// "3/4", "6/8", when the music says
 	int Speed, Tempo;
 	double Bpm;
 	int Rows;				// played once through
@@ -57,7 +60,7 @@ struct TrackReport {
 	int Dropped;			// notes too short to keep, on a row another note took
 	std::vector<std::string> Channels;	// "Pulse 1: 120 notes, lead", ...
 	std::vector<std::string> Problems;
-	TrackReport() : TicksPerRow(0), RowsPerBeat(4), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Notes(0), Delayed(0), Dropped(0) {}
+	TrackReport() : TicksPerRow(0), RowsPerBeat(4), BeatsPerBar(4), FirstBarRow(-1), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Notes(0), Delayed(0), Dropped(0) {}
 };
 
 struct ConvertReport {

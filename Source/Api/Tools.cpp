@@ -5645,10 +5645,21 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	const bool Shortened = FitSoundEffect(Effect, MaxSoundTicks(false), Changes);
 	Effect = ChangeSoundEffect(Effect, Changes);
 
-	// Named after the file: pew.wav makes "SFX Pew"
+	// Named after the file: pew.wav makes "SFX Pew", and a take FamiTracker
+	// kept ("Voice 2026-10-21 18-30-00.wav") "SFX Voice"
 	std::string Base = File.substr(File.find_last_of("/\\") == std::string::npos ? 0 : File.find_last_of("/\\") + 1);
 	if (Base.find('.') != std::string::npos)
 		Base = Base.substr(0, Base.rfind('.'));
+	if (Base.size() > 20) {
+		static const char TIME[] = " 0000-00-00 00-00-00";
+		bool Taken = true;
+		for (size_t i = 0; i < 20; ++i) {
+			const char c = Base[Base.size() - 20 + i];
+			Taken = Taken && (TIME[i] == '0' ? std::isdigit(static_cast<unsigned char>(c)) != 0 : c == TIME[i]);
+		}
+		if (Taken)
+			Base.resize(Base.size() - 20);
+	}
 	if (Base.empty())
 		Base = "Voice";
 	Base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Base[0])));
@@ -5897,8 +5908,16 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	const int Given = (Arg(Args, "kind") != 0 ? 1 : 0) + (Arg(Args, "recording") != 0 ? 1 : 0) + (Arg(Args, "layers") != 0 ? 1 : 0);
 	if (Given > 1)
 		throw Problem("Give one of kind, recording and layers.");
-	if (Arg(Args, "recording") != 0)
-		return VoiceSoundEffect(S, Args, StringArg(Args, "recording"));
+	if (Arg(Args, "recording") != 0) {
+		// "latest": the newest take recorded in FamiTracker
+		std::string Recording = StringArg(Args, "recording");
+		if (Lowercase(Trim(Recording)) == "latest") {
+			std::string Error;
+			if (!S.Host().LatestRecording(Recording, Error))
+				throw Problem(Error);
+		}
+		return VoiceSoundEffect(S, Args, Recording);
+	}
 	if (Arg(Args, "layers") != 0)
 		return DesignedSoundEffect(S, Args);
 	const std::string Kind = StringArg(Args, "kind");
@@ -7693,22 +7712,30 @@ std::string StudyNsfTool(Session &S, const Json &Args)
 	return Out + Left;
 }
 
-// A tracker module (MOD, S3M, XM, IT) studied from its pattern data, kept in the library
+// A tracker module (MOD, S3M, XM, IT) studied from its pattern data, or a
+// MIDI file from its notes, kept in the library
 std::string StudyModuleTool(Session &S, const Json &Args)
 {
 	const std::string Path = WindowsPath(StringArg(Args, "path"));
 	if (Path.empty())
-		throw Problem("Give the path of the module (\"path\"): a MOD, S3M, XM or IT file on the user's computer, as Windows "
-			"writes it, like C:\\Users\\Name\\Music\\song.xm.");
+		throw Problem("Give the path of the module (\"path\"): a MOD, S3M, XM or IT file, or a MIDI file, on the user's computer, "
+			"as Windows writes it, like C:\\Users\\Name\\Music\\song.xm or song.mid.");
 	nsf::TrackerSong Song;
 	std::string Error;
 	if (!nsf::ReadTrackerFile(S.Host().LocalPath(Path), Song, Error))
-		throw Problem("The module " + Path + " couldn't be read: " + Error + ". Give the path of a MOD, S3M, XM or IT file as "
-			"Windows writes it.");
+		throw Problem("The file " + Path + " couldn't be read: " + Error + ". Give the path of a MOD, S3M, XM or IT file, or a "
+			"MIDI file, as Windows writes it.");
+	const std::string What = Song.Format == "MIDI" ? "MIDI file" : "module";
+	if (Song.Title.empty()) {
+		// Untitled: named after its file
+		Song.Title = Path.substr(Path.find_last_of("\\/") == std::string::npos ? 0 : Path.find_last_of("\\/") + 1);
+		if (Song.Title.find('.') != std::string::npos)
+			Song.Title = Song.Title.substr(0, Song.Title.find_last_of('.'));
+	}
 	nsf::Module M;
 	nsf::TrackReport Report;
 	if (!nsf::TrackerToModule(Song, M, Report, Error))
-		throw Problem("The module " + Path + " couldn't be studied: " + Error + ".");
+		throw Problem("The " + What + " " + Path + " couldn't be studied: " + Error + ".");
 	const nsf::TrackStudy Study = nsf::StudyTrack(M, 0, Report);
 	Reference R = MakeModuleReference(Song, Study, Path, Today());
 	const bool Keep = BoolArg(Args, "save", true);
@@ -7740,8 +7767,8 @@ std::string StudyModuleTool(Session &S, const Json &Args)
 	Out += "\nTo write in its style for the NES: keep its tempo and feel, form, chord movement, rhythms and groove, and boil its "
 		"channels down to the NES's: its lead on a pulse (or the VRC6 sawtooth for a big lead), its harmony, pads or chords on "
 		"the other pulse (held, or as 0xy arpeggios), its bass on the triangle, its drums on the noise channel with a sampled "
-		"kick and snare on the DPCM (add_sample_drums). Write melodies and progressions of your own: the module is for its "
-		"craft, not its tunes.";
+		"kick and snare on the DPCM (add_sample_drums). Write melodies and progressions of your own: the " + What + " is for "
+		"its craft, not its tunes.";
 	return Out;
 }
 
@@ -7768,7 +7795,7 @@ std::string ReferencesTool(Session &S, const Json &Args)
 		std::string Out;
 		if (All.empty())
 			Out = "The reference library is empty. study_nsf studies tracks of NSF files the user has and keeps them here; "
-				"study_module studies their MOD, S3M, XM and IT modules.";
+				"study_module studies their MOD, S3M, XM and IT modules and their MIDI files.";
 		else {
 			Out = Format("%s in the library:\n", Plural(static_cast<int>(All.size()), "reference", "references").c_str());
 			std::string Game = "\x01";
@@ -7847,6 +7874,10 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 	if (R.Sounds.empty() && std::find(R.Tags.begin(), R.Tags.end(), "tracker-module") != R.Tags.end())
 		throw Problem("The reference " + R.Id + " is a tracker module's: its sounds are samples, which the NES's chips can't play. "
 			"design_instrument makes sounds in their spirit (its study names its instruments and what they play).");
+	if (R.Sounds.empty() && std::find(R.Tags.begin(), R.Tags.end(), "midi") != R.Tags.end())
+		throw Problem("The reference " + R.Id + " is a MIDI file's: its sounds are General MIDI's instruments, which the NES's "
+			"chips can't play. design_instrument makes sounds in their spirit (its study names its instruments and what they "
+			"play).");
 	if (R.Sounds.empty())
 		throw Problem("The reference " + R.Id + " has no sounds to use.");
 	const int Number = IntArg(Args, "sound", 1, 1, static_cast<int>(R.Sounds.size()));
@@ -8471,8 +8502,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("loop", Prop("boolean", "The track loops instead of halting, for ambience a game plays over and over (the kinds "
 					"marked \"loops\" do by default). A loop lasts at most 4.2 s."))
 				.Add("recording", Prop("string", "Instead of a kind: a WAV file of the user's voice (\"pew\", \"boing\", \"kssh\") "
-					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav. Its pitch and loudness play on a pulse, its "
-					"breathy and hissy part on the noise channel."))
+					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav, or \"latest\" for the newest take recorded in "
+					"FamiTracker (Record from microphone, Sound effect from your voice: they're kept in the Recordings folder next "
+					"to FamiTracker.exe). Its pitch and loudness play on a pulse, its breathy and hissy part on the noise channel."))
 				.Add("octaves", Prop("integer", "With a recording: whole octaves to move its pitch, -4 to 4. Default: so its "
 					"middle lands near E-4."))
 				.Add("noise", Prop("boolean", "With a recording: its unpitched part on the noise channel (default true)."))
@@ -8646,16 +8678,20 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("save", Prop("boolean", "Keep them in the library (default true).")),
 		false);
 
-	AddTool("study_module", "Study a tracker module",
-		"Studies a music module from a PC tracker that the user has (MOD, S3M, XM or IT) for how it's made, from its pattern "
-		"data alone (its samples aren't read), and keeps it as a reference in the user's library, as study_nsf does for NSF "
-		"tracks: tempo and form, key and the chords bar by bar, each channel's role, register, rhythm (its commonest bar as a "
-		"grid), intervals and instruments by name, the bass's figure, the drums' grooves (drums told by their instruments' "
-		"names), the tricks between channels and the techniques written into the patterns (arpeggios, vibrato, portamento, "
-		"volume slides). Use it when the user wants music like a module of theirs: the study is for writing something of "
-		"your own in its style, never a copy of its notes, and its many channels boil down to the NES's few.",
+	AddTool("study_module", "Study a tracker module or MIDI file",
+		"Studies a music module from a PC tracker (MOD, S3M, XM or IT) or a MIDI file (.mid, .midi, .rmi) that the user has, "
+		"for how it's made, from its notes alone (a module's samples aren't read), and keeps it as a reference in the user's "
+		"library, as study_nsf does for NSF tracks: tempo and form, key and the chords bar by bar, each channel's role, "
+		"register, rhythm (its commonest bar as a grid), intervals and instruments by name, the bass's figure, the drums' "
+		"grooves (drums told by their instruments' names, or General MIDI's drum keys), the tricks between channels and the "
+		"techniques written into the patterns (arpeggios, vibrato, portamento, volume slides). A MIDI file's parts become "
+		"channels of a note at a time (a piano's chords spread over several), named after its tracks or its General MIDI "
+		"instruments, and its bars follow its meter (3/4, 6/8...). Use it when the user wants music like a module or MIDI file "
+		"of theirs: the study is for writing something of your own in its style, never a copy of its notes, and its many "
+		"channels boil down to the NES's few.",
 		Schema()
-			.Add("path", Prop("string", "The module file, as Windows writes it: C:\\Users\\Name\\Music\\song.xm."), true)
+			.Add("path", Prop("string", "The module or MIDI file, as Windows writes it: C:\\Users\\Name\\Music\\song.xm or "
+				"song.mid."), true)
 			.Add("tags", WordListProp("Words to find it by later, like [\"chiptune\", \"upbeat\"]."))
 			.Add("notes", Prop("string", "A note to keep with it, like \"the user wants a NES track that feels like this\"."))
 			.Add("save", Prop("boolean", "Keep it in the library (default true).")),
@@ -8902,7 +8938,8 @@ std::string ToolSet::Instructions()
 		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
-		"MOD, S3M, XM and IT modules; references lists, shows and searches them), and references action guide is a built-in "
+		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "
+		"is a built-in "
 		"guide to the classic NES styles. When the user "
 		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man...), or says to use the "
 		"references, search the library and the guide first and plan from what you find: the tempo and feel, the form, the "

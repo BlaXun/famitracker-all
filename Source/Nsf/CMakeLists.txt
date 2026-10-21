@@ -32,6 +32,7 @@ add_library(nsf STATIC
 	Simulate.cpp
 	Study.cpp
 	Tracker.cpp
+	MidiFile.cpp
 )
 target_include_directories(nsf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -87,9 +87,11 @@ std::string ReferenceId(const std::string &Game, int Track);
 Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStudy &Study, const std::string &Source,
 	const std::string &Date);
 
-// A reference from the study of a tracker module (MOD, S3M, XM or IT, from
-// Source, its path): no game or track, tagged with its format and
-// "tracker-module", and no sounds (its sounds are samples)
+// A reference from the study of a tracker module (MOD, S3M, XM or IT) or a
+// MIDI file, from Source, its path: no game or track, tagged with its format
+// and "tracker-module" (a MIDI file's with "midi", its meter when it isn't
+// 4/4, and its copyright kept), and no sounds (its sounds are samples, or
+// General MIDI's)
 std::string ModuleReferenceId(const std::string &Title, const std::string &Format);
 Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStudy &Study, const std::string &Source,
 	const std::string &Date);

@@ -25,7 +25,8 @@
 //   nsf2ftm music.nsf music.txt [-tracks 1,3-5] [-seconds 600] [-list]
 //
 // It also studies tracker modules (MOD, S3M, XM, IT) for how they're made,
-// from their pattern data: nsf2ftm song.xm -study
+// from their pattern data, and MIDI files from their notes:
+// nsf2ftm song.xm -study
 
 #include "../Import.h"
 #include "../Study.h"
@@ -44,11 +45,12 @@ int main(int argc, char **argv)
 			"  nsf2ftm music.nsf -study [-tracks 1,3-5] [-seconds 600]\n"
 			"  nsf2ftm music.nsf -survey\n"
 			"  nsf2ftm music.nsf -list\n"
-			"  nsf2ftm song.xm -study\n\n"
+			"  nsf2ftm song.xm -study\n"
+			"  nsf2ftm song.mid -study\n\n"
 			"Tracks count from 1; all of them by default. Open the text in FamiTracker\n"
 			"with File > Import text. -study says how each track is made instead,\n"
-			"-survey which tracks are music. A tracker module (MOD, S3M, XM or IT) can\n"
-			"only be studied.\n");
+			"-survey which tracks are music. A tracker module (MOD, S3M, XM or IT) or\n"
+			"a MIDI file can only be studied.\n");
 		return 1;
 	}
 	const std::string In = argv[1];
@@ -76,7 +78,7 @@ int main(int argc, char **argv)
 	nsf::NsfFile File;
 	std::string Error;
 	if (!nsf::ReadNsfFile(In, File, Error)) {
-		// A tracker module, to study
+		// A tracker module or a MIDI file, to study
 		nsf::TrackerSong Song;
 		std::string TrackerError;
 		if (!nsf::ReadTrackerFile(In, Song, TrackerError)) {

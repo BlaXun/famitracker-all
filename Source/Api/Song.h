@@ -233,6 +233,12 @@ public:
 	virtual bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
 	virtual bool DeleteLibrary(const std::string &Name, std::string &Error) = 0;
 
+	// The newest take in the Recordings folder next to FamiTracker.exe (the
+	// WAV files of Record from microphone and Sound effect from your voice),
+	// its path as the tools are given paths; false with the reason when
+	// there's none
+	virtual bool LatestRecording(std::string &Path, std::string &Error) = 0;
+
 	// Replaces the open song with a module in FamiTracker's text format, as
 	// File > Import text does: a new, untitled module. FamiTracker can't undo
 	// it; the tools first make sure the song has no unsaved changes.

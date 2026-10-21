@@ -58,6 +58,7 @@
 #include "Clips.h"
 #include "InsertRecording.h"
 #include "InstrumentLibrary.h"
+#include "AppFolders.h"
 #include "ImportNsfDlg.h"
 #include "McpSocket.h"
 #include "McpConnection.h"
@@ -929,80 +930,6 @@ public:
 		return true;
 	}
 
-	// FamiTracker.exe's folder, without a backslash at the end
-	static CString ExeFolder()
-	{
-		TCHAR Path[MAX_PATH];
-		const DWORD Length = GetModuleFileName(NULL, Path, MAX_PATH);
-		if (Length == 0 || Length >= MAX_PATH)
-			return CString();
-		const CString Full(Path);
-		return Full.Left(Full.ReverseFind(_T('\\')));
-	}
-
-	static bool IsFolder(const CString &Path)
-	{
-		const DWORD Attributes = GetFileAttributes(Path);
-		return Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-	}
-
-	// Where the reference library was before it moved next to FamiTracker.exe
-	static CString DocumentsLibrary(bool Create)
-	{
-		TCHAR Documents[MAX_PATH];
-		if (FAILED(SHGetFolderPath(NULL, CSIDL_PERSONAL | (Create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, Documents)))
-			return CString();
-		CString Folder(Documents);
-		Folder += _T("\\FamiTracker references");
-		if (Create)
-			CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
-		return Folder;
-	}
-
-	// The references in From move to To (one of the same name there stays), and
-	// From goes once it's empty
-	static void MoveReferences(const CString &From, const CString &To)
-	{
-		WIN32_FIND_DATA Found;
-		HANDLE hFind = FindFirstFile(From + _T("\\*.json"), &Found);
-		if (hFind != INVALID_HANDLE_VALUE) {
-			do {
-				if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
-					MoveFile(From + _T("\\") + Found.cFileName, To + _T("\\") + Found.cFileName);	// fails when To has it
-			} while (FindNextFile(hFind, &Found));
-			FindClose(hFind);
-		}
-		RemoveDirectory(From);	// only when empty
-	}
-
-	// The reference library (Api/References.h): the References folder next to
-	// FamiTracker.exe, so it goes wherever FamiTracker goes. References kept in
-	// Documents\FamiTracker references (where the library was before) or in a
-	// "FamiTracker references" folder next to the exe (the zip of studies,
-	// unpacked there) move into it. Where FamiTracker's folder can't be
-	// written (Program Files), the library stays in Documents.
-	CString LibraryFolder(bool Create)
-	{
-		const CString Exe = ExeFolder();
-		const CString Old = DocumentsLibrary(false);
-		if (!Exe.IsEmpty()) {
-			const CString Beside = Exe + _T("\\References"), Unpacked = Exe + _T("\\FamiTracker references");
-			const bool OldThere = !Old.IsEmpty() && IsFolder(Old), UnpackedThere = IsFolder(Unpacked);
-			if (!IsFolder(Beside) && (Create || OldThere || UnpackedThere))
-				CreateDirectory(Beside, NULL);	// fails where FamiTracker's folder can't be written
-			if (IsFolder(Beside)) {
-				if (OldThere)
-					MoveReferences(Old, Beside);
-				if (UnpackedThere)
-					MoveReferences(Unpacked, Beside);
-				return Beside;
-			}
-			if (!OldThere && !Create)
-				return Beside;	// nothing kept yet: the first goes next to FamiTracker if it can
-		}
-		return Create ? DocumentsLibrary(true) : Old;
-	}
-
 	static bool PlainName(const std::string &Name)
 	{
 		return !Name.empty() && Name.find_first_of("\\/:*?\"<>|") == std::string::npos && Name != "." && Name != "..";
@@ -1011,7 +938,7 @@ public:
 	bool ListLibrary(std::vector<std::string> &Names, std::string &Error)
 	{
 		Names.clear();
-		const CString Folder = LibraryFolder(false);
+		const CString Folder = ReferencesFolder(false);
 		if (Folder.IsEmpty()) {
 			Error = "FamiTracker couldn't find a folder for the reference library.";
 			return false;
@@ -1031,7 +958,7 @@ public:
 	bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &Error)
 	{
 		Bytes.clear();
-		const CString Folder = LibraryFolder(false);
+		const CString Folder = ReferencesFolder(false);
 		if (Folder.IsEmpty() || !PlainName(Name))
 			return false;
 		const CString Full = Folder + _T("\\") + Ansi(Name);
@@ -1056,7 +983,7 @@ public:
 			Error = "A reference's file name has no folders.";
 			return false;
 		}
-		const CString Folder = LibraryFolder(true);
+		const CString Folder = ReferencesFolder(true);
 		if (Folder.IsEmpty()) {
 			Error = "FamiTracker couldn't find a folder for the reference library.";
 			return false;
@@ -1080,7 +1007,7 @@ public:
 
 	bool DeleteLibrary(const std::string &Name, std::string &Error)
 	{
-		const CString Folder = LibraryFolder(false);
+		const CString Folder = ReferencesFolder(false);
 		if (Folder.IsEmpty() || !PlainName(Name)) {
 			Error = "There's no such reference.";
 			return false;
@@ -1090,6 +1017,33 @@ public:
 			Error = "Couldn't delete " + Utf8(Full) + ".";
 			return false;
 		}
+		return true;
+	}
+
+	// make_sound_effect's "latest": the newest WAV file in the Recordings folder
+	bool LatestRecording(std::string &Path, std::string &Error)
+	{
+		const CString Folder = RecordingsFolder(false);
+		CString Newest;
+		FILETIME Time = { 0, 0 };
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = Folder.IsEmpty() ? INVALID_HANDLE_VALUE : FindFirstFile(Folder + _T("\\*.wav"), &Found);
+		if (hFind != INVALID_HANDLE_VALUE) {
+			do {
+				if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && CompareFileTime(&Found.ftLastWriteTime, &Time) > 0) {
+					Time = Found.ftLastWriteTime;
+					Newest = Found.cFileName;
+				}
+			} while (FindNextFile(hFind, &Found));
+			FindClose(hFind);
+		}
+		if (Newest.IsEmpty()) {
+			Error = "There are no recordings yet" + (Folder.IsEmpty() ? std::string() : " in " + Utf8(Folder)) + ": Edit > Record "
+				"from microphone and Edit > Sound effect from your voice keep their takes there. Give the path of a WAV file "
+				"instead.";
+			return false;
+		}
+		Path = Utf8(Folder + _T("\\") + Newest);
 		return true;
 	}
 

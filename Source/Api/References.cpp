@@ -421,8 +421,16 @@ Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStud
 	R.Key = Study.Key;
 	R.LoopBars = Study.LoopBars;
 	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
-	AddTag(R.Tags, Lowercase(Song.Format));
-	AddTag(R.Tags, "tracker-module");
+	if (Song.Format == "MIDI") {
+		AddTag(R.Tags, "midi");
+		R.Copyright = ValidUtf8(Song.Copyright);
+	}
+	else {
+		AddTag(R.Tags, Lowercase(Song.Format));
+		AddTag(R.Tags, "tracker-module");
+	}
+	if (!Study.Meter.empty() && Study.Meter != "4/4")
+		AddTag(R.Tags, Study.Meter);
 	if (R.Bpm > 0)
 		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
 	if (Contains(R.Key, "minor"))

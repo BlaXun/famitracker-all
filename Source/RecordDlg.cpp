@@ -24,7 +24,7 @@
 // song's tempo, then clicking along if asked) and keeps what the microphone
 // hears; the song starts playing with the downbeat after the count-in. Stop
 // turns the take into notes at the cursor (InsertTake) and saves it as a WAV
-// file in Documents\FamiTracker recordings.
+// file in the Recordings folder next to FamiTracker.exe (AppFolders.h).
 //
 // Timing: the click is played and the microphone recorded by two separate
 // Windows streams. While the click plays, their sample counts are read
@@ -42,7 +42,6 @@
 #include "Transcribe/Transcribe.h"
 #include "MicRecorder.h"
 #include "stdafx.h"
-#include <shlobj.h>
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -54,6 +53,7 @@
 #include "InsertRecordingDlg.h"
 #include "Clips.h"
 #include "RecordDlg.h"
+#include "AppFolders.h"
 
 namespace {
 
@@ -93,16 +93,14 @@ transcribe::Beat SongBeat(CFamiTrackerDoc *pDoc, unsigned int Track)
 	return transcribe::BeatFor(RowsPerSecond(pDoc, Track), pDoc->GetFirstHighlight(), pDoc->GetSecondHighlight());
 }
 
-// Saves a take as Documents\FamiTracker recordings\Take <date> <time>.wav.
-// Returns the path, or an empty string when it couldn't be saved.
+// Saves a take as Take <date> <time>.wav in the Recordings folder next to
+// FamiTracker.exe (AppFolders.h). Returns the path, or an empty string when
+// it couldn't be saved.
 CString SaveTake(const transcribe::Audio &Audio)
 {
-	TCHAR Documents[MAX_PATH];
-	if (FAILED(SHGetFolderPath(NULL, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, Documents)))
+	const CString Folder = RecordingsFolder(true);
+	if (Folder.IsEmpty())
 		return CString();
-	CString Folder(Documents);
-	Folder += _T("\\FamiTracker recordings");
-	CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
 	const CString Path = Folder + _T("\\") + CTime::GetCurrentTime().Format(_T("Take %Y-%m-%d %H-%M-%S.wav"));
 	std::string Error;
 	if (!transcribe::WriteWav(std::string(static_cast<LPCSTR>(CStringA(Path))), Audio, &Error))
@@ -263,6 +261,7 @@ BOOL CRecordDlg::OnInitDialog()
 	m_cLevel.SetRange(0, 100);
 	m_cClickVolume.SetRange(5, 100);
 	m_cClickVolume.SetPageSize(10);
+	RecordingsFolder(false);	// takes kept in Documents move next to FamiTracker
 
 	static const struct { LPCTSTR Text; click_t Mode; } CLICKS[] = {
 		{ _T("Count in, then click every beat"), CLICK_ALONG },
@@ -857,7 +856,7 @@ void CRecordDlg::FinishTake()
 
 	m_sResult = Message;
 	if (!Saved.IsEmpty())
-		m_sResult += _T(" The take is saved in Documents\\FamiTracker recordings.");
+		m_sResult += _T(" The take is saved in ") + Saved.Left(Saved.ReverseFind(_T('\\'))) + _T(".");
 	if (Timing.leak.heard)
 		m_sResult += _T(" The microphone heard the click: headphones keep it out of takes.");
 	EndDialog(IDOK);
