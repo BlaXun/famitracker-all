@@ -2517,6 +2517,105 @@ bool IsBassChannel(const ChannelInfo &Channel)
 	return IsBass(Channel);
 }
 
+int EchoDelayOf(Session &S, int Channel, int Source, int First, int End);
+
+// The parts a song already plays in [First, End), which new chords and a new
+// bass line there replace rather than stack on
+
+// The chord part: the channel beside the melody with the most notes there that
+// sound a chord (a lush or arpeggio instrument, or 0xy); -1 if none
+int ChordPartIn(Session &S, int First, int End, int Melody)
+{
+	int Best = -1, BestCount = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Melody || !IsMelodic(S.Channel(c)) || IsBass(S.Channel(c)))
+			continue;
+		int Count = 0;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row >= First && Notes[i].Row < End && SoundsChord(S, Notes[i]))
+				++Count;
+		if (Count > BestCount) {
+			Best = c;
+			BestCount = Count;
+		}
+	}
+	return Best;
+}
+
+// The bass line: the triangle or sawtooth beside the melody with the most notes there; -1 if none
+int BassPartIn(Session &S, int First, int End, int Melody)
+{
+	int Best = -1, BestCount = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Melody || !IsBass(S.Channel(c)))
+			continue;
+		const int Count = static_cast<int>(NotesIn(S.Notes(c), First, End).size());
+		if (Count > BestCount) {
+			Best = c;
+			BestCount = Count;
+		}
+	}
+	return Best;
+}
+
+// The instrument most of Notes play
+int UsualInstrument(const std::vector<NoteInfo> &Notes)
+{
+	std::map<int, int> Count;
+	int Best = NO_INSTRUMENT, BestCount = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int n = ++Count[Notes[i].Instrument];
+		if (n > BestCount) {
+			Best = Notes[i].Instrument;
+			BestCount = n;
+		}
+	}
+	return Best;
+}
+
+// Voiced chords: two to four channels of one kind (FM, N163 or pulses) beside
+// the melody, not an echo of it, whose notes there mostly start together; empty if none
+std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody)
+{
+	for (int Group = 0; Group < 3; ++Group) {
+		std::vector<int> Channels;
+		std::vector<std::set<int> > Starts;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const ChannelInfo &Info = S.Channel(c);
+			const bool Fits = Group == 0 ? Info.Kind == KIND_FM : Group == 1 ? Info.Chip == "N163" : IsLushChordChannel(Info);
+			if (!Fits || c == Melody || (Melody >= 0 && EchoDelayOf(S, c, Melody, First, End) > 0))
+				continue;
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			if (Notes.size() < 2)
+				continue;
+			std::set<int> Rows;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Rows.insert(Notes[i].Row);
+			Channels.push_back(c);
+			Starts.push_back(Rows);
+		}
+		// The channels that start most of their notes with another's
+		std::vector<int> Voices;
+		for (size_t a = 0; a < Channels.size(); ++a) {
+			bool Together = false;
+			for (size_t b = 0; b < Channels.size() && !Together; ++b) {
+				if (a == b)
+					continue;
+				int Shared = 0;
+				for (std::set<int>::const_iterator it = Starts[a].begin(); it != Starts[a].end(); ++it)
+					Shared += Starts[b].count(*it) > 0 ? 1 : 0;
+				Together = Shared * 10 >= static_cast<int>(Starts[a].size()) * 7;
+			}
+			if (Together && Voices.size() < 4)
+				Voices.push_back(Channels[a]);
+		}
+		if (Voices.size() >= 2)
+			return Voices;
+	}
+	return std::vector<int>();
+}
+
 // Arranging: chords in a style, bass lines, drums, harmony and counter-melodies
 
 std::vector<BarSpan> BarSpans(const std::vector<transcribe::Bar> &Bars)
@@ -2969,10 +3068,33 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		if (!IsMelodic(S.Channel(Melody)))
 			throw Problem("The melody channel needs notes, not drums or samples.");
 	}
-	else if (Given && Range)
-		Melody = GuessMelodyChannel(S, S.Time.BarStart(From), S.Time.BarEnd(To));
-	else
-		Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+	else {
+		const int GuessFrom = Given && Range ? S.Time.BarStart(From) : 0, GuessEnd = Given && Range ? S.Time.BarEnd(To) : S.Time.TotalRows();
+		Melody = GuessMelodyChannel(S, GuessFrom, GuessEnd);
+		if (Given && Melody >= 0) {
+			// Only chords play there (a groove with no melody yet): they're what the new chords replace
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Melody), GuessFrom, GuessEnd);
+			int Chords = 0;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Chords += SoundsChord(S, Notes[i]) ? 1 : 0;
+			if (Chords * 3 >= static_cast<int>(Notes.size()))
+				Melody = -1;
+		}
+		if (Melody >= 0) {
+			// Nor is the top voice of voiced chords with no melody over them (it plays their sound, on any chip)
+			const std::vector<int> Voices = ChordVoicesIn(S, GuessFrom, GuessEnd, -1);
+			auto SoundOf = [&](int Channel) {
+				const InstrumentInfo *pInfo = FindInstrument(S.Song, UsualInstrument(NotesIn(S.Notes(Channel), GuessFrom, GuessEnd)));
+				return pInfo == 0 ? std::string() : Lowercase(pInfo->Name);
+			};
+			if (std::find(Voices.begin(), Voices.end(), Melody) != Voices.end()) {
+				const std::string Mine = SoundOf(Melody);
+				for (size_t v = 0; v < Voices.size() && Melody >= 0; ++v)
+					if (Voices[v] != Melody && SoundOf(Voices[v]) == Mine)
+						Melody = -1;
+			}
+		}
+	}
 	if (Melody < 0 && !Given)
 		throw Problem("There's no melody to fit chords to yet. Give chords (like \"| C | Am | F | G |\") to write a backing without one.");
 
@@ -2999,8 +3121,13 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	const int First = Bars.front().row, End = Bars.back().row + Bars.back().length;
 	const std::vector<BarSpan> Spans = BarSpans(Bars);
 
-	// The channels: as asked ("none" leaves one out), or free ones
-	auto Pick = [&](const char *Name, bool (*Fits)(const ChannelInfo &), const char *Kind) -> int {
+	// The channels: as asked ("none" leaves one out), the ones that play the
+	// chords and the bass there already (new ones replace them rather than
+	// stack a second part on them), or free ones
+	const int OldChords = ChordPartIn(S, First, End, Melody), OldBass = BassPartIn(S, First, End, Melody);
+	const std::vector<int> OldVoices = ChordVoicesIn(S, First, End, Melody);
+	std::vector<int> Replaced;
+	auto Pick = [&](const char *Name, bool (*Fits)(const ChannelInfo &), const char *Kind, int Playing) -> int {
 		const Json *pValue = Arg(Args, Name);
 		if (pValue != 0 && pValue->IsString() && Lowercase(pValue->String()) == "none")
 			return -1;
@@ -3009,6 +3136,10 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			if (!Fits(S.Channel(Channel)) || Channel == Melody)
 				throw Problem(Format("%s needs %s other than the melody's.", Name, Kind));
 			return Channel;
+		}
+		if (Playing >= 0 && Fits(S.Channel(Playing))) {
+			Replaced.push_back(Playing);
+			return Playing;
 		}
 		const int Free = FreeChannel(S, First, End, Melody, Fits);
 		if (Free >= 0)
@@ -3034,27 +3165,55 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			if (VoiceChannels.size() < 2 || VoiceChannels.size() > 4)
 				throw Problem("chord_channels: voiced chords take 2 to 4 channels.");
 		}
+		else if (pVoices == 0 && !OldVoices.empty()) {
+			VoiceChannels = OldVoices;	// the voices that play there already
+			Replaced.insert(Replaced.end(), OldVoices.begin(), OldVoices.end());
+		}
 		else if (pVoices == 0) {
+			// Free channels, or the one whose chords these replace
 			for (int Group = 0; Group < 3 && VoiceChannels.size() < 2; ++Group) {
 				VoiceChannels.clear();
 				for (int c = 0; c < S.ChannelCount() && VoiceChannels.size() < 3; ++c) {
 					const ChannelInfo &Info = S.Channel(c);
 					const bool Fits = Group == 0 ? Info.Kind == KIND_FM : Group == 1 ? Info.Chip == "N163" : IsLushChordChannel(Info);
-					if (Fits && c != Melody && !HasNotesIn(S, c, First, End))
+					if (Fits && c != Melody && (c == OldChords || !HasNotesIn(S, c, First, End)))
 						VoiceChannels.push_back(c);
 				}
 			}
+			if (OldChords >= 0 && std::find(VoiceChannels.begin(), VoiceChannels.end(), OldChords) != VoiceChannels.end())
+				Replaced.push_back(OldChords);
 			if (VoiceChannels.size() < 2)
 				throw Problem("Voiced chords need two to four free channels; name them with chord_channels (their notes there are "
 					"replaced).");
 		}
 	}
 	const int ChordChannel = Style == CHORDS_VOICES ? (VoiceChannels.empty() ? -1 : VoiceChannels[0]) :
-		Style == CHORDS_LUSH ? Pick("chord_channel", IsLushChordChannel, "a 2A03, MMC5 or VRC6 pulse channel") :
-		Pick("chord_channel", IsChordChannel, "a pulse channel");
-	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth");
+		Style == CHORDS_LUSH ? Pick("chord_channel", IsLushChordChannel, "a 2A03, MMC5 or VRC6 pulse channel", OldChords) :
+		Pick("chord_channel", IsChordChannel, "a pulse channel", OldChords);
+	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth", OldBass);
 	if (ChordChannel < 0 && BassChannel < 0)
 		throw Problem("There's no channel for chords or a bass line.");
+	std::vector<std::string> Warnings;
+	{
+		// The old chords that still play under the new ones
+		std::vector<int> Old = OldVoices;
+		if (OldChords >= 0 && std::find(Old.begin(), Old.end(), OldChords) == Old.end())
+			Old.push_back(OldChords);
+		std::string Kept;
+		int KeptCount = 0;
+		for (size_t i = 0; i < Old.size(); ++i) {
+			const int c = Old[i];
+			const bool Writes = c == ChordChannel || std::find(VoiceChannels.begin(), VoiceChannels.end(), c) != VoiceChannels.end();
+			if (Writes || c == BassChannel || (ChordChannel < 0 && VoiceChannels.empty()))
+				continue;
+			Kept += (Kept.empty() ? "" : ", ") + S.Channel(c).FullName();
+			++KeptCount;
+		}
+		if (!Kept.empty())
+			Warnings.push_back(Format("The chords on %s there still play under the new ones; clear %s (write_notes with an empty "
+				"list) or name %s as the chord channel to replace them.", Kept.c_str(), KeptCount > 1 ? "them" : "it",
+				KeptCount > 1 ? "one of them" : "it"));
+	}
 
 	// The key, and the chords
 	bool Found;
@@ -3066,7 +3225,6 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	}
 	const std::vector<NoteInfo> MelodyNotes = Melody >= 0 ? NotesIn(S.Notes(Melody), First, End) : std::vector<NoteInfo>();
 	std::vector<ChordAt> Chords;
-	std::vector<std::string> Warnings;
 	if (Given) {
 		std::string Error;
 		if (!LayOutProgression(Progression, Spans, R, K, Chords, Error))
@@ -3187,7 +3345,18 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		Where += (Where.empty() ? "a " : " and a ") + std::string(BassStyles()[static_cast<size_t>(BassStyle)].Name) +
 			" bass line on " + Info.FullName();
 	}
-	const std::string What = Where + ", " + RangeText(S.Time.BarOf(First), S.Time.BarOf(End - 1)) + ", in " + KeyName(K);
+	std::string What = Where + ", " + RangeText(S.Time.BarOf(First), S.Time.BarOf(End - 1)) + ", in " + KeyName(K);
+	{
+		// Which parts it took the place of
+		bool Chords = false, Bass = false;
+		for (size_t i = 0; i < Replaced.size(); ++i) {
+			Bass = Bass || Replaced[i] == BassChannel;
+			Chords = Chords || Replaced[i] != BassChannel;
+		}
+		if (Chords || Bass)
+			What += Format(" (in place of the %s%s%s that played there)", Chords ? "chords" : "", Chords && Bass ? " and " : "",
+				Bass ? "bass line" : "");
+	}
 	std::sort(Changes.begin(), Changes.end(), [](const Change &a, const Change &b) { return a.Channel < b.Channel; });
 	const std::string Result = Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What);
 	return WithRemarks(S, Result + "\nChords: " + ProgressionText(Chords, Spans, K) + "\nAs degrees of " + KeyName(K) + ": " +
@@ -3220,6 +3389,7 @@ int EchoTarget(Session &S, int Source, int First, int End)
 struct EchoPlan {
 	int Source, Target, Delay, Volume, Instrument;
 	int Detune;		// fine pitch steps up (+) or down (-), 0 for none
+	bool OtherChip;	// Instrument is the source's sound on the target's chip, picked by name
 };
 
 EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
@@ -3243,9 +3413,23 @@ EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
 			throw Problem("No free channel for the echo in those bars; name one with to_channel (its notes there are replaced).");
 	}
 	Plan.Instrument = Arg(Args, "instrument") != 0 ? InstrumentArg(S, Args, "instrument", Plan.Target, NO_INSTRUMENT) : NO_INSTRUMENT;
-	if (Plan.Instrument == NO_INSTRUMENT && InstrumentChip(S.Channel(Plan.Target)) != InstrumentChip(S.Channel(Plan.Source)))
-		throw Problem(Format("%s needs %s instruments; give the echo an instrument (a preset works).",
-			S.Channel(Plan.Target).FullName().c_str(), InstrumentChip(S.Channel(Plan.Target)).c_str()));
+	Plan.OtherChip = false;
+	if (Plan.Instrument == NO_INSTRUMENT && InstrumentChip(S.Channel(Plan.Target)) != InstrumentChip(S.Channel(Plan.Source))) {
+		// The melody's own sound on the echo's chip, when it's a preset (or one of the VRC7's or N163's sounds)
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, UsualInstrument(NotesIn(S.Notes(Plan.Source), First, End)));
+		if (pInfo != 0) {
+			try {
+				Plan.Instrument = ResolveInstrument(S, pInfo->Name, Plan.Target);
+				Plan.OtherChip = true;
+			}
+			catch (const Problem &) {
+				Plan.Instrument = NO_INSTRUMENT;
+			}
+		}
+		if (Plan.Instrument == NO_INSTRUMENT)
+			throw Problem(Format("%s needs %s instruments; give the echo an instrument (a preset works).",
+				S.Channel(Plan.Target).FullName().c_str(), InstrumentChip(S.Channel(Plan.Target)).c_str()));
+	}
 	return Plan;
 }
 
@@ -3406,9 +3590,12 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("The echo is already there.");
-	const std::string What = Format("an echo of %s on %s, %s later at volume %d%s, %s", S.Channel(Plan.Source).FullName().c_str(),
+	std::string What = Format("an echo of %s on %s, %s later at volume %d%s, %s", S.Channel(Plan.Source).FullName().c_str(),
 		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume,
 		Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(), RangeText(From, To).c_str());
+	if (Plan.OtherChip)
+		What += Format(" (playing the melody's sound on the %s: %s)", InstrumentChip(S.Channel(Plan.Target)).c_str(),
+			InstrumentLabel(S.Song, Plan.Instrument).c_str());
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
@@ -9263,15 +9450,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"and the order of a lush chord's arpeggio, where alberti leaps and rolling spreads it over two octaves): " +
 			StyleList(BrokenPatterns()) + ". bass_style: " + StyleList(BassStyles()) + ". color adds sevenths (\"sevenths\") "
 			"or richer tones (\"rich\": add9, maj7, m9, a V7sus4 resolving) where the melody allows. Lush chords are "
-			"instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\"), added when first needed. Free channels are "
-			"picked unless named. The reply lists the chords by name and as degrees.",
+			"instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\"), added when first needed. Chords and a bass "
+			"line that play in those bars already are replaced (other chords for a section); else free channels are picked unless "
+			"named. The reply lists the chords by name and as degrees.",
 			Schema()
 				.Add("chords", Chords)
 				.Add("melody_channel", ChannelProp("Channel with the melody. Default: the busiest one."))
-				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
+				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: the one playing chords there "
+					"already, else a free one."))
 				.Add("chord_channels", ChannelListProp("Voiced chords: 2-4 channels, a voice each (VRC7 FM, N163 or pulse channels). "
 					"Default: free FM channels, else N163 ones, else pulses."))
-				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
+				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: the one playing the bass "
+					"there already, else a free one."))
 				.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
 				.Add("color", EnumProp("plain (triads; the default but for lush and voices), sevenths, or rich (the default for lush "
 					"and voices).",
@@ -9382,11 +9572,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("add_echo", "Add an echo",
 		"Copies a channel's notes onto a free channel, a little later and quieter: the classic NES echo. Makes a part sound "
 		"spacious, dreamy or underwater. The echo follows the original's dynamics (volume 6 is about 40% of each note's "
-		"loudness, as atmospheric chiptune mixes it), plays the same instrument and octave, and can be detuned a step or two "
-		"so it shimmers against the melody where they overlap.",
+		"loudness, as atmospheric chiptune mixes it), plays the same instrument and octave (on another chip, the same preset "
+		"there), and can be detuned a step or two so it shimmers against the melody where they overlap.",
 		Schema()
 			.Add("channel", ChannelProp("Channel to echo."), true)
-			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind."))
+			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind, else another free one."))
 			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows; a beat is the other common choice)."))
 			.Add("volume", Prop("integer", "Echo volume 1-15 at the original's full loudness (default 6, about 40%), scaled with "
 				"each note's own."))

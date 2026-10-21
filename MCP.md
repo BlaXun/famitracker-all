@@ -166,7 +166,7 @@ anything; close the dialog and ask again.
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is) |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
@@ -355,6 +355,9 @@ avoid that, and gives it tools for each layer:
   the third and seventh first, each voice moving to the next chord's
   nearest note without crossing: an electric piano comping on the VRC7's
   FM channels (its custom patch), held or struck on a rhythm.
+  Chords asked for over bars that have chords and a bass line already (other
+  chords for a section) take their place, on their channels (voiced chords
+  on the voices' channels), rather than stacking a second part on them.
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
   approach notes into each chord), syncopated, arpeggio, driving, pedal. On
   the triangle it sits where it sounds like a bass (the triangle plays an

@@ -3021,6 +3021,30 @@ void TestEchoAndVibrato()
 		CHECK(!Rub.Rows[6][3].HasNote() && Rub.Rows[6][6].Pitch() == Rub.Rows[5][3].Pitch() && Rub.Rows[6][11].Pitch() == 52);
 		CHECK(Rub.Rows[6][13].IsEnd() && Rub.Rows[6][16].Pitch() == 53);
 	}
+	{
+		// An echo on another chip plays the melody's sound there, when it's a preset
+		FakeSong Chips;
+		Chips.Info.DirectChanges = true;
+		CHECK(!Run(Chips, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"singing lead\", \"notes\": [{\"bar\": 1, "
+			"\"pitch\": \"C-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"E-4\", \"beats\": 2}]}").IsError);
+		Chips.Put(6, 0, "G-3", 0);	// VRC6 Pulse 2 plays already
+		ToolResult R = Run(Chips, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "an echo of VRC6 Pulse 1 on 2A03 Pulse 1");
+		CHECK_HAS(R.Text, "(playing the melody's sound on the 2A03: \"Singing lead\" (");
+		const InstrumentInfo *pEcho = 0;
+		for (size_t i = 0; i < Chips.Info.Instruments.size(); ++i)
+			if (Chips.Info.Instruments[i].Index == Chips.Rows[0][3].Instrument)
+				pEcho = &Chips.Info.Instruments[i];
+		CHECK(pEcho != 0 && pEcho->Chip == "2A03" && pEcho->Name == "Singing lead" && Chips.Rows[0][3].Pitch() == 48);
+		// A sound of the song's own can't be found on another chip
+		FakeSong Own;
+		Own.Info.DirectChanges = true;
+		Own.Put(5, 0, "C-4", 0);
+		Own.Put(6, 0, "G-3", 0);
+		CHECK_HAS(Run(Own, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}").Text,
+			"2A03 Pulse 1 needs 2A03 instruments; give the echo an instrument");
+	}
 
 	Song.Put(0, 0, "C-4", 2);
 	Song.Put(0, 2, "D-4");
@@ -6473,6 +6497,54 @@ void TestFadesAndScoops()
 	CHECK_HAS(Run(Leap, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bar 1 beat 2: F-4, 2 beats, effects Q62");
 }
 
+void TestReharmonize()
+{
+	// New chords over a groove's take the place of its chords and bass rather than stacking a second part on them
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "make_groove", "{\"mood\": \"nostalgic\", \"key\": \"D major\", \"bars\": 8}").IsError);
+	CHECK(Song.Rows[0][64].HasNote() && !Song.Rows[1][64].HasNote());	// its chords on 2A03 Pulse 1
+	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Em9 | A7 |\", \"chord_style\": \"lush\", \"from_bar\": 5, "
+		"\"to_bar\": 6, \"key\": \"D major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "chords on 2A03 Pulse 1 and a root_fifth bass line on 2A03 Triangle, bars 5-6, in D major (in place of the "
+		"chords and bass line that played there)");
+	CHECK(Song.Rows[0][64].Pitch() % 12 == 4 && Song.Rows[0][80].Pitch() % 12 == 9);	// Em9, A7
+	for (int r = 0; r < 128; ++r)
+		CHECK(!Song.Rows[1][r].HasNote() && !Song.Rows[7][r].HasNote());	// no second chord part, no second bass
+	// With a melody over them, named or not
+	for (int b = 0; b < 8; ++b)
+		Song.Put(5, b * 16, b % 2 == 0 ? "F#4" : "A-4", 0, 12);
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Gmaj7 | F#m7 |\", \"chord_style\": \"lush\", \"from_bar\": 7, "
+		"\"to_bar\": 8, \"key\": \"D major\", \"bass_channel\": \"none\"}");
+	CHECK_HAS(Result.Text, "chords on 2A03 Pulse 1, bars 7-8, in D major (in place of the chords that played there)");
+	CHECK(Song.Rows[5][96].HasNote() && !Song.Rows[1][96].HasNote());
+
+	// Voiced chords give way to voiced chords on the same channels
+	FakeSong Fm;
+	Fm.Info.DirectChanges = true;
+	CHECK(!Run(Fm, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	CHECK(!Run(Fm, "add_chords_and_bass", "{\"chords\": \"| Dm7 | G7 | Cmaj7 | Cmaj7 |\", \"chord_style\": \"voices\", "
+		"\"key\": \"C major\"}").IsError);
+	Result = Run(Fm, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"C major\", "
+		"\"from_bar\": 3, \"to_bar\": 4}");
+	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3 and a root_fifth bass line on "
+		"2A03 Triangle, bars 3-4, in C major (in place of the chords and bass line that played there)");
+	for (int r = 0; r < 64; ++r)
+		CHECK(!Fm.Rows[8][r].HasNote());	// FM Channel 4 stays free
+	CHECK(Fm.Rows[5][32].HasNote() && Fm.Rows[6][32].HasNote() && Fm.Rows[7][32].HasNote());
+
+	// Lush chords can't go where voices played on three channels: the old ones are named, kept
+	FakeSong Pulses;
+	Pulses.Info.DirectChanges = true;
+	CHECK(!Run(Pulses, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"G major\", "
+		"\"bass_channel\": \"none\"}").IsError);
+	Result = Run(Pulses, "add_chords_and_bass", "{\"chords\": \"| Cmaj7 | D7 |\", \"chord_style\": \"lush\", \"key\": \"G major\", "
+		"\"bass_channel\": \"none\"}");
+	CHECK_HAS(Result.Text, "lush chords on VRC6 Pulse 2");
+	CHECK_HAS(Result.Text, "The chords on 2A03 Pulse 1, 2A03 Pulse 2, VRC6 Pulse 1 there still play under the new ones");
+}
+
 int main()
 {
 	TestJson();
@@ -6534,6 +6606,7 @@ int main()
 	TestVrc7Custom();
 	TestVoicedChords();
 	TestFadesAndScoops();
+	TestReharmonize();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
