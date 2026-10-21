@@ -971,8 +971,13 @@ void CPatternEditor::DrawEmptySongHint(CDC *pDC, int Row, int Line) const
 	int Width = 0;
 	for (int i = m_iFirstChannel; i < m_iFirstChannel + m_iChannelsVisible; ++i)
 		Width += m_iChannelWidths[i];
+	// Within the part of the channels in sight (the last one can be cut off)
+	const int Seen = m_iWinWidth - ::GetSystemMetrics(SM_CXVSCROLL) - ROW_COLUMN_WIDTH;
+	int TextWidth = Width < Seen ? Width : Seen;
+	if (TextWidth > 640)
+		TextWidth = 640;
 	const int Left = ROW_COLUMN_WIDTH + 16;
-	const int Right = ROW_COLUMN_WIDTH + (Width < 640 ? Width : 640) - 16;
+	const int Right = ROW_COLUMN_WIDTH + TextWidth - 16;
 	if (Right - Left < 200)
 		return;
 
