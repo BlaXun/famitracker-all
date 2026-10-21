@@ -2750,7 +2750,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades or scoops");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops or staccato");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -6457,6 +6457,18 @@ void TestFadesAndScoops()
 	CHECK_HAS(Result.Text, "1 scoop after leaps up on VRC6 Pulse 1");
 	CHECK(Leap.Rows[5][4].Pitch() == 53 && Leap.Rows[5][4].Effect[0] == EFF_SLIDE_UP && Leap.Rows[5][4].Param[0] == 0x62);
 	CHECK(Leap.Rows[5][12].Pitch() == 57 && Leap.Rows[5][12].Effect[0] == EFF_NONE);	// a step, not a leap
+	// Staccato: the bass bounces, its notes cut after three quarters of a beat
+	FakeSong Bass;
+	Bass.Info.DirectChanges = true;
+	Bass.Put(2, 0, "C-3", 1);
+	Bass.Put(2, 8, "G-2");
+	Bass.Put(2, 16, "A-2");
+	Bass.Put(2, 18, "A-2");
+	Bass.End(2, 32, NOTE_HALT);
+	Result = Run(Bass, "polish", "{\"touches\": [\"staccato\"]}");
+	CHECK_HAS(Result.Text, "3 bass notes on 2A03 Triangle cut short after three quarters of a beat (staccato)");
+	CHECK(Bass.Rows[2][3].Note == NOTE_HALT && Bass.Rows[2][11].Note == NOTE_HALT && Bass.Rows[2][21].Note == NOTE_HALT);
+	CHECK(Bass.Rows[2][17].Note == NOTE_NONE);	// a note shorter than a beat stays
 	// Read back as written: the note and its slide
 	CHECK_HAS(Run(Leap, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bar 1 beat 2: F-4, 2 beats, effects Q62");
 }

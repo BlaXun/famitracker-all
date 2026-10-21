@@ -4116,6 +4116,29 @@ int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
 	return Count;
 }
 
+// A bass played short: each note of a beat or more cut after three
+// quarters of a beat (a halt), so the line bounces as a triangle bass in
+// atmospheric and action tracks does. How many notes.
+int StaccatoBass(Session &S, Draft &D, int Channel, int First, int End)
+{
+	const int R = S.Time.RowsPerBeat;
+	const int Keep = std::max(1, R * 3 / 4);
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End || N.Rows < R || N.Row + Keep >= static_cast<int>(Cells.size()))
+			continue;
+		Cell &Cut = Cells[static_cast<size_t>(N.Row + Keep)];
+		if (Cut.Note != NOTE_NONE)
+			continue;
+		Cut.Note = NOTE_HALT;
+		++Count;
+	}
+	return Count;
+}
+
 std::string PolishTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -4140,8 +4163,9 @@ std::string PolishTool(Session &S, const Json &Args)
 			Words.push_back(pWhat->String());
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
-			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops")
-				throw Problem("touches: accents, vibrato, separate, fades or scoops.");
+			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
+				Word != "staccato")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops or staccato.");
 			What.insert(Word);
 		}
 	}
@@ -4208,6 +4232,17 @@ std::string PolishTool(Session &S, const Json &Args)
 		if (Count > 0)
 			Done.push_back(Format("%s after leaps up on %s (written a semitone or two low, sliding up with Q6y)",
 				Plural(Count, "scoop", "scoops").c_str(), S.Channel(Melody).FullName().c_str()));
+	}
+	if (What.count("staccato")) {
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (!IsBass(S.Channel(c)))
+				continue;
+			const int Count = StaccatoBass(S, D, c, First, End);
+			if (Count > 0)
+				Done.push_back(Format("%s on %s cut short after three quarters of a beat (staccato)",
+					Plural(Count, "bass note", "bass notes").c_str(), S.Channel(c).FullName().c_str()));
+		}
 	}
 	if (What.count("separate")) {
 		for (size_t i = 0; i < Channels.size(); ++i) {
@@ -9319,7 +9354,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one); and when asked, fades "
 			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
 			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
-			"bars). Default: accents, vibrato and separate.");
+			"bars) and staccato (the bass's notes of a beat or more cut after three quarters of a beat, so it bounces). Default: "
+			"accents, vibrato and separate.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
@@ -9328,6 +9364,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("separate");
 		TouchNames.Push("fades");
 		TouchNames.Push("scoops");
+		TouchNames.Push("staccato");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
