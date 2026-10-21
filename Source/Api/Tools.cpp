@@ -10551,9 +10551,13 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"5. Build the form: copy_bars for repeats and make each repeat different (vary_part, a counter-melody or harmony only "
 			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar).\n"
 			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
-			"beat, polish; give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument).\n"
-			"7. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
-			"8. check_loop and set_loop so it loops cleanly, then play it for me and ask what I'd change. Keep what I like in "
+			"beat (kit samples for a punchy sampled kick and snare), polish (fades, scoops and a staccato or thump bass where they "
+			"fit); give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument), and an echo "
+			"(add_echo, detune 1) where it leaves room.\n"
+			"7. Finish the sound: set_swing if the feel should swing, then mix (soft) last, so the triangle and the drums come "
+			"through and the pulses don't harshen.\n"
+			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
+			"9. check_loop and set_loop so it loops cleanly, then play it for me and ask what I'd change. Keep what I like in "
 			"soundtrack_notes.";
 		return true;
 	}
@@ -10564,7 +10568,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"1. get_song and review_arrangement" + (Bars.empty() ? std::string() : " (from_bar and to_bar for those bars)") + ".\n"
 			"2. Work through its list in order, one change at a time: missing layers first (chords, bass, drums, a second line), "
 			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then expression (polish, an "
-			"echo, a sound that changes between sections). Keep my melody unless the review points at it.\n"
+			"echo, a sound that changes between sections, sampled drums), and mix last. Keep my melody unless the review points "
+			"at it.\n"
 			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
 			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
 		return true;
