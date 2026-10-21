@@ -331,6 +331,34 @@ std::string InstrumentLabel(const SongInfo &Song, int Index)
 	return Format("\"%s\" (%02X)", pInfo->Name.c_str(), Index);
 }
 
+// The notes an instrument's looping arpeggio adds above each note it plays ({4, 7, 11}); empty for none
+const std::vector<int> &InstrumentChord(const Session &S, int Instrument)
+{
+	static const std::vector<int> NONE;
+	const InstrumentInfo *pInfo = FindInstrument(S.Song, Instrument);
+	return pInfo != 0 ? pInfo->Arpeggio : NONE;
+}
+
+// The semitones above a note that sound with it: its 0xy arpeggio's (Arpeggio, 0 for none), else its instrument's
+std::vector<int> ChordAbove(const Session &S, const NoteInfo &N, int Arpeggio)
+{
+	if (Arpeggio == 0)
+		return InstrumentChord(S, N.Instrument);
+	std::vector<int> Out(1, Arpeggio >> 4);
+	if ((Arpeggio & 15) != 0)
+		Out.push_back(Arpeggio & 15);
+	return Out;
+}
+
+// Whether a note sounds a chord: an 0xy arpeggio on its rows, or its instrument's own
+bool SoundsChord(const Session &S, const NoteInfo &N)
+{
+	for (size_t e = 0; e < N.Effects.size(); ++e)
+		if (N.Effects[e].second.first == EFF_ARPEGGIO && N.Effects[e].second.second != 0)
+			return true;
+	return !InstrumentChord(S, N.Instrument).empty();
+}
+
 std::vector<bool> ReleasingInstruments(const SongInfo &Song)
 {
 	std::vector<bool> Releases(NO_INSTRUMENT, false);
@@ -902,11 +930,8 @@ int GuessMelodyChannel(Session &S, int First, int End)
 				continue;
 			int Chords = 0;
 			for (size_t i = 0; i < Notes.size(); ++i)
-				for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
-					if (Notes[i].Effects[e].second.first == EFF_ARPEGGIO && Notes[i].Effects[e].second.second != 0) {
-						++Chords;
-						break;
-					}
+				if (SoundsChord(S, Notes[i]))
+					++Chords;
 			if (Pass == 0 && Chords * 3 >= static_cast<int>(Notes.size()))
 				continue;
 			// An echo of another part isn't the melody
@@ -2653,7 +2678,7 @@ void RubWarnings(const Session &S, const std::vector<ChordAt> &Chords, const std
 }
 
 // The notes the song's parts other than one play, as pitch classes, with
-// the chords their 0xy arpeggios sound
+// the chords their 0xy arpeggios and arpeggio instruments sound
 std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End)
 {
 	std::vector<HeardNote> Out;
@@ -2677,11 +2702,10 @@ std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End)
 			H.Weight = std::max(0.3, N.Volume / 15.0);
 			H.Bass = Bass;
 			Out.push_back(H);
-			if (Arpeggio != 0) {
+			const std::vector<int> Above = ChordAbove(S, N, Arpeggio);
+			for (size_t a = 0; a < Above.size(); ++a) {
 				H.Bass = false;
-				H.PitchClass = (N.Pitch + (Arpeggio >> 4)) % 12;
-				Out.push_back(H);
-				H.PitchClass = (N.Pitch + (Arpeggio & 15)) % 12;
+				H.PitchClass = (N.Pitch + Above[a]) % 12;
 				Out.push_back(H);
 			}
 		}
@@ -2992,7 +3016,7 @@ std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<Note
 std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const std::vector<PartNote> &Notes, int &Dropped,
 	int &Shortened)
 {
-	struct Other { int Row, End, Count; int Pitches[3]; };
+	struct Other { int Row, End; std::vector<int> Pitches; };
 	std::vector<Other> Others;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (c == Target || !IsMelodic(S.Channel(c)))
@@ -3003,10 +3027,10 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 			Other o;
 			o.Row = Theirs[i].Row;
 			o.End = Theirs[i].Row + Theirs[i].Rows;
-			o.Pitches[0] = Theirs[i].Pitch;
-			o.Pitches[1] = Theirs[i].Pitch + (Arps[i] >> 4);
-			o.Pitches[2] = Theirs[i].Pitch + (Arps[i] & 15);
-			o.Count = Arps[i] == 0 ? 1 : ((Arps[i] & 15) != 0 ? 3 : 2);
+			o.Pitches.push_back(Theirs[i].Pitch);
+			const std::vector<int> Above = ChordAbove(S, Theirs[i], Arps[i]);
+			for (size_t a = 0; a < Above.size(); ++a)
+				o.Pitches.push_back(Theirs[i].Pitch + Above[a]);
 			Others.push_back(o);
 		}
 	}
@@ -3019,11 +3043,14 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 			const Other &o = Others[k];
 			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
 				continue;
-			bool Rub = false;
-			for (int p = 0; p < o.Count; ++p) {
+			// A note of the other part's chord doesn't rub against it (the F# of a Gmaj7)
+			bool Rub = false, InChord = false;
+			for (size_t p = 0; p < o.Pitches.size(); ++p) {
 				const int d = ((E.Pitch - o.Pitches[p]) % 12 + 12) % 12;
 				Rub = Rub || d == 1 || d == 11;
+				InChord = InChord || (d == 0 && o.Pitches.size() > 1);
 			}
+			Rub = Rub && !InChord;
 			if (Rub)
 				CutAt = std::min(CutAt, std::max(o.Row, E.Row));
 		}
@@ -3167,19 +3194,9 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 	if (IsBass(Info))
 		return ROLE_BASS;
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
-	for (size_t i = 0; i < Notes.size(); ++i) {
-		if (Notes[i].Row < First || Notes[i].Row >= End)
-			continue;
-		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
-			if (Notes[i].Effects[e].second.first == EFF_ARPEGGIO && Notes[i].Effects[e].second.second != 0)
-				return ROLE_CHORDS;
-		const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
-		if (pInfo != 0) {
-			const std::string Name = Lowercase(pInfo->Name);
-			if (Name.find("chord") != std::string::npos || Name.compare(0, 5, "lush ") == 0 || Name.find("arp") != std::string::npos)
-				return ROLE_CHORDS;
-		}
-	}
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row >= First && Notes[i].Row < End && SoundsChord(S, Notes[i]))
+			return ROLE_CHORDS;
 	return ROLE_LINE;
 }
 
@@ -3866,18 +3883,6 @@ std::string BarPrint(const std::vector<NoteInfo> &Notes, int Row, int End)
 	return Out;
 }
 
-int EffectCount(const std::vector<NoteInfo> &Notes, int Effect)
-{
-	int Count = 0;
-	for (size_t i = 0; i < Notes.size(); ++i)
-		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
-			if (Notes[i].Effects[e].second.first == Effect && Notes[i].Effects[e].second.second != 0) {
-				++Count;
-				break;
-			}
-	return Count;
-}
-
 // What a version's name says about it: calm (night), tense (battle) or neither
 enum version_mood { MOOD_OTHER, MOOD_CALM, MOOD_TENSE };
 
@@ -3962,7 +3967,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Bass = c;
 			continue;
 		}
-		const int Arpeggios = EffectCount(Notes, EFF_ARPEGGIO);
+		int Arpeggios = 0;	// notes that sound chords (0xy, or arpeggio instruments)
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (SoundsChord(S, Notes[i]))
+				++Arpeggios;
 		// An echo: the melody's notes again, a little later
 		int Delayed = 0;
 		for (size_t i = 0; i < Notes.size(); ++i) {
@@ -5471,9 +5479,8 @@ bool PlaysChords(Session &S, int Channel)
 {
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	for (size_t i = 0; i < Notes.size(); ++i)
-		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
-			if (Notes[i].Effects[e].second.first == EFF_ARPEGGIO && Notes[i].Effects[e].second.second != 0)
-				return true;
+		if (SoundsChord(S, Notes[i]))
+			return true;
 	return false;
 }
 
@@ -6743,10 +6750,9 @@ bool SoundingChord(Session &S, int First, int End, int &Root, bool &Minor)
 				continue;
 			const double Rows = To - From;
 			Weight[N.Pitch % 12] += Rows;
-			if (Arpeggio != 0) {
-				Weight[(N.Pitch + (Arpeggio >> 4)) % 12] += Rows;
-				Weight[(N.Pitch + (Arpeggio & 15)) % 12] += Rows;
-			}
+			const std::vector<int> Above = ChordAbove(S, N, Arpeggio);
+			for (size_t a = 0; a < Above.size(); ++a)
+				Weight[(N.Pitch + Above[a]) % 12] += Rows;
 			if (N.Row <= First + S.Time.RowsPerBeat && N.Pitch < BassPitch) {
 				BassPitch = N.Pitch;
 				Bass = N.Pitch % 12;
@@ -7926,9 +7932,7 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 			const NoteInfo &Note = Channel.Notes[i];
 			if (Note.Row < End && Note.Row + Note.Rows > First) {
 				Sounds = true;
-				for (size_t e = 0; e < Note.Effects.size(); ++e)
-					if (Note.Effects[e].second.first == EFF_ARPEGGIO && Note.Effects[e].second.second != 0)
-						Chords = true;
+				Chords = Chords || SoundsChord(S, Note);
 			}
 		}
 		if (!Sounds) {

@@ -180,6 +180,28 @@ public:
 		Rows = Tracks[Track].Rows;
 	}
 
+	// The notes a preset's looping arpeggio plays besides each note, as FamiTracker reports them
+	static std::vector<int> LoopingArpeggio(const Preset &Sound)
+	{
+		std::vector<int> Out;
+		for (size_t s = 0; s < Sound.Sequences2A03.size(); ++s) {
+			const PresetSequence &Seq = Sound.Sequences2A03[s];
+			if (Seq.Type != SEQUENCE_ARPEGGIO || Seq.Loop < 0 || Seq.Setting != SEQUENCE_ABSOLUTE)
+				continue;
+			bool Root = false;
+			for (size_t i = static_cast<size_t>(Seq.Loop); i < Seq.Items.size(); ++i) {
+				if (Seq.Items[i] == 0)
+					Root = true;
+				else if (std::find(Out.begin(), Out.end(), Seq.Items[i]) == Out.end())
+					Out.push_back(Seq.Items[i]);
+			}
+			if (Out.size() == 1 && !Root)
+				Out.clear();
+			std::sort(Out.begin(), Out.end());
+		}
+		return Out;
+	}
+
 	void AddInstrumentInfo(int Index, const char *Name, const char *Chip, bool Releases)
 	{
 		InstrumentInfo I;
@@ -379,6 +401,7 @@ public:
 			Next = std::max(Next, Info.Instruments[i].Index + 1);
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
+		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
 		Made[Next] = Sound;
 		return Next;
 	}
@@ -6069,6 +6092,31 @@ void TestLushChords()
 	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"color\": \"plain\", "
 		"\"key\": \"C major\", \"bass_channel\": \"none\", \"from_bar\": 8, \"to_bar\": 8}");
 	CHECK_HAS(Result.Text, "\"Lush major\"");
+
+	// The instruments report the chords their arpeggios play, and the analyses hear them
+	CHECK(Song.Info.Instruments[3].Arpeggio == std::vector<int>({ 4, 7, 14 }) && Song.Info.Instruments[1].Arpeggio.empty());
+	const char *const TUNE[] = { "E-4", "G-4", "D-4", "C-4" };
+	for (int b = 0; b < 4; ++b)
+		Song.Put(5, b * 16, TUNE[b], b == 0 ? 0 : NO_INSTRUMENT);
+	Song.End(5, 64, NOTE_RELEASE);
+	Result = Run(Song, "review_arrangement", "{\"to_bar\": 4}");
+	CHECK_HAS(Result.Text, "in C major");
+	CHECK_HAS(Result.Text, "chords on 2A03 Pulse 1");
+	CHECK_HAS(Result.Text, "Fmaj7");
+	{
+		// An echo note in the chord isn't a rub: the F# of a Gmaj7 stays
+		FakeSong Rub;
+		Rub.Info.DirectChanges = true;
+		CHECK(!Run(Rub, "add_chords_and_bass", "{\"chords\": \"Gmaj7\", \"chord_style\": \"lush\", \"key\": \"G major\", "
+			"\"bass_channel\": \"none\", \"to_bar\": 1}").IsError);
+		Rub.Put(5, 0, "F#4", 0);
+		Rub.Put(5, 4, "B-4");
+		Rub.Put(5, 8, "F#4");
+		Rub.Put(5, 12, "D-4");
+		Rub.End(5, 16, NOTE_RELEASE);
+		Result = Run(Rub, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"delay_beats\": 1}");
+		CHECK(!Result.IsError && Result.Text.find("left out") == std::string::npos && Rub.Rows[6][4].Pitch() == Rub.Rows[5][0].Pitch());
+	}
 
 	// A VRC7 song: lush chords go on a 2A03 pulse; an FM channel can't play them
 	FakeSong Fm;

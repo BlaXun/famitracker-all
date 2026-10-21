@@ -209,6 +209,59 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 	return Up && Down;
 }
 
+// The notes an instrument's looping arpeggio sequence plays besides the note
+// itself, in semitones ({4, 7, 11}): the chord it plays from each note; empty
+// when it has none, or one that doesn't loop (an attack's octave blip)
+std::vector<int> LoopingArpeggio(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
+{
+	std::vector<int> Out;
+	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	switch (pInstrument->GetType()) {
+	case INST_2A03: {
+		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
+		Enabled = p->GetSeqEnable(SEQ_ARPEGGIO);
+		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
+		break;
+	}
+	case INST_VRC6: {
+		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+		Chip = SNDCHIP_VRC6;
+		Enabled = p->GetSeqEnable(SEQ_ARPEGGIO);
+		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
+		break;
+	}
+	case INST_N163: {
+		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(SEQ_ARPEGGIO);
+		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
+		break;
+	}
+	default:
+		return Out;
+	}
+	if (Enabled == 0)
+		return Out;
+	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_ARPEGGIO);
+	if (pSeq == NULL || pSeq->GetSetting() != ARP_SETTING_ABSOLUTE)
+		return Out;
+	const int Loop = static_cast<int>(pSeq->GetLoopPoint()), Count = static_cast<int>(pSeq->GetItemCount());
+	if (Loop < 0 || Loop >= Count)
+		return Out;
+	bool Root = false;
+	for (int i = Loop; i < Count; ++i) {
+		const int Value = pSeq->GetItem(i);
+		if (Value == 0)
+			Root = true;
+		else if (std::find(Out.begin(), Out.end(), Value) == Out.end())
+			Out.push_back(Value);
+	}
+	if (Out.empty() || (Out.size() == 1 && !Root))
+		Out.clear();	// one note over and over
+	std::sort(Out.begin(), Out.end());
+	return Out;
+}
+
 std::string InstrumentChip(inst_type_t Type)
 {
 	switch (Type) {
@@ -628,6 +681,7 @@ public:
 			if (pInstrument != NULL) {
 				Instrument.Releases = pInstrument->CanRelease();
 				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
+				Instrument.Arpeggio = LoopingArpeggio(pDoc, pInstrument);
 				if (pInstrument->GetType() == INST_N163) {
 					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
 					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();

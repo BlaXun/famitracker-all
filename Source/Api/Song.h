@@ -55,6 +55,8 @@ struct InstrumentInfo {
 	bool Releases;			// fades out on a release (===)
 	bool Vibrato;			// vibrato built in: its pitch sequence goes up and down in a loop
 	int WavePos, WaveSize;	// an N163 instrument's place and length in the chip's wave memory (samples); -1 otherwise
+	std::vector<int> Arpeggio;	// the notes its looping arpeggio plays besides each note it's given, in semitones ({4, 7,
+								// 11}: a major seventh); empty when it has none, or one that doesn't loop
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1) {}
 };
