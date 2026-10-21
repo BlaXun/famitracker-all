@@ -86,10 +86,27 @@ Some things to try:
 - "Make it faster, speed 5." / "Set the tempo to 100 BPM."
 - "Make a jump sound and three coin sounds to choose from." / "Turn my
   recording pew.wav into a sound effect."
+- "Start a battle theme in D minor." / "Give me a groove for a spooky cave."
+- "Use these chords: | Am7 | Fmaj7 | C | G7sus4 G7 |, as broken chords, with a
+  walking bass."
+- "Add drums with a fill every four bars." / "Give the melody a harmony a
+  third below." / "Add a counter-melody under it."
+- "How full does the arrangement sound? What's missing?"
+- "Make a lead that swells in and gets a vibrato on long notes."
+- "Repeat bars 1-8 at bar 9, but make the repeat different."
+- "Remember that I like bright leads and don't want echo on the melody."
 
 Claude can't hear the song. It checks what it wrote (notes outside the key,
-clashes, range), looks at a picture of the notes, and plays it for you, then
-asks how it sounds.
+clashes, range), looks at a picture of the notes, reviews how full the
+arrangement is, and plays it for you, then asks how it sounds.
+
+Four recipes come with the connection as commands in Claude Code (type `/`
+to see them): `/mcp__famitracker__compose_track` composes a track for a
+scene ("a snowy village at night") step by step, `/mcp__famitracker__deepen_track`
+works through what makes the open song sound plain,
+`/mcp__famitracker__make_versions` makes versions of a part as clips to
+choose from, and `/mcp__famitracker__study_track` explains what makes a track
+work, to reuse its ideas.
 
 ## How changes arrive
 
@@ -115,15 +132,25 @@ anything; close the dialog and ask again.
 
 | Tool | What it does |
 |---|---|
-| `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes and the chords that fit the melody bar by bar |
+| `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, or one of the VRC7's own sounds |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop or fall on the attack, a chord arpeggio; or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
-| `add_chords_and_bass` | Fits chords to the melody and writes them as an arpeggio, plus a bass line |
+| `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
+| `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert): chords, bass and drums, each played as that mood usually is |
+| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it |
+| `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
+| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
+| `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played |
+| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics |
+| `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
@@ -136,15 +163,16 @@ anything; close the dialog and ask again.
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`) (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games) |
-| `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched |
+| `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you |
 | `undo` | Ctrl+Z (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
-chords, warm pad, bass, plucky bass, kick, snare, hi-hat, open hi-hat. Each
-is built for the 2A03 (also MMC5 channels) and the VRC6. VRC7 channels play
-the chip's own sounds instead (see [Expansion chips](#expansion-chips)).
+chords, warm pad, bass, plucky bass, singing lead (a vibrato that comes in by
+itself), strings, brass, organ, kick, snare, hi-hat, open hi-hat, crash, tom.
+Each is built for the 2A03 (also MMC5 channels) and the VRC6. VRC7 channels
+play the chip's own sounds instead (see [Expansion chips](#expansion-chips)).
 
 Notes are written the way FamiTracker shows them: C-4, C#4 (Db4 works too).
 FamiTracker's octave numbers are one lower than in most music software: C-3
@@ -204,6 +232,52 @@ and a preset's name picks the sound most like it: "soft lead" is the flute,
 "bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
 which lets the sound fade the way the chip does. The FDS and N163 need
 wavetable instruments, which you make in FamiTracker's instrument editor.
+
+## Arrangements with depth
+
+Tracks sound plain when every bar is the same: one chord held as an
+arpeggio, a bass on the roots, no drums, a melody of one note length, a
+section pasted again unchanged. The connection tells Claude how arrangers
+avoid that, and gives it tools for each layer:
+
+- **Chords** (`add_chords_and_bass`): by name ("| Am7 | Fmaj7 | C | G7sus4
+  G7 |") or as degrees of the key ("I vi IV V", "V7/V"); "." holds a chord
+  for a beat, "%" repeats a bar, and the progression repeats to fill the
+  bars. Or fitted to the melody, with `color` sevenths (Imaj7, ii7, V7...) or
+  rich (add9, maj7, m9, a V7sus4 that resolves) where the melody doesn't rub
+  against them. Played as an `arpeggio` (the 0xy shimmer, held or struck on a
+  rhythm), `stabs` (short hits: offbeats, eighths, tresillo, charleston,
+  waltz...), `broken` chords (up, down, updown, alberti, rolling) or a
+  `guide` line (one long note a chord on its third or seventh).
+- **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
+  approach notes into each chord), syncopated, arpeggio, driving, pedal. On
+  the triangle it sits where it sounds like a bass (the triangle plays an
+  octave below what's written).
+- **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,
+  breakbeat, calm, driving, waltz; light, normal or busy; an open hi-hat into
+  every other bar, fills that take turns (toms, a snare roll, kick and snare)
+  and crashes.
+- **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
+  free channel.
+- **Finishing touches**: `polish`; `make_groove` starts a whole backing for
+  a mood; `copy_bars` and `vary_part` build a form whose repeats change.
+
+`review_arrangement` listens the way an arranger would and scores the depth
+out of 10, with what would help most and the tool for each. Claude runs it
+before calling a track done.
+
+## Sounds in words
+
+`design_instrument` makes an instrument from words, starting from a kind
+(lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune; kick,
+snare, hihat, open hihat, crash, tom) and changing what should differ:
+attack, decay, sustain and release (words or frames, 60 a second), the
+pulse width (12.5%, 25%, 50%) and whether it opens up, shimmers or thins as
+it fades, a vibrato built in that comes in after a delay given in beats, an
+octave blip, a scoop or a fall on the attack, or a chord played as a fast
+arpeggio from every note. Drums can be darker or brighter, shorter or
+longer. The instrument gets a new name, so notes that use another one don't
+change.
 
 ## Moods
 
@@ -398,6 +472,7 @@ editor; they're muted again afterwards.
 
 - Recording ideas from a phone page into the clips.
 - Instruments for the FDS and N163.
+- Importing NSF files, so Claude can study real NES tracks.
 
 ## For developers
 
@@ -407,11 +482,16 @@ editor; they're muted again afterwards.
   2025-03-26 to 2025-11-25, Host, Origin and token checks), `Music` (cells,
   note names, bars and beats, keys and modes, writing a part into a range of
   rows, and following the song through its jumps, skips and halts),
-  `Presets` (also the VRC7's patches), `Picture` and `Png` (the piano-roll
+  `Presets` (also the VRC7's patches, and `DesignPreset`: a sound described
+  in words as sequences), `Chords` (chords read from names and degrees,
+  progressions laid out on bars, colors, and the chords heard in notes),
+  `Arrange` (chord parts in styles, bass lines, drum grooves with fills, a
+  harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the
   jingles' scores, in semitones from the key note and sixteenth notes),
   `SoundEffects` (the sound effect kinds, built a tick at a time), and
-  `Tools` (the tools, against the `SongHost` interface in `Song.h`). Tool
+  `Tools` (the tools, against the `SongHost` interface in `Song.h`, the
+  server's instructions and the recipes served as MCP prompts). Tool
   results can carry an image after their text.
 - `Source/Transcribe/SoundEffect.cpp`: sound effects as layers of per-tick
   values and as FamiTracker instruments (each tick an absolute arpeggio picks

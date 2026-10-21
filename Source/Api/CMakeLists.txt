@@ -73,6 +73,8 @@ add_library(ftapi STATIC
 	Jingles.cpp
 	SoundEffects.cpp
 	Music.cpp
+	Chords.cpp
+	Arrange.cpp
 	Presets.cpp
 	Tools.cpp
 	${TRANSCRIBE}/WavReader.cpp

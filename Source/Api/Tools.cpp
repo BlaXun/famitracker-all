@@ -20,6 +20,8 @@
 */
 
 #include "Tools.h"
+#include "Arrange.h"
+#include "Chords.h"
 #include "GameAudio.h"
 #include "Jingles.h"
 #include "Music.h"
@@ -36,6 +38,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <map>
 #include <set>
 
@@ -46,6 +49,7 @@ namespace {
 const int MAX_READ_BARS = 32;
 const int MAX_PICTURE_BARS = 32;
 const int MAX_LISTED = 15;
+const char *const SOUNDTRACK_NOTES = "Soundtrack notes.txt";
 
 // A tool's arguments or the song don't allow it: the reason goes back to Claude
 struct Problem {
@@ -689,23 +693,82 @@ std::string ChordsText(const std::vector<transcribe::ChordSpan> &Chords, const s
 	return Text;
 }
 
-// The busiest melodic channel that isn't a bass channel (where a melody usually is)
+// A channel's notes that start in [First, End)
+std::vector<NoteInfo> NotesIn(const std::vector<NoteInfo> &Notes, int First, int End)
+{
+	std::vector<NoteInfo> Out;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row >= First && Notes[i].Row < End)
+			Out.push_back(Notes[i]);
+	return Out;
+}
+
+// The pitch half of the notes' time is spent below, or Default
+int MiddleOf(const std::vector<NoteInfo> &Notes, int Default)
+{
+	std::vector<std::pair<int, int> > Pitches;
+	int Total = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Pitches.push_back(std::make_pair(Notes[i].Pitch, std::max(1, Notes[i].Rows)));
+		Total += std::max(1, Notes[i].Rows);
+	}
+	if (Pitches.empty())
+		return Default;
+	std::sort(Pitches.begin(), Pitches.end());
+	int Sum = 0;
+	for (size_t i = 0; i < Pitches.size(); ++i) {
+		Sum += Pitches[i].second;
+		if (Sum * 2 >= Total)
+			return Pitches[i].first;
+	}
+	return Pitches.back().first;
+}
+
+// The channel most likely to play the melody in [First, End): of the
+// melodic channels that aren't bass channels or mostly 0xy chords (any of
+// them when only those play), the one with the most notes, notes higher up
+// counting for more: a melody is usually the top line, and an accompaniment
+// of many quick notes sits under it
 int GuessMelodyChannel(Session &S, int First, int End)
 {
-	int Best = -1;
-	size_t BestCount = 0;
-	for (int Pass = 0; Pass < 2 && Best < 0; ++Pass) {
+	for (int Pass = 0; Pass < 3; ++Pass) {
+		std::vector<int> Channels, Counts, Middles;
+		int Lowest = 1000;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
-			if (!IsMelodic(S.Channel(c)) || (Pass == 0 && IsBass(S.Channel(c))))
+			const ChannelInfo &Info = S.Channel(c);
+			if (!IsMelodic(Info) || (Pass < 2 && IsBass(Info)))
 				continue;
-			const size_t Count = MelodyOf(S.Notes(c), First, End).size();
-			if (Count > BestCount) {
-				Best = c;
-				BestCount = Count;
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			if (Notes.empty())
+				continue;
+			int Chords = 0;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+					if (Notes[i].Effects[e].second.first == EFF_ARPEGGIO && Notes[i].Effects[e].second.second != 0) {
+						++Chords;
+						break;
+					}
+			if (Pass == 0 && Chords * 3 >= static_cast<int>(Notes.size()))
+				continue;
+			const int Middle = MiddleOf(Notes, 48) - (Info.Kind == KIND_TRIANGLE ? 12 : 0);
+			Channels.push_back(c);
+			Counts.push_back(static_cast<int>(Notes.size()));
+			Middles.push_back(Middle);
+			Lowest = std::min(Lowest, Middle);
+		}
+		int Best = -1;
+		double BestScore = 0.0;
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const double Score = Counts[i] * std::pow(2.0, (Middles[i] - Lowest) / 8.0);
+			if (Score > BestScore) {
+				Best = Channels[i];
+				BestScore = Score;
 			}
 		}
+		if (Best >= 0)
+			return Best;
 	}
-	return Best;
+	return -1;
 }
 
 bool NoteStartsIn(Session &S, int Channel, int First, int End)
@@ -827,6 +890,9 @@ std::string RangeText(int From, int To)
 
 // The song
 
+std::vector<BarSpan> SongBarSpans(const Session &S, int First, int End);
+std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K);
+
 std::string SongOverview(Session &S, const Json &Args)
 {
 	const SongInfo &Song = S.Song;
@@ -909,6 +975,26 @@ std::string SongOverview(Session &S, const Json &Args)
 	}
 	else
 		Text += "Key: none yet (no notes)\n";
+	{
+		Key Played;
+		if (FindKey(S, 0, T.TotalRows(), Played)) {
+			const int Melody = GuessMelodyChannel(S, 0, T.TotalRows());
+			bool Backing = false;
+			for (int c = 0; c < S.ChannelCount() && !Backing; ++c)
+				Backing = c != Melody && IsMelodic(S.Channel(c)) && !S.Notes(c).empty();
+			if (Backing) {
+				const std::vector<ChordAt> Heard = SongChords(S, 0, T.TotalRows(), Played);
+				if (!Heard.empty())
+					Text += "Chords the parts play: " + ProgressionText(Heard, SongBarSpans(S, 0, T.TotalRows()), Played) + "\n";
+			}
+		}
+	}
+	{
+		std::string Notes, Error;
+		if (S.Host().ReadFile(SOUNDTRACK_NOTES, Notes, Error) && !Trim(Notes).empty())
+			Text += std::string("Soundtrack notes: \"") + SOUNDTRACK_NOTES + "\" next to the song holds the user's taste and the decisions "
+				"about this game's music; read it with soundtrack_notes before writing.\n";
+	}
 
 	Text += "Instruments:";
 	if (Song.Instruments.empty())
@@ -1467,6 +1553,155 @@ std::vector<int> ChannelsArg(Session &S, const Json &Args, const char *Name)
 	return Channels;
 }
 
+// Sounds described in words
+
+// A word from Words (as Values), or a number from 0 to Max
+int WordArg(const Json &Args, const char *Name, int Default, const char *const *Words, const int *Values, int Count, int Max)
+{
+	const Json *pValue = Arg(Args, Name);
+	if (pValue == 0)
+		return Default;
+	if (pValue->IsString()) {
+		const std::string Text = Squeezed(pValue->String());
+		for (int i = 0; i < Count; ++i)
+			if (Text == Squeezed(Words[i]))
+				return Values[i];
+		if (Text.empty() || Text.find_first_not_of("0123456789") != std::string::npos) {
+			std::string List;
+			for (int i = 0; i < Count; ++i)
+				List += (i == 0 ? "" : ", ") + std::string(Words[i]);
+			throw Problem(std::string(Name) + ": " + List + (Max > 0 ? Format(", or a number up to %d.", Max) : std::string(".")));
+		}
+	}
+	return IntArg(Args, Name, Default, 0, Max);
+}
+
+std::string DesignInstrumentTool(Session &S, const Json &Args)
+{
+	const std::string Name = StringArg(Args, "name");
+	if (Name.empty())
+		throw Problem("Give the instrument a name.");
+	if (Name.size() > 60)
+		throw Problem("name: up to 60 characters.");
+	std::string Chip = "2A03";
+	bool Sawtooth = false, Noise = false, Low = false;
+	if (Arg(Args, "channel") != 0) {
+		const int Channel = ChannelArg(S, Args, "channel");
+		Chip = InstrumentChip(S.Channel(Channel));
+		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+		Noise = S.Channel(Channel).Kind == KIND_NOISE;
+		Low = IsBass(S.Channel(Channel));
+		if (S.Channel(Channel).Kind == KIND_DPCM)
+			throw Problem("The DPCM channel plays samples; design_instrument makes sounds for the other channels.");
+	}
+	else if (Arg(Args, "chip") != 0) {
+		Chip = StringArg(Args, "chip");
+		for (size_t i = 0; i < Chip.size(); ++i)
+			Chip[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(Chip[i])));
+		if (Chip == "MMC5")
+			Chip = "2A03";
+	}
+	if (Chip == "VRC7")
+		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
+	if (Chip != "2A03" && Chip != "VRC6")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5) and VRC6 channels.");
+	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
+		throw Problem("This song has no VRC6 channels.");
+
+	SoundDesign D;
+	const std::string Kind = StringArg(Args, "kind");
+	if (!Kind.empty()) {
+		if (!DesignOfKind(Kind, D))
+			throw Problem("kind: " + DesignKinds() + ".");
+	}
+	else if (Noise)
+		throw Problem("For the noise channel, say which drum with kind: kick, snare, hihat, open hihat, crash or tom.");
+	else
+		DesignOfKind(Low ? "bass" : "lead", D);
+	if (D.Drum && Arg(Args, "channel") != 0 && !Noise)
+		throw Problem("A drum is for the noise channel.");
+	if (!D.Drum && Noise)
+		throw Problem("The noise channel plays drums: kind kick, snare, hihat, open hihat, crash or tom.");
+	if (D.Drum) {
+		Chip = "2A03";
+		Sawtooth = false;
+	}
+	D.Name = Name;
+
+	static const char *const ATTACKS[] = { "instant", "fast", "medium", "slow", "swell" };
+	static const int ATTACK_FRAMES[] = { 0, 2, 5, 10, 20 };
+	static const char *const DECAYS[] = { "none", "short", "medium", "long" };
+	static const int DECAY_FRAMES[] = { 0, 4, 10, 24 };
+	static const char *const SUSTAINS[] = { "none", "low", "half", "high", "full" };
+	static const int SUSTAIN_LEVELS[] = { 0, 4, 8, 12, 15 };
+	static const char *const RELEASES[] = { "short", "medium", "long" };
+	static const int RELEASE_FRAMES[] = { 3, 8, 20 };
+	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%", "12.5", "25", "50", "75", "thin", "bright", "round", "square",
+		"hollow", "nasal" };
+	static const int DUTY_VALUES[] = { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 2, 2, 0 };
+	static const char *const MOTIONS[] = { "still", "none", "sweep", "open", "wobble", "chorus", "fade" };
+	static const int MOTION_VALUES[] = { DUTY_STILL, DUTY_STILL, DUTY_SWEEP, DUTY_SWEEP, DUTY_WOBBLE, DUTY_WOBBLE, DUTY_FADE };
+	static const char *const VIBRATOS[] = { "none", "gentle", "medium", "strong" };
+	static const int VIBRATO_DEPTHS[] = { 0, 1, 2, 3 };
+	static const char *const PITCHES_WORDS[] = { "none", "blip", "scoop", "drop" };
+	static const int PITCH_VALUES[] = { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP };
+	static const char *const TONES[] = { "dark", "normal", "bright" };
+	static const int TONE_VALUES[] = { -1, 0, 1 };
+	static const char *const LENGTHS[] = { "short", "normal", "long" };
+	static const int LENGTH_VALUES[] = { -1, 0, 1 };
+	D.Attack = WordArg(Args, "attack", D.Attack, ATTACKS, ATTACK_FRAMES, 5, 60);
+	D.Decay = WordArg(Args, "decay", D.Decay, DECAYS, DECAY_FRAMES, 4, 120);
+	D.Peak = IntArg(Args, "volume", D.Peak, 1, 15);
+	if (Arg(Args, "decay") != 0 && D.Decay == 0 && Arg(Args, "sustain") == 0)
+		D.Sustain = D.Peak;	// no decay: it holds at its peak
+	D.Sustain = std::min(D.Peak, WordArg(Args, "sustain", D.Sustain, SUSTAINS, SUSTAIN_LEVELS, 5, 15));
+	D.Release = WordArg(Args, "release", D.Release, RELEASES, RELEASE_FRAMES, 3, 60);
+	D.Duty = WordArg(Args, "duty", D.Duty, DUTIES, DUTY_VALUES, 14, 0);
+	D.Motion = WordArg(Args, "duty_motion", D.Motion, MOTIONS, MOTION_VALUES, 7, 0);
+	D.Vibrato = WordArg(Args, "vibrato", D.Vibrato, VIBRATOS, VIBRATO_DEPTHS, 4, 0);
+	if (Arg(Args, "vibrato_delay_beats") != 0) {
+		const double Beats = NumberArg(Args, "vibrato_delay_beats", 0.5, 0.0, 8.0);
+		const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
+		D.VibratoDelay = std::max(0, std::min(200, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+	}
+	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 4, 0);
+	const std::string Chord = Squeezed(StringArg(Args, "arpeggio"));
+	if (!Chord.empty()) {
+		static const struct { const char *Word; std::initializer_list<int> Tones; } CHORDS[] = {
+			{ "none", {} }, { "octave", { 0, 12 } }, { "major", { 0, 4, 7 } }, { "minor", { 0, 3, 7 } }, { "fifth", { 0, 7 } },
+			{ "power", { 0, 7, 12 } }, { "sus4", { 0, 5, 7 } }, { "major7", { 0, 4, 7, 11 } }, { "minor7", { 0, 3, 7, 10 } },
+		};
+		bool Known = false;
+		for (size_t i = 0; i < sizeof(CHORDS) / sizeof(CHORDS[0]) && !Known; ++i) {
+			if (Chord == CHORDS[i].Word) {
+				D.Arpeggio.assign(CHORDS[i].Tones.begin(), CHORDS[i].Tones.end());
+				Known = true;
+			}
+		}
+		if (!Known)
+			throw Problem("arpeggio: none, octave, major, minor, fifth, power, sus4, major7 or minor7.");
+	}
+	D.ArpeggioFrames = IntArg(Args, "arpeggio_frames", D.ArpeggioFrames, 1, 8);
+	D.Tone = WordArg(Args, "tone", D.Tone, TONES, TONE_VALUES, 3, 0);
+	D.Length = WordArg(Args, "length", D.Length, LENGTHS, LENGTH_VALUES, 3, 0);
+
+	// A new name, so an instrument the song uses doesn't change under it
+	const Preset Sound = DesignPreset(D);
+	const std::string Final = Lowercase(Sound.InstrumentName(Sawtooth));
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (Lowercase(S.Song.Instruments[i].Name) == Final && S.Song.Instruments[i].Chip == Chip)
+			throw Problem(Format("The song already has a %s instrument called \"%s\"; give the new sound another name.", Chip.c_str(),
+				S.Song.Instruments[i].Name.c_str()));
+	std::string Error;
+	const int Index = S.Host().AddInstrument(Sound, Chip, Sawtooth, Error);
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate) +
+		". Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
+}
+
 std::string SetInstrumentTool(Session &S, const Json &Args)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
@@ -1700,46 +1935,6 @@ std::string SetTempoTool(Session &S, const Json &Args)
 	return Text;
 }
 
-// Melody cells from the harmony code to notes to write
-std::vector<PartNote> NotesFromCells(const std::vector<transcribe::MelodyCell> &Line, int End, int Instrument)
-{
-	std::vector<PartNote> Notes;
-	for (size_t i = 0; i < Line.size(); ++i) {
-		const transcribe::MelodyCell &C = Line[i];
-		int Effect = EFF_NONE;
-		switch (C.effect) {
-		case '0': Effect = EFF_ARPEGGIO; break;
-		case '4': Effect = EFF_VIBRATO; break;
-		case 'Q': Effect = EFF_SLIDE_UP; break;
-		case 'R': Effect = EFF_SLIDE_DOWN; break;
-		}
-		if (C.kind == transcribe::MelodyCell::Note) {
-			if (!Notes.empty() && Notes.back().Row + Notes.back().Rows > C.row)
-				Notes.back().Rows = std::max(1, C.row - Notes.back().Row);
-			PartNote N;
-			N.Row = C.row;
-			N.Rows = std::max(1, End - C.row);
-			N.Pitch = std::max(0, std::min(PITCHES - 1, C.midi - 24));
-			N.Instrument = Instrument;
-			N.Volume = C.volume;
-			if (Effect != EFF_NONE)
-				N.Effects.push_back(std::make_pair(Effect, C.effectParam));
-			Notes.push_back(N);
-		}
-		else if (!Notes.empty()) {
-			PartNote &Last = Notes.back();
-			if (C.kind == transcribe::MelodyCell::Release) {
-				Last.Rows = std::max(1, C.row - Last.Row);
-				if (Effect != EFF_NONE)
-					Last.EndEffects.push_back(std::make_pair(Effect, C.effectParam));
-			}
-			else if (Effect != EFF_NONE && C.row > Last.Row)
-				Last.LaterEffects.push_back(std::make_pair(C.row - Last.Row, std::make_pair(Effect, C.effectParam)));
-		}
-	}
-	return Notes;
-}
-
 int FreeChannel(Session &S, int First, int End, int Avoid, bool (*Fits)(const ChannelInfo &))
 {
 	for (int Pass = 0; Pass < 2; ++Pass) {
@@ -1764,30 +1959,297 @@ bool IsBassChannel(const ChannelInfo &Channel)
 	return IsBass(Channel);
 }
 
+// Arranging: chords in a style, bass lines, drums, harmony and counter-melodies
+
+std::vector<BarSpan> BarSpans(const std::vector<transcribe::Bar> &Bars)
+{
+	std::vector<BarSpan> Out;
+	for (size_t i = 0; i < Bars.size(); ++i)
+		Out.push_back(BarSpan(Bars[i].row, Bars[i].length));
+	return Out;
+}
+
+std::vector<BarSpan> SongBarSpans(const Session &S, int First, int End)
+{
+	return BarSpans(transcribe::SongBars(First, End, S.Time.PatternLength, S.Time.RowsPerBar));
+}
+
+// The harmony code's chords (triads), to arrange
+std::vector<ChordAt> ChordsOf(const std::vector<transcribe::ChordSpan> &Spans)
+{
+	std::vector<ChordAt> Out;
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		ChordAt A;
+		A.Row = Spans[i].row;
+		A.Rows = Spans[i].length;
+		const transcribe::Chord &C = Spans[i].chord;
+		std::vector<int> Tones;
+		Tones.push_back(C.quality == transcribe::Chord::Major ? 4 : 3);
+		Tones.push_back(C.quality == transcribe::Chord::Diminished ? 6 : 7);
+		A.C = Chord(C.root, Tones);
+		Out.push_back(A);
+	}
+	return Out;
+}
+
+// The triangle sounds an octave below what's written: a pitch that sounds
+// as Sounding does elsewhere, as written on Channel
+int Written(const ChannelInfo &Channel, int Sounding)
+{
+	return Channel.Kind == KIND_TRIANGLE ? Sounding + 12 : Sounding;
+}
+
+// A style named by an argument, or Default
+int StyleArg(const Json &Args, const char *Name, const std::vector<StyleInfo> &Styles, int Default)
+{
+	const std::string Text = StringArg(Args, Name);
+	if (Text.empty())
+		return Default;
+	const int Index = FindStyle(Styles, Text);
+	if (Index < 0) {
+		std::string Names;
+		for (size_t i = 0; i < Styles.size(); ++i)
+			Names += (i == 0 ? "" : ", ") + std::string(Styles[i].Name);
+		throw Problem(std::string(Name) + ": \"" + Text + "\" isn't one. Choose from " + Names + ".");
+	}
+	return Index;
+}
+
+// A progression from an argument: text with bar lines ("| C | Am7 | F G |"),
+// chords a bar each without them ("C Am F G", "I-vi-IV-V"), or a list of bars
+std::vector<std::string> ProgressionArg(const Json &Args, const char *Name)
+{
+	const Json *pValue = Arg(Args, Name);
+	std::vector<std::string> Bars;
+	if (pValue == 0)
+		return Bars;
+	if (pValue->IsString())
+		Bars = SplitProgression(pValue->String());
+	else if (pValue->IsArray()) {
+		for (size_t i = 0; i < pValue->Size(); ++i) {
+			const Json &Item = pValue->At(i);
+			if (!Item.IsString())
+				throw Problem(std::string(Name) + ": each bar is text, like \"Am7\" or \"F G7\".");
+			const std::string Text = Trim(Item.String());
+			if (Text.find('|') != std::string::npos) {
+				const std::vector<std::string> Split = SplitProgression(Text);
+				Bars.insert(Bars.end(), Split.begin(), Split.end());
+			}
+			else
+				Bars.push_back(Text.empty() ? "." : Text);
+		}
+	}
+	else
+		throw Problem(std::string(Name) + " should be text like \"| C | Am7 | F G7 | C |\" or a list of bars like [\"C\", \"Am7\", \"F G7\", \"C\"].");
+	if (Bars.empty())
+		throw Problem(std::string(Name) + " has no chords in it.");
+	return Bars;
+}
+
+// Where chords go on a channel: their lowest notes about an octave and a
+// half under the melody's middle (a rolling pattern spreads two octaves up,
+// so it starts lower)
+void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vector<NoteInfo> &Melody)
+{
+	int Top = Melody.empty() ? 43 : MiddleOf(Melody, 52) - 7;
+	Top = std::max(36, std::min(48, Top));
+	if (O.Style == CHORDS_BROKEN && O.Pattern == BROKEN_ROLLING)
+		Top -= 5;
+	O.High = Written(Info, Top);
+	O.Low = O.High - 12;
+}
+
+// A bass line's register: C-1 to G-2 as a pulse or the sawtooth plays them,
+// written an octave up on the triangle, where it sounds the same
+void BassRegister(BassOptions &O, const ChannelInfo &Info)
+{
+	O.Low = Written(Info, 12);
+	O.High = Written(Info, 31);
+}
+
+// Drum hits as notes, each ringing until the next, with their instruments
+// (added from the presets) and volumes scaled to Loudest
+std::vector<PartNote> DrumNotes(Session &S, int Channel, const std::vector<DrumHit> &Hits, int First, int End, int Loudest)
+{
+	std::map<std::string, int> Instruments;
+	std::vector<PartNote> Notes;
+	for (size_t i = 0; i < Hits.size(); ++i) {
+		const DrumHit &H = Hits[i];
+		if (Instruments.find(H.Sound) == Instruments.end())
+			Instruments[H.Sound] = ResolveInstrument(S, H.Sound, Channel);
+		PartNote N;
+		N.Row = H.Row;
+		N.Rows = (i + 1 < Hits.size() ? Hits[i + 1].Row : End) - H.Row;
+		N.Pitch = H.Pitch;
+		N.Instrument = Instruments[H.Sound];
+		N.Volume = std::max(1, (H.Volume * Loudest + 7) / 15);
+		Notes.push_back(N);
+	}
+	TidyPart(Notes, First, End);
+	return Notes;
+}
+
+// An instrument for a part: the one named by the argument, else the preset
+// (which is only added when it's used)
+int PartInstrument(Session &S, const Json &Args, const char *Name, int Channel, const char *Preset)
+{
+	if (Arg(Args, Name) != 0)
+		return InstrumentArg(S, Args, Name, Channel, NO_INSTRUMENT);
+	return ResolveInstrument(S, Preset, Channel);
+}
+
+// Where a long melody note rubs a semitone against chords that were given
+void RubWarnings(const Session &S, const std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melody, const Key &K,
+	std::vector<std::string> &Warnings)
+{
+	std::string Places;
+	int Count = 0;
+	for (size_t i = 0; i < Chords.size(); ++i) {
+		const ChordAt &A = Chords[i];
+		const std::vector<int> Classes = A.C.PitchClasses();
+		for (size_t t = 0; t < Classes.size(); ++t) {
+			if (MelodyRub(Melody, A.Row, A.Row + A.Rows, Classes[t], S.Time.RowsPerBeat) < 1.0)
+				continue;
+			if (Count < 4)
+				Places += Format("%sbar %d (%s)", Count == 0 ? "" : ", ", S.Time.BarOf(A.Row), ChordName(A.C, K).c_str());
+			++Count;
+			break;
+		}
+	}
+	if (Count > 0)
+		Warnings.push_back("A long melody note rubs a semitone against a chord tone in " + Places + (Count > 4 ? " and more" : "") +
+			". Another chord there, or another melody note, would sound cleaner.");
+}
+
+// The notes the song's parts other than one play, as pitch classes, with
+// the chords their 0xy arpeggios sound
+std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End)
+{
+	std::vector<HeardNote> Out;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Except || !IsMelodic(S.Channel(c)))
+			continue;
+		const bool Bass = IsBass(S.Channel(c));
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		int Arpeggio = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			for (size_t e = 0; e < N.Effects.size(); ++e)
+				if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
+					Arpeggio = N.Effects[e].second.second;
+			if (N.Row >= End || N.Row + N.Rows <= First)
+				continue;
+			HeardNote H;
+			H.Row = N.Row;
+			H.Rows = N.Rows;
+			H.PitchClass = N.Pitch % 12;
+			H.Weight = std::max(0.3, N.Volume / 15.0);
+			H.Bass = Bass;
+			Out.push_back(H);
+			if (Arpeggio != 0) {
+				H.Bass = false;
+				H.PitchClass = (N.Pitch + (Arpeggio >> 4)) % 12;
+				Out.push_back(H);
+				H.PitchClass = (N.Pitch + (Arpeggio & 15)) % 12;
+				Out.push_back(H);
+			}
+		}
+	}
+	return Out;
+}
+
+// The chords a part around a melody follows: the ones given (chords), the
+// ones the song's other parts play when they cover most of the bars, or
+// chords fitted to the melody. Source says which.
+std::vector<ChordAt> ChordsForMelody(Session &S, const Json &Args, int Melody, const std::vector<BarSpan> &Bars, const Key &K,
+	std::string &Source)
+{
+	std::vector<ChordAt> Chords;
+	const std::vector<std::string> Progression = ProgressionArg(Args, "chords");
+	if (!Progression.empty()) {
+		std::string Error;
+		if (!LayOutProgression(Progression, Bars, S.Time.RowsPerBeat, K, Chords, Error))
+			throw Problem(Error);
+		Source = "the chords given";
+		return Chords;
+	}
+	const int First = Bars.front().Row, End = Bars.back().Row + Bars.back().Rows;
+	Chords = HearChords(HeardNotes(S, Melody, First, End), Bars, S.Time.RowsPerBeat, K, true);
+	int Covered = 0;
+	for (size_t i = 0; i < Chords.size(); ++i)
+		Covered += Chords[i].Rows;
+	if (Covered * 2 >= End - First) {
+		Source = "the chords the other parts play";
+		return Chords;
+	}
+	std::vector<transcribe::MelodyNote> Line = MelodyOf(S.Notes(Melody), First, End);
+	std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
+	std::vector<transcribe::Bar> TBars;
+	for (size_t i = 0; i < Bars.size(); ++i) {
+		transcribe::Bar B;
+		B.row = Bars[i].Row;
+		B.length = Bars[i].Rows;
+		TBars.push_back(B);
+	}
+	transcribe::HarmonyOptions Options;
+	Options.rowsPerBeat = S.Time.RowsPerBeat;
+	Chords = ChordsOf(transcribe::ChooseChords(Line, TBars, HarmonyKey(K), Options));
+	Source = "chords fitted to the melody";
+	return Chords;
+}
+
 std::string AddBackingTool(Session &S, const Json &Args)
 {
 	const bool AsClip = BoolArg(Args, "as_clip", false);
 	const bool DirectChange = Direct(S, AsClip);
-	int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, 0, S.Time.TotalRows());
-	if (Melody < 0)
-		throw Problem("There's no melody to fit chords to yet.");
-	if (!IsMelodic(S.Channel(Melody)))
-		throw Problem("The melody channel needs notes, not drums or samples.");
+	const int R = S.Time.RowsPerBeat;
+	const std::vector<std::string> Progression = ProgressionArg(Args, "chords");
+	const bool Given = !Progression.empty();
 
-	// The bars: as asked, or the ones the melody covers
-	std::vector<transcribe::MelodyNote> Line = MelodyOf(S.Notes(Melody), 0, S.Time.TotalRows());
-	std::vector<transcribe::Bar> Bars;
-	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0) {
-		int From, To;
-		BarRange(S, Args, From, To);
-		Bars = transcribe::SongBars(S.Time.BarStart(From), S.Time.BarEnd(To), S.Time.PatternLength, S.Time.RowsPerBar);
-		Line = MelodyOf(S.Notes(Melody), S.Time.BarStart(From), S.Time.BarEnd(To));
+	// The melody: the chords are fitted to it, or with chords given it colors
+	// them (then only a channel that plays in the bars counts as one)
+	const bool Range = Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0;
+	int From = 1, To = 1;
+	if (Range) {
+		BarRange(S, Args, From, To, Given);
+		if (Given && Arg(Args, "to_bar") == 0)
+			To = std::max(To, std::min(S.MaxBars(), From + static_cast<int>(Progression.size()) - 1));
 	}
+	int Melody = -1;
+	if (Arg(Args, "melody_channel") != 0) {
+		Melody = ChannelArg(S, Args, "melody_channel");
+		if (!IsMelodic(S.Channel(Melody)))
+			throw Problem("The melody channel needs notes, not drums or samples.");
+	}
+	else if (Given && Range)
+		Melody = GuessMelodyChannel(S, S.Time.BarStart(From), S.Time.BarEnd(To));
 	else
+		Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+	if (Melody < 0 && !Given)
+		throw Problem("There's no melody to fit chords to yet. Give chords (like \"| C | Am | F | G |\") to write a backing without one.");
+
+	// The bars: as asked, the melody's, or the progression's from bar 1
+	std::vector<transcribe::MelodyNote> Line;
+	if (Melody >= 0)
+		Line = MelodyOf(S.Notes(Melody), 0, S.Time.TotalRows());
+	std::vector<transcribe::Bar> Bars;
+	if (Range) {
+		Bars = transcribe::SongBars(S.Time.BarStart(From), S.Time.BarEnd(To), S.Time.PatternLength, S.Time.RowsPerBar);
+		if (Melody >= 0)
+			Line = MelodyOf(S.Notes(Melody), S.Time.BarStart(From), S.Time.BarEnd(To));
+	}
+	else if (!Line.empty())
 		Bars = transcribe::MelodyBars(Line, S.Time.PatternLength, S.Time.RowsPerBar);
-	if (Line.empty() || Bars.empty())
+	else {
+		const int To = std::min(S.MaxBars(), static_cast<int>(Progression.size()));
+		Bars = transcribe::SongBars(0, S.Time.BarEnd(To), S.Time.PatternLength, S.Time.RowsPerBar);
+	}
+	if (!Given && (Line.empty() || Bars.empty()))
 		throw Problem(Format("%s has no notes there to fit chords to.", S.Channel(Melody).FullName().c_str()));
+	if (Bars.empty())
+		throw Problem("There are no bars there.");
 	const int First = Bars.front().row, End = Bars.back().row + Bars.back().length;
+	const std::vector<BarSpan> Spans = BarSpans(Bars);
 
 	// The channels: as asked ("none" leaves one out), or free ones
 	auto Pick = [&](const char *Name, bool (*Fits)(const ChannelInfo &), const char *Kind) -> int {
@@ -1813,47 +2275,97 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	if (ChordChannel < 0 && BassChannel < 0)
 		throw Problem("There's no channel for chords or a bass line.");
 
+	// The key, and the chords
 	bool Found;
-	const Key K = KeyArg(S, Args, "key", First, End, Found);
-	const transcribe::Key HK = HarmonyKey(K);
-	transcribe::HarmonyOptions Options;
-	Options.rowsPerBeat = S.Time.RowsPerBeat;
-	Options.halfBars = BoolArg(Args, "half_bars", true);
-	std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
-	const std::vector<transcribe::ChordSpan> Chords = transcribe::ChooseChords(Line, Bars, HK, Options);
-	if (Chords.empty())
-		throw Problem("The melody is too short to fit chords to.");
+	Key K = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found) {
+		if (Given && WrittenAsDegrees(Progression))
+			throw Problem("Chords written as degrees (I, vi, V7...) need the key: give key, like \"C major\".");
+		K = Key(0, MODE_MAJOR);
+	}
+	const std::vector<NoteInfo> MelodyNotes = Melody >= 0 ? NotesIn(S.Notes(Melody), First, End) : std::vector<NoteInfo>();
+	std::vector<ChordAt> Chords;
+	std::vector<std::string> Warnings;
+	if (Given) {
+		std::string Error;
+		if (!LayOutProgression(Progression, Spans, R, K, Chords, Error))
+			throw Problem(Error);
+	}
+	else {
+		const transcribe::Key HK = HarmonyKey(K);
+		transcribe::HarmonyOptions Options;
+		Options.rowsPerBeat = R;
+		Options.halfBars = BoolArg(Args, "half_bars", true);
+		std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
+		Chords = ChordsOf(transcribe::ChooseChords(Line, Bars, HK, Options));
+		if (Chords.empty())
+			throw Problem("The melody is too short to fit chords to.");
+	}
+	chord_color Color;
+	if (!ParseColor(StringArg(Args, "color", "plain"), Color))
+		throw Problem("color: plain (triads), sevenths or rich.");
+	ColorChords(Chords, MelodyNotes, K, R, Color);
+	if (Given && !MelodyNotes.empty())
+		RubWarnings(S, Chords, MelodyNotes, K, Warnings);
 
 	std::vector<Change> Changes;
-	std::vector<std::string> Warnings;
 	std::string Where;
+	const int Style = StyleArg(Args, "chord_style", ChordStyles(), CHORDS_ARPEGGIO);
+	const int BassStyle = StyleArg(Args, "bass_style", BassStyles(), BASS_ROOT_FIFTH);
 	if (ChordChannel >= 0) {
-		const int Instrument = InstrumentArg(S, Args, "chord_instrument", ChordChannel, ResolveInstrument(S, "soft chords", ChordChannel));
-		std::vector<PartNote> Notes = NotesFromCells(transcribe::ArpeggioCells(Chords, Bars), End, Instrument);
-		if (!Notes.empty() && Notes.front().Volume < 0)
-			Notes.front().Volume = 15;
+		const ChannelInfo &Info = S.Channel(ChordChannel);
+		ChordPartOptions O;
+		O.Style = Style;
+		O.Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), -1);
+		O.Pattern = StyleArg(Args, "pattern", BrokenPatterns(), BROKEN_UP);
+		O.StepRows = std::max(1, R / IntArg(Args, "notes_per_beat", 2, 1, 4));
+		O.RowsPerBeat = R;
+		ChordRegister(O, Info, MelodyNotes);
+		O.RootInBass = BassChannel >= 0;
+		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
+			O.RootInBass = c != ChordChannel && IsBass(S.Channel(c)) && HasNotesIn(S, c, First, End);
+		const int DefaultVolume = Style == CHORDS_STABS ? 11 : Style == CHORDS_BROKEN ? 10 : 15;
+		O.Volume = IntArg(Args, "chord_volume", DefaultVolume, 1, 15);
+		const char *Sound = Style == CHORDS_GUIDE ? "warm pad" : Style == CHORDS_ARPEGGIO ? "soft chords" : "pluck";
+		const int Instrument = PartInstrument(S, Args, "chord_instrument", ChordChannel, Sound);
+		std::vector<PartNote> Notes = ChordPart(Chords, Spans, O);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Instrument = Instrument;
 		Change C;
 		C.Channel = ChordChannel;
 		BuildPart(S.Cells(ChordChannel), First, End, Notes, OptionsFor(S, ChordChannel, DirectChange), C.Cells, Warnings);
 		Changes.push_back(C);
-		Where = "chords on " + S.Channel(ChordChannel).FullName();
+		std::string Kind = ChordStyles()[static_cast<size_t>(Style)].Name;
+		if (Style == CHORDS_BROKEN)
+			Kind += std::string(" (") + BrokenPatterns()[static_cast<size_t>(O.Pattern)].Name + ")";
+		else if (O.Rhythm >= 0)
+			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(O.Rhythm)].Name + ")";
+		Where = Kind + " chords on " + Info.FullName();
 	}
 	if (BassChannel >= 0) {
-		const int Instrument = InstrumentArg(S, Args, "bass_instrument", BassChannel, ResolveInstrument(S, "bass", BassChannel));
-		std::vector<PartNote> Notes = NotesFromCells(transcribe::BassCells(Chords, Bars, Options), End, Instrument);
-		if (!Notes.empty() && Notes.front().Volume < 0)
-			Notes.front().Volume = 15;
+		const ChannelInfo &Info = S.Channel(BassChannel);
+		BassOptions O;
+		O.Style = BassStyle;
+		O.RowsPerBeat = R;
+		O.K = K;
+		BassRegister(O, Info);
+		O.Volume = 15;
+		const int Instrument = PartInstrument(S, Args, "bass_instrument", BassChannel, "bass");
+		std::vector<PartNote> Notes = BassPart(Chords, Spans, O);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Instrument = Instrument;
 		Change C;
 		C.Channel = BassChannel;
 		BuildPart(S.Cells(BassChannel), First, End, Notes, OptionsFor(S, BassChannel, DirectChange), C.Cells, Warnings);
 		Changes.push_back(C);
-		Where += (Where.empty() ? "a bass line on " : " and a bass line on ") + S.Channel(BassChannel).FullName();
+		Where += (Where.empty() ? "a " : " and a ") + std::string(BassStyles()[static_cast<size_t>(BassStyle)].Name) +
+			" bass line on " + Info.FullName();
 	}
-	const std::string What = Format("%s, %s, in %s", Where.c_str(), RangeText(S.Time.BarOf(First), S.Time.BarOf(End - 1)).c_str(),
-		KeyName(K).c_str());
+	const std::string What = Where + ", " + RangeText(S.Time.BarOf(First), S.Time.BarOf(End - 1)) + ", in " + KeyName(K);
 	std::sort(Changes.begin(), Changes.end(), [](const Change &a, const Change &b) { return a.Channel < b.Channel; });
 	const std::string Result = Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What);
-	return WithRemarks(S, Result + " Chords: " + ChordsText(Chords, Bars, HK), Warnings);
+	return WithRemarks(S, Result + "\nChords: " + ProgressionText(Chords, Spans, K) + "\nAs degrees of " + KeyName(K) + ": " +
+		ProgressionText(Chords, Spans, K, true), Warnings);
 }
 
 bool SameKind(const ChannelInfo &a, const ChannelInfo &b)
@@ -2049,6 +2561,1289 @@ std::string AddVibratoTool(Session &S, const Json &Args)
 			RangeText(From, To).c_str());
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
 		Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+}
+
+// Drums, harmony, counter-melodies and finishing touches
+
+// The bars the song's melodic parts play in, first to last; the whole song when none do
+void PlayedBars(Session &S, int &From, int &To)
+{
+	int First = -1, Last = -1;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			if (First < 0 || Notes[i].Row < First)
+				First = Notes[i].Row;
+			Last = std::max(Last, Notes[i].Row + std::max(1, Notes[i].Rows) - 1);
+		}
+	}
+	if (First < 0) {
+		From = 1;
+		To = S.Time.BarCount();
+		return;
+	}
+	From = S.Time.BarOf(First);
+	To = S.Time.BarOf(std::min(Last, S.Time.TotalRows() - 1));
+}
+
+std::string AddDrumsTool(Session &S, const Json &Args)
+{
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	int Channel = -1;
+	if (Arg(Args, "channel") != 0) {
+		Channel = ChannelArg(S, Args, "channel");
+		if (S.Channel(Channel).Kind != KIND_NOISE)
+			throw Problem("Drums go on the noise channel.");
+	}
+	for (int c = 0; c < S.ChannelCount() && Channel < 0; ++c)
+		if (S.Channel(c).Kind == KIND_NOISE)
+			Channel = c;
+	if (Channel < 0)
+		throw Problem("The song has no noise channel.");
+	int From, To;
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To, true);
+	else
+		PlayedBars(S, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const int R = S.Time.RowsPerBeat;
+
+	DrumOptions O;
+	O.Groove = StyleArg(Args, "groove", Grooves(), S.Time.RowsPerBar == 3 * R ? GROOVE_WALTZ : GROOVE_BASIC);
+	static const char *const LEVELS[] = { "light", "normal", "busy", "soft", "medium", "intense" };
+	static const int LEVEL_VALUES[] = { 1, 2, 3, 1, 2, 3 };
+	O.Intensity = std::max(1, std::min(3, LevelArg(Args, "intensity", 2, LEVELS, LEVEL_VALUES, 6)));
+	O.FillEvery = IntArg(Args, "fill_every", 4, 0, 64);
+	O.PhraseStart = O.FillEvery > 0 ? (From - 1) % O.FillEvery : 0;
+	O.Crash = BoolArg(Args, "crash", true);
+	O.RowsPerBeat = R;
+	const std::vector<DrumHit> Hits = DrumPart(SongBarSpans(S, First, End), O);
+	if (Hits.empty())
+		throw Problem("There are no beats in those bars.");
+	const std::vector<PartNote> Notes = DrumNotes(S, Channel, Hits, First, End, IntArg(Args, "volume", 15, 1, 15));
+	std::vector<std::string> Warnings;
+	if (HasNotesIn(S, Channel, First, End))
+		Warnings.push_back(S.Channel(Channel).FullName() + "'s drums in those bars were replaced.");
+	Change C;
+	C.Channel = Channel;
+	BuildPart(S.Cells(Channel), First, End, Notes, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
+	std::vector<Change> Changes(1, C);
+	static const char *const INTENSITY[] = { "", "light", "", "busy" };
+	std::string What = std::string(INTENSITY[O.Intensity]) + (O.Intensity == 2 ? "" : " ") + Grooves()[static_cast<size_t>(O.Groove)].Name +
+		" drums on " + S.Channel(Channel).FullName();
+	What += O.FillEvery > 0 ? Format(", a fill every %d bars", O.FillEvery) : std::string(", no fills");
+	What += ", " + RangeText(From, To);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+}
+
+// The melody a part goes with: as named, or the busiest channel
+int MelodyArg(Session &S, const Json &Args)
+{
+	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, 0, S.Time.TotalRows());
+	if (Melody < 0)
+		throw Problem("There's no melody yet.");
+	if (!IsMelodic(S.Channel(Melody)))
+		throw Problem("The melody channel needs notes, not drums or samples.");
+	return Melody;
+}
+
+// The channel for a new part beside the melody: as named, or a free one like it
+int PartChannel(Session &S, const Json &Args, int Melody, int First, int End, const char *What)
+{
+	if (Arg(Args, "channel") != 0) {
+		const int Channel = ChannelArg(S, Args, "channel");
+		if (Channel == Melody || !IsMelodic(S.Channel(Channel)))
+			throw Problem(Format("The %s needs a melodic channel other than the melody's.", What));
+		return Channel;
+	}
+	const int Channel = EchoTarget(S, Melody, First, End);
+	if (Channel < 0)
+		throw Problem(Format("No free channel for the %s in those bars; name one with channel (its notes there are replaced).", What));
+	return Channel;
+}
+
+std::string AddHarmonyTool(Session &S, const Json &Args)
+{
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const int Melody = MelodyArg(S, Args);
+	int From, To;
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To);
+	else
+		PlayedBars(S, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const std::vector<NoteInfo> Line = NotesIn(S.Notes(Melody), First, End);
+	if (Line.empty())
+		throw Problem(Format("%s has no notes in %s to harmonize.", S.Channel(Melody).FullName().c_str(), RangeText(From, To).c_str()));
+	const int Target = PartChannel(S, Args, Melody, First, End, "harmony");
+	bool Found;
+	Key K = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found)
+		K = Key(0, MODE_MAJOR);
+	std::string Source;
+	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, SongBarSpans(S, First, End), K, Source);
+
+	HarmonyOptions O;
+	O.Interval = StyleArg(Args, "interval", HarmonyIntervals(), HARMONY_THIRD_BELOW);
+	O.MinRows = BoolArg(Args, "long_notes_only", false) ? S.Time.RowsPerBeat : 0;
+	O.RowsPerBeat = S.Time.RowsPerBeat;
+	O.K = K;
+	// In sounding pitches: the triangle sounds an octave below what's written
+	const int Shift = Written(S.Channel(Target), 0) - Written(S.Channel(Melody), 0);
+	O.Low = std::max(0, Written(S.Channel(Target), 12)) - Shift;
+	O.High = std::min(PITCHES - 1, Written(S.Channel(Target), 84)) - Shift;
+	int Loudest = 0;
+	for (size_t i = 0; i < Line.size(); ++i)
+		Loudest = std::max(Loudest, Line[i].Volume);
+	O.VolumeDrop = Arg(Args, "volume") != 0 ? std::max(0, Loudest - IntArg(Args, "volume", 12, 1, 15)) : 3;
+	std::vector<PartNote> Notes = HarmonyPart(Line, Chords, O);
+	if (Notes.empty())
+		throw Problem("No melody notes there are long enough to harmonize.");
+
+	// The melody's own instruments when the channel takes them, else the one asked for or a soft lead
+	const bool SameChip = InstrumentChip(S.Channel(Target)) == InstrumentChip(S.Channel(Melody));
+	const int Instrument = Arg(Args, "instrument") != 0 || !SameChip ? PartInstrument(S, Args, "instrument", Target, "soft lead") : NO_INSTRUMENT;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Notes[i].Pitch = std::max(0, std::min(PITCHES - 1, Notes[i].Pitch + Shift));
+		if (Instrument != NO_INSTRUMENT)
+			Notes[i].Instrument = Instrument;
+		else
+			for (size_t m = 0; m < Line.size(); ++m)
+				if (Line[m].Row == Notes[i].Row)
+					Notes[i].Instrument = Line[m].Instrument;
+	}
+	TidyPart(Notes, First, End);
+	std::vector<std::string> Warnings;
+	if (HasNotesIn(S, Target, First, End))
+		Warnings.push_back(S.Channel(Target).FullName() + "'s own notes in those bars were replaced.");
+	Change C;
+	C.Channel = Target;
+	BuildPart(S.Cells(Target), First, End, Notes, OptionsFor(S, Target, Direct(S, AsClip)), C.Cells, Warnings);
+	std::vector<Change> Changes(1, C);
+	std::string Interval = HarmonyIntervals()[static_cast<size_t>(O.Interval)].Name;
+	std::replace(Interval.begin(), Interval.end(), '_', ' ');
+	const std::string What = "a harmony a " + Interval + " " + S.Channel(Melody).FullName() + " on " + S.Channel(Target).FullName() +
+		", " + RangeText(From, To);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s, on %s in %s)", Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(), Source.c_str(),
+			KeyName(K).c_str()), Warnings);
+}
+
+std::string AddCounterMelodyTool(Session &S, const Json &Args)
+{
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const int Melody = MelodyArg(S, Args);
+	int From, To;
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To);
+	else
+		PlayedBars(S, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const std::vector<NoteInfo> Line = NotesIn(S.Notes(Melody), First, End);
+	if (Line.empty())
+		throw Problem(Format("%s has no notes in %s to answer.", S.Channel(Melody).FullName().c_str(), RangeText(From, To).c_str()));
+	const int Target = PartChannel(S, Args, Melody, First, End, "counter-melody");
+	bool Found;
+	Key K = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found)
+		K = Key(0, MODE_MAJOR);
+	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+	std::string Source;
+	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, Bars, K, Source);
+
+	CounterOptions O;
+	const std::string Place = Lowercase(StringArg(Args, "position", "below"));
+	if (Place != "below" && Place != "above" && Place != "under" && Place != "over" && Place != "descant")
+		throw Problem("position: below or above.");
+	O.Above = Place == "above" || Place == "over" || Place == "descant";
+	O.RowsPerBeat = S.Time.RowsPerBeat;
+	O.K = K;
+	// Around a sixth to a tenth under the melody, or over it; in the melody's pitches
+	const int Middle = MiddleOf(Line, 52);
+	const int Shift = Written(S.Channel(Target), 0) - Written(S.Channel(Melody), 0);
+	O.Low = O.Above ? Middle + 3 : Middle - 17;
+	O.High = O.Above ? Middle + 15 : Middle - 4;
+	O.Low = std::max(12 - Shift, O.Low);
+	O.High = std::min(PITCHES - 13 - Shift, std::max(O.Low + 7, O.High));
+	int Loudest = 0;
+	for (size_t i = 0; i < Line.size(); ++i)
+		Loudest = std::max(Loudest, Line[i].Volume);
+	O.Volume = IntArg(Args, "volume", std::max(4, Loudest - 4), 1, 15);
+	std::vector<PartNote> Notes = CounterMelody(Line, Chords, Bars, O);
+	if (Notes.empty())
+		throw Problem("There are no chords there for a counter-melody to follow.");
+	const int Instrument = PartInstrument(S, Args, "instrument", Target, IsBass(S.Channel(Target)) ? "bass" : "soft lead");
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Notes[i].Pitch = std::max(0, std::min(PITCHES - 1, Notes[i].Pitch + Shift));
+		Notes[i].Instrument = Instrument;
+	}
+	std::vector<std::string> Warnings;
+	if (HasNotesIn(S, Target, First, End))
+		Warnings.push_back(S.Channel(Target).FullName() + "'s own notes in those bars were replaced.");
+	Change C;
+	C.Channel = Target;
+	BuildPart(S.Cells(Target), First, End, Notes, OptionsFor(S, Target, Direct(S, AsClip)), C.Cells, Warnings);
+	std::vector<Change> Changes(1, C);
+	const std::string What = std::string("a counter-melody ") + (O.Above ? "above " : "below ") + S.Channel(Melody).FullName() + " on " +
+		S.Channel(Target).FullName() + ", " + RangeText(From, To);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s on %s in %s; it moves where the melody holds and holds where it moves. Shape it further with write_notes.)",
+			Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(), Source.c_str(), KeyName(K).c_str()), Warnings);
+}
+
+// Finishing touches
+
+// Accents in the draft: notes on a bar's first row as loud as the channel
+// plays, other beats a step softer, between the beats two, quarter beats
+// three. Channels that already shape their volumes are left alone. How
+// many notes; -1 when the channel was left alone.
+int Accents(Session &S, Draft &D, int Channel, int First, int End)
+{
+	const int R = S.Time.RowsPerBeat;
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	std::set<int> Volumes;
+	int Loudest = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		if (Notes[i].Row < First || Notes[i].Row >= End)
+			continue;
+		Volumes.insert(Notes[i].Volume);
+		Loudest = std::max(Loudest, Notes[i].Volume);
+	}
+	if (Volumes.size() >= 3)
+		return -1;
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End || N.Row >= static_cast<int>(Cells.size()))
+			continue;
+		const int InBar = N.Row - S.Time.BarStart(S.Time.BarOf(N.Row));
+		const int Softer = InBar == 0 ? 0 : InBar % R == 0 ? 1 : (2 * InBar) % R == 0 ? 2 : 3;
+		const int Volume = std::max(1, std::min(15, N.Volume - Softer));
+		Cells[N.Row].Volume = static_cast<unsigned char>(Volume);
+		++Count;
+	}
+	// The note after the bars plays as loud as before
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		if (Notes[i].Row >= End && Notes[i].Row < static_cast<int>(Cells.size())) {
+			if (Cells[Notes[i].Row].Volume == NO_VOLUME)
+				Cells[Notes[i].Row].Volume = static_cast<unsigned char>(Notes[i].Volume);
+			break;
+		}
+	}
+	(void)Loudest;
+	return Count;
+}
+
+// Repeated notes that run into each other on the triangle sound as one (it
+// has no attack): each gets a halt on its last row. How many.
+int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
+{
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	int Count = 0;
+	for (size_t i = 0; i + 1 < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End || Notes[i + 1].Row != N.Row + N.Rows || Notes[i + 1].Pitch != N.Pitch || N.Rows < 2)
+			continue;
+		Cell &Last = Cells[static_cast<size_t>(N.Row + N.Rows - 1)];
+		if (Last.Note != NOTE_NONE)
+			continue;
+		Last.Note = NOTE_HALT;
+		++Count;
+	}
+	(void)S;
+	return Count;
+}
+
+std::string PolishTool(Session &S, const Json &Args)
+{
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	std::set<std::string> What;
+	const Json *pWhat = Arg(Args, "touches");
+	if (pWhat == 0) {
+		What.insert("accents");
+		What.insert("vibrato");
+		What.insert("separate");
+	}
+	else {
+		std::vector<std::string> Words;
+		if (pWhat->IsArray()) {
+			for (size_t i = 0; i < pWhat->Size(); ++i)
+				if (pWhat->At(i).IsString())
+					Words.push_back(pWhat->At(i).String());
+		}
+		else if (pWhat->IsString())
+			Words.push_back(pWhat->String());
+		for (size_t i = 0; i < Words.size(); ++i) {
+			const std::string Word = Squeezed(Words[i]);
+			if (Word != "accents" && Word != "vibrato" && Word != "separate")
+				throw Problem("touches: accents, vibrato or separate.");
+			What.insert(Word);
+		}
+	}
+	const std::vector<int> Channels = ChannelsArg(S, Args, "channels");
+	int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+
+	Draft D(S);
+	std::vector<std::string> Done, Warnings;
+	if (What.count("accents")) {
+		std::string List;
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (S.Channel(c).Kind == KIND_TRIANGLE || !IsMelodic(S.Channel(c)))
+				continue;	// the triangle has no volume
+			const int Count = Accents(S, D, c, First, End);
+			if (Count > 0)
+				List += (List.empty() ? "" : ", ") + S.Channel(c).FullName();
+			else if (Count < 0)
+				Warnings.push_back(S.Channel(c).FullName() + " already shapes its volumes, so it kept them.");
+		}
+		if (!List.empty())
+			Done.push_back("accents (beats a step softer than a bar's first note, the notes between them softer still) on " + List);
+	}
+	if (What.count("vibrato") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
+		VibratoPlan Plan;
+		Plan.Channel = Melody;
+		Plan.Speed = 5;
+		Plan.Depth = 2;
+		Plan.MinRows = S.Time.RowsPerBeat * 3 / 2;
+		Plan.Delay = std::max(1, S.Time.RowsPerBeat / 2);
+		bool Lost = false;
+		const int Count = MakeVibrato(S, D, Plan, First, End, Lost);
+		if (Lost)
+			Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
+		if (Count > 0)
+			Done.push_back(Format("a gentle vibrato that comes in after half a beat on %s of %s", Plural(Count, "long note", "long notes").c_str(),
+				S.Channel(Melody).FullName().c_str()));
+	}
+	if (What.count("separate")) {
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (S.Channel(c).Kind != KIND_TRIANGLE)
+				continue;
+			const int Count = SeparateRepeats(S, D, c, First, End);
+			if (Count > 0)
+				Done.push_back(Format("a short gap before %s on %s, so each is heard", Plural(Count, "repeated note", "repeated notes").c_str(),
+					S.Channel(c).FullName().c_str()));
+		}
+	}
+	std::vector<Change> Changes;
+	int Start;
+	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem("There was nothing to polish there: no notes for accents, no long melody notes for vibrato and no repeated "
+			"triangle notes.");
+	std::string Summary;
+	for (size_t i = 0; i < Done.size(); ++i)
+		Summary += (i == 0 ? "" : "; ") + Done[i];
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), "finishing touches, " + RangeText(From, To)) +
+		"\nTouches: " + Summary + ".", Warnings);
+}
+
+// The chords a song's parts play in [First, End): the melody left out when
+// others play too, else the chords it implies by itself
+std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K)
+{
+	const int Melody = GuessMelodyChannel(S, First, End);
+	bool Backing = false;
+	for (int c = 0; c < S.ChannelCount() && !Backing; ++c)
+		Backing = c != Melody && IsMelodic(S.Channel(c)) && HasNotesIn(S, c, First, End);
+	return HearChords(HeardNotes(S, Backing ? Melody : -1, First, End), SongBarSpans(S, First, End), S.Time.RowsPerBeat, K, true);
+}
+
+// The depth review: what a part, or the arrangement, is missing
+
+std::string SecondsText(double Seconds);
+
+// Bars as "3, 5-8, 12"
+std::string BarList(const std::vector<int> &Bars)
+{
+	std::string Out;
+	for (size_t i = 0; i < Bars.size(); ) {
+		size_t j = i;
+		while (j + 1 < Bars.size() && Bars[j + 1] == Bars[j] + 1)
+			++j;
+		Out += (Out.empty() ? "" : ", ") + (j == i ? Format("%d", Bars[i]) : Format("%d-%d", Bars[i], Bars[j]));
+		i = j + 1;
+	}
+	return Out;
+}
+
+// A bar of a channel as text: its notes' rows, pitches, lengths and
+// volumes, for finding bars that repeat note for note
+std::string BarPrint(const std::vector<NoteInfo> &Notes, int Row, int End)
+{
+	std::string Out;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < Row || N.Row >= End)
+			continue;
+		Out += Format("%d:%d:%d:%d ", N.Row - Row, N.Pitch, std::min(N.Rows, End - N.Row), N.Volume);
+	}
+	return Out;
+}
+
+int EffectCount(const std::vector<NoteInfo> &Notes, int Effect)
+{
+	int Count = 0;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+			if (Notes[i].Effects[e].second.first == Effect && Notes[i].Effects[e].second.second != 0) {
+				++Count;
+				break;
+			}
+	return Count;
+}
+
+std::string ReviewTool(Session &S, const Json &Args)
+{
+	int From, To;
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To);
+	else
+		PlayedBars(S, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+	const int R = S.Time.RowsPerBeat;
+	const int BarCount = To - From + 1;
+	bool Found;
+	Key K = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found)
+		K = Key(0, MODE_MAJOR);
+	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+	std::vector<std::string> Lines, Tips;
+	double Missing = 0.0;	// what the tips take off the score, out of 10
+	auto Tip = [&](double Weight, const std::string &Text) {
+		Tips.push_back(Text);
+		Missing += Weight;
+	};
+
+	// The parts and what each does
+	const int Melody = GuessMelodyChannel(S, First, End);
+	if (Melody < 0)
+		throw Problem(Format("Nothing plays a melody in %s yet. Write one with write_notes (or ask for a backing with "
+			"add_chords_and_bass and chords) first.", RangeText(From, To).c_str()));
+	const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
+	int Bass = -1, Drums = -1;
+	std::vector<int> Chords, Voices, Echoes, Playing;
+	std::vector<std::string> Free;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const ChannelInfo &Info = S.Channel(c);
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		if (Notes.empty()) {
+			if (Info.Kind != KIND_DPCM)
+				Free.push_back(Info.FullName());
+			continue;
+		}
+		Playing.push_back(c);
+		if (c == Melody)
+			continue;
+		if (Info.Kind == KIND_NOISE) {
+			Drums = c;
+			continue;
+		}
+		if (Info.Kind == KIND_DPCM)
+			continue;
+		if (IsBass(Info) && Bass < 0) {
+			Bass = c;
+			continue;
+		}
+		const int Arpeggios = EffectCount(Notes, EFF_ARPEGGIO);
+		// An echo: the melody's notes again, a little later
+		int Delayed = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			for (size_t m = 0; m < Tune.size(); ++m) {
+				if (Notes[i].Row > Tune[m].Row && Notes[i].Row - Tune[m].Row <= 2 * R && Notes[i].Pitch == Tune[m].Pitch) {
+					++Delayed;
+					break;
+				}
+			}
+		}
+		if (Arpeggios * 3 >= static_cast<int>(Notes.size()))
+			Chords.push_back(c);
+		else if (Delayed * 2 >= static_cast<int>(Notes.size()))
+			Echoes.push_back(c);
+		else
+			Voices.push_back(c);
+	}
+	auto Names = [&](const std::vector<int> &List) {
+		std::string Out;
+		for (size_t i = 0; i < List.size(); ++i)
+			Out += (i == 0 ? "" : ", ") + S.Channel(List[i]).FullName();
+		return Out;
+	};
+	std::string Parts = "Parts: melody on " + S.Channel(Melody).FullName();
+	if (!Chords.empty())
+		Parts += "; chords on " + Names(Chords);
+	if (Bass >= 0)
+		Parts += "; bass on " + S.Channel(Bass).FullName();
+	if (Drums >= 0)
+		Parts += "; drums on " + S.Channel(Drums).FullName();
+	if (!Voices.empty())
+		Parts += "; another line on " + Names(Voices);
+	if (!Echoes.empty())
+		Parts += "; an echo on " + Names(Echoes);
+	Parts += ".";
+	if (!Free.empty()) {
+		Parts += " Free: ";
+		for (size_t i = 0; i < Free.size(); ++i)
+			Parts += (i == 0 ? "" : ", ") + Free[i];
+		Parts += ".";
+	}
+	Lines.push_back(Parts);
+	const int Layers = static_cast<int>(Playing.size());
+	if (Chords.empty() && Voices.empty())
+		Tip(2.0, "Nothing harmonizes the melody: add_chords_and_bass fits chords to it (choose a chord_style and color).");
+	if (Bass < 0)
+		Tip(2.0, "No bass line: add_chords_and_bass with chord_channel \"none\" and a bass_style.");
+	if (Drums < 0)
+		Tip(1.0, "No drums: add_drums (groove calm for a quiet track, driving for action), unless the track should float without a beat.");
+	if (Voices.empty() && Echoes.empty())
+		Tip(1.0, "The melody has no company: add_counter_melody (a line of its own) or add_harmony (thirds under it) on " +
+			(Free.empty() ? std::string("a channel") : Free[0]) + " adds depth; add_echo makes it spacious.");
+
+	// Thin bars: two parts or fewer
+	std::vector<int> Thin;
+	for (size_t b = 0; b < Bars.size(); ++b) {
+		int Sounding = 0;
+		for (size_t p = 0; p < Playing.size(); ++p)
+			if (HasNotesIn(S, Playing[p], Bars[b].Row, Bars[b].Row + Bars[b].Rows))
+				++Sounding;
+		if (Sounding <= 2 && Layers > 2)
+			Thin.push_back(S.Time.BarOf(Bars[b].Row));
+	}
+	if (!Thin.empty() && static_cast<int>(Thin.size()) < BarCount)
+		Lines.push_back("Thin: only two parts or fewer play in bars " + BarList(Thin) + ".");
+
+	// Harmony: the chords the parts play (with the melody when nothing else does)
+	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
+	const std::vector<ChordAt> Heard = SongChords(S, First, End, K);
+	if (!Heard.empty()) {
+		std::set<std::string> Vocabulary;
+		bool Colored = false;
+		for (size_t i = 0; i < Heard.size(); ++i) {
+			Vocabulary.insert(ChordName(Heard[i].C, K));
+			Colored = Colored || !Heard[i].C.IsTriad();
+		}
+		std::string Line = "Harmony" + std::string(Backing ? "" : " (implied by the melody alone)") + ": " +
+			ProgressionText(Heard, Bars, K, false, 16) + Format(" — %d different chords%s.", static_cast<int>(Vocabulary.size()),
+			Colored ? "" : ", all plain triads");
+		// The same chords every four bars, all the way
+		if (BarCount >= 12) {
+			std::vector<std::string> Blocks;
+			for (int b = 0; b + 4 <= static_cast<int>(Bars.size()); b += 4) {
+				const std::vector<BarSpan> Four(Bars.begin() + b, Bars.begin() + b + 4);
+				Blocks.push_back(ProgressionText(Heard, Four, K));
+			}
+			bool Same = Blocks.size() >= 3;
+			for (size_t i = 1; i < Blocks.size(); ++i)
+				Same = Same && Blocks[i] == Blocks[0];
+			if (Same) {
+				Line += Format(" The same four-bar progression plays %d times.", static_cast<int>(Blocks.size()));
+				Tip(1.0, "The chords loop unchanged: a contrasting section (a B part on IV, V or vi, or the relative "
+					"minor or major) for a few bars gives the song somewhere to go. add_chords_and_bass takes chords by name.");
+			}
+		}
+		Lines.push_back(Line);
+		if (!Colored && (!Chords.empty() || !Voices.empty()))
+			Tip(1.0, "Every chord is a plain triad: add_chords_and_bass with color \"sevenths\" or \"rich\" (add9, maj7, "
+				"m9, V7sus4) sounds less bare.");
+	}
+
+	// Bass: how it moves
+	if (Bass >= 0) {
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Bass), First, End);
+		const double PerBar = Notes.size() / static_cast<double>(BarCount);
+		std::set<int> Pitches;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Pitches.insert(Notes[i].Pitch);
+		const std::string Rounded = FormatNumber(std::floor(PerBar * 10 + 0.5) / 10);
+		std::string Line = "Bass: " + Rounded + (Rounded == "1" ? " note" : " notes") + Format(" a bar on average, %d different notes",
+			static_cast<int>(Pitches.size()));
+		const int Middle = MiddleOf(Notes, 30) - (S.Channel(Bass).Kind == KIND_TRIANGLE ? 12 : 0);
+		Line += ", around " + PitchName(Middle + (S.Channel(Bass).Kind == KIND_TRIANGLE ? 12 : 0)) + " as written.";
+		Lines.push_back(Line);
+		if (PerBar <= 2.0)
+			Tip(1.0, "The bass mostly holds roots: bass_style walking (towns, jazz), octaves (action), syncopated (pop) "
+				"or arpeggio (adventure) in add_chords_and_bass gives it a pulse.");
+		if (Middle < 12)
+			Tip(0.5, S.Channel(Bass).FullName() + " plays very low, where small speakers lose it: an octave up (transpose).");
+	}
+
+	// Drums: variety, fills
+	if (Drums >= 0) {
+		const std::vector<NoteInfo> &Notes = S.Notes(Drums);
+		std::map<std::string, int> Prints;
+		int Fills = 0, PhraseEnds = 0;
+		std::string Before;
+		for (size_t b = 0; b < Bars.size(); ++b) {
+			const std::string Print = BarPrint(Notes, Bars[b].Row, Bars[b].Row + Bars[b].Rows);
+			++Prints[Print];
+			const int Bar = S.Time.BarOf(Bars[b].Row);
+			if (Bar % 4 == 0) {
+				++PhraseEnds;
+				if (b > 0 && Print != Before)
+					++Fills;
+			}
+			Before = Print;
+		}
+		int Most = 0;
+		for (std::map<std::string, int>::const_iterator it = Prints.begin(); it != Prints.end(); ++it)
+			Most = std::max(Most, it->second);
+		Lines.push_back(Format("Drums: %d different bars in %d; %s.", static_cast<int>(Prints.size()), BarCount,
+			Fills > 0 ? Plural(Fills, "phrase ends with a change (a fill)", "phrase ends change (fills)").c_str() : "no fills where phrases end"));
+		if (Fills == 0 && BarCount >= 8)
+			Tip(1.0, "The drums never change where a phrase ends: add_drums with fill_every 4 (or 8) adds fills and crashes.");
+		else if (Most * 10 >= BarCount * 9 && BarCount >= 8)
+			Tip(1.0, "The drums repeat one bar almost all the way: add_drums varies every other bar and fills phrase ends.");
+	}
+
+	// The melody
+	{
+		int Low = 1000, High = -1, Rests = 0, LongBare = 0;
+		std::set<int> Lengths;
+		for (size_t i = 0; i < Tune.size(); ++i) {
+			const NoteInfo &N = Tune[i];
+			Low = std::min(Low, N.Pitch);
+			High = std::max(High, N.Pitch);
+			Lengths.insert(N.Rows);
+			if (i + 1 < Tune.size()) {
+				if (Tune[i + 1].Row - (N.Row + N.Rows) >= R || (N.EndNote != NOTE_NONE && Tune[i + 1].Row - N.Row - N.Rows >= R / 2))
+					++Rests;
+			}
+			bool Expression = false;
+			for (size_t e = 0; e < N.Effects.size(); ++e)
+				Expression = Expression || N.Effects[e].second.first == EFF_VIBRATO;
+			if (N.Rows >= 2 * R && !Expression)
+				++LongBare;
+		}
+		std::string Line = "Melody: " + PitchName(Low) + " to " + PitchName(High) + Format(" (%d semitones), %s, %s", High - Low,
+			Plural(static_cast<int>(Lengths.size()), "note length", "note lengths").c_str(),
+			Rests == 0 ? "no rests" : Plural(Rests, "rest", "rests").c_str());
+		// Phrases that come back note for note
+		std::vector<int> Repeats;
+		const std::vector<NoteInfo> &All = S.Notes(Melody);
+		for (size_t b = 4; b < Bars.size(); ++b) {
+			const std::string Print = BarPrint(All, Bars[b].Row, Bars[b].Row + Bars[b].Rows);
+			if (!Print.empty() && Print == BarPrint(All, Bars[b - 4].Row, Bars[b - 4].Row + Bars[b - 4].Rows))
+				Repeats.push_back(S.Time.BarOf(Bars[b].Row));
+		}
+		if (!Repeats.empty())
+			Line += "; bars " + BarList(Repeats) + " repeat the bars four before them";
+		Lines.push_back(Line + ".");
+		if (Lengths.size() <= 2 && Tune.size() >= 8)
+			Tip(1.0, "The melody keeps one or two note lengths: mix long and short notes (a dotted rhythm, a held note "
+				"at each phrase end, a run of quick notes) with write_notes.");
+		if (Rests == 0 && BarCount >= 8)
+			Tip(1.0, "The melody never rests: a breath of a beat or two between phrases (every 2 or 4 bars) helps it "
+				"sound sung, and leaves room for a counter-melody to answer.");
+		if (High - Low < 7 && Tune.size() >= 8)
+			Tip(1.0, "The melody stays within a few notes: let a phrase climb to a high point (a climax) and fall back.");
+		if (!Repeats.empty() && Repeats.size() * 4 >= static_cast<size_t>(BarCount))
+			Tip(1.0, "Phrases come back unchanged: vary the repeat (another ending, an octave up, a counter-melody "
+				"only the second time, busier drums).");
+		if (LongBare > 0)
+			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(" no vibrato: polish adds a "
+				"gentle one that comes in after half a beat."));
+	}
+
+	// Dynamics: parts at one volume throughout
+	std::vector<int> Flat;
+	for (size_t p = 0; p < Playing.size(); ++p) {
+		const int c = Playing[p];
+		if (S.Channel(c).Kind == KIND_TRIANGLE || S.Channel(c).Kind == KIND_DPCM ||
+			std::find(Chords.begin(), Chords.end(), c) != Chords.end())
+			continue;	// chord stabs keep a level on purpose
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		std::set<int> Volumes;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Volumes.insert(Notes[i].Volume);
+		if (Notes.size() >= 8 && Volumes.size() == 1)
+			Flat.push_back(c);
+	}
+	if (!Flat.empty()) {
+		Lines.push_back("Dynamics: every note at one volume on " + Names(Flat) + ".");
+		Tip(1.0, "Flat dynamics sound typed: polish adds accents (the bar's first note loudest, the notes between beats "
+			"softer).");
+	}
+
+	// Register: another part sitting on the melody
+	const int TuneMiddle = MiddleOf(Tune, 52) - (S.Channel(Melody).Kind == KIND_TRIANGLE ? 12 : 0);
+	std::vector<int> Crowding;
+	for (size_t p = 0; p < Playing.size(); ++p) {
+		const int c = Playing[p];
+		if (c == Melody || c == Bass || !IsMelodic(S.Channel(c)))
+			continue;
+		const int Middle = MiddleOf(NotesIn(S.Notes(c), First, End), 0) - (S.Channel(c).Kind == KIND_TRIANGLE ? 12 : 0);
+		if (std::abs(Middle - TuneMiddle) <= 3 && std::find(Echoes.begin(), Echoes.end(), c) == Echoes.end())
+			Crowding.push_back(c);
+	}
+	if (!Crowding.empty()) {
+		Lines.push_back("Register: " + Names(Crowding) + " plays around the melody's own notes (" + PitchName(TuneMiddle) + ").");
+		Tip(1.0, "Parts in the melody's register blur it: move them an octave down (transpose with semitones -12) or "
+			"the melody up.");
+	}
+
+	// Parallel octaves with the bass
+	if (Bass >= 0) {
+		const std::vector<NoteInfo> Low = NotesIn(S.Notes(Bass), First, End);
+		int Parallel = 0;
+		for (size_t i = 0; i + 1 < Tune.size(); ++i) {
+			const NoteInfo *pA = 0, *pB = 0;
+			for (size_t k = 0; k < Low.size(); ++k) {
+				if (Low[k].Row == Tune[i].Row)
+					pA = &Low[k];
+				if (Low[k].Row == Tune[i + 1].Row)
+					pB = &Low[k];
+			}
+			if (pA != 0 && pB != 0 && (Tune[i].Pitch - pA->Pitch) % 12 == 0 && (Tune[i + 1].Pitch - pB->Pitch) % 12 == 0 &&
+				Tune[i].Pitch != Tune[i + 1].Pitch)
+				++Parallel;
+		}
+		if (Parallel >= 3) {
+			Lines.push_back(Format("The bass doubles the melody in octaves %d times as both move.", Parallel));
+			Tip(0.5, "A bass moving in octaves with the melody sounds hollow: let it move the other way, or hold.");
+		}
+	}
+
+	// Everything repeating: the whole arrangement four bars on
+	std::vector<int> Copies;
+	for (size_t b = 4; b < Bars.size(); ++b) {
+		bool Same = true;
+		for (size_t p = 0; p < Playing.size() && Same; ++p) {
+			const std::vector<NoteInfo> &Notes = S.Notes(Playing[p]);
+			Same = BarPrint(Notes, Bars[b].Row, Bars[b].Row + Bars[b].Rows) == BarPrint(Notes, Bars[b - 4].Row, Bars[b - 4].Row + Bars[b - 4].Rows);
+		}
+		if (Same)
+			Copies.push_back(S.Time.BarOf(Bars[b].Row));
+	}
+	if (!Copies.empty()) {
+		Lines.push_back("Bars " + BarList(Copies) + " repeat the four bars before them in every part.");
+		Tip(1.0, "A repeat with nothing new is where a loop starts to sound like a loop: change one or two layers the "
+			"second time (a counter-melody, drums one step busier, chords in another style, the melody an octave up).");
+	}
+
+	// Length
+	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
+	const double Seconds = Bpm > 0 ? BarCount * (S.Time.RowsPerBar / static_cast<double>(R)) * 60.0 / Bpm : 0.0;
+	Lines.push_back(Format("Length: %d bars, %s at %s BPM.", BarCount, SecondsText(Seconds).c_str(), FormatNumber(std::floor(Bpm + 0.5)).c_str()));
+	if (Seconds > 0 && Seconds < 30 && BarCount <= 16)
+		Tip(0.0, "Under half a minute before it loops: game music heard for minutes wants more material, an A part and "
+			"a B part (16 to 32 bars or more).");
+
+	const int Score = std::max(1, std::min(10, static_cast<int>(std::floor(10.0 - Missing + 0.5))));
+	std::string Text = "Depth review, " + RangeText(From, To) + " in " + KeyName(K) + Format(": %d/10.\n", Score);
+	for (size_t i = 0; i < Lines.size(); ++i)
+		Text += Lines[i] + "\n";
+	if (Tips.empty())
+		Text += "Nothing obvious is missing. Listen with the user (play) and ask what they'd change.";
+	else {
+		Text += "What would help, most first:\n";
+		for (size_t i = 0; i < Tips.size(); ++i)
+			Text += Format("%d. ", static_cast<int>(i) + 1) + Tips[i] + "\n";
+	}
+	return Text;
+}
+
+// Grooves to start from, sections repeated and varied, the soundtrack's notes
+
+struct Mood {
+	const char *Name;
+	const char *Aliases;	// separated by "|"
+	const char *Use;
+	bool Minor;
+	const char *Chords;		// as degrees, four bars
+	const char *Color;
+	int Style, Rhythm, Pattern, Bass, Groove, Intensity, Bpm;
+	const char *ChordSound;
+};
+
+const Mood MOODS[] = {
+	{ "town", "village|peaceful|home|friendly|inn", "a peaceful, friendly town", false, "| I | vi | IV | V |", "sevenths",
+		CHORDS_BROKEN, -1, BROKEN_UPDOWN, BASS_ROOT_FIFTH, GROOVE_CALM, 1, 112, "pluck" },
+	{ "overworld", "adventure|field|heroic|hero|journey|exploration|world", "setting out on an adventure", false,
+		"| I | bVII | IV | I |", "plain", CHORDS_ARPEGGIO, RHYTHM_TRESILLO, BROKEN_UP, BASS_OCTAVES, GROOVE_BASIC, 2, 140, "soft chords" },
+	{ "battle", "fight|combat|enemy", "a fight", true, "| i | VI | VII | i |", "plain", CHORDS_STABS, RHYTHM_EIGHTHS, BROKEN_UP,
+		BASS_DRIVING, GROOVE_DRIVING, 3, 165, "pluck" },
+	{ "boss", "final|showdown|villain", "a boss fight: darker and tenser", true, "| i | iv | bII | V |", "plain", CHORDS_STABS,
+		RHYTHM_EIGHTHS, BROKEN_UP, BASS_OCTAVES, GROOVE_DRIVING, 3, 175, "pluck" },
+	{ "dungeon", "cave|mysterious|mystery|spooky|haunted|ruins|creepy", "a dark cave, ruins or a haunted place", true,
+		"| i | bII | i | bII |", "plain", CHORDS_GUIDE, -1, BROKEN_UP, BASS_PEDAL, GROOVE_CALM, 1, 90, "warm pad" },
+	{ "sad", "melancholy|tragic|lament|loss|sorrow", "a sad or tragic scene", true, "| i | VI | III | VII |", "rich", CHORDS_BROKEN,
+		-1, BROKEN_ROLLING, BASS_ROOTS, -1, 0, 80, "pluck" },
+	{ "calm", "night|rest|ambient|sleep|quiet|gentle", "night, rest or a quiet place", false, "| Imaj7 | IVmaj7 | Imaj7 | IVmaj7 |",
+		"plain", CHORDS_ARPEGGIO, -1, BROKEN_UP, BASS_ROOTS, GROOVE_CALM, 1, 85, "soft chords" },
+	{ "chase", "tense|action|escape|hurry|danger|race", "a chase or a race against time", true, "| i | i | VI | VII |", "plain",
+		CHORDS_STABS, RHYTHM_EIGHTHS, BROKEN_UP, BASS_OCTAVES, GROOVE_FOUR_ON_FLOOR, 3, 170, "pluck" },
+	{ "upbeat", "happy|pop|cheerful|fun|bright|catchy", "something cheerful and catchy", false, "| I | V | vi | IV |", "plain",
+		CHORDS_STABS, RHYTHM_OFFBEATS, BROKEN_UP, BASS_SYNCOPATED, GROOVE_FOUR_ON_FLOOR, 2, 140, "pluck" },
+	{ "shop", "jazzy|jazz|cafe|store|lounge|casino|bar", "a shop, a cafe or a casino: jazzy", false, "| ii7 | V7 | Imaj7 | VI7 |",
+		"plain", CHORDS_STABS, RHYTHM_CHARLESTON, BROKEN_UP, BASS_WALKING, GROOVE_SHUFFLE, 2, 120, "pluck" },
+	{ "underwater", "dreamy|dream|water|floating|sky|clouds", "underwater or a dream: floating", false, "| Imaj7 | II | Imaj7 | II |",
+		"plain", CHORDS_BROKEN, -1, BROKEN_ROLLING, BASS_ROOTS, -1, 0, 90, "pluck" },
+	{ "castle", "royal|march|kingdom|throne|palace", "a castle or a royal march", false, "| I | IV | V | I |", "plain",
+		CHORDS_STABS, RHYTHM_BEATS, BROKEN_UP, BASS_ROOT_FIFTH, GROOVE_MARCH, 2, 110, "pluck" },
+	{ "desert", "exotic|sand|bazaar|ancient", "a desert or an exotic place", true, "| i | bII | i | V |", "plain", CHORDS_BROKEN,
+		-1, BROKEN_UPDOWN, BASS_PEDAL, GROOVE_HALF_TIME, 1, 100, "pluck" },
+};
+
+const Mood *FindMood(const std::string &Name)
+{
+	const std::string Wanted = Squeezed(Name);
+	for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i)
+		if (Squeezed(MOODS[i].Name) == Wanted)
+			return &MOODS[i];
+	for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i) {
+		const std::string Aliases = MOODS[i].Aliases;
+		size_t From = 0;
+		while (From <= Aliases.size()) {
+			size_t To = Aliases.find('|', From);
+			if (To == std::string::npos)
+				To = Aliases.size();
+			if (Squeezed(Aliases.substr(From, To - From)) == Wanted)
+				return &MOODS[i];
+			From = To + 1;
+		}
+	}
+	return 0;
+}
+
+std::string MakeGrooveTool(Session &S, const Json &Args)
+{
+	const std::string Name = StringArg(Args, "mood");
+	const Mood *pMood = FindMood(Name);
+	if (pMood == 0) {
+		std::string List;
+		for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i)
+			List += (i == 0 ? "" : ", ") + std::string(MOODS[i].Name);
+		throw Problem("mood: \"" + Name + "\" isn't one. Moods: " + List + " (other words for them work too).");
+	}
+	const Mood &M = *pMood;
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const bool DirectChange = Direct(S, AsClip);
+	const int R = S.Time.RowsPerBeat;
+	const int From = IntArg(Args, "from_bar", 1, 1, S.MaxBars());
+	const int To = std::min(S.MaxBars(), From + IntArg(Args, "bars", 8, 1, 64) - 1);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+
+	// The key: as given, else the song's key note in the mood's mode
+	Key K;
+	const std::string KeyText = StringArg(Args, "key");
+	if (!KeyText.empty()) {
+		if (!ParseKey(KeyText, K))
+			throw Problem("key: \"" + KeyText + "\" isn't a key. Write it like \"C major\", \"A minor\" or \"Bbm\".");
+	}
+	else {
+		Key Found;
+		const bool Any = FindKey(S, 0, S.Time.TotalRows(), Found);
+		K = Key(Any ? Found.Tonic : (M.Minor ? 9 : 0), M.Minor ? MODE_MINOR : MODE_MAJOR);
+	}
+
+	auto Pick = [&](const char *Arg_, bool (*Fits)(const ChannelInfo &), const char *Kind) -> int {
+		const Json *pValue = Arg(Args, Arg_);
+		if (pValue != 0 && pValue->IsString() && Lowercase(pValue->String()) == "none")
+			return -1;
+		if (pValue != 0) {
+			const int Channel = ParseChannel(S, *pValue, Arg_);
+			if (!Fits(S.Channel(Channel)))
+				throw Problem(Format("%s needs %s.", Arg_, Kind));
+			return Channel;
+		}
+		const int Free = FreeChannel(S, First, End, -1, Fits);
+		return Free >= 0 ? Free : -1;
+	};
+	struct Local {
+		static bool IsNoise(const ChannelInfo &Info) { return Info.Kind == KIND_NOISE; }
+	};
+	const int ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");
+	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth");
+	const int DrumChannel = M.Groove >= 0 ? Pick("drum_channel", Local::IsNoise, "the noise channel") : -1;
+	if (ChordChannel < 0 && BassChannel < 0 && DrumChannel < 0)
+		throw Problem("Every channel the groove needs already plays in those bars; name them (chord_channel, bass_channel, "
+			"drum_channel), or start at another bar.");
+
+	std::vector<ChordAt> Chords;
+	std::string Error;
+	if (!LayOutProgression(SplitProgression(M.Chords), Bars, R, K, Chords, Error))
+		throw Problem(Error);
+	chord_color Color;
+	ParseColor(M.Color, Color);
+	ColorChords(Chords, std::vector<NoteInfo>(), K, R, Color);
+
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings, Parts;
+	if (ChordChannel >= 0) {
+		ChordPartOptions O;
+		O.Style = M.Style;
+		O.Rhythm = M.Rhythm;
+		O.Pattern = M.Pattern;
+		O.StepRows = std::max(1, R / 2);
+		O.RowsPerBeat = R;
+		O.RootInBass = BassChannel >= 0;
+		O.Volume = M.Style == CHORDS_STABS ? 11 : M.Style == CHORDS_BROKEN ? 10 : 15;
+		ChordRegister(O, S.Channel(ChordChannel), std::vector<NoteInfo>());
+		const int Instrument = ResolveInstrument(S, M.ChordSound, ChordChannel);
+		std::vector<PartNote> Notes = ChordPart(Chords, Bars, O);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Instrument = Instrument;
+		Change C;
+		C.Channel = ChordChannel;
+		BuildPart(S.Cells(ChordChannel), First, End, Notes, OptionsFor(S, ChordChannel, DirectChange), C.Cells, Warnings);
+		Changes.push_back(C);
+		std::string Kind = ChordStyles()[static_cast<size_t>(M.Style)].Name;
+		if (M.Style == CHORDS_BROKEN)
+			Kind += std::string(" (") + BrokenPatterns()[static_cast<size_t>(M.Pattern)].Name + ")";
+		else if (M.Rhythm >= 0)
+			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(M.Rhythm)].Name + ")";
+		Parts.push_back(Kind + " chords on " + S.Channel(ChordChannel).FullName());
+	}
+	if (BassChannel >= 0) {
+		BassOptions O;
+		O.Style = M.Bass;
+		O.RowsPerBeat = R;
+		O.K = K;
+		BassRegister(O, S.Channel(BassChannel));
+		const int Instrument = ResolveInstrument(S, "bass", BassChannel);
+		std::vector<PartNote> Notes = BassPart(Chords, Bars, O);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Instrument = Instrument;
+		Change C;
+		C.Channel = BassChannel;
+		BuildPart(S.Cells(BassChannel), First, End, Notes, OptionsFor(S, BassChannel, DirectChange), C.Cells, Warnings);
+		Changes.push_back(C);
+		Parts.push_back(std::string("a ") + BassStyles()[static_cast<size_t>(M.Bass)].Name + " bass on " + S.Channel(BassChannel).FullName());
+	}
+	if (DrumChannel >= 0) {
+		DrumOptions O;
+		O.Groove = M.Groove;
+		O.Intensity = M.Intensity;
+		O.FillEvery = 4;
+		O.PhraseStart = (From - 1) % 4;
+		O.RowsPerBeat = R;
+		Change C;
+		C.Channel = DrumChannel;
+		BuildPart(S.Cells(DrumChannel), First, End, DrumNotes(S, DrumChannel, DrumPart(Bars, O), First, End, 15),
+			OptionsFor(S, DrumChannel, DirectChange), C.Cells, Warnings);
+		Changes.push_back(C);
+		Parts.push_back(std::string(Grooves()[static_cast<size_t>(M.Groove)].Name) + " drums on " + S.Channel(DrumChannel).FullName());
+	}
+	std::string Summary;
+	for (size_t i = 0; i < Parts.size(); ++i)
+		Summary += (i == 0 ? "" : i + 1 == Parts.size() ? " and " : ", ") + Parts[i];
+	std::sort(Changes.begin(), Changes.end(), [](const Change &a, const Change &b) { return a.Channel < b.Channel; });
+	const std::string What = std::string("a ") + M.Name + " groove: " + Summary + ", " + RangeText(From, To) + ", in " + KeyName(K);
+	std::string Text = Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What);
+	Text += "\nChords: " + ProgressionText(Chords, Bars, K) + "\nAs degrees: " + ProgressionText(Chords, Bars, K, true);
+	const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
+	if (std::fabs(Now - M.Bpm) > 8)
+		Text += Format("\nThe mood suits about %d BPM; the song plays at %s (set_tempo with bpm %d changes it).", M.Bpm,
+			FormatNumber(std::floor(Now + 0.5)).c_str(), M.Bpm);
+	// Where the melody can go
+	int Free = -1;
+	for (int c = 0; c < S.ChannelCount() && Free < 0; ++c)
+		if (c != ChordChannel && c != BassChannel && IsChordChannel(S.Channel(c)) && !HasNotesIn(S, c, First, End))
+			Free = c;
+	Text += "\nNext: a melody in " + KeyName(K) + " over these chords" + (Free >= 0 ? " on " + S.Channel(Free).FullName() : std::string()) +
+		" with write_notes (chord tones on the strong beats, steps between them, a rest at the end of each phrase), then "
+		"review_arrangement.";
+	return WithRemarks(S, Text, Warnings);
+}
+
+// copy_bars: a section again, later (A A B A)
+
+std::string CopyBarsTool(Session &S, const Json &Args)
+{
+	int From, To;
+	BarRange(S, Args, From, To);
+	if (Arg(Args, "to_bar") == 0)
+		To = From;
+	const int At = IntArg(Args, "at_bar", 0, 1, S.MaxBars());
+	if (At == 0)
+		throw Problem("Say where the copy goes with at_bar.");
+	const int Times = IntArg(Args, "times", 1, 1, 16);
+	const int Semitones = IntArg(Args, "semitones", 0, -24, 24);
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const int Length = End - First;
+	const int Dest = S.Time.BarStart(At);
+	if (Dest < End && Dest + Length * Times > First)
+		throw Problem("The copy would land on the bars it copies; choose an at_bar after them (or before).");
+	if (Dest + Length * Times > S.MaxRows())
+		throw Problem(Format("That runs past the most a song can hold (%d bars).", S.MaxBars()));
+	std::vector<int> Channels;
+	const Json *pChannels = Arg(Args, "channels");
+	if (pChannels == 0 || (pChannels->IsString() && Lowercase(pChannels->String()) == "all"))
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			Channels.push_back(c);
+	else
+		Channels = ChannelsArg(S, Args, "channels");
+
+	Draft D(S);
+	int Notes = 0;
+	for (size_t i = 0; i < Channels.size(); ++i) {
+		const int c = Channels[i];
+		const ChannelInfo &Info = S.Channel(c);
+		const int Columns = Info.EffectColumns;
+		const std::vector<Cell> &Song = S.Cells(c);
+		std::vector<Cell> Part;
+		for (int r = First; r < End; ++r)
+			Part.push_back(r < static_cast<int>(Song.size()) ? Song[static_cast<size_t>(r)] : Cell());
+		// The copy plays as the original does: its first note gets the instrument and volume it played with
+		const ChannelState State = StateAt(Song, First, Columns);
+		for (size_t r = 0; r < Part.size(); ++r) {
+			Cell &C = Part[r];
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				if (C.Effect[k] == EFF_JUMP || C.Effect[k] == EFF_SKIP || C.Effect[k] == EFF_HALT) {
+					C.Effect[k] = EFF_NONE;	// the song's own jumps and ends stay where they are
+					C.Param[k] = 0;
+				}
+			if (C.HasNote()) {
+				++Notes;
+				if (Semitones != 0 && IsMelodic(Info)) {
+					const int Pitch = C.Pitch() + Semitones;
+					if (Pitch >= 0 && Pitch < PITCHES)
+						C.SetPitch(Pitch);
+				}
+			}
+		}
+		for (size_t r = 0; r < Part.size(); ++r) {
+			if (!Part[r].HasNote())
+				continue;
+			if (Part[r].Instrument == NO_INSTRUMENT && State.Instrument != NO_INSTRUMENT)
+				Part[r].Instrument = static_cast<unsigned char>(State.Instrument);
+			if (Part[r].Volume == NO_VOLUME && State.Volume != 15)
+				Part[r].Volume = static_cast<unsigned char>(State.Volume);
+			for (int e = 0; e < EFF_COUNT; ++e)
+				if (State.Sticky[e] != 0 && !HasEffect(Part[r], e, Columns))
+					AddEffect(Part[r], e, State.Sticky[e], Columns);
+			break;
+		}
+		for (int t = 0; t < Times; ++t)
+			D.Put(c, Dest + t * Length, Part);
+	}
+	if (Notes == 0)
+		throw Problem(Format("There are no notes in %s to copy.", RangeText(From, To).c_str()));
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start;
+	if (!D.Collect(Dest, Direct(S, AsClip), Changes, Start, Warnings))
+		throw Problem("Those bars already hold the same notes.");
+	const int Last = At + Times * (To - From + 1) - 1;
+	std::string What = RangeText(From, To) + " copied to " + RangeText(At, Last);
+	if (Times > 1)
+		What += Format(" (%d times)", Times);
+	if (Semitones != 0)
+		What += Format(", %d semitones %s", std::abs(Semitones), Semitones > 0 ? "up" : "down");
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
+		" A repeat sounds fresher with something changed: vary_part on the melody, a counter-melody, busier drums.", Warnings);
+}
+
+// vary_part: the same part, a little different (for a repeat)
+
+std::string VaryPartTool(Session &S, const Json &Args)
+{
+	const int Channel = ChannelArg(S, Args, "channel");
+	const ChannelInfo &Info = S.Channel(Channel);
+	if (!IsMelodic(Info))
+		throw Problem("vary_part changes melodic parts; add_drums makes drums busier or lighter.");
+	if (Arg(Args, "from_bar") == 0)
+		throw Problem("Say which bars with from_bar and to_bar.");
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const int R = S.Time.RowsPerBeat;
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	static const char *const KINDS[] = { "embellish", "simplify", "syncopate", "octave_up", "octave_down", "ending" };
+	const std::string Kind = Squeezed(StringArg(Args, "variation"));
+	int Variation = -1;
+	for (int i = 0; i < 6; ++i)
+		if (Kind == Squeezed(KINDS[i]))
+			Variation = i;
+	if (Variation < 0)
+		throw Problem("variation: embellish, simplify, syncopate, octave_up, octave_down or ending.");
+	bool Found;
+	Key K = KeyArg(S, Args, "key", First, End, Found);
+	if (!Found)
+		K = Key(0, MODE_MAJOR);
+
+	const std::vector<NoteInfo> Old = NotesIn(S.Notes(Channel), First, End);
+	if (Old.empty())
+		throw Problem(Format("%s has no notes in %s.", Info.FullName().c_str(), RangeText(From, To).c_str()));
+	std::vector<PartNote> Notes;
+	for (size_t i = 0; i < Old.size(); ++i) {
+		const NoteInfo &N = Old[i];
+		PartNote P;
+		P.Row = N.Row;
+		P.Rows = std::min(N.Rows, End - N.Row);
+		P.Pitch = N.Pitch;
+		P.Instrument = N.InstrumentSet || i == 0 ? N.Instrument : NO_INSTRUMENT;
+		P.Volume = N.VolumeSet || i == 0 ? N.Volume : -1;
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			if (IsSongEffect(N.Effects[e].second.first))
+				continue;
+			if (N.Effects[e].first == 0)
+				P.Effects.push_back(N.Effects[e].second);
+			else
+				P.LaterEffects.push_back(N.Effects[e]);
+		}
+		if (N.EndNote == NOTE_NONE && i + 1 < Old.size())
+			P.Rows = Old[i + 1].Row - N.Row;
+		Notes.push_back(P);
+	}
+	auto Step = [&](int Pitch, int Direction) {
+		for (int s = 1; s <= 2; ++s)
+			if (InKey(Pitch + Direction * s, K))
+				return Pitch + Direction * s;
+		return Pitch + Direction;
+	};
+	int Changed = 0;
+	std::vector<PartNote> Out;
+	switch (Variation) {
+	case 0: {	// passing notes between notes a third apart, a neighbour on a held one, at most two a bar
+		std::map<int, int> PerBar;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			PartNote A = Notes[i];
+			const int Bar = S.Time.BarOf(A.Row);
+			const bool Next = i + 1 < Notes.size() && Notes[i + 1].Row == A.Row + A.Rows;
+			const int Gap = Next ? Notes[i + 1].Pitch - A.Pitch : 99;
+			if (A.Rows >= R && Next && PerBar[Bar] < 2 && (std::abs(Gap) == 3 || std::abs(Gap) == 4 || Gap == 0)) {
+				const int Half = std::max(1, (A.Rows / 2) / std::max(1, R / 2) * std::max(1, R / 2));
+				PartNote B = A;
+				B.Row = A.Row + Half;
+				B.Rows = A.Rows - Half;
+				B.Pitch = Gap == 0 ? Step(A.Pitch, 1) : Step(A.Pitch, Gap > 0 ? 1 : -1);
+				B.Instrument = NO_INSTRUMENT;
+				B.Volume = -1;
+				B.Effects.clear();
+				B.LaterEffects.clear();
+				A.Rows = Half;
+				A.LaterEffects.clear();
+				Out.push_back(A);
+				Out.push_back(B);
+				++PerBar[Bar];
+				++Changed;
+				continue;
+			}
+			Out.push_back(A);
+		}
+		break;
+	}
+	case 1:	// only the notes on beats, each held until the next
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int InBar = Notes[i].Row - S.Time.BarStart(S.Time.BarOf(Notes[i].Row));
+			if (InBar % R != 0 && !Out.empty() && Out.back().Row + Out.back().Rows == Notes[i].Row) {
+				Out.back().Rows += Notes[i].Rows;
+				++Changed;
+				continue;
+			}
+			Out.push_back(Notes[i]);
+		}
+		break;
+	case 2: {	// notes on the middle of a bar, and on every other bar's first beat, come half a beat early
+		const int Half = std::max(1, R / 2);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			PartNote N = Notes[i];
+			const int Bar = S.Time.BarOf(N.Row);
+			const int InBar = N.Row - S.Time.BarStart(Bar);
+			const int Middle = S.Time.BarLength(Bar) / R / 2 * R;
+			const bool Strong = (InBar == Middle && Middle > 0) || (InBar == 0 && Bar % 2 == 0);
+			if (Strong && !Out.empty() && Out.back().Row + Out.back().Rows == N.Row && Out.back().Rows >= R && N.Row - Half >= First) {
+				Out.back().Rows -= Half;
+				N.Row -= Half;
+				N.Rows += Half;
+				++Changed;
+			}
+			Out.push_back(N);
+		}
+		break;
+	}
+	case 3:
+	case 4:
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int Pitch = Notes[i].Pitch + (Variation == 3 ? 12 : -12);
+			if (Pitch >= 0 && Pitch < PITCHES) {
+				Notes[i].Pitch = Pitch;
+				++Changed;
+			}
+			Out.push_back(Notes[i]);
+		}
+		break;
+	default: {	// the last note on the key's tonic, held to the end of the bars
+		Out = Notes;
+		PartNote &Last = Out.back();
+		int Best = Last.Pitch;
+		for (int d = 0; d <= 6; ++d) {
+			if (((Last.Pitch - d) % 12 + 12) % 12 == K.Tonic) {
+				Best = Last.Pitch - d;
+				break;
+			}
+			if (((Last.Pitch + d) % 12 + 12) % 12 == K.Tonic) {
+				Best = Last.Pitch + d;
+				break;
+			}
+		}
+		Changed = Best != Last.Pitch || Last.Row + Last.Rows != End ? 1 : 0;
+		Last.Pitch = Best;
+		Last.Rows = End - Last.Row;
+		break;
+	}
+	}
+	if (Changed == 0)
+		throw Problem("That variation found nothing to change in those bars (embellish needs notes of a beat or more a third "
+			"apart; syncopate a long note before a strong beat).");
+	std::vector<std::string> Warnings;
+	Change C;
+	C.Channel = Channel;
+	BuildPart(S.Cells(Channel), First, End, Out, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
+	std::vector<Change> Changes(1, C);
+	static const char *const DONE[] = { "passing and neighbour notes added", "simplified to the notes on the beats",
+		"syncopated (strong-beat notes half a beat early)", "an octave up", "an octave down", "ending on the tonic" };
+	const std::string What = Info.FullName() + " " + DONE[Variation] + ", " + RangeText(From, To);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
+		Format(" (%s)", Plural(Changed, "change", "changes").c_str()), Warnings);
+}
+
+// The soundtrack's notes (SOUNDTRACK_NOTES): a text file beside the song,
+// shared by every module in its folder, where the user's taste and the
+// decisions about the game's music are kept between sessions
+
+std::string SoundtrackNotesTool(Session &S, const Json &Args)
+{
+	const std::string Action = Lowercase(StringArg(Args, "action", "read"));
+	std::string Text, Error;
+	const bool Exists = S.Host().ReadFile(SOUNDTRACK_NOTES, Text, Error);
+	if (!Exists && !Error.empty())
+		throw Problem(Error);
+	if (Action == "read") {
+		if (!Exists || Trim(Text).empty())
+			return std::string("There are no soundtrack notes yet (\"") + SOUNDTRACK_NOTES + "\" next to the song). Add what the user "
+				"tells you they like and dislike, and what you decide together (keys, tempos, sounds, motifs for places and "
+				"characters), with action \"add\", so later sessions keep to it.";
+		return std::string("Soundtrack notes (\"") + SOUNDTRACK_NOTES + "\" next to the song):\n" + Text;
+	}
+	const std::string Line = StringArg(Args, "text");
+	if (Line.empty())
+		throw Problem("Give the text to write.");
+	std::string New;
+	if (Action == "add") {
+		New = Text;
+		if (!New.empty() && New[New.size() - 1] != '\n')
+			New += "\r\n";
+		New += "- " + Line + "\r\n";
+	}
+	else if (Action == "replace")
+		New = Line + (Line.empty() || Line[Line.size() - 1] == '\n' ? "" : "\r\n");
+	else
+		throw Problem("action: read, add or replace.");
+	std::string Path;
+	if (!S.Host().SaveFile(SOUNDTRACK_NOTES, New, Path, Error))
+		throw Problem(Error.empty() ? "The notes couldn't be saved." : Error);
+	return Action == "add" ? "Added to the soundtrack notes (" + Path + ")." : "Rewrote the soundtrack notes (" + Path + ").";
 }
 
 // Moods: several changes at once, so they arrive together
@@ -4203,6 +5998,12 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 			Text += (i > 0 ? ", " : "") + Silent[i];
 		Text += ".";
 	}
+	Key K;
+	if (FindKey(S, First, End, K)) {
+		const std::vector<ChordAt> Heard = SongChords(S, First, End, K);
+		if (!Heard.empty())
+			Text += " Chords heard (" + KeyName(K) + "): " + ProgressionText(Heard, SongBarSpans(S, First, End), K) + ".";
+	}
 	if (To < Bars)
 		Text += Format(" The song has %d bars.", Bars);
 	return Text;
@@ -4346,6 +6147,41 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", Chips)),
 		false, false, true);
 
+	AddTool("design_instrument", "Design an instrument",
+		"Makes a new instrument from a description in words, for when no preset fits: its volume envelope (attack, decay to "
+		"a sustain level, release after ===), its pulse width and how that moves (a tone that opens up, shimmers or thins), "
+		"a vibrato built in that comes in after a moment (so long notes sing without effects), a blip, scoop or fall on "
+		"the attack, or a chord arpeggio; on the noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, "
+		"shorter or longer. Start from a kind (" + DesignKinds() + ") and change what should differ. Envelope times are in "
+		"frames, 60 a second.",
+		Schema()
+			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
+			.Add("kind", Prop("string", "What it starts from: lead (default), pad, pluck, bass, keys, bell, brass, strings, organ, "
+				"chiptune; kick, snare, hihat, open hihat, crash, tom."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip; the noise channel makes a drum)."))
+			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
+			.Add("attack", LevelProp("instant, fast, medium, slow, swell, or frames (0-60)."))
+			.Add("decay", LevelProp("none (holds at its peak), short, medium, long, or frames (0-120): how long it takes to fall "
+				"to the sustain level."))
+			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
+				"high, full, or 0-15."))
+			.Add("release", LevelProp("short, medium, long, or frames (0-60): how it fades after a release (===)."))
+			.Add("volume", Prop("integer", "Its loudest, 1-15."))
+			.Add("duty", LevelProp("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%."))
+			.Add("duty_motion", EnumProp("How the tone moves: still, sweep (opens from thin on the attack), wobble (shimmers to "
+				"and fro), fade (thins as it fades).", std::vector<std::string>{ "still", "sweep", "wobble", "fade" }))
+			.Add("vibrato", EnumProp("A vibrato built into the instrument.", std::vector<std::string>{ "none", "gentle", "medium", "strong" }))
+			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
+				"a second)."))
+			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
+				"the note), drop (falls, like a laser or a tom).", std::vector<std::string>{ "none", "blip", "scoop", "drop" }))
+			.Add("arpeggio", EnumProp("A chord played as a fast arpeggio from each note.", std::vector<std::string>{ "none", "octave",
+				"major", "minor", "fifth", "power", "sus4", "major7", "minor7" }))
+			.Add("arpeggio_frames", Prop("integer", "Frames for each note of the arpeggio, 1-8 (default 1, the fastest)."))
+			.Add("tone", EnumProp("Drums: darker or brighter noise.", std::vector<std::string>{ "dark", "normal", "bright" }))
+			.Add("length", EnumProp("Drums: shorter or longer.", std::vector<std::string>{ "short", "normal", "long" })),
+		false);
+
 	AddTool("set_instrument", "Change the instrument",
 		"Gives one channel's notes in some bars another instrument: one of the song's or a preset (added). Good for changing "
 		"the sound of a part (softer, brighter, rounder) for a mood.",
@@ -4379,19 +6215,125 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
 		false, false, true);
 
-	AddTool("add_chords_and_bass", "Add chords and a bass line",
-		"Fits chords to a melody bar by bar in its key and writes them as an arpeggio on a pulse channel, plus a bass line on "
-		"the triangle or sawtooth. Free channels are picked unless named.",
-		Schema()
-			.Add("melody_channel", ChannelProp("Channel with the melody. Default: the busiest one."))
-			.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
-			.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
-			.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
-			.Add("half_bars", Prop("boolean", "Chords may change halfway through a bar (default true)."))
-			.Add("chord_instrument", Prop("string", "Instrument or preset for the chords (default \"soft chords\")."))
-			.Add("bass_instrument", Prop("string", "Instrument or preset for the bass (default \"bass\")."))
-			.Range().ClipChoice(),
-		false, true);
+	{
+		Json Chords = Prop("string", "");
+		Json Types = Json::MakeArray();
+		Types.Push("string");
+		Types.Push("array");
+		Chords.Set("type", Types);
+		Json Item = Json::MakeObject();
+		Item.Set("type", "string");
+		Chords.Set("items", Item);
+		Chords.Set("description", "The chords to play instead of fitting them to the melody: a progression with bar lines, "
+			"\"| Am7 | Fmaj7 | C | G7sus4 G7 |\", chords a bar each without them, \"I vi IV V\", or a list of bars, "
+			"[\"Am7\", \"F G\"]. Names (C, F#m7, Bbmaj7, Dsus4, Cadd9, Em7b5, C/E) or degrees of the key (I, vi, IV, V7, "
+			"bVII, V7/V). Chords in a bar share it; \".\" holds the chord before for a share (\"C . . G\": three beats of C, "
+			"one of G); \"%\" repeats a bar. The progression repeats to fill the bars.");
+		AddTool("add_chords_and_bass", "Add chords and a bass line",
+			"Writes chords on a pulse channel and a bass line on the triangle or sawtooth: chords fitted to a melody bar by bar "
+			"in its key, or the progression you give (no melody needed then). Choose how they're played; the defaults are the "
+			"plainest (triads held as an arpeggio, root and fifth in the bass), and most songs want more. chord_style: " +
+			StyleList(ChordStyles()) + ". rhythm (arpeggio and stabs): " + StyleList(ChordRhythms()) + ". pattern (broken): " +
+			StyleList(BrokenPatterns()) + ". bass_style: " + StyleList(BassStyles()) + ". color adds sevenths (\"sevenths\") "
+			"or richer tones (\"rich\": add9, maj7, m9, a V7sus4 resolving) where the melody allows. Free channels are "
+			"picked unless named. The reply lists the chords by name and as degrees.",
+			Schema()
+				.Add("chords", Chords)
+				.Add("melody_channel", ChannelProp("Channel with the melody. Default: the busiest one."))
+				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
+				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
+				.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
+				.Add("color", EnumProp("plain (triads, default), sevenths, or rich.", std::vector<std::string>{ "plain", "sevenths", "rich" }))
+				.Add("chord_style", EnumProp("How the chords are played (default arpeggio).", StyleNames(ChordStyles())))
+				.Add("rhythm", EnumProp("When arpeggio or stabs chords are struck (arpeggio: bars, stabs: offbeats by default).",
+					StyleNames(ChordRhythms())))
+				.Add("pattern", EnumProp("The order of a broken chord's notes (default up).", StyleNames(BrokenPatterns())))
+				.Add("notes_per_beat", Prop("integer", "Broken chords: notes a beat, 1-4 (default 2)."))
+				.Add("bass_style", EnumProp("How the bass line moves (default root_fifth).", StyleNames(BassStyles())))
+				.Add("half_bars", Prop("boolean", "Fitted chords may change halfway through a bar (default true)."))
+				.Add("chord_instrument", Prop("string", "Instrument or preset for the chords (default: soft chords for arpeggio, "
+					"pluck for stabs and broken, warm pad for guide)."))
+				.Add("chord_volume", Prop("integer", "The chords' volume, 1-15 (default 15 for arpeggio and guide, 11 for stabs, "
+					"10 for broken); beats a step softer than a bar's first note."))
+				.Add("bass_instrument", Prop("string", "Instrument or preset for the bass (default \"bass\")."))
+				.Range().ClipChoice(),
+			false, true);
+
+		Json Intensity = LevelProp("light, normal (default) or busy.");
+		AddTool("add_drums", "Add drums",
+			"Writes a drum part on the noise channel: a groove with small changes every other bar (an open hi-hat into the "
+			"next bar), a fill at the end of every phrase (toms, a snare roll, or kick and snare, in turn) and a crash where "
+			"the drums come in and after each fill. Grooves: " + StyleList(Grooves()) + ". Kick, snare, hi-hat, crash and tom "
+			"instruments are added from presets.",
+			Schema()
+				.Add("groove", EnumProp("The beat (default basic; waltz in bars of three beats).", StyleNames(Grooves())))
+				.Add("intensity", Intensity)
+				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1 (default 4; "
+					"0 for none)."))
+				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
+				.Add("volume", Prop("integer", "The loudest hit's volume, 1-15 (default 15); the others follow."))
+				.Add("channel", ChannelProp("The noise channel (default: the song's)."))
+				.Add("from_bar", BarProp("First bar. Default: where the song's parts start."))
+				.Add("to_bar", BarProp("Last bar. Default: where they end."))
+				.ClipChoice(),
+			false, true);
+
+		AddTool("add_harmony", "Add a harmony voice",
+			"Writes a second voice that follows the melody note for note, a third under it by default, in the key; where the "
+			"melody holds or lands on a beat it takes the chord's note nearest that interval, so it doesn't rub. Intervals: " +
+			StyleList(HarmonyIntervals()) + ". It follows the chords given, the ones the song's other parts play, or chords "
+			"fitted to the melody. Best on a channel like the melody's (a free one is picked), quieter.",
+			Schema()
+				.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel."))
+				.Add("channel", ChannelProp("Channel for the harmony. Default: a free one like the melody's."))
+				.Add("interval", EnumProp("How far from the melody (default third_below).", StyleNames(HarmonyIntervals())))
+				.Add("long_notes_only", Prop("boolean", "Only under the melody's notes of a beat or more, so quick runs stay single "
+					"(default false)."))
+				.Add("volume", Prop("integer", "Its volume, 1-15. Default: 3 softer than the melody."))
+				.Add("instrument", Prop("string", "Instrument or preset. Default: the melody's own (a soft lead on another chip)."))
+				.Add("chords", Chords)
+				.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+				.Range().ClipChoice(),
+			false, true);
+
+		AddTool("add_counter_melody", "Add a counter-melody",
+			"Writes a counter-melody: a second line of its own, made from the chords' thirds and sevenths, that holds while the "
+			"melody moves and moves by step (a pickup into the next chord) while the melody holds or rests, never a semitone "
+			"from it. Below the melody (a tenor line) or above it (a descant). Gives a song depth; a starting point you can "
+			"shape further with write_notes.",
+			Schema()
+				.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel."))
+				.Add("channel", ChannelProp("Channel for it. Default: a free one like the melody's."))
+				.Add("position", EnumProp("below (default) or above the melody.", std::vector<std::string>{ "below", "above" }))
+				.Add("volume", Prop("integer", "Its volume, 1-15. Default: 4 softer than the melody."))
+				.Add("instrument", Prop("string", "Instrument or preset (default \"soft lead\", a contrast to most leads)."))
+				.Add("chords", Chords)
+				.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+				.Range().ClipChoice(),
+			false, true);
+
+		Json Touches = Prop("array", "Which touches: accents (a bar's first note loudest, beats a step softer, the notes between "
+			"them softer still), vibrato (a gentle vibrato that comes in half a beat into the melody's notes of 1.5 beats or "
+			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one). Default: all three.");
+		Json TouchItem = Json::MakeObject();
+		TouchItem.Set("type", "string");
+		Json TouchNames = Json::MakeArray();
+		TouchNames.Push("accents");
+		TouchNames.Push("vibrato");
+		TouchNames.Push("separate");
+		TouchItem.Set("enum", TouchNames);
+		Touches.Set("items", TouchItem);
+		AddTool("polish", "Finishing touches",
+			"Gives parts the small things that make them sound played rather than typed: accents, a delayed vibrato on the "
+			"melody's long notes, and gaps between repeated triangle notes. Channels that already shape their volumes keep them. "
+			"Run it after the parts are written.",
+			Schema()
+				.Add("touches", Touches)
+				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
+				.Add("melody_channel", ChannelProp("The melody, for the vibrato. Default: the busiest channel."))
+				.Range().ClipChoice(),
+			false, true);
+	}
 
 	AddTool("add_echo", "Add an echo",
 		"Copies a channel's notes onto a free channel, a little later and quieter: the classic NES echo. Makes a part sound "
@@ -4611,6 +6553,81 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the old chip's channels.")),
 		false, true);
 
+	{
+		std::vector<std::string> Moods;
+		std::string Uses;
+		for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i) {
+			Moods.push_back(MOODS[i].Name);
+			Uses += std::string(i == 0 ? "" : "; ") + MOODS[i].Name + " (" + MOODS[i].Use + ")";
+		}
+		AddTool("make_groove", "Start from a groove",
+			"Writes a backing to start a track from: chords, a bass line and drums for a mood, each played the way that mood "
+			"is usually arranged, in one go (one clip, or one Ctrl+Z). Then write the melody over it with write_notes. Moods: " +
+			Uses + ". Other words for them work too (\"village\", \"fight\", \"spooky\", \"jazzy\"). The reply gives the "
+			"chords and the tempo the mood suits.",
+			Schema()
+				.Add("mood", EnumProp("The mood.", Moods), true)
+				.Add("key", Prop("string", "Key, like \"D minor\". Default: the song's key note (C or A when there are no notes) "
+					"in the mood's mode."))
+				.Add("from_bar", BarProp("Where it starts (default 1)."))
+				.Add("bars", Prop("integer", "How many bars, 1-64 (default 8; the four-bar progression repeats)."))
+				.Add("chord_channel", ChannelProp("Pulse channel for the chords, or \"none\". Default: a free one."))
+				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a free one."))
+				.Add("drum_channel", ChannelProp("The noise channel, or \"none\" for no drums. Default: it, when free."))
+				.ClipChoice(),
+			false, true);
+	}
+
+	AddTool("copy_bars", "Repeat bars",
+		"Copies bars to another place in the song, for a song's form (A A B A, a verse coming back): every channel by "
+		"default, a number of times, moved up or down if asked. The copy plays with the instruments and volumes the "
+		"original did; the song's own jumps and ends stay where they are. Vary the repeat afterwards (vary_part, a "
+		"counter-melody, busier drums) so it doesn't sound pasted.",
+		Schema()
+			.Add("from_bar", BarProp("First bar to copy."), true)
+			.Add("to_bar", BarProp("Last bar to copy (default from_bar)."))
+			.Add("at_bar", BarProp("Where the copy starts."), true)
+			.Add("times", Prop("integer", "How many copies, one after another (default 1)."))
+			.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default)."))
+			.Add("semitones", Prop("integer", "Move the copy's notes up or down (noise and samples stay), -24 to 24."))
+			.ClipChoice(),
+		false, true);
+
+	AddTool("vary_part", "Vary a part",
+		"Changes a melodic part a little, for a repeat that shouldn't sound pasted: embellish (passing notes between notes "
+		"a third apart and a neighbour note on held ones, at most two a bar), simplify (only the notes on the beats), "
+		"syncopate (notes on the middle of a bar, and every other bar's first beat, come half a beat early), octave_up, "
+		"octave_down, ending (the last note goes to the key's tonic and holds to the end).",
+		Schema()
+			.Add("channel", ChannelProp("Channel name or number."), true)
+			.Add("variation", EnumProp("The variation.", std::vector<std::string>{ "embellish", "simplify", "syncopate", "octave_up",
+				"octave_down", "ending" }), true)
+			.Add("from_bar", BarProp("First bar."), true)
+			.Add("to_bar", BarProp("Last bar (default: the song's end)."))
+			.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+			.ClipChoice(),
+		false, true);
+
+	AddTool("soundtrack_notes", "Soundtrack notes",
+		std::string("Reads or adds to the soundtrack's notes: a text file next to the song (\"") + SOUNDTRACK_NOTES + "\"), shared "
+		"by every module in its folder, that keeps the user's taste and what you decided together between sessions: sounds "
+		"and styles they liked or didn't, keys and tempos of places, motifs for characters. Read it before writing for a "
+		"song that has one (get_song says so); add a line whenever the user tells you what they like, dislike or want.",
+		Schema()
+			.Add("action", EnumProp("read (default), add (a line), or replace (all of it).", std::vector<std::string>{ "read", "add", "replace" }))
+			.Add("text", Prop("string", "What to add, like \"likes bright leads with vibrato; no echo on the melody\", or the "
+				"whole new text.")),
+		false);
+
+	AddTool("review_arrangement", "Review the arrangement's depth",
+		"What makes the song sound plain, as a musician would hear it: which parts play (melody, chords, bass, drums, a "
+		"second line) and which are missing, bars where only one or two play, the chords (how many, plain triads or "
+		"colored, the same loop all the way), a bass that only holds roots, drums without fills, a melody with one note "
+		"length or no rests, phrases and whole sections that repeat unchanged, flat dynamics, parts crowding the "
+		"melody's register, a bass in octaves with the melody, and the length. It scores the depth out of 10 and lists "
+		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done.",
+		Schema().Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes.")).Range(), true, false, true);
+
 	AddTool("check_song", "Check the song",
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars and unused channels. Run it after writing.",
@@ -4663,10 +6680,20 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args);
 		else if (Name == "place_clip") Result.Text = PlaceClipTool(S, Args);
 		else if (Name == "add_instrument") Result.Text = AddInstrumentTool(S, Args);
+		else if (Name == "design_instrument") Result.Text = DesignInstrumentTool(S, Args);
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
+		else if (Name == "add_drums") Result.Text = AddDrumsTool(S, Args);
+		else if (Name == "add_harmony") Result.Text = AddHarmonyTool(S, Args);
+		else if (Name == "add_counter_melody") Result.Text = AddCounterMelodyTool(S, Args);
+		else if (Name == "polish") Result.Text = PolishTool(S, Args);
+		else if (Name == "review_arrangement") Result.Text = ReviewTool(S, Args);
+		else if (Name == "make_groove") Result.Text = MakeGrooveTool(S, Args);
+		else if (Name == "copy_bars") Result.Text = CopyBarsTool(S, Args);
+		else if (Name == "vary_part") Result.Text = VaryPartTool(S, Args);
+		else if (Name == "soundtrack_notes") Result.Text = SoundtrackNotesTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
 		else if (Name == "change_mood") Result.Text = ChangeMoodTool(S, Args);
@@ -4707,19 +6734,161 @@ std::string ToolSet::Instructions()
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
-		"look at the result with look_at_song, and use play so the user can listen, then ask them. "
+		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them.\n"
+		"Write music that sounds composed, not generated. Users notice plain tracks: one chord a bar held as an arpeggio, a bass "
+		"on roots, no drums, one note length, sections pasted unchanged.\n"
+		"- Plan first: the mood gives the key and mode (major or lydian bright; minor, dorian sad or mysterious; phrygian or "
+		"harmonic minor for danger), the tempo and a form of 16 to 32 bars or more with an A part and a contrasting B (A A B A, "
+		"intro A B A'). Game music is heard for minutes, so it needs somewhere to go. Read soundtrack_notes when get_song "
+		"mentions them, and keep to the user's taste.\n"
+		"- Layers: an NES arrangement has four or five: melody (a pulse), chords (the other pulse), bass (triangle), drums "
+		"(noise), and a second line (a counter-melody, a harmony or an echo) where the melody leaves room. make_groove starts a "
+		"backing for a mood; add_chords_and_bass plays chords you choose (\"| Am7 | Fmaj7 | C | G7sus4 G7 |\" or \"i VI III VII\") "
+		"in a style; choose its chord_style, rhythm or pattern, color and bass_style for the mood, since the defaults are the "
+		"plainest. add_drums adds a groove with fills; add_counter_melody and add_harmony add the second line.\n"
+		"- Melody: a motif of two to four notes with a rhythm you'd recognize, repeated and developed (moved up a step, "
+		"inverted, extended); phrases of two or four bars that breathe (a held note or a rest at the end); chord tones on "
+		"strong beats and steps between them; one high point in each section; long and short notes mixed (dotted rhythms, "
+		"syncopation). Not a scale run, not eighth notes without a rest.\n"
+		"- Harmony with direction: tonic, subdominant, dominant, home; a B part on other chords (IV, vi, the relative key); "
+		"sevenths, added ninths and suspensions resolving into V (color sevenths or rich); chords changing about once a bar, "
+		"not every beat. Bass: walking for towns and jazz, octaves for action, syncopated for pop, arpeggio for adventure. "
+		"Drums: lighter in calm parts, busier toward a climax, a fill at each phrase end.\n"
+		"- Expression: polish adds accents and a vibrato that comes in on long notes; add_echo gives space; change a sound or "
+		"the duty between sections; instruments with life (the singing lead, strings and brass presets, or design_instrument "
+		"for a sound described in words).\n"
+		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
+		"busier drums, another chord style).\n"
+		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
+		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
+		"the user tells you they like or don't in soundtrack_notes.\n"
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "
 		"each start from the original): darker = to_mode minor or phrygian, about 10-20% slower, parts an octave lower, rounder "
 		"or softer sounds (warm pad, soft lead); happier = to_mode major or lydian, a bit faster, brighter sounds (bright lead, "
-		"bell, pluck), and add_chords_and_bass if there are no chords; underwater = slower, a slow and strong vibrato on the "
-		"lead, an echo, soft round sounds (soft lead, warm pad), a lower register. Fewer notes also darken; rewrite a part "
-		"with write_notes for that. A night version (or another version of a song for a game state, like a tense one for a "
-		"battle) is make_version, which adds it as a new track and leaves the original as it was; a jingle (level up, quest "
-		"complete, item found...) is make_jingle, and a sound effect (jump, coin, menu blip, \"pew\"...) make_sound_effect. "
-		"For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion first (it asks before clearing notes on the old "
-		"chip's channels); VRC7 channels play the chip's own sounds by name (piano, flute, "
-		"brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the user what you "
-		"changed and why.";
+		"bell, pluck); underwater = slower, a slow and strong vibrato on the lead, an echo, soft round sounds, a lower register. "
+		"A night version (or another version of a song for a game state, like a tense one for a battle) is make_version, which "
+		"adds it as a new track; a jingle (level up, quest complete, item found...) is make_jingle, and a sound effect (jump, "
+		"coin, menu blip, \"pew\"...) make_sound_effect. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
+		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
+		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
+		"user what you changed and why.";
+}
+
+const std::vector<PromptInfo> &ToolSet::Prompts()
+{
+	static std::vector<PromptInfo> PROMPTS;
+	if (PROMPTS.empty()) {
+		PromptInfo P;
+		P.Name = "compose_track";
+		P.Title = "Compose a track";
+		P.Description = "Compose a track for a game scene or a mood, step by step, with the depth of a real arrangement.";
+		PromptArgument Idea = { "idea", "What it's for: a place, a scene or a mood, like \"a snowy mountain village at night\".", true };
+		PromptArgument Bars = { "bars", "How long, in bars (default 32).", false };
+		P.Arguments.push_back(Idea);
+		P.Arguments.push_back(Bars);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "deepen_track";
+		P.Title = "Give the track more depth";
+		P.Description = "Review the song as an arranger would and work through what makes it sound plain.";
+		PromptArgument Where = { "bars", "Which bars, like \"9-16\" (default: the whole song).", false };
+		P.Arguments.push_back(Where);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "make_versions";
+		P.Title = "Offer versions to choose from";
+		P.Description = "Make two or three versions of a part as clips, so the user can listen and pick.";
+		PromptArgument Part = { "part", "What to try versions of: the chords, the bass, the drums, the melody's sound, a section...", true };
+		PromptArgument Count = { "count", "How many (default 3).", false };
+		P.Arguments.push_back(Part);
+		P.Arguments.push_back(Count);
+		PROMPTS.push_back(P);
+
+		P = PromptInfo();
+		P.Name = "study_track";
+		P.Title = "Study a track";
+		P.Description = "Explain what makes the open track work (form, harmony, melody, bass, drums, sounds), to reuse its ideas.";
+		PromptArgument Track = { "track", "The track's number or name (default: the selected one).", false };
+		P.Arguments.push_back(Track);
+		PROMPTS.push_back(P);
+	}
+	return PROMPTS;
+}
+
+bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error)
+{
+	auto Value = [&](const char *Key, const std::string &Default) {
+		const Json *pValue = Arguments.IsObject() ? Arguments.Get(Key) : 0;
+		if (pValue == 0 || !pValue->IsString() || Trim(pValue->String()).empty())
+			return Default;
+		return Trim(pValue->String());
+	};
+	if (Name == "compose_track") {
+		const std::string Idea = Value("idea", "");
+		if (Idea.empty()) {
+			Error = "compose_track needs the idea: what the track is for.";
+			return false;
+		}
+		Text = "Compose a track in FamiTracker for this: " + Idea + ". Make it sound composed by a person, with depth. "
+			"Work through these steps with the FamiTracker tools:\n"
+			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them.\n"
+			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
+			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
+			"3. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you choose and a chord_style, "
+			"color and bass_style that fit (not the defaults). Set the tempo with set_tempo.\n"
+			"4. Write the melody with write_notes, phrase by phrase: a short motif with a rhythm you'd recognize, repeated and "
+			"developed; phrases of two or four bars that end on a held note or a rest; chord tones on strong beats; one high point "
+			"in each section; long and short notes mixed.\n"
+			"5. Build the form: copy_bars for repeats and make each repeat different (vary_part, a counter-melody or harmony only "
+			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar).\n"
+			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
+			"beat, polish; give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument).\n"
+			"7. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
+			"8. check_loop and set_loop so it loops cleanly, then play it for me and ask what I'd change. Keep what I like in "
+			"soundtrack_notes.";
+		return true;
+	}
+	if (Name == "deepen_track") {
+		const std::string Bars = Value("bars", "");
+		Text = "Give the FamiTracker song more depth" + (Bars.empty() ? std::string() : " in bars " + Bars) + ", the way an "
+			"arranger would:\n"
+			"1. get_song and review_arrangement" + (Bars.empty() ? std::string() : " (from_bar and to_bar for those bars)") + ".\n"
+			"2. Work through its list in order, one change at a time: missing layers first (chords, bass, drums, a second line), "
+			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then expression (polish, an "
+			"echo, a sound that changes between sections). Keep my melody unless the review points at it.\n"
+			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
+			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
+		return true;
+	}
+	if (Name == "make_versions") {
+		const std::string Part = Value("part", "");
+		if (Part.empty()) {
+			Error = "make_versions needs the part to try versions of.";
+			return false;
+		}
+		Text = "Make " + Value("count", "3") + " versions of " + Part + " in the FamiTracker song for me to choose from. Make each "
+			"one a clip (as_clip true, with a clip_name that says what's different, like \"Chords: broken, rolling\"), changing "
+			"one thing at a time: a chord style or rhythm, a bass style, a groove or how busy it is, a color, a sound. Then tell "
+			"me how they differ and that each clip card's play button plays it, ask which I like, and put my choice in the song "
+			"(place_clip when direct changes are allowed). Note what I chose with soundtrack_notes.";
+		return true;
+	}
+	if (Name == "study_track") {
+		const std::string Track = Value("track", "");
+		Text = std::string("Study ") + (Track.empty() ? "the selected track" : "track " + Track + " (select_track first)") +
+			" in FamiTracker as an arranger would, and explain what makes it work so its ideas can go into new music:\n"
+			"1. get_song, review_arrangement, and look_at_song for a few sections.\n"
+			"2. read_notes for each part over a phrase or two.\n"
+			"3. Describe the form (sections, repeats and how they change), the harmony (progressions, colors, how often chords "
+			"change), the melody (motifs, phrase lengths, range, rhythm), the bass and drums (patterns, fills), how the parts share "
+			"the channels (who plays what, registers, call and response), the effects and sounds, and the tempo and feel.\n"
+			"4. End with a short list of techniques to reuse, and offer to keep them in soundtrack_notes.";
+		return true;
+	}
+	Error = "No prompt called \"" + Name + "\".";
+	return false;
 }
 
 }	// namespace ftapi

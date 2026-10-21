@@ -66,6 +66,46 @@ const std::vector<Preset> &Presets();
 const Preset *FindPreset(const std::string &Name);	// by name or a common word for it ("flute", "pad")
 std::string PresetList();							// "soft lead, bright lead, ..."
 
+// A sound described in words (design_instrument), made into a preset
+enum duty_motion { DUTY_STILL, DUTY_SWEEP, DUTY_WOBBLE, DUTY_FADE };
+enum attack_pitch { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP };
+enum drum_kind { DRUM_KICK, DRUM_SNARE, DRUM_HIHAT, DRUM_OPEN_HIHAT, DRUM_CRASH, DRUM_TOM };
+
+struct SoundDesign {
+	std::string Name;
+	bool Drum;
+	// A melodic sound: its volume envelope in frames (60 a second on NTSC)
+	int Peak;					// 1-15
+	int Attack;					// frames to reach the peak; 0 at once
+	int Decay;					// frames from the peak to the sustain level
+	int Sustain;				// 0-15, held while the note lasts; 0 dies away by itself
+	int Release;				// frames to fade after a release (===)
+	int Duty;					// 0-3: 12.5%, 25%, 50%, 75% (the VRC6's nearest)
+	int Motion;					// duty_motion: still, thin to the duty on the attack, to and fro (a chorus), thinner as it fades
+	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong
+	int VibratoDelay;			// frames before it comes in
+	int VibratoRate;			// frames a cycle, a multiple of 4
+	int AttackPitch;			// attack_pitch: plain, an octave up for two frames, up into the note from below, falling
+	std::vector<int> Arpeggio;	// semitones looped ({0, 4, 7}); empty for none
+	int ArpeggioFrames;			// frames each
+	// A drum, on the noise channel
+	int Kind;					// drum_kind
+	int Tone;					// -1 dark, 0, 1 bright
+	int Length;					// -1 short, 0, 1 long
+	SoundDesign();
+};
+
+// The design's sequences: volume, arpeggio (the attack's pitch, a chord, or a
+// drum's noise pitches), pitch (vibrato that sums to nothing each cycle, or a
+// fall) and duty
+Preset DesignPreset(const SoundDesign &Design);
+// The design in words: "a 25% pulse that reaches 13 in 2 frames, ..."
+std::string DescribeDesign(const SoundDesign &Design, int FrameRate);
+// A starting point by kind: lead, pad, pluck, bass, keys, bell, brass, strings, organ,
+// chiptune; kick, snare, hihat, open hihat, crash, tom. False if Kind isn't one.
+bool DesignOfKind(const std::string &Kind, SoundDesign &Out);
+std::string DesignKinds();
+
 // A VRC7 patch, as FamiTracker's VRC7 instrument editor names it
 struct Vrc7Patch {
 	int Number;					// 1-15

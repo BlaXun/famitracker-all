@@ -765,6 +765,29 @@ public:
 		return true;
 	}
 
+	bool ReadFile(const std::string &FileName, std::string &Bytes, std::string &Error)
+	{
+		Bytes.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL ? pDoc->GetPathName() : CString();
+		if (Song.IsEmpty())
+			return false;	// no folder yet, so no file
+		const CString Full = Song.Left(Song.ReverseFind(_T('\\')) + 1) + Ansi(FileName);
+		if (GetFileAttributes(Full) == INVALID_FILE_ATTRIBUTES)
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("rb")) != 0 || pFile == NULL) {
+			Error = "Couldn't read " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		char Buffer[4096];
+		size_t Read;
+		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < 1024 * 1024)
+			Bytes.append(Buffer, Read);
+		fclose(pFile);
+		return true;
+	}
+
 	// Edit > Sound effect from your voice: make_sound_effect with the take
 	CString FreeSoundName(const CString &Base)
 	{
