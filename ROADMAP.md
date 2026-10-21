@@ -278,11 +278,11 @@ when ready.
   - Studies: what makes a track work, in words a composer uses (form,
     harmony, each channel's role and rhythm grid, bass figures, drum grooves,
     tricks between channels, the sounds' articulations), kept in a
-    reference library in Documents for every session (`study_nsf`,
-    `references`, `reference_sound`), without the melodies; and a built-in
-    guide to the classic NES styles from studies of Konami, Capcom and
-    Nintendo soundtracks. `design_instrument` learned the articulations those
-    soundtracks are made of.
+    reference library next to FamiTracker.exe for every session
+    (`study_nsf`, `references`, `reference_sound`), without the melodies;
+    and a built-in guide to the classic NES styles from studies of Konami,
+    Capcom and Nintendo soundtracks. `design_instrument` learned the
+    articulations those soundtracks are made of.
 
   A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
   encoded here) plays on the DPCM channel by name (`add_sample_drums`).
@@ -306,7 +306,16 @@ when ready.
   `loopStart` say, and leaves out grace notes. A track named "Melody",
   "Lead" or "Soprano" is the lead.
 
+  The user's files next to FamiTracker.exe (asked for on 21 October 2026):
+  the reference library (`References`) and the recordings of Record from
+  microphone and Sound effect from your voice (`Recordings`) are folders
+  next to FamiTracker.exe, so they move with it (`Source/AppFolders.cpp`).
+  The old folders in Documents move there by themselves, to another drive
+  too; where FamiTracker's folder can't be written, they stay in Documents.
+  `make_sound_effect` takes the recording `"latest"` for the newest take.
+
 ## Open questions
 
 - Some recordings "don't sound correct" (maybe background noise). Waiting
-  for a sample take from `Documents\FamiTracker recordings` to diagnose.
+  for a sample take from the `Recordings` folder next to FamiTracker.exe
+  (`Documents\FamiTracker recordings` before 21 October 2026) to diagnose.

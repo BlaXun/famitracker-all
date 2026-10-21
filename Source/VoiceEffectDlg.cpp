@@ -35,10 +35,10 @@
 #include "MicRecorder.h"
 #include "stdafx.h"
 #include <mmsystem.h>
-#include <shlobj.h>
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "VoiceEffectDlg.h"
+#include "AppFolders.h"
 
 namespace {
 
@@ -101,18 +101,13 @@ std::vector<char> WavBytes(const std::vector<float> &Samples, int SampleRate, fl
 	return Out;
 }
 
-// Documents\FamiTracker recordings\Voice <date> <time>.wav, next to the takes
-// of Record from microphone; the temporary folder when there's no Documents
+// Voice <date> <time>.wav in the Recordings folder next to FamiTracker.exe
+// (AppFolders.h), with the takes of Record from microphone; the temporary
+// folder when there's none
 CString NewTakePath()
 {
-	CString Folder;
-	TCHAR Documents[MAX_PATH];
-	if (SUCCEEDED(SHGetFolderPath(NULL, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, Documents))) {
-		Folder = Documents;
-		Folder += _T("\\FamiTracker recordings");
-		CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
-	}
-	else {
+	CString Folder = RecordingsFolder(true);
+	if (Folder.IsEmpty()) {
 		TCHAR Temp[MAX_PATH];
 		const DWORD Length = GetTempPath(MAX_PATH, Temp);
 		Folder = (Length > 0 && Length < MAX_PATH) ? CString(Temp) : CString(_T("."));
@@ -241,6 +236,7 @@ BOOL CVoiceEffectDlg::OnInitDialog()
 	m_cPitch.SubclassDlgItem(IDC_VOICE_PITCH, this);
 	m_cLevel.SubclassDlgItem(IDC_VOICE_LEVEL, this);
 	m_cLevel.SetRange(0, 100);
+	RecordingsFolder(false);	// takes kept in Documents move next to FamiTracker
 
 	for (int i = 0; i < PITCH_COUNT; ++i)
 		m_cPitch.AddString(PITCHES[i].Name);
@@ -451,6 +447,9 @@ void CVoiceEffectDlg::OnOpen()
 	StopSound();
 	CFileDialog Dialog(TRUE, _T("wav"), NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
 		_T("WAV files (*.wav)|*.wav|All files (*.*)|*.*||"), this);
+	const CString Takes = RecordingsFolder(false);	// opens where the takes are
+	if (GetFileAttributes(Takes) != INVALID_FILE_ATTRIBUTES)
+		Dialog.m_ofn.lpstrInitialDir = Takes;
 	if (Dialog.DoModal() != IDOK)
 		return;
 	const CString Path = Dialog.GetPathName();

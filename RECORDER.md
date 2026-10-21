@@ -114,8 +114,10 @@ again, as copies or linked.
     starting so its first row sounds with the downbeat. The channel being
     recorded stays quiet, so an earlier take doesn't play along.
   - Stop puts the take in at the cursor row, the downbeat after the count-in
-    on that row, as one undoable action, and saves it as a WAV file in
-    Documents\FamiTracker recordings.
+    on that row, as one undoable action, and saves it as a WAV file in the
+    `Recordings` folder next to FamiTracker.exe (takes saved before in
+    Documents\FamiTracker recordings move there by themselves; where
+    FamiTracker's folder can't be written, they stay in Documents).
   - Test timing: tap along to eight clicks, and takes are lined up with how
     late the taps arrived (see How it works).
   - "From a WAV file..." switches to Insert recording.
@@ -218,9 +220,10 @@ effect for your game, a track of its own:
    instruments, named after it, hold the shape in their sequences, so you can
    smooth it in the instrument editor.
 
-Open a WAV file... uses a recording you have instead. Takes are kept in
-`Documents\FamiTracker recordings` as "Voice <date> <time>.wav", so Claude
-Code can make another version from one later. A sound effect lasts up to 4.2
+Open a WAV file... uses a recording you have instead, and starts in the
+`Recordings` folder next to FamiTracker.exe, where takes are kept as "Voice
+<date> <time>.wav", so Claude Code can make another version from one later
+(`make_sound_effect` with the recording `"latest"` takes the newest). A sound effect lasts up to 4.2
 seconds (5 on PAL). Keep sound effects in a module of their own ("Sound
 effects.ftm"), so the music stays clean.
 

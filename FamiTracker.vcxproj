@@ -565,6 +565,7 @@
     <ClCompile Include="Source\Api\Wavetables.cpp" />
     <ClCompile Include="Source\McpSocket.cpp" />
     <ClCompile Include="Source\McpConnection.cpp" />
+    <ClCompile Include="Source\AppFolders.cpp" />
     <ClCompile Include="Source\ChipSwitch.cpp" />
     <ClInclude Include="Source\Api\Json.h" />
     <ClInclude Include="Source\Api\Http.h" />
@@ -587,6 +588,7 @@
     <ClInclude Include="Source\Api\Wavetables.h" />
     <ClInclude Include="Source\McpSocket.h" />
     <ClInclude Include="Source\McpConnection.h" />
+    <ClInclude Include="Source\AppFolders.h" />
     <ClInclude Include="Source\ChipSwitch.h" />
   </ItemGroup>
   <ItemGroup>

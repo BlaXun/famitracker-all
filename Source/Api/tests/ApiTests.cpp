@@ -732,6 +732,17 @@ public:
 		return true;
 	}
 
+	std::string LatestTake;						// the newest recording, "" for none
+	bool LatestRecording(std::string &Path, std::string &Error) override
+	{
+		if (LatestTake.empty()) {
+			Error = "There are no recordings yet in C:\\Games\\FamiTracker\\Recordings.";
+			return false;
+		}
+		Path = LatestTake;
+		return true;
+	}
+
 	bool OpenText(const std::string &Text, std::string &) override
 	{
 		OpenedText = Text;
@@ -4534,6 +4545,15 @@ void TestSoundEffects()
 		CHECK_HAS(Result.Text, "Made track 8 \"Zap\" from the recording (pew.wav): the voice's pitch and loudness on a pulse, 1 "
 			"octave higher.");
 		CHECK(Song.Rows[0][0].Pitch() == Note + 12);
+		// The newest take recorded in FamiTracker
+		Song.LatestTake = "pew.wav";
+		Tools.Call("select_track", Parse("{\"track\": 1}"));
+		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"Latest\", \"name\": \"Zap 2\"}"));
+		CHECK_HAS(Result.Text, "\"Zap 2\" from the recording (pew.wav)");
+		Song.LatestTake.clear();
+		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"latest\"}"));
+		CHECK(Result.IsError);
+		CHECK_HAS(Result.Text, "There are no recordings yet in C:\\Games\\FamiTracker\\Recordings.");
 		std::remove("pew.wav");
 		CHECK(Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\", \"kind\": \"jump\"}")).IsError);
 		CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"recording\": \"/mnt/c/Takes/pew.wav\"}")).Text,
@@ -4545,7 +4565,7 @@ void TestSoundEffects()
 	// free, or the new sound would play with the old instrument
 	Song.AddInstrumentInfo(40, "SFX Hurt (noise)", "2A03", false);
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"hurt\"}"));
-	CHECK_HAS(Result.Text, "Made track 9 \"SFX Hurt 2\"");
+	CHECK_HAS(Result.Text, "Made track 10 \"SFX Hurt 2\"");
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"hurt\", \"name\": \"sfx hurt\"}"));
 	CHECK(Result.IsError);
 	CHECK_HAS(Result.Text, "There's an instrument called \"SFX Hurt (noise)\" already (from an earlier sound, perhaps)");

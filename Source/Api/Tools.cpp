@@ -5897,8 +5897,16 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	const int Given = (Arg(Args, "kind") != 0 ? 1 : 0) + (Arg(Args, "recording") != 0 ? 1 : 0) + (Arg(Args, "layers") != 0 ? 1 : 0);
 	if (Given > 1)
 		throw Problem("Give one of kind, recording and layers.");
-	if (Arg(Args, "recording") != 0)
-		return VoiceSoundEffect(S, Args, StringArg(Args, "recording"));
+	if (Arg(Args, "recording") != 0) {
+		// "latest": the newest take recorded in FamiTracker
+		std::string Recording = StringArg(Args, "recording");
+		if (Lowercase(Trim(Recording)) == "latest") {
+			std::string Error;
+			if (!S.Host().LatestRecording(Recording, Error))
+				throw Problem(Error);
+		}
+		return VoiceSoundEffect(S, Args, Recording);
+	}
 	if (Arg(Args, "layers") != 0)
 		return DesignedSoundEffect(S, Args);
 	const std::string Kind = StringArg(Args, "kind");
@@ -8477,8 +8485,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("loop", Prop("boolean", "The track loops instead of halting, for ambience a game plays over and over (the kinds "
 					"marked \"loops\" do by default). A loop lasts at most 4.2 s."))
 				.Add("recording", Prop("string", "Instead of a kind: a WAV file of the user's voice (\"pew\", \"boing\", \"kssh\") "
-					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav. Its pitch and loudness play on a pulse, its "
-					"breathy and hissy part on the noise channel."))
+					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav, or \"latest\" for the newest take recorded in "
+					"FamiTracker (Record from microphone, Sound effect from your voice: they're kept in the Recordings folder next "
+					"to FamiTracker.exe). Its pitch and loudness play on a pulse, its breathy and hissy part on the noise channel."))
 				.Add("octaves", Prop("integer", "With a recording: whole octaves to move its pitch, -4 to 4. Default: so its "
 					"middle lands near E-4."))
 				.Add("noise", Prop("boolean", "With a recording: its unpitched part on the noise channel (default true)."))

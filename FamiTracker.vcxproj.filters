@@ -1290,6 +1290,9 @@
     <ClCompile Include="Source\McpConnection.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\AppFolders.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\ChipSwitch.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1348,6 +1351,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpConnection.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\AppFolders.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\ChipSwitch.h">

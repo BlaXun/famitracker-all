@@ -553,9 +553,10 @@ plays on the noise channel, brighter for "sss" than for a breath. Silence
 before and after is left out, and a sound can last up to 4.2 seconds.
 FamiTracker can do this without Claude, too: Edit > Sound effect from your
 voice records the sound, plays it as the NES would and adds it with this
-same tool (see `RECORDER.md`). Its takes stay in
-`Documents\FamiTracker recordings`, so you can ask Claude for another
-version of one ("the last voice take, an octave lower").
+same tool (see `RECORDER.md`). Its takes stay in the `Recordings` folder
+next to FamiTracker.exe, so you can ask Claude for another version of one
+("the last voice take, an octave lower": the recording `"latest"` is the
+newest take).
 
 Keep sound effects in a module of their own ("Sound effects.ftm"), so your
 music file stays clean; Claude works on whichever module is open.

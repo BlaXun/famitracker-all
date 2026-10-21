@@ -24,11 +24,11 @@
 // Edit > Sound effect from your voice: say "pew", "boing" or "kssh" into the
 // microphone, or open a WAV file, and it becomes a sound effect for a game.
 // The dialog records the take, which stops by itself once the sound is over
-// (transcribe::VoiceTake), keeps it in Documents\FamiTracker recordings, says
-// what it heard and plays it as the NES would (transcribe::RenderEffect).
-// Add to the song writes it as a track of its own with Claude Code's
-// make_sound_effect tool, so the dialog and Claude make the same sound from a
-// take.
+// (transcribe::VoiceTake), keeps it in the Recordings folder next to
+// FamiTracker.exe (AppFolders.h), says what it heard and plays it as the NES
+// would (transcribe::RenderEffect). Add to the song writes it as a track of
+// its own with Claude Code's make_sound_effect tool, so the dialog and Claude
+// make the same sound from a take.
 
 // What the dialog needs from the tools' side of FamiTracker (McpConnection.cpp)
 class CVoiceEffectMaker

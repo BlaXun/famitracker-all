@@ -47,6 +47,10 @@ nature use too), or made from a voice recording, and turned into
 instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
 (`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
 ends when the sound is over, and adds it with that tool through `CMcpLink`.
+Both dialogs keep their takes in the `Recordings` folder next to
+FamiTracker.exe (`Source/AppFolders.cpp`, which moves takes from the old
+Documents\FamiTracker recordings into it), where `make_sound_effect`'s
+recording `"latest"` finds the newest (`SongHost::LatestRecording`).
 Arranging is in `Source/Api/Chords.cpp` (chords read from names and degrees,
 progressions on bars, colors, chords heard in the notes) and
 `Source/Api/Arrange.cpp` (chord parts in styles, bass lines, drum grooves
@@ -74,9 +78,10 @@ conversion to a module in FamiTracker's text format, which
 for a composer). Claude Code's `study_nsf` keeps those studies in a
 reference library, JSON files in the `References` folder next to
 FamiTracker.exe (`Source/Api/References.cpp`, through `SongHost::ListLibrary`
-and its siblings; `CMcpLink::LibraryFolder` moves references from the old
-Documents\FamiTracker references into it, and falls back to Documents where
-FamiTracker's folder can't be written), with `references`, `reference_sound`
+and its siblings; `ReferencesFolder` in `Source/AppFolders.cpp` moves
+references from the old Documents\FamiTracker references into it, and falls
+back to Documents where FamiTracker's folder can't be written), with
+`references`, `reference_sound`
 and `import_nsf`, and a built-in style guide in `Source/Api/StyleGuide.cpp`. `study_module` does
 the same for tracker modules: `Source/Nsf/Tracker.cpp` reads the patterns
 of MOD, S3M, XM and IT files (never their samples), and
