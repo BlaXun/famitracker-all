@@ -6367,6 +6367,70 @@ void TestVrc7Custom()
 		"custom ones: electric piano, soft electric piano, glass bell, fm pad, fm bass, wooden mallet");
 }
 
+void TestVoicedChords()
+{
+	const Key C(0, MODE_MAJOR);
+	// The notes a voicing uses, the color first
+	ftapi::Chord Q;
+	CHECK(ParseChord("Cmaj7", C, Q) && VoiceTones(Q, 2, true) == std::vector<int>({ 4, 11 }));
+	CHECK(VoiceTones(Q, 3, true) == std::vector<int>({ 4, 11, 7 }) && VoiceTones(Q, 4, true) == std::vector<int>({ 4, 11, 7, 0 }));
+	CHECK(ParseChord("C", C, Q) && VoiceTones(Q, 3, false) == std::vector<int>({ 0, 4, 7 }) && VoiceTones(Q, 2, true) == std::vector<int>({ 4, 7 }));
+	CHECK(ParseChord("Am9", C, Q) && VoiceTones(Q, 3, true) == std::vector<int>({ 3, 10, 2 }));
+
+	// ii V I: three voices that move by the smallest steps and never cross
+	const std::vector<ChordAt> Chords = Progression("| Dm7 | G7 | Cmaj7 | Cmaj7 |");
+	ChordPartOptions O;
+	O.Style = CHORDS_VOICES;
+	O.Low = 40;
+	O.High = 54;
+	O.Volume = 10;
+	const std::vector<std::vector<PartNote> > Parts = VoicedChordParts(Chords, FourFour(4), O, 3);
+	CHECK(Parts.size() == 3 && Parts[0].size() == 4 && Parts[1].size() == 4 && Parts[2].size() == 4);	// struck each bar
+	for (size_t h = 0; h < 3; ++h) {
+		CHECK(Parts[0][h].Pitch < Parts[1][h].Pitch && Parts[1][h].Pitch < Parts[2][h].Pitch);
+		CHECK(Parts[0][h].Pitch >= 38 && Parts[2][h].Pitch <= 56);
+		if (h > 0)
+			for (size_t v = 0; v < 3; ++v)
+				CHECK(std::abs(Parts[v][h].Pitch - Parts[v][h - 1].Pitch) <= 3);
+	}
+	CHECK(Parts[0][2].Rows == 16 && Parts[0][0].Volume == 10 && Parts[0][3].Pitch == Parts[0][2].Pitch);	// the same chord again, the same voicing
+	// Each voice a note of its chord
+	for (size_t v = 0; v < 3; ++v) {
+		CHECK(Chords[0].C.HasPitchClass(Parts[v][0].Pitch % 12) && Chords[1].C.HasPitchClass(Parts[v][1].Pitch % 12));
+		CHECK(Chords[2].C.HasPitchClass(Parts[v][2].Pitch % 12));
+	}
+
+	// The tool on the VRC7: an electric piano comping on free FM channels
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Dm7 | G7 | Cmaj7 | Cmaj7 |\", \"chord_style\": \"voices\", "
+		"\"key\": \"C major\", \"rhythm\": \"charleston\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "voices (charleston) chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3 and a root_fifth "
+		"bass line on 2A03 Triangle");
+	CHECK_HAS(Result.Text, "(a VRC7 custom patch: a bright, bell-like attack");
+	const int Ep = Song.Rows[5][0].Instrument;
+	CHECK(Song.Vrc7Patches[Ep] == 0 && Song.Rows[6][0].Instrument == Ep && Song.Rows[7][0].Instrument == Ep);
+	CHECK(Song.Rows[5][0].Pitch() < Song.Rows[6][0].Pitch() && Song.Rows[6][0].Pitch() < Song.Rows[7][0].Pitch());
+	CHECK(Song.Rows[5][6].HasNote());	// charleston: beat 1 and the "and" of 2
+	// Channels named; too few; not the triangle
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"voices\", \"chord_channels\": [\"FM Channel 4\", "
+		"\"FM Channel 5\"], \"bass_channel\": \"none\", \"key\": \"C major\", \"chord_instrument\": \"vibraphone\"}");
+	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 4 and VRC7 FM Channel 5");
+	CHECK(Song.Vrc7Patches[Song.Rows[8][0].Instrument] == 11);
+	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"voices\", \"chord_channels\": \"FM Channel 4\", "
+		"\"key\": \"C major\"}").Text, "voiced chords take 2 to 4 channels");
+	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"voices\", \"chord_channels\": [\"Triangle\", "
+		"\"FM Channel 4\"], \"key\": \"C major\"}").Text, "can't take a voice");
+	// On a 2A03 song: the pulses
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	Result = Run(Plain, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"G major\", "
+		"\"bass_channel\": \"none\"}");
+	CHECK_HAS(Result.Text, "voices chords on 2A03 Pulse 1, 2A03 Pulse 2 and VRC6 Pulse 1");
+}
+
 int main()
 {
 	TestJson();
@@ -6426,6 +6490,7 @@ int main()
 	TestSwing();
 	TestMix();
 	TestVrc7Custom();
+	TestVoicedChords();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

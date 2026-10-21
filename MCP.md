@@ -350,6 +350,11 @@ avoid that, and gives it tools for each layer:
   arpeggios down, up and back, leaping (alberti) or spread over two octaves
   (rolling). They need a 2A03, MMC5 or VRC6 pulse, since VRC7 instruments
   have no arpeggios.
+  Or `voices`: the chord's notes on 2-4 channels of their own
+  (`chord_channels`, else free FM channels, then N163 ones, then pulses),
+  the third and seventh first, each voice moving to the next chord's
+  nearest note without crossing: an electric piano comping on the VRC7's
+  FM channels (its custom patch), held or struck on a rhythm.
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
   approach notes into each chord), syncopated, arpeggio, driving, pedal. On
   the triangle it sits where it sounds like a bass (the triangle plays an

@@ -45,6 +45,10 @@ const std::vector<StyleInfo> &ChordStyles()
 			"each, so sevenths and ninths ring (plain chords get them: color rich by default); held like arpeggio, softly "
 			"(volume 6) under the melody: lush, jazzy and atmospheric, on 2A03, MMC5 or VRC6 pulses",
 			"lusharp|jazzarp|jazzy|atmospheric|instrumentarp|instrumentarpeggio|slowarp|sevenths" },
+		{ "voices", "each chord's notes on channels of their own (chord_channels, 2-4 of them), its third and seventh first, "
+			"each voice moving to the next chord's nearest note: real chords on the VRC7's FM channels (an electric piano "
+			"comping), the N163's or the pulses; held by default, or struck on a rhythm", "spread|shell|shellvoicing|comp|"
+			"comping|multichannel|polyphonic|piano|epiano|pad" },
 	};
 	return STYLES;
 }
@@ -655,6 +659,124 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 	if (!Out.empty() && !Lush)
 		Out.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_ARPEGGIO), 0));	// 000: the arpeggio stops
 	return Out;
+}
+
+std::vector<int> VoiceTones(const Chord &C, int Voices, bool RootInBass)
+{
+	const int Third = C.Third(), Fifth = C.Fifth(), Seventh = C.Seventh();
+	std::vector<int> Order;
+	auto Add = [&](int Tone) {
+		if (Tone >= 0 && std::find(Order.begin(), Order.end(), Tone) == Order.end())
+			Order.push_back(Tone);
+	};
+	if (!RootInBass && C.Tones.size() <= 3)
+		Add(0);		// a triad with no bass under it needs its root heard
+	Add(Third);
+	Add(Seventh);
+	for (size_t i = 0; i < C.Tones.size(); ++i) {
+		const int Tone = Mod12(C.Tones[i]);
+		if (Tone != 0 && Tone != Third && Tone != Fifth && Tone != Seventh)
+			Add(Tone);	// ninths, elevenths, sixths
+	}
+	Add(Fifth);
+	Add(0);
+	std::vector<int> Out;
+	for (int v = 0; v < Voices && !Order.empty(); ++v)
+		Out.push_back(Order[static_cast<size_t>(v) % Order.size()]);
+	return Out;
+}
+
+std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars,
+	const ChordPartOptions &O, int Voices)
+{
+	Voices = std::max(1, std::min(4, Voices));
+	std::vector<std::vector<PartNote> > Parts(static_cast<size_t>(Voices));
+	if (Chords.empty() || Bars.empty())
+		return Parts;
+	const int R = std::max(1, O.RowsPerBeat);
+	const int First = Bars.front().Row, End = Bars.back().Row + Bars.back().Rows;
+	const std::vector<Segment> Segs = Segments(Chords, Bars);
+	const int Low = std::min(O.Low, O.High), High = std::max(O.Low, O.High);
+	const int Rhythm = O.Rhythm >= 0 ? O.Rhythm : RHYTHM_BARS;
+	const bool Held = O.Style != CHORDS_STABS;
+	std::vector<std::pair<int, const BarSpan *> > Hits;
+	for (size_t b = 0; b < Bars.size(); ++b) {
+		const std::vector<int> Rows = RhythmRows(Rhythm, Bars[b].Rows, R);
+		for (size_t i = 0; i < Rows.size(); ++i)
+			Hits.push_back(std::make_pair(Bars[b].Row + Rows[i], &Bars[b]));
+		for (size_t s = 0; s < Segs.size(); ++s)
+			if (Segs[s].pBar == &Bars[b])
+				Hits.push_back(std::make_pair(Segs[s].Row, &Bars[b]));	// a chord that changes between hits is struck where it starts
+	}
+	std::sort(Hits.begin(), Hits.end());
+	Hits.erase(std::unique(Hits.begin(), Hits.end()), Hits.end());
+	std::vector<int> Least(Bars.size(), 2);
+	for (size_t h = 0; h < Hits.size(); ++h) {
+		const size_t b = static_cast<size_t>(Hits[h].second - &Bars[0]);
+		Least[b] = std::min(Least[b], Softer(Hits[h].first, *Hits[h].second, R));
+	}
+
+	// Each chord's voicing, led from the one before
+	std::vector<int> Previous;
+	const Chord *pPrevious = 0;
+	std::vector<int> Current;
+	for (size_t h = 0; h < Hits.size(); ++h) {
+		const int Row = Hits[h].first;
+		const Segment *pSeg = SegmentAt(Segs, Row);
+		if (pSeg == 0)
+			continue;
+		if (pPrevious == 0 || !(*pPrevious == pSeg->pChord->C)) {
+			const std::vector<int> Tones = VoiceTones(pSeg->pChord->C, Voices, O.RootInBass);
+			std::vector<int> Perm(Tones.size());
+			for (size_t i = 0; i < Perm.size(); ++i)
+				Perm[i] = static_cast<int>(i);
+			double BestCost = 1e18;
+			std::vector<int> Best;
+			do {
+				std::vector<int> Pitches;
+				double Cost = 0.0;
+				for (size_t v = 0; v < Perm.size(); ++v) {
+					const int PitchClass = Mod12(pSeg->pChord->C.Root + Tones[static_cast<size_t>(Perm[v])]);
+					int Pitch;
+					if (Previous.size() == Perm.size())
+						Pitch = NearestPitch(PitchClass, Previous[v], Low - 2, High + 2);
+					else {
+						// The first chord: close, from the lower part of the register up
+						const int From = Pitches.empty() ? Low + (High - Low) / 4 : Pitches.back() + 1;
+						Pitch = From + Mod12(PitchClass - From);
+					}
+					if (Previous.size() == Perm.size())
+						Cost += std::abs(Pitch - Previous[v]);
+					if (!Pitches.empty() && Pitch <= Pitches.back())
+						Cost += 100.0;	// voices crossing or in unison
+					if (!Pitches.empty() && Pitch - Pitches.back() == 1)
+						Cost += 3.0;	// a semitone between neighbouring voices rubs
+					Cost += 3.0 * (std::max(0, Low - Pitch) + std::max(0, Pitch - High));	// out of the register, the more the worse
+					Pitches.push_back(Pitch);
+				}
+				Cost += 0.1 * (Pitches.back() - Pitches.front());	// close rather than spread
+				if (Cost < BestCost) {
+					BestCost = Cost;
+					Best = Pitches;
+				}
+			} while (std::next_permutation(Perm.begin(), Perm.end()));
+			Current = Best;
+			Previous = Best;
+			pPrevious = &pSeg->pChord->C;
+		}
+		const int Next = h + 1 < Hits.size() ? Hits[h + 1].first : End;
+		const int ChordEnd = pSeg->pChord->Row + pSeg->pChord->Rows;
+		int Rows = std::min(Next, ChordEnd) - Row;
+		if (!Held)
+			Rows = std::max(1, std::min((Next - Row + 1) / 2, std::max(1, R / 2)));
+		const size_t b = static_cast<size_t>(Hits[h].second - &Bars[0]);
+		const int Volume = O.Volume < 0 ? -1 : std::max(1, O.Volume - std::max(0, Softer(Row, *Hits[h].second, R) - Least[b]));
+		for (size_t v = 0; v < Current.size() && v < Parts.size(); ++v)
+			Parts[v].push_back(MakeNote(Row, Rows, Current[v], Volume));
+	}
+	for (size_t v = 0; v < Parts.size(); ++v)
+		TidyPart(Parts[v], First, End);
+	return Parts;
 }
 
 std::vector<int> LushShape(const Chord &C, int Pattern)

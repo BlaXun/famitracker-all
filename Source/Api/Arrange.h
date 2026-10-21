@@ -46,7 +46,7 @@ struct StyleInfo {
 	const char *Aliases;		// other words for it, separated by "|"
 };
 
-enum chord_style { CHORDS_ARPEGGIO, CHORDS_STABS, CHORDS_BROKEN, CHORDS_GUIDE, CHORDS_LUSH };
+enum chord_style { CHORDS_ARPEGGIO, CHORDS_STABS, CHORDS_BROKEN, CHORDS_GUIDE, CHORDS_LUSH, CHORDS_VOICES };
 enum chord_rhythm { RHYTHM_BARS, RHYTHM_BEATS, RHYTHM_OFFBEATS, RHYTHM_EIGHTHS, RHYTHM_HALF, RHYTHM_TRESILLO, RHYTHM_CHARLESTON,
 	RHYTHM_WALTZ };
 enum broken_pattern { BROKEN_UP, BROKEN_DOWN, BROKEN_UPDOWN, BROKEN_ALBERTI, BROKEN_ROLLING };
@@ -85,6 +85,19 @@ struct ChordPartOptions {
 // Lush chords are held like the arpeggio's, each note at its chord's root,
 // its Arpeggio the chord's LushShape: the tool makes the instruments.
 std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const ChordPartOptions &Options);
+
+// Chords as voices on channels of their own (chord_style voices), as FM and
+// wavetable chips play them: each chord in Voices notes (2-4), its color
+// first (the third and seventh, then a ninth or the fifth, then the root
+// when no bass plays it), each led to the next chord's by the smallest
+// moves without crossing, in [Low, High], struck on the rhythm (held, once
+// a bar and at chord changes, by default). A part per voice, lowest first.
+std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars,
+	const ChordPartOptions &Options, int Voices);
+
+// The notes of a chord a voicing of Voices uses, as semitones above its
+// root, most telling first
+std::vector<int> VoiceTones(const Chord &C, int Voices, bool RootInBass);
 
 // A lush chord: its notes as semitones above the root, in the order an
 // instrument's arpeggio plays them. Root position and close, with a ninth,
