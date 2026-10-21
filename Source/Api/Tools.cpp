@@ -769,10 +769,38 @@ int MiddleOf(const std::vector<NoteInfo> &Notes, int Default)
 // them when only those play), the one with the most notes, notes higher up
 // counting for more: a melody is usually the top line, and an accompaniment
 // of many quick notes sits under it
+// Whether a channel mostly repeats another's notes a little later (an echo of it)
+bool EchoesAnother(Session &S, int Channel, const std::vector<NoteInfo> &Notes, int First, int End)
+{
+	if (Notes.size() < 4)
+		return false;
+	for (int o = 0; o < S.ChannelCount(); ++o) {
+		if (o == Channel || !IsMelodic(S.Channel(o)))
+			continue;
+		const std::vector<NoteInfo> Theirs = NotesIn(S.Notes(o), First, End);
+		if (Theirs.size() < 4)
+			continue;
+		std::map<int, int> PitchAt;
+		for (size_t i = 0; i < Theirs.size(); ++i)
+			PitchAt[Theirs[i].Row] = Theirs[i].Pitch;
+		for (int Delay = 1; Delay <= std::max(1, S.Time.RowsPerBar); ++Delay) {
+			size_t Same = 0;
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				std::map<int, int>::const_iterator it = PitchAt.find(Notes[i].Row - Delay);
+				if (it != PitchAt.end() && (it->second - Notes[i].Pitch) % 12 == 0)
+					++Same;
+			}
+			if (Same * 10 >= Notes.size() * 7)
+				return true;
+		}
+	}
+	return false;
+}
+
 int GuessMelodyChannel(Session &S, int First, int End)
 {
 	for (int Pass = 0; Pass < 3; ++Pass) {
-		std::vector<int> Channels, Counts, Middles;
+		std::vector<int> Channels, Counts, Middles, Loudness;
 		int Lowest = 1000;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			const ChannelInfo &Info = S.Channel(c);
@@ -790,16 +818,26 @@ int GuessMelodyChannel(Session &S, int First, int End)
 					}
 			if (Pass == 0 && Chords * 3 >= static_cast<int>(Notes.size()))
 				continue;
+			// An echo of another part isn't the melody
+			if (Pass < 2 && EchoesAnother(S, c, Notes, First, End))
+				continue;
 			const int Middle = MiddleOf(Notes, 48) - (Info.Kind == KIND_TRIANGLE ? 12 : 0);
+			// How loud it usually plays (the triangle has no volume)
+			std::vector<int> Volumes;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Volumes.push_back(Info.Kind == KIND_TRIANGLE ? 15 : Notes[i].Volume);
+			std::sort(Volumes.begin(), Volumes.end());
 			Channels.push_back(c);
 			Counts.push_back(static_cast<int>(Notes.size()));
 			Middles.push_back(Middle);
+			Loudness.push_back(std::max(1, Volumes[Volumes.size() / 2]));
 			Lowest = std::min(Lowest, Middle);
 		}
 		int Best = -1;
 		double BestScore = 0.0;
 		for (size_t i = 0; i < Channels.size(); ++i) {
-			const double Score = Counts[i] * std::pow(2.0, (Middles[i] - Lowest) / 8.0);
+			// Busy and high, and loud: a quiet part is seldom the melody
+			const double Score = Counts[i] * std::pow(2.0, (Middles[i] - Lowest) / 8.0) * std::pow(Loudness[i] / 15.0, 2.0);
 			if (Score > BestScore) {
 				Best = Channels[i];
 				BestScore = Score;
@@ -1640,11 +1678,12 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	if (Name.size() > 60)
 		throw Problem("name: up to 60 characters.");
 	std::string Chip = "2A03";
-	bool Sawtooth = false, Noise = false, Low = false;
+	bool Sawtooth = false, Triangle = false, Noise = false, Low = false;
 	if (Arg(Args, "channel") != 0) {
 		const int Channel = ChannelArg(S, Args, "channel");
 		Chip = InstrumentChip(S.Channel(Channel));
 		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+		Triangle = S.Channel(Channel).Kind == KIND_TRIANGLE;
 		Noise = S.Channel(Channel).Kind == KIND_NOISE;
 		Low = IsBass(S.Channel(Channel));
 		if (S.Channel(Channel).Kind == KIND_DPCM)
@@ -1771,7 +1810,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	if (Index < 0)
 		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
 	S.Refresh();
-	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate) +
+	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate,
+		Sawtooth ? "sawtooth" : (Triangle ? "triangle" : "pulse")) +
 		". Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
 
@@ -2499,6 +2539,76 @@ EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
 // the original's), replacing what the target plays there. It stops at the
 // song's end rather than making the song longer (which would change where it
 // loops). How many notes.
+// A sticky effect's parameter in effect as each note starts (0 when it's off)
+std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<NoteInfo> &Notes, int Columns, int Effect)
+{
+	std::vector<int> Out(Notes.size(), 0);
+	int Current = 0;
+	size_t n = 0;
+	for (size_t r = 0; r < Cells.size() && n < Notes.size(); ++r) {
+		for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k)
+			if (Cells[r].Effect[k] == Effect)
+				Current = Cells[r].Param[k];
+		while (n < Notes.size() && static_cast<int>(r) == Notes[n].Row)
+			Out[n++] = Current;
+	}
+	return Out;
+}
+
+// Echo notes that wouldn't grate: one a semitone (or a major seventh) from a
+// note another part plays as it starts is left out, one another part moves
+// against on its way is cut short there. Dropped and Shortened count them.
+std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const std::vector<PartNote> &Notes, int &Dropped,
+	int &Shortened)
+{
+	struct Other { int Row, End, Count; int Pitches[3]; };
+	std::vector<Other> Others;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Target || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Theirs = D.Notes(c);
+		const std::vector<int> Arps = StickyAt(D.Cells(c), Theirs, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+		for (size_t i = 0; i < Theirs.size(); ++i) {
+			Other o;
+			o.Row = Theirs[i].Row;
+			o.End = Theirs[i].Row + Theirs[i].Rows;
+			o.Pitches[0] = Theirs[i].Pitch;
+			o.Pitches[1] = Theirs[i].Pitch + (Arps[i] >> 4);
+			o.Pitches[2] = Theirs[i].Pitch + (Arps[i] & 15);
+			o.Count = Arps[i] == 0 ? 1 : ((Arps[i] & 15) != 0 ? 3 : 2);
+			Others.push_back(o);
+		}
+	}
+	Dropped = Shortened = 0;
+	std::vector<PartNote> Out;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		PartNote E = Notes[i];
+		int CutAt = E.Row + E.Rows;
+		for (size_t k = 0; k < Others.size(); ++k) {
+			const Other &o = Others[k];
+			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
+				continue;
+			bool Rub = false;
+			for (int p = 0; p < o.Count; ++p) {
+				const int d = ((E.Pitch - o.Pitches[p]) % 12 + 12) % 12;
+				Rub = Rub || d == 1 || d == 11;
+			}
+			if (Rub)
+				CutAt = std::min(CutAt, std::max(o.Row, E.Row));
+		}
+		if (CutAt <= E.Row) {
+			++Dropped;
+			continue;
+		}
+		if (CutAt < E.Row + E.Rows) {
+			E.Rows = CutAt - E.Row;
+			++Shortened;
+		}
+		Out.push_back(E);
+	}
+	return Out;
+}
+
 int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings)
 {
 	const int Stop = std::min(End + Plan.Delay, std::max(End, S.Time.TotalRows()));
@@ -2526,6 +2636,15 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		return 0;
 	for (size_t i = 0; i + 1 < Notes.size(); ++i)
 		Notes[i].Rows = std::min(Notes[i].Rows, Notes[i + 1].Row - Notes[i].Row);
+	int Dropped, Shortened;
+	Notes = EchoWithoutRubs(S, D, Plan.Target, Notes, Dropped, Shortened);
+	if (Dropped > 0 || Shortened > 0)
+		Warnings.push_back(Format("Where the echo would grate a semitone against another part, %s%s%s.",
+			Dropped > 0 ? (Plural(Dropped, "echo note was", "echo notes were") + " left out").c_str() : "",
+			Dropped > 0 && Shortened > 0 ? " and " : "",
+			Shortened > 0 ? (Plural(Shortened, "was", "were") + " cut short").c_str() : ""));
+	if (Notes.empty())
+		return 0;
 	if (HasNotesIn(S, Plan.Target, First + Plan.Delay, Stop))
 		Warnings.push_back(Format("%s's own notes in those bars were replaced by the echo.", S.Channel(Plan.Target).FullName().c_str()));
 	PartOptions Options = OptionsFor(S, Plan.Target, false);
@@ -3073,6 +3192,33 @@ int EffectCount(const std::vector<NoteInfo> &Notes, int Effect)
 	return Count;
 }
 
+// What a version's name says about it: calm (night), tense (battle) or neither
+enum version_mood { MOOD_OTHER, MOOD_CALM, MOOD_TENSE };
+
+int VersionMood(const std::string &Version)
+{
+	static const char *const CALM[] = { "night", "calm", "evening", "sleep", "sleepy", "peaceful", "quiet", "relaxed" };
+	static const char *const TENSE[] = { "tense", "battle", "danger", "boss", "fight", "combat", "chase", "alarm", "panic" };
+	bool Calm = false, Tense = false;
+	std::string Word;
+	const std::string Text = Lowercase(Version) + " ";
+	for (size_t i = 0; i < Text.size(); ++i) {
+		const char c = Text[i];
+		if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			Word += c;
+			continue;
+		}
+		for (size_t w = 0; w < sizeof(CALM) / sizeof(CALM[0]); ++w)
+			Calm = Calm || Word == CALM[w];
+		for (size_t w = 0; w < sizeof(TENSE) / sizeof(TENSE[0]); ++w)
+			Tense = Tense || Word == TENSE[w];
+		Word.clear();
+	}
+	if (Calm == Tense)
+		return MOOD_OTHER;
+	return Calm ? MOOD_CALM : MOOD_TENSE;
+}
+
 std::string ReviewTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -3088,6 +3234,11 @@ std::string ReviewTool(Session &S, const Json &Args)
 	if (!Found)
 		K = Key(0, MODE_MAJOR);
 	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+	// A calm track (a night version, an ambient one) floats: no drums, fills or accents are asked of it
+	const std::string Style = Lowercase(StringArg(Args, "style", VersionMood(S.Song.TrackName) == MOOD_CALM ? "calm" : "any"));
+	if (Style != "any" && Style != "calm" && Style != "ambient")
+		throw Problem("style should be any or calm.");
+	const bool Calm = Style != "any";
 	std::vector<std::string> Lines, Tips;
 	double Missing = 0.0;	// what the tips take off the score, out of 10
 	auto Tip = [&](double Weight, const std::string &Text) {
@@ -3173,7 +3324,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Tip(2.0, "Nothing harmonizes the melody: add_chords_and_bass fits chords to it (choose a chord_style and color).");
 	if (Bass < 0)
 		Tip(2.0, "No bass line: add_chords_and_bass with chord_channel \"none\" and a bass_style.");
-	if (Drums < 0)
+	if (Drums < 0 && !Calm)
 		Tip(1.0, "No drums: add_drums (groove calm for a quiet track, driving for action), unless the track should float without a beat.");
 	if (Voices.empty() && Echoes.empty())
 		Tip(1.0, "The melody has no company: add_counter_melody (a line of its own) or add_harmony (thirds under it) on " +
@@ -3269,9 +3420,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Most = std::max(Most, it->second);
 		Lines.push_back(Format("Drums: %d different bars in %d; %s.", static_cast<int>(Prints.size()), BarCount,
 			Fills > 0 ? Plural(Fills, "phrase ends with a change (a fill)", "phrase ends change (fills)").c_str() : "no fills where phrases end"));
-		if (Fills == 0 && BarCount >= 8)
+		if (Fills == 0 && BarCount >= 8 && !Calm)
 			Tip(1.0, "The drums never change where a phrase ends: add_drums with fill_every 4 (or 8) adds fills and crashes.");
-		else if (Most * 10 >= BarCount * 9 && BarCount >= 8)
+		else if (Most * 10 >= BarCount * 9 && BarCount >= 8 && !Calm)
 			Tip(1.0, "The drums repeat one bar almost all the way: add_drums varies every other bar and fills phrase ends.");
 	}
 
@@ -3279,6 +3430,12 @@ std::string ReviewTool(Session &S, const Json &Args)
 	{
 		int Low = 1000, High = -1, Rests = 0, LongBare = 0;
 		std::set<int> Lengths;
+		// Vibrato from a 4xy still on from before, or built into the instrument
+		const std::vector<int> Sticky = StickyAt(S.Cells(Melody), Tune, S.Channel(Melody).EffectColumns, EFF_VIBRATO);
+		std::set<int> Wobbly;
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (S.Song.Instruments[i].Vibrato)
+				Wobbly.insert(S.Song.Instruments[i].Index);
 		for (size_t i = 0; i < Tune.size(); ++i) {
 			const NoteInfo &N = Tune[i];
 			Low = std::min(Low, N.Pitch);
@@ -3288,7 +3445,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 				if (Tune[i + 1].Row - (N.Row + N.Rows) >= R || (N.EndNote != NOTE_NONE && Tune[i + 1].Row - N.Row - N.Rows >= R / 2))
 					++Rests;
 			}
-			bool Expression = false;
+			bool Expression = (Sticky[i] & 0x0F) != 0 || Wobbly.count(N.Instrument) > 0;
 			for (size_t e = 0; e < N.Effects.size(); ++e)
 				Expression = Expression || N.Effects[e].second.first == EFF_VIBRATO;
 			if (N.Rows >= 2 * R && !Expression)
@@ -3342,8 +3499,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 	}
 	if (!Flat.empty()) {
 		Lines.push_back("Dynamics: every note at one volume on " + Names(Flat) + ".");
-		Tip(1.0, "Flat dynamics sound typed: polish adds accents (the bar's first note loudest, the notes between beats "
-			"softer).");
+		if (!Calm)
+			Tip(1.0, "Flat dynamics sound typed: polish adds accents (the bar's first note loudest, the notes between beats "
+				"softer).");
 	}
 
 	// Register: another part sitting on the melody
@@ -3669,6 +3827,19 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 		std::vector<Cell> Part;
 		for (int r = First; r < End; ++r)
 			Part.push_back(r < static_cast<int>(Song.size()) ? Song[static_cast<size_t>(r)] : Cell());
+		// Bars that start without a note of their own start the copy as they
+		// did: silent (with the end that silenced them, so a note playing where
+		// the copy goes stops) or with the note ringing into them, struck again
+		int StartEnd = NOTE_NONE;
+		if (!Part.empty() && Part[0].Note == NOTE_NONE && IsMelodic(Info)) {
+			int Back = std::min(First, static_cast<int>(Song.size())) - 1;
+			while (Back >= 0 && Song[static_cast<size_t>(Back)].Note == NOTE_NONE)
+				--Back;
+			if (Back < 0 || Song[static_cast<size_t>(Back)].IsEnd())
+				StartEnd = Back < 0 ? NOTE_HALT : Song[static_cast<size_t>(Back)].Note;
+			else
+				Part[0].SetPitch(Song[static_cast<size_t>(Back)].Pitch());	// moved with the others below
+		}
 		// The copy plays as the original does: its first note gets the instrument and volume it played with
 		const ChannelState State = StateAt(Song, First, Columns);
 		for (size_t r = 0; r < Part.size(); ++r) {
@@ -3699,8 +3870,18 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 					AddEffect(Part[r], e, State.Sticky[e], Columns);
 			break;
 		}
-		for (int t = 0; t < Times; ++t)
-			D.Put(c, Dest + t * Length, Part);
+		for (int t = 0; t < Times; ++t) {
+			std::vector<Cell> Copy(Part);
+			const size_t Row = static_cast<size_t>(Dest + t * Length);
+			if (StartEnd != NOTE_NONE) {
+				// The end the place had already, or the original's
+				const std::vector<Cell> &Here = D.Cells(c);
+				const bool Ends = Row < Here.size() && Here[Row].IsEnd();
+				Copy[0].Note = static_cast<unsigned char>(Ends ? Here[Row].Note : StartEnd);
+				Copy[0].Octave = 0;
+			}
+			D.Put(c, static_cast<int>(Row), Copy);
+		}
 	}
 	if (Notes == 0)
 		throw Problem(Format("There are no notes in %s to copy.", RangeText(From, To).c_str()));
@@ -4414,17 +4595,7 @@ int EvenVolumes(std::vector<Cell> &Cells, int Columns)
 // The arpeggio (0xy) in effect at each note
 std::vector<int> ArpeggiosAt(const std::vector<Cell> &Cells, const std::vector<NoteInfo> &Notes, int Columns)
 {
-	std::vector<int> Out(Notes.size(), 0);
-	int Current = 0;
-	size_t n = 0;
-	for (size_t r = 0; r < Cells.size() && n < Notes.size(); ++r) {
-		for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k)
-			if (Cells[r].Effect[k] == EFF_ARPEGGIO)
-				Current = Cells[r].Param[k];
-		if (static_cast<int>(r) == Notes[n].Row)
-			Out[n++] = Current;
-	}
-	return Out;
+	return StickyAt(Cells, Notes, Columns, EFF_ARPEGGIO);
 }
 
 // Chords held as pads: a chord struck again in its bar (the same note and
@@ -4491,33 +4662,6 @@ int LongBass(Session &S, std::vector<Cell> &Cells, int Columns)
 	if (Removed > 0)
 		KeepNoteSounds(Cells, Notes, Columns);
 	return Removed;
-}
-
-// What a version's name says about it: calm (night), tense (battle) or neither
-enum version_mood { MOOD_OTHER, MOOD_CALM, MOOD_TENSE };
-
-int VersionMood(const std::string &Version)
-{
-	static const char *const CALM[] = { "night", "calm", "evening", "sleep", "sleepy", "peaceful", "quiet", "relaxed" };
-	static const char *const TENSE[] = { "tense", "battle", "danger", "boss", "fight", "combat", "chase", "alarm", "panic" };
-	bool Calm = false, Tense = false;
-	std::string Word;
-	const std::string Text = Lowercase(Version) + " ";
-	for (size_t i = 0; i < Text.size(); ++i) {
-		const char c = Text[i];
-		if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-			Word += c;
-			continue;
-		}
-		for (size_t w = 0; w < sizeof(CALM) / sizeof(CALM[0]); ++w)
-			Calm = Calm || Word == CALM[w];
-		for (size_t w = 0; w < sizeof(TENSE) / sizeof(TENSE[0]); ++w)
-			Tense = Tense || Word == TENSE[w];
-		Word.clear();
-	}
-	if (Calm == Tense)
-		return MOOD_OTHER;
-	return Calm ? MOOD_CALM : MOOD_TENSE;
 }
 
 // Tempo commands (Fxx from the split point up) at Factor; speed ones stay,
@@ -7566,8 +7710,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"colored, the same loop all the way), a bass that only holds roots, drums without fills, a melody with one note "
 		"length or no rests, phrases and whole sections that repeat unchanged, flat dynamics, parts crowding the "
 		"melody's register, a bass in octaves with the melody, and the length. It scores the depth out of 10 and lists "
-		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done.",
-		Schema().Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes.")).Range(), true, false, true);
+		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done. A calm "
+		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills or accents of it.",
+		Schema()
+			.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+			.Add("style", EnumProp("any, or calm (also \"ambient\"): no tips for drums, fills or accents. Default: calm when the "
+				"track's name says so, like \"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient" })).Range(),
+		true, false, true);
 
 	AddTool("check_song", "Check the song",
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "

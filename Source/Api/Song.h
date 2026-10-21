@@ -52,8 +52,9 @@ struct InstrumentInfo {
 	std::string Name;
 	std::string Chip;		// "2A03", "VRC6", ...
 	bool Releases;			// fades out on a release (===)
+	bool Vibrato;			// vibrato built in: its pitch sequence goes up and down in a loop
 
-	InstrumentInfo() : Index(0), Releases(false) {}
+	InstrumentInfo() : Index(0), Releases(false), Vibrato(false) {}
 };
 
 struct ClipInfo {

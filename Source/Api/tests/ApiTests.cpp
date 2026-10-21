@@ -1470,6 +1470,14 @@ void TestDesign()
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"chip\": \"VRC7\"}").Text, "built-in sounds");
 	Result = Run(Song, "design_instrument", "{\"name\": \"Shimmer\", \"kind\": \"chiptune\", \"arpeggio\": \"minor7\", \"arpeggio_frames\": 2}");
 	CHECK_HAS(Result.Text, "it arpeggiates 0, 3, 7, 10 semitones");
+	// The sawtooth and the triangle have no duty (and the triangle no volume): said so
+	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"motion\": \"open\"}");
+	CHECK_HAS(Result.Text, "a sawtooth that reaches");
+	CHECK_LACKS(Result.Text, "pulse");
+	CHECK_LACKS(Result.Text, "its tone opens");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Tri bass\", \"channel\": \"Triangle\", \"kind\": \"bass\"}");
+	CHECK_HAS(Result.Text, "a triangle");
+	CHECK_LACKS(Result.Text, "pulse");
 
 	// The classic articulations: a bloom, a duty click, held notes struck again
 	SoundDesign Bloom;
@@ -2292,6 +2300,11 @@ void TestArrange()
 			CHECK(H.Row >= 60 && H.Row < 64);	// the first fill: the last beat of bar 4, in toms
 	}
 	CHECK(Kicks > 10 && Snares == 6 && Toms == 4 && Crashes == 2 && Open == 2);
+	// No hi-hat for a beat after a crash: the noise channel would cut it off
+	for (size_t i = 0; i < Hits.size(); ++i)
+		if (Hits[i].Sound == "crash")
+			for (size_t j = i + 1; j < Hits.size() && Hits[j].Row < Hits[i].Row + 4; ++j)
+				CHECK(Hits[j].Sound != "hi-hat" && Hits[j].Sound != "open hi-hat");
 	CHECK(Hits.back().Row == 127 && Hits.back().Sound == "snare" && Hits.back().Volume == 15);	// the second fill: a snare roll
 	D.Intensity = 1;
 	D.FillEvery = 0;
@@ -2337,6 +2350,26 @@ void TestArrange()
 	H.Interval = HARMONY_THIRD_BELOW;
 	H.MinRows = 4;
 	CHECK(HarmonyPart(Melody, Chords, H).size() == 4);
+	// Between the beats, over a chord that alters the key's scale (A major in A
+	// minor): the chord's C#, not the scale's C, which would grate against it
+	{
+		const Key AMinorKey(9, MODE_MINOR);
+		const std::vector<ChordAt> Major = Progression("| A | Dm | E | Am |", AMinorKey);
+		std::vector<NoteInfo> Line;
+		Line.push_back(MelodyNote(0, 4, "A-4"));
+		Line.push_back(MelodyNote(5, 1, "E-4"));		// third below: C in the key, C# in the chord
+		Line.push_back(MelodyNote(6, 1, "D-4"));		// B: no clash with A major, stays
+		Line.push_back(MelodyNote(7, 1, "A-4"));		// F: a semitone over the chord's E, so F#, a third under A
+		HarmonyOptions Ha;
+		Ha.K = AMinorKey;
+		const std::vector<PartNote> Under = HarmonyPart(Line, Major, Ha);
+		CHECK(Under.size() == 4);
+		if (Under.size() == 4) {
+			CHECK_EQ(PitchName(Under[1].Pitch), std::string("C#4"));
+			CHECK_EQ(PitchName(Under[2].Pitch), std::string("B-3"));
+			CHECK_EQ(PitchName(Under[3].Pitch), std::string("F#4"));
+		}
+	}
 
 	// A counter-melody: under the melody, never a semitone from it, holding where it's busy
 	CounterOptions Counter;
@@ -2527,6 +2560,39 @@ void TestReview()
 	CHECK_HAS(Run(Song, "look_at_song", "{\"to_bar\": 4}").Text, "Chords heard (C major): |");
 	FakeSong Empty;
 	CHECK_HAS(Run(Empty, "review_arrangement", "{}").Text, "Nothing plays a melody");
+	{
+		// Vibrato built into the lead's instrument, or a 4xy still on from before, is vibrato
+		FakeSong Long;
+		for (int i = 0; i < 8; ++i)
+			Long.Put(5, i * 16, i % 2 ? "E-4" : "C-4", i == 0 ? 0 : NO_INSTRUMENT);
+		Long.End(5, 127, NOTE_RELEASE);
+		CHECK_HAS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+		Long.Info.Instruments[0].Vibrato = true;
+		CHECK_LACKS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+		Long.Info.Instruments[0].Vibrato = false;
+		Long.Rows[5][0].Effect[0] = EFF_VIBRATO;
+		Long.Rows[5][0].Param[0] = 0x42;
+		CHECK_LACKS(Run(Long, "review_arrangement", "{}").Text, "no vibrato");
+	}
+	{
+		// The melody isn't its echo (a channel repeating it later), nor a quiet busy part
+		FakeSong Echoed;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4" };
+		for (int i = 0; i < 8; ++i) {
+			Echoed.Put(6, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+			Echoed.Put(0, i * 8 + 3, TUNE[i], i == 0 ? 2 : NO_INSTRUMENT, i == 0 ? 12 : -1);	// the echo, as loud
+		}
+		for (int Row = 0; Row < 64; Row += 2)
+			Echoed.Put(1, Row, Row % 4 ? "C-5" : "G-5", Row == 0 ? 2 : NO_INSTRUMENT, Row == 0 ? 3 : -1);	// busy, high, quiet
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{}").Text, "melody on VRC6 Pulse 2");
+		// A calm track floats: no drums asked of it (by name, or with style calm)
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{}").Text, "No drums");
+		CHECK_LACKS(Run(Echoed, "review_arrangement", "{\"style\": \"calm\"}").Text, "No drums");
+		Echoed.Info.TrackName = "Town (night)";
+		CHECK_LACKS(Run(Echoed, "review_arrangement", "{}").Text, "No drums");
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"any\"}").Text, "No drums");
+		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"loud\"}").Text, "style should be any or calm");
+	}
 }
 
 void TestStructure()
@@ -2572,6 +2638,24 @@ void TestStructure()
 	CHECK(!Result.IsError && Form.Rows[5][128].Pitch() == Form.Rows[5][0].Pitch() && Form.Rows[5][128].Instrument == 0);
 	CHECK(Form.Rows[5][128].Volume == 10 && HasEffectAt(Form, 5, 140, EFF_VIBRATO, 0x42));
 	CHECK(Form.Rows[3][128].HasNote());
+	{
+		// Bars that start silent: the copy ends the note playing where it goes
+		// (keeping a release that was there); bars a note rings into: struck again
+		FakeSong Hang(4);
+		Hang.Info.DirectChanges = true;
+		Hang.Put(5, 4, "C-4", 0);			// bar 1 starts silent
+		Hang.End(5, 12);
+		Hang.Put(5, 28, "G-4", 0);		// bar 2's note rings into bar 3
+		Hang.Put(5, 40, "A-4");
+		Hang.Put(5, 60, "B-4");			// rings into bar 5
+		Hang.End(5, 64, NOTE_RELEASE);
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 1, \"at_bar\": 5}").IsError);
+		CHECK(Hang.Rows[5][64].Note == NOTE_RELEASE && Hang.Rows[5][68].Pitch() == Hang.Rows[5][4].Pitch());
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 1, \"at_bar\": 7}").IsError);
+		CHECK(Hang.Rows[5][96].Note == NOTE_HALT);
+		CHECK(!Run(Hang, "copy_bars", "{\"from_bar\": 3, \"at_bar\": 8}").IsError);
+		CHECK(Hang.Rows[5][112].Pitch() == Hang.Rows[5][28].Pitch() && Hang.Rows[5][112].Instrument == 0);
+	}
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1, \"to_bar\": 2, \"at_bar\": 2}").Text, "land on the bars it copies");
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 1}").Text, "at_bar");
 	CHECK_HAS(Run(Form, "copy_bars", "{\"from_bar\": 4, \"at_bar\": 12, \"channels\": [\"Pulse 1\"]}").Text, "no notes");
@@ -2648,6 +2732,22 @@ void TestEchoAndVibrato()
 		CHECK_EQ(Notes(Tail, 6), std::string("123:G-4 127:A-4 "));
 		CHECK_HAS(Run(Tail, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"from_bar\": 8}").Text,
 			"The echo is already there");
+	}
+	{
+		// An echo note that would grate a semitone against the melody is left
+		// out, or cut short where the melody moves against it
+		FakeSong Rub;
+		Rub.Info.DirectChanges = true;
+		Rub.Put(5, 0, "C-4", 0);
+		Rub.Put(5, 3, "B-3");		// the echo's C-4 would start against it: left out
+		Rub.Put(5, 8, "E-4");
+		Rub.Put(5, 13, "F-4");		// the echo's E-4 (from row 11) runs into it: cut short at row 13
+		Rub.End(5, 20, NOTE_RELEASE);
+		const ToolResult R = Run(Rub, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "Where the echo would grate a semitone against another part, 1 echo note was left out and 1 was cut short.");
+		CHECK(!Rub.Rows[6][3].HasNote() && Rub.Rows[6][6].Pitch() == Rub.Rows[5][3].Pitch() && Rub.Rows[6][11].Pitch() == 52);
+		CHECK(Rub.Rows[6][13].IsEnd() && Rub.Rows[6][16].Pitch() == 53);
 	}
 
 	Song.Put(0, 0, "C-4", 2);
