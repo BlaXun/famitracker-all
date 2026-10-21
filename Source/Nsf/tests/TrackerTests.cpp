@@ -29,6 +29,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -511,11 +512,8 @@ int main(int argc, char **argv)
 		const std::vector<uint8_t> Files[] = { MakeMod(), MakeS3m(), MakeXm(), MakeIt() };
 		for (int i = 0; i < 4; ++i) {
 			const std::string Path = std::string(argv[1]) + "/" + Names[i];
-			FILE *f = std::fopen(Path.c_str(), "wb");
-			if (f) {
-				std::fwrite(Files[i].data(), 1, Files[i].size(), f);
-				std::fclose(f);
-			}
+			std::ofstream Out(Path.c_str(), std::ios::binary);
+			Out.write(reinterpret_cast<const char *>(Files[i].data()), static_cast<std::streamsize>(Files[i].size()));
 		}
 	}
 	TestMod();
