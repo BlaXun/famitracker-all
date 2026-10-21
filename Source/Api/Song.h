@@ -122,14 +122,24 @@ struct SongWrite {
 	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1) {}
 };
 
+// Rows of a track (from 0) to play
+struct PlayPart {
+	int Track;
+	int First, Rows;
+	PlayPart() : Track(0), First(0), Rows(1) {}
+};
+
 // What SongHost::Play plays
 struct PlayRequest {
+	int Track;                  // the track it plays (selected for it); -1 for the selected one
 	int First;                  // the song row it starts at
 	int Rows;                   // how many; 0 to the end
-	bool Loop;                  // those rows over and over, until it's stopped
+	std::vector<PlayPart> Then; // played after those, one after the other (the same bars of other versions)
+	bool Loop;                  // all of it over and over, until it's stopped
 	std::vector<bool> Muted;    // per channel: silent this time (empty: as the user has them); the user's own mutes come
 								// back when it stops
-	PlayRequest() : First(0), Rows(0), Loop(false) {}
+	int ReturnTrack;            // selected again when it stops; -1 to leave the track it ends on
+	PlayRequest() : Track(-1), First(0), Rows(0), Loop(false), ReturnTrack(-1) {}
 };
 
 class SongHost {

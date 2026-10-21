@@ -172,6 +172,8 @@ anything; close the dialog and ask again.
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
 | `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops. See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
+| `keep_version` | Keeps the selected track as it is now as a track of its own ("Town (version 1)", or named, like "Town (calm bridge)"), and stays on the selected track, so Claude can try something and you can compare or go back |
+| `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |

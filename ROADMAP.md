@@ -247,8 +247,12 @@ when ready.
   channels or leaves some out, giving the user's own mutes back when it
   stops.
 
-  Ideas not built yet: FDS and N163 instruments, named versions to compare,
-  and recording through Claude.
+  Versions to compare: `keep_version` keeps the track as it is now as a
+  track of its own before Claude tries something, and `compare_versions`
+  plays the same bars of each, one after the other, for the user to pick.
+
+  Ideas not built yet: FDS and N163 instruments, and recording through
+  Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF
   files open as readable FamiTracker songs, and Claude learns from them.
   - Our own portable player core (a 6502, the NSF's bank switching, the 2A03

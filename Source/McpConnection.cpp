@@ -325,7 +325,7 @@ class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 public:
 	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
 		m_pProgress(NULL), m_iPlayFirst(0),
-		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false)
+		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false), m_iPlayPart(0), m_iReturnTrack(-1)
 	{
 		m_Settings.Enabled = false;
 		m_Settings.Port = DEFAULT_PORT;
@@ -483,16 +483,35 @@ public:
 			}
 		}
 		if (m_bPlayStarted && (Row >= m_iPlayEnd || Row < m_iPlayFirst)) {
-			if (m_bPlayLoop)
-				StartAt(m_iPlayFirst);
+			if (m_iPlayPart + 1 < m_PlayParts.size())
+				BeginPart(m_iPlayPart + 1);	// the next version
+			else if (m_bPlayLoop)
+				BeginPart(0);
 			else {
 				theApp.StopPlayer();
 				EndPlayback();
 			}
 		}
-		else if (m_bPlayStarted && m_bPlayLoop && m_iPlayFirst % Length == 0 && m_iPlayEnd % Length == 0 &&
+		else if (m_bPlayStarted && m_bPlayLoop && m_PlayParts.size() == 1 && m_iPlayFirst % Length == 0 && m_iPlayEnd % Length == 0 &&
 			Row / Length == (m_iPlayEnd - 1) / Length && pSound->GetQueueFrame() == -1)
 			pSound->SetQueueFrame(m_iPlayFirst / Length);	// whole frames: back to the first without a gap
+	}
+
+	// Plays a part of what Claude asked for: its track, from its first row
+	void BeginPart(size_t Part)
+	{
+		if (Part >= m_PlayParts.size())
+			return;
+		m_iPlayPart = Part;
+		const ftapi::PlayPart &p = m_PlayParts[Part];
+		if (p.Track != static_cast<int>(Track())) {
+			if (theApp.IsPlaying())
+				theApp.StopPlayerAndWait();
+			m_pMain->SelectTrack(static_cast<unsigned int>(p.Track));
+		}
+		m_iPlayFirst = p.First;
+		m_iPlayEnd = p.Rows > 0 ? p.First + p.Rows : p.First;
+		StartAt(p.First);
 	}
 
 	// Plays from a song row (stopping what plays)
@@ -525,7 +544,15 @@ public:
 		if (pSound != NULL && m_bPlayLoop)
 			pSound->SetQueueFrame(-1);
 		m_bPlayLoop = false;
+		m_PlayParts.clear();
 		CFamiTrackerDoc *pDoc = Doc();
+		if (m_iReturnTrack >= 0 && pDoc != NULL && m_iReturnTrack < static_cast<int>(pDoc->GetTrackCount()) &&
+			m_iReturnTrack != static_cast<int>(Track())) {
+			if (theApp.IsPlaying())
+				theApp.StopPlayerAndWait();
+			m_pMain->SelectTrack(static_cast<unsigned int>(m_iReturnTrack));	// the track Claude works on
+		}
+		m_iReturnTrack = -1;
 		CFamiTrackerView *pView = CFamiTrackerView::GetView();
 		if (!m_UserMutes.empty() && pDoc != NULL && pView != NULL) {
 			for (unsigned int c = 0; c < m_UserMutes.size() && c < pDoc->GetAvailableChannels(); ++c)
@@ -1358,10 +1385,24 @@ public:
 			Error = "No song is open in FamiTracker.";
 			return false;
 		}
-		const int Length = static_cast<int>(pDoc->GetPatternLength(Track()));
-		if (Request.First < 0 || Request.First >= Length * static_cast<int>(pDoc->GetFrameCount(Track()))) {
-			Error = "That bar is past the end of the song.";
-			return false;
+		// The parts: the request's rows, then the other versions'
+		std::vector<ftapi::PlayPart> Parts(1);
+		Parts[0].Track = Request.Track >= 0 ? Request.Track : static_cast<int>(Track());
+		Parts[0].First = Request.First;
+		Parts[0].Rows = Request.Rows;
+		Parts.insert(Parts.end(), Request.Then.begin(), Request.Then.end());
+		for (size_t i = 0; i < Parts.size(); ++i) {
+			const ftapi::PlayPart &p = Parts[i];
+			if (p.Track < 0 || p.Track >= static_cast<int>(pDoc->GetTrackCount())) {
+				Error = "There's no such track.";
+				return false;
+			}
+			const unsigned int Track = static_cast<unsigned int>(p.Track);
+			const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+			if (p.First < 0 || p.First >= Length * static_cast<int>(pDoc->GetFrameCount(Track)) || (i > 0 && p.Rows < 1)) {
+				Error = "That bar is past the end of the song.";
+				return false;
+			}
 		}
 		if (theApp.IsPlaying())
 			theApp.StopPlayerAndWait();
@@ -1375,12 +1416,12 @@ public:
 			pView->GetPatternEditor()->InvalidateHeader();
 			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
 		}
-		m_iPlayFirst = Request.First;
-		m_iPlayEnd = Request.Rows > 0 ? Request.First + Request.Rows : Request.First;
+		m_PlayParts = Parts;
 		m_bPlayLoop = Request.Loop && Request.Rows > 0;
-		StartAt(Request.First);
-		if (Request.Rows > 0 || !m_UserMutes.empty())
-			SetTimer(m_hWindow, PLAY_TIMER, m_bPlayLoop ? 20 : 50, NULL);
+		m_iReturnTrack = Request.ReturnTrack;
+		BeginPart(0);
+		if (Request.Rows > 0 || !m_UserMutes.empty() || m_iReturnTrack >= 0)
+			SetTimer(m_hWindow, PLAY_TIMER, m_bPlayLoop || Parts.size() > 1 ? 20 : 50, NULL);
 		return true;
 	}
 
@@ -1558,6 +1599,9 @@ private:
 	int m_iPlayTicks;
 	bool m_bPlayLoop;				// those rows over and over
 	std::vector<bool> m_UserMutes;	// the user's own mutes while Claude's playback mutes others, else empty
+	std::vector<ftapi::PlayPart> m_PlayParts;	// what Claude asked to hear, one after the other
+	size_t m_iPlayPart;				// the one playing
+	int m_iReturnTrack;				// selected again when it's over, or -1
 };
 
 // The dialog

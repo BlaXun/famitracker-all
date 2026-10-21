@@ -6719,6 +6719,118 @@ std::string RemoveBarsTool(Session &S, const Json &Args)
 	return WithRemarks(S, Text, Warnings);
 }
 
+// Versions to compare: the track as it is now, kept as a track of its own
+
+std::string KeepVersionTool(Session &S, const Json &Args)
+{
+	const std::string Base = S.Song.TrackName, Label = StringArg(Args, "name");
+	const std::vector<std::string> &Names = S.Song.TrackNames;
+	auto Taken = [&](const std::string &Name) { return std::find(Names.begin(), Names.end(), Name) != Names.end(); };
+	std::string Name = Label.empty() ? std::string() : Base + " (" + Label + ")";
+	for (int n = 1; Name.empty() || Taken(Name); ++n)
+		Name = Label.empty() ? Format("%s (version %d)", Base.c_str(), n) : Format("%s (%s %d)", Base.c_str(), Label.c_str(), n + 1);
+	std::vector<std::vector<Cell> > Channels;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Channels.push_back(S.Cells(c));
+	const int Here = S.Song.Track;
+	std::string Error;
+	const int Track = S.Host().AddTrack(Name, Channels, S.Song.Speed, S.Song.Tempo, Error);
+	if (Track < 0)
+		throw Problem("The version couldn't be kept: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	if (!S.Host().SelectTrack(Here, Error))
+		throw Problem(Format("Kept it as track %d \"%s\", but FamiTracker shows that one now: %s", Track + 1, Name.c_str(),
+			Error.c_str()));
+	return Format("Kept track %d \"%s\" as it is now, as track %d \"%s\". You're still on \"%s\", so change it as you like: "
+		"compare_versions then plays the same bars of both for the user, one after the other, and select_track goes to the "
+		"kept one to carry on from it instead. FamiTracker can't undo adding a track: the user removes one in Module > Module "
+		"properties.", Here + 1, Base.c_str(), Track + 1, Name.c_str(), Base.c_str());
+}
+
+std::string CompareVersionsTool(Session &S, const Json &Args)
+{
+	const int Here = S.Song.Track;
+	const std::string HereName = S.Song.TrackName;
+	std::vector<int> Tracks;
+	const Json *pVersions = Arg(Args, "versions");
+	if (pVersions != 0) {
+		const size_t Count = pVersions->IsArray() ? pVersions->Size() : 1;
+		for (size_t i = 0; i < Count; ++i) {
+			Json One = Json::MakeObject();
+			One.Set("track", pVersions->IsArray() ? pVersions->At(i) : *pVersions);
+			const int Track = TrackArg(S, One, "track");
+			if (std::find(Tracks.begin(), Tracks.end(), Track) == Tracks.end())
+				Tracks.push_back(Track);
+		}
+		if (Tracks.size() == 1 && Tracks[0] != Here)
+			Tracks.push_back(Here);	// one named: with the track worked on
+	}
+	else {
+		// The track worked on and its newest kept version
+		const std::string Prefix = HereName + " (";
+		int Kept = -1;
+		for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
+			if (static_cast<int>(t) != Here && S.Song.TrackNames[t].compare(0, Prefix.size(), Prefix) == 0)
+				Kept = static_cast<int>(t);
+		if (Kept < 0)
+			throw Problem(Format("\"%s\" has no kept version to compare with: keep_version keeps one before you change it, or "
+				"name the tracks with versions.", HereName.c_str()));
+		Tracks.push_back(Kept);
+		Tracks.push_back(Here);
+	}
+	if (Tracks.size() < 2)
+		throw Problem("Name two tracks or more to compare.");
+	if (Tracks.size() > 8)
+		throw Problem("Compare up to 8 versions at a time.");
+	const int From = IntArg(Args, "from_bar", 1, 1, S.MaxBars());
+	const int Bars = IntArg(Args, "bars", 8, 1, 64);
+
+	// The same bars of each version, read from its track
+	SongHost &Host = S.Host();
+	int Selected = Here, Last = From + Bars - 1;
+	std::string Error, Names;
+	PlayRequest Request;
+	try {
+		for (size_t i = 0; i < Tracks.size(); ++i) {
+			if (Tracks[i] != Selected && !Host.SelectTrack(Tracks[i], Error))
+				throw Problem(Error.empty() ? std::string("FamiTracker didn't switch tracks.") : Error);
+			Selected = Tracks[i];
+			SongInfo Info;
+			if (!Host.GetSong(Info, Error))
+				throw Problem(Error);
+			const Timing Time(Info.PatternLength, Info.Frames, Info.FirstHighlight, Info.SecondHighlight);
+			const std::string Label = Format("track %d \"%s\"", Tracks[i] + 1, Info.TrackName.c_str());
+			if (From > Time.BarCount())
+				throw Problem(Format("%s has only %d bars.", Label.c_str(), Time.BarCount()));
+			Last = std::min(Last, Time.BarCount());
+			PlayPart Part;
+			Part.Track = Tracks[i];
+			Part.First = Time.BarStart(From);
+			Part.Rows = Time.BarEnd(std::min(From + Bars - 1, Time.BarCount())) - Part.First;
+			if (i == 0) {
+				Request.Track = Part.Track;
+				Request.First = Part.First;
+				Request.Rows = Part.Rows;
+			}
+			else
+				Request.Then.push_back(Part);
+			Names += (i == 0 ? "" : ", then of ") + Label;
+		}
+		Request.Loop = BoolArg(Args, "loop", false);
+		Request.ReturnTrack = Here;
+		if (!Host.Play(Request, Error))
+			throw Problem(Error.empty() ? std::string("FamiTracker couldn't play.") : Error);
+	}
+	catch (...) {
+		std::string Ignored;
+		if (Selected != Here)
+			Host.SelectTrack(Here, Ignored);
+		throw;
+	}
+	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. You can't hear it yourself: ask "
+		"the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
+		RangeText(From, Last).c_str(), Names.c_str(), Request.Loop ? ", over and over until you call stop" : "", HereName.c_str());
+}
+
 // Music for games: each track as a looping OGG
 
 // The track's file name: its own name, or the song's for one called "New song"
@@ -8333,6 +8445,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"one. get_song lists the tracks.",
 		Schema().Add("track", ChannelProp("Track number (from 1) or name, like \"Town (night)\"."), true), false, false, true);
 
+	AddTool("keep_version", "Keep a version",
+		"Keeps the selected track as it is now as a track of its own, named after it (\"Town (version 1)\", or with name: "
+		"\"Town (calm bridge)\"), and stays on the selected track: keep one before trying something, so the user can "
+		"compare (compare_versions) or go back (select_track).",
+		Schema().Add("name", Prop("string", "What sets this version apart, like \"before the bridge\". Default: version 1, 2...")),
+		false);
+
+	AddTool("compare_versions", "Compare versions",
+		"Plays the same bars of two versions or more for the user, one after the other: by default the newest version kept "
+		"of the selected track (keep_version), then the track as it is now. FamiTracker shows the selected track again "
+		"afterwards. You can't hear it; ask the user which they like better.",
+		Schema().Add("versions", ChannelListProp("Tracks by number or name, in the order to play; one: it, then the selected track."))
+			.Add("from_bar", BarProp("Bar to start at (default 1)."))
+			.Add("bars", Prop("integer", "How many bars of each (default 8)."))
+			.Add("loop", Prop("boolean", "Play them over and over until stop (default false).")),
+		true);
+
 	AddTool("set_expansion", "Switch the expansion chip",
 		"Switches the song's expansion sound chip, as Module > Module properties does: none (the 2A03's five channels only), "
 		"VRC6 (two more pulses and a sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 "
@@ -8606,6 +8735,8 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
 		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
 		else if (Name == "insert_bars") Result.Text = InsertBarsTool(S, Args);
+		else if (Name == "keep_version") Result.Text = KeepVersionTool(S, Args);
+		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);

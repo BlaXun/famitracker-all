@@ -130,6 +130,7 @@ public:
 	SongWrite LastWrite;
 	bool PlayLoop = false;
 	std::vector<bool> PlayMuted;
+	PlayRequest LastPlay;
 	bool Busy, Stopped;
 	std::string Saved;
 
@@ -723,6 +724,9 @@ public:
 		PlayRows = Request.Rows;
 		PlayLoop = Request.Loop;
 		PlayMuted = Request.Muted;
+		LastPlay = Request;
+		if (Request.ReturnTrack >= 0)
+			Switch(Request.ReturnTrack);	// as when it's over
 		return true;
 	}
 
@@ -4994,6 +4998,44 @@ void TestLoops()
 	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
+// Versions to compare
+void TestKeptVersions()
+{
+	FakeSong Song;		// "Town", 8 bars
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	CHECK_HAS(Run(Song, "compare_versions", "{}").Text, "\"Town\" has no kept version to compare with: keep_version keeps one");
+	std::string Text = Run(Song, "keep_version", "{}").Text;
+	CHECK_HAS(Text, "Kept track 1 \"Town\" as it is now, as track 2 \"Town (version 1)\". You're still on \"Town\"");
+	CHECK(Song.Tracks.size() == 2u && Song.Current == 0 && Song.Tracks[1].Name == "Town (version 1)");
+	CHECK(Song.Tracks[1].Rows[5][0].Pitch() == Song.Rows[5][0].Pitch());
+	// Changed afterwards: the kept one stays as it was
+	CHECK(!Run(Song, "transpose", "{\"semitones\": 2}").IsError);
+	CHECK(Song.Tracks[1].Rows[5][0].Pitch() + 2 == Song.Rows[5][0].Pitch());
+	// The kept one, then the track as it is
+	Text = Run(Song, "compare_versions", "{\"from_bar\": 3, \"bars\": 2}").Text;
+	CHECK_HAS(Text, "Playing bars 3-4 of track 2 \"Town (version 1)\", then of track 1 \"Town\" for the user; afterwards "
+		"FamiTracker shows \"Town\" again.");
+	CHECK(Song.LastPlay.Track == 1 && Song.LastPlay.First == 32 && Song.LastPlay.Rows == 32 && Song.LastPlay.Then.size() == 1u);
+	CHECK(Song.LastPlay.Then[0].Track == 0 && Song.LastPlay.Then[0].First == 32 && Song.LastPlay.Then[0].Rows == 32);
+	CHECK(Song.LastPlay.ReturnTrack == 0 && Song.Current == 0 && !Song.LastPlay.Loop);
+	// Named versions, in the order asked, over and over
+	CHECK_HAS(Run(Song, "keep_version", "{\"name\": \"calm\"}").Text, "as track 3 \"Town (calm)\"");
+	CHECK_HAS(Run(Song, "keep_version", "{\"name\": \"calm\"}").Text, "as track 4 \"Town (calm 2)\"");
+	Text = Run(Song, "compare_versions", "{\"versions\": [\"Town\", \"calm 2\", 2], \"loop\": true}").Text;
+	CHECK_HAS(Text, "Playing bars 1-8 of track 1 \"Town\", then of track 4 \"Town (calm 2)\", then of track 2 \"Town (version 1)\" "
+		"for the user, over and over until you call stop;");
+	CHECK(Song.LastPlay.Track == 0 && Song.LastPlay.Then.size() == 2u && Song.LastPlay.Then[0].Track == 3 && Song.LastPlay.Loop);
+	// One named: with the track worked on; the newest kept one by default
+	CHECK(!Run(Song, "compare_versions", "{\"versions\": \"version 1\"}").IsError && Song.LastPlay.Track == 1 &&
+		Song.LastPlay.Then[0].Track == 0);
+	CHECK(!Run(Song, "compare_versions", "{}").IsError && Song.LastPlay.Track == 3);
+	// Bars a version doesn't have
+	CHECK_HAS(Run(Song, "compare_versions", "{\"from_bar\": 9}").Text, "has only 8 bars.");
+	CHECK(Song.Current == 0);
+	CHECK_HAS(Run(Song, "compare_versions", "{\"versions\": \"Town\"}").Text, "Name two tracks or more to compare.");
+}
+
 // insert_bars and remove_bars: the song's form
 
 // A song of Frames frames (4 bars each) with a note at each bar's start that
@@ -5725,6 +5767,7 @@ int main()
 	TestTiming2();
 	TestLoops();
 	TestBars();
+	TestKeptVersions();
 	TestOgg();
 	TestCut();
 	TestExport();
