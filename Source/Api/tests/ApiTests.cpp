@@ -1473,7 +1473,7 @@ void TestBacking()
 
 std::string ChordText(const char *Text, const Key &K = Key(0, MODE_MAJOR))
 {
-	Chord C;
+	ftapi::Chord C;
 	if (!ParseChord(Text, K, C))
 		return "-";
 	std::string Out = ChordName(C, K) + " " + ChordDegree(C, K) + " {";
@@ -1678,12 +1678,12 @@ void TestArrange()
 		V = W;
 	}
 	// A seventh chord keeps its third and seventh; a power chord is root, fifth and octave
-	Chord G7;
+	ftapi::Chord G7;
 	ParseChord("G7", C, G7);
 	V = ArpeggioVoicing(G7, 0, 37, 31, 43, false);
 	CHECK(G7.HasPitchClass((V.Base + V.X) % 12) && (((V.Base % 12) == 11 || (V.Base + V.X) % 12 == 11 || (V.Base + V.Y) % 12 == 11)));
 	CHECK((((V.Base % 12) == 5 || (V.Base + V.X) % 12 == 5 || (V.Base + V.Y) % 12 == 5)));
-	Chord Power;
+	ftapi::Chord Power;
 	ParseChord("E5", C, Power);
 	V = ArpeggioVoicing(Power, 0, 37, 31, 43, true);
 	CHECK(V.Param() == 0x7C && V.Base % 12 == 4);
@@ -1969,6 +1969,54 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato or separate");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
+}
+
+void TestReview()
+{
+	// A plain song: one melody phrase four times over the same chords, held triads, roots, no drums
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	const char *const MELODY[] = { "E-4", "G-4", "C-5", "G-4", "F-4", "A-4", "C-5", "A-4", "D-4", "G-4", "B-4", "G-4", "C-4", "E-4", "G-4", "C-5" };
+	for (int Copy = 0; Copy < 4; ++Copy)
+		for (int i = 0; i < 16; ++i)
+			Song.Put(5, Copy * 64 + i * 4, MELODY[i], i == 0 && Copy == 0 ? 0 : NO_INSTRUMENT);
+	Song.End(5, 255, NOTE_RELEASE);
+	CHECK(!Run(Song, "add_chords_and_bass", "{\"bass_style\": \"roots\", \"half_bars\": false}").IsError);
+	ToolResult Result = Run(Song, "review_arrangement", "{}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Depth review, bars 1-16 in C major: ");
+	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1; chords on 2A03 Pulse 1; bass on 2A03 Triangle.");
+	CHECK_HAS(Result.Text, "Harmony: | C | F | G | C |");
+	CHECK_HAS(Result.Text, "all plain triads");
+	CHECK_HAS(Result.Text, "The same four-bar progression plays 4 times.");
+	CHECK_HAS(Result.Text, "No drums: add_drums");
+	CHECK_HAS(Result.Text, "The melody has no company");
+	CHECK_HAS(Result.Text, "The bass mostly holds roots");
+	CHECK_HAS(Result.Text, "The melody keeps one or two note lengths");
+	CHECK_HAS(Result.Text, "The melody never rests");
+	CHECK_HAS(Result.Text, "repeat the four bars before them in every part");
+	CHECK_HAS(Result.Text, "Length: 16 bars");
+	const std::string Before = Result.Text;
+	const int Plain = std::atoi(Before.substr(Before.find(": ") + 2).c_str());
+
+	// Deeper: colored chords in stabs, a walking bass, drums, a counter-melody, finishing touches
+	CHECK(!Run(Song, "add_chords_and_bass", "{\"color\": \"rich\", \"chord_style\": \"stabs\", \"bass_style\": \"walking\", "
+		"\"chord_channel\": \"Pulse 1\", \"bass_channel\": \"Triangle\"}").IsError);
+	CHECK(!Run(Song, "add_drums", "{}").IsError);
+	CHECK(!Run(Song, "add_counter_melody", "{}").IsError);
+	CHECK(!Run(Song, "polish", "{}").IsError);
+	Result = Run(Song, "review_arrangement", "{}");
+	const int Deeper = std::atoi(Result.Text.substr(Result.Text.find(": ") + 2).c_str());
+	CHECK(Deeper > Plain + 3);
+	CHECK_LACKS(Result.Text, "No drums");
+	CHECK_LACKS(Result.Text, "all plain triads");
+	CHECK_LACKS(Result.Text, "The bass mostly holds roots");
+	CHECK_HAS(Result.Text, "drums on 2A03 Noise");
+	CHECK_HAS(Result.Text, "phrase ends change (fills)");
+	// The picture's text names the chords too
+	CHECK_HAS(Run(Song, "look_at_song", "{\"to_bar\": 4}").Text, "Chords heard (C major): |");
+	FakeSong Empty;
+	CHECK_HAS(Run(Empty, "review_arrangement", "{}").Text, "Nothing plays a melody");
 }
 
 void TestEchoAndVibrato()
@@ -4167,6 +4215,7 @@ int main()
 	TestChords();
 	TestArrange();
 	TestArrangingTools();
+	TestReview();
 	TestEchoAndVibrato();
 	TestMood();
 	TestCheck();
