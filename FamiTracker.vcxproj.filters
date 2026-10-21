@@ -1278,6 +1278,9 @@
     <ClCompile Include="Source\Api\SoundEffects.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Effects.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1330,6 +1333,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\SoundEffects.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Effects.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">

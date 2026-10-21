@@ -32,6 +32,7 @@
 #include "References.h"
 #include "Song.h"
 #include "SoundEffects.h"
+#include "Effects.h"
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
@@ -1263,10 +1264,13 @@ std::string WriteNotes(Session &S, const Json &Args)
 			if (!pEffects->IsArray())
 				throw Problem(Which + ": effects should be a list like [\"Q31\"].");
 			for (size_t e = 0; e < pEffects->Size(); ++e) {
-				int Effect, Param;
-				if (!pEffects->At(e).IsString() || !ParseEffect(pEffects->At(e).String(), Effect, Param) || IsSongEffect(Effect))
-					throw Problem(Format("%s: effects are written as in FamiTracker, like \"Q31\" or \"421\" (no speed, jump, skip or halt).",
-						Which.c_str()));
+				int Effect = EFF_NONE, Param = 0;
+				std::string Why;
+				if (!pEffects->At(e).IsString())
+					throw Problem(Which + ": effects are written as in FamiTracker, like \"Q31\" or \"047\".");
+				// Only what FamiTracker 0.4.6 has, and what this channel plays
+				if (!ParseChannelEffect(pEffects->At(e).String(), Info, S.Song.Speed, Effect, Param, Why))
+					throw Problem(Which + ": " + Why + " (the effects tool explains them all.)");
 				Note.Effects.push_back(std::make_pair(Effect, Param));
 			}
 		}
@@ -7192,6 +7196,18 @@ std::string StudyModuleTool(Session &S, const Json &Args)
 	return Out;
 }
 
+// effects: FamiTracker 0.4.6's effects and the techniques made with them
+std::string EffectsTool(Session &S, const Json &Args)
+{
+	const ChannelInfo *pChannel = 0;
+	if (Arg(Args, "channel") != 0)
+		pChannel = &S.Channel(ChannelArg(S, Args, "channel"));
+	std::string Text;
+	if (!EffectsText(StringArg(Args, "effect"), StringArg(Args, "technique"), pChannel, Text))
+		throw Problem(Text);
+	return Text;
+}
+
 std::string ReferencesTool(Session &S, const Json &Args)
 {
 	const std::string Action = Lowercase(StringArg(Args, "action", "list"));
@@ -8073,6 +8089,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
 		false);
 
+	AddTool("effects", "FamiTracker's effects",
+		"FamiTracker 0.4.6's pattern effects: what each does, which channels play it, how long it lasts and what it's good "
+		"for, and the classic techniques made with them (echo, chorus with Pxx, delayed vibrato, swing with Gxx, staccato with "
+		"Sxx, fades and swells, tremolo, sweeps, duty changes, slides and grace notes, arpeggio chords, a triangle kick, DPCM "
+		"tricks, noise drums). Only 0.4.6's effects play here: Lxx, Mxy, Oxx and Txy come from later FamiTrackers, and "
+		"write_notes refuses them. With nothing, the overview.",
+		Schema()
+			.Add("effect", Prop("string", "One effect, like \"Q\", \"Qxy\" or \"4\"."))
+			.Add("technique", Prop("string", "A technique, like \"swing\" or \"triangle kick\"."))
+			.Add("channel", ChannelProp("A channel: the effects it plays (with effect: H, I and J on the FDS are its modulator).")),
+		true);
+
 	AddTool("reference_sound", "Use a reference's sound",
 		"Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes (volume, arpeggio, "
 		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
@@ -8182,6 +8210,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "study_nsf") Result.Text = StudyNsfTool(S, Args);
 		else if (Name == "study_module") Result.Text = StudyModuleTool(S, Args);
 		else if (Name == "references") Result.Text = ReferencesTool(S, Args);
+		else if (Name == "effects") Result.Text = EffectsTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
 		else if (Name == "add_sample_drums") Result.Text = AddSampleDrumsTool(S, Args);
@@ -8247,7 +8276,9 @@ std::string ToolSet::Instructions()
 		"Drums: lighter in calm parts, busier toward a climax, a fill at each phrase end.\n"
 		"- Expression: polish adds accents and a vibrato that comes in on long notes; add_echo gives space; change a sound or "
 		"the duty between sections; instruments with life (the singing lead, strings and brass presets, or design_instrument "
-		"for a sound described in words).\n"
+		"for a sound described in words). The effects tool explains FamiTracker 0.4.6's effects and the techniques made with "
+		"them (swing with Gxx, a chorus with Pxx, staccato with Sxx, a kick on the triangle); only 0.4.6's effects play, so "
+		"none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style).\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "

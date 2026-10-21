@@ -51,7 +51,10 @@ progressions on bars, colors, chords heard in the notes) and
 with fills, a harmony voice, a counter-melody), used by
 `add_chords_and_bass`, `make_groove`, `add_drums`, `add_harmony`,
 `add_counter_melody` and `review_arrangement`; `design_instrument` turns words
-into sequences with `DesignPreset` in `Presets.cpp`. The server's
+into sequences with `DesignPreset` in `Presets.cpp`. `Source/Api/Effects.cpp`
+holds the `effects` tool's reference to 0.4.6's effects and techniques, and
+the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
+from the 0.4.6 channel handlers. The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
@@ -471,7 +474,7 @@ NSF export still uses the 2A03 driver. Touch points:
   must account for it.
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
-  standard headers), and 60 never include it: all of `APU/`, `Api/`, `Nsf/`
+  standard headers), and 62 never include it: all of `APU/`, `Api/`, `Nsf/`
   and `Transcribe/`, plus `Blip_Buffer.cpp`, `FFT/Fft.cpp`, `WaveFile.cpp`,
   `McpSocket.cpp`, `TutorialScript.cpp`, `resampler/`, `ExportTest/` and the
   `CustomExporter*` files. Turning PCH on breaks them.

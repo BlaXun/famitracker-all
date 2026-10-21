@@ -561,6 +561,7 @@
     <ClCompile Include="Source\Api\GameAudio.cpp" />
     <ClCompile Include="Source\Api\Jingles.cpp" />
     <ClCompile Include="Source\Api\SoundEffects.cpp" />
+    <ClCompile Include="Source\Api\Effects.cpp" />
     <ClCompile Include="Source\McpSocket.cpp" />
     <ClCompile Include="Source\McpConnection.cpp" />
     <ClCompile Include="Source\ChipSwitch.cpp" />
@@ -581,6 +582,7 @@
     <ClInclude Include="Source\Api\GameAudio.h" />
     <ClInclude Include="Source\Api\Jingles.h" />
     <ClInclude Include="Source\Api\SoundEffects.h" />
+    <ClInclude Include="Source\Api\Effects.h" />
     <ClInclude Include="Source\McpSocket.h" />
     <ClInclude Include="Source\McpConnection.h" />
     <ClInclude Include="Source\ChipSwitch.h" />

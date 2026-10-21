@@ -230,6 +230,12 @@ when ready.
   fire, thunder, birds, wings, an engine, an alarm and a heartbeat. Ambience
   loops seamlessly in the export for games.
 
+  FamiTracker 0.4.6's effects (asked: does Claude know them all?): the
+  `effects` tool explains each one and the classic techniques made with
+  them, and `write_notes` refuses effects 0.4.6 doesn't have (the `Lxx` and
+  `Oxx` of later versions) or that the channel can't play, saying what to
+  use instead.
+
   Ideas not built yet: FDS and N163 instruments, named versions to compare,
   listening help (loop, solo, mute), and recording through Claude.
 - **NSF import and a reference library (October 2026, on `next`):** NSF

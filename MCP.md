@@ -157,6 +157,7 @@ anything; close the dialog and ask again.
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
+| `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
@@ -295,6 +296,24 @@ steps, held notes struck again every so many beats, a soft echo after the
 note, a quick pitch flick, and a bass that thumps in from a fourth above.
 The kinds "bloom lead", "stepped lead", "click pluck", "echo pluck" and
 "thump bass" start from them.
+
+## Effects and techniques
+
+Claude knows FamiTracker 0.4.6's effects, and only those: `effects` says
+what each one does, which channels play it, whether it stays on until turned
+off with `00` and what it's good for, and how the classic techniques are
+made: an echo channel, a chorus with `Pxx` (P81 on a doubled part), vibrato
+that comes in after a beat, swing with `Gxx` on the off-beats, staccato with
+`Sxx`, fades and swells with `Axy`, tremolo, the 2A03 pulses' hardware sweep
+(`Hxy`, `Ixy`), duty changes with `Vxx`, slides and grace notes, chords as
+arpeggios, a kick on the triangle, DPCM tricks and noise drums.
+
+When Claude writes notes, an effect FamiTracker 0.4.6 doesn't have (`Lxx`,
+`Mxy`, `Oxx` and `Txy` come from later FamiTrackers; `5xy`, `8xx` and the
+like from MOD and XM) or one the channel can't play (a sweep on a VRC6
+pulse, tremolo on the triangle, `Vxx` beyond what a channel takes, `Gxx`
+longer than a row) is refused with what to use instead, so nothing silently
+does nothing. On the FDS channel, `Hxx`, `Ixx` and `Jxx` are its modulator.
 
 ## References: learning from NES soundtracks
 

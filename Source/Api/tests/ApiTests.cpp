@@ -27,6 +27,7 @@
 #include "../BridgeSocket.h"
 #include "../Chords.h"
 #include "../DpcmKit.h"
+#include "../Effects.h"
 #include "../GameAudio.h"
 #include "../Http.h"
 #include "../Jingles.h"
@@ -4629,6 +4630,107 @@ void TestDesignedSounds()
 		"A layer can last at most 4.18 s in a sound that loops");
 }
 
+ChannelInfo MakeChannel(const char *Name, const char *Chip, int Kind)
+{
+	ChannelInfo C;
+	C.Name = Name;
+	C.Chip = Chip;
+	C.Kind = Kind;
+	return C;
+}
+
+void TestEffects()
+{
+	const ChannelInfo Pulse = MakeChannel("Pulse 1", "2A03", KIND_PULSE), Vrc6 = MakeChannel("Pulse 1", "VRC6", KIND_PULSE);
+	const ChannelInfo Triangle = MakeChannel("Triangle", "2A03", KIND_TRIANGLE), Noise = MakeChannel("Noise", "2A03", KIND_NOISE);
+	const ChannelInfo Dpcm = MakeChannel("DPCM", "2A03", KIND_DPCM), Fds = MakeChannel("FDS", "FDS", KIND_OTHER);
+	const ChannelInfo Saw = MakeChannel("Sawtooth", "VRC6", KIND_SAWTOOTH), N163 = MakeChannel("Namco 1", "N163", KIND_OTHER);
+	int Effect = 0, Param = 0;
+	std::string Why;
+	// What FamiTracker 0.4.6 plays where
+	CHECK(ParseChannelEffect("Q31", Pulse, 6, Effect, Param, Why) && Effect == EFF_SLIDE_UP && Param == 0x31);
+	CHECK(ParseChannelEffect(" q 3 1 ", Pulse, 6, Effect, Param, Why) && Effect == EFF_SLIDE_UP);
+	CHECK(ParseChannelEffect("H71", Pulse, 6, Effect, Param, Why) && Effect == EFF_SWEEPUP);
+	CHECK(ParseChannelEffect("H10", Fds, 6, Effect, Param, Why) && Effect == EFF_FDS_MOD_DEPTH && Param == 0x10);
+	CHECK(ParseChannelEffect("I0F", Fds, 6, Effect, Param, Why) && Effect == EFF_FDS_MOD_SPEED_HI);
+	CHECK(ParseChannelEffect("J80", Fds, 6, Effect, Param, Why) && Effect == EFF_FDS_MOD_SPEED_LO);
+	CHECK(ParseChannelEffect("V03", Pulse, 6, Effect, Param, Why) && ParseChannelEffect("V07", Vrc6, 6, Effect, Param, Why));
+	CHECK(ParseChannelEffect("V01", Noise, 6, Effect, Param, Why) && ParseChannelEffect("V0F", N163, 6, Effect, Param, Why));
+	CHECK(ParseChannelEffect("Z00", Dpcm, 6, Effect, Param, Why) && Effect == EFF_DAC);
+	CHECK(ParseChannelEffect("G05", Pulse, 6, Effect, Param, Why) && ParseChannelEffect("S02", Dpcm, 6, Effect, Param, Why));
+	CHECK(ParseChannelEffect("047", Noise, 6, Effect, Param, Why) && ParseChannelEffect("443", Triangle, 6, Effect, Param, Why));
+	// What it doesn't, and what to use instead
+	CHECK(!ParseChannelEffect("L05", Pulse, 6, Effect, Param, Why));
+	CHECK_HAS(Why, "L05 (release the note after xx ticks) comes from later FamiTrackers (0CC-FamiTracker), not 0.4.6. End the note "
+		"with a release (===)");
+	CHECK(!ParseChannelEffect("O02", Pulse, 6, Effect, Param, Why) && Contains(Why, "hold the off-beat notes back with Gxx"));
+	CHECK(!ParseChannelEffect("K10", Pulse, 6, Effect, Param, Why) && Contains(Why, "K10 isn't one of FamiTracker 0.4.6's effects"));
+	CHECK(!ParseChannelEffect("844", Pulse, 6, Effect, Param, Why) && Contains(Why, "the NES plays in mono"));
+	CHECK(!ParseChannelEffect("E0A", Pulse, 6, Effect, Param, Why) && Contains(Why, "give the note a volume (1-15) instead"));
+	CHECK(!ParseChannelEffect("F06", Pulse, 6, Effect, Param, Why) && Contains(Why, "set_tempo"));
+	CHECK(!ParseChannelEffect("B00", Pulse, 6, Effect, Param, Why) && Contains(Why, "set_loop"));
+	CHECK(!ParseChannelEffect("H71", Vrc6, 6, Effect, Param, Why));
+	CHECK_HAS(Why, "Hxy and Ixy start the sweep of the 2A03's pulses, which VRC6 Pulse 1 doesn't have");
+	CHECK(!ParseChannelEffect("H81", Pulse, 6, Effect, Param, Why) && Contains(Why, "x is how often the sweep moves (0-7)"));
+	CHECK(!ParseChannelEffect("I70", Pulse, 6, Effect, Param, Why));
+	CHECK(!ParseChannelEffect("J10", Pulse, 6, Effect, Param, Why) && Contains(Why, "the FDS's modulator"));
+	CHECK(!ParseChannelEffect("V04", Pulse, 6, Effect, Param, Why) && Contains(Why, "2A03 Pulse 1 takes V00-V03 (12.5%, 25%, 50%, 75%)."));
+	CHECK(!ParseChannelEffect("V00", Triangle, 6, Effect, Param, Why) && Contains(Why, "2A03 Triangle has none to change"));
+	CHECK(!ParseChannelEffect("V01", Saw, 6, Effect, Param, Why));
+	CHECK(!ParseChannelEffect("744", Triangle, 6, Effect, Param, Why) && Contains(Why, "The triangle has no volume"));
+	CHECK(!ParseChannelEffect("A20", Triangle, 6, Effect, Param, Why));
+	CHECK(!ParseChannelEffect("A22", Pulse, 6, Effect, Param, Why) && Contains(Why, "one way at a time"));
+	CHECK(!ParseChannelEffect("047", Dpcm, 6, Effect, Param, Why) && Contains(Why, "pitch effects don't reach it"));
+	CHECK(!ParseChannelEffect("Z00", Pulse, 6, Effect, Param, Why) && Contains(Why, "the DPCM channel's"));
+	CHECK(!ParseChannelEffect("Z80", Dpcm, 6, Effect, Param, Why));
+	CHECK(!ParseChannelEffect("H40", Fds, 6, Effect, Param, Why) && Contains(Why, "H00 to H3F"));
+	CHECK(!ParseChannelEffect("G06", Pulse, 6, Effect, Param, Why));
+	CHECK_HAS(Why, "at speed 6 a row lasts 6, so G06 would push it past its row. Use G01-G05");
+	CHECK(!ParseChannelEffect("Q30", Pulse, 6, Effect, Param, Why) && Contains(Why, "Q30 slides nowhere"));
+	CHECK(!ParseChannelEffect("Q3", Pulse, 6, Effect, Param, Why) && Contains(Why, "a letter or digit and two hex digits"));
+	CHECK(!ParseChannelEffect("QZZ", Pulse, 6, Effect, Param, Why));
+
+	// The reference: the overview, an effect, a technique, what a channel plays
+	std::string Text;
+	CHECK(EffectsText("", "", 0, Text) && Contains(Text, "FamiTracker 0.4.6's effects") && Contains(Text, "Techniques: echo, chorus"));
+	CHECK(EffectsText("q", "", 0, Text) && Contains(Text, "Qxy note slide up: Slides from the note up y semitones"));
+	CHECK(EffectsText("Hxy", "", 0, Text) && Contains(Text, "Hxy hardware sweep up") && Contains(Text, "On the FDS channel, Hxx is its modulator"));
+	CHECK(EffectsText("H", "", &Fds, Text) && Contains(Text, "Hxx FDS modulation depth") && !Contains(Text, "sweep"));
+	CHECK(EffectsText("", "swing", 0, Text) && Contains(Text, "Swing: Delay every off-beat note"));
+	CHECK(EffectsText("", "shuffle", 0, Text) && Contains(Text, "Swing:"));
+	CHECK(EffectsText("", "Triangle Kick", 0, Text) && Contains(Text, "Triangle kick:"));
+	CHECK(!EffectsText("", "moonwalk", 0, Text) && Contains(Text, "No technique \"moonwalk\". The techniques: echo"));
+	CHECK(!EffectsText("L", "", 0, Text) && Contains(Text, "comes from later FamiTrackers"));
+	CHECK(EffectsText("F", "", 0, Text) && Contains(Text, "set_tempo"));
+	CHECK(EffectsText("", "", &Triangle, Text));
+	CHECK_HAS(Text, "2A03 Triangle plays 0xy, 1xx, 2xx, 3xx, 4xy, Gxx, Pxx, Qxy, Rxy and Sxx. The triangle has no volume");
+	CHECK(EffectsText("", "", &Dpcm, Text) && Contains(Text, "2A03 DPCM plays Gxx, Sxx, Wxx, Xxx, Yxx and Zxx."));
+	CHECK(EffectsText("", "", &Pulse, Text) && Contains(Text, "Hxy, Ixy") && Contains(Text, "Vxx: V00-V03."));
+	CHECK(EffectsText("", "", &Fds, Text) && Contains(Text, "Hxx, ") && Contains(Text, "Ixx and Jxx.") && !Contains(Text, "Hxy"));
+	for (size_t i = 0; i < EffectReference().size(); ++i)
+		Check(std::string(EffectReference()[i].Uses).size() > 20, EffectReference()[i].Form, __LINE__);
+
+	// In write_notes: refused with what to use, and the tool
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("write_notes", Parse("{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, "
+		"\"effects\": [\"L05\"]}]}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "Note 1: L05 (release the note after xx ticks) comes from later FamiTrackers");
+	CHECK_HAS(Result.Text, "(the effects tool explains them all.)");
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, "
+		"\"effects\": [\"I71\"]}]}"));
+	CHECK(Result.IsError && Contains(Result.Text, "which VRC6 Pulse 1 doesn't have"));
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"Pulse 1\", \"instrument\": \"Square\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-4\", \"beats\": 2, \"effects\": [\"I71\", \"V01\"]}]}"));
+	CHECK(!Result.IsError && HasEffectAt(Song, 0, 0, EFF_SWEEPDOWN, 0x71) && HasEffectAt(Song, 0, 0, EFF_DUTY_CYCLE, 1));
+	CHECK_HAS(Tools.Call("effects", Parse("{}")).Text, "FamiTracker 0.4.6's effects");
+	CHECK_HAS(Tools.Call("effects", Parse("{\"channel\": \"Triangle\"}")).Text, "2A03 Triangle plays 0xy");
+	CHECK_HAS(Tools.Call("effects", Parse("{\"effect\": \"V\", \"channel\": \"Noise\"}")).Text, "Vxx timbre");
+	CHECK(Tools.Call("effects", Parse("{\"technique\": \"moonwalk\"}")).IsError);
+}
+
 void TestMmc5()
 {
 	// An MMC5 song: two more pulses, which play the 2A03's instruments and presets
@@ -5426,6 +5528,7 @@ int main()
 	TestMmc5();
 	TestSoundEffects();
 	TestDesignedSounds();
+	TestEffects();
 	TestTiming2();
 	TestLoops();
 	TestOgg();
