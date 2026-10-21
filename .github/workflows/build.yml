@@ -56,6 +56,14 @@ jobs:
           cmake --build build/api --config Release 2>&1 | tee -a api-build.log
           ctest --test-dir build/api -C Release --output-on-failure 2>&1 | tee api-test.log
 
+      - name: Build and test the NSF importer
+        if: matrix.configuration == 'Release'
+        shell: bash
+        run: |
+          cmake -S Source/Nsf -B build/nsf -A Win32 2>&1 | tee nsf-build.log
+          cmake --build build/nsf --config Release 2>&1 | tee -a nsf-build.log
+          ctest --test-dir build/nsf -C Release --output-on-failure 2>&1 | tee nsf-test.log
+
       - name: Upload wav2ftm.exe
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@v4
@@ -73,6 +81,15 @@ jobs:
           path: build/api/Release/famitracker-mcp.exe
           if-no-files-found: error
 
+      # Turns an NSF's tracks into a FamiTracker text module, or studies them (Source/Nsf)
+      - name: Upload nsf2ftm.exe
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsf2ftm-Win32
+          path: build/nsf/Release/nsf2ftm.exe
+          if-no-files-found: error
+
       # Publishes compiler diagnostics, toolchain details and facts about the built exe
       # as a check run named "Build report (<config> Win32)", readable through the
       # GitHub checks API (gh api repos/<owner>/<repo>/commits/<sha>/check-runs).
@@ -85,7 +102,7 @@ jobs:
         run: |
           $exe = "build/Win32/$env:CONFIGURATION/FamiTracker.exe"
           $diag = @()
-          $logs = @('msbuild.log', 'transcribe-build.log', 'api-build.log') | Where-Object { Test-Path $_ }
+          $logs = @('msbuild.log', 'transcribe-build.log', 'api-build.log', 'nsf-build.log') | Where-Object { Test-Path $_ }
           if ($logs) {
             $diag = Get-Content $logs |
               Where-Object { $_ -match ':\s+(fatal )?(error|warning) [A-Z]+[0-9]+' } |
@@ -128,6 +145,9 @@ jobs:
           if (Test-Path api-test.log) {
             $tests += @(Get-Content api-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed' } | ForEach-Object { "Claude Code connection: $_" })
           }
+          if (Test-Path nsf-test.log) {
+            $tests += @(Get-Content nsf-test.log | Where-Object { $_ -match 'FAIL|checks,|tests passed|tests failed' } | ForEach-Object { "NSF importer: $_" })
+          }
           $text = @('## Toolchain and binary') + $info + @('', '## Transcription engine tests') + $tests + @('', '## Diagnostics by code') + $byCode + @('', '## Unique diagnostics') + $diag
           $text = $text -join "`n"
           if ($text.Length -gt 60000) { $text = $text.Substring(0, 60000) + "`n... (truncated)" }
@@ -164,6 +184,13 @@ jobs:
           cmake -S Source/Api -B build/api -DCMAKE_BUILD_TYPE=Release
           cmake --build build/api -j 4
           ctest --test-dir build/api --output-on-failure
+
+      # The NSF importer: the 6502, the chips, the conversion and the studies (Source/Nsf)
+      - name: NSF importer tests
+        run: |
+          cmake -S Source/Nsf -B build/nsf -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/nsf -j 4
+          ctest --test-dir build/nsf --output-on-failure
 
       # The clip library and the piano roll's note editing against stand-ins for MFC (Source/Tests)
       - name: Clips and note editing tests
@@ -205,6 +232,13 @@ jobs:
         with:
           name: famitracker-mcp-Win32
           path: dist/famitracker-mcp
+
+      - name: Download nsf2ftm.exe
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: nsf2ftm-Win32
+          path: dist/nsf2ftm
 
       - name: Package and publish
         env:
