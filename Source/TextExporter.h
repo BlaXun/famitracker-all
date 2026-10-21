@@ -30,5 +30,7 @@ public:
 
 	// returns an empty string on success, otherwise returns a descriptive error
 	const CString& ImportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc);
+	// The same for a module's text in memory (an imported NSF's)
+	const CString& ImportText(const CString &Text, CFamiTrackerDoc *pDoc);
 	const CString& ExportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc);
 };

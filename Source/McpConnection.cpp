@@ -33,6 +33,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "Api/DpcmKit.h"
 #include "Api/Http.h"
 #include "Api/Json.h"
 #include "Api/Mcp.h"
@@ -43,6 +44,7 @@
 #include "Api/Tools.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
+#include <shlobj.h>
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -50,11 +52,13 @@
 #include "PatternEditor.h"
 #include "SoundGen.h"
 #include "TrackerChannel.h"
+#include "ChannelMap.h"
 #include "Action.h"
 #include "ChipSwitch.h"
 #include "Clips.h"
 #include "InsertRecording.h"
 #include "InstrumentLibrary.h"
+#include "ImportNsfDlg.h"
 #include "McpSocket.h"
 #include "McpConnection.h"
 #include "VoiceEffectDlg.h"
@@ -788,6 +792,130 @@ public:
 		return true;
 	}
 
+	// The reference library: Documents\FamiTracker references (Api/References.h)
+	CString LibraryFolder(bool Create)
+	{
+		TCHAR Documents[MAX_PATH];
+		if (FAILED(SHGetFolderPath(NULL, CSIDL_PERSONAL | (Create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, Documents)))
+			return CString();
+		CString Folder(Documents);
+		Folder += _T("\\FamiTracker references");
+		if (Create)
+			CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
+		return Folder;
+	}
+
+	static bool PlainName(const std::string &Name)
+	{
+		return !Name.empty() && Name.find_first_of("\\/:*?\"<>|") == std::string::npos && Name != "." && Name != "..";
+	}
+
+	bool ListLibrary(std::vector<std::string> &Names, std::string &Error)
+	{
+		Names.clear();
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty()) {
+			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			return false;
+		}
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = FindFirstFile(Folder + _T("\\*.json"), &Found);
+		if (hFind == INVALID_HANDLE_VALUE)
+			return true;	// no folder or no references yet
+		do {
+			if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+				Names.push_back(Utf8(Found.cFileName));
+		} while (FindNextFile(hFind, &Found));
+		FindClose(hFind);
+		return true;
+	}
+
+	bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &Error)
+	{
+		Bytes.clear();
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty() || !PlainName(Name))
+			return false;
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		if (GetFileAttributes(Full) == INVALID_FILE_ATTRIBUTES)
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("rb")) != 0 || pFile == NULL) {
+			Error = "Couldn't read " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		char Buffer[4096];
+		size_t Read;
+		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < 4 * 1024 * 1024)
+			Bytes.append(Buffer, Read);
+		fclose(pFile);
+		return true;
+	}
+
+	bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error)
+	{
+		if (!PlainName(Name)) {
+			Error = "A reference's file name has no folders.";
+			return false;
+		}
+		const CString Folder = LibraryFolder(true);
+		if (Folder.IsEmpty()) {
+			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			return false;
+		}
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("wb")) != 0 || pFile == NULL) {
+			Error = "Couldn't write " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		const size_t Written = fwrite(Bytes.data(), 1, Bytes.size(), pFile);
+		const bool Closed = fclose(pFile) == 0;
+		if (Written != Bytes.size() || !Closed) {
+			DeleteFile(Full);
+			Error = "Couldn't write all of " + Utf8(Full) + " (is the disk full?).";
+			return false;
+		}
+		Path = Utf8(Full);
+		return true;
+	}
+
+	bool DeleteLibrary(const std::string &Name, std::string &Error)
+	{
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty() || !PlainName(Name)) {
+			Error = "There's no such reference.";
+			return false;
+		}
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		if (!DeleteFile(Full)) {
+			Error = "Couldn't delete " + Utf8(Full) + ".";
+			return false;
+		}
+		return true;
+	}
+
+	// import_nsf: the module replaces the song, as File > Import NSF does
+	bool OpenText(const std::string &Text, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL) {
+			Error = "No song is open in FamiTracker.";
+			return false;
+		}
+		if (!m_bOwnDialog && !m_pMain->IsWindowEnabled()) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		Stop();
+		const CString Problem = OpenModuleText(m_pMain, pDoc, CString(Text.c_str()), CString());
+		if (!Problem.IsEmpty()) {
+			Error = Utf8(Problem);
+			return false;
+		}
+		return true;
+	}
+
 	// Edit > Sound effect from your voice: make_sound_effect with the take
 	CString FreeSoundName(const CString &Base)
 	{
@@ -965,6 +1093,82 @@ public:
 		const int Index = AddVrc7PatchInstrument(Doc(), Patch, Ansi(Name), Problem);
 		if (Index < 0)
 			Error = Utf8(Problem);
+		return Index;
+	}
+
+	int AddDpcmKit(const ftapi::DpcmKit &Kit, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Name = Ansi(Kit.Name);
+		const int Existing = FindNamedInstrument(pDoc, INST_2A03, Name);
+		if (Existing >= 0)
+			return Existing;
+		// The samples: ones of the same name and size are reused
+		std::vector<int> Slots;
+		std::vector<int> Taken;
+		unsigned int Bytes = 0;
+		for (size_t s = 0; s < Kit.Samples.size(); ++s) {
+			const ftapi::DpcmSample &Sample = Kit.Samples[s];
+			int Slot = -1;
+			for (int i = 0; i < MAX_DSAMPLES && Slot < 0; ++i) {
+				const CDSample *pSample = pDoc->GetSample(static_cast<unsigned int>(i));
+				if (pSample->GetSize() == Sample.Data.size() && CString(pSample->GetName()) == Ansi(Sample.Name))
+					Slot = i;
+			}
+			if (Slot < 0) {
+				Bytes += static_cast<unsigned int>(Sample.Data.size());
+				for (int i = 0; i < MAX_DSAMPLES && Slot < 0; ++i)
+					if (!pDoc->IsSampleUsed(static_cast<unsigned int>(i)) && pDoc->GetSample(static_cast<unsigned int>(i))->GetSize() == 0 &&
+						std::find(Taken.begin(), Taken.end(), i) == Taken.end())
+						Slot = i;
+				if (Slot < 0) {
+					Error = "There's no room for more DPCM samples (a song has at most 64).";
+					return -1;
+				}
+				Taken.push_back(Slot);
+			}
+			Slots.push_back(Slot);
+		}
+		if (pDoc->GetTotalSampleSize() + Bytes > static_cast<unsigned int>(MAX_SAMPLE_SPACE)) {
+			Error = "The song's DPCM samples would take more room than FamiTracker has.";
+			return -1;
+		}
+		CInstrument *pNew = theApp.GetChannelMap()->GetChipInstrument(SNDCHIP_NONE);
+		if (pNew == NULL) {
+			Error = "FamiTracker has no 2A03 instruments.";
+			return -1;
+		}
+		pNew->SetName(Name);
+		const int Index = pDoc->AddInstrument(pNew);
+		if (Index == INVALID_INSTRUMENT) {
+			pNew->Release();
+			Error = "There are no free instrument slots left (a song has at most 64).";
+			return -1;
+		}
+		for (size_t s = 0; s < Kit.Samples.size(); ++s) {
+			CDSample *pSample = pDoc->GetSample(static_cast<unsigned int>(Slots[s]));
+			if (std::find(Taken.begin(), Taken.end(), Slots[s]) == Taken.end())
+				continue;	// reused
+			const std::vector<unsigned char> &Data = Kit.Samples[s].Data;
+			pSample->Allocate(static_cast<unsigned int>(Data.size()), reinterpret_cast<const char*>(&Data[0]));
+			pSample->SetName(static_cast<LPCSTR>(CStringA(Ansi(Kit.Samples[s].Name))));
+		}
+		CInstrument2A03 *pInstrument = static_cast<CInstrument2A03*>(pDoc->GetInstrument(static_cast<unsigned int>(Index)));	// retained
+		if (pInstrument != NULL) {
+			for (size_t k = 0; k < Kit.Keys.size(); ++k) {
+				const ftapi::DpcmKey &Key = Kit.Keys[k];
+				const int Octave = Key.Pitch / 12, Note = Key.Pitch % 12;
+				pInstrument->SetSample(Octave, Note, static_cast<char>(Slots[static_cast<size_t>(Key.Sample)] + 1));
+				pInstrument->SetSamplePitch(Octave, Note, static_cast<char>(Key.Rate & 15));
+				pInstrument->SetSampleLoop(Octave, Note, false);
+				pInstrument->SetSampleDeltaValue(Octave, Note, static_cast<char>(Key.Delta));
+			}
+			pInstrument->Release();
+		}
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 		return Index;
 	}
 

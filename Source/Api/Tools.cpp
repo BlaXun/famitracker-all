@@ -22,14 +22,19 @@
 #include "Tools.h"
 #include "Arrange.h"
 #include "Chords.h"
+#include "DpcmKit.h"
 #include "GameAudio.h"
 #include "Jingles.h"
 #include "Music.h"
 #include "Ogg.h"
 #include "Picture.h"
 #include "Presets.h"
+#include "References.h"
 #include "Song.h"
 #include "SoundEffects.h"
+#include "../Nsf/Import.h"
+#include "../Nsf/NsfFile.h"
+#include "../Nsf/Study.h"
 #include "../Transcribe/Transcribe.h"
 
 #include <algorithm>
@@ -38,6 +43,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -126,6 +133,20 @@ Json ChannelProp(const char *Description)
 }
 
 // One channel, several in a list, or "all"
+// Words, as a list or as one text with commas
+Json WordListProp(const char *Description)
+{
+	Json P = Prop("array", Description);
+	Json Types = Json::MakeArray();
+	Types.Push("array");
+	Types.Push("string");
+	P.Set("type", Types);
+	Json Item = Json::MakeObject();
+	Item.Set("type", "string");
+	P.Set("items", Item);
+	return P;
+}
+
 Json ChannelListProp(const char *Description)
 {
 	Json P = ChannelProp(Description);
@@ -479,6 +500,24 @@ void BarRange(const Session &S, const Json &Args, int &From, int &To, bool PastE
 	To = IntArg(Args, "to_bar", std::max(From, S.Time.BarCount()), 1, Last);
 	if (To < From)
 		throw Problem("to_bar comes before from_bar.");
+}
+
+// The sampled drum kit's instrument (DpcmKit.h), added with its samples when
+// the song has none
+int SampleDrumsInstrument(Session &S)
+{
+	const DpcmKit &Kit = SampleDrums();
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(Kit.Name) && S.Song.Instruments[i].Chip == "2A03")
+			return S.Song.Instruments[i].Index;
+	std::string Error;
+	const int Index = S.Host().AddDpcmKit(Kit, Error);
+	if (Index < 0)
+		throw Problem("The sampled drums couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	S.Refresh();
+	S.Remarks.push_back(Format("Added the instrument %s: sampled drums for the DPCM channel (kick on C-3, snare on D-3, low tom on "
+		"F-3, high tom on A-3).", InstrumentLabel(S.Song, Index).c_str()));
+	return Index;
 }
 
 // An instrument for notes on a channel: one in the song (by name, or by its
@@ -1100,8 +1139,7 @@ std::string WriteNotes(Session &S, const Json &Args)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
 	const ChannelInfo &Info = S.Channel(Channel);
-	if (Info.Kind == KIND_DPCM)
-		throw Problem("The DPCM channel plays samples; write notes on another channel.");
+	const bool Dpcm = Info.Kind == KIND_DPCM;
 	const Json *pNotes = Arg(Args, "notes");
 	if (pNotes == 0 || !pNotes->IsArray())
 		throw Problem("notes should be a list of notes like {\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}.");
@@ -1148,9 +1186,20 @@ std::string WriteNotes(Session &S, const Json &Args)
 		Note.Rows = Rows;
 		const std::string Pitch = StringArg(Item, "pitch");
 		if (Pitch.empty())
-			throw Problem(Which + " needs a pitch, like \"C-4\" or \"F#3\"" + (Noise ? " (on the noise channel: kick, snare, hihat or 0-# to F-#)." : "."));
+			throw Problem(Which + " needs a pitch, like \"C-4\" or \"F#3\"" + (Noise ? " (on the noise channel: kick, snare, hihat or 0-# to F-#)." :
+				(Dpcm ? " (on the DPCM channel: kick, snare, low tom or high tom, from add_sample_drums)." : ".")));
 		std::string Drum;
-		if (Noise) {
+		if (Dpcm) {
+			const DpcmKey *pKey = FindSampleDrum(Pitch);
+			if (pKey != 0) {
+				Note.Pitch = pKey->Pitch;
+				Drum = "sample drums";
+			}
+			else if (!ParsePitch(Pitch, Note.Pitch))
+				throw Problem(Format("%s: \"%s\" isn't a drum or a key. On the DPCM channel: kick, snare, low tom or high tom (the "
+					"sampled drums of add_sample_drums), or the key a sample is on, like C-3.", Which.c_str(), Pitch.c_str()));
+		}
+		else if (Noise) {
 			if (!ParseNoisePitch(Pitch, Note.Pitch, Drum))
 				throw Problem(Format("%s: \"%s\" isn't a noise sound. Use kick, snare, hihat, open hihat or a noise pitch 0-# to F-#.",
 					Which.c_str(), Pitch.c_str()));
@@ -1162,6 +1211,8 @@ std::string WriteNotes(Session &S, const Json &Args)
 			Note.Instrument = InstrumentArg(S, Item, "instrument", Channel, NO_INSTRUMENT);
 		else if (DefaultInstrument != NO_INSTRUMENT)
 			Note.Instrument = DefaultInstrument;
+		else if (Drum == "sample drums")
+			Note.Instrument = SampleDrumsInstrument(S);
 		else if (!Drum.empty())
 			Note.Instrument = ResolveInstrument(S, Drum, Channel);
 		if (Arg(Item, "volume") != 0)
@@ -1209,6 +1260,10 @@ std::string WriteNotes(Session &S, const Json &Args)
 		throw Problem(Format("A note starts before from_bar %d.", From));
 	if (LastRow > End)
 		End = LastRow;
+	// A sample plays to its end: hits ring until the next one, rather than being cut
+	if (Dpcm)
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Rows = (i + 1 < Notes.size() ? Notes[i + 1].Row : End) - Notes[i].Row;
 
 	// The instrument when none was named: what the channel played with
 	const int Playing = InstrumentAt(S, Channel, First);
@@ -1643,13 +1698,24 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	static const int MOTION_VALUES[] = { DUTY_STILL, DUTY_STILL, DUTY_SWEEP, DUTY_SWEEP, DUTY_WOBBLE, DUTY_WOBBLE, DUTY_FADE };
 	static const char *const VIBRATOS[] = { "none", "gentle", "medium", "strong" };
 	static const int VIBRATO_DEPTHS[] = { 0, 1, 2, 3 };
-	static const char *const PITCHES_WORDS[] = { "none", "blip", "scoop", "drop" };
-	static const int PITCH_VALUES[] = { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP };
+	static const char *const PITCHES_WORDS[] = { "none", "blip", "scoop", "drop", "flick", "thump" };
+	static const int PITCH_VALUES[] = { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP, PITCH_FLICK, PITCH_THUMP };
+	static const char *const DECAY_STYLES[] = { "smooth", "steps", "stepped" };
+	static const int DECAY_STYLE_VALUES[] = { DECAY_SMOOTH, DECAY_STEPS, DECAY_STEPS };
 	static const char *const TONES[] = { "dark", "normal", "bright" };
 	static const int TONE_VALUES[] = { -1, 0, 1 };
 	static const char *const LENGTHS[] = { "short", "normal", "long" };
 	static const int LENGTH_VALUES[] = { -1, 0, 1 };
-	D.Attack = WordArg(Args, "attack", D.Attack, ATTACKS, ATTACK_FRAMES, 5, 60);
+	if (Lowercase(StringArg(Args, "attack")) == "bloom") {	// from about two thirds of the peak, in two frames
+		D.Attack = 2;
+		D.AttackFrom = std::max(1, (IntArg(Args, "volume", D.Peak, 1, 15) * 2 + 1) / 3);
+	}
+	else
+		D.Attack = WordArg(Args, "attack", D.Attack, ATTACKS, ATTACK_FRAMES, 5, 60);
+	D.AttackFrom = IntArg(Args, "attack_from", D.AttackFrom, 0, 15);
+	D.DecayStyle = WordArg(Args, "decay_style", D.DecayStyle, DECAY_STYLES, DECAY_STYLE_VALUES, 3, 0);
+	D.Click = BoolArg(Args, "click", D.Click);
+	D.Echo = BoolArg(Args, "echo", D.Echo);
 	D.Decay = WordArg(Args, "decay", D.Decay, DECAYS, DECAY_FRAMES, 4, 120);
 	D.Peak = IntArg(Args, "volume", D.Peak, 1, 15);
 	if (Arg(Args, "decay") != 0 && D.Decay == 0 && Arg(Args, "sustain") == 0)
@@ -1665,7 +1731,13 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
 		D.VibratoDelay = std::max(0, std::min(200, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
 	}
-	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 4, 0);
+	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 6, 0);
+	if (Arg(Args, "restrike_beats") != 0) {
+		const double Beats = NumberArg(Args, "restrike_beats", 0.5, 0.0, 4.0);
+		const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
+		D.Restrike = Beats <= 0 ? 0 : std::max(4, std::min(60, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+	}
 	const std::string Chord = Squeezed(StringArg(Args, "arpeggio"));
 	if (!Chord.empty()) {
 		static const struct { const char *Word; std::initializer_list<int> Tones; } CHORDS[] = {
@@ -6052,6 +6124,425 @@ std::string SaveTool(Session &S, const Json &Args)
 	return Message;
 }
 
+// The reference library: tracks studied from the user's NSF files, to lean on
+
+const int MAX_STUDIED = 24;			// tracks a study_nsf call studies; each takes a moment
+const char *const REFERENCE_EXTENSION = ".json";
+
+// Today, for when a reference was studied: "2026-10-21"
+std::string Today()
+{
+	const std::time_t Now = std::time(0);
+	std::tm Local;
+#ifdef _MSC_VER
+	if (localtime_s(&Local, &Now) != 0)
+		return std::string();
+#else
+	if (localtime_r(&Now, &Local) == 0)
+		return std::string();
+#endif
+	char Buffer[16];
+	std::strftime(Buffer, sizeof(Buffer), "%Y-%m-%d", &Local);
+	return Buffer;
+}
+
+// An NSF named in a tool's arguments, read with its playlist
+nsf::NsfFile ReadNsfArg(Session &S, const Json &Args, std::string &Path)
+{
+	Path = WindowsPath(StringArg(Args, "path"));
+	if (Path.empty())
+		throw Problem("Give the path of the NSF file (\"path\"), as Windows writes it: C:\\Users\\Name\\Music\\game.nsf.");
+	nsf::NsfFile File;
+	std::string Error;
+	if (!nsf::ReadNsfFile(S.Host().LocalPath(Path), File, Error))
+		throw Problem("The NSF " + Path + " couldn't be read: " + Error + ". Give the path of an NSF or NSFe file on the user's "
+			"computer as Windows writes it, like C:\\Users\\Name\\Music\\game.nsf.");
+	return File;
+}
+
+// The tracks a tool's "tracks" asks for (from 0): "music" (the default), "all", or "1,3-5"
+std::vector<int> NsfTracksArg(const nsf::NsfFile &File, const Json &Args, std::vector<nsf::TrackSurvey> *pSurvey)
+{
+	const std::string Asked = Lowercase(StringArg(Args, "tracks", "music"));
+	std::vector<int> Tracks;
+	if (Asked.empty() || Asked == "music") {
+		const std::vector<nsf::TrackSurvey> Survey = nsf::SurveyTracks(File);
+		for (size_t i = 0; i < Survey.size(); ++i)
+			if (Survey[i].Kind == "music")
+				Tracks.push_back(Survey[i].Track);
+		if (pSurvey != 0)
+			*pSurvey = Survey;
+		if (Tracks.empty())
+			throw Problem("None of the NSF's tracks sounds like music (they're short jingles or sound effects). Name the tracks to "
+				"use with \"tracks\", like \"1,3-5\".");
+		return Tracks;
+	}
+	std::string Error;
+	if (!nsf::ParseTrackList(Asked, File.Songs, Tracks, Error))
+		throw Problem("tracks: " + Error + ". Give \"music\", \"all\" or numbers from 1, like \"1,3-5\".");
+	return Tracks;
+}
+
+// The library's references, read from their files; Broken counts the files that aren't references
+std::vector<Reference> ReadLibrary(Session &S, int *pBroken = 0)
+{
+	std::vector<std::string> Names;
+	std::string Error;
+	if (!S.Host().ListLibrary(Names, Error))
+		throw Problem(Error.empty() ? "The reference library couldn't be read." : Error);
+	std::sort(Names.begin(), Names.end());
+	std::vector<Reference> Out;
+	int Broken = 0;
+	for (size_t i = 0; i < Names.size(); ++i) {
+		const std::string &Name = Names[i];
+		if (Name.size() <= std::strlen(REFERENCE_EXTENSION) ||
+			Lowercase(Name.substr(Name.size() - std::strlen(REFERENCE_EXTENSION))) != REFERENCE_EXTENSION)
+			continue;
+		std::string Bytes, Problem2;
+		Reference R;
+		if (!S.Host().ReadLibrary(Name, Bytes, Problem2) || !ReadReferenceFile(Bytes, R, Problem2)) {
+			++Broken;
+			continue;
+		}
+		R.Id = Name.substr(0, Name.size() - std::strlen(REFERENCE_EXTENSION));	// the file's name is what finds it
+		Out.push_back(R);
+	}
+	if (pBroken != 0)
+		*pBroken = Broken;
+	return Out;
+}
+
+Reference FindReference(Session &S, const std::string &Id)
+{
+	if (Id.empty())
+		throw Problem("Give the reference's id (\"reference\"), as references lists them.");
+	const std::vector<Reference> All = ReadLibrary(S);
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Lowercase(All[i].Id) == Lowercase(Id))
+			return All[i];
+	// Close enough: a unique one whose id or title holds the words
+	std::vector<size_t> Near;
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Lowercase(All[i].Id).find(Lowercase(Id)) != std::string::npos || Lowercase(All[i].Title) == Lowercase(Id))
+			Near.push_back(i);
+	if (Near.size() == 1)
+		return All[Near[0]];
+	throw Problem("There's no reference \"" + Id + "\" in the library" + (All.empty() ? std::string(" (it's empty: study_nsf adds "
+		"references from NSF files)") : ". references lists them") + ".");
+}
+
+void SaveReference(Session &S, const Reference &R, std::string &Path)
+{
+	std::string Error;
+	if (!S.Host().SaveLibrary(R.Id + REFERENCE_EXTENSION, ReferenceFile(R), Path, Error))
+		throw Problem("The reference couldn't be saved: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+}
+
+std::vector<std::string> TagsArg(const Json &Args, const char *Name)
+{
+	std::vector<std::string> Tags;
+	const Json *pValue = Arg(Args, Name);
+	if (pValue == 0)
+		return Tags;
+	std::vector<std::string> Raw;
+	if (pValue->IsArray()) {
+		for (size_t i = 0; i < pValue->Size(); ++i)
+			if (pValue->At(i).IsString())
+				Raw.push_back(pValue->At(i).String());
+	}
+	else if (pValue->IsString()) {
+		std::string Part;
+		const std::string &Text = pValue->String();
+		for (size_t i = 0; i <= Text.size(); ++i) {
+			if (i == Text.size() || Text[i] == ',') {
+				Raw.push_back(Part);
+				Part.clear();
+			}
+			else
+				Part += Text[i];
+		}
+	}
+	else
+		throw Problem(Format("%s should be a list of words.", Name));
+	for (size_t i = 0; i < Raw.size(); ++i) {
+		const std::string Tag = Lowercase(Trim(Raw[i]));
+		if (!Tag.empty() && std::find(Tags.begin(), Tags.end(), Tag) == Tags.end())
+			Tags.push_back(Tag);
+	}
+	return Tags;
+}
+
+std::string StudyNsfTool(Session &S, const Json &Args)
+{
+	std::string Path;
+	const nsf::NsfFile File = ReadNsfArg(S, Args, Path);
+	if (Lowercase(StringArg(Args, "tracks")) == "list") {
+		const std::vector<nsf::TrackSurvey> Survey = nsf::SurveyTracks(File);
+		std::string Out = nsf::DescribeNsf(File) + "\nWhat the tracks are:\n";
+		for (size_t i = 0; i < Survey.size(); ++i) {
+			const nsf::TrackSurvey &t = Survey[i];
+			Out += Format("  %d. %s: %s", t.Track + 1, ValidUtf8(t.Title).c_str(), t.Kind.c_str());
+			if (t.Seconds > 0)
+				Out += Format(", %s s", FormatNumber(static_cast<int>(t.Seconds * 10 + 0.5) / 10.0).c_str());
+			if (t.LoopSeconds > 0)
+				Out += Format(" (a loop of %s s)", FormatNumber(static_cast<int>(t.LoopSeconds * 10 + 0.5) / 10.0).c_str());
+			Out += "\n";
+		}
+		return ValidUtf8(Out) + "Study the music with tracks \"music\", or name the tracks.";
+	}
+	std::vector<int> Tracks = NsfTracksArg(File, Args, 0);
+	std::string Left;
+	if (static_cast<int>(Tracks.size()) > MAX_STUDIED) {
+		Left = Format(" %d more music tracks weren't studied this time: name them with tracks (\"%d-%d\").",
+			static_cast<int>(Tracks.size()) - MAX_STUDIED, Tracks[MAX_STUDIED] + 1, Tracks.back() + 1);
+		Tracks.resize(MAX_STUDIED);
+	}
+	nsf::StudyOptions Options;
+	std::vector<nsf::StudiedTrack> Studied;
+	std::string Error;
+	if (!nsf::StudyTracks(File, Tracks, Options, Studied, Error))
+		throw Problem("The study stopped: " + Error);
+
+	const bool Keep = BoolArg(Args, "save", true);
+	const std::vector<std::string> Tags = TagsArg(Args, "tags");
+	const std::string Notes = StringArg(Args, "notes");
+	const std::string Date = Today();
+	std::vector<Reference> Made;
+	std::vector<std::string> Problems;
+	std::string Folder;
+	for (size_t i = 0; i < Studied.size(); ++i) {
+		if (!Studied[i].Problem.empty()) {
+			Problems.push_back(ValidUtf8(Studied[i].Problem));
+			continue;
+		}
+		Reference R = MakeReference(File, Studied[i].Track, Studied[i].Study, Path, Date);
+		if (Keep) {
+			// Studied again: what the user tagged and noted stays
+			std::string Old, Why;
+			Reference Before;
+			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why)) {
+				for (size_t t = 0; t < Before.Tags.size(); ++t)
+					if (std::find(R.Tags.begin(), R.Tags.end(), Before.Tags[t]) == R.Tags.end())
+						R.Tags.push_back(Before.Tags[t]);
+				R.Notes = Before.Notes;
+			}
+			for (size_t t = 0; t < Tags.size(); ++t)
+				if (std::find(R.Tags.begin(), R.Tags.end(), Tags[t]) == R.Tags.end())
+					R.Tags.push_back(Tags[t]);
+			if (!Notes.empty())
+				R.Notes = R.Notes.empty() ? Notes : R.Notes + " " + Notes;
+			std::string Written;
+			SaveReference(S, R, Written);
+			if (Folder.empty()) {
+				const size_t Slash = Written.find_last_of("\\/");
+				Folder = Slash == std::string::npos ? Written : Written.substr(0, Slash);
+			}
+		}
+		Made.push_back(R);
+	}
+	if (Made.empty())
+		throw Problem("No track could be studied: " + (Problems.empty() ? std::string("they make no sound.") : Problems[0]));
+
+	std::string Out;
+	if (Made.size() <= 3) {
+		for (size_t i = 0; i < Made.size(); ++i)
+			Out += (i ? "\n" : "") + ReferenceText(Made[i]);
+	}
+	else {
+		Out = Format("Studied %d tracks of %s:\n", static_cast<int>(Made.size()), File.Title.empty() ? "the NSF" :
+			("\"" + ValidUtf8(File.Title) + "\"").c_str());
+		for (size_t i = 0; i < Made.size(); ++i)
+			Out += "- " + ReferenceLine(Made[i]) + "\n";
+		Out += "references with action \"show\" and an id gives a whole study, with its sounds.";
+	}
+	if (!Problems.empty())
+	{
+		Out += "\nNot studied:";
+		for (size_t i = 0; i < Problems.size(); ++i)
+			Out += (i ? "; " : " ") + Problems[i];
+		Out += ".";
+	}
+	if (Keep)
+		Out += "\nKept in the reference library" + (Folder.empty() ? std::string() : " (" + Folder + ")") + ", for every song: "
+			"references finds them again.";
+	else
+		Out += "\nNot kept (save was false).";
+	return Out + Left;
+}
+
+std::string ReferencesTool(Session &S, const Json &Args)
+{
+	const std::string Action = Lowercase(StringArg(Args, "action", "list"));
+	if (Action == "guide")
+		return StyleGuide(StringArg(Args, "topic"));
+	if (Action == "list") {
+		int Broken = 0;
+		const std::vector<Reference> All = ReadLibrary(S, &Broken);
+		std::string Out;
+		if (All.empty())
+			Out = "The reference library is empty. study_nsf studies tracks of NSF files the user has and keeps them here.";
+		else {
+			Out = Format("%s in the library:\n", Plural(static_cast<int>(All.size()), "reference", "references").c_str());
+			std::string Game = "\x01";
+			for (size_t i = 0; i < All.size(); ++i) {
+				if (All[i].Game != Game) {
+					Game = All[i].Game;
+					Out += (Game.empty() ? std::string("Other") : Game) + (All[i].Composer.empty() ? std::string() : " (" + All[i].Composer + ")") + ":\n";
+				}
+				Out += "- " + ReferenceLine(All[i]) + "\n";
+			}
+			Out += "show gives one's whole study; search finds them by words (a game, a technique, a mood, a tempo).";
+		}
+		if (Broken > 0)
+			Out += Format("\n%s in the library folder couldn't be read.", Plural(Broken, "file", "files").c_str());
+		return Out + "\nThe built-in guide to the classic NES styles: action \"guide\".";
+	}
+	if (Action == "show")
+		return ReferenceText(FindReference(S, StringArg(Args, "reference")));
+	if (Action == "search") {
+		const std::string Query = StringArg(Args, "query");
+		if (Query.empty())
+			throw Problem("Give the words to look for (\"query\"): a game, a composer, a technique (echo, gallop, duty click, "
+				"triangle thump), a mood or a tempo.");
+		const std::vector<Reference> All = ReadLibrary(S);
+		std::vector<std::pair<int, size_t> > Found;
+		for (size_t i = 0; i < All.size(); ++i) {
+			const int Score = ReferenceMatch(All[i], Query);
+			if (Score > 0)
+				Found.push_back(std::make_pair(-Score, i));
+		}
+		std::sort(Found.begin(), Found.end());
+		std::string Out;
+		if (Found.empty())
+			Out = All.empty() ? "The reference library is empty (study_nsf adds to it)." : "No reference matches \"" + Query + "\".";
+		else {
+			Out = Format("References for \"%s\", best first:\n", Query.c_str());
+			for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i)
+				Out += "- " + ReferenceLine(All[Found[i].second]) + "\n";
+			if (Found.size() > static_cast<size_t>(MAX_LISTED))
+				Out += Format("and %d more.\n", static_cast<int>(Found.size()) - MAX_LISTED);
+		}
+		const std::string Guide = StyleGuide(Query);
+		if (Guide.find("isn't in the guide") == std::string::npos)
+			Out += "\nFrom the built-in guide:\n" + Guide;
+		return Out;
+	}
+	if (Action == "tag") {
+		Reference R = FindReference(S, StringArg(Args, "reference"));
+		const std::vector<std::string> Add = TagsArg(Args, "tags"), Remove = TagsArg(Args, "remove_tags");
+		for (size_t i = 0; i < Add.size(); ++i)
+			if (std::find(R.Tags.begin(), R.Tags.end(), Add[i]) == R.Tags.end())
+				R.Tags.push_back(Add[i]);
+		for (size_t i = 0; i < Remove.size(); ++i)
+			R.Tags.erase(std::remove(R.Tags.begin(), R.Tags.end(), Remove[i]), R.Tags.end());
+		if (Arg(Args, "notes") != 0)
+			R.Notes = StringArg(Args, "notes");
+		std::string Path;
+		SaveReference(S, R, Path);
+		return "Updated " + ReferenceLine(R) + (R.Notes.empty() ? std::string() : "\nNotes: " + R.Notes);
+	}
+	if (Action == "delete") {
+		const Reference R = FindReference(S, StringArg(Args, "reference"));
+		std::string Error;
+		if (!S.Host().DeleteLibrary(R.Id + REFERENCE_EXTENSION, Error))
+			throw Problem("The reference couldn't be deleted: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+		return "Deleted the reference " + R.Id + " (" + R.Title + ").";
+	}
+	throw Problem("action: list, show, search, guide, tag or delete.");
+}
+
+std::string ReferenceSoundTool(Session &S, const Json &Args)
+{
+	const Reference R = FindReference(S, StringArg(Args, "reference"));
+	if (R.Sounds.empty())
+		throw Problem("The reference " + R.Id + " has no sounds to use.");
+	const int Number = IntArg(Args, "sound", 1, 1, static_cast<int>(R.Sounds.size()));
+	const ReferenceSound &Sound = R.Sounds[static_cast<size_t>(Number - 1)];
+	const Json *pChannel = Arg(Args, "channel");
+	std::string Chip = "2A03";
+	bool Sawtooth = false;
+	std::string For;
+	if (pChannel != 0) {
+		const int Channel = ParseChannel(S, *pChannel, "channel");
+		const ChannelInfo &Info = S.Channel(Channel);
+		Chip = InstrumentChip(Info);
+		Sawtooth = Info.Kind == KIND_SAWTOOTH;
+		For = " for " + Info.FullName();
+		if (Chip != "2A03" && Chip != "VRC6")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5 and VRC6 channels, not " + Info.FullName() + ".");
+		if (Sound.Noise != (Info.Kind == KIND_NOISE))
+			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
+				"other than the noise.");
+	}
+	else if (Sound.Chip == "VRC6" && S.Song.Expansion == "VRC6")
+		Chip = "VRC6";
+	std::string Name = StringArg(Args, "name");
+	if (Name.empty())
+		Name = ReferenceSoundName(R, Sound);
+	const Preset Made = ReferencePreset(Sound, Name);
+	std::string Error;
+	const int Index = S.Host().AddInstrument(Made, Chip, Sawtooth, Error);
+	if (Index < 0)
+		throw Problem("The instrument couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	S.Refresh();
+	std::string Out = Format("Added %s, a %s instrument%s: sound %d of %s (%s, %s): %s.", InstrumentLabel(S.Song, Index).c_str(),
+		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
+	if (Sound.Chip != Chip && !Sound.Noise && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
+		Out += " Its duty was translated from the " + Sound.Chip + "'s.";
+	if (Sound.Triangle && !Sawtooth && pChannel != 0 && S.Channel(ParseChannel(S, *pChannel, "channel")).Kind != KIND_TRIANGLE)
+		Out += " It was a triangle sound: on a pulse it plays with the pulse's duty.";
+	return Out + " Use it with write_notes or set_instrument.";
+}
+
+std::string AddSampleDrumsTool(Session &S, const Json &)
+{
+	const DpcmKit &Kit = SampleDrums();
+	const size_t Before = S.Song.Instruments.size();
+	const int Index = SampleDrumsInstrument(S);
+	S.Remarks.clear();
+	int Bytes = 0;
+	for (size_t i = 0; i < Kit.Samples.size(); ++i)
+		Bytes += static_cast<int>(Kit.Samples[i].Data.size());
+	std::string Keys;
+	for (size_t i = 0; i < Kit.Keys.size(); ++i) {
+		Cell At;
+		At.SetPitch(Kit.Keys[i].Pitch);
+		Keys += (i == 0 ? "" : (i + 1 == Kit.Keys.size() ? " and " : ", ")) + Kit.Keys[i].Drum + " on " + PitchName(At.Pitch());
+	}
+	int Dpcm = -1;
+	for (int c = 0; c < S.ChannelCount() && Dpcm < 0; ++c)
+		if (S.Channel(c).Kind == KIND_DPCM)
+			Dpcm = c;
+	return Format("%s %s: %s (%s of samples). Play them with write_notes on %s, by name: {\"pitch\": \"kick\"}, "
+		"\"snare\", \"low tom\", \"high tom\"; each hit rings until the next. Keep the hi-hats on the noise channel, and "
+		"keep the samples to the kick and snare (and toms in fills): that's the punch of the classic soundtracks.",
+		S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(), Keys.c_str(),
+		Bytes >= 1024 ? Format("%.1f KB", Bytes / 1024.0).c_str() : Format("%d bytes", Bytes).c_str(),
+		Dpcm >= 0 ? S.Channel(Dpcm).FullName().c_str() : "the DPCM channel");
+}
+
+std::string ImportNsfTool(Session &S, const Json &Args)
+{
+	if (S.Song.Modified)
+		throw Problem("The open song has changes that aren't saved, and importing replaces it. Save it first (save_song), or "
+			"ask the user.");
+	std::string Path;
+	const nsf::NsfFile File = ReadNsfArg(S, Args, Path);
+	std::vector<int> Tracks = NsfTracksArg(File, Args, 0);
+	if (Tracks.size() > 64)
+		Tracks.resize(64);
+	nsf::ImportOptions Options;
+	Options.Tracks = Tracks;
+	nsf::ImportResult Result;
+	std::string Error;
+	if (!nsf::ImportNsf(File, Options, Result, Error))
+		throw Problem("The NSF couldn't be imported: " + Error + ".");
+	if (!S.Host().OpenText(Result.Text, Error))
+		throw Problem("FamiTracker couldn't open the imported module: " + (Error.empty() ? std::string("it refused.") : Error));
+	return ValidUtf8(Result.Summary) + "It's open in FamiTracker as a new module, not saved yet (save_song keeps it). Its tracks "
+		"are the NSF's: select_track switches between them, and read_notes and look_at_song show how they're made.";
+}
+
 }	// namespace
 
 // The tool set
@@ -6079,7 +6570,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		N.Add("beats", Prop("number", "How long it plays, in beats (0.25, 0.5, 1, 1.5, 2...). A gap before the next note is a rest."), true);
 		N.Add("volume", Prop("integer", "1-15 (15 is full). Stays for the following notes until another volume is given; the part starts at 15."));
 		N.Add("instrument", Prop("string", "Instrument for this note, if not the part's."));
-		N.Add("effects", Prop("array", "FamiTracker effects on the note's first row, e.g. [\"Q31\"] (slide up), [\"447\"] (arpeggio)."));
+		N.Add("effects", Prop("array", "FamiTracker effects on the note's first row, e.g. [\"Q31\"] (slide up 1 semitone), [\"047\"] (a major chord as an arpeggio), [\"445\"] (vibrato)."));
 		NoteItem = N.Get();
 	}
 	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}.");
@@ -6118,7 +6609,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Writes a part (melody, counter-melody, bass line, drums...) on one channel, replacing that channel's notes in the bars "
 		"it covers. Each note lasts its beats; a gap is a rest. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
-		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + ").",
+		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "). Drums on the noise channel by name (kick, "
+		"snare, hihat); on the DPCM channel the sampled drums of add_sample_drums (kick, snare, low tom, high tom).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("notes", NotesProp, true)
@@ -6154,21 +6646,32 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Makes a new instrument from a description in words, for when no preset fits: its volume envelope (attack, decay to "
 		"a sustain level, release after ===), its pulse width and how that moves (a tone that opens up, shimmers or thins), "
 		"a vibrato built in that comes in after a moment (so long notes sing without effects), a blip, scoop or fall on "
-		"the attack, or a chord arpeggio; on the noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, "
-		"shorter or longer. Start from a kind (" + DesignKinds() + ") and change what should differ. Envelope times are in "
-		"frames, 60 a second.",
+		"the attack, or a chord arpeggio; the articulations of the classic NES soundtracks: an attack that blooms, a duty "
+		"click, a decay in steps, held notes struck again, an echo after the note, a pitch flick, a bass that thumps; on the "
+		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer. Start from a kind (" +
+		DesignKinds() + ") and change what should differ. Envelope times are in frames, 60 a second.",
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
 			.Add("kind", Prop("string", "What it starts from: lead (default), pad, pluck, bass, keys, bell, brass, strings, organ, "
-				"chiptune; kick, snare, hihat, open hihat, crash, tom."))
+				"chiptune; the classic articulations: bloom lead, stepped lead, click pluck, echo pluck, thump bass; kick, snare, "
+				"hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; the noise channel makes a drum)."))
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
-			.Add("attack", LevelProp("instant, fast, medium, slow, swell, or frames (0-60)."))
+			.Add("attack", LevelProp("instant, fast, medium, slow, swell, bloom (from about two thirds of the peak to it in two "
+				"frames, so notes open up), or frames (0-60)."))
+			.Add("attack_from", Prop("integer", "The level the attack starts at, 1-15 (0: from silence); with attack in frames, a "
+				"bloom of your own."))
 			.Add("decay", LevelProp("none (holds at its peak), short, medium, long, or frames (0-120): how long it takes to fall "
 				"to the sustain level."))
+			.Add("decay_style", EnumProp("smooth (default), or steps: holds, then drops a few levels at a time, like the leads "
+				"of fast action tracks.", std::vector<std::string>{ "smooth", "steps" }))
 			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
 				"high, full, or 0-15."))
 			.Add("release", LevelProp("short, medium, long, or frames (0-60): how it fades after a release (===)."))
+			.Add("restrike_beats", Prop("number", "Strike a held note again every so many beats (0.5: eighths), a dip and a rise, "
+				"so long notes keep the rhythm. 0 for none."))
+			.Add("echo", Prop("boolean", "A soft echo of the note after it dies away or is released."))
+			.Add("click", Prop("boolean", "A duty click: each note's first frame at another pulse width, so it speaks."))
 			.Add("volume", Prop("integer", "Its loudest, 1-15."))
 			.Add("duty", LevelProp("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%."))
 			.Add("duty_motion", EnumProp("How the tone moves: still, sweep (opens from thin on the attack), wobble (shimmers to "
@@ -6177,7 +6680,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
 				"a second)."))
 			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
-				"the note), drop (falls, like a laser or a tom).", std::vector<std::string>{ "none", "blip", "scoop", "drop" }))
+				"the note), drop (falls, like a laser or a tom), flick (a quick flick up and back), thump (from a fourth above, "
+				"dropping into the note: a bass that thumps).", std::vector<std::string>{ "none", "blip", "scoop", "drop", "flick",
+				"thump" }))
 			.Add("arpeggio", EnumProp("A chord played as a fast arpeggio from each note.", std::vector<std::string>{ "none", "octave",
 				"major", "minor", "fifth", "power", "sus4", "major7", "minor7" }))
 			.Add("arpeggio_frames", Prop("integer", "Frames for each note of the arpeggio, 1-8 (default 1, the fastest)."))
@@ -6622,6 +7127,68 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"whole new text.")),
 		false);
 
+	AddTool("study_nsf", "Study an NSF's tracks",
+		"Studies tracks of an NSF file the user has (game music, ripped as .nsf or .nsfe; track names come from a .m3u "
+		"playlist of the same name next to it) and keeps each as a reference in the user's library, for every song: how it's "
+		"made, in words, from its notes: tempo and form, key and the chords bar by bar, each channel's role, register, "
+		"rhythm (its commonest bar as a grid) and intervals, the bass's figure, the drums' grooves, the tricks between "
+		"channels (an echo a row behind, harmony in thirds, doubling, notes traded), the techniques in the sounds (duty "
+		"clicks, attacks that bloom, echoes in the envelope, stepped decays, scoops, pitch flicks, vibrato with its delay, "
+		"triangle thumps) and the main sounds with their sequences, which reference_sound turns into instruments. Melodies "
+		"aren't kept. tracks \"list\" says which tracks are music, jingles or sound effects.",
+		Schema()
+			.Add("path", Prop("string", "The NSF file, as Windows writes it: C:\\Users\\Name\\Music\\game.nsf."), true)
+			.Add("tracks", Prop("string", "Which: \"music\" (default: every track that's music, not a jingle or sound effect), "
+				"\"all\", numbers from 1 like \"1,3-5\", or \"list\" to see what the tracks are first."))
+			.Add("tags", WordListProp("Words to find these references by later, like [\"action\", \"boss\"]."))
+			.Add("notes", Prop("string", "A note to keep with them, like \"the user loves the bass in this one\"."))
+			.Add("save", Prop("boolean", "Keep them in the library (default true).")),
+		false);
+
+	AddTool("references", "The reference library",
+		"The user's library of studied tracks (study_nsf adds to it) and the built-in guide to the classic NES styles "
+		"(Konami, Capcom, Nintendo: grooves, bass figures, sounds, tricks). When the user wants music like a game, a composer "
+		"or a reference, or in a style, search here first and lean on what you find: its tempo and feel, form, harmonic color, "
+		"how the channels share the parts, rhythm grids, drum grooves, tricks and sounds. Write your own melodies and chord "
+		"progressions; never copy a reference's notes. Actions: list (default), show (a reference's whole study and its "
+		"sounds), search (by words: a game, composer, technique, mood or tempo), guide (the built-in guide, or a topic of "
+		"it), tag (add or remove tags, set notes), delete.",
+		Schema()
+			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete" }))
+			.Add("reference", Prop("string", "The reference's id, for show, tag and delete, like \"bucky-o-hare-08\"."))
+			.Add("query", Prop("string", "For search: words like \"konami echo\", \"gallop bass\", \"fast minor\", \"mega man\"."))
+			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"drums\" or \"lead sounds\" (default: the contents)."))
+			.Add("tags", WordListProp("For tag: tags to add."))
+			.Add("remove_tags", WordListProp("For tag: tags to take off."))
+			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
+		false);
+
+	AddTool("reference_sound", "Use a reference's sound",
+		"Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes (volume, arpeggio, "
+		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
+		"number. The duty is translated between the 2A03 and the VRC6.",
+		Schema()
+			.Add("reference", Prop("string", "The reference's id."), true)
+			.Add("sound", Prop("integer", "The sound's number in the reference (default 1)."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5 or VRC6)."))
+			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
+		false, false, true);
+
+	AddTool("add_sample_drums", "Add sampled drums",
+		"Adds a drum kit of samples for the DPCM channel, made for FamiTracker: a punchy kick, a snare and two toms, as one "
+		"instrument (\"Sample drums\"). Then write_notes on the DPCM channel plays them by name (kick, snare, low tom, high "
+		"tom). A sampled kick and snare under the noise channel's hi-hats is how many classic NES soundtracks get their punch "
+		"(Konami's, Nintendo's). The samples start from silence, so the triangle stays loud.",
+		Schema(), false, false, true);
+
+	AddTool("import_nsf", "Open an NSF's tracks",
+		"Opens tracks of an NSF file in FamiTracker as a new module, a track each, with the patterns, instruments and drums "
+		"worked out from the music, to look at closely or play. It replaces the open song, so that must be saved first.",
+		Schema()
+			.Add("path", Prop("string", "The NSF file, as Windows writes it."), true)
+			.Add("tracks", Prop("string", "Which: \"music\" (default), \"all\", or numbers from 1 like \"1,3-5\" (at most 64).")),
+		false, true);
+
 	AddTool("review_arrangement", "Review the arrangement's depth",
 		"What makes the song sound plain, as a musician would hear it: which parts play (melody, chords, bass, drums, a "
 		"second line) and which are missing, bars where only one or two play, the chords (how many, plain triads or "
@@ -6697,6 +7264,11 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "copy_bars") Result.Text = CopyBarsTool(S, Args);
 		else if (Name == "vary_part") Result.Text = VaryPartTool(S, Args);
 		else if (Name == "soundtrack_notes") Result.Text = SoundtrackNotesTool(S, Args);
+		else if (Name == "study_nsf") Result.Text = StudyNsfTool(S, Args);
+		else if (Name == "references") Result.Text = ReferencesTool(S, Args);
+		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
+		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
+		else if (Name == "add_sample_drums") Result.Text = AddSampleDrumsTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
 		else if (Name == "change_mood") Result.Text = ChangeMoodTool(S, Args);
@@ -6774,7 +7346,18 @@ std::string ToolSet::Instructions()
 		"coin, menu blip, \"pew\"...) make_sound_effect. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
 		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
-		"user what you changed and why.";
+		"user what you changed and why.\n"
+		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have; references lists, "
+		"shows and searches them), and references action guide is a built-in guide to the classic NES styles. When the user "
+		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man...), or says to use the "
+		"references, search the library and the guide first and plan from what you find: the tempo and feel, the form, the "
+		"harmonic color (modes, borrowed chords, how often chords change), how the channels share the parts (lead, echo, "
+		"harmony, bass, drums), the rhythm grids and bass figures, the drum grooves, the tricks and the sounds. Take the craft, "
+		"not the tunes: write your own melodies, motifs and chord progressions, and never copy a reference's notes or its exact "
+		"progression. reference_sound gives a song a reference's instrument as it was (its duty click, bloom, echo, vibrato); "
+		"design_instrument makes your own in the same spirit; add_sample_drums gives the DPCM channel a sampled kick, snare "
+		"and toms (write_notes plays them by name) for the punch of those soundtracks. Tell the user which references you "
+		"leaned on and how.";
 }
 
 const std::vector<PromptInfo> &ToolSet::Prompts()

@@ -781,6 +781,15 @@
 // View > Keyboard (KeyboardBar.cpp)
 #define ID_VIEW_KEYBOARD                33170
 
+// File > Import NSF (ImportNsfDlg.cpp)
+#define IDD_IMPORT_NSF                  337
+#define IDC_NSF_INFO                    1432
+#define IDC_NSF_TRACKS                  1433
+#define IDC_NSF_MUSIC                   1434
+#define IDC_NSF_ALL                     1435
+#define IDC_NSF_NONE                    1436
+#define ID_FILE_IMPORTNSF               33171
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

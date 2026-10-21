@@ -134,10 +134,10 @@ anything; close the dialog and ask again.
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, or one of the VRC7's own sounds |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop or fall on the attack, a chord arpeggio; or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
@@ -151,6 +151,11 @@ anything; close the dialog and ask again.
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
+| `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
+| `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
+| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
+| `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
+| `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
@@ -278,6 +283,45 @@ octave blip, a scoop or a fall on the attack, or a chord played as a fast
 arpeggio from every note. Drums can be darker or brighter, shorter or
 longer. The instrument gets a new name, so notes that use another one don't
 change.
+
+The articulations the studied NES soundtracks are made of are there too:
+an attack that blooms from about two thirds of its peak in two frames, a
+duty click (each note's first frame at another pulse width), a decay in
+steps, held notes struck again every so many beats, a soft echo after the
+note, a quick pitch flick, and a bass that thumps in from a fourth above.
+The kinds "bloom lead", "stepped lead", "click pluck", "echo pluck" and
+"thump bass" start from them.
+
+## References: learning from NES soundtracks
+
+Give Claude NSF files you have (game music, ripped as `.nsf` or `.nsfe`;
+put the `.m3u` playlist of the same name next to it, and the tracks get
+their names) and ask it to study them, like "study the Mega Man 2 NSF in
+my Music folder". `study_nsf` plays each track that's music (jingles and
+sound effects are told apart), works out its notes and writes down how
+it's made: the tempo and form, the key and the chords bar by bar, what each
+channel does (its role, register, rhythm as a grid of its commonest bar,
+intervals, and for the bass its figure), the drums' grooves, the tricks
+between channels (an echo a row behind, harmony in thirds, doubling, notes
+traded) and the techniques in the sounds (duty clicks, attacks that bloom,
+echoes in the envelope, decays in steps, scoops, pitch flicks, vibrato
+with its delay, triangle thumps), with the main sounds' envelopes.
+
+Each study is kept as a reference in a library of yours,
+`Documents\FamiTracker references` (a JSON file each), for every song and
+every session. When you ask for music "like Bucky O'Hare", "in a Mega Man
+style" or "lean on the references", Claude searches the library
+(`references`) and plans from what it finds, and `reference_sound` brings
+in a reference's instrument exactly. The melodies aren't kept: Claude
+takes the craft (grooves, bass figures, harmonic color, how the channels
+share the parts, the sounds) and writes its own tunes and progressions.
+Built in, without any NSF, is a guide to the classic NES styles from
+studies of Konami's (Bucky O'Hare, TMNT II), Capcom's (Mega Man 2-5, Little
+Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks.
+
+You can tag references and keep notes with them ("the user loves this
+bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to
+look at the notes themselves.
 
 ## Moods
 
@@ -472,7 +516,6 @@ editor; they're muted again afterwards.
 
 - Recording ideas from a phone page into the clips.
 - Instruments for the FDS and N163.
-- Importing NSF files, so Claude can study real NES tracks.
 
 ## For developers
 
@@ -538,6 +581,27 @@ editor; they're muted again afterwards.
   records with `CMicInput`, previews with `RenderEffect` through
   `PlaySound`, and adds the track through `CVoiceEffectMaker`, which
   `CMcpLink` implements with the `make_sound_effect` tool.
+- `Source/Nsf/`: the NSF importer, plain C++14 built and tested on Linux
+  (`cmake -S Source/Nsf -B build/nsf`). A 6502 and the sound chips'
+  registers (`Cpu6502`, `Chips`), the player that records a track a tick
+  at a time and finds its loop (`Player`), the conversion to a FamiTracker
+  module (`Convert`: the rows, notes and instruments; `Module`: the text
+  format), `Import` (all of it in one call), `Simulate` (FamiTracker's
+  playback of a module, to measure how close a conversion is) and `Study`
+  (a converted track described for a composer, the survey of which tracks
+  are music, and studies of tracks one at a time). `nsf2ftm` runs it from
+  a command line. The tests build little NSFs with their own 6502 program
+  (`tests/TestNsf.h`, also used by the Api tests).
+- `Source/Api/DpcmKit.cpp`: the sampled drums, synthesized (a body that
+  falls in pitch, noise for the snare) and encoded as the DMC's delta
+  modulation from silence; `SongHost::AddDpcmKit` adds the samples and the
+  instrument that maps them to keys.
+- `Source/Api/References.cpp` and `StyleGuide.cpp`: the reference library
+  (references as indented JSON, searching them, a sound as a preset) and
+  the built-in style guide. The library's files are read and written
+  through `SongHost::ListLibrary`, `ReadLibrary`, `SaveLibrary` and
+  `DeleteLibrary`; `import_nsf` opens its module with `SongHost::OpenText`,
+  which `ImportNsfDlg.cpp` (File > Import NSF) shares.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and

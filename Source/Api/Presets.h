@@ -68,7 +68,8 @@ std::string PresetList();							// "soft lead, bright lead, ..."
 
 // A sound described in words (design_instrument), made into a preset
 enum duty_motion { DUTY_STILL, DUTY_SWEEP, DUTY_WOBBLE, DUTY_FADE };
-enum attack_pitch { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP };
+enum attack_pitch { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP, PITCH_FLICK, PITCH_THUMP };
+enum decay_style { DECAY_SMOOTH, DECAY_STEPS };
 enum drum_kind { DRUM_KICK, DRUM_SNARE, DRUM_HIHAT, DRUM_OPEN_HIHAT, DRUM_CRASH, DRUM_TOM };
 
 struct SoundDesign {
@@ -77,15 +78,21 @@ struct SoundDesign {
 	// A melodic sound: its volume envelope in frames (60 a second on NTSC)
 	int Peak;					// 1-15
 	int Attack;					// frames to reach the peak; 0 at once
+	int AttackFrom;				// the level the attack starts at: 0 from silence; a bloom starts near two thirds of the peak
 	int Decay;					// frames from the peak to the sustain level
+	int DecayStyle;				// decay_style: smooth, or in steps that hold and then drop a few levels at a time
 	int Sustain;				// 0-15, held while the note lasts; 0 dies away by itself
 	int Release;				// frames to fade after a release (===)
+	int Restrike;				// frames between restrikes while a note holds (a dip and a rise back), 0 for none
+	bool Echo;					// a soft echo after the sound dies away or is released
 	int Duty;					// 0-3: 12.5%, 25%, 50%, 75% (the VRC6's nearest)
 	int Motion;					// duty_motion: still, thin to the duty on the attack, to and fro (a chorus), thinner as it fades
+	bool Click;					// a duty click: the first frame at another duty, so each note speaks
 	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong
 	int VibratoDelay;			// frames before it comes in
 	int VibratoRate;			// frames a cycle, a multiple of 4
-	int AttackPitch;			// attack_pitch: plain, an octave up for two frames, up into the note from below, falling
+	int AttackPitch;			// attack_pitch: plain, an octave up for two frames, up into the note from below, falling,
+								// a quick flick up and back, a thump (from a fourth above, dropping into the note)
 	std::vector<int> Arpeggio;	// semitones looped ({0, 4, 7}); empty for none
 	int ArpeggioFrames;			// frames each
 	// A drum, on the noise channel

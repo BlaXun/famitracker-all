@@ -33,6 +33,7 @@
 namespace ftapi {
 
 struct Preset;
+struct DpcmKit;
 
 struct ChannelInfo {
 	std::string Name;		// "Pulse 1", "Sawtooth"
@@ -123,6 +124,10 @@ public:
 	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
 	// name already there: its index, -1 with the reason
 	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;
+	// A kit of samples (DpcmKit.h) as a 2A03 instrument for the DPCM channel, its samples added
+	// (or ones of the same name and size reused), or the 2A03 instrument of the kit's name already
+	// there: its index, -1 with the reason
+	virtual int AddDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
 
 	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
 	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their
@@ -163,6 +168,22 @@ public:
 	// with Windows' backslashes), as the C library opens it: FamiTracker turns
 	// it into the Windows code page it runs in
 	virtual std::string LocalPath(const std::string &Path) = 0;
+
+	// The reference library (References.h): files in a folder of the user's,
+	// Documents\FamiTracker references, shared by every song. Names have no
+	// folders. Listing gives the names of the files in it (none when there's no
+	// folder yet); reading is false when there's no such file (Error empty) or
+	// it can't be read (Error says why); saving makes the folder when needed
+	// and gives the path written; deleting is false with the reason.
+	virtual bool ListLibrary(std::vector<std::string> &Names, std::string &Error) = 0;
+	virtual bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &Error) = 0;
+	virtual bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
+	virtual bool DeleteLibrary(const std::string &Name, std::string &Error) = 0;
+
+	// Replaces the open song with a module in FamiTracker's text format, as
+	// File > Import text does: a new, untitled module. FamiTracker can't undo
+	// it; the tools first make sure the song has no unsaved changes.
+	virtual bool OpenText(const std::string &Text, std::string &Error) = 0;
 
 	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
 	virtual void Stop() = 0;

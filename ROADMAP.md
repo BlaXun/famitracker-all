@@ -237,22 +237,35 @@ when ready.
   Ideas for more: notes coloured by instrument, a channel's instrument
   named in its header, and warnings in place (a note too high or too low
   for the channel).
-- **NSF import (next, asked for in October 2026):** open NSF files as
-  readable FamiTracker songs, so the user and Claude can study real NES
-  tracks.
+- **NSF import and a reference library (October 2026, on `next`):** NSF
+  files open as readable FamiTracker songs, and Claude learns from them.
   - Our own portable player core (a 6502, the NSF's bank switching, the 2A03
-    and the expansion chips' registers, the frame counter's envelopes,
-    length counters and sweeps), tested on Linux, rather than the archived
-    `nsf-importer` fork (NSF Importer 0.1 on 0.3.6), which writes every frame
-    as a row: faithful but unreadable.
+    and the VRC6, VRC7, FDS, MMC5 and N163 registers), tested on Linux,
+    rather than the archived `nsf-importer` fork (NSF Importer 0.1 on
+    0.3.6), which writes every frame as a row: faithful but unreadable.
   - From the registers, music: the rows and speed found from when notes
-    start, notes on rows, fast chord flickers as `0xy` and wobbles as `4xy`,
-    instruments rebuilt from each note's volume, duty and pitch shapes, the
-    loop found and set.
-  - Every track of the NSF as a track of one module, or the ones picked;
-    2A03 first, then VRC6, MMC5 and N163; DPCM drums later.
-  - An `import_nsf` tool for Claude, and a way to study what makes a track
-    work.
+    start (fractional tempos too), notes on rows, legato steps and chord
+    changes, fast chord flickers as `0xy`, duties as `Vxx`, instruments
+    rebuilt from each note's volume, duty and pitch shapes (blooming attacks
+    kept), DPCM drums with their samples, the loop found even when a vibrato
+    runs free, and track names from an `.m3u` playlist. Measured against
+    FamiTracker's own playback of the result: most tracks 95-100% the same
+    sound and pitch.
+  - File > Import NSF picks out the music from the jingles and sound
+    effects; `import_nsf` does it for Claude; `nsf2ftm` from a command line.
+  - Studies: what makes a track work, in words a composer uses (form,
+    harmony, each channel's role and rhythm grid, bass figures, drum grooves,
+    tricks between channels, the sounds' articulations), kept in a
+    reference library in Documents for every session (`study_nsf`,
+    `references`, `reference_sound`), without the melodies; and a built-in
+    guide to the classic NES styles from studies of Konami, Capcom and
+    Nintendo soundtracks. `design_instrument` learned the articulations those
+    soundtracks are made of.
+
+  A DPCM drum kit of our own (a kick, a snare and two toms, synthesized and
+  encoded here) plays on the DPCM channel by name (`add_sample_drums`).
+
+  Next: music modules (MOD, XM, S3M, IT) as style references for new tracks.
 
 ## Open questions
 

@@ -552,6 +552,9 @@
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
+    <ClCompile Include="Source\Api\DpcmKit.cpp" />
+    <ClCompile Include="Source\Api\References.cpp" />
+    <ClCompile Include="Source\Api\StyleGuide.cpp" />
     <ClCompile Include="Source\Api\Png.cpp" />
     <ClCompile Include="Source\Api\Picture.cpp" />
     <ClCompile Include="Source\Api\Ogg.cpp" />
@@ -570,6 +573,8 @@
     <ClInclude Include="Source\Api\Presets.h" />
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
+    <ClInclude Include="Source\Api\DpcmKit.h" />
+    <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />
     <ClInclude Include="Source\Api\Picture.h" />
     <ClInclude Include="Source\Api\Ogg.h" />
@@ -631,6 +636,28 @@
     <ClInclude Include="Source\PianoRoll.h" />
     <ClCompile Include="Source\NoteEdit.cpp" />
     <ClInclude Include="Source\NoteEdit.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Nsf\Cpu6502.cpp" />
+    <ClCompile Include="Source\Nsf\NsfFile.cpp" />
+    <ClCompile Include="Source\Nsf\Chips.cpp" />
+    <ClCompile Include="Source\Nsf\Player.cpp" />
+    <ClCompile Include="Source\Nsf\Module.cpp" />
+    <ClCompile Include="Source\Nsf\Convert.cpp" />
+    <ClCompile Include="Source\Nsf\Import.cpp" />
+    <ClCompile Include="Source\Nsf\Simulate.cpp" />
+    <ClCompile Include="Source\Nsf\Study.cpp" />
+    <ClCompile Include="Source\ImportNsfDlg.cpp" />
+    <ClInclude Include="Source\Nsf\Cpu6502.h" />
+    <ClInclude Include="Source\Nsf\NsfFile.h" />
+    <ClInclude Include="Source\Nsf\Chips.h" />
+    <ClInclude Include="Source\Nsf\Player.h" />
+    <ClInclude Include="Source\Nsf\Module.h" />
+    <ClInclude Include="Source\Nsf\Convert.h" />
+    <ClInclude Include="Source\Nsf\Import.h" />
+    <ClInclude Include="Source\Nsf\Simulate.h" />
+    <ClInclude Include="Source\Nsf\Study.h" />
+    <ClInclude Include="Source\ImportNsfDlg.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

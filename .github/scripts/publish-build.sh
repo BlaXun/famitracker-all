@@ -21,6 +21,7 @@ exe="$(find "$dist" -name FamiTracker.exe -print -quit)"
 pdb="$(find "$dist" -name FamiTracker.pdb -print -quit)"
 wav2ftm="$(find "$dist" -name wav2ftm.exe -print -quit)"
 bridge="$(find "$dist" -name famitracker-mcp.exe -print -quit)"
+nsf2ftm="$(find "$dist" -name nsf2ftm.exe -print -quit)"
 if [ -z "$exe" ]; then
 	echo "FamiTracker.exe not found under $dist" >&2
 	exit 1
@@ -39,6 +40,10 @@ if [ -n "$bridge" ]; then
 	cp "$bridge" "$work/$folder/"
 	contents="${contents/ and /, } and famitracker-mcp.exe"
 fi
+if [ -n "$nsf2ftm" ]; then
+	cp "$nsf2ftm" "$work/$folder/"
+	contents="${contents/ and /, } and nsf2ftm.exe"
+fi
 
 {
 	echo "FamiTracker, $branch branch, build $short ($date)"
@@ -46,6 +51,7 @@ fi
 	echo "FamiTracker.exe   The tracker. 32-bit Windows, no installation needed."
 	echo "                  New here? Help > Tutorials shows you around, and View >"
 	echo "                  Profile makes FamiTracker simpler for writing game music."
+	echo "                  File > Import NSF opens game music (NSF files) as modules."
 	if [ -n "$wav2ftm" ]; then
 		echo "                  The microphone button on the toolbar records a whistle,"
 		echo "                  hum, song or finger taps straight into the song, Edit >"
@@ -75,11 +81,21 @@ fi
 		echo "                  Connects Claude Code running in WSL to FamiTracker. Keep"
 		echo "                  it next to FamiTracker.exe; Claude Code starts it by itself."
 	fi
+	if [ -n "$nsf2ftm" ]; then
+		echo "nsf2ftm.exe       Turns the tracks of an NSF file (game music) into a"
+		echo "                  FamiTracker text file, or says how they're made (-study)."
+		echo "                  FamiTracker's File > Import NSF does the same in a few"
+		echo "                  clicks. Run nsf2ftm from a command prompt for its options."
+	fi
 	if [ -n "$bridge" ]; then
 		echo
 		echo "File > Connect Claude Code lets Claude Code on this computer, in Windows or"
 		echo "in WSL, work on the open song: switch it on there and run the command it"
 		echo "shows once. See MCP.md in the source for what Claude can do and how to ask."
+		echo "Claude can study the tracks of NSF files you have (study_nsf) and keep what"
+		echo "it learns in a reference library, Documents\\FamiTracker references, to lean"
+		echo "on when it writes music for you; it also knows a guide to the classic NES"
+		echo "styles."
 		echo "File > Export for games saves tracks as OGG files that loop without a seam"
 		echo "(jingles and sound effects play once), with the GameMaker code that plays"
 		echo "them."

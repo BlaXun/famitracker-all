@@ -133,6 +133,8 @@ public:
 
 	// Import
 	CFamiTrackerDoc* LoadImportFile(LPCTSTR lpszPathName) const;
+	// A new, empty document without the game music profile's template (for text imports)
+	BOOL NewEmptyDocument();
 	bool ImportInstruments(CFamiTrackerDoc *pImported, int *pInstTable);
 	bool ImportTrack(int Track, CFamiTrackerDoc *pImported, int *pInstTable);
 
