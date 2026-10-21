@@ -62,10 +62,12 @@ words from `Source/CellHint.cpp`, set by `CFamiTrackerView::UpdateCellHint`),
 an empty song says how to begin above its first row
 (`CPatternEditor::DrawEmptySongHint`), the pattern editor's corner shows a
 red EDIT badge while editing, the status bar's position is in bars and beats
-(`CMainFrame::SetIndicatorPos`), and View > Keyboard is a piano keyboard
-along the bottom with the computer key for each note (`Source/KeyboardBar.cpp`,
-playing through `CFamiTrackerView::PlayKeyboardNote`). View > Explain what's
-under the cursor (`CSettings::bCellHints`) turns the words off.
+(`CMainFrame::SetIndicatorPos`), the frame list draws where the song loops
+or halts (`FindJumps` in `Source/FrameEditor.cpp`), and View > Keyboard is a
+piano keyboard along the bottom with the computer key for each note
+(`Source/KeyboardBar.cpp`, playing through
+`CFamiTrackerView::PlayKeyboardNote`). View > Explain what's under the
+cursor (`CSettings::bCellHints`) turns the words off.
 
 ## What this repository is
 

@@ -212,7 +212,11 @@ when ready.
   glance, for people who don't read tracker notation yet. Done:
   - The status bar says what the cell under the cursor is: a note and how
     high it is, its instrument by name, the volume, or an effect and what
-    its number does ("452: vibrato, speed 5 and depth 2: gentle").
+    its number does ("452: vibrato, speed 5 and depth 2: gentle"). An
+    instrument for another chip, shown in red, says which chip it's for.
+  - The frame list shows where the song loops: a bracket from the frame
+    with the jump (Bxx), or the last frame, to the frame it goes back to,
+    and a stop mark on a frame with a halt (Cxx).
   - An empty song says above its first row how to begin: Space to edit,
     the letters that play each note, Enter to play.
   - A red EDIT badge in the pattern editor's corner while editing, and plain
@@ -223,9 +227,8 @@ when ready.
     with the other main keys beside it.
 
   Ideas for more: notes coloured by instrument, a channel's instrument
-  named in its header, the loop point drawn in the frame list, and warnings
-  in place (a note too high for the channel, an instrument for another
-  chip).
+  named in its header, and warnings in place (a note too high or too low
+  for the channel).
 - **`nsf-import` (planned):** pull instruments, and optionally songs, out of
   NSF files.
   - Start from the archived `nsf-importer` fork (NSF Importer 0.1, based on
