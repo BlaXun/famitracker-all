@@ -22,7 +22,7 @@ step
 show: clips
 text: Your clip is in the clips panel. Its play button plays it, and right-clicking it shows what else it can do.
 
-  Drag it into the pattern editor to put a copy in: the place it'll go is shaded until you let go. Hold Ctrl as you let go for a linked copy: change one, and the others change with it.
+  Drag it into the pattern editor or the piano roll to put a copy in: you see where it'll go until you let go. Hold Ctrl as you let go for a linked copy: change one, and the others change with it.
 
 step
 show: button piano-roll

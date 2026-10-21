@@ -2353,6 +2353,11 @@ void CMainFrame::ShowPianoRoll(bool Show)
 	}
 }
 
+CPianoRollWnd *CMainFrame::GetPianoRollWnd() const
+{
+	return m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsVisible() ? m_pPianoRoll->GetRoll() : NULL;
+}
+
 void CMainFrame::OnViewClipsPanel()
 {
 	ShowClipsPanel(m_pClipsBar == NULL || !m_pClipsBar->IsVisible());

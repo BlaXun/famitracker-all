@@ -49,6 +49,16 @@ public:
 	void Activate(bool Shown);				// follows the song while shown
 	void SongChanged();						// the notes are read again before the next paint
 
+	// A clip dragged in from the clips panel (ClipsPanel.cpp). Over the notes,
+	// the roll shows where it would go, on the channel being edited and the
+	// ones to its right, as placing one with the Clips button does; with
+	// Scroll, a point close to the left or right edge scrolls the roll that
+	// way, so calling it on a timer keeps it scrolling. False, showing
+	// nothing, when the point isn't over the notes; otherwise Channel, Frame
+	// and Row say where the clip would start.
+	bool ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row);
+	bool HideClipDrop();					// true if it showed one
+
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:
@@ -96,6 +106,7 @@ public:
 	void Opened(bool Open);					// shown or hidden by the main frame
 	void SongChanged();
 	static bool WasOpen();					// it was open when FamiTracker closed
+	CPianoRollWnd *GetRoll() { return &m_wndRoll; }
 
 	virtual CSize CalcFixedLayout(BOOL bStretch, BOOL bHorz);
 	virtual void OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler);
