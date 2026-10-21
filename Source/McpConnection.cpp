@@ -43,6 +43,7 @@
 #include "Api/Tools.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
+#include <shlobj.h>
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -55,6 +56,7 @@
 #include "Clips.h"
 #include "InsertRecording.h"
 #include "InstrumentLibrary.h"
+#include "ImportNsfDlg.h"
 #include "McpSocket.h"
 #include "McpConnection.h"
 #include "VoiceEffectDlg.h"
@@ -785,6 +787,130 @@ public:
 		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < 1024 * 1024)
 			Bytes.append(Buffer, Read);
 		fclose(pFile);
+		return true;
+	}
+
+	// The reference library: Documents\FamiTracker references (Api/References.h)
+	CString LibraryFolder(bool Create)
+	{
+		TCHAR Documents[MAX_PATH];
+		if (FAILED(SHGetFolderPath(NULL, CSIDL_PERSONAL | (Create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, Documents)))
+			return CString();
+		CString Folder(Documents);
+		Folder += _T("\\FamiTracker references");
+		if (Create)
+			CreateDirectory(Folder, NULL);	// fails harmlessly when it's there already
+		return Folder;
+	}
+
+	static bool PlainName(const std::string &Name)
+	{
+		return !Name.empty() && Name.find_first_of("\\/:*?\"<>|") == std::string::npos && Name != "." && Name != "..";
+	}
+
+	bool ListLibrary(std::vector<std::string> &Names, std::string &Error)
+	{
+		Names.clear();
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty()) {
+			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			return false;
+		}
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = FindFirstFile(Folder + _T("\\*.json"), &Found);
+		if (hFind == INVALID_HANDLE_VALUE)
+			return true;	// no folder or no references yet
+		do {
+			if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+				Names.push_back(Utf8(Found.cFileName));
+		} while (FindNextFile(hFind, &Found));
+		FindClose(hFind);
+		return true;
+	}
+
+	bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &Error)
+	{
+		Bytes.clear();
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty() || !PlainName(Name))
+			return false;
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		if (GetFileAttributes(Full) == INVALID_FILE_ATTRIBUTES)
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("rb")) != 0 || pFile == NULL) {
+			Error = "Couldn't read " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		char Buffer[4096];
+		size_t Read;
+		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < 4 * 1024 * 1024)
+			Bytes.append(Buffer, Read);
+		fclose(pFile);
+		return true;
+	}
+
+	bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error)
+	{
+		if (!PlainName(Name)) {
+			Error = "A reference's file name has no folders.";
+			return false;
+		}
+		const CString Folder = LibraryFolder(true);
+		if (Folder.IsEmpty()) {
+			Error = "Windows didn't say where the Documents folder is, where the reference library goes.";
+			return false;
+		}
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("wb")) != 0 || pFile == NULL) {
+			Error = "Couldn't write " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		const size_t Written = fwrite(Bytes.data(), 1, Bytes.size(), pFile);
+		const bool Closed = fclose(pFile) == 0;
+		if (Written != Bytes.size() || !Closed) {
+			DeleteFile(Full);
+			Error = "Couldn't write all of " + Utf8(Full) + " (is the disk full?).";
+			return false;
+		}
+		Path = Utf8(Full);
+		return true;
+	}
+
+	bool DeleteLibrary(const std::string &Name, std::string &Error)
+	{
+		const CString Folder = LibraryFolder(false);
+		if (Folder.IsEmpty() || !PlainName(Name)) {
+			Error = "There's no such reference.";
+			return false;
+		}
+		const CString Full = Folder + _T("\\") + Ansi(Name);
+		if (!DeleteFile(Full)) {
+			Error = "Couldn't delete " + Utf8(Full) + ".";
+			return false;
+		}
+		return true;
+	}
+
+	// import_nsf: the module replaces the song, as File > Import NSF does
+	bool OpenText(const std::string &Text, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL) {
+			Error = "No song is open in FamiTracker.";
+			return false;
+		}
+		if (!m_bOwnDialog && !m_pMain->IsWindowEnabled()) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		Stop();
+		const CString Problem = OpenModuleText(m_pMain, pDoc, CString(Text.c_str()), CString());
+		if (!Problem.IsEmpty()) {
+			Error = Utf8(Problem);
+			return false;
+		}
 		return true;
 	}
 

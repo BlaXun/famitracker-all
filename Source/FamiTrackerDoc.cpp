@@ -300,6 +300,15 @@ BOOL CFamiTrackerDoc::OnNewDocument()
 	return TRUE;
 }
 
+BOOL CFamiTrackerDoc::NewEmptyDocument()
+{
+	// This calls DeleteContents and forgets the file's path
+	if (!CDocument::OnNewDocument())
+		return FALSE;
+	CreateEmpty();
+	return TRUE;
+}
+
 BOOL CFamiTrackerDoc::OnOpenDocument(LPCTSTR lpszPathName)
 {
 	// This function is called by the GUI to load a file

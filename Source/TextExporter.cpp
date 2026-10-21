@@ -622,9 +622,18 @@ const CString& CTextExport::ImportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc)
 	while (f.ReadString(line))
 		text += line + TCHAR('\n');
 	f.Close();
+	return ImportText(text, pDoc);
+}
 
-	// begin a new document
-	if (!pDoc->OnNewDocument())
+const CString& CTextExport::ImportText(const CString &Text, CFamiTrackerDoc *pDoc)
+{
+	static CString sResult;
+	sResult = _T("");
+	CString text = Text;
+	text.Remove(_T('\r'));		// lines end with \n only, as ImportFile reads them
+
+	// begin a new document, without the song template: the text holds the whole module
+	if (!pDoc->NewEmptyDocument())
 	{
 		sResult = _T("Unable to create new Famitracker document.");
 		return sResult;

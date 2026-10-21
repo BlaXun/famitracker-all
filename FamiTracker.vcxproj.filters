@@ -249,6 +249,9 @@
     <Filter Include="Claude Code (MCP)">
       <UniqueIdentifier>{6901EB35-0CD5-59A7-951F-D141FE398BFF}</UniqueIdentifier>
     </Filter>
+    <Filter Include="NSF importer">
+      <UniqueIdentifier>{7EC0E9A8-A13D-5449-8427-7C56879074BF}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Recorder">
       <UniqueIdentifier>{7814030B-35CE-5CEF-9CED-EF6650C58345}</UniqueIdentifier>
     </Filter>
@@ -1552,5 +1555,74 @@
     <ClCompile Include="Source\libvorbis\lib\window.c">
       <Filter>Ogg Vorbis (libogg, libvorbis)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\References.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\StyleGuide.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Api\References.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\Nsf\Cpu6502.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\NsfFile.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Chips.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Player.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Module.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Convert.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Import.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Simulate.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Nsf\Study.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\ImportNsfDlg.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Nsf\Cpu6502.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\NsfFile.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Chips.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Player.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Module.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Convert.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Import.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Simulate.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\Study.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\ImportNsfDlg.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

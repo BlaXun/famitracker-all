@@ -53,6 +53,7 @@
 #include "InstrumentLibrary.h"
 #include "DrumGridDlg.h"
 #include "Profile.h"
+#include "ImportNsfDlg.h"
 #include "Tutorial.h"
 #include "APU/APU.h"
 #include "Clips.h"
@@ -186,6 +187,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_SHOWEVERYTHING, OnUpdateViewShowEverything)
 	ON_COMMAND(ID_FILE_IMPORTTEXT, OnFileImportText)
+	ON_COMMAND(ID_FILE_IMPORTNSF, OnFileImportNsf)
 	ON_COMMAND(ID_FILE_EXPORTTEXT, OnFileExportText)
 	ON_COMMAND(ID_FILE_CREATE_NSF, OnCreateNSF)
 	ON_COMMAND(ID_FILE_CREATEWAV, OnCreateWAV)
@@ -2096,6 +2098,11 @@ void CMainFrame::OnFileImportText()
 	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 	//pDoc->UpdateAllViews(NULL, UPDATE_ENTIRE);		// TODO Remove
 	theApp.GetSoundGenerator()->DocumentPropertiesChanged(pDoc);
+}
+
+void CMainFrame::OnFileImportNsf()
+{
+	ImportNsfFile(this);
 }
 
 void CMainFrame::OnFileExportText()

@@ -164,6 +164,22 @@ public:
 	// it into the Windows code page it runs in
 	virtual std::string LocalPath(const std::string &Path) = 0;
 
+	// The reference library (References.h): files in a folder of the user's,
+	// Documents\FamiTracker references, shared by every song. Names have no
+	// folders. Listing gives the names of the files in it (none when there's no
+	// folder yet); reading is false when there's no such file (Error empty) or
+	// it can't be read (Error says why); saving makes the folder when needed
+	// and gives the path written; deleting is false with the reason.
+	virtual bool ListLibrary(std::vector<std::string> &Names, std::string &Error) = 0;
+	virtual bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &Error) = 0;
+	virtual bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
+	virtual bool DeleteLibrary(const std::string &Name, std::string &Error) = 0;
+
+	// Replaces the open song with a module in FamiTracker's text format, as
+	// File > Import text does: a new, untitled module. FamiTracker can't undo
+	// it; the tools first make sure the song has no unsaved changes.
+	virtual bool OpenText(const std::string &Text, std::string &Error) = 0;
+
 	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
 	virtual void Stop() = 0;
 	virtual bool Undo(std::string &Message) = 0;

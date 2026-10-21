@@ -36,9 +36,11 @@
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
+#include "../References.h"
 #include "../Song.h"
 #include "../SoundEffects.h"
 #include "../Tools.h"
+#include "../../Nsf/tests/TestNsf.h"
 
 #include <algorithm>
 #include <atomic>
@@ -577,6 +579,49 @@ public:
 		if (it == Files.end())
 			return false;
 		Bytes = it->second;
+		return true;
+	}
+
+	std::map<std::string, std::string> Library;		// the reference library's files
+	std::string OpenedText;							// the module OpenText was given
+
+	bool ListLibrary(std::vector<std::string> &Names, std::string &) override
+	{
+		Names.clear();
+		for (std::map<std::string, std::string>::const_iterator it = Library.begin(); it != Library.end(); ++it)
+			Names.push_back(it->first);
+		return true;
+	}
+
+	bool ReadLibrary(const std::string &Name, std::string &Bytes, std::string &) override
+	{
+		std::map<std::string, std::string>::const_iterator it = Library.find(Name);
+		if (it == Library.end())
+			return false;
+		Bytes = it->second;
+		return true;
+	}
+
+	bool SaveLibrary(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &) override
+	{
+		Library[Name] = Bytes;
+		Path = "C:\\Users\\Me\\Documents\\FamiTracker references\\" + Name;
+		return true;
+	}
+
+	bool DeleteLibrary(const std::string &Name, std::string &Error) override
+	{
+		if (Library.erase(Name) == 0) {
+			Error = "There's no such file.";
+			return false;
+		}
+		return true;
+	}
+
+	bool OpenText(const std::string &Text, std::string &) override
+	{
+		OpenedText = Text;
+		Info.Modified = false;
 		return true;
 	}
 
@@ -1335,8 +1380,8 @@ void CheckSequence(const PresetSequence &Seq, bool Drum)
 void TestDesign()
 {
 	// Every kind, and variations of each, makes sequences FamiTracker takes
-	const char *const KINDS[] = { "lead", "pad", "pluck", "bass", "keys", "bell", "brass", "strings", "organ", "chiptune", "kick", "snare",
-		"hihat", "open hihat", "crash", "tom" };
+	const char *const KINDS[] = { "lead", "pad", "pluck", "bass", "keys", "bell", "brass", "strings", "organ", "chiptune", "bloom lead",
+		"stepped lead", "click pluck", "echo pluck", "thump bass", "kick", "snare", "hihat", "open hihat", "crash", "tom" };
 	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k) {
 		SoundDesign D;
 		CHECK(DesignOfKind(KINDS[k], D));
@@ -1408,6 +1453,216 @@ void TestDesign()
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"chip\": \"VRC7\"}").Text, "built-in sounds");
 	Result = Run(Song, "design_instrument", "{\"name\": \"Shimmer\", \"kind\": \"chiptune\", \"arpeggio\": \"minor7\", \"arpeggio_frames\": 2}");
 	CHECK_HAS(Result.Text, "it arpeggiates 0, 3, 7, 10 semitones");
+
+	// The classic articulations: a bloom, a duty click, held notes struck again
+	SoundDesign Bloom;
+	CHECK(DesignOfKind("bloom lead", Bloom));
+	Preset BP = DesignPreset(Bloom);
+	const PresetSequence &BV = BP.Sequences2A03[0];
+	CHECK(BV.Items[0] == 10 && BV.Items[1] == 12 && BV.Items[2] == 15);
+	CHECK(BV.Loop > 2 && BV.Release > BV.Loop && BV.Items[static_cast<size_t>(BV.Release)] < 12 &&
+		BV.Items[static_cast<size_t>(BV.Release - 1)] < BV.Items[static_cast<size_t>(BV.Release - 2)]);	// the dip before the loop goes round
+	for (size_t i = 0; i < BP.Sequences2A03.size(); ++i)
+		if (BP.Sequences2A03[i].Type == SEQUENCE_DUTY)
+			CHECK(BP.Sequences2A03[i].Items == std::vector<int>({ 0, 1 }) && BP.SequencesVRC6[i].Items == std::vector<int>({ 1, 3 }));
+	// Steps: the peak held, then a few levels lower held
+	SoundDesign Steps;
+	DesignOfKind("stepped lead", Steps);
+	const std::vector<int> SV = DesignPreset(Steps).Sequences2A03[0].Items;
+	CHECK(SV.size() > 37 && SV[0] == 15 && SV[17] == 15 && SV[18] == 12 && SV[35] == 12 && SV[36] == 9);
+	// An echo after the note dies away, a thump, a flick
+	SoundDesign Echo;
+	DesignOfKind("echo pluck", Echo);
+	const std::vector<int> EV = DesignPreset(Echo).Sequences2A03[0].Items;
+	int Silent = 0, After = 0;
+	for (size_t i = 1; i < EV.size(); ++i) {
+		if (EV[i] == 0 && Silent == 0 && EV[i - 1] > 0)
+			Silent = static_cast<int>(i);
+		if (Silent > 0 && EV[i] > 0)
+			After = std::max(After, EV[i]);
+	}
+	CHECK(Silent > 0 && After >= 2 && After <= 6 && EV.back() == 0);
+	SoundDesign Thump;
+	DesignOfKind("thump bass", Thump);
+	CHECK(DesignPreset(Thump).Sequences2A03[1].Type == SEQUENCE_ARPEGGIO && DesignPreset(Thump).Sequences2A03[1].Items == std::vector<int>({ 5, 3, 1, 0 }));
+	Thump.AttackPitch = PITCH_FLICK;
+	Thump.Vibrato = 1;
+	const Preset Flick = DesignPreset(Thump);
+	for (size_t i = 0; i < Flick.Sequences2A03.size(); ++i) {
+		CheckSequence(Flick.Sequences2A03[i], false);
+		if (Flick.Sequences2A03[i].Type == SEQUENCE_PITCH)
+			CHECK(Flick.Sequences2A03[i].Items[0] == -4 && Flick.Sequences2A03[i].Items[1] == 3 && Flick.Sequences2A03[i].Items[2] == 1);
+	}
+	Result = Run(Song, "design_instrument", "{\"name\": \"Konami lead\", \"kind\": \"bloom lead\", \"channel\": 1}");
+	CHECK_HAS(Result.Text, "a 25% pulse that blooms from 10 to 15 2 frames in after a 12.5% duty click on the first frame");
+	CHECK_HAS(Result.Text, "struck again every 12 frames while it holds");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Mine\", \"attack\": \"bloom\", \"volume\": 12, \"decay\": 30, \"decay_style\": "
+		"\"steps\", \"sustain\": 6, \"click\": true, \"echo\": true, \"restrike_beats\": 0.5, \"attack_pitch\": \"flick\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "blooms from 8 to 12");
+	CHECK_HAS(Result.Text, "stepping down a few levels at a time");
+	CHECK_HAS(Result.Text, "a soft echo after it");
+	CHECK_HAS(Result.Text, "a quick pitch flick up and back on the attack");
+	for (std::map<int, Preset>::const_iterator it = Song.Made.begin(); it != Song.Made.end(); ++it)
+		for (size_t i = 0; i < it->second.Sequences2A03.size(); ++i)
+			CheckSequence(it->second.Sequences2A03[i], it->second.Drum);
+}
+
+// A looping tune on Pulse 1 with a triangle bass, written to Path, with a
+// playlist that names its track
+void WriteTestNsf(const std::string &Path)
+{
+	using namespace nsftest;
+	static const int SCALE[8] = { 0, 2, 3, 5, 7, 8, 10, 12 };
+	std::vector<Tone> Tones;
+	for (int i = 0; i < 32; ++i) {
+		Tone t;
+		t.Start = i * 12;
+		t.Length = 10;
+		t.Note = 45 + SCALE[(i * 5 + i / 3) % 8];
+		t.Envelope = std::vector<int>{ 9, 12, 15, 13, 13, 12 };
+		t.Duty = 2;
+		t.Trigger = true;
+		Tones.push_back(t);
+	}
+	std::vector<Frame> Frames = PulseFrames(Tones, 32 * 12);
+	for (int i = 0; i < 16; ++i) {	// the triangle: a bass note every two of the tune's
+		const double f = 440.0 * std::pow(2.0, (21 + SCALE[(i * 3) % 5] - 45) / 12.0);
+		const int Period = static_cast<int>(1789773.0 / (32.0 * f) - 1.0 + 0.5);
+		Frame &Start = Frames[static_cast<size_t>(i * 24)];
+		Start.push_back(std::make_pair(0x08, 0xFF));
+		Start.push_back(std::make_pair(0x0A, Period & 0xFF));
+		Start.push_back(std::make_pair(0x0B, ((Period >> 8) & 7) | 0x08));
+		Frames[static_cast<size_t>(i * 24 + 20)].push_back(std::make_pair(0x08, 0x80));	// silent before the next
+	}
+	const std::vector<uint8_t> Bytes = BuildNsf(Frames, 0, "Tester Song");
+	std::ofstream Nsf(Path.c_str(), std::ios::binary);
+	Nsf.write(reinterpret_cast<const char *>(&Bytes[0]), static_cast<std::streamsize>(Bytes.size()));
+	Nsf.close();
+	std::ofstream M3u((Path.substr(0, Path.size() - 4) + ".m3u").c_str(), std::ios::binary);
+	M3u << "api_tests_study.nsf::NSF,1,Lava Run,0:00:40,,0:00:05\n";
+}
+
+void TestReferences()
+{
+	// Ids, the file read back, a sound as a preset for either chip
+	CHECK_EQ(ReferenceId("Bucky O'Hare", 8), std::string("bucky-o-hare-08"));
+	CHECK_EQ(ReferenceId("", 3), std::string("nsf-03"));
+	Reference R;
+	R.Id = "game-02";
+	R.Title = "Lava";
+	R.Game = "Game";
+	R.Track = 2;
+	R.Tags.push_back("fast");
+	R.Bpm = 150;
+	R.Key = "E minor";
+	R.LoopBars = 16;
+	R.Study = "Lava\n  Tempo: 150 BPM.\n  Pulse 1, the lead: an echo a row behind.";
+	ReferenceSound Lead;
+	Lead.Channel = "Pulse 1";
+	Lead.Role = "the lead";
+	Lead.Words = "25% duty after a 12.5% click";
+	Lead.Chip = "2A03";
+	Lead.Share = 80;
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 9, 12, 15, 13, 6, 0 };
+	Lead.Sequences[SEQUENCE_VOLUME].Release = 3;
+	Lead.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 0, 1 };
+	Lead.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 0, 0, 1, -1, -1, 1 };
+	Lead.Sequences[SEQUENCE_PITCH].Loop = 2;
+	R.Sounds.push_back(Lead);
+	Reference Back;
+	std::string Error;
+	CHECK(ReadReferenceFile(ReferenceFile(R), Back, Error));
+	CHECK(Back.Title == "Lava" && Back.Track == 2 && Back.Bpm == 150 && Back.Study == R.Study && Back.Tags == R.Tags);
+	CHECK(Back.Sounds.size() == 1 && Back.Sounds[0].Sequences[SEQUENCE_VOLUME].Items == Lead.Sequences[SEQUENCE_VOLUME].Items &&
+		Back.Sounds[0].Sequences[SEQUENCE_VOLUME].Release == 3 && Back.Sounds[0].Sequences[SEQUENCE_PITCH].Loop == 2);
+	CHECK(!ReadReferenceFile("{\"title\": \"x\"}", Back, Error) && !ReadReferenceFile("not json", Back, Error));
+	CHECK_HAS(ReferenceFile(R), "\n\t\"study\": [\n");		// a line each, to read
+	CHECK_HAS(ReferenceText(R), "volume 9 12 15 13 | 6 0; pitch 0 0 [1 -1 -1 1; duty 0 1");
+	const Preset P = ReferencePreset(Lead, "Lava lead");
+	CHECK(P.Name == "Lava lead" && P.Releases() && P.Sequences2A03.size() == 3 && P.SequencesVRC6.size() == 3);
+	CHECK(P.Sequences2A03[2].Type == SEQUENCE_DUTY && P.Sequences2A03[2].Items == std::vector<int>({ 0, 1 }) &&
+		P.SequencesVRC6[2].Items == std::vector<int>({ 1, 3 }));		// 12.5% and 25% on the VRC6
+	CHECK(ReferenceMatch(R, "echo") > 0 && ReferenceMatch(R, "fast lava") > ReferenceMatch(R, "fast kazoo") &&
+		ReferenceMatch(R, "kazoo") == 0 && ReferenceMatch(R, "the") == 0);
+	CHECK_EQ(ReferenceSoundName(R, Lead), std::string("Lava lead"));
+
+	// study_nsf: the track studied and kept in the library
+	const std::string Path = "api_tests_study.nsf";
+	WriteTestNsf(Path);
+	FakeSong Song;
+	ToolResult Result = Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"list\"}");
+	CHECK_HAS(Result.Text, "1. Lava Run: music");
+	Result = Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tags\": [\"Lava\", \"test\"], \"notes\": \"made for the tests\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Lava Run from Tester Song (track 1), by Tester. Reference \"tester-song-01\"");
+	CHECK_HAS(Result.Text, "Kept in the reference library (C:\\Users\\Me\\Documents\\FamiTracker references)");
+	CHECK_HAS(Result.Text, "Pulse 1, the lead");
+	CHECK(Song.Library.count("tester-song-01.json") == 1);
+	Reference Kept;
+	CHECK(ReadReferenceFile(Song.Library["tester-song-01.json"], Kept, Error));
+	CHECK(Kept.Title == "Lava Run" && Kept.Game == "Tester Song" && Kept.Track == 1 && Kept.Notes == "made for the tests");
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "lava") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "bloom") != Kept.Tags.end());
+	CHECK(!Kept.Sounds.empty() && Kept.Sounds[0].Channel == "Pulse 1" && Kept.Sounds[0].Sequences[SEQUENCE_VOLUME].Items.size() >= 3 &&
+		Kept.Sounds[0].Sequences[SEQUENCE_VOLUME].Items[0] == 9 && Kept.Sounds[0].Sequences[SEQUENCE_VOLUME].Items[2] == 15);
+	CHECK_HAS(Run(Song, "study_nsf", "{\"path\": \"no_such_file.nsf\"}").Text, "couldn't be read");
+	CHECK_HAS(Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"7\"}").Text, "the NSF has tracks 1 to 1");
+	CHECK_HAS(Run(Song, "study_nsf", "{}").Text, "Give the path of the NSF file");
+
+	// references: list, search, show, tag, guide
+	Result = Run(Song, "references", "{}");
+	CHECK_HAS(Result.Text, "1 reference in the library:\nTester Song (Tester):\n- tester-song-01: Lava Run (Tester Song, track 1)");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"search\", \"query\": \"blooming lava\"}").Text, "- tester-song-01: Lava Run");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"search\", \"query\": \"kazoo\"}").Text, "No reference matches \"kazoo\"");
+	Result = Run(Song, "references", "{\"action\": \"show\", \"reference\": \"tester-song-01\"}");
+	CHECK_HAS(Result.Text, "Sounds (reference_sound adds one to the song as an instrument, by its number):\n  1. Pulse 1, the lead");
+	CHECK_HAS(Result.Text, "Notes: made for the tests");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"show\", \"reference\": \"lava run\"}").Text, "Reference \"tester-song-01\"");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"show\", \"reference\": \"nope\"}").Text, "There's no reference \"nope\"");
+	Result = Run(Song, "references", "{\"action\": \"tag\", \"reference\": \"tester-song-01\", \"tags\": \"boss, heroic\", \"remove_tags\": [\"test\"], "
+		"\"notes\": \"the user's favourite\"}");
+	CHECK_HAS(Result.Text, "boss, heroic]");
+	CHECK_LACKS(Result.Text, "test,");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\"}").Text, "Topics");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"fly\"}").Text, "action: list, show, search");
+
+	// Studied again: the user's tags and notes stay
+	CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"1\"}").IsError);
+	CHECK(ReadReferenceFile(Song.Library["tester-song-01.json"], Kept, Error));
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "heroic") != Kept.Tags.end() && Kept.Notes == "the user's favourite");
+	CHECK(Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"save\": false}").Text.find("Not kept") != std::string::npos);
+
+	// reference_sound: the lead as an instrument for a VRC6 pulse, its duty translated
+	Result = Run(Song, "reference_sound", "{\"reference\": \"tester-song-01\", \"sound\": 1, \"channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Lava Run lead\" (03), a VRC6 instrument for VRC6 Pulse 1: sound 1 of tester-song-01");
+	const Preset &Made = Song.Made[3];
+	bool Duty = false;
+	for (size_t i = 0; i < Made.SequencesVRC6.size(); ++i)
+		if (Made.SequencesVRC6[i].Type == SEQUENCE_DUTY)
+			Duty = !Made.SequencesVRC6[i].Items.empty() && Made.SequencesVRC6[i].Items[0] == 7;	// 50%
+	CHECK(Duty);
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"tester-song-01\", \"channel\": \"Noise\"}").Text, "give a channel other than the noise");
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"tester-song-01\", \"sound\": 9}").Text, "sound should be from 1 to");
+
+	// import_nsf: not over unsaved changes; then the tracks open as a module
+	Song.Info.Modified = true;
+	CHECK_HAS(Run(Song, "import_nsf", "{\"path\": \"" + Path + "\"}").Text, "changes that aren't saved");
+	CHECK(Song.OpenedText.empty());
+	Song.Info.Modified = false;
+	Result = Run(Song, "import_nsf", "{\"path\": \"" + Path + "\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Imported 1 track of \"Tester Song\"");
+	CHECK_HAS(Result.Text, "It's open in FamiTracker as a new module");
+	CHECK_HAS(Song.OpenedText, "TRACK");
+
+	// delete
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"tester-song-01\"}").Text, "Deleted the reference tester-song-01");
+	CHECK(Song.Library.empty());
+	CHECK_HAS(Run(Song, "references", "{}").Text, "The reference library is empty");
+	std::remove(Path.c_str());
+	std::remove("api_tests_study.m3u");
 }
 
 void TestInstruments()
@@ -4469,6 +4724,7 @@ int main()
 	TestPlaceClip();
 	TestInstruments();
 	TestDesign();
+	TestReferences();
 	TestTranspose();
 	TestTempoTool();
 	TestBacking();

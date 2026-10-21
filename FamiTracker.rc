@@ -102,6 +102,7 @@ BEGIN
         MENUITEM "Create WAV...",               ID_FILE_CREATEWAV
         MENUITEM "Export for &games (OGG)...",  ID_FILE_EXPORTFORGAMES
         MENUITEM SEPARATOR
+        MENUITEM "&Import NSF (game music)...", ID_FILE_IMPORTNSF
         MENUITEM "Import text...",              ID_FILE_IMPORTTEXT
         MENUITEM "Export text...",              ID_FILE_EXPORTTEXT
         MENUITEM SEPARATOR
@@ -912,6 +913,7 @@ END
 STRINGTABLE 
 BEGIN
     ID_FILE_IMPORTTEXT      "Imports pattern text files"
+    ID_FILE_IMPORTNSF       "Opens the tracks of an NSF file (game music) as a new module, to see and hear how they're made\nImport NSF"
     ID_FILE_EXPORTTEXT      "Exports pattern text files"
     ID_EDIT_VOLUMEMASK      "Disables insertion of values in the volume column"
 END
@@ -1921,6 +1923,20 @@ BEGIN
     PUSHBUTTON      "Copy",IDC_GAME_COPY,7,211,50,14
     DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,211,50,14
     PUSHBUTTON      "Close",IDCANCEL,263,211,50,14
+END
+
+IDD_IMPORT_NSF DIALOGEX 0, 0, 300, 236
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Import NSF"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_NSF_INFO,7,7,286,34
+    LISTBOX         IDC_NSF_TRACKS,7,44,286,162,LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Music",IDC_NSF_MUSIC,7,215,40,14
+    PUSHBUTTON      "All",IDC_NSF_ALL,51,215,40,14
+    PUSHBUTTON      "None",IDC_NSF_NONE,95,215,40,14
+    DEFPUSHBUTTON   "Import",IDOK,188,215,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,215,50,14
 END
 
 IDD_INSERT_RECORDING DIALOGEX 0, 0, 250, 199

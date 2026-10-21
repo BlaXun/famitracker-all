@@ -344,8 +344,9 @@ const Vrc7Patch *FindVrc7Patch(const std::string &Name)
 
 // Sounds in words
 
-SoundDesign::SoundDesign() : Drum(false), Peak(13), Attack(1), Decay(8), Sustain(10), Release(6), Duty(1), Motion(DUTY_STILL),
-	Vibrato(0), VibratoDelay(20), VibratoRate(12), AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
+SoundDesign::SoundDesign() : Drum(false), Peak(13), Attack(1), AttackFrom(0), Decay(8), DecayStyle(DECAY_SMOOTH), Sustain(10),
+	Release(6), Restrike(0), Echo(false), Duty(1), Motion(DUTY_STILL), Click(false), Vibrato(0), VibratoDelay(20), VibratoRate(12),
+	AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
 {
 }
 
@@ -358,35 +359,76 @@ int Clamp(int Value, int Low, int High)
 	return std::max(Low, std::min(High, Value));
 }
 
-// Attack, decay to the sustain level (held at the release point), release
-std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint)
+// Attack, decay to the sustain level (held at the release point, struck again
+// in a loop when it restrikes), release, and an echo after it
+std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint, int &LoopPoint)
 {
 	const int Peak = Clamp(D.Peak, 1, 15);
 	const int Sustain = Clamp(D.Sustain, 0, Peak);
 	const int Attack = Clamp(D.Attack, 0, 60), Release = Clamp(D.Release, 0, 60);
 	const int Decay = Sustain == 0 ? Clamp(D.Decay, 4, 120) : Clamp(D.Decay, 0, 120);
+	const int From = Clamp(D.AttackFrom, 0, Peak);
 	std::vector<int> Out;
-	for (int i = 1; i <= Attack; ++i)
-		Out.push_back(std::max(1, (Peak * i + Attack / 2) / (Attack + 1)));
+	if (From > 0)		// a bloom: from its level to the peak
+		for (int i = 0; i < Attack; ++i)
+			Out.push_back(From + (Peak - From) * i / std::max(1, Attack));
+	else
+		for (int i = 1; i <= Attack; ++i)
+			Out.push_back(std::max(1, (Peak * i + Attack / 2) / (Attack + 1)));
 	Out.push_back(Peak);
-	for (int i = 1; i <= Decay; ++i) {
-		const double Left = 1.0 - i / static_cast<double>(Decay);
-		Out.push_back(static_cast<int>(std::floor(Sustain + (Peak - Sustain) * Left * Left + 0.5)));	// faster at first
+	if (D.DecayStyle == DECAY_STEPS && Decay > 0) {
+		// Plateaus a few levels apart, each held a while
+		const int Steps = std::max(1, (Peak - Sustain + 2) / 3);
+		const int Hold = std::max(2, Decay / Steps);
+		for (int s = 0; s < Steps; ++s) {
+			const int Level = s == 0 ? Peak : std::max(Sustain, Peak - 3 * s);
+			for (int i = s == 0 ? 1 : 0; i < Hold; ++i)
+				Out.push_back(Level);
+		}
 	}
+	else
+		for (int i = 1; i <= Decay; ++i) {
+			const double Left = 1.0 - i / static_cast<double>(Decay);
+			Out.push_back(static_cast<int>(std::floor(Sustain + (Peak - Sustain) * Left * Left + 0.5)));	// faster at first
+		}
 	if (Out.back() != Sustain)
 		Out.push_back(Sustain);
-	ReleasePoint = -1;
+	ReleasePoint = LoopPoint = -1;
 	if (Sustain > 0) {
+		const int Restrike = Clamp(D.Restrike, 0, 60);
+		if (Restrike >= 4) {
+			// Held: struck again every Restrike frames, a dip and a rise back
+			LoopPoint = static_cast<int>(Out.size());
+			for (int i = 0; i < Restrike - 2; ++i)
+				Out.push_back(Sustain);
+			Out.push_back(std::max(1, Sustain - 5));
+			Out.push_back(std::max(1, Sustain - 2));
+		}
 		ReleasePoint = static_cast<int>(Out.size()) - 1;
 		for (int i = 1; i <= Release; ++i)
 			Out.push_back(static_cast<int>(std::floor(Sustain * (1.0 - i / static_cast<double>(Release + 1)) + 0.5)));
 		if (Out.back() != 0)
 			Out.push_back(0);
 	}
+	if (D.Echo) {
+		// Quiet for a moment, then a soft repeat that fades
+		if (Out.back() != 0)
+			Out.push_back(0);
+		Out.push_back(0);
+		Out.push_back(0);
+		const int Echo = std::max(2, (Peak + 2) / 3);
+		for (int Level = Echo; Level >= 1; --Level) {
+			Out.push_back(Level);
+			Out.push_back(Level);
+		}
+		Out.push_back(0);
+	}
 	if (Out.size() > MAX_ITEMS) {
 		Out.resize(MAX_ITEMS);
 		Out.back() = 0;
 		ReleasePoint = std::min(ReleasePoint, MAX_ITEMS - 2);
+		if (LoopPoint > ReleasePoint)
+			LoopPoint = -1;
 	}
 	return Out;
 }
@@ -398,11 +440,13 @@ int Vrc6Duty(int Duty)
 	return NEAREST[Clamp(Duty, 0, 3)];
 }
 
-std::vector<int> DutyItems(int Duty, int Motion, bool Vrc6, int &Loop)
+std::vector<int> DutyItems(int Duty, int Motion, bool Click, bool Vrc6, int &Loop)
 {
 	Loop = -1;
 	const int d = Vrc6 ? Vrc6Duty(Duty) : Clamp(Duty, 0, 3);
 	std::vector<int> Items;
+	if (Click)		// the first frame thin, or round when the note is thin itself
+		Items.push_back(Vrc6 ? (d >= 3 ? 1 : 7) : (d >= 1 ? 0 : 2));
 	switch (Motion) {
 	case DUTY_SWEEP:	// thin to the duty on the attack
 		for (int Step = Vrc6 ? 1 : 0; Step < d; Step += Vrc6 ? 2 : 1) {
@@ -413,9 +457,9 @@ std::vector<int> DutyItems(int Duty, int Motion, bool Vrc6, int &Loop)
 		break;
 	case DUTY_WOBBLE: {	// to and fro: a shimmer like a chorus
 		const int Other = Vrc6 ? (d >= 3 ? d - 2 : d + 2) : (d >= 2 ? d - 1 : d + 1);
+		Loop = static_cast<int>(Items.size());
 		for (int i = 0; i < 12; ++i)
 			Items.push_back(i < 6 ? d : Other);
-		Loop = 0;
 		break;
 	}
 	case DUTY_FADE:		// thinner as it fades
@@ -499,10 +543,10 @@ Preset DesignPreset(const SoundDesign &D)
 		return P;
 	}
 
-	int Release;
-	const std::vector<int> Volume = Envelope(D, Release);
-	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
-	P.SequencesVRC6.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
+	int Release, VolumeLoop;
+	const std::vector<int> Volume = Envelope(D, Release, VolumeLoop);
+	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume, VolumeLoop, Release));
+	P.SequencesVRC6.push_back(Sequence(SEQUENCE_VOLUME, Volume, VolumeLoop, Release));
 
 	// Arpeggio: a chord looped, or the attack's pitch
 	std::vector<int> Arpeggio;
@@ -517,6 +561,8 @@ Preset DesignPreset(const SoundDesign &D)
 		Arpeggio = List({ 12, 12, 0 });
 	else if (D.AttackPitch == PITCH_SCOOP)
 		Arpeggio = List({ -3, -2, -1, 0 });
+	else if (D.AttackPitch == PITCH_THUMP)
+		Arpeggio = List({ 5, 3, 1, 0 });
 	if (!Arpeggio.empty()) {
 		P.Sequences2A03.push_back(Sequence(SEQUENCE_ARPEGGIO, Arpeggio, ArpeggioLoop));
 		P.SequencesVRC6.push_back(Sequence(SEQUENCE_ARPEGGIO, Arpeggio, ArpeggioLoop));
@@ -527,6 +573,8 @@ Preset DesignPreset(const SoundDesign &D)
 	int PitchLoop = -1;
 	if (D.AttackPitch == PITCH_DROP)
 		Pitch = List({ 0, 2, 3, 4, 5, 6, 7, 8 });
+	else if (D.AttackPitch == PITCH_FLICK)
+		Pitch = List({ -4, 3, 1 });		// up and back: the period's steps add up to nothing
 	if (D.Vibrato > 0) {
 		int Loop;
 		const std::vector<int> Wave = VibratoItems(std::max(0, D.VibratoDelay - static_cast<int>(Pitch.size())), Clamp(D.Vibrato, 1, 3),
@@ -540,9 +588,9 @@ Preset DesignPreset(const SoundDesign &D)
 	}
 
 	int Loop;
-	std::vector<int> Duty = DutyItems(D.Duty, D.Motion, false, Loop);
+	std::vector<int> Duty = DutyItems(D.Duty, D.Motion, D.Click, false, Loop);
 	P.Sequences2A03.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
-	Duty = DutyItems(D.Duty, D.Motion, true, Loop);
+	Duty = DutyItems(D.Duty, D.Motion, D.Click, true, Loop);
 	P.SequencesVRC6.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
 	return P;
 }
@@ -562,9 +610,12 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%" };
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
 	std::string Out;
-	std::snprintf(Buffer, sizeof(Buffer), "a %s pulse that reaches %d %s", DUTIES[Clamp(D.Duty, 0, 3)], Clamp(D.Peak, 1, 15),
-		D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
+	std::snprintf(Buffer, sizeof(Buffer), "a %s pulse that %s %d %s", DUTIES[Clamp(D.Duty, 0, 3)],
+		D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() : "reaches",
+		Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
 	Out = Buffer;
+	if (D.Click)
+		Out += std::string(" after a ") + (D.Duty >= 1 ? "12.5%" : "50%") + " duty click on the first frame";
 	if (Sustain == 0)
 		std::snprintf(Buffer, sizeof(Buffer), ", then dies away over %d frames by itself", std::max(4, D.Decay));
 	else if (Sustain == Clamp(D.Peak, 1, 15))
@@ -573,6 +624,14 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 		std::snprintf(Buffer, sizeof(Buffer), ", settles to %d over %d frames, and fades over %d frames after a release (===)", Sustain,
 			D.Decay, D.Release);
 	Out += Buffer;
+	if (D.DecayStyle == DECAY_STEPS && D.Decay > 0 && Sustain < Clamp(D.Peak, 1, 15))
+		Out += " (stepping down a few levels at a time)";
+	if (D.Restrike >= 4 && Sustain > 0) {
+		std::snprintf(Buffer, sizeof(Buffer), "; struck again every %d frames while it holds", D.Restrike);
+		Out += Buffer;
+	}
+	if (D.Echo)
+		Out += "; a soft echo after it";
 	static const char *const MOTIONS[] = { "", "; its tone opens from thin on the attack", "; its tone shimmers to and fro",
 		"; its tone thins as it fades" };
 	Out += MOTIONS[Clamp(D.Motion, 0, 3)];
@@ -582,6 +641,10 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate)
 		Out += "; it scoops up into the note";
 	else if (D.AttackPitch == PITCH_DROP)
 		Out += "; its pitch falls";
+	else if (D.AttackPitch == PITCH_FLICK)
+		Out += "; a quick pitch flick up and back on the attack";
+	else if (D.AttackPitch == PITCH_THUMP)
+		Out += "; it thumps: starts a fourth up and drops into the note";
 	if (!D.Arpeggio.empty()) {
 		Out += "; it arpeggiates";
 		for (size_t i = 0; i < D.Arpeggio.size(); ++i)
@@ -632,6 +695,23 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 		D.Attack = 0; D.Peak = 13; D.Decay = 10; D.Sustain = 9; D.Release = 4; D.Duty = 1;
 		D.Arpeggio = List({ 0, 4, 7 });
 	}
+	// The articulations of the classic NES soundtracks (references action guide)
+	else if (K == "bloomlead") {		// blooms in, a duty click, struck again while held, a vibrato that waits
+		D.Attack = 2; D.AttackFrom = 10; D.Peak = 15; D.Decay = 6; D.Sustain = 12; D.Release = 6; D.Duty = 1; D.Click = true;
+		D.Restrike = 12; D.Vibrato = 1; D.VibratoDelay = 24;
+	}
+	else if (K == "steppedlead") {	// holds, then steps down; the lead of fast action tracks
+		D.Attack = 0; D.Peak = 15; D.Decay = 36; D.DecayStyle = DECAY_STEPS; D.Sustain = 9; D.Release = 7; D.Duty = 2;
+	}
+	else if (K == "clickpluck") {	// a short, bright note that speaks with a click and holds low
+		D.Attack = 0; D.Peak = 15; D.Decay = 4; D.Sustain = 3; D.Release = 2; D.Duty = 1; D.Click = true;
+	}
+	else if (K == "echopluck") {		// dies away, then a soft echo of itself
+		D.Attack = 0; D.Peak = 14; D.Decay = 12; D.Sustain = 0; D.Duty = 1; D.Echo = true;
+	}
+	else if (K == "thumpbass") {		// a bass that thumps in from a fourth above
+		D.Attack = 0; D.Peak = 15; D.Decay = 0; D.Sustain = 15; D.Release = 2; D.Duty = 2; D.AttackPitch = PITCH_THUMP;
+	}
 	else {
 		static const struct { const char *Word; int Kind; } DRUMS[] = {
 			{ "kick", DRUM_KICK }, { "bassdrum", DRUM_KICK }, { "snare", DRUM_SNARE }, { "clap", DRUM_SNARE }, { "hihat", DRUM_HIHAT },
@@ -653,8 +733,8 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 
 std::string DesignKinds()
 {
-	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio); drums: kick, snare, hihat, "
-		"open hihat, crash, tom";
+	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio); the classic articulations: "
+		"bloom lead, stepped lead, click pluck, echo pluck, thump bass; drums: kick, snare, hihat, open hihat, crash, tom";
 }
 
 std::string Vrc7PatchList()

@@ -304,6 +304,7 @@ public:
 	afx_msg void OnEnSongArtistChange();
 	afx_msg void OnEnSongCopyrightChange();
 	afx_msg void OnFileImportText();
+	afx_msg void OnFileImportNsf();
 	afx_msg void OnFileExportText();
 	afx_msg void OnEnKillfocusTempo();
 	afx_msg void OnModuleInsertFrame();

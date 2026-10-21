@@ -1,0 +1,230 @@
+/*
+** FamiTracker - NES/Famicom sound tracker
+** Copyright (C) 2005-2014  Jonathan Liss
+** Copyright (C) 2026  The beginner-friendly FamiTracker contributors
+**
+** This program is free software; you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation; either version 2 of the License, or
+** (at your option) any later version.
+**
+** This program is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Library General Public License for more details.  To obtain a
+** copy of the GNU Library General Public License, write to the Free
+** Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+**
+** Any permitted reproduction of these routines, in whole or in part,
+** must bear this legend.
+*/
+
+// The built-in guide to the classic NES styles (References.h)
+
+#include "References.h"
+#include "Music.h"
+
+#include <algorithm>
+#include <cctype>
+
+namespace ftapi {
+
+namespace {
+
+struct Section {
+	const char *Topic;		// "konami"
+	const char *Title;		// "Konami action (Bucky O'Hare, TMNT II)"
+	const char *Words;		// more words that find it
+	const char *Text;
+};
+
+// What the studies of Bucky O'Hare, TMNT II, Mega Man 2 to 5, Little Nemo,
+// Super Mario Bros. 2 and 3 found (study_nsf's numbers), as craft to write
+// with. Every instrument recipe here is a design of this guide's, not a copy.
+const Section SECTIONS[] = {
+	{ "konami", "Konami action (Bucky O'Hare, TMNT II, Castlevania II)", "bucky ohare turtles tmnt castlevania action",
+		"Feel: driving and dense; 112-167 BPM, often written with 8 rows a beat (rows of 3.5-4 frames) so attacks, flicks and "
+		"echoes can sit between sixteenths. Mostly minor (11 of 14 Bucky tracks).\n"
+		"- Leads that speak: almost every note has an articulation (blooms in 13 of 14 Bucky tracks, duty clicks in 11). "
+		"Attacks bloom (9 or 11 to 15 in 2-3 frames), the first "
+		"frame clicks at another duty (12.5% before a 25% or 50% body), long notes are struck again inside the envelope (a dip "
+		"of 4-5 levels and a rise, every eighth), quick pitch flicks on the attack, decays in steps, and an echo built into "
+		"the envelope (the note fades to 1-2, then comes back at 3-4 and fades). design_instrument kind \"bloom lead\" or "
+		"attack bloom, click, restrike_beats 0.5, echo, attack_pitch flick.\n"
+		"- The pulses play quietly (volume column 6-9 of 15) and close together: an echo of the lead a row behind (5 of 14 "
+		"Bucky tracks), the two in rhythm on different notes (chords between them), or doubling in unison with different "
+		"duties and volumes (12.5% at 9 with 75% at 5: thick, like a chorus).\n"
+		"- Triangle: busy sixteenths, staccato (cut with Sxx after 3-4 frames), a pedal on the root with neighbour notes "
+		"(0 0 +2 0 0 +4 0 0 ...), or a riff doubled with a pulse an octave up.\n"
+		"- Drums on the DPCM: a short kick sample on the beats with pushes (x... xx.. x... xx..) and a longer snare sample "
+		"either on 2 and 4 or on every 'and' (..x. ..x. ..x. ..x.), which doubles the drive; the noise adds a crack or a hat. "
+		"Without samples: add_drums with a busy groove, a snare on the 'and's.\n"
+		"- Harmony: long minor pedals (i for 4-8 bars) that then move by VI-III-VII; phrygian neighbours (i-bII-i); "
+		"mixolydian vamps (I-bVII); sus4 chords; chords climbing by whole steps (bVI-bVII-I) into the loop's peak." },
+	{ "capcom", "Capcom action (Mega Man 2-5, Little Nemo)", "megaman mega man rockman nemo ducktales capcom action",
+		"Feel: fast and clear; 150-200 BPM at 4 rows a beat (speed 5 or 6 at tempo 150 is 180 or 150 BPM). Mega Man mostly "
+		"minor (10 of 16 in MM2, 14 of 18 in MM3), Little Nemo mostly major.\n"
+		"- Staccato everywhere: most notes are cut short (Sxx) or have short envelopes, so the fast lines stay clean.\n"
+		"- The stepped lead: full volume held about 20 frames, then 3 lower held as long, then 3 lower again, with a short "
+		"release; 50% or 25% duty (75% for a hollow edge). design_instrument kind \"stepped lead\". Leads at 12-13 of 15. "
+		"From Mega Man 3 on, many leads bloom in 2-3 frames instead (12 of 18 MM3 tracks).\n"
+		"- Second pulse: harmony in thirds struck with the lead (6 of 16 MM2 tracks), or an echo a row or two behind, or "
+		"its own countermelody; arpeggio chords for the sustained harmony.\n"
+		"- Triangle: the gallop x.xx (an eighth and two sixteenths) on one note per bar or half bar, octave pedals, and runs "
+		"between; an occasional thump (the note starts a fourth up and drops in 3 frames: attack_pitch thump).\n"
+		"- Noise drums: a snare on 2 and 4 (.... x... .... x...) with a 10-frame decay (15 15 11 11 11 7 7 7 3 0), and hats "
+		"on most sixteenths (x.xx ..xx) with a 3-4 frame decay (15 5 5 0); crashes at section starts.\n"
+		"- Harmony: i-VI-VII-I (minor to a major tonic at the cadence), i-bVII, dorian i-IV, and a riff repeated a semitone "
+		"higher every 4 bars to build tension." },
+	{ "nintendo", "Nintendo (Super Mario Bros. 2 and 3)", "mario smb kondo nintendo",
+		"Feel: light, bouncy and witty; mostly major (13 of 23 SMB3 tracks), 112-150 BPM, short loops (4-16 bars) built "
+		"from a catchy riff; many rests, so every part has air.\n"
+		"- Plucky staccato: a duty click (12.5% for a frame, then 25%; in 15 of 23 SMB3 tracks) and a quick fall from 15 to "
+		"a low hold (2-3), released "
+		"at once: design_instrument kind \"click pluck\". Pulses play at about 10 of 15.\n"
+		"- Harmony in thirds (8 of 23 SMB3 tracks) or sixths between the pulses, or both pulses doubling a riff; swells on "
+		"held chords.\n"
+		"- Bass: bouncing between root, octave and fifth (0 +12 -5 +7), latin and calypso figures (x..x ..x. x...), "
+		"walking lines.\n"
+		"- Drums: the noise as a light hat on the offbeats, a crash now and then; samples for timpani, kicks and congas.\n"
+		"- Harmony: I-bVII and I-IV vamps, chromatic neighbours (I-bII-I), I-IV-bVI, and a major tonic turning minor (I to "
+		"i) for a shadow." },
+	{ "leads", "Lead sounds and articulations", "lead melody sound instrument envelope articulation duty click bloom vibrato",
+		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
+		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "
+		"especially fast ones. design_instrument click.\n"
+		"- Bloom: start a third below full and reach it in 2 frames (10 13 15): softer than a hard attack, punchier than a "
+		"swell. attack bloom.\n"
+		"- Restrike: a held note dips 4-5 levels and rises every eighth, so long notes keep the beat. restrike_beats 0.5.\n"
+		"- Stepped decay: hold, then drop 3 levels at a time: punchy and clear at fast tempos. decay_style steps.\n"
+		"- Echo tail: after the note fades, a soft repeat at a quarter of the volume. echo.\n"
+		"- Pitch flick: up and back in 3 frames on the attack. attack_pitch flick. Scoop: up into the note from below.\n"
+		"- Vibrato that waits: none for the first 12-24 frames, then 1-2 period steps either way over 6-8 frames per "
+		"side; only long notes get it. vibrato gentle with vibrato_delay_beats.\n"
+		"- Swell: 8 to 15 over 6-30 frames for held, singing notes, with vibrato.\n"
+		"reference_sound brings in a studied track's lead exactly; design_instrument makes your own." },
+	{ "echo", "Echoes, doubling and the second pulse", "echo delay doubling unison second pulse harmony thirds chorus",
+		"With two pulses, the second one is what makes a track sound big:\n"
+		"- Echo: the lead's notes again on the other pulse a row or two later (an eighth at most), at about half the "
+		"volume (4-7), often a thinner duty. add_echo does it. Konami's echo runs one row (6-8 frames) behind.\n"
+		"- Doubling: both pulses in unison with different duties and volumes (12.5% loud with 75% soft): a thick, chorused "
+		"lead. Or an octave apart.\n"
+		"- Harmony: the second pulse a third or sixth below, struck with the lead (add_harmony); change to parallel sixths "
+		"for the B part.\n"
+		"- Chords between them: both pulses in the same rhythm on different chord tones, under a triangle melody.\n"
+		"- Traded notes (hocket): one plays while the other rests, a row apart, for fast riffs that sound faster than one "
+		"channel could." },
+	{ "bass", "Triangle bass figures", "bass triangle gallop pedal octave walking thump",
+		"The triangle has no volume, so its rhythm and note lengths do the work:\n"
+		"- Gallop: x.xx (an eighth, two sixteenths) on one note, changing with the chord (Capcom's drive).\n"
+		"- Sixteenth pedal with neighbours: 0 0 +2 0 0 +4 0 0, staccato (Konami's churn).\n"
+		"- Octave and fifth bounce: 0 +12 0 +7 +9 0 +12 0 (rock), or 0 +12 -5 +7 (Nintendo's bounce).\n"
+		"- Walking eighths through the chord with passing notes, for towns and jazz.\n"
+		"- Staccato: cut notes after 3-6 frames (S03-S06) so the bass punches instead of droning.\n"
+		"- Thump: start a fourth up and drop in 3 frames on the downbeats (attack_pitch thump, or kind \"thump bass\").\n"
+		"add_chords_and_bass's bass_style and make_groove give these figures; write_notes for your own." },
+	{ "drums", "Drums: noise kits, samples and grooves", "drums noise snare hat kick dpcm samples groove backbeat fills",
+		"- Noise kit: hat 15 5 5 0 or 15 11 7 3 0 at a high noise pitch; snare 15 15 11 11 11 7 7 7 3 0 at a middle one; "
+		"kick at a low pitch, short, its pitch falling; crash: a long fade at a high pitch. design_instrument kinds make "
+		"these.\n"
+		"- Grooves found: the backbeat (.... x... .... x...) under sixteenth hats (x.xx ..xx); the double-time drive (a "
+		"kick on the beats, a snare on every 'and'); half-time with the snare on 3 for heavy parts; hats only on the "
+		"offbeats for light ones.\n"
+		"- Samples (DPCM): Konami and Nintendo use a short kick and a longer snare on the DPCM channel, with the noise "
+		"adding hats; they sound fuller than noise alone.\n"
+		"- Fills every 4 or 8 bars: sixteenth snares, or the hats dropping out for a bar before a section. add_drums adds "
+		"fills." },
+	{ "harmony", "Harmony and color", "harmony chords progression key mode minor major modal dorian phrygian mixolydian",
+		"What the studied tracks do with chords (write your own progressions in these colors):\n"
+		"- Long pedals: the tonic held 4-8 bars under a moving melody and bass, then a move that feels big (VI-III-VII, "
+		"or a semitone up).\n"
+		"- Minor with a major ending: i-VI-VII-I, the last chord major for a heroic lift.\n"
+		"- Aeolian and mixolydian vamps: i-bVII, I-bVII, VI-VII-i: adventure without a dominant.\n"
+		"- Dorian: i-IV with a major IV (brighter minor); phrygian: i-bII (danger, mystery).\n"
+		"- Sus4 chords that resolve or don't, and chromatic shifts: a whole section moved up a semitone or step for the "
+		"next loop, or every four bars to build tension.\n"
+		"- Chords change once or twice a bar; the bass often anticipates them by an eighth." },
+	{ "form", "Form, tempo and loops", "form loop intro tempo structure length sections",
+		"- Tempo: 112, 125, 150 and 180 BPM are the common ones (speeds 8, 7, 6 and 5 at tempo 150); fast action 150-200, "
+		"towns and maps 100-130.\n"
+		"- Loops: 16-32 bars for stages (4-bar phrases: A B A' C, A A' B B'), 4-12 for short loops (menus, bosses), with an "
+		"intro of 1-2 bars (a drum fill or a riff) that doesn't come back.\n"
+		"- Each loop pass should have a climax: the highest note, the busiest drums, a key change or the second pulse "
+		"joining in harmony.\n"
+		"- The loop point sits on a bar line; the last bar leads back (a fill, a pickup, the dominant)." },
+	{ "texture", "Sharing four channels", "texture channels arrangement layers parts roles",
+		"- Roles: lead (a pulse), second line (the other pulse: echo, harmony, chords or counter-melody), bass (triangle), "
+		"drums (noise, samples). The roles can swap for a section: the triangle takes a melody while the pulses play "
+		"chords.\n"
+		"- Registers: the lead around C-4 to C-5, the second pulse a third to an octave below, the triangle's bass one or two "
+		"octaves under the lead.\n"
+		"- Dynamics come from the volume column and from which channels play: drop the second pulse for a verse, bring it "
+		"back in harmony for the climax.\n"
+		"- Leave room: rests in the lead let the echo and drums speak; busy bass under a sparse lead, or the other way "
+		"round." },
+};
+
+const size_t SECTION_COUNT = sizeof(SECTIONS) / sizeof(SECTIONS[0]);
+
+std::vector<std::string> SplitWords(const std::string &Text)
+{
+	std::vector<std::string> Out;
+	std::string Word;
+	for (size_t i = 0; i <= Text.size(); ++i) {
+		const unsigned char c = i < Text.size() ? static_cast<unsigned char>(Text[i]) : ' ';
+		if (std::isalnum(c))
+			Word += static_cast<char>(std::tolower(c));
+		else if (!Word.empty()) {
+			Out.push_back(Word);
+			Word.clear();
+		}
+	}
+	return Out;
+}
+
+}	// namespace
+
+std::vector<std::string> StyleGuideTopics()
+{
+	std::vector<std::string> Out;
+	for (size_t i = 0; i < SECTION_COUNT; ++i)
+		Out.push_back(SECTIONS[i].Topic);
+	return Out;
+}
+
+std::string StyleGuide(const std::string &Topic)
+{
+	const std::vector<std::string> Asked = SplitWords(Topic);
+	if (Asked.empty()) {
+		std::string Out = "The guide to the classic NES styles, from studies of their soundtracks. Topics (references action "
+			"guide with a topic):\n";
+		for (size_t i = 0; i < SECTION_COUNT; ++i)
+			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
+		return Out;
+	}
+	// The sections whose topic, title or words hold the words asked for, best first
+	std::vector<std::pair<int, size_t> > Found;
+	for (size_t i = 0; i < SECTION_COUNT; ++i) {
+		const std::vector<std::string> Own = SplitWords(std::string(SECTIONS[i].Topic) + " " + SECTIONS[i].Title + " " + SECTIONS[i].Words);
+		int Score = 0;
+		for (size_t a = 0; a < Asked.size(); ++a)
+			for (size_t o = 0; o < Own.size(); ++o)
+				if (Own[o] == Asked[a] || (Asked[a].size() > 3 && Own[o].compare(0, Asked[a].size(), Asked[a]) == 0)) {
+					Score += Own[o] == SplitWords(SECTIONS[i].Topic)[0] ? 3 : 1;
+					break;
+				}
+		if (Score > 0)
+			Found.push_back(std::make_pair(-Score, i));
+	}
+	if (Found.empty())
+		return "\"" + Topic + "\" isn't in the guide. " + StyleGuide(std::string());
+	std::sort(Found.begin(), Found.end());
+	std::string Out;
+	for (size_t i = 0; i < Found.size() && i < 2; ++i) {
+		const Section &S = SECTIONS[Found[i].second];
+		Out += (i ? "\n" : "") + std::string(S.Title) + "\n" + S.Text + "\n";
+	}
+	return Out;
+}
+
+}	// namespace ftapi
