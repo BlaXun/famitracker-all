@@ -3328,6 +3328,9 @@ std::string AddBackingTool(Session &S, const Json &Args)
 				HasNotesIn(S, c, First, End);
 		O.Volume = IntArg(Args, "chord_volume", 10, 1, 15);
 		const std::vector<std::vector<PartNote> > Voices = VoicedChordParts(Chords, Spans, O, static_cast<int>(VoiceChannels.size()));
+		// Strummed: each voice a frame or more after the one below it (Gxx), as a hand rolls a chord, within the row
+		const int Strum = std::min(IntArg(Args, "strum", 1, 0, 3), std::max(0, (S.Song.Speed - 1) / std::max(1,
+			static_cast<int>(VoiceChannels.size()) - 1)));
 		std::string Names;
 		for (size_t v = 0; v < VoiceChannels.size(); ++v) {
 			const int c = VoiceChannels[v];
@@ -3336,8 +3339,11 @@ std::string AddBackingTool(Session &S, const Json &Args)
 				Info.Kind == KIND_FM || Info.Chip == "N163" ? "electric piano" : "soft chords";
 			const int Instrument = ResolveInstrument(S, Sound, c);
 			std::vector<PartNote> Notes = Voices[v];
-			for (size_t i = 0; i < Notes.size(); ++i)
+			for (size_t i = 0; i < Notes.size(); ++i) {
 				Notes[i].Instrument = Instrument;
+				if (Strum > 0 && v > 0)
+					Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_DELAY), Strum * static_cast<int>(v)));
+			}
 			Change C;
 			C.Channel = c;
 			BuildPart(S.Cells(c), First, End, Notes, OptionsFor(S, c, DirectChange), C.Cells, Warnings);
@@ -3348,6 +3354,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		if (O.Rhythm >= 0)
 			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(O.Rhythm)].Name + ")";
 		Where = Kind + " chords on " + Names;
+		if (Strum > 0)
+			Where += Format(", strummed upward %s apart (Gxx)", Plural(Strum, "frame", "frames").c_str());
 	}
 	else if (ChordChannel >= 0) {
 		const ChannelInfo &Info = S.Channel(ChordChannel);
@@ -9661,6 +9669,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("notes_per_beat", Prop("integer", "Broken chords: notes a beat, 1-4 (default 2)."))
 				.Add("arp_frames", Prop("integer", "Lush chords: frames each note of a chord's arpeggio lasts, 1-6 (default 2; 3 or 4 "
 					"slower and dreamier, 1 a buzz)."))
+				.Add("strum", Prop("integer", "Voiced chords: frames between one voice and the next above it (Gxx), 0-3 (default 1: "
+					"rolled a little, as a hand plays them; 0 struck together; 2 or 3 a slow harp-like roll)."))
 				.Add("bass_style", EnumProp("How the bass line moves (default root_fifth).", StyleNames(BassStyles())))
 				.Add("half_bars", Prop("boolean", "Fitted chords may change halfway through a bar (default true)."))
 				.Add("chord_instrument", Prop("string", "Instrument or preset for the chords (default: soft chords for arpeggio, "

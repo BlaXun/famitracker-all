@@ -6575,8 +6575,10 @@ void TestVoicedChords()
 	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Dm7 | G7 | Cmaj7 | Cmaj7 |\", \"chord_style\": \"voices\", "
 		"\"key\": \"C major\", \"rhythm\": \"charleston\"}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "voices (charleston) chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3 and a root_fifth "
-		"bass line on 2A03 Triangle");
+	CHECK_HAS(Result.Text, "voices (charleston) chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3, strummed upward 1 "
+		"frame apart (Gxx) and a root_fifth bass line on 2A03 Triangle");
+	// Strummed: the middle voice a frame late, the top one two
+	CHECK(!HasEffectAt(Song, 5, 0, EFF_DELAY, 1) && HasEffectAt(Song, 6, 0, EFF_DELAY, 1) && HasEffectAt(Song, 7, 0, EFF_DELAY, 2));
 	CHECK_HAS(Result.Text, "(a VRC7 custom patch: a bright, bell-like attack");
 	const int Ep = Song.Rows[5][0].Instrument;
 	CHECK(Song.Vrc7Patches[Ep] == 0 && Song.Rows[6][0].Instrument == Ep && Song.Rows[7][0].Instrument == Ep);
@@ -6584,8 +6586,9 @@ void TestVoicedChords()
 	CHECK(Song.Rows[5][6].HasNote());	// charleston: beat 1 and the "and" of 2
 	// Channels named; too few; not the triangle
 	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"voices\", \"chord_channels\": [\"FM Channel 4\", "
-		"\"FM Channel 5\"], \"bass_channel\": \"none\", \"key\": \"C major\", \"chord_instrument\": \"vibraphone\"}");
-	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 4 and VRC7 FM Channel 5");
+		"\"FM Channel 5\"], \"bass_channel\": \"none\", \"key\": \"C major\", \"chord_instrument\": \"vibraphone\", \"strum\": 0}");
+	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 4 and VRC7 FM Channel 5, bar 1");
+	CHECK(!HasEffectAt(Song, 9, 0, EFF_DELAY, 1));	// struck together
 	CHECK(Song.Vrc7Patches[Song.Rows[8][0].Instrument] == 11);
 	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"voices\", \"chord_channels\": \"FM Channel 4\", "
 		"\"key\": \"C major\"}").Text, "voiced chords take 2 to 4 channels");
@@ -6672,8 +6675,8 @@ void TestReharmonize()
 		"\"key\": \"C major\"}").IsError);
 	Result = Run(Fm, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"C major\", "
 		"\"from_bar\": 3, \"to_bar\": 4}");
-	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3 and a root_fifth bass line on "
-		"2A03 Triangle, bars 3-4, in C major (in place of the chords and bass line that played there)");
+	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3, strummed upward 1 frame apart "
+		"(Gxx) and a root_fifth bass line on 2A03 Triangle, bars 3-4, in C major (in place of the chords and bass line that played there)");
 	for (int r = 0; r < 64; ++r)
 		CHECK(!Fm.Rows[8][r].HasNote());	// FM Channel 4 stays free
 	CHECK(Fm.Rows[5][32].HasNote() && Fm.Rows[6][32].HasNote() && Fm.Rows[7][32].HasNote());

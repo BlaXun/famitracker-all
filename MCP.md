@@ -354,7 +354,8 @@ avoid that, and gives it tools for each layer:
   (`chord_channels`, else free FM channels, then N163 ones, then pulses),
   the third and seventh first, each voice moving to the next chord's
   nearest note without crossing: an electric piano comping on the VRC7's
-  FM channels (its custom patch), held or struck on a rhythm.
+  FM channels (its custom patch), held or struck on a rhythm, each voice a
+  frame after the one below it (`strum`, `Gxx`) as a hand rolls a chord.
   Chords asked for over bars that have chords and a bass line already (other
   chords for a section) take their place, on their channels (voiced chords
   on the voices' channels), rather than stacking a second part on them.
