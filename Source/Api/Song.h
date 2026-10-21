@@ -106,6 +106,42 @@ struct ChannelCells {
 	ChannelCells() : Channel(0), Exact(false) {}
 };
 
+// How SongHost::WriteSong writes its parts
+struct SongWrite {
+	int First;          // the song row the parts' cells start at
+	int LinkClipId;     // what's written is a linked copy of this clip; -1 for none
+	// Before the cells are written, MoveBy frames are put in at frame
+	// MoveFrame (MoveBy > 0), each with new empty patterns, or the -MoveBy
+	// frames from MoveFrame on are taken out (MoveBy < 0), as FamiTracker's
+	// frame list does it: the frames after keep their patterns (and linked
+	// copies). The parts' rows count with the frames moved.
+	int MoveFrame;
+	int MoveBy;
+	int Cursor;         // the song row the cursor goes to afterwards; -1 for First
+
+	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1) {}
+};
+
+// Rows of a track (from 0) to play
+struct PlayPart {
+	int Track;
+	int First, Rows;
+	PlayPart() : Track(0), First(0), Rows(1) {}
+};
+
+// What SongHost::Play plays
+struct PlayRequest {
+	int Track;                  // the track it plays (selected for it); -1 for the selected one
+	int First;                  // the song row it starts at
+	int Rows;                   // how many; 0 to the end
+	std::vector<PlayPart> Then; // played after those, one after the other (the same bars of other versions)
+	bool Loop;                  // all of it over and over, until it's stopped
+	std::vector<bool> Muted;    // per channel: silent this time (empty: as the user has them); the user's own mutes come
+								// back when it stops
+	int ReturnTrack;            // selected again when it stops; -1 to leave the track it ends on
+	PlayRequest() : Track(-1), First(0), Rows(0), Loop(false), ReturnTrack(-1) {}
+};
+
 class SongHost {
 public:
 	virtual ~SongHost() {}
@@ -119,11 +155,13 @@ public:
 
 	// False with the reason when the song can't be changed right now
 	virtual bool CanChange(std::string &Why) = 0;
-	// One undoable change (Ctrl+Z): each part's cells replace its channel's
-	// rows from First on (ChannelCells says what becomes of the song's speed,
-	// jumps and halts there), frames are added when they run past the end.
-	// With a clip ID, what's written is a linked copy of that clip.
-	virtual bool WriteSong(const std::vector<ChannelCells> &Parts, int First, int LinkClipId, std::string &Error) = 0;
+	// One undoable change (Ctrl+Z): frames moved first when the write says so,
+	// then each part's cells replace its channel's rows from the write's First
+	// on (ChannelCells says what becomes of the song's speed, jumps and halts
+	// there), frames are added when they run past the end. With a clip ID,
+	// what's written is a linked copy of that clip. Parts can be empty when
+	// frames move.
+	virtual bool WriteSong(const std::vector<ChannelCells> &Parts, const SongWrite &Write, std::string &Error) = 0;
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,
 		std::string &Error) = 0;
@@ -194,7 +232,7 @@ public:
 	// it; the tools first make sure the song has no unsaved changes.
 	virtual bool OpenText(const std::string &Text, std::string &Error) = 0;
 
-	virtual bool Play(int First, int Rows, std::string &Error) = 0;	// Rows 0: to the end
+	virtual bool Play(const PlayRequest &Request, std::string &Error) = 0;
 	virtual void Stop() = 0;
 	virtual bool Undo(std::string &Message) = 0;
 	// Saves the song, or a copy of it next to it (CopyName: a file name)

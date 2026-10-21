@@ -135,7 +135,12 @@ bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);
 // and halts there, which stay, the part's effects going around them (as a
 // clip dragged into the song does). With a LinkClipId (a clip's ID, -1 for
 // none), what's written is a linked copy of that clip, its first column in
-// the first part's channel. False with the reason in Message.
+// the first part's channel. Before the cells, MoveBy frames are put in at
+// frame MoveFrame (MoveBy > 0), each with new empty patterns as Insert frame
+// gives them, or the -MoveBy frames from MoveFrame on are taken out (MoveBy
+// < 0); the frames after keep their patterns, and Frame counts with the
+// frames moved. Count can be 0 then. The cursor goes to song row Cursor (-1
+// for Row of Frame). False with the reason in Message.
 struct song_part_t {
 	int Channel;
 	const stChanNote *pCells;	// Rows of them, from the first row on
@@ -143,4 +148,4 @@ struct song_part_t {
 	bool Exact;
 };
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	CString &Message);
+	int MoveFrame, int MoveBy, int Cursor, CString &Message);

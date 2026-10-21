@@ -236,8 +236,23 @@ when ready.
   `Oxx` of later versions) or that the channel can't play, saying what to
   use instead.
 
-  Ideas not built yet: FDS and N163 instruments, named versions to compare,
-  listening help (loop, solo, mute), and recording through Claude.
+  The song's form, as the user works mostly through Claude Code:
+  `insert_bars` and `remove_bars` put empty bars in or take bars out
+  anywhere, in every channel, and the loop's jump and the song's end move
+  with the music. Whole frames go into or out of FamiTracker's frame list,
+  as Insert frame does, so the frames after keep their patterns and linked
+  clips.
+
+  Listening help: `play` loops bars until stopped, and plays only some
+  channels or leaves some out, giving the user's own mutes back when it
+  stops.
+
+  Versions to compare: `keep_version` keeps the track as it is now as a
+  track of its own before Claude tries something, and `compare_versions`
+  plays the same bars of each, one after the other, for the user to pick.
+
+  Ideas not built yet: FDS and N163 instruments, and recording through
+  Claude.
 - **`visual-cues` (October 2026, made from `next`; its build is the
   `build-visual-cues` pre-release):** FamiTracker easier to read at a
   glance, for people who don't read tracker notation yet. Done:

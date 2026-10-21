@@ -127,6 +127,10 @@ public:
 	std::vector<std::vector<std::vector<Cell> > > History;
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
+	SongWrite LastWrite;
+	bool PlayLoop = false;
+	std::vector<bool> PlayMuted;
+	PlayRequest LastPlay;
 	bool Busy, Stopped;
 	std::string Saved;
 
@@ -252,13 +256,32 @@ public:
 	}
 
 	// As FamiTracker writes them (CInsertRecordingAction::Redo, which this
-	// follows): exact parts as they are; the others keep the song's own
-	// speed, jumps, skips and halts in their rows, with their effects around
-	// them in the columns that show
-	bool WriteSong(const std::vector<ChannelCells> &Parts, int First, int LinkClipId, std::string &) override
+	// follows): frames moved first; then exact parts as they are, and the
+	// others keeping the song's own speed, jumps, skips and halts in their
+	// rows, with their effects around them in the columns that show
+	bool WriteSong(const std::vector<ChannelCells> &Parts, const SongWrite &Write, std::string &Error) override
 	{
-		History.push_back(Rows);
 		const size_t Length = static_cast<size_t>(Info.PatternLength);
+		const int Frames = static_cast<int>(Rows[0].size() / Length);
+		if (Parts.empty() && Write.MoveBy == 0) {
+			Error = "There was nothing to write.";
+			return false;
+		}
+		if (Write.MoveBy != 0 && (Write.MoveFrame < 0 || Write.MoveFrame > Frames || (Write.MoveBy < 0 &&
+			Write.MoveFrame - Write.MoveBy > Frames) || Frames + Write.MoveBy < 1 || Frames + Write.MoveBy > Info.MaxFrames)) {
+			Error = "Those frames can't move.";
+			return false;
+		}
+		History.push_back(Rows);
+		const size_t At = static_cast<size_t>(Write.MoveFrame) * Length;
+		for (size_t c = 0; c < Rows.size(); ++c) {
+			if (Write.MoveBy > 0)
+				Rows[c].insert(Rows[c].begin() + static_cast<std::ptrdiff_t>(At), static_cast<size_t>(Write.MoveBy) * Length, Cell());
+			else if (Write.MoveBy < 0)
+				Rows[c].erase(Rows[c].begin() + static_cast<std::ptrdiff_t>(At),
+					Rows[c].begin() + static_cast<std::ptrdiff_t>(At + static_cast<size_t>(-Write.MoveBy) * Length));
+		}
+		const size_t First = static_cast<size_t>(Write.First);
 		size_t Needed = Rows[0].size();
 		for (size_t p = 0; p < Parts.size(); ++p)
 			Needed = std::max(Needed, First + Parts[p].Cells.size());
@@ -308,7 +331,8 @@ public:
 			}
 		}
 		++Writes;
-		LastLink = LinkClipId;
+		LastLink = Write.LinkClipId;
+		LastWrite = Write;
 		return true;
 	}
 
@@ -694,10 +718,15 @@ public:
 		return true;
 	}
 
-	bool Play(int First, int Count, std::string &) override
+	bool Play(const PlayRequest &Request, std::string &) override
 	{
-		PlayFirst = First;
-		PlayRows = Count;
+		PlayFirst = Request.First;
+		PlayRows = Request.Rows;
+		PlayLoop = Request.Loop;
+		PlayMuted = Request.Muted;
+		LastPlay = Request;
+		if (Request.ReturnTrack >= 0)
+			Switch(Request.ReturnTrack);	// as when it's over
 		return true;
 	}
 
@@ -2937,8 +2966,20 @@ void TestPlayback()
 	CHECK(!Run(Song, "play", "{\"from_bar\": 2, \"bars\": 2}").IsError);
 	CHECK(Song.PlayFirst == 16 && Song.PlayRows == 32);
 	CHECK(!Run(Song, "play", "{}").IsError);
-	CHECK(Song.PlayFirst == 0 && Song.PlayRows == 0);
+	CHECK(Song.PlayFirst == 0 && Song.PlayRows == 0 && !Song.PlayLoop && Song.PlayMuted.empty());
 	CHECK_LACKS(Run(Song, "play", "{}").Text, "muted");
+	// Listening closely: bars over and over, a part alone or the rest without it
+	std::string Text = Run(Song, "play", "{\"from_bar\": 5, \"bars\": 2, \"loop\": true}").Text;
+	CHECK_HAS(Text, "Playing bars 5-6 for the user over and over, until you call stop or the user stops it.");
+	CHECK(Song.PlayFirst == 64 && Song.PlayRows == 32 && Song.PlayLoop);
+	CHECK(!Run(Song, "play", "{\"from_bar\": 3, \"loop\": true}").IsError && Song.PlayFirst == 32 && Song.PlayRows == 96);
+	Text = Run(Song, "play", "{\"channels\": [\"Triangle\", \"Noise\"]}").Text;
+	CHECK_HAS(Text, "Only 2A03 Triangle and 2A03 Noise play; the user's own mutes come back when it stops.");
+	CHECK(Song.PlayMuted.size() == 8u && Song.PlayMuted[0] && !Song.PlayMuted[2] && !Song.PlayMuted[3] && Song.PlayMuted[7]);
+	Text = Run(Song, "play", "{\"mute\": \"VRC6 Pulse 1\"}").Text;
+	CHECK(Song.PlayMuted.size() == 8u && Song.PlayMuted[5] && !Song.PlayMuted[0]);
+	CHECK_HAS(Text, "Only 2A03 Pulse 1, 2A03 Pulse 2, 2A03 Triangle, 2A03 Noise, 2A03 DPCM, VRC6 Pulse 2 and VRC6 Sawtooth play");
+	CHECK_HAS(Run(Song, "play", "{\"channels\": \"Noise\", \"mute\": \"Noise\"}").Text, "That leaves no channel playing.");
 	CHECK_LACKS(Run(Song, "get_song", "{}").Text, "muted");
 	// Channels the user muted: Claude knows they aren't heard
 	Song.Info.Channels[1].Muted = true;
@@ -4957,6 +4998,200 @@ void TestLoops()
 	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
+// Versions to compare
+void TestKeptVersions()
+{
+	FakeSong Song;		// "Town", 8 bars
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	CHECK_HAS(Run(Song, "compare_versions", "{}").Text, "\"Town\" has no kept version to compare with: keep_version keeps one");
+	std::string Text = Run(Song, "keep_version", "{}").Text;
+	CHECK_HAS(Text, "Kept track 1 \"Town\" as it is now, as track 2 \"Town (version 1)\". You're still on \"Town\"");
+	CHECK(Song.Tracks.size() == 2u && Song.Current == 0 && Song.Tracks[1].Name == "Town (version 1)");
+	CHECK(Song.Tracks[1].Rows[5][0].Pitch() == Song.Rows[5][0].Pitch());
+	// Changed afterwards: the kept one stays as it was
+	CHECK(!Run(Song, "transpose", "{\"semitones\": 2}").IsError);
+	CHECK(Song.Tracks[1].Rows[5][0].Pitch() + 2 == Song.Rows[5][0].Pitch());
+	// The kept one, then the track as it is
+	Text = Run(Song, "compare_versions", "{\"from_bar\": 3, \"bars\": 2}").Text;
+	CHECK_HAS(Text, "Playing bars 3-4 of track 2 \"Town (version 1)\", then of track 1 \"Town\" for the user; afterwards "
+		"FamiTracker shows \"Town\" again.");
+	CHECK(Song.LastPlay.Track == 1 && Song.LastPlay.First == 32 && Song.LastPlay.Rows == 32 && Song.LastPlay.Then.size() == 1u);
+	CHECK(Song.LastPlay.Then[0].Track == 0 && Song.LastPlay.Then[0].First == 32 && Song.LastPlay.Then[0].Rows == 32);
+	CHECK(Song.LastPlay.ReturnTrack == 0 && Song.Current == 0 && !Song.LastPlay.Loop);
+	// Named versions, in the order asked, over and over
+	CHECK_HAS(Run(Song, "keep_version", "{\"name\": \"calm\"}").Text, "as track 3 \"Town (calm)\"");
+	CHECK_HAS(Run(Song, "keep_version", "{\"name\": \"calm\"}").Text, "as track 4 \"Town (calm 2)\"");
+	Text = Run(Song, "compare_versions", "{\"versions\": [\"Town\", \"calm 2\", 2], \"loop\": true}").Text;
+	CHECK_HAS(Text, "Playing bars 1-8 of track 1 \"Town\", then of track 4 \"Town (calm 2)\", then of track 2 \"Town (version 1)\" "
+		"for the user, over and over until you call stop;");
+	CHECK(Song.LastPlay.Track == 0 && Song.LastPlay.Then.size() == 2u && Song.LastPlay.Then[0].Track == 3 && Song.LastPlay.Loop);
+	// One named: with the track worked on; the newest kept one by default
+	CHECK(!Run(Song, "compare_versions", "{\"versions\": \"version 1\"}").IsError && Song.LastPlay.Track == 1 &&
+		Song.LastPlay.Then[0].Track == 0);
+	CHECK(!Run(Song, "compare_versions", "{}").IsError && Song.LastPlay.Track == 3);
+	// Bars a version doesn't have
+	CHECK_HAS(Run(Song, "compare_versions", "{\"from_bar\": 9}").Text, "has only 8 bars.");
+	CHECK(Song.Current == 0);
+	CHECK_HAS(Run(Song, "compare_versions", "{\"versions\": \"Town\"}").Text, "Name two tracks or more to compare.");
+}
+
+// insert_bars and remove_bars: the song's form
+
+// A song of Frames frames (4 bars each) with a note at each bar's start that
+// tells the bar (C-3 for bar 1, C#3 for bar 2...); with Loop, bars 1-4 are an
+// intro and the rest loops (B01 after the last bar, in Pulse 2's second
+// effect column)
+FakeSong BarSong(int Frames, bool Loop)
+{
+	FakeSong Song(Frames);
+	Song.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < Frames * 4; ++Bar) {
+		Song.Rows[5][static_cast<size_t>(Bar * 16)].SetPitch(36 + Bar);
+		Song.Rows[5][static_cast<size_t>(Bar * 16)].Instrument = 0;
+	}
+	if (Loop) {
+		Song.Rows[1][static_cast<size_t>(Frames * 64 - 1)].Effect[1] = EFF_JUMP;
+		Song.Rows[1][static_cast<size_t>(Frames * 64 - 1)].Param[1] = 1;
+	}
+	return Song;
+}
+
+// The bar whose music starts at Row (by its note), 0 for none
+int BarHeard(const FakeSong &Song, int Row)
+{
+	const Cell &C = Song.Rows[5][static_cast<size_t>(Row)];
+	return C.HasNote() ? C.Pitch() - 36 + 1 : 0;
+}
+
+void TestBars()
+{
+	// A whole frame before the loop: the frame list makes room, and the jump goes to where the loop's bars are now
+	{
+		FakeSong Song = BarSong(3, true);
+		std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "Changed the song: 4 empty bars put in at bar 5; what was bar 5 on is bar 9 on now. One Ctrl+Z in "
+			"FamiTracker undoes it. Now bars 1-8 play once, then bars 9-16 loop.");
+		CHECK_HAS(Text, "The new bars play once, before the loop; set_loop with from_bar 5 takes them into it.");
+		CHECK_HAS(Text, "Fill bars 5-8 with write_notes");
+		CHECK(Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == 1 && Song.LastWrite.Cursor == 64);
+		CHECK(Song.Rows[5].size() == 256u && BarHeard(Song, 64) == 0 && BarHeard(Song, 128) == 5 && BarHeard(Song, 240) == 12);
+		CHECK(HasEffectAt(Song, 1, 255, EFF_JUMP, 2) && !HasEffectAt(Song, 1, 191, EFF_JUMP, 1));
+		CHECK_HAS(Run(Song, "check_loop", "{}").Text, "after bar 16 it goes back to bar 9.");
+		// One undo takes it all back
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Rows[5].size() == 192u && BarHeard(Song, 64) == 5 && HasEffectAt(Song, 1, 191, EFF_JUMP, 1));
+		// Taken out again: the frame goes from the frame list
+		CHECK(!Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}").IsError);
+		Text = Run(Song, "remove_bars", "{\"from_bar\": 5, \"to_bar\": 8}").Text;
+		CHECK_HAS(Text, "bars 5-8 taken out; what came after starts at bar 5 now");
+		CHECK_HAS(Text, "Now bars 1-4 play once, then bars 5-12 loop.");
+		CHECK(Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == -1);
+		CHECK(Song.Rows[5].size() == 192u && BarHeard(Song, 64) == 5 && HasEffectAt(Song, 1, 191, EFF_JUMP, 1));
+	}
+	// Bars inside the loop that aren't a whole frame: the rows after move, frames added at the end
+	{
+		FakeSong Song = BarSong(3, true);
+		const std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 7, \"bars\": 2}").Text;
+		CHECK_HAS(Text, "Now bars 1-4 play once, then bars 5-14 loop.");
+		CHECK(Song.LastWrite.MoveFrame == 3 && Song.LastWrite.MoveBy == 1);
+		CHECK(BarHeard(Song, 96) == 0 && BarHeard(Song, 112) == 0 && BarHeard(Song, 128) == 7 && BarHeard(Song, 208) == 12);
+		CHECK(HasEffectAt(Song, 1, 223, EFF_JUMP, 1) && !HasEffectAt(Song, 1, 191, EFF_JUMP, 1));
+		CHECK_HAS(Run(Song, "check_loop", "{}").Text, "after bar 14 it goes back to bar 5.");
+		// And out again: the frame added goes
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 7, \"to_bar\": 8}").Text, "Now bars 1-4 play once, then bars 5-12 loop.");
+		CHECK(Song.Rows[5].size() == 192u && BarHeard(Song, 96) == 7 && HasEffectAt(Song, 1, 191, EFF_JUMP, 1));
+		CHECK(Song.LastWrite.MoveFrame == 3 && Song.LastWrite.MoveBy == -1);
+	}
+	// A bar at the loop's start: it begins the loop, since FamiTracker jumps back only to a frame's start
+	{
+		FakeSong Song = BarSong(3, true);
+		const std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 5}").Text;
+		CHECK_HAS(Text, "1 empty bar put in at bar 5; what was bar 5 on is bar 6 on now");
+		CHECK_HAS(Text, "Now bars 1-4 play once, then bars 5-13 loop. The new bars begin the loop");
+		CHECK(BarHeard(Song, 64) == 0 && BarHeard(Song, 80) == 5 && HasEffectAt(Song, 1, 207, EFF_JUMP, 1));
+	}
+	// ...but not before it, inside a frame of the intro
+	{
+		FakeSong Song = BarSong(3, true);
+		const ToolResult Result = Run(Song, "insert_bars", "{\"at_bar\": 3, \"bars\": 2}");
+		CHECK(Result.IsError && Song.Writes == 0);
+		CHECK_HAS(Result.Text, "The song loops back to bar 5, and bars put in before it would move that inside a frame: FamiTracker "
+			"jumps back only to a frame's start. Put in a whole frame (4 bars), or put the bars in at bar 5, where they begin the loop.");
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 2}").Text, "Take out a whole frame (4 bars) instead.");
+		// A whole frame's worth there is fine: frame 1 comes in after frame 0, and bars 3-4 move into it
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 3, \"bars\": 4}").Text, "Now bars 1-8 play once, then bars 9-16 loop.");
+		CHECK(Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == 1);
+		CHECK(BarHeard(Song, 32) == 0 && BarHeard(Song, 96) == 3 && BarHeard(Song, 112) == 4 && BarHeard(Song, 128) == 5);
+		CHECK(HasEffectAt(Song, 1, 255, EFF_JUMP, 2));
+	}
+	// A song that loops as a whole by itself: the new end gets a jump back
+	{
+		FakeSong Song = BarSong(3, false);
+		const std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 3}").Text;
+		CHECK_HAS(Text, "Now the whole song loops (bars 1-13).");
+		CHECK(Song.Rows[5].size() == 256u && HasEffectAt(Song, 0, 207, EFF_JUMP, 0) && BarHeard(Song, 48) == 3);
+		// Bar 13 out again: back to three frames, looping by itself
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 3}").Text, "Now the whole song loops (bars 1-12).");
+		CHECK(Song.Rows[5].size() == 192u && BarHeard(Song, 32) == 3 && BarHeard(Song, 176) == 12);
+	}
+	// The last bar taken out, its jump with it: the jump comes back on the new last row
+	{
+		FakeSong Song = BarSong(3, true);
+		const std::string Text = Run(Song, "remove_bars", "{\"from_bar\": 12}").Text;
+		CHECK_HAS(Text, "bar 12 taken out at the end. One Ctrl+Z in FamiTracker undoes it. Now bars 1-4 play once, then bars 5-11 loop.");
+		CHECK(HasEffectAt(Song, 0, 175, EFF_JUMP, 1) && !HasEffectAt(Song, 1, 191, EFF_JUMP, 1) && BarHeard(Song, 176) == 0);
+		// Bars taken out where the loop starts: it starts with what came after them
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 5, \"to_bar\": 8}").Text, "Now bars 1-4 play once, then bars 5-7 loop.");
+		CHECK(Song.Rows[5].size() == 128u && BarHeard(Song, 64) == 9 && HasEffectAt(Song, 0, 111, EFF_JUMP, 1));
+		// Not the whole loop, nor every bar
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 5, \"to_bar\": 8}").Text, "That takes out the whole loop (bars 5-7)");
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 1, \"to_bar\": 8}").Text, "That's every bar of the song.");
+	}
+	// Bars at the end of a song that stops: its halt moves after them, so they play
+	{
+		FakeSong Song = BarSong(2, false);
+		Song.Rows[3][127].Effect[0] = EFF_HALT;
+		const std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 9, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "4 empty bars added at the end (bars 9-12). One Ctrl+Z in FamiTracker undoes it. Now it plays once and stops "
+			"after bar 12.");
+		CHECK(HasEffectAt(Song, 3, 191, EFF_HALT, 0) && !HasEffectAt(Song, 3, 127, EFF_HALT, 0));
+		CHECK(Song.LastWrite.MoveFrame == 2 && Song.LastWrite.MoveBy == 1);
+	}
+	// Bars after a song's end don't play; it says so
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Rows[0][127].Effect[0] = EFF_JUMP;	// the song ends after bar 8, bars 9-12 left over
+		Song.Rows[0][127].Param[0] = 0;
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 13, \"bars\": 2}").Text, "Bars 13-14 don't play: the song goes back after bar "
+			"8, before them. set_loop with to_bar 14 takes it on through them.");
+	}
+	// A skip ends a frame early: only whole frames there
+	{
+		FakeSong Song = BarSong(3, true);
+		Song.Rows[3][100].Effect[0] = EFF_SKIP;
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 6}").Text, "The song skips ahead (D00) at bar 7 beat 2, which ends that "
+			"frame early, so bars go in or out there only a whole frame (4 bars) at a time.");
+		CHECK(!Run(Song, "insert_bars", "{\"at_bar\": 9, \"bars\": 4}").IsError && HasEffectAt(Song, 3, 100, EFF_SKIP, 0));
+	}
+	// Frames of three bars and a bit: whole frames only
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Info.PatternLength = 48;
+		Song.Info.SecondHighlight = 20;
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 2}").Text, "A frame here is 48 rows, not whole bars of 20, so bars go in a "
+			"frame (3 bars) at a time");
+	}
+	// Asked properly, with direct changes
+	{
+		FakeSong Song = BarSong(2, true);
+		CHECK_HAS(Run(Song, "insert_bars", "{}").Text, "Say where with at_bar");
+		Song.Info.DirectChanges = false;
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 5}").Text, "needs direct changes");
+		CHECK_HAS(Run(Song, "remove_bars", "{\"from_bar\": 5}").Text, "needs direct changes");
+	}
+}
+
 // OGG files for games
 
 void TestOgg()
@@ -5531,6 +5766,8 @@ int main()
 	TestEffects();
 	TestTiming2();
 	TestLoops();
+	TestBars();
+	TestKeptVersions();
 	TestOgg();
 	TestCut();
 	TestExport();

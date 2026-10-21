@@ -27,7 +27,9 @@ Linux), the Winsock listener in `Source/McpSocket.cpp`, and the glue to the
 document, the settings and the dialog in `Source/McpConnection.cpp`, which
 writes changes with `WriteSongParts` in `InsertRecording.cpp` (exactly as the
 tools worked them out; only a clip placed keeps the song's own speed, jumps
-and halts where it lands, as dragging one does) and switches expansion chips
+and halts where it lands, as dragging one does; for `insert_bars` and
+`remove_bars` it first puts whole frames into the frame list or takes them
+out, so the frames after keep their patterns) and switches expansion chips
 with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and

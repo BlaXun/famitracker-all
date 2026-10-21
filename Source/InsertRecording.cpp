@@ -268,8 +268,18 @@ public:
 		CAction(ACT_INSERT_RECORDING), m_Parts(Parts),
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
 		m_iOldFrameCount(0), m_iLinkClip(-1), m_bKeepLinks(false),
-		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row))
+		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row)),
+		m_iMoveFrame(0), m_iMoveBy(0)
 	{
+	}
+
+	// Before the cells are written, By frames put in at Frame (each with new
+	// empty patterns) or -By frames there taken out, as the frame list does
+	// it; the parts count with the frames moved
+	void MoveFrames(int Frame, int By)
+	{
+		m_iMoveFrame = Frame;
+		m_iMoveBy = By;
 	}
 
 	// What's written is a linked copy of this clip (by ID)
@@ -315,6 +325,9 @@ private:
 	bool m_bKeepLinks;
 	unsigned int m_iCursorFrame;
 	unsigned int m_iCursorRow;
+	int m_iMoveFrame;
+	int m_iMoveBy;
+	std::vector<unsigned int> m_FrameList;	// the patterns of the frames before frames moved, a frame at a time
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
@@ -349,13 +362,26 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	const unsigned int Length = pDoc->GetPatternLength(m_iTrack);
 
 	pDoc->LockDocument();
+	m_iOldFrameCount = pDoc->GetFrameCount(m_iTrack);
+
+	// Frames put in or taken out first, the frame list kept for Undo
+	if (m_iMoveBy != 0) {
+		const unsigned int Channels = pDoc->GetAvailableChannels();
+		m_FrameList.clear();
+		for (unsigned int f = 0; f < m_iOldFrameCount; ++f)
+			for (unsigned int c = 0; c < Channels; ++c)
+				m_FrameList.push_back(pDoc->GetPatternAtFrame(m_iTrack, f, c));
+		for (int i = 0; i < m_iMoveBy; ++i)
+			pDoc->InsertFrame(m_iTrack, static_cast<unsigned int>(m_iMoveFrame + i));	// new free patterns
+		for (int i = 0; i < -m_iMoveBy; ++i)
+			pDoc->RemoveFrame(m_iTrack, static_cast<unsigned int>(m_iMoveFrame));
+	}
 
 	// Add frames at the end of the song when the insert runs past it
 	unsigned int Last = m_iFrame;
 	for (size_t p = 0; p < m_Parts.size(); ++p)
 		Last = std::max(Last, LastFrame(m_Parts[p], Length));
-	m_iOldFrameCount = pDoc->GetFrameCount(m_iTrack);
-	while (pDoc->GetFrameCount(m_iTrack) <= Last) {
+	while (!m_Parts.empty() && pDoc->GetFrameCount(m_iTrack) <= Last) {
 		if (!pDoc->InsertFrame(m_iTrack, pDoc->GetFrameCount(m_iTrack)))
 			break;	// MAX_FRAMES
 	}
@@ -368,8 +394,8 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		const unsigned int Channel = m_Parts[p].Channel;
 		const unsigned int PartLast = LastFrame(m_Parts[p], Length);
 		for (unsigned int f = m_iFrame; f <= PartLast && f < Frames; ++f) {
-			if (m_Parts[p].Exact && f < m_iOldFrameCount && !ChangesFrame(pDoc, m_iTrack, m_Parts[p], m_iFrame, m_iRow, f))
-				continue;
+			if (m_Parts[p].Exact && !ChangesFrame(pDoc, m_iTrack, m_Parts[p], m_iFrame, m_iRow, f))
+				continue;	// (frames added hold new empty patterns)
 			unsigned int Pattern = pDoc->GetPatternAtFrame(m_iTrack, f, Channel);
 			if (UsedElsewhere(pDoc, m_iTrack, Channel, f, Pattern)) {
 				const int Free = FindFreePattern(pDoc, m_iTrack, Channel);
@@ -387,11 +413,33 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		}
 	}
 
-	// Linked copies written over aren't linked any more (unless the notes there are being edited)
+	// Linked copies written over aren't linked any more (unless the notes there are being edited);
+	// an exact part writes over only the rows it changes
 	CClipLibrary *pClips = pDoc->GetClips();
 	pClips->SaveLinks(m_LinksBefore);
-	for (size_t p = 0; p < m_Parts.size() && !m_bKeepLinks; ++p)
-		pClips->UnlinkArea(pDoc, m_iTrack, m_iFrame, m_iRow, static_cast<int>(m_Parts[p].Channel), m_Parts[p].Rows);
+	for (size_t p = 0; p < m_Parts.size() && !m_bKeepLinks; ++p) {
+		const RecordedPart &Part = m_Parts[p];
+		if (!Part.Exact) {
+			pClips->UnlinkArea(pDoc, m_iTrack, m_iFrame, m_iRow, static_cast<int>(Part.Channel), Part.Rows);
+			continue;
+		}
+		int Run = -1;	// the first row of changed rows in a row
+		for (int r = 0; r <= Part.Rows; ++r) {
+			bool Changed = false;
+			const unsigned int Position = m_iRow + static_cast<unsigned int>(r);
+			if (r < Part.Rows && static_cast<size_t>(r) < Part.Cells.size() && m_iFrame + Position / Length < Frames) {
+				stChanNote Note;
+				pDoc->GetNoteData(m_iTrack, m_iFrame + Position / Length, Part.Channel, Position % Length, &Note);
+				Changed = !SameCell(Note, Part.Cells[static_cast<size_t>(r)]);
+			}
+			if (Changed && Run < 0)
+				Run = r;
+			else if (!Changed && Run >= 0) {
+				pClips->UnlinkArea(pDoc, m_iTrack, m_iFrame, m_iRow + static_cast<unsigned int>(Run), static_cast<int>(Part.Channel), r - Run);
+				Run = -1;
+			}
+		}
+	}
 
 	// Write the cells. Rows between them are cleared in the channel (note,
 	// instrument and volume). Effects stay, except earlier slides and vibrato
@@ -497,6 +545,13 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 	for (size_t i = m_Reassigned.size(); i-- > 0; )
 		pDoc->SetPatternAtFrame(m_iTrack, m_Reassigned[i].Frame, m_Reassigned[i].Channel, m_Reassigned[i].OldPattern);
 	pDoc->SetFrameCount(m_iTrack, m_iOldFrameCount);
+	if (m_iMoveBy != 0) {
+		// The frames as they were before frames moved
+		const unsigned int Channels = pDoc->GetAvailableChannels();
+		for (unsigned int f = 0; f < m_iOldFrameCount; ++f)
+			for (unsigned int c = 0; c < Channels && f * Channels + c < m_FrameList.size(); ++c)
+				pDoc->SetPatternAtFrame(m_iTrack, f, c, m_FrameList[f * Channels + c]);
+	}
 	pDoc->UnlockDocument();
 
 	Finish(pMainFrm, pDoc, pEditor);
@@ -599,6 +654,84 @@ void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc,
 	pDoc->SetModifiedFlag();
 	pDoc->UpdateAllViews(NULL, UPDATE_FRAME);	// redraws the frame list and the patterns
 	pMainFrm->UpdateControls();
+}
+
+// The patterns a channel's frames play once By frames are put in at frame
+// Frame (By > 0), each with the next free pattern as InsertFrame picks it
+// (-1 when there is none), or the -By frames from Frame on are taken out
+std::vector<int> FramesAfterMove(const CFamiTrackerDoc *pDoc, unsigned int Track, unsigned int Channel, int Frame, int By)
+{
+	const int Count = static_cast<int>(pDoc->GetFrameCount(Track));
+	std::vector<int> Layout;
+	for (int f = 0; f <= Count; ++f) {
+		if (f == Frame && By > 0)
+			Layout.insert(Layout.end(), static_cast<size_t>(By), -2);	// filled in below
+		if (f == Count)
+			break;
+		if (By < 0 && f >= Frame && f < Frame - By)
+			continue;
+		Layout.push_back(static_cast<int>(pDoc->GetPatternAtFrame(Track, static_cast<unsigned int>(f), Channel)));
+	}
+	for (size_t i = 0; i < Layout.size(); ++i) {
+		if (Layout[i] != -2)
+			continue;
+		Layout[i] = -1;
+		for (unsigned int p = 0; p < MAX_PATTERN && Layout[i] < 0; ++p) {
+			if (std::find(Layout.begin(), Layout.end(), static_cast<int>(p)) == Layout.end() &&
+				!UsedAnywhere(pDoc, Track, Channel, p) && pDoc->IsPatternEmpty(Track, Channel, p))
+				Layout[i] = static_cast<int>(p);
+		}
+	}
+	return Layout;
+}
+
+// Does an exact part, written from Row of Frame on, change anything in frame
+// f, which plays Pattern?
+bool ChangesPattern(const CFamiTrackerDoc *pDoc, unsigned int Track, const RecordedPart &Part, unsigned int Frame,
+	unsigned int Row, unsigned int f, unsigned int Pattern)
+{
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	for (int r = 0; r < Length; ++r) {
+		const int Index = static_cast<int>(f - Frame) * Length + r - static_cast<int>(Row);
+		if (Index < 0 || Index >= Part.Rows || static_cast<size_t>(Index) >= Part.Cells.size())
+			continue;
+		stChanNote Note;
+		pDoc->GetDataAtPattern(Track, Pattern, Part.Channel, static_cast<unsigned int>(r), &Note);
+		if (!SameCell(Note, Part.Cells[static_cast<size_t>(Index)]))
+			return true;
+	}
+	return false;
+}
+
+// Free patterns for a part written in its channel from Row of Frame on, with
+// the frames laid out as Layout says (FramesAfterMove): one for each frame
+// added at the end of the song, and one for each frame it touches (an exact
+// part: changes) whose pattern another frame plays too
+bool EnoughPatternsAfterMove(const CFamiTrackerDoc *pDoc, unsigned int Track, const RecordedPart &Part, unsigned int Frame,
+	unsigned int Row, std::vector<int> Layout)
+{
+	const unsigned int Length = pDoc->GetPatternLength(Track);
+	const unsigned int LastFrame = Frame + (Row + static_cast<unsigned int>(std::max(1, Part.Rows)) - 1) / Length;
+	const unsigned int Count = static_cast<unsigned int>(Layout.size());
+	unsigned int Needed = LastFrame >= Count ? LastFrame + 1 - Count : 0;
+	for (unsigned int f = Frame; f <= LastFrame && f < Count; ++f) {
+		if (Layout[f] < 0 || (Part.Exact && !ChangesPattern(pDoc, Track, Part, Frame, Row, f, static_cast<unsigned int>(Layout[f]))))
+			continue;
+		for (unsigned int g = 0; g < Count; ++g) {
+			if (g != f && Layout[g] == Layout[f]) {
+				++Needed;
+				Layout[f] = -1;	// from now on its own
+				break;
+			}
+		}
+	}
+	unsigned int Free = 0;
+	for (unsigned int p = 0; p < MAX_PATTERN; ++p) {
+		if (std::find(Layout.begin(), Layout.end(), static_cast<int>(p)) == Layout.end() &&
+			!UsedAnywhere(pDoc, Track, Part.Channel, p) && pDoc->IsPatternEmpty(Track, Part.Channel, p))
+			++Free;
+	}
+	return Needed <= Free;
 }
 
 // Free patterns for a part written in Channel over frames Frame-LastFrame:
@@ -1459,15 +1592,32 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 // The Claude Code connection
 
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	CString &Message)
+	int MoveFrame, int MoveBy, int Cursor, CString &Message)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
 	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
 	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
-	if (Count < 1 || Frame < 0 || Frame >= MAX_FRAMES || Row < 0 || Row >= Length) {
+	if (Count < 0 || (Count == 0 && MoveBy == 0) || (Count > 0 && pParts == NULL) || Frame < 0 || Frame >= MAX_FRAMES || Row < 0 ||
+		Row >= Length) {
 		Message = _T("There's nothing to write there.");
 		return false;
+	}
+	// Frames to move: ones the song has, leaving at least one, at most MAX_FRAMES
+	const int FrameCount = static_cast<int>(pDoc->GetFrameCount(Track));
+	if (MoveBy != 0 && (MoveFrame < 0 || MoveFrame > FrameCount || (MoveBy < 0 && MoveFrame - MoveBy > FrameCount) ||
+		FrameCount + MoveBy < 1 || FrameCount + MoveBy > MAX_FRAMES)) {
+		Message = _T("Those frames can't move.");
+		return false;
+	}
+	// Frames put in need a new empty pattern in every channel
+	for (int c = 0; MoveBy > 0 && c < static_cast<int>(pDoc->GetAvailableChannels()); ++c) {
+		const std::vector<int> Layout = FramesAfterMove(pDoc, Track, static_cast<unsigned int>(c), MoveFrame, MoveBy);
+		if (std::find(Layout.begin(), Layout.end(), -1) != Layout.end()) {
+			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+				static_cast<LPCTSTR>(RecordingChannelName(pDoc, c)));
+			return false;
+		}
 	}
 	std::vector<RecordedPart> Parts;
 	for (int p = 0; p < Count; ++p) {
@@ -1484,28 +1634,26 @@ bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, 
 		for (int r = 0; r < Rows; ++r)
 			if (Part.Exact || !IsEmptyCell(In.pCells[r]))
 				Part.Cells.push_back(CellOf(r, In.pCells[r]));
-		const unsigned int LastFrame = static_cast<unsigned int>(Frame + (Row + Rows - 1) / Length);
-		// An exact part needs patterns of its own only in the frames it changes
-		std::vector<bool> Changes;
-		if (Part.Exact) {
-			for (unsigned int f = static_cast<unsigned int>(Frame); f <= LastFrame; ++f)
-				Changes.push_back(f >= pDoc->GetFrameCount(Track) ||
-					ChangesFrame(pDoc, Track, Part, static_cast<unsigned int>(Frame), static_cast<unsigned int>(Row), f));
-		}
-		if (!EnoughPatterns(pDoc, Track, Part.Channel, static_cast<unsigned int>(Frame), LastFrame, Part.Exact ? &Changes : NULL)) {
+		// Patterns of its own in the frames it touches once frames moved (for an exact part, the ones it changes)
+		if (!EnoughPatternsAfterMove(pDoc, Track, Part, static_cast<unsigned int>(Frame), static_cast<unsigned int>(Row),
+			FramesAfterMove(pDoc, Track, Part.Channel, MoveFrame, MoveBy))) {
 			Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
 				static_cast<LPCTSTR>(RecordingChannelName(pDoc, In.Channel)));
 			return false;
 		}
 		Parts.push_back(Part);
 	}
-	if (Parts.empty()) {
+	if (Parts.empty() && MoveBy == 0) {
 		Message = _T("There's nothing to write there.");
 		return false;
 	}
 	CInsertRecordingAction *pAction = new CInsertRecordingAction(Parts, Frame, Row);
 	if (LinkClipId >= 0)
 		pAction->LinkTo(LinkClipId);
+	if (MoveBy != 0)
+		pAction->MoveFrames(MoveFrame, MoveBy);
+	if (Cursor >= 0)
+		pAction->PlaceCursor(Cursor / Length, Cursor % Length);
 	if (!pMainFrm->AddAction(pAction)) {
 		Message = _T("The song couldn't be changed.");
 		return false;

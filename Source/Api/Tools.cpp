@@ -909,8 +909,10 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 			Part.Exact = true;	// worked out from the song's cells, its speed, jumps and halts among them
 			Parts.push_back(Part);
 		}
+		SongWrite Write;
+		Write.First = First;
 		std::string Error;
-		if (!S.Host().WriteSong(Parts, First, -1, Error))
+		if (!S.Host().WriteSong(Parts, Write, Error))
 			throw Problem(Error.empty() ? "The song couldn't be changed." : Error);
 		Result = "Changed the song: " + What + ". One Ctrl+Z in FamiTracker undoes it.";
 	}
@@ -1395,7 +1397,10 @@ std::string PlaceClipTool(Session &S, const Json &Args)
 	std::string Why, Error;
 	if (!S.Host().CanChange(Why))
 		throw Problem(Why);
-	if (!S.Host().WriteSong(Parts, Row, Linked ? pInfo->Id : -1, Error))
+	SongWrite Write;
+	Write.First = Row;
+	Write.LinkClipId = Linked ? pInfo->Id : -1;
+	if (!S.Host().WriteSong(Parts, Write, Error))
 		throw Problem(Error.empty() ? "The clip couldn't be placed." : Error);
 	return WithRemarks(S, Format("Placed the clip \"%s\" %s on %s at %s. One Ctrl+Z undoes it.", pInfo->Name.c_str(),
 		Linked ? "linked" : "as a copy", S.Channel(Channel).FullName().c_str(), PositionText(S, Row).c_str()), Warnings);
@@ -6400,6 +6405,432 @@ std::string SetLoopTool(Session &S, const Json &Args)
 	return WithRemarks(S, Done, Warnings);
 }
 
+// The song's form: bars put in and taken out
+
+// A channel's rows with Shift empty rows put in at First (Shift > 0), or the
+// -Shift rows from First on taken out (Shift < 0), the rest moving along;
+// Rows of them
+std::vector<Cell> ShiftedRows(const std::vector<Cell> &Cells, int First, int Shift, int Rows)
+{
+	const size_t Head = std::min(Cells.size(), static_cast<size_t>(std::max(0, First)));
+	std::vector<Cell> Out(Cells.begin(), Cells.begin() + static_cast<std::ptrdiff_t>(Head));
+	Out.resize(static_cast<size_t>(std::max(0, First + std::max(0, Shift))));
+	const size_t From = static_cast<size_t>(std::max(0, First - std::min(0, Shift)));
+	if (From < Cells.size())
+		Out.insert(Out.end(), Cells.begin() + static_cast<std::ptrdiff_t>(From), Cells.end());
+	Out.resize(static_cast<size_t>(std::max(0, Rows)));
+	return Out;
+}
+
+// How the song plays, in words: "bars 1-4 play once, then bars 5-16 loop"
+std::string FlowText(const Session &S, const SongFlow &F)
+{
+	const int PL = S.Time.PatternLength;
+	const int Last = F.EndRow(PL) - 1;
+	if (F.Halts())
+		return Format("it plays once and stops after %s", EndPosition(S, Last).c_str());
+	if (F.LoopRow(PL) <= 0)
+		return Format("the whole song loops (%s)", RangeText(1, S.Time.BarOf(Last)).c_str());
+	const int LoopBar = S.Time.BarOf(F.LoopRow(PL)), LastBar = S.Time.BarOf(Last);
+	return Format("%s once, then %s %s", LoopBar == 2 ? "bar 1 plays" : Format("bars 1-%d play", LoopBar - 1).c_str(),
+		RangeText(LoopBar, LastBar).c_str(), LoopBar == LastBar ? "loops" : "loop");
+}
+
+int LinkedCopies(const Session &S)
+{
+	int Count = 0;
+	for (size_t i = 0; i < S.Song.Clips.size(); ++i)
+		Count += S.Song.Clips[i].Links;
+	return Count;
+}
+
+// Moves the song's rows from First on by Shift in every channel (empty bars
+// put in, or bars taken out) as one undoable change that keeps how the song
+// plays: jumps go to the bars they went to, the loop starts where it did and
+// the song ends after what played last (bars put in right after that play
+// too). Whole frames move in FamiTracker's frame list, so the frames after
+// keep their patterns and linked copies; other moves rewrite the frames after.
+std::string ShiftSong(Session &S, int First, int Shift, const std::string &What, std::vector<std::string> &Warnings)
+{
+	const int PL = S.Time.PatternLength;
+	const int OldFrames = S.Time.Frames, OldTotal = S.Time.TotalRows();
+	int NewFrames = std::max(1, (OldTotal + Shift + PL - 1) / PL), Rows = NewFrames * PL;
+	const bool Whole = Shift % PL == 0;
+	const std::string FrameBars = Plural(S.Time.BarsPerFrame(), "bar", "bars");
+	const SongFlow Before = Flow(S);
+	const int OldLast = Before.EndRow(PL) - 1, OldLoop = Before.LoopRow(PL);
+	auto Moved = [&](int Row) {
+		if (Row < First)
+			return Row;
+		if (Shift < 0 && Row < First - Shift)
+			return -1;	// taken out
+		return Row + Shift;
+	};
+
+	// Skips (Dxx) end a frame early and go on in the next, so they keep their meaning only when whole frames move
+	for (int c = 0; c < S.ChannelCount() && !Whole; ++c) {
+		const std::vector<Cell> &Cells = S.Cells(c);
+		for (int r = 0; r < static_cast<int>(Cells.size()); ++r)
+			for (int k = 0; k < S.Channel(c).EffectColumns && k < EFFECT_COLUMNS; ++k) {
+				const Cell &C = Cells[static_cast<size_t>(r)];
+				if (C.Effect[k] == EFF_SKIP && (r >= First || (r / PL + 1) * PL + C.Param[k] >= First))
+					throw Problem(Format("The song skips ahead (D%02X) at %s, which ends that frame early, so bars go in or out "
+						"there only a whole frame (%s) at a time.", C.Param[k], S.Time.Position(r).c_str(), FrameBars.c_str()));
+			}
+	}
+
+	// The loop starts where it did, moved along (with what comes after its first bars when they go)
+	int NewLoop = -1;
+	bool LoopTakesNew = false;	// the bars put in begin the loop
+	if (!Before.Halts()) {
+		NewLoop = Moved(OldLoop);
+		if (NewLoop < 0)
+			NewLoop = First;
+		if (NewLoop % PL != OldLoop % PL) {
+			if (Shift > 0 && OldLoop == First) {
+				NewLoop = OldLoop;	// FamiTracker jumps back only to a frame's start
+				LoopTakesNew = true;
+			}
+			else if (Shift > 0)
+				throw Problem(Format("The song loops back to %s, and bars put in before it would move that inside a frame: "
+					"FamiTracker jumps back only to a frame's start. Put in a whole frame (%s), or put the bars in at %s, where "
+					"they begin the loop.", StartPosition(S, OldLoop).c_str(), FrameBars.c_str(), StartPosition(S, OldLoop).c_str()));
+			else
+				throw Problem(Format("The song loops back to %s, and taking out those bars would move that inside a frame: "
+					"FamiTracker jumps back only to a frame's start. Take out a whole frame (%s) instead.",
+					StartPosition(S, OldLoop).c_str(), FrameBars.c_str()));
+		}
+	}
+
+	// What plays last: the row that did, moved along (or the one before the bars taken out); bars put in right after it play too
+	const bool AtEnd = Shift > 0 && First == OldLast + 1;
+	int NewLast = AtEnd ? OldLast + Shift : Moved(OldLast);
+	if (NewLast < 0)
+		NewLast = First - 1;
+	if (NewLast < 0)
+		throw Problem("That takes out every bar the song plays.");
+	if (NewLoop > NewLast)
+		throw Problem(Format("That takes out the whole loop (%s); take out fewer bars, or set another loop first with set_loop.",
+			RangeText(S.Time.BarOf(OldLoop), S.Time.BarOf(OldLast)).c_str()));
+
+	// Every channel moved along, its jumps going to the bars they went to
+	std::vector<std::vector<Cell> > Final;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const int Cols = std::max(1, std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns));
+		std::vector<Cell> Cells = ShiftedRows(S.Cells(c), First, Shift, Rows);
+		for (int r = 0; r < Rows; ++r)
+			for (int k = 0; k < Cols; ++k) {
+				Cell &C = Cells[static_cast<size_t>(r)];
+				if (C.Effect[k] != EFF_JUMP)
+					continue;
+				const int Old = std::min(static_cast<int>(C.Param[k]), OldFrames - 1) * PL;
+				int Target = Moved(Old);
+				if (Target < 0)
+					Target = First;
+				if (Target % PL != 0 && Shift > 0 && Old == First)
+					Target = First;	// the bars put in begin where it jumps
+				if (Target % PL != 0)
+					throw Problem(Format("A jump (B%02X) at %s goes to %s, which would move inside a frame, where FamiTracker "
+						"can't jump. Put in or take out a whole frame (%s) instead.", C.Param[k],
+						S.Time.Position(r < First ? r : r - Shift).c_str(), StartPosition(S, Old).c_str(), FrameBars.c_str()));
+				C.Param[k] = static_cast<unsigned char>(Target / PL);
+			}
+		// Bars put in right after the end play before the song goes back (or stops)
+		if (AtEnd) {
+			Cell &End = Cells[static_cast<size_t>(OldLast)];
+			for (int k = 0; k < Cols; ++k)
+				if (End.Effect[k] == EFF_JUMP || End.Effect[k] == EFF_HALT) {
+					AddEffect(Cells[static_cast<size_t>(NewLast)], End.Effect[k], End.Param[k], Cols);
+					End.Effect[k] = EFF_NONE;
+					End.Param[k] = 0;
+				}
+		}
+		Final.push_back(Cells);
+		Columns.push_back(Cols);
+	}
+
+	// Frames the move leaves at the end holding nothing, after all that plays (and the bars put in), go
+	if (!Whole) {
+		auto Padding = [&](const std::vector<std::vector<Cell> > &Channels, int Frames, int Last) {
+			int Pad = 0;
+			for (int f = Frames - 1; f > 0 && f * PL > Last; --f, ++Pad)
+				for (size_t c = 0; c < Channels.size(); ++c)
+					for (int r = f * PL; r < (f + 1) * PL && r < static_cast<int>(Channels[c].size()); ++r)
+						if (!Channels[c][static_cast<size_t>(r)].IsEmpty())
+							return Pad;
+			return Pad;
+		};
+		std::vector<std::vector<Cell> > Old;
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			Old.push_back(S.Cells(c));
+		const int Extra = Padding(Final, NewFrames, Shift > 0 ? std::max(NewLast, First + Shift - 1) : NewLast) -
+			Padding(Old, OldFrames, OldLast);
+		if (Extra > 0) {
+			NewFrames -= Extra;
+			Rows = NewFrames * PL;
+			for (size_t c = 0; c < Final.size(); ++c)
+				Final[c].resize(static_cast<size_t>(Rows));
+		}
+	}
+
+	// The song ends where it should: its jump or halt written there when it went, or comes too late
+	auto Right = [&](const SongFlow &F) {
+		if (Before.Halts())
+			return F.Halts() && F.EndRow(PL) - 1 == NewLast;
+		return !F.Halts() && F.LoopRow(PL) == NewLoop && F.EndRow(PL) - 1 == NewLast;
+	};
+	if (!Right(FollowSong(Final, Columns, PL, NewFrames)) && (Before.Halts() || NewLoop % PL == 0)) {
+		bool Placed = false;
+		for (int c = 0; c < S.ChannelCount() && !Placed; ++c)
+			Placed = AddEffect(Final[static_cast<size_t>(c)][static_cast<size_t>(NewLast)], Before.Halts() ? EFF_HALT : EFF_JUMP,
+				Before.Halts() ? 0 : NewLoop / PL, Columns[static_cast<size_t>(c)]);
+		if (!Placed)
+			throw Problem(Format("No channel has a free effect column on the song's new last row (%s) for its %s; show another "
+				"effect column in FamiTracker.", S.Time.Position(NewLast).c_str(), Before.Halts() ? "halt (C00)" : "jump back (Bxx)"));
+	}
+
+	// Whole frames move in the frame list, so the frames after keep their patterns (and linked
+	// copies); otherwise the rows after are rewritten, frames coming or going at the end
+	SongWrite Write;
+	if (Whole) {
+		Write.MoveFrame = (First + PL - 1) / PL;
+		Write.MoveBy = Shift / PL;
+	}
+	else if (NewFrames != OldFrames) {
+		Write.MoveFrame = std::min(OldFrames, NewFrames);
+		Write.MoveBy = NewFrames - OldFrames;
+	}
+	Write.Cursor = std::min(First, Rows - 1);
+	// What the frame list leaves to write: the rows that differ
+	std::vector<std::vector<Cell> > Base;
+	int Low = -1, High = -1;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Base.push_back(ShiftedRows(S.Cells(c), Write.MoveFrame * PL, Write.MoveBy * PL, Rows));
+		for (int r = 0; r < Rows; ++r)
+			if (Final[static_cast<size_t>(c)][static_cast<size_t>(r)] != Base.back()[static_cast<size_t>(r)]) {
+				Low = Low < 0 ? r : std::min(Low, r);
+				High = std::max(High, r);
+			}
+	}
+	std::vector<ChannelCells> Parts;
+	for (int c = 0; c < S.ChannelCount() && High >= 0; ++c) {
+		const std::vector<Cell> &New = Final[static_cast<size_t>(c)], &Old = Base[static_cast<size_t>(c)];
+		if (std::equal(New.begin() + Low, New.begin() + High + 1, Old.begin() + Low))
+			continue;
+		ChannelCells Part;
+		Part.Channel = c;
+		Part.Exact = true;
+		Part.Cells.assign(New.begin() + Low, New.begin() + High + 1);
+		Parts.push_back(Part);
+	}
+	if (Parts.empty() && Write.MoveBy == 0)
+		throw Problem("Nothing would change: those bars are empty, and FamiTracker's frames keep their length.");
+	Write.First = std::max(0, Low);
+	const int LinksBefore = LinkedCopies(S);
+	std::string Why, Error;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	if (!S.Host().WriteSong(Parts, Write, Error))
+		throw Problem(Error.empty() ? "The song couldn't be changed." : Error);
+
+	// How it plays now, as FamiTracker has it
+	S.Load();
+	const SongFlow Now = Flow(S);
+	std::string Text = "Changed the song: " + What + ". One Ctrl+Z in FamiTracker undoes it. Now " + FlowText(S, Now) + ".";
+	if (LoopTakesNew)
+		Text += " The new bars begin the loop: FamiTracker jumps back only to a frame's start, and the bar the loop began with "
+			"is inside a frame now.";
+	else if (Shift > 0 && OldLoop == First)
+		Text += Format(" The new bars play once, before the loop; set_loop with from_bar %d takes them into it.", S.Time.BarOf(First));
+	if (Shift > 0) {
+		// Bars the song never gets to: after its loop's jump back, or its halt
+		const std::vector<bool> Played = Now.Played(S.Time.TotalRows(), PL);
+		int From = -1, To = -1;
+		for (int r = First; r < First + Shift && r < static_cast<int>(Played.size()); ++r)
+			if (!Played[static_cast<size_t>(r)]) {
+				From = From < 0 ? r : From;
+				To = r;
+			}
+		if (From >= 0) {
+			std::string Bars = RangeText(S.Time.BarOf(From), S.Time.BarOf(To));
+			Bars[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Bars[0])));
+			const bool One = S.Time.BarOf(From) == S.Time.BarOf(To);
+			Warnings.push_back(Format("%s %s play: the song %s after %s, before %s. set_loop with to_bar %d takes it on through %s.",
+				Bars.c_str(), One ? "doesn't" : "don't", Now.Halts() ? "stops" : "goes back", EndPosition(S, Now.EndRow(PL) - 1).c_str(),
+				One ? "it" : "them", S.Time.BarOf(To), One ? "it" : "them"));
+		}
+	}
+	const int Unlinked = LinksBefore - LinkedCopies(S);
+	if (Unlinked > 0)
+		Warnings.push_back(Format("%s of clips became plain notes: their notes moved inside frames.",
+			Plural(Unlinked, "linked copy", "linked copies").c_str()));
+	if (!Right(Now))
+		Warnings.push_back("FamiTracker's song doesn't end where it should now; check_loop shows how it plays, and set_loop sets "
+			"the loop.");
+	return Text;
+}
+
+std::string InsertBarsTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Putting bars in moves the rest of the song, which needs direct changes: the user can allow them in File > "
+			"Connect Claude Code, or insert frames in FamiTracker's frame list.");
+	const int PL = S.Time.PatternLength, RPB = S.Time.RowsPerBar, BPF = S.Time.BarsPerFrame(), Bars = S.Time.BarCount();
+	if (Arg(Args, "at_bar") == 0)
+		throw Problem(Format("Say where with at_bar: the new bars go before that bar (%d adds them at the end).", Bars + 1));
+	const int At = IntArg(Args, "at_bar", 1, 1, Bars + 1);
+	const int Count = IntArg(Args, "bars", 1, 1, S.MaxBars());
+	if (PL % RPB != 0 && ((At - 1) % BPF != 0 || Count % BPF != 0))
+		throw Problem(Format("A frame here is %d rows, not whole bars of %d, so bars go in a frame (%s) at a time, before a "
+			"frame's first bar (bar 1, %d, %d...).", PL, RPB, Plural(BPF, "bar", "bars").c_str(), BPF + 1, 2 * BPF + 1));
+	const int Shift = PL % RPB == 0 ? Count * RPB : Count / BPF * PL;
+	if (S.Time.TotalRows() + Shift > S.MaxRows())
+		throw Problem(Format("That's more than a song can hold (%d bars; it has %d).", S.MaxBars(), Bars));
+	const std::string New = Plural(Count, "empty bar", "empty bars");
+	const std::string What = At > Bars ? Format("%s added at the end (%s)", New.c_str(), RangeText(At, At + Count - 1).c_str()) :
+		Format("%s put in at bar %d; what was bar %d on is bar %d on now", New.c_str(), At, At, At + Count);
+	std::vector<std::string> Warnings;
+	std::string Text = ShiftSong(S, S.Time.BarStart(At), Shift, What, Warnings);
+	Text += Format(" Fill %s with write_notes, copy_bars or the arranging tools.", RangeText(At, At + Count - 1).c_str());
+	return WithRemarks(S, Text, Warnings);
+}
+
+std::string RemoveBarsTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Taking bars out moves the rest of the song, which needs direct changes: the user can allow them in File > "
+			"Connect Claude Code, or delete frames in FamiTracker's frame list.");
+	const int PL = S.Time.PatternLength, RPB = S.Time.RowsPerBar, BPF = S.Time.BarsPerFrame(), Bars = S.Time.BarCount();
+	if (Arg(Args, "from_bar") == 0)
+		throw Problem("Say which bars with from_bar (and to_bar).");
+	const int From = IntArg(Args, "from_bar", 1, 1, Bars);
+	const int To = IntArg(Args, "to_bar", From, From, Bars);
+	if (From == 1 && To == Bars)
+		throw Problem("That's every bar of the song.");
+	if (PL % RPB != 0 && ((From - 1) % BPF != 0 || (To - From + 1) % BPF != 0))
+		throw Problem(Format("A frame here is %d rows, not whole bars of %d, so bars come out a frame (%s) at a time, from a "
+			"frame's first bar (bar 1, %d, %d...).", PL, RPB, Plural(BPF, "bar", "bars").c_str(), BPF + 1, 2 * BPF + 1));
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+	const std::string What = To < Bars ? Format("%s taken out; what came after starts at bar %d now", RangeText(From, To).c_str(), From) :
+		Format("%s taken out at the end", RangeText(From, To).c_str());
+	std::vector<std::string> Warnings;
+	const std::string Text = ShiftSong(S, First, First - End, What, Warnings);
+	return WithRemarks(S, Text, Warnings);
+}
+
+// Versions to compare: the track as it is now, kept as a track of its own
+
+std::string KeepVersionTool(Session &S, const Json &Args)
+{
+	const std::string Base = S.Song.TrackName, Label = StringArg(Args, "name");
+	const std::vector<std::string> &Names = S.Song.TrackNames;
+	auto Taken = [&](const std::string &Name) { return std::find(Names.begin(), Names.end(), Name) != Names.end(); };
+	std::string Name = Label.empty() ? std::string() : Base + " (" + Label + ")";
+	for (int n = 1; Name.empty() || Taken(Name); ++n)
+		Name = Label.empty() ? Format("%s (version %d)", Base.c_str(), n) : Format("%s (%s %d)", Base.c_str(), Label.c_str(), n + 1);
+	std::vector<std::vector<Cell> > Channels;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Channels.push_back(S.Cells(c));
+	const int Here = S.Song.Track;
+	std::string Error;
+	const int Track = S.Host().AddTrack(Name, Channels, S.Song.Speed, S.Song.Tempo, Error);
+	if (Track < 0)
+		throw Problem("The version couldn't be kept: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	if (!S.Host().SelectTrack(Here, Error))
+		throw Problem(Format("Kept it as track %d \"%s\", but FamiTracker shows that one now: %s", Track + 1, Name.c_str(),
+			Error.c_str()));
+	return Format("Kept track %d \"%s\" as it is now, as track %d \"%s\". You're still on \"%s\", so change it as you like: "
+		"compare_versions then plays the same bars of both for the user, one after the other, and select_track goes to the "
+		"kept one to carry on from it instead. FamiTracker can't undo adding a track: the user removes one in Module > Module "
+		"properties.", Here + 1, Base.c_str(), Track + 1, Name.c_str(), Base.c_str());
+}
+
+std::string CompareVersionsTool(Session &S, const Json &Args)
+{
+	const int Here = S.Song.Track;
+	const std::string HereName = S.Song.TrackName;
+	std::vector<int> Tracks;
+	const Json *pVersions = Arg(Args, "versions");
+	if (pVersions != 0) {
+		const size_t Count = pVersions->IsArray() ? pVersions->Size() : 1;
+		for (size_t i = 0; i < Count; ++i) {
+			Json One = Json::MakeObject();
+			One.Set("track", pVersions->IsArray() ? pVersions->At(i) : *pVersions);
+			const int Track = TrackArg(S, One, "track");
+			if (std::find(Tracks.begin(), Tracks.end(), Track) == Tracks.end())
+				Tracks.push_back(Track);
+		}
+		if (Tracks.size() == 1 && Tracks[0] != Here)
+			Tracks.push_back(Here);	// one named: with the track worked on
+	}
+	else {
+		// The track worked on and its newest kept version
+		const std::string Prefix = HereName + " (";
+		int Kept = -1;
+		for (size_t t = 0; t < S.Song.TrackNames.size(); ++t)
+			if (static_cast<int>(t) != Here && S.Song.TrackNames[t].compare(0, Prefix.size(), Prefix) == 0)
+				Kept = static_cast<int>(t);
+		if (Kept < 0)
+			throw Problem(Format("\"%s\" has no kept version to compare with: keep_version keeps one before you change it, or "
+				"name the tracks with versions.", HereName.c_str()));
+		Tracks.push_back(Kept);
+		Tracks.push_back(Here);
+	}
+	if (Tracks.size() < 2)
+		throw Problem("Name two tracks or more to compare.");
+	if (Tracks.size() > 8)
+		throw Problem("Compare up to 8 versions at a time.");
+	const int From = IntArg(Args, "from_bar", 1, 1, S.MaxBars());
+	const int Bars = IntArg(Args, "bars", 8, 1, 64);
+
+	// The same bars of each version, read from its track
+	SongHost &Host = S.Host();
+	int Selected = Here, Last = From + Bars - 1;
+	std::string Error, Names;
+	PlayRequest Request;
+	try {
+		for (size_t i = 0; i < Tracks.size(); ++i) {
+			if (Tracks[i] != Selected && !Host.SelectTrack(Tracks[i], Error))
+				throw Problem(Error.empty() ? std::string("FamiTracker didn't switch tracks.") : Error);
+			Selected = Tracks[i];
+			SongInfo Info;
+			if (!Host.GetSong(Info, Error))
+				throw Problem(Error);
+			const Timing Time(Info.PatternLength, Info.Frames, Info.FirstHighlight, Info.SecondHighlight);
+			const std::string Label = Format("track %d \"%s\"", Tracks[i] + 1, Info.TrackName.c_str());
+			if (From > Time.BarCount())
+				throw Problem(Format("%s has only %d bars.", Label.c_str(), Time.BarCount()));
+			Last = std::min(Last, Time.BarCount());
+			PlayPart Part;
+			Part.Track = Tracks[i];
+			Part.First = Time.BarStart(From);
+			Part.Rows = Time.BarEnd(std::min(From + Bars - 1, Time.BarCount())) - Part.First;
+			if (i == 0) {
+				Request.Track = Part.Track;
+				Request.First = Part.First;
+				Request.Rows = Part.Rows;
+			}
+			else
+				Request.Then.push_back(Part);
+			Names += (i == 0 ? "" : ", then of ") + Label;
+		}
+		Request.Loop = BoolArg(Args, "loop", false);
+		Request.ReturnTrack = Here;
+		if (!Host.Play(Request, Error))
+			throw Problem(Error.empty() ? std::string("FamiTracker couldn't play.") : Error);
+	}
+	catch (...) {
+		std::string Ignored;
+		if (Selected != Here)
+			Host.SelectTrack(Here, Ignored);
+		throw;
+	}
+	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. You can't hear it yourself: ask "
+		"the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
+		RangeText(From, Last).c_str(), Names.c_str(), Request.Loop ? ", over and over until you call stop" : "", HereName.c_str());
+}
+
 // Music for games: each track as a looping OGG
 
 // The track's file name: its own name, or the song's for one called "New song"
@@ -6858,19 +7289,57 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 	return Text;
 }
 
+// "Pulse 1, Triangle and Noise"
+std::string ChannelNames(const Session &S, const std::vector<int> &Channels)
+{
+	std::string Text;
+	for (size_t i = 0; i < Channels.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Channels.size() ? " and " : ", ") + S.Channel(Channels[i]).FullName();
+	return Text;
+}
+
 std::string PlayTool(Session &S, const Json &Args)
 {
 	const int From = IntArg(Args, "from_bar", 1, 1, std::max(1, S.Time.BarCount()));
 	const int Bars = IntArg(Args, "bars", 0, 0, S.MaxBars());
-	const int First = S.Time.BarStart(From);
-	const int Rows = Bars > 0 ? std::min(S.Time.TotalRows(), S.Time.BarEnd(From + Bars - 1)) - First : 0;
+	PlayRequest Request;
+	Request.First = S.Time.BarStart(From);
+	Request.Loop = BoolArg(Args, "loop", false);
+	Request.Rows = Bars > 0 || Request.Loop ? std::min(S.Time.TotalRows(), Bars > 0 ? S.Time.BarEnd(From + Bars - 1) : S.Time.TotalRows()) -
+		Request.First : 0;
+	// Channels on their own, or left out, this time
+	std::vector<int> Playing;
+	if (Arg(Args, "channels") != 0 || Arg(Args, "mute") != 0) {
+		Request.Muted.assign(static_cast<size_t>(S.ChannelCount()), Arg(Args, "channels") != 0);
+		if (Arg(Args, "channels") != 0) {
+			const std::vector<int> Solo = ChannelsArg(S, Args, "channels");
+			for (size_t i = 0; i < Solo.size(); ++i)
+				Request.Muted[static_cast<size_t>(Solo[i])] = false;
+		}
+		if (Arg(Args, "mute") != 0) {
+			const std::vector<int> Mute = ChannelsArg(S, Args, "mute");
+			for (size_t i = 0; i < Mute.size(); ++i)
+				Request.Muted[static_cast<size_t>(Mute[i])] = true;
+		}
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (!Request.Muted[static_cast<size_t>(c)])
+				Playing.push_back(c);
+		if (Playing.empty())
+			throw Problem("That leaves no channel playing.");
+	}
 	std::string Error;
-	if (!S.Host().Play(First, Rows, Error))
+	if (!S.Host().Play(Request, Error))
 		throw Problem(Error.empty() ? "FamiTracker couldn't play." : Error);
-	std::string Text = Format("Playing for the user from bar %d%s. You can't hear it yourself; ask the user how it sounds.", From,
+	const std::string What = Bars > 0 ? RangeText(From, From + Bars - 1) : Format("bar %d to the end", From);
+	std::string Text = Request.Loop ? Format("Playing %s for the user over and over, until you call stop or the user stops it.",
+		What.c_str()) : Format("Playing for the user from bar %d%s.", From,
 		Bars > 0 ? Format(" for %s", Plural(Bars, "bar", "bars").c_str()).c_str() : " to the end");
+	if (!Request.Muted.empty())
+		Text += Format(" Only %s %s; the user's own mutes come back when it stops.", ChannelNames(S, Playing).c_str(),
+			Playing.size() == 1 ? "plays" : "play");
+	Text += " You can't hear it yourself; ask the user how it sounds.";
 	const std::string Muted = MutedChannels(S);
-	if (!Muted.empty())
+	if (!Muted.empty() && Request.Muted.empty())
 		Text += " The user has muted " + Muted + " in FamiTracker, so that doesn't play; clicking a channel's name "
 			"above its column switches it back on.";
 	return Text;
@@ -7945,6 +8414,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("to_bar", BarProp("The loop's last bar. Default: the song's last bar.")),
 		false, true);
 
+	AddTool("insert_bars", "Put bars in",
+		"Puts empty bars into the song at at_bar, in every channel: everything from there on moves later, and the loop, its "
+		"jump back (Bxx) and the song's end move with it. For a new section between others (an intro, a bridge, a break); "
+		"fill the new bars afterwards. Whole frames go into FamiTracker's frame list, so the frames after keep their patterns "
+		"and linked copies. Needs direct changes; one Ctrl+Z undoes it.",
+		Schema().Add("at_bar", BarProp("The new bars go before this bar; the bar after the last adds them at the end."), true)
+			.Add("bars", Prop("integer", "How many bars (default 1).")),
+		false);
+
+	AddTool("remove_bars", "Take bars out",
+		"Takes bars out of the song, in every channel: what comes after moves up to close the gap, and the loop, its jump "
+		"back (Bxx) and the song's end move with it. Whole frames go from FamiTracker's frame list, so the frames after keep "
+		"their patterns and linked copies. Needs direct changes; one Ctrl+Z undoes it.",
+		Schema().Add("from_bar", BarProp("First bar to take out."), true)
+			.Add("to_bar", BarProp("Last bar to take out (default from_bar).")),
+		false, true);
+
 	AddTool("export_for_game", "Export music for a game",
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
@@ -7958,6 +8444,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Selects another track (song) of the module in FamiTracker, by number or name; the other tools work on the selected "
 		"one. get_song lists the tracks.",
 		Schema().Add("track", ChannelProp("Track number (from 1) or name, like \"Town (night)\"."), true), false, false, true);
+
+	AddTool("keep_version", "Keep a version",
+		"Keeps the selected track as it is now as a track of its own, named after it (\"Town (version 1)\", or with name: "
+		"\"Town (calm bridge)\"), and stays on the selected track: keep one before trying something, so the user can "
+		"compare (compare_versions) or go back (select_track).",
+		Schema().Add("name", Prop("string", "What sets this version apart, like \"before the bridge\". Default: version 1, 2...")),
+		false);
+
+	AddTool("compare_versions", "Compare versions",
+		"Plays the same bars of two versions or more for the user, one after the other: by default the newest version kept "
+		"of the selected track (keep_version), then the track as it is now. FamiTracker shows the selected track again "
+		"afterwards. You can't hear it; ask the user which they like better.",
+		Schema().Add("versions", ChannelListProp("Tracks by number or name, in the order to play; one: it, then the selected track."))
+			.Add("from_bar", BarProp("Bar to start at (default 1)."))
+			.Add("bars", Prop("integer", "How many bars of each (default 8)."))
+			.Add("loop", Prop("boolean", "Play them over and over until stop (default false).")),
+		true);
 
 	AddTool("set_expansion", "Switch the expansion chip",
 		"Switches the song's expansion sound chip, as Module > Module properties does: none (the 2A03's five channels only), "
@@ -8158,8 +8661,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("play", "Play for the user",
-		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end. You can't hear it; ask the user.",
-		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end).")),
+		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end; over and over (loop) for listening "
+		"closely, and with only some channels (channels) or without some (mute), to hear a part on its own or the rest without "
+		"it. The user's own mutes come back when it stops. You can't hear it; ask the user.",
+		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end)."))
+			.Add("loop", Prop("boolean", "Play them over and over until stop (default false)."))
+			.Add("channels", ChannelListProp("Only these channels play this time (the bass and drums, a lead alone)."))
+			.Add("mute", ChannelListProp("These channels don't play this time.")),
 		true);
 
 	AddTool("stop", "Stop playing", "Stops playback in FamiTracker.", Schema(), true, false, true);
@@ -8226,6 +8734,10 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "set_expansion") Result.Text = SetExpansionTool(S, Args);
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
 		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
+		else if (Name == "insert_bars") Result.Text = InsertBarsTool(S, Args);
+		else if (Name == "keep_version") Result.Text = KeepVersionTool(S, Args);
+		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
+		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
@@ -8280,7 +8792,8 @@ std::string ToolSet::Instructions()
 		"them (swing with Gxx, a chorus with Pxx, staccato with Sxx, a kick on the triangle); only 0.4.6's effects play, so "
 		"none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
-		"busier drums, another chord style).\n"
+		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
+		"remove_bars cuts bars; the rest of the song and its loop move along.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
 		"the user tells you they like or don't in soundtrack_notes.\n"
