@@ -22,7 +22,10 @@
 #include "Presets.h"
 #include "Music.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <initializer_list>
 
 namespace ftapi {
@@ -61,7 +64,15 @@ Preset Melodic(const char *Name, const char *Description, const std::vector<int>
 	return P;
 }
 
-Preset Drum(const char *Name, const char *Description, const std::vector<int> &Volume)
+std::vector<int> List(std::initializer_list<int> Items)
+{
+	return std::vector<int>(Items);
+}
+
+// A drum: a volume envelope, and noise pitches that move: Fixed ones it plays
+// whatever its note is (a kick's falling thump), or ones relative to its note
+Preset Drum(const char *Name, const char *Description, const std::vector<int> &Volume,
+	const std::vector<int> &Pitches = std::vector<int>(), bool Fixed = true)
 {
 	Preset P;
 	P.Name = Name;
@@ -69,12 +80,42 @@ Preset Drum(const char *Name, const char *Description, const std::vector<int> &V
 	P.Drum = true;
 	P.Vrc7Patch = 0;
 	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume));
+	if (!Pitches.empty()) {
+		PresetSequence Arpeggio = Sequence(SEQUENCE_ARPEGGIO, Pitches);
+		Arpeggio.Setting = Fixed ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE;
+		P.Sequences2A03.push_back(Arpeggio);
+	}
 	return P;
 }
 
-std::vector<int> List(std::initializer_list<int> Items)
+// A vibrato for a pitch sequence: Delay frames of nothing, then a looping
+// triangle wave Depth units a frame each way that sums to nothing (pitch
+// sequences add to the pitch every frame), Rate frames a cycle
+std::vector<int> VibratoItems(int Delay, int Depth, int Rate, int &Loop)
 {
-	return std::vector<int>(Items);
+	std::vector<int> Items(static_cast<size_t>(std::max(0, Delay)), 0);
+	Loop = static_cast<int>(Items.size());
+	const int Quarter = std::max(1, Rate / 4);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(Depth);
+	for (int i = 0; i < 2 * Quarter; ++i)
+		Items.push_back(-Depth);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(Depth);
+	return Items;
+}
+
+// A melodic preset with a delayed vibrato built in
+Preset Singing(const char *Name, const char *Description, const std::vector<int> &Volume, int Release, int Duty2A03,
+	int DutyVRC6, int Delay, int Depth)
+{
+	Preset P = Melodic(Name, Description, Volume, Release, Duty2A03, DutyVRC6);
+	int Loop;
+	PresetSequence Pitch = Sequence(SEQUENCE_PITCH, VibratoItems(Delay, Depth, 12, Loop));
+	Pitch.Loop = Loop;
+	P.Sequences2A03.push_back(Pitch);
+	P.SequencesVRC6.push_back(Pitch);
+	return P;
 }
 
 std::vector<Preset> MakePresets()
@@ -98,19 +139,44 @@ std::vector<Preset> MakePresets()
 		List({ 15, 15, 14, 13, 12, 12, 10, 8, 6, 4, 2, 0 }), 5, 2, 7));
 	All.push_back(Melodic("plucky bass", "short, bouncy bass notes that decay by themselves",
 		List({ 15, 15, 14, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), -1, 2, 7));
-	All.push_back(Drum("kick", "noise kick drum (play it as \"kick\" on the noise channel)", List({ 15, 12, 8, 5, 3, 1, 0 })));
-	All.push_back(Drum("snare", "noise snare drum (\"snare\")", List({ 14, 11, 9, 7, 5, 3, 2, 1, 0 })));
+	All.push_back(Singing("singing lead", "expressive lead (25% duty) with a vibrato that comes in after a third of a second, "
+		"so long notes sing without effects", List({ 9, 12, 13, 13, 12, 12, 11, 11, 9, 7, 5, 3, 2, 1, 0 }), 7, 1, 3, 20, 1));
+	All.push_back(Singing("strings", "string section: swells in slowly, sustains with a gentle late vibrato (50% duty)",
+		List({ 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 11, 11, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), 12, 2, 7, 24, 1));
+	{
+		// A quick swell, from thin to round, scooping up into the note
+		Preset Brass = Melodic("brass", "brass or horn: a quick swell from a thin to a round tone, scooping up into the note",
+			List({ 8, 12, 14, 15, 15, 14, 13, 13, 13, 12, 10, 8, 6, 4, 2, 0 }), 8, 2, 7, List({ -2, -1, 0 }));
+		Brass.Sequences2A03.back().Items = List({ 0, 0, 1, 1, 2 });
+		Brass.SequencesVRC6.back().Items = List({ 1, 1, 3, 3, 5, 5, 7 });
+		All.push_back(Brass);
+	}
+	{
+		// Held at full volume; the duty moves to and fro like an organ's chorus
+		Preset Organ = Melodic("organ", "organ: full and steady with a slow shimmer between two tones, stops at once",
+			List({ 13, 13, 13, 12, 9, 5, 2, 0 }), 2, 2, 7);
+		Organ.Sequences2A03.back().Items = List({ 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1 });
+		Organ.Sequences2A03.back().Loop = 0;
+		Organ.SequencesVRC6.back().Items = List({ 7, 7, 7, 7, 7, 7, 5, 5, 5, 5, 5, 5 });
+		Organ.SequencesVRC6.back().Loop = 0;
+		All.push_back(Organ);
+	}
+	All.push_back(Drum("kick", "punchy noise kick that falls from a click to a thump (play it as \"kick\" on the noise channel)",
+		List({ 15, 13, 10, 7, 4, 2, 1, 0 }), List({ 12, 8, 5, 3, 2, 1 })));
+	All.push_back(Drum("snare", "noise snare drum with a bright snap (\"snare\")", List({ 15, 13, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }),
+		List({ 14, 12, 11, 11, 10 })));
 	All.push_back(Drum("hi-hat", "short closed hi-hat (\"hihat\")", List({ 10, 6, 3, 1, 0 })));
 	All.push_back(Drum("open hi-hat", "longer open hi-hat (\"open hi-hat\")", List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 })));
 	All.push_back(Drum("crash", "crash cymbal that rings out, for the first beat of a new part (\"crash\")",
 		List({ 15, 14, 13, 12, 11, 10, 9, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0 })));
-	All.push_back(Drum("tom", "tom for fills, pitched by its note (\"high tom\", \"mid tom\", \"low tom\")",
-		List({ 15, 13, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 })));
+	All.push_back(Drum("tom", "tom for fills that falls as it rings, pitched by its note (\"high tom\", \"mid tom\", \"low tom\")",
+		List({ 15, 13, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), List({ 0, 0, -1, -1, -2, -2, -3 }), false));
 
 	// What sounds most like each on the VRC7
 	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
 		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
-		{ "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 },
+		{ "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 }, { "strings", 15 }, { "brass", 12 },
+		{ "organ", 8 },
 	};
 	for (size_t i = 0; i < All.size(); ++i)
 		for (size_t k = 0; k < sizeof(ON_VRC7) / sizeof(ON_VRC7[0]); ++k)
@@ -193,7 +259,9 @@ const Preset *FindPreset(const std::string &Name)
 		{ "square", "bright lead" }, { "thinlead", "thin lead" }, { "nasal", "thin lead" }, { "harp", "pluck" },
 		{ "guitar", "pluck" }, { "pluckylead", "pluck" }, { "chime", "bell" }, { "glockenspiel", "bell" },
 		{ "chords", "soft chords" }, { "softchords", "soft chords" }, { "arpeggio", "soft chords" }, { "pad", "warm pad" },
-		{ "warmpad", "warm pad" }, { "strings", "warm pad" }, { "bassline", "bass" }, { "softbass", "bass" },
+		{ "warmpad", "warm pad" }, { "violin", "strings" }, { "violins", "strings" }, { "bassline", "bass" }, { "softbass", "bass" },
+		{ "vibratolead", "singing lead" }, { "singinglead", "singing lead" }, { "vocal", "singing lead" }, { "voice", "singing lead" },
+		{ "horn", "brass" }, { "horns", "brass" }, { "trumpet", "brass" }, { "keys", "organ" },
 		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
 		{ "snaredrum", "snare" }, { "clap", "snare" }, { "hihat", "hi-hat" }, { "hat", "hi-hat" },
 		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "cymbal", "crash" },
@@ -272,6 +340,321 @@ const Vrc7Patch *FindVrc7Patch(const std::string &Name)
 	if (pPreset != 0 && pPreset->Vrc7Patch >= 1 && pPreset->Vrc7Patch <= static_cast<int>(All.size()))
 		return &All[static_cast<size_t>(pPreset->Vrc7Patch - 1)];
 	return 0;
+}
+
+// Sounds in words
+
+SoundDesign::SoundDesign() : Drum(false), Peak(13), Attack(1), Decay(8), Sustain(10), Release(6), Duty(1), Motion(DUTY_STILL),
+	Vibrato(0), VibratoDelay(20), VibratoRate(12), AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
+{
+}
+
+namespace {
+
+const int MAX_ITEMS = 252;	// a FamiTracker sequence's most
+
+int Clamp(int Value, int Low, int High)
+{
+	return std::max(Low, std::min(High, Value));
+}
+
+// Attack, decay to the sustain level (held at the release point), release
+std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint)
+{
+	const int Peak = Clamp(D.Peak, 1, 15);
+	const int Sustain = Clamp(D.Sustain, 0, Peak);
+	const int Attack = Clamp(D.Attack, 0, 60), Release = Clamp(D.Release, 0, 60);
+	const int Decay = Sustain == 0 ? Clamp(D.Decay, 4, 120) : Clamp(D.Decay, 0, 120);
+	std::vector<int> Out;
+	for (int i = 1; i <= Attack; ++i)
+		Out.push_back(std::max(1, (Peak * i + Attack / 2) / (Attack + 1)));
+	Out.push_back(Peak);
+	for (int i = 1; i <= Decay; ++i) {
+		const double Left = 1.0 - i / static_cast<double>(Decay);
+		Out.push_back(static_cast<int>(std::floor(Sustain + (Peak - Sustain) * Left * Left + 0.5)));	// faster at first
+	}
+	if (Out.back() != Sustain)
+		Out.push_back(Sustain);
+	ReleasePoint = -1;
+	if (Sustain > 0) {
+		ReleasePoint = static_cast<int>(Out.size()) - 1;
+		for (int i = 1; i <= Release; ++i)
+			Out.push_back(static_cast<int>(std::floor(Sustain * (1.0 - i / static_cast<double>(Release + 1)) + 0.5)));
+		if (Out.back() != 0)
+			Out.push_back(0);
+	}
+	if (Out.size() > MAX_ITEMS) {
+		Out.resize(MAX_ITEMS);
+		Out.back() = 0;
+		ReleasePoint = std::min(ReleasePoint, MAX_ITEMS - 2);
+	}
+	return Out;
+}
+
+// The 2A03's duty (0-3) as the VRC6's nearest (0-7)
+int Vrc6Duty(int Duty)
+{
+	static const int NEAREST[4] = { 1, 3, 7, 7 };
+	return NEAREST[Clamp(Duty, 0, 3)];
+}
+
+std::vector<int> DutyItems(int Duty, int Motion, bool Vrc6, int &Loop)
+{
+	Loop = -1;
+	const int d = Vrc6 ? Vrc6Duty(Duty) : Clamp(Duty, 0, 3);
+	std::vector<int> Items;
+	switch (Motion) {
+	case DUTY_SWEEP:	// thin to the duty on the attack
+		for (int Step = Vrc6 ? 1 : 0; Step < d; Step += Vrc6 ? 2 : 1) {
+			Items.push_back(Step);
+			Items.push_back(Step);
+		}
+		Items.push_back(d);
+		break;
+	case DUTY_WOBBLE: {	// to and fro: a shimmer like a chorus
+		const int Other = Vrc6 ? (d >= 3 ? d - 2 : d + 2) : (d >= 2 ? d - 1 : d + 1);
+		for (int i = 0; i < 12; ++i)
+			Items.push_back(i < 6 ? d : Other);
+		Loop = 0;
+		break;
+	}
+	case DUTY_FADE:		// thinner as it fades
+		for (int Step = d; Step >= 0; Step -= Vrc6 ? 2 : 1)
+			for (int i = 0; i < 6; ++i)
+				Items.push_back(Step);
+		break;
+	default:
+		Items.push_back(d);
+		break;
+	}
+	return Items;
+}
+
+}	// namespace
+
+Preset DesignPreset(const SoundDesign &D)
+{
+	Preset P;
+	P.Name = D.Name;
+	P.Description = "designed with design_instrument";
+	P.Drum = D.Drum;
+	P.Vrc7Patch = 0;
+	if (D.Drum) {
+		// Noise: a volume envelope, and pitches that fall
+		std::vector<int> Volume, Pitches;
+		bool Fixed = true;
+		switch (D.Kind) {
+		case DRUM_SNARE:
+			Volume = List({ 15, 13, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 });
+			Pitches = List({ 14, 12, 11, 11, 10 });
+			break;
+		case DRUM_HIHAT:
+			Volume = List({ 10, 6, 3, 1, 0 });
+			Pitches = List({ 14 });
+			break;
+		case DRUM_OPEN_HIHAT:
+			Volume = List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 });
+			Pitches = List({ 13 });
+			break;
+		case DRUM_CRASH:
+			Volume = List({ 15, 14, 13, 12, 11, 10, 9, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0 });
+			Pitches = List({ 12 });
+			break;
+		case DRUM_TOM:
+			Volume = List({ 15, 13, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 });
+			Pitches = List({ 0, 0, -1, -1, -2, -2, -3 });
+			Fixed = false;
+			break;
+		default:	// kick
+			Volume = List({ 15, 13, 10, 7, 4, 2, 1, 0 });
+			Pitches = List({ 12, 8, 5, 3, 2, 1 });
+			break;
+		}
+		const int Peak = Clamp(D.Peak, 1, 15);
+		for (size_t i = 0; i < Volume.size(); ++i)
+			Volume[i] = Volume[i] == 0 ? 0 : std::max(1, (Volume[i] * Peak + 7) / 15);
+		if (D.Length > 0) {			// longer: each step twice
+			std::vector<int> Longer;
+			for (size_t i = 0; i + 1 < Volume.size(); ++i) {
+				Longer.push_back(Volume[i]);
+				Longer.push_back(Volume[i]);
+			}
+			Longer.push_back(0);
+			Volume = Longer;
+		}
+		else if (D.Length < 0 && Volume.size() > 4) {	// shorter: every other step
+			std::vector<int> Shorter;
+			for (size_t i = 0; i + 1 < Volume.size(); i += 2)
+				Shorter.push_back(Volume[i]);
+			Shorter.push_back(0);
+			Volume = Shorter;
+		}
+		if (Fixed)
+			for (size_t i = 0; i < Pitches.size(); ++i)
+				Pitches[i] = Clamp(Pitches[i] + 2 * D.Tone, 0, 15);
+		P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume));
+		PresetSequence Arpeggio = Sequence(SEQUENCE_ARPEGGIO, Pitches);
+		Arpeggio.Setting = Fixed ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE;
+		P.Sequences2A03.push_back(Arpeggio);
+		return P;
+	}
+
+	int Release;
+	const std::vector<int> Volume = Envelope(D, Release);
+	P.Sequences2A03.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
+	P.SequencesVRC6.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
+
+	// Arpeggio: a chord looped, or the attack's pitch
+	std::vector<int> Arpeggio;
+	int ArpeggioLoop = -1;
+	if (!D.Arpeggio.empty()) {
+		for (size_t i = 0; i < D.Arpeggio.size(); ++i)
+			for (int f = 0; f < Clamp(D.ArpeggioFrames, 1, 8); ++f)
+				Arpeggio.push_back(Clamp(D.Arpeggio[i], -24, 24));
+		ArpeggioLoop = 0;
+	}
+	else if (D.AttackPitch == PITCH_BLIP)
+		Arpeggio = List({ 12, 12, 0 });
+	else if (D.AttackPitch == PITCH_SCOOP)
+		Arpeggio = List({ -3, -2, -1, 0 });
+	if (!Arpeggio.empty()) {
+		P.Sequences2A03.push_back(Sequence(SEQUENCE_ARPEGGIO, Arpeggio, ArpeggioLoop));
+		P.SequencesVRC6.push_back(Sequence(SEQUENCE_ARPEGGIO, Arpeggio, ArpeggioLoop));
+	}
+
+	// Pitch: a fall, then the vibrato
+	std::vector<int> Pitch;
+	int PitchLoop = -1;
+	if (D.AttackPitch == PITCH_DROP)
+		Pitch = List({ 0, 2, 3, 4, 5, 6, 7, 8 });
+	if (D.Vibrato > 0) {
+		int Loop;
+		const std::vector<int> Wave = VibratoItems(std::max(0, D.VibratoDelay - static_cast<int>(Pitch.size())), Clamp(D.Vibrato, 1, 3),
+			std::max(4, D.VibratoRate / 4 * 4), Loop);
+		PitchLoop = static_cast<int>(Pitch.size()) + Loop;
+		Pitch.insert(Pitch.end(), Wave.begin(), Wave.end());
+	}
+	if (!Pitch.empty() && Pitch.size() <= MAX_ITEMS) {
+		P.Sequences2A03.push_back(Sequence(SEQUENCE_PITCH, Pitch, PitchLoop));
+		P.SequencesVRC6.push_back(Sequence(SEQUENCE_PITCH, Pitch, PitchLoop));
+	}
+
+	int Loop;
+	std::vector<int> Duty = DutyItems(D.Duty, D.Motion, false, Loop);
+	P.Sequences2A03.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
+	Duty = DutyItems(D.Duty, D.Motion, true, Loop);
+	P.SequencesVRC6.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
+	return P;
+}
+
+std::string DescribeDesign(const SoundDesign &D, int FrameRate)
+{
+	char Buffer[512];
+	const double Rate = FrameRate > 0 ? FrameRate : 60;
+	if (D.Drum) {
+		static const char *const KINDS[] = { "kick", "snare", "closed hi-hat", "open hi-hat", "crash", "tom" };
+		std::snprintf(Buffer, sizeof(Buffer), "a %s%s%s at volume %d%s", D.Tone < 0 ? "dark " : D.Tone > 0 ? "bright " : "",
+			D.Length < 0 ? "short " : D.Length > 0 ? "long " : "", KINDS[Clamp(D.Kind, 0, 5)], Clamp(D.Peak, 1, 15),
+			D.Kind == DRUM_KICK || D.Kind == DRUM_SNARE ? ", its noise falling from bright to dark" :
+			D.Kind == DRUM_TOM ? ", falling as it rings (pitched by its note)" : "");
+		return Buffer;
+	}
+	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%" };
+	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
+	std::string Out;
+	std::snprintf(Buffer, sizeof(Buffer), "a %s pulse that reaches %d %s", DUTIES[Clamp(D.Duty, 0, 3)], Clamp(D.Peak, 1, 15),
+		D.Attack <= 0 ? "at once" : (std::to_string(D.Attack) + " frames in").c_str());
+	Out = Buffer;
+	if (Sustain == 0)
+		std::snprintf(Buffer, sizeof(Buffer), ", then dies away over %d frames by itself", std::max(4, D.Decay));
+	else if (Sustain == Clamp(D.Peak, 1, 15))
+		std::snprintf(Buffer, sizeof(Buffer), ", holds, and fades over %d frames after a release (===)", D.Release);
+	else
+		std::snprintf(Buffer, sizeof(Buffer), ", settles to %d over %d frames, and fades over %d frames after a release (===)", Sustain,
+			D.Decay, D.Release);
+	Out += Buffer;
+	static const char *const MOTIONS[] = { "", "; its tone opens from thin on the attack", "; its tone shimmers to and fro",
+		"; its tone thins as it fades" };
+	Out += MOTIONS[Clamp(D.Motion, 0, 3)];
+	if (D.AttackPitch == PITCH_BLIP)
+		Out += "; an octave blip on the attack";
+	else if (D.AttackPitch == PITCH_SCOOP)
+		Out += "; it scoops up into the note";
+	else if (D.AttackPitch == PITCH_DROP)
+		Out += "; its pitch falls";
+	if (!D.Arpeggio.empty()) {
+		Out += "; it arpeggiates";
+		for (size_t i = 0; i < D.Arpeggio.size(); ++i)
+			Out += (i == 0 ? " " : ", ") + std::to_string(D.Arpeggio[i]);
+		Out += " semitones";
+	}
+	if (D.Vibrato > 0) {
+		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong" };
+		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note", DEPTHS[Clamp(D.Vibrato, 1, 3)],
+			D.VibratoDelay, D.VibratoDelay / Rate);
+		Out += Buffer;
+	}
+	return Out;
+}
+
+bool DesignOfKind(const std::string &Kind, SoundDesign &D)
+{
+	const std::string K = Simplified(Kind);
+	D = SoundDesign();
+	if (K == "lead" || K == "melody") {
+		D.Attack = 1; D.Peak = 13; D.Decay = 8; D.Sustain = 11; D.Release = 6; D.Duty = 1; D.Vibrato = 1;
+	}
+	else if (K == "pad") {
+		D.Attack = 10; D.Peak = 11; D.Decay = 0; D.Sustain = 11; D.Release = 16; D.Duty = 2; D.Vibrato = 1; D.VibratoDelay = 30;
+	}
+	else if (K == "pluck" || K == "harp" || K == "guitar") {
+		D.Attack = 0; D.Peak = 15; D.Decay = 24; D.Sustain = 0; D.Duty = 1;
+	}
+	else if (K == "bass") {
+		D.Attack = 0; D.Peak = 15; D.Decay = 6; D.Sustain = 12; D.Release = 3; D.Duty = 2;
+	}
+	else if (K == "keys" || K == "piano") {
+		D.Attack = 0; D.Peak = 14; D.Decay = 40; D.Sustain = 3; D.Release = 6; D.Duty = 2; D.Motion = DUTY_FADE;
+	}
+	else if (K == "bell" || K == "chime") {
+		D.Attack = 0; D.Peak = 15; D.Decay = 40; D.Sustain = 0; D.Duty = 1; D.AttackPitch = PITCH_BLIP;
+	}
+	else if (K == "brass" || K == "horn") {
+		D.Attack = 3; D.Peak = 15; D.Decay = 6; D.Sustain = 13; D.Release = 6; D.Duty = 2; D.Motion = DUTY_SWEEP; D.AttackPitch = PITCH_SCOOP;
+	}
+	else if (K == "strings" || K == "violin") {
+		D.Attack = 14; D.Peak = 12; D.Decay = 0; D.Sustain = 12; D.Release = 12; D.Duty = 2; D.Vibrato = 1; D.VibratoDelay = 24;
+	}
+	else if (K == "organ") {
+		D.Attack = 0; D.Peak = 13; D.Decay = 0; D.Sustain = 13; D.Release = 2; D.Duty = 2; D.Motion = DUTY_WOBBLE;
+	}
+	else if (K == "chiptune" || K == "arp" || K == "arpeggio") {
+		D.Attack = 0; D.Peak = 13; D.Decay = 10; D.Sustain = 9; D.Release = 4; D.Duty = 1;
+		D.Arpeggio = List({ 0, 4, 7 });
+	}
+	else {
+		static const struct { const char *Word; int Kind; } DRUMS[] = {
+			{ "kick", DRUM_KICK }, { "bassdrum", DRUM_KICK }, { "snare", DRUM_SNARE }, { "clap", DRUM_SNARE }, { "hihat", DRUM_HIHAT },
+			{ "hat", DRUM_HIHAT }, { "closedhihat", DRUM_HIHAT }, { "openhihat", DRUM_OPEN_HIHAT }, { "openhat", DRUM_OPEN_HIHAT },
+			{ "crash", DRUM_CRASH }, { "cymbal", DRUM_CRASH }, { "tom", DRUM_TOM },
+		};
+		for (size_t i = 0; i < sizeof(DRUMS) / sizeof(DRUMS[0]); ++i) {
+			if (K == DRUMS[i].Word) {
+				D.Drum = true;
+				D.Kind = DRUMS[i].Kind;
+				D.Peak = 15;
+				return true;
+			}
+		}
+		return false;
+	}
+	return true;
+}
+
+std::string DesignKinds()
+{
+	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio); drums: kick, snare, hihat, "
+		"open hihat, crash, tom";
 }
 
 std::string Vrc7PatchList()

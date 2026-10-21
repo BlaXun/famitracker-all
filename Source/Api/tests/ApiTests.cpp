@@ -1298,6 +1298,109 @@ void TestPlaceClip()
 	CHECK(Run(Song, "place_clip", "{\"clip\": 5, \"channel\": 1, \"bar\": 1}").IsError);
 }
 
+// A sequence FamiTracker takes: in range, a vibrato's loop summing to nothing
+void CheckSequence(const PresetSequence &Seq, bool Drum)
+{
+	CHECK(!Seq.Items.empty() && Seq.Items.size() <= 252);
+	CHECK(Seq.Release < static_cast<int>(Seq.Items.size()) && Seq.Loop < static_cast<int>(Seq.Items.size()));
+	for (size_t k = 0; k < Seq.Items.size(); ++k) {
+		if (Seq.Type == SEQUENCE_VOLUME)
+			CHECK(Seq.Items[k] >= 0 && Seq.Items[k] <= 15);
+		if (Seq.Type == SEQUENCE_ARPEGGIO && Seq.Setting == SEQUENCE_FIXED)
+			CHECK(Seq.Items[k] >= 0 && Seq.Items[k] <= (Drum ? 15 : 95));
+		if (Seq.Type == SEQUENCE_ARPEGGIO && Seq.Setting == SEQUENCE_ABSOLUTE)
+			CHECK(Seq.Items[k] >= -24 && Seq.Items[k] <= 24);
+		if (Seq.Type == SEQUENCE_PITCH)
+			CHECK(Seq.Items[k] >= -15 && Seq.Items[k] <= 15);
+	}
+	if (Seq.Type == SEQUENCE_VOLUME)
+		CHECK(Seq.Items.back() == 0);
+	if (Seq.Type == SEQUENCE_PITCH && Seq.Loop >= 0) {
+		int Sum = 0;
+		for (size_t k = static_cast<size_t>(Seq.Loop); k < Seq.Items.size(); ++k)
+			Sum += Seq.Items[k];
+		CHECK_EQ(Sum, 0);	// pitch adds up every frame: the vibrato's loop must come back where it started
+	}
+}
+
+void TestDesign()
+{
+	// Every kind, and variations of each, makes sequences FamiTracker takes
+	const char *const KINDS[] = { "lead", "pad", "pluck", "bass", "keys", "bell", "brass", "strings", "organ", "chiptune", "kick", "snare",
+		"hihat", "open hihat", "crash", "tom" };
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k) {
+		SoundDesign D;
+		CHECK(DesignOfKind(KINDS[k], D));
+		for (int Variant = 0; Variant < 4; ++Variant) {
+			D.Name = KINDS[k];
+			D.Motion = Variant;
+			D.Vibrato = Variant;
+			D.AttackPitch = Variant;
+			D.Tone = Variant - 2;
+			D.Length = Variant % 3 - 1;
+			D.Sustain = Variant == 1 ? 0 : D.Sustain;
+			const Preset P = DesignPreset(D);
+			CHECK(P.Drum == D.Drum && !DescribeDesign(D, 60).empty());
+			for (int Chip = 0; Chip < 2; ++Chip) {
+				const std::vector<PresetSequence> &List = Chip == 0 ? P.Sequences2A03 : P.SequencesVRC6;
+				CHECK(P.Drum ? (Chip == 1 ? List.empty() : List.size() == 2) : List.size() >= 2);
+				for (size_t s = 0; s < List.size(); ++s) {
+					CheckSequence(List[s], P.Drum);
+					if (List[s].Type == SEQUENCE_DUTY)
+						for (size_t i = 0; i < List[s].Items.size(); ++i)
+							CHECK(List[s].Items[i] >= 0 && List[s].Items[i] <= (Chip == 0 ? 3 : 7));
+				}
+			}
+		}
+	}
+	SoundDesign Unknown;
+	CHECK(!DesignOfKind("kazoo", Unknown));
+
+	// An envelope: attack, decay to the sustain level held at the release point, release
+	SoundDesign D;
+	DesignOfKind("lead", D);
+	D.Attack = 2;
+	D.Peak = 12;
+	D.Decay = 4;
+	D.Sustain = 8;
+	D.Release = 3;
+	Preset P = DesignPreset(D);
+	const PresetSequence &Volume = P.Sequences2A03[0];
+	CHECK(Volume.Type == SEQUENCE_VOLUME && Volume.Items[0] < 12 && Volume.Items[2] == 12 && Volume.Items[static_cast<size_t>(Volume.Release)] == 8);
+	CHECK(Volume.Items.size() == static_cast<size_t>(Volume.Release) + 5);	// 6, 4, 2 and silence after the release
+	D.Sustain = 0;
+	P = DesignPreset(D);
+	CHECK(P.Sequences2A03[0].Release == -1 && !P.Releases());
+
+	// The tool: words to an instrument, added to the song under its own name
+	FakeSong Song;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"hero lead\", \"channel\": \"VRC6 Pulse 1\", \"attack\": \"fast\", "
+		"\"sustain\": \"high\", \"duty\": \"25%\", \"duty_motion\": \"sweep\", \"vibrato\": \"gentle\", \"vibrato_delay_beats\": 0.5, "
+		"\"attack_pitch\": \"scoop\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Hero lead\" (03) (VRC6 instrument): a 25% pulse that reaches 13 2 frames in");
+	CHECK_HAS(Result.Text, "a gentle vibrato from 12 frames");	// half a beat at speed 6
+	CHECK_HAS(Result.Text, "scoops up into the note");
+	const Preset &Made = Song.Made[3];
+	bool Pitch = false, Scoop = false;
+	for (size_t i = 0; i < Made.SequencesVRC6.size(); ++i) {
+		Pitch = Pitch || (Made.SequencesVRC6[i].Type == SEQUENCE_PITCH && Made.SequencesVRC6[i].Loop == 12);
+		Scoop = Scoop || (Made.SequencesVRC6[i].Type == SEQUENCE_ARPEGGIO && Made.SequencesVRC6[i].Items[0] < 0);
+	}
+	CHECK(Pitch && Scoop);
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Hero lead\", \"chip\": \"VRC6\"}").Text, "already has a VRC6 instrument called");
+	CHECK(!Run(Song, "design_instrument", "{\"name\": \"Hero lead\"}").IsError);	// a 2A03 one may share the name
+	Result = Run(Song, "design_instrument", "{\"name\": \"Thump\", \"channel\": \"Noise\", \"kind\": \"kick\", \"tone\": \"dark\", \"length\": \"long\"}");
+	CHECK_HAS(Result.Text, "a dark long kick at volume 15");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"Noise\"}").Text, "say which drum");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": 1, \"kind\": \"snare\"}").Text, "for the noise channel");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"attack\": \"glacial\"}").Text, "attack: instant, fast");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"kind\": \"theremin\"}").Text, "kind: lead, pad");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"chip\": \"VRC7\"}").Text, "built-in sounds");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Shimmer\", \"kind\": \"chiptune\", \"arpeggio\": \"minor7\", \"arpeggio_frames\": 2}");
+	CHECK_HAS(Result.Text, "it arpeggiates 0, 3, 7, 10 semitones");
+}
+
 void TestInstruments()
 {
 	FakeSong Song;
@@ -1334,6 +1437,7 @@ void TestInstruments()
 					Volume = true;
 					CHECK(Seq.Items.back() == 0);	// fades to silence
 				}
+				CheckSequence(Seq, P.Drum);
 			}
 			CHECK(Volume);
 		}
@@ -4209,6 +4313,7 @@ int main()
 	TestWriteNotes();
 	TestPlaceClip();
 	TestInstruments();
+	TestDesign();
 	TestTranspose();
 	TestTempoTool();
 	TestBacking();

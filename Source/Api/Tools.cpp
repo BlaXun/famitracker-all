@@ -38,6 +38,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <map>
 #include <set>
 
@@ -1526,6 +1527,155 @@ std::vector<int> ChannelsArg(Session &S, const Json &Args, const char *Name)
 	std::sort(Channels.begin(), Channels.end());
 	Channels.erase(std::unique(Channels.begin(), Channels.end()), Channels.end());
 	return Channels;
+}
+
+// Sounds described in words
+
+// A word from Words (as Values), or a number from 0 to Max
+int WordArg(const Json &Args, const char *Name, int Default, const char *const *Words, const int *Values, int Count, int Max)
+{
+	const Json *pValue = Arg(Args, Name);
+	if (pValue == 0)
+		return Default;
+	if (pValue->IsString()) {
+		const std::string Text = Squeezed(pValue->String());
+		for (int i = 0; i < Count; ++i)
+			if (Text == Squeezed(Words[i]))
+				return Values[i];
+		if (Text.empty() || Text.find_first_not_of("0123456789") != std::string::npos) {
+			std::string List;
+			for (int i = 0; i < Count; ++i)
+				List += (i == 0 ? "" : ", ") + std::string(Words[i]);
+			throw Problem(std::string(Name) + ": " + List + (Max > 0 ? Format(", or a number up to %d.", Max) : std::string(".")));
+		}
+	}
+	return IntArg(Args, Name, Default, 0, Max);
+}
+
+std::string DesignInstrumentTool(Session &S, const Json &Args)
+{
+	const std::string Name = StringArg(Args, "name");
+	if (Name.empty())
+		throw Problem("Give the instrument a name.");
+	if (Name.size() > 60)
+		throw Problem("name: up to 60 characters.");
+	std::string Chip = "2A03";
+	bool Sawtooth = false, Noise = false, Low = false;
+	if (Arg(Args, "channel") != 0) {
+		const int Channel = ChannelArg(S, Args, "channel");
+		Chip = InstrumentChip(S.Channel(Channel));
+		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+		Noise = S.Channel(Channel).Kind == KIND_NOISE;
+		Low = IsBass(S.Channel(Channel));
+		if (S.Channel(Channel).Kind == KIND_DPCM)
+			throw Problem("The DPCM channel plays samples; design_instrument makes sounds for the other channels.");
+	}
+	else if (Arg(Args, "chip") != 0) {
+		Chip = StringArg(Args, "chip");
+		for (size_t i = 0; i < Chip.size(); ++i)
+			Chip[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(Chip[i])));
+		if (Chip == "MMC5")
+			Chip = "2A03";
+	}
+	if (Chip == "VRC7")
+		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
+	if (Chip != "2A03" && Chip != "VRC6")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5) and VRC6 channels.");
+	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
+		throw Problem("This song has no VRC6 channels.");
+
+	SoundDesign D;
+	const std::string Kind = StringArg(Args, "kind");
+	if (!Kind.empty()) {
+		if (!DesignOfKind(Kind, D))
+			throw Problem("kind: " + DesignKinds() + ".");
+	}
+	else if (Noise)
+		throw Problem("For the noise channel, say which drum with kind: kick, snare, hihat, open hihat, crash or tom.");
+	else
+		DesignOfKind(Low ? "bass" : "lead", D);
+	if (D.Drum && Arg(Args, "channel") != 0 && !Noise)
+		throw Problem("A drum is for the noise channel.");
+	if (!D.Drum && Noise)
+		throw Problem("The noise channel plays drums: kind kick, snare, hihat, open hihat, crash or tom.");
+	if (D.Drum) {
+		Chip = "2A03";
+		Sawtooth = false;
+	}
+	D.Name = Name;
+
+	static const char *const ATTACKS[] = { "instant", "fast", "medium", "slow", "swell" };
+	static const int ATTACK_FRAMES[] = { 0, 2, 5, 10, 20 };
+	static const char *const DECAYS[] = { "none", "short", "medium", "long" };
+	static const int DECAY_FRAMES[] = { 0, 4, 10, 24 };
+	static const char *const SUSTAINS[] = { "none", "low", "half", "high", "full" };
+	static const int SUSTAIN_LEVELS[] = { 0, 4, 8, 12, 15 };
+	static const char *const RELEASES[] = { "short", "medium", "long" };
+	static const int RELEASE_FRAMES[] = { 3, 8, 20 };
+	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%", "12.5", "25", "50", "75", "thin", "bright", "round", "square",
+		"hollow", "nasal" };
+	static const int DUTY_VALUES[] = { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 2, 2, 0 };
+	static const char *const MOTIONS[] = { "still", "none", "sweep", "open", "wobble", "chorus", "fade" };
+	static const int MOTION_VALUES[] = { DUTY_STILL, DUTY_STILL, DUTY_SWEEP, DUTY_SWEEP, DUTY_WOBBLE, DUTY_WOBBLE, DUTY_FADE };
+	static const char *const VIBRATOS[] = { "none", "gentle", "medium", "strong" };
+	static const int VIBRATO_DEPTHS[] = { 0, 1, 2, 3 };
+	static const char *const PITCHES_WORDS[] = { "none", "blip", "scoop", "drop" };
+	static const int PITCH_VALUES[] = { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP };
+	static const char *const TONES[] = { "dark", "normal", "bright" };
+	static const int TONE_VALUES[] = { -1, 0, 1 };
+	static const char *const LENGTHS[] = { "short", "normal", "long" };
+	static const int LENGTH_VALUES[] = { -1, 0, 1 };
+	D.Attack = WordArg(Args, "attack", D.Attack, ATTACKS, ATTACK_FRAMES, 5, 60);
+	D.Decay = WordArg(Args, "decay", D.Decay, DECAYS, DECAY_FRAMES, 4, 120);
+	D.Peak = IntArg(Args, "volume", D.Peak, 1, 15);
+	if (Arg(Args, "decay") != 0 && D.Decay == 0 && Arg(Args, "sustain") == 0)
+		D.Sustain = D.Peak;	// no decay: it holds at its peak
+	D.Sustain = std::min(D.Peak, WordArg(Args, "sustain", D.Sustain, SUSTAINS, SUSTAIN_LEVELS, 5, 15));
+	D.Release = WordArg(Args, "release", D.Release, RELEASES, RELEASE_FRAMES, 3, 60);
+	D.Duty = WordArg(Args, "duty", D.Duty, DUTIES, DUTY_VALUES, 14, 0);
+	D.Motion = WordArg(Args, "duty_motion", D.Motion, MOTIONS, MOTION_VALUES, 7, 0);
+	D.Vibrato = WordArg(Args, "vibrato", D.Vibrato, VIBRATOS, VIBRATO_DEPTHS, 4, 0);
+	if (Arg(Args, "vibrato_delay_beats") != 0) {
+		const double Beats = NumberArg(Args, "vibrato_delay_beats", 0.5, 0.0, 8.0);
+		const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
+		D.VibratoDelay = std::max(0, std::min(200, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+	}
+	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 4, 0);
+	const std::string Chord = Squeezed(StringArg(Args, "arpeggio"));
+	if (!Chord.empty()) {
+		static const struct { const char *Word; std::initializer_list<int> Tones; } CHORDS[] = {
+			{ "none", {} }, { "octave", { 0, 12 } }, { "major", { 0, 4, 7 } }, { "minor", { 0, 3, 7 } }, { "fifth", { 0, 7 } },
+			{ "power", { 0, 7, 12 } }, { "sus4", { 0, 5, 7 } }, { "major7", { 0, 4, 7, 11 } }, { "minor7", { 0, 3, 7, 10 } },
+		};
+		bool Known = false;
+		for (size_t i = 0; i < sizeof(CHORDS) / sizeof(CHORDS[0]) && !Known; ++i) {
+			if (Chord == CHORDS[i].Word) {
+				D.Arpeggio.assign(CHORDS[i].Tones.begin(), CHORDS[i].Tones.end());
+				Known = true;
+			}
+		}
+		if (!Known)
+			throw Problem("arpeggio: none, octave, major, minor, fifth, power, sus4, major7 or minor7.");
+	}
+	D.ArpeggioFrames = IntArg(Args, "arpeggio_frames", D.ArpeggioFrames, 1, 8);
+	D.Tone = WordArg(Args, "tone", D.Tone, TONES, TONE_VALUES, 3, 0);
+	D.Length = WordArg(Args, "length", D.Length, LENGTHS, LENGTH_VALUES, 3, 0);
+
+	// A new name, so an instrument the song uses doesn't change under it
+	const Preset Sound = DesignPreset(D);
+	const std::string Final = Lowercase(Sound.InstrumentName(Sawtooth));
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (Lowercase(S.Song.Instruments[i].Name) == Final && S.Song.Instruments[i].Chip == Chip)
+			throw Problem(Format("The song already has a %s instrument called \"%s\"; give the new sound another name.", Chip.c_str(),
+				S.Song.Instruments[i].Name.c_str()));
+	std::string Error;
+	const int Index = S.Host().AddInstrument(Sound, Chip, Sawtooth, Error);
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate) +
+		". Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
 
 std::string SetInstrumentTool(Session &S, const Json &Args)
@@ -5456,6 +5606,41 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", Chips)),
 		false, false, true);
 
+	AddTool("design_instrument", "Design an instrument",
+		"Makes a new instrument from a description in words, for when no preset fits: its volume envelope (attack, decay to "
+		"a sustain level, release after ===), its pulse width and how that moves (a tone that opens up, shimmers or thins), "
+		"a vibrato built in that comes in after a moment (so long notes sing without effects), a blip, scoop or fall on "
+		"the attack, or a chord arpeggio; on the noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, "
+		"shorter or longer. Start from a kind (" + DesignKinds() + ") and change what should differ. Envelope times are in "
+		"frames, 60 a second.",
+		Schema()
+			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
+			.Add("kind", Prop("string", "What it starts from: lead (default), pad, pluck, bass, keys, bell, brass, strings, organ, "
+				"chiptune; kick, snare, hihat, open hihat, crash, tom."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip; the noise channel makes a drum)."))
+			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
+			.Add("attack", LevelProp("instant, fast, medium, slow, swell, or frames (0-60)."))
+			.Add("decay", LevelProp("none (holds at its peak), short, medium, long, or frames (0-120): how long it takes to fall "
+				"to the sustain level."))
+			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
+				"high, full, or 0-15."))
+			.Add("release", LevelProp("short, medium, long, or frames (0-60): how it fades after a release (===)."))
+			.Add("volume", Prop("integer", "Its loudest, 1-15."))
+			.Add("duty", LevelProp("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%."))
+			.Add("duty_motion", EnumProp("How the tone moves: still, sweep (opens from thin on the attack), wobble (shimmers to "
+				"and fro), fade (thins as it fades).", std::vector<std::string>{ "still", "sweep", "wobble", "fade" }))
+			.Add("vibrato", EnumProp("A vibrato built into the instrument.", std::vector<std::string>{ "none", "gentle", "medium", "strong" }))
+			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
+				"a second)."))
+			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
+				"the note), drop (falls, like a laser or a tom).", std::vector<std::string>{ "none", "blip", "scoop", "drop" }))
+			.Add("arpeggio", EnumProp("A chord played as a fast arpeggio from each note.", std::vector<std::string>{ "none", "octave",
+				"major", "minor", "fifth", "power", "sus4", "major7", "minor7" }))
+			.Add("arpeggio_frames", Prop("integer", "Frames for each note of the arpeggio, 1-8 (default 1, the fastest)."))
+			.Add("tone", EnumProp("Drums: darker or brighter noise.", std::vector<std::string>{ "dark", "normal", "bright" }))
+			.Add("length", EnumProp("Drums: shorter or longer.", std::vector<std::string>{ "short", "normal", "long" })),
+		false);
+
 	AddTool("set_instrument", "Change the instrument",
 		"Gives one channel's notes in some bars another instrument: one of the song's or a preset (added). Good for changing "
 		"the sound of a part (softer, brighter, rounder) for a mood.",
@@ -5888,6 +6073,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args);
 		else if (Name == "place_clip") Result.Text = PlaceClipTool(S, Args);
 		else if (Name == "add_instrument") Result.Text = AddInstrumentTool(S, Args);
+		else if (Name == "design_instrument") Result.Text = DesignInstrumentTool(S, Args);
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);

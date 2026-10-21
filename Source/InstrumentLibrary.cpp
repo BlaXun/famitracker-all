@@ -240,11 +240,11 @@ struct lib_sound_t {
 
 LPCTSTR PresetGroup(const std::string &Name)
 {
-	if (Name == "soft lead" || Name == "bright lead" || Name == "thin lead")
+	if (Name == "soft lead" || Name == "bright lead" || Name == "thin lead" || Name == "singing lead" || Name == "brass")
 		return _T("Lead");
 	if (Name == "pluck" || Name == "bell")
 		return _T("Pluck or bell");
-	if (Name == "soft chords" || Name == "warm pad")
+	if (Name == "soft chords" || Name == "warm pad" || Name == "strings" || Name == "organ")
 		return _T("Chords or pad");
 	if (Name == "bass" || Name == "plucky bass")
 		return _T("Bass");
