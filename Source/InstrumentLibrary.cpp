@@ -37,6 +37,7 @@
 #include "MainFrm.h"
 #include "SoundGen.h"
 #include "TrackerChannel.h"
+#include "ChannelMap.h"
 #include "InstrumentLibrary.h"
 
 int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR Name)
@@ -65,8 +66,19 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 	const int Existing = FindNamedInstrument(pDoc, Type, Name);
 	if (Existing >= 0)
 		return Existing;
-	const int Index = pDoc->AddInstrument(Name, ChipType);
+	// Not CFamiTrackerDoc::AddInstrument(Name, Chip): its instruments' Setup()
+	// finds free sequences in the active document, and a new song gets its
+	// template's instruments at startup, before there is one. The preset sets
+	// the sequences it uses below; the others stay off.
+	CInstrument *pNew = theApp.GetChannelMap()->GetChipInstrument(ChipType);
+	if (pNew == NULL) {
+		Error = _T("FamiTracker has no instruments for that chip.");
+		return -1;
+	}
+	pNew->SetName(Name);
+	const int Index = pDoc->AddInstrument(pNew);
 	if (Index == INVALID_INSTRUMENT) {
+		pNew->Release();
 		Error = _T("There are no free instrument slots left (a song has at most 64).");
 		return -1;
 	}
