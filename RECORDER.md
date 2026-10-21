@@ -260,6 +260,11 @@ channels at once if the selection spans them).
   that row on, running into the following frames and adding frames at the
   end of the song when needed. What those channels had there is replaced;
   Ctrl+Z undoes it. Double-clicking a card puts a copy in at the cursor.
+- **Into the piano roll:** a card dragged over the piano roll's notes shows
+  the clip's notes where it would start, on the channel being edited and the
+  ones to its right, snapped to the grid (hold Alt for any row). Held near
+  the roll's left or right edge, the roll scrolls that way. Letting go puts
+  it in there, as a copy or, with Ctrl, linked.
 - **Right-click a card** for the rest: put it in at the cursor (as a copy or
   linked), listen, edit its notes, rename, duplicate, unlink its copies,
   delete, or save the selection as a new clip.

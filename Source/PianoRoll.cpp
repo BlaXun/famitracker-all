@@ -68,6 +68,8 @@ const int ROW_WIDTHS[] = { 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48 };	// z
 const int ZOOMS = sizeof(ROW_WIDTHS) / sizeof(ROW_WIDTHS[0]);
 const int DEFAULT_ZOOM = 6;
 const int DRAG_DISTANCE = 3;			// how far the mouse moves before a click becomes a drag
+const int DROP_EDGE = 24;				// a clip dragged in this close to the left or right edge scrolls the roll
+const int DROP_STEP = 12;				// that much each time, at least
 const int END_GRAB = 6;					// the part of a note's right end that changes its length
 const int DIVIDER = 6;					// the line along the top of the docked piano roll
 const int DEFAULT_HEIGHT = 280;
@@ -439,6 +441,7 @@ struct CPianoRollWnd::Impl {
 	int PlacingClip;	// index, -1 when not placing one
 	int PlaceRow;		// where it goes, -1 off the grid
 	std::vector<std::vector<RollNote> > ClipNotes;	// per column
+	bool PanelDrop;		// PlacingClip is dragged in from the clips panel, which places it
 
 	// The buttons along the top, where they were drawn last
 	struct Button {
@@ -459,7 +462,7 @@ struct CPianoRollWnd::Impl {
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
-		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), HasCopied(false), PlacingClip(-1), PlaceRow(-1), BackSize(0, 0)
+		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), HasCopied(false), PlacingClip(-1), PlaceRow(-1), PanelDrop(false), BackSize(0, 0)
 	{
 	}
 
@@ -2032,12 +2035,13 @@ struct CPianoRollWnd::Impl {
 		Say(Text);
 	}
 
-	void StartPlacing(int Index)
+	// The clip's notes, to show where it would go
+	bool LoadClip(int Index)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
 		CClipLibrary *pClips = pDoc != NULL ? pDoc->GetClips() : NULL;
 		if (pClips == NULL || Index < 0 || Index >= pClips->GetCount())
-			return;
+			return false;
 		ClipNotes.clear();
 		for (int c = 0; c < pClips->GetColumns(Index); ++c) {
 			CChannelNotes Column;
@@ -2050,9 +2054,71 @@ struct CPianoRollWnd::Impl {
 			}
 			ClipNotes.push_back(RollNotes(Column, Column.GetRows()));
 		}
+		return true;
+	}
+
+	void StartPlacing(int Index)
+	{
+		if (!LoadClip(Index))
+			return;
+		PanelDrop = false;
 		PlacingClip = Index;
 		PlaceRow = -1;
 		Selection.clear();
+	}
+
+	// A clip dragged in from the clips panel: where it would start, shown as
+	// when the Clips button places one (the clips panel places it)
+	bool ShowDrop(CPoint Point, int Index, bool Scroll)
+	{
+		Layout();
+		if (Notes.empty() || Channel < 0 || Channel >= static_cast<int>(Notes.size()) || !Grid.PtInRect(Point)) {
+			HideDrop();
+			return false;
+		}
+		if (!PanelDrop || PlacingClip != Index) {
+			if (!LoadClip(Index)) {
+				HideDrop();
+				return false;
+			}
+			PanelDrop = true;
+			PlacingClip = Index;
+			PlaceRow = -1;
+		}
+		if (Scroll) {
+			// Close to the left or right edge: on that way
+			const int Edge = SX(DROP_EDGE), Step = std::max(RowWidth(), SX(DROP_STEP));
+			const int Most = std::max(0, EditRows() * RowWidth() - Grid.Width());
+			int To = ScrollX;
+			if (Point.x < Grid.left + Edge)
+				To = std::max(0, ScrollX - Step);
+			else if (Point.x >= Grid.right - Edge)
+				To = std::min(Most, ScrollX + Step);
+			if (To != ScrollX) {
+				ScrollX = To;
+				UpdateScrollBars();
+				pWnd->Invalidate(FALSE);
+			}
+		}
+		const int Row = RowAt(Point.x);
+		const int Place = Row < 0 ? -1 : std::min(AltHeld() ? Row : SnapDown(Row), TotalRows() - 1);
+		if (Place != PlaceRow) {
+			PlaceRow = Place;
+			pWnd->Invalidate(FALSE);
+		}
+		return PlaceRow >= 0;
+	}
+
+	bool HideDrop()
+	{
+		if (!PanelDrop)
+			return false;
+		PanelDrop = false;
+		PlacingClip = -1;
+		PlaceRow = -1;
+		ClipNotes.clear();
+		pWnd->Invalidate(FALSE);
+		return true;
 	}
 
 	void PlaceClipHere()
@@ -2267,6 +2333,12 @@ struct CPianoRollWnd::Impl {
 		if (!Message.IsEmpty())
 			return Message;
 		CString Text;
+		if (PlacingClip >= 0 && PanelDrop) {
+			Text.Format(_T("Let go where the clip \"%s\" should start (it goes on %s%s). Hold Ctrl for a linked copy, Esc to stop."),
+				static_cast<LPCTSTR>(pDoc->GetClips()->GetName(PlacingClip)), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)),
+				ClipNotes.size() > 1 ? _T(" and the channels to its right") : _T(""));
+			return Text;
+		}
 		if (PlacingClip >= 0) {
 			Text.Format(_T("Click where the clip \"%s\" should start (it goes on %s%s). Right-click or Esc: never mind."),
 				static_cast<LPCTSTR>(pDoc->GetClips()->GetName(PlacingClip)), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)),
@@ -2764,6 +2836,7 @@ void CPianoRollWnd::Activate(bool Shown)
 		d.CancelDrag();
 		d.StopPreview();
 		d.PlacingClip = -1;
+		d.PanelDrop = false;
 		KillTimer(TIMER_ID);
 		return;
 	}
@@ -2787,6 +2860,29 @@ void CPianoRollWnd::SongChanged()
 	m_pImpl->Dirty = true;
 	if (m_pImpl->Shown && GetSafeHwnd() != NULL)
 		Invalidate(FALSE);
+}
+
+bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row)
+{
+	Impl &d = *m_pImpl;
+	if (GetSafeHwnd() == NULL)
+		return false;
+	// Only where the roll can be seen at that point
+	CPoint Point = ScreenPoint;
+	ScreenToClient(&Point);
+	if (!d.Shown || !IsWindowVisible() || ::WindowFromPoint(ScreenPoint) != m_hWnd || d.Length == 0 || !d.ShowDrop(Point, Index, Scroll)) {
+		d.HideDrop();
+		return false;
+	}
+	Channel = d.Channel;
+	Frame = d.PlaceRow / static_cast<int>(d.Length);
+	Row = d.PlaceRow % static_cast<int>(d.Length);
+	return true;
+}
+
+bool CPianoRollWnd::HideClipDrop()
+{
+	return GetSafeHwnd() != NULL && m_pImpl->HideDrop();
 }
 
 BOOL CPianoRollWnd::PreTranslateMessage(MSG *pMsg)

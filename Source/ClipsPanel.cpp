@@ -39,6 +39,7 @@
 #include "Clips.h"
 #include "ClipsDlg.h"
 #include "InsertRecording.h"
+#include "PianoRoll.h"
 #include "ClipsPanel.h"
 
 namespace {
@@ -146,9 +147,10 @@ struct CClipsPanelWnd::Impl {
 	bool PressedPlay;
 	CPoint PressPoint;
 	bool Dragging;
-	bool Dropping;						// over the pattern editor, which shades where it would go
+	bool Dropping;						// over the pattern editor, which shades where it would go, or the piano roll
+	bool DropInRoll;					// over the piano roll, which shows where it would go
 	CPoint DragPoint;					// on the screen
-	int DropChannel, DropRow;
+	int DropChannel, DropFrame, DropRow;
 	bool DropLinked;
 	int StartFrame, StartRow, StartChannel;	// the cursor before the drag (scrolling moves it)
 
@@ -162,7 +164,8 @@ struct CClipsPanelWnd::Impl {
 	CFont Font, BoldFont, SmallFont;
 
 	Impl(CClipsPanelWnd *p) : pWnd(p), Stale(true), Scroll(0), Content(0), Selected(-1), Hover(-1), HoverPlay(false),
-		Pressed(-1), PressedPlay(false), Dragging(false), Dropping(false), DropChannel(-1), DropRow(-1), DropLinked(false),
+		Pressed(-1), PressedPlay(false), Dragging(false), Dropping(false), DropInRoll(false), DropChannel(-1), DropFrame(-1), DropRow(-1),
+		DropLinked(false),
 		StartFrame(0), StartRow(0), StartChannel(0),
 		PlayId(-1), PlayStart(0), RowsPerSecond(10.0), PlayedRows(0)
 	{
@@ -561,7 +564,8 @@ struct CClipsPanelWnd::Impl {
 		CFamiTrackerView *pView = View();
 		Dragging = true;
 		Dropping = false;
-		DropChannel = DropRow = -1;
+		DropInRoll = false;
+		DropChannel = DropFrame = DropRow = -1;
 		if (pView != NULL) {
 			StartFrame = static_cast<int>(pView->GetSelectedFrame());
 			StartRow = static_cast<int>(pView->GetSelectedRow());
@@ -577,8 +581,27 @@ struct CClipsPanelWnd::Impl {
 		return Text;
 	}
 
-	// The pattern editor shades where the clip would go (and scrolls, close to its edges); the
-	// status bar says it in words
+	// Where a clip would start in the piano roll, as its ruler counts: "bar 3, beat 2"
+	CString BarText(int Frame, int Row) const
+	{
+		const CFamiTrackerDoc *pDoc = Doc();
+		CMainFrame *pMain = Main();
+		CString Text;
+		const int Bar = pDoc != NULL ? pDoc->GetSecondHighlight() : 0, Beat = pDoc != NULL ? pDoc->GetFirstHighlight() : 0;
+		const int Length = pDoc != NULL && pMain != NULL ?
+			static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(pMain->GetSelectedTrack()))) : 0;
+		if (Bar > 0 && Beat > 0 && Length > 0) {
+			const int BarsPerFrame = (Length + Bar - 1) / Bar;
+			Text.Format(_T("bar %d, beat %d"), Frame * BarsPerFrame + Row / Bar + 1, Row % Bar / Beat + 1);
+		}
+		else
+			Text.Format(_T("frame %02X, row %s"), Frame, static_cast<LPCTSTR>(RowText(Row)));
+		return Text;
+	}
+
+	// The pattern editor shades where the clip would go (and scrolls, close to its edges), or the
+	// piano roll shows it (and scrolls, close to its left and right edges); the status bar says it in
+	// words
 	void Drag(const CPoint &Screen, bool Scroll)
 	{
 		DragPoint = Screen;
@@ -588,23 +611,38 @@ struct CClipsPanelWnd::Impl {
 			return;
 		const card_t &Card = Cards[static_cast<size_t>(Pressed)];
 		const bool Linked = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-		int Channel = -1, Row = -1;
-		const bool Over = pView->ShowClipDrop(Screen, Card.Columns, Card.Rows, Scroll, Channel, Row);
-		if (Over == Dropping && (!Over || (Channel == DropChannel && Row == DropRow && Linked == DropLinked)))
+		CPianoRollWnd *pRoll = Main() != NULL ? Main()->GetPianoRollWnd() : NULL;
+		int Channel = -1, Frame = -1, Row = -1;
+		bool InRoll = false;
+		bool Over = pView->ShowClipDrop(Screen, Card.Columns, Card.Rows, Scroll, Channel, Row);
+		if (Over) {
+			Frame = static_cast<int>(pView->GetSelectedFrame());
+			if (pRoll != NULL)
+				pRoll->HideClipDrop();
+		}
+		else if (pRoll != NULL && pRoll->ShowClipDrop(Screen, LibraryIndex(Pressed), Scroll, Channel, Frame, Row))
+			Over = InRoll = true;
+		if (Over == Dropping && (!Over || (Channel == DropChannel && Frame == DropFrame && Row == DropRow && InRoll == DropInRoll &&
+			Linked == DropLinked)))
 			return;		// says the same as before
 		Dropping = Over;
+		DropInRoll = InRoll;
 		DropChannel = Channel;
+		DropFrame = Frame;
 		DropRow = Row;
 		DropLinked = Linked;
-		CString Text;
+		CString Text, Where;
+		if (Over)
+			Where.Format(_T("%s, %s"), pDoc->GetChannel(Channel)->GetChannelName(),
+				static_cast<LPCTSTR>(InRoll ? BarText(Frame, Row) : _T("row ") + RowText(Row)));
 		if (!Over)
-			Text = _T("Drag the clip into the pattern editor: where it starts, the row and the channel.");
+			Text = _T("Drag the clip into the pattern editor or the piano roll, to where it should start.");
 		else if (Linked)
-			Text.Format(_T("Let go to put a linked copy of \"%s\" here: %s, row %s. Linked copies change together."),
-				static_cast<LPCTSTR>(Card.Name), pDoc->GetChannel(Channel)->GetChannelName(), static_cast<LPCTSTR>(RowText(Row)));
+			Text.Format(_T("Let go to put a linked copy of \"%s\" here: %s. Linked copies change together."),
+				static_cast<LPCTSTR>(Card.Name), static_cast<LPCTSTR>(Where));
 		else
-			Text.Format(_T("Let go to put \"%s\" here: %s, row %s. Hold Ctrl for a linked copy, Esc to stop."),
-				static_cast<LPCTSTR>(Card.Name), pDoc->GetChannel(Channel)->GetChannelName(), static_cast<LPCTSTR>(RowText(Row)));
+			Text.Format(_T("Let go to put \"%s\" here: %s. Hold Ctrl for a linked copy, Esc to stop."),
+				static_cast<LPCTSTR>(Card.Name), static_cast<LPCTSTR>(Where));
 		Status(Text);
 	}
 
@@ -612,6 +650,9 @@ struct CClipsPanelWnd::Impl {
 	void CancelDrop()
 	{
 		pWnd->KillTimer(TMR_DRAG);
+		CPianoRollWnd *pRoll = Main() != NULL ? Main()->GetPianoRollWnd() : NULL;
+		if (pRoll != NULL)
+			pRoll->HideClipDrop();
 		CFamiTrackerView *pView = View();
 		if (pView != NULL) {
 			pView->HideClipDrop();
@@ -622,6 +663,7 @@ struct CClipsPanelWnd::Impl {
 			}
 		}
 		Dropping = false;
+		DropInRoll = false;
 	}
 
 	void EndDrag(const CPoint &Screen, bool Linked)
@@ -630,11 +672,22 @@ struct CClipsPanelWnd::Impl {
 		Dragging = false;
 		pWnd->KillTimer(TMR_DRAG);
 		CFamiTrackerView *pView = View();
-		int Channel = -1, Row = -1;
-		if (pView != NULL && Card >= 0 && Card < static_cast<int>(Cards.size()) &&
-			pView->ShowClipDrop(Screen, Cards[static_cast<size_t>(Card)].Columns, Cards[static_cast<size_t>(Card)].Rows, false, Channel, Row)) {
+		CPianoRollWnd *pRoll = Main() != NULL ? Main()->GetPianoRollWnd() : NULL;
+		int Channel = -1, Frame = -1, Row = -1;
+		const bool Valid = pView != NULL && Card >= 0 && Card < static_cast<int>(Cards.size());
+		if (Valid && pView->ShowClipDrop(Screen, Cards[static_cast<size_t>(Card)].Columns, Cards[static_cast<size_t>(Card)].Rows, false,
+			Channel, Row)) {
 			pView->HideClipDrop();
-			Dropping = false;
+			if (pRoll != NULL)
+				pRoll->HideClipDrop();
+			Dropping = DropInRoll = false;
+			MoveCursor(Channel, Row);
+			Place(Card, Linked);
+		}
+		else if (Valid && pRoll != NULL && pRoll->ShowClipDrop(Screen, LibraryIndex(Card), false, Channel, Frame, Row)) {
+			pRoll->HideClipDrop();
+			Dropping = DropInRoll = false;
+			pView->SelectFrame(static_cast<unsigned int>(Frame));
 			MoveCursor(Channel, Row);
 			Place(Card, Linked);
 		}

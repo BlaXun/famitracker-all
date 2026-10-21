@@ -42,6 +42,7 @@ enum {
 class CVisualizerWnd;
 class CInstrumentFileTree;
 class CPianoRollBar;
+class CPianoRollWnd;
 class CClipsBar;
 class CKeyboardBar;
 class CAction;
@@ -99,6 +100,7 @@ public:
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
+	CPianoRollWnd *GetPianoRollWnd() const;	// NULL while the piano roll isn't shown
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowKeyboard(bool Show);	// along the bottom of the window (KeyboardBar.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
