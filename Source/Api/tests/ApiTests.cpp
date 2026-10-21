@@ -1711,6 +1711,65 @@ void WriteTestMod(const std::string &Path)
 	Mod.write(reinterpret_cast<const char *>(&b[0]), static_cast<std::streamsize>(b.size()));
 }
 
+// A MIDI file of a waltz: 150 BPM in 3/4, eight bars of a flute, a bass and drums
+void WriteTestMidi(const std::string &Path)
+{
+	struct Ev { unsigned long Tick; int Order; std::vector<uint8_t> Data; };
+	std::vector<Ev> Events;
+	auto Add = [&](unsigned long Tick, int Order, const std::vector<uint8_t> &Data) {
+		Ev e = { Tick, Order, Data };
+		Events.push_back(e);
+	};
+	auto Note = [&](unsigned long Tick, unsigned long Length, int Channel, int Key) {
+		Add(Tick, 1, { uint8_t(0x90 | Channel), uint8_t(Key), 100 });
+		Add(Tick + Length, 0, { uint8_t(0x80 | Channel), uint8_t(Key), 0 });
+	};
+	const std::string Name = "Api Waltz";
+	std::vector<uint8_t> Title = { 0xFF, 0x03, uint8_t(Name.size()) };
+	Title.insert(Title.end(), Name.begin(), Name.end());
+	Add(0, 1, Title);
+	Add(0, 1, { 0xFF, 0x51, 3, 0x06, 0x1A, 0x80 });		// 400000 microseconds a beat: 150 BPM
+	Add(0, 1, { 0xFF, 0x58, 4, 3, 2, 24, 8 });			// 3/4
+	Add(0, 1, { 0xC0, 73 });							// a flute
+	Add(0, 1, { 0xC1, 32 });							// an acoustic bass
+	const unsigned long Q = 96;
+	static const int TUNE[8] = { 79, 81, 79, 76, 77, 76, 74, 72 };
+	for (unsigned long b = 0; b < 8; ++b) {
+		const unsigned long Bar = b * 3 * Q;
+		Note(Bar, 2 * Q, 0, TUNE[b]);
+		Note(Bar + 2 * Q, Q, 0, TUNE[b] - 3);
+		Note(Bar, 2 * Q, 1, b % 2 ? 43 : 48);
+		Note(Bar, Q / 2, 9, 36);
+		Note(Bar + Q, Q / 2, 9, 42);
+		Note(Bar + 2 * Q, Q / 2, 9, 42);
+	}
+	std::stable_sort(Events.begin(), Events.end(), [](const Ev &a, const Ev &b) {
+		return a.Tick != b.Tick ? a.Tick < b.Tick : a.Order < b.Order;
+	});
+	std::vector<uint8_t> Body;
+	unsigned long Last = 0;
+	for (size_t i = 0; i < Events.size(); ++i) {
+		unsigned long d = Events[i].Tick - Last;
+		Last = Events[i].Tick;
+		uint8_t Vlq[4];
+		int n = 0;
+		Vlq[n++] = uint8_t(d & 0x7F);
+		while ((d >>= 7) != 0 && n < 4)
+			Vlq[n++] = uint8_t(0x80 | (d & 0x7F));
+		while (n > 0)
+			Body.push_back(Vlq[--n]);
+		Body.insert(Body.end(), Events[i].Data.begin(), Events[i].Data.end());
+	}
+	const uint8_t End[4] = { 0, 0xFF, 0x2F, 0 };
+	Body.insert(Body.end(), End, End + 4);
+	std::vector<uint8_t> File = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 'M', 'T', 'r', 'k' };
+	for (int s = 24; s >= 0; s -= 8)
+		File.push_back(uint8_t(Body.size() >> s));
+	File.insert(File.end(), Body.begin(), Body.end());
+	std::ofstream Mid(Path.c_str(), std::ios::binary);
+	Mid.write(reinterpret_cast<const char *>(&File[0]), static_cast<std::streamsize>(File.size()));
+}
+
 void TestReferences()
 {
 	// Ids, the file read back, a sound as a preset for either chip
@@ -1853,6 +1912,26 @@ void TestReferences()
 	CHECK_HAS(Run(Song, "study_module", "{}").Text, "Give the path of the module");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"test-song-mod\"}").Text, "Deleted the reference");
 	std::remove(ModPath.c_str());
+
+	// study_module: a MIDI file's study, counted in its meter, tagged as MIDI
+	const std::string MidiPath = "api_tests_study.mid";
+	WriteTestMidi(MidiPath);
+	Result = Run(Song, "study_module", "{\"path\": \"" + MidiPath + "\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Api Waltz: a MIDI file (format 0, 1 track) in 3/4: 4 channels of a note at a time, 4 rows a beat, playing "
+		"Acoustic Bass, Flute and drums.");
+	CHECK_HAS(Result.Text, "Reference \"api-waltz-midi\"");
+	CHECK_HAS(Result.Text, "Tempo: 150 BPM in 3/4, 4 rows a beat (speed 6, tempo 150)");
+	CHECK_HAS(Result.Text, "Flute, the lead");
+	CHECK_HAS(Result.Text, "kick 'Bass Drum 1'");
+	CHECK_HAS(Result.Text, "the MIDI file is for its craft");
+	CHECK(ReadReferenceFile(Song.Library["api-waltz-midi.json"], Kept, Error));
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "midi") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "3/4") != Kept.Tags.end() &&
+		std::find(Kept.Tags.begin(), Kept.Tags.end(), "tracker-module") == Kept.Tags.end());
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"api-waltz-midi\"}").Text, "General MIDI's instruments");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"api-waltz-midi\"}").Text, "Deleted the reference");
+	std::remove(MidiPath.c_str());
 
 	// delete
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"tester-song-01\"}").Text, "Deleted the reference tester-song-01");

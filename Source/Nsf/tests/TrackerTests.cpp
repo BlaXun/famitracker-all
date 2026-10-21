@@ -22,14 +22,19 @@
 // Tests for reading tracker modules (Tracker.h): MOD, S3M, XM and IT files
 // built here byte by byte, their notes, instruments and effects, files cut
 // short at every length, drums told by their names, the song followed
-// through its breaks and jumps, and a study of the result.
+// through its breaks and jumps, and a study of the result. MIDI files
+// (Midi.h) too: parts spread over channels, drums by kind, meters, grids,
+// tempo changes and loops.
 
+#include "../Midi.h"
 #include "../Study.h"
 #include "../Tracker.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -464,10 +469,485 @@ void TestNames()
 	CHECK(DrumOfName("") == "");
 }
 
+// --- MIDI ---
+
+void Vlq(std::vector<uint8_t> &b, unsigned long v)
+{
+	uint8_t Buf[4];
+	int n = 0;
+	Buf[n++] = uint8_t(v & 0x7F);
+	while ((v >>= 7) != 0 && n < 4)
+		Buf[n++] = uint8_t(0x80 | (v & 0x7F));
+	while (n > 0)
+		b.push_back(Buf[--n]);
+}
+void AddBig16(std::vector<uint8_t> &b, unsigned v) { b.push_back(uint8_t(v >> 8)); b.push_back(uint8_t(v)); }
+void AddBig32(std::vector<uint8_t> &b, unsigned long v) { AddBig16(b, unsigned(v >> 16) & 0xFFFF); AddBig16(b, unsigned(v & 0xFFFF)); }
+
+// A MIDI file's track: events at their ticks, written in time order (a note's
+// end before another's start on the same tick)
+struct MidiTrack {
+	struct Ev { unsigned long Tick; int Order; std::vector<uint8_t> Data; };
+	std::vector<Ev> Events;
+	void Add(unsigned long Tick, const std::vector<uint8_t> &Data, int Order = 1)
+	{
+		Ev e = { Tick, Order, Data };
+		Events.push_back(e);
+	}
+	void Meta(unsigned long Tick, int Type, const std::string &Text)
+	{
+		std::vector<uint8_t> d(1, 0xFF);
+		d.push_back(uint8_t(Type));
+		Vlq(d, static_cast<unsigned long>(Text.size()));
+		d.insert(d.end(), Text.begin(), Text.end());
+		Add(Tick, d);
+	}
+	void Tempo(unsigned long Tick, int Bpm)
+	{
+		const unsigned long Us = 60000000UL / unsigned(Bpm);
+		Add(Tick, { 0xFF, 0x51, 3, uint8_t(Us >> 16), uint8_t(Us >> 8), uint8_t(Us) });
+	}
+	void Meter(unsigned long Tick, int Num, int DenPower) { Add(Tick, { 0xFF, 0x58, 4, uint8_t(Num), uint8_t(DenPower), 24, 8 }); }
+	void Program(unsigned long Tick, int Channel, int Program) { Add(Tick, { uint8_t(0xC0 | Channel), uint8_t(Program) }); }
+	void Control(unsigned long Tick, int Channel, int Number, int Value)
+	{
+		Add(Tick, { uint8_t(0xB0 | Channel), uint8_t(Number), uint8_t(Value) });
+	}
+	void Note(unsigned long Tick, unsigned long Length, int Channel, int Key, int Velocity = 100)
+	{
+		Add(Tick, { uint8_t(0x90 | Channel), uint8_t(Key), uint8_t(Velocity) });
+		Add(Tick + Length, { uint8_t(0x80 | Channel), uint8_t(Key), 64 }, 0);
+	}
+	// "MTrk" and the events; with Running, a status byte said once for the
+	// messages after it, and the note offs as note ons at velocity 0
+	std::vector<uint8_t> Chunk(bool Running = false) const
+	{
+		std::vector<Ev> e = Events;
+		std::stable_sort(e.begin(), e.end(), [](const Ev &a, const Ev &b) { return a.Tick != b.Tick ? a.Tick < b.Tick : a.Order < b.Order; });
+		std::vector<uint8_t> Body;
+		unsigned long Last = 0;
+		int Status = -1;
+		for (size_t i = 0; i < e.size(); ++i) {
+			Vlq(Body, e[i].Tick - Last);
+			Last = e[i].Tick;
+			std::vector<uint8_t> d = e[i].Data;
+			if (Running && (d[0] & 0xF0) == 0x80) {
+				d[0] = uint8_t(0x90 | (d[0] & 0x0F));
+				d[2] = 0;
+			}
+			if (Running && d[0] < 0xF0 && d[0] == Status)
+				d.erase(d.begin());
+			else if (d[0] < 0xF0)
+				Status = d[0];
+			Body.insert(Body.end(), d.begin(), d.end());
+		}
+		const uint8_t End[4] = { 0, 0xFF, 0x2F, 0 };
+		Body.insert(Body.end(), End, End + 4);
+		std::vector<uint8_t> Out;
+		Out.push_back('M');
+		Out.push_back('T');
+		Out.push_back('r');
+		Out.push_back('k');
+		AddBig32(Out, static_cast<unsigned long>(Body.size()));
+		Out.insert(Out.end(), Body.begin(), Body.end());
+		return Out;
+	}
+};
+
+std::vector<uint8_t> MidiFile(int Format, int Division, const std::vector<std::vector<uint8_t> > &Chunks)
+{
+	std::vector<uint8_t> b;
+	const char Head[] = "MThd";
+	b.insert(b.end(), Head, Head + 4);
+	AddBig32(b, 6);
+	AddBig16(b, unsigned(Format));
+	AddBig16(b, unsigned(Chunks.size()));
+	AddBig16(b, unsigned(Division));
+	for (size_t c = 0; c < Chunks.size(); ++c)
+		b.insert(b.end(), Chunks[c].begin(), Chunks[c].end());
+	return b;
+}
+
+// Format 1 at 480 ticks a quarter, 140 BPM in 4/4: four bars that loop from
+// the second (controller 111). A lead; piano chords at half volume, with
+// running status and their ends as velocity 0; a bass held a little into
+// each next note; and drums.
+std::vector<uint8_t> MakeMidi()
+{
+	const unsigned long Q = 480, Bar = 4 * Q;
+	MidiTrack Conductor, Lead, Piano, Bass, Drums;
+	Conductor.Meta(0, 0x03, "Midi Test Song");
+	Conductor.Meta(0, 0x02, "(c) Test");
+	Conductor.Tempo(0, 140);
+	Conductor.Meter(0, 4, 2);
+	Lead.Meta(0, 0x03, "Lead");
+	Lead.Program(0, 0, 80);
+	Lead.Control(Bar, 0, 111, 0);
+	const int Melody[16] = { 72, 74, 76, 79, 81, 79, 76, 74, 72, 74, 76, 72, 74, 71, 72, 72 };
+	for (int i = 0; i < 16; ++i)
+		Lead.Note(i * Q, Q - 48, 0, Melody[i]);
+	Piano.Program(0, 1, 0);
+	Piano.Control(0, 1, 7, 50);
+	const int Chords[4][3] = { { 60, 64, 67 }, { 57, 60, 64 }, { 53, 57, 60 }, { 55, 59, 62 } };
+	for (int b = 0; b < 4; ++b)
+		for (int k = 0; k < 3; ++k)
+			Piano.Note(b * Bar, Bar, 1, Chords[b][k]);
+	Bass.Meta(0, 0x03, "Bass");
+	Bass.Program(0, 2, 33);
+	const int Roots[4] = { 36, 33, 29, 31 };
+	for (int h = 0; h < 8; ++h)
+		Bass.Note(h * 2 * Q, h < 7 ? 2 * Q + 60 : 2 * Q, 2, Roots[h / 2], 110);
+	Drums.Meta(0, 0x03, "Drums");
+	for (int b = 0; b < 4; ++b) {
+		for (int e = 0; e < 8; ++e)
+			Drums.Note(b * Bar + e * Q / 2, 60, 9, 42, 80);
+		Drums.Note(b * Bar, 60, 9, 36);
+		Drums.Note(b * Bar + 2 * Q, 60, 9, 36);
+		Drums.Note(b * Bar + Q, 60, 9, 38);
+		Drums.Note(b * Bar + 3 * Q, 60, 9, 38);
+	}
+	Drums.Note(0, 60, 9, 49, 110);
+	return MidiFile(1, 480, { Conductor.Chunk(), Lead.Chunk(), Piano.Chunk(true), Bass.Chunk(), Drums.Chunk() });
+}
+
+// Format 0 at 96 ticks a quarter, 90 BPM in 3/4: eight bars of a violin, a
+// piano on beats 2 and 3 and a bass on 1, looping from bar 3 to the end
+// (markers), and a note after the end
+std::vector<uint8_t> MakeWaltz()
+{
+	const unsigned long Q = 96, Bar = 3 * Q;
+	MidiTrack T;
+	T.Meta(0, 0x03, "Waltz");
+	T.Tempo(0, 90);
+	T.Meter(0, 3, 2);
+	T.Program(0, 0, 40);
+	T.Program(0, 1, 0);
+	T.Program(0, 2, 32);
+	T.Meta(2 * Bar, 0x06, "loopStart");
+	T.Meta(8 * Bar, 0x06, "loopEnd");
+	const int Tune[8] = { 76, 79, 77, 74, 72, 76, 74, 72 };
+	for (int b = 0; b < 8; ++b) {
+		T.Note(b * Bar, 2 * Q, 0, Tune[b]);
+		T.Note(b * Bar + 2 * Q, Q, 0, Tune[b] - 2);
+		T.Note(b * Bar, Q, 2, b % 2 ? 43 : 48);
+		for (int Beat = 1; Beat < 3; ++Beat) {
+			T.Note(b * Bar + Beat * Q, Q / 2, 1, 60);
+			T.Note(b * Bar + Beat * Q, Q / 2, 1, 64);
+		}
+	}
+	T.Note(9 * Bar, Q, 0, 60);
+	return MidiFile(0, 96, { T.Chunk() });
+}
+
+// The notes a channel starts on a row of a song
+std::multiset<int> NotesAt(const TrackerSong &S, int Pattern, int Row, int From, int To)
+{
+	std::multiset<int> Out;
+	for (int c = From; c <= To; ++c)
+		Out.insert(S.Patterns[Pattern].Cells[Row][c].Note);
+	return Out;
+}
+
+void TestMidi()
+{
+	TrackerSong S;
+	std::string Error;
+	CHECK(IsMidi(MakeMidi()));
+	CHECK(ParseTracker(MakeMidi(), S, Error));
+	CHECK(S.Format == "MIDI" && S.Title == "Midi Test Song" && S.Tracker == "format 1, 5 tracks" && S.Copyright == "(c) Test");
+	CHECK(S.Meter == "4/4" && S.BeatsPerBar == 4 && S.FirstBarRow == 0 && S.RowsPerBeat == 4);
+	CHECK(S.Speed == 6 && S.Tempo == 140);
+	CHECK(S.Message.empty());
+	// The lead, the piano's chord over three channels, the bass, a channel for each kind of drum
+	const char *Names[] = { "Lead", "Acoustic Grand Piano 1", "Acoustic Grand Piano 2", "Acoustic Grand Piano 3", "Bass",
+		"Drums: cymbal", "Drums: hi-hat", "Drums: kick", "Drums: snare" };
+	CHECK(S.Channels == 9 && S.ChannelNames.size() == 9);
+	for (size_t c = 0; c < S.ChannelNames.size() && c < 9; ++c)
+		CHECK(S.ChannelNames[c] == Names[c]);
+	// General MIDI's instruments, the drums named for their kind
+	CHECK(S.Instruments.size() == 176);
+	if (S.Instruments.size() == 176) {
+		CHECK(S.Instruments[0] == "Acoustic Grand Piano" && S.Instruments[80] == "Lead 1 (square)");
+		CHECK(S.Instruments[MIDI_DRUM_INSTRUMENTS + 1] == "Bass Drum 1" && S.Instruments[175] == "Percussion");
+		CHECK(S.Instruments[MIDI_DRUM_INSTRUMENTS + 2] == "Side Stick (snare rim)" && DrumOfName(S.Instruments[130]) == "snare");
+		CHECK(S.Instruments[MIDI_DRUM_INSTRUMENTS + 70 - 35] == "Maracas percussion");
+	}
+	CHECK(std::string(MidiProgramName(114)) == "Steel Pan" && DrumOfName(MidiProgramName(114)).empty());
+	CHECK(std::string(MidiDrumName(42)) == "Closed Hi-Hat" && MidiDrumName(34) == 0 && std::string(MidiProgramName(-5)) == "Acoustic Grand Piano");
+	// A pattern before the loop, one from it
+	CHECK(S.Restart == 1 && S.Orders.size() == 2 && S.Patterns.size() == 2);
+	if (S.Patterns.size() == 2 && S.Channels == 9) {
+		const TrackerPattern &P = S.Patterns[0], &L = S.Patterns[1];
+		CHECK(P.Rows == 16 && L.Rows == 48);
+		CHECK(P.Cells[0][0].Note == 60 && P.Cells[0][0].Instrument == 80 && P.Cells[0][0].Volume == 50);
+		CHECK(P.Cells[4][0].Note == 62 && P.Cells[2][0].Note == TRACKER_NONE);
+		CHECK(P.Cells[0][1].Note == 55 && P.Cells[0][2].Note == 52 && P.Cells[0][3].Note == 48);
+		CHECK(P.Cells[0][1].Instrument == 0 && P.Cells[0][1].Volume == 25);
+		std::multiset<int> Am;
+		Am.insert(45);
+		Am.insert(48);
+		Am.insert(52);
+		CHECK(NotesAt(S, 1, 0, 1, 3) == Am);
+		// The bass held over into each next note: one channel, no ends between
+		CHECK(P.Cells[0][4].Note == 24 && P.Cells[8][4].Note == 24 && P.Cells[0][4].Instrument == 33 && P.Cells[0][4].Volume == 55);
+		CHECK(L.Cells[0][4].Note == 21 && L.Cells[7][4].Note == TRACKER_NONE);
+		// Drums: their instruments by key, no ends
+		CHECK(P.Cells[0][5].Instrument == MIDI_DRUM_INSTRUMENTS + 49 - 35 && P.Cells[0][6].Instrument == MIDI_DRUM_INSTRUMENTS + 7);
+		CHECK(P.Cells[0][7].Instrument == MIDI_DRUM_INSTRUMENTS + 1 && P.Cells[8][7].Instrument == MIDI_DRUM_INSTRUMENTS + 1);
+		CHECK(P.Cells[4][8].Instrument == MIDI_DRUM_INSTRUMENTS + 3 && P.Cells[12][8].Note == 26);
+		CHECK(P.Cells[1][6].Note == TRACKER_NONE && P.Cells[2][6].Instrument == MIDI_DRUM_INSTRUMENTS + 7);
+	}
+	const std::string Line = DescribeTracker(S);
+	CHECK(Line.find("Midi Test Song: a MIDI file (format 1, 5 tracks) in 4/4: 9 channels of a note at a time, 4 rows a beat, playing "
+		"Acoustic Grand Piano, Electric Bass (finger), Lead 1 (square) and drums.") == 0);
+
+	// As a module: the channels named, the drums as drums, the beat as it is
+	Module M;
+	TrackReport R;
+	CHECK(TrackerToModule(S, M, R, Error));
+	CHECK(M.ChannelNames.size() == 9 && M.ChannelNames == S.ChannelNames);
+	CHECK(M.ChannelKinds.size() == 9 && M.ChannelKinds[4] == LAYOUT_MELODIC && M.ChannelKinds[5] == LAYOUT_DRUMS &&
+		M.ChannelKinds[8] == LAYOUT_DRUMS);
+	CHECK(M.Instruments.size() == 7);
+	if (M.Instruments.size() == 7) {
+		CHECK(M.Instruments[0].Name == "Lead 1 (square)" && M.Instruments[0].Drum.empty());
+		CHECK(M.Instruments[2].Name == "Electric Bass (finger)" && M.Instruments[2].Drum.empty());
+		CHECK(M.Instruments[3].Name == "Crash Cymbal 1" && M.Instruments[3].Drum == "cymbal");
+		CHECK(M.Instruments[5].Name == "Bass Drum 1" && M.Instruments[5].Drum == "kick");
+	}
+	CHECK(R.Speed == 6 && R.Tempo == 140 && R.RowsPerBeat == 4 && R.Bpm > 139.9 && R.Bpm < 140.1);
+	CHECK(R.BeatsPerBar == 4 && R.FirstBarRow == 0 && R.Meter == "4/4");
+
+	// The study
+	const TrackStudy St = StudyTrack(M, 0, R);
+	const std::string Text = DescribeStudy(St);
+	CHECK(Text.find("Tempo: 140 BPM in 4/4, 4 rows a beat (speed 6, tempo 140); an intro of 1 bar, then a loop of 3 bars.") !=
+		std::string::npos);
+	CHECK(St.IntroBars == 1 && St.LoopBars == 3 && St.FirstBarRow == 0);
+	CHECK(St.Key == "C major");
+	CHECK(Text.find("Lead, the lead") != std::string::npos);
+	CHECK(Text.find("Bass, bass") != std::string::npos);
+	CHECK(Text.find("kick 'Bass Drum 1'") != std::string::npos);
+	CHECK(Text.find("snare 'Acoustic Snare'") != std::string::npos);
+	CHECK(Text.find("hi-hat 'Closed Hi-Hat'") != std::string::npos);
+	if (g_Failures)
+		std::printf("%s\n%s\n", Line.c_str(), Text.c_str());
+
+	// Wrapped in RIFF (.rmi): the same song
+	std::vector<uint8_t> Rmi;
+	Put(Rmi, 0, "RIFF", 4);
+	Put(Rmi, 8, "RMIDdata", 8);
+	const std::vector<uint8_t> Smf = MakeMidi();
+	Put32(Rmi, 16, static_cast<unsigned long>(Smf.size()));
+	Rmi.insert(Rmi.end(), Smf.begin(), Smf.end());
+	Put32(Rmi, 4, static_cast<unsigned long>(Rmi.size() - 8));
+	TrackerSong W;
+	CHECK(IsMidi(Rmi) && ParseTracker(Rmi, W, Error) && W.Title == "Midi Test Song" && W.Channels == 9);
+}
+
+void TestMidiMeters()
+{
+	// 3/4, a format 0 file: the parts named after their programs, the loop from markers
+	TrackerSong S;
+	std::string Error;
+	CHECK(ParseTracker(MakeWaltz(), S, Error));
+	CHECK(S.Title == "Waltz" && S.Tracker == "format 0, 1 track" && S.Meter == "3/4" && S.BeatsPerBar == 3 && S.RowsPerBeat == 4);
+	CHECK(S.Speed == 6 && S.Tempo == 90 && S.FirstBarRow == 0);
+	CHECK(S.ChannelNames.size() == 4 && S.ChannelNames[0] == "Violin" && S.ChannelNames[1] == "Acoustic Grand Piano 1" &&
+		S.ChannelNames[3] == "Acoustic Bass");
+	CHECK(S.Restart == 1 && S.Patterns.size() == 3);
+	if (S.Patterns.size() == 3 && S.Channels == 4) {
+		CHECK(S.Patterns[0].Rows == 24 && S.Patterns[1].Rows == 24 && S.Patterns[2].Rows == 48);
+		const TrackerPattern &P = S.Patterns[0];
+		CHECK(P.Cells[0][0].Note == 64 && P.Cells[8][0].Note == 62 && P.Cells[4][0].Note == TRACKER_NONE);
+		CHECK(P.Cells[4][1].Note == 52 && P.Cells[4][2].Note == 48 && P.Cells[6][1].Note == TRACKER_OFF);
+		CHECK(P.Cells[0][3].Note == 36 && P.Cells[4][3].Note == TRACKER_OFF && P.Cells[12][3].Note == 31);
+	}
+	Module M;
+	TrackReport R;
+	CHECK(TrackerToModule(S, M, R, Error));
+	CHECK(R.BeatsPerBar == 3 && R.Bpm > 89.9 && R.Bpm < 90.1);
+	TrackStudy St = StudyTrack(M, 0, R);
+	std::string Text = DescribeStudy(St);
+	CHECK(Text.find("Tempo: 90 BPM in 3/4, 4 rows a beat (speed 6, tempo 90); an intro of 2 bars, then a loop of 6 bars.") !=
+		std::string::npos);
+	CHECK(St.IntroBars == 2 && St.LoopBars == 6 && St.BeatsPerBar == 3);
+	if (g_Failures)
+		std::printf("%s\n", Text.c_str());
+
+	// 6/8: two beats of three eighths a bar, the beat a dotted quarter
+	{
+		MidiTrack T;
+		T.Tempo(0, 120);
+		T.Meter(0, 6, 3);
+		T.Program(0, 0, 73);
+		for (int i = 0; i < 48; ++i)
+			T.Note(i * 240, 200, 0, i % 6 == 0 ? 67 : 72 + i % 3);
+		TrackerSong S8;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S8, Error));
+		CHECK(S8.Meter == "6/8" && S8.BeatsPerBar == 2 && S8.RowsPerBeat == 6 && S8.Speed == 6 && S8.Tempo == 120);
+		CHECK(S8.Patterns.size() == 2 && S8.Patterns[0].Rows == 48);
+		Module M8;
+		TrackReport R8;
+		CHECK(TrackerToModule(S8, M8, R8, Error));
+		CHECK(R8.Bpm > 79.9 && R8.Bpm < 80.1 && R8.RowsPerBeat == 6);
+		const std::string Text8 = DescribeStudy(StudyTrack(M8, 0, R8));
+		CHECK(Text8.find("Tempo: 80 BPM in 6/8, 2 beats a bar, 6 rows a beat") != std::string::npos);
+		if (g_Failures)
+			std::printf("%s\n", Text8.c_str());
+	}
+
+	// A one-beat pickup in 1/4, then 4/4: the bars start a beat in
+	{
+		MidiTrack T;
+		T.Meter(0, 1, 2);
+		T.Meter(480, 4, 2);
+		for (int i = 0; i < 17; ++i)
+			T.Note(i * 480, 400, 0, 60 + i % 5);
+		TrackerSong Sp;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), Sp, Error));
+		CHECK(Sp.Meter == "4/4" && Sp.FirstBarRow == 4 && Sp.Patterns.size() == 2 && Sp.Patterns[0].Rows == 4 && Sp.Patterns[1].Rows == 64);
+	}
+
+	// An odd meter: 7/8 counted in eighths; 7/16 in 4/4
+	{
+		MidiTrack T;
+		T.Meter(0, 7, 3);
+		for (int i = 0; i < 28; ++i)
+			T.Note(i * 240, 200, 0, 60 + i % 7);
+		TrackerSong S7;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S7, Error));
+		CHECK(S7.Meter == "7/8" && S7.BeatsPerBar == 7 && S7.RowsPerBeat == 2);
+		Module M7;
+		TrackReport R7;
+		CHECK(TrackerToModule(S7, M7, R7, Error));
+		CHECK(DescribeStudy(StudyTrack(M7, 0, R7)).find("in 7/8, 2 rows a beat") != std::string::npos);
+		MidiTrack U;
+		U.Meter(0, 7, 4);
+		for (int i = 0; i < 28; ++i)
+			U.Note(i * 120, 100, 0, 60 + i % 7);
+		TrackerSong S16;
+		CHECK(ParseTracker(MidiFile(0, 480, { U.Chunk() }), S16, Error));
+		CHECK(S16.Meter.empty() && S16.BeatsPerBar == 4 && S16.Message.find("It's in 7/16, counted here in bars of 4/4.") == 0);
+	}
+}
+
+void TestMidiGrids()
+{
+	std::string Error;
+	// Eighth-note triplets: 6 rows a beat, at speed 4
+	{
+		MidiTrack T;
+		T.Tempo(0, 100);
+		for (int i = 0; i < 24; ++i)
+			T.Note(i * 40, 36, 0, 60 + i % 4);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 120, { T.Chunk() }), S, Error));
+		CHECK(S.RowsPerBeat == 6 && S.Speed == 4 && S.Tempo == 100 && S.Meter.empty() && S.FirstBarRow == -1);
+		CHECK(S.Patterns.size() == 1 && S.Patterns[0].Cells[2][0].Note == 49);
+	}
+	// Sixteenths and a few triplets: 12 rows a beat
+	{
+		MidiTrack T;
+		for (int i = 0; i < 32; ++i)
+			T.Note(i * 120, 100, 0, 60);
+		T.Note(4000, 40, 0, 62);
+		T.Note(4040, 40, 0, 64);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S, Error));
+		CHECK(S.RowsPerBeat == 12 && S.Speed == 2 && S.Tempo == 120);
+	}
+	// Played rather than written: sixteenths
+	{
+		MidiTrack T;
+		unsigned Seed = 12345;
+		for (int i = 0; i < 64; ++i) {
+			Seed = Seed * 1103515245u + 12345u;
+			T.Note(1000 + i * 240 + (Seed >> 16) % 101, 150, 0, 60 + i % 12);
+		}
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S, Error));
+		CHECK(S.RowsPerBeat == 4);
+	}
+	// The tempo it keeps longest, its changes as tempo effects
+	{
+		MidiTrack T;
+		T.Tempo(0, 100);
+		T.Tempo(1920, 150);
+		for (int i = 0; i < 16; ++i)
+			T.Note(i * 480, 400, 0, 60);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S, Error));
+		CHECK(S.Tempo == 150 && S.Speed == 6);
+		CHECK(S.Patterns.size() == 1 && S.Patterns[0].Cells[16][0].Effect == 'F' && S.Patterns[0].Cells[16][0].Param == 150);
+		CHECK(!S.Patterns.empty() && S.Patterns[0].Cells[0][0].Effect == 0);
+		CHECK(S.Message == "The tempo changes 1 time (100 to 150 BPM); the study takes 150, the tempo it keeps longest.");
+	}
+	// A chord of eight: six channels, two notes left out; a track named "Track 1" named by its program
+	{
+		MidiTrack C, T;
+		C.Meta(0, 0x03, "Song");
+		T.Meta(0, 0x03, "Track 1");
+		T.Program(0, 3, 48);
+		for (int k = 0; k < 8; ++k)
+			T.Note(0, 1920, 3, 48 + k * 4);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(1, 480, { C.Chunk(), T.Chunk() }), S, Error));
+		CHECK(S.Channels == 6 && S.ChannelNames[0] == "String Ensemble 1 1" && S.ChannelNames[5] == "String Ensemble 1 6");
+		CHECK(S.Message == "2 notes left out: more than 6 at once in a part, or past 32 channels.");
+		CHECK(S.Channels == 6 && !S.Patterns.empty() && S.Patterns[0].Cells[0][0].Note == 48 + 28 - 12 && S.Patterns[0].Cells[0][5].Note == 48 + 8 - 12);
+	}
+	// Grace notes written end first (as notation programs write notes of no
+	// length): left out, and the notes around them whole; a melody stays on
+	// its channel through a double stop
+	{
+		MidiTrack T;
+		T.Note(0, 480, 0, 77);
+		T.Add(480, { 0x80, 79, 0 }, 0);
+		T.Add(480, { 0x80, 77, 0 }, 0);
+		T.Add(480, { 0x80, 77, 0 }, 0);
+		T.Add(480, { 0x90, 79, 60 });
+		T.Add(480, { 0x90, 77, 60 });
+		T.Add(480, { 0x90, 77, 60 });
+		T.Note(480, 480, 0, 81);
+		T.Note(960, 480, 0, 77);
+		T.Note(1440, 480, 0, 79);
+		T.Note(1920, 480, 0, 72);
+		T.Note(2400, 480, 0, 76);
+		T.Note(2400, 480, 0, 69);
+		T.Note(2880, 480, 0, 74);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 480, { T.Chunk() }), S, Error));
+		CHECK(S.Channels == 2 && S.Patterns.size() == 1);
+		if (S.Channels == 2 && S.Patterns.size() == 1 && S.Patterns[0].Rows == 32) {
+			const TrackerPattern &P = S.Patterns[0];
+			CHECK(P.Cells[0][0].Note == 65 && P.Cells[4][0].Note == 69 && P.Cells[8][0].Note == 65 && P.Cells[12][0].Note == 67);
+			CHECK(P.Cells[16][0].Note == 60 && P.Cells[20][0].Note == 64 && P.Cells[24][0].Note == 62);
+			CHECK(P.Cells[20][1].Note == 57 && P.Cells[24][1].Note == TRACKER_OFF && P.Cells[4][1].Note == TRACKER_NONE);
+		}
+	}
+	// Clock-based timing (SMPTE): read as beats at 120 BPM
+	{
+		MidiTrack T;
+		for (int i = 0; i < 8; ++i)
+			T.Note(i * 500, 400, 0, 60);
+		TrackerSong S;
+		CHECK(ParseTracker(MidiFile(0, 0xE728, { T.Chunk() }), S, Error));
+		CHECK(S.RowsPerBeat == 4 && S.Tempo == 120 && !S.Patterns.empty() && S.Patterns[0].Rows > 4 && S.Patterns[0].Cells[4][0].Note == 48);
+	}
+	// No notes, no music
+	{
+		MidiTrack T;
+		T.Tempo(0, 100);
+		TrackerSong S;
+		CHECK(!ParseTracker(MidiFile(1, 480, { T.Chunk() }), S, Error) && Error == "a MIDI file without notes");
+	}
+}
+
 // Files cut short at every length, and bytes changed, read without harm
 void TestBroken()
 {
-	const std::vector<uint8_t> Files[] = { MakeMod(), MakeS3m(), MakeXm(), MakeIt() };
+	const std::vector<uint8_t> Files[] = { MakeMod(), MakeS3m(), MakeXm(), MakeIt(), MakeMidi(), MakeWaltz() };
 	int Read = 0;
 	for (size_t f = 0; f < sizeof(Files) / sizeof(Files[0]); ++f) {
 		for (size_t n = 0; n < Files[f].size(); n += (n < 1200 ? 1 : 37)) {
@@ -508,9 +988,9 @@ int main(int argc, char **argv)
 {
 	// With a folder: the modules built here written to it, to look at
 	if (argc > 1) {
-		const char *Names[] = { "test.mod", "test.s3m", "test.xm", "test.it" };
-		const std::vector<uint8_t> Files[] = { MakeMod(), MakeS3m(), MakeXm(), MakeIt() };
-		for (int i = 0; i < 4; ++i) {
+		const char *Names[] = { "test.mod", "test.s3m", "test.xm", "test.it", "test.mid", "waltz.mid" };
+		const std::vector<uint8_t> Files[] = { MakeMod(), MakeS3m(), MakeXm(), MakeIt(), MakeMidi(), MakeWaltz() };
+		for (int i = 0; i < 6; ++i) {
 			const std::string Path = std::string(argv[1]) + "/" + Names[i];
 			std::ofstream Out(Path.c_str(), std::ios::binary);
 			Out.write(reinterpret_cast<const char *>(Files[i].data()), static_cast<std::streamsize>(Files[i].size()));
@@ -521,6 +1001,9 @@ int main(int argc, char **argv)
 	TestXm();
 	TestIt();
 	TestNames();
+	TestMidi();
+	TestMidiMeters();
+	TestMidiGrids();
 	TestBroken();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures ? 1 : 0;

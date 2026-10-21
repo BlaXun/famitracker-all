@@ -24,6 +24,7 @@
 #include "Player.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -608,17 +609,47 @@ std::string ChordLine(const std::vector<std::string> &Chords, size_t From, size_
 	return s;
 }
 
+// A part's name that calls it the melody: "Melody", "Lead", "Soprano",
+// "Vocals" (a MIDI file's tracks are named so)
+bool NamesTheMelody(const std::string &Name)
+{
+	static const char *const WORDS[] = { "melody", "lead", "soprano", "vocal", "vocals", "solo", "singer", "tune", "theme" };
+	std::string w;
+	for (size_t i = 0; i <= Name.size(); ++i) {
+		const unsigned char c = i < Name.size() ? static_cast<unsigned char>(Name[i]) : ' ';
+		if (std::isalpha(c)) {
+			w += static_cast<char>(std::tolower(c));
+			continue;
+		}
+		for (size_t k = 0; k < sizeof(WORDS) / sizeof(WORDS[0]); ++k)
+			if (w == WORDS[k])
+				return true;
+		w.clear();
+	}
+	return false;
+}
+
 // --- Rhythm ---
 
-// Steps in a bar for the rhythm grids: sixteenths, or eighth-note triplets
-// when a beat has 3 or 6 rows
-int StepsInBar(int RowsPerBeat) { return RowsPerBeat % 3 == 0 ? 12 : 16; }
+// Steps in a beat for the rhythm grids: sixteenths, or eighth-note triplets
+// when a beat has 3 or 6 rows (a compound meter's eighths); sixteenths in a
+// meter of eighth-note beats (5/8, 7/8)
+int StepsInBeat(int RowsPerBeat, int BeatsPerBar)
+{
+	if (RowsPerBeat % 3 == 0)
+		return 3;
+	if (BeatsPerBar == 4 || RowsPerBeat % 4 == 0)
+		return 4;
+	return RowsPerBeat % 2 == 0 ? 2 : 1;
+}
 
 std::string BeatName(int Step, int StepsPerBeat)
 {
 	const int Beat = Step / StepsPerBeat + 1, Part = Step % StepsPerBeat;
 	if (Part == 0)
 		return std::to_string(Beat);
+	if (StepsPerBeat == 2)
+		return std::to_string(Beat) + "&";
 	if (StepsPerBeat == 4) {
 		static const char *const SUFFIX[4] = { "", "e", "&", "a" };
 		return std::to_string(Beat) + SUFFIX[Part];
@@ -750,9 +781,11 @@ int TwoPlaces(const Voice &V, int RowsPerBar, int LoopRow, int LoopBars)
 // snare on two places a bar, half a bar apart, is on beats 2 and 4.
 // Otherwise the beat is where the most notes start (long ones and drums
 // counting most), and the bar line is the loop point, or the start, when
-// it falls on a beat; else where long notes and bass notes fall.
+// it falls on a beat; else where long notes and bass notes fall. Known, when
+// the music says where its bars start (a MIDI file's meter), stands for the
+// loop point and keeps its beat; only a backbeat moves it.
 int BarPhase(const std::vector<std::vector<Played> > &Notes, const std::vector<int> &Kinds, int Bass, const std::vector<Voice> &Voices,
-	const std::vector<int> &SampleSizes, int RowsPerBar, int RowsPerBeat, int LoopRow)
+	const std::vector<int> &SampleSizes, int RowsPerBar, int RowsPerBeat, int LoopRow, int Known)
 {
 	if (RowsPerBar <= 1)
 		return 0;
@@ -788,7 +821,7 @@ int BarPhase(const std::vector<std::vector<Played> > &Notes, const std::vector<i
 			Beat[Voices[v].Rows[i] % RowsPerBeat] += 2;
 	}
 	const int Half = RowsPerBar / 2;
-	const int Default = LoopRow > 0 ? LoopRow % RowsPerBar : 0;
+	const int Default = Known >= 0 ? Known % RowsPerBar : (LoopRow > 0 ? LoopRow % RowsPerBar : 0);
 	auto ScoreAt = [&](int ph) { return W[ph] + 0.5 * W[(ph + Half) % RowsPerBar]; };
 	// A backbeat: the snare on two places a bar, half a bar apart
 	int Back = -1;
@@ -804,7 +837,7 @@ int BarPhase(const std::vector<std::vector<Played> > &Notes, const std::vector<i
 		return ScoreAt(P2) > ScoreAt(P1) ? P2 : P1;
 	}
 	int On = Default % RowsPerBeat;
-	for (int o = 0; o < RowsPerBeat; ++o)
+	for (int o = 0; o < RowsPerBeat && Known < 0; ++o)
 		if (Beat[o] > 1.25 * Beat[Default % RowsPerBeat] && Beat[o] > Beat[On])
 			On = o;
 	if (Default % RowsPerBeat == On)
@@ -988,6 +1021,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	S.Name = T.Name;
 	S.Bpm = Report.Bpm;
 	S.RowsPerBeat = Report.RowsPerBeat > 0 ? Report.RowsPerBeat : 4;
+	S.BeatsPerBar = Report.BeatsPerBar > 0 ? Report.BeatsPerBar : 4;
+	S.Meter = Report.Meter;
 	S.TicksPerRow = Report.TicksPerRow;
 	S.Tracker = !M.ChannelKinds.empty();
 	S.Speed = Report.Speed;
@@ -996,9 +1031,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	const std::vector<std::string> Names = ChannelNamesOf(M);
 	int TotalRows = 0, LoopRow = -1;
 	const std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow);
-	const int RowsPerBar = S.RowsPerBeat * 4;
+	const int RowsPerBar = S.RowsPerBeat * S.BeatsPerBar;
 	const int Columns = int(Notes.size());
-	const int Steps = StepsInBar(S.RowsPerBeat), StepsPerBeat = Steps / 4;
+	const int StepsPerBeat = StepsInBeat(S.RowsPerBeat, S.BeatsPerBar), Steps = StepsPerBeat * S.BeatsPerBar;
+	// A compound meter's beat (6/8's) is three eighths rather than a triplet
+	const bool Compound = S.Meter.find("/8") != std::string::npos && std::atoi(S.Meter.c_str()) % 3 == 0;
 	auto IsVrc6 = [&](int c) { return (M.Expansion & EXP_VRC6) && c >= 5 && c <= 7; };
 	auto Instr = [&](int i) -> const Instrument * { return i >= 0 && i < int(M.Instruments.size()) ? &M.Instruments[i] : nullptr; };
 
@@ -1082,7 +1119,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		}
 		for (size_t n = 0; n < Voices.size(); ++n) {
 			Voice &V = Voices[n];
-			V.Backbeat = TwoPlaces(V, RowsPerBar, LoopRow, LoopBarCount);
+			V.Backbeat = S.BeatsPerBar == 4 ? TwoPlaces(V, RowsPerBar, LoopRow, LoopBarCount) : -1;	// 4/4's backbeat
 			if (V.Dpcm)
 				continue;
 			int Hits = 0;
@@ -1116,7 +1153,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	std::vector<int> SampleSizes;
 	for (size_t i = 0; i < M.Samples.size(); ++i)
 		SampleSizes.push_back(int(M.Samples[i].size()));
-	const int Phase = BarPhase(Notes, Kinds, Bass, Voices, SampleSizes, RowsPerBar, S.RowsPerBeat, LoopRow);
+	const int Phase = BarPhase(Notes, Kinds, Bass, Voices, SampleSizes, RowsPerBar, S.RowsPerBeat, LoopRow, Report.FirstBarRow);
 	S.FirstBarRow = Phase;
 	auto BarOf = [&](int Row) { return Row >= Phase ? (Row - Phase) / RowsPerBar : -1; };
 	auto StepOf = [&](int Row) { return ((((Row - Phase) % RowsPerBar) + RowsPerBar) % RowsPerBar) * Steps / RowsPerBar; };
@@ -1167,8 +1204,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	}
 
 	// --- The lead: the melodic channel with the most going on, up high ---
-	int Lead = -1;
-	double LeadScore = -1;
+	int Lead = -1, NamedLead = -1;
+	double LeadScore = -1, NamedScore = -1;
 	for (int c = 0; c < Columns; ++c) {
 		if (!Melodic(Kinds[c]) || Notes[c].empty())
 			continue;
@@ -1192,7 +1229,13 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			LeadScore = Score;
 			Lead = c;
 		}
+		if (Score > NamedScore && NamesTheMelody(Names[c])) {
+			NamedScore = Score;
+			NamedLead = c;
+		}
 	}
+	if (NamedLead >= 0)
+		Lead = NamedLead;	// a part its name calls the melody (a MIDI file's "Melody", "Soprano")
 
 	// Echoes: a channel that repeats another a little later. The lead is the
 	// one echoed, not its echo.
@@ -1361,7 +1404,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		// Rhythm
 		std::string Rhythm;
 		if (Off * 4 >= t.Notes)
-			Rhythm = StepsPerBeat == 4 ? "busy, on sixteenths" : "on the triplets";
+			Rhythm = StepsPerBeat != 3 ? "busy, on sixteenths" : (Compound ? "on the eighths between the beats" : "on the triplets");
 		else if (OnEighth * 4 >= t.Notes)
 			Rhythm = "on the beats and the eighths between";
 		else
@@ -1855,10 +1898,17 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 std::string DescribeStudy(const TrackStudy &S, bool Macros)
 {
 	std::string s = S.Name + "\n";
+	// The meter, when the music says: its beats when they aren't its top number (6/8's two)
+	std::string In;
+	if (!S.Meter.empty()) {
+		In = " in " + S.Meter;
+		if (std::atoi(S.Meter.c_str()) != S.BeatsPerBar)
+			In += ", " + Count(S.BeatsPerBar, "beat", "beats") + " a bar";
+	}
 	if (S.Tracker)
-		s += Format("  Tempo: %.0f BPM, %d rows a beat (speed %d, tempo %d)", S.Bpm, S.RowsPerBeat, S.Speed, S.Tempo);
+		s += Format("  Tempo: %.0f BPM%s, %d rows a beat (speed %d, tempo %d)", S.Bpm, In.c_str(), S.RowsPerBeat, S.Speed, S.Tempo);
 	else
-		s += Format("  Tempo: %.0f BPM, %d rows a beat (rows of %.2g frames)", S.Bpm, S.RowsPerBeat, S.TicksPerRow);
+		s += Format("  Tempo: %.0f BPM%s, %d rows a beat (rows of %.2g frames)", S.Bpm, In.c_str(), S.RowsPerBeat, S.TicksPerRow);
 	if (S.LoopBars > 0)
 		s += S.IntroBars > 0 ? Format("; an intro of %s, then a loop of %s", Count(S.IntroBars, "bar", "bars").c_str(),
 			Count(S.LoopBars, "bar", "bars").c_str()) : Format("; a loop of %s", Count(S.LoopBars, "bar", "bars").c_str());

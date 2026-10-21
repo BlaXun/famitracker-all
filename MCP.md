@@ -158,7 +158,7 @@ anything; close the dialog and ask again.
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
-| `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
+| `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, or a MIDI file from its notes, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
@@ -397,6 +397,22 @@ channels than the NES, so Claude boils it down: the lead on a pulse or the
 sawtooth, harmony, pads and chords on the other pulse or as arpeggios, the
 bass on the triangle, the drums on the noise and the DPCM. The tunes stay
 the module's own: Claude writes new ones that sound like they belong to it.
+
+MIDI files (`.mid`, `.midi`, `.rmi`) are studied the same way, like "study
+the town theme in C:\Users\Name\Music\town.mid". Their notes go on a grid
+of rows (4 a beat, or 6, 8 or 12 for triplets and thirty-seconds), and
+their bars follow the file's meter, so a waltz is counted in 3/4 and a jig
+in 6/8 (two beats of three eighths). Each part becomes channels of one note
+at a time: a piano's chords spread over several, the highest note on the
+first, so a melody stays on one channel; the drums (MIDI channel 10) go on
+a channel for each kind (kick, snare, hi-hat, cymbal, tom, percussion),
+named after General MIDI's drums. The channels are named after the file's
+tracks, or after their General MIDI instruments, and a track called
+"Melody", "Lead" or "Soprano" is taken as the lead. The tempo is the one
+the file keeps longest, and a loop point (controller 111 as RPG Maker
+writes it, EMIDI's loop controllers, or `loopStart`/`loopEnd` markers)
+makes it loop. Grace notes are left out. A MIDI study is tagged `midi`, and
+with its meter when that isn't 4/4.
 
 ## Moods
 
@@ -713,7 +729,9 @@ editor; they're muted again afterwards.
   which `ImportNsfDlg.cpp` (File > Import NSF) shares. `study_module` reads
   a tracker module with `Source/Nsf/Tracker.cpp` (MOD, S3M, XM and IT
   patterns, followed through their breaks and jumps into a module of one
-  track with a channel layout of its own) and studies it with `Study.cpp`.
+  track with a channel layout of its own), or a MIDI file with
+  `Source/Nsf/Midi.cpp` (read into the same kind of song, with its meter
+  and channel names), and studies it with `Study.cpp`.
 - `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
   `SelectExpansionChip`: counting the notes on the channels that go,
   emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and

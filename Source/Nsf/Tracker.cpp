@@ -20,6 +20,7 @@
 */
 
 #include "Tracker.h"
+#include "Midi.h"
 
 #include <algorithm>
 #include <cctype>
@@ -647,6 +648,40 @@ std::string DrumOfName(const std::string &Name)
 
 std::string DescribeTracker(const TrackerSong &Song)
 {
+	if (Song.Format == "MIDI") {
+		// A MIDI file: its meter, its channels and the instruments they play
+		std::set<int> Used;
+		for (size_t p = 0; p < Song.Patterns.size(); ++p)
+			for (size_t r = 0; r < Song.Patterns[p].Cells.size(); ++r)
+				for (size_t c = 0; c < Song.Patterns[p].Cells[r].size(); ++c)
+					if (Song.Patterns[p].Cells[r][c].Instrument >= 0)
+						Used.insert(Song.Patterns[p].Cells[r][c].Instrument);
+		std::vector<std::string> Names;
+		bool Drums = false;
+		for (std::set<int>::const_iterator it = Used.begin(); it != Used.end(); ++it) {
+			if (*it < MIDI_DRUM_INSTRUMENTS && *it < int(Song.Instruments.size()))
+				Names.push_back(Song.Instruments[*it]);
+			else
+				Drums = true;
+		}
+		if (Names.size() > 12) {
+			const size_t More = Names.size() - 11;
+			Names.resize(11);
+			Names.push_back(std::to_string(More) + " more");
+		}
+		if (Drums)
+			Names.push_back("drums");
+		std::string List;
+		for (size_t i = 0; i < Names.size(); ++i)
+			List += (i == 0 ? "" : (i + 1 == Names.size() ? " and " : ", ")) + Names[i];
+		char Buf[256];
+		std::snprintf(Buf, sizeof(Buf), "a MIDI file (%s)%s%s: %d channel%s of a note at a time, %d rows a beat", Song.Tracker.c_str(),
+			Song.Meter.empty() ? "" : " in ", Song.Meter.c_str(), Song.Channels, Song.Channels == 1 ? "" : "s", Song.RowsPerBeat);
+		std::string s = (Song.Title.empty() ? std::string("Untitled") : Song.Title) + ": " + Buf + (List.empty() ? "" : ", playing " + List) + ".";
+		if (!Song.Message.empty())
+			s += " " + Song.Message;
+		return s;
+	}
 	int Named = 0;
 	for (size_t i = 0; i < Song.Instruments.size(); ++i)
 		Named += !Song.Instruments[i].empty();
@@ -664,6 +699,8 @@ std::string DescribeTracker(const TrackerSong &Song)
 bool ParseTracker(const std::vector<uint8_t> &Bytes, TrackerSong &Out, std::string &Error)
 {
 	Out = TrackerSong();
+	if (IsMidi(Bytes))
+		return ParseMidi(Bytes, Out, Error);
 	if (Bytes.size() >= 0x60 && !std::memcmp(&Bytes[0], "Extended Module:", 16))
 		return ParseXm(Bytes, Out, Error);
 	if (Bytes.size() >= 0xC0 && !std::memcmp(&Bytes[0], "IMPM", 4))
@@ -672,7 +709,7 @@ bool ParseTracker(const std::vector<uint8_t> &Bytes, TrackerSong &Out, std::stri
 		return ParseS3m(Bytes, Out, Error);
 	if (Bytes.size() >= 1084)
 		return ParseMod(Bytes, Out, Error);
-	Error = "not a module FamiTracker knows (MOD, S3M, XM or IT)";
+	Error = "not a module FamiTracker knows (MOD, S3M, XM or IT) or a MIDI file";
 	return false;
 }
 
@@ -841,7 +878,8 @@ bool TrackerToModule(const TrackerSong &Song, Module &Out, TrackReport &Report, 
 			DrumKind[v] = DrumOfName(Name);
 		if (!DrumKind[v].empty())
 			Drum[v] = true;
-		else if (!MelodicName(Name) && !MelodicName(Sample) && Uses[v] >= 4 && Pitches[v].size() <= 2) {
+		else if (Song.Format != "MIDI" && !MelodicName(Name) && !MelodicName(Sample) && Uses[v] >= 4 && Pitches[v].size() <= 2) {
+			// (MIDI's programs play notes: its drums say so by their names)
 			Drum[v] = true;
 			DrumKind[v] = "drum";
 		}
@@ -867,15 +905,17 @@ bool TrackerToModule(const TrackerSong &Song, Module &Out, TrackReport &Report, 
 			}
 	}
 	std::vector<int> NoteColumn(Channels, -1), DrumColumn(Channels, -1);
+	const bool Named = Song.ChannelNames.size() == size_t(Channels);
 	for (int c = 0; c < Channels; ++c) {
+		const std::string Name = Named ? Song.ChannelNames[c] : "Channel " + std::to_string(c + 1);
 		if (HasNotes[c]) {
 			NoteColumn[c] = int(Out.ChannelNames.size());
-			Out.ChannelNames.push_back("Channel " + std::to_string(c + 1));
+			Out.ChannelNames.push_back(Name);
 			Out.ChannelKinds.push_back(LAYOUT_MELODIC);
 		}
 		if (HasDrums[c]) {
 			DrumColumn[c] = int(Out.ChannelNames.size());
-			Out.ChannelNames.push_back("Channel " + std::to_string(c + 1) + (HasNotes[c] ? " drums" : " (drums)"));
+			Out.ChannelNames.push_back(HasNotes[c] ? Name + " drums" : (Named ? Name : Name + " (drums)"));
 			Out.ChannelKinds.push_back(LAYOUT_DRUMS);
 		}
 	}
@@ -1016,10 +1056,10 @@ bool TrackerToModule(const TrackerSong &Song, Module &Out, TrackReport &Report, 
 	Report.Tempo = Tempo;
 	Report.TicksPerRow = Speed;
 	// A beat of 4 rows, or the module's highlight; doubled or halved when the
-	// tempo would be far out of the usual
+	// tempo would be far out of the usual. A MIDI file's beat is its own.
 	const double RowsPerSecond = Tempo * 2.0 / 5.0 / std::max(1, Speed);
 	int PerBeat = Song.RowsPerBeat > 0 ? Song.RowsPerBeat : 4;
-	if (Song.Format != "IT" || Song.RowsPerBeat == 4) {
+	if (Song.Format != "MIDI" && (Song.Format != "IT" || Song.RowsPerBeat == 4)) {
 		while (RowsPerSecond * 60 / PerBeat > 190 && PerBeat * 2 <= 16)
 			PerBeat *= 2;
 		while (RowsPerSecond * 60 / PerBeat < 60 && PerBeat % 2 == 0 && PerBeat > 1)
@@ -1027,6 +1067,9 @@ bool TrackerToModule(const TrackerSong &Song, Module &Out, TrackReport &Report, 
 	}
 	Report.RowsPerBeat = PerBeat;
 	Report.Bpm = RowsPerSecond * 60 / PerBeat;
+	Report.BeatsPerBar = Song.BeatsPerBar > 0 ? Song.BeatsPerBar : 4;
+	Report.FirstBarRow = Song.FirstBarRow;
+	Report.Meter = Song.Meter;
 	return true;
 }
 
