@@ -146,6 +146,7 @@ anything; close the dialog and ask again.
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off (direct changes only; undoable) |
+| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). See [Mixing](#mixing) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it |
@@ -230,6 +231,33 @@ instead, and `none` takes it off. The speed changes go on the channel that
 has the song's speed effects, else the last one. Change the speed with
 `set_tempo` afterwards and the swing needs setting again; a BPM keeps the
 speed and changes the tempo, which keeps the swing.
+
+## Mixing
+
+A NES song played with every pulse at full volume sounds harsh, and the
+pulses bury the triangle, which has no volume of its own. Atmospheric NES
+tracks keep the pulses well down instead: a lead around 4 to 8, its echo at
+2 or 3, chords at 4 to 7, and the triangle carrying the low end. `mix` does
+that in one undoable step. It works out what each channel plays (the
+melody, an echo of it, chords, a second line, a bass, drums) and scales
+each channel's volume column so its loudest note plays at that role's
+level, keeping its accents and fades. style soft (the default) puts the
+melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, a
+bass on a pulse or the sawtooth at 10 and the drums at 10, which with the
+instruments' own envelopes is about where those tracks sit; style full
+goes back to near full volume; `levels` sets channels by hand.
+
+The NES mixes the triangle, the noise and the DPCM together, so the DPCM
+channel's level (`Zxx`) also sets how loud the triangle and the noise are:
+`Z00` full, `Z20` about 80%, `Z30` 70%, `Z60` half, `Z7F` 43%. FamiTracker
+plays that the way the NES does. The soft mix sets `Z30` where the song
+starts and where its loop starts, so nothing sticks out of the quieter
+pulses; `dac` sets the level alone. Samples on the DPCM channel start from
+that level, and at a high one they have less room and can clip.
+
+`review_arrangement` mentions a mix where every part plays near full
+volume. Tools that write parts afterwards use their own volumes, so mixing
+is a last step, or one to repeat at the end.
 
 ## Expansion chips
 

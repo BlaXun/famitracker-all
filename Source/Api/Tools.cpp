@@ -1602,7 +1602,10 @@ public:
 	// that's earlier) to the last, in every channel that changed. Direct
 	// changes also keep the notes after it playing as before. False when
 	// nothing changed.
-	bool Collect(int RangeFirst, bool DirectChange, std::vector<Change> &Changes, int &First, std::vector<std::string> &Warnings)
+	// The changed rows from RangeFirst (or the first changed one) to the last changed one, or to RangeEnd when that's
+	// later: the notes after them play as they did before (direct changes)
+	bool Collect(int RangeFirst, bool DirectChange, std::vector<Change> &Changes, int &First, std::vector<std::string> &Warnings,
+		int RangeEnd = -1)
 	{
 		int Low = -1, High = -1;
 		std::vector<int> Changed;
@@ -1626,7 +1629,7 @@ public:
 		if (High < 0)
 			return false;
 		First = std::min(Low, std::max(0, RangeFirst));
-		const int End = High + 1;
+		const int End = std::max(High + 1, RangeEnd);
 		bool Lost = false;
 		for (size_t i = 0; i < Changed.size(); ++i) {
 			const std::vector<Cell> &New = m_Work[Changed[i]];
@@ -3079,6 +3082,255 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
+// Mixing
+
+SongFlow Flow(Session &S);
+
+// How many rows later Channel copies Source's notes in [First, End), as an
+// echo does (most of its notes Source's pitches that many rows on); 0 if not
+int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
+{
+	const std::vector<NoteInfo> &Mine = S.Notes(Channel), &Theirs = S.Notes(Source);
+	std::map<int, int> Pitches;
+	for (size_t i = 0; i < Theirs.size(); ++i)
+		if (Theirs[i].Row < End)
+			Pitches[Theirs[i].Row] = Theirs[i].Pitch;
+	int Count = 0;
+	for (size_t i = 0; i < Mine.size(); ++i)
+		if (Mine[i].Row >= First && Mine[i].Row < End)
+			++Count;
+	if (Count < 4)
+		return 0;
+	int Best = 0, BestHits = 0;
+	for (int Delay = 1; Delay <= 3 * S.Time.RowsPerBeat; ++Delay) {
+		int Hits = 0;
+		for (size_t i = 0; i < Mine.size(); ++i) {
+			if (Mine[i].Row < First || Mine[i].Row >= End)
+				continue;
+			std::map<int, int>::const_iterator it = Pitches.find(Mine[i].Row - Delay);
+			if (it != Pitches.end() && it->second == Mine[i].Pitch)
+				++Hits;
+		}
+		if (Hits > BestHits) {
+			BestHits = Hits;
+			Best = Delay;
+		}
+	}
+	return BestHits * 2 >= Count ? Best : 0;
+}
+
+enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS };
+
+// What a channel plays in [First, End), for mixing
+int MixRole(Session &S, int Channel, int Melody, int First, int End)
+{
+	const ChannelInfo &Info = S.Channel(Channel);
+	if (Info.Kind == KIND_DPCM || Info.Kind == KIND_TRIANGLE || !HasNotesIn(S, Channel, First, End))
+		return ROLE_NONE;	// no volume of their own (the DPCM level softens the triangle)
+	if (Info.Kind == KIND_NOISE)
+		return ROLE_DRUMS;
+	if (Channel == Melody)
+		return ROLE_MELODY;
+	if (Melody >= 0 && EchoDelayOf(S, Channel, Melody, First, End) > 0)
+		return ROLE_ECHO;
+	if (IsBass(Info))
+		return ROLE_BASS;
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		if (Notes[i].Row < First || Notes[i].Row >= End)
+			continue;
+		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+			if (Notes[i].Effects[e].second.first == EFF_ARPEGGIO && Notes[i].Effects[e].second.second != 0)
+				return ROLE_CHORDS;
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
+		if (pInfo != 0) {
+			const std::string Name = Lowercase(pInfo->Name);
+			if (Name.find("chord") != std::string::npos || Name.compare(0, 5, "lush ") == 0 || Name.find("arp") != std::string::npos)
+				return ROLE_CHORDS;
+		}
+	}
+	return ROLE_LINE;
+}
+
+const char *RoleName(int Role)
+{
+	switch (Role) {
+	case ROLE_MELODY: return "melody";
+	case ROLE_ECHO: return "echo";
+	case ROLE_CHORDS: return "chords";
+	case ROLE_LINE: return "a second line";
+	case ROLE_BASS: return "bass";
+	case ROLE_DRUMS: return "drums";
+	}
+	return "";
+}
+
+// The triangle's and the noise's loudness at a DPCM level, against level 0:
+// the NES mixes the three together, and the triangle's swing shrinks as the
+// DPCM's output rises
+double TriangleShare(int Level)
+{
+	auto Mix = [](double Triangle, double Dpcm) {
+		const double Sum = Triangle / 8227.0 + Dpcm / 22638.0;
+		return Sum <= 0.0 ? 0.0 : 159.79 / (1.0 / Sum + 100.0);
+	};
+	const double Full = Mix(15.0, 0.0);
+	return (Mix(15.0, Level) - Mix(0.0, Level)) / Full;
+}
+
+std::string MixTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Mixing changes the volumes of the whole song, which needs direct changes; the user can allow them in "
+			"File > Connect Claude Code.");
+	const std::string Style = Squeezed(StringArg(Args, "style", Arg(Args, "levels") != 0 || Arg(Args, "dac") != 0 ? "" : "soft"));
+	if (!Style.empty() && Style != "soft" && Style != "full" && Style != "quiet" && Style != "loud" && Style != "atmospheric")
+		throw Problem("style: soft (quiet pulses under a warm triangle, as atmospheric tracks mix) or full (everything near "
+			"full volume).");
+	const bool Soft = Style == "soft" || Style == "quiet" || Style == "atmospheric";
+	int From = 1, To = S.Time.BarCount();
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0)
+		BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
+	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+
+	// The loudest volume each channel gets: by its role for a style, or as given
+	std::vector<int> Target(static_cast<size_t>(S.ChannelCount()), -1), Roles(static_cast<size_t>(S.ChannelCount()), ROLE_NONE);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Roles[static_cast<size_t>(c)] = MixRole(S, c, Melody, First, End);
+		if (Style.empty() || Roles[static_cast<size_t>(c)] == ROLE_NONE)
+			continue;
+		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
+		Target[static_cast<size_t>(c)] = (Soft ? SOFT : FULL)[Roles[static_cast<size_t>(c)]];
+	}
+	const Json *pLevels = Arg(Args, "levels");
+	if (pLevels != 0) {
+		if (!pLevels->IsObject())
+			throw Problem("levels: an object of channels and their loudest volume, like {\"VRC6 Pulse 1\": 9, \"Noise\": 10}.");
+		for (size_t i = 0; i < pLevels->Members().size(); ++i) {
+			const int c = ParseChannel(S, Json(pLevels->Members()[i].first), "levels");
+			const Json &Value = pLevels->Members()[i].second;
+			if (!Value.IsNumber() || Value.Number() < 1 || Value.Number() > 15)
+				throw Problem("levels: each channel's loudest volume is 1-15.");
+			if (S.Channel(c).Kind == KIND_TRIANGLE || S.Channel(c).Kind == KIND_DPCM)
+				throw Problem(Format("%s has no volume of its own; dac softens the triangle (and the noise).", S.Channel(c).FullName().c_str()));
+			Target[static_cast<size_t>(c)] = static_cast<int>(Value.Number());
+		}
+	}
+	// The DPCM level: soft mixes soften the triangle and the noise a little
+	int Dac = Soft ? 0x30 : (Style == "full" || Style == "loud") ? 0 : -1;
+	const Json *pDac = Arg(Args, "dac");
+	if (pDac != 0) {
+		if (pDac->IsNumber())
+			Dac = IntArg(Args, "dac", 0, 0, 127);
+		else {
+			const std::string Word = Squeezed(StringArg(Args, "dac"));
+			if (Word == "full" || Word == "off" || Word == "zero")
+				Dac = 0;
+			else if (Word == "warm" || Word == "light")
+				Dac = 0x30;
+			else if (Word == "soft" || Word == "medium")
+				Dac = 0x50;
+			else if (Word == "softest" || Word == "strong" || Word == "max")
+				Dac = 0x7F;
+			else if (Word == "keep" || Word == "none" || Word == "leave")
+				Dac = -1;
+			else
+				throw Problem("dac: full (Z00), warm (Z30), soft (Z50), softest (Z7F), keep, or a level 0-127.");
+		}
+	}
+
+	Draft D(S);
+	std::vector<std::string> Done;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const int Want = Target[static_cast<size_t>(c)];
+		if (Want < 1)
+			continue;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		int Loudest = 0;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row >= First && Notes[i].Row < End)
+				Loudest = std::max(Loudest, Notes[i].Volume);
+		if (Loudest <= 0)
+			continue;
+		const std::string Label = S.Channel(c).FullName() + (Roles[static_cast<size_t>(c)] != ROLE_NONE ?
+			std::string(" (") + RoleName(Roles[static_cast<size_t>(c)]) + ")" : std::string());
+		if (Loudest == Want) {
+			Done.push_back(Format("%s stays at %d", Label.c_str(), Want));
+			continue;
+		}
+		std::vector<Cell> &Cells = D.Cells(c);
+		auto Scaled = [&](int Volume) {
+			return Volume <= 0 ? 0 : std::max(1, std::min(15, static_cast<int>(std::floor(Volume * static_cast<double>(Want) / Loudest + 0.5))));
+		};
+		bool FirstNote = true;
+		const int Entering = StateAt(Cells, First, S.Channel(c).EffectColumns).Volume;
+		for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r) {
+			Cell &C = Cells[static_cast<size_t>(r)];
+			if (C.Volume < NO_VOLUME)
+				C.Volume = static_cast<unsigned char>(Scaled(C.Volume));
+			else if (FirstNote && C.HasNote())
+				C.Volume = static_cast<unsigned char>(Scaled(Entering));
+			if (C.HasNote())
+				FirstNote = false;
+		}
+		Done.push_back(Format("%s loudest %d to %d", Label.c_str(), Loudest, Want));
+	}
+
+	// The level at the start and where the loop comes back
+	std::string DacText;
+	if (Dac >= 0) {
+		int Dpcm = -1;
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (S.Channel(c).Kind == KIND_DPCM)
+				Dpcm = c;
+		if (Dpcm < 0)
+			throw Problem("The song has no DPCM channel to set the level on.");
+		std::vector<int> Rows(1, First);
+		const SongFlow Flow_ = Flow(S);
+		const int Loop = Flow_.LoopRow(S.Time.PatternLength);
+		if (Loop > First && Loop < End)
+			Rows.push_back(Loop);
+		std::vector<Cell> &Cells = D.Cells(Dpcm);
+		for (size_t i = 0; i < Rows.size(); ++i) {
+			Cell &C = Cells[static_cast<size_t>(Rows[i])];
+			bool Placed = false;
+			for (int k = 0; k < EFFECT_COLUMNS && !Placed; ++k)
+				if (C.Effect[k] == EFF_DAC) {
+					C.Param[k] = static_cast<unsigned char>(Dac);
+					Placed = true;
+				}
+			if (!Placed && !AddEffect(C, EFF_DAC, Dac, S.Channel(Dpcm).EffectColumns))
+				throw Problem(Format("The DPCM channel has no free effect column at %s for the level; show another one in FamiTracker.",
+					S.Time.Position(Rows[i]).c_str()));
+		}
+		const int Share = static_cast<int>(std::floor(100.0 * TriangleShare(Dac) + 0.5));
+		DacText = Format("the DPCM level Z%02X at %s%s, so the triangle and the noise play at about %d%%", Dac,
+			S.Time.Position(First).c_str(), Rows.size() > 1 ? (" and where the loop starts (" + S.Time.Position(Rows[1]) + ")").c_str() : "",
+			Share);
+		if (HasNotesIn(S, Dpcm, 0, S.Time.TotalRows()) && Dac > 0x40)
+			DacText += " (samples on the DPCM channel start from that level: at a high one they have less room and can clip; "
+				"Z30-Z40 suits songs with samples)";
+	}
+
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = First;
+	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" : "the mix";
+	What += ", " + RangeText(From, To) + ": ";
+	for (size_t i = 0; i < Done.size(); ++i)
+		What += (i == 0 ? "" : "; ") + Done[i];
+	if (!DacText.empty())
+		What += (Done.empty() ? "" : "; ") + DacText;
+	if (!D.Collect(First, true, Changes, Start, Warnings, End))
+		return "The song is mixed that way already: " + What.substr(What.find(": ") + 2) + ".";
+	std::string Text = Commit(S, Changes, Start, false, "", What);
+	if (Soft)
+		Text += " Soft pulses leave the low end to the triangle and make the sound warmer; turn the playback volume up rather "
+			"than the pulses. Volumes the tools write later start from the song's own, so mix again at the end.";
+	return WithRemarks(S, Text, Warnings);
+}
+
 int LevelArg(const Json &Args, const char *Name, int Default, const char *const *Words, const int *Values, int Count)
 {
 	const Json *pValue = Arg(Args, Name);
@@ -3905,6 +4157,29 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (!Calm)
 			Tip(1.0, "Flat dynamics sound typed: polish adds accents (the bar's first note loudest, the notes between beats "
 				"softer).");
+	}
+
+	// The mix: every part near full volume buries the triangle and sounds harsh
+	{
+		int Parts = 0, Loud = 0;
+		for (size_t p = 0; p < Playing.size(); ++p) {
+			const int Kind = S.Channel(Playing[p]).Kind;
+			if (Kind == KIND_TRIANGLE || Kind == KIND_DPCM || Kind == KIND_NOISE)
+				continue;
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Playing[p]), First, End);
+			int Loudest = 0;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Loudest = std::max(Loudest, Notes[i].Volume);
+			++Parts;
+			if (Loudest >= 13)
+				++Loud;
+		}
+		if (Parts >= 2 && Loud == Parts) {
+			Lines.push_back(Format("Mix: %s near full volume.", Parts == 2 ? "both parts with a volume play" :
+				"every part with a volume plays"));
+			Tip(0.5, "Everything near full volume buries the triangle and sounds harsh: mix (style soft) brings the melody to 9, "
+				"an echo to 4 and the rest to 6-7, and softens the triangle and the noise a little with the DPCM level.");
+		}
 	}
 
 	// Register: another part sitting on the melody
@@ -8458,6 +8733,28 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
 		false, false, true);
 
+	{
+		Json Levels = Prop("object", "Each channel's loudest volume, 1-15, like {\"VRC6 Pulse 1\": 9, \"Noise\": 10}; the "
+			"channel's other volumes scale with it. Overrides the style for those channels.");
+		AddTool("mix", "Balance the mix",
+			"Sets how loud each part plays, keeping each part's own dynamics: its volume column scales so its loudest note plays "
+			"at a level. style soft (the default) mixes the way atmospheric NES tracks do: the melody's loudest at 9, an echo of "
+			"it at 4, chords at 6, a second line at 7, a bass on a pulse or the sawtooth at 10, drums at 10, and the DPCM level "
+			"at Z30 so the triangle and the noise soften to about 70% too; the pulses stop burying the triangle, and the sound "
+			"gets warmer. style full puts them near full volume again. levels sets channels yourself, dac the DPCM level alone "
+			"(full Z00, warm Z30, soft Z50, softest Z7F, or 0-127), set where the song starts and where its loop starts. The "
+			"reply says what each channel plays (melody, echo, chords...) and what changed. Needs direct changes; undoable.",
+			Schema()
+				.Add("style", EnumProp("soft (default) or full.", std::vector<std::string>{ "soft", "full" }))
+				.Add("levels", Levels)
+				.Add("dac", Prop("string", "The DPCM level that softens the triangle and the noise: full, warm, soft, softest, keep, or "
+					"0-127 (default warm for soft, full for full)."))
+				.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel."))
+				.Add("from_bar", BarProp("First bar (default 1)."))
+				.Add("to_bar", BarProp("Last bar (default the song's last).")),
+			false, false, true);
+	}
+
 	AddTool("set_swing", "Swing the rhythm",
 		"Makes the rhythm swing the way FamiTracker 0.4.6 can: the speed changes every half beat (Fxx), longer then shorter, "
 		"so every channel's off-beat notes come late together, and notes written later swing too. The two speeds average the "
@@ -9161,6 +9458,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
 		else if (Name == "set_swing") Result.Text = SetSwingTool(S, Args);
+		else if (Name == "mix") Result.Text = MixTool(S, Args);
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
 		else if (Name == "add_drums") Result.Text = AddDrumsTool(S, Args);
 		else if (Name == "add_harmony") Result.Text = AddHarmonyTool(S, Args);

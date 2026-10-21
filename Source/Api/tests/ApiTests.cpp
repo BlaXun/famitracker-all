@@ -6135,6 +6135,71 @@ void TestSwing()
 	CHECK_HAS(Run(Song, "set_swing", "{\"amount\": \"wobbly\"}").Text, "amount: none, light");
 }
 
+void TestMix()
+{
+	// A melody, its echo, chords, a second line, a bass on the triangle and drums
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "C-5", "A-4" };
+	for (int i = 0; i < 8; ++i) {
+		Song.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 4 ? 12 : -1);
+		Song.Put(6, i * 4 + 3, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 6 : -1);
+	}
+	Song.Put(0, 0, "C-3", 2);
+	Song.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][0].Param[0] = 0x47;
+	Song.Put(0, 16, "F-3");
+	Song.Put(1, 0, "E-3", 2, 12);
+	Song.Put(1, 8, "G-3");
+	Song.Put(1, 16, "A-3");
+	Song.Put(1, 24, "C-4");
+	Song.Put(2, 0, "C-3", 1);
+	Song.Put(3, 0, "kick", 2, 15);
+	Song.Put(3, 4, "snare", 2, 12);
+	ToolResult Result = Run(Song, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a soft mix, bars 1-8: 2A03 Pulse 1 (chords) loudest 15 to 6; 2A03 Pulse 2 (a second line) loudest 12 to 7; "
+		"2A03 Noise (drums) loudest 15 to 10; VRC6 Pulse 1 (melody) loudest 15 to 9; VRC6 Pulse 2 (echo) loudest 6 to 4; the DPCM "
+		"level Z30 at bar 1 beat 1, so the triangle and the noise play at about 70%");
+	CHECK(Song.Rows[5][0].Volume == 9 && Song.Rows[5][16].Volume == 7 && Song.Rows[5][4].Volume == NO_VOLUME);
+	CHECK(Song.Rows[6][3].Volume == 4 && Song.Rows[0][0].Volume == 6 && Song.Rows[1][0].Volume == 7);
+	CHECK(Song.Rows[3][0].Volume == 10 && Song.Rows[3][4].Volume == 8);
+	CHECK(Song.Rows[4][0].Effect[0] == EFF_DAC && Song.Rows[4][0].Param[0] == 0x30);
+	CHECK(Song.Rows[2][0].Volume == NO_VOLUME);	// the triangle has none
+	CHECK_HAS(Run(Song, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "mixed that way already");
+	// Near full volume again, the level back to 0
+	Result = Run(Song, "mix", "{\"style\": \"full\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(Result.Text, "a full mix, bars 1-8:");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 9 to 15");
+	CHECK_HAS(Result.Text, "Z00 at bar 1 beat 1, so the triangle and the noise play at about 100%");
+	CHECK(Song.Rows[5][0].Volume == 15 && Song.Rows[4][0].Param[0] == 0 && Song.Rows[4][0].Effect[0] == EFF_DAC);
+	// One channel by hand: the rest and the level stay
+	Result = Run(Song, "mix", "{\"levels\": {\"Noise\": 8}}");
+	CHECK_HAS(Result.Text, "the mix, bars 1-8: 2A03 Noise (drums) loudest 15 to 8.");
+	CHECK(Song.Rows[3][0].Volume == 8 && Song.Rows[5][0].Volume == 15);
+	// The level alone, as a number
+	Result = Run(Song, "mix", "{\"dac\": 127}");
+	CHECK_HAS(Result.Text, "Z7F at bar 1 beat 1, so the triangle and the noise play at about 43%");
+	CHECK_HAS(Run(Song, "mix", "{\"levels\": {\"Triangle\": 8}}").Text, "has no volume of its own");
+	CHECK_HAS(Run(Song, "mix", "{\"style\": \"funky\"}").Text, "style: soft");
+	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"loudest\"}").Text, "dac: full (Z00)");
+	FakeSong Ask;
+	CHECK_HAS(Run(Ask, "mix", "{}").Text, "needs direct changes");
+	// Guessing the melody works too
+	CHECK(!Run(Song, "mix", "{}").IsError);
+
+	// The review points out a mix where everything plays near full volume
+	FakeSong Loud;
+	Loud.Info.DirectChanges = true;
+	for (int i = 0; i < 16; ++i)
+		Loud.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT);
+	for (int b = 0; b < 4; ++b)
+		Loud.Put(0, b * 16, "C-3", b == 0 ? 2 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Loud, "review_arrangement", "{}").Text, "Mix: both parts with a volume play near full volume.");
+	CHECK(!Run(Loud, "mix", "{}").IsError);
+	CHECK(Run(Loud, "review_arrangement", "{}").Text.find("Mix:") == std::string::npos);
+}
+
 int main()
 {
 	TestJson();
@@ -6192,6 +6257,7 @@ int main()
 	TestExport();
 	TestLushChords();
 	TestSwing();
+	TestMix();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
