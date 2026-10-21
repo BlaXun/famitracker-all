@@ -1735,7 +1735,7 @@ void WriteTestMidi(const std::string &Path)
 		Add(Tick, 1, { uint8_t(0x90 | Channel), uint8_t(Key), 100 });
 		Add(Tick + Length, 0, { uint8_t(0x80 | Channel), uint8_t(Key), 0 });
 	};
-	const std::string Name = "Api Waltz";
+	const std::string Name = Path.find("untitled") == std::string::npos ? "Api Waltz" : "";
 	std::vector<uint8_t> Title = { 0xFF, 0x03, uint8_t(Name.size()) };
 	Title.insert(Title.end(), Name.begin(), Name.end());
 	Add(0, 1, Title);
@@ -1941,6 +1941,13 @@ void TestReferences()
 		std::find(Kept.Tags.begin(), Kept.Tags.end(), "3/4") != Kept.Tags.end() &&
 		std::find(Kept.Tags.begin(), Kept.Tags.end(), "tracker-module") == Kept.Tags.end());
 	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"api-waltz-midi\"}").Text, "General MIDI's instruments");
+	// Untitled: named after its file
+	WriteTestMidi("untitled waltz.mid");
+	Result = Run(Song, "study_module", "{\"path\": \"untitled waltz.mid\", \"save\": false}");
+	CHECK_HAS(Result.Text, "untitled waltz: a MIDI file (format 0, 1 track) in 3/4");
+	CHECK_HAS(Result.Text, "untitled waltz. Reference \"untitled-waltz-midi\"");
+	CHECK_LACKS(Result.Text, "\nSong\n");
+	std::remove("untitled waltz.mid");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"delete\", \"reference\": \"api-waltz-midi\"}").Text, "Deleted the reference");
 	std::remove(MidiPath.c_str());
 

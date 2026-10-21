@@ -7715,6 +7715,12 @@ std::string StudyModuleTool(Session &S, const Json &Args)
 		throw Problem("The file " + Path + " couldn't be read: " + Error + ". Give the path of a MOD, S3M, XM or IT file, or a "
 			"MIDI file, as Windows writes it.");
 	const std::string What = Song.Format == "MIDI" ? "MIDI file" : "module";
+	if (Song.Title.empty()) {
+		// Untitled: named after its file
+		Song.Title = Path.substr(Path.find_last_of("\\/") == std::string::npos ? 0 : Path.find_last_of("\\/") + 1);
+		if (Song.Title.find('.') != std::string::npos)
+			Song.Title = Song.Title.substr(0, Song.Title.find_last_of('.'));
+	}
 	nsf::Module M;
 	nsf::TrackReport Report;
 	if (!nsf::TrackerToModule(Song, M, Report, Error))
