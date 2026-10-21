@@ -620,8 +620,13 @@ struct CClipsPanelWnd::Impl {
 			if (pRoll != NULL)
 				pRoll->HideClipDrop();
 		}
-		else if (pRoll != NULL && pRoll->ShowClipDrop(Screen, LibraryIndex(Pressed), Scroll, Channel, Frame, Row))
-			Over = InRoll = true;
+		else {
+			// Off the pattern editor: the cursor back where it was if passing its edge scrolled it,
+			// as the piano roll's notes go on the cursor's channel
+			RestoreCursor();
+			if (pRoll != NULL && pRoll->ShowClipDrop(Screen, LibraryIndex(Pressed), Scroll, Channel, Frame, Row))
+				Over = InRoll = true;
+		}
 		if (Over == Dropping && (!Over || (Channel == DropChannel && Frame == DropFrame && Row == DropRow && InRoll == DropInRoll &&
 			Linked == DropLinked)))
 			return;		// says the same as before
@@ -646,6 +651,17 @@ struct CClipsPanelWnd::Impl {
 		Status(Text);
 	}
 
+	// The cursor back where it was before the drag, if scrolling the pattern editor moved it
+	void RestoreCursor()
+	{
+		CFamiTrackerView *pView = View();
+		if (pView != NULL && (static_cast<int>(pView->GetSelectedFrame()) != StartFrame ||
+			static_cast<int>(pView->GetSelectedRow()) != StartRow || static_cast<int>(pView->GetSelectedChannel()) != StartChannel)) {
+			pView->SelectFrame(static_cast<unsigned int>(StartFrame));
+			MoveCursor(StartChannel, StartRow);
+		}
+	}
+
 	// Nothing shaded, and the cursor back where it was if scrolling moved it
 	void CancelDrop()
 	{
@@ -656,11 +672,7 @@ struct CClipsPanelWnd::Impl {
 		CFamiTrackerView *pView = View();
 		if (pView != NULL) {
 			pView->HideClipDrop();
-			if (static_cast<int>(pView->GetSelectedFrame()) != StartFrame || static_cast<int>(pView->GetSelectedRow()) != StartRow ||
-				static_cast<int>(pView->GetSelectedChannel()) != StartChannel) {
-				pView->SelectFrame(static_cast<unsigned int>(StartFrame));
-				MoveCursor(StartChannel, StartRow);
-			}
+			RestoreCursor();
 		}
 		Dropping = false;
 		DropInRoll = false;
