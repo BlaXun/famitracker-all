@@ -4386,6 +4386,45 @@ int AddScoops(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
 	return Count;
 }
 
+// Falls where a channel's phrases end: a note of a beat or more that a rest
+// of a beat or more follows drops two semitones as it ends (R42 half a beat
+// before its end, quick and short, a sigh), at most one every two bars. How
+// many; Lost when an effect column was full.
+int AddFalls(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
+{
+	const int R = S.Time.RowsPerBeat;
+	const int Columns = S.Channel(Channel).EffectColumns;
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	int Count = 0, Last = -1000;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		const int Stop = N.Row + N.Rows;	// where a halt or release ends it
+		if (N.Row < First || N.Row >= End || N.Rows < R || N.Row - Last < 2 * S.Time.RowsPerBar || N.Pitch < 3 ||
+			Stop >= static_cast<int>(Cells.size()) || !Cells[static_cast<size_t>(Stop)].IsEnd())
+			continue;
+		const int Next = i + 1 < Notes.size() ? Notes[i + 1].Row : static_cast<int>(Cells.size());
+		if (Next - Stop < R)
+			continue;	// a breath, not a phrase's end
+		bool Sliding = false;
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first;
+			Sliding = Sliding || Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || Effect == EFF_PORTAMENTO || Effect == EFF_PORTA_UP ||
+				Effect == EFF_PORTA_DOWN || Effect == EFF_ARPEGGIO;
+		}
+		const int At = std::max(N.Row + 1, Stop - std::max(1, R / 2));
+		if (Sliding || At >= Stop)
+			continue;
+		if (!AddEffect(Cells[static_cast<size_t>(At)], EFF_SLIDE_DOWN, 0x42, Columns)) {
+			Lost = true;
+			continue;
+		}
+		Last = N.Row;
+		++Count;
+	}
+	return Count;
+}
+
 int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
 {
 	const std::vector<NoteInfo> Notes = D.Notes(Channel);
@@ -4453,8 +4492,8 @@ std::string PolishTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
-				Word != "staccato")
-				throw Problem("touches: accents, vibrato, separate, fades, scoops or staccato.");
+				Word != "staccato" && Word != "falls")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls or staccato.");
 			What.insert(Word);
 		}
 	}
@@ -4521,6 +4560,15 @@ std::string PolishTool(Session &S, const Json &Args)
 		if (Count > 0)
 			Done.push_back(Format("%s after leaps up on %s (written a semitone or two low, sliding up with Q6y)",
 				Plural(Count, "scoop", "scoops").c_str(), S.Channel(Melody).FullName().c_str()));
+	}
+	if (What.count("falls") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
+		bool Lost = false;
+		const int Count = AddFalls(S, D, Melody, First, End, Lost);
+		if (Lost)
+			Warnings.push_back("Some phrase ends had no free effect column for a fall (show more effect columns in FamiTracker).");
+		if (Count > 0)
+			Done.push_back(Format("%s where phrases of %s end (a drop of two semitones as the last note ends, R42)",
+				Plural(Count, "fall", "falls").c_str(), S.Channel(Melody).FullName().c_str()));
 	}
 	if (What.count("staccato")) {
 		for (size_t i = 0; i < Channels.size(); ++i) {
@@ -9753,8 +9801,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one); and when asked, fades "
 			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
 			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
-			"bars) and staccato (the bass's notes of a beat or more cut after three quarters of a beat, so it bounces). Default: "
-			"accents, vibrato and separate.");
+			"bars), falls (the melody's last note before a rest of a beat or more drops two semitones as it ends, a sigh, at "
+			"most one every two bars) and staccato (the bass's notes of a beat or more cut after three quarters of a beat, so "
+			"it bounces). Default: accents, vibrato and separate.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
@@ -9763,6 +9812,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("separate");
 		TouchNames.Push("fades");
 		TouchNames.Push("scoops");
+		TouchNames.Push("falls");
 		TouchNames.Push("staccato");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
@@ -10441,8 +10491,9 @@ std::string ToolSet::Instructions()
 		"loudest at 9, echoes at 4, the triangle softened by the DPCM level), an echo under nearly every melodic line (add_echo "
 		"a beat later, volume 6, detune 1), chords as lush arpeggio instruments with sevenths and ninths (add_chords_and_bass "
 		"chord_style lush; make_groove nostalgic; on the VRC7, chord_style voices with its electric piano across FM "
-		"channels), a swing from alternating speeds (set_swing), a vibrato that waits on long notes, fades on held notes and "
-		"scoops after leaps (polish touches fades and scoops), a bouncing bass (touch staccato) or a punchy one (bass_instrument "
+		"channels), a swing from alternating speeds (set_swing), a vibrato that waits on long notes, fades on held notes, "
+		"scoops after leaps and falls where phrases end (polish touches fades, scoops and falls), a bouncing bass (touch "
+		"staccato) or a punchy one (bass_instrument "
 		"\"thump bass\": an octave blip into each triangle note), a sampled kick and snare under the noise channel's hi-hats "
 		"(add_drums or make_groove with kit samples), and VRC6 bells and pianos or VRC7 electric pianos. references action "
 		"guide topic atmospheric has the numbers.\n"

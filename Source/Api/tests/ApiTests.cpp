@@ -2890,7 +2890,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops or staccato");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls or staccato");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -6638,6 +6638,25 @@ void TestFadesAndScoops()
 	CHECK(Bass.Rows[2][17].Note == NOTE_NONE);	// a note shorter than a beat stays
 	// Read back as written: the note and its slide
 	CHECK_HAS(Run(Leap, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bar 1 beat 2: F-4, 2 beats, effects Q62");
+
+	// Falls: a phrase's last note before a rest of a beat drops as it ends; a breath or a note into the next doesn't
+	FakeSong Sigh;
+	Sigh.Info.DirectChanges = true;
+	Sigh.Put(5, 0, "E-4", 0, 12);
+	Sigh.End(5, 8, NOTE_RELEASE);		// two beats, then a rest of two
+	Sigh.Put(5, 16, "D-4");
+	Sigh.End(5, 22, NOTE_RELEASE);		// a rest of two rows: a breath
+	Sigh.Put(5, 24, "C-4");
+	Sigh.Put(5, 32, "G-4");			// rings into the next
+	Sigh.Put(5, 40, "C-5");
+	Sigh.End(5, 48, NOTE_HALT);
+	Result = Run(Sigh, "polish", "{\"touches\": [\"falls\"], \"channels\": \"VRC6 Pulse 1\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "2 falls where phrases of VRC6 Pulse 1 end (a drop of two semitones as the last note ends, R42)");
+	CHECK(HasEffectAt(Sigh, 5, 6, EFF_SLIDE_DOWN, 0x42) && HasEffectAt(Sigh, 5, 46, EFF_SLIDE_DOWN, 0x42));
+	for (int r = 8; r < 46; ++r)
+		CHECK(!HasEffectAt(Sigh, 5, r, EFF_SLIDE_DOWN, 0x42));	// the breath, and the notes into the next
+	CHECK_HAS(Run(Sigh, "polish", "{\"touches\": [\"sighs\"]}").Text, "falls");
 }
 
 void TestReharmonize()

@@ -377,8 +377,9 @@ avoid that, and gives it tools for each layer:
   free channel.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
   between repeated triangle notes; when asked, fades on held notes, `A0y`
-  from halfway through, scoops into held notes after a leap up, and a
-  staccato bass that bounces);
+  from halfway through, scoops into held notes after a leap up, falls (a
+  sigh of two semitones, `R42`) where phrases end, and a staccato bass that
+  bounces);
   `make_groove` starts a whole backing for a mood; `copy_bars` and `vary_part` build a form whose repeats change,
   and `insert_bars` and `remove_bars` make room for a section or cut one.
 
