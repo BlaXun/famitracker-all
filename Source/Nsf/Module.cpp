@@ -21,8 +21,8 @@
 
 #include "Module.h"
 
+#include <algorithm>
 #include <cstdio>
-#include <set>
 #include <sstream>
 
 namespace nsf {
@@ -210,8 +210,8 @@ std::string WriteText(const Module &M)
 	char Line[256];
 	const int Channels = M.ChannelCount();
 
-	Out << "# FamiTracker text export 0.4.2\n";
-	Out << "# Imported from an NSF by beginner-friendly FamiTracker\n\n";
+	// The header FamiTracker writes (a converted NSF names itself in the song's comment)
+	Out << "# FamiTracker text export 0.4.2\n\n";
 	Out << "# Song information\n";
 	std::snprintf(Line, sizeof(Line), "%-15s %s\n%-15s %s\n%-15s %s\n\n", "TITLE", Quote(M.Title, 31).c_str(),
 		"AUTHOR", Quote(M.Author, 31).c_str(), "COPYRIGHT", Quote(M.Copyright, 31).c_str());
@@ -232,17 +232,21 @@ std::string WriteText(const Module &M)
 		Out << Line;
 	}
 
+	// Empty macros and samples are free places in their lists, as in FamiTracker
 	Out << "# Macros\n";
 	static const char *const MACRO_COMMANDS[3] = { "MACRO", "MACROVRC6", "MACRON163" };
 	for (int Chip = 0; Chip < 3; ++Chip)
 		for (int Type = 0; Type < SEQ_TYPES; ++Type)
 			for (size_t i = 0; i < M.Macros[Chip][Type].size(); ++i)
-				WriteMacroLine(Out, MACRO_COMMANDS[Chip], Type, int(i), M.Macros[Chip][Type][i]);
+				if (!M.Macros[Chip][Type][i].Empty())
+					WriteMacroLine(Out, MACRO_COMMANDS[Chip], Type, int(i), M.Macros[Chip][Type][i]);
 	Out << "\n";
 
 	Out << "# DPCM samples\n";
 	for (size_t s = 0; s < M.Samples.size(); ++s) {
 		const std::vector<uint8_t> &Data = M.Samples[s];
+		if (Data.empty())
+			continue;
 		std::snprintf(Line, sizeof(Line), "%s %3d %5d %s\n", "DPCMDEF", int(s), int(Data.size()),
 			Quote(s < M.SampleNames.size() ? M.SampleNames[s] : "Sample " + std::to_string(s), 60).c_str());
 		Out << Line;
@@ -258,13 +262,16 @@ std::string WriteText(const Module &M)
 	Out << "# Instruments\n";
 	for (size_t i = 0; i < M.Instruments.size(); ++i) {
 		const Instrument &Inst = M.Instruments[i];
+		if (Inst.Unused)
+			continue;
 		const std::string Name = Quote(Inst.Name, 60);
-		// The macros' indices: an instrument's own macros are added to its chip's list by the converter
+		// The macros' indices: as the instrument numbers them, or else found in its chip's list (an
+		// instrument's own macros are added to it by the converter)
 		int Seq[SEQ_TYPES];
 		const int Chip = Inst.Kind == INST_VRC6 ? MACROS_VRC6 : (Inst.Kind == INST_N163 ? MACROS_N163 : MACROS_2A03);
 		for (int t = 0; t < SEQ_TYPES; ++t) {
-			Seq[t] = -1;
-			if (Inst.Macros[t].Empty())
+			Seq[t] = Inst.MacroIndex[t];
+			if (Seq[t] >= 0 || Inst.Macros[t].Empty())
 				continue;
 			const std::vector<Macro> &List = M.Macros[Chip][t];
 			for (size_t k = 0; k < List.size(); ++k)
@@ -290,7 +297,9 @@ std::string WriteText(const Module &M)
 				Out << Line;
 				break;
 			case INST_FDS: {
-				std::snprintf(Line, sizeof(Line), "%-8s %3d   %3d %3d %3d %3d %s\n", "INSTFDS", int(i), Inst.ModDepth > 0 ? 1 : 0,
+				// Modulation on: FamiTracker's instruments always have it (the setting isn't saved in a module),
+				// and a 0 here leaves the instrument editor's modulation fields greyed out
+				std::snprintf(Line, sizeof(Line), "%-8s %3d   %3d %3d %3d %3d %s\n", "INSTFDS", int(i), 1,
 					Inst.ModRate, Inst.ModDepth, Inst.ModDelay, Name.c_str());
 				Out << Line;
 				std::snprintf(Line, sizeof(Line), "%-8s %3d :", "FDSWAVE", int(i));
@@ -349,20 +358,30 @@ std::string WriteText(const Module &M)
 		}
 		Out << "\n";
 
-		// A PATTERN block for every pattern number any channel uses
-		std::set<int> Used;
-		for (size_t f = 0; f < T.Frames.size(); ++f)
-			for (size_t c = 0; c < T.Frames[f].size(); ++c)
-				Used.insert(T.Frames[f][c]);
+		// A PATTERN block for every pattern number with something in it in any channel, as FamiTracker
+		// writes them: one that no frame plays is kept, an empty one needn't be written
+		int Patterns = 0;
+		for (int c = 0; c < Channels && c < int(T.Patterns.size()); ++c)
+			Patterns = std::max(Patterns, int(T.Patterns[c].size()));
 		const Cell Empty;
-		for (std::set<int>::const_iterator p = Used.begin(); p != Used.end(); ++p) {
-			Out << "PATTERN " << Printf("%02X", *p) << "\n";
+		for (int p = 0; p < Patterns; ++p) {
+			bool Used = false;
+			for (int c = 0; c < Channels && c < int(T.Patterns.size()) && !Used; ++c) {
+				if (p >= int(T.Patterns[c].size()))
+					continue;
+				const std::vector<Cell> &Rows = T.Patterns[c][p];
+				for (int r = 0; r < T.PatternLength && r < int(Rows.size()) && !Used; ++r)
+					Used = !Rows[r].Empty();
+			}
+			if (!Used)
+				continue;
+			Out << "PATTERN " << Printf("%02X", p) << "\n";
 			for (int r = 0; r < T.PatternLength; ++r) {
 				Out << "ROW " << Printf("%02X", r);
 				for (int c = 0; c < Channels; ++c) {
 					const Cell *pCell = &Empty;
-					if (c < int(T.Patterns.size()) && *p < int(T.Patterns[c].size()) && r < int(T.Patterns[c][*p].size()))
-						pCell = &T.Patterns[c][*p][r];
+					if (c < int(T.Patterns.size()) && p < int(T.Patterns[c].size()) && r < int(T.Patterns[c][p].size()))
+						pCell = &T.Patterns[c][p][r];
 					Out << " : " << CellText(*pCell, c < int(T.Columns.size()) ? T.Columns[c] : 1, c == NOISE_CHANNEL);
 				}
 				Out << "\n";
