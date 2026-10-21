@@ -1178,8 +1178,16 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Pitches.insert(Notes[c][i].Note);
 			Long += Notes[c][i].Length >= 2;
 		}
-		const double Score = double(Long + 1) * Pitches.size() * (AvgPitch[c] >= 36 ? 1.0 : 0.3) * (Kinds[c] == C_TRIANGLE ? 0.4 : 1.0) *
+		double Score = double(Long + 1) * Pitches.size() * (AvgPitch[c] >= 36 ? 1.0 : 0.3) * (Kinds[c] == C_TRIANGLE ? 0.4 : 1.0) *
 			(1.0 + (AvgPitch[c] - 40) / 40.0);
+		if (Kinds[c] == C_SAMPLE) {
+			// A tracker module's quiet parts are seldom the lead: its usual volume counts
+			std::vector<int> Volumes;
+			for (size_t i = 0; i < Notes[c].size(); ++i)
+				Volumes.push_back(Notes[c][i].Volume);
+			std::sort(Volumes.begin(), Volumes.end());
+			Score *= std::pow(std::max(1, Volumes[Volumes.size() / 2]) / 15.0, 2.0);
+		}
 		if (Score > LeadScore) {
 			LeadScore = Score;
 			Lead = c;

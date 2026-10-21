@@ -4810,8 +4810,14 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 			Plan.Set("moves", Moves);
 	}
 	if (Calm) {
-		if (Arg(Args, "tempo_percent") == 0 && Arg(Args, "bpm") == 0)
-			Plan.Set("tempo_percent", 80);
+		if (Arg(Args, "tempo_percent") == 0 && Arg(Args, "bpm") == 0) {
+			// 20% slower, and a fast song slower still: no faster than 120 BPM, but at least 60% of the day's tempo
+			const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+			double Target = Now * 0.8;
+			if (Target > 120.0)
+				Target = std::max(120.0, Now * 0.6);
+			Plan.Set("tempo_percent", std::floor(100.0 * Target / Now + 0.5));
+		}
 		if (Melody >= 0 && Arg(Args, "vibrato") == 0) {
 			// Slower and wider than a day's, and later into the note
 			Json Vibrato = Json::MakeObject();
@@ -7417,7 +7423,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"the parts that sit high an octave lower (register), the melody's fast runs as their outline (melody simpler), notes "
 			"held into the next with even dynamics (legato), chords held as a warm pad that swells in (chords held), the bass in "
 			"long notes (bass long), the drums a soft pulse on each bar's first beat (drums pulse), a soft lead that swells in, "
-			"slower and wider vibrato, a longer and softer echo, tempo_percent 80 and volume_percent 75. version \"tense\" (or "
+			"slower and wider vibrato, a longer and softer echo, tempo_percent 80 (a fast song slows to 120 BPM, down to 60%) and "
+			"volume_percent 75. version \"tense\" (or "
 			"\"battle\", \"danger\", \"boss\", \"chase\") is faster and "
 			"darker by itself: tempo_percent 115, to_mode minor when the song is in major, a bright lead on the melody, bass "
 			"driving and drums busier. Give any of those to change it (false turns vibrato, echo or sounds off; to_mode \"keep\" "

@@ -3745,6 +3745,13 @@ void TestNightVersion()
 	CHECK_LACKS(Result.Text, "octave");
 	CHECK(Song.Rows[5][3].HasNote() && Song.Rows[0][4].HasNote() && Song.Rows[2][2].HasNote() && Song.Rows[3][2].HasNote());
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"lush\"}")).Text, "chords should be keep, held or richer");
+	// A fast song slows more than 20%: to 120 BPM
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Song.Info.Tempo = 180;
+	Result = Tools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false}"));
+	CHECK_HAS(Result.Text, "BPM instead of 180");
+	const double Bpm = Song.Info.Tempo * 6.0 / Song.Info.Speed;
+	CHECK(Bpm > 115 && Bpm < 125);
 }
 
 void TestTenseVersions()
