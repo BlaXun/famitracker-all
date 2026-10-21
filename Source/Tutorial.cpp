@@ -190,11 +190,13 @@ class CTutorialOverlay : public CWnd
 public:
 	CTutorialOverlay() : m_Colour(RING_COLOUR) {}
 	bool Create(CWnd *pOwner);
-	bool Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow);	// screen coordinates; true if it changed
+	// Screen coordinates; Keep is the note, left clear whatever the windows'
+	// order (some systems put a layered window over the others). True if it changed.
+	bool Show(const CRect &Window, const CRect &Spot, const CRect &Keep, COLORREF Colour, CWnd *pBelow);
 	void Hide();
 
 private:
-	CRect m_Window, m_Spot;
+	CRect m_Window, m_Spot, m_Keep;
 	COLORREF m_Colour;
 };
 
@@ -205,14 +207,15 @@ bool CTutorialOverlay::Create(CWnd *pOwner)
 		CRect(0, 0, 1, 1), pOwner, 0) != FALSE;
 }
 
-bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Colour, CWnd *pBelow)
+bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, const CRect &Keep, COLORREF Colour, CWnd *pBelow)
 {
 	if (GetSafeHwnd() == NULL || Window.IsRectEmpty())
 		return false;
-	if (Window == m_Window && Spot == m_Spot && Colour == m_Colour && IsWindowVisible())
+	if (Window == m_Window && Spot == m_Spot && Keep == m_Keep && Colour == m_Colour && IsWindowVisible())
 		return false;
 	m_Window = Window;
 	m_Spot = Spot;
+	m_Keep = Keep;
 	m_Colour = Colour;
 
 	const int Width = Window.Width(), Height = Window.Height();
@@ -243,16 +246,22 @@ bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, COLORREF Col
 	const DWORD Dim = static_cast<DWORD>(DIM_ALPHA) << 24;
 	const DWORD Ring = 0xFF000000u | (static_cast<DWORD>(GetRValue(Colour)) << 16) | (static_cast<DWORD>(GetGValue(Colour)) << 8) |
 		GetBValue(Colour);
+	const CRect Clear = Keep.IsRectEmpty() ? CRect() : Keep - Window.TopLeft();
 	DWORD *pPixels = static_cast<DWORD*>(pBits);
 	for (int y = 0; y < Height; ++y) {
 		DWORD *pRow = pPixels + static_cast<size_t>(y) * static_cast<size_t>(Width);
 		std::fill(pRow, pRow + Width, Dim);
-		if (y < Frame.top || y >= Frame.bottom)
-			continue;
-		const int Left = std::max(0, static_cast<int>(Frame.left)), Right = std::min(Width, static_cast<int>(Frame.right));
-		const bool InHole = y >= Hole.top && y < Hole.bottom;
-		for (int x = Left; x < Right; ++x)
-			pRow[x] = (InHole && x >= Hole.left && x < Hole.right) ? 0 : Ring;
+		if (y >= Frame.top && y < Frame.bottom) {
+			const int Left = std::max(0, static_cast<int>(Frame.left)), Right = std::min(Width, static_cast<int>(Frame.right));
+			const bool InHole = y >= Hole.top && y < Hole.bottom;
+			for (int x = Left; x < Right; ++x)
+				pRow[x] = (InHole && x >= Hole.left && x < Hole.right) ? 0 : Ring;
+		}
+		if (y >= Clear.top && y < Clear.bottom) {
+			const int Left = std::max(0, static_cast<int>(Clear.left)), Right = std::min(Width, static_cast<int>(Clear.right));
+			for (int x = Left; x < Right; ++x)
+				pRow[x] = 0;
+		}
 	}
 
 	POINT Destination = { Window.left, Window.top };
@@ -640,13 +649,15 @@ void CTutorialBubble::Tick()
 		!Spot.IsRectEmpty();
 	if (!HasSpot)
 		Spot.SetRectEmpty();
-	bool Raise = false;
-	if (HasSpot)
-		Raise = m_Overlay.Show(Window, Spot, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
-	else
-		m_Overlay.Hide();
 	if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
 		Place(Spot);
+	CRect Note;
+	GetWindowRect(&Note);
+	bool Raise = false;
+	if (HasSpot)
+		Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
+	else
+		m_Overlay.Hide();
 	m_LastSpot = Spot;
 	m_LastWindow = Window;
 	if (!IsWindowVisible()) {
