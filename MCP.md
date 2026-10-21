@@ -166,7 +166,7 @@ anything; close the dialog and ask again.
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
-| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip and 22 more kinds, or a recording of your voice ("pew", "boing", "kssh"). See [Sound effects](#sound-effects) |
+| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops. See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
@@ -451,10 +451,29 @@ change it in the instrument editor.
 | bounce, warp, whoosh, splash, door, footstep, break | a spring ("boing"), teleporting, dashing, water, doors, steps, breaking a pot |
 | select, confirm, cancel, error, text | menus, OK, back, something that can't be done, dialogue letters |
 | message, heal | chat messages and notifications, healing |
+| wind, rain, fire | ambience: a heavy wind blowing in gusts, rain pattering, a fire crackling (these loop) |
+| thunder, birds, wings | a crack of thunder rolling away, two birds chirping, a bird flying off ("bird flying away") |
+| engine, alarm, heartbeat | an engine idling, a siren, a heartbeat for low health (these loop) |
 
 Every kind has variants (variant 2, 3, ... are a little higher or lower,
 shorter or longer, some with another duty), and Claude can move a sound by
-semitones, stretch it, or make it softer.
+semitones, stretch it, or make it softer. A sound lasts at most 4.2 seconds.
+
+**Ambience loops** instead of halting: its track ends with a jump back to
+its start (`B00`), and what reaches its end (a gust, a flutter) goes on into
+its start, so the export for games saves an OGG that loops without a seam
+(stop it with `audio_stop_sound`). Any sound can loop if you ask, and a kind
+that loops can play once instead.
+
+**Sounds described in words.** For anything else ("a bird flying away", "a
+heavy wind through a ruin", "a robot powering down"), Claude builds the
+sound from layers: a part each on a pulse, the triangle or the noise
+channel, with when it sounds, its pitch and how it slides, its loudness and
+how it moves (a hit, a fade, a swell), repeats (chirps, flaps, beeps) and
+the textures of nature: gusts, a flutter, crackle, drops. Layers that don't
+sound at once share a channel. The reply lists the layers in words, so you
+can ask for one to change ("the flaps slower", "the chirp higher"), and a
+variant of a described sound also draws its gusts, crackle and drops anew.
 
 Claude can also turn **a recording of your voice** into a sound effect: give
 it the path of a WAV file ("C:\Users\Me\Documents\pew.wav"). Where your
@@ -563,7 +582,10 @@ editor; they're muted again afterwards.
   harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the
   jingles' scores, in semitones from the key note and sixteenth notes),
-  `SoundEffects` (the sound effect kinds, built a tick at a time), and
+  `SoundEffects` (the sound effect kinds, built a tick at a time or from
+  layers, and `DesignSoundEffect`, which builds sounds described in words
+  from layers: slides, envelopes, repeats, gusts, flutters, crackle and
+  drops), and
   `Tools` (the tools, against the `SongHost` interface in `Song.h`, the
   server's instructions and the recipes served as MCP prompts). Tool
   results can carry an image after their text.

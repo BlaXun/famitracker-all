@@ -38,10 +38,11 @@ tracks as looping OGG files through the `export_for_game` tool
 which notes the sample where each row starts (`GetRenderMarks`), and libvorbis
 encodes (`Source/libvorbis`, `Source/libogg`). The jingles that `make_jingle`
 writes as tracks of their own are scores in `Source/Api/Jingles.cpp`. The
-sound effects of `make_sound_effect`, tracks at speed 1 that halt, are built a
-tick at a time in `Source/Api/SoundEffects.cpp` or made from a voice
-recording, and turned into instruments, by
-`Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
+sound effects of `make_sound_effect`, tracks at speed 1 that halt (or loop,
+for ambience), are built a tick at a time in `Source/Api/SoundEffects.cpp`,
+from layers described in words (`DesignSoundEffect`, which the kinds from
+nature use too), or made from a voice recording, and turned into
+instruments, by `Source/Transcribe/SoundEffect.cpp`. Edit > Sound effect from your voice
 (`Source/VoiceEffectDlg.cpp`) records a take, which `transcribe::VoiceTake`
 ends when the sound is over, and adds it with that tool through `CMcpLink`.
 Arranging is in `Source/Api/Chords.cpp` (chords read from names and degrees,

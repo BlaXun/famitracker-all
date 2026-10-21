@@ -4425,6 +4425,210 @@ void TestSoundEffects()
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\"}")).Text, "64 tracks");
 }
 
+// The loudness of a rendering in windows of Seconds, from Start for Count of them
+std::vector<double> Loudness(const transcribe::Audio &A, double Start, double Seconds, int Count)
+{
+	std::vector<double> Out;
+	const size_t Size = static_cast<size_t>(Seconds * A.sampleRate);
+	for (int w = 0; w < Count; ++w) {
+		const size_t From = static_cast<size_t>((Start + w * Seconds) * A.sampleRate);
+		double Sum = 0.0;
+		size_t n = 0;
+		for (size_t i = From; i < From + Size && i < A.samples.size(); ++i, ++n)
+			Sum += A.samples[i] * A.samples[i];
+		Out.push_back(n > 0 ? std::sqrt(Sum / n) : 0.0);
+	}
+	return Out;
+}
+
+// How many times a layer starts sounding after silence
+int Bursts(const transcribe::SfxLayer &Layer)
+{
+	int Count = 0;
+	bool Sounding = false;
+	for (size_t t = 0; t < Layer.volume.size(); ++t) {
+		if (Layer.volume[t] > 0 && !Sounding)
+			++Count;
+		Sounding = Layer.volume[t] > 0;
+	}
+	return Count;
+}
+
+const transcribe::SfxLayer *LayerOn(const transcribe::SoundEffect &E, transcribe::SfxChannel Channel)
+{
+	for (size_t l = 0; l < E.layers.size(); ++l)
+		if (E.layers[l].channel == Channel)
+			return &E.layers[l];
+	return 0;
+}
+
+void TestDesignedSounds()
+{
+	using transcribe::SfxChannel;
+	// Nature and machines among the kinds, found by the words people use; the ambience loops
+	CHECK(FindSoundEffect("bird flying away") != 0 && FindSoundEffect("bird flying away")->Name == "wings");
+	CHECK(FindSoundEffect("fire")->Name == "fire" && FindSoundEffect("pew")->Name == "laser" && FindSoundEffect("shoot")->Name == "laser");
+	CHECK(FindSoundEffect("heavy wind")->Name == "wind" && FindSoundEffect("siren")->Name == "alarm" &&
+		FindSoundEffect("low health")->Name == "heartbeat" && FindSoundEffect("thunderstorm")->Name == "thunder" &&
+		FindSoundEffect("chirp")->Name == "birds" && FindSoundEffect("motor")->Name == "engine" &&
+		FindSoundEffect("drizzle")->Name == "rain");
+	const char *const LOOPING[] = { "wind", "rain", "fire", "engine", "alarm", "heartbeat" };
+	for (size_t i = 0; i < 6; ++i) {
+		const SoundEffectKind *K = FindSoundEffect(LOOPING[i]);
+		const transcribe::SoundEffect E = K->Make();
+		Check(K->Loops && E.length() <= MaxSoundTicks(true), LOOPING[i], __LINE__);
+	}
+	CHECK(!FindSoundEffect("thunder")->Loops && !FindSoundEffect("jump")->Loops && !FindSoundEffect("wings")->Loops);
+
+	// As they sound: gusts come and go, the siren rises, the heart beats twice and rests
+	const transcribe::Audio Wind = transcribe::RenderEffect(FindSoundEffect("wind")->Make(), 44100, false);
+	const std::vector<double> Gusts = Loudness(Wind, 0.0, 0.1, 40);
+	CHECK(*std::max_element(Gusts.begin(), Gusts.end()) > 2.0 * *std::min_element(Gusts.begin(), Gusts.end()));
+	std::vector<transcribe::PitchFrame> Frames = transcribe::TrackPitch(Wind, transcribe::PitchOptions());
+	int Pitched = 0, Sounding = 0;
+	for (size_t i = 0; i < Frames.size(); ++i) {
+		if (Frames[i].rms < 0.01)
+			continue;
+		++Sounding;
+		Pitched += Frames[i].aperiodicity < 0.2 ? 1 : 0;
+	}
+	CHECK(Sounding > 300 && Pitched * 4 < Sounding);	// noise
+	Frames = transcribe::TrackPitch(transcribe::RenderEffect(FindSoundEffect("alarm")->Make(), 44100, false), transcribe::PitchOptions());
+	CHECK(PitchAround(Frames, 0.05) > 800.0 && PitchAround(Frames, 0.4) > PitchAround(Frames, 0.05) * 1.6);
+	const std::vector<double> Beat = Loudness(transcribe::RenderEffect(FindSoundEffect("heartbeat")->Make(), 44100, false), 0.0, 0.05, 20);
+	CHECK(Beat[0] > 0.02 && Beat[5] > 0.02 && Beat[10] < Beat[0] * 0.05 && Beat[18] < Beat[0] * 0.05);
+	const transcribe::SoundEffect Thunder = FindSoundEffect("thunder")->Make();
+	CHECK(Thunder.length() > 180 && LayerOn(Thunder, SfxChannel::Noise) != 0 && LayerOn(Thunder, SfxChannel::Triangle) != 0);
+	const transcribe::SoundEffect Wings = FindSoundEffect("wings")->Make();
+	CHECK(Bursts(*LayerOn(Wings, SfxChannel::Noise)) == 7);
+	const transcribe::SfxLayer &Flaps = *LayerOn(Wings, SfxChannel::Noise);
+	CHECK(Flaps.volume[0] > Flaps.volume[Flaps.volume.size() - 8] + 4);	// flying away: fainter
+	CHECK(Bursts(*LayerOn(Wings, SfxChannel::Pulse)) == 2);	// a chirp, and a faint one far off, on one pulse
+
+	// The designer: layers of a sound described in words
+	std::vector<SfxLayerDesign> Layers(1);
+	Layers[0].Channel = SfxChannel::Noise;
+	Layers[0].Seconds = 1.0;
+	Layers[0].Pitch = 6;
+	Layers[0].Volume = 10;
+	transcribe::SoundEffect E;
+	std::string Problem;
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem) && E.layers.size() == 1 && E.length() == 60);
+	CHECK(E.layers[0].volume[30] == 10 && E.layers[0].volume[59] < 10);	// a steady sound ends with a short fade...
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, true, 2, E, Problem) && E.layers[0].volume[59] == 10);	// ...unless it loops on
+	Layers[0].Gusts = 3;	// gusts in whole cycles: a loop's end leads into its start
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, true, 2, E, Problem));
+	CHECK(std::abs(E.layers[0].volume[59] - E.layers[0].volume[0]) <= 2);
+	transcribe::SoundEffect Again;
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, true, 2, Again, Problem) && Again.layers[0].volume == E.layers[0].volume);	// the same each time
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 2, true, 2, Again, Problem) && Again.layers[0].volume != E.layers[0].volume);	// another take
+	// Repeats with a slide each time (chirps), and steps between them
+	Layers[0] = SfxLayerDesign();
+	Layers[0].Seconds = 1.0;
+	Layers[0].Pitch = 60;
+	Layers[0].PitchTo = 67;
+	Layers[0].Repeats = 4;
+	Layers[0].Step = -2;
+	Layers[0].Envelope = SFX_HIT;
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem) && Bursts(E.layers[0]) == 4);
+	CHECK(std::fabs(E.layers[0].pitch[0] - 60.0) < 1e-9 && E.layers[0].pitch[10] > 66.0);	// up within the first...
+	CHECK(std::fabs(E.layers[0].pitch[15] - 58.0) < 1e-9);	// ...and the second starts a whole step lower
+	// Layers on one channel share it when they don't sound at once; two at once don't fit
+	Layers.resize(2);
+	Layers[1] = Layers[0];
+	Layers[1].Start = 1.5;
+	Layers[1].Seconds = 0.5;
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem) && E.layers.size() == 1 && E.length() == 120);
+	CHECK(E.layers[0].volume[70] == 0 && E.layers[0].volume[90] > 0);
+	Layers[1].Channel = SfxChannel::Noise;
+	Layers[0].Channel = SfxChannel::Noise;
+	Layers[1].Start = 0.5;
+	CHECK(!DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem));
+	CHECK_HAS(Problem, "Two noise layers sound at once (at 0.5 s); the 2A03 has one noise channel");
+	Layers.assign(3, SfxLayerDesign());	// three pulses at once
+	CHECK(!DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem));
+	CHECK_HAS(Problem, "More pulse layers sound at once (at 0 s) than the song's 2 pulse channels");
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 4, E, Problem) && E.layers.size() == 3);	// with the MMC5's
+	Layers.resize(1);
+	Layers[0].Seconds = 5.0;
+	CHECK(!DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem));
+	CHECK_HAS(Problem, "A layer can last at most 4.2 s; layer 1 lasts 5 s.");
+	Layers[0].Seconds = 0.2;	// a whole length longer than its layers: silence after them
+	CHECK(DesignSoundEffect(Layers, 1.0, 60, 1, true, 2, E, Problem) && E.length() == 60);
+	Layers[0].Echo = true;		// an echo on the other pulse, softer
+	CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem) && E.layers.size() == 2 && E.layers[1].start == 6);
+	CHECK(E.layers[1].volume[0] < E.layers[0].volume[0]);
+
+	// The tool: a bird flying off, described in words
+	FakeSong Song;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"SFX Bird flies off\", \"layers\": ["
+		"{\"channel\": \"noise\", \"seconds\": 1.1, \"pitch\": 7, \"pitch_to\": 5, \"envelope\": \"hit\", \"repeats\": 7, \"gap\": 0.3, "
+		"\"volume\": 10, \"volume_to\": 2},"
+		"{\"channel\": \"pulse\", \"seconds\": 0.12, \"pitch\": \"D-6\", \"pitch_to\": \"A-6\", \"glide\": \"fast\", \"envelope\": \"hit\", "
+		"\"volume\": \"loud\"}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"SFX Bird flies off\": a sound in 2 layers, 1.10 s long, on 2A03 Noise with \"SFX Bird flies off\" "
+		"(03), 2A03 Pulse 1 with \"SFX Bird flies off (pulse 1)\" (04).");
+	CHECK_HAS(Result.Text, "1. noise from 0 s for 1.1 s: 7 hits, noise pitch 7 to 5, volume 10 fading to 2");
+	CHECK_HAS(Result.Text, "2. pulse from 0 s for 0.12 s: a hit, D-6 to A-6 (quickly), volume 13, 50% duty");
+	CHECK_HAS(Result.Text, "halts at its end (C00)");
+	CHECK(Song.Rows[3][0].HasNote() && Song.Rows[3][0].Pitch() == 7 && Song.Rows[0][0].Pitch() == 74);
+	CHECK(EffectAt(Song.Rows[3][66], EFF_HALT) == 0 || EffectAt(Song.Rows[0][66], EFF_HALT) == 0);
+	// Ambience loops: B00 on its last row, no halt
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"heavy wind\"}"));
+	CHECK_HAS(Result.Text, "Made track 3 \"SFX Wind\": the wind sound (a heavy wind blowing in gusts (loops, for ambience)), 4.00 s long");
+	CHECK_HAS(Result.Text, "and loops: B00 on its last row takes it back to its start");
+	CHECK_HAS(Result.Text, "with the GameMaker code that plays snd_sfx_wind (audio_stop_sound ends it)");
+	CHECK(EffectAt(Song.Rows[3][239], EFF_JUMP) == 0 && Song.Rows[3][0].HasNote());
+	bool Halts = false;
+	for (size_t c = 0; c < Song.Rows.size(); ++c)
+		for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+			Halts = Halts || EffectAt(Song.Rows[c][r], EFF_HALT) >= 0 || Song.Rows[c][r].Note == NOTE_HALT;
+	CHECK(!Halts);
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Wind\"]}")).Text, "- SFX Wind.ogg: 4 s");
+	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Wind\"]}")).Text, "loops as a whole");
+	// ...unless asked to play once; a loop too long is shortened to the most a loop lasts
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"loop\": false}")).Text, "halts at its end (C00)");
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"rain\", \"length_percent\": 200}"));
+	CHECK_HAS(Result.Text, "A sound can last at most 4.2 s as a loop, so it was made shorter to fit.");
+	CHECK_HAS(Result.Text, "4.17 s long");
+	CHECK_HAS(Result.Text, "104% of the length");
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"thunder\", \"length_percent\": 400}")).Text,
+		"A sound can last at most 4.2 s, so it was made shorter to fit.");
+	// A designed sound that loops, as long as asked
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"Clock\", \"loop\": true, \"seconds\": 1, \"layers\": ["
+		"{\"channel\": \"noise\", \"seconds\": 0.05, \"pitch\": \"bright\", \"envelope\": \"hit\", \"duty\": \"metallic\"},"
+		"{\"channel\": \"noise\", \"start\": 0.5, \"seconds\": 0.05, \"pitch\": 10, \"envelope\": \"hit\", \"duty\": \"metallic\"}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "1.00 s long, on 2A03 Noise with \"Clock\"");
+	CHECK_HAS(Result.Text, "noise pitch 12, volume 12, metallic");
+	CHECK(EffectAt(Song.Rows[3][59], EFF_JUMP) == 0);
+	// Mistakes
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"layers\": [{\"channel\": \"noise\"}]}")).Text,
+		"Give one of kind, recording and layers.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"flute\"}]}")).Text,
+		"Layer 1: channel should be pulse, triangle or noise.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"pulse\"}, {\"channel\": \"pulse\", \"pitch\": \"H-9\"}]}")).Text,
+		"Layer 2: pitch: a note like \"C-6\"");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"pitch\": 20}]}")).Text,
+		"Layer 1: pitch on the noise: 0-15");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"echo\": true}]}")).Text,
+		"Layer 1: echo is for a pulse");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"volume\": \"thunderous\"}]}")).Text,
+		"volume should be a number from 1 to 15 or one of silent, soft, quiet, medium, loud, full, loudest.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\"}, {\"channel\": \"noise\"}]}")).Text,
+		"Two noise layers sound at once");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": []}")).Text, "layers should be a list of layers");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"loop\": true, \"layers\": [{\"channel\": \"noise\", \"seconds\": 4.2}]}")).Text,
+		"A layer can last at most 4.18 s in a sound that loops");
+}
+
 void TestMmc5()
 {
 	// An MMC5 song: two more pulses, which play the 2A03's instruments and presets
@@ -5221,6 +5425,7 @@ int main()
 	TestExpansion();
 	TestMmc5();
 	TestSoundEffects();
+	TestDesignedSounds();
 	TestTiming2();
 	TestLoops();
 	TestOgg();
