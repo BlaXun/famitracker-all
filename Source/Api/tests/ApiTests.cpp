@@ -1863,6 +1863,11 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "boss, heroic]");
 	CHECK_LACKS(Result.Text, "test,");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\"}").Text, "Topics");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\"}").Text, "- atmospheric: Atmospheric chiptune");
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"lush jazzy\"}");
+	CHECK_HAS(Result.Text, "Atmospheric chiptune (warm, lush and nostalgic, made in FamiTracker)");
+	CHECK_HAS(Result.Text, "chord_style lush");
+	CHECK_HAS(Result.Text, "set_swing");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"fly\"}").Text, "action: list, show, search");
 
 	// Studied again: the user's tags and notes stay
