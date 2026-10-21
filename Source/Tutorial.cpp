@@ -325,6 +325,8 @@ private:
 	void Go(int Step);
 	void Layout();
 	void Place(const CRect &Spot);
+	CWnd *OpenDialog() const;
+	void KeepClear(CWnd *pDialog, bool Front);
 	void Tick();
 	bool Done() const;
 	bool Seen(UINT nID) const;
@@ -343,6 +345,7 @@ private:
 	bool m_bTracking;
 	bool m_bMoved;					// dragged aside: it stays there for this step
 	CRect m_LastSpot, m_LastWindow;
+	CRect m_DialogRect;				// a dialog open in front of FamiTracker, empty for none
 
 	// Where the step began
 	DWORD m_dwBegan, m_dwDone;		// m_dwDone: when it was found done, 0 until then
@@ -493,6 +496,7 @@ void CTutorialBubble::Go(int Index)
 	m_dwDone = 0;
 	m_LastSpot = CRect(-1, -1, -1, -1);
 	m_LastWindow.SetRectEmpty();
+	m_DialogRect.SetRectEmpty();		// out of a dialog's way again, at its new size
 
 	// What the step waits for, from where things are now
 	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(m_pMainFrame->GetActiveDocument());
@@ -631,6 +635,62 @@ void CTutorialBubble::Place(const CRect &Spot)
 	SetWindowPos(NULL, Place.left, Place.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// The dialog or message box FamiTracker has open in front of its window,
+// which is disabled meanwhile
+CWnd *CTutorialBubble::OpenDialog() const
+{
+	if (m_pMainFrame->IsWindowEnabled())
+		return NULL;
+	CWnd *pPopup = m_pMainFrame->GetLastActivePopup();
+	if (pPopup == NULL || pPopup == m_pMainFrame || pPopup == this || !pPopup->IsWindowVisible())
+		return NULL;
+	return pPopup;
+}
+
+// While a dialog is open it has the attention: no dimming, and the note out
+// of its way, beside it where the screen has room, or else under it
+void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
+{
+	m_Overlay.Hide();
+	if (!IsWindowVisible())
+		ShowWindow(SW_SHOWNOACTIVATE);
+	CRect Dialog, Note, Overlap;
+	pDialog->GetWindowRect(&Dialog);
+	if (Dialog == m_DialogRect)
+		return;
+	m_DialogRect = Dialog;
+	GetWindowRect(&Note);
+	if (!Overlap.IntersectRect(&Note, &Dialog))
+		return;
+
+	if (!m_bMoved) {
+		MONITORINFO Monitor;
+		memset(&Monitor, 0, sizeof(Monitor));
+		Monitor.cbSize = sizeof(Monitor);
+		::GetMonitorInfo(::MonitorFromRect(&Dialog, MONITOR_DEFAULTTONEAREST), &Monitor);
+		const CRect Work(Monitor.rcWork);
+		const CSize Size = Note.Size();
+		const int Gap = SX(GAP);
+		const int Top = std::max(static_cast<int>(Work.top), std::min(static_cast<int>(Dialog.top), static_cast<int>(Work.bottom) - Size.cy));
+		const int Left = std::max(static_cast<int>(Work.left), std::min(static_cast<int>(Dialog.left), static_cast<int>(Work.right) - Size.cx));
+		const CRect Tries[] = {
+			CRect(CPoint(Dialog.right + Gap, Top), Size),
+			CRect(CPoint(Dialog.left - Gap - Size.cx, Top), Size),
+			CRect(CPoint(Left, Dialog.bottom + Gap), Size),
+			CRect(CPoint(Left, Dialog.top - Gap - Size.cy), Size),
+		};
+		for (size_t i = 0; i < sizeof(Tries) / sizeof(Tries[0]); ++i) {
+			CRect Inside;
+			Inside.IntersectRect(&Tries[i], &Work);
+			if (Inside == Tries[i]) {
+				SetWindowPos(&wndTop, Tries[i].left, Tries[i].top, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | (Front ? 0 : SWP_NOZORDER));
+				return;
+			}
+		}
+	}
+	SetWindowPos(pDialog, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 void CTutorialBubble::Tick()
 {
 	if (!m_pMainFrame->IsWindowVisible() || m_pMainFrame->IsIconic()) {
@@ -640,37 +700,50 @@ void CTutorialBubble::Tick()
 		return;
 	}
 
-	// The part the step shows, framed
-	CRect Window, Spot;
-	m_pMainFrame->GetWindowRect(&Window);
-	const tutorial_step_t &Now = Step();
-	const bool HasSpot = Now.Show != "window" &&
-		m_pMainFrame->GetTutorialRect(CString(Now.Show.c_str()), CString(Now.ShowName.c_str()), CommandId(Now.ShowName), Spot) &&
-		!Spot.IsRectEmpty();
-	if (!HasSpot)
-		Spot.SetRectEmpty();
-	if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
-		Place(Spot);
-	CRect Note;
-	GetWindowRect(&Note);
-	bool Raise = false;
-	if (HasSpot)
-		Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
-	else
-		m_Overlay.Hide();
-	m_LastSpot = Spot;
-	m_LastWindow = Window;
-	if (!IsWindowVisible()) {
-		ShowWindow(SW_SHOWNOACTIVATE);
-		Raise = true;
-	}
-
-	// Above the dimming, and above a dialog the step opened, while
-	// FamiTracker is the active program (not above other programs)
+	// FamiTracker is the active program: the note may go above its other
+	// windows (not above other programs)
 	DWORD Process = 0;
 	::GetWindowThreadProcessId(::GetForegroundWindow(), &Process);
-	if ((Raise || !m_pMainFrame->IsWindowEnabled()) && Process == ::GetCurrentProcessId())
-		SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	const bool Front = Process == ::GetCurrentProcessId();
+
+	CWnd *pDialog = OpenDialog();
+	if (pDialog != NULL)
+		KeepClear(pDialog, Front);
+	else {
+		if (!m_DialogRect.IsRectEmpty()) {
+			// The dialog closed: the note goes back beside the part shown
+			m_DialogRect.SetRectEmpty();
+			m_LastSpot = CRect(-1, -1, -1, -1);
+		}
+
+		// The part the step shows, framed
+		CRect Window, Spot;
+		m_pMainFrame->GetWindowRect(&Window);
+		const tutorial_step_t &Now = Step();
+		const bool HasSpot = Now.Show != "window" &&
+			m_pMainFrame->GetTutorialRect(CString(Now.Show.c_str()), CString(Now.ShowName.c_str()), CommandId(Now.ShowName), Spot) &&
+			!Spot.IsRectEmpty();
+		if (!HasSpot)
+			Spot.SetRectEmpty();
+		if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
+			Place(Spot);
+		CRect Note;
+		GetWindowRect(&Note);
+		bool Raise = false;
+		if (HasSpot)
+			Raise = m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, this);
+		else
+			m_Overlay.Hide();
+		m_LastSpot = Spot;
+		m_LastWindow = Window;
+		if (!IsWindowVisible()) {
+			ShowWindow(SW_SHOWNOACTIVATE);
+			Raise = true;
+		}
+		// Above the dimming
+		if (Raise && Front)
+			SetWindowPos(&wndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
 
 	// Done: the frame turns green for a moment, then the next step
 	const DWORD Time = ::GetTickCount();
