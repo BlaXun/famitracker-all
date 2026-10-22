@@ -7127,6 +7127,20 @@ void TestFadesAndScoops()
 	CHECK(Song.Rows[5][8].Effect[0] == EFF_VOLUME_SLIDE && Song.Rows[5][8].Param[0] == 0x02);
 	CHECK(Song.Rows[5][16].Effect[0] == EFF_VOLUME_SLIDE && Song.Rows[5][16].Param[0] == 0 && Song.Rows[5][16].Volume == 12);
 	CHECK(Song.Rows[5][20].Effect[0] == EFF_NONE);	// a short note: no fade
+	{
+		// A held note that ends in a release and a rest: the slide stops at the release, and the note after the
+		// rest plays at its own volume again, not where the fade left it
+		FakeSong Rest;
+		Rest.Info.DirectChanges = true;
+		Rest.Put(5, 0, "C-4", 0, 12);
+		Rest.End(5, 12, NOTE_RELEASE);
+		Rest.Put(5, 20, "E-4");
+		Rest.End(5, 24, NOTE_RELEASE);
+		CHECK(!Run(Rest, "polish", "{\"touches\": [\"fades\"], \"channels\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(Rest.Rows[5][6].Effect[0] == EFF_VOLUME_SLIDE && Rest.Rows[5][6].Param[0] != 0);
+		CHECK(Rest.Rows[5][12].Effect[0] == EFF_VOLUME_SLIDE && Rest.Rows[5][12].Param[0] == 0);
+		CHECK(Rest.Rows[5][20].Volume == 12);
+	}
 	// Scoops: a held note after a leap up slides into place from below
 	FakeSong Leap;
 	Leap.Info.DirectChanges = true;

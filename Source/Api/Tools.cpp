@@ -4739,6 +4739,14 @@ int AddFades(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
 				Lost = true;
 			if (Next.HasNote() && Next.Volume == NO_VOLUME)
 				Next.Volume = static_cast<unsigned char>(i + 1 < Notes.size() ? Notes[i + 1].Volume : N.Volume);
+			// Ended by a release or halt, a rest after it: the slide stopped where it had got to, so the note after
+			// the rest gets its volume back too (else it plays at the faded level, near silence)
+			if (!Next.HasNote() && i + 1 < Notes.size() && Notes[i + 1].Row > After &&
+				Notes[i + 1].Row < static_cast<int>(Cells.size())) {
+				Cell &Later = Cells[static_cast<size_t>(Notes[i + 1].Row)];
+				if (Later.Volume == NO_VOLUME)
+					Later.Volume = static_cast<unsigned char>(Notes[i + 1].Volume);
+			}
 		}
 		++Count;
 	}
