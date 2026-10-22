@@ -2554,9 +2554,18 @@ std::string SetMeterTool(Session &S, const Json &Args)
 		if (Meter == WORDS[i].Word)
 			Meter = WORDS[i].Meter;
 	int Top = 0, Bottom = 0;
-	char Extra = 0;
-	if (std::sscanf(Meter.c_str(), "%d/%d%c", &Top, &Bottom, &Extra) != 2 || Top < 1 || Top > 16 ||
-		(Bottom != 2 && Bottom != 4 && Bottom != 8))
+	{
+		// "6/8": two numbers and a slash between them, nothing else
+		const size_t Slash = Meter.find('/');
+		const std::string A = Slash == std::string::npos ? std::string() : Trim(Meter.substr(0, Slash));
+		const std::string B = Slash == std::string::npos ? std::string() : Trim(Meter.substr(Slash + 1));
+		if (!A.empty() && A.size() <= 2 && A.find_first_not_of("0123456789") == std::string::npos &&
+			!B.empty() && B.size() <= 2 && B.find_first_not_of("0123456789") == std::string::npos) {
+			Top = std::atoi(A.c_str());
+			Bottom = std::atoi(B.c_str());
+		}
+	}
+	if (Top < 1 || Top > 16 || (Bottom != 2 && Bottom != 4 && Bottom != 8))
 		throw Problem("meter: like \"4/4\", \"3/4\", \"2/4\", \"6/8\", \"12/8\" or \"5/4\" (1-16 beats over 2, 4 or 8), or waltz, "
 			"march or jig.");
 	Meter = Format("%d/%d", Top, Bottom);
