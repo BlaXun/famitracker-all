@@ -28,8 +28,10 @@
 namespace ftapi {
 
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
-	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error)
+	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
+	bool StartStep)
 {
+	const long long Fade = StartStep ? std::max(1, SampleRate / 25) : 0;	// 40 ms
 	Out = GameCut();
 	const long long Size = static_cast<long long>(Render.size());
 	if (Rows.empty() || Marks.empty() || Size == 0) {
@@ -50,6 +52,7 @@ bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vec
 		Out.End = Size;
 		if (Marks.size() >= Rows.size())
 			Out.End = std::max(Out.Begin, std::min(Size, Marks[Rows.size() - 1].second));
+		Out.FadeIn = std::min(Fade, Out.Length());
 		return true;
 	}
 
@@ -81,7 +84,15 @@ bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vec
 	Out.Difference = Most / 2.0;
 	Out.Loops = true;
 	long long From = S1, To = S2;
-	if (!(Most < 0.01 || CleanSeam || S3 < 0 || S3 > Size)) {
+	const bool Rendered = S3 >= 0 && S3 <= Size;
+	if (Fade > 0 && S1 - Out.Begin < Fade && Rendered) {
+		// The loop starts with the song, whose start pops: it repeats from the second time through
+		From = S2;
+		To = S3;
+		Out.SecondPass = true;
+		Out.StartPops = true;
+	}
+	else if (!(Most < 0.01 || CleanSeam || !Rendered)) {
 		From = S2;
 		To = S3;
 		Out.SecondPass = true;
@@ -109,6 +120,7 @@ bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vec
 	}
 	Out.LoopStart = From + Best - Out.Begin;
 	Out.End = To + Best;
+	Out.FadeIn = std::min(Fade, Out.LoopStart);
 	return true;
 }
 

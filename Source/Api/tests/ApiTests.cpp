@@ -5925,6 +5925,32 @@ void TestCut()
 	// With the row that halts rendered, the sound ends where it starts
 	Rows.pop_back();
 	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error) && !Cut.Loops && Cut.Begin == 100 && Cut.End == 1100);
+	CHECK(Cut.FadeIn == 0);
+	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error, true) && Cut.FadeIn == 320);
+
+	// A song whose start pops (the DPCM level set from silence) fades in over its first 40 ms, outside the loop: one that
+	// loops as a whole repeats from its second time through
+	std::vector<TimedRow> Whole(2);
+	Whole[0].Row = 0;
+	Whole[0].LoopStart = true;
+	Whole[1].Row = 0;
+	Whole[1].LoopStart = true;
+	std::vector<std::pair<int, long long> > Thrice;
+	Thrice.push_back(std::make_pair(0, 100LL));
+	Thrice.push_back(std::make_pair(0, 8100LL));
+	Thrice.push_back(std::make_pair(0, 16100LL));
+	CHECK(CutForGame(Render, 8000, Whole, Thrice, false, true, Cut, Error) && !Cut.SecondPass && Cut.LoopStart < 20 && Cut.FadeIn == 0);
+	CHECK(CutForGame(Render, 8000, Whole, Thrice, false, true, Cut, Error, true) && Cut.SecondPass && Cut.StartPops);
+	CHECK(Cut.LoopStart == 8000 && Cut.End == 16100 && Cut.FadeIn == 320);
+	// With an intro the loop stays the first time through
+	Marks.clear();
+	Marks.push_back(std::make_pair(0, 100LL));
+	Marks.push_back(std::make_pair(16, 1100LL));
+	Marks.push_back(std::make_pair(16, 9100LL));
+	Rows.push_back(Rows.back());
+	Rows[2].LoopStart = true;
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error, true) && !Cut.SecondPass && !Cut.StartPops);
+	CHECK(Cut.LoopStart == 1000 && Cut.FadeIn == 320);
 }
 
 std::string Comment(const OggComments &Comments, const char *pKey)
@@ -5985,6 +6011,25 @@ void TestExport()
 		CHECK(Near(QuietPeak * 3.98, Peak, 0.05));
 	}
 	CHECK_LACKS(Text, "muted");
+	CHECK_LACKS(Text, "fading in");
+	// The DPCM level set on the first row pops as the song starts: the file fades in over it
+	{
+		Song.Rows[4][0].Effect[0] = EFF_DAC;
+		Song.Rows[4][0].Param[0] = 0x30;
+		const std::string Faded = Tools.Call("export_for_game", Parse("{}")).Text;
+		CHECK_HAS(Faded, "fading in over its first 40 ms (the DPCM level set as it starts pops)");
+		CHECK_HAS(Faded, "the first 12.8 s once, then the loop from 12.8 s to the end.");
+		std::vector<float> Start;
+		CHECK(DecodeOgg(Song.Files["Town.ogg"], Start, Rate, Channels, Comments, Error));
+		float Early = 0.0f, Later = 0.0f;
+		for (size_t i = 0; i < 16 && i < Start.size(); ++i)
+			Early = std::max(Early, std::fabs(Start[i]));
+		for (size_t i = 400; i < 800 && i < Start.size(); ++i)
+			Later = std::max(Later, std::fabs(Start[i]));
+		CHECK(Early < 0.05f && Later > 0.2f);
+		Song.Rows[4][0].Effect[0] = EFF_NONE;
+		Song.Rows[4][0].Param[0] = 0;
+	}
 	// A muted channel is in the game's file all the same
 	Song.Info.Channels[2].Muted = true;
 	CHECK_HAS(Tools.Call("export_for_game", Parse("{}")).Text, "\nEvery channel is in the files, the muted 2A03 Triangle too.\n");

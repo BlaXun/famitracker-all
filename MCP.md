@@ -721,6 +721,12 @@ the loop, cut so it repeats without a seam:
   `fix_loop` makes the loop start the same way both times where it can.
 - The loop points move together by up to 2 ms to where the waves meet, so
   the jump doesn't click; the loop keeps its exact length.
+- A song that sets the DPCM level on its first row (as `mix` does) steps
+  the DMC's output up from silence there, a pop that the repeats don't
+  have. The file fades in over its first 40 ms, before its level is
+  measured (the pop used to be its loudest peak and kept the rest quieter),
+  and a song that loops as a whole repeats from its second time through,
+  so the fade stays out of the loop.
 
 GameMaker (2023.2 or newer) loops a sound between two points. The dialog and
 Claude's reply give the code, for example:

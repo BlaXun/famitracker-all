@@ -9050,8 +9050,17 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 	std::string Error;
 	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, Samples, SampleRate, Marks, Error))
 		throw Problem("The track couldn't be rendered: " + Error);
+	// A DPCM level set on the song's first row steps the DMC's output up from silence there: a pop
+	bool StartStep = false;
+	for (int c = 0; c < S.ChannelCount() && !StartStep; ++c) {
+		if (S.Channel(c).Kind != KIND_DPCM)
+			continue;
+		const Cell &Start = Cells[static_cast<size_t>(c)][static_cast<size_t>(Rows[0].Row)];
+		for (int k = 0; k < Columns[static_cast<size_t>(c)] && !StartStep; ++k)
+			StartStep = Start.Effect[k] == EFF_DAC && Start.Param[k] > 0;
+	}
 	GameCut Cut;
-	if (!CutForGame(Samples, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error))
+	if (!CutForGame(Samples, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error, StartStep))
 		throw Problem("The track couldn't be cut for a game: " + Error);
 
 	const std::string File = TrackFileName(S, Track, Taken);
@@ -9069,6 +9078,10 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 	}
 	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
 	std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	// Over the pop at the start, a fade in, before the level is measured so the pop doesn't set it
+	const size_t FadeIn = static_cast<size_t>(std::max(0LL, std::min(static_cast<long long>(Kept.size()), Cut.FadeIn)));
+	for (size_t i = 0; i < FadeIn; ++i)
+		Kept[i] *= static_cast<float>(0.5 - 0.5 * std::cos(3.14159265358979 * (static_cast<double>(i) + 0.5) / static_cast<double>(FadeIn)));
 	double Raised = 0.0;	// dB
 	if (Normalize) {
 		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS
@@ -9101,6 +9114,9 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
 	if (Raised >= 0.1)
 		Text += Format(", %.1f dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)", Raised);
+	if (FadeIn > 0)
+		Text += Format(", fading in over its first %d ms (the DPCM level set as it starts pops)",
+			static_cast<int>(FadeIn * 1000 / static_cast<size_t>(std::max(1, SampleRate))));
 	if (!Cut.Loops)
 		Text += ", plays once (the song halts).";
 	else if (Cut.LoopStart < SampleRate / 100)	// moved a moment to where the waves meet
@@ -9108,6 +9124,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 	else
 		Text += Format(", the first %s once, then the loop from %s to the end.%s", SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
 			SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
+			Cut.StartPops ? " The loop is the song's second time through, since its very start pops." :
 			Cut.SecondPass ? " The loop is the song's second time through, since the first starts differently (check_loop says why)." : "");
 	Code += (Code.empty() ? "" : "\n") + GameMakerCode(GameMakerName(File), Cut, SampleRate);
 	return Text;
