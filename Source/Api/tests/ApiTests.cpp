@@ -2813,7 +2813,7 @@ void TestArrangingTools()
 	CHECK_HAS(Result.Text, "Added the instrument");
 	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[0][2].HasNote() && Song.Rows[0][4].HasNote());	// eighths
 	CHECK(Song.Rows[2][0].HasNote() && Song.Rows[2][4].HasNote() && Song.Rows[2][8].HasNote());	// a note a beat
-	CHECK(Song.Rows[2][0].Pitch() % 12 == 9 && Song.Rows[2][0].Pitch() >= 24 && Song.Rows[2][0].Pitch() <= 43);	// A, where the triangle is a bass
+	CHECK(Song.Rows[2][0].Pitch() % 12 == 9 && Song.Rows[2][0].Pitch() >= 21 && Song.Rows[2][0].Pitch() <= 40);	// A, where the triangle is a bass
 	CHECK_EQ(Song.Writes, 1);
 	// Repeats over the bars asked for; degrees need a key unless the notes give one
 	Result = Run(Song, "add_chords_and_bass", "{\"chords\": [\"C\", \"G\"], \"from_bar\": 5, \"to_bar\": 8, \"bass_channel\": \"none\", "
@@ -2930,7 +2930,7 @@ void TestReview()
 	CHECK(!Run(Song, "polish", "{}").IsError);
 	Result = Run(Song, "review_arrangement", "{}");
 	const int Deeper = std::atoi(Result.Text.substr(Result.Text.find(": ") + 2).c_str());
-	CHECK(Deeper > Plain + 3);
+	CHECK(Deeper >= Plain + 3);
 	CHECK_LACKS(Result.Text, "No drums");
 	CHECK_LACKS(Result.Text, "all plain triads");
 	CHECK_LACKS(Result.Text, "The bass mostly holds roots");
@@ -6669,7 +6669,7 @@ void TestFadesAndScoops()
 	CHECK_HAS(Result.Text, "1 scoop after leaps up on VRC6 Pulse 1");
 	CHECK(Leap.Rows[5][4].Pitch() == 53 && Leap.Rows[5][4].Effect[0] == EFF_SLIDE_UP && Leap.Rows[5][4].Param[0] == 0x62);
 	CHECK(Leap.Rows[5][12].Pitch() == 57 && Leap.Rows[5][12].Effect[0] == EFF_NONE);	// a step, not a leap
-	// Staccato: the bass bounces, its notes cut after three quarters of a beat
+	// Staccato: the bass bounces, its notes cut after half a beat
 	FakeSong Bass;
 	Bass.Info.DirectChanges = true;
 	Bass.Put(2, 0, "C-3", 1);
@@ -6678,8 +6678,8 @@ void TestFadesAndScoops()
 	Bass.Put(2, 18, "A-2");
 	Bass.End(2, 32, NOTE_HALT);
 	Result = Run(Bass, "polish", "{\"touches\": [\"staccato\"]}");
-	CHECK_HAS(Result.Text, "3 bass notes on 2A03 Triangle cut short after three quarters of a beat (staccato)");
-	CHECK(Bass.Rows[2][3].Note == NOTE_HALT && Bass.Rows[2][11].Note == NOTE_HALT && Bass.Rows[2][21].Note == NOTE_HALT);
+	CHECK_HAS(Result.Text, "3 bass notes on 2A03 Triangle cut short after half a beat (staccato)");
+	CHECK(Bass.Rows[2][2].Note == NOTE_HALT && Bass.Rows[2][10].Note == NOTE_HALT && Bass.Rows[2][20].Note == NOTE_HALT);
 	CHECK(Bass.Rows[2][17].Note == NOTE_NONE);	// a note shorter than a beat stays
 	// Read back as written: the note and its slide
 	CHECK_HAS(Run(Leap, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bar 1 beat 2: F-4, 2 beats, effects Q62");

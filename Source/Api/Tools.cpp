@@ -2817,8 +2817,8 @@ void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vect
 // written an octave up on the triangle, where it sounds the same
 void BassRegister(BassOptions &O, const ChannelInfo &Info)
 {
-	O.Low = Written(Info, 12);
-	O.High = Written(Info, 31);
+	O.Low = Written(Info, 9);
+	O.High = Written(Info, 28);
 }
 
 // Drum hits as notes, each ringing until the next, with their instruments
@@ -4544,7 +4544,7 @@ int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
 int StaccatoBass(Session &S, Draft &D, int Channel, int First, int End)
 {
 	const int R = S.Time.RowsPerBeat;
-	const int Keep = std::max(1, R * 3 / 4);
+	const int Keep = std::max(1, R / 2);
 	const std::vector<NoteInfo> Notes = D.Notes(Channel);
 	std::vector<Cell> &Cells = D.Cells(Channel);
 	int Count = 0;
@@ -4671,7 +4671,7 @@ std::string PolishTool(Session &S, const Json &Args)
 				continue;
 			const int Count = StaccatoBass(S, D, c, First, End);
 			if (Count > 0)
-				Done.push_back(Format("%s on %s cut short after three quarters of a beat (staccato)",
+				Done.push_back(Format("%s on %s cut short after half a beat (staccato)",
 					Plural(Count, "bass note", "bass notes").c_str(), S.Channel(c).FullName().c_str()));
 		}
 	}
@@ -4950,7 +4950,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (PerBar <= 2.0)
 			Tip(1.0, "The bass mostly holds roots: bass_style walking (towns, jazz), octaves (action), syncopated (pop) "
 				"or arpeggio (adventure) in add_chords_and_bass gives it a pulse.");
-		if (Middle < 12)
+		if (Middle < 8)
 			Tip(0.5, S.Channel(Bass).FullName() + " plays very low, where small speakers lose it: an octave up (transpose).");
 	}
 
@@ -9920,8 +9920,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
 			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
 			"bars), falls (the melody's last note before a rest of a beat or more drops two semitones as it ends, a sigh, at "
-			"most one every two bars) and staccato (the bass's notes of a beat or more cut after three quarters of a beat, so "
-			"it bounces). Default: accents, vibrato and separate.");
+			"most one every two bars) and staccato (the bass's notes of a beat or more cut after half a beat, so it bounces "
+			"rather than booms). Default: accents, vibrato and separate.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
