@@ -1643,7 +1643,7 @@ void TestDesign()
 	bool Pitch = false, Scoop = false;
 	for (size_t i = 0; i < Made.SequencesVRC6.size(); ++i) {
 		Pitch = Pitch || (Made.SequencesVRC6[i].Type == SEQUENCE_PITCH && Made.SequencesVRC6[i].Loop == 12);
-		Scoop = Scoop || (Made.SequencesVRC6[i].Type == SEQUENCE_ARPEGGIO && Made.SequencesVRC6[i].Items[0] < 0);
+		Scoop = Scoop || (Made.SequencesVRC6[i].Type == SEQUENCE_ARPEGGIO && Made.SequencesVRC6[i].Items[0] == -2);	// a whole step
 	}
 	CHECK(Pitch && Scoop);
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Hero lead\", \"chip\": \"VRC6\"}").Text, "already has a VRC6 instrument called");

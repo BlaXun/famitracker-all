@@ -10518,7 +10518,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
 				"a second)."))
 			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
-				"the note), drop (falls, like a laser or a tom), flick (a quick flick up and back), thump (from a fourth above, "
+				"the note from a whole step below, over two frames), drop (falls, like a laser or a tom), flick (a quick flick up and back), thump (from a fourth above, "
 				"dropping into the note: a bass that thumps).", std::vector<std::string>{ "none", "blip", "scoop", "drop", "flick",
 				"thump" }))
 			.Add("arpeggio", EnumProp("A chord played as a fast arpeggio from each note.", std::vector<std::string>{ "none", "octave",

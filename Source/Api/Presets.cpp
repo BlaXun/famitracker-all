@@ -664,7 +664,7 @@ Preset DesignPreset(const SoundDesign &D)
 	else if (D.AttackPitch == PITCH_BLIP)
 		Arpeggio = List({ 12, 12, 0 });
 	else if (D.AttackPitch == PITCH_SCOOP)
-		Arpeggio = List({ -3, -2, -1, 0 });
+		Arpeggio = List({ -2, -1, 0 });	// a whole step, as a horn bends up into a note (a third smears quick notes)
 	else if (D.AttackPitch == PITCH_THUMP)
 		Arpeggio = List({ 5, 3, 1, 0 });
 	if (!Arpeggio.empty()) {
@@ -759,7 +759,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	if (D.AttackPitch == PITCH_BLIP)
 		Out += "; an octave blip on the attack";
 	else if (D.AttackPitch == PITCH_SCOOP)
-		Out += "; it scoops up into the note";
+		Out += "; it scoops up into the note from a whole step below";
 	else if (D.AttackPitch == PITCH_DROP)
 		Out += "; its pitch falls";
 	else if (D.AttackPitch == PITCH_FLICK)
