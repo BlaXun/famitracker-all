@@ -281,6 +281,8 @@ CFamiTrackerDoc* CFamiTrackerView::GetDocument() const // non-debug version is i
 CFamiTrackerView *CFamiTrackerView::GetView()
 {
 	CFrameWnd *pFrame = static_cast<CFrameWnd*>(AfxGetApp()->m_pMainWnd);
+	if (pFrame == NULL)	// not yet: the first document is still opening
+		return NULL;
 	ASSERT_VALID(pFrame);
 
 	CView *pView = pFrame->GetActiveView();

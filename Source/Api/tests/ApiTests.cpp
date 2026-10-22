@@ -353,6 +353,18 @@ public:
 				}
 			}
 		}
+		// Effects in columns a channel doesn't show don't play: it shows more, as CInsertRecordingAction does
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			int Needed = 0;
+			for (size_t r = 0; r < Parts[p].Cells.size(); ++r)
+				for (int k = EFFECT_COLUMNS - 1; k >= Needed; --k)
+					if (Parts[p].Cells[r].Effect[k] != EFF_NONE) {
+						Needed = k + 1;
+						break;
+					}
+			int &Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
+			Shown = std::max(Shown, Needed);
+		}
 		++Writes;
 		LastLink = Write.LinkClipId;
 		LastWrite = Write;
@@ -6755,16 +6767,26 @@ void TestReharmonize()
 
 void TestBreathing()
 {
-	// Every part all the way through: the review asks for a build and a break; a break without the drums answers it
+	// Every part all the way through: the review asks for a build and a break; an intro on the chords alone answers it
 	FakeSong Song;
 	Song.Info.DirectChanges = true;
 	CHECK(!Run(Song, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 16}").IsError);
 	for (int b = 0; b < 16; ++b)
 		Song.Put(5, b * 16, b % 2 == 0 ? "E-4" : "G-4", 0, 12);
 	CHECK(!Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\"}").IsError);
-	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "Every part plays all the way through, so the song never breathes");
+	ToolResult Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "The song keeps about one loudness all the way through (0 dB between its quietest and loudest bars)");
+	CHECK_HAS(Result.Text, "Loudness: about 0 dB between the quietest bars");
+	// Four bars without the drums still sound about as loud: the triangle and the melody carry them
 	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 5, \"to_bar\": 8, \"notes\": []}").IsError);
-	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
+	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
+	// An intro on the chords alone plays several dB under the rest
+	const char *const INTRO[] = { "Triangle", "VRC6 Pulse 1", "VRC6 Pulse 2", "2A03 Pulse 2", "Noise" };
+	for (size_t i = 0; i < sizeof(INTRO) / sizeof(INTRO[0]); ++i)
+		Run(Song, "write_notes", std::string("{\"channel\": \"") + INTRO[i] + "\", \"from_bar\": 1, \"to_bar\": 4, \"notes\": []}");
+	Result = Run(Song, "review_arrangement", "{}");
+	CHECK_LACKS(Result.Text, "never breathes");
+	CHECK_HAS(Result.Text, "dB between the quietest bars (bars 1-2) and the loudest");
 }
 
 void TestChipLevels()
@@ -6789,6 +6811,8 @@ void TestChipLevels()
 	// Accents: the notes between beats a step softer, the beats as loud; a fade three steps over the end
 	Result = Run(Song, "polish", "{\"touches\": [\"accents\", \"fades\"], \"melody_channel\": \"FM Channel 1\"}");
 	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "accents (the notes between beats a step, 3 dB, softer than the beats) on VRC7 FM Channel 1");
+	CHECK_HAS(Result.Text, "; on the VRC7 three steps, 9 dB, over the note's end)");
 	CHECK(Song.Rows[5][0].Volume == 15 && Song.Rows[5][4].Volume == 15 && Song.Rows[5][6].Volume == 14 && Song.Rows[5][8].Volume == 15);
 	CHECK(HasEffectAt(Song, 5, 28, EFF_VOLUME_SLIDE, 1) && !HasEffectAt(Song, 5, 24, EFF_VOLUME_SLIDE, 1));
 	// A soft mix: the melody at 12 (as loud as 9 on a pulse), the echo at 10, each volume as far under the loudest
@@ -6876,9 +6900,38 @@ void TestGrooveUnderMelody()
 	CHECK(Under > 0 && Under <= 36.0 && Alone >= Under + 5);
 }
 
+void TestEffectRoom()
+{
+	// A channel that shows one effect column: the tools use all four, and FamiTracker shows more where they're
+	// needed; an effect in a column it hides (which doesn't play) isn't read as playing
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Channels[5].EffectColumns = 1;
+	Song.Rows[5][40].Effect[1] = EFF_VOLUME_SLIDE;
+	Song.Rows[5][40].Param[1] = 0x0F;
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, \"effects\": [\"P81\", \"V01\"]}, {\"bar\": 1, \"beat\": 3, "
+		"\"pitch\": \"E-4\", \"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "More effect columns show for the effects on VRC6 Pulse 1 (2).");
+	CHECK_EQ(Song.Info.Channels[5].EffectColumns, 2);
+	CHECK(HasEffectAt(Song, 5, 0, EFF_PITCH, 0x81) && HasEffectAt(Song, 5, 0, EFF_DUTY_CYCLE, 1));
+	CHECK_LACKS(Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 3}").Text, "A0F");
+	// Touches on the notes find room beside those effects
+	Result = Run(Song, "polish", "{\"touches\": [\"vibrato\", \"fades\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "no free effect column");
+	// Nothing past the columns shown: nothing said
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	CHECK_LACKS(Run(Plain, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}").Text, "More effect columns");
+}
+
 int main()
 {
 	TestJson();
+	TestEffectRoom();
 	TestChipLevels();
 	TestGrooveUnderMelody();
 	TestBreathing();

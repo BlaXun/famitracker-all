@@ -226,7 +226,16 @@ BOOL CFamiTrackerApp::InitInstance()
 
 	// Dispatch commands specified on the command line.  Will return FALSE if
 	// app was launched with /RegServer, /Register, /Unregserver or /Unregister.
-	if (!ProcessShellCommand(cmdInfo)) {
+	BOOL bStarted = ProcessShellCommand(cmdInfo);
+	// A file that couldn't be opened (moved away, or a path split at its spaces): after
+	// the message about it, start with a new song rather than quitting
+	if (!bStarted && cmdInfo.m_nShellCommand == CCommandLineInfo::FileOpen && m_pMainWnd == NULL) {
+		cmdInfo.m_nShellCommand = CCommandLineInfo::FileNew;
+		cmdInfo.m_strFileName.Empty();
+		cmdInfo.m_bPlay = false;
+		bStarted = ProcessShellCommand(cmdInfo);
+	}
+	if (!bStarted) {
 		if (cmdInfo.m_nShellCommand == CCommandLineInfo::AppUnregister) {
 			// Also clear settings from registry when unregistering
 			m_pSettings->DeleteSettings();
