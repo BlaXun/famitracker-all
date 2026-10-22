@@ -616,6 +616,19 @@ public:
 		return true;
 	}
 
+	bool SetNames(const SongNames &Names, std::string &) override
+	{
+		if (Names.HasTitle)
+			Info.Title = Names.Title;
+		if (Names.HasAuthor)
+			Info.Author = Names.Author;
+		if (Names.HasCopyright)
+			Info.Copyright = Names.Copyright;
+		if (Names.HasTrack)
+			Info.TrackName = Names.Track;
+		return true;
+	}
+
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &) override
 	{
 		TempoUndo.push_back(std::make_pair(Info.Speed, Info.Tempo));
@@ -3447,6 +3460,25 @@ void TestCheck()
 	Slides.Put(6, 12, "G-4");	// against that F#4 for a beat
 	CHECK_HAS(Run(Slides, "check_song", "{\"key\": \"G major\", \"to_bar\": 2}").Text,
 		"Clash: F#4 on VRC6 Pulse 1 against G-4 on VRC6 Pulse 2 at bar 1 beat 4 for 1 beat");
+}
+
+void TestNameSong()
+{
+	FakeSong Song;
+	CHECK_HAS(Run(Song, "name_song", "{\"title\": \"Skylight\"}").Text, "hasn't allowed direct changes");
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "name_song", "{\"title\": \" Skylight \", \"author\": \"Ada\", \"track\": \"Title screen\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Set the title \"Skylight\", the author \"Ada\" and track 1's name \"Title screen\" (export_for_game names");
+	CHECK(Song.Info.Title == "Skylight" && Song.Info.Author == "Ada" && Song.Info.TrackName == "Title screen" && Song.Info.Copyright.empty());
+	// What isn't given stays
+	CHECK(!Run(Song, "name_song", "{\"copyright\": \"2026 Ada\"}").IsError);
+	CHECK(Song.Info.Title == "Skylight" && Song.Info.Copyright == "2026 Ada");
+	// FamiTracker keeps 31 characters (é is one)
+	CHECK_HAS(Run(Song, "name_song", "{\"title\": \"A title much longer than FamiTracker keeps\"}").Text, "title: at most 31 characters");
+	CHECK(!Run(Song, "name_song", "{\"title\": \"\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\"}").IsError);
+	CHECK_HAS(Run(Song, "name_song", "{}").Text, "Give the names to set");
+	CHECK_HAS(Run(Song, "name_song", "{\"track\": \"  \"}").Text, "can't be empty");
 }
 
 void TestPlayback()
@@ -7356,6 +7388,7 @@ int main()
 	TestEchoAndVibrato();
 	TestMood();
 	TestCheck();
+	TestNameSong();
 	TestPlayback();
 	TestProtocol();
 	TestSession();

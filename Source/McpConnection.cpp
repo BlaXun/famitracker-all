@@ -1508,6 +1508,32 @@ public:
 		return true;
 	}
 
+	bool SetNames(const ftapi::SongNames &Names, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Title = Ansi(Names.Title), Author = Ansi(Names.Author), Copyright = Ansi(Names.Copyright);
+		if ((Names.HasTitle && Title.GetLength() > 31) || (Names.HasAuthor && Author.GetLength() > 31) ||
+			(Names.HasCopyright && Copyright.GetLength() > 31)) {
+			Error = "FamiTracker keeps at most 31 characters for the title, the author and the copyright.";
+			return false;
+		}
+		if (Names.HasTitle)
+			pDoc->SetSongName(Title);
+		if (Names.HasAuthor)
+			pDoc->SetSongArtist(Author);
+		if (Names.HasCopyright)
+			pDoc->SetSongCopyright(Copyright);
+		if (Names.HasTrack)
+			pDoc->SetTrackTitle(Track(), Ansi(Names.Track));
+		m_pMain->SetSongInfo(pDoc->GetSongName(), pDoc->GetSongArtist(), pDoc->GetSongCopyright());
+		if (Names.HasTrack)
+			m_pMain->UpdateTrackBox();
+		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+		return true;
+	}
+
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &Error)
 	{
 		if (!CanChange(Error))

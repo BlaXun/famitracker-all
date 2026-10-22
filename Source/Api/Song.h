@@ -97,6 +97,14 @@ struct SongInfo {
 		Playing(false), PlayRow(-1) {}
 };
 
+// Names for the module and the selected track (name_song), in UTF-8; what
+// isn't Has... stays as it is
+struct SongNames {
+	bool HasTitle, HasAuthor, HasCopyright, HasTrack;
+	std::string Title, Author, Copyright, Track;
+	SongNames() : HasTitle(false), HasAuthor(false), HasCopyright(false), HasTrack(false) {}
+};
+
 // Cells to write into a channel from a row on. Exact cells are the rows as
 // they're to be, the song's speed, jumps, skips and halts among them, and are
 // written as they are. Otherwise (a clip placed) the song's own speed, jumps,
@@ -201,6 +209,10 @@ public:
 	virtual bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
 	// Undoable
 	virtual bool SetSpeedTempo(int Speed, int Tempo, std::string &Error) = 0;
+	// The module's title, author and copyright (FamiTracker's song information
+	// boxes) and the selected track's name. False with Error when the song
+	// can't change, or a name is longer than FamiTracker keeps.
+	virtual bool SetNames(const SongNames &Names, std::string &Error) = 0;
 
 	// Tracks (FamiTracker's songs in one module). The tools work on the
 	// selected one; this selects another (from 0).

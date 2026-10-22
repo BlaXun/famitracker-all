@@ -2358,6 +2358,60 @@ std::string UnevenText(const Session &S, int Speed, int Tempo, bool Nearby)
 	return Text;
 }
 
+// How many characters UTF-8 text holds
+size_t Characters(const std::string &Text)
+{
+	size_t Count = 0;
+	for (size_t i = 0; i < Text.size(); ++i)
+		if ((static_cast<unsigned char>(Text[i]) & 0xC0) != 0x80)
+			++Count;
+	return Count;
+}
+
+std::string NameSongTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Naming the song changes it, and the user hasn't allowed direct changes. Suggest the user types the names in "
+			"FamiTracker's song information boxes (title, author, copyright) or renames the track in Module > Module properties, "
+			"or allows direct changes in File > Connect Claude Code.");
+	SongNames Names;
+	auto Take = [&](const char *Name, bool &Has, std::string &Text, size_t Most) {
+		if (Arg(Args, Name) == 0)
+			return;
+		Text = Trim(StringArg(Args, Name));
+		if (Characters(Text) > Most)
+			throw Problem(Format("%s: at most %d characters, as FamiTracker keeps them.", Name, static_cast<int>(Most)));
+		Has = true;
+	};
+	Take("title", Names.HasTitle, Names.Title, 31);
+	Take("author", Names.HasAuthor, Names.Author, 31);
+	Take("copyright", Names.HasCopyright, Names.Copyright, 31);
+	Take("track", Names.HasTrack, Names.Track, 60);
+	if (!Names.HasTitle && !Names.HasAuthor && !Names.HasCopyright && !Names.HasTrack)
+		throw Problem("Give the names to set: title, author or copyright (the module's) or track (the selected track's), like "
+			"{\"title\": \"Skylight\", \"track\": \"Title screen\"}.");
+	if (Names.HasTrack && Names.Track.empty())
+		throw Problem("A track's name can't be empty.");
+	std::string Error;
+	if (!S.Host().SetNames(Names, Error))
+		throw Problem(Error.empty() ? "The names couldn't be set." : Error);
+	S.Refresh();
+	std::vector<std::string> Done;
+	if (Names.HasTitle)
+		Done.push_back("the title \"" + S.Song.Title + "\"");
+	if (Names.HasAuthor)
+		Done.push_back("the author \"" + S.Song.Author + "\"");
+	if (Names.HasCopyright)
+		Done.push_back("the copyright \"" + S.Song.Copyright + "\"");
+	if (Names.HasTrack)
+		Done.push_back(Format("track %d's name \"%s\" (export_for_game names its file and GameMaker sound after it)", S.Song.Track + 1,
+			S.Song.TrackName.c_str()));
+	std::string Text = "Set ";
+	for (size_t i = 0; i < Done.size(); ++i)
+		Text += (i == 0 ? "" : (i + 1 == Done.size() ? " and " : ", ")) + Done[i];
+	return Text + ". Ctrl+Z doesn't undo names; name_song again changes them.";
+}
+
 std::string SetTempoTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
@@ -10402,6 +10456,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
 		false, false, true);
 
+	AddTool("name_song", "Name the song and the track",
+		"Sets the module's title, author and copyright (FamiTracker's song information boxes, at most 31 characters each) and "
+		"the selected track's name, which export_for_game names the track's file and GameMaker sound after. Give only the "
+		"names to change. Needs direct changes; Ctrl+Z doesn't undo them.",
+		Schema()
+			.Add("title", Prop("string", "The module's title, like \"Skylight\"."))
+			.Add("author", Prop("string", "Who made it."))
+			.Add("copyright", Prop("string", "Its copyright line, like \"2026 Ada\"."))
+			.Add("track", Prop("string", "The selected track's name, like \"Title screen\".")),
+		false, false, true);
+
 	{
 		Json Levels = Prop("object", "Each channel's loudest volume, 1-15, like {\"VRC6 Pulse 1\": 9, \"Noise\": 10}; the "
 			"channel's other volumes scale with it. Overrides the style for those channels.");
@@ -10886,8 +10951,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
 		"gives). A song that halts plays once. Each is brought up so its loudest peak is at -1 dBFS (FamiTracker renders at "
-		"the NES's level, well under full scale); normalize false keeps that level. Run check_loop first. Takes a while for "
-		"long songs.",
+		"the NES's level, well under full scale); normalize false keeps that level. Each file is named after its track "
+		"(name_song names the selected one). Run check_loop first. Takes a while for long songs.",
 		Schema()
 			.Add("tracks", ChannelListProp("\"this\" (default: the selected track), \"all\", or tracks by number or name."))
 			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes."))
@@ -11173,6 +11238,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
+		else if (Name == "name_song") Result.Text = NameSongTool(S, Args);
 		else if (Name == "set_swing") Result.Text = SetSwingTool(S, Args);
 		else if (Name == "mix") Result.Text = MixTool(S, Args);
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
