@@ -153,7 +153,7 @@ anything; close the dialog and ask again.
 | `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). See [Mixing](#mixing) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
-| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it |
+| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
@@ -182,6 +182,7 @@ anything; close the dialog and ask again.
 | `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
+| `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato) and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
@@ -424,7 +425,10 @@ chords alone plays about 10 dB under the rest, with the bass only 3.
 `compose_track` builds that in: an intro of a few bars with one or two
 quiet parts (`insert_bars` at bar 1, `copy_bars` with `channels`, and
 `set_loop` from the bar after, so it plays once), and a few bars without
-the drums or the melody before a repeat.
+the drums or the melody before a repeat. An intro makes the loop's seam
+matter: a fade or an echo at the loop's end carries into its start on
+repeat, where the first time came from the quiet intro, so the recipe ends
+with `check_loop` and `fix_loop`.
 
 ## Sounds in words
 
@@ -709,7 +713,8 @@ the loop, cut so it repeats without a seam:
 - If the loop starts the same way both times (no note, effect, instrument or
   volume from the intro hanging over), the file is the intro and the loop
   once. Otherwise it holds the loop twice and loops the second time, which
-  starts the way every repeat does. `check_loop` tells you which, and why.
+  starts the way every repeat does. `check_loop` tells you which, and why;
+  `fix_loop` makes the loop start the same way both times where it can.
 - The loop points move together by up to 2 ms to where the waves meet, so
   the jump doesn't click; the loop keeps its exact length.
 

@@ -5379,6 +5379,117 @@ void TestLoops()
 	CHECK(KeepSongEffects(Old, New, 2) && New.Effect[0] == EFF_NONE && New.Effect[1] == EFF_JUMP);
 }
 
+// fix_loop: what carries over the loop's seam, written so the repeats start
+// as the first time does; drum fills counted from where the loop starts
+void TestFixLoop()
+{
+	FakeSong Song;		// 8 bars, 4 a frame
+	Song.Info.DirectChanges = true;
+	// The melody from bar 5, its last note fading (A02) into the loop's end
+	Song.Put(5, 64, "C-4", 0, 9);
+	Song.Put(5, 80, "E-4");
+	Song.Put(5, 96, "G-4");
+	Song.Put(5, 112, "E-4");
+	Song.Rows[5][120].Effect[0] = EFF_VOLUME_SLIDE;
+	Song.Rows[5][120].Param[0] = 0x02;
+	// Its echo a beat behind from bar 6, detuned, its last note hanging over the loop's end
+	Song.Put(1, 84, "C-4", 2, 3);
+	Song.Rows[1][84].Effect[0] = EFF_PITCH;
+	Song.Rows[1][84].Param[0] = 0x81;
+	Song.Put(1, 100, "G-4");
+	Song.Put(1, 116, "E-4");
+	// A second line: "Square" at 10 in the intro, "Bass" at 5 at the loop's end; its first note in the loop sets neither
+	Song.Put(6, 0, "G-3", 2, 10);
+	Song.End(6, 16);
+	Song.Put(6, 72, "A-3");
+	Song.End(6, 80);
+	Song.Put(6, 104, "B-3", 1, 5);
+	Song.End(6, 112);
+	// The speed drops to 5 in bar 7: the repeats would start slower
+	Song.Rows[0][96].Effect[0] = EFF_SPEED;
+	Song.Rows[0][96].Param[0] = 5;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).IsError);
+
+	std::string Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "2A03 Pulse 2: E-4 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 6 beat 2), where the "
+		"first time nothing sounds.");
+	CHECK_HAS(Text, "VRC6 Pulse 1: volume slide A02 is still on at the loop's end");
+	CHECK_HAS(Text, "VRC6 Pulse 2: the loop's first note (bar 5 beat 3) plays with \"Square\" (02) the first time and \"Bass\" (01) on "
+		"repeat; set the instrument on it.");
+	CHECK_HAS(Text, "VRC6 Pulse 2: the loop starts at volume 10 the first time and 5 on repeat; set the volume at bar 5 beat 1.");
+	CHECK_HAS(Text, "The loop starts at speed 6, tempo 150 the first time and speed 5, tempo 150 on repeat");
+	// The echo's first note in the loop sets its own volume and detune, and its last one is halted: those don't matter
+	CHECK_LACKS(Text, "2A03 Pulse 2: the loop starts at volume");
+	CHECK_LACKS(Text, "2A03 Pulse 2: effect P");
+	CHECK_HAS(Text, "fix_loop writes all of that");
+
+	Text = Tools.Call("fix_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "a halt (---) on 2A03 Pulse 2 at bar 5 beat 1, where E-4 from the loop's end hung over");
+	CHECK_HAS(Text, "A00 on VRC6 Pulse 1 at bar 5 beat 1");
+	CHECK_HAS(Text, "\"Square\" (02) on VRC6 Pulse 2's first note in the loop (bar 5 beat 3)");
+	CHECK_HAS(Text, "volume 10 on VRC6 Pulse 2 at bar 5 beat 1");
+	CHECK_HAS(Text, "speed 6 (F06) at bar 5 beat 1");
+	CHECK_HAS(Text, "The seam is clean now");
+	CHECK(Song.Rows[1][64].Note == NOTE_HALT);
+	CHECK(HasEffectAt(Song, 5, 64, EFF_VOLUME_SLIDE, 0) && Song.Rows[5][64].Pitch() == Song.Rows[5][80].Pitch() - 4 &&
+		Song.Rows[5][64].Volume == 9);
+	CHECK(Song.Rows[6][72].Instrument == 2 && Song.Rows[6][64].Volume == 10 && !Song.Rows[6][64].HasNote());
+	CHECK(HasEffectAt(Song, 0, 64, EFF_SPEED, 6) && HasEffectAt(Song, 0, 96, EFF_SPEED, 5) && HasEffectAt(Song, 0, 127, EFF_JUMP, 1));
+	CHECK_HAS(Tools.Call("check_loop", Parse("{}")).Text, "The seam is clean: every channel starts the loop the same way both times.");
+	CHECK_HAS(Tools.Call("fix_loop", Parse("{}")).Text, "The seam is clean already");
+
+	// An intro's note ringing into the loop's start the first time can't be matched by writing there
+	{
+		FakeSong Ring;
+		Ring.Info.DirectChanges = true;
+		Ring.Put(0, 0, "C-3", 2, 8);
+		Ring.Put(0, 112, "G-3");
+		Ring.Rows[0][127].Effect[0] = EFF_JUMP;
+		Ring.Rows[0][127].Param[0] = 1;
+		ToolSet RingTools(Ring);
+		Text = RingTools.Call("fix_loop", Parse("{}")).Text;
+		CHECK_HAS(Text, "Nothing at the seam can be fixed by writing at the loop's start:");
+		CHECK_HAS(Text, "2A03 Pulse 1: G-3 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 8 beat 1), where the "
+			"first time C-3 from the intro does.");
+		CHECK(!Ring.Rows[0][64].IsEnd());
+		CHECK_LACKS(RingTools.Call("check_loop", Parse("{}")).Text, "fix_loop");
+		// A song that stops has no loop to fix; one that isn't to be changed directly is told so
+		Ring.Rows[0][127].Effect[0] = EFF_HALT;
+		CHECK_HAS(RingTools.Call("fix_loop", Parse("{}")).Text, "it has no loop to fix");
+		Ring.Info.DirectChanges = false;
+		CHECK_HAS(RingTools.Call("fix_loop", Parse("{}")).Text, "needs direct changes");
+	}
+
+	// Drum fills end the phrases that start where the loop does: after a 4-bar intro, every 3 bars ends bar 7 (not bar 6)
+	{
+		FakeSong Drums;
+		Drums.Info.DirectChanges = true;
+		for (int Bar = 4; Bar < 8; ++Bar)
+			Drums.Put(5, Bar * 16, "C-4", 0);
+		Drums.Rows[0][127].Effect[0] = EFF_JUMP;
+		Drums.Rows[0][127].Param[0] = 1;
+		ToolSet DrumTools(Drums);
+		CHECK(!DrumTools.Call("add_drums", Parse("{\"fill_every\": 3, \"crash\": false, \"from_bar\": 5, \"to_bar\": 8}")).IsError);
+		bool Fill6 = false, Fill7 = false;
+		for (int r = 92; r < 96; ++r)
+			Fill6 = Fill6 || (Drums.Rows[3][r].HasNote() && (Drums.Rows[3][r].Pitch() == 0x9 || Drums.Rows[3][r].Pitch() == 0x7 ||
+				Drums.Rows[3][r].Pitch() == 0x5));
+		for (int r = 108; r < 112; ++r)
+			Fill7 = Fill7 || (Drums.Rows[3][r].HasNote() && (Drums.Rows[3][r].Pitch() == 0x9 || Drums.Rows[3][r].Pitch() == 0x7 ||
+				Drums.Rows[3][r].Pitch() == 0x5));
+		CHECK(Fill7 && !Fill6);
+		// Without an intro they count from bar 1, as before
+		Drums.Rows[0][127].Effect[0] = EFF_NONE;
+		CHECK(!DrumTools.Call("add_drums", Parse("{\"fill_every\": 3, \"crash\": false, \"from_bar\": 5, \"to_bar\": 8}")).IsError);
+		Fill6 = false;
+		for (int r = 92; r < 96; ++r)
+			Fill6 = Fill6 || (Drums.Rows[3][r].HasNote() && (Drums.Rows[3][r].Pitch() == 0x9 || Drums.Rows[3][r].Pitch() == 0x7 ||
+				Drums.Rows[3][r].Pitch() == 0x5));
+		CHECK(Fill6);
+	}
+}
+
 // The N163: wave sounds, and where their waves go
 void TestWaveSounds()
 {
@@ -7026,6 +7137,7 @@ int main()
 	TestEffects();
 	TestTiming2();
 	TestLoops();
+	TestFixLoop();
 	TestBars();
 	TestKeptVersions();
 	TestWaveSounds();
