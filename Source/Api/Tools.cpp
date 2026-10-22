@@ -4078,7 +4078,17 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 
 int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings)
 {
-	const int Stop = std::min(End + Plan.Delay, std::max(End, S.Time.TotalRows()));
+	int Stop = std::min(End + Plan.Delay, std::max(End, S.Time.TotalRows()));
+	// Past the bars asked for, the echo rings on only until the target's own next note there: a part it isn't replacing
+	{
+		const std::vector<NoteInfo> Theirs = D.Notes(Plan.Target);
+		for (size_t i = 0; i < Theirs.size(); ++i) {
+			if (Theirs[i].Row >= End && Theirs[i].Row < Stop) {
+				Stop = Theirs[i].Row;
+				break;
+			}
+		}
+	}
 	const std::vector<NoteInfo> Played = D.Notes(Plan.Source);
 	std::vector<PartNote> Notes;
 	for (size_t i = 0; i < Played.size(); ++i) {
@@ -4296,31 +4306,84 @@ std::string MixTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
 	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
 
-	// The loudest volume each channel gets: by its role for a style, as loud on its chip as that
+	// What each channel plays, frame by frame where that changes: a channel that echoes the melody in some
+	// frames and plays a line of its own in others (a harmony at the climax) is mixed as each, there
+	struct MixSpan { int Channel, First, End, Role, Target; double Level; };
+	std::vector<MixSpan> Spans;
+	std::set<int> Leveled;	// channels given a level: mixed as one part
+	{
+		const Json *pGiven = Arg(Args, "levels");
+		if (pGiven != 0 && pGiven->IsObject())
+			for (size_t i = 0; i < pGiven->Members().size(); ++i)
+				Leveled.insert(ParseChannel(S, Json(pGiven->Members()[i].first), "levels"));
+	}
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const MixSpan All = { c, First, End, MixRole(S, c, Melody, First, End), -1, 0.0 };
+		std::vector<int> Starts, Echo;	// each frame's first row, and 1 where the channel echoes the melody (-1: too few notes)
+		if (All.Role != ROLE_NONE && All.Role != ROLE_DRUMS && All.Role != ROLE_MELODY && Melody >= 0) {
+			for (int f = First; f < End; ) {
+				const int FrameEnd = std::min(End, (f / S.Time.PatternLength + 1) * S.Time.PatternLength);
+				const int Count = static_cast<int>(NotesIn(S.Notes(c), f, FrameEnd).size());
+				Starts.push_back(f);
+				Echo.push_back(Count < 4 ? -1 : EchoDelayOf(S, c, Melody, f, FrameEnd) > 0 ? 1 : 0);
+				f = FrameEnd;
+			}
+		}
+		// Frames too sparse to tell go with the frame before (the first ones with the first that tells)
+		int Known = -1;
+		for (size_t i = 0; i < Echo.size() && Known < 0; ++i)
+			Known = Echo[i];
+		bool Echoes = false, Not = false;
+		for (size_t i = 0; i < Echo.size(); ++i) {
+			if (Echo[i] < 0)
+				Echo[i] = Known;
+			Known = Echo[i];
+			Echoes = Echoes || Echo[i] == 1;
+			Not = Not || Echo[i] == 0;
+		}
+		if (!(Echoes && Not) || Leveled.count(c) > 0) {
+			Spans.push_back(All);
+			continue;
+		}
+		for (size_t i = 0; i < Starts.size(); ) {
+			size_t j = i;
+			while (j + 1 < Starts.size() && Echo[j + 1] == Echo[i])
+				++j;
+			const int SpanEnd = j + 1 < Starts.size() ? Starts[j + 1] : End;
+			const MixSpan Piece = { c, Starts[i], SpanEnd, Echo[i] == 1 ? static_cast<int>(ROLE_ECHO) : MixRole(S, c, -1, Starts[i], SpanEnd),
+				-1, 0.0 };
+			Spans.push_back(Piece);
+			i = j + 1;
+		}
+	}
+	std::vector<int> SpanCount(static_cast<size_t>(S.ChannelCount()), 0);
+	for (size_t i = 0; i < Spans.size(); ++i)
+		++SpanCount[static_cast<size_t>(Spans[i].Channel)];
+
+	// The loudest volume each part gets: by its role for a style, as loud on its chip as that
 	// volume on a pulse (a chip too quiet for its parts' levels plays the loudest at 15 and the rest as
 	// far under it), or as given
-	std::vector<int> Target(static_cast<size_t>(S.ChannelCount()), -1), Roles(static_cast<size_t>(S.ChannelCount()), ROLE_NONE);
-	std::vector<double> Level(static_cast<size_t>(S.ChannelCount()), 0.0);
 	std::map<std::string, double> Short;	// per chip: how far its loudest part falls short of its level at 15
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		Roles[static_cast<size_t>(c)] = MixRole(S, c, Melody, First, End);
-		if (Style.empty() || Roles[static_cast<size_t>(c)] == ROLE_NONE)
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		MixSpan &P = Spans[i];
+		if (Style.empty() || P.Role == ROLE_NONE)
 			continue;
 		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
-		const int AsPulse = (Soft ? SOFT : FULL)[Roles[static_cast<size_t>(c)]];
-		Level[static_cast<size_t>(c)] = 20.0 * std::log10(AsPulse / 15.0);
-		const double Over = Level[static_cast<size_t>(c)] - LevelDb(S.Channel(c), 15);
-		double &Most = Short[S.Channel(c).Chip];
+		const int AsPulse = (Soft ? SOFT : FULL)[P.Role];
+		P.Level = 20.0 * std::log10(AsPulse / 15.0);
+		const double Over = P.Level - LevelDb(S.Channel(P.Channel), 15);
+		double &Most = Short[S.Channel(P.Channel).Chip];
 		Most = std::max(Most, Over);
-		Target[static_cast<size_t>(c)] = AsPulse;
+		P.Target = AsPulse;
 	}
 	bool Fm = false, Quiet = false;
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (Target[static_cast<size_t>(c)] < 1)
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		MixSpan &P = Spans[i];
+		if (P.Target < 1)
 			continue;
-		const ChannelInfo &Info = S.Channel(c);
+		const ChannelInfo &Info = S.Channel(P.Channel);
 		if (Info.Kind == KIND_FM || Info.Chip == "N163") {
-			Target[static_cast<size_t>(c)] = VolumeForDb(Info, Level[static_cast<size_t>(c)] - Short[Info.Chip]);
+			P.Target = VolumeForDb(Info, P.Level - Short[Info.Chip]);
 			Fm = Fm || Info.Kind == KIND_FM;
 			Quiet = Quiet || Info.Chip == "N163";
 		}
@@ -4336,7 +4399,9 @@ std::string MixTool(Session &S, const Json &Args)
 				throw Problem("levels: each channel's loudest volume is 1-15.");
 			if (S.Channel(c).Kind == KIND_TRIANGLE || S.Channel(c).Kind == KIND_DPCM)
 				throw Problem(Format("%s has no volume of its own; dac softens the triangle (and the noise).", S.Channel(c).FullName().c_str()));
-			Target[static_cast<size_t>(c)] = static_cast<int>(Value.Number());
+			for (size_t k = 0; k < Spans.size(); ++k)
+				if (Spans[k].Channel == c)
+					Spans[k].Target = static_cast<int>(Value.Number());
 		}
 	}
 	// The DPCM level: soft mixes soften the triangle and the noise a little
@@ -4373,19 +4438,22 @@ std::string MixTool(Session &S, const Json &Args)
 
 	Draft D(S);
 	std::vector<std::string> Done;
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		const int Want = Target[static_cast<size_t>(c)];
+	for (size_t p = 0; p < Spans.size(); ++p) {
+		const MixSpan &P = Spans[p];
+		const int c = P.Channel, Want = P.Target;
 		if (Want < 1)
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		int Loudest = 0;
 		for (size_t i = 0; i < Notes.size(); ++i)
-			if (Notes[i].Row >= First && Notes[i].Row < End)
+			if (Notes[i].Row >= P.First && Notes[i].Row < P.End)
 				Loudest = std::max(Loudest, Notes[i].Volume);
 		if (Loudest <= 0)
 			continue;
-		const std::string Label = S.Channel(c).FullName() + (Roles[static_cast<size_t>(c)] != ROLE_NONE ?
-			std::string(" (") + RoleName(Roles[static_cast<size_t>(c)]) + ")" : std::string());
+		std::string Label = S.Channel(c).FullName();
+		if (P.Role != ROLE_NONE || SpanCount[static_cast<size_t>(c)] > 1)
+			Label += std::string(" (") + (P.Role != ROLE_NONE ? RoleName(P.Role) : "") + (SpanCount[static_cast<size_t>(c)] > 1 ?
+				(std::string(P.Role != ROLE_NONE ? ", " : "") + RangeText(S.Time.BarOf(P.First), S.Time.BarOf(P.End - 1))) : "") + ")";
 		if (Loudest == Want) {
 			Done.push_back(Format("%s stays at %d", Label.c_str(), Want));
 			continue;
@@ -4397,8 +4465,8 @@ std::string MixTool(Session &S, const Json &Args)
 			return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + LevelDb(Info, Want) - LevelDb(Info, Loudest));
 		};
 		bool FirstNote = true;
-		const int Entering = StateAt(Cells, First, S.Channel(c).EffectColumns).Volume;
-		for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r) {
+		const int Entering = StateAt(S.Cells(c), P.First, S.Channel(c).EffectColumns).Volume;	// as the song has it, before any mixing
+		for (int r = P.First; r < P.End && r < static_cast<int>(Cells.size()); ++r) {
 			Cell &C = Cells[static_cast<size_t>(r)];
 			if (C.Volume < NO_VOLUME)
 				C.Volume = static_cast<unsigned char>(Scaled(C.Volume));

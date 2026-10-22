@@ -6966,6 +6966,29 @@ void TestSwing()
 
 void TestMix()
 {
+	// A channel that echoes the melody in the first two frames and harmonizes it in the last two: mixed as an echo there
+	// and as a second line here, each from its own loudest note
+	{
+		FakeSong Split(4);
+		Split.Info.DirectChanges = true;
+		const char *const LINE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "C-5", "A-4" };
+		const char *const UNDER[] = { "B-3", "D-4", "F-4", "D-4", "G-3", "B-3", "D-4", "B-3" };	// no note of the melody's, later
+		for (int f = 0; f < 4; ++f) {
+			for (int i = 0; i < 16; ++i) {
+				const int Row = f * 64 + i * 4;
+				Split.Put(5, Row, LINE[i % 8], Row == 0 ? 0 : NO_INSTRUMENT, Row == 0 ? 15 : -1);
+				if (f < 2)
+					Split.Put(6, Row + 2, LINE[i % 8], Row == 0 ? 0 : NO_INSTRUMENT, Row == 0 ? 9 : -1);	// an echo, half a beat later
+				else
+					Split.Put(6, Row, UNDER[i % 8], Row == 128 ? 0 : NO_INSTRUMENT, Row == 128 ? 12 : -1);	// a line of its own
+			}
+		}
+		ToolResult Mixed = Run(Split, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
+		CHECK(!Mixed.IsError);
+		CHECK_HAS(Mixed.Text, "VRC6 Pulse 2 (echo, bars 1-8) loudest 9 to 4; VRC6 Pulse 2 (a second line, bars 9-16) loudest 12 to 7");
+		CHECK(Split.Rows[6][2].Volume == 4 && Split.Rows[6][128].Volume == 7);
+	}
+
 	// A melody, its echo, chords, a second line, a bass on the triangle and drums
 	FakeSong Song;
 	Song.Info.DirectChanges = true;
@@ -7574,6 +7597,23 @@ void TestMeterAndSounds()
 	Result = Run(High, "check_song", "{\"key\": \"C major\"}");
 	CHECK_HAS(Result.Text, "Range: D#6 at N163 Namco 1 bar 1 beat 2 is above A#5, where 4 N163 channels turn a 16-sample wave grainy");
 	CHECK_LACKS(Result.Text, "Range: A#5");
+
+	// An echo of bars 1-2 rings into bar 3 only until the target's own note there, which stays
+	FakeSong Echoed;
+	Echoed.Info.DirectChanges = true;
+	for (int i = 0; i < 8; ++i)
+		Echoed.Put(5, i * 4, i % 2 == 0 ? "C-4" : "E-4", i == 0 ? 0 : NO_INSTRUMENT);
+	Echoed.End(5, 32);
+	Echoed.Put(6, 32, "G-3", 0, 11);
+	Result = Run(Echoed, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 2, \"delay_beats\": 1}");
+	CHECK(!Result.IsError);
+	CHECK(Echoed.Rows[6][4].HasNote() && Echoed.Rows[6][32].Pitch() == Echoed.Rows[5][0].Pitch() - 5 && Echoed.Rows[6][32].Volume == 11);
+	CHECK_LACKS(Result.Text, "own notes in those bars were replaced");
+
+	// A sawtooth sound named "... (saw)" keeps one mark
+	FakeSong Named;
+	Result = Run(Named, "design_instrument", "{\"name\": \"Cello (saw)\", \"kind\": \"strings\", \"channel\": \"Sawtooth\"}");
+	CHECK(!Result.IsError && InstrumentIndex(Named, "Cello (saw)") >= 0 && InstrumentIndex(Named, "Cello (saw) (saw)") < 0);
 }
 
 void TestVrc7Octave()

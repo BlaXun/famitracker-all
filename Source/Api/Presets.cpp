@@ -297,8 +297,9 @@ std::string Preset::InstrumentName(bool Sawtooth) const
 	std::string Out = Name;
 	if (!Out.empty())
 		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
-	if (Sawtooth)
-		Out += " (saw)";
+	const std::string Mark = " (saw)";
+	if (Sawtooth && !(Out.size() >= Mark.size() && Out.compare(Out.size() - Mark.size(), Mark.size(), Mark) == 0))
+		Out += Mark;	// once, when the name has it already
 	return Out;
 }
 
