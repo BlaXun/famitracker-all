@@ -385,6 +385,8 @@ avoid that, and gives it tools for each layer:
   Chords asked for over bars that have chords and a bass line already (other
   chords for a section) take their place, on their channels (voiced chords
   on the voices' channels), rather than stacking a second part on them.
+  Chords given for more bars than the melody plays (an intro of chords
+  before it) start early enough to end with the melody.
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
   approach notes into each chord), syncopated, arpeggio, driving, pedal. On
   the triangle it sits where it sounds like a bass (the triangle plays an
@@ -496,7 +498,11 @@ Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks.
 
 You can tag references and keep notes with them ("the user loves this
 bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to
-look at the notes themselves.
+look at the notes themselves. `compose_track` looks up a composer, a game
+or a reference named in its idea or in the soundtrack notes by itself, so
+"a save room in the style of <a composer whose modules you studied>" plans
+from those studies. A composer is found by the name the modules give as
+their author.
 
 ### Modules as references
 

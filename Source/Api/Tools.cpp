@@ -1047,6 +1047,21 @@ bool EchoesAnother(Session &S, int Channel, const std::vector<NoteInfo> &Notes, 
 	return false;
 }
 
+// A steady run of quick notes of one length (an arpeggio, broken chords, an
+// ostinato): accompaniment, however busy
+bool RunsSteadily(const Session &S, const std::vector<NoteInfo> &Notes)
+{
+	if (Notes.size() < 16)
+		return false;
+	std::map<int, int> Lengths;
+	int Most = 0;
+	for (size_t i = 0; i + 1 < Notes.size(); ++i)
+		Most = std::max(Most, ++Lengths[Notes[i].Rows]);
+	const int Span = Notes.back().Row - Notes.front().Row;
+	const double PerBeat = Span > 0 ? (Notes.size() - 1) * static_cast<double>(std::max(1, S.Time.RowsPerBeat)) / Span : 0.0;
+	return Most * 20 >= static_cast<int>(Notes.size() - 1) * 17 && PerBeat >= 2.0;
+}
+
 int GuessMelodyChannel(Session &S, int First, int End)
 {
 	for (int Pass = 0; Pass < 3; ++Pass) {
@@ -1075,7 +1090,8 @@ int GuessMelodyChannel(Session &S, int First, int End)
 				Volumes.push_back(Info.Kind == KIND_TRIANGLE ? 15 : Notes[i].Volume);
 			std::sort(Volumes.begin(), Volumes.end());
 			Channels.push_back(c);
-			Counts.push_back(static_cast<int>(Notes.size()));
+			// A steady run counts as a part of a few notes, so a melody over it wins
+			Counts.push_back(RunsSteadily(S, Notes) ? static_cast<int>(Notes.size()) / 8 : static_cast<int>(Notes.size()));
 			Middles.push_back(Middle);
 			Loudness.push_back(std::max(1, Volumes[Volumes.size() / 2]));
 			Lowest = std::min(Lowest, Middle);
@@ -3349,8 +3365,24 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		if (Melody >= 0)
 			Line = MelodyOf(S.Notes(Melody), S.Time.BarStart(From), S.Time.BarEnd(To));
 	}
-	else if (!Line.empty())
+	else if (!Line.empty()) {
 		Bars = transcribe::MelodyBars(Line, S.Time.PatternLength, S.Time.RowsPerBar);
+		// Chords given for more bars than the melody plays: an intro before it, ending with it, when they fit
+		if (Given && !Bars.empty() && Progression.size() > Bars.size()) {
+			const int MelodyFrom = S.Time.BarOf(Bars.front().row), MelodyTo = S.Time.BarOf(Bars.back().row);
+			const int Start = MelodyTo - static_cast<int>(Progression.size()) + 1;
+			if (Start >= 1) {
+				Bars = transcribe::SongBars(S.Time.BarStart(Start), S.Time.BarEnd(MelodyTo), S.Time.PatternLength, S.Time.RowsPerBar);
+				S.Remarks.push_back(Format("The chords are %d bars and the melody plays in bars %d-%d, so they start at bar %d "
+					"and end with it (from_bar sets where they start).", static_cast<int>(Progression.size()), MelodyFrom, MelodyTo,
+					Start));
+			}
+			else
+				S.Remarks.push_back(Format("The chords are %d bars, more than the melody's %d (bars %d-%d), so the last %d were "
+					"left out; from_bar and to_bar set where they go.", static_cast<int>(Progression.size()),
+					static_cast<int>(Bars.size()), MelodyFrom, MelodyTo, static_cast<int>(Progression.size() - Bars.size())));
+		}
+	}
 	else {
 		const int To = std::min(S.MaxBars(), static_cast<int>(Progression.size()));
 		Bars = transcribe::SongBars(0, S.Time.BarEnd(To), S.Time.PatternLength, S.Time.RowsPerBar);
@@ -5106,7 +5138,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		std::set<std::string> Vocabulary;
 		bool Colored = false;
 		for (size_t i = 0; i < Heard.size(); ++i) {
-			Vocabulary.insert(ChordName(Heard[i].C, K));
+			Chord Plain = Heard[i].C;	// an inversion (Fmaj7/C) is the same chord
+			Plain.Bass = Plain.Root;
+			Vocabulary.insert(ChordName(Plain, K));
 			Colored = Colored || !Heard[i].C.IsTriad();
 		}
 		std::string Line = "Harmony" + std::string(Backing ? "" : " (implied by the melody alone)") + ": " +
@@ -8958,8 +8992,11 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
-	// Busy and empty bars
+	// Busy and empty bars (a steady run of quick notes, an arpeggio or broken chords, is busy by design)
 	int Busy = 0, Silent = 0;
+	std::vector<bool> Runs(static_cast<size_t>(S.ChannelCount()), false);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Runs[static_cast<size_t>(c)] = RunsSteadily(S, NotesIn(S.Notes(c), S.Time.BarStart(From), S.Time.BarEnd(To)));
 	for (int Bar = From; Bar <= To; ++Bar) {
 		const int BarFirst = S.Time.BarStart(Bar), BarEnd = std::min(S.Time.BarEnd(Bar), S.Time.TotalRows());
 		if (BarFirst >= S.Time.TotalRows())
@@ -8974,7 +9011,8 @@ std::string CheckTool(Session &S, const Json &Args)
 				if (Notes[i].Row >= BarFirst && Notes[i].Row < BarEnd)
 					++Starts;
 			}
-			if (IsMelodic(S.Channel(c)) && BarEnd - BarFirst >= 8 && Starts * 4 >= (BarEnd - BarFirst) * 3) {
+			if (IsMelodic(S.Channel(c)) && !Runs[static_cast<size_t>(c)] && BarEnd - BarFirst >= 8 &&
+				Starts * 4 >= (BarEnd - BarFirst) * 3) {
 				++Busy;
 				Report(Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
 			}
@@ -10963,7 +11001,10 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 		}
 		Text = "Compose a track in FamiTracker for this: " + Idea + ". Make it sound composed by a person, with depth. "
 			"Work through these steps with the FamiTracker tools:\n"
-			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them.\n"
+			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
+			"notes name a composer, a game or a reference, look it up in the reference library (references, action search, "
+			"then show) and lean on what the studies show: tempo and feel, form, chord colors, how the channels share the "
+			"parts, volumes, echoes, sounds (reference_sound brings one in) and tricks. Write your own melody and chords.\n"
 			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
 			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
 			"3. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you choose and a chord_style, "
