@@ -1444,19 +1444,49 @@ int CounterPitch(const Chord &C, int Near, int From, int To, const std::vector<N
 	return Best;
 }
 
-// A note near Pitch that fits against the melody: itself, a chord tone or a scale step
+// A note for a line moving over a chord: one of its tones, or of the key's
+// that doesn't rub a semitone against a tone of the chord from outside the key
+// (no F under an F#7 in G, no B over a C#dim7's Bb). Over the key's own
+// chords, any note of the key.
+bool FitsChord(int Pitch, const Chord &C, const Key &K)
+{
+	if (C.HasPitchClass(Mod12(Pitch)))
+		return true;
+	if (!InKey(Pitch, K))
+		return false;
+	for (int d = -1; d <= 1; d += 2)
+		if (C.HasPitchClass(Mod12(Pitch + d)) && !InKey(Pitch + d, K))
+			return false;
+	return true;
+}
+
+// A step of the line up or down from Pitch: the key's next note, or over a
+// chord from outside the key the next note that fits it
+int ChordStep(int Pitch, int Direction, const Chord &C, const Key &K)
+{
+	const int Step = ScaleStep(Pitch, Direction, K);
+	if (FitsChord(Step, C, K))
+		return Step;
+	for (int d = 1; d <= 4; ++d)
+		if (FitsChord(Pitch + Direction * d, C, K))
+			return Pitch + Direction * d;
+	return Step;
+}
+
+// A note near Pitch that fits against the melody and the chord: itself, a chord tone or a scale step
 int Fitted(int Pitch, int From, int To, const ChordAt *pChord, const std::vector<NoteInfo> &Melody, const CounterOptions &O)
 {
-	if (Clash(Pitch, From, To, Melody, O.Above) < 0.8)
+	auto Fits = [&](int p) { return pChord != 0 ? FitsChord(p, pChord->C, O.K) : InKey(p, O.K); };
+	if (Clash(Pitch, From, To, Melody, O.Above) < 0.8 && Fits(Pitch))
 		return Pitch;
 	int Best = Pitch;
-	double BestCost = Clash(Pitch, From, To, Melody, O.Above);
+	double BestCost = Fits(Pitch) ? Clash(Pitch, From, To, Melody, O.Above) : 1e9;
 	for (int d = -4; d <= 4; ++d) {
 		const int p = Pitch + d;
 		if (d == 0 || p < O.Low - 2 || p > O.High + 2)
 			continue;
 		const bool ChordTone = pChord != 0 && pChord->C.HasPitchClass(Mod12(p));
-		if (!ChordTone && !InKey(p, O.K))
+		if (!Fits(p))
 			continue;
 		const double Cost = Clash(p, From, To, Melody, O.Above) + 0.3 * std::abs(d) + (ChordTone ? 0.0 : 0.5);
 		if (Cost < BestCost) {
@@ -1529,14 +1559,14 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 		if (Next == Target) {
 			if (Calm) {
 				// The neighbour that sounds best against the melody, away from it on a tie
-				const int Away = ScaleStep(Target, O.Above ? 1 : -1, O.K), Toward = ScaleStep(Target, O.Above ? -1 : 1, O.K);
+				const int Away = ChordStep(Target, O.Above ? 1 : -1, pChord->C, O.K), Toward = ChordStep(Target, O.Above ? -1 : 1, pChord->C, O.K);
 				const int From = W.To - R;
 				Path.push_back(Clash(Toward, From, W.To, Melody, O.Above) + 0.2 < Clash(Away, From, W.To, Melody, O.Above) ? Toward : Away);
 			}
 		}
 		else {
 			const int Direction = Next > Target ? 1 : -1;
-			for (int p = ScaleStep(Target, Direction, O.K); Direction > 0 ? p < Next : p > Next; p = ScaleStep(p, Direction, O.K))
+			for (int p = ChordStep(Target, Direction, pChord->C, O.K); Direction > 0 ? p < Next : p > Next; p = ChordStep(p, Direction, pChord->C, O.K))
 				Path.push_back(p);
 		}
 		// As many notes as there are beats (two while the melody moves some), the
@@ -1555,7 +1585,8 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 			if (To <= Row)
 				continue;
 			const int Pitch = Clamp(Path[k], O.Low - 2, O.High + 2);
-			const int Played = k == 0 ? Pitch : Fitted(Pitch, Row, std::min(To, Row + R), pChord, Melody, O);
+			const ChordAt *pHere = ChordAtRow(Chords, Row);	// the chord can change within the window
+			const int Played = k == 0 ? Pitch : Fitted(Pitch, Row, std::min(To, Row + R), pHere != 0 ? pHere : pChord, Melody, O);
 			Out.push_back(MakeNote(Row, To - Row, Played, O.Volume));
 			Previous = Played;
 		}

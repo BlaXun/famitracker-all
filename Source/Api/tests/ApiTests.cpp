@@ -2902,6 +2902,35 @@ void TestArrange()
 	Part = CounterMelody(Melody, Chords, Bars, Counter);
 	for (size_t i = 0; i < Part.size(); ++i)
 		CHECK(Part[i].Pitch >= 74);
+	// Over chords from outside the key its passing notes don't rub against their tones: in G mixolydian, no C, D, A or
+	// B over a C#dim7 (C# E G Bb), no G, F, A, B, C or D over an F#7 (F# A# C# E)
+	{
+		const Key GMix(7, 4);
+		const std::vector<ChordAt> Chromatic = Progression("| G7 | C#dim7 | F#7 | G7 |", GMix);
+		std::vector<NoteInfo> Held;
+		Held.push_back(MelodyNote(0, 16, "B-4"));
+		Held.push_back(MelodyNote(16, 16, "E-5"));
+		Held.push_back(MelodyNote(32, 16, "E-5"));
+		Held.push_back(MelodyNote(48, 16, "D-5"));
+		CounterOptions Co;
+		Co.K = GMix;
+		Co.Low = 43;
+		Co.High = 60;
+		const std::vector<PartNote> Line = CounterMelody(Held, Chromatic, Bars, Co);
+		int Moving = 0;
+		for (size_t i = 0; i < Line.size(); ++i) {
+			const int pc = Line[i].Pitch % 12;
+			if (Line[i].Row >= 16 && Line[i].Row < 32) {
+				++Moving;
+				Check(pc != 0 && pc != 2 && pc != 9 && pc != 11, "no rub against the C#dim7", __LINE__);
+			}
+			if (Line[i].Row >= 32 && Line[i].Row < 48) {
+				++Moving;
+				Check(pc != 7 && pc != 5 && pc != 9 && pc != 11 && pc != 0 && pc != 2, "no rub against the F#7", __LINE__);
+			}
+		}
+		CHECK(Moving >= 3);
+	}
 
 	// Tidying: order, overlaps, the range, volumes only where they change
 	std::vector<PartNote> Untidy(3);
