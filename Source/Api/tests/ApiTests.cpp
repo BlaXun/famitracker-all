@@ -6755,16 +6755,26 @@ void TestReharmonize()
 
 void TestBreathing()
 {
-	// Every part all the way through: the review asks for a build and a break; a break without the drums answers it
+	// Every part all the way through: the review asks for a build and a break; an intro on the chords alone answers it
 	FakeSong Song;
 	Song.Info.DirectChanges = true;
 	CHECK(!Run(Song, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 16}").IsError);
 	for (int b = 0; b < 16; ++b)
 		Song.Put(5, b * 16, b % 2 == 0 ? "E-4" : "G-4", 0, 12);
 	CHECK(!Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\"}").IsError);
-	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "Every part plays all the way through, so the song never breathes");
+	ToolResult Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "The song keeps about one loudness all the way through (0 dB between its quietest and loudest bars)");
+	CHECK_HAS(Result.Text, "Loudness: about 0 dB between the quietest bars");
+	// Four bars without the drums still sound about as loud: the triangle and the melody carry them
 	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 5, \"to_bar\": 8, \"notes\": []}").IsError);
-	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
+	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
+	// An intro on the chords alone plays several dB under the rest
+	const char *const INTRO[] = { "Triangle", "VRC6 Pulse 1", "VRC6 Pulse 2", "2A03 Pulse 2", "Noise" };
+	for (size_t i = 0; i < sizeof(INTRO) / sizeof(INTRO[0]); ++i)
+		Run(Song, "write_notes", std::string("{\"channel\": \"") + INTRO[i] + "\", \"from_bar\": 1, \"to_bar\": 4, \"notes\": []}");
+	Result = Run(Song, "review_arrangement", "{}");
+	CHECK_LACKS(Result.Text, "never breathes");
+	CHECK_HAS(Result.Text, "dB between the quietest bars (bars 1-2) and the loudest");
 }
 
 void TestChipLevels()

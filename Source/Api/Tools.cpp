@@ -4983,7 +4983,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// Thin bars: two parts or fewer; and how much the number of parts changes
 	std::vector<int> Thin;
-	int Fewest = 1000, Most = 0;
+	int Most = 0;
 	for (size_t b = 0; b < Bars.size(); ++b) {
 		int Sounding = 0;
 		for (size_t p = 0; p < Playing.size(); ++p)
@@ -4991,16 +4991,68 @@ std::string ReviewTool(Session &S, const Json &Args)
 				++Sounding;
 		if (Sounding <= 2 && Layers > 2)
 			Thin.push_back(S.Time.BarOf(Bars[b].Row));
-		Fewest = std::min(Fewest, Sounding);
 		Most = std::max(Most, Sounding);
 	}
 	if (!Thin.empty() && static_cast<int>(Thin.size()) < BarCount)
 		Lines.push_back("Thin: only two parts or fewer play in bars " + BarList(Thin) + ".");
-	if (BarCount >= 16 && Most >= 4 && Fewest == Most)
-		Tip(0.5, "Every part plays all the way through, so the song never breathes: let it build and fall back, a "
-			"few bars with fewer parts (an intro on the chords and bass, a break without the drums, a verse without the "
-			"second line) and the full sound where it matters. Well-arranged tracks swing 8-12 dB in loudness between "
-			"sections. write_notes with an empty list of notes clears a part from bars.");
+
+	// Loudness bar by bar, from the parts that sound in it at their levels (as FamiTracker plays each chip; the
+	// triangle a little under a pulse at 15, drums at a steady share), two bars at a time: how far the song swings
+	double Swing = 0.0;
+	int Quietest = -1, Loudest = -1;
+	{
+		std::vector<double> Power(Bars.size(), 0.0);
+		for (size_t p = 0; p < Playing.size(); ++p) {
+			const int c = Playing[p];
+			const ChannelInfo &Info = S.Channel(c);
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			for (size_t b = 0; b < Bars.size(); ++b) {
+				const int Begin = Bars[b].Row, Stop = Bars[b].Row + Bars[b].Rows;
+				if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM) {
+					if (HasNotesIn(S, c, Begin, Stop))
+						Power[b] += 0.25;	// -6 dB
+					continue;
+				}
+				for (size_t i = 0; i < Notes.size(); ++i) {
+					const int A = std::max(Begin, Notes[i].Row), Z = std::min(Stop, Notes[i].Row + Notes[i].Rows);
+					if (Z <= A || (Info.Kind != KIND_TRIANGLE && Notes[i].Volume <= 0))
+						continue;
+					const double Db = Info.Kind == KIND_TRIANGLE ? -2.0 : LevelDb(Info, Notes[i].Volume);
+					Power[b] += std::pow(10.0, Db / 10.0) * (Z - A) / static_cast<double>(std::max(1, Bars[b].Rows));
+				}
+			}
+		}
+		double Low = 0.0, High = 0.0;
+		for (size_t b = 0; b + 1 < Power.size() || (b == 0 && Power.size() == 1); b += 2) {
+			const double Mean = b + 1 < Power.size() ? (Power[b] + Power[b + 1]) / 2 : Power[b];
+			if (Mean <= 0.0)
+				continue;
+			const double Db = 10.0 * std::log10(Mean);
+			if (Quietest < 0 || Db < Low) {
+				Low = Db;
+				Quietest = static_cast<int>(b);
+			}
+			if (Loudest < 0 || Db > High) {
+				High = Db;
+				Loudest = static_cast<int>(b);
+			}
+		}
+		Swing = Quietest >= 0 ? High - Low : 0.0;
+	}
+	if (Quietest >= 0 && Bars.size() >= 4) {
+		auto Pair = [&](int b) {
+			const int Bar = S.Time.BarOf(Bars[static_cast<size_t>(b)].Row);
+			return static_cast<size_t>(b) + 1 < Bars.size() ? Format("bars %d-%d", Bar, Bar + 1) : Format("bar %d", Bar);
+		};
+		Lines.push_back(Format("Loudness: about %d dB between the quietest bars (%s) and the loudest (%s).",
+			static_cast<int>(std::floor(Swing + 0.5)), Pair(Quietest).c_str(), Pair(Loudest).c_str()));
+	}
+	if (BarCount >= 16 && Most >= 3 && Swing < 3.0)
+		Tip(0.5, Format("The song keeps about one loudness all the way through (%d dB between its quietest and loudest bars), "
+			"so it never breathes: let it build and fall back, a few bars with fewer and quieter parts (an intro on the chords "
+			"alone, the bass joining later; a break without the drums and the melody) and the full sound where it matters. "
+			"Well-arranged tracks swing 8-12 dB in loudness between sections; the triangle is loud, so bars with it stay "
+			"loud. write_notes with an empty list of notes clears a part from bars.", static_cast<int>(std::floor(Swing + 0.5))));
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
