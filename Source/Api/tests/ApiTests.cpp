@@ -1650,6 +1650,9 @@ void TestDesign()
 	CHECK(!Run(Song, "design_instrument", "{\"name\": \"Hero lead\"}").IsError);	// a 2A03 one may share the name
 	Result = Run(Song, "design_instrument", "{\"name\": \"Thump\", \"channel\": \"Noise\", \"kind\": \"kick\", \"tone\": \"dark\", \"length\": \"long\"}");
 	CHECK_HAS(Result.Text, "a dark long kick at volume 15");
+	// As the description says it: darker, longer
+	Result = Run(Song, "design_instrument", "{\"name\": \"Thump 2\", \"channel\": \"Noise\", \"kind\": \"kick\", \"tone\": \"darker\", \"length\": \"longer\"}");
+	CHECK_HAS(Result.Text, "a dark long kick at volume 15");
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"Noise\"}").Text, "say which drum");
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": 1, \"kind\": \"snare\"}").Text, "for the noise channel");
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"attack\": \"glacial\"}").Text, "attack: instant, fast");

@@ -2006,8 +2006,11 @@ int WordArg(const Json &Args, const char *Name, int Default, const char *const *
 		return Default;
 	if (pValue->IsString()) {
 		const std::string Text = Squeezed(pValue->String());
+		// "darker" for dark, "longer" for long, as the descriptions put it
+		const std::string Plain = Text.size() > 3 && Text.compare(Text.size() - 2, 2, "er") == 0 ? Text.substr(0, Text.size() - 2) :
+			std::string();
 		for (int i = 0; i < Count; ++i)
-			if (Text == Squeezed(Words[i]))
+			if (Text == Squeezed(Words[i]) || (!Plain.empty() && Plain == Squeezed(Words[i])))
 				return Values[i];
 		if (Text.empty() || Text.find_first_not_of("0123456789") != std::string::npos) {
 			std::string List;
