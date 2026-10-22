@@ -148,8 +148,9 @@ std::vector<Technique> MakeTechniques()
 		"Alternate the speed every half beat, longer then shorter, so the rows themselves swing: at speed 6, F08 and F04 in turn "
 		"is a triplet feel and F07 and F05 a light one, averaging 6 so the tempo stays (F06 and F03 at speed 4.5, F04 and F02 at "
 		"3). Every channel swings together, and notes written later too; set_swing does it. For one part, delay its off-beat "
-		"notes with Gxx instead (G02 or G03 at speed 6), all of them, or it sounds like mistakes. The same trick gives speeds "
-		"between whole numbers: F03 F03 F03 F04 is 3.25 ticks a row." });
+		"notes with Gxx instead (G02 or G03 at speed 6), all of them, or it sounds like mistakes: set_swing by delays does it on "
+		"the channels named, worked out from each row's speed (a shuffled hi-hat or arpeggio over a straight bass). The same "
+		"trick gives speeds between whole numbers: F03 F03 F03 F04 is 3.25 ticks a row." });
 	All.push_back({ "staccato", "short notes, sxx, gated, stabs",
 		"Cut notes short with Sxx: S02-S04 make plucky, bouncing notes; an arpeggio chord (037) with S03 sounds gated. A halt (---) "
 		"or release (===) a row after the note does the same on the row grid." });
@@ -167,8 +168,9 @@ std::vector<Technique> MakeTechniques()
 		"flutes, pulse bass). Change it per section for color, or alternate per note for a \"talking\" lead. On the noise, V01 is "
 		"metallic: hats, zaps, buzzes." });
 	All.push_back({ "slides and grace notes", "bend, scoop, glide, portamento, qxy, rxy, fall",
-		"A scoop into a note: write it a semitone or two below and slide up with Q21/Q32. A fall at a phrase's end: Rxy (R5C, an "
-		"octave down). For every note gliding into the next, 3xx portamento (306 smooth), off again with 300." });
+		"A scoop into a note: write it a semitone or two below and slide up with Q21/Q32. A fall at a phrase's end: Rxy, a sigh "
+		"of a semitone or two (R41, R42) as the note ends, or a long drop (R5C, an octave down). For every note gliding into the "
+		"next, 3xx portamento (306 smooth), off again with 300. polish's touches scoops and falls write the short ones." });
 	All.push_back({ "arpeggio chords", "arpeggio, chords on one channel, 0xy",
 		"0xy plays a chord on one channel: 037 minor, 047 major, 0C0 octaves, 059 or 057 open. It frees the other channels for "
 		"a melody and a bass; change the arpeggio with the chords, and 000 for notes that should stand alone." });
