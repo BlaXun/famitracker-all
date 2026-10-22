@@ -63,10 +63,19 @@ instruments by `LushInstruments` in `Tools.cpp` (`WithArpeggio` in
 `Presets.cpp`); FamiTracker reports each instrument's looping arpeggio
 (`InstrumentInfo::Arpeggio`), which `ChordAbove` and `SoundsChord` in
 `Tools.cpp` count as chords. `set_swing` alternates speed effects every
-half beat, `mix` scales each part's volume column by its role and sets the
-DPCM level (`Zxx`), and `Vrc7Customs` in `Presets.cpp` are VRC7 custom
+half beat (or, `by` delays, puts `Gxx` on chosen channels' off-beat notes:
+`SwingByDelays`), `mix` scales each part's volume column by its role and
+sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
+start from silence), and `Vrc7Customs` in `Presets.cpp` are VRC7 custom
 patches of our own design (`AddVrc7CustomInstrument` in
-`InstrumentLibrary.cpp`). `Source/Api/Effects.cpp`
+`InstrumentLibrary.cpp`). Sampled drums are `DrumOptions::Samples` in
+`Arrange.cpp` (which hits a sample plays) written by `DrumChanges` in
+`Tools.cpp` onto the noise and DPCM channels; `add_chords_and_bass` finds
+the chord part, bass and chord voices already in its bars (`ChordPartIn`,
+`BassPartIn`, `ChordVoicesIn`) to write over them, and strums voiced chords
+with `Gxx`; `polish`'s touches are `Accents`, `MakeVibrato`, `AddFades`,
+`AddScoops`, `AddFalls`, `StaccatoBass` and `SeparateRepeats`.
+`Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
 from the 0.4.6 channel handlers. `Source/Api/Wavetables.cpp` draws the N163's
