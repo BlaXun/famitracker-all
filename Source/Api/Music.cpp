@@ -1032,8 +1032,10 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 				EffectsLost = true;
 		}
 
-		// The end: the next note, or a release or halt
+		// The end: the next note, or a release or halt (a sample plays out by itself)
 		if (i + 1 < Notes.size() && Notes[i + 1].Row == EndRow)
+			continue;
+		if (Options.RingOut && N.EndEffects.empty())
 			continue;
 		const unsigned char EndNote = Local::Releases(Options, Instrument) ? NOTE_RELEASE : NOTE_HALT;
 		Cell *pEnd = 0;
@@ -1052,7 +1054,8 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 			pEnd = &Out.back();
 		}
 		if (pEnd != 0) {
-			pEnd->Note = EndNote;
+			if (!Options.RingOut)
+				pEnd->Note = EndNote;
 			for (size_t e = 0; e < N.EndEffects.size(); ++e)
 				if (!AddEffect(*pEnd, N.EndEffects[e].first, N.EndEffects[e].second, Columns))
 					EffectsLost = true;
@@ -1060,7 +1063,7 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 	}
 
 	// Entering the range: a note still sounding stops, effects still on go off
-	if (Before.Sounding && !Out[0].HasNote())
+	if (Before.Sounding && !Out[0].HasNote() && !Options.RingOut)
 		Out[0].Note = Local::Releases(Options, Before.SoundingInstrument) ? NOTE_RELEASE : NOTE_HALT;
 	for (int e = 0; e < EFF_COUNT; ++e) {
 		if (Before.Sticky[e] != StickyOff(e) && !HasEffect(Out[0], e, Columns) && !AddEffect(Out[0], e, StickyOff(e), Columns))

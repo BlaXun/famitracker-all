@@ -142,7 +142,7 @@ anything; close the dialog and ask again.
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, or an N163 wave sound |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
@@ -170,11 +170,11 @@ anything; close the dialog and ask again.
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
-| `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels. Notes count as they sound: a scoop where it lands, the triangle an octave under its written note, and not a fall as a note ends |
+| `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
 | `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops. See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
@@ -258,7 +258,9 @@ level, keeping its accents and fades. style soft (the default) puts the
 melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, a
 bass on a pulse or the sawtooth at 10 and the drums at 10, which with the
 instruments' own envelopes is about where those tracks sit; style full
-goes back to near full volume; `levels` sets channels by hand.
+goes back to near full volume; `levels` sets channels by hand. A sawtooth
+well over a triangle bass (or high up, with none) plays a second line or
+chords, not the bass.
 
 The NES mixes the triangle, the noise and the DPCM together, so the DPCM
 channel's level (`Zxx`) also sets how loud the triangle and the noise are:

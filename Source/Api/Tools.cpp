@@ -835,6 +835,22 @@ int InstrumentAt(Session &S, int Channel, int Row)
 
 // Keys and melodies for the harmony code
 
+// The pitch a note lands on: a slide as it starts (a scoop, written a
+// semitone or two low and sliding up at once) counts where it lands
+int LandedPitch(const NoteInfo &N)
+{
+	int Pitch = N.Pitch;
+	for (size_t e = 0; e < N.Effects.size(); ++e) {
+		if (N.Effects[e].first != 0)
+			continue;
+		if (N.Effects[e].second.first == EFF_SLIDE_UP)
+			Pitch += N.Effects[e].second.second & 0x0F;
+		else if (N.Effects[e].second.first == EFF_SLIDE_DOWN)
+			Pitch -= N.Effects[e].second.second & 0x0F;
+	}
+	return Pitch;
+}
+
 std::vector<transcribe::MelodyNote> MelodyOf(const std::vector<NoteInfo> &Notes, int First, int End)
 {
 	std::vector<transcribe::MelodyNote> Melody;
@@ -845,15 +861,7 @@ std::vector<transcribe::MelodyNote> MelodyOf(const std::vector<NoteInfo> &Notes,
 		transcribe::MelodyNote M;
 		M.row = N.Row;
 		M.length = std::max(1, N.Rows);
-		M.midi = N.Pitch + 24;	// C-0 is MIDI note 24
-		for (size_t e = 0; e < N.Effects.size(); ++e) {
-			if (N.Effects[e].first != 0)
-				continue;
-			if (N.Effects[e].second.first == EFF_SLIDE_UP)
-				M.midi += N.Effects[e].second.second & 0x0F;	// a slide counts where it lands
-			else if (N.Effects[e].second.first == EFF_SLIDE_DOWN)
-				M.midi -= N.Effects[e].second.second & 0x0F;
-		}
+		M.midi = LandedPitch(N) + 24;	// C-0 is MIDI note 24
 		M.weight = std::max(0.3, N.Volume / 15.0);
 		Melody.push_back(M);
 	}
@@ -1157,6 +1165,7 @@ PartOptions OptionsFor(const Session &S, int Channel, bool DirectChange)
 	Options.Releases = ReleasingInstruments(S.Song);
 	Options.KeepFollowing = DirectChange;
 	Options.StopAtEnd = !DirectChange;
+	Options.RingOut = S.Channel(Channel).Kind == KIND_DPCM;
 	return Options;
 }
 
@@ -3753,7 +3762,10 @@ std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<Note
 
 // Echo notes that wouldn't grate: one a semitone (or a major seventh) from a
 // note another part plays as it starts is left out, one another part moves
-// against on its way is cut short there. Dropped and Shortened count them.
+// against on its way is cut short there. Two tones of the chord sounding
+// there don't rub (the F# of a Gmaj7 over its G bass); a chord tone in the
+// echo against a passing note of the melody does. Dropped and Shortened
+// count them.
 std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const std::vector<PartNote> &Notes, int &Dropped,
 	int &Shortened)
 {
@@ -3775,37 +3787,38 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 			Others.push_back(o);
 		}
 	}
+	// Whether a pitch is a tone of a chord another part sounds on a row
+	auto ChordTone = [&](int Pitch, int Row) {
+		for (size_t k = 0; k < Others.size(); ++k) {
+			const Other &o = Others[k];
+			if (o.Pitches.size() > 1 && o.Row <= Row && Row < o.End)
+				for (size_t p = 0; p < o.Pitches.size(); ++p)
+					if ((Pitch - o.Pitches[p]) % 12 == 0)
+						return true;
+		}
+		return false;
+	};
 	Dropped = Shortened = 0;
 	std::vector<PartNote> Out;
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		PartNote E = Notes[i];
 		int CutAt = E.Row + E.Rows;
-		// A note the harmony sounds as the echo starts (the F# of a Gmaj7 over its G bass) doesn't rub
-		bool Sounded = false;
-		for (size_t k = 0; k < Others.size() && !Sounded; ++k) {
-			const Other &o = Others[k];
-			if (o.Row <= E.Row && E.Row < o.End && o.Pitches.size() > 1)
-				for (size_t p = 0; p < o.Pitches.size(); ++p)
-					Sounded = Sounded || (E.Pitch - o.Pitches[p]) % 12 == 0;
-		}
-		if (Sounded) {
-			Out.push_back(E);
-			continue;
-		}
 		for (size_t k = 0; k < Others.size(); ++k) {
 			const Other &o = Others[k];
 			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
 				continue;
-			// A note of the other part's chord doesn't rub against it (the F# of a Gmaj7)
+			// A note of the other part's chord doesn't rub against it (the F# of a Gmaj7), nor two tones
+			// of the chord sounding there
+			const int At = std::max(o.Row, E.Row);
 			bool Rub = false, InChord = false;
 			for (size_t p = 0; p < o.Pitches.size(); ++p) {
 				const int d = ((E.Pitch - o.Pitches[p]) % 12 + 12) % 12;
-				Rub = Rub || d == 1 || d == 11;
+				if ((d == 1 || d == 11) && !(ChordTone(E.Pitch, At) && ChordTone(o.Pitches[p], At)))
+					Rub = true;
 				InChord = InChord || (d == 0 && o.Pitches.size() > 1);
 			}
-			Rub = Rub && !InChord;
-			if (Rub)
-				CutAt = std::min(CutAt, std::max(o.Row, E.Row));
+			if (Rub && !InChord)
+				CutAt = std::min(CutAt, At);
 		}
 		if (CutAt <= E.Row) {
 			++Dropped;
@@ -3947,6 +3960,20 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 
 enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS };
 
+// Whether a channel that can play the bass plays it in [First, End): a
+// sawtooth well over a triangle bass (or high up, with none there) plays a
+// second line or chords
+bool PlaysTheBass(Session &S, int Channel, int First, int End)
+{
+	if (S.Channel(Channel).Kind != KIND_SAWTOOTH)
+		return true;
+	const int Mine = MiddleOf(NotesIn(S.Notes(Channel), First, End), 0);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind == KIND_TRIANGLE && HasNotesIn(S, c, First, End))
+			return Mine < MiddleOf(NotesIn(S.Notes(c), First, End), 0) + 7;
+	return Mine < 36;	// under C-3
+}
+
 // What a channel plays in [First, End), for mixing
 int MixRole(Session &S, int Channel, int Melody, int First, int End)
 {
@@ -3959,7 +3986,7 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 		return ROLE_MELODY;
 	if (Melody >= 0 && EchoDelayOf(S, Channel, Melody, First, End) > 0)
 		return ROLE_ECHO;
-	if (IsBass(Info))
+	if (IsBass(Info) && PlaysTheBass(S, Channel, First, End))
 		return ROLE_BASS;
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	for (size_t i = 0; i < Notes.size(); ++i)
@@ -5019,7 +5046,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Samples = c;
 			continue;
 		}
-		if (IsBass(Info) && Bass < 0) {
+		if (IsBass(Info) && Bass < 0 && PlaysTheBass(S, c, First, End)) {
 			Bass = c;
 			continue;
 		}
@@ -6553,6 +6580,19 @@ std::vector<int> ArpeggiosAt(const std::vector<Cell> &Cells, const std::vector<N
 
 // Chords held as pads: a chord struck again in its bar (the same note and
 // arpeggio, ringing up to it) is taken out, so it rings on. How many strikes went.
+// Whether a channel's chords come from its instruments' own arpeggios (lush
+// chords), which another instrument would lose
+bool ArpeggioChords(Session &S, int Channel)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
+		if (pInfo != 0 && !pInfo->Arpeggio.empty())
+			return true;
+	}
+	return false;
+}
+
 int HeldChords(Session &S, std::vector<Cell> &Cells, int Columns)
 {
 	const std::vector<NoteInfo> Notes = ReadNotes(Cells, Columns);
@@ -6789,10 +6829,14 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 				Sound.Set("channel", c + 1);
 				if (c == Melody)
 					Sound.Set("instrument", "soft lead");
-				else if (PlaysChords(S, c))
+				else if (PlaysChords(S, c) && !ArpeggioChords(S, c))
 					Sound.Set("instrument", "warm pad");
-				else
+				else {
+					if (PlaysChords(S, c))
+						Remarks.push_back(Format("The lush chords on %s keep their own sounds (a pad would lose their arpeggios).",
+							S.Channel(c).FullName().c_str()));
 					continue;
+				}
 				Sounds.Push(Sound);
 			}
 			Plan.Set("sounds", Sounds);
@@ -8047,7 +8091,8 @@ std::vector<Seam> FindSeams(Session &S, const std::vector<std::vector<Cell> > &C
 			return 0;
 		};
 		const NoteInfo *pFirst = SoundingAt(static_cast<int>(First)), *pAgain = SoundingAt(static_cast<int>(Second));
-		if (!Start.HasNote() && !Start.IsEnd()) {
+		// A sample plays out by itself (and a halt on the DPCM channel would reset its level)
+		if (!Start.HasNote() && !Start.IsEnd() && Info.Kind != KIND_DPCM) {
 			const int PitchFirst = pFirst != 0 ? pFirst->Pitch : -1, PitchAgain = pAgain != 0 ? pAgain->Pitch : -1;
 			if (PitchFirst != PitchAgain && pAgain != 0) {
 				// When the loop's own first note comes
@@ -9197,6 +9242,27 @@ std::string ExportTool(Session &S, const Json &Args)
 
 // Checks
 
+// The pitch a note sounds on each of its rows in [First, End), into Sound
+// (indexed from First): a scoop where it lands, a slide later in the note
+// where it goes, and nothing once a fall starts as the note ends (a gesture,
+// not a pitch held against the other parts)
+void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::vector<int> &Sound)
+{
+	const int Stop = N.Row + N.Rows, Gesture = std::max(1, RowsPerBeat / 2);
+	int Pitch = LandedPitch(N);
+	for (int r = N.Row; r < Stop && r < End; ++r) {
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first, Semitones = N.Effects[e].second.second & 0x0F;
+			if (N.Effects[e].first == 0 || N.Row + N.Effects[e].first != r || Semitones == 0 || Pitch < 0 ||
+				(Effect != EFF_SLIDE_UP && Effect != EFF_SLIDE_DOWN))
+				continue;
+			Pitch = Stop - r <= Gesture ? -1 : Pitch + (Effect == EFF_SLIDE_UP ? Semitones : -Semitones);
+		}
+		if (r >= First)
+			Sound[static_cast<size_t>(r - First)] = Pitch;
+	}
+}
+
 std::string CheckTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -9227,8 +9293,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			continue;
 		Sound[c].assign(static_cast<size_t>(std::max(0, End - First)), -1);
 		for (size_t i = 0; i < Notes.size(); ++i)
-			for (int r = std::max(First, Notes[i].Row); r < std::min(End, Notes[i].Row + Notes[i].Rows); ++r)
-				Sound[c][r - First] = Notes[i].Pitch;
+			SoundingRows(Notes[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
 	// Outside the key, and outside the channel's range
@@ -9243,9 +9308,9 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (N.Row < First || N.Row >= End)
 				continue;
 			const std::string Where = Format("%s %s", Info.FullName().c_str(), S.Time.Position(N.Row).c_str());
-			if (Found && !InKey(N.Pitch, K)) {
+			if (Found && !InKey(LandedPitch(N), K)) {
 				++OutOfKey;
-				Report(Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(N.Pitch).c_str(), Where.c_str(),
+				Report(Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(), Where.c_str(),
 					S.Time.Length(N.Rows).c_str()));
 			}
 			std::string Range;
@@ -9262,16 +9327,19 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
-	// Clashes: two channels a semitone (or a semitone plus octaves) apart for a while
+	// Clashes: two channels a semitone (or a semitone plus octaves) apart for a while, as they sound (the
+	// triangle an octave under its written note, so it's a major seventh where it's written a semitone over)
 	int Clashes = 0;
 	const int MinClash = std::max(1, S.Time.RowsPerBeat / 2);
 	for (int a = 0; a < S.ChannelCount(); ++a) {
 		for (int b = a + 1; b < S.ChannelCount(); ++b) {
 			if (Sound[a].empty() || Sound[b].empty())
 				continue;
+			const int Apart = (S.Channel(b).Kind == KIND_TRIANGLE ? 12 : 0) - (S.Channel(a).Kind == KIND_TRIANGLE ? 12 : 0);
 			int Run = 0;
 			for (int r = 0; r <= End - First; ++r) {
-				const bool Clash = r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0 && std::abs(Sound[a][r] - Sound[b][r]) % 12 == 1;
+				const bool Clash = r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0 &&
+					std::abs(Sound[a][r] - Sound[b][r] + Apart) % 12 == 1;
 				const bool Same = Clash && Run > 0 && Sound[a][r] == Sound[a][r - 1] && Sound[b][r] == Sound[b][r - 1];
 				if (Clash && (Run == 0 || Same)) {
 					++Run;

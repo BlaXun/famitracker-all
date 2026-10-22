@@ -2201,6 +2201,10 @@ void TestSampleDrums()
 		for (size_t r = 1; r < 8 && r < Rows.size(); ++r)
 			Cut = Cut || Rows[r].IsEnd();
 		CHECK(!Cut);		// the hits ring to the next
+		bool Halted = false;
+		for (size_t r = 0; r < Rows.size(); ++r)
+			Halted = Halted || Rows[r].IsEnd();
+		CHECK(!Halted);	// and nothing ends the last: a halt on the DPCM channel would reset the DPCM level
 	}
 	CHECK_HAS(Run(Fresh, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"cowbell\", "
 		"\"beats\": 1}]}").Text, "isn't a drum or a key");
@@ -2225,6 +2229,26 @@ void TestSampleDrums()
 		CHECK(HighTom && LowTom);
 	}
 	CHECK_HAS(Run(Kit2, "add_drums", "{\"kit\": \"cowbells\", \"from_bar\": 1}").Text, "kit: noise");
+	{
+		// Drums over part of a song stop without a halt on the DPCM channel, where it would reset the DPCM level
+		// (the triangle and the noise jumping to full volume): the last sample plays out
+		FakeSong Part;
+		Part.Info.DirectChanges = true;
+		CHECK(!Run(Part, "add_drums", "{\"groove\": \"basic\", \"kit\": \"samples\", \"from_bar\": 1, \"to_bar\": 1}").IsError);
+		bool Halted = false;
+		for (size_t r = 0; r < Part.Rows[4].size(); ++r)
+			Halted = Halted || Part.Rows[4][r].IsEnd();
+		CHECK(Part.Rows[4][0].HasNote() && !Halted);
+		// Nor does clearing a bar halt a sample from the bar before
+		FakeSong Clear;
+		Clear.Info.DirectChanges = true;
+		CHECK(!Run(Clear, "add_drums", "{\"groove\": \"basic\", \"kit\": \"samples\", \"from_bar\": 1, \"to_bar\": 2}").IsError);
+		CHECK(!Run(Clear, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [], \"from_bar\": 2, \"to_bar\": 2}").IsError);
+		Halted = false;
+		for (size_t r = 0; r < Clear.Rows[4].size(); ++r)
+			Halted = Halted || Clear.Rows[4][r].IsEnd() || (r >= 16 && Clear.Rows[4][r].HasNote());
+		CHECK(Clear.Rows[4][0].HasNote() && !Halted);
+	}
 	// A groove with it; the mix holds its level through every sample
 	FakeSong Groove;
 	Groove.Info.DirectChanges = true;
@@ -3368,6 +3392,44 @@ void TestCheck()
 	CHECK_HAS(Result.Text, "Silent: nothing plays in bar 3");
 	CHECK_HAS(Result.Text, "Unused channels");
 	CHECK_HAS(Result.Text, "2A03 Pulse 2");
+
+	// The triangle sounds an octave under its written note: written a semitone over another part, it's a major
+	// seventh under it; written a major seventh over, it's a semitone under
+	FakeSong Low;
+	Low.Put(2, 0, "C-4", 1);		// sounds as C-3
+	Low.End(2, 8);
+	Low.Put(5, 0, "B-3", 0);		// a major seventh over C-3
+	Low.Put(5, 4, "C#3");		// a semitone over it, for a beat
+	Low.End(5, 8);
+	const ToolResult Octave = Run(Low, "check_song", "{\"key\": \"C major\", \"to_bar\": 1}");
+	CHECK_HAS(Octave.Text, "Clash: C-4 on 2A03 Triangle against C#3 on VRC6 Pulse 1 at bar 1 beat 2 for 1 beat");
+	CHECK_HAS(Octave.Text, ", 1 clashes,");
+
+	// A scoop counts where it lands, and a fall as a note ends is no pitch to clash with
+	FakeSong Slides;
+	Slides.Put(5, 0, "D#4", 0);	// polish's scoop into E-4
+	Slides.Rows[5][0].Effect[0] = EFF_SLIDE_UP;
+	Slides.Rows[5][0].Param[0] = 0x61;
+	Slides.Put(5, 8, "G-4");
+	Slides.Rows[5][14].Effect[0] = EFF_SLIDE_DOWN;	// and its fall as G-4 ends
+	Slides.Rows[5][14].Param[0] = 0x42;
+	Slides.End(5, 16);
+	Slides.Put(6, 0, "E-4", 0);
+	Slides.Put(6, 14, "F#4");
+	Slides.End(6, 16);
+	const ToolResult Landed = Run(Slides, "check_song", "{\"key\": \"G major\", \"to_bar\": 1}");
+	CHECK(!Landed.IsError);
+	CHECK_HAS(Landed.Text, ": 0 outside the key, 0 clashes,");
+	// A slide that goes on to hold its new note is that note
+	Slides.Rows[5][14] = Cell();
+	Slides.Rows[5][16] = Cell();
+	Slides.End(5, 24);
+	Slides.Rows[5][12].Effect[0] = EFF_SLIDE_DOWN;
+	Slides.Rows[5][12].Param[0] = 0x41;	// G-4 down to F#4, held
+	Slides.Rows[6][14] = Cell();
+	Slides.Put(6, 12, "G-4");	// against that F#4 for a beat
+	CHECK_HAS(Run(Slides, "check_song", "{\"key\": \"G major\", \"to_bar\": 2}").Text,
+		"Clash: F#4 on VRC6 Pulse 1 against G-4 on VRC6 Pulse 2 at bar 1 beat 4 for 1 beat");
 }
 
 void TestPlayback()
@@ -4251,6 +4313,30 @@ void TestNightVersion()
 	CHECK_LACKS(Result.Text, "octave");
 	CHECK(Song.Rows[5][3].HasNote() && Song.Rows[0][4].HasNote() && Song.Rows[2][2].HasNote() && Song.Rows[3][2].HasNote());
 	CHECK_HAS(Tools.Call("make_version", Parse("{\"version\": \"night\", \"chords\": \"lush\"}")).Text, "chords should be keep, held or richer");
+	{
+		// Lush chords keep their own sounds: a pad would lose their arpeggios, leaving the roots
+		FakeSong Lush;
+		Lush.Info.DirectChanges = true;
+		CHECK(!Run(Lush, "add_chords_and_bass", "{\"chords\": \"| Cmaj7 | Am7 |\", \"chord_style\": \"lush\", \"key\": \"C major\", "
+			"\"bass_channel\": \"none\", \"to_bar\": 2}").IsError);
+		Lush.Put(5, 0, "E-4", 0);
+		Lush.Put(5, 8, "G-4");
+		Lush.Put(5, 16, "C-5");
+		Lush.End(5, 32, NOTE_RELEASE);
+		int Chords = -1;
+		for (int c = 0; c < 8 && Chords < 0; ++c)
+			if (c != 5 && Lush.Rows[static_cast<size_t>(c)][0].HasNote())
+				Chords = c;
+		CHECK(Chords >= 0);
+		if (Chords >= 0) {
+			const int Instrument = Lush.Rows[static_cast<size_t>(Chords)][0].Instrument;
+			ToolSet LushTools(Lush);
+			const ToolResult Night = LushTools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false}"));
+			CHECK(!Night.IsError);
+			CHECK_HAS(Night.Text, "keep their own sounds (a pad would lose their arpeggios)");
+			CHECK(Lush.Rows[static_cast<size_t>(Chords)][0].Instrument == Instrument);
+		}
+	}
 	// A fast song slows more than 20%: to 120 BPM
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Song.Info.Tempo = 180;
@@ -5452,10 +5538,13 @@ void TestFixLoop()
 	// The speed drops to 5 in bar 7: the repeats would start slower
 	Song.Rows[0][96].Effect[0] = EFF_SPEED;
 	Song.Rows[0][96].Param[0] = 5;
+	// A sampled kick in the loop's last bar plays out by itself: nothing to halt (a halt would reset the DPCM level)
+	Song.Put(4, 120, "C-3", 1);
 	ToolSet Tools(Song);
 	CHECK(!Tools.Call("set_loop", Parse("{\"from_bar\": 5}")).IsError);
 
 	std::string Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_LACKS(Text, "DPCM");
 	CHECK_HAS(Text, "2A03 Pulse 2: E-4 from the loop's end keeps sounding into bar 5 beat 1 on repeat (until bar 6 beat 2), where the "
 		"first time nothing sounds.");
 	CHECK_HAS(Text, "VRC6 Pulse 1: volume slide A02 is still on at the loop's end");
@@ -5475,7 +5564,7 @@ void TestFixLoop()
 	CHECK_HAS(Text, "volume 10 on VRC6 Pulse 2 at bar 5 beat 1");
 	CHECK_HAS(Text, "speed 6 (F06) at bar 5 beat 1");
 	CHECK_HAS(Text, "The seam is clean now");
-	CHECK(Song.Rows[1][64].Note == NOTE_HALT);
+	CHECK(Song.Rows[1][64].Note == NOTE_HALT && !Song.Rows[4][64].IsEnd());
 	CHECK(HasEffectAt(Song, 5, 64, EFF_VOLUME_SLIDE, 0) && Song.Rows[5][64].Pitch() == Song.Rows[5][80].Pitch() - 4 &&
 		Song.Rows[5][64].Volume == 9);
 	CHECK(Song.Rows[6][72].Instrument == 2 && Song.Rows[6][64].Volume == 10 && !Song.Rows[6][64].HasNote());
@@ -6512,6 +6601,22 @@ void TestLushChords()
 		Result = Run(Rub, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"delay_beats\": 1}");
 		CHECK(!Result.IsError && Result.Text.find("left out") == std::string::npos && Rub.Rows[6][4].Pitch() == Rub.Rows[5][0].Pitch());
 	}
+	{
+		// A chord tone in the echo still grates against a passing note the melody moves to: the
+		// echo's E-4 under the melody's F-4 is left out, and so is its F-4 against the chord's E
+		FakeSong Pass;
+		Pass.Info.DirectChanges = true;
+		CHECK(!Run(Pass, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"key\": \"C major\", "
+			"\"bass_channel\": \"none\", \"to_bar\": 1}").IsError);
+		Pass.Put(5, 0, "E-4", 0);
+		Pass.Put(5, 4, "F-4");
+		Pass.Put(5, 8, "G-4");
+		Pass.End(5, 12, NOTE_RELEASE);
+		Result = Run(Pass, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"delay_beats\": 1}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "2 echo notes were left out");
+		CHECK(!Pass.Rows[6][4].HasNote() && !Pass.Rows[6][8].HasNote() && Pass.Rows[6][12].Pitch() == Pass.Rows[5][8].Pitch());
+	}
 
 	// Into another mode: the chords move with the key and get the instruments for their new shapes
 	{
@@ -6740,6 +6845,30 @@ void TestMix()
 	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"loudest\"}").Text, "dac: full (Z00)");
 	FakeSong Ask;
 	CHECK_HAS(Run(Ask, "mix", "{}").Text, "needs direct changes");
+	{
+		// A sawtooth line over a triangle bass is a second line; down low it's the bass
+		FakeSong Saw;
+		Saw.Info.DirectChanges = true;
+		for (int i = 0; i < 8; ++i)
+			Saw.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+		Saw.Put(2, 0, "C-2", 1);
+		Saw.Put(2, 16, "F-2");
+		Saw.Put(7, 0, "E-3", 0, 15);	// a counter-line on the chords' thirds
+		Saw.Put(7, 8, "G-3");
+		Saw.Put(7, 16, "A-3");
+		Saw.Put(7, 24, "C-4");
+		Result = Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
+		CHECK_HAS(Result.Text, "VRC6 Sawtooth (a second line) loudest 15 to 7");
+		for (int i = 0; i < 4; ++i)
+			Saw.Rows[7][static_cast<size_t>(i * 8)].SetPitch(Saw.Rows[7][static_cast<size_t>(i * 8)].Pitch() - 24);
+		Saw.Rows[7][0].Volume = 15;
+		Result = Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
+		CHECK_HAS(Result.Text, "VRC6 Sawtooth (bass) loudest 15 to 10");
+		// With no triangle, the register decides
+		Saw.Rows[2] = std::vector<Cell>(Saw.Rows[2].size());
+		Saw.Rows[7][0].Volume = 15;
+		CHECK_HAS(Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "VRC6 Sawtooth (bass) loudest 15 to 10");
+	}
 	// Guessing the melody works too
 	CHECK(!Run(Song, "mix", "{}").IsError);
 
