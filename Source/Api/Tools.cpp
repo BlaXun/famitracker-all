@@ -10995,7 +10995,10 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 		}
 		Text = "Compose a track in FamiTracker for this: " + Idea + ". Make it sound composed by a person, with depth. "
 			"Work through these steps with the FamiTracker tools:\n"
-			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them.\n"
+			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
+			"notes name a composer, a game or a reference, look it up in the reference library (references, action search, "
+			"then show) and lean on what the studies show: tempo and feel, form, chord colors, how the channels share the "
+			"parts, volumes, echoes, sounds (reference_sound brings one in) and tricks. Write your own melody and chords.\n"
 			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
 			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
 			"3. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you choose and a chord_style, "

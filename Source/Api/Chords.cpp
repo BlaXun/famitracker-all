@@ -1131,6 +1131,10 @@ std::vector<ChordAt> HearChords(const std::vector<HeardNote> &Notes, const std::
 		for (size_t s = 0; s < Slots.size(); ++s) {
 			const int From = Slots[s].first, To = Slots[s].second;
 			double Weight[12] = { 0 }, BassWeight[12] = { 0 }, Total = 0.0;
+			// The bass is one voice: its long, loud notes count for at most half as much as the parts over it,
+			// so a bass on the fifth (Dm7 over A) doesn't turn the chord into one on the fifth
+			std::vector<double> Heard(Notes.size(), 0.0);
+			double Upper = 0.0, Low = 0.0;
 			for (size_t n = 0; n < Notes.size(); ++n) {
 				const HeardNote &N = Notes[n];
 				const int A = std::max(N.Row, From), Z = std::min(N.Row + N.Rows, To);
@@ -1139,6 +1143,15 @@ std::vector<ChordAt> HearChords(const std::vector<HeardNote> &Notes, const std::
 				double W = (Z - A) / static_cast<double>(Beat) * N.Weight;
 				if (N.Row >= From && N.Row < To && (N.Row - Bar.Row) % Beat == 0)
 					W *= 1.25;	// struck on a beat
+				Heard[n] = W;
+				(N.Bass ? Low : Upper) += W;
+			}
+			const double BassShare = Low > 0.0 && Upper > 0.0 ? std::min(1.0, 0.5 * Upper / Low) : 1.0;
+			for (size_t n = 0; n < Notes.size(); ++n) {
+				const HeardNote &N = Notes[n];
+				if (Heard[n] <= 0.0)
+					continue;
+				const double W = N.Bass ? Heard[n] * BassShare : Heard[n];
 				Weight[Mod12(N.PitchClass)] += W;
 				Total += W;
 				if (N.Bass)

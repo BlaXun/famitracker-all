@@ -3493,6 +3493,7 @@ void TestProtocol()
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "for this: a snowy village at night.");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars with one or two quiet parts");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "name a composer, a game or a reference, look it up");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\"}}"),
 		Config, Tools);
 	CHECK_EQ(ErrorCode(Response), -32602);
@@ -6948,6 +6949,19 @@ void TestHarpUnderMelody()
 	// The harp's steady sixteenths are accompaniment: the melody is the line over them
 	Result = Run(Song, "review_arrangement", "{\"from_bar\": 3}");
 	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1");
+	// A harp rolling a Dm7 over a bass that moves to the fifth: still Dm7 (over A), not a chord on A
+	FakeSong Fifth;
+	const char *const ROLL[] = { "D-2", "A-2", "F-3", "C-4" };
+	for (int r = 0; r < 16; ++r)
+		Fifth.Put(0, r, ROLL[r % 4 == 0 ? 0 : r % 4], r == 0 ? 0 : NO_INSTRUMENT, r == 0 ? 7 : -1);
+	Fifth.Put(2, 0, "D-3", 2);
+	Fifth.Put(2, 8, "A-3");
+	Fifth.Put(5, 0, "F-3", 0, 12);
+	Fifth.Put(5, 8, "A-3");
+	Result = Run(Fifth, "get_song", "{}");
+	CHECK_HAS(Result.Text, "Chords the parts play: | Dm7");
+	CHECK_LACKS(Result.Text, "Dm7 A");
+	CHECK_LACKS(Result.Text, "Dm7 Am");
 	// Chords too long to fit before the melody: the last are left out, and the reply says so
 	FakeSong Late(4);
 	Late.Info.DirectChanges = true;
