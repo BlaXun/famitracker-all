@@ -7610,6 +7610,18 @@ void TestMeterAndSounds()
 	CHECK(Echoed.Rows[6][4].HasNote() && Echoed.Rows[6][32].Pitch() == Echoed.Rows[5][0].Pitch() - 5 && Echoed.Rows[6][32].Volume == 11);
 	CHECK_LACKS(Result.Text, "own notes in those bars were replaced");
 
+	// Effects later in a note and where it ends
+	FakeSong Later;
+	Later.Info.DirectChanges = true;
+	Result = Run(Later, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", "
+		"\"beats\": 2, \"later_effects\": [{\"beats\": 1, \"effects\": [\"A02\"]}], \"end_effects\": [\"A00\"]}]}");
+	CHECK(!Result.IsError);
+	CHECK(HasEffectAt(Later, 0, 4, EFF_VOLUME_SLIDE, 2) && HasEffectAt(Later, 0, 8, EFF_VOLUME_SLIDE, 0));
+	CHECK_HAS(Run(Later, "write_notes", "{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, "
+		"\"later_effects\": [{\"beats\": 3, \"effects\": [\"A02\"]}]}]}").Text, "is past the note's end");
+	CHECK_HAS(Run(Later, "write_notes", "{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, "
+		"\"end_effects\": \"A00\"}]}").Text, "end_effects should be a list");
+
 	// A sawtooth sound named "... (saw)" keeps one mark
 	FakeSong Named;
 	Result = Run(Named, "design_instrument", "{\"name\": \"Cello (saw)\", \"kind\": \"strings\", \"channel\": \"Sawtooth\"}");

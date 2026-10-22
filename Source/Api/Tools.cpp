@@ -1617,6 +1617,44 @@ std::string WriteNotes(Session &S, const Json &Args)
 				Note.Effects.push_back(std::make_pair(Effect, Param));
 			}
 		}
+		// Effects later in the note (a fade into its tail, a slide, a vibrato coming in), and where it ends
+		auto ReadEffects = [&](const Json &List, const std::string &Where, std::vector<std::pair<int, int> > &Into) {
+			if (!List.IsArray() || List.Size() == 0)
+				throw Problem(Which + ": " + Where + " should be a list of effects like [\"A02\"].");
+			for (size_t e = 0; e < List.Size(); ++e) {
+				int Effect = EFF_NONE, Param = 0;
+				std::string Why;
+				if (!List.At(e).IsString())
+					throw Problem(Which + ": effects are written as in FamiTracker, like \"A02\" or \"P80\".");
+				if (!ParseChannelEffect(List.At(e).String(), Info, S.Song.Speed, Effect, Param, Why))
+					throw Problem(Which + ": " + Why + " (the effects tool explains them all.)");
+				Into.push_back(std::make_pair(Effect, Param));
+			}
+		};
+		const Json *pLater = Arg(Item, "later_effects");
+		if (pLater != 0) {
+			if (!pLater->IsArray())
+				throw Problem(Which + ": later_effects should be a list like [{\"beats\": 1, \"effects\": [\"A02\"]}].");
+			for (size_t k = 0; k < pLater->Size(); ++k) {
+				const Json &Later = pLater->At(k);
+				if (!Later.IsObject() || Arg(Later, "beats") == 0 || Arg(Later, "effects") == 0)
+					throw Problem(Which + ": each of later_effects is {\"beats\": how far into the note, \"effects\": [\"A02\"]}.");
+				bool ExactLater;
+				const double Beats = NumberArg(Later, "beats", 1.0, 0.001, 1024.0);
+				const int After = S.Time.BeatsToRows(Beats, ExactLater);
+				if (!ExactLater)
+					Rounded = true;
+				if (After >= Rows)
+					throw Problem(Format("%s: later_effects %s beats in is past the note's end (it lasts %s); end_effects go where it "
+						"ends.", Which.c_str(), FormatNumber(Beats).c_str(), S.Time.Length(Rows).c_str()));
+				std::vector<std::pair<int, int> > Effects;
+				ReadEffects(*Arg(Later, "effects"), "later_effects' effects", Effects);
+				for (size_t e = 0; e < Effects.size(); ++e)
+					Note.LaterEffects.push_back(std::make_pair(After, Effects[e]));
+			}
+		}
+		if (Arg(Item, "end_effects") != 0)
+			ReadEffects(*Arg(Item, "end_effects"), "end_effects", Note.EndEffects);
 		Notes.push_back(Note);
 		FirstBar = std::min(FirstBar, Bar);
 		LastRow = std::max(LastRow, Row + Rows);
@@ -10644,6 +10682,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		N.Add("volume", Prop("integer", "1-15 (15 is full). Stays for the following notes until another volume is given; the part starts at 15."));
 		N.Add("instrument", Prop("string", "Instrument for this note, if not the part's."));
 		N.Add("effects", Prop("array", "FamiTracker effects on the note's first row, e.g. [\"Q31\"] (slide up 1 semitone), [\"047\"] (a major chord as an arpeggio), [\"445\"] (vibrato)."));
+		N.Add("later_effects", Prop("array", "Effects later in the note, each {\"beats\": how far in, \"effects\": [\"A02\"]}: a fade into "
+			"its tail, a slide or a fall, a vibrato that comes in."));
+		N.Add("end_effects", Prop("array", "Effects on the row where the note ends (its release or halt), e.g. [\"P80\"] (back in tune)."));
 		NoteItem = N.Get();
 	}
 	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}.");
