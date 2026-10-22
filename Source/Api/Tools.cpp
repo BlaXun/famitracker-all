@@ -11323,7 +11323,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then breathing (an intro on "
 			"the chords and bass, a break with fewer parts), then expression (polish, an echo, a sound that changes between "
 			"sections, sampled drums), and mix last. Keep my melody unless the review points at it.\n"
-			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
+			"3. Run review_arrangement again after each round until it scores 8 or more. If the song loops, finish with "
+			"check_loop and fix_loop: an echo or a fade at the loop's end carries into its start on repeat.\n"
 			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
 		return true;
 	}
