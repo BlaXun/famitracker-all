@@ -235,7 +235,7 @@ bool ParseNoisePitch(const std::string &Input, int &Pitch, std::string &Drum)
 		return true;
 	}
 	if (Text == "hihat" || Text == "hi-hat" || Text == "hat" || Text == "closed hi-hat" || Text == "closed hihat") {
-		Pitch = 0xE;
+		Pitch = 0xD;	// D-#: higher, most of the noise's sound lies above hearing (E-# is about 4 dB quieter)
 		Drum = "hi-hat";
 		return true;
 	}

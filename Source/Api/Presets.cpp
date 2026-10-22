@@ -599,7 +599,7 @@ Preset DesignPreset(const SoundDesign &D)
 			break;
 		case DRUM_HIHAT:
 			Volume = List({ 10, 6, 3, 1, 0 });
-			Pitches = List({ 14 });
+			Pitches = List({ 13 });	// D-#: at E-# it's about 4 dB quieter, most of it above hearing
 			break;
 		case DRUM_OPEN_HIHAT:
 			Volume = List({ 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0 });

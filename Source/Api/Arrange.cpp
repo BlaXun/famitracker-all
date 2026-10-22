@@ -1076,7 +1076,8 @@ const GrooveDef GROOVE_DEFS[] = {
 	{ "x...........", "....g...g...", "x.x.x.x.x.x." },				// waltz
 };
 
-const int KICK_PITCH = 0x4, SNARE_PITCH = 0xA, HAT_PITCH = 0xE, OPEN_PITCH = 0xD, CRASH_PITCH = 0xC;
+// The hi-hats at D-#: at E-# most of the noise's sound lies above hearing and they come out about 4 dB quieter
+const int KICK_PITCH = 0x4, SNARE_PITCH = 0xA, HAT_PITCH = 0xD, OPEN_PITCH = 0xD, CRASH_PITCH = 0xC;
 const int TOM_PITCHES[3] = { 0x9, 0x7, 0x5 };	// high, middle, low
 
 DrumHit Hit(int Row, int Pitch, int Volume, const char *Sound)

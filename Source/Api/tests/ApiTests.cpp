@@ -1080,7 +1080,7 @@ void TestNames()
 
 	std::string Drum;
 	CHECK(ParseNoisePitch("kick", Pitch, Drum) && Pitch == 4 && Drum == "kick");
-	CHECK(ParseNoisePitch("Hi-Hat", Pitch, Drum) && Pitch == 14 && Drum == "hi-hat");
+	CHECK(ParseNoisePitch("Hi-Hat", Pitch, Drum) && Pitch == 13 && Drum == "hi-hat");
 	CHECK(ParseNoisePitch("A-#", Pitch, Drum) && Pitch == 10 && Drum.empty());
 	CHECK(ParseNoisePitch("noise 12", Pitch, Drum) && Pitch == 12);
 	CHECK(ParseNoisePitch("f", Pitch, Drum) && Pitch == 15);
@@ -1560,7 +1560,7 @@ void TestWriteNotes()
 			"{\"bar\": 1, \"beat\": 2.5, \"pitch\": \"hihat\", \"beats\": 0.25}]}");
 		CHECK(!Result.IsError);
 		CHECK_HAS(Result.Text, "Added the instrument \"Kick\" (03) (2A03) from the preset \"kick\"");
-		CHECK_EQ(Notes(Song, 3, 0, 16), std::string("0:4-# 2:--- 4:A-# 6:E-# 7:--- "));
+		CHECK_EQ(Notes(Song, 3, 0, 16), std::string("0:4-# 2:--- 4:A-# 6:D-# 7:--- "));
 	}
 	{
 		// Mistakes come back as errors Claude can fix
@@ -1742,6 +1742,20 @@ void TestDesign()
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Bell\", \"kind\": \"bell\"}").Text, "dies away over 40 frames");
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Short bell\", \"kind\": \"bell\", \"decay\": \"short\"}").Text,
 		"dies away over 13 frames");
+	// A pad asked to hold at half doesn't drop straight down after its attack: it swells to half, or with a volume given
+	// settles there
+	for (int Given = 0; Given < 2; ++Given) {
+		const size_t Before = Song.Made.size();
+		CHECK(!Run(Song, "design_instrument", Given ? "{\"name\": \"Half pad 2\", \"kind\": \"pad\", \"sustain\": \"half\", \"volume\": 15}" :
+			"{\"name\": \"Half pad\", \"kind\": \"pad\", \"sustain\": \"half\"}").IsError);
+		CHECK(Song.Made.size() == Before + 1);
+		const std::vector<int> &V = Song.Made.rbegin()->second.Sequences2A03[0].Items;
+		int Jump = 0;
+		for (size_t i = 1; i < V.size(); ++i)
+			Jump = std::max(Jump, V[i - 1] - V[i]);
+		CHECK(Jump <= 2);
+		CHECK(*std::max_element(V.begin(), V.end()) == (Given ? 15 : 8));
+	}
 	// The sawtooth and the triangle have no duty (and the triangle no volume): said so
 	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"motion\": \"open\"}");
 	CHECK_HAS(Result.Text, "a sawtooth that reaches");
@@ -2315,7 +2329,7 @@ void TestSampleDrums()
 	CHECK_HAS(Result.Text, "basic drums: sampled kick and snare on 2A03 DPCM, hi-hats on 2A03 Noise, a fill every 4 bars, bars 1-4");
 	CHECK_HAS(Result.Text, "Added the instrument \"Sample drums\" (06)");
 	CHECK(Kit2.Rows[4][0].Pitch() == 36 && Kit2.Rows[4][0].Instrument == 6 && Kit2.Rows[4][4].Pitch() == 38 && Kit2.Rows[4][8].Pitch() == 36);
-	CHECK(Kit2.Rows[3][4].HasNote() && Kit2.Rows[3][4].Pitch() == 0xE && Kit2.Rows[3][8].Pitch() == 0xE);	// hats under the snare and kick
+	CHECK(Kit2.Rows[3][4].HasNote() && Kit2.Rows[3][4].Pitch() == 0xD && Kit2.Rows[3][8].Pitch() == 0xD);	// hats under the snare and kick
 	CHECK(Kit2.Rows[3][0].Pitch() == 0xC && !Kit2.Rows[3][2].HasNote());	// the crash, and no hat to cut it short
 	{
 		// Ghost snares stay soft on the noise; the fill's toms are sampled
@@ -4586,8 +4600,8 @@ void TestTenseVersions()
 	// Hi-hats on the offbeats of bar 1 only, the snares still playing as before
 	const int HiHat = InstrumentIndex(Song, "Hi-hat");
 	CHECK(HiHat >= 0);
-	CHECK(Battle[3][2].Pitch() == 0xE && Battle[3][2].Instrument == HiHat && Battle[3][2].Volume == 8);
-	CHECK(Battle[3][14].Pitch() == 0xE && !Battle[3][18].HasNote() && !Battle[3][16].HasNote());
+	CHECK(Battle[3][2].Pitch() == 0xD && Battle[3][2].Instrument == HiHat && Battle[3][2].Volume == 8);
+	CHECK(Battle[3][14].Pitch() == 0xD && !Battle[3][18].HasNote() && !Battle[3][16].HasNote());
 	CHECK(Battle[3][4].Instrument == 2 && Battle[3][4].Volume == 15 && Battle[3][4].Pitch() == Day[3][4].Pitch());
 	CHECK(Battle[5][0].Instrument == InstrumentIndex(Song, "Bright lead") && Battle[5][8].Pitch() == Day[5][8].Pitch() - 1);
 

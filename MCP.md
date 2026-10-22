@@ -469,8 +469,11 @@ shimmers or thins as it fades, a vibrato built in that comes in after a
 delay given in beats, an octave blip, a scoop or a fall on the attack, or a
 chord played as a fast arpeggio from every note (major, minor, sus2, sus4,
 6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7, augmented).
-Drums can be darker or brighter, shorter or longer. The instrument gets a new name, so notes that use another one don't
-change.
+A sound that holds under its peak (a pad at half) swells to that level, or
+settles to it, rather than dropping straight after its attack. Drums can be
+darker or brighter, shorter or longer (a hi-hat sits at the noise's D-#: at
+E-# most of its sound lies above hearing). The instrument gets a new name,
+so notes that use another one don't change.
 
 On the noise channel, a kind that isn't a drum makes a volume envelope: a
 `swell` rises over half a second and washes out after a release, for waves

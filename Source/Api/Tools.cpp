@@ -2199,6 +2199,14 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	if (Arg(Args, "decay") != 0 && D.Decay == 0 && Arg(Args, "sustain") == 0)
 		D.Sustain = D.Peak;	// no decay: it holds at its peak
 	D.Sustain = std::min(D.Peak, WordArg(Args, "sustain", D.Sustain, SUSTAINS, SUSTAIN_LEVELS, 5, 15));
+	// A sound that holds (no decay) asked to hold under its peak would drop straight down after its attack: it swells to
+	// the level it holds instead, or with a volume given, settles to it over as long as its attack took
+	if (!D.Drum && D.Decay == 0 && D.Sustain > 0 && D.Sustain < D.Peak && Arg(Args, "decay") == 0) {
+		if (Arg(Args, "volume") == 0)
+			D.Peak = D.Sustain;
+		else
+			D.Decay = std::max(8, D.Attack);
+	}
 	D.Release = WordArg(Args, "release", D.Release, RELEASES, RELEASE_FRAMES, 3, 60);
 	D.Duty = WordArg(Args, "duty", D.Duty, DUTIES, DUTY_VALUES, 14, 0);
 	D.Motion = WordArg(Args, "duty_motion", D.Motion, MOTIONS, MOTION_VALUES, 7, 0);
