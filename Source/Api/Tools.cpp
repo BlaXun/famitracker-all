@@ -4303,6 +4303,22 @@ void PlayedBars(Session &S, int &From, int &To)
 	To = S.Time.BarOf(std::min(Last, S.Time.TotalRows() - 1));
 }
 
+// The bar phrases count from: where the loop comes back to when an intro
+// plays once before it (a fill every 8 bars after a 4-bar intro ends bars
+// 12, 20 and 28), else bar 1
+int PhraseAnchor(Session &S)
+{
+	const int Loop = Flow(S).LoopRow(S.Time.PatternLength);
+	return Loop > 0 ? S.Time.BarOf(Loop) : 1;
+}
+
+// How many bars into its phrase Bar is, in phrases of Length bars
+int BarsIntoPhrase(int Bar, int Anchor, int Length)
+{
+	const int n = std::max(1, Length);
+	return ((Bar - Anchor) % n + n) % n;
+}
+
 std::string AddDrumsTool(Session &S, const Json &Args)
 {
 	const bool AsClip = BoolArg(Args, "as_clip", false);
@@ -4331,7 +4347,7 @@ std::string AddDrumsTool(Session &S, const Json &Args)
 	static const int LEVEL_VALUES[] = { 1, 2, 3, 1, 2, 3 };
 	O.Intensity = std::max(1, std::min(3, LevelArg(Args, "intensity", 2, LEVELS, LEVEL_VALUES, 6)));
 	O.FillEvery = IntArg(Args, "fill_every", 4, 0, 64);
-	O.PhraseStart = O.FillEvery > 0 ? (From - 1) % O.FillEvery : 0;
+	O.PhraseStart = O.FillEvery > 0 ? BarsIntoPhrase(From, PhraseAnchor(S), O.FillEvery) : 0;
 	O.Crash = BoolArg(Args, "crash", true);
 	O.Samples = SampledKitArg(Args);
 	O.RowsPerBeat = R;
@@ -5194,11 +5210,12 @@ std::string ReviewTool(Session &S, const Json &Args)
 		std::map<std::string, int> Prints;
 		int Fills = 0, PhraseEnds = 0;
 		std::string Before;
+		const int Anchor = PhraseAnchor(S);
 		for (size_t b = 0; b < Bars.size(); ++b) {
 			const std::string Print = BarPrint(Notes, Bars[b].Row, Bars[b].Row + Bars[b].Rows);
 			++Prints[Print];
 			const int Bar = S.Time.BarOf(Bars[b].Row);
-			if (Bar % 4 == 0) {
+			if (BarsIntoPhrase(Bar, Anchor, 4) == 3) {
 				++PhraseEnds;
 				if (b > 0 && Print != Before)
 					++Fills;
@@ -5639,7 +5656,7 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		O.Groove = M.Groove;
 		O.Intensity = M.Intensity;
 		O.FillEvery = 4;
-		O.PhraseStart = (From - 1) % 4;
+		O.PhraseStart = BarsIntoPhrase(From, PhraseAnchor(S), 4);
 		O.RowsPerBeat = R;
 		O.Samples = Sampled;
 		std::string Where;
@@ -7979,15 +7996,32 @@ std::string EffectName(int Effect)
 	}
 }
 
+// A difference between the loop's start the first time and on repeat, and
+// what fix_loop writes so the repeats start as the first time does
+enum { SEAM_NONE, SEAM_HALT, SEAM_INSTRUMENT, SEAM_VOLUME, SEAM_EFFECT, SEAM_SPEED };
+struct Seam {
+	std::string Text;	// what check_loop says
+	int Channel;		// -1 for the song's speed and tempo
+	int Row;			// the song row the fix goes on
+	int What;			// SEAM_NONE when nothing written at the loop's start fixes it
+	int Value;			// the instrument, volume or effect; the speed (-1: stays)
+	int Param;			// the effect's parameter; the tempo (-1: stays)
+	std::string Done;	// what fix_loop says it wrote
+	Seam() : Channel(-1), Row(-1), What(SEAM_NONE), Value(0), Param(0) {}
+};
+
 // What differs between the loop's start the first time (from the intro, or
 // the song's start) and on repeat (from the loop's end): notes hanging over,
-// instruments, volumes, effects still on, speed and tempo. Rows: the song's
-// rows in playing order with the loop twice; First and Second: where the loop
-// starts in them.
-std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<Cell> > &Cells, const std::vector<int> &Columns,
+// instruments, volumes, effects still on, speed and tempo. Each comes with
+// what fix_loop writes so the repeats start as the first time does; the
+// checks see the fixes found before them (a note halted at the loop's start
+// needs no volume there). Rows: the song's rows in playing order with the
+// loop twice; First and Second: where the loop starts in them.
+std::vector<Seam> FindSeams(Session &S, const std::vector<std::vector<Cell> > &Cells, const std::vector<int> &Columns,
 	const std::vector<TimedRow> &Rows, size_t First, size_t Second, int LoopRow)
 {
-	std::vector<std::string> Seams;
+	std::vector<Seam> Seams;
+	const std::string Where = S.Time.Position(LoopRow);
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
 		std::vector<Cell> Played;
@@ -7996,7 +8030,7 @@ std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<
 		const int Cols = Columns[static_cast<size_t>(c)];
 		const ChannelState Before = StateAt(Played, static_cast<int>(First), Cols);
 		const ChannelState Again = StateAt(Played, static_cast<int>(Second), Cols);
-		const Cell &Start = Played[Second];
+		Cell Start = Played[Second];	// with the fixes found so far
 		const std::vector<NoteInfo> Notes = ReadNotes(Played, Cols);
 		auto SoundingAt = [&](int Index) -> const NoteInfo* {
 			for (size_t i = 0; i < Notes.size(); ++i)
@@ -8004,8 +8038,8 @@ std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<
 					return &Notes[i];
 			return 0;
 		};
+		const NoteInfo *pFirst = SoundingAt(static_cast<int>(First)), *pAgain = SoundingAt(static_cast<int>(Second));
 		if (!Start.HasNote() && !Start.IsEnd()) {
-			const NoteInfo *pFirst = SoundingAt(static_cast<int>(First)), *pAgain = SoundingAt(static_cast<int>(Second));
 			const int PitchFirst = pFirst != 0 ? pFirst->Pitch : -1, PitchAgain = pAgain != 0 ? pAgain->Pitch : -1;
 			if (PitchFirst != PitchAgain && pAgain != 0) {
 				// When the loop's own first note comes
@@ -8015,32 +8049,99 @@ std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<
 						Until = "until " + S.Time.Position(Rows[static_cast<size_t>(Notes[i].Row)].Row);
 						break;
 					}
-				Seams.push_back(Format("%s: %s from the loop's end keeps sounding into %s on repeat (%s), where the first time %s. "
+				Seam H;
+				H.Channel = c;
+				H.Text = Format("%s: %s from the loop's end keeps sounding into %s on repeat (%s), where the first time %s. "
 					"Put a note, release (===) or halt (---) there.", Info.FullName().c_str(), PitchText(Info, PitchAgain).c_str(),
-					S.Time.Position(LoopRow).c_str(), Until.c_str(),
-					PitchFirst < 0 ? "nothing sounds" : (PitchText(Info, PitchFirst) + " from the intro does").c_str()));
+					Where.c_str(), Until.c_str(),
+					PitchFirst < 0 ? "nothing sounds" : (PitchText(Info, PitchFirst) + " from the intro does").c_str());
+				// A halt where nothing sounds the first time changes nothing then (an instrument set there
+				// without a note would be lost with it)
+				if (PitchFirst < 0 && Start.Instrument == NO_INSTRUMENT) {
+					H.What = SEAM_HALT;
+					H.Row = LoopRow;
+					H.Done = Format("a halt (---) on %s at %s, where %s from the loop's end hung over", Info.FullName().c_str(),
+						Where.c_str(), PitchText(Info, PitchAgain).c_str());
+					Start.Note = NOTE_HALT;
+					Start.Octave = 0;
+				}
+				Seams.push_back(H);
 			}
-			else if (PitchFirst != PitchAgain && pFirst != 0)
-				Seams.push_back(Format("%s: the first time, %s from the intro sounds into %s; on repeat, nothing does.",
-					Info.FullName().c_str(), PitchText(Info, PitchFirst).c_str(), S.Time.Position(LoopRow).c_str()));
+			else if (PitchFirst != PitchAgain && pFirst != 0) {
+				Seam H;
+				H.Channel = c;
+				H.Text = Format("%s: the first time, %s from the intro sounds into %s; on repeat, nothing does.",
+					Info.FullName().c_str(), PitchText(Info, PitchFirst).c_str(), Where.c_str());
+				Seams.push_back(H);
+			}
 		}
 		if (!IsMelodic(Info) && Info.Kind != KIND_NOISE)
 			continue;
-		if (Start.Instrument == NO_INSTRUMENT && Before.Instrument != Again.Instrument && Before.Instrument != NO_INSTRUMENT &&
-			Again.Instrument != NO_INSTRUMENT && !Start.IsEnd())
-			Seams.push_back(Format("%s: the loop starts with %s the first time and %s on repeat; set the instrument on its first note.",
-				Info.FullName().c_str(), InstrumentLabel(S.Song, Before.Instrument).c_str(), InstrumentLabel(S.Song, Again.Instrument).c_str()));
-		if (Start.Volume == NO_VOLUME && Before.Volume != Again.Volume && Info.Kind != KIND_TRIANGLE)
-			Seams.push_back(Format("%s: the loop starts at volume %d the first time and %d on repeat; set the volume on its first note.",
-				Info.FullName().c_str(), Before.Volume, Again.Volume));
+		// What the loop plays from its start: a note sounding into it (in either pass, not ended there), and its first
+		// note. The channel's state matters for them, unless a row from the start to the first note sets it again.
+		auto CellAt = [&](size_t i) -> const Cell& { return i == Second ? Start : Played[i]; };
+		size_t FirstNote = Played.size();
+		for (size_t i = Second; i < Played.size() && FirstNote == Played.size(); ++i)
+			if (CellAt(i).HasNote())
+				FirstNote = i;
+		const bool Plays = FirstNote < Played.size();
+		const bool Hangs = !Start.HasNote() && !Start.IsEnd() && (pFirst != 0 || pAgain != 0);
+		bool InstrumentSet = false, VolumeSet = false;
+		for (size_t i = Second; i < Played.size() && i <= FirstNote; ++i) {
+			const Cell &C = CellAt(i);
+			InstrumentSet = InstrumentSet || (C.Instrument != NO_INSTRUMENT && !C.IsEnd());
+			VolumeSet = VolumeSet || C.Volume < NO_VOLUME;
+		}
+		if (Plays && !InstrumentSet && Before.Instrument != Again.Instrument && Before.Instrument != NO_INSTRUMENT &&
+			Again.Instrument != NO_INSTRUMENT) {
+			Seam I;
+			I.Channel = c;
+			I.Row = Rows[FirstNote].Row;
+			I.What = SEAM_INSTRUMENT;
+			I.Value = Before.Instrument;
+			const std::string At = S.Time.Position(I.Row);
+			I.Text = Format("%s: the loop's first note (%s) plays with %s the first time and %s on repeat; set the instrument "
+				"on it.", Info.FullName().c_str(), At.c_str(), InstrumentLabel(S.Song, Before.Instrument).c_str(),
+				InstrumentLabel(S.Song, Again.Instrument).c_str());
+			I.Done = Format("%s on %s's first note in the loop (%s)", InstrumentLabel(S.Song, Before.Instrument).c_str(),
+				Info.FullName().c_str(), At.c_str());
+			Seams.push_back(I);
+		}
+		if (Info.Kind != KIND_TRIANGLE && Start.Volume == NO_VOLUME && Before.Volume != Again.Volume && (Hangs || (Plays && !VolumeSet))) {
+			Seam V;
+			V.Channel = c;
+			V.Row = LoopRow;
+			V.What = SEAM_VOLUME;
+			V.Value = Before.Volume;
+			V.Text = Format("%s: the loop starts at volume %d the first time and %d on repeat; set the volume at %s.",
+				Info.FullName().c_str(), Before.Volume, Again.Volume, Where.c_str());
+			V.Done = Format("volume %d on %s at %s", Before.Volume, Info.FullName().c_str(), Where.c_str());
+			Start.Volume = static_cast<unsigned char>(Before.Volume);
+			Seams.push_back(V);
+		}
 		for (int e = 1; e < EFF_COUNT; ++e) {
 			if (!IsStickyEffect(e) || Before.Sticky[e] == Again.Sticky[e] || HasEffect(Start, e, Cols))
 				continue;
+			bool Set = false;
+			for (size_t i = Second; i < Played.size() && i <= FirstNote && !Set; ++i)
+				Set = HasEffect(CellAt(i), e, Cols);
+			if (!Hangs && (!Plays || Set))
+				continue;
 			const bool StillOn = Again.Sticky[e] != StickyOff(e);
 			const int On = StillOn ? Again.Sticky[e] : Before.Sticky[e];
-			Seams.push_back(Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
+			Seam E;
+			E.Channel = c;
+			E.Text = Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
 				"set it at %s (%c%02X turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
-				StillOn ? "still on" : "off", StillOn ? "gets" : "lacks", S.Time.Position(LoopRow).c_str(), EffectLetter(e), StickyOff(e)));
+				StillOn ? "still on" : "off", StillOn ? "gets" : "lacks", Where.c_str(), EffectLetter(e), StickyOff(e));
+			if (AddEffect(Start, e, Before.Sticky[e], Cols)) {
+				E.Row = LoopRow;
+				E.What = SEAM_EFFECT;
+				E.Value = e;
+				E.Param = Before.Sticky[e];
+				E.Done = Format("%c%02X on %s at %s", EffectLetter(e), Before.Sticky[e], Info.FullName().c_str(), Where.c_str());
+			}
+			Seams.push_back(E);
 		}
 	}
 
@@ -8065,11 +8166,174 @@ std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<
 				}
 		}
 	}
-	if (!StartSets && (Speed != SpeedFirst || Tempo != TempoFirst))
-		Seams.push_back(Format("The loop starts at speed %d, tempo %d the first time and speed %d, tempo %d on repeat; put the "
-			"speed and tempo (Fxx) on its first row.", SpeedFirst, TempoFirst, Speed, Tempo));
-
+	if (!StartSets && (Speed != SpeedFirst || Tempo != TempoFirst)) {
+		Seam T;
+		T.Row = LoopRow;
+		T.What = SEAM_SPEED;
+		T.Value = Speed != SpeedFirst ? SpeedFirst : -1;
+		T.Param = Tempo != TempoFirst ? TempoFirst : -1;
+		T.Text = Format("The loop starts at speed %d, tempo %d the first time and speed %d, tempo %d on repeat; put the "
+			"speed and tempo (Fxx) on its first row.", SpeedFirst, TempoFirst, Speed, Tempo);
+		if (T.Value >= 0 && T.Param >= 0)
+			T.Done = Format("speed %d and tempo %d (F%02X F%02X) at %s", SpeedFirst, TempoFirst, SpeedFirst, TempoFirst, Where.c_str());
+		else if (T.Value >= 0)
+			T.Done = Format("speed %d (F%02X) at %s", SpeedFirst, SpeedFirst, Where.c_str());
+		else
+			T.Done = Format("tempo %d (F%02X) at %s", TempoFirst, TempoFirst, Where.c_str());
+		Seams.push_back(T);
+	}
 	return Seams;
+}
+
+std::vector<std::string> SeamProblems(Session &S, const std::vector<std::vector<Cell> > &Cells, const std::vector<int> &Columns,
+	const std::vector<TimedRow> &Rows, size_t First, size_t Second, int LoopRow)
+{
+	const std::vector<Seam> Seams = FindSeams(S, Cells, Columns, Rows, First, Second, LoopRow);
+	std::vector<std::string> Out;
+	for (size_t i = 0; i < Seams.size(); ++i)
+		Out.push_back(Seams[i].Text);
+	return Out;
+}
+
+// The song as check_loop and fix_loop follow it: its rows in playing order
+// with the loop twice, and where the loop starts in them
+struct LoopPlay {
+	SongFlow Played;
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	std::vector<TimedRow> Rows;
+	int EndTick;
+	size_t First, Second;	// where the loop starts the first time and the second (Rows.size() when it doesn't)
+	int LoopRow;
+};
+
+LoopPlay PlayLoop(Session &S)
+{
+	LoopPlay P;
+	const int PL = S.Time.PatternLength;
+	P.Played = Flow(S);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		P.Cells.push_back(S.Cells(c));
+		P.Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	P.EndTick = 0;
+	P.Rows = TimeRows(P.Cells, P.Columns, P.Played, PL, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint, S.Song.FrameRate, 2,
+		P.EndTick);
+	P.First = P.Second = P.Rows.size();
+	for (size_t i = 0; i < P.Rows.size(); ++i)
+		if (P.Rows[i].LoopStart) {
+			if (P.First == P.Rows.size())
+				P.First = i;
+			else if (P.Second == P.Rows.size())
+				P.Second = i;
+		}
+	P.LoopRow = P.Played.LoopRow(PL);
+	return P;
+}
+
+// Writes what makes the loop's repeats start as its first time does: the
+// fixes of the seam's problems
+std::string FixLoopTool(Session &S, const Json &)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Fixing the loop changes the song, which needs direct changes. check_loop says what to change; the user "
+			"can do it, or allow direct changes in File > Connect Claude Code.");
+	const LoopPlay P = PlayLoop(S);
+	if (P.Rows.empty())
+		throw Problem("The song has no rows.");
+	if (P.Played.Halts())
+		throw Problem("The song plays once and stops (a halt, Cxx): it has no loop to fix. set_loop makes it loop.");
+	if (P.First == P.Rows.size() || P.Second == P.Rows.size())
+		throw Problem("The song's loop couldn't be followed.");
+	const std::vector<Seam> Seams = FindSeams(S, P.Cells, P.Columns, P.Rows, P.First, P.Second, P.LoopRow);
+	Draft D(S);
+	std::vector<std::string> Done, Left;
+	for (size_t i = 0; i < Seams.size(); ++i) {
+		const Seam &F = Seams[i];
+		bool Written = false;
+		if (F.What == SEAM_SPEED) {
+			// Each Fxx in an empty effect column of the loop's first row, on the first channel with room
+			std::vector<int> Params;
+			if (F.Value >= 0)
+				Params.push_back(F.Value);
+			if (F.Param >= 0)
+				Params.push_back(F.Param);
+			for (int c = 0; c < S.ChannelCount() && !Written; ++c) {
+				Cell &C = D.Cells(c)[static_cast<size_t>(F.Row)];
+				int Free = 0;
+				for (int k = 0; k < S.Channel(c).EffectColumns; ++k)
+					if (C.Effect[k] == EFF_NONE)
+						++Free;
+				if (Free < static_cast<int>(Params.size()))
+					continue;
+				for (size_t p = 0; p < Params.size(); ++p)
+					for (int k = 0; k < S.Channel(c).EffectColumns; ++k)
+						if (C.Effect[k] == EFF_NONE) {
+							C.Effect[k] = EFF_SPEED;
+							C.Param[k] = static_cast<unsigned char>(Params[p]);
+							break;
+						}
+				Written = true;
+			}
+		}
+		else if (F.What != SEAM_NONE && F.Channel >= 0) {
+			Cell &C = D.Cells(F.Channel)[static_cast<size_t>(F.Row)];
+			switch (F.What) {
+			case SEAM_HALT:
+				C.Note = NOTE_HALT;
+				C.Octave = 0;
+				Written = true;
+				break;
+			case SEAM_INSTRUMENT:
+				C.Instrument = static_cast<unsigned char>(F.Value);
+				Written = true;
+				break;
+			case SEAM_VOLUME:
+				C.Volume = static_cast<unsigned char>(F.Value);
+				Written = true;
+				break;
+			case SEAM_EFFECT:
+				Written = AddEffect(C, F.Value, F.Param, S.Channel(F.Channel).EffectColumns);
+				break;
+			}
+		}
+		if (Written)
+			Done.push_back(F.Done);
+		else
+			Left.push_back(F.Text);
+	}
+	if (Done.empty()) {
+		if (Seams.empty())
+			return "The seam is clean already: every channel starts the loop the same way both times.";
+		std::string Text = "Nothing at the seam can be fixed by writing at the loop's start:";
+		for (size_t i = 0; i < Left.size(); ++i)
+			Text += "\n- " + Left[i];
+		return Text;
+	}
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = 0;
+	if (!D.Collect(0, true, Changes, Start, Warnings))
+		return "The seam is clean already: every channel starts the loop the same way both times.";
+	std::string What = "the loop's seam, so the repeats start as the first time does: ";
+	for (size_t i = 0; i < Done.size(); ++i)
+		What += (i == 0 ? "" : (i + 1 == Done.size() ? " and " : ", ")) + Done[i];
+	std::string Text = Commit(S, Changes, Start, false, "", What);
+
+	// How it loops now, as FamiTracker has it
+	S.Load();
+	const LoopPlay After = PlayLoop(S);
+	std::vector<std::string> Still;
+	if (!After.Played.Halts() && After.First < After.Rows.size() && After.Second < After.Rows.size())
+		Still = SeamProblems(S, After.Cells, After.Columns, After.Rows, After.First, After.Second, After.LoopRow);
+	if (Still.empty())
+		Text += "\nThe seam is clean now: every channel starts the loop the same way both times.";
+	else {
+		Text += "\nStill at the seam:";
+		for (size_t i = 0; i < Still.size(); ++i)
+			Text += "\n- " + Still[i];
+	}
+	return WithRemarks(S, Text, Warnings);
 }
 
 // "bar 8" when the row ends its bar, else "bar 8 beat 3"
@@ -8138,14 +8402,22 @@ std::string CheckLoopTool(Session &S, const Json &)
 	if (LoopRows % std::max(1, S.Time.RowsPerBar) != 0)
 		Text += Format(" The loop is %s long, not whole bars; whole bars repeat more steadily.", S.Time.Length(LoopRows).c_str());
 
-	const std::vector<std::string> Seams = SeamProblems(S, Cells, Columns, Rows, First, Second, LoopRow);
+	const std::vector<Seam> Seams = FindSeams(S, Cells, Columns, Rows, First, Second, LoopRow);
 
 	if (Seams.empty())
 		Text += "\nThe seam is clean: every channel starts the loop the same way both times.";
 	else {
 		Text += "\nAt the seam (the loop's end into its start):";
-		for (size_t i = 0; i < Seams.size(); ++i)
-			Text += "\n- " + Seams[i];
+		size_t Fixable = 0;
+		for (size_t i = 0; i < Seams.size(); ++i) {
+			Text += "\n- " + Seams[i].Text;
+			if (Seams[i].What != SEAM_NONE)
+				++Fixable;
+		}
+		if (Fixable == Seams.size())
+			Text += "\nfix_loop writes all of that, so the repeats start as the first time does (undoable).";
+		else if (Fixable > 0)
+			Text += Format("\nfix_loop writes %s of that at the loop's start (undoable).", Fixable == 1 ? "one" : "some");
 	}
 
 	// How it sounds going round: the chords, the melody's step
@@ -10147,8 +10419,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			Schema()
 				.Add("groove", EnumProp("The beat (default basic; waltz in bars of three beats).", StyleNames(Grooves())))
 				.Add("intensity", Intensity)
-				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1 (default 4; "
-					"0 for none)."))
+				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1, or from "
+					"where the loop starts when an intro plays once before it (default 4; 0 for none)."))
 				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
 				.Add("volume", Prop("integer", "The loudest hit's volume, 1-15 (default 15); the others follow."))
 				.Add("kit", EnumProp("noise (default): every drum on the noise channel, one at a time. samples: a sampled kick "
@@ -10483,6 +10755,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"between the first time and the repeats, the chords and the melody's step across it. Run it before exporting music "
 		"for a game.",
 		Schema(), true, false, true);
+
+	AddTool("fix_loop", "Fix the loop's seam",
+		"Writes what check_loop finds at the seam, so the loop starts on repeat the way it does the first time: a halt (---) "
+		"where a note from the loop's end would hang over into a silence (an echo's last note, a held chord), and at the "
+		"loop's start the instrument, volume and effects the first time has (a fade's volume slide or a vibrato still on at "
+		"the loop's end carries over otherwise) and its speed and tempo. Run it after the last change to a song that loops. "
+		"Needs direct changes; undoable.",
+		Schema(), false, false, true);
 
 	AddTool("set_loop", "Set the loop",
 		"Sets where the song loops: after to_bar it jumps back to from_bar (a Bxx effect), which has to start a frame; bars "
@@ -10829,6 +11109,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "select_track") Result.Text = SelectTrackTool(S, Args);
 		else if (Name == "set_expansion") Result.Text = SetExpansionTool(S, Args);
 		else if (Name == "check_loop") Result.Text = CheckLoopTool(S, Args);
+		else if (Name == "fix_loop") Result.Text = FixLoopTool(S, Args);
 		else if (Name == "set_loop") Result.Text = SetLoopTool(S, Args);
 		else if (Name == "insert_bars") Result.Text = InsertBarsTool(S, Args);
 		else if (Name == "keep_version") Result.Text = KeepVersionTool(S, Args);
@@ -10911,6 +11192,8 @@ std::string ToolSet::Instructions()
 		"The triangle is loud, so bars with it stay loud. review_arrangement estimates how far the song swings. On the VRC7 a "
 		"volume step is 3 dB (9 is 18 dB under 15): let mix set the levels.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
+		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
+		"its start on repeat. "
 		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
 		"the user tells you they like or don't in soundtrack_notes.\n"
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "
@@ -11026,8 +11309,9 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"7. Finish the sound: set_swing if the feel should swing, then mix (soft) last, so the triangle and the drums come "
 			"through and the pulses don't harshen.\n"
 			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
-			"9. check_loop and set_loop so it loops cleanly, then play it for me and ask what I'd change. Keep what I like in "
-			"soundtrack_notes.";
+			"9. set_loop where the loop starts, then check_loop and fix_loop, so the repeats start as the first time does (a "
+			"fade or an echo at the loop's end carries over otherwise). Then play it for me and ask what I'd change. Keep what "
+			"I like in soundtrack_notes.";
 		return true;
 	}
 	if (Name == "deepen_track") {
