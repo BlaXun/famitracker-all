@@ -6903,7 +6903,7 @@ void TestMix()
 	FakeSong Ask;
 	CHECK_HAS(Run(Ask, "mix", "{}").Text, "needs direct changes");
 	{
-		// A sawtooth line over a triangle bass is a second line; down low it's the bass
+		// A sawtooth line over a triangle bass is a second line, a sawtooth doubling it the bass
 		FakeSong Saw;
 		Saw.Info.DirectChanges = true;
 		for (int i = 0; i < 8; ++i)
@@ -6916,8 +6916,9 @@ void TestMix()
 		Saw.Put(7, 24, "C-4");
 		Result = Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
 		CHECK_HAS(Result.Text, "VRC6 Sawtooth (a second line) loudest 15 to 7");
+		const char *const ROOTS[] = { "C-2", "C-2", "F-2", "F-2" };
 		for (int i = 0; i < 4; ++i)
-			Saw.Rows[7][static_cast<size_t>(i * 8)].SetPitch(Saw.Rows[7][static_cast<size_t>(i * 8)].Pitch() - 24);
+			Saw.Put(7, i * 8, ROOTS[i]);
 		Saw.Rows[7][0].Volume = 15;
 		Result = Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}");
 		CHECK_HAS(Result.Text, "VRC6 Sawtooth (bass) loudest 15 to 10");
@@ -6925,6 +6926,10 @@ void TestMix()
 		Saw.Rows[2] = std::vector<Cell>(Saw.Rows[2].size());
 		Saw.Rows[7][0].Volume = 15;
 		CHECK_HAS(Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "VRC6 Sawtooth (bass) loudest 15 to 10");
+		for (int i = 0; i < 4; ++i)
+			Saw.Put(7, i * 8, "E-3");
+		Saw.Rows[7][0].Volume = 15;
+		CHECK_HAS(Run(Saw, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "VRC6 Sawtooth (a second line)");
 	}
 	// Guessing the melody works too
 	CHECK(!Run(Song, "mix", "{}").IsError);

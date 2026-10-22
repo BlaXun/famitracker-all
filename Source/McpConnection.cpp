@@ -1528,8 +1528,10 @@ public:
 		if (Names.HasTrack)
 			pDoc->SetTrackTitle(Track(), Ansi(Names.Track));
 		m_pMain->SetSongInfo(pDoc->GetSongName(), pDoc->GetSongArtist(), pDoc->GetSongCopyright());
-		if (Names.HasTrack)
+		if (Names.HasTrack) {
 			m_pMain->UpdateTrackBox();
+			static_cast<CFrameWnd*>(m_pMain)->OnUpdateFrameTitle(TRUE);	// the caption shows the track's name
+		}
 		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
 		return true;
 	}

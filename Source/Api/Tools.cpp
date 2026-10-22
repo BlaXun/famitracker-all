@@ -1267,7 +1267,7 @@ std::string RangeText(int From, int To)
 // The song
 
 std::vector<BarSpan> SongBarSpans(const Session &S, int First, int End);
-std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K);
+std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K, int Melody = -2);
 
 std::string SongOverview(Session &S, const Json &Args)
 {
@@ -4014,18 +4014,33 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 
 enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS };
 
-// Whether a channel that can play the bass plays it in [First, End): a
-// sawtooth well over a triangle bass (or high up, with none there) plays a
-// second line or chords
+// Whether a channel that can play the bass plays it in [First, End): over a
+// triangle bass, a sawtooth plays it only where it doubles the triangle's
+// notes (on others it's a second line or a pad's voice, however low); with
+// no triangle there, where it's low
 bool PlaysTheBass(Session &S, int Channel, int First, int End)
 {
 	if (S.Channel(Channel).Kind != KIND_SAWTOOTH)
 		return true;
-	const int Mine = MiddleOf(NotesIn(S.Notes(Channel), First, End), 0);
-	for (int c = 0; c < S.ChannelCount(); ++c)
-		if (S.Channel(c).Kind == KIND_TRIANGLE && HasNotesIn(S, c, First, End))
-			return Mine < MiddleOf(NotesIn(S.Notes(c), First, End), 0) + 7;
-	return Mine < 36;	// under C-3
+	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (S.Channel(c).Kind != KIND_TRIANGLE || !HasNotesIn(S, c, First, End))
+			continue;
+		const std::vector<NoteInfo> Bass = NotesIn(S.Notes(c), First, End);
+		int Together = 0, Same = 0;
+		for (size_t m = 0; m < Mine.size(); ++m)
+			for (size_t b = 0; b < Bass.size(); ++b) {
+				const int Overlap = std::min(Mine[m].Row + Mine[m].Rows, Bass[b].Row + Bass[b].Rows) - std::max(Mine[m].Row, Bass[b].Row);
+				if (Overlap <= 0)
+					continue;
+				Together += Overlap;
+				if ((Mine[m].Pitch - Bass[b].Pitch) % 12 == 0)
+					Same += Overlap;
+			}
+		if (Together > 0)
+			return Same * 2 >= Together;
+	}
+	return MiddleOf(Mine, 0) < 36;	// under C-3
 }
 
 // What a channel plays in [First, End), for mixing
@@ -4977,9 +4992,10 @@ std::string PolishTool(Session &S, const Json &Args)
 
 // The chords a song's parts play in [First, End): the melody left out when
 // others play too, else the chords it implies by itself
-std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K)
+std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K, int Melody)
 {
-	const int Melody = GuessMelodyChannel(S, First, End);
+	if (Melody == -2)
+		Melody = GuessMelodyChannel(S, First, End);
 	bool Backing = false;
 	for (int c = 0; c < S.ChannelCount() && !Backing; ++c)
 		Backing = c != Melody && IsMelodic(S.Channel(c)) && HasNotesIn(S, c, First, End);
@@ -5073,7 +5089,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 	};
 
 	// The parts and what each does
-	const int Melody = GuessMelodyChannel(S, First, End);
+	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
 	if (Melody < 0)
 		throw Problem(Format("Nothing plays a melody in %s yet. Write one with write_notes (or ask for a backing with "
 			"add_chords_and_bass and chords) first.", RangeText(From, To).c_str()));
@@ -5238,7 +5254,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
-	const std::vector<ChordAt> Heard = SongChords(S, First, End, K);
+	const std::vector<ChordAt> Heard = SongChords(S, First, End, K, Melody);
 	if (!Heard.empty()) {
 		std::set<std::string> Vocabulary;
 		bool Colored = false;
@@ -8461,7 +8477,7 @@ std::string StartPosition(const Session &S, int Row)
 	return S.Time.Position(Row);
 }
 
-std::string CheckLoopTool(Session &S, const Json &)
+std::string CheckLoopTool(Session &S, const Json &Args)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -8545,7 +8561,8 @@ std::string CheckLoopTool(Session &S, const Json &)
 			else
 				Text += ".";
 		}
-		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") :
+			GuessMelodyChannel(S, 0, S.Time.TotalRows());
 		if (Melody >= 0) {
 			int Last = -1, Next = -1;
 			for (size_t i = 0; i < Rows.size(); ++i) {
@@ -10913,7 +10930,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"where the end goes back to the loop's start: notes hanging over it, effects, instruments, volumes or tempo that differ "
 		"between the first time and the repeats, the chords and the melody's step across it. Run it before exporting music "
 		"for a game.",
-		Schema(), true, false, true);
+		Schema().Add("melody_channel", ChannelProp("The melody, for its step across the seam. Default: the busiest channel.")),
+		true, false, true);
 
 	AddTool("fix_loop", "Fix the loop's seam",
 		"Writes what check_loop finds at the seam, so the loop starts on repeat the way it does the first time: a halt (---) "
@@ -11174,7 +11192,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema()
 			.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
 			.Add("style", EnumProp("any, or calm (also \"ambient\"): no tips for drums, fills or accents. Default: calm when the "
-				"track's name says so, like \"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient" })).Range(),
+				"track's name says so, like \"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient" }))
+			.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel (busy bells or arpeggios can take its "
+				"place: name it then)."))
+			.Range(),
 		true, false, true);
 
 	AddTool("check_song", "Check the song",
