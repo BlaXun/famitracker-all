@@ -1008,6 +1008,7 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 	const ChannelState Before = StateAt(Old, First, Columns);
 	int Instrument = Before.Instrument;
 	bool EffectsLost = false;
+	std::vector<std::pair<int, int> > EndAfter;	// end effects of a note that lasts to the end of the range
 
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		const PartNote &N = Notes[i];
@@ -1033,16 +1034,28 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 		}
 
 		// The end: the next note, or a release or halt (a sample plays out by itself)
-		if (i + 1 < Notes.size() && Notes[i + 1].Row == EndRow)
+		if (i + 1 < Notes.size() && Notes[i + 1].Row == EndRow) {
+			// The next note starts where this one ends: the end effects go on its row, and its own effects win
+			// over them (it writes them after)
+			if (EndRow < End)
+				for (size_t e = 0; e < N.EndEffects.size(); ++e)
+					if (!AddEffect(Out[EndRow - First], N.EndEffects[e].first, N.EndEffects[e].second, Columns))
+						EffectsLost = true;
 			continue;
+		}
 		if (Options.RingOut && N.EndEffects.empty())
 			continue;
 		const unsigned char EndNote = Local::Releases(Options, Instrument) ? NOTE_RELEASE : NOTE_HALT;
 		Cell *pEnd = 0;
 		if (EndRow < End)
 			pEnd = &Out[EndRow - First];
-		else if (EndRow >= SongRows || Old[EndRow].HasNote() || Old[EndRow].IsEnd())
-			continue;	// lasts to the end of the range, and the song ends or something follows anyway
+		else if (EndRow >= SongRows)
+			continue;	// lasts to the end of the song
+		else if (Old[EndRow].HasNote() || Old[EndRow].IsEnd()) {
+			// Lasts to the end of the range, and something follows anyway: the end effects go on that row (below)
+			EndAfter = N.EndEffects;
+			continue;
+		}
 		else if (Options.StopAtEnd) {
 			if (EndRow - 1 > N.Row)
 				pEnd = &Out[EndRow - 1 - First];
@@ -1073,6 +1086,17 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 	// The next note after the range plays as it did
 	if (Options.KeepFollowing && !KeepFollowing(Old, First, End, Out, Columns))
 		EffectsLost = true;
+
+	// A note that lasts to the end of the range ends on the row after it: its end effects go there, over the state
+	// KeepFollowing kept, while that row's own effects win over them
+	if (!EndAfter.empty() && End < SongRows) {
+		while (First + static_cast<int>(Out.size()) <= End)
+			Out.push_back(Old[First + Out.size()]);
+		Cell &C = Out[End - First];
+		for (size_t e = 0; e < EndAfter.size(); ++e)
+			if (!HasEffect(Old[End], EndAfter[e].first, Columns) && !AddEffect(C, EndAfter[e].first, EndAfter[e].second, Columns))
+				EffectsLost = true;
+	}
 
 	if (EffectsLost)
 		Warnings.push_back("Some effects didn't fit in the channel's visible effect columns and were left out.");

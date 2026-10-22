@@ -1382,6 +1382,55 @@ void TestBuildPart()
 		CHECK_EQ(Out.size(), static_cast<size_t>(16));
 	}
 	{
+		// A note's end effects, when the next note starts where it ends, go on that note's row; the next note's own
+		// effects win over them
+		struct Param {
+			static int Of(const Cell &C, int Effect)
+			{
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (C.Effect[k] == Effect)
+						return C.Param[k];
+				return -1;
+			}
+		};
+		std::vector<Cell> Old(64);
+		std::vector<PartNote> Notes;
+		Notes.push_back(MakeNote(0, 4, 48, 2));
+		Notes[0].Effects.push_back(std::make_pair(int(EFF_PORTAMENTO), 0x08));
+		Notes[0].EndEffects.push_back(std::make_pair(int(EFF_PORTAMENTO), 0x00));
+		Notes[0].EndEffects.push_back(std::make_pair(int(EFF_PITCH), 0x80));
+		Notes.push_back(MakeNote(4, 4, 50));
+		Notes[1].Effects.push_back(std::make_pair(int(EFF_PITCH), 0x81));
+		BuildPart(Old, 0, 16, Notes, Direct, Out, Warnings);
+		CHECK(Out[4].Pitch() == 50);
+		CHECK_EQ(Param::Of(Out[4], EFF_PORTAMENTO), 0);
+		CHECK_EQ(Param::Of(Out[4], EFF_PITCH), 0x81);
+		CHECK(Out[8].Note == NOTE_HALT);
+
+		// A note lasting to the range's end, with a note right after the range: its end effects go on that note,
+		// whose own effects win over them
+		std::vector<Cell> After(64);
+		After[32].SetPitch(30);
+		After[32].Effect[0] = EFF_VIBRATO;
+		After[32].Param[0] = 0x44;
+		std::vector<PartNote> Held;
+		Held.push_back(MakeNote(16, 16, 55, 2));
+		Held[0].EndEffects.push_back(std::make_pair(int(EFF_PITCH), 0x80));
+		Held[0].EndEffects.push_back(std::make_pair(int(EFF_VIBRATO), 0x00));
+		BuildPart(After, 16, 32, Held, Direct, Out, Warnings);
+		CHECK_EQ(Out.size(), static_cast<size_t>(17));
+		CHECK(Out[16].Pitch() == 30);
+		CHECK_EQ(Param::Of(Out[16], EFF_PITCH), 0x80);
+		CHECK_EQ(Param::Of(Out[16], EFF_VIBRATO), 0x44);
+		// The same before a release on that row
+		std::vector<Cell> Released(64);
+		Released[32].Note = NOTE_RELEASE;
+		BuildPart(Released, 16, 32, Held, Direct, Out, Warnings);
+		CHECK_EQ(Out.size(), static_cast<size_t>(17));
+		CHECK(Out[16].Note == NOTE_RELEASE);
+		CHECK_EQ(Param::Of(Out[16], EFF_PITCH), 0x80);
+	}
+	{
 		// Effects that don't fit in the visible columns are reported
 		std::vector<Cell> Old(64);
 		std::vector<PartNote> Notes;

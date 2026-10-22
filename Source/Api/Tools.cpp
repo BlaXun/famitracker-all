@@ -10739,7 +10739,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		N.Add("effects", Prop("array", "FamiTracker effects on the note's first row, e.g. [\"Q31\"] (slide up 1 semitone), [\"047\"] (a major chord as an arpeggio), [\"445\"] (vibrato)."));
 		N.Add("later_effects", Prop("array", "Effects later in the note, each {\"beats\": how far in, \"effects\": [\"A02\"]}: a fade into "
 			"its tail, a slide or a fall, a vibrato that comes in."));
-		N.Add("end_effects", Prop("array", "Effects on the row where the note ends (its release or halt), e.g. [\"P80\"] (back in tune)."));
+		N.Add("end_effects", Prop("array", "Effects on the row where the note ends (its release or halt, or the next note when it starts "
+			"right there), e.g. [\"P80\"] (back in tune)."));
 		NoteItem = N.Get();
 	}
 	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}.");
