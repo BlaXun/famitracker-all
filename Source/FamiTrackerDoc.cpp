@@ -258,6 +258,8 @@ CFamiTrackerDoc::~CFamiTrackerDoc()
 CFamiTrackerDoc *CFamiTrackerDoc::GetDoc()
 {
 	CFrameWnd *pFrame = static_cast<CFrameWnd*>(AfxGetApp()->m_pMainWnd);
+	if (pFrame == NULL)	// not yet: the first document is still opening
+		return NULL;
 	ASSERT_VALID(pFrame);
 
 	return static_cast<CFamiTrackerDoc*>(pFrame->GetActiveDocument());

@@ -1615,6 +1615,10 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 	switch (nIDEvent) {
 		// Welcome message
 		case TMR_WELCOME:
+			// Not before this frame is the program's window: while the first document opens, a message
+			// about it (a file that can't be opened) runs the timer, and the panels would find no view
+			if (AfxGetApp()->m_pMainWnd != this)
+				break;
 			str.Format(_T("%i.%i.%i"), VERSION_MAJ, VERSION_MIN, VERSION_REV);
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
