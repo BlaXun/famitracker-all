@@ -2889,6 +2889,10 @@ void TestArrange()
 		InCalmBars += Part[i].Row >= 32;
 	}
 	CHECK(InBusyBar <= 1 && InCalmBars >= 2);
+	// Nor does it double the melody an octave away where the chord has other notes: not E under the held E-4
+	for (size_t i = 0; i < Part.size(); ++i)
+		if (Part[i].Row < 16)
+			CHECK(Part[i].Pitch % 12 != 4);
 	Counter.Above = true;
 	Counter.Low = 76;
 	Counter.High = 88;

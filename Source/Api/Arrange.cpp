@@ -1410,6 +1410,8 @@ double Clash(int Pitch, int From, int To, const std::vector<NoteInfo> &Melody, b
 			Cost += 0.8 * Weight;
 		if (m == Pitch)
 			Cost += 3.0 * Weight;
+		else if (d == 0)
+			Cost += 2.0 * Weight;	// the melody an octave away: a doubling, not a line of its own
 		if (!Above && Pitch > m - 2)
 			Cost += 5.0 * Weight;
 		if (Above && Pitch < m + 2)
