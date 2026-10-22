@@ -45,6 +45,7 @@
 namespace ftapi {
 
 const int N163_WAVE_SIZE = 16;		// samples a wave (notes in tune)
+const int N163_LOADABLE = 128;		// FamiTracker 0.4.6 loads an N163 wave only from a place under this sample
 const int N163_MAX_WAVES = 16;		// waves an instrument has, at most
 
 struct WaveSound {

@@ -359,7 +359,10 @@ drawbars turn like a rotating speaker, the strings and the choir shimmer,
 brass opens up from mellow to bright, the electric piano and the bell mellow
 as they fade, the lead's pulse narrows and widens smoothly, and the bass
 growls like a wah. A preset's name picks the sound most like it ("soft
-lead" is the flute, "bass" the round bass).
+lead" is the flute, "bass" the round bass). A song holds up to 8 of them:
+FamiTracker 0.4.6 loads an N163 wave only from the first 128 samples of the
+chip's memory (a wave placed later makes the module load out of step), so
+Claude puts each sound's 16-sample wave there, in a place of its own.
 
 - The waves are 16 samples long: FamiTracker 0.4.6 plays N163 notes in tune
   at that length (a 32-sample wave sounds an octave lower than written).

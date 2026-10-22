@@ -667,12 +667,14 @@ int AddWaveInstrument(Session &S, const WaveSound &Sound, std::string &Where)
 	int Channels = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c)
 		Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
-	const int Memory = N163WaveMemory(Channels);
+	// FamiTracker 0.4.6 loads an N163 instrument's wave only from the memory's first 128 samples: a wave placed at 128 or
+	// later makes its loader stop short, and the module loads out of step. So the waves go there, whatever the chip holds.
+	const int Memory = std::min(N163WaveMemory(Channels), N163_LOADABLE);
 	const int Place = FindWavePlace(N163_WAVE_SIZE, Memory, Used);
 	if (Place < 0)
-		throw Problem(Format("The N163's wave memory is full: with %d channels it holds %d samples, and the song's N163 instruments "
-			"take them all. Fewer N163 channels make room (set_expansion), or use one of the song's N163 instruments.", Channels,
-			Memory));
+		throw Problem(Format("The N163's wave memory is full: FamiTracker loads N163 waves only from its first %d samples (%d sounds "
+			"of %d samples), and the song's N163 instruments take them all. Use one of the song's N163 instruments.", Memory,
+			Memory / N163_WAVE_SIZE, N163_WAVE_SIZE));
 	std::string Error;
 	const int Index = S.Host().AddN163Instrument(Sound, Place, Error);
 	if (Index < 0)
@@ -682,8 +684,8 @@ int AddWaveInstrument(Session &S, const WaveSound &Sound, std::string &Where)
 	int Room = 0;
 	for (std::vector<std::pair<int, int> > More(Used); FindWavePlace(N163_WAVE_SIZE, Memory, More) >= 0; ++Room)
 		More.push_back(std::make_pair(FindWavePlace(N163_WAVE_SIZE, Memory, More), N163_WAVE_SIZE));
-	Where = Format("its wave takes samples %d-%d of the N163's %d, which have room for %d more %s", Place, Place + N163_WAVE_SIZE - 1,
-		Memory, Room, Room == 1 ? "sound" : "sounds");
+	Where = Format("its wave takes samples %d-%d of the %d FamiTracker loads N163 waves from, which have room for %d more %s", Place,
+		Place + N163_WAVE_SIZE - 1, Memory, Room, Room == 1 ? "sound" : "sounds");
 	return Index;
 }
 
@@ -11546,7 +11548,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema()
 			.Add("chip", EnumProp("The chip.", std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163" }), true)
 			.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default 4). Up to 6 keep the chip's switching whine above "
-				"hearing; each takes 16 samples of its wave memory, leaving room for 16 minus that many sounds."))
+				"hearing, and fewer channels play high notes cleanly higher up. A song holds up to 8 N163 sounds whatever the "
+				"count (FamiTracker loads their waves only from the chip's first 128 samples)."))
 			.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the old chip's channels.")),
 		false, true);
 

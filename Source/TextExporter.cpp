@@ -860,7 +860,7 @@ const CString& CTextExport::ImportText(const CString &Text, CFamiTrackerDoc *pDo
 					}
 					CHECK(t.ReadInt(i,0,CInstrumentN163::MAX_WAVE_SIZE,&sResult));
 					pInst->SetWaveSize(i);
-					CHECK(t.ReadInt(i,0,127,&sResult));
+					CHECK(t.ReadInt(i,0,255,&sResult));	// as the wave editor takes it (0.4.6 read 0-127)
 					pInst->SetWavePos(i);
 					CHECK(t.ReadInt(i,0,CInstrumentN163::MAX_WAVE_COUNT,&sResult));
 					pInst->SetWaveCount(i);

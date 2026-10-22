@@ -135,7 +135,7 @@ bool CInstrumentN163::Load(CDocumentFile *pDocFile)
 	m_iWaveSize = pDocFile->GetBlockInt();
 	ASSERT_FILE_DATA(m_iWaveSize >= 0 && m_iWaveSize <= MAX_WAVE_SIZE);
 	m_iWavePos = pDocFile->GetBlockInt();
-	ASSERT_FILE_DATA(m_iWavePos >= 0 && m_iWavePos < 128);
+	ASSERT_FILE_DATA(m_iWavePos >= 0 && m_iWavePos < 256);	// the wave editor takes 0-255 (0.4.6 refused 128 and above here)
 //	m_bAutoWavePos = (pDocFile->GetBlockInt() == 0) ? false : true;
 	//pDocFile->GetBlockInt();
 	m_iWaveCount = pDocFile->GetBlockInt();

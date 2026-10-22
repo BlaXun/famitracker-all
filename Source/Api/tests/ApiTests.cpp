@@ -5897,7 +5897,7 @@ void TestWaveSounds()
 	Song.Info.Instruments.clear();
 	std::string Text = Run(Song, "add_instrument", "{\"preset\": \"glass bell\", \"channel\": \"Namco 1\"}").Text;
 	CHECK_HAS(Text, "Added \"Glass bell\" (00) (N163 instrument: a glassy bell: a hollow, metallic ring that mellows as it dies "
-		"away; its wave takes samples 0-15 of the N163's 208, which have room for 12 more sounds).");
+		"away; its wave takes samples 0-15 of the 128 FamiTracker loads N163 waves from, which have room for 7 more sounds).");
 	CHECK(Song.Info.Instruments[0].WavePos == 0 && Song.MadeWaves[0].Name == "glass bell");
 	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"bell\", \"chip\": \"N163\"}").Text, "The song already has \"Glass bell\" (00)");
 	// In write_notes by name: added, its wave in a place of its own
@@ -5922,8 +5922,28 @@ void TestWaveSounds()
 		Wave.WaveSize = 16;
 		Song.Info.Instruments.push_back(Wave);
 	}
-	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "The N163's wave memory is full: with 3 "
-		"channels it holds 208 samples, and the song's N163 instruments take them all. Fewer N163 channels make room");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "The N163's wave memory is full: "
+		"FamiTracker loads N163 waves only from its first 128 samples (8 sounds of 16 samples)");
+	// Never a wave at 128 or later, which FamiTracker 0.4.6 can't load: with five more waves at 48-112, the memory is full
+	{
+		FakeSong Eight;
+		Eight.Info.DirectChanges = true;
+		Eight.Info.Expansion = "N163";
+		Eight.Info.Channels[5].Name = "Namco 1";
+		Eight.Info.Channels[5].Chip = "N163";
+		Eight.Info.Channels[5].Kind = KIND_OTHER;
+		Eight.Info.Instruments.clear();
+		const char *const SOUNDS[] = { "soft flute", "drawbar organ", "string ensemble", "choir", "brass section", "electric piano",
+			"glass bell", "harp", "marimba" };
+		for (int i = 0; i < 9; ++i) {
+			const std::string Reply = Run(Eight, "add_instrument", std::string("{\"preset\": \"") + SOUNDS[i] + "\", \"chip\": \"N163\"}").Text;
+			if (i < 8)
+				CHECK(Eight.Info.Instruments.back().WavePos == 16 * i);
+			else
+				CHECK_HAS(Reply, "The N163's wave memory is full");
+		}
+		CHECK(Eight.Info.Instruments.size() == 8u);
+	}
 	// Not without N163 channels
 	FakeSong Plain;
 	CHECK_HAS(Run(Plain, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
