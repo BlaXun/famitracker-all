@@ -414,6 +414,11 @@ public:
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
 		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
+		// As FamiTracker reports a VRC6 sound whose duty sequence plays odd values (its sawtooth version has none)
+		for (size_t s = 0; Chip == "VRC6" && !Sawtooth && s < Sound.SequencesVRC6.size(); ++s)
+			if (Sound.SequencesVRC6[s].Type == SEQUENCE_DUTY)
+				for (size_t k = 0; k < Sound.SequencesVRC6[s].Items.size(); ++k)
+					Info.Instruments.back().OddDuty = Info.Instruments.back().OddDuty || (Sound.SequencesVRC6[s].Items[k] & 1) != 0;
 		Made[Next] = Sound;
 		return Next;
 	}
@@ -634,6 +639,20 @@ public:
 		TempoUndo.push_back(std::make_pair(Info.Speed, Info.Tempo));
 		Info.Speed = Speed;
 		Info.Tempo = Tempo;
+		return true;
+	}
+
+	// The row highlights, and the pattern length (0 keeps it): the frames stay, each as long as the new length
+	bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &) override
+	{
+		Info.FirstHighlight = RowsPerBeat;
+		Info.SecondHighlight = RowsPerBar;
+		if (PatternLength > 0 && PatternLength != Info.PatternLength) {
+			const size_t Frames = Rows[0].size() / static_cast<size_t>(Info.PatternLength);
+			for (size_t c = 0; c < Rows.size(); ++c)
+				Rows[c].resize(Frames * static_cast<size_t>(PatternLength));
+			Info.PatternLength = PatternLength;
+		}
 		return true;
 	}
 
@@ -7474,6 +7493,79 @@ void TestHarpUnderMelody()
 		"The chords are 4 bars, more than the melody's 2 (bars 1-2), so the last 2 were left out");
 }
 
+void TestMeterAndSounds()
+{
+	// A waltz on a song without notes: 3/4 at 4 rows a beat, patterns of 4 bars (48 rows)
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "set_meter", "{\"meter\": \"waltz\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song is in 3/4 now: 3 beats a bar, each beat a quarter note, 4 rows; 12 rows a bar (FamiTracker's row "
+		"highlights 4 and 12), 4 bars to a frame (patterns of 48 rows, were 64)");
+	CHECK(Song.Info.FirstHighlight == 4 && Song.Info.SecondHighlight == 12 && Song.Info.PatternLength == 48);
+	CHECK(Song.Rows[0].size() == 96);	// the two frames, each 48 rows
+	CHECK_HAS(Run(Song, "set_meter", "{\"meter\": \"3/4\"}").Text, "The song is in 3/4 already");
+	// Every tool counts in it: bar 2 beat 3 is row 20
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": [{\"bar\": 2, \"beat\": 3, "
+		"\"pitch\": \"C-4\", \"beats\": 1}]}").IsError);
+	CHECK(Song.Rows[0][20].HasNote());
+	// With notes the patterns stay: 6/8 at 6 rows a beat divides 48 rows (12 rows a bar), 5/4 at 4 doesn't (20)
+	Result = Run(Song, "set_meter", "{\"meter\": \"6/8\"}");
+	CHECK_HAS(Result.Text, "The song is in 6/8 now: 2 beats a bar, each beat a dotted quarter of three eighths, 6 rows (an eighth is 2 "
+		"rows); 12 rows a bar (FamiTracker's row highlights 6 and 12), 4 bars to a frame.");
+	CHECK_HAS(Result.Text, "the eighths of beat 1 are beats 1, 1.333 and 1.667");
+	CHECK(Song.Info.FirstHighlight == 6 && Song.Info.SecondHighlight == 12 && Song.Info.PatternLength == 48);
+	// An eighth written as a third of a beat falls on its row without a warning
+	Result = Run(Song, "write_notes", "{\"channel\": \"Pulse 2\", \"instrument\": \"soft lead\", \"notes\": [{\"bar\": 1, \"beat\": 1.333, "
+		"\"pitch\": \"E-4\", \"beats\": 0.333}, {\"bar\": 1, \"beat\": 1.667, \"pitch\": \"G-4\", \"beats\": 0.333}]}");
+	CHECK(!Result.IsError && Song.Rows[1][2].HasNote() && Song.Rows[1][4].HasNote());
+	CHECK_LACKS(Result.Text, "rounded");
+	CHECK_HAS(Run(Song, "set_meter", "{\"meter\": \"5/4\", \"rows_per_beat\": 4}").Text, "don't divide");
+	CHECK_HAS(Run(Song, "set_meter", "{\"meter\": \"6/8\", \"rows_per_beat\": 4}").Text, "rows_per_beat 3, 6, 9 or 12");
+	CHECK_HAS(Run(Song, "set_meter", "{\"meter\": \"7/3\"}").Text, "meter: like");
+	CHECK_HAS(Run(Song, "set_meter", "{\"meter\": \"4/4\", \"bars_per_frame\": 2}").Text, "bars_per_frame is for a track without notes");
+	FakeSong Ask;
+	CHECK_HAS(Run(Ask, "set_meter", "{\"meter\": \"3/4\"}").Text, "hasn't allowed direct changes");
+
+	// A swell on the noise channel: a volume envelope, normal noise, nothing that moves its pitch
+	FakeSong Sea;
+	Result = Run(Sea, "design_instrument", "{\"name\": \"Sea swell\", \"kind\": \"swell\", \"channel\": \"Noise\", \"vibrato\": \"gentle\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(2A03 instrument): a noise envelope that reaches 12 30 frames in, holds, and fades over 40 frames after a release");
+	CHECK_HAS(Result.Text, "its note picks the noise's pitch");
+	CHECK_HAS(Result.Text, "(without the vibrato asked for: on the noise they'd make it warble or ring metallic)");
+	{
+		const Preset &Made = Sea.Made[InstrumentIndex(Sea, "Sea swell")];
+		bool Pitch = false, OddDuty = false;
+		for (size_t i = 0; i < Made.Sequences2A03.size(); ++i) {
+			const PresetSequence &Seq = Made.Sequences2A03[i];
+			Pitch = Pitch || Seq.Type == SEQUENCE_PITCH || Seq.Type == SEQUENCE_ARPEGGIO;
+			if (Seq.Type == SEQUENCE_DUTY)
+				for (size_t k = 0; k < Seq.Items.size(); ++k)
+					OddDuty = OddDuty || (Seq.Items[k] & 1) != 0;
+		}
+		CHECK(!Pitch && !OddDuty);
+	}
+	CHECK_HAS(Run(Sea, "design_instrument", "{\"name\": \"Gust\", \"channel\": \"Noise\"}").Text, "or swell for waves and wind");
+
+	// A pulse sound on the sawtooth: its sawtooth version when the song has one, else a remark that it overdrives
+	FakeSong Saw;
+	Saw.Info.DirectChanges = true;
+	CHECK(!Run(Saw, "design_instrument", "{\"name\": \"Horn\", \"kind\": \"brass\", \"chip\": \"VRC6\"}").IsError);
+	CHECK(InstrumentIndex(Saw, "Horn") >= 0);
+	Result = Run(Saw, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"Horn\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-3\", "
+		"\"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "is a pulse sound: the odd values of its duty sequence add 32 to the sawtooth's volume, so on VRC6 Sawtooth it "
+		"overdrives");
+	CHECK(!Run(Saw, "design_instrument", "{\"name\": \"Horn\", \"kind\": \"brass\", \"channel\": \"Sawtooth\"}").IsError);
+	Result = Run(Saw, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"Horn\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-3\", "
+		"\"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "overdrives");
+	CHECK(Saw.Rows[7][0].Instrument == InstrumentIndex(Saw, "Horn (saw)"));
+}
+
 void TestVrc7Octave()
 {
 	// The VRC7 sounds an octave under what's written (its A-3 is 220 Hz, a pulse's 440), as the triangle does: the parts
@@ -7565,6 +7657,7 @@ void TestVrc7Octave()
 int main()
 {
 	TestJson();
+	TestMeterAndSounds();
 	TestVrc7Octave();
 	TestHarpUnderMelody();
 	TestEffectRoom();

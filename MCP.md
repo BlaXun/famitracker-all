@@ -145,10 +145,11 @@ anything; close the dialog and ask again.
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, or an N163 wave sound |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind). See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
+| `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
 | `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). See [Mixing](#mixing) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
@@ -204,6 +205,20 @@ FamiTracker's octave numbers are one lower than in most music software: C-3
 is middle C and A-3 is 440 Hz. Bars and beats count from 1, as the row
 highlight shows them (the first highlight is a beat, the second a bar).
 Claude works on the track that's selected.
+
+### Meter
+
+`set_meter` sets the row highlights for a meter, so a waltz counts three
+beats to a bar everywhere: in `write_notes`, the chords, the drums, the
+review and the loop. 3/4 keeps the song's rows a beat (4: 12 rows a bar);
+6/8, 9/8 and 12/8 count dotted quarters of three eighths (6 rows a beat, an
+eighth every 2 rows: the eighths of beat 1 are beats 1, 1.333 and 1.667),
+and 5/8 or 7/8 count eighths. A track without notes also gets patterns of
+whole bars (4 to a frame, or `bars_per_frame`); a track with notes keeps its
+patterns, so the meter is set before writing (a bar that doesn't divide the
+patterns is refused). In 0.4.6 the highlights are the module's, so every
+track counts in the same meter. After a change to a compound meter the BPM
+counts dotted quarters: `set_tempo` with bpm picks the speed for them.
 
 ## Speed and tempo
 
@@ -454,6 +469,17 @@ octave blip, a scoop or a fall on the attack, or a chord played as a fast
 arpeggio from every note. Drums can be darker or brighter, shorter or
 longer. The instrument gets a new name, so notes that use another one don't
 change.
+
+On the noise channel, a kind that isn't a drum makes a volume envelope: a
+`swell` rises over half a second and washes out after a release, for waves
+and gusts of wind (the note picks the noise's pitch, 0-# deep to F-#
+bright). Anything that would move its pitch or make it metallic (vibrato,
+an attack's pitch, an arpeggio, a duty) is left out. A pulse sound played on
+the VRC6 sawtooth overdrives it (the odd values of its duty sequence add 32
+to the sawtooth's volume), so a sound asked for there by name plays its
+sawtooth version when the song has one ("Horn (saw)", made by
+`design_instrument` or a preset for that channel), and Claude says so
+otherwise.
 
 The articulations the studied NES soundtracks are made of are there too:
 an attack that blooms from about two thirds of its peak in two frames, a

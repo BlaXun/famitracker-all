@@ -687,6 +687,17 @@ int AddWaveInstrument(Session &S, const WaveSound &Sound, std::string &Where)
 	return Index;
 }
 
+// A pulse sound on the sawtooth: the odd values of its duty sequence add 32
+// to the sawtooth's volume, so it overdrives. Said once.
+void OddDutyRemark(Session &S, const InstrumentInfo &I, const ChannelInfo &Info)
+{
+	const std::string Text = Format("%s is a pulse sound: the odd values of its duty sequence add 32 to the sawtooth's volume, so "
+		"on %s it overdrives (louder, and distorted). For the sawtooth, name a preset (it adds a sawtooth version) or make a "
+		"sound with design_instrument for that channel.", InstrumentLabel(S.Song, I.Index).c_str(), Info.FullName().c_str());
+	if (std::find(S.Remarks.begin(), S.Remarks.end(), Text) == S.Remarks.end())
+		S.Remarks.push_back(Text);
+}
+
 // An instrument for notes on a channel: one in the song (by name, or by its
 // number as FamiTracker shows it), or a preset, which is added
 int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
@@ -700,8 +711,16 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
 		const InstrumentInfo &I = S.Song.Instruments[i];
 		if (Lowercase(I.Name) == Lower) {
-			if (I.Chip == Chip)
+			if (I.Chip == Chip) {
+				if (Info.Kind == KIND_SAWTOOTH && I.OddDuty) {
+					// A pulse sound would overdrive the sawtooth: its sawtooth version, when the song has one
+					for (size_t k = 0; k < S.Song.Instruments.size(); ++k)
+						if (S.Song.Instruments[k].Chip == Chip && Lowercase(S.Song.Instruments[k].Name) == Lower + " (saw)")
+							return S.Song.Instruments[k].Index;
+					OddDutyRemark(S, I, Info);
+				}
 				return I.Index;
+			}
 			pWrongChip = &I;
 		}
 	}
@@ -807,6 +826,8 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			if (pInfo->Chip != Chip)
 				throw Problem(Format("Instrument %02X \"%s\" is a %s instrument; %s needs a %s one. A preset name (like \"soft lead\") adds one.",
 					Number, pInfo->Name.c_str(), pInfo->Chip.c_str(), Info.FullName().c_str(), Chip.c_str()));
+			if (Info.Kind == KIND_SAWTOOTH && pInfo->OddDuty)
+				OddDutyRemark(S, *pInfo, Info);
 			return Number;
 		}
 	}
@@ -2087,13 +2108,12 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 			throw Problem("kind: " + DesignKinds() + ".");
 	}
 	else if (Noise)
-		throw Problem("For the noise channel, say which drum with kind: kick, snare, hihat, open hihat, crash or tom.");
+		throw Problem("For the noise channel, say which drum with kind (kick, snare, hihat, open hihat, crash or tom), or swell for "
+			"waves and wind.");
 	else
 		DesignOfKind(Low ? "bass" : "lead", D);
 	if (D.Drum && Arg(Args, "channel") != 0 && !Noise)
 		throw Problem("A drum is for the noise channel.");
-	if (!D.Drum && Noise)
-		throw Problem("The noise channel plays drums: kind kick, snare, hihat, open hihat, crash or tom.");
 	if (D.Drum) {
 		Chip = "2A03";
 		Sawtooth = false;
@@ -2174,6 +2194,28 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	D.ArpeggioFrames = IntArg(Args, "arpeggio_frames", D.ArpeggioFrames, 1, 8);
 	D.Tone = WordArg(Args, "tone", D.Tone, TONES, TONE_VALUES, 3, 0);
 	D.Length = WordArg(Args, "length", D.Length, LENGTHS, LENGTH_VALUES, 3, 0);
+	std::vector<std::string> Dropped;
+	if (Noise && !D.Drum) {
+		// A volume envelope on the noise (a wave, a gust): an odd duty would make it metallic, and anything that moves the
+		// pitch makes it warble
+		if (Arg(Args, "vibrato") != 0 && D.Vibrato > 0)
+			Dropped.push_back("vibrato");
+		if (Arg(Args, "attack_pitch") != 0 && D.AttackPitch != PITCH_PLAIN)
+			Dropped.push_back("attack_pitch");
+		if (Arg(Args, "arpeggio") != 0 && !D.Arpeggio.empty())
+			Dropped.push_back("arpeggio");
+		if ((Arg(Args, "duty_motion") != 0 && D.Motion != DUTY_STILL) || (Arg(Args, "click") != 0 && D.Click) ||
+			(Arg(Args, "duty") != 0 && D.Duty % 2 != 0))
+			Dropped.push_back("duty");
+		D.Duty = 0;
+		D.Motion = DUTY_STILL;
+		D.Click = false;
+		D.Vibrato = 0;
+		D.AttackPitch = PITCH_PLAIN;
+		D.Arpeggio.clear();
+		Chip = "2A03";
+		Sawtooth = false;
+	}
 
 	// A new name, so an instrument the song uses doesn't change under it
 	const Preset Sound = DesignPreset(D);
@@ -2187,8 +2229,13 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	if (Index < 0)
 		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
 	S.Refresh();
+	std::string Without;
+	for (size_t i = 0; i < Dropped.size(); ++i)
+		Without += (i == 0 ? "" : i + 1 == Dropped.size() ? " or " : ", ") + Dropped[i];
 	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate,
-		Sawtooth ? "sawtooth" : (Triangle ? "triangle" : "pulse")) +
+		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : "pulse") +
+		(Without.empty() ? std::string() : " (without the " + Without + " asked for: on the noise they'd make it warble or ring "
+			"metallic)") +
 		". Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
 
@@ -2487,6 +2534,102 @@ std::string SetTempoTool(Session &S, const Json &Args)
 			}
 		}
 	}
+	return Text;
+}
+
+// The meter
+
+std::string SetMeterTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Changing the meter changes the song, and the user hasn't allowed direct changes. Suggest the user sets the row "
+			"highlights in FamiTracker's toolbar (the first is rows a beat, the second rows a bar), or allows direct changes in "
+			"File > Connect Claude Code.");
+	std::string Meter = Lowercase(Trim(StringArg(Args, "meter")));
+	if (Meter.empty())
+		throw Problem("Say which meter, like {\"meter\": \"3/4\"} (a waltz) or \"6/8\" (a jig, a sea shanty).");
+	static const struct { const char *Word, *Meter; } WORDS[] = { { "waltz", "3/4" }, { "march", "2/4" }, { "jig", "6/8" },
+		{ "shanty", "6/8" }, { "common", "4/4" }, { "common time", "4/4" }, { "cut", "2/2" }, { "cut time", "2/2" } };
+	for (size_t i = 0; i < sizeof(WORDS) / sizeof(WORDS[0]); ++i)
+		if (Meter == WORDS[i].Word)
+			Meter = WORDS[i].Meter;
+	int Top = 0, Bottom = 0;
+	char Extra = 0;
+	if (std::sscanf(Meter.c_str(), "%d/%d%c", &Top, &Bottom, &Extra) != 2 || Top < 1 || Top > 16 ||
+		(Bottom != 2 && Bottom != 4 && Bottom != 8))
+		throw Problem("meter: like \"4/4\", \"3/4\", \"2/4\", \"6/8\", \"12/8\" or \"5/4\" (1-16 beats over 2, 4 or 8), or waltz, "
+			"march or jig.");
+	Meter = Format("%d/%d", Top, Bottom);
+	// The beat: a quarter (a half in x/2); in 6/8, 9/8 and 12/8 a dotted quarter of three eighths; in other x/8 an eighth
+	const bool Compound = Bottom == 8 && Top >= 6 && Top % 3 == 0;
+	const int Beats = Compound ? Top / 3 : Top;
+	const int Current = S.Time.RowsPerBeat;
+	int Default;
+	if (Compound)
+		Default = Current >= 3 && Current <= 12 && Current % 3 == 0 ? Current : 6;
+	else if (Bottom == 8)
+		Default = 2;
+	else if (Bottom == 2)
+		Default = 8;
+	else
+		Default = Current >= 2 && Current <= 12 ? Current : 4;
+	const int RowsPerBeat = IntArg(Args, "rows_per_beat", Default, 1, 32);
+	if (Compound && RowsPerBeat % 3 != 0)
+		throw Problem(Format("In %s a beat is three eighths: rows_per_beat 3, 6, 9 or 12 puts each eighth on a row.", Meter.c_str()));
+	const int RowsPerBar = Beats * RowsPerBeat;
+	if (RowsPerBar > 256)
+		throw Problem("That bar is longer than a pattern can be (256 rows): give fewer rows_per_beat.");
+
+	// A track with notes keeps its patterns, so its bars have to divide them; one without gets patterns of whole bars
+	bool Notes = false;
+	for (int c = 0; c < S.ChannelCount() && !Notes; ++c)
+		Notes = !S.Notes(c).empty();
+	int Length = S.Time.PatternLength;
+	if (Notes) {
+		if (Arg(Args, "bars_per_frame") != 0)
+			throw Problem("The track has notes, so its patterns stay as long as they are: bars_per_frame is for a track without "
+				"notes.");
+		if (Length % RowsPerBar != 0)
+			throw Problem(Format("The track has notes in patterns of %d rows, which bars of %d rows (%s at %d rows a beat) don't "
+				"divide: its bars would run across frames. Set the meter before writing the notes (on a new song, or on a track of its "
+				"own with select_track), or give rows_per_beat so a bar divides %d rows.", Length, RowsPerBar, Meter.c_str(),
+				RowsPerBeat, Length));
+	}
+	else {
+		int Bars = IntArg(Args, "bars_per_frame", 4, 1, 64);
+		while (Bars > 1 && Bars * RowsPerBar > 256)
+			--Bars;
+		Length = Bars * RowsPerBar;
+	}
+	if (RowsPerBeat == S.Time.RowsPerBeat && RowsPerBar == S.Time.RowsPerBar && Length == S.Time.PatternLength)
+		return Format("The song is in %s already: %d rows a beat, %d a bar, %d bars to a frame.", Meter.c_str(), RowsPerBeat, RowsPerBar,
+			Length / RowsPerBar);
+	std::string Why, Error;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	if (!S.Host().SetMeter(RowsPerBeat, RowsPerBar, Length == S.Time.PatternLength ? 0 : Length, Error))
+		throw Problem(Error.empty() ? "The meter couldn't be set." : Error);
+	const int OldLength = S.Time.PatternLength;
+	S.Load();
+	std::string Beat = Compound ? Format("a dotted quarter of three eighths, %d rows (an eighth is %s)", RowsPerBeat,
+		Plural(RowsPerBeat / 3, "row", "rows").c_str()) :
+		Bottom == 8 ? Format("an eighth, %s", Plural(RowsPerBeat, "row", "rows").c_str()) :
+		Format("a %s, %s", Bottom == 2 ? "half note" : "quarter note", Plural(RowsPerBeat, "row", "rows").c_str());
+	std::string Text = Format("The song is in %s now: %s a bar, each beat %s; %d rows a bar (FamiTracker's row highlights %d and %d)",
+		Meter.c_str(), Plural(Beats, "beat", "beats").c_str(), Beat.c_str(), RowsPerBar, RowsPerBeat, RowsPerBar);
+	if (Length != OldLength)
+		Text += Format(", %s to a frame (patterns of %d rows, were %d)", Plural(Length / RowsPerBar, "bar", "bars").c_str(), Length,
+			OldLength);
+	else
+		Text += Format(", %s to a frame", Plural(Length / RowsPerBar, "bar", "bars").c_str());
+	Text += ". Every tool counts bars and beats this way now";
+	if (Compound)
+		Text += Format(" (in write_notes the eighths of beat 1 are beats 1, %s and %s)", FormatNumber(1.0 + 1.0 / 3).c_str(),
+			FormatNumber(1.0 + 2.0 / 3).c_str());
+	Text += ". At " + TempoText(S, S.Song.Speed, S.Song.Tempo) + " for this beat; set_tempo with bpm picks speed and tempo for "
+		"another. One Ctrl+Z undoes it.";
+	if (S.Song.Tracks > 1)
+		Text += " The row highlights are the module's: its other tracks count their bars in " + Meter + " too.";
 	return Text;
 }
 
@@ -10486,14 +10629,15 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"a vibrato built in that comes in after a moment (so long notes sing without effects), a blip, scoop or fall on "
 		"the attack, or a chord arpeggio; the articulations of the classic NES soundtracks: an attack that blooms, a duty "
 		"click, a decay in steps, held notes struck again, an echo after the note, a pitch flick, a bass that thumps; on the "
-		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer. Start from a kind (" +
+		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer, or a swell that rises and "
+		"washes out (waves, wind; any other kind there is its volume envelope alone). Start from a kind (" +
 		DesignKinds() + ") and change what should differ. Envelope times are in frames, 60 a second.",
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
 			.Add("kind", Prop("string", "What it starts from: lead (default), pad, pluck, bass, keys, bell, brass, strings, organ, "
-				"chiptune; the classic articulations: bloom lead, stepped lead, click pluck, echo pluck, thump bass; kick, snare, "
-				"hihat, open hihat, crash, tom."))
-			.Add("channel", ChannelProp("The channel it's for (picks the chip; the noise channel makes a drum)."))
+				"chiptune, swell (rises and washes out: waves and wind on the noise channel); the classic articulations: bloom lead, "
+				"stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
 			.Add("attack", LevelProp("instant, fast, medium, slow, swell, bloom (from about two thirds of the peak to it in two "
 				"frames, so notes open up), or frames (0-60)."))
@@ -10559,6 +10703,19 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("bpm", Prop("number", "Beats per minute."))
 			.Add("speed", Prop("integer", "FamiTracker's speed: ticks a row, 1-31 (lower is faster)."))
 			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
+		false, false, true);
+
+	AddTool("set_meter", "Set the meter",
+		"Sets the song's meter: how many beats a bar has and how a beat divides (3/4 for a waltz or a lullaby, 6/8 for a jig, a "
+		"sea shanty or a lilt, 2/4 for a march, 4/4, 5/4, 12/8), as FamiTracker's row highlights, which every tool counts bars "
+		"and beats by. A track without notes also gets patterns of whole bars (4 to a frame); one with notes keeps its "
+		"patterns, so set the meter before writing. In 6/8, 9/8 and 12/8 a beat is a dotted quarter of three eighths, so "
+		"set_tempo's BPM counts dotted quarters. Needs direct changes; undoable.",
+		Schema()
+			.Add("meter", Prop("string", "Like \"3/4\", \"6/8\", \"4/4\", \"2/4\", \"12/8\", \"5/4\"; or waltz, march, jig."), true)
+			.Add("rows_per_beat", Prop("integer", "Rows to a beat (default: the song's now in x/4; 6 in 6/8, so an eighth is 2 rows; "
+				"2 in 5/8 or 7/8, whose beat is an eighth). More rows give finer rhythms."))
+			.Add("bars_per_frame", Prop("integer", "Bars to a pattern, for a track without notes (default 4).")),
 		false, false, true);
 
 	AddTool("name_song", "Name the song and the track",
@@ -11351,6 +11508,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
+		else if (Name == "set_meter") Result.Text = SetMeterTool(S, Args);
 		else if (Name == "name_song") Result.Text = NameSongTool(S, Args);
 		else if (Name == "set_swing") Result.Text = SetSwingTool(S, Args);
 		else if (Name == "mix") Result.Text = MixTool(S, Args);
@@ -11481,7 +11639,7 @@ std::string ToolSet::Instructions()
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
 		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
-		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written. set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
+		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written. set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them; set_meter sets 3/4 or 6/8 (before the notes). Tell the "
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "

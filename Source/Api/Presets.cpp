@@ -725,7 +725,8 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 			Out = "a triangle at its one loudness, held until the next note or a release (===)";
 	}
 	else {
-		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Pulse ? (std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() :
+		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Wave == "noise" ? "noise envelope" : Pulse ?
+			(std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() :
 			"sawtooth", D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() :
 			"reaches", Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" :
 			(std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
@@ -778,6 +779,8 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 			D.VibratoDelay, D.VibratoDelay / Rate);
 		Out += Buffer;
 	}
+	if (Wave == "noise")
+		Out += "; its note picks the noise's pitch, from 0-# (dark, a deep wash) to F-# (bright, a hiss)";
 	return Out;
 }
 
@@ -815,6 +818,10 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 	else if (K == "chiptune" || K == "arp" || K == "arpeggio") {
 		D.Attack = 0; D.Peak = 13; D.Decay = 10; D.Sustain = 9; D.Release = 4; D.Duty = 1;
 		D.Arpeggio = List({ 0, 4, 7 });
+	}
+	else if (K == "swell" || K == "wave" || K == "waves" || K == "wind" || K == "surf" || K == "breath") {
+		// Rises slowly and washes out after a release: a wave or a gust on the noise channel, a swell on a pulse
+		D.Attack = 30; D.Peak = 12; D.Decay = 0; D.Sustain = 12; D.Release = 40; D.Duty = 0;
 	}
 	// The articulations of the classic NES soundtracks (references action guide)
 	else if (K == "bloomlead") {		// blooms in, a duty click, struck again while held, a vibrato that waits
@@ -854,8 +861,9 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 
 std::string DesignKinds()
 {
-	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio); the classic articulations: "
-		"bloom lead, stepped lead, click pluck, echo pluck, thump bass; drums: kick, snare, hihat, open hihat, crash, tom";
+	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio), swell (rises and washes out: "
+		"waves and wind on the noise channel); the classic articulations: bloom lead, stepped lead, click pluck, echo pluck, "
+		"thump bass; drums: kick, snare, hihat, open hihat, crash, tom";
 }
 
 std::string Vrc7PatchList()

@@ -409,7 +409,7 @@ bool Timing::PositionToRow(int Bar, double Beat, int &Row, bool &Exact) const
 	const long Rounded = std::lround(Offset);
 	if (Rounded < 0 || Rounded >= BarLength(Bar))
 		return false;
-	Exact = std::fabs(Offset - Rounded) < 1e-6;
+	Exact = std::fabs(Offset - Rounded) < 0.01;	// a third of a beat written 1.333 is meant to fall on a row
 	Row = BarStart(Bar) + static_cast<int>(Rounded);
 	return true;
 }
@@ -418,7 +418,7 @@ int Timing::BeatsToRows(double Beats, bool &Exact) const
 {
 	const double Rows = Beats * RowsPerBeat;
 	const long Rounded = std::lround(Rows);
-	Exact = std::fabs(Rows - Rounded) < 1e-6 && Rounded >= 1;
+	Exact = std::fabs(Rows - Rounded) < 0.01 && Rounded >= 1;
 	return static_cast<int>(std::max(1L, Rounded));
 }
 
