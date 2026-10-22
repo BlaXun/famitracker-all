@@ -4732,19 +4732,22 @@ std::string PolishTool(Session &S, const Json &Args)
 	Draft D(S);
 	std::vector<std::string> Done, Warnings;
 	if (What.count("accents")) {
-		std::string List;
+		std::string List, Fm;
 		for (size_t i = 0; i < Channels.size(); ++i) {
 			const int c = Channels[i];
 			if (S.Channel(c).Kind == KIND_TRIANGLE || !IsMelodic(S.Channel(c)))
 				continue;	// the triangle has no volume
 			const int Count = Accents(S, D, c, First, End);
+			std::string &Into = S.Channel(c).Kind == KIND_FM ? Fm : List;
 			if (Count > 0)
-				List += (List.empty() ? "" : ", ") + S.Channel(c).FullName();
+				Into += (Into.empty() ? "" : ", ") + S.Channel(c).FullName();
 			else if (Count < 0)
 				Warnings.push_back(S.Channel(c).FullName() + " already shapes its volumes, so it kept them.");
 		}
 		if (!List.empty())
 			Done.push_back("accents (beats a step softer than a bar's first note, the notes between them softer still) on " + List);
+		if (!Fm.empty())	// a VRC7 step is 3 dB
+			Done.push_back("accents (the notes between beats a step, 3 dB, softer than the beats) on " + Fm);
 	}
 	if (What.count("vibrato") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
 		VibratoPlan Plan;
@@ -4764,7 +4767,7 @@ std::string PolishTool(Session &S, const Json &Args)
 	if (What.count("fades")) {
 		std::string List;
 		int Total = 0;
-		bool Lost = false;
+		bool Lost = false, Fm = false;
 		for (size_t i = 0; i < Channels.size(); ++i) {
 			const int c = Channels[i];
 			if (!IsMelodic(S.Channel(c)) || S.Channel(c).Kind == KIND_TRIANGLE)
@@ -4773,13 +4776,15 @@ std::string PolishTool(Session &S, const Json &Args)
 			if (Count > 0) {
 				List += (List.empty() ? "" : ", ") + S.Channel(c).FullName();
 				Total += Count;
+				Fm = Fm || S.Channel(c).Kind == KIND_FM;
 			}
 		}
 		if (Lost)
 			Warnings.push_back("Some held notes had no free effect column for a fade (all four were full).");
 		if (Total > 0)
-			Done.push_back(Format("fades on %s (a volume slide from halfway through, A0y, the next note at its own volume) on %s",
-				Plural(Total, "held note", "held notes").c_str(), List.c_str()));
+			Done.push_back(Format("fades on %s (a volume slide from halfway through, A0y, the next note at its own volume%s) on %s",
+				Plural(Total, "held note", "held notes").c_str(), Fm ? "; on the VRC7 three steps, 9 dB, over the note's end" : "",
+				List.c_str()));
 	}
 	if (What.count("scoops") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
 		bool Lost = false;

@@ -6811,6 +6811,8 @@ void TestChipLevels()
 	// Accents: the notes between beats a step softer, the beats as loud; a fade three steps over the end
 	Result = Run(Song, "polish", "{\"touches\": [\"accents\", \"fades\"], \"melody_channel\": \"FM Channel 1\"}");
 	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "accents (the notes between beats a step, 3 dB, softer than the beats) on VRC7 FM Channel 1");
+	CHECK_HAS(Result.Text, "; on the VRC7 three steps, 9 dB, over the note's end)");
 	CHECK(Song.Rows[5][0].Volume == 15 && Song.Rows[5][4].Volume == 15 && Song.Rows[5][6].Volume == 14 && Song.Rows[5][8].Volume == 15);
 	CHECK(HasEffectAt(Song, 5, 28, EFF_VOLUME_SLIDE, 1) && !HasEffectAt(Song, 5, 24, EFF_VOLUME_SLIDE, 1));
 	// A soft mix: the melody at 12 (as loud as 9 on a pulse), the echo at 10, each volume as far under the loudest
