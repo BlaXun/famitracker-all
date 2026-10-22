@@ -3480,7 +3480,7 @@ void TestProtocol()
 	CHECK(pMessages != 0 && pMessages->Size() == 1 && pMessages->At(0).Get("role")->String() == "user");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "for this: a snowy village at night.");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
-	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars on the chords and bass alone");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars with one or two quiet parts");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\"}}"),
 		Config, Tools);
 	CHECK_EQ(ErrorCode(Response), -32602);
@@ -6784,6 +6784,7 @@ void TestChipLevels()
 	// An echo on another FM channel: three steps (9 dB) under the melody, as volume 6 is on a pulse, not 27 dB
 	Result = Run(Song, "add_echo", "{\"channel\": \"FM Channel 1\", \"to_channel\": \"FM Channel 5\"}");
 	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "at volume 6 (as much softer as 6 is than 15 on a pulse: 12 where the melody plays 15)");
 	CHECK(Song.Rows[9][3].HasNote() && Song.Rows[9][3].Volume == 12);
 	// Accents: the notes between beats a step softer, the beats as loud; a fade three steps over the end
 	Result = Run(Song, "polish", "{\"touches\": [\"accents\", \"fades\"], \"melody_channel\": \"FM Channel 1\"}");

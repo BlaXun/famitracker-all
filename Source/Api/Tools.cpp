@@ -3807,9 +3807,21 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("The echo is already there.");
-	std::string What = Format("an echo of %s on %s, %s later at volume %d%s, %s", S.Channel(Plan.Source).FullName().c_str(),
-		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume,
-		Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(), RangeText(From, To).c_str());
+	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter), the number written differs
+	std::string Level = Format("at volume %d", Plan.Volume);
+	const ChannelInfo &Source = S.Channel(Plan.Source), &Target = S.Channel(Plan.Target);
+	if (Source.Kind == KIND_FM || Target.Kind == KIND_FM || Source.Chip == "N163" || Target.Chip == "N163") {
+		int Loudest = 0;
+		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
+		for (size_t i = 0; i < Played.size(); ++i)
+			Loudest = std::max(Loudest, Played[i].Volume);
+		if (Loudest > 0)
+			Level += Format(" (as much softer as %d is than 15 on a pulse: %d where the melody plays %d)", Plan.Volume,
+				MatchVolume(Source, Loudest, Plan.Volume / 15.0, Target), Loudest);
+	}
+	std::string What = Format("an echo of %s on %s, %s later %s%s, %s", Source.FullName().c_str(), Target.FullName().c_str(),
+		S.Time.Length(Plan.Delay).c_str(), Level.c_str(), Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(),
+		RangeText(From, To).c_str());
 	if (Plan.OtherChip)
 		What += Format(" (playing the melody's sound on the %s: %s)", InstrumentChip(S.Channel(Plan.Target)).c_str(),
 			InstrumentLabel(S.Song, Plan.Instrument).c_str());
@@ -10859,9 +10871,11 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"in each section; long and short notes mixed.\n"
 			"5. Build the form: copy_bars for repeats and make each repeat different (vary_part, a counter-melody or harmony only "
 			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar). Let "
-			"it breathe, as well-arranged tracks swing 8-12 dB in loudness between sections: an intro of 2-4 bars on the chords "
-			"and bass alone (insert_bars at bar 1, copy_bars with channels to fill it, set_loop from the bar after so it plays "
-			"once), a few bars without the drums or the melody before a repeat, and the full sound where it matters.\n"
+			"it breathe, as well-arranged tracks swing 8-12 dB in loudness between sections: an intro of 2-4 bars with one or "
+			"two quiet parts, like the chords alone with the bass joining for the last bar or two (insert_bars at bar 1, "
+			"copy_bars with channels to fill it, set_loop from the bar after so it plays once; the triangle is loud, so an "
+			"intro with it is only a few dB quieter), a few bars without the drums or the melody before a repeat, and the "
+			"full sound where it matters.\n"
 			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
 			"beat (kit samples for a punchy sampled kick and snare), polish (fades, scoops and a staccato or thump bass where they "
 			"fit); give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument), and an echo "
