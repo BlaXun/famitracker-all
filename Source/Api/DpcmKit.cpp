@@ -117,14 +117,36 @@ std::vector<unsigned char> EncodeDpcm(const std::vector<double> &Wave, int Start
 	unsigned char Byte = 0;
 	int Bit = 0;
 	for (size_t i = 0; i < Wave.size(); ++i) {
-		// Up when the wave is above, as far as the DMC goes (it stays in 0-127)
-		const bool Up = Wave[i] > Level;
+		// A step the counter can't take here (down from 0 or 1, up from 126 or 127) is a hold instead,
+		// a step the other way that the next one takes back: a step lost here would be taken when the
+		// DMC starts the sample from another level (a Zxx on its row), and the sample wouldn't end where
+		// it started (the toms slid to silence, which clicked)
+		bool Up = Wave[i] > Level;
+		if (!Up && Level < 2)
+			Up = true;
+		else if (Up && Level > 125)
+			Up = false;
 		if (Up) {
 			Byte = static_cast<unsigned char>(Byte | (1 << Bit));
-			if (Level <= 125)
-				Level += 2;
+			Level += 2;
 		}
-		else if (Level >= 2)
+		else
+			Level -= 2;
+		if (++Bit == 8) {
+			Out.push_back(Byte);
+			Byte = 0;
+			Bit = 0;
+		}
+	}
+	// Back to the level it started from (a decaying drum still swings a little at its end), so the
+	// level after the sound is the one before it and the next sound starts without a step
+	const int Home = std::max(0, std::min(127, Start));
+	while (Level != Home && Level != Home + 1 && Level != Home - 1) {
+		if (Level < Home) {
+			Byte = static_cast<unsigned char>(Byte | (1 << Bit));
+			Level += 2;
+		}
+		else
 			Level -= 2;
 		if (++Bit == 8) {
 			Out.push_back(Byte);

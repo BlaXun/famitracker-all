@@ -743,6 +743,19 @@ public:
 		return Next;
 	}
 
+	int OutdatedKitSamples = 0;		// samples of a kit an older version made, brought up to date once
+
+	int RefreshDpcmKit(const DpcmKit &Kit, std::string &) override
+	{
+		bool Has = false;
+		for (size_t i = 0; i < Info.Instruments.size(); ++i)
+			Has = Has || (Info.Instruments[i].Name == Kit.Name && Info.Instruments[i].Chip == "2A03");
+		const int Refreshed = Has ? OutdatedKitSamples : 0;
+		if (Has)
+			OutdatedKitSamples = 0;
+		return Refreshed;
+	}
+
 	std::map<std::string, std::string> Library;		// the reference library's files
 	std::string OpenedText;							// the module OpenText was given
 
@@ -2123,13 +2136,34 @@ void TestSampleDrums()
 	CHECK(FindSampleDrum("Kick") == &Kit.Keys[0] && FindSampleDrum("bass drum") == &Kit.Keys[0] && FindSampleDrum("snare") == &Kit.Keys[1] &&
 		FindSampleDrum("tom") == &Kit.Keys[2] && FindSampleDrum("hi tom") == &Kit.Keys[3] && FindSampleDrum("cowbell") == 0);
 	CHECK(Kit.Keys[0].Pitch == 36 && Kit.Keys[1].Pitch == 38 && Kit.Keys[0].Rate == 15 && Kit.Keys[0].Delta == 0);
-	// Encoding follows a wave within the DMC's steps of 2, and holds its level in the padding
+	// Encoding follows a wave within the DMC's steps of 2
 	std::vector<double> Ramp;
 	for (int i = 0; i < 100; ++i)
 		Ramp.push_back(i < 50 ? i * 2.0 : 100.0);
 	const std::vector<unsigned char> Encoded = EncodeDpcm(Ramp, 0);
 	const std::vector<int> Back = DecodeDpcm(Encoded, 0);
-	CHECK(Encoded.size() == 17 && Back[48] >= 96 && Back[48] <= 100 && std::abs(Back.back() - 100) <= 2);
+	// (a step behind, as it holds at 0 for its first step down), and back at its start level after it
+	CHECK(Encoded.size() % 16 == 1 && Back[48] >= 92 && Back[48] <= 100 && Back[99] >= 98 && Back.back() <= 2);
+	// Started from a higher level (a Zxx on the sample's row, as mix writes), each sample walks the same way and ends
+	// where it started: the toms used to slide to silence at their end, which clicked
+	for (size_t i = 0; i < Kit.Samples.size(); ++i) {
+		const std::vector<int> FromSilence = DecodeDpcm(Kit.Samples[i].Data, 0);
+		for (int Start = 16; Start <= 48; Start += 16) {
+			const std::vector<int> Played = DecodeDpcm(Kit.Samples[i].Data, Start);
+			bool Same = Played.size() == FromSilence.size();
+			for (size_t k = 0; k < Played.size() && Same; ++k)
+				Same = Played[k] == FromSilence[k] + Start;
+			CHECK(Same && std::abs(Played.back() - Start) <= 2);
+		}
+	}
+	// A wave below the floor or above the ceiling holds there: the steps still cancel out
+	{
+		std::vector<double> Dip(200, 0.0);
+		for (int i = 0; i < 60; ++i)
+			Dip[static_cast<size_t>(i)] = -40.0;
+		const std::vector<int> Low = DecodeDpcm(EncodeDpcm(Dip, 0), 0), High = DecodeDpcm(EncodeDpcm(Dip, 0), 60);
+		CHECK(Low.size() == High.size() && std::abs(Low.back()) <= 2 && std::abs(High.back() - 60) <= 2);
+	}
 
 	// The tool, and write_notes on the DPCM channel by name
 	FakeSong Song;
@@ -2138,6 +2172,16 @@ void TestSampleDrums()
 	CHECK_HAS(Result.Text, "Added \"Sample drums\" (03): kick on C-3, snare on D-3, low tom on F-3 and high tom on A-3 (2.6 KB of samples)");
 	CHECK_HAS(Run(Song, "add_sample_drums", "{}").Text, "The song already has \"Sample drums\" (03)");
 	CHECK(Song.Kits.size() == 1);
+	// A kit an older version made has its samples brought up to date, and the tools say so
+	Song.OutdatedKitSamples = 2;
+	CHECK_HAS(Run(Song, "add_sample_drums", "{}").Text, "The song's sampled drums were brought up to date");
+	CHECK_LACKS(Run(Song, "add_sample_drums", "{}").Text, "brought up to date");
+	Song.OutdatedKitSamples = 3;
+	Song.Info.DirectChanges = true;
+	Result = Run(Song, "add_drums", "{\"kit\": \"samples\", \"from_bar\": 1, \"to_bar\": 2}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song's sampled drums were brought up to date");
+	Song.Info.DirectChanges = false;
 	FakeSong Fresh;
 	Result = Run(Fresh, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"kick\", "
 		"\"beats\": 0.25}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"snare\", \"beats\": 0.25}, {\"bar\": 1, \"beat\": 3, "

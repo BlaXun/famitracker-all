@@ -602,12 +602,20 @@ void BarRange(const Session &S, const Json &Args, int &From, int &To, bool PastE
 
 // The sampled drum kit's instrument (DpcmKit.h), added with its samples when
 // the song has none
+// What a kit made by an older version gets: its samples brought up to date
+const char *const KIT_REFRESHED = "The song's sampled drums were brought up to date: their old samples (the toms, mostly) slid "
+	"to silence where they ended when the DPCM level started them higher, which clicked and made the bass jump.";
+
 int SampleDrumsInstrument(Session &S)
 {
 	const DpcmKit &Kit = SampleDrums();
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
-		if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(Kit.Name) && S.Song.Instruments[i].Chip == "2A03")
+		if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(Kit.Name) && S.Song.Instruments[i].Chip == "2A03") {
+			std::string Error;
+			if (S.Host().RefreshDpcmKit(Kit, Error) > 0)
+				S.Remarks.push_back(KIT_REFRESHED);
 			return S.Song.Instruments[i].Index;
+		}
 	std::string Error;
 	const int Index = S.Host().AddDpcmKit(Kit, Error);
 	if (Index < 0)
@@ -10078,6 +10086,7 @@ std::string AddSampleDrumsTool(Session &S, const Json &)
 	const DpcmKit &Kit = SampleDrums();
 	const size_t Before = S.Song.Instruments.size();
 	const int Index = SampleDrumsInstrument(S);
+	const bool Refreshed = std::find(S.Remarks.begin(), S.Remarks.end(), std::string(KIT_REFRESHED)) != S.Remarks.end();
 	S.Remarks.clear();
 	int Bytes = 0;
 	for (size_t i = 0; i < Kit.Samples.size(); ++i)
@@ -10094,10 +10103,10 @@ std::string AddSampleDrumsTool(Session &S, const Json &)
 			Dpcm = c;
 	return Format("%s %s: %s (%s of samples). Play them with write_notes on %s, by name: {\"pitch\": \"kick\"}, "
 		"\"snare\", \"low tom\", \"high tom\"; each hit rings until the next. Keep the hi-hats on the noise channel, and "
-		"keep the samples to the kick and snare (and toms in fills): that's the punch of the classic soundtracks.",
+		"keep the samples to the kick and snare (and toms in fills): that's the punch of the classic soundtracks.%s",
 		S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(), Keys.c_str(),
 		Bytes >= 1024 ? Format("%.1f KB", Bytes / 1024.0).c_str() : Format("%d bytes", Bytes).c_str(),
-		Dpcm >= 0 ? S.Channel(Dpcm).FullName().c_str() : "the DPCM channel");
+		Dpcm >= 0 ? S.Channel(Dpcm).FullName().c_str() : "the DPCM channel", Refreshed ? (std::string(" ") + KIT_REFRESHED).c_str() : "");
 }
 
 std::string ImportNsfTool(Session &S, const Json &Args)
@@ -11323,7 +11332,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then breathing (an intro on "
 			"the chords and bass, a break with fewer parts), then expression (polish, an echo, a sound that changes between "
 			"sections, sampled drums), and mix last. Keep my melody unless the review points at it.\n"
-			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
+			"3. Run review_arrangement again after each round until it scores 8 or more. If the song loops, finish with "
+			"check_loop and fix_loop: an echo or a fade at the loop's end carries into its start on repeat.\n"
 			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
 		return true;
 	}

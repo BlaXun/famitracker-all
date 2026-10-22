@@ -1406,6 +1406,49 @@ public:
 		return Index;
 	}
 
+	int RefreshDpcmKit(const ftapi::DpcmKit &Kit, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CFamiTrackerDoc *pDoc = Doc();
+		const int Index = FindNamedInstrument(pDoc, INST_2A03, Ansi(Kit.Name));
+		if (Index < 0)
+			return 0;
+		CInstrument2A03 *pInstrument = static_cast<CInstrument2A03*>(pDoc->GetInstrument(static_cast<unsigned int>(Index)));	// retained
+		if (pInstrument == NULL)
+			return 0;
+		int Refreshed = 0;
+		for (size_t k = 0; k < Kit.Keys.size(); ++k) {
+			const ftapi::DpcmKey &Key = Kit.Keys[k];
+			if (Key.Sample < 0 || static_cast<size_t>(Key.Sample) >= Kit.Samples.size())
+				continue;
+			const int Slot = pInstrument->GetSample(Key.Pitch / 12, Key.Pitch % 12) - 1;
+			if (Slot < 0 || Slot >= MAX_DSAMPLES)
+				continue;
+			const ftapi::DpcmSample &Sample = Kit.Samples[static_cast<size_t>(Key.Sample)];
+			CDSample *pSample = pDoc->GetSample(static_cast<unsigned int>(Slot));
+			// Only the kit's own samples: one of the user's under its key stays
+			if (pSample == NULL || Sample.Data.empty() || CString(pSample->GetName()) != Ansi(Sample.Name))
+				continue;
+			const unsigned char *pOld = reinterpret_cast<const unsigned char*>(pSample->GetData());
+			bool Same = pOld != NULL && pSample->GetSize() == Sample.Data.size();
+			for (size_t b = 0; b < Sample.Data.size() && Same; ++b)
+				Same = pOld[b] == Sample.Data[b];
+			if (Same)
+				continue;
+			if (pDoc->GetTotalSampleSize() - pSample->GetSize() + Sample.Data.size() > static_cast<unsigned int>(MAX_SAMPLE_SPACE))
+				continue;
+			pSample->Allocate(static_cast<unsigned int>(Sample.Data.size()), reinterpret_cast<const char*>(&Sample.Data[0]));
+			++Refreshed;
+		}
+		pInstrument->Release();
+		if (Refreshed > 0) {
+			pDoc->SetModifiedFlag();
+			pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+		}
+		return Refreshed;
+	}
+
 	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks)
 	{
 		Tracks.clear();

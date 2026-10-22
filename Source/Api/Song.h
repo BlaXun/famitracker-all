@@ -185,6 +185,9 @@ public:
 	// (or ones of the same name and size reused), or the 2A03 instrument of the kit's name already
 	// there: its index, -1 with the reason
 	virtual int AddDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
+	// The samples of the kit's instrument already in the song that an older version made (the kit's
+	// names under its keys) brought up to date with Kit's: how many changed, -1 with the reason
+	virtual int RefreshDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
 
 	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
 	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their
