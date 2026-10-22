@@ -819,7 +819,9 @@ std::vector<int> LushShape(const Chord &C, int Pattern)
 		break;
 	case BROKEN_ROLLING: {
 		// The root and fifth below, the rest an octave up; a tone that would
-		// land a semitone from another is left out (a third under a ninth)
+		// land a semitone from another is left out. The third says what the
+		// chord is, so it stays: a ninth over a minor third goes up another
+		// octave (an eleventh over a major third, which would go too high, out)
 		std::vector<int> Spread;
 		for (size_t i = 0; i < n; ++i)
 			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
@@ -828,6 +830,18 @@ std::vector<int> LushShape(const Chord &C, int Pattern)
 			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
 				continue;
 			const int Raised = Up[i] + 12;
+			if (Up[i] == 3 || Up[i] == 4) {
+				std::vector<int> Kept;
+				for (size_t k = 0; k < Spread.size(); ++k) {
+					if (Spread[k] < 12 || std::abs(Spread[k] - Raised) > 1)
+						Kept.push_back(Spread[k]);
+					else if (Spread[k] + 12 <= 26)
+						Kept.push_back(Spread[k] + 12);
+				}
+				Spread = Kept;
+				Spread.push_back(Raised);
+				continue;
+			}
 			bool Rubs = false;
 			for (size_t k = 0; k < Spread.size(); ++k)
 				Rubs = Rubs || std::abs(Spread[k] - Raised) <= 1;
@@ -1301,17 +1315,37 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 		if (O.Interval != HARMONY_OCTAVE_BELOW && pChord != 0 && ClashesWithChord(h, pChord->C)) {
 			// Between the beats too, not a semitone from the chord's notes: the
 			// chord's version of the degree (C# over A major, not the scale's C),
-			// a third or sixth from the melody where it can be
+			// a third or sixth from the melody where it can be. Over a chord of
+			// the key's own notes the line stays in the key (under a Dsus4 in D
+			// major, G rather than F)
+			const std::vector<int> Classes = pChord->C.PitchClasses();
+			bool Diatonic = true;
+			for (size_t k = 0; k < Classes.size(); ++k)
+				Diatonic = Diatonic && InKey(Classes[k], O.K);
 			int Best = h, BestScore = -1;
 			for (int Step = -1; Step <= 1; Step += 2) {
 				const int Candidate = h + Step;
 				if (ClashesWithChord(Candidate, pChord->C) || Rubs(Candidate, p))
+					continue;
+				if (Diatonic && !InKey(Candidate, O.K) && !pChord->C.HasPitchClass(Mod12(Candidate)))
 					continue;
 				const int Gap = Mod12(p - Candidate);
 				const int Score = (Gap == 3 || Gap == 4 || Gap == 8 || Gap == 9 ? 2 : 0) + (pChord->C.HasPitchClass(Mod12(Candidate)) ? 1 : 0);
 				if (Score > BestScore) {
 					BestScore = Score;
 					Best = Candidate;
+				}
+			}
+			if (BestScore < 0) {
+				// Neither neighbor fits: the nearest of the chord's notes a third
+				// to a sixth from the melody (a fifth under a sus chord's)
+				const bool Below = O.Interval != HARMONY_THIRD_ABOVE;
+				for (int Distance = 3; Distance <= 9; ++Distance) {
+					const int Candidate = Below ? p - Distance : p + Distance;
+					if (pChord->C.HasPitchClass(Mod12(Candidate))) {
+						Best = Candidate;
+						break;
+					}
 				}
 			}
 			h = Best;

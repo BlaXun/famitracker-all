@@ -2830,6 +2830,23 @@ void TestArrange()
 			CHECK_EQ(PitchName(Under[3].Pitch), std::string("F#4"));
 		}
 	}
+	// Over sus chords of the key, the line stays in the key: under A over Dsus4 neither F (outside D major) nor G (a
+	// step from A) fits, so the chord's D, a fifth under; under E over Dsus2, the chord's A rather than C
+	{
+		const Key DMajorKey(2, MODE_MAJOR);
+		const std::vector<ChordAt> Sus = Progression("| Dsus4 | Dsus2 |", DMajorKey);
+		std::vector<NoteInfo> Line;
+		Line.push_back(MelodyNote(0, 4, "A-4"));
+		Line.push_back(MelodyNote(16, 4, "E-4"));
+		HarmonyOptions Hd;
+		Hd.K = DMajorKey;
+		const std::vector<PartNote> Under = HarmonyPart(Line, Sus, Hd);
+		CHECK(Under.size() == 2);
+		if (Under.size() == 2) {
+			CHECK_EQ(PitchName(Under[0].Pitch), std::string("D-4"));
+			CHECK_EQ(PitchName(Under[1].Pitch), std::string("A-3"));
+		}
+	}
 
 	// A counter-melody: under the melody, never a semitone from it, holding where it's busy
 	CounterOptions Counter;
@@ -6510,7 +6527,11 @@ void TestLushChords()
 	CHECK(LushShape(Q, BROKEN_DOWN) == std::vector<int>({ 11, 7, 4, 0 }) && LushShape(Q, BROKEN_UPDOWN) == std::vector<int>({ 0, 4, 7, 11, 7, 4 }));
 	CHECK(LushShape(Q, BROKEN_ALBERTI) == std::vector<int>({ 0, 7, 4, 11 }) && LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 16, 23 }));
 	CHECK(ParseChord("Am9", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 3, 7, 10, 14 }));
-	CHECK(LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 14, 22 }));	// the third would rub against the ninth
+	// Rolling, the minor third would land a semitone over the ninth: the ninth goes up an octave, since without the
+	// third the chord would sound like a 7sus2
+	CHECK(LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 15, 22, 26 }));
+	CHECK(ParseChord("Cmadd9", C, Q) && LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 15, 26 }));
+	CHECK(ParseChord("C9", C, Q) && LushShape(Q, BROKEN_ROLLING) == std::vector<int>({ 0, 7, 14, 16, 22 }));
 	CHECK(ParseChord("Cadd9", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 4, 7, 14 }));
 	CHECK(ParseChord("Csus2", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 2, 7 }));
 	CHECK(ParseChord("G7sus4", C, Q) && LushShape(Q, BROKEN_UP) == std::vector<int>({ 0, 5, 7, 10 }));
