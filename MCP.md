@@ -399,7 +399,11 @@ avoid that, and gives it tools for each layer:
   and the fills' toms are the sampled drums of `add_sample_drums` on the DPCM
   channel, and the noise channel keeps the hi-hats on the rows where it would
   otherwise give them up to a kick or a snare; `mix` writes its DPCM level on
-  each sample, which would otherwise start it from silence.
+  each sample, which would otherwise start it from silence. Each sample ends
+  at the level it started from, whatever level that is, so the hits don't
+  click and the bass doesn't jump between them (the toms of the first kit
+  slid to silence when they started higher; a song with that kit has its
+  samples brought up to date when the sampled drums are used again).
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
@@ -858,8 +862,12 @@ editor; they're muted again afterwards.
   (`tests/TestNsf.h`, also used by the Api tests).
 - `Source/Api/DpcmKit.cpp`: the sampled drums, synthesized (a body that
   falls in pitch, noise for the snare) and encoded as the DMC's delta
-  modulation from silence; `SongHost::AddDpcmKit` adds the samples and the
-  instrument that maps them to keys.
+  modulation from silence, never stepping past the counter's ends (it holds
+  there instead) and back at its start level at the end, so a sample started
+  from another level (`Zxx`) walks the same way and ends where it started;
+  `SongHost::AddDpcmKit` adds the samples and the instrument that maps them
+  to keys, and `RefreshDpcmKit` brings a kit an older version made up to
+  date.
 - `Source/Api/References.cpp` and `StyleGuide.cpp`: the reference library
   (references as indented JSON, searching them, a sound as a preset) and
   the built-in style guide. The library's files are read and written

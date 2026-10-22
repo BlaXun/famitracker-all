@@ -60,7 +60,8 @@ const DpcmKey *FindSampleDrum(const std::string &Name);
 
 // The levels (0-127) a sound should follow at the DMC's 33144 Hz, as delta
 // modulation from level Start: a bit a sample, the low bit first, padded to
-// 16n + 1 bytes
+// 16n + 1 bytes. It never steps past 0 or 127 (it holds there), so played
+// from another level the sound walks the same way and ends where it started.
 std::vector<unsigned char> EncodeDpcm(const std::vector<double> &Wave, int Start);
 // The levels the DMC plays from Data, starting at Start (0-127)
 std::vector<int> DecodeDpcm(const std::vector<unsigned char> &Data, int Start);
