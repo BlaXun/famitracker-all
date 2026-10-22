@@ -70,12 +70,14 @@ std::vector<EffectInfo> MakeReference()
 		"Wobbles the volume: x is how fast, y how deep.", "channels with a volume (not the triangle or the DPCM)", "until 700",
 		"744 a gentle shimmer on pads and organs, 7A8 a fast throb." });
 	All.push_back({ "Axy", "volume slide",
-		"Slides the volume: A0y up, Ax0 down, by x or y eighths of a step a tick (one of them, the other 0).",
+		"Slides the volume: A0y down, Ax0 up, by y or x eighths of a step a tick (one of them, the other 0).",
 		"channels with a volume (not the triangle or the DPCM)", "until A00",
-		"A20-A40 fade a held note out, A02-A04 swell one in (start it soft, at volume 3 or so); a fade at the end of a song." });
+		"A01-A04 fade a held note out (give the next note its volume, since the slide leaves the channel quieter), A10-A40 "
+		"swell one in (start it soft, at volume 3 or so); a fade at the end of a song." });
 	All.push_back({ "Gxx", "note delay",
 		"Holds this row's note back xx ticks, less than the speed (the ticks a row lasts).", "every channel", "this row only",
-		"swing (G02 or G03 on the off-beats at speed 6), flams and rolls on drums, an echo that lags, a less mechanical feel." });
+		"a swing for one part (G02 or G03 on its off-beats at speed 6; set_swing swings the whole song), flams and rolls on "
+		"drums, an echo that lags, a less mechanical feel." });
 	All.push_back({ "Hxy", "hardware sweep up",
 		"Starts the 2A03 pulse's own sweep: the pitch rises by itself, x how often (0 fastest to 7 slowest), y how much each "
 		"time (1 the most to 7 the least).", "the 2A03 pulses only", "until the next note",
@@ -131,8 +133,10 @@ std::vector<Technique> MakeTechniques()
 {
 	std::vector<Technique> All;
 	All.push_back({ "echo", "delay, echo channel, reverb",
-		"The lead's notes again on a free channel, an eighth or a dotted eighth later and 5-8 steps quieter, often with a thinner "
-		"duty: space without effects. add_echo makes one. With no channel free, repeat a long note softly on the rows after it." });
+		"The lead's notes again on a free channel, a dotted eighth or a beat later, at about 40% of the lead's loudness (a lead "
+		"at volume 6 echoes at 2 or 3), same instrument and octave: space without effects. Atmospheric tracks keep one under "
+		"nearly every melodic line; a step of detune (P81 or P7F) on the echo makes it shimmer where the two overlap. add_echo "
+		"makes one. With no channel free, repeat a long note softly on the rows after it." });
 	All.push_back({ "chorus", "detune, pxx, double, unison, thick lead",
 		"Two channels play the same part, one a little sharp: P81 or P82 on the second (P80 is in tune). The slow beat between them "
 		"shimmers and thickens a lead; two pulses with different duties (or a 2A03 and a VRC6 pulse) even more." });
@@ -140,14 +144,18 @@ std::vector<Technique> MakeTechniques()
 		"Start long notes plain and bring the vibrato in after a beat: the note, then 443-454 a row or two later (4xy on that row), "
 		"and 400 before the next note if it shouldn't wobble. add_vibrato does it with delay_beats, and design_instrument can build "
 		"it into an instrument." });
-	All.push_back({ "swing", "shuffle, groove, gxx",
-		"Delay every off-beat note: at speed 6, G02 or G03 on the \"and\" of each beat (a third to a half of a row); all of them, "
-		"or it sounds like mistakes. Drums and bass swing with the melody." });
+	All.push_back({ "swing", "shuffle, groove, gxx, fxx",
+		"Alternate the speed every half beat, longer then shorter, so the rows themselves swing: at speed 6, F08 and F04 in turn "
+		"is a triplet feel and F07 and F05 a light one, averaging 6 so the tempo stays (F06 and F03 at speed 4.5, F04 and F02 at "
+		"3). Every channel swings together, and notes written later too; set_swing does it. For one part, delay its off-beat "
+		"notes with Gxx instead (G02 or G03 at speed 6), all of them, or it sounds like mistakes: set_swing by delays does it on "
+		"the channels named, worked out from each row's speed (a shuffled hi-hat or arpeggio over a straight bass). The same "
+		"trick gives speeds between whole numbers: F03 F03 F03 F04 is 3.25 ticks a row." });
 	All.push_back({ "staccato", "short notes, sxx, gated, stabs",
 		"Cut notes short with Sxx: S02-S04 make plucky, bouncing notes; an arpeggio chord (037) with S03 sounds gated. A halt (---) "
 		"or release (===) a row after the note does the same on the row grid." });
 	All.push_back({ "fades and swells", "fade, swell, crescendo, decrescendo, volume slide, axy",
-		"A held note fades out with Ax0 (A20 slowly, A80 quickly) and swells in with A0y from a soft start (volume 3, A02-A04); "
+		"A held note fades out with A0y (A01 slowly, A08 quickly) and swells in with Ax0 from a soft start (volume 3, A10-A40); "
 		"end with A00. The volume column on later notes does it a note at a time." });
 	All.push_back({ "tremolo", "7xy, shimmer, throb",
 		"7xy shakes the volume: 744 a gentle shimmer on pads, 7A8 a fast throb; 700 stops it. Not on the triangle, which has no "
@@ -160,18 +168,32 @@ std::vector<Technique> MakeTechniques()
 		"flutes, pulse bass). Change it per section for color, or alternate per note for a \"talking\" lead. On the noise, V01 is "
 		"metallic: hats, zaps, buzzes." });
 	All.push_back({ "slides and grace notes", "bend, scoop, glide, portamento, qxy, rxy, fall",
-		"A scoop into a note: write it a semitone or two below and slide up with Q21/Q32. A fall at a phrase's end: Rxy (R5C, an "
-		"octave down). For every note gliding into the next, 3xx portamento (306 smooth), off again with 300." });
+		"A scoop into a note: write it a semitone or two below and slide up with Q21/Q32. A fall at a phrase's end: Rxy, a sigh "
+		"of a semitone or two (R41, R42) as the note ends, or a long drop (R5C, an octave down). For every note gliding into the "
+		"next, 3xx portamento (306 smooth), off again with 300. polish's touches scoops and falls write the short ones." });
 	All.push_back({ "arpeggio chords", "arpeggio, chords on one channel, 0xy",
 		"0xy plays a chord on one channel: 037 minor, 047 major, 0C0 octaves, 059 or 057 open. It frees the other channels for "
 		"a melody and a bass; change the arpeggio with the chords, and 000 for notes that should stand alone." });
+	All.push_back({ "lush chords", "sevenths, ninths, jazz chords, arpeggio instruments, chord instruments",
+		"For chords of four or more notes, put the arpeggio in an instrument: an arpeggio sequence like 0 0 4 4 7 7 11 11, "
+		"looping, plays a major seventh two frames a note (0 0 3 3 7 7 10 10 a minor seventh, 0 4 7 14 an add9 with its ninth on "
+		"top), one instrument a chord shape, played on the root softly (volume 4-7) and struck again on a rhythm. Slower (three "
+		"or four frames a note) is dreamier; descending or spread over two octaves sounds wider. add_chords_and_bass with "
+		"chord_style lush makes them." });
+	All.push_back({ "quiet mixing", "mixing, balance, volume, soft, warm, levels",
+		"Pulses well under full volume: a lead at 4-8 rather than 15, echoes at 2-3, chords at 4-7, drums under 12, with the "
+		"triangle (which has no volume) carrying the low end. The pulses stop burying the triangle and the noise, the sound gets "
+		"warmer and the volume column has room for dynamics. A higher DPCM level (Zxx) then softens the triangle and the noise "
+		"too, so nothing sticks out." });
 	All.push_back({ "triangle kick", "kick on the triangle, triangle drums",
 		"A kick on the triangle frees the noise for snares and hats: a short triangle note that drops fast, a C-3 or so with "
 		"an instrument whose arpeggio or pitch falls an octave in a few ticks (or 2xx), cut after a row with S02 or a halt. A "
 		"staple of Capcom and Konami tracks." });
 	All.push_back({ "dpcm tricks", "dpcm, samples, zxx, yxx, wxx, xxx",
-		"Z00 at the start keeps the triangle and the noise at full volume (a higher Z quiets them). Yxx starts a sample later, "
-		"Wxx plays it higher or lower, Xxx retriggers it for rolls. add_sample_drums adds a kit." });
+		"Z00 at the start keeps the triangle and the noise at full volume; a higher level quiets them, since the NES mixes the "
+		"three together: Z20 to about 80%, Z3A 65%, Z60 half, Z7F 43%. Atmospheric tracks set Z30-Z7F at the start so a soft "
+		"mix stays even. Yxx starts a sample later, Wxx plays it higher or lower, Xxx retriggers it for rolls. add_sample_drums "
+		"adds a kit." });
 	All.push_back({ "noise drums", "drums on the noise, hi-hat, snare",
 		"The noise's pitch makes the drum: low (0-4) thuds and kicks, the middle (5-9) snares, high (A-F) hats and cymbals; V01 "
 		"for metallic hats. Short volume envelopes for hats, longer for snares and crashes; the drum presets and add_drums do "
@@ -229,7 +251,7 @@ std::string ChannelProblem(const ChannelInfo &C, int Effect, int Param, int Spee
 		if (C.Kind == KIND_DPCM)
 			return "The DPCM channel plays samples at their own loudness, so 7xy and Axy don't reach it.";
 		if (Effect == EFF_VOLUME_SLIDE && x != 0 && y != 0)
-			return "Axy slides one way at a time: A0y up, Ax0 down.";
+			return "Axy slides one way at a time: A0y down, Ax0 up.";
 		break;
 	case EFF_SWEEPUP: case EFF_SWEEPDOWN:
 		if (!Is2A03Pulse(C))
@@ -293,7 +315,8 @@ std::string ForeignEffect(char Letter, const std::string &Written)
 		return Written + " (a volume change xx ticks later) comes from 0CC-FamiTracker, not 0.4.6. Give the next note its volume, "
 			"or slide with Axy.";
 	case 'O':
-		return Written + " (a groove) comes from 0CC-FamiTracker, not 0.4.6. For a swing, hold the off-beat notes back with Gxx.";
+		return Written + " (a groove) comes from 0CC-FamiTracker, not 0.4.6. For a swing, alternate the speed every half beat "
+			"with Fxx (set_swing does it), or hold the off-beat notes back with Gxx.";
 	case 'T':
 		return Written + " (a transpose xx ticks later) comes from 0CC-FamiTracker, not 0.4.6. Write the next note, or slide to it "
 			"with Qxy or Rxy.";

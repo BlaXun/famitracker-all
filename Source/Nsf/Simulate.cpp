@@ -228,7 +228,7 @@ private:
 
 	const Instrument *GetInstrument(int Index) const
 	{
-		return Index >= 0 && Index < int(m_M.Instruments.size()) ? &m_M.Instruments[Index] : nullptr;
+		return Index >= 0 && Index < int(m_M.Instruments.size()) && !m_M.Instruments[Index].Unused ? &m_M.Instruments[Index] : nullptr;
 	}
 
 	unsigned TableNote(const Channel &c, int Note) const

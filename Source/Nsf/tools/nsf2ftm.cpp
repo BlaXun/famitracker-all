@@ -25,9 +25,12 @@
 //   nsf2ftm music.nsf music.txt [-tracks 1,3-5] [-seconds 600] [-list]
 //
 // It also studies tracker modules (MOD, S3M, XM, IT) for how they're made,
-// from their pattern data, and MIDI files from their notes:
+// from their pattern data, MIDI files from their notes, and FamiTracker's own
+// modules from theirs, a study a track:
 // nsf2ftm song.xm -study
+// nsf2ftm song.ftm -study [-tracks 1,3-5]
 
+#include "../FtmFile.h"
 #include "../Import.h"
 #include "../Study.h"
 #include "../Tracker.h"
@@ -46,11 +49,12 @@ int main(int argc, char **argv)
 			"  nsf2ftm music.nsf -survey\n"
 			"  nsf2ftm music.nsf -list\n"
 			"  nsf2ftm song.xm -study\n"
-			"  nsf2ftm song.mid -study\n\n"
+			"  nsf2ftm song.mid -study\n"
+			"  nsf2ftm song.ftm -study [-tracks 1,3-5]\n\n"
 			"Tracks count from 1; all of them by default. Open the text in FamiTracker\n"
 			"with File > Import text. -study says how each track is made instead,\n"
-			"-survey which tracks are music. A tracker module (MOD, S3M, XM or IT) or\n"
-			"a MIDI file can only be studied.\n");
+			"-survey which tracks are music. A tracker module (MOD, S3M, XM or IT), a\n"
+			"MIDI file or a FamiTracker module can only be studied.\n");
 		return 1;
 	}
 	const std::string In = argv[1];
@@ -78,6 +82,27 @@ int main(int argc, char **argv)
 	nsf::NsfFile File;
 	std::string Error;
 	if (!nsf::ReadNsfFile(In, File, Error)) {
+		// A FamiTracker module, to study track by track
+		nsf::Module Ftm;
+		nsf::FtmInfo FtmInfo;
+		std::string FtmError;
+		if (nsf::ReadFtmFile(In, Ftm, FtmInfo, FtmError)) {
+			std::printf("FamiTracker module \"%s\" by %s: %d track%s\n", Ftm.Title.c_str(), Ftm.Author.empty() ? "?" : Ftm.Author.c_str(),
+				int(Ftm.Tracks.size()), Ftm.Tracks.size() == 1 ? "" : "s");
+			for (size_t i = 0; i < FtmInfo.Problems.size(); ++i)
+				std::printf("  (%s)\n", FtmInfo.Problems[i].c_str());
+			if (!Study)
+				return 0;
+			std::vector<int> Which;
+			if (!nsf::ParseTrackList(Tracks, int(Ftm.Tracks.size()), Which, FtmError)) {
+				std::fprintf(stderr, "nsf2ftm: %s\n", FtmError.c_str());
+				return 2;
+			}
+			for (size_t i = 0; i < Which.size(); ++i)
+				std::printf("\n%d. %s", Which[i] + 1, nsf::DescribeStudy(nsf::StudyTrack(Ftm, Which[i],
+					nsf::FtmTrackReport(Ftm, FtmInfo, Which[i])), true).c_str());
+			return 0;
+		}
 		// A tracker module or a MIDI file, to study
 		nsf::TrackerSong Song;
 		std::string TrackerError;

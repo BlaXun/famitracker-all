@@ -211,6 +211,35 @@ int AddVrc7PatchInstrument(CFamiTrackerDoc *pDoc, int Patch, LPCTSTR Name, CStri
 	return Index;
 }
 
+int AddVrc7CustomInstrument(CFamiTrackerDoc *pDoc, const int *Regs, LPCTSTR Name, CString &Error)
+{
+	if (!pDoc->ExpansionEnabled(SNDCHIP_VRC7)) {
+		Error = _T("This song has no VRC7 channels.");
+		return -1;
+	}
+	const int Existing = FindNamedInstrument(pDoc, INST_VRC7, Name);
+	if (Existing >= 0)
+		return Existing;
+	const int Index = pDoc->AddInstrument(Name, SNDCHIP_VRC7);
+	if (Index == INVALID_INSTRUMENT) {
+		Error = _T("There are no free instrument slots left (a song has at most 64).");
+		return -1;
+	}
+	CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Index));	// retained
+	if (pInstrument != NULL) {
+		if (pInstrument->GetType() == INST_VRC7) {
+			CInstrumentVRC7 *pVrc7 = static_cast<CInstrumentVRC7*>(pInstrument);
+			pVrc7->SetPatch(0);
+			for (int i = 0; i < 8; ++i)
+				pVrc7->SetCustomReg(i, static_cast<unsigned int>(Regs[i] & 0xFF));
+		}
+		pInstrument->Release();
+	}
+	pDoc->SetModifiedFlag();
+	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+	return Index;
+}
+
 namespace {
 
 // The sequence an instrument plays for a type, -1 if it plays none

@@ -336,6 +336,24 @@ when ready.
   too; where FamiTracker's folder can't be written, they stay in Documents.
   `make_sound_effect` takes the recording `"latest"` for the newest take.
 
+  Depth and atmosphere (from 21 October 2026 the aim for the music itself:
+  the warm, lush and nostalgic sound of modern FamiTracker music, which
+  gets its depth from technique rather than from an expansion chip).
+  Studies of modern FamiTracker modules found how it's made, and the tools
+  now do it: `lush` chords (an instrument for each chord shape whose
+  arpeggio loops through four or more of its notes, two frames each, so
+  sevenths and ninths ring; a `nostalgic` groove plays them), echoes that
+  follow the lead at about 40% and can be detuned a step, `set_swing`
+  (the speed alternating every half beat, as 0.4.6 composers swing
+  without grooves), `mix` (a soft mix by role, and the DPCM level that
+  softens the triangle and the noise the way the NES mixes them), six
+  VRC7 custom sounds of our own design (electric pianos, a bell, a pad, a
+  bass, a mallet), the technique reference and an `atmospheric` section in
+  the style guide. FamiTracker reports instruments' looping arpeggios, so
+  the review, the chord fitting and the echo hear those chords. Still to
+  come: studying `.ftm` modules for the reference library, and moving lush
+  chords into another mode (their instruments keep their shapes for now).
+
 ## Open questions
 
 - Some recordings "don't sound correct" (maybe background noise). Waiting

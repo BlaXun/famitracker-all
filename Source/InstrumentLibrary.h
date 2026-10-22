@@ -42,6 +42,8 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 // A VRC7 instrument playing one of the chip's sounds (patch 1-15), named
 // Name, or the one of that name already there
 int AddVrc7PatchInstrument(CFamiTrackerDoc *pDoc, int Patch, LPCTSTR Name, CString &Error);
+// The same with the chip's custom patch (patch 0) set to Regs, its 8 registers
+int AddVrc7CustomInstrument(CFamiTrackerDoc *pDoc, const int *Regs, LPCTSTR Name, CString &Error);
 
 // An N163 instrument playing a wave sound (Api/Wavetables.h), its waves at
 // WavePos (samples) of the chip's memory, or the N163 one of that name

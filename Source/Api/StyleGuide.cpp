@@ -39,7 +39,8 @@ struct Section {
 };
 
 // What the studies of Bucky O'Hare, TMNT II, Mega Man 2 to 5, Little Nemo,
-// Super Mario Bros. 2 and 3 found (study_nsf's numbers), as craft to write
+// Super Mario Bros. 2 and 3 found (study_nsf's numbers), and studies of
+// modern FamiTracker modules (the atmospheric section), as craft to write
 // with. Every instrument recipe here is a design of this guide's, not a copy.
 const Section SECTIONS[] = {
 	{ "konami", "Konami action (Bucky O'Hare, TMNT II, Castlevania II)", "bucky ohare turtles tmnt castlevania action",
@@ -90,6 +91,39 @@ const Section SECTIONS[] = {
 		"- Drums: the noise as a light hat on the offbeats, a crash now and then; samples for timpani, kicks and congas.\n"
 		"- Harmony: I-bVII and I-IV vamps, chromatic neighbours (I-bII-I), I-IV-bVI, and a major tonic turning minor (I to "
 		"i) for a shadow." },
+	{ "atmospheric", "Atmospheric chiptune (warm, lush and nostalgic, made in FamiTracker)",
+		"atmospheric atmosphere lush warm jazzy jazz nostalgic dreamy chill lofi depth deep modern famitracker vrc6 vrc7 soft "
+		"swing sevenths ninths",
+		"Feel: deep, warm and nostalgic, the sound of modern FamiTracker music (often with the VRC6 or VRC7): jazz harmony, "
+		"everything soft, every line echoed, the rhythm swung. 120-150 BPM is common, at speed 3-6 with 4 or 8 rows a beat.\n"
+		"- A quiet mix: leads at volume 4-6 of 15 on a plain instrument (no envelope: the volume column shapes each phrase, "
+		"with Axy fades on held notes), echoes at 2-3, chord arpeggios at 4-7, the triangle at full under them and the DPCM "
+		"level raised (Z20 to Z7F) so the triangle and the noise soften too. mix (style soft) gets most of the way.\n"
+		"- An echo under nearly every melodic line: the same notes a beat (4 rows) later on a free channel, same instrument and "
+		"octave, at about 40% of the volume, sometimes a step out of tune (P7F or P81); with the VRC7's extra channels, three "
+		"lines can each have one. add_echo with delay_beats 1, volume 6 and detune 1.\n"
+		"- Lush chord instruments: a library of arpeggio instruments, one per chord shape, looping their notes two frames "
+		"each: maj7 0 4 7 11, m7 0 3 7 10, a ninth and eleventh on top (0 3 7 10 14 17), leaping (0 7 2 11), falling (11 7 4 0), "
+		"spread over two octaves (0 7 14 22), sometimes three or four frames a note for a slower shimmer. They play on the "
+		"pulses in octaves 2-3 at volume 4-7, struck again on syncopated rows (beats 2 and 4, or 3+3+2). add_chords_and_bass "
+		"with chord_style lush (pattern alberti, down or rolling; arp_frames 3) makes them.\n"
+		"- Harmony: sevenths and ninths almost everywhere (maj7 on I and IV, m7 or m9 on ii, iii and vi, 7 and 7sus4 on V), "
+		"progressions that sidestep (IVmaj7 V iii7 vi7; ii9 V7sus4 Imaj7), passing m7b5, diminished and augmented chords. "
+		"make_groove with the nostalgic mood starts there.\n"
+		"- Swing: the speed alternating every row or half beat (6 and 3, 4 and 2, 4 and 3, 10 and 6), and repeating patterns "
+		"like 3 3 3 4 for speeds between whole numbers. set_swing. Or only some parts swing: their notes on the second "
+		"sixteenth of each pair late by G01-G03, a shuffle over a straight bass (set_swing by delays).\n"
+		"- Expression: a vibrato that waits a beat (453-464, then 400 to stop it), slides into notes (Qxy, 2xx), sighs of a "
+		"semitone or two where phrases end (R41, R42), late notes with G01-G03, quick octave blips on attacks (an arpeggio "
+		"12 0; on the triangle bass, the thump bass preset), held notes fading (A0y), and on a plain instrument the duty "
+		"changed note by note (V00 V01 V02 in turn) so runs shimmer; a staccato triangle, cut after a row or two. polish with "
+		"touches fades, scoops, falls and staccato adds most of them.\n"
+		"- Colors: VRC6 bells and pianos with long decays (14 13 12 11 10 8 6 5 4 3 3 3) and pulses at 25-50% for leads; on "
+		"the VRC7, soft electric pianos of its own (custom patches) comp the chords across two or three channels, rolled a "
+		"frame apart (Gxx), while its built-in sounds take leads and bass (chord_style voices).\n"
+		"- Drums: short and long noise hats (14 2 0; 12 10 8 7 7 6 5...), snares and kicks whose noise pitch moves, and a "
+		"sampled kick and snare on the DPCM channel with the level written on each hit (Zxx) so it stays where the mix put it "
+		"(add_drums with kit samples, then mix)." },
 	{ "leads", "Lead sounds and articulations", "lead melody sound instrument envelope articulation duty click bloom vibrato",
 		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
 		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "
@@ -198,8 +232,8 @@ std::string StyleGuide(const std::string &Topic)
 {
 	const std::vector<std::string> Asked = SplitWords(Topic);
 	if (Asked.empty()) {
-		std::string Out = "The guide to the classic NES styles, from studies of their soundtracks. Topics (references action "
-			"guide with a topic):\n";
+		std::string Out = "The guide to the classic NES styles and the atmospheric sound of modern FamiTracker music, from "
+			"studies of their soundtracks. Topics (references action guide with a topic):\n";
 		for (size_t i = 0; i < SECTION_COUNT; ++i)
 			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
 		return Out;

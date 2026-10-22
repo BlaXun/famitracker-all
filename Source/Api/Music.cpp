@@ -335,9 +335,15 @@ bool IsStickyEffect(int Effect)
 	case EFF_VIBRATO:
 	case EFF_TREMOLO:
 	case EFF_VOLUME_SLIDE:
+	case EFF_PITCH:
 		return true;
 	}
 	return false;
+}
+
+int StickyOff(int Effect)
+{
+	return Effect == EFF_PITCH ? 0x80 : 0;
 }
 
 bool IsSongEffect(int Effect)
@@ -837,6 +843,7 @@ std::vector<NoteInfo> ReadNotes(const std::vector<Cell> &Cells, int EffectColumn
 ChannelState::ChannelState() : Instrument(NO_INSTRUMENT), Volume(15), Sounding(false), SoundingInstrument(NO_INSTRUMENT)
 {
 	std::memset(Sticky, 0, sizeof(Sticky));
+	Sticky[EFF_PITCH] = static_cast<unsigned char>(StickyOff(EFF_PITCH));
 }
 
 ChannelState StateAt(const std::vector<Cell> &Cells, int Row, int EffectColumns)
@@ -1056,7 +1063,7 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 	if (Before.Sounding && !Out[0].HasNote())
 		Out[0].Note = Local::Releases(Options, Before.SoundingInstrument) ? NOTE_RELEASE : NOTE_HALT;
 	for (int e = 0; e < EFF_COUNT; ++e) {
-		if (Before.Sticky[e] != 0 && !HasEffect(Out[0], e, Columns) && !AddEffect(Out[0], e, 0, Columns))
+		if (Before.Sticky[e] != StickyOff(e) && !HasEffect(Out[0], e, Columns) && !AddEffect(Out[0], e, StickyOff(e), Columns))
 			EffectsLost = true;
 	}
 

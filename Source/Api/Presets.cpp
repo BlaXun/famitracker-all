@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <initializer_list>
 
@@ -133,10 +134,16 @@ std::vector<Preset> MakePresets()
 		List({ 15, 13, 11, 10, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1, 0 }), -1, 1, 2, List({ 12, 0 })));
 	All.push_back(Melodic("soft chords", "quiet, thin pad for chords and arpeggios under a melody (12.5% duty)",
 		List({ 4, 6, 7, 8, 8, 7, 5, 4, 3, 2, 1, 0 }), 5, 0, 1));
+	All.push_back(Melodic("lush chords", "steady 25% tone that settles a little and holds, for lush chords (their arpeggios "
+		"are added to it); full in the instrument, so the volume column sets how soft it plays",
+		List({ 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 11, 10, 9, 7, 5, 3, 2, 1, 0 }), 11, 1, 3));
 	All.push_back(Melodic("warm pad", "slow, round and dark pad (50% duty); good for calm, sad or underwater moods",
 		List({ 2, 3, 4, 5, 6, 7, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), 8, 2, 7));
 	All.push_back(Melodic("bass", "sustained bass for the triangle, the VRC6 sawtooth or a pulse",
 		List({ 15, 15, 14, 13, 12, 12, 10, 8, 6, 4, 2, 0 }), 5, 2, 7));
+	All.push_back(Melodic("thump bass", "punchy bass: each note starts an octave up for a frame and drops into place, a thump "
+		"that gives the triangle (which has no volume to accent with) an attack; sharper on a pulse or the sawtooth",
+		List({ 15, 15, 14, 13, 12, 12, 10, 8, 6, 4, 2, 0 }), 5, 2, 7, List({ 12, 0 })));
 	All.push_back(Melodic("plucky bass", "short, bouncy bass notes that decay by themselves",
 		List({ 15, 15, 14, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0 }), -1, 2, 7));
 	All.push_back(Singing("singing lead", "expressive lead (25% duty) with a vibrato that comes in after a third of a second, "
@@ -175,7 +182,8 @@ std::vector<Preset> MakePresets()
 	// What sounds most like each on the VRC7
 	static const struct { const char *Name; int Patch; } ON_VRC7[] = {
 		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
-		{ "warm pad", 15 }, { "bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 }, { "strings", 15 }, { "brass", 12 },
+		{ "lush chords", 11 }, { "warm pad", 15 }, { "bass", 13 }, { "thump bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 },
+		{ "strings", 15 }, { "brass", 12 },
 		{ "organ", 8 },
 	};
 	for (size_t i = 0; i < All.size(); ++i)
@@ -215,6 +223,36 @@ std::vector<Vrc7Patch> MakeVrc7Patches()
 	return All;
 }
 
+// Measured with emu2413 as FamiTracker plays it (a C-3 struck, held, released)
+std::vector<Vrc7Custom> MakeVrc7Customs()
+{
+	struct Design { const char *Name; const char *Description; int Regs[8]; };
+	static const Design DESIGNS[] = {
+		{ "electric piano", "a bright, bell-like attack that mellows within a fifth of a second into a warm tone, fading over two "
+			"seconds: comping chords and soft leads", { 0x01, 0x01, 0x48, 0x01, 0xF7, 0xF2, 0x95, 0x23 } },
+		{ "soft electric piano", "the electric piano with a gentler attack: rounder, for quiet chords under a melody",
+			{ 0x01, 0x01, 0x50, 0x00, 0xF6, 0xF2, 0x85, 0x23 } },
+		{ "glass bell", "a glassy bell whose high partials ring and fade slowly into a pure tone: chimes, music boxes, night",
+			{ 0x05, 0x01, 0x56, 0x00, 0xF4, 0xF2, 0xF3, 0x21 } },
+		{ "fm pad", "a warm pad that swells in over a fifth of a second and holds, with a gentle vibrato: long chords",
+			{ 0x21, 0x61, 0x64, 0x01, 0x52, 0x42, 0x12, 0x13 } },
+		{ "fm bass", "a bass with a plucked, bright start that settles into a round, held body", { 0x00, 0x21, 0x50, 0x05, 0xF6,
+			0xF4, 0xF6, 0x26 } },
+		{ "wooden mallet", "a soft, woody mallet that dies away within a second: marimba-like riffs and arpeggios",
+			{ 0x03, 0x01, 0x5A, 0x00, 0xF9, 0xF5, 0xF7, 0x34 } },
+	};
+	std::vector<Vrc7Custom> All;
+	for (size_t i = 0; i < sizeof(DESIGNS) / sizeof(DESIGNS[0]); ++i) {
+		Vrc7Custom C;
+		C.Name = DESIGNS[i].Name;
+		C.Description = DESIGNS[i].Description;
+		for (int r = 0; r < 8; ++r)
+			C.Regs[r] = DESIGNS[i].Regs[r];
+		All.push_back(C);
+	}
+	return All;
+}
+
 std::string Simplified(const std::string &Text)
 {
 	std::string Out;
@@ -227,6 +265,24 @@ std::string Simplified(const std::string &Text)
 }
 
 }	// namespace
+
+Preset WithArpeggio(const Preset &Base, const std::vector<int> &Notes, int Frames, const std::string &Name)
+{
+	Preset P = Base;
+	P.Name = Name;
+	PresetSequence Arpeggio = Sequence(SEQUENCE_ARPEGGIO, std::vector<int>(), 0);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Arpeggio.Items.insert(Arpeggio.Items.end(), static_cast<size_t>(std::max(1, Frames)), Notes[i]);
+	std::vector<PresetSequence> *Lists[2] = { &P.Sequences2A03, &P.SequencesVRC6 };
+	for (int l = 0; l < 2; ++l) {
+		std::vector<PresetSequence> &List = *Lists[l];
+		for (size_t s = List.size(); s-- > 0; )
+			if (List[s].Type == SEQUENCE_ARPEGGIO)
+				List.erase(List.begin() + static_cast<std::ptrdiff_t>(s));
+		List.push_back(Arpeggio);
+	}
+	return P;
+}
 
 bool Preset::Releases() const
 {
@@ -259,10 +315,12 @@ const Preset *FindPreset(const std::string &Name)
 		{ "square", "bright lead" }, { "thinlead", "thin lead" }, { "nasal", "thin lead" }, { "harp", "pluck" },
 		{ "guitar", "pluck" }, { "pluckylead", "pluck" }, { "chime", "bell" }, { "glockenspiel", "bell" },
 		{ "chords", "soft chords" }, { "softchords", "soft chords" }, { "arpeggio", "soft chords" }, { "pad", "warm pad" },
+		{ "lush", "lush chords" }, { "jazzchords", "lush chords" },
 		{ "warmpad", "warm pad" }, { "violin", "strings" }, { "violins", "strings" }, { "bassline", "bass" }, { "softbass", "bass" },
 		{ "vibratolead", "singing lead" }, { "singinglead", "singing lead" }, { "vocal", "singing lead" }, { "voice", "singing lead" },
 		{ "horn", "brass" }, { "horns", "brass" }, { "trumpet", "brass" }, { "keys", "organ" },
-		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
+		{ "pluckybass", "plucky bass" }, { "slapbass", "plucky bass" }, { "punchybass", "thump bass" }, { "blipbass", "thump bass" },
+		{ "thumpbass", "thump bass" }, { "kickdrum", "kick" }, { "bassdrum", "kick" },
 		{ "snaredrum", "snare" }, { "clap", "snare" }, { "hihat", "hi-hat" }, { "hat", "hi-hat" },
 		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "cymbal", "crash" },
 		{ "crashcymbal", "crash" }, { "toms", "tom" }, { "hightom", "tom" }, { "midtom", "tom" }, { "lowtom", "tom" },
@@ -302,6 +360,52 @@ std::string Vrc7Patch::InstrumentName() const
 	std::string Out = Name;
 	if (!Out.empty())
 		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
+	return Out;
+}
+
+std::string Vrc7Custom::InstrumentName() const
+{
+	std::string Out = Name;
+	if (!Out.empty())
+		Out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Out[0])));
+	return Out;
+}
+
+const std::vector<Vrc7Custom> &Vrc7Customs()
+{
+	static const std::vector<Vrc7Custom> All = MakeVrc7Customs();
+	return All;
+}
+
+const Vrc7Custom *FindVrc7Custom(const std::string &Name)
+{
+	static const char *const WORDS[][2] = {
+		{ "epiano", "electric piano" }, { "rhodes", "electric piano" }, { "ep", "electric piano" }, { "fmpiano", "electric piano" },
+		{ "softepiano", "soft electric piano" }, { "softrhodes", "soft electric piano" }, { "softep", "soft electric piano" },
+		{ "glassbells", "glass bell" }, { "fmbell", "glass bell" }, { "fmsynthpad", "fm pad" }, { "fmbassguitar", "fm bass" },
+		{ "woodenmallets", "wooden mallet" }, { "woodmallet", "wooden mallet" },
+	};
+	const std::string Wanted = Simplified(Name);
+	if (Wanted.empty())
+		return 0;
+	const std::vector<Vrc7Custom> &All = Vrc7Customs();
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Simplified(All[i].Name) == Wanted)
+			return &All[i];
+	for (size_t w = 0; w < sizeof(WORDS) / sizeof(WORDS[0]); ++w)
+		if (Wanted == WORDS[w][0])
+			for (size_t i = 0; i < All.size(); ++i)
+				if (All[i].Name == WORDS[w][1])
+					return &All[i];
+	return 0;
+}
+
+std::string Vrc7CustomList()
+{
+	std::string Out;
+	const std::vector<Vrc7Custom> &All = Vrc7Customs();
+	for (size_t i = 0; i < All.size(); ++i)
+		Out += (i == 0 ? "" : ", ") + All[i].Name;
 	return Out;
 }
 
