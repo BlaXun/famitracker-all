@@ -6849,6 +6849,14 @@ void TestSwing()
 	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"light\"}").Text,
 		"At speed 3 a beat can't swing that little; the swings that fit are 67%, 83%.");
 	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"hard\"}").Text, "speed 4 then 2");
+	// At speed 9 a light swing is 61% (11 then 7): 56% hardly swings. A percentage can come as text too
+	FakeSong Nine;
+	Nine.Info.DirectChanges = true;
+	Nine.Info.Speed = 9;
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"light\"}").Text, "speed 11 then 7");
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"67%\"}").Text, "speed 12 then 6");
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"61\"}").Text, "speed 11 then 7");
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"90%\"}").Text, "amount: a percentage from 50 (straight) to 75");
 	FakeSong Slowest;
 	Slowest.Info.DirectChanges = true;
 	Slowest.Info.Speed = 1;

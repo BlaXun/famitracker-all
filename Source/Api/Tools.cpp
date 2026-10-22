@@ -2599,6 +2599,7 @@ std::string SetSwingTool(Session &S, const Json &Args)
 			"File > Connect Claude Code.");
 	// How much: the long unit's share of each pair
 	double Share = 0.5;
+	bool Light = false;	// at most a lilt: never a triplet shuffle where the speed allows nothing in between
 	const Json *pAmount = Arg(Args, "amount");
 	if (pAmount == 0)
 		throw Problem("Give amount: none, light, medium, hard (triplet), or a percentage from 50 (straight) to 75.");
@@ -2606,10 +2607,20 @@ std::string SetSwingTool(Session &S, const Json &Args)
 		Share = NumberArg(Args, "amount", 50.0, 50.0, 80.0) / 100.0;
 	else {
 		const std::string Word = Squeezed(StringArg(Args, "amount"));
-		if (Word == "none" || Word == "straight" || Word == "off" || Word == "even")
+		// A percentage in words: "61" or "61%"
+		char *pAfter = 0;
+		const double Percent = std::strtod(Word.c_str(), &pAfter);
+		const bool Number = !Word.empty() && pAfter != Word.c_str() && (*pAfter == 0 || std::string(pAfter) == "%");
+		if (Number && (Percent < 50.0 || Percent > 80.0))
+			throw Problem("amount: a percentage from 50 (straight) to 75 (a hard shuffle), or none, light, medium or hard.");
+		if (Number)
+			Share = Percent / 100.0;
+		else if (Word == "none" || Word == "straight" || Word == "off" || Word == "even")
 			Share = 0.5;
-		else if (Word == "light" || Word == "subtle" || Word == "gentle" || Word == "lazy")
-			Share = 0.58;
+		else if (Word == "light" || Word == "subtle" || Word == "gentle" || Word == "lazy") {
+			Share = 0.6;	// at speed 9, 61% rather than 56%, which hardly swings
+			Light = true;
+		}
 		else if (Word == "medium" || Word == "normal")
 			Share = 0.625;
 		else if (Word == "hard" || Word == "triplet" || Word == "triplets" || Word == "shuffle" || Word == "heavy" || Word == "full")
@@ -2662,6 +2673,8 @@ std::string SetSwingTool(Session &S, const Json &Args)
 	const int Base = std::max(1, static_cast<int>((Ticks + (End - First) / 2) / std::max(1, End - First)));
 	int A, B;
 	SwingSpeeds(Base, std::min(31, Split - 1), Share, A, B);
+	if (Light && A > B && static_cast<double>(A) / (A + B) > 0.64)
+		A = B = Base;
 	std::string Fits;	// the swings the speed's ticks allow
 	for (int a = Base + 1; a <= std::min(31, Split - 1) && 2 * Base - a >= 1; ++a)
 		Fits += (Fits.empty() ? "" : ", ") + Format("%d%%", static_cast<int>(std::floor(100.0 * a / (2 * Base) + 0.5)));
