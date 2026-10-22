@@ -6752,9 +6752,24 @@ void TestReharmonize()
 	CHECK_HAS(Result.Text, "The chords on 2A03 Pulse 1, 2A03 Pulse 2, VRC6 Pulse 1 there still play under the new ones");
 }
 
+void TestBreathing()
+{
+	// Every part all the way through: the review asks for a build and a break; a break without the drums answers it
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 16}").IsError);
+	for (int b = 0; b < 16; ++b)
+		Song.Put(5, b * 16, b % 2 == 0 ? "E-4" : "G-4", 0, 12);
+	CHECK(!Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\"}").IsError);
+	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "Every part plays all the way through, so the song never breathes");
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 5, \"to_bar\": 8, \"notes\": []}").IsError);
+	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
+}
+
 int main()
 {
 	TestJson();
+	TestBreathing();
 	TestHttp();
 	TestNames();
 	TestTiming();

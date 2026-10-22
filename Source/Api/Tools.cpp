@@ -4886,8 +4886,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Tip(1.0, "The melody has no company: add_counter_melody (a line of its own) or add_harmony (thirds under it) on " +
 			(Free.empty() ? std::string("a channel") : Free[0]) + " adds depth; add_echo makes it spacious.");
 
-	// Thin bars: two parts or fewer
+	// Thin bars: two parts or fewer; and how much the number of parts changes
 	std::vector<int> Thin;
+	int Fewest = 1000, Most = 0;
 	for (size_t b = 0; b < Bars.size(); ++b) {
 		int Sounding = 0;
 		for (size_t p = 0; p < Playing.size(); ++p)
@@ -4895,9 +4896,16 @@ std::string ReviewTool(Session &S, const Json &Args)
 				++Sounding;
 		if (Sounding <= 2 && Layers > 2)
 			Thin.push_back(S.Time.BarOf(Bars[b].Row));
+		Fewest = std::min(Fewest, Sounding);
+		Most = std::max(Most, Sounding);
 	}
 	if (!Thin.empty() && static_cast<int>(Thin.size()) < BarCount)
 		Lines.push_back("Thin: only two parts or fewer play in bars " + BarList(Thin) + ".");
+	if (BarCount >= 16 && Most >= 4 && Fewest == Most)
+		Tip(0.5, "Every part plays all the way through, so the song never breathes: let it build and fall back, a "
+			"few bars with fewer parts (an intro on the chords and bass, a break without the drums, a verse without the "
+			"second line) and the full sound where it matters. Well-arranged tracks swing 8-12 dB in loudness between "
+			"sections.");
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
