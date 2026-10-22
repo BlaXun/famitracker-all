@@ -6928,9 +6928,39 @@ void TestEffectRoom()
 		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}").Text, "More effect columns");
 }
 
+void TestHarpUnderMelody()
+{
+	// A melody from bar 3 and chords for six bars, the first two an intro: they start at bar 1 and end with the melody
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 3, \"pitch\": \"A-3\", \"beats\": 2}, {\"bar\": 3, \"beat\": 3, \"pitch\": \"C-4\", \"beats\": 1.5}, "
+		"{\"bar\": 4, \"pitch\": \"D-4\", \"beats\": 3}, {\"bar\": 5, \"pitch\": \"C-4\", \"beats\": 1}, "
+		"{\"bar\": 5, \"beat\": 2, \"pitch\": \"A-3\", \"beats\": 0.5}, {\"bar\": 5, \"beat\": 2.5, \"pitch\": \"G-3\", \"beats\": 1.5}, "
+		"{\"bar\": 6, \"pitch\": \"F-3\", \"beats\": 4}]}").IsError);
+	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| F | Bb | F | Bb | C | F |\", \"chord_style\": \"broken\", "
+		"\"pattern\": \"rolling\", \"notes_per_beat\": 4, \"chord_channel\": \"Pulse 1\", \"bass_channel\": \"none\", "
+		"\"key\": \"F major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "bars 1-6");
+	CHECK_HAS(Result.Text, "The chords are 6 bars and the melody plays in bars 3-6, so they start at bar 1 and end with it");
+	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[0][1].HasNote());
+	// The harp's steady sixteenths are accompaniment: the melody is the line over them
+	Result = Run(Song, "review_arrangement", "{\"from_bar\": 3}");
+	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1");
+	// Chords too long to fit before the melody: the last are left out, and the reply says so
+	FakeSong Late(4);
+	Late.Info.DirectChanges = true;
+	CHECK(!Run(Late, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"A-3\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"C-4\", \"beats\": 4}]}").IsError);
+	CHECK_HAS(Run(Late, "add_chords_and_bass", "{\"chords\": \"| F | Bb | C | F |\", \"key\": \"F major\"}").Text,
+		"The chords are 4 bars, more than the melody's 2 (bars 1-2), so the last 2 were left out");
+}
+
 int main()
 {
 	TestJson();
+	TestHarpUnderMelody();
 	TestEffectRoom();
 	TestChipLevels();
 	TestGrooveUnderMelody();

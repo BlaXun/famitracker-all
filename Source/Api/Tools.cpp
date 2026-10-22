@@ -1047,6 +1047,21 @@ bool EchoesAnother(Session &S, int Channel, const std::vector<NoteInfo> &Notes, 
 	return false;
 }
 
+// A steady run of quick notes of one length (an arpeggio, broken chords, an
+// ostinato): accompaniment, however busy
+bool RunsSteadily(const Session &S, const std::vector<NoteInfo> &Notes)
+{
+	if (Notes.size() < 16)
+		return false;
+	std::map<int, int> Lengths;
+	int Most = 0;
+	for (size_t i = 0; i + 1 < Notes.size(); ++i)
+		Most = std::max(Most, ++Lengths[Notes[i].Rows]);
+	const int Span = Notes.back().Row - Notes.front().Row;
+	const double PerBeat = Span > 0 ? (Notes.size() - 1) * static_cast<double>(std::max(1, S.Time.RowsPerBeat)) / Span : 0.0;
+	return Most * 20 >= static_cast<int>(Notes.size() - 1) * 17 && PerBeat >= 2.0;
+}
+
 int GuessMelodyChannel(Session &S, int First, int End)
 {
 	for (int Pass = 0; Pass < 3; ++Pass) {
@@ -1075,7 +1090,8 @@ int GuessMelodyChannel(Session &S, int First, int End)
 				Volumes.push_back(Info.Kind == KIND_TRIANGLE ? 15 : Notes[i].Volume);
 			std::sort(Volumes.begin(), Volumes.end());
 			Channels.push_back(c);
-			Counts.push_back(static_cast<int>(Notes.size()));
+			// A steady run counts as a part of a few notes, so a melody over it wins
+			Counts.push_back(RunsSteadily(S, Notes) ? static_cast<int>(Notes.size()) / 8 : static_cast<int>(Notes.size()));
 			Middles.push_back(Middle);
 			Loudness.push_back(std::max(1, Volumes[Volumes.size() / 2]));
 			Lowest = std::min(Lowest, Middle);
@@ -3349,8 +3365,24 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		if (Melody >= 0)
 			Line = MelodyOf(S.Notes(Melody), S.Time.BarStart(From), S.Time.BarEnd(To));
 	}
-	else if (!Line.empty())
+	else if (!Line.empty()) {
 		Bars = transcribe::MelodyBars(Line, S.Time.PatternLength, S.Time.RowsPerBar);
+		// Chords given for more bars than the melody plays: an intro before it, ending with it, when they fit
+		if (Given && !Bars.empty() && Progression.size() > Bars.size()) {
+			const int MelodyFrom = S.Time.BarOf(Bars.front().row), MelodyTo = S.Time.BarOf(Bars.back().row);
+			const int Start = MelodyTo - static_cast<int>(Progression.size()) + 1;
+			if (Start >= 1) {
+				Bars = transcribe::SongBars(S.Time.BarStart(Start), S.Time.BarEnd(MelodyTo), S.Time.PatternLength, S.Time.RowsPerBar);
+				S.Remarks.push_back(Format("The chords are %d bars and the melody plays in bars %d-%d, so they start at bar %d "
+					"and end with it (from_bar sets where they start).", static_cast<int>(Progression.size()), MelodyFrom, MelodyTo,
+					Start));
+			}
+			else
+				S.Remarks.push_back(Format("The chords are %d bars, more than the melody's %d (bars %d-%d), so the last %d were "
+					"left out; from_bar and to_bar set where they go.", static_cast<int>(Progression.size()),
+					static_cast<int>(Bars.size()), MelodyFrom, MelodyTo, static_cast<int>(Progression.size() - Bars.size())));
+		}
+	}
 	else {
 		const int To = std::min(S.MaxBars(), static_cast<int>(Progression.size()));
 		Bars = transcribe::SongBars(0, S.Time.BarEnd(To), S.Time.PatternLength, S.Time.RowsPerBar);
