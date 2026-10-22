@@ -316,6 +316,45 @@ std::string InstrumentChip(const ChannelInfo &Channel)
 	return Channel.Chip == "MMC5" ? "2A03" : Channel.Chip;
 }
 
+// How loud a channel plays at a volume, in dB against a 2A03 pulse at 15, as FamiTracker renders
+// it (measured): the VRC7's sounds about 5 dB louder at 15, each volume step 3 dB softer; the
+// N163's wave sounds about 8 dB quieter; everything else in proportion to the volume
+const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0;
+
+double LevelDb(const ChannelInfo &Channel, int Volume)
+{
+	if (Volume <= 0)
+		return -60.0;
+	if (Channel.Kind == KIND_FM)
+		return FM_FULL_DB - FM_STEP_DB * (15 - std::min(15, Volume));
+	return (Channel.Chip == "N163" ? N163_FULL_DB : 0.0) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
+}
+
+// The volume (1-15) at which a channel plays nearest a level in dB
+int VolumeForDb(const ChannelInfo &Channel, double Db)
+{
+	double Volume;
+	if (Channel.Kind == KIND_FM)
+		Volume = 15.0 - (FM_FULL_DB - Db) / FM_STEP_DB;
+	else
+		Volume = 15.0 * std::pow(10.0, (Db - (Channel.Chip == "N163" ? N163_FULL_DB : 0.0)) / 20.0);
+	return std::max(1, std::min(15, static_cast<int>(std::floor(Volume + 1e-9 + 0.5))));
+}
+
+// The volume on To that sounds like Volume on From made Ratio as loud, the way a pulse's volume
+// scales (11.0 / 15: four steps under full): the same number between chips that count volume alike
+int MatchVolume(const ChannelInfo &From, int Volume, double Ratio, const ChannelInfo &To)
+{
+	return VolumeForDb(To, LevelDb(From, Volume) + 20.0 * std::log10(std::max(0.01, Ratio)));
+}
+
+// A part's default volume on a channel, given as on a pulse: the same, but nearer 15 on the VRC7,
+// whose steps are 3 dB each
+int PartVolume(const ChannelInfo &Channel, int Volume)
+{
+	return MatchVolume(Channel, 15, Volume / 15.0, Channel);
+}
+
 const InstrumentInfo *FindInstrument(const SongInfo &Song, int Index)
 {
 	for (size_t i = 0; i < Song.Instruments.size(); ++i)
@@ -612,6 +651,11 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			pWrongChip = &I;
 		}
 	}
+	// The sawtooth's sounds carry " (saw)" after the name they were made under
+	if (Info.Kind == KIND_SAWTOOTH)
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (S.Song.Instruments[i].Chip == Chip && Lowercase(S.Song.Instruments[i].Name) == Lower + " (saw)")
+				return S.Song.Instruments[i].Index;
 	// VRC7 channels play the chip's own patches (a preset's name picks the one most like it), or a
 	// custom patch of this connection's design
 	if (Chip == "VRC7") {
@@ -2817,8 +2861,8 @@ void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vect
 // written an octave up on the triangle, where it sounds the same
 void BassRegister(BassOptions &O, const ChannelInfo &Info)
 {
-	O.Low = Written(Info, 12);
-	O.High = Written(Info, 31);
+	O.Low = Written(Info, 9);
+	O.High = Written(Info, 28);
 }
 
 // Drum hits as notes, each ringing until the next, with their instruments
@@ -3428,7 +3472,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) == VoiceChannels.end() && IsBass(S.Channel(c)) &&
 				HasNotesIn(S, c, First, End);
-		O.Volume = IntArg(Args, "chord_volume", 10, 1, 15);
+		O.Volume = Arg(Args, "chord_volume") != 0 ? IntArg(Args, "chord_volume", 10, 1, 15) : PartVolume(S.Channel(VoiceChannels[0]), 10);
 		const std::vector<std::vector<PartNote> > Voices = VoicedChordParts(Chords, Spans, O, static_cast<int>(VoiceChannels.size()));
 		// Strummed: each voice a frame or more after the one below it (Gxx), as a hand rolls a chord, within the row
 		const int Strum = std::min(IntArg(Args, "strum", 1, 0, 3), std::max(0, (S.Song.Speed - 1) / std::max(1,
@@ -3472,7 +3516,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = c != ChordChannel && IsBass(S.Channel(c)) && HasNotesIn(S, c, First, End);
 		const int DefaultVolume = Style == CHORDS_STABS ? 11 : Style == CHORDS_BROKEN ? 10 : Style == CHORDS_LUSH ? 6 : 15;
-		O.Volume = IntArg(Args, "chord_volume", DefaultVolume, 1, 15);
+		O.Volume = Arg(Args, "chord_volume") != 0 ? IntArg(Args, "chord_volume", DefaultVolume, 1, 15) : PartVolume(Info, DefaultVolume);
 		const char *Sound = Style == CHORDS_GUIDE ? "warm pad" : Style == CHORDS_ARPEGGIO ? "soft chords" :
 			Style == CHORDS_LUSH ? "lush chords" : "pluck";
 		std::vector<PartNote> Notes = ChordPart(Chords, Spans, O);
@@ -3710,7 +3754,7 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		E.Rows = std::min(N.Rows, Stop - E.Row);
 		E.Pitch = N.Pitch;
 		E.Instrument = Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument : N.Instrument;
-		E.Volume = std::max(1, (N.Volume * Plan.Volume + 7) / 15);
+		E.Volume = MatchVolume(S.Channel(Plan.Source), N.Volume, Plan.Volume / 15.0, S.Channel(Plan.Target));
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
 			if (N.Effects[e].first == 0)
 				E.Effects.push_back(N.Effects[e].second);
@@ -3763,9 +3807,21 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("The echo is already there.");
-	std::string What = Format("an echo of %s on %s, %s later at volume %d%s, %s", S.Channel(Plan.Source).FullName().c_str(),
-		S.Channel(Plan.Target).FullName().c_str(), S.Time.Length(Plan.Delay).c_str(), Plan.Volume,
-		Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(), RangeText(From, To).c_str());
+	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter), the number written differs
+	std::string Level = Format("at volume %d", Plan.Volume);
+	const ChannelInfo &Source = S.Channel(Plan.Source), &Target = S.Channel(Plan.Target);
+	if (Source.Kind == KIND_FM || Target.Kind == KIND_FM || Source.Chip == "N163" || Target.Chip == "N163") {
+		int Loudest = 0;
+		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
+		for (size_t i = 0; i < Played.size(); ++i)
+			Loudest = std::max(Loudest, Played[i].Volume);
+		if (Loudest > 0)
+			Level += Format(" (as much softer as %d is than 15 on a pulse: %d where the melody plays %d)", Plan.Volume,
+				MatchVolume(Source, Loudest, Plan.Volume / 15.0, Target), Loudest);
+	}
+	std::string What = Format("an echo of %s on %s, %s later %s%s, %s", Source.FullName().c_str(), Target.FullName().c_str(),
+		S.Time.Length(Plan.Delay).c_str(), Level.c_str(), Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(),
+		RangeText(From, To).c_str());
 	if (Plan.OtherChip)
 		What += Format(" (playing the melody's sound on the %s: %s)", InstrumentChip(S.Channel(Plan.Target)).c_str(),
 			InstrumentLabel(S.Song, Plan.Instrument).c_str());
@@ -3874,14 +3930,34 @@ std::string MixTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
 	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
 
-	// The loudest volume each channel gets: by its role for a style, or as given
+	// The loudest volume each channel gets: by its role for a style, as loud on its chip as that
+	// volume on a pulse (a chip too quiet for its parts' levels plays the loudest at 15 and the rest as
+	// far under it), or as given
 	std::vector<int> Target(static_cast<size_t>(S.ChannelCount()), -1), Roles(static_cast<size_t>(S.ChannelCount()), ROLE_NONE);
+	std::vector<double> Level(static_cast<size_t>(S.ChannelCount()), 0.0);
+	std::map<std::string, double> Short;	// per chip: how far its loudest part falls short of its level at 15
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		Roles[static_cast<size_t>(c)] = MixRole(S, c, Melody, First, End);
 		if (Style.empty() || Roles[static_cast<size_t>(c)] == ROLE_NONE)
 			continue;
 		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
-		Target[static_cast<size_t>(c)] = (Soft ? SOFT : FULL)[Roles[static_cast<size_t>(c)]];
+		const int AsPulse = (Soft ? SOFT : FULL)[Roles[static_cast<size_t>(c)]];
+		Level[static_cast<size_t>(c)] = 20.0 * std::log10(AsPulse / 15.0);
+		const double Over = Level[static_cast<size_t>(c)] - LevelDb(S.Channel(c), 15);
+		double &Most = Short[S.Channel(c).Chip];
+		Most = std::max(Most, Over);
+		Target[static_cast<size_t>(c)] = AsPulse;
+	}
+	bool Fm = false, Quiet = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (Target[static_cast<size_t>(c)] < 1)
+			continue;
+		const ChannelInfo &Info = S.Channel(c);
+		if (Info.Kind == KIND_FM || Info.Chip == "N163") {
+			Target[static_cast<size_t>(c)] = VolumeForDb(Info, Level[static_cast<size_t>(c)] - Short[Info.Chip]);
+			Fm = Fm || Info.Kind == KIND_FM;
+			Quiet = Quiet || Info.Chip == "N163";
+		}
 	}
 	const Json *pLevels = Arg(Args, "levels");
 	if (pLevels != 0) {
@@ -3940,8 +4016,10 @@ std::string MixTool(Session &S, const Json &Args)
 			continue;
 		}
 		std::vector<Cell> &Cells = D.Cells(c);
+		// Each volume as much under the loudest as it was (the VRC7 counts 3 dB a step, the others in proportion)
+		const ChannelInfo &Info = S.Channel(c);
 		auto Scaled = [&](int Volume) {
-			return Volume <= 0 ? 0 : std::max(1, std::min(15, static_cast<int>(std::floor(Volume * static_cast<double>(Want) / Loudest + 0.5))));
+			return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + LevelDb(Info, Want) - LevelDb(Info, Loudest));
 		};
 		bool FirstNote = true;
 		const int Entering = StateAt(Cells, First, S.Channel(c).EffectColumns).Volume;
@@ -4031,6 +4109,11 @@ std::string MixTool(Session &S, const Json &Args)
 	if (Soft)
 		Text += " Soft pulses leave the low end to the triangle and make the sound warmer; turn the playback volume up rather "
 			"than the pulses. Volumes the tools write later start from the song's own, so mix again at the end.";
+	if (Fm && !Style.empty())
+		Text += " The VRC7 plays louder than the pulses and counts its volume in steps of 3 dB, so its parts sit nearer 15 "
+			"for the same balance (9 there is 18 dB under 15).";
+	if (Quiet && !Style.empty())
+		Text += " The N163's wave sounds play quieter than the pulses, so its parts sit nearer 15 for the same balance.";
 	return WithRemarks(S, Text, Warnings);
 }
 
@@ -4267,12 +4350,17 @@ std::string AddHarmonyTool(Session &S, const Json &Args)
 	const int Instrument = Arg(Args, "instrument") != 0 || !SameChip ? PartInstrument(S, Args, "instrument", Target, "soft lead") : NO_INSTRUMENT;
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		Notes[i].Pitch = std::max(0, std::min(PITCHES - 1, Notes[i].Pitch + Shift));
+		for (size_t m = 0; m < Line.size(); ++m) {
+			if (Line[m].Row != Notes[i].Row)
+				continue;
+			if (Instrument == NO_INSTRUMENT)
+				Notes[i].Instrument = Line[m].Instrument;
+			if (Arg(Args, "volume") == 0 && Line[m].Volume > 0)
+				Notes[i].Volume = MatchVolume(S.Channel(Melody), Line[m].Volume, std::max(1, Line[m].Volume - O.VolumeDrop) /
+					static_cast<double>(Line[m].Volume), S.Channel(Target));
+		}
 		if (Instrument != NO_INSTRUMENT)
 			Notes[i].Instrument = Instrument;
-		else
-			for (size_t m = 0; m < Line.size(); ++m)
-				if (Line[m].Row == Notes[i].Row)
-					Notes[i].Instrument = Line[m].Instrument;
 	}
 	TidyPart(Notes, First, End);
 	std::vector<std::string> Warnings;
@@ -4330,7 +4418,8 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 	int Loudest = 0;
 	for (size_t i = 0; i < Line.size(); ++i)
 		Loudest = std::max(Loudest, Line[i].Volume);
-	O.Volume = IntArg(Args, "volume", std::max(4, Loudest - 4), 1, 15);
+	O.Volume = Arg(Args, "volume") != 0 ? IntArg(Args, "volume", 11, 1, 15) :
+		MatchVolume(S.Channel(Melody), Loudest, std::max(4, Loudest - 4) / static_cast<double>(std::max(1, Loudest)), S.Channel(Target));
 	std::vector<PartNote> Notes = CounterMelody(Line, Chords, Bars, O);
 	if (Notes.empty())
 		throw Problem("There are no chords there for a counter-melody to follow.");
@@ -4380,7 +4469,9 @@ int Accents(Session &S, Draft &D, int Channel, int First, int End)
 		if (N.Row < First || N.Row >= End || N.Row >= static_cast<int>(Cells.size()))
 			continue;
 		const int InBar = N.Row - S.Time.BarStart(S.Time.BarOf(N.Row));
-		const int Softer = InBar == 0 ? 0 : InBar % R == 0 ? 1 : (2 * InBar) % R == 0 ? 2 : 3;
+		int Softer = InBar == 0 ? 0 : InBar % R == 0 ? 1 : (2 * InBar) % R == 0 ? 2 : 3;
+		if (S.Channel(Channel).Kind == KIND_FM)
+			Softer = Softer >= 2 ? 1 : 0;	// a VRC7 step is 3 dB: the notes between beats one softer
 		const int Volume = std::max(1, std::min(15, N.Volume - Softer));
 		Cells[N.Row].Volume = static_cast<unsigned char>(Volume);
 		++Count;
@@ -4420,10 +4511,14 @@ int AddFades(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
 			Shaped = Shaped || N.Effects[e].second.first == EFF_VOLUME_SLIDE || N.Effects[e].second.first == EFF_TREMOLO;
 		if (Shaped)
 			continue;
-		const int From = N.Row + N.Rows / 2;
+		int From = N.Row + N.Rows / 2;
+		const bool Fm = S.Channel(Channel).Kind == KIND_FM;
+		if (Fm)	// three steps of 3 dB, over the note's last frames
+			From = std::max(From, N.Row + N.Rows - std::max(1, (24 + Ticks - 1) / Ticks));
 		const int Rows = N.Row + N.Rows - From;
 		// Two thirds of the loudness in eighths of a step, over the rows left
-		const int Down = std::max(1, std::min(4, (N.Volume * 2 * 8 / 3 + Rows * Ticks - 1) / (Rows * Ticks)));
+		const int Eighths = Fm ? 24 : N.Volume * 2 * 8 / 3;
+		const int Down = std::max(1, std::min(4, (Eighths + Rows * Ticks - 1) / (Rows * Ticks)));
 		if (From >= static_cast<int>(Cells.size()) || !AddEffect(Cells[static_cast<size_t>(From)], EFF_VOLUME_SLIDE, Down, Columns)) {
 			Lost = true;
 			continue;
@@ -4544,7 +4639,7 @@ int SeparateRepeats(Session &S, Draft &D, int Channel, int First, int End)
 int StaccatoBass(Session &S, Draft &D, int Channel, int First, int End)
 {
 	const int R = S.Time.RowsPerBeat;
-	const int Keep = std::max(1, R * 3 / 4);
+	const int Keep = std::max(1, R / 2);
 	const std::vector<NoteInfo> Notes = D.Notes(Channel);
 	std::vector<Cell> &Cells = D.Cells(Channel);
 	int Count = 0;
@@ -4671,7 +4766,7 @@ std::string PolishTool(Session &S, const Json &Args)
 				continue;
 			const int Count = StaccatoBass(S, D, c, First, End);
 			if (Count > 0)
-				Done.push_back(Format("%s on %s cut short after three quarters of a beat (staccato)",
+				Done.push_back(Format("%s on %s cut short after half a beat (staccato)",
 					Plural(Count, "bass note", "bass notes").c_str(), S.Channel(c).FullName().c_str()));
 		}
 	}
@@ -4886,8 +4981,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Tip(1.0, "The melody has no company: add_counter_melody (a line of its own) or add_harmony (thirds under it) on " +
 			(Free.empty() ? std::string("a channel") : Free[0]) + " adds depth; add_echo makes it spacious.");
 
-	// Thin bars: two parts or fewer
+	// Thin bars: two parts or fewer; and how much the number of parts changes
 	std::vector<int> Thin;
+	int Fewest = 1000, Most = 0;
 	for (size_t b = 0; b < Bars.size(); ++b) {
 		int Sounding = 0;
 		for (size_t p = 0; p < Playing.size(); ++p)
@@ -4895,9 +4991,16 @@ std::string ReviewTool(Session &S, const Json &Args)
 				++Sounding;
 		if (Sounding <= 2 && Layers > 2)
 			Thin.push_back(S.Time.BarOf(Bars[b].Row));
+		Fewest = std::min(Fewest, Sounding);
+		Most = std::max(Most, Sounding);
 	}
 	if (!Thin.empty() && static_cast<int>(Thin.size()) < BarCount)
 		Lines.push_back("Thin: only two parts or fewer play in bars " + BarList(Thin) + ".");
+	if (BarCount >= 16 && Most >= 4 && Fewest == Most)
+		Tip(0.5, "Every part plays all the way through, so the song never breathes: let it build and fall back, a "
+			"few bars with fewer parts (an intro on the chords and bass, a break without the drums, a verse without the "
+			"second line) and the full sound where it matters. Well-arranged tracks swing 8-12 dB in loudness between "
+			"sections. write_notes with an empty list of notes clears a part from bars.");
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
@@ -4950,7 +5053,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (PerBar <= 2.0)
 			Tip(1.0, "The bass mostly holds roots: bass_style walking (towns, jazz), octaves (action), syncopated (pop) "
 				"or arpeggio (adventure) in add_chords_and_bass gives it a pulse.");
-		if (Middle < 12)
+		if (Middle < 8)
 			Tip(0.5, S.Channel(Bass).FullName() + " plays very low, where small speakers lose it: an octave up (transpose).");
 	}
 
@@ -5092,6 +5195,43 @@ std::string ReviewTool(Session &S, const Json &Args)
 				"every part with a volume plays"));
 			Tip(0.5, "Everything near full volume buries the triangle and sounds harsh: mix (style soft) brings the melody to 9, "
 				"an echo to 4 and the rest to 6-7, and softens the triangle and the noise a little with the DPCM level.");
+		}
+	}
+
+	// Levels: the melody well under another part, counted as FamiTracker plays each chip (the VRC7
+	// louder and 3 dB a step, the N163 quieter); a soft mix keeps the triangle a little over the melody
+	if (S.Channel(Melody).Kind != KIND_TRIANGLE) {
+		auto Typical = [&](int c) {
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			std::vector<int> Volumes;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Volumes.push_back(Notes[i].Volume);
+			if (Volumes.empty())
+				return -60.0;
+			std::sort(Volumes.begin(), Volumes.end());
+			return LevelDb(S.Channel(c), Volumes[Volumes.size() * 3 / 4]);	// its louder notes
+		};
+		const double Lead = Typical(Melody);
+		int Over = -1;
+		double Most = 0.0;
+		for (size_t p = 0; p < Playing.size(); ++p) {
+			const int c = Playing[p];
+			const int Kind = S.Channel(c).Kind;
+			if (c == Melody || Kind == KIND_NOISE || Kind == KIND_DPCM || std::find(Echoes.begin(), Echoes.end(), c) != Echoes.end())
+				continue;
+			const double Above = (Kind == KIND_TRIANGLE ? -1.0 : Typical(c)) - Lead - (Kind == KIND_TRIANGLE ? 8.0 : 3.0);
+			if (Above > Most) {
+				Most = Above;
+				Over = c;
+			}
+		}
+		if (Over >= 0) {
+			const double Under = Most + (S.Channel(Over).Kind == KIND_TRIANGLE ? 8.0 : 3.0);
+			Lines.push_back(Format("Levels: the melody plays about %d dB under %s.", static_cast<int>(std::floor(Under + 0.5)),
+				S.Channel(Over).FullName().c_str()));
+			Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
+				"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
+				S.Channel(Melody).Kind == KIND_FM ? " (the VRC7 counts its volume in steps of 3 dB: 9 is 18 dB under 15)" : ""));
 		}
 	}
 
@@ -5301,6 +5441,11 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	if (ChordChannel < 0 && BassChannel < 0 && DrumChannel < 0)
 		throw Problem("Every channel the groove needs already plays in those bars; name them (chord_channel, bass_channel, "
 			"drum_channel), or start at another bar.");
+	// A melody already written there: the chords go under it and keep their added tones off its notes
+	std::vector<NoteInfo> Tune;
+	const int Melody = GuessMelodyChannel(S, First, End);
+	if (Melody >= 0 && Melody != ChordChannel && Melody != BassChannel && !IsBass(S.Channel(Melody)))
+		Tune = NotesIn(S.Notes(Melody), First, End);
 
 	std::vector<ChordAt> Chords;
 	std::string Error;
@@ -5308,7 +5453,7 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		throw Problem(Error);
 	chord_color Color;
 	ParseColor(M.Color, Color);
-	ColorChords(Chords, std::vector<NoteInfo>(), K, R, Color);
+	ColorChords(Chords, Tune, K, R, Color);
 
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings, Parts;
@@ -5320,8 +5465,9 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		O.StepRows = std::max(1, R / 2);
 		O.RowsPerBeat = R;
 		O.RootInBass = BassChannel >= 0;
-		O.Volume = ChordStyle == CHORDS_STABS ? 11 : ChordStyle == CHORDS_BROKEN ? 10 : ChordStyle == CHORDS_LUSH ? 6 : 15;
-		ChordRegister(O, S.Channel(ChordChannel), std::vector<NoteInfo>());
+		O.Volume = PartVolume(S.Channel(ChordChannel), ChordStyle == CHORDS_STABS ? 11 : ChordStyle == CHORDS_BROKEN ? 10 :
+			ChordStyle == CHORDS_LUSH ? 6 : 15);
+		ChordRegister(O, S.Channel(ChordChannel), Tune);
 		std::vector<PartNote> Notes = ChordPart(Chords, Bars, O);
 		if (ChordStyle == CHORDS_LUSH)
 			LushInstruments(S, ChordChannel, M.ChordSound, O.Pattern, 2, Notes);
@@ -9920,8 +10066,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
 			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
 			"bars), falls (the melody's last note before a rest of a beat or more drops two semitones as it ends, a sigh, at "
-			"most one every two bars) and staccato (the bass's notes of a beat or more cut after three quarters of a beat, so "
-			"it bounces). Default: accents, vibrato and separate.");
+			"most one every two bars) and staccato (the bass's notes of a beat or more cut after half a beat, so it bounces "
+			"rather than booms). Default: accents, vibrato and separate.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
@@ -10596,7 +10742,9 @@ std::string ToolSet::Instructions()
 		"- Melody: a motif of two to four notes with a rhythm you'd recognize, repeated and developed (moved up a step, "
 		"inverted, extended); phrases of two or four bars that breathe (a held note or a rest at the end); chord tones on "
 		"strong beats and steps between them; one high point in each section; long and short notes mixed (dotted rhythms, "
-		"syncopation). Not a scale run, not eighth notes without a rest.\n"
+		"syncopation). Not a scale run, not eighth notes without a rest. For warmth, a pulse lead lives mostly in octave 3 "
+		"(C-3 to C-4) and reaches into octave 4 at its high points: higher, the pulses turn thin and the warm middle of the "
+		"sound is left empty.\n"
 		"- Harmony with direction: tonic, subdominant, dominant, home; a B part on other chords (IV, vi, the relative key); "
 		"sevenths, added ninths and suspensions resolving into V (color sevenths or rich); chords changing about once a bar, "
 		"not every beat. Bass: walking for towns and jazz, octaves for action, syncopated for pop, arpeggio for adventure. "
@@ -10722,7 +10870,12 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"developed; phrases of two or four bars that end on a held note or a rest; chord tones on strong beats; one high point "
 			"in each section; long and short notes mixed.\n"
 			"5. Build the form: copy_bars for repeats and make each repeat different (vary_part, a counter-melody or harmony only "
-			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar).\n"
+			"the second time, busier drums); give the B part other chords (add_chords_and_bass with chords and from_bar). Let "
+			"it breathe, as well-arranged tracks swing 8-12 dB in loudness between sections: an intro of 2-4 bars with one or "
+			"two quiet parts, like the chords alone with the bass joining for the last bar or two (insert_bars at bar 1, "
+			"copy_bars with channels to fill it, set_loop from the bar after so it plays once; the triangle is loud, so an "
+			"intro with it is only a few dB quieter), a few bars without the drums or the melody before a repeat, and the "
+			"full sound where it matters.\n"
 			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
 			"beat (kit samples for a punchy sampled kick and snare), polish (fades, scoops and a staccato or thump bass where they "
 			"fit); give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument), and an echo "
@@ -10740,9 +10893,9 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"arranger would:\n"
 			"1. get_song and review_arrangement" + (Bars.empty() ? std::string() : " (from_bar and to_bar for those bars)") + ".\n"
 			"2. Work through its list in order, one change at a time: missing layers first (chords, bass, drums, a second line), "
-			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then expression (polish, an "
-			"echo, a sound that changes between sections, sampled drums), and mix last. Keep my melody unless the review points "
-			"at it.\n"
+			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then breathing (an intro on "
+			"the chords and bass, a break with fewer parts), then expression (polish, an echo, a sound that changes between "
+			"sections, sampled drums), and mix last. Keep my melody unless the review points at it.\n"
 			"3. Run review_arrangement again after each round until it scores 8 or more.\n"
 			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";
 		return true;
