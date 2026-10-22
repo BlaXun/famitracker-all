@@ -7622,6 +7622,17 @@ void TestMeterAndSounds()
 	CHECK_HAS(Run(Later, "write_notes", "{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, "
 		"\"end_effects\": \"A00\"}]}").Text, "end_effects should be a list");
 
+	// A note of a chord's arpeggio counts in check_song: F over a C major chord played as 047 rubs against its E
+	FakeSong Arp;
+	Arp.Put(0, 0, "C-3", 0);
+	Arp.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Arp.Rows[0][0].Param[0] = 0x47;
+	Arp.End(0, 8);
+	Arp.Put(5, 0, "F-4", 0);
+	Arp.End(5, 8);
+	Result = Run(Arp, "check_song", "{\"key\": \"C major\", \"to_bar\": 1}");
+	CHECK_HAS(Result.Text, "Clash: E-3 (in its chord's arpeggio) on 2A03 Pulse 1 against F-4 on VRC6 Pulse 1 at bar 1 beat 1 for 2 beats");
+
 	// A sawtooth sound named "... (saw)" keeps one mark
 	FakeSong Named;
 	Result = Run(Named, "design_instrument", "{\"name\": \"Cello (saw)\", \"kind\": \"strings\", \"channel\": \"Sawtooth\"}");

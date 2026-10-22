@@ -9760,9 +9760,29 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
+	// The notes a channel's chords sound above each row's note (an instrument's looping arpeggio, a 0xy effect): a
+	// lush maj7 keeps its seventh on top, where a melody note a semitone over it rubs
+	std::vector<std::vector<int> > ChordIndex(static_cast<size_t>(S.ChannelCount()));	// per row, into Chords; -1 for none
+	std::vector<std::vector<std::vector<int> > > Chords(static_cast<size_t>(S.ChannelCount()));
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (Sound[c].empty())
+			continue;
+		ChordIndex[c].assign(Sound[c].size(), -1);
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		const std::vector<int> Arps = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const std::vector<int> Above = ChordAbove(S, Notes[i], Arps[i]);
+			if (Above.empty() || Notes[i].Row + Notes[i].Rows <= First || Notes[i].Row >= End)
+				continue;
+			Chords[c].push_back(Above);
+			for (int r = std::max(First, Notes[i].Row); r < Notes[i].Row + Notes[i].Rows && r < End; ++r)
+				ChordIndex[c][static_cast<size_t>(r - First)] = static_cast<int>(Chords[c].size()) - 1;
+		}
+	}
+
 	// Clashes: two channels a semitone (or a semitone plus octaves) apart for a while, as they sound (the
 	// triangle and the VRC7 an octave under their written notes, so it's a major seventh where one is written a
-	// semitone over a pulse)
+	// semitone over a pulse), a note of a chord's arpeggio counted too
 	int Clashes = 0;
 	const int MinClash = std::max(1, S.Time.RowsPerBeat / 2);
 	for (int a = 0; a < S.ChannelCount(); ++a) {
@@ -9770,23 +9790,58 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (Sound[a].empty() || Sound[b].empty())
 				continue;
 			const int Apart = Written(S.Channel(b), 0) - Written(S.Channel(a), 0);
-			int Run = 0;
+			// Every pitch a channel sounds on a row: its note, and its chord's
+			auto Pitches = [&](int c, int r) {
+				std::vector<int> Out(1, Sound[c][r]);
+				const int Index = ChordIndex[c][static_cast<size_t>(r)];
+				if (Index >= 0)
+					for (size_t k = 0; k < Chords[c][static_cast<size_t>(Index)].size(); ++k)
+						Out.push_back(Sound[c][r] + Chords[c][static_cast<size_t>(Index)][k]);
+				return Out;
+			};
+			int Run = 0, RunA = -1, RunB = -1;
+			bool ArpA = false, ArpB = false;
 			for (int r = 0; r <= End - First; ++r) {
-				const bool Clash = r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0 &&
-					std::abs(Sound[a][r] - Sound[b][r] + Apart) % 12 == 1;
-				const bool Same = Clash && Run > 0 && Sound[a][r] == Sound[a][r - 1] && Sound[b][r] == Sound[b][r - 1];
+				bool Clash = false, InA = false, InB = false;
+				int PitchA = -1, PitchB = -1;
+				if (r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0) {
+					const std::vector<int> PA = Pitches(a, r), PB = Pitches(b, r);
+					for (size_t i = 0; i < PA.size() && !Clash; ++i)
+						for (size_t j = 0; j < PB.size() && !Clash; ++j)
+							if (std::abs(PA[i] - PB[j] + Apart) % 12 == 1) {
+								Clash = true;
+								PitchA = PA[i];
+								PitchB = PB[j];
+								InA = i > 0;
+								InB = j > 0;
+							}
+				}
+				const bool Same = Clash && Run > 0 && Sound[a][r] == Sound[a][r - 1] && Sound[b][r] == Sound[b][r - 1] &&
+					ChordIndex[a][static_cast<size_t>(r)] == ChordIndex[a][static_cast<size_t>(r - 1)] &&
+					ChordIndex[b][static_cast<size_t>(r)] == ChordIndex[b][static_cast<size_t>(r - 1)];
 				if (Clash && (Run == 0 || Same)) {
+					if (Run == 0) {
+						RunA = PitchA;
+						RunB = PitchB;
+						ArpA = InA;
+						ArpB = InB;
+					}
 					++Run;
 					continue;
 				}
 				if (Run >= MinClash) {
 					const int Row = First + r - Run;
 					++Clashes;
-					Report(Format("Clash: %s on %s against %s on %s at %s for %s.", PitchName(Sound[a][r - Run]).c_str(),
-						S.Channel(a).FullName().c_str(), PitchName(Sound[b][r - Run]).c_str(), S.Channel(b).FullName().c_str(),
-						S.Time.Position(Row).c_str(), S.Time.Length(Run).c_str()));
+					Report(Format("Clash: %s%s on %s against %s%s on %s at %s for %s.", PitchName(RunA).c_str(),
+						ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(), PitchName(RunB).c_str(),
+						ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(), S.Time.Position(Row).c_str(),
+						S.Time.Length(Run).c_str()));
 				}
 				Run = Clash ? 1 : 0;
+				RunA = PitchA;
+				RunB = PitchB;
+				ArpA = InA;
+				ArpB = InB;
 			}
 		}
 	}
