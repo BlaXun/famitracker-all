@@ -6766,9 +6766,119 @@ void TestBreathing()
 	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "never breathes");
 }
 
+void TestChipLevels()
+{
+	// The VRC7 plays louder than the pulses and counts its volume in steps of 3 dB
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chip\": \"VRC7\", \"confirm\": true}").IsError);
+	CHECK(Song.Info.Channels[5].Kind == KIND_FM);
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"FM Channel 1\", \"instrument\": \"clarinet\", \"notes\": ["
+		"{\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 0.5}, "
+		"{\"bar\": 1, \"beat\": 2.5, \"pitch\": \"F-4\", \"beats\": 0.5}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 4, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"G-4\", \"beats\": 4}]}");
+	CHECK(!Result.IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-3\", "
+		"\"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-2\", \"beats\": 4}]}").IsError);
+	// An echo on another FM channel: three steps (9 dB) under the melody, as volume 6 is on a pulse, not 27 dB
+	Result = Run(Song, "add_echo", "{\"channel\": \"FM Channel 1\", \"to_channel\": \"FM Channel 5\"}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[9][3].HasNote() && Song.Rows[9][3].Volume == 12);
+	// Accents: the notes between beats a step softer, the beats as loud; a fade three steps over the end
+	Result = Run(Song, "polish", "{\"touches\": [\"accents\", \"fades\"], \"melody_channel\": \"FM Channel 1\"}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[5][0].Volume == 15 && Song.Rows[5][4].Volume == 15 && Song.Rows[5][6].Volume == 14 && Song.Rows[5][8].Volume == 15);
+	CHECK(HasEffectAt(Song, 5, 28, EFF_VOLUME_SLIDE, 1) && !HasEffectAt(Song, 5, 24, EFF_VOLUME_SLIDE, 1));
+	// A soft mix: the melody at 12 (as loud as 9 on a pulse), the echo at 10, each volume as far under the loudest
+	Result = Run(Song, "mix", "{\"melody_channel\": \"FM Channel 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC7 FM Channel 1 (melody) loudest 15 to 12");
+	CHECK_HAS(Result.Text, "VRC7 FM Channel 5 (echo) loudest 11 to 10");	// its notes all between beats
+	CHECK_HAS(Result.Text, "The VRC7 plays louder than the pulses and counts its volume in steps of 3 dB");
+	CHECK(Song.Rows[5][0].Volume == 12 && Song.Rows[5][6].Volume == 11);
+	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "Levels:");
+	// A melody at 9 there plays far under the triangle: the review says so
+	CHECK(!Run(Song, "mix", "{\"levels\": {\"FM Channel 1\": 9}}").IsError);
+	Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "Levels: the melody plays about 12 dB under 2A03 Triangle.");
+	CHECK_HAS(Result.Text, "mix (style soft) sets each part's level for its chip (the VRC7 counts its volume in steps of 3 dB");
+	// A counter-melody and a harmony on FM channels: a step under the melody, not four or three
+	FakeSong Lines;
+	Lines.Info.DirectChanges = true;
+	CHECK(!Run(Lines, "set_expansion", "{\"chip\": \"VRC7\", \"confirm\": true}").IsError);
+	CHECK(!Run(Lines, "write_notes", "{\"channel\": \"FM Channel 1\", \"instrument\": \"flute\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, "
+		"{\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 2}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}]}").IsError);
+	CHECK(!Run(Lines, "add_harmony", "{\"melody_channel\": \"FM Channel 1\", \"channel\": \"FM Channel 2\", \"key\": \"C major\"}").IsError);
+	int Harmony = -1, Counter = -1;
+	for (int r = 0; r < 32 && Harmony < 0; ++r)
+		if (Lines.Rows[6][r].HasNote())
+			Harmony = Lines.Rows[6][r].Volume;
+	CHECK_EQ(Harmony, 14);
+	CHECK(!Run(Lines, "add_counter_melody", "{\"melody_channel\": \"FM Channel 1\", \"channel\": \"FM Channel 3\", "
+		"\"key\": \"C major\"}").IsError);
+	for (int r = 0; r < 32 && Counter < 0; ++r)
+		if (Lines.Rows[7][r].HasNote())
+			Counter = Lines.Rows[7][r].Volume;
+	CHECK_EQ(Counter, 14);
+
+	// The N163's wave sounds play quieter: its melody stays at 15, its other parts as far under it
+	FakeSong Waves;
+	Waves.Info.DirectChanges = true;
+	CHECK(!Run(Waves, "set_expansion", "{\"chip\": \"N163\", \"confirm\": true}").IsError);
+	CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Namco 1\", \"instrument\": \"soft flute\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"G-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"A-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"C-5\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"B-4\", \"beats\": 4}]}").IsError);
+	CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Namco 2\", \"instrument\": \"soft flute\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-3\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"D-3\", \"beats\": 4}]}").IsError);
+	Result = Run(Waves, "mix", "{\"melody_channel\": \"Namco 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "N163 Namco 1 (melody) stays at 15");
+	CHECK_HAS(Result.Text, "N163 Namco 2 (a second line) loudest 15 to 12");
+	CHECK_HAS(Result.Text, "The N163's wave sounds play quieter than the pulses");
+
+	// A sawtooth sound designed by name plays by that name
+	FakeSong Saw;
+	CHECK(!Run(Saw, "design_instrument", "{\"name\": \"Grit\", \"kind\": \"bass\", \"channel\": \"Sawtooth\"}").IsError);
+	Result = Run(Saw, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"Grit\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-2\", "
+		"\"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "Added the instrument");
+}
+
+void TestGrooveUnderMelody()
+{
+	// A melody written first: the groove's chords go under it, not around its notes
+	auto Middle = [](const FakeSong &Song, int Channel) {
+		int Sum = 0, Count = 0;
+		for (size_t r = 0; r < Song.Rows[static_cast<size_t>(Channel)].size(); ++r)
+			if (Song.Rows[static_cast<size_t>(Channel)][r].HasNote() && Song.Rows[static_cast<size_t>(Channel)][r].Note <= 12) {
+				Sum += Song.Rows[static_cast<size_t>(Channel)][r].Pitch();
+				++Count;
+			}
+		return Count == 0 ? 0.0 : Sum / static_cast<double>(Count);
+	};
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-3\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-3\", \"beats\": 2}, "
+		"{\"bar\": 2, \"pitch\": \"A-3\", \"beats\": 2}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"E-3\", \"beats\": 2}, "
+		"{\"bar\": 3, \"pitch\": \"F-3\", \"beats\": 4}, {\"bar\": 4, \"pitch\": \"E-3\", \"beats\": 4}]}").IsError);
+	CHECK(!Run(Song, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 4}").IsError);
+	// Without one they sit higher
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	CHECK(!Run(Plain, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 4}").IsError);
+	const double Under = Middle(Song, 0), Alone = Middle(Plain, 0);
+	CHECK(Under > 0 && Under <= 36.0 && Alone >= Under + 5);
+}
+
 int main()
 {
 	TestJson();
+	TestChipLevels();
+	TestGrooveUnderMelody();
 	TestBreathing();
 	TestHttp();
 	TestNames();
