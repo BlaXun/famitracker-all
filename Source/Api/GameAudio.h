@@ -40,8 +40,10 @@ struct GameCut {
 	bool Loops;
 	bool SecondPass;			// the loop is the second time through, since the first starts differently
 	double Difference;			// the biggest difference between the loop's two starts, 0-1 of full scale
+	long long FadeIn;			// samples at the start that fade in over a step from silence (before the loop)
+	bool StartPops;				// the loop is the second time through since the song's start pops
 
-	GameCut() : Begin(0), End(0), LoopStart(0), Loops(false), SecondPass(false), Difference(0.0) {}
+	GameCut() : Begin(0), End(0), LoopStart(0), Loops(false), SecondPass(false), Difference(0.0), FadeIn(0), StartPops(false) {}
 	long long Length() const { return End - Begin; }
 };
 
@@ -53,9 +55,14 @@ struct GameCut {
 // the same), else the second time through. Its two ends move together by up
 // to 2 ms to where the waves match, so the jump back doesn't click. A song
 // that halts is kept up to the row with the halt, where FamiTracker silences
-// it. False with the reason when the render doesn't fit the song.
+// it. StartStep: the song steps the DMC's level up from silence as it starts
+// (a Zxx on its first row), a pop the repeats don't have; the file fades in
+// over its first 40 ms, and a loop that starts with the song is taken from
+// its second time through, so the fade stays out of it. False with the
+// reason when the render doesn't fit the song.
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
-	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error);
+	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
+	bool StartStep = false);
 
 // The sound's name in GameMaker for an exported file: "Town (night).ogg"
 // becomes snd_town_night
