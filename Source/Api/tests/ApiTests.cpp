@@ -353,6 +353,18 @@ public:
 				}
 			}
 		}
+		// Effects in columns a channel doesn't show don't play: it shows more, as CInsertRecordingAction does
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			int Needed = 0;
+			for (size_t r = 0; r < Parts[p].Cells.size(); ++r)
+				for (int k = EFFECT_COLUMNS - 1; k >= Needed; --k)
+					if (Parts[p].Cells[r].Effect[k] != EFF_NONE) {
+						Needed = k + 1;
+						break;
+					}
+			int &Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
+			Shown = std::max(Shown, Needed);
+		}
 		++Writes;
 		LastLink = Write.LinkClipId;
 		LastWrite = Write;
@@ -6886,9 +6898,38 @@ void TestGrooveUnderMelody()
 	CHECK(Under > 0 && Under <= 36.0 && Alone >= Under + 5);
 }
 
+void TestEffectRoom()
+{
+	// A channel that shows one effect column: the tools use all four, and FamiTracker shows more where they're
+	// needed; an effect in a column it hides (which doesn't play) isn't read as playing
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Channels[5].EffectColumns = 1;
+	Song.Rows[5][40].Effect[1] = EFF_VOLUME_SLIDE;
+	Song.Rows[5][40].Param[1] = 0x0F;
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2, \"effects\": [\"P81\", \"V01\"]}, {\"bar\": 1, \"beat\": 3, "
+		"\"pitch\": \"E-4\", \"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "More effect columns show for the effects on VRC6 Pulse 1 (2).");
+	CHECK_EQ(Song.Info.Channels[5].EffectColumns, 2);
+	CHECK(HasEffectAt(Song, 5, 0, EFF_PITCH, 0x81) && HasEffectAt(Song, 5, 0, EFF_DUTY_CYCLE, 1));
+	CHECK_LACKS(Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 3}").Text, "A0F");
+	// Touches on the notes find room beside those effects
+	Result = Run(Song, "polish", "{\"touches\": [\"vibrato\", \"fades\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "no free effect column");
+	// Nothing past the columns shown: nothing said
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	CHECK_LACKS(Run(Plain, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}").Text, "More effect columns");
+}
+
 int main()
 {
 	TestJson();
+	TestEffectRoom();
 	TestChipLevels();
 	TestGrooveUnderMelody();
 	TestBreathing();

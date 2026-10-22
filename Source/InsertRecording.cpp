@@ -328,6 +328,7 @@ private:
 	int m_iMoveFrame;
 	int m_iMoveBy;
 	std::vector<unsigned int> m_FrameList;	// the patterns of the frames before frames moved, a frame at a time
+	std::vector<std::pair<unsigned int, unsigned int> > m_Widened;	// channels that show more effect columns, and what they showed
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
@@ -520,7 +521,27 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		}
 	}
 
+	// Effects in columns a channel doesn't show don't play: it shows more
+	m_Widened.clear();
+	for (size_t p = 0; p < m_Parts.size(); ++p) {
+		const RecordedPart &Part = m_Parts[p];
+		int Needed = 0;
+		for (size_t i = 0; i < Part.Cells.size(); ++i)
+			for (int c = MAX_EFFECT_COLUMNS - 1; c >= Needed; --c)
+				if (Part.Cells[i].Effect[c] != EF_NONE) {
+					Needed = c + 1;
+					break;
+				}
+		const unsigned int Shown = pDoc->GetEffColumns(m_iTrack, Part.Channel);	// one less than it shows
+		if (Needed > static_cast<int>(Shown) + 1) {
+			m_Widened.push_back(std::make_pair(Part.Channel, Shown));
+			pDoc->SetEffColumns(m_iTrack, Part.Channel, static_cast<unsigned int>(Needed - 1));
+		}
+	}
+
 	pDoc->UnlockDocument();
+	if (!m_Widened.empty())
+		pDoc->UpdateAllViews(NULL, UPDATE_COLUMNS);
 
 	// A linked copy: its patterns are its own now
 	if (m_iLinkClip >= 0 && !m_Parts.empty())
@@ -552,7 +573,11 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 			for (unsigned int c = 0; c < Channels && f * Channels + c < m_FrameList.size(); ++c)
 				pDoc->SetPatternAtFrame(m_iTrack, f, c, m_FrameList[f * Channels + c]);
 	}
+	for (size_t i = m_Widened.size(); i-- > 0; )
+		pDoc->SetEffColumns(m_iTrack, m_Widened[i].first, m_Widened[i].second);
 	pDoc->UnlockDocument();
+	if (!m_Widened.empty())
+		pDoc->UpdateAllViews(NULL, UPDATE_COLUMNS);
 
 	Finish(pMainFrm, pDoc, pEditor);
 }

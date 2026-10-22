@@ -252,6 +252,7 @@ public:
 		if (!m_Host.GetSong(Song, Error))
 			throw Problem(Error.empty() ? "No song is open in FamiTracker." : Error);
 		Time = Timing(Song.PatternLength, Song.Frames, Song.FirstHighlight, Song.SecondHighlight);
+		Unhide();
 		m_Cache.clear();
 		m_Notes.clear();
 	}
@@ -261,8 +262,18 @@ public:
 	{
 		std::string Error;
 		SongInfo Info;
-		if (m_Host.GetSong(Info, Error))
+		if (m_Host.GetSong(Info, Error)) {
 			Song = Info;
+			Unhide();
+		}
+	}
+
+	// The effect columns a channel shows in FamiTracker, the ones that play. The tools use all
+	// four (FamiTracker shows more where the effects written need them), so the effects of the
+	// columns hidden now are left out of the cells they read
+	int Shown(int Channel) const
+	{
+		return Channel >= 0 && static_cast<size_t>(Channel) < m_Shown.size() ? m_Shown[static_cast<size_t>(Channel)] : 1;
 	}
 
 	SongHost &Host() { return m_Host; }
@@ -274,6 +285,11 @@ public:
 			std::vector<Cell> Read;
 			m_Host.ReadCells(Channel, 0, Time.TotalRows(), Read);
 			Read.resize(Time.TotalRows());
+			for (size_t r = 0; r < Read.size(); ++r)
+				for (int k = std::max(1, Shown(Channel)); k < EFFECT_COLUMNS; ++k) {
+					Read[r].Effect[k] = EFF_NONE;
+					Read[r].Param[k] = 0;
+				}
 			it = m_Cache.insert(std::make_pair(Channel, Read)).first;
 		}
 		return it->second;
@@ -297,8 +313,18 @@ public:
 	std::vector<std::string> Remarks;	// told along with the result
 
 private:
+	void Unhide()
+	{
+		m_Shown.clear();
+		for (size_t c = 0; c < Song.Channels.size(); ++c) {
+			m_Shown.push_back(std::max(1, std::min(EFFECT_COLUMNS, Song.Channels[c].EffectColumns)));
+			Song.Channels[c].EffectColumns = EFFECT_COLUMNS;
+		}
+	}
+
 	std::map<int, std::vector<Cell> > m_Cache;
 	std::map<int, std::vector<NoteInfo> > m_Notes;
+	std::vector<int> m_Shown;
 };
 
 bool IsMelodic(const ChannelInfo &Channel)
@@ -1130,10 +1156,25 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		}
 		SongWrite Write;
 		Write.First = First;
+		// Effects past the columns a channel shows: FamiTracker shows more there
+		std::string Wider;
+		for (size_t i = 0; i < Parts.size(); ++i) {
+			int Needed = 0;
+			for (size_t r = 0; r < Parts[i].Cells.size(); ++r)
+				for (int k = EFFECT_COLUMNS - 1; k >= Needed; --k)
+					if (Parts[i].Cells[r].Effect[k] != EFF_NONE) {
+						Needed = k + 1;
+						break;
+					}
+			if (Needed > S.Shown(Parts[i].Channel))
+				Wider += Format("%s%s (%d)", Wider.empty() ? "" : ", ", S.Channel(Parts[i].Channel).FullName().c_str(), Needed);
+		}
 		std::string Error;
 		if (!S.Host().WriteSong(Parts, Write, Error))
 			throw Problem(Error.empty() ? "The song couldn't be changed." : Error);
 		Result = "Changed the song: " + What + ". One Ctrl+Z in FamiTracker undoes it.";
+		if (!Wider.empty())
+			Result += " More effect columns show for the effects on " + Wider + ".";
 	}
 	else {
 		// One clip over the channels from the first changed one to the last;
@@ -1803,7 +1844,7 @@ public:
 			Changes.push_back(C);
 		}
 		if (Lost)
-			Warnings.push_back("Some effects didn't fit in the channels' visible effect columns and were left out.");
+			Warnings.push_back("Some effects didn't fit in the channels' four effect columns and were left out.");
 		return true;
 	}
 
@@ -2439,7 +2480,7 @@ std::string SwingByDelays(Session &S, const Json &Args, double Share, int Parts,
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings;
 	if (Lost > 0)
-		Warnings.push_back(Format("%s had no free effect column for the delay (show another effect column in FamiTracker).",
+		Warnings.push_back(Format("%s had no free effect column for the delay (all four were full).",
 			Plural(Lost, "note", "notes").c_str()));
 	int Start = First;
 	std::string Names;
@@ -2601,8 +2642,7 @@ std::string SetSwingTool(Session &S, const Json &Args)
 			Put(End, After);
 	}
 	if (Lost > 0)
-		throw Problem(Format("%s had no free effect column for the swing's speed changes; show another effect column in "
-			"FamiTracker (on %s, say).", Plural(Lost, "row", "rows").c_str(), S.Channel(Home).FullName().c_str()));
+		throw Problem(Format("%s had no free effect column for the swing's speed changes (all four were full; on %s, say).", Plural(Lost, "row", "rows").c_str(), S.Channel(Home).FullName().c_str()));
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings;
 	int Start = First;
@@ -4075,12 +4115,12 @@ std::string MixTool(Session &S, const Json &Args)
 					++Missed;
 					continue;
 				}
-				throw Problem(Format("The DPCM channel has no free effect column at %s for the level; show another one in FamiTracker.",
+				throw Problem(Format("The DPCM channel has no free effect column at %s for the level (all four are full).",
 					S.Time.Position(Rows[i]).c_str()));
 			}
 		}
 		if (Missed > 0)
-			DacWarning = Format("%s had no free effect column for the level (show another one in FamiTracker), so the level "
+			DacWarning = Format("%s had no free effect column for the level (all four were full), so the level "
 				"goes back to the sample's own after %s.", Plural(Missed, "sample", "samples").c_str(), Missed == 1 ? "it" : "them");
 		const int Share = static_cast<int>(std::floor(100.0 * TriangleShare(Dac) + 0.5));
 		DacText = Format("the DPCM level Z%02X at %s%s%s, so the triangle and the noise play at about %d%%", Dac,
@@ -4192,7 +4232,7 @@ std::string AddVibratoTool(Session &S, const Json &Args)
 	const int Count = MakeVibrato(S, D, Plan, First, End, Lost);
 	std::vector<std::string> Warnings;
 	if (Lost)
-		Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
+		Warnings.push_back("Some notes had no free effect column for the vibrato (all four were full).");
 	std::vector<Change> Changes;
 	int Start;
 	if (Count == 0 || !D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
@@ -4716,7 +4756,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		bool Lost = false;
 		const int Count = MakeVibrato(S, D, Plan, First, End, Lost, true);
 		if (Lost)
-			Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
+			Warnings.push_back("Some notes had no free effect column for the vibrato (all four were full).");
 		if (Count > 0)
 			Done.push_back(Format("a gentle vibrato that comes in after half a beat on %s of %s", Plural(Count, "long note", "long notes").c_str(),
 				S.Channel(Melody).FullName().c_str()));
@@ -4736,7 +4776,7 @@ std::string PolishTool(Session &S, const Json &Args)
 			}
 		}
 		if (Lost)
-			Warnings.push_back("Some held notes had no free effect column for a fade (show more effect columns in FamiTracker).");
+			Warnings.push_back("Some held notes had no free effect column for a fade (all four were full).");
 		if (Total > 0)
 			Done.push_back(Format("fades on %s (a volume slide from halfway through, A0y, the next note at its own volume) on %s",
 				Plural(Total, "held note", "held notes").c_str(), List.c_str()));
@@ -4745,7 +4785,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		bool Lost = false;
 		const int Count = AddScoops(S, D, Melody, First, End, Lost);
 		if (Lost)
-			Warnings.push_back("Some notes had no free effect column for a scoop (show more effect columns in FamiTracker).");
+			Warnings.push_back("Some notes had no free effect column for a scoop (all four were full).");
 		if (Count > 0)
 			Done.push_back(Format("%s after leaps up on %s (written a semitone or two low, sliding up with Q6y)",
 				Plural(Count, "scoop", "scoops").c_str(), S.Channel(Melody).FullName().c_str()));
@@ -4754,7 +4794,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		bool Lost = false;
 		const int Count = AddFalls(S, D, Melody, First, End, Lost);
 		if (Lost)
-			Warnings.push_back("Some phrase ends had no free effect column for a fall (show more effect columns in FamiTracker).");
+			Warnings.push_back("Some phrase ends had no free effect column for a fall (all four were full).");
 		if (Count > 0)
 			Done.push_back(Format("%s where phrases of %s end (a drop of two semitones as the last note ends, R42)",
 				Plural(Count, "fall", "falls").c_str(), S.Channel(Melody).FullName().c_str()));
@@ -5701,7 +5741,7 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 		throw Problem("Those bars already hold the same notes.");
 	if (Crowded)
 		Warnings.push_back("Some copied effects found no free effect column beside the song's speed, jump and halt effects there "
-			"and were left out (show another effect column in FamiTracker).");
+			"and were left out (all four were full).");
 	// Copies the song never gets to: after its loop's jump back, or its halt
 	if (Direct(S, AsClip)) {
 		int Total = 0;
@@ -6105,7 +6145,7 @@ void ApplyMoodPlan(Session &S, Draft &D, const MoodPlan &Plan, int First, int En
 			Done.push_back(Vibrato.Depth == 0 ? "no vibrato on " + S.Channel(Vibrato.Channel).FullName() :
 				Format("vibrato 4%X%X on %s", Vibrato.Speed, Vibrato.Depth, S.Channel(Vibrato.Channel).FullName().c_str()));
 		if (Lost)
-			Warnings.push_back("Some notes had no free effect column for the vibrato (show more effect columns in FamiTracker).");
+			Warnings.push_back("Some notes had no free effect column for the vibrato (all four were full).");
 	}
 
 	// 5. An echo of the part as it is now
@@ -8382,8 +8422,8 @@ std::string ShiftSong(Session &S, int First, int Shift, const std::string &What,
 			Placed = AddEffect(Final[static_cast<size_t>(c)][static_cast<size_t>(NewLast)], Before.Halts() ? EFF_HALT : EFF_JUMP,
 				Before.Halts() ? 0 : NewLoop / PL, Columns[static_cast<size_t>(c)]);
 		if (!Placed)
-			throw Problem(Format("No channel has a free effect column on the song's new last row (%s) for its %s; show another "
-				"effect column in FamiTracker.", S.Time.Position(NewLast).c_str(), Before.Halts() ? "halt (C00)" : "jump back (Bxx)"));
+			throw Problem(Format("No channel has a free effect column on the song's new last row (%s) for its %s (all four are "
+				"full in every channel).", S.Time.Position(NewLast).c_str(), Before.Halts() ? "halt (C00)" : "jump back (Bxx)"));
 	}
 
 	// Whole frames move in the frame list, so the frames after keep their patterns (and linked

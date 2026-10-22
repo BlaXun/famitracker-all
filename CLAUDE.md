@@ -78,7 +78,10 @@ by `DrumChanges` in `Tools.cpp` onto the noise and DPCM channels;
 its bars (`ChordPartIn`, `BassPartIn`, `ChordVoicesIn`) to write over them,
 and strums voiced chords with `Gxx`; `polish`'s touches are `Accents`,
 `MakeVibrato`, `AddFades`, `AddScoops`, `AddFalls`, `StaccatoBass` and
-`SeparateRepeats`.
+`SeparateRepeats`. The tools use all four effect columns: `Session` hides
+the effects of columns a channel doesn't show (they don't play), and
+`CInsertRecordingAction` shows more columns where written effects need them
+(undoably).
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken

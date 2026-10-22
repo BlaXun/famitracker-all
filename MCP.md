@@ -124,7 +124,11 @@ work, to reuse its ideas.
   `insert_bars`, `remove_bars`); a clip
   Claude places keeps the ones where it lands, as when you drag one. Instruments it
   adds from presets stay in the instrument list even when the notes are
-  undone.
+  undone. FamiTracker plays only the effect columns a channel shows, so
+  where Claude's effects need more room (a vibrato beside a fade, a scoop
+  beside a delay), the channel shows more of its four, as the + button over
+  it would; the reply names those channels, and Ctrl+Z shows the old number
+  again.
 
 Without direct changes Claude doesn't change the tempo; when an idea needs
 another one, the reply says which speed and tempo to set in the toolbar.
