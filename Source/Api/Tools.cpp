@@ -8454,8 +8454,9 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 	return File;
 }
 
-// One track rendered, cut where it loops, encoded and saved next to the song
-std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::string> &Taken, std::string &Code)
+// One track rendered, cut where it loops, brought up so its loudest peak is at
+// -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
+std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, std::vector<std::string> &Taken, std::string &Code)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -8511,6 +8512,21 @@ std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::s
 	}
 	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
 	std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	double Raised = 0.0;	// dB
+	if (Normalize) {
+		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS
+		float Peak = 0.0f;
+		for (size_t i = 0; i < Kept.size(); ++i)
+			Peak = std::max(Peak, std::fabs(Kept[i]));
+		if (Peak > 0.0001f) {
+			const double Gain = std::min(std::pow(10.0, 12.0 / 20.0), std::pow(10.0, -1.0 / 20.0) / Peak);
+			if (Gain > 1.0) {
+				for (size_t i = 0; i < Kept.size(); ++i)
+					Kept[i] = static_cast<float>(Kept[i] * Gain);
+				Raised = 20.0 * std::log10(Gain);
+			}
+		}
+	}
 	if (!Cut.Loops) {
 		// No click where it stops: the last 10 ms fade out
 		const size_t Fade = std::min(Kept.size(), static_cast<size_t>(SampleRate / 100));
@@ -8526,6 +8542,8 @@ std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::s
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
+	if (Raised >= 0.1)
+		Text += Format(", %.1f dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)", Raised);
 	if (!Cut.Loops)
 		Text += ", plays once (the song halts).";
 	else if (Cut.LoopStart < SampleRate / 100)	// moved a moment to where the waves meet
@@ -8541,6 +8559,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, std::vector<std::s
 std::string ExportTool(Session &S, const Json &Args)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
+	const bool Normalize = BoolArg(Args, "normalize", true);
 	std::vector<int> Tracks;
 	const Json *pTracks = Arg(Args, "tracks");
 	if (pTracks == 0 || (pTracks->IsString() && Lowercase(Trim(pTracks->String())) == "this"))
@@ -8582,7 +8601,7 @@ std::string ExportTool(Session &S, const Json &Args)
 		}
 		Session Track(S.Host());
 		try {
-			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Taken, Code));
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Taken, Code));
 		}
 		catch (const Problem &P) {
 			Lines.push_back(Format("Track %d: %s", Tracks[i] + 1, P.Text.c_str()));
@@ -10211,10 +10230,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("export_for_game", "Export music for a game",
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
-		"gives). A song that halts plays once. Run check_loop first. Takes a while for long songs.",
+		"gives). A song that halts plays once. Each is brought up so its loudest peak is at -1 dBFS (FamiTracker renders at "
+		"the NES's level, well under full scale); normalize false keeps that level. Run check_loop first. Takes a while for "
+		"long songs.",
 		Schema()
 			.Add("tracks", ChannelListProp("\"this\" (default: the selected track), \"all\", or tracks by number or name."))
-			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes.")),
+			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes."))
+			.Add("normalize", Prop("boolean", "Bring the loudest peak up to -1 dBFS, by at most 12 dB (default true); false keeps "
+				"FamiTracker's own level, as it plays.")),
 		false);
 
 	AddTool("select_track", "Switch tracks",

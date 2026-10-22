@@ -5798,6 +5798,23 @@ void TestExport()
 	CHECK(std::llabs(Start - 102400) <= 16 && Comment(Comments, "LOOPLENGTH") == "51200");
 	CHECK(std::atoll(Comment(Comments, "LOOPEND").c_str()) == Start + 51200 && static_cast<long long>(Samples.size()) == Start + 51200);
 	CHECK(Comment(Comments, "TITLE") == "Town" && Comment(Comments, "ALBUM") == "Test song");
+	{
+		// Brought up to a peak of -1 dBFS (0.89), or kept at the level FamiTracker renders
+		float Peak = 0.0f;
+		for (size_t i = 0; i < Samples.size(); ++i)
+			Peak = std::max(Peak, std::fabs(Samples[i]));
+		CHECK_HAS(Text, "dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)");
+		CHECK(Peak < 0.97f);
+		CHECK_HAS(Text, "12.0 dB louder");	// this quiet render: as much as it may be raised
+		const std::string Plain = Tools.Call("export_for_game", Parse("{\"normalize\": false}")).Text;
+		CHECK_LACKS(Plain, "dB louder");
+		std::vector<float> Quiet;
+		CHECK(DecodeOgg(Song.Files["Town 2.ogg"].empty() ? Song.Files["Town.ogg"] : Song.Files["Town 2.ogg"], Quiet, Rate, Channels, Comments, Error));
+		float QuietPeak = 0.0f;
+		for (size_t i = 0; i < Quiet.size(); ++i)
+			QuietPeak = std::max(QuietPeak, std::fabs(Quiet[i]));
+		CHECK(Near(QuietPeak * 3.98, Peak, 0.05));
+	}
 	CHECK_LACKS(Text, "muted");
 	// A muted channel is in the game's file all the same
 	Song.Info.Channels[2].Muted = true;
