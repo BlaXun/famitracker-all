@@ -337,6 +337,26 @@ bool IsBass(const ChannelInfo &Channel)
 	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_SAWTOOTH;
 }
 
+// The triangle and the VRC7 sound an octave below what's written (the VRC7's
+// A-3 is 220 Hz, a pulse's 440): a pitch that sounds as Sounding does on a
+// pulse, as written on Channel
+int Written(const ChannelInfo &Channel, int Sounding)
+{
+	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_FM ? Sounding + 12 : Sounding;
+}
+
+// A note written on one channel, as written on another to sound the same
+// (an octave further when that's outside FamiTracker's notes)
+int WrittenOn(const ChannelInfo &From, const ChannelInfo &To, int Pitch)
+{
+	int Out = Pitch + Written(To, 0) - Written(From, 0);
+	while (Out >= PITCHES)
+		Out -= 12;
+	while (Out < 0)
+		Out += 12;
+	return Out;
+}
+
 std::string InstrumentChip(const ChannelInfo &Channel)
 {
 	return Channel.Chip == "MMC5" ? "2A03" : Channel.Chip;
@@ -723,8 +743,13 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			return Index;
 		}
 		const Vrc7Patch *pPatch = FindVrc7Patch(Wanted);
-		if (pPatch != 0 && pWrongChip != 0 && Squeezed(pPatch->Name) != Squeezed(Wanted))
-			pPatch = 0;	// the song's instrument of that name was meant
+		if (pPatch != 0 && pWrongChip != 0 && Squeezed(pPatch->Name) != Squeezed(Wanted)) {
+			// The song's instrument of that name was meant, unless that's a preset's own name (a 2A03 "Soft lead"
+			// from the preset): then it's the preset's VRC7 sound
+			const Preset *pNamed = FindPreset(Wanted);
+			if (pNamed == 0 || Squeezed(pNamed->Name) != Squeezed(Wanted))
+				pPatch = 0;
+		}
 		if (pPatch != 0) {
 			const size_t Before = S.Song.Instruments.size();
 			std::string Error;
@@ -1099,7 +1124,7 @@ int GuessMelodyChannel(Session &S, int First, int End)
 			// An echo of another part isn't the melody
 			if (Pass < 2 && EchoesAnother(S, c, Notes, First, End))
 				continue;
-			const int Middle = MiddleOf(Notes, 48) - (Info.Kind == KIND_TRIANGLE ? 12 : 0);
+			const int Middle = MiddleOf(Notes, 48) - Written(Info, 0);	// as it sounds
 			// How loud it usually plays (the triangle has no volume)
 			std::vector<int> Volumes;
 			for (size_t i = 0; i < Notes.size(); ++i)
@@ -2931,13 +2956,6 @@ std::vector<ChordAt> ChordsOf(const std::vector<transcribe::ChordSpan> &Spans)
 	return Out;
 }
 
-// The triangle sounds an octave below what's written: a pitch that sounds
-// as Sounding does elsewhere, as written on Channel
-int Written(const ChannelInfo &Channel, int Sounding)
-{
-	return Channel.Kind == KIND_TRIANGLE ? Sounding + 12 : Sounding;
-}
-
 // A style named by an argument, or Default
 int StyleArg(const Json &Args, const char *Name, const std::vector<StyleInfo> &Styles, int Default)
 {
@@ -2987,10 +3005,11 @@ std::vector<std::string> ProgressionArg(const Json &Args, const char *Name)
 
 // Where chords go on a channel: their lowest notes about an octave and a
 // half under the melody's middle (a rolling pattern spreads two octaves up,
-// so it starts lower)
-void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vector<NoteInfo> &Melody)
+// so it starts lower), as both sound (Lifted: how far over its sound the
+// melody's channel writes a note)
+void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vector<NoteInfo> &Melody, int Lifted)
 {
-	int Top = Melody.empty() ? 43 : MiddleOf(Melody, 52) - 7;
+	int Top = Melody.empty() ? 43 : MiddleOf(Melody, 52) - Lifted - 7;
 	Top = std::max(36, std::min(48, Top));
 	if (O.Style == CHORDS_BROKEN && O.Pattern == BROKEN_ROLLING)
 		Top -= 5;
@@ -3615,12 +3634,13 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), -1);
 		O.RowsPerBeat = R;
 		// Under the melody, a voice to a channel: well under its middle, and under the low notes it often dips to,
-		// so the top voice doesn't blur it
-		int Top = MelodyNotes.empty() ? 50 : MiddleOf(MelodyNotes, 57) - 9;
+		// so the top voice doesn't blur it (as they sound: each voice is written for its channel below)
+		const int Lifted = Melody >= 0 ? Written(S.Channel(Melody), 0) : 0;
+		int Top = MelodyNotes.empty() ? 50 : MiddleOf(MelodyNotes, 57) - Lifted - 9;
 		if (!MelodyNotes.empty()) {
 			std::vector<int> Pitches;
 			for (size_t i = 0; i < MelodyNotes.size(); ++i)
-				Pitches.push_back(MelodyNotes[i].Pitch);
+				Pitches.push_back(MelodyNotes[i].Pitch - Lifted);
 			std::sort(Pitches.begin(), Pitches.end());
 			Top = std::min(Top, Pitches[Pitches.size() / 5] - 4);
 		}
@@ -3645,6 +3665,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			const int Instrument = ResolveInstrument(S, Sound, c);
 			std::vector<PartNote> Notes = Voices[v];
 			for (size_t i = 0; i < Notes.size(); ++i) {
+				Notes[i].Pitch = std::min(PITCHES - 1, Written(Info, Notes[i].Pitch));
 				Notes[i].Instrument = Instrument;
 				if (Strum > 0 && v > 0)
 					Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_DELAY), Strum * static_cast<int>(v)));
@@ -3670,7 +3691,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Pattern = StyleArg(Args, "pattern", BrokenPatterns(), BROKEN_UP);
 		O.StepRows = std::max(1, R / IntArg(Args, "notes_per_beat", 2, 1, 4));
 		O.RowsPerBeat = R;
-		ChordRegister(O, Info, MelodyNotes);
+		ChordRegister(O, Info, MelodyNotes, Melody >= 0 ? Written(S.Channel(Melody), 0) : 0);
 		O.RootInBass = BassChannel >= 0;
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = c != ChordChannel && IsBass(S.Channel(c)) && HasNotesIn(S, c, First, End);
@@ -3915,7 +3936,7 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		PartNote E;
 		E.Row = N.Row + Plan.Delay;
 		E.Rows = std::min(N.Rows, Stop - E.Row);
-		E.Pitch = N.Pitch;
+		E.Pitch = WrittenOn(S.Channel(Plan.Source), S.Channel(Plan.Target), N.Pitch);	// at the same pitch as it sounds
 		E.Instrument = Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument : N.Instrument;
 		E.Volume = MatchVolume(S.Channel(Plan.Source), N.Volume, Plan.Volume / 15.0, S.Channel(Plan.Target));
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
@@ -4004,6 +4025,7 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 	for (size_t i = 0; i < Theirs.size(); ++i)
 		if (Theirs[i].Row < End)
 			Pitches[Theirs[i].Row] = Theirs[i].Pitch;
+	const int Lift = Written(S.Channel(Channel), 0) - Written(S.Channel(Source), 0);	// the same note as it sounds
 	int Count = 0;
 	for (size_t i = 0; i < Mine.size(); ++i)
 		if (Mine[i].Row >= First && Mine[i].Row < End)
@@ -4017,7 +4039,7 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 			if (Mine[i].Row < First || Mine[i].Row >= End)
 				continue;
 			std::map<int, int>::const_iterator it = Pitches.find(Mine[i].Row - Delay);
-			if (it != Pitches.end() && it->second == Mine[i].Pitch)
+			if (it != Pitches.end() && (it->second == Mine[i].Pitch || it->second + Lift == Mine[i].Pitch))
 				++Hits;
 		}
 		if (Hits > BestHits) {
@@ -5332,8 +5354,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 		const std::string Rounded = FormatNumber(std::floor(PerBar * 10 + 0.5) / 10);
 		std::string Line = "Bass: " + Rounded + (Rounded == "1" ? " note" : " notes") + Format(" a bar on average, %d different notes",
 			static_cast<int>(Pitches.size()));
-		const int Middle = MiddleOf(Notes, 30) - (S.Channel(Bass).Kind == KIND_TRIANGLE ? 12 : 0);
-		Line += ", around " + PitchName(Middle + (S.Channel(Bass).Kind == KIND_TRIANGLE ? 12 : 0)) + " as written.";
+		const int Middle = MiddleOf(Notes, 30) - Written(S.Channel(Bass), 0);	// as it sounds
+		Line += ", around " + PitchName(Written(S.Channel(Bass), Middle)) + " as written.";
 		Lines.push_back(Line);
 		if (PerBar <= 2.0)
 			Tip(1.0, "The bass mostly holds roots: bass_style walking (towns, jazz), octaves (action), syncopated (pop) "
@@ -5522,18 +5544,19 @@ std::string ReviewTool(Session &S, const Json &Args)
 	}
 
 	// Register: another part sitting on the melody
-	const int TuneMiddle = MiddleOf(Tune, 52) - (S.Channel(Melody).Kind == KIND_TRIANGLE ? 12 : 0);
+	const int TuneMiddle = MiddleOf(Tune, 52) - Written(S.Channel(Melody), 0);	// as they sound
 	std::vector<int> Crowding;
 	for (size_t p = 0; p < Playing.size(); ++p) {
 		const int c = Playing[p];
 		if (c == Melody || c == Bass || !IsMelodic(S.Channel(c)))
 			continue;
-		const int Middle = MiddleOf(NotesIn(S.Notes(c), First, End), 0) - (S.Channel(c).Kind == KIND_TRIANGLE ? 12 : 0);
+		const int Middle = MiddleOf(NotesIn(S.Notes(c), First, End), 0) - Written(S.Channel(c), 0);
 		if (std::abs(Middle - TuneMiddle) <= 3 && std::find(Echoes.begin(), Echoes.end(), c) == Echoes.end())
 			Crowding.push_back(c);
 	}
 	if (!Crowding.empty()) {
-		Lines.push_back("Register: " + Names(Crowding) + " plays around the melody's own notes (" + PitchName(TuneMiddle) + ").");
+		Lines.push_back("Register: " + Names(Crowding) + " plays around the melody's own notes (" +
+			PitchName(Written(S.Channel(Melody), TuneMiddle)) + ").");
 		Tip(1.0, "Parts in the melody's register blur it: move them an octave down (transpose with semitones -12) or "
 			"the melody up.");
 	}
@@ -5753,7 +5776,7 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		O.RootInBass = BassChannel >= 0;
 		O.Volume = PartVolume(S.Channel(ChordChannel), ChordStyle == CHORDS_STABS ? 11 : ChordStyle == CHORDS_BROKEN ? 10 :
 			ChordStyle == CHORDS_LUSH ? 6 : 15);
-		ChordRegister(O, S.Channel(ChordChannel), Tune);
+		ChordRegister(O, S.Channel(ChordChannel), Tune, Tune.empty() ? 0 : Written(S.Channel(Melody), 0));
 		std::vector<PartNote> Notes = ChordPart(Chords, Bars, O);
 		if (ChordStyle == CHORDS_LUSH)
 			LushInstruments(S, ChordChannel, M.ChordSound, O.Pattern, 2, Notes);
@@ -6825,11 +6848,12 @@ int EchoOf(Session &S, int Melody)
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		if (Notes.size() < 4)
 			continue;
+		const int Lift = Written(S.Channel(c), 0) - Written(S.Channel(Melody), 0);	// the same note as it sounds
 		for (int Delay = 1; Delay <= S.Time.RowsPerBar; ++Delay) {
 			size_t Same = 0;
 			for (size_t i = 0; i < Notes.size(); ++i) {
 				std::map<int, int>::const_iterator it = PitchAt.find(Notes[i].Row - Delay);
-				if (it != PitchAt.end() && it->second == Notes[i].Pitch)
+				if (it != PitchAt.end() && (it->second == Notes[i].Pitch || it->second + Lift == Notes[i].Pitch))
 					++Same;
 			}
 			if (Same * 10 >= Notes.size() * 7)
@@ -6892,7 +6916,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 				continue;
 			std::vector<int> Pitches;
 			for (size_t i = 0; i < Notes.size(); ++i)
-				Pitches.push_back(Notes[i].Pitch);
+				Pitches.push_back(Notes[i].Pitch - Written(Info, 0));	// as they sound
 			std::sort(Pitches.begin(), Pitches.end());
 			if (Pitches[Pitches.size() / 2] < 48 || Pitches[0] - 12 < 24)	// C-4 and up, above C-2 after
 				continue;
@@ -7376,12 +7400,12 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 		}
 		Write(Channel, Notes, Pulsing);
 	};
-	const int LeadKey = PlaceKeyNote(J.Lead, J.Harmony, Used.Tonic, MiddlePitch(S, Lead, 48), 12, 84);
+	const int LeadKey = PlaceKeyNote(J.Lead, J.Harmony, Used.Tonic, MiddlePitch(S, Lead, Written(S.Channel(Lead), 48)), 12, 84);
 	Melodic(Lead, J.Lead, LeadKey, LeadSound, J.LeadVolume);
-	if (Harmony >= 0)
-		Melodic(Harmony, J.Harmony, LeadKey, HarmonySound, J.HarmonyVolume);
+	if (Harmony >= 0)	// written to sound beside the lead (the VRC7 sounds an octave under a pulse)
+		Melodic(Harmony, J.Harmony, LeadKey + Written(S.Channel(Harmony), 0) - Written(S.Channel(Lead), 0), HarmonySound, J.HarmonyVolume);
 	if (Bass >= 0) {
-		const int Center = MiddlePitch(S, Bass, S.Channel(Bass).Kind == KIND_TRIANGLE ? 36 : 26);
+		const int Center = MiddlePitch(S, Bass, S.Channel(Bass).Kind == KIND_TRIANGLE ? 36 : Written(S.Channel(Bass), 26));
 		Melodic(Bass, J.Bass, PlaceKeyNote(J.Bass, std::vector<JingleNote>(), Used.Tonic, Center, 9, 60), BassSound, 15);
 	}
 	if (Noise >= 0) {
@@ -8030,7 +8054,9 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 		Text += " Two pulses and a sawtooth, a strong bass; the presets work on them.";
 	else if (Chip == "VRC7")
 		Text += " FM channels with the chip's built-in sounds: " + Vrc7PatchList() + ". Name one as an instrument in write_notes, "
-			"set_instrument or add_instrument (a preset's name picks the one most like it).";
+			"set_instrument or add_instrument (a preset's name picks the one most like it). Like the triangle, they sound an octave "
+			"under the note written (A-3 is 220 Hz there, 440 on a pulse): to play with a pulse, write their notes an octave up. "
+			"The tools that write parts for them (add_echo, add_harmony, add_counter_melody, voiced chords) do that already.";
 	else if (Chip == "MMC5")
 		Text += " Two more pulses; the 2A03 presets work on them.";
 	else if (Chip == "N163")
@@ -9450,7 +9476,7 @@ std::string CheckTool(Session &S, const Json &Args)
 				Range = "below A-0, the lowest note its pulse can play";
 			else if (Info.Kind == KIND_TRIANGLE && N.Pitch > 72)
 				Range = "above C-6, thin and shrill on the triangle";
-			else if (N.Pitch > 84)
+			else if (N.Pitch - Written(Info, 0) > 84)
 				Range = "above C-7, very high";
 			if (!Range.empty()) {
 				++OutOfRange;
@@ -9460,14 +9486,15 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 
 	// Clashes: two channels a semitone (or a semitone plus octaves) apart for a while, as they sound (the
-	// triangle an octave under its written note, so it's a major seventh where it's written a semitone over)
+	// triangle and the VRC7 an octave under their written notes, so it's a major seventh where one is written a
+	// semitone over a pulse)
 	int Clashes = 0;
 	const int MinClash = std::max(1, S.Time.RowsPerBeat / 2);
 	for (int a = 0; a < S.ChannelCount(); ++a) {
 		for (int b = a + 1; b < S.ChannelCount(); ++b) {
 			if (Sound[a].empty() || Sound[b].empty())
 				continue;
-			const int Apart = (S.Channel(b).Kind == KIND_TRIANGLE ? 12 : 0) - (S.Channel(a).Kind == KIND_TRIANGLE ? 12 : 0);
+			const int Apart = Written(S.Channel(b), 0) - Written(S.Channel(a), 0);
 			int Run = 0;
 			for (int r = 0; r <= End - First; ++r) {
 				const bool Clash = r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0 &&
@@ -11454,7 +11481,7 @@ std::string ToolSet::Instructions()
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
 		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
-		"(piano, flute, brass...). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
+		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written. set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them. Tell the "
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "

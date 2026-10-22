@@ -7445,9 +7445,98 @@ void TestHarpUnderMelody()
 		"The chords are 4 bars, more than the melody's 2 (bars 1-2), so the last 2 were left out");
 }
 
+void TestVrc7Octave()
+{
+	// The VRC7 sounds an octave under what's written (its A-3 is 220 Hz, a pulse's 440), as the triangle does: the parts
+	// the tools write there from a pulse's notes go an octave up, and the checks count notes as they sound
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}");
+	CHECK_HAS(Result.Text, "Like the triangle, they sound an octave under the note written (A-3 is 220 Hz there, 440 on a pulse)");
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"F-4\", \"beats\": 2}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"D-4\", \"beats\": 2}]}").IsError);
+	const std::vector<NoteInfo> Melody = ReadNotes(Song.Rows[0], Song.Info.Channels[0].EffectColumns);
+
+	// An echo on an FM channel plays the melody's notes an octave up, where they sound as the pulse's do, and is still
+	// taken for the echo
+	Result = Run(Song, "add_echo", "{\"channel\": \"Pulse 1\", \"to_channel\": \"FM Channel 1\", \"delay_beats\": 0.5, "
+		"\"instrument\": \"flute\"}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[5][2].HasNote() && Song.Rows[5][2].Pitch() == Song.Rows[0][0].Pitch() + 12);
+	CHECK(Song.Rows[5][18].HasNote() && Song.Rows[5][18].Pitch() == Song.Rows[0][16].Pitch() + 12);
+	CHECK_HAS(Run(Song, "mix", "{\"melody_channel\": \"Pulse 1\"}").Text, "VRC7 FM Channel 1 (echo)");
+
+	// A harmony on FM Channel 2 (the song has a 2A03 "Soft lead", but the preset of that name is a VRC7 sound too): a third
+	// or a sixth under each melody note as they sound
+	Result = Run(Song, "add_harmony", "{\"melody_channel\": \"Pulse 1\", \"channel\": \"FM Channel 2\", \"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	int Harmonized = 0;
+	for (size_t i = 0; i < Melody.size(); ++i) {
+		const Cell &H = Song.Rows[6][static_cast<size_t>(Melody[i].Row)];
+		if (!H.HasNote())
+			continue;
+		++Harmonized;
+		const int Under = Melody[i].Pitch - (H.Pitch() - 12);
+		Check(Under >= 3 && Under <= 9, "an FM harmony note sounds a third to a sixth under the pulse's", __LINE__);
+	}
+	CHECK(Harmonized >= 4);
+
+	// A counter-melody on FM Channel 3, under the melody as they sound
+	CHECK(!Run(Song, "add_counter_melody", "{\"melody_channel\": \"Pulse 1\", \"channel\": \"FM Channel 3\", \"key\": \"C major\"}").IsError);
+	const std::vector<NoteInfo> Counter = ReadNotes(Song.Rows[7], Song.Info.Channels[7].EffectColumns);
+	CHECK(!Counter.empty());
+	for (size_t i = 0; i < Counter.size(); ++i)
+		Check(Counter[i].Pitch - 12 < 52 && Counter[i].Pitch - 12 >= 52 - 20, "an FM counter-melody sounds under the melody's middle",
+			__LINE__);
+
+	// Voiced chords on FM Channels 4-6 sound under the melody: between A-2 and A#3, written an octave up
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Dm |\", \"chord_style\": \"voices\", \"chord_channels\": "
+		"[\"FM Channel 4\", \"FM Channel 5\", \"FM Channel 6\"], \"bass_channel\": \"none\", \"key\": \"C major\", \"strum\": 0}");
+	CHECK(!Result.IsError);
+	int Voiced = 0;
+	for (int c = 8; c <= 10; ++c) {
+		const std::vector<NoteInfo> Voice = ReadNotes(Song.Rows[static_cast<size_t>(c)], Song.Info.Channels[static_cast<size_t>(c)].EffectColumns);
+		for (size_t i = 0; i < Voice.size(); ++i, ++Voiced)
+			Check(Voice[i].Pitch - 12 >= 33 && Voice[i].Pitch - 12 <= 46, "an FM chord voice sounds between A-2 and A#3", __LINE__);
+	}
+	CHECK(Voiced >= 6);
+
+	// check_song: an FM note written a semitone over a pulse's sounds a major seventh under it; written an octave and
+	// a semitone over, it sounds a semitone over: a clash
+	FakeSong Clashing;
+	Clashing.Info.DirectChanges = true;
+	CHECK(!Run(Clashing, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	Clashing.Put(0, 0, "C-4", 0);
+	Clashing.End(0, 8);
+	Clashing.Put(5, 0, "C#4");		// sounds as C#3, a major seventh under C-4
+	Clashing.Put(5, 4, "C#5");		// sounds as C#4
+	Clashing.End(5, 8);
+	Result = Run(Clashing, "check_song", "{\"key\": \"C major\", \"to_bar\": 1}");
+	CHECK_HAS(Result.Text, "Clash: C-4 on 2A03 Pulse 1 against C#5 on VRC7 FM Channel 1 at bar 1 beat 2 for 1 beat");
+	CHECK_HAS(Result.Text, ", 1 clashes,");
+
+	// A jingle's harmony on an FM channel under a pulse lead: an octave up from where a pulse would play it
+	FakeSong Tune;
+	Tune.Info.DirectChanges = true;
+	CHECK(!Run(Tune, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+	const char *const LINE[] = { "G-3", "B-3", "D-4", "G-4", "F#4", "D-4", "G-3" };
+	for (int i = 0; i < 7; ++i)
+		Tune.Put(0, i * 8, LINE[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Tune.End(0, 64);
+	Result = Run(Tune, "make_jingle", "{\"kind\": \"level up\", \"lead_channel\": \"Pulse 1\", \"harmony_channel\": \"FM Channel 1\", "
+		"\"bass_channel\": \"none\", \"drums\": false}");
+	CHECK(!Result.IsError);
+	int G3 = 0;
+	ParsePitch("G-3", G3);
+	CHECK(Tune.Rows[0][0].Pitch() == G3 && Tune.Rows[5][0].Pitch() == G3 - 8 + 12);	// as a pulse's would be G3 - 8
+}
+
 int main()
 {
 	TestJson();
+	TestVrc7Octave();
 	TestHarpUnderMelody();
 	TestEffectRoom();
 	TestChipLevels();

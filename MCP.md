@@ -170,10 +170,10 @@ anything; close the dialog and ask again.
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7). An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels. Notes count as they sound: a scoop where it lands, the triangle an octave under its written note, and not a fall as a note ends |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, and not a fall as a note ends |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -316,7 +316,12 @@ xylophone, vibraphone, brass, bass guitar, synthesizer and chorus. Claude
 adds them as instruments by name ("a piano for the melody", "brass chords"),
 and a preset's name picks the sound most like it: "soft lead" is the flute,
 "bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
-which lets the sound fade the way the chip does.
+which lets the sound fade the way the chip does. Like the triangle, the VRC7
+sounds an octave under the note written (its A-3 is 220 Hz, a pulse's 440),
+so a part that plays with a pulse is written an octave up there; the echo,
+the harmony, the counter-melody, voiced chords and a jingle's harmony are
+written that way, and the checks and the review count VRC7 notes where they
+sound.
 
 The chip also has one custom patch, whose 8 registers set two FM operators
 (their frequency ratio, the modulation level, feedback and envelopes).
