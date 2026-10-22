@@ -4173,7 +4173,16 @@ std::string MixTool(Session &S, const Json &Args)
 			Dac = IntArg(Args, "dac", 0, 0, 127);
 		else {
 			const std::string Word = Squeezed(StringArg(Args, "dac"));
-			if (Word == "full" || Word == "off" || Word == "zero")
+			// A level as text: "64", or the effect itself, "Z40" (hexadecimal, as FamiTracker shows it)
+			const bool Effect = Word.size() == 3 && Word[0] == 'z' && std::isxdigit(static_cast<unsigned char>(Word[1])) &&
+				std::isxdigit(static_cast<unsigned char>(Word[2]));
+			const bool Digits = !Word.empty() && Word.size() <= 3 && Word.find_first_not_of("0123456789") == std::string::npos;
+			if (Effect || Digits) {
+				Dac = Effect ? static_cast<int>(std::strtol(Word.c_str() + 1, 0, 16)) : std::atoi(Word.c_str());
+				if (Dac > 127)
+					throw Problem("dac: a level 0-127 (Z00-Z7F).");
+			}
+			else if (Word == "full" || Word == "off" || Word == "zero")
 				Dac = 0;
 			else if (Word == "warm" || Word == "light")
 				Dac = 0x30;

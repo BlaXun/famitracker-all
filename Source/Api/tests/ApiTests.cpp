@@ -6964,6 +6964,10 @@ void TestMix()
 	CHECK_HAS(Run(Song, "mix", "{\"levels\": {\"Triangle\": 8}}").Text, "has no volume of its own");
 	CHECK_HAS(Run(Song, "mix", "{\"style\": \"funky\"}").Text, "style: soft");
 	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"loudest\"}").Text, "dac: full (Z00)");
+	// The level as text too: a number, or the effect as FamiTracker shows it
+	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"64\"}").Text, "the DPCM level Z40");
+	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"Z30\"}").Text, "the DPCM level Z30");
+	CHECK_HAS(Run(Song, "mix", "{\"dac\": \"200\"}").Text, "dac: a level 0-127");
 	FakeSong Ask;
 	CHECK_HAS(Run(Ask, "mix", "{}").Text, "needs direct changes");
 	{
