@@ -2161,7 +2161,10 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	static const char *const ATTACKS[] = { "instant", "fast", "medium", "slow", "swell" };
 	static const int ATTACK_FRAMES[] = { 0, 2, 5, 10, 20 };
 	static const char *const DECAYS[] = { "none", "short", "medium", "long" };
-	static const int DECAY_FRAMES[] = { 0, 4, 10, 24 };
+	// The decay words go by the kind's own decay, so a bell's "long" rings longer than its usual 40 frames, not 24
+	const int Natural = D.Decay;
+	const int DECAY_FRAMES[] = { 0, Natural > 0 ? std::max(4, Natural / 3) : 4, Natural > 0 ? std::max(10, Natural) : 10,
+		Natural > 0 ? std::min(120, std::max(24, Natural * 2)) : 24 };
 	static const char *const SUSTAINS[] = { "none", "low", "half", "high", "full" };
 	static const int SUSTAIN_LEVELS[] = { 0, 4, 8, 12, 15 };
 	static const char *const RELEASES[] = { "short", "medium", "long" };
@@ -2217,7 +2220,15 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	if (!Chord.empty()) {
 		static const struct { const char *Word; std::initializer_list<int> Tones; } CHORDS[] = {
 			{ "none", {} }, { "octave", { 0, 12 } }, { "major", { 0, 4, 7 } }, { "minor", { 0, 3, 7 } }, { "fifth", { 0, 7 } },
-			{ "power", { 0, 7, 12 } }, { "sus4", { 0, 5, 7 } }, { "major7", { 0, 4, 7, 11 } }, { "minor7", { 0, 3, 7, 10 } },
+			{ "power", { 0, 7, 12 } }, { "sus2", { 0, 2, 7 } }, { "sus4", { 0, 5, 7 } }, { "major6", { 0, 4, 7, 9 } },
+			{ "minor6", { 0, 3, 7, 9 } }, { "major7", { 0, 4, 7, 11 } }, { "minor7", { 0, 3, 7, 10 } }, { "dominant7", { 0, 4, 7, 10 } },
+			{ "add9", { 0, 4, 7, 14 } }, { "minoradd9", { 0, 3, 7, 14 } }, { "diminished", { 0, 3, 6 } }, { "halfdiminished", { 0, 3, 6, 10 } },
+			{ "diminished7", { 0, 3, 6, 9 } }, { "augmented", { 0, 4, 8 } },
+			// The usual short names
+			{ "maj", { 0, 4, 7 } }, { "m", { 0, 3, 7 } }, { "min", { 0, 3, 7 } }, { "5", { 0, 7 } }, { "6", { 0, 4, 7, 9 } }, { "m6", { 0, 3, 7, 9 } },
+			{ "maj7", { 0, 4, 7, 11 } }, { "m7", { 0, 3, 7, 10 } }, { "7", { 0, 4, 7, 10 } }, { "dom7", { 0, 4, 7, 10 } },
+			{ "madd9", { 0, 3, 7, 14 } }, { "dim", { 0, 3, 6 } }, { "m7b5", { 0, 3, 6, 10 } }, { "dim7", { 0, 3, 6, 9 } },
+			{ "aug", { 0, 4, 8 } },
 		};
 		bool Known = false;
 		for (size_t i = 0; i < sizeof(CHORDS) / sizeof(CHORDS[0]) && !Known; ++i) {
@@ -2227,7 +2238,9 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 			}
 		}
 		if (!Known)
-			throw Problem("arpeggio: none, octave, major, minor, fifth, power, sus4, major7 or minor7.");
+			throw Problem("arpeggio: none, octave, major, minor, fifth, power, sus2, sus4, major6, minor6, major7, minor7, dominant7, "
+				"add9, minoradd9, diminished, halfdiminished, diminished7 or augmented (or a short name: 6, m6, maj7, m7, 7, madd9, "
+				"dim, m7b5, dim7, aug).");
 	}
 	D.ArpeggioFrames = IntArg(Args, "arpeggio_frames", D.ArpeggioFrames, 1, 8);
 	D.Tone = WordArg(Args, "tone", D.Tone, TONES, TONE_VALUES, 3, 0);
@@ -5408,7 +5421,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			"add_chords_and_bass and chords) first.", RangeText(From, To).c_str()));
 	const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
 	int Bass = -1, Drums = -1, Samples = -1;
-	std::vector<int> Chords, Voices, Echoes, Playing;
+	std::vector<int> Chords, Voices, Echoes, Doubles, Playing;
 	std::vector<std::string> Free;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
@@ -5447,10 +5460,24 @@ std::string ReviewTool(Session &S, const Json &Args)
 				}
 			}
 		}
+		// A double: the melody's notes at the same time, in unison or an octave away (a chorus, a musette's two reeds)
+		int Doubled = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int Sounds = Notes[i].Pitch - Written(Info, 0);
+			for (size_t m = 0; m < Tune.size(); ++m) {
+				const int Interval = std::abs(Sounds - (Tune[m].Pitch - Written(S.Channel(Melody), 0)));
+				if (Notes[i].Row == Tune[m].Row && (Interval == 0 || Interval == 12)) {
+					++Doubled;
+					break;
+				}
+			}
+		}
 		if (Arpeggios * 3 >= static_cast<int>(Notes.size()))
 			Chords.push_back(c);
 		else if (Delayed * 2 >= static_cast<int>(Notes.size()))
 			Echoes.push_back(c);
+		else if (Doubled * 10 >= static_cast<int>(Notes.size()) * 6)
+			Doubles.push_back(c);
 		else
 			Voices.push_back(c);
 	}
@@ -5473,6 +5500,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Parts += "; another line on " + Names(Voices);
 	if (!Echoes.empty())
 		Parts += "; an echo on " + Names(Echoes);
+	if (!Doubles.empty())
+		Parts += "; the melody doubled on " + Names(Doubles);
 	Parts += ".";
 	if (!Free.empty()) {
 		Parts += " Free: ";
@@ -5512,6 +5541,34 @@ std::string ReviewTool(Session &S, const Json &Args)
 	double Swing = 0.0;
 	int Quietest = -1, Loudest = -1;
 	{
+		// The DPCM level softens the triangle and the noise (0.4.6's mixer: to about 70% at Z30, 57% at Z50 and 44% at
+		// Z7F), bar by bar as the song sets it
+		std::vector<double> Softened(Bars.size(), 1.0);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (S.Channel(c).Kind != KIND_DPCM)
+				continue;
+			const std::vector<Cell> &Cells = S.Cells(c);
+			const int Columns = std::max(1, std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns));
+			std::vector<int> LevelAt(static_cast<size_t>(std::max(0, End)), 0);
+			int Level = 0;
+			for (int r = 0; r < End; ++r) {
+				if (r < static_cast<int>(Cells.size()))
+					for (int k = 0; k < Columns; ++k)
+						if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_DAC)
+							Level = Cells[static_cast<size_t>(r)].Param[k] & 0x7F;
+				LevelAt[static_cast<size_t>(r)] = Level;
+			}
+			for (size_t b = 0; b < Bars.size(); ++b) {
+				double Sum = 0.0;
+				int Rows = 0;
+				for (int r = Bars[b].Row; r < Bars[b].Row + Bars[b].Rows && r < End; ++r, ++Rows) {
+					const double F = 1.091 / (1.091 + 100.0 * LevelAt[static_cast<size_t>(r)] / 22638.0);
+					Sum += F * F * F * F;	// the amplitude's factor is F squared; its power, that squared
+				}
+				Softened[b] = Rows > 0 ? Sum / Rows : 1.0;
+			}
+			break;
+		}
 		std::vector<double> Power(Bars.size(), 0.0);
 		for (size_t p = 0; p < Playing.size(); ++p) {
 			const int c = Playing[p];
@@ -5519,9 +5576,19 @@ std::string ReviewTool(Session &S, const Json &Args)
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
 			for (size_t b = 0; b < Bars.size(); ++b) {
 				const int Begin = Bars[b].Row, Stop = Bars[b].Row + Bars[b].Rows;
+				const double Beats = std::max(1.0, Bars[b].Rows / static_cast<double>(std::max(1, S.Time.RowsPerBeat)));
 				if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM) {
-					if (HasNotesIn(S, c, Begin, Stop))
-						Power[b] += 0.25;	// -6 dB
+					// Drums at a steady share (-6 dB) when they play on every beat (hi-hats on every half beat), less for a
+					// few hits, quiet ticks or a lone tom
+					double Hits = 0.0;
+					for (size_t i = 0; i < Notes.size(); ++i) {
+						if (Notes[i].Row < Begin || Notes[i].Row >= Stop)
+							continue;
+						const double Share = Info.Kind == KIND_NOISE ? Notes[i].Volume / 15.0 : 1.0;
+						Hits += Share * Share;
+					}
+					const double Full = Info.Kind == KIND_NOISE ? 2.0 * Beats : Beats;
+					Power[b] += 0.25 * std::min(1.0, Hits / Full) * (Info.Kind == KIND_NOISE ? Softened[b] : 1.0);
 					continue;
 				}
 				for (size_t i = 0; i < Notes.size(); ++i) {
@@ -5529,7 +5596,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 					if (Z <= A || (Info.Kind != KIND_TRIANGLE && Notes[i].Volume <= 0))
 						continue;
 					const double Db = Info.Kind == KIND_TRIANGLE ? -2.0 : LevelDb(Info, Notes[i].Volume);
-					Power[b] += std::pow(10.0, Db / 10.0) * (Z - A) / static_cast<double>(std::max(1, Bars[b].Rows));
+					Power[b] += std::pow(10.0, Db / 10.0) * (Z - A) / static_cast<double>(std::max(1, Bars[b].Rows)) *
+						(Info.Kind == KIND_TRIANGLE ? Softened[b] : 1.0);
 				}
 			}
 		}
@@ -5801,17 +5869,37 @@ std::string ReviewTool(Session &S, const Json &Args)
 		}
 	}
 
-	// Register: another part sitting on the melody
+	// Register: another part sitting on the melody while it sounds. A double thickens it rather than blurring it, and a
+	// part that plays in the melody's gaps (a hocket, answers) trades notes with it
 	const int TuneMiddle = MiddleOf(Tune, 52) - Written(S.Channel(Melody), 0);	// as they sound
-	std::vector<int> Crowding;
+	std::vector<char> TuneSounds(static_cast<size_t>(std::max(0, End - First)), 0);
+	for (size_t i = 0; i < Tune.size(); ++i)
+		for (int r = std::max(First, Tune[i].Row); r < std::min(End, Tune[i].Row + std::max(1, Tune[i].Rows)); ++r)
+			TuneSounds[static_cast<size_t>(r - First)] = 1;
+	std::vector<int> Crowding, Trading;
 	for (size_t p = 0; p < Playing.size(); ++p) {
 		const int c = Playing[p];
 		if (c == Melody || c == Bass || !IsMelodic(S.Channel(c)))
 			continue;
-		const int Middle = MiddleOf(NotesIn(S.Notes(c), First, End), 0) - Written(S.Channel(c), 0);
-		if (std::abs(Middle - TuneMiddle) <= 3 && std::find(Echoes.begin(), Echoes.end(), c) == Echoes.end())
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		const int Middle = MiddleOf(Notes, 0) - Written(S.Channel(c), 0);
+		if (std::abs(Middle - TuneMiddle) > 3 || std::find(Echoes.begin(), Echoes.end(), c) != Echoes.end() ||
+			std::find(Doubles.begin(), Doubles.end(), c) != Doubles.end())
+			continue;
+		int Sounding = 0, Together = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			for (int r = std::max(First, Notes[i].Row); r < std::min(End, Notes[i].Row + std::max(1, Notes[i].Rows)); ++r) {
+				++Sounding;
+				Together += TuneSounds[static_cast<size_t>(r - First)];
+			}
+		}
+		if (Sounding > 0 && Together * 4 < Sounding)
+			Trading.push_back(c);
+		else
 			Crowding.push_back(c);
 	}
+	if (!Trading.empty())
+		Lines.push_back("Register: " + Names(Trading) + " plays in the melody's gaps, around its notes (a hocket, or answers).");
 	if (!Crowding.empty()) {
 		Lines.push_back("Register: " + Names(Crowding) + " plays around the melody's own notes (" +
 			PitchName(Written(S.Channel(Melody), TuneMiddle)) + ").");
@@ -10834,8 +10922,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"frames, so notes open up), or frames (0-60)."))
 			.Add("attack_from", Prop("integer", "The level the attack starts at, 1-15 (0: from silence); with attack in frames, a "
 				"bloom of your own."))
-			.Add("decay", LevelProp("none (holds at its peak), short, medium, long, or frames (0-120): how long it takes to fall "
-				"to the sustain level."))
+			.Add("decay", LevelProp("none (holds at its peak), short, medium, long (by the kind: a bell's long rings longer than a "
+				"lead's), or frames (0-120): how long it takes to fall to the sustain level."))
 			.Add("decay_style", EnumProp("smooth (default), or steps: holds, then drops a few levels at a time, like the leads "
 				"of fast action tracks.", std::vector<std::string>{ "smooth", "steps" }))
 			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
@@ -10857,7 +10945,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"dropping into the note: a bass that thumps).", std::vector<std::string>{ "none", "blip", "scoop", "drop", "flick",
 				"thump" }))
 			.Add("arpeggio", EnumProp("A chord played as a fast arpeggio from each note.", std::vector<std::string>{ "none", "octave",
-				"major", "minor", "fifth", "power", "sus4", "major7", "minor7" }))
+				"major", "minor", "fifth", "power", "sus2", "sus4", "major6", "minor6", "major7", "minor7", "dominant7", "add9",
+				"minoradd9", "diminished", "halfdiminished", "diminished7", "augmented" }))
 			.Add("arpeggio_frames", Prop("integer", "Frames for each note of the arpeggio, 1-8 (default 1, the fastest)."))
 			.Add("tone", EnumProp("Drums: darker or brighter noise.", std::vector<std::string>{ "dark", "normal", "bright" }))
 			.Add("length", EnumProp("Drums: shorter or longer.", std::vector<std::string>{ "short", "normal", "long" })),

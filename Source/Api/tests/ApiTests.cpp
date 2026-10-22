@@ -1728,6 +1728,20 @@ void TestDesign()
 	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"chip\": \"VRC7\"}").Text, "built-in sounds");
 	Result = Run(Song, "design_instrument", "{\"name\": \"Shimmer\", \"kind\": \"chiptune\", \"arpeggio\": \"minor7\", \"arpeggio_frames\": 2}");
 	CHECK_HAS(Result.Text, "it arpeggiates 0, 3, 7, 10 semitones");
+	// More chord shapes, by name or short name
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Dom\", \"kind\": \"chiptune\", \"arpeggio\": \"dominant 7\"}").Text,
+		"it arpeggiates 0, 4, 7, 10 semitones");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Half\", \"kind\": \"chiptune\", \"arpeggio\": \"m7b5\"}").Text,
+		"it arpeggiates 0, 3, 6, 10 semitones");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Nine\", \"kind\": \"chiptune\", \"arpeggio\": \"add9\"}").Text,
+		"it arpeggiates 0, 4, 7, 14 semitones");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"arpeggio\": \"mystery\"}").Text, "arpeggio: none, octave");
+	// Decay words go by the kind: a long bell rings longer than its usual 40 frames, a long lead decays over 24
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Long bell\", \"kind\": \"bell\", \"decay\": \"long\"}").Text,
+		"dies away over 80 frames");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Bell\", \"kind\": \"bell\"}").Text, "dies away over 40 frames");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Short bell\", \"kind\": \"bell\", \"decay\": \"short\"}").Text,
+		"dies away over 13 frames");
 	// The sawtooth and the triangle have no duty (and the triangle no volume): said so
 	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"motion\": \"open\"}");
 	CHECK_HAS(Result.Text, "a sawtooth that reaches");
@@ -3186,6 +3200,34 @@ void TestReview()
 		CHECK_LACKS(Run(Echoed, "review_arrangement", "{}").Text, "No drums");
 		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"any\"}").Text, "No drums");
 		CHECK_HAS(Run(Echoed, "review_arrangement", "{\"style\": \"loud\"}").Text, "style should be any or calm");
+	}
+	{
+		// A part in the melody's register crowds it, unless it doubles it (a musette's two reeds) or plays in its gaps (a
+		// hocket)
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4" };
+		const char *const OTHER[] = { "D-4", "F-4", "A-4", "F-4", "G-4", "B-4", "A-4", "F-4" };
+		FakeSong Crowded, Doubled, Hocket;
+		for (int i = 0; i < 8; ++i) {
+			Crowded.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			Crowded.Put(6, i * 8, OTHER[i], i == 0 ? 0 : NO_INSTRUMENT);
+			Doubled.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			Doubled.Put(6, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			Hocket.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			Hocket.End(5, i * 8 + 4, NOTE_HALT);
+			Hocket.Put(6, i * 8 + 4, OTHER[i], i == 0 ? 0 : NO_INSTRUMENT);
+			if (i < 7)
+				Hocket.End(6, i * 8 + 8, NOTE_HALT);
+		}
+		const char *const ARGS = "{\"melody_channel\": \"VRC6 Pulse 1\"}";
+		const std::string C = Run(Crowded, "review_arrangement", ARGS).Text;
+		CHECK_HAS(C, "VRC6 Pulse 2 plays around the melody's own notes");
+		CHECK_HAS(C, "Parts in the melody's register blur it");
+		const std::string D = Run(Doubled, "review_arrangement", ARGS).Text;
+		CHECK_HAS(D, "the melody doubled on VRC6 Pulse 2");
+		CHECK_LACKS(D, "plays around the melody's own notes");
+		const std::string H = Run(Hocket, "review_arrangement", ARGS).Text;
+		CHECK_HAS(H, "VRC6 Pulse 2 plays in the melody's gaps");
+		CHECK_LACKS(H, "plays around the melody's own notes");
 	}
 }
 
@@ -7381,6 +7423,31 @@ void TestBreathing()
 	Result = Run(Song, "review_arrangement", "{}");
 	CHECK_LACKS(Result.Text, "never breathes");
 	CHECK_HAS(Result.Text, "dB between the quietest bars (bars 1-2) and the loudest");
+
+	{
+		// A lone sampled tom in a quiet intro isn't a whole drum kit
+		FakeSong Intro(4);
+		Intro.Put(0, 0, "C-3", 0, 3);
+		Intro.Put(4, 0, "C-3", 0);
+		Intro.Put(4, 16, "C-3", 0);
+		Intro.End(0, 32, NOTE_RELEASE);
+		for (int b = 2; b < 16; ++b)
+			Intro.Put(5, b * 16, b % 2 == 0 ? "E-4" : "G-4", b == 2 ? 0 : NO_INSTRUMENT, b == 2 ? 12 : -1);
+		CHECK_HAS(Run(Intro, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"Loudness: about 8 dB between the quietest bars (bars 1-2)");
+	}
+	{
+		// A high DPCM level softens the triangle (Z7F: to about 44%)
+		FakeSong Level(4);
+		for (int b = 0; b < 16; ++b) {
+			Level.Put(2, b * 16, "C-3", b == 0 ? 0 : NO_INSTRUMENT);
+			Level.Put(5, b * 16, b % 2 == 0 ? "E-4" : "G-4", b == 0 ? 0 : NO_INSTRUMENT, b == 0 ? 8 : -1);
+		}
+		Level.Rows[4][128].Effect[0] = EFF_DAC;
+		Level.Rows[4][128].Param[0] = 0x7F;
+		CHECK_HAS(Run(Level, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"Loudness: about 4 dB between the quietest bars (bars 9-10) and the loudest (bars 1-2)");
+	}
 }
 
 void TestChipLevels()

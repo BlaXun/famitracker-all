@@ -162,7 +162,7 @@ anything; close the dialog and ask again.
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays), a song that keeps one loudness throughout. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
@@ -462,12 +462,14 @@ with `check_loop` and `fix_loop`.
 `design_instrument` makes an instrument from words, starting from a kind
 (lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune; kick,
 snare, hihat, open hihat, crash, tom) and changing what should differ:
-attack, decay, sustain and release (words or frames, 60 a second), the
-pulse width (12.5%, 25%, 50%) and whether it opens up, shimmers or thins as
-it fades, a vibrato built in that comes in after a delay given in beats, an
-octave blip, a scoop or a fall on the attack, or a chord played as a fast
-arpeggio from every note. Drums can be darker or brighter, shorter or
-longer. The instrument gets a new name, so notes that use another one don't
+attack, decay, sustain and release (words or frames, 60 a second; the
+decay's words go by the kind, so a long bell rings twice its usual 40
+frames), the pulse width (12.5%, 25%, 50%) and whether it opens up,
+shimmers or thins as it fades, a vibrato built in that comes in after a
+delay given in beats, an octave blip, a scoop or a fall on the attack, or a
+chord played as a fast arpeggio from every note (major, minor, sus2, sus4,
+6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7, augmented).
+Drums can be darker or brighter, shorter or longer. The instrument gets a new name, so notes that use another one don't
 change.
 
 On the noise channel, a kind that isn't a drum makes a volume envelope: a
