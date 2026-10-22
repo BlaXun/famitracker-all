@@ -74,4 +74,16 @@ std::string GameMakerCode(const std::string &SoundName, const GameCut &Cut, int 
 // A file name from a track's name, without what Windows doesn't allow
 std::string SafeFileName(const std::string &Name);
 
+// The integrated loudness of Count samples from First, in LUFS, as EBU R128
+// (ITU-R BS.1770) measures it: K-weighted, in blocks of 400 ms every 100 ms,
+// gated at -70 LUFS and 10 LU under the ungated loudness. One channel counts
+// once, as ffmpeg's ebur128 measures it. -70 or less when it's (nearly)
+// silent.
+double IntegratedLoudness(const std::vector<float> &Samples, int SampleRate, size_t First, size_t Count);
+
+// The gain in dB that brings audio measuring Measured LUFS to Target, as far
+// as its loudest peak (Peak, 0-1 of full scale) may rise: to -1 dBFS. Held
+// when the peak holds it back.
+double LoudnessGain(double Measured, double Target, double Peak, bool &Held);
+
 }	// namespace ftapi

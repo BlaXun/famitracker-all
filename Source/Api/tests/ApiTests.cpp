@@ -6103,6 +6103,35 @@ std::string Comment(const OggComments &Comments, const char *pKey)
 	return "(none)";
 }
 
+void TestLoudness()
+{
+	// EBU R128: a full-scale 997 Hz sine in one channel measures -3.01 LUFS, at any sample rate
+	const int Rates[] = { 44100, 48000, 8000 };
+	for (int r = 0; r < 3; ++r) {
+		std::vector<float> Sine(static_cast<size_t>(Rates[r] * 10));
+		for (size_t i = 0; i < Sine.size(); ++i)
+			Sine[i] = static_cast<float>(std::sin(2.0 * 3.14159265358979 * 997.0 * static_cast<double>(i) / Rates[r]));
+		CHECK(Near(IntegratedLoudness(Sine, Rates[r], 0, Sine.size()), -3.01, 0.05));
+		for (size_t i = 0; i < Sine.size(); ++i)
+			Sine[i] *= 0.1f;
+		CHECK(Near(IntegratedLoudness(Sine, Rates[r], 0, Sine.size()), -23.01, 0.05));
+		// From a sample on, and no further than the end
+		CHECK(Near(IntegratedLoudness(Sine, Rates[r], Sine.size() / 2, Sine.size()), -23.01, 0.05));
+	}
+	// Silence doesn't count (the gate at -70 LUFS): 5 s of a sine and 5 of silence measure about as the sine
+	std::vector<float> Half(44100 * 10, 0.0f);
+	for (size_t i = 0; i < Half.size() / 2; ++i)
+		Half[i] = static_cast<float>(0.1 * std::sin(2.0 * 3.14159265358979 * 997.0 * static_cast<double>(i) / 44100.0));
+	CHECK(Near(IntegratedLoudness(Half, 44100, 0, Half.size()), -23.0, 0.3));
+	// Nor what's more than 10 LU under the rest
+	for (size_t i = Half.size() / 2; i < Half.size(); ++i)
+		Half[i] = static_cast<float>(0.001 * std::sin(2.0 * 3.14159265358979 * 997.0 * static_cast<double>(i) / 44100.0));
+	CHECK(Near(IntegratedLoudness(Half, 44100, 0, Half.size()), -23.0, 0.3));
+	CHECK(IntegratedLoudness(std::vector<float>(44100, 0.0f), 44100, 0, 44100) <= -70.0);
+	CHECK(IntegratedLoudness(Half, 44100, 0, 100) <= -70.0);	// shorter than a block
+	CHECK(IntegratedLoudness(Half, 44100, Half.size(), 100) <= -70.0);
+}
+
 void TestExport()
 {
 	// Bars 1-4 an intro, bars 5-8 the loop; the bass's last note hangs over the seam
@@ -6154,6 +6183,30 @@ void TestExport()
 	}
 	CHECK_LACKS(Text, "muted");
 	CHECK_LACKS(Text, "fading in");
+	// To a loudness instead: the loop measures it; where the peak would pass -1 dBFS, the peak holds it back
+	{
+		const std::string Quiet = Tools.Call("export_for_game", Parse("{\"loudness\": -30}")).Text;
+		CHECK_HAS(Quiet, ", its loop at -30.0 LUFS (");
+		CHECK_LACKS(Quiet, "LU short of");
+		std::vector<float> Back;
+		CHECK(DecodeOgg(Song.Files["Town.ogg"], Back, Rate, Channels, Comments, Error));
+		const long long From = std::atoll(Comment(Comments, "LOOPSTART").c_str());
+		CHECK(Near(IntegratedLoudness(Back, Rate, static_cast<size_t>(From), Back.size()), -30.0, 0.3));
+		// These square waves peak little over their loudness, so even -6 LUFS stays under -1 dBFS
+		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -6}")).Text, ", its loop at -6.0 LUFS (");
+		CHECK(DecodeOgg(Song.Files["Town.ogg"], Back, Rate, Channels, Comments, Error));
+		float Peak = 0.0f;
+		for (size_t i = 0; i < Back.size(); ++i)
+			Peak = std::max(Peak, std::fabs(Back[i]));
+		CHECK(Peak > 0.3f && Peak < 0.97f);	// the encoding rings a little over a square wave's edges
+		// A peak that would pass -1 dBFS holds the gain back there
+		bool Held = false;
+		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.1, Held), 10.0, 1e-9) && !Held);	// the peak to -10 dBFS
+		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.5, Held), -1.0 + 6.0206, 0.001) && Held);	// from -6 dBFS to -1
+		CHECK(Near(LoudnessGain(-14.0, -20.0, 0.9, Held), -6.0, 1e-9) && !Held);	// quieter: no peak holds that back
+		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).Text, "loudness");	// out of its range
+		CHECK(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).IsError);
+	}
 	// The DPCM level set on the first row pops as the song starts: the file fades in over it
 	{
 		Song.Rows[4][0].Effect[0] = EFF_DAC;
@@ -7398,6 +7451,7 @@ int main()
 	TestMood();
 	TestCheck();
 	TestNameSong();
+	TestLoudness();
 	TestPlayback();
 	TestProtocol();
 	TestSession();

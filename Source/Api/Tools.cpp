@@ -9129,7 +9129,9 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
-std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, std::vector<std::string> &Taken, std::string &Code)
+// Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
+std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, double Loudness, std::vector<std::string> &Taken,
+	std::string &Code)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -9199,7 +9201,24 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 	for (size_t i = 0; i < FadeIn; ++i)
 		Kept[i] *= static_cast<float>(0.5 - 0.5 * std::cos(3.14159265358979 * (static_cast<double>(i) + 0.5) / static_cast<double>(FadeIn)));
 	double Raised = 0.0;	// dB
-	if (Normalize) {
+	double Measured = -70.0;	// the loop's loudness as rendered, LUFS
+	bool HeldByPeak = false;
+	if (Loudness < 0.0) {
+		// The loop (all of a song that plays once) to the loudness asked, its loudest peak no higher than -1 dBFS
+		const size_t From = Cut.Loops ? static_cast<size_t>(std::max(0LL, Cut.LoopStart)) : 0;
+		Measured = IntegratedLoudness(Kept, SampleRate, From, Kept.size() - From);
+		float Peak = 0.0f;
+		for (size_t i = 0; i < Kept.size(); ++i)
+			Peak = std::max(Peak, std::fabs(Kept[i]));
+		if (Measured > -70.0 && Peak > 0.0001f) {
+			const double Gain = LoudnessGain(Measured, Loudness, Peak, HeldByPeak);
+			const double Factor = std::pow(10.0, Gain / 20.0);
+			for (size_t i = 0; i < Kept.size(); ++i)
+				Kept[i] = static_cast<float>(Kept[i] * Factor);
+			Raised = Gain;
+		}
+	}
+	else if (Normalize) {
 		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS
 		float Peak = 0.0f;
 		for (size_t i = 0; i < Kept.size(); ++i)
@@ -9228,7 +9247,15 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, st
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
-	if (Raised >= 0.1)
+	if (Loudness < 0.0 && Measured > -70.0) {
+		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
+			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
+		if (HeldByPeak)
+			Text += Format(": %.1f LU short of %.0f LUFS, where its loudest peak reaches -1 dBFS", Loudness - Measured - Raised, Loudness);
+	}
+	else if (Loudness < 0.0)
+		Text += ", silent, so its level stayed";
+	else if (Raised >= 0.1)
 		Text += Format(", %.1f dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)", Raised);
 	if (FadeIn > 0)
 		Text += Format(", fading in over its first %d ms (the DPCM level set as it starts pops)",
@@ -9250,6 +9277,7 @@ std::string ExportTool(Session &S, const Json &Args)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	const bool Normalize = BoolArg(Args, "normalize", true);
+	const double Loudness = Arg(Args, "loudness") != 0 ? NumberArg(Args, "loudness", -20.0, -40.0, -6.0) : 0.0;
 	std::vector<int> Tracks;
 	const Json *pTracks = Arg(Args, "tracks");
 	if (pTracks == 0 || (pTracks->IsString() && Lowercase(Trim(pTracks->String())) == "this"))
@@ -9291,7 +9319,7 @@ std::string ExportTool(Session &S, const Json &Args)
 		}
 		Session Track(S.Host());
 		try {
-			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Taken, Code));
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code));
 		}
 		catch (const Problem &P) {
 			Lines.push_back(Format("Track %d: %s", Tracks[i] + 1, P.Text.c_str()));
@@ -10969,13 +10997,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
 		"gives). A song that halts plays once. Each is brought up so its loudest peak is at -1 dBFS (FamiTracker renders at "
-		"the NES's level, well under full scale); normalize false keeps that level. Each file is named after its track "
-		"(name_song names the selected one). Run check_loop first. Takes a while for long songs.",
+		"the NES's level, well under full scale); normalize false keeps that level. A game's tracks sound equally loud "
+		"when each is brought to the same loudness instead: loudness -20 (LUFS, as EBU R128 measures the loop), a few "
+		"under for calm places. Each file is named after its track (name_song names the selected one). Run check_loop "
+		"first. Takes a while for long songs.",
 		Schema()
 			.Add("tracks", ChannelListProp("\"this\" (default: the selected track), \"all\", or tracks by number or name."))
 			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes."))
 			.Add("normalize", Prop("boolean", "Bring the loudest peak up to -1 dBFS, by at most 12 dB (default true); false keeps "
-				"FamiTracker's own level, as it plays.")),
+				"FamiTracker's own level, as it plays."))
+			.Add("loudness", Prop("number", "Instead: the loop's loudness in LUFS, -40 to -6, like -20 (calm tracks -22 or -23). "
+				"The loudest peak still stays at -1 dBFS or under; a track it holds back says how loud it came out.")),
 		false);
 
 	AddTool("select_track", "Switch tracks",
