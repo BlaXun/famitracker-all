@@ -7564,6 +7564,16 @@ void TestMeterAndSounds()
 	CHECK(!Result.IsError);
 	CHECK_LACKS(Result.Text, "overdrives");
 	CHECK(Saw.Rows[7][0].Instrument == InstrumentIndex(Saw, "Horn (saw)"));
+
+	// N163 notes too high for the channel count: with 4 channels a 16-sample wave plays whole up to A#5
+	FakeSong High;
+	High.Info.DirectChanges = true;
+	CHECK(!Run(High, "set_expansion", "{\"chip\": \"N163\", \"n163_channels\": 4, \"confirm\": true}").IsError);
+	CHECK(!Run(High, "write_notes", "{\"channel\": \"Namco 1\", \"instrument\": \"glass bell\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"A#5\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"D#6\", \"beats\": 1}]}").IsError);
+	Result = Run(High, "check_song", "{\"key\": \"C major\"}");
+	CHECK_HAS(Result.Text, "Range: D#6 at N163 Namco 1 bar 1 beat 2 is above A#5, where 4 N163 channels turn a 16-sample wave grainy");
+	CHECK_LACKS(Result.Text, "Range: A#5");
 }
 
 void TestVrc7Octave()

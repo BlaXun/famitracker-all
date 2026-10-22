@@ -9597,7 +9597,16 @@ std::string CheckTool(Session &S, const Json &Args)
 			SoundingRows(Notes[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
-	// Outside the key, and outside the channel's range
+	// Outside the key, and outside the channel's range. The N163 plays its channels in turn, each once every 15 CPU cycles
+	// times their count, so a wave of so many samples skips some above a pitch (and turns grainy): the highest that plays
+	// whole, for a wave size
+	int N163Channels = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		N163Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
+	auto HighestWhole = [&](int WaveSize) {
+		const double Hz = 1789773.0 / (15.0 * std::max(1, N163Channels) * std::max(4, WaveSize));
+		return static_cast<int>(std::floor(12.0 * std::log2(Hz / 32.7032) + 0.2));	// C-0 is 32.7 Hz; a skip in 100 steps is nothing
+	};
 	int OutOfKey = 0, OutOfRange = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
@@ -9621,6 +9630,14 @@ std::string CheckTool(Session &S, const Json &Args)
 				Range = "above C-6, thin and shrill on the triangle";
 			else if (N.Pitch - Written(Info, 0) > 84)
 				Range = "above C-7, very high";
+			else if (Info.Chip == "N163") {
+				const InstrumentInfo *pInstrument = FindInstrument(S.Song, N.Instrument);
+				const int Wave = pInstrument != 0 && pInstrument->WaveSize > 0 ? pInstrument->WaveSize : 16;
+				if (N.Pitch > HighestWhole(Wave))
+					Range = Format("above %s, where %s turn a %d-sample wave grainy (the chip skips some of its samples; fewer "
+						"N163 channels play higher)", PitchName(HighestWhole(Wave)).c_str(),
+						Plural(N163Channels, "N163 channel", "N163 channels").c_str(), Wave);
+			}
 			if (!Range.empty()) {
 				++OutOfRange;
 				Report(Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(), Where.c_str(), Range.c_str()));
