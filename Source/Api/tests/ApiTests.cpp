@@ -6429,6 +6429,34 @@ void TestSwing()
 	CHECK_HAS(Run(Ask, "set_swing", "{\"amount\": \"light\"}").Text, "needs direct changes");
 	CHECK_HAS(Run(Song, "set_swing", "{}").Text, "Give amount");
 	CHECK_HAS(Run(Song, "set_swing", "{\"amount\": \"wobbly\"}").Text, "amount: none, light");
+
+	// By delays, on one channel: its notes on the second sixteenth of each pair start late, the others stay straight
+	FakeSong Shuffle;
+	Shuffle.Info.DirectChanges = true;
+	for (int r = 0; r < 16; ++r)
+		Shuffle.Put(3, r, "E-#");			// sixteenth hi-hats on the noise
+	Shuffle.Put(5, 0, "C-4", 0);
+	Shuffle.Put(5, 2, "D-4");
+	Result = Run(Shuffle, "set_swing", "{\"amount\": \"hard\", \"unit\": \"sixteenths\", \"by\": \"delays\", \"channels\": "
+		"\"Noise\", \"to_bar\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a 67% swing on the sixteenths of 2A03 Noise, bar 1, by delays: 8 notes late by 2 frames (G02)");
+	CHECK_HAS(Result.Text, "The other channels play straight");
+	CHECK(HasEffectAt(Shuffle, 3, 1, EFF_DELAY, 2) && HasEffectAt(Shuffle, 3, 15, EFF_DELAY, 2) && !HasEffectAt(Shuffle, 3, 2, EFF_DELAY, 2));
+	CHECK(!HasEffectAt(Shuffle, 5, 2, EFF_DELAY, 2));
+	for (int r = 0; r < 128; ++r)
+		for (int c = 0; c < 8; ++c)
+			CHECK(!HasEffectAt(Shuffle, c, r, EFF_SPEED, 8) && !HasEffectAt(Shuffle, c, r, EFF_SPEED, 4));	// no speed changes
+	// Eighths: the "and" of each beat, by a third of half a beat; none takes the delays off
+	Result = Run(Shuffle, "set_swing", "{\"amount\": \"hard\", \"by\": \"delays\", \"channels\": \"Noise\", \"to_bar\": 1}");
+	CHECK_HAS(Result.Text, "a 67% swing on the eighths of 2A03 Noise, bar 1, by delays: 4 notes late by 4 frames (G04)");
+	CHECK(HasEffectAt(Shuffle, 3, 2, EFF_DELAY, 4) && HasEffectAt(Shuffle, 3, 1, EFF_DELAY, 2));	// the sixteenths' stay
+	Result = Run(Shuffle, "set_swing", "{\"amount\": \"none\", \"by\": \"delays\", \"channels\": \"Noise\", \"to_bar\": 1}");
+	CHECK_HAS(Result.Text, "the delays of a swing taken off 2A03 Noise, bar 1");
+	CHECK(!HasEffectAt(Shuffle, 3, 2, EFF_DELAY, 4) && HasEffectAt(Shuffle, 3, 1, EFF_DELAY, 2));
+	CHECK(!Run(Shuffle, "set_swing", "{\"amount\": \"none\", \"unit\": \"sixteenths\", \"by\": \"delays\", \"channels\": \"Noise\"}").IsError);
+	CHECK(!HasEffectAt(Shuffle, 3, 1, EFF_DELAY, 2));
+	CHECK_HAS(Run(Shuffle, "set_swing", "{\"amount\": \"hard\", \"by\": \"magic\"}").Text, "by: speed");
 }
 
 void TestMix()

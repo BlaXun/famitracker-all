@@ -2331,6 +2331,95 @@ void SwingSpeeds(int Speed, int MaxSpeed, double Share, int &A, int &B)
 	}
 }
 
+// A swing made with note delays (Gxx) on some channels only: each note that
+// falls on the second unit of a pair (an eighth's "and", or a sixteenth's)
+// starts late by the ticks the swing asks for at the row's speed, as
+// FamiTracker composers shuffle a busy part while the rest plays straight.
+// Share 0.5 takes the delays off those rows.
+std::string SwingByDelays(Session &S, const Json &Args, double Share, int Parts, int First, int End, int From, int To)
+{
+	const int R = S.Time.RowsPerBeat, Unit = R / Parts;
+	std::vector<int> Channels;
+	if (Arg(Args, "channels") != 0)
+		Channels = ChannelsArg(S, Args, "channels");
+	else
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (HasNotesIn(S, c, First, End))
+				Channels.push_back(c);
+	if (Channels.empty())
+		throw Problem("No channel plays in those bars to swing.");
+	// The speed of each row, as the song's speed commands set it
+	std::vector<int> Speeds(static_cast<size_t>(End), S.Song.Speed);
+	int Speed = S.Song.Speed;
+	for (int r = 0; r < End; ++r) {
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Cell> &Cells = S.Cells(c);
+			if (r < static_cast<int>(Cells.size()))
+				for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+					if (Cells[r].Effect[k] == EFF_SPEED && std::max(1, static_cast<int>(Cells[r].Param[k])) < S.Song.SplitPoint)
+						Speed = std::max(1, static_cast<int>(Cells[r].Param[k]));
+		}
+		Speeds[static_cast<size_t>(r)] = Speed;
+	}
+	Draft D(S);
+	int Delayed = 0, Lost = 0, Low = 99, High = 0;
+	for (size_t i = 0; i < Channels.size(); ++i) {
+		const int c = Channels[i];
+		std::vector<Cell> &Cells = D.Cells(c);
+		const int Columns = S.Channel(c).EffectColumns;
+		for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r) {
+			const int InBeat = (r - S.Time.BarStart(S.Time.BarOf(r))) % R;
+			if (InBeat % (2 * Unit) != Unit)
+				continue;	// not the second unit of a pair
+			Cell &C = Cells[static_cast<size_t>(r)];
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				if (C.Effect[k] == EFF_DELAY) {
+					C.Effect[k] = EFF_NONE;
+					C.Param[k] = 0;
+				}
+			if (Share <= 0.5 || C.Note == NOTE_NONE)
+				continue;
+			const int Ticks = Speeds[static_cast<size_t>(r)];
+			const int Delay = std::min(Ticks - 1, static_cast<int>(std::floor((2.0 * Share - 1.0) * Unit * Ticks + 0.5)));
+			if (Delay < 1)
+				continue;
+			if (!AddEffect(C, EFF_DELAY, Delay, Columns)) {
+				++Lost;
+				continue;
+			}
+			Low = std::min(Low, Delay);
+			High = std::max(High, Delay);
+			++Delayed;
+		}
+	}
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	if (Lost > 0)
+		Warnings.push_back(Format("%s had no free effect column for the delay (show another effect column in FamiTracker).",
+			Plural(Lost, "note", "notes").c_str()));
+	int Start = First;
+	std::string Names;
+	for (size_t i = 0; i < Channels.size(); ++i)
+		Names += (i == 0 ? "" : i + 1 == Channels.size() ? " and " : ", ") + S.Channel(Channels[i]).FullName();
+	const std::string Where = RangeText(From, To);
+	if (!D.Collect(First, true, Changes, Start, Warnings))
+		return Share <= 0.5 ? "No delays to take off there, " + Where + "." :
+			(Delayed == 0 ? "Nothing to delay there: no notes fall on the second " + std::string(Parts == 2 ? "eighth" : "sixteenth") +
+			" of a pair, or the rows are too short for a delay, " + Where + "." : "It swings that way there already, " + Where + ".");
+	std::string What;
+	if (Share <= 0.5)
+		What = Format("the delays of a swing taken off %s, %s", Names.c_str(), Where.c_str());
+	else
+		What = Format("a %d%% swing on the %s of %s, %s, by delays: %s late by %s (G%02X%s)",
+			static_cast<int>(std::floor(100.0 * Share + 0.5)), Parts == 2 ? "eighths" : "sixteenths", Names.c_str(), Where.c_str(),
+			Plural(Delayed, "note", "notes").c_str(), Low == High ? Plural(Low, "frame", "frames").c_str() :
+			Format("%d-%d frames", Low, High).c_str(), Low, Low == High ? "" : Format("-G%02X", High).c_str());
+	std::string Text = Commit(S, Changes, Start, false, "", What);
+	if (Share > 0.5)
+		Text += " The other channels play straight; set_swing without by swings them all with the speed.";
+	return WithRemarks(S, Text, Warnings);
+}
+
 std::string SetSwingTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
@@ -2374,6 +2463,11 @@ std::string SetSwingTool(Session &S, const Json &Args)
 		BarRange(S, Args, From, To);
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
 	const int Split = S.Song.SplitPoint;
+	const std::string By = Squeezed(StringArg(Args, "by", "speed"));
+	if (By == "delays" || By == "delay" || By == "gxx" || By == "notedelays")
+		return SwingByDelays(S, Args, Share, Parts, First, End, From, To);
+	if (By != "speed" && By != "speeds" && By != "fxx")
+		throw Problem("by: speed (every channel swings, by speed changes) or delays (only the channels named, by note delays).");
 
 	// The speed the rows play at on average there now (a swing there comes out as its middle)
 	long long Ticks = 0;
@@ -9675,6 +9769,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("amount", Prop("string", "none, light, medium, hard (triplet), or a percentage, 50 (straight) to 75."), true)
 			.Add("unit", EnumProp("What swings: eighths (half beats, default) or sixteenths.",
 				std::vector<std::string>{ "eighths", "sixteenths" }))
+			.Add("by", EnumProp("speed (default): every channel swings together, by speed changes. delays: only the channels "
+				"named swing, each note on the second unit of a pair late by a few frames (Gxx), as a shuffled hi-hat or "
+				"arpeggio over a straight part; amount none with the same unit takes those delays off.",
+				std::vector<std::string>{ "speed", "delays" }))
+			.Add("channels", ChannelListProp("With by delays: the channels that swing (default: every one that plays there)."))
 			.Add("from_bar", BarProp("First bar (default 1)."))
 			.Add("to_bar", BarProp("Last bar (default the song's last).")),
 		false, false, true);
