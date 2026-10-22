@@ -3480,6 +3480,7 @@ void TestProtocol()
 	CHECK(pMessages != 0 && pMessages->Size() == 1 && pMessages->At(0).Get("role")->String() == "user");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "for this: a snowy village at night.");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars on the chords and bass alone");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\"}}"),
 		Config, Tools);
 	CHECK_EQ(ErrorCode(Response), -32602);
