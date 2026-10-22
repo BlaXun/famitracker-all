@@ -6946,9 +6946,10 @@ void TestHarpUnderMelody()
 	CHECK_HAS(Result.Text, "bars 1-6");
 	CHECK_HAS(Result.Text, "The chords are 6 bars and the melody plays in bars 3-6, so they start at bar 1 and end with it");
 	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[0][1].HasNote());
-	// The harp's steady sixteenths are accompaniment: the melody is the line over them
+	// The harp's steady sixteenths are accompaniment: the melody is the line over them, and they aren't too busy
 	Result = Run(Song, "review_arrangement", "{\"from_bar\": 3}");
 	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1");
+	CHECK_LACKS(Run(Song, "check_song", "{}").Text, "Busy: 2A03 Pulse 1");
 	// A harp rolling a Dm7 over a bass that moves to the fifth: still Dm7 (over A), not a chord on A
 	FakeSong Fifth;
 	const char *const ROLL[] = { "D-2", "A-2", "F-3", "C-4" };

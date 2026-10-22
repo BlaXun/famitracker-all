@@ -5138,7 +5138,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		std::set<std::string> Vocabulary;
 		bool Colored = false;
 		for (size_t i = 0; i < Heard.size(); ++i) {
-			Vocabulary.insert(ChordName(Heard[i].C, K));
+			Chord Plain = Heard[i].C;	// an inversion (Fmaj7/C) is the same chord
+			Plain.Bass = Plain.Root;
+			Vocabulary.insert(ChordName(Plain, K));
 			Colored = Colored || !Heard[i].C.IsTriad();
 		}
 		std::string Line = "Harmony" + std::string(Backing ? "" : " (implied by the melody alone)") + ": " +
@@ -8990,8 +8992,11 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
-	// Busy and empty bars
+	// Busy and empty bars (a steady run of quick notes, an arpeggio or broken chords, is busy by design)
 	int Busy = 0, Silent = 0;
+	std::vector<bool> Runs(static_cast<size_t>(S.ChannelCount()), false);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Runs[static_cast<size_t>(c)] = RunsSteadily(S, NotesIn(S.Notes(c), S.Time.BarStart(From), S.Time.BarEnd(To)));
 	for (int Bar = From; Bar <= To; ++Bar) {
 		const int BarFirst = S.Time.BarStart(Bar), BarEnd = std::min(S.Time.BarEnd(Bar), S.Time.TotalRows());
 		if (BarFirst >= S.Time.TotalRows())
@@ -9006,7 +9011,8 @@ std::string CheckTool(Session &S, const Json &Args)
 				if (Notes[i].Row >= BarFirst && Notes[i].Row < BarEnd)
 					++Starts;
 			}
-			if (IsMelodic(S.Channel(c)) && BarEnd - BarFirst >= 8 && Starts * 4 >= (BarEnd - BarFirst) * 3) {
+			if (IsMelodic(S.Channel(c)) && !Runs[static_cast<size_t>(c)] && BarEnd - BarFirst >= 8 &&
+				Starts * 4 >= (BarEnd - BarFirst) * 3) {
 				++Busy;
 				Report(Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
 			}
