@@ -214,7 +214,7 @@ a click pluck that holds low.
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
-| `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
+| `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
@@ -624,8 +624,15 @@ in a reference's instrument exactly. The melodies aren't kept: Claude
 takes the craft (grooves, bass figures, harmonic color, how the channels
 share the parts, the sounds) and writes its own tunes and progressions.
 Built in, without any NSF, is a guide to the classic NES styles from
-studies of Konami's (Bucky O'Hare, TMNT II), Capcom's (Mega Man 2-5, Little
-Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks. Its
+studies of Konami's (Bucky O'Hare, TMNT II, Castlevania, Castlevania III,
+Super C), Capcom's (Mega Man 2-5, Little Nemo, Strider), Nintendo's (Super
+Mario Bros. 2 and 3, The Legend of Zelda, Kid Icarus on the Famicom Disk
+System, Gyromite, Punch-Out!!, Dr. Mario), Square's (Final Fantasy III),
+Sunsoft's (Journey to Silius) and Technos's (Nintendo World Cup)
+soundtracks. Its `dark` topic is the craft of dungeons, caves, crypts and
+the underworld in all of them (low, narrow registers, semitones and
+tritones, pedals and ostinatos, music without drums, quiet echoes), and
+`melancholy` that of sad scenes, laments and night. Its
 `soundtrack` topic is about a game's music as a whole, from composing a
 30-track soundtrack with these tools: a catalogue of places, a leitmotif
 that comes back changed, tempos whose rows all last the same, a loudness
