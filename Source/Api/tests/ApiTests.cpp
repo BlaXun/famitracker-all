@@ -788,6 +788,40 @@ public:
 		return Refreshed;
 	}
 
+	// The selected track's notes, the other tracks' and the clips', as FamiTracker counts them
+	void CountInstrumentUses(std::vector<int> &InTracks, std::vector<int> &InClips) override
+	{
+		InTracks.assign(NO_INSTRUMENT, 0);
+		InClips.assign(NO_INSTRUMENT, 0);
+		for (size_t t = 0; t < Tracks.size(); ++t) {
+			const std::vector<std::vector<Cell> > &Channels = static_cast<int>(t) == Current ? Rows : Tracks[t].Rows;
+			for (size_t c = 0; c < Channels.size(); ++c)
+				for (size_t r = 0; r < Channels[c].size(); ++r)
+					if (Channels[c][r].Instrument < NO_INSTRUMENT)
+						++InTracks[Channels[c][r].Instrument];
+		}
+		for (size_t i = 0; i < Clips.size(); ++i)
+			for (size_t c = 0; c < Clips[i].Columns.size(); ++c)
+				for (size_t r = 0; r < Clips[i].Columns[c].size(); ++r)
+					if (Clips[i].Columns[c][r].Instrument < NO_INSTRUMENT)
+						++InClips[Clips[i].Columns[c][r].Instrument];
+	}
+
+	std::vector<int> Removed;		// instruments RemoveInstruments took out
+	bool RemoveInstruments(const std::vector<int> &Indices, std::string &Why) override
+	{
+		if (!CanChange(Why))
+			return false;
+		for (size_t i = 0; i < Indices.size(); ++i)
+			for (size_t k = 0; k < Info.Instruments.size(); ++k)
+				if (Info.Instruments[k].Index == Indices[i]) {
+					Info.Instruments.erase(Info.Instruments.begin() + static_cast<std::ptrdiff_t>(k));
+					Removed.push_back(Indices[i]);
+					break;
+				}
+		return true;
+	}
+
 	std::map<std::string, std::string> Library;		// the reference library's files
 	std::string OpenedText;							// the module OpenText was given
 
@@ -2617,6 +2651,47 @@ void TestTempoInside()
 	Whole.Put(5, 0, "C-4", 0);
 	Run(Whole, "change_mood", "{\"bpm\": 100}");
 	CHECK(Whole.Info.Speed == 9 && Whole.Info.Tempo == 150);
+}
+
+// Instruments no track or clip plays: listed, then removed once confirmed (2026-10-23)
+void TestRemoveUnusedInstruments()
+{
+	FakeSong Song;
+	Song.AddInstrumentInfo(3, "Pad", "2A03", false);
+	Song.AddInstrumentInfo(4, "Bell", "2A03", false);
+	Song.Put(5, 0, "C-4", 0);			// the Lead plays in this track
+	FakeSong::StoredTrack Other = Song.Tracks[0];
+	Other.Name = "Cave";
+	Other.Rows = Song.Rows;
+	Other.Rows[2][0].SetPitch(24);
+	Other.Rows[2][0].Instrument = 1;	// the Bass in another track
+	Song.Tracks.push_back(Other);
+	FakeSong::Clip Riff;
+	Riff.Name = "Riff";
+	Riff.Id = 7;
+	Riff.Sources.push_back(0);
+	Riff.Columns.push_back(std::vector<Cell>(16));
+	Riff.Columns[0][0].SetPitch(48);
+	Riff.Columns[0][0].Instrument = 2;	// the Square only in a clip
+	Song.Clips.push_back(Riff);
+	// Listed first, nothing removed
+	ToolResult Result = Run(Song, "remove_unused_instruments", "{}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "No track or clip plays 2 instruments: 03 Pad, 04 Bell. Only clips play 02 Square, so they stay.");
+	CHECK_HAS(Result.Text, "call again with confirm: true");
+	CHECK(Song.Removed.empty() && Song.Info.Instruments.size() == 5);
+	// Removing needs direct changes
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true}").Text, "needs direct changes");
+	Song.Info.DirectChanges = true;
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": [\"Harp\"]}").Text, "keep: the song has no instrument \"Harp\"");
+	// One kept by name, the other by its number
+	Result = Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": [\"bell\"]}");
+	CHECK_HAS(Result.Text, "Removed 1 instrument no track or clip played: 03 Pad, and the sequences only they used.");
+	CHECK(Song.Removed.size() == 1 && Song.Removed[0] == 3 && Song.Info.Instruments.size() == 4);
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"keep\": \"04\"}").Text, "Every instrument plays somewhere");
+	Result = Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": 2}");
+	CHECK_HAS(Result.Text, "Removed 1 instrument no track or clip played: 04 Bell");
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true}").Text, "Every instrument plays somewhere, in a track or a clip");
 }
 
 void TestBacking()
@@ -8001,6 +8076,7 @@ int main()
 	TestTranspose();
 	TestTempoTool();
 	TestTempoInside();
+	TestRemoveUnusedInstruments();
 	TestBacking();
 	TestChords();
 	TestArrange();

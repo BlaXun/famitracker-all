@@ -198,6 +198,13 @@ public:
 	// The samples of the kit's instrument already in the song that an older version made (the kit's
 	// names under its keys) brought up to date with Kit's: how many changed, -1 with the reason
 	virtual int RefreshDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
+	// How many cells name each instrument (0-63): in the module's tracks (the
+	// patterns their frame lists play) and in its clips
+	virtual void CountInstrumentUses(std::vector<int> &InTracks, std::vector<int> &InClips) = 0;
+	// Removes instruments from the module, and the sequences no instrument
+	// left uses (as Edit > Clean up > Remove unused instruments does). False
+	// with the reason. FamiTracker can't undo it.
+	virtual bool RemoveInstruments(const std::vector<int> &Indices, std::string &Error) = 0;
 
 	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
 	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their

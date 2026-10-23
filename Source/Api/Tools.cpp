@@ -2371,6 +2371,76 @@ std::string MovesText(const std::map<int, int> &Moves, const Key &FromKey, const
 
 int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, const Key &FromKey, const Key &ToKey, int &Unknown);
 
+// Instruments no note in the module plays (its tracks, its clips): the
+// template's starters, sounds tried and replaced. They're listed first and
+// go with confirm, since FamiTracker can't undo it.
+std::string RemoveUnusedInstrumentsTool(Session &S, const Json &Args)
+{
+	std::vector<int> InTracks, InClips;
+	S.Host().CountInstrumentUses(InTracks, InClips);
+	InTracks.resize(NO_INSTRUMENT, 0);
+	InClips.resize(NO_INSTRUMENT, 0);
+	// The ones to keep anyway, by name or number
+	std::set<int> Keep;
+	const Json *pKeep = Arg(Args, "keep");
+	if (pKeep != 0) {
+		std::vector<Json> Items;
+		if (pKeep->IsArray())
+			for (size_t i = 0; i < pKeep->Size(); ++i)
+				Items.push_back(pKeep->At(i));
+		else
+			Items.push_back(*pKeep);
+		for (size_t i = 0; i < Items.size(); ++i) {
+			int Found = -1;
+			const std::string Text = Items[i].IsString() ? Lowercase(Trim(Items[i].String())) : std::string();
+			for (size_t k = 0; k < S.Song.Instruments.size() && Found < 0; ++k)
+				if (Items[i].IsNumber() ? S.Song.Instruments[k].Index == static_cast<int>(Items[i].Number()) :
+					Lowercase(S.Song.Instruments[k].Name) == Text)
+					Found = S.Song.Instruments[k].Index;
+			if (Found < 0 && Text.size() <= 2 && !Text.empty() && Text.find_first_not_of("0123456789abcdef") == std::string::npos) {
+				const int Index = static_cast<int>(std::strtol(Text.c_str(), 0, 16));	// as FamiTracker numbers them
+				if (FindInstrument(S.Song, Index) != 0)
+					Found = Index;
+			}
+			if (Found < 0)
+				throw Problem("keep: the song has no instrument " + (Items[i].IsNumber() ? FormatNumber(Items[i].Number()) :
+					"\"" + (Items[i].IsString() ? Items[i].String() : std::string("?")) + "\"") + "; get_song lists them.");
+			Keep.insert(Found);
+		}
+	}
+	std::vector<int> Unused;
+	std::string Names, InClipsOnly;
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
+		const InstrumentInfo &I = S.Song.Instruments[i];
+		if (I.Index < 0 || I.Index >= NO_INSTRUMENT || Keep.count(I.Index) > 0)
+			continue;
+		if (InTracks[static_cast<size_t>(I.Index)] > 0)
+			continue;
+		if (InClips[static_cast<size_t>(I.Index)] > 0) {
+			InClipsOnly += (InClipsOnly.empty() ? "" : ", ") + Format("%02X %s", I.Index, I.Name.c_str());
+			continue;
+		}
+		Unused.push_back(I.Index);
+		Names += (Names.empty() ? "" : ", ") + Format("%02X %s", I.Index, I.Name.c_str());
+	}
+	const std::string Clips = InClipsOnly.empty() ? std::string() : " Only clips play " + InClipsOnly + ", so they stay.";
+	if (Unused.empty())
+		return "Every instrument plays somewhere, in a track or a clip: nothing to remove." + Clips;
+	const std::string Count = Plural(static_cast<int>(Unused.size()), "instrument", "instruments");
+	if (!BoolArg(Args, "confirm", false))
+		return Format("No track or clip plays %s: %s.%s FamiTracker can't undo removing them, so ask the user, then call again "
+			"with confirm: true (keep names any to keep).", Count.c_str(), Names.c_str(), Clips.c_str());
+	if (!S.Song.DirectChanges)
+		throw Problem("Removing instruments changes the song, which needs direct changes; the user can allow them in File > Connect "
+			"Claude Code, or remove them with Edit > Clean up > Remove unused instruments in FamiTracker.");
+	std::string Error;
+	if (!S.Host().RemoveInstruments(Unused, Error))
+		throw Problem(Error.empty() ? "The instruments couldn't be removed." : Error);
+	S.Refresh();
+	return Format("Removed %s no track or clip played: %s, and the sequences only they used. FamiTracker can't undo it; the "
+		"song's notes play as before.%s", Count.c_str(), Names.c_str(), Clips.c_str());
+}
+
 std::string TransposeTool(Session &S, const Json &Args)
 {
 	std::vector<int> Channels = ChannelsArg(S, Args, "channels");
@@ -11445,6 +11515,16 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Range().ClipChoice(),
 		false, true);
 
+	AddTool("remove_unused_instruments", "Remove unused instruments",
+		"Removes the instruments no note in the module plays, in any track or clip (the starter sounds of a template, sounds "
+		"tried and replaced), and the sequences only they used, as Edit > Clean up > Remove unused instruments does. Without "
+		"confirm it lists them; FamiTracker can't undo it, so ask the user, then call it with confirm: true. Good when "
+		"finishing a song.",
+		Schema()
+			.Add("confirm", Prop("boolean", "True once the user agreed to remove the ones listed."))
+			.Add("keep", Prop("array", "Instruments to keep anyway, by name or number, like [\"Hero lead\", \"0A\"].")),
+		false, true, true);
+
 	AddTool("transpose", "Transpose or change key",
 		"Moves notes by semitones, or into another key or mode by scale degree (C major to C minor sounds darker, to lydian "
 		"dreamier, to dorian bittersweet; to_key also moves the tonic). Arpeggiated chords follow. Noise and DPCM are left alone.",
@@ -12287,6 +12367,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "add_instrument") Result.Text = AddInstrumentTool(S, Args);
 		else if (Name == "design_instrument") Result.Text = DesignInstrumentTool(S, Args);
 		else if (Name == "set_instrument") Result.Text = SetInstrumentTool(S, Args);
+		else if (Name == "remove_unused_instruments") Result.Text = RemoveUnusedInstrumentsTool(S, Args);
 		else if (Name == "transpose") Result.Text = TransposeTool(S, Args);
 		else if (Name == "set_tempo") Result.Text = SetTempoTool(S, Args);
 		else if (Name == "set_meter") Result.Text = SetMeterTool(S, Args);
@@ -12417,7 +12498,7 @@ std::string ToolSet::Instructions()
 		"with stop. For many tracks for one game, references action guide topic soundtrack has the plan.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
-		"its start on repeat. "
+		"its start on repeat. remove_unused_instruments lists the sounds nothing plays (removing them needs the user's OK). "
 		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
 		"the user tells you they like or don't in soundtrack_notes.\n"
 		"For a mood, use change_mood, which makes all of its changes together (separate tools would make separate clips that "

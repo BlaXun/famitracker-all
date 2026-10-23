@@ -1517,6 +1517,51 @@ public:
 		return Refreshed;
 	}
 
+	void CountInstrumentUses(std::vector<int> &InTracks, std::vector<int> &InClips)
+	{
+		InTracks.assign(MAX_INSTRUMENTS, 0);
+		InClips.assign(MAX_INSTRUMENTS, 0);
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL)
+			return;
+		const unsigned int Channels = pDoc->GetAvailableChannels();
+		for (unsigned int t = 0; t < pDoc->GetTrackCount(); ++t) {
+			const unsigned int Length = pDoc->GetPatternLength(t);
+			for (unsigned int f = 0; f < pDoc->GetFrameCount(t); ++f)
+				for (unsigned int c = 0; c < Channels; ++c)
+					for (unsigned int r = 0; r < Length; ++r) {
+						stChanNote Note;
+						pDoc->GetNoteData(t, f, c, r, &Note);
+						if (Note.Instrument < MAX_INSTRUMENTS)
+							++InTracks[Note.Instrument];
+					}
+		}
+		const CClipLibrary *pClips = pDoc->GetClips();
+		for (int i = 0; pClips != NULL && i < pClips->GetCount(); ++i)
+			for (int c = 0; c < pClips->GetColumns(i); ++c)
+				for (int r = 0; r < pClips->GetRows(i); ++r) {
+					stChanNote Note;
+					pClips->GetCell(i, c, r, Note);
+					if (Note.Instrument < MAX_INSTRUMENTS)
+						++InClips[Note.Instrument];
+				}
+	}
+
+	bool RemoveInstruments(const std::vector<int> &Indices, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		m_pMain->CloseInstrumentEditor();	// it may show one of them
+		for (size_t i = 0; i < Indices.size(); ++i)
+			if (Indices[i] >= 0 && Indices[i] < MAX_INSTRUMENTS && pDoc->IsInstrumentUsed(static_cast<unsigned int>(Indices[i])))
+				pDoc->RemoveInstrument(static_cast<unsigned int>(Indices[i]));
+		pDoc->RemoveUnusedSequences();
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+		return true;
+	}
+
 	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks)
 	{
 		Tracks.clear();

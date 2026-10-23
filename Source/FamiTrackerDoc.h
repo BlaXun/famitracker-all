@@ -319,6 +319,7 @@ public:
 
 	// Operations
 	void			RemoveUnusedInstruments();
+	void			RemoveUnusedSequences();
 	void			RemoveUnusedPatterns();
 	void			MergeDuplicatedPatterns();
 	void			SwapInstruments(int First, int Second);
