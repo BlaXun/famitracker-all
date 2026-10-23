@@ -2552,6 +2552,397 @@ std::string NameSongTool(Session &S, const Json &Args)
 	return Text + ". Ctrl+Z doesn't undo names; name_song again changes them.";
 }
 
+// Speed and tempo commands (Fxx) inside the song
+
+// A row's speed and tempo commands applied to Speed and Tempo, as
+// CSoundGen::EvaluateGlobalEffects reads them: 0 counts as 1, and from the
+// split point up a value is a tempo
+void ApplySpeedCommands(const Cell &C, int Columns, int Split, int &Speed, int &Tempo)
+{
+	for (int k = 0; k < std::min(EFFECT_COLUMNS, Columns); ++k) {
+		if (C.Effect[k] != EFF_SPEED)
+			continue;
+		const int Value = std::max(1, static_cast<int>(C.Param[k]));
+		if (Value >= Split)
+			Tempo = Value;
+		else
+			Speed = Value;
+	}
+}
+
+// The speed and tempo as Row starts, the rows before it played in order: the
+// track's, then their commands (a later channel's wins on a row). Rows gives
+// a channel's cells, the song's or a draft's.
+template <class RowsOf>
+void SpeedTempoAt(Session &S, RowsOf Rows, int Row, int &Speed, int &Tempo)
+{
+	Speed = S.Song.Speed;
+	Tempo = S.Song.Tempo;
+	for (int r = 0; r < Row; ++r)
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Cell> &Cells = Rows(c);
+			if (r < static_cast<int>(Cells.size()))
+				ApplySpeedCommands(Cells[static_cast<size_t>(r)], S.Channel(c).EffectColumns, S.Song.SplitPoint, Speed, Tempo);
+		}
+}
+
+// The BPM a beat from Row plays at: its rows at their speed and tempo, on
+// average (a swing's middle)
+double BpmAt(Session &S, int Row)
+{
+	const int R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	int Speed, Tempo;
+	SpeedTempoAt(S, [&](int c) -> const std::vector<Cell> & { return S.Cells(c); }, Row, Speed, Tempo);
+	double Frames = 0.0;
+	int Rows = 0;
+	for (int r = std::max(0, Row); r < Row + R && r < Total; ++r, ++Rows) {
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			ApplySpeedCommands(S.Cells(c)[static_cast<size_t>(r)], S.Channel(c).EffectColumns, S.Song.SplitPoint, Speed, Tempo);
+		Frames += 60.0 * S.Song.FrameRate / std::max(1e-9, RowsPerMinute(Speed, Tempo, S.Song.FrameRate));
+	}
+	if (Rows == 0 || Frames <= 0.0)
+		return BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, R);
+	return 60.0 * S.Song.FrameRate * Rows / Frames / R;
+}
+
+// The channel the song's speed and tempo commands go on: the one that has
+// some already, else the last
+int SpeedHome(Session &S)
+{
+	for (int c = S.ChannelCount() - 1; c >= 0; --c) {
+		const std::vector<Cell> &Cells = S.Cells(c);
+		for (size_t r = 0; r < Cells.size(); ++r)
+			if (HasEffect(Cells[r], EFF_SPEED, S.Channel(c).EffectColumns))
+				return c;
+	}
+	return S.ChannelCount() - 1;
+}
+
+// An effect in a cell (AddEffect), where a speed command (Fxx under the split
+// point) and a tempo command (from it up) are two kinds: a new one takes the
+// place of one of its own kind, beside one of the other
+bool AddSongEffect(Cell &Target, int Effect, int Param, int EffectColumns, int Split)
+{
+	if (Effect != EFF_SPEED)
+		return AddEffect(Target, Effect, Param, EffectColumns);
+	const int Columns = std::max(1, std::min(EFFECT_COLUMNS, EffectColumns));
+	const bool Tempo = std::max(1, Param) >= Split;
+	for (int k = 0; k < Columns; ++k)
+		if (Target.Effect[k] == EFF_SPEED && (std::max(1, static_cast<int>(Target.Param[k])) >= Split) == Tempo) {
+			Target.Param[k] = static_cast<unsigned char>(Param);
+			return true;
+		}
+	for (int k = 0; k < Columns; ++k)
+		if (Target.Effect[k] == EFF_NONE) {
+			Target.Effect[k] = static_cast<unsigned char>(Effect);
+			Target.Param[k] = static_cast<unsigned char>(Param);
+			return true;
+		}
+	return false;
+}
+
+// An effect that steers the song (Fxx, Cxx) on Row in the draft: on Home, or
+// the last channel with a free effect column there; false when none has one
+bool PutSongEffect(Session &S, Draft &D, int Home, int Row, int Effect, int Param)
+{
+	if (Row < 0 || Row >= S.Time.TotalRows())
+		return false;
+	const int Split = S.Song.SplitPoint;
+	if (AddSongEffect(D.Cells(Home)[static_cast<size_t>(Row)], Effect, Param, S.Channel(Home).EffectColumns, Split))
+		return true;
+	for (int c = S.ChannelCount() - 1; c >= 0; --c)
+		if (c != Home && AddSongEffect(D.Cells(c)[static_cast<size_t>(Row)], Effect, Param, S.Channel(c).EffectColumns, Split))
+			return true;
+	return false;
+}
+
+SongFlow Flow(Session &S);
+std::string StartPosition(const Session &S, int Row);
+
+// A new tempo inside the song: from row First on, at Bpm (Speed and Tempo,
+// when given, are its own; 0 works them out with even rows first), reached
+// at once or in Ramp steps a beat apart, until End, where the speed and
+// tempo the song had there come back (End at the song's end: none)
+struct TempoChange {
+	int First, End;
+	double Bpm;
+	int Speed, Tempo;
+	int Ramp;
+};
+
+// The tempo whose BPM at Speed comes nearest Bpm, within FamiTracker's
+// tempos
+int NearestTempo(Session &S, double Bpm, int Speed)
+{
+	const int R = std::max(1, S.Time.RowsPerBeat), MinTempo = std::max(32, S.Song.SplitPoint);
+	const int Guess = static_cast<int>(std::floor(Bpm * Speed * R / 24.0 + 0.5));
+	int Best = std::max(MinTempo, std::min(255, Guess));
+	for (int t = std::max(MinTempo, Guess - 2); t <= std::min(255, Guess + 2); ++t)
+		if (std::fabs(BeatsPerMinute(Speed, t, S.Song.FrameRate, R) - Bpm) <
+			std::fabs(BeatsPerMinute(Speed, Best, S.Song.FrameRate, R) - Bpm) - 1e-9)
+			Best = t;
+	return Best;
+}
+
+// The speed and tempo commands for a change, in the draft: the song's own
+// there go, but for speed commands that change inside it (a swing, a
+// section's speed): those stay and the tempo moves instead, so they keep their
+// proportions. Where the song loops back into or past the change, the loop's
+// start gets the speed and tempo it plays at the first time. What it did, in
+// words ("" when nothing changed); a Problem when it can't be done.
+std::string WriteTempoChange(Session &S, Draft &D, const TempoChange &Plan, std::vector<std::string> &Warnings,
+	bool *pKeptSpeeds = 0)
+{
+	const int Split = S.Song.SplitPoint, R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	const int MinTempo = std::max(32, Split), MaxSpeed = std::max(1, std::min(31, Split - 1));
+	const int First = std::max(0, Plan.First), End = std::min(Total, std::max(First + 1, Plan.End));
+	const auto Song = [&](int c) -> const std::vector<Cell> & { return S.Cells(c); };
+	const auto Drafted = [&](int c) -> const std::vector<Cell> & { return D.View(c); };
+	int Speed0, Tempo0;	// entering the range (its first row's commands go)
+	SpeedTempoAt(S, Drafted, First, Speed0, Tempo0);
+	int SpeedAt = Speed0, TempoAt = Tempo0;	// what it starts at now, with them
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (First < static_cast<int>(D.View(c).size()))
+			ApplySpeedCommands(D.View(c)[static_cast<size_t>(First)], S.Channel(c).EffectColumns, Split, SpeedAt, TempoAt);
+	int SpeedAfter = 0, TempoAfter = 0;	// as the song plays on from End (with End's own commands)
+	if (End < Total)
+		SpeedTempoAt(S, Song, End + 1, SpeedAfter, TempoAfter);
+
+	// Speed commands that change inside the range stay
+	bool KeepSpeeds = false;
+	for (int c = 0; c < S.ChannelCount() && !KeepSpeeds; ++c) {
+		const std::vector<Cell> &Cells = D.View(c);
+		for (int r = First + 1; r < End && r < static_cast<int>(Cells.size()) && !KeepSpeeds; ++r)
+			for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+				if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_SPEED &&
+					std::max(1, static_cast<int>(Cells[static_cast<size_t>(r)].Param[k])) < Split)
+					KeepSpeeds = true;
+	}
+	if (pKeptSpeeds != 0)
+		*pKeptSpeeds = KeepSpeeds;
+	// The speed the range's first beat plays at on average (a swing's middle)
+	double Base = SpeedAt;
+	if (KeepSpeeds) {
+		int Speed = Speed0, Tempo = Tempo0, Sum = 0, Rows = 0;
+		for (int r = First; r < std::min(End, First + R); ++r, ++Rows) {
+			for (int c = 0; c < S.ChannelCount(); ++c)
+				if (r < static_cast<int>(D.View(c).size()))
+					ApplySpeedCommands(D.View(c)[static_cast<size_t>(r)], S.Channel(c).EffectColumns, Split, Speed, Tempo);
+			Sum += Speed;
+		}
+		Base = Rows > 0 ? static_cast<double>(Sum) / Rows : SpeedAt;
+	}
+	const double Bpm0 = KeepSpeeds ? 24.0 * TempoAt / (Base * R) : BeatsPerMinute(SpeedAt, TempoAt, S.Song.FrameRate, R);
+	if (Bpm0 <= 0.0 || Plan.Bpm <= 0.0)
+		throw Problem("The tempo there can't be worked out.");
+	auto ScaledTempo = [&](double Bpm) {
+		const int Tempo = static_cast<int>(std::floor(TempoAt * Bpm / Bpm0 + 0.5));
+		if (Tempo < MinTempo || Tempo > 255)
+			throw Problem(Format("The song changes its speed inside those bars (a swing, say), which stays, so the tempo has to "
+				"carry the change: from %d it would go to %d, outside FamiTracker's tempos (%d-255).", TempoAt, Tempo, MinTempo));
+		return Tempo;
+	};
+	int Speed1 = Plan.Speed, Tempo1 = Plan.Tempo;
+	if (KeepSpeeds) {
+		Speed1 = -1;
+		Tempo1 = ScaledTempo(Plan.Bpm);
+	}
+	else if (Speed1 <= 0 || Tempo1 <= 0)
+		ChooseSpeedTempo(Plan.Bpm, R, S.Song.FrameRate, Speed0, Split, Speed1, Tempo1);
+
+	// The song's commands there go
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		for (int r = First; r < End && r < static_cast<int>(D.View(c).size()); ++r)
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				const Cell &Old = D.View(c)[static_cast<size_t>(r)];
+				if (Old.Effect[k] != EFF_SPEED || (KeepSpeeds && std::max(1, static_cast<int>(Old.Param[k])) < Split))
+					continue;
+				Cell &C = D.Cells(c)[static_cast<size_t>(r)];
+				C.Effect[k] = EFF_NONE;
+				C.Param[k] = 0;
+			}
+
+	// The steps: one, or a beat apart, the last on the new speed and tempo. A
+	// ramp keeps one speed on its way, one every step's tempo fits at
+	struct Step { int Row, Speed, Tempo; };
+	std::vector<Step> Steps;
+	const int Ramp = std::max(0, Plan.Ramp);
+	if (Ramp > 1 && First + (Ramp - 1) * R >= End)
+		throw Problem(Format("The change is %s long, too short for %s of it a beat apart.", S.Time.Length(End - First).c_str(),
+			Plural(Ramp, "step", "steps").c_str()));
+	int Along = Speed0;
+	if (Ramp > 1 && !KeepSpeeds) {
+		const double Low = std::min(Bpm0, Plan.Bpm), High = std::max(Bpm0, Plan.Bpm);
+		int Best = -1;
+		for (int s = 1; s <= MaxSpeed; ++s) {
+			if (Low * s * R / 24.0 < MinTempo - 0.5 || High * s * R / 24.0 > 255.5)
+				continue;
+			if (Best < 0 || std::abs(s - Speed0) < std::abs(Best - Speed0))
+				Best = s;
+		}
+		if (Best < 0)
+			throw Problem(Format("FamiTracker can't slide from %s to %s BPM in even steps; try fewer bars or a nearer tempo.",
+				FormatNumber(std::floor(Bpm0 * 10 + 0.5) / 10).c_str(), FormatNumber(std::floor(Plan.Bpm * 10 + 0.5) / 10).c_str()));
+		Along = Best;
+	}
+	if (Ramp <= 1) {
+		const Step Only = { First, Speed1, Tempo1 };
+		Steps.push_back(Only);
+	}
+	else
+		for (int k = 1; k <= Ramp; ++k) {
+			const double Bpm = Bpm0 + (Plan.Bpm - Bpm0) * k / Ramp;
+			Step St = { First + (k - 1) * R, Speed1, Tempo1 };
+			if (k < Ramp) {
+				St.Speed = KeepSpeeds ? -1 : Along;
+				St.Tempo = KeepSpeeds ? ScaledTempo(Bpm) : NearestTempo(S, Bpm, Along);
+			}
+			Steps.push_back(St);
+		}
+	const int Home = SpeedHome(S);
+	int Speed = Speed0, Tempo = Tempo0, Lost = 0, LowTempo = 999, HighTempo = 0;
+	for (size_t i = 0; i < Steps.size(); ++i) {
+		const Step &St = Steps[i];
+		if (St.Speed > 0 && St.Speed != Speed) {
+			Lost += PutSongEffect(S, D, Home, St.Row, EFF_SPEED, St.Speed) ? 0 : 1;
+			Speed = St.Speed;
+		}
+		if (St.Tempo != Tempo) {
+			Lost += PutSongEffect(S, D, Home, St.Row, EFF_SPEED, St.Tempo) ? 0 : 1;
+			Tempo = St.Tempo;
+		}
+		if (i + 1 < Steps.size() || St.Speed == Along || St.Speed < 0) {
+			LowTempo = std::min(LowTempo, St.Tempo);
+			HighTempo = std::max(HighTempo, St.Tempo);
+		}
+	}
+
+	// From End on as the song had it
+	bool Back = false;
+	if (End < Total) {
+		int SpeedNow, TempoNow;
+		SpeedTempoAt(S, Drafted, End + 1, SpeedNow, TempoNow);
+		if (SpeedNow != SpeedAfter) {
+			Lost += PutSongEffect(S, D, Home, End, EFF_SPEED, SpeedAfter) ? 0 : 1;
+			Back = true;
+		}
+		if (TempoNow != TempoAfter) {
+			Lost += PutSongEffect(S, D, Home, End, EFF_SPEED, TempoAfter) ? 0 : 1;
+			Back = true;
+		}
+	}
+
+	// Where the loop comes back: the speed and tempo its start has the first
+	// time (when the song played the loop alike before)
+	int Rows = 0;
+	const SongFlow F = D.Flow(Rows);
+	bool Seam = false;
+	if (!F.Halts()) {
+		const int Loop = F.LoopRow(S.Time.PatternLength), Last = F.EndRow(S.Time.PatternLength) - 1;
+		int SpeedFirst, TempoFirst, SpeedAgain, TempoAgain, WasFirst[2], WasAgain[2];
+		SpeedTempoAt(S, Drafted, Loop, SpeedFirst, TempoFirst);
+		SpeedTempoAt(S, Drafted, Last + 1, SpeedAgain, TempoAgain);
+		SpeedTempoAt(S, Song, Loop, WasFirst[0], WasFirst[1]);
+		SpeedTempoAt(S, Song, Last + 1, WasAgain[0], WasAgain[1]);
+		int SpeedOwn = 0, TempoOwn = 0;	// what the loop's first row sets itself
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (Loop < static_cast<int>(D.View(c).size()))
+				ApplySpeedCommands(D.View(c)[static_cast<size_t>(Loop)], S.Channel(c).EffectColumns, Split, SpeedOwn, TempoOwn);
+		if (SpeedAgain != SpeedFirst && SpeedOwn == 0 && WasAgain[0] == WasFirst[0]) {
+			Lost += PutSongEffect(S, D, Home, Loop, EFF_SPEED, SpeedFirst) ? 0 : 1;
+			Seam = true;
+		}
+		if (TempoAgain != TempoFirst && TempoOwn == 0 && WasAgain[1] == WasFirst[1]) {
+			Lost += PutSongEffect(S, D, Home, Loop, EFF_SPEED, TempoFirst) ? 0 : 1;
+			Seam = true;
+		}
+		if (Seam)
+			Warnings.push_back(Format("Where the loop comes back (%s) the song gets the speed and tempo it has there the first time, "
+				"so the loop plays the same each time.", StartPosition(S, Loop).c_str()));
+	}
+	if (Lost > 0)
+		throw Problem(Format("%s had no free effect column for the speed and tempo (all four were full); show another effect "
+			"column in FamiTracker or free one there.", Plural(Lost, "row", "rows").c_str()));
+
+	// In words
+	const std::string From = StartPosition(S, First), Old = KeepSpeeds ? Format("%s BPM (tempo %d)",
+		FormatNumber(std::floor(Bpm0 * 10 + 0.5) / 10).c_str(), TempoAt) : TempoText(S, SpeedAt, TempoAt);
+	std::string Text;
+	const std::string New = KeepSpeeds ? Format("%s BPM (tempo %d)", FormatNumber(std::floor(Plan.Bpm * 10 + 0.5) / 10).c_str(),
+		Tempo1) : TempoText(S, Speed1, Tempo1);
+	const int RampRows = static_cast<int>(Steps.size()) * R;
+	const std::string Over = RampRows % std::max(1, S.Time.RowsPerBar) == 0 ?
+		Plural(RampRows / std::max(1, S.Time.RowsPerBar), "bar", "bars") : S.Time.Length(RampRows);
+	if (Steps.size() > 1)
+		Text = Format("from %s it %s gradually over %s, a step a beat, from %s to %s (tempo commands F%02X-F%02X%s)", From.c_str(),
+			Plan.Bpm < Bpm0 ? "slows down" : "speeds up", Over.c_str(), Old.c_str(),
+			New.c_str(), Plan.Bpm < Bpm0 ? HighTempo : LowTempo, Plan.Bpm < Bpm0 ? LowTempo : HighTempo,
+			!KeepSpeeds && Along != Speed0 ? Format(" at speed %d", Along).c_str() : "");
+	else
+		Text = Format("from %s it plays at %s instead of %s", From.c_str(), New.c_str(), Old.c_str());
+	if (KeepSpeeds)
+		Text += "; the song's speed changes there stay (a swing, say), so the tempo carries the change";
+	if (End < Total)
+		Text += Back ? Format(", and from %s at %s again", StartPosition(S, End).c_str(), KeepSpeeds ?
+			Format("tempo %d", TempoAfter).c_str() : TempoText(S, SpeedAfter, TempoAfter).c_str()) :
+			Format(" until %s", StartPosition(S, End).c_str());
+	else
+		Text += " to the song's end";
+	// Nothing to say when the song stays as it was
+	bool Changed = false;
+	for (int c = 0; c < S.ChannelCount() && !Changed; ++c)
+		Changed = D.View(c) != S.Cells(c);
+	return Changed ? Text : std::string();
+}
+
+// set_tempo for some bars: speed and tempo commands from a bar (and beat) on,
+// at once or gradually, the tempo the song had coming back after to_bar
+std::string TempoInsideTool(Session &S, const Json &Args, bool ByBpm, bool BySpeed, bool ByTempo)
+{
+	const int Bars = S.Time.BarCount(), R = std::max(1, S.Time.RowsPerBeat);
+	const int MaxSpeed = std::max(1, std::min(31, S.Song.SplitPoint - 1)), MinTempo = std::max(32, S.Song.SplitPoint);
+	const int From = IntArg(Args, "from_bar", 1, 1, Bars);
+	const int To = IntArg(Args, "to_bar", Bars, From, Bars);
+	int First = S.Time.BarStart(From);
+	if (Arg(Args, "beat") != 0) {
+		bool Exact;
+		const double Beat = NumberArg(Args, "beat", 1.0, 1.0, 64.0);
+		if (!S.Time.PositionToRow(From, Beat, First, Exact))
+			throw Problem(Format("Bar %d has %s; beat is one of them, like 3 or 2.5.", From,
+				Plural(S.Time.BeatsPerBar(From), "beat", "beats").c_str()));
+	}
+	int Speed0, Tempo0;
+	SpeedTempoAt(S, [&](int c) -> const std::vector<Cell> & { return S.Cells(c); }, First, Speed0, Tempo0);
+	int Speed = BySpeed ? IntArg(Args, "speed", Speed0, 1, MaxSpeed) : Speed0;
+	int Tempo = ByTempo ? IntArg(Args, "tempo", Tempo0, MinTempo, 255) : Tempo0;
+	double Bpm;
+	if (ByBpm) {
+		Bpm = NumberArg(Args, "bpm", 0.0, 10.0, 1000.0);
+		ChooseSpeedTempo(Bpm, R, S.Song.FrameRate, Speed0, S.Song.SplitPoint, Speed, Tempo, BySpeed ? Speed : 0, ByTempo ? Tempo : 0);
+	}
+	else
+		Bpm = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, R);
+	int Ramp = 0;
+	if (Arg(Args, "over_bars") != 0) {
+		const double Over = NumberArg(Args, "over_bars", 0.0, 0.25, 64.0);
+		Ramp = std::max(1, static_cast<int>(std::floor(Over * S.Time.BeatsPerBar(From) + 0.5)));
+	}
+	const TempoChange Plan = { First, S.Time.BarEnd(To), Bpm, Speed, Tempo, Ramp };
+	Draft D(S);
+	std::vector<std::string> Warnings;
+	bool KeptSpeeds = false;
+	const std::string What = WriteTempoChange(S, D, Plan, Warnings, &KeptSpeeds);
+	std::vector<Change> Changes;
+	int Start = First;
+	if (What.empty() || !D.Collect(First, true, Changes, Start, Warnings))
+		return Format("It plays at %s there already.", KeptSpeeds ? (FormatNumber(std::floor(Bpm * 10 + 0.5) / 10) + " BPM").c_str() :
+			TempoText(S, Speed, Tempo).c_str());
+	std::string Text = Commit(S, Changes, Start, false, "", What);
+	if (Ramp <= 1 && !KeptSpeeds && !EvenRows(Speed, Tempo, S.Song.FrameRate))
+		Text += UnevenText(S, Speed, Tempo, true);
+	return WithRemarks(S, Text, Warnings);
+}
+
 std::string SetTempoTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
@@ -2564,6 +2955,8 @@ std::string SetTempoTool(Session &S, const Json &Args)
 	if (ByBpm && BySpeed && ByTempo)
 		throw Problem("Give bpm, or speed and tempo. With bpm, give at most one of speed and tempo: it stays, and the other is picked "
 			"for the bpm.");
+	if (Arg(Args, "from_bar") != 0 || Arg(Args, "to_bar") != 0 || Arg(Args, "beat") != 0 || Arg(Args, "over_bars") != 0)
+		return TempoInsideTool(S, Args, ByBpm, BySpeed, ByTempo);
 	const int MaxSpeed = std::max(1, std::min(31, S.Song.SplitPoint - 1)), MinTempo = std::max(32, S.Song.SplitPoint);
 	int Speed = BySpeed ? IntArg(Args, "speed", S.Song.Speed, 1, MaxSpeed) : S.Song.Speed;
 	int Tempo = ByTempo ? IntArg(Args, "tempo", S.Song.Tempo, MinTempo, 255) : S.Song.Tempo;
@@ -2955,12 +3348,8 @@ std::string SetSwingTool(Session &S, const Json &Args)
 				}
 	}
 	auto Put = [&](int Row, int Speed) {
-		if (AddEffect(D.Cells(Home)[static_cast<size_t>(Row)], EFF_SPEED, Speed, S.Channel(Home).EffectColumns))
-			return;
-		for (int c = S.ChannelCount() - 1; c >= 0; --c)
-			if (c != Home && AddEffect(D.Cells(c)[static_cast<size_t>(Row)], EFF_SPEED, Speed, S.Channel(c).EffectColumns))
-				return;
-		++Lost;
+		if (!PutSongEffect(S, D, Home, Row, EFF_SPEED, Speed))
+			++Lost;	// a tempo command there stays beside it
 	};
 	int Written = 0;
 	if (A != B) {
@@ -6631,7 +7020,7 @@ MoodPlan ReadMoodPlan(Session &S, const Json &Args, int First, int End)
 	if (pEcho != 0 && !pEcho->IsObject())
 		throw Problem("echo should be like {\"channel\": \"VRC6 Pulse 1\"}.");
 
-	const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	const double Now = BpmAt(S, First);	// as the bars play now
 	if (Arg(Args, "bpm") != 0)
 		Plan.Bpm = NumberArg(Args, "bpm", 0.0, 10.0, 1000.0);
 	else if (Arg(Args, "tempo_percent") != 0)
@@ -6748,10 +7137,23 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 	Draft D(S);
 	ApplyMoodPlan(S, D, Plan, First, End, Done, Warnings);
 
-	// 6. The tempo
+	// 6. The tempo: the track's for the whole song, else speed and tempo
+	// commands in the bars (direct changes), the old tempo back after them
+	const bool WholeSong = From <= 1 && To >= S.Time.BarCount();
 	int Speed = S.Song.Speed, Tempo = S.Song.Tempo;
-	if (Plan.Bpm > 0.0)
+	std::string TempoLater;
+	if (Plan.Bpm > 0.0 && WholeSong)
 		SpeedTempoFor(S, Plan.Bpm, S.Time.RowsPerBeat, Speed, Tempo);
+	else if (Plan.Bpm > 0.0 && DirectChange) {
+		const TempoChange Range = { First, End, Plan.Bpm, 0, 0, 0 };
+		const std::string Text = WriteTempoChange(S, D, Range, Warnings);
+		if (!Text.empty())
+			Done.push_back(Text);
+	}
+	else if (Plan.Bpm > 0.0)
+		TempoLater = Format(" Meant to play at %s BPM there: a tempo for some bars is a speed and tempo command at their start "
+			"(set_tempo with from_bar and to_bar writes it), which needs direct changes.",
+			FormatNumber(std::floor(Plan.Bpm * 10 + 0.5) / 10).c_str());
 	const bool NewTempo = Speed != S.Song.Speed || Tempo != S.Song.Tempo;
 	const std::string NewBpm = FormatNumber(std::floor(BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat) * 10 + 0.5) / 10);
 
@@ -6773,6 +7175,7 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 			ClipName = "Claude: " + (Mood.empty() ? std::string("new mood") : Mood) + ", " + RangeText(From, To);
 		Result = Commit(S, Changes, Start, AsClip, ClipName, What + ", " + RangeText(From, To));
 	}
+	Result += TempoLater;
 	if (NewTempo) {
 		if (!Result.empty())
 			Result += " ";
@@ -9009,8 +9412,75 @@ std::string CheckLoopTool(Session &S, const Json &Args)
 
 // Sets where the song loops: a jump (Bxx) after to_bar back to from_bar,
 // which starts a frame; jumps and halts that would end it earlier go
+// set_loop with stop: the song plays once and stops, a halt (Cxx) on the last
+// row of to_bar or at stop_beat in it; the jumps and halts elsewhere go
+std::string StopSongTool(Session &S, const Json &Args)
+{
+	const int Bars = S.Time.BarCount(), PL = S.Time.PatternLength;
+	if (Arg(Args, "from_bar") != 0)
+		throw Problem("A song that stops plays once from its start, so from_bar has no use with stop; leave it out.");
+	const int To = IntArg(Args, "to_bar", Bars, 1, Bars);
+	int Row = S.Time.BarEnd(To) - 1;
+	if (Arg(Args, "stop_beat") != 0) {
+		bool Exact;
+		const double Beat = NumberArg(Args, "stop_beat", 1.0, 1.0, 64.0);
+		if (!S.Time.PositionToRow(To, Beat, Row, Exact))
+			throw Problem(Format("Bar %d has %s; stop_beat is one of them, like 3 or 2.5.", To,
+				Plural(S.Time.BeatsPerBar(To), "beat", "beats").c_str()));
+	}
+	const bool BarEnds = Row == S.Time.BarEnd(To) - 1;
+	const std::string Where = BarEnds ? Format("after bar %d", To) : "at " + S.Time.Position(Row);
+	if (!S.Song.DirectChanges)
+		throw Problem(Format("Stopping the song changes it, which needs direct changes. The user can do it: a C00 effect on %s "
+			"(frame %02X, row %02X) stops it there.", S.Time.Position(Row).c_str(), Row / PL, Row % PL));
+	Draft D(S);
+	int Removed = 0;
+	bool Already = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<Cell> &Cells = S.Cells(c);
+		for (size_t r = 0; r < Cells.size(); ++r)
+			for (int k = 0; k < S.Channel(c).EffectColumns && k < EFFECT_COLUMNS; ++k) {
+				if (Cells[r].Effect[k] != EFF_JUMP && Cells[r].Effect[k] != EFF_HALT)
+					continue;
+				if (static_cast<int>(r) == Row && Cells[r].Effect[k] == EFF_HALT && !Already) {
+					Already = true;	// the halt it needs
+					continue;
+				}
+				Cell &C = D.Cells(c)[r];
+				C.Effect[k] = EFF_NONE;
+				C.Param[k] = 0;
+				++Removed;
+			}
+	}
+	if (!Already && !PutSongEffect(S, D, S.ChannelCount() - 1, Row, EFF_HALT, 0))
+		throw Problem(Format("No channel has a free effect column at %s for the halt; show another effect column in FamiTracker.",
+			S.Time.Position(Row).c_str()));
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = 0;
+	if (!D.Collect(0, true, Changes, Start, Warnings))
+		return Format("The song already plays once and stops %s.", Where.c_str());
+	std::string What = Format("the song plays once and stops %s (C00 there)", Where.c_str());
+	if (Removed > 0)
+		What += Format("; %s that ended it elsewhere went", Plural(Removed, "jump or halt", "jumps and halts").c_str());
+	if (S.Time.BarEnd(To) < S.Time.TotalRows())
+		Warnings.push_back(Format("Bars after %d don't play now.", To));
+	if (!BarEnds)
+		Warnings.push_back(Format("FamiTracker stops as the halt's row begins, cutting what still sounds: let the last chord ring out "
+			"(or fade it) before %s.", S.Time.Position(Row).c_str()));
+	const std::string Done = Commit(S, Changes, Start, false, "", What);
+	S.Load();
+	if (!Flow(S).Halts())
+		Warnings.push_back("FamiTracker's song still loops (a jump comes before the halt); check_loop shows how it plays.");
+	return WithRemarks(S, Done, Warnings);
+}
+
 std::string SetLoopTool(Session &S, const Json &Args)
 {
+	if (BoolArg(Args, "stop", false))
+		return StopSongTool(S, Args);
+	if (Arg(Args, "stop_beat") != 0)
+		throw Problem("stop_beat goes with stop: true (the song plays once and stops there).");
 	const int PL = S.Time.PatternLength, Bars = S.Time.BarCount();
 	const int From = IntArg(Args, "from_bar", 1, 1, Bars);
 	const int To = IntArg(Args, "to_bar", Bars, 1, Bars);
@@ -10992,11 +11462,21 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"first, mostly by changing the speed at tempo 150 as FamiTracker users do (at 4 rows a beat: speed 5 is 180 BPM, 6 is 150, "
 		"7 about 129, 8 112.5, 9 100). Or give FamiTracker's own speed (ticks a row, lower is faster) and tempo (150 usually; "
 		"higher is faster) when the user names them; with bpm too, the one given stays. Slower feels calmer or sadder, faster "
-		"brighter or more urgent. Needs direct changes; undoable.",
+		"brighter or more urgent. With from_bar it changes inside the song instead, with speed and tempo effects (Fxx) there: "
+		"a section at its own tempo (to_bar: the old tempo comes back after it), or with over_bars a gradual change, a step a "
+		"beat: a ritardando that slows an ending down, an accelerando. set_loop with stop then ends the song. Needs direct "
+		"changes; undoable.",
 		Schema()
 			.Add("bpm", Prop("number", "Beats per minute."))
 			.Add("speed", Prop("integer", "FamiTracker's speed: ticks a row, 1-31 (lower is faster)."))
-			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual).")),
+			.Add("tempo", Prop("integer", "FamiTracker's tempo, 32-255 (150 is the usual)."))
+			.Add("from_bar", BarProp("The bar the new tempo starts at, inside the song (speed and tempo effects there). Without it "
+				"the whole track's tempo changes."))
+			.Add("beat", Prop("number", "With from_bar: the beat in that bar it starts at, like 3 (default 1)."))
+			.Add("to_bar", BarProp("With from_bar: the last bar at the new tempo; after it the song plays at the tempo it had "
+				"(default: to the song's end)."))
+			.Add("over_bars", Prop("number", "With from_bar: reach the new tempo gradually over this many bars, a step every beat "
+				"(a ritardando when slower, like 4 for an ending that slows down; an accelerando when faster).")),
 		false, false, true);
 
 	AddTool("set_meter", "Set the meter",
@@ -11277,7 +11757,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		AddTool("change_mood", "Change the mood",
 			"Changes the mood of some bars in one go: another key or mode for every melodic channel, parts moved up or down, new "
 			"sounds, vibrato on a part, an echo of a part (in that order), and the tempo. All of it arrives together: one clip "
-			"to try, or with direct changes one Ctrl+Z step (the tempo is a second one). Use it rather than several separate "
+			"to try, or with direct changes one Ctrl+Z step (the whole song's tempo is a second one; for some bars the tempo goes in "
+			"with the rest, as speed and tempo effects there, the old tempo back after them). Use it rather than several separate "
 			"tools whenever a mood needs more than one change, since separate clips each start from the original song. Darker, "
 			"for example: to_mode minor, the bass an octave lower, a softer lead sound, tempo_percent 85.",
 			Schema()
@@ -11482,9 +11963,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("set_loop", "Set the loop",
 		"Sets where the song loops: after to_bar it jumps back to from_bar (a Bxx effect), which has to start a frame; bars "
-		"before from_bar then play once as an intro. Jumps and halts elsewhere go. Needs direct changes; undoable.",
+		"before from_bar then play once as an intro. Or, with stop, the song plays once and stops after to_bar (a halt, Cxx), "
+		"for the credits, an ending, a game over: export_for_game then makes a file that plays once. Jumps and halts elsewhere "
+		"go. Needs direct changes; undoable.",
 		Schema().Add("from_bar", BarProp("Where the loop starts; it has to start a frame. Default 1 (no intro)."))
-			.Add("to_bar", BarProp("The loop's last bar. Default: the song's last bar.")),
+			.Add("to_bar", BarProp("The loop's last bar, or with stop the last bar that plays. Default: the song's last bar."))
+			.Add("stop", Prop("boolean", "Play once and stop after to_bar instead of looping."))
+			.Add("stop_beat", Prop("number", "With stop: the beat in to_bar where the sound stops, like 3 (default: the bar's end). "
+				"FamiTracker cuts what still sounds there, so let a last chord ring out or fade before it.")),
 		false, true);
 
 	AddTool("insert_bars", "Put bars in",
@@ -11925,9 +12411,10 @@ std::string ToolSet::Instructions()
 		"melody on the root rubs against it (an add9 or a 6 there). A sampled drum on the same row as a metallic noise hit "
 		"squashes it. set_meter with bars_per_frame 2 lets a 2-bar intro loop from bar 3.\n"
 		"- For a game: name_song first (the export is named after the track), then export_for_game at the loudness for its kind "
-		"of place, so the tracks sit together: about -22 LUFS for calm places, -19 for action and bosses, -20 for the rest. A boss with phases can "
-		"be a track per phase (make_version gives the second track to rewrite), and the game switches between them. For many "
-		"tracks for one game, references action guide topic soundtrack has the plan.\n"
+		"of place, so the tracks sit together: about -22 LUFS for calm places, -19 for action and bosses, -20 for the rest. A "
+		"boss with phases can be a track per phase (make_version gives the second track to rewrite), and the game switches "
+		"between them. Credits or an ending that slows down and stops: set_tempo with from_bar and over_bars, then set_loop "
+		"with stop. For many tracks for one game, references action guide topic soundtrack has the plan.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. "

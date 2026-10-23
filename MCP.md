@@ -148,7 +148,7 @@ anything; close the dialog and ask again.
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind). See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
-| `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
+| `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers: the track's, or from a bar on (a section's own tempo, a ritardando or accelerando over some bars) with speed and tempo effects there (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
 | `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. See [Mixing](#mixing) |
@@ -185,7 +185,7 @@ anything; close the dialog and ask again.
 | `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato) and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
-| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
+| `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
@@ -242,6 +242,24 @@ with `Fxx` effects, a BPM changes the tempo only, since those effects would
 set the speed back. Night and tense versions pick their tempo the same way,
 unless the song has `Fxx` effects: then they scale the tempo, and the tempo
 effects along with it.
+
+**A tempo for some bars** comes from `set_tempo` with `from_bar` (and
+`beat`): speed and tempo effects (`Fxx`) there set it, and after `to_bar` the
+song plays at the tempo it had (without `to_bar` the new one holds to the
+end). With `over_bars` it changes gradually, a step every beat: a ritardando
+for an ending that slows down, or an accelerando. The steps keep one speed
+and move the tempo, and the last one lands on even rows: from 112.5 to 56.25
+BPM the tempo steps down at speed 8 and ends at speed 16, tempo 150. Speed
+changes inside those bars (a swing) stay, and the tempo carries the change.
+Where the song loops back into the change or past it, the loop's start gets
+the speed and tempo it has the first time, so every repeat plays alike.
+`change_mood` with a `bpm` or `tempo_percent` for some bars writes the same
+effects within its one Ctrl+Z step; for the whole song it sets the track's
+tempo as before. **A song that stops** (credits, an ending, a game over) gets
+a halt (`Cxx`) from `set_loop` with `stop`: on the last row of `to_bar`, or
+at `stop_beat` in it, and `export_for_game` then makes a file that plays once.
+FamiTracker cuts what still sounds when the halt's row comes, so a last chord
+rings out or fades before it.
 
 **Swing** (`set_swing`) works the way FamiTracker 0.4.6 composers do it: the
 speed changes every half beat, longer then shorter, so the rows themselves

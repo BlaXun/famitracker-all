@@ -2534,6 +2534,91 @@ void TestTempoTool()
 	CHECK_HAS(Result.Text, "F96 effect at bar 5 beat 2.5");
 }
 
+// Tempo changes inside the song: a section at its own tempo, a ritardando, a song that stops (2026-10-23)
+void TestTempoInside()
+{
+	FakeSong Song(4);	// 16 bars
+	Song.Info.DirectChanges = true;
+	Song.Info.Speed = 8;	// 112.5 BPM
+	Song.Info.Tempo = 150;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Song.Put(5, Bar * 16, "C-4", 0);
+	// Bars 5-8 at 90 BPM, then 112.5 again: speed commands on the last channel
+	ToolResult Result = Run(Song, "set_tempo", "{\"bpm\": 90, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Changed the song: from bar 5 it plays at 90 BPM (speed 10, tempo 150) instead of 112.5 BPM (speed 8, tempo 150), "
+		"and from bar 9 at 112.5 BPM (speed 8, tempo 150) again.");
+	CHECK(HasEffectAt(Song, 7, 64, EFF_SPEED, 10) && HasEffectAt(Song, 7, 128, EFF_SPEED, 8));
+	CHECK(Song.Info.Speed == 8 && Song.Info.Tempo == 150);
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 90, \"from_bar\": 5, \"to_bar\": 8}").Text, "It plays at 90 BPM (speed 10, tempo 150) there already.");
+	// Back to the song's tempo there: its command goes (the one after it stays, playing what plays anyway)
+	Result = Run(Song, "set_tempo", "{\"speed\": 8, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK_HAS(Result.Text, "from bar 5 it plays at 112.5 BPM (speed 8, tempo 150) instead of 90 BPM (speed 10, tempo 150)");
+	CHECK(!HasEffectAt(Song, 7, 64, EFF_SPEED, 10));
+
+	// A ritardando over the last 4 bars, a step a beat at speed 8, landing on even rows (speed 16)
+	Result = Run(Song, "set_tempo", "{\"bpm\": 56.25, \"from_bar\": 13, \"over_bars\": 4}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "from bar 13 it slows down gradually over 4 bars, a step a beat, from 112.5 BPM (speed 8, tempo 150) to 56.3 BPM "
+		"(speed 16, tempo 150) (tempo commands F91-F50) to the song's end");
+	CHECK(HasEffectAt(Song, 7, 192, EFF_SPEED, 0x91) && HasEffectAt(Song, 7, 196, EFF_SPEED, 0x8D));
+	CHECK(HasEffectAt(Song, 7, 252, EFF_SPEED, 16) && HasEffectAt(Song, 7, 252, EFF_SPEED, 150));
+	// The whole song loops, so its start gets the speed back for the next time through
+	CHECK_HAS(Result.Text, "Where the loop comes back (bar 1) the song gets the speed and tempo it has there the first time");
+	CHECK(HasEffectAt(Song, 7, 0, EFF_SPEED, 8));
+	// Too long for the bars left
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 60, \"from_bar\": 15, \"over_bars\": 4}").Text, "too short for 16 steps of it a beat apart");
+
+	// The end: the song plays once and stops in bar 16 (a halt), then check_loop agrees
+	CHECK(Run(Song, "set_loop", "{\"stop_beat\": 3}").IsError);
+	CHECK(Run(Song, "set_loop", "{\"stop\": true, \"from_bar\": 5}").IsError);
+	Result = Run(Song, "set_loop", "{\"stop\": true, \"stop_beat\": 3}");
+	CHECK_HAS(Result.Text, "Changed the song: the song plays once and stops at bar 16 beat 3 (C00 there).");
+	CHECK_HAS(Result.Text, "let the last chord ring out (or fade it) before bar 16 beat 3");
+	CHECK(HasEffectAt(Song, 7, 248, EFF_HALT, 0));
+	CHECK_HAS(Run(Song, "check_loop", "{}").Text, "The song plays once and stops after bar 16 beat 3 (a halt, Cxx)");
+	CHECK_HAS(Run(Song, "set_loop", "{\"stop\": true, \"stop_beat\": 3}").Text, "already plays once and stops at bar 16 beat 3");
+	// At a bar's end, and earlier: the halt moves, the bars after don't play
+	Result = Run(Song, "set_loop", "{\"stop\": true, \"to_bar\": 15}");
+	CHECK_HAS(Result.Text, "the song plays once and stops after bar 15 (C00 there); 1 jump or halt that ended it elsewhere went");
+	CHECK_HAS(Result.Text, "Bars after 15 don't play now.");
+	CHECK(HasEffectAt(Song, 7, 239, EFF_HALT, 0) && !HasEffectAt(Song, 7, 248, EFF_HALT, 0));
+	// Looping again takes the halt off
+	CHECK_HAS(Run(Song, "set_loop", "{}").Text, "1 jump or halt that ended it elsewhere went");
+	CHECK(!HasEffectAt(Song, 7, 239, EFF_HALT, 0));
+
+	// A swing stays: the tempo carries the change
+	FakeSong Swung(4);
+	Swung.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Swung.Put(5, Bar * 16, "C-4", 0);
+	CHECK(!Run(Swung, "set_swing", "{\"amount\": \"hard\"}").IsError);
+	Result = Run(Swung, "set_tempo", "{\"bpm\": 120, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK_HAS(Result.Text, "from bar 5 it plays at 120 BPM (tempo 120) instead of");
+	CHECK_HAS(Result.Text, "the song's speed changes there stay (a swing, say), so the tempo carries the change");
+	CHECK(HasEffectAt(Swung, 7, 64, EFF_SPEED, 120) && HasEffectAt(Swung, 7, 64, EFF_SPEED, 8) && HasEffectAt(Swung, 7, 66, EFF_SPEED, 4));
+	CHECK(HasEffectAt(Swung, 7, 128, EFF_SPEED, 150));
+
+	// change_mood with bpm for some bars: commands there, the track's tempo stays; for the whole song, the track's
+	FakeSong Mood(4);
+	Mood.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Mood.Put(5, Bar * 16, Bar % 2 ? "E-4" : "C-4", 0);
+	Result = Run(Mood, "change_mood", "{\"bpm\": 120, \"from_bar\": 9, \"to_bar\": 12}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "from bar 9 it plays at 120 BPM");
+	CHECK(Mood.Info.Speed == 6 && Mood.Info.Tempo == 150 && Mood.TempoUndo.empty());
+	CHECK(HasEffectAt(Mood, 7, 128, EFF_SPEED, 120) && HasEffectAt(Mood, 7, 192, EFF_SPEED, 150));
+	// tempo_percent goes by the tempo the bars play at
+	Result = Run(Mood, "change_mood", "{\"tempo_percent\": 50, \"from_bar\": 9, \"to_bar\": 12}");
+	CHECK_HAS(Result.Text, "from bar 9 it plays at 60 BPM");
+	FakeSong Whole;
+	Whole.Info.DirectChanges = true;
+	Whole.Put(5, 0, "C-4", 0);
+	Run(Whole, "change_mood", "{\"bpm\": 100}");
+	CHECK(Whole.Info.Speed == 9 && Whole.Info.Tempo == 150);
+}
+
 void TestBacking()
 {
 	FakeSong Song;
@@ -3507,7 +3592,7 @@ void TestMood()
 	CHECK_HAS(Result.Text, "from C major to C minor (E to Eb, A to Ab, B to Bb), 2A03 Triangle down 1 octave, VRC6 Pulse 1 played by "
 		"\"Warm pad\" (03), vibrato 437 on VRC6 Pulse 1 and an echo of VRC6 Pulse 1 on VRC6 Pulse 2, bars 1-2");
 	CHECK_HAS(Result.Text, "dragging the card to 2A03 Triangle at bar 1 beat 1");
-	CHECK_HAS(Result.Text, "Meant to play at 120 BPM: suggest the user sets speed 6 and tempo 120");
+	CHECK_HAS(Result.Text, "Meant to play at 120 BPM there: a tempo for some bars is a speed and tempo command at their start");
 	const std::vector<std::vector<Cell> > &Clip = Song.Clips[0].Columns;
 	CHECK_EQ(Clip.size(), static_cast<size_t>(5));	// Triangle to VRC6 Pulse 2
 	CHECK(Song.Clips[0].Sources[0] == 2 && Song.Clips[0].Sources[4] == 6);
@@ -3520,14 +3605,16 @@ void TestMood()
 	CHECK(Clip[4][4].Effect[0] == EFF_VIBRATO && Clip[4][4].Param[0] == 0x37);
 	CHECK(Clip[4].size() == 36 && Clip[4][35].Note == NOTE_RELEASE);
 
-	// Directly: one undoable change for the notes, another for the tempo
+	// Directly: one undoable change, the tempo of bars 1-2 in it as effects there (the song's tempo after them)
 	Song.Info.DirectChanges = true;
 	Result = Run(Song, "change_mood", Underwater);
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Changed the song: from C major to C minor");
-	CHECK_HAS(Result.Text, "The tempo is now 120 BPM (speed 6, tempo 120), its own Ctrl+Z step.");
+	CHECK_HAS(Result.Text, "and from bar 1 it plays at 120 BPM (speed 6, tempo 120) instead of 150 BPM (speed 6, tempo 150), and from "
+		"bar 3 at 150 BPM (speed 6, tempo 150) again, bars 1-2.");
 	CHECK_EQ(Song.Writes, 1);
-	CHECK(Song.Info.Tempo == 120 && Song.TempoUndo.size() == 1);
+	CHECK(Song.Info.Tempo == 150 && Song.TempoUndo.empty());
+	CHECK(HasEffectAt(Song, 7, 0, EFF_SPEED, 120) && HasEffectAt(Song, 7, 32, EFF_SPEED, 150));
 	CHECK_EQ(Notes(Song, 5, 0, 33), std::string("0:C-4 4:D-4 8:D#4 12:F-4 16:G-4 20:G#4 24:A#4 28:C-5 32:=== "));
 	CHECK(Song.Rows[2][0].Pitch() == 24 && Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][35].Note == NOTE_RELEASE);
 	CHECK_EQ(Song.Clips.size(), static_cast<size_t>(1));
@@ -7913,6 +8000,7 @@ int main()
 	TestSampleDrums();
 	TestTranspose();
 	TestTempoTool();
+	TestTempoInside();
 	TestBacking();
 	TestChords();
 	TestArrange();
