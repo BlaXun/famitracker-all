@@ -9,7 +9,10 @@ instruments, not hex rows.
 It works over MCP (the Model Context Protocol). FamiTracker itself is the
 MCP server, so there is nothing else to install besides Claude Code. Claude
 Code in WSL connects through `famitracker-mcp.exe`, which comes in the same
-zip (see [Claude Code in WSL](#claude-code-in-wsl)).
+zip (see [Claude Code in WSL](#claude-code-in-wsl)). Other MCP clients on
+another computer of your home network, such as an AI assistant on a Linux
+PC, can connect too once you allow it (see
+[Connecting from another computer](#connecting-from-another-computer)).
 
 ## Connecting, once
 
@@ -62,6 +65,140 @@ is on unless `/etc/wsl.conf` turns it off (`[interop] enabled=false`).
 
 With mirrored networking (`networkingMode=mirrored` in `.wslconfig`), WSL
 shares 127.0.0.1 with Windows, and the Windows command works in WSL too.
+
+## Connecting from another computer
+
+FamiTracker can serve its tools to another computer on your home network
+too: an AI assistant on a Linux PC in the next room, say, or a laptop. It's
+for your home network and Tailscale only, never for the internet.
+
+### Turning it on
+
+1. In FamiTracker: **File > Connect Claude Code...**, tick **Let Claude Code
+   connect**.
+2. On the right, under **Other computers on your network**, tick **Allow
+   connections from other computers on my network**. The column shows this
+   computer's addresses and the access code, each with a **Copy** button:
+
+   ```
+   Ethernet:     http://192.168.1.10:46600/mcp        [Copy]
+   Tailscale:    http://100.101.102.103:46600/mcp     [Copy]
+   Access code:  1f3a...                              [Copy]
+   ```
+
+3. Press OK. Windows asks once whether FamiTracker may use the network
+   ("Windows Defender Firewall has blocked some features of this app"): tick
+   **Private networks** and press **Allow access**.
+4. On the other computer, give its MCP client the address and the access
+   code, as the header `Authorization: Bearer <code>`.
+
+Take the address of the network both computers are on: the home network's
+(192.168..., 10..., 172.16-31...) at home, Tailscale's (100...) wherever
+your Tailscale reaches. This computer's name works too, where the other
+computer can look it up (`http://desktop-pc:46600/mcp`, or Tailscale's
+`http://desktop-pc.your-tailnet.ts.net:46600/mcp`). FamiTracker remembers the
+setting; untick it and FamiTracker listens on 127.0.0.1 only again, as
+before.
+
+### A small set of tools for local models
+
+Local models (a Qwen running in llama.cpp, say) do better with fewer tools
+and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 18
+of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
+`add_instrument`, `design_instrument`, `set_instrument`,
+`add_chords_and_bass`, `add_drums`, `add_echo`, `set_tempo`, `polish`,
+`mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song` and
+`export_for_game`. Its instructions are a page instead of four, but keep the
+craft (plan a key, tempo and form; a motif; chords and a bass in a style;
+drums with fills; an echo; polish, then mix) and the rules that decide how
+it sounds: notes on a sound that's gone at once vanish, a vibrato on the
+2A03's pulses can click, and only 0.4.6's effects play. It has no recipes,
+so a client adds no tools of its own to list them. Tick **A small set of
+tools, for local models** in the dialog and its addresses end in
+`/mcp/core`. Both sets are always there; each client picks one by its
+address.
+
+### Hermes Agent
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)
+keeps its MCP servers in `~/.hermes/config.yaml`, under `mcp_servers`. Over
+HTTP, with the address and access code from the dialog:
+
+```yaml
+mcp_servers:
+  famitracker:
+    url: "http://192.168.1.10:46600/mcp/core"
+    headers:
+      Authorization: "Bearer 1f3a..."
+    timeout: 600          # export_for_game renders the song first
+    connect_timeout: 30
+```
+
+Then `/reload-mcp` in a Hermes session (or start a new one). The tools show
+up as `mcp_famitracker_get_song` and so on. To keep the code out of the
+file, put `FAMITRACKER_TOKEN=1f3a...` into `~/.hermes/.env` and write
+`Authorization: "Bearer ${env:FAMITRACKER_TOKEN}"`. Use `/mcp` instead of
+`/mcp/core` for every tool, with a model that copes with them. Hermes in a
+Distrobox container shares the host's network, so the same address works
+there.
+
+For clients that only start MCP servers over stdio, the zip has
+`famitracker-mcp-linux` (Linux, x86-64, linked statically, so it runs in any
+distribution or container). Copy it to the Linux computer, make it
+executable (`chmod +x famitracker-mcp-linux`) and let the client start it:
+
+```yaml
+mcp_servers:
+  famitracker:
+    command: "/home/you/bin/famitracker-mcp-linux"
+    args: ["--host", "192.168.1.10", "--token", "1f3a...", "--core"]
+    timeout: 600
+```
+
+`--host` takes the address or the computer's name, `--port` another port
+than 46600, and `--core` picks the small set (leave it out for all the
+tools). It passes each message to FamiTracker over the network, like
+`famitracker-mcp.exe` does for WSL, and says what to check when FamiTracker
+doesn't answer.
+
+### Files between the computers
+
+`study_nsf`, `import_nsf`, `study_module` and `make_sound_effect` (a voice
+recording) read files on the PC FamiTracker runs on. From another computer,
+send the file first: `send_file` takes its name and its bytes in base64 and
+puts it into the **Inbox** folder next to FamiTracker.exe
+(`Documents\FamiTracker inbox` where FamiTracker's folder can't be
+written); the reply gives the path to pass on, like
+`C:\Users\you\FamiTracker\Inbox\Mega Man 2.nsf`. A client with a shell
+sends the file itself, which is quicker:
+
+```
+curl -T "Mega Man 2.nsf" -H "Authorization: Bearer 1f3a..." "http://192.168.1.10:46600/inbox/Mega%20Man%202.nsf"
+```
+
+The Inbox takes NSF and NSFe files with their `.m3u` playlists, MOD, S3M,
+XM, IT and MIDI files, FamiTracker modules and WAV recordings, at most 5 MB
+each; a file of the same name is replaced. Its name can't hold folders.
+
+`export_for_game` saves its OGG files next to the song, on the PC. When it's
+asked over the network, its reply ends with a link to each file:
+
+```
+curl -H "Authorization: Bearer 1f3a..." -o Town.ogg http://192.168.1.10:46600/files/Town.ogg
+```
+
+Only the OGG files next to the song can be fetched, by their names.
+
+### Over the network, safely
+
+- FamiTracker only answers addresses of home networks (10.x, 172.16-31.x,
+  192.168.x, 169.254.x) and Tailscale's (100.64-127.x), besides this
+  computer; any other address is closed off at once.
+- Every request needs the access code, files too. Web pages are turned away
+  as before.
+- Never forward the port on your router: from outside, use Tailscale.
+- **New access code** in the dialog makes the old one stop working on the
+  other computer too: give it the new one.
 
 ## Asking
 
@@ -218,6 +355,7 @@ a click pluck that holds low.
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
+| `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
@@ -881,7 +1019,9 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
 
 ## Safety
 
-- FamiTracker only listens on 127.0.0.1, so other computers can't reach it.
+- FamiTracker only listens on 127.0.0.1, so other computers can't reach it,
+  unless you allow other computers on your network (then only home networks
+  and Tailscale; see [Over the network, safely](#over-the-network-safely)).
   Claude Code in WSL comes through `famitracker-mcp.exe`, a Windows program
   that connects to 127.0.0.1 like any other; nothing is opened to WSL's
   network.
@@ -912,6 +1052,22 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   command again.
 - **The Windows command in WSL connects to nothing**: that's WSL's own
   127.0.0.1. Pick **WSL** in the dialog and run that command instead.
+- **Another computer can't connect** (it times out, or
+  `famitracker-mcp-linux` says "didn't answer"): Windows' firewall keeps
+  FamiTracker out. In **Windows Security > Firewall & network protection >
+  Allow an app through firewall**, tick FamiTracker for Private networks
+  (and Public, if Windows thinks your home network is public; or set it to
+  Private in its network settings). Check the address too: both computers
+  on the same network, or both in your Tailscale.
+- **"Connection refused" from another computer**: **Allow connections from
+  other computers on my network** isn't ticked, the connection is off, or
+  the port isn't the one in the address.
+- **"FamiTracker only answers computers on a home network"**: the other
+  computer's address isn't a home network's or Tailscale's, as through some
+  VPNs. Connect through the home network or Tailscale.
+- **"FamiTracker only answers requests to this computer's addresses or
+  name"**: the client used a name FamiTracker doesn't know as its own (a
+  name of your own in a hosts file, say). Use the address from the dialog.
 
 ## Not yet
 
@@ -964,7 +1120,20 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   as released). The tests render with a stand-in synthesizer and decode the
   files again.
 - `Source/McpSocket.cpp`: the listener thread (Winsock, no MFC). It frames
-  HTTP requests and hands each to the UI thread with `SendMessageTimeout`.
+  HTTP requests and hands each to the UI thread with `SendMessageTimeout`,
+  each with its client's address (`HttpRequest::Peer`). With other computers
+  allowed it binds every IPv4 address and closes connections from addresses
+  outside home networks at once; `ListNetworkAddresses` gives the dialog this
+  computer's addresses (`GetAdaptersAddresses`).
+- `Source/Api/Network.cpp`: who may connect from the network (`MayConnect`:
+  loopback, 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10, or one of
+  this computer's own addresses), the Host headers that name this computer
+  (`NamesThisComputer`), the names files may have in the Inbox and the file
+  route (`IsPlainFileName`, `IsInboxFile`, `IsExportFile`), links and base64.
+  `HandleMcp` routes `/mcp`, `/mcp/core` (the tools of `ToolSet::CoreTools`
+  with `ToolSet::CoreInstructions`, no prompts), `GET /files/<name>` and
+  `PUT /inbox/<name>`; `ToolSet::Call` takes a `Caller` whose `FilesUrl`
+  makes `export_for_game` link its files.
 - `Source/Api/Bridge.cpp` and `Source/Api/tools/famitracker-mcp.cpp`: the
   connection for Claude Code in WSL, an MCP server over stdio. Each JSON-RPC
   line becomes the HTTP request Claude Code would send (with the protocol
@@ -973,8 +1142,12 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   `BridgeSocket.cpp` sends it to 127.0.0.1 (Winsock, or BSD sockets for the
   tests). On Windows it reads the port and the access code from
   `HKEY_CURRENT_USER\Software\FamiTracker\Claude Code` for every message;
-  `--port` and `--token` override them. The tests also run it against the
-  endpoint over real sockets.
+  `--port` and `--token` override them. With `--host` (an address or a
+  name) it connects to FamiTracker on another computer instead, within 10
+  seconds, and `--core` picks `/mcp/core`. Its sources build alone as the
+  `ftbridge` library, and CI links it statically against musl on Alpine for
+  the release's `famitracker-mcp-linux`. The tests also run it against the
+  endpoint over real sockets, by address and by name.
 - `Source/McpConnection.cpp`: `SongHost` over the open document, the
   message-only window that answers on the UI thread, the settings (registry
   section "Claude Code") and the dialog. Song changes go through

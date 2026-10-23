@@ -502,8 +502,8 @@ struct mcp_settings_t {
 class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 {
 public:
-	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
-		m_pProgress(NULL), m_iPlayFirst(0),
+	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bAddressesRead(false), m_bBusy(false),
+		m_bStopping(false), m_bOwnDialog(false), m_pProgress(NULL), m_iPlayFirst(0),
 		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false), m_iPlayPart(0), m_iReturnTrack(-1)
 	{
 		m_Settings.Enabled = false;
@@ -1967,13 +1967,14 @@ private:
 	// This computer's addresses for the Host check, looked up again every few seconds (Tailscale may come up later)
 	std::vector<std::string> OwnAddresses()
 	{
-		const ULONGLONG Now = GetTickCount64();
-		if (m_iAddressesTime == 0 || Now - m_iAddressesTime > 10000) {
+		const DWORD Now = GetTickCount();	// the difference stays right when it wraps
+		if (!m_bAddressesRead || Now - m_iAddressesTime > 10000) {
 			const std::vector<mcp_address_t> Found = ListNetworkAddresses();
 			m_Addresses.clear();
 			for (size_t i = 0; i < Found.size(); ++i)
 				m_Addresses.push_back(Found[i].Address);
 			m_iAddressesTime = Now;
+			m_bAddressesRead = true;
 		}
 		return m_Addresses;
 	}
@@ -2038,7 +2039,8 @@ private:
 	mcp_settings_t m_Settings;
 	CString m_sLastError;
 	std::vector<std::string> m_Addresses;	// this computer's, for other computers' requests
-	ULONGLONG m_iAddressesTime;				// when they were looked up; 0: not yet
+	DWORD m_iAddressesTime;					// when they were looked up
+	bool m_bAddressesRead;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
 	bool m_bStopping;
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
