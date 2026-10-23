@@ -1287,6 +1287,9 @@
     <ClCompile Include="Source\Api\PulseClicks.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\ProblemList.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1351,6 +1354,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\PulseClicks.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\ProblemList.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">
@@ -1452,6 +1458,12 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\ClipsPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\ProblemsPanel.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\ProblemsPanel.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\InstrumentLibrary.cpp">

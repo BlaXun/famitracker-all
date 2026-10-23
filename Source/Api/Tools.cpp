@@ -11075,6 +11075,7 @@ Json CheckJson(Session &S, const CheckFinding &F)
 		Json Note = Json::MakeObject();
 		Note.Set("channel", N.Channel + 1);
 		PutPlace(S, N.Row, Note);
+		Note.Set("position", S.Time.Position(N.Row));
 		Note.Set("note", N.Pitch >= 0 ? Json(PitchName(N.Pitch)) : Json());
 		Note.Set("rows", N.Rows);
 		Notes.Push(Note);

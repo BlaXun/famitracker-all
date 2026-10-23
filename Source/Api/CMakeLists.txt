@@ -77,6 +77,7 @@ add_library(ftapi STATIC
 	Effects.cpp
 	Wavetables.cpp
 	PulseClicks.cpp
+	ProblemList.cpp
 	Music.cpp
 	Chords.cpp
 	Arrange.cpp

@@ -38,6 +38,7 @@
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
+#include "../ProblemList.h"
 #include "../PulseClicks.h"
 #include "../References.h"
 #include "../Song.h"
@@ -8688,6 +8689,7 @@ void TestCheckJson()
 			CHECK_EQ(TextOf(&pNotes2->At(1), "note"), std::string("E-4"));
 			CHECK_EQ(IntegerOf(&pNotes2->At(2), "row"), 16);
 			CHECK_EQ(IntegerOf(&pNotes2->At(2), "bar"), 2);
+			CHECK_EQ(TextOf(&pNotes2->At(2), "position"), std::string("bar 2 beat 1"));
 			CHECK_EQ(TextOf(&pNotes2->At(2), "note"), std::string("G-4"));
 		}
 		CHECK(pGone != 0 && pGone->Get("fix") == 0);
@@ -8699,6 +8701,151 @@ void TestCheckJson()
 	CHECK(Nothing.Get("key") != 0 && Nothing.Get("key")->IsNull());
 	CHECK(Nothing.Get("findings") != 0 && Nothing.Get("findings")->Size() == 0);
 	CHECK_EQ(IntegerOf(Nothing.Get("counts"), "key"), 0);
+}
+
+// check_song's JSON read back as the problems panel shows it (ProblemList.h): the findings by kind, a line each (a note
+// each of notes that vanish) in the song's order, and the marks the pattern editor and the piano roll draw
+void TestProblemList()
+{
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+	CHECK(Error.empty());
+	CHECK_EQ(List.Track(), 0);
+	CHECK_EQ(List.PatternLength(), 64);
+	CHECK_EQ(List.Key(), std::string("C major"));
+	CHECK_EQ(List.Count(PROBLEM_CLASH), 1);
+	CHECK_EQ(List.Count(PROBLEM_RANGE), 1);
+	CHECK_EQ(List.Count(PROBLEM_SILENT), 1);
+	CHECK_EQ(List.Count(PROBLEM_KEY), 2);
+	CHECK_EQ(List.Count(PROBLEM_VANISHING), 0);
+	CHECK_EQ(List.Total(), 5);
+	CHECK_EQ(List.Findings().size(), 5u);
+	CHECK_EQ(std::string(ProblemKindTitle(PROBLEM_VANISHING)), std::string("Notes that vanish"));
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_KEY)), std::string("key"));
+	CHECK(ProblemSeverity(PROBLEM_CLICK) == 3 && ProblemSeverity(PROBLEM_RANGE) == 2 && ProblemSeverity(PROBLEM_BUSY) == 1);
+
+	// The lines of a kind in the song's order: C#4 at bar 1 before F#4 at bar 2, though check_song found F#4 first
+	const std::vector<ProblemLine> &Key = List.Lines(PROBLEM_KEY);
+	CHECK_EQ(Key.size(), 2u);
+	if (Key.size() == 2) {
+		CHECK(Key[0].Row == 0 && Key[0].Channel == 6);
+		CHECK(Key[1].Row == 16 && Key[1].Channel == 5);
+		CHECK_EQ(List.LineText(Key[1]), std::string("F#4 is outside C major"));
+		CHECK(List.LineNote(Key[1]) != 0 && List.LineNote(Key[1])->Name == "F#4" && List.LineNote(Key[1])->Rows == 4);
+	}
+	const std::vector<ProblemLine> &Clash = List.Lines(PROBLEM_CLASH);
+	CHECK(Clash.size() == 1 && List.LineText(Clash[0]) == "C-4 against C#4 on VRC6 Pulse 2 for 1 beat");
+	const ProblemFinding &ClashFinding = List.Findings()[static_cast<size_t>(Clash.empty() ? 0 : Clash[0].Finding)];
+	CHECK_EQ(ClashFinding.Kind, static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ClashFinding.Channel, 5);
+	CHECK_EQ(ClashFinding.ChannelName, std::string("VRC6 Pulse 1"));
+	CHECK_EQ(ClashFinding.Position, std::string("bar 1 beat 1"));
+	CHECK_EQ(ClashFinding.Message, std::string("Clash: C-4 on VRC6 Pulse 1 against C#4 on VRC6 Pulse 2 at bar 1 beat 1 for 1 beat."));
+	CHECK(ClashFinding.Notes.size() == 2 && ClashFinding.Notes[1].Channel == 6 && ClashFinding.Notes[1].Name == "C#4");
+	CHECK(ClashFinding.FixTool.empty());
+	const std::vector<ProblemLine> &Silent = List.Lines(PROBLEM_SILENT);
+	CHECK(Silent.size() == 1 && Silent[0].Channel == -1 && Silent[0].Row == 32 && List.LineText(Silent[0]) == "Nothing plays in bar 3");
+	CHECK(Silent.size() == 1 && List.LineNote(Silent[0]) == 0);
+	CHECK(Silent.size() == 1 && List.LinePosition(Silent[0]) == "bar 3 beat 1");
+
+	// Marks: the worst kind on each note's row, none for the silent bar, none on another track
+	ProblemMarks Marks;
+	CHECK(Marks.IsEmpty());
+	Marks.Set(List, 8, 128, -1);
+	CHECK(!Marks.IsEmpty());
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));	// outside the key too, but a clash is worse
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 16)), static_cast<int>(PROBLEM_KEY));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 0, 48)), static_cast<int>(PROBLEM_RANGE));
+	CHECK_EQ(Marks.At(0, 5, 4), 0);
+	CHECK_EQ(Marks.At(0, 5, 32), 0);
+	CHECK_EQ(Marks.At(1, 5, 0), 0);		// another track
+	CHECK_EQ(Marks.At(0, 9, 0), 0);
+	CHECK_EQ(Marks.At(0, 5, 500), 0);
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 0)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 0, 48)), 0x001E96F0ul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 16)), 0x00AF8C78ul);
+	// The selected finding's notes are set apart
+	Marks.Set(List, 8, 128, Clash.empty() ? -1 : Clash[0].Finding);
+	CHECK(ProblemMarks::IsSelected(Marks.At(0, 5, 0)) && ProblemMarks::IsSelected(Marks.At(0, 6, 0)));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 16)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	Marks.Clear();
+	CHECK(Marks.IsEmpty() && Marks.At(0, 5, 0) == 0);
+
+	// Notes that vanish: a line each, with the note's name
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		ProblemList Gone;
+		CHECK(Gone.Read(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+		const std::vector<ProblemLine> &Lines = Gone.Lines(PROBLEM_VANISHING);
+		CHECK_EQ(Gone.Count(PROBLEM_VANISHING), 3);
+		CHECK_EQ(Lines.size(), 3u);
+		CHECK_EQ(Gone.Findings().size(), 1u);
+		if (Lines.size() == 3) {
+			CHECK(Lines[0].Row == 8 && Lines[1].Row == 10 && Lines[2].Row == 16 && Lines[2].Note == 2 && Lines[2].Channel == 5);
+			CHECK_EQ(Gone.LineText(Lines[0]), std::string("D-4: \"Fair pluck\" (03) is gone within 3 frames, between notes of the line "
+				"that hold (\"Lead\" (00))"));
+			CHECK(Gone.LineNote(Lines[2]) != 0 && Gone.LineNote(Lines[2])->Name == "G-4");
+			CHECK_EQ(Gone.LinePosition(Lines[1]), std::string("bar 1 beat 3.5"));
+			CHECK_EQ(Gone.LinePosition(Lines[2]), std::string("bar 2 beat 1"));
+		}
+		ProblemMarks GoneMarks;
+		GoneMarks.Set(Gone, 8, 128, 0);
+		CHECK(GoneMarks.At(0, 5, 8) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK(GoneMarks.At(0, 5, 16) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK_EQ(GoneMarks.At(0, 5, 12), 0);
+	}
+
+	// A click's fix, as the panel's Nudge runs it
+	{
+		FakeSong Clicky;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+		Clicky.End(0, 32);
+		ProblemList Clicks;
+		CHECK(Clicks.Read(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text, Error));
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixTool == "polish");
+		CHECK(Clicks.Findings().size() == 1 &&
+			Clicks.Findings()[0].FixArguments == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixDoes == "nudges it a hair (P81, 7 cents sharp), so its vibrato "
+			"stays clear of 256");
+		CHECK_HAS(Clicks.LineText(Clicks.Lines(PROBLEM_CLICK)[0]), "A-3 clicks ");
+	}
+
+	// Not check_song's JSON
+	ProblemList Wrong;
+	CHECK(!Wrong.Read("Checked bars 1-8 in C major", Error) && !Error.empty());
+	CHECK(!Wrong.Read("{\"counts\": {}}", Error));
+	CHECK(Wrong.Findings().empty() && Wrong.Total() == 0);
+	// A kind of a later version is left out
+	CHECK(Wrong.Read("{\"track\": 2, \"pattern_length\": 32, \"counts\": {\"key\": 1}, \"findings\": [{\"kind\": \"later\"}, "
+		"{\"kind\": \"key\", \"channel\": 2, \"frame\": 1, \"row\": 3, \"notes\": [{\"channel\": 2, \"frame\": 1, \"row\": 3}]}]}", Error));
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Track() == 1 && Wrong.Findings()[0].Row == 35 && Wrong.Findings()[0].Channel == 1);
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Findings()[0].Notes.size() == 1 && Wrong.Findings()[0].Notes[0].Row == 35);
 }
 
 int main()
@@ -8743,6 +8890,7 @@ int main()
 	TestPulseClicks();
 	TestVanishing();
 	TestCheckJson();
+	TestProblemList();
 	TestNameSong();
 	TestLoudness();
 	TestPlayback();
