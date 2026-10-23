@@ -11006,13 +11006,12 @@ std::string CheckTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
 	bool Found;
 	const Key K = KeyArg(S, Args, "key", First, End, Found);
-	std::vector<std::string> Findings;
-	int Hidden = 0;
-	auto Report = [&](const std::string &Text) {
-		if (static_cast<int>(Findings.size()) < MAX_LISTED * 3)
-			Findings.push_back(Text);
-		else
-			++Hidden;
+	// Findings by kind, the ones a listener hears worst first, so a long list of notes outside the key (a song that
+	// changes key) doesn't hide notes that vanish or click
+	enum { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
+	std::vector<std::string> Findings[FOUND_KINDS];
+	auto Report = [&](int Kind, const std::string &Text) {
+		Findings[Kind].push_back(Text);
 	};
 
 	// What sounds on each row, per melodic channel
@@ -11055,7 +11054,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			const std::string Where = Format("%s %s", Info.FullName().c_str(), S.Time.Position(N.Row).c_str());
 			if (Found && !InKey(LandedPitch(N), K)) {
 				++OutOfKey;
-				Report(Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(), Where.c_str(),
+				Report(FOUND_KEY, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(), Where.c_str(),
 					S.Time.Length(N.Rows).c_str()));
 			}
 			std::string Range;
@@ -11075,7 +11074,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			}
 			if (!Range.empty()) {
 				++OutOfRange;
-				Report(Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(), Where.c_str(), Range.c_str()));
+				Report(FOUND_RANGE, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(), Where.c_str(), Range.c_str()));
 			}
 		}
 	}
@@ -11152,7 +11151,7 @@ std::string CheckTool(Session &S, const Json &Args)
 				if (Run >= MinClash) {
 					const int Row = First + r - Run;
 					++Clashes;
-					Report(Format("Clash: %s%s on %s against %s%s on %s at %s for %s.", PitchName(RunA).c_str(),
+					Report(FOUND_CLASH, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.", PitchName(RunA).c_str(),
 						ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(), PitchName(RunB).c_str(),
 						ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(), S.Time.Position(Row).c_str(),
 						S.Time.Length(Run).c_str()));
@@ -11188,12 +11187,12 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (IsMelodic(S.Channel(c)) && !Runs[static_cast<size_t>(c)] && BarEnd - BarFirst >= 8 &&
 				Starts * 4 >= (BarEnd - BarFirst) * 3) {
 				++Busy;
-				Report(Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
+				Report(FOUND_BUSY, Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
 			}
 		}
 		if (!Anything && SongFirst >= 0 && BarFirst > SongFirst && BarFirst < SongLast) {
 			++Silent;
-			Report(Format("Silent: nothing plays in bar %d.", Bar));
+			Report(FOUND_SILENT, Format("Silent: nothing plays in bar %d.", Bar));
 		}
 	}
 	// Clicks: held notes on the 2A03's and MMC5's pulses whose vibrato takes the period across a multiple of 256, where
@@ -11201,7 +11200,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	const std::vector<std::pair<int, ClickFix> > Clicks = SongClicks(S, First, End);
 	for (size_t i = 0; i < Clicks.size(); ++i) {
 		const ClickFix &F = Clicks[i].second;
-		Report(Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the period across %d, where the pulse "
+		Report(FOUND_CLICK, Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the period across %d, where the pulse "
 			"restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(Clicks[i].first).FullName().c_str(),
 			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), ClickBoundary(S.Song, F),
 			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + NudgeText(S, F) + ").").c_str() :
@@ -11216,7 +11215,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			const std::vector<Vanishing> Found = VanishingNotes(S, c, First, End, RowFrames);
 			for (size_t i = 0; i < Found.size(); ++i) {
 				Vanished += static_cast<int>(Found[i].Rows.size());
-				Report("Vanishing: " + VanishingText(S, c, Found[i]));
+				Report(FOUND_VANISHING, "Vanishing: " + VanishingText(S, c, Found[i]));
 			}
 		}
 	}
@@ -11233,11 +11232,29 @@ std::string CheckTool(Session &S, const Json &Args)
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
 	if (!Unused.empty())
 		Text += " Unused channels (free for harmony, an echo or a counter-melody): " + Unused + ".";
-	for (size_t i = 0; i < Findings.size(); ++i)
-		Text += "\n" + Findings[i];
-	if (Hidden > 0)
-		Text += Format("\n... and %d more.", Hidden);
-	if (Findings.empty())
+	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
+	// order; what doesn't fit is counted after its kind
+	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
+		"silent bars", "busy bars", "notes outside the key" };
+	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
+	bool Any = false;
+	for (int k = 0; k < FOUND_KINDS; ++k) {
+		Shown[k] = std::min(std::min(static_cast<int>(Findings[k].size()), MAX_LISTED), Left);
+		Left -= Shown[k];
+		Any = Any || !Findings[k].empty();
+	}
+	for (int k = 0; k < FOUND_KINDS && Left > 0; ++k) {
+		const int More = std::min(static_cast<int>(Findings[k].size()) - Shown[k], Left);
+		Shown[k] += More;
+		Left -= More;
+	}
+	for (int k = 0; k < FOUND_KINDS; ++k) {
+		for (int i = 0; i < Shown[k]; ++i)
+			Text += "\n" + Findings[k][static_cast<size_t>(i)];
+		if (Shown[k] < static_cast<int>(Findings[k].size()))
+			Text += Format("\n... and %d more %s.", static_cast<int>(Findings[k].size()) - Shown[k], MORE[k]);
+	}
+	if (!Any)
 		Text += "\nNothing stands out.";
 	return Text;
 }
