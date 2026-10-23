@@ -2641,6 +2641,25 @@ void TestTempoInside()
 	CHECK(HasEffectAt(Swung, 7, 64, EFF_SPEED, 120) && HasEffectAt(Swung, 7, 64, EFF_SPEED, 8) && HasEffectAt(Swung, 7, 66, EFF_SPEED, 4));
 	CHECK(HasEffectAt(Swung, 7, 128, EFF_SPEED, 150));
 
+	// A few speed commands in the bars (a ritardando written by hand) go with the rest; so do a swing's when the
+	// user names the speed
+	FakeSong Hand(4);
+	Hand.Info.DirectChanges = true;
+	Hand.Info.Speed = 8;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Hand.Put(5, Bar * 16, "C-4", 0);
+	const int RIT[] = { 9, 10, 11, 12, 14 };
+	for (int i = 0; i < 5; ++i) {
+		Hand.Rows[3][192 + i * 8].Effect[0] = EFF_SPEED;
+		Hand.Rows[3][192 + i * 8].Param[0] = static_cast<unsigned char>(RIT[i]);
+	}
+	Result = Run(Hand, "set_tempo", "{\"speed\": 8, \"from_bar\": 13}");
+	CHECK_HAS(Result.Text, "from bar 13 it plays at 112.5 BPM (speed 8, tempo 150) instead of 100 BPM (speed 9, tempo 150) to the song's end");
+	for (int i = 0; i < 5; ++i)
+		CHECK(!HasEffectAt(Hand, 3, 192 + i * 8, EFF_SPEED, RIT[i]));
+	Result = Run(Swung, "set_tempo", "{\"speed\": 6, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!HasEffectAt(Swung, 7, 66, EFF_SPEED, 4) && !HasEffectAt(Swung, 7, 64, EFF_SPEED, 120));
+
 	// change_mood with bpm for some bars: commands there, the track's tempo stays; for the whole song, the track's
 	FakeSong Mood(4);
 	Mood.Info.DirectChanges = true;

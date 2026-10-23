@@ -2781,12 +2781,14 @@ std::string StartPosition(const Session &S, int Row);
 // A new tempo inside the song: from row First on, at Bpm (Speed and Tempo,
 // when given, are its own; 0 works them out with even rows first), reached
 // at once or in Ramp steps a beat apart, until End, where the speed and
-// tempo the song had there come back (End at the song's end: none)
+// tempo the song had there come back (End at the song's end: none).
+// SpeedGiven: the user named the speed, so the song's own go.
 struct TempoChange {
 	int First, End;
 	double Bpm;
 	int Speed, Tempo;
 	int Ramp;
+	bool SpeedGiven;
 };
 
 // The tempo whose BPM at Speed comes nearest Bpm, within FamiTracker's
@@ -2804,8 +2806,8 @@ int NearestTempo(Session &S, double Bpm, int Speed)
 }
 
 // The speed and tempo commands for a change, in the draft: the song's own
-// there go, but for speed commands that change inside it (a swing, a
-// section's speed): those stay and the tempo moves instead, so they keep their
+// there go, but for speed commands that keep changing inside it, one a beat or
+// more (a swing): those stay and the tempo moves instead, so they keep their
 // proportions. Where the song loops back into or past the change, the loop's
 // start gets the speed and tempo it plays at the first time. What it did, in
 // words ("" when nothing changed); a Problem when it can't be done.
@@ -2827,16 +2829,21 @@ std::string WriteTempoChange(Session &S, Draft &D, const TempoChange &Plan, std:
 	if (End < Total)
 		SpeedTempoAt(S, Song, End + 1, SpeedAfter, TempoAfter);
 
-	// Speed commands that change inside the range stay
-	bool KeepSpeeds = false;
-	for (int c = 0; c < S.ChannelCount() && !KeepSpeeds; ++c) {
-		const std::vector<Cell> &Cells = D.View(c);
-		for (int r = First + 1; r < End && r < static_cast<int>(Cells.size()) && !KeepSpeeds; ++r)
-			for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
-				if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_SPEED &&
-					std::max(1, static_cast<int>(Cells[static_cast<size_t>(r)].Param[k])) < Split)
-					KeepSpeeds = true;
+	// Speed commands that keep changing inside the range (a swing) stay; a few (a ritardando, a section's
+	// speed) go with the rest, as do all when the user named the speed
+	int Changing = 0;	// rows inside with a speed command
+	for (int r = First + 1; r < End; ++r) {
+		bool Has = false;
+		for (int c = 0; c < S.ChannelCount() && !Has; ++c) {
+			const std::vector<Cell> &Cells = D.View(c);
+			if (r < static_cast<int>(Cells.size()))
+				for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+					Has = Has || (Cells[static_cast<size_t>(r)].Effect[k] == EFF_SPEED &&
+						std::max(1, static_cast<int>(Cells[static_cast<size_t>(r)].Param[k])) < Split);
+		}
+		Changing += Has ? 1 : 0;
 	}
+	const bool KeepSpeeds = !Plan.SpeedGiven && Changing >= std::max(4, (End - First) / R);
 	if (pKeptSpeeds != 0)
 		*pKeptSpeeds = KeepSpeeds;
 	// The speed the range's first beat plays at on average (a swing's middle)
@@ -3046,7 +3053,7 @@ std::string TempoInsideTool(Session &S, const Json &Args, bool ByBpm, bool BySpe
 		const double Over = NumberArg(Args, "over_bars", 0.0, 0.25, 64.0);
 		Ramp = std::max(1, static_cast<int>(std::floor(Over * S.Time.BeatsPerBar(From) + 0.5)));
 	}
-	const TempoChange Plan = { First, S.Time.BarEnd(To), Bpm, Speed, Tempo, Ramp };
+	const TempoChange Plan = { First, S.Time.BarEnd(To), Bpm, Speed, Tempo, Ramp, BySpeed };
 	Draft D(S);
 	std::vector<std::string> Warnings;
 	bool KeptSpeeds = false;
@@ -7498,7 +7505,7 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 	if (Plan.Bpm > 0.0 && WholeSong)
 		SpeedTempoFor(S, Plan.Bpm, S.Time.RowsPerBeat, Speed, Tempo);
 	else if (Plan.Bpm > 0.0 && DirectChange) {
-		const TempoChange Range = { First, End, Plan.Bpm, 0, 0, 0 };
+		const TempoChange Range = { First, End, Plan.Bpm, 0, 0, 0, false };
 		const std::string Text = WriteTempoChange(S, D, Range, Warnings);
 		if (!Text.empty())
 			Done.push_back(Text);
