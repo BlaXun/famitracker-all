@@ -84,6 +84,12 @@ public:
 	void ClearEverything();
 	void ClearPattern(unsigned int Channel, unsigned int Pattern);
 
+	// Channel i gets what channel pFrom[i] had (its patterns, its column of the
+	// frame list, its effect columns), or nothing when pFrom[i] is -1; what no
+	// channel takes is freed. pFrom has MAX_CHANNELS entries and names a channel
+	// at most once.
+	void MoveChannels(const int *pFrom);
+
 	stChanNote *GetPatternData(unsigned int Channel, unsigned int Pattern, unsigned int Row);
 
 	unsigned int GetPatternLength() const { 

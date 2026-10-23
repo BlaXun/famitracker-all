@@ -143,6 +143,40 @@ void CPatternData::ClearEverything()
 	}
 }
 
+void CPatternData::MoveChannels(const int *pFrom)
+{
+	unsigned char EffectColumns[MAX_CHANNELS];
+	unsigned char FrameList[MAX_FRAMES][MAX_CHANNELS];
+	stChanNote *pPatterns[MAX_CHANNELS][MAX_PATTERN];
+	bool Taken[MAX_CHANNELS];
+
+	for (int i = 0; i < MAX_CHANNELS; ++i)
+		Taken[i] = false;
+
+	for (int i = 0; i < MAX_CHANNELS; ++i) {
+		const int From = pFrom[i];
+		const bool Has = From >= 0 && From < MAX_CHANNELS && !Taken[From];
+		EffectColumns[i] = Has ? m_iEffectColumns[From] : 0;
+		for (int f = 0; f < MAX_FRAMES; ++f)
+			FrameList[f][i] = Has ? m_iFrameList[f][From] : 0;
+		for (int p = 0; p < MAX_PATTERN; ++p)
+			pPatterns[i][p] = Has ? m_pPatternData[From][p] : NULL;
+		if (Has)
+			Taken[From] = true;
+	}
+
+	for (int c = 0; c < MAX_CHANNELS; ++c) {
+		if (!Taken[c]) {
+			for (int p = 0; p < MAX_PATTERN; ++p)
+				SAFE_RELEASE_ARRAY(m_pPatternData[c][p]);
+		}
+	}
+
+	memcpy(m_iEffectColumns, EffectColumns, sizeof(m_iEffectColumns));
+	memcpy(m_iFrameList, FrameList, sizeof(m_iFrameList));
+	memcpy(m_pPatternData, pPatterns, sizeof(m_pPatternData));
+}
+
 void CPatternData::ClearPattern(unsigned int Channel, unsigned int Pattern)
 {
 	// Deletes a specified pattern in a channel

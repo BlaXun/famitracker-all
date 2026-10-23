@@ -199,12 +199,16 @@ void CSequenceEditor::SequenceChangedMessage(bool Changed)
 	// Translate sequence to MML-like string
 	Text = "";
 
+	// A 5B instrument's noise / mode values are bits: they show as 0-255
+	const bool Unsigned = m_iInstrumentType == INST_S5B && m_iSelectedSetting == SEQ_DUTYCYCLE;
+
 	for (unsigned i = 0; i < m_pSequence->GetItemCount(); ++i) {
 		if (m_pSequence->GetLoopPoint() == i)
 			Text.Append(_T("| "));
 		else if (m_pSequence->GetReleasePoint() == i)
 			Text.Append(_T("/ "));
-		Text.AppendFormat(_T("%i "), m_pSequence->GetItem(i));
+		const int Item = m_pSequence->GetItem(i);
+		Text.AppendFormat(_T("%i "), Unsigned ? (Item & 0xFF) : Item);
 	}
 
 	static_cast<CSequenceInstrumentEditPanel*>(m_pParent)->SetSequenceString(Text, Changed);

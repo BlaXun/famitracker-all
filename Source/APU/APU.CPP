@@ -73,7 +73,6 @@ CAPU::CAPU(IAudioCallback *pCallback, CSampleMem *pSampleMem) :
 	m_pS5B = new CS5B(m_pMixer);
 
 	m_fLevelVRC7 = 1.0f;
-	m_fLevelS5B = 1.0f;
 
 #ifdef LOGGING
 	m_pLog = new CFile("apu_log.txt", CFile::modeCreate | CFile::modeWrite);
@@ -365,9 +364,6 @@ bool CAPU::SetupSound(int SampleRate, int NrChannels, int Machine)
 	// VRC7 generates samples on it's own
 	m_pVRC7->SetSampleSpeed(SampleRate, BaseFreq, FrameRate);
 
-	// Same for sunsoft
-	m_pS5B->SetSampleSpeed(SampleRate, BaseFreq, FrameRate);
-
 	// Numbers of cycles/audio frame
 	m_iFrameCycleCount = BaseFreq / FrameRate;
 
@@ -547,9 +543,6 @@ void CAPU::SetChipLevel(chip_level_t Chip, float Level)
 	switch (Chip) {
 		case CHIP_LEVEL_VRC7:
 			m_fLevelVRC7 = fLevel;
-			break;
-		case CHIP_LEVEL_S5B:
-			m_fLevelS5B = fLevel;
 			break;
 		default:
 			m_pMixer->SetChipLevel(Chip, fLevel);

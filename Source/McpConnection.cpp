@@ -73,7 +73,7 @@ static_assert(ftapi::EFF_COUNT == EF_COUNT && ftapi::EFF_ARPEGGIO == EF_ARPEGGIO
 	ftapi::EFF_SLIDE_UP == EF_SLIDE_UP && ftapi::EFF_SLIDE_DOWN == EF_SLIDE_DOWN && ftapi::EFF_SPEED == EF_SPEED &&
 	ftapi::EFF_JUMP == EF_JUMP && ftapi::EFF_SKIP == EF_SKIP && ftapi::EFF_HALT == EF_HALT && ftapi::EFF_NOTE_CUT == EF_NOTE_CUT &&
 	ftapi::EFF_VOLUME_SLIDE == EF_VOLUME_SLIDE && ftapi::EFF_PORTAMENTO == EF_PORTAMENTO && ftapi::EFF_TREMOLO == EF_TREMOLO &&
-	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE, "effects");
+	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE && ftapi::EFF_SUNSOFT_ENV_LO == EF_SUNSOFT_ENV_LO, "effects");
 static_assert(ftapi::SEQUENCE_VOLUME == SEQ_VOLUME && ftapi::SEQUENCE_ARPEGGIO == SEQ_ARPEGGIO && ftapi::SEQUENCE_PITCH == SEQ_PITCH &&
 	ftapi::SEQUENCE_HIPITCH == SEQ_HIPITCH && ftapi::SEQUENCE_DUTY == SEQ_DUTYCYCLE, "sequences");
 static_assert(ftapi::SEQUENCE_ABSOLUTE == ARP_SETTING_ABSOLUTE && ftapi::SEQUENCE_FIXED == ARP_SETTING_FIXED, "arpeggio settings");

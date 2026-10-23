@@ -46,7 +46,11 @@
 
  ---
 
- N163 & 5B are still unknown
+ N163 is still unknown
+
+ 5B: the real cartridge is very loud. Here a 5B square at volume 15 is as loud
+ as a 2A03 pulse of 50% duty at 15 (SynthS5B), as the VRC6's pulses are, and the
+ other chips make room for it as they do for the VRC6.
 
 */
 
@@ -77,6 +81,7 @@ CMixer::CMixer()
 	m_fLevelMMC5 = 1.0f;
 	m_fLevelFDS = 1.0f;
 	m_fLevelN163 = 1.0f;
+	m_fLevelS5B = 1.0f;
 
 	m_iExternalChip = 0;
 	m_iSampleRate = 0;
@@ -142,6 +147,9 @@ void CMixer::SetChipLevel(chip_level_t Chip, float Level)
 		case CHIP_LEVEL_N163:
 			m_fLevelN163 = Level;
 			break;
+		case CHIP_LEVEL_S5B:
+			m_fLevelS5B = Level;
+			break;
 	}
 }
 
@@ -152,6 +160,7 @@ float CMixer::GetAttenuation() const
 	const float ATTENUATION_N163 = 0.70f;
 	const float ATTENUATION_MMC5 = 0.83f;
 	const float ATTENUATION_FDS  = 0.90f;
+	const float ATTENUATION_S5B  = 0.80f;
 
 	float Attenuation = 1.0f;
 
@@ -171,6 +180,9 @@ float CMixer::GetAttenuation() const
 
 	if (m_iExternalChip & SNDCHIP_FDS)
 		Attenuation *= ATTENUATION_FDS;
+
+	if (m_iExternalChip & SNDCHIP_S5B)
+		Attenuation *= ATTENUATION_S5B;
 
 	return Attenuation;
 }
@@ -217,7 +229,9 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 	
 	// Not checked
 	SynthN163.volume(Volume * 1.1f * m_fLevelN163);
-	//SynthS5B.volume(Volume * 1.0f);
+
+	// 5B: a channel at 15 (255) as a 2A03 pulse at 15 (CalcPin1 * AMP_2A03 = 59.75 of Synth2A03SS's 500)
+	SynthS5B.volume(Volume * 0.9373f * m_fLevelS5B);
 
 	m_iLowCut = LowCut;
 	m_iHighCut = HighCut;
@@ -388,6 +402,9 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 			break;
 		case SNDCHIP_VRC6:
 			MixVRC6(Value, FrameCycles);
+			break;
+		case SNDCHIP_S5B:
+			MixS5B(Value, FrameCycles);
 			break;
 	}
 }

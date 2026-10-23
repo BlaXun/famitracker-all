@@ -113,6 +113,7 @@ private:
 	float		m_fLevelMMC5;
 	float		m_fLevelFDS;
 	float		m_fLevelN163;
+	float		m_fLevelS5B;
 };
 
 #endif /* MIXER_H */

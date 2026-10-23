@@ -39,10 +39,12 @@
 
 */
 
+#include <vector>
 #include "stdafx.h"
 #include <algorithm>
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
+#include "ChipSwitch.h"
 #include "TrackerChannel.h"
 #include "MainFrm.h"
 #include "DocumentFile.h"
@@ -681,11 +683,6 @@ BOOL CFamiTrackerDoc::SaveDocument(LPCTSTR lpszPathName) const
 	TCHAR TempPath[MAX_PATH], TempFile[MAX_PATH];
 	ULONGLONG FileSize;
 
-	if (ExpansionEnabled(SNDCHIP_S5B)) {
-		AfxMessageBox(_T("Saving Sunsoft modules is not yet supported"));
-		return FALSE;
-	}
-
 	// First write to a temp file (if saving fails, the original is not destroyed)
 	GetTempPath(MAX_PATH, TempPath);
 	GetTempFileName(TempPath, _T("FTM"), 0, TempFile);
@@ -790,12 +787,12 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 		if (!WriteBlock_SequencesN163(pDocFile))
 			return false;
 	}
-#if 0
+
 	if (m_iExpansionChip & SNDCHIP_S5B) {
 		if (!WriteBlock_SequencesS5B(pDocFile))
 			return false;
 	}
-#endif
+
 	return true;
 }
 
@@ -1102,7 +1099,7 @@ bool CFamiTrackerDoc::WriteBlock_SequencesN163(CDocumentFile *pDocFile) const
 bool CFamiTrackerDoc::WriteBlock_SequencesS5B(CDocumentFile *pDocFile) const
 {
 	/* 
-	 * Store N163 sequences
+	 * Store 5B sequences (as the N163's; 0CC-FamiTracker writes the same block)
 	 */ 
 
 	// Sequences, version 0
@@ -1712,7 +1709,7 @@ bool CFamiTrackerDoc::ReadBlock_Parameters(CDocumentFile *pDocFile)
 	m_iEngineSpeed			= pDocFile->GetBlockInt();
 
 	ASSERT_FILE_DATA(m_iMachine == NTSC || m_iMachine == PAL);
-	ASSERT_FILE_DATA(m_iChannelsAvailable < MAX_CHANNELS);
+	ASSERT_FILE_DATA(m_iChannelsAvailable <= MAX_CHANNELS);	// every chip on has 28
 
 	if (m_iMachine != NTSC && m_iMachine != PAL)
 		m_iMachine = NTSC;
@@ -2764,8 +2761,7 @@ CSequence *CFamiTrackerDoc::GetSequence(int Chip, unsigned int Index, int Type)
 		case SNDCHIP_N163: 
 			return GetSequenceN163(Index, Type);
 		case SNDCHIP_S5B:
-			return 0;
-			//return GetSequenceS5B(Index, Type);
+			return GetSequenceS5B(Index, Type);
 	}
 
 	return NULL;
@@ -3059,7 +3055,7 @@ CInstrument *CFamiTrackerDoc::CreateInstrument(inst_type_t InstType) const
 		case INST_FDS: 
 			return new CInstrumentFDS();
 		case INST_S5B: 
-			return NULL;//return new CInstrumentS5B();
+			return new CInstrumentS5B();
 	}
 
 	return NULL;
@@ -3243,6 +3239,21 @@ int CFamiTrackerDoc::DeepCloneInstrument(unsigned int Index)
 						if (freeSeq != -1) {
 							if( pInstrument->GetSeqEnable(i) ) {
 								this->GetSequenceN163(unsigned(freeSeq), i)->Copy( this->GetSequenceN163(unsigned(oldSeq), i) );
+							}
+							pInstrument->SetSeqIndex(i, freeSeq);
+						}
+					}
+				}
+				break;
+			case INST_S5B:
+				{
+					CInstrumentS5B *pInstrument = static_cast<CInstrumentS5B*>(newInst);
+					for(unsigned int i = 0; i < CInstrumentS5B::SEQUENCE_COUNT; i++) {
+						int freeSeq = this->GetFreeSequenceS5B(i);
+						int oldSeq = pInstrument->GetSeqIndex(i);
+						if (freeSeq != -1) {
+							if( pInstrument->GetSeqEnable(i) ) {
+								this->GetSequenceS5B(unsigned(freeSeq), i)->Copy( this->GetSequenceS5B(unsigned(oldSeq), i) );
 							}
 							pInstrument->SetSeqIndex(i, freeSeq);
 						}
@@ -4135,15 +4146,45 @@ unsigned int CFamiTrackerDoc::GetTrackCount() const
 
 void CFamiTrackerDoc::SelectExpansionChip(unsigned char Chip)
 {
-	// Disallow unimplemented chips
-#ifndef _DEBUG
-	if (Chip & SNDCHIP_S5B)
-		Chip = 0;
-#endif
+	// Chip has a bit for each expansion chip that's on (SNDCHIP_*). The channels
+	// of the chips that stay keep their notes where they move to; the channels of
+	// chips switched off are emptied (ChipSwitch.h counts their notes first).
+	int OldTypes[MAX_CHANNELS];
+	const unsigned int OldCount = std::min(std::min(m_iChannelsAvailable, static_cast<unsigned int>(m_iRegisteredChannels)),
+		static_cast<unsigned int>(MAX_CHANNELS));
+	for (unsigned int i = 0; i < OldCount; ++i)
+		OldTypes[i] = m_iChannelTypes[i];
 
 	// Complete sound chip setup
 	SetupChannels(Chip);
+	MoveChannels(OldTypes, OldCount);
 	ApplyExpansionChip();
+}
+
+void CFamiTrackerDoc::MoveChannels(const int *pOldTypes, unsigned int OldCount)
+{
+	// Each channel gets the patterns, frames and effect columns of the channel of
+	// its type before (ChipSwitch.h); channels new to the module start empty
+	const std::vector<int> OldTypes(pOldTypes, pOldTypes + OldCount);
+	const std::vector<int> NewTypes(m_iChannelTypes, m_iChannelTypes + std::min(m_iChannelsAvailable, static_cast<unsigned int>(MAX_CHANNELS)));
+	const std::vector<int> Sources = ChannelSources(OldTypes, NewTypes);
+
+	int From[MAX_CHANNELS];
+	bool Same = OldTypes.size() == NewTypes.size();
+	for (int i = 0; i < MAX_CHANNELS; ++i) {
+		From[i] = static_cast<size_t>(i) < Sources.size() ? Sources[i] : -1;
+		if (static_cast<size_t>(i) < Sources.size() && From[i] != i)
+			Same = false;
+	}
+	if (Same)
+		return;
+
+	LockDocument();
+	for (unsigned int t = 0; t < MAX_TRACKS; ++t) {
+		if (m_pTracks[t] != NULL)
+			m_pTracks[t]->MoveChannels(From);
+	}
+	UnlockDocument();
 }
 
 void CFamiTrackerDoc::SetupChannels(unsigned char Chip)
@@ -4667,6 +4708,21 @@ void CFamiTrackerDoc::RemoveUnusedSequences()
 				if (!Used)
 					GetSequenceN163(i, j)->Clear();
 			}	
+			// And the 5B's
+			if (GetSequenceItemCountS5B(i, j) > 0) {
+				bool Used = false;
+				for (int k = 0; k < MAX_INSTRUMENTS; ++k) {
+					if (IsInstrumentUsed(k) && GetInstrumentType(k) == INST_S5B) {
+						CInstrumentS5B *pInstrument = static_cast<CInstrumentS5B*>(GetInstrument(k));
+						Used = pInstrument->GetSeqIndex(j) == i;
+						pInstrument->Release();
+						if (Used)
+							break;
+					}
+				}
+				if (!Used)
+					GetSequenceS5B(i, j)->Clear();
+			}
 		}
 	}
 }

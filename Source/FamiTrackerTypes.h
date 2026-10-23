@@ -149,9 +149,11 @@ enum effect_t {
 	EF_FDS_MOD_SPEED_HI,
 	EF_FDS_MOD_SPEED_LO,
 	EF_DPCM_PITCH,
-	EF_SUNSOFT_ENV_LO,
-	EF_SUNSOFT_ENV_HI,
-	EF_SUNSOFT_ENV_TYPE,
+	// The 5B's, as 0CC-FamiTracker and Dn-FamiTracker play them (0.4.6 named the
+	// first and last the other way round, and never played or saved them)
+	EF_SUNSOFT_ENV_TYPE,		// Hxy: envelope shape y, starts it; x follows the note (ChannelsS5B.cpp)
+	EF_SUNSOFT_ENV_HI,			// Ixx: envelope period, high byte
+	EF_SUNSOFT_ENV_LO,			// Jxx: envelope period, low byte
 //	EF_TARGET_VOLUME_SLIDE, 
 /*
 	EF_VRC7_MODULATOR,
@@ -202,9 +204,9 @@ const char EFF_CHAR[] = {
 	'I',	// FDS modulation speed hi
 	'J',	// FDS modulation speed lo
 	'W',	// DPCM Pitch
-	'H',	// Sunsoft envelope low
+	'H',	// Sunsoft envelope type
 	'I',	// Sunsoft envelope high
-	'J',	// Sunsoft envelope type
+	'J',	// Sunsoft envelope low
 	//'9'	// Targeted volume slide
 	/*
 	'H',	// VRC7 modulator

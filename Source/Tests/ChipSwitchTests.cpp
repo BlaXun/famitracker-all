@@ -19,12 +19,40 @@
 ** must bear this legend.
 */
 
-// Tests for switching the expansion chip (Source/ChipSwitch.cpp): the notes
-// counted, the channels emptied, and the effects that steer the song moved to
-// a channel that stays, on a song in memory.
+// Tests for switching the expansion chips (Source/ChipSwitch.cpp): the
+// channels a set of chips has, the notes counted, the channels emptied, the
+// effects that steer the song moved to a channel that stays, and the channels
+// that stay moved to their new columns, on a song in memory.
 #include "Clips.cpp"
 #include "ChipSwitch.cpp"
 #include <cstdio>
+
+// As CFamiTrackerDoc::SelectExpansionChip: the module's channels become those
+// of the chips, and each keeps the frames, patterns and effect columns of the
+// channel of its type before (CPatternData::MoveChannels); new ones are empty
+void CFamiTrackerDoc::SelectExpansionChip(unsigned char Chips)
+{
+	const std::vector<int> New = ChipChannels(Chips, namco);
+	const std::vector<int> From = ChannelSources(chanIDs, New);
+	for (Track &T : tracks) {
+		Track Moved;
+		for (const std::vector<unsigned> &Frame : T.frames) {
+			std::vector<unsigned> F(MAX_CHANNELS, 0);
+			for (size_t c = 0; c < New.size(); ++c)
+				if (From[c] >= 0) F[c] = Frame[size_t(From[c])];
+			Moved.frames.push_back(F);
+		}
+		for (const auto &P : T.patterns)
+			for (size_t c = 0; c < New.size(); ++c)
+				if (From[c] == int(P.first.first)) Moved.patterns[{ unsigned(c), P.first.second }] = P.second;
+		for (const auto &Col : T.columns)
+			for (size_t c = 0; c < New.size(); ++c)
+				if (From[c] == int(Col.first)) Moved.columns[unsigned(c)] = Col.second;
+		T = Moved;
+	}
+	chanIDs = New;
+	chips = Chips;
+}
 
 static int g_checks = 0, g_fail = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { ++g_fail; std::printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
@@ -213,6 +241,87 @@ int main()
 		std::vector<song_effect_t> one(1, song_effect_t{ 0, 0, 1, EF_HALT, 0 });
 		CHECK(PlaceSongEffects(&doc, 5, one) == 1);
 		CHECK(!Has(At(doc, 0, 0, 5, 1), EF_HALT, 0));
+	}
+
+	// The channels of a set of chips, in chan_id_t order: 2A03, VRC6, MMC5, N163, FDS, VRC7, 5B
+	{
+		CHECK(ChipChannels(SNDCHIP_NONE, 4) == std::vector<int>({ 0, 1, 2, 3, 4 }));
+		CHECK(ChipChannels(SNDCHIP_S5B, 1) == std::vector<int>({ 0, 1, 2, 3, 4, CHANID_S5B_CH1, CHANID_S5B_CH2, CHANID_S5B_CH3 }));
+		CHECK(ChipChannels(SNDCHIP_VRC6 | SNDCHIP_N163 | SNDCHIP_S5B, 4) == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7,
+			CHANID_N163_CHAN1, CHANID_N163_CHAN2, CHANID_N163_CHAN3, CHANID_N163_CHAN4, CHANID_S5B_CH1, CHANID_S5B_CH2, CHANID_S5B_CH3 }));
+		CHECK(ChipChannels(SNDCHIP_MMC5, 1) == std::vector<int>({ 0, 1, 2, 3, 4, CHANID_MMC5_SQUARE1, CHANID_MMC5_SQUARE2 }));
+		CHECK(ChipChannels(SNDCHIP_N163 | SNDCHIP_VRC7, 2) == std::vector<int>({ 0, 1, 2, 3, 4, CHANID_N163_CHAN1, CHANID_N163_CHAN2,
+			CHANID_VRC7_CH1, CHANID_VRC7_CH2, CHANID_VRC7_CH3, CHANID_VRC7_CH4, CHANID_VRC7_CH5, CHANID_VRC7_CH6 }));
+		CHECK(ChipChannels(0x3F, 8).size() == size_t(MAX_CHANNELS));	// every chip on fills the pattern editor
+		CHECK(ChipChannels(SNDCHIP_N163, 0).size() == 6 && ChipChannels(SNDCHIP_N163, 9).size() == 13);
+		// Where each new channel's notes come from
+		const std::vector<int> Vrc6 = ChipChannels(SNDCHIP_VRC6, 1), Both = ChipChannels(SNDCHIP_VRC6 | SNDCHIP_N163, 2);
+		CHECK(ChannelSources(Vrc6, Both) == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7, -1, -1 }));
+		CHECK(ChannelSources(ChipChannels(SNDCHIP_N163, 2), Both) == std::vector<int>({ 0, 1, 2, 3, 4, -1, -1, -1, 5, 6 }));
+		CHECK(ChannelSources(Both, Vrc6) == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7 }));
+	}
+
+	// The channels a switch takes away: those of the chips switched off, and the N163's past its new count
+	{
+		CFamiTrackerDoc doc; MakeSong(doc, 1);
+		doc.chips = SNDCHIP_VRC6;
+		CHECK(LeavingChannels(&doc, SNDCHIP_N163, 4) == std::vector<unsigned>({ 5, 6, 7 }));
+		CHECK(LeavingChannels(&doc, SNDCHIP_VRC6 | SNDCHIP_N163 | SNDCHIP_S5B, 4).empty());
+		CHECK(LeavingChannels(&doc, SNDCHIP_NONE, 1) == std::vector<unsigned>({ 5, 6, 7 }));
+		doc.namco = 4;
+		doc.SelectExpansionChip(SNDCHIP_VRC6 | SNDCHIP_N163);
+		CHECK(doc.GetAvailableChannels() == 12 && doc.GetChannelType(8) == CHANID_N163_CHAN1);
+		CHECK(LeavingChannels(&doc, SNDCHIP_VRC6 | SNDCHIP_N163, 2) == std::vector<unsigned>({ 10, 11 }));
+		CHECK(LeavingChannels(&doc, SNDCHIP_N163 | SNDCHIP_S5B, 4) == std::vector<unsigned>({ 5, 6, 7 }));
+	}
+
+	// Switching: the chips that stay keep their notes, frames and columns where they move to
+	{
+		CFamiTrackerDoc doc; MakeSong(doc, 2);
+		doc.chips = SNDCHIP_N163; doc.namco = 2;
+		doc.chanIDs = ChipChannels(SNDCHIP_N163, 2);
+		Set(doc, 0, 1, 5, 3, N(A, 4, 2));		// Namco 1
+		Set(doc, 1, 0, 6, 0, N(C, 3, 2));		// Namco 2, in track 2
+		doc.SetPatternAtFrame(0, 2, 5, 9);		// frame 2 plays another pattern
+		Set(doc, 0, 2, 5, 0, N(E, 4, 2));
+		doc.SetEffColumns(0, 5, 2);
+		Set(doc, 0, 0, 0, 0, N(G, 3));			// Pulse 1
+		std::vector<int> tracks;
+		CHECK(CountChannelNotes(&doc, LeavingChannels(&doc, SNDCHIP_VRC6 | SNDCHIP_N163, 2), tracks) == 0);
+		int moved = -1;
+		CHECK(SwitchChips(&doc, SNDCHIP_VRC6 | SNDCHIP_N163, 2, moved) == 0 && moved == 0);
+		CHECK(doc.chips == (SNDCHIP_VRC6 | SNDCHIP_N163) && doc.GetAvailableChannels() == 10);
+		CHECK(doc.GetChannelType(5) == CHANID_VRC6_PULSE1 && doc.GetChannelType(8) == CHANID_N163_CHAN1);
+		CHECK(At(doc, 0, 1, 8, 3).Note == A && At(doc, 0, 2, 8, 0).Note == E && At(doc, 1, 0, 9, 0).Note == C);
+		CHECK(doc.GetPatternAtFrame(0, 2, 8) == 9 && doc.GetPatternAtFrame(0, 1, 8) == 1);
+		CHECK(doc.GetEffColumns(0, 8) == 2 && doc.GetEffColumns(0, 5) == 0);
+		CHECK(At(doc, 0, 1, 5, 3).Note == NONE && doc.IsPatternEmpty(0, 5, 1));	// the VRC6 starts empty
+		CHECK(At(doc, 0, 0, 0, 0).Note == G);
+
+		// Adding the 5B after them; then the VRC6 goes, with its notes and the loop on its sawtooth
+		for (unsigned f = 0; f < 4; ++f) {		// the VRC6's frames all play 00 so far
+			doc.SetPatternAtFrame(0, f, 6, f);
+			doc.SetPatternAtFrame(0, f, 7, f);
+		}
+		Set(doc, 0, 3, 7, 15, Fx(EF_JUMP, 0));
+		Set(doc, 0, 0, 6, 4, N(D, 2));
+		CHECK(SwitchChips(&doc, SNDCHIP_VRC6 | SNDCHIP_N163 | SNDCHIP_S5B, 2, moved) == 0 && doc.GetAvailableChannels() == 13);
+		Set(doc, 0, 0, 11, 0, N(F, 3));			// 5B Square 2
+		const unsigned char Without = SNDCHIP_N163 | SNDCHIP_S5B;
+		CHECK(LeavingChannels(&doc, Without, 2) == std::vector<unsigned>({ 5, 6, 7 }));
+		CHECK(CountChannelNotes(&doc, LeavingChannels(&doc, Without, 2), tracks) == 1 && tracks.size() == 1);
+		CHECK(SwitchChips(&doc, Without, 2, moved) == 0 && moved == 1);
+		CHECK(doc.GetAvailableChannels() == 10 && doc.GetChannelType(5) == CHANID_N163_CHAN1 && doc.GetChannelType(9) == CHANID_S5B_CH3);
+		CHECK(At(doc, 0, 1, 5, 3).Note == A && At(doc, 1, 0, 6, 0).Note == C && At(doc, 0, 0, 8, 0).Note == F);
+		CHECK(Has(At(doc, 0, 3, 9, 15), EF_JUMP, 0));	// on the last channel now, 5B Square 3
+		bool vrc6 = false;
+		for (unsigned c = 0; c < doc.GetAvailableChannels(); ++c) vrc6 = vrc6 || At(doc, 0, 0, c, 4).Note == D;
+		CHECK(!vrc6);
+
+		// Fewer N163 channels: the ones past the count go
+		CHECK(LeavingChannels(&doc, Without, 1) == std::vector<unsigned>({ 6 }));
+		CHECK(SwitchChips(&doc, Without, 1, moved) == 0 && doc.GetAvailableChannels() == 9 && doc.namco == 1);
+		CHECK(At(doc, 0, 1, 5, 3).Note == A && At(doc, 0, 0, 7, 0).Note == F);
 	}
 
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);

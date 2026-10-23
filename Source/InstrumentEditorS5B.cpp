@@ -27,8 +27,6 @@
 #include "SequenceEditor.h"
 #include "InstrumentEditorS5B.h"
 
-std::string test;
-
 LPCTSTR CInstrumentEditorS5B::INST_SETTINGS_S5B[] = {
 	_T("Volume"), 
 	_T("Arpeggio"), 
@@ -221,7 +219,8 @@ void CInstrumentEditorS5B::OnKeyReturn()
 			TranslateMML(Text, 126, -127);
 			break;
 		case SEQ_DUTYCYCLE:
-			TranslateMML(Text, 31, 0);
+			// The noise pitch (0-31) plus 32 for the envelope, 64 for the square and 128 for the noise
+			TranslateMML(Text, 255, 0);
 			break;
 	}
 }

@@ -1,6 +1,7 @@
 /*
 ** FamiTracker - NES/Famicom sound tracker
 ** Copyright (C) 2005-2014  Jonathan Liss
+** Copyright (C) 2026  The beginner-friendly FamiTracker contributors
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
@@ -18,67 +19,89 @@
 ** must bear this legend.
 */
 
+#include <algorithm>
 #include <cstdio>
 #include "APU.h"
 #include "S5B.h"
 #include "emu2149.h"
 
 // Sunsoft 5B (YM2149)
+//
+// emu2149 runs a tick at a time, every 16 CPU cycles: the chip's square
+// toggles every 16 cycles times its period, its noise steps every 32 times its
+// period and its envelope steps every 16 times its period (NESdev wiki). Each
+// channel's level goes to the mixer as it changes, at the cycle it changed,
+// through a band-limited synth like the other chips'.
 
-PSG *psg;
+static PSG *psg = NULL;
 
-float CS5B::AMPLIFY = 2.0f;
+namespace {
+const uint32 CYCLES_PER_TICK = 16;
+}
 
-CS5B::CS5B(CMixer *pMixer) : m_iRegister(0), m_iTime(0)
+CS5B::CS5B(CMixer *pMixer) : m_iRegister(0), m_iTime(0), m_iTickCycles(CYCLES_PER_TICK)
 {
 	m_pMixer = pMixer;
+	for (int i = 0; i < 3; ++i)
+		m_iLevels[i] = 0;
 
-	m_fVolume = AMPLIFY;
-
-	psg = NULL;
+	// One tick a call: a clock 16 times the "sample rate"
+	psg = PSG_new(CYCLES_PER_TICK, 1);
+	PSG_setVolumeMode(psg, 1);		// the YM2149's 32 steps of 1.5 dB
+	PSG_reset(psg);
 }
 
 CS5B::~CS5B()
 {
 	if (psg)
 		PSG_delete(psg);
+	psg = NULL;
 }
 
 void CS5B::Reset()
 {
+	// The mixer's buffer is cleared with the APU, so the levels start from silence
 	m_iTime = 0;
-//	PSG_reset(psg);
+	m_iTickCycles = CYCLES_PER_TICK;
+	for (int i = 0; i < 3; ++i)
+		m_iLevels[i] = 0;
+	m_iRegister = 0;
+	PSG_reset(psg);
 }
 
 void CS5B::Process(uint32 Time)
 {
-	m_iTime += Time;
+	while (Time > 0) {
+		const uint32 Run = std::min(Time, m_iTickCycles);
+		Time -= Run;
+		m_iTime += Run;
+		m_iTickCycles -= Run;
+		if (m_iTickCycles == 0) {
+			m_iTickCycles = CYCLES_PER_TICK;
+			PSG_calc(psg);
+			MixLevels();
+		}
+	}
 }
 
-int16 m_pBuffer[4000];
-uint32 m_iBufferPtr = 0;
+void CS5B::MixLevels()
+{
+	// Each channel's output as emu2149 sums it: the tone and noise it lets
+	// through, at its volume or the envelope's
+	const bool Noise = (psg->noise_seed & 1) != 0;
+	for (int i = 0; i < 3; ++i) {
+		int32 Level = 0;
+		if (!(psg->mask & PSG_MASK_CH(i)) && (psg->tmask[i] || psg->edge[i]) && (psg->nmask[i] || Noise))
+			Level = static_cast<int32>(psg->voltbl[(psg->volume[i] & 32) ? (psg->env_ptr & 31) : (psg->volume[i] & 31)]);
+		if (Level != m_iLevels[i]) {
+			m_pMixer->AddValue(CHANID_S5B_CH1 + i, SNDCHIP_S5B, Level - m_iLevels[i], Level, m_iTime);
+			m_iLevels[i] = Level;
+		}
+	}
+}
 
 void CS5B::EndFrame()
 {
-	GetMixMono();
-}
-
-void CS5B::GetMixMono()
-{
-	static int32 LastSample = 0;
-
-	uint32 WantSamples = m_pMixer->GetMixSampleCount(m_iTime);
-
-	// Generate samples
-	while (m_iBufferPtr < WantSamples) {
-		int32 Sample = int32(float(PSG_calc(psg)) * m_fVolume);
-		m_pBuffer[m_iBufferPtr++] = int16((Sample + LastSample) >> 1);
-		LastSample = Sample;
-	}
-
-	m_pMixer->MixSamples((blip_sample_t*)m_pBuffer, WantSamples);
-
-	m_iBufferPtr -= WantSamples;
 	m_iTime = 0;
 }
 
@@ -100,31 +123,3 @@ uint8 CS5B::Read(uint16 Address, bool &Mapped)
 	Mapped = false;
 	return 0;
 }
-
-void CS5B::SetSampleSpeed(uint32 SampleRate, double ClockRate, uint32 FrameRate)
-{
-	if (psg != NULL) {
-		PSG_delete(psg);
-	}
-
-	//PSG_init((uint32)ClockRate, SampleRate);
-	psg = PSG_new((uint32)ClockRate, SampleRate);
-	PSG_setVolumeMode(psg, 1);
-	PSG_reset(psg);
-
-//	psg = PSG_new();
-
-//	PSG_setVolumeMode(psg, 1);
-//	PSG_reset(psg);
-}
-
-void CS5B::SetVolume(float fVol)
-{
-	m_fVolume = AMPLIFY * fVol;
-}
-/*
-void CS5B::SetChannelVolume(int Chan, int LevelL, int LevelR)
-{
-	PSG_set_chan_vol(Chan, LevelL, LevelR);
-}
-*/

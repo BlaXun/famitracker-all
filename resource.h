@@ -784,6 +784,14 @@
 #define IDC_NSF_NONE                    1436
 #define ID_FILE_IMPORTNSF               33171
 
+// Module > Module properties: the expansion chips (ModulePropertiesDlg.cpp)
+#define IDC_EXPANSION_VRC6              1600
+#define IDC_EXPANSION_VRC7              1601
+#define IDC_EXPANSION_FDS               1602
+#define IDC_EXPANSION_MMC5              1603
+#define IDC_EXPANSION_N163              1604
+#define IDC_EXPANSION_S5B               1605
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

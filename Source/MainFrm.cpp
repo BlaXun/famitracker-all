@@ -1521,6 +1521,21 @@ void CMainFrame::OnUpdateSBChip(CCmdUI *pCmdUI)
 		case SNDCHIP_S5B:
 			String = _T("Sunsoft 5B");
 			break;
+		default: {
+			// Several chips: "VRC6+N163+5B" (the pane is as wide as "No expansion chip")
+			const struct { int Chip; LPCTSTR pName; } CHIPS[] = {
+				{ SNDCHIP_VRC6, _T("VRC6") }, { SNDCHIP_VRC7, _T("VRC7") }, { SNDCHIP_FDS, _T("FDS") },
+				{ SNDCHIP_MMC5, _T("MMC5") }, { SNDCHIP_N163, _T("N163") }, { SNDCHIP_S5B, _T("5B") },
+			};
+			for (size_t i = 0; i < sizeof(CHIPS) / sizeof(CHIPS[0]); ++i) {
+				if (Chip & CHIPS[i].Chip) {
+					if (!String.IsEmpty())
+						String += _T("+");
+					String += CHIPS[i].pName;
+				}
+			}
+			break;
+		}
 	}
 
 	pCmdUI->Enable(); 
