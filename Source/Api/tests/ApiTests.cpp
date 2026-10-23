@@ -1861,6 +1861,14 @@ void TestDesign()
 	Result = Run(Song, "design_instrument", "{\"name\": \"Konami lead\", \"kind\": \"bloom lead\", \"channel\": 1}");
 	CHECK_HAS(Result.Text, "a 25% pulse that blooms from 10 to 15 2 frames in after a 12.5% duty click on the first frame");
 	CHECK_HAS(Result.Text, "struck again every 12 frames while it holds");
+	// A 75% note clicks at 50% (12.5% would be the same thin sound as 75%, a pulse's mirror image)
+	Result = Run(Song, "design_instrument", "{\"name\": \"Hollow thump\", \"kind\": \"bass\", \"duty\": \"75%\", \"click\": true, "
+		"\"channel\": 1}");
+	CHECK_HAS(Result.Text, "a 75% pulse that reaches 15 at once after a 50% duty click on the first frame");
+	for (std::map<int, Preset>::const_iterator it = Song.Made.begin(); it != Song.Made.end(); ++it)
+		for (size_t i = 0; it->second.Name == "Hollow thump" && i < it->second.Sequences2A03.size(); ++i)
+			if (it->second.Sequences2A03[i].Type == SEQUENCE_DUTY)
+				CHECK(it->second.Sequences2A03[i].Items == std::vector<int>({ 2, 3 }));
 	Result = Run(Song, "design_instrument", "{\"name\": \"Mine\", \"attack\": \"bloom\", \"volume\": 12, \"decay\": 30, \"decay_style\": "
 		"\"steps\", \"sustain\": 6, \"click\": true, \"echo\": true, \"restrike_beats\": 0.5, \"attack_pitch\": \"flick\"}");
 	CHECK(!Result.IsError);
@@ -8197,7 +8205,7 @@ void TestPulseClicks()
 		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), 0x81);
 		CHECK_EQ(EffectAt(Song.Rows[0][16], EFF_PITCH), 0x80);
 		CHECK_EQ(Notes(Song, 0), std::string("0:A-3 16:C-4 24:=== "));
-		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking,");
 		// The same on a VRC6 pulse, which doesn't restart its wave, or a G#3: nothing to nudge
 		FakeSong Vrc6;
 		Vrc6.Info.DirectChanges = true;
@@ -8224,7 +8232,7 @@ void TestPulseClicks()
 		Song.Put(0, 48, "E-4");
 		Song.End(0, 56);
 		const std::string Found = Run(Song, "check_song", "{}").Text;
-		CHECK_HAS(Found, ", 2 clicking.");
+		CHECK_HAS(Found, ", 2 clicking,");
 		CHECK_HAS(Found, "Click: A-3 on 2A03 Pulse 1 at bar 1 beat 1 clicks ");
 		CHECK_HAS(Found, " as it plays: its vibrato takes the period across 256, where the pulse restarts its wave. polish with "
 			"touches [\"clicks\"] nudges it (P81, 7 cents sharp).");
@@ -8236,7 +8244,7 @@ void TestPulseClicks()
 		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), 0x81);
 		CHECK_EQ(EffectAt(Song.Rows[0][32], EFF_PITCH), -1);	// still sharp from the first
 		CHECK_EQ(EffectAt(Song.Rows[0][48], EFF_PITCH), 0x80);
-		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking,");
 		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"clicks\"]}").Text, "no notes that click");
 
 		// A song that ends on such a note: the loop's first note starts with the fine pitch it had
@@ -8248,7 +8256,7 @@ void TestPulseClicks()
 		CHECK(!Run(Last, "polish", "{\"touches\": [\"clicks\"]}").IsError);
 		CHECK_EQ(EffectAt(Last.Rows[0][96], EFF_PITCH), 0x81);
 		CHECK_EQ(EffectAt(Last.Rows[0][0], EFF_PITCH), 0x80);
-		CHECK_HAS(Run(Last, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Last, "check_song", "{}").Text, ", 0 clicking,");
 		// Written that way, the change reaches back to the loop's first note
 		FakeSong Ending;
 		Ending.Info.DirectChanges = true;
@@ -8262,7 +8270,7 @@ void TestPulseClicks()
 		CHECK_EQ(EffectAt(Ending.Rows[0][0], EFF_PITCH), 0x80);
 		CHECK_EQ(Notes(Ending, 0), std::string("0:C-4 96:A-3 "));
 		CHECK_EQ(Notes(Ending, 3), std::string("0:4-# "));
-		CHECK_HAS(Run(Ending, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Ending, "check_song", "{}").Text, ", 0 clicking,");
 
 		// Exported as it is, it says so
 		FakeSong Loud;
@@ -8303,7 +8311,7 @@ void TestPulseClicks()
 		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), -1);
 		CHECK_EQ(EffectAt(Song.Rows[0][3], EFF_PITCH), 0x84);
 		CHECK_EQ(EffectAt(Song.Rows[0][16], EFF_PITCH), 0x80);
-		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking,");
 	}
 
 	// Too deep a vibrato to nudge clear: said, and left
@@ -8317,6 +8325,107 @@ void TestPulseClicks()
 		CHECK_HAS(Result.Text, "1 note on 2A03 Pulse 1 still clicks: A-3 at bar 1 beat 1, its vibrato too deep to nudge clear");
 		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), -1);
 		CHECK_HAS(Run(Song, "check_song", "{}").Text, "Too deep a vibrato to nudge clear");
+	}
+}
+
+// Notes that vanish: a pluck gone within 3 frames between held notes of a tune sounds like missing notes, a tick in their
+// place (a user heard it at once)
+void TestVanishing()
+{
+	// The lead (no envelope: it holds) with plucks falling 15 10 5 2 1 0 between its notes
+	FakeSong Song;
+	Song.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+	Song.Info.Instruments.back().VolumeLoop = Song.Info.Instruments.back().VolumeRelease = -1;
+	Song.Put(5, 0, "C-4", 0);	// held, 8 rows of 6 frames
+	Song.Put(5, 8, "D-4", 3);	// two plucks
+	Song.Put(5, 10, "E-4");
+	Song.Put(5, 12, "F-4", 0);	// held
+	Song.Put(5, 16, "G-4", 3);	// a pluck
+	Song.Put(5, 18, "A-4", 0);	// held
+	Song.End(5, 32);
+	std::string Text = Run(Song, "check_song", "{\"key\": \"C major\"}").Text;
+	CHECK_HAS(Text, ", 0 clicking, 3 vanishing.");
+	CHECK_HAS(Text, "Vanishing: 3 notes on VRC6 Pulse 1 (bars 1-2) play \"Fair pluck\" (03), which is gone within 3 frames, "
+		"between notes of the line that hold (\"Lead\" (00)): next to those they sound like missing notes, a tick in their "
+		"place. Give them a sound that lasts, a pluck that settles to a level instead of dying (design_instrument kind pluck, "
+		"sustain half) or the held notes' sound");
+	// review_arrangement counts it against the melody
+	Text = Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(Text, "Melody notes vanish: 3 notes on VRC6 Pulse 1 (bars 1-2) play \"Fair pluck\" (03)");
+	// Played quieter, still gone (the volume column scales the envelope)
+	Song.Rows[5][8].Volume = 9;
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 3 vanishing.");
+	Song.Rows[5][8].Volume = NO_VOLUME;
+
+	// A pluck that settles to a level, or a click pluck holding low (2-3), carries its notes
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 13, 11, 10, 9 };
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 6, 4, 3 };
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
+	// A long decay is heard
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 12, 10, 9, 8, 7, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0 };
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+
+	// Stabs an octave or more off the line (an oom-pah), a run of them (a figure), or one alone: not counted
+	{
+		FakeSong Oompah;
+		Oompah.AddInstrumentInfo(3, "Stab", "VRC6", false);
+		Oompah.Info.Instruments.back().Volume = std::vector<int>{ 15, 13, 0 };
+		for (int Bar = 0; Bar < 2; ++Bar) {
+			Oompah.Put(5, Bar * 16, "C-2", 0);
+			Oompah.Put(5, Bar * 16 + 4, "E-3", 3);
+			Oompah.Put(5, Bar * 16 + 6, "C-2", 0);
+			Oompah.Put(5, Bar * 16 + 10, "G-3", 3);
+			Oompah.Put(5, Bar * 16 + 12, "G-1", 0);
+		}
+		Oompah.End(5, 32);
+		CHECK_HAS(Run(Oompah, "check_song", "{}").Text, ", 0 vanishing.");
+		FakeSong Figure;
+		Figure.AddInstrumentInfo(3, "Tick", "VRC6", false);
+		Figure.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Figure.Put(5, 0, "C-4", 0);
+		const char *const TICKS[] = { "D-4", "E-4", "F-4", "G-4", "A-4" };
+		for (int i = 0; i < 5; ++i)
+			Figure.Put(5, 8 + 2 * i, TICKS[i], 3);
+		Figure.Put(5, 18, "G-4", 0);
+		Figure.Put(5, 32, "C-4", 0);
+		Figure.Put(5, 40, "D-4", 3);	// one alone
+		Figure.Put(5, 42, "E-4", 0);
+		Figure.End(5, 56);
+		CHECK_HAS(Run(Figure, "check_song", "{}").Text, ", 0 vanishing.");
+	}
+
+	// A tune that's all blips
+	{
+		FakeSong Blips;
+		Blips.AddInstrumentInfo(3, "Blip", "VRC6", false);
+		Blips.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4", "D-4", "C-4" };
+		for (int i = 0; i < 10; ++i)
+			Blips.Put(5, i * 4, TUNE[i], i == 0 ? 3 : NO_INSTRUMENT);
+		Blips.End(5, 40);
+		Text = Run(Blips, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+		CHECK_HAS(Text, "Most of the melody's notes are gone within 3 frames (\"Blip\" (03)): a tune of blips sounds like ticks, "
+			"not a melody.");
+		CHECK_LACKS(Text, "Melody notes vanish");
+		CHECK_HAS(Run(Blips, "check_song", "{}").Text, ", 0 vanishing.");	// no held notes to miss them beside
+	}
+
+	// design_instrument says so of a sound gone that fast, not of one that settles
+	{
+		FakeSong Song2;
+		std::string Made = Run(Song2, "design_instrument", "{\"name\": \"Blip\", \"kind\": \"pluck\", \"decay\": 4, \"channel\": "
+			"\"2A03 Pulse 1\"}").Text;
+		CHECK_HAS(Made, " Its notes are gone within 3 frames: right for echoes, stabs and drums, but a tune's notes on it come out "
+			"as blips, which sound like missing notes beside held ones");
+		Made = Run(Song2, "design_instrument", "{\"name\": \"Pick\", \"kind\": \"pluck\", \"decay\": 12, \"sustain\": \"half\", "
+			"\"channel\": \"2A03 Pulse 1\"}").Text;
+		CHECK_HAS(Made, "Added \"Pick\"");
+		CHECK_LACKS(Made, "gone within");
+		CHECK_LACKS(Run(Song2, "design_instrument", "{\"name\": \"Hat\", \"kind\": \"hihat\", \"channel\": \"2A03 Noise\"}").Text,
+			"gone within");
 	}
 }
 
@@ -8360,6 +8469,7 @@ int main()
 	TestMood();
 	TestCheck();
 	TestPulseClicks();
+	TestVanishing();
 	TestNameSong();
 	TestLoudness();
 	TestPlayback();
