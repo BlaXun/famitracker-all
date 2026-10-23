@@ -174,7 +174,10 @@ a click pluck that holds low.
   notes: a run of up to four, with a held note of the line just before and
   just after, less than an octave away. A stab an octave off the line (an
   oom-pah's), a longer run (ticks, a ratchet) and a run where a line starts
-  or ends are figures of their own and left alone.
+  or ends are figures of their own and left alone, and so is a sound struck
+  again while the note lasts (an envelope that loops back up, an echo).
+  `check_song` lists the faults heard worst first (notes that vanish,
+  clicks, clashes), so a long list of notes outside the key can't hide them.
 - `review_arrangement` counts such notes in the melody against the score,
   and a melody whose notes mostly vanish too.
 - `design_instrument` and `reference_sound` say so when the sound they add
