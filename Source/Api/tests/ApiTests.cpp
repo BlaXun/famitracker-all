@@ -33,6 +33,7 @@
 #include "../Jingles.h"
 #include "../Json.h"
 #include "../Mcp.h"
+#include "../Network.h"
 #include "../Music.h"
 #include "../Ogg.h"
 #include "../Picture.h"
@@ -778,6 +779,23 @@ public:
 			return false;
 		Bytes = it->second;
 		return true;
+	}
+
+	std::map<std::string, std::string> Inbox;	// files sent from another computer
+
+	bool SaveInbox(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &) override
+	{
+		Inbox[Name] = Bytes;
+		Path = "C:\\Games\\FamiTracker\\Inbox\\" + Name;
+		return true;
+	}
+
+	std::vector<std::string> Fetched;	// the files ReadExport was asked for
+
+	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error) override
+	{
+		Fetched.push_back(Name);
+		return ReadFile(Name, Bytes, Error);
 	}
 
 	std::vector<std::string> Kits;	// the kits of samples added
@@ -4212,6 +4230,377 @@ void TestProtocol()
 		"http://127.0.0.1:46600/mcp --header \"Authorization: Bearer secret\""));
 }
 
+// A request from another computer: its address, and the Host it reached FamiTracker at
+HttpRequest FromNetwork(const std::string &Body, const std::string &Peer, const std::string &Host = "192.168.1.10:46600",
+	const std::string &Token = "secret")
+{
+	HttpRequest Request = Post(Body, Token);
+	Request.Peer = Peer;
+	Request.Headers[0].second = Host;
+	return Request;
+}
+
+HttpRequest FileRequest(const std::string &Method, const std::string &Target, const std::string &Body = std::string(),
+	const std::string &Token = "secret")
+{
+	HttpRequest Request;
+	Request.Method = Method;
+	Request.Target = Target;
+	Request.Version = "HTTP/1.1";
+	Request.Headers.push_back(std::make_pair(std::string("Host"), std::string("192.168.1.10:46600")));
+	if (!Token.empty())
+		Request.Headers.push_back(std::make_pair(std::string("Authorization"), "Bearer " + Token));
+	Request.Body = Body;
+	Request.Peer = "192.168.1.20";
+	return Request;
+}
+
+// The tool-like words of a text (lower case with underscores, like check_song)
+std::vector<std::string> ToolWords(const std::string &Text)
+{
+	std::vector<std::string> Words;
+	size_t At = 0;
+	while ((At = Text.find('_', At)) != std::string::npos) {
+		size_t From = At, To = At;
+		while (From > 0 && (std::islower(static_cast<unsigned char>(Text[From - 1])) || Text[From - 1] == '_'))
+			--From;
+		while (To < Text.size() && (std::islower(static_cast<unsigned char>(Text[To])) || Text[To] == '_'))
+			++To;
+		Words.push_back(Text.substr(From, To - From));
+		At = To;
+	}
+	return Words;
+}
+
+// Other computers on the user's network: who may connect, the Host they use,
+// the small set of tools, files sent in and fetched
+void TestNetwork()
+{
+	// Addresses
+	unsigned long Address = 0;
+	CHECK(ParseIpv4("192.168.1.10", Address) && Address == 0xC0A8010AUL && Ipv4Text(Address) == "192.168.1.10");
+	CHECK(ParseIpv4("0.0.0.0", Address) && Address == 0 && ParseIpv4("255.255.255.255", Address) && Address == 0xFFFFFFFFUL);
+	const char *const NOT_ADDRESSES[] = { "", "1.2.3", "1.2.3.4.5", "256.1.1.1", "01.2.3.4", "1.2.3.4 ", " 1.2.3.4", "1..2.3",
+		"a.b.c.d", "1.2.3.-4", "1234.1.1.1", "::1", "localhost" };
+	for (size_t i = 0; i < sizeof(NOT_ADDRESSES) / sizeof(NOT_ADDRESSES[0]); ++i)
+		Check(!ParseIpv4(NOT_ADDRESSES[i], Address), NOT_ADDRESSES[i], __LINE__);
+	const char *const HOME[] = { "127.0.0.1", "127.255.0.9", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255",
+		"192.168.0.1", "192.168.178.20", "169.254.10.20", "100.64.0.1", "100.101.102.103", "100.127.255.255" };
+	for (size_t i = 0; i < sizeof(HOME) / sizeof(HOME[0]); ++i)
+		Check(ParseIpv4(HOME[i], Address) && IsPrivateIpv4(Address), HOME[i], __LINE__);
+	const char *const OUTSIDE[] = { "8.8.8.8", "1.1.1.1", "172.15.255.255", "172.32.0.1", "192.167.1.1", "192.169.0.1",
+		"169.253.1.1", "100.63.255.255", "100.128.0.1", "11.0.0.1", "192.0.2.2", "0.0.0.0", "255.255.255.255", "224.0.0.1" };
+	for (size_t i = 0; i < sizeof(OUTSIDE) / sizeof(OUTSIDE[0]); ++i)
+		Check(ParseIpv4(OUTSIDE[i], Address) && !IsPrivateIpv4(Address), OUTSIDE[i], __LINE__);
+	CHECK(IsLoopbackIpv4(0x7F000001UL) && !IsLoopbackIpv4(0x0A000001UL));
+	std::vector<std::string> Own;
+	Own.push_back("192.168.1.10");
+	Own.push_back("100.90.1.2");
+	Own.push_back("203.0.113.7");		// this computer's own public address
+	CHECK(MayConnect("192.168.1.20", Own) && MayConnect("100.70.0.3", Own) && MayConnect("127.0.0.1", Own));
+	CHECK(MayConnect("203.0.113.7", Own));	// this computer at its own address
+	CHECK(!MayConnect("203.0.113.8", Own) && !MayConnect("8.8.8.8", Own) && !MayConnect("", Own) && !MayConnect("::1", Own));
+
+	// Host headers that name this computer
+	CHECK(NamesThisComputer("192.168.1.10:46600", Own, "DESKTOP-PC") && NamesThisComputer("192.168.1.10", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("100.90.1.2:46600", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("desktop-pc:46600", Own, "DESKTOP-PC") && NamesThisComputer("DESKTOP-PC", Own, "desktop-pc"));
+	CHECK(NamesThisComputer("desktop-pc.fritz.box:46600", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("desktop-pc.tail1234.ts.net", Own, "DESKTOP-PC") && NamesThisComputer("desktop-pc.local.", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("192.168.1.11:46600", Own, "DESKTOP-PC") && !NamesThisComputer("attacker.example", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("desktop-pcx:46600", Own, "DESKTOP-PC") && !NamesThisComputer("evil-desktop-pc", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("desktop-pc", Own, "") && !NamesThisComputer("", Own, "DESKTOP-PC") &&
+		!NamesThisComputer("[fd7a::1]:46600", Own, "DESKTOP-PC") && !NamesThisComputer(".", Own, "DESKTOP-PC"));
+
+	// File names
+	const char *const PLAIN[] = { "song.nsf", "Mega Man 2 (Capcom).nsf", "Town (night).ogg", "\xC3\x9C" "berwelt.ogg", "a" };
+	for (size_t i = 0; i < sizeof(PLAIN) / sizeof(PLAIN[0]); ++i)
+		Check(IsPlainFileName(PLAIN[i]), PLAIN[i], __LINE__);
+	const char *const NOT_PLAIN[] = { "", ".", "..", "../x.nsf", "..\\x.nsf", "a/b.nsf", "C:x.nsf", "x.ogg:stream", "x?.nsf",
+		"x*.nsf", "\"x\".nsf", "<x>.nsf", "x|y.nsf", "x\tnsf", "x.nsf ", " x.nsf", "x.nsf.", "NUL.ogg", "nul", "con.nsf",
+		"COM1.ogg", "lpt9.mid", "aux.wav", "conout$.txt", "bad\xFF.nsf" };
+	for (size_t i = 0; i < sizeof(NOT_PLAIN) / sizeof(NOT_PLAIN[0]); ++i)
+		Check(!IsPlainFileName(NOT_PLAIN[i]), NOT_PLAIN[i], __LINE__);
+	CHECK(!IsPlainFileName(std::string(201, 'a')) && IsPlainFileName(std::string(200, 'a')));
+	CHECK(!IsPlainFileName(std::string("x\0y.nsf", 7)));
+	CHECK(IsPlainFileName("COM10.ogg") && IsPlainFileName("console.nsf"));
+	CHECK(IsInboxFile("game.NSF") && IsInboxFile("game.nsfe") && IsInboxFile("game.m3u") && IsInboxFile("song.xm") &&
+		IsInboxFile("song.it") && IsInboxFile("song.mod") && IsInboxFile("song.s3m") && IsInboxFile("town.mid") &&
+		IsInboxFile("town.midi") && IsInboxFile("town.rmi") && IsInboxFile("song.ftm") && IsInboxFile("pew.wav"));
+	CHECK(!IsInboxFile("tool.exe") && !IsInboxFile("x.dll") && !IsInboxFile("notes.txt") && !IsInboxFile(".nsf") &&
+		!IsInboxFile("nsf") && !IsInboxFile("../game.nsf") && !IsInboxFile("game.nsf.exe"));
+	CHECK(IsExportFile("Town.ogg") && IsExportFile("Town (night).OGG") && !IsExportFile("test.ftm") && !IsExportFile(".ogg") &&
+		!IsExportFile("../Town.ogg"));
+
+	// Links and base64
+	CHECK_EQ(UrlEncode("Town (night).ogg"), std::string("Town%20%28night%29.ogg"));
+	CHECK_EQ(UrlEncode("a-b_c.d~e"), std::string("a-b_c.d~e"));
+	CHECK_EQ(UrlEncode("\xC3\x9C" "ber/welt"), std::string("%C3%9Cber%2Fwelt"));
+	std::string Decoded;
+	CHECK(UrlDecode("Town%20%28night%29.ogg", Decoded) && Decoded == "Town (night).ogg");
+	CHECK(UrlDecode("%c3%9cber", Decoded) && Decoded == "\xC3\x9C" "ber");
+	CHECK(UrlDecode("a+b", Decoded) && Decoded == "a+b");
+	CHECK(!UrlDecode("bad%2", Decoded) && !UrlDecode("bad%zz", Decoded) && !UrlDecode("%", Decoded));
+	std::string Bytes;
+	for (int i = 0; i < 300; ++i)
+		Bytes += static_cast<char>(i * 7);
+	for (size_t Length = 0; Length < 8; ++Length) {
+		std::string Back;
+		Check(Base64Decode(Base64Encode(Bytes.substr(0, Length)), Back) && Back == Bytes.substr(0, Length), "base64 comes back", __LINE__);
+	}
+	std::string Back;
+	CHECK(Base64Decode(Base64Encode(Bytes), Back) && Back == Bytes);
+	CHECK(Base64Decode("TWFu\r\nTWE=", Back) && Back == "ManMa");
+	CHECK(Base64Decode("TWE", Back) && Back == "Ma");				// without its padding
+	CHECK(Base64Decode("-_8", Back) && Back == "\xFB\xFF");			// the URL alphabet
+	CHECK(!Base64Decode("TWFu!", Back) && !Base64Decode("T", Back) && !Base64Decode("TW=a", Back) && !Base64Decode("TWE===", Back));
+
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	Config.Addresses = Own;
+	Config.ComputerName = "DESKTOP-PC";
+	const std::string Ping = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+
+	// With the option off, only this computer: requests from elsewhere are refused (FamiTracker doesn't listen there then)
+	HttpResponse Response = HandleMcp(FromNetwork(Ping, "192.168.1.20"), Config, Tools);
+	CHECK_EQ(Response.Status, 403);
+	CHECK_HAS(Body(Response).Get("error")->Get("message")->String(), "Allow connections from other computers on my network");
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "127.0.0.1", "127.0.0.1:46600"), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "", "127.0.0.1:46600"), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(Post(Ping), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "127.0.0.1", "192.168.1.10:46600"), Config, Tools).Status, 403);	// not its Host then
+
+	// With it on: home networks and Tailscale, never the internet
+	Config.Network = true;
+	const char *const ANSWERED[] = { "192.168.1.20", "10.0.0.5", "172.16.3.4", "172.31.0.9", "100.101.102.103", "169.254.1.1",
+		"127.0.0.1", "203.0.113.7" };
+	for (size_t i = 0; i < sizeof(ANSWERED) / sizeof(ANSWERED[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, ANSWERED[i]), Config, Tools).Status == 200, ANSWERED[i], __LINE__);
+	const char *const REFUSED[] = { "8.8.8.8", "172.32.0.1", "100.128.0.1", "203.0.113.8", "192.0.2.2", "garbage" };
+	for (size_t i = 0; i < sizeof(REFUSED) / sizeof(REFUSED[0]); ++i) {
+		Response = HandleMcp(FromNetwork(Ping, REFUSED[i]), Config, Tools);
+		Check(Response.Status == 403 && Contains(Body(Response).Get("error")->Get("message")->String(), "home network"), REFUSED[i],
+			__LINE__);
+	}
+	// The access code, always
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", "wrong"), Config, Tools).Status, 403);
+	// Its own addresses and name as the Host; nothing else
+	const char *const HOSTS[] = { "192.168.1.10:46600", "100.90.1.2:46600", "desktop-pc:46600", "DESKTOP-PC.fritz.box:46600",
+		"desktop-pc.tail1234.ts.net:46600", "localhost:46600", "127.0.0.1:46600" };
+	for (size_t i = 0; i < sizeof(HOSTS) / sizeof(HOSTS[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, "192.168.1.20", HOSTS[i]), Config, Tools).Status == 200, HOSTS[i], __LINE__);
+	const char *const OTHER_HOSTS[] = { "192.168.1.11:46600", "attacker.example:46600", "evil-desktop-pc:46600",
+		"desktop-pcx.fritz.box:46600", "[fd7a:115c::1]:46600" };
+	for (size_t i = 0; i < sizeof(OTHER_HOSTS) / sizeof(OTHER_HOSTS[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, "192.168.1.20", OTHER_HOSTS[i]), Config, Tools).Status == 403, OTHER_HOSTS[i], __LINE__);
+	// Its name under any domain counts (routers and Tailscale add their own), so a page that knows the name could rebind one
+	// to it: the Origin check below and the access code keep such a page out
+	CHECK(NamesThisComputer("desktop-pc.attacker.example", Own, "DESKTOP-PC"));
+	// Web pages stay out, from anywhere
+	HttpRequest Page = FromNetwork(Ping, "192.168.1.20");
+	Page.Headers.push_back(std::make_pair(std::string("Origin"), std::string("http://192.168.1.10:46600")));
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+	Page.Headers.back().second = "https://evil.example";
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+	Page.Headers[0].second = "desktop-pc.attacker.example:46600";		// rebound to this computer
+	Page.Headers.back().second = "http://desktop-pc.attacker.example:46600";
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+
+	// The small set of tools for local models
+	const std::vector<std::string> &Core = ToolSet::CoreTools();
+	CHECK(Core.size() >= 15 && Core.size() <= 18);
+	for (size_t i = 0; i < Core.size(); ++i)
+		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
+	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
+	HttpRequest CoreList = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}", "192.168.1.20");
+	CoreList.Target = "/mcp/core";
+	Response = HandleMcp(CoreList, Config, Tools);
+	Json Message = Body(Response);
+	const Json *pTools = Message.Get("result")->Get("tools");
+	CHECK(pTools != 0 && pTools->Size() == Core.size());
+	{
+		// In the full list's order, each as described there
+		std::vector<std::string> Listed, InOrder;
+		for (size_t i = 0; pTools != 0 && i < pTools->Size(); ++i)
+			Listed.push_back(pTools->At(i).Get("name")->String());
+		for (size_t i = 0; i < Tools.List().size(); ++i)
+			if (ToolSet::IsCoreTool(Tools.List()[i].Name))
+				InOrder.push_back(Tools.List()[i].Name);
+		CHECK(Listed == InOrder);
+		CHECK(std::find(Listed.begin(), Listed.end(), "write_notes") != Listed.end() &&
+			std::find(Listed.begin(), Listed.end(), "export_for_game") != Listed.end() &&
+			std::find(Listed.begin(), Listed.end(), "add_chords_and_bass") != Listed.end());
+		// Under half the full list's text
+		const Json Full = Body(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), Config, Tools));
+		CHECK(WriteJson(*pTools).size() * 2 < WriteJson(*Full.Get("result")->Get("tools")).size());
+	}
+	HttpRequest CoreStart = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}");
+	CoreStart.Target = "/mcp/core/";
+	Message = Body(HandleMcp(CoreStart, Config, Tools));
+	const std::string Short = Message.Get("result")->Get("instructions")->String();
+	CHECK(Short == ToolSet::CoreInstructions());
+	CHECK(Short.size() < 4200 && Short.size() * 3 < ToolSet::Instructions().size());
+	CHECK(Message.Get("result")->Get("capabilities")->Get("tools") != 0 && Message.Get("result")->Get("capabilities")->Get("prompts") == 0);
+	// The craft and the rules that decide how it sounds are in them
+	CHECK_HAS(Short, "C-3 is middle C");
+	CHECK_HAS(Short, "Notes that vanish");
+	CHECK_HAS(Short, "design_instrument kind pluck, sustain half");
+	CHECK_HAS(Short, "multiple of 256");
+	CHECK_HAS(Short, "polish with touches [\"clicks\"]");
+	CHECK_HAS(Short, "chord_style, color and bass_style");
+	CHECK_HAS(Short, "mix last");
+	CHECK_HAS(Short, "no Lxx, Mxy, Oxx or Txy");
+	{
+		// They name only tools of the set
+		const std::vector<std::string> Words = ToolWords(Short);
+		for (size_t i = 0; i < Words.size(); ++i)
+			Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style",
+				("a core tool: " + Words[i]).c_str(), __LINE__);
+		CHECK(Words.size() >= 15);
+	}
+	// The full instructions tell of send_file, and name only tools there are
+	CHECK_HAS(ToolSet::Instructions(), "send_file puts your files");
+	HttpRequest CoreCall = Post("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"make_jingle\"}}");
+	CoreCall.Target = "/mcp/core";
+	Response = HandleMcp(CoreCall, Config, Tools);
+	CHECK_EQ(ErrorCode(Response), -32602);
+	CHECK_HAS(Body(Response).Get("error")->Get("message")->String(), "small set of tools (/mcp/core)");
+	CoreCall.Body = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\",\"arguments\":{}}}";
+	Message = Body(HandleMcp(CoreCall, Config, Tools));
+	CHECK(!Message.Get("result")->Get("isError")->Bool());
+	CHECK_HAS(Message.Get("result")->Get("content")->At(0).Get("text")->String(), "VRC6 Pulse 1: 1 note");
+	CoreCall.Body = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"prompts/list\"}";
+	CHECK_EQ(ErrorCode(HandleMcp(CoreCall, Config, Tools)), -32601);
+	HttpRequest CoreDiscover = ModernPost("server/discover", "");
+	CoreDiscover.Target = "/mcp/core";
+	Message = Body(HandleMcp(CoreDiscover, Config, Tools));
+	CHECK(Message.Get("result")->Get("instructions")->String() == Short && Message.Get("result")->Get("capabilities")->Get("prompts") == 0);
+	HttpRequest CoreModernList = ModernPost("tools/list", "");
+	CoreModernList.Target = "/mcp/core";
+	CHECK(Body(HandleMcp(CoreModernList, Config, Tools)).Get("result")->Get("tools")->Size() == Core.size());
+	HttpRequest CorePrompts = ModernPost("prompts/list", "");
+	CorePrompts.Target = "/mcp/core";
+	Response = HandleMcp(CorePrompts, Config, Tools);
+	CHECK(Response.Status == 404 && ErrorCode(Response) == -32601);
+	HttpRequest Elsewhere = Post(Ping);
+	Elsewhere.Target = "/mcp/other";
+	CHECK_EQ(HandleMcp(Elsewhere, Config, Tools).Status, 404);
+	CHECK_EQ(NetworkUrl("192.168.1.10", 46600, false), std::string("http://192.168.1.10:46600/mcp"));
+	CHECK_EQ(NetworkUrl("100.90.1.2", 46601, true), std::string("http://100.90.1.2:46601/mcp/core"));
+
+	// send_file: a file into the Inbox, for the tools that read files on the user's PC
+	std::string Nsf = "NESM\x1A";
+	Nsf += std::string(200, '\x01');
+	ToolResult Sent = Tools.Call("send_file", Parse("{\"name\":\"Mega Man 2.nsf\",\"data\":\"" + Base64Encode(Nsf) + "\"}"));
+	CHECK(!Sent.IsError);
+	CHECK_HAS(Sent.Text, "Saved C:\\Games\\FamiTracker\\Inbox\\Mega Man 2.nsf (1 KB).");
+	CHECK_HAS(Sent.Text, "study_nsf");
+	CHECK(Song.Inbox["Mega Man 2.nsf"] == Nsf);
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"Mega Man 2.m3u\",\"data\":\"" + Base64Encode("x.nsf::NSF,1,Title") + "\"}")).Text,
+		"names the tracks of the NSF");
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"pew.wav\",\"data\":\"UklGRg==\"}")).Text, "make_sound_effect");
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"town.mid\",\"data\":\"TVRoZA==\"}")).Text, "study_module");
+	const char *const REFUSED_NAMES[] = { "..\\\\evil.nsf", "../evil.nsf", "C:\\\\Windows\\\\evil.nsf", "evil.exe", "NUL.nsf", "" };
+	for (size_t i = 0; i < sizeof(REFUSED_NAMES) / sizeof(REFUSED_NAMES[0]); ++i) {
+		const ToolResult Refused = Tools.Call("send_file", Parse(std::string("{\"name\":\"") + REFUSED_NAMES[i] + "\",\"data\":\"QUJD\"}"));
+		Check(Refused.IsError, REFUSED_NAMES[i], __LINE__);
+	}
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"evil.exe\",\"data\":\"QUJD\"}")).Text, ".nsf, .nsfe, .m3u");
+	CHECK(Song.Inbox.size() == 4);
+	CHECK(Tools.Call("send_file", Parse("{\"name\":\"x.nsf\",\"data\":\"not base64!\"}")).IsError);
+	CHECK(Tools.Call("send_file", Parse("{\"name\":\"x.nsf\",\"data\":\"\"}")).IsError);
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"big.nsf\",\"data\":\"" + Base64Encode(std::string(MAX_INBOX_FILE + 1, 'x')) +
+		"\"}")).Text, "at most 5 MB");
+	CHECK(Song.Inbox.count("big.nsf") == 0 && Song.Inbox.count("x.nsf") == 0);
+	CHECK(!ToolSet::IsCoreTool("send_file") && Tools.Has("send_file"));
+
+	// PUT /inbox/<name>: the same with the file itself
+	Response = HandleMcp(FileRequest("PUT", "/inbox/Castle%20theme.xm", "Extended Module: "), Config, Tools);
+	CHECK_EQ(Response.Status, 200);
+	CHECK_HAS(Response.Body, "Saved C:\\Games\\FamiTracker\\Inbox\\Castle theme.xm");
+	CHECK(Song.Inbox["Castle theme.xm"] == "Extended Module: ");
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/x.nsf", "NESM", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/x.nsf", "NESM", "wrong"), Config, Tools).Status, 403);
+	Response = HandleMcp(FileRequest("GET", "/inbox/x.nsf"), Config, Tools);
+	CHECK(Response.Status == 405 && Response.Headers.size() == 1 && Response.Headers[0].second == "PUT");
+	const char *const BAD_UPLOADS[] = { "/inbox/..%2Fevil.nsf", "/inbox/..%5Cevil.nsf", "/inbox/evil.exe", "/inbox/%2e%2e",
+		"/inbox/a%00.nsf", "/inbox/bad%zz.nsf", "/inbox/C%3Aevil.nsf" };
+	for (size_t i = 0; i < sizeof(BAD_UPLOADS) / sizeof(BAD_UPLOADS[0]); ++i)
+		Check(HandleMcp(FileRequest("PUT", BAD_UPLOADS[i], "x"), Config, Tools).Status == 400, BAD_UPLOADS[i], __LINE__);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/big.nsf", std::string(MAX_INBOX_FILE + 1, 'x')), Config, Tools).Status, 413);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/", "x"), Config, Tools).Status, 404);
+	CHECK(Song.Inbox.size() == 5);
+
+	// GET /files/<name>: what export_for_game saved next to the song, and nothing else
+	Song.Files["Town.ogg"] = std::string("OggS\0\x02rest", 10);
+	Song.Files["Town (night).ogg"] = "OggS night";
+	Song.Files["Soundtrack notes.txt"] = "private";
+	Response = HandleMcp(FileRequest("GET", "/files/Town.ogg"), Config, Tools);
+	CHECK(Response.Status == 200 && Response.ContentType == "audio/ogg" && Response.Body == Song.Files["Town.ogg"]);
+	CHECK(Response.Headers.size() == 1 && Response.Headers[0].second == "attachment; filename=\"Town.ogg\"");
+	Response = HandleMcp(FileRequest("GET", "/files/Town%20%28night%29.ogg?x=1"), Config, Tools);
+	CHECK(Response.Status == 200 && Response.Body == "OggS night");
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Missing.ogg"), Config, Tools).Status, 404);
+	Song.Fetched.clear();
+	const char *const TRAVERSALS[] = { "/files/..%2F..%2Fsecret.ogg", "/files/..%5C..%5Csecret.ogg", "/files/../secret.ogg",
+		"/files/..\\secret.ogg", "/files/%2e%2e", "/files/C%3A%5Csecret.ogg", "/files/x.ogg%00.txt", "/files/test.ftm",
+		"/files/Soundtrack%20notes.txt", "/files/NUL.ogg", "/files/%2Fetc%2Fpasswd", "/files/bad%2", "/files/Town.ogg%3Astream" };
+	for (size_t i = 0; i < sizeof(TRAVERSALS) / sizeof(TRAVERSALS[0]); ++i)
+		Check(HandleMcp(FileRequest("GET", TRAVERSALS[i]), Config, Tools).Status == 400, TRAVERSALS[i], __LINE__);
+	CHECK(Song.Fetched.empty());	// none of them reached the song's folder
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", "wrong"), Config, Tools).Status, 403);
+	Response = HandleMcp(FileRequest("POST", "/files/Town.ogg"), Config, Tools);
+	CHECK(Response.Status == 405 && Response.Headers[0].second == "GET");
+	{
+		// From outside a home network, or with the option off, nothing
+		HttpRequest Outside = FileRequest("GET", "/files/Town.ogg");
+		Outside.Peer = "8.8.8.8";
+		CHECK_EQ(HandleMcp(Outside, Config, Tools).Status, 403);
+		McpConfig Off = Config;
+		Off.Network = false;
+		CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg"), Off, Tools).Status, 403);
+		HttpRequest Here = FileRequest("GET", "/files/Town.ogg");
+		Here.Peer = "127.0.0.1";
+		Here.Headers[0].second = "127.0.0.1:46600";
+		CHECK_EQ(HandleMcp(Here, Off, Tools).Status, 200);
+	}
+
+	// export_for_game links its files for a client on another computer, as it reached FamiTracker
+	{
+		FakeSong Exported;
+		Exported.Info.DirectChanges = true;
+		Exported.Put(5, 0, "C-4", 0);
+		Exported.Put(5, 64, "E-4");
+		ToolSet ExportTools(Exported);
+		HttpRequest Export = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"export_for_game\","
+			"\"arguments\":{}}}", "192.168.1.20", "desktop-pc:46600");
+		Export.Target = "/mcp/core";
+		std::string Text = Body(HandleMcp(Export, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
+		CHECK_HAS(Text, "Saved next to test.ftm:\n- Town.ogg");
+		CHECK_HAS(Text, "fetch the files from FamiTracker with the access code");
+		CHECK_HAS(Text, "\n- http://desktop-pc:46600/files/Town.ogg");
+		CHECK(Exported.Files.count("Town.ogg") == 1);
+		// The link works
+		HttpRequest Fetch = FileRequest("GET", "/files/Town.ogg");
+		Fetch.Headers[0].second = "desktop-pc:46600";
+		Response = HandleMcp(Fetch, Config, ExportTools);
+		CHECK(Response.Status == 200 && Response.Body == Exported.Files["Town.ogg"] && Response.Body.compare(0, 4, "OggS") == 0);
+		// On this computer, the files are next to the song: no links
+		HttpRequest Local = Post("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"export_for_game\","
+			"\"arguments\":{}}}");
+		Text = Body(HandleMcp(Local, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
+		CHECK_HAS(Text, "- Town.ogg");
+		CHECK_LACKS(Text, "/files/");
+		CHECK_LACKS(ExportTools.Call("export_for_game", Parse("{}")).Text, "http://");
+	}
+}
+
 // A session as Claude Code would run it, from the handshake to a melody in the song
 void TestSession()
 {
@@ -6775,6 +7164,17 @@ void TestBridge()
 	Check(Contains(Bytes, Length), "the length before the body", __LINE__);
 	CHECK(BridgeRequest(Initialize, 46600, "", Message));
 	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("(none)"));
+	// FamiTracker on another computer (--host), and the small set of tools (--core)
+	CHECK(BridgeRequest(Initialize, 46601, "secret", Message, "192.168.1.10", "/mcp/core"));
+	CHECK_EQ(HeaderOf(Message.Request, "Host"), std::string("192.168.1.10:46601"));
+	CHECK_EQ(Message.Request.Target, std::string("/mcp/core"));
+	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("Bearer secret"));
+	{
+		const std::string Head = "POST /mcp/core HTTP/1.1\r\nHost: 192.168.1.10:46601\r\n";
+		CHECK_EQ(FormatHttpRequest(Message.Request).compare(0, Head.size(), Head), 0);
+	}
+	CHECK(BridgeRequest(Initialize, 46600, "secret", Message, "desktop-pc"));
+	CHECK(HeaderOf(Message.Request, "Host") == "desktop-pc:46600" && Message.Request.Target == "/mcp");
 
 	// The 2026-07-28 protocol: the headers say what the body says
 	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\","
@@ -6971,6 +7371,9 @@ public:
 
 	int Port() const { return m_iPort; }
 	int Answered() const { return m_iAnswered; }
+	// The last request's Host header and target (read once it's answered)
+	std::string LastHost() const { return m_LastHost; }
+	std::string LastTarget() const { return m_LastTarget; }
 
 private:
 	void Run()
@@ -6982,9 +7385,13 @@ private:
 			timeval Wait = { 0, 20000 };
 			if (select(static_cast<int>(m_Listener) + 1, &Readable, 0, 0, &Wait) <= 0)
 				continue;
-			const test_socket_t Client = accept(m_Listener, 0, 0);
+			sockaddr_in From;
+			socklen_t FromSize = sizeof(From);
+			const test_socket_t Client = accept(m_Listener, reinterpret_cast<sockaddr*>(&From), &FromSize);
 			if (Client == NO_TEST_SOCKET)
 				continue;
+			char Peer[INET_ADDRSTRLEN] = "";
+			inet_ntop(AF_INET, &From.sin_addr, Peer, sizeof(Peer));
 			HttpRequestParser Parser;
 			HttpRequestParser::Result Result = HttpRequestParser::NEED_MORE;
 			char Buffer[4096];
@@ -6995,7 +7402,11 @@ private:
 				Result = Parser.Feed(Buffer, static_cast<size_t>(Count));
 			}
 			if (Result == HttpRequestParser::COMPLETE) {
-				const std::string Bytes = FormatHttpResponse(HandleMcp(Parser.Take(), m_Config, m_Tools), false);
+				HttpRequest Request = Parser.Take();
+				Request.Peer = Peer;	// as McpSocket.cpp gives it
+				m_LastHost = Request.Header("Host") != 0 ? *Request.Header("Host") : std::string();
+				m_LastTarget = Request.Target;
+				const std::string Bytes = FormatHttpResponse(HandleMcp(Request, m_Config, m_Tools), false);
 				++m_iAnswered;	// before the answer goes out: the client may check as soon as it has it
 				for (size_t Sent = 0; Sent < Bytes.size(); ) {
 					const long Count = static_cast<long>(send(Client, Bytes.data() + Sent, static_cast<int>(Bytes.size() - Sent), 0));
@@ -7015,6 +7426,7 @@ private:
 	std::atomic<bool> m_bStop;
 	std::atomic<int> m_iAnswered;
 	std::thread m_Thread;
+	std::string m_LastHost, m_LastTarget;
 };
 
 // famitracker-mcp's side over real sockets
@@ -7050,6 +7462,26 @@ void TestBridgeSockets()
 	Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"params\":{\"padding\":\"" + std::string(200000, 'x') + "\"}}", Error);
 	CHECK_EQ(Out, std::string("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}\n"));
 	CHECK_EQ(Endpoint.Answered(), 3);
+	// --host: FamiTracker named by its address or its name, the small set of tools with --core
+	const char *const HOSTS[] = { "127.0.0.1", "localhost" };
+	for (size_t i = 0; i < sizeof(HOSTS) / sizeof(HOSTS[0]); ++i) {
+		BridgeMessage Message;
+		BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/list\"}", Port, "t", Message, HOSTS[i], "/mcp/core");
+		HttpResponse Answer;
+		const BridgeExchangeResult Result = BridgeExchange(HOSTS[i], Port, FormatHttpRequest(Message.Request), 5000, Answer, Error);
+		Check(Result == EXCHANGE_ANSWERED, HOSTS[i], __LINE__);
+		Out = BridgeAnswer(Message, Answer);
+		Check(OneLine(Out) && Contains(Out, "\"name\":\"write_notes\"") && !Contains(Out, "\"name\":\"make_jingle\""), HOSTS[i], __LINE__);
+		CHECK_EQ(Endpoint.LastTarget(), std::string("/mcp/core"));
+		CHECK_EQ(Endpoint.LastHost(), std::string(HOSTS[i]) + ":" + std::to_string(Port));
+	}
+	{
+		BridgeMessage Message;
+		BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"ping\"}", Port, "t", Message, "no-such-computer.invalid");
+		HttpResponse Answer;
+		CHECK_EQ(BridgeExchange("no-such-computer.invalid", Port, FormatHttpRequest(Message.Request), 5000, Answer, Error), EXCHANGE_FAILED);
+		CHECK_HAS(Error, "No computer called no-such-computer.invalid");
+	}
 	Endpoint.Stop();
 
 	// Nobody listens: FamiTracker isn't running
@@ -8487,6 +8919,7 @@ int main()
 	TestLoudness();
 	TestPlayback();
 	TestProtocol();
+	TestNetwork();
 	TestSession();
 	TestBridge();
 	TestBridgeSockets();

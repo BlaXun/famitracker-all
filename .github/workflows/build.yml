@@ -185,6 +185,26 @@ jobs:
           cmake --build build/api -j 4
           ctest --test-dir build/api --output-on-failure
 
+      # famitracker-mcp for Linux, linked statically against musl on Alpine so it
+      # runs on any x86-64 Linux: stdio MCP clients on another computer reach
+      # FamiTracker over the network with it (--host)
+      - name: Build famitracker-mcp for Linux
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src alpine:3.20 sh -c '
+            apk add --no-cache g++ cmake make >/dev/null &&
+            cmake -S Source/Api -B build/bridge-linux -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static &&
+            cmake --build build/bridge-linux --target famitracker-mcp -j 4 &&
+            strip -o famitracker-mcp-linux build/bridge-linux/famitracker-mcp'
+          file famitracker-mcp-linux
+          ./famitracker-mcp-linux --help | head -1
+
+      - name: Upload famitracker-mcp-linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: famitracker-mcp-linux
+          path: famitracker-mcp-linux
+          if-no-files-found: error
+
       # The NSF importer: the 6502, the chips, the conversion and the studies (Source/Nsf)
       - name: NSF importer tests
         run: |
@@ -241,6 +261,13 @@ jobs:
         with:
           name: nsf2ftm-Win32
           path: dist/nsf2ftm
+
+      - name: Download famitracker-mcp-linux
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: famitracker-mcp-linux
+          path: dist/famitracker-mcp-linux
 
       - name: Package and publish
         env:

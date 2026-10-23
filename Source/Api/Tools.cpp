@@ -26,6 +26,7 @@
 #include "GameAudio.h"
 #include "Jingles.h"
 #include "Music.h"
+#include "Network.h"
 #include "Ogg.h"
 #include "Picture.h"
 #include "Presets.h"
@@ -10772,8 +10773,9 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
 // Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
+// Saved: the file's name is added once it's written
 std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, double Loudness, std::vector<std::string> &Taken,
-	std::string &Code)
+	std::string &Code, std::vector<std::string> &Saved)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -10886,6 +10888,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	std::string Path;
 	if (!S.Host().SaveFile(File, Bytes, Path, Error))
 		throw Problem(Error);
+	Saved.push_back(File);
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
@@ -10915,7 +10918,8 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	return Text;
 }
 
-std::string ExportTool(Session &S, const Json &Args)
+// FilesUrl: where a client on another computer fetches the files (Caller::FilesUrl), or empty
+std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	const bool Normalize = BoolArg(Args, "normalize", true);
@@ -10948,7 +10952,7 @@ std::string ExportTool(Session &S, const Json &Args)
 
 	const int Selected = S.Song.Track;
 	int Current = Selected;
-	std::vector<std::string> Taken, Lines;
+	std::vector<std::string> Taken, Lines, Saved;
 	std::string Code;
 	std::string Error;
 	for (size_t i = 0; i < Tracks.size(); ++i) {
@@ -10961,7 +10965,7 @@ std::string ExportTool(Session &S, const Json &Args)
 		}
 		Session Track(S.Host());
 		try {
-			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code));
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code, Saved));
 			const int Clicking = static_cast<int>(SongClicks(Track, 0, Track.Time.TotalRows()).size());
 			if (Clicking > 0)
 				Lines.push_back(Format("Track %d: %s on the 2A03's pulses %s in the files (a vibrato that takes the period across a "
@@ -10981,6 +10985,12 @@ std::string ExportTool(Session &S, const Json &Args)
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty())
 		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
+	if (!FilesUrl.empty() && !Saved.empty()) {
+		Text += "\n\nYou're on another computer: fetch the files from FamiTracker with the access code you connect with (the same "
+			"Authorization header), like curl -H \"Authorization: Bearer <code>\" -o <file> <link>:";
+		for (size_t i = 0; i < Saved.size(); ++i)
+			Text += "\n- " + FilesUrl + UrlEncode(Saved[i]);
+	}
 	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
 		"points are in seconds.\n" + Code;
 	return Text;
@@ -13032,6 +13042,20 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tracks", Prop("string", "Which: \"music\" (default), \"all\", or numbers from 1 like \"1,3-5\" (at most 64).")),
 		false, true);
 
+	AddTool("send_file", "Send a file to FamiTracker",
+		"For a client on another computer, whose files FamiTracker can't open: puts a file into the Inbox folder next to "
+		"FamiTracker.exe on the user's PC and replies with its Windows path, for the tools that read files there: an NSF for "
+		"study_nsf and import_nsf (its .m3u playlist too, which names the tracks), a MOD, S3M, XM, IT, MIDI or FamiTracker "
+		"module for study_module, a WAV recording for make_sound_effect. Give the file's name and its bytes in base64, at most "
+		"5 MB. A file of that name in the Inbox is replaced. With a shell, sending the file itself is quicker, with the "
+		"same access code: curl -T song.nsf -H \"Authorization: Bearer <code>\" http://<FamiTracker's address>:<port>/inbox/"
+		"song.nsf.",
+		Schema()
+			.Add("name", Prop("string", "The file's name without folders, like \"Mega Man 2.nsf\": .nsf, .nsfe, .m3u, .mod, .s3m, .xm, "
+				".it, .mid, .midi, .rmi, .ftm or .wav."), true)
+			.Add("data", Prop("string", "The file's bytes in base64."), true),
+		false, false, true);
+
 	AddTool("review_arrangement", "Review the arrangement's depth",
 		"What makes the song sound plain, as a musician would hear it: which parts play (melody, chords, bass, drums, a "
 		"second line) and which are missing, bars where only one or two play, the chords (how many, plain triads or "
@@ -13098,7 +13122,7 @@ bool ToolSet::Has(const std::string &Name) const
 	return false;
 }
 
-ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
+ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
 	const Json Args = Arguments.IsObject() ? Arguments : Json::MakeObject();
@@ -13134,6 +13158,15 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "effects") Result.Text = EffectsTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
+		else if (Name == "send_file") {
+			std::string Bytes;
+			const std::string File = Trim(StringArg(Args, "name"));
+			if (File.empty())
+				throw Problem("send_file needs the file's name, like \"song.nsf\".");
+			if (!Base64Decode(StringArg(Args, "data"), Bytes))
+				throw Problem("data should be the file's bytes in base64.");
+			Result.IsError = !ReceiveFile(File, Bytes, Result.Text);
+		}
 		else if (Name == "add_sample_drums") Result.Text = AddSampleDrumsTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
@@ -13152,7 +13185,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "keep_version") Result.Text = KeepVersionTool(S, Args);
 		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
-		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
+		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
 			S.Host().Stop();
@@ -13170,6 +13203,108 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		Result.IsError = true;
 	}
 	return Result;
+}
+
+bool ToolSet::ReceiveFile(const std::string &Name, const std::string &Bytes, std::string &Reply)
+{
+	if (!IsInboxFile(Name)) {
+		Reply = IsPlainFileName(Name) ? "FamiTracker's Inbox takes " + std::string(INBOX_FILE_KINDS) + " files (what study_nsf, "
+			"import_nsf, study_module and make_sound_effect read), not " + Name + "." :
+			"Give the file's name without folders, like \"song.nsf\" (\"" + ValidUtf8(Name) + "\" isn't one).";
+		return false;
+	}
+	if (Bytes.empty()) {
+		Reply = Name + " is empty.";
+		return false;
+	}
+	if (Bytes.size() > MAX_INBOX_FILE) {
+		Reply = Format("%s is %.1f MB; FamiTracker's Inbox takes files of at most 5 MB.", Name.c_str(),
+			static_cast<double>(Bytes.size()) / (1024.0 * 1024.0));
+		return false;
+	}
+	std::string Path, Error;
+	if (!m_Host.SaveInbox(Name, Bytes, Path, Error)) {
+		Reply = Error.empty() ? "FamiTracker couldn't save " + Name + "." : Error;
+		return false;
+	}
+	const std::string Kind = Lowercase(Name.substr(Name.rfind('.') + 1));
+	std::string Use;
+	if (Kind == "nsf" || Kind == "nsfe")
+		Use = "Give that path to study_nsf (to study its tracks) or import_nsf (to open them as a module). Its .m3u playlist, sent "
+			"with the same name, names the tracks.";
+	else if (Kind == "m3u")
+		Use = "It names the tracks of the NSF of the same name in the Inbox, for study_nsf.";
+	else if (Kind == "wav")
+		Use = "Give that path to make_sound_effect as its recording.";
+	else
+		Use = "Give that path to study_module.";
+	Reply = "Saved " + Path + Format(" (%d KB). ", static_cast<int>((Bytes.size() + 1023) / 1024)) + Use;
+	return true;
+}
+
+bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::string &Error)
+{
+	Error.clear();
+	Bytes.clear();
+	if (!IsExportFile(Name)) {
+		Error = "FamiTracker gives only the OGG files export_for_game saved next to the song.";
+		return false;
+	}
+	return m_Host.ReadExport(Name, Bytes, Error);
+}
+
+// The composing essentials, for local models that struggle with many tools: reading the song, writing notes,
+// instruments and sounds, chords and bass, drums, echo, tempo, mix, polish, the checks, playback, saving, export
+const std::vector<std::string> &ToolSet::CoreTools()
+{
+	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "add_instrument", "design_instrument",
+		"set_instrument", "add_chords_and_bass", "add_drums", "add_echo", "set_tempo", "polish", "mix", "check_song",
+		"review_arrangement", "play", "stop", "save_song", "export_for_game" };
+	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
+	return CORE;
+}
+
+bool ToolSet::IsCoreTool(const std::string &Name)
+{
+	const std::vector<std::string> &Core = CoreTools();
+	return std::find(Core.begin(), Core.end(), Name) != Core.end();
+}
+
+std::string ToolSet::CoreInstructions()
+{
+	return
+		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (two pulses, a triangle, noise, "
+		"DPCM), sometimes with an expansion chip. Bars and beats count from 1. Notes are written C-4, C#4, Db4 with "
+		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
+		"Work like this: get_song first, read_notes before you change a part. Unless the user allowed direct changes, each "
+		"change arrives as a clip the user plays and places; say where it goes. You can't hear: after writing, run check_song "
+		"and review_arrangement, play the bars for the user, then ask how it sounds. Say what you changed and why.\n"
+		"Write music that sounds composed, not generated:\n"
+		"- Plan: the mood gives the key and mode (major or lydian bright, minor or dorian sad, phrygian for danger), a tempo "
+		"(set_tempo; pick an even one it names, or the hi-hats wobble) and a form of 16-32 bars with an A part and a "
+		"different B part.\n"
+		"- Melody (write_notes, on a pulse): a short motif repeated and developed, phrases of 2 or 4 bars that end on a held "
+		"note or a rest, chord tones on strong beats, long and short notes mixed, mostly in octave 3 (C-3 to C-4).\n"
+		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\" or \"i VI III VII\"), "
+		"about one a bar, with a chord_style, color and bass_style that fit the mood (the defaults are the plainest); other "
+		"chords for the B part.\n"
+		"- Drums: add_drums on the noise channel, with fills where phrases end; lighter in calm parts.\n"
+		"- Space: add_echo copies the melody onto a free channel, later and quieter.\n"
+		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
+		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
+		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
+		"Rules that decide how it sounds:\n"
+		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 "
+		"1 0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give "
+		"a plucked melody a sound that settles to a level (design_instrument kind pluck, sustain half), and keep sounds that "
+		"vanish for echoes, stabs and drums. check_song lists such notes.\n"
+		"- Clicks: on the 2A03's pulses, a vibrato that takes a held note's period across a multiple of 256 restarts the "
+		"wave, a click several times a second (A-3 even with a gentle vibrato, F-1 with any). The tools nudge such notes a "
+		"few cents with Pxx and say so; check_song lists any left, and polish with touches [\"clicks\"] nudges them.\n"
+		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
+		"For a game: save_song, then export_for_game at about -20 LUFS (-22 for calm places, -19 for action).\n"
+		"This is FamiTracker's small set of tools (/mcp/core). Replies sometimes name tools it doesn't have (/mcp has them "
+		"all): skip those steps, or tell the user.";
 }
 
 std::string ToolSet::Instructions()
@@ -13249,6 +13384,9 @@ std::string ToolSet::Instructions()
 		"boss with phases can be a track per phase (make_version gives the second track to rewrite), and the game switches "
 		"between them. Credits or an ending that slows down and stops: set_tempo with from_bar and over_bars, then set_loop "
 		"with stop. For many tracks for one game, references action guide topic soundtrack has the plan.\n"
+		"- From another computer (FamiTracker lets the user's network connect): paths are the user's PC's, so send_file puts "
+		"your files (an NSF, a module, a WAV) into FamiTracker's Inbox and gives their paths, and export_for_game's reply links "
+		"to the files it saves.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. remove_unused_instruments lists the sounds nothing plays (removing them needs the user's OK). "

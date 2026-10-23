@@ -28,6 +28,7 @@
 #include <vector>
 #include "Api/Http.h"
 #include "Api/Json.h"
+#include "Api/Network.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -38,11 +39,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <process.h>
 
 #include "McpSocket.h"
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace {
 
@@ -55,8 +58,46 @@ struct Connection {
 	SOCKET Socket;
 	ftapi::HttpRequestParser Parser;
 	ULONGLONG LastUsed;
-	Connection(SOCKET s) : Socket(s), LastUsed(GetTickCount64()) {}
+	std::string Peer;	// the client's address
+	Connection(SOCKET s, const std::string &From) : Socket(s), LastUsed(GetTickCount64()), Peer(From) {}
 };
+
+// Whether a client at Address (host order) is answered: this computer always;
+// with Network, home networks' addresses and this computer's own too
+bool MayConnect(unsigned long Address, bool Network)
+{
+	if (ftapi::IsLoopbackIpv4(Address))
+		return true;
+	if (!Network)
+		return false;
+	if (ftapi::IsPrivateIpv4(Address))
+		return true;
+	const std::vector<mcp_address_t> Own = ListNetworkAddresses();
+	for (size_t i = 0; i < Own.size(); ++i)
+		if (Own[i].Address == ftapi::Ipv4Text(Address))
+			return true;
+	return false;
+}
+
+// home networks with a router, Tailscale, other home networks, link-local, the rest
+int AddressRank(const mcp_address_t &A)
+{
+	unsigned long Address = 0;
+	ftapi::ParseIpv4(A.Address, Address);
+	const bool Tailscale = (Address & 0xFFC00000UL) == 0x64400000UL, LinkLocal = (Address & 0xFFFF0000UL) == 0xA9FE0000UL;
+	if (!ftapi::IsPrivateIpv4(Address))
+		return 4;
+	if (Tailscale)
+		return 1;
+	if (LinkLocal)
+		return 3;
+	return A.Gateway ? 0 : 2;
+}
+
+bool RankedBefore(const mcp_address_t &a, const mcp_address_t &b)
+{
+	return AddressRank(a) < AddressRank(b);
+}
 
 bool SendAll(SOCKET Socket, const std::string &Bytes)
 {
@@ -124,6 +165,55 @@ enum { OWNER_SERVER, OWNER_THREAD, OWNER_FINISHED };
 
 }	// namespace
 
+std::vector<mcp_address_t> ListNetworkAddresses()
+{
+	std::vector<mcp_address_t> Found;
+	const ULONG Flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
+	ULONG Size = 16384;
+	std::vector<unsigned char> Buffer;
+	ULONG Result = ERROR_BUFFER_OVERFLOW;
+	for (int Try = 0; Try < 3 && Result == ERROR_BUFFER_OVERFLOW; ++Try) {
+		Buffer.assign(Size, 0);
+		Result = GetAdaptersAddresses(AF_INET, Flags, NULL, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(&Buffer[0]), &Size);
+	}
+	if (Result != NO_ERROR)
+		return Found;
+	for (const IP_ADAPTER_ADDRESSES *p = reinterpret_cast<const IP_ADAPTER_ADDRESSES*>(&Buffer[0]); p != NULL; p = p->Next) {
+		if (p->OperStatus != IfOperStatusUp || p->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+			continue;
+		char Name[128] = "";
+		if (p->FriendlyName != NULL)
+			WideCharToMultiByte(CP_ACP, 0, p->FriendlyName, -1, Name, static_cast<int>(sizeof(Name)), "?", NULL);
+		Name[sizeof(Name) - 1] = 0;
+		for (const IP_ADAPTER_UNICAST_ADDRESS *u = p->FirstUnicastAddress; u != NULL; u = u->Next) {
+			if (u->Address.lpSockaddr == NULL || u->Address.lpSockaddr->sa_family != AF_INET)
+				continue;
+			const unsigned long Address = ntohl(reinterpret_cast<const sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr);
+			if (ftapi::IsLoopbackIpv4(Address) || Address == 0)
+				continue;
+			mcp_address_t A;
+			A.Address = ftapi::Ipv4Text(Address);
+			A.Adapter = Name;
+			A.Gateway = p->FirstGatewayAddress != NULL;
+			Found.push_back(A);
+		}
+	}
+	std::stable_sort(Found.begin(), Found.end(), RankedBefore);
+	return Found;
+}
+
+std::string NetworkComputerName()
+{
+	char Name[256] = "";
+	DWORD Size = sizeof(Name);
+	if (!GetComputerNameExA(ComputerNameDnsHostname, Name, &Size)) {
+		Size = sizeof(Name);
+		if (!GetComputerNameA(Name, &Size))
+			return std::string();
+	}
+	return Name;
+}
+
 bool BeginMcpExchange(mcp_exchange_t *pExchange)
 {
 	Exchange *p = static_cast<Exchange*>(pExchange);
@@ -141,10 +231,12 @@ struct CMcpSocketServer::Impl {
 	HWND hWindow;
 	UINT Message;
 	int Port;
+	bool Network;				// other computers too
 	volatile LONG Stopping;
 	volatile LONG Owner;
 
-	Impl() : Listener(INVALID_SOCKET), hThread(NULL), hWindow(NULL), Message(0), Port(0), Stopping(0), Owner(OWNER_SERVER) {}
+	Impl() : Listener(INVALID_SOCKET), hThread(NULL), hWindow(NULL), Message(0), Port(0), Network(false), Stopping(0),
+		Owner(OWNER_SERVER) {}
 
 	// The UI thread answers, or the client hears it's busy
 	ftapi::HttpResponse Answer(const ftapi::HttpRequest &Request)
@@ -179,7 +271,8 @@ struct CMcpSocketServer::Impl {
 		if (C.Parser.TakeContinue() && !SendAll(C.Socket, "HTTP/1.1 100 Continue\r\n\r\n"))
 			return false;
 		while (Result == ftapi::HttpRequestParser::COMPLETE) {
-			const ftapi::HttpRequest Request = C.Parser.Take();
+			ftapi::HttpRequest Request = C.Parser.Take();
+			Request.Peer = C.Peer;
 			const ftapi::HttpResponse Response = Answer(Request);
 			const bool KeepAlive = Request.KeepAlive() && !Stopping;
 			if (!SendAll(C.Socket, ftapi::FormatHttpResponse(Response, KeepAlive)) || !KeepAlive)
@@ -211,16 +304,21 @@ struct CMcpSocketServer::Impl {
 				continue;
 			}
 			if (FD_ISSET(Listener, &Readable)) {
-				const SOCKET Socket = accept(Listener, NULL, NULL);
+				sockaddr_in From;
+				ZeroMemory(&From, sizeof(From));
+				int FromSize = sizeof(From);
+				const SOCKET Socket = accept(Listener, reinterpret_cast<sockaddr*>(&From), &FromSize);
 				if (Socket != INVALID_SOCKET) {
-					if (static_cast<int>(Connections.size()) >= MAX_CONNECTIONS)
+					const unsigned long Peer = From.sin_family == AF_INET ? ntohl(From.sin_addr.s_addr) : 0;
+					// Only this computer, and with Network home networks: anything else is closed unread
+					if (static_cast<int>(Connections.size()) >= MAX_CONNECTIONS || !MayConnect(Peer, Network))
 						closesocket(Socket);
 					else {
 						const BOOL NoDelay = TRUE;
 						setsockopt(Socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&NoDelay), sizeof(NoDelay));
 						const DWORD Timeout = SEND_TIMEOUT_MS;
 						setsockopt(Socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&Timeout), sizeof(Timeout));
-						Connections.push_back(new Connection(Socket));
+						Connections.push_back(new Connection(Socket, ftapi::Ipv4Text(Peer)));
 					}
 				}
 			}
@@ -271,7 +369,7 @@ CMcpSocketServer::~CMcpSocketServer()
 	delete m_pImpl;
 }
 
-bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char *pError, int ErrorSize)
+bool CMcpSocketServer::Start(int Port, bool Network, void *hWindow, unsigned int Message, char *pError, int ErrorSize)
 {
 	Stop();
 	Impl &d = *m_pImpl;
@@ -297,7 +395,9 @@ bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char
 	ZeroMemory(&Address, sizeof(Address));
 	Address.sin_family = AF_INET;
 	Address.sin_port = htons(static_cast<u_short>(Port));
-	Address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);	// this computer only
+	// This computer only, or every IPv4 address for other computers on the network too (Windows' firewall asks the
+	// user once whether FamiTracker may)
+	Address.sin_addr.s_addr = htonl(Network ? INADDR_ANY : INADDR_LOOPBACK);
 	if (bind(Listener, reinterpret_cast<const sockaddr*>(&Address), sizeof(Address)) == SOCKET_ERROR ||
 		listen(Listener, SOMAXCONN) == SOCKET_ERROR) {
 		const int Code = WSAGetLastError();
@@ -315,6 +415,7 @@ bool CMcpSocketServer::Start(int Port, void *hWindow, unsigned int Message, char
 	d.hWindow = static_cast<HWND>(hWindow);
 	d.Message = Message;
 	d.Port = Port;
+	d.Network = Network;
 	d.Stopping = 0;
 	d.Owner = OWNER_SERVER;
 	unsigned ThreadId = 0;
@@ -352,6 +453,7 @@ void CMcpSocketServer::Stop()
 	CloseHandle(d.hThread);	// only lets go of the handle; a thread still running goes on
 	d.hThread = NULL;
 	d.Port = 0;
+	d.Network = false;
 	// Still stuck (sending to a client that doesn't read): it keeps its state,
 	// frees it when it ends, and this server starts afresh
 	if (!Ended && InterlockedCompareExchange(&d.Owner, OWNER_THREAD, OWNER_SERVER) == OWNER_SERVER)
@@ -366,4 +468,9 @@ bool CMcpSocketServer::IsRunning() const
 int CMcpSocketServer::GetPort() const
 {
 	return m_pImpl->Port;
+}
+
+bool CMcpSocketServer::IsNetwork() const
+{
+	return m_pImpl->hThread != NULL && m_pImpl->Network;
 }

@@ -37,6 +37,7 @@ struct HttpRequest {
 	std::string Version;	// "HTTP/1.1"
 	std::vector<std::pair<std::string, std::string> > Headers;	// as received, values trimmed
 	std::string Body;
+	std::string Peer;		// the client's IPv4 address ("192.168.1.20") as the listener accepted it; empty: this computer
 
 	const std::string *Header(const char *Name) const;	// case-insensitive; NULL if missing
 	bool KeepAlive() const;

@@ -1245,6 +1245,9 @@
     <ClCompile Include="Source\Api\Mcp.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Network.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Music.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1306,6 +1309,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Mcp.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Network.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Music.h">
