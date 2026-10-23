@@ -59,8 +59,12 @@ struct InstrumentInfo {
 								// 11}: a major seventh); empty when it has none, or one that doesn't loop
 	bool OddDuty;			// a VRC6 instrument whose duty sequence plays odd values: on the sawtooth they add 32 to
 							// its volume, and it overdrives
+	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6 and
+								// N163 instruments; empty when it has none
+	int VolumeLoop, VolumeRelease;	// where that sequence loops back to and where it waits for a release (-1: none)
 
-	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false) {}
+	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
+		VolumeRelease(-1) {}
 };
 
 struct ClipInfo {

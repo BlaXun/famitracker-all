@@ -414,6 +414,14 @@ public:
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
 		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
+		// Its volume sequence, as FamiTracker reports it
+		const std::vector<PresetSequence> &Sequences = Chip == "VRC6" ? Sound.SequencesVRC6 : Sound.Sequences2A03;
+		for (size_t s = 0; s < Sequences.size(); ++s)
+			if (Sequences[s].Type == SEQUENCE_VOLUME) {
+				Info.Instruments.back().Volume = Sequences[s].Items;
+				Info.Instruments.back().VolumeLoop = Sequences[s].Loop;
+				Info.Instruments.back().VolumeRelease = Sequences[s].Release;
+			}
 		// As FamiTracker reports a VRC6 sound whose duty sequence plays odd values (its sawtooth version has none)
 		for (size_t s = 0; Chip == "VRC6" && !Sawtooth && s < Sound.SequencesVRC6.size(); ++s)
 			if (Sound.SequencesVRC6[s].Type == SEQUENCE_DUTY)
@@ -2692,6 +2700,67 @@ void TestRemoveUnusedInstruments()
 	Result = Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": 2}");
 	CHECK_HAS(Result.Text, "Removed 1 instrument no track or clip played: 04 Bell");
 	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true}").Text, "Every instrument plays somewhere, in a track or a clip");
+}
+
+// mix counts the notes as they play: their instruments' envelopes, and how high volume slides take them (2026-10-23)
+void TestMixAsPlayed()
+{
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4" };
+	// A lead whose envelope holds at 10 plays its loudest at 10: a soft mix's 9 sets its volume to 14, not to 9
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Instruments[0].Volume = std::vector<int>(1, 10);
+	for (int i = 0; i < 16; ++i)
+		Song.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT);
+	ToolResult Result = Run(Song, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 10 to 9");
+	CHECK(Song.Rows[5][0].Volume == 14);
+	// One that peaks at 6 can't reach 9: its volume goes to 15 and the reply says so
+	FakeSong Soft;
+	Soft.Info.DirectChanges = true;
+	Soft.Info.Instruments[0].Volume = { 2, 6, 6, 5 };
+	for (int i = 0; i < 16; ++i)
+		Soft.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT, 12);
+	Result = Run(Soft, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 4 to 9 (its instrument's envelope peaks at 6 of 15, so it plays at most 6)");
+	CHECK(Soft.Rows[5][0].Volume == 15);
+
+	// A fade (A04) on a part mixed to half its volume fades half as fast, from half as high
+	FakeSong Fade;
+	Fade.Info.DirectChanges = true;
+	Fade.Put(5, 0, "C-4", 0, 12);
+	Fade.Rows[5][8].Effect[0] = EFF_VOLUME_SLIDE;
+	Fade.Rows[5][8].Param[0] = 0x04;
+	Fade.Put(5, 16, "D-4", NO_INSTRUMENT, 12);
+	Fade.Rows[5][16].Effect[0] = EFF_VOLUME_SLIDE;
+	Result = Run(Fade, "mix", "{\"levels\": {\"VRC6 Pulse 1\": 6}}");
+	CHECK_HAS(Result.Text, "loudest 12 to 6, 1 volume slide with it");
+	CHECK(Fade.Rows[5][0].Volume == 6 && HasEffectAt(Fade, 5, 8, EFF_VOLUME_SLIDE, 0x02) && HasEffectAt(Fade, 5, 16, EFF_VOLUME_SLIDE, 0));
+
+	// A pad swelling from 3 to full over two bars (A10) and chords at 12 after it: its loudest is the swell's 15. Mixed
+	// to 6 the swell can't slow (A10 is the slowest), so it stops where it would climb past the part and the volume
+	// column follows the original's swell a step at a time, up to 6 where that reached 15
+	FakeSong Pad;
+	Pad.Info.DirectChanges = true;
+	Pad.AddInstrumentInfo(3, "Pad", "VRC6", false);
+	Pad.Put(6, 0, "C-3", 3, 3);
+	Pad.Rows[6][0].Effect[0] = EFF_VOLUME_SLIDE;
+	Pad.Rows[6][0].Param[0] = 0x10;
+	Pad.Put(6, 32, "G-3", NO_INSTRUMENT, 12);
+	Pad.Rows[6][32].Effect[0] = EFF_VOLUME_SLIDE;
+	Result = Run(Pad, "mix", "{\"levels\": {\"VRC6 Pulse 2\": 6}}");
+	CHECK_HAS(Result.Text, "loudest 15 to 6 (1 swell stopped where it would climb past the part's level)");
+	CHECK(Pad.Rows[6][0].Volume == 1 && HasEffectAt(Pad, 6, 0, EFF_VOLUME_SLIDE, 0x10));
+	CHECK(Pad.Rows[6][2].Volume == 2 && HasEffectAt(Pad, 6, 2, EFF_VOLUME_SLIDE, 0));
+	int Highest = 0, Steps = 0;
+	for (int r = 3; r < 32; ++r)
+		if (Pad.Rows[6][r].Volume < NO_VOLUME) {
+			Highest = std::max(Highest, static_cast<int>(Pad.Rows[6][r].Volume));
+			++Steps;
+		}
+	CHECK(Highest == 6 && Steps == 4);
+	CHECK(Pad.Rows[6][32].Volume == 5);
 }
 
 void TestBacking()
@@ -7377,6 +7446,27 @@ void TestMix()
 	for (int b = 0; b < 4; ++b)
 		Loud.Put(0, b * 16, "C-3", b == 0 ? 2 : NO_INSTRUMENT);
 	CHECK_HAS(Run(Loud, "review_arrangement", "{}").Text, "Mix: both parts with a volume play near full volume.");
+	// Notes as they play: instruments whose envelopes peak at 8 aren't near full, whatever their volume column (2026-10-23)
+	FakeSong Enveloped = Loud;
+	Enveloped.Info.Instruments[0].Volume = std::vector<int>(1, 8);
+	Enveloped.Info.Instruments[2].Volume = std::vector<int>(1, 8);
+	CHECK_LACKS(Run(Enveloped, "review_arrangement", "{}").Text, "Mix:");
+	// A lead whose envelope holds at 5 plays about 10 dB under a part at 15
+	Enveloped.Info.Instruments[2].Volume.clear();
+	Enveloped.Info.Instruments[0].Volume = std::vector<int>(1, 5);
+	CHECK_HAS(Run(Enveloped, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+		"Levels: the melody plays about 10 dB under 2A03 Pulse 1.");
+	// Chords plucked in bars 1-4 (dying in 4 frames) and held in bars 5-8 at the same volume: the loudness hears
+	// the plucks as near silent after their attack, so bars 5-8 come out about 3 dB louder
+	FakeSong Plucked;
+	Plucked.AddInstrumentInfo(3, "Pluck", "2A03", false);
+	Plucked.Info.Instruments.back().Volume = { 15, 8, 4, 2, 0 };
+	Plucked.AddInstrumentInfo(4, "Organ", "2A03", false);
+	for (int i = 0; i < 32; ++i)
+		Plucked.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT);
+	for (int b = 0; b < 8; ++b)
+		Plucked.Put(0, b * 16, "C-3", b == 0 ? 3 : b == 4 ? 4 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Plucked, "review_arrangement", "{}").Text, "Loudness: about 3 dB between the quietest bars (bars 1-2) and the loudest (bars 5-6).");
 	CHECK(!Run(Loud, "mix", "{}").IsError);
 	CHECK(Run(Loud, "review_arrangement", "{}").Text.find("Mix:") == std::string::npos);
 }
@@ -8077,6 +8167,7 @@ int main()
 	TestTempoTool();
 	TestTempoInside();
 	TestRemoveUnusedInstruments();
+	TestMixAsPlayed();
 	TestBacking();
 	TestChords();
 	TestArrange();

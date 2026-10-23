@@ -210,6 +210,46 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 	return Up && Down;
 }
 
+// An instrument's volume sequence (2A03, VRC6 and N163 instruments): its
+// values, where it loops back to and where it waits for a release
+void VolumeSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::InstrumentInfo &Info)
+{
+	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	switch (pInstrument->GetType()) {
+	case INST_2A03: {
+		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
+		Enabled = p->GetSeqEnable(SEQ_VOLUME);
+		Index = p->GetSeqIndex(SEQ_VOLUME);
+		break;
+	}
+	case INST_VRC6: {
+		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+		Chip = SNDCHIP_VRC6;
+		Enabled = p->GetSeqEnable(SEQ_VOLUME);
+		Index = p->GetSeqIndex(SEQ_VOLUME);
+		break;
+	}
+	case INST_N163: {
+		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(SEQ_VOLUME);
+		Index = p->GetSeqIndex(SEQ_VOLUME);
+		break;
+	}
+	default:
+		return;
+	}
+	if (Enabled == 0)
+		return;
+	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_VOLUME);
+	if (pSeq == NULL || pSeq->GetItemCount() == 0)
+		return;
+	for (unsigned int i = 0; i < pSeq->GetItemCount(); ++i)
+		Info.Volume.push_back(pSeq->GetItem(static_cast<int>(i)));
+	Info.VolumeLoop = static_cast<int>(pSeq->GetLoopPoint());
+	Info.VolumeRelease = static_cast<int>(pSeq->GetReleasePoint());
+}
+
 // A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the
 // duty's low bit adds 32 to the volume (CVRC6Sawtooth::RefreshChannel), so a
 // pulse sound played there overdrives
@@ -750,6 +790,7 @@ public:
 				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
 				Instrument.Arpeggio = LoopingArpeggio(pDoc, pInstrument);
 				Instrument.OddDuty = HasOddDuty(pDoc, pInstrument);
+				VolumeSequence(pDoc, pInstrument, Instrument);
 				if (pInstrument->GetType() == INST_N163) {
 					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
 					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();

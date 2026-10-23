@@ -409,6 +409,55 @@ const InstrumentInfo *FindInstrument(const SongInfo &Song, int Index)
 	return 0;
 }
 
+// An instrument's volume envelope for a held note, a frame at a time, as
+// CSequenceHandler runs it: from the start, back to the loop point at the
+// sequence's end or past its release point (waiting there without a loop),
+// its last value once it ends; 15 every frame when it has none
+std::vector<int> HeldEnvelope(const InstrumentInfo *pInfo, int Frames)
+{
+	std::vector<int> Out(static_cast<size_t>(std::max(0, Frames)), 15);
+	if (pInfo == 0 || pInfo->Volume.empty())
+		return Out;
+	const int Items = static_cast<int>(pInfo->Volume.size()), Loop = pInfo->VolumeLoop, Release = pInfo->VolumeRelease;
+	int Pointer = 0, Value = 15;
+	bool Ended = false;
+	for (int f = 0; f < Frames; ++f) {
+		if (!Ended) {
+			Value = std::max(0, std::min(15, pInfo->Volume[static_cast<size_t>(std::max(0, std::min(Pointer, Items - 1)))]));
+			++Pointer;
+			if (Pointer == Release + 1 || Pointer >= Items) {
+				if (Loop >= 0 && Loop < Items)
+					Pointer = Loop;
+				else if (Pointer >= Items)
+					Ended = true;
+				else
+					--Pointer;
+			}
+		}
+		Out[static_cast<size_t>(f)] = Value;
+	}
+	return Out;
+}
+
+// The loudest an instrument's envelope gets while a note holds (15 without one)
+int EnvelopePeak(const InstrumentInfo *pInfo)
+{
+	if (pInfo == 0 || pInfo->Volume.empty())
+		return 15;
+	const std::vector<int> Held = HeldEnvelope(pInfo, static_cast<int>(pInfo->Volume.size()) + 1);
+	return *std::max_element(Held.begin(), Held.end());
+}
+
+// The volume a channel plays at, as CChannelHandler::CalculateVolume works
+// it out: the volume column's times the envelope's over 15, at least 1 while
+// both sound
+int PlayedVolume(int Column, int Envelope)
+{
+	if (Column <= 0 || Envelope <= 0)
+		return 0;
+	return std::max(1, Column * Envelope / 15);
+}
+
 std::string InstrumentLabel(const SongInfo &Song, int Index)
 {
 	const InstrumentInfo *pInfo = FindInstrument(Song, Index);
@@ -4814,6 +4863,175 @@ double TriangleShare(int Level)
 	return (Mix(15.0, Level) - Mix(0.0, Level)) / Full;
 }
 
+// The frames a row lasts at the track's speed and tempo
+double FramesPerRow(const Session &S)
+{
+	const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+	return Rows > 0.0 ? 60.0 * S.Song.FrameRate / Rows : std::max(1, S.Song.Speed);
+}
+
+// Volume slides (Axy), as CChannelHandler runs them: the volume in eighths of
+// a step (m_iVolume, 0-127, 127 when the song starts), set by the volume
+// column, and each frame the slide takes its low digit off and adds its high
+// one, held between 0 and 127; a slide runs on across notes until A00
+
+void SlideRow(const Cell &C, int Columns, int &Level, int &Slide)
+{
+	for (int k = 0; k < std::min(EFFECT_COLUMNS, Columns); ++k)
+		if (C.Effect[k] == EFF_VOLUME_SLIDE)
+			Slide = C.Param[k];
+	if (C.Volume < NO_VOLUME)
+		Level = C.Volume << 3;
+}
+
+void SlideFrames(int &Level, int Slide, int Frames)
+{
+	for (int f = 0; f < Frames && Slide != 0; ++f) {
+		Level = std::max(0, Level - (Slide & 15));
+		Level = std::min(127, Level + (Slide >> 4));
+	}
+}
+
+// The level and slide as Row starts
+void SlideBefore(const std::vector<Cell> &Cells, int Row, int Columns, const std::vector<int> &Frames, int &Level, int &Slide)
+{
+	Level = 127;
+	Slide = 0;
+	for (int r = 0; r < Row && r < static_cast<int>(Cells.size()); ++r) {
+		SlideRow(Cells[static_cast<size_t>(r)], Columns, Level, Slide);
+		SlideFrames(Level, Slide, r < static_cast<int>(Frames.size()) ? Frames[static_cast<size_t>(r)] : 1);
+	}
+}
+
+// The frames each song row lasts the first time through, its speed and tempo
+// commands in (rows it never reaches at the track's speed and tempo)
+std::vector<int> RowFramesOf(Session &S)
+{
+	const int Total = S.Time.TotalRows();
+	std::vector<int> Out(static_cast<size_t>(Total), std::max(1, static_cast<int>(std::floor(FramesPerRow(S) + 0.5))));
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	int EndTick = 0;
+	const std::vector<TimedRow> Rows = TimeRows(Cells, Columns, Flow(S), S.Time.PatternLength, S.Song.Speed, S.Song.Tempo,
+		S.Song.SplitPoint, S.Song.FrameRate, 1, EndTick);
+	std::vector<char> Seen(static_cast<size_t>(Total), 0);
+	for (size_t i = 0; i < Rows.size(); ++i) {
+		const int Row = Rows[i].Row;
+		if (Row < 0 || Row >= Total || Seen[static_cast<size_t>(Row)])
+			continue;
+		Seen[static_cast<size_t>(Row)] = 1;
+		Out[static_cast<size_t>(Row)] = std::max(1, (i + 1 < Rows.size() ? Rows[i + 1].Tick : EndTick) - Rows[i].Tick);
+	}
+	return Out;
+}
+
+// The loudest a part's volume slides take it in [First, End) while it swells
+// (in volume steps, 0 when none climbs), the instrument then playing in Peak
+int SlidePeak(const std::vector<Cell> &Cells, int First, int End, int Columns, const std::vector<int> &Frames, int &Instrument)
+{
+	int Level, Slide, Peak = 0;
+	SlideBefore(Cells, First, Columns, Frames, Level, Slide);
+	int Playing = StateAt(Cells, First, Columns).Instrument;
+	Instrument = NO_INSTRUMENT;
+	for (int r = First; r < End && r < static_cast<int>(Cells.size()); ++r) {
+		const Cell &C = Cells[static_cast<size_t>(r)];
+		SlideRow(C, Columns, Level, Slide);
+		if (C.Instrument != NO_INSTRUMENT && !C.IsEnd())
+			Playing = C.Instrument;
+		for (int f = 0; f < Frames[static_cast<size_t>(r)] && (Slide >> 4) != 0; ++f) {
+			SlideFrames(Level, Slide, 1);
+			if ((Level >> 3) > Peak) {
+				Peak = Level >> 3;
+				Instrument = Playing;
+			}
+		}
+	}
+	return Peak;
+}
+
+// mix's volume slides in a part's rows [First, End) of Cells (mixed already,
+// Original as it was): each slide as much faster or slower as the part's
+// volumes moved (Slope; the VRC7 counts 3 dB a step and keeps its slides).
+// Where a slide now climbs past where the original's goes, moved the same way
+// (Map), as one too slow to scale does (a speed of 1 can't go slower), it
+// stops there (A00), and the volume column follows the original's slide a
+// step at a time until that slide ends or another starts
+struct SlideMix {
+	int Scaled, Stopped, Lost;
+};
+
+SlideMix MixSlides(const std::vector<Cell> &Original, std::vector<Cell> &Cells, int First, int End, int Columns,
+	const std::vector<int> &Frames, double Slope, double ShiftSteps, bool Fm)
+{
+	SlideMix Out = { 0, 0, 0 };
+	auto Scale = [&](int Param) {
+		if (Fm)
+			return Param;
+		auto Digit = [&](int Value) {
+			return Value == 0 ? 0 : std::max(1, std::min(15, static_cast<int>(std::floor(Value * Slope + 0.5))));
+		};
+		return (Digit(Param >> 4) << 4) | Digit(Param & 15);
+	};
+	auto Map = [&](int Level) {
+		const double Moved = Fm ? Level + ShiftSteps * 8.0 : Level * Slope;
+		return std::max(0, std::min(127, static_cast<int>(std::floor(Moved + 0.5))));
+	};
+	const int Last = std::min(End, static_cast<int>(std::min(Original.size(), Cells.size())));
+	for (int r = First; r < Last; ++r)
+		for (int k = 0; k < std::min(EFFECT_COLUMNS, Columns); ++k) {
+			Cell &C = Cells[static_cast<size_t>(r)];
+			if (C.Effect[k] == EFF_VOLUME_SLIDE && C.Param[k] != 0 && Scale(C.Param[k]) != C.Param[k]) {
+				C.Param[k] = static_cast<unsigned char>(Scale(C.Param[k]));
+				++Out.Scaled;
+			}
+		}
+	int Was, WasSlide, Now, NowSlide;
+	SlideBefore(Original, First, Columns, Frames, Was, WasSlide);
+	SlideBefore(Cells, First, Columns, Frames, Now, NowSlide);
+	bool Stopped = false;
+	for (int r = First; r < Last; ++r) {
+		const Cell &O = Original[static_cast<size_t>(r)];
+		Cell &C = Cells[static_cast<size_t>(r)];
+		SlideRow(O, Columns, Was, WasSlide);
+		int WasEnd = Was;
+		SlideFrames(WasEnd, WasSlide, Frames[static_cast<size_t>(r)]);
+		const int Target = std::max(0, std::min(15, (Map(WasEnd) + 4) >> 3));	// where the original's slide is, moved
+		if (Stopped && (HasEffect(O, EFF_VOLUME_SLIDE, Columns) || WasSlide == 0))
+			Stopped = false;	// another slide, or none: the mixed row has it too
+		if (Stopped) {
+			// The volume column follows the original's slide
+			if (C.Volume == NO_VOLUME && Target != (Now >> 3))
+				C.Volume = static_cast<unsigned char>(Target);
+			if (C.Volume < NO_VOLUME)
+				Now = C.Volume << 3;
+			Was = WasEnd;
+			continue;
+		}
+		SlideRow(C, Columns, Now, NowSlide);
+		int NowEnd = Now;
+		SlideFrames(NowEnd, NowSlide, Frames[static_cast<size_t>(r)]);
+		if ((NowSlide >> 4) != 0 && NowEnd > Map(WasEnd) + 8 && C.Volume == NO_VOLUME && !HasEffect(C, EFF_VOLUME_SLIDE, Columns)) {
+			// The climb stops here, at the level the original's reaches, moved as the part was
+			if (AddEffect(C, EFF_VOLUME_SLIDE, 0, Columns)) {
+				C.Volume = static_cast<unsigned char>(std::max(1, Target));
+				NowEnd = C.Volume << 3;
+				NowSlide = 0;
+				Stopped = true;
+				++Out.Stopped;
+			}
+			else
+				++Out.Lost;
+		}
+		Was = WasEnd;
+		Now = NowEnd;
+	}
+	return Out;
+}
+
 std::string MixTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
@@ -4962,16 +5180,33 @@ std::string MixTool(Session &S, const Json &Args)
 
 	Draft D(S);
 	std::vector<std::string> Done;
+	const std::vector<int> Frames = RowFramesOf(S);
+	int SlidesLost = 0;
 	for (size_t p = 0; p < Spans.size(); ++p) {
 		const MixSpan &P = Spans[p];
 		const int c = P.Channel, Want = P.Target;
 		if (Want < 1)
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
-		int Loudest = 0;
+		const bool Fm = S.Channel(c).Kind == KIND_FM;
+		// The loudest the part plays: each note's volume as its instrument's envelope lets it peak (a pad held at 9 of
+		// 15 plays 9 at volume 15), and as high as a volume slide swells it
+		int Loudest = 0, Column = 0, Envelope = 15;
+		auto Count = [&](int Volume, int Instrument) {
+			const int Peak = Fm ? 15 : EnvelopePeak(FindInstrument(S.Song, Instrument));
+			if (PlayedVolume(Volume, Peak) > Loudest || (PlayedVolume(Volume, Peak) == Loudest && Volume > Column)) {
+				Loudest = PlayedVolume(Volume, Peak);
+				Column = Volume;
+				Envelope = Peak;
+			}
+		};
 		for (size_t i = 0; i < Notes.size(); ++i)
 			if (Notes[i].Row >= P.First && Notes[i].Row < P.End)
-				Loudest = std::max(Loudest, Notes[i].Volume);
+				Count(Notes[i].Volume, Notes[i].Instrument);
+		int Swelling = NO_INSTRUMENT;
+		const int Swell = SlidePeak(S.Cells(c), P.First, P.End, S.Channel(c).EffectColumns, Frames, Swelling);
+		if (Swell > 0)
+			Count(Swell, Swelling);
 		if (Loudest <= 0)
 			continue;
 		std::string Label = S.Channel(c).FullName();
@@ -4985,8 +5220,9 @@ std::string MixTool(Session &S, const Json &Args)
 		std::vector<Cell> &Cells = D.Cells(c);
 		// Each volume as much under the loudest as it was (the VRC7 counts 3 dB a step, the others in proportion)
 		const ChannelInfo &Info = S.Channel(c);
+		const double Shift = LevelDb(Info, Want) - LevelDb(Info, Loudest);
 		auto Scaled = [&](int Volume) {
-			return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + LevelDb(Info, Want) - LevelDb(Info, Loudest));
+			return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + Shift);
 		};
 		bool FirstNote = true;
 		const int Entering = StateAt(S.Cells(c), P.First, S.Channel(c).EffectColumns).Volume;	// as the song has it, before any mixing
@@ -4999,7 +5235,20 @@ std::string MixTool(Session &S, const Json &Args)
 			if (C.HasNote())
 				FirstNote = false;
 		}
-		Done.push_back(Format("%s loudest %d to %d", Label.c_str(), Loudest, Want));
+		// Volume slides keep their shape at the new level
+		const SlideMix Slides = MixSlides(S.Cells(c), Cells, P.First, P.End, S.Channel(c).EffectColumns, Frames,
+			std::pow(10.0, Shift / 20.0), Shift / FM_STEP_DB, Fm);
+		SlidesLost += Slides.Lost;
+		std::string Also;
+		if (Slides.Scaled > 0)
+			Also += Format(", %s with it", Plural(Slides.Scaled, "volume slide", "volume slides").c_str());
+		if (Slides.Stopped > 0)
+			Also += Format(" (%s stopped where %s climb past the part's level)", Plural(Slides.Stopped, "swell", "swells").c_str(),
+				Slides.Stopped == 1 ? "it would" : "they would");
+		// An envelope that peaks under 15 can keep a part under its level, its volume at 15
+		if (LevelDb(Info, Column) + Shift > LevelDb(Info, 15) + 1.0)
+			Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Envelope, PlayedVolume(15, Envelope));
+		Done.push_back(Format("%s loudest %d to %d%s", Label.c_str(), Loudest, Want, Also.c_str()));
 	}
 
 	// The level at the start and where the loop comes back
@@ -5063,6 +5312,9 @@ std::string MixTool(Session &S, const Json &Args)
 	std::vector<std::string> Warnings;
 	if (!DacWarning.empty())
 		Warnings.push_back(DacWarning);
+	if (SlidesLost > 0)
+		Warnings.push_back(Format("%s found no free effect column or volume column for its stop (or its slide back on), so it "
+			"climbs as it did.", Plural(SlidesLost, "swell", "swells").c_str()));
 	int Start = First;
 	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" : "the mix";
 	What += ", " + RangeText(From, To) + ": ";
@@ -5860,6 +6112,31 @@ int VersionMood(const std::string &Version)
 	return Calm ? MOOD_CALM : MOOD_TENSE;
 }
 
+// How loud a note plays over its rows [From, To) on average, as power against
+// a pulse at 15: its volume times its instrument's envelope frame by frame (a
+// pluck dies away, a pad swells), as FamiTracker plays each chip; the triangle
+// a little under a pulse at 15 while its envelope lets it sound
+double NotePower(const Session &S, int Channel, const NoteInfo &N, int From, int To, double RowFrames)
+{
+	const ChannelInfo &Info = S.Channel(Channel);
+	if (To <= From)
+		return 0.0;
+	const int First = std::max(0, static_cast<int>(std::floor((From - N.Row) * RowFrames)));
+	const int Last = std::max(First + 1, static_cast<int>(std::floor((To - N.Row) * RowFrames)));
+	const std::vector<int> Envelope = HeldEnvelope(Info.Kind == KIND_FM ? 0 : FindInstrument(S.Song, N.Instrument), Last);
+	double Sum = 0.0;
+	for (int f = First; f < Last; ++f) {
+		const int Level = Envelope[static_cast<size_t>(f)];
+		if (Info.Kind == KIND_TRIANGLE)
+			Sum += Level > 0 ? std::pow(10.0, -0.2) : 0.0;
+		else {
+			const int Volume = PlayedVolume(N.Volume, Level);
+			Sum += Volume > 0 ? std::pow(10.0, LevelDb(Info, Volume) / 10.0) : 0.0;
+		}
+	}
+	return Sum / (Last - First);
+}
+
 std::string ReviewTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -6043,6 +6320,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			break;
 		}
 		std::vector<double> Power(Bars.size(), 0.0);
+		const double RowFrames = FramesPerRow(S);
 		for (size_t p = 0; p < Playing.size(); ++p) {
 			const int c = Playing[p];
 			const ChannelInfo &Info = S.Channel(c);
@@ -6068,8 +6346,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 					const int A = std::max(Begin, Notes[i].Row), Z = std::min(Stop, Notes[i].Row + Notes[i].Rows);
 					if (Z <= A || (Info.Kind != KIND_TRIANGLE && Notes[i].Volume <= 0))
 						continue;
-					const double Db = Info.Kind == KIND_TRIANGLE ? -2.0 : LevelDb(Info, Notes[i].Volume);
-					Power[b] += std::pow(10.0, Db / 10.0) * (Z - A) / static_cast<double>(std::max(1, Bars[b].Rows)) *
+					Power[b] += NotePower(S, c, Notes[i], A, Z, RowFrames) * (Z - A) / static_cast<double>(std::max(1, Bars[b].Rows)) *
 						(Info.Kind == KIND_TRIANGLE ? Softened[b] : 1.0);
 				}
 			}
@@ -6290,9 +6567,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 			if (Kind == KIND_TRIANGLE || Kind == KIND_DPCM || Kind == KIND_NOISE)
 				continue;
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Playing[p]), First, End);
-			int Loudest = 0;
+			int Loudest = 0;	// as it plays: an envelope that peaks under 15 keeps it softer
 			for (size_t i = 0; i < Notes.size(); ++i)
-				Loudest = std::max(Loudest, Notes[i].Volume);
+				Loudest = std::max(Loudest, PlayedVolume(Notes[i].Volume, Kind == KIND_FM ? 15 :
+					EnvelopePeak(FindInstrument(S.Song, Notes[i].Instrument))));
 			++Parts;
 			if (Loudest >= 13)
 				++Loud;
@@ -6308,15 +6586,20 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// Levels: the melody well under another part, counted as FamiTracker plays each chip (the VRC7
 	// louder and 3 dB a step, the N163 quieter); a soft mix keeps the triangle a little over the melody
 	if (S.Channel(Melody).Kind != KIND_TRIANGLE) {
+		const double RowFrames = FramesPerRow(S);
 		auto Typical = [&](int c) {
+			// Each note over its first beat as it plays (its envelope in), the louder ones
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
-			std::vector<int> Volumes;
-			for (size_t i = 0; i < Notes.size(); ++i)
-				Volumes.push_back(Notes[i].Volume);
-			if (Volumes.empty())
+			std::vector<double> Levels;
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				const int Rows = std::max(1, std::min(Notes[i].Rows, S.Time.RowsPerBeat));
+				const double Power = NotePower(S, c, Notes[i], Notes[i].Row, Notes[i].Row + Rows, RowFrames);
+				Levels.push_back(Power > 0.0 ? 10.0 * std::log10(Power) : -60.0);
+			}
+			if (Levels.empty())
 				return -60.0;
-			std::sort(Volumes.begin(), Volumes.end());
-			return LevelDb(S.Channel(c), Volumes[Volumes.size() * 3 / 4]);	// its louder notes
+			std::sort(Levels.begin(), Levels.end());
+			return Levels[Levels.size() * 3 / 4];
 		};
 		const double Lead = Typical(Melody);
 		int Over = -1;
@@ -11588,7 +11871,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"channel's other volumes scale with it. Overrides the style for those channels.");
 		AddTool("mix", "Balance the mix",
 			"Sets how loud each part plays, keeping each part's own dynamics: its volume column scales so its loudest note plays "
-			"at a level. style soft (the default) mixes the way atmospheric NES tracks do: the melody's loudest at 9, an echo of "
+			"at a level, as it plays (its instrument's envelope in, and how high a volume slide swells it; the slides move with "
+			"it). style soft (the default) mixes the way atmospheric NES tracks do: the melody's loudest at 9, an echo of "
 			"it at 4, chords at 6, a second line at 7, a bass on a pulse or the sawtooth at 10, drums at 10, and the DPCM level "
 			"at Z30 so the triangle and the noise soften to about 70% too; the pulses stop burying the triangle, and the sound "
 			"gets warmer. style full puts them near full volume again. levels sets channels yourself, dac the DPCM level alone "
