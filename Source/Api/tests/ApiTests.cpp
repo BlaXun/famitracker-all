@@ -414,6 +414,14 @@ public:
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
 		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
+		// Its volume sequence, as FamiTracker reports it
+		const std::vector<PresetSequence> &Sequences = Chip == "VRC6" ? Sound.SequencesVRC6 : Sound.Sequences2A03;
+		for (size_t s = 0; s < Sequences.size(); ++s)
+			if (Sequences[s].Type == SEQUENCE_VOLUME) {
+				Info.Instruments.back().Volume = Sequences[s].Items;
+				Info.Instruments.back().VolumeLoop = Sequences[s].Loop;
+				Info.Instruments.back().VolumeRelease = Sequences[s].Release;
+			}
 		// As FamiTracker reports a VRC6 sound whose duty sequence plays odd values (its sawtooth version has none)
 		for (size_t s = 0; Chip == "VRC6" && !Sawtooth && s < Sound.SequencesVRC6.size(); ++s)
 			if (Sound.SequencesVRC6[s].Type == SEQUENCE_DUTY)
@@ -786,6 +794,40 @@ public:
 		if (Has)
 			OutdatedKitSamples = 0;
 		return Refreshed;
+	}
+
+	// The selected track's notes, the other tracks' and the clips', as FamiTracker counts them
+	void CountInstrumentUses(std::vector<int> &InTracks, std::vector<int> &InClips) override
+	{
+		InTracks.assign(NO_INSTRUMENT, 0);
+		InClips.assign(NO_INSTRUMENT, 0);
+		for (size_t t = 0; t < Tracks.size(); ++t) {
+			const std::vector<std::vector<Cell> > &Channels = static_cast<int>(t) == Current ? Rows : Tracks[t].Rows;
+			for (size_t c = 0; c < Channels.size(); ++c)
+				for (size_t r = 0; r < Channels[c].size(); ++r)
+					if (Channels[c][r].Instrument < NO_INSTRUMENT)
+						++InTracks[Channels[c][r].Instrument];
+		}
+		for (size_t i = 0; i < Clips.size(); ++i)
+			for (size_t c = 0; c < Clips[i].Columns.size(); ++c)
+				for (size_t r = 0; r < Clips[i].Columns[c].size(); ++r)
+					if (Clips[i].Columns[c][r].Instrument < NO_INSTRUMENT)
+						++InClips[Clips[i].Columns[c][r].Instrument];
+	}
+
+	std::vector<int> Removed;		// instruments RemoveInstruments took out
+	bool RemoveInstruments(const std::vector<int> &Indices, std::string &Why) override
+	{
+		if (!CanChange(Why))
+			return false;
+		for (size_t i = 0; i < Indices.size(); ++i)
+			for (size_t k = 0; k < Info.Instruments.size(); ++k)
+				if (Info.Instruments[k].Index == Indices[i]) {
+					Info.Instruments.erase(Info.Instruments.begin() + static_cast<std::ptrdiff_t>(k));
+					Removed.push_back(Indices[i]);
+					break;
+				}
+		return true;
 	}
 
 	std::map<std::string, std::string> Library;		// the reference library's files
@@ -2534,6 +2576,212 @@ void TestTempoTool()
 	CHECK_HAS(Result.Text, "F96 effect at bar 5 beat 2.5");
 }
 
+// Tempo changes inside the song: a section at its own tempo, a ritardando, a song that stops (2026-10-23)
+void TestTempoInside()
+{
+	FakeSong Song(4);	// 16 bars
+	Song.Info.DirectChanges = true;
+	Song.Info.Speed = 8;	// 112.5 BPM
+	Song.Info.Tempo = 150;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Song.Put(5, Bar * 16, "C-4", 0);
+	// Bars 5-8 at 90 BPM, then 112.5 again: speed commands on the last channel
+	ToolResult Result = Run(Song, "set_tempo", "{\"bpm\": 90, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Changed the song: from bar 5 it plays at 90 BPM (speed 10, tempo 150) instead of 112.5 BPM (speed 8, tempo 150), "
+		"and from bar 9 at 112.5 BPM (speed 8, tempo 150) again.");
+	CHECK(HasEffectAt(Song, 7, 64, EFF_SPEED, 10) && HasEffectAt(Song, 7, 128, EFF_SPEED, 8));
+	CHECK(Song.Info.Speed == 8 && Song.Info.Tempo == 150);
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 90, \"from_bar\": 5, \"to_bar\": 8}").Text, "It plays at 90 BPM (speed 10, tempo 150) there already.");
+	// Back to the song's tempo there: its command goes (the one after it stays, playing what plays anyway)
+	Result = Run(Song, "set_tempo", "{\"speed\": 8, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK_HAS(Result.Text, "from bar 5 it plays at 112.5 BPM (speed 8, tempo 150) instead of 90 BPM (speed 10, tempo 150)");
+	CHECK(!HasEffectAt(Song, 7, 64, EFF_SPEED, 10));
+
+	// A ritardando over the last 4 bars, a step a beat at speed 8, landing on even rows (speed 16)
+	Result = Run(Song, "set_tempo", "{\"bpm\": 56.25, \"from_bar\": 13, \"over_bars\": 4}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "from bar 13 it slows down gradually over 4 bars, a step a beat, from 112.5 BPM (speed 8, tempo 150) to 56.3 BPM "
+		"(speed 16, tempo 150) (tempo commands F91-F50) to the song's end");
+	CHECK(HasEffectAt(Song, 7, 192, EFF_SPEED, 0x91) && HasEffectAt(Song, 7, 196, EFF_SPEED, 0x8D));
+	CHECK(HasEffectAt(Song, 7, 252, EFF_SPEED, 16) && HasEffectAt(Song, 7, 252, EFF_SPEED, 150));
+	// The whole song loops, so its start gets the speed back for the next time through
+	CHECK_HAS(Result.Text, "Where the loop comes back (bar 1) the song gets the speed and tempo it has there the first time");
+	CHECK(HasEffectAt(Song, 7, 0, EFF_SPEED, 8));
+	// Too long for the bars left
+	CHECK_HAS(Run(Song, "set_tempo", "{\"bpm\": 60, \"from_bar\": 15, \"over_bars\": 4}").Text, "too short for 16 steps of it a beat apart");
+
+	// The end: the song plays once and stops in bar 16 (a halt), then check_loop agrees
+	CHECK(Run(Song, "set_loop", "{\"stop_beat\": 3}").IsError);
+	CHECK(Run(Song, "set_loop", "{\"stop\": true, \"from_bar\": 5}").IsError);
+	Result = Run(Song, "set_loop", "{\"stop\": true, \"stop_beat\": 3}");
+	CHECK_HAS(Result.Text, "Changed the song: the song plays once and stops at bar 16 beat 3 (C00 there).");
+	CHECK_HAS(Result.Text, "let the last chord ring out (or fade it) before bar 16 beat 3");
+	CHECK(HasEffectAt(Song, 7, 248, EFF_HALT, 0));
+	CHECK_HAS(Run(Song, "check_loop", "{}").Text, "The song plays once and stops after bar 16 beat 3 (a halt, Cxx)");
+	CHECK_HAS(Run(Song, "set_loop", "{\"stop\": true, \"stop_beat\": 3}").Text, "already plays once and stops at bar 16 beat 3");
+	// At a bar's end, and earlier: the halt moves, the bars after don't play
+	Result = Run(Song, "set_loop", "{\"stop\": true, \"to_bar\": 15}");
+	CHECK_HAS(Result.Text, "the song plays once and stops after bar 15 (C00 there); 1 jump or halt that ended it elsewhere went");
+	CHECK_HAS(Result.Text, "Bars after 15 don't play now.");
+	CHECK(HasEffectAt(Song, 7, 239, EFF_HALT, 0) && !HasEffectAt(Song, 7, 248, EFF_HALT, 0));
+	// Looping again takes the halt off
+	CHECK_HAS(Run(Song, "set_loop", "{}").Text, "1 jump or halt that ended it elsewhere went");
+	CHECK(!HasEffectAt(Song, 7, 239, EFF_HALT, 0));
+
+	// A swing stays: the tempo carries the change
+	FakeSong Swung(4);
+	Swung.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Swung.Put(5, Bar * 16, "C-4", 0);
+	CHECK(!Run(Swung, "set_swing", "{\"amount\": \"hard\"}").IsError);
+	Result = Run(Swung, "set_tempo", "{\"bpm\": 120, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK_HAS(Result.Text, "from bar 5 it plays at 120 BPM (tempo 120) instead of");
+	CHECK_HAS(Result.Text, "the song's speed changes there stay (a swing, say), so the tempo carries the change");
+	CHECK(HasEffectAt(Swung, 7, 64, EFF_SPEED, 120) && HasEffectAt(Swung, 7, 64, EFF_SPEED, 8) && HasEffectAt(Swung, 7, 66, EFF_SPEED, 4));
+	CHECK(HasEffectAt(Swung, 7, 128, EFF_SPEED, 150));
+
+	// A few speed commands in the bars (a ritardando written by hand) go with the rest; so do a swing's when the
+	// user names the speed
+	FakeSong Hand(4);
+	Hand.Info.DirectChanges = true;
+	Hand.Info.Speed = 8;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Hand.Put(5, Bar * 16, "C-4", 0);
+	const int RIT[] = { 9, 10, 11, 12, 14 };
+	for (int i = 0; i < 5; ++i) {
+		Hand.Rows[3][192 + i * 8].Effect[0] = EFF_SPEED;
+		Hand.Rows[3][192 + i * 8].Param[0] = static_cast<unsigned char>(RIT[i]);
+	}
+	Result = Run(Hand, "set_tempo", "{\"speed\": 8, \"from_bar\": 13}");
+	CHECK_HAS(Result.Text, "from bar 13 it plays at 112.5 BPM (speed 8, tempo 150) instead of 100 BPM (speed 9, tempo 150) to the song's end");
+	for (int i = 0; i < 5; ++i)
+		CHECK(!HasEffectAt(Hand, 3, 192 + i * 8, EFF_SPEED, RIT[i]));
+	Result = Run(Swung, "set_tempo", "{\"speed\": 6, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!HasEffectAt(Swung, 7, 66, EFF_SPEED, 4) && !HasEffectAt(Swung, 7, 64, EFF_SPEED, 120));
+
+	// change_mood with bpm for some bars: commands there, the track's tempo stays; for the whole song, the track's
+	FakeSong Mood(4);
+	Mood.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < 16; ++Bar)
+		Mood.Put(5, Bar * 16, Bar % 2 ? "E-4" : "C-4", 0);
+	Result = Run(Mood, "change_mood", "{\"bpm\": 120, \"from_bar\": 9, \"to_bar\": 12}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "from bar 9 it plays at 120 BPM");
+	CHECK(Mood.Info.Speed == 6 && Mood.Info.Tempo == 150 && Mood.TempoUndo.empty());
+	CHECK(HasEffectAt(Mood, 7, 128, EFF_SPEED, 120) && HasEffectAt(Mood, 7, 192, EFF_SPEED, 150));
+	// tempo_percent goes by the tempo the bars play at
+	Result = Run(Mood, "change_mood", "{\"tempo_percent\": 50, \"from_bar\": 9, \"to_bar\": 12}");
+	CHECK_HAS(Result.Text, "from bar 9 it plays at 60 BPM");
+	FakeSong Whole;
+	Whole.Info.DirectChanges = true;
+	Whole.Put(5, 0, "C-4", 0);
+	Run(Whole, "change_mood", "{\"bpm\": 100}");
+	CHECK(Whole.Info.Speed == 9 && Whole.Info.Tempo == 150);
+}
+
+// Instruments no track or clip plays: listed, then removed once confirmed (2026-10-23)
+void TestRemoveUnusedInstruments()
+{
+	FakeSong Song;
+	Song.AddInstrumentInfo(3, "Pad", "2A03", false);
+	Song.AddInstrumentInfo(4, "Bell", "2A03", false);
+	Song.Put(5, 0, "C-4", 0);			// the Lead plays in this track
+	FakeSong::StoredTrack Other = Song.Tracks[0];
+	Other.Name = "Cave";
+	Other.Rows = Song.Rows;
+	Other.Rows[2][0].SetPitch(24);
+	Other.Rows[2][0].Instrument = 1;	// the Bass in another track
+	Song.Tracks.push_back(Other);
+	FakeSong::Clip Riff;
+	Riff.Name = "Riff";
+	Riff.Id = 7;
+	Riff.Sources.push_back(0);
+	Riff.Columns.push_back(std::vector<Cell>(16));
+	Riff.Columns[0][0].SetPitch(48);
+	Riff.Columns[0][0].Instrument = 2;	// the Square only in a clip
+	Song.Clips.push_back(Riff);
+	// Listed first, nothing removed
+	ToolResult Result = Run(Song, "remove_unused_instruments", "{}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "No track or clip plays 2 instruments: 03 Pad, 04 Bell. Only clips play 02 Square, so they stay.");
+	CHECK_HAS(Result.Text, "call again with confirm: true");
+	CHECK(Song.Removed.empty() && Song.Info.Instruments.size() == 5);
+	// Removing needs direct changes
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true}").Text, "needs direct changes");
+	Song.Info.DirectChanges = true;
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": [\"Harp\"]}").Text, "keep: the song has no instrument \"Harp\"");
+	// One kept by name, the other by its number
+	Result = Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": [\"bell\"]}");
+	CHECK_HAS(Result.Text, "Removed 1 instrument no track or clip played: 03 Pad, and the sequences only they used.");
+	CHECK(Song.Removed.size() == 1 && Song.Removed[0] == 3 && Song.Info.Instruments.size() == 4);
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"keep\": \"04\"}").Text, "Every instrument plays somewhere");
+	Result = Run(Song, "remove_unused_instruments", "{\"confirm\": true, \"keep\": 2}");
+	CHECK_HAS(Result.Text, "Removed 1 instrument no track or clip played: 04 Bell");
+	CHECK_HAS(Run(Song, "remove_unused_instruments", "{\"confirm\": true}").Text, "Every instrument plays somewhere, in a track or a clip");
+}
+
+// mix counts the notes as they play: their instruments' envelopes, and how high volume slides take them (2026-10-23)
+void TestMixAsPlayed()
+{
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "G-4", "E-4" };
+	// A lead whose envelope holds at 10 plays its loudest at 10: a soft mix's 9 sets its volume to 14, not to 9
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Instruments[0].Volume = std::vector<int>(1, 10);
+	for (int i = 0; i < 16; ++i)
+		Song.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT);
+	ToolResult Result = Run(Song, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 10 to 9");
+	CHECK(Song.Rows[5][0].Volume == 14);
+	// One that peaks at 6 can't reach 9: its volume goes to 15 and the reply says so
+	FakeSong Soft;
+	Soft.Info.DirectChanges = true;
+	Soft.Info.Instruments[0].Volume = { 2, 6, 6, 5 };
+	for (int i = 0; i < 16; ++i)
+		Soft.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT, 12);
+	Result = Run(Soft, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 4 to 9 (its instrument's envelope peaks at 6 of 15, so it plays at most 6)");
+	CHECK(Soft.Rows[5][0].Volume == 15);
+
+	// A fade (A04) on a part mixed to half its volume fades half as fast, from half as high
+	FakeSong Fade;
+	Fade.Info.DirectChanges = true;
+	Fade.Put(5, 0, "C-4", 0, 12);
+	Fade.Rows[5][8].Effect[0] = EFF_VOLUME_SLIDE;
+	Fade.Rows[5][8].Param[0] = 0x04;
+	Fade.Put(5, 16, "D-4", NO_INSTRUMENT, 12);
+	Fade.Rows[5][16].Effect[0] = EFF_VOLUME_SLIDE;
+	Result = Run(Fade, "mix", "{\"levels\": {\"VRC6 Pulse 1\": 6}}");
+	CHECK_HAS(Result.Text, "loudest 12 to 6, 1 volume slide with it");
+	CHECK(Fade.Rows[5][0].Volume == 6 && HasEffectAt(Fade, 5, 8, EFF_VOLUME_SLIDE, 0x02) && HasEffectAt(Fade, 5, 16, EFF_VOLUME_SLIDE, 0));
+
+	// A pad swelling from 3 to full over two bars (A10) and chords at 12 after it: its loudest is the swell's 15. Mixed
+	// to 6 the swell can't slow (A10 is the slowest), so it stops where it would climb past the part and the volume
+	// column follows the original's swell a step at a time, up to 6 where that reached 15
+	FakeSong Pad;
+	Pad.Info.DirectChanges = true;
+	Pad.AddInstrumentInfo(3, "Pad", "VRC6", false);
+	Pad.Put(6, 0, "C-3", 3, 3);
+	Pad.Rows[6][0].Effect[0] = EFF_VOLUME_SLIDE;
+	Pad.Rows[6][0].Param[0] = 0x10;
+	Pad.Put(6, 32, "G-3", NO_INSTRUMENT, 12);
+	Pad.Rows[6][32].Effect[0] = EFF_VOLUME_SLIDE;
+	Result = Run(Pad, "mix", "{\"levels\": {\"VRC6 Pulse 2\": 6}}");
+	CHECK_HAS(Result.Text, "loudest 15 to 6 (1 swell stopped where it would climb past the part's level)");
+	CHECK(Pad.Rows[6][0].Volume == 1 && HasEffectAt(Pad, 6, 0, EFF_VOLUME_SLIDE, 0x10));
+	CHECK(Pad.Rows[6][2].Volume == 2 && HasEffectAt(Pad, 6, 2, EFF_VOLUME_SLIDE, 0));
+	int Highest = 0, Steps = 0;
+	for (int r = 3; r < 32; ++r)
+		if (Pad.Rows[6][r].Volume < NO_VOLUME) {
+			Highest = std::max(Highest, static_cast<int>(Pad.Rows[6][r].Volume));
+			++Steps;
+		}
+	CHECK(Highest == 6 && Steps == 4);
+	CHECK(Pad.Rows[6][32].Volume == 5);
+}
+
 void TestBacking()
 {
 	FakeSong Song;
@@ -3507,7 +3755,7 @@ void TestMood()
 	CHECK_HAS(Result.Text, "from C major to C minor (E to Eb, A to Ab, B to Bb), 2A03 Triangle down 1 octave, VRC6 Pulse 1 played by "
 		"\"Warm pad\" (03), vibrato 437 on VRC6 Pulse 1 and an echo of VRC6 Pulse 1 on VRC6 Pulse 2, bars 1-2");
 	CHECK_HAS(Result.Text, "dragging the card to 2A03 Triangle at bar 1 beat 1");
-	CHECK_HAS(Result.Text, "Meant to play at 120 BPM: suggest the user sets speed 6 and tempo 120");
+	CHECK_HAS(Result.Text, "Meant to play at 120 BPM there: a tempo for some bars is a speed and tempo command at their start");
 	const std::vector<std::vector<Cell> > &Clip = Song.Clips[0].Columns;
 	CHECK_EQ(Clip.size(), static_cast<size_t>(5));	// Triangle to VRC6 Pulse 2
 	CHECK(Song.Clips[0].Sources[0] == 2 && Song.Clips[0].Sources[4] == 6);
@@ -3520,14 +3768,16 @@ void TestMood()
 	CHECK(Clip[4][4].Effect[0] == EFF_VIBRATO && Clip[4][4].Param[0] == 0x37);
 	CHECK(Clip[4].size() == 36 && Clip[4][35].Note == NOTE_RELEASE);
 
-	// Directly: one undoable change for the notes, another for the tempo
+	// Directly: one undoable change, the tempo of bars 1-2 in it as effects there (the song's tempo after them)
 	Song.Info.DirectChanges = true;
 	Result = Run(Song, "change_mood", Underwater);
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Changed the song: from C major to C minor");
-	CHECK_HAS(Result.Text, "The tempo is now 120 BPM (speed 6, tempo 120), its own Ctrl+Z step.");
+	CHECK_HAS(Result.Text, "and from bar 1 it plays at 120 BPM (speed 6, tempo 120) instead of 150 BPM (speed 6, tempo 150), and from "
+		"bar 3 at 150 BPM (speed 6, tempo 150) again, bars 1-2.");
 	CHECK_EQ(Song.Writes, 1);
-	CHECK(Song.Info.Tempo == 120 && Song.TempoUndo.size() == 1);
+	CHECK(Song.Info.Tempo == 150 && Song.TempoUndo.empty());
+	CHECK(HasEffectAt(Song, 7, 0, EFF_SPEED, 120) && HasEffectAt(Song, 7, 32, EFF_SPEED, 150));
 	CHECK_EQ(Notes(Song, 5, 0, 33), std::string("0:C-4 4:D-4 8:D#4 12:F-4 16:G-4 20:G#4 24:A#4 28:C-5 32:=== "));
 	CHECK(Song.Rows[2][0].Pitch() == 24 && Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][35].Note == NOTE_RELEASE);
 	CHECK_EQ(Song.Clips.size(), static_cast<size_t>(1));
@@ -7215,6 +7465,27 @@ void TestMix()
 	for (int b = 0; b < 4; ++b)
 		Loud.Put(0, b * 16, "C-3", b == 0 ? 2 : NO_INSTRUMENT);
 	CHECK_HAS(Run(Loud, "review_arrangement", "{}").Text, "Mix: both parts with a volume play near full volume.");
+	// Notes as they play: instruments whose envelopes peak at 8 aren't near full, whatever their volume column (2026-10-23)
+	FakeSong Enveloped = Loud;
+	Enveloped.Info.Instruments[0].Volume = std::vector<int>(1, 8);
+	Enveloped.Info.Instruments[2].Volume = std::vector<int>(1, 8);
+	CHECK_LACKS(Run(Enveloped, "review_arrangement", "{}").Text, "Mix:");
+	// A lead whose envelope holds at 5 plays about 10 dB under a part at 15
+	Enveloped.Info.Instruments[2].Volume.clear();
+	Enveloped.Info.Instruments[0].Volume = std::vector<int>(1, 5);
+	CHECK_HAS(Run(Enveloped, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+		"Levels: the melody plays about 10 dB under 2A03 Pulse 1.");
+	// Chords plucked in bars 1-4 (dying in 4 frames) and held in bars 5-8 at the same volume: the loudness hears
+	// the plucks as near silent after their attack, so bars 5-8 come out about 3 dB louder
+	FakeSong Plucked;
+	Plucked.AddInstrumentInfo(3, "Pluck", "2A03", false);
+	Plucked.Info.Instruments.back().Volume = { 15, 8, 4, 2, 0 };
+	Plucked.AddInstrumentInfo(4, "Organ", "2A03", false);
+	for (int i = 0; i < 32; ++i)
+		Plucked.Put(5, i * 4, TUNE[i % 8], i == 0 ? 0 : NO_INSTRUMENT);
+	for (int b = 0; b < 8; ++b)
+		Plucked.Put(0, b * 16, "C-3", b == 0 ? 3 : b == 4 ? 4 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Plucked, "review_arrangement", "{}").Text, "Loudness: about 3 dB between the quietest bars (bars 1-2) and the loudest (bars 5-6).");
 	CHECK(!Run(Loud, "mix", "{}").IsError);
 	CHECK(Run(Loud, "review_arrangement", "{}").Text.find("Mix:") == std::string::npos);
 }
@@ -7913,6 +8184,9 @@ int main()
 	TestSampleDrums();
 	TestTranspose();
 	TestTempoTool();
+	TestTempoInside();
+	TestRemoveUnusedInstruments();
+	TestMixAsPlayed();
 	TestBacking();
 	TestChords();
 	TestArrange();

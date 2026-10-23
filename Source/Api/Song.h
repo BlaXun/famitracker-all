@@ -59,8 +59,12 @@ struct InstrumentInfo {
 								// 11}: a major seventh); empty when it has none, or one that doesn't loop
 	bool OddDuty;			// a VRC6 instrument whose duty sequence plays odd values: on the sawtooth they add 32 to
 							// its volume, and it overdrives
+	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6 and
+								// N163 instruments; empty when it has none
+	int VolumeLoop, VolumeRelease;	// where that sequence loops back to and where it waits for a release (-1: none)
 
-	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false) {}
+	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
+		VolumeRelease(-1) {}
 };
 
 struct ClipInfo {
@@ -198,6 +202,13 @@ public:
 	// The samples of the kit's instrument already in the song that an older version made (the kit's
 	// names under its keys) brought up to date with Kit's: how many changed, -1 with the reason
 	virtual int RefreshDpcmKit(const DpcmKit &Kit, std::string &Error) = 0;
+	// How many cells name each instrument (0-63): in the module's tracks (the
+	// patterns their frame lists play) and in its clips
+	virtual void CountInstrumentUses(std::vector<int> &InTracks, std::vector<int> &InClips) = 0;
+	// Removes instruments from the module, and the sequences no instrument
+	// left uses (as Edit > Clean up > Remove unused instruments does). False
+	// with the reason. FamiTracker can't undo it.
+	virtual bool RemoveInstruments(const std::vector<int> &Indices, std::string &Error) = 0;
 
 	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
 	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their

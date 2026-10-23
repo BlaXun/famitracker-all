@@ -4601,12 +4601,25 @@ void CFamiTrackerDoc::RemoveUnusedInstruments()
 					}
 				}
 			}
+			// A clip's notes play it too
+			for (int Clip = 0; !Used && m_pClipLibrary != NULL && Clip < m_pClipLibrary->GetCount(); ++Clip)
+				for (int Column = 0; !Used && Column < m_pClipLibrary->GetColumns(Clip); ++Column)
+					for (int Row = 0; !Used && Row < m_pClipLibrary->GetRows(Clip); ++Row) {
+						stChanNote Note;
+						m_pClipLibrary->GetCell(Clip, Column, Row, Note);
+						Used = Note.Instrument == i;
+					}
 			if (!Used)
 				RemoveInstrument(i);
 		}
 	}
 
-	// Also remove unused sequences
+	RemoveUnusedSequences();
+}
+
+void CFamiTrackerDoc::RemoveUnusedSequences()
+{
+	// Sequences no instrument uses (each instrument's reference released)
 	for (unsigned int i = 0; i < MAX_SEQUENCES; ++i) {
 		for (int j = 0; j < SEQ_COUNT; ++j) {
 			// Scan through all 2A03 sequences
@@ -4615,11 +4628,10 @@ void CFamiTrackerDoc::RemoveUnusedInstruments()
 				for (int k = 0; k < MAX_INSTRUMENTS; ++k) {
 					if (IsInstrumentUsed(k) && GetInstrumentType(k) == INST_2A03) {
 						CInstrument2A03 *pInstrument = static_cast<CInstrument2A03*>(GetInstrument(k));
-						if (pInstrument->GetSeqIndex(j) == i) {
-							Used = true;
-							break;
-						}
+						Used = pInstrument->GetSeqIndex(j) == i;
 						pInstrument->Release();
+						if (Used)
+							break;
 					}
 				}
 				if (!Used)
@@ -4631,11 +4643,10 @@ void CFamiTrackerDoc::RemoveUnusedInstruments()
 				for (int k = 0; k < MAX_INSTRUMENTS; ++k) {
 					if (IsInstrumentUsed(k) && GetInstrumentType(k) == INST_VRC6) {
 						CInstrumentVRC6 *pInstrument = static_cast<CInstrumentVRC6*>(GetInstrument(k));
-						if (pInstrument->GetSeqIndex(j) == i) {
-							Used = true;
-							break;
-						}
+						Used = pInstrument->GetSeqIndex(j) == i;
 						pInstrument->Release();
+						if (Used)
+							break;
 					}
 				}
 				if (!Used)
@@ -4647,11 +4658,10 @@ void CFamiTrackerDoc::RemoveUnusedInstruments()
 				for (int k = 0; k < MAX_INSTRUMENTS; ++k) {
 					if (IsInstrumentUsed(k) && GetInstrumentType(k) == INST_N163) {
 						CInstrumentN163 *pInstrument = static_cast<CInstrumentN163*>(GetInstrument(k));
-						if (pInstrument->GetSeqIndex(j) == i) {
-							Used = true;
-							break;
-						}
+						Used = pInstrument->GetSeqIndex(j) == i;
 						pInstrument->Release();
+						if (Used)
+							break;
 					}
 				}
 				if (!Used)

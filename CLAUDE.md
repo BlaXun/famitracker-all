@@ -64,12 +64,26 @@ instruments by `LushInstruments` in `Tools.cpp` (`WithArpeggio` in
 (`InstrumentInfo::Arpeggio`), which `ChordAbove` and `SoundsChord` in
 `Tools.cpp` count as chords. `set_swing` alternates speed effects every
 half beat (or, `by` delays, puts `Gxx` on chosen channels' off-beat notes:
-`SwingByDelays`), `mix` scales each part's volume column by its role and
+`SwingByDelays`); `set_tempo` with `from_bar` writes speed and tempo
+effects inside the song, at once or a step a beat (`WriteTempoChange`,
+which `change_mood` uses for some bars too; `AddSongEffect` keeps a speed
+and a tempo command on one row apart, since both are `Fxx`), and
+`set_loop` with `stop` a halt (`StopSongTool`). `mix` scales each part's
+volume column by its role and
 sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
 5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under), as
-the echo, harmony, counter-melody, `polish` and the review do, and
+the echo, harmony, counter-melody, `polish` and the review do; `mix` and
+the review also play each note's instrument envelope (`HeldEnvelope`, from
+the volume sequence FamiTracker reports in `InstrumentInfo::Volume`, times
+the volume column over 15: `PlayedVolume`), and `mix` moves volume slides
+with the volumes (`MixSlides`, which follows a swell too slow to scale a
+step at a time). `remove_unused_instruments` counts each instrument's
+cells in every track and clip (`SongHost::CountInstrumentUses`) and
+removes the unused ones as Edit > Clean up does (`RemoveInstruments`,
+`CFamiTrackerDoc::RemoveUnusedSequences`; that menu command keeps clips'
+instruments too), and
 `Vrc7Customs` in `Presets.cpp` are VRC7 custom patches of our own design
 (`AddVrc7CustomInstrument` in `InstrumentLibrary.cpp`). Sampled drums are
 `DrumOptions::Samples` in `Arrange.cpp` (which hits a sample plays) written
