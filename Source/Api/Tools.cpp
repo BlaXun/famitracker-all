@@ -11009,19 +11009,107 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 	}
 }
 
+// What check_song finds: the line its text lists, and the rest for its JSON (format "json"), which FamiTracker's
+// problems panel reads (Source/ProblemsPanel.cpp). The kinds go heard worst first, so a long list of notes outside the
+// key (a song that changes key) doesn't hide notes that vanish or click.
+enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
+const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key" };
+const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low" };
+
+// A note a finding is about
+struct CheckNote {
+	int Channel, Row, Rows, Pitch;
+};
+
+struct CheckFinding {
+	int Kind;				// check_kind
+	int Channel;			// -1 for none (a silent bar)
+	int Row, Rows;			// where it starts (a song row) and how long it lasts
+	std::string Line;		// as the text lists it
+	std::string Summary;	// a few words, for a list beside the song
+	std::vector<CheckNote> Notes;
+	Json Details;			// more about it, by kind
+	Json Fix;				// the tool call that fixes it (polish nudging a click), or null
+
+	CheckFinding() : Kind(0), Channel(-1), Row(0), Rows(0), Details(Json::MakeObject()) {}
+};
+
+// The note of a channel sounding on Row (the last one starting there or before)
+CheckNote SoundingNote(Session &S, int Channel, int Row)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = Notes.size(); i-- > 0; ) {
+		if (Notes[i].Row <= Row) {
+			const CheckNote Note = { Channel, Notes[i].Row, Notes[i].Rows, Notes[i].Pitch };
+			return Note;
+		}
+	}
+	const CheckNote None = { Channel, Row, 1, -1 };
+	return None;
+}
+
+// Where a song row is: its frame and its row there, as FamiTracker's pattern editor shows them (from 0), and its bar
+// and beat (from 1)
+void PutPlace(const Session &S, int Row, Json &Out)
+{
+	const int Length = std::max(1, S.Time.PatternLength);
+	Out.Set("frame", Row / Length);
+	Out.Set("row", Row % Length);
+	Out.Set("bar", S.Time.BarOf(Row));
+	Out.Set("beat", Json::NumberText(FormatNumber(S.Time.BeatOf(Row))));
+}
+
+Json CheckJson(Session &S, const CheckFinding &F)
+{
+	Json Out = Json::MakeObject();
+	Out.Set("kind", CHECK_KIND[F.Kind]);
+	Out.Set("severity", CHECK_SEVERITY[F.Kind]);
+	Out.Set("channel", F.Channel >= 0 ? Json(F.Channel + 1) : Json());
+	Out.Set("channel_name", F.Channel >= 0 ? Json(S.Channel(F.Channel).FullName()) : Json());
+	PutPlace(S, F.Row, Out);
+	Out.Set("position", S.Time.Position(F.Row));
+	Out.Set("rows", F.Rows);
+	Json Notes = Json::MakeArray();
+	for (size_t i = 0; i < F.Notes.size(); ++i) {
+		const CheckNote &N = F.Notes[i];
+		Json Note = Json::MakeObject();
+		Note.Set("channel", N.Channel + 1);
+		PutPlace(S, N.Row, Note);
+		Note.Set("note", N.Pitch >= 0 ? Json(PitchName(N.Pitch)) : Json());
+		Note.Set("rows", N.Rows);
+		Notes.Push(Note);
+	}
+	Out.Set("notes", Notes);
+	Out.Set("summary", F.Summary);
+	Out.Set("message", F.Line);
+	for (size_t i = 0; i < F.Details.Members().size(); ++i)
+		Out.Set(F.Details.Members()[i].first, F.Details.Members()[i].second);
+	if (!F.Fix.IsNull())
+		Out.Set("fix", F.Fix);
+	return Out;
+}
+
 std::string CheckTool(Session &S, const Json &Args)
 {
 	int From, To;
 	BarRange(S, Args, From, To);
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json.");
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
 	bool Found;
 	const Key K = KeyArg(S, Args, "key", First, End, Found);
-	// Findings by kind, the ones a listener hears worst first, so a long list of notes outside the key (a song that
-	// changes key) doesn't hide notes that vanish or click
-	enum { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
-	std::vector<std::string> Findings[FOUND_KINDS];
-	auto Report = [&](int Kind, const std::string &Text) {
-		Findings[Kind].push_back(Text);
+	std::vector<CheckFinding> Findings[FOUND_KINDS];
+	auto Report = [&](int Kind, int Channel, int Row, int Rows, const std::string &Line, const std::string &Summary) -> CheckFinding & {
+		CheckFinding F;
+		F.Kind = Kind;
+		F.Channel = Channel;
+		F.Row = Row;
+		F.Rows = Rows;
+		F.Line = Line;
+		F.Summary = Summary;
+		Findings[Kind].push_back(F);
+		return Findings[Kind].back();
 	};
 
 	// What sounds on each row, per melodic channel
@@ -11062,10 +11150,12 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (N.Row < First || N.Row >= End)
 				continue;
 			const std::string Where = Format("%s %s", Info.FullName().c_str(), S.Time.Position(N.Row).c_str());
+			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
 			if (Found && !InKey(LandedPitch(N), K)) {
 				++OutOfKey;
-				Report(FOUND_KEY, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(), Where.c_str(),
-					S.Time.Length(N.Rows).c_str()));
+				Report(FOUND_KEY, c, N.Row, N.Rows, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(),
+					Where.c_str(), S.Time.Length(N.Rows).c_str()), Format("%s is outside %s", PitchName(LandedPitch(N)).c_str(),
+					KeyName(K).c_str())).Notes.push_back(Note);
 			}
 			std::string Range;
 			if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && N.Pitch < 9)
@@ -11084,7 +11174,10 @@ std::string CheckTool(Session &S, const Json &Args)
 			}
 			if (!Range.empty()) {
 				++OutOfRange;
-				Report(FOUND_RANGE, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(), Where.c_str(), Range.c_str()));
+				CheckFinding &F = Report(FOUND_RANGE, c, N.Row, N.Rows, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(),
+					Where.c_str(), Range.c_str()), Format("%s is %s", PitchName(N.Pitch).c_str(), Range.c_str()));
+				F.Notes.push_back(Note);
+				F.Details.Set("reason", Range);
 			}
 		}
 	}
@@ -11161,10 +11254,19 @@ std::string CheckTool(Session &S, const Json &Args)
 				if (Run >= MinClash) {
 					const int Row = First + r - Run;
 					++Clashes;
-					Report(FOUND_CLASH, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.", PitchName(RunA).c_str(),
-						ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(), PitchName(RunB).c_str(),
-						ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(), S.Time.Position(Row).c_str(),
-						S.Time.Length(Run).c_str()));
+					CheckFinding &F = Report(FOUND_CLASH, a, Row, Run, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.",
+						PitchName(RunA).c_str(), ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(),
+						PitchName(RunB).c_str(), ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(),
+						S.Time.Position(Row).c_str(), S.Time.Length(Run).c_str()), Format("%s against %s on %s for %s",
+						PitchName(RunA).c_str(), PitchName(RunB).c_str(), S.Channel(b).FullName().c_str(), S.Time.Length(Run).c_str()));
+					F.Notes.push_back(SoundingNote(S, a, Row));
+					F.Notes.push_back(SoundingNote(S, b, Row));
+					F.Details.Set("other_channel", b + 1);
+					F.Details.Set("other_channel_name", S.Channel(b).FullName());
+					Json Heard = Json::MakeArray();
+					Heard.Push(PitchName(RunA));
+					Heard.Push(PitchName(RunB));
+					F.Details.Set("pitches", Heard);
 				}
 				Run = Clash ? 1 : 0;
 				RunA = PitchA;
@@ -11197,24 +11299,51 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (IsMelodic(S.Channel(c)) && !Runs[static_cast<size_t>(c)] && BarEnd - BarFirst >= 8 &&
 				Starts * 4 >= (BarEnd - BarFirst) * 3) {
 				++Busy;
-				Report(FOUND_BUSY, Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
+				Report(FOUND_BUSY, c, BarFirst, BarEnd - BarFirst, Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(),
+					Plural(Starts, "note", "notes").c_str(), Bar), Format("%s in bar %d", Plural(Starts, "note", "notes").c_str(),
+					Bar)).Details.Set("note_count", Starts);
 			}
 		}
 		if (!Anything && SongFirst >= 0 && BarFirst > SongFirst && BarFirst < SongLast) {
 			++Silent;
-			Report(FOUND_SILENT, Format("Silent: nothing plays in bar %d.", Bar));
+			Report(FOUND_SILENT, -1, BarFirst, BarEnd - BarFirst, Format("Silent: nothing plays in bar %d.", Bar),
+				Format("nothing plays in bar %d", Bar));
 		}
 	}
 	// Clicks: held notes on the 2A03's and MMC5's pulses whose vibrato takes the period across a multiple of 256, where
 	// the pulse restarts its wave (PulseClicks.h)
 	const std::vector<std::pair<int, ClickFix> > Clicks = SongClicks(S, First, End);
 	for (size_t i = 0; i < Clicks.size(); ++i) {
+		const int c = Clicks[i].first;
 		const ClickFix &F = Clicks[i].second;
-		Report(FOUND_CLICK, Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the period across %d, where the pulse "
-			"restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(Clicks[i].first).FullName().c_str(),
-			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), ClickBoundary(S.Song, F),
-			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + NudgeText(S, F) + ").").c_str() :
-			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."));
+		const int Boundary = ClickBoundary(S.Song, F);
+		const std::string Nudge = F.Shift != 0 ? NudgeText(S, F) : std::string();
+		CheckFinding &Out = Report(FOUND_CLICK, c, F.Row, 1, Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the "
+			"period across %d, where the pulse restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(c).FullName().c_str(),
+			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), Boundary,
+			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + Nudge + ").").c_str() :
+			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."),
+			Format("%s clicks %s: its vibrato crosses %d%s", PitchName(F.Pitch).c_str(), Plural(F.Clicks, "time", "times").c_str(), Boundary,
+			F.Shift != 0 ? "" : ", too deep to nudge clear"));
+		Out.Notes.push_back(SoundingNote(S, c, F.Row));
+		Out.Rows = Out.Notes.back().Rows;
+		Out.Details.Set("clicks", F.Clicks);
+		Out.Details.Set("boundary", Boundary);
+		if (F.Shift != 0) {
+			Out.Details.Set("nudge", Nudge);
+			// The note's bar on its channel, polished for clicks alone: one Ctrl+Z
+			Json Touches = Json::MakeArray(), Channels = Json::MakeArray(), Arguments = Json::MakeObject();
+			Touches.Push("clicks");
+			Channels.Push(c + 1);
+			Arguments.Set("touches", Touches);
+			Arguments.Set("channels", Channels);
+			Arguments.Set("from_bar", S.Time.BarOf(F.Row));
+			Arguments.Set("to_bar", S.Time.BarOf(F.Row));
+			Out.Fix = Json::MakeObject();
+			Out.Fix.Set("tool", "polish");
+			Out.Fix.Set("arguments", Arguments);
+			Out.Fix.Set("does", "nudges it a hair (" + Nudge + "), so its vibrato stays clear of " + Format("%d", Boundary));
+		}
 	}
 	const int Clicking = static_cast<int>(Clicks.size());
 	// Vanishing: notes of a line on a sound that's gone within a few frames, beside the line's notes that hold
@@ -11222,26 +11351,69 @@ std::string CheckTool(Session &S, const Json &Args)
 	{
 		const std::vector<int> RowFrames = RowFramesOf(S);
 		for (int c = 0; c < S.ChannelCount(); ++c) {
-			const std::vector<Vanishing> Found = VanishingNotes(S, c, First, End, RowFrames);
-			for (size_t i = 0; i < Found.size(); ++i) {
-				Vanished += static_cast<int>(Found[i].Rows.size());
-				Report(FOUND_VANISHING, "Vanishing: " + VanishingText(S, c, Found[i]));
+			const std::vector<Vanishing> Gone = VanishingNotes(S, c, First, End, RowFrames);
+			for (size_t i = 0; i < Gone.size(); ++i) {
+				const Vanishing &V = Gone[i];
+				Vanished += static_cast<int>(V.Rows.size());
+				CheckFinding &F = Report(FOUND_VANISHING, c, V.Rows.front(), 1, "Vanishing: " + VanishingText(S, c, V),
+					Format("%s is gone within %s, between notes of the line that hold (%s)", InstrumentLabel(S.Song, V.Instrument).c_str(),
+					Plural(V.Heard, "frame", "frames").c_str(), InstrumentLabel(S.Song, V.Held).c_str()));
+				for (size_t n = 0; n < V.Rows.size(); ++n)
+					F.Notes.push_back(SoundingNote(S, c, V.Rows[n]));
+				F.Rows = std::max(1, F.Notes.back().Row + F.Notes.back().Rows - F.Row);
+				const InstrumentInfo *pSound = FindInstrument(S.Song, V.Instrument);
+				F.Details.Set("instrument", V.Instrument);
+				F.Details.Set("instrument_name", pSound != 0 ? Json(pSound->Name) : Json());
+				F.Details.Set("heard_frames", V.Heard);
+				F.Details.Set("held_instrument", V.Held);
 			}
 		}
 	}
 
-	std::string Unused;
+	std::vector<std::string> Unused;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (IsMelodic(S.Channel(c)) && S.Notes(c).empty())
-			Unused += (Unused.empty() ? "" : ", ") + S.Channel(c).FullName();
+			Unused.push_back(S.Channel(c).FullName());
+	}
+	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey };
+
+	if (Form == "json") {
+		Json Out = Json::MakeObject();
+		Out.Set("track", S.Song.Track + 1);
+		Out.Set("track_name", S.Song.TrackName);
+		Out.Set("from_bar", From);
+		Out.Set("to_bar", To);
+		Out.Set("key", Found ? Json(KeyName(K)) : Json());
+		Out.Set("key_from_notes", Found && Arg(Args, "key") == 0);
+		Out.Set("pattern_length", S.Time.PatternLength);
+		Out.Set("rows_per_beat", S.Time.RowsPerBeat);
+		Out.Set("rows_per_bar", S.Time.RowsPerBar);
+		Json CountList = Json::MakeObject();
+		for (int k = 0; k < FOUND_KINDS; ++k)
+			CountList.Set(CHECK_KIND[k], Counts[k]);
+		Out.Set("counts", CountList);
+		Json UnusedList = Json::MakeArray();
+		for (size_t i = 0; i < Unused.size(); ++i)
+			UnusedList.Push(Unused[i]);
+		Out.Set("unused_channels", UnusedList);
+		Json List = Json::MakeArray();
+		for (int k = 0; k < FOUND_KINDS; ++k)
+			for (size_t i = 0; i < Findings[k].size(); ++i)
+				List.Push(CheckJson(S, Findings[k][i]));
+		Out.Set("findings", List);
+		return WriteJson(Out);
 	}
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
 	Text += Found ? " in " + KeyName(K) + (Arg(Args, "key") != 0 ? "" : " (found from the notes)") : " (no key: no notes)";
 	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing.", OutOfKey,
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
-	if (!Unused.empty())
-		Text += " Unused channels (free for harmony, an echo or a counter-melody): " + Unused + ".";
+	if (!Unused.empty()) {
+		Text += " Unused channels (free for harmony, an echo or a counter-melody): ";
+		for (size_t i = 0; i < Unused.size(); ++i)
+			Text += (i == 0 ? "" : ", ") + Unused[i];
+		Text += ".";
+	}
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
@@ -11260,7 +11432,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	for (int k = 0; k < FOUND_KINDS; ++k) {
 		for (int i = 0; i < Shown[k]; ++i)
-			Text += "\n" + Findings[k][static_cast<size_t>(i)];
+			Text += "\n" + Findings[k][static_cast<size_t>(i)].Line;
 		if (Shown[k] < static_cast<int>(Findings[k].size()))
 			Text += Format("\n... and %d more %s.", static_cast<int>(Findings[k].size()) - Shown[k], MORE[k]);
 	}
@@ -13054,8 +13226,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels. Run it "
-		"after writing.",
-		Schema().Add("key", Prop("string", "Key to check against. Default: found from the notes.")).Range(), true, false, true);
+		"after writing. format json gives every finding (its kind, severity, channel, frame, row, bar and beat, the notes "
+		"and the message, and for a click that can be nudged the polish call that fixes it) and the counts, for programs.",
+		Schema()
+			.Add("key", Prop("string", "Key to check against. Default: found from the notes."))
+			.Add("format", EnumProp("text (the default): a summary and the findings to read, the ones heard worst first; json: "
+				"all of them as data, for programs (FamiTracker's problems panel reads it).", std::vector<std::string>{ "text", "json" }))
+			.Range(),
+		true, false, true);
 
 	AddTool("look_at_song", "Look at the notes",
 		"A picture of the song's notes for you to look at: a piano roll with time left to right (bars numbered on top) and "
