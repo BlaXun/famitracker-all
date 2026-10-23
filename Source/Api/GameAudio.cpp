@@ -162,6 +162,88 @@ std::string GameMakerCode(const std::string &SoundName, const GameCut &Cut, int 
 	return Text;
 }
 
+double IntegratedLoudness(const std::vector<float> &Samples, int SampleRate, size_t First, size_t Count)
+{
+	const double Silent = -70.0;
+	if (SampleRate <= 0 || First >= Samples.size())
+		return Silent;
+	Count = std::min(Count, Samples.size() - First);
+	// K-weighting: a high shelf (+4 dB over about 1.7 kHz), then a high-pass at about 38 Hz, for this sample rate
+	const double Pi = 3.14159265358979323846;
+	double Shelf[5], Pass[5];	// b0 b1 b2 a1 a2
+	{
+		const double K = std::tan(Pi * 1681.974450955533 / SampleRate), Q = 0.7071752369554196;
+		const double Vh = std::pow(10.0, 3.999843853973347 / 20.0), Vb = std::pow(Vh, 0.4996667741545416);
+		const double a0 = 1.0 + K / Q + K * K;
+		Shelf[0] = (Vh + Vb * K / Q + K * K) / a0;
+		Shelf[1] = 2.0 * (K * K - Vh) / a0;
+		Shelf[2] = (Vh - Vb * K / Q + K * K) / a0;
+		Shelf[3] = 2.0 * (K * K - 1.0) / a0;
+		Shelf[4] = (1.0 - K / Q + K * K) / a0;
+	}
+	{
+		const double K = std::tan(Pi * 38.13547087602444 / SampleRate), Q = 0.5003270373238773;
+		const double a0 = 1.0 + K / Q + K * K;
+		Pass[0] = 1.0;
+		Pass[1] = -2.0;
+		Pass[2] = 1.0;
+		Pass[3] = 2.0 * (K * K - 1.0) / a0;
+		Pass[4] = (1.0 - K / Q + K * K) / a0;
+	}
+	std::vector<double> Squared(Count);
+	double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0, z1 = 0.0, z2 = 0.0;
+	for (size_t i = 0; i < Count; ++i) {
+		const double x = Samples[First + i];
+		const double y = Shelf[0] * x + Shelf[1] * x1 + Shelf[2] * x2 - Shelf[3] * y1 - Shelf[4] * y2;
+		const double z = Pass[0] * y + Pass[1] * y1 + Pass[2] * y2 - Pass[3] * z1 - Pass[4] * z2;
+		x2 = x1;
+		x1 = x;
+		y2 = y1;
+		y1 = y;
+		z2 = z1;
+		z1 = z;
+		Squared[i] = z * z;
+	}
+	// The blocks' mean squares, from running sums
+	const size_t Block = static_cast<size_t>(SampleRate) * 4 / 10, Hop = static_cast<size_t>(SampleRate) / 10;
+	if (Count < Block || Hop == 0)
+		return Silent;
+	std::vector<double> Sum(Count + 1, 0.0);
+	for (size_t i = 0; i < Count; ++i)
+		Sum[i + 1] = Sum[i] + Squared[i];
+	std::vector<double> Blocks;
+	for (size_t b = 0; b + Block <= Count; b += Hop)
+		Blocks.push_back((Sum[b + Block] - Sum[b]) / static_cast<double>(Block));
+	auto Lufs = [](double MeanSquare) { return MeanSquare > 0.0 ? -0.691 + 10.0 * std::log10(MeanSquare) : -1000.0; };
+	// Gated: blocks over -70 LUFS, then those over 10 LU under their loudness
+	double Total = 0.0;
+	size_t Kept = 0;
+	for (size_t b = 0; b < Blocks.size(); ++b)
+		if (Lufs(Blocks[b]) > Silent) {
+			Total += Blocks[b];
+			++Kept;
+		}
+	if (Kept == 0)
+		return Silent;
+	const double Relative = Lufs(Total / static_cast<double>(Kept)) - 10.0;
+	Total = 0.0;
+	Kept = 0;
+	for (size_t b = 0; b < Blocks.size(); ++b)
+		if (Lufs(Blocks[b]) > Silent && Lufs(Blocks[b]) > Relative) {
+			Total += Blocks[b];
+			++Kept;
+		}
+	return Kept == 0 ? Silent : Lufs(Total / static_cast<double>(Kept));
+}
+
+double LoudnessGain(double Measured, double Target, double Peak, bool &Held)
+{
+	const double Gain = Target - Measured;
+	const double Headroom = Peak > 0.0 ? -1.0 - 20.0 * std::log10(Peak) : Gain;
+	Held = Gain > Headroom;
+	return Held ? Headroom : Gain;
+}
+
 std::string SafeFileName(const std::string &Name)
 {
 	std::string Out;

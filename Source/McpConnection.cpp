@@ -83,6 +83,7 @@ namespace {
 const TCHAR SECTION[] = _T("Claude Code");
 const int DEFAULT_PORT = 46600;
 const int ACT_MCP_TEMPO = 0x1100;		// action ID, away from the others
+const int ACT_MCP_METER = 0x1101;
 const UINT WM_MCP_REQUEST = WM_APP + 0x3C1;
 const UINT_PTR PLAY_TIMER = 1;
 const TCHAR WINDOW_CLASS[] = _T("FamiTrackerClaudeCode");
@@ -207,6 +208,25 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 		Down = Down || pSeq->GetItem(i) < 0;
 	}
 	return Up && Down;
+}
+
+// A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the
+// duty's low bit adds 32 to the volume (CVRC6Sawtooth::RefreshChannel), so a
+// pulse sound played there overdrives
+bool HasOddDuty(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
+{
+	if (pInstrument->GetType() != INST_VRC6)
+		return false;
+	const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+	if (p->GetSeqEnable(SEQ_DUTYCYCLE) == 0)
+		return false;
+	const CSequence *pSeq = pDoc->GetSequence(SNDCHIP_VRC6, static_cast<unsigned int>(p->GetSeqIndex(SEQ_DUTYCYCLE)), SEQ_DUTYCYCLE);
+	if (pSeq == NULL)
+		return false;
+	for (unsigned int i = 0; i < pSeq->GetItemCount(); ++i)
+		if (pSeq->GetItem(static_cast<int>(i)) & 1)
+			return true;
+	return false;
 }
 
 // The notes an instrument's looping arpeggio sequence plays besides the note
@@ -360,6 +380,53 @@ private:
 
 	unsigned int m_iTrack;
 	int m_iSpeed, m_iTempo, m_iOldSpeed, m_iOldTempo;
+};
+
+// The meter: the row highlights (the module's) and a track's pattern length
+class CMcpMeterAction : public CAction
+{
+public:
+	CMcpMeterAction(int First, int Second, int Length) :
+		CAction(ACT_MCP_METER), m_iTrack(0), m_iFirst(First), m_iSecond(Second), m_iLength(Length), m_iOldFirst(0), m_iOldSecond(0),
+		m_iOldLength(0)
+	{
+	}
+
+	bool SaveState(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		m_iTrack = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+		m_iOldFirst = pDoc->GetFirstHighlight();
+		m_iOldSecond = pDoc->GetSecondHighlight();
+		m_iOldLength = static_cast<int>(pDoc->GetPatternLength(m_iTrack));
+		if (m_iLength <= 0)
+			m_iLength = m_iOldLength;
+		Redo(pMainFrm);
+		return true;
+	}
+
+	void Undo(CMainFrame *pMainFrm) { Set(pMainFrm, m_iOldFirst, m_iOldSecond, m_iOldLength); }
+	void Redo(CMainFrame *pMainFrm) { Set(pMainFrm, m_iFirst, m_iSecond, m_iLength); }
+
+private:
+	void Set(CMainFrame *pMainFrm, int First, int Second, int Length)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (m_iTrack >= pDoc->GetTrackCount())
+			return;
+		if (Length > 0 && Length <= MAX_PATTERN_LENGTH)
+			pDoc->SetPatternLength(m_iTrack, static_cast<unsigned int>(Length));
+		pDoc->SetHighlight(First, Second);
+		pMainFrm->SetFirstHighlightRow(First);	// the toolbar's boxes, which would set them back
+		pMainFrm->SetSecondHighlightRow(Second);
+		pDoc->SetModifiedFlag();
+		pDoc->UpdateAllViews(NULL, UPDATE_HIGHLIGHT);
+		pDoc->UpdateAllViews(NULL, UPDATE_PATTERN);
+		pMainFrm->UpdateControls();
+	}
+
+	unsigned int m_iTrack;
+	int m_iFirst, m_iSecond, m_iLength, m_iOldFirst, m_iOldSecond, m_iOldLength;
 };
 
 }	// namespace
@@ -682,6 +749,7 @@ public:
 				Instrument.Releases = pInstrument->CanRelease();
 				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
 				Instrument.Arpeggio = LoopingArpeggio(pDoc, pInstrument);
+				Instrument.OddDuty = HasOddDuty(pDoc, pInstrument);
 				if (pInstrument->GetType() == INST_N163) {
 					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
 					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();
@@ -1508,12 +1576,55 @@ public:
 		return true;
 	}
 
+	bool SetNames(const ftapi::SongNames &Names, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Title = Ansi(Names.Title), Author = Ansi(Names.Author), Copyright = Ansi(Names.Copyright);
+		if ((Names.HasTitle && Title.GetLength() > 31) || (Names.HasAuthor && Author.GetLength() > 31) ||
+			(Names.HasCopyright && Copyright.GetLength() > 31)) {
+			Error = "FamiTracker keeps at most 31 characters for the title, the author and the copyright.";
+			return false;
+		}
+		if (Names.HasTitle)
+			pDoc->SetSongName(Title);
+		if (Names.HasAuthor)
+			pDoc->SetSongArtist(Author);
+		if (Names.HasCopyright)
+			pDoc->SetSongCopyright(Copyright);
+		if (Names.HasTrack)
+			pDoc->SetTrackTitle(Track(), Ansi(Names.Track));
+		m_pMain->SetSongInfo(pDoc->GetSongName(), pDoc->GetSongArtist(), pDoc->GetSongCopyright());
+		if (Names.HasTrack) {
+			m_pMain->UpdateTrackBox();
+			static_cast<CFrameWnd*>(m_pMain)->OnUpdateFrameTitle(TRUE);	// the caption shows the track's name
+		}
+		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+		return true;
+	}
+
 	bool SetSpeedTempo(int Speed, int Tempo, std::string &Error)
 	{
 		if (!CanChange(Error))
 			return false;
 		if (!m_pMain->AddAction(new CMcpTempoAction(Speed, Tempo))) {
 			Error = "The tempo couldn't be changed.";
+			return false;
+		}
+		return true;
+	}
+
+	bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		if (RowsPerBeat < 1 || RowsPerBar < RowsPerBeat || RowsPerBar > MAX_PATTERN_LENGTH || PatternLength > MAX_PATTERN_LENGTH) {
+			Error = "FamiTracker can't show that meter.";
+			return false;
+		}
+		if (!m_pMain->AddAction(new CMcpMeterAction(RowsPerBeat, RowsPerBar, PatternLength))) {
+			Error = "The meter couldn't be changed.";
 			return false;
 		}
 		return true;

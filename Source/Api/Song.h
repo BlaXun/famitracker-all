@@ -57,8 +57,10 @@ struct InstrumentInfo {
 	int WavePos, WaveSize;	// an N163 instrument's place and length in the chip's wave memory (samples); -1 otherwise
 	std::vector<int> Arpeggio;	// the notes its looping arpeggio plays besides each note it's given, in semitones ({4, 7,
 								// 11}: a major seventh); empty when it has none, or one that doesn't loop
+	bool OddDuty;			// a VRC6 instrument whose duty sequence plays odd values: on the sawtooth they add 32 to
+							// its volume, and it overdrives
 
-	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1) {}
+	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false) {}
 };
 
 struct ClipInfo {
@@ -95,6 +97,14 @@ struct SongInfo {
 	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Speed(6), Tempo(150), SplitPoint(32),
 		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), DirectChanges(false),
 		Playing(false), PlayRow(-1) {}
+};
+
+// Names for the module and the selected track (name_song), in UTF-8; what
+// isn't Has... stays as it is
+struct SongNames {
+	bool HasTitle, HasAuthor, HasCopyright, HasTrack;
+	std::string Title, Author, Copyright, Track;
+	SongNames() : HasTitle(false), HasAuthor(false), HasCopyright(false), HasTrack(false) {}
 };
 
 // Cells to write into a channel from a row on. Exact cells are the rows as
@@ -201,6 +211,13 @@ public:
 	virtual bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
 	// Undoable
 	virtual bool SetSpeedTempo(int Speed, int Tempo, std::string &Error) = 0;
+	// The meter, undoable: the row highlights (rows a beat, rows a bar; one pair for the whole module in
+	// 0.4.6) and the selected track's pattern length (0 keeps it)
+	virtual bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &Error) = 0;
+	// The module's title, author and copyright (FamiTracker's song information
+	// boxes) and the selected track's name. False with Error when the song
+	// can't change, or a name is longer than FamiTracker keeps.
+	virtual bool SetNames(const SongNames &Names, std::string &Error) = 0;
 
 	// Tracks (FamiTracker's songs in one module). The tools work on the
 	// selected one; this selects another (from 0).

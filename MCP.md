@@ -142,26 +142,27 @@ anything; close the dialog and ask again.
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, or an N163 wave sound |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind). See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
+| `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
-| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). See [Mixing](#mixing) |
+| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. See [Mixing](#mixing) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
-| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it |
+| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays), a song that keeps one loudness throughout. A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
@@ -170,11 +171,12 @@ anything; close the dialog and ask again.
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels |
-| `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
+| `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
+| `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
 | `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops. See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
@@ -184,7 +186,7 @@ anything; close the dialog and ask again.
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato) and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
-| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level) |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, and rows that never play hatched; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -203,6 +205,20 @@ FamiTracker's octave numbers are one lower than in most music software: C-3
 is middle C and A-3 is 440 Hz. Bars and beats count from 1, as the row
 highlight shows them (the first highlight is a beat, the second a bar).
 Claude works on the track that's selected.
+
+### Meter
+
+`set_meter` sets the row highlights for a meter, so a waltz counts three
+beats to a bar everywhere: in `write_notes`, the chords, the drums, the
+review and the loop. 3/4 keeps the song's rows a beat (4: 12 rows a bar);
+6/8, 9/8 and 12/8 count dotted quarters of three eighths (6 rows a beat, an
+eighth every 2 rows: the eighths of beat 1 are beats 1, 1.333 and 1.667),
+and 5/8 or 7/8 count eighths. A track without notes also gets patterns of
+whole bars (4 to a frame, or `bars_per_frame`); a track with notes keeps its
+patterns, so the meter is set before writing (a bar that doesn't divide the
+patterns is refused). In 0.4.6 the highlights are the module's, so every
+track counts in the same meter. After a change to a compound meter the BPM
+counts dotted quarters: `set_tempo` with bpm picks the speed for them.
 
 ## Speed and tempo
 
@@ -258,7 +274,9 @@ level, keeping its accents and fades. style soft (the default) puts the
 melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, a
 bass on a pulse or the sawtooth at 10 and the drums at 10, which with the
 instruments' own envelopes is about where those tracks sit; style full
-goes back to near full volume; `levels` sets channels by hand.
+goes back to near full volume; `levels` sets channels by hand. A sawtooth
+well over a triangle bass (or high up, with none) plays a second line or
+chords, not the bass.
 
 The NES mixes the triangle, the noise and the DPCM together, so the DPCM
 channel's level (`Zxx`) also sets how loud the triangle and the noise are:
@@ -313,7 +331,12 @@ xylophone, vibraphone, brass, bass guitar, synthesizer and chorus. Claude
 adds them as instruments by name ("a piano for the melody", "brass chords"),
 and a preset's name picks the sound most like it: "soft lead" is the flute,
 "bass" the bass guitar, "warm pad" the chorus. Notes end with a halt (`---`),
-which lets the sound fade the way the chip does.
+which lets the sound fade the way the chip does. Like the triangle, the VRC7
+sounds an octave under the note written (its A-3 is 220 Hz, a pulse's 440),
+so a part that plays with a pulse is written an octave up there; the echo,
+the harmony, the counter-melody, voiced chords and a jingle's harmony are
+written that way, and the checks and the review count VRC7 notes where they
+sound.
 
 The chip also has one custom patch, whose 8 registers set two FM operators
 (their frequency ratio, the modulation level, feedback and envelopes).
@@ -336,7 +359,10 @@ drawbars turn like a rotating speaker, the strings and the choir shimmer,
 brass opens up from mellow to bright, the electric piano and the bell mellow
 as they fade, the lead's pulse narrows and widens smoothly, and the bass
 growls like a wah. A preset's name picks the sound most like it ("soft
-lead" is the flute, "bass" the round bass).
+lead" is the flute, "bass" the round bass). A song holds up to 8 of them:
+FamiTracker 0.4.6 loads an N163 wave only from the first 128 samples of the
+chip's memory (a wave placed later makes the module load out of step), so
+Claude puts each sound's 16-sample wave there, in a place of its own.
 
 - The waves are 16 samples long: FamiTracker 0.4.6 plays N163 notes in tune
   at that length (a 32-sample wave sounds an octave lower than written).
@@ -439,13 +465,29 @@ with `check_loop` and `fix_loop`.
 `design_instrument` makes an instrument from words, starting from a kind
 (lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune; kick,
 snare, hihat, open hihat, crash, tom) and changing what should differ:
-attack, decay, sustain and release (words or frames, 60 a second), the
-pulse width (12.5%, 25%, 50%) and whether it opens up, shimmers or thins as
-it fades, a vibrato built in that comes in after a delay given in beats, an
-octave blip, a scoop or a fall on the attack, or a chord played as a fast
-arpeggio from every note. Drums can be darker or brighter, shorter or
-longer. The instrument gets a new name, so notes that use another one don't
-change.
+attack, decay, sustain and release (words or frames, 60 a second; the
+decay's words go by the kind, so a long bell rings twice its usual 40
+frames), the pulse width (12.5%, 25%, 50%) and whether it opens up,
+shimmers or thins as it fades, a vibrato built in that comes in after a
+delay given in beats, an octave blip, a scoop or a fall on the attack, or a
+chord played as a fast arpeggio from every note (major, minor, sus2, sus4,
+6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7, augmented).
+A sound that holds under its peak (a pad at half) swells to that level, or
+settles to it, rather than dropping straight after its attack. Drums can be
+darker or brighter, shorter or longer (a hi-hat sits at the noise's D-#: at
+E-# most of its sound lies above hearing). The instrument gets a new name,
+so notes that use another one don't change.
+
+On the noise channel, a kind that isn't a drum makes a volume envelope: a
+`swell` rises over half a second and washes out after a release, for waves
+and gusts of wind (the note picks the noise's pitch, 0-# deep to F-#
+bright). Anything that would move its pitch or make it metallic (vibrato,
+an attack's pitch, an arpeggio, a duty) is left out. A pulse sound played on
+the VRC6 sawtooth overdrives it (the odd values of its duty sequence add 32
+to the sawtooth's volume), so a sound asked for there by name plays its
+sawtooth version when the song has one ("Horn (saw)", made by
+`design_instrument` or a preset for that channel), and Claude says so
+otherwise.
 
 The articulations the studied NES soundtracks are made of are there too:
 an attack that blooms from about two thirds of its peak in two frames, a
@@ -502,7 +544,12 @@ takes the craft (grooves, bass figures, harmonic color, how the channels
 share the parts, the sounds) and writes its own tunes and progressions.
 Built in, without any NSF, is a guide to the classic NES styles from
 studies of Konami's (Bucky O'Hare, TMNT II), Capcom's (Mega Man 2-5, Little
-Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks.
+Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks. Its
+`soundtrack` topic is about a game's music as a whole, from composing a
+30-track soundtrack with these tools: a catalogue of places, a leitmotif
+that comes back changed, tempos whose rows all last the same, a loudness
+for each kind of place, and forms for towns, dungeons, bosses and the
+credits.
 
 You can tag references and keep notes with them ("the user loves this
 bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to

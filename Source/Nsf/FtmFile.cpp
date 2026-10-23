@@ -787,7 +787,7 @@ bool Document::LoadInstrument(BlockReader &b, int Slot, FtInstrument &Inst, std:
 				if (Inst.WaveSize < 0 || Inst.WaveSize > N163_WAVE_SIZE)
 					return Fail(Why, "instrument " + Number(Slot) + "'s waves are " + Number(Inst.WaveSize) + " samples long");
 				Inst.WavePos = b.Int();
-				if (Inst.WavePos < 0 || Inst.WavePos >= 128)
+				if (Inst.WavePos < 0 || Inst.WavePos >= 256)	// as this build's loader (0.4.6's refused 128 and above)
 					return Fail(Why, "instrument " + Number(Slot) + "'s waves go at " + Number(Inst.WavePos));
 				Inst.WaveCount = b.Int();
 				if (Inst.WaveCount < 1 || Inst.WaveCount > N163_WAVES)

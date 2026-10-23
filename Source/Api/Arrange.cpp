@@ -819,7 +819,9 @@ std::vector<int> LushShape(const Chord &C, int Pattern)
 		break;
 	case BROKEN_ROLLING: {
 		// The root and fifth below, the rest an octave up; a tone that would
-		// land a semitone from another is left out (a third under a ninth)
+		// land a semitone from another is left out. The third says what the
+		// chord is, so it stays: a ninth over a minor third goes up another
+		// octave (an eleventh over a major third, which would go too high, out)
 		std::vector<int> Spread;
 		for (size_t i = 0; i < n; ++i)
 			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
@@ -828,6 +830,18 @@ std::vector<int> LushShape(const Chord &C, int Pattern)
 			if (Up[i] == 0 || Up[i] == 7 || Up[i] >= 12)
 				continue;
 			const int Raised = Up[i] + 12;
+			if (Up[i] == 3 || Up[i] == 4) {
+				std::vector<int> Kept;
+				for (size_t k = 0; k < Spread.size(); ++k) {
+					if (Spread[k] < 12 || std::abs(Spread[k] - Raised) > 1)
+						Kept.push_back(Spread[k]);
+					else if (Spread[k] + 12 <= 26)
+						Kept.push_back(Spread[k] + 12);
+				}
+				Spread = Kept;
+				Spread.push_back(Raised);
+				continue;
+			}
 			bool Rubs = false;
 			for (size_t k = 0; k < Spread.size(); ++k)
 				Rubs = Rubs || std::abs(Spread[k] - Raised) <= 1;
@@ -1062,7 +1076,8 @@ const GrooveDef GROOVE_DEFS[] = {
 	{ "x...........", "....g...g...", "x.x.x.x.x.x." },				// waltz
 };
 
-const int KICK_PITCH = 0x4, SNARE_PITCH = 0xA, HAT_PITCH = 0xE, OPEN_PITCH = 0xD, CRASH_PITCH = 0xC;
+// The hi-hats at D-#: at E-# most of the noise's sound lies above hearing and they come out about 4 dB quieter
+const int KICK_PITCH = 0x4, SNARE_PITCH = 0xA, HAT_PITCH = 0xD, OPEN_PITCH = 0xD, CRASH_PITCH = 0xC;
 const int TOM_PITCHES[3] = { 0x9, 0x7, 0x5 };	// high, middle, low
 
 DrumHit Hit(int Row, int Pitch, int Volume, const char *Sound)
@@ -1301,17 +1316,37 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 		if (O.Interval != HARMONY_OCTAVE_BELOW && pChord != 0 && ClashesWithChord(h, pChord->C)) {
 			// Between the beats too, not a semitone from the chord's notes: the
 			// chord's version of the degree (C# over A major, not the scale's C),
-			// a third or sixth from the melody where it can be
+			// a third or sixth from the melody where it can be. Over a chord of
+			// the key's own notes the line stays in the key (under a Dsus4 in D
+			// major, G rather than F)
+			const std::vector<int> Classes = pChord->C.PitchClasses();
+			bool Diatonic = true;
+			for (size_t k = 0; k < Classes.size(); ++k)
+				Diatonic = Diatonic && InKey(Classes[k], O.K);
 			int Best = h, BestScore = -1;
 			for (int Step = -1; Step <= 1; Step += 2) {
 				const int Candidate = h + Step;
 				if (ClashesWithChord(Candidate, pChord->C) || Rubs(Candidate, p))
+					continue;
+				if (Diatonic && !InKey(Candidate, O.K) && !pChord->C.HasPitchClass(Mod12(Candidate)))
 					continue;
 				const int Gap = Mod12(p - Candidate);
 				const int Score = (Gap == 3 || Gap == 4 || Gap == 8 || Gap == 9 ? 2 : 0) + (pChord->C.HasPitchClass(Mod12(Candidate)) ? 1 : 0);
 				if (Score > BestScore) {
 					BestScore = Score;
 					Best = Candidate;
+				}
+			}
+			if (BestScore < 0) {
+				// Neither neighbor fits: the nearest of the chord's notes a third
+				// to a sixth from the melody (a fifth under a sus chord's)
+				const bool Below = O.Interval != HARMONY_THIRD_ABOVE;
+				for (int Distance = 3; Distance <= 9; ++Distance) {
+					const int Candidate = Below ? p - Distance : p + Distance;
+					if (pChord->C.HasPitchClass(Mod12(Candidate))) {
+						Best = Candidate;
+						break;
+					}
 				}
 			}
 			h = Best;
@@ -1376,6 +1411,8 @@ double Clash(int Pitch, int From, int To, const std::vector<NoteInfo> &Melody, b
 			Cost += 0.8 * Weight;
 		if (m == Pitch)
 			Cost += 3.0 * Weight;
+		else if (d == 0)
+			Cost += 2.0 * Weight;	// the melody an octave away: a doubling, not a line of its own
 		if (!Above && Pitch > m - 2)
 			Cost += 5.0 * Weight;
 		if (Above && Pitch < m + 2)
@@ -1408,19 +1445,49 @@ int CounterPitch(const Chord &C, int Near, int From, int To, const std::vector<N
 	return Best;
 }
 
-// A note near Pitch that fits against the melody: itself, a chord tone or a scale step
+// A note for a line moving over a chord: one of its tones, or of the key's
+// that doesn't rub a semitone against a tone of the chord from outside the key
+// (no F under an F#7 in G, no B over a C#dim7's Bb). Over the key's own
+// chords, any note of the key.
+bool FitsChord(int Pitch, const Chord &C, const Key &K)
+{
+	if (C.HasPitchClass(Mod12(Pitch)))
+		return true;
+	if (!InKey(Pitch, K))
+		return false;
+	for (int d = -1; d <= 1; d += 2)
+		if (C.HasPitchClass(Mod12(Pitch + d)) && !InKey(Pitch + d, K))
+			return false;
+	return true;
+}
+
+// A step of the line up or down from Pitch: the key's next note, or over a
+// chord from outside the key the next note that fits it
+int ChordStep(int Pitch, int Direction, const Chord &C, const Key &K)
+{
+	const int Step = ScaleStep(Pitch, Direction, K);
+	if (FitsChord(Step, C, K))
+		return Step;
+	for (int d = 1; d <= 4; ++d)
+		if (FitsChord(Pitch + Direction * d, C, K))
+			return Pitch + Direction * d;
+	return Step;
+}
+
+// A note near Pitch that fits against the melody and the chord: itself, a chord tone or a scale step
 int Fitted(int Pitch, int From, int To, const ChordAt *pChord, const std::vector<NoteInfo> &Melody, const CounterOptions &O)
 {
-	if (Clash(Pitch, From, To, Melody, O.Above) < 0.8)
+	auto Fits = [&](int p) { return pChord != 0 ? FitsChord(p, pChord->C, O.K) : InKey(p, O.K); };
+	if (Clash(Pitch, From, To, Melody, O.Above) < 0.8 && Fits(Pitch))
 		return Pitch;
 	int Best = Pitch;
-	double BestCost = Clash(Pitch, From, To, Melody, O.Above);
+	double BestCost = Fits(Pitch) ? Clash(Pitch, From, To, Melody, O.Above) : 1e9;
 	for (int d = -4; d <= 4; ++d) {
 		const int p = Pitch + d;
 		if (d == 0 || p < O.Low - 2 || p > O.High + 2)
 			continue;
 		const bool ChordTone = pChord != 0 && pChord->C.HasPitchClass(Mod12(p));
-		if (!ChordTone && !InKey(p, O.K))
+		if (!Fits(p))
 			continue;
 		const double Cost = Clash(p, From, To, Melody, O.Above) + 0.3 * std::abs(d) + (ChordTone ? 0.0 : 0.5);
 		if (Cost < BestCost) {
@@ -1493,14 +1560,14 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 		if (Next == Target) {
 			if (Calm) {
 				// The neighbour that sounds best against the melody, away from it on a tie
-				const int Away = ScaleStep(Target, O.Above ? 1 : -1, O.K), Toward = ScaleStep(Target, O.Above ? -1 : 1, O.K);
+				const int Away = ChordStep(Target, O.Above ? 1 : -1, pChord->C, O.K), Toward = ChordStep(Target, O.Above ? -1 : 1, pChord->C, O.K);
 				const int From = W.To - R;
 				Path.push_back(Clash(Toward, From, W.To, Melody, O.Above) + 0.2 < Clash(Away, From, W.To, Melody, O.Above) ? Toward : Away);
 			}
 		}
 		else {
 			const int Direction = Next > Target ? 1 : -1;
-			for (int p = ScaleStep(Target, Direction, O.K); Direction > 0 ? p < Next : p > Next; p = ScaleStep(p, Direction, O.K))
+			for (int p = ChordStep(Target, Direction, pChord->C, O.K); Direction > 0 ? p < Next : p > Next; p = ChordStep(p, Direction, pChord->C, O.K))
 				Path.push_back(p);
 		}
 		// As many notes as there are beats (two while the melody moves some), the
@@ -1519,7 +1586,8 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 			if (To <= Row)
 				continue;
 			const int Pitch = Clamp(Path[k], O.Low - 2, O.High + 2);
-			const int Played = k == 0 ? Pitch : Fitted(Pitch, Row, std::min(To, Row + R), pChord, Melody, O);
+			const ChordAt *pHere = ChordAtRow(Chords, Row);	// the chord can change within the window
+			const int Played = k == 0 ? Pitch : Fitted(Pitch, Row, std::min(To, Row + R), pHere != 0 ? pHere : pChord, Melody, O);
 			Out.push_back(MakeNote(Row, To - Row, Played, O.Volume));
 			Previous = Played;
 		}

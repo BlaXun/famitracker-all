@@ -255,7 +255,9 @@ struct PartOptions {
 	std::vector<bool> Releases;			// per instrument: ends notes with a release (===) rather than a halt (---)
 	bool KeepFollowing;					// change cells after the range so later notes play as before (direct writes)
 	bool StopAtEnd;						// the end marker after the range goes on the range's last row instead (clips)
-	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false) {}
+	bool RingOut;						// nothing ends the notes: the DPCM channel's samples play out, and a halt there
+									// would reset the DPCM level (0.4.6 writes $4011 = 0 as it cuts a sample)
+	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false) {}
 };
 
 // A channel's new cells for rows [First, End), its notes replaced by Notes,
