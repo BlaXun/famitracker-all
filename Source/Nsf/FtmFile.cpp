@@ -592,6 +592,8 @@ bool Document::ReadBlock(const std::string &Id, BlockReader &b, std::string &Err
 		Ok = ReadSequencesN163(b, Why);
 	else if (Id == "BF CLIPS")
 		return true;	// beginner-friendly FamiTracker's clips (Clips.cpp): copies of what the patterns hold
+	else if (Id == "BF SECTIONS")
+		return true;	// and its sections' names (Api/Sections.h), which change nothing that plays
 	else {
 		Problem("skipped the block \"" + Shown(Id) + "\", which FamiTracker 0.4.6 doesn't read");
 		return true;

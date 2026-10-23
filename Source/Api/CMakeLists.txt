@@ -78,6 +78,7 @@ add_library(ftapi STATIC
 	Wavetables.cpp
 	PulseClicks.cpp
 	Music.cpp
+	Sections.cpp
 	Chords.cpp
 	Arrange.cpp
 	DpcmKit.cpp

@@ -39,6 +39,9 @@
 
 */
 
+// The sections' standard headers come before stdafx.h, whose DEBUG_NEW macro
+// would otherwise rewrite the placement new inside the standard library
+#include "Api/Sections.h"
 #include "stdafx.h"
 #include <algorithm>
 #include "FamiTracker.h"
@@ -197,7 +200,8 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_iRegisteredChannels(0), 
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
 	m_bDisplayComment(false),
-	m_pClipLibrary(new CClipLibrary())
+	m_pClipLibrary(new CClipLibrary()),
+	m_pSections(new ftapi::SectionStore())
 {
 	// Initialize document object
 
@@ -221,6 +225,8 @@ CFamiTrackerDoc::~CFamiTrackerDoc()
 	// Clean up
 	delete m_pClipLibrary;
 	m_pClipLibrary = NULL;
+	delete m_pSections;
+	m_pSections = NULL;
 
 	// DPCM samples
 	for (int i = 0; i < MAX_DSAMPLES; ++i) {
@@ -404,6 +410,9 @@ void CFamiTrackerDoc::DeleteContents()
 
 	// Clips
 	m_pClipLibrary->Clear();
+
+	// Sections
+	m_pSections->Clear();
 
 	// Instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -779,6 +788,8 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 	if (!WriteBlock_Comments(pDocFile))
 		return false;
 	if (!m_pClipLibrary->IsEmpty() && !m_pClipLibrary->Write(pDocFile))
+		return false;
+	if (!m_pSections->Empty() && !WriteBlock_Sections(pDocFile))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1289,6 +1300,16 @@ bool CFamiTrackerDoc::WriteBlock_ChannelLayout(CDocumentFile *pDocFile) const
 	return pDocFile->FlushBlock();
 }
 
+bool CFamiTrackerDoc::WriteBlock_Sections(CDocumentFile *pDocFile) const
+{
+	// Beginner-friendly: the tracks' sections (Api/Sections.h), a block other versions skip
+	const std::vector<unsigned char> Data = m_pSections->Write();
+	pDocFile->CreateBlock(ftapi::SectionStore::BLOCK_ID, ftapi::SectionStore::BLOCK_VERSION);
+	if (!Data.empty())
+		pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
+	return pDocFile->FlushBlock();
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Document load functions
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1633,6 +1654,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		else if (!strcmp(BlockID, FILE_BLOCK_CLIPS)) {
 			m_pClipLibrary->Read(&DocumentFile);	// damaged clips are left out; the song still loads
 		}
+		else if (!strcmp(BlockID, ftapi::SectionStore::BLOCK_ID)) {
+			ReadBlock_Sections(&DocumentFile);	// damaged sections are left out too
+		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
 		}
@@ -1673,6 +1697,12 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 
 	if (m_iFileVersion < 0x0300)
 		ConvertSequences();
+
+	// Sections only where the tracks have frames (another program may have changed them)
+	for (int i = 0; i < MAX_TRACKS; ++i) {
+		const bool Used = i < static_cast<int>(m_iTrackCount) && m_pTracks[i] != NULL;
+		m_pSections->FitFrames(i, Used ? static_cast<int>(m_pTracks[i]->GetFrameCount()) : 0);
+	}
 
 #ifdef TRANSPOSE_FDS
 	if (m_bAdjustFDSArpeggio) {
@@ -1851,6 +1881,17 @@ bool CFamiTrackerDoc::ReadBlock_ChannelLayout(CDocumentFile *pDocFile)
 	int Version = pDocFile->GetBlockVersion();
 	// Todo
 	return false;
+}
+
+void CFamiTrackerDoc::ReadBlock_Sections(CDocumentFile *pDocFile)
+{
+	// Every read is checked against the block's size; damaged sections are
+	// left out, and the song still loads
+	const int Size = pDocFile->GetBlockSize() - pDocFile->GetBlockPos();
+	std::vector<unsigned char> Data(static_cast<size_t>(std::max(0, Size)));
+	if (!Data.empty())
+		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
+	m_pSections->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
 }
 
 bool CFamiTrackerDoc::ReadBlock_Instruments(CDocumentFile *pDocFile)
@@ -2649,6 +2690,9 @@ bool CFamiTrackerDoc::ImportTrack(int Track, CFamiTrackerDoc *pImported, int *pI
 	// Copy track name
 	SetTrackTitle(NewTrack, pImported->GetTrackTitle(Track));
 
+	// and its sections
+	m_pSections->Set(NewTrack, pImported->GetSections()->Get(Track));
+
 	// Copy frames
 	for (unsigned int f = 0; f < pImported->GetFrameCount(Track); ++f) {
 		for (unsigned int c = 0; c < GetAvailableChannels(); ++c) {
@@ -3396,6 +3440,7 @@ void CFamiTrackerDoc::SetFrameCount(unsigned int Track, unsigned int Count)
 	CPatternData *pTrack = GetTrack(Track);
 	if (pTrack->GetFrameCount() != Count) {
 		pTrack->SetFrameCount(Count);
+		m_pSections->FitFrames(Track, Count);	// sections in the frames gone at the end go with them
 		SetModifiedFlag();
 	}
 }
@@ -3674,6 +3719,7 @@ void CFamiTrackerDoc::ClearPatterns(unsigned int Track)
 	CPatternData *pTrack = GetTrack(Track);
 	pTrack->ClearEverything();
 	m_pClipLibrary->DropLinks(Track);
+	m_pSections->Set(Track, ftapi::SectionList());
 
 	SetModifiedFlag();
 }
@@ -3874,6 +3920,9 @@ bool CFamiTrackerDoc::InsertFrame(unsigned int Track, unsigned int Frame)
 		SetPatternAtFrame(Track, Frame, i, GetFirstFreePattern(Track, i));
 	}
 
+	// Between two frames of a section, it's part of it
+	ftapi::SectionsInsertFrames(m_pSections->Edit(Track), Frame, 1);
+
 	SetModifiedFlag();
 
 	return true;
@@ -3893,6 +3942,9 @@ bool CFamiTrackerDoc::RemoveFrame(unsigned int Track, unsigned int Frame)
 
 	if (FrameCount == 1)
 		return false;
+
+	// It leaves its section (before the frame count drops, which would cut the last frame's)
+	ftapi::SectionsRemoveFrames(m_pSections->Edit(Track), Frame, 1);
 
 	for (int i = Frame; i < FrameCount - 1; ++i) {
 		for (int j = 0; j < Channels; ++j) {
@@ -3931,6 +3983,9 @@ bool CFamiTrackerDoc::DuplicateFrame(unsigned int Track, unsigned int Frame)
 		SetPatternAtFrame(Track, Frame + 1, i, GetPatternAtFrame(Track, Frame, i));
 	}
 
+	// The copy goes into its original's section
+	ftapi::SectionsCopyFrame(m_pSections->Edit(Track), Frame);
+
 	SetModifiedFlag();
 
 	return true;
@@ -3957,6 +4012,9 @@ bool CFamiTrackerDoc::DuplicatePatterns(unsigned int Track, unsigned int Frame)
 		}
 	}
 
+	// A copy: it goes into its original's section
+	ftapi::SectionsJoinBefore(m_pSections->Edit(Track), Frame);
+
 	SetModifiedFlag();
 
 	return true;
@@ -3975,6 +4033,8 @@ bool CFamiTrackerDoc::MoveFrameDown(unsigned int Track, unsigned int Frame)
 		SetPatternAtFrame(Track, Frame + 1, i, Pattern);
 	}
 
+	ftapi::SectionsMoveFrames(m_pSections->Edit(Track), Frame, Frame, Frame + 1);
+
 	SetModifiedFlag();
 
 	return true;
@@ -3992,6 +4052,44 @@ bool CFamiTrackerDoc::MoveFrameUp(unsigned int Track, unsigned int Frame)
 		SetPatternAtFrame(Track, Frame, i, GetPatternAtFrame(Track, Frame - 1, i));
 		SetPatternAtFrame(Track, Frame - 1, i, Pattern);
 	}
+
+	ftapi::SectionsMoveFrames(m_pSections->Edit(Track), Frame, Frame, Frame - 1);
+
+	SetModifiedFlag();
+
+	return true;
+}
+
+bool CFamiTrackerDoc::MoveFrames(unsigned int Track, unsigned int First, unsigned int Last, unsigned int To)
+{
+	// Beginner-friendly: a block of frames moves (a section moved up or down),
+	// keeping its patterns; the sections follow (Api/Sections.h)
+	ASSERT(Track < MAX_TRACKS);
+
+	const unsigned int Frames = GetFrameCount(Track);
+	const unsigned int Channels = GetAvailableChannels();
+	if (Last < First || Last >= Frames || To + (Last - First) >= Frames)
+		return false;
+	if (To == First)
+		return true;
+
+	// The frames' order afterwards: the others, with the block put in at To
+	std::vector<unsigned int> Order;
+	for (unsigned int f = 0; f < Frames; ++f)
+		if (f < First || f > Last)
+			Order.push_back(f);
+	for (unsigned int f = First; f <= Last; ++f)
+		Order.insert(Order.begin() + static_cast<std::ptrdiff_t>(To + (f - First)), f);
+
+	std::vector<unsigned int> Patterns(Frames * Channels);
+	for (unsigned int f = 0; f < Frames; ++f)
+		for (unsigned int c = 0; c < Channels; ++c)
+			Patterns[f * Channels + c] = GetPatternAtFrame(Track, f, c);
+	for (unsigned int f = 0; f < Frames; ++f)
+		for (unsigned int c = 0; c < Channels; ++c)
+			SetPatternAtFrame(Track, f, c, Patterns[Order[f] * Channels + c]);
+
+	ftapi::SectionsMoveFrames(m_pSections->Edit(Track), static_cast<int>(First), static_cast<int>(Last), static_cast<int>(To));
 
 	SetModifiedFlag();
 
@@ -4044,6 +4142,7 @@ void CFamiTrackerDoc::RemoveTrack(unsigned int Track)
 
 	delete m_pTracks[Track];
 	m_pClipLibrary->TrackRemoved(Track);
+	m_pSections->TrackRemoved(Track);
 
 	// Move down all other tracks
 	for (unsigned int i = Track; i < m_iTrackCount - 1; ++i) {
@@ -4091,6 +4190,7 @@ void CFamiTrackerDoc::MoveTrackDown(unsigned int Track)
 void CFamiTrackerDoc::SwapTracks(unsigned int Track1, unsigned int Track2)
 {
 	m_pClipLibrary->TracksSwapped(Track1, Track2);
+	m_pSections->TracksSwapped(Track1, Track2);
 
 	CString Temp = m_sTrackNames[Track1];
 	m_sTrackNames[Track1] = m_sTrackNames[Track2];
