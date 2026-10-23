@@ -168,8 +168,8 @@ const Section SECTIONS[] = {
 		"- The triangle as the melody, a hollow voice for water and sorrow: a soft 50% pulse echoes it 3 rows later at "
 		"volume 5 (add_echo from the triangle, to_channel a pulse, instrument soft lead), or it arpeggiates over two "
 		"octaves under held pulse notes.\n"
-		"- A lilt from delays: 30-63% of a part's notes a few frames late (Gxx) in 18 parts (set_swing by delays). Echoes "
-		"1-4 rows behind at half the volume in 9 tracks.\n"
+		"- A lilt from delays: 20-63% of a part's notes a few frames late (Gxx) in 18 parts (set_swing by delays). Echoes "
+		"in 11 tracks, mostly 1-4 rows behind at half the volume or a little more.\n"
 		"- Harmony: bass lines stepping down (laments), i-VII-VI-V cadences, the dominant held as a pedal, minor triads "
 		"sliding down a semitone at a time, chords a major third apart, the major and minor of one chord alternating, the "
 		"Neapolitan in minor; for danger, chords a tritone or a semitone apart alternating." },
