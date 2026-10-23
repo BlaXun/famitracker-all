@@ -38,6 +38,7 @@
 #include "Api/Json.h"
 #include "Api/Mcp.h"
 #include "Api/Music.h"
+#include "Api/Network.h"
 #include "Api/Presets.h"
 #include "Api/Song.h"
 #include "Api/SoundEffects.h"
@@ -2058,6 +2059,20 @@ private:
 
 // The dialog
 
+// This computer's addresses that other computers at home can use: home networks' and Tailscale's (the others'
+// own addresses would be public too, and FamiTracker doesn't answer those)
+static std::vector<mcp_address_t> HomeAddresses()
+{
+	const std::vector<mcp_address_t> Found = ListNetworkAddresses();
+	std::vector<mcp_address_t> Home;
+	for (size_t i = 0; i < Found.size(); ++i) {
+		unsigned long Address = 0;
+		if (ftapi::ParseIpv4(Found[i].Address, Address) && ftapi::IsPrivateIpv4(Address))
+			Home.push_back(Found[i]);
+	}
+	return Home;
+}
+
 class CConnectClaudeDlg : public CDialog
 {
 public:
@@ -2110,7 +2125,7 @@ BOOL CConnectClaudeDlg::OnInitDialog()
 	CDialog::OnInitDialog();
 	const mcp_settings_t &Settings = m_pLink->GetSettings();
 	m_sToken = Settings.Token;
-	m_Addresses = ListNetworkAddresses();
+	m_Addresses = HomeAddresses();
 	CheckDlgButton(IDC_MCP_ENABLE, Settings.Enabled ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_MCP_DIRECT, Settings.DirectChanges ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_MCP_NETWORK, Settings.Network ? BST_CHECKED : BST_UNCHECKED);
@@ -2175,8 +2190,8 @@ void CConnectClaudeDlg::ShowNetwork()
 		SetDlgItemText(IDC_MCP_NET_INFO, _T("Off: only programs on this computer can connect. Tick it to use FamiTracker's tools from ")
 			_T("another computer at home, like an AI assistant on a Linux PC."));
 	else if (Rows == 0)
-		SetDlgItemText(IDC_MCP_NET_INFO, _T("This computer has no network address right now. Connect it to your network (or start ")
-			_T("Tailscale), then open this dialog again."));
+		SetDlgItemText(IDC_MCP_NET_INFO, _T("This computer has no home network or Tailscale address right now. Connect it to your ")
+			_T("network (or start Tailscale), then open this dialog again."));
 	else
 		SetDlgItemText(IDC_MCP_NET_INFO, _T("On the other computer, the MCP client connects to one of these addresses, with the access ")
 			_T("code in the header \"Authorization: Bearer <code>\":"));
@@ -2224,7 +2239,7 @@ void CConnectClaudeDlg::OnChange()
 
 void CConnectClaudeDlg::OnNetwork()
 {
-	m_Addresses = ListNetworkAddresses();	// as they are now
+	m_Addresses = HomeAddresses();	// as they are now
 	ShowNetwork();
 }
 

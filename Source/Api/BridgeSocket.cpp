@@ -73,6 +73,7 @@ int LastError() { return WSAGetLastError(); }
 bool Refused(int Code) { return Code == WSAECONNREFUSED; }
 bool TimedOut(int Code) { return Code == WSAETIMEDOUT || Code == WSAEWOULDBLOCK; }
 bool Connecting(int Code) { return Code == WSAEWOULDBLOCK || Code == WSAEINPROGRESS; }
+bool Unreachable(int Code) { return Code == WSAEHOSTUNREACH || Code == WSAENETUNREACH || Code == WSAEHOSTDOWN; }
 
 void SetBlocking(socket_t Socket, bool Blocking)
 {
@@ -100,6 +101,7 @@ int LastError() { return errno; }
 bool Refused(int Code) { return Code == ECONNREFUSED; }
 bool TimedOut(int Code) { return Code == EAGAIN || Code == EWOULDBLOCK || Code == ETIMEDOUT; }
 bool Connecting(int Code) { return Code == EINPROGRESS; }
+bool Unreachable(int Code) { return Code == EHOSTUNREACH || Code == ENETUNREACH || Code == EHOSTDOWN; }
 
 void SetBlocking(socket_t Socket, bool Blocking)
 {
@@ -207,8 +209,11 @@ BridgeExchangeResult BridgeExchange(const std::string &Host, int Port, const std
 			Error = "Nothing listens on " + Where + Text;
 			return EXCHANGE_UNREACHABLE;
 		}
-		if (Refusal == -1 || TimedOut(Refusal)) {
-			std::snprintf(Text, sizeof(Text), ":%d didn't answer within %d seconds.", Port, BRIDGE_CONNECT_MS / 1000);
+		if (Refusal == -1 || TimedOut(Refusal) || Unreachable(Refusal)) {
+			if (Unreachable(Refusal))
+				std::snprintf(Text, sizeof(Text), ":%d can't be reached on the network.", Port);
+			else
+				std::snprintf(Text, sizeof(Text), ":%d didn't answer within %d seconds.", Port, BRIDGE_CONNECT_MS / 1000);
 			Error = Where + Text;
 			return EXCHANGE_NO_ANSWER;
 		}

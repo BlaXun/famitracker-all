@@ -275,7 +275,8 @@ struct CMcpSocketServer::Impl {
 			Request.Peer = C.Peer;
 			const ftapi::HttpResponse Response = Answer(Request);
 			const bool KeepAlive = Request.KeepAlive() && !Stopping;
-			if (!SendAll(C.Socket, ftapi::FormatHttpResponse(Response, KeepAlive)) || !KeepAlive)
+			// A HEAD request's answer has no body (a client's probe may send one), or the connection would go out of step
+			if (!SendAll(C.Socket, ftapi::FormatHttpResponse(Response, KeepAlive, Request.Method == "HEAD")) || !KeepAlive)
 				return false;
 			Result = C.Parser.Feed();
 		}

@@ -90,8 +90,9 @@ private:
 
 const char *HttpReason(int Status);
 
-// The response as bytes, with Content-Length and Connection headers
-std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive);
+// The response as bytes, with Content-Length and Connection headers; for a
+// HEAD request (HeadersOnly) without the body, its length still given
+std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive, bool HeadersOnly = false);
 
 bool EqualsNoCase(const std::string &a, const char *b);
 

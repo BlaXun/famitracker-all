@@ -1124,6 +1124,17 @@ void TestHttp()
 		CHECK_HAS(Bytes, "Connection: keep-alive\r\n");
 		CHECK(Bytes.size() >= 4 && Bytes.compare(Bytes.size() - 4, 4, "\r\n\r\n") == 0);
 	}
+	{
+		// A HEAD request's answer: the body's length, without the body
+		HttpResponse Response;
+		Response.Status = 405;
+		Response.ContentType = "application/json";
+		Response.Body = "{\"x\":1}";
+		const std::string Head = FormatHttpResponse(Response, true, true), Full = FormatHttpResponse(Response, true);
+		CHECK_HAS(Head, "Content-Length: 7\r\n");
+		CHECK(Head.size() >= 4 && Head.compare(Head.size() - 4, 4, "\r\n\r\n") == 0);
+		CHECK(Full == Head + Response.Body);
+	}
 }
 
 // Music
