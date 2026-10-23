@@ -2103,6 +2103,12 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "chord_style lush");
 	CHECK_HAS(Result.Text, "set_swing");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"fly\"}").Text, "action: list, show, search");
+	// What a 30-track soundtrack showed, as a topic of its own (2026-10-23)
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\"}").Text, "- soundtrack: A game's soundtrack");
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"boss\"}");
+	CHECK_HAS(Result.Text, "A game's soundtrack (many tracks, one world)");
+	CHECK_HAS(Result.Text, "export_for_game with loudness -22 LUFS");
+	CHECK_HAS(Result.Text, "set_meter bars_per_frame 2");
 
 	// Studied again: the user's tags and notes stay
 	CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"1\"}").IsError);
@@ -3795,6 +3801,7 @@ void TestProtocol()
 	Message = Body(Response);
 	CHECK(Message.Get("result")->Get("capabilities")->Get("prompts") != 0);
 	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "review_arrangement");
+	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "about -22 LUFS for calm places");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/list\"}"), Config, Tools);
 	const Json Listed = Body(Response);
 	const Json *pPrompts = Listed.Get("result")->Get("prompts");
@@ -3809,6 +3816,8 @@ void TestProtocol()
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars with one or two quiet parts");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "name a composer, a game or a reference, look it up");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "set_meter before any notes");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "export_for_game with the loudness of the game's other tracks");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"compose_track\"}}"),
 		Config, Tools);
 	CHECK_EQ(ErrorCode(Response), -32602);

@@ -544,7 +544,12 @@ takes the craft (grooves, bass figures, harmonic color, how the channels
 share the parts, the sounds) and writes its own tunes and progressions.
 Built in, without any NSF, is a guide to the classic NES styles from
 studies of Konami's (Bucky O'Hare, TMNT II), Capcom's (Mega Man 2-5, Little
-Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks.
+Nemo) and Nintendo's (Super Mario Bros. 2 and 3) soundtracks. Its
+`soundtrack` topic is about a game's music as a whole, from composing a
+30-track soundtrack with these tools: a catalogue of places, a leitmotif
+that comes back changed, tempos whose rows all last the same, a loudness
+for each kind of place, and forms for towns, dungeons, bosses and the
+credits.
 
 You can tag references and keep notes with them ("the user loves this
 bass"), and `import_nsf` (or File > Import NSF) opens tracks as a module to

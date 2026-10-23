@@ -11680,7 +11680,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete" }))
 			.Add("reference", Prop("string", "The reference's id, for show, tag and delete, like \"bucky-o-hare-08\"."))
 			.Add("query", Prop("string", "For search: words like \"konami echo\", \"gallop bass\", \"fast minor\", \"mega man\"."))
-			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"drums\" or \"lead sounds\" (default: the contents)."))
+			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"drums\", \"lead sounds\" or \"soundtrack\" (default: the contents)."))
 			.Add("tags", WordListProp("For tag: tags to add."))
 			.Add("remove_tags", WordListProp("For tag: tags to take off."))
 			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
@@ -11917,6 +11917,17 @@ std::string ToolSet::Instructions()
 		"the bar after so it plays once), drop parts for a break before a repeat, and keep the full sound for where it matters. "
 		"The triangle is loud, so bars with it stay loud. review_arrangement estimates how far the song swings. On the VRC7 a "
 		"volume step is 3 dB (9 is 18 dB under 15): let mix set the levels.\n"
+		"- What decides how it sounds in FamiTracker: a tempo whose rows all last the same number of frames (set_tempo says "
+		"when they don't and names even ones; speed 7 with tempo 191 gives even eighths near 164 BPM), or the hi-hats and "
+		"arpeggios wobble. The DPCM level (Zxx) goes on sample hits and changes in steps across a fill: a jump thumps (from 0 "
+		"at the first hit it can be the loudest peak of the file), and a halt on the DPCM channel resets it. The triangle is "
+		"loud and can't fade: keep it short in quiet intros and breaks. A lush maj7 voicing puts the seventh on top, so a "
+		"melody on the root rubs against it (an add9 or a 6 there). A sampled drum on the same row as a metallic noise hit "
+		"squashes it. set_meter with bars_per_frame 2 lets a 2-bar intro loop from bar 3.\n"
+		"- For a game: name_song first (the export is named after the track), then export_for_game at the loudness for its kind "
+		"of place, so the tracks sit together: about -22 LUFS for calm places, -19 for action and bosses, -20 for the rest. A boss with phases can "
+		"be a track per phase (make_version gives the second track to rewrite), and the game switches between them. For many "
+		"tracks for one game, references action guide topic soundtrack has the plan.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. "
@@ -12016,8 +12027,10 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"parts, volumes, echoes, sounds (reference_sound brings one in) and tricks. Write your own melody and chords.\n"
 			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
 			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
-			"3. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you choose and a chord_style, "
-			"color and bass_style that fit (not the defaults). Set the tempo with set_tempo.\n"
+			"3. For a meter other than 4/4 (a waltz, a 6/8 lilt), set_meter before any notes. Set the tempo with set_tempo, at one "
+			"whose rows are all the same length (it says when they aren't and names even tempos nearby), so the hi-hats and "
+			"arpeggios stay steady. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you "
+			"choose and a chord_style, color and bass_style that fit (not the defaults).\n"
 			"4. Write the melody with write_notes, phrase by phrase: a short motif with a rhythm you'd recognize, repeated and "
 			"developed; phrases of two or four bars that end on a held note or a rest; chord tones on strong beats; one high point "
 			"in each section; long and short notes mixed.\n"
@@ -12037,7 +12050,10 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
 			"9. set_loop where the loop starts, then check_loop and fix_loop, so the repeats start as the first time does (a "
 			"fade or an echo at the loop's end carries over otherwise). Then play it for me and ask what I'd change. Keep what "
-			"I like in soundtrack_notes.";
+			"I like in soundtrack_notes.\n"
+			"10. When it's for a game: name_song (the exported file and its GameMaker sound are named after the track), then "
+			"export_for_game with the loudness of the game's other tracks: about -22 LUFS for places to rest, -19 for action and "
+			"bosses, -20 for the rest.";
 		return true;
 	}
 	if (Name == "deepen_track") {
