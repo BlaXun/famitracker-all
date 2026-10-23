@@ -210,44 +210,60 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 	return Up && Down;
 }
 
-// An instrument's volume sequence (2A03, VRC6 and N163 instruments): its
-// values, where it loops back to and where it waits for a release
-void VolumeSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::InstrumentInfo &Info)
+// One of an instrument's sequences (2A03, VRC6 and N163 instruments): its
+// values, where it loops back to, where it waits for a release, its setting;
+// false when it has none
+bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std::vector<int> &Items, int &Loop, int &Release,
+	int &Setting)
 {
 	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
 	switch (pInstrument->GetType()) {
 	case INST_2A03: {
 		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
-		Enabled = p->GetSeqEnable(SEQ_VOLUME);
-		Index = p->GetSeqIndex(SEQ_VOLUME);
+		Enabled = p->GetSeqEnable(Type);
+		Index = p->GetSeqIndex(Type);
 		break;
 	}
 	case INST_VRC6: {
 		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
 		Chip = SNDCHIP_VRC6;
-		Enabled = p->GetSeqEnable(SEQ_VOLUME);
-		Index = p->GetSeqIndex(SEQ_VOLUME);
+		Enabled = p->GetSeqEnable(Type);
+		Index = p->GetSeqIndex(Type);
 		break;
 	}
 	case INST_N163: {
 		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
 		Chip = SNDCHIP_N163;
-		Enabled = p->GetSeqEnable(SEQ_VOLUME);
-		Index = p->GetSeqIndex(SEQ_VOLUME);
+		Enabled = p->GetSeqEnable(Type);
+		Index = p->GetSeqIndex(Type);
 		break;
 	}
 	default:
-		return;
+		return false;
 	}
 	if (Enabled == 0)
-		return;
-	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_VOLUME);
+		return false;
+	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), Type);
 	if (pSeq == NULL || pSeq->GetItemCount() == 0)
-		return;
+		return false;
+	Items.clear();
 	for (unsigned int i = 0; i < pSeq->GetItemCount(); ++i)
-		Info.Volume.push_back(pSeq->GetItem(static_cast<int>(i)));
-	Info.VolumeLoop = static_cast<int>(pSeq->GetLoopPoint());
-	Info.VolumeRelease = static_cast<int>(pSeq->GetReleasePoint());
+		Items.push_back(pSeq->GetItem(static_cast<int>(i)));
+	Loop = static_cast<int>(pSeq->GetLoopPoint());
+	Release = static_cast<int>(pSeq->GetReleasePoint());
+	Setting = static_cast<int>(pSeq->GetSetting());
+	return true;
+}
+
+// An instrument's volume, arpeggio, pitch and hi-pitch sequences
+void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::InstrumentInfo &Info)
+{
+	int Setting = 0;
+	ReadSequence(pDoc, pInstrument, SEQ_VOLUME, Info.Volume, Info.VolumeLoop, Info.VolumeRelease, Setting);
+	ftapi::SequenceInfo *const INTO[] = { &Info.Steps, &Info.Pitch, &Info.HiPitch };
+	const int TYPES[] = { SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH };
+	for (int i = 0; i < 3; ++i)
+		ReadSequence(pDoc, pInstrument, TYPES[i], INTO[i]->Items, INTO[i]->Loop, INTO[i]->Release, INTO[i]->Setting);
 }
 
 // A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the
@@ -747,6 +763,7 @@ public:
 		for (unsigned int t = 0; t < pDoc->GetTrackCount(); ++t)
 			Info.TrackNames.push_back(Utf8(pDoc->GetTrackTitle(t)));
 		Info.FrameRate = static_cast<int>(pDoc->GetFrameRate());
+		Info.Pal = pDoc->GetMachine() == PAL;
 		Info.Speed = static_cast<int>(pDoc->GetSongSpeed(Track));
 		Info.Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
 		Info.SplitPoint = pDoc->GetSpeedSplitPoint();
@@ -790,7 +807,7 @@ public:
 				Instrument.Vibrato = HasVibrato(pDoc, pInstrument);
 				Instrument.Arpeggio = LoopingArpeggio(pDoc, pInstrument);
 				Instrument.OddDuty = HasOddDuty(pDoc, pInstrument);
-				VolumeSequence(pDoc, pInstrument, Instrument);
+				ReadSequences(pDoc, pInstrument, Instrument);
 				if (pInstrument->GetType() == INST_N163) {
 					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
 					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();

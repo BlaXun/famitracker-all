@@ -29,6 +29,7 @@
 #include "Ogg.h"
 #include "Picture.h"
 #include "Presets.h"
+#include "PulseClicks.h"
 #include "References.h"
 #include "Song.h"
 #include "SoundEffects.h"
@@ -1270,26 +1271,185 @@ PartOptions OptionsFor(const Session &S, int Channel, bool DirectChange)
 	return Options;
 }
 
+// Clicks on the 2A03's and MMC5's pulses (PulseClicks.h)
+
+// The multiple of 256 a note's vibrato crosses: the one nearest its period
+int ClickBoundary(const SongInfo &Song, const ClickFix &F)
+{
+	const int Period = PulsePeriod(F.Pitch, Song.Pal) + 0x80 - (F.Fine + F.Shift);
+	return std::max(256, (Period + 128) / 256 * 256);
+}
+
+// A nudge in words: "P81, 7 cents sharp", or "P84 from bar 5 beat 2 as its vibrato starts, 21 cents sharp"
+std::string NudgeText(Session &S, const ClickFix &F)
+{
+	const int Period = PulsePeriod(F.Pitch, S.Song.Pal) + 0x80 - (F.Fine + F.Shift);
+	return Format("P%02X%s, %.0f cents %s", F.Fine, F.At != F.Row ? (" from " + S.Time.Position(F.At) + " as its vibrato starts").c_str() :
+		"", NudgeCents(Period, F.Shift), F.Shift < 0 ? "sharp" : "flat");
+}
+
+// What smoothing a channel's clicks did, for a tool's answer ("" when no note clicked)
+std::string SmoothedText(Session &S, int Channel, const std::vector<ClickFix> &Fixes)
+{
+	const int LISTED = 4;
+	std::string Nudged, Stuck;
+	int NudgedCount = 0, StuckCount = 0;
+	for (size_t i = 0; i < Fixes.size(); ++i) {
+		const ClickFix &F = Fixes[i];
+		const std::string Where = Format("%s at %s", PitchName(F.Pitch).c_str(), S.Time.Position(F.Row).c_str());
+		if (F.Shift != 0 && F.Left == 0) {
+			if (++NudgedCount <= LISTED)
+				Nudged += (Nudged.empty() ? "" : ", ") + Where + " (" + NudgeText(S, F) + ")";
+		}
+		else if (++StuckCount <= LISTED)
+			Stuck += (Stuck.empty() ? "" : ", ") + Where;
+	}
+	const std::string Name = S.Channel(Channel).FullName();
+	std::string Text;
+	if (NudgedCount > 0)
+		Text = Format("%s on %s nudged a hair so %s vibrato doesn't click (the 2A03's pulses restart their wave when a "
+			"vibrato takes the period across a multiple of 256): %s%s.", Plural(NudgedCount, "note", "notes").c_str(), Name.c_str(),
+			NudgedCount == 1 ? "its" : "their", Nudged.c_str(), NudgedCount > LISTED ? ", ..." : "");
+	if (StuckCount > 0)
+		Text += (Text.empty() ? "" : " ") + Format("%s on %s still click%s: %s, %s vibrato too deep to nudge clear (a gentler "
+			"vibrato, or another channel, stops it).", Plural(StuckCount, "note", "notes").c_str(), Name.c_str(),
+			StuckCount == 1 ? "s" : "", (Stuck + (StuckCount > LISTED ? ", ..." : "")).c_str(), StuckCount == 1 ? "its" : "their");
+	return Text;
+}
+
+// The song's notes that click on the 2A03's and MMC5's pulses, those that sound in [First, End): each with its channel
+std::vector<std::pair<int, ClickFix> > SongClicks(Session &S, int First, int End)
+{
+	std::vector<std::pair<int, ClickFix> > Out;
+	std::vector<std::vector<Cell> > Channels;
+	std::vector<int> Columns;
+	bool Any = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Channels.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+		Any = Any || ClicksOnPeriods(S.Channel(c));
+	}
+	if (!Any)
+		return Out;
+	int LoopRow = -1;
+	const std::vector<std::pair<int, int> > Played = PlayedFrames(S.Song, Channels, Columns, LoopRow);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!ClicksOnPeriods(S.Channel(c)))
+			continue;
+		int Shown = Columns[static_cast<size_t>(c)];
+		bool Lost = false;
+		const std::vector<ClickFix> Fixes = SmoothClicks(S.Song, Channels[static_cast<size_t>(c)], Shown, First, End, Played,
+			LoopRow, false, Lost);
+		for (size_t i = 0; i < Fixes.size(); ++i)
+			Out.push_back(std::make_pair(c, Fixes[i]));
+	}
+	return Out;
+}
+
+// A direct change's notes on the 2A03's and MMC5's pulses that would click are nudged: those that sound in the rows it
+// writes. The changes grow to the rows the nudges touch (the fine pitch back on the next note, or on the loop's first
+// note), First moving back when that's before them; Notes says what was done. Without Fix (a clip, whose neighbours
+// are the song's once it's placed), Notes only says which would click.
+void SmoothChanges(Session &S, std::vector<Change> &Changes, int &First, std::vector<std::string> &Notes, bool Fix = true)
+{
+	bool Any = false;
+	for (size_t i = 0; i < Changes.size(); ++i)
+		Any = Any || ClicksOnPeriods(S.Channel(Changes[i].Channel));
+	if (!Any)
+		return;
+	// The song as the change leaves it
+	std::vector<std::vector<Cell> > Channels;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Channels.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	int End = First;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(Changes[i].Channel)];
+		const size_t Need = static_cast<size_t>(First) + Changes[i].Cells.size();
+		if (Cells.size() < Need)
+			Cells.resize(Need);
+		std::copy(Changes[i].Cells.begin(), Changes[i].Cells.end(), Cells.begin() + First);
+		End = std::max(End, static_cast<int>(Need));
+	}
+	int LoopRow = -1;
+	const std::vector<std::pair<int, int> > Played = PlayedFrames(S.Song, Channels, Columns, LoopRow);
+	bool Lost = false;
+	std::set<int> Touched;	// channels the nudges changed
+	int Low = First, High = End;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		if (!ClicksOnPeriods(S.Channel(c)))
+			continue;
+		std::vector<Cell> Work = Channels[static_cast<size_t>(c)];
+		int Shown = Columns[static_cast<size_t>(c)];
+		const std::vector<ClickFix> Fixes = SmoothClicks(S.Song, Work, Shown, First,
+			First + static_cast<int>(Changes[i].Cells.size()), Played, LoopRow, Fix, Lost);
+		if (!Fix) {
+			if (!Fixes.empty())
+				Notes.push_back(Format("%s on %s click%s as written (the 2A03's pulses restart their wave when a vibrato takes "
+					"the period across a multiple of 256): once it's in the song, polish with touches [\"clicks\"] nudges %s.",
+					Plural(static_cast<int>(Fixes.size()), "note", "notes").c_str(), S.Channel(c).FullName().c_str(),
+					Fixes.size() == 1 ? "s" : "", Fixes.size() == 1 ? "it" : "them"));
+			continue;
+		}
+		const std::string Text = SmoothedText(S, c, Fixes);
+		if (!Text.empty())
+			Notes.push_back(Text);
+		const std::vector<Cell> &Was = Channels[static_cast<size_t>(c)];
+		for (size_t r = 0; r < Work.size(); ++r) {
+			if (r >= Was.size() || Work[r] != Was[r]) {
+				Low = std::min(Low, static_cast<int>(r));
+				High = std::max(High, static_cast<int>(r) + 1);
+				Touched.insert(c);
+			}
+		}
+		Channels[static_cast<size_t>(c)] = Work;
+	}
+	if (Lost)
+		Notes.push_back("A note that clicks had no free effect column for its nudge (Pxx), so it still clicks.");
+	if (Touched.empty())
+		return;
+	// A nudged channel's change runs over every row the nudges touched; the others start there too (the rows before
+	// theirs as they are), since every part starts on the same row
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		const std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const int Stop = Touched.count(c) ? High : First + static_cast<int>(Changes[i].Cells.size());
+		Changes[i].Cells.clear();
+		for (int r = Low; r < Stop; ++r)
+			Changes[i].Cells.push_back(r < static_cast<int>(Cells.size()) ? Cells[static_cast<size_t>(r)] : Cell());
+	}
+	First = Low;
+}
+
 std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsClip, const std::string &ClipName,
 	const std::string &What)
 {
 	if (Changes.empty())
 		throw Problem("There was nothing to change.");
 	std::string Result;
+	std::vector<std::string> Smoothed;	// what was done about notes that would click
 	if (Direct(S, AsClip)) {
 		std::string Why;
 		if (!S.Host().CanChange(Why))
 			throw Problem(Why);
+		std::vector<Change> Writing = Changes;
+		int Start = First;
+		SmoothChanges(S, Writing, Start, Smoothed);
 		std::vector<ChannelCells> Parts;
-		for (size_t i = 0; i < Changes.size(); ++i) {
+		for (size_t i = 0; i < Writing.size(); ++i) {
 			ChannelCells Part;
-			Part.Channel = Changes[i].Channel;
-			Part.Cells = Changes[i].Cells;
+			Part.Channel = Writing[i].Channel;
+			Part.Cells = Writing[i].Cells;
 			Part.Exact = true;	// worked out from the song's cells, its speed, jumps and halts among them
 			Parts.push_back(Part);
 		}
 		SongWrite Write;
-		Write.First = First;
+		Write.First = Start;
+		if (Start != First)
+			Write.Cursor = First;
 		// Effects past the columns a channel shows: FamiTracker shows more there
 		std::string Wider;
 		for (size_t i = 0; i < Parts.size(); ++i) {
@@ -1309,6 +1469,8 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		Result = "Changed the song: " + What + ". One Ctrl+Z in FamiTracker undoes it.";
 		if (!Wider.empty())
 			Result += " More effect columns show for the effects on " + Wider + ".";
+		for (size_t i = 0; i < Smoothed.size(); ++i)
+			Result += "\nNote: " + Smoothed[i];
 	}
 	else {
 		// One clip over the channels from the first changed one to the last;
@@ -1346,6 +1508,11 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 			S.Channel(Low).FullName().c_str(), PositionText(S, First).c_str());
 		if (!S.Song.DirectChanges)
 			Result += " (Changes arrive as clips: the user hasn't allowed direct changes in File > Connect Claude Code.)";
+		std::vector<Change> Placed = Changes;
+		int Start = First;
+		SmoothChanges(S, Placed, Start, Smoothed, false);
+		for (size_t i = 0; i < Smoothed.size(); ++i)
+			Result += "\nNote: " + Smoothed[i];
 	}
 	return Result;
 }
@@ -5918,6 +6085,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		What.insert("accents");
 		What.insert("vibrato");
 		What.insert("separate");
+		What.insert("clicks");
 	}
 	else {
 		std::vector<std::string> Words;
@@ -5931,8 +6099,8 @@ std::string PolishTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
-				Word != "staccato" && Word != "falls")
-				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls or staccato.");
+				Word != "staccato" && Word != "falls" && Word != "clicks")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato or clicks.");
 			What.insert(Word);
 		}
 	}
@@ -6036,11 +6204,55 @@ std::string PolishTool(Session &S, const Json &Args)
 					S.Channel(c).FullName().c_str()));
 		}
 	}
+	if (What.count("clicks")) {
+		// Last, so it hears the other touches too: notes on the 2A03's and MMC5's pulses whose vibrato clicks, nudged
+		std::vector<std::vector<Cell> > All;
+		std::vector<int> Columns;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			All.push_back(D.View(c));
+			Columns.push_back(S.Channel(c).EffectColumns);
+		}
+		int LoopRow = -1;
+		const std::vector<std::pair<int, int> > Played = PlayedFrames(S.Song, All, Columns, LoopRow);
+		bool Lost = false;
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (!ClicksOnPeriods(S.Channel(c)))
+				continue;
+			std::vector<Cell> Work = All[static_cast<size_t>(c)];
+			int Shown = Columns[static_cast<size_t>(c)];
+			const std::vector<ClickFix> Fixes = SmoothClicks(S.Song, Work, Shown, First, End, Played, LoopRow, true, Lost);
+			if (Fixes.empty())
+				continue;
+			D.Cells(c) = Work;
+			std::string List;
+			int Nudged = 0;
+			for (size_t f = 0; f < Fixes.size(); ++f) {
+				if (Fixes[f].Shift == 0 || Fixes[f].Left > 0)
+					continue;
+				if (++Nudged <= 4)
+					List += Format("%s%s at %s (%s)", List.empty() ? "" : ", ", PitchName(Fixes[f].Pitch).c_str(),
+						S.Time.Position(Fixes[f].Row).c_str(), NudgeText(S, Fixes[f]).c_str());
+			}
+			if (Nudged > 0)
+				Done.push_back(Format("%s on %s nudged a hair so %s vibrato doesn't click (%s%s)", Plural(Nudged, "note", "notes").c_str(),
+					S.Channel(c).FullName().c_str(), Nudged == 1 ? "its" : "their", List.c_str(), Nudged > 4 ? ", ..." : ""));
+			if (Nudged < static_cast<int>(Fixes.size())) {
+				std::vector<ClickFix> Stuck;
+				for (size_t f = 0; f < Fixes.size(); ++f)
+					if (Fixes[f].Shift == 0 || Fixes[f].Left > 0)
+						Stuck.push_back(Fixes[f]);
+				Warnings.push_back(SmoothedText(S, c, Stuck));
+			}
+		}
+		if (Lost)
+			Warnings.push_back("A note that clicks had no free effect column for its nudge (Pxx), so it still clicks.");
+	}
 	std::vector<Change> Changes;
 	int Start;
 	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
-		throw Problem("There was nothing to polish there: no notes for accents, no long melody notes for vibrato and no repeated "
-			"triangle notes.");
+		throw Problem("There was nothing to polish there: no notes for accents, no long melody notes for vibrato, no repeated "
+			"triangle notes and no notes that click.");
 	std::string Summary;
 	for (size_t i = 0; i < Done.size(); ++i)
 		Summary += (i == 0 ? "" : "; ") + Done[i];
@@ -10569,6 +10781,11 @@ std::string ExportTool(Session &S, const Json &Args)
 		Session Track(S.Host());
 		try {
 			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code));
+			const int Clicking = static_cast<int>(SongClicks(Track, 0, Track.Time.TotalRows()).size());
+			if (Clicking > 0)
+				Lines.push_back(Format("Track %d: %s on the 2A03's pulses %s in the files (a vibrato that takes the period across a "
+					"multiple of 256 restarts the wave): polish with touches [\"clicks\"] nudges them, then export again; check_song "
+					"lists them.", Tracks[i] + 1, Plural(Clicking, "note", "notes").c_str(), Clicking == 1 ? "clicks" : "click"));
 		}
 		catch (const Problem &P) {
 			Lines.push_back(Format("Track %d: %s", Tracks[i] + 1, P.Text.c_str()));
@@ -10808,6 +11025,19 @@ std::string CheckTool(Session &S, const Json &Args)
 			Report(Format("Silent: nothing plays in bar %d.", Bar));
 		}
 	}
+	// Clicks: held notes on the 2A03's and MMC5's pulses whose vibrato takes the period across a multiple of 256, where
+	// the pulse restarts its wave (PulseClicks.h)
+	const std::vector<std::pair<int, ClickFix> > Clicks = SongClicks(S, First, End);
+	for (size_t i = 0; i < Clicks.size(); ++i) {
+		const ClickFix &F = Clicks[i].second;
+		Report(Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the period across %d, where the pulse "
+			"restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(Clicks[i].first).FullName().c_str(),
+			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), ClickBoundary(S.Song, F),
+			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + NudgeText(S, F) + ").").c_str() :
+			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."));
+	}
+	const int Clicking = static_cast<int>(Clicks.size());
+
 	std::string Unused;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (IsMelodic(S.Channel(c)) && S.Notes(c).empty())
@@ -10816,7 +11046,8 @@ std::string CheckTool(Session &S, const Json &Args)
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
 	Text += Found ? " in " + KeyName(K) + (Arg(Args, "key") != 0 ? "" : " (found from the notes)") : " (no key: no notes)";
-	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent.", OutOfKey, Clashes, OutOfRange, Busy, Silent);
+	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking.", OutOfKey, Clashes, OutOfRange,
+		Busy, Silent, Clicking);
 	if (!Unused.empty())
 		Text += " Unused channels (free for harmony, an echo or a counter-melody): " + Unused + ".";
 	for (size_t i = 0; i < Findings.size(); ++i)
@@ -12035,12 +12266,15 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 		Json Touches = Prop("array", "Which touches: accents (a bar's first note loudest, beats a step softer, the notes between "
 			"them softer still), vibrato (a gentle vibrato that comes in half a beat into the melody's notes of 1.5 beats or "
-			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one); and when asked, fades "
+			"more), separate (a short gap between repeated triangle notes, which otherwise sound as one), clicks (notes on the "
+			"2A03's pulses whose vibrato takes the period across a multiple of 256, where the pulse restarts its wave and "
+			"clicks, nudged a few cents with Pxx; A-3 does with any vibrato; new notes get it as they're written); and when "
+			"asked, fades "
 			"(held notes of two beats or more fade from halfway through with A0y, the next note at its own volume again) and "
 			"scoops (held melody notes after a leap up slide into place from a semitone or two below, at most one every two "
 			"bars), falls (the melody's last note before a rest of a beat or more drops two semitones as it ends, a sigh, at "
 			"most one every two bars) and staccato (the bass's notes of a beat or more cut after half a beat, so it bounces "
-			"rather than booms). Default: accents, vibrato and separate.");
+			"rather than booms). Default: accents, vibrato, separate and clicks.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
@@ -12051,12 +12285,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("scoops");
 		TouchNames.Push("falls");
 		TouchNames.Push("staccato");
+		TouchNames.Push("clicks");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
 			"Gives parts the small things that make them sound played rather than typed: accents, a delayed vibrato on the "
-			"melody's long notes, and gaps between repeated triangle notes; fades on held notes and scoops into notes after "
-			"leaps when asked. Channels that already shape their volumes keep them. Run it after the parts are written.",
+			"melody's long notes, gaps between repeated triangle notes, and a nudge for notes whose vibrato clicks on the "
+			"2A03's pulses; fades on held notes and scoops into notes after leaps when asked. Channels that already shape their "
+			"volumes keep them. Run it after the parts are written.",
 			Schema()
 				.Add("touches", Touches)
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
@@ -12781,7 +13017,11 @@ std::string ToolSet::Instructions()
 		"at the first hit it can be the loudest peak of the file), and a halt on the DPCM channel resets it. The triangle is "
 		"loud and can't fade: keep it short in quiet intros and breaks. A lush maj7 voicing puts the seventh on top, so a "
 		"melody on the root rubs against it (an add9 or a 6 there). A sampled drum on the same row as a metallic noise hit "
-		"squashes it. set_meter with bars_per_frame 2 lets a 2-bar intro loop from bar 3.\n"
+		"squashes it. set_meter with bars_per_frame 2 lets a 2-bar intro loop from bar 3. On the 2A03's pulses a vibrato that "
+		"takes a held note's period across a multiple of 256 restarts the wave every time it crosses, a click several times "
+		"a second (A-3, period 253, does with the gentlest vibrato; F-1 with any): the tools nudge such notes a few cents "
+		"(Pxx) as they write them and say so, check_song lists any left (after an instrument's vibrato changes, say), and "
+		"polish touches clicks nudges them.\n"
 		"- For a game: name_song first (the export is named after the track), then export_for_game at the loudness for its kind "
 		"of place, so the tracks sit together: about -22 LUFS for calm places, -19 for action and bosses, -20 for the rest. A "
 		"boss with phases can be a track per phase (make_version gives the second track to rewrite), and the game switches "
