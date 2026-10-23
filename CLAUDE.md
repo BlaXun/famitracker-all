@@ -564,9 +564,10 @@ Point these out rather than silently fixing them inside archive commits.
 - **N163 wave positions:** the N163 wave editor takes positions 0-255, but
   `CInstrumentN163::Load` and text import refuse 128 and above. In Release
   the failed check ends the instrument's load early, so the module loads out
-  of step. This branch's loaders (and `Source/Nsf/FtmFile.cpp`) accept 0-255;
-  the Claude Code tools still place waves under 128 so modules open in stock
-  0.4.6.
+  of step. This branch's loaders (and `Source/Nsf/FtmFile.cpp`) accept 0-255,
+  so such modules open, but a wave placed at 128 or later doesn't play as
+  drawn either (measured: one wave at 0, 64 or 112 renders identically, at
+  128 differently). The Claude Code tools place waves under 128.
 
 ## Code conventions
 

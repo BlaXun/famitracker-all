@@ -1211,6 +1211,10 @@ PartOptions OptionsFor(const Session &S, int Channel, bool DirectChange)
 	PartOptions Options;
 	Options.EffectColumns = S.Channel(Channel).EffectColumns;
 	Options.Releases = ReleasingInstruments(S.Song);
+	// The triangle can't fade: a release plays on at full volume until the instrument's release reaches 0 (a row or
+	// more), so a staccato note would sound held. Its notes end with a halt.
+	if (S.Channel(Channel).Kind == KIND_TRIANGLE)
+		Options.Releases.assign(Options.Releases.size(), false);
 	Options.KeepFollowing = DirectChange;
 	Options.StopAtEnd = !DirectChange;
 	Options.RingOut = S.Channel(Channel).Kind == KIND_DPCM;
