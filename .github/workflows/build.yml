@@ -199,12 +199,14 @@ jobs:
           cmake --build build/tests -j 4
           ctest --test-dir build/tests --output-on-failure
 
-  # After a green build on the main working branches, replace that branch's
-  # rolling release (tag build-<branch>) with the new FamiTracker.exe.
+  # After a green build on the main working branches (and on feat-* feature
+  # branches, so their builds can be tried before they're merged), replace
+  # that branch's rolling release (tag build-<branch>) with the new
+  # FamiTracker.exe.
   publish:
     name: Publish latest build
     needs: [build, transcribe-linux]
-    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'recorder' || github.ref_name == 'api')
+    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'recorder' || github.ref_name == 'api' || startsWith(github.ref_name, 'feat-'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
