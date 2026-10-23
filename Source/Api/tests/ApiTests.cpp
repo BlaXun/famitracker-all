@@ -28,6 +28,7 @@
 #include "../Chords.h"
 #include "../DpcmKit.h"
 #include "../Effects.h"
+#include "../FdsSounds.h"
 #include "../GameAudio.h"
 #include "../Http.h"
 #include "../Jingles.h"
@@ -464,6 +465,56 @@ public:
 		MadeWaves[Next] = Sound;
 		return Next;
 	}
+	std::map<int, FdsSound> MadeFds;	// FDS instrument -> its sound
+
+	// As McpConnection makes an FDS instrument (AddFdsSoundInstrument) and reports it (GetSong): its volume
+	// (0-31) counted as the others' (0-15), its arpeggio and pitch, and its vibrato (a pitch sequence going up
+	// and down in its loop, or a modulator that wobbles slowly)
+	int AddFdsInstrument(const FdsSound &Sound, std::string &Error) override
+	{
+		if (Info.Expansion.find("FDS") == std::string::npos) {
+			Error = "This song has no FDS channel.";
+			return -1;
+		}
+		int Next = 0;
+		for (size_t i = 0; i < Info.Instruments.size(); ++i) {
+			if (Info.Instruments[i].Name == Sound.InstrumentName() && Info.Instruments[i].Chip == "FDS")
+				return Info.Instruments[i].Index;
+			Next = std::max(Next, Info.Instruments[i].Index + 1);
+		}
+		AddInstrumentInfo(Next, Sound.InstrumentName().c_str(), "FDS", Sound.Releases());
+		InstrumentInfo &I = Info.Instruments.back();
+		for (size_t s = 0; s < Sound.Sequences.size(); ++s) {
+			const PresetSequence &Seq = Sound.Sequences[s];
+			if (Seq.Items.empty())
+				continue;
+			if (Seq.Type == SEQUENCE_VOLUME) {
+				for (size_t k = 0; k < Seq.Items.size(); ++k)
+					I.Volume.push_back(FdsVolumeAs15(Seq.Items[k]));
+				I.VolumeLoop = Seq.Loop;
+				I.VolumeRelease = Seq.Release;
+			}
+			SequenceInfo *pInto = Seq.Type == SEQUENCE_ARPEGGIO ? &I.Steps : Seq.Type == SEQUENCE_PITCH ? &I.Pitch : 0;
+			if (pInto != 0) {
+				pInto->Items = Seq.Items;
+				pInto->Loop = Seq.Loop;
+				pInto->Release = Seq.Release;
+				pInto->Setting = Seq.Setting;
+			}
+			if (Seq.Type == SEQUENCE_PITCH && Seq.Loop >= 0) {
+				bool Up = false, Down = false;
+				for (size_t k = static_cast<size_t>(Seq.Loop); k < Seq.Items.size(); ++k) {
+					Up = Up || Seq.Items[k] > 0;
+					Down = Down || Seq.Items[k] < 0;
+				}
+				I.Vibrato = I.Vibrato || (Up && Down);
+			}
+		}
+		I.Vibrato = I.Vibrato || FdsModulatorWobbles(Sound.ModSpeed, Sound.ModDepth, Sound.Modulation);
+		MadeFds[Next] = Sound;
+		return Next;
+	}
+
 	std::vector<std::string> Opened;	// the files LocalPath was asked about
 
 	std::string LocalPath(const std::string &Path) override
@@ -6228,6 +6279,261 @@ void TestWaveSounds()
 	CHECK_HAS(Run(Plain, "add_instrument", "{\"preset\": \"organ\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
 }
 
+// The bend the FDS's modulator gives a note on average, in cents, over a turn of its table after the first, as 0.4.6's
+// APU/FDSSound.cpp works it out: each entry (every step of the table twice) moves the bias, which times the depth is
+// rounded away from the note, and the note's frequency moves by that many 64ths
+double MeanBendCents(const std::vector<int> &Table, int Depth)
+{
+	static const int ADJUST[8] = { 0, 1, 2, 4, 0, -4, -2, -1 };
+	int Bias = 0, Count = 0;
+	double Sum = 0.0;
+	for (int Turn = 0; Turn < 3; ++Turn) {
+		for (int e = 0; e < 64; ++e) {
+			if (Turn > 0 || e > 0) {
+				const int Value = Table[static_cast<size_t>(e / 2)];
+				Bias = Value == 4 ? 0 : Bias + ADJUST[Value];
+				while (Bias > 63)
+					Bias -= 128;
+				while (Bias < -64)
+					Bias += 128;
+			}
+			const int Product = Bias * Depth;
+			int Mod = Product >= 0 ? Product / 16 : -((-Product + 15) / 16);	// an arithmetic shift, as the emulator's
+			if ((Mod & 0x0F) != 0)
+				Mod += Bias < 0 ? -1 : 2;
+			if (Mod > 193)
+				Mod -= 258;
+			if (Mod < -64)
+				Mod += 256;
+			if (Turn > 0) {
+				Sum += 1200.0 * std::log2(1.0 + Mod / 64.0);
+				++Count;
+			}
+		}
+	}
+	return Sum / Count;
+}
+
+// A song with the FDS's channel (after the 2A03's five)
+FakeSong FdsSong()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chip\": \"FDS\", \"confirm\": true}").IsError);
+	CHECK(Song.Info.Channels.size() == 6u && Song.Info.Channels[5].Chip == "FDS");
+	Song.Info.Instruments.clear();
+	return Song;
+}
+
+void TestFdsSounds()
+{
+	// Every sound: a wave of 64 samples of 0-63, filling the range around the chip's zero (32), a table of 32 steps of
+	// 0-7, its sequences as FamiTracker keeps them, its volume 0-31; vibratos that sum to nothing each turn; a modulator
+	// that stays in tune on average; and no melodic sound gone within a few frames
+	const std::vector<FdsSound> &All = FdsSounds();
+	CHECK(All.size() >= 12u);
+	for (size_t i = 0; i < All.size(); ++i) {
+		const FdsSound &F = All[i];
+		bool Fine = F.Wave.size() == static_cast<size_t>(FDS_WAVE_SIZE) && F.Modulation.size() == static_cast<size_t>(FDS_MOD_SIZE) &&
+			!F.Description.empty() && F.ModSpeed >= 0 && F.ModSpeed <= 4095 && F.ModDepth >= 0 && F.ModDepth <= 63 &&
+			F.ModDelay >= 0 && F.ModDelay <= 255;
+		int Low = 63, High = 0, Sum = 0;
+		for (size_t k = 0; k < F.Wave.size(); ++k) {
+			Low = std::min(Low, F.Wave[k]);
+			High = std::max(High, F.Wave[k]);
+			Sum += F.Wave[k];
+		}
+		Fine = Fine && Low >= 0 && High <= 63 && High - Low >= 56 && std::abs(Sum - 32 * FDS_WAVE_SIZE) <= FDS_WAVE_SIZE;
+		for (size_t k = 0; k < F.Modulation.size(); ++k)
+			Fine = Fine && F.Modulation[k] >= 0 && F.Modulation[k] <= 7;
+		bool Volume = false;
+		for (size_t s = 0; s < F.Sequences.size(); ++s) {
+			const PresetSequence &Seq = F.Sequences[s];
+			Fine = Fine && !Seq.Items.empty() && Seq.Items.size() <= 253u && Seq.Loop < static_cast<int>(Seq.Items.size()) &&
+				Seq.Release < static_cast<int>(Seq.Items.size());
+			if (Seq.Type == SEQUENCE_VOLUME) {
+				Volume = true;
+				for (size_t k = 0; k < Seq.Items.size(); ++k)
+					Fine = Fine && Seq.Items[k] >= 0 && Seq.Items[k] <= FDS_VOLUME_MAX;
+				Fine = Fine && Seq.Items.back() == 0;		// fades to silence at its end
+				// A held note, a frame at a time as CSequenceHandler plays it: it starts softly (a smooth wave starting
+				// at its peak would click) and is heard well past four frames after it peaks (it doesn't vanish)
+				std::vector<int> Held;
+				int Pointer = 0;
+				for (int f = 0; f < 240; ++f) {
+					Held.push_back(Seq.Items[static_cast<size_t>(std::min(Pointer, static_cast<int>(Seq.Items.size()) - 1))]);
+					++Pointer;
+					if (Pointer == Seq.Release + 1 || Pointer >= static_cast<int>(Seq.Items.size()))
+						Pointer = Seq.Loop >= 0 ? Seq.Loop : Pointer - (Pointer == Seq.Release + 1 ? 1 : 0);
+				}
+				const int Peak = *std::max_element(Held.begin(), Held.end());
+				const size_t Top = static_cast<size_t>(std::find(Held.begin(), Held.end(), Peak) - Held.begin());
+				Fine = Fine && Held[0] * 2 <= Peak + 1 && Held[Top + 4] * 6 > Peak;
+			}
+			else if (Seq.Type == SEQUENCE_PITCH && Seq.Loop >= 0) {
+				int Turn = 0;
+				for (size_t k = static_cast<size_t>(Seq.Loop); k < Seq.Items.size(); ++k)
+					Turn += Seq.Items[k];
+				Fine = Fine && Turn == 0;
+			}
+			else if (Seq.Type == SEQUENCE_ARPEGGIO)
+				Fine = Fine && Seq.Items.back() == 0 && Seq.Loop < 0;	// a strike that lands on the note
+			else
+				Fine = Fine && Seq.Type == SEQUENCE_PITCH;
+		}
+		if (F.ModDepth > 0)
+			Fine = Fine && std::fabs(MeanBendCents(F.Modulation, F.ModDepth)) < 3.0;
+		Check(Fine && Volume, F.Name.c_str(), __LINE__);
+		CHECK(FindFdsSound(F.Name) == &F);
+	}
+	// Asked for by a word, or by a preset's name, which picks the one most like it
+	CHECK(FindFdsSound("Bell") != 0 && FindFdsSound("Bell")->Name == "glass bell");
+	CHECK(FindFdsSound("soft lead") != 0 && FindFdsSound("soft lead")->Name == "soft flute");
+	CHECK(FindFdsSound("bass") != 0 && FindFdsSound("bass")->Name == "round bass");
+	CHECK(FindFdsSound("strings") != 0 && FindFdsSound("strings")->Name == "swelling strings");
+	CHECK(FindFdsSound("warm pad") != 0 && FindFdsSound("warm pad")->Name == "choir pad");
+	CHECK(FindFdsSound("Theremin") != 0 && FindFdsSound("Theremin")->Name == "eerie lead");
+	CHECK(FindFdsSound("kazoo") == 0 && FindFdsSound("") == 0);
+	CHECK(FindFdsSound("eerie lead")->InstrumentName() == "Eerie lead" && FindFdsSound("eerie lead")->Releases());
+	CHECK(FdsSoundList().compare(0, 22, "soft flute, whistle, e") == 0);
+	// The FDS's volume counted as the others': 31 is 15, at least 1 while it sounds
+	CHECK(FdsVolumeAs15(0) == 0 && FdsVolumeAs15(1) == 1 && FdsVolumeAs15(16) == 8 && FdsVolumeAs15(31) == 15 && FdsVolumeAs15(32) == 15);
+	// The modulator wobbles the eerie lead and the underwater tone; at audio rates it colours the growl and the drone
+	const FdsSound &Eerie = *FindFdsSound("eerie lead"), &Growl = *FindFdsSound("growl bass");
+	CHECK(FdsModulatorWobbles(Eerie.ModSpeed, Eerie.ModDepth, Eerie.Modulation) && Eerie.ModDelay > 0);
+	CHECK(FdsModulatorWobbles(FindFdsSound("underwater")->ModSpeed, 1, FindFdsSound("underwater")->Modulation));
+	CHECK(!FdsModulatorWobbles(Growl.ModSpeed, Growl.ModDepth, Growl.Modulation) && Growl.ModDepth > 0);
+	CHECK(!FdsModulatorWobbles(0, 1, Eerie.Modulation) && !FdsModulatorWobbles(Eerie.ModSpeed, 0, Eerie.Modulation));
+	// The modulator's bends as 0.4.6 rounds them: FamiTracker's own sine at depth 1 sits a quarter tone flat
+	std::vector<int> FtSine;
+	for (const char *p = "77777770001111111111111000777777"; *p != 0; ++p)
+		FtSine.push_back(*p - '0');
+	CHECK(MeanBendCents(FtSine, 1) < -20.0);
+
+	// set_expansion lists the sounds and says where the notes go
+	FakeSong Song = FdsSong();
+	FakeSong Fresh;
+	Fresh.Info.DirectChanges = true;
+	std::string Text = Run(Fresh, "set_expansion", "{\"chip\": \"FDS\"}").Text;
+	CHECK_HAS(Text, "playing FDS sounds drawn for it: soft flute, whistle, eerie lead");
+	CHECK_HAS(Text, "two octaves under the note written (its A-5 sounds 440 Hz, a pulse's A-3)");
+	CHECK_LACKS(Text, "can't make");
+	// add_instrument by name, for the channel or the chip, and reused
+	Text = Run(Song, "add_instrument", "{\"preset\": \"soft flute\", \"channel\": \"FDS\"}").Text;
+	CHECK_HAS(Text, "Added \"Soft flute\" (00) (FDS instrument: a round, breathy flute");
+	CHECK_HAS(Text, "two octaves above where a pulse would play them");
+	CHECK(Song.MadeFds.count(0) == 1u && Song.MadeFds[0].Name == "soft flute" && Song.Info.Instruments[0].Chip == "FDS");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"flute\", \"chip\": \"FDS\"}").Text, "The song already has \"Soft flute\" (00)");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"kazoo\", \"chip\": \"FDS\"}").Text,
+		"No FDS sound called \"kazoo\". FDS sounds: soft flute");
+	// As FamiTracker reports it: the volume as the others count it (28 of 31 is 14 of 15), a release, a vibrato
+	const InstrumentInfo &Flute = Song.Info.Instruments[0];
+	CHECK(!Flute.Volume.empty() && *std::max_element(Flute.Volume.begin(), Flute.Volume.end()) == 14);
+	CHECK(Flute.Releases && Flute.VolumeRelease >= 0 && Flute.Vibrato && !Flute.Pitch.Items.empty());
+	// write_notes and set_instrument by name; a preset's name picks the FDS sound most like it
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"eerie lead\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"E-6\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-6\", \"beats\": 2}]}").IsError);
+	CHECK(Song.Info.Instruments.back().Name == "Eerie lead" && Song.Info.Instruments.back().Vibrato);
+	CHECK(Song.Rows[5][0].Instrument == Song.Info.Instruments.back().Index);
+	CHECK(!Run(Song, "set_instrument", "{\"channel\": \"FDS\", \"instrument\": \"bass\"}").IsError);
+	CHECK(Song.Info.Instruments.back().Name == "Round bass" && !Song.Info.Instruments.back().Vibrato);
+	CHECK(Song.Rows[5][0].Instrument == Song.Info.Instruments.back().Index);
+	CHECK(!Run(Song, "set_instrument", "{\"channel\": \"FDS\", \"instrument\": \"keys\"}").IsError);	// the organ preset's word
+	CHECK(Song.Info.Instruments.back().Name == "Warm organ");
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"kick\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-5\", \"beats\": 4}]}").Text, "is a drum for the noise channel");
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"kazoo\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-5\", \"beats\": 4}]}").Text, "No instrument or FDS sound called \"kazoo\"");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Mine\", \"kind\": \"lead\", \"channel\": \"FDS\"}").Text,
+		"The FDS channel plays the FDS's own sounds, drawn for it: add_instrument picks one by name");
+	Text = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Text, "FDS sounds (for the FDS channel, which sounds two octaves under the note written: its A-5 is a pulse's A-3): "
+		"soft flute, whistle");
+	CHECK_HAS(Text, "\"Soft flute\" (FDS)");
+	// Not without an FDS channel
+	FakeSong Plain;
+	CHECK_HAS(Run(Plain, "add_instrument", "{\"preset\": \"soft flute\", \"chip\": \"FDS\"}").Text, "This song has no FDS channel");
+}
+
+void TestFdsOctave()
+{
+	// The FDS sounds two octaves under what's written: parts the tools write there from a pulse's notes go two octaves up,
+	// and the checks count its notes as they sound
+	FakeSong Song = FdsSong();
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"F-4\", \"beats\": 2}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"D-4\", \"beats\": 2}]}").IsError);
+	const std::vector<NoteInfo> Melody = ReadNotes(Song.Rows[0], Song.Info.Channels[0].EffectColumns);
+	// An echo on the FDS plays the melody's notes two octaves up, where they sound as the pulse's do, with the melody's
+	// sound there
+	ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"Pulse 1\", \"to_channel\": \"FDS\", \"delay_beats\": 0.5}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[5][2].HasNote() && Song.Rows[5][2].Pitch() == Song.Rows[0][0].Pitch() + 24);
+	CHECK(Song.Rows[5][18].HasNote() && Song.Rows[5][18].Pitch() == Song.Rows[0][16].Pitch() + 24);
+	CHECK_HAS(Result.Text, "playing the melody's sound on the FDS: \"Soft flute\"");
+	// A harmony on the FDS: a third to a sixth under each melody note as they sound
+	FakeSong Lines = FdsSong();
+	CHECK(!Run(Lines, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, "
+		"{\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 2}, {\"bar\": 2, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}]}").IsError);
+	const std::vector<NoteInfo> Tune = ReadNotes(Lines.Rows[0], Lines.Info.Channels[0].EffectColumns);
+	CHECK(!Run(Lines, "add_harmony", "{\"melody_channel\": \"Pulse 1\", \"channel\": \"FDS\", \"key\": \"C major\", "
+		"\"instrument\": \"choir\"}").IsError);
+	int Harmonized = 0;
+	for (size_t i = 0; i < Tune.size(); ++i) {
+		const Cell &H = Lines.Rows[5][static_cast<size_t>(Tune[i].Row)];
+		if (!H.HasNote())
+			continue;
+		++Harmonized;
+		const int Under = Tune[i].Pitch - (H.Pitch() - 24);
+		Check(Under >= 3 && Under <= 9, "an FDS harmony note sounds a third to a sixth under the pulse's", __LINE__);
+	}
+	CHECK(Harmonized >= 3);
+	// check_song: notes the FDS can't play in tune (its register tops out at G#7) and ones it plays too low to hear
+	FakeSong Range = FdsSong();
+	Range.Put(5, 0, "A-7");
+	Range.End(5, 4);
+	Range.Put(5, 8, "G-1");
+	Range.End(5, 12);
+	Range.Put(5, 16, "G#7");
+	Range.End(5, 20);
+	const std::string Text = Run(Range, "check_song", "{}").Text;
+	CHECK_HAS(Text, "Range: A-7 at FDS FDS bar 1 beat 1 is above G#7, the highest the FDS plays");
+	CHECK_HAS(Text, "Range: G-1 at FDS FDS bar 1 beat 3 is below A-1, which the FDS plays two octaves down");
+	CHECK_LACKS(Text, "G#7 at FDS");
+	// An echo from the FDS onto a pulse comes down two octaves; one onto the FDS that would land past G#7 goes an octave down
+	FakeSong High = FdsSong();
+	CHECK(!Run(High, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"A-5\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-5\", \"beats\": 2}]}").IsError);
+	CHECK(!Run(High, "add_echo", "{\"channel\": \"Pulse 1\", \"to_channel\": \"FDS\", \"delay_beats\": 0.5, \"instrument\": "
+		"\"whistle\"}").IsError);
+	CHECK(High.Rows[5][2].HasNote() && High.Rows[5][2].Pitch() == High.Rows[0][0].Pitch() + 12);
+	CHECK(High.Rows[5][10].HasNote() && High.Rows[5][10].Pitch() == High.Rows[0][8].Pitch() + 24);
+}
+
+void TestFdsLevels()
+{
+	// The FDS plays louder than a pulse (about 4 dB at its envelope's top): its melody sits lower in a soft mix, its echo too
+	FakeSong Song = FdsSong();
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"soft flute\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"E-6\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"G-6\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"A-6\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"C-7\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"B-6\", \"beats\": 4}]}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Pulse 2\", \"instrument\": \"soft chords\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"D-4\", \"beats\": 4}]}").IsError);
+	ToolResult Result = Run(Song, "mix", "{\"melody_channel\": \"FDS\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The FDS plays louder than the pulses, so its parts sit lower for the same balance.");
+	int Melody = -1;
+	for (int r = 0; r < 32 && Melody < 0; ++r)
+		if (Song.Rows[5][static_cast<size_t>(r)].HasNote())
+			Melody = Song.Rows[5][static_cast<size_t>(r)].Volume;
+	// 9 on a pulse is 4.4 dB under 15; the flute's envelope peaks at 14 of 15 and the FDS plays 4 dB over a pulse at
+	// its top, so 15 * 10^((-4.4 - 4) / 20) * 15 / 14 is about 6
+	CHECK_EQ(Melody, 6);
+}
+
 // Versions to compare
 void TestKeptVersions()
 {
@@ -8509,6 +8815,9 @@ int main()
 	TestBars();
 	TestKeptVersions();
 	TestWaveSounds();
+	TestFdsSounds();
+	TestFdsOctave();
+	TestFdsLevels();
 	TestOgg();
 	TestCut();
 	TestExport();

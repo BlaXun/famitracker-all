@@ -73,7 +73,8 @@ volume column by its role and
 sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
-5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under), as
+5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under, the
+FDS's about 4 dB over with its envelope at the top), as
 the echo, harmony, counter-melody, `polish` and the review do; `mix` and
 the review also play each note's instrument envelope (`HeldEnvelope`, from
 the volume sequence FamiTracker reports in `InstrumentInfo::Volume`, times
@@ -114,7 +115,15 @@ from the 0.4.6 channel handlers. `Source/Api/Wavetables.cpp` draws the N163's
 wave sounds (16-sample waves, in tune in 0.4.6, played in turn by their wave
 sequence) and places each one's wave in the chip's shared memory
 (`FindWavePlace`); `AddWaveSoundInstrument` in `InstrumentLibrary.cpp` makes
-the instrument. The server's
+the instrument. `Source/Api/FdsSounds.cpp` draws the FDS's sounds (a wave of
+64 samples of one cycle, the modulator's table, speed, depth and delay, and
+the volume, arpeggio and pitch sequences CInstrumentFDS keeps itself);
+`AddFdsSoundInstrument` in `InstrumentLibrary.cpp` makes the instrument, for
+the tools (`SongHost::AddFdsInstrument`) and for Instrument > Instrument
+library's FDS target. FamiTracker reports an FDS instrument's volume (0-31)
+as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and the
+vanish check hear it, and the tools write FDS notes two octaves up
+(`Written` in `Tools.cpp`; see Gotchas). The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
@@ -534,6 +543,27 @@ NSF export still uses the 2A03 driver. Touch points:
   (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
   "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
   `Commit` and the checks in step with the channel handlers.
+- **The FDS in 0.4.6:**
+  - It sounds two octaves under the note written: with `TRANSPOSE_FDS`,
+    `CSoundGen::LoadMachineSettings` gives a wave of one cycle a quarter of
+    the note's frequency (A-5 sounds 440 Hz, A-3 110 Hz), and the loader
+    moved older files' FDS notes up two octaves. Its frequency register
+    tops out at 4095, so G#7 is the highest note in tune (A-7 plays 13
+    cents flat, A#7 and B-7 no higher), and FDS notes at written octave 2
+    and under round to a coarse register (tens of cents).
+  - Its emulator (`APU/FDSSound.cpp`) rounds the modulator's bend after the
+    shift rather than on the product, so the bend goes 2 (bias under 0) or
+    3 (bias 16 and over) 64ths of the pitch at the least, whatever the
+    depth: about 55 cents down or 79 up. The editor's own "sine" table at
+    depth 1 sits a quarter tone flat. `FdsSounds.cpp` makes gentle
+    vibratos with the pitch sequence (on the FDS a positive value raises
+    the pitch, and a unit is 1731 cents over the register) and modulator
+    tables whose bends average out (`MeanBendCents` in the tests checks
+    them).
+  - The emulator writes a volume change at once, so a smooth wave starting
+    at its peak at a random phase clicks; the sounds start over two frames
+    or more. `CChannelHandlerFDS` doesn't reset the wave's phase on a note.
+  - The mixer lowpasses it (`treble_eq(-48, 1000)` in `CMixer::UpdateSettings`).
 - **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
   (BSD licensed) keep upstream's files and LF line endings; both builds turn
   their warnings off, and only `libogg/include/ogg/config_types.h` is ours.

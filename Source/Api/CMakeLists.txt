@@ -75,6 +75,7 @@ add_library(ftapi STATIC
 	Jingles.cpp
 	SoundEffects.cpp
 	Effects.cpp
+	FdsSounds.cpp
 	Wavetables.cpp
 	PulseClicks.cpp
 	Music.cpp
