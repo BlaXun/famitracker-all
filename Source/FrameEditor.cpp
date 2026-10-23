@@ -20,6 +20,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
+#include "Api/Sections.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -33,6 +36,7 @@
 #include "Settings.h"
 #include "Graphics.h"
 #include "Clipboard.h"
+#include "ClipsDlg.h"
 
 /*
  * CFrameEditor
@@ -42,6 +46,100 @@
 
 const TCHAR CFrameEditor::DEFAULT_FONT[] = _T("System");
 const TCHAR CFrameEditor::CLIPBOARD_ID[] = _T("FamiTracker Frames");
+
+namespace {
+
+// The frame the song goes back to after its end, as CSoundGen plays it: each
+// frame from the row it starts at until a jump (Bxx), a skip (Dxx) or a halt
+// (Cxx), as Api/Music.cpp's FollowSong follows it; -1 when the song halts
+int LoopFrame(const CFamiTrackerDoc *pDoc, unsigned int Track)
+{
+	const int Frames = static_cast<int>(pDoc->GetFrameCount(Track)), Rows = static_cast<int>(pDoc->GetPatternLength(Track));
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	if (Frames < 1 || Rows < 1)
+		return -1;
+	std::vector<bool> Started(static_cast<size_t>(Frames) * static_cast<size_t>(Rows), false);
+	int Frame = 0, Row = 0;
+	for (;;) {
+		const size_t Start = static_cast<size_t>(Frame) * static_cast<size_t>(Rows) + static_cast<size_t>(Row);
+		if (Started[Start])
+			return Frame;
+		Started[Start] = true;
+		int NextFrame = Frame + 1 < Frames ? Frame + 1 : 0, NextRow = 0;
+		for (int r = Row; r < Rows; ++r) {
+			int Jump = -1, Skip = -1;
+			bool Halt = false;
+			for (int c = 0; c < Channels; ++c) {
+				stChanNote Note;
+				pDoc->GetNoteData(Track, Frame, c, r, &Note);
+				const int Columns = std::min(static_cast<int>(pDoc->GetEffColumns(Track, c)) + 1, MAX_EFFECT_COLUMNS);
+				for (int k = 0; k < Columns; ++k) {
+					// The last one read wins, as in CSoundGen::EvaluateGlobalEffects
+					if (Note.EffNumber[k] == EF_JUMP)
+						Jump = Note.EffParam[k];
+					else if (Note.EffNumber[k] == EF_SKIP)
+						Skip = Note.EffParam[k];
+					else if (Note.EffNumber[k] == EF_HALT)
+						Halt = true;
+				}
+			}
+			if (Halt)
+				return -1;
+			if (Jump >= 0) {	// a jump goes before a skip
+				NextFrame = std::min(Jump, Frames - 1);
+				NextRow = 0;
+				break;
+			}
+			if (Skip >= 0) {
+				NextRow = std::min(Skip, Rows - 1);
+				break;
+			}
+		}
+		Frame = NextFrame;
+		Row = NextRow;
+	}
+}
+
+COLORREF SectionColorRef(const std::string &Name)
+{
+	int Red, Green, Blue;
+	ftapi::SectionRgb(ftapi::SectionColor(Name), Red, Green, Blue);
+	return RGB(Red, Green, Blue);
+}
+
+// The selected track's sections changed, as one undoable action
+void ChangeSections(CMainFrame *pMainFrame, const ftapi::SectionList &List)
+{
+	ftapi::SectionStore *pStore = new ftapi::SectionStore();
+	pStore->Set(0, List);
+	CFrameAction *pAction = new CFrameAction(CFrameAction::ACT_SECTIONS);
+	pAction->SetSections(pStore);
+	pMainFrame->AddAction(pAction);
+}
+
+// A frame's number as the frame editor shows it
+CString FrameText(int Frame)
+{
+	return MakeIntString(Frame, theApp.GetSettings()->General.bRowInHex ? _T("%02X") : _T("%02i"));
+}
+
+// A name to start from: the section's when the frames are one already,
+// "Intro" for frames at the song's start, else the next letter no section
+// has (A, B, C...)
+CString SuggestedName(const ftapi::SectionList &List, int First, int Last)
+{
+	const int Index = ftapi::SectionAt(List, First);
+	if (Index >= 0 && List[static_cast<size_t>(Index)].First == First && List[static_cast<size_t>(Index)].Last == Last)
+		return CString(List[static_cast<size_t>(Index)].Name.c_str());
+	if (First == 0 && ftapi::FindSection(List, "Intro") < 0)
+		return _T("Intro");
+	for (char Letter = 'A'; Letter <= 'Z'; ++Letter)
+		if (ftapi::FindSection(List, std::string(1, Letter)) < 0)
+			return CString(Letter);
+	return CString();
+}
+
+}	// namespace
 
 IMPLEMENT_DYNAMIC(CFrameEditor, CWnd)
 
@@ -76,6 +174,8 @@ CFrameEditor::CFrameEditor(CMainFrame *pMainFrm) :
 	m_iTopScrollArea(0),
 	m_iBottomScrollArea(0),
 	m_DropTarget(this),
+	m_iMenuFrame(0),
+	m_bSectionColumn(false),
 	m_iDragThresholdX(0),
 	m_iDragThresholdY(0),
 	m_iUpdates(0),
@@ -116,6 +216,13 @@ BEGIN_MESSAGE_MAP(CFrameEditor, CWnd)
 	ON_COMMAND(ID_MODULE_DUPLICATEFRAMEPATTERNS, OnModuleDuplicateFramePatterns)
 	ON_COMMAND(ID_MODULE_MOVEFRAMEDOWN, OnModuleMoveFrameDown)
 	ON_COMMAND(ID_MODULE_MOVEFRAMEUP, OnModuleMoveFrameUp)
+	ON_COMMAND(ID_SECTION_NAME, OnSectionName)
+	ON_COMMAND(ID_SECTION_RENAME, OnSectionRename)
+	ON_COMMAND(ID_SECTION_REMOVE, OnSectionRemove)
+	ON_COMMAND(ID_SECTION_SELECT, OnSectionSelect)
+	ON_COMMAND(ID_SECTION_MOVE_UP, OnSectionMoveUp)
+	ON_COMMAND(ID_SECTION_MOVE_DOWN, OnSectionMoveDown)
+	ON_COMMAND(ID_SECTION_DUPLICATE, OnSectionDuplicate)
 END_MESSAGE_MAP()
 
 
@@ -346,6 +453,10 @@ void CFrameEditor::DrawFrameEditor(CDC *pDC)
 		Frame++;
 	}
 
+	// The sections beside the frames
+	if (ShowsSections())
+		DrawSections(&m_dcBack, FirstVisibleFrame, Start, End, ChannelCount);
+
 	if (m_DropTarget.IsDragging()) {
 		// Draw cursor when dragging
 		if (!m_bSelecting || (m_iDragRow <= SelectStart || m_iDragRow >= (SelectEnd + 1))) {
@@ -384,6 +495,72 @@ void CFrameEditor::SetupColors()
 {
 	// Color scheme has changed
 	InvalidateFrameData();
+}
+
+void CFrameEditor::DrawSections(CDC *pDC, int FirstVisibleFrame, int Start, int End, int ChannelCount)
+{
+	// Each section a coloured band beside its frames (and a stripe beside
+	// their numbers), its name at its first frame, or at the top when that's
+	// above; and where the song loops back to, where there's room for it
+	const CFamiTrackerDoc *pDoc = CFamiTrackerDoc::GetDoc();
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const ftapi::SectionList &List = pDoc->GetSections()->Get(Track);
+	const COLORREF ColBackground = theApp.GetSettings()->Appearance.iColBackground;
+	const COLORREF ColText = theApp.GetSettings()->Appearance.iColPatternText;
+	const COLORREF ColEdge = BLEND(ColBackground, (ColBackground ^ 0xFFFFFF), 75);
+	const int Left = ROW_COLUMN_WIDTH + 4 + FRAME_ITEM_WIDTH * ChannelCount;
+	const int Loop = LoopFrame(pDoc, Track);
+	const CString LOOP_TEXT = _T("loop");
+
+	pDC->FillSolidRect(SX(Left), 0, SX(SECTION_WIDTH), m_iWinHeight, ColBackground);
+	pDC->FillSolidRect(SX(Left - 1), 0, 1, m_iWinHeight, ColEdge);
+
+	for (int i = Start; i < End; ++i) {
+		const int Frame = FirstVisibleFrame + i;
+		const int y = i * ROW_HEIGHT + 3;
+		const CRect Cell(SX(Left), SY(y), SX(Left + SECTION_WIDTH), SY(y + ROW_HEIGHT));
+		const int Index = ftapi::SectionAt(List, Frame);
+		COLORREF Ink = DIM(ColText, 80);
+		CString Name;
+		if (Index >= 0) {
+			const ftapi::Section &Section = List[static_cast<size_t>(Index)];
+			const COLORREF Color = SectionColorRef(Section.Name);
+			const COLORREF Band = BLEND(Color, ColBackground, 42);
+			pDC->FillSolidRect(&Cell, Band);
+			pDC->FillSolidRect(Cell.left, Cell.top, SX(3), Cell.Height(), Color);
+			pDC->FillSolidRect(0, Cell.top, SX(3), Cell.Height(), Color);
+			if (Frame == Section.First)
+				pDC->FillSolidRect(Cell.left, Cell.top, Cell.Width(), 1, Color);
+			Ink = INTENSITY(Band) >= 0x80 ? 0x202020 : 0xF0F0F0;
+			if (Frame == Section.First || i == Start)
+				Name = Section.Name.c_str();
+		}
+		pDC->SetTextColor(Ink);
+		CRect Text(Cell.left + SX(6), Cell.top, Cell.right - SX(2), Cell.bottom);
+
+		// The loop's start, at the right when the name leaves room for it
+		if (Frame == Loop) {
+			const int Arrow = SX(5), Gap = SX(4);
+			const int Width = Arrow + SX(2) + pDC->GetTextExtent(LOOP_TEXT).cx;
+			const int NameWidth = Name.IsEmpty() ? 0 : pDC->GetTextExtent(Name).cx + Gap;
+			if (NameWidth + Width <= Text.Width()) {
+				const int x = Text.right - Width, Mid = (Cell.top + Cell.bottom) / 2;
+				const POINT Points[3] = { { x, Mid }, { x + Arrow, Mid - Arrow }, { x + Arrow, Mid + Arrow } };
+				CBrush Brush(Ink);
+				CPen Pen(PS_SOLID, 1, Ink);
+				CBrush *pOldBrush = pDC->SelectObject(&Brush);
+				CPen *pOldPen = pDC->SelectObject(&Pen);
+				pDC->Polygon(Points, 3);
+				pDC->SelectObject(pOldBrush);
+				pDC->SelectObject(pOldPen);
+				CRect LoopText(x + Arrow + SX(2), Cell.top, Text.right, Cell.bottom);
+				pDC->DrawText(LOOP_TEXT, &LoopText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+				Text.right = x - Gap;
+			}
+		}
+		if (!Name.IsEmpty())
+			pDC->DrawText(Name, &Text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+	}
 }
 
 void CFrameEditor::RedrawFrameEditor()
@@ -725,13 +902,25 @@ int CFrameEditor::GetRowFromPoint(const CPoint &point, bool DropTarget) const
 
 int CFrameEditor::GetChannelFromPoint(const CPoint &point) const
 {
-	// Translate a point value to a channel
-	return (point.x - ROW_COLUMN_WIDTH - 2) / FRAME_ITEM_WIDTH;
+	// Translate a point value to a channel (none right of them, where the sections are)
+	const int Channel = (point.x - ROW_COLUMN_WIDTH - 2) / FRAME_ITEM_WIDTH;
+	return (ShowsSections() && Channel >= static_cast<int>(m_pDocument->GetAvailableChannels())) ? -1 : Channel;
 }
 
 unsigned int CFrameEditor::CalcWidth(int Channels) const
 {
-	return ROW_COLUMN_WIDTH + FRAME_ITEM_WIDTH * Channels + 25;
+	m_bSectionColumn = ShowsSections();
+	return ROW_COLUMN_WIDTH + FRAME_ITEM_WIDTH * Channels + 25 + (m_bSectionColumn ? SECTION_WIDTH + 4 : 0);
+}
+
+bool CFrameEditor::ShowsSections() const
+{
+	return m_pDocument != NULL && !m_pDocument->GetSections()->Empty();
+}
+
+bool CFrameEditor::NeedsResize() const
+{
+	return ShowsSections() != m_bSectionColumn;
 }
 
 //// Mouse ////////////////////////////////////////////////////////////////////////////////////////
@@ -873,6 +1062,18 @@ void CFrameEditor::OnLButtonDblClk(UINT nFlags, CPoint point)
 	const int Channel  = GetChannelFromPoint(point);
 	const int NewFrame = GetRowFromPoint(point, false);
 
+	// In the sections' column: name the frame's section, or the frame
+	if (ShowsSections() && point.x >= ROW_COLUMN_WIDTH + 4 + FRAME_ITEM_WIDTH * static_cast<int>(m_pDocument->GetAvailableChannels())) {
+		m_pView->SelectFrame(NewFrame);
+		m_iMenuFrame = NewFrame;
+		if (MenuSection() >= 0)
+			OnSectionRename();
+		else
+			OnSectionName();
+		CWnd::OnLButtonDblClk(nFlags, point);
+		return;
+	}
+
 	m_pView->SelectFrame(NewFrame);
 
 	if (Channel >= 0)
@@ -940,7 +1141,198 @@ void CFrameEditor::OnContextMenu(CWnd* /*pWnd*/, CPoint point)
 	pPopupMenu->EnableMenuItem(ID_FRAME_PASTE, MF_BYCOMMAND | (ClipboardAvailable ? MF_ENABLED : MF_DISABLED));
 	pPopupMenu->EnableMenuItem(ID_FRAME_PASTENEWPATTERNS, MF_BYCOMMAND | (ClipboardAvailable ? MF_ENABLED : MF_DISABLED));
 
+	// The section commands are for the frame under the mouse (the cursor's
+	// when the menu comes from the keyboard, or from below the frames)
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const int Frames = static_cast<int>(m_pDocument->GetFrameCount(Track));
+	m_iMenuFrame = m_pView->GetSelectedFrame();
+	if (point.x != -1 || point.y != -1) {
+		CPoint Client(point);
+		ScreenToClient(&Client);
+		ScaleMouse(Client);
+		const int Frame = m_pView->GetSelectedFrame() + (Client.y - TOP_OFFSET) / ROW_HEIGHT - m_iMiddleRow;
+		if (Client.y >= TOP_OFFSET && Frame >= 0 && Frame < Frames)
+			m_iMenuFrame = Frame;
+	}
+	else {
+		CRect Rect;
+		GetWindowRect(&Rect);
+		point = Rect.TopLeft();
+	}
+	const ftapi::SectionList &List = m_pDocument->GetSections()->Get(Track);
+	const int Index = MenuSection();
+	const UINT InSection = MF_BYCOMMAND | (Index >= 0 ? MF_ENABLED : MF_GRAYED);
+	pPopupMenu->EnableMenuItem(ID_SECTION_RENAME, InSection);
+	pPopupMenu->EnableMenuItem(ID_SECTION_REMOVE, InSection);
+	pPopupMenu->EnableMenuItem(ID_SECTION_SELECT, InSection);
+	pPopupMenu->EnableMenuItem(ID_SECTION_MOVE_UP, MF_BYCOMMAND |
+		(ftapi::SectionMoveTarget(List, Index, true, Frames) >= 0 ? MF_ENABLED : MF_GRAYED));
+	pPopupMenu->EnableMenuItem(ID_SECTION_MOVE_DOWN, MF_BYCOMMAND |
+		(ftapi::SectionMoveTarget(List, Index, false, Frames) >= 0 ? MF_ENABLED : MF_GRAYED));
+	pPopupMenu->EnableMenuItem(ID_SECTION_DUPLICATE, MF_BYCOMMAND |
+		(Index >= 0 && Frames + List[static_cast<size_t>(Index)].Frames() <= MAX_FRAMES ? MF_ENABLED : MF_GRAYED));
+
 	pPopupMenu->TrackPopupMenu(TPM_RIGHTBUTTON, point.x, point.y, this);
+}
+
+// Sections (Api/Sections.h)
+
+int CFrameEditor::MenuSection() const
+{
+	return ftapi::SectionAt(m_pDocument->GetSections()->Get(m_pMainFrame->GetSelectedTrack()), m_iMenuFrame);
+}
+
+void CFrameEditor::MenuFrames(int &First, int &Last) const
+{
+	// The selected frames when the menu is for one of them, else that frame
+	const int SelectStart = std::min(m_iSelStartRow, m_iSelEndRow), SelectEnd = std::max(m_iSelStartRow, m_iSelEndRow);
+	const int Frames = static_cast<int>(m_pDocument->GetFrameCount(m_pMainFrame->GetSelectedTrack()));
+	if (m_bSelecting && m_iMenuFrame >= SelectStart && m_iMenuFrame <= SelectEnd) {
+		First = std::max(0, SelectStart);
+		Last = std::min(Frames - 1, SelectEnd);
+	}
+	else
+		First = Last = std::max(0, std::min(Frames - 1, m_iMenuFrame));
+}
+
+void CFrameEditor::OnSectionName()
+{
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	int First, Last;
+	MenuFrames(First, Last);
+	ftapi::SectionList List = m_pDocument->GetSections()->Get(Track);
+
+	CString Prompt;
+	if (First == Last)
+		Prompt.Format(_T("A name for frame %s, like Intro, A, B, Chorus, Bridge or Outro:"), static_cast<LPCTSTR>(FrameText(First)));
+	else
+		Prompt.Format(_T("A name for frames %s to %s, like Intro, A, B, Chorus, Bridge or Outro:"),
+			static_cast<LPCTSTR>(FrameText(First)), static_cast<LPCTSTR>(FrameText(Last)));
+	CClipNameDlg Dialog(_T("Name section"), Prompt, SuggestedName(List, First, Last), m_pMainFrame, ftapi::MAX_SECTION_NAME);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	const std::string Name = ftapi::TrimSectionName(static_cast<LPCSTR>(Dialog.GetName()));
+	const std::string Problem = ftapi::SectionNameProblem(Name);
+	if (!Problem.empty()) {
+		AfxMessageBox(Problem.c_str(), MB_ICONWARNING);
+		return;
+	}
+
+	// A name used elsewhere moves here (a section has a name of its own), if the user agrees
+	const int Same = ftapi::FindSection(List, Name);
+	if (Same >= 0 && (List[static_cast<size_t>(Same)].First != First || List[static_cast<size_t>(Same)].Last != Last)) {
+		const ftapi::Section &Other = List[static_cast<size_t>(Same)];
+		const LPCTSTR OWN = _T("Each section has a name of its own: give the name to these frames instead?");
+		CString Question;
+		if (Other.Last != Other.First)
+			Question.Format(_T("Frames %s to %s are called \"%s\" already. %s"), static_cast<LPCTSTR>(FrameText(Other.First)),
+				static_cast<LPCTSTR>(FrameText(Other.Last)), Other.Name.c_str(), OWN);
+		else
+			Question.Format(_T("Frame %s is called \"%s\" already. %s"), static_cast<LPCTSTR>(FrameText(Other.First)),
+				Other.Name.c_str(), OWN);
+		if (AfxMessageBox(Question, MB_YESNO | MB_ICONQUESTION) != IDYES)
+			return;
+	}
+	ftapi::NameFrames(List, First, Last, Name);
+	ChangeSections(m_pMainFrame, List);
+}
+
+void CFrameEditor::OnSectionRename()
+{
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const int Index = MenuSection();
+	if (Index < 0)
+		return;
+	ftapi::SectionList List = m_pDocument->GetSections()->Get(Track);
+	const CString Old = List[static_cast<size_t>(Index)].Name.c_str();
+	CString Prompt;
+	Prompt.Format(_T("A new name for \"%s\":"), static_cast<LPCTSTR>(Old));
+	CClipNameDlg Dialog(_T("Rename section"), Prompt, Old, m_pMainFrame, ftapi::MAX_SECTION_NAME);
+	if (Dialog.DoModal() != IDOK)
+		return;
+	const std::string Name = ftapi::TrimSectionName(static_cast<LPCSTR>(Dialog.GetName()));
+	const std::string Problem = ftapi::SectionNameProblem(Name);
+	if (!Problem.empty()) {
+		AfxMessageBox(Problem.c_str(), MB_ICONWARNING);
+		return;
+	}
+	if (!ftapi::RenameSection(List, Index, Name)) {
+		CString Text;
+		Text.Format(_T("There's a section called \"%s\" already."), Name.c_str());
+		AfxMessageBox(Text, MB_ICONWARNING);
+		return;
+	}
+	if (List != m_pDocument->GetSections()->Get(Track))
+		ChangeSections(m_pMainFrame, List);
+}
+
+void CFrameEditor::OnSectionRemove()
+{
+	const int Index = MenuSection();
+	if (Index < 0)
+		return;
+	ftapi::SectionList List = m_pDocument->GetSections()->Get(m_pMainFrame->GetSelectedTrack());
+	ftapi::RemoveSection(List, Index);
+	ChangeSections(m_pMainFrame, List);
+}
+
+void CFrameEditor::OnSectionSelect()
+{
+	const int Index = MenuSection();
+	if (Index < 0)
+		return;
+	const ftapi::Section Section = m_pDocument->GetSections()->Get(m_pMainFrame->GetSelectedTrack())[static_cast<size_t>(Index)];
+	m_pView->SelectFrame(Section.First);
+	m_bSelecting = true;
+	m_iSelStartRow = Section.First;
+	m_iSelEndRow = Section.Last;
+	InvalidateFrameData();
+	Invalidate();
+}
+
+void CFrameEditor::OnSectionMoveUp()
+{
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const ftapi::SectionList &List = m_pDocument->GetSections()->Get(Track);
+	const int Index = MenuSection();
+	const int To = ftapi::SectionMoveTarget(List, Index, true, static_cast<int>(m_pDocument->GetFrameCount(Track)));
+	if (To < 0)
+		return;
+	CFrameAction *pAction = new CFrameAction(CFrameAction::ACT_MOVE_FRAMES);
+	pAction->SetFrameBlock(List[static_cast<size_t>(Index)].First, List[static_cast<size_t>(Index)].Last, To);
+	m_pMainFrame->AddAction(pAction);
+}
+
+void CFrameEditor::OnSectionMoveDown()
+{
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const ftapi::SectionList &List = m_pDocument->GetSections()->Get(Track);
+	const int Index = MenuSection();
+	const int To = ftapi::SectionMoveTarget(List, Index, false, static_cast<int>(m_pDocument->GetFrameCount(Track)));
+	if (To < 0)
+		return;
+	CFrameAction *pAction = new CFrameAction(CFrameAction::ACT_MOVE_FRAMES);
+	pAction->SetFrameBlock(List[static_cast<size_t>(Index)].First, List[static_cast<size_t>(Index)].Last, To);
+	m_pMainFrame->AddAction(pAction);
+}
+
+void CFrameEditor::OnSectionDuplicate()
+{
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const ftapi::SectionList &List = m_pDocument->GetSections()->Get(Track);
+	const int Index = MenuSection();
+	if (Index < 0)
+		return;
+	const ftapi::Section &Section = List[static_cast<size_t>(Index)];
+	if (static_cast<int>(m_pDocument->GetFrameCount(Track)) + Section.Frames() > MAX_FRAMES) {
+		CString Text;
+		Text.Format(_T("There's no room for another %d frames: a track has at most %d."), Section.Frames(), MAX_FRAMES);
+		AfxMessageBox(Text, MB_ICONWARNING);
+		return;
+	}
+	CFrameAction *pAction = new CFrameAction(CFrameAction::ACT_DUPLICATE_FRAMES);
+	pAction->SetFrameBlock(Section.First, Section.Last, 0);
+	m_pMainFrame->AddAction(pAction);
 }
 
 void CFrameEditor::EnableInput()
@@ -1332,6 +1724,9 @@ void CFrameEditor::PerformDragOperation(unsigned int Track, CFrameClipData *pCli
 	
 	int SelectedFrame = m_pView->GetSelectedFrame();
 
+	// Moved within the frame list, the sections wholly among the frames go along (Api/Sections.h)
+	ftapi::SectionList Sections = m_pDocument->GetSections()->Get(Track);
+
 	if (bDelete) {
 		// Target and source is same window
 		if (DragTarget > SelEnd)
@@ -1361,6 +1756,11 @@ void CFrameEditor::PerformDragOperation(unsigned int Track, CFrameClipData *pCli
 		}
 		if (DragTarget <= SelectedFrame)
 			++SelectedFrame;
+	}
+
+	if (bDelete) {
+		ftapi::SectionsMoveFrames(Sections, SelStart, SelEnd, DragTarget);
+		m_pDocument->GetSections()->Set(Track, Sections);
 	}
 
 	m_iSelStartRow = DragTarget;

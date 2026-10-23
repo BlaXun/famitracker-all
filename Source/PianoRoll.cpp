@@ -29,6 +29,7 @@
 #include <map>
 #include <vector>
 #include "Transcribe/Transcribe.h"
+#include "Api/Sections.h"
 #include "stdafx.h"
 #pragma push_macro("new")
 #undef new
@@ -369,6 +370,7 @@ struct CPianoRollWnd::Impl {
 	unsigned int Frames;
 	unsigned int Length;
 	int Beat, Bar;		// rows, from the row highlight (0: none)
+	ftapi::SectionList Sections;	// the track's (Api/Sections.h), named on the ruler
 	bool Dirty;
 
 	// The view
@@ -751,6 +753,7 @@ struct CPianoRollWnd::Impl {
 		Length = std::max(1U, pDoc->GetPatternLength(Track));
 		Beat = std::max(0, pDoc->GetFirstHighlight());
 		Bar = std::max(0, pDoc->GetSecondHighlight());
+		Sections = pDoc->GetSections()->Get(static_cast<int>(Track));
 
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
 		for (int c = 0; c < Channels; ++c)
@@ -2819,6 +2822,37 @@ struct CPianoRollWnd::Impl {
 			}
 			const int Next = InFrame + BarRows;
 			Row += (Next >= static_cast<int>(Length)) ? static_cast<int>(Length) - InFrame : BarRows;
+		}
+		// Sections: a band in their color under their bars, the name at the first bar (after its number) as far as the
+		// next section; one that starts off to the left is named at the left edge
+		for (size_t i = 0; i < Sections.size(); ++i) {
+			const ftapi::Section &Section = Sections[i];
+			const int From = Section.First * static_cast<int>(Length), To = (Section.Last + 1) * static_cast<int>(Length);
+			if (To <= FirstRow || From > LastRow)
+				continue;
+			int Red, Green, Blue;
+			ftapi::SectionRgb(ftapi::SectionColor(Section.Name), Red, Green, Blue);
+			const COLORREF Color = RGB(Red, Green, Blue);
+			const int Left = std::max(static_cast<int>(Ruler.left), RowX(From)), Right = std::min(static_cast<int>(Ruler.right), RowX(To));
+			dc.FillSolidRect(Left, Ruler.bottom - SY(3), Right - Left, SY(3), Color);
+			const int FirstBar = Section.First * BarsPerFrame + 1;
+			CString Number;
+			if (RowX(From) >= Ruler.left && (FirstBar - 1) % Every == 0)
+				Number.Format(_T("%d"), FirstBar);
+			const CString Name(Section.Name.c_str());
+			CRect Tag(Left + SX(3) + (Number.IsEmpty() ? 0 : dc.GetTextExtent(Number).cx + SX(3)), Ruler.top + SY(2), Right - SX(2),
+				Ruler.bottom - SY(4));
+			if (Tag.Width() < SX(14))
+				continue;
+			Tag.right = std::min(Tag.right, Tag.left + dc.GetTextExtent(Name).cx + SX(8));
+			const COLORREF Fill = Mix(Panel, Color, 0.75);
+			dc.FillSolidRect(&Tag, Fill);
+			Outline(dc, Tag, Color);
+			dc.SetTextColor((GetRValue(Fill) * 3 + GetGValue(Fill) * 6 + GetBValue(Fill)) / 10 >= 140 ? RGB(16, 16, 20) : RGB(250, 250, 250));
+			CRect Label(Tag);
+			Label.DeflateRect(SX(4), 0);
+			dc.DrawText(Name, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			dc.SetTextColor(Text);
 		}
 		if (CursorFrame >= 0 && CursorRow >= 0)
 			dc.FillSolidRect(RowX(CursorFrame * static_cast<int>(Length) + CursorRow), Ruler.top, 1, Ruler.Height(), Cursor);

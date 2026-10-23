@@ -66,11 +66,12 @@ CString Count(int Number, LPCTSTR One, LPCTSTR Many)
 
 IMPLEMENT_DYNAMIC(CClipNameDlg, CDialog)
 
-CClipNameDlg::CClipNameDlg(LPCTSTR Title, LPCTSTR Prompt, LPCTSTR Name, CWnd *pParent) :
+CClipNameDlg::CClipNameDlg(LPCTSTR Title, LPCTSTR Prompt, LPCTSTR Name, CWnd *pParent, int Limit) :
 	CDialog(CClipNameDlg::IDD, pParent),
 	m_sTitle(Title),
 	m_sPrompt(Prompt),
-	m_sName(Name)
+	m_sName(Name),
+	m_iLimit(Limit)
 {
 }
 
@@ -80,7 +81,7 @@ BOOL CClipNameDlg::OnInitDialog()
 	SetWindowText(m_sTitle);
 	SetDlgItemText(IDC_CLIPNAME_PROMPT, m_sPrompt);
 	CEdit *pEdit = static_cast<CEdit*>(GetDlgItem(IDC_CLIPNAME_EDIT));
-	pEdit->LimitText(255);
+	pEdit->LimitText(m_iLimit);
 	pEdit->SetWindowText(m_sName);
 	pEdit->SetSel(0, -1);
 	pEdit->SetFocus();

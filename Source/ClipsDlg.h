@@ -25,13 +25,14 @@ class CFamiTrackerView;
 class CFamiTrackerDoc;
 struct stChanNote;
 
-// Asks for a clip's name: a new clip, a copy, or a new name for one
+// Asks for a clip's name: a new clip, a copy, or a new name for one (and a
+// section's, in the frame editor: at most Limit characters)
 class CClipNameDlg : public CDialog
 {
 	DECLARE_DYNAMIC(CClipNameDlg)
 
 public:
-	CClipNameDlg(LPCTSTR Title, LPCTSTR Prompt, LPCTSTR Name, CWnd *pParent = NULL);
+	CClipNameDlg(LPCTSTR Title, LPCTSTR Prompt, LPCTSTR Name, CWnd *pParent = NULL, int Limit = 255);
 
 	enum { IDD = IDD_CLIP_NAME };
 
@@ -45,6 +46,7 @@ private:
 	CString m_sTitle;
 	CString m_sPrompt;
 	CString m_sName;
+	int m_iLimit;
 };
 
 // The clip editor: the clip's notes in a list. The selected notes, or all of
