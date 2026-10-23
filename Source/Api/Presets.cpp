@@ -550,8 +550,9 @@ std::vector<int> DutyItems(int Duty, int Motion, bool Click, bool Vrc6, int &Loo
 	Loop = -1;
 	const int d = Vrc6 ? Vrc6Duty(Duty) : Clamp(Duty, 0, 3);
 	std::vector<int> Items;
-	if (Click)		// the first frame thin, or round when the note is thin itself
-		Items.push_back(Vrc6 ? (d >= 3 ? 1 : 7) : (d >= 1 ? 0 : 2));
+	if (Click)		// the first frame thin, or round when the note is thin itself; a 75% note clicks at 50%, the
+					// thump of a pulse bass
+		Items.push_back(Vrc6 ? (d >= 3 ? 1 : 7) : (d == 3 ? 2 : (d >= 1 ? 0 : 2)));
 	switch (Motion) {
 	case DUTY_SWEEP:	// thin to the duty on the attack
 		for (int Step = Vrc6 ? 1 : 0; Step < d; Step += Vrc6 ? 2 : 1) {
@@ -734,7 +735,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 		Out = Buffer;
 	}
 	if (D.Click && Pulse)
-		Out += std::string(" after a ") + (D.Duty >= 1 ? "12.5%" : "50%") + " duty click on the first frame";
+		Out += std::string(" after a ") + (D.Duty >= 1 && D.Duty != 3 ? "12.5%" : "50%") + " duty click on the first frame";
 	Buffer[0] = 0;
 	if (Wave == "triangle")
 		;	// said above

@@ -102,6 +102,11 @@ slides, volume): a vibrato that takes a held note's period across a multiple
 of 256 clicks (see Gotchas), and `Commit` nudges the notes a direct change
 leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
 `polish`'s `clicks` touch fixes older ones and `export_for_game` warns.
+`check_song` and `review_arrangement` also find notes that vanish
+(`VanishingNotes` in `Tools.cpp`): a run of a few notes on a sound gone
+within four frames between held notes of their line, which a user heard as
+missing notes, and `design_instrument` and `reference_sound` say when the
+sound they add is that short (`VanishRemark`).
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken

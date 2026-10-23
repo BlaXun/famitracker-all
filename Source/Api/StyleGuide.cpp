@@ -139,6 +139,10 @@ const Section SECTIONS[] = {
 		"the period across a multiple of 256 restarts the wave, a click every time (A-3, period 253, with any vibrato): the "
 		"tools nudge such notes a few cents with Pxx as they write them.\n"
 		"- Swell: 8 to 15 over 6-30 frames for held, singing notes, with vibrato.\n"
+		"- A sound that lasts: a tune's quick notes need an envelope that holds or settles to a level (15 down to 9). One "
+		"that's gone in 3-4 frames (15 10 5 2 1 0) turns them into blips, and beside held notes of the same line they sound "
+		"like missing notes. A staccato tune settles low (the click pluck holds at 2-3) rather than to silence; sounds that "
+		"vanish are for echoes, stabs and drums.\n"
 		"reference_sound brings in a studied track's lead exactly; design_instrument makes your own." },
 	{ "echo", "Echoes, doubling and the second pulse", "echo delay doubling unison second pulse harmony thirds chorus",
 		"With two pulses, the second one is what makes a track sound big:\n"

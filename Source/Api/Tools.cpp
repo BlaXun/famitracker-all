@@ -459,6 +459,43 @@ int PlayedVolume(int Column, int Envelope)
 	return std::max(1, Column * Envelope / 15);
 }
 
+// Notes that vanish. A note heard for VANISH_FRAMES or fewer (what it plays falls under a sixth of the loudest it got, or
+// to silence) and over two frames or more before the next comes out as a blip: beside notes of its line that hold
+// (HOLD_FRAMES or more) it sounds like a missing note, a tick in its place. A user heard it at once in a tune that went
+// from a held lead to a pluck whose envelope fell 15 10 5 2 1 0. A click pluck that holds low (2-3) carries its notes.
+const int VANISH_FRAMES = 4, HOLD_FRAMES = 8;
+
+// How many frames a note is heard for: until what it plays (its volume column times its instrument's envelope, as
+// CalculateVolume works it out) falls under a sixth of the loudest it has got, or to silence; Limit when it's heard that
+// long (or never sounds)
+int HeardFrames(const SongInfo &Song, const NoteInfo &N, int Limit)
+{
+	const std::vector<int> Envelope = HeldEnvelope(FindInstrument(Song, N.Instrument), Limit);
+	int Peak = 0;
+	for (int f = 0; f < Limit; ++f) {
+		const int Level = PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]);
+		if (Level > Peak)
+			Peak = Level;
+		else if (Peak > 0 && (Level == 0 || Level * 6 < Peak))
+			return f;
+	}
+	return Limit;
+}
+
+// What design_instrument and reference_sound say of a sound whose notes vanish (nothing for one that lasts)
+std::string VanishRemark(const SongInfo &Song, int Instrument)
+{
+	NoteInfo N = NoteInfo();
+	N.Instrument = Instrument;
+	N.Volume = 15;
+	const int Heard = HeardFrames(Song, N, 60);
+	if (Heard > VANISH_FRAMES)
+		return std::string();
+	return Format(" Its notes are gone within %s: right for echoes, stabs and drums, but a tune's notes on it come out as "
+		"blips, which sound like missing notes beside held ones (for a tune, a sound that settles to a level: design_instrument "
+		"kind pluck with sustain half).", Plural(Heard, "frame", "frames").c_str());
+}
+
 std::string InstrumentLabel(const SongInfo &Song, int Index)
 {
 	const InstrumentInfo *pInfo = FindInstrument(Song, Index);
@@ -2516,8 +2553,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate,
 		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : "pulse") +
 		(Without.empty() ? std::string() : " (without the " + Without + " asked for: on the noise they'd make it warble or ring "
-			"metallic)") +
-		". Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
+			"metallic)") + "." + (D.Drum || Triangle || Noise ? std::string() : VanishRemark(S.Song, Index)) +
+		" Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
 
 std::string SetInstrumentTool(Session &S, const Json &Args)
@@ -6331,6 +6368,113 @@ int VersionMood(const std::string &Version)
 	return Calm ? MOOD_CALM : MOOD_TENSE;
 }
 
+// The frames a note lasts, from the frames each row does (RowFramesOf)
+int NoteFrames(const NoteInfo &N, const std::vector<int> &RowFrames)
+{
+	int Frames = 0;
+	for (int r = std::max(0, N.Row); r < N.Row + N.Rows && r < static_cast<int>(RowFrames.size()); ++r)
+		Frames += RowFrames[static_cast<size_t>(r)];
+	return Frames;
+}
+
+// The channels whose notes can vanish by their envelope: not the triangle, whose envelope only starts and stops it (its
+// kicks are blips by design), the drums, or the VRC7, which shapes its own sounds
+bool CanVanish(const ChannelInfo &Info)
+{
+	return Info.Kind == KIND_PULSE || Info.Kind == KIND_SAWTOOTH || Info.Kind == KIND_OTHER;
+}
+
+// Whether a note vanishes (Heard: the frames it's heard for), or holds
+bool Vanishes(const SongInfo &Song, const NoteInfo &N, const std::vector<int> &RowFrames, int &Heard)
+{
+	const int Frames = NoteFrames(N, RowFrames);
+	Heard = HeardFrames(Song, N, Frames);
+	return N.Volume > 0 && Heard <= VANISH_FRAMES && Frames >= Heard + 2;
+}
+
+bool Holds(const SongInfo &Song, const NoteInfo &N, const std::vector<int> &RowFrames)
+{
+	return N.Volume > 0 && NoteFrames(N, RowFrames) >= HOLD_FRAMES && HeardFrames(Song, N, HOLD_FRAMES) >= HOLD_FRAMES;
+}
+
+// A sound's notes that vanish in the middle of a line that holds: a run of up to MAX_VANISHING_RUN of them on a channel
+// with a held note of the line just before and just after (a beat apart at most, and less than an octave away: a stab an
+// octave off the line, an oom-pah's, is another voice), notes gone missing from the line. A longer run, or one where a
+// line starts or ends, is a figure of its own (stabs, ticks, a ratchet) and fine
+struct Vanishing {
+	int Instrument;
+	int Heard;				// the most frames its notes are heard for
+	int Held;				// the instrument of the line's notes that hold
+	std::vector<int> Rows;	// its notes'
+};
+const int MAX_VANISHING_RUN = 4;
+const int MIN_VANISHING = 2;	// notes of a sound: one alone may be meant
+
+// A channel's notes starting in [First, End) that vanish in the middle of a line that holds, by sound (MIN_VANISHING notes
+// or more)
+std::vector<Vanishing> VanishingNotes(Session &S, int Channel, int First, int End, const std::vector<int> &RowFrames)
+{
+	std::vector<Vanishing> Out;
+	if (!CanVanish(S.Channel(Channel)))
+		return Out;
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	const int Count = static_cast<int>(Notes.size());
+	std::vector<int> Heard(Notes.size(), 0);
+	std::vector<char> Gone(Notes.size(), 0);
+	for (int i = 0; i < Count; ++i)
+		Gone[static_cast<size_t>(i)] = Vanishes(S.Song, Notes[static_cast<size_t>(i)], RowFrames, Heard[static_cast<size_t>(i)]) ? 1 : 0;
+	// M, a note before (or After) N, holds right beside it in its register
+	auto Beside = [&](const NoteInfo &M, const NoteInfo &N, bool After) {
+		const int Gap = After ? M.Row - (N.Row + N.Rows) : N.Row - (M.Row + M.Rows);
+		return Gap <= S.Time.RowsPerBeat && std::abs(M.Pitch - N.Pitch) < 12 && Holds(S.Song, M, RowFrames);
+	};
+	std::map<int, Vanishing> By;
+	for (int i = 0; i < Count; ) {
+		if (!Gone[static_cast<size_t>(i)]) {
+			++i;
+			continue;
+		}
+		int j = i;
+		while (j + 1 < Count && Gone[static_cast<size_t>(j + 1)])
+			++j;
+		if (j - i + 1 <= MAX_VANISHING_RUN && i > 0 && j + 1 < Count &&
+			Beside(Notes[static_cast<size_t>(i - 1)], Notes[static_cast<size_t>(i)], false) &&
+			Beside(Notes[static_cast<size_t>(j + 1)], Notes[static_cast<size_t>(j)], true)) {
+			for (int k = i; k <= j; ++k) {
+				const NoteInfo &N = Notes[static_cast<size_t>(k)];
+				if (N.Row < First || N.Row >= End)
+					continue;
+				std::map<int, Vanishing>::iterator it = By.find(N.Instrument);
+				if (it == By.end()) {
+					Vanishing V;
+					V.Instrument = N.Instrument;
+					V.Heard = 0;
+					V.Held = Notes[static_cast<size_t>(i - 1)].Instrument;
+					it = By.insert(std::make_pair(N.Instrument, V)).first;
+				}
+				it->second.Heard = std::max(it->second.Heard, Heard[static_cast<size_t>(k)]);
+				it->second.Rows.push_back(N.Row);
+			}
+		}
+		i = j + 1;
+	}
+	for (std::map<int, Vanishing>::const_iterator it = By.begin(); it != By.end(); ++it)
+		if (static_cast<int>(it->second.Rows.size()) >= MIN_VANISHING)
+			Out.push_back(it->second);
+	return Out;
+}
+
+std::string VanishingText(Session &S, int Channel, const Vanishing &V)
+{
+	return Format("%s on %s (%s) play %s, which is gone within %s, between notes of the line that hold (%s): next to "
+		"those they sound like missing notes, a tick in their place. Give them a sound that lasts, a pluck that settles to a "
+		"level instead of dying (design_instrument kind pluck, sustain half) or the held notes' sound; sounds that vanish this "
+		"fast are for echoes, stabs and drums.", Plural(static_cast<int>(V.Rows.size()), "note", "notes").c_str(),
+		S.Channel(Channel).FullName().c_str(), RangeText(S.Time.BarOf(V.Rows.front()), S.Time.BarOf(V.Rows.back())).c_str(),
+		InstrumentLabel(S.Song, V.Instrument).c_str(), Plural(V.Heard, "frame", "frames").c_str(),
+		InstrumentLabel(S.Song, V.Held).c_str());
+}
+
 // How loud a note plays over its rows [From, To) on average, as power against
 // a pulse at 15: its volume times its instrument's envelope frame by frame (a
 // pluck dies away, a pad swells), as FamiTracker plays each chip; the triangle
@@ -6755,6 +6899,33 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (LongBare > 0)
 			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(" no vibrato: polish adds a "
 				"gentle one that comes in after half a beat."));
+		// Notes that vanish: a tune on a sound that's gone within a few frames, or some of its notes beside ones that hold.
+		// The user hears them as missing notes, so they cost the most
+		if (CanVanish(S.Channel(Melody))) {
+			const std::vector<int> RowFrames = RowFramesOf(S);
+			int Long = 0, Gone = 0, GoneFor = 0, GoneSound = NO_INSTRUMENT;
+			for (size_t i = 0; i < Tune.size(); ++i) {
+				int HeardFor;
+				if (Tune[i].Volume <= 0 || NoteFrames(Tune[i], RowFrames) < 6)
+					continue;
+				++Long;
+				if (Vanishes(S.Song, Tune[i], RowFrames, HeardFor)) {
+					++Gone;
+					GoneFor = std::max(GoneFor, HeardFor);
+					GoneSound = Tune[i].Instrument;
+				}
+			}
+			if (Long >= 8 && Gone * 2 >= Long)
+				Tip(2.5, Format("Most of the melody's notes are gone within %s (%s): a tune of blips sounds like ticks, not a "
+					"melody. Give it a sound that lasts, a lead or a pluck that settles to a level (design_instrument kind pluck, "
+					"sustain half); sounds that vanish this fast are for echoes, stabs and drums.", Plural(GoneFor, "frame",
+					"frames").c_str(), InstrumentLabel(S.Song, GoneSound).c_str()));
+			else {
+				const std::vector<Vanishing> Found = VanishingNotes(S, Melody, First, End, RowFrames);
+				for (size_t i = 0; i < Found.size(); ++i)
+					Tip(2.5, "Melody notes vanish: " + VanishingText(S, Melody, Found[i]));
+			}
+		}
 	}
 
 	// Dynamics: parts at one volume throughout
@@ -11037,6 +11208,18 @@ std::string CheckTool(Session &S, const Json &Args)
 			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."));
 	}
 	const int Clicking = static_cast<int>(Clicks.size());
+	// Vanishing: notes of a line on a sound that's gone within a few frames, beside the line's notes that hold
+	int Vanished = 0;
+	{
+		const std::vector<int> RowFrames = RowFramesOf(S);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const std::vector<Vanishing> Found = VanishingNotes(S, c, First, End, RowFrames);
+			for (size_t i = 0; i < Found.size(); ++i) {
+				Vanished += static_cast<int>(Found[i].Rows.size());
+				Report("Vanishing: " + VanishingText(S, c, Found[i]));
+			}
+		}
+	}
 
 	std::string Unused;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
@@ -11046,8 +11229,8 @@ std::string CheckTool(Session &S, const Json &Args)
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
 	Text += Found ? " in " + KeyName(K) + (Arg(Args, "key") != 0 ? "" : " (found from the notes)") : " (no key: no notes)";
-	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking.", OutOfKey, Clashes, OutOfRange,
-		Busy, Silent, Clicking);
+	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing.", OutOfKey,
+		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
 	if (!Unused.empty())
 		Text += " Unused channels (free for harmony, an echo or a counter-melody): " + Unused + ".";
 	for (size_t i = 0; i < Findings.size(); ++i)
@@ -11815,6 +11998,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Out += " Its duty was translated from the " + Sound.Chip + "'s.";
 	if (Sound.Triangle && !Sawtooth && pChannel != 0 && S.Channel(ParseChannel(S, *pChannel, "channel")).Kind != KIND_TRIANGLE)
 		Out += " It was a triangle sound: on a pulse it plays with the pulse's duty.";
+	const bool OnTriangle = pChannel != 0 ? S.Channel(ParseChannel(S, *pChannel, "channel")).Kind == KIND_TRIANGLE : Sound.Triangle;
+	if (!Sound.Noise && !OnTriangle)
+		Out += VanishRemark(S.Song, Index);
 	return Out + " Use it with write_notes or set_instrument.";
 }
 
@@ -12002,7 +12188,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("decay_style", EnumProp("smooth (default), or steps: holds, then drops a few levels at a time, like the leads "
 				"of fast action tracks.", std::vector<std::string>{ "smooth", "steps" }))
 			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
-				"high, full, or 0-15."))
+				"high, full, or 0-15. A tune's notes need one (half, say) unless the decay is long: a sound gone within a few "
+				"frames turns quick notes into blips."))
 			.Add("release", LevelProp("short, medium, long, or frames (0-60): how it fades after a release (===)."))
 			.Add("restrike_beats", Prop("number", "Strike a held note again every so many beats (0.5: eighths), a dip and a rise, "
 				"so long notes keep the rhythm. 0 for none."))
@@ -12822,7 +13009,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"What makes the song sound plain, as a musician would hear it: which parts play (melody, chords, bass, drums, a "
 		"second line) and which are missing, bars where only one or two play, the chords (how many, plain triads or "
 		"colored, the same loop all the way), a bass that only holds roots, drums without fills, a melody with one note "
-		"length or no rests, phrases and whole sections that repeat unchanged, flat dynamics, parts crowding the "
+		"length or no rests, melody notes on a sound that's gone within a few frames (they sound missing), phrases and whole "
+		"sections that repeat unchanged, flat dynamics, parts crowding the "
 		"melody's register, a bass in octaves with the melody, and the length. It scores the depth out of 10 and lists "
 		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done. A calm "
 		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills or accents of it.",
@@ -12837,7 +13025,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("check_song", "Check the song",
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
-		"range, very busy bars, silent bars and unused channels. Run it after writing.",
+		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
+		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels. Run it "
+		"after writing.",
 		Schema().Add("key", Prop("string", "Key to check against. Default: found from the notes.")).Range(), true, false, true);
 
 	AddTool("look_at_song", "Look at the notes",
@@ -13021,7 +13211,12 @@ std::string ToolSet::Instructions()
 		"takes a held note's period across a multiple of 256 restarts the wave every time it crosses, a click several times "
 		"a second (A-3, period 253, does with the gentlest vibrato; F-1 with any): the tools nudge such notes a few cents "
 		"(Pxx) as they write them and say so, check_song lists any left (after an instrument's vibrato changes, say), and "
-		"polish touches clicks nudges them.\n"
+		"polish touches clicks nudges them. A tune's notes need a sound that lasts: on a pluck that's gone within a few "
+		"frames (15 10 5 2 1 0) quick notes come out as blips, and beside held notes of the same line they sound like missing "
+		"notes with a tick in their place (a user heard it at once). Give a plucked melody an envelope that settles to a level "
+		"(design_instrument kind pluck, sustain half: 15 down to about 9), check reference_sound's sounds before a tune uses "
+		"them, and keep sounds that vanish for echoes, stabs and drums; check_song and review_arrangement point such notes "
+		"out.\n"
 		"- For a game: name_song first (the export is named after the track), then export_for_game at the loudness for its kind "
 		"of place, so the tracks sit together: about -22 LUFS for calm places, -19 for action and bosses, -20 for the rest. A "
 		"boss with phases can be a track per phase (make_version gives the second track to rewrite), and the game switches "
