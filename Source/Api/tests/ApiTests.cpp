@@ -8357,8 +8357,7 @@ void TestVanishing()
 	{
 		FakeSong Busy = Song;
 		for (int r = 64; r < 128; ++r)
-			Busy.Put(1, r, r % 2 == 0 ? "C#3" : "F#3", 2);
-		Busy.End(1, 128);
+			Busy.Put(1, r, r % 2 == 0 ? "C#3" : "F#3", 2);	// to the song's end (its last row is 127)
 		const std::string Listed = Run(Busy, "check_song", "{\"key\": \"C major\"}").Text;
 		CHECK(Listed.find("Vanishing: 3 notes") != std::string::npos && Listed.find("Vanishing: 3 notes") < Listed.find("Outside C major"));
 		CHECK_HAS(Listed, "... and 22 more notes outside the key.");
@@ -8373,6 +8372,10 @@ void TestVanishing()
 	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
 	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 6, 4, 3 };
 	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
+	// Struck again as it loops back up (a tremolo of plucks): heard again
+	Song.Info.Instruments.back().VolumeLoop = 0;
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");
+	Song.Info.Instruments.back().VolumeLoop = -1;
 	// A long decay is heard
 	Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 12, 10, 9, 8, 7, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0 };
 	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, ", 0 vanishing.");

@@ -6384,12 +6384,22 @@ bool CanVanish(const ChannelInfo &Info)
 	return Info.Kind == KIND_PULSE || Info.Kind == KIND_SAWTOOTH || Info.Kind == KIND_OTHER;
 }
 
-// Whether a note vanishes (Heard: the frames it's heard for), or holds
+// Whether a note vanishes (Heard: the frames it's heard for), or holds. A sound struck again while the note lasts (an
+// envelope that loops back up, an echo of itself at half its level or more) is heard again, so it doesn't vanish
 bool Vanishes(const SongInfo &Song, const NoteInfo &N, const std::vector<int> &RowFrames, int &Heard)
 {
 	const int Frames = NoteFrames(N, RowFrames);
 	Heard = HeardFrames(Song, N, Frames);
-	return N.Volume > 0 && Heard <= VANISH_FRAMES && Frames >= Heard + 2;
+	if (N.Volume <= 0 || Heard > VANISH_FRAMES || Frames < Heard + 2)
+		return false;
+	const std::vector<int> Envelope = HeldEnvelope(FindInstrument(Song, N.Instrument), Frames);
+	int Peak = 0;
+	for (int f = 0; f < Heard; ++f)
+		Peak = std::max(Peak, PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]));
+	for (int f = Heard; f < Frames; ++f)
+		if (PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]) * 2 >= Peak)
+			return false;
+	return true;
 }
 
 bool Holds(const SongInfo &Song, const NoteInfo &N, const std::vector<int> &RowFrames)
