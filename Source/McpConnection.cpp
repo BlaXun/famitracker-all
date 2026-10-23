@@ -39,6 +39,7 @@
 #include "Api/Mcp.h"
 #include "Api/Music.h"
 #include "Api/Presets.h"
+#include "Api/Sections.h"
 #include "Api/Song.h"
 #include "Api/SoundEffects.h"
 #include "Api/Tools.h"
@@ -54,6 +55,7 @@
 #include "TrackerChannel.h"
 #include "ChannelMap.h"
 #include "Action.h"
+#include "FrameAction.h"
 #include "ChipSwitch.h"
 #include "Clips.h"
 #include "InsertRecording.h"
@@ -88,6 +90,8 @@ const UINT WM_MCP_REQUEST = WM_APP + 0x3C1;
 const UINT_PTR PLAY_TIMER = 1;
 const TCHAR WINDOW_CLASS[] = _T("FamiTrackerClaudeCode");
 const TCHAR WSL_HELPER[] = _T("famitracker-mcp.exe");	// for Claude Code in WSL (Api/Bridge.h)
+const char SECTIONS_REFUSED[] = "FamiTracker can't keep those sections: each is a run of the track's frames, apart from the "
+	"others, with a name of its own of at most 32 characters (in FamiTracker's character set).";
 
 // Text between the API (UTF-8) and FamiTracker (the ANSI code page)
 std::string Utf8(LPCSTR pText)
@@ -122,6 +126,23 @@ CString Ansi(const std::string &Text)
 	std::vector<char> Out(static_cast<size_t>(Bytes));
 	WideCharToMultiByte(CP_ACP, 0, &Buffer[0], -1, &Out[0], Bytes, "?", NULL);
 	return CString(&Out[0]);
+}
+
+// Sections' names between the API (UTF-8) and the module (the ANSI code page)
+ftapi::SectionList Utf8Sections(const ftapi::SectionList &In)
+{
+	ftapi::SectionList Out(In);
+	for (size_t i = 0; i < Out.size(); ++i)
+		Out[i].Name = Utf8(In[i].Name.c_str());
+	return Out;
+}
+
+ftapi::SectionList AnsiSections(const ftapi::SectionList &In)
+{
+	ftapi::SectionList Out(In);
+	for (size_t i = 0; i < Out.size(); ++i)
+		Out[i].Name = static_cast<LPCSTR>(Ansi(In[i].Name));
+	return Out;
 }
 
 ftapi::Cell ToCell(const stChanNote &Note)
@@ -829,6 +850,7 @@ public:
 				Clip.Sources.push_back(pClips->GetSource(i, c));
 			Info.Clips.push_back(Clip);
 		}
+		Info.Sections = Utf8Sections(pDoc->GetSections()->Get(static_cast<int>(Track)));
 		Info.DirectChanges = m_Settings.DirectChanges;
 		Info.Playing = theApp.IsPlaying();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
@@ -1368,10 +1390,43 @@ public:
 			Error = "There was nothing to write.";
 			return false;
 		}
+		ftapi::SectionStore Sections;
+		if (Write.SetSections) {
+			Sections.Set(0, AnsiSections(Write.Sections));
+			if (!ftapi::ValidSections(Sections.Get(0), 0)) {
+				Error = SECTIONS_REFUSED;
+				return false;
+			}
+		}
 		CString Message;
 		if (!WriteSongParts(m_pMain, Raw.empty() ? NULL : &Raw[0], static_cast<int>(Raw.size()), Write.First / Length,
-			Write.First % Length, Write.LinkClipId, Write.MoveFrame, Write.MoveBy, Write.Cursor, Message)) {
+			Write.First % Length, Write.LinkClipId, Write.MoveFrame, Write.MoveBy, Write.Cursor, Message,
+			Write.SetSections ? &Sections : NULL)) {
 			Error = Utf8(Message);
+			return false;
+		}
+		return true;
+	}
+
+	bool SetSections(const ftapi::SectionList &Sections, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		const int Track = static_cast<int>(this->Track());
+		const ftapi::SectionList List = AnsiSections(Sections);
+		if (!ftapi::ValidSections(List, static_cast<int>(pDoc->GetFrameCount(static_cast<unsigned int>(Track))))) {
+			Error = SECTIONS_REFUSED;
+			return false;
+		}
+		if (List == pDoc->GetSections()->Get(Track))
+			return true;
+		ftapi::SectionStore *pStore = new ftapi::SectionStore();
+		pStore->Set(0, List);
+		CFrameAction *pAction = new CFrameAction(CFrameAction::ACT_SECTIONS);
+		pAction->SetSections(pStore);
+		if (!m_pMain->AddAction(pAction)) {
+			Error = "The sections couldn't be changed.";
 			return false;
 		}
 		return true;

@@ -117,6 +117,7 @@ public:
 		std::string Name;
 		int Speed, Tempo;
 		std::vector<std::vector<Cell> > Rows;
+		SectionList Sections;
 	};
 
 	SongInfo Info;
@@ -127,6 +128,8 @@ public:
 	std::map<std::string, std::string> Files;	// saved next to the song
 	int RenderLatency;							// samples of silence before the song starts
 	std::vector<std::vector<std::vector<Cell> > > History;
+	std::vector<SectionList> SectionHistory;	// with History: the sections before each change
+	int SectionWrites = 0;
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
 	SongWrite LastWrite;
@@ -174,11 +177,13 @@ public:
 		Tracks[Current].Speed = Info.Speed;
 		Tracks[Current].Tempo = Info.Tempo;
 		Tracks[Current].Rows = Rows;
+		Tracks[Current].Sections = Info.Sections;
 		Current = Track;
 		Info.TrackName = Tracks[Track].Name;
 		Info.Speed = Tracks[Track].Speed;
 		Info.Tempo = Tracks[Track].Tempo;
 		Rows = Tracks[Track].Rows;
+		Info.Sections = Tracks[Track].Sections;
 	}
 
 	// The notes a preset's looping arpeggio plays besides each note, as FamiTracker reports them
@@ -296,7 +301,12 @@ public:
 			Error = "Those frames can't move.";
 			return false;
 		}
+		if (Write.SetSections && !ValidSections(Write.Sections, 0)) {
+			Error = "Those sections can't be.";
+			return false;
+		}
 		History.push_back(Rows);
+		SectionHistory.push_back(Info.Sections);
 		const size_t At = static_cast<size_t>(Write.MoveFrame) * Length;
 		for (size_t c = 0; c < Rows.size(); ++c) {
 			if (Write.MoveBy > 0)
@@ -305,6 +315,11 @@ public:
 				Rows[c].erase(Rows[c].begin() + static_cast<std::ptrdiff_t>(At),
 					Rows[c].begin() + static_cast<std::ptrdiff_t>(At + static_cast<size_t>(-Write.MoveBy) * Length));
 		}
+		// The sections follow the frames moved, as CFamiTrackerDoc's InsertFrame and RemoveFrame move them
+		if (Write.MoveBy > 0)
+			SectionsInsertFrames(Info.Sections, Write.MoveFrame, Write.MoveBy);
+		else if (Write.MoveBy < 0)
+			SectionsRemoveFrames(Info.Sections, Write.MoveFrame, -Write.MoveBy);
 		const size_t First = static_cast<size_t>(Write.First);
 		size_t Needed = Rows[0].size();
 		for (size_t p = 0; p < Parts.size(); ++p)
@@ -366,9 +381,30 @@ public:
 			int &Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
 			Shown = std::max(Shown, Needed);
 		}
+		// The sections as asked, inside the frames there are (as CInsertRecordingAction sets them)
+		if (Write.SetSections)
+			Info.Sections = Write.Sections;
+		SectionsFrameCount(Info.Sections, static_cast<int>(Rows[0].size() / Length));
 		++Writes;
 		LastLink = Write.LinkClipId;
 		LastWrite = Write;
+		return true;
+	}
+
+	bool SetSections(const SectionList &Sections, std::string &Error) override
+	{
+		if (Busy) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		if (!ValidSections(Sections, static_cast<int>(Rows[0].size()) / Info.PatternLength)) {
+			Error = "Those sections can't be.";
+			return false;
+		}
+		History.push_back(Rows);
+		SectionHistory.push_back(Info.Sections);
+		Info.Sections = Sections;
+		++SectionWrites;
 		return true;
 	}
 
@@ -916,6 +952,10 @@ public:
 			return false;
 		Rows = History.back();
 		History.pop_back();
+		if (!SectionHistory.empty()) {
+			Info.Sections = SectionHistory.back();
+			SectionHistory.pop_back();
+		}
 		Message = "Undid it.";
 		return true;
 	}
@@ -6422,6 +6462,373 @@ void TestBars()
 	}
 }
 
+// Sections: named runs of a track's frames (Sections.h)
+
+// "Intro 0-0, A 1-3"
+std::string Layout(const SectionList &List)
+{
+	std::string Out;
+	for (size_t i = 0; i < List.size(); ++i) {
+		char Buffer[80];
+		std::snprintf(Buffer, sizeof(Buffer), "%s%s %d-%d", i == 0 ? "" : ", ", List[i].Name.c_str(), List[i].First, List[i].Last);
+		Out += Buffer;
+	}
+	return Out;
+}
+
+// Intro on frame 0, A on 1-3, B on 4-5 (frames 6 and 7 without one)
+SectionList ThreeSections()
+{
+	SectionList List;
+	List.push_back(Section("Intro", 0, 0));
+	List.push_back(Section("A", 1, 3));
+	List.push_back(Section("B", 4, 5));
+	return List;
+}
+
+void TestSections()
+{
+	// Lookups and names
+	{
+		SectionList List;
+		List.push_back(Section("Intro", 0, 0));
+		List.push_back(Section("A", 1, 2));
+		List.push_back(Section("Chorus 2", 5, 6));
+		CHECK(SectionAt(List, 0) == 0 && SectionAt(List, 2) == 1 && SectionAt(List, 3) == -1 && SectionAt(List, 6) == 2);
+		CHECK(FindSection(List, " intro ") == 0 && FindSection(List, "a") == 1 && FindSection(List, "B") == -1);
+		CHECK(!SectionNameProblem("").empty() && !SectionNameProblem("   ").empty() && !SectionNameProblem("A\tB").empty());
+		CHECK(SectionNameProblem(std::string(32, 'x')).empty() && !SectionNameProblem(std::string(33, 'x')).empty());
+		CHECK_EQ(TrimSectionName("  Bridge "), std::string("Bridge"));
+		CHECK_EQ(FreeSectionName(List, "Bridge"), std::string("Bridge"));
+		CHECK_EQ(FreeSectionName(List, "A"), std::string("A 2"));
+		CHECK_EQ(FreeSectionName(List, "Chorus"), std::string("Chorus"));
+		CHECK_EQ(FreeSectionName(List, "chorus 2"), std::string("chorus 3"));
+		CHECK_EQ(FreeSectionName(List, std::string(32, 'x')), std::string(32, 'x'));
+		List.push_back(Section(std::string(32, 'x'), 7, 7));
+		CHECK_EQ(FreeSectionName(List, std::string(32, 'x')), std::string(30, 'x') + " 2");
+		CHECK(ValidSections(List, 8) && !ValidSections(List, 7));
+		List.push_back(Section("a", 9, 9));
+		CHECK(!ValidSections(List, 0));	// a name twice
+		// Repeats share a color
+		CHECK(SectionColor("Chorus") == SectionColor("chorus 2") && SectionColor("A") == SectionColor("A 3"));
+		CHECK(SectionColor("Intro") >= 0 && SectionColor("Intro") < SECTION_COLORS);
+	}
+
+	// Naming frames: the others give them up, a name used elsewhere moves
+	{
+		SectionList List;
+		NameFrames(List, 2, 3, "Verse");
+		NameFrames(List, 0, 1, "Intro");
+		CHECK_EQ(Layout(List), "Intro 0-1, Verse 2-3");
+		NameFrames(List, 6, 9, "Chorus");
+		NameFrames(List, 7, 7, "Break");	// inside another: it keeps its frames before
+		CHECK_EQ(Layout(List), "Intro 0-1, Verse 2-3, Chorus 6-6, Break 7-7");
+		NameFrames(List, 1, 2, " Pickup ");	// over the end of one and the start of the next
+		CHECK_EQ(Layout(List), "Intro 0-0, Pickup 1-2, Verse 3-3, Chorus 6-6, Break 7-7");
+		NameFrames(List, 8, 9, "intro");
+		CHECK_EQ(Layout(List), "Pickup 1-2, Verse 3-3, Chorus 6-6, Break 7-7, intro 8-9");
+		NameFrames(List, 3, 3, "V");	// all of one: it goes
+		CHECK_EQ(Layout(List), "Pickup 1-2, V 3-3, Chorus 6-6, Break 7-7, intro 8-9");
+		UnnameFrames(List, 2, 6);
+		CHECK_EQ(Layout(List), "Pickup 1-1, Break 7-7, intro 8-9");
+		CHECK(!RenameSection(List, 0, "BREAK") && RenameSection(List, 0, " Lead-in ") && List[0].Name == "Lead-in");
+		CHECK(RenameSection(List, 1, "break") && List[1].Name == "break");	// its own name, written another way
+		RemoveSection(List, 1);
+		CHECK_EQ(Layout(List), "Lead-in 1-1, intro 8-9");
+	}
+
+	// The frame list changing
+	{
+		const SectionList Start = ThreeSections();
+		SectionList List = Start;
+		SectionsInsertFrames(List, 2, 1);	// between two frames of A: it's A's
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-4, B 5-6");
+		List = Start;
+		SectionsInsertFrames(List, 4, 2);	// where B starts: before it
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 6-7");
+		List = Start;
+		SectionsInsertFrames(List, 6, 1);	// after B ends
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-5");
+		List = Start;
+		SectionsCopyFrame(List, 3);			// a copy of A's last frame is A's
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-4, B 5-6");
+		List = Start;
+		SectionsCopyFrame(List, 0);			// of a section of one frame
+		CHECK_EQ(Layout(List), "Intro 0-1, A 2-4, B 5-6");
+		List = Start;
+		SectionsCopyFrame(List, 6);			// of a frame without a section
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-5");
+		List = Start;
+		SectionsInsertFrames(List, 1, 1);	// Duplicate patterns of frame 0: InsertFrame, then the copy joins
+		SectionsJoinBefore(List, 1);
+		CHECK_EQ(Layout(List), "Intro 0-1, A 2-4, B 5-6");
+		List = Start;
+		SectionsRemoveFrames(List, 0, 1);	// all of Intro: it goes
+		CHECK_EQ(Layout(List), "A 0-2, B 3-4");
+		List = Start;
+		SectionsRemoveFrames(List, 2, 3);	// A's last two frames and B's first
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-1, B 2-2");
+		List = Start;
+		SectionsFrameCount(List, 5);
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-4");
+		SectionsFrameCount(List, 4);
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3");
+
+		// Frames moved as a block
+		List = Start;
+		SectionsMoveFrames(List, 4, 5, 1);	// all of B, before A: B goes along
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-2, A 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 3, 3, 4);	// Move frame down on A's last: it leaves A, landing inside B
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-2, B 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 0, 0, 1);	// Intro into A, bringing its name: A ends there
+		CHECK_EQ(Layout(List), "A 0-0, Intro 1-1, B 4-5");
+		List = Start;
+		SectionsMoveFrames(List, 6, 7, 2);	// frames without a section into A: they join it
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-5, B 6-7");
+		List = Start;
+		SectionsMoveFrames(List, 1, 4, 3);	// A and B's first frame: A goes along, B gives that frame up
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-1, A 3-5");
+
+		// A whole section moving past its neighbour
+		CHECK(SectionMoveTarget(Start, 0, true, 8) == -1);	// Intro starts the song
+		CHECK(SectionMoveTarget(Start, 2, true, 8) == 1);	// B up past A: where A starts
+		CHECK(SectionMoveTarget(Start, 1, false, 8) == 3);	// A down past B's two frames
+		CHECK(SectionMoveTarget(Start, 2, false, 8) == 5);	// B down past a frame without a section
+		CHECK(SectionMoveTarget(Start, 2, false, 6) == -1);	// at the song's end
+		CHECK(SectionMoveTarget(Start, 3, false, 8) == -1);
+		List = Start;
+		SectionsMoveFrames(List, 1, 3, SectionMoveTarget(Start, 1, false, 8));
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-2, A 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 4, 5, SectionMoveTarget(Start, 2, false, 8));
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 5-6");
+	}
+
+	// Rows moving (insert_bars and remove_bars), on 64-row frames: Intro 0, A 1-2, B 3
+	{
+		SectionList List;
+		List.push_back(Section("Intro", 0, 0));
+		List.push_back(Section("A", 1, 2));
+		List.push_back(Section("B", 3, 3));
+		bool Exact = false;
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 64, 64, 5, Exact)), "Intro 0-0, A 2-3, B 4-4");	// where A starts
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 80, 64, 5, Exact)), "Intro 0-0, A 1-3, B 4-4");	// inside A's first frame
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 256, 128, 6, Exact)), "Intro 0-0, A 1-2, B 3-3");	// at the end
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 64, -128, 2, Exact)), "Intro 0-0, B 1-1");		// A taken out
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 128, 32, 5, Exact)), "Intro 0-0, A 1-3, B 4-4");	// half a frame into A
+		CHECK(!Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 0, -256, 1, Exact)), "");
+	}
+
+	// Every track's, and the module's block
+	{
+		SectionList Theme;
+		Theme.push_back(Section("Theme", 2, 4));
+		SectionStore Store;
+		CHECK(Store.Empty() && Store.Write().size() == 4u);
+		Store.Set(0, ThreeSections());
+		Store.Set(2, Theme);
+		CHECK(!Store.Empty() && Store.Get(1).empty() && Store.Get(2) == Theme && Store.Get(70).empty());
+		const std::vector<unsigned char> Data = Store.Write();
+		CHECK(Data.size() == 68u);
+		SectionStore Back;
+		Back.Set(5, Theme);	// what was there goes
+		CHECK(Back.Read(&Data[0], Data.size(), SectionStore::BLOCK_VERSION));
+		CHECK(Back.Get(0) == ThreeSections() && Back.Get(2) == Theme && Back.Get(1).empty() && Back.Get(5).empty());
+		CHECK(std::string(SectionStore::BLOCK_ID) == "BF SECTIONS");
+		// Cut short anywhere: nothing loaded, and no crash
+		for (size_t n = 0; n < Data.size(); ++n) {
+			SectionStore Cut;
+			Cut.Set(0, Theme);
+			CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, SectionStore::BLOCK_VERSION) && Cut.Empty());
+		}
+		// Damaged: nothing loaded
+		auto Damaged = [&](size_t At, unsigned char Value) {
+			std::vector<unsigned char> Bad(Data);
+			Bad[At] = Value;
+			SectionStore Read;
+			return !Read.Read(&Bad[0], Bad.size(), SectionStore::BLOCK_VERSION) && Read.Empty();
+		};
+		CHECK(Damaged(12, 1));		// Intro's first frame after its last
+		CHECK(Damaged(25, 'x'));	// Intro's name without its end
+		CHECK(Damaged(26, 0));		// A starting on Intro's frame
+		CHECK(Damaged(46, 0));		// track 2 as track 0 again
+		CHECK(Damaged(50, 0));		// track 2 with no sections
+		CHECK(Damaged(0, 65));		// more tracks than a module has
+		CHECK(Damaged(34, 'b'));	// A renamed "b", which B is called too
+		CHECK(Damaged(20, 1));		// a control character in a name
+		// A newer version is left out
+		SectionStore Later;
+		CHECK(Later.Read(&Data[0], Data.size(), SectionStore::BLOCK_VERSION + 1) && Later.Empty());
+
+		// Tracks swapped and removed, and sections past a track's frames
+		Store.TracksSwapped(1, 2);
+		CHECK(Store.Get(1) == Theme && Store.Get(2).empty());
+		Store.TrackRemoved(0);
+		CHECK(Store.Get(0) == Theme && Store.Get(1).empty());
+		Store.FitFrames(0, 3);
+		CHECK_EQ(Layout(Store.Get(0)), "Theme 2-2");
+		Store.FitFrames(0, 2);
+		CHECK(Store.Empty());
+	}
+
+	// The picture: a band under the bar numbers names them
+	{
+		const Timing T(64, 2, 4, 16);
+		PictureSpec Spec(T);
+		Spec.First = 0;
+		Spec.End = 128;
+		PictureChannel Channel;
+		Channel.Color = 0;
+		Channel.Kind = KIND_PULSE;
+		NoteInfo Note = NoteInfo();
+		Note.Row = 0;
+		Note.Rows = 16;
+		Note.Pitch = 48;
+		Note.Volume = 15;
+		Channel.Notes.push_back(Note);
+		const Picture Plain = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		PictureSection Band;
+		Band.Name = "Chorus";
+		Band.First = 64;
+		Band.End = 128;
+		Band.Color = 2;
+		Spec.Sections.push_back(Band);
+		const Picture Named = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		CHECK(Named.Width == Plain.Width && Named.Height == Plain.Height + 16);
+		int Red, Green, Blue;
+		SectionRgb(2, Red, Green, Blue);
+		const Rgb &Fill = Named.Palette[Named.Pixels[static_cast<size_t>(30 * Named.Width + 1000)]];
+		CHECK(Fill.R == 255 - (255 - Red) * 45 / 100 && Fill.G == 255 - (255 - Green) * 45 / 100 && Fill.B == 255 - (255 - Blue) * 45 / 100);
+		const Rgb &Before = Named.Palette[Named.Pixels[static_cast<size_t>(30 * Named.Width + 300)]];
+		CHECK(Before.R == 255 && Before.G == 255 && Before.B == 255);	// bars 1-4 have none
+	}
+}
+
+void TestSectionTools()
+{
+	// Naming bars: whole frames, said when they're widened
+	{
+		FakeSong Song = BarSong(4, true);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: none named yet");
+		std::string Text = Run(Song, "name_section", "{\"name\": \"Intro\", \"from_bar\": 1, \"to_bar\": 4}").Text;
+		CHECK_HAS(Text, "Changed the song: named bars 1-4 \"Intro\". One Ctrl+Z in FamiTracker undoes it. Sections now: \"Intro\" "
+			"bars 1-4; bars 5-16 aren't in one.");
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0");
+		Text = Run(Song, "name_section", "{\"name\": \"A\", \"from_bar\": 6, \"to_bar\": 10}").Text;
+		CHECK_HAS(Text, "named bars 5-12 \"A\"");
+		CHECK_HAS(Text, "A section is whole frames (4 bars each), so bars 6-10 went out to the frames they're in: bars 5-12.");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"B\", \"from_bar\": 13}").Text,
+			"Sections now: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16.");
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16\n");
+		// A name is used once: refused for a rename, moved for bars
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"b\", \"name\": \"intro\"}").Text,
+			"A section is called \"intro\" already: \"Intro\" (bars 1-4).");
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"B\", \"name\": \"Bridge\"}").Text, "renamed \"B\" (bars 13-16) \"Bridge\"");
+		Text = Run(Song, "name_section", "{\"name\": \"Break\", \"from_bar\": 9, \"to_bar\": 12}").Text;
+		CHECK_HAS(Text, "\"A\" is bars 5-8 now (it was bars 5-12).");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"intro\", \"from_bar\": 5}").Text,
+			"The name \"Intro\" moved here from bars 1-4.");
+		// Undone, step by step
+		CHECK(!Run(Song, "undo", "{}").IsError && !Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"Bridge\" bars 13-16\n");
+		// A name taken away
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"Bridge\", \"clear\": true}").Text,
+			"took the name \"Bridge\" off bars 13-16 (the bars stay as they are)");
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"Bridge\", \"clear\": true}").Text,
+			"No section is called \"Bridge\". The track's sections: \"Intro\" bars 1-4, \"A\" bars 5-12; bars 13-16 aren't in one.");
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 3, \"to_bar\": 6, \"clear\": true}").Text,
+			"\"Intro\" (bars 1-4) went. \"A\" is bars 9-12 now (it was bars 5-12). Sections now: \"A\" bars 9-12; bars 1-8 and "
+			"bars 13-16 aren't in one.");
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 1, \"to_bar\": 4, \"clear\": true}").Text, "Nothing would change");
+		// Asked properly
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 1}").Text, "Give the section's name with name");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\"}").Text, "Say which bars");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\", \"section\": \"A\", \"from_bar\": 1}").Text, "not both");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"A name much longer than thirty-two\", \"from_bar\": 1}").Text,
+			"at most 32 characters");
+		Song.Info.DirectChanges = false;
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\", \"from_bar\": 1}").Text, "needs direct changes");
+	}
+
+	// Sections in place of bars
+	{
+		FakeSong Song = BarSong(4, true);
+		Song.Info.Sections.push_back(Section("Intro", 0, 0));
+		Song.Info.Sections.push_back(Section("A", 1, 2));
+		Song.Info.Sections.push_back(Section("B", 3, 3));
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"b\"}").Text, "VRC6 Pulse 1, bars 13-16 ");
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"C\"}").Text,
+			"No section is called \"C\". The track's sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16.");
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"A\", \"from_bar\": 2}").Text, "Give a section or bars");
+		CHECK_HAS(Run(Song, "check_song", "{\"section\": \"A\"}").Text, "bars 5-12");
+		CHECK_HAS(Run(Song, "play", "{\"section\": \"A\"}").Text, "Playing for the user from bar 5 for 8 bars.");
+		CHECK(Song.PlayFirst == 64 && Song.PlayRows == 128);
+		CHECK_HAS(Run(Song, "play", "{\"section\": \"A\", \"bars\": 2}").Text, "leave bars out");
+		const ToolResult Look = Run(Song, "look_at_song", "{\"section\": \"A\"}");
+		CHECK_HAS(Look.Text, "Piano roll of bars 5-12");
+		CHECK_HAS(Look.Text, "The band under the bar numbers names the song's sections: \"A\" (bars 5-12).");
+		CHECK(!Look.Image.empty());
+		CHECK_HAS(Run(Song, "set_loop", "{\"section\": \"A\"}").Text, "bars 1-4 play once as an intro, then bars 5-12 loop");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "set_tempo", "{\"section\": \"B\", \"bpm\": 100}").Text, "bar 13");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		// remove_bars takes a section out, and its name with it; undone, both come back
+		const std::string Text = Run(Song, "remove_bars", "{\"section\": \"A\"}").Text;
+		CHECK_HAS(Text, "bars 5-12 taken out");
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"B\" bars 5-8.");
+		CHECK(Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == -2 && Song.LastWrite.SetSections);
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2, B 3-3");
+	}
+
+	// insert_bars: before a section, inside one, named
+	{
+		FakeSong Song = BarSong(3, true);
+		Song.Info.Sections.push_back(Section("Intro", 0, 0));
+		Song.Info.Sections.push_back(Section("A", 1, 2));
+		std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4, \"name\": \"Break\"}").Text;
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"Break\" bars 5-8, \"A\" bars 9-16.");
+		CHECK(Song.LastWrite.SetSections && Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == 1);
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2");
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 9, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"A\" bars 5-16.");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "The new bars aren't in a section: name_section names them.");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 6, \"bars\": 1, \"name\": \"X\"}").Text,
+			"A section is whole frames, and those bars aren't");
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 6, \"bars\": 1}").Text;
+		CHECK_HAS(Text, "moved by less than a frame, and a section is whole frames");
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2");
+	}
+
+	// copy_bars: a whole section's copy is its repeat
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Info.Sections.push_back(Section("A", 0, 0));
+		Song.Info.Sections.push_back(Section("B", 1, 1));
+		std::string Text = Run(Song, "copy_bars", "{\"section\": \"A\", \"at_bar\": 13}").Text;
+		CHECK_HAS(Text, "The copy is a section of its own, the original's repeat: \"A 2\" (bars 13-16).");
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-1, A 2 3-3");
+		Text = Run(Song, "copy_bars", "{\"section\": \"A\", \"at_bar\": 5}").Text;	// onto B: no new section
+		CHECK_LACKS(Text, "a section of its own");
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-1, A 2 3-3");
+		CHECK_HAS(Run(Song, "copy_bars", "{\"at_bar\": 5}").Text, "Say which bars to copy");
+	}
+
+	// The instructions teach it
+	CHECK_HAS(ToolSet::Instructions(), "name_section");
+}
+
 // OGG files for games
 
 void TestOgg()
@@ -8507,6 +8914,8 @@ int main()
 	TestLoops();
 	TestFixLoop();
 	TestBars();
+	TestSections();
+	TestSectionTools();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestOgg();
