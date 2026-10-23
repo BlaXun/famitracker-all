@@ -135,7 +135,9 @@ const Section SECTIONS[] = {
 		"- Echo tail: after the note fades, a soft repeat at a quarter of the volume. echo.\n"
 		"- Pitch flick: up and back in 3 frames on the attack. attack_pitch flick. Scoop: up into the note from below.\n"
 		"- Vibrato that waits: none for the first 12-24 frames, then 1-2 period steps either way over 6-8 frames per "
-		"side; only long notes get it. vibrato gentle with vibrato_delay_beats.\n"
+		"side; only long notes get it. vibrato gentle with vibrato_delay_beats. On the 2A03's pulses a vibrato that takes "
+		"the period across a multiple of 256 restarts the wave, a click every time (A-3, period 253, with any vibrato): the "
+		"tools nudge such notes a few cents with Pxx as they write them.\n"
 		"- Swell: 8 to 15 over 6-30 frames for held, singing notes, with vibrato.\n"
 		"reference_sound brings in a studied track's lead exactly; design_instrument makes your own." },
 	{ "echo", "Echoes, doubling and the second pulse", "echo delay doubling unison second pulse harmony thirds chorus",

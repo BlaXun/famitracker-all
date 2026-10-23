@@ -136,6 +136,30 @@ another one, the reply says which speed and tempo to set in the toolbar.
 While a dialog is open in FamiTracker, Claude reads but doesn't change
 anything; close the dialog and ask again.
 
+### Clicks in held notes on the 2A03's pulses
+
+The 2A03's two pulses (and the MMC5's) restart their wave whenever
+FamiTracker writes a new high byte of a note's period, which it does each
+time that byte changes. A vibrato (an instrument's built-in one, or `4xy`)
+that takes a held note's period across a multiple of 256 therefore clicks
+every time it crosses, several times a second: A-3 (period 253) does with
+the gentlest vibrato, F-1 (1280) with any, and A-2, D-2 and A-1 with a deep
+one. The VRC6's pulses and the triangle don't restart their waves.
+
+- When Claude changes the song directly, a note it writes that would click
+  is nudged a period step or two sharper or flatter with `Pxx` (a few
+  cents, at most 15), and the next note gets the fine pitch back (the
+  loop's first note too, when the nudged note is the song's last). The
+  reply names the notes, for example "A-3 at bar 5 beat 1 (P81, 7 cents
+  sharp)". A clip isn't nudged, since its neighbours are the song's once it's
+  placed; the reply says which of its notes would click.
+- `check_song` lists the notes that click: ones written before this, or
+  ones an instrument's vibrato reaches after it changed. `polish` with the
+  touch `clicks` nudges them, and `export_for_game` says when a track it
+  exported still clicks.
+- A vibrato too deep to nudge clear is named in the reply, so a gentler one
+  or another channel can take the note.
+
 ## What Claude can do (the tools)
 
 | Tool | What it does |
@@ -158,7 +182,7 @@ anything; close the dialog and ask again.
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's |
-| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
@@ -175,7 +199,7 @@ anything; close the dialog and ask again.
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -463,7 +487,7 @@ avoid that, and gives it tools for each layer:
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
-  between repeated triangle notes; when asked, fades on held notes, `A0y`
+  between repeated triangle notes, a nudge for notes that click; when asked, fades on held notes, `A0y`
   from halfway through, scoops into held notes after a leap up, falls (a
   sigh of two semitones, `R42`) where phrases end, and a staccato bass that
   bounces);
@@ -823,6 +847,10 @@ The song has to be saved, since the files go next to it; files of the same
 names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
 files. Every channel is in the files, also the ones muted in the pattern
 editor; they're muted again afterwards.
+
+A track whose notes click on the 2A03's pulses (see "Clicks in held notes
+on the 2A03's pulses") is exported as it is, and the reply says so:
+`polish` with the touch `clicks` nudges those notes, then export again.
 
 ## Safety
 

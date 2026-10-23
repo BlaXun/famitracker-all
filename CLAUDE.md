@@ -96,6 +96,12 @@ and strums voiced chords with `Gxx`; `polish`'s touches are `Accents`,
 the effects of columns a channel doesn't show (they don't play), and
 `CInsertRecordingAction` shows more columns where written effects need them
 (undoably).
+`Source/Api/PulseClicks.cpp` plays the 2A03's and MMC5's pulse notes a
+frame at a time as the 0.4.6 channel handlers do (sequences, `4xy`, `Pxx`,
+slides, volume): a vibrato that takes a held note's period across a multiple
+of 256 clicks (see Gotchas), and `Commit` nudges the notes a direct change
+leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
+`polish`'s `clicks` touch fixes older ones and `export_for_game` warns.
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
@@ -513,6 +519,16 @@ NSF export still uses the 2A03 driver. Touch points:
 
 ## Gotchas
 
+- **Pulse vibrato clicks:** `CSquare1Chan::RefreshChannel` (and the MMC5's)
+  writes the period's high register (`$4003`) only when its value changes,
+  and `CSquare::Write` resets the duty step on that write, as the 2A03
+  does; the NSF driver behaves the same. A vibrato (pitch sequence or `4xy`)
+  that takes a held note across a multiple of 256 in the period restarts
+  the wave every time it crosses, about ten clicks a second. A-3 (period
+  253) does with a gentle vibrato of 3 steps, F-1 (1280) with any; A-2
+  (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
+  "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
+  `Commit` and the checks in step with the channel handlers.
 - **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
   (BSD licensed) keep upstream's files and LF line endings; both builds turn
   their warnings off, and only `libogg/include/ogg/config_types.h` is ours.

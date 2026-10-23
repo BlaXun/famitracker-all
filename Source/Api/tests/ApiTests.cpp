@@ -38,6 +38,7 @@
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
+#include "../PulseClicks.h"
 #include "../References.h"
 #include "../Song.h"
 #include "../SoundEffects.h"
@@ -416,12 +417,23 @@ public:
 		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
 		// Its volume sequence, as FamiTracker reports it
 		const std::vector<PresetSequence> &Sequences = Chip == "VRC6" ? Sound.SequencesVRC6 : Sound.Sequences2A03;
-		for (size_t s = 0; s < Sequences.size(); ++s)
+		for (size_t s = 0; s < Sequences.size(); ++s) {
 			if (Sequences[s].Type == SEQUENCE_VOLUME) {
 				Info.Instruments.back().Volume = Sequences[s].Items;
 				Info.Instruments.back().VolumeLoop = Sequences[s].Loop;
 				Info.Instruments.back().VolumeRelease = Sequences[s].Release;
 			}
+			// and its arpeggio, pitch and hi-pitch sequences
+			SequenceInfo *pInto = Sequences[s].Type == SEQUENCE_ARPEGGIO ? &Info.Instruments.back().Steps :
+				Sequences[s].Type == SEQUENCE_PITCH ? &Info.Instruments.back().Pitch :
+				Sequences[s].Type == SEQUENCE_HIPITCH ? &Info.Instruments.back().HiPitch : 0;
+			if (pInto != 0 && !Sequences[s].Items.empty()) {
+				pInto->Items = Sequences[s].Items;
+				pInto->Loop = Sequences[s].Loop;
+				pInto->Release = Sequences[s].Release;
+				pInto->Setting = Sequences[s].Setting;
+			}
+		}
 		// As FamiTracker reports a VRC6 sound whose duty sequence plays odd values (its sawtooth version has none)
 		for (size_t s = 0; Chip == "VRC6" && !Sawtooth && s < Sound.SequencesVRC6.size(); ++s)
 			if (Sound.SequencesVRC6[s].Type == SEQUENCE_DUTY)
@@ -3386,7 +3398,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls or staccato");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato or clicks");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -8157,6 +8169,157 @@ void TestVrc7Octave()
 	CHECK(Tune.Rows[0][0].Pitch() == G3 && Tune.Rows[5][0].Pitch() == G3 - 8 + 12);	// as a pulse's would be G3 - 8
 }
 
+// Held notes on the 2A03's pulses whose vibrato takes the period across a multiple of 256 click: FamiTracker writes the
+// period's high byte again and the pulse restarts its wave (PulseClicks.h)
+void TestPulseClicks()
+{
+	// FamiTracker's periods next to the boundaries
+	CHECK_EQ(PulsePeriod(45, false), 253);	// A-3
+	CHECK_EQ(PulsePeriod(44, false), 268);	// G#3
+	CHECK_EQ(PulsePeriod(33, false), 507);	// A-2
+	CHECK_EQ(PulsePeriod(26, false), 761);	// D-2
+	CHECK_EQ(PulsePeriod(21, false), 1016);	// A-1
+	CHECK_EQ(PulsePeriod(17, false), 1280);	// F-1
+	CHECK_EQ(PulsePeriod(45, true), 235);	// A-3 on a PAL NES
+	CHECK(Near(NudgeCents(253, -1), 6.8, 0.1) && Near(NudgeCents(253, -2), 13.7, 0.1));
+
+	// A held A-3 on the singing lead (its vibrato goes 3 steps either way after 20 frames) reaches 256: written, it's
+	// nudged a step sharper, and the next note gets the fine pitch back
+	const std::string Sung = "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"singing lead\", \"notes\": ["
+		"{\"bar\": 1, \"beat\": 1, \"pitch\": \"A-3\", \"beats\": 4}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}";
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const ToolResult Result = Run(Song, "write_notes", Sung);
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "Note: 1 note on 2A03 Pulse 1 nudged a hair so its vibrato doesn't click (the 2A03's pulses restart "
+			"their wave when a vibrato takes the period across a multiple of 256): A-3 at bar 1 beat 1 (P81, 7 cents sharp).");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), 0x81);
+		CHECK_EQ(EffectAt(Song.Rows[0][16], EFF_PITCH), 0x80);
+		CHECK_EQ(Notes(Song, 0), std::string("0:A-3 16:C-4 24:=== "));
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+		// The same on a VRC6 pulse, which doesn't restart its wave, or a G#3: nothing to nudge
+		FakeSong Vrc6;
+		Vrc6.Info.DirectChanges = true;
+		std::string Other = Sung;
+		Other.replace(Other.find("2A03 Pulse 1"), 12, "VRC6 Pulse 1");
+		CHECK(Run(Vrc6, "write_notes", Other).Text.find("nudged") == std::string::npos);
+		CHECK_EQ(EffectAt(Vrc6.Rows[5][0], EFF_PITCH), -1);
+		FakeSong Lower;
+		Lower.Info.DirectChanges = true;
+		Other = Sung;
+		Other.replace(Other.find("A-3"), 3, "G#3");
+		CHECK(Run(Lower, "write_notes", Other).Text.find("nudged") == std::string::npos);
+		CHECK_EQ(EffectAt(Lower.Rows[0][0], EFF_PITCH), -1);
+	}
+
+	// Notes written before (or an instrument's vibrato changed later): check_song finds them, polish nudges them
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		const int Sing = Song.Info.Instruments.back().Index;
+		Song.Put(0, 0, "A-3", Sing);
+		Song.Put(0, 32, "A-3");
+		Song.Put(0, 48, "E-4");
+		Song.End(0, 56);
+		const std::string Found = Run(Song, "check_song", "{}").Text;
+		CHECK_HAS(Found, ", 2 clicking.");
+		CHECK_HAS(Found, "Click: A-3 on 2A03 Pulse 1 at bar 1 beat 1 clicks ");
+		CHECK_HAS(Found, " as it plays: its vibrato takes the period across 256, where the pulse restarts its wave. polish with "
+			"touches [\"clicks\"] nudges it (P81, 7 cents sharp).");
+		CHECK_HAS(Found, "Click: A-3 on 2A03 Pulse 1 at bar 3 beat 1 clicks ");
+		const ToolResult Polished = Run(Song, "polish", "{\"touches\": [\"clicks\"]}");
+		CHECK(!Polished.IsError);
+		CHECK_HAS(Polished.Text, "Touches: 2 notes on 2A03 Pulse 1 nudged a hair so their vibrato doesn't click (A-3 at bar 1 beat 1 "
+			"(P81, 7 cents sharp), A-3 at bar 3 beat 1 (P81, 7 cents sharp)).");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), 0x81);
+		CHECK_EQ(EffectAt(Song.Rows[0][32], EFF_PITCH), -1);	// still sharp from the first
+		CHECK_EQ(EffectAt(Song.Rows[0][48], EFF_PITCH), 0x80);
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"clicks\"]}").Text, "no notes that click");
+
+		// A song that ends on such a note: the loop's first note starts with the fine pitch it had
+		FakeSong Last;
+		Last.Info.DirectChanges = true;
+		Run(Last, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}");
+		Last.Put(0, 0, "C-4", Last.Info.Instruments.back().Index);
+		Last.Put(0, 96, "A-3");
+		CHECK(!Run(Last, "polish", "{\"touches\": [\"clicks\"]}").IsError);
+		CHECK_EQ(EffectAt(Last.Rows[0][96], EFF_PITCH), 0x81);
+		CHECK_EQ(EffectAt(Last.Rows[0][0], EFF_PITCH), 0x80);
+		CHECK_HAS(Run(Last, "check_song", "{}").Text, ", 0 clicking.");
+		// Written that way, the change reaches back to the loop's first note
+		FakeSong Ending;
+		Ending.Info.DirectChanges = true;
+		Run(Ending, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}");
+		Ending.Put(0, 0, "C-4", Ending.Info.Instruments.back().Index);
+		Ending.Put(3, 0, "4-#", 2);
+		const ToolResult Written = Run(Ending, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"notes\": [{\"bar\": 7, \"beat\": 1, "
+			"\"pitch\": \"A-3\", \"beats\": 8}]}");
+		CHECK_HAS(Written.Text, "A-3 at bar 7 beat 1 (P81, 7 cents sharp)");
+		CHECK_EQ(EffectAt(Ending.Rows[0][96], EFF_PITCH), 0x81);
+		CHECK_EQ(EffectAt(Ending.Rows[0][0], EFF_PITCH), 0x80);
+		CHECK_EQ(Notes(Ending, 0), std::string("0:C-4 96:A-3 "));
+		CHECK_EQ(Notes(Ending, 3), std::string("0:4-# "));
+		CHECK_HAS(Run(Ending, "check_song", "{}").Text, ", 0 clicking.");
+
+		// Exported as it is, it says so
+		FakeSong Loud;
+		Loud.Info.DirectChanges = true;
+		Run(Loud, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}");
+		Loud.Put(0, 0, "A-3", Loud.Info.Instruments.back().Index);
+		Loud.End(0, 32);
+		ToolSet Tools(Loud);
+		CHECK_HAS(Tools.Call("export_for_game", Parse("{}")).Text, "- Track 1: 1 note on the 2A03's pulses clicks in the files (a "
+			"vibrato that takes the period across a multiple of 256 restarts the wave): polish with touches [\"clicks\"] nudges them, "
+			"then export again; check_song lists them.");
+	}
+
+	// A 4xy vibrato of 4 steps either way needs two steps (14 cents)
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"Square\", \"notes\": ["
+			"{\"bar\": 1, \"beat\": 1, \"pitch\": \"A-3\", \"beats\": 4}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), -1);	// no vibrato yet
+		const ToolResult Result = Run(Song, "add_vibrato", "{\"channel\": \"2A03 Pulse 1\", \"depth\": \"medium\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "vibrato 454 on the longer notes of 2A03 Pulse 1");
+		CHECK_HAS(Result.Text, "A-3 at bar 1 beat 1 (P82, 14 cents sharp)");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), 0x82);
+		CHECK_EQ(EffectAt(Song.Rows[0][16], EFF_PITCH), 0x80);
+	}
+
+	// A medium vibrato (6 steps either way) needs 4 steps: from the row it starts in, so the note's attack stays in tune
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "design_instrument", "{\"name\": \"Wavy\", \"kind\": \"organ\", \"channel\": \"2A03 Pulse 1\", \"attack\": "
+			"\"instant\", \"decay\": \"none\", \"sustain\": \"full\", \"vibrato\": \"medium\"}").IsError);
+		const ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"Wavy\", \"notes\": ["
+			"{\"bar\": 1, \"beat\": 1, \"pitch\": \"A-3\", \"beats\": 4}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}");
+		CHECK_HAS(Result.Text, "A-3 at bar 1 beat 1 (P84 from bar 1 beat 1.75 as its vibrato starts, 27 cents sharp)");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), -1);
+		CHECK_EQ(EffectAt(Song.Rows[0][3], EFF_PITCH), 0x84);
+		CHECK_EQ(EffectAt(Song.Rows[0][16], EFF_PITCH), 0x80);
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking.");
+	}
+
+	// Too deep a vibrato to nudge clear: said, and left
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "design_instrument", "{\"name\": \"Wide\", \"kind\": \"organ\", \"channel\": \"2A03 Pulse 1\", \"attack\": "
+			"\"instant\", \"decay\": \"none\", \"sustain\": \"full\", \"vibrato\": \"strong\"}").IsError);
+		const ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"Wide\", \"notes\": ["
+			"{\"bar\": 1, \"beat\": 1, \"pitch\": \"A-3\", \"beats\": 4}]}");
+		CHECK_HAS(Result.Text, "1 note on 2A03 Pulse 1 still clicks: A-3 at bar 1 beat 1, its vibrato too deep to nudge clear");
+		CHECK_EQ(EffectAt(Song.Rows[0][0], EFF_PITCH), -1);
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, "Too deep a vibrato to nudge clear");
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -8196,6 +8359,7 @@ int main()
 	TestEchoAndVibrato();
 	TestMood();
 	TestCheck();
+	TestPulseClicks();
 	TestNameSong();
 	TestLoudness();
 	TestPlayback();

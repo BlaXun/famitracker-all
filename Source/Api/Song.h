@@ -48,6 +48,15 @@ struct ChannelInfo {
 	std::string FullName() const { return Chip + " " + Name; }	// "VRC6 Pulse 1"
 };
 
+// One of an instrument's sequences, as FamiTracker stores it
+struct SequenceInfo {
+	std::vector<int> Items;	// a value a frame; empty when the instrument has none
+	int Loop, Release;		// where it loops back to and where it waits for a release (-1: none)
+	int Setting;			// an arpeggio's: 0 absolute, 1 fixed, 2 relative (ARP_SETTING_*)
+
+	SequenceInfo() : Loop(-1), Release(-1), Setting(0) {}
+};
+
 struct InstrumentInfo {
 	int Index;				// 0-63
 	std::string Name;
@@ -62,6 +71,7 @@ struct InstrumentInfo {
 	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6 and
 								// N163 instruments; empty when it has none
 	int VolumeLoop, VolumeRelease;	// where that sequence loops back to and where it waits for a release (-1: none)
+	SequenceInfo Steps, Pitch, HiPitch;	// its arpeggio, pitch and hi-pitch sequences (2A03, VRC6 and N163 instruments)
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
 		VolumeRelease(-1) {}
@@ -87,6 +97,7 @@ struct SongInfo {
 	std::string TrackName;
 	std::vector<std::string> TrackNames;	// every track's, in order
 	int FrameRate;			// engine ticks a second (60 NTSC, 50 PAL)
+	bool Pal;				// a PAL module: the 2A07's clock sets the pulses' periods
 	int Speed, Tempo, SplitPoint;
 	int PatternLength, Frames, MaxFrames;
 	int FirstHighlight, SecondHighlight;
@@ -98,7 +109,7 @@ struct SongInfo {
 	bool Playing;
 	int PlayRow;			// from the song's start, -1 when stopped
 
-	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Speed(6), Tempo(150), SplitPoint(32),
+	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Pal(false), Speed(6), Tempo(150), SplitPoint(32),
 		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), DirectChanges(false),
 		Playing(false), PlayRow(-1) {}
 };
