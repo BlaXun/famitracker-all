@@ -218,7 +218,7 @@ std::vector<WaveSound> MakeSounds()
 		"a soft choir that swells in and holds under a lead: the choir's \"aah\" with its edge taken off",
 		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.45, 0.6, 0.3 }), HarmonicWave({ 1.0, 0.55, 0.5, 0.4, 0.08 }, { 0.0, 0.1, 0.0, 0.2 }) },
 		WaveSteps(Steps({ { 0, 12 }, { 1, 12 } }), 0), Envelope(20, 0, 11, 0, 11, 20, true, 30)));
-	Out.push_back(Sound("string pad", "soft strings, strings pad, slow strings, warm strings",
+	Out.push_back(Sound("string pad", "warm pad, soft strings, strings pad, slow strings, warm strings",
 		"strings swelling in slowly behind the melody, softer and rounder than the string ensemble",
 		Shimmer(SawHarmonics(6, 3.0), 2), WaveSteps(Steps({ { 0, 8 }, { 1, 8 }, { 2, 8 }, { 3, 8 } }), 0),
 		Envelope(24, 0, 11, 0, 11, 22, true, 34)));

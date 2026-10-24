@@ -11878,7 +11878,8 @@ void TestVrc6Plus()
 	}
 	CHECK(!IsSoftLayerSound("glass bell") && !IsSoftLayerSound("choir"));
 	CHECK(FindWaveSound("soft choir")->Name == "choir pad" && FindWaveSound("sub")->Name == "sub bass" &&
-		FindWaveSound("soft strings")->Name == "string pad" && FindWaveSound("choir")->Name == "choir");
+		FindWaveSound("soft strings")->Name == "string pad" && FindWaveSound("choir")->Name == "choir" &&
+		FindWaveSound("warm pad")->Name == "string pad");	// the preset's name on an N163 channel
 	CHECK(FindWaveSound("choir pad")->Releases() && FindWaveSound("string pad")->Waves.size() == 4u);
 	// What a song is missing, each wave in a place of its own under sample 128
 	std::vector<InstrumentInfo> Have;
