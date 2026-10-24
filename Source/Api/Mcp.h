@@ -26,9 +26,23 @@
 // with a JSON object. Both eras of the protocol are served: per-request
 // metadata (2026-07-28: server/discover, no handshake) and the initialize
 // handshake of 2025-03-26 to 2025-11-25. Requests are only accepted from
-// this computer (Host and Origin are checked) with the access token.
+// this computer (Host and Origin are checked) with the access token, and
+// from other computers on the user's home network when the user allows it
+// (McpConfig::Network, Network.h).
+//
+// The routes, every one needing the access token:
+// - POST /mcp: the tools (ToolSet), their instructions and the recipes.
+// - POST /mcp/core: a small set of them for local models, which struggle
+//   with 50 tools and long instructions (ToolSet::CoreTools), with short
+//   instructions (ToolSet::CoreInstructions) and no recipes.
+// - GET /files/<name>: a file export_for_game saved next to the song, for a
+//   client on another computer, which gets the link in its reply.
+// - PUT /inbox/<name>: a file into the Inbox folder next to FamiTracker.exe
+//   (the request's body, as the send_file tool takes it in base64), for the
+//   tools that read files on this computer (study_nsf, study_module...).
 
 #include <string>
+#include <vector>
 #include "Http.h"
 
 namespace ftapi {
@@ -39,8 +53,14 @@ struct McpConfig {
 	int Port;
 	std::string Token;			// required as "Authorization: Bearer <token>"; without one, nothing is answered
 	std::string Version;		// FamiTracker's, for serverInfo
+	// Other computers may connect (FamiTracker listens on the network too): requests from a home network's
+	// addresses are answered (others are refused), and Host headers naming this computer by one of its
+	// Addresses or its ComputerName are accepted besides 127.0.0.1 and localhost
+	bool Network;
+	std::vector<std::string> Addresses;	// this computer's IPv4 addresses ("192.168.1.10")
+	std::string ComputerName;			// its name on the network ("desktop-pc")
 
-	McpConfig() : Port(0) {}
+	McpConfig() : Port(0), Network(false) {}
 };
 
 const char *const MCP_MODERN_VERSION = "2026-07-28";
@@ -50,6 +70,10 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 
 // What a client runs to connect: claude mcp add ...
 std::string ClaudeAddCommand(const McpConfig &Config);
+
+// The address another computer connects to: http://192.168.1.10:46600/mcp,
+// or /mcp/core for the small set of tools
+std::string NetworkUrl(const std::string &Address, int Port, bool Core);
 
 // What Claude Code in WSL runs to connect through famitracker-mcp.exe (see
 // Bridge.h), given where that is on Windows. Running it again replaces the

@@ -21,6 +21,7 @@
 
 #include "Mcp.h"
 #include "Json.h"
+#include "Network.h"
 #include "Tools.h"
 
 #include <cstdio>
@@ -123,6 +124,13 @@ bool IsLocalHost(const std::string &Value)
 	return IsLocalName(Host);
 }
 
+// A Host header FamiTracker answers: 127.0.0.1 or localhost, and when other
+// computers may connect, this computer's addresses and name too
+bool IsAcceptedHost(const std::string &Value, const McpConfig &Config)
+{
+	return IsLocalHost(Value) || (Config.Network && NamesThisComputer(Value, Config.Addresses, Config.ComputerName));
+}
+
 // "http://localhost:3000": a page from this computer
 bool IsLocalOrigin(const std::string &Origin)
 {
@@ -195,6 +203,13 @@ bool DecodeHeaderValue(const std::string &Value, std::string &Out)
 	return true;
 }
 
+// What the request asked for: all the tools (/mcp) or the small set (/mcp/core), and who asks
+struct Endpoint {
+	bool Core;
+	Caller Who;
+	Endpoint() : Core(false) {}
+};
+
 Json ServerInfo(const McpConfig &Config)
 {
 	Json Info = Json::MakeObject();
@@ -211,11 +226,13 @@ Json ModernMeta(const McpConfig &Config)
 	return Meta;
 }
 
-Json ToolsJson(const ToolSet &Tools)
+Json ToolsJson(const ToolSet &Tools, const Endpoint &E)
 {
 	Json List = Json::MakeArray();
 	for (size_t i = 0; i < Tools.List().size(); ++i) {
 		const ToolInfo &Info = Tools.List()[i];
+		if (E.Core && !ToolSet::IsCoreTool(Info.Name))
+			continue;
 		Json Tool = Json::MakeObject();
 		Tool.Set("name", Info.Name);
 		Tool.Set("title", Info.Title);
@@ -234,7 +251,7 @@ Json ToolsJson(const ToolSet &Tools)
 }
 
 // tools/call: the result, or false with a JSON-RPC error
-bool CallTool(ToolSet &Tools, const Json &Params, Json &Out, int &ErrorCode, std::string &ErrorText)
+bool CallTool(ToolSet &Tools, const Endpoint &E, const Json &Params, Json &Out, int &ErrorCode, std::string &ErrorText)
 {
 	const Json *pName = Params.Get("name");
 	if (pName == 0 || !pName->IsString()) {
@@ -247,13 +264,19 @@ bool CallTool(ToolSet &Tools, const Json &Params, Json &Out, int &ErrorCode, std
 		ErrorText = "Unknown tool: " + pName->String();
 		return false;
 	}
+	if (E.Core && !ToolSet::IsCoreTool(pName->String())) {
+		ErrorCode = INVALID_PARAMS;
+		ErrorText = "Unknown tool: " + pName->String() + ". This is FamiTracker's small set of tools (/mcp/core); /mcp has all of them.";
+		return false;
+	}
 	const Json *pArguments = Params.Get("arguments");
 	if (pArguments != 0 && !pArguments->IsNull() && !pArguments->IsObject()) {
 		ErrorCode = INVALID_PARAMS;
 		ErrorText = "The tool's arguments should be an object.";
 		return false;
 	}
-	const ToolResult Called = Tools.Call(pName->String(), pArguments != 0 && pArguments->IsObject() ? *pArguments : Json::MakeObject());
+	const ToolResult Called = Tools.Call(pName->String(), pArguments != 0 && pArguments->IsObject() ? *pArguments : Json::MakeObject(),
+		E.Who);
 	Json Text = Json::MakeObject();
 	Text.Set("type", "text");
 	Text.Set("text", Called.Text);
@@ -272,16 +295,24 @@ bool CallTool(ToolSet &Tools, const Json &Params, Json &Out, int &ErrorCode, std
 	return true;
 }
 
-Json Capabilities()
+// The small set has no recipes, so a client adds no tools of its own to list and get them
+Json Capabilities(const Endpoint &E)
 {
 	Json Tools = Json::MakeObject();
 	Tools.Set("listChanged", false);
-	Json Prompts = Json::MakeObject();
-	Prompts.Set("listChanged", false);
 	Json Capabilities = Json::MakeObject();
 	Capabilities.Set("tools", Tools);
-	Capabilities.Set("prompts", Prompts);
+	if (!E.Core) {
+		Json Prompts = Json::MakeObject();
+		Prompts.Set("listChanged", false);
+		Capabilities.Set("prompts", Prompts);
+	}
 	return Capabilities;
+}
+
+std::string InstructionsFor(const Endpoint &E)
+{
+	return E.Core ? ToolSet::CoreInstructions() : ToolSet::Instructions();
 }
 
 // The recipes, as prompts/list gives them
@@ -352,24 +383,24 @@ Json SupportedVersions()
 	return Versions;
 }
 
-Json DiscoverResult(const McpConfig &Config)
+Json DiscoverResult(const McpConfig &Config, const Endpoint &E)
 {
 	Json Result = Json::MakeObject();
 	Result.Set("resultType", "complete");
 	Json Versions = Json::MakeArray();
 	Versions.Push(MCP_MODERN_VERSION);
 	Result.Set("supportedVersions", Versions);
-	Result.Set("capabilities", Capabilities());
+	Result.Set("capabilities", Capabilities(E));
 	Result.Set("_meta", ModernMeta(Config));
-	Result.Set("instructions", ToolSet::Instructions());
+	Result.Set("instructions", InstructionsFor(E));
 	Result.Set("ttlMs", CACHE_MS);
 	Result.Set("cacheScope", "private");
 	return Result;
 }
 
 // Requests carrying their protocol version in _meta (2026-07-28)
-HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools, const Json &Id, const std::string &Method,
-	const Json &Params, const Json &Version)
+HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools, const Endpoint &E, const Json &Id,
+	const std::string &Method, const Json &Params, const Json &Version)
 {
 	if (!Version.IsString())
 		return Failure(400, Id, INVALID_PARAMS, "The protocol version should be a string.");
@@ -398,19 +429,22 @@ HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet
 	}
 
 	Json Out;
+	const bool Prompts = Method == "prompts/list" || Method == "prompts/get";
 	if (Method == "server/discover")
-		return Result(Id, DiscoverResult(Config));
+		return Result(Id, DiscoverResult(Config, E));
+	if (Prompts && E.Core)
+		return Failure(404, Id, METHOD_NOT_FOUND, "Method not found: " + Method + " (the small set of tools has no recipes)");
 	if (Method == "tools/list") {
 		Out = Json::MakeObject();
 		Out.Set("resultType", "complete");
-		Out.Set("tools", ToolsJson(Tools));
+		Out.Set("tools", ToolsJson(Tools, E));
 		Out.Set("ttlMs", CACHE_MS);
 		Out.Set("cacheScope", "private");
 	}
 	else if (Method == "tools/call" || Method == "prompts/get") {
 		int Code;
 		std::string Text;
-		if (Method == "tools/call" ? !CallTool(Tools, Params, Out, Code, Text) : !GetPrompt(Params, Out, Code, Text))
+		if (Method == "tools/call" ? !CallTool(Tools, E, Params, Out, Code, Text) : !GetPrompt(Params, Out, Code, Text))
 			return Failure(200, Id, Code, Text);
 		Json Ordered = Json::MakeObject();
 		Ordered.Set("resultType", "complete");
@@ -432,8 +466,8 @@ HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet
 }
 
 // The initialize handshake's era (2025-03-26 to 2025-11-25)
-HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools, const Json &Id, const std::string &Method,
-	const Json &Params)
+HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools, const Endpoint &E, const Json &Id,
+	const std::string &Method, const Json &Params)
 {
 	const std::string *pVersion = Request.Header("MCP-Protocol-Version");
 	if (pVersion != 0 && *pVersion == MCP_MODERN_VERSION)
@@ -446,26 +480,28 @@ HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet
 		const std::string Requested = (pRequested != 0 && pRequested->IsString()) ? pRequested->String() : std::string();
 		Json Out = Json::MakeObject();
 		Out.Set("protocolVersion", IsLegacyVersion(Requested) ? Requested : std::string(MCP_LEGACY_VERSION));
-		Out.Set("capabilities", Capabilities());
+		Out.Set("capabilities", Capabilities(E));
 		Out.Set("serverInfo", ServerInfo(Config));
-		Out.Set("instructions", ToolSet::Instructions());
+		Out.Set("instructions", InstructionsFor(E));
 		return Result(Id, Out);
 	}
 	if (Method == "ping")
 		return Result(Id, Json::MakeObject());
 	if (Method == "tools/list") {
 		Json Out = Json::MakeObject();
-		Out.Set("tools", ToolsJson(Tools));
+		Out.Set("tools", ToolsJson(Tools, E));
 		return Result(Id, Out);
 	}
 	if (Method == "tools/call") {
 		Json Out;
 		int Code;
 		std::string Text;
-		if (!CallTool(Tools, Params, Out, Code, Text))
+		if (!CallTool(Tools, E, Params, Out, Code, Text))
 			return Failure(200, Id, Code, Text);
 		return Result(Id, Out);
 	}
+	if ((Method == "prompts/list" || Method == "prompts/get") && E.Core)
+		return Failure(200, Id, METHOD_NOT_FOUND, "Method not found: " + Method + " (the small set of tools has no recipes)");
 	if (Method == "prompts/list") {
 		Json Out = Json::MakeObject();
 		Out.Set("prompts", PromptsJson());
@@ -480,8 +516,55 @@ HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet
 		return Result(Id, Out);
 	}
 	if (Method == "server/discover")
-		return Result(Id, DiscoverResult(Config));
+		return Result(Id, DiscoverResult(Config, E));
 	return Failure(200, Id, METHOD_NOT_FOUND, "Method not found: " + Method);
+}
+
+HttpResponse TextResponse(int Status, const std::string &Text)
+{
+	HttpResponse Response;
+	Response.Status = Status;
+	Response.ContentType = "text/plain; charset=utf-8";
+	Response.Body = Text + "\n";
+	return Response;
+}
+
+HttpResponse WrongMethod(const char *pAllowed, const std::string &Text)
+{
+	HttpResponse Response = Failure(405, Json(), INVALID_REQUEST, Text);
+	Response.Headers.push_back(std::make_pair(std::string("Allow"), std::string(pAllowed)));
+	return Response;
+}
+
+// GET /files/<name>: a file export_for_game saved next to the song
+HttpResponse FileRoute(ToolSet &Tools, const std::string &Encoded)
+{
+	std::string Name, Bytes, Error;
+	if (!UrlDecode(Encoded, Name) || !IsExportFile(Name))
+		return TextResponse(400, "FamiTracker gives only the OGG files export_for_game saved next to the song, by their names.");
+	if (!Tools.ReadExport(Name, Bytes, Error))
+		return TextResponse(Error.empty() ? 404 : 500, Error.empty() ? "There's no " + Name + " next to the song; export_for_game "
+			"saves it there." : Error);
+	HttpResponse Response;
+	Response.ContentType = "audio/ogg";
+	Response.Body.swap(Bytes);
+	bool Plain = true;
+	for (size_t i = 0; i < Name.size(); ++i)
+		Plain = Plain && static_cast<unsigned char>(Name[i]) < 0x80;
+	if (Plain)
+		Response.Headers.push_back(std::make_pair(std::string("Content-Disposition"), "attachment; filename=\"" + Name + "\""));
+	return Response;
+}
+
+// PUT /inbox/<name>: the body as a file in the Inbox folder, as send_file does
+HttpResponse InboxRoute(const HttpRequest &Request, ToolSet &Tools, const std::string &Encoded)
+{
+	std::string Name, Reply;
+	if (!UrlDecode(Encoded, Name))
+		return TextResponse(400, "That isn't a file's name.");
+	if (!Tools.ReceiveFile(Name, Request.Body, Reply))
+		return TextResponse(Request.Body.size() > MAX_INBOX_FILE ? 413 : 400, Reply);
+	return TextResponse(200, Reply);
 }
 
 }	// namespace
@@ -489,34 +572,73 @@ HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet
 HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools)
 {
 	const Json NoId;
-	const std::string Path = Request.Path();
-	if (Path != "/mcp" && Path != "/mcp/") {
-		HttpResponse Response;
-		Response.Status = 404;
-		Response.ContentType = "text/plain; charset=utf-8";
-		Response.Body = "FamiTracker's MCP endpoint is /mcp.\n";
-		return Response;
-	}
 
-	// Only from this computer: a web page can't reach it through a renamed
-	// host (DNS rebinding) or from another site
+	// From another computer: only when the user allows it, and only from a
+	// home network (or this computer at one of its own addresses)
+	unsigned long PeerAddress = 0;
+	const bool Remote = !Request.Peer.empty() && !(ParseIpv4(Request.Peer, PeerAddress) && IsLoopbackIpv4(PeerAddress));
+	if (Remote && !Config.Network)
+		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker only answers programs on its own computer. To let other computers on "
+			"your network connect, tick \"Allow connections from other computers on my network\" in File > Connect Claude Code.");
+	if (Remote && !MayConnect(Request.Peer, Config.Addresses))
+		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker only answers computers on a home network (or Tailscale), not " +
+			ValidUtf8(Request.Peer) + ".");
+
+	enum { ROUTE_MCP, ROUTE_CORE, ROUTE_FILES, ROUTE_INBOX } Route;
+	const std::string Path = Request.Path();
+	std::string Rest;
+	if (Path == "/mcp" || Path == "/mcp/")
+		Route = ROUTE_MCP;
+	else if (Path == "/mcp/core" || Path == "/mcp/core/")
+		Route = ROUTE_CORE;
+	else if (Path.compare(0, 7, "/files/") == 0 && Path.size() > 7) {
+		Route = ROUTE_FILES;
+		Rest = Path.substr(7);
+	}
+	else if (Path.compare(0, 7, "/inbox/") == 0 && Path.size() > 7) {
+		Route = ROUTE_INBOX;
+		Rest = Path.substr(7);
+	}
+	else
+		return TextResponse(404, "FamiTracker's MCP endpoint is /mcp (/mcp/core: a small set of the tools, for local models).");
+
+	// Only to this computer: a web page can't reach it through a renamed host
+	// (DNS rebinding) or from another site
 	const std::string *pHost = Request.Header("Host");
-	if (pHost != 0 && !IsLocalHost(*pHost))
-		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker only answers requests to 127.0.0.1 or localhost.");
+	if (pHost != 0 && !IsAcceptedHost(*pHost, Config))
+		return Failure(403, NoId, ACCESS_DENIED, Config.Network ? "FamiTracker only answers requests to this computer's addresses or "
+			"name, 127.0.0.1 or localhost." : "FamiTracker only answers requests to 127.0.0.1 or localhost.");
 	const std::string *pOrigin = Request.Header("Origin");
 	if (pOrigin != 0 && !IsLocalOrigin(*pOrigin))
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker doesn't answer requests from web pages.");
 
-	if (Request.Method != "POST") {
-		HttpResponse Response = Failure(405, NoId, INVALID_REQUEST, "FamiTracker's MCP endpoint takes POST requests.");
-		Response.Headers.push_back(std::make_pair(std::string("Allow"), std::string("POST")));
-		return Response;
-	}
+	if ((Route == ROUTE_MCP || Route == ROUTE_CORE) && Request.Method != "POST")
+		return WrongMethod("POST", "FamiTracker's MCP endpoint takes POST requests.");
+	if (Route == ROUTE_FILES && Request.Method != "GET")
+		return WrongMethod("GET", "FamiTracker's /files/ give the files export_for_game saved, by GET.");
+	if (Route == ROUTE_INBOX && Request.Method != "PUT" && Request.Method != "POST")
+		return WrongMethod("PUT", "FamiTracker's /inbox/ takes a file by PUT (curl -T).");
 	if (Config.Token.empty())
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker has no access token set, so it answers nothing.");
 	if (!TokenMatches(Request.Header("Authorization"), Config.Token))
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker refused the request: the access token is missing or wrong. "
 			"File > Connect Claude Code in FamiTracker shows the command that connects with the right one.");
+	if (Route == ROUTE_FILES)
+		return FileRoute(Tools, Rest);
+	if (Route == ROUTE_INBOX)
+		return InboxRoute(Request, Tools, Rest);
+
+	Endpoint E;
+	E.Core = Route == ROUTE_CORE;
+	if (Remote) {
+		// Links to what export_for_game saves, as this client reached FamiTracker
+		char Port[16];
+		std::snprintf(Port, sizeof(Port), ":%d", Config.Port);
+		if (pHost != 0 && !pHost->empty())
+			E.Who.FilesUrl = "http://" + *pHost + (pHost->find(':') == std::string::npos ? Port : "") + "/files/";
+		else if (!Config.Addresses.empty())
+			E.Who.FilesUrl = "http://" + Config.Addresses[0] + Port + "/files/";
+	}
 	const std::string *pType = Request.Header("Content-Type");
 	if (pType == 0 || Lower(*pType).compare(0, 16, "application/json") != 0)
 		return Failure(415, NoId, INVALID_REQUEST, "Send JSON (Content-Type: application/json).");
@@ -557,8 +679,8 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 	const Json *pMeta = Params.Get("_meta");
 	const Json *pVersion = (pMeta != 0 && pMeta->IsObject()) ? pMeta->Get(VERSION_KEY) : 0;
 	if (pVersion != 0)
-		return Modern(Request, Config, Tools, *pId, pMethod->String(), Params, *pVersion);
-	return Legacy(Request, Config, Tools, *pId, pMethod->String(), Params);
+		return Modern(Request, Config, Tools, E, *pId, pMethod->String(), Params, *pVersion);
+	return Legacy(Request, Config, Tools, E, *pId, pMethod->String(), Params);
 }
 
 std::string ClaudeAddCommand(const McpConfig &Config)
@@ -570,6 +692,13 @@ std::string ClaudeAddCommand(const McpConfig &Config)
 	if (!Config.Token.empty())
 		Command += " --header \"Authorization: Bearer " + Config.Token + "\"";
 	return Command;
+}
+
+std::string NetworkUrl(const std::string &Address, int Port, bool Core)
+{
+	char Text[96];
+	std::snprintf(Text, sizeof(Text), ":%d/mcp%s", Port, Core ? "/core" : "");
+	return "http://" + Address + Text;
 }
 
 std::string WslAddCommand(const std::string &HelperPath)

@@ -59,6 +59,7 @@
 #include "Clips.h"
 #include "PianoRoll.h"
 #include "ClipsPanel.h"
+#include "ProblemsPanel.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -136,6 +137,7 @@ CMainFrame::CMainFrame() :
 	m_pInstrumentFileTree(NULL),
 	m_pPianoRoll(NULL),
 	m_pClipsBar(NULL),
+	m_pProblemsBar(NULL),
 	m_bFewerMenus(false),
 	m_bBPM(false),
 	m_bSongRectsKept(false),
@@ -165,6 +167,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pMcpConnection);
 	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
 	SAFE_RELEASE(m_pClipsBar);
+	SAFE_RELEASE(m_pProblemsBar);
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -241,6 +244,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_CONTROLPANEL, OnViewControlpanel)
 	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
+	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
 	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
@@ -313,6 +317,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CONTROLPANEL, OnUpdateViewControlpanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -1628,6 +1633,8 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowPianoRoll(true);
 			if (CClipsBar::WasOpen())
 				ShowClipsPanel(true);
+			if (CProblemsBar::WasOpen())
+				ShowProblemsPanel(true);
 			// The first time: a simpler FamiTracker for game music? Then the
 			// untouched new song starts again from the template.
 			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
@@ -2398,12 +2405,46 @@ void CMainFrame::ShowClipsPanel(bool Show, bool Focus)
 		m_pClipsBar->Focus();
 }
 
+void CMainFrame::OnViewProblems()
+{
+	ShowProblemsPanel(m_pProblemsBar == NULL || !m_pProblemsBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewProblems(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pProblemsBar != NULL && m_pProblemsBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowProblemsPanel(bool Show)
+{
+	// What check_song finds, along the bottom of the main window or its right (see ProblemsPanel.h), made the first time
+	if (Show && m_pProblemsBar == NULL) {
+		m_pProblemsBar = new CProblemsBar();
+		if (!m_pProblemsBar->Create(this, m_pMcpConnection)) {
+			delete m_pProblemsBar;
+			m_pProblemsBar = NULL;
+			return;
+		}
+		// Laid out before the piano roll and the clips panel, so it's along the window's edge, outside them
+		if (m_pPianoRoll != NULL)
+			m_pPianoRoll->SetWindowPos(m_pProblemsBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		if (m_pClipsBar != NULL)
+			m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	if (m_pProblemsBar == NULL)
+		return;
+	ShowControlBar(m_pProblemsBar, Show ? TRUE : FALSE, FALSE);
+	m_pProblemsBar->Opened(Show);
+}
+
 void CMainFrame::SongChanged()
 {
 	if (m_pPianoRoll != NULL)
 		m_pPianoRoll->SongChanged();
 	if (m_pClipsBar != NULL)
 		m_pClipsBar->SongChanged();
+	if (m_pProblemsBar != NULL)
+		m_pProblemsBar->SongChanged();
 	// The frame editor shows the sections' column while the module has sections, and where the song loops
 	if (m_pFrameEditor != NULL && m_pFrameEditor->GetSafeHwnd() != NULL) {
 		if (m_pFrameEditor->NeedsResize())

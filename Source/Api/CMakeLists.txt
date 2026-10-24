@@ -1,9 +1,13 @@
 # The Claude Code connection's core (MCP over HTTP, the tools in musical terms)
-# with its tests, and famitracker-mcp, the connection for Claude Code in WSL.
-# Builds on Linux, macOS and Windows without MFC:
+# with its tests, and famitracker-mcp, the connection for Claude Code in WSL
+# (and for MCP clients on another computer). Builds on Linux, macOS and Windows
+# without MFC:
 #   cmake -S Source/Api -B build/api
 #   cmake --build build/api --config Release
 #   ctest --test-dir build/api -C Release --output-on-failure
+# famitracker-mcp alone, statically linked (as CI builds it for Linux, on Alpine):
+#   cmake -S Source/Api -B build/bridge -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static
+#   cmake --build build/bridge --target famitracker-mcp
 
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)
@@ -62,12 +66,21 @@ endif()
 # engine, and the NSF importer (Source/Nsf) studies and imports NSF files
 set(TRANSCRIBE ${CMAKE_CURRENT_SOURCE_DIR}/../Transcribe)
 set(NSF ${CMAKE_CURRENT_SOURCE_DIR}/../Nsf)
-add_library(ftapi STATIC
+# What famitracker-mcp needs: JSON, HTTP and the bridge (Bridge.h)
+add_library(ftbridge STATIC
 	Json.cpp
 	Http.cpp
-	Mcp.cpp
 	Bridge.cpp
 	BridgeSocket.cpp
+)
+target_include_directories(ftbridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(WIN32)
+	target_link_libraries(ftbridge PUBLIC ws2_32 advapi32)
+endif()
+
+add_library(ftapi STATIC
+	Mcp.cpp
+	Network.cpp
 	Png.cpp
 	Picture.cpp
 	Ogg.cpp
@@ -77,6 +90,7 @@ add_library(ftapi STATIC
 	Effects.cpp
 	Wavetables.cpp
 	PulseClicks.cpp
+	ProblemList.cpp
 	Music.cpp
 	Sections.cpp
 	Chords.cpp
@@ -110,15 +124,13 @@ add_library(ftapi STATIC
 	${NSF}/FtmFile.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ftapi PUBLIC xiph)
-if(WIN32)
-	target_link_libraries(ftapi PUBLIC ws2_32 advapi32)
-endif()
+target_link_libraries(ftapi PUBLIC ftbridge xiph)
 
 # Claude Code in WSL starts this Windows program, which passes its messages
-# to FamiTracker on Windows' 127.0.0.1 (Bridge.h)
+# to FamiTracker on Windows' 127.0.0.1 (Bridge.h); with --host, a stdio MCP
+# client on another computer reaches FamiTracker over the network with it
 add_executable(famitracker-mcp tools/famitracker-mcp.cpp)
-target_link_libraries(famitracker-mcp PRIVATE ftapi)
+target_link_libraries(famitracker-mcp PRIVATE ftbridge)
 
 # The tests run FamiTracker's endpoint on a thread to try the bridge over sockets
 find_package(Threads REQUIRED)

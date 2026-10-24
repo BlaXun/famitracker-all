@@ -27,7 +27,9 @@
 // program reaches FamiTracker's endpoint on Windows' 127.0.0.1, which Linux
 // in WSL can't (WSL's network has a 127.0.0.1 of its own). Each line becomes
 // the HTTP request Claude Code would have sent itself, and each answer a line
-// again. No sockets here; BridgeSocket.cpp moves the bytes.
+// again. No sockets here; BridgeSocket.cpp moves the bytes. With a host, an
+// MCP client that only speaks stdio, on another computer of the user's
+// network (famitracker-mcp-linux, built for Linux), reaches FamiTracker there.
 
 #include <string>
 #include "Http.h"
@@ -46,8 +48,11 @@ struct BridgeMessage {
 };
 
 // The line (without its line break) as the request to FamiTracker on
-// 127.0.0.1:Port with the access token. False for a blank line.
-bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out);
+// Host:Port (127.0.0.1 when Host is empty: an IPv4 address or a computer's
+// name) at Path (/mcp, or /mcp/core for the small set of tools) with the
+// access token. False for a blank line.
+bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out,
+	const std::string &Host = std::string(), const std::string &Path = std::string("/mcp"));
 
 // What Claude Code gets back: a line ending in '\n', or nothing when no
 // answer is due (notifications, Claude Code's own answers)

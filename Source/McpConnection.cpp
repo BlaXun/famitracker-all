@@ -38,6 +38,7 @@
 #include "Api/Json.h"
 #include "Api/Mcp.h"
 #include "Api/Music.h"
+#include "Api/Network.h"
 #include "Api/Presets.h"
 #include "Api/Sections.h"
 #include "Api/Song.h"
@@ -514,6 +515,8 @@ struct mcp_settings_t {
 	CString Token;
 	bool DirectChanges;
 	bool Wsl;			// the dialog shows the setup for Claude Code in WSL
+	bool Network;		// other computers on the user's network may connect too
+	bool CoreTools;		// the dialog shows other computers the addresses of the small set of tools (/mcp/core)
 };
 
 // The connection: settings, listener, and the song for the tools (and for
@@ -521,14 +524,16 @@ struct mcp_settings_t {
 class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 {
 public:
-	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_bBusy(false), m_bStopping(false), m_bOwnDialog(false),
-		m_pProgress(NULL), m_iPlayFirst(0),
+	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bAddressesRead(false), m_bBusy(false),
+		m_bStopping(false), m_bOwnDialog(false), m_bByHand(false), m_pProgress(NULL), m_iPlayFirst(0),
 		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false), m_iPlayPart(0), m_iReturnTrack(-1)
 	{
 		m_Settings.Enabled = false;
 		m_Settings.Port = DEFAULT_PORT;
 		m_Settings.DirectChanges = false;
 		m_Settings.Wsl = false;
+		m_Settings.Network = false;
+		m_Settings.CoreTools = false;
 	}
 
 	~CMcpLink()
@@ -565,7 +570,8 @@ public:
 	{
 		if (m_Server.IsRunning()) {
 			CString Text;
-			Text.Format(_T("On: Claude Code can connect at 127.0.0.1:%d."), m_Server.GetPort());
+			Text.Format(m_Server.IsNetwork() ? _T("On: Claude Code can connect at 127.0.0.1:%d, and other computers on your network too.") :
+				_T("On: Claude Code can connect at 127.0.0.1:%d."), m_Server.GetPort());
 			return Text;
 		}
 		if (!m_sLastError.IsEmpty())
@@ -614,7 +620,8 @@ public:
 	// From the dialog: saves the settings and starts or stops listening
 	bool Apply(const mcp_settings_t &Settings, CString &Error)
 	{
-		const bool Restart = Settings.Port != m_Settings.Port || Settings.Token != m_Settings.Token || !m_Server.IsRunning();
+		const bool Restart = Settings.Port != m_Settings.Port || Settings.Token != m_Settings.Token || !m_Server.IsRunning() ||
+			Settings.Network != m_Server.IsNetwork();
 		m_Settings = Settings;
 		SaveSettings();
 		if (!m_Settings.Enabled) {
@@ -636,6 +643,11 @@ public:
 			ftapi::McpConfig Config;
 			Config.Port = m_Server.GetPort();
 			Config.Token = std::string(static_cast<LPCSTR>(CStringA(m_Settings.Token)));
+			Config.Network = m_Server.IsNetwork();
+			if (Config.Network) {
+				Config.Addresses = OwnAddresses();
+				Config.ComputerName = NetworkComputerName();
+			}
 			char Version[32];
 			_snprintf_s(Version, sizeof(Version), _TRUNCATE, "%d.%d.%d-beginner-friendly", VERSION_MAJ, VERSION_MIN, VERSION_REV);
 			Config.Version = Version;
@@ -851,7 +863,7 @@ public:
 			Info.Clips.push_back(Clip);
 		}
 		Info.Sections = Utf8Sections(pDoc->GetSections()->Get(static_cast<int>(Track)));
-		Info.DirectChanges = m_Settings.DirectChanges;
+		Info.DirectChanges = m_Settings.DirectChanges || m_bByHand;
 		Info.Playing = theApp.IsPlaying();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
 		if (Info.Playing && pSound != NULL && static_cast<unsigned int>(pSound->GetPlayerTrack()) == Track)
@@ -1137,6 +1149,69 @@ public:
 		return !Name.empty() && Name.find_first_of("\\/:*?\"<>|") == std::string::npos && Name != "." && Name != "..";
 	}
 
+	// send_file and PUT /inbox: a file from another computer into the Inbox folder next to FamiTracker.exe (the
+	// tools checked its name)
+	bool SaveInbox(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error)
+	{
+		const CString File = Ansi(Name);
+		if (!PlainName(Name) || Utf8(File) != Name) {
+			Error = "FamiTracker can't make a file called " + Name + " on this computer; give it a name of plain letters.";
+			return false;
+		}
+		const CString Folder = InboxFolder(true);
+		if (Folder.IsEmpty()) {
+			Error = "FamiTracker found no folder for its Inbox.";
+			return false;
+		}
+		const CString Full = Folder + _T("\\") + File;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("wb")) != 0 || pFile == NULL) {
+			Error = "Couldn't write " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		const size_t Written = fwrite(Bytes.data(), 1, Bytes.size(), pFile);
+		const bool Closed = fclose(pFile) == 0;
+		if (Written != Bytes.size() || !Closed) {
+			DeleteFile(Full);
+			Error = "Couldn't write all of " + Utf8(Full) + " (is the disk full?).";
+			return false;
+		}
+		Path = Utf8(Full);
+		return true;
+	}
+
+	// GET /files: a file next to the song, all of it (the OGG files export_for_game saves)
+	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error)
+	{
+		Bytes.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL ? pDoc->GetPathName() : CString();
+		const CString File = Ansi(Name);
+		if (Song.IsEmpty() || !PlainName(Name) || Utf8(File) != Name)
+			return false;	// no such file can be there
+		const CString Full = Song.Left(Song.ReverseFind(_T('\\')) + 1) + File;
+		const DWORD Attributes = GetFileAttributes(Full);
+		if (Attributes == INVALID_FILE_ATTRIBUTES || (Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("rb")) != 0 || pFile == NULL) {
+			Error = "Couldn't read " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		char Buffer[65536];
+		size_t Read;
+		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < (256u << 20))
+			Bytes.append(Buffer, Read);
+		const bool Failed = ferror(pFile) != 0, Whole = feof(pFile) != 0;
+		fclose(pFile);
+		if (Failed || !Whole) {
+			Error = Failed ? "Couldn't read all of " + Utf8(Full) + "." : Utf8(Full) + " is too big to send (over 256 MB).";
+			Bytes.clear();
+			return false;
+		}
+		return true;
+	}
+
 	bool ListLibrary(std::vector<std::string> &Names, std::string &Error)
 	{
 		Names.clear();
@@ -1350,6 +1425,37 @@ public:
 		CString Text = Ansi(Result.Text);
 		Text.Replace(_T("\n"), _T("\r\n"));
 		return Text;
+	}
+
+	bool IsBusy() const { return m_bBusy; }
+
+	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
+	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
+	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply)
+	{
+		if (m_bBusy) {
+			Reply = "FamiTracker is busy with Claude Code; try again in a moment.";
+			return false;
+		}
+		ftapi::Json Args;
+		if (!ftapi::ParseJson(Arguments, Args) || !Args.IsObject()) {
+			Reply = "The tool's arguments aren't JSON.";
+			return false;
+		}
+		m_bBusy = true;
+		m_bByHand = true;
+		ftapi::ToolResult Result;
+		try {
+			Result = m_Tools.Call(Name, Args);
+		}
+		catch (...) {
+			Result.Text = "FamiTracker couldn't do that.";
+			Result.IsError = true;
+		}
+		m_bByHand = false;
+		m_bBusy = false;
+		Reply = Result.Text;
+		return !Result.IsError;
 	}
 
 	bool CanChange(std::string &Why)
@@ -1930,6 +2036,8 @@ private:
 		}
 		m_Settings.DirectChanges = theApp.GetProfileInt(SECTION, _T("Direct changes"), 0) != 0;
 		m_Settings.Wsl = theApp.GetProfileInt(SECTION, _T("Claude Code in WSL"), 0) != 0;
+		m_Settings.Network = theApp.GetProfileInt(SECTION, _T("Allow network"), 0) != 0;
+		m_Settings.CoreTools = theApp.GetProfileInt(SECTION, _T("Core tools"), 0) != 0;
 	}
 
 	void SaveSettings()
@@ -1939,6 +2047,23 @@ private:
 		theApp.WriteProfileString(SECTION, _T("Token"), m_Settings.Token);
 		theApp.WriteProfileInt(SECTION, _T("Direct changes"), m_Settings.DirectChanges ? 1 : 0);
 		theApp.WriteProfileInt(SECTION, _T("Claude Code in WSL"), m_Settings.Wsl ? 1 : 0);
+		theApp.WriteProfileInt(SECTION, _T("Allow network"), m_Settings.Network ? 1 : 0);
+		theApp.WriteProfileInt(SECTION, _T("Core tools"), m_Settings.CoreTools ? 1 : 0);
+	}
+
+	// This computer's addresses for the Host check, looked up again every few seconds (Tailscale may come up later)
+	std::vector<std::string> OwnAddresses()
+	{
+		const DWORD Now = GetTickCount();	// the difference stays right when it wraps
+		if (!m_bAddressesRead || Now - m_iAddressesTime > 10000) {
+			const std::vector<mcp_address_t> Found = ListNetworkAddresses();
+			m_Addresses.clear();
+			for (size_t i = 0; i < Found.size(); ++i)
+				m_Addresses.push_back(Found[i].Address);
+			m_iAddressesTime = Now;
+			m_bAddressesRead = true;
+		}
+		return m_Addresses;
 	}
 
 	static LRESULT CALLBACK WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
@@ -1985,7 +2110,7 @@ private:
 			return false;
 		}
 		char Reason[256] = "";
-		if (!m_Server.Start(m_Settings.Port, m_hWindow, WM_MCP_REQUEST, Reason, sizeof(Reason))) {
+		if (!m_Server.Start(m_Settings.Port, m_Settings.Network, m_hWindow, WM_MCP_REQUEST, Reason, sizeof(Reason))) {
 			Error = Reason;
 			m_sLastError = Error;
 			return false;
@@ -2000,10 +2125,15 @@ private:
 	ftapi::ToolSet m_Tools;
 	mcp_settings_t m_Settings;
 	CString m_sLastError;
+	std::vector<std::string> m_Addresses;	// this computer's, for other computers' requests
+	DWORD m_iAddressesTime;					// when they were looked up
+	bool m_bAddressesRead;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
 	bool m_bStopping;
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
 						// which may change the song
+	bool m_bByHand;		// working for a window of FamiTracker's (the problems panel): what the user asks of it goes
+						// into the song, whatever the Claude Code setting says
 	CWnd *m_pProgress;	// where a rendering's progress shows, or NULL
 	int m_iPlayFirst, m_iPlayEnd;	// the rows played for Claude; End at First: to the end
 	bool m_bPlayStarted;
@@ -2017,6 +2147,20 @@ private:
 
 // The dialog
 
+// This computer's addresses that other computers at home can use: home networks' and Tailscale's (the others'
+// own addresses would be public too, and FamiTracker doesn't answer those)
+static std::vector<mcp_address_t> HomeAddresses()
+{
+	const std::vector<mcp_address_t> Found = ListNetworkAddresses();
+	std::vector<mcp_address_t> Home;
+	for (size_t i = 0; i < Found.size(); ++i) {
+		unsigned long Address = 0;
+		if (ftapi::ParseIpv4(Found[i].Address, Address) && ftapi::IsPrivateIpv4(Address))
+			Home.push_back(Found[i]);
+	}
+	return Home;
+}
+
 class CConnectClaudeDlg : public CDialog
 {
 public:
@@ -2028,17 +2172,27 @@ protected:
 	afx_msg void OnChange();
 	afx_msg void OnCopy();
 	afx_msg void OnNewToken();
+	afx_msg void OnNetwork();
+	afx_msg void OnCopyAddress(UINT nID);
+	afx_msg void OnCopyCode();
 
 	DECLARE_MESSAGE_MAP()
 
 private:
+	enum { ADDRESS_ROWS = 4 };	// IDC_MCP_NET_NAME1..4, URL1..4, COPY1..4
+
 	int Port() const;
 	bool Wsl() const;
+	bool Network() const;
 	CString CurrentCommand() const;		// empty while the port isn't valid
+	CString AddressUrl(int Row) const;	// what the other computer connects to, by the address on that row
 	void ShowCommand();
+	void ShowNetwork();					// the other computers' side: their addresses and the access code, when allowed
+	bool CopyText(const CString &Text);
 
 	CMcpLink *m_pLink;
 	CString m_sToken;
+	std::vector<mcp_address_t> m_Addresses;	// this computer's, as the rows show them
 };
 
 BEGIN_MESSAGE_MAP(CConnectClaudeDlg, CDialog)
@@ -2048,6 +2202,10 @@ BEGIN_MESSAGE_MAP(CConnectClaudeDlg, CDialog)
 	ON_BN_CLICKED(IDC_MCP_WSL, OnChange)
 	ON_BN_CLICKED(IDC_MCP_COPY, OnCopy)
 	ON_BN_CLICKED(IDC_MCP_NEWTOKEN, OnNewToken)
+	ON_BN_CLICKED(IDC_MCP_NETWORK, OnNetwork)
+	ON_BN_CLICKED(IDC_MCP_NET_CORE, OnChange)
+	ON_CONTROL_RANGE(BN_CLICKED, IDC_MCP_NET_COPY1, IDC_MCP_NET_COPY4, OnCopyAddress)
+	ON_BN_CLICKED(IDC_MCP_NET_COPYCODE, OnCopyCode)
 END_MESSAGE_MAP()
 
 BOOL CConnectClaudeDlg::OnInitDialog()
@@ -2055,13 +2213,17 @@ BOOL CConnectClaudeDlg::OnInitDialog()
 	CDialog::OnInitDialog();
 	const mcp_settings_t &Settings = m_pLink->GetSettings();
 	m_sToken = Settings.Token;
+	m_Addresses = HomeAddresses();
 	CheckDlgButton(IDC_MCP_ENABLE, Settings.Enabled ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_MCP_DIRECT, Settings.DirectChanges ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_MCP_NETWORK, Settings.Network ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_MCP_NET_CORE, Settings.CoreTools ? BST_CHECKED : BST_UNCHECKED);
 	CheckRadioButton(IDC_MCP_WINDOWS, IDC_MCP_WSL, Settings.Wsl ? IDC_MCP_WSL : IDC_MCP_WINDOWS);
 	SetDlgItemInt(IDC_MCP_PORT, static_cast<UINT>(Settings.Port), FALSE);
 	static_cast<CEdit*>(GetDlgItem(IDC_MCP_PORT))->SetLimitText(5);
 	SetDlgItemText(IDC_MCP_STATUS, m_pLink->Status());
 	ShowCommand();
+	ShowNetwork();
 	return TRUE;
 }
 
@@ -2075,6 +2237,57 @@ int CConnectClaudeDlg::Port() const
 bool CConnectClaudeDlg::Wsl() const
 {
 	return IsDlgButtonChecked(IDC_MCP_WSL) == BST_CHECKED;
+}
+
+bool CConnectClaudeDlg::Network() const
+{
+	return IsDlgButtonChecked(IDC_MCP_NETWORK) == BST_CHECKED;
+}
+
+CString CConnectClaudeDlg::AddressUrl(int Row) const
+{
+	if (Row < 0 || Row >= static_cast<int>(m_Addresses.size()) || Port() == 0)
+		return CString();
+	return CString(ftapi::NetworkUrl(m_Addresses[static_cast<size_t>(Row)].Address, Port(),
+		IsDlgButtonChecked(IDC_MCP_NET_CORE) == BST_CHECKED).c_str());
+}
+
+void CConnectClaudeDlg::ShowNetwork()
+{
+	const bool On = Network();
+	const int Rows = On ? std::min<int>(ADDRESS_ROWS, static_cast<int>(m_Addresses.size())) : 0;
+	for (int i = 0; i < ADDRESS_ROWS; ++i) {
+		const int Show = i < Rows ? SW_SHOW : SW_HIDE;
+		GetDlgItem(IDC_MCP_NET_NAME1 + i)->ShowWindow(Show);
+		GetDlgItem(IDC_MCP_NET_URL1 + i)->ShowWindow(Show);
+		GetDlgItem(IDC_MCP_NET_COPY1 + i)->ShowWindow(Show);
+		if (i < Rows) {
+			const CString Adapter(m_Addresses[static_cast<size_t>(i)].Adapter.c_str());
+			SetDlgItemText(IDC_MCP_NET_NAME1 + i, (Adapter.IsEmpty() ? CString(_T("Network")) : Adapter) + _T(":"));
+			const CString Url = AddressUrl(i);
+			SetDlgItemText(IDC_MCP_NET_URL1 + i, Url.IsEmpty() ? CString(_T("(Pick a port from 1024 to 65535.)")) : Url);
+		}
+	}
+	const int Code = On ? SW_SHOW : SW_HIDE;
+	GetDlgItem(IDC_MCP_NET_CODELABEL)->ShowWindow(Code);
+	GetDlgItem(IDC_MCP_NET_CODE)->ShowWindow(Code);
+	GetDlgItem(IDC_MCP_NET_COPYCODE)->ShowWindow(Code);
+	GetDlgItem(IDC_MCP_NET_CORE)->ShowWindow(Code);
+	SetDlgItemText(IDC_MCP_NET_CODE, m_sToken);
+	if (!On)
+		SetDlgItemText(IDC_MCP_NET_INFO, _T("Off: only programs on this computer can connect. Tick it to use FamiTracker's tools from ")
+			_T("another computer at home, like an AI assistant on a Linux PC."));
+	else if (Rows == 0)
+		SetDlgItemText(IDC_MCP_NET_INFO, _T("This computer has no home network or Tailscale address right now. Connect it to your ")
+			_T("network (or start Tailscale), then open this dialog again."));
+	else
+		SetDlgItemText(IDC_MCP_NET_INFO, _T("On the other computer, the MCP client connects to one of these addresses, with the access ")
+			_T("code in the header \"Authorization: Bearer <code>\":"));
+	SetDlgItemText(IDC_MCP_NET_HINT, !On ? CString() : CString(_T("Windows asks once whether FamiTracker may use the network: allow it ")
+		_T("on private networks. For your home network or Tailscale only: never forward the port to the internet.\r\n\r\n")
+		_T("A client that starts its servers over stdio uses famitracker-mcp-linux from the zip instead: ")
+		_T("famitracker-mcp-linux --host <address> --token <code> --core. MCP.md shows the setup for Hermes Agent, and how files ")
+		_T("travel: send_file puts one into FamiTracker's Inbox, and export_for_game links to the files it saves.")));
 }
 
 CString CConnectClaudeDlg::CurrentCommand() const
@@ -2109,38 +2322,65 @@ void CConnectClaudeDlg::ShowCommand()
 void CConnectClaudeDlg::OnChange()
 {
 	ShowCommand();
+	ShowNetwork();
 }
 
-void CConnectClaudeDlg::OnCopy()
+void CConnectClaudeDlg::OnNetwork()
 {
-	const CStringA Text(CurrentCommand());
-	if (Text.IsEmpty())
-		return;
-	if (!OpenClipboard())
-		return;
+	m_Addresses = HomeAddresses();	// as they are now
+	ShowNetwork();
+}
+
+bool CConnectClaudeDlg::CopyText(const CString &Text)
+{
+	const CStringA Bytes(Text);
+	if (Bytes.IsEmpty() || !OpenClipboard())
+		return false;
 	EmptyClipboard();
-	HGLOBAL hMemory = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(Text.GetLength() + 1));
+	bool Copied = false;
+	HGLOBAL hMemory = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(Bytes.GetLength() + 1));
 	if (hMemory != NULL) {
 		char *pTarget = static_cast<char*>(GlobalLock(hMemory));
 		if (pTarget != NULL) {
-			memcpy(pTarget, static_cast<LPCSTR>(Text), static_cast<size_t>(Text.GetLength() + 1));
+			memcpy(pTarget, static_cast<LPCSTR>(Bytes), static_cast<size_t>(Bytes.GetLength() + 1));
 			GlobalUnlock(hMemory);
-			if (SetClipboardData(CF_TEXT, hMemory) == NULL)
+			Copied = SetClipboardData(CF_TEXT, hMemory) != NULL;
+			if (!Copied)
 				GlobalFree(hMemory);
 		}
 		else
 			GlobalFree(hMemory);
 	}
 	CloseClipboard();
+	return Copied;
+}
+
+void CConnectClaudeDlg::OnCopy()
+{
+	if (!CopyText(CurrentCommand()))
+		return;
 	SetDlgItemText(IDC_MCP_STATUS, Wsl() ? _T("Copied. Paste it into your WSL terminal and press Enter.") :
 		_T("Copied. Paste it into a terminal and press Enter."));
 	m_pLink->RememberWsl(Wsl());
+}
+
+void CConnectClaudeDlg::OnCopyAddress(UINT nID)
+{
+	if (CopyText(AddressUrl(static_cast<int>(nID) - IDC_MCP_NET_COPY1)))
+		SetDlgItemText(IDC_MCP_STATUS, _T("Copied the address: put it into the other computer's MCP settings, with the access code."));
+}
+
+void CConnectClaudeDlg::OnCopyCode()
+{
+	if (CopyText(m_sToken))
+		SetDlgItemText(IDC_MCP_STATUS, _T("Copied the access code."));
 }
 
 void CConnectClaudeDlg::OnNewToken()
 {
 	m_sToken = NewToken();
 	ShowCommand();
+	ShowNetwork();
 	SetDlgItemText(IDC_MCP_STATUS, Wsl() ? _T("New access code: Claude Code in WSL uses it after OK, without connecting again.") :
 		_T("New access code: after OK, connect again with the new command (claude mcp remove famitracker first)."));
 }
@@ -2151,6 +2391,8 @@ void CConnectClaudeDlg::OnOK()
 	Settings.Enabled = IsDlgButtonChecked(IDC_MCP_ENABLE) == BST_CHECKED;
 	Settings.DirectChanges = IsDlgButtonChecked(IDC_MCP_DIRECT) == BST_CHECKED;
 	Settings.Wsl = Wsl();
+	Settings.Network = Network();
+	Settings.CoreTools = IsDlgButtonChecked(IDC_MCP_NET_CORE) == BST_CHECKED;
 	Settings.Port = Port();
 	Settings.Token = m_sToken;
 	if (Settings.Port == 0) {
@@ -2308,4 +2550,14 @@ void CMcpConnection::ShowGameExport()
 void CMcpConnection::ShowVoiceEffect()
 {
 	ShowVoiceEffectDialog(&m_pImpl->Link, AfxGetMainWnd());
+}
+
+bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply)
+{
+	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply);
+}
+
+bool CMcpConnection::IsBusy() const
+{
+	return m_pImpl->Link.IsBusy();
 }
