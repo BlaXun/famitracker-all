@@ -176,6 +176,17 @@ Json LevelProp(const char *Description)
 	return ChannelProp(Description);
 }
 
+// A pan: a word or a number
+Json PanChoice(const char *Description)
+{
+	Json P = Prop("string", Description);
+	Json Types = Json::MakeArray();
+	Types.Push("string");
+	Types.Push("number");
+	P.Set("type", Types);
+	return P;
+}
+
 Json BarProp(const char *Description)
 {
 	Json P = Prop("integer", Description);
@@ -589,6 +600,146 @@ std::string PositionText(const Session &S, int Row)
 std::string PitchText(const ChannelInfo &Channel, int Pitch)
 {
 	return Channel.Kind == KIND_NOISE ? NoisePitchName(Pitch & 15) : PitchName(Pitch);
+}
+
+// Stereo (this FamiTracker's own: the pan effect, 8xx; the NES, FamiTracker
+// 0.4.6 and NSF files are mono, the game's OGG files are stereo)
+
+// A pan as the tools take it: "left", "right", "center" (or "middle"), "half left", "a little right", "40% left", a
+// number from -1 (left) to 1 (right), or the effect itself ("840"); false otherwise
+bool ParsePanValue(const Json &Value, int &Param)
+{
+	if (Value.IsNumber()) {
+		const double Position = Value.Number();
+		if (!(Position >= -1.0 && Position <= 1.0))
+			return false;
+		Param = PanParam(Position);
+		return true;
+	}
+	if (!Value.IsString())
+		return false;
+	std::string Text = Lowercase(Trim(Value.String()));
+	if (Text.size() == 3 && Text[0] == '8' && std::isxdigit(static_cast<unsigned char>(Text[1])) &&
+		std::isxdigit(static_cast<unsigned char>(Text[2]))) {
+		Param = static_cast<int>(std::strtol(Text.c_str() + 1, 0, 16));	// the effect, as FamiTracker shows it
+		return true;
+	}
+	if (Text == "center" || Text == "centre" || Text == "middle" || Text == "mid" || Text == "centered" || Text == "the middle") {
+		Param = PAN_CENTER;
+		return true;
+	}
+	int Side = 0;
+	if (Text.size() >= 4 && Text.compare(Text.size() - 4, 4, "left") == 0) {
+		Side = -1;
+		Text = Trim(Text.substr(0, Text.size() - 4));
+	}
+	else if (Text.size() >= 5 && Text.compare(Text.size() - 5, 5, "right") == 0) {
+		Side = 1;
+		Text = Trim(Text.substr(0, Text.size() - 5));
+	}
+	if (Side == 0) {
+		char *pEnd = 0;
+		const double Position = std::strtod(Text.c_str(), &pEnd);
+		if (Text.empty() || pEnd == 0 || *pEnd != 0 || !(Position >= -1.0 && Position <= 1.0))
+			return false;
+		Param = PanParam(Position);
+		return true;
+	}
+	if (Text.size() >= 3 && Text.compare(Text.size() - 3, 3, " to") == 0)
+		Text = Trim(Text.substr(0, Text.size() - 3));	// "halfway to the left"
+	if (Text.size() >= 7 && Text.compare(Text.size() - 7, 7, " to the") == 0)
+		Text = Trim(Text.substr(0, Text.size() - 7));
+	if (Text == "the")
+		Text.clear();
+	double Share = -1.0;
+	if (Text.empty() || Text == "hard" || Text == "full" || Text == "fully" || Text == "all the way" || Text == "far")
+		Share = 1.0;
+	else if (Text == "half" || Text == "halfway" || Text == "half way")
+		Share = 0.5;
+	else if (Text == "a little" || Text == "slightly" || Text == "a bit" || Text == "a touch" || Text == "a little to the")
+		Share = 0.25;
+	else if (!Text.empty() && Text[Text.size() - 1] == '%') {
+		char *pEnd = 0;
+		const double Percent = std::strtod(Text.c_str(), &pEnd);
+		if (pEnd != 0 && Trim(std::string(pEnd)) == "%" && Percent >= 0.0 && Percent <= 100.0)
+			Share = Percent / 100.0;
+	}
+	if (Share < 0.0)
+		return false;
+	Param = PanParam(Side * Share);
+	return true;
+}
+
+// Where notes play between the speakers: "in the middle", "panned left", "panned 40% right", or "panning between
+// left and right"
+std::string PanText(const std::vector<NoteInfo> &Notes)
+{
+	int Lowest = -1, Highest = -1, Changes = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Pan = Notes[i].Pan;
+		if (i > 0 && Pan != Notes[i - 1].Pan)
+			++Changes;
+		if (Lowest < 0 || Pan < Lowest)
+			Lowest = Pan;
+		if (Highest < 0 || Pan > Highest)
+			Highest = Pan;
+	}
+	if (Lowest < 0 || (Lowest == PAN_CENTER && Highest == PAN_CENTER))
+		return "in the middle";
+	if (Lowest == Highest)
+		return "panned " + PanName(Lowest);
+	return "panning between " + PanName(Lowest) + " and " + PanName(Highest) + (Changes >= 3 ? " (" + Plural(Changes, "change",
+		"changes") + ")" : "");
+}
+
+// Where notes play most of their time, from -1 (left) to 1 (right)
+double PanPositionOf(const std::vector<NoteInfo> &Notes)
+{
+	double Sum = 0.0, Rows = 0.0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Sum += PanPosition(Notes[i].Pan) * std::max(1, Notes[i].Rows);
+		Rows += std::max(1, Notes[i].Rows);
+	}
+	return Rows > 0.0 ? Sum / Rows : 0.0;
+}
+
+// Whether any of the song's notes play anywhere but the middle
+bool SongPans(Session &S)
+{
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Pan != PAN_CENTER)
+				return true;
+	}
+	return false;
+}
+
+// Puts the pans Want (one per note, by where each starts) on a channel's notes in [First, End): the 8xx there go,
+// and a note gets one where the pan coming into it isn't its own. The notes after the range keep theirs when the
+// change is collected (KeepFollowing). False when a note had no free effect column for it.
+bool PutPans(std::vector<Cell> &Cells, int First, int End, int Columns, const std::vector<std::pair<int, int> > &Want)
+{
+	Columns = std::max(1, std::min(EFFECT_COLUMNS, Columns));
+	End = std::min(End, static_cast<int>(Cells.size()));
+	for (int r = std::max(0, First); r < End; ++r)
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_PAN) {
+				Cells[static_cast<size_t>(r)].Effect[k] = EFF_NONE;
+				Cells[static_cast<size_t>(r)].Param[k] = 0;
+			}
+	int Now = StateAt(Cells, std::max(0, First), Columns).Sticky[EFF_PAN];
+	bool Fits = true;
+	for (size_t i = 0; i < Want.size(); ++i) {
+		const int Row = Want[i].first;
+		if (Row < First || Row >= End || Want[i].second == Now)
+			continue;
+		if (AddEffect(Cells[static_cast<size_t>(Row)], EFF_PAN, Want[i].second, Columns))
+			Now = Want[i].second;
+		else
+			Fits = false;
+	}
+	return Fits;
 }
 
 // Arguments
@@ -1576,6 +1727,102 @@ void SmoothChanges(Session &S, std::vector<Change> &Changes, int &First, std::ve
 	First = Low;
 }
 
+// When the song loops, its end leads back into its loop: a channel the change leaves panned at the end otherwise than
+// the loop's first note plays the first time through would move that note elsewhere every time round. The note gets
+// that pan written on its row then (it changes nothing the first time through), and the change grows to it, First
+// moving back when it's before; Notes says so. A song that doesn't pan has nothing to keep.
+void KeepLoopPans(Session &S, std::vector<Change> &Changes, int &First, std::vector<std::string> &Notes)
+{
+	// The song as the change leaves it
+	std::vector<std::vector<Cell> > Channels;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Channels.push_back(S.Cells(c));
+		Columns.push_back(std::max(1, std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns)));
+	}
+	int End = First;
+	bool Pans = false;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const size_t Need = static_cast<size_t>(First) + Changes[i].Cells.size();
+		if (Cells.size() < Need)
+			Cells.resize(Need);
+		std::copy(Changes[i].Cells.begin(), Changes[i].Cells.end(), Cells.begin() + First);
+		End = std::max(End, static_cast<int>(Need));
+		for (size_t r = 0; r < Cells.size() && !Pans; ++r)
+			Pans = HasEffect(Cells[r], EFF_PAN, Columns[static_cast<size_t>(c)]);
+	}
+	if (!Pans)
+		return;
+	int LoopRow = -1;
+	const std::vector<std::pair<int, int> > Played = PlayedFrames(S.Song, Channels, Columns, LoopRow);
+	size_t Once = Played.size(), Again = Played.size();	// where the loop starts in Played, the first time and the next
+	for (size_t p = 0; p < Played.size() && LoopRow >= 0; ++p) {
+		if (Played[p].first != LoopRow)
+			continue;
+		if (Once == Played.size())
+			Once = p;
+		else {
+			Again = p;
+			break;
+		}
+	}
+	if (Again == Played.size())
+		return;
+	std::set<int> Touched;
+	int Low = First, High = End;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const int Shown = Columns[static_cast<size_t>(c)];
+		// The loop's first note, and the pans coming into it the first time and the next
+		size_t Note = Again;
+		for (size_t p = Once; p < Again && Note == Again; ++p)
+			if (Played[p].first < static_cast<int>(Cells.size()) && Cells[static_cast<size_t>(Played[p].first)].HasNote())
+				Note = p;
+		if (Note == Again || Again + (Note - Once) >= Played.size())
+			continue;
+		int Pan = PAN_CENTER, FirstTime = PAN_CENTER;
+		for (size_t p = 0; p < Again + (Note - Once); ++p) {
+			if (p == Note)
+				FirstTime = Pan;
+			const int Row = Played[p].first;
+			if (Row < static_cast<int>(Cells.size()))
+				for (int k = 0; k < Shown; ++k)
+					if (Cells[static_cast<size_t>(Row)].Effect[k] == EFF_PAN)
+						Pan = Cells[static_cast<size_t>(Row)].Param[k];
+		}
+		const int Row = Played[Note].first;
+		if (Pan == FirstTime || HasEffect(Cells[static_cast<size_t>(Row)], EFF_PAN, Shown))
+			continue;
+		if (!AddEffect(Cells[static_cast<size_t>(Row)], EFF_PAN, FirstTime, Shown)) {
+			Notes.push_back(Format("%s ends panned %s, so when the song loops its note at %s plays there too (it has no free "
+				"effect column for its own pan, %s).", S.Channel(c).FullName().c_str(), PanName(Pan).c_str(), S.Time.Position(Row).c_str(),
+				PanName(FirstTime).c_str()));
+			continue;
+		}
+		Notes.push_back(Format("%s's note at %s, where the song loops, gets 8%02X: the song's end leaves the channel panned %s, "
+			"and this keeps the note %s every time round, as the first time.", S.Channel(c).FullName().c_str(),
+			S.Time.Position(Row).c_str(), FirstTime, PanName(Pan).c_str(), FirstTime == PAN_CENTER ? "in the middle" :
+			("panned " + PanName(FirstTime)).c_str()));
+		Touched.insert(c);
+		Low = std::min(Low, Row);
+		High = std::max(High, Row + 1);
+	}
+	if (Touched.empty())
+		return;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		const std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const int Stop = Touched.count(c) ? High : First + static_cast<int>(Changes[i].Cells.size());
+		Changes[i].Cells.clear();
+		for (int r = Low; r < Stop; ++r)
+			Changes[i].Cells.push_back(r < static_cast<int>(Cells.size()) ? Cells[static_cast<size_t>(r)] : Cell());
+	}
+	First = Low;
+}
+
 std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsClip, const std::string &ClipName,
 	const std::string &What, const SectionList *pSections = 0)
 {
@@ -1590,6 +1837,7 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		std::vector<Change> Writing = Changes;
 		int Start = First;
 		SmoothChanges(S, Writing, Start, Smoothed);
+		KeepLoopPans(S, Writing, Start, Smoothed);
 		std::vector<ChannelCells> Parts;
 		for (size_t i = 0; i < Writing.size(); ++i) {
 			ChannelCells Part;
@@ -1726,6 +1974,7 @@ std::string SongOverview(Session &S, const Json &Args)
 		Text += "Sections: " + SectionsText(S, Song.Sections) + "\n";
 
 	Text += Format("Channels%s:\n", Song.Expansion.empty() ? "" : (" (expansion: " + Song.Expansion + ")").c_str());
+	const bool Stereo = SongPans(S);
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Channel = S.Channel(c);
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
@@ -1752,8 +2001,13 @@ std::string SongOverview(Session &S, const Json &Args)
 			for (std::set<int>::const_iterator it = Instruments.begin(); it != Instruments.end(); ++it)
 				Text += " " + InstrumentLabel(Song, *it);
 		}
+		if (Stereo)
+			Text += ", " + PanText(Notes);
 		Text += "\n";
 	}
+	Text += Stereo ? "Stereo: the parts pan (8xx, this FamiTracker's own: its playback and the game's OGG files have it; NSF "
+		"files and FamiTracker 0.4.6 play mono).\n" : "Stereo: every part in the middle (set_pan, or write_notes' pan, moves "
+		"parts left or right for the game's stereo OGG files).\n";
 
 	// Key and chords
 	Key K;
@@ -1828,14 +2082,21 @@ std::string SongOverview(Session &S, const Json &Args)
 	return Text;
 }
 
-// "Q31", "431 at beat 3.5"
+// "Q31", "431 at beat 3.5"; the pan on the note's first row is told apart, a later one as "pan right (8FF)"
 std::string EffectsText(const Session &S, const NoteInfo &Note)
 {
 	std::string Text;
 	for (size_t e = 0; e < Note.Effects.size(); ++e) {
+		const bool Pan = Note.Effects[e].second.first == EFF_PAN;
+		if (Pan && Note.Effects[e].first == 0)
+			continue;
 		if (!Text.empty())
 			Text += ", ";
+		if (Pan)
+			Text += "pan " + PanName(Note.Effects[e].second.second) + " (";
 		Text += EffectText(Note.Effects[e].second.first, Note.Effects[e].second.second);
+		if (Pan)
+			Text += ")";
 		if (Note.Effects[e].first > 0)
 			Text += " at beat " + FormatNumber(S.Time.BeatOf(Note.Row + Note.Effects[e].first));
 	}
@@ -1857,7 +2118,7 @@ std::string ReadChannel(Session &S, const Json &Args)
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	std::string Text = Format("%s, %s (%d beats a bar, %d rows a beat):", Info.FullName().c_str(), RangeText(From, To).c_str(),
 		S.Time.RowsPerBar / S.Time.RowsPerBeat, S.Time.RowsPerBeat);
-	int Instrument = -1, Volume = -1;
+	int Instrument = -1, Volume = -1, Pan = -1;
 	size_t Shown = 0;
 	for (int Bar = From; Bar <= To; ++Bar) {
 		const int BarFirst = S.Time.BarStart(Bar), BarEnd = S.Time.BarEnd(Bar);
@@ -1880,6 +2141,9 @@ std::string ReadChannel(Session &S, const Json &Args)
 					Line += ", " + InstrumentLabel(S.Song, N.Instrument);
 				if (N.VolumeSet || (Volume < 0 && N.Volume != 15))
 					Line += Format(", volume %d", N.Volume);
+				// Where it plays between the speakers, where that changes (or the bars start off the middle)
+				if (N.PanSet || (Pan < 0 ? N.Pan != PAN_CENTER : N.Pan != Pan))
+					Line += ", pan " + PanName(N.Pan) + Format(" (8%02X)", N.Pan);
 				const std::string Effects = EffectsText(S, N);
 				if (!Effects.empty())
 					Line += ", effects " + Effects;
@@ -1888,6 +2152,7 @@ std::string ReadChannel(Session &S, const Json &Args)
 			}
 			Instrument = N.Instrument;
 			Volume = N.Volume;
+			Pan = N.Pan;
 			Text += Line;
 		}
 		if (!Any)
@@ -2037,6 +2302,14 @@ std::string WriteNotes(Session &S, const Json &Args)
 		}
 		if (Arg(Item, "end_effects") != 0)
 			ReadEffects(*Arg(Item, "end_effects"), "end_effects", Note.EndEffects);
+		// Where it plays between the speakers (8xx); the notes after it keep that until one says otherwise
+		if (Arg(Item, "pan") != 0) {
+			int Pan = PAN_CENTER;
+			if (!ParsePanValue(*Arg(Item, "pan"), Pan))
+				throw Problem(Which + ": pan is \"left\", \"right\", \"center\", a place between like \"half left\" or \"30% right\", "
+					"or a number from -1 (left) to 1 (right).");
+			Note.Effects.push_back(std::make_pair(static_cast<int>(EFF_PAN), Pan));
+		}
 		Notes.push_back(Note);
 		FirstBar = std::min(FirstBar, Bar);
 		LastRow = std::max(LastRow, Row + Rows);
@@ -2097,8 +2370,28 @@ std::string WriteNotes(Session &S, const Json &Args)
 	std::vector<Change> Changes(1);
 	Changes[0].Channel = Channel;
 	Changes[0].Cells = Out;
-	const std::string What = Format("%s on %s, %s", Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(),
+	std::string What = Format("%s on %s, %s", Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(),
 		Info.FullName().c_str(), RangeText(From, S.Time.BarOf(End - 1)).c_str());
+	// What got panned: where the part's notes play now, as written
+	{
+		std::vector<Cell> Song(S.Cells(Channel));
+		for (size_t i = 0; i < Out.size(); ++i) {
+			if (First + i >= Song.size())
+				Song.resize(First + i + 1);
+			Song[First + i] = Out[i];
+		}
+		const std::vector<NoteInfo> Written = NotesIn(ReadNotes(Song, Info.EffectColumns), First, End);
+		std::string Panned;
+		int Count = 0;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+				if (Notes[i].Effects[e].first == EFF_PAN && Count++ < 6)
+					Panned += (Panned.empty() ? "" : ", ") + S.Time.Position(Notes[i].Row) + " " + PanName(Notes[i].Effects[e].second);
+		if (Count > 0)
+			What += Format(", panned: %s%s (the notes after each keep its place)", Panned.c_str(), Count > 6 ? ", ..." : "");
+		else if (PanText(Written) != "in the middle")
+			What += ", " + PanText(Written) + " where the channel played before";
+	}
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
@@ -4849,7 +5142,15 @@ struct EchoPlan {
 	int Source, Target, Delay, Volume, Instrument;
 	int Detune;		// fine pitch steps up (+) or down (-), 0 for none
 	bool OtherChip;	// Instrument is the source's sound on the target's chip, picked by name
+	int Pan;		// the echo's pan (8xx), -1 to leave its channel's as it is
+	bool Opposite;	// on the other side of the source, note by note
 };
+
+// The other side of a pan: a sound in the middle has its echo halfway to the right
+int OppositePan(int Pan)
+{
+	return Pan == PAN_CENTER ? PanParam(0.5) : PanParam(-PanPosition(Pan));
+}
 
 EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
 {
@@ -4861,6 +5162,16 @@ EchoPlan EchoArgs(Session &S, const Json &Args, int First, int End)
 	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 3.0 / S.Time.RowsPerBeat, 0.01, 16.0), Exact);
 	Plan.Volume = IntArg(Args, "volume", 6, 1, 15);
 	Plan.Detune = IntArg(Args, "detune", 0, -8, 8);
+	Plan.Pan = -1;
+	Plan.Opposite = false;
+	if (Arg(Args, "pan") != 0) {
+		const Json &Value = *Arg(Args, "pan");
+		if (Value.IsString() && (Squeezed(Value.String()) == "opposite" || Squeezed(Value.String()) == "otherside"))
+			Plan.Opposite = true;
+		else if (!ParsePanValue(Value, Plan.Pan))
+			throw Problem("pan: opposite (the other side of the original, note by note), left, right, center, or a number from "
+				"-1 (left) to 1 (right).");
+	}
 	if (Arg(Args, "to_channel") != 0) {
 		Plan.Target = ChannelArg(S, Args, "to_channel");
 		if (Plan.Target == Plan.Source || !IsMelodic(S.Channel(Plan.Target)))
@@ -4986,9 +5297,13 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 	return Out;
 }
 
-int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings)
+// pStop: where the rows written end, for Draft::Collect, so the notes the echo wrote alike (a pan carried over
+// them) count as its own
+int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings, int *pStop = 0)
 {
 	int Stop = std::min(End + Plan.Delay, std::max(End, S.Time.TotalRows()));
+	if (pStop != 0)
+		*pStop = Stop;
 	// Past the bars asked for, the echo rings on only until the target's own next note there: a part it isn't replacing
 	{
 		const std::vector<NoteInfo> Theirs = D.Notes(Plan.Target);
@@ -5001,6 +5316,7 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 	}
 	const std::vector<NoteInfo> Played = D.Notes(Plan.Source);
 	std::vector<PartNote> Notes;
+	std::map<int, int> Pans;	// the pan each echo note gets, by its row: its own place, not the original's
 	for (size_t i = 0; i < Played.size(); ++i) {
 		const NoteInfo &N = Played[i];
 		if (N.Row < First || N.Row >= End || N.Row + Plan.Delay >= Stop)
@@ -5012,11 +5328,15 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		E.Instrument = Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument : N.Instrument;
 		E.Volume = MatchVolume(S.Channel(Plan.Source), N.Volume, Plan.Volume / 15.0, S.Channel(Plan.Target));
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			if (N.Effects[e].second.first == EFF_PAN)
+				continue;
 			if (N.Effects[e].first == 0)
 				E.Effects.push_back(N.Effects[e].second);
 			else if (N.Effects[e].first < E.Rows)
 				E.LaterEffects.push_back(N.Effects[e]);
 		}
+		if (Plan.Opposite || Plan.Pan >= 0)
+			Pans[E.Row] = Plan.Opposite ? OppositePan(N.Pan) : Plan.Pan;
 		Notes.push_back(E);
 	}
 	if (Notes.empty())
@@ -5036,6 +5356,15 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		// A little off the melody's pitch, so the two shimmer where they overlap; back in tune after
 		Notes.front().Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80 + Plan.Detune));
 		Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
+	}
+	// Its place between the speakers, on the notes where it changes (the ones between keep it)
+	int Last = -1;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const std::map<int, int>::const_iterator It = Pans.find(Notes[i].Row);
+		if (It != Pans.end() && It->second != Last) {
+			Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_PAN), It->second));
+			Last = It->second;
+		}
 	}
 	if (HasNotesIn(S, Plan.Target, First + Plan.Delay, Stop))
 		Warnings.push_back(Format("%s's own notes in those bars were replaced by the echo.", S.Channel(Plan.Target).FullName().c_str()));
@@ -5057,11 +5386,12 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	const EchoPlan Plan = EchoArgs(S, Args, First, End);
 	std::vector<std::string> Warnings;
 	Draft D(S);
-	if (MakeEcho(S, D, Plan, First, End, Warnings) == 0)
+	int Stop = 0;
+	if (MakeEcho(S, D, Plan, First, End, Warnings, &Stop) == 0)
 		throw Problem(Format("%s has no notes in %s to echo.", S.Channel(Plan.Source).FullName().c_str(), RangeText(From, To).c_str()));
 	std::vector<Change> Changes;
 	int Start;
-	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
+	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings, Stop))
 		throw Problem("The echo is already there.");
 	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter), the number written differs
 	std::string Level = Format("at volume %d", Plan.Volume);
@@ -5075,9 +5405,18 @@ std::string AddEchoTool(Session &S, const Json &Args)
 			Level += Format(" (as much softer as %d is than 15 on a pulse: %d where the melody plays %d)", Plan.Volume,
 				MatchVolume(Source, Loudest, Plan.Volume / 15.0, Target), Loudest);
 	}
-	std::string What = Format("an echo of %s on %s, %s later %s%s, %s", Source.FullName().c_str(), Target.FullName().c_str(),
+	std::string Side;
+	if (Plan.Opposite) {
+		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
+		const double Where = PanPositionOf(Played);
+		Side = std::fabs(Where) < 0.05 ? Format(", %s (8%02X) while the original plays in the middle", PanName(OppositePan(PAN_CENTER)).c_str(),
+			OppositePan(PAN_CENTER)) : ", on the other side of the original";
+	}
+	else if (Plan.Pan >= 0)
+		Side = Format(", %s (8%02X)", PanName(Plan.Pan).c_str(), Plan.Pan);
+	std::string What = Format("an echo of %s on %s, %s later %s%s%s, %s", Source.FullName().c_str(), Target.FullName().c_str(),
 		S.Time.Length(Plan.Delay).c_str(), Level.c_str(), Plan.Detune == 0 ? "" : Format(" detuned P%02X", 0x80 + Plan.Detune).c_str(),
-		RangeText(From, To).c_str());
+		Side.c_str(), RangeText(From, To).c_str());
 	if (Plan.OtherChip)
 		What += Format(" (playing the melody's sound on the %s: %s)", InstrumentChip(S.Channel(Plan.Target)).c_str(),
 			InstrumentLabel(S.Song, Plan.Instrument).c_str());
@@ -5374,7 +5713,24 @@ std::string MixTool(Session &S, const Json &Args)
 	if (!S.Song.DirectChanges)
 		throw Problem("Mixing changes the volumes of the whole song, which needs direct changes; the user can allow them in "
 			"File > Connect Claude Code.");
-	const std::string Style = Squeezed(StringArg(Args, "style", Arg(Args, "levels") != 0 || Arg(Args, "dac") != 0 ? "" : "soft"));
+	const std::string Style = Squeezed(StringArg(Args, "style", Arg(Args, "levels") != 0 || Arg(Args, "dac") != 0 ||
+		Arg(Args, "width") != 0 ? "" : "soft"));
+	// The stereo picture: how far the parts that aren't the melody, the bass or the drums go to the sides (-1: as they are)
+	double Width = -1.0;
+	{
+		const std::string Word = Squeezed(StringArg(Args, "width", "keep"));
+		if (Word == "mono" || Word == "center" || Word == "centre" || Word == "middle" || Word == "none")
+			Width = 0.0;
+		else if (Word == "narrow")
+			Width = 0.25;
+		else if (Word == "wide")
+			Width = 0.5;
+		else if (Word == "full" || Word == "widest")
+			Width = 1.0;
+		else if (Word != "keep")
+			throw Problem("width: keep (the pans as they are, the default), mono (every part in the middle), narrow, wide or "
+				"full (how far the side parts go).");
+	}
 	if (!Style.empty() && Style != "soft" && Style != "full" && Style != "quiet" && Style != "loud" && Style != "atmospheric")
 		throw Problem("style: soft (quiet pulses under a warm triangle, as atmospheric tracks mix) or full (everything near "
 			"full volume).");
@@ -5588,6 +5944,66 @@ std::string MixTool(Session &S, const Json &Args)
 		Done.push_back(Format("%s loudest %d to %d%s", Label.c_str(), Loudest, Want, Also.c_str()));
 	}
 
+	// The stereo picture: the melody, the bass and the drums in the middle; the other parts out to the sides by Width,
+	// an echo first to the right, then each part to the side with fewer, and chord voices sounding together spread
+	// over the width, the lowest on the left
+	int PansLost = 0;
+	if (Width >= 0.0) {
+		std::vector<double> Place(Spans.size(), 0.0);
+		std::vector<bool> Placed(Spans.size(), false);
+		int Lefts = 0, Rights = 0;
+		auto Overlaps = [&](const MixSpan &a, const MixSpan &b) { return a.First < b.End && b.First < a.End; };
+		auto Middle = [&](const MixSpan &P) { return MiddleOf(NotesIn(S.Notes(P.Channel), P.First, P.End), 0); };
+		for (int Pass = 0; Pass < 3 && Width > 0.0; ++Pass) {
+			const int Role = Pass == 0 ? static_cast<int>(ROLE_ECHO) : Pass == 1 ? static_cast<int>(ROLE_CHORDS) : static_cast<int>(ROLE_LINE);
+			for (size_t i = 0; i < Spans.size(); ++i) {
+				if (Spans[i].Role != Role || Placed[i])
+					continue;
+				std::vector<size_t> Group(1, i);
+				if (Role == ROLE_CHORDS)
+					for (size_t k = 0; k < Spans.size(); ++k)
+						if (k != i && !Placed[k] && Spans[k].Role == ROLE_CHORDS && Spans[k].Channel != Spans[i].Channel &&
+							Overlaps(Spans[i], Spans[k]))
+							Group.push_back(k);
+				if (Group.size() >= 2) {
+					std::stable_sort(Group.begin(), Group.end(), [&](size_t a, size_t b) { return Middle(Spans[a]) < Middle(Spans[b]); });
+					for (size_t g = 0; g < Group.size(); ++g) {
+						Place[Group[g]] = -Width + 2.0 * Width * static_cast<double>(g) / static_cast<double>(Group.size() - 1);
+						Placed[Group[g]] = true;
+					}
+					continue;
+				}
+				const bool Right = Role == ROLE_ECHO ? Rights <= Lefts : Rights < Lefts;
+				Place[i] = Right ? Width : -Width;
+				++(Right ? Rights : Lefts);
+				Placed[i] = true;
+			}
+		}
+		std::string Middles, Sides;
+		std::set<int> Centered;
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			const MixSpan &P = Spans[i];
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(P.Channel), P.First, P.End);
+			std::vector<std::pair<int, int> > Want;
+			for (size_t n = 0; n < Notes.size(); ++n)
+				Want.push_back(std::make_pair(Notes[n].Row, PanParam(Place[i])));
+			if (!PutPans(D.Cells(P.Channel), P.First, P.End, S.Channel(P.Channel).EffectColumns, Want))
+				++PansLost;
+			if (Notes.empty())
+				continue;
+			const std::string Label = S.Channel(P.Channel).FullName() + (P.Role != ROLE_NONE ? std::string(" (") + RoleName(P.Role) + ")" : "") +
+				(SpanCount[static_cast<size_t>(P.Channel)] > 1 ? " in " + RangeText(S.Time.BarOf(P.First), S.Time.BarOf(P.End - 1)) : "");
+			if (Place[i] == 0.0) {
+				if (Centered.insert(P.Channel).second || SpanCount[static_cast<size_t>(P.Channel)] > 1)
+					Middles += (Middles.empty() ? "" : ", ") + Label;
+			}
+			else
+				Sides += (Sides.empty() ? "" : ", ") + Label + " " + PanName(PanParam(Place[i]));
+		}
+		Done.push_back(Width == 0.0 || Sides.empty() ? "every part in the middle (mono)" :
+			"stereo: " + Sides + (Middles.empty() ? "" : "; in the middle " + Middles));
+	}
+
 	// The level at the start and where the loop comes back
 	std::string DacText, DacWarning;
 	if (Dac >= 0) {
@@ -5652,8 +6068,12 @@ std::string MixTool(Session &S, const Json &Args)
 	if (SlidesLost > 0)
 		Warnings.push_back(Format("%s found no free effect column or volume column for its stop (or its slide back on), so it "
 			"climbs as it did.", Plural(SlidesLost, "swell", "swells").c_str()));
+	if (PansLost > 0)
+		Warnings.push_back(Format("%s had a note with no free effect column for its pan, which plays where the note before it "
+			"does.", Plural(PansLost, "part", "parts").c_str()));
 	int Start = First;
-	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" : "the mix";
+	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" :
+		(Style.empty() && Width >= 0.0 && Arg(Args, "levels") == 0 && Dac < 0) ? "the stereo picture" : "the mix";
 	What += ", " + RangeText(From, To) + ": ";
 	for (size_t i = 0; i < Done.size(); ++i)
 		What += (i == 0 ? "" : "; ") + Done[i];
@@ -7151,6 +7571,50 @@ std::string ReviewTool(Session &S, const Json &Args)
 		}
 	}
 
+	// Stereo (this FamiTracker's own; the game's OGG files have it): where the parts play between the speakers. An echo
+	// on the melody's side blurs it; the bass and the drums carry the song from the middle
+	{
+		bool Pans = false;
+		for (size_t p = 0; p < Playing.size() && !Pans; ++p) {
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Playing[p]), First, End);
+			for (size_t i = 0; i < Notes.size() && !Pans; ++i)
+				Pans = Notes[i].Pan != PAN_CENTER;
+		}
+		if (!Pans) {
+			Lines.push_back("Stereo: every part plays in the middle.");
+			if (!Echoes.empty() || Chords.size() + Voices.size() >= 2)
+				Tip(0.0, "For width in the game's stereo OGG files: an echo on the other side of the melody (add_echo with pan "
+					"\"opposite\", or set_pan), chord voices or a second line apart (mix with width wide does it all); the melody, "
+					"the bass and the drums stay in the middle.");
+		}
+		else {
+			std::string Line = "Stereo:";
+			for (size_t p = 0; p < Playing.size(); ++p)
+				Line += (p == 0 ? " " : "; ") + S.Channel(Playing[p]).FullName() + " " + PanText(NotesIn(S.Notes(Playing[p]), First, End));
+			Lines.push_back(Line + ".");
+			const double Lead = PanPositionOf(Tune);
+			for (size_t i = 0; i < Echoes.size(); ++i) {
+				const double Echo = PanPositionOf(NotesIn(S.Notes(Echoes[i]), First, End));
+				if ((std::fabs(Echo) < 0.15 && std::fabs(Lead) < 0.15) || Echo * Lead > 0.0)
+					Tip(0.5, Format("The echo on %s plays on the melody's side (%s, the melody %s): on the other side (set_pan, or "
+						"add_echo again with pan \"opposite\") it stops blurring the melody and the song widens.",
+						S.Channel(Echoes[i]).FullName().c_str(), PanText(NotesIn(S.Notes(Echoes[i]), First, End)).c_str(),
+						PanText(Tune).c_str()));
+			}
+			if (Bass >= 0 && std::fabs(PanPositionOf(NotesIn(S.Notes(Bass), First, End))) >= 0.25)
+				Tip(0.5, "The bass on " + S.Channel(Bass).FullName() + " plays from one side: keep it in the middle (set_pan with pan "
+					"center), as the low end anchors the song and some players hear only one speaker.");
+			const int Kit[2] = { Drums, Samples };
+			for (int k = 0; k < 2; ++k)
+				if (Kit[k] >= 0 && std::fabs(PanPositionOf(NotesIn(S.Notes(Kit[k]), First, End))) >= 0.25)
+					Tip(0.5, "The drums on " + S.Channel(Kit[k]).FullName() + " play from one side: the kick and the snare belong in "
+						"the middle (set_pan with pan center).");
+			if (std::fabs(Lead) >= 0.5)
+				Tip(0.5, "The melody plays from one side (" + PanText(Tune) + "): it belongs in the middle, with its echo or a "
+					"second line to the sides.");
+		}
+	}
+
 	// Register: another part sitting on the melody while it sounds. A double thickens it rather than blurring it, and a
 	// part that plays in the melody's gaps (a hocket, answers) trades notes with it
 	const int TuneMiddle = MiddleOf(Tune, 52) - Written(S.Channel(Melody), 0);	// as they sound
@@ -7532,7 +7996,8 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 			else
 				Part[0].SetPitch(Song[static_cast<size_t>(Back)].Pitch());	// moved with the others below
 		}
-		// The copy plays as the original does: its first note gets the instrument and volume it played with
+		// The copy plays as the original does: its first note gets the instrument and volume it played with, and
+		// plays from where it did between the speakers
 		const ChannelState State = StateAt(Song, First, Columns);
 		for (size_t r = 0; r < Part.size(); ++r) {
 			Cell &C = Part[r];
@@ -7558,10 +8023,16 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 			if (Part[r].Volume == NO_VOLUME && State.Volume != 15)
 				Part[r].Volume = static_cast<unsigned char>(State.Volume);
 			for (int e = 0; e < EFF_COUNT; ++e)
-				if (State.Sticky[e] != StickyOff(e) && !HasEffect(Part[r], e, Columns))
+				if (e != EFF_PAN && State.Sticky[e] != StickyOff(e) && !HasEffect(Part[r], e, Columns))
 					AddEffect(Part[r], e, State.Sticky[e], Columns);
 			break;
 		}
+		int FirstNote = -1, SourcePan = PAN_CENTER;
+		for (size_t r = 0; r < Part.size() && FirstNote < 0; ++r)
+			if (Part[r].HasNote()) {
+				FirstNote = static_cast<int>(r);
+				SourcePan = StateAt(Song, First + FirstNote + 1, Columns).Sticky[EFF_PAN];
+			}
 		for (int t = 0; t < Times; ++t) {
 			std::vector<Cell> Copy(Part);
 			const size_t Row = static_cast<size_t>(Dest + t * Length);
@@ -7576,6 +8047,16 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 			for (size_t r = 0; r < Copy.size() && Row + r < Song.size(); ++r)
 				if (!KeepSongEffects(Song[Row + r], Copy[r], Columns))
 					Crowded = true;
+			// Where the copy's first note plays: as the original's, whatever the place had before it
+			if (FirstNote >= 0) {
+				std::vector<Cell> Here(D.Cells(c));
+				if (Here.size() < Row + Copy.size())
+					Here.resize(Row + Copy.size());
+				std::copy(Copy.begin(), Copy.end(), Here.begin() + static_cast<std::ptrdiff_t>(Row));
+				if (StateAt(Here, static_cast<int>(Row) + FirstNote + 1, Columns).Sticky[EFF_PAN] != SourcePan &&
+					!AddEffect(Copy[static_cast<size_t>(FirstNote)], EFF_PAN, SourcePan, Columns))
+					Crowded = true;
+			}
 			D.Put(c, static_cast<int>(Row), Copy);
 		}
 	}
@@ -7584,7 +8065,7 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings;
 	int Start;
-	if (!D.Collect(Dest, Direct(S, AsClip), Changes, Start, Warnings))
+	if (!D.Collect(Dest, Direct(S, AsClip), Changes, Start, Warnings, Dest + Length * Times))
 		throw Problem("Those bars already hold the same notes.");
 	if (Crowded)
 		Warnings.push_back("Some copied effects found no free effect column beside the song's speed, jump and halt effects there "
@@ -7649,6 +8130,75 @@ std::string CopyBarsTool(Session &S, const Json &Args)
 		Text += " The copy is a section of its own, the original's repeat: " + Repeats + ".";
 	return WithRemarks(S, Text + " A repeat sounds fresher with something changed: vary_part on the melody, a counter-melody, "
 		"busier drums.", Warnings);
+}
+
+// set_pan: where a channel's notes play between the speakers (stereo, this FamiTracker's own)
+
+std::string SetPanTool(Session &S, const Json &Args)
+{
+	const int Channel = ChannelArg(S, Args, "channel");
+	const ChannelInfo &Info = S.Channel(Channel);
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const Json *pPan = Arg(Args, "pan");
+	if (pPan == 0)
+		throw Problem("Say where with pan: left, right, center, a place between (\"half left\", or a number from -1 to 1), "
+			"alternate or spread.");
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+	if (Notes.empty())
+		throw Problem(Format("%s has no notes in %s to pan.", Info.FullName().c_str(), RangeText(From, To).c_str()));
+	const double Amount = NumberArg(Args, "amount", 0.5, 0.05, 1.0);
+	const std::string Mode = pPan->IsString() ? Squeezed(pPan->String()) : std::string();
+	std::vector<std::pair<int, int> > Want;
+	std::string How;
+	double Furthest = 0.0;
+	if (Mode == "alternate" || Mode == "alternating" || Mode == "pingpong") {
+		const int Left = PanParam(-Amount), Right = PanParam(Amount);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Want.push_back(std::make_pair(Notes[i].Row, i % 2 == 0 ? Left : Right));
+		How = Format("alternating note by note between %s and %s (8%02X, 8%02X)", PanName(Left).c_str(), PanName(Right).c_str(),
+			Left, Right);
+		Furthest = Amount;
+	}
+	else if (Mode == "spread" || Mode == "sweep") {
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const double Position = Notes.size() > 1 ? -Amount + 2.0 * Amount * static_cast<double>(i) / static_cast<double>(Notes.size() - 1) :
+				0.0;
+			Want.push_back(std::make_pair(Notes[i].Row, PanParam(Position)));
+		}
+		How = Format("spread from %s to %s across the bars", PanName(PanParam(-Amount)).c_str(), PanName(PanParam(Amount)).c_str());
+		Furthest = Amount;
+	}
+	else {
+		int Pan = PAN_CENTER;
+		if (!ParsePanValue(*pPan, Pan))
+			throw Problem("pan: left, right, center, a place between (\"half left\", \"30% right\", or a number from -1 (left) "
+				"to 1 (right)), alternate (note by note left and right) or spread (from left to right across the bars).");
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Want.push_back(std::make_pair(Notes[i].Row, Pan));
+		How = Pan == PAN_CENTER ? std::string("in the middle (880)") : Format("panned %s (8%02X)", PanName(Pan).c_str(), Pan);
+		Furthest = std::fabs(PanPosition(Pan));
+	}
+	Draft D(S);
+	std::vector<std::string> Warnings;
+	if (!PutPans(D.Cells(Channel), First, End, Info.EffectColumns, Want))
+		Warnings.push_back("Some notes had no free effect column for their pan (all four were full), so they play where the note "
+			"before them does.");
+	std::vector<Change> Changes;
+	int Start;
+	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings, End))
+		throw Problem(Format("%s plays there that way already.", Info.FullName().c_str()));
+	const std::string What = Format("%s %s, %s (%s)", Info.FullName().c_str(), How.c_str(), RangeText(From, To).c_str(),
+		Plural(static_cast<int>(Notes.size()), "note", "notes").c_str());
+	if (Furthest >= 0.5 && (Info.Kind == KIND_TRIANGLE || Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM || IsBass(Info) ||
+		Channel == GuessMelodyChannel(S, First, End)))
+		Warnings.push_back("The melody, the bass and the drums usually stay in the middle: they carry the song, and some "
+			"players hear only one speaker. Echoes, chord voices, arpeggios and hi-hats are the parts to spread.");
+	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) + " Stereo is this "
+		"FamiTracker's own: its playback and the game's OGG files (export_for_game) have it; NSF files and FamiTracker 0.4.6 "
+		"play mono.", Warnings);
 }
 
 // vary_part: the same part, a little different (for a repeat)
@@ -7945,7 +8495,7 @@ MoodPlan ReadMoodPlan(Session &S, const Json &Args, int First, int End)
 
 // The plan's note changes in the draft: key or mode, parts moved, sounds,
 // vibrato, then an echo of the part as it is by then
-void ApplyMoodPlan(Session &S, Draft &D, const MoodPlan &Plan, int First, int End, std::vector<std::string> &Done,
+void ApplyMoodPlan(Session &S, Draft &D, const MoodPlan &Plan, int First, int End, std::vector<std::string> &Done, int *pEchoStop,
 	std::vector<std::string> &Warnings)
 {
 	// 1. Key or mode, for every melodic channel
@@ -8021,7 +8571,7 @@ void ApplyMoodPlan(Session &S, Draft &D, const MoodPlan &Plan, int First, int En
 
 	// 5. An echo of the part as it is now
 	if (Plan.HasEcho) {
-		if (MakeEcho(S, D, Plan.Echo, First, End, Warnings) > 0)
+		if (MakeEcho(S, D, Plan.Echo, First, End, Warnings, pEchoStop) > 0)
 			Done.push_back(Format("an echo of %s on %s", S.Channel(Plan.Echo.Source).FullName().c_str(),
 				S.Channel(Plan.Echo.Target).FullName().c_str()));
 		else
@@ -8040,7 +8590,8 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 
 	std::vector<std::string> Done, Warnings;
 	Draft D(S);
-	ApplyMoodPlan(S, D, Plan, First, End, Done, Warnings);
+	int EchoStop = 0;	// where an echo's rows end
+	ApplyMoodPlan(S, D, Plan, First, End, Done, &EchoStop, Warnings);
 
 	// 6. The tempo: the track's for the whole song, else speed and tempo
 	// commands in the bars (direct changes), the old tempo back after them
@@ -8064,7 +8615,7 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 
 	std::vector<Change> Changes;
 	int Start = First;
-	const bool NotesChanged = D.Collect(First, DirectChange, Changes, Start, Warnings);
+	const bool NotesChanged = D.Collect(First, DirectChange, Changes, Start, Warnings, EchoStop);
 	if (!NotesChanged && !NewTempo)
 		throw Problem(WithRemarks(S, Format("Nothing changed in %s. Give at least one of to_mode, to_key, moves, sounds, vibrato, "
 			"echo, bpm or tempo_percent, for bars that have notes.", RangeText(From, To).c_str()), Warnings));
@@ -8738,7 +9289,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 			Done.push_back(Format("the bass on %s in long notes (%s left out)", Info.FullName().c_str(),
 				Plural(Removed, "note", "notes").c_str()));
 	}
-	ApplyMoodPlan(S, D, Changes, 0, Total, Done, Warnings);
+	ApplyMoodPlan(S, D, Changes, 0, Total, Done, 0, Warnings);
 
 	if (VolumePercent != 100) {
 		int Changed = 0;
@@ -9842,6 +10393,7 @@ std::string EffectName(int Effect)
 	case EFF_PORTAMENTO: return "portamento";
 	case EFF_PORTA_UP: return "pitch slide up";
 	case EFF_PORTA_DOWN: return "pitch slide down";
+	case EFF_PAN: return "pan";
 	default: return std::string("effect ") + EffectLetter(Effect);
 	}
 }
@@ -9982,9 +10534,14 @@ std::vector<Seam> FindSeams(Session &S, const std::vector<std::vector<Cell> > &C
 			const int On = StillOn ? Again.Sticky[e] : Before.Sticky[e];
 			Seam E;
 			E.Channel = c;
-			E.Text = Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
-				"set it at %s (%c%02X turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
-				StillOn ? "still on" : "off", StillOn ? "gets" : "lacks", Where.c_str(), EffectLetter(e), StickyOff(e));
+			if (e == EFF_PAN)
+				E.Text = Format("%s: the loop starts %s the first time and %s on repeat (the pan at its end, 8%02X, carries over); "
+					"set 8%02X at %s.", Info.FullName().c_str(), PanName(Before.Sticky[e]).c_str(), PanName(Again.Sticky[e]).c_str(),
+					Again.Sticky[e], Before.Sticky[e], Where.c_str());
+			else
+				E.Text = Format("%s: %s %s is %s at the loop's end, so the loop's start %s it on repeat but not the first time; "
+					"set it at %s (%c%02X turns it off).", Info.FullName().c_str(), EffectName(e).c_str(), EffectText(e, On).c_str(),
+					StillOn ? "still on" : "off", StillOn ? "gets" : "lacks", Where.c_str(), EffectLetter(e), StickyOff(e));
 			if (AddEffect(Start, e, Before.Sticky[e], Cols)) {
 				E.Row = LoopRow;
 				E.What = SEAM_EFFECT;
@@ -11096,13 +11653,14 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 			Clean = SeamProblems(S, Cells, Columns, Rows, First, Second, F.LoopRow(PL)).empty();
 	}
 
-	// A little more than the loop twice, so the third time it starts is there too
-	std::vector<float> Samples;
+	// A little more than the loop twice, so the third time it starts is there too; in stereo
+	std::vector<float> Left, Right;
 	std::vector<std::pair<int, long long> > Marks;
 	int SampleRate = 0;
 	std::string Error;
-	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, Samples, SampleRate, Marks, Error))
+	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, Left, Right, SampleRate, Marks, Error))
 		throw Problem("The track couldn't be rendered: " + Error);
+	Right.resize(Left.size());
 	// A DPCM level set on the song's first row steps the DMC's output up from silence there: a pop
 	bool StartStep = false;
 	for (int c = 0; c < S.ChannelCount() && !StartStep; ++c) {
@@ -11113,7 +11671,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 			StartStep = Start.Effect[k] == EFF_DAC && Start.Param[k] > 0;
 	}
 	GameCut Cut;
-	if (!CutForGame(Samples, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error, StartStep))
+	if (!CutForGame(Left, Right, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error, StartStep))
 		throw Problem("The track couldn't be cut for a game: " + Error);
 
 	const std::string File = TrackFileName(S, Track, Taken);
@@ -11130,39 +11688,42 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 		Comments.push_back(std::make_pair(std::string("LOOPEND"), Format("%lld", Cut.Length())));
 	}
 	Comments.push_back(std::make_pair(std::string("ENCODER"), std::string("FamiTracker (beginner-friendly)")));
-	std::vector<float> Kept(Samples.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Samples.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	// The two sides, kept
+	std::vector<float> Kept(Left.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Left.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	std::vector<float> KeptRight(Right.begin() + static_cast<std::ptrdiff_t>(Cut.Begin), Right.begin() + static_cast<std::ptrdiff_t>(Cut.End));
+	std::vector<float> *const pSides[2] = { &Kept, &KeptRight };
 	// Over the pop at the start, a fade in, before the level is measured so the pop doesn't set it
 	const size_t FadeIn = static_cast<size_t>(std::max(0LL, std::min(static_cast<long long>(Kept.size()), Cut.FadeIn)));
 	for (size_t i = 0; i < FadeIn; ++i)
-		Kept[i] *= static_cast<float>(0.5 - 0.5 * std::cos(3.14159265358979 * (static_cast<double>(i) + 0.5) / static_cast<double>(FadeIn)));
+		for (int s = 0; s < 2; ++s)
+			(*pSides[s])[i] *= static_cast<float>(0.5 - 0.5 * std::cos(3.14159265358979 * (static_cast<double>(i) + 0.5) / static_cast<double>(FadeIn)));
+	float Peak = 0.0f;		// on either side
+	for (size_t i = 0; i < Kept.size(); ++i)
+		Peak = std::max(Peak, std::max(std::fabs(Kept[i]), std::fabs(KeptRight[i])));
 	double Raised = 0.0;	// dB
-	double Measured = -70.0;	// the loop's loudness as rendered, LUFS
+	double Measured = -70.0;	// the loop's loudness as rendered, LUFS, the two sides together
 	bool HeldByPeak = false;
 	if (Loudness < 0.0) {
 		// The loop (all of a song that plays once) to the loudness asked, its loudest peak no higher than -1 dBFS
 		const size_t From = Cut.Loops ? static_cast<size_t>(std::max(0LL, Cut.LoopStart)) : 0;
-		Measured = IntegratedLoudness(Kept, SampleRate, From, Kept.size() - From);
-		float Peak = 0.0f;
-		for (size_t i = 0; i < Kept.size(); ++i)
-			Peak = std::max(Peak, std::fabs(Kept[i]));
+		Measured = IntegratedLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From);
 		if (Measured > -70.0 && Peak > 0.0001f) {
 			const double Gain = LoudnessGain(Measured, Loudness, Peak, HeldByPeak);
 			const double Factor = std::pow(10.0, Gain / 20.0);
-			for (size_t i = 0; i < Kept.size(); ++i)
-				Kept[i] = static_cast<float>(Kept[i] * Factor);
+			for (int s = 0; s < 2; ++s)
+				for (size_t i = 0; i < Kept.size(); ++i)
+					(*pSides[s])[i] = static_cast<float>((*pSides[s])[i] * Factor);
 			Raised = Gain;
 		}
 	}
 	else if (Normalize) {
 		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS
-		float Peak = 0.0f;
-		for (size_t i = 0; i < Kept.size(); ++i)
-			Peak = std::max(Peak, std::fabs(Kept[i]));
 		if (Peak > 0.0001f) {
 			const double Gain = std::min(std::pow(10.0, 12.0 / 20.0), std::pow(10.0, -1.0 / 20.0) / Peak);
 			if (Gain > 1.0) {
-				for (size_t i = 0; i < Kept.size(); ++i)
-					Kept[i] = static_cast<float>(Kept[i] * Gain);
+				for (int s = 0; s < 2; ++s)
+					for (size_t i = 0; i < Kept.size(); ++i)
+						(*pSides[s])[i] = static_cast<float>((*pSides[s])[i] * Gain);
 				Raised = 20.0 * std::log10(Gain);
 			}
 		}
@@ -11170,11 +11731,13 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (!Cut.Loops) {
 		// No click where it stops: the last 10 ms fade out
 		const size_t Fade = std::min(Kept.size(), static_cast<size_t>(SampleRate / 100));
-		for (size_t i = 0; i < Fade; ++i)
-			Kept[Kept.size() - 1 - i] *= static_cast<float>(i) / static_cast<float>(Fade);
+		for (int s = 0; s < 2; ++s)
+			for (size_t i = 0; i < Fade; ++i)
+				(*pSides[s])[Kept.size() - 1 - i] *= static_cast<float>(i) / static_cast<float>(Fade);
 	}
+	// In stereo, where the song pans; a song that doesn't is the same on both sides
 	std::string Bytes;
-	if (!EncodeOgg(Kept, SampleRate, Quality, Comments, Bytes, Error))
+	if (!EncodeOgg(Kept, KeptRight, SampleRate, Quality, Comments, Bytes, Error))
 		throw Problem(Error);
 	std::string Path;
 	if (!S.Host().SaveFile(File, Bytes, Path, Error))
@@ -11183,6 +11746,8 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
+	if (SongPans(S))
+		Text += ", in stereo (its parts pan)";
 	if (Loudness < 0.0 && Measured > -70.0) {
 		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
 			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
@@ -11276,6 +11841,7 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty())
 		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
+	Text += "\nThe files are stereo; where nothing pans, both sides are the same.";
 	if (!FilesUrl.empty() && !Saved.empty()) {
 		Text += "\n\nYou're on another computer: fetch the files from FamiTracker with the access code you connect with (the same "
 			"Authorization header), like curl -H \"Authorization: Bearer <code>\" -o <file> <link>:";
@@ -11873,6 +12439,15 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 	Text += " A note lasts until the next one, a release or a halt in its channel; paler notes are quieter.";
 	if (Chords)
 		Text += " Thin faint bars above a note are the other notes of its arpeggio chord (0xy).";
+	bool Panned = false;
+	for (size_t c = 0; c < Channels.size() && !Panned; ++c)
+		for (size_t i = 0; i < Channels[c].Notes.size() && !Panned; ++i) {
+			const NoteInfo &Note = Channels[c].Notes[i];
+			Panned = Note.Row < End && Note.Row + Note.Rows > First && Note.Pan != PAN_CENTER;
+		}
+	if (Panned)
+		Text += " An L at a note's left end or an R at its right end: it plays from the left or the right (the pan, 8xx; a "
+			"bar for a note too small for the letter); notes without one play in the middle.";
 	const int LoopRow = Spec.LoopRow, EndRow = Spec.EndRow;
 	if (Played.Halts())
 		Text += Format(" The song stops after %s (red line).", S.Time.Position(EndRow - 1).c_str());
@@ -12613,6 +13188,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"its tail, a slide or a fall, a vibrato that comes in."));
 		N.Add("end_effects", Prop("array", "Effects on the row where the note ends (its release or halt, or the next note when it starts "
 			"right there), e.g. [\"P80\"] (back in tune)."));
+		Json Pan = Prop("string", "Where it plays between the speakers (stereo, for the game's OGG files): \"left\", \"right\", "
+			"\"center\", a place between (\"half left\", \"30% right\") or a number from -1 (left) to 1 (right). The notes after it "
+			"keep it until one says otherwise; notes without one play where the channel played there before.");
+		Json PanTypes = Json::MakeArray();
+		PanTypes.Push("string");
+		PanTypes.Push("number");
+		Pan.Set("type", PanTypes);
+		N.Add("pan", Pan);
 		NoteItem = N.Get();
 	}
 	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}.");
@@ -12636,14 +13219,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	} AddTool = { m_Tools };
 
 	AddTool("get_song", "Song overview",
-		"Overview of the song open in FamiTracker: title, tempo in BPM, bars and beats, each channel and what it plays, "
-		"instruments, clips, the key found from the notes with chords that fit the melody bar by bar, whether your changes go "
-		"into the song or arrive as clips, and the instrument presets. Start here.",
+		"Overview of the song open in FamiTracker: title, tempo in BPM, bars and beats, each channel and what it plays (and "
+		"where it pans, when the song uses stereo), instruments, clips, the key found from the notes with chords that fit the "
+		"melody bar by bar, whether your changes go into the song or arrive as clips, and the instrument presets. Start here.",
 		Schema().Add("melody_channel", ChannelProp("Channel with the melody, for the chords. Default: the busiest one.")), true, false, true);
 
 	AddTool("read_notes", "Read a channel's notes",
-		"The notes of one channel in musical terms: bar, beat, note, length in beats, instrument, volume and effects. "
-		"Up to 32 bars per call.",
+		"The notes of one channel in musical terms: bar, beat, note, length in beats, instrument, volume, effects and pan "
+		"(where it changes). Up to 32 bars per call.",
 		Schema().Add("channel", ChannelProp("Channel name (\"VRC6 Pulse 1\", \"Triangle\") or number from get_song."), true).Range(),
 		true, false, true);
 
@@ -12826,13 +13409,20 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"it at 4, chords at 6, a second line at 7, a bass on a pulse or the sawtooth at 10, drums at 10, and the DPCM level "
 			"at Z30 so the triangle and the noise soften to about 70% too; the pulses stop burying the triangle, and the sound "
 			"gets warmer. style full puts them near full volume again. levels sets channels yourself, dac the DPCM level alone "
-			"(full Z00, warm Z30, soft Z50, softest Z7F, or 0-127), set where the song starts and where its loop starts. The "
-			"reply says what each channel plays (melody, echo, chords...) and what changed. Needs direct changes; undoable.",
+			"(full Z00, warm Z30, soft Z50, softest Z7F, or 0-127), set where the song starts and where its loop starts; width "
+			"sets the stereo picture (wide: the echo opposite the lead, chord voices apart, the melody, bass and drums in the "
+			"middle). The reply says what each channel plays (melody, echo, chords...) and what changed. Needs direct changes; "
+			"undoable.",
 			Schema()
 				.Add("style", EnumProp("soft (default) or full.", std::vector<std::string>{ "soft", "full" }))
 				.Add("levels", Levels)
 				.Add("dac", Prop("string", "The DPCM level that softens the triangle and the noise: full, warm, soft, softest, keep, or "
 					"0-127 (default warm for soft, full for full)."))
+				.Add("width", EnumProp("Stereo, for the game's OGG files (this FamiTracker's own; NSF files are mono): keep (the "
+					"pans as they are, the default), mono (every part in the middle), or narrow, wide or full: the melody, the bass "
+					"and the drums in the middle, an echo on the other side (right), chords and second lines out to the sides "
+					"(chord voices on several channels spread apart), a quarter, half or all the way. Without a style, only the "
+					"pans change.", std::vector<std::string>{ "keep", "mono", "narrow", "wide", "full" }))
 				.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel."))
 				.Add("from_bar", BarProp("First bar (default 1)."))
 				.Add("to_bar", BarProp("Last bar (default the song's last)."))
@@ -13030,6 +13620,25 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("detune", Prop("integer", "Fine pitch steps, -8 to 8 (default 0): 1 or -1 (P81, P7F) give a subtle chorus with "
 				"the melody, more sounds out of tune. Back in tune (P80) after the echo."))
 			.Add("instrument", Prop("string", "Instrument for the echo. Default: the original's."))
+			.Add("pan", PanChoice("Where the echo plays between the speakers (stereo, for the game's OGG files): \"opposite\" puts "
+				"it on the other side of the original, note by note (halfway right when the original plays in the middle), which "
+				"widens the song and keeps the echo from blurring the melody; or \"left\", \"right\", \"center\", a place between "
+				"(\"half left\") or a number from -1 to 1. Default: where its channel played there before."))
+			.Range().ClipChoice(),
+		false, true);
+
+	AddTool("set_pan", "Pan a part",
+		"Sets where a channel's notes play between the speakers, in the bars given (stereo is this FamiTracker's own: its "
+		"playback and the game's OGG files have it; NSF files and FamiTracker 0.4.6 play mono): left, right, center, a place "
+		"between, alternate (note by note left and right, a ping-pong for arpeggios and hi-hats) or spread (from left to right "
+		"across the bars). It writes the pan effect (8xx: 00 left, 80 the middle, FF right) where it changes, and the note "
+		"after the bars plays where it did. Width helps where parts compete: an echo or a counter-melody on the other side "
+		"of the melody, chord voices apart. Keep the melody, the bass and the kick and snare in the middle.",
+		Schema()
+			.Add("channel", ChannelProp("Channel name or number."), true)
+			.Add("pan", PanChoice("left, right, center, a place between (\"half left\", \"30% right\", or a number from -1 (left) "
+				"to 1 (right)), alternate or spread."), true)
+			.Add("amount", Prop("number", "For alternate and spread: how far to each side, 0.05-1 (default 0.5, halfway)."))
 			.Range().ClipChoice(),
 		false, true);
 
@@ -13711,6 +14320,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "name_section") Result.Text = NameSectionTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
+		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
 			S.Host().Stop();
@@ -13815,6 +14425,9 @@ std::string ToolSet::CoreInstructions()
 		"chords for the B part.\n"
 		"- Drums: add_drums on the noise channel, with fills where phrases end; lighter in calm parts.\n"
 		"- Space: add_echo copies the melody onto a free channel, later and quieter.\n"
+		"- Stereo (FamiTracker's own: its playback and the OGG files; NSFs are mono): a note's \"pan\" in write_notes (left, "
+		"right, center, or -1 to 1) lasts for the notes after it; add_echo with pan \"opposite\" sets the echo apart. Keep "
+		"the melody, bass and drums in the middle.\n"
 		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
 		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
 		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
@@ -13880,6 +14493,13 @@ std::string ToolSet::Instructions()
 		"\"thump bass\": an octave blip into each triangle note), a sampled kick and snare under the noise channel's hi-hats "
 		"(add_drums or make_groove with kit samples), and VRC6 bells and pianos or VRC7 electric pianos. references action "
 		"guide topic atmospheric has the numbers.\n"
+		"- Stereo (this FamiTracker's own: FamiTracker's playback and the game's OGG files from export_for_game are stereo, "
+		"NSF files and FamiTracker 0.4.6 mono): a note or a part plays from the left, the middle or the right (write_notes' "
+		"pan, set_pan, the 8xx effect: 00 left, 80 the middle, FF right; it lasts until the next one). Width helps where parts "
+		"compete: an echo on the other side of its melody (add_echo pan \"opposite\"), chord voices or arpeggios apart, a "
+		"counter-melody answering from the other side, hi-hats alternating; keep the melody, the bass, the kick and the snare "
+		"in the middle. mix with width wide sets that picture. Spread a little (halfway, not hard left and right): players "
+		"heard on one speaker or on headphones tire of parts that sit far to one side.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"
@@ -14040,7 +14660,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"fit); give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument), and an echo "
 			"(add_echo, detune 1) where it leaves room.\n"
 			"7. Finish the sound: set_swing if the feel should swing, then mix (soft) last, so the triangle and the drums come "
-			"through and the pulses don't harshen.\n"
+			"through and the pulses don't harshen; with width wide, for the game's stereo files: the echo opposite the melody, "
+			"chord voices apart, the melody, the bass and the drums in the middle.\n"
 			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
 			"9. set_loop where the loop starts, then check_loop and fix_loop, so the repeats start as the first time does (a "
 			"fade or an echo at the loop's end carries over otherwise). Then play it for me and ask what I'd change. Keep what "
@@ -14058,7 +14679,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"2. Work through its list in order, one change at a time: missing layers first (chords, bass, drums, a second line), "
 			"then variety (chord colors and styles, a bass that moves, fills, repeats that change), then breathing (an intro on "
 			"the chords and bass, a break with fewer parts), then expression (polish, an echo, a sound that changes between "
-			"sections, sampled drums), and mix last. Keep my melody unless the review points at it.\n"
+			"sections, sampled drums), width (an echo on the other side of the melody, chord voices apart: mix with width wide, "
+			"or set_pan; the bass and the drums stay in the middle), and mix last. Keep my melody unless the review points at it.\n"
 			"3. Run review_arrangement again after each round until it scores 8 or more. If the song loops, finish with "
 			"check_loop and fix_loop: an echo or a fade at the loop's end carries into its start on repeat.\n"
 			"4. Play the changed bars for me, say what you changed and why, and ask what I think.";

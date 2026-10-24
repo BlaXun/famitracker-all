@@ -66,9 +66,9 @@ const char CHORD_DUTY_VRC6[] = "1";
 const char LEAD_DUTY_2A03[] = "1";
 const char LEAD_DUTY_VRC6[] = "3 3 3 3 3 3 2 2 2 2 2 2";
 
-// Effect letters, as EFF_CHAR in FamiTrackerTypes.h (index = effect - 1).
-const char EFFECT_LETTERS[] = "FBDCE3\0HI047PGZ12VYQRASX\0HIJWHIJ";
-const int EFFECT_LETTER_COUNT = 32;
+// Effect letters, as EFF_CHAR in FamiTrackerTypes.h (index = effect - 1); 8 is the pan, this FamiTracker's own.
+const char EFFECT_LETTERS[] = "FBDCE3\0HI047PGZ12VYQRASX\0HIJWHIJ8";
+const int EFFECT_LETTER_COUNT = 33;
 
 std::string Quote(const std::string &s)
 {

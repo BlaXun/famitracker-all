@@ -89,11 +89,14 @@ const int NO_INSTRUMENT = 0x40, NO_VOLUME = 0x10;
 // The FDS channel's ID (chan_id_t)
 const int CHANID_FDS = 19;
 
-// The letters of effects 1-32 as FamiTracker writes them (EFF_CHAR): the FDS's
-// and the 5B's own effects reuse H, I and J; 0 for the two without one
-const char EFF_CHAR[32] = {
+// The letters of effects 1-33 as FamiTracker writes them (EFF_CHAR): the FDS's
+// and the 5B's own effects reuse H, I and J; 0 for the two without one; 33 is
+// the pan (8xx), this FamiTracker's own stereo
+const int EFF_CHARS = 33;
+const char EFF_CHAR[EFF_CHARS] = {
 	'F', 'B', 'D', 'C', 'E', '3', 0, 'H', 'I', '0', '4', '7', 'P', 'G', 'Z', '1',
-	'2', 'V', 'Y', 'Q', 'R', 'A', 'S', 'X', 0, 'H', 'I', 'J', 'W', 'H', 'I', 'J'
+	'2', 'V', 'Y', 'Q', 'R', 'A', 'S', 'X', 0, 'H', 'I', 'J', 'W', 'H', 'I', 'J',
+	'8'
 };
 
 // What 0.4.6 writes of each block, to tell newer ones
@@ -1375,7 +1378,7 @@ Cell Document::MakeCell(const FtNote &n, bool Noise)
 		const int Code = n.EffNumber[e];
 		if (Code == 0)
 			continue;
-		const char Letter = Code <= 32 ? EFF_CHAR[Code - 1] : 0;
+		const char Letter = Code <= EFF_CHARS ? EFF_CHAR[Code - 1] : 0;
 		if (Letter)
 			c.Effects[e] = Effect(Letter, n.EffParam[e]);
 		else

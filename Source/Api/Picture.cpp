@@ -195,6 +195,21 @@ bool IsStrip(int Kind)
 	return Kind == KIND_NOISE || Kind == KIND_DPCM;
 }
 
+// A note's pan (stereo, 8xx): an L at its left end or an R at its right end, or a bar there when the letter doesn't fit;
+// nothing in the middle
+void MarkPan(Canvas &C, const NoteInfo &Note, int x0, int y0, int x1, int y1)
+{
+	if (Note.Pan == PAN_CENTER)
+		return;
+	const bool Right = Note.Pan > PAN_CENTER;
+	if (y1 - y0 >= GLYPH_HEIGHT + 1 && x1 - x0 >= GLYPH_WIDTH + 4) {
+		const int y = y0 + (y1 - y0 - GLYPH_HEIGHT) / 2;
+		C.Text(Right ? x1 - 2 - GLYPH_WIDTH : x0 + 2, y, Right ? "R" : "L", 1, TEXT);
+	}
+	else if (x1 - x0 >= 3)
+		C.Fill(Right ? x1 - 3 : x0 + 1, y0, Right ? x1 - 1 : x0 + 3, y1, TEXT);
+}
+
 // "C-4" without the dash when there's no room isn't needed: C labels only
 std::string OctaveLabel(int Pitch)
 {
@@ -444,9 +459,11 @@ Picture DrawNotes(const std::vector<PictureChannel> &Channels, const PictureSpec
 			const int HitEnd = std::min(X(To), X(From) + std::max(RowWidth, 4));
 			if (X(To) > HitEnd)
 				C.Fill(HitEnd, Top, X(To) - 1, Top + Height, Shade(Channel.Color, SHADE_GHOST));
-			if (Note.Row >= First)
+			if (Note.Row >= First) {
 				C.Fill(X(From), Top, HitEnd, Top + Height,
 					Shade(Channel.Color, Channel.Kind == KIND_NOISE ? VolumeShade(Note.Volume) : SHADE_DARK));
+				MarkPan(C, Note, X(From), Top, std::max(X(To) - 1, HitEnd), Top + Height);
+			}
 		}
 	}
 	std::stable_sort(Melodic.begin(), Melodic.end(),
@@ -466,6 +483,7 @@ Picture DrawNotes(const std::vector<PictureChannel> &Channels, const PictureSpec
 		C.Outline(x0, y0, x1, y1, Dark, Starts);
 		if (Starts && RowWidth >= 6)
 			C.Fill(x0 + 1, y0, x0 + 2, y1, Dark);
+		MarkPan(C, Note, x0 + (Starts && RowWidth >= 6 ? 2 : 0), y0, x1, y1);
 	}
 
 	// Labels: each C on the left, the strips' names

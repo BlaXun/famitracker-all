@@ -556,6 +556,13 @@ void CAPU::SetChipLevel(chip_level_t Chip, float Level)
 	}
 }
 
+void CAPU::SetChannelPan(int ChanID, int Pan)
+{
+	// From now on, as a register written now would (stereo is this FamiTracker's own: the 8xx effect)
+	Process();
+	m_pMixer->SetChannelPan(ChanID, Pan, m_iFrameCycles);
+}
+
 void CAPU::LogExternalWrite(uint16 Address, uint8 Value)
 {
 	if (Address >= 0x9000 && Address <= 0x9003)

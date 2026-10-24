@@ -1483,6 +1483,92 @@ OPLL_calc (OPLL * opll)
 }
 #endif
 
+/* calc with channels 0-5 on each side by their gains (256: all of a channel), the others in the middle */
+static void
+calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right)
+{
+  int32 inst = 0, perc = 0, instL = 0, instR = 0, outL, outR;
+  int32 i;
+
+  update_ampm (opll);
+  update_noise (opll);
+
+  for (i = 0; i < 18; i++)
+  {
+    calc_phase(&opll->slot[i],opll->lfo_pm);
+    calc_envelope(&opll->slot[i],opll->lfo_am);
+  }
+
+  for (i = 0; i < 6; i++)
+	  if (!(opll->mask & OPLL_MASK_CH (i)) && (CAR(opll,i)->eg_mode != FINISH)) {
+		int32 absval, val = calc_slot_car (CAR(opll,i), calc_slot_mod(MOD(opll,i)));
+		instL += val * gainL[i];
+		instR += val * gainR[i];
+		absval = abs(val);
+		if (absval > opll_volumes[i])
+			opll_volumes[i] = val;
+	  }
+
+  /* CH6 */
+  if (opll->patch_number[6] <= 15)
+  {
+    if (!(opll->mask & OPLL_MASK_CH (6)) && (CAR(opll,6)->eg_mode != FINISH))
+      inst += calc_slot_car (CAR(opll,6), calc_slot_mod(MOD(opll,6)));
+  }
+  else
+  {
+    if (!(opll->mask & OPLL_MASK_BD) && (CAR(opll,6)->eg_mode != FINISH))
+      perc += calc_slot_car (CAR(opll,6), calc_slot_mod(MOD(opll,6)));
+  }
+
+  /* CH7 */
+  if (opll->patch_number[7] <= 15)
+  {
+    if (!(opll->mask & OPLL_MASK_CH (7)) && (CAR(opll,7)->eg_mode != FINISH))
+      inst += calc_slot_car (CAR(opll,7), calc_slot_mod(MOD(opll,7)));
+  }
+  else
+  {
+    if (!(opll->mask & OPLL_MASK_HH) && (MOD(opll,7)->eg_mode != FINISH))
+      perc += calc_slot_hat (MOD(opll,7), CAR(opll,8)->pgout, opll->noise_seed&1);
+    if (!(opll->mask & OPLL_MASK_SD) && (CAR(opll,7)->eg_mode != FINISH))
+      perc -= calc_slot_snare (CAR(opll,7), opll->noise_seed&1);
+  }
+
+  /* CH8 */
+  if (opll->patch_number[8] <= 15)
+  {
+    if (!(opll->mask & OPLL_MASK_CH(8)) && (CAR(opll,8)->eg_mode != FINISH))
+      inst += calc_slot_car (CAR(opll,8), calc_slot_mod (MOD(opll,8)));
+  }
+  else
+  {
+    if (!(opll->mask & OPLL_MASK_TOM) && (MOD(opll,8)->eg_mode != FINISH))
+      perc += calc_slot_tom (MOD(opll,8));
+    if (!(opll->mask & OPLL_MASK_CYM) && (CAR(opll,8)->eg_mode != FINISH))
+      perc -= calc_slot_cym (CAR(opll,8), MOD(opll,7)->pgout);
+  }
+
+  /* As calc ends: with gains of 256, (x * 256 + 128) >> 8 is x itself */
+  outL = ((instL + 128) >> 8) + inst + (perc << 1);
+  outR = ((instR + 128) >> 8) + inst + (perc << 1);
+  *left = (int16) ((int16) outL << 3);
+  *right = (int16) ((int16) outR << 3);
+}
+
+void
+OPLL_calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right)
+{
+#ifndef EMU2413_COMPACTION
+  if (opll->quality)
+  {
+    *left = *right = OPLL_calc (opll);	/* the rate converter: in the middle */
+    return;
+  }
+#endif
+  calc_lr (opll, gainL, gainR, left, right);
+}
+
 uint32
 OPLL_setMask (OPLL * opll, uint32 mask)
 {

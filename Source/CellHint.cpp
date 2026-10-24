@@ -210,6 +210,11 @@ std::string DescribeEffect(int Effect, int Param, hint_channel_t Kind, int Split
 		return Head + ": the 5B envelope's speed";
 	case EF_SUNSOFT_ENV_TYPE:
 		return Head + ": the 5B envelope's shape";
+	case EF_PAN: {
+		const char *Where = Param == 0x80 ? "in the middle" : (Param == 0x00 ? "on the left only" : (Param == 0xFF ? "on the right only" :
+			(Param < 0x80 ? "toward the left" : "toward the right")));
+		return Head + Format(": the channel plays %s from here (stereo: 00 left, 80 the middle, FF right)", Where);
+	}
 	default:
 		return EffectLetter(Effect) != 0 ? Head + ": an effect" : std::string("An effect FamiTracker doesn't use");
 	}

@@ -122,6 +122,8 @@ void CN163::Mix(int32 Value, uint32 Time, uint8 ChanID)
 
 	if (Delta)
 		m_pMixer->AddValue(ChanID, SNDCHIP_N163, Delta, Value, Time + m_iGlobalTime);
+	else
+		m_pMixer->N163Channel(ChanID, Time + m_iGlobalTime);	// the same level, from another channel (its own pan)
 
 	m_iLastValue = Value;
 }

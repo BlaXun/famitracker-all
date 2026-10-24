@@ -133,6 +133,9 @@ void TestEffects()
 	CHECK(Has(DescribeEffect(EF_SAMPLE_OFFSET, 2, HINT_DPCM), "128 bytes"));
 	CHECK(Has(DescribeEffect(EF_FDS_MOD_DEPTH, 0x10, HINT_OTHER), "H10: the FDS modulation"));
 	CHECK(Has(DescribeEffect(EF_DPCM_PITCH, 0x0F, HINT_DPCM), "W0F"));
+	CHECK(Has(DescribeEffect(EF_PAN, 0x00, HINT_PULSE), "800: the channel plays on the left only"));
+	CHECK(Has(DescribeEffect(EF_PAN, 0x80, HINT_DPCM), "in the middle"));
+	CHECK(Has(DescribeEffect(EF_PAN, 0xC0, HINT_PULSE), "toward the right"));
 	// Every effect says something, starting with its code
 	for (int e = EF_SPEED; e < EF_COUNT; ++e) {
 		const std::string Text = DescribeEffect(e, 0x12, HINT_PULSE);

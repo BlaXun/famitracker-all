@@ -618,6 +618,163 @@ static void TestClearEffects()
 	CHECK_EQ(Effects(x, 0), "");
 }
 
+// "L R C 40" per note: its pan (L 00, C 80, R FF, otherwise in hex)
+static std::string Pans(const CChannelNotes &ch)
+{
+	std::string s;
+	for (int i = 0; i < ch.GetNoteCount(); ++i) {
+		const int p = ch.GetNote(i).Pan;
+		char b[8];
+		if (p == PAN_LEFT || p == PAN_CENTER || p == PAN_RIGHT)
+			std::snprintf(b, sizeof b, "%c", p == PAN_LEFT ? 'L' : p == PAN_CENTER ? 'C' : 'R');
+		else
+			std::snprintf(b, sizeof b, "%02X", p);
+		s += (s.empty() ? "" : " ") + std::string(b);
+	}
+	return s;
+}
+
+static int PanEffects(const CChannelNotes &ch)
+{
+	int n = 0;
+	for (int r = 0; r < ch.GetRows(); ++r)
+		for (int i = 0; i < MAX_EFFECT_COLUMNS; ++i)
+			n += At(ch, r).EffNumber[i] == EF_PAN;
+	return n;
+}
+
+static void TestPan()
+{
+	// Read: a pan lasts from note to note, in the effect columns that play, the last on a row winning
+	CChannelNotes ch = Channel(32);
+	ch.SetCell(0, Cell(C, 4, 0));
+	ch.SetCell(4, With(Cell(D, 4), 1, EF_PAN, PAN_LEFT));
+	ch.SetCell(8, Cell(E, 4));
+	ch.SetCell(12, With(With(Cell(F, 4), 0, EF_PAN, 0x40), 1, EF_PAN, PAN_RIGHT));
+	ch.SetCell(16, Cell(G, 4));
+	CHECK_EQ(Pans(ch), "C L L R R");
+	ch.SetEffectColumns(1);
+	CHECK_EQ(Pans(ch), "C C C 40 40");
+	ch.SetEffectColumns(2);
+	CHECK_EQ(Effects(ch, 1), "");	// the pan isn't one of the effects shown on notes
+	const int at0[] = { 0 }, none[] = { 0 };
+	const unsigned char right[] = { PAN_RIGHT };
+	CHECK(ch.SetLasting(at0, 1, EF_PAN, right, none));	// not a lasting effect SetLasting puts on: SetPan does
+	CHECK_EQ(Pans(ch), "C L L R R");
+
+	// Set on a note: written on its row, the next note keeps the pan it had
+	CChannelNotes s = Channel(32);
+	s.SetCell(0, Cell(C, 4, 0));
+	s.SetCell(4, Cell(D, 4));
+	s.SetCell(8, Cell(E, 4));
+	s.SetCell(12, Cell(HALT));
+	const int d4[] = { 4 };
+	CHECK(s.SetPan(d4, 1, PAN_LEFT));
+	CHECK_EQ(Pans(s), "C L C");
+	CHECK(HasEffect(s, 4, EF_PAN, PAN_LEFT) && HasEffect(s, 8, EF_PAN, PAN_CENTER) && PanEffects(s) == 2);
+	CHECK_EQ(Notes(s), "C-4 0-4> D-4 4-8> E-4 8-12-");
+
+	// Back to the middle: nothing is left to write
+	CHECK(s.SetPan(d4, 1, PAN_CENTER));
+	CHECK_EQ(Pans(s), "C C C");
+	CHECK(!HasEffect(s, 4, EF_PAN, PAN_LEFT) && PanEffects(s) <= 1);
+
+	// Two notes in a row to the right: one effect, on the first; a pan that changed in the middle
+	// of a note goes
+	CChannelNotes r = Channel(32);
+	r.SetCell(0, Cell(C, 4, 0));
+	r.SetCell(4, Cell(D, 4));
+	r.SetCell(6, With(Cell(NONE), 0, EF_PAN, PAN_LEFT));
+	r.SetCell(8, Cell(E, 4));
+	r.SetCell(12, Cell(F, 4));
+	r.SetCell(16, Cell(HALT));
+	CHECK_EQ(Pans(r), "C C L L");
+	const int de[] = { 8, 4 };
+	CHECK(r.SetPan(de, 2, PAN_RIGHT));
+	CHECK_EQ(Pans(r), "C R R L");
+	CHECK(HasEffect(r, 4, EF_PAN, PAN_RIGHT) && !HasEffect(r, 6, EF_PAN, PAN_LEFT) && !HasEffect(r, 8, EF_PAN, PAN_RIGHT));
+	CHECK(HasEffect(r, 12, EF_PAN, PAN_LEFT));
+
+	// The last note panned: the first gets the middle written, for when the song loops
+	CChannelNotes l = Channel(32);
+	l.SetCell(0, Cell(C, 4, 0));
+	l.SetCell(8, Cell(D, 4));
+	l.SetCell(12, Cell(HALT));
+	const int last[] = { 8 };
+	CHECK(l.SetPan(last, 1, PAN_RIGHT));
+	CHECK(HasEffect(l, 8, EF_PAN, PAN_RIGHT) && HasEffect(l, 0, EF_PAN, PAN_CENTER));
+	CHECK_EQ(Pans(l), "C R");
+
+	// No free effect column: false, the rest is done
+	CChannelNotes f = Channel(8, 1);
+	f.SetCell(0, With(Cell(C, 4, 0), 0, EF_VIBRATO, 0x44));
+	f.SetCell(4, Cell(HALT));
+	const int c4[] = { 0 };
+	CHECK(!f.SetPan(c4, 1, PAN_LEFT));
+	CHECK(HasEffect(f, 0, EF_VIBRATO, 0x44));
+
+	// Edits keep the pans: a moved note plays at its pan where it lands, the notes it leaves at theirs
+	CChannelNotes m = Channel(48);
+	m.SetCell(0, With(Cell(C, 4, 0), 0, EF_PAN, PAN_LEFT));
+	m.SetCell(4, Cell(D, 4));
+	m.SetCell(8, Cell(E, 4));
+	m.SetCell(12, Cell(HALT));
+	m.SetCell(24, With(Cell(G, 4), 0, EF_PAN, PAN_RIGHT));
+	m.SetCell(28, Cell(HALT));
+	CHECK_EQ(Pans(m), "L L L R");
+	const int c[] = { 0 };
+	const int cp[] = { P(C, 4) };
+	m.Move(c, 1, 32, cp, false);	// to row 32, after the G-4 (on the right)
+	CHECK_EQ(Notes(m), "D-4 4-8> E-4 8-12- G-4 24-28- C-4 32-36-");
+	CHECK_EQ(Pans(m), "L L R L");
+	CHECK(HasEffect(m, 4, EF_PAN, PAN_LEFT) && HasEffect(m, 32, EF_PAN, PAN_LEFT));
+
+	// Removed: the notes after it keep their pan
+	m.Remove(4);
+	CHECK_EQ(Pans(m), "L R L");
+	CHECK(HasEffect(m, 8, EF_PAN, PAN_LEFT));
+
+	// A new note plays where the channel is panned
+	m.Add(14, 18, P(A, 4), 0);
+	CHECK_EQ(Pans(m), "L L R L");
+	CHECK(!HasEffect(m, 14, EF_PAN, PAN_LEFT));
+
+	// Copied and pasted somewhere else, and in a clip made self-contained
+	CChannelNotes p = Channel(64);
+	p.SetCell(0, With(Cell(C, 4, 0), 0, EF_PAN, PAN_RIGHT));
+	p.SetCell(4, Cell(D, 4));
+	p.SetCell(8, With(Cell(E, 4), 0, EF_PAN, PAN_CENTER));
+	p.SetCell(12, Cell(HALT));
+	const int dd[] = { 4 };
+	const CChannelNotes clip = p.Copy(dd, 1);
+	p.Paste(clip, 20, 0);
+	CHECK_EQ(Pans(p), "R R C R");
+	CHECK(HasEffect(p, 20, EF_PAN, PAN_RIGHT));
+	CChannelNotes own = clip;
+	own.SelfContained();
+	CHECK(HasEffect(own, 0, EF_PAN, PAN_RIGHT));
+
+	// Effects taken off: the pan stays, the next note's too
+	CChannelNotes x = Channel(32, 3);
+	x.SetCell(0, With(With(Cell(C, 4, 0), 0, EF_VIBRATO, 0x44), 1, EF_PAN, PAN_LEFT));
+	x.SetCell(4, Cell(D, 4));
+	x.SetCell(8, Cell(HALT));
+	CHECK(x.ClearEffects(c, 1));
+	CHECK(HasEffect(x, 0, EF_PAN, PAN_LEFT) && !HasEffect(x, 0, EF_VIBRATO, 0x44));
+	CHECK_EQ(Pans(x), "L L");
+
+	// A song that doesn't pan gets no pan from any of these edits
+	CChannelNotes plain = Channel(32);
+	plain.SetCell(0, Cell(C, 4, 0));
+	plain.SetCell(4, Cell(D, 4));
+	plain.SetCell(8, Cell(HALT));
+	plain.Add(12, 16, P(E, 4), 0);
+	plain.Move(c, 1, 20, cp, false);
+	plain.Paste(plain.Copy(d4, 1), 24, 2);
+	CHECK(PanEffects(plain) == 0);
+	CHECK_EQ(Pans(plain), "C C C C");
+}
+
 static void TestCompare()
 {
 	CChannelNotes a = Channel(32), b = Channel(32);
@@ -644,6 +801,7 @@ int main()
 	TestSetLasting();
 	TestSlidesAndBends();
 	TestClearEffects();
+	TestPan();
 	TestCompare();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
