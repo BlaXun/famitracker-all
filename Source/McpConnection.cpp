@@ -349,6 +349,8 @@ void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::Instr
 		ReadSequence(pDoc, pInstrument, TYPES[i], INTO[i]->Items, INTO[i]->Loop, INTO[i]->Release, INTO[i]->Setting);
 	if (pInstrument->GetType() == INST_S5B)	// the 5B's noise / mode sequence, in the duty sequence's place
 		ReadSequence(pDoc, pInstrument, SEQ_DUTYCYCLE, Info.Mode.Items, Info.Mode.Loop, Info.Mode.Release, Info.Mode.Setting);
+	else if (pInstrument->GetType() != INST_FDS)	// the pulse's width, or the N163's wave (how loud the tools hear it)
+		ReadSequence(pDoc, pInstrument, SEQ_DUTYCYCLE, Info.Duty.Items, Info.Duty.Loop, Info.Duty.Release, Info.Duty.Setting);
 }
 
 // A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the
@@ -954,8 +956,15 @@ public:
 				Instrument.OddDuty = HasOddDuty(pDoc, pInstrument);
 				ReadSequences(pDoc, pInstrument, Instrument);
 				if (pInstrument->GetType() == INST_N163) {
-					Instrument.WavePos = static_cast<CInstrumentN163*>(pInstrument)->GetWavePos();
-					Instrument.WaveSize = static_cast<CInstrumentN163*>(pInstrument)->GetWaveSize();
+					const CInstrumentN163 *pN163 = static_cast<CInstrumentN163*>(pInstrument);
+					Instrument.WavePos = pN163->GetWavePos();
+					Instrument.WaveSize = pN163->GetWaveSize();
+					for (int w = 0; w < pN163->GetWaveCount(); ++w) {
+						std::vector<int> Wave;
+						for (int s = 0; s < pN163->GetWaveSize(); ++s)
+							Wave.push_back(pN163->GetSample(w, s));
+						Instrument.Waves.push_back(Wave);
+					}
 				}
 				pInstrument->Release();
 			}

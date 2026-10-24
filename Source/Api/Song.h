@@ -96,6 +96,9 @@ struct InstrumentInfo {
 										// 5B instruments; an FDS pitch sequence moves the frequency register, up is sharper)
 	SequenceInfo Mode;		// a 5B instrument's noise / mode sequence: 64 the square, 128 the noise, 32 the envelope (whose
 							// level replaces the volume's), and the noise's pitch 0-31 in the low bits; empty otherwise
+	SequenceInfo Duty;		// its duty sequence (2A03 and VRC6 instruments: the pulse's width, 0-3 and 0-7) or, on an N163
+							// instrument, the wave it plays (its index in Waves); empty when it has none
+	std::vector<std::vector<int> > Waves;	// an N163 instrument's waves, 0-15 a sample; empty for the other chips
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
 		VolumeRelease(-1) {}

@@ -582,7 +582,7 @@ public:
 			SequenceInfo *pInto = Sequences[s].Type == SEQUENCE_ARPEGGIO ? &Info.Instruments.back().Steps :
 				Sequences[s].Type == SEQUENCE_PITCH ? &Info.Instruments.back().Pitch :
 				Sequences[s].Type == SEQUENCE_HIPITCH ? &Info.Instruments.back().HiPitch :
-				Sequences[s].Type == SEQUENCE_DUTY && Chip == "5B" ? &Info.Instruments.back().Mode : 0;
+				Sequences[s].Type == SEQUENCE_DUTY ? (Chip == "5B" ? &Info.Instruments.back().Mode : &Info.Instruments.back().Duty) : 0;
 			if (pInto != 0 && !Sequences[s].Items.empty()) {
 				pInto->Items = Sequences[s].Items;
 				pInto->Loop = Sequences[s].Loop;
@@ -624,6 +624,14 @@ public:
 		AddInstrumentInfo(Next, Sound.InstrumentName().c_str(), "N163", Sound.Releases());
 		Info.Instruments.back().WavePos = WavePos;
 		Info.Instruments.back().WaveSize = N163_WAVE_SIZE;
+		// Its waves and the sequence that picks among them, as McpConnection reports them
+		Info.Instruments.back().Waves = Sound.Waves;
+		for (size_t s = 0; s < Sound.Sequences.size(); ++s)
+			if (Sound.Sequences[s].Type == SEQUENCE_DUTY && !Sound.Sequences[s].Items.empty()) {
+				Info.Instruments.back().Duty.Items = Sound.Sequences[s].Items;
+				Info.Instruments.back().Duty.Loop = Sound.Sequences[s].Loop;
+				Info.Instruments.back().Duty.Release = Sound.Sequences[s].Release;
+			}
 		MadeWaves[Next] = Sound;
 		return Next;
 	}
@@ -6089,7 +6097,9 @@ void TestSeveralChips()
 		"\"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-2\", \"beats\": 4}]}").IsError);
 	Result = Run(Mixed, "mix", "{\"melody_channel\": \"5B Square 1\"}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "5B Square 1 (melody) loudest 15 to 13");
+	// The square lead holds 6 dB (two steps) under its strike, which on the 5B counts as it holds: as loud as a pulse
+	// lead holding 13 of 15 plays in a soft mix, it stays at 15 (it used to go to 13 and play 6 dB under that)
+	CHECK_HAS(Result.Text, "5B Square 1 (melody) stays at 15");
 	CHECK_HAS(Result.Text, "The 5B counts its volume in steps of 3 dB");
 
 	// Switching the VRC6 off: its notes go (asked first), the N163's and the 5B's move to their new columns

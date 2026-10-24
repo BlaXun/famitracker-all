@@ -28,11 +28,12 @@ namespace ftapi {
 
 namespace {
 
-const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key" };
+const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held" };
 const char *const KIND_TITLES[PROBLEM_KINDS] = {
-	"Notes that vanish", "Notes that click", "Clashes", "Out of range", "Silent bars", "Busy bars", "Outside the key"
+	"Notes that vanish", "Notes that click", "Clashes", "Out of range", "Silent bars", "Busy bars", "Outside the key",
+	"Leads that hold steady"
 };
-const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 2, 1, 1, 1 };
+const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 2, 1, 1, 1, 2 };
 
 int IntOf(const Json &Object, const char *Name, int Default)
 {
