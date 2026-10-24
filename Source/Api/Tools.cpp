@@ -38,6 +38,7 @@
 #include "SoundIndex.h"
 #include "Effects.h"
 #include "FdsSounds.h"
+#include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "../Nsf/FtmFile.h"
 #include "../Nsf/Import.h"
@@ -355,6 +356,11 @@ private:
 		for (size_t c = 0; c < Song.Channels.size(); ++c) {
 			m_Shown.push_back(std::max(1, std::min(EFFECT_COLUMNS, Song.Channels[c].EffectColumns)));
 			Song.Channels[c].EffectColumns = EFFECT_COLUMNS;
+			// The channels of its chip (the N163's count sets how loud it plays: N163FullDb)
+			int Same = 0;
+			for (size_t d = 0; d < Song.Channels.size(); ++d)
+				Same += Song.Channels[d].Chip == Song.Channels[c].Chip ? 1 : 0;
+			Song.Channels[c].ChipChannels = Same;
 		}
 	}
 
@@ -427,6 +433,20 @@ std::vector<std::string> SongChips(const SongInfo &Song)
 	return Out;
 }
 
+// The expansion chips as the user knows them, for get_song: "VRC6", "VRC6, N163, 5B", "VRC6 Plus (the VRC6 with a
+// soft layer of four N163 wave channels), 5B"
+std::string ExpansionText(const SongInfo &Song)
+{
+	if (!Song.Vrc6Plus)
+		return Song.Expansion;
+	std::string Text = std::string(VRC6_PLUS) + " (the VRC6 with a soft layer of four N163 wave channels)";
+	const std::vector<std::string> Chips = SongChips(Song);
+	for (size_t i = 0; i < Chips.size(); ++i)
+		if (Chips[i] != "VRC6" && Chips[i] != "N163")
+			Text += ", " + Chips[i];
+	return Text;
+}
+
 bool HasChip(const SongInfo &Song, const std::string &Chip)
 {
 	const std::vector<std::string> Chips = SongChips(Song);
@@ -452,9 +472,25 @@ std::string ChipWord(const std::string &Asked)
 // How loud a channel plays at a volume, in dB against a 2A03 pulse at 15, as FamiTracker renders
 // it (measured): the VRC7's sounds about 5 dB louder at 15, each volume step 3 dB softer; the
 // 5B's square as loud as a pulse at 15 (0.4 dB louder), each step 3 dB softer too; the N163's
-// wave sounds about 8 dB quieter; the FDS's sounds about 5 dB louder with their envelope at
-// its top (31; FdsSounds.h's from 4 to 6.5); everything else in proportion to the volume
-const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, S5B_FULL_DB = 0.4, S5B_STEP_DB = 3.0, N163_FULL_DB = -8.0, FDS_FULL_DB = 5.0;
+// wave sounds by its channel count (N163FullDb); the FDS's sounds about 5 dB louder with their
+// envelope at its top (31; FdsSounds.h's from 4 to 6.5); everything else in proportion to the volume
+const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, S5B_FULL_DB = 0.4, S5B_STEP_DB = 3.0, FDS_FULL_DB = 5.0;
+// The N163, measured under Wine (A-3, volume 15 on a plain instrument, against a 2A03 pulse at 15 in the same
+// rendering, October 2026): its one DAC plays its channels in turn, each a 1/n of the time, which FamiTracker's
+// mixer makes up in part (CN163::Process: 1.3 for one channel, 1.5 + (n - 2) / 1.5 for more), so a square wave of
+// 0-15 plays 0.6 dB under the pulse with 4 channels, 4.4 dB over it with 1 and 1.0 over with 8 (where the chip's
+// switching whine, at 15 kHz, adds 1.8 dB of its own). Its level follows the wave's: the RMS of the ready-made
+// waves, rounder than a square, is 4.1 dB under the square's on average (a sine 3.2, the soft flute 2.8, the
+// choir 7.1, the sub bass 3.3), measured within 0.2 dB of that on every one.
+const double N163_SQUARE_DB = -0.6, N163_WAVE_DB = -4.1;
+
+// The N163's level at 15 against a pulse's with Channels of its channels in the song (0: not known, as 4)
+double N163FullDb(int Channels)
+{
+	auto Share = [](int n) { return (n <= 1 ? 1.3 : 1.5 + (n - 2) / 1.5) / std::max(1, n); };
+	const int n = Channels < 1 ? 4 : std::min(8, Channels);
+	return N163_SQUARE_DB + N163_WAVE_DB + 20.0 * std::log10(Share(n) / Share(4));
+}
 
 // The channels whose volume counts in steps of 3 dB, the VRC7's and the 5B's, not in proportion to it
 bool StepVolume(const ChannelInfo &Channel)
@@ -465,8 +501,17 @@ bool StepVolume(const ChannelInfo &Channel)
 // A chip's level at 15 against a pulse's, where it counts volume in proportion
 double FullDb(const ChannelInfo &Channel)
 {
-	return Channel.Chip == "N163" ? N163_FULL_DB : Channel.Chip == "FDS" ? FDS_FULL_DB : 0.0;
+	return Channel.Chip == "N163" ? N163FullDb(Channel.ChipChannels) : Channel.Chip == "FDS" ? FDS_FULL_DB : 0.0;
 }
+
+// A channel of the VRC6 Plus's soft layer (Vrc6Plus.h): an N163 channel shown as the VRC6 Plus's
+bool IsSoftLayer(const ChannelInfo &Channel)
+{
+	return Channel.Chip == "N163" && Channel.Group == VRC6_PLUS;
+}
+
+// How far mix keeps the soft layer's parts under their roles' levels (but a melody of its own), so it sits under the VRC6
+const double SOFT_LAYER_DB = 3.0;
 
 // The mixer window's fader on a channel (View > Mixer, set_mixer), which FamiTracker's mixer adds to how loud it plays
 double FaderDb(const ChannelInfo &Channel)
@@ -955,11 +1000,17 @@ int ParseChannel(const Session &S, const Json &Value, const char *Name)
 				if (Text == ALIASES[a][0])
 					Alias = ALIASES[a][1];
 			// A channel's own name before a word for one: "Square 1" is the 5B's in a 5B song, else the first pulse
+			// and a VRC6 Plus's channels by their names on the VRC6 and the N163 ("VRC6 Pulse 1", "N163 Namco 1", "Namco 1")
 			for (int Try = 0; Try < 2 && Number == 0; ++Try) {
 				const std::string &Wanted = Try == 0 ? Text : Alias;
-				for (int Pass = 0; Pass < 2 && Number == 0; ++Pass) {
+				for (int Pass = 0; Pass < 4 && Number == 0; ++Pass) {
 					for (int c = 0; c < S.ChannelCount(); ++c) {
-						std::string Full = Lowercase(Pass == 0 ? S.Channel(c).FullName() : S.Channel(c).Name), Squeezed;
+						const ChannelInfo &Info = S.Channel(c);
+						if (Pass >= 2 && Info.Group.empty())
+							continue;
+						const std::string &Old = Info.OldName.empty() ? Info.Name : Info.OldName;
+						std::string Full = Lowercase(Pass == 0 ? Info.FullName() : Pass == 1 ? Info.Name : Pass == 2 ? Info.Chip + " " + Old :
+							Old), Squeezed;
 						for (size_t i = 0; i < Full.size(); ++i)
 							if (Full[i] != ' ' && Full[i] != '-' && Full[i] != '_')
 								Squeezed += Full[i];
@@ -2301,7 +2352,7 @@ std::string SongOverview(Session &S, const Json &Args)
 	else
 		Text += "Sections: " + SectionsText(S, Song.Sections) + "\n";
 
-	Text += Format("Channels%s:\n", Song.Expansion.empty() ? "" : (" (expansion: " + Song.Expansion + ")").c_str());
+	Text += Format("Channels%s:\n", Song.Expansion.empty() ? "" : (" (expansion: " + ExpansionText(Song) + ")").c_str());
 	const bool Stereo = SongPans(S);
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Channel = S.Channel(c);
@@ -2712,8 +2763,10 @@ std::string WriteNotes(Session &S, const Json &Args)
 		}
 	}
 	if (NeedInstrument)
-		throw Problem(Format("%s has no instrument to play these notes with yet: give an instrument (one of the song's, or a preset: %s).",
-			Info.FullName().c_str(), PresetList().c_str()));
+		throw Problem(Format("%s has no instrument to play these notes with yet: give an instrument (one of the song's, or %s: %s).",
+			Info.FullName().c_str(), Info.Chip == "N163" ? "an N163 sound" : "a preset", Info.Chip == "N163" ?
+			(IsSoftLayer(Info) ? "the soft layer's choir pad, string pad, soft flute and sub bass, or " + WaveSoundList() :
+			WaveSoundList()).c_str() : PresetList().c_str()));
 	if (!Notes.empty() && Notes.front().Volume < 0)
 		Notes.front().Volume = 15;	// the part starts at full volume unless it says otherwise
 
@@ -5468,8 +5521,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		for (size_t v = 0; v < VoiceChannels.size(); ++v) {
 			const int c = VoiceChannels[v];
 			const ChannelInfo &Info = S.Channel(c);
-			const std::string Sound = Arg(Args, "chord_instrument") != 0 ? StringArg(Args, "chord_instrument") :
-				Info.Kind == KIND_FM || Info.Chip == "N163" ? "electric piano" : "soft chords";
+			const std::string Sound = Arg(Args, "chord_instrument") != 0 ? StringArg(Args, "chord_instrument") : IsSoftLayer(Info) ?
+				"string pad" : Info.Kind == KIND_FM || Info.Chip == "N163" ? "electric piano" : "soft chords";
 			const int Instrument = ResolveInstrument(S, Sound, c);
 			std::vector<PartNote> Notes = Voices[v];
 			for (size_t i = 0; i < Notes.size(); ++i) {
@@ -6264,6 +6317,7 @@ std::string MixTool(Session &S, const Json &Args)
 	// volume on a pulse (a chip too quiet for its parts' levels plays the loudest at 15 and the rest as
 	// far under it), or as given
 	std::map<std::string, double> Short;	// per chip: how far its loudest part falls short of its level at 15
+	bool Under = false;						// parts on the VRC6 Plus's soft layer, kept under the VRC6
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
 		if (Style.empty() || P.Role == ROLE_NONE)
@@ -6271,6 +6325,10 @@ std::string MixTool(Session &S, const Json &Args)
 		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
 		const int AsPulse = (Soft ? SOFT : FULL)[P.Role];
 		P.Level = 20.0 * std::log10(AsPulse / 15.0);
+		if (IsSoftLayer(S.Channel(P.Channel)) && P.Role != ROLE_MELODY) {
+			P.Level -= SOFT_LAYER_DB;
+			Under = true;
+		}
 		ChannelInfo Unfaded = S.Channel(P.Channel);
 		Unfaded.MixLevel = 0;	// a chip's shortfall is its own, whatever one channel's fader does
 		const double Over = P.Level - LevelDb(Unfaded, 15);
@@ -6288,7 +6346,7 @@ std::string MixTool(Session &S, const Json &Args)
 			P.Target = VolumeForDb(Info, P.Level - Short[Info.Chip]);
 			Fm = Fm || Info.Kind == KIND_FM;
 			Square = Square || Info.Kind == KIND_SQUARE;
-			Quiet = Quiet || Info.Chip == "N163";
+			Quiet = Quiet || (Info.Chip == "N163" && FullDb(Info) < -1.0);
 			Loud = Loud || Info.Chip == "FDS";
 		}
 		else if (Info.MixLevel != 0)
@@ -6566,6 +6624,8 @@ std::string MixTool(Session &S, const Json &Args)
 			"under 15).";
 	if (Quiet && !Style.empty())
 		Text += " The N163's wave sounds play quieter than the pulses, so its parts sit nearer 15 for the same balance.";
+	if (Under && !Style.empty())
+		Text += Format(" The VRC6 Plus's soft layer sits %.0f dB under its parts' roles, under the VRC6.", SOFT_LAYER_DB);
 	if (Loud && !Style.empty())
 		Text += " The FDS plays louder than the pulses, so its parts sit lower for the same balance.";
 	return WithRemarks(S, Text, Warnings);
@@ -10705,7 +10765,8 @@ std::string ChipText(const std::vector<std::string> &Chips)
 }
 
 // The chips set_expansion is asked for: chips (a list, or a list in words: "VRC6 and 5B") or chip
-// (one, or none), in EXPANSION_CHIPS's order
+// (one, or none), in EXPANSION_CHIPS's order; "VRC6 Plus" (Vrc6Plus.h) first, in place of the
+// VRC6 and the N163 it has
 std::vector<std::string> ExpansionArg(const Json &Args)
 {
 	std::vector<std::string> Asked;
@@ -10726,11 +10787,20 @@ std::vector<std::string> ExpansionArg(const Json &Args)
 	else if (Arg(Args, "chip") != 0)
 		Asked.push_back(StringArg(Args, "chip"));
 	else
-		throw Problem("Say which chips with chips, like [\"VRC6\", \"5B\"], or chip: one of VRC6, VRC7, FDS, MMC5, N163 and 5B, or "
-			"none.");
+		throw Problem("Say which chips with chips, like [\"VRC6\", \"5B\"], or chip: one of VRC6, VRC6 Plus, VRC7, FDS, MMC5, N163 "
+			"and 5B, or none.");
 	std::vector<std::string> Words;
 	for (size_t a = 0; a < Asked.size(); ++a) {
 		std::string Text = Lowercase(Asked[a]);
+		// "VRC6+" alone is the VRC6 Plus (before + separates chips); "VRC6 + N163" and "VRC6+N163" are two chips
+		for (size_t At = Text.find("vrc6+"); At != std::string::npos; At = Text.find("vrc6+", At + 1)) {
+			size_t Next = At + 5;
+			while (Next < Text.size() && Text[Next] == ' ')
+				++Next;
+			if (Next >= Text.size() || Text[Next] == ',' || Text[Next] == ';' || Text[Next] == '/' || Text[Next] == '&' ||
+				Text.compare(Next, 4, "and ") == 0)
+				Text.replace(At, 5, "vrc6plus");
+		}
 		for (size_t i = 0; i < Text.size(); ++i)
 			if (Text[i] == '+' || Text[i] == '/' || Text[i] == '&' || Text[i] == ';')
 				Text[i] = ',';
@@ -10750,32 +10820,78 @@ std::vector<std::string> ExpansionArg(const Json &Args)
 	if (Words.empty())
 		throw Problem("Say which chips with chips, like [\"VRC6\", \"5B\"], or none for the 2A03 alone.");
 	std::set<std::string> Set;
-	bool None = false;
+	bool None = false, Plus = false;
 	for (size_t w = 0; w < Words.size(); ++w) {
 		if (Words[w] == "NONE" || Words[w] == "2A03" || Words[w] == "OFF" || Words[w] == "NO") {
 			None = true;
+			continue;
+		}
+		if (Words[w] == "VRC6PLUS") {
+			Plus = true;
 			continue;
 		}
 		bool Known = false;
 		for (size_t c = 0; c < sizeof(EXPANSION_CHIPS) / sizeof(EXPANSION_CHIPS[0]); ++c)
 			Known = Known || Words[w] == EXPANSION_CHIPS[c];
 		if (!Known)
-			throw Problem(Format("\"%s\" isn't an expansion chip. The chips: VRC6, VRC7, FDS, MMC5, N163 and 5B (the Sunsoft 5B), "
-				"any of them together, or none.", Words[w].c_str()));
+			throw Problem(Format("\"%s\" isn't an expansion chip. The chips: VRC6, VRC6 Plus (the VRC6 with a soft layer), VRC7, FDS, "
+				"MMC5, N163 and 5B (the Sunsoft 5B), any of them together, or none.", Words[w].c_str()));
 		Set.insert(Words[w]);
 	}
-	if (None && !Set.empty())
+	if (None && (!Set.empty() || Plus))
 		throw Problem("none goes alone: give the chips the song should have, or none for the 2A03's channels only.");
 	std::vector<std::string> Out;
+	if (Plus) {	// it has the VRC6 and the N163 in it
+		Set.erase("VRC6");
+		Set.erase("N163");
+		Out.push_back(VRC6_PLUS);
+	}
 	for (size_t c = 0; c < sizeof(EXPANSION_CHIPS) / sizeof(EXPANSION_CHIPS[0]); ++c)
 		if (Set.count(EXPANSION_CHIPS[c]))
 			Out.push_back(EXPANSION_CHIPS[c]);
 	return Out;
 }
 
+// The chips as the host takes them, the VRC6 Plus as the VRC6 and the N163, in EXPANSION_CHIPS's order
+std::vector<std::string> RealChips(const std::vector<std::string> &Chips)
+{
+	const bool Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+	std::vector<std::string> Out;
+	for (size_t c = 0; c < sizeof(EXPANSION_CHIPS) / sizeof(EXPANSION_CHIPS[0]); ++c)
+		if (std::find(Chips.begin(), Chips.end(), EXPANSION_CHIPS[c]) != Chips.end() || (Plus && (std::string(EXPANSION_CHIPS[c]) == "VRC6" ||
+			std::string(EXPANSION_CHIPS[c]) == "N163")))
+			Out.push_back(EXPANSION_CHIPS[c]);
+	return Out;
+}
+
+// The chips a song has as the user sees them: "VRC6 Plus" first, in place of the VRC6 and the N163, when it is one
+std::vector<std::string> ShownChips(const SongInfo &Song)
+{
+	const std::vector<std::string> Real = SongChips(Song);
+	if (!Song.Vrc6Plus)
+		return Real;
+	std::vector<std::string> Out(1, VRC6_PLUS);
+	for (size_t i = 0; i < Real.size(); ++i)
+		if (Real[i] != "VRC6" && Real[i] != "N163")
+			Out.push_back(Real[i]);
+	return Out;
+}
+
 // What a chip brings, for set_expansion's answer
 std::string ChipSounds(const std::string &Chip)
 {
+	if (Chip == VRC6_PLUS) {
+		std::string Others;	// the N163's sounds besides the soft layer's own
+		for (size_t i = 0; i < WaveSounds().size(); ++i)
+			if (!IsSoftLayerSound(WaveSounds()[i].Name))
+				Others += (Others.empty() ? "" : ", ") + WaveSounds()[i].Name;
+		return "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music (the melody, the sawtooth's bass and "
+			"bite), and under them a soft layer of four N163 wave channels, Soft 1 to Soft 4, adds softness and depth: a pad or "
+			"a choir holding the chords, a soft echo of the melody, a sub bass an octave under the sawtooth. It's optional and "
+			"quieter: left empty, the song is plain VRC6. Its sounds: choir pad, string pad, soft flute and sub bass, and the "
+			"N163's other wave sounds (" + Others + "). The VRC6 Plus is this FamiTracker's own; other FamiTrackers "
+			"open the song as the VRC6 and the N163 with 4 channels, which play it the same.";
+	}
 	if (Chip == "VRC6")
 		return "The VRC6: two pulses and a sawtooth, a strong bass; the presets work on them.";
 	if (Chip == "VRC7")
@@ -10807,15 +10923,59 @@ std::string ChipSounds(const std::string &Chip)
 	return std::string();
 }
 
+// The channels that go when the chips Going are switched off (Fewer: the N163 channels past Channels too), as the
+// user knows them: a VRC6 Plus's as its own
+std::string GoingText(const std::vector<std::string> &Going, bool WasPlus, bool Fewer, int Channels)
+{
+	std::vector<std::string> Parts;
+	const bool Vrc6 = std::find(Going.begin(), Going.end(), "VRC6") != Going.end(),
+		Namco = std::find(Going.begin(), Going.end(), "N163") != Going.end();
+	if (WasPlus && Vrc6 && Namco)
+		Parts.push_back("the VRC6 Plus's channels");
+	else if (WasPlus && Namco)
+		Parts.push_back("the VRC6 Plus's soft layer (Soft 1 to Soft 4)");
+	else if (WasPlus && Vrc6)
+		Parts.push_back("the VRC6 Plus's pulses and sawtooth");
+	for (size_t i = 0; i < Going.size(); ++i)
+		if (!WasPlus || (Going[i] != "VRC6" && Going[i] != "N163"))
+			Parts.push_back("the " + Going[i] + "'s channels");
+	if (Fewer)
+		Parts.push_back(Format("the N163 channels after Namco %d", Channels));
+	std::string Text;
+	for (size_t i = 0; i < Parts.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Parts.size() ? " and " : ", ") + Parts[i];
+	return Text;
+}
+
+// A song that becomes VRC6 Plus gets what's missing of its soft layer's starter sounds (Vrc6Plus.h); their labels
+std::vector<std::string> AddSoftSounds(Session &S)
+{
+	std::vector<std::string> Added;
+	const std::vector<std::pair<const WaveSound *, int> > Missing = MissingSoftSounds(S.Song.Instruments);
+	for (size_t i = 0; i < Missing.size(); ++i) {
+		std::string Error;
+		const int Index = S.Host().AddN163Instrument(*Missing[i].first, Missing[i].second, Error);
+		if (Index < 0)
+			break;	// no free instrument slot: the song keeps the sounds it got
+		S.Refresh();
+		Added.push_back(InstrumentLabel(S.Song, Index));
+	}
+	return Added;
+}
+
 std::string SetExpansionTool(Session &S, const Json &Args)
 {
-	const std::vector<std::string> Chips = ExpansionArg(Args);
-	const std::vector<std::string> Old = SongChips(S.Song);
+	const std::vector<std::string> Chips = ExpansionArg(Args), Real = RealChips(Chips);
+	const std::vector<std::string> Old = ShownChips(S.Song), OldReal = SongChips(S.Song);
+	const bool Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end(), WasPlus = S.Song.Vrc6Plus;
 	int Namco = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c)
 		Namco += S.Channel(c).Chip == "N163" ? 1 : 0;
-	const bool HasNamco = std::find(Chips.begin(), Chips.end(), "N163") != Chips.end();
-	const int Channels = IntArg(Args, "n163_channels", Namco > 0 ? Namco : 4, 1, 8);
+	const bool HasNamco = std::find(Real.begin(), Real.end(), "N163") != Real.end();
+	if (Plus && Arg(Args, "n163_channels") != 0 && IntArg(Args, "n163_channels", VRC6_PLUS_SOFT_CHANNELS, 1, 8) != VRC6_PLUS_SOFT_CHANNELS)
+		throw Problem("The VRC6 Plus's soft layer has four channels. For another count of N163 channels, switch to the VRC6 and "
+			"the N163 instead (chips [\"VRC6\", \"N163\"] with n163_channels).");
+	const int Channels = Plus ? VRC6_PLUS_SOFT_CHANNELS : IntArg(Args, "n163_channels", Namco > 0 ? Namco : 4, 1, 8);
 	if (Chips == Old && (!HasNamco || Namco == Channels))
 		return "The song uses " + ChipText(Chips) + " already.";
 	std::string Why;
@@ -10824,9 +10984,9 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 
 	// Notes on the channels that go need the user's word
 	std::vector<std::string> Going;	// the chips switched off
-	for (size_t i = 0; i < Old.size(); ++i)
-		if (std::find(Chips.begin(), Chips.end(), Old[i]) == Chips.end())
-			Going.push_back(Old[i]);
+	for (size_t i = 0; i < OldReal.size(); ++i)
+		if (std::find(Real.begin(), Real.end(), OldReal[i]) == Real.end())
+			Going.push_back(OldReal[i]);
 	const bool Fewer = HasNamco && Namco > Channels;	// the N163 channels past the new count go too
 	std::vector<int> Tracks;
 	const int Notes = S.Host().ExpansionNotes(Chips, Channels, Tracks);
@@ -10837,12 +10997,8 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 			Where += Format("%s%d \"%s\"", i == 0 ? "" : ", ", t + 1,
 				static_cast<size_t>(t) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(t)].c_str() : "");
 		}
-		std::string Lose;
-		for (size_t i = 0; i < Going.size(); ++i)
-			Lose += (i == 0 ? "" : i + 1 == Going.size() && !Fewer ? " and " : ", ") + ("the " + Going[i] + "'s channels");
-		if (Fewer)
-			Lose += (Lose.empty() ? "" : " and ") + Format("the N163 channels after Namco %d", Channels);
-		const std::string To = Going.empty() ? Format("%d N163 channels", Channels) : ChipText(Chips);	// or just fewer N163 channels
+		const std::string Lose = GoingText(Going, WasPlus, Fewer, Channels);
+		const std::string To = Going.empty() && Fewer ? Format("%d N163 channels", Channels) : ChipText(Chips);	// or just fewer N163 channels
 		throw Problem(Format("The song has %s on %s (track%s %s). Switching to %s clears those channels in every track, and "
 			"FamiTracker can't undo it. Ask the user first; if they agree, call set_expansion again with confirm: true.",
 			Plural(Notes, "note", "notes").c_str(), Lose.c_str(), Tracks.size() == 1 ? "" : "s", Where.c_str(), To.c_str()));
@@ -10853,6 +11009,7 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 	if (!S.Host().SetExpansion(Chips, Channels, Moved, Lost, Error))
 		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch the chips.") : Error);
 	S.Load();
+	const std::vector<std::string> Starters = Plus && !WasPlus ? AddSoftSounds(S) : std::vector<std::string>();
 
 	std::string Added;
 	int Count = 0;
@@ -10866,8 +11023,17 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 	Text += Count > 0 ? Format(": %s (%s) besides the 2A03's five.", Plural(Count, "more channel", "more channels").c_str(), Added.c_str()) :
 		": just the 2A03's five channels.";
 	for (size_t i = 0; i < Chips.size(); ++i)
-		if (std::find(Old.begin(), Old.end(), Chips[i]) == Old.end())
+		if (std::find(Old.begin(), Old.end(), Chips[i]) == Old.end() && !(WasPlus && (Chips[i] == "VRC6" || Chips[i] == "N163")))
 			Text += " " + ChipSounds(Chips[i]);
+	if (!Starters.empty()) {
+		Text += " Added its soft layer's sounds:";
+		for (size_t i = 0; i < Starters.size(); ++i)
+			Text += (i == 0 ? " " : i + 1 == Starters.size() ? " and " : ", ") + Starters[i];
+		Text += ", each with a wave of its own.";
+	}
+	if (WasPlus && !Plus)
+		Text += HasNamco ? " It's no VRC6 Plus any more: its soft channels are N163 channels again (Namco 1 to 4), notes and all." :
+			" It's no VRC6 Plus any more.";
 	if (!Going.empty() || Fewer)
 		Text += Format(" %s", Notes > 0 ? Format("Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str()).c_str() :
 			"The channels that went were empty.");
@@ -10879,7 +11045,10 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 			Plural(Lost, "effect", "effects").c_str(), Lost == 1 ? "is" : "are");
 	if (Pal && !Chips.empty())
 		Text += " Expansion chips play on NTSC machines, so the song is NTSC now.";
-	if (Chips.size() > 1 || std::find(Chips.begin(), Chips.end(), "5B") != Chips.end())
+	if (Plus)
+		Text += " FamiTracker's NSF export plays one expansion chip, and the VRC6 Plus is two (the VRC6 and the N163), so it refuses "
+			"this song; export_for_game (OGG) and WAV export play it.";
+	else if (Real.size() > 1 || std::find(Real.begin(), Real.end(), "5B") != Real.end())
 		Text += " FamiTracker's NSF export plays one expansion chip, not the 5B, so it refuses this song; export_for_game (OGG) and "
 			"WAV export play every chip.";
 	Text += " FamiTracker can't undo switching chips: Module > Module properties switches back.";
@@ -15377,13 +15546,16 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	{
 		Json Chips = Prop("array", "The expansion chips the song should have, any of them together, like [\"VRC6\", \"N163\"]; [] "
-			"for the 2A03 alone. The chips not listed are switched off.");
-		Chips.Set("items", EnumProp("A chip.", std::vector<std::string>{ "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" }));
+			"for the 2A03 alone. The chips not listed are switched off. \"VRC6 Plus\" stands for the VRC6 and the N163 with 4 "
+			"channels, as one chip.");
+		Chips.Set("items", EnumProp("A chip.", std::vector<std::string>{ "VRC6", "VRC6 Plus", "VRC7", "FDS", "MMC5", "N163", "5B" }));
 		AddTool("set_expansion", "Switch the expansion chips",
 			"Sets the song's expansion sound chips, as Module > Module properties does: any of VRC6 (two more pulses and a "
 			"sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 (two more pulses), FDS (a "
 			"wavetable with a modulator, playing sounds drawn for it), N163 (wavetables) and 5B (the Sunsoft 5B: three squares with noise and an envelope for buzz basses), together, or "
-			"none (the 2A03's five channels only). Use it when the user asks for a VRC6, VRC7, FDS, N163 or 5B song, before writing. The "
+			"none (the 2A03's five channels only); or VRC6 Plus, this FamiTracker's own: the VRC6 with a soft layer of four N163 "
+			"wave channels (Soft 1 to Soft 4) for pads, a choir, a soft echo or a sub bass, which comes with those sounds, for when "
+			"the user wants the VRC6 softer, warmer or deeper (another chip can join it). Use it when the user asks for a VRC6, VRC7, FDS, N163 or 5B song, before writing. The "
 			"chips apply to every track of the module. The channels of the chips that stay keep their notes; the channels of "
 			"chips switched off are cleared, so when they have notes this asks for confirm: true, which needs the user's OK. It "
 			"can't be undone in FamiTracker. NSF export plays one expansion chip and not the 5B; OGG (export_for_game) and WAV "
@@ -15391,7 +15563,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			Schema()
 				.Add("chips", Chips)
 				.Add("chip", EnumProp("Or one chip on its own (the others off), or none.",
-					std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" }))
+					std::vector<std::string>{ "none", "VRC6", "VRC6 Plus", "VRC7", "FDS", "MMC5", "N163", "5B" }))
 				.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default: as many as the song has, or 4). Up to 6 keep "
 					"the chip's switching whine above hearing, and fewer channels play high notes cleanly higher up. A song holds up "
 					"to 8 N163 sounds whatever the count (FamiTracker loads their waves only from the chip's first 128 samples)."))
@@ -15563,7 +15735,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("find_sound", "Find a sound",
 		"Searches every sound the song can get, in one list, as FamiTracker's Instrument > Sound browser shows them: the "
 		"ready-made sounds for the chips it has on (the presets, the 5B's own, the VRC7's patches and custom patches, the "
-		"N163's and the FDS's sounds), each sound of the reference library's studies, and the song's own instruments. By "
+		"N163's and the FDS's sounds, the VRC6 Plus's soft layer's), each sound of the reference library's studies, and the song's own instruments. By "
 		"words (\"warm bell\", \"pluck\", \"bass\", a game or a reference), kind and source. Each comes with its kind, where "
 		"it's from, the channel it plays on, its words, the call that adds it (add_instrument or reference_sound) and the "
 		"warnings: notes that vanish, a vibrato that clicks on the 2A03's pulses. Without a channel each sound is listed "
@@ -15913,6 +16085,9 @@ std::string ToolSet::CoreInstructions()
 		"chords for the B part.\n"
 		"- Drums: add_drums on the noise channel, with fills where phrases end; lighter in calm parts.\n"
 		"- Space: add_echo copies the melody onto a free channel, later and quieter.\n"
+		"- VRC6 Plus (get_song says so): the VRC6 carries the music; its Soft 1-4 channels are a quieter, optional layer under "
+		"it for softness and depth: a choir pad or string pad holding the chords (add_chords_and_bass chord_style voices), a "
+		"soft echo (add_echo onto Soft 1, soft flute), a sub bass an octave under the sawtooth.\n"
 		"- Stereo (FamiTracker's own: its playback and the OGG files; NSFs are mono): a note's \"pan\" in write_notes (left, "
 		"right, center, or -1 to 1) lasts for the notes after it; add_echo with pan \"opposite\" sets the echo apart. Keep "
 		"the melody, bass and drums in the middle.\n"
@@ -15975,6 +16150,15 @@ std::string ToolSet::Instructions()
 		"the pitch plays sounds drawn for it (a soft flute, a whistle, an eerie lead that trembles, a glass bell, a warm organ, "
 		"a nasal reed, strings and a choir that swell, a round or a growling bass, an underwater wobble, a cave drone) for a "
 		"dark, atmospheric lead or bass; it sounds two octaves under the note written.\n"
+		"- VRC6 Plus (set_expansion chips [\"VRC6 Plus\"]; get_song names it): the VRC6 with a soft layer of four N163 wave "
+		"channels, Soft 1 to Soft 4, for when the user wants the VRC6 softer, warmer or deeper. The VRC6 carries the music: the "
+		"melody on its pulses, the sawtooth's bass and bite. The soft layer sits underneath, optional and quieter: a pad or a "
+		"choir holding the chords (add_chords_and_bass chord_style voices puts them there, the string pad by default, the choir "
+		"pad as chord_instrument), a soft echo of the melody (add_echo with to_channel Soft 1 and instrument soft flute, volume "
+		"4-6), a sub bass an octave under the sawtooth's bass (write_notes with the sub bass), or long held notes that swell. "
+		"Those four sounds come with it (find_sound lists them). mix keeps the soft layer a few dB under the VRC6. Leave it "
+		"empty and the song is plain VRC6; when the user asks for softer, warmer or deeper on a VRC6 song, offer it "
+		"(the guide's topic vrc6-plus has more).\n"
 		"- Depth and atmosphere, the warm and nostalgic sound of modern FamiTracker music: a soft mix (mix: the melody's "
 		"loudest at 9, echoes at 4, the triangle softened by the DPCM level), an echo under nearly every melodic line (add_echo "
 		"a beat later, volume 6, detune 1), chords as lush arpeggio instruments with sevenths and ninths (add_chords_and_bass "
@@ -16164,7 +16348,11 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"6. Add depth: add_counter_melody or add_harmony where the melody leaves room, add_drums with fills if the scene has a "
 			"beat (kit samples for a punchy sampled kick and snare), polish (fades, scoops and a staccato or thump bass where they "
 			"fit); give the lead a sound with life (the singing lead, strings or brass presets, or design_instrument), and an echo "
-			"(add_echo, detune 1) where it leaves room.\n"
+			"(add_echo, detune 1) where it leaves room. On a VRC6 Plus song (get_song names it), or when the idea asks for "
+			"something softer, warmer or deeper on the VRC6 (set_expansion chips [\"VRC6 Plus\"] first), use its soft layer "
+			"under the VRC6: a choir pad or string pad holding the chords on Soft 1-3 (add_chords_and_bass chord_style voices), "
+			"a soft echo (add_echo onto a soft channel with the soft flute) or a sub bass an octave under the sawtooth; keep it "
+			"quieter than the VRC6 and leave it out where the music should be plain.\n"
 			"7. Finish the sound: set_swing if the feel should swing, then mix (soft) last, so the triangle and the drums come "
 			"through and the pulses don't harshen; with width wide, for the game's stereo files: the echo opposite the melody, "
 			"chord voices apart, the melody, the bass and the drums in the middle.\n"

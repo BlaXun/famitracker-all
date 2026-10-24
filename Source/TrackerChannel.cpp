@@ -49,6 +49,11 @@ LPCTSTR CTrackerChannel::GetChannelName() const
 	return m_pChannelName;
 }
 
+void CTrackerChannel::SetChannelName(LPCTSTR pName)
+{
+	m_pChannelName = pName;
+}
+
 const char CTrackerChannel::GetChip() const
 {
 	return m_iChip;

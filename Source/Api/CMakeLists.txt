@@ -96,6 +96,7 @@ add_library(ftapi STATIC
 	Sections.cpp
 	Keys.cpp
 	ChannelMix.cpp
+	Vrc6Plus.cpp
 	Chords.cpp
 	Arrange.cpp
 	DpcmKit.cpp

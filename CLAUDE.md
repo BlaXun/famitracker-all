@@ -127,7 +127,10 @@ sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
 5 dB over a pulse at 15 and 3 dB a step, a 5B square 0.4 dB over and 3 dB a
-step, the N163's about 8 dB under, the FDS's about 5 dB over with its envelope
+step, the N163's by its channel count (`N163FullDb`: a square wave 0.6 dB
+under with 4 channels, 4.4 over with 1, the wave sounds' waves 4.1 dB under
+a square on average; the tools count each chip's channels when they read the
+song, `ChannelInfo::ChipChannels`), the FDS's about 5 dB over with its envelope
 at the top), as
 the echo, harmony, counter-melody, `polish` and the review do; `mix` and
 the review also play each note's instrument envelope (`HeldEnvelope`, from
@@ -379,6 +382,30 @@ time through, and a halt keeps its tail. `set_mixer` takes `soft`, `space`,
 `SongHost::SetMixer(MixerSettings)`; the tools' loudness counts a channel's
 level before its depth.
 
+VRC6 Plus (`Source/Api/Vrc6Plus.cpp`, portable) is this branch's own chip:
+the VRC6 with a soft layer of four N163 wave channels, shown as one chip.
+Underneath the module has the VRC6 and the N163 with 4 channels; the
+document's mark (`CFamiTrackerDoc::IsVrc6Plus`, `SetVrc6Plus`, saved in a
+`BF VRC6PLUS` block) holds only while those chips are on
+(`ApplyExpansionChip` unmarks it otherwise), and `UpdateChannelNames`
+renames the N163's first four tracker channels Soft 1 to Soft 4 while it
+holds (`CTrackerChannel::SetChannelName`; the channels are the sound
+generator's). Module > Module properties has its box (`IDC_EXPANSION_VRC6PLUS`:
+the VRC6 and N163 boxes ticked and disabled while it's on), and choosing it
+adds what's missing of its starter sounds (`AddSoftLayerSounds` in
+`InstrumentLibrary.cpp`, from `ftapi::MissingSoftSounds`: choir pad, string
+pad, soft flute and sub bass of `Wavetables.cpp`). Its channels are named as
+the VRC6 Plus's by `IsVrc6PlusChannel` in the pattern editor's header
+(`HeaderName`, which counts it as one chip), the mixer's strips,
+`RecordingChannelName` (the piano roll's and other pickers) and the tools
+(`ChannelInfo::Group` "VRC6 Plus" with `Chip` still "VRC6" or "N163",
+`OldName` "Namco 1", which `ParseChannel` still takes; `SongInfo::Vrc6Plus`
+with `Expansion` still "VRC6, N163"). `SongHost::SetExpansion` takes
+"VRC6 Plus" in place of the two (`ChipFlags` in `McpConnection.cpp`), and
+`set_expansion` adds the starter sounds itself. The sound index lists the
+soft layer as `TARGET_SOFT`; `mix` keeps its parts `SOFT_LAYER_DB` under
+their roles; voiced chords default to the string pad there.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -564,6 +591,11 @@ The application has no test suite of its own. What exists:
   depth: the block's version 2 (the same way), `set_mixer`'s `soft`, `space`,
   `room`, `echo` and `repeats`, `mix` unchanged by them, and the export's
   loop from the second time through and a halt's tail;
+  `TestVrc6Plus` the `BF VRC6PLUS` block (read back, cut short at every
+  byte, damaged, another version), the starter sounds and their wave places,
+  `set_expansion` to and from the VRC6 Plus, its names old and new, the
+  soft layer in the sound index, voiced chords and `mix` on it, and the
+  N163's level by channel count;
   `TestSoundIndex` and `TestFindSound` the sound browser's
   index on every chip (homes, kinds, words, the two warnings, previews, the
   song's own instruments) and `find_sound`, `ToolSet::Sounds` and
@@ -731,6 +763,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   after the channels come `int32` room (0-4, `SPACE_ROOM_NAMES`, append
   only, as `CSpace` numbers them), echo (0-96 48ths of a beat) and repeats
   (1-8).
+- **`BF VRC6PLUS` block** (this branch; version 1, written after `BF MIXER`
+  only while the module is VRC6 Plus): one `int32`, the soft layer's
+  channels (4). `Vrc6PlusMark::Read` takes exactly those 4 bytes of version
+  1 with that value; anything else is ignored and the song opens as VRC6 +
+  N163 (4 channels), as builds without it open it. `Source/Nsf/FtmFile.cpp`
+  skips it quietly.
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.

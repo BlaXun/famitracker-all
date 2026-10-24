@@ -32,7 +32,8 @@ private:
 	void UpdateSongButtons();
 	unsigned char CheckedChips() const;
 	void UpdateNamcoChannels();
-	bool SwitchChips(unsigned char Chips, unsigned int NamcoChannels);
+	void UpdateVrc6Plus();
+	bool SwitchChips(unsigned char Chips, unsigned int NamcoChannels, bool Vrc6Plus);
 	
 	unsigned int m_iSelectedSong;
 
@@ -62,6 +63,7 @@ public:
 	afx_msg void OnClickSongList(NMHDR *pNMHDR, LRESULT *pResult);
 	afx_msg void OnBnClickedSongImport();
 	afx_msg void OnBnClickedExpansion();
+	afx_msg void OnBnClickedVrc6Plus();
 	afx_msg void OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar);
 	afx_msg void OnLvnItemchangedSonglist(NMHDR *pNMHDR, LRESULT *pResult);
 	virtual BOOL PreTranslateMessage(MSG* pMsg);

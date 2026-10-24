@@ -23,6 +23,7 @@
 #include "FdsSounds.h"
 #include "Music.h"
 #include "PulseClicks.h"
+#include "Vrc6Plus.h"
 #include "Wavetables.h"
 
 #include <algorithm>
@@ -295,17 +296,29 @@ public:
 				Finish(E, 0);
 			}
 		}
-		if (Has(TARGET_N163)) {
-			const std::vector<WaveSound> &Waves = WaveSounds();
-			for (size_t i = 0; i < Waves.size(); ++i) {
-				SoundEntry E = Base(Waves[i].InstrumentName(), Waves[i].Description, TARGET_N163, true);
-				E.Kind = KindOf(Waves[i].Name, Waves[i].Words, Waves[i].Description);
+		for (const int Target : { static_cast<int>(TARGET_N163), static_cast<int>(TARGET_SOFT) }) {
+			if (!Has(Target))
+				continue;
+			// The VRC6 Plus's soft layer: its starter sounds first, then the N163's others
+			const std::vector<WaveSound> &All = WaveSounds();
+			std::vector<const WaveSound *> Waves;
+			for (size_t i = 0; i < All.size(); ++i)
+				if (Target == TARGET_SOFT && IsSoftLayerSound(All[i].Name))
+					Waves.push_back(&All[i]);
+			for (size_t i = 0; i < All.size(); ++i)
+				if (Target != TARGET_SOFT || !IsSoftLayerSound(All[i].Name))
+					Waves.push_back(&All[i]);
+			for (size_t w = 0; w < Waves.size(); ++w) {
+				const WaveSound &Wave = *Waves[w];
+				SoundEntry E = Base(Wave.InstrumentName(), Wave.Description, Target, true);
+				E.Kind = KindOf(Wave.Name, Wave.Words, Wave.Description);
 				E.Make = MAKE_N163;
 				E.Chip = "N163";
-				E.Key = Waves[i].Name;
-				E.Origin = "ready-made for the N163";
-				E.Extra = Waves[i].Words;
-				const InstrumentInfo Info = SequencesInfo(Waves[i].Sequences, "N163");
+				E.Key = Wave.Name;
+				E.Origin = Target == TARGET_SOFT && IsSoftLayerSound(Wave.Name) ? "a starter sound of the VRC6 Plus's soft layer" :
+					"ready-made for the N163";
+				E.Extra = Wave.Words;
+				const InstrumentInfo Info = SequencesInfo(Wave.Sequences, "N163");
 				Finish(E, &Info);
 			}
 		}
@@ -412,7 +425,7 @@ public:
 			if (Home < 0 || TargetChip(Home) != I.Chip) {
 				// Not played yet: where its chip's sounds go
 				Home = I.Chip == "VRC6" ? (Lowercase(I.Name).find("(saw)") != std::string::npos ? TARGET_SAWTOOTH :
-					TARGET_VRC6_PULSE) : I.Chip == "N163" ? TARGET_N163 : I.Chip == "FDS" ? TARGET_FDS : I.Chip == "VRC7" ?
+					TARGET_VRC6_PULSE) : I.Chip == "N163" ? (Has(TARGET_SOFT) ? TARGET_SOFT : TARGET_N163) : I.Chip == "FDS" ? TARGET_FDS : I.Chip == "VRC7" ?
 					TARGET_VRC7 : I.Chip == "5B" ? TARGET_S5B : Kind == "drums" ? TARGET_NOISE : TARGET_PULSE;
 			}
 			if (Kind.empty())
@@ -639,6 +652,7 @@ std::string TargetName(int Target)
 	case TARGET_FDS: return "FDS";
 	case TARGET_VRC7: return "VRC7 channels";
 	case TARGET_S5B: return "Sunsoft 5B channels";
+	case TARGET_SOFT: return "VRC6 Plus soft layer";
 	default: return std::string();
 	}
 }
@@ -653,7 +667,7 @@ int TargetOf(const ChannelInfo &Channel)
 	if (Channel.Chip == "MMC5")
 		return Channel.Kind == KIND_PULSE ? TARGET_MMC5 : -1;
 	if (Channel.Chip == "N163")
-		return TARGET_N163;
+		return Channel.Group == VRC6_PLUS ? TARGET_SOFT : TARGET_N163;
 	if (Channel.Chip == "FDS")
 		return TARGET_FDS;
 	if (Channel.Chip == "VRC7")
@@ -667,7 +681,7 @@ std::string TargetChip(int Target)
 {
 	switch (Target) {
 	case TARGET_VRC6_PULSE: case TARGET_SAWTOOTH: return "VRC6";
-	case TARGET_N163: return "N163";
+	case TARGET_N163: case TARGET_SOFT: return "N163";
 	case TARGET_FDS: return "FDS";
 	case TARGET_VRC7: return "VRC7";
 	case TARGET_S5B: return "5B";

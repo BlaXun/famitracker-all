@@ -48,6 +48,7 @@
 #include "../SoundEffects.h"
 #include "../SoundIndex.h"
 #include "../Tools.h"
+#include "../Vrc6Plus.h"
 #include "../Wavetables.h"
 #include "../../Nsf/tests/TestNsf.h"
 
@@ -717,18 +718,32 @@ public:
 	// The expansion chips' channels as FamiTracker names them, in the order of the module's columns
 	// after the 2A03's (ChipSwitch.h): the VRC6's, the MMC5's, the N163's (Namco of them), the FDS's,
 	// the VRC7's, the 5B's
+	// As CFamiTrackerDoc names them: "VRC6 Plus" (Vrc6Plus.h) is the VRC6 and the N163 with 4 channels, its N163 channels
+	// named Soft 1 to Soft 4 (Namco 1 to 4 their old names), all of them shown as the VRC6 Plus's
 	static std::vector<ChannelInfo> ChipChannels(const std::vector<std::string> &Chips, int Namco)
 	{
 		std::vector<ChannelInfo> Out;
-		auto On = [&](const char *Chip) { return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end(); };
+		const bool Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+		auto On = [&](const char *Chip) {
+			return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end() || (Plus && (std::string(Chip) == "VRC6" ||
+				std::string(Chip) == "N163"));
+		};
 		auto Add = [&](const char *Chip, const std::string &Name, int Kind, int Id) {
 			ChannelInfo Channel;
 			Channel.Name = Name;
 			Channel.Chip = Chip;
 			Channel.Kind = Kind;
 			Channel.ChanId = Id;
+			if (Plus && (std::string(Chip) == "VRC6" || std::string(Chip) == "N163"))
+				Channel.Group = VRC6_PLUS;
+			if (Plus && std::string(Chip) == "N163") {
+				Channel.Name = SoftChannelName(Id - 11);
+				Channel.OldName = SoftChannelOldName(Id - 11);
+			}
 			Out.push_back(Channel);
 		};
+		if (Plus)
+			Namco = VRC6_PLUS_SOFT_CHANNELS;
 		if (On("VRC6")) {
 			Add("VRC6", "Pulse 1", KIND_PULSE, 5);
 			Add("VRC6", "Pulse 2", KIND_PULSE, 6);
@@ -831,7 +846,11 @@ public:
 		const std::vector<ChannelInfo> Added = ChipChannels(Chips, Channels);
 		for (size_t i = 0; i < Added.size(); ++i) {
 			const int Source = ColumnOf(Added[i]);
-			Next.push_back(Source >= 0 ? Info.Channels[static_cast<size_t>(Source)] : Added[i]);
+			ChannelInfo Kept = Source >= 0 ? Info.Channels[static_cast<size_t>(Source)] : Added[i];
+			Kept.Name = Added[i].Name;	// named as the chips are now (the VRC6 Plus's or not)
+			Kept.Group = Added[i].Group;
+			Kept.OldName = Added[i].OldName;
+			Next.push_back(Kept);
 			From.push_back(Source);
 		}
 		for (size_t t = 0; t < Tracks.size(); ++t) {
@@ -868,8 +887,13 @@ public:
 			++Moved;
 		}
 		Info.Expansion.clear();
-		for (size_t i = 0; i < Chips.size(); ++i)
-			Info.Expansion += (i == 0 ? "" : ", ") + Chips[i];
+		Info.Vrc6Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+		const char *const ORDER[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };	// as the host names them
+		for (size_t i = 0; i < sizeof(ORDER) / sizeof(ORDER[0]); ++i) {
+			const bool Part = Info.Vrc6Plus && (std::string(ORDER[i]) == "VRC6" || std::string(ORDER[i]) == "N163");
+			if (Part || std::find(Chips.begin(), Chips.end(), ORDER[i]) != Chips.end())
+				Info.Expansion += (Info.Expansion.empty() ? "" : ", ") + std::string(ORDER[i]);
+		}
 		if (!Chips.empty())
 			Info.FrameRate = 60;
 		Rows = Tracks[Current].Rows;
@@ -12050,6 +12074,223 @@ Reference ClickyReference()
 	return R;
 }
 
+// VRC6 Plus (Vrc6Plus.h): the VRC6 with a soft layer of four N163 channels, as one chip
+void TestVrc6Plus()
+{
+	// The mark: one int32 (4), read back; cut short at every byte, longer, damaged or another version, it says no
+	const std::vector<unsigned char> Mark = Vrc6PlusMark::Write();
+	CHECK(Mark == std::vector<unsigned char>({ 4, 0, 0, 0 }));
+	CHECK(std::string(Vrc6PlusMark::BLOCK_ID) == "BF VRC6PLUS" && std::string(Vrc6PlusMark::BLOCK_ID).size() <= 15u);
+	CHECK(Vrc6PlusMark::Read(&Mark[0], Mark.size(), Vrc6PlusMark::BLOCK_VERSION));
+	for (size_t n = 0; n < Mark.size(); ++n)
+		CHECK(!Vrc6PlusMark::Read(n == 0 ? 0 : &Mark[0], n, Vrc6PlusMark::BLOCK_VERSION));
+	std::vector<unsigned char> Longer(Mark);
+	Longer.push_back(0);
+	CHECK(!Vrc6PlusMark::Read(&Longer[0], Longer.size(), Vrc6PlusMark::BLOCK_VERSION));
+	for (const unsigned int Bad : { 0u, 3u, 5u, 8u, 0x104u, 0xFFFFFFFFu }) {
+		std::vector<unsigned char> Damaged;
+		for (int i = 0; i < 4; ++i)
+			Damaged.push_back(static_cast<unsigned char>((Bad >> (8 * i)) & 0xFF));
+		CHECK(!Vrc6PlusMark::Read(&Damaged[0], Damaged.size(), Vrc6PlusMark::BLOCK_VERSION));
+	}
+	CHECK(!Vrc6PlusMark::Read(&Mark[0], Mark.size(), Vrc6PlusMark::BLOCK_VERSION + 1) && !Vrc6PlusMark::Read(&Mark[0], Mark.size(), 0));
+	CHECK(SoftChannelName(0) == "Soft 1" && SoftChannelName(3) == "Soft 4" && SoftChannelOldName(1) == "Namco 2");
+
+	// The starter sounds: wave sounds of their own, found by their words
+	CHECK(SoftLayerSounds() == std::vector<std::string>({ "choir pad", "string pad", "soft flute", "sub bass" }));
+	for (size_t i = 0; i < SoftLayerSounds().size(); ++i) {
+		const WaveSound *pSound = FindWaveSound(SoftLayerSounds()[i]);
+		CHECK(pSound != 0 && pSound->Name == SoftLayerSounds()[i] && IsSoftLayerSound(pSound->InstrumentName()));
+	}
+	CHECK(!IsSoftLayerSound("glass bell") && !IsSoftLayerSound("choir"));
+	CHECK(FindWaveSound("soft choir")->Name == "choir pad" && FindWaveSound("sub")->Name == "sub bass" &&
+		FindWaveSound("soft strings")->Name == "string pad" && FindWaveSound("choir")->Name == "choir" &&
+		FindWaveSound("warm pad")->Name == "string pad");	// the preset's name on an N163 channel
+	CHECK(FindWaveSound("choir pad")->Releases() && FindWaveSound("string pad")->Waves.size() == 4u);
+	// What a song is missing, each wave in a place of its own under sample 128
+	std::vector<InstrumentInfo> Have;
+	std::vector<std::pair<const WaveSound *, int> > Missing = MissingSoftSounds(Have);
+	CHECK(Missing.size() == 4u && Missing[0].first->Name == "choir pad" && Missing[0].second == 0 &&
+		Missing[1].second == 16 && Missing[2].second == 32 && Missing[3].first->Name == "sub bass" && Missing[3].second == 48);
+	InstrumentInfo Choir;
+	Choir.Name = "Choir pad";
+	Choir.Chip = "N163";
+	Choir.WavePos = 0;
+	Choir.WaveSize = 16;
+	InstrumentInfo Bell = Choir, Flute = Choir;
+	Bell.Index = 1;
+	Bell.Name = "Glass bell";
+	Bell.WavePos = 16;
+	Flute.Index = 2;
+	Flute.Name = "Soft flute";
+	Flute.Chip = "2A03";	// a pulse's of that name isn't the soft layer's
+	Flute.WavePos = Flute.WaveSize = -1;
+	Have = { Choir, Bell, Flute };
+	Missing = MissingSoftSounds(Have);
+	CHECK(Missing.size() == 3u && Missing[0].first->Name == "string pad" && Missing[0].second == 32 &&
+		Missing[1].first->Name == "soft flute" && Missing[1].second == 48 && Missing[2].second == 64);
+	Have.clear();
+	for (int i = 0; i < 7; ++i) {
+		InstrumentInfo Wave = Choir;
+		Wave.Index = i;
+		Wave.Name = "Wave " + std::to_string(i);
+		Wave.WavePos = 16 * i;
+		Have.push_back(Wave);
+	}
+	Missing = MissingSoftSounds(Have);	// room for one more under 128
+	CHECK(Missing.size() == 1u && Missing[0].first->Name == "choir pad" && Missing[0].second == 112);
+
+	// set_expansion: the VRC6 song becomes VRC6 Plus, its VRC6 notes stay, the starter sounds come
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(7, 16, "C-2", 0);
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 Plus now: 7 more channels (VRC6 Plus Pulse 1, VRC6 Plus Pulse 2, VRC6 Plus "
+		"Sawtooth, VRC6 Plus Soft 1, VRC6 Plus Soft 2, VRC6 Plus Soft 3, VRC6 Plus Soft 4) besides the 2A03's five.");
+	CHECK_HAS(Result.Text, "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music");
+	CHECK_HAS(Result.Text, "Its sounds: choir pad, string pad, soft flute and sub bass, and the N163's other wave sounds (drawbar organ, ");
+	CHECK_LACKS(Result.Text, "round bass, choir pad");
+	CHECK_HAS(Result.Text, "Added its soft layer's sounds: \"Choir pad\" (03), \"String pad\" (04), \"Soft flute\" (05) and "
+		"\"Sub bass\" (06), each with a wave of its own.");
+	CHECK_HAS(Result.Text, "the VRC6 Plus is two (the VRC6 and the N163)");
+	CHECK_LACKS(Result.Text, "Cleared");
+	CHECK(Song.Info.Vrc6Plus && Song.Info.Expansion == "VRC6, N163" && Song.Info.Channels.size() == 12u);
+	CHECK(Song.ExpansionsAsked.back() == std::vector<std::string>({ "VRC6 Plus" }));
+	CHECK(Song.Rows[5][0].HasNote() && Song.Rows[7][16].HasNote());
+	CHECK(Song.Info.Channels[8].Name == "Soft 1" && Song.Info.Channels[8].Chip == "N163" && Song.Info.Channels[8].OldName == "Namco 1" &&
+		Song.Info.Channels[11].FullName() == "VRC6 Plus Soft 4" && Song.Info.Channels[5].FullName() == "VRC6 Plus Pulse 1" &&
+		Song.Info.Channels[0].FullName() == "2A03 Pulse 1");
+	std::vector<std::string> Names;
+	std::vector<int> Places;
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Chip == "N163") {
+			Names.push_back(Song.Info.Instruments[i].Name);
+			Places.push_back(Song.Info.Instruments[i].WavePos);
+		}
+	CHECK(Names == std::vector<std::string>({ "Choir pad", "String pad", "Soft flute", "Sub bass" }));
+	CHECK(Places == std::vector<int>({ 0, 16, 32, 48 }));
+	// Asked again, in other words: it's there
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"vrc6+\"}")).Text, "The song uses the VRC6 Plus already.");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": \"VRC6 plus\"}")).Text, "already");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\", \"N163\", \"VRC6\"]}")).Text, "already");	// it has them
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"], \"n163_channels\": 8}")).Text,
+		"soft layer has four channels");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"none\", \"VRC6 Plus\"]}")).Text, "none goes alone");
+	// get_song names it and its channels
+	std::string Text = Tools.Call("get_song", Parse("{}")).Text;
+	CHECK_HAS(Text, "(expansion: VRC6 Plus (the VRC6 with a soft layer of four N163 wave channels))");
+	CHECK_HAS(Text, "  9 VRC6 Plus Soft 1: empty");
+	CHECK_HAS(Text, "  6 VRC6 Plus Pulse 1: 1 note");
+	// Its channels by their names, and by their old ones
+	const char *const ASKED[][2] = { { "Soft 2", "9" }, { "VRC6 Plus Soft 2", "9" }, { "Namco 2", "9" }, { "N163 Namco 2", "9" },
+		{ "VRC6 Pulse 2", "6" }, { "VRC6 Plus Sawtooth", "7" } };
+	for (size_t a = 0; a < sizeof(ASKED) / sizeof(ASKED[0]); ++a) {
+		Result = Tools.Call("write_notes", Parse(std::string("{\"channel\": \"") + ASKED[a][0] + "\", \"notes\": [{\"bar\": 2, "
+			"\"pitch\": \"E-3\", \"beats\": 1}]}"));
+		if (a == 0)	// without an instrument: the soft layer's sounds are named
+			CHECK_HAS(Result.Text, "or an N163 sound: the soft layer's choir pad, string pad, soft flute and sub bass, or soft flute, ");
+		if (Result.IsError)
+			Result = Tools.Call("write_notes", Parse(std::string("{\"channel\": \"") + ASKED[a][0] + "\", \"instrument\": \"" +
+				(ASKED[a][1][0] == '9' ? "Soft flute" : "Lead") + "\", \"notes\": [{\"bar\": 2, \"pitch\": \"E-3\", \"beats\": 1}]}"));
+		Check(!Result.IsError && Song.Rows[static_cast<size_t>(std::atoi(ASKED[a][1]))][16].HasNote(),
+			(std::string(ASKED[a][0]) + ": " + Result.Text).c_str(), __LINE__);
+		Song.Rows[static_cast<size_t>(std::atoi(ASKED[a][1]))][16] = Cell();
+	}
+	// The sound browser and find_sound: the soft layer's sounds under the VRC6 Plus, its starter sounds first
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(8, All, Error));
+	const SoundEntry *pPad = FindEntry(All, "Choir pad", TARGET_SOFT), *pBell = FindEntry(All, "Glass bell", TARGET_SOFT);
+	CHECK(pPad != 0 && pPad->Make == MAKE_N163 && pPad->Chip == "N163" && pPad->Home && pPad->ChannelName == "VRC6 Plus Soft 1" &&
+		pPad->Origin == "a starter sound of the VRC6 Plus's soft layer" && pPad->InSong >= 0);
+	CHECK(pBell != 0 && pBell->Origin == "ready-made for the N163" && pBell->InSong < 0);
+	CHECK(FindEntry(All, "Choir pad", TARGET_N163) == 0 && TargetName(TARGET_SOFT) == "VRC6 Plus soft layer" &&
+		TargetChip(TARGET_SOFT) == "N163" && TargetOf(Song.Info.Channels[8]) == TARGET_SOFT &&
+		TargetOf(Song.Info.Channels[5]) == TARGET_VRC6_PULSE);
+	CHECK_HAS(Tools.Call("find_sound", Parse("{\"query\": \"sub bass\", \"channel\": \"Soft 4\"}")).Text, "Sub bass");
+	CHECK(Tools.MakeSound(*pBell, Error) >= 0 && SongInstrument(Song, 7) != 0 && SongInstrument(Song, 7)->WavePos == 64);
+
+	// Voiced chords go on the soft layer, with its string pad
+	Result = Tools.Call("add_chords_and_bass", Parse("{\"chords\": \"| C | Am | F | G |\", \"chord_style\": \"voices\", "
+		"\"bass_channel\": \"none\", \"key\": \"C major\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Plus Soft 1");
+	int Pad = -1;
+	for (size_t r = 0; r < Song.Rows[8].size() && Pad < 0; ++r)
+		if (Song.Rows[8][r].HasNote())
+			Pad = Song.Rows[8][r].Instrument;
+	CHECK(SongInstrument(Song, Pad) != 0 && SongInstrument(Song, Pad)->Name == "String pad");
+	// mix keeps the soft layer under the VRC6
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"E-4\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}, {\"bar\": 3, \"pitch\": \"A-4\", \"beats\": 4}, "
+		"{\"bar\": 4, \"pitch\": \"G-4\", \"beats\": 4}]}")).IsError);
+	Result = Tools.Call("mix", Parse("{\"melody_channel\": \"VRC6 Pulse 1\", \"style\": \"soft\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The VRC6 Plus's soft layer sits 3 dB under its parts' roles, under the VRC6.");
+	int Loudest = 0;
+	for (size_t r = 0; r < Song.Rows[8].size(); ++r)
+		if (Song.Rows[8][r].HasNote() && Song.Rows[8][r].Volume != NO_VOLUME)
+			Loudest = std::max(Loudest, static_cast<int>(Song.Rows[8][r].Volume));
+	CHECK_EQ(Loudest, 9);	// a second line's level (7 on a pulse) 3 dB under, on the N163 with the pad's envelope
+	CHECK_HAS(Result.Text, "VRC6 Plus Soft 1 (a second line) loudest 10 to 9");
+
+	// Back to the VRC6: the soft layer's notes go, after asking; the VRC6's stay
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"Soft 4\", \"instrument\": \"sub bass\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-1\", \"beats\": 4}]}")).IsError);
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\"]}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "on the VRC6 Plus's soft layer (Soft 1 to Soft 4)");
+	CHECK_HAS(Result.Text, "confirm: true");
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\"], \"confirm\": true}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 now: 3 more channels (VRC6 Pulse 1, VRC6 Pulse 2, VRC6 Sawtooth)");
+	CHECK_HAS(Result.Text, "It's no VRC6 Plus any more.");
+	CHECK_HAS(Result.Text, "Cleared");
+	CHECK_LACKS(Result.Text, "The VRC6: two pulses");	// it was there
+	CHECK(!Song.Info.Vrc6Plus && Song.Info.Expansion == "VRC6" && Song.Info.Channels.size() == 8u && Song.Rows[5][0].HasNote() &&
+		Song.Info.Channels[5].FullName() == "VRC6 Pulse 1");
+
+	// The VRC6 and the N163 (4 channels) made VRC6 Plus keep their notes, the N163's on the soft layer; and back to plain
+	// N163 channels, notes and all; another chip can join it
+	FakeSong Both;
+	Both.Info.DirectChanges = true;
+	CHECK(!Run(Both, "set_expansion", "{\"chips\": [\"VRC6\", \"N163\"], \"n163_channels\": 4}").IsError);
+	Both.Put(8, 0, "A-3");
+	Result = Run(Both, "set_expansion", "{\"chips\": [\"VRC6 Plus\", \"FDS\"]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 Plus and the FDS now");
+	CHECK_HAS(Result.Text, "The FDS:");
+	CHECK(Both.Info.Vrc6Plus && Both.Info.Expansion == "VRC6, FDS, N163" && Both.Rows[8][0].HasNote() &&
+		Both.Info.Channels[8].FullName() == "VRC6 Plus Soft 1" && Both.Info.Channels[12].FullName() == "FDS");
+	CHECK_HAS(Run(Both, "get_song", "{}").Text, "(expansion: VRC6 Plus (the VRC6 with a soft layer of four N163 wave channels), FDS)");
+	Result = Run(Both, "set_expansion", "{\"chips\": [\"VRC6\", \"N163\"]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "its soft channels are N163 channels again (Namco 1 to 4), notes and all");
+	CHECK(!Both.Info.Vrc6Plus && Both.Rows[8][0].HasNote() && Both.Info.Channels[8].FullName() == "N163 Namco 1");
+
+	// The N163's level follows its channel count: one channel plays about 5 dB louder than four, so mix gives the same part
+	// a lower volume there
+	int Volumes[2] = { 0, 0 };
+	for (int Count = 0; Count < 2; ++Count) {
+		FakeSong Waves;
+		Waves.Info.DirectChanges = true;
+		CHECK(!Run(Waves, "set_expansion", Count == 0 ? "{\"chip\": \"N163\", \"n163_channels\": 1, \"confirm\": true}" :
+			"{\"chip\": \"N163\", \"n163_channels\": 4, \"confirm\": true}").IsError);
+		CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"Square\", \"notes\": [{\"bar\": 1, \"pitch\": \"E-4\", \"beats\": 2}, "
+			"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 4}]}").IsError);
+		CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Namco 1\", \"instrument\": \"soft flute\", \"notes\": [{\"bar\": 1, "
+			"\"pitch\": \"C-3\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"D-3\", \"beats\": 4}]}").IsError);
+		CHECK(!Run(Waves, "mix", "{\"melody_channel\": \"Pulse 1\", \"style\": \"soft\"}").IsError);
+		for (size_t r = 0; r < Waves.Rows[5].size(); ++r)
+			if (Waves.Rows[5][r].HasNote() && Waves.Rows[5][r].Volume != NO_VOLUME)
+				Volumes[Count] = std::max(Volumes[Count], static_cast<int>(Waves.Rows[5][r].Volume));
+	}
+	CHECK(Volumes[0] == 7 && Volumes[1] == 12);	// 4.6 dB apart (the old -8 dB for both put both at 15)
+}
+
 void TestSoundIndex()
 {
 	// The 2A03 alone: each preset once, where it's at home (the drums on the noise), and nothing for other chips
@@ -12470,6 +12711,7 @@ int main()
 	TestStereoExport();
 	TestSoundIndex();
 	TestFindSound();
+	TestVrc6Plus();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

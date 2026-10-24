@@ -654,7 +654,8 @@ void CMixerPanelWnd::PaintStrip(CDC &dc, int Channel, CFamiTrackerDoc *pDoc)
 	CRect Chip(Name.left, Name.bottom, Name.right, Name.bottom + SY(13));
 	dc.SelectObject(&m_SmallFont);
 	dc.SetTextColor(TEXT_DIM);
-	dc.DrawText(ChipLabel(pDoc->GetChipType(Channel)), Chip, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+	dc.DrawText(pDoc->IsVrc6PlusChannel(Channel) ? _T("VRC6 Plus") : ChipLabel(pDoc->GetChipType(Channel)), Chip,
+		DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 
 	// Mute and solo
 	const CRect MuteBox = MuteRect(Channel), SoloBox = SoloRect(Channel);

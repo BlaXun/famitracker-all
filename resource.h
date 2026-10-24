@@ -826,6 +826,8 @@
 #define IDC_EXPANSION_MMC5              1603
 #define IDC_EXPANSION_N163              1604
 #define IDC_EXPANSION_S5B               1605
+#define IDC_EXPANSION_VRC6PLUS          1950
+#define IDC_VRC6PLUS_TEXT               1951
 
 // View > Problems (ProblemsPanel.cpp)
 #define ID_VIEW_PROBLEMS                37250

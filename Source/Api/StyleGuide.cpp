@@ -411,6 +411,29 @@ const Section SECTIONS[] = {
 		"back in harmony for the climax.\n"
 		"- Leave room: rests in the lead let the echo and drums speak; busy bass under a sparse lead, or the other way "
 		"round." },
+	{ "vrc6-plus", "VRC6 Plus: the VRC6 with a soft layer",
+		"vrc6 plus vrc6plus soft layer pad pads choir strings sub bass softer warmer deeper depth softness n163 wave",
+		"VRC6 Plus is this FamiTracker's own chip: the real VRC6 (two pulses and the sawtooth) with a soft layer of four N163 "
+		"wave channels, Soft 1 to Soft 4. It plays only soft waves, through a real chip's emulation, so it still sounds like "
+		"the NES: a VRC6 track with a bit more to it.\n"
+		"- The VRC6 carries the music: the melody and its answers on the pulses (25% or 50% duty for warmth, 12.5% to cut), "
+		"the sawtooth's bass and bite, the triangle and the noise as ever. Write the track as a VRC6 track first.\n"
+		"- The soft layer goes under it, quieter and optional: a pad or a choir holding the chords, a voice a channel "
+		"(add_chords_and_bass chord_style voices, with the string pad or the choir pad); a soft echo of the melody a beat later "
+		"(add_echo onto Soft 1 with the soft flute, volume 4-6); a sub bass doubling the sawtooth's bass an octave down (the sub "
+		"bass, felt more than heard); or a long note that swells under a phrase's end.\n"
+		"- Keep it under the VRC6: the pulses and the sawtooth at 12-15, the soft layer's parts 3-6 dB lower (mix keeps them "
+		"there), a pad's voices at about 8-10. The starter pads swell in over 20-24 frames, which blurs quick changes: a chord "
+		"a bar or half a bar.\n"
+		"- Use it for contrast: leave it out of a busy A part and bring the pad in for the B part, a bridge, a calm or night "
+		"version; the choir pad for a sacred or eerie place, the string pad for warmth, the sub bass under a boss or a cave.\n"
+		"- The four channels share the N163's one output, each heard a quarter of the time, which FamiTracker makes up; with "
+		"four its switching whine stays above hearing.\n"
+		"- More depth: View > Mixer has Soft (a gentle filter) and Space (a reverb and echo send) for each channel, which suit "
+		"the soft layer and an echo (FamiTracker's own: its playback and the game's OGG files).\n"
+		"- Leave the soft layer empty and the song is plain VRC6; set_expansion with chips [\"VRC6\"] goes back to it "
+		"(asking before the soft channels' notes are cleared). NSF export plays one expansion chip, so a VRC6 Plus song goes "
+		"to the game as OGG files (export_for_game)." },
 	{ "soundtrack", "A game's soundtrack (many tracks, one world)",
 		"soundtrack game ost score tracks places world town dungeon boss credits title ending leitmotif motif theme mmo rpg "
 		"platformer catalogue loudness",
