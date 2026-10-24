@@ -23,9 +23,10 @@
 
 // Instrument presets for the Claude Code connection: sounds asked for by
 // name ("soft lead", "plucky bass", "snare"), built from sequences for the
-// 2A03 (also used by MMC5 channels) and for the VRC6, and the VRC7's sounds:
-// the 15 patches built into the chip ("piano", "brass"), which the presets
-// also have an equivalent among.
+// 2A03 (also used by MMC5 channels) and for the VRC6, the Sunsoft 5B's own
+// sounds ("buzz bass", "noise hat"; the other presets play on it too), and
+// the VRC7's sounds: the 15 patches built into the chip ("piano", "brass"),
+// which the presets also have an equivalent among.
 
 #include <string>
 #include <vector>
@@ -56,6 +57,8 @@ struct Preset {
 	bool Drum;					// for the noise channel
 	std::vector<PresetSequence> Sequences2A03;
 	std::vector<PresetSequence> SequencesVRC6;	// the sawtooth leaves out the duty sequence
+	std::vector<PresetSequence> Sequences5B;	// a 5B sound's (Sunsoft5BSounds), its duty sequence the 5B's noise / mode
+												// (S5B_* below); the others play theirs there (Preset5BSequences)
 	int Vrc7Patch;				// the VRC7 patch that sounds most like it, 0 for none (drums)
 
 	bool Releases() const;		// notes end with a release (===) rather than a halt (---)
@@ -65,6 +68,26 @@ struct Preset {
 const std::vector<Preset> &Presets();
 const Preset *FindPreset(const std::string &Name);	// by name or a common word for it ("flute", "pad")
 std::string PresetList();							// "soft lead, bright lead, ..."
+
+// The Sunsoft 5B. Its noise / mode sequence (in the duty sequence's place) turns
+// on, a frame at a time, its square, its noise and its envelope, whose level
+// replaces the volume's (a falling saw at the note's pitch, until a song sets
+// it with Hxy), and sets the noise's pitch (0-31, bits 0-4) while the noise is on.
+const int S5B_ENVELOPE = 32, S5B_SQUARE = 64, S5B_NOISE = 128;
+// The 5B's volume (0-15, 3 dB a step) that plays as loud as Volume does on a pulse (in proportion to it)
+int Volume5B(int Volume);
+// The sequences a preset plays as a 5B instrument: a 5B sound's own, or the 2A03's with each frame's volume as loud
+// on the 5B (Volume5B) and no duty (the 5B's square is always 50%)
+std::vector<PresetSequence> Preset5BSequences(const Preset &Sound);
+// The 5B's own sounds: square lead, singing square, square pad, square pluck, square bell, buzz bass, sync buzz,
+// noise hat, noise snare and square kick (Sequences5B only)
+const std::vector<Preset> &Sunsoft5BSounds();
+const Preset *Find5BSound(const std::string &Name);	// by name or a common word for it ("buzz": the buzz bass, "hat")
+std::string Sound5BList();							// "square lead, singing square, ..."
+// A sound for a 5B channel by name: one of the 5B's own or a preset (played as Preset5BSequences makes it), each
+// by its own name before the words for it ("lead" is the square lead, "flute" the soft lead); not the presets'
+// drums, which are the noise channel's (the 5B has its own: "snare" is the noise snare). 0 when none is
+const Preset *FindSoundFor5B(const std::string &Name);
 
 // Base with Notes (semitones from the note played) looping as its arpeggio,
 // Frames frames each, in place of an arpeggio it had; named Name

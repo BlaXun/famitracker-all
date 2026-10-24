@@ -63,6 +63,8 @@ enum arp_setting_t {
 	ARP_SETTING_RELATIVE = 2
 };
 
-// Sunsoft modes
+// Sunsoft modes: what a 5B instrument's "noise / mode" sequence plays a frame
+// (bits 0-4 are the noise pitch, used when the noise is on)
+const int S5B_MODE_ENVELOPE = 32;	// the volume follows the hardware envelope
 const int S5B_MODE_SQUARE = 64;
 const int S5B_MODE_NOISE = 128;

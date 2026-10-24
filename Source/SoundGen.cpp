@@ -28,6 +28,8 @@
 //  - Perhaps this should be a worker thread and not GUI thread?
 //
 
+#include <algorithm>
+#include <vector>
 #include "stdafx.h"
 #include <cmath>
 #include <afxmt.h>
@@ -50,6 +52,7 @@
 #include "Settings.h"
 #include "TrackerChannel.h"
 #include "MIDI.h"
+#include "ChipSwitch.h"
 
 #ifdef EXPORT_TEST
 #include "ExportTest/ExportTest.h"
@@ -220,11 +223,9 @@ void CSoundGen::CreateChannels()
 	AssignChannel(new CTrackerChannel(_T("Namco 8"), SNDCHIP_N163, CHANID_N163_CHAN8), new CChannelHandlerN163());
 
 	// Sunsoft 5B
-#if 0
-	AssignChannel(new CTrackerChannel(_T("Square 1"), SNDCHIP_S5B, CHANID_S5B_CH1), new CS5BChannel1());
-	AssignChannel(new CTrackerChannel(_T("Square 2"), SNDCHIP_S5B, CHANID_S5B_CH2), new CS5BChannel2());
-	AssignChannel(new CTrackerChannel(_T("Square 3"), SNDCHIP_S5B, CHANID_S5B_CH3), new CS5BChannel3());
-#endif
+	AssignChannel(new CTrackerChannel(_T("Square 1"), SNDCHIP_S5B, CHANID_S5B_CH1), new CChannelHandlerS5B());
+	AssignChannel(new CTrackerChannel(_T("Square 2"), SNDCHIP_S5B, CHANID_S5B_CH2), new CChannelHandlerS5B());
+	AssignChannel(new CTrackerChannel(_T("Square 3"), SNDCHIP_S5B, CHANID_S5B_CH3), new CChannelHandlerS5B());
 }
 
 void CSoundGen::AssignChannel(CTrackerChannel *pTrackerChannel, CChannelHandler *pRenderer)
@@ -321,11 +322,23 @@ void CSoundGen::RegisterChannels(int Chip, CFamiTrackerDoc *pDoc)
 	// Clear all registered channels
 	pDoc->ResetChannels();
 
-	// Register the channels in the document
-	// Expansion & internal channels
-	for (int i = 0; i < CHANNELS; ++i) {
-		if (m_pTrackerChannels[i] && ((m_pTrackerChannels[i]->GetChip() & Chip) || (i < 5))) {
-			pDoc->RegisterChannel(m_pTrackerChannels[i], i, m_pTrackerChannels[i]->GetChip());
+	// Register the channels in the document, in chan_id_t order: the 2A03's, then
+	// those of every expansion chip that's on (Chip has a bit for each; see
+	// ChipChannels). The N163 channels past the module's count come last, after
+	// every chip's, so the module's channels are the first ones
+	// (CFamiTrackerDoc::SetupChannels); with the N163 alone, that's the order
+	// 0.4.6 had.
+	const int Namco = (Chip & SNDCHIP_N163) ? std::max(1, std::min(8, static_cast<int>(pDoc->GetNamcoChannels()))) : 8;
+	const std::vector<int> Types = ChipChannels(static_cast<unsigned char>(Chip), static_cast<unsigned int>(Namco));
+	for (size_t i = 0; i < Types.size(); ++i) {
+		const int ID = Types[i];
+		if (m_pTrackerChannels[ID] != NULL)
+			pDoc->RegisterChannel(m_pTrackerChannels[ID], ID, m_pTrackerChannels[ID]->GetChip());
+	}
+	if (Chip & SNDCHIP_N163) {
+		for (int ID = CHANID_N163_CHAN1 + Namco; ID <= CHANID_N163_CHAN8; ++ID) {
+			if (m_pTrackerChannels[ID] != NULL)
+				pDoc->RegisterChannel(m_pTrackerChannels[ID], ID, m_pTrackerChannels[ID]->GetChip());
 		}
 	}
 
@@ -1193,9 +1206,10 @@ void CSoundGen::LoadMachineSettings(int Machine, int Rate, int NamcoChannels)
 		if (m_iNoteLookupTableN163[i] > 0xFFFF)	// 0x3FFFF
 			m_iNoteLookupTableN163[i] = 0xFFFF;	// 0x3FFFF
 
-		// Sunsoft 5B
-		Pitch = (clock_ntsc / Freq) - 0.5;
-		m_iNoteLookupTableS5B[i] = (unsigned int)Pitch;
+		// Sunsoft 5B: its square plays CPU / (32 * period), so this period sounds an
+		// octave under the note, as the triangle and 0CC-FamiTracker's 5B do
+		Pitch = (clock_ntsc / Freq) + 0.5;
+		m_iNoteLookupTableS5B[i] = std::min(0xFFFu, (unsigned int)Pitch);
 	}
 /*
 	CStdioFile period_file("periods.txt", CStdioFile::modeWrite | CStdioFile::modeCreate);
@@ -1341,11 +1355,9 @@ void CSoundGen::LoadMachineSettings(int Machine, int Rate, int NamcoChannels)
 	m_pChannels[CHANID_N163_CHAN6]->SetNoteTable(m_iNoteLookupTableN163);
 	m_pChannels[CHANID_N163_CHAN7]->SetNoteTable(m_iNoteLookupTableN163);
 	m_pChannels[CHANID_N163_CHAN8]->SetNoteTable(m_iNoteLookupTableN163);
-#if 0
 	m_pChannels[CHANID_S5B_CH1]->SetNoteTable(m_iNoteLookupTableS5B);
 	m_pChannels[CHANID_S5B_CH2]->SetNoteTable(m_iNoteLookupTableS5B);
 	m_pChannels[CHANID_S5B_CH3]->SetNoteTable(m_iNoteLookupTableS5B);
-#endif
 }
 
 int CSoundGen::FindNote(unsigned int Period) const

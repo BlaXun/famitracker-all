@@ -30,6 +30,9 @@ class CModulePropertiesDlg : public CDialog
 private:
 	void SelectSong(int Song);
 	void UpdateSongButtons();
+	unsigned char CheckedChips() const;
+	void UpdateNamcoChannels();
+	bool SwitchChips(unsigned char Chips, unsigned int NamcoChannels);
 	
 	unsigned int m_iSelectedSong;
 
@@ -58,7 +61,7 @@ public:
 	afx_msg void OnEnChangeSongname();
 	afx_msg void OnClickSongList(NMHDR *pNMHDR, LRESULT *pResult);
 	afx_msg void OnBnClickedSongImport();
-	afx_msg void OnCbnSelchangeExpansion();
+	afx_msg void OnBnClickedExpansion();
 	afx_msg void OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar);
 	afx_msg void OnLvnItemchangedSonglist(NMHDR *pNMHDR, LRESULT *pResult);
 	virtual BOOL PreTranslateMessage(MSG* pMsg);

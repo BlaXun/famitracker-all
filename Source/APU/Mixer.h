@@ -88,7 +88,7 @@ private:
 	void MixFDS(int ChanID, int Value, int Time);
 	void MixVRC6(int ChanID, int Value, int Time);
 	void MixMMC5(int ChanID, int Value, int Time);
-	void MixS5B(int Value, int Time);
+	void MixS5B(int ChanID, int Value, int Time);
 	void MixN163Sides(int Time);
 	template <class Synth> void MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time);
 	Blip_Buffer &Side(int Index) { return Index == 0 ? BlipBuffer : BlipBufferRight; }
@@ -142,6 +142,7 @@ private:
 	float		m_fLevelMMC5;
 	float		m_fLevelFDS;
 	float		m_fLevelN163;
+	float		m_fLevelS5B;
 };
 
 #endif /* MIXER_H */

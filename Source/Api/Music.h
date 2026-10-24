@@ -49,7 +49,7 @@ enum effect_id {
 	EFF_ARPEGGIO, EFF_VIBRATO, EFF_TREMOLO, EFF_PITCH, EFF_DELAY, EFF_DAC, EFF_PORTA_UP, EFF_PORTA_DOWN,
 	EFF_DUTY_CYCLE, EFF_SAMPLE_OFFSET, EFF_SLIDE_UP, EFF_SLIDE_DOWN, EFF_VOLUME_SLIDE, EFF_NOTE_CUT,
 	EFF_RETRIGGER, EFF_DELAYED_VOLUME, EFF_FDS_MOD_DEPTH, EFF_FDS_MOD_SPEED_HI, EFF_FDS_MOD_SPEED_LO,
-	EFF_DPCM_PITCH, EFF_SUNSOFT_ENV_LO, EFF_SUNSOFT_ENV_HI, EFF_SUNSOFT_ENV_TYPE,
+	EFF_DPCM_PITCH, EFF_SUNSOFT_ENV_TYPE, EFF_SUNSOFT_ENV_HI, EFF_SUNSOFT_ENV_LO,	// the 5B's H, I, J
 	EFF_PAN,	// 8xx, this FamiTracker's own stereo
 	EFF_COUNT
 };
@@ -87,7 +87,9 @@ struct Cell {
 };
 
 // What a channel plays
-enum channel_kind { KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM, KIND_SAWTOOTH, KIND_OTHER, KIND_FM };	// KIND_FM: VRC7's
+// KIND_FM: the VRC7's. KIND_SQUARE: the Sunsoft 5B's, a square wave (with the chip's noise and
+// envelope) that sounds an octave under the note written, its volume 3 dB a step
+enum channel_kind { KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM, KIND_SAWTOOTH, KIND_OTHER, KIND_FM, KIND_SQUARE };
 
 // Names. Pitches are FamiTracker's: 0 = C-0 ... 95 = B-7, where C-3 is middle
 // C (MIDI 60) and A-3 is 440 Hz. Noise pitches are 0-15 (0-# to F-#).

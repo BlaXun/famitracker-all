@@ -176,4 +176,6 @@ public:
 	void ModifyItem(CPoint point, bool Redraw);
 	void HighlightItem(CPoint point);
 	int GetItemHeight() const;
+private:
+	int GetSwitchTop() const;
 };

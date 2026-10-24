@@ -415,6 +415,7 @@ private:
 	void			SwapTracks(unsigned int Track1, unsigned int Track2);
 
 	void			SetupChannels(unsigned char Chip);
+	void			MoveChannels(const int *pOldTypes, unsigned int OldCount);
 	void			ApplyExpansionChip();
 
 	unsigned int	GetFirstFreePattern(unsigned int Track, unsigned int Channel) const;

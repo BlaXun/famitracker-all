@@ -32,7 +32,8 @@
 namespace nsf {
 
 // FamiTracker's expansion chip numbers (SNDCHIP_*)
-enum expansion_t { EXP_NONE = 0, EXP_VRC6 = 1, EXP_VRC7 = 2, EXP_FDS = 4, EXP_MMC5 = 8, EXP_N163 = 16 };
+// (bits: a module can have several on)
+enum expansion_t { EXP_NONE = 0, EXP_VRC6 = 1, EXP_VRC7 = 2, EXP_FDS = 4, EXP_MMC5 = 8, EXP_N163 = 16, EXP_S5B = 32 };
 
 // The channels of a module with a layout of its own (a tracker module's, for
 // a study): notes, or drums
@@ -43,7 +44,7 @@ enum seq_type { SEQ_VOLUME, SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH, SEQ_DUTY, SEQ_
 enum arp_setting { ARP_ABSOLUTE = 0, ARP_FIXED = 1, ARP_RELATIVE = 2 };
 
 // Which chip's macro list a macro is in
-enum macro_chip { MACROS_2A03, MACROS_VRC6, MACROS_N163 };
+enum macro_chip { MACROS_2A03, MACROS_VRC6, MACROS_N163, MACROS_S5B, MACRO_CHIPS };
 
 struct Macro {
 	std::vector<int> Items;
@@ -57,7 +58,7 @@ struct Macro {
 	bool Empty() const { return Items.empty(); }
 };
 
-enum inst_kind { INST_2A03, INST_VRC6, INST_VRC7, INST_FDS, INST_N163 };
+enum inst_kind { INST_2A03, INST_VRC6, INST_VRC7, INST_FDS, INST_N163, INST_S5B };
 
 // A DPCM sample on a key of a 2A03 instrument
 struct DpcmKey {
@@ -74,8 +75,8 @@ struct Instrument {
 	std::string Name;
 	bool Unused;				// an empty slot between instruments (a FamiTracker module's own numbering has gaps):
 								// no instrument, and left out of the text and the studies
-	Macro Macros[SEQ_TYPES];	// 2A03, VRC6, N163; FDS uses volume, arpeggio and pitch
-	int MacroIndex[SEQ_TYPES];	// 2A03, VRC6, N163: each macro's index in its chip's list (Module::Macros) as a
+	Macro Macros[SEQ_TYPES];	// 2A03, VRC6, N163, 5B (its duty the 5B's noise / mode); FDS uses volume, arpeggio and pitch
+	int MacroIndex[SEQ_TYPES];	// 2A03, VRC6, N163, 5B: each macro's index in its chip's list (Module::Macros) as a
 								// FamiTracker module numbers them; -1 to find it there by its items, or for none
 	std::vector<DpcmKey> Keys;	// 2A03
 	int Patch;					// VRC7: 0 for the custom patch below, 1-15 built in
@@ -140,7 +141,7 @@ struct Module {
 	int N163Channels;
 	int VibratoStyle;		// 1: 4xy bends up and down (0.3.5 on), 0: down only, as old modules play it
 	int SplitPoint;			// Fxx below it set the speed, from it the tempo (32; 21 in modules before 0.4.0)
-	std::vector<Macro> Macros[3][SEQ_TYPES];	// [macro_chip][type]
+	std::vector<Macro> Macros[MACRO_CHIPS][SEQ_TYPES];	// [macro_chip][type]
 	std::vector<std::vector<uint8_t> > Samples;
 	std::vector<std::string> SampleNames;
 	std::vector<Instrument> Instruments;
@@ -157,7 +158,10 @@ struct Module {
 	int AddMacro(int Chip, int Type, const Macro &M);
 };
 
-// The channel names of a module's columns, for the text and reports
+// The channel names of a module's columns, for the text and reports, in the
+// order FamiTracker registers the channels: the 2A03's, then those of every
+// chip that's on (the VRC6's, the MMC5's, the N163's it uses, the FDS's, the
+// VRC7's, the 5B's), then the N163's past its count, "(unused)"
 std::vector<std::string> ModuleChannelNames(int Expansion, int N163Channels);
 // The module's channel names: its own layout's, or its chips'
 std::vector<std::string> ChannelNamesOf(const Module &M);

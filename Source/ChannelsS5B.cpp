@@ -1,161 +1,134 @@
 /*
 ** FamiTracker - NES/Famicom sound tracker
 ** Copyright (C) 2005-2014  Jonathan Liss
+** Copyright (C) 2026  The beginner-friendly FamiTracker contributors
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation; either version 2 of the License, or
 ** (at your option) any later version.
 **
-** This program is distributed in the hope that it will be useful, 
+** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
-** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU 
-** Library General Public License for more details.  To obtain a 
-** copy of the GNU Library General Public License, write to the Free 
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Library General Public License for more details.  To obtain a
+** copy of the GNU Library General Public License, write to the Free
 ** Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 **
 ** Any permitted reproduction of these routines, in whole or in part,
 ** must bear this legend.
 */
 
-// Sunsoft 5B (YM2149/AY-3-8910)
+// Sunsoft 5B (YM2149): see ChannelsS5B.h
 
-#include <cmath>
+#include <algorithm>
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "ChannelHandler.h"
 #include "ChannelsS5B.h"
 #include "SoundGen.h"
-#include "APU/APU.h"
+#include "APU/Types.h"
 
-// Static member variables, for the shared stuff in 5B
-int			  CChannelHandlerS5B::m_iModes		= 0;
-int			  CChannelHandlerS5B::m_iNoiseFreq	= 0;
-unsigned char CChannelHandlerS5B::m_iEnvFreqHi	= 0;
-unsigned char CChannelHandlerS5B::m_iEnvFreqLo	= 0;
-int			  CChannelHandlerS5B::m_iEnvType	= 0;
-bool		  CChannelHandlerS5B::m_bRegsDirty	= false;
+namespace {
 
-// Class functions
+// Until the song sets the envelope: a falling saw that repeats, its period
+// following the note so that it sounds the note (as HC8 does)
+const int DEFAULT_ENVELOPE_SHAPE = 0x08;
+const int DEFAULT_AUTO_SHIFT = 0x0C;
 
-void CChannelHandlerS5B::SetEnvelopeHigh(int Val)
+const int ALL_MODES = S5B_MODE_ENVELOPE | S5B_MODE_SQUARE | S5B_MODE_NOISE;
+
+}	// namespace
+
+int  CChannelHandlerS5B::s_iMixer = 0x3F;
+int  CChannelHandlerS5B::s_iNoisePitch = 0;
+int  CChannelHandlerS5B::s_iNoiseWritten = -1;
+int  CChannelHandlerS5B::s_iEnvelopePeriod = 0;
+int  CChannelHandlerS5B::s_iEnvelopeShape = 0;
+bool CChannelHandlerS5B::s_bEnvelopeRestart = false;
+bool CChannelHandlerS5B::s_bSongEnvelope = false;
+
+CChannelHandlerS5B::CChannelHandlerS5B() :
+	CChannelHandler(0xFFF, 0x0F),
+	m_iMode(S5B_MODE_SQUARE),
+	m_iDefaultMode(S5B_MODE_SQUARE),
+	m_iAutoShift(0),
+	m_bNoteStarted(false),
+	m_bEnvelopeStarted(false),
+	m_iPostEffect(0),
+	m_iPostEffectParam(0)
 {
-	m_iEnvFreqHi = Val;
-	m_bRegsDirty = true;
 }
 
-void CChannelHandlerS5B::SetEnvelopeLow(int Val)
+int CChannelHandlerS5B::AutoEnvelopePeriod(int Period, int Shift)
 {
-	m_iEnvFreqLo = Val;
-	m_bRegsDirty = true;
-}
-
-void CChannelHandlerS5B::SetEnvelopeType(int Val)
-{
-	m_iEnvType = Val;
-	m_bRegsDirty = true;
-}
-
-void CChannelHandlerS5B::SetMode(int Chan, int Square, int Noise)
-{
-	int initModes = m_iModes;
-
-	switch (Chan) {
-		case 0:
-			m_iModes &= 0x36;
-			break;
-		case 1:
-			m_iModes &= 0x2D;
-			break;
-		case 2:
-			m_iModes &= 0x1B;
-			break;
+	if (Shift > 8) {
+		const int Steps = Shift - 8;
+		return (Period + (1 << (Steps - 1))) >> Steps;
 	}
-
-	m_iModes |= (Noise << (3 + Chan)) | (Square << Chan);
-	
-	if (m_iModes != initModes) {
-		m_bRegsDirty = true;
-	}
+	if (Shift < 8)
+		return std::min(Period << (8 - Shift), 0xFFFF);
+	return Period;
 }
 
-void CChannelHandlerS5B::SetNoiseFreq(int Freq)
+int CChannelHandlerS5B::ChipChannel() const
 {
-	m_iNoiseFreq = Freq;
-	m_bRegsDirty = true;
+	return m_iChannelID - CHANID_S5B_CH1;
 }
 
-void CChannelHandlerS5B::UpdateRegs(CAPU *pAPU)
+void CChannelHandlerS5B::WriteReg(int Reg, int Value)
 {
-	if (!m_bRegsDirty)
-		return;
-
-	// Done only once
-	pAPU->ExternalWrite(0xC000, 0x07);
-	pAPU->ExternalWrite(0xE000, m_iModes);
-
-	pAPU->ExternalWrite(0xC000, 0x06);
-	pAPU->ExternalWrite(0xE000, m_iNoiseFreq);
-
-	pAPU->ExternalWrite(0xC000, 0x0B);
-	pAPU->ExternalWrite(0xE000, m_iEnvFreqLo);
-
-	pAPU->ExternalWrite(0xC000, 0x0C);
-	pAPU->ExternalWrite(0xE000, m_iEnvFreqHi);
-
-	pAPU->ExternalWrite(0xC000, 0x0D);
-	pAPU->ExternalWrite(0xE000, m_iEnvType);
-
-	m_bRegsDirty = false;
+	WriteExternalRegister(0xC000, static_cast<uint8>(Reg));
+	WriteExternalRegister(0xE000, static_cast<uint8>(Value));
 }
-
-// Instance functions
-
-CChannelHandlerS5B::CChannelHandlerS5B() : 
-	CChannelHandler(0xFFF, 0x0F), 
-	m_iNoiseOffset(0), 
-	m_bUpdate(false)
-{
-}
-
-/*
-bool NoteValid(int Note)
-{
-	return (Note != NONE && Note != HALT && Note != RELEASE);
-}
-*/
 
 void CChannelHandlerS5B::HandleNoteData(stChanNote *pNoteData, int EffColumns)
 {
+	m_iPostEffect = 0;
+	m_iPostEffectParam = 0;
+
 	CChannelHandler::HandleNoteData(pNoteData, EffColumns);
+
+	if (pNoteData->Note != NONE && pNoteData->Note != HALT && pNoteData->Note != RELEASE) {
+		if (m_iPostEffect && (m_iEffect == EF_SLIDE_UP || m_iEffect == EF_SLIDE_DOWN))
+			SetupSlide(m_iPostEffect, m_iPostEffectParam);
+		else if (m_iEffect == EF_SLIDE_DOWN || m_iEffect == EF_SLIDE_UP)
+			m_iEffect = EF_NONE;
+	}
 }
 
 void CChannelHandlerS5B::HandleCustomEffects(int EffNum, int EffParam)
 {
-	if (!CheckCommonEffects(EffNum, EffParam)) {
-		switch (EffNum) {
-			case EF_SUNSOFT_ENV_HI:
-				SetEnvelopeHigh(EffParam);
-				break;
-			case EF_SUNSOFT_ENV_LO:
-				SetEnvelopeLow(EffParam);
-				break;
-			case EF_SUNSOFT_ENV_TYPE:
-				SetEnvelopeType(EffParam);
-				m_bEnvEnable = true;
-				m_bUpdate = true;
-				break;
+	if (CheckCommonEffects(EffNum, EffParam))
+		return;
 
-				/*
-			case EF_SLIDE_UP:
-			case EF_SLIDE_DOWN:
-				PostEffect = EffCmd;
-				PostEffectParam = EffParam;
-				SetupSlide(EffCmd, EffParam);
-				break;
-				*/
-		}
+	switch (EffNum) {
+		case EF_DUTY_CYCLE:
+			// Vxx: 1 the square, 2 the noise, 4 the envelope
+			m_iDefaultMode = m_iMode = ((EffParam & 1) ? S5B_MODE_SQUARE : 0) | ((EffParam & 2) ? S5B_MODE_NOISE : 0) |
+				((EffParam & 4) ? S5B_MODE_ENVELOPE : 0);
+			break;
+		case EF_SUNSOFT_ENV_TYPE:
+			s_iEnvelopeShape = EffParam & 0x0F;
+			m_iAutoShift = EffParam >> 4;
+			m_bEnvelopeStarted = true;
+			s_bSongEnvelope = true;
+			break;
+		case EF_SUNSOFT_ENV_HI:
+			s_iEnvelopePeriod = (s_iEnvelopePeriod & 0x00FF) | (EffParam << 8);
+			s_bSongEnvelope = true;
+			break;
+		case EF_SUNSOFT_ENV_LO:
+			s_iEnvelopePeriod = (s_iEnvelopePeriod & 0xFF00) | EffParam;
+			s_bSongEnvelope = true;
+			break;
+		case EF_SLIDE_UP:
+		case EF_SLIDE_DOWN:
+			m_iPostEffect = EffNum;
+			m_iPostEffectParam = EffParam;
+			SetupSlide(EffNum, EffParam);
+			break;
 	}
 }
 
@@ -168,7 +141,7 @@ bool CChannelHandlerS5B::HandleInstrument(int Instrument, bool Trigger, bool New
 	if (pInstrument == NULL)
 		return false;
 
-	for (int i = 0; i < SEQ_COUNT; ++i) {
+	for (int i = 0; i < CInstrumentS5B::SEQUENCE_COUNT; ++i) {
 		const CSequence *pSequence = pDocument->GetSequence(SNDCHIP_S5B, pInstrument->GetSeqIndex(i), i);
 		if (Trigger || !IsSequenceEqual(i, pSequence) || pInstrument->GetSeqEnable(i) > GetSequenceState(i)) {
 			if (pInstrument->GetSeqEnable(i) == 1)
@@ -188,154 +161,128 @@ void CChannelHandlerS5B::HandleEmptyNote()
 void CChannelHandlerS5B::HandleCut()
 {
 	CutNote();
-	m_iNote = 0;
 }
 
 void CChannelHandlerS5B::HandleRelease()
 {
 	if (!m_bRelease) {
 		ReleaseNote();
-		m_bUpdate = true;
+		ReleaseSequences();
 	}
 }
 
 void CChannelHandlerS5B::HandleNote(int Note, int Octave)
 {
-	m_iNote	= RunNote(Octave, Note);
-	m_iSeqVolume = 0xF;
+	m_iNote = RunNote(Octave, Note);
+	m_iSeqVolume = 0x0F;
+	m_iMode = m_iDefaultMode;
+	m_bNoteStarted = true;
+}
 
-	m_iDutyPeriod = S5B_MODE_SQUARE;
+void CChannelHandlerS5B::SetDutyPeriod(int Period)
+{
+	// A frame of the instrument's noise / mode sequence
+	m_iMode = Period & ALL_MODES;
+	if (Period & S5B_MODE_NOISE)
+		s_iNoisePitch = Period & 0x1F;
+}
 
-	m_bUpdate = true;
+int CChannelHandlerS5B::CalculateVolume() const
+{
+	// The 5B's volume steps are 3 dB each, so the volume column and the
+	// instrument's volume add: each step under 15 takes 3 dB more off
+	if (!m_bGate)
+		return 0;
+	return LimitVolume((m_iVolume >> VOL_COLUMN_SHIFT) + m_iSeqVolume - 15 - GetTremolo());
 }
 
 void CChannelHandlerS5B::ProcessChannel()
 {
-	CFamiTrackerDoc *pDocument = m_pSoundGen->GetDocument();
-
 	// Default effects
 	CChannelHandler::ProcessChannel();
 
 	// Sequences
-	for (int i = 0; i < SEQ_COUNT; ++i)
+	for (int i = 0; i < CInstrumentS5B::SEQUENCE_COUNT; ++i)
 		RunSequence(i);
 }
 
-void CChannelHandlerS5B::WriteReg(int Reg, int Value)
+void CChannelHandlerS5B::RefreshChannel()
 {
-	m_pAPU->ExternalWrite(0xC000, Reg);
-	m_pAPU->ExternalWrite(0xE000, Value);
+	const int Channel = ChipChannel();
+	const int Period = CalculatePeriod();
+	const int Volume = CalculateVolume();
+
+	// A note at volume 0 is silent, also with the envelope (which sets the level itself)
+	const bool On = m_bGate && Volume > 0;
+	const bool Envelope = On && (m_iMode & S5B_MODE_ENVELOPE) != 0;
+	const bool Square = On && (m_iMode & S5B_MODE_SQUARE) != 0;
+	const bool Noise = On && (m_iMode & S5B_MODE_NOISE) != 0;
+
+	const int SquareOff = 1 << Channel, NoiseOff = 8 << Channel;
+	s_iMixer |= SquareOff | NoiseOff;
+	if (Square)
+		s_iMixer &= ~SquareOff;
+	if (Noise)
+		s_iMixer &= ~NoiseOff;
+
+	WriteReg(Channel * 2, Period & 0xFF);
+	WriteReg(Channel * 2 + 1, Period >> 8);
+	WriteReg(8 + Channel, On ? (Envelope ? 0x10 | Volume : Volume) : 0);
+
+	if (Envelope) {
+		// Each new note starts the envelope again, its period following the note when asked
+		if (m_bNoteStarted)
+			s_bEnvelopeRestart = true;
+		const int Shift = s_bSongEnvelope ? m_iAutoShift : DEFAULT_AUTO_SHIFT;
+		if (Shift != 0)
+			s_iEnvelopePeriod = AutoEnvelopePeriod(Period, Shift);
+	}
+	if (m_bEnvelopeStarted)
+		s_bEnvelopeRestart = true;
+	m_bNoteStarted = false;
+	m_bEnvelopeStarted = false;
+
+	if (m_iChannelID == CHANID_S5B_CH3)
+		WriteSharedRegs();
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Square 1 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-void CS5BChannel1::RefreshChannel()
+void CChannelHandlerS5B::WriteSharedRegs()
 {
-	if (!m_bUpdate)
-		return;
-
-	m_bUpdate = false;
-
-	int Period = CalculatePeriod();
-	unsigned char LoPeriod = Period & 0xFF;
-	unsigned char HiPeriod = Period >> 8;
-	int Volume = CalculateVolume();
-
-	unsigned char Noise = (m_iDutyPeriod & S5B_MODE_NOISE) ? 0 : 1;
-	unsigned char Square = (m_iDutyPeriod & S5B_MODE_SQUARE) ? 0 : 1;
-	unsigned char NoisePeriod = (m_iDutyPeriod + m_iNoiseOffset) & 0x1F;
-	unsigned char Envelope = m_bEnvEnable ? 0x10 : 0x00;
-
-	SetMode(0, Square, Noise);
-
-	WriteReg(0, LoPeriod);
-	WriteReg(1, HiPeriod);
-	WriteReg(8, Volume | Envelope);
-
-	if (!Noise)
-		SetNoiseFreq(NoisePeriod);
-
-//	UpdateRegs(m_pAPU);
+	if (s_iNoisePitch != s_iNoiseWritten) {
+		WriteReg(0x06, 0x1F - s_iNoisePitch);
+		s_iNoiseWritten = s_iNoisePitch;
+	}
+	WriteReg(0x07, s_iMixer & 0x3F);
+	WriteReg(0x0B, s_iEnvelopePeriod & 0xFF);
+	WriteReg(0x0C, s_iEnvelopePeriod >> 8);
+	if (s_bEnvelopeRestart) {
+		WriteReg(0x0D, s_bSongEnvelope ? s_iEnvelopeShape : DEFAULT_ENVELOPE_SHAPE);
+		s_bEnvelopeRestart = false;
+	}
 }
 
-void CS5BChannel1::ClearRegisters()
+void CChannelHandlerS5B::ResetChannel()
 {
-	//WriteReg(7, 0x38);
-	WriteReg(8, 0);		// Clear volume
+	CChannelHandler::ResetChannel();
+
+	m_iMode = m_iDefaultMode = S5B_MODE_SQUARE;
+	m_iAutoShift = 0;
+	m_bNoteStarted = false;
+	m_bEnvelopeStarted = false;
+	m_iPostEffect = 0;
+	m_iPostEffectParam = 0;
+
+	// The chip's (each of its channels resets it)
+	s_iMixer = 0x3F;
+	s_iNoisePitch = 0;
+	s_iNoiseWritten = -1;
+	s_iEnvelopePeriod = 0;
+	s_iEnvelopeShape = 0;
+	s_bEnvelopeRestart = false;
+	s_bSongEnvelope = false;
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Square 2 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void CS5BChannel2::RefreshChannel()
+void CChannelHandlerS5B::ClearRegisters()
 {
-	int Period = CalculatePeriod();
-	unsigned char LoPeriod = Period & 0xFF;
-	unsigned char HiPeriod = Period >> 8;
-	int Volume = CalculateVolume();
-
-	unsigned char Noise = (m_iDutyPeriod & S5B_MODE_NOISE) ? 0 : 1;
-	unsigned char Square = (m_iDutyPeriod & S5B_MODE_SQUARE) ? 0 : 1;
-	unsigned char NoisePeriod = (m_iDutyPeriod + m_iNoiseOffset) & 0x1F;
-	unsigned char Envelope = 0;
-
-	//WriteReg(7, 0x30 | (Noise << 3) | 0x06 | Square);
-
-	SetMode(1, Square, Noise);
-
-	WriteReg(2, LoPeriod);
-	WriteReg(3, HiPeriod);
-	WriteReg(9, Volume);
-
-	if (!Noise)
-		SetNoiseFreq(NoisePeriod);
+	WriteReg(8 + ChipChannel(), 0);		// silent
 }
-
-void CS5BChannel2::ClearRegisters()
-{
-	WriteReg(9, 0);		// Clear volume
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Channel 3 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void CS5BChannel3::RefreshChannel()
-{
-/*
-	if (!m_bUpdate)
-		return;
-
-	m_bUpdate = true;
-*/
-	int Period = CalculatePeriod();
-	unsigned char LoPeriod = Period & 0xFF;
-	unsigned char HiPeriod = Period >> 8;
-	int Volume = CalculateVolume();
-
-	unsigned char Noise = (m_iDutyPeriod & S5B_MODE_NOISE) ? 0 : 1;
-	unsigned char Square = (m_iDutyPeriod & S5B_MODE_SQUARE) ? 0 : 1;
-	unsigned char NoisePeriod = (m_iDutyPeriod + m_iNoiseOffset) & 0x1F;
-	unsigned char Envelope = 0;
-
-	SetMode(2, Square, Noise);
-
-	WriteReg(4, LoPeriod);
-	WriteReg(5, HiPeriod);
-	WriteReg(10, Volume | Envelope);
-
-	if (!Noise)
-		SetNoiseFreq(NoisePeriod);
-
-	UpdateRegs(m_pAPU);
-}
-
-void CS5BChannel3::ClearRegisters()
-{
-	WriteReg(10, 0);		// Clear volume
-}
-

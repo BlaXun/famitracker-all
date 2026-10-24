@@ -31,8 +31,15 @@ enum note_t { NONE = 0, C, Cs, D, Ds, E, F, Fs, G, Gs, A, As, B, RELEASE, HALT }
 enum effect_t { EF_NONE = 0, EF_SPEED, EF_JUMP, EF_SKIP, EF_HALT, EF_VOLUME, EF_PORTAMENTO, EF_PORTAOFF, EF_SWEEPUP, EF_SWEEPDOWN, EF_ARPEGGIO,
 	EF_VIBRATO, EF_TREMOLO, EF_PITCH, EF_DELAY, EF_DAC, EF_PORTA_UP, EF_PORTA_DOWN, EF_DUTY_CYCLE, EF_SAMPLE_OFFSET, EF_SLIDE_UP, EF_SLIDE_DOWN,
 	EF_VOLUME_SLIDE, EF_NOTE_CUT, EF_RETRIGGER, EF_DELAYED_VOLUME, EF_FDS_MOD_DEPTH, EF_FDS_MOD_SPEED_HI, EF_FDS_MOD_SPEED_LO, EF_DPCM_PITCH,
-	EF_SUNSOFT_ENV_LO, EF_SUNSOFT_ENV_HI, EF_SUNSOFT_ENV_TYPE, EF_PAN, EF_COUNT };
+	EF_SUNSOFT_ENV_TYPE, EF_SUNSOFT_ENV_HI, EF_SUNSOFT_ENV_LO, EF_PAN, EF_COUNT };
 const int PAN_LEFT = 0x00; const int PAN_CENTER = 0x80; const int PAN_RIGHT = 0xFF;
+// As APU/Types.h
+const unsigned char SNDCHIP_NONE = 0, SNDCHIP_VRC6 = 1, SNDCHIP_VRC7 = 2, SNDCHIP_FDS = 4, SNDCHIP_MMC5 = 8, SNDCHIP_N163 = 16, SNDCHIP_S5B = 32;
+enum chan_id_t { CHANID_SQUARE1, CHANID_SQUARE2, CHANID_TRIANGLE, CHANID_NOISE, CHANID_DPCM, CHANID_VRC6_PULSE1, CHANID_VRC6_PULSE2,
+	CHANID_VRC6_SAWTOOTH, CHANID_MMC5_SQUARE1, CHANID_MMC5_SQUARE2, CHANID_MMC5_VOICE, CHANID_N163_CHAN1, CHANID_N163_CHAN2,
+	CHANID_N163_CHAN3, CHANID_N163_CHAN4, CHANID_N163_CHAN5, CHANID_N163_CHAN6, CHANID_N163_CHAN7, CHANID_N163_CHAN8, CHANID_FDS,
+	CHANID_VRC7_CH1, CHANID_VRC7_CH2, CHANID_VRC7_CH3, CHANID_VRC7_CH4, CHANID_VRC7_CH5, CHANID_VRC7_CH6, CHANID_S5B_CH1,
+	CHANID_S5B_CH2, CHANID_S5B_CH3, CHANNELS };
 struct stChanNote { unsigned char Note; unsigned char Octave; unsigned char Vol; unsigned char Instrument; unsigned char EffNumber[MAX_EFFECT_COLUMNS]; unsigned char EffParam[MAX_EFFECT_COLUMNS]; };
 class CClipLibrary;
 // A song in memory: tracks of frames, each frame a pattern per channel
@@ -71,4 +78,11 @@ public:
 	BOOL UnlockDocument() const { --locks; return TRUE; }
 	mutable int locks = 0;
 	int writes = 0;
+	// The expansion chips (SwitchChips): ChipSwitchTests.cpp defines SelectExpansionChip as the document does it
+	unsigned char chips = 0;
+	unsigned namco = 1;
+	unsigned char GetExpansionChip() const { return chips; }
+	unsigned GetNamcoChannels() const { return namco; }
+	void SetNamcoChannels(unsigned n) { namco = n; }
+	void SelectExpansionChip(unsigned char Chips);
 };

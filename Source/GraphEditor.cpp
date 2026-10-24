@@ -1136,7 +1136,28 @@ void CPitchGraphEditor::HighlightItem(CPoint point)
 	}
 }
 
-// Sunsoft noise editor
+// Sunsoft noise editor: a 5B instrument's noise / mode sequence. Above, the
+// noise pitch a frame (0-31, the highest at the top); below, a row of switches
+// each for the square, the noise and the envelope (S5B_MODE_* in Sequence.h).
+
+namespace {
+const int NOISE_SWITCH_ROW = 11;		// a switch is 9 pixels high, with a gap
+const int NOISE_SWITCH_ROWS = 3;
+const int NOISE_SWITCH_BITS[NOISE_SWITCH_ROWS] = { S5B_MODE_SQUARE, S5B_MODE_NOISE, S5B_MODE_ENVELOPE };
+const COLORREF NOISE_SWITCH_COLORS[NOISE_SWITCH_ROWS] = { COMBINE(0, 160, 160), COMBINE(160, 0, 160), COMBINE(176, 144, 0) };
+LPCTSTR const NOISE_SWITCH_NAMES[NOISE_SWITCH_ROWS] = { _T("Sqr"), _T("Noi"), _T("Env") };
+}
+
+int CNoiseEditor::GetItemHeight() const
+{
+	const int Height = (m_GraphRect.Height() - NOISE_SWITCH_ROWS * NOISE_SWITCH_ROW - 4) / (m_iItems + 1);
+	return Height > 1 ? Height : 1;
+}
+
+int CNoiseEditor::GetSwitchTop() const
+{
+	return m_GraphRect.top + (m_iItems + 1) * GetItemHeight() + 3;
+}
 
 void CNoiseEditor::OnPaint()
 {
@@ -1144,73 +1165,57 @@ void CNoiseEditor::OnPaint()
 
 	CPaintDC dc(this);
 	
-	DrawBackground(m_pBackDC, m_iItems, false, 0);
-	DrawRange(m_pBackDC, m_iItems, 0);
+	DrawBackground(m_pBackDC, 0, false, 0);
+
+	const int StepHeight = GetItemHeight();
+	const int SwitchTop = GetSwitchTop();
+
+	// Lines between the pitches
+	for (int i = 0; i <= m_iItems + 1; ++i)
+		m_pBackDC->FillSolidRect(m_GraphRect.left + 1, m_GraphRect.top + StepHeight * i, m_GraphRect.Width() - 2, 1, COLOR_LINES);
+
+	// The range, and the switches' names
+	CFont *pOldFont = m_pBackDC->SelectObject(m_pSmallFont);
+	m_pBackDC->SetBkMode(TRANSPARENT);
+	m_pBackDC->SetTextColor(0xFFFFFF);
+	CRect Text(1, m_GraphRect.top - 3, GRAPH_LEFT - 3, m_GraphRect.top + 9);
+	CString Max;
+	Max.Format(_T("%02i"), m_iItems);
+	m_pBackDC->DrawText(Max, Text, DT_RIGHT);
+	Text.MoveToY(m_GraphRect.top + (m_iItems + 1) * StepHeight - 11);
+	m_pBackDC->DrawText(_T("00"), Text, DT_RIGHT);
+	for (int s = 0; s < NOISE_SWITCH_ROWS; ++s) {
+		Text.MoveToY(SwitchTop + s * NOISE_SWITCH_ROW - 1);
+		m_pBackDC->DrawText(NOISE_SWITCH_NAMES[s], Text, DT_RIGHT);
+	}
+	m_pBackDC->SelectObject(pOldFont);
 
 	// Return now if no sequence is selected
-	if (!m_pSequence) {
+	if (!m_pSequence || !m_pSequence->GetItemCount()) {
 		PaintBuffer(m_pBackDC, &dc);
 		return;
 	}
 
-	// Draw items
-	int Count = m_pSequence->GetItemCount();
+	const int Count = m_pSequence->GetItemCount();
+	const int StepWidth = GetItemWidth();
 
-	if (!Count) {
-		PaintBuffer(m_pBackDC, &dc);
-		return;
-	}
-
-	int StepWidth = GetItemWidth();
-	int StepHeight = m_GraphRect.Height() / m_iItems;
-
-	// Draw items
 	for (int i = 0; i < Count; i++) {
-		// Draw noise frequency
-		int item = m_pSequence->GetItem(i) & 0x1F;
-		int x = m_GraphRect.left + i * StepWidth + 1;
-		int y = m_GraphRect.top + StepHeight * (m_iItems - item);
-		int w = StepWidth;
-		int h = StepHeight;//* item;
-		
+		const int Item = m_pSequence->GetItem(i);
+		const int x = m_GraphRect.left + i * StepWidth + 1;
+
+		// The noise pitch
+		const int y = m_GraphRect.top + StepHeight * (m_iItems - (Item & 0x1F));
 		if (m_iCurrentPlayPos == i)
-			DrawPlayRect(m_pBackDC, x, y, w, h);
+			DrawPlayRect(m_pBackDC, x, y, StepWidth, StepHeight);
 		else
-			DrawRect(m_pBackDC, x, y, w, h);
+			DrawRect(m_pBackDC, x, y, StepWidth, StepHeight);
 
-		// Draw switches
-		item = m_pSequence->GetItem(i);
-
-		int Offset = h * 36 - 1;
-
-		if (item & S5B_MODE_SQUARE) {
-			static const COLORREF BUTTON_COL = COMBINE(0, 160, 160);
-			int y = Offset;
-			int h = 9;
-			m_pBackDC->FillSolidRect(x, y, w, h, BUTTON_COL);
-			m_pBackDC->Draw3dRect(x, y, w, h, BLEND(BUTTON_COL, 0xFFFFFF, 80), BLEND(BUTTON_COL, 0x000000, 80));
-		}
-		else {
-			static const COLORREF BUTTON_COL = COMBINE(50, 50, 50);
-			int y = Offset;
-			int h = 9;
-			m_pBackDC->FillSolidRect(x, y, w, h, BUTTON_COL);
-			m_pBackDC->Draw3dRect(x, y, w, h, BLEND(BUTTON_COL, 0xFFFFFF, 80), BLEND(BUTTON_COL, 0x000000, 80));
-		}
-
-		if (item & S5B_MODE_NOISE) {
-			static const COLORREF BUTTON_COL = COMBINE(160, 0, 160);
-			int y = Offset + 11;
-			int h = 9;
-			m_pBackDC->FillSolidRect(x, y, w, h, BUTTON_COL);
-			m_pBackDC->Draw3dRect(x, y, w, h, BLEND(BUTTON_COL, 0xFFFFFF, 80), BLEND(BUTTON_COL, 0x000000, 80));
-		}
-		else {
-			static const COLORREF BUTTON_COL = COMBINE(50, 50, 50);
-			int y = Offset + 11;
-			int h = 9;
-			m_pBackDC->FillSolidRect(x, y, w, h, BUTTON_COL);
-			m_pBackDC->Draw3dRect(x, y, w, h, BLEND(BUTTON_COL, 0xFFFFFF, 80), BLEND(BUTTON_COL, 0x000000, 80));
+		// The switches
+		for (int s = 0; s < NOISE_SWITCH_ROWS; ++s) {
+			const COLORREF Color = (Item & NOISE_SWITCH_BITS[s]) ? NOISE_SWITCH_COLORS[s] : COMBINE(50, 50, 50);
+			const int Top = SwitchTop + s * NOISE_SWITCH_ROW;
+			m_pBackDC->FillSolidRect(x, Top, StepWidth, 9, Color);
+			m_pBackDC->Draw3dRect(x, Top, StepWidth, 9, BLEND(Color, 0xFFFFFF, 80), BLEND(Color, 0x000000, 80));
 		}
 	}
 	
@@ -1223,46 +1228,34 @@ void CNoiseEditor::OnPaint()
 
 void CNoiseEditor::ModifyItem(CPoint point, bool Redraw)
 {
+	const int ItemWidth = GetItemWidth();
+	const int ItemHeight = GetItemHeight();
+	const int ItemIndex = (point.x - GRAPH_LEFT) / ItemWidth;
+
+	if (ItemIndex < 0 || ItemIndex >= (int)m_pSequence->GetItemCount())
+		return;
+
 	int ItemValue;
-	int ItemWidth = GetItemWidth();
-	int ItemHeight = GetItemHeight();
+	const int SwitchTop = GetSwitchTop();
 
-	int ItemIndex = (point.x - GRAPH_LEFT) / ItemWidth;
-
-	int Offset = 36 * ItemHeight - 1;
-
-	if (point.y >= Offset) {
-
-		if (m_iLastIndex == ItemIndex)
+	if (point.y >= SwitchTop) {
+		// A switch flips once per item while the button is held
+		const int Row = (point.y - SwitchTop) / NOISE_SWITCH_ROW;
+		if (Row >= NOISE_SWITCH_ROWS || m_iLastIndex == ItemIndex)
 			return;
-
 		m_iLastIndex = ItemIndex;
-
-		if (point.y >= Offset && point.y < Offset + 10) {
-			// Square
-			ItemValue = m_pSequence->GetItem(ItemIndex) ^ S5B_MODE_SQUARE;
-		}
-		else if (point.y >= Offset + 11 && point.y < Offset + 21) {
-			// Noise
-			ItemValue = m_pSequence->GetItem(ItemIndex) ^ S5B_MODE_NOISE;
-		}
-		else
-			return;
+		ItemValue = m_pSequence->GetItem(ItemIndex) ^ NOISE_SWITCH_BITS[Row];
 	}
 	else {
-
-		ItemValue = m_iItems - (((point.y - m_GraphRect.top) + (ItemHeight / 2)) / ItemHeight);
+		ItemValue = m_iItems - (point.y - m_GraphRect.top) / ItemHeight;
 
 		if (ItemValue < 0)
 			ItemValue = 0;
 		if (ItemValue > m_iItems)
 			ItemValue = m_iItems;
 
-		ItemValue |= m_pSequence->GetItem(ItemIndex) & 0xC0;
+		ItemValue |= m_pSequence->GetItem(ItemIndex) & (S5B_MODE_ENVELOPE | S5B_MODE_SQUARE | S5B_MODE_NOISE);
 	}
-
-	if (ItemIndex < 0 || ItemIndex >= (int)m_pSequence->GetItemCount())
-		return;
 
 	m_pSequence->SetItem(ItemIndex, ItemValue);
 
@@ -1272,11 +1265,6 @@ void CNoiseEditor::ModifyItem(CPoint point, bool Redraw)
 void CNoiseEditor::HighlightItem(CPoint point)
 {
 	// TODO
-}
-
-int CNoiseEditor::GetItemHeight() const
-{
-	return m_GraphRect.Height() / m_iItems;
 }
 
 void CNoiseEditor::ModifyReleased()

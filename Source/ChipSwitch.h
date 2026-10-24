@@ -25,13 +25,33 @@
 
 class CFamiTrackerDoc;
 
-// Switching the expansion chip for Claude Code's set_expansion tool
-// (McpConnection.cpp). The new chip's channels take the old one's place, so
-// the channels that go are emptied in every track first, and the effects on
-// them that steer the whole song (speed and tempo, jumps, skips, halts) move
-// to a channel that stays, so the song still loops and ends as it did.
-// Channels are column indices in the module, as the document's pattern
-// functions take them. Source/Tests checks this against a stand-in document.
+// Switching the expansion chips, for Module > Module properties and Claude
+// Code's set_expansion tool (McpConnection.cpp). A module can have any of the
+// expansion chips on (SNDCHIP_* bits); its channels are the 2A03's and then
+// every chip's, in chan_id_t order. When the chips change, the channels of the
+// chips that stay keep their notes and move to their new columns
+// (CFamiTrackerDoc::SelectExpansionChip, with ChannelSources), and the
+// channels of chips switched off go: their notes are counted first so the user
+// can be asked, and the effects on them that steer the whole song (speed and
+// tempo, jumps, skips, halts) move to a channel that stays, so the song still
+// loops and ends as it did. Channels are column indices in the module, as the
+// document's pattern functions take them. Source/Tests checks this against a
+// stand-in document.
+
+// The channel types (chan_id_t) of a module with the expansion chips Chips
+// and NamcoChannels N163 channels (1-8), in the order of its columns: the
+// 2A03's, then those of every chip that's on, in chan_id_t order (the MMC5's
+// third, CHANID_MMC5_VOICE, has no channel). CSoundGen::RegisterChannels
+// registers these, then the N163 channels past the count.
+std::vector<int> ChipChannels(unsigned char Chips, unsigned int NamcoChannels);
+
+// For each of the new channels (NewTypes, in column order), the column of the
+// old ones (OldTypes) that has its type, -1 when none does
+std::vector<int> ChannelSources(const std::vector<int> &OldTypes, const std::vector<int> &NewTypes);
+
+// The module's channels (column indices) that a switch to Chips and
+// NamcoChannels takes away: those whose type the new channels don't have
+std::vector<unsigned int> LeavingChannels(const CFamiTrackerDoc *pDoc, unsigned char Chips, unsigned int NamcoChannels);
 
 // An effect that steers the song, and where it was
 struct song_effect_t {
@@ -56,3 +76,12 @@ void EmptyChannels(CFamiTrackerDoc *pDoc, const std::vector<unsigned int> &Chann
 // a pattern of its own. Returns how many effects found no place: every column
 // of the row was taken, or no pattern was free.
 int PlaceSongEffects(CFamiTrackerDoc *pDoc, unsigned int Channel, const std::vector<song_effect_t> &Effects);
+
+// Switches the module to the expansion chips Chips with NamcoChannels N163
+// channels (when the N163 is on): the effects that steer the song move from
+// the channels that go (LeavingChannels) to the module's last channel after
+// the switch, those channels are emptied, and the others keep their notes in
+// their new columns. Moved gets how many effects moved; returns how many found
+// no place. The caller asks the user first (CountChannelNotes) and stops the
+// player; FamiTracker can't undo it.
+int SwitchChips(CFamiTrackerDoc *pDoc, unsigned char Chips, unsigned int NamcoChannels, int &Moved);

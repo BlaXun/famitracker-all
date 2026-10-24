@@ -45,9 +45,7 @@ CChannelMap::~CChannelMap()
 
 void CChannelMap::SetupSoundChips()
 {
-	// Add available chips
-#ifdef _DEBUG
-	// Under development
+	// Add available chips (a module can have any of the expansion chips on)
 	AddChip(SNDCHIP_NONE, new CInstrument2A03(), _T("NES channels only"));
 	AddChip(SNDCHIP_VRC6, new CInstrumentVRC6(), _T("Konami VRC6"));
 	AddChip(SNDCHIP_VRC7, new CInstrumentVRC7(), _T("Konami VRC7"));
@@ -55,16 +53,6 @@ void CChannelMap::SetupSoundChips()
 	AddChip(SNDCHIP_MMC5, new CInstrument2A03(), _T("Nintendo MMC5"));
 	AddChip(SNDCHIP_N163, new CInstrumentN163(), _T("Namco 163"));
 	AddChip(SNDCHIP_S5B,  new CInstrumentS5B(),  _T("Sunsoft 5B"));
-#else /* _DEBUG */
-	// Ready for use
-	AddChip(SNDCHIP_NONE, new CInstrument2A03(), _T("NES channels only"));
-	AddChip(SNDCHIP_VRC6, new CInstrumentVRC6(), _T("Konami VRC6"));
-	AddChip(SNDCHIP_VRC7, new CInstrumentVRC7(), _T("Konami VRC7"));
-	AddChip(SNDCHIP_FDS,  new CInstrumentFDS(),  _T("Nintendo FDS sound"));
-	AddChip(SNDCHIP_MMC5, new CInstrument2A03(), _T("Nintendo MMC5"));
-	AddChip(SNDCHIP_N163, new CInstrumentN163(), _T("Namco 163"));
-//	AddChip(SNDCHIP_S5B,  new CInstrumentS5B(),  _T("Sunsoft 5B"));
-#endif /* _DEBUG */
 }
 
 void CChannelMap::AddChip(int Ident, CInstrument *pInst, LPCTSTR pName)
