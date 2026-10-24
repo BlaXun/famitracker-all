@@ -12094,7 +12094,7 @@ std::string ReferencesTool(Session &S, const Json &Args)
 		}
 		if (Broken > 0)
 			Out += Format("\n%s in the library folder couldn't be read.", Plural(Broken, "file", "files").c_str());
-		return Out + "\nThe built-in guide to the classic NES styles: action \"guide\".";
+		return Out + "\nThe built-in guide to the classic NES styles and to dark and melancholic music: action \"guide\".";
 	}
 	if (Action == "show")
 		return ReferenceText(FindReference(S, StringArg(Args, "reference")));
@@ -13150,7 +13150,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("references", "The reference library",
 		"The user's library of studied tracks (study_nsf and study_module add to it) and the built-in guide to the classic NES styles "
-		"(Konami, Capcom, Nintendo: grooves, bass figures, sounds, tricks). When the user wants music like a game, a composer "
+		"(Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music (grooves, bass figures, sounds, "
+		"tricks). When the user wants music like a game, a composer "
 		"or a reference, or in a style, search here first and lean on what you find: its tempo and feel, form, harmonic color, "
 		"how the channels share the parts, rhythm grids, drum grooves, tricks and sounds. Write your own melodies and chord "
 		"progressions; never copy a reference's notes. Actions: list (default), show (a reference's whole study and its "
@@ -13160,7 +13161,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete" }))
 			.Add("reference", Prop("string", "The reference's id, for show, tag and delete, like \"bucky-o-hare-08\"."))
 			.Add("query", Prop("string", "For search: words like \"konami echo\", \"gallop bass\", \"fast minor\", \"mega man\"."))
-			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"drums\", \"lead sounds\" or \"soundtrack\" (default: the contents)."))
+			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"square\", \"dark\", \"drums\" or \"soundtrack\" (default: the contents)."))
 			.Add("tags", WordListProp("For tag: tags to add."))
 			.Add("remove_tags", WordListProp("For tag: tags to take off."))
 			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
@@ -13441,7 +13442,11 @@ std::string ToolSet::Instructions()
 		"adds it as a new track. Night is much more than slower: the parts that sat high move down an octave, fast runs thin "
 		"to their outline, notes hold into each other without accents, chords become a held pad that swells in, the bass plays "
 		"long notes, the drums fade to a soft pulse or stop, the lead swells in with a slower and wider vibrato, and a longer, "
-		"softer echo adds space; make_version \"night\" does all of that by itself, and chords \"richer\" adds sevenths. A jingle (level up, quest complete, item found...) is make_jingle, and a sound effect (jump, "
+		"softer echo adds space; make_version \"night\" does all of that by itself, and chords \"richer\" adds sevenths. "
+		"Dungeons, caves, crypts and haunted places, sad scenes and laments want more than a darker mood: references action "
+		"guide topics dark and melancholy have the craft of the classic soundtracks (low, narrow registers, semitones and "
+		"tritones, pedals and ostinatos, no drums, quiet echoes, slow swells). A jingle (level up, quest complete, item "
+		"found...) is make_jingle, and a sound effect (jump, "
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
 		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
@@ -13449,9 +13454,9 @@ std::string ToolSet::Instructions()
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "
-		"is a built-in "
-		"guide to the classic NES styles. When the user "
-		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man...), or says to use the "
+		"is a built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and "
+		"melancholic music. When the user "
+		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man, Castlevania, Zelda...), or says to use the "
 		"references, search the library and the guide first and plan from what you find: the tempo and feel, the form, the "
 		"harmonic color (modes, borrowed chords, how often chords change), how the channels share the parts (lead, echo, "
 		"harmony, bass, drums), the rhythm grids and bass figures, the drum grooves, the tricks and the sounds. Take the craft, "

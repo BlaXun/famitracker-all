@@ -2172,6 +2172,34 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "A game's soundtrack (many tracks, one world)");
 	CHECK_HAS(Result.Text, "export_for_game with loudness -22 LUFS");
 	CHECK_HAS(Result.Text, "set_meter bars_per_frame 2");
+	// The studies of October 2026: Castlevania, Zelda, Final Fantasy III and others, and dark and melancholic music
+	Result = Run(Song, "references", "{\"action\": \"guide\"}");
+	CHECK_HAS(Result.Text, "- castlevania: Konami's gothic action");
+	CHECK_HAS(Result.Text, "- square: Square's RPG sound");
+	CHECK_HAS(Result.Text, "- sunsoft: Sunsoft's sound");
+	CHECK_HAS(Result.Text, "- dark: Dark and claustrophobic");
+	CHECK_HAS(Result.Text, "- melancholy: Melancholic and sad");
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"cave\"}");
+	CHECK_HAS(Result.Text, "Dark and claustrophobic (dungeons, caves, crypts, the underworld)");
+	CHECK_HAS(Result.Text, "No drums, or nearly none");
+	// A dungeon: the dark topic first, then the soundtrack's plan
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"dungeon\"}");
+	CHECK(Result.Text.find("Dark and claustrophobic") < Result.Text.find("A game's soundtrack"));
+	// Castlevania: Konami's gothic section and its action section
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"castlevania\"}");
+	CHECK_HAS(Result.Text, "Konami's gothic action (Castlevania, Castlevania III, Super C)");
+	CHECK_HAS(Result.Text, "Konami action (Bucky O'Hare");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"sad night\"}").Text, "Melancholic and sad");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"final fantasy\"}").Text, "Square's RPG sound");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"kid icarus fds\"}").Text, "sawtooth-ramp wave");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"journey to silius\"}").Text, "The sampled bass");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"strider\"}").Text, "75% duty for both pulses");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"technos\"}").Text, "Technos (Nintendo World Cup)");
+	// The guide is plain ASCII, as JSON carries it
+	for (size_t i = 0; i < StyleGuideTopics().size(); ++i) {
+		const std::string Text = StyleGuide(StyleGuideTopics()[i]);
+		CHECK(std::find_if(Text.begin(), Text.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x80; }) == Text.end());
+	}
 
 	// Studied again: the user's tags and notes stay
 	CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"1\"}").IsError);
@@ -4073,6 +4101,7 @@ void TestProtocol()
 	CHECK(Message.Get("result")->Get("capabilities")->Get("prompts") != 0);
 	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "review_arrangement");
 	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "about -22 LUFS for calm places");
+	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "guide topics dark and melancholy");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/list\"}"), Config, Tools);
 	const Json Listed = Body(Response);
 	const Json *pPrompts = Listed.Get("result")->Get("prompts");
