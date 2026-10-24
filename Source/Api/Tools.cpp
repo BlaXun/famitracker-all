@@ -7410,6 +7410,8 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 		How += " or rests";
 	else if (O.Rests == RESTS_LEAVE)
 		How += "; it rests where the melody does";
+	else if (Answers == 0)
+		How += "; it rests where the melody does (no rest of two beats or more to answer in)";
 	else
 		How += Format("; it rests where the melody does, but for %s in rests of two beats or more", Plural(Answers, "short answer",
 			"short answers").c_str());

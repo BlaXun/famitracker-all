@@ -12862,6 +12862,10 @@ void TestArrangeFixes()
 			"rests: fill");
 		CHECK_HAS(Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"style\": \"boss\"}").Text,
 			"style should be any or calm");
+		// A melody without a rest of two beats gets no answer, and the reply says so
+		Result = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"chords\": \"| C |\", "
+			"\"key\": \"C major\", \"style\": \"calm\", \"to_bar\": 1}");
+		CHECK_HAS(Result.Text, "it rests where the melody does (no rest of two beats or more to answer in)");
 	}
 	{
 		// The echo plays as far under each note as both sounds play: under an envelope holding 12, column 7 (5 played) is

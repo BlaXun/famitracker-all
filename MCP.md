@@ -538,7 +538,7 @@ later too. The two speeds average the old one, so the tempo stays: at speed
 6, `F08` and `F04` in turn is a triplet feel (67%) and `F07` and `F05` a light
 one (58%). Light is a lilt of 56-58%, never over 61% (at speed 8, `F09` and
 `F07`: 56%). The speed's ticks decide which swings fit, and Claude says which
-when the one asked for doesn't (at speed 4 the gentlest is 62%, too much for
+when the one asked for doesn't (at speed 4 the gentlest is 63%, too much for
 light); `unit` sixteenths swings quarter beats
 instead, and `none` takes it off. The speed changes go on the channel that
 has the song's speed effects, else the last one. Change the speed with
