@@ -65,6 +65,12 @@ public:
 	bool HasSelection() const;
 	void SaveSelectionAsClip();				// asks for a name
 
+	// The problems panel's notes in sight (ProblemsPanel.h): the roll goes to
+	// where the pattern editor's cursor is now (the panel put it on the first
+	// of them) and up or down to the notes, which start at pStarts on Channel,
+	// the bright one from then on; with Select they're the selection
+	void ShowNotes(int Channel, const int *pStarts, int Count, bool Select);
+
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:

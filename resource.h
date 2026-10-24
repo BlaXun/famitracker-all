@@ -549,6 +549,13 @@
 #define ID_EDIT_PASTEMIX                32899
 #define ID_MODULE_MOVEFRAMEDOWN         32902
 #define ID_MODULE_MOVEFRAMEUP           32903
+#define ID_SECTION_NAME                 37200
+#define ID_SECTION_RENAME               37201
+#define ID_SECTION_REMOVE               37202
+#define ID_SECTION_SELECT               37203
+#define ID_SECTION_MOVE_UP              37204
+#define ID_SECTION_MOVE_DOWN            37205
+#define ID_SECTION_DUPLICATE            37206
 #define ID_MODULE_SAVEINSTRUMENT        32909
 #define ID_MODULE_LOADINSTRUMENT        32911
 #define ID_MODULE_ADDINSTRUMENT         32915
@@ -691,6 +698,26 @@
 #define IDC_MCP_WHERE                   1379
 #define IDC_MCP_HINT                    1380
 #define ID_FILE_CONNECTCLAUDE           33160
+// Other computers on the network (the dialog's right column)
+#define IDC_MCP_NETWORK                 1500
+#define IDC_MCP_NET_INFO                1501
+#define IDC_MCP_NET_NAME1               1502
+#define IDC_MCP_NET_NAME2               1503
+#define IDC_MCP_NET_NAME3               1504
+#define IDC_MCP_NET_NAME4               1505
+#define IDC_MCP_NET_URL1                1506
+#define IDC_MCP_NET_URL2                1507
+#define IDC_MCP_NET_URL3                1508
+#define IDC_MCP_NET_URL4                1509
+#define IDC_MCP_NET_COPY1               1510
+#define IDC_MCP_NET_COPY2               1511
+#define IDC_MCP_NET_COPY3               1512
+#define IDC_MCP_NET_COPY4               1513
+#define IDC_MCP_NET_CODELABEL           1514
+#define IDC_MCP_NET_CODE                1515
+#define IDC_MCP_NET_COPYCODE            1516
+#define IDC_MCP_NET_CORE                1517
+#define IDC_MCP_NET_HINT                1518
 
 // File > Export for games (McpConnection.cpp)
 #define IDD_GAME_EXPORT                 331
@@ -783,6 +810,9 @@
 #define IDC_NSF_ALL                     1435
 #define IDC_NSF_NONE                    1436
 #define ID_FILE_IMPORTNSF               33171
+
+// View > Problems (ProblemsPanel.cpp)
+#define ID_VIEW_PROBLEMS                37250
 
 // Next default values for new objects
 // 

@@ -112,3 +112,8 @@ CString RecordingsFolder(bool Create)
 	const CString Old[1] = { DocumentsFolder(_T("FamiTracker recordings"), false) };
 	return FolderBeside(_T("Recordings"), Old, 1, _T("FamiTracker recordings"), _T("*"), Create);
 }
+
+CString InboxFolder(bool Create)
+{
+	return FolderBeside(_T("Inbox"), NULL, 0, _T("FamiTracker inbox"), _T("*"), Create);
+}

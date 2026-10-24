@@ -1245,7 +1245,13 @@
     <ClCompile Include="Source\Api\Mcp.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Network.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Music.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\Sections.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
     <ClCompile Include="Source\Api\Chords.cpp">
@@ -1290,6 +1296,9 @@
     <ClCompile Include="Source\Api\PulseClicks.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\ProblemList.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1311,7 +1320,13 @@
     <ClInclude Include="Source\Api\Mcp.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Api\Network.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Api\Music.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Sections.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Chords.h">
@@ -1357,6 +1372,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\PulseClicks.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\ProblemList.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">
@@ -1458,6 +1476,12 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\ClipsPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\ProblemsPanel.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\ProblemsPanel.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\InstrumentLibrary.cpp">

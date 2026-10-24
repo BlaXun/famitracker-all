@@ -24,7 +24,8 @@
 // The song's notes as a picture for Claude to look at (the look_at_song
 // tool): a piano roll with time from left to right and pitch from bottom to
 // top, each channel in its own color, the drums (noise) and samples (DPCM)
-// in strips below. Bars are numbered on top, each C is labeled on the left.
+// in strips below. Bars are numbered on top, each C is labeled on the left,
+// and the song's sections are named in a band between the two.
 // Plain C++14.
 
 #include <string>
@@ -40,12 +41,20 @@ struct PictureChannel {
 	std::vector<NoteInfo> Notes;	// from the song's first row
 };
 
+// A section of the song (Sections.h), on rows
+struct PictureSection {
+	std::string Name;
+	int First, End;					// song rows, End excluded
+	int Color;						// 0 to SECTION_COLORS - 1
+};
+
 struct PictureSpec {
 	int First, End;					// song rows shown, End excluded
 	Timing Time;
 	std::vector<bool> Played;		// per song row: does it ever play (empty: all do)
 	int LoopRow;					// where the song loops back to, -1 for no mark
 	int EndRow;						// where it jumps back or halts (after the last row played), -1 for no mark
+	std::vector<PictureSection> Sections;
 
 	PictureSpec(const Timing &T) : First(0), End(0), Time(T), LoopRow(-1), EndRow(-1) {}
 };

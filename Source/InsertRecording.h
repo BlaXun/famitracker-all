@@ -28,6 +28,7 @@
 class CMainFrame;
 class CFamiTrackerDoc;
 struct stChanNote;
+namespace ftapi { class SectionStore; }
 namespace transcribe { struct Audio; struct TakeTiming; }
 
 // What a recording holds
@@ -140,7 +141,9 @@ bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);
 // gives them, or the -MoveBy frames from MoveFrame on are taken out (MoveBy
 // < 0); the frames after keep their patterns, and Frame counts with the
 // frames moved. Count can be 0 then. The cursor goes to song row Cursor (-1
-// for Row of Frame). False with the reason in Message.
+// for Row of Frame). The track's sections follow the frames moved, or with
+// pSections become its track 0's (Api/Sections.h) in the same action. False
+// with the reason in Message.
 struct song_part_t {
 	int Channel;
 	const stChanNote *pCells;	// Rows of them, from the first row on
@@ -148,4 +151,4 @@ struct song_part_t {
 	bool Exact;
 };
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	int MoveFrame, int MoveBy, int Cursor, CString &Message);
+	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections = NULL);

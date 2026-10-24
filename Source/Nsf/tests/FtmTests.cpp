@@ -1124,11 +1124,12 @@ void TestOtherFiles()
 	CHECK(ReadError(Writer(0x0280).Finish()).find("newer") != std::string::npos);
 	CHECK(ReadError(Writer(0x0440).Finish()).empty());
 
-	// Blocks it doesn't know are skipped and said; beginner-friendly FamiTracker's clips quietly
+	// Blocks it doesn't know are skipped and said; beginner-friendly FamiTracker's clips and sections quietly
 	{
 		Writer w;
 		w.Begin("GROOVES", 1).Int(7).End();
 		w.Begin("BF CLIPS", 1).Int(0).End();
+		w.Begin("BF SECTIONS", 1).Int(0).End();
 		w.Begin("PATTERNS", 6).End();
 		if (ReadModule(w.Finish(), M, Info)) {
 			CHECK(Info.Problems.size() == 2);
