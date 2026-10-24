@@ -2517,6 +2517,15 @@ void CMainFrame::SongChanged()
 		m_pClipsBar->SongChanged();
 	if (m_pProblemsBar != NULL)
 		m_pProblemsBar->SongChanged();
+	// The frame editor shows the sections' column while the module has sections, and where the song loops
+	if (m_pFrameEditor != NULL && m_pFrameEditor->GetSafeHwnd() != NULL) {
+		if (m_pFrameEditor->NeedsResize())
+			ResizeFrameWindow();
+		if (m_pFrameEditor->ShowsSections()) {
+			m_pFrameEditor->InvalidateFrameData();
+			m_pFrameEditor->Invalidate();
+		}
+	}
 }
 
 void CMainFrame::OnUpdateHighlight(CCmdUI *pCmdUI)

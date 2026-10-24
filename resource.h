@@ -549,6 +549,13 @@
 #define ID_EDIT_PASTEMIX                32899
 #define ID_MODULE_MOVEFRAMEDOWN         32902
 #define ID_MODULE_MOVEFRAMEUP           32903
+#define ID_SECTION_NAME                 37200
+#define ID_SECTION_RENAME               37201
+#define ID_SECTION_REMOVE               37202
+#define ID_SECTION_SELECT               37203
+#define ID_SECTION_MOVE_UP              37204
+#define ID_SECTION_MOVE_DOWN            37205
+#define ID_SECTION_DUPLICATE            37206
 #define ID_MODULE_SAVEINSTRUMENT        32909
 #define ID_MODULE_LOADINSTRUMENT        32911
 #define ID_MODULE_ADDINSTRUMENT         32915

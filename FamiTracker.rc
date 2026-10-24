@@ -309,6 +309,14 @@ BEGIN
         MENUITEM "&Paste\tCtrl+V",              ID_FRAME_PASTE
         MENUITEM "Paste && duplicate",          ID_FRAME_PASTENEWPATTERNS
         MENUITEM "D&elete\tDel",                ID_FRAME_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Name section...",            ID_SECTION_NAME
+        MENUITEM "Rena&me section...",          ID_SECTION_RENAME
+        MENUITEM "Remo&ve section name",        ID_SECTION_REMOVE
+        MENUITEM "&Select section",             ID_SECTION_SELECT
+        MENUITEM "Move section up",             ID_SECTION_MOVE_UP
+        MENUITEM "Move section down",           ID_SECTION_MOVE_DOWN
+        MENUITEM "Duplicate section",           ID_SECTION_DUPLICATE
     END
 END
 

@@ -92,6 +92,7 @@ add_library(ftapi STATIC
 	PulseClicks.cpp
 	ProblemList.cpp
 	Music.cpp
+	Sections.cpp
 	Chords.cpp
 	Arrange.cpp
 	DpcmKit.cpp

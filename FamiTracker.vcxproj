@@ -549,6 +549,7 @@
     <ClCompile Include="Source\Api\Mcp.cpp" />
     <ClCompile Include="Source\Api\Network.cpp" />
     <ClCompile Include="Source\Api\Music.cpp" />
+    <ClCompile Include="Source\Api\Sections.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
@@ -575,6 +576,7 @@
     <ClInclude Include="Source\Api\Mcp.h" />
     <ClInclude Include="Source\Api\Network.h" />
     <ClInclude Include="Source\Api\Music.h" />
+    <ClInclude Include="Source\Api\Sections.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
     <ClInclude Include="Source\Api\Presets.h" />

@@ -9,9 +9,10 @@ which plays the tracks as OGG files.
 - **Keep songs readable everywhere.** The piano roll is another view of the
   same pattern data, profiles live in program settings, and presets are
   ordinary `.fti` files. Songs must keep opening in vanilla FamiTracker,
-  0CC/Dn-FamiTracker and FamiStudio. The one addition to the `.ftm` file is
-  the recorder's clips, in a block of their own (`BF CLIPS`) that other
-  versions skip; there, linked copies are ordinary notes.
+  0CC/Dn-FamiTracker and FamiStudio. The additions to the `.ftm` file are
+  blocks of their own that other versions skip: the recorder's clips
+  (`BF CLIPS`; there, linked copies are ordinary notes) and the tracks'
+  named sections (`BF SECTIONS`).
 - **Stay in the UI and export layers.** The NSF driver is binary-only in this
   repo (see CLAUDE.md), so no feature may need new driver commands.
 - **Full FamiTracker stays one click away** through a "Show everything" option.
@@ -184,6 +185,29 @@ starts if it was open.
 The panel's keys: the arrows, Page Up and Down, Home and End to move, Enter
 to go there, Space for the button, Left and Right to fold, Ctrl+C to copy
 the message, Esc back to the pattern editor.
+
+## 8. Song sections
+
+Done (October 2026, on `feat-sections`): a track's frames can be named
+(Intro, A, B, Bridge, Outro), so a song's form is something to see and to
+talk about.
+
+- Select frames in the frame editor and right-click > **Name section**.
+  Each section is a coloured band beside its frames, named at its first
+  frame, with where the song loops back to; the column appears once the
+  module has a section. A double-click on a band renames it.
+- Right-click a section to rename it, take its name off, select its
+  frames, move it up or down past the section beside it (its patterns
+  with it) or duplicate it after itself (the copy plays the same
+  patterns). Each is one Ctrl+Z.
+- Frames inserted, removed, moved, dragged or duplicated keep their
+  sections: frames put in inside a section join it, removed ones leave it.
+- The piano roll's ruler names each section at its first bar.
+- Claude Code names the sections as it builds a song (`name_section`),
+  lists them in `get_song`, and its tools take a section's name in place
+  of bars (see `MCP.md`).
+- They're saved in a block of their own (`BF SECTIONS`), which other
+  versions skip.
 
 ## Feature branches
 

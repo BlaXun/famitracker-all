@@ -133,6 +133,11 @@ public:
 	// Return window width in pixels
 	unsigned int CalcWidth(int Channels) const;
 
+	// Sections (Api/Sections.h): the column of their names shows beside the
+	// frames while the module has sections, which widens the frame editor
+	bool ShowsSections() const;
+	bool NeedsResize() const;	// since the last CalcWidth
+
 private:
 	// Drawing
 	void DrawFrameEditor(CDC *pDC);
@@ -145,6 +150,11 @@ private:
 	// Drag & drop
 	void InitiateDrag();
 
+	// Sections
+	void DrawSections(CDC *pDC, int FirstVisibleFrame, int Start, int End, int ChannelCount);
+	int  MenuSection() const;							// the section of the frame the menu is for, -1 for none
+	void MenuFrames(int &First, int &Last) const;		// the frames Name section names
+
 	void AutoScroll(const CPoint &point);
 
 public:
@@ -155,6 +165,7 @@ public:
 	static const int TOP_OFFSET			= 3;	// Top offset
 	static const int DEFAULT_HEIGHT		= 161;	// Window height at top position
 	static const int CURSOR_WIDTH		= 8;	// Cursor box width
+	static const int SECTION_WIDTH		= 78;	// The sections' column
 
 	static const TCHAR DEFAULT_FONT[];
 	static const TCHAR CLIPBOARD_ID[];
@@ -210,6 +221,10 @@ private:
 
 	CPoint	m_ButtonPoint;
 
+	// Sections
+	int		m_iMenuFrame;				// the frame right-clicked for the context menu
+	mutable bool m_bSectionColumn;		// the column the last CalcWidth made room for
+
 	CFrameEditorDropTarget m_DropTarget;
 
 	// Numbers of pixels until selection is initiated
@@ -248,6 +263,13 @@ public:
 	afx_msg void OnModuleDuplicateFramePatterns();
 	afx_msg void OnModuleMoveFrameDown();
 	afx_msg void OnModuleMoveFrameUp();
+	afx_msg void OnSectionName();
+	afx_msg void OnSectionRename();
+	afx_msg void OnSectionRemove();
+	afx_msg void OnSectionSelect();
+	afx_msg void OnSectionMoveUp();
+	afx_msg void OnSectionMoveDown();
+	afx_msg void OnSectionDuplicate();
 	afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
 	afx_msg void OnContextMenu(CWnd* /*pWnd*/, CPoint /*point*/);
 	afx_msg void OnSize(UINT nType, int cx, int cy);

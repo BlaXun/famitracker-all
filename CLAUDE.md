@@ -16,9 +16,17 @@ block), shown in the clips panel docked along the right of the window
 and View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under
 the pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
 edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
-action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
-`ROADMAP.md`. Unless a section says otherwise, everything below describes the
-0.4.6 code as found on `master` and was checked against that source.
+action by `WriteChannelRows` in `InsertRecording.cpp`. Named sections (a
+track's frames named Intro, A, B...) are `Source/Api/Sections.cpp`
+(portable, shared with the tools): the document keeps them in a
+`SectionStore` (`CFamiTrackerDoc::GetSections`, saved in a `BF SECTIONS`
+block) and keeps them with their frames in its frame functions; the frame
+editor draws them (`CFrameEditor::DrawSections`) and changes them with its
+right-click commands as `CFrameAction`s (every frame action snapshots the
+sections, so Undo puts them back), and the piano roll's ruler names them.
+The overall plan is in `ROADMAP.md`. Unless a section says otherwise,
+everything below describes the 0.4.6 code as found on `master` and was
+checked against that source.
 
 File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 (see `MCP.md`; built on the `api` branch and merged into `recorder`, then
@@ -368,7 +376,10 @@ The application has no test suite of its own. What exists:
   `TestNetwork` covers other computers: the address filter, Host headers,
   the core set, `send_file`, the file routes with traversal attempts and
   `export_for_game`'s links, and `TestCheckJson` and `TestProblemList`
-  read `check_song`'s JSON back as the problems panel reads it. Same three
+  read `check_song`'s JSON back as the problems panel reads it;
+  `TestSections` and `TestSectionTools` cover sections as frames move, the
+  `BF SECTIONS` block (read back, cut short at every byte and damaged) and
+  the tools that name them or take them in place of bars. Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -500,6 +511,17 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
     names) or length-prefixed (instrument and sample names).
   - Files newer than `FILE_VER` are refused. Unknown blocks are skipped. Block
     IDs are at most 15 characters.
+- **`BF SECTIONS` block** (this branch; version 1, written after `BF CLIPS`
+  only when a track has sections): an `int32` count of tracks, then for
+  each track its `int32` number, an `int32` count of sections and, for each
+  section, `int32` first and last frame and its name NUL-terminated (1-32
+  bytes, in the code page). Tracks come in order; sections are in order,
+  don't overlap, lie within the track's frames and have names unique
+  regardless of case. `SectionStore::Read` checks every read, and a damaged
+  block or another version is left out: the song loads without sections.
+  Anything that changes a track's frame list must keep them in step
+  (`SectionsInsertFrames`, `SectionsRemoveFrames`, `SectionsMoveFrames`,
+  `SectionsCopyFrame`, `SectionStore::FitFrames`).
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.
@@ -630,6 +652,11 @@ NSF export still uses the 2A03 driver. Touch points:
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies
   to every file that includes it. Placement new or a custom `operator new`
   must account for it.
+- **Headers before `stdafx.h`:** it defines `_CRT_SECURE_NO_WARNINGS`, so a
+  header that pulls in the C runtime (any of `Api/`'s) included before it
+  brings back C4996 for `sscanf` and the like later in that file. Include
+  such headers after `stdafx.h` (the MSVC standard headers protect
+  themselves from `DEBUG_NEW`).
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
   standard headers), and 65 never include it: all of `APU/`, `Api/`, `Nsf/`

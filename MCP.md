@@ -357,7 +357,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 
 | Tool | What it does |
 |---|---|
-| `get_song` | Title, tempo in BPM, bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
+| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
@@ -379,6 +379,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
+| `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -438,6 +439,32 @@ patterns, so the meter is set before writing (a bar that doesn't divide the
 patterns is refused). In 0.4.6 the highlights are the module's, so every
 track counts in the same meter. After a change to a compound meter the BPM
 counts dotted quarters: `set_tempo` with bpm picks the speed for them.
+
+### Sections
+
+A track's frames can carry names: Intro, A, B, Bridge, Outro. In
+FamiTracker, select frames in the frame editor and right-click > Name
+section. Each section is a coloured band beside its frames, where the
+loop's start shows too (a double-click on a band renames its section), and
+the piano roll's ruler names it at its first bar. Right-click also renames
+a section, takes its name off, selects its frames, moves it up or down
+past the section beside it (patterns and all), and duplicates it after
+itself (the copy plays the same patterns). Each is one Ctrl+Z, and
+inserting, removing, moving or duplicating frames keeps the sections with
+their frames.
+
+Claude names the sections as it builds the song's form (`name_section`),
+and `get_song` lists them with their bars. The tools that take bars
+(`read_notes`, `play`, `look_at_song`, `copy_bars`, `remove_bars`,
+`set_loop`, `set_tempo`, `add_chords_and_bass`, `check_song`...) take a
+section's name instead: `play` with `section` "Bridge". `insert_bars` can
+name whole frames it puts in, `copy_bars` names a whole section's copy as
+its repeat ("A 2"), `remove_bars` takes a removed section's name with it,
+`look_at_song` labels the sections in its picture, and `keep_version` and
+`make_version` keep them. A section is whole frames, so bars moved by less
+than a frame leave the sections where they were, and the reply says so.
+The names are saved in the module in a block of their own (`BF SECTIONS`)
+that other FamiTracker versions skip.
 
 ## Speed and tempo
 
@@ -686,7 +713,8 @@ avoid that, and gives it tools for each layer:
   sigh of two semitones, `R42`) where phrases end, and a staccato bass that
   bounces);
   `make_groove` starts a whole backing for a mood; `copy_bars` and `vary_part` build a form whose repeats change,
-  and `insert_bars` and `remove_bars` make room for a section or cut one.
+  and `insert_bars` and `remove_bars` make room for a section or cut one; `name_section` names the parts as
+  the form grows (Intro, A, B, Bridge), and the tools then take a section's name in place of bars.
 
 `review_arrangement` listens the way an arranger would and scores the depth
 out of 10, with what would help most and the tool for each. Claude runs it
@@ -1125,6 +1153,10 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   `Presets` (also the VRC7's patches, and `DesignPreset`: a sound described
   in words as sequences), `Chords` (chords read from names and degrees,
   progressions laid out on bars, colors, and the chords heard in notes),
+  `Sections` (a track's named runs of frames, kept with their frames as
+  frames go in, come out, move or are copied, and the `BF SECTIONS` block,
+  read with every read checked; the frame editor, the piano roll's ruler
+  and `CFrameAction` use it too),
   `Arrange` (chord parts in styles, bass lines, drum grooves with fills, a
   harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the

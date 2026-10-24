@@ -29,6 +29,7 @@
 #include <utility>
 #include <vector>
 #include "Music.h"
+#include "Sections.h"
 
 namespace ftapi {
 
@@ -105,6 +106,7 @@ struct SongInfo {
 	std::vector<ChannelInfo> Channels;
 	std::vector<InstrumentInfo> Instruments;
 	std::vector<ClipInfo> Clips;
+	SectionList Sections;	// the selected track's (Sections.h), names in UTF-8
 	bool DirectChanges;		// the user lets Claude change the song (otherwise ideas become clips)
 	bool Playing;
 	int PlayRow;			// from the song's start, -1 when stopped
@@ -147,8 +149,13 @@ struct SongWrite {
 	int MoveFrame;
 	int MoveBy;
 	int Cursor;         // the song row the cursor goes to afterwards; -1 for First
+	// With SetSections, the selected track's sections afterwards (Sections.h,
+	// UTF-8 names): set once the frames have moved and the cells are written,
+	// in the same undoable change. Otherwise they follow the frames moved.
+	bool SetSections;
+	SectionList Sections;
 
-	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1) {}
+	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1), SetSections(false) {}
 };
 
 // Rows of a track (from 0) to play
@@ -191,6 +198,9 @@ public:
 	// what's written is a linked copy of that clip. Parts can be empty when
 	// frames move.
 	virtual bool WriteSong(const std::vector<ChannelCells> &Parts, const SongWrite &Write, std::string &Error) = 0;
+	// The selected track's sections become these (Sections.h, UTF-8 names), as
+	// one undoable change; false with the reason
+	virtual bool SetSections(const SectionList &Sections, std::string &Error) = 0;
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,
 		std::string &Error) = 0;
