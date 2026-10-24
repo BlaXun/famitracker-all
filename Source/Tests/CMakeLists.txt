@@ -87,6 +87,10 @@ endforeach()
 add_library(apu STATIC ${APU_SOURCES} ${APU_STAGE}/Blip_Buffer/Blip_Buffer.cpp)
 target_include_directories(apu PUBLIC ${APU_STAGE})
 target_compile_options(apu PRIVATE -w)		# as released, warnings and all
+# Blip_Buffer checks its assumptions with asserts written for a 32-bit long
+# (LONG_MIN >> 31 == -1), which fail on 64-bit Linux and macOS; FamiTracker
+# is a 32-bit Windows program, and the emulation doesn't depend on them
+target_compile_definitions(apu PRIVATE NDEBUG)
 
 add_executable(apu_tests ApuTests.cpp)
 target_link_libraries(apu_tests PRIVATE apu)
