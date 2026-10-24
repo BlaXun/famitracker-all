@@ -554,6 +554,7 @@
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
+    <ClCompile Include="Source\Api\SoundIndex.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
@@ -583,6 +584,7 @@
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
     <ClInclude Include="Source\Api\Presets.h" />
+    <ClInclude Include="Source\Api\SoundIndex.h" />
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
@@ -622,6 +624,7 @@
     <ClInclude Include="Source\RecordDlg.h" />
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
+    <ClCompile Include="Source\SoundBrowserDlg.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
     <ClCompile Include="Source\ProblemsPanel.cpp" />
     <ClCompile Include="Source\DrumGrid.cpp" />
@@ -637,6 +640,7 @@
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\ProblemsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
+    <ClInclude Include="Source\SoundBrowserDlg.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />
     <ClCompile Include="Source\Transcribe\Take.cpp" />
     <ClCompile Include="Source\BackingDlg.cpp" />

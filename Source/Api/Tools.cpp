@@ -34,6 +34,7 @@
 #include "References.h"
 #include "Song.h"
 #include "SoundEffects.h"
+#include "SoundIndex.h"
 #include "Effects.h"
 #include "FdsSounds.h"
 #include "Wavetables.h"
@@ -594,19 +595,32 @@ const int VANISH_FRAMES = 4, HOLD_FRAMES = 8;
 // How many frames a note is heard for: until what it plays (its volume column times its instrument's envelope, as
 // CalculateVolume works it out) falls under a sixth of the loudest it has got, or to silence; Limit when it's heard that
 // long (or never sounds)
-int HeardFrames(const SongInfo &Song, const NoteInfo &N, int Limit)
+int HeardFramesOf(const InstrumentInfo *pInfo, int Volume, int Limit)
 {
-	const InstrumentInfo *pInfo = FindInstrument(Song, N.Instrument);
 	const std::vector<int> Envelope = HeldEnvelope(pInfo, Limit);
 	int Peak = 0;
 	for (int f = 0; f < Limit; ++f) {
-		const int Level = HeardVolume(pInfo, N.Volume, Envelope[static_cast<size_t>(f)]);
+		const int Level = HeardVolume(pInfo, Volume, Envelope[static_cast<size_t>(f)]);
 		if (Level > Peak)
 			Peak = Level;
 		else if (Peak > 0 && (Level == 0 || Level * 6 < Peak))
 			return f;
 	}
 	return Limit;
+}
+
+int HeardFrames(const SongInfo &Song, const NoteInfo &N, int Limit)
+{
+	return HeardFramesOf(FindInstrument(Song, N.Instrument), N.Volume, Limit);
+}
+
+// What the tools and the sound browser say of a sound whose notes are gone within Heard frames
+std::string VanishText(int Heard, bool ForTools)
+{
+	return Format(" Its notes are gone within %s: right for echoes, stabs and drums, but a tune's notes on it come out as "
+		"blips, which sound like missing notes beside held ones (for a tune, %s).", Plural(Heard, "frame", "frames").c_str(),
+		ForTools ? "a sound that settles to a level: design_instrument kind pluck with sustain half" :
+		"pick a sound that settles to a level");
 }
 
 // What design_instrument and reference_sound say of a sound whose notes vanish (nothing for one that lasts)
@@ -618,9 +632,7 @@ std::string VanishRemark(const SongInfo &Song, int Instrument)
 	const int Heard = HeardFrames(Song, N, 60);
 	if (Heard > VANISH_FRAMES)
 		return std::string();
-	return Format(" Its notes are gone within %s: right for echoes, stabs and drums, but a tune's notes on it come out as "
-		"blips, which sound like missing notes beside held ones (for a tune, a sound that settles to a level: design_instrument "
-		"kind pluck with sustain half).", Plural(Heard, "frame", "frames").c_str());
+	return VanishText(Heard, true);
 }
 
 std::string InstrumentLabel(const SongInfo &Song, int Index)
@@ -13557,6 +13569,24 @@ std::string ReferencesTool(Session &S, const Json &Args)
 	throw Problem("action: list, show, search, guide, tag or delete.");
 }
 
+// A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS" or "5B"; Sawtooth for the VRC6's sawtooth),
+// named Name, as reference_sound makes it (the sound browser too): its index, Added when it's new; on the FDS, How
+// says what wave it plays
+int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::string &Name, const std::string &Chip,
+	bool Sawtooth, std::string &How, bool &Added)
+{
+	if (Chip == "FDS")
+		return AddFdsSound(S, ReferenceFdsSound(Sound, Name, How), Added);
+	const size_t Before = S.Song.Instruments.size();
+	std::string Error;
+	const int Index = S.Host().AddInstrument(ReferencePreset(Sound, Name), Chip, Sawtooth, Error);
+	if (Index < 0)
+		throw Problem("The instrument couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	S.Refresh();
+	Added = S.Song.Instruments.size() > Before;
+	return Index;
+}
+
 std::string ReferenceSoundTool(Session &S, const Json &Args)
 {
 	const Reference R = FindReference(S, StringArg(Args, "reference"));
@@ -13596,23 +13626,16 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 	if (Name.empty())
 		Name = ReferenceSoundName(R, Sound);
 	// On the FDS: an FDS instrument, its own wave and modulator for an FDS sound, a wave from its channel for another's
+	std::string How;
+	bool Added = false;
+	const int Index = MakeReferenceInstrument(S, Sound, Name, Chip, Sawtooth, How, Added);
 	if (Chip == "FDS") {
-		std::string How;
-		const FdsSound F = ReferenceFdsSound(Sound, Name, How);
-		bool Added = false;
-		const int Index = AddFdsSound(S, F, Added);
 		return Format("%s %s, an FDS instrument%s: sound %d of %s (%s, %s): %s. It plays %s.", Added ? "Added" : "The song already has",
 			InstrumentLabel(S.Song, Index).c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(),
 			Sound.Words.c_str(), How.c_str()) + (Sound.Chip != "FDS" ? std::string(" Its volume is counted as the FDS counts it "
 			"(0-31), its pitch sequence in the FDS's finer steps.") : std::string()) + VanishRemark(S.Song, Index) +
 			" Use it with write_notes or set_instrument; the FDS sounds two octaves under the note written.";
 	}
-	const Preset Made = ReferencePreset(Sound, Name);
-	std::string Error;
-	const int Index = S.Host().AddInstrument(Made, Chip, Sawtooth, Error);
-	if (Index < 0)
-		throw Problem("The instrument couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
-	S.Refresh();
 	std::string Out = Format("Added %s, a %s instrument%s: sound %d of %s (%s, %s): %s.", InstrumentLabel(S.Song, Index).c_str(),
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
 	if (Chip == "5B" && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
@@ -13680,7 +13703,230 @@ std::string ImportNsfTool(Session &S, const Json &Args)
 		"are the NSF's: select_track switches between them, and read_notes and look_at_song show how they're made.";
 }
 
+// What the song plays each instrument on in the selected track: the channel with most of its notes, and the pitches it
+// plays there (the sound browser lists it on that channel, and plays a drum at those pitches)
+std::vector<SoundUse> SongSoundUses(Session &S)
+{
+	std::vector<SoundUse> Uses(NO_INSTRUMENT);
+	const int Channels = S.ChannelCount();
+	std::vector<std::vector<int> > Count(NO_INSTRUMENT, std::vector<int>(static_cast<size_t>(Channels), 0));
+	std::map<std::pair<int, int>, std::set<int> > Pitches;	// (instrument, channel)
+	for (int c = 0; c < Channels; ++c) {
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		for (size_t n = 0; n < Notes.size(); ++n) {
+			const int I = Notes[n].Instrument;
+			if (I < 0 || I >= NO_INSTRUMENT)
+				continue;
+			++Count[static_cast<size_t>(I)][static_cast<size_t>(c)];
+			Pitches[std::make_pair(I, c)].insert(Notes[n].Pitch);
+		}
+	}
+	for (int i = 0; i < NO_INSTRUMENT; ++i) {
+		SoundUse &U = Uses[static_cast<size_t>(i)];
+		const std::vector<int> &Of = Count[static_cast<size_t>(i)];
+		for (int c = 0; c < Channels; ++c) {
+			if (Of[static_cast<size_t>(c)] == 0)
+				continue;
+			U.Channels.push_back(c);
+			if (U.Channel < 0 || Of[static_cast<size_t>(c)] > Of[static_cast<size_t>(U.Channel)])
+				U.Channel = c;
+		}
+		if (U.Channel < 0)
+			continue;
+		U.Notes = Of[static_cast<size_t>(U.Channel)];
+		const std::set<int> &At = Pitches[std::make_pair(i, U.Channel)];
+		for (std::set<int>::const_iterator it = At.begin(); it != At.end() && U.Pitches.size() < 4; ++it)
+			U.Pitches.push_back(*it);
+	}
+	return Uses;
+}
+
+// Every sound the song can get (the sound browser's and find_sound's), the reference library's too unless it can't be
+// read; Cursor: the channel the user is on, -1 for none
+std::vector<SoundEntry> SongSounds(Session &S, int Cursor)
+{
+	std::vector<Reference> Library;
+	try {
+		Library = ReadLibrary(S);
+	}
+	catch (const Problem &) {
+		Library.clear();	// the ready-made sounds and the song's own still list
+	}
+	return ListSounds(S.Song, Library, SongSoundUses(S), Cursor);
+}
+
+// A ready-made sound by its exact name
+const Preset *PresetNamed(const std::vector<Preset> &All, const std::string &Name)
+{
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Name == Name)
+			return &All[i];
+	return 0;
+}
+
+// One of the sounds made into an instrument as add_instrument or reference_sound makes it: its index
+int MakeSoundIn(Session &S, const SoundEntry &E)
+{
+	std::string Error;
+	int Index = -1;
+	switch (E.Make) {
+	case MAKE_NONE:
+		return E.Number;
+	case MAKE_PRESET: case MAKE_5B: {
+		const Preset *pSound = PresetNamed(E.Make == MAKE_5B ? Sunsoft5BSounds() : Presets(), E.Key);
+		if (pSound == 0)
+			throw Problem("There's no sound called \"" + E.Key + "\".");
+		Index = S.Host().AddInstrument(*pSound, E.Chip, E.Sawtooth, Error);
+		break;
+	}
+	case MAKE_VRC7:
+		Index = S.Host().AddVrc7Instrument(E.Number, E.Name, Error);
+		break;
+	case MAKE_VRC7_CUSTOM: {
+		const Vrc7Custom *pCustom = FindVrc7Custom(E.Key);
+		if (pCustom == 0)
+			throw Problem("There's no VRC7 sound called \"" + E.Key + "\".");
+		Index = S.Host().AddVrc7CustomInstrument(std::vector<int>(pCustom->Regs, pCustom->Regs + 8), pCustom->InstrumentName(), Error);
+		break;
+	}
+	case MAKE_N163: {
+		const WaveSound *pSound = FindWaveSound(E.Key);
+		if (pSound == 0)
+			throw Problem("There's no N163 sound called \"" + E.Key + "\".");
+		std::string Where;
+		return AddWaveInstrument(S, *pSound, Where);
+	}
+	case MAKE_FDS: {
+		const FdsSound *pSound = FindFdsSound(E.Key);
+		if (pSound == 0)
+			throw Problem("There's no FDS sound called \"" + E.Key + "\".");
+		bool Added = false;
+		return AddFdsSound(S, *pSound, Added);
+	}
+	case MAKE_REFERENCE: {
+		if (!E.Reference)
+			throw Problem("That reference's sound is gone.");
+		std::string How;
+		bool Added = false;
+		return MakeReferenceInstrument(S, *E.Reference, E.Short, E.Chip, E.Sawtooth, How, Added);
+	}
+	default:
+		throw Problem("That sound can't be made.");
+	}
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	return Index;
+}
+
+// How the tools add a sound, in a sentence (Channel: the one asked for, -1 for none)
+std::string HowToAdd(const SoundEntry &E, int Channel)
+{
+	const std::string On = Format(" channel %d", (Channel >= 0 ? Channel : E.Channel) + 1);
+	switch (E.Make) {
+	case MAKE_NONE:
+		return Format("It's the song's instrument %02X: write_notes and set_instrument use it by name", E.Number);
+	case MAKE_REFERENCE:
+		return "Add it with reference_sound reference \"" + E.Key + "\" sound " + std::to_string(E.Number) +
+			(Channel >= 0 ? On : std::string());
+	case MAKE_VRC7_CUSTOM:
+		return "Add it with set_instrument or write_notes on a VRC7 channel, instrument \"" + E.Key + "\" (a custom patch)";
+	default:
+		return "Add it with add_instrument preset \"" + E.Key + "\"" + ((E.Target == TARGET_PULSE || E.Target == TARGET_NOISE) &&
+			Channel < 0 ? std::string() : On);
+	}
+}
+
+std::string KindList()
+{
+	std::string Out;
+	const std::vector<SoundKind> &Kinds = SoundKinds();
+	for (size_t i = 0; i < Kinds.size(); ++i)
+		Out += (i == 0 ? "" : ", ") + Kinds[i].Id;
+	return Out;
+}
+
+std::string FindSoundTool(Session &S, const Json &Args)
+{
+	SoundQuery Q;
+	Q.Words = StringArg(Args, "query");
+	const std::string Kind = StringArg(Args, "kind");
+	if (!Kind.empty()) {
+		Q.Kind = KindId(Kind);
+		if (Q.Kind.empty())
+			throw Problem("kind: one of " + KindList() + ".");
+	}
+	const std::string From = Lowercase(StringArg(Args, "from", "all"));
+	if (From == "presets" || From == "ready-made")
+		Q.Source = SOURCE_PRESET;
+	else if (From == "references" || From == "reference library")
+		Q.Source = SOURCE_REFERENCE;
+	else if (From == "song" || From == "this song")
+		Q.Source = SOURCE_SONG;
+	else if (From != "all")
+		throw Problem("from: all, presets, references or song.");
+	const int Channel = Arg(Args, "channel") != 0 ? ChannelArg(S, Args, "channel") : -1;
+	if (Channel >= 0) {
+		Q.Target = TargetOf(S.Channel(Channel));
+		if (Q.Target < 0)
+			throw Problem("No sounds are listed for " + S.Channel(Channel).FullName() + ".");
+	}
+	const std::vector<SoundEntry> All = SongSounds(S, Channel);
+	const std::vector<size_t> Found = FindSounds(All, Q);
+	std::string Asked;
+	if (!Q.Words.empty())
+		Asked += " for \"" + Q.Words + "\"";
+	if (!Q.Kind.empty())
+		Asked += " of the kind " + Q.Kind;
+	if (Q.Source >= 0)
+		Asked += " from " + SourceName(Q.Source);
+	if (Channel >= 0)
+		Asked += " on " + S.Channel(Channel).FullName();
+	if (Found.empty())
+		return "No sound" + Asked + ". Try fewer or other words (a kind like bell, pluck or pad, a quality like warm or soft, a "
+			"game), another kind, or from all.";
+	std::string Out = Format("%s%s%s:\n", Plural(static_cast<int>(Found.size()), "sound", "sounds").c_str(), Asked.c_str(),
+		Q.Words.empty() ? "" : ", best first");
+	for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i) {
+		const SoundEntry &E = All[Found[i]];
+		Out += "- " + E.Name + " (" + E.Kind + "; " + E.Origin + "; plays on " + E.ChannelName + ")" + (E.Words.empty() ? "" : ": " +
+			E.Words) + ". " + HowToAdd(E, Channel) + ".";
+		if (E.InSong >= 0 && E.Make != MAKE_NONE)
+			Out += Format(" The song has it already, as instrument %02X.", E.InSong);
+		if (SoundVanishes(E.Heard))
+			Out += VanishText(E.Heard, true);
+		if (!E.ClickPitches.empty()) {
+			std::string Pitches;
+			for (size_t p = 0; p < E.ClickPitches.size() && p < 4; ++p)
+				Pitches += (p == 0 ? "" : ", ") + PitchName(E.ClickPitches[p]);
+			Out += " Held on a 2A03 pulse its vibrato clicks on " + Pitches + (E.ClickPitches.size() > 4 ? " and more" : "") +
+				": the tools nudge such notes with a fine pitch (Pxx) as they write them, and check_song lists any left.";
+		}
+		Out += "\n";
+	}
+	if (Found.size() > static_cast<size_t>(MAX_LISTED))
+		Out += Format("and %d more: narrow it with more words, kind, from or channel.\n", static_cast<int>(Found.size()) - MAX_LISTED);
+	return Out;
+}
+
 }	// namespace
+
+// The sound browser's and find_sound's checks (SoundIndex.h), as the tools make them
+
+int SoundHeardFrames(const InstrumentInfo &Info, int Limit)
+{
+	return HeardFramesOf(&Info, 15, Limit);
+}
+
+bool SoundVanishes(int Heard)
+{
+	return Heard <= VANISH_FRAMES;
+}
+
+std::string VanishWarning(int Heard, bool ForTools)
+{
+	return SoundVanishes(Heard) ? VanishText(Heard, ForTools) : std::string();
+}
 
 // The tool set
 
@@ -14718,6 +14964,25 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 
+	std::vector<std::string> Kinds;
+	for (size_t k = 0; k < SoundKinds().size(); ++k)
+		Kinds.push_back(SoundKinds()[k].Id);
+	AddTool("find_sound", "Find a sound",
+		"Searches every sound the song can get, in one list, as FamiTracker's Instrument > Sound browser shows them: the "
+		"ready-made sounds for the chips it has on (the presets, the 5B's own, the VRC7's patches and custom patches, the "
+		"N163's and the FDS's sounds), each sound of the reference library's studies, and the song's own instruments. By "
+		"words (\"warm bell\", \"pluck\", \"bass\", a game or a reference), kind and source. Each comes with its kind, where "
+		"it's from, the channel it plays on, its words, the call that adds it (add_instrument or reference_sound) and the "
+		"warnings: notes that vanish, a vibrato that clicks on the 2A03's pulses. Without a channel each sound is listed "
+		"once, where it's meant to play; with one, every sound that plays there.",
+		Schema()
+			.Add("query", Prop("string", "Words to look for: a kind (bell, pluck, bass, pad, drums), a quality (warm, soft, bright), a game, a reference's title or id. Empty: all of them."))
+			.Add("kind", EnumProp("Only this kind of sound.", Kinds))
+			.Add("from", EnumProp("Where from: all (default), presets (the ready-made sounds), references (the reference library) or song (its instruments).",
+				std::vector<std::string>{ "all", "presets", "references", "song" }))
+			.Add("channel", ChannelProp("The channel to find sounds for: every sound that plays there.")),
+		true);
+
 	AddTool("add_sample_drums", "Add sampled drums",
 		"Adds a drum kit of samples for the DPCM channel, made for FamiTracker: a punchy kick, a snare and two toms, as one "
 		"instrument (\"Sample drums\"). Then write_notes on the DPCM channel plays them by name (kick, snare, low tom, high "
@@ -14857,6 +15122,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "references") Result.Text = ReferencesTool(S, Args);
 		else if (Name == "effects") Result.Text = EffectsTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
+		else if (Name == "find_sound") Result.Text = FindSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
 		else if (Name == "send_file") {
 			std::string Bytes;
@@ -14939,6 +15205,32 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 	catch (const Problem &P) {
 		Error = P.Text;
 		return false;
+	}
+}
+
+bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error)
+{
+	Out.clear();
+	try {
+		Session S(m_Host);
+		Out = SongSounds(S, Cursor >= 0 && Cursor < S.ChannelCount() ? Cursor : -1);
+		return true;
+	}
+	catch (const Problem &P) {
+		Error = P.Text;
+		return false;
+	}
+}
+
+int ToolSet::MakeSound(const SoundEntry &Sound, std::string &Error)
+{
+	try {
+		Session S(m_Host);
+		return MakeSoundIn(S, Sound);
+	}
+	catch (const Problem &P) {
+		Error = P.Text;
+		return -1;
 	}
 }
 
@@ -15079,7 +15371,8 @@ std::string ToolSet::Instructions()
 		"Drums: lighter in calm parts, busier toward a climax, a fill at each phrase end.\n"
 		"- Expression: polish adds accents and a vibrato that comes in on long notes; add_echo gives space; change a sound or "
 		"the duty between sections; instruments with life (the singing lead, strings and brass presets, or design_instrument "
-		"for a sound described in words). The effects tool explains FamiTracker 0.4.6's effects and the techniques made with "
+		"for a sound described in words; find_sound searches every sound the song can get, the reference library's too, by "
+		"words like \"warm bell\"). The effects tool explains FamiTracker 0.4.6's effects and the techniques made with "
 		"them (swing, a chorus with Pxx, staccato with Sxx, a kick on the triangle, lush chords, quiet mixing); only 0.4.6's "
 		"effects play, so none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers. With the N163 (set_expansion), up to 8 more "
 		"channels play wave sounds whose timbre moves (an organ's rotating shimmer, strings and a choir that swell, brass "

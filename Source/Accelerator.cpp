@@ -99,7 +99,7 @@ const stAccelEntry CAccelerator::DEFAULT_TABLE[] = {
 	{_T("Clips"),						MOD_CONTROL | MOD_SHIFT,	'V',	ID_EDIT_CLIPS},
 	{_T("Piano roll"),					MOD_CONTROL | MOD_SHIFT,	'P',	ID_VIEW_PIANOROLL},
 	{_T("Sound effect from your voice"),	MOD_NONE,		0,				ID_EDIT_VOICEEFFECT},
-	{_T("Instrument library"),			MOD_CONTROL | MOD_SHIFT,	'L',	ID_INSTRUMENT_LIBRARY},
+	{_T("Sound browser"),				MOD_CONTROL | MOD_SHIFT,	'L',	ID_INSTRUMENT_LIBRARY},
 	{_T("Drum grid"),					MOD_CONTROL | MOD_SHIFT,	'D',	ID_EDIT_DRUMGRID},
 };
 

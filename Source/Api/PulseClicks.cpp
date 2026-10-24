@@ -22,6 +22,7 @@
 #include "PulseClicks.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <map>
 
@@ -566,6 +567,64 @@ std::vector<ClickFix> SmoothClicks(const SongInfo &Song, std::vector<Cell> &Cell
 		Left[Now[i].Row] = std::max(Left[Now[i].Row], PulseClicks(Now[i], 0));
 	for (size_t i = 0; i < Out.size(); ++i)
 		Out[i].Left = Left[Out[i].Row];
+	return Out;
+}
+
+namespace {
+
+// How far a held note's pitch sequence can take its period in Frames frames: its running sum (a pitch sequence adds
+// up) and its values, as CSequenceHandler plays it: back to the loop at the end or past the release point
+int SequenceReach(const SequenceInfo &Seq, int Frames)
+{
+	const int Items = static_cast<int>(Seq.Items.size());
+	int Pointer = 0, Sum = 0, Reach = 0;
+	for (int f = 0; f < Frames && Items > 0; ++f) {
+		const int Value = Seq.Items[static_cast<size_t>(std::min(Pointer, Items - 1))];
+		Sum += Value;
+		Reach = std::max(Reach, std::max(std::abs(Sum), std::abs(Value)));
+		++Pointer;
+		if (Pointer == Seq.Release + 1 || Pointer >= Items) {
+			if (Seq.Loop >= 0 && Seq.Loop < Items)
+				Pointer = Seq.Loop;
+			else if (Pointer >= Items)
+				break;
+			else
+				--Pointer;
+		}
+	}
+	return Reach;
+}
+
+}
+
+std::vector<int> VibratoClickPitches(const InstrumentInfo &Info)
+{
+	std::vector<int> Out;
+	if (Info.Pitch.Items.empty() && Info.HiPitch.Items.empty())
+		return Out;
+	// Only a note whose period the vibrato can take across a multiple of 256 can click (an arpeggio moves the note
+	// itself: then every one is tried)
+	const int Reach = SequenceReach(Info.Pitch, 120) + 16 * SequenceReach(Info.HiPitch, 120) + 2;
+	const bool Moves = !Info.Steps.Items.empty();
+	SongInfo Song;
+	Song.Instruments.push_back(Info);
+	Song.Instruments.back().Index = 0;
+	std::vector<std::pair<int, int> > Played;
+	for (int Row = 0; Row < 20; ++Row)
+		Played.push_back(std::make_pair(Row, 6));	// two seconds at speed 6
+	// From C-1 to B-4: higher, the period stays under 256, so its high byte never changes
+	for (int Pitch = 12; Pitch < 60; ++Pitch) {
+		const int Period = PulsePeriod(Pitch, false), Below = Period % 256;
+		if (!Moves && !((Period >= 256 && Below <= Reach) || 256 - Below <= Reach))
+			continue;
+		std::vector<Cell> Cells(1);
+		Cells[0].SetPitch(Pitch);
+		Cells[0].Instrument = 0;
+		Cells[0].Volume = 15;
+		const std::vector<PulseNote> Notes = PlayPulse(Song, Cells, 1, Played);
+		if (!Notes.empty() && PulseClicks(Notes[0], 0) >= 2)
+			Out.push_back(Pitch);
+	}
 	return Out;
 }
 

@@ -99,6 +99,7 @@ add_library(ftapi STATIC
 	Arrange.cpp
 	DpcmKit.cpp
 	Presets.cpp
+	SoundIndex.cpp
 	References.cpp
 	StyleGuide.cpp
 	Tools.cpp

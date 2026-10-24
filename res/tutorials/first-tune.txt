@@ -45,7 +45,7 @@ step
 show: instruments
 text: These are the song's instruments, the sounds the notes play with. A note plays with the instrument chosen here when you typed it, and its number shows next to the note: red if the song has no such instrument yet.
 
-  Instrument > Instrument library has ready-made sounds to listen to and add.
+  Instrument > Sound browser has ready-made sounds to find, listen to and add.
 
 step
 show: frames

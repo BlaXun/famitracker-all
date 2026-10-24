@@ -22,9 +22,10 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 class CMainFrame;
-namespace ftapi { struct TrackHarmony; }
+namespace ftapi { struct TrackHarmony; struct SoundEntry; }
 
 // File > Connect Claude Code: FamiTracker as an MCP server, so Claude Code on
 // the same computer can work on the open song in musical terms (the tools are
@@ -58,6 +59,11 @@ public:
 	// The piano roll's chord strip and key (Api/Tools.h, ToolSet::Harmony): the selected track's key, chosen or found
 	// from the notes, and the chords its parts play, as the tools hear them. False when busy or without a song.
 	bool Harmony(ftapi::TrackHarmony &Out);
+	// Instrument > Sound browser (SoundBrowserDlg.cpp): every sound the song can get (Api/SoundIndex.h, as find_sound
+	// lists them), Cursor the channel the user is on; and one made into an instrument as add_instrument or
+	// reference_sound makes it: its index. False, or -1, with the reason when busy with Claude Code or without a song.
+	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error);
+	int MakeSound(const ftapi::SoundEntry &Sound, std::string &Error);
 
 private:
 	struct Impl;

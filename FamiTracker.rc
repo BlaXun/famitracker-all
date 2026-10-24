@@ -177,7 +177,7 @@ BEGIN
     END
     POPUP "&Instrument"
     BEGIN
-        MENUITEM "Instrument library...",       ID_INSTRUMENT_LIBRARY
+        MENUITEM "Sound browser...",            ID_INSTRUMENT_LIBRARY
         MENUITEM SEPARATOR
         MENUITEM "New instrument",              ID_INSTRUMENT_NEW
         MENUITEM "Remove instrument",           ID_INSTRUMENT_REMOVE
@@ -323,7 +323,7 @@ BEGIN
     POPUP "Instrument"
     BEGIN
         MENUITEM "Add",                         ID_INSTRUMENT_NEW
-        MENUITEM "Add from the library...",     ID_INSTRUMENT_LIBRARY
+        MENUITEM "Add from the sound browser...", ID_INSTRUMENT_LIBRARY
         MENUITEM "Remove",                      ID_INSTRUMENT_REMOVE
         MENUITEM SEPARATOR
         MENUITEM "&Load from file...",          ID_INSTRUMENT_LOAD
@@ -574,7 +574,7 @@ BEGIN
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
-    ID_INSTRUMENT_LIBRARY   "Ready-made sounds to listen to and add: leads, plucks, pads, basses and drums\nInstrument library"
+    ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_DRUMGRID        "Put drums on the noise channel a bar at a time, on a grid of steps, or pick a ready-made beat\nDrum grid"
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
@@ -2045,20 +2045,27 @@ BEGIN
     PUSHBUTTON      "Close",IDCANCEL,363,192,50,14
 END
 
-IDD_INSTRUMENT_LIBRARY DIALOGEX 0, 0, 300, 240
+IDD_SOUND_BROWSER DIALOGEX 0, 0, 460, 304
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Instrument library"
+CAPTION "Sound browser"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Ready-made sounds: pick the channel they're for, then click one to hear it. Add to the song keeps it as an instrument, which you can change later in the instrument editor.",IDC_STATIC,7,7,286,26
-    LTEXT           "Sounds for:",IDC_STATIC,7,40,44,8
-    COMBOBOX        IDC_LIB_FOR,54,38,150,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "",IDC_LIB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,7,56,286,104
-    LTEXT           "",IDC_LIB_TEXT,7,164,286,26
-    PUSHBUTTON      "Listen",IDC_LIB_LISTEN,7,194,60,14
-    DEFPUSHBUTTON   "Add to the song",IDC_LIB_ADD,72,194,72,14
-    LTEXT           "",IDC_LIB_STATUS,7,214,230,24
-    PUSHBUTTON      "Close",IDCANCEL,243,218,50,14
+    LTEXT           "Every sound this song can use: ready-made sounds for its chips, the sounds of your reference library and the song's own instruments. Click one to hear it; while the list is picked, the note keys (or a MIDI keyboard) play it too.",IDC_STATIC,7,7,446,18
+    LTEXT           "Find:",IDC_STATIC,7,32,30,8
+    EDITTEXT        IDC_SB_FIND,40,30,170,12,ES_AUTOHSCROLL
+    LTEXT           "Kind:",IDC_STATIC,220,32,20,8
+    COMBOBOX        IDC_SB_KIND,242,30,86,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "From:",IDC_STATIC,336,32,20,8
+    COMBOBOX        IDC_SB_FROM,358,30,95,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Plays on:",IDC_STATIC,7,48,30,8
+    COMBOBOX        IDC_SB_CHANNEL,40,46,170,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    RTEXT           "",IDC_SB_COUNT,336,48,117,8
+    CONTROL         "",IDC_SB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA | WS_BORDER | WS_TABSTOP,7,62,446,140
+    LTEXT           "",IDC_SB_TEXT,7,206,446,42
+    PUSHBUTTON      "Listen",IDC_SB_LISTEN,7,252,60,14
+    DEFPUSHBUTTON   "Add to the song",IDC_SB_ADD,72,252,72,14
+    LTEXT           "",IDC_SB_STATUS,7,272,380,26
+    PUSHBUTTON      "Close",IDCANCEL,403,284,50,14
 END
 
 IDD_VOICE_EFFECT DIALOGEX 0, 0, 280, 228

@@ -51,6 +51,7 @@
 #include "FrameEditor.h"
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
+#include "SoundBrowserDlg.h"
 #include "DrumGridDlg.h"
 #include "Profile.h"
 #include "ImportNsfDlg.h"
@@ -1754,7 +1755,7 @@ void CMainFrame::OnEditVoiceEffect()
 
 void CMainFrame::OnInstrumentLibrary()
 {
-	ShowInstrumentLibrary(this);
+	ShowSoundBrowser(this);
 }
 
 void CMainFrame::OnEditDrumGrid()
@@ -2702,7 +2703,7 @@ void CMainFrame::OnNewInstrumentMenu(NMHDR* pNotifyStruct, LRESULT* result)
 	if (Chip & SNDCHIP_S5B)
 		menu.AppendMenu(MF_STRING, ID_INSTRUMENT_ADD_S5B, _T("New Sunsoft instrument"));
 	menu.AppendMenu(MF_SEPARATOR);
-	menu.AppendMenu(MF_STRING, ID_INSTRUMENT_LIBRARY, _T("From the instrument library..."));
+	menu.AppendMenu(MF_STRING, ID_INSTRUMENT_LIBRARY, _T("From the sound browser..."));
 
 	switch (SelectedChip) {
 		case SNDCHIP_NONE:
