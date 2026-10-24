@@ -4819,7 +4819,7 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 18);
+	CHECK(Core.size() >= 15 && Core.size() <= 20);
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -4869,6 +4869,47 @@ void TestNetwork()
 			Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style",
 				("a core tool: " + Words[i]).c_str(), __LINE__);
 		CHECK(Words.size() >= 15);
+	}
+	{
+		// get_recipe on the small set: each kind's steps name only the set's own tools (2026-10-24)
+		const char *const KINDS[] = { "calm", "lively", "action", "" };
+		for (const char *Kind : KINDS) {
+			HttpRequest Ask = Post(std::string("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_recipe\","
+				"\"arguments\":{") + (*Kind ? std::string("\"kind\":\"") + Kind + "\"" : std::string()) + "}}}");
+			Ask.Target = "/mcp/core";
+			const Json Got = Body(HandleMcp(Ask, Config, Tools));
+			CHECK(Got.Get("result") != 0 && !Got.Get("result")->Get("isError")->Bool());
+			const std::string Text = Got.Get("result")->Get("content")->At(0).Get("text")->String();
+			const std::vector<std::string> Words = ToolWords(Text);
+			for (size_t i = 0; i < Words.size(); ++i)
+				Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style" ||
+					Words[i] == "arp_frames" || Words[i] == "delay_beats" || Words[i] == "bass_instrument" || Words[i] == "root_fifth",
+					("a core tool in the recipe: " + Words[i]).c_str(), __LINE__);
+			if (std::string(Kind) == "calm") {
+				CHECK_HAS(Text, "kind breath");
+				CHECK_HAS(Text, "mix with style calm");
+				CHECK_HAS(Text, "loudness -22");
+			}
+			else if (std::string(Kind) == "lively")
+				CHECK_HAS(Text, "mix with style lively");
+			else if (std::string(Kind) == "action")
+				CHECK_HAS(Text, "loudness -19");
+			else
+				CHECK_HAS(Text, "then ask get_recipe for it");
+		}
+		// On the full set, the compose_track recipe of that kind; a kind it doesn't know is refused
+		ToolResult Got = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\", \"idea\": \"a quiet pond\", \"bars\": 32}"));
+		CHECK(!Got.IsError);
+		CHECK_HAS(Got.Text, "Compose a calm track in FamiTracker for this: a quiet pond.");
+		CHECK_HAS(Got.Text, "the form for 32 bars");
+		CHECK_HAS(Got.Text, "Calm songs (a place to rest");
+		Got = Tools.Call("get_recipe", Json::MakeObject());
+		CHECK(!Got.IsError);
+		CHECK_HAS(Got.Text, "for this: the song the user asked for.");
+		CHECK_HAS(Got.Text, "follow that kind's recipe instead");
+		Got = Tools.Call("get_recipe", Parse("{\"kind\": \"sad\"}"));
+		CHECK(Got.IsError);
+		CHECK_HAS(Got.Text, "kind should be calm, lively or action");
 	}
 	// The full instructions tell of send_file, and name only tools there are
 	CHECK_HAS(ToolSet::Instructions(), "send_file puts your files");
