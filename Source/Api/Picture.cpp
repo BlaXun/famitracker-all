@@ -20,8 +20,10 @@
 */
 
 #include "Picture.h"
+#include "Sections.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace ftapi {
@@ -295,10 +297,14 @@ Picture DrawNotes(const std::vector<PictureChannel> &Channels, const PictureSpec
 		Samples = Samples || Channels[c].Kind == KIND_DPCM;
 	}
 
-	// The layout
+	// The layout: bar numbers on top, then the sections' band when there are sections
+	bool Named = false;
+	for (size_t i = 0; i < Spec.Sections.size(); ++i)
+		Named = Named || (Spec.Sections[i].First < End && Spec.Sections[i].End > First);
 	const int RowWidth = std::max(2, std::min(16, 1024 / Rows));
 	const int PitchHeight = std::max(5, std::min(14, 560 / Semitones));
-	const int LEFT = 56, TOP = 26, RIGHT = 8, BOTTOM = 8, GAP = 10, DRUM_LANE = 4, SAMPLE_HEIGHT = 14;
+	const int NUMBERS = 26, BAND = 13, LEFT = 56, TOP = NUMBERS + (Named ? BAND + 3 : 0), RIGHT = 8, BOTTOM = 8, GAP = 10,
+		DRUM_LANE = 4, SAMPLE_HEIGHT = 14;
 	const int PlotTop = TOP, PlotHeight = Semitones * PitchHeight, PlotLeft = LEFT, PlotWidth = Rows * RowWidth;
 	const int DrumTop = PlotTop + PlotHeight + GAP, DrumHeight = Drums ? 16 * DRUM_LANE : 0;
 	const int SampleTop = DrumTop + DrumHeight + (Drums ? GAP : 0), SampleHeight = Samples ? SAMPLE_HEIGHT : 0;
@@ -362,10 +368,29 @@ Picture DrawNotes(const std::vector<PictureChannel> &Channels, const PictureSpec
 			const int Scale = BarWidth >= static_cast<int>(Number.size()) * GLYPH_ADVANCE * 2 + 4 ? 2 : 1;
 			const int x = X(r) + 2;
 			if (x > LastLabelEnd + 4) {
-				C.Text(x, TOP - 4 - GLYPH_HEIGHT * Scale, Number, Scale, TEXT);
+				C.Text(x, NUMBERS - 4 - GLYPH_HEIGHT * Scale, Number, Scale, TEXT);
 				LastLabelEnd = x + C.TextWidth(Number, Scale);
 			}
 		}
+	}
+
+	// The sections: a band each in its color, named in capitals as far as there's room
+	const int SectionShades = PLAIN_COLORS + COLOR_COUNT * SHADES;
+	for (size_t i = 0; Named && i < Spec.Sections.size(); ++i) {
+		const PictureSection &Section = Spec.Sections[i];
+		const int From = std::max(Section.First, First), To = std::min(Section.End, End);
+		if (To <= From)
+			continue;
+		const int x0 = X(From), x1 = X(To), y0 = NUMBERS, y1 = NUMBERS + BAND;
+		const int Color = SectionShades + ((Section.Color % SECTION_COLORS) + SECTION_COLORS) % SECTION_COLORS;
+		C.Fill(x0, y0, x1 - 1, y1, Color);
+		C.Fill(x0, y0, x0 + 1, y1, TEXT);
+		std::string Name;
+		for (size_t k = 0; k < Section.Name.size(); ++k)
+			Name += static_cast<char>(std::toupper(static_cast<unsigned char>(Section.Name[k])));
+		while (!Name.empty() && C.TextWidth(Name, 1) > x1 - x0 - 6)
+			Name.erase(Name.size() - 1);
+		C.Text(x0 + 3, y0 + (BAND - GLYPH_HEIGHT) / 2, Name, 1, TEXT);
 	}
 
 	// Where the song loops back to, and where it jumps back or stops
@@ -475,6 +500,15 @@ Picture DrawNotes(const std::vector<PictureChannel> &Channels, const PictureSpec
 			}
 			Out.Palette.push_back(Color);
 		}
+	}
+	for (int k = 0; k < SECTION_COLORS; ++k) {
+		int Red, Green, Blue;
+		SectionRgb(k, Red, Green, Blue);
+		Rgb Color;
+		Color.R = static_cast<unsigned char>(255 - (255 - Red) * 45 / 100);
+		Color.G = static_cast<unsigned char>(255 - (255 - Green) * 45 / 100);
+		Color.B = static_cast<unsigned char>(255 - (255 - Blue) * 45 / 100);
+		Out.Palette.push_back(Color);
 	}
 	Out.Pixels.swap(C.Pixels());
 	return Out;

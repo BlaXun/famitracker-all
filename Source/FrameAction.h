@@ -23,6 +23,8 @@
 #include "Action.h"
 #include "FrameEditor.h"
 
+namespace ftapi { class SectionStore; }
+
 // Frame commands
 class CFrameAction : public CAction
 {
@@ -46,7 +48,11 @@ public:
 		ACT_DRAG_AND_DROP_COPY,
 		ACT_DRAG_AND_DROP_COPY_NEW,
 		ACT_DELETE_SELECTION,
-		ACT_MERGE_DUPLICATED_PATTERNS
+		ACT_MERGE_DUPLICATED_PATTERNS,
+		// Beginner-friendly: the track's sections (Api/Sections.h)
+		ACT_SECTIONS,				// named, renamed or their names taken away
+		ACT_MOVE_FRAMES,			// a block of frames moved, keeping its patterns (Move section up or down)
+		ACT_DUPLICATE_FRAMES		// a block of frames again right after it, sharing its patterns (Duplicate section)
 	};
 
 public:
@@ -64,6 +70,11 @@ public:
 	void Update(CMainFrame *pMainFrm);
 	void SetPasteData(CFrameClipData *pClipData);
 	void SetDragInfo(int DragTarget, CFrameClipData *pClipData, bool Remove);
+	// ACT_SECTIONS: the selected track's sections afterwards, as track 0 of the store (the action keeps it)
+	void SetSections(ftapi::SectionStore *pSections);
+	// ACT_MOVE_FRAMES: frames First..Last go where First is at To (counted without them); ACT_DUPLICATE_FRAMES:
+	// First..Last again after Last (To unused), a copy of a section named as its repeat ("Chorus 2")
+	void SetFrameBlock(int First, int Last, int To);
 
 private:
 	void SaveFrame(CFamiTrackerDoc *pDoc);
@@ -75,6 +86,8 @@ private:
 	int ClipPattern(int Pattern) const;
 
 	void ClearPatterns(CFamiTrackerDoc *pDoc, int Target);
+
+	void DuplicateFrames(CFamiTrackerDoc *pDoc) const;
 
 private:
 	unsigned int m_iUndoTrack;
@@ -101,4 +114,8 @@ private:
 	CFrameClipData *m_pClipData;
 
 	stSelectInfo m_oSelInfo;
+
+	ftapi::SectionStore *m_pSectionsBefore;	// the track's sections before (as track 0), which undo brings back
+	ftapi::SectionStore *m_pSectionsAfter;	// ACT_SECTIONS
+	int m_iBlockFirst, m_iBlockLast, m_iBlockTo;
 };

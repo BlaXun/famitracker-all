@@ -16,9 +16,17 @@ block), shown in the clips panel docked along the right of the window
 and View > Piano roll in `Source/PianoRoll.cpp`: a control bar docked under
 the pattern editor (told about edits through `CMainFrame::SongChanged`) whose note
 edits are worked out by `Source/NoteEdit.cpp` and written as one undoable
-action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
-`ROADMAP.md`. Unless a section says otherwise, everything below describes the
-0.4.6 code as found on `master` and was checked against that source.
+action by `WriteChannelRows` in `InsertRecording.cpp`. Named sections (a
+track's frames named Intro, A, B...) are `Source/Api/Sections.cpp`
+(portable, shared with the tools): the document keeps them in a
+`SectionStore` (`CFamiTrackerDoc::GetSections`, saved in a `BF SECTIONS`
+block) and keeps them with their frames in its frame functions; the frame
+editor draws them (`CFrameEditor::DrawSections`) and changes them with its
+right-click commands as `CFrameAction`s (every frame action snapshots the
+sections, so Undo puts them back), and the piano roll's ruler names them.
+The overall plan is in `ROADMAP.md`. Unless a section says otherwise,
+everything below describes the 0.4.6 code as found on `master` and was
+checked against that source.
 
 The Sunsoft 5B is a working chip here, and a module can have several
 expansion chips on at once. The 5B's channels are `Source/ChannelsS5B.cpp`
@@ -48,7 +56,29 @@ with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
-project and ships next to FamiTracker.exe. File > Export for games saves
+project and ships next to FamiTracker.exe. Other computers on the user's
+home network connect when the dialog's "Allow connections from other
+computers on my network" is ticked (setting "Allow network"; see MCP.md,
+Connecting from another computer): `CMcpSocketServer::Start` then binds
+every IPv4 address and closes connections from addresses outside home
+networks (`MayConnect` in `Source/Api/Network.cpp`: loopback, 10/8,
+172.16/12, 192.168/16, 169.254/16, 100.64/10 for Tailscale, or this PC's
+own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
+`GetAdaptersAddresses`), and each request carries its client's address
+(`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
+again, accepts this PC's addresses and name in the Host header
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 18 tools of
+`ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
+prompts, for local models), `GET /files/<name>` (the OGG files next to the
+song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
+tool: `ToolSet::ReceiveFile` into the Inbox folder next to FamiTracker.exe,
+`InboxFolder` in `Source/AppFolders.cpp`, `SongHost::SaveInbox`); a
+request from the network gives `ToolSet::Call` a `Caller` whose `FilesUrl`
+makes `export_for_game` link its files. `famitracker-mcp --host <address>
+[--port N] [--token CODE] [--core]` reaches FamiTracker on another
+computer; its sources build alone as the `ftbridge` library, which CI links
+statically against musl on Alpine for the release's `famitracker-mcp-linux`.
+File > Export for games saves
 tracks as looping OGG files through the `export_for_game` tool
 (`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with `CSoundGen`,
 which notes the sample where each row starts (`GetRenderMarks`), and libvorbis
@@ -123,6 +153,20 @@ leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
 within four frames between held notes of their line, which a user heard as
 missing notes, and `design_instrument` and `reference_sound` say when the
 sound they add is that short (`VanishRemark`).
+View > Problems (`Source/ProblemsPanel.cpp`, docked along the bottom or the
+right) shows those checks in FamiTracker: it runs `check_song` with
+`format` `json` (each finding as data: `CheckFinding` and `CheckJson` in
+`Tools.cpp`) through `CMcpConnection::RunTool`, which runs a tool for
+FamiTracker's own windows with direct changes whatever the Claude Code
+setting says. `Source/Api/ProblemList.cpp` reads the JSON back (a line a
+note for notes that vanish) and keeps the marks that
+`CPatternEditor::DrawRow` (a tick at the channel's edge) and the piano roll
+(a dot on the note) draw through `ProblemMarkAt`. The panel checks again a
+moment after `CMainFrame::SongChanged`, not while the song plays, and
+polls a signature of what changes unannounced (instruments' sequences,
+speed and tempo, the track); a click's Nudge runs the `fix` the JSON gives
+(`polish` with the touch `clicks` on its bar, one undoable action), and
+Show selects notes in the piano roll (`CPianoRollWnd::ShowNotes`).
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
@@ -277,7 +321,9 @@ replaced the VS2008 project:
     `beginner-friendly` is marked Latest; the others are pre-releases. Each
     release has a zip with `FamiTracker.exe`, plus `wav2ftm.exe`,
     `famitracker-mcp.exe` and `nsf2ftm.exe` when the branch builds them
-    (`api` has no `famitracker-mcp.exe`), and a debug-symbols zip. These
+    (`api` has no `famitracker-mcp.exe`), `famitracker-mcp-linux` (the
+    bridge for Linux, built in the Linux job in an Alpine container), and a
+    debug-symbols zip. These
     tags are build pointers and get deleted and recreated; never use them
     for real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
@@ -328,7 +374,14 @@ The application has no test suite of its own. What exists:
   job. The stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
-  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
+  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`);
+  `TestNetwork` covers other computers: the address filter, Host headers,
+  the core set, `send_file`, the file routes with traversal attempts and
+  `export_for_game`'s links, and `TestCheckJson` and `TestProblemList`
+  read `check_song`'s JSON back as the problems panel reads it;
+  `TestSections` and `TestSectionTools` cover sections as frames move, the
+  `BF SECTIONS` block (read back, cut short at every byte and damaged) and
+  the tools that name them or take them in place of bars. Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -460,6 +513,17 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
     names) or length-prefixed (instrument and sample names).
   - Files newer than `FILE_VER` are refused. Unknown blocks are skipped. Block
     IDs are at most 15 characters.
+- **`BF SECTIONS` block** (this branch; version 1, written after `BF CLIPS`
+  only when a track has sections): an `int32` count of tracks, then for
+  each track its `int32` number, an `int32` count of sections and, for each
+  section, `int32` first and last frame and its name NUL-terminated (1-32
+  bytes, in the code page). Tracks come in order; sections are in order,
+  don't overlap, lie within the track's frames and have names unique
+  regardless of case. `SectionStore::Read` checks every read, and a damaged
+  block or another version is left out: the song loads without sections.
+  Anything that changes a track's frame list must keep them in step
+  (`SectionsInsertFrames`, `SectionsRemoveFrames`, `SectionsMoveFrames`,
+  `SectionsCopyFrame`, `SectionStore::FitFrames`).
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.
@@ -544,6 +608,18 @@ NSF export still uses the 2A03 driver. Touch points:
 
 ## Gotchas
 
+- **Other computers (the connection over the network):** with the option
+  off, FamiTracker binds 127.0.0.1 only and `HandleMcp` refuses any request
+  whose `Peer` isn't loopback; keep both, so one mistake doesn't open it.
+  Every route needs the access code. The file routes take plain file names
+  only (`IsPlainFileName`: no folders, drive letters, streams or device
+  names), the Inbox only the kinds the tools read (`IsInboxFile`) and
+  `/files/` only `.ogg` (`IsExportFile`); never let them take paths. A tool
+  added later either joins `ToolSet::CoreTools` or not: the tests check that
+  `CoreInstructions` names only tools of the set and stays short, so keep
+  its rules (notes that vanish, clicks, 0.4.6's effects) in step with
+  `Instructions`. `famitracker-mcp` must keep building from `ftbridge`
+  alone.
 - **Pulse vibrato clicks:** `CSquare1Chan::RefreshChannel` (and the MMC5's)
   writes the period's high register (`$4003`) only when its value changes,
   and `CSquare::Write` resets the duty step on that write, as the 2A03
@@ -554,6 +630,10 @@ NSF export still uses the 2A03 driver. Touch points:
   (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
   "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
   `Commit` and the checks in step with the channel handlers.
+- **`check_song`'s JSON is read by the problems panel** (`ProblemList.cpp`):
+  keep its field names, and give a new kind of finding a name in both
+  (`CHECK_KIND` in `Tools.cpp`, `KIND_IDS` in `ProblemList.cpp`, heard worst
+  first); the panel leaves out kinds it doesn't know.
 - **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
   (BSD licensed) keep upstream's files and LF line endings; both builds turn
   their warnings off, and only `libogg/include/ogg/config_types.h` is ours.
@@ -577,6 +657,11 @@ NSF export still uses the 2A03 driver. Touch points:
 - **`DEBUG_NEW`:** `stdafx.h` ends with `#define new DEBUG_NEW`, which applies
   to every file that includes it. Placement new or a custom `operator new`
   must account for it.
+- **Headers before `stdafx.h`:** it defines `_CRT_SECURE_NO_WARNINGS`, so a
+  header that pulls in the C runtime (any of `Api/`'s) included before it
+  brings back C4996 for `sscanf` and the like later in that file. Include
+  such headers after `stdafx.h` (the MSVC standard headers protect
+  themselves from `DEBUG_NEW`).
 - **Precompiled headers:** PCH is off. 53 `.cpp` files include other headers
   before `stdafx.h` (`Compiler.cpp` and `FamiTrackerView.cpp` start with
   standard headers), and 65 never include it: all of `APU/`, `Api/`, `Nsf/`

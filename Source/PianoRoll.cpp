@@ -29,6 +29,7 @@
 #include <map>
 #include <vector>
 #include "Transcribe/Transcribe.h"
+#include "Api/Sections.h"
 #include "stdafx.h"
 #pragma push_macro("new")
 #undef new
@@ -46,6 +47,7 @@
 #include "ClipsDlg.h"
 #include "InsertRecording.h"
 #include "NoteEdit.h"
+#include "ProblemsPanel.h"
 #include "PianoRoll.h"
 
 namespace {
@@ -297,6 +299,24 @@ void Cross(CDC &dc, const CRect &Rect, COLORREF Color)
 	}
 }
 
+// What the problems panel found on a note (ProblemsPanel.h): a dot at its
+// start, and a ring around it when the panel has that finding selected
+void ProblemDot(CDC &dc, const CRect &Note, int Mark)
+{
+	if (Mark == 0)
+		return;
+	const COLORREF Color = ProblemMarkColor(Mark);
+	if (ProblemMarkSelected(Mark)) {
+		CRect Ring(Note);
+		Ring.InflateRect(std::max(1, SX(2)), std::max(1, SY(1)));
+		Outline(dc, Ring, Color, std::max(1, SX(2)));
+	}
+	const int Size = std::max(3, std::min(static_cast<int>(Note.Height()) - 2, SY(6)));
+	const int X = Note.left + std::max(1, SX(2)), Y = Note.top + (Note.Height() - Size) / 2;
+	dc.FillSolidRect(X - 1, Y - 1, Size + 2, Size + 2, RGB(255, 255, 255));
+	dc.FillSolidRect(X, Y, Size, Size, Color);
+}
+
 // The first of a channel's notes still sounding after Row (notes don't
 // overlap, so their ends are in order too)
 size_t FirstEndingAfter(const std::vector<RollNote> &Notes, int Row)
@@ -369,6 +389,7 @@ struct CPianoRollWnd::Impl {
 	unsigned int Frames;
 	unsigned int Length;
 	int Beat, Bar;		// rows, from the row highlight (0: none)
+	ftapi::SectionList Sections;	// the track's (Api/Sections.h), named on the ruler
 	bool Dirty;
 
 	// The view
@@ -751,6 +772,7 @@ struct CPianoRollWnd::Impl {
 		Length = std::max(1U, pDoc->GetPatternLength(Track));
 		Beat = std::max(0, pDoc->GetFirstHighlight());
 		Bar = std::max(0, pDoc->GetSecondHighlight());
+		Sections = pDoc->GetSections()->Get(static_cast<int>(Track));
 
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
 		for (int c = 0; c < Channels; ++c)
@@ -906,6 +928,48 @@ struct CPianoRollWnd::Impl {
 		CursorFrame = pView->GetPatternEditor()->GetFrame();	// seen, so it doesn't scroll
 		CursorRow = pView->GetPatternEditor()->GetRow();
 		CursorChannel = pView->GetPatternEditor()->GetChannel();
+	}
+
+	// The problems panel's notes in sight (CPianoRollWnd::ShowNotes)
+	void ShowNotes(int ToChannel, const int *pStarts, int Count, bool Select)
+	{
+		CFamiTrackerView *pView = View();
+		if (pView == NULL || pStarts == NULL || Count <= 0)
+			return;
+		Layout();
+		if (Dirty)
+			Read();
+		if (ToChannel < 0 || ToChannel >= static_cast<int>(Notes.size()))
+			return;
+		CancelDrag();
+		PlacingClip = -1;
+		// The pattern editor's cursor as it is now, seen, so the next look leaves the bright channel and the selection be
+		CPatternEditor *pEditor = pView->GetPatternEditor();
+		if (Select)
+			pEditor->CancelSelection();		// one selection at a time
+		PatternSelecting = pEditor->IsSelecting();
+		CursorFrame = pEditor->GetFrame();
+		CursorRow = pEditor->GetRow();
+		CursorChannel = pEditor->GetChannel();
+		Channel = ToChannel;
+		Selection.clear();
+		int Low = PITCHES, High = -1;
+		for (int i = 0; i < Count; ++i) {
+			const int Index = FindStart(pStarts[i]);
+			if (Index < 0)
+				continue;
+			const RollNote &Note = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(Index)];
+			Low = std::min(Low, Note.Pitch);
+			High = std::max(High, Note.Pitch);
+			if (Select && !Contains(Selection, Note.Start))
+				Selection.push_back(Note.Start);
+		}
+		FollowRow(pStarts[0], false);
+		if (High >= 0 && (Low < PitchAt(Grid.bottom - 1) || High > PitchAt(Grid.top)))
+			ScrollY = (PITCHES - 1 - (Low + High) / 2) * KeyHeight() - Grid.Height() / 2;
+		Placed = true;
+		UpdateScrollBars();
+		pWnd->Invalidate(FALSE);
 	}
 
 	// The instrument list follows the note clicked
@@ -2757,6 +2821,8 @@ struct CPianoRollWnd::Impl {
 						DrawEffects(dc, List, i, Rect, Edge, Full, Back_);
 					if (Bright && Keyed && !InKey(Note.Pitch))
 						Outline(dc, Rect, OffKey);
+					if (!(Bright && Previewing))
+						ProblemDot(dc, Rect, ProblemMarkAt(static_cast<int>(Track), static_cast<int>(c), Note.Start));
 					if (Selected)
 						Outline(dc, Rect, Picked, Rect.Height() >= SY(8) ? std::max(1, SX(2)) : 1);
 					else if (static_cast<int>(c) == HoverChannel && static_cast<int>(i) == HoverNote)
@@ -2819,6 +2885,37 @@ struct CPianoRollWnd::Impl {
 			}
 			const int Next = InFrame + BarRows;
 			Row += (Next >= static_cast<int>(Length)) ? static_cast<int>(Length) - InFrame : BarRows;
+		}
+		// Sections: a band in their color under their bars, the name at the first bar (after its number) as far as the
+		// next section; one that starts off to the left is named at the left edge
+		for (size_t i = 0; i < Sections.size(); ++i) {
+			const ftapi::Section &Section = Sections[i];
+			const int From = Section.First * static_cast<int>(Length), To = (Section.Last + 1) * static_cast<int>(Length);
+			if (To <= FirstRow || From > LastRow)
+				continue;
+			int Red, Green, Blue;
+			ftapi::SectionRgb(ftapi::SectionColor(Section.Name), Red, Green, Blue);
+			const COLORREF Color = RGB(Red, Green, Blue);
+			const int Left = std::max(static_cast<int>(Ruler.left), RowX(From)), Right = std::min(static_cast<int>(Ruler.right), RowX(To));
+			dc.FillSolidRect(Left, Ruler.bottom - SY(3), Right - Left, SY(3), Color);
+			const int FirstBar = Section.First * BarsPerFrame + 1;
+			CString Number;
+			if (RowX(From) >= Ruler.left && (FirstBar - 1) % Every == 0)
+				Number.Format(_T("%d"), FirstBar);
+			const CString Name(Section.Name.c_str());
+			CRect Tag(Left + SX(3) + (Number.IsEmpty() ? 0 : dc.GetTextExtent(Number).cx + SX(3)), Ruler.top + SY(2), Right - SX(2),
+				Ruler.bottom - SY(4));
+			if (Tag.Width() < SX(14))
+				continue;
+			Tag.right = std::min(Tag.right, Tag.left + dc.GetTextExtent(Name).cx + SX(8));
+			const COLORREF Fill = Mix(Panel, Color, 0.75);
+			dc.FillSolidRect(&Tag, Fill);
+			Outline(dc, Tag, Color);
+			dc.SetTextColor((GetRValue(Fill) * 3 + GetGValue(Fill) * 6 + GetBValue(Fill)) / 10 >= 140 ? RGB(16, 16, 20) : RGB(250, 250, 250));
+			CRect Label(Tag);
+			Label.DeflateRect(SX(4), 0);
+			dc.DrawText(Name, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			dc.SetTextColor(Text);
 		}
 		if (CursorFrame >= 0 && CursorRow >= 0)
 			dc.FillSolidRect(RowX(CursorFrame * static_cast<int>(Length) + CursorRow), Ruler.top, 1, Ruler.Height(), Cursor);
@@ -2942,6 +3039,12 @@ void CPianoRollWnd::SongChanged()
 	m_pImpl->Dirty = true;
 	if (m_pImpl->Shown && GetSafeHwnd() != NULL)
 		Invalidate(FALSE);
+}
+
+void CPianoRollWnd::ShowNotes(int Channel, const int *pStarts, int Count, bool Select)
+{
+	if (GetSafeHwnd() != NULL && m_pImpl->Shown)
+		m_pImpl->ShowNotes(Channel, pStarts, Count, Select);
 }
 
 bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row)

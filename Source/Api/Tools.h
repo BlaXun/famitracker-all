@@ -65,16 +65,37 @@ struct ToolResult {
 	ToolResult() : IsError(false) {}
 };
 
+// Who calls: a client on another computer can't open the files the tools
+// write on this one, so export_for_game gives it links to fetch them
+struct Caller {
+	std::string FilesUrl;	// "http://192.168.1.10:46600/files/" as that client reached FamiTracker; empty for this computer
+};
+
 class ToolSet {
 public:
 	explicit ToolSet(SongHost &Host);
 
 	const std::vector<ToolInfo> &List() const { return m_Tools; }
 	bool Has(const std::string &Name) const;
-	ToolResult Call(const std::string &Name, const Json &Arguments);
+	ToolResult Call(const std::string &Name, const Json &Arguments, const Caller &Who = Caller());
+
+	// A file sent from another computer (send_file, PUT /inbox) into the Inbox folder next to FamiTracker.exe:
+	// the reply that names its path for the tools that read it, or false with the reason (a name that isn't
+	// a plain file name of a kind they read, too big)
+	bool ReceiveFile(const std::string &Name, const std::string &Bytes, std::string &Reply);
+	// A file export_for_game saved next to the song, for a client on another computer (GET /files): false when
+	// the name isn't one of those files' (Error says so) or there's none (Error empty)
+	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error);
+
+	// The small set of tools for local models (/mcp/core): the composing essentials
+	static const std::vector<std::string> &CoreTools();
+	static bool IsCoreTool(const std::string &Name);
 
 	// For the client: how to use the tools, and how to write music that doesn't sound plain
 	static std::string Instructions();
+	// The same for the small set, short enough for a local model, with the craft and the rules that decide how
+	// it sounds
+	static std::string CoreInstructions();
 	// Recipes: compose a track, give it depth, offer versions, study one
 	static const std::vector<PromptInfo> &Prompts();
 	// A prompt's message with its arguments filled in; false with the reason
