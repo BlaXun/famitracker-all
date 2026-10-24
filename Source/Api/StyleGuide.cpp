@@ -41,7 +41,15 @@ struct Section {
 // What the studies of Bucky O'Hare, TMNT II, Mega Man 2 to 5, Little Nemo,
 // Super Mario Bros. 2 and 3 found (study_nsf's numbers), and studies of
 // modern FamiTracker modules (the atmospheric section), as craft to write
-// with. Every instrument recipe here is a design of this guide's, not a copy.
+// with; and the studies of Castlevania, Castlevania III (the American
+// version: the 2A03 with DPCM drums, no VRC6), Super C, The Legend of Zelda,
+// Kid Icarus (the Famicom Disk System original), Gyromite, Punch-Out!!,
+// Dr. Mario, Final Fantasy III, Journey to Silius, Strider and Nintendo World
+// Cup (October 2026): the sections from castlevania to technos, and the dark
+// and melancholy sections, which draw on all of them. The FDS's wave and
+// modulation and Journey to Silius's DPCM bass are from nsf2ftm's conversion
+// of those tracks, since a study keeps neither. Every instrument recipe here
+// is a design of this guide's, not a copy.
 const Section SECTIONS[] = {
 	{ "konami", "Konami action (Bucky O'Hare, TMNT II, Castlevania II)", "bucky ohare turtles tmnt castlevania action",
 		"Feel: driving and dense; 112-167 BPM, often written with 8 rows a beat (rows of 3.5-4 frames) so attacks, flicks and "
@@ -91,6 +99,125 @@ const Section SECTIONS[] = {
 		"- Drums: the noise as a light hat on the offbeats, a crash now and then; samples for timpani, kicks and congas.\n"
 		"- Harmony: I-bVII and I-IV vamps, chromatic neighbours (I-bII-I), I-IV-bVI, and a major tonic turning minor (I to "
 		"i) for a shadow." },
+	{ "castlevania", "Konami's gothic action (Castlevania, Castlevania III, Super C)",
+		"castlevania dracula vampire gothic horror castle belmont konami super contra probotector military",
+		"Feel: gothic and driven; 112.5-200 BPM at 4 rows a beat (129, speed 7, the commonest; 200 for Super C's late "
+		"stages and bosses), almost always minor (8 of 10 Castlevania tracks, 15 of 21 in Castlevania III, every Super C "
+		"stage). The Castlevania III studied is the American version: the 2A03 with sampled drums, no VRC6.\n"
+		"- Quiet pulses over a loud triangle: Castlevania's lead and second part mostly at volume 4-6, Castlevania III's "
+		"at 7-8, while the triangle, which has no volume, carries the weight. mix style soft, then the pulses' levels "
+		"lower still.\n"
+		"- Duty by mood: 50% and 75% for the stages, 12.5% for the dark pieces (Dracula's quarters, a boss, the final "
+		"battle). Castlevania III and Super C play 25% with a duty click (a 12.5% or 50% first frame; 24 of their 31 "
+		"tracks) and envelopes that fall from 15 to 8-9 in 3-4 frames, then ring on at 2-6 for 10-20 frames after the "
+		"note: design_instrument click, decay short, sustain low, release long.\n"
+		"- Triangle: staccato in most tracks (Sxx on a quarter to all of its notes): a root pedal in eighths (x.x. x.x.), "
+		"octave churn in sixteenths for final battles (+0 +12 over and over, 77-82% octave jumps), the leading tone "
+		"rocking against the tonic for a cave, off-beat steps down a semitone and back (+0 -1 -2 -1).\n"
+		"- Weight from doubling: the triangle in unison or octaves with a pulse; Super C puts a pulse in octaves 1-3 at "
+		"12.5-25% duty under the triangle in 7 of 10 tracks, a buzzing growl beneath the riff.\n"
+		"- Echoes in places, two beats (8 rows) behind in Castlevania; Castlevania III's run 2-4 rows behind, as soft as "
+		"volume 2.\n"
+		"- Drums: Castlevania's noise kit (a snare 15 15 15 5 5 5 3 3 3 0 whose noise pitch drops at frame 7, a hat 15 6 2 "
+		"0); Castlevania III and Super C add DPCM: a tiny 17-byte low thump as a busy kick (3-8 hits a bar), 129-705-byte "
+		"hits as snare and toms, and a cymbal held 6 frames on every eighth (final battles) or every sixteenth. add_drums "
+		"with kit samples and groove driving.\n"
+		"- Harmony: minor pedals of 5-8 bars; i alternating with VI or VII; the minor tonic alternating with the "
+		"diminished chord on the same root; minor chords on bIII and bII (an alien lair); a chord a tritone away; sus4 "
+		"chords climbing a semitone a bar into the loop; a boss's last phase the first one a semitone higher "
+		"(make_version, then transpose semitones 1)." },
+	{ "early-nintendo", "Nintendo's early sound (Zelda, Kid Icarus on the FDS, Gyromite, Punch-Out!!, Dr. Mario)",
+		"zelda kondo tanaka hip kid icarus palutena fds famicom disk gyromite robot punch out punchout dr mario puzzle "
+		"early",
+		"Feel: clear and economical; Zelda and Kid Icarus at 112.5 BPM (speed 8, or 8 rows a beat of 4 frames) or 150-180, "
+		"Dr. Mario 103-180 and mostly major (10 of 12); only Dr. Mario uses samples.\n"
+		"- One blended sound: Zelda gives both pulses 50% duty and the same soft envelope, a swell from 9-12 to 15 over 4 "
+		"frames (never a hard 15), with a slow tremolo written into long notes (15 13 13 13 13 11 11 11 11 9 9 9 9 9 9 11 "
+		"13 13 15, round again about every 20 frames) and a vibrato after 15 frames on an 8-frame cycle. design_instrument "
+		"attack 4, attack_from 9, vibrato gentle with vibrato_delay_beats 0.5.\n"
+		"- Harmony in sixths between the pulses (Zelda) or thirds (Kid Icarus, 65-72% of the time); hats as one-frame "
+		"ticks (15 0) on the bass's own rhythm.\n"
+		"- Kid Icarus on the FDS: the FDS takes the lead only in the title and the ending, an octave above the pulses (G-4 "
+		"to A#5): a sawtooth-ramp wave, its volume swelling 5 to 32 over 9 frames (or reaching 32 in 5 and fading over "
+		"67), the modulator a gentle vibrato (speed 34, depth 5, a triangle-shaped table), while the pulses under it throb "
+		"in a looping tremolo (8 9 11 13 15 13 11 9, every 8 frames). The tools can't make FDS instruments: the user draws "
+		"one in FamiTracker's FDS editor.\n"
+		"- Echoes: Kid Icarus's 3-4 rows behind at half the volume; Gyromite's at volume 2 under a lead at 8 (a shadow), "
+		"or the triangle repeating the lead two beats later an octave down; Gyromite also plays a whole lead a few frames "
+		"late (Gxx on every note), behind the beat.\n"
+		"- Punch-Out!!'s struck tones: pulses that never hold (15 14 12 11 11 9 9 8 ... down over 22-34 frames) with the "
+		"triangle doubling the lead, and a cymbal fading over 41 frames that wobbles a step as it goes.\n"
+		"- Dr. Mario: 3-frame plucks (15 12 1 at 75% duty), a swung bass on a pulse in octave 2 (60% of its notes late by "
+		"Gxx and cut short), hocket between the pulses, a 113-byte and a 241-byte sample as kick and snare under noise "
+		"hats on three of every four sixteenths.\n"
+		"- Zelda's dungeon and its final dungeon are models for dark places: topic dark." },
+	{ "square", "Square's RPG sound (Final Fantasy III)",
+		"square final fantasy ff3 uematsu rpg jrpg town field world map shrine crystal tower airship chocobo prelude",
+		"Feel: lyrical and orchestral, a singing lead over a moving inner line and a triangle bass; 100-192 BPM (120 and "
+		"150-190 the commonest), 27 of 47 tracks major. Square's rows aren't whole frames (4.7 to 8.9): take the nearest "
+		"even tempo (set_tempo).\n"
+		"- Drumless places: only 5 of 47 tracks use the noise channel (the battles, a fanfare, an ending). Towns, fields, "
+		"caves, shrines and towers keep time with the triangle and a sixteenth figure on the second pulse; add_drums only "
+		"for battles.\n"
+		"- A loud lead and a soft inner line: the lead at 12 (25% duty, or 50% where it swells), the second pulse at 8-9 "
+		"at 12.5% in running sixteenths (broken chords, octave flickers, scale steps), echoes at 6.\n"
+		"- Envelopes that breathe: swells from 3-5 to 15 over 12-14 frames (23 of 47 tracks); a hold that wobbles a step "
+		"every two frames (15 14 14 15 15 14 14 ...); a breath (15, a dip to 5, back up over 8 frames); fades of 30-61 "
+		"frames with a vibrato that waits 16-50 frames (a 12-frame cycle, 4-7 cents). design_instrument attack 12, "
+		"attack_from 4, release long, vibrato gentle with vibrato_delay_beats 0.75.\n"
+		"- The triangle as the melody, a hollow voice for water and sorrow: a soft 50% pulse echoes it 3 rows later at "
+		"volume 5 (add_echo from the triangle, to_channel a pulse, instrument soft lead), or it arpeggiates over two "
+		"octaves under held pulse notes.\n"
+		"- A lilt from delays: 20-63% of a part's notes a few frames late (Gxx) in 18 parts (set_swing by delays). Echoes "
+		"in 11 tracks, mostly 1-4 rows behind at half the volume or a little more.\n"
+		"- Harmony: bass lines stepping down (laments), i-VII-VI-V cadences, the dominant held as a pedal, minor triads "
+		"sliding down a semitone at a time, chords a major third apart, the major and minor of one chord alternating, the "
+		"Neapolitan in minor; for danger, chords a tritone or a semitone apart alternating." },
+	{ "sunsoft", "Sunsoft's sound (Journey to Silius)", "sunsoft silius raf world kodaka sampled bass dpcm bass sci fi",
+		"Feel: dark sci-fi drive; 112.5-200 BPM, mostly 150-200; 6 of 8 tracks minor, the other two chromatic; long tonic "
+		"stretches broken by bII and diminished chords, chords a major third or a tritone apart.\n"
+		"- The sampled bass: the bass line is on the DPCM channel, 1 KB bass samples played at rates 9-15 (12 keys in one "
+		"stage alone), so it growls like a real instrument and leaves the pulses and the triangle free. In FamiTracker "
+		"that's one sample on many keys at different pitches (an instrument's DPCM tab) or Wxx; the tools here make drum "
+		"samples only (add_sample_drums), so the user loads a bass sample. A study calls such samples low thumps: "
+		"import_nsf's DPCM keys tell.\n"
+		"- The triangle as the kick: up to a third of its notes start 2 semitones up and drop in 2 frames, and a longer "
+		"drop of 8 semitones over 8 frames is the bass drum (design_instrument kind thump bass, or attack_pitch drop on "
+		"the triangle).\n"
+		"- Echoes in 4 of 8: the lead again 3-5 rows later on the other pulse at volume 3-5 under 7-10 (add_echo "
+		"delay_beats 0.75-1.25, volume 5).\n"
+		"- Blooms from 8 to 15 in one frame on 25% and 12.5% pulses (attack bloom); scoops into notes from a semitone or "
+		"two (attack_pitch scoop); for story scenes a swell from 2 to 15 over 10 frames that steps down and echoes, fading "
+		"over 58.\n"
+		"- Drums: a 6-frame snare (15 12 9 5 2 0) on syncopated grids (..x. x.x.), a cymbal held 1-2 frames on most "
+		"sixteenths (10-16 a bar): a hissing, mechanical hat line.\n"
+		"- Registers turned over in the prologue: both pulses in octaves 1-2 under the triangle, grave and heavy." },
+	{ "strider", "Capcom's Strider (stealthy, staccato, 75% duty)",
+		"strider hiryu capcom stealth spy infiltration base staccato nervous",
+		"Feel: nervous and mechanical; 112.5 BPM (often 8 rows a beat of 4 frames) or 150, 11 of 14 tracks minor.\n"
+		"- 75% duty for both pulses (21 of 28 parts): hollow and nasal, where Mega Man uses 25-50%.\n"
+		"- Staccato everywhere: Sxx on a third to nearly all of the pulses' notes and up to 99% of the triangle's; sounds "
+		"held at 15 and cut, with long releases (65-79 frames) only where a note is let go.\n"
+		"- Echoes 1-3 rows behind at the same volume, the lead itself a few frames late on half its notes (Gxx).\n"
+		"- A flutter: a pitch flick down on the attack, again every 6-7 frames, on a third of the lead's notes "
+		"(design_instrument attack_pitch flick).\n"
+		"- Hats on nearly every sixteenth (11-13 a bar, a 4-frame decay), no samples; the triangle in root-fifth-octave "
+		"figures (+0 +7 +12 +7) under staccato sixteenths.\n"
+		"- Harmony: the tonic and the minor chord a semitone above alternating every bar for 18 bars; bVI, bII and the "
+		"major chord a tritone away in minor; a boss on one chord whose motion is a semitone grind in octaves 1-2, the "
+		"second pulse and the triangle on the same two notes." },
+	{ "technos", "Technos (Nintendo World Cup)",
+		"technos kunio nekketsu nintendo world cup soccer football sports dodgeball",
+		"Feel: fast and sporty; 141-176 BPM (one slow piece at 101), 6 of 9 tracks minor. Technos's rows are fractions of "
+		"a frame (5.1 to 8.9): take the nearest even tempo.\n"
+		"- 50% duty for nearly every part (14 of 18), the pulses quiet (volume 5), attacks that bloom from 12 to 15 in 2 "
+		"frames and die in 5 (design_instrument attack bloom, sustain none): punchy and clipped.\n"
+		"- One pulse runs broken-chord sixteenths under a lead in eighths; the triangle staccato on 47-100% of its notes, "
+		"in root, fifth and third figures.\n"
+		"- Hats on most sixteenths (10-11 a bar, x.xx ..xx, a 3-frame decay), a 10-frame snare on 2 and 4; noise only.\n"
+		"- Harmony: chords falling by fifths through the key and turning on a chromatic dominant, for momentum; "
+		"i-VII-VI-V; for the slow, wistful piece, modal mixture (bVI, the minor iv, the tonic turned minor).\n"
+		"- An echo a row behind at another duty (a 50% echo of a 75% part), and the triangle trading notes with a pulse." },
 	{ "atmospheric", "Atmospheric chiptune (warm, lush and nostalgic, made in FamiTracker)",
 		"atmospheric atmosphere lush warm jazzy jazz nostalgic dreamy chill lofi depth deep modern famitracker vrc6 vrc7 soft "
 		"swing sevenths ninths",
@@ -124,6 +251,60 @@ const Section SECTIONS[] = {
 		"- Drums: short and long noise hats (14 2 0; 12 10 8 7 7 6 5...), snares and kicks whose noise pitch moves, and a "
 		"sampled kick and snare on the DPCM channel with the level written on each hit (Zxx) so it stays where the mix put it "
 		"(add_drums with kit samples, then mix)." },
+	{ "dark", "Dark and claustrophobic (dungeons, caves, crypts, the underworld)",
+		"dark dungeon dungeons cave caves cavern crypt tomb catacomb underworld underground labyrinth sewer mine ruins "
+		"haunted eerie ominous creepy spooky horror claustrophobic menace dread lair",
+		"What the dark tracks of Castlevania, Castlevania III, Super C, Zelda, Kid Icarus, Final Fantasy III, Journey to "
+		"Silius and Strider share (write your own lines in these ways):\n"
+		"- Register squeezed low and narrow: lines that stay inside a fifth or sixth (sixteenths by step around C-3), "
+		"pulses in octaves 1-2 at 12.5-25% duty buzzing under or with the triangle, or the registers turned over with the "
+		"triangle above the pulses. change_mood moves -12; keep the lead under C-4.\n"
+		"- Thin and quiet: 12.5% duty where the stages use 50%; the lead at 4-6 with the triangle on top.\n"
+		"- Semitones and tritones: two chords a tritone apart alternating each bar (16 bars of it), the tonic and the "
+		"chord a semitone above alternating for 18-20 bars, the minor tonic and the diminished chord on the same root, "
+		"minor chords on bIII and bII, minor triads sliding down a semitone a bar, chords stepping down chromatically over "
+		"their bass. add_chords_and_bass takes them by name; make_groove dungeon starts dark.\n"
+		"- A bass ostinato on a semitone: the leading tone rocking against the tonic in eighths, off-beat steps down and "
+		"back (+0 -1 -2 -1), a grind between two notes a semitone apart in octaves 1-2; or a triangle ringing a minor "
+		"third high up on the beats.\n"
+		"- Pedals: the triangle on the tonic every beat for dozens of bars under moving chords; one minor chord for 8-12 "
+		"bars; the dominant held 6 bars.\n"
+		"- An ostinato that never stops: two pulses interlocking one broken chord, one on the beats and one on the 'and's; "
+		"or a quiet sixteenth carpet on one pulse at 12.5% duty and volume 1-3, often a few frames late (Gxx), under a "
+		"slow lead.\n"
+		"- No drums, or nearly none: Zelda's dungeons, Final Fantasy III's caves, shrines and towers (drums in 5 of its 47 "
+		"tracks), several of Castlevania III's; the triangle and the ostinato keep time. Where drums play, sparse and "
+		"stumbling: a syncopated snare, 1-2 hats a bar, a long low noise once in a while.\n"
+		"- Space and quiet echoes: a bass on the bar's first two beats only, or half a bar and then silence; a lead in "
+		"half notes; echoes 2-4 rows behind at volume 2-3 (add_echo volume 3).\n"
+		"- Tempo: 112.5 BPM (speed 8, or 8 rows a beat of 4 frames), or a fast grid (180) under slow parts. Loops that "
+		"don't settle: a 3-bar loop, sus4 chords climbing a semitone a bar, a boss's second phase a semitone higher.\n"
+		"- Sounds: the triangle with a late vibrato (after 15 frames, about 15 cents) so the bass wavers; notes that fall "
+		"3 semitones after 3 frames, or leap a tritone at their end; a pitch flutter on the attack.\n"
+		"- Expansion chips: the VRC6 carries the same craft on its pulses (narrower duties, down to 6.25%) with the "
+		"sawtooth for a low growl; on the FDS, Kid Icarus's lead: a sawtooth-ramp wave, a slow modulator vibrato (speed "
+		"about 34, depth 5), a 5-9-frame swell and a 67-frame fade." },
+	{ "melancholy", "Melancholic and sad (laments, night, loss, endings)",
+		"melancholy melancholic sad sorrow sorrowful tragic tragedy loss grief lament requiem mournful lonely night "
+		"nocturne farewell funeral memorial wistful bittersweet rain goodbye",
+		"What the sad and night pieces of Castlevania, Castlevania III, Final Fantasy III and Nintendo World Cup do:\n"
+		"- A bass that steps down from the tonic (a lament) to the dominant, held for a few bars; or the minor i-VII-VI-V "
+		"again and again; a major last chord (the tonic or the dominant) for a glimmer.\n"
+		"- No drums; the triangle in long notes of a beat or two, or syncopated (half its notes off the beat), some a few "
+		"frames late (Gxx).\n"
+		"- Slow swells: 6 to 15 over 33 frames and a 59-frame fade (Castlevania III's ending), 5 to 15 over 14 frames on a "
+		"50% pulse (Final Fantasy III). design_instrument kind pad or lead, attack 14-33, attack_from 5, release long.\n"
+		"- A vibrato that waits 16-50 frames (a 12-14-frame cycle, 4-16 cents) and fades of 30-60 frames on held notes "
+		"(polish touches fades).\n"
+		"- The echo close behind: a row (Final Fantasy III's maiden), or 2-4 rows at volume 2-6.\n"
+		"- The triangle singing the melody, its notes bending down over 21 frames (a sigh), a soft pulse echoing it.\n"
+		"- A low, tolling lead: repeated notes in octave 2 struck again inside each note, an echo 4 rows behind at volume "
+		"2 that scoops up from 3 semitones below (Castlevania III's password screen).\n"
+		"- Tempo: 108-128 BPM, or a fast grid (180) under long notes; 112.5 at 8 rows a beat for the laments.\n"
+		"- Night: the lead at 4 with an echo at 2, the triangle on the second sixteenth of each beat (a hesitant pulse), "
+		"no drums; make_version night does the rest.\n"
+		"- Wistful rather than tragic: modal mixture in a major key (bVI, the minor iv), the major and minor of one chord "
+		"alternating." },
 	{ "leads", "Lead sounds and articulations", "lead melody sound instrument envelope articulation duty click bloom vibrato",
 		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
 		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "
@@ -274,8 +455,9 @@ std::string StyleGuide(const std::string &Topic)
 {
 	const std::vector<std::string> Asked = SplitWords(Topic);
 	if (Asked.empty()) {
-		std::string Out = "The guide to the classic NES styles and the atmospheric sound of modern FamiTracker music, from "
-			"studies of their soundtracks. Topics (references action guide with a topic):\n";
+		std::string Out = "The guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos), to dark "
+			"and melancholic music, and to the atmospheric sound of modern FamiTracker music, from studies of their "
+			"soundtracks. Topics (references action guide with a topic):\n";
 		for (size_t i = 0; i < SECTION_COUNT; ++i)
 			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
 		return Out;

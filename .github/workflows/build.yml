@@ -274,3 +274,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
         run: bash .github/scripts/publish-build.sh
+
+      - name: Remove the builds and branches of merged features
+        if: github.ref_name == 'next'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/cleanup-feature-builds.sh
