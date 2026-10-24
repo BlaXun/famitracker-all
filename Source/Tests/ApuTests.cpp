@@ -36,6 +36,15 @@
 // the same scripts: configure with -DAPU_REFERENCE=<a folder holding that
 // code's APU and Blip_Buffer folders>, and apu_tests prints them.
 //
+// Depth (the mixer window's Soft and Space, APU/Space.cpp): Soft and Space at
+// 0, set explicitly or set and cleared before anything sounds, leave every
+// chip's mix as it was, sample for sample; a channel in its own buffers with
+// nothing to do there (Space without a room or an echo) sounds as it did,
+// give or take the rounding of two buffers. Soft takes the designed share of
+// a pulse's sound over 2 kHz off and keeps it brighter than a triangle; Space
+// rings on after a note in each room, the same every time, unlike on the two
+// sides, and its echo repeats when it should, each repeat quieter.
+//
 // Each rendering runs in a process of its own (fork), since the emulators
 // keep some of their state in globals.
 
@@ -91,17 +100,39 @@ const uint64_t MONO[CHIPS] = {
 };
 #endif
 
+// Single notes instead of a chip's script: a VRC6 pulse (50%) held at 291 Hz, the 2A03's triangle at the
+// same pitch, and the pulse for 10 frames, then silence
+enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP };
+
 struct Run {
 	int Chip;
 	unsigned Mask;			// the voices that play (CHANNELS_OF)
 	int Pan[VOICES];		// their pans: 0x00 left, 0x80 the middle, 0xFF right
 	int PanFrame;			// set before this frame's writes
 	double Gain[VOICES];	// the mixer window's levels (1 as they play), set with the pans
+	// Depth, when Depth: the voices' Soft and Space and the space's room, echo (seconds) and repeats, set
+	// before DepthFrame's writes; Off: every voice's back to 0 before frame Off - 1 (0: never)
+	bool Depth;
+	int Soft[VOICES];
+	int Space[VOICES];
+	int Room;
+	double Echo;
+	int Repeats;
+	int DepthFrame;
+	int Off;
+	int Tone;				// tone_t
+	int Frames;				// 0: FRAMES
 };
 
 Run Plain(int Chip, unsigned Mask)
 {
-	Run R = { Chip, Mask, { 0x80, 0x80, 0x80, 0x80, 0x80 }, 0, { 1.0, 1.0, 1.0, 1.0, 1.0 } };
+	Run R = Run();
+	R.Chip = Chip;
+	R.Mask = Mask;
+	for (int v = 0; v < VOICES; ++v) {
+		R.Pan[v] = 0x80;
+		R.Gain[v] = 1.0;
+	}
 	return R;
 }
 
@@ -118,6 +149,30 @@ Run Panned(int Chip, unsigned Mask, int First, int Second = 0x80, int Frame = 0)
 	R.Pan[0] = First;
 	R.Pan[1] = Second;
 	R.PanFrame = Frame;
+	return R;
+}
+
+Run Deep(int Chip, unsigned Mask, int Soft, int Space, int Room = 1, double Echo = 0.0, int Repeats = 3)
+{
+	Run R = Plain(Chip, Mask);
+	R.Depth = true;
+	R.Soft[0] = Soft;
+	R.Space[0] = Space;
+	R.Room = Room;
+	R.Echo = Echo;
+	R.Repeats = Repeats;
+	return R;
+}
+
+Run Tone(int Kind, int Soft = 0, int Space = 0, int Room = 1, double Echo = 0.0, int Repeats = 3)
+{
+	Run R = Deep(Kind == TONE_TRIANGLE ? CHIP_2A03 : CHIP_VRC6, 1, Soft, Space, Room, Echo, Repeats);
+	if (Kind == TONE_TRIANGLE) {
+		R.Soft[0] = R.Space[0] = 0;
+		R.Soft[2] = Soft;
+		R.Space[2] = Space;
+	}
+	R.Tone = Kind;
 	return R;
 }
 
@@ -333,6 +388,19 @@ void PlayS5B(Writer &w, unsigned Mask, int f)
 	w.Next();
 }
 
+void PlayTone(Writer &w, int Tone, int f)
+{
+	// Period 383 on the VRC6 (16 cycles a step) and 191 on the triangle (32 a step): both 291.3 Hz
+	if (Tone == TONE_TRIANGLE) {
+		if (f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
+	}
+	else {
+		if (f == 0) { w.X(0x9000, 0x7F); w.X(0x9001, 0x7F); w.X(0x9002, 0x81); }
+		if (Tone == TONE_BLIP && f == 10) w.X(0x9002, 0x01);
+	}
+	w.Next();
+}
+
 // Samples for the DPCM channel
 char g_Samples[0x4000];
 
@@ -362,9 +430,20 @@ Sides RenderHere(const Run &R)
 		Apu.ExternalWrite(0x5015, 0x03);
 
 	const uint32 Cycles = CAPU::BASE_FREQ_NTSC / CAPU::FRAME_RATE_NTSC;
-	for (int f = 0; f < FRAMES; ++f) {
+	const int Frames = R.Frames > 0 ? R.Frames : FRAMES;
+	for (int f = 0; f < Frames; ++f) {
 		Writer w(Apu);
 #ifndef APU_REFERENCE
+		if (R.Depth && f == R.DepthFrame) {
+			Apu.SetSpace(R.Room, R.Echo, R.Repeats);
+			for (int v = 0; v < VOICES; ++v)
+				if (CHANNELS_OF[R.Chip][v] >= 0)
+					Apu.SetChannelDepth(CHANNELS_OF[R.Chip][v], R.Soft[v], R.Space[v]);
+		}
+		if (R.Off > 0 && f == R.Off - 1)
+			for (int v = 0; v < VOICES; ++v)
+				if (CHANNELS_OF[R.Chip][v] >= 0)
+					Apu.SetChannelDepth(CHANNELS_OF[R.Chip][v], 0, 0);
 		if (f == R.PanFrame) {
 			for (int v = 0; v < VOICES; ++v) {
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Pan[v] != 0x80)
@@ -372,6 +451,12 @@ Sides RenderHere(const Run &R)
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Gain[v] != 1.0)
 					Apu.SetChannelGain(CHANNELS_OF[R.Chip][v], R.Gain[v]);
 			}
+		}
+		if (R.Tone != TONE_NONE) {
+			PlayTone(w, R.Tone, f);
+			Apu.AddTime(static_cast<int32>(Cycles - w.Used()));
+			Apu.Process();
+			continue;
 		}
 #endif
 		switch (R.Chip) {
@@ -648,6 +733,199 @@ void TestLevels()
 	CHECK(Ratio > 0.6 && Ratio < 0.95 && Rms(Halved.Left) > Rms(Second.Left) * 0.9);
 }
 
+// Depth
+
+const int ROOM_NONE = 4;	// CSpace::ROOM_NONE: the echo alone
+
+double RmsOf(const std::vector<int16> &Samples, size_t From, size_t To)
+{
+	double Sum = 0.0;
+	size_t n = 0;
+	for (size_t i = From; i < To && i < Samples.size(); ++i, ++n)
+		Sum += double(Samples[i]) * Samples[i];
+	return n == 0 ? 0.0 : std::sqrt(Sum / n);
+}
+
+int MostApart(const std::vector<int16> &First, const std::vector<int16> &Second)
+{
+	int Most = First.size() == Second.size() ? 0 : 1 << 20;
+	for (size_t i = 0; i < First.size() && i < Second.size(); ++i)
+		Most = std::max(Most, std::abs(int(First[i]) - int(Second[i])));
+	return Most;
+}
+
+// The energy of samples From to To over 2 kHz (two Butterworth high-passes) and in all
+void Energies(const std::vector<int16> &Samples, size_t From, size_t To, double &High, double &All)
+{
+	const double Pi = 3.14159265358979323846, w = 2.0 * Pi * 2000.0 / SAMPLE_RATE, Alpha = std::sin(w) / (2.0 * 0.70710678118654752);
+	const double a0 = 1.0 + Alpha, b0 = (1.0 + std::cos(w)) / 2.0 / a0, b1 = -(1.0 + std::cos(w)) / a0, a1 = -2.0 * std::cos(w) / a0,
+		a2 = (1.0 - Alpha) / a0;
+	double x1[2] = { 0, 0 }, x2[2] = { 0, 0 }, y1[2] = { 0, 0 }, y2[2] = { 0, 0 };
+	High = All = 0.0;
+	for (size_t i = 0; i < To && i < Samples.size(); ++i) {
+		double x = Samples[i];
+		if (i >= From)
+			All += x * x;
+		for (int k = 0; k < 2; ++k) {
+			const double y = b0 * x + b1 * x1[k] + b0 * x2[k] - a1 * y1[k] - a2 * y2[k];
+			x2[k] = x1[k];
+			x1[k] = x;
+			y2[k] = y1[k];
+			y1[k] = y;
+			x = y;
+		}
+		if (i >= From)
+			High += x * x;
+	}
+}
+
+double Db(double Ratio)
+{
+	return Ratio > 0.0 ? 10.0 * std::log10(Ratio) : -300.0;
+}
+
+void TestDepthOff()
+{
+	for (int Chip = 0; Chip < CHIPS; ++Chip) {
+		// Soft and Space at 0, said so: the mono mix
+		const Sides Zero = Render(Deep(Chip, ALL, 0, 0));
+		if (Hash(Zero.Left) != MONO[Chip] || !Same(Zero.Left, Zero.Right)) {
+			std::printf("FAIL: %s with Soft and Space at 0 isn't the mono mix\n", CHIP_NAMES[Chip]);
+			++g_fail;
+		}
+		++g_checks;
+		// Every channel in its own buffers before anything sounds, and back at once: the same (its buffers
+		// are read for a second after, and have nothing)
+		Run Back = Deep(Chip, ALL, 60, 40, 2, 0.1, 4);
+		for (int v = 0; v < VOICES; ++v) {
+			Back.Soft[v] = 60;
+			Back.Space[v] = 40;
+		}
+		Back.Off = 1;
+		const Sides Again = Render(Back);
+		if (Hash(Again.Left) != MONO[Chip] || !Same(Again.Left, Again.Right)) {
+			std::printf("FAIL: %s with Soft and Space set and cleared isn't the mono mix\n", CHIP_NAMES[Chip]);
+			++g_fail;
+		}
+		++g_checks;
+	}
+}
+
+void TestOwnBuffers()
+{
+	// A channel in its own buffers with nothing done there (Space without a room or an echo) sounds as it did,
+	// from the start and moved there while it sounds, on every chip: the sides and its own buffers add up
+	// (each rounded apart, and the 2A03's pins' steps to whole units of the synth)
+	// (the VRC7 clips the sum of its channels, as the chip does, and a channel in its own buffers is clipped apart, so
+	// there the channel plays alone)
+	const int ALLOWED[CHIPS] = { 2, 2, 2, 2, 2, 2, 2 };
+	for (int Chip = 0; Chip < CHIPS; ++Chip) {
+		const unsigned Mask = Chip == CHIP_VRC7 ? 1 : ALL;
+		const Sides Dry = Render(Plain(Chip, Mask));
+		const Sides Through = Render(Deep(Chip, Mask, 0, 50, ROOM_NONE));
+		Run Later = Deep(Chip, Mask, 0, 50, ROOM_NONE);
+		Later.DepthFrame = 12;
+		Later.Off = 31;
+		const Sides Moved = Render(Later);
+		const int Apart = MostApart(Dry.Left, Through.Left), Apart2 = MostApart(Dry.Left, Moved.Left);
+		if (Apart > ALLOWED[Chip] || Apart2 > ALLOWED[Chip] || !Same(Through.Left, Through.Right) || !Same(Moved.Left, Moved.Right)) {
+			std::printf("FAIL: %s through its own buffers: %d and %d apart from the mix\n", CHIP_NAMES[Chip], Apart, Apart2);
+			++g_fail;
+		}
+		++g_checks;
+	}
+}
+
+void TestSoft()
+{
+	// The pulse softened: the share of its sound over 2 kHz taken off, as designed (about 2.5 dB at 50, 7 at 100),
+	// as loud as before, and brighter than a triangle at the same pitch
+	const size_t From = 5 * FRAME_SAMPLES, To = 39 * FRAME_SAMPLES;
+	double High[3], All[3], TriHigh, TriAll;
+	const int SOFTS[3] = { 0, 50, 100 };
+	for (int k = 0; k < 3; ++k) {
+		const Sides Made = Render(Tone(TONE_PULSE, SOFTS[k]));
+		Energies(Made.Left, From, To, High[k], All[k]);
+		CHECK(Same(Made.Left, Made.Right));
+	}
+	const Sides Tri = Render(Tone(TONE_TRIANGLE));
+	Energies(Tri.Left, From, To, TriHigh, TriAll);
+	const double Half = Db(High[0] / High[1]), Full = Db(High[0] / High[2]), Level = Db(All[2] / All[0]);
+	std::printf("Soft on a 291 Hz pulse: %.1f dB over 2 kHz off at 50, %.1f at 100, its level %+.2f dB; over 2 kHz: %.2f%% of it "
+		"at 100, %.2f%% of a triangle's\n", Half, Full, Level, 100.0 * High[2] / All[2], 100.0 * TriHigh / TriAll);
+	CHECK(Half > 1.8 && Half < 4.0);
+	CHECK(Full > 5.5 && Full < 9.0);
+	CHECK(std::fabs(Level) < 1.0);
+	CHECK(High[2] / All[2] > 1.5 * TriHigh / TriAll);
+	// The triangle softened too (Soft goes on any channel)
+	const Sides SoftTri = Render(Tone(TONE_TRIANGLE, 100));
+	double SoftTriHigh, SoftTriAll;
+	Energies(SoftTri.Left, From, To, SoftTriHigh, SoftTriAll);
+	CHECK(SoftTriHigh < TriHigh && SoftTriAll > 0.8 * TriAll);
+
+	// Every chip: its first channel at Soft 100 has less over 2 kHz and about the level it had
+	for (int Chip = 0; Chip < CHIPS; ++Chip) {
+		const Sides Dry = Render(Plain(Chip, 1)), Soft = Render(Deep(Chip, 1, 100, 0));
+		double DryHigh, DryAll, SoftHigh, SoftAll;
+		Energies(Dry.Left, 0, Dry.Left.size(), DryHigh, DryAll);
+		Energies(Soft.Left, 0, Soft.Left.size(), SoftHigh, SoftAll);
+		if (!(Db(DryHigh / SoftHigh) > 2.0) || std::fabs(Db(SoftAll / DryAll)) > 1.5 || !Same(Soft.Left, Soft.Right)) {
+			std::printf("FAIL: %s at Soft 100: %.1f dB over 2 kHz off, its level %+.2f dB\n", CHIP_NAMES[Chip], Db(DryHigh / SoftHigh),
+				Db(SoftAll / DryAll));
+			++g_fail;
+		}
+		++g_checks;
+	}
+}
+
+void TestSpace()
+{
+	// A short note (10 frames) with all of it sent: after it, the room rings on, dying away, the same every time,
+	// unlike on the two sides; the note without Space is silent there
+	Run DryRun = Tone(TONE_BLIP);
+	DryRun.Frames = 80;
+	const Sides Dry = Render(DryRun);
+	const double Note = RmsOf(Dry.Left, 2 * FRAME_SAMPLES, 9 * FRAME_SAMPLES);
+	CHECK(Note > 1000.0 && Peak(Dry.Left, 14 * FRAME_SAMPLES) < 20);
+	const char *const ROOMS[4] = { "small room", "hall", "cathedral", "cave" };
+	for (int Room = 0; Room < 4; ++Room) {
+		Run R = Tone(TONE_BLIP, 0, 100, Room);
+		R.Frames = 80;
+		const Sides A = Render(R), B = Render(R);
+		const double Early = RmsOf(A.Left, 12 * FRAME_SAMPLES, 22 * FRAME_SAMPLES), Late = RmsOf(A.Left, 60 * FRAME_SAMPLES, 80 * FRAME_SAMPLES);
+		std::printf("Space 100 in a %s: %.1f dB after the note (frames 12-22), %.1f dB a second later\n", ROOMS[Room], 20.0 * std::log10(Early / Note),
+			Late > 0.0 ? 20.0 * std::log10(Late / Note) : -300.0);
+		if (!Same(A.Left, B.Left) || !Same(A.Right, B.Right) || Same(A.Left, A.Right) || !(Early > Note * 0.02) || !(Late < Early)) {
+			std::printf("FAIL: Space in a %s\n", ROOMS[Room]);
+			++g_fail;
+		}
+		++g_checks;
+		// While the note sounds, it's there as it was (with the room's start added)
+		CHECK(RmsOf(A.Left, 2 * FRAME_SAMPLES, 9 * FRAME_SAMPLES) > Note * 0.9);
+	}
+	// The echo alone, a quarter of a second, 3 repeats: silent until the first, each repeat about 10 dB under the one
+	// before (and a little darker), the first at 0.6 of the note
+	Run E = Tone(TONE_BLIP, 0, 100, ROOM_NONE, 0.25, 3);
+	E.Frames = 70;
+	const Sides Echo = Render(E);
+	const double Gap = RmsOf(Echo.Left, 12 * FRAME_SAMPLES, 14 * FRAME_SAMPLES), First = RmsOf(Echo.Left, 17 * FRAME_SAMPLES, 24 * FRAME_SAMPLES),
+		Second = RmsOf(Echo.Left, 32 * FRAME_SAMPLES, 39 * FRAME_SAMPLES), Third = RmsOf(Echo.Left, 47 * FRAME_SAMPLES, 54 * FRAME_SAMPLES),
+		After = RmsOf(Echo.Left, 62 * FRAME_SAMPLES, 69 * FRAME_SAMPLES);
+	std::printf("Echo of 0.25 s, 3 repeats: %.2f, %.2f and %.2f of the note, then %.3f\n", First / Note, Second / Note, Third / Note, After / Note);
+	CHECK(Gap < First * 0.05);
+	CHECK(First / Note > 0.45 && First / Note < 0.65);
+	CHECK(Second / First > 0.22 && Second / First < 0.36);
+	CHECK(Third / Second > 0.22 && Third / Second < 0.36);
+	CHECK(After < Third * 0.5);
+	CHECK(Same(Echo.Left, Echo.Right));
+	// Post-fader: the channel at half its level sends half
+	Run Halved = E;
+	Halved.Gain[0] = 0.5;
+	const Sides Less = Render(Halved);
+	const double Ratio = RmsOf(Less.Left, 17 * FRAME_SAMPLES, 24 * FRAME_SAMPLES) / First;
+	CHECK(Ratio > 0.45 && Ratio < 0.55);
+}
+
 #endif
 
 }	// namespace
@@ -668,6 +946,10 @@ int main()
 	TestHalfway();
 	TestMoving();
 	TestLevels();
+	TestDepthOff();
+	TestOwnBuffers();
+	TestSoft();
+	TestSpace();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 #endif

@@ -568,6 +568,23 @@ double CAPU::GetChannelGain(int ChanID) const
 	return m_pMixer->GetChannelGain(ChanID);
 }
 
+void CAPU::SetChannelDepth(int ChanID, int Soft, int Space)
+{
+	// From now on, as the pan
+	Process();
+	m_pMixer->SetChannelDepth(ChanID, Soft, Space, m_iFrameCycles);
+}
+
+void CAPU::SetSpace(int Room, double EchoSeconds, int Repeats)
+{
+	m_pMixer->SetSpace(Room, EchoSeconds, Repeats);
+}
+
+bool CAPU::SpaceRinging() const
+{
+	return m_pMixer->SpaceRinging();
+}
+
 void CAPU::LogExternalWrite(uint16 Address, uint8 Value)
 {
 	if (Address >= 0x9000 && Address <= 0x9003)

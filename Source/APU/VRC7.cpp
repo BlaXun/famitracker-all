@@ -29,6 +29,11 @@ const uint32 CVRC7::OPL_CLOCK = 3579545;	// Clock frequency
 CVRC7::CVRC7(CMixer *pMixer) : CExternal(pMixer), m_pBuffer(NULL), m_pBufferRight(NULL), m_pOPLLInt(NULL), m_fVolume(1.0f), m_iMaxSamples(0),
 	m_iSoundReg(0)
 {
+	for (int i = 0; i < 6; ++i)
+		for (int s = 0; s < 2; ++s) {
+			m_pOwn[i][s] = NULL;
+			m_iOwnLast[i][s] = 0;
+		}
 	Reset();
 }
 
@@ -41,6 +46,9 @@ CVRC7::~CVRC7()
 
 	SAFE_RELEASE_ARRAY(m_pBuffer);
 	SAFE_RELEASE_ARRAY(m_pBufferRight);
+	for (int i = 0; i < 6; ++i)
+		for (int s = 0; s < 2; ++s)
+			SAFE_RELEASE_ARRAY(m_pOwn[i][s]);
 }
 
 void CVRC7::Reset()
@@ -69,6 +77,13 @@ void CVRC7::SetSampleSpeed(uint32 SampleRate, double ClockRate, uint32 FrameRate
 	SAFE_RELEASE_ARRAY(m_pBufferRight);
 	m_pBufferRight = new int16[m_iMaxSamples];
 	memset(m_pBufferRight, 0, sizeof(int16) * m_iMaxSamples);
+	for (int i = 0; i < 6; ++i)
+		for (int s = 0; s < 2; ++s) {
+			SAFE_RELEASE_ARRAY(m_pOwn[i][s]);
+			m_pOwn[i][s] = new int16[m_iMaxSamples];
+			memset(m_pOwn[i][s], 0, sizeof(int16) * m_iMaxSamples);
+			m_iOwnLast[i][s] = 0;
+		}
 }
 
 void CVRC7::SetVolume(float Volume)
@@ -103,11 +118,47 @@ void CVRC7::EndFrame()
 	int32 GainL[6], GainR[6];
 	for (int i = 0; i < 6; ++i)
 		m_pMixer->PanGains256(CHANID_VRC7_CH1 + i, GainL[i], GainR[i]);
+	// Depth (Soft or Space): the channels in buffers of their own get samples of their own, made as the chip's are
+	bool Own[6], AnyOwn = false;
+	int32 OwnGain[6][2];
+	for (int i = 0; i < 6; ++i) {
+		Own[i] = m_pMixer->IsOwn(CHANID_VRC7_CH1 + i) && m_pOwn[i][0] != NULL;
+		OwnGain[i][0] = GainL[i];
+		OwnGain[i][1] = GainR[i];
+		if (Own[i]) {
+			GainL[i] = GainR[i] = 0;
+			AnyOwn = true;
+		}
+	}
 
 	// Generate VRC7 samples, the left side and the right
 	while (m_iBufferPtr < WantSamples) {
 		int16 Raw[2];
-		OPLL_calc_lr(m_pOPLLInt, GainL, GainR, &Raw[0], &Raw[1]);
+		int32 Chan[6];
+		if (AnyOwn)
+			OPLL_calc_lr_ch(m_pOPLLInt, GainL, GainR, &Raw[0], &Raw[1], Chan);
+		else
+			OPLL_calc_lr(m_pOPLLInt, GainL, GainR, &Raw[0], &Raw[1]);
+
+		for (int i = 0; i < 6 && AnyOwn; ++i) {
+			if (!Own[i] || m_iBufferPtr >= m_iMaxSamples)
+				continue;
+			for (int s = 0; s < 2; ++s) {
+				// As calc_lr ends, the clipping, the volume and the average with the sample before
+				int32 RawSample = int16(int16((Chan[i] * OwnGain[i][s] + 128) >> 8) << 3);
+				if (RawSample > 3600)
+					RawSample = 3600;
+				if (RawSample < -3200)
+					RawSample = -3200;
+				int32 Sample = int(float(RawSample) * m_fVolume);
+				if (Sample > 32767)
+					Sample = 32767;
+				if (Sample < -32768)
+					Sample = -32768;
+				m_pOwn[i][s][m_iBufferPtr] = int16((Sample + m_iOwnLast[i][s]) >> 1);
+				m_iOwnLast[i][s] = Sample;
+			}
+		}
 
 		for (int s = 0; s < 2; ++s) {
 			int32 RawSample = Raw[s];
@@ -133,6 +184,9 @@ void CVRC7::EndFrame()
 	}
 
 	m_pMixer->MixSamples((blip_sample_t*)m_pBuffer, (blip_sample_t*)m_pBufferRight, WantSamples);
+	for (int i = 0; i < 6 && AnyOwn; ++i)
+		if (Own[i])
+			m_pMixer->MixOwnSamples(CHANID_VRC7_CH1 + i, (blip_sample_t*)m_pOwn[i][0], (blip_sample_t*)m_pOwn[i][1], WantSamples);
 
 	m_iBufferPtr -= WantSamples;
 	m_iTime = 0;

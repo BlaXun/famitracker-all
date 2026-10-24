@@ -1483,9 +1483,10 @@ OPLL_calc (OPLL * opll)
 }
 #endif
 
-/* calc with channels 0-5 on each side by their gains (256: all of a channel), the others in the middle */
+/* calc with channels 0-5 on each side by their gains (256: all of a channel), the others in the middle;
+   chanval (when not NULL) gets channels 0-5's own values, before their gains */
 static void
-calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right)
+calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval)
 {
   int32 inst = 0, perc = 0, instL = 0, instR = 0, outL, outR;
   int32 i;
@@ -1499,15 +1500,20 @@ calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16
     calc_envelope(&opll->slot[i],opll->lfo_am);
   }
 
-  for (i = 0; i < 6; i++)
+  for (i = 0; i < 6; i++) {
+	  if (chanval != NULL)
+		chanval[i] = 0;
 	  if (!(opll->mask & OPLL_MASK_CH (i)) && (CAR(opll,i)->eg_mode != FINISH)) {
 		int32 absval, val = calc_slot_car (CAR(opll,i), calc_slot_mod(MOD(opll,i)));
 		instL += val * gainL[i];
 		instR += val * gainR[i];
+		if (chanval != NULL)
+			chanval[i] = val;
 		absval = abs(val);
 		if (absval > opll_volumes[i])
 			opll_volumes[i] = val;
 	  }
+  }
 
   /* CH6 */
   if (opll->patch_number[6] <= 15)
@@ -1566,7 +1572,25 @@ OPLL_calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, 
     return;
   }
 #endif
-  calc_lr (opll, gainL, gainR, left, right);
+  calc_lr (opll, gainL, gainR, left, right, NULL);
+}
+
+/* The same, with channels 0-5's own values in chanval (6 of them; all 0 with the rate converter, which mixes
+   them in the middle) */
+void
+OPLL_calc_lr_ch (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval)
+{
+#ifndef EMU2413_COMPACTION
+  if (opll->quality)
+  {
+    int i;
+    for (i = 0; i < 6; i++)
+      chanval[i] = 0;
+    *left = *right = OPLL_calc (opll);
+    return;
+  }
+#endif
+  calc_lr (opll, gainL, gainR, left, right, chanval);
 }
 
 uint32

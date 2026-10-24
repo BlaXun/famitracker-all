@@ -512,6 +512,9 @@
     <ClCompile Include="Source\APU\S5B.cpp">
       <Filter>Source Files\Sound Driver\Emulation\Expansion</Filter>
     </ClCompile>
+    <ClCompile Include="Source\APU\Space.cpp">
+      <Filter>Source Files\Sound Driver\Emulation</Filter>
+    </ClCompile>
     <ClCompile Include="Source\APU\VRC6.CPP">
       <Filter>Source Files\Sound Driver\Emulation\Expansion</Filter>
     </ClCompile>
@@ -690,6 +693,9 @@
     </ClInclude>
     <ClInclude Include="Source\APU\S5B.h">
       <Filter>Header Files\Sound Driver Headers\Emulation Headers\Expansion Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\APU\Space.h">
+      <Filter>Header Files\Sound Driver Headers\Emulation Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\APU\VRC6.H">
       <Filter>Header Files\Sound Driver Headers\Emulation Headers\Expansion Headers</Filter>

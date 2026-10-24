@@ -65,6 +65,17 @@
  turn, each with its own pan. The VRC7 makes its samples at the end of a
  frame, a side at a time with the pans then (CVRC7::EndFrame).
 
+ Depth (this FamiTracker's own too, Space.h): a channel with Soft or Space
+ on is mixed into two Blip_Buffers of its own instead of the sides (the
+ 2A03's channels as their share of their pin, the N163's as the DAC's level
+ while it plays them, the VRC7's as samples of their own), and ReadBuffer
+ adds them to the sides, softened, sending them to the space, whose sound
+ it adds too. Its buffers stay in step with the sides' (the same clock, the
+ same frames), and when a channel leaves them what it sent there moves back
+ to the sides at that moment; they're read for a second more while what
+ they had dies away. With every channel's Soft and Space at 0 and the space
+ silent, ReadBuffer is what it was, sample for sample.
+
 */
 
 #include "../stdafx.h"
@@ -120,10 +131,36 @@ CMixer::CMixer()
 
 	m_dSumSS[0] = m_dSumSS[1] = 0.0;
 	m_dSumTND[0] = m_dSumTND[1] = 0.0;
+
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_bOwn[i] = false;
+		m_iOwnDrain[i] = 0;
+		m_iSoftOf[i] = 0;
+		m_iSpaceOf[i] = 0;
+		m_iPinOwn[i][0] = m_iPinOwn[i][1] = 0;
+	}
+	m_iOwnCount = 0;
+	m_iN163Dest = -1;
+	for (int i = 0; i < 4; ++i)
+		m_pDepth[i] = NULL;
+	m_pDepthRead = NULL;
+	m_iDepthSize = 0;
 }
 
 CMixer::~CMixer()
 {
+	FreeDepth();
+}
+
+void CMixer::FreeDepth()
+{
+	for (int i = 0; i < 4; ++i) {
+		delete [] m_pDepth[i];
+		m_pDepth[i] = NULL;
+	}
+	delete [] m_pDepthRead;
+	m_pDepthRead = NULL;
+	m_iDepthSize = 0;
 }
 
 // A channel's level on a side: exact in the middle, where the gain is 1
@@ -228,6 +265,10 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 	// Blip-buffer filtering
 	BlipBuffer.bass_freq(LowCut);
 	BlipBufferRight.bass_freq(LowCut);
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_OwnBuffer[i][0].bass_freq(LowCut);
+		m_OwnBuffer[i][1].bass_freq(LowCut);
+	}
 
 	blip_eq_t eq(-HighDamp, HighCut, m_iSampleRate);
 
@@ -320,6 +361,22 @@ bool CMixer::AllocateBuffer(unsigned int BufferLength, uint32 SampleRate, uint8 
 	m_iSampleRate = SampleRate;
 	BlipBuffer.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
 	BlipBufferRight.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
+
+	// Depth: every channel's own buffers, the space and ReadDepth's room, all made here (not while sound plays)
+	for (int i = 0; i < CHANNELS; ++i) {
+		for (int s = 0; s < 2; ++s) {
+			m_OwnBuffer[i][s].sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
+			m_OwnBuffer[i][s].clock_rate(BlipBuffer.clock_rate());
+			m_OwnBuffer[i][s].bass_freq(m_iLowCut);
+		}
+		m_SoftFilter[i].Set(m_iSoftOf[i], SampleRate);
+	}
+	m_Space.Allocate(SampleRate);
+	FreeDepth();
+	m_iDepthSize = BlipBuffer.buffer_size_ + 64;
+	for (int i = 0; i < 4; ++i)
+		m_pDepth[i] = new float[m_iDepthSize];
+	m_pDepthRead = new blip_sample_t[m_iDepthSize * 2];
 	return true;
 }
 
@@ -328,6 +385,10 @@ void CMixer::SetClockRate(uint32 Rate)
 	// Change the clockrate
 	BlipBuffer.clock_rate(Rate);
 	BlipBufferRight.clock_rate(Rate);
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_OwnBuffer[i][0].clock_rate(Rate);
+		m_OwnBuffer[i][1].clock_rate(Rate);
+	}
 }
 
 void CMixer::ClearBuffer()
@@ -338,6 +399,17 @@ void CMixer::ClearBuffer()
 	// The channels' levels stay as they are, as the mono mixer kept them
 	m_dSumSS[0] = m_dSumSS[1] = 0;
 	m_dSumTND[0] = m_dSumTND[1] = 0;
+
+	// Depth: the channels' own buffers empty as the sides, and the space silent
+	for (int i = 0; i < CHANNELS; ++i) {
+		if (OwnActive(i)) {
+			m_OwnBuffer[i][0].clear();
+			m_OwnBuffer[i][1].clear();
+		}
+		m_iPinOwn[i][0] = m_iPinOwn[i][1] = 0;
+		m_SoftFilter[i].Clear();
+	}
+	m_Space.Clear();
 }
 
 int CMixer::SamplesAvail() const
@@ -349,6 +421,11 @@ int CMixer::FinishBuffer(int t)
 {
 	BlipBuffer.end_frame(t);
 	BlipBufferRight.end_frame(t);
+	for (int i = 0; i < CHANNELS && m_iOwnCount > 0; ++i)
+		if (OwnActive(i)) {
+			m_OwnBuffer[i][0].end_frame(t);
+			m_OwnBuffer[i][1].end_frame(t);
+		}
 
 	// Get channel levels for VRC7
 	for (int i = 0; i < 6; ++i)
@@ -395,7 +472,14 @@ void CMixer::MixInternal1(int Time)
 #endif
 
 		double Delta = (Sum - m_dSumSS[s]) * AMP_2A03;
-		Synth2A03SS.offset(Time, (int)Delta, &Side(s));
+		int Step = (int)Delta;
+		if (m_bOwn[CHANID_SQUARE1] || m_bOwn[CHANID_SQUARE2] || m_iPinOwn[CHANID_SQUARE1][s] != 0 || m_iPinOwn[CHANID_SQUARE2][s] != 0) {
+			// Depth: a pulse in its own buffers gets its share of the pin there, out of the sides' step
+			static const int CHANS[2] = { CHANID_SQUARE1, CHANID_SQUARE2 };
+			const double Weighted[2] = { Pulse1 * m_dLevel[CHANID_SQUARE1], Pulse2 * m_dLevel[CHANID_SQUARE2] };
+			Step -= SplitPin(Synth2A03SS, CHANS, Weighted, 2, Sum, s, Time);
+		}
+		Synth2A03SS.offset(Time, Step, &Side(s));
 		m_dSumSS[s] = Sum;
 	}
 }
@@ -420,19 +504,27 @@ void CMixer::MixInternal2(int Time)
 #endif
 
 		double Delta = (Sum - m_dSumTND[s]) * AMP_2A03;
-		Synth2A03TND.offset(Time, (int)Delta, &Side(s));
+		int Step = (int)Delta;
+		if (m_bOwn[CHANID_TRIANGLE] || m_bOwn[CHANID_NOISE] || m_bOwn[CHANID_DPCM] || m_iPinOwn[CHANID_TRIANGLE][s] != 0 ||
+			m_iPinOwn[CHANID_NOISE][s] != 0 || m_iPinOwn[CHANID_DPCM][s] != 0) {
+			static const int CHANS[3] = { CHANID_TRIANGLE, CHANID_NOISE, CHANID_DPCM };
+			const double Weighted[3] = { Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE], Noise / 12241.0 * m_dLevel[CHANID_NOISE],
+				Dpcm / 22638.0 * m_dLevel[CHANID_DPCM] };
+			Step -= SplitPin(Synth2A03TND, CHANS, Weighted, 3, Sum, s, Time);
+		}
+		Synth2A03TND.offset(Time, Step, &Side(s));
 		m_dSumTND[s] = Sum;
 	}
 }
 
 // A linear chip's channel: each side gets its share of the channel's level
 template <class Synth>
-void CMixer::MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time)
+void CMixer::MixSides(Synth &Synth_, int Dest, int32 Level, const double *pGain, int32 *pSent, int Time)
 {
 	for (int s = 0; s < 2; ++s) {
 		const int32 Want = SideLevel(Level, pGain[s]);
 		if (Want != pSent[s]) {
-			Synth_.offset(Time, Want - pSent[s], &Side(s));
+			Synth_.offset(Time, Want - pSent[s], &Buffer(Dest, s));
 			pSent[s] = Want;
 		}
 	}
@@ -441,17 +533,18 @@ void CMixer::MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pS
 // ...and where the mixer window's level lives in a synth of the channel's own: through that one when Faded (off 0 dB),
 // through the chip's otherwise (the levels move between the two as the fader leaves 0 dB or comes back)
 template <class Synth>
-void CMixer::MixSides(Synth &Synth_, Synth &Own, bool Faded, int32 Level, const double *pGain, int32 *pSent, int32 *pOwnSent, int Time)
+void CMixer::MixSides(Synth &Synth_, Synth &Own, bool Faded, int Dest, int32 Level, const double *pGain, int32 *pSent, int32 *pOwnSent,
+	int Time)
 {
 	for (int s = 0; s < 2; ++s) {
 		const int32 Want = SideLevel(Level, pGain[s]);
 		const int32 Chip = Faded ? 0 : Want, Mine = Faded ? Want : 0;
 		if (Chip != pSent[s]) {
-			Synth_.offset(Time, Chip - pSent[s], &Side(s));
+			Synth_.offset(Time, Chip - pSent[s], &Buffer(Dest, s));
 			pSent[s] = Chip;
 		}
 		if (Mine != pOwnSent[s]) {
-			Own.offset(Time, Mine - pOwnSent[s], &Side(s));
+			Own.offset(Time, Mine - pOwnSent[s], &Buffer(Dest, s));
 			pOwnSent[s] = Mine;
 		}
 	}
@@ -470,32 +563,43 @@ void CMixer::N163Channel(int ChanID, int Time)
 	if (ChanID == m_iN163Chan)
 		return;
 	m_iN163Chan = ChanID;
-	if (m_dSide[ChanID][0] != 1.0 || m_dSide[ChanID][1] != 1.0 || m_iN163Sent[0] != m_iN163Level || m_iN163Sent[1] != m_iN163Level)
+	if (m_dSide[ChanID][0] != 1.0 || m_dSide[ChanID][1] != 1.0 || m_iN163Sent[0] != m_iN163Level || m_iN163Sent[1] != m_iN163Level ||
+		DestOf(ChanID) != m_iN163Dest)
 		MixN163Sides(Time);
 }
 
 void CMixer::MixN163Sides(int Time)
 {
-	MixSides(SynthN163, m_iN163Level, m_dSide[m_iN163Chan], m_iN163Sent, Time);
+	// Depth: the DAC's level is in the buffers of the channel it plays (the sides, or the channel's own)
+	const int Dest = DestOf(m_iN163Chan);
+	if (Dest != m_iN163Dest) {
+		for (int s = 0; s < 2; ++s) {
+			if (m_iN163Sent[s] != 0)
+				SynthN163.offset(Time, -m_iN163Sent[s], &Buffer(m_iN163Dest, s));
+			m_iN163Sent[s] = 0;
+		}
+		m_iN163Dest = Dest;
+	}
+	MixSides(SynthN163, Dest, m_iN163Level, m_dSide[m_iN163Chan], m_iN163Sent, Time);
 }
 
 void CMixer::MixFDS(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthFDS, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthFDS, DestOf(ChanID), m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::MixVRC6(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthVRC6, SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1], m_dLevel[ChanID] != 1.0, m_iLevel[ChanID], m_dGain[ChanID],
+	MixSides(SynthVRC6, SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1], m_dLevel[ChanID] != 1.0, DestOf(ChanID), m_iLevel[ChanID], m_dGain[ChanID],
 		m_iSent[ChanID], m_iOwnSent[ChanID], Time);
 }
 
 void CMixer::MixMMC5(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthMMC5, SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1], m_dLevel[ChanID] != 1.0, m_iLevel[ChanID], m_dGain[ChanID],
+	MixSides(SynthMMC5, SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1], m_dLevel[ChanID] != 1.0, DestOf(ChanID), m_iLevel[ChanID], m_dGain[ChanID],
 		m_iSent[ChanID], m_iOwnSent[ChanID], Time);
 }
 
@@ -503,7 +607,7 @@ void CMixer::MixS5B(int ChanID, int Value, int Time)
 {
 	// Each channel's level as it changes (CS5B), on each side as its pan has it
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthS5B, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthS5B, DestOf(ChanID), m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::PanGains(int Pan, double &Left, double &Right)
@@ -548,9 +652,9 @@ void CMixer::ClearOwn(int ChanID, int Time)
 		if (Had == 0)
 			continue;
 		if (ChanID >= CHANID_VRC6_PULSE1 && ChanID <= CHANID_VRC6_SAWTOOTH)
-			SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1].offset(Time, -Had, &Side(s));
+			SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1].offset(Time, -Had, &Buffer(DestOf(ChanID), s));
 		else if (ChanID >= CHANID_MMC5_SQUARE1 && ChanID <= CHANID_MMC5_VOICE)
-			SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1].offset(Time, -Had, &Side(s));
+			SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1].offset(Time, -Had, &Buffer(DestOf(ChanID), s));
 		m_iOwnSent[ChanID][s] = 0;
 	}
 }
@@ -589,7 +693,7 @@ void CMixer::Remix(int ChanID, int Time)
 			MixMMC5(ChanID, 0, Time);
 			break;
 		case CHANID_FDS:
-			MixSides(SynthFDS, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+			MixSides(SynthFDS, DestOf(ChanID), m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 			break;
 		default:
 			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
@@ -659,6 +763,8 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 int CMixer::ReadBuffer(int Size, void *Buffer, bool Stereo)
 {
 	blip_sample_t *pOut = (blip_sample_t*)Buffer;
+	if (m_iOwnCount > 0 || !m_Space.Idle())
+		return ReadDepth(Size, pOut, Stereo);
 	if (Stereo) {
 		// The left and the right side, one after the other
 		const int Read = BlipBuffer.read_samples(pOut, Size, 1);
@@ -720,4 +826,201 @@ void CMixer::ClearChannelLevels()
 uint32 CMixer::ResampleDuration(uint32 Time) const
 {
 	return (uint32)BlipBuffer.resampled_duration((blip_time_t)Time);
+}
+
+// Depth
+
+static const int OWN_DRAIN_FRAMES = 60;		// a second: what a channel had in its own buffers dies away by then
+
+void CMixer::SetChannelDepth(int ChanID, int Soft, int Space, int Time)
+{
+	if (ChanID < 0 || ChanID >= CHANNELS)
+		return;
+	Soft = std::max(0, std::min(100, Soft));
+	Space = std::max(0, std::min(100, Space));
+	m_iSpaceOf[ChanID] = Space;
+	if (Soft != m_iSoftOf[ChanID]) {
+		m_iSoftOf[ChanID] = Soft;
+		m_SoftFilter[ChanID].Set(Soft, m_iSampleRate);
+	}
+	const bool Own = Soft > 0 || Space > 0;
+	if (Own == m_bOwn[ChanID])
+		return;
+	if (Own) {
+		if (m_iOwnDrain[ChanID] == 0) {
+			// Its buffers start empty, in step with the sides
+			for (int s = 0; s < 2; ++s) {
+				m_OwnBuffer[ChanID][s].clear();
+				m_OwnBuffer[ChanID][s].offset_ = Side(s).offset_;
+			}
+			m_SoftFilter[ChanID].Clear();
+		}
+		m_iOwnDrain[ChanID] = 0;
+	}
+	else
+		m_iOwnDrain[ChanID] = OWN_DRAIN_FRAMES;
+	m_bOwn[ChanID] = Own;
+	MoveOwn(ChanID, Time);
+	CountOwn();
+}
+
+void CMixer::SetSpace(int Room, double EchoSeconds, int Repeats)
+{
+	m_Space.Set(Room, EchoSeconds, Repeats);
+}
+
+bool CMixer::SpaceRinging() const
+{
+	return !m_Space.Idle();
+}
+
+bool CMixer::IsOwn(int ChanID) const
+{
+	return ChanID >= 0 && ChanID < CHANNELS && m_bOwn[ChanID];
+}
+
+void CMixer::MixOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count)
+{
+	if (ChanID < 0 || ChanID >= CHANNELS || !OwnActive(ChanID))
+		return;
+	m_OwnBuffer[ChanID][0].mix_samples(pLeft, Count);
+	m_OwnBuffer[ChanID][1].mix_samples(pRight, Count);
+}
+
+void CMixer::CountOwn()
+{
+	m_iOwnCount = 0;
+	for (int i = 0; i < CHANNELS; ++i)
+		m_iOwnCount += OwnActive(i) ? 1 : 0;
+}
+
+template <class Synth>
+void CMixer::Move(Synth &Synth_, int32 Amount, int From, int To, int Index, int Time)
+{
+	if (Amount == 0)
+		return;
+	Synth_.offset(Time, -Amount, &Buffer(From, Index));
+	Synth_.offset(Time, Amount, &Buffer(To, Index));
+}
+
+void CMixer::MoveOwn(int ChanID, int Time)
+{
+	// What the channel sent so far leaves where it was for where its sound goes now, at once
+	const int To = DestOf(ChanID), From = To < 0 ? ChanID : -1;
+	for (int s = 0; s < 2; ++s) {
+		if (ChanID >= CHANID_VRC6_PULSE1 && ChanID <= CHANID_VRC6_SAWTOOTH) {
+			Move(SynthVRC6, m_iSent[ChanID][s], From, To, s, Time);
+			Move(SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1], m_iOwnSent[ChanID][s], From, To, s, Time);
+		}
+		else if (ChanID >= CHANID_MMC5_SQUARE1 && ChanID <= CHANID_MMC5_VOICE) {
+			Move(SynthMMC5, m_iSent[ChanID][s], From, To, s, Time);
+			Move(SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1], m_iOwnSent[ChanID][s], From, To, s, Time);
+		}
+		else if (ChanID == CHANID_FDS)
+			Move(SynthFDS, m_iSent[ChanID][s], From, To, s, Time);
+		else if (ChanID >= CHANID_S5B_CH1 && ChanID <= CHANID_S5B_CH3)
+			Move(SynthS5B, m_iSent[ChanID][s], From, To, s, Time);
+	}
+	switch (ChanID) {
+		case CHANID_SQUARE1:
+		case CHANID_SQUARE2:
+			MixInternal1(Time);
+			break;
+		case CHANID_TRIANGLE:
+		case CHANID_NOISE:
+		case CHANID_DPCM:
+			MixInternal2(Time);
+			break;
+		default:
+			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
+				MixN163Sides(Time);
+			// The VRC7 makes its samples at the end of the frame, for where each channel goes then
+			break;
+	}
+}
+
+int CMixer::SplitPin(Blip_Synth<blip_good_quality, -500> &Synth, const int *pChans, const double *pWeighted, int Count, double Sum,
+	int Side_, int Time)
+{
+	// Sum is what the pin puts out (with the mixer window's levels); each channel's share of it is in proportion to
+	// its input times its level, as the levels scale it. A channel in its own buffers has its share there, in whole
+	// steps of the synth; what it gets is taken out of the sides' step, so the two add up to the pin's steps as
+	// they were. Returns what the channels' own buffers got.
+	double Total = 0.0;
+	for (int i = 0; i < Count; ++i)
+		Total += pWeighted[i];
+	int Moved = 0;
+	for (int i = 0; i < Count; ++i) {
+		const int c = pChans[i];
+		const int32 Want = m_bOwn[c] && Total > 0.0 ? static_cast<int32>(std::floor(Sum * pWeighted[i] / Total * AMP_2A03 + 0.5)) : 0;
+		if (Want != m_iPinOwn[c][Side_]) {
+			Synth.offset(Time, Want - m_iPinOwn[c][Side_], &m_OwnBuffer[c][Side_]);
+			Moved += Want - m_iPinOwn[c][Side_];
+			m_iPinOwn[c][Side_] = Want;
+		}
+	}
+	return Moved;
+}
+
+int CMixer::ReadDepth(int Size, blip_sample_t *pOut, bool Stereo)
+{
+	// The sides, then each channel in its own buffers added, softened and sent to the space, then the space
+	long Count = std::min(static_cast<long>(Size), BlipBuffer.samples_avail());
+	Count = std::max(0L, std::min(Count, m_iDepthSize));
+	float *const pLeft = m_pDepth[0], *const pRight = m_pDepth[1], *const pSendLeft = m_pDepth[2], *const pSendRight = m_pDepth[3];
+	if (pLeft == NULL || m_pDepthRead == NULL)
+		return 0;
+	blip_sample_t *const pReadLeft = m_pDepthRead, *const pReadRight = m_pDepthRead + m_iDepthSize;
+	BlipBuffer.read_samples(pReadLeft, Count);
+	BlipBufferRight.read_samples(pReadRight, Count);
+	for (long i = 0; i < Count; ++i) {
+		pLeft[i] = pReadLeft[i];
+		pRight[i] = pReadRight[i];
+		pSendLeft[i] = pSendRight[i] = 0.0f;
+	}
+	bool Changed = false;
+	for (int c = 0; c < CHANNELS; ++c) {
+		if (!OwnActive(c))
+			continue;
+		const long GotLeft = m_OwnBuffer[c][0].read_samples(pReadLeft, Count);
+		const long GotRight = m_OwnBuffer[c][1].read_samples(pReadRight, Count);
+		for (long i = GotLeft; i < Count; ++i)
+			pReadLeft[i] = 0;
+		for (long i = GotRight; i < Count; ++i)
+			pReadRight[i] = 0;
+		CSoftFilter &Filter = m_SoftFilter[c];
+		const bool Soft = Filter.Soft() > 0;
+		const float Send = m_bOwn[c] ? m_iSpaceOf[c] / 100.0f : 0.0f;
+		for (long i = 0; i < Count; ++i) {
+			float l = pReadLeft[i], r = pReadRight[i];
+			if (Soft)
+				Filter.Run(l, r);
+			pLeft[i] += l;
+			pRight[i] += r;
+			if (Send > 0.0f) {
+				pSendLeft[i] += Send * l;
+				pSendRight[i] += Send * r;
+			}
+		}
+		if (!m_bOwn[c] && --m_iOwnDrain[c] == 0) {
+			Filter.Clear();
+			Changed = true;
+		}
+	}
+	if (Changed)
+		CountOwn();
+	m_Space.Process(pSendLeft, pSendRight, pLeft, pRight, static_cast<int>(Count));
+
+	for (long i = 0; i < Count; ++i) {
+		const float l = pLeft[i], r = pRight[i];
+		const int Left = std::max(-32768, std::min(32767, static_cast<int>(l < 0.0f ? l - 0.5f : l + 0.5f)));
+		const int Right = std::max(-32768, std::min(32767, static_cast<int>(r < 0.0f ? r - 0.5f : r + 0.5f)));
+		if (Stereo) {
+			pOut[i * 2] = static_cast<blip_sample_t>(Left);
+			pOut[i * 2 + 1] = static_cast<blip_sample_t>(Right);
+		}
+		else
+			pOut[i] = static_cast<blip_sample_t>((Left + Right) / 2);
+	}
+	return static_cast<int>(Count);
 }

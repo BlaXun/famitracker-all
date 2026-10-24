@@ -195,6 +195,7 @@
     <ClCompile Include="Source\APU\MMC5.CPP" />
     <ClCompile Include="Source\APU\N163.CPP" />
     <ClCompile Include="Source\APU\S5B.cpp" />
+    <ClCompile Include="Source\APU\Space.cpp" />
     <ClCompile Include="Source\APU\VRC6.CPP" />
     <ClCompile Include="Source\APU\VRC7.cpp" />
     <ClCompile Include="Source\APU\emu2149.c" />
@@ -256,6 +257,7 @@
     <ClInclude Include="Source\APU\MMC5.H" />
     <ClInclude Include="Source\APU\N163.H" />
     <ClInclude Include="Source\APU\S5B.h" />
+    <ClInclude Include="Source\APU\Space.h" />
     <ClInclude Include="Source\APU\VRC6.H" />
     <ClInclude Include="Source\APU\VRC7.h" />
     <ClInclude Include="Source\APU\2413tone.h" />
