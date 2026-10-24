@@ -23,12 +23,12 @@
 
 // Instruments made from FamiTracker's sound presets (Api/Presets.h: leads,
 // plucks, pads, basses and drums for the 2A03, MMC5, VRC6 and 5B, the 5B's
-// own sounds, and the VRC7's built-in sounds) and the FDS's sounds
-// (Api/FdsSounds.h), for Claude Code's tools and for Instrument > Instrument
-// library, which lists them by the channel they're for and plays each one
-// before it goes into the song. Include after FamiTrackerDoc.h.
+// own sounds, and the VRC7's built-in sounds and custom patches), the N163's
+// wave sounds (Api/Wavetables.h) and the FDS's sounds (Api/FdsSounds.h), for
+// Claude Code's tools and for Instrument > Sound browser (SoundBrowserDlg.h),
+// which makes them through the tools and plays each one before it goes into
+// the song. Include after FamiTrackerDoc.h.
 
-class CMainFrame;
 namespace ftapi { struct Preset; struct WaveSound; struct FdsSound; }
 
 // The instrument of that type and name, -1 if there's none
@@ -62,6 +62,3 @@ int AddFdsSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::FdsSound &Sound, C
 
 // Removes an instrument, and the sequences it used that no other instrument uses
 void RemoveInstrumentAndSequences(CFamiTrackerDoc *pDoc, unsigned int Index);
-
-// Instrument > Instrument library
-void ShowInstrumentLibrary(CMainFrame *pMainFrame);

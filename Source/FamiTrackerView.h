@@ -98,6 +98,12 @@ public:
 	// Note preview
 	bool		 PreviewNote(unsigned char Key);
 	void		 PreviewRelease(unsigned char Key);
+	// The note a key plays in the pattern editor (FamiTracker's MIDI note: C-0 = 0, at the octave picked), 0 for none
+	int			 NoteOfKey(unsigned char Key) const { return TranslateKey(Key); }
+	// A window that plays the notes of a MIDI keyboard itself while it's open (the sound browser): sent Message
+	// with the note (C-0 = 0) and its velocity, 0 when the key is let go, in place of the pattern editor getting
+	// them. NULL for none.
+	void		 SetNoteListener(HWND hWnd, UINT Message) { m_hNoteListener = hWnd; m_iNoteListenerMessage = Message; }
 
 	// Mute methods
 	void		 SoloChannel(unsigned int Channel);
@@ -181,6 +187,9 @@ private:
 	void	KeyIncreaseAction();
 	void	KeyDecreaseAction();
 	
+	HWND	m_hNoteListener = NULL;			// SetNoteListener
+	UINT	m_iNoteListenerMessage = 0;
+
 	int		TranslateKey(unsigned char Key) const;
 	int		TranslateKeyDefault(unsigned char Key) const;
 	int		TranslateKeyModplug(unsigned char Key) const;

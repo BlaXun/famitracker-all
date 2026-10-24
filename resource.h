@@ -749,14 +749,18 @@
 #define IDC_VOICE_ADD                   1398
 #define ID_EDIT_VOICEEFFECT             33162
 
-// Instrument > Instrument library (InstrumentLibrary.cpp)
-#define IDD_INSTRUMENT_LIBRARY          333
-#define IDC_LIB_FOR                     1399
-#define IDC_LIB_LIST                    1400
-#define IDC_LIB_TEXT                    1401
-#define IDC_LIB_LISTEN                  1402
-#define IDC_LIB_ADD                     1403
-#define IDC_LIB_STATUS                  1404
+// Instrument > Sound browser (SoundBrowserDlg.cpp); the command keeps the instrument library's ID
+#define IDD_SOUND_BROWSER               540
+#define IDC_SB_FIND                     1850
+#define IDC_SB_KIND                     1851
+#define IDC_SB_FROM                     1852
+#define IDC_SB_CHANNEL                  1853
+#define IDC_SB_LIST                     1854
+#define IDC_SB_TEXT                     1855
+#define IDC_SB_LISTEN                   1856
+#define IDC_SB_ADD                      1857
+#define IDC_SB_STATUS                   1858
+#define IDC_SB_COUNT                    1859
 #define ID_INSTRUMENT_LIBRARY           33163
 
 // View > Clips panel (ClipsPanel.cpp)

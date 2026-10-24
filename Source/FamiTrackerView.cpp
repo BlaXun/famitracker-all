@@ -3050,6 +3050,11 @@ void CFamiTrackerView::TranslateMidiMessage()
 			Data1 -= 24;
 			if (Data1 > 127)
 				return;
+			// A window that plays the notes itself (the sound browser) gets them
+			if (m_hNoteListener != NULL && ::IsWindow(m_hNoteListener)) {
+				::SendMessage(m_hNoteListener, m_iNoteListenerMessage, Data1, Message == MIDI_MSG_NOTE_ON ? Data2 : 0);
+				continue;
+			}
 		}
 
 		switch (Message) {

@@ -105,4 +105,9 @@ struct ClickFix {
 std::vector<ClickFix> SmoothClicks(const SongInfo &Song, std::vector<Cell> &Cells, int &Columns, int First, int End,
 	const std::vector<std::pair<int, int> > &Played, int LoopRow, bool Fix, bool &Lost);
 
+// The pitches a held note of an instrument clicks on with its vibrato (its pitch or hi-pitch sequence), alone on a
+// 2A03 or MMC5 pulse (NTSC): twice or more in two seconds. Empty for one without a vibrato. (The sound browser and
+// find_sound warn of it.)
+std::vector<int> VibratoClickPitches(const InstrumentInfo &Info);
+
 }

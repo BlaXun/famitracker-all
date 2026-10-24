@@ -391,6 +391,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)) |
+| `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips, each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. A study's sounds of the same name are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
@@ -769,7 +770,7 @@ The **Sunsoft 5B** adds three square waves (always 50%), each of which can
 also play the chip's noise and its envelope. Claude has sounds of its own for
 it: square lead, singing square, square pad, square pluck, square bell, buzz
 bass, sync buzz, noise hat, noise crash, noise snare, square kick and square
-tom, also in **Instrument > Instrument library**. The presets play there
+tom, also in **Instrument > Sound browser**. The presets play there
 too ("soft lead", "warm pad"), their volume envelopes turned into the 5B's
 3 dB steps so they sound as loud as on a pulse; "snare", "hi-hat" and
 "kick" there are the 5B's own drums. Like the triangle and the VRC7, the 5B
@@ -810,7 +811,7 @@ sound, a vibrato or the modulator:
 
 Ask for them by name, or by a preset's name, which picks the sound most like
 it ("soft lead" is the flute, "bass" the round bass, "warm pad" the choir).
-**Instrument > Instrument library** offers the same sounds for the FDS
+**Instrument > Sound browser** offers the same sounds for the FDS
 channel. `design_instrument` makes new ones there from words: a wave (sine,
 round, hollow, square, bright, strings, nasal, organ, voice, glassy, bass,
 triangle), the envelope, attack and vibrato as for the other chips, and what

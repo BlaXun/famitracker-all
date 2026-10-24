@@ -46,6 +46,7 @@
 #include "../References.h"
 #include "../Song.h"
 #include "../SoundEffects.h"
+#include "../SoundIndex.h"
 #include "../Tools.h"
 #include "../Wavetables.h"
 #include "../../Nsf/tests/TestNsf.h"
@@ -11756,6 +11757,391 @@ void TestKeyTools()
 	}
 }
 
+// The sound browser's index (SoundIndex.h): every sound a song can get, found by words, kind, source and channel
+const SoundEntry *FindEntry(const std::vector<SoundEntry> &All, const std::string &Name, int Target)
+{
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Name == Name && All[i].Target == Target)
+			return &All[i];
+	return 0;
+}
+
+SongInfo SongWithChips(const std::vector<std::string> &Chips)
+{
+	SongInfo Song;
+	const char *const NAMES[] = { "Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM" };
+	const int KINDS[] = { KIND_PULSE, KIND_PULSE, KIND_TRIANGLE, KIND_NOISE, KIND_DPCM };
+	for (int c = 0; c < 5; ++c) {
+		ChannelInfo Channel;
+		Channel.Name = NAMES[c];
+		Channel.Chip = "2A03";
+		Channel.Kind = KINDS[c];
+		Channel.ChanId = c;
+		Song.Channels.push_back(Channel);
+	}
+	const std::vector<ChannelInfo> More = FakeSong::ChipChannels(Chips, 2);
+	Song.Channels.insert(Song.Channels.end(), More.begin(), More.end());
+	for (size_t i = 0; i < Chips.size(); ++i)
+		Song.Expansion += (i == 0 ? "" : ", ") + Chips[i];
+	return Song;
+}
+
+// A reference with a lead that clicks with its vibrato, a pluck gone within four frames and a snare
+Reference ClickyReference()
+{
+	Reference R;
+	R.Id = "lava-game-03";
+	R.Title = "Lava Caves";
+	R.Game = "Lava Game";
+	R.Composer = "Tester";
+	R.Track = 3;
+	R.Tags.push_back("konami");
+	ReferenceSound Lead;
+	Lead.Channel = "Pulse 1";
+	Lead.Role = "the lead";
+	Lead.Words = "a 50% pulse that holds at 12 with a deep vibrato";
+	Lead.Chip = "2A03";
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 12 };
+	Lead.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 0, 2, 2, -2, -2, -2, -2, 2, 2 };
+	Lead.Sequences[SEQUENCE_PITCH].Loop = 1;
+	Lead.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 2 };
+	R.Sounds.push_back(Lead);
+	ReferenceSound Blip;
+	Blip.Channel = "Pulse 2";
+	Blip.Role = "an echo of Pulse 1";
+	Blip.Words = "a 25% pulse that falls 15 10 5 2 1 0";
+	Blip.Chip = "2A03";
+	Blip.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+	R.Sounds.push_back(Blip);
+	ReferenceSound Snare;
+	Snare.Channel = "Noise";
+	Snare.Role = "snare";
+	Snare.Words = "a short burst";
+	Snare.Chip = "2A03";
+	Snare.Noise = true;
+	Snare.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 9, 4, 0 };
+	R.Sounds.push_back(Snare);
+	return R;
+}
+
+void TestSoundIndex()
+{
+	// The 2A03 alone: each preset once, where it's at home (the drums on the noise), and nothing for other chips
+	const SongInfo Plain = SongWithChips(std::vector<std::string>());
+	std::vector<SoundEntry> All = ListSounds(Plain, std::vector<Reference>(), std::vector<SoundUse>(), -1);
+	SoundQuery Q;
+	std::vector<size_t> Found = FindSounds(All, Q);
+	CHECK_EQ(Found.size(), Presets().size());
+	bool Placed = true;
+	for (size_t i = 0; i < Found.size(); ++i) {
+		const SoundEntry &E = All[Found[i]];
+		Placed = Placed && E.Source == SOURCE_PRESET && E.Make == MAKE_PRESET && E.Chip == "2A03" && E.Home &&
+			(E.Drum ? E.Target == TARGET_NOISE && E.Channel == 3 : E.Target == TARGET_PULSE && E.Channel == 0);
+	}
+	CHECK(Placed);
+	bool Only2A03 = true;
+	for (size_t i = 0; i < All.size(); ++i)
+		Only2A03 = Only2A03 && All[i].Chip == "2A03" && All[i].Target <= TARGET_DPCM;
+	CHECK(Only2A03);
+	// The triangle has the melodic presets too, not at home there; their kinds
+	Q.Target = TARGET_TRIANGLE;
+	const size_t OnTriangle = FindSounds(All, Q).size();
+	CHECK(OnTriangle > 10 && OnTriangle < Presets().size());
+	const SoundEntry *pLead = FindEntry(All, "Soft lead", TARGET_PULSE);
+	CHECK(pLead != 0 && pLead->Kind == "lead" && pLead->ChannelName == "Pulse 1" && pLead->Origin == "ready-made" &&
+		pLead->Key == "soft lead" && !pLead->Low);
+	CHECK(FindEntry(All, "Plucky bass", TARGET_PULSE) != 0 && FindEntry(All, "Plucky bass", TARGET_PULSE)->Kind == "bass" &&
+		FindEntry(All, "Plucky bass", TARGET_PULSE)->Low);
+	CHECK(FindEntry(All, "Bell", TARGET_PULSE) != 0 && FindEntry(All, "Bell", TARGET_PULSE)->Kind == "bell");
+	CHECK(FindEntry(All, "Pluck", TARGET_PULSE) != 0 && FindEntry(All, "Pluck", TARGET_PULSE)->Kind == "pluck");
+	CHECK(FindEntry(All, "Warm pad", TARGET_PULSE) != 0 && FindEntry(All, "Warm pad", TARGET_PULSE)->Kind == "pad");
+	CHECK(FindEntry(All, "Snare", TARGET_NOISE) != 0 && FindEntry(All, "Snare", TARGET_NOISE)->Kind == "drums");
+	CHECK(FindEntry(All, "Soft lead", TARGET_TRIANGLE) != 0 && !FindEntry(All, "Soft lead", TARGET_TRIANGLE)->Home);
+	// Kinds asked for in words
+	CHECK_EQ(KindId("Bells"), std::string("bell"));
+	CHECK_EQ(KindId("drums"), std::string("drums"));
+	CHECK_EQ(KindId("Pads and chords"), std::string("pad"));
+	CHECK_EQ(KindId("piano"), std::string("keys"));
+	CHECK_EQ(KindId("kazoo"), std::string());
+	CHECK_EQ(KindOfWords("plucky bass"), std::string("bass"));
+	CHECK_EQ(KindOfWords("glass bell"), std::string("bell"));
+
+	// Words: the name counts most, a word finds the start of one ("pluck" in "plucky"), plurals too, all must be found
+	Q = SoundQuery();
+	Q.Words = "bell";
+	Found = FindSounds(All, Q);
+	CHECK(!Found.empty() && All[Found[0]].Name == "Bell");
+	Q.Words = "plucky";
+	Found = FindSounds(All, Q);
+	CHECK(!Found.empty() && All[Found[0]].Name == "Plucky bass");
+	Q.Words = "bells";
+	CHECK(!FindSounds(All, Q).empty());
+	Q.Words = "warm";
+	Found = FindSounds(All, Q);
+	CHECK(!Found.empty() && All[Found[0]].Name == "Warm pad");
+	Q.Words = "kazoo";
+	bool Some = true;
+	CHECK(FindSounds(All, Q, &Some).empty() && !Some);
+	Q.Words = "soft kazoo";		// none has both: the ones with "soft"
+	Found = FindSounds(All, Q, &Some);
+	CHECK(Some && !Found.empty() && All[Found[0]].Name == "Soft lead");
+	Q.Words = "soft lead";
+	Found = FindSounds(All, Q, &Some);
+	CHECK(!Some && !Found.empty() && All[Found[0]].Name == "Soft lead");
+	CHECK(SoundMatch(*pLead, "soft lead") > SoundMatch(*pLead, "flute"));
+	CHECK(SoundMatch(*pLead, "flute") > 0);
+	// Kind and source
+	Q = SoundQuery();
+	Q.Kind = "drums";
+	Found = FindSounds(All, Q);
+	CHECK(!Found.empty());
+	for (size_t i = 0; i < Found.size(); ++i)
+		CHECK(All[Found[i]].Kind == "drums" && All[Found[i]].Target == TARGET_NOISE);
+	Q.Kind.clear();
+	Q.Source = SOURCE_SONG;
+	CHECK(FindSounds(All, Q).empty());
+	// Without words: by kind, the leads first
+	Q = SoundQuery();
+	Found = FindSounds(All, Q);
+	CHECK(All[Found.front()].Kind == "lead" && All[Found.back()].Kind != "lead");
+
+	// The user on the triangle: the presets that play there are at home there
+	All = ListSounds(Plain, std::vector<Reference>(), std::vector<SoundUse>(), 2);
+	CHECK(FindEntry(All, "Soft lead", TARGET_TRIANGLE)->Home && !FindEntry(All, "Soft lead", TARGET_PULSE)->Home);
+	CHECK(FindEntry(All, "Snare", TARGET_NOISE)->Home);
+
+	// The warnings the tools give: the singing lead's vibrato clicks on a held A-3 on a 2A03 pulse
+	All = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6" }), std::vector<Reference>(), std::vector<SoundUse>(), -1);
+	const SoundEntry *pSinging = FindEntry(All, "Singing lead", TARGET_PULSE);
+	CHECK(pSinging != 0 && std::find(pSinging->ClickPitches.begin(), pSinging->ClickPitches.end(), 45) != pSinging->ClickPitches.end());
+	CHECK_HAS(pSinging->Warning, "Held on a 2A03 pulse, its vibrato clicks on ");
+	CHECK_HAS(pSinging->Warning, "A-3");
+	CHECK_HAS(pSinging->Warning, "View > Problems finds such notes in the song, and its Nudge stops them.");
+	CHECK(FindEntry(All, "Singing lead", TARGET_VRC6_PULSE)->ClickPitches.empty() &&
+		FindEntry(All, "Singing lead", TARGET_VRC6_PULSE)->Warning.empty());
+	// The sawtooth's presets: named apart, the VRC6's, a bass heard low
+	const SoundEntry *pSaw = FindEntry(All, "Bass (saw)", TARGET_SAWTOOTH);
+	CHECK(pSaw != 0 && pSaw->Chip == "VRC6" && pSaw->Sawtooth && pSaw->Key == "bass" && pSaw->ChannelName == "VRC6 Sawtooth");
+	// VibratoClickPitches itself: none without a vibrato, none above B-4
+	InstrumentInfo Still;
+	CHECK(VibratoClickPitches(Still).empty());
+	InstrumentInfo Deep;
+	Deep.Pitch.Items = std::vector<int>{ 0, 2, 2, -2, -2, -2, -2, 2, 2 };
+	Deep.Pitch.Loop = 1;
+	const std::vector<int> Clicks = VibratoClickPitches(Deep);
+	CHECK(std::find(Clicks.begin(), Clicks.end(), 45) != Clicks.end() && !Clicks.empty() && Clicks.back() < 60);
+
+	// Every chip: the VRC7's patches and custom patches, the N163's and the FDS's sounds and the 5B's own, at home there
+	const SongInfo Every = SongWithChips(std::vector<std::string>{ "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" });
+	All = ListSounds(Every, std::vector<Reference>(), std::vector<SoundUse>(), -1);
+	const SoundEntry *pPiano = FindEntry(All, "Piano", TARGET_VRC7);
+	CHECK(pPiano != 0 && pPiano->Make == MAKE_VRC7 && pPiano->Number >= 1 && pPiano->Home && pPiano->Kind == "keys");
+	CHECK(FindEntry(All, Vrc7Customs()[0].InstrumentName(), TARGET_VRC7) != 0 &&
+		FindEntry(All, Vrc7Customs()[0].InstrumentName(), TARGET_VRC7)->Make == MAKE_VRC7_CUSTOM);
+	const SoundEntry *pWave = FindEntry(All, WaveSounds()[0].InstrumentName(), TARGET_N163);
+	CHECK(pWave != 0 && pWave->Make == MAKE_N163 && pWave->Chip == "N163" && pWave->Home);
+	const SoundEntry *pFds = FindEntry(All, FdsSounds()[0].InstrumentName(), TARGET_FDS);
+	CHECK(pFds != 0 && pFds->Make == MAKE_FDS && pFds->Chip == "FDS" && pFds->Home);
+	const SoundEntry *pBuzz = FindEntry(All, "Buzz bass", TARGET_S5B);
+	CHECK(pBuzz != 0 && pBuzz->Make == MAKE_5B && pBuzz->Kind == "bass" && pBuzz->Home);
+	CHECK(FindEntry(All, "Soft lead", TARGET_S5B) != 0 && FindEntry(All, "Soft lead", TARGET_S5B)->Make == MAKE_PRESET &&
+		FindEntry(All, "Soft lead", TARGET_S5B)->Chip == "5B" && !FindEntry(All, "Soft lead", TARGET_S5B)->Home);
+	CHECK(FindEntry(All, "Snare", TARGET_S5B) == 0);		// the presets' drums are the noise channel's
+	CHECK(FindEntry(All, "Soft lead", TARGET_MMC5) != 0 && FindEntry(All, "Soft lead", TARGET_MMC5)->Chip == "2A03");
+	Q = SoundQuery();
+	Q.Words = "glass bell";
+	Found = FindSounds(All, Q);
+	bool OnN163 = false, OnFds = false;
+	for (size_t i = 0; i < Found.size(); ++i) {
+		OnN163 = OnN163 || All[Found[i]].Target == TARGET_N163;
+		OnFds = OnFds || All[Found[i]].Target == TARGET_FDS;
+	}
+	CHECK(OnN163 && OnFds);
+	Q = SoundQuery();
+	Q.Target = TARGET_FDS;
+	Found = FindSounds(All, Q);
+	CHECK_EQ(Found.size(), FdsSounds().size());
+	// Previews: a melody, two octaves up on the FDS and one on the 5B; a beat on the noise at the drum's pitch
+	std::vector<PreviewStep> Steps = PreviewSteps(*FindEntry(All, "Soft lead", TARGET_PULSE));
+	CHECK(Steps.size() == 8 && Steps[0].Note == 48 && Steps[3].Note == 60 && Steps[6].Note == PREVIEW_RELEASE &&
+		Steps[7].Note == PREVIEW_HALT);
+	Steps = PreviewSteps(*pFds);
+	CHECK(Steps[0].Note == (pFds->Low ? 48 : 72));
+	Steps = PreviewSteps(*FindEntry(All, "Soft lead", TARGET_S5B));
+	CHECK_EQ(Steps[0].Note, 60);
+	Steps = PreviewSteps(*FindEntry(All, "Snare", TARGET_NOISE));
+	CHECK(Steps.size() == 6 && Steps[0].Note == 0xA && Steps.back().Note == PREVIEW_HALT);
+	Steps = PreviewSteps(*FindEntry(All, "Kick", TARGET_NOISE));
+	CHECK_EQ(Steps[0].Note, 0x4);
+	Steps = PreviewSteps(*pSaw);
+	CHECK_EQ(Steps[0].Note, 36);	// low
+
+	// References: each sound at home where reference_sound puts it, on the other channels it can play on too; found
+	// by the game, the title, a tag; warned of a vibrato that clicks and notes that vanish
+	std::vector<Reference> Library(1, ClickyReference());
+	// Two sounds of a reference with one name: the second is numbered, so each can be added
+	Library.push_back(ClickyReference());
+	Library[1].Id = "lava-game-04";
+	Library[1].Title = "Magma Pools";
+	Library[1].Track = 4;
+	Library[1].Sounds[1].Role = "the lead";
+	const std::string PoolLead = ReferenceSoundName(Library[1], Library[1].Sounds[0]);
+	const std::string LeadName = ReferenceSoundName(Library[0], Library[0].Sounds[0]);
+	const std::string EchoName = ReferenceSoundName(Library[0], Library[0].Sounds[1]);
+	const std::string SnareName = ReferenceSoundName(Library[0], Library[0].Sounds[2]);
+	All = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6", "FDS" }), Library, std::vector<SoundUse>(), -1);
+	CHECK(FindEntry(All, PoolLead, TARGET_PULSE) != 0 && FindEntry(All, PoolLead + " 2", TARGET_PULSE) != 0 &&
+		FindEntry(All, PoolLead + " 2", TARGET_PULSE)->Short == PoolLead + " 2" && FindEntry(All, PoolLead + " 2", TARGET_PULSE)->Number == 2);
+	Library.pop_back();
+	All = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6", "FDS" }), Library, std::vector<SoundUse>(), -1);
+	const SoundEntry *pRefLead = FindEntry(All, LeadName, TARGET_PULSE);
+	CHECK(pRefLead != 0 && pRefLead->Source == SOURCE_REFERENCE && pRefLead->Make == MAKE_REFERENCE && pRefLead->Home &&
+		pRefLead->Key == "lava-game-03" && pRefLead->Number == 1 && pRefLead->Short == LeadName && pRefLead->Reference);
+	CHECK_EQ(pRefLead->Origin, std::string("Lava Caves (Lava Game, track 3), sound 1: Pulse 1, the lead"));
+	CHECK_HAS(pRefLead->Warning, "its vibrato clicks on");
+	CHECK(FindEntry(All, LeadName, TARGET_VRC6_PULSE) != 0 && !FindEntry(All, LeadName, TARGET_VRC6_PULSE)->Home &&
+		FindEntry(All, LeadName, TARGET_VRC6_PULSE)->Chip == "VRC6");
+	CHECK(FindEntry(All, LeadName + " (saw)", TARGET_SAWTOOTH) != 0 && FindEntry(All, LeadName + " (saw)", TARGET_SAWTOOTH)->Sawtooth);
+	CHECK(FindEntry(All, LeadName, TARGET_FDS) != 0 && FindEntry(All, LeadName, TARGET_FDS)->Chip == "FDS");
+	CHECK(FindEntry(All, LeadName, TARGET_NOISE) == 0 && FindEntry(All, SnareName, TARGET_PULSE) == 0);
+	const SoundEntry *pRefEcho = FindEntry(All, EchoName, TARGET_PULSE);
+	CHECK(pRefEcho != 0 && pRefEcho->Kind == "lead" && pRefEcho->Heard <= 4);
+	CHECK_HAS(pRefEcho->Warning, "Its notes are gone within ");
+	CHECK_HAS(pRefEcho->Warning, "(for a tune, pick a sound that settles to a level).");
+	const SoundEntry *pRefSnare = FindEntry(All, SnareName, TARGET_NOISE);
+	CHECK(pRefSnare != 0 && pRefSnare->Kind == "drums" && pRefSnare->Home && pRefSnare->Warning.empty());
+	Q = SoundQuery();
+	Q.Words = "lava game";
+	Found = FindSounds(All, Q);
+	CHECK_EQ(Found.size(), static_cast<size_t>(3));
+	Q.Words = "konami lead";
+	Found = FindSounds(All, Q);
+	CHECK(!Found.empty() && All[Found[0]].Name == LeadName);
+	Q = SoundQuery();
+	Q.Source = SOURCE_REFERENCE;
+	Q.Target = TARGET_FDS;
+	CHECK_EQ(FindSounds(All, Q).size(), static_cast<size_t>(2));
+
+	// The song's own instruments: where the track plays them, what it plays them at, whether a sound is in the song
+	SongInfo Own = SongWithChips(std::vector<std::string>{ "VRC6" });
+	InstrumentInfo Lead;
+	Lead.Index = 0;
+	Lead.Name = "Soft lead";
+	Lead.Chip = "2A03";
+	Own.Instruments.push_back(Lead);
+	InstrumentInfo Hat;
+	Hat.Index = 3;
+	Hat.Name = "Tick";
+	Hat.Chip = "2A03";
+	Own.Instruments.push_back(Hat);
+	std::vector<SoundUse> Uses(64);
+	Uses[0].Channel = 1;
+	Uses[0].Notes = 12;
+	Uses[0].Channels.push_back(1);
+	Uses[0].Pitches.push_back(48);
+	Uses[3].Channel = 3;
+	Uses[3].Notes = 1;
+	Uses[3].Channels.push_back(3);
+	Uses[3].Pitches.push_back(0x2E);
+	All = ListSounds(Own, std::vector<Reference>(), Uses, -1);
+	const SoundEntry *pMine = 0;
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Source == SOURCE_SONG && All[i].Number == 0 && All[i].Home)
+			pMine = &All[i];
+	CHECK(pMine != 0 && pMine->Target == TARGET_PULSE && pMine->Channel == 1 && pMine->ChannelName == "Pulse 2" &&
+		pMine->InSong == 0 && pMine->Make == MAKE_NONE && pMine->Kind == "lead");
+	CHECK_EQ(pMine->Words, std::string("12 notes on Pulse 2 in this track"));
+	CHECK_EQ(FindEntry(All, "Soft lead", TARGET_PULSE)->InSong, 0);		// the preset's: in the song already
+	CHECK_EQ(FindEntry(All, "Soft lead", TARGET_VRC6_PULSE)->InSong, -1);	// not as a VRC6 instrument
+	const SoundEntry *pTick = 0;
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Source == SOURCE_SONG && All[i].Number == 3 && All[i].Home)
+			pTick = &All[i];
+	CHECK(pTick != 0 && pTick->Target == TARGET_NOISE && pTick->Kind == "drums");
+	Steps = PreviewSteps(*pTick);
+	CHECK_EQ(Steps[0].Note, 0x2E);		// at the pitch the song plays it
+	Q = SoundQuery();
+	Q.Source = SOURCE_SONG;
+	CHECK_EQ(FindSounds(All, Q).size(), static_cast<size_t>(2));
+	Q.Target = TARGET_NOISE;
+	CHECK_EQ(FindSounds(All, Q).size(), static_cast<size_t>(1));		// the lead isn't offered for the noise
+}
+
+// find_sound, and the sound browser's list and its sounds made as add_instrument and reference_sound make them
+void TestFindSound()
+{
+	FakeSong Song;
+	const Reference R = ClickyReference();
+	const std::string LeadName = ReferenceSoundName(R, R.Sounds[0]);
+	Song.Library["lava-game-03.json"] = ReferenceFile(R);
+	ToolResult Result = Run(Song, "find_sound", "{\"query\": \"bell\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, " for \"bell\", best first:\n- Bell (bell; ready-made; plays on Pulse 1): ");
+	CHECK_HAS(Result.Text, "Add it with add_instrument preset \"bell\".");
+	Result = Run(Song, "find_sound", "{\"query\": \"lava caves\"}");
+	CHECK(Contains(Result.Text, ("- " + LeadName + " (lead; Lava Caves (Lava Game, track 3), sound 1: Pulse 1, the lead; plays on "
+		"Pulse 1): a 50% pulse that holds at 12 with a deep vibrato. Add it with reference_sound reference \"lava-game-03\" sound "
+		"1 name \"" + LeadName + "\".").c_str()));
+	CHECK_HAS(Result.Text, "its vibrato clicks on ");
+	CHECK_HAS(Result.Text, "the tools nudge such notes with a fine pitch (Pxx) as they write them");
+	CHECK_HAS(Result.Text, "Its notes are gone within ");
+	CHECK_HAS(Result.Text, "design_instrument kind pluck with sustain half");
+	Result = Run(Song, "find_sound", "{\"from\": \"song\"}");
+	CHECK_HAS(Result.Text, "3 sounds from this song:");
+	CHECK_HAS(Result.Text, "It's the song's instrument 01: write_notes and set_instrument use it by name.");
+	Result = Run(Song, "find_sound", "{\"kind\": \"drums\", \"from\": \"presets\"}");
+	CHECK_HAS(Result.Text, "- Snare (drums; ready-made; plays on Noise)");
+	CHECK_LACKS(Result.Text, "Soft lead");
+	Result = Run(Song, "find_sound", "{\"query\": \"bass\", \"channel\": 8}");
+	CHECK_HAS(Result.Text, "- Bass (saw) (bass; ready-made; plays on VRC6 Sawtooth)");
+	CHECK_HAS(Result.Text, "Add it with add_instrument preset \"bass\" channel 8.");
+	Result = Run(Song, "find_sound", "{\"query\": \"lava\", \"channel\": 8}");
+	CHECK_HAS(Result.Text, "Add it with reference_sound reference \"lava-game-03\" sound 1 channel 8 name \"");
+	// Words no sound has all of: the ones with some, said so
+	Result = Run(Song, "find_sound", "{\"query\": \"warm bell\"}");
+	CHECK_HAS(Result.Text, "No sound for \"warm bell\" has all the words; ");
+	CHECK_HAS(Result.Text, "- Warm pad (pad;");
+	CHECK_HAS(Result.Text, "- Bell (bell;");
+	CHECK(Run(Song, "find_sound", "{\"kind\": \"kazoo\"}").IsError);
+	CHECK_HAS(Run(Song, "find_sound", "{\"kind\": \"kazoo\"}").Text, "kind: one of lead, bass, pad, pluck, bell, keys, drums, effect, other.");
+	CHECK_HAS(Run(Song, "find_sound", "{\"query\": \"kazoo\"}").Text, "No sound for \"kazoo\".");
+	CHECK(Run(Song, "find_sound", "{\"from\": \"elsewhere\"}").IsError);
+
+	// The browser's list (ToolSet::Sounds), its sounds made into instruments (ToolSet::MakeSound)
+	ToolSet Tools(Song);
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(5, All, Error));
+	const SoundEntry *pSoft = FindEntry(All, "Soft lead", TARGET_VRC6_PULSE);
+	CHECK(pSoft != 0 && pSoft->Home);		// the user is on the VRC6's Pulse 1
+	const size_t Before = Song.Info.Instruments.size();
+	const int Index = Tools.MakeSound(*pSoft, Error);
+	CHECK(Index >= 0 && Song.Info.Instruments.size() == Before + 1 && Song.Info.Instruments.back().Chip == "VRC6" &&
+		Song.Info.Instruments.back().Name == "Soft lead" && Song.Made[Index].Name == "soft lead");
+	CHECK_EQ(Tools.MakeSound(*pSoft, Error), Index);	// the one of that name for that chip
+	const int Saw = Tools.MakeSound(*FindEntry(All, "Bass (saw)", TARGET_SAWTOOTH), Error);
+	CHECK(Saw >= 0 && Song.Info.Instruments.back().Name == "Bass (saw)" && Song.Info.Instruments.back().Chip == "VRC6");
+	// A reference's sound comes in as reference_sound makes it for that channel
+	const SoundEntry *pCaves = FindEntry(All, LeadName, TARGET_VRC6_PULSE);
+	CHECK(pCaves != 0);
+	const int Made = Tools.MakeSound(*pCaves, Error);
+	FakeSong Other;
+	Other.Library = Song.Library;
+	CHECK(!Run(Other, "reference_sound", "{\"reference\": \"lava-game-03\", \"sound\": 1, \"channel\": 6}").IsError);
+	CHECK(Made >= 0 && Song.Info.Instruments.back().Name == Other.Info.Instruments.back().Name &&
+		Song.Info.Instruments.back().Chip == Other.Info.Instruments.back().Chip);
+	CHECK(Song.Made[Made].SequencesVRC6.size() == Other.Made[Other.Info.Instruments.back().Index].SequencesVRC6.size() &&
+		Song.Made[Made].SequencesVRC6[0].Items == Other.Made[Other.Info.Instruments.back().Index].SequencesVRC6[0].Items);
+	// A song's own is itself
+	const SoundEntry *pOwn = 0;
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Source == SOURCE_SONG && All[i].Number == 1)
+			pOwn = &All[i];
+	const size_t Count = Song.Info.Instruments.size();
+	CHECK(pOwn != 0 && Tools.MakeSound(*pOwn, Error) == 1 && Song.Info.Instruments.size() == Count);
+	CHECK(Tools.Sounds(-1, All, Error) && FindEntry(All, "Soft lead", TARGET_VRC6_PULSE)->InSong == Index);
+}
+
 int main()
 {
 	TestJson();
@@ -11853,6 +12239,8 @@ int main()
 	TestStereoMix();
 	TestStereoLookAndLoop();
 	TestStereoExport();
+	TestSoundIndex();
+	TestFindSound();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
