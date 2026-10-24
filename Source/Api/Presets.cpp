@@ -636,8 +636,8 @@ const Vrc7Patch *FindVrc7Patch(const std::string &Name)
 // Sounds in words
 
 SoundDesign::SoundDesign() : Drum(false), Peak(13), Attack(1), AttackFrom(0), Decay(8), DecayStyle(DECAY_SMOOTH), Sustain(10),
-	Release(6), Restrike(0), Echo(false), Duty(1), Motion(DUTY_STILL), Click(false), Vibrato(0), VibratoDelay(20), VibratoRate(12),
-	AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
+	Release(6), Restrike(0), Echo(false), Duty(1), Vrc6Duty(-1), Motion(DUTY_STILL), Click(false), Vibrato(0), VibratoDelay(20),
+	VibratoRate(12), AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
 {
 }
 
@@ -720,12 +720,24 @@ std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint, int &LoopPoin
 	if (Sustain > 0) {
 		const int Restrike = Clamp(D.Restrike, 0, 120);
 		if (Restrike >= 4) {
-			// Held: struck again every Restrike frames, a dip and a rise back
+			// Held: struck again every Restrike frames from the note's start, so the strikes keep the beat: a dip of a few
+			// levels over two frames (half the level, up to 5), then a strike a little over the held level that settles back
+			const int Dip = std::min(5, std::max(2, (Sustain + 1) / 2)), Low = std::max(1, Sustain - Dip);
+			const int Rise = std::min(2, Peak - Sustain);
+			std::vector<int> Strike;
+			if (Restrike >= 6)
+				Strike = List({ std::max(1, Sustain - (Dip + 1) / 2), Low, Sustain + Rise, Sustain + Rise / 2 });
+			else
+				Strike = List({ Low, Sustain + Rise });
+			const int Top = Restrike >= 6 ? 2 : 1;	// where the strike is in it
+			// The first strike on the first multiple of Restrike frames that leaves the attack and the decay whole
+			int First = Restrike;
+			while (First - Top < static_cast<int>(Out.size()))
+				First += Restrike;
+			Out.resize(static_cast<size_t>(First - Top), Sustain);
 			LoopPoint = static_cast<int>(Out.size());
-			for (int i = 0; i < Restrike - 2; ++i)
-				Out.push_back(Sustain);
-			Out.push_back(std::max(1, Sustain - 5));
-			Out.push_back(std::max(1, Sustain - 2));
+			Out.insert(Out.end(), Strike.begin(), Strike.end());
+			Out.insert(Out.end(), static_cast<size_t>(Restrike) - Strike.size(), Sustain);
 		}
 		ReleasePoint = static_cast<int>(Out.size()) - 1;
 		for (int i = 1; i <= Release && Out.back() > 0; ++i)
@@ -763,10 +775,11 @@ int Vrc6Duty(int Duty)
 	return NEAREST[Clamp(Duty, 0, 3)];
 }
 
-std::vector<int> DutyItems(int Duty, int Motion, bool Click, bool Vrc6, int &Loop)
+// The duty a frame at a time on the 2A03 (Duty, 0-3) or the VRC6 (Vrc6Step, 0-7, or the nearest to Duty when it's -1)
+std::vector<int> DutyItems(int Duty, int Vrc6Step, int Motion, bool Click, bool Vrc6, int &Loop)
 {
 	Loop = -1;
-	const int d = Vrc6 ? Vrc6Duty(Duty) : Clamp(Duty, 0, 3);
+	const int d = Vrc6 ? (Vrc6Step >= 0 ? Clamp(Vrc6Step, 0, 7) : Vrc6Duty(Duty)) : Clamp(Duty, 0, 3);
 	std::vector<int> Items;
 	if (Click)		// the first frame thin, or round when the note is thin itself; a 75% note clicks at 50%, the
 					// thump of a pulse bass
@@ -913,9 +926,9 @@ Preset DesignPreset(const SoundDesign &D)
 	}
 
 	int Loop;
-	std::vector<int> Duty = DutyItems(D.Duty, D.Motion, D.Click, false, Loop);
+	std::vector<int> Duty = DutyItems(D.Duty, D.Vrc6Duty, D.Motion, D.Click, false, Loop);
 	P.Sequences2A03.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
-	Duty = DutyItems(D.Duty, D.Motion, D.Click, true, Loop);
+	Duty = DutyItems(D.Duty, D.Vrc6Duty, D.Motion, D.Click, true, Loop);
 	P.SequencesVRC6.push_back(Sequence(SEQUENCE_DUTY, Duty, Loop));
 	return P;
 }
@@ -933,6 +946,8 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 		return Buffer;
 	}
 	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%" };
+	static const char *const VRC6_DUTIES[] = { "6.25%", "12.5%", "18.75%", "25%", "31.25%", "37.5%", "43.75%", "50%" };
+	const std::string DutyText = D.Vrc6Duty >= 0 ? VRC6_DUTIES[Clamp(D.Vrc6Duty, 0, 7)] : DUTIES[Clamp(D.Duty, 0, 3)];
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
 	const bool Pulse = Wave != "sawtooth" && Wave != "triangle" && Wave != "square";	// "square": the 5B's
 	std::string Out;
@@ -947,14 +962,15 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	}
 	else {
 		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Wave == "noise" ? "noise envelope" : Pulse ?
-			(std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() : Wave == "square" ? "5B square (its levels as on a pulse)" :
+			(DutyText + " pulse").c_str() : Wave == "square" ? "5B square (its levels as on a pulse)" :
 			"sawtooth", D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() :
 			"reaches", Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" :
 			(std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
 		Out = Buffer;
 	}
 	if (D.Click && Pulse)
-		Out += std::string(" after a ") + (D.Duty >= 1 && D.Duty != 3 ? "12.5%" : "50%") + " duty click on the first frame";
+		Out += std::string(" after a ") + ((D.Vrc6Duty >= 0 ? D.Vrc6Duty >= 3 : D.Duty >= 1 && D.Duty != 3) ? "12.5%" : "50%") +
+			" duty click on the first frame";
 	Buffer[0] = 0;
 	if (Wave == "triangle")
 		;	// said above

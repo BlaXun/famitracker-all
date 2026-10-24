@@ -3306,6 +3306,72 @@ std::string VolumeTimeline(const InstrumentInfo &Info, double FramesPerBeat, dou
 	return Out + ".";
 }
 
+// design_instrument's duty: a word (thin, bright, round, square, hollow, nasal), a share ("37.5%", 37.5) or a step of the
+// chip's pulse (0-3 on the 2A03; 0-7 on the VRC6, (n + 1) / 16). The VRC6's pulses play every 6.25% up to 50% (Vrc6Duty its
+// step, Duty the nearest on the 2A03), the 2A03's 12.5%, 25%, 50% and 75%.
+void DutyArg(const Json &Args, bool Vrc6, int &Duty, int &Vrc6Duty)
+{
+	const Json *pValue = Arg(Args, "duty");
+	if (pValue == 0)
+		return;
+	static const char *const WORDS[] = { "thin", "bright", "round", "square", "hollow", "nasal" };
+	static const int WORD_VALUES[] = { 0, 1, 2, 2, 2, 0 };
+	static const int NEAREST[8] = { 0, 0, 1, 1, 1, 2, 2, 2 };	// a VRC6 step's on the 2A03
+	const std::string Help = Vrc6 ? "duty on the VRC6's pulses: 6.25% to 50% in steps of 6.25% (6.25%, 12.5%, 18.75%, 25%, 31.25%, "
+		"37.5%, 43.75%, 50%), a step 0-7, or thin, bright, round, hollow, nasal." : "duty on the 2A03's pulses: 12.5%, 25%, 50% or "
+		"75%, a step 0-3, or thin, bright, round, hollow, nasal (the VRC6's pulses also play 6.25% to 50% in steps of 6.25%).";
+	double Share = -1.0;
+	bool Step = false;
+	if (pValue->IsNumber()) {
+		Share = pValue->Number();
+		Step = Share == std::floor(Share) && Share >= 0 && Share <= (Vrc6 ? 7 : 3);
+	}
+	else if (pValue->IsString()) {
+		std::string Text = Lowercase(Trim(pValue->String()));
+		const bool Percent = !Text.empty() && Text[Text.size() - 1] == '%';
+		if (Percent)
+			Text = Trim(Text.substr(0, Text.size() - 1));
+		for (size_t w = 0; w < sizeof(WORDS) / sizeof(WORDS[0]); ++w) {
+			if (Text == WORDS[w]) {
+				Duty = WORD_VALUES[w];
+				Vrc6Duty = -1;
+				return;
+			}
+		}
+		char *pEnd = 0;
+		Share = Text.empty() ? -1.0 : std::strtod(Text.c_str(), &pEnd);
+		if (Text.empty() || pEnd == 0 || *pEnd != 0)
+			throw Problem(Help);
+		Step = !Percent && Share == std::floor(Share) && Share >= 0 && Share <= (Vrc6 ? 7 : 3);
+	}
+	else
+		throw Problem(Help);
+	if (Step) {
+		Vrc6Duty = Vrc6 ? static_cast<int>(Share) : -1;
+		Duty = Vrc6 ? NEAREST[static_cast<int>(Share)] : static_cast<int>(Share);
+		return;
+	}
+	if (std::fabs(Share - 75.0) < 0.01) {	// a 75% pulse sounds like a 25% one; the VRC6 plays it as before, at its nearest
+		Duty = 3;
+		Vrc6Duty = -1;
+		return;
+	}
+	if (Vrc6 && Share >= 6.0 && Share <= 50.5) {
+		Vrc6Duty = std::max(0, std::min(7, static_cast<int>(std::floor(Share / 6.25 + 0.5)) - 1));
+		Duty = NEAREST[Vrc6Duty];
+		return;
+	}
+	static const double SHARES[] = { 12.5, 25.0, 50.0 };
+	for (int d = 0; d < 3 && !Vrc6; ++d) {
+		if (std::fabs(Share - SHARES[d]) < 0.01) {
+			Duty = d;
+			Vrc6Duty = -1;
+			return;
+		}
+	}
+	throw Problem(Help);
+}
+
 std::string DesignInstrumentTool(Session &S, const Json &Args)
 {
 	const std::string Name = StringArg(Args, "name");
@@ -3376,9 +3442,6 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	static const int SUSTAIN_LEVELS[] = { 0, 4, 8, 12, 15 };
 	static const char *const RELEASES[] = { "short", "medium", "long" };
 	static const int RELEASE_FRAMES[] = { 3, 8, 20 };
-	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%", "12.5", "25", "50", "75", "thin", "bright", "round", "square",
-		"hollow", "nasal" };
-	static const int DUTY_VALUES[] = { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 2, 2, 0 };
 	static const char *const MOTIONS[] = { "still", "none", "sweep", "open", "wobble", "chorus", "fade" };
 	static const int MOTION_VALUES[] = { DUTY_STILL, DUTY_STILL, DUTY_SWEEP, DUTY_SWEEP, DUTY_WOBBLE, DUTY_WOBBLE, DUTY_FADE };
 	static const char *const VIBRATOS[] = { "none", "faint", "gentle", "medium", "strong" };
@@ -3424,7 +3487,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 			D.Decay = std::max(8, D.Attack);
 	}
 	D.Release = WordArg(Args, "release", D.Release, RELEASES, RELEASE_FRAMES, 3, 60);
-	D.Duty = WordArg(Args, "duty", D.Duty, DUTIES, DUTY_VALUES, 14, 0);
+	if (Chip != "FDS")	// on the FDS a duty's word picks its wave
+		DutyArg(Args, Chip == "VRC6", D.Duty, D.Vrc6Duty);
 	D.Motion = WordArg(Args, "duty_motion", D.Motion, MOTIONS, MOTION_VALUES, 7, 0);
 	D.Vibrato = WordArg(Args, "vibrato", D.Vibrato, VIBRATOS, VIBRATO_DEPTHS, 5, 0);
 	if (Arg(Args, "vibrato_delay_beats") != 0) {
@@ -11001,14 +11065,16 @@ std::string ChipSounds(const std::string &Chip)
 	if (Chip == VRC6_PLUS) {
 		std::string Others;	// the N163's sounds besides the soft layer's own
 		for (size_t i = 0; i < WaveSounds().size(); ++i)
-			if (!IsSoftLayerSound(WaveSounds()[i].Name))
+			if (!IsSoftLayerSound(WaveSounds()[i].Name) && !IsSoftLayerCalmSound(WaveSounds()[i].Name))
 				Others += (Others.empty() ? "" : ", ") + WaveSounds()[i].Name;
 		return "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music (the melody, the sawtooth's bass and "
 			"bite), and under them a soft layer of four N163 wave channels, Soft 1 to Soft 4, adds softness and depth: a pad or "
 			"a choir holding the chords, a soft echo of the melody, a sub bass an octave under the sawtooth. It's optional and "
 			"quieter: left empty, the song is plain VRC6. Its sounds: choir pad, string pad, soft flute and sub bass, and the "
-			"N163's other wave sounds (" + Others + "). The VRC6 Plus is this FamiTracker's own; other FamiTrackers "
-			"open the song as the VRC6 and the N163 with 4 channels, which play it the same.";
+			"N163's other wave sounds (" + Others + "). For calm parts, by name (a song holds 8 soft sounds): breath (in from 4 "
+			"over 11 frames, sinks to 10 and holds), quick pad (in within 7 frames, a chord a beat), pulsing pad (struck again "
+			"every 12 frames, a soft echo after) and music box (gone in 40 frames). The VRC6 Plus is this FamiTracker's own; "
+			"other FamiTrackers open the song as the VRC6 and the N163 with 4 channels, which play it the same.";
 	}
 	if (Chip == "VRC6")
 		return "The VRC6: two pulses and a sawtooth, a strong bass; the presets work on them.";
@@ -14938,7 +15004,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("echo", Prop("boolean", "A soft echo of the note after it dies away or is released."))
 			.Add("click", Prop("boolean", "A duty click: each note's first frame at another pulse width, so it speaks."))
 			.Add("volume", Prop("integer", "Its loudest, 1-15."))
-			.Add("duty", LevelProp("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%."))
+			.Add("duty", PanChoice("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%; on the VRC6's pulses any "
+				"step of 6.25% up to 50% (37.5%: Castlevania III's calm leads). Or the step: 0-3 on the 2A03, 0-7 on the VRC6."))
 			.Add("duty_motion", EnumProp("How the tone moves: still, sweep (opens from thin on the attack), wobble (shimmers to "
 				"and fro), fade (thins as it fades).", std::vector<std::string>{ "still", "sweep", "wobble", "fade" }))
 			.Add("vibrato", EnumProp("A vibrato built into the instrument, either way at A-3: faint (about 3 cents, the calm references'; "

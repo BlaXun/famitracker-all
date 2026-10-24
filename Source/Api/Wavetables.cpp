@@ -138,6 +138,27 @@ std::vector<std::pair<int, int> > Steps(std::initializer_list<std::pair<int, int
 	return std::vector<std::pair<int, int> >(List);
 }
 
+// A design with the faint vibrato (VIBRATO_FAINT) after Delay frames
+SoundDesign Faint(SoundDesign Design, int Delay)
+{
+	Design.Vibrato = VIBRATO_FAINT;
+	Design.VibratoDelay = Delay;
+	return Design;
+}
+
+// A sound's volume sequence replaced by one of its own (its loop and release point as a sequence keeps them, -1 for none)
+WaveSound WithVolume(WaveSound Sound, const std::vector<int> &Items, int Loop, int Release)
+{
+	for (size_t i = 0; i < Sound.Sequences.size(); ++i) {
+		if (Sound.Sequences[i].Type != SEQUENCE_VOLUME)
+			continue;
+		Sound.Sequences[i].Items = Items;
+		Sound.Sequences[i].Loop = Loop;
+		Sound.Sequences[i].Release = Release;
+	}
+	return Sound;
+}
+
 // Waves whose upper harmonics drift in phase, a quarter turn each: a timbre that shimmers like several players
 std::vector<std::vector<int> > Shimmer(const std::vector<double> &Amplitudes, size_t From)
 {
@@ -225,6 +246,35 @@ std::vector<WaveSound> MakeSounds()
 	Out.push_back(Sound("sub bass", "sub, sine bass, low bass, 808",
 		"a round sub bass, almost a sine, for an octave under the sawtooth: felt more than heard",
 		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.18 }) }, None, Envelope(1, 8, 15, 6, 13, 4)));
+	// The soft layer's calm shapes (Vrc6Plus.h, SoftLayerCalmSounds), which its pads don't have: a lead that breathes in and
+	// sinks, a pad quick enough for a chord every beat, a pad struck again and again, a music box
+	Out.push_back(Sound("breath", "breathy lead, breath lead, calm lead, airy flute, night lead",
+		"a breathy lead that breathes in from 4 over 11 frames, sinks to 10 by frame 21 and holds it, with a faint vibrato "
+		"after 24 frames: a calm lead, or a soft answer to the VRC6's",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.24, 0.1 }), HarmonicWave({ 1.0, 0.18, 0.15 }, { 0.0, 0.12, 0.3 }) },
+		WaveSteps(Steps({ { 0, 8 }, { 1, 8 } }), 0), Faint(Envelope(11, 4, 14, 10, 10, 16), 24)));
+	Out.push_back(Sound("quick pad", "fast pad, short pad, beat pad, chord a beat, quick chords",
+		"a soft pad that's in within 7 frames and holds, for a chord every beat (the other pads take 20-24 frames to swell)",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.5, 0.3, 0.15 }), HarmonicWave({ 1.0, 0.45, 0.35, 0.12, 0.05 },
+			{ 0.0, 0.08, 0.0, 0.15 }) }, WaveSteps(Steps({ { 0, 10 }, { 1, 10 } }), 0), Envelope(7, 0, 11, 0, 11, 10)));
+	{
+		// Struck every 12 frames, each strike a little softer down to a level it keeps striking, and after a release a fade,
+		// a moment's silence and a soft echo (Fearofdark's slow pads, snow-burn-ftm-01)
+		const WaveSound Pulsing = Sound("pulsing pad", "struck pad, restruck pad, restrike pad, echo pad, throb pad, tremolo pad",
+			"a pad struck again every 12 frames, each strike softer (13, 11, then 10 again and again), with a soft echo after "
+			"a release: slow chords that keep moving",
+			std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.4, 0.25, 0.1 }), HarmonicWave({ 1.0, 0.3, 0.3, 0.15 }, { 0.0, 0.1, 0.2 }) },
+			WaveSteps(Steps({ { 0, 6 }, { 1, 6 } }), 0), Envelope(0, 0, 13, 0, 13, 6));
+		const std::vector<int> Volume = { 13, 13, 12, 12, 11, 10, 10, 9, 9, 9, 8, 8,	// the first strike
+			11, 11, 10, 10, 9, 9, 8, 8, 8, 7, 7, 7,		// the second, softer
+			10, 10, 9, 9, 8, 8, 7, 7, 7, 6, 6, 6,		// then this one again and again while the note holds
+			5, 4, 3, 3, 2, 1, 0, 0, 0, 0, 2, 2, 3, 3, 2, 2, 1, 1, 0 };	// after a release: a fade, then the echo
+		Out.push_back(WithVolume(Pulsing, Volume, 24, 35));
+	}
+	Out.push_back(Sound("music box", "celesta, toy piano, lullaby, tinkle, struck lead",
+		"a soft music box: a bright tine struck at 15 that mellows to a pure tone and dies away by itself in 40 frames",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.0, 0.0, 0.4, 0.0, 0.15 }), HarmonicWave({ 1.0, 0.0, 0.0, 0.18 }),
+			HarmonicWave({ 1.0 }) }, WaveSteps(Steps({ { 0, 3 }, { 1, 6 }, { 2, 1 } }), -1), Envelope(0, 0, 15, 40, 0, 6)));
 	return Out;
 }
 

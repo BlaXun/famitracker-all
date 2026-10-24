@@ -118,6 +118,7 @@ struct SoundDesign {
 								// is struck again from its peak), 0 for none
 	bool Echo;					// a soft echo after the sound dies away or is released
 	int Duty;					// 0-3: 12.5%, 25%, 50%, 75% (the VRC6's nearest)
+	int Vrc6Duty;				// the VRC6's own duty, 0-7 ((n + 1) / 16: 6.25% to 50%), -1 for the nearest to Duty
 	int Motion;					// duty_motion: still, thin to the duty on the attack, to and fro (a chorus), thinner as it fades
 	bool Click;					// a duty click: the first frame at another duty, so each note speaks
 	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong, VIBRATO_FAINT
