@@ -48,9 +48,23 @@
 
  N163 & 5B are still unknown
 
+ Stereo (this FamiTracker's own; the NES plays in mono): every channel has a
+ pan (the 8xx effect, CChannelHandler::SetPan), 0x00 left, 0x80 the middle,
+ 0xFF right, and the mixer renders a left and a right side, a Blip_Buffer
+ each. A channel's level on a side is its level times the side's gain
+ (PanGains): both gains are 1 in the middle, so a song that doesn't pan comes
+ out on both sides sample for sample as the mono mix did. The 2A03's two
+ outputs mix their channels nonlinearly (CalcPin1, CalcPin2): each side mixes
+ its share of every channel with the same formula. The linear chips' channels
+ (VRC6, MMC5, FDS) send each side its share of their level; the N163's one
+ DAC plays its channels in turn, each with its own pan. The VRC7 and the 5B
+ make their samples at the end of a frame, a side at a time with the pans
+ then (CVRC7::EndFrame, CS5B::GetMixMono).
+
 */
 
 #include "../stdafx.h"
+#include <algorithm>
 #include <memory>
 #include <cmath>
 #include "Mixer.h"
@@ -71,6 +85,16 @@ CMixer::CMixer()
 	memset(m_fChannelLevels, 0, sizeof(float) * CHANNELS);
 	memset(m_iChanLevelFallOff, 0, sizeof(uint32) * CHANNELS);
 
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_iPan[i] = 0x80;
+		m_dGain[i][0] = m_dGain[i][1] = 1.0;
+		m_iLevel[i] = 0;
+		m_iSent[i][0] = m_iSent[i][1] = 0;
+	}
+	m_iN163Level = 0;
+	m_iN163Chan = CHANID_N163_CHAN1;
+	m_iN163Sent[0] = m_iN163Sent[1] = 0;
+
 	m_fLevelAPU1 = 1.0f;
 	m_fLevelAPU2 = 1.0f;
 	m_fLevelVRC6 = 1.0f;
@@ -85,12 +109,18 @@ CMixer::CMixer()
 	m_iHighDamp = 0;
 	m_fOverallVol = 1.0f;
 
-	m_dSumSS = 0.0;
-	m_dSumTND = 0.0;
+	m_dSumSS[0] = m_dSumSS[1] = 0.0;
+	m_dSumTND[0] = m_dSumTND[1] = 0.0;
 }
 
 CMixer::~CMixer()
 {
+}
+
+// A channel's level on a side: exact in the middle, where the gain is 1
+static inline int32 SideLevel(int32 Level, double Gain)
+{
+	return Gain == 1.0 ? Level : static_cast<int32>(std::floor(Level * Gain + 0.5));
 }
 
 inline double CMixer::CalcPin1(double Val1, double Val2)
@@ -181,6 +211,7 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 
 	// Blip-buffer filtering
 	BlipBuffer.bass_freq(LowCut);
+	BlipBufferRight.bass_freq(LowCut);
 
 	blip_eq_t eq(-HighDamp, HighCut, m_iSampleRate);
 
@@ -234,8 +265,16 @@ void CMixer::SetNamcoVolume(float fVol)
 
 void CMixer::MixSamples(blip_sample_t *pBuffer, uint32 Count)
 {
-	// For VRC7
+	// Samples in the middle, on both sides
 	BlipBuffer.mix_samples(pBuffer, Count);
+	BlipBufferRight.mix_samples(pBuffer, Count);
+}
+
+void CMixer::MixSamples(blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count)
+{
+	// For VRC7 and 5B
+	BlipBuffer.mix_samples(pLeft, Count);
+	BlipBufferRight.mix_samples(pRight, Count);
 }
 
 uint32 CMixer::GetMixSampleCount(int t) const
@@ -247,6 +286,7 @@ bool CMixer::AllocateBuffer(unsigned int BufferLength, uint32 SampleRate, uint8 
 {
 	m_iSampleRate = SampleRate;
 	BlipBuffer.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
+	BlipBufferRight.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
 	return true;
 }
 
@@ -254,14 +294,17 @@ void CMixer::SetClockRate(uint32 Rate)
 {
 	// Change the clockrate
 	BlipBuffer.clock_rate(Rate);
+	BlipBufferRight.clock_rate(Rate);
 }
 
 void CMixer::ClearBuffer()
 {
 	BlipBuffer.clear();
+	BlipBufferRight.clear();
 
-	m_dSumSS = 0;
-	m_dSumTND = 0;
+	// The channels' levels stay as they are, as the mono mixer kept them
+	m_dSumSS[0] = m_dSumSS[1] = 0;
+	m_dSumTND[0] = m_dSumTND[1] = 0;
 }
 
 int CMixer::SamplesAvail() const
@@ -272,6 +315,7 @@ int CMixer::SamplesAvail() const
 int CMixer::FinishBuffer(int t)
 {
 	BlipBuffer.end_frame(t);
+	BlipBufferRight.end_frame(t);
 
 	// Get channel levels for VRC7
 	for (int i = 0; i < 6; ++i)
@@ -303,55 +347,162 @@ int CMixer::FinishBuffer(int t)
 
 void CMixer::MixInternal1(int Time)
 {
+	// Each side mixes its share of the pulses (a pulse in the middle has all of it on both)
+	for (int s = 0; s < 2; ++s) {
 #ifdef LINEAR_MIXING
-	SumL = ((m_iChannels[CHANID_SQUARE1].Left + m_iChannels[CHANID_SQUARE2].Left) * 0.00752) * InternalVol;
-	SumR = ((m_iChannels[CHANID_SQUARE1].Right + m_iChannels[CHANID_SQUARE2].Right) *  0.00752) * InternalVol;
+		SumL = ((m_iChannels[CHANID_SQUARE1].Left + m_iChannels[CHANID_SQUARE2].Left) * 0.00752) * InternalVol;
+		SumR = ((m_iChannels[CHANID_SQUARE1].Right + m_iChannels[CHANID_SQUARE2].Right) *  0.00752) * InternalVol;
 #else
-	double Sum = CalcPin1(m_iChannels[CHANID_SQUARE1], m_iChannels[CHANID_SQUARE2]);
+		double Sum = CalcPin1(m_iChannels[CHANID_SQUARE1] * m_dGain[CHANID_SQUARE1][s], m_iChannels[CHANID_SQUARE2] * m_dGain[CHANID_SQUARE2][s]);
 #endif
 
-	double Delta = (Sum - m_dSumSS) * AMP_2A03;
-	Synth2A03SS.offset(Time, (int)Delta, &BlipBuffer);
-	m_dSumSS = Sum;
+		double Delta = (Sum - m_dSumSS[s]) * AMP_2A03;
+		Synth2A03SS.offset(Time, (int)Delta, &Side(s));
+		m_dSumSS[s] = Sum;
+	}
 }
 
 void CMixer::MixInternal2(int Time)
 {
+	for (int s = 0; s < 2; ++s) {
 #ifdef LINEAR_MIXING
-	SumL = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Left + 0.00494 * m_iChannels[CHANID_NOISE].Left + 0.00335 * m_iChannels[CHANID_DPCM].Left)) * InternalVol;
-	SumR = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Right + 0.00494 * m_iChannels[CHANID_NOISE].Right + 0.00335 * m_iChannels[CHANID_DPCM].Right)) * InternalVol;
+		SumL = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Left + 0.00494 * m_iChannels[CHANID_NOISE].Left + 0.00335 * m_iChannels[CHANID_DPCM].Left)) * InternalVol;
+		SumR = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Right + 0.00494 * m_iChannels[CHANID_NOISE].Right + 0.00335 * m_iChannels[CHANID_DPCM].Right)) * InternalVol;
 #else
-	double Sum = CalcPin2(m_iChannels[CHANID_TRIANGLE], m_iChannels[CHANID_NOISE], m_iChannels[CHANID_DPCM]);
+		double Sum = CalcPin2(m_iChannels[CHANID_TRIANGLE] * m_dGain[CHANID_TRIANGLE][s], m_iChannels[CHANID_NOISE] * m_dGain[CHANID_NOISE][s],
+			m_iChannels[CHANID_DPCM] * m_dGain[CHANID_DPCM][s]);
 #endif
 
-	double Delta = (Sum - m_dSumTND) * AMP_2A03;
-	Synth2A03TND.offset(Time, (int)Delta, &BlipBuffer);
-	m_dSumTND = Sum;
+		double Delta = (Sum - m_dSumTND[s]) * AMP_2A03;
+		Synth2A03TND.offset(Time, (int)Delta, &Side(s));
+		m_dSumTND[s] = Sum;
+	}
 }
 
-void CMixer::MixN163(int Value, int Time)
+// A linear chip's channel: each side gets its share of the channel's level
+template <class Synth>
+void CMixer::MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time)
 {
-	SynthN163.offset(Time, Value, &BlipBuffer);
+	for (int s = 0; s < 2; ++s) {
+		const int32 Want = SideLevel(Level, pGain[s]);
+		if (Want != pSent[s]) {
+			Synth_.offset(Time, Want - pSent[s], &Side(s));
+			pSent[s] = Want;
+		}
+	}
 }
 
-void CMixer::MixFDS(int Value, int Time)
+void CMixer::MixN163(int ChanID, int Value, int Time)
 {
-	SynthFDS.offset(Time, Value, &BlipBuffer);
+	// The DAC's level changed (Value), and it plays ChanID now
+	m_iN163Level += Value;
+	m_iN163Chan = ChanID;
+	MixN163Sides(Time);
 }
 
-void CMixer::MixVRC6(int Value, int Time)
+void CMixer::N163Channel(int ChanID, int Time)
 {
-	SynthVRC6.offset(Time, Value, &BlipBuffer);
+	if (ChanID == m_iN163Chan)
+		return;
+	m_iN163Chan = ChanID;
+	if (m_iPan[ChanID] != 0x80 || m_iN163Sent[0] != m_iN163Level || m_iN163Sent[1] != m_iN163Level)
+		MixN163Sides(Time);
 }
 
-void CMixer::MixMMC5(int Value, int Time)
+void CMixer::MixN163Sides(int Time)
 {
-	SynthMMC5.offset(Time, Value, &BlipBuffer);
+	MixSides(SynthN163, m_iN163Level, m_dGain[m_iN163Chan], m_iN163Sent, Time);
+}
+
+void CMixer::MixFDS(int ChanID, int Value, int Time)
+{
+	m_iLevel[ChanID] += Value;
+	MixSides(SynthFDS, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+}
+
+void CMixer::MixVRC6(int ChanID, int Value, int Time)
+{
+	m_iLevel[ChanID] += Value;
+	MixSides(SynthVRC6, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+}
+
+void CMixer::MixMMC5(int ChanID, int Value, int Time)
+{
+	m_iLevel[ChanID] += Value;
+	MixSides(SynthMMC5, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::MixS5B(int Value, int Time)
 {
 	SynthS5B.offset(Time, Value, &BlipBuffer);
+	SynthS5B.offset(Time, Value, &BlipBufferRight);
+}
+
+void CMixer::PanGains(int Pan, double &Left, double &Right)
+{
+	// 0x00 hard left, 0x80 the middle, 0xFF hard right: the side the sound moves
+	// away from fades out, the other keeps all of it
+	Left = Right = 1.0;
+	if (Pan < 0x80)
+		Right = std::max(0, Pan) / 128.0;
+	else if (Pan > 0x80)
+		Left = (0xFF - std::min(0xFF, Pan)) / 127.0;
+}
+
+void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
+{
+	if (ChanID < 0 || ChanID >= CHANNELS)
+		return;
+	Pan = std::max(0, std::min(0xFF, Pan));
+	if (Pan == m_iPan[ChanID])
+		return;
+	m_iPan[ChanID] = Pan;
+	PanGains(Pan, m_dGain[ChanID][0], m_dGain[ChanID][1]);
+
+	// What the channel sounds moves to its new place now
+	switch (ChanID) {
+		case CHANID_SQUARE1:
+		case CHANID_SQUARE2:
+			MixInternal1(Time);
+			break;
+		case CHANID_TRIANGLE:
+		case CHANID_NOISE:
+		case CHANID_DPCM:
+			MixInternal2(Time);
+			break;
+		case CHANID_VRC6_PULSE1:
+		case CHANID_VRC6_PULSE2:
+		case CHANID_VRC6_SAWTOOTH:
+			MixSides(SynthVRC6, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			break;
+		case CHANID_MMC5_SQUARE1:
+		case CHANID_MMC5_SQUARE2:
+		case CHANID_MMC5_VOICE:
+			MixSides(SynthMMC5, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			break;
+		case CHANID_FDS:
+			MixSides(SynthFDS, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			break;
+		default:
+			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
+				MixN163Sides(Time);
+			// The VRC7's and the 5B's channels: their samples are made at the end of the frame
+			break;
+	}
+}
+
+int CMixer::GetChannelPan(int ChanID) const
+{
+	return (ChanID >= 0 && ChanID < CHANNELS) ? m_iPan[ChanID] : 0x80;
+}
+
+void CMixer::PanGains256(int ChanID, int32 &Left, int32 &Right) const
+{
+	Left = Right = 256;
+	if (ChanID < 0 || ChanID >= CHANNELS)
+		return;
+	Left = static_cast<int32>(std::floor(m_dGain[ChanID][0] * 256.0 + 0.5));
+	Right = static_cast<int32>(std::floor(m_dGain[ChanID][1] * 256.0 + 0.5));
 }
 
 void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCycles)
@@ -378,23 +529,35 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 			}
 			break;
 		case SNDCHIP_N163:
-			MixN163(Value, FrameCycles);
+			MixN163(ChanID, Value, FrameCycles);
 			break;
 		case SNDCHIP_FDS:
-			MixFDS(Value, FrameCycles);
+			MixFDS(ChanID, Value, FrameCycles);
 			break;
 		case SNDCHIP_MMC5:
-			MixMMC5(Delta, FrameCycles);
+			MixMMC5(ChanID, Delta, FrameCycles);
 			break;
 		case SNDCHIP_VRC6:
-			MixVRC6(Value, FrameCycles);
+			MixVRC6(ChanID, Value, FrameCycles);
 			break;
 	}
 }
 
 int CMixer::ReadBuffer(int Size, void *Buffer, bool Stereo)
 {
-	return BlipBuffer.read_samples((blip_sample_t*)Buffer, Size);
+	blip_sample_t *pOut = (blip_sample_t*)Buffer;
+	if (Stereo) {
+		// The left and the right side, one after the other
+		const int Read = BlipBuffer.read_samples(pOut, Size, 1);
+		BlipBufferRight.read_samples(pOut + 1, Size, 1);
+		return Read;
+	}
+	// Mono: the two sides together, the left in Buffer and the right after it for a moment
+	const int Read = BlipBuffer.read_samples(pOut, Size);
+	BlipBufferRight.read_samples(pOut + Read, Read);
+	for (int i = 0; i < Read; ++i)
+		pOut[i] = static_cast<blip_sample_t>((pOut[i] + pOut[Read + i]) / 2);
+	return Read;
 }
 
 int32 CMixer::GetChanOutput(uint8 Chan) const

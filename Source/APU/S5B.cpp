@@ -56,6 +56,7 @@ void CS5B::Process(uint32 Time)
 }
 
 int16 m_pBuffer[4000];
+int16 m_pBufferRight[4000];	// the right side (m_pBuffer is the left)
 uint32 m_iBufferPtr = 0;
 
 void CS5B::EndFrame()
@@ -65,18 +66,28 @@ void CS5B::EndFrame()
 
 void CS5B::GetMixMono()
 {
-	static int32 LastSample = 0;
+	static int32 LastSample = 0, LastRight = 0;
 
 	uint32 WantSamples = m_pMixer->GetMixSampleCount(m_iTime);
 
-	// Generate samples
+	// The channels' pans, for the whole frame (stereo is this FamiTracker's own)
+	int32 GainL[3], GainR[3];
+	for (int i = 0; i < 3; ++i)
+		m_pMixer->PanGains256(CHANID_S5B_CH1 + i, GainL[i], GainR[i]);
+
+	// Generate samples, the left side and the right
 	while (m_iBufferPtr < WantSamples) {
-		int32 Sample = int32(float(PSG_calc(psg)) * m_fVolume);
+		int16 Left, Right;
+		PSG_calc_lr(psg, GainL, GainR, &Left, &Right);
+		int32 Sample = int32(float(Left) * m_fVolume);
+		int32 SampleRight = int32(float(Right) * m_fVolume);
+		m_pBufferRight[m_iBufferPtr] = int16((SampleRight + LastRight) >> 1);
 		m_pBuffer[m_iBufferPtr++] = int16((Sample + LastSample) >> 1);
 		LastSample = Sample;
+		LastRight = SampleRight;
 	}
 
-	m_pMixer->MixSamples((blip_sample_t*)m_pBuffer, WantSamples);
+	m_pMixer->MixSamples((blip_sample_t*)m_pBuffer, (blip_sample_t*)m_pBufferRight, WantSamples);
 
 	m_iBufferPtr -= WantSamples;
 	m_iTime = 0;

@@ -69,6 +69,15 @@ std::vector<EffectInfo> MakeReference()
 	All.push_back({ "7xy", "tremolo",
 		"Wobbles the volume: x is how fast, y how deep.", "channels with a volume (not the triangle or the DPCM)", "until 700",
 		"744 a gentle shimmer on pads and organs, 7A8 a fast throb." });
+	All.push_back({ "8xx", "pan",
+		"Sets where the channel sounds from, between the speakers: 00 hard left, 80 the middle (where every channel starts), FF "
+		"hard right, and the places between (40 halfway left, C0 halfway right; the far side fades, the near one keeps all of "
+		"it). This FamiTracker's own stereo: its playback, File > Create WAV and the OGG files of export_for_game have it; "
+		"FamiTracker 0.4.6 and NSF files play mono and leave it out.",
+		"every channel", "until the next 8xx, over notes, releases and halts",
+		"width: an echo on the other side of its lead (add_echo with side), chord voices apart (840 and 8C0), arpeggios or "
+		"hi-hats alternating left and right (set_pan). Keep the bass, the kick, the snare and the lead in the middle (880): they "
+		"carry the song, and many players hear it from one speaker." });
 	All.push_back({ "Axy", "volume slide",
 		"Slides the volume: A0y down, Ax0 up, by y or x eighths of a step a tick (one of them, the other 0).",
 		"channels with a volume (not the triangle or the DPCM)", "until A00",
@@ -297,6 +306,7 @@ std::string ChannelProblem(const ChannelInfo &C, int Effect, int Param, int Spee
 	case EFF_SPEED: case EFF_JUMP: case EFF_SKIP: case EFF_HALT:
 		return "Fxx, Bxx, Cxx and Dxx steer the whole song: set_tempo sets the speed and tempo, set_loop the loop and the end.";
 	case EFF_NOTE_CUT:
+	case EFF_PAN:
 		break;
 	default:
 		std::snprintf(Text, sizeof(Text), "%s isn't one of FamiTracker 0.4.6's effects.", Written.c_str());
@@ -326,8 +336,6 @@ std::string ForeignEffect(char Letter, const std::string &Written)
 	case '6':
 		return Written + " (vibrato and volume slide at once) is a MOD and XM effect. In FamiTracker put 4xy and Axy in two effect "
 			"columns.";
-	case '8':
-		return Written + " (panning) is a MOD and XM effect; the NES plays in mono.";
 	case '9':
 		return Written + " (sample offset) is a MOD effect; FamiTracker's is Yxx, on the DPCM channel.";
 	}
@@ -343,9 +351,11 @@ const char *const OVERVIEW =
 	"Tone: Vxx timbre (a pulse's duty, the noise's mode, an N163 wave).\n"
 	"Samples (the DPCM channel): Wxx pitch, Xxx retrigger, Yxx sample offset, Zxx delta counter.\n"
 	"The FDS: Hxx modulation depth, Ixx and Jxx modulation speed.\n"
+	"Stereo (this FamiTracker's own, not 0.4.6's): 8xx pan, 00 left, 80 the middle, FF right; its playback and the OGG files "
+	"for games have it, NSF files don't.\n"
 	"The song (set_tempo and set_loop write these): Fxx speed or tempo, Bxx jump, Dxx skip, Cxx halt. Exx (volume) is only kept "
 	"for old songs: use the volume column.\n"
-	"Not in 0.4.6: Lxx, Mxy, Oxx, Txy and the like come from later FamiTrackers (0CC); 5xy, 6xy, 8xx and 9xx from MOD and XM. "
+	"Not in 0.4.6: Lxx, Mxy, Oxx, Txy and the like come from later FamiTrackers (0CC); 5xy, 6xy and 9xx from MOD and XM. "
 	"write_notes refuses them and effects a channel can't play, and says what to use.";
 
 }	// namespace

@@ -39,6 +39,7 @@ extern "C"
     uint8 reg[0x20];
     int32 out;
     int32 cout[3];
+    int32 chout[3];		/* what each channel added to the last sample (FamiTracker's stereo) */
 
     uint32 clk, rate, base_incr, quality;
 
@@ -91,6 +92,9 @@ extern "C"
   EMU2149_API uint8 PSG_readReg (PSG * psg, uint32 reg);
   EMU2149_API uint8 PSG_readIO (PSG * psg);
   EMU2149_API int16 PSG_calc (PSG *);
+  /* FamiTracker's stereo: the output on each side, the channels weighed by their gains for it (256:
+     all of the channel); with every gain 256, both sides are what PSG_calc gives */
+  EMU2149_API void PSG_calc_lr (PSG *, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right);
   EMU2149_API void PSG_setVolumeMode (PSG * psg, int type);
   EMU2149_API uint32 PSG_setMask (PSG *, uint32 mask);
   EMU2149_API uint32 PSG_toggleMask (PSG *, uint32 mask);

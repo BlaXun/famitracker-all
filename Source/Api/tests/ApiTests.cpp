@@ -710,8 +710,9 @@ public:
 
 	// Plays the song as square waves, a little like the 2A03: each channel's
 	// note at its volume, the noise channel from a free-running noise
-	// generator, 8000 samples a second
-	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+	// generator, 8000 samples a second, each channel on the sides as its pan
+	// (8xx) puts it, as FamiTracker's mixer does (PanGains)
+	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, std::vector<float> &Right, int &SampleRate,
 		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
 	{
 		if (Track != Current) {
@@ -720,6 +721,7 @@ public:
 		}
 		SampleRate = 8000;
 		Samples.assign(static_cast<size_t>(RenderLatency), 0.0f);
+		Right.assign(static_cast<size_t>(RenderLatency), 0.0f);
 		Marks.clear();
 		std::vector<int> Columns;
 		for (size_t c = 0; c < Rows.size(); ++c)
@@ -729,7 +731,7 @@ public:
 		const std::vector<TimedRow> Timed = TimeRows(Rows, Columns, Flow, Info.PatternLength, Info.Speed, Info.Tempo, Info.SplitPoint,
 			Info.FrameRate, 6, EndTick);
 		const long long Total = static_cast<long long>(Seconds * SampleRate) + RenderLatency;
-		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15);
+		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15), Pan(Rows.size(), PAN_CENTER);
 		std::vector<double> Phase(Rows.size(), 0.0);
 		unsigned int Noise = 1;
 		for (size_t i = 0; i < Timed.size() && static_cast<long long>(Samples.size()) < Total; ++i) {
@@ -742,23 +744,33 @@ public:
 					Pitch[c] = -1;
 				if (C.Volume != NO_VOLUME)
 					Volume[c] = C.Volume;
+				for (int k = 0; k < Info.Channels[c].EffectColumns; ++k)
+					if (C.Effect[k] == EFF_PAN)
+						Pan[c] = C.Param[k];
 			}
 			const long long Until = RenderLatency + (i + 1 < Timed.size() ? Timed[i + 1].Tick : EndTick) * SampleRate / Info.FrameRate;
 			while (static_cast<long long>(Samples.size()) < std::min(Until, Total)) {
-				double Sum = 0.0;
+				double Sum = 0.0, SumRight = 0.0;
 				for (size_t c = 0; c < Rows.size(); ++c) {
 					if (Pitch[c] < 0)
 						continue;
+					double Value;
 					if (Info.Channels[c].Kind == KIND_NOISE) {
 						Noise = (Noise >> 1) | (((Noise ^ (Noise >> 1)) & 1u) << 14);
-						Sum += (Noise & 1u ? 0.05 : -0.05) * Volume[c] / 15.0;
-						continue;
+						Value = (Noise & 1u ? 0.05 : -0.05) * Volume[c] / 15.0;
 					}
-					const double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
-					Phase[c] = std::fmod(Phase[c] + Frequency / SampleRate, 1.0);
-					Sum += (Phase[c] < 0.5 ? 0.05 : -0.05) * Volume[c] / 15.0;
+					else {
+						const double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
+						Phase[c] = std::fmod(Phase[c] + Frequency / SampleRate, 1.0);
+						Value = (Phase[c] < 0.5 ? 0.05 : -0.05) * Volume[c] / 15.0;
+					}
+					double GainLeft, GainRight;
+					PanGains(Pan[c], GainLeft, GainRight);
+					Sum += Value * GainLeft;
+					SumRight += Value * GainRight;
 				}
 				Samples.push_back(static_cast<float>(Sum));
+				Right.push_back(static_cast<float>(SumRight));
 			}
 		}
 		return true;
@@ -5703,7 +5715,10 @@ void TestEffects()
 		"with a release (===)");
 	CHECK(!ParseChannelEffect("O02", Pulse, 6, Effect, Param, Why) && Contains(Why, "hold the off-beat notes back with Gxx"));
 	CHECK(!ParseChannelEffect("K10", Pulse, 6, Effect, Param, Why) && Contains(Why, "K10 isn't one of FamiTracker 0.4.6's effects"));
-	CHECK(!ParseChannelEffect("844", Pulse, 6, Effect, Param, Why) && Contains(Why, "the NES plays in mono"));
+	// 8xx is this FamiTracker's own pan (stereo), on every channel
+	CHECK(ParseChannelEffect("844", Pulse, 6, Effect, Param, Why) && Effect == EFF_PAN && Param == 0x44);
+	CHECK(ParseChannelEffect("8FF", Dpcm, 6, Effect, Param, Why) && ParseChannelEffect("800", Triangle, 6, Effect, Param, Why));
+	CHECK(!ParseChannelEffect("944", Pulse, 6, Effect, Param, Why) && Contains(Why, "sample offset"));
 	CHECK(!ParseChannelEffect("E0A", Pulse, 6, Effect, Param, Why) && Contains(Why, "give the note a volume (1-15) instead"));
 	CHECK(!ParseChannelEffect("F06", Pulse, 6, Effect, Param, Why) && Contains(Why, "set_tempo"));
 	CHECK(!ParseChannelEffect("B00", Pulse, 6, Effect, Param, Why) && Contains(Why, "set_loop"));
@@ -5743,8 +5758,11 @@ void TestEffects()
 	CHECK(!EffectsText("L", "", 0, Text) && Contains(Text, "comes from later FamiTrackers"));
 	CHECK(EffectsText("F", "", 0, Text) && Contains(Text, "set_tempo"));
 	CHECK(EffectsText("", "", &Triangle, Text));
-	CHECK_HAS(Text, "2A03 Triangle plays 0xy, 1xx, 2xx, 3xx, 4xy, Gxx, Pxx, Qxy, Rxy and Sxx. The triangle has no volume");
-	CHECK(EffectsText("", "", &Dpcm, Text) && Contains(Text, "2A03 DPCM plays Gxx, Sxx, Wxx, Xxx, Yxx and Zxx."));
+	CHECK_HAS(Text, "2A03 Triangle plays 0xy, 1xx, 2xx, 3xx, 4xy, 8xx, Gxx, Pxx, Qxy, Rxy and Sxx. The triangle has no volume");
+	CHECK(EffectsText("", "", &Dpcm, Text) && Contains(Text, "2A03 DPCM plays 8xx, Gxx, Sxx, Wxx, Xxx, Yxx and Zxx."));
+	CHECK(EffectsText("8", "", 0, Text) && Contains(Text, "8xx pan: Sets where the channel sounds from") &&
+		Contains(Text, "FamiTracker 0.4.6 and NSF files play mono") && Contains(Text, "every channel"));
+	CHECK(EffectsText("", "", 0, Text) && Contains(Text, "Stereo (this FamiTracker's own, not 0.4.6's): 8xx pan"));
 	CHECK(EffectsText("", "", &Pulse, Text) && Contains(Text, "Hxy, Ixy") && Contains(Text, "Vxx: V00-V03."));
 	CHECK(EffectsText("", "", &Fds, Text) && Contains(Text, "Hxx, ") && Contains(Text, "Ixx and Jxx.") && !Contains(Text, "Hxy"));
 	for (size_t i = 0; i < EffectReference().size(); ++i)
@@ -6643,10 +6661,17 @@ void TestExport()
 		const std::string Quiet = Tools.Call("export_for_game", Parse("{\"loudness\": -30}")).Text;
 		CHECK_HAS(Quiet, ", its loop at -30.0 LUFS (");
 		CHECK_LACKS(Quiet, "LU short of");
-		std::vector<float> Back;
-		CHECK(DecodeOgg(Song.Files["Town.ogg"], Back, Rate, Channels, Comments, Error));
+		// In stereo, its loudness over both sides (the same on both: nothing pans)
+		std::vector<float> Back, BackRight;
+		CHECK(DecodeOgg(Song.Files["Town.ogg"], Back, Rate, Channels, Comments, Error, &BackRight));
+		CHECK(Channels == 2 && BackRight.size() == Back.size());
+		float Apart = 0.0f;
+		for (size_t i = 0; i < Back.size() && i < BackRight.size(); ++i)
+			Apart = std::max(Apart, std::fabs(Back[i] - BackRight[i]));
+		CHECK(Apart < 0.001f);
 		const long long From = std::atoll(Comment(Comments, "LOOPSTART").c_str());
-		CHECK(Near(IntegratedLoudness(Back, Rate, static_cast<size_t>(From), Back.size()), -30.0, 0.3));
+		CHECK(Near(IntegratedLoudness(Back, BackRight, Rate, static_cast<size_t>(From), Back.size()), -30.0, 0.3));
+		CHECK(Near(IntegratedLoudness(Back, Rate, static_cast<size_t>(From), Back.size()), -33.0, 0.3));	// one side alone
 		// These square waves peak little over their loudness, so even -6 LUFS stays under -1 dBFS
 		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -6}")).Text, ", its loop at -6.0 LUFS (");
 		CHECK(DecodeOgg(Song.Files["Town.ogg"], Back, Rate, Channels, Comments, Error));
@@ -8442,6 +8467,550 @@ void TestVanishing()
 	}
 }
 
+// Stereo, this FamiTracker's own (8xx: 00 left, 80 the middle, FF right)
+
+// The pan on a cell (8xx), -1 for none
+int PanOf(const Cell &C)
+{
+	for (int k = 0; k < EFFECT_COLUMNS; ++k)
+		if (C.Effect[k] == EFF_PAN)
+			return C.Param[k];
+	return -1;
+}
+
+void SetPan(FakeSong &Song, int Channel, int Row, int Pan)
+{
+	Cell &C = Song.Rows[Channel][Row];
+	for (int k = 0; k < EFFECT_COLUMNS; ++k)
+		if (C.Effect[k] == EFF_NONE || C.Effect[k] == EFF_PAN) {
+			C.Effect[k] = EFF_PAN;
+			C.Param[k] = static_cast<unsigned char>(Pan);
+			return;
+		}
+}
+
+// The song's pan effects, all channels
+int PanEffects(const FakeSong &Song)
+{
+	int Count = 0;
+	for (size_t c = 0; c < Song.Rows.size(); ++c)
+		for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+			if (PanOf(Song.Rows[c][r]) >= 0)
+				++Count;
+	return Count;
+}
+
+// Where a channel's note starting at Row plays, as read back
+int PanAt(const FakeSong &Song, int Channel, int Row)
+{
+	const std::vector<NoteInfo> Notes = ReadNotes(Song.Rows[Channel], Song.Info.Channels[Channel].EffectColumns);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row == Row)
+			return Notes[i].Pan;
+	return -1;
+}
+
+void TestStereoBasics()
+{
+	// The places and their names; the mixer's law: the far side fades, the near one keeps all
+	CHECK(PanParam(-1.0) == 0x00 && PanParam(-0.5) == 0x40 && PanParam(0.0) == 0x80 && PanParam(0.5) == 0xC0 && PanParam(1.0) == 0xFF);
+	CHECK(PanParam(-2.0) == 0x00 && PanParam(3.0) == 0xFF);
+	CHECK(Near(PanPosition(0x00), -1.0, 1e-9) && Near(PanPosition(0x80), 0.0, 1e-9) && Near(PanPosition(0xFF), 1.0, 1e-9));
+	for (int p = 0; p < 256; ++p)
+		Check(PanParam(PanPosition(p)) == p, "PanParam(PanPosition(p)) == p", __LINE__);
+	CHECK(PanName(0x00) == "left" && PanName(0x80) == "center" && PanName(0xFF) == "right");
+	CHECK(PanName(0x40) == "50% left" && PanName(0xC0) == "50% right" && PanName(0x7F) == "1% left");
+	double L = 0.0, R = 0.0;
+	PanGains(0x80, L, R);
+	CHECK(L == 1.0 && R == 1.0);
+	PanGains(0x00, L, R);
+	CHECK(L == 1.0 && R == 0.0);
+	PanGains(0xFF, L, R);
+	CHECK(L == 0.0 && R == 1.0);
+	PanGains(0x40, L, R);
+	CHECK(L == 1.0 && Near(R, 0.5, 1e-9));
+	// The effect, as FamiTracker writes it: lasting, the middle as off
+	int Effect = 0, Param = 0;
+	CHECK(ParseEffect("8C0", Effect, Param) && Effect == EFF_PAN && Param == 0xC0);
+	CHECK(EffectText(EFF_PAN, 0x40) == "840" && EffectLetter(EFF_PAN) == '8');
+	CHECK(IsStickyEffect(EFF_PAN) && StickyOff(EFF_PAN) == 0x80 && !IsSongEffect(EFF_PAN));
+	CHECK(ChannelState().Sticky[EFF_PAN] == 0x80);
+
+	// Reading: each note's pan as it starts, set on its row or before
+	std::vector<Cell> Cells(32);
+	Cells[0].SetPitch(48);
+	Cells[0].Effect[0] = EFF_PAN;
+	Cells[0].Param[0] = 0x20;
+	Cells[8].SetPitch(50);
+	Cells[12].Effect[1] = EFF_PAN;	// on a row between notes
+	Cells[12].Param[1] = 0xE0;
+	Cells[16].SetPitch(52);
+	const std::vector<NoteInfo> Notes = ReadNotes(Cells, 2);
+	CHECK(Notes.size() == 3);
+	if (Notes.size() == 3) {
+		CHECK(Notes[0].Pan == 0x20 && Notes[0].PanSet && Notes[1].Pan == 0x20 && !Notes[1].PanSet);
+		CHECK(Notes[2].Pan == 0xE0 && !Notes[2].PanSet);
+	}
+	CHECK(StateAt(Cells, 16, 2).Sticky[EFF_PAN] == 0xE0 && StateAt(Cells, 8, 2).Sticky[EFF_PAN] == 0x20);
+	CHECK(NoteInfo().Pan == PAN_CENTER && !NoteInfo().PanSet);
+
+	// Writing a part: a note without a pan plays where the channel played at its row; one with a pan carries it
+	// to the notes after it in the part; the note after the range keeps its own place
+	{
+		std::vector<Cell> Old(64);
+		Old[0].SetPitch(48);
+		Old[0].Effect[0] = EFF_PAN;
+		Old[0].Param[0] = 0x00;		// left from bar 1
+		Old[16].SetPitch(50);
+		Old[16].Effect[0] = EFF_PAN;
+		Old[16].Param[0] = 0xFF;	// right from bar 2
+		Old[32].SetPitch(52);		// still right
+		Old[48].SetPitch(53);		// right, until the end
+		std::vector<PartNote> Part(3);
+		Part[0].Row = 8;
+		Part[0].Pitch = 60;
+		Part[0].Rows = 4;
+		Part[1].Row = 20;
+		Part[1].Pitch = 62;
+		Part[1].Rows = 4;
+		Part[2].Row = 36;
+		Part[2].Pitch = 64;
+		Part[2].Rows = 4;
+		PartOptions Options;
+		Options.EffectColumns = 2;
+		std::vector<Cell> Out;
+		std::vector<std::string> Warnings;
+		BuildPart(Old, 8, 40, Part, Options, Out, Warnings);
+		CHECK(Out.size() >= 32);
+		if (Out.size() >= 32) {
+			CHECK(PanOf(Out[0]) == -1);		// left already, as the song played there
+			CHECK(PanOf(Out[12]) == 0xFF);	// right, where bar 2 played (its 8FF was in the bars written)
+			CHECK(PanOf(Out[28]) == -1);	// still right
+		}
+		CHECK(Warnings.empty());
+		// Told: from the first note on, and the note after the range gets its own place back
+		Part[0].Effects.push_back(std::make_pair(static_cast<int>(EFF_PAN), 0xC0));
+		BuildPart(Old, 8, 40, Part, Options, Out, Warnings);
+		CHECK(Out.size() >= 41);
+		if (Out.size() >= 41) {
+			CHECK(PanOf(Out[0]) == 0xC0 && PanOf(Out[12]) == -1 && PanOf(Out[28]) == -1);	// the part keeps its pan
+			CHECK(PanOf(Out[40]) == 0xFF || (Out.size() > 40 && PanOf(Out[Out.size() - 1]) == 0xFF));
+		}
+		std::vector<Cell> New(Old);
+		for (size_t i = 0; i < Out.size(); ++i)
+			New[8 + i] = Out[i];
+		const std::vector<NoteInfo> After = ReadNotes(New, 2);
+		for (size_t i = 0; i < After.size(); ++i) {
+			if (After[i].Row == 0)
+				CHECK(After[i].Pan == 0x00);
+			else if (After[i].Row == 48)
+				CHECK(After[i].Pan == 0xFF);	// as before the part was written
+			else
+				CHECK(After[i].Pan == 0xC0);
+		}
+		// Without pans in the song, a part brings none
+		std::vector<Cell> Plain(64);
+		Plain[0].SetPitch(48);
+		Plain[40].SetPitch(50);
+		Part[0].Effects.clear();
+		BuildPart(Plain, 8, 40, Part, Options, Out, Warnings);
+		for (size_t i = 0; i < Out.size(); ++i)
+			Check(PanOf(Out[i]) == -1, "no pan in a part of a mono song", __LINE__);
+	}
+}
+
+void TestStereoTools()
+{
+	// write_notes: a pan per note, which the notes after keep; the reply says what got panned
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": ["
+		"{\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1, \"pan\": \"left\"},"
+		"{\"bar\": 1, \"beat\": 2, \"pitch\": \"D-4\", \"beats\": 1},"
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"E-4\", \"beats\": 1, \"pan\": 0.5},"
+		"{\"bar\": 1, \"beat\": 4, \"pitch\": \"F-4\", \"beats\": 1, \"pan\": \"center\"},"
+		"{\"bar\": 2, \"beat\": 1, \"pitch\": \"G-4\", \"beats\": 1, \"pan\": \"half left\"},"
+		"{\"bar\": 2, \"beat\": 2, \"pitch\": \"A-4\", \"beats\": 1, \"pan\": \"30% right\"},"
+		"{\"bar\": 2, \"beat\": 3, \"pitch\": \"B-4\", \"beats\": 1, \"pan\": \"8F0\"}]}");
+	CHECK(!Result.IsError);
+	CHECK(PanOf(Song.Rows[5][0]) == 0x00 && PanOf(Song.Rows[5][4]) == -1 && PanOf(Song.Rows[5][8]) == 0xC0);
+	CHECK(PanOf(Song.Rows[5][12]) == 0x80 && PanOf(Song.Rows[5][16]) == 0x40 && PanOf(Song.Rows[5][20]) == 0xA6);
+	CHECK(PanOf(Song.Rows[5][24]) == 0xF0);
+	CHECK(PanAt(Song, 5, 4) == 0x00);	// the note after a panned one keeps its place
+	CHECK_HAS(Result.Text, "panned: bar 1 beat 1 left, bar 1 beat 3 50% right, bar 1 beat 4 center, bar 2 beat 1 50% left, bar 2 "
+		"beat 2 30% right, bar 2 beat 3 88% right (the notes after each keep its place)");
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 3, \"pitch\": \"C-4\", \"beats\": 1, "
+		"\"pan\": \"up\"}]}").Text, "pan is \"left\", \"right\", \"center\"");
+	CHECK(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 3, \"pitch\": \"C-4\", \"beats\": 1, "
+		"\"pan\": 1.5}]}").IsError);
+	// Rewriting the bars without pans: the notes keep the places the channel had there
+	Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": ["
+		"{\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}]}");
+	CHECK(!Result.IsError);
+	CHECK(PanAt(Song, 5, 0) == 0x00 && PanAt(Song, 5, 8) == 0xC0);
+	CHECK(PanAt(Song, 5, 16) == 0x40);	// bar 2 as it was
+	CHECK_HAS(Result.Text, "panning between left and 50% right where the channel played before");
+
+	// read_notes and get_song tell where the notes play
+	std::string Text = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 2}").Text;
+	CHECK_HAS(Text, ", pan left (800)");
+	CHECK_HAS(Text, "bar 1 beat 3: G-4, 2 beats, pan 50% right (8C0)");
+	CHECK_HAS(Text, "bar 2 beat 2: A-4, 1 beat, pan 30% right (8A6)");
+	CHECK_LACKS(Text, "effects 8");
+	Text = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Text, "Stereo: the parts pan (8xx, this FamiTracker's own");
+	CHECK_HAS(Text, "panning between left and 88% right");
+	CHECK_HAS(Text, "2A03 Pulse 1: empty");
+	{
+		FakeSong Mono;
+		Mono.Put(0, 0, "C-4", 2);
+		CHECK_HAS(Run(Mono, "get_song", "{}").Text, "Stereo: every part in the middle (set_pan");
+		CHECK_LACKS(Run(Mono, "get_song", "{}").Text, "in the middle,");
+	}
+
+	// set_pan: a channel's notes in bars; the note after them plays where it did
+	FakeSong Arp;
+	Arp.Info.DirectChanges = true;
+	for (int r = 0; r < 32; r += 4)
+		Arp.Put(1, r, r % 8 == 0 ? "C-4" : "G-4", 2);
+	Result = Run(Arp, "set_pan", "{\"channel\": \"Pulse 2\", \"pan\": \"alternate\", \"to_bar\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "2A03 Pulse 2 alternating note by note between 50% left and 50% right (840, 8C0), bar 1 (4 notes)");
+	CHECK_HAS(Result.Text, "Stereo is this FamiTracker's own");
+	CHECK(PanOf(Arp.Rows[1][0]) == 0x40 && PanOf(Arp.Rows[1][4]) == 0xC0 && PanOf(Arp.Rows[1][8]) == 0x40 && PanOf(Arp.Rows[1][12]) == 0xC0);
+	CHECK(PanOf(Arp.Rows[1][16]) == 0x80 && PanAt(Arp, 1, 20) == 0x80);	// bar 2 in the middle, as before
+	Result = Run(Arp, "set_pan", "{\"channel\": 2, \"pan\": \"spread\", \"from_bar\": 2, \"to_bar\": 2, \"amount\": 1}");
+	CHECK(!Result.IsError);
+	CHECK(PanOf(Arp.Rows[1][16]) == 0x00 && PanOf(Arp.Rows[1][28]) == 0xFF);
+	CHECK_HAS(Result.Text, "spread from left to right across the bars");
+	CHECK(PanAt(Arp, 1, 20) > 0x00 && PanAt(Arp, 1, 20) < PanAt(Arp, 1, 24) && PanAt(Arp, 1, 24) < 0xFF);
+	Result = Run(Arp, "set_pan", "{\"channel\": 2, \"pan\": \"center\"}");
+	CHECK(!Result.IsError && PanEffects(Arp) == 0);		// all in the middle again: no pan left
+	CHECK(Run(Arp, "set_pan", "{\"channel\": 2, \"pan\": \"center\"}").IsError);	// that way already
+	CHECK_HAS(Run(Arp, "set_pan", "{\"channel\": 2, \"pan\": \"sideways\"}").Text, "pan: left, right, center");
+	CHECK_HAS(Run(Arp, "set_pan", "{\"channel\": 2, \"pan\": \"left\", \"from_bar\": 5, \"to_bar\": 6}").Text, "has no notes");
+	CHECK_HAS(Run(Arp, "set_pan", "{\"channel\": \"Triangle\", \"pan\": \"left\"}").Text, "has no notes");
+	Arp.Put(2, 0, "C-2", 1);
+	CHECK_HAS(Run(Arp, "set_pan", "{\"channel\": \"Triangle\", \"pan\": \"left\"}").Text, "the bass and the drums usually stay in the middle");
+	Run(Arp, "set_pan", "{\"channel\": \"Triangle\", \"pan\": \"center\"}");
+	// As a clip, when direct changes aren't allowed
+	{
+		FakeSong Clip;
+		Clip.Put(1, 0, "C-4", 2);
+		CHECK_HAS(Run(Clip, "set_pan", "{\"channel\": 2, \"pan\": \"right\"}").Text, "Saved as the clip");
+		CHECK(Clip.Clips.size() == 1 && PanEffects(Clip) == 0);
+	}
+
+	// add_echo: on the other side of the original, note by note; by default where its channel played
+	{
+		FakeSong Echo;
+		Echo.Info.DirectChanges = true;
+		Echo.Put(5, 0, "C-4", 0, 12);
+		Echo.Put(5, 8, "E-4");
+		Echo.Put(5, 16, "G-4");
+		Echo.End(5, 24, NOTE_RELEASE);
+		Result = Run(Echo, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 2, \"pan\": \"opposite\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, ", 50% right (8C0) while the original plays in the middle");
+		CHECK(PanOf(Echo.Rows[6][3]) == 0xC0 && PanOf(Echo.Rows[6][11]) == -1 && PanAt(Echo, 6, 11) == 0xC0);
+		// The original panned: the echo mirrors it, note by note
+		FakeSong Mirror;
+		Mirror.Info.DirectChanges = true;
+		Mirror.Put(5, 0, "C-4", 0, 12);
+		SetPan(Mirror, 5, 0, 0x30);
+		Mirror.Put(5, 8, "E-4");
+		SetPan(Mirror, 5, 8, 0xFF);
+		Mirror.End(5, 16, NOTE_RELEASE);
+		Result = Run(Mirror, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1, \"pan\": \"opposite\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, ", on the other side of the original");
+		CHECK(PanAt(Mirror, 6, 3) == PanParam(-PanPosition(0x30)) && PanAt(Mirror, 6, 11) == 0x00);
+		// Not told: the original's pans aren't copied
+		FakeSong Plain;
+		Plain.Info.DirectChanges = true;
+		Plain.Put(5, 0, "C-4", 0, 12);
+		SetPan(Plain, 5, 0, 0x00);
+		Plain.Put(5, 8, "E-4");
+		Plain.End(5, 16, NOTE_RELEASE);
+		CHECK(!Run(Plain, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1}").IsError);
+		CHECK(PanAt(Plain, 6, 3) == 0x80 && PanAt(Plain, 6, 11) == 0x80);
+		CHECK(!Run(Plain, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"pan\": \"right\"}").IsError);
+		CHECK(PanAt(Plain, 6, 3) == 0xFF && PanAt(Plain, 6, 11) == 0xFF);
+		CHECK_HAS(Run(Plain, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"pan\": \"behind\"}").Text, "pan: opposite");
+	}
+
+	// add_harmony keeps its channel's place, not the melody's
+	{
+		FakeSong Harmony;
+		Harmony.Info.DirectChanges = true;
+		const char *const Tune[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "D-4", "C-4", "G-3" };
+		for (int i = 0; i < 8; ++i)
+			Harmony.Put(5, i * 4, Tune[i], i == 0 ? 0 : NO_INSTRUMENT);
+		SetPan(Harmony, 5, 0, 0x00);
+		Harmony.End(5, 32, NOTE_RELEASE);
+		CHECK(!Run(Harmony, "add_harmony", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\", \"to_bar\": 2}").IsError);
+		const std::vector<NoteInfo> Voice = ReadNotes(Harmony.Rows[6], 2);
+		CHECK(!Voice.empty());
+		for (size_t i = 0; i < Voice.size(); ++i)
+			CHECK(Voice[i].Pan == PAN_CENTER);
+	}
+
+	// copy_bars: the copy plays from where the original did, and the notes after it from where they did
+	{
+		FakeSong Copy;
+		Copy.Info.DirectChanges = true;
+		Copy.Put(0, 0, "C-4", 2);
+		SetPan(Copy, 0, 0, 0x00);	// bar 1 left
+		Copy.Put(0, 16, "D-4");		// bar 2 still left
+		Copy.Put(0, 24, "E-4");
+		Copy.Put(0, 32, "F-4");
+		SetPan(Copy, 0, 32, 0xFF);	// bar 3 right
+		Copy.Put(0, 80, "G-4");		// bar 6 right
+		Result = Run(Copy, "copy_bars", "{\"from_bar\": 2, \"at_bar\": 5, \"channels\": [\"Pulse 1\"]}");
+		CHECK(!Result.IsError);
+		CHECK(PanAt(Copy, 0, 64) == 0x00 && PanAt(Copy, 0, 72) == 0x00);	// as bar 2 plays
+		CHECK(PanAt(Copy, 0, 80) == 0xFF);	// bar 6 as before
+		CHECK(PanAt(Copy, 0, 16) == 0x00 && PanAt(Copy, 0, 32) == 0xFF);
+	}
+
+	// transpose, vary_part and polish leave the pans where they are
+	{
+		FakeSong Keep;
+		Keep.Info.DirectChanges = true;
+		const char *const Tune[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "D-4", "C-4", "G-3", "C-4", "E-4", "G-4", "C-5" };
+		for (int i = 0; i < 12; ++i)
+			Keep.Put(5, i * 4, Tune[i], i == 0 ? 0 : NO_INSTRUMENT, 12);
+		SetPan(Keep, 5, 0, 0x30);
+		SetPan(Keep, 5, 16, 0xD0);
+		Keep.End(5, 48, NOTE_RELEASE);
+		CHECK(!Run(Keep, "transpose", "{\"channel\": \"VRC6 Pulse 1\", \"semitones\": 2}").IsError);
+		CHECK(PanAt(Keep, 5, 0) == 0x30 && PanAt(Keep, 5, 12) == 0x30 && PanAt(Keep, 5, 16) == 0xD0 && PanAt(Keep, 5, 44) == 0xD0);
+		CHECK(!Run(Keep, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"octave_up\", \"from_bar\": 1, \"to_bar\": 3}").IsError);
+		CHECK(PanAt(Keep, 5, 0) == 0x30 && PanAt(Keep, 5, 12) == 0x30 && PanAt(Keep, 5, 16) == 0xD0 && PanAt(Keep, 5, 44) == 0xD0);
+		CHECK(!Run(Keep, "polish", "{}").IsError);
+		CHECK(PanAt(Keep, 5, 0) == 0x30 && PanAt(Keep, 5, 16) == 0xD0 && PanAt(Keep, 5, 44) == 0xD0);
+		CHECK(PanEffects(Keep) == 2);
+	}
+
+	// A song that doesn't pan gets no pans from the tools that write parts
+	{
+		FakeSong Mono;
+		Mono.Info.DirectChanges = true;
+		const char *const Tune[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "D-4", "C-4", "G-3" };
+		for (int i = 0; i < 8; ++i)
+			Mono.Put(5, i * 4, Tune[i], i == 0 ? 0 : NO_INSTRUMENT);
+		Mono.End(5, 32, NOTE_RELEASE);
+		CHECK(!Run(Mono, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 2}").IsError);
+		CHECK(!Run(Mono, "add_chords_and_bass", "{\"melody_channel\": \"VRC6 Pulse 1\", \"to_bar\": 2}").IsError);
+		CHECK(!Run(Mono, "copy_bars", "{\"from_bar\": 1, \"to_bar\": 2, \"at_bar\": 3}").IsError);
+		CHECK(!Run(Mono, "polish", "{}").IsError);
+		CHECK(!Run(Mono, "mix", "{}").IsError);
+		CHECK_EQ(PanEffects(Mono), 0);
+	}
+}
+
+void TestStereoMix()
+{
+	// A melody, its echo, chords, a bass and drums
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const Tune[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "D-4", "C-4", "G-3", "A-3", "C-4", "E-4", "D-4" };
+	for (int i = 0; i < 12; ++i) {
+		Song.Put(0, i * 4, Tune[i], i == 0 ? 2 : NO_INSTRUMENT, 12);
+		Song.Put(1, i * 4 + 2, Tune[i], i == 0 ? 2 : NO_INSTRUMENT, 5);
+	}
+	Song.End(0, 48);
+	Song.End(1, 50);
+	Song.Put(5, 0, "C-3", 0, 10);
+	Song.Rows[5][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[5][0].Param[0] = 0x47;
+	Song.Put(5, 16, "F-3");
+	Song.Put(5, 32, "G-3");
+	Song.End(5, 48, NOTE_RELEASE);
+	for (int r = 0; r < 48; r += 8)
+		Song.Put(2, r, r % 16 == 0 ? "C-2" : "G-1", r == 0 ? 1 : NO_INSTRUMENT);
+	Song.End(2, 48);
+	for (int r = 0; r < 48; r += 4)
+		Song.Put(3, r, r % 8 == 0 ? "kick" : "hihat");
+	ToolResult Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "Stereo: every part plays in the middle.");
+	CHECK_HAS(Result.Text, "For width in the game's stereo OGG files: an echo on the other side of the melody");
+
+	// mix with width: the stereo picture only (no style given), the echo to the right, the chords to the left
+	Result = Run(Song, "mix", "{\"width\": \"wide\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "the stereo picture, bars 1-8: stereo: 2A03 Pulse 2 (echo) 50% right, VRC6 Pulse 1 (chords) 50% left; in "
+		"the middle 2A03 Pulse 1 (melody)");
+	CHECK(PanAt(Song, 1, 2) == 0xC0 && PanAt(Song, 1, 46) == 0xC0);
+	CHECK(PanAt(Song, 5, 0) == 0x40 && PanAt(Song, 5, 32) == 0x40);
+	CHECK(PanAt(Song, 0, 0) == 0x80 && PanAt(Song, 2, 0) == 0x80 && PanAt(Song, 3, 0) == 0x80);
+	CHECK(Song.Rows[0][0].Volume == 12);	// the volumes stay
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "Stereo: the parts pan");
+	// The review: the picture, and nothing to fix in it
+	Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "Stereo: 2A03 Pulse 1 in the middle; 2A03 Pulse 2 panned 50% right;");
+	CHECK_LACKS(Result.Text, "The echo on 2A03 Pulse 2 plays on the melody's side");
+	// An echo on the melody's side, and the bass off to one side: tips
+	Run(Song, "set_pan", "{\"channel\": \"Pulse 2\", \"pan\": \"center\"}");
+	Run(Song, "set_pan", "{\"channel\": \"Triangle\", \"pan\": \"left\"}");
+	Run(Song, "set_pan", "{\"channel\": \"Noise\", \"pan\": \"right\"}");
+	Result = Run(Song, "review_arrangement", "{}");
+	CHECK_HAS(Result.Text, "The echo on 2A03 Pulse 2 plays on the melody's side (in the middle, the melody in the middle)");
+	CHECK_HAS(Result.Text, "The bass on 2A03 Triangle plays from one side");
+	CHECK_HAS(Result.Text, "The drums on 2A03 Noise play from one side");
+	// mono puts everything back in the middle, without a pan left
+	Result = Run(Song, "mix", "{\"width\": \"mono\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "every part in the middle (mono)");
+	CHECK_EQ(PanEffects(Song), 0);
+	CHECK_HAS(Run(Song, "mix", "{\"width\": \"sideways\"}").Text, "width: keep");
+	// With a style the volumes change too, and full goes all the way to the sides
+	Result = Run(Song, "mix", "{\"style\": \"soft\", \"width\": \"full\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a soft mix");
+	CHECK(PanAt(Song, 1, 2) == 0xFF && PanAt(Song, 5, 0) == 0x00 && Song.Rows[0][0].Volume == 9);
+
+	// Chord voices on several channels spread apart, the lowest on the left
+	{
+		FakeSong Voices;
+		Voices.Info.DirectChanges = true;
+		for (int i = 0; i < 12; ++i)
+			Voices.Put(0, i * 4, Tune[i], i == 0 ? 2 : NO_INSTRUMENT, 12);
+		Voices.End(0, 48);
+		const char *const Low[] = { "C-3", "F-3", "G-3" }, *const High[] = { "E-3", "A-3", "B-3" };
+		for (int b = 0; b < 3; ++b) {
+			Voices.Put(5, b * 16, Low[b], b == 0 ? 0 : NO_INSTRUMENT, 8);
+			Voices.Put(6, b * 16, High[b], b == 0 ? 0 : NO_INSTRUMENT, 8);
+			Voices.Rows[5][b * 16].Effect[0] = EFF_ARPEGGIO;
+			Voices.Rows[5][b * 16].Param[0] = 0x37;
+			Voices.Rows[6][b * 16].Effect[0] = EFF_ARPEGGIO;
+			Voices.Rows[6][b * 16].Param[0] = 0x34;
+		}
+		Voices.End(5, 48, NOTE_RELEASE);
+		Voices.End(6, 48, NOTE_RELEASE);
+		Result = Run(Voices, "mix", "{\"width\": \"wide\"}");
+		CHECK(!Result.IsError);
+		CHECK(PanAt(Voices, 5, 0) == 0x40 && PanAt(Voices, 6, 0) == 0xC0);
+		CHECK_HAS(Result.Text, "VRC6 Pulse 1 (chords) 50% left, VRC6 Pulse 2 (chords) 50% right");
+	}
+}
+
+void TestStereoLookAndLoop()
+{
+	// look_at_song marks panned notes: an L or an R, told in the legend
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0, 15);
+	Song.Put(5, 8, "E-4");
+	Song.Put(5, 16, "G-4");
+	Song.End(5, 32, NOTE_RELEASE);
+	ToolSet Tools(Song);
+	ToolResult Plain = Tools.Call("look_at_song", Parse("{\"to_bar\": 2}"));
+	CHECK_LACKS(Plain.Text, "An L at a note's left end");
+	SetPan(Song, 5, 0, 0x00);
+	SetPan(Song, 5, 16, 0xFF);
+	ToolResult Marked = Tools.Call("look_at_song", Parse("{\"to_bar\": 2}"));
+	CHECK_HAS(Marked.Text, "An L at a note's left end or an R at its right end: it plays from the left or the right");
+	DecodedPng Before, After;
+	CHECK(DecodePng(Plain.Image, Before) && DecodePng(Marked.Image, After));
+	CHECK(CountColor(After, 25, 25, 25) > CountColor(Before, 25, 25, 25) + 20);	// the letters
+	const std::string Directory = Environment("FTAPI_PICTURES");
+	if (!Directory.empty())
+		std::ofstream(Directory + "/look_at_song_stereo.png", std::ios::binary) << Marked.Image;
+
+	// check_loop: a pan at the loop's end carries into its start on repeat; fix_loop sets it there
+	FakeSong Loop;
+	Loop.Info.DirectChanges = true;
+	Loop.Put(0, 0, "C-4", 2);
+	Loop.Put(0, 32, "E-4");
+	SetPan(Loop, 0, 32, 0x00);
+	Loop.Put(0, 96, "G-4");
+	ToolSet LoopTools(Loop);
+	const std::string Text = LoopTools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "2A03 Pulse 1: the loop starts center the first time and left on repeat (the pan at its end, 800, carries over); "
+		"set 880 at bar 1 beat 1.");
+	CHECK(!LoopTools.Call("fix_loop", Parse("{}")).IsError);
+	CHECK(PanOf(Loop.Rows[0][0]) == 0x80);
+	CHECK_LACKS(LoopTools.Call("check_loop", Parse("{}")).Text, "the pan at its end");
+}
+
+void TestStereoExport()
+{
+	// The OGG is stereo: a part panned hard left is on the left side only, one in the middle on both
+	FakeSong Song(1);
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "A-3", 0);
+	SetPan(Song, 5, 0, 0x00);
+	ToolSet Tools(Song);
+	std::string Text = Tools.Call("export_for_game", Parse("{}")).Text;
+	CHECK_HAS(Text, "- Town.ogg: ");
+	CHECK_HAS(Text, ", in stereo (its parts pan)");
+	CHECK_HAS(Text, "The files are stereo; where nothing pans, both sides are the same.");
+	std::vector<float> Left, Right;
+	int Rate = 0, Channels = 0;
+	OggComments Comments;
+	std::string Error;
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Left, Rate, Channels, Comments, Error, &Right));
+	CHECK(Channels == 2 && Left.size() == Right.size() && !Left.empty());
+	float LeftPeak = 0.0f, RightPeak = 0.0f;
+	for (size_t i = 0; i < Left.size() && i < Right.size(); ++i) {
+		LeftPeak = std::max(LeftPeak, std::fabs(Left[i]));
+		RightPeak = std::max(RightPeak, std::fabs(Right[i]));
+	}
+	CHECK(LeftPeak > 0.1f && RightPeak < 0.01f);
+	CHECK(Comment(Comments, "LOOPSTART") != "(none)");
+	// Hard right
+	SetPan(Song, 5, 0, 0xFF);
+	Tools.Call("export_for_game", Parse("{}"));
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Left, Rate, Channels, Comments, Error, &Right));
+	LeftPeak = RightPeak = 0.0f;
+	for (size_t i = 0; i < Left.size() && i < Right.size(); ++i) {
+		LeftPeak = std::max(LeftPeak, std::fabs(Left[i]));
+		RightPeak = std::max(RightPeak, std::fabs(Right[i]));
+	}
+	CHECK(RightPeak > 0.1f && LeftPeak < 0.01f);
+	// In the middle: the same on both sides, and as loud over both as asked
+	SetPan(Song, 5, 0, 0x80);
+	Text = Tools.Call("export_for_game", Parse("{\"loudness\": -20}")).Text;
+	CHECK_LACKS(Text, "in stereo (its parts pan)");
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Left, Rate, Channels, Comments, Error, &Right));
+	float Apart = 0.0f;
+	for (size_t i = 0; i < Left.size() && i < Right.size(); ++i)
+		Apart = std::max(Apart, std::fabs(Left[i] - Right[i]));
+	CHECK(Channels == 2 && Apart < 0.001f);
+	CHECK(Near(IntegratedLoudness(Left, Right, Rate, 0, Left.size()), -20.0, 0.3));
+	// Halfway left: the right side at half
+	SetPan(Song, 5, 0, 0x40);
+	Tools.Call("export_for_game", Parse("{\"normalize\": false}"));
+	CHECK(DecodeOgg(Song.Files["Town.ogg"], Left, Rate, Channels, Comments, Error, &Right));
+	LeftPeak = RightPeak = 0.0f;
+	for (size_t i = 0; i < Left.size() && i < Right.size(); ++i) {
+		LeftPeak = std::max(LeftPeak, std::fabs(Left[i]));
+		RightPeak = std::max(RightPeak, std::fabs(Right[i]));
+	}
+	CHECK(Near(RightPeak / LeftPeak, 0.5, 0.05));
+	// The loudness over both sides: one the same on both measures 3 LU over one side alone
+	std::vector<float> Tone(48000);
+	for (size_t i = 0; i < Tone.size(); ++i)
+		Tone[i] = static_cast<float>(0.1 * std::sin(2.0 * 3.14159265358979 * 1000.0 * static_cast<double>(i) / 48000.0));
+	CHECK(Near(IntegratedLoudness(Tone, Tone, 48000, 0, Tone.size()) - IntegratedLoudness(Tone, 48000, 0, Tone.size()), 3.01, 0.02));
+	CHECK(Near(IntegratedLoudness(Tone, std::vector<float>(Tone.size(), 0.0f), 48000, 0, Tone.size()),
+		IntegratedLoudness(Tone, 48000, 0, Tone.size()), 0.01));
+	// The cut on both sides: a seam that matches on the left but not on the right isn't clean
+	std::vector<float> Steady(16000, 0.25f), Moving(16000, 0.25f);
+	for (size_t i = 8000; i < Moving.size(); ++i)
+		Moving[i] = -0.25f;
+	std::vector<TimedRow> Rows;
+	std::vector<std::pair<int, long long> > Marks;
+	for (int r = 0; r < 4; ++r) {
+		TimedRow Row = { r % 2, r * 4, r / 2, r % 2 == 0 };
+		Rows.push_back(Row);
+		Marks.push_back(std::make_pair(r % 2, static_cast<long long>(r) * 4000));
+	}
+	GameCut Cut, Mono;
+	CHECK(CutForGame(Steady, 8000, Rows, Marks, false, false, Mono, Error) && !Mono.SecondPass);
+	CHECK(CutForGame(Steady, Moving, 8000, Rows, Marks, false, false, Cut, Error) && Cut.Difference > 0.1);
+}
+
 int main()
 {
 	TestJson();
@@ -8519,6 +9088,11 @@ int main()
 	TestVoicedChords();
 	TestFadesAndScoops();
 	TestReharmonize();
+	TestStereoBasics();
+	TestStereoTools();
+	TestStereoMix();
+	TestStereoLookAndLoop();
+	TestStereoExport();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

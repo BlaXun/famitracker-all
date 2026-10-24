@@ -288,6 +288,11 @@ void CPatternCompiler::CompileData(int Track, int Pattern, int Channel)
 
 			unsigned char Effect   = ChanNote.EffNumber[j];
 			unsigned char EffParam = ChanNote.EffParam[j];
+
+			// The pan (8xx) is this FamiTracker's own and the NES is mono: the driver has no command for it,
+			// so a row with one compiles as it would without it
+			if (Effect == EF_PAN)
+				continue;
 			
 			if (Effect > 0) {
 				WriteDuration();
@@ -564,7 +569,7 @@ CPatternCompiler::stSpacingInfo CPatternCompiler::ScanNoteLengths(int Track, uns
 		if (NoteData.Vol < 0x10)
 			NoteUsed = true;
 		for (unsigned j = 0; j < (m_pDocument->GetEffColumns(Track, Channel) + 1); ++j) {
-			if (NoteData.EffNumber[j] != EF_NONE)
+			if (NoteData.EffNumber[j] != EF_NONE && NoteData.EffNumber[j] != EF_PAN)	// the pan isn't exported
 				NoteUsed = true;
 		}
 

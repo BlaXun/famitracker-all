@@ -136,6 +136,9 @@ EMU2413_API void OPLL_writeReg(OPLL *, uint32 reg, uint32 val) ;
 /* Synthsize */
 EMU2413_API int16 OPLL_calc(OPLL *) ;
 EMU2413_API void OPLL_calc_stereo(OPLL *, int32 out[2]) ;
+/* FamiTracker's stereo: the output on each side, the melody channels 0-5 weighed by their gains for
+   it (256: all of the channel); with every gain 256, both sides are what OPLL_calc gives */
+EMU2413_API void OPLL_calc_lr(OPLL *, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right) ;
 
 /* Misc */
 EMU2413_API void OPLL_setPatch(OPLL *, const uint8 *dump) ;

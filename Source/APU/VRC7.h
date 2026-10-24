@@ -47,6 +47,7 @@ private:
 	uint32	m_iMaxSamples;
 
 	int16	*m_pBuffer;
+	int16	*m_pBufferRight;	// the right side (m_pBuffer is the left)
 	uint32	m_iBufferPtr;
 
 	uint8	m_iSoundReg;

@@ -44,6 +44,7 @@ CChannelHandler::CChannelHandler(int MaxPeriod, int MaxVolume) :
 	m_pVibratoTable(NULL),
 	m_pAPU(NULL),
 	m_iPitch(0),
+	m_iPan(PAN_CENTER),
 	m_iNote(0),
 	m_iSeqVolume(0),
 	m_iDefaultDuty(0),
@@ -171,6 +172,9 @@ void CChannelHandler::ResetChannel()
 
 	RegisterKeyState(-1);
 
+	// Every channel starts in the middle
+	SetPan(PAN_CENTER);
+
 	// Clear channel registers
 	ClearRegisters();
 
@@ -208,7 +212,10 @@ void CChannelHandler::HandleNoteData(stChanNote *pNoteData, int EffColumns)
 	for (int n = 0; n < EffColumns; n++) {
 		unsigned char EffNum   = pNoteData->EffNumber[n];
 		unsigned char EffParam = pNoteData->EffParam[n];
-		HandleCustomEffects(EffNum, EffParam);
+		if (EffNum == EF_PAN)
+			SetPan(EffParam);	// the same on every channel, the DPCM's too (whose handler has no common effects)
+		else
+			HandleCustomEffects(EffNum, EffParam);
 	}
 
 	// Volume
@@ -389,6 +396,16 @@ bool CChannelHandler::CheckCommonEffects(unsigned char EffCmd, unsigned char Eff
 	}
 	
 	return true;
+}
+
+void CChannelHandler::SetPan(int Pan)
+{
+	// Stereo is this FamiTracker's own: the mixer gives each side its share
+	// of the channel from now on (CMixer::SetChannelPan). It lasts until the
+	// next 8xx, over notes, releases and halts.
+	m_iPan = Pan;
+	if (m_pAPU != NULL)
+		m_pAPU->SetChannelPan(m_iChannelID, Pan);
 }
 
 bool CChannelHandler::HandleDelay(stChanNote *pNoteData, int EffColumns)

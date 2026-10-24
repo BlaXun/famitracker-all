@@ -39,7 +39,7 @@ const char *const FLAT_CLASSES[] = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", 
 // Letters as EFF_CHAR (FamiTrackerTypes.h), by effect - 1
 const char EFFECT_LETTERS[EFF_COUNT - 1] = {
 	'F', 'B', 'D', 'C', 'E', '3', 0, 'H', 'I', '0', '4', '7', 'P', 'G', 'Z', '1', '2', 'V', 'Y', 'Q', 'R', 'A', 'S',
-	'X', 0, 'H', 'I', 'J', 'W', 'H', 'I', 'J'
+	'X', 0, 'H', 'I', 'J', 'W', 'H', 'I', 'J', '8'
 };
 
 struct ModeInfo {
@@ -336,6 +336,7 @@ bool IsStickyEffect(int Effect)
 	case EFF_TREMOLO:
 	case EFF_VOLUME_SLIDE:
 	case EFF_PITCH:
+	case EFF_PAN:
 		return true;
 	}
 	return false;
@@ -343,7 +344,51 @@ bool IsStickyEffect(int Effect)
 
 int StickyOff(int Effect)
 {
-	return Effect == EFF_PITCH ? 0x80 : 0;
+	return Effect == EFF_PITCH || Effect == EFF_PAN ? 0x80 : 0;
+}
+
+// Stereo
+
+int PanParam(double Position)
+{
+	if (!(Position > -1.0))
+		return PAN_LEFT;
+	if (Position >= 1.0)
+		return PAN_RIGHT;
+	return Position < 0.0 ? PAN_CENTER + static_cast<int>(std::floor(Position * 128.0 + 0.5)) :
+		PAN_CENTER + static_cast<int>(std::floor(Position * 127.0 + 0.5));
+}
+
+double PanPosition(int Param)
+{
+	Param = std::max(0, std::min(0xFF, Param));
+	return Param < PAN_CENTER ? (Param - PAN_CENTER) / 128.0 : (Param - PAN_CENTER) / 127.0;
+}
+
+std::string PanName(int Param)
+{
+	Param = std::max(0, std::min(0xFF, Param));
+	if (Param == PAN_CENTER)
+		return "center";
+	if (Param == PAN_LEFT)
+		return "left";
+	if (Param == PAN_RIGHT)
+		return "right";
+	const double Position = PanPosition(Param);
+	char Text[32];
+	std::snprintf(Text, sizeof(Text), "%d%% %s", std::max(1, static_cast<int>(std::floor(std::fabs(Position) * 100.0 + 0.5))),
+		Position < 0.0 ? "left" : "right");
+	return Text;
+}
+
+void PanGains(int Param, double &Left, double &Right)
+{
+	Param = std::max(0, std::min(0xFF, Param));
+	Left = Right = 1.0;
+	if (Param < PAN_CENTER)
+		Right = Param / 128.0;
+	else if (Param > PAN_CENTER)
+		Left = (0xFF - Param) / 127.0;
 }
 
 bool IsSongEffect(int Effect)
@@ -798,7 +843,7 @@ std::vector<NoteInfo> ReadNotes(const std::vector<Cell> &Cells, int EffectColumn
 {
 	const int Columns = std::max(1, std::min(EFFECT_COLUMNS, EffectColumns));
 	std::vector<NoteInfo> Notes;
-	int Instrument = NO_INSTRUMENT, Volume = 15;
+	int Instrument = NO_INSTRUMENT, Volume = 15, Pan = PAN_CENTER;
 	bool Open = false;
 	for (size_t r = 0; r < Cells.size(); ++r) {
 		const Cell &C = Cells[r];
@@ -807,6 +852,12 @@ std::vector<NoteInfo> ReadNotes(const std::vector<Cell> &Cells, int EffectColumn
 			Volume = C.Volume;
 		if (C.Instrument != NO_INSTRUMENT && !C.IsEnd())
 			Instrument = C.Instrument;
+		bool PanHere = false;
+		for (int k = 0; k < Columns; ++k)
+			if (C.Effect[k] == EFF_PAN) {
+				Pan = C.Param[k];
+				PanHere = true;
+			}
 		if (C.HasNote()) {
 			if (Open)
 				Notes.back().Rows = Row - Notes.back().Row;
@@ -818,6 +869,8 @@ std::vector<NoteInfo> ReadNotes(const std::vector<Cell> &Cells, int EffectColumn
 			Note.Volume = Volume;
 			Note.InstrumentSet = C.Instrument != NO_INSTRUMENT;
 			Note.VolumeSet = C.Volume < NO_VOLUME;
+			Note.Pan = Pan;
+			Note.PanSet = PanHere;
 			Note.EndNote = NOTE_NONE;
 			Notes.push_back(Note);
 			Open = true;
@@ -844,6 +897,7 @@ ChannelState::ChannelState() : Instrument(NO_INSTRUMENT), Volume(15), Sounding(f
 {
 	std::memset(Sticky, 0, sizeof(Sticky));
 	Sticky[EFF_PITCH] = static_cast<unsigned char>(StickyOff(EFF_PITCH));
+	Sticky[EFF_PAN] = static_cast<unsigned char>(StickyOff(EFF_PAN));
 }
 
 ChannelState StateAt(const std::vector<Cell> &Cells, int Row, int EffectColumns)
@@ -1075,12 +1129,48 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 		}
 	}
 
-	// Entering the range: a note still sounding stops, effects still on go off
+	// Entering the range: a note still sounding stops, effects still on go off (the pan stays, below)
 	if (Before.Sounding && !Out[0].HasNote() && !Options.RingOut)
 		Out[0].Note = Local::Releases(Options, Before.SoundingInstrument) ? NOTE_RELEASE : NOTE_HALT;
 	for (int e = 0; e < EFF_COUNT; ++e) {
+		if (e == EFF_PAN)
+			continue;
 		if (Before.Sticky[e] != StickyOff(e) && !HasEffect(Out[0], e, Columns) && !AddEffect(Out[0], e, StickyOff(e), Columns))
 			EffectsLost = true;
+	}
+
+	// The pan: a note that doesn't set one plays from where the channel played at its row before (its
+	// row's own 8xx included), until a note of the part sets one, which the notes after it keep
+	{
+		std::vector<int> Was(static_cast<size_t>(End - First), PAN_CENTER);
+		int Pan = PAN_CENTER;
+		for (int r = 0; r < End; ++r) {
+			if (r < SongRows)
+				for (int k = 0; k < Columns; ++k)
+					if (Old[r].Effect[k] == EFF_PAN)
+						Pan = Old[r].Param[k];
+			if (r >= First)
+				Was[static_cast<size_t>(r - First)] = Pan;
+		}
+		int Now = Before.Sticky[EFF_PAN];
+		bool Set = false;
+		for (int r = First; r < End && r - First < static_cast<int>(Out.size()); ++r) {
+			Cell &C = Out[r - First];
+			int Own = -1;
+			for (int k = 0; k < Columns; ++k)
+				if (C.Effect[k] == EFF_PAN)
+					Own = C.Param[k];
+			if (Own >= 0) {
+				Now = Own;
+				Set = true;
+			}
+			else if (C.HasNote() && !Set && Was[static_cast<size_t>(r - First)] != Now) {
+				if (AddEffect(C, EFF_PAN, Was[static_cast<size_t>(r - First)], Columns))
+					Now = Was[static_cast<size_t>(r - First)];
+				else
+					EffectsLost = true;
+			}
+		}
 	}
 
 	// The next note after the range plays as it did

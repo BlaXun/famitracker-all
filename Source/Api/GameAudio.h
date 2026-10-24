@@ -63,6 +63,11 @@ struct GameCut {
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
 	bool StartStep = false);
+// The same for a stereo render, its left and right sides (as long as each
+// other): the loop's two starts are compared, and its ends matched, on both
+bool CutForGame(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, const std::vector<TimedRow> &Rows,
+	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
+	bool StartStep = false);
 
 // The sound's name in GameMaker for an exported file: "Town (night).ogg"
 // becomes snd_town_night
@@ -80,6 +85,11 @@ std::string SafeFileName(const std::string &Name);
 // once, as ffmpeg's ebur128 measures it. -70 or less when it's (nearly)
 // silent.
 double IntegratedLoudness(const std::vector<float> &Samples, int SampleRate, size_t First, size_t Count);
+// The same over a stereo sound's two sides, which count together as ffmpeg's
+// ebur128 counts them: a sound the same on both measures 3 LU louder than one
+// side of it alone
+double IntegratedLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, size_t First,
+	size_t Count);
 
 // The gain in dB that brings audio measuring Measured LUFS to Target, as far
 // as its loudest peak (Peak, 0-1 of full scale) may rise: to -1 dBFS. Held
