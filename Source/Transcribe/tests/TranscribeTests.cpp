@@ -29,6 +29,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <sstream>
 #include <string>
 
@@ -933,6 +935,61 @@ void TestWavRoundTrip()
 	CHECK(worst <= 0.5 / 32768.0 + 1e-7);	// rounding error only
 	std::remove(path.c_str());
 	CHECK(!ReadWav("does_not_exist.wav", back, &error));
+}
+
+// The two sides of a stereo file (FamiTracker's renders for games), and a mono file's one on both
+void TestWavSides()
+{
+	const std::string path = "transcribe_test_sides.wav";
+	const int frames = 100;
+	std::vector<unsigned char> bytes(44 + frames * 4);
+	auto put32 = [&bytes](size_t at, uint32_t v) {
+		for (int b = 0; b < 4; ++b)
+			bytes[at + b] = (unsigned char)((v >> (8 * b)) & 0xFF);
+	};
+	auto put16 = [&bytes](size_t at, uint16_t v) {
+		bytes[at] = (unsigned char)(v & 0xFF);
+		bytes[at + 1] = (unsigned char)(v >> 8);
+	};
+	std::memcpy(&bytes[0], "RIFF", 4);
+	put32(4, uint32_t(36 + frames * 4));
+	std::memcpy(&bytes[8], "WAVEfmt ", 8);
+	put32(16, 16);
+	put16(20, 1);
+	put16(22, 2);
+	put32(24, 8000);
+	put32(28, 8000 * 4);
+	put16(32, 4);
+	put16(34, 16);
+	std::memcpy(&bytes[36], "data", 4);
+	put32(40, uint32_t(frames * 4));
+	for (int i = 0; i < frames; ++i) {
+		put16(44 + size_t(i) * 4, uint16_t(int16_t(i * 100)));		// the left side rises
+		put16(44 + size_t(i) * 4 + 2, uint16_t(int16_t(-i * 50)));	// the right one falls
+	}
+	{
+		std::ofstream out(path.c_str(), std::ios::binary);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	}
+	Audio left, right, mono;
+	std::string error;
+	CHECK(ReadWavSides(path, left, right, &error));
+	CHECK(left.sampleRate == 8000 && right.sampleRate == 8000);
+	CHECK(left.samples.size() == size_t(frames) && right.samples.size() == size_t(frames));
+	CHECK(left.samples[10] == float(1000 / 32768.0) && right.samples[10] == float(-500 / 32768.0));
+	CHECK(left.samples[99] == float(9900 / 32768.0) && right.samples[99] == float(-4950 / 32768.0));
+	CHECK(ReadWav(path, mono, &error));		// the two together
+	CHECK(mono.samples[10] == float((1000 / 32768.0 + -500 / 32768.0) / 2));
+	std::remove(path.c_str());
+
+	Synth s;
+	s.Tone(440.0, 0.05);
+	CHECK(WriteWav(path, s.audio, &error));
+	CHECK(ReadWavSides(path, left, right, &error));
+	CHECK(left.samples.size() == s.audio.samples.size() && left.samples == right.samples);
+	CHECK(ReadWav(path, mono, &error) && mono.samples == left.samples);
+	std::remove(path.c_str());
+	CHECK(!ReadWavSides("does_not_exist.wav", left, right, &error));
 }
 
 void TestTextModule()
@@ -2007,6 +2064,7 @@ int main()
 	TestHits();
 	TestGuessSource();
 	TestWavRoundTrip();
+	TestWavSides();
 	TestTextModule();
 	TestEndToEnd();
 	TestClickTrack();

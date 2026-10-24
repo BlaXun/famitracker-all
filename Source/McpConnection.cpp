@@ -76,7 +76,7 @@ static_assert(ftapi::EFF_COUNT == EF_COUNT && ftapi::EFF_ARPEGGIO == EF_ARPEGGIO
 	ftapi::EFF_SLIDE_UP == EF_SLIDE_UP && ftapi::EFF_SLIDE_DOWN == EF_SLIDE_DOWN && ftapi::EFF_SPEED == EF_SPEED &&
 	ftapi::EFF_JUMP == EF_JUMP && ftapi::EFF_SKIP == EF_SKIP && ftapi::EFF_HALT == EF_HALT && ftapi::EFF_NOTE_CUT == EF_NOTE_CUT &&
 	ftapi::EFF_VOLUME_SLIDE == EF_VOLUME_SLIDE && ftapi::EFF_PORTAMENTO == EF_PORTAMENTO && ftapi::EFF_TREMOLO == EF_TREMOLO &&
-	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE && ftapi::EFF_SUNSOFT_ENV_LO == EF_SUNSOFT_ENV_LO, "effects");
+	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE && ftapi::EFF_SUNSOFT_ENV_LO == EF_SUNSOFT_ENV_LO && ftapi::EFF_PAN == EF_PAN && ftapi::PAN_CENTER == PAN_CENTER, "effects");
 static_assert(ftapi::SEQUENCE_VOLUME == SEQ_VOLUME && ftapi::SEQUENCE_ARPEGGIO == SEQ_ARPEGGIO && ftapi::SEQUENCE_PITCH == SEQ_PITCH &&
 	ftapi::SEQUENCE_HIPITCH == SEQ_HIPITCH && ftapi::SEQUENCE_DUTY == SEQ_DUTYCYCLE, "sequences");
 static_assert(ftapi::SEQUENCE_ABSOLUTE == ARP_SETTING_ABSOLUTE && ftapi::SEQUENCE_FIXED == ARP_SETTING_FIXED, "arpeggio settings");
@@ -1040,9 +1040,9 @@ public:
 		}
 	}
 
-	// FamiTracker's own WAV rendering into a temporary file, read back with
-	// the sample where each row began
-	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+	// FamiTracker's own WAV rendering (stereo) into a temporary file, read
+	// back with the sample where each row began
+	bool RenderTrack(int Track, double Seconds, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
 		std::vector<std::pair<int, long long> > &Marks, std::string &Error)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
@@ -1117,16 +1117,18 @@ public:
 
 		CArray<CSoundGen::render_mark_t> Raw;
 		pSound->GetRenderMarks(Raw);
-		transcribe::Audio Audio;
+		transcribe::Audio LeftSide, RightSide;
 		std::string Problem;
-		const bool Read = Started && transcribe::ReadWav(std::string(static_cast<LPCSTR>(CStringA(File))), Audio, &Problem);
+		const bool Read = Started && transcribe::ReadWavSides(std::string(static_cast<LPCSTR>(CStringA(File))), LeftSide, RightSide,
+			&Problem);
 		DeleteFile(File);
 		if (!Read) {
 			Error = Started ? "The rendering couldn't be read: " + Problem : "FamiTracker didn't start rendering.";
 			return false;
 		}
-		Samples.swap(Audio.samples);
-		SampleRate = Audio.sampleRate;
+		Left.swap(LeftSide.samples);
+		Right.swap(RightSide.samples);
+		SampleRate = LeftSide.sampleRate;
 		const int Length = static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(Track)));
 		Marks.clear();
 		for (INT_PTR i = 0; i < Raw.GetCount(); ++i)

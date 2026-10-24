@@ -65,7 +65,48 @@ const uint16_t FORMAT_EXTENSIBLE = 0xFFFE;
 
 }	// namespace
 
-bool ReadWav(const std::string &path, Audio &out, std::string *error)
+namespace {
+
+// A WAV file's format and its samples, as stored
+struct WavData {
+	uint16_t format = 0, channels = 0, bits = 0, blockAlign = 0;
+	uint32_t sampleRate = 0;
+	bool isFloat = false;
+	std::vector<unsigned char> data;
+
+	size_t Frames() const { return blockAlign > 0 ? data.size() / blockAlign : 0; }
+
+	// A frame's sample on a channel, in [-1, 1]
+	double Sample(size_t frame, int channel) const
+	{
+		const size_t bytesPerSample = bits / 8;
+		const unsigned char *p = &data[frame * blockAlign + channel * bytesPerSample];
+		double v = 0.0;
+		if (isFloat) {
+			if (bits == 32) {
+				float f;
+				std::memcpy(&f, p, 4);
+				v = f;
+			}
+			else {
+				double d;
+				std::memcpy(&d, p, 8);
+				v = d;
+			}
+		}
+		else {
+			switch (bits) {
+			case 8:  v = (int(p[0]) - 128) / 128.0; break;
+			case 16: v = int16_t(ReadU16(p)) / 32768.0; break;
+			case 24: v = (int32_t((uint32_t(p[0]) << 8) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 24)) >> 8) / 8388608.0; break;
+			case 32: v = int32_t(ReadU32(p)) / 2147483648.0; break;
+			}
+		}
+		return v;
+	}
+};
+
+bool LoadWav(const std::string &path, WavData &wav, std::string *error)
 {
 	FilePtr file(OpenFile(path, "rb"));
 	if (!file)
@@ -124,39 +165,50 @@ bool ReadWav(const std::string &path, Audio &out, std::string *error)
 	const size_t bytesPerSample = bits / 8;
 	if (blockAlign < channels * bytesPerSample)
 		return Fail(error, "invalid block alignment");
-	const size_t frames = data.size() / blockAlign;
 
-	out.sampleRate = int(sampleRate);
+	wav.format = format;
+	wav.channels = channels;
+	wav.bits = bits;
+	wav.blockAlign = blockAlign;
+	wav.sampleRate = sampleRate;
+	wav.isFloat = isFloat;
+	wav.data.swap(data);
+	return true;
+}
+
+}	// namespace
+
+bool ReadWav(const std::string &path, Audio &out, std::string *error)
+{
+	WavData wav;
+	if (!LoadWav(path, wav, error))
+		return false;
+	const size_t frames = wav.Frames();
+	out.sampleRate = int(wav.sampleRate);
 	out.samples.assign(frames, 0.0f);
 
 	for (size_t i = 0; i < frames; ++i) {
 		double sum = 0.0;
-		for (int c = 0; c < channels; ++c) {
-			const unsigned char *p = &data[i * blockAlign + c * bytesPerSample];
-			double v = 0.0;
-			if (isFloat) {
-				if (bits == 32) {
-					float f;
-					std::memcpy(&f, p, 4);
-					v = f;
-				}
-				else {
-					double d;
-					std::memcpy(&d, p, 8);
-					v = d;
-				}
-			}
-			else {
-				switch (bits) {
-				case 8:  v = (int(p[0]) - 128) / 128.0; break;
-				case 16: v = int16_t(ReadU16(p)) / 32768.0; break;
-				case 24: v = (int32_t((uint32_t(p[0]) << 8) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 24)) >> 8) / 8388608.0; break;
-				case 32: v = int32_t(ReadU32(p)) / 2147483648.0; break;
-				}
-			}
-			sum += v;
-		}
-		out.samples[i] = float(sum / channels);
+		for (int c = 0; c < wav.channels; ++c)
+			sum += wav.Sample(i, c);
+		out.samples[i] = float(sum / wav.channels);
+	}
+	return true;
+}
+
+bool ReadWavSides(const std::string &path, Audio &left, Audio &right, std::string *error)
+{
+	WavData wav;
+	if (!LoadWav(path, wav, error))
+		return false;
+	const size_t frames = wav.Frames();
+	left.sampleRate = right.sampleRate = int(wav.sampleRate);
+	left.samples.assign(frames, 0.0f);
+	right.samples.assign(frames, 0.0f);
+	const int second = wav.channels > 1 ? 1 : 0;
+	for (size_t i = 0; i < frames; ++i) {
+		left.samples[i] = float(wav.Sample(i, 0));
+		right.samples[i] = float(wav.Sample(i, second));
 	}
 	return true;
 }

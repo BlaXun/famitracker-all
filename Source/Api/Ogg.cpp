@@ -41,13 +41,16 @@ void WritePage(std::string &Out, const ogg_page &Page)
 }
 
 // The stream's serial number, the same for the same audio
-int Serial(const std::vector<float> &Samples, int SampleRate)
+int Serial(const std::vector<const std::vector<float>*> &Channels, int SampleRate)
 {
 	unsigned long Hash = 2166136261ul ^ static_cast<unsigned long>(SampleRate);
-	const size_t Step = std::max<size_t>(1, Samples.size() / 4096);
-	for (size_t i = 0; i < Samples.size(); i += Step)
-		Hash = (Hash ^ static_cast<unsigned long>(static_cast<long>(Samples[i] * 32767.0f) & 0xFFFF)) * 16777619ul;
-	Hash ^= static_cast<unsigned long>(Samples.size());
+	for (size_t c = 0; c < Channels.size(); ++c) {
+		const std::vector<float> &Samples = *Channels[c];
+		const size_t Step = std::max<size_t>(1, Samples.size() / 4096);
+		for (size_t i = 0; i < Samples.size(); i += Step)
+			Hash = (Hash ^ static_cast<unsigned long>(static_cast<long>(Samples[i] * 32767.0f) & 0xFFFF)) * 16777619ul;
+		Hash ^= static_cast<unsigned long>(Samples.size());
+	}
 	return static_cast<int>(Hash & 0x7FFFFFFF);
 }
 
@@ -87,16 +90,18 @@ long TellMemory(void *pSource)
 	return static_cast<long>(static_cast<MemoryFile*>(pSource)->Position);
 }
 
-}	// namespace
-
-bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality, const OggComments &Comments, std::string &Out,
-	std::string &Error)
+// EncodeOgg's work, for one channel or two (as long as each other)
+bool Encode(const std::vector<const std::vector<float>*> &Channels, int SampleRate, float Quality, const OggComments &Comments,
+	std::string &Out, std::string &Error)
 {
 	Out.clear();
+	size_t Length = Channels[0]->size();
+	for (size_t c = 1; c < Channels.size(); ++c)
+		Length = std::min(Length, Channels[c]->size());
 	vorbis_info Info;
 	vorbis_info_init(&Info);
 	if (SampleRate < 8000 || SampleRate > 192000 ||
-		vorbis_encode_init_vbr(&Info, 1, SampleRate, std::max(-0.1f, std::min(1.0f, Quality))) != 0) {
+		vorbis_encode_init_vbr(&Info, static_cast<long>(Channels.size()), SampleRate, std::max(-0.1f, std::min(1.0f, Quality))) != 0) {
 		vorbis_info_clear(&Info);
 		char Text[96];
 		std::snprintf(Text, sizeof(Text), "The OGG encoder can't use a sample rate of %d Hz.", SampleRate);
@@ -112,7 +117,7 @@ bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality,
 	vorbis_analysis_init(&State, &Info);
 	vorbis_block_init(&State, &Block);
 	ogg_stream_state Stream;
-	ogg_stream_init(&Stream, Serial(Samples, SampleRate));
+	ogg_stream_init(&Stream, Serial(Channels, SampleRate));
 
 	// The three headers, then the audio from a page of its own
 	ogg_packet Header, HeaderComment, HeaderCode;
@@ -128,11 +133,14 @@ bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality,
 	size_t Done = 0;
 	bool Ended = false, Wrote = false;
 	while (!Ended) {
-		const size_t Count = std::min(CHUNK, Samples.size() - Done);
+		const size_t Count = std::min(CHUNK, Length - Done);
 		if (Count > 0) {
 			float **ppBuffer = vorbis_analysis_buffer(&State, static_cast<int>(Count));
-			for (size_t i = 0; i < Count; ++i)
-				ppBuffer[0][i] = std::max(-1.0f, std::min(1.0f, Samples[Done + i]));
+			for (size_t c = 0; c < Channels.size(); ++c) {
+				const std::vector<float> &Samples = *Channels[c];
+				for (size_t i = 0; i < Count; ++i)
+					ppBuffer[c][i] = std::max(-1.0f, std::min(1.0f, Samples[Done + i]));
+			}
 			vorbis_analysis_wrote(&State, static_cast<int>(Count));
 			Done += Count;
 		}
@@ -166,10 +174,29 @@ bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality,
 	return true;
 }
 
-bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &SampleRate, int &Channels, OggComments &Comments,
+}	// namespace
+
+bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality, const OggComments &Comments, std::string &Out,
 	std::string &Error)
 {
+	return Encode(std::vector<const std::vector<float>*>(1, &Samples), SampleRate, Quality, Comments, Out, Error);
+}
+
+bool EncodeOgg(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, float Quality,
+	const OggComments &Comments, std::string &Out, std::string &Error)
+{
+	std::vector<const std::vector<float>*> Channels;
+	Channels.push_back(&Left);
+	Channels.push_back(&Right);
+	return Encode(Channels, SampleRate, Quality, Comments, Out, Error);
+}
+
+bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &SampleRate, int &Channels, OggComments &Comments,
+	std::string &Error, std::vector<float> *pSecond)
+{
 	Samples.clear();
+	if (pSecond != 0)
+		pSecond->clear();
 	Comments.clear();
 	MemoryFile Source = { &File, 0 };
 	ov_callbacks Callbacks;
@@ -205,6 +232,8 @@ bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &Sample
 			break;
 		}
 		Samples.insert(Samples.end(), ppPcm[0], ppPcm[0] + Count);
+		if (pSecond != 0)
+			pSecond->insert(pSecond->end(), ppPcm[Channels > 1 ? 1 : 0], ppPcm[Channels > 1 ? 1 : 0] + Count);
 	}
 	ov_clear(&Vorbis);
 	return Good;

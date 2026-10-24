@@ -267,10 +267,11 @@ public:
 	virtual int AddTrack(const std::string &Name, const std::vector<std::vector<Cell> > &Channels, int Speed, int Tempo,
 		std::string &Error) = 0;
 
-	// For games: a track (from 0) played from its start for Seconds as audio
-	// (mono, -1 to 1), with the sample where each row began, as song rows in
-	// playing order. Every channel plays, muted ones too.
-	virtual bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, int &SampleRate,
+	// For games: a track (from 0) played from its start for Seconds as audio,
+	// its left and right sides (-1 to 1; the same on both when nothing pans),
+	// with the sample where each row began, as song rows in playing order.
+	// Every channel plays, muted ones too.
+	virtual bool RenderTrack(int Track, double Seconds, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
 		std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
 	// Writes a file next to the song (FileName has no folders), replacing one
 	// of that name; the path written comes back in Path

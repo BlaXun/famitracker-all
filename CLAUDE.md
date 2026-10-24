@@ -221,6 +221,42 @@ tutorials of `res/tutorials` (built in as RCDATA, read by
 `CMainFrame::OnCommand`. New work goes to the `next` branch first; once its
 build has been tried, `beginner-friendly` is fast-forwarded to it.
 
+Stereo is this branch's own (the NES, NSF files and FamiTracker 0.4.6 are
+mono). Every channel has a pan, set by the `8xx` effect (`EF_PAN`, appended
+to `effect_t`; `00` left, `80` the middle, `FF` right, lasting until the next
+`8xx`, every channel starting in the middle at `ResetChannel`).
+`CChannelHandler::HandleNoteData` handles it for every channel, the DPCM's
+too, with `SetPan`, which tells `CAPU::SetChannelPan` and
+`CMixer::SetChannelPan` (mapping the N163's channels, see Gotchas). `CMixer`
+renders a left and a right Blip_Buffer with the pan law of `PanGains`: the
+side a channel moves away from fades out and the other keeps all of it, so
+a channel in the middle has a gain of exactly 1 on both sides. The 2A03's
+two outputs mix each side's share of their channels with the same
+nonlinear formulas; the VRC6's, MMC5's, FDS's and 5B's channels send each
+side its share of their level (`MixSides`; `CS5B` sends each channel's level
+as it changes); the N163's one DAC is followed channel by channel
+(`N163Channel`); the VRC7 makes each side's samples with its channels
+weighed by `PanGains256` (`OPLL_calc_lr` in emu2413; emu2149's
+`PSG_calc_lr` is unused since the 5B's emulation sends its levels to the
+mixer). `CSoundGen` plays and writes WAV files in stereo
+(`OUTPUT_CHANNELS`), gives the visualizer the two sides together and counts
+`GetRenderMarks` in samples of each side; `export_for_game` encodes stereo
+OGG files (`EncodeOgg` with both sides; `transcribe::ReadWavSides` reads the
+rendering) and measures loudness over both channels as BS.1770 sums them. A
+song without `8xx` comes out on both sides sample for sample as the mono mix
+did (`Source/Tests/ApuTests.cpp` checks every chip against hashes of the
+mono code) and saves byte for byte as before; NSF export leaves `8xx` out
+(`CPatternCompiler`), so its NSF is the same as without the pans. The piano
+roll draws a note's pan as an arrow and pans notes from its Effects menu
+(`CChannelNotes::SetPan`; every note edit keeps each note at the pan it
+played at, and a new note plays where the channel is panned). The Claude
+Code tools read pans into `NoteInfo::Pan`, write them with `write_notes`'
+`pan`, `set_pan`, `add_echo`'s `opposite` and `mix`'s `width`, keep them
+through their other writes (`BuildPart` keeps the old pans where a part
+doesn't set its own, `KeepFollowing` the next note's), and `Commit` writes
+the loop's first note its pan when a change leaves the song's end panned
+otherwise (`KeepLoopPans`).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -352,9 +388,10 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips, note editing, chip switching, the drum grid and tutorials**
-  (`Source/Clips.cpp`, `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`,
-  `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`): `Source/Tests` builds
+- **Clips, note editing, chip switching, the drum grid, tutorials and the
+  sound chips** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`,
+  `Source/ChipSwitch.cpp`, `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`,
+  `Source/APU`): `Source/Tests` builds
   them on Linux against working stand-ins for the MFC and document pieces
   they use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
   following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
@@ -369,7 +406,16 @@ The application has no test suite of its own. What exists:
   channels that stay moved to their new columns. `DrumGridTests.cpp` covers reading the
   drums off a bar, putting them on and off, and the ready-made beats.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
-  the errors, and the built-in tutorials, which must stay ASCII. Same three
+  the errors, and the built-in tutorials, which must stay ASCII.
+  `ApuTests.cpp` plays every chip's channels by register writes (each
+  rendering forked, since the emulators keep state in globals): all in the
+  middle, both sides must be the mono mix of the code before stereo,
+  pinned by hashes (`MONO`; after a deliberate change to the emulation,
+  configure with `-DAPU_REFERENCE=<a folder with that code's APU and
+  Blip_Buffer>` and `apu_tests` prints them anew); two channels panned
+  apart must each be alone on their side as they sound in the middle. The
+  APU sources are copied under the names they're included by, next to
+  stand-ins for `stdafx.h` and `Common.h` (`standins/apu`). Same three
   commands with `Source/Tests` and `build/tests`; CI runs them in the Linux
   job. The stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
@@ -556,7 +602,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   `Vol = MAX_VOLUME (0x10)`, `EffNumber = EF_NONE (0)`. Notes 1-12 are C to B,
   13 is release and 14 is halt.
 - **Effect letters:** `EFF_CHAR[]` is indexed by `effect - 1`. FDS and 5B
-  reuse the letters H, I and J.
+  reuse the letters H, I and J. `8` is this branch's pan (`EF_PAN`, 33):
+  FamiTracker 0.4.6 loads a module with it (nothing checks effect numbers
+  on load), shows "(invalid)" on a row with it in the first effect column
+  (the other columns stay blank) and plays it in the middle. The Claude
+  Code tools (`Source/Api/Music.h`), `Source/Nsf/FtmFile.cpp` and
+  `Source/Transcribe/TextModule.cpp` keep their own copies of the letters.
 - **Instrument files (`.fti`):** `"FTI"` plus `INST_VERSION` "2.4".
   `CFamiTrackerDoc::SaveInstrument`/`LoadInstrument` write and read the header,
   version, type byte and name; each `CInstrument*::SaveFile/LoadFile` handles
@@ -572,7 +623,10 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
 2. If the letter is chip-specific, add it to that chip's table in
    `CFamiTrackerView::EditEffNumberColumn`.
 3. Playback: shared effects go in `CChannelHandler::CheckCommonEffects`,
-   chip-specific ones in the channel class's `HandleCustomEffects`.
+   chip-specific ones in the channel class's `HandleCustomEffects`. The DPCM
+   channel's handler never calls `CheckCommonEffects`; an effect that every
+   channel plays alike, the DPCM's too, can go in the effect loop of
+   `CChannelHandler::HandleNoteData`, as the pan (`8xx`) does.
 4. NSF export is `PatternCompiler.cpp`. The driver is binary-only, so an effect
    it does not understand can only be dropped or approximated at export.
 5. Check `TextExporter.cpp` and `hlp/effect_list.htm`.
@@ -670,6 +724,12 @@ NSF export still uses the 2A03 driver. Touch points:
   `CustomExporter*` files. Turning PCH on breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
+- **The N163 plays its channels in reverse order:** `CChannelHandlerN163`
+  writes channel index i at `0x40 + (7 - i) * 8`, which `CN163` mixes as its
+  channel 7 - i (`CHANID_N163_CHAN8` for the first). Code that reaches the
+  emulation's N163 channels by `chan_id_t` maps them, as
+  `CMixer::StoreChannelLevel` does for the meters and
+  `CChannelHandler::SetPan` for the pan.
 - **Several expansion chips:** `SNDCHIP_*` are bit flags, and a module can
   have any of them on (on `master`, 0.4.6's dialog takes one). The N163
   channels past its count are registered last, so `GetChannelCount()` still

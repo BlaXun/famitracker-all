@@ -36,9 +36,13 @@ typedef std::vector<std::pair<std::string, std::string> > OggComments;	// "TITLE
 // 1.0 best; 0.6 suits chiptunes), with Vorbis comments. False with the reason.
 bool EncodeOgg(const std::vector<float> &Samples, int SampleRate, float Quality, const OggComments &Comments, std::string &Out,
 	std::string &Error);
+// The same in stereo: the left and the right side, as long as each other
+bool EncodeOgg(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, float Quality,
+	const OggComments &Comments, std::string &Out, std::string &Error);
 
-// For checks and tests: an OGG Vorbis file's first channel, its rate and comments
+// For checks and tests: an OGG Vorbis file's first channel, its rate and
+// comments; with pSecond, its second channel there (the first again in a mono file)
 bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &SampleRate, int &Channels, OggComments &Comments,
-	std::string &Error);
+	std::string &Error, std::vector<float> *pSecond = 0);
 
 }	// namespace ftapi

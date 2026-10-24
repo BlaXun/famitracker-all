@@ -1360,7 +1360,7 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 		PartNote Note = MakeNote(N.Row, N.Rows, h, std::max(1, N.Volume - O.VolumeDrop));
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
 			const int Effect = N.Effects[e].second.first;
-			if (Effect == EFF_ARPEGGIO || IsSongEffect(Effect))
+			if (Effect == EFF_ARPEGGIO || Effect == EFF_PAN || IsSongEffect(Effect))	// the harmony keeps its own channel's place
 				continue;
 			if (N.Effects[e].first == 0)
 				Note.Effects.push_back(N.Effects[e].second);

@@ -74,6 +74,7 @@ public:
 	uint8	GetReg(int Chip, int Reg) const;
 
 	void	SetChipLevel(chip_level_t Chip, float Level);
+	void	SetChannelPan(int ChanID, int Pan);		// 0x00 left, 0x80 the middle, 0xFF right (CMixer::SetChannelPan)
 
 #ifdef LOGGING
 	void	Log();

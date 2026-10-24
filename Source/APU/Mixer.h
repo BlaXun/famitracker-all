@@ -57,6 +57,22 @@ public:
 	void	AddSample(int ChanID, int Value);
 	int		ReadBuffer(int Size, void *Buffer, bool Stereo);
 
+	// Stereo (this FamiTracker's own, the NES being mono): a channel's pan,
+	// 0x00 left, 0x80 the middle (where every channel starts), 0xFF right,
+	// from Time (cycles into the frame) on
+	void	SetChannelPan(int ChanID, int Pan, int Time);
+	int		GetChannelPan(int ChanID) const;
+	// What a channel's level is multiplied by on each side, for the chips that
+	// make their samples themselves (VRC7, 5B): 256 is the whole of it
+	void	PanGains256(int ChanID, int32 &Left, int32 &Right) const;
+	// The pan law: the side a sound is panned away from fades out, the other
+	// stays whole, so a sound in the middle is on both sides as the mono mix had it
+	static void PanGains(int Pan, double &Left, double &Right);
+	// For the VRC7 and the 5B: their samples for each side
+	void	MixSamples(blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
+	// The N163's DAC plays the sample of another channel, at the level the last one had
+	void	N163Channel(int ChanID, int Time);
+
 	int32	GetChanOutput(uint8 Chan) const;
 	void	SetChipLevel(chip_level_t Chip, float Level);
 	uint32	ResampleDuration(uint32 Time) const;
@@ -68,11 +84,14 @@ private:
 
 	void MixInternal1(int Time);
 	void MixInternal2(int Time);
-	void MixN163(int Value, int Time);
-	void MixFDS(int Value, int Time);
-	void MixVRC6(int Value, int Time);
-	void MixMMC5(int Value, int Time);
-	void MixS5B(int Value, int Time);
+	void MixN163(int ChanID, int Value, int Time);
+	void MixFDS(int ChanID, int Value, int Time);
+	void MixVRC6(int ChanID, int Value, int Time);
+	void MixMMC5(int ChanID, int Value, int Time);
+	void MixS5B(int ChanID, int Value, int Time);
+	void MixN163Sides(int Time);
+	template <class Synth> void MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time);
+	Blip_Buffer &Side(int Index) { return Index == 0 ? BlipBuffer : BlipBufferRight; }
 
 	void StoreChannelLevel(int Channel, int Value);
 	void ClearChannelLevels();
@@ -89,13 +108,23 @@ private:
 	Blip_Synth<blip_good_quality, -3500>	SynthFDS;
 	Blip_Synth<blip_good_quality, -2000>	SynthS5B;
 	
-	// Blip buffer object
+	// Blip buffer objects: the left side, and the right
 	Blip_Buffer	BlipBuffer;
+	Blip_Buffer	BlipBufferRight;
 
-	double		m_dSumSS;
-	double		m_dSumTND;
+	double		m_dSumSS[2];				// the 2A03's two outputs on each side
+	double		m_dSumTND[2];
 
 	int32		m_iChannels[CHANNELS];
+
+	// Stereo
+	int			m_iPan[CHANNELS];			// 0x00-0xFF
+	double		m_dGain[CHANNELS][2];		// left and right, from the pan
+	int32		m_iLevel[CHANNELS];			// the linear chips' channels: the level the deltas sent add up to
+	int32		m_iSent[CHANNELS][2];		// ...and what each side has of it
+	int32		m_iN163Level;				// the N163's DAC: its level, the channel it plays and what each side has of it
+	int			m_iN163Chan;
+	int32		m_iN163Sent[2];
 	uint8		m_iExternalChip;
 	uint32		m_iSampleRate;
 

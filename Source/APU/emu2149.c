@@ -140,6 +140,7 @@ PSG_reset (PSG * psg)
   for (i = 0; i < 3; i++)
   {
     psg->cout[i] = 0;
+    psg->chout[i] = 0;
     psg->count[i] = 0x1000;
     psg->freq[i] = 0;
     psg->edge[i] = 0;
@@ -263,6 +264,7 @@ calc (PSG * psg)
       }
     }
 
+    psg->chout[i] = 0;
     if (psg->mask&PSG_MASK_CH(i))
       continue;
 
@@ -275,6 +277,7 @@ calc (PSG * psg)
 
 	  psg_volumes[i] = psg->cout[i];
 	  mix += psg->cout[i];
+	  psg->chout[i] = psg->cout[i];
     }
 
   }
@@ -299,6 +302,29 @@ PSG_calc (PSG * psg)
   psg->psgtime = psg->psgtime - psg->realstep;
 
   return (int16) (psg->out << 4);
+}
+
+EMU2149_API void
+PSG_calc_lr (PSG * psg, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right)
+{
+  int32 l = 0, r = 0;
+  int i;
+
+  if (psg->quality)
+  {
+    *left = *right = PSG_calc (psg);	/* the rate converter: in the middle */
+    return;
+  }
+
+  calc (psg);
+  for (i = 0; i < 3; i++)
+  {
+    l += psg->chout[i] * gainL[i];
+    r += psg->chout[i] * gainR[i];
+  }
+  /* As PSG_calc: with gains of 256, (x * 256 + 128) >> 8 is x itself */
+  *left = (int16) ((int16) ((l + 128) >> 8) << 4);
+  *right = (int16) ((int16) ((r + 128) >> 8) << 4);
 }
 
 EMU2149_API void

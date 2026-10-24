@@ -154,6 +154,7 @@ enum effect_t {
 	EF_SUNSOFT_ENV_TYPE,		// Hxy: envelope shape y, starts it; x follows the note (ChannelsS5B.cpp)
 	EF_SUNSOFT_ENV_HI,			// Ixx: envelope period, high byte
 	EF_SUNSOFT_ENV_LO,			// Jxx: envelope period, low byte
+	EF_PAN,						// 8xx, this FamiTracker's own: 00 left, 80 center, FF right (0.4.6 and NSFs play mono)
 //	EF_TARGET_VOLUME_SLIDE, 
 /*
 	EF_VRC7_MODULATOR,
@@ -162,6 +163,11 @@ enum effect_t {
 */
 	EF_COUNT
 };
+
+// The pan effect's (8xx) values: hard left, the middle (where every channel starts), hard right
+const int PAN_LEFT = 0x00;
+const int PAN_CENTER = 0x80;
+const int PAN_RIGHT = 0xFF;
 
 // DPCM  effects
 //const int EF_DPCM_PITCH = EF_SWEEPUP;		// DPCM pitch, 'H'
@@ -207,6 +213,7 @@ const char EFF_CHAR[] = {
 	'H',	// Sunsoft envelope type
 	'I',	// Sunsoft envelope high
 	'J',	// Sunsoft envelope low
+	'8',	// Pan (stereo position; the MOD and XM letter for panning)
 	//'9'	// Targeted volume slide
 	/*
 	'H',	// VRC7 modulator
