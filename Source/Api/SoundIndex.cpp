@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <map>
 
@@ -331,11 +332,16 @@ public:
 			TARGET_SAWTOOTH, TARGET_FDS, TARGET_S5B };
 		for (size_t r = 0; r < Library.size(); ++r) {
 			const Reference &R = Library[r];
+			// Its sounds' names, numbered where two have the same ("Green Planet lead 2"), so each can be added
+			std::vector<std::string> Names;
+			for (size_t s = 0; s < R.Sounds.size(); ++s)
+				Names.push_back(ReferenceSoundName(R, R.Sounds[s]));
 			for (size_t s = 0; s < R.Sounds.size(); ++s) {
 				const std::shared_ptr<const ReferenceSound> pSound = std::make_shared<ReferenceSound>(R.Sounds[s]);
 				const ReferenceSound &Sound = *pSound;
 				const int Home = ReferenceHome(Sound);
-				const std::string Short = ReferenceSoundName(R, Sound);
+				const int Same = static_cast<int>(std::count(Names.begin(), Names.begin() + static_cast<std::ptrdiff_t>(s), Names[s]));
+				const std::string Short = Same == 0 ? Names[s] : Names[s] + " " + std::to_string(Same + 1);
 				// As reference_sound makes it: a preset for the 2A03, the VRC6 and the 5B, an FDS sound for the FDS
 				const Preset Made = ReferencePreset(Sound, Short);
 				const std::string Kind = ReferenceKind(Sound);
@@ -579,7 +585,7 @@ private:
 const std::vector<SoundKind> &SoundKinds()
 {
 	static const std::vector<SoundKind> KINDS = {
-		{ "lead", "Leads", "lead leads melody tune flute whistle brass trumpet horn clarinet oboe saxophone violin singing" },
+		{ "lead", "Leads", "lead leads melody tune flute whistle brass trumpet horn clarinet oboe saxophone violin" },
 		{ "bass", "Basses", "bass basses low" },
 		{ "pad", "Pads and chords", "pad pads chord chords strings organ choir" },
 		{ "pluck", "Plucks", "pluck plucks plucked harp guitar pizzicato koto banjo" },
@@ -712,6 +718,10 @@ std::vector<SoundEntry> ListSounds(const SongInfo &Song, const std::vector<Refer
 	return L.Out();
 }
 
+namespace {
+std::vector<size_t> FindMatching(const std::vector<SoundEntry> &All, const SoundQuery &Query, bool Every);
+}
+
 // The fields of SoundEntry::Search, in the order they count: the name, the kind, where it's from, its words, where it plays
 const char FIELD_MARKS[] = "\x01\x02\x03\x04\x05";
 const int FIELD_SCORES[] = { 10, 6, 4, 3, 2 };
@@ -756,7 +766,7 @@ int WordScore(const std::string &Search, const std::string &Asked)
 
 }	// namespace
 
-int SoundMatch(const SoundEntry &Sound, const std::string &Words)
+int SoundMatch(const SoundEntry &Sound, const std::string &Words, bool Every)
 {
 	const std::vector<std::string> Asked = WordsOf(Words);
 	std::string Indexed;
@@ -772,14 +782,30 @@ int SoundMatch(const SoundEntry &Sound, const std::string &Words)
 			continue;
 		++Counted;
 		const int Best = WordScore(Search, Asked[a]);
-		if (Best == 0)
+		if (Best == 0 && Every)
 			return 0;
 		Score += Best;
 	}
 	return Counted > 0 ? Score : 1;
 }
 
-std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQuery &Query)
+std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQuery &Query, bool *pSome)
+{
+	if (pSome != 0)
+		*pSome = false;
+	std::vector<size_t> Out = FindMatching(All, Query, true);
+	if (Out.empty() && WordsOf(Query.Words).size() > 1) {
+		// None has every word: the ones with some of them
+		Out = FindMatching(All, Query, false);
+		if (pSome != 0)
+			*pSome = !Out.empty();
+	}
+	return Out;
+}
+
+namespace {
+
+std::vector<size_t> FindMatching(const std::vector<SoundEntry> &All, const SoundQuery &Query, bool Every)
 {
 	std::vector<std::pair<std::pair<int, int>, size_t> > Found;		// (-score, order), index
 	const bool Words = !WordsOf(Query.Words).empty();
@@ -788,7 +814,7 @@ std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQu
 		if ((!Query.Kind.empty() && E.Kind != Query.Kind) || (Query.Source >= 0 && E.Source != Query.Source) ||
 			(Query.Target >= 0 ? E.Target != Query.Target : !E.Home))
 			continue;
-		const int Score = Words ? SoundMatch(E, Query.Words) : 1;
+		const int Score = Words ? SoundMatch(E, Query.Words, Every) : 1;
 		if (Score <= 0)
 			continue;
 		const int Order = (KindOrder(E.Kind) * SOURCE_COUNT + E.Source) * TARGET_COUNT + E.Target;
@@ -801,6 +827,8 @@ std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQu
 		Out.push_back(Found[i].second);
 	return Out;
 }
+
+}	// namespace
 
 std::vector<PreviewStep> PreviewSteps(const SoundEntry &Sound)
 {

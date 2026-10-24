@@ -2051,14 +2051,14 @@ CAPTION "Sound browser"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     LTEXT           "Every sound this song can use: ready-made sounds for its chips, the sounds of your reference library and the song's own instruments. Click one to hear it; while the list is picked, the note keys (or a MIDI keyboard) play it too.",IDC_STATIC,7,7,446,18
-    LTEXT           "Find:",IDC_STATIC,7,32,30,8
-    EDITTEXT        IDC_SB_FIND,40,30,170,12,ES_AUTOHSCROLL
+    LTEXT           "Find:",IDC_STATIC,7,32,34,8
+    EDITTEXT        IDC_SB_FIND,44,30,166,12,ES_AUTOHSCROLL
     LTEXT           "Kind:",IDC_STATIC,220,32,20,8
     COMBOBOX        IDC_SB_KIND,242,30,86,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "From:",IDC_STATIC,336,32,20,8
     COMBOBOX        IDC_SB_FROM,358,30,95,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Plays on:",IDC_STATIC,7,48,30,8
-    COMBOBOX        IDC_SB_CHANNEL,40,46,170,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Plays on:",IDC_STATIC,7,48,34,8
+    COMBOBOX        IDC_SB_CHANNEL,44,46,166,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     RTEXT           "",IDC_SB_COUNT,336,48,117,8
     CONTROL         "",IDC_SB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA | WS_BORDER | WS_TABSTOP,7,62,446,140
     LTEXT           "",IDC_SB_TEXT,7,206,446,42

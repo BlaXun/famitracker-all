@@ -13828,7 +13828,7 @@ std::string HowToAdd(const SoundEntry &E, int Channel)
 		return Format("It's the song's instrument %02X: write_notes and set_instrument use it by name", E.Number);
 	case MAKE_REFERENCE:
 		return "Add it with reference_sound reference \"" + E.Key + "\" sound " + std::to_string(E.Number) +
-			(Channel >= 0 ? On : std::string());
+			(Channel >= 0 ? On : std::string()) + " name \"" + E.Short + "\"";
 	case MAKE_VRC7_CUSTOM:
 		return "Add it with set_instrument or write_notes on a VRC7 channel, instrument \"" + E.Key + "\" (a custom patch)";
 	default:
@@ -13872,7 +13872,8 @@ std::string FindSoundTool(Session &S, const Json &Args)
 			throw Problem("No sounds are listed for " + S.Channel(Channel).FullName() + ".");
 	}
 	const std::vector<SoundEntry> All = SongSounds(S, Channel);
-	const std::vector<size_t> Found = FindSounds(All, Q);
+	bool Some = false;
+	const std::vector<size_t> Found = FindSounds(All, Q, &Some);
 	std::string Asked;
 	if (!Q.Words.empty())
 		Asked += " for \"" + Q.Words + "\"";
@@ -13885,8 +13886,9 @@ std::string FindSoundTool(Session &S, const Json &Args)
 	if (Found.empty())
 		return "No sound" + Asked + ". Try fewer or other words (a kind like bell, pluck or pad, a quality like warm or soft, a "
 			"game), another kind, or from all.";
-	std::string Out = Format("%s%s%s:\n", Plural(static_cast<int>(Found.size()), "sound", "sounds").c_str(), Asked.c_str(),
-		Q.Words.empty() ? "" : ", best first");
+	std::string Out = Some ? Format("No sound%s has all the words; %s some of them, best first:\n", Asked.c_str(),
+		Plural(static_cast<int>(Found.size()), "sound has", "sounds have").c_str()) : Format("%s%s%s:\n",
+		Plural(static_cast<int>(Found.size()), "sound", "sounds").c_str(), Asked.c_str(), Q.Words.empty() ? "" : ", best first");
 	for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i) {
 		const SoundEntry &E = All[Found[i]];
 		Out += "- " + E.Name + " (" + E.Kind + "; " + E.Origin + "; plays on " + E.ChannelName + ")" + (E.Words.empty() ? "" : ": " +

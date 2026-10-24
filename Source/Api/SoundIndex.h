@@ -154,13 +154,15 @@ struct SoundQuery {
 	int Target;				// sound_target, -1 for each sound once, where it's at home
 	SoundQuery() : Source(-1), Target(-1) {}
 };
-// How well a sound matches words, 0 for not at all: every word must be found (a word matches the start of
-// one of the sound's, so "pluck" finds "plucky"), in its name most, then its kind, origin and words
-int SoundMatch(const SoundEntry &Sound, const std::string &Words);
+// How well a sound matches words, 0 for not at all: every word must be found (or, not Every, one at least; a
+// word matches the start of one of the sound's, so "pluck" finds "plucky"), in its name most, then its kind,
+// origin and words
+int SoundMatch(const SoundEntry &Sound, const std::string &Words, bool Every = true);
 // Search set to the sound's words as they are now (ListSounds does it; after changing a sound, again)
 void IndexWords(SoundEntry &Sound);
-// The sounds that match, as indices into All: best first with words, otherwise by kind, then source
-std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQuery &Query);
+// The sounds that match, as indices into All: best first with words, otherwise by kind, then source. When no
+// sound has every word, the ones with some of them, and Some says so
+std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQuery &Query, bool *pSome = 0);
 
 // The notes a preview plays: ms from its start, and FamiTracker's pitch (C-0 = 0; a noise pitch 0-15 on the
 // noise), PREVIEW_RELEASE or PREVIEW_HALT. A melody up and back, low for a bass, a beat for a drum; the FDS's

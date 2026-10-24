@@ -11578,9 +11578,14 @@ void TestSoundIndex()
 	Found = FindSounds(All, Q);
 	CHECK(!Found.empty() && All[Found[0]].Name == "Warm pad");
 	Q.Words = "kazoo";
-	CHECK(FindSounds(All, Q).empty());
-	Q.Words = "soft kazoo";
-	CHECK(FindSounds(All, Q).empty());
+	bool Some = true;
+	CHECK(FindSounds(All, Q, &Some).empty() && !Some);
+	Q.Words = "soft kazoo";		// none has both: the ones with "soft"
+	Found = FindSounds(All, Q, &Some);
+	CHECK(Some && !Found.empty() && All[Found[0]].Name == "Soft lead");
+	Q.Words = "soft lead";
+	Found = FindSounds(All, Q, &Some);
+	CHECK(!Some && !Found.empty() && All[Found[0]].Name == "Soft lead");
 	CHECK(SoundMatch(*pLead, "soft lead") > SoundMatch(*pLead, "flute"));
 	CHECK(SoundMatch(*pLead, "flute") > 0);
 	// Kind and source
@@ -11672,9 +11677,20 @@ void TestSoundIndex()
 	// References: each sound at home where reference_sound puts it, on the other channels it can play on too; found
 	// by the game, the title, a tag; warned of a vibrato that clicks and notes that vanish
 	std::vector<Reference> Library(1, ClickyReference());
+	// Two sounds of a reference with one name: the second is numbered, so each can be added
+	Library.push_back(ClickyReference());
+	Library[1].Id = "lava-game-04";
+	Library[1].Title = "Magma Pools";
+	Library[1].Track = 4;
+	Library[1].Sounds[1].Role = "the lead";
+	const std::string PoolLead = ReferenceSoundName(Library[1], Library[1].Sounds[0]);
 	const std::string LeadName = ReferenceSoundName(Library[0], Library[0].Sounds[0]);
 	const std::string EchoName = ReferenceSoundName(Library[0], Library[0].Sounds[1]);
 	const std::string SnareName = ReferenceSoundName(Library[0], Library[0].Sounds[2]);
+	All = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6", "FDS" }), Library, std::vector<SoundUse>(), -1);
+	CHECK(FindEntry(All, PoolLead, TARGET_PULSE) != 0 && FindEntry(All, PoolLead + " 2", TARGET_PULSE) != 0 &&
+		FindEntry(All, PoolLead + " 2", TARGET_PULSE)->Short == PoolLead + " 2" && FindEntry(All, PoolLead + " 2", TARGET_PULSE)->Number == 2);
+	Library.pop_back();
 	All = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6", "FDS" }), Library, std::vector<SoundUse>(), -1);
 	const SoundEntry *pRefLead = FindEntry(All, LeadName, TARGET_PULSE);
 	CHECK(pRefLead != 0 && pRefLead->Source == SOURCE_REFERENCE && pRefLead->Make == MAKE_REFERENCE && pRefLead->Home &&
@@ -11763,7 +11779,7 @@ void TestFindSound()
 	Result = Run(Song, "find_sound", "{\"query\": \"lava caves\"}");
 	CHECK(Contains(Result.Text, ("- " + LeadName + " (lead; Lava Caves (Lava Game, track 3), sound 1: Pulse 1, the lead; plays on "
 		"Pulse 1): a 50% pulse that holds at 12 with a deep vibrato. Add it with reference_sound reference \"lava-game-03\" sound "
-		"1.").c_str()));
+		"1 name \"" + LeadName + "\".").c_str()));
 	CHECK_HAS(Result.Text, "its vibrato clicks on ");
 	CHECK_HAS(Result.Text, "the tools nudge such notes with a fine pitch (Pxx) as they write them");
 	CHECK_HAS(Result.Text, "Its notes are gone within ");
@@ -11778,7 +11794,12 @@ void TestFindSound()
 	CHECK_HAS(Result.Text, "- Bass (saw) (bass; ready-made; plays on VRC6 Sawtooth)");
 	CHECK_HAS(Result.Text, "Add it with add_instrument preset \"bass\" channel 8.");
 	Result = Run(Song, "find_sound", "{\"query\": \"lava\", \"channel\": 8}");
-	CHECK_HAS(Result.Text, "Add it with reference_sound reference \"lava-game-03\" sound 1 channel 8.");
+	CHECK_HAS(Result.Text, "Add it with reference_sound reference \"lava-game-03\" sound 1 channel 8 name \"");
+	// Words no sound has all of: the ones with some, said so
+	Result = Run(Song, "find_sound", "{\"query\": \"warm bell\"}");
+	CHECK_HAS(Result.Text, "No sound for \"warm bell\" has all the words; ");
+	CHECK_HAS(Result.Text, "- Warm pad (pad;");
+	CHECK_HAS(Result.Text, "- Bell (bell;");
 	CHECK(Run(Song, "find_sound", "{\"kind\": \"kazoo\"}").IsError);
 	CHECK_HAS(Run(Song, "find_sound", "{\"kind\": \"kazoo\"}").Text, "kind: one of lead, bass, pad, pluck, bell, keys, drums, effect, other.");
 	CHECK_HAS(Run(Song, "find_sound", "{\"query\": \"kazoo\"}").Text, "No sound for \"kazoo\".");

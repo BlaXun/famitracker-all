@@ -292,7 +292,8 @@ void CSoundBrowserDlg::Refilter()
 	Query.Source = From > 0 ? From - 1 : -1;
 	const int Channel = m_cChannel.GetCurSel();
 	Query.Target = Channel > 0 && static_cast<size_t>(Channel) <= m_Targets.size() ? m_Targets[static_cast<size_t>(Channel - 1)] : -1;
-	m_Shown = ftapi::FindSounds(m_All, Query);
+	bool Some = false;
+	m_Shown = ftapi::FindSounds(m_All, Query, &Some);
 
 	// The sound picked stays picked while it's listed
 	m_bFilling = true;
@@ -311,7 +312,10 @@ void CSoundBrowserDlg::Refilter()
 	m_cList.Invalidate();
 	m_bFilling = false;
 	CString Count;
-	Count.Format(m_Shown.size() == 1 ? _T("%d sound") : _T("%d sounds"), static_cast<int>(m_Shown.size()));
+	if (Some)
+		Count.Format(_T("None has all the words; %d with some"), static_cast<int>(m_Shown.size()));
+	else
+		Count.Format(m_Shown.size() == 1 ? _T("%d sound") : _T("%d sounds"), static_cast<int>(m_Shown.size()));
 	SetDlgItemText(IDC_SB_COUNT, Count);
 	ShowSelected();
 }
