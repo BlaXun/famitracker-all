@@ -8931,6 +8931,33 @@ void TestStereoLookAndLoop()
 	CHECK(!LoopTools.Call("fix_loop", Parse("{}")).IsError);
 	CHECK(PanOf(Loop.Rows[0][0]) == 0x80);
 	CHECK_LACKS(LoopTools.Call("check_loop", Parse("{}")).Text, "the pan at its end");
+
+	// A write that leaves a channel panned at the song's end: the loop's first note gets its own pan with it, in the
+	// same change, so it plays where it did the first time every time round
+	FakeSong Seam;
+	Seam.Info.DirectChanges = true;
+	Seam.Put(0, 0, "C-4", 2);
+	Seam.Put(0, 16, "D-4");
+	Seam.End(0, 32, NOTE_HALT);
+	const int Writes = Seam.Writes;
+	ToolResult Wrote = Run(Seam, "write_notes", "{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 8, \"beat\": 1, \"pitch\": \"E-4\", "
+		"\"beats\": 4, \"pan\": \"left\"}]}");
+	CHECK(!Wrote.IsError);
+	CHECK(Seam.Writes == Writes + 1);
+	CHECK(PanOf(Seam.Rows[0][112]) == 0x00 && PanOf(Seam.Rows[0][0]) == 0x80 && PanOf(Seam.Rows[0][16]) == -1);
+	CHECK_HAS(Wrote.Text, "2A03 Pulse 1's note at bar 1 beat 1, where the song loops, gets 880: the song's end leaves the channel "
+		"panned left");
+	CHECK_LACKS(Run(Seam, "check_loop", "{}").Text, "the pan at its end");
+	// The end in the middle again: the loop's note has its pan already, nothing more is written
+	Wrote = Run(Seam, "set_pan", "{\"channel\": \"Pulse 1\", \"pan\": \"center\", \"from_bar\": 8}");
+	CHECK(!Wrote.IsError);
+	CHECK_LACKS(Wrote.Text, "where the song loops");
+	// A song in the middle gets no pan from a write at its end
+	FakeSong Mono;
+	Mono.Info.DirectChanges = true;
+	Mono.Put(0, 0, "C-4", 2);
+	CHECK(!Run(Mono, "write_notes", "{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 8, \"pitch\": \"E-4\", \"beats\": 4}]}").IsError);
+	CHECK(PanEffects(Mono) == 0);
 }
 
 void TestStereoExport()

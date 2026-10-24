@@ -1612,6 +1612,102 @@ void SmoothChanges(Session &S, std::vector<Change> &Changes, int &First, std::ve
 	First = Low;
 }
 
+// When the song loops, its end leads back into its loop: a channel the change leaves panned at the end otherwise than
+// the loop's first note plays the first time through would move that note elsewhere every time round. The note gets
+// that pan written on its row then (it changes nothing the first time through), and the change grows to it, First
+// moving back when it's before; Notes says so. A song that doesn't pan has nothing to keep.
+void KeepLoopPans(Session &S, std::vector<Change> &Changes, int &First, std::vector<std::string> &Notes)
+{
+	// The song as the change leaves it
+	std::vector<std::vector<Cell> > Channels;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Channels.push_back(S.Cells(c));
+		Columns.push_back(std::max(1, std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns)));
+	}
+	int End = First;
+	bool Pans = false;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const size_t Need = static_cast<size_t>(First) + Changes[i].Cells.size();
+		if (Cells.size() < Need)
+			Cells.resize(Need);
+		std::copy(Changes[i].Cells.begin(), Changes[i].Cells.end(), Cells.begin() + First);
+		End = std::max(End, static_cast<int>(Need));
+		for (size_t r = 0; r < Cells.size() && !Pans; ++r)
+			Pans = HasEffect(Cells[r], EFF_PAN, Columns[static_cast<size_t>(c)]);
+	}
+	if (!Pans)
+		return;
+	int LoopRow = -1;
+	const std::vector<std::pair<int, int> > Played = PlayedFrames(S.Song, Channels, Columns, LoopRow);
+	size_t Once = Played.size(), Again = Played.size();	// where the loop starts in Played, the first time and the next
+	for (size_t p = 0; p < Played.size() && LoopRow >= 0; ++p) {
+		if (Played[p].first != LoopRow)
+			continue;
+		if (Once == Played.size())
+			Once = p;
+		else {
+			Again = p;
+			break;
+		}
+	}
+	if (Again == Played.size())
+		return;
+	std::set<int> Touched;
+	int Low = First, High = End;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const int Shown = Columns[static_cast<size_t>(c)];
+		// The loop's first note, and the pans coming into it the first time and the next
+		size_t Note = Again;
+		for (size_t p = Once; p < Again && Note == Again; ++p)
+			if (Played[p].first < static_cast<int>(Cells.size()) && Cells[static_cast<size_t>(Played[p].first)].HasNote())
+				Note = p;
+		if (Note == Again || Again + (Note - Once) >= Played.size())
+			continue;
+		int Pan = PAN_CENTER, FirstTime = PAN_CENTER;
+		for (size_t p = 0; p < Again + (Note - Once); ++p) {
+			if (p == Note)
+				FirstTime = Pan;
+			const int Row = Played[p].first;
+			if (Row < static_cast<int>(Cells.size()))
+				for (int k = 0; k < Shown; ++k)
+					if (Cells[static_cast<size_t>(Row)].Effect[k] == EFF_PAN)
+						Pan = Cells[static_cast<size_t>(Row)].Param[k];
+		}
+		const int Row = Played[Note].first;
+		if (Pan == FirstTime || HasEffect(Cells[static_cast<size_t>(Row)], EFF_PAN, Shown))
+			continue;
+		if (!AddEffect(Cells[static_cast<size_t>(Row)], EFF_PAN, FirstTime, Shown)) {
+			Notes.push_back(Format("%s ends panned %s, so when the song loops its note at %s plays there too (it has no free "
+				"effect column for its own pan, %s).", S.Channel(c).FullName().c_str(), PanName(Pan).c_str(), S.Time.Position(Row).c_str(),
+				PanName(FirstTime).c_str()));
+			continue;
+		}
+		Notes.push_back(Format("%s's note at %s, where the song loops, gets 8%02X: the song's end leaves the channel panned %s, "
+			"and this keeps the note %s every time round, as the first time.", S.Channel(c).FullName().c_str(),
+			S.Time.Position(Row).c_str(), FirstTime, PanName(Pan).c_str(), FirstTime == PAN_CENTER ? "in the middle" :
+			("panned " + PanName(FirstTime)).c_str()));
+		Touched.insert(c);
+		Low = std::min(Low, Row);
+		High = std::max(High, Row + 1);
+	}
+	if (Touched.empty())
+		return;
+	for (size_t i = 0; i < Changes.size(); ++i) {
+		const int c = Changes[i].Channel;
+		const std::vector<Cell> &Cells = Channels[static_cast<size_t>(c)];
+		const int Stop = Touched.count(c) ? High : First + static_cast<int>(Changes[i].Cells.size());
+		Changes[i].Cells.clear();
+		for (int r = Low; r < Stop; ++r)
+			Changes[i].Cells.push_back(r < static_cast<int>(Cells.size()) ? Cells[static_cast<size_t>(r)] : Cell());
+	}
+	First = Low;
+}
+
 std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsClip, const std::string &ClipName,
 	const std::string &What)
 {
@@ -1626,6 +1722,7 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		std::vector<Change> Writing = Changes;
 		int Start = First;
 		SmoothChanges(S, Writing, Start, Smoothed);
+		KeepLoopPans(S, Writing, Start, Smoothed);
 		std::vector<ChannelCells> Parts;
 		for (size_t i = 0; i < Writing.size(); ++i) {
 			ChannelCells Part;
