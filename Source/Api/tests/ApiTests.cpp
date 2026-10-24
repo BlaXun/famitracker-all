@@ -2188,6 +2188,11 @@ void TestReferences()
 	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"castlevania\"}");
 	CHECK_HAS(Result.Text, "Konami's gothic action (Castlevania, Castlevania III, Super C)");
 	CHECK_HAS(Result.Text, "Konami action (Bucky O'Hare");
+	// Castlevania III is the Japanese version, with the VRC6 (studied again on 2026-10-24)
+	CHECK_HAS(Result.Text, "the Japanese version, Akumajou Densetsu, with the VRC6");
+	CHECK_HAS(Result.Text, "Castlevania III's sawtooth");
+	CHECK_LACKS(Result.Text, "American");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"akumajou densetsu\"}").Text, "Konami's gothic action");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"sad night\"}").Text, "Melancholic and sad");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"final fantasy\"}").Text, "Square's RPG sound");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"kid icarus fds\"}").Text, "sawtooth-ramp wave");
