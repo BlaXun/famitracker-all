@@ -277,7 +277,12 @@ public:
 		for (size_t c = 0; c < Info.Channels.size(); ++c) {
 			Info.Channels[c].MixLevel = Mix.Level(Info.Channels[c].ChanId);
 			Info.Channels[c].MixPan = Mix.Pan(Info.Channels[c].ChanId);
+			Info.Channels[c].MixSoft = Mix.Soft(Info.Channels[c].ChanId);
+			Info.Channels[c].MixSpace = Mix.Space(Info.Channels[c].ChanId);
 		}
+		Info.SpaceRoom = Mix.Room();
+		Info.SpaceEcho = Mix.Echo();
+		Info.SpaceRepeats = Mix.Repeats();
 		Info.Frames = static_cast<int>(Rows[0].size()) / Info.PatternLength;
 		Info.Track = Current;
 		Info.Tracks = static_cast<int>(Tracks.size());
@@ -462,16 +467,21 @@ public:
 		return true;
 	}
 
-	// As CChannelMixAction (InsertRecording.cpp) sets them: by channel ID, one undoable step
-	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error) override
+	// As CChannelMixAction (InsertRecording.cpp) sets them, through McpConnection's SetMixer: by channel ID, one
+	// undoable step
+	bool SetMixer(const MixerSettings &Mixer, std::string &Error) override
 	{
 		if (Busy) {
 			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
 			return false;
 		}
 		MixStore Next = Mix;
-		for (size_t c = 0; c < Info.Channels.size() && c < Levels.size() && c < Pans.size(); ++c)
-			Next.Set(Info.Channels[c].ChanId, Levels[c], Pans[c]);
+		for (size_t c = 0; c < Info.Channels.size() && c < Mixer.Levels.size() && c < Mixer.Pans.size(); ++c) {
+			Next.Set(Info.Channels[c].ChanId, Mixer.Levels[c], Mixer.Pans[c]);
+			if (c < Mixer.Softs.size() && c < Mixer.Spaces.size())
+				Next.SetDepth(Info.Channels[c].ChanId, Mixer.Softs[c], Mixer.Spaces[c]);
+		}
+		Next.SetSpace(Mixer.Room, Mixer.Echo, Mixer.Repeats);
 		if (Next == Mix)
 			return true;
 		Remember();
@@ -1001,6 +1011,17 @@ public:
 				}
 				Samples.push_back(static_cast<float>(Sum));
 				Right.push_back(static_cast<float>(SumRight));
+			}
+		}
+		if (Mix.SpaceHeard()) {
+			// The mixer's space, roughly: the whole render echoing every eighth of a second, each time 8 dB under, and
+			// a second more for its tail, as FamiTracker renders on while the space rings
+			Samples.resize(Samples.size() + static_cast<size_t>(SampleRate), 0.0f);
+			Right.resize(Right.size() + static_cast<size_t>(SampleRate), 0.0f);
+			const size_t Delay = static_cast<size_t>(SampleRate / 8);
+			for (size_t n = Delay; n < Samples.size(); ++n) {
+				Samples[n] += 0.4f * Samples[n - Delay];
+				Right[n] += 0.4f * Right[n - Delay];
 			}
 		}
 		return true;
@@ -8259,6 +8280,51 @@ void TestCut()
 	CHECK(Cut.LoopStart == 1000 && Cut.FadeIn == 320);
 }
 
+void TestCutTail()
+{
+	// A tone through its loop twice and a third start, with a tail (the mixer's space) from the first pass's end in
+	// the second's start: with Tail the loop is the second time through, whatever the notes do at the seam
+	std::vector<float> Render;
+	for (int i = 0; i < 26000; ++i) {
+		float v = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / 8000.0));
+		if (i >= 9100 && i < 9600)
+			v += static_cast<float>(0.2 * std::exp(-(i - 9100) / 100.0));	// the first pass's tail
+		Render.push_back(v);
+	}
+	std::vector<TimedRow> Rows(3);
+	Rows[0].Row = 0;
+	Rows[1].Row = 16;
+	Rows[1].LoopStart = true;
+	Rows[2].Row = 16;
+	Rows[2].LoopStart = true;
+	std::vector<std::pair<int, long long> > Marks;
+	Marks.push_back(std::make_pair(0, 100LL));
+	Marks.push_back(std::make_pair(16, 1100LL));
+	Marks.push_back(std::make_pair(16, 9100LL));
+	Marks.push_back(std::make_pair(16, 17100LL));	// the third time it starts (the render went on)
+	GameCut Cut;
+	std::string Error;
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error) && !Cut.SecondPass && !Cut.Tail);	// the notes alike
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error, false, true) && Cut.SecondPass && Cut.Tail);
+	CHECK(Cut.LoopStart + Cut.Begin >= 9090 && Cut.LoopStart + Cut.Begin <= 9110 && Cut.End - (Cut.LoopStart + Cut.Begin) == 8000);
+	// A song that halts keeps its tail up to where it's 80 dB under full scale
+	std::vector<float> Halting(12000, 0.0f);
+	for (int i = 0; i < 4000; ++i)
+		Halting[static_cast<size_t>(i)] = static_cast<float>(0.5 * std::sin(i * 0.3));
+	for (int i = 4000; i < 12000; ++i)
+		Halting[static_cast<size_t>(i)] = static_cast<float>(0.3 * std::exp(-(i - 4000) / 300.0));
+	std::vector<TimedRow> Once(2);
+	Once[0].Row = 0;
+	Once[1].Row = 8;
+	std::vector<std::pair<int, long long> > At;
+	At.push_back(std::make_pair(0, 0LL));
+	At.push_back(std::make_pair(8, 4000LL));
+	CHECK(CutForGame(Halting, Halting, 8000, Once, At, true, true, Cut, Error) && Cut.End == 4000 && !Cut.Tail);
+	CHECK(CutForGame(Halting, Halting, 8000, Once, At, true, true, Cut, Error, false, true) && Cut.Tail);
+	const long long Expected = 4000 + static_cast<long long>(std::ceil(300.0 * std::log(0.3 / 1e-4)));
+	CHECK(Cut.End >= Expected - 2 && Cut.End <= Expected + 2 && !Cut.Loops);
+}
+
 std::string Comment(const OggComments &Comments, const char *pKey)
 {
 	for (size_t i = 0; i < Comments.size(); ++i)
@@ -8307,29 +8373,30 @@ void TestMixerStore()
 	CHECK(!Store.Set(29, -10, PAN_CENTER) && !Store.Set(-1, -10, PAN_CENTER) && Store.Level(29) == 0 && Store.Pan(-1) == PAN_CENTER);
 	CHECK(Near(MixStore::Gain(-60), 0.501187, 1e-6) && MixStore::Gain(0) == 1.0 && Near(MixStore::Gain(60), 1.995262, 1e-6));
 	const std::vector<unsigned char> Data = Store.Write();
+	CHECK(Store.WriteVersion() == 1);	// faders and pans alone: version 1, as before Soft and Space
 	CHECK(Data.size() == 40u);	// the count, then each channel's ID, level (tenths of a dB) and pan
 	CHECK(Data[0] == 3 && Data[4] == 0 && Data[8] == 0xDD && Data[11] == 0xFF && Data[12] == 0x80 && Data[16] == 7 && Data[20] == 0 &&
 		Data[24] == 0x40 && Data[28] == 28 && Data[32] == 60 && Data[36] == 0xFF);
 	MixStore Back;
 	Back.Set(3, 10, PAN_CENTER);	// what was there goes
-	CHECK(Back.Read(&Data[0], Data.size(), MixStore::BLOCK_VERSION) && Back == Store && Back.Write() == Data);
+	CHECK(Back.Read(&Data[0], Data.size(), 1) && Back == Store && Back.Write() == Data);
 	CHECK(Back.Level(0) == -35 && Back.Pan(7) == 0x40 && Back.Level(3) == 0);
 	CHECK(std::string(MixStore::BLOCK_ID) == "BF MIXER");
 	// Cut short anywhere: every channel at its default, and no crash
 	for (size_t n = 0; n < Data.size(); ++n) {
 		MixStore Cut;
 		Cut.Set(1, 5, PAN_CENTER);
-		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, MixStore::BLOCK_VERSION) && Cut.Empty());
+		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, 1) && Cut.Empty());
 	}
 	// Longer than its channels, or damaged: the defaults
 	std::vector<unsigned char> Longer(Data);
 	Longer.push_back(0);
-	CHECK(!Back.Read(&Longer[0], Longer.size(), MixStore::BLOCK_VERSION) && Back.Empty());
+	CHECK(!Back.Read(&Longer[0], Longer.size(), 1) && Back.Empty());
 	auto Damaged = [&](size_t At, unsigned char Value) {
 		std::vector<unsigned char> Bad(Data);
 		Bad[At] = Value;
 		MixStore Read;
-		return !Read.Read(&Bad[0], Bad.size(), MixStore::BLOCK_VERSION) && Read.Empty();
+		return !Read.Read(&Bad[0], Bad.size(), 1) && Read.Empty();
 	};
 	CHECK(Damaged(4, 29));		// a channel past chan_id_t's
 	CHECK(Damaged(16, 0));		// channel 0 twice
@@ -8351,6 +8418,165 @@ void TestMixerStore()
 	CHECK(Store.Level(0) == -35 && Store.Pan(7) == PAN_CENTER && Store.Level(28) == 0 && !Store.Empty());
 	Store.Clear();
 	CHECK(Store.Empty() && Store == MixStore());
+}
+
+void TestMixerDepthTools()
+{
+	// set_mixer's soft and space on channels, and the space they send to
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 2, 12);
+	Song.Put(5, 0, "E-4", 0, 10);
+	ToolResult R = Run(Song, "set_mixer", "{\"channels\": \"VRC6 Pulse 1\", \"soft\": 30, \"space\": 25}");
+	CHECK(!R.IsError && Song.Mix.Soft(5) == 30 && Song.Mix.Space(5) == 25 && Song.MixWrites == 1);
+	CHECK_HAS(R.Text, "Set FamiTracker's mixer (View > Mixer): VRC6 Pulse 1 Soft 30 Space 25.");
+	CHECK_HAS(R.Text, "(Soft and Space, FamiTracker's own depth, stay in the mixer)");
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"VRC6 Pulse 1\", \"soft\": 30}").Text, "Nothing changed");
+	// The space alone: its room, echo and repeats, one undoable change
+	R = Run(Song, "set_mixer", "{\"room\": \"cave\", \"echo\": \"1/2\", \"repeats\": 4}");
+	CHECK(!R.IsError && Song.Mix.Room() == 3 && Song.Mix.Echo() == 24 && Song.Mix.Repeats() == 4 && Song.MixWrites == 2);
+	CHECK_HAS(R.Text, "the space a cave, an echo of 1/2 beat repeating 4 times.");
+	const char *const ECHOES[] = { "\"1 1/2\"", "0.75", "\"3/4 beat\"", "1", "\"2 beats\"", "\"1/3\"", "\"off\"" };
+	const int STEPS[] = { 72, 36, 36, 48, 96, 16, 0 };
+	for (int i = 0; i < 7; ++i) {
+		R = Run(Song, "set_mixer", std::string("{\"echo\": ") + ECHOES[i] + "}");
+		Check(!R.IsError && Song.Mix.Echo() == STEPS[i], ECHOES[i], __LINE__);
+	}
+	CHECK(Run(Song, "set_mixer", "{\"echo\": 3}").IsError && Run(Song, "set_mixer", "{\"echo\": \"soon\"}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"room\": \"kitchen\"}").IsError && Run(Song, "set_mixer", "{\"repeats\": 9}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"channels\": 1, \"soft\": 101}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"soft\": 20}").IsError);	// which channels?
+	CHECK(Run(Song, "set_mixer", "{\"room\": \"hall\", \"write_into_notes\": true}").IsError);
+	CHECK(!Run(Song, "set_mixer", "{\"room\": \"church\"}").IsError && Song.Mix.Room() == 2);
+	CHECK(!Run(Song, "set_mixer", "{\"room\": \"cave\"}").IsError);
+	// get_song lists them, and says the tools count a channel's level before them
+	const std::string Overview = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Overview, "VRC6 Pulse 1 Soft 30 Space 25; the space they send to: a cave, no echo.");
+	CHECK_HAS(Overview, "(a channel's level before its Soft and Space)");
+	// The drums blur; a space with no room and no echo sends to nothing
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"Noise\", \"space\": 20}").Text, "blurs the beat");
+	CHECK_HAS(Run(Song, "set_mixer", "{\"room\": \"none\"}").Text, "Space sends to nothing yet");
+	// One change undone at a time
+	std::string Message;
+	CHECK(Song.Undo(Message) && Song.Mix.Room() == 3 && Song.Undo(Message) && Song.Mix.Space(3) == 0 && Song.Mix.Space(5) == 25);
+
+	// mix counts a channel's level before Soft and Space: the same volumes with them as without
+	{
+		FakeSong Without, With;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "C-5", "A-4" };
+		for (int s = 0; s < 2; ++s) {
+			FakeSong &One = s == 0 ? Without : With;
+			One.Info.DirectChanges = true;
+			for (int i = 0; i < 8; ++i)
+				One.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			One.Put(1, 0, "E-3", 2, 12);
+			One.Put(2, 0, "C-3", 1);
+		}
+		With.Mix.SetDepth(5, 60, 50);
+		With.Mix.SetDepth(1, 40, 0);
+		CHECK(!Run(Without, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(!Run(With, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(Without.Rows == With.Rows);
+	}
+
+	// Write into the notes moves the faders and pans; Soft, Space and the space stay
+	CHECK(!Run(Song, "set_mixer", "{\"channels\": \"Pulse 1\", \"level\": -3}").IsError);
+	R = Run(Song, "set_mixer", "{\"write_into_notes\": true}");
+	CHECK(!R.IsError && Song.Mix.Level(0) == 0 && Song.Mix.Soft(5) == 30 && Song.Mix.Space(5) == 25 && Song.Mix.Room() == 3);
+	CHECK_HAS(R.Text, "Soft and Space stay in the mixer");
+	// reset with no channels named: every channel and the space as they start
+	CHECK(!Run(Song, "set_mixer", "{\"reset\": true}").IsError && Song.Mix.Empty());
+
+	// The game's files: with the space ringing, the loop is the song's second time through, whose start has the
+	// end's tail, and a song that halts keeps its tail
+	{
+		FakeSong One;
+		One.Info.DirectChanges = true;
+		One.Put(0, 0, "A-3", 2, 15);
+		for (int r = 8; r < 128; r += 8)
+			One.Put(0, r, r % 16 == 0 ? "A-3" : "E-4");
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK(!R.IsError && !Contains(R.Text, "second time through"));
+		CHECK(!Run(One, "set_mixer", "{\"channels\": \"Pulse 1\", \"space\": 40}").IsError);
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK_HAS(R.Text, "The loop is the song's second time through, so the echo and reverb of its end (the mixer's Space) carry "
+			"into its start as the game loops.");
+		// ...not when the space sounds nothing (no room, no echo)
+		CHECK(!Run(One, "set_mixer", "{\"room\": \"none\"}").IsError);
+		CHECK(!Contains(Run(One, "export_for_game", "{\"normalize\": false}").Text, "second time through"));
+		CHECK(!Run(One, "set_mixer", "{\"room\": \"hall\"}").IsError);
+		One.Rows[0][120].Effect[0] = EFF_HALT;
+		One.Rows[0][120].Param[0] = 0;
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK_HAS(R.Text, "plays once (the song halts), its last notes ringing out in the mixer's space.");
+	}
+}
+
+void TestMixerDepthStore()
+{
+	// Soft and Space, and the space they send to (version 2 of the block)
+	MixStore Store;
+	CHECK(Store.Soft(5) == 0 && Store.Space(5) == 0 && Store.Room() == SPACE_ROOM_DEFAULT && Store.Echo() == 0 &&
+		Store.Repeats() == ECHO_REPEATS_DEFAULT && !Store.SpaceHeard());
+	CHECK(std::string(SPACE_ROOM_NAMES[SPACE_ROOM_DEFAULT]) == "hall" && std::string(SPACE_ROOM_NAMES[SPACE_ROOM_NONE]) == "none");
+	CHECK(Store.SetDepth(5, 30, 0) && !Store.SetDepth(5, 30, 0) && !Store.Empty() && Store.FadersDefault() && !Store.SpaceHeard());
+	CHECK(Store.SetDepth(7, 150, -4) && Store.Soft(7) == MIX_DEPTH_MOST && Store.Space(7) == 0);	// kept in range
+	CHECK(!Store.SetDepth(29, 10, 10) && Store.Soft(29) == 0);
+	CHECK(Store.SetDepth(7, 0, 40) && Store.SpaceHeard());
+	CHECK(Store.SetSpace(SPACE_ROOM_NONE, 0, 3) && !Store.SpaceHeard());	// no room and no echo: nothing to hear
+	CHECK(Store.SetSpace(SPACE_ROOM_NONE, 24, 3) && Store.SpaceHeard());		// the echo alone
+	CHECK(Store.SetSpace(9, 200, 0) && Store.Room() == SPACE_ROOM_NONE && Store.Echo() == ECHO_LONGEST && Store.Repeats() == 1);
+	CHECK(Store.SetSpace(3, 24, 4) && !Store.SetSpace(3, 24, 4));
+	Store.Set(0, -20, 0x60);
+	CHECK(Store.WriteVersion() == 2 && MixStore::BLOCK_VERSION == 2);
+	const std::vector<unsigned char> Data = Store.Write();
+	// Three channels of five numbers (ID, level, pan, Soft, Space), then the room, the echo and the repeats
+	CHECK(Data.size() == 4u + 3u * 20u + 12u);
+	CHECK(Data[0] == 3 && Data[4] == 0 && Data[12] == 0x60 && Data[24] == 5 && Data[36] == 30 && Data[44] == 7 && Data[60] == 40 &&
+		Data[64] == 3 && Data[68] == 24 && Data[72] == 4);
+	MixStore Back;
+	Back.Set(3, 10, PAN_CENTER);
+	CHECK(Back.Read(&Data[0], Data.size(), 2) && Back == Store && Back.Write() == Data);
+	CHECK(Back.Soft(5) == 30 && Back.Space(7) == 40 && Back.Level(0) == -20 && Back.Room() == 3 && Back.Echo() == 24 && Back.Repeats() == 4);
+	// Cut short anywhere: the defaults, and no crash
+	for (size_t n = 0; n < Data.size(); ++n) {
+		MixStore Cut;
+		Cut.SetDepth(1, 5, 5);
+		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, 2) && Cut.Empty());
+	}
+	// Longer, or damaged: the defaults
+	std::vector<unsigned char> Longer(Data);
+	Longer.push_back(0);
+	CHECK(!Back.Read(&Longer[0], Longer.size(), 2) && Back.Empty());
+	auto Damaged = [&](size_t At, unsigned char Value) {
+		std::vector<unsigned char> Bad(Data);
+		Bad[At] = Value;
+		MixStore Read;
+		return !Read.Read(&Bad[0], Bad.size(), 2) && Read.Empty();
+	};
+	CHECK(Damaged(36, 101));	// Soft over 100
+	CHECK(Damaged(60, 0xFF));	// Space over 100
+	CHECK(Damaged(64, 5));		// a room past the last
+	CHECK(Damaged(68, 97));		// an echo over two beats
+	CHECK(Damaged(72, 0));		// no repeats
+	CHECK(Damaged(72, 9));		// too many
+	CHECK(Damaged(0, 4));		// a channel more than the block holds
+	// Version 2's data read as version 1, and version 1's as version 2: damaged
+	CHECK(!Back.Read(&Data[0], Data.size(), 1) && Back.Empty());
+	MixStore Faders;
+	Faders.Set(2, -30, PAN_CENTER);
+	const std::vector<unsigned char> Old = Faders.Write();
+	CHECK(Faders.WriteVersion() == 1 && Old.size() == 16u && !Back.Read(&Old[0], Old.size(), 2) && Back.Read(&Old[0], Old.size(), 1) &&
+		Back == Faders);
+	// The space off its defaults alone is saved (version 2, no channels)
+	MixStore Room;
+	CHECK(Room.SetSpace(2, 0, 3) && !Room.Empty() && Room.WriteVersion() == 2 && Room.Write().size() == 16u);
+	// A chip switch keeps only the module's channels, their depth too; the space stays
+	std::vector<int> Kept(1, 0);
+	Store.KeepOnly(Kept);
+	CHECK(Store.Soft(5) == 0 && Store.Space(7) == 0 && Store.Level(0) == -20 && Store.Room() == 3 && !Store.SpaceHeard());
+	Store.Clear();
+	CHECK(Store.Empty() && Store.Room() == SPACE_ROOM_DEFAULT && Store.WriteVersion() == 1);
 }
 
 // Rows of a render, the two sides together: their loudness from First
@@ -8379,7 +8605,7 @@ void TestMixerTools()
 	ToolResult R = Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}");
 	CHECK(!R.IsError && Song.Mix.Level(0) == -60 && Song.MixWrites == 1);
 	CHECK_HAS(R.Text, "Set FamiTracker's mixer (View > Mixer): 2A03 Pulse 1 -6.0 dB.");
-	CHECK_HAS(R.Text, "NSF files don't: set_mixer with write_into_notes puts it into the notes.");
+	CHECK_HAS(R.Text, "NSF files don't: set_mixer with write_into_notes puts the faders and pans into the notes");
 	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}").Text, "Nothing changed: FamiTracker's mixer has 2A03 Pulse 1 -6.0 dB already.");
 	R = Run(Song, "set_mixer", "{\"channels\": [\"Pulse 2\"], \"pan\": \"half left\"}");
 	CHECK(!R.IsError && Song.Mix.Pan(1) == 0x40 && Song.Mix.Level(1) == 0);
@@ -12217,6 +12443,9 @@ int main()
 	TestKeyTools();
 	TestMixerStore();
 	TestMixerTools();
+	TestMixerDepthStore();
+	TestMixerDepthTools();
+	TestCutTail();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestFdsSounds();

@@ -2174,8 +2174,8 @@ std::string RangeText(int From, int To)
 std::vector<BarSpan> SongBarSpans(const Session &S, int First, int End);
 std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K, int Melody = -2);
 
-// The channels whose fader or starting pan in FamiTracker's mixer is off its default: "Pulse 1 -3.0 dB, Triangle
-// starting 30% left"
+// The channels whose fader, starting pan, Soft or Space in FamiTracker's mixer is off its default: "Pulse 1
+// -3.0 dB, Triangle starting 30% left, VRC6 Pulse 1 Soft 30 Space 25"
 std::string MixerText(const ChannelInfo &Channel)
 {
 	std::string Text = Channel.FullName();
@@ -2183,16 +2183,90 @@ std::string MixerText(const ChannelInfo &Channel)
 		Text += Format(" %+.1f dB", Channel.MixLevel / 10.0);
 	if (Channel.MixPan != PAN_CENTER)
 		Text += " starting " + PanName(Channel.MixPan);
+	if (Channel.MixSoft > 0)
+		Text += Format(" Soft %d", Channel.MixSoft);
+	if (Channel.MixSpace > 0)
+		Text += Format(" Space %d", Channel.MixSpace);
 	return Text;
+}
+
+bool MixerDefault(const ChannelInfo &Channel)
+{
+	return Channel.MixLevel == 0 && Channel.MixPan == PAN_CENTER && Channel.MixSoft == 0 && Channel.MixSpace == 0;
+}
+
+// The echo's time, from 48ths of a beat: "1/2 beat", "1 1/2 beats"
+std::string EchoText(int Echo)
+{
+	if (Echo <= 0)
+		return "no echo";
+	const int Whole = Echo / ECHO_STEPS, Rest = Echo % ECHO_STEPS;
+	int x = Rest, y = ECHO_STEPS;
+	while (y != 0) {
+		const int t = x % y;
+		x = y;
+		y = t;
+	}
+	const int a = x > 0 ? Rest / x : 0, b = x > 0 ? ECHO_STEPS / x : 1;
+	if (Rest == 0)
+		return Format("%d %s", Whole, Whole == 1 ? "beat" : "beats");
+	if (Whole == 0)
+		return Format("%d/%d beat", a, b);
+	return Format("%d %d/%d beats", Whole, a, b);
+}
+
+// The space channels' Space sends to: "a hall, an echo of 1/2 beat repeating 3 times"
+std::string SpaceText(const SongInfo &Song)
+{
+	const int Room = std::max(0, std::min(SPACE_ROOMS - 1, Song.SpaceRoom));
+	std::string Text = Room == SPACE_ROOM_NONE ? "no room" : std::string("a ") + SPACE_ROOM_NAMES[Room];
+	if (Song.SpaceEcho > 0)
+		Text += Format(", an echo of %s repeating %s", EchoText(Song.SpaceEcho).c_str(), Song.SpaceRepeats == 1 ? "once" :
+			Format("%d times", Song.SpaceRepeats).c_str());
+	else
+		Text += ", no echo";
+	return Text;
+}
+
+// A channel sends to the space and the space sounds: its sound rings on after the notes
+bool SpaceRings(const Session &S)
+{
+	if (S.Song.SpaceRoom == SPACE_ROOM_NONE && S.Song.SpaceEcho <= 0)
+		return false;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).MixSpace > 0)
+			return true;
+	return false;
 }
 
 std::string MixerList(const Session &S)
 {
 	std::string Text;
-	for (int c = 0; c < S.ChannelCount(); ++c)
-		if (S.Channel(c).MixLevel != 0 || S.Channel(c).MixPan != PAN_CENTER)
+	bool Space = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!MixerDefault(S.Channel(c)))
 			Text += (Text.empty() ? "" : ", ") + MixerText(S.Channel(c));
+		Space = Space || S.Channel(c).MixSpace > 0;
+	}
+	if (Space)
+		Text += "; the space they send to: " + SpaceText(S.Song);
 	return Text;
+}
+
+// The mixer as it is, for SongHost::SetMixer
+MixerSettings CurrentMixer(const Session &S)
+{
+	MixerSettings M;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		M.Levels.push_back(S.Channel(c).MixLevel);
+		M.Pans.push_back(S.Channel(c).MixPan);
+		M.Softs.push_back(S.Channel(c).MixSoft);
+		M.Spaces.push_back(S.Channel(c).MixSpace);
+	}
+	M.Room = S.Song.SpaceRoom;
+	M.Echo = S.Song.SpaceEcho;
+	M.Repeats = S.Song.SpaceRepeats;
+	return M;
 }
 
 std::string SongOverview(Session &S, const Json &Args)
@@ -2268,8 +2342,9 @@ std::string SongOverview(Session &S, const Json &Args)
 	const std::string Mixer = MixerList(S);
 	if (!Mixer.empty())
 		Text += "Mixer (FamiTracker's View > Mixer, saved with the song, the same in every track; its playback, WAV files and "
-			"export_for_game play it, NSF files don't): " + Mixer + ". The tools count the faders in how loud parts sound; "
-			"set_mixer changes them, or writes them into the notes for NSF files.\n";
+			"export_for_game play it, NSF files don't): " + Mixer + ". The tools count the faders in how loud parts sound (a "
+			"channel's level before its Soft and Space); set_mixer changes them, or writes the faders and pans into the notes "
+			"for NSF files.\n";
 
 	// Key and chords
 	Key K, Found;
@@ -12225,8 +12300,14 @@ std::string WriteMixerIntoNotes(Session &S)
 		if (!One.empty())
 			Written.push_back(One);
 	}
-	if (!S.Host().SetMixer(Levels, Kept, Error))
+	MixerSettings Back = CurrentMixer(S);	// Soft, Space and the space stay: notes can't have them
+	Back.Levels = Levels;
+	Back.Pans = Kept;
+	if (!S.Host().SetMixer(Back, Error))
 		throw Problem(Error.empty() ? "FamiTracker couldn't set the mixer back." : Error);
+	bool Depth = false;
+	for (int c = 0; c < Channels; ++c)
+		Depth = Depth || S.Channel(c).MixSoft > 0 || S.Channel(c).MixSpace > 0;
 
 	std::string Text = Changed == 0 ? "No notes needed changing" : Format("Wrote FamiTracker's mixer into the notes, in %s",
 		Plural(Changed, "track", "tracks").c_str());
@@ -12239,6 +12320,9 @@ std::string WriteMixerIntoNotes(Session &S)
 			Text += (i == 0 ? " " : "; ") + Stays[i];
 	}
 	Text += ". NSF files now sound as FamiTracker played the mix.";
+	if (Depth)
+		Text += " Soft and Space stay in the mixer: they're FamiTracker's own depth, which no notes can hold, so NSF files "
+			"play without them.";
 	if (Over > 0.0)
 		Text += Format(" %s was raised past its loudest notes' volume 15, so every channel came down %.1f dB instead, which "
 			"keeps the balance (the song plays that much quieter; export_for_game brings its files back up).", OverName.c_str(), Over);
@@ -12247,33 +12331,113 @@ std::string WriteMixerIntoNotes(Session &S)
 	return Text + " One Ctrl+Z in FamiTracker undoes it all.";
 }
 
-// A channel's fader and pan as set_mixer takes them
+// The space's room as set_mixer takes it: a name of SPACE_ROOM_NAMES, or a word for one
+int ParseRoom(const Json &Value)
+{
+	const std::string Text = Value.IsString() ? Lowercase(Trim(Value.String())) : std::string();
+	for (int r = 0; r < SPACE_ROOMS; ++r)
+		if (Text == SPACE_ROOM_NAMES[r])
+			return r;
+	if (Text == "room" || Text == "small" || Text == "a small room")
+		return 0;
+	if (Text == "a hall" || Text == "concert hall")
+		return 1;
+	if (Text == "a cathedral" || Text == "church" || Text == "chapel")
+		return 2;
+	if (Text == "a cave" || Text == "cavern" || Text == "grotto")
+		return 3;
+	if (Text == "off" || Text == "no room" || Text == "dry" || Text == "echo only")
+		return SPACE_ROOM_NONE;
+	throw Problem("room: \"small room\", \"hall\", \"cathedral\", \"cave\" or \"none\" (the echo alone).");
+}
+
+// The echo's time as set_mixer takes it, in beats (a number, "1/2", "1 1/2", or "off"), to 48ths of a beat
+int ParseEcho(const Json &Value)
+{
+	const char *const Help = "echo: its time in beats of the track's tempo, like 0.5, \"1/2\", \"3/4\", 1 or \"1 1/2\" (up to 2), "
+		"or \"off\".";
+	double Beats = -1.0;
+	if (Value.IsNumber())
+		Beats = Value.Number();
+	else if (Value.IsBool() && !Value.Bool())
+		Beats = 0.0;
+	else if (Value.IsString()) {
+		std::string Text = Lowercase(Trim(Value.String()));
+		for (const char *Word : { " beats", " beat" })
+			if (Text.size() > std::strlen(Word) && Text.compare(Text.size() - std::strlen(Word), std::string::npos, Word) == 0)
+				Text = Trim(Text.substr(0, Text.size() - std::strlen(Word)));
+		if (Text == "off" || Text == "none" || Text == "no" || Text == "0")
+			Beats = 0.0;
+		else {
+			// A whole number, a fraction or both ("1 1/2"), or a decimal
+			auto Whole = [](const std::string &Part, int &Value) {
+				char *pEnd = 0;
+				const long Number = std::strtol(Part.c_str(), &pEnd, 10);
+				Value = static_cast<int>(Number);
+				return !Part.empty() && pEnd != Part.c_str() && *pEnd == 0 && Number >= 0 && Number < 100;
+			};
+			const size_t Slash = Text.find('/');
+			if (Slash != std::string::npos) {
+				std::string Top = Trim(Text.substr(0, Slash));
+				const std::string Bottom = Trim(Text.substr(Slash + 1));
+				int Beat = 0, Over = 0, Under = 0;
+				const size_t Gap = Top.find(' ');
+				bool OK = true;
+				if (Gap != std::string::npos) {
+					OK = Whole(Trim(Top.substr(0, Gap)), Beat);
+					Top = Trim(Top.substr(Gap + 1));
+				}
+				if (OK && Whole(Top, Over) && Whole(Bottom, Under) && Under > 0)
+					Beats = Beat + Over / static_cast<double>(Under);
+			}
+			else {
+				char *pEnd = 0;
+				const double Number = std::strtod(Text.c_str(), &pEnd);
+				if (pEnd != Text.c_str() && *pEnd == 0)
+					Beats = Number;
+			}
+		}
+	}
+	if (!(Beats >= 0.0 && Beats <= 2.0001))
+		throw Problem(Help);
+	if (Beats == 0.0)
+		return 0;
+	return std::max(1, std::min(ECHO_LONGEST, static_cast<int>(std::floor(Beats * ECHO_STEPS + 0.5))));
+}
+
+// A channel's fader, pan, Soft and Space, and the space, as set_mixer takes them
 std::string SetMixerTool(Session &S, const Json &Args)
 {
 	if (!S.Song.DirectChanges)
 		throw Problem("The mixer is part of the song, so changing it needs direct changes: the user can allow them in File > "
 			"Connect Claude Code, or move the faders in FamiTracker (View > Mixer).");
+	const Json *pLevel = Arg(Args, "level"), *pChange = Arg(Args, "change"), *pPan = Arg(Args, "pan"), *pSoft = Arg(Args, "soft"),
+		*pSpace = Arg(Args, "space"), *pRoom = Arg(Args, "room"), *pEcho = Arg(Args, "echo"), *pRepeats = Arg(Args, "repeats");
+	const bool PerChannel = pLevel != 0 || pChange != 0 || pPan != 0 || pSoft != 0 || pSpace != 0;
+	const bool Shared = pRoom != 0 || pEcho != 0 || pRepeats != 0;
 	if (BoolArg(Args, "write_into_notes", false)) {
-		if (Arg(Args, "level") != 0 || Arg(Args, "change") != 0 || Arg(Args, "pan") != 0 || Arg(Args, "reset") != 0)
+		if (PerChannel || Shared || Arg(Args, "reset") != 0)
 			throw Problem("write_into_notes goes alone: set the faders first, then write them into the notes.");
 		return WriteMixerIntoNotes(S);
 	}
 	const bool Reset = BoolArg(Args, "reset", false);
-	const Json *pLevel = Arg(Args, "level"), *pChange = Arg(Args, "change"), *pPan = Arg(Args, "pan");
-	if (!Reset && pLevel == 0 && pChange == 0 && pPan == 0)
-		throw Problem("Say what to set: level (dB, -24 to 6), change (dB to add), pan, reset, or write_into_notes.");
+	if (!Reset && !PerChannel && !Shared)
+		throw Problem("Say what to set: level (dB, -24 to 6), change (dB to add), pan, soft or space (0-100), the space's room, "
+			"echo and repeats, reset, or write_into_notes.");
 	if (pLevel != 0 && pChange != 0)
 		throw Problem("Give level or change, not both.");
-	if (Reset && (pLevel != 0 || pChange != 0 || pPan != 0))
-		throw Problem("reset sets the channels back to 0 dB and the middle; give it alone.");
+	if (Reset && (PerChannel || Shared))
+		throw Problem("reset sets the channels back to 0 dB, the middle and no Soft or Space (and the space too when no channels "
+			"are named); give it alone.");
 	// The channels: a name or number, a list, or all (every channel, the noise and the DPCM too)
 	std::vector<int> Chosen;
 	const Json *pChannels = Arg(Args, "channels");
 	if (pChannels == 0 || (pChannels->IsString() && Lowercase(Trim(pChannels->String())) == "all")) {
-		if (pChannels == 0 && !Reset)
+		if (pChannels == 0 && PerChannel)
 			throw Problem("Name the channels to set (channels: a name or number, a list, or \"all\").");
-		for (int c = 0; c < S.ChannelCount(); ++c)
-			Chosen.push_back(c);
+		if (pChannels != 0 || Reset)
+			for (int c = 0; c < S.ChannelCount(); ++c)
+				Chosen.push_back(c);
 	}
 	else
 		Chosen = ChannelsArg(S, Args, "channels");
@@ -12283,50 +12447,88 @@ std::string SetMixerTool(Session &S, const Json &Args)
 	if (pPan != 0 && !ParsePanValue(*pPan, Pan))
 		throw Problem("pan: left, right, center, a place between (\"half left\", \"30% right\"), or a number from -1 (left) to 1 "
 			"(right).");
+	const int Soft = pSoft != 0 ? IntArg(Args, "soft", 0, 0, MIX_DEPTH_MOST) : 0;
+	const int Space = pSpace != 0 ? IntArg(Args, "space", 0, 0, MIX_DEPTH_MOST) : 0;
 
-	std::vector<int> Levels, Pans;
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		Levels.push_back(S.Channel(c).MixLevel);
-		Pans.push_back(S.Channel(c).MixPan);
+	MixerSettings Next = CurrentMixer(S);
+	if (Reset && pChannels == 0) {
+		Next.Room = SPACE_ROOM_DEFAULT;
+		Next.Echo = 0;
+		Next.Repeats = ECHO_REPEATS_DEFAULT;
 	}
+	if (pRoom != 0)
+		Next.Room = ParseRoom(*pRoom);
+	if (pEcho != 0)
+		Next.Echo = ParseEcho(*pEcho);
+	if (pRepeats != 0)
+		Next.Repeats = IntArg(Args, "repeats", ECHO_REPEATS_DEFAULT, 1, ECHO_REPEATS_MOST);
 	std::vector<std::string> Done;
-	bool Clamped = false;
+	bool Clamped = false, Rhythm = false;
 	for (size_t i = 0; i < Chosen.size(); ++i) {
 		const size_t c = static_cast<size_t>(Chosen[i]);
 		if (Reset) {
-			Levels[c] = 0;
-			Pans[c] = PAN_CENTER;
+			Next.Levels[c] = 0;
+			Next.Pans[c] = PAN_CENTER;
+			Next.Softs[c] = 0;
+			Next.Spaces[c] = 0;
 		}
 		if (pLevel != 0)
-			Levels[c] = static_cast<int>(std::floor(Level * 10.0 + 0.5));
+			Next.Levels[c] = static_cast<int>(std::floor(Level * 10.0 + 0.5));
 		if (pChange != 0) {
-			const int Want = Levels[c] + static_cast<int>(std::floor(By * 10.0 + 0.5));
-			Levels[c] = std::max(MIX_LEVEL_LOWEST, std::min(MIX_LEVEL_HIGHEST, Want));
-			Clamped = Clamped || Levels[c] != Want;
+			const int Want = Next.Levels[c] + static_cast<int>(std::floor(By * 10.0 + 0.5));
+			Next.Levels[c] = std::max(MIX_LEVEL_LOWEST, std::min(MIX_LEVEL_HIGHEST, Want));
+			Clamped = Clamped || Next.Levels[c] != Want;
 		}
 		if (pPan != 0)
-			Pans[c] = Pan;
+			Next.Pans[c] = Pan;
+		if (pSoft != 0)
+			Next.Softs[c] = Soft;
+		if (pSpace != 0)
+			Next.Spaces[c] = Space;
 		ChannelInfo After = S.Channel(Chosen[i]);
-		After.MixLevel = Levels[c];
-		After.MixPan = Pans[c];
-		Done.push_back(After.MixLevel == 0 && After.MixPan == PAN_CENTER ? After.FullName() + " at 0 dB in the middle" : MixerText(After));
+		After.MixLevel = Next.Levels[c];
+		After.MixPan = Next.Pans[c];
+		After.MixSoft = Next.Softs[c];
+		After.MixSpace = Next.Spaces[c];
+		Done.push_back(MixerDefault(After) ? After.FullName() + " at 0 dB in the middle" : MixerText(After));
+		const int Kind = After.Kind;
+		Rhythm = Rhythm || ((pSoft != 0 || pSpace != 0) && (After.MixSoft > 0 || After.MixSpace > 0) &&
+			(Kind == KIND_TRIANGLE || Kind == KIND_NOISE || Kind == KIND_DPCM));
 	}
-	bool Changes = false;
-	for (int c = 0; c < S.ChannelCount(); ++c)
-		Changes = Changes || Levels[static_cast<size_t>(c)] != S.Channel(c).MixLevel || Pans[static_cast<size_t>(c)] != S.Channel(c).MixPan;
+	const MixerSettings Now = CurrentMixer(S);
+	const bool SharedChanges = Next.Room != Now.Room || Next.Echo != Now.Echo || Next.Repeats != Now.Repeats;
+	bool Changes = SharedChanges;
+	for (size_t c = 0; c < Next.Levels.size(); ++c)
+		Changes = Changes || Next.Levels[c] != Now.Levels[c] || Next.Pans[c] != Now.Pans[c] || Next.Softs[c] != Now.Softs[c] ||
+			Next.Spaces[c] != Now.Spaces[c];
 	std::string Text;
 	for (size_t i = 0; i < Done.size(); ++i)
 		Text += (i == 0 ? "" : ", ") + Done[i];
+	SongInfo Shown = S.Song;
+	Shown.SpaceRoom = Next.Room;
+	Shown.SpaceEcho = Next.Echo;
+	Shown.SpaceRepeats = Next.Repeats;
+	if (Shared || (Reset && pChannels == 0))
+		Text += (Text.empty() ? "the space " : "; the space ") + SpaceText(Shown);
 	if (!Changes)
 		return "Nothing changed: FamiTracker's mixer has " + Text + " already.";
 	std::string Error;
-	if (!S.Host().SetMixer(Levels, Pans, Error))
+	if (!S.Host().SetMixer(Next, Error))
 		throw Problem(Error.empty() ? "FamiTracker couldn't change the mixer." : Error);
 	Text = "Set FamiTracker's mixer (View > Mixer): " + Text + ".";
 	if (Clamped)
 		Text += " The faders go from -24 to +6 dB, so some stopped there.";
+	bool Sends = false;
+	for (size_t c = 0; c < Next.Spaces.size(); ++c)
+		Sends = Sends || Next.Spaces[c] > 0;
+	if (Sends && Next.Room == SPACE_ROOM_NONE && Next.Echo == 0)
+		Text += " The space has no room and no echo, so Space sends to nothing yet: give it a room or an echo.";
+	if (Rhythm)
+		Text += " Soft or Space on the bass or the drums blurs the beat and the low end; keep them dry unless that's the effect "
+			"you want.";
 	Text += " FamiTracker's playback, WAV files and export_for_game play it (a pan is where the channel starts, before any 8xx); "
-		"NSF files don't: set_mixer with write_into_notes puts it into the notes. One Ctrl+Z in FamiTracker undoes it.";
+		"NSF files don't: set_mixer with write_into_notes puts the faders and pans into the notes (Soft and Space, "
+		"FamiTracker's own depth, stay in the mixer). One Ctrl+Z in FamiTracker undoes it.";
 	return Text;
 }
 
@@ -12522,7 +12724,9 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 			StartStep = Start.Effect[k] == EFF_DAC && Start.Param[k] > 0;
 	}
 	GameCut Cut;
-	if (!CutForGame(Left, Right, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error, StartStep))
+	// The mixer's space rings on after the notes: the loop's end carries into its start (or a halt keeps its tail)
+	const bool Tail = SpaceRings(S);
+	if (!CutForGame(Left, Right, SampleRate, Rows, Marks, F.Halts(), Clean, Cut, Error, StartStep, Tail))
 		throw Problem("The track couldn't be cut for a game: " + Error);
 
 	const std::string File = TrackFileName(S, Track, Taken);
@@ -12617,13 +12821,16 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 		Text += Format(", fading in over its first %d ms (the DPCM level set as it starts pops)",
 			static_cast<int>(FadeIn * 1000 / static_cast<size_t>(std::max(1, SampleRate))));
 	if (!Cut.Loops)
-		Text += ", plays once (the song halts).";
+		Text += Cut.Tail ? ", plays once (the song halts), its last notes ringing out in the mixer's space." :
+			", plays once (the song halts).";
 	else if (Cut.LoopStart < SampleRate / 100)	// moved a moment to where the waves meet
 		Text += ", loops as a whole.";
 	else
 		Text += Format(", the first %s once, then the loop from %s to the end.%s", SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
 			SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
 			Cut.StartPops ? " The loop is the song's second time through, since its very start pops." :
+			Cut.Tail ? " The loop is the song's second time through, so the echo and reverb of its end (the mixer's Space) carry "
+				"into its start as the game loops." :
 			Cut.SecondPass ? " The loop is the song's second time through, since the first starts differently (check_loop says why)." : "");
 	Code += (Code.empty() ? "" : "\n") + GameMakerCode(GameMakerName(File), Cut, SampleRate);
 	return Text;
@@ -15099,17 +15306,34 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"track; FamiTracker's playback, File > Create WAV and export_for_game play them, and the tools count the faders in how "
 		"loud parts sound. They aren't changes to the notes, so NSF files don't have them: write_into_notes puts the faders into "
 		"the volume columns (as mix scales a part) and the pans as 8xx on each channel's first note, in every track, then sets "
-		"the mixer back to 0 dB and the middle. get_song lists the channels off their default. Needs direct changes; each call "
-		"is one undoable change.",
+		"the mixer back to 0 dB and the middle. The mixer also adds optional depth, off unless set and not the NES's own "
+		"(NSF files never have it; it's for the game's OGG files): soft (0-100) rounds a channel's edges with a gentle "
+		"low-pass, warmer but still that chip (about 7 dB off its sound over 2 kHz at 100), and space (0-100) sends it to "
+		"the space every channel shares, a reverb in a room with an echo, which rings on after the notes; room, echo and "
+		"repeats set that space for the whole song. Use them sparingly: a little space (15-30) on pads and chords, a lead "
+		"in a big place (cave or cathedral, 30-50, maybe an echo of a half or a whole beat), soft 20-50 on a pulse or "
+		"sawtooth that should sound warm; keep the bass and the drums dry. mix and the review count a channel's level "
+		"before soft and space. get_song lists the channels off their default. Needs direct changes; each call is one "
+		"undoable change.",
 		Schema()
 			.Add("channels", ChannelListProp("The channels to set: a name or number, a list, or \"all\" (every channel)."))
 			.Add("level", Prop("number", "Their fader in dB, -24 to 6 (0: as they play)."))
 			.Add("change", Prop("number", "Instead: dB to add to their faders, like -3."))
 			.Add("pan", PanChoice("Where they start: left, right, center, a place between (\"half left\", \"30% right\", or a "
 				"number from -1 (left) to 1 (right)). An 8xx in their notes still moves them from there."))
-			.Add("reset", Prop("boolean", "Back to 0 dB and the middle (every channel when none are named)."))
-			.Add("write_into_notes", Prop("boolean", "Write the whole mixer into the notes for NSF files, in every track, and set "
-				"it back (alone, without the others).")),
+			.Add("soft", Prop("integer", "Soft, 0 (off) to 100: a gentle low-pass that rounds a pulse's or a sawtooth's edges."))
+			.Add("space", Prop("integer", "Space, 0 (off) to 100: how much of them goes to the shared space (the reverb and its "
+				"echo), after their fader."))
+			.Add("room", Prop("string", "The space's room, for the whole song: \"small room\", \"hall\" (the default), "
+				"\"cathedral\", \"cave\", or \"none\" (the echo alone)."))
+			.Add("echo", Prop("string", "The space's echo, in beats of the track's tempo: like \"1/2\", \"3/4\", 1 or \"1 1/2\" "
+				"(up to 2), or \"off\" (the default)."))
+			.Add("repeats", Prop("integer", "How many times the echo repeats, 1-8 (default 3), each quieter, the one after the "
+				"last 30 dB under the first."))
+			.Add("reset", Prop("boolean", "Back to 0 dB, the middle and no soft or space (every channel, and the space, when none "
+				"are named)."))
+			.Add("write_into_notes", Prop("boolean", "Write the faders and pans into the notes for NSF files, in every track, and "
+				"set them back (alone, without the others; soft and space stay in the mixer).")),
 		false);
 
 	AddTool("export_for_game", "Export music for a game",
@@ -15771,6 +15995,12 @@ std::string ToolSet::Instructions()
 		"- FamiTracker's mixer (View > Mixer, set_mixer) gives each channel a fader and a starting pan, saved with the song; "
 		"get_song lists them, and the tools count the faders in how loud parts sound (mix, the review). Prefer the notes' own volumes for "
 		"a mix that NSF files keep; set_mixer write_into_notes moves the mixer into them.\n"
+		"- The mixer's depth is optional and not NES-authentic (NSF files never have it; it's for the game's OGG files): soft "
+		"rounds a channel's edges with a gentle low-pass, and space sends it to a reverb with an echo that the whole song "
+		"shares (room, echo in beats, repeats). Use them sparingly and only when they serve the place: a little space (15-30) "
+		"on pads and chord arpeggios; a lead or an echo line in a big place, a cave or a cathedral (space 30-50, an echo of a "
+		"half or a whole beat); soft 20-50 on a pulse or a sawtooth that should sound warm. Never on the bass or the drums "
+		"unless asked: they blur the beat. mix and the review count each channel's level before soft and space.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"

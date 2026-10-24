@@ -1332,9 +1332,10 @@ bool CFamiTrackerDoc::WriteBlock_Sections(CDocumentFile *pDocFile) const
 
 bool CFamiTrackerDoc::WriteBlock_Mixer(CDocumentFile *pDocFile, const ftapi::MixStore &Mix) const
 {
-	// Beginner-friendly: the mixer window's faders and pans (Api/ChannelMix.h), a block other versions skip
+	// Beginner-friendly: the mixer window's faders and pans (Api/ChannelMix.h), a block other versions skip; version 2
+	// only when Soft, Space or the space is used, so a song with faders alone saves as before
 	const std::vector<unsigned char> Data = Mix.Write();
-	pDocFile->CreateBlock(ftapi::MixStore::BLOCK_ID, ftapi::MixStore::BLOCK_VERSION);
+	pDocFile->CreateBlock(ftapi::MixStore::BLOCK_ID, Mix.WriteVersion());
 	if (!Data.empty())
 		pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
 	return pDocFile->FlushBlock();
@@ -4386,12 +4387,14 @@ void CFamiTrackerDoc::ChannelMixChanged()
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	if (pSoundGen == NULL || m_pChannelMix == NULL)
 		return;
-	int Levels[CHANNELS], Pans[CHANNELS];
+	int Levels[CHANNELS], Pans[CHANNELS], Softs[CHANNELS], Spaces[CHANNELS];
 	for (int i = 0; i < CHANNELS; ++i) {
 		Levels[i] = m_pChannelMix->Level(i);
 		Pans[i] = m_pChannelMix->Pan(i);
+		Softs[i] = m_pChannelMix->Soft(i);
+		Spaces[i] = m_pChannelMix->Space(i);
 	}
-	pSoundGen->SetChannelMix(Levels, Pans);
+	pSoundGen->SetChannelMix(Levels, Pans, Softs, Spaces, m_pChannelMix->Room(), m_pChannelMix->Echo(), m_pChannelMix->Repeats());
 }
 
 void CFamiTrackerDoc::MoveChannels(const int *pOldTypes, unsigned int OldCount)

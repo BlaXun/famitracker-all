@@ -187,7 +187,11 @@ public:
 	// sets them (CFamiTrackerDoc::ChannelMixChanged) without waiting on the
 	// sound thread, which gives the mixer the levels at its next frame (and
 	// as a song starts or renders) and starts each channel at its pan.
-	void		 SetChannelMix(const int *pLevels, const int *pPans);
+	// With them each channel's depth, Soft and Space (0-100), and the space they
+	// send to: its room, the echo in 48ths of a beat (0 none) and its repeats
+	// (Api/ChannelMix.h); the echo's time follows the playing track's tempo.
+	void		 SetChannelMix(const int *pLevels, const int *pPans, const int *pSofts, const int *pSpaces, int Room, int Echo,
+		int Repeats);
 	int			 GetStartPan(int ChanID) const;
 
 	// Sample previewing
@@ -369,9 +373,14 @@ private:
 	// The mixer window's settings, by chan_id_t (SetChannelMix), and the ones the mixer has
 	volatile int		m_iMixLevel[CHANNELS];
 	volatile int		m_iMixPan[CHANNELS];
+	volatile int		m_iMixSoft[CHANNELS];
+	volatile int		m_iMixSpace[CHANNELS];
+	volatile int		m_iSpaceRoom, m_iSpaceEcho, m_iSpaceRepeats;
 	volatile LONG		m_iMixVersion;
 	LONG				m_iMixApplied;
 	void				ApplyChannelMix();
+	void				ApplySpace();						// the space, its echo timed to the playing track's beat
+	int					m_iRenderTail;						// frames rendered after the end while the space rang on
 
 	// Rendering
 	bool				m_bRendering;

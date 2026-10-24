@@ -50,8 +50,12 @@ struct ChannelInfo {
 	// dB (0 as it plays; FamiTracker's mixer makes it that much louder) and the pan it starts at (0x80 the middle)
 	int MixLevel;
 	int MixPan;
+	// ...and its depth there, after the fader: Soft (a gentle low-pass) and Space (its send to the song's space),
+	// 0 (off) to 100
+	int MixSoft;
+	int MixSpace;
 
-	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false), MixLevel(0), MixPan(0x80) {}
+	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false), MixLevel(0), MixPan(0x80), MixSoft(0), MixSpace(0) {}
 	std::string FullName() const { return Name == Chip ? Name : Chip + " " + Name; }	// "VRC6 Pulse 1"; "FDS"
 };
 
@@ -123,10 +127,22 @@ struct SongInfo {
 	bool DirectChanges;		// the user lets Claude change the song (otherwise ideas become clips)
 	bool Playing;
 	int PlayRow;			// from the song's start, -1 when stopped
+	// The mixer's space, which channels' Space sends to (ChannelMix.h): its room (SPACE_ROOM_NAMES), its echo in
+	// 48ths of a beat of the track's tempo (0: none) and the echo's repeats
+	int SpaceRoom, SpaceEcho, SpaceRepeats;
 
 	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Pal(false), Speed(6), Tempo(150), SplitPoint(32),
 		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), KeyChosen(false), DirectChanges(false),
-		Playing(false), PlayRow(-1) {}
+		Playing(false), PlayRow(-1), SpaceRoom(1), SpaceEcho(0), SpaceRepeats(3) {}
+};
+
+// The mixer window's settings as set_mixer sets them: a fader (tenths of a dB), a starting pan, Soft and Space
+// for every channel of the module in order, and the space (SongInfo::SpaceRoom and the rest)
+struct MixerSettings {
+	std::vector<int> Levels, Pans, Softs, Spaces;
+	int Room, Echo, Repeats;
+
+	MixerSettings() : Room(1), Echo(0), Repeats(3) {}
 };
 
 // Names for the module and the selected track (name_song), in UTF-8; what
@@ -223,10 +239,10 @@ public:
 	// The selected track's key (Keys.h): Choice when Chosen, otherwise back to
 	// auto (found from the notes), as one undoable change; false with the reason
 	virtual bool SetKey(bool Chosen, const KeyChoice &Choice, std::string &Error) = 0;
-	// The mixer window's faders and starting pans (ChannelInfo::MixLevel and
-	// MixPan), one of each for every channel of the module in order, as one
-	// undoable change; false with the reason
-	virtual bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error) = 0;
+	// The mixer window's faders, starting pans, Soft and Space (ChannelInfo::MixLevel
+	// and the rest), one of each for every channel of the module in order, and its
+	// space, as one undoable change; false with the reason
+	virtual bool SetMixer(const MixerSettings &Mixer, std::string &Error) = 0;
 	// The changes made from BeginGroup to EndGroup (in any track) are undone
 	// and redone together, as one Ctrl+Z
 	virtual void BeginGroup() = 0;

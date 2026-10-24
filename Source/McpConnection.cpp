@@ -914,8 +914,13 @@ public:
 			Channel.Muted = pView != NULL && pView->IsChannelMuted(static_cast<unsigned int>(c));
 			Channel.MixLevel = pDoc->GetChannelMix()->Level(Channel.ChanId);
 			Channel.MixPan = pDoc->GetChannelMix()->Pan(Channel.ChanId);
+			Channel.MixSoft = pDoc->GetChannelMix()->Soft(Channel.ChanId);
+			Channel.MixSpace = pDoc->GetChannelMix()->Space(Channel.ChanId);
 			Info.Channels.push_back(Channel);
 		}
+		Info.SpaceRoom = pDoc->GetChannelMix()->Room();
+		Info.SpaceEcho = pDoc->GetChannelMix()->Echo();
+		Info.SpaceRepeats = pDoc->GetChannelMix()->Repeats();
 		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
 			if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)))
 				continue;
@@ -1716,16 +1721,21 @@ public:
 		return true;
 	}
 
-	// The mixer window's faders and pans, as one undoable step (CChannelMixAction)
-	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error)
+	// The mixer window's faders, pans, Soft and Space and its space, as one undoable step (CChannelMixAction)
+	bool SetMixer(const ftapi::MixerSettings &Mixer, std::string &Error)
 	{
 		if (!CanChange(Error))
 			return false;
 		CFamiTrackerDoc *pDoc = Doc();
 		ftapi::MixStore Mix = *pDoc->GetChannelMix();
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
-		for (int c = 0; c < Channels && c < static_cast<int>(Levels.size()) && c < static_cast<int>(Pans.size()); ++c)
-			Mix.Set(pDoc->GetChannelType(c), Levels[static_cast<size_t>(c)], Pans[static_cast<size_t>(c)]);
+		for (int c = 0; c < Channels && c < static_cast<int>(Mixer.Levels.size()) && c < static_cast<int>(Mixer.Pans.size()); ++c) {
+			const size_t i = static_cast<size_t>(c);
+			Mix.Set(pDoc->GetChannelType(c), Mixer.Levels[i], Mixer.Pans[i]);
+			if (i < Mixer.Softs.size() && i < Mixer.Spaces.size())
+				Mix.SetDepth(pDoc->GetChannelType(c), Mixer.Softs[i], Mixer.Spaces[i]);
+		}
+		Mix.SetSpace(Mixer.Room, Mixer.Echo, Mixer.Repeats);
 		if (Mix == *pDoc->GetChannelMix())
 			return true;
 		if (!SetChannelMix(m_pMain, Mix)) {
