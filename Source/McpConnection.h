@@ -24,6 +24,7 @@
 #include <string>
 
 class CMainFrame;
+namespace ftapi { struct TrackHarmony; }
 
 // File > Connect Claude Code: FamiTracker as an MCP server, so Claude Code on
 // the same computer can work on the open song in musical terms (the tools are
@@ -54,6 +55,9 @@ public:
 	// failed, or FamiTracker is busy answering Claude Code.
 	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply);
 	bool IsBusy() const;				// answering Claude Code right now (RunTool would refuse)
+	// The piano roll's chord strip and key (Api/Tools.h, ToolSet::Harmony): the selected track's key, chosen or found
+	// from the notes, and the chords its parts play, as the tools hear them. False when busy or without a song.
+	bool Harmony(ftapi::TrackHarmony &Out);
 
 private:
 	struct Impl;

@@ -247,6 +247,12 @@ void KeyStore::TracksSwapped(int Track1, int Track2)
 	std::swap(m_Tracks[static_cast<size_t>(Track1)], m_Tracks[static_cast<size_t>(Track2)]);
 }
 
+void KeyStore::FitTracks(int Tracks)
+{
+	if (Tracks >= 0 && Tracks < static_cast<int>(m_Tracks.size()))
+		m_Tracks.resize(static_cast<size_t>(Tracks));
+}
+
 std::vector<unsigned char> KeyStore::Write() const
 {
 	std::vector<unsigned char> Out;

@@ -9919,6 +9919,14 @@ void TestKeyChoices()
 		CHECK(Store.Get(1, Got) && Got.K.Tonic == 2 && Got.K.Mode == 1 && !Got.Pentatonic);
 		Store.Set(64, CMajor);
 		CHECK(!Store.Get(64, Got));
+		// Keys of tracks a module doesn't have go
+		Store.Set(5, CMajor);
+		Store.FitTracks(6);
+		CHECK(Store.Get(5, Got) && Store.Get(1, Got));
+		Store.FitTracks(2);
+		CHECK(!Store.Get(5, Got) && Store.Get(1, Got));
+		Store.FitTracks(1);
+		CHECK(Store.Empty());
 	}
 }
 

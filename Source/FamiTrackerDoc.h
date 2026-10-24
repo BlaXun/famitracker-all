@@ -97,7 +97,7 @@ struct stSequence {
 class CTrackerChannel;
 class CDocumentFile;
 class CClipLibrary;
-namespace ftapi { class SectionStore; }
+namespace ftapi { class SectionStore; class KeyStore; }
 
 //
 // I'll try to organize this class, things are quite messy right now!
@@ -261,6 +261,10 @@ public:
 	// functions above keep them in step with the frame list
 	ftapi::SectionStore *GetSections() const { return m_pSections; }
 
+	// The keys chosen for the tracks in the piano roll (Api/Keys.h); a track
+	// without one finds its key from its notes
+	ftapi::KeyStore *GetKeys() const { return m_pKeys; }
+
 	// Track management functions
 	int				AddTrack();
 	void			RemoveTrack(unsigned int Track);
@@ -377,6 +381,7 @@ private:
 	bool			WriteBlock_Comments(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_ChannelLayout(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_Sections(CDocumentFile *pDocFile) const;
+	bool			WriteBlock_Keys(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesVRC6(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesN163(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesS5B(CDocumentFile *pDocFile) const;
@@ -391,6 +396,7 @@ private:
 	bool			ReadBlock_Comments(CDocumentFile *pDocFile);
 	bool			ReadBlock_ChannelLayout(CDocumentFile *pDocFile);
 	void			ReadBlock_Sections(CDocumentFile *pDocFile);
+	void			ReadBlock_Keys(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesVRC6(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesN163(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesS5B(CDocumentFile *pDocFile);
@@ -463,6 +469,7 @@ private:
 	CPatternData	*m_pTracks[MAX_TRACKS];						// List of all tracks
 	CClipLibrary	*m_pClipLibrary;							// Clips and their linked copies
 	ftapi::SectionStore *m_pSections;							// Every track's sections
+	ftapi::KeyStore	*m_pKeys;									// and chosen keys
 	CString			m_sTrackNames[MAX_TRACKS];
 
 	unsigned int	m_iTrackCount;								// Number of tracks added

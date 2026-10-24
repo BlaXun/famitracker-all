@@ -91,6 +91,7 @@ public:
 	void SetAuto(int Track);
 	void TrackRemoved(int Track);				// the tracks after it move up
 	void TracksSwapped(int Track1, int Track2);
+	void FitTracks(int Tracks);					// keys of tracks the module doesn't have go (after loading)
 
 	// The "BF KEYS" block: little-endian 32-bit numbers. The count of tracks
 	// with a chosen key, then for each, in order of its number: its number

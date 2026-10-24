@@ -48,6 +48,8 @@
 #include "InsertRecording.h"
 #include "NoteEdit.h"
 #include "ProblemsPanel.h"
+#include "McpConnection.h"
+#include "Api/Tools.h"
 #include "PianoRoll.h"
 
 namespace {
@@ -59,11 +61,14 @@ const UINT TIMER_MS = 30;
 const DWORD MESSAGE_MS = 7000;			// how long a message stays in the status line
 const DWORD NUDGE_SOUND_MS = 220;		// how long a note sounds after moving it with the keys
 const TCHAR SECTION[] = _T("Piano roll");
+const DWORD HARMONY_DELAY = 400;		// the key and chords are worked out again this long after the song changed
+const DWORD HARMONY_RETRY = 500;		// or this much later, when the Claude Code connection is busy
 
 // Sizes at 96 DPI (scaled with SX and SY)
 const int KEYS_WIDTH = 52;
 const int HEADER_HEIGHT = 26;
 const int RULER_HEIGHT = 20;
+const int CHORDS_HEIGHT = 16;			// the chord strip under the ruler
 const int STATUS_HEIGHT = 18;
 const int KEY_HEIGHT = 10;
 const int ROW_WIDTHS[] = { 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48 };	// zoom steps
@@ -81,32 +86,42 @@ const int MIN_VIEW_HEIGHT = 90;			// what the pattern editor keeps at least
 const TCHAR *const NOTE_NAMES[] = {
 	_T("C-"), _T("C#"), _T("D-"), _T("D#"), _T("E-"), _T("F-"), _T("F#"), _T("G-"), _T("G#"), _T("A-"), _T("A#"), _T("B-")
 };
-const TCHAR *const KEY_NAMES[] = {
-	_T("C"), _T("C#"), _T("D"), _T("Eb"), _T("E"), _T("F"), _T("F#"), _T("G"), _T("Ab"), _T("A"), _T("Bb"), _T("B")
-};
 
 enum tool_t { TOOL_DRAW, TOOL_PAINT, TOOL_SELECT };
 
 enum grid_t { GRID_ROW, GRID_HALF_BEAT, GRID_BEAT, GRID_TWO_BEATS, GRID_BAR, GRIDS };
 const TCHAR *const GRID_NAMES[GRIDS] = { _T("Row"), _T("Half a beat"), _T("Beat"), _T("Two beats"), _T("Bar") };
 
-enum scale_t { SCALE_MAJOR, SCALE_MINOR, SCALE_MAJOR_PENTATONIC, SCALE_MINOR_PENTATONIC, SCALES };
-const TCHAR *const SCALE_NAMES[SCALES] = { _T("major"), _T("minor"), _T("major pentatonic"), _T("minor pentatonic") };
-const TCHAR *const SCALE_MENUS[SCALES] = { _T("Major"), _T("Minor"), _T("Major pentatonic"), _T("Minor pentatonic") };
-const transcribe::Scale SCALE_KINDS[SCALES] = {
-	transcribe::Scale::Major, transcribe::Scale::Minor, transcribe::Scale::MajorPentatonic, transcribe::Scale::MinorPentatonic
+// The Key menu's scales: a mode (by its place in Api/Music.cpp's), or a major or minor key's five pentatonic notes
+struct KeyMenuScale {
+	int Mode;
+	bool Pentatonic;
+	const TCHAR *Name;		// with what it sounds like
 };
+const KeyMenuScale KEY_SCALES[] = {
+	{ ftapi::MODE_MAJOR, false, _T("Major (bright, happy)") },
+	{ ftapi::MODE_MINOR, false, _T("Minor (sad, serious)") },
+	{ ftapi::MODE_MAJOR, true, _T("Major pentatonic (five notes that always fit)") },
+	{ ftapi::MODE_MINOR, true, _T("Minor pentatonic (five notes, bluesy)") },
+	{ 1, false, _T("Dorian (minor with a hopeful sixth)") },
+	{ 4, false, _T("Mixolydian (major with a bluesy seventh)") },
+	{ 3, false, _T("Lydian (dreamy, floating)") },
+	{ 2, false, _T("Phrygian (dark, Spanish)") },
+	{ 7, false, _T("Harmonic minor (minor with a strong pull home)") },
+	{ 6, false, _T("Locrian (unsettled)") },
+};
+const int KEY_SCALE_COUNT = sizeof(KEY_SCALES) / sizeof(KEY_SCALES[0]);
 
 // The buttons along the top
-enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_INSTRUMENT, BUTTON_EFFECTS, BUTTON_CLIPS,
-	BUTTON_CLOSE };
+enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_SNAP, BUTTON_INSTRUMENT, BUTTON_EFFECTS,
+	BUTTON_CLIPS, BUTTON_CLOSE };
 
 // Menu items (TrackPopupMenu returns them; they are never sent as commands)
 const UINT MENU_CHANNEL = 100;			// + channel
 const UINT MENU_GRID = 200;				// + grid_t
-const UINT MENU_KEY_OFF = 300;
-const UINT MENU_KEY_FIND = 301;
-const UINT MENU_KEY = 400;				// + scale * 12 + key
+const UINT MENU_KEY_AUTO = 300;
+const UINT MENU_KEY_SNAP = 301;
+const UINT MENU_KEY = 4000;				// + scale (into KEY_SCALES) * 12 + tonic
 const UINT MENU_INSTRUMENT = 500;		// + instrument: for new notes
 const UINT MENU_GIVE = 600;				// + instrument: for the selected notes
 const UINT MENU_CLIP = 1000;			// + clip
@@ -377,6 +392,23 @@ bool AltHeld()
 	return ::GetKeyState(VK_MENU) < 0;
 }
 
+int Luma(COLORREF Color)
+{
+	return (GetRValue(Color) * 3 + GetGValue(Color) * 6 + GetBValue(Color)) / 10;
+}
+
+// "A, C and E"
+CString PitchClassList(const std::vector<int> &Classes, const ftapi::Key &K)
+{
+	CString Text;
+	for (size_t i = 0; i < Classes.size(); ++i) {
+		if (i > 0)
+			Text += i + 1 == Classes.size() ? _T(" and ") : _T(", ");
+		Text += ftapi::NoteClassName(Classes[i], K).c_str();
+	}
+	return Text;
+}
+
 }	// namespace
 
 struct CPianoRollWnd::Impl {
@@ -391,6 +423,14 @@ struct CPianoRollWnd::Impl {
 	int Beat, Bar;		// rows, from the row highlight (0: none)
 	ftapi::SectionList Sections;	// the track's (Api/Sections.h), named on the ruler
 	bool Dirty;
+	bool KeyChosen;					// the track's key, chosen in the Key menu (Api/Keys.h)...
+	ftapi::KeyChoice ChosenKey;
+	ftapi::TrackHarmony Harmony;	// ...else the one its notes fit, with the chords the parts play (Api/Tools.h)
+	bool HarmonyRead;				// for HarmonyTrack
+	unsigned int HarmonyTrack;
+	bool HarmonyStale;				// the song changed since: worked out again at HarmonyDue
+	DWORD HarmonyDue;
+	int HoverChord;					// into Harmony.Chords, under the mouse in the chord strip; -1 for none
 
 	// The view
 	int Zoom;			// into ROW_WIDTHS
@@ -400,7 +440,7 @@ struct CPianoRollWnd::Impl {
 	bool Placed;		// scrolled to the notes once
 	bool Shown;
 	bool Focused;
-	CRect Client, Header, Keys, Ruler, Grid, Status;
+	CRect Client, Header, Keys, Ruler, ChordStrip, Grid, Status;
 
 	// The rest of FamiTracker, as last seen
 	int CursorFrame, CursorRow, CursorChannel;
@@ -415,8 +455,7 @@ struct CPianoRollWnd::Impl {
 	// Editing
 	int Tool;			// tool_t
 	int GridChoice;		// grid_t
-	int KeyRoot;		// 0-11 (C-B), -1 for no key
-	int KeyScale;		// scale_t
+	bool Snap;			// new and moved notes land on the key's notes
 	bool LinkedClips;	// clips are placed as linked copies
 	std::vector<int> Selection;		// where the selected notes of the bright channel start
 	CString Message;	// the last message for the status line...
@@ -478,11 +517,12 @@ struct CPianoRollWnd::Impl {
 	CSize BackSize;
 
 	explicit Impl(CWnd *pWindow) :
-		pWnd(pWindow), Track(0), Frames(1), Length(64), Beat(4), Bar(16), Dirty(true),
+		pWnd(pWindow), Track(0), Frames(1), Length(64), Beat(4), Bar(16), Dirty(true), KeyChosen(false), HarmonyRead(false),
+		HarmonyTrack(static_cast<unsigned int>(-1)), HarmonyStale(true), HarmonyDue(0), HoverChord(-1),
 		Zoom(DEFAULT_ZOOM), ScrollX(0), ScrollY(0), Channel(0), Placed(false), Shown(false), Focused(false),
 		CursorFrame(-1), CursorRow(-1), CursorChannel(-1), Playing(false), PlayRow(-1),
 		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0),
-		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), KeyRoot(-1), KeyScale(SCALE_MAJOR), LinkedClips(false), MessageTime(0),
+		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), Snap(false), LinkedClips(false), MessageTime(0),
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
@@ -508,10 +548,9 @@ struct CPianoRollWnd::Impl {
 		Tool = std::max(static_cast<int>(TOOL_DRAW), std::min(static_cast<int>(TOOL_SELECT),
 			static_cast<int>(theApp.GetProfileInt(SECTION, _T("Tool"), TOOL_DRAW))));
 		GridChoice = std::min(static_cast<int>(theApp.GetProfileInt(SECTION, _T("Grid"), GRID_BEAT)), GRIDS - 1);
-		KeyRoot = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Key"), static_cast<UINT>(-1)));
-		if (KeyRoot < -1 || KeyRoot > 11)
-			KeyRoot = -1;
-		KeyScale = std::min(static_cast<int>(theApp.GetProfileInt(SECTION, _T("Scale"), SCALE_MAJOR)), SCALES - 1);
+		// Snapping to the key: on at first for those who had picked a key in the old Key menu, which always snapped
+		const int OldKey = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Key"), static_cast<UINT>(-1)));
+		Snap = theApp.GetProfileInt(SECTION, _T("Snap to key"), OldKey >= 0 && OldKey <= 11 ? 1 : 0) != 0;
 		LinkedClips = theApp.GetProfileInt(SECTION, _T("Linked clips"), 0) != 0;
 	}
 
@@ -520,8 +559,7 @@ struct CPianoRollWnd::Impl {
 		theApp.WriteProfileInt(SECTION, _T("Zoom"), Zoom);
 		theApp.WriteProfileInt(SECTION, _T("Tool"), Tool);
 		theApp.WriteProfileInt(SECTION, _T("Grid"), GridChoice);
-		theApp.WriteProfileInt(SECTION, _T("Key"), KeyRoot);
-		theApp.WriteProfileInt(SECTION, _T("Scale"), KeyScale);
+		theApp.WriteProfileInt(SECTION, _T("Snap to key"), Snap ? 1 : 0);
 		theApp.WriteProfileInt(SECTION, _T("Linked clips"), LinkedClips ? 1 : 0);
 	}
 
@@ -542,8 +580,10 @@ struct CPianoRollWnd::Impl {
 	{
 		pWnd->GetClientRect(&Client);
 		Header = CRect(Client.left, Client.top, Client.right, Client.top + SY(HEADER_HEIGHT));
-		Keys = CRect(Client.left, Header.bottom + SY(RULER_HEIGHT), Client.left + SX(KEYS_WIDTH), Client.bottom - SY(STATUS_HEIGHT));
-		Ruler = CRect(Keys.right, Header.bottom, Client.right, Keys.top);
+		Keys = CRect(Client.left, Header.bottom + SY(RULER_HEIGHT) + SY(CHORDS_HEIGHT), Client.left + SX(KEYS_WIDTH),
+			Client.bottom - SY(STATUS_HEIGHT));
+		Ruler = CRect(Keys.right, Header.bottom, Client.right, Header.bottom + SY(RULER_HEIGHT));
+		ChordStrip = CRect(Keys.right, Ruler.bottom, Client.right, Keys.top);
 		Grid = CRect(Keys.right, Keys.top, Client.right, Keys.bottom);
 		Status = CRect(Client.left, Keys.bottom, Client.right, Client.bottom);
 	}
@@ -560,6 +600,10 @@ struct CPianoRollWnd::Impl {
 	{
 		const int Offset = Y - Grid.top + ScrollY;
 		return Offset >= 0 ? PITCHES - 1 - Offset / KeyHeight() : PITCHES;
+	}
+	double PitchAtF(int Y) const	// with the fraction: a lane's middle is its pitch
+	{
+		return PITCHES - 0.5 - (Y - Grid.top + ScrollY + 0.5) / KeyHeight();
 	}
 	CRect NoteRect(const RollNote &Note) const
 	{
@@ -610,52 +654,29 @@ struct CPianoRollWnd::Impl {
 	int Highest() const { return IsNoise(Channel) ? NOISE_PITCHES - 1 : PITCHES - 1; }
 	int ClampPitch(int Pitch) const { return std::max(0, std::min(Highest(), Pitch)); }
 
-	// The key: lanes outside it are darker, and new and moved notes stay in it
+	// The key: the track's chosen one (the Key menu), else the one its notes fit as the tools find it (worked out with
+	// the chords a moment after a change). Its lanes are lighter, the tonic's marked; with Snap, new and moved notes
+	// land on its notes (Alt: any note)
 
-	bool KeyApplies() const { return KeyRoot >= 0 && !IsNoise(Channel) && !IsDPCM(Channel); }
-	bool InKey(int Pitch) const
+	bool HasKey() const { return KeyChosen || (HarmonyRead && HarmonyTrack == Track && Harmony.HasFound); }
+	ftapi::KeyChoice TheKey() const { return KeyChosen ? ChosenKey : ftapi::KeyChoice(Harmony.Found); }
+	bool KeyApplies() const { return HasKey() && !IsNoise(Channel) && !IsDPCM(Channel); }
+	bool InKey(int Pitch) const { return ftapi::KeyHasPitch(TheKey(), Pitch); }
+	bool SnapsToKey() const { return Snap && KeyApplies() && !AltHeld(); }
+	int SnapPitch(double Pitch) const	// the lane under the mouse (Pitch: PitchAtF), or with Snap the key's nearest
 	{
-		return transcribe::SnapToScale(Pitch, KeyRoot, SCALE_KINDS[KeyScale]) == Pitch;
-	}
-	int SnapPitch(int Pitch) const
-	{
-		Pitch = ClampPitch(Pitch);
-		if (!KeyApplies() || AltHeld())
-			return Pitch;
-		const int Snapped = transcribe::SnapToScale(Pitch, KeyRoot, SCALE_KINDS[KeyScale]);
-		return (Snapped >= 0 && Snapped <= Highest()) ? Snapped : Pitch;
-	}
-	int StepPitch(int Pitch, int Steps) const	// Steps notes of the key up or down
-	{
-		const int Way = Steps > 0 ? 1 : -1;
-		for (int k = 0; k != Steps; k += Way) {
-			do
-				Pitch += Way;
-			while (Pitch > -12 && Pitch < PITCHES + 12 && !InKey(Pitch));
-		}
-		return Pitch;
-	}
-	int ScaleSteps(int From, int To) const	// notes of the key from From up (or down) to To
-	{
-		int Steps = 0;
-		for (int p = From + 1; p <= To; ++p)
-			Steps += InKey(p) ? 1 : 0;
-		for (int p = From - 1; p >= To; --p)
-			Steps -= InKey(p) ? 1 : 0;
-		return Steps;
+		if (!SnapsToKey())
+			return ClampPitch(static_cast<int>(std::floor(Pitch + 0.5)));
+		return ftapi::SnapToKey(TheKey(), Pitch, 0, Highest());
 	}
 	CString NameOf(int Which, int Pitch) const
 	{
 		return IsNoise(Which) ? NoiseName(Pitch) : PitchName(Pitch);
 	}
 
-	CString KeyText() const
+	CString KeyText() const		// "A minor", "D dorian"
 	{
-		if (KeyRoot < 0)
-			return _T("none");
-		CString Text;
-		Text.Format(_T("%s %s"), KEY_NAMES[KeyRoot], SCALE_NAMES[KeyScale]);
-		return Text;
+		return HasKey() ? CString(ftapi::KeyChoiceName(TheKey()).c_str()) : CString(_T("none yet"));
 	}
 
 	// Instruments
@@ -773,6 +794,11 @@ struct CPianoRollWnd::Impl {
 		Beat = std::max(0, pDoc->GetFirstHighlight());
 		Bar = std::max(0, pDoc->GetSecondHighlight());
 		Sections = pDoc->GetSections()->Get(static_cast<int>(Track));
+		KeyChosen = pDoc->GetKeys()->Get(static_cast<int>(Track), ChosenKey);
+		HarmonyStale = true;
+		HarmonyDue = ::GetTickCount() + (HarmonyRead && HarmonyTrack == Track ? HARMONY_DELAY : 0);
+		if (HarmonyTrack != Track)
+			HarmonyRead = false;	// another track's: not shown
 
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
 		for (int c = 0; c < Channels; ++c)
@@ -1115,7 +1141,7 @@ struct CPianoRollWnd::Impl {
 		for (size_t i = 0; i < Moving.size(); ++i) {
 			const int Index = Before.FindNote(Moving[i]);
 			const int Pitch = Index >= 0 ? Before.GetNote(Index).Pitch : 0;
-			const int To = (KeyApplies() && MoveSteps != 0) ? StepPitch(Pitch, MoveSteps) : Pitch + MoveSemitones;
+			const int To = (KeyApplies() && MoveSteps != 0) ? ftapi::StepInKey(TheKey(), Pitch, MoveSteps) : Pitch + MoveSemitones;
 			Pitches.push_back(ClampPitch(To));
 		}
 		return Pitches;
@@ -1187,19 +1213,29 @@ struct CPianoRollWnd::Impl {
 	int BeatRows() const { return Beat > 0 ? Beat : 4; }
 
 	// The chord of the key on a note, as an arpeggio's two notes above it: its third and fifth in
-	// the key's scale (a pentatonic key's from its major or minor); a major chord outside the key
+	// the key's mode (a pentatonic key's from its major or minor); a minor key's raised seventh a
+	// diminished chord, and a major chord outside the key
 	unsigned char KeyChord(int Pitch) const
 	{
-		if (!KeyApplies() || !InKey(Pitch))
+		if (!KeyApplies())
 			return 0x47;
-		const transcribe::Scale Kind = (KeyScale == SCALE_MINOR || KeyScale == SCALE_MINOR_PENTATONIC) ?
-			transcribe::Scale::Minor : transcribe::Scale::Major;
+		const ftapi::Key K = TheKey().K;
+		const int *pSteps = ftapi::ModeSteps(K.Mode);
+		auto InMode = [&](int p) {
+			const int Relative = ((p - K.Tonic) % 12 + 12) % 12;
+			for (int d = 0; d < 7; ++d)
+				if (pSteps[d] == Relative)
+					return true;
+			return false;
+		};
+		if (!InMode(Pitch))
+			return InKey(Pitch) ? 0x36 : 0x47;
 		int Steps[2] = { 0, 0 };
 		int Above = Pitch;
 		for (int Step = 1; Step <= 4; ++Step) {
 			do
 				++Above;
-			while (transcribe::SnapToScale(Above, KeyRoot, Kind) != Above);
+			while (!InMode(Above));
 			if (Step == 2)
 				Steps[0] = Above - Pitch;
 			if (Step == 4)
@@ -1289,7 +1325,7 @@ struct CPianoRollWnd::Impl {
 				CString Item = Choice.Name;
 				UINT Flags = MF_STRING;
 				if (Choice.Action == FX_KEY_CHORD && !KeyApplies()) {
-					Item += _T(" (pick a key first)");
+					Item += _T(" (no key yet: draw some notes, or choose one with Key)");
 					Flags |= MF_GRAYED;
 				}
 				const CString Code = EffectCode(Choice);
@@ -1527,7 +1563,7 @@ struct CPianoRollWnd::Impl {
 			}
 			return;
 		}
-		if (Ruler.PtInRect(Point)) {
+		if (Ruler.PtInRect(Point) || ChordStrip.PtInRect(Point)) {
 			if (!Right) {
 				// The Select tool: dragging along the ruler selects the notes in those rows
 				Drag = Tool == TOOL_SELECT ? DRAG_RANGE : DRAG_RULER;
@@ -1602,7 +1638,7 @@ struct CPianoRollWnd::Impl {
 			Drag = DRAG_DRAW;
 			EditStart = DragAlt ? Row : SnapDown(Row);
 			EditEnd = std::min(NextStep(EditStart), EditRows());
-			EditPitch = SnapPitch(PitchAt(Point.y));
+			EditPitch = SnapPitch(PitchAtF(Point.y));
 			EditInstrument = NewInstrument(EditStart);
 			Recompute();
 			Preview(EditPitch, EditInstrument);
@@ -1655,7 +1691,7 @@ struct CPianoRollWnd::Impl {
 		case DRAG_DRAW: {
 			const int Row = std::max(EditStart, static_cast<int>(std::floor(RowAtF(Point.x))));
 			EditEnd = std::min(std::max(NextStep(Row), EditStart + 1), EditRows());
-			const int Pitch = SnapPitch(PitchAt(Point.y));
+			const int Pitch = SnapPitch(PitchAtF(Point.y));
 			if (Pitch != EditPitch) {
 				EditPitch = Pitch;
 				Preview(EditPitch, EditInstrument);
@@ -1674,13 +1710,14 @@ struct CPianoRollWnd::Impl {
 				Last = std::max(Last, Moving[i]);
 			}
 			Rows = std::max(-First, std::min(Rows, EditRows() - 1 - Last));
-			const int Target = SnapPitch(PitchAt(Point.y));
+			const int Target = SnapPitch(PitchAtF(Point.y));
 			if (Rows != MoveRows || Target != MovePitch || !Previewing) {
 				const bool NewPitch = Target != MovePitch;
 				MoveRows = Rows;
 				MovePitch = Target;
-				MoveSteps = KeyApplies() ? ScaleSteps(GrabPitch, Target) : 0;
-				MoveSemitones = KeyApplies() ? 0 : Target - GrabPitch;
+				const bool ByKey = SnapsToKey();	// by steps of the key, so they stay in it; otherwise by semitones
+				MoveSteps = ByKey ? ftapi::KeyStepsBetween(TheKey(), GrabPitch, Target) : 0;
+				MoveSemitones = ByKey ? 0 : Target - GrabPitch;
 				Recompute();
 				if (NewPitch) {
 					const int Index = Before.FindNote(GrabStart);
@@ -1811,6 +1848,11 @@ struct CPianoRollWnd::Impl {
 	{
 		int HoverCh = -1, Note = -1;
 		HitNote(Point, HoverCh, Note);
+		const int Chord = ChordAt(Point);
+		if (Chord != HoverChord) {
+			HoverChord = Chord;
+			pWnd->Invalidate(FALSE);
+		}
 		if (HoverCh != HoverChannel || Note != HoverNote) {
 			HoverChannel = HoverCh;
 			HoverNote = Note;
@@ -1871,7 +1913,7 @@ struct CPianoRollWnd::Impl {
 	{
 		const int Row = std::max(0, std::min(RowAt(Point.x), EditRows() - 1));
 		const int Step = DragAlt ? Row : SnapDown(Row);
-		const int Pitch = SnapPitch(PitchAt(Point.y));
+		const int Pitch = SnapPitch(PitchAtF(Point.y));
 		if (StrokeLast >= 0 && Step != StrokeLast) {
 			const int From = Stroke[StrokeLast];
 			std::vector<int> Between;
@@ -2039,8 +2081,9 @@ struct CPianoRollWnd::Impl {
 		Moving = Selection;
 		MoveRows = 0;
 		MoveCopy = false;
-		MoveSteps = (!Octave && KeyApplies()) ? Way : 0;
-		MoveSemitones = Octave ? 12 * Way : (KeyApplies() ? 0 : Way);
+		const bool ByKey = !Octave && Snap && KeyApplies();
+		MoveSteps = ByKey ? Way : 0;
+		MoveSemitones = Octave ? 12 * Way : (ByKey ? 0 : Way);
 		Recompute();
 		const std::vector<int> Pitches = MovedPitches();
 		if (Commit(Selection.front()) && !Pitches.empty()) {
@@ -2332,34 +2375,12 @@ struct CPianoRollWnd::Impl {
 			}
 			break;
 		}
-		case BUTTON_KEY: {
-			CMenu Menu;
-			Menu.CreatePopupMenu();
-			Menu.AppendMenu(MF_STRING | (KeyRoot < 0 ? MF_CHECKED : 0), MENU_KEY_OFF, _T("No key"));
-			Menu.AppendMenu(MF_STRING, MENU_KEY_FIND, _T("Find the key from the song's notes"));
-			Menu.AppendMenu(MF_SEPARATOR);
-			for (int s = 0; s < SCALES; ++s) {
-				CMenu Keys_;
-				Keys_.CreatePopupMenu();
-				for (int k = 0; k < 12; ++k) {
-					CString Item;
-					Item.Format(_T("%s %s"), KEY_NAMES[k], SCALE_NAMES[s]);
-					Keys_.AppendMenu(MF_STRING | (KeyRoot == k && KeyScale == s ? MF_CHECKED : 0), MENU_KEY + s * 12 + k, Item);
-				}
-				Menu.AppendMenu(MF_POPUP | (KeyRoot >= 0 && KeyScale == s ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(Keys_.Detach()), SCALE_MENUS[s]);
-			}
-			const int Choice = PopUp(Menu, Id);
-			if (Choice == static_cast<int>(MENU_KEY_OFF))
-				KeyRoot = -1;
-			else if (Choice == static_cast<int>(MENU_KEY_FIND))
-				FindKey();
-			else if (Choice >= static_cast<int>(MENU_KEY) && Choice < static_cast<int>(MENU_KEY) + SCALES * 12) {
-				KeyScale = (Choice - static_cast<int>(MENU_KEY)) / 12;
-				KeyRoot = (Choice - static_cast<int>(MENU_KEY)) % 12;
-			}
-			Save();
+		case BUTTON_KEY:
+			KeyMenu(Id);
 			break;
-		}
+		case BUTTON_SNAP:
+			ToggleSnap();
+			break;
 		case BUTTON_INSTRUMENT: {
 			CMenu Menu, Give;
 			Menu.CreatePopupMenu();
@@ -2426,39 +2447,134 @@ struct CPianoRollWnd::Impl {
 		pWnd->Invalidate(FALSE);
 	}
 
-	// The key that fits the song's notes best (the recorder's harmony code)
-	void FindKey()
+	// The key and the chords (Api/Keys.h, Api/Tools.h): chosen in the Key menu, or found from the notes as the
+	// Claude Code tools find them
+
+	// Worked out a moment after the song changed (a long song takes a while), never while dragging, and kept
+	void UpdateHarmony()
 	{
-		std::vector<std::pair<int, transcribe::MelodyNote> > Heard;
-		for (size_t c = 0; c < Notes.size(); ++c) {
-			if (ChanIDs[c] == CHANID_NOISE || ChanIDs[c] == CHANID_DPCM)
-				continue;
-			for (size_t i = 0; i < Notes[c].size(); ++i) {
-				transcribe::MelodyNote Note;
-				Note.row = Notes[c][i].Start;
-				Note.length = std::max(1, Notes[c][i].End - Notes[c][i].Start);
-				Note.midi = Notes[c][i].Pitch + 24;	// C-0 is MIDI note 24
-				Heard.push_back(std::make_pair(Note.row, Note));
-			}
-		}
-		if (Heard.empty()) {
-			Say(_T("There are no notes to find the key from yet."));
+		CMainFrame *pMain = Main();
+		CMcpConnection *pTools = pMain != NULL ? pMain->GetMcpConnection() : NULL;
+		ftapi::TrackHarmony Fresh;
+		if (pTools == NULL || !pTools->Harmony(Fresh)) {
+			HarmonyDue = ::GetTickCount() + HARMONY_RETRY;	// busy with Claude Code: a little later
 			return;
 		}
-		std::stable_sort(Heard.begin(), Heard.end(),
-			[](const std::pair<int, transcribe::MelodyNote> &First, const std::pair<int, transcribe::MelodyNote> &Second) {
-				return First.first < Second.first;
-			});
-		std::vector<transcribe::MelodyNote> Melody;
-		for (size_t i = 0; i < Heard.size(); ++i)
-			Melody.push_back(Heard[i].second);
-		const transcribe::Key Found = transcribe::FindKey(Melody);
-		KeyRoot = ((Found.tonic % 12) + 12) % 12;
-		KeyScale = Found.minor ? SCALE_MINOR : SCALE_MAJOR;
+		Harmony = Fresh;
+		HarmonyRead = true;
+		HarmonyTrack = Track;
+		HarmonyStale = false;
+		HoverChord = -1;
+	}
+
+	bool HarmonyDueNow() const
+	{
+		return HarmonyStale && Drag == DRAG_NONE && static_cast<int>(::GetTickCount() - HarmonyDue) >= 0;
+	}
+
+	const std::vector<ftapi::HeardChord> &ShownChords() const
+	{
+		static const std::vector<ftapi::HeardChord> NONE;
+		return (HarmonyRead && HarmonyTrack == Track) ? Harmony.Chords : NONE;
+	}
+
+	// The chord in the strip under Point, -1 for none
+	int ChordAt(CPoint Point) const
+	{
+		if (!ChordStrip.PtInRect(Point))
+			return -1;
+		const int Row = RowAt(Point.x);
+		const std::vector<ftapi::HeardChord> &Chords = ShownChords();
+		for (size_t i = 0; i < Chords.size(); ++i)
+			if (Row >= Chords[i].Row && Row < Chords[i].Row + Chords[i].Rows)
+				return static_cast<int>(i);
+		return -1;
+	}
+
+	void ChooseKey(bool Chosen, const ftapi::KeyChoice &Key)
+	{
+		if (!SetTrackKey(Main(), Chosen, Key))
+			return;		// it was that already
 		CString Text;
-		Text.Format(_T("The song's notes fit %s best. Lanes outside the key are darker, and new notes stay in it."),
-			static_cast<LPCTSTR>(KeyText()));
+		if (Chosen)
+			Text.Format(_T("The track's key is %s now: its notes are the lighter lanes%s. Ctrl+Z undoes it."),
+				ftapi::KeyChoiceName(Key).c_str(), Snap ? _T(", and new notes land on them") : _T(""));
+		else if (Harmony.HasFound)
+			Text.Format(_T("The key is found from the notes again: %s. Ctrl+Z undoes it."), ftapi::KeyName(Harmony.Found).c_str());
+		else
+			Text = _T("The key is found from the notes again, once there are some. Ctrl+Z undoes it.");
 		Say(Text);
+	}
+
+	void ToggleSnap()
+	{
+		Snap = !Snap;
+		Save();
+		Say(Snap ? _T("Notes you draw or move land on the key's notes now; hold Alt for any note.") :
+			_T("Notes you draw or move go on any note now (Snap to key is off)."));
+	}
+
+	// The Key menu: Auto, or a tonic in a mode, and snapping
+	void KeyMenu(int Id)
+	{
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		CString Auto = _T("Auto: the key the notes fit");
+		if (HarmonyRead && HarmonyTrack == Track && Harmony.HasFound)
+			Auto += CString(_T(" (")) + ftapi::KeyName(Harmony.Found).c_str() + _T(")");
+		Menu.AppendMenu(MF_STRING | (!KeyChosen ? MF_CHECKED : 0), MENU_KEY_AUTO, Auto);
+		Menu.AppendMenu(MF_SEPARATOR);
+		for (int s = 0; s < KEY_SCALE_COUNT; ++s) {
+			if (s == 4)
+				Menu.AppendMenu(MF_SEPARATOR);	// the modes after the usual four
+			CMenu Tonics;
+			Tonics.CreatePopupMenu();
+			bool Here = false;
+			for (int t = 0; t < 12; ++t) {
+				const ftapi::KeyChoice Key(ftapi::Key(t, KEY_SCALES[s].Mode), KEY_SCALES[s].Pentatonic);
+				const bool This = KeyChosen && ChosenKey == Key;
+				Here = Here || This;
+				Tonics.AppendMenu(MF_STRING | (This ? MF_CHECKED : 0), MENU_KEY + s * 12 + t, CString(ftapi::KeyChoiceName(Key).c_str()));
+			}
+			Menu.AppendMenu(MF_POPUP | (Here ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(Tonics.Detach()), KEY_SCALES[s].Name);
+		}
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | (Snap ? MF_CHECKED : 0), MENU_KEY_SNAP, _T("Snap notes to the key (hold Alt for any note)"));
+		const int Choice = PopUp(Menu, Id);
+		if (Choice == static_cast<int>(MENU_KEY_AUTO))
+			ChooseKey(false, ftapi::KeyChoice());
+		else if (Choice == static_cast<int>(MENU_KEY_SNAP))
+			ToggleSnap();
+		else if (Choice >= static_cast<int>(MENU_KEY) && Choice < static_cast<int>(MENU_KEY) + KEY_SCALE_COUNT * 12) {
+			const KeyMenuScale &Scale = KEY_SCALES[(Choice - static_cast<int>(MENU_KEY)) / 12];
+			ChooseKey(true, ftapi::KeyChoice(ftapi::Key((Choice - static_cast<int>(MENU_KEY)) % 12, Scale.Mode), Scale.Pentatonic));
+		}
+	}
+
+	// A chord of the strip in words, for the status line
+	CString ChordText(const ftapi::HeardChord &Chord) const
+	{
+		const ftapi::Key K = TheKey().K;
+		CString Where, Text;
+		if (Bar > 0) {
+			const int InFrame = Chord.Row % static_cast<int>(Length), Rows = std::min(Chord.Rows, static_cast<int>(Length) - InFrame);
+			const int BarsPerFrame = (static_cast<int>(Length) + Bar - 1) / Bar;
+			const int First = Chord.Row / static_cast<int>(Length) * BarsPerFrame + InFrame / Bar + 1;
+			const int Last = Chord.Row / static_cast<int>(Length) * BarsPerFrame + (InFrame + Rows - 1) / Bar + 1;
+			if (InFrame % Bar != 0 || (Rows < Bar && Last == First))
+				Where.Format(_T("Bar %d, from beat %d: "), First, Beat > 0 ? InFrame % Bar / Beat + 1 : 1);
+			else if (Last > First)
+				Where.Format(_T("Bars %d-%d: "), First, Last);
+			else
+				Where.Format(_T("Bar %d: "), First);
+		}
+		Text.Format(_T("%s%s (%s in %s), the notes %s. "), static_cast<LPCTSTR>(Where), Chord.Name.c_str(), Chord.Degree.c_str(),
+			ftapi::KeyName(K).c_str(), static_cast<LPCTSTR>(PitchClassList(Chord.PitchClasses, K)));
+		if (Chord.InKey)
+			Text += _T("They fit best while it sounds (the lit lanes); the key's other notes pass between them.");
+		else
+			Text += _T("It borrows notes from outside the key (the lit lanes), which fit while it sounds.");
+		return Text;
 	}
 
 	// The status line
@@ -2510,6 +2626,8 @@ struct CPianoRollWnd::Impl {
 		default:
 			break;
 		}
+		if (HoverChord >= 0 && HoverChord < static_cast<int>(ShownChords().size()))
+			return ChordText(ShownChords()[static_cast<size_t>(HoverChord)]);
 		if (HoverChannel >= 0 && HoverChannel < static_cast<int>(Notes.size()) && HoverNote >= 0 &&
 			HoverNote < static_cast<int>(Visible(HoverChannel).size()))
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
@@ -2524,6 +2642,9 @@ struct CPianoRollWnd::Impl {
 		if (Tool == TOOL_SELECT)
 			return _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
 				_T("Then Ctrl+Shift+C saves them as a clip.");
+		if (SnapsToKey())
+			return _T("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Drag a note to move it ")
+				_T("(Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. E: effects. Ctrl+Z undoes.");
 		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
 			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. Ctrl+Z undoes.");
 	}
@@ -2626,8 +2747,12 @@ struct CPianoRollWnd::Impl {
 		CString Text;
 		Text.Format(_T("Grid: %s"), GRID_NAMES[GridChoice]);
 		DrawButton(dc, BUTTON_GRID, Text, X, Right, false, true);
-		Text.Format(_T("Key: %s"), static_cast<LPCTSTR>(KeyText()));
-		DrawButton(dc, BUTTON_KEY, Text, X, Right, KeyRoot >= 0, true);
+		if (!HasKey())
+			Text = _T("Key: auto");
+		else
+			Text.Format(KeyChosen ? _T("Key: %s") : _T("Key: %s (auto)"), static_cast<LPCTSTR>(KeyText()));
+		DrawButton(dc, BUTTON_KEY, Text, X, Right, KeyChosen, true);
+		DrawButton(dc, BUTTON_SNAP, _T("Snap to key"), X, Right, Snap, false);
 		CString Name = InstrumentText(NewInstrument(CursorFrame * static_cast<int>(Length) + std::max(0, CursorRow)));
 		if (Name.GetLength() > 22)
 			Name = Name.Left(21) + _T("...");
@@ -2717,6 +2842,81 @@ struct CPianoRollWnd::Impl {
 		}
 	}
 
+	// The lanes: one per semitone. With a key, its notes' lanes are a little lighter than the others (whether the
+	// colours are dark or light), the tonic's warmer, and a chord under the mouse in the chord strip lights its notes'
+	// lanes while it sounds; without one, the piano's white keys' lanes lighter
+	void DrawLanes(CDC &dc, int FirstPitch, int LastPitch, COLORREF OctaveLine) const
+	{
+		const CSettings *pSettings = theApp.GetSettings();
+		const COLORREF Back_ = pSettings->Appearance.iColBackground, Text = pSettings->Appearance.iColPatternText;
+		const bool Light = Luma(Back_) > Luma(Text);
+		const COLORREF White = RGB(255, 255, 255), Black = RGB(0, 0, 0), Warm = RGB(255, 168, 64), Lit = RGB(96, 200, 255);
+		const COLORREF InLane = Light ? Mix(Back_, White, 0.5) : Mix(Back_, Text, 0.09);
+		const COLORREF OutLane = Light ? Mix(Back_, Text, 0.075) : Mix(Back_, Black, 0.3);
+		const COLORREF TonicLane = Mix(InLane, Warm, Light ? 0.22 : 0.16);
+		const COLORREF Unused = Mix(Back_, Black, 0.45);
+		const bool Keyed = KeyApplies();
+		const ftapi::KeyChoice K = TheKey();
+		const int KeyH = KeyHeight();
+		for (int p = FirstPitch; p <= LastPitch; ++p) {
+			const int Y = PitchTop(p);
+			COLORREF Lane = IsBlackKey(p) ? Back_ : Mix(Back_, Text, 0.07);
+			if (Keyed)
+				Lane = !ftapi::KeyHasPitch(K, p) ? OutLane : (ftapi::IsTonic(K, p) ? TonicLane : InLane);
+			if (IsNoise(Channel) && p >= NOISE_PITCHES)
+				Lane = Unused;
+			dc.FillSolidRect(Grid.left, Y, Grid.Width(), KeyH, Lane);
+			if (p % 12 == 0)
+				dc.FillSolidRect(Grid.left, Y + KeyH - 1, Grid.Width(), 1, OctaveLine);
+		}
+		// The notes of the chord under the mouse, while it sounds
+		if (HoverChord >= 0 && HoverChord < static_cast<int>(ShownChords().size()) && !IsNoise(Channel) && !IsDPCM(Channel)) {
+			const ftapi::HeardChord &Chord = ShownChords()[static_cast<size_t>(HoverChord)];
+			const int X1 = std::max(static_cast<int>(Grid.left), RowX(Chord.Row));
+			const int X2 = std::min(static_cast<int>(Grid.right), RowX(Chord.Row + Chord.Rows));
+			for (int p = FirstPitch; p <= LastPitch && X2 > X1; ++p)
+				if (std::find(Chord.PitchClasses.begin(), Chord.PitchClasses.end(), p % 12) != Chord.PitchClasses.end())
+					dc.FillSolidRect(X1, PitchTop(p), X2 - X1, KeyH, Mix(Light ? InLane : Back_, Lit, Light ? 0.30 : 0.22));
+		}
+	}
+
+	// The chord strip under the ruler: the chord of each bar (or half bar, where it changes there) as the Claude Code
+	// tools hear the parts play it, named in the key's spelling; chords from outside the key in another colour, the one
+	// under the mouse and the one playing marked
+	void DrawChordStrip(CDC &dc, COLORREF Panel, int FirstRow, int LastRow) const
+	{
+		const CSettings *pSettings = theApp.GetSettings();
+		const COLORREF Back_ = pSettings->Appearance.iColBackground, Text = pSettings->Appearance.iColPatternText;
+		const COLORREF Strip = Mix(Panel, Back_, 0.45), Line = Mix(Strip, Text, 0.25);
+		const COLORREF Outside = Mix(Text, RGB(255, 120, 200), 0.55);
+		const COLORREF Play = Mix(CPatternEditor::ROW_PLAY_COLOR, RGB(255, 255, 255), 0.55);
+		dc.IntersectClipRect(&ChordStrip);
+		dc.FillSolidRect(&ChordStrip, Strip);
+		dc.FillSolidRect(ChordStrip.left, ChordStrip.bottom - 1, ChordStrip.Width(), 1, Line);
+		const std::vector<ftapi::HeardChord> &Chords = ShownChords();
+		for (size_t i = 0; i < Chords.size(); ++i) {
+			const ftapi::HeardChord &Chord = Chords[i];
+			if (Chord.Row + Chord.Rows <= FirstRow || Chord.Row > LastRow)
+				continue;
+			const int X1 = RowX(Chord.Row), X2 = RowX(Chord.Row + Chord.Rows);
+			const bool Sounding = Playing && PlayRow >= Chord.Row && PlayRow < Chord.Row + Chord.Rows;
+			if (static_cast<int>(i) == HoverChord || Sounding)
+				dc.FillSolidRect(X1, ChordStrip.top, X2 - X1, ChordStrip.Height() - 1,
+					Mix(Strip, Sounding ? Play : Text, static_cast<int>(i) == HoverChord ? 0.22 : 0.14));
+			dc.FillSolidRect(X1, ChordStrip.top + SY(2), 1, ChordStrip.Height() - SY(4), Line);
+			const CString Name(Chord.Name.c_str());
+			CRect Label(std::max(X1, static_cast<int>(ChordStrip.left)) + SX(4), ChordStrip.top, X2 - SX(2), ChordStrip.bottom - 1);
+			if (Label.Width() >= dc.GetTextExtent(Name).cx) {
+				dc.SetTextColor(Chord.InKey ? Text : Outside);
+				dc.DrawText(Name, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			}
+		}
+		if (CursorFrame >= 0 && CursorRow >= 0)
+			dc.FillSolidRect(RowX(CursorFrame * static_cast<int>(Length) + CursorRow), ChordStrip.top, 1, ChordStrip.Height(),
+				pSettings->Appearance.iColCursor);
+		dc.SelectClipRgn(NULL);
+	}
+
 	void Draw(CDC &dc)
 	{
 		if (Dirty)
@@ -2726,8 +2926,7 @@ struct CPianoRollWnd::Impl {
 		const COLORREF Back_ = pSettings->Appearance.iColBackground;
 		const COLORREF Text = pSettings->Appearance.iColPatternText;
 		const COLORREF Cursor = pSettings->Appearance.iColCursor;
-		const COLORREF LaneWhite = Mix(Back_, Text, 0.07), LaneBlack = Back_;
-		const COLORREF LaneTonic = Mix(Back_, Text, 0.15), LaneOut = Mix(Back_, RGB(0, 0, 0), 0.45);
+		const COLORREF LaneWhite = Mix(Back_, Text, 0.07);
 		const COLORREF RowLine = Mix(Back_, Text, 0.10), BeatLine = Mix(Back_, Text, 0.22), BarLine = Mix(Back_, Text, 0.38);
 		const COLORREF FrameLine = Mix(Back_, Text, 0.62), OctaveLine = Mix(Back_, Text, 0.20);
 		const COLORREF Panel = Mix(Back_, Text, 0.13), Past = Mix(Back_, RGB(0, 0, 0), 0.5), Room = Mix(Back_, Text, 0.04);
@@ -2744,19 +2943,9 @@ struct CPianoRollWnd::Impl {
 		const int FirstRow = std::max(0, RowAt(Grid.left)), LastRow = std::min(EditRows() - 1, RowAt(Grid.right));
 		const int SongEnd = Previewing ? std::max(TotalRows(), PreviewRows) : TotalRows();
 
-		// The grid: a lane per semitone (outside the key darker), lines for rows, beats, bars and frames
+		// The grid: a lane per semitone (the key's lighter), lines for rows, beats, bars and frames
 		dc.IntersectClipRect(&Grid);
-		for (int p = FirstPitch; p <= LastPitch; ++p) {
-			const int Y = PitchTop(p);
-			COLORREF Lane = IsBlackKey(p) ? LaneBlack : LaneWhite;
-			if (Keyed)
-				Lane = !InKey(p) ? LaneOut : ((p % 12) == KeyRoot ? LaneTonic : LaneWhite);
-			if (IsNoise(Channel) && p >= NOISE_PITCHES)
-				Lane = LaneOut;
-			dc.FillSolidRect(Grid.left, Y, Grid.Width(), KeyH, Lane);
-			if (p % 12 == 0)
-				dc.FillSolidRect(Grid.left, Y + KeyH - 1, Grid.Width(), 1, OctaveLine);
-		}
+		DrawLanes(dc, FirstPitch, LastPitch, OctaveLine);
 		if (CursorFrame >= 0 && CursorRow >= 0) {
 			const int Row = CursorFrame * static_cast<int>(Length) + CursorRow;
 			dc.FillSolidRect(RowX(Row), Grid.top, RowW, Grid.Height(), Mix(LaneWhite, Cursor, 0.18));
@@ -2922,6 +3111,7 @@ struct CPianoRollWnd::Impl {
 		if (Playing && PlayRow >= 0)
 			dc.FillSolidRect(RowX(PlayRow), Ruler.top, std::max(2, SX(2)), Ruler.Height(), Play);
 		dc.SelectClipRgn(NULL);
+		DrawChordStrip(dc, Panel, FirstRow, LastRow);
 
 		// The keyboard, with the notes of the key marked
 		dc.IntersectClipRect(&Keys);
@@ -2941,7 +3131,7 @@ struct CPianoRollWnd::Impl {
 			if (Keyed && InKey(p)) {
 				const int Dot = std::max(2, KeyH / 3);
 				dc.FillSolidRect(Keys.left + Keys.Width() * 62 / 100 + SX(3), Y + (KeyH - Dot) / 2, Dot, Dot,
-					(p % 12) == KeyRoot ? RGB(230, 120, 40) : RGB(120, 160, 220));
+					ftapi::IsTonic(TheKey(), p) ? RGB(230, 120, 40) : RGB(120, 160, 220));
 			}
 			if (p % 12 == 0 && KeyH >= SY(8)) {
 				dc.SetTextColor(RGB(80, 80, 80));
@@ -2953,7 +3143,10 @@ struct CPianoRollWnd::Impl {
 		dc.SelectClipRgn(NULL);
 
 		// The corner above the keyboard, the buttons, and the status line
-		dc.FillSolidRect(Client.left, Ruler.top, Keys.Width(), Ruler.Height(), Panel);
+		dc.FillSolidRect(Client.left, Ruler.top, Keys.Width(), Keys.top - Ruler.top, Panel);
+		CRect Corner(Client.left, ChordStrip.top, Keys.right - SX(4), ChordStrip.bottom);
+		dc.SetTextColor(Mix(Panel, Text, 0.6));
+		dc.DrawText(_T("Chords"), &Corner, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		DrawHeader(dc, Panel);
 		dc.FillSolidRect(&Status, Panel);
 		dc.SetTextColor(Text);
@@ -3338,8 +3531,14 @@ void CPianoRollWnd::OnKillFocus(CWnd *pNewWnd)
 void CPianoRollWnd::OnTimer(UINT_PTR nIDEvent)
 {
 	if (nIDEvent == TIMER_ID) {
-		m_pImpl->Layout();
-		if (m_pImpl->Poll() || m_pImpl->Dirty)
+		Impl &d = *m_pImpl;
+		d.Layout();
+		bool Changed = d.Poll() || d.Dirty;
+		if (d.HarmonyDueNow()) {
+			d.UpdateHarmony();
+			Changed = true;
+		}
+		if (Changed)
 			Invalidate(FALSE);
 		return;
 	}

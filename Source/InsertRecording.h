@@ -28,7 +28,7 @@
 class CMainFrame;
 class CFamiTrackerDoc;
 struct stChanNote;
-namespace ftapi { class SectionStore; }
+namespace ftapi { class SectionStore; class KeyStore; struct KeyChoice; }
 namespace transcribe { struct Audio; struct TakeTiming; }
 
 // What a recording holds
@@ -86,6 +86,11 @@ void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, in
 bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNote *pCells, int Count, int CursorRow,
 	CString &Message);
 
+// The selected track's key (Api/Keys.h): Key when Chosen, otherwise back to
+// auto (found from the notes), as one undoable action. False when nothing
+// changed.
+bool SetTrackKey(CMainFrame *pMainFrm, bool Chosen, const ftapi::KeyChoice &Key);
+
 // Edit > Add chords and bass line: chords and a bass line that fit the melody
 // in one channel, written into two others, over the bars the melody covers
 // (bars and beats as the row highlight shows them).
@@ -142,8 +147,9 @@ bool IsBassChannel(const CFamiTrackerDoc *pDoc, int Channel);
 // < 0); the frames after keep their patterns, and Frame counts with the
 // frames moved. Count can be 0 then. The cursor goes to song row Cursor (-1
 // for Row of Frame). The track's sections follow the frames moved, or with
-// pSections become its track 0's (Api/Sections.h) in the same action. False
-// with the reason in Message.
+// pSections become its track 0's (Api/Sections.h) in the same action; with
+// pKeys, its track 0's key (or auto, when it has none) becomes the track's
+// (Api/Keys.h). False with the reason in Message.
 struct song_part_t {
 	int Channel;
 	const stChanNote *pCells;	// Rows of them, from the first row on
@@ -151,4 +157,5 @@ struct song_part_t {
 	bool Exact;
 };
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections = NULL);
+	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections = NULL,
+	const ftapi::KeyStore *pKeys = NULL);

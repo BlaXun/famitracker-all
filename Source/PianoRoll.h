@@ -31,8 +31,12 @@
 // Notes are edited in the bright channel with the mouse: drawn, painted as a
 // melody that follows the mouse, moved, copied, made longer or shorter,
 // erased; selected notes are moved, transposed, copied and pasted with the
-// keyboard too. A key and scale keep new and moved notes in key. Clips are
-// placed with the mouse. Each change is one undoable action on the patterns
+// keyboard too. The track's key (chosen in the Key menu and kept in the
+// module, or found from the notes as the Claude Code tools find it) lights
+// its notes' lanes, and with Snap to key new and moved notes land on them; a
+// strip under the ruler names the chords the parts play (Api/Tools.h,
+// ToolSet::Harmony), worked out a moment after a change. Clips are placed
+// with the mouse. Each change is one undoable action on the patterns
 // (CChannelNotes in NoteEdit.h works out the cells, WriteChannelRows in
 // InsertRecording.h writes them).
 //

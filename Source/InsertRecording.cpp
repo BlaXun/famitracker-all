@@ -34,6 +34,7 @@
 #include "Transcribe/Transcribe.h"
 #include "Api/Sections.h"
 #include "stdafx.h"
+#include "Api/Keys.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -49,6 +50,7 @@ namespace {
 // Action IDs, well away from the CPatternAction and CFrameAction values
 const int ACT_INSERT_RECORDING = 0x1000;
 const int ACT_EDIT_CLIP = 0x1001;
+const int ACT_TRACK_KEY = 0x1300;
 
 // Volume envelopes, the same as wav2ftm writes (Transcribe/TextModule.cpp).
 // Both hold at 10 on their release point for as long as the note lasts, then
@@ -270,8 +272,16 @@ public:
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
 		m_iOldFrameCount(0), m_iLinkClip(-1), m_bKeepLinks(false),
 		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row)),
-		m_iMoveFrame(0), m_iMoveBy(0), m_bSetSections(false)
+		m_iMoveFrame(0), m_iMoveBy(0), m_bSetSections(false), m_bKeyChosenBefore(false), m_bSetKey(false), m_bKeyChosenAfter(false)
 	{
+	}
+
+	// The track's key afterwards (Api/Keys.h): chosen, or back to auto
+	void SetKey(bool Chosen, const ftapi::KeyChoice &Key)
+	{
+		m_bSetKey = true;
+		m_bKeyChosenAfter = Chosen;
+		m_KeyAfter = Key;
 	}
 
 	// The track's sections afterwards (Api/Sections.h), set once the frames
@@ -340,6 +350,10 @@ private:
 	ftapi::SectionList m_SectionsBefore;	// the track's sections, which undo brings back
 	bool m_bSetSections;
 	ftapi::SectionList m_SectionsAfter;
+	bool m_bKeyChosenBefore;				// the track's key, which undo brings back
+	ftapi::KeyChoice m_KeyBefore;
+	bool m_bSetKey, m_bKeyChosenAfter;
+	ftapi::KeyChoice m_KeyAfter;
 	std::vector<std::pair<unsigned int, unsigned int> > m_Widened;	// channels that show more effect columns, and what they showed
 };
 
@@ -377,6 +391,7 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 	pDoc->LockDocument();
 	m_iOldFrameCount = pDoc->GetFrameCount(m_iTrack);
 	m_SectionsBefore = pDoc->GetSections()->Get(static_cast<int>(m_iTrack));
+	m_bKeyChosenBefore = pDoc->GetKeys()->Get(static_cast<int>(m_iTrack), m_KeyBefore);
 
 	// Frames put in or taken out first, the frame list kept for Undo (the sections follow them)
 	if (m_iMoveBy != 0) {
@@ -557,6 +572,13 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		pDoc->GetSections()->Set(static_cast<int>(m_iTrack), m_SectionsAfter);
 		pDoc->GetSections()->FitFrames(static_cast<int>(m_iTrack), static_cast<int>(pDoc->GetFrameCount(m_iTrack)));
 	}
+	// and the key (the whole song moved to another key takes it along)
+	if (m_bSetKey) {
+		if (m_bKeyChosenAfter)
+			pDoc->GetKeys()->Set(static_cast<int>(m_iTrack), m_KeyAfter);
+		else
+			pDoc->GetKeys()->SetAuto(static_cast<int>(m_iTrack));
+	}
 
 	pDoc->UnlockDocument();
 	if (!m_Widened.empty())
@@ -595,12 +617,61 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 	for (size_t i = m_Widened.size(); i-- > 0; )
 		pDoc->SetEffColumns(m_iTrack, m_Widened[i].first, m_Widened[i].second);
 	pDoc->GetSections()->Set(static_cast<int>(m_iTrack), m_SectionsBefore);
+	if (m_bKeyChosenBefore)
+		pDoc->GetKeys()->Set(static_cast<int>(m_iTrack), m_KeyBefore);
+	else
+		pDoc->GetKeys()->SetAuto(static_cast<int>(m_iTrack));
 	pDoc->UnlockDocument();
 	if (!m_Widened.empty())
 		pDoc->UpdateAllViews(NULL, UPDATE_COLUMNS);
 
 	Finish(pMainFrm, pDoc, pEditor);
 }
+
+// A track's key chosen in the piano roll (or with set_key), or back to auto,
+// as one undoable step (module settings aren't undoable in FamiTracker 0.4.6)
+class CTrackKeyAction : public CAction
+{
+public:
+	CTrackKeyAction(unsigned int Track, bool Chosen, const ftapi::KeyChoice &Key) :
+		CAction(ACT_TRACK_KEY), m_iTrack(Track), m_bChosen(Chosen), m_Key(Key), m_bOldChosen(false)
+	{
+	}
+
+	bool SaveState(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (m_iTrack >= pDoc->GetTrackCount())
+			return false;
+		m_bOldChosen = pDoc->GetKeys()->Get(static_cast<int>(m_iTrack), m_OldKey);
+		if (m_bOldChosen == m_bChosen && (!m_bChosen || m_OldKey == m_Key))
+			return false;	// nothing changes
+		Redo(pMainFrm);
+		return true;
+	}
+
+	void Undo(CMainFrame *pMainFrm) { Set(pMainFrm, m_bOldChosen, m_OldKey); }
+	void Redo(CMainFrame *pMainFrm) { Set(pMainFrm, m_bChosen, m_Key); }
+
+private:
+	void Set(CMainFrame *pMainFrm, bool Chosen, const ftapi::KeyChoice &Key)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (m_iTrack >= pDoc->GetTrackCount())
+			return;
+		if (Chosen)
+			pDoc->GetKeys()->Set(static_cast<int>(m_iTrack), Key);
+		else
+			pDoc->GetKeys()->SetAuto(static_cast<int>(m_iTrack));
+		pDoc->SetModifiedFlag();
+	}
+
+	unsigned int m_iTrack;
+	bool m_bChosen;
+	ftapi::KeyChoice m_Key;
+	bool m_bOldChosen;
+	ftapi::KeyChoice m_OldKey;
+};
 
 // A clip edited in the clip editor, written into its linked copies. Undo puts
 // the copies' patterns back, and the clip follows them (CMainFrame::SyncClips).
@@ -1634,10 +1705,18 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 	return true;
 }
 
+// The piano roll's key menu and set_key
+
+bool SetTrackKey(CMainFrame *pMainFrm, bool Chosen, const ftapi::KeyChoice &Key)
+{
+	const int Track = pMainFrm->GetSelectedTrack();
+	return Track >= 0 && pMainFrm->AddAction(new CTrackKeyAction(static_cast<unsigned int>(Track), Chosen, Key));
+}
+
 // The Claude Code connection
 
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections)
+	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections, const ftapi::KeyStore *pKeys)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
@@ -1699,6 +1778,11 @@ bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, 
 		pAction->MoveFrames(MoveFrame, MoveBy);
 	if (pSections != NULL)
 		pAction->SetSections(pSections->Get(0));
+	if (pKeys != NULL) {
+		ftapi::KeyChoice Key;
+		const bool Chosen = pKeys->Get(0, Key);
+		pAction->SetKey(Chosen, Key);
+	}
 	if (Cursor >= 0)
 		pAction->PlaceCursor(Cursor / Length, Cursor % Length);
 	if (!pMainFrm->AddAction(pAction)) {
