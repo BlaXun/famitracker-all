@@ -362,7 +362,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)). It says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves. Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `remove_unused_instruments` | Lists the instruments no note plays in any track or clip (a template's starter sounds, sounds tried and replaced) and, with `confirm` once you agree, removes them and the sequences only they used, as Edit > Clean up > Remove unused instruments does (which now also keeps the instruments clips play). FamiTracker can't undo it; `keep` names any to keep |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
@@ -396,7 +396,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
-| `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
+| `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
@@ -420,8 +420,9 @@ and `findings`, heard worst first as in the text. Each finding has:
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
 chords, lush chords, warm pad, bass, thump bass (an octave blip into each
 note, the punch a triangle bass can't get from volume), plucky bass, singing
-lead (a vibrato that comes in by itself), strings, brass, organ, kick, snare,
-hi-hat, open hi-hat, crash, tom.
+lead (a vibrato that comes in by itself), strings, brass, organ, the calm
+leads music box, breath and falling strike (see [Sounds in
+words](#sounds-in-words)), kick, snare, hi-hat, open hi-hat, crash, tom.
 Each is built for the 2A03 (also MMC5 channels) and the VRC6, and plays on
 the Sunsoft 5B too. VRC7 channels play the chip's own sounds instead, and
 the 5B has its own besides (see [Expansion chips](#expansion-chips)).
@@ -837,7 +838,8 @@ The **N163** (Namco 163) adds 1 to 8 wavetable channels, 13 in all with the
 2A03's, and Claude draws their sounds: soft flute, drawbar organ, string
 ensemble, choir, brass section, electric piano, glass bell, harp, marimba,
 pulse sweep lead, growl bass and round bass, and the VRC6 Plus's choir pad,
-string pad and sub bass. Each plays waves of its own one
+string pad, sub bass, breath, quick pad, pulsing pad and music box. Each
+plays waves of its own one
 after the other, so its timbre moves as a note plays: the organ's upper
 drawbars turn like a rotating speaker, the strings and the choir shimmer,
 brass opens up from mellow to bright, the electric piano and the bell mellow
@@ -887,7 +889,24 @@ properties** has a box for it.
 - Choosing it adds what's missing of its starter sounds, each with a wave
   of its own under sample 128: choir pad, string pad, soft flute and sub
   bass. `find_sound` and the sound browser list them first, under "VRC6
-  Plus soft layer", with the N163's other sounds after them.
+  Plus soft layer", then its calm shapes, then the N163's other sounds.
+- Its calm shapes, added by name on a soft channel (a song holds 8 soft
+  sounds, the starters among them): **breath**, a breathy lead that comes
+  in from 4 over 11 frames, sinks to 10 and holds, with a faint vibrato;
+  **quick pad**, in within 7 frames, for a chord every beat (the starter
+  pads take 20-24 frames to swell); **pulsing pad**, struck again every 12
+  frames, each strike softer down to one it repeats, with a soft echo after
+  a release (the slow pads of atmospheric FamiTracker music); **music box**, a bright tine that
+  mellows to a pure tone and is gone in 40 frames.
+- How loud they play at volume 15 against a 2A03 pulse at 15 (measured,
+  with the soft layer's 4 channels): choir pad 8.3 dB under, string pad
+  7.3, soft flute 5.3, sub bass 5.1, breath 7.4, quick pad 7.7, pulsing
+  pad 10.4 over its strikes, music box 4.8 at its strike. `add_instrument`
+  says it when it adds one.
+- `design_instrument` makes sounds of your own there: a wave sound's waves
+  (`wave`, or the kind's: the soft flute's for a lead, the string pad's for
+  a pad, the breath's and the music box's for theirs) with the envelope,
+  vibrato and pitch you describe, each with a wave place of its own.
 - Underneath, the song is VRC6 + N163 with 4 channels, marked by a
   `BF VRC6PLUS` block, so other FamiTrackers open it as that and play it
   the same. Back to the VRC6 (`chips: ["VRC6"]`) clears the soft channels
@@ -1072,18 +1091,43 @@ with `check_loop` and `fix_loop`.
 `design_instrument` makes an instrument from words, starting from a kind
 (lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune; kick,
 snare, hihat, open hihat, crash, tom) and changing what should differ:
-attack, decay, sustain and release (words or frames, 60 a second; the
-decay's words go by the kind, so a long bell rings twice its usual 40
-frames), the pulse width (12.5%, 25%, 50%) and whether it opens up,
-shimmers or thins as it fades, a vibrato built in that comes in after a
-delay given in beats, an octave blip, a scoop or a fall on the attack, or a
-chord played as a fast arpeggio from every note (major, minor, sus2, sus4,
-6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7, augmented).
-A sound that holds under its peak (a pad at half) swells to that level, or
-settles to it, rather than dropping straight after its attack. Drums can be
-darker or brighter, shorter or longer (a hi-hat sits at the noise's D-#: at
-E-# most of its sound lies above hearing). The instrument gets a new name,
-so notes that use another one don't change.
+attack, decay, sustain and release (words or frames, 60 a second; a decay of
+40 frames reaches its sustain level, or silence, on frame 40; the decay's
+words go by the kind, so a long bell rings twice its usual 40 frames), the
+pulse width (12.5%, 25%, 50%; on the VRC6's pulses every 6.25% up to 50%,
+such as the 37.5% of Castlevania III's night leads) and whether it opens
+up, shimmers or thins as it fades, a vibrato built in that comes in after a
+delay given in beats (faint, gentle, medium or strong: about 3, 20, 40 and
+60 cents either way at A-3), an octave blip, a scoop or a fall on the
+attack, or a chord played as a fast arpeggio from every note (major, minor,
+sus2, sus4, 6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7,
+augmented). A sound that holds under its peak (a pad at half) swells to that
+level, or settles to it, rather than dropping straight after its attack.
+Drums can be darker or brighter, shorter or longer (a hi-hat sits at the
+noise's D-#: at E-# most of its sound lies above hearing). The instrument
+gets a new name, so notes that use another one don't change. The reply
+gives its volume a frame at a time and what that means at the song's tempo
+("down to half (7) on frame 16 and silent from frame 43, 0.9 of a beat"),
+and on the 2A03's pulses the notes its vibrato would click on.
+
+Three kinds are calm leads, the shapes of the quiet tracks in the
+reference library, none of which holds a high level from attack to
+release (a level held like that presses, however soft the parts around
+it). Their times follow the song's tempo, and a volume given scales their
+levels:
+
+- **music box**: struck at its volume and gone in 0.9 of a beat (43 frames
+  at 75 BPM, half gone by frame 16), 50%, like a music box or a piano.
+- **breath**: breathes in from 4 to 15 over 12 frames, sinks to 9 by frame
+  22 and holds it, with a faint vibrato half a beat in, and fades over 24
+  frames after a release; 50%.
+- **falling strike**: struck at 15, falls to 6 over 14 frames and holds it
+  there, the faint vibrato half a beat in, a short fade after a release;
+  25% (Final Fantasy III's Time Remains).
+
+They're presets too, by the same names. The faint vibrato is theirs: the
+period a step flatter for half of each 12 frames, which takes no note of
+the 2A03's pulses across a multiple of 256, so it never clicks.
 
 On the noise channel, a kind that isn't a drum makes a volume envelope: a
 `swell` rises over half a second and washes out after a release, for waves
@@ -1102,7 +1146,11 @@ duty click (each note's first frame at another pulse width), a decay in
 steps, held notes struck again every so many beats, a soft echo after the
 note, a quick pitch flick, and a bass that thumps in from a fourth above.
 The kinds "bloom lead", "stepped lead", "click pluck", "echo pluck" and
-"thump bass" start from them.
+"thump bass" start from them. A held note struck again dips over two frames
+to about half its level (at most 5 under) and strikes a little over it, on
+the beat's grid from the note's start; a sound that dies away (a pluck, a
+music box) is struck again from its peak until a release. Drums and the
+triangle can't be struck again that way, and the reply says so.
 
 A sound gone within four frames (a pluck with a short decay and no
 sustain) is for echoes, stabs and drums, and the reply says so: a tune's

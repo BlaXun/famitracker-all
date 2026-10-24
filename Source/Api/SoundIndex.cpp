@@ -299,15 +299,13 @@ public:
 		for (const int Target : { static_cast<int>(TARGET_N163), static_cast<int>(TARGET_SOFT) }) {
 			if (!Has(Target))
 				continue;
-			// The VRC6 Plus's soft layer: its starter sounds first, then the N163's others
+			// The VRC6 Plus's soft layer: its starter sounds first, then its calm shapes, then the N163's others
 			const std::vector<WaveSound> &All = WaveSounds();
 			std::vector<const WaveSound *> Waves;
-			for (size_t i = 0; i < All.size(); ++i)
-				if (Target == TARGET_SOFT && IsSoftLayerSound(All[i].Name))
-					Waves.push_back(&All[i]);
-			for (size_t i = 0; i < All.size(); ++i)
-				if (Target != TARGET_SOFT || !IsSoftLayerSound(All[i].Name))
-					Waves.push_back(&All[i]);
+			for (int Group = 0; Group < (Target == TARGET_SOFT ? 3 : 1); ++Group)
+				for (size_t i = 0; i < All.size(); ++i)
+					if (Target != TARGET_SOFT || Group == (IsSoftLayerSound(All[i].Name) ? 0 : IsSoftLayerCalmSound(All[i].Name) ? 1 : 2))
+						Waves.push_back(&All[i]);
 			for (size_t w = 0; w < Waves.size(); ++w) {
 				const WaveSound &Wave = *Waves[w];
 				SoundEntry E = Base(Wave.InstrumentName(), Wave.Description, Target, true);
@@ -316,6 +314,7 @@ public:
 				E.Chip = "N163";
 				E.Key = Wave.Name;
 				E.Origin = Target == TARGET_SOFT && IsSoftLayerSound(Wave.Name) ? "a starter sound of the VRC6 Plus's soft layer" :
+					Target == TARGET_SOFT && IsSoftLayerCalmSound(Wave.Name) ? "a calm sound made for the VRC6 Plus's soft layer" :
 					"ready-made for the N163";
 				E.Extra = Wave.Words;
 				const InstrumentInfo Info = SequencesInfo(Wave.Sequences, "N163");

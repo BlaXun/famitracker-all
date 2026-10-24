@@ -429,6 +429,31 @@ with `Expansion` still "VRC6, N163"). `SongHost::SetExpansion` takes
 soft layer as `TARGET_SOFT`; `mix` keeps its parts `SOFT_LAYER_DB` under
 their roles; voiced chords default to the string pad there.
 
+Calm sounds (from `feat-calm-sounds`): `DesignOfKind` in `Presets.cpp` has
+three calm leads, music box, breath and falling strike, which are also
+presets of those names (the kinds at 75 BPM, `CALM_BEAT_FRAMES`);
+`design_instrument` fits their times to the song's tempo (`FitCalmTempo`)
+and their levels to a volume given (`FitCalmPeak`). `VIBRATO_FAINT`
+(`FaintVibratoItems`) puts the period a step flatter for half of each
+cycle, so it never takes a 2A03 pulse note across a multiple of 256.
+`DecayItems` stretches the quadratic decay so a decay of N frames reaches
+its level on frame N; in `Envelope` a held note's restrike is a two-frame
+dip and a strike over the hold on the beat's grid from the note's start,
+and a sound that dies away is struck again from its peak until a release.
+`SoundDesign::Vrc6Duty` is the VRC6's own duty (6.25% steps, `DutyArg` in
+`Tools.cpp`). The reply's volume a frame at a time is `VolumeTimeline`,
+read from the instrument as the host reports it. The soft layer's calm
+shapes are `SoftLayerCalmSounds` in `Vrc6Plus.cpp` (breath, quick pad,
+pulsing pad, music box: not starters, since a song holds 8 N163 sounds),
+and on an N163 channel `design_instrument` makes a `DesignedWaveSound`
+from a built-in sound's waves. `WaveSoundDb` in `Tools.cpp` (from
+`WaveLevelDb` and `HeldVolume` in `Wavetables.cpp`) is a wave sound's
+level against a 2A03 pulse at 15: it matched the soft layer's eight
+sounds measured under Wine within 0.5 dB. `TestCalmKinds`,
+`TestDecayFrames`, `TestRestrikes`, `TestFaintVibrato`,
+`TestSoftCalmSounds`, `TestVrc6DutiesAndStrikes`, `TestSoftDesign` and
+`TestSoftLevels` in `Source/Api/tests/ApiTests.cpp` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
