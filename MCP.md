@@ -411,6 +411,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
+| `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play; `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -613,6 +614,56 @@ volume, and a melody that plays well under another part (a VRC7 melody at
 volumes, so mixing is a last step, or one to repeat at the end. A channel
 with a fader in FamiTracker's mixer (see [The mixer](#the-mixer)) is mixed
 as it sounds with it: 3 dB down, its volumes come out higher to match.
+
+### Measuring the mix
+
+`mix` and `review_arrangement` work from the volumes in the notes;
+`measure_mix` measures what FamiTracker plays. It renders the selected track
+the way `export_for_game` does, with FamiTracker's mixer, Soft and Space, and
+changes nothing: no undo step, no change to the mixer or the track, and no
+file written (the exported OGG files stay as they are).
+
+- **Loudness, section by section:** each named section, or every 4 bars when
+  the track has none (the intro's bars apart), in LUFS with the two sides
+  together as BS.1770 sums them (as `export_for_game` and ffmpeg measure
+  it), with its loudest peak in dBFS; then the loop's. The loudest section
+  and the quietest after the intro are marked when they're half a dB apart
+  or more.
+- **The intro against the loop:** 6-10 dB under reads as an intro. More
+  than 10 under, players in a game hear silence; less than 6, it doesn't set
+  itself apart. The reply says when it's outside.
+- **The two sides:** each side's level (RMS) and how far apart they are.
+  More than 2 dB apart, it names the part that puts the most on the louder
+  side.
+- **Each part alone:** the melody, the chords together, and each other
+  channel that plays with the melody, each rendered with the other channels
+  silent. Their sound goes, but their notes and effects still play (the
+  DPCM level still softens the triangle and the noise), and each part keeps
+  its own Space, so the space holds only that part. A part is measured in
+  the bars where it plays with the melody, against the melody there ("the
+  melody 2.7 dB over"), with how that varies from section to section. The
+  chords are the channels whose notes sound chords (arpeggio or lush
+  instruments, `0xy`), or else voiced chords (two to four channels of one
+  kind starting their notes together); `chords` names other channels.
+  `parts` names what to measure instead: channels, `"chords"`, or channels
+  joined with `+` as one part (`"Soft 1+Soft 2+Soft 3"`). `melody_channel`
+  names the melody; otherwise it's guessed as `review_arrangement` guesses
+  it, and the reply says so (a high part of a few notes can win the guess).
+- **Targets:** `style` `calm` checks the melody 2-3 dB over the chords,
+  `lively` 3-4 dB over the parts around it (the nearest one, the echo and
+  the drums aside), and says how far to move the faders; `any`, the
+  default, gives the numbers alone.
+- **Loudness of the file:** with `loudness` (LUFS, as `export_for_game`
+  takes it) every number is as the exported file at that loudness has it,
+  and the reply says whether the loudest peak holds it back. Without it,
+  the numbers are as FamiTracker renders (`export_for_game` with
+  `normalize` false).
+
+Each part alone is a render of its own, from the song's start to the last
+bar it needs, without the space's tail after: a two-minute song with seven
+parts is nine renders, about a minute on a slow computer. `stems` false
+measures the mix alone, in one render, and `parts` `["chords"]` checks the
+melody against the chords alone, in three.
 
 ## Stereo
 
@@ -1385,12 +1436,12 @@ the loop, cut so it repeats without a seam:
   `fix_loop` makes the loop start the same way both times where it can.
 - The loop points move together by up to 2 ms to where the waves meet, so
   the jump doesn't click; the loop keeps its exact length.
-- A song that sets the DPCM level on its first row (as `mix` does) steps
-  the DMC's output up from silence there, a pop that the repeats don't
-  have. The file fades in over its first 40 ms, before its level is
-  measured (the pop used to be its loudest peak and kept the rest quieter),
-  and a song that loops as a whole repeats from its second time through,
-  so the fade stays out of the loop.
+- A song that sets the DPCM level on its first row (as `mix` does) used to
+  step the DMC's output up from silence there, a pop that the repeats
+  don't have. FamiTracker now starts such a song at that level, in
+  playback and in the files. The file still fades in over its first 40 ms,
+  before its level is measured, and a song that loops as a whole still
+  repeats from its second time through, so the fade stays out of the loop.
 
 GameMaker (2023.2 or newer) loops a sound between two points. The dialog and
 Claude's reply give the code, for example:

@@ -80,6 +80,14 @@ void CDPCM::Write(uint16 Address, uint8 Value)
 	}
 }
 
+void CDPCM::StartAt(uint8 Level)
+{
+	// What a $4011 write sets, the mixer told it's been there all along (a write would step the output there: a pop)
+	m_iDeltaCounter = Level & 0x7F;
+	m_iLastValue = m_iDeltaCounter;
+	m_pMixer->StartAt(m_iChanId, m_iDeltaCounter);
+}
+
 void CDPCM::WriteControl(uint8 Value)
 {
 	if ((Value & 1) == 1) {

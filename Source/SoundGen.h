@@ -162,8 +162,11 @@ public:
 	void		 EvaluateGlobalEffects(stChanNote *NoteData, int EffColumns);
 	stDPCMState	 GetDPCMState() const;
 
-	// Rendering
-	bool		 RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track);
+	// Rendering. pSilent (by chan_id_t, CHANNELS of them; NULL for none): channels left out of the sound, whose
+	// notes and effects play on (a DPCM level still softens the triangle and the noise) and whose Space sends go
+	// with them (measure_mix's stems). Tail: go on while the mixer's space rings after the end (up to 15 s).
+	bool		 RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track, const bool *pSilent = NULL,
+		bool Tail = true);
 	void		 StopRendering();
 	void		 GetRenderStat(int &Frame, int &Time, bool &Done, int &FramesToRender, int &Row, int &RowCount) const;
 	bool		 IsRendering() const;	
@@ -381,6 +384,12 @@ private:
 	void				ApplyChannelMix();
 	void				ApplySpace();						// the space, its echo timed to the playing track's beat
 	int					m_iRenderTail;						// frames rendered after the end while the space rang on
+	bool				m_bRenderSilent[CHANNELS];			// left out of the render's sound, by chan_id_t (RenderToFile)
+	bool				m_bRenderTail;						// the render goes on while the space rings after its end
+	bool				m_bMixAgain;						// ApplyChannelMix again: a render with silent channels starts or ends
+	// A song that sets the DPCM level (Zxx) on its first row starts with the DMC's output there, as if it had
+	// always been at that level: stepping it up from silence as the row plays would pop
+	void				StartDacLevel();
 
 	// Rendering
 	bool				m_bRendering;

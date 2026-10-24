@@ -382,6 +382,29 @@ time through, and a halt keeps its tail. `set_mixer` takes `soft`, `space`,
 `SongHost::SetMixer(MixerSettings)`; the tools' loudness counts a channel's
 level before its depth.
 
+`measure_mix` (`MeasureMixTool` in `Tools.cpp`) renders the selected track
+through `SongHost::RenderTrack` as `export_for_game` does and measures it
+(`SpansLoudness` in `GameAudio.cpp` takes stretches of a render as one
+program). Each part alone (a stem) is a render with `RenderOptions::Silent`
+(`Song.h`): `CSoundGen::RenderToFile` takes the channels to leave silent (by
+`chan_id_t`) and whether to render the space's tail, and `ApplyChannelMix`
+leaves them out of the mixer while the render runs (applied again as a
+render starts and stops, `m_bMixAgain`), so their notes and effects still
+play and their Space sends go with them. The other chips' channels get a
+gain of 0; a 2A03 channel comes off its pin as the pin plays it
+(`CMixer::SetChannelSilent`, `Pin1`, `Pin2`: the pin's output less what it
+plays from the silent channels alone), since the pin compresses what it
+mixes: a fader's share of the pin (a gain of 0, or the -24 dB stems
+composers made by hand) leaves a triangle under a DPCM level several dB
+louder than it sounds (`TestSilentParts`). The document's mixer, mutes and
+track stay as they are. Each render stops at the last row it needs, without
+the tail. A song that sets the
+DPCM level (`Zxx`) on its first row starts with the DMC's output there
+(`CSoundGen::StartDacLevel` in `BeginPlayer`, `CAPU::StartDAC`,
+`CDPCM::StartAt`, and `CMixer::StartAt`, which takes the pin's output in
+without a step), so playback and renders don't pop; `ExportTrack`'s fade-in
+over the first 40 ms (`StartStep`) is older than that and stays.
+
 VRC6 Plus (`Source/Api/Vrc6Plus.cpp`, portable) is this branch's own chip:
 the VRC6 with a soft layer of four N163 wave channels, shown as one chip.
 Underneath the module has the VRC6 and the N163 with 4 channels; the
@@ -587,7 +610,9 @@ The application has no test suite of its own. What exists:
   also with Soft and Space at 0 or set and cleared before a sound (the
   depth tests also check a channel through its own buffers within 2 steps
   of the mix on every chip, Soft's response, each room's tail, the echo's
-  repeats and determinism), pinned by hashes (`MONO`; after a deliberate change to the emulation,
+  repeats and determinism; `TestDacStart` a DPCM level started without a
+  step, `TestSilentParts` a 2A03 channel left out of a render: the mix less
+  it alone), pinned by hashes (`MONO`; after a deliberate change to the emulation,
   configure with `-DAPU_REFERENCE=<a folder with that code's APU and
   Blip_Buffer>` and `apu_tests` prints them anew); two channels panned
   apart must each be alone on their side as they sound in the middle. The
@@ -621,6 +646,9 @@ The application has no test suite of its own. What exists:
   `set_expansion` to and from the VRC6 Plus, its names old and new, the
   soft layer in the sound index, voiced chords and `mix` on it, and the
   N163's level by channel count;
+  `TestMeasureMix` `measure_mix` against the parts rendered alone (nothing
+  changed, the renders' silent channels, sections, the intro, the sides,
+  the targets, `loudness`, named parts);
   `TestSoundIndex` and `TestFindSound` the sound browser's
   index on every chip (homes, kinds, words, the two warnings, previews, the
   song's own instruments) and `find_sound`, `ToolSet::Sounds` and
