@@ -10805,13 +10805,18 @@ std::vector<std::string> ShownChips(const SongInfo &Song)
 // What a chip brings, for set_expansion's answer
 std::string ChipSounds(const std::string &Chip)
 {
-	if (Chip == VRC6_PLUS)
+	if (Chip == VRC6_PLUS) {
+		std::string Others;	// the N163's sounds besides the soft layer's own
+		for (size_t i = 0; i < WaveSounds().size(); ++i)
+			if (!IsSoftLayerSound(WaveSounds()[i].Name))
+				Others += (Others.empty() ? "" : ", ") + WaveSounds()[i].Name;
 		return "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music (the melody, the sawtooth's bass and "
 			"bite), and under them a soft layer of four N163 wave channels, Soft 1 to Soft 4, adds softness and depth: a pad or "
 			"a choir holding the chords, a soft echo of the melody, a sub bass an octave under the sawtooth. It's optional and "
 			"quieter: left empty, the song is plain VRC6. Its sounds: choir pad, string pad, soft flute and sub bass, and the "
-			"N163's other wave sounds (" + WaveSoundList() + "). The VRC6 Plus is this FamiTracker's own; other FamiTrackers "
+			"N163's other wave sounds (" + Others + "). The VRC6 Plus is this FamiTracker's own; other FamiTrackers "
 			"open the song as the VRC6 and the N163 with 4 channels, which play it the same.";
+	}
 	if (Chip == "VRC6")
 		return "The VRC6: two pulses and a sawtooth, a strong bass; the presets work on them.";
 	if (Chip == "VRC7")

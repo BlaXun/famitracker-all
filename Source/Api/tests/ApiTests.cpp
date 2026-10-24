@@ -11925,6 +11925,8 @@ void TestVrc6Plus()
 	CHECK_HAS(Result.Text, "The song uses the VRC6 Plus now: 7 more channels (VRC6 Plus Pulse 1, VRC6 Plus Pulse 2, VRC6 Plus "
 		"Sawtooth, VRC6 Plus Soft 1, VRC6 Plus Soft 2, VRC6 Plus Soft 3, VRC6 Plus Soft 4) besides the 2A03's five.");
 	CHECK_HAS(Result.Text, "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music");
+	CHECK_HAS(Result.Text, "Its sounds: choir pad, string pad, soft flute and sub bass, and the N163's other wave sounds (drawbar organ, ");
+	CHECK_LACKS(Result.Text, "round bass, choir pad");
 	CHECK_HAS(Result.Text, "Added its soft layer's sounds: \"Choir pad\" (03), \"String pad\" (04), \"Soft flute\" (05) and "
 		"\"Sub bass\" (06), each with a wave of its own.");
 	CHECK_HAS(Result.Text, "the VRC6 Plus is two (the VRC6 and the N163)");
