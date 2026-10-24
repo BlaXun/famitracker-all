@@ -330,6 +330,32 @@ Plus).
   sounds with those shapes; design support after that, if a track needs
   more. A song holds at most 8 soft-layer sounds, 4 of them the starters.
 
+## 12. Ideas from Mario Paint
+
+Not started (the user's idea, 24 October 2026: Mario Paint's music
+composer felt very intuitive). It has 15 sounds as pictures stamped on a
+staff, at most three notes on a beat, quarter notes only, no sharps or
+flats (C major and A minor), and songs of up to 24 bars. Much of its ease
+comes from those limits and from never meeting a channel. What could carry
+over:
+
+- **Pick a sound, then click.** A stamp mode for the piano roll: the song's
+  sounds as a palette of small pictures or colors; a click places a note of
+  the chosen sound, and FamiTracker puts it on a free channel that can play
+  it (a melody sound on a pulse, the bass on the triangle or sawtooth, a
+  drum on the noise). Each note shows its sound's color, and the palette
+  says when a sound has no channel left at that spot. The channels stay
+  underneath for later.
+- **Limits as a first mode.** A simple mode that bundles them: notes on a
+  beat grid, one length per click, Snap to key locked on, a dozen chosen
+  sounds, short songs. Switched off, everything else is there.
+- **Fun to watch.** Every stamp already sounds as it's placed; playback
+  could be fun to watch too, with a small character hopping onto the notes
+  as they play.
+- **Fun sounds beside the instruments.** Mario Paint puts a dog, a cat and
+  a pig next to its piano and trumpet. A few novelty stamps, made like the
+  sound effects from the voice, would fit.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
