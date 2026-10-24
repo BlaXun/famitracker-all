@@ -76,12 +76,16 @@ public:
 	void	SetChipLevel(chip_level_t Chip, float Level);
 	void	SetChannelPan(int ChanID, int Pan);		// 0x00 left, 0x80 the middle, 0xFF right (CMixer::SetChannelPan)
 	void	SetChannelGain(int ChanID, double Gain);	// the mixer window's level, 1 as it plays (CMixer::SetChannelGain)
+	void	SetChannelSilent(int ChanID, bool Silent);	// a 2A03 channel left out of a render (CMixer::SetChannelSilent)
 	double	GetChannelGain(int ChanID) const;
 	// Depth, the mixer window's Soft and Space (CMixer::SetChannelDepth), and the space they share (CMixer::SetSpace)
 	void	SetChannelDepth(int ChanID, int Soft, int Space);
 	void	SetSpace(int Room, double EchoSeconds, int Repeats);
 	bool	SpaceRinging() const;
 	void	ClearSpace();							// as a song or a render starts: Reset leaves the space ringing
+	// The DPCM's output at Level (0-127) as if it had always been there: as a song starts with the level its first row
+	// sets, which a $4011 write would step up to from silence, a pop (this FamiTracker's own)
+	void	StartDAC(uint8 Level);
 
 #ifdef LOGGING
 	void	Log();
