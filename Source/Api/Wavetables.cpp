@@ -138,6 +138,27 @@ std::vector<std::pair<int, int> > Steps(std::initializer_list<std::pair<int, int
 	return std::vector<std::pair<int, int> >(List);
 }
 
+// A design with the faint vibrato (VIBRATO_FAINT) after Delay frames
+SoundDesign Faint(SoundDesign Design, int Delay)
+{
+	Design.Vibrato = VIBRATO_FAINT;
+	Design.VibratoDelay = Delay;
+	return Design;
+}
+
+// A sound's volume sequence replaced by one of its own (its loop and release point as a sequence keeps them, -1 for none)
+WaveSound WithVolume(WaveSound Sound, const std::vector<int> &Items, int Loop, int Release)
+{
+	for (size_t i = 0; i < Sound.Sequences.size(); ++i) {
+		if (Sound.Sequences[i].Type != SEQUENCE_VOLUME)
+			continue;
+		Sound.Sequences[i].Items = Items;
+		Sound.Sequences[i].Loop = Loop;
+		Sound.Sequences[i].Release = Release;
+	}
+	return Sound;
+}
+
 // Waves whose upper harmonics drift in phase, a quarter turn each: a timbre that shimmers like several players
 std::vector<std::vector<int> > Shimmer(const std::vector<double> &Amplitudes, size_t From)
 {
@@ -225,6 +246,35 @@ std::vector<WaveSound> MakeSounds()
 	Out.push_back(Sound("sub bass", "sub, sine bass, low bass, 808",
 		"a round sub bass, almost a sine, for an octave under the sawtooth: felt more than heard",
 		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.18 }) }, None, Envelope(1, 8, 15, 6, 13, 4)));
+	// The soft layer's calm shapes (Vrc6Plus.h, SoftLayerCalmSounds), which its pads don't have: a lead that breathes in and
+	// sinks, a pad quick enough for a chord every beat, a pad struck again and again, a music box
+	Out.push_back(Sound("breath", "breathy lead, breath lead, calm lead, airy flute, night lead",
+		"a breathy lead that breathes in from 4 over 11 frames, sinks to 10 by frame 21 and holds it, with a faint vibrato "
+		"after 24 frames: a calm lead, or a soft answer to the VRC6's",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.24, 0.1 }), HarmonicWave({ 1.0, 0.18, 0.15 }, { 0.0, 0.12, 0.3 }) },
+		WaveSteps(Steps({ { 0, 8 }, { 1, 8 } }), 0), Faint(Envelope(11, 4, 14, 10, 10, 16), 24)));
+	Out.push_back(Sound("quick pad", "fast pad, short pad, beat pad, chord a beat, quick chords",
+		"a soft pad that's in within 7 frames and holds, for a chord every beat (the other pads take 20-24 frames to swell)",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.5, 0.3, 0.15 }), HarmonicWave({ 1.0, 0.45, 0.35, 0.12, 0.05 },
+			{ 0.0, 0.08, 0.0, 0.15 }) }, WaveSteps(Steps({ { 0, 10 }, { 1, 10 } }), 0), Envelope(7, 0, 11, 0, 11, 10)));
+	{
+		// Struck every 12 frames, each strike a little softer down to a level it keeps striking, and after a release a fade,
+		// a moment's silence and a soft echo, as the slow pads of atmospheric FamiTracker music do
+		const WaveSound Pulsing = Sound("pulsing pad", "struck pad, restruck pad, restrike pad, echo pad, throb pad, tremolo pad",
+			"a pad struck again every 12 frames, each strike softer (13, 11, then 10 again and again), with a soft echo after "
+			"a release: slow chords that keep moving",
+			std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.4, 0.25, 0.1 }), HarmonicWave({ 1.0, 0.3, 0.3, 0.15 }, { 0.0, 0.1, 0.2 }) },
+			WaveSteps(Steps({ { 0, 6 }, { 1, 6 } }), 0), Envelope(0, 0, 13, 0, 13, 6));
+		const std::vector<int> Volume = { 13, 13, 12, 12, 11, 10, 10, 9, 9, 9, 8, 8,	// the first strike
+			11, 11, 10, 10, 9, 9, 8, 8, 8, 7, 7, 7,		// the second, softer
+			10, 10, 9, 9, 8, 8, 7, 7, 7, 6, 6, 6,		// then this one again and again while the note holds
+			5, 4, 3, 3, 2, 1, 0, 0, 0, 0, 2, 2, 3, 3, 2, 2, 1, 1, 0 };	// after a release: a fade, then the echo
+		Out.push_back(WithVolume(Pulsing, Volume, 24, 35));
+	}
+	Out.push_back(Sound("music box", "celesta, toy piano, lullaby, tinkle, struck lead",
+		"a soft music box: a bright tine struck at 15 that mellows to a pure tone and dies away by itself in 40 frames",
+		std::vector<std::vector<int> >{ HarmonicWave({ 1.0, 0.0, 0.0, 0.4, 0.0, 0.15 }), HarmonicWave({ 1.0, 0.0, 0.0, 0.18 }),
+			HarmonicWave({ 1.0 }) }, WaveSteps(Steps({ { 0, 3 }, { 1, 6 }, { 2, 1 } }), -1), Envelope(0, 0, 15, 40, 0, 6)));
 	return Out;
 }
 
@@ -289,6 +339,111 @@ std::string WaveSoundList()
 	const std::vector<WaveSound> &All = WaveSounds();
 	for (size_t i = 0; i < All.size(); ++i)
 		Out += (i == 0 ? "" : ", ") + All[i].Name;
+	return Out;
+}
+
+namespace {
+
+const PresetSequence *SequenceOfType(const WaveSound &Sound, int Type)
+{
+	for (size_t i = 0; i < Sound.Sequences.size(); ++i)
+		if (Sound.Sequences[i].Type == Type && !Sound.Sequences[i].Items.empty())
+			return &Sound.Sequences[i];
+	return 0;
+}
+
+// A wave's RMS around its mean against a 0-15 square's (7.5), as a power ratio
+double WavePower(const std::vector<int> &Wave)
+{
+	if (Wave.empty())
+		return 0.0;
+	double Mean = 0.0, Sum = 0.0;
+	for (size_t i = 0; i < Wave.size(); ++i)
+		Mean += Wave[i];
+	Mean /= Wave.size();
+	for (size_t i = 0; i < Wave.size(); ++i)
+		Sum += (Wave[i] - Mean) * (Wave[i] - Mean);
+	return Sum / Wave.size() / (7.5 * 7.5);
+}
+
+}	// namespace
+
+double WaveLevelDb(const WaveSound &Sound, bool Struck)
+{
+	if (Sound.Waves.empty())
+		return -60.0;
+	const PresetSequence *pSteps = SequenceOfType(Sound, SEQUENCE_DUTY);
+	std::vector<int> Playing;	// the waves heard, a frame each
+	if (pSteps == 0)
+		Playing.push_back(0);
+	else if (Struck)
+		Playing.push_back(pSteps->Items.front());
+	else if (pSteps->Loop >= 0 && pSteps->Loop < static_cast<int>(pSteps->Items.size()))
+		Playing.assign(pSteps->Items.begin() + pSteps->Loop, pSteps->Items.end());
+	else
+		Playing.push_back(pSteps->Items.back());
+	double Power = 0.0;
+	for (size_t i = 0; i < Playing.size(); ++i)
+		Power += WavePower(Sound.Waves[static_cast<size_t>(std::max(0, std::min(static_cast<int>(Sound.Waves.size()) - 1, Playing[i])))]);
+	Power /= Playing.size();
+	return Power > 0.0 ? 10.0 * std::log10(Power) : -60.0;
+}
+
+double HeldVolume(const WaveSound &Sound, bool &Struck)
+{
+	Struck = false;
+	const PresetSequence *pVolume = SequenceOfType(Sound, SEQUENCE_VOLUME);
+	if (pVolume == 0)
+		return 15.0;
+	const std::vector<int> &V = pVolume->Items;
+	const int Items = static_cast<int>(V.size());
+	const int End = pVolume->Release >= 0 && pVolume->Release < Items ? pVolume->Release : Items - 1;
+	if (pVolume->Loop >= 0 && pVolume->Loop <= End) {
+		double Power = 0.0;
+		for (int i = pVolume->Loop; i <= End; ++i)
+			Power += V[static_cast<size_t>(i)] * V[static_cast<size_t>(i)];
+		return std::sqrt(Power / (End - pVolume->Loop + 1));
+	}
+	if (pVolume->Release >= 0 && pVolume->Release < Items)
+		return V[static_cast<size_t>(pVolume->Release)];
+	Struck = V.back() == 0;
+	return Struck ? *std::max_element(V.begin(), V.end()) : V.back();
+}
+
+const WaveSound *WaveSoundForKind(const std::string &Kind)
+{
+	static const char *const KINDS[][2] = {
+		{ "breath", "breath" }, { "musicbox", "music box" }, { "fallingstrike", "electric piano" }, { "pad", "string pad" },
+		{ "strings", "string pad" }, { "violin", "string pad" }, { "swell", "choir pad" }, { "wind", "choir pad" },
+		{ "pluck", "harp" }, { "harp", "harp" }, { "guitar", "harp" }, { "clickpluck", "harp" }, { "echopluck", "harp" },
+		{ "bass", "sub bass" }, { "thumpbass", "sub bass" }, { "keys", "electric piano" }, { "piano", "electric piano" },
+		{ "bell", "glass bell" }, { "chime", "glass bell" }, { "brass", "brass section" }, { "horn", "brass section" },
+		{ "organ", "drawbar organ" }, { "chiptune", "pulse sweep lead" }, { "arp", "pulse sweep lead" },
+		{ "arpeggio", "pulse sweep lead" },
+	};
+	const std::string Wanted = Simple(Kind);
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k)
+		if (Wanted == KINDS[k][0] && FindWaveSound(KINDS[k][1]) != 0)
+			return FindWaveSound(KINDS[k][1]);
+	return FindWaveSound("soft flute");	// a lead
+}
+
+WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, const std::string &Name)
+{
+	WaveSound Out;
+	Out.Name = Name;
+	Out.Words = Base.Words;
+	Out.Description = "designed with design_instrument from the " + Base.Name + "'s waves";
+	Out.Waves = Base.Waves;
+	// The design's volume, arpeggio and pitch (its duty would pick waves), then Base's waves in their order
+	const Preset Made = DesignPreset(Design);
+	for (size_t i = 0; i < Made.Sequences2A03.size(); ++i)
+		if (Made.Sequences2A03[i].Type == SEQUENCE_VOLUME || Made.Sequences2A03[i].Type == SEQUENCE_ARPEGGIO ||
+			Made.Sequences2A03[i].Type == SEQUENCE_PITCH)
+			Out.Sequences.push_back(Made.Sequences2A03[i]);
+	for (size_t i = 0; i < Base.Sequences.size(); ++i)
+		if (Base.Sequences[i].Type == SEQUENCE_DUTY)
+			Out.Sequences.push_back(Base.Sequences[i]);
 	return Out;
 }
 

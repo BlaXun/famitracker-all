@@ -320,15 +320,16 @@ Plus).
 - Claude Code knows it: `set_expansion` takes "VRC6 Plus", and the tools
   keep the soft layer under the VRC6 and reach for it when you ask for
   something softer, warmer or deeper.
-- Later (on the backlog, the user's call on 24 October): sounds of your own
-  for the soft layer. `design_instrument` and `reference_sound` don't take
-  its channels yet, so it plays its built-in sounds as they are. Their
-  shapes cover pads, echoes, glints and bells; missing are a lead that
-  swells in and then sinks, a pad quick enough for a chord every beat (the
-  pads swell in over 20-24 frames), and a pad struck again and again with
-  a soft echo. The cheaper first step is three or four more built-in soft
-  sounds with those shapes; design support after that, if a track needs
-  more. A song holds at most 8 soft-layer sounds, 4 of them the starters.
+- Done (24 October, on `feat-calm-sounds`): sounds for the soft layer in
+  the shapes it was missing. Four more built-in soft sounds, added by name:
+  a breath (a lead that breathes in over 11 frames and sinks a little,
+  then holds), a quick pad (in within 7 frames, for a chord every beat), a
+  pulsing pad (struck again every 12 frames, a soft echo after it) and a
+  music box (gone in 40 frames). `design_instrument` takes the soft
+  channels too: a built-in sound's waves with an envelope of your own. A
+  song holds at most 8 soft-layer sounds, 4 of them the starters, so the
+  new ones come by name rather than with the starters. `reference_sound`
+  still doesn't take its channels.
 
 ## 12. Ideas from Mario Paint
 
@@ -376,10 +377,12 @@ is calm:
 
 - A calm mix: the melody only 2-3 dB over the chords (the soft mix puts it
   at 9 against chords at 6, and the leads' held envelopes add more).
-- Lead sounds with calm shapes, ready made: a music box (struck, fading
-  away in about a beat), a breath (swelling in over 10-14 frames, then
-  sinking a little), a strike that falls low. Today's presets and
-  design_instrument's lead hold their level from attack to release.
+- Done (on `feat-calm-sounds`): lead sounds with calm shapes, ready made:
+  `design_instrument` kinds and presets music box (struck, gone in 0.9 of
+  a beat at the song's tempo), breath (in over 12 frames, sinking to 60%
+  and holding) and falling strike (struck, falling to a low hold), with a
+  faint vibrato (about 3 cents) that never clicks; the same shapes on the
+  VRC6 Plus's soft layer.
 - polish without accents (and no scoops or falls) on calm tracks.
 - check_song and the review warn about a lead that holds a high, steady
   level, as the composers' calm scan did.

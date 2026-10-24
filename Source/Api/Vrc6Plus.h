@@ -72,6 +72,11 @@ public:
 const std::vector<std::string> &SoftLayerSounds();
 bool IsSoftLayerSound(const std::string &Name);
 
+// Its calm shapes, wave sounds made for it that a song adds by name (add_instrument on a soft channel): a breath that
+// sinks and holds, a quick pad, a pulsing pad and a music box. Not added with the starters: a song holds 8 N163 sounds.
+const std::vector<std::string> &SoftLayerCalmSounds();
+bool IsSoftLayerCalmSound(const std::string &Name);
+
 // Those the song's instruments (Song.h) don't have yet as N163 instruments of
 // their name, each with the place of its wave: under sample 128 (where
 // FamiTracker 0.4.6 loads N163 waves), where no other N163 instrument's wave
