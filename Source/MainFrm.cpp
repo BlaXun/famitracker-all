@@ -62,10 +62,40 @@
 #include "ClipsPanel.h"
 #include "KeyboardBar.h"
 #include "ProblemsPanel.h"
+#include "MixerPanel.h"
+#include <vector>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
+
+// Actions undone and redone together (CMainFrame::BeginActionGroup): the last one first on undo
+class CActionGroup : public CAction
+{
+public:
+	CActionGroup() : CAction(0x1401) {}
+	virtual ~CActionGroup()
+	{
+		for (size_t i = 0; i < m_Actions.size(); ++i)
+			delete m_Actions[i];
+	}
+	bool SaveState(CMainFrame *pMainFrm) { return !m_Actions.empty(); }	// each was done as it was added
+	void Undo(CMainFrame *pMainFrm)
+	{
+		for (size_t i = m_Actions.size(); i-- > 0; )
+			m_Actions[i]->Undo(pMainFrm);
+	}
+	void Redo(CMainFrame *pMainFrm)
+	{
+		for (size_t i = 0; i < m_Actions.size(); ++i)
+			m_Actions[i]->Redo(pMainFrm);
+	}
+	void Add(CAction *pAction) { m_Actions.push_back(pAction); }
+	bool Empty() const { return m_Actions.empty(); }
+
+private:
+	std::vector<CAction*> m_Actions;
+};
 
 static UINT indicators[] =
 {
@@ -138,6 +168,9 @@ CMainFrame::CMainFrame() :
 	m_pClipsBar(NULL),
 	m_pKeyboardBar(NULL),
 	m_pProblemsBar(NULL),
+	m_pMixerBar(NULL),
+	m_pActionGroup(NULL),
+	m_iActionGroupDepth(0),
 	m_bFewerMenus(false),
 	m_bBPM(false),
 	m_bSongRectsKept(false),
@@ -169,6 +202,8 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pClipsBar);
 	SAFE_RELEASE(m_pKeyboardBar);
 	SAFE_RELEASE(m_pProblemsBar);
+	SAFE_RELEASE(m_pMixerBar);
+	SAFE_RELEASE(m_pActionGroup);
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
 
@@ -250,6 +285,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
+	ON_COMMAND(ID_VIEW_MIXER, OnViewMixer)
 	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
@@ -323,6 +359,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_MIXER, OnUpdateViewMixer)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -1674,6 +1711,8 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowKeyboard(true);
 			if (CProblemsBar::WasOpen())
 				ShowProblemsPanel(true);
+			if (CMixerBar::WasOpen())
+				ShowMixer(true);
 			// The first time: a simpler FamiTracker for game music? Then the
 			// untouched new song starts again from the template.
 			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
@@ -2525,10 +2564,46 @@ void CMainFrame::ShowProblemsPanel(bool Show)
 	m_pProblemsBar->Opened(Show);
 }
 
+void CMainFrame::OnViewMixer()
+{
+	ShowMixer(m_pMixerBar == NULL || !m_pMixerBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewMixer(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pMixerBar != NULL && m_pMixerBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowMixer(bool Show)
+{
+	// A strip for every channel along the bottom of the main window (see MixerPanel.h), made the first time
+	if (Show && m_pMixerBar == NULL) {
+		m_pMixerBar = new CMixerBar();
+		if (!m_pMixerBar->Create(this)) {
+			delete m_pMixerBar;
+			m_pMixerBar = NULL;
+			return;
+		}
+		// Laid out before the piano roll, the problems panel and the clips panel: along the window's bottom edge
+		if (m_pPianoRoll != NULL)
+			m_pPianoRoll->SetWindowPos(m_pMixerBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		if (m_pProblemsBar != NULL)
+			m_pProblemsBar->SetWindowPos(m_pMixerBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		if (m_pClipsBar != NULL)
+			m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	if (m_pMixerBar == NULL)
+		return;
+	ShowControlBar(m_pMixerBar, Show ? TRUE : FALSE, FALSE);
+	m_pMixerBar->Opened(Show);
+}
+
 void CMainFrame::SongChanged()
 {
 	if (m_pPianoRoll != NULL)
 		m_pPianoRoll->SongChanged();
+	if (m_pMixerBar != NULL)
+		m_pMixerBar->SongChanged();
 	if (m_pClipsBar != NULL)
 		m_pClipsBar->SongChanged();
 	if (m_pProblemsBar != NULL)
@@ -2898,11 +2973,34 @@ bool CMainFrame::AddAction(CAction *pAction)
 		return false;
 	}
 
-	m_pActionHandler->Push(pAction);
+	if (m_pActionGroup != NULL)
+		m_pActionGroup->Add(pAction);	// undone with the rest of its group
+	else
+		m_pActionHandler->Push(pAction);
 	SyncClips();
 	SongChanged();
 
 	return true;
+}
+
+void CMainFrame::BeginActionGroup()
+{
+	if (m_iActionGroupDepth++ == 0) {
+		SAFE_RELEASE(m_pActionGroup);
+		m_pActionGroup = new CActionGroup();
+	}
+}
+
+void CMainFrame::EndActionGroup()
+{
+	if (m_iActionGroupDepth <= 0 || --m_iActionGroupDepth > 0)
+		return;
+	CActionGroup *pGroup = m_pActionGroup;
+	m_pActionGroup = NULL;
+	if (pGroup != NULL && !pGroup->Empty())
+		m_pActionHandler->Push(pGroup);
+	else
+		SAFE_RELEASE(pGroup);
 }
 
 CAction *CMainFrame::GetLastAction(int Filter) const

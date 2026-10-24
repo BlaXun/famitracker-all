@@ -28,7 +28,7 @@
 class CMainFrame;
 class CFamiTrackerDoc;
 struct stChanNote;
-namespace ftapi { class SectionStore; class KeyStore; struct KeyChoice; }
+namespace ftapi { class SectionStore; class KeyStore; struct KeyChoice; class MixStore; }
 namespace transcribe { struct Audio; struct TakeTiming; }
 
 // What a recording holds
@@ -90,6 +90,12 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 // auto (found from the notes), as one undoable action. False when nothing
 // changed.
 bool SetTrackKey(CMainFrame *pMainFrm, bool Chosen, const ftapi::KeyChoice &Key);
+
+// The mixer window's faders and starting pans (Api/ChannelMix.h) become Mix,
+// as one undoable action; pBefore is what Undo brings back when the change is
+// already in the song (a fader dragged, one action for the drag). False when
+// nothing changed.
+bool SetChannelMix(CMainFrame *pMainFrm, const ftapi::MixStore &Mix, const ftapi::MixStore *pBefore = NULL);
 
 // Edit > Add chords and bass line: chords and a bass line that fit the melody
 // in one channel, written into two others, over the bars the melody covers

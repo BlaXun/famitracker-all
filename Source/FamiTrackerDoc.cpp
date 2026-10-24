@@ -48,6 +48,7 @@
 #include <algorithm>
 #include "Api/Sections.h"
 #include "Api/Keys.h"
+#include "Api/ChannelMix.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "ChipSwitch.h"
@@ -207,7 +208,8 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_bDisplayComment(false),
 	m_pClipLibrary(new CClipLibrary()),
 	m_pSections(new ftapi::SectionStore()),
-	m_pKeys(new ftapi::KeyStore())
+	m_pKeys(new ftapi::KeyStore()),
+	m_pChannelMix(new ftapi::MixStore())
 {
 	// Initialize document object
 
@@ -235,6 +237,8 @@ CFamiTrackerDoc::~CFamiTrackerDoc()
 	m_pSections = NULL;
 	delete m_pKeys;
 	m_pKeys = NULL;
+	delete m_pChannelMix;
+	m_pChannelMix = NULL;
 
 	// DPCM samples
 	for (int i = 0; i < MAX_DSAMPLES; ++i) {
@@ -419,9 +423,11 @@ void CFamiTrackerDoc::DeleteContents()
 	// Clips
 	m_pClipLibrary->Clear();
 
-	// Sections and keys
+	// Sections, keys and the mixer window's settings
 	m_pSections->Clear();
 	m_pKeys->Clear();
+	m_pChannelMix->Clear();
+	ChannelMixChanged();
 
 	// Instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -535,6 +541,7 @@ void CFamiTrackerDoc::CreateEmpty()
 	m_csDocumentLock.Unlock();
 
 	theApp.GetSoundGenerator()->DocumentPropertiesChanged(this);
+	ChannelMixChanged();
 }
 
 //
@@ -797,6 +804,12 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 	if (!m_pSections->Empty() && !WriteBlock_Sections(pDocFile))
 		return false;
 	if (!m_pKeys->Empty() && !WriteBlock_Keys(pDocFile))
+		return false;
+	// The mixer window's settings, only when a channel of the module is off its default (a song without
+	// them saves as before)
+	ftapi::MixStore Mix = *m_pChannelMix;
+	Mix.KeepOnly(GetModuleChannelIds());
+	if (!Mix.Empty() && !WriteBlock_Mixer(pDocFile, Mix))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1317,6 +1330,16 @@ bool CFamiTrackerDoc::WriteBlock_Sections(CDocumentFile *pDocFile) const
 	return pDocFile->FlushBlock();
 }
 
+bool CFamiTrackerDoc::WriteBlock_Mixer(CDocumentFile *pDocFile, const ftapi::MixStore &Mix) const
+{
+	// Beginner-friendly: the mixer window's faders and pans (Api/ChannelMix.h), a block other versions skip
+	const std::vector<unsigned char> Data = Mix.Write();
+	pDocFile->CreateBlock(ftapi::MixStore::BLOCK_ID, ftapi::MixStore::BLOCK_VERSION);
+	if (!Data.empty())
+		pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
+	return pDocFile->FlushBlock();
+}
+
 bool CFamiTrackerDoc::WriteBlock_Keys(CDocumentFile *pDocFile) const
 {
 	// Beginner-friendly: the keys chosen for the tracks (Api/Keys.h), a block other versions skip
@@ -1410,6 +1433,7 @@ BOOL CFamiTrackerDoc::OpenDocument(LPCTSTR lpszPathName)
 	m_bFileLoadFailed = false;
 
 	theApp.GetSoundGenerator()->DocumentPropertiesChanged(this);
+	ChannelMixChanged();
 
 	return TRUE;
 }
@@ -1677,6 +1701,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		else if (!strcmp(BlockID, ftapi::KeyStore::BLOCK_ID)) {
 			ReadBlock_Keys(&DocumentFile);		// and damaged keys: the tracks find theirs from the notes
 		}
+		else if (!strcmp(BlockID, ftapi::MixStore::BLOCK_ID)) {
+			ReadBlock_Mixer(&DocumentFile);		// and a damaged mixer: every channel at 0 dB and in the middle
+		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
 		}
@@ -1722,6 +1749,7 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		m_pSections->FitFrames(i, Used ? static_cast<int>(m_pTracks[i]->GetFrameCount()) : 0);
 	}
 	m_pKeys->FitTracks(static_cast<int>(m_iTrackCount));	// and keys only for tracks there are
+	m_pChannelMix->KeepOnly(GetModuleChannelIds());			// and mixer settings only for channels there are
 
 #ifdef TRANSPOSE_FDS
 	if (m_bAdjustFDSArpeggio) {
@@ -1911,6 +1939,16 @@ void CFamiTrackerDoc::ReadBlock_Sections(CDocumentFile *pDocFile)
 	if (!Data.empty())
 		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
 	m_pSections->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
+}
+
+void CFamiTrackerDoc::ReadBlock_Mixer(CDocumentFile *pDocFile)
+{
+	// Every read checked against the block's size, as the keys
+	const int Size = pDocFile->GetBlockSize() - pDocFile->GetBlockPos();
+	std::vector<unsigned char> Data(static_cast<size_t>(std::max(0, Size)));
+	if (!Data.empty())
+		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
+	m_pChannelMix->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
 }
 
 void CFamiTrackerDoc::ReadBlock_Keys(CDocumentFile *pDocFile)
@@ -4326,6 +4364,34 @@ void CFamiTrackerDoc::SelectExpansionChip(unsigned char Chip)
 	SetupChannels(Chip);
 	MoveChannels(OldTypes, OldCount);
 	ApplyExpansionChip();
+
+	// The mixer window's settings of the channels that stay (they're kept by channel ID)
+	m_pChannelMix->KeepOnly(GetModuleChannelIds());
+	ChannelMixChanged();
+}
+
+std::vector<int> CFamiTrackerDoc::GetModuleChannelIds() const
+{
+	std::vector<int> Ids;
+	const unsigned int Count = std::min(m_iChannelsAvailable, static_cast<unsigned int>(MAX_CHANNELS));
+	for (unsigned int i = 0; i < Count; ++i)
+		Ids.push_back(m_iChannelTypes[i]);
+	return Ids;
+}
+
+void CFamiTrackerDoc::ChannelMixChanged()
+{
+	// The sound generator gets the settings at once; its thread applies them the next frame (CSoundGen::SetChannelMix)
+	static_assert(CHANNELS == ftapi::MIX_CHANNELS, "the mixer window keeps a setting for each chan_id_t");
+	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
+	if (pSoundGen == NULL || m_pChannelMix == NULL)
+		return;
+	int Levels[CHANNELS], Pans[CHANNELS];
+	for (int i = 0; i < CHANNELS; ++i) {
+		Levels[i] = m_pChannelMix->Level(i);
+		Pans[i] = m_pChannelMix->Pan(i);
+	}
+	pSoundGen->SetChannelMix(Levels, Pans);
 }
 
 void CFamiTrackerDoc::MoveChannels(const int *pOldTypes, unsigned int OldCount)

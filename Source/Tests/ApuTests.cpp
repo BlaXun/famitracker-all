@@ -96,11 +96,19 @@ struct Run {
 	unsigned Mask;			// the voices that play (CHANNELS_OF)
 	int Pan[VOICES];		// their pans: 0x00 left, 0x80 the middle, 0xFF right
 	int PanFrame;			// set before this frame's writes
+	double Gain[VOICES];	// the mixer window's levels (1 as they play), set with the pans
 };
 
 Run Plain(int Chip, unsigned Mask)
 {
-	Run R = { Chip, Mask, { 0x80, 0x80, 0x80, 0x80, 0x80 }, 0 };
+	Run R = { Chip, Mask, { 0x80, 0x80, 0x80, 0x80, 0x80 }, 0, { 1.0, 1.0, 1.0, 1.0, 1.0 } };
+	return R;
+}
+
+Run Leveled(int Chip, unsigned Mask, double First)
+{
+	Run R = Plain(Chip, Mask);
+	R.Gain[0] = First;
 	return R;
 }
 
@@ -361,6 +369,8 @@ Sides RenderHere(const Run &R)
 			for (int v = 0; v < VOICES; ++v) {
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Pan[v] != 0x80)
 					Apu.SetChannelPan(CHANNELS_OF[R.Chip][v], R.Pan[v]);
+				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Gain[v] != 1.0)
+					Apu.SetChannelGain(CHANNELS_OF[R.Chip][v], R.Gain[v]);
 			}
 		}
 #endif
@@ -597,6 +607,47 @@ void TestMoving()
 	}
 }
 
+void TestLevels()
+{
+	// The mixer window's level: a channel at a gain of one half is half as loud, on both sides
+	for (int Chip = 0; Chip < CHIPS; ++Chip) {
+		const Sides Middle = Render(Plain(Chip, 1));
+		const Sides Halved = Render(Leveled(Chip, 1, 0.5));
+		const double Half_ = Rms(Halved.Left) / Rms(Middle.Left);
+		// Exactly half on the VRC6, MMC5, FDS and VRC7 (the VRC6's and MMC5's small levels play through a synth of
+		// the channel's own, so they aren't rounded); the 2A03's pins and the 5B's and N163's levels go in whole steps
+		const bool Exact = Chip == CHIP_VRC6 || Chip == CHIP_MMC5 || Chip == CHIP_FDS || Chip == CHIP_VRC7;
+		if (!Half(Middle.Left, Halved.Left) || !Same(Halved.Left, Halved.Right) || (Exact && std::fabs(Half_ - 0.5) > 0.006)) {
+			std::printf("FAIL: %s at half its level: %.4f of it\n", CHIP_NAMES[Chip], Half_);
+			++g_fail;
+		}
+		++g_checks;
+		// Twice as loud (the VRC7 clips its own output, as the chip does, so it may come out a little under)
+		const Sides Doubled = Render(Leveled(Chip, 1, 2.0));
+		const double Ratio = Rms(Doubled.Left) / Rms(Middle.Left);
+		if (Ratio < (Chip == CHIP_VRC7 ? 1.5 : 1.9) || Ratio > 2.1) {
+			std::printf("FAIL: %s at twice its level: %.3f of it\n", CHIP_NAMES[Chip], Ratio);
+			++g_fail;
+		}
+		++g_checks;
+		// One silent: as if it didn't play, on the chips that mix their channels apart (the 2A03's pins, the N163's
+		// one DAC and the VRC7 mix theirs together)
+		if (CHANNELS_OF[Chip][1] >= 0 && Chip != CHIP_2A03 && Chip != CHIP_VRC7 && Chip != CHIP_N163) {
+			const Sides Second = Render(Plain(Chip, 2));
+			const Sides Without = Render(Leveled(Chip, 3, 0.0));
+			if (!Same(Without.Left, Second.Left)) {
+				std::printf("FAIL: %s, its first channel silenced isn't the second alone\n", CHIP_NAMES[Chip]);
+				++g_fail;
+			}
+			++g_checks;
+		}
+	}
+	// The 2A03's pulses share a pin: one at half, the other as it was (its share of the pin kept)
+	const Sides Both = Render(Plain(CHIP_2A03, 3)), Halved = Render(Leveled(CHIP_2A03, 3, 0.5)), Second = Render(Plain(CHIP_2A03, 2));
+	const double Ratio = Rms(Halved.Left) / Rms(Both.Left);
+	CHECK(Ratio > 0.6 && Ratio < 0.95 && Rms(Halved.Left) > Rms(Second.Left) * 0.9);
+}
+
 #endif
 
 }	// namespace
@@ -616,6 +667,7 @@ int main()
 	TestHardPans();
 	TestHalfway();
 	TestMoving();
+	TestLevels();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 #endif

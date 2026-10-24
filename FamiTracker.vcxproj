@@ -551,6 +551,7 @@
     <ClCompile Include="Source\Api\Music.cpp" />
     <ClCompile Include="Source\Api\Sections.cpp" />
     <ClCompile Include="Source\Api\Keys.cpp" />
+    <ClCompile Include="Source\Api\ChannelMix.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
@@ -581,6 +582,7 @@
     <ClInclude Include="Source\Api\Music.h" />
     <ClInclude Include="Source\Api\Sections.h" />
     <ClInclude Include="Source\Api\Keys.h" />
+    <ClInclude Include="Source\Api\ChannelMix.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
     <ClInclude Include="Source\Api\Presets.h" />
@@ -627,6 +629,7 @@
     <ClCompile Include="Source\SoundBrowserDlg.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
     <ClCompile Include="Source\ProblemsPanel.cpp" />
+    <ClCompile Include="Source\MixerPanel.cpp" />
     <ClCompile Include="Source\DrumGrid.cpp" />
     <ClInclude Include="Source\DrumGrid.h" />
     <ClCompile Include="Source\DrumGridDlg.cpp" />
@@ -643,6 +646,7 @@
     <ClInclude Include="Source\KeyboardBar.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\ProblemsPanel.h" />
+    <ClInclude Include="Source\MixerPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\SoundBrowserDlg.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />

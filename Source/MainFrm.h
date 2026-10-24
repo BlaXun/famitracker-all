@@ -46,7 +46,9 @@ class CPianoRollWnd;
 class CClipsBar;
 class CKeyboardBar;
 class CProblemsBar;
+class CMixerBar;
 class CAction;
+class CActionGroup;
 class CActionHandler;
 class CFrameEditor;
 class CMcpConnection;
@@ -98,6 +100,10 @@ public:
 	bool	AddAction(CAction *pAction);
 	CAction *GetLastAction(int Filter) const;
 	void	ResetUndo();
+	// The actions added from BeginActionGroup to EndActionGroup (they can nest) are undone and redone
+	// together, as one Ctrl+Z (the mixer's Write into the notes, in every track)
+	void	BeginActionGroup();
+	void	EndActionGroup();
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
@@ -105,6 +111,7 @@ public:
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowKeyboard(bool Show);	// along the bottom of the window (KeyboardBar.h)
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
+	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
 	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
@@ -208,6 +215,9 @@ private:  // control bar embedded members
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
 	CKeyboardBar		*m_pKeyboardBar;		// View > Keyboard, along the bottom; created when first shown
 	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
+	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
+	CActionGroup		*m_pActionGroup;		// the actions of a group being added (BeginActionGroup)
+	int					m_iActionGroupDepth;
 
 	// The profile as shown (Profile.h)
 	bool				m_bFewerMenus;
@@ -289,6 +299,7 @@ public:
 	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewProblems(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewMixer(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCopy(CCmdUI *pCmdUI);
@@ -349,6 +360,7 @@ public:
 	afx_msg void OnViewPianoRoll();
 	afx_msg void OnViewClipsPanel();
 	afx_msg void OnViewProblems();
+	afx_msg void OnViewMixer();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
 	afx_msg void OnSelectPatternEditor();

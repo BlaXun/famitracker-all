@@ -67,6 +67,11 @@ track, or all of them, as OGG files next to the song.
   (`audio_sound_loop_start` and `audio_sound_loop_end`, GameMaker 2023.2 and
   later), and the files carry `LOOPSTART`/`LOOPLENGTH` comments for other
   engines. A song that ends with a halt (`Cxx`) plays once, like a jingle.
+- The dialog's Loudness (remembered): each track's loudest peak at -1 dBFS,
+  as before, or every track brought to one loudness (-22 LUFS for calm
+  places, -20 for most tracks, -19 for action and bosses, or a number), so
+  the game's tracks sound equally loud; a peak that would pass -1 dBFS holds
+  a track back, and the result says so.
 
 ## 3. Sounds before settings
 
@@ -257,6 +262,28 @@ right.
   first effect column and plays it in the middle. 0CC-FamiTracker and
   Dn-FamiTracker number effects of their own after 0.4.6's, so they may
   read `8xx` as one of theirs: an open question below.
+
+## 10. Mixer
+
+Done (October 2026, on `feat-mixer`): **View > Mixer**, a strip for every
+channel along the bottom of the window (see `MCP.md`, The mixer).
+
+- Each strip: the channel's name and chip, a meter while the song plays,
+  mute and solo in step with the pattern editor's, a fader from -24 to
+  +6 dB and a starting pan. Every change is one Ctrl+Z (a drag one for the
+  drag).
+- The faders and pans are saved with the song (a `BF MIXER` block, written
+  only when a channel is off its default, so other songs save as before)
+  and played by FamiTracker's mixer in playback, WAV files and the game's
+  OGG files. A pan is the channel's before any `8xx`.
+- NSF files don't have them: NSF export says so, and **Write into the
+  notes** puts the faders into the volume columns and the pans as `8xx`,
+  in every track, as one Ctrl+Z.
+- Claude Code reads them in `get_song`, sets them with `set_mixer` and
+  counts the faders in its loudness math.
+- File > Export for games has a Loudness choice (as loud as it goes, or a
+  calm place, most tracks or action at -22, -20 or -19 LUFS), so the
+  game's tracks can sound equally loud.
 
 ## Feature branches
 

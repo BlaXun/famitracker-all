@@ -90,6 +90,7 @@ public:
 	void	Arpeggiate(unsigned int Note);
 
 	void	DocumentPropertiesChanged(CFamiTrackerDoc *pDoc);
+	void	MixerPanChanged();							// the mixer window's starting pan, for a channel no 8xx has moved yet
 
 	//
 	// Public virtual functions
@@ -241,6 +242,7 @@ protected:
 	unsigned char	m_iDefaultDuty;					// Duty effect
 	unsigned char	m_iVolSlide;					// Volume slide effect
 	int				m_iPan;							// Pan effect (stereo, this FamiTracker's own), 0x80 in the middle
+	bool			m_bPanned;						// an 8xx played since the channel was reset (the mixer window's pan then waits)
 
 	// Misc 
 	CAPU			*m_pAPU;

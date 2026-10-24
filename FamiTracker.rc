@@ -226,6 +226,7 @@ BEGIN
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
         MENUITEM "Keyboard",                    ID_VIEW_KEYBOARD
         MENUITEM "Problems",                    ID_VIEW_PROBLEMS
+        MENUITEM "Mixer",                       ID_VIEW_MIXER
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -588,6 +589,7 @@ BEGIN
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
     ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
+    ID_VIEW_MIXER           "Each channel's level and pan, with meters, mute and solo, saved with the song\nMixer"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
@@ -1943,7 +1945,7 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,533,255,50,14
 END
 
-IDD_GAME_EXPORT DIALOGEX 0, 0, 320, 232
+IDD_GAME_EXPORT DIALOGEX 0, 0, 320, 268
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Export for games"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -1951,12 +1953,17 @@ BEGIN
     LTEXT           "Saves tracks as OGG files for a game, next to the song. Each plays its intro once, then loops without a seam; the loop points come with the GameMaker code that plays it.",IDC_STATIC,7,7,306,26
     CONTROL         "This track",IDC_GAME_THIS,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,7,38,70,10
     CONTROL         "All tracks (day and night versions together)",IDC_GAME_ALL,"Button",BS_AUTORADIOBUTTON,80,38,200,10
-    LTEXT           "Quality:",IDC_STATIC,7,56,30,8,WS_GROUP
-    COMBOBOX        IDC_GAME_QUALITY,40,54,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    EDITTEXT        IDC_GAME_RESULT,7,74,306,128,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
-    PUSHBUTTON      "Copy",IDC_GAME_COPY,7,211,50,14
-    DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,211,50,14
-    PUSHBUTTON      "Close",IDCANCEL,263,211,50,14
+    LTEXT           "Quality:",IDC_STATIC,7,56,36,8,WS_GROUP
+    COMBOBOX        IDC_GAME_QUALITY,46,54,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Loudness:",IDC_STATIC,7,74,36,8
+    COMBOBOX        IDC_GAME_LOUDNESS,46,72,150,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_GAME_LOUDNESS_OTHER,202,72,30,14,ES_AUTOHSCROLL
+    LTEXT           "LUFS",IDC_GAME_LOUDNESS_UNIT,236,74,30,8
+    LTEXT           "Tracks at the same loudness sound equally loud in the game; tracks brought up to their loudest peak don't.",IDC_GAME_LOUDNESS_HINT,7,90,306,16
+    EDITTEXT        IDC_GAME_RESULT,7,110,306,128,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
+    PUSHBUTTON      "Copy",IDC_GAME_COPY,7,247,50,14
+    DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,247,50,14
+    PUSHBUTTON      "Close",IDCANCEL,263,247,50,14
 END
 
 IDD_IMPORT_NSF DIALOGEX 0, 0, 300, 236

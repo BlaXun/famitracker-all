@@ -181,6 +181,15 @@ public:
 	// finish between two looks at IsRendering; this count still moves.
 	long		 GetRenderCount() const;
 
+	// The mixer window's settings (View > Mixer, this FamiTracker's own), by
+	// chan_id_t: each channel's level in tenths of a dB (0 as it plays) and
+	// the pan it starts at, before any 8xx (0x80 the middle). The UI thread
+	// sets them (CFamiTrackerDoc::ChannelMixChanged) without waiting on the
+	// sound thread, which gives the mixer the levels at its next frame (and
+	// as a song starts or renders) and starts each channel at its pan.
+	void		 SetChannelMix(const int *pLevels, const int *pPans);
+	int			 GetStartPan(int ChanID) const;
+
 	// Sample previewing
 	void		 PreviewSample(CDSample *pSample, int Offset, int Pitch);
 	void		 CancelPreviewSample();
@@ -356,6 +365,13 @@ private:
 	int					m_iVibratoTable[VIBRATO_LENGTH];
 
 	unsigned int		m_iMachineType;						// NTSC/PAL
+
+	// The mixer window's settings, by chan_id_t (SetChannelMix), and the ones the mixer has
+	volatile int		m_iMixLevel[CHANNELS];
+	volatile int		m_iMixPan[CHANNELS];
+	volatile LONG		m_iMixVersion;
+	LONG				m_iMixApplied;
+	void				ApplyChannelMix();
 
 	// Rendering
 	bool				m_bRendering;

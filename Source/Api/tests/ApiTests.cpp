@@ -25,6 +25,7 @@
 #include "../Arrange.h"
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
+#include "../ChannelMix.h"
 #include "../Chords.h"
 #include "../DpcmKit.h"
 #include "../Effects.h"
@@ -133,9 +134,23 @@ public:
 	std::vector<Clip> Clips;
 	std::map<std::string, std::string> Files;	// saved next to the song
 	int RenderLatency;							// samples of silence before the song starts
-	std::vector<std::vector<std::vector<Cell> > > History;
-	std::vector<SectionList> SectionHistory;	// with History: the sections before each change
-	std::vector<std::pair<bool, KeyChoice> > KeyHistory;	// with History: the track's key before each change
+	// What undo brings back: the selected track's rows, sections and key and the mixer before each change;
+	// for a group of changes (BeginGroup) every track as it was before the group, as one step
+	struct Snapshot {
+		std::vector<std::vector<Cell> > Rows;
+		SectionList Sections;
+		bool KeyChosen = false;
+		KeyChoice Key;
+		MixStore Mix;
+		bool Whole = false;
+		std::vector<StoredTrack> AllTracks;
+		int Selected = 0;
+	};
+	std::vector<Snapshot> Undos;
+	MixStore Mix;			// the mixer window's settings, by channel ID, as CFamiTrackerDoc keeps them
+	int MixWrites = 0;
+	int GroupDepth = 0, Groups = 0;
+	bool GroupRemembered = false;
 	int KeyWrites = 0;
 	int SectionWrites = 0;
 	std::vector<std::pair<int, int> > TempoUndo;
@@ -188,6 +203,12 @@ public:
 		Tracks[Current].Sections = Info.Sections;
 		Tracks[Current].KeyChosen = Info.KeyChosen;
 		Tracks[Current].Key = Info.ChosenKey;
+		Select(Track);
+	}
+
+	// Track comes out of Tracks, as it's kept there
+	void Select(int Track)
+	{
 		Current = Track;
 		Info.TrackName = Tracks[Track].Name;
 		Info.Speed = Tracks[Track].Speed;
@@ -253,6 +274,10 @@ public:
 
 	bool GetSong(SongInfo &Out, std::string &) override
 	{
+		for (size_t c = 0; c < Info.Channels.size(); ++c) {
+			Info.Channels[c].MixLevel = Mix.Level(Info.Channels[c].ChanId);
+			Info.Channels[c].MixPan = Mix.Pan(Info.Channels[c].ChanId);
+		}
 		Info.Frames = static_cast<int>(Rows[0].size()) / Info.PatternLength;
 		Info.Track = Current;
 		Info.Tracks = static_cast<int>(Tracks.size());
@@ -317,9 +342,7 @@ public:
 			Error = "Those sections can't be.";
 			return false;
 		}
-		History.push_back(Rows);
-		SectionHistory.push_back(Info.Sections);
-		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
+		Remember();
 		const size_t At = static_cast<size_t>(Write.MoveFrame) * Length;
 		for (size_t c = 0; c < Rows.size(); ++c) {
 			if (Write.MoveBy > 0)
@@ -419,9 +442,7 @@ public:
 			Error = "Those sections can't be.";
 			return false;
 		}
-		History.push_back(Rows);
-		SectionHistory.push_back(Info.Sections);
-		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
+		Remember();
 		Info.Sections = Sections;
 		++SectionWrites;
 		return true;
@@ -434,13 +455,63 @@ public:
 			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
 			return false;
 		}
-		History.push_back(Rows);
-		SectionHistory.push_back(Info.Sections);
-		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
+		Remember();
 		Info.KeyChosen = Chosen;
 		Info.ChosenKey = Chosen ? Choice : KeyChoice();
 		++KeyWrites;
 		return true;
+	}
+
+	// As CChannelMixAction (InsertRecording.cpp) sets them: by channel ID, one undoable step
+	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error) override
+	{
+		if (Busy) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		MixStore Next = Mix;
+		for (size_t c = 0; c < Info.Channels.size() && c < Levels.size() && c < Pans.size(); ++c)
+			Next.Set(Info.Channels[c].ChanId, Levels[c], Pans[c]);
+		if (Next == Mix)
+			return true;
+		Remember();
+		Mix = Next;
+		++MixWrites;
+		return true;
+	}
+
+	// As CMainFrame::BeginActionGroup: the changes until the group ends are one undoable step
+	void BeginGroup() override
+	{
+		if (GroupDepth++ == 0)
+			GroupRemembered = false;
+	}
+
+	void EndGroup() override
+	{
+		if (GroupDepth > 0 && --GroupDepth == 0 && GroupRemembered)
+			++Groups;
+	}
+
+	void Remember()
+	{
+		if (GroupDepth > 0 && GroupRemembered)
+			return;
+		Snapshot S;
+		S.Rows = Rows;
+		S.Sections = Info.Sections;
+		S.KeyChosen = Info.KeyChosen;
+		S.Key = Info.ChosenKey;
+		S.Mix = Mix;
+		if (GroupDepth > 0) {
+			// A group can change several tracks: all of them as they are
+			Switch(Current);
+			S.Whole = true;
+			S.AllTracks = Tracks;
+			S.Selected = Current;
+			GroupRemembered = true;
+		}
+		Undos.push_back(S);
 	}
 
 	static bool HasSame(const Cell &C, int Effect, int Param)
@@ -865,7 +936,8 @@ public:
 	// Plays the song as square waves, a little like the 2A03: each channel's
 	// note at its volume, the noise channel from a free-running noise
 	// generator, 8000 samples a second, each channel on the sides as its pan
-	// (8xx) puts it, as FamiTracker's mixer does (PanGains)
+	// (8xx) puts it, as FamiTracker's mixer does (PanGains), from the mixer
+	// window's starting pan, and at its fader's level
 	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, std::vector<float> &Right, int &SampleRate,
 		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
 	{
@@ -886,7 +958,11 @@ public:
 			Info.FrameRate, 6, EndTick);
 		const long long Total = static_cast<long long>(Seconds * SampleRate) + RenderLatency;
 		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15), Pan(Rows.size(), PAN_CENTER);
-		std::vector<double> Phase(Rows.size(), 0.0);
+		std::vector<double> Phase(Rows.size(), 0.0), Gain(Rows.size(), 1.0);
+		for (size_t c = 0; c < Rows.size(); ++c) {
+			Pan[c] = Mix.Pan(Info.Channels[c].ChanId);
+			Gain[c] = MixStore::Gain(Mix.Level(Info.Channels[c].ChanId));
+		}
 		unsigned int Noise = 1;
 		for (size_t i = 0; i < Timed.size() && static_cast<long long>(Samples.size()) < Total; ++i) {
 			Marks.push_back(std::make_pair(Timed[i].Row, static_cast<long long>(Samples.size())));
@@ -920,8 +996,8 @@ public:
 					}
 					double GainLeft, GainRight;
 					PanGains(Pan[c], GainLeft, GainRight);
-					Sum += Value * GainLeft;
-					SumRight += Value * GainRight;
+					Sum += Value * GainLeft * Gain[c];
+					SumRight += Value * GainRight * Gain[c];
 				}
 				Samples.push_back(static_cast<float>(Sum));
 				Right.push_back(static_cast<float>(SumRight));
@@ -1095,19 +1171,21 @@ public:
 
 	bool Undo(std::string &Message) override
 	{
-		if (History.empty())
+		if (Undos.empty())
 			return false;
-		Rows = History.back();
-		History.pop_back();
-		if (!SectionHistory.empty()) {
-			Info.Sections = SectionHistory.back();
-			SectionHistory.pop_back();
+		const Snapshot S = Undos.back();
+		Undos.pop_back();
+		if (S.Whole) {
+			Tracks = S.AllTracks;
+			Select(S.Selected);
 		}
-		if (!KeyHistory.empty()) {
-			Info.KeyChosen = KeyHistory.back().first;
-			Info.ChosenKey = KeyHistory.back().second;
-			KeyHistory.pop_back();
+		else {
+			Rows = S.Rows;
+			Info.Sections = S.Sections;
+			Info.KeyChosen = S.KeyChosen;
+			Info.ChosenKey = S.Key;
 		}
+		Mix = S.Mix;
 		Message = "Undid it.";
 		return true;
 	}
@@ -8218,6 +8296,214 @@ void TestLoudness()
 	CHECK(IntegratedLoudness(Half, 44100, Half.size(), 100) <= -70.0);
 }
 
+// FamiTracker's mixer (View > Mixer): the settings and their block
+void TestMixerStore()
+{
+	MixStore Store;
+	CHECK(Store.Empty() && Store.Write().size() == 4u && Store.Level(0) == 0 && Store.Pan(0) == PAN_CENTER);
+	CHECK(Store.Set(0, -35, PAN_CENTER) && !Store.Set(0, -35, PAN_CENTER) && !Store.Empty());
+	CHECK(Store.Set(7, 0, 0x40));
+	CHECK(Store.Set(28, 99, 300) && Store.Level(28) == MIX_LEVEL_HIGHEST && Store.Pan(28) == 0xFF);	// kept in range
+	CHECK(!Store.Set(29, -10, PAN_CENTER) && !Store.Set(-1, -10, PAN_CENTER) && Store.Level(29) == 0 && Store.Pan(-1) == PAN_CENTER);
+	CHECK(Near(MixStore::Gain(-60), 0.501187, 1e-6) && MixStore::Gain(0) == 1.0 && Near(MixStore::Gain(60), 1.995262, 1e-6));
+	const std::vector<unsigned char> Data = Store.Write();
+	CHECK(Data.size() == 40u);	// the count, then each channel's ID, level (tenths of a dB) and pan
+	CHECK(Data[0] == 3 && Data[4] == 0 && Data[8] == 0xDD && Data[11] == 0xFF && Data[12] == 0x80 && Data[16] == 7 && Data[20] == 0 &&
+		Data[24] == 0x40 && Data[28] == 28 && Data[32] == 60 && Data[36] == 0xFF);
+	MixStore Back;
+	Back.Set(3, 10, PAN_CENTER);	// what was there goes
+	CHECK(Back.Read(&Data[0], Data.size(), MixStore::BLOCK_VERSION) && Back == Store && Back.Write() == Data);
+	CHECK(Back.Level(0) == -35 && Back.Pan(7) == 0x40 && Back.Level(3) == 0);
+	CHECK(std::string(MixStore::BLOCK_ID) == "BF MIXER");
+	// Cut short anywhere: every channel at its default, and no crash
+	for (size_t n = 0; n < Data.size(); ++n) {
+		MixStore Cut;
+		Cut.Set(1, 5, PAN_CENTER);
+		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, MixStore::BLOCK_VERSION) && Cut.Empty());
+	}
+	// Longer than its channels, or damaged: the defaults
+	std::vector<unsigned char> Longer(Data);
+	Longer.push_back(0);
+	CHECK(!Back.Read(&Longer[0], Longer.size(), MixStore::BLOCK_VERSION) && Back.Empty());
+	auto Damaged = [&](size_t At, unsigned char Value) {
+		std::vector<unsigned char> Bad(Data);
+		Bad[At] = Value;
+		MixStore Read;
+		return !Read.Read(&Bad[0], Bad.size(), MixStore::BLOCK_VERSION) && Read.Empty();
+	};
+	CHECK(Damaged(4, 29));		// a channel past chan_id_t's
+	CHECK(Damaged(16, 0));		// channel 0 twice
+	CHECK(Damaged(8, 0x0F));	// a fader under -24 dB
+	CHECK(Damaged(32, 61));		// over +6 dB
+	CHECK(Damaged(37, 1));		// a pan past FF
+	CHECK(Damaged(0, 30));		// more channels than there are
+	CHECK(Damaged(0, 4));		// a channel more than the block holds
+	CHECK(Damaged(0, 2));		// a channel less: longer than its channels
+	// Another version is left out
+	MixStore Later;
+	Later.Set(0, 10, PAN_CENTER);
+	CHECK(Later.Read(&Data[0], Data.size(), MixStore::BLOCK_VERSION + 1) && Later.Empty());
+	// The channels a module keeps (after its chips change)
+	std::vector<int> Kept;
+	for (int c = 0; c < 5; ++c)
+		Kept.push_back(c);
+	Store.KeepOnly(Kept);
+	CHECK(Store.Level(0) == -35 && Store.Pan(7) == PAN_CENTER && Store.Level(28) == 0 && !Store.Empty());
+	Store.Clear();
+	CHECK(Store.Empty() && Store == MixStore());
+}
+
+// Rows of a render, the two sides together: their loudness from First
+double RenderedLoudness(FakeSong &Song, size_t First = 400)
+{
+	std::vector<float> Left, Right;
+	std::vector<std::pair<int, long long> > Marks;
+	int Rate = 0;
+	std::string Error;
+	Song.RenderTrack(Song.Current, 6.0, Left, Right, Rate, Marks, Error);
+	return IntegratedLoudness(Left, Right, Rate, First, Left.size() - First);
+}
+
+void TestMixerTools()
+{
+	FakeSong Song;
+	Song.Put(0, 0, "C-4", 2, 12);
+	Song.Put(0, 16, "E-4");
+	Song.Put(0, 32, "G-4", NO_INSTRUMENT, 9);
+	Song.Put(1, 0, "G-3", 2);		// at the 15 every channel starts at
+	Song.Put(1, 32, "A-3", NO_INSTRUMENT, 8);
+	Song.Put(2, 0, "C-3");
+	Song.Put(7, 8, "C-3", NO_INSTRUMENT, 10);
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"Pulse 1\", \"level\": -6}").Text, "needs direct changes");
+	Song.Info.DirectChanges = true;
+	ToolResult R = Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}");
+	CHECK(!R.IsError && Song.Mix.Level(0) == -60 && Song.MixWrites == 1);
+	CHECK_HAS(R.Text, "Set FamiTracker's mixer (View > Mixer): 2A03 Pulse 1 -6.0 dB.");
+	CHECK_HAS(R.Text, "NSF files don't: set_mixer with write_into_notes puts it into the notes.");
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}").Text, "Nothing changed: FamiTracker's mixer has 2A03 Pulse 1 -6.0 dB already.");
+	R = Run(Song, "set_mixer", "{\"channels\": [\"Pulse 2\"], \"pan\": \"half left\"}");
+	CHECK(!R.IsError && Song.Mix.Pan(1) == 0x40 && Song.Mix.Level(1) == 0);
+	CHECK_HAS(R.Text, "2A03 Pulse 2 starting 50% left");
+	R = Run(Song, "set_mixer", "{\"channels\": \"Triangle\", \"change\": -30}");
+	CHECK(!R.IsError && Song.Mix.Level(2) == MIX_LEVEL_LOWEST);
+	CHECK_HAS(R.Text, "so some stopped there");
+	CHECK(!Run(Song, "set_mixer", "{\"channels\": \"Triangle\", \"level\": -3}").IsError && Song.Mix.Level(2) == -30);
+	CHECK(Run(Song, "set_mixer", "{\"channels\": 1, \"level\": 7}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -3, \"change\": 1}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"channels\": 1, \"pan\": \"up\"}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"level\": -3}").IsError);	// which channels?
+	CHECK(Run(Song, "set_mixer", "{}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"write_into_notes\": true, \"level\": 1}").IsError);
+	// get_song lists them
+	const std::string Overview = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Overview, "Mixer (FamiTracker's View > Mixer, saved with the song, the same in every track;");
+	CHECK_HAS(Overview, "2A03 Pulse 1 -6.0 dB, 2A03 Pulse 2 starting 50% left, 2A03 Triangle -3.0 dB.");
+	// Undone one change at a time
+	std::string Message;
+	CHECK(Song.Undo(Message) && Song.Mix.Level(2) == MIX_LEVEL_LOWEST && Song.Undo(Message) && Song.Mix.Level(2) == 0 &&
+		Song.Mix.Pan(1) == 0x40);
+	CHECK(!Run(Song, "set_mixer", "{\"channels\": \"Triangle\", \"level\": -3}").IsError);
+
+	// The tools count the faders: mix gives a melody under a fader 3 dB down the volume that sounds as loud
+	{
+		FakeSong Without, With;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "C-5", "A-4" };
+		for (int s = 0; s < 2; ++s) {
+			FakeSong &One = s == 0 ? Without : With;
+			One.Info.DirectChanges = true;
+			for (int i = 0; i < 8; ++i)
+				One.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			One.Put(1, 0, "E-3", 2, 12);
+			One.Put(1, 16, "A-3");
+			One.Put(2, 0, "C-3", 1);
+		}
+		With.Mix.Set(5, -30, PAN_CENTER);
+		CHECK(!Run(Without, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK_HAS(Run(With, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "VRC6 Pulse 1 (melody) loudest 15 to 13");
+		CHECK(Without.Rows[5][0].Volume == 9 && With.Rows[5][0].Volume == 13);	// 9 sounds as 12.7 does 3 dB down
+		CHECK(Without.Rows[1][0].Volume == With.Rows[1][0].Volume);
+	}
+
+	// The mixer in the game's files: a fader moves the channel's loudness by its dB, a pan puts it on its side
+	{
+		FakeSong One;
+		One.Info.DirectChanges = true;
+		One.Put(0, 0, "A-3", 2, 15);
+		for (int r = 8; r < 128; r += 8)
+			One.Put(0, r, r % 16 == 0 ? "A-3" : "E-4");
+		const double Plain = RenderedLoudness(One);
+		CHECK(!Run(One, "set_mixer", "{\"channels\": \"Pulse 1\", \"level\": -6.5}").IsError);
+		CHECK(Near(RenderedLoudness(One), Plain - 6.5, 0.01));
+		CHECK_HAS(Run(One, "export_for_game", "{\"normalize\": false}").Text, ", mixed as FamiTracker's mixer has it (View > Mixer)");
+		CHECK(!Run(One, "set_mixer", "{\"channels\": \"Pulse 1\", \"level\": 0, \"pan\": \"left\"}").IsError);
+		std::vector<float> Left, Right;
+		std::vector<std::pair<int, long long> > Marks;
+		int Rate = 0;
+		std::string Error;
+		One.RenderTrack(0, 4.0, Left, Right, Rate, Marks, Error);
+		float LeftPeak = 0.0f, RightPeak = 0.0f;
+		for (size_t i = 0; i < Left.size(); ++i) {
+			LeftPeak = std::max(LeftPeak, std::fabs(Left[i]));
+			RightPeak = std::max(RightPeak, std::fabs(Right[i]));
+		}
+		CHECK(Near(LeftPeak, 0.05, 1e-6) && RightPeak == 0.0f);	// all of it on the left, as loud as in the middle
+		// An 8xx still moves it from there (rows last a tenth of a second)
+		One.Rows[0][16].Effect[0] = EFF_PAN;
+		One.Rows[0][16].Param[0] = 0xFF;
+		One.RenderTrack(0, 4.0, Left, Right, Rate, Marks, Error);
+		CHECK(Marks.size() > 30u);
+		CHECK(std::fabs(Right[static_cast<size_t>(Marks[20].second)]) > 0.04f && Right[static_cast<size_t>(Marks[10].second)] == 0.0f);
+	}
+
+	// Write into the notes, in every track, as one undoable change
+	{
+		std::string Error;
+		std::vector<std::vector<Cell> > Night = Song.Rows;
+		Night[0][0].Volume = 6;
+		CHECK(Song.AddTrack("Town (night)", Night, 6, 150, Error) == 1);
+		Song.Switch(0);
+		const FakeSong Before = Song;
+		const double Loud0 = RenderedLoudness(Song);
+		Song.Switch(1);
+		const double Loud1 = RenderedLoudness(Song);
+		Song.Switch(0);
+		const int Undos = static_cast<int>(Song.Undos.size());
+		R = Run(Song, "set_mixer", "{\"write_into_notes\": true}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "Wrote FamiTracker's mixer into the notes, in 2 tracks: 2A03 Pulse 1: 4 volumes 6.0 dB down; 2A03 Pulse 2: "
+			"50% left as 840 on its first note.");
+		CHECK_HAS(R.Text, "The mixer is back at 0 dB and the middle, except: 2A03 Triangle's fader stays at -3.0 dB (it has no volume "
+			"column; NSF files play it as loud as before).");
+		CHECK_HAS(R.Text, "One Ctrl+Z in FamiTracker undoes it all.");
+		CHECK(Song.Current == 0 && Song.Mix.Level(0) == 0 && Song.Mix.Pan(1) == PAN_CENTER && Song.Mix.Level(2) == -30);
+		CHECK(Song.Rows[0][0].Volume == 6 && Song.Rows[0][16].Volume == NO_VOLUME && Song.Rows[0][32].Volume == 5);
+		CHECK(Song.Rows[1][0].Volume == NO_VOLUME && HasEffect(Song.Rows[1][0], EFF_PAN, 4) && Song.Rows[1][32].Volume == 8);
+		CHECK(Song.Rows[7][8].Volume == 10);	// at 0 dB already
+		CHECK(Song.Tracks[1].Rows[0][0].Volume == 3 && HasEffect(Song.Tracks[1].Rows[1][0], EFF_PAN, 4));
+		CHECK(static_cast<int>(Song.Undos.size()) == Undos + 1 && Song.Groups == 1);
+		// It sounds as it did, within a fraction of a dB
+		CHECK(Near(RenderedLoudness(Song), Loud0, 0.3));
+		Song.Switch(1);
+		CHECK(Near(RenderedLoudness(Song), Loud1, 0.3));
+		Song.Switch(0);
+		// One undo puts every track and the mixer back
+		CHECK(Song.Undo(Message));
+		CHECK(Song.Rows == Before.Rows && Song.Tracks[1].Rows == Before.Tracks[1].Rows && Song.Mix == Before.Mix && Song.Current == 0);
+		// Raised past 15: every channel comes down instead, which keeps the balance
+		CHECK(!Run(Song, "set_mixer", "{\"channels\": \"all\", \"reset\": true}").IsError && Song.Mix.Empty());
+		CHECK(!Run(Song, "set_mixer", "{\"channels\": \"Pulse 2\", \"level\": 3}").IsError);
+		R = Run(Song, "set_mixer", "{\"write_into_notes\": true}");
+		CHECK_HAS(R.Text, "2A03 Pulse 2 was raised past its loudest notes' volume 15, so every channel came down 3.0 dB instead");
+		CHECK_HAS(R.Text, "2A03 Pulse 1: 4 volumes 3.0 dB down");
+		CHECK_HAS(R.Text, "VRC6 Sawtooth: 2 volumes 3.0 dB down");
+		CHECK(Song.Rows[1][0].Volume == NO_VOLUME && Song.Rows[0][0].Volume == 8 && Song.Rows[7][8].Volume == 7);
+		CHECK(Song.Mix.Level(2) == -30 && Song.Mix.Level(1) == 0 && Song.Mix.Level(0) == 0);
+		CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"Triangle\", \"level\": 0}").Text, "2A03 Triangle at 0 dB in the middle");
+		CHECK(!Run(Song, "set_mixer", "{\"reset\": true}").IsError && Song.Mix.Empty());	// every channel, the DPCM's -3 dB too
+		CHECK_HAS(Run(Song, "set_mixer", "{\"write_into_notes\": true}").Text, "Nothing to write");
+	}
+}
+
 void TestExport()
 {
 	// Bars 1-4 an intro, bars 5-8 the loop; the bass's last note hangs over the seam
@@ -8297,6 +8583,22 @@ void TestExport()
 		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.1, Held), 10.0, 1e-9) && !Held);	// the peak to -10 dBFS
 		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.5, Held), -1.0 + 6.0206, 0.001) && Held);	// from -6 dBFS to -1
 		CHECK(Near(LoudnessGain(-14.0, -20.0, 0.9, Held), -6.0, 1e-9) && !Held);	// quieter: no peak holds that back
+		// A quiet loop with one loud chord: its peak holds it back, and the reply says what that means
+		{
+			FakeSong Peaky;
+			Peaky.Info.DirectChanges = true;
+			Peaky.Put(0, 0, "C-4", NO_INSTRUMENT, 1);
+			Peaky.Put(1, 0, "E-4", NO_INSTRUMENT, 15);
+			Peaky.Put(2, 0, "G-3");
+			Peaky.Put(5, 0, "C-5", NO_INSTRUMENT, 15);
+			for (int c : { 1, 2, 5 })
+				Peaky.End(c, 1);
+			ToolSet PeakyTools(Peaky);
+			const std::string HeldBack = PeakyTools.Call("export_for_game", Parse("{\"loudness\": -19.5}")).Text;
+			CHECK_HAS(HeldBack, "LU short of -19.5 LUFS, held back so its loudest peak stays at -1 dBFS");
+			CHECK_HAS(HeldBack, "\nOne track came out quieter than -19.5 LUFS: its loudest peak (a sharp hit or attack)");
+			CHECK_LACKS(PeakyTools.Call("export_for_game", Parse("{}")).Text, "came out quieter");
+		}
 		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).Text, "loudness");	// out of its range
 		CHECK(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).IsError);
 	}
@@ -11913,6 +12215,8 @@ int main()
 	TestSectionTools();
 	TestKeyChoices();
 	TestKeyTools();
+	TestMixerStore();
+	TestMixerTools();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestFdsSounds();

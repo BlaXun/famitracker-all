@@ -46,8 +46,12 @@ struct ChannelInfo {
 	int ChanId;				// FamiTracker's channel ID (chan_id_t)
 	int EffectColumns;		// visible effect columns, 1-4
 	bool Muted;				// muted in FamiTracker, so the user doesn't hear it play
+	// The mixer window's settings (ChannelMix.h), the same in every track: the channel's fader in tenths of a
+	// dB (0 as it plays; FamiTracker's mixer makes it that much louder) and the pan it starts at (0x80 the middle)
+	int MixLevel;
+	int MixPan;
 
-	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false) {}
+	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false), MixLevel(0), MixPan(0x80) {}
 	std::string FullName() const { return Name == Chip ? Name : Chip + " " + Name; }	// "VRC6 Pulse 1"; "FDS"
 };
 
@@ -219,6 +223,14 @@ public:
 	// The selected track's key (Keys.h): Choice when Chosen, otherwise back to
 	// auto (found from the notes), as one undoable change; false with the reason
 	virtual bool SetKey(bool Chosen, const KeyChoice &Choice, std::string &Error) = 0;
+	// The mixer window's faders and starting pans (ChannelInfo::MixLevel and
+	// MixPan), one of each for every channel of the module in order, as one
+	// undoable change; false with the reason
+	virtual bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error) = 0;
+	// The changes made from BeginGroup to EndGroup (in any track) are undone
+	// and redone together, as one Ctrl+Z
+	virtual void BeginGroup() = 0;
+	virtual void EndGroup() = 0;
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,
 		std::string &Error) = 0;
