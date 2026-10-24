@@ -1412,6 +1412,31 @@ void CPatternEditor::DrawCell(CDC *pDC, int PosX, int Column, int Channel, bool 
 	}
 }
 
+// The channel's name in the header. With several expansion chips on, a name
+// another chip's channel has too ("Pulse 1") gets the chip's ("MMC5 Pulse 1").
+static CString HeaderName(const CFamiTrackerDoc *pDocument, int Channel)
+{
+	const CTrackerChannel *pChannel = pDocument->GetChannel(Channel);
+	const CString Name = pChannel->GetChannelName();
+	const unsigned char Chips = pDocument->GetExpansionChip();
+	if ((Chips & (Chips - 1)) == 0 || pChannel->GetChip() == SNDCHIP_NONE)
+		return Name;
+	bool Shared = false;
+	for (int i = 0; i < static_cast<int>(pDocument->GetAvailableChannels()) && !Shared; ++i)
+		Shared = i != Channel && Name == pDocument->GetChannel(i)->GetChannelName();
+	if (!Shared)
+		return Name;
+	switch (pChannel->GetChip()) {
+		case SNDCHIP_VRC6: return _T("VRC6 ") + Name;
+		case SNDCHIP_MMC5: return _T("MMC5 ") + Name;
+		case SNDCHIP_VRC7: return _T("VRC7 ") + Name;
+		case SNDCHIP_FDS:  return _T("FDS ") + Name;
+		case SNDCHIP_N163: return _T("N163 ") + Name;
+		case SNDCHIP_S5B:  return _T("5B ") + Name;
+	}
+	return Name;
+}
+
 void CPatternEditor::DrawHeader(CDC *pDC)
 {
 	// Draw the pattern header (channel names, meters...)
@@ -1453,8 +1478,8 @@ void CPatternEditor::DrawHeader(CDC *pDC)
 			pDC->Draw3dRect(Offset, HEADER_CHAN_START, m_iChannelWidths[Channel], HEADER_CHAN_HEIGHT, STATIC_COLOR_SCHEME.FRAME_LIGHT, STATIC_COLOR_SCHEME.FRAME_DARK);
 
 		// Text
-		CTrackerChannel *pChannel = m_pDocument->GetChannel(Channel);
-		LPCTSTR pChanName = pChannel->GetChannelName();
+		const CString ChanName = HeaderName(m_pDocument, Channel);
+		LPCTSTR pChanName = ChanName;
 
 		COLORREF HeadTextCol = bMuted ? STATIC_COLOR_SCHEME.CHANNEL_MUTED : STATIC_COLOR_SCHEME.CHANNEL_NORMAL;
 

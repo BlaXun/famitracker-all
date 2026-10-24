@@ -81,22 +81,77 @@ bool CInstrumentS5B::Load(CDocumentFile *pDocFile)
 
 void CInstrumentS5B::SaveFile(CInstrumentFile *pFile, const CFamiTrackerDoc *pDoc)
 {
-	AfxMessageBox(_T("Saving 5B instruments is not yet supported"));
+	// Sequences, as the VRC6's (and 0CC-FamiTracker's 5B instruments)
+	pFile->WriteChar(SEQUENCE_COUNT);
+
+	for (int i = 0; i < SEQUENCE_COUNT; ++i) {
+		const CSequence *pSeq = GetSeqEnable(i) ? pDoc->GetSequenceS5B(GetSeqIndex(i), i) : NULL;
+		if (pSeq != NULL) {
+			pFile->WriteChar(1);
+			pFile->WriteInt(pSeq->GetItemCount());
+			pFile->WriteInt(pSeq->GetLoopPoint());
+			pFile->WriteInt(pSeq->GetReleasePoint());
+			pFile->WriteInt(pSeq->GetSetting());
+
+			for (unsigned j = 0; j < pSeq->GetItemCount(); ++j) {
+				pFile->WriteChar(pSeq->GetItem(j));
+			}
+		}
+		else {
+			pFile->WriteChar(0);
+		}
+	}
 }
 
 bool CInstrumentS5B::LoadFile(CInstrumentFile *pFile, int iVersion, CFamiTrackerDoc *pDoc)
 {
-	return false;
+	unsigned char SeqCount = pFile->ReadChar();
+
+	if (SeqCount > SEQUENCE_COUNT)
+		return false;
+
+	for (int i = 0; i < SeqCount; ++i) {
+		unsigned char Enabled = pFile->ReadChar();
+		if (Enabled == 1) {
+			int Count = pFile->ReadInt();
+			if (Count < 0 || Count > MAX_SEQUENCE_ITEMS)
+				return false;
+			int Index = pDoc->GetFreeSequenceS5B(i);
+			CSequence Read;
+			Read.SetItemCount(Count);
+			Read.SetLoopPoint(pFile->ReadInt());
+			Read.SetReleasePoint(pFile->ReadInt());
+			Read.SetSetting(pFile->ReadInt());
+			for (int j = 0; j < Count; ++j)
+				Read.SetItem(j, pFile->ReadChar());
+			if (Index != -1) {
+				pDoc->GetSequence(SNDCHIP_S5B, Index, i)->Copy(&Read);
+				SetSeqEnable(i, true);
+				SetSeqIndex(i, Index);
+			}
+		}
+		else {
+			SetSeqEnable(i, false);
+			SetSeqIndex(i, 0);
+		}
+	}
+
+	return true;
 }
 
 int CInstrumentS5B::Compile(CFamiTrackerDoc *pDoc, CChunk *pChunk, int Index)
 {
-	return 0;
+	return 0;	// no NSF driver plays the 5B here: CCompiler refuses such modules
 }
 
 bool CInstrumentS5B::CanRelease() const
 {
-	return false; // TODO
+	if (GetSeqEnable(SEQ_VOLUME) != 0) {
+		const CSequence *pSeq = CFamiTrackerDoc::GetDoc()->GetSequenceS5B(GetSeqIndex(SEQ_VOLUME), SEQ_VOLUME);
+		return pSeq != NULL && pSeq->GetReleasePoint() != -1;
+	}
+
+	return false;
 }
 
 int	CInstrumentS5B::GetSeqEnable(int Index) const

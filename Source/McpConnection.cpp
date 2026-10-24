@@ -77,7 +77,7 @@ static_assert(ftapi::EFF_COUNT == EF_COUNT && ftapi::EFF_ARPEGGIO == EF_ARPEGGIO
 	ftapi::EFF_SLIDE_UP == EF_SLIDE_UP && ftapi::EFF_SLIDE_DOWN == EF_SLIDE_DOWN && ftapi::EFF_SPEED == EF_SPEED &&
 	ftapi::EFF_JUMP == EF_JUMP && ftapi::EFF_SKIP == EF_SKIP && ftapi::EFF_HALT == EF_HALT && ftapi::EFF_NOTE_CUT == EF_NOTE_CUT &&
 	ftapi::EFF_VOLUME_SLIDE == EF_VOLUME_SLIDE && ftapi::EFF_PORTAMENTO == EF_PORTAMENTO && ftapi::EFF_TREMOLO == EF_TREMOLO &&
-	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE && ftapi::EFF_PAN == EF_PAN && ftapi::PAN_CENTER == PAN_CENTER, "effects");
+	ftapi::EFF_SUNSOFT_ENV_TYPE == EF_SUNSOFT_ENV_TYPE && ftapi::EFF_SUNSOFT_ENV_LO == EF_SUNSOFT_ENV_LO && ftapi::EFF_PAN == EF_PAN && ftapi::PAN_CENTER == PAN_CENTER, "effects");
 static_assert(ftapi::SEQUENCE_VOLUME == SEQ_VOLUME && ftapi::SEQUENCE_ARPEGGIO == SEQ_ARPEGGIO && ftapi::SEQUENCE_PITCH == SEQ_PITCH &&
 	ftapi::SEQUENCE_HIPITCH == SEQ_HIPITCH && ftapi::SEQUENCE_DUTY == SEQ_DUTYCYCLE, "sequences");
 static_assert(ftapi::SEQUENCE_ABSOLUTE == ARP_SETTING_ABSOLUTE && ftapi::SEQUENCE_FIXED == ARP_SETTING_FIXED, "arpeggio settings");
@@ -214,7 +214,7 @@ bool LoopsUpAndDown(const CSequence *pSeq)
 }
 
 // An instrument with vibrato built in: a pitch sequence that goes up and
-// down in its loop (2A03, VRC6, N163 and FDS instruments), or an FDS
+// down in its loop (2A03, VRC6, N163, FDS and 5B instruments), or an FDS
 // modulator that wobbles the pitch slowly enough to hear as one
 bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 {
@@ -245,6 +245,13 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 		Index = p->GetSeqIndex(SEQ_PITCH);
 		break;
 	}
+	case INST_S5B: {
+		const CInstrumentS5B *p = static_cast<const CInstrumentS5B *>(pInstrument);
+		Chip = SNDCHIP_S5B;
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
 	default:
 		return false;
 	}
@@ -266,7 +273,7 @@ const CSequence *FdsSequence(const CInstrument *pInstrument, int Type)
 	return NULL;
 }
 
-// One of an instrument's sequences (2A03, VRC6, N163 and FDS instruments):
+// One of an instrument's sequences (2A03, VRC6, N163, FDS and 5B instruments):
 // its values, where it loops back to, where it waits for a release, its
 // setting; false when it has none
 bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std::vector<int> &Items, int &Loop, int &Release,
@@ -291,6 +298,13 @@ bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std
 	case INST_N163: {
 		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
 		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(Type);
+		Index = p->GetSeqIndex(Type);
+		break;
+	}
+	case INST_S5B: {
+		const CInstrumentS5B *p = static_cast<const CInstrumentS5B *>(pInstrument);
+		Chip = SNDCHIP_S5B;
 		Enabled = p->GetSeqEnable(Type);
 		Index = p->GetSeqIndex(Type);
 		break;
@@ -330,6 +344,8 @@ void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::Instr
 	const int TYPES[] = { SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH };
 	for (int i = 0; i < 3; ++i)
 		ReadSequence(pDoc, pInstrument, TYPES[i], INTO[i]->Items, INTO[i]->Loop, INTO[i]->Release, INTO[i]->Setting);
+	if (pInstrument->GetType() == INST_S5B)	// the 5B's noise / mode sequence, in the duty sequence's place
+		ReadSequence(pDoc, pInstrument, SEQ_DUTYCYCLE, Info.Mode.Items, Info.Mode.Loop, Info.Mode.Release, Info.Mode.Setting);
 }
 
 // A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the
@@ -376,6 +392,13 @@ std::vector<int> LoopingArpeggio(CFamiTrackerDoc *pDoc, CInstrument *pInstrument
 	case INST_N163: {
 		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
 		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(SEQ_ARPEGGIO);
+		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
+		break;
+	}
+	case INST_S5B: {
+		const CInstrumentS5B *p = static_cast<const CInstrumentS5B *>(pInstrument);
+		Chip = SNDCHIP_S5B;
 		Enabled = p->GetSeqEnable(SEQ_ARPEGGIO);
 		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
 		break;
@@ -436,16 +459,18 @@ int KindOf(int ChanID)
 	case CHANID_VRC7_CH1: case CHANID_VRC7_CH2: case CHANID_VRC7_CH3: case CHANID_VRC7_CH4: case CHANID_VRC7_CH5:
 	case CHANID_VRC7_CH6:
 		return ftapi::KIND_FM;
+	case CHANID_S5B_CH1: case CHANID_S5B_CH2: case CHANID_S5B_CH3:
+		return ftapi::KIND_SQUARE;
 	}
 	return ftapi::KIND_OTHER;
 }
 
-// The expansion chip by the API's name ("" for none); false if it isn't one FamiTracker switches to
+// An expansion chip by the API's name ("" for none); false if it isn't one FamiTracker has
 bool ChipFlag(const std::string &Chip, unsigned char &Flag)
 {
 	const struct { const char *pName; unsigned char Flag; } CHIPS[] = {
 		{ "", SNDCHIP_NONE }, { "VRC6", SNDCHIP_VRC6 }, { "VRC7", SNDCHIP_VRC7 }, { "FDS", SNDCHIP_FDS },
-		{ "MMC5", SNDCHIP_MMC5 }, { "N163", SNDCHIP_N163 },
+		{ "MMC5", SNDCHIP_MMC5 }, { "N163", SNDCHIP_N163 }, { "5B", SNDCHIP_S5B },
 	};
 	for (size_t i = 0; i < sizeof(CHIPS) / sizeof(CHIPS[0]); ++i) {
 		if (Chip == CHIPS[i].pName) {
@@ -454,6 +479,19 @@ bool ChipFlag(const std::string &Chip, unsigned char &Flag)
 		}
 	}
 	return false;
+}
+
+// The expansion chips by the API's names, together (SNDCHIP_* bits); false if one isn't a chip FamiTracker has
+bool ChipFlags(const std::vector<std::string> &Chips, unsigned char &Flags)
+{
+	Flags = SNDCHIP_NONE;
+	for (size_t i = 0; i < Chips.size(); ++i) {
+		unsigned char Flag = SNDCHIP_NONE;
+		if (!ChipFlag(Chips[i], Flag))
+			return false;
+		Flags |= Flag;
+	}
+	return true;
 }
 
 // 32 hex digits from the system's random numbers
@@ -1663,7 +1701,8 @@ public:
 		if (!CanChange(Error))
 			return -1;
 		CString Problem;
-		const int Index = AddPresetInstrument(Doc(), Sound, Chip == "VRC6", Sawtooth, Problem);
+		const int Index = Chip == "5B" ? AddPreset5BInstrument(Doc(), Sound, Problem) :
+			AddPresetInstrument(Doc(), Sound, Chip == "VRC6", Sawtooth, Problem);
 		if (Index < 0)
 			Error = Utf8(Problem);
 		return Index;
@@ -1881,58 +1920,35 @@ public:
 		return true;
 	}
 
-	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks)
+	int ExpansionNotes(const std::vector<std::string> &Chips, int Channels, std::vector<int> &Tracks)
 	{
 		Tracks.clear();
 		CFamiTrackerDoc *pDoc = Doc();
-		unsigned char Flag = SNDCHIP_NONE;
-		if (pDoc == NULL || !pDoc->IsFileLoaded() || !ChipFlag(Chip, Flag))
+		unsigned char Flags = SNDCHIP_NONE;
+		if (pDoc == NULL || !pDoc->IsFileLoaded() || !ChipFlags(Chips, Flags))
 			return 0;
-		return CountChannelNotes(pDoc, LeavingChannels(Flag, Channels), Tracks);
+		const unsigned int Namco = static_cast<unsigned int>(std::max(1, std::min(8, Channels)));
+		return CountChannelNotes(pDoc, LeavingChannels(pDoc, Flags, Namco), Tracks);
 	}
 
-	// As Module > Module properties does, after emptying the channels that go
-	// (ChipSwitch.h); the new chip's channels show one effect column
-	bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error)
+	// As Module > Module properties does (ChipSwitch.h): the channels of the chips that stay keep
+	// their notes in their new columns, those of chips switched off are emptied, and channels that
+	// come in start empty with one effect column
+	bool SetExpansion(const std::vector<std::string> &Chips, int Channels, int &Moved, int &Lost, std::string &Error)
 	{
 		Moved = Lost = 0;
 		if (!CanChange(Error))
 			return false;
-		unsigned char Flag = SNDCHIP_NONE;
-		if (!ChipFlag(Chip, Flag)) {
-			Error = "FamiTracker can't switch to that chip.";
+		unsigned char Flags = SNDCHIP_NONE;
+		if (!ChipFlags(Chips, Flags)) {
+			Error = "FamiTracker can't switch to those chips.";
 			return false;
 		}
 		CFamiTrackerDoc *pDoc = Doc();
-		const int Namco = std::max(1, std::min(8, Channels));
-		const std::vector<unsigned int> Going = LeavingChannels(Flag, Namco);
-		std::vector<unsigned int> Emptied = Going;	// with what earlier chips left past the channels shown
-		for (unsigned int c = pDoc->GetAvailableChannels(); c < MAX_CHANNELS; ++c)
-			Emptied.push_back(c);
 		Stop();
 		if (theApp.IsPlaying())
 			theApp.StopPlayerAndWait();
-
-		std::vector<song_effect_t> Effects;
-		pDoc->LockDocument();
-		GatherSongEffects(pDoc, Going, Effects);
-		EmptyChannels(pDoc, Emptied);
-		pDoc->UnlockDocument();
-		if (Flag == SNDCHIP_N163)
-			pDoc->SetNamcoChannels(static_cast<unsigned int>(Namco));
-		pDoc->SelectExpansionChip(Flag);
-		pDoc->LockDocument();
-		for (unsigned int t = 0; t < pDoc->GetTrackCount(); ++t) {
-			for (size_t i = 0; i < Emptied.size(); ++i) {
-				if (Emptied[i] < static_cast<unsigned int>(pDoc->GetChannelCount()))	// SetEffColumns needs a channel there
-					pDoc->SetEffColumns(t, Emptied[i], 0);
-			}
-		}
-		if (!Effects.empty() && pDoc->GetAvailableChannels() > 0) {
-			Lost = PlaceSongEffects(pDoc, pDoc->GetAvailableChannels() - 1, Effects);
-			Moved = static_cast<int>(Effects.size()) - Lost;
-		}
-		pDoc->UnlockDocument();
+		Lost = SwitchChips(pDoc, Flags, static_cast<unsigned int>(std::max(1, std::min(8, Channels))), Moved);
 		pDoc->SetModifiedFlag();
 		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
 		m_pMain->UpdateControls();
@@ -2105,23 +2121,6 @@ private:
 		return static_cast<unsigned int>(std::max(0, m_pMain->GetSelectedTrack()));
 	}
 
-	// The channels switching to the chip Flag empties (ftapi::SongHost::ExpansionNotes): the
-	// expansion chip's, or when only the N163's channel count changes, its channels past Namco
-	std::vector<unsigned int> LeavingChannels(unsigned char Flag, int Namco) const
-	{
-		std::vector<unsigned int> Out;
-		const CFamiTrackerDoc *pDoc = Doc();
-		const bool Same = Flag == pDoc->GetExpansionChip();
-		int Kept = 0;
-		for (unsigned int c = 0; c < pDoc->GetAvailableChannels(); ++c) {
-			if (pDoc->GetChipType(static_cast<int>(c)) == SNDCHIP_NONE)
-				continue;	// the 2A03's
-			if (Same && (Flag != SNDCHIP_N163 || Kept++ < Namco))
-				continue;
-			Out.push_back(c);
-		}
-		return Out;
-	}
 
 	void LoadSettings()
 	{

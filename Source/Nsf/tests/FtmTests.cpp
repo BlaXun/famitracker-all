@@ -741,6 +741,55 @@ void TestN163()
 	CHECK(Has(Text, "COLUMNS : 1 1 1 1 1 2 1 1 1 1 1 1 1\n"));
 	CHECK(Has(Text, "ORDER 00 : 00 00 00 00 00 01 02 00 00 00 00 00 00\n"));
 
+	// Several chips: the N163 (two channels) and the Sunsoft 5B, as this FamiTracker saves them: the
+	// N163 channels it uses, the 5B's, then the N163's past its count
+	{
+		Writer s;
+		Params(s, EXP_N163 | EXP_S5B, 10, 0, 0, 1, 2);
+		Header(s, { "Both" }, { { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 } });
+		s.Begin("INSTRUMENTS", 6).Int(1);
+		s.Int(0).U8(T_S5B);
+		InstSequences(s, { 0, -1, -1, -1, 0 });
+		s.Name("Buzz");
+		s.End();
+		Frames3(s, { { 6, 150, 4, { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } } } });
+		s.Begin("PATTERNS", 5);
+		PatternRows(s, 0, 7, 0, { { 0, 1, 3, 0, NO_VOL, { { 30, 0xC8 }, { 0, 0 } } } }, 2);
+		PatternRows(s, 0, 6, 0, { { 1, 3, 4, NO_INST, NO_VOL, {} } }, 1);
+		s.End();
+		SequencesN163(s, {
+			{ 0, SEQ_VOLUME, { 15, 0 }, -1, 0, 0 },
+			{ 0, SEQ_DUTY, { 32 }, -1, -1, 0 },
+		}, "SEQUENCES_S5B");
+		Module C;
+		FtmInfo CInfo;
+		CHECK(ReadModule(s.Finish(), C, CInfo) && CInfo.Problems.empty());
+		CHECK(C.Expansion == (EXP_N163 | EXP_S5B) && C.N163Channels == 2 && C.ChannelCount() == 16);
+		CHECK(C.Instruments.size() == 1 && C.Instruments[0].Kind == INST_S5B);
+		if (C.Instruments.size() == 1) {
+			CHECK(Items(C.Instruments[0].Macros[SEQ_VOLUME], { 15, 0 }) && C.Instruments[0].Macros[SEQ_VOLUME].Release == 0);
+			CHECK(Items(C.Instruments[0].Macros[SEQ_DUTY], { 32 }));
+		}
+		const std::vector<std::string> Names = ChannelNamesOf(C);
+		CHECK(Names.size() == 16 && Names[6] == "Namco 2" && Names[7] == "5B Square 1" && Names[9] == "5B Square 3" &&
+			Names[10] == "(unused)");
+		CHECK(C.Tracks.size() == 1);
+		if (C.Tracks.size() == 1 && C.Tracks[0].Patterns.size() == 16) {
+			const Track &T = C.Tracks[0];
+			CHECK(T.Columns[7] == 2 && T.Patterns[7].size() == 1 && T.Patterns[7][0][0].Note == 36 &&
+				T.Patterns[7][0][0].Effects[0] == Effect('H', 0xC8) && T.Patterns[7][0][0].Instrument == 0);
+			CHECK(T.Patterns[6][0][1].Note == 50);	// Namco 2's D-4
+		}
+		else
+			CHECK(false);
+		const std::string Text = WriteText(C);
+		CHECK(Has(Text, "EXPANSION       48\n"));
+		CHECK(Has(Text, "N163CHANNELS    2\n"));
+		CHECK(Has(Text, "MACROS5B "));
+		CHECK(Has(Text, "INSTS5B    0     0  -1  -1  -1   0 \"Buzz\"\n"));
+		CHECK(Has(Text, "COLUMNS : 1 1 1 1 1 1 1 2 1 1 1 1 1 1 1 1\n"));
+	}
+
 	// The block's name before 0.4.0
 	Writer x;
 	SequencesN163(x, { { 2, SEQ_PITCH, { 1, -1 }, 0, -1, 0 } }, "SEQUENCES_N106");
@@ -1163,8 +1212,8 @@ void TestOtherFiles()
 		y.Begin("INSTRUMENTS", 6).Int(1).Int(64).U8(T_2A03).End();
 		CHECK(ReadError(y.Finish()).find("damaged") != std::string::npos);
 		Writer z;
-		z.Begin("INSTRUMENTS", 6).Int(1).Int(0).U8(T_S5B).End();
-		CHECK(ReadError(z.Finish()).find("Sunsoft 5B") != std::string::npos);
+		z.Begin("INSTRUMENTS", 6).Int(1).Int(0).U8(T_S5B + 1).End();
+		CHECK(ReadError(z.Finish()).find("of a kind FamiTracker doesn't know (7)") != std::string::npos);
 		Writer v;
 		Params(v, 0, 5, 2);
 		CHECK(ReadError(v.Finish()).find("machine") != std::string::npos);

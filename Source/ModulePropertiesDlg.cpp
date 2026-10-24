@@ -18,6 +18,7 @@
 ** must bear this legend.
 */
 
+#include <vector>
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -26,8 +27,27 @@
 #include "ChannelMap.h"
 #include "ModuleImportDlg.h"
 #include "SoundGen.h"
+#include "ChipSwitch.h"
 
 LPCTSTR TRACK_FORMAT = _T("#%02i %s");
+
+namespace {
+
+// The expansion chips' check boxes
+const struct {
+	int Control;
+	unsigned char Chip;
+	LPCTSTR pName;
+} CHIP_BOXES[] = {
+	{ IDC_EXPANSION_VRC6, SNDCHIP_VRC6, _T("VRC6") },
+	{ IDC_EXPANSION_VRC7, SNDCHIP_VRC7, _T("VRC7") },
+	{ IDC_EXPANSION_FDS,  SNDCHIP_FDS,  _T("FDS") },
+	{ IDC_EXPANSION_MMC5, SNDCHIP_MMC5, _T("MMC5") },
+	{ IDC_EXPANSION_N163, SNDCHIP_N163, _T("N163") },
+	{ IDC_EXPANSION_S5B,  SNDCHIP_S5B,  _T("5B") },
+};
+
+}	// namespace
 
 // CModulePropertiesDlg dialog
 
@@ -59,7 +79,12 @@ BEGIN_MESSAGE_MAP(CModulePropertiesDlg, CDialog)
 	ON_BN_CLICKED(IDC_SONG_DOWN, &CModulePropertiesDlg::OnBnClickedSongDown)
 	ON_EN_CHANGE(IDC_SONGNAME, &CModulePropertiesDlg::OnEnChangeSongname)
 	ON_BN_CLICKED(IDC_SONG_IMPORT, &CModulePropertiesDlg::OnBnClickedSongImport)
-	ON_CBN_SELCHANGE(IDC_EXPANSION, &CModulePropertiesDlg::OnCbnSelchangeExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_VRC6, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_VRC7, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_FDS, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_MMC5, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_N163, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_S5B, &CModulePropertiesDlg::OnBnClickedExpansion)
 	ON_WM_HSCROLL()
 	ON_NOTIFY(LVN_ITEMCHANGED, IDC_SONGLIST, &CModulePropertiesDlg::OnLvnItemchangedSonglist)
 END_MESSAGE_MAP()
@@ -81,15 +106,10 @@ BOOL CModulePropertiesDlg::OnInitDialog()
 
 	FillSongList();
 
-	// Expansion chips
-	CComboBox *pChipBox = static_cast<CComboBox*>(GetDlgItem(IDC_EXPANSION));
-	int ExpChip = m_pDocument->GetExpansionChip();
-	CChannelMap *pChannelMap = theApp.GetChannelMap();
-
-	for (int i = 0; i < pChannelMap->GetChipCount(); ++i)
-		pChipBox->AddString(pChannelMap->GetChipName(i));
-
-	pChipBox->SetCurSel(pChannelMap->GetChipIndex(ExpChip));
+	// Expansion chips: any of them can be on
+	const unsigned char Chips = m_pDocument->GetExpansionChip();
+	for (size_t i = 0; i < sizeof(CHIP_BOXES) / sizeof(CHIP_BOXES[0]); ++i)
+		CheckDlgButton(CHIP_BOXES[i].Control, (Chips & CHIP_BOXES[i].Chip) ? BST_CHECKED : BST_UNCHECKED);
 
 	// Vibrato 
 	CComboBox *pVibratoBox = static_cast<CComboBox*>(GetDlgItem(IDC_VIBRATO));
@@ -98,38 +118,90 @@ BOOL CModulePropertiesDlg::OnInitDialog()
 	// Namco channel count
 	CSliderCtrl *pChanSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
 	pChanSlider->SetRange(1, 8);
-	CString channelsStr;
-	channelsStr.LoadString(IDS_PROPERTIES_CHANNELS);
-	if (ExpChip == SNDCHIP_N163) {
-		int Channels = m_pDocument->GetNamcoChannels();
-		pChanSlider->SetPos(Channels);
-		pChanSlider->EnableWindow(TRUE);
-		channelsStr.AppendFormat(_T(" %i"), Channels);
-	}
-	else {
-		pChanSlider->SetPos(0);
-		pChanSlider->EnableWindow(FALSE);
-		channelsStr.Append(_T(" N/A"));
-	}
-	SetDlgItemText(IDC_CHANNELS_NR, channelsStr);
+	pChanSlider->SetPos(m_pDocument->GetNamcoChannels());
+	UpdateNamcoChannels();
 
 	return TRUE;  // return TRUE unless you set the focus to a control
 	// EXCEPTION: OCX Property Pages should return FALSE
 }
 
+unsigned char CModulePropertiesDlg::CheckedChips() const
+{
+	unsigned char Chips = SNDCHIP_NONE;
+	for (size_t i = 0; i < sizeof(CHIP_BOXES) / sizeof(CHIP_BOXES[0]); ++i) {
+		if (IsDlgButtonChecked(CHIP_BOXES[i].Control) == BST_CHECKED)
+			Chips |= CHIP_BOXES[i].Chip;
+	}
+	return Chips;
+}
+
+void CModulePropertiesDlg::UpdateNamcoChannels()
+{
+	// The N163's channel count, which its check box turns on
+	const bool Namco = (CheckedChips() & SNDCHIP_N163) != 0;
+	CSliderCtrl *pSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
+	pSlider->EnableWindow(Namco ? TRUE : FALSE);
+	CString channelsStr;
+	channelsStr.LoadString(IDS_PROPERTIES_CHANNELS);
+	if (Namco)
+		channelsStr.AppendFormat(_T(" %i"), pSlider->GetPos());
+	else
+		channelsStr.Append(_T(" N/A"));
+	SetDlgItemText(IDC_CHANNELS_NR, channelsStr);
+}
+
+bool CModulePropertiesDlg::SwitchChips(unsigned char Chips, unsigned int NamcoChannels)
+{
+	// The channels that go take their notes with them: ask first (ChipSwitch.h)
+	const std::vector<unsigned int> Going = LeavingChannels(m_pDocument, Chips, NamcoChannels);
+	std::vector<int> Tracks;
+	const int Notes = CountChannelNotes(m_pDocument, Going, Tracks);
+	if (Notes > 0) {
+		const unsigned char Old = m_pDocument->GetExpansionChip();
+		CString What;
+		for (size_t i = 0; i < sizeof(CHIP_BOXES) / sizeof(CHIP_BOXES[0]); ++i) {
+			if ((Old & CHIP_BOXES[i].Chip) && !(Chips & CHIP_BOXES[i].Chip)) {
+				if (!What.IsEmpty())
+					What += _T(" and ");
+				What += CString(_T("the ")) + CHIP_BOXES[i].pName + _T("'s channels");
+			}
+		}
+		if ((Old & Chips & SNDCHIP_N163) && NamcoChannels < m_pDocument->GetNamcoChannels()) {
+			if (!What.IsEmpty())
+				What += _T(" and ");
+			CString Namco;
+			Namco.Format(_T("N163 channels %u to %u"), NamcoChannels + 1, m_pDocument->GetNamcoChannels());
+			What += Namco;
+		}
+		CString Message;
+		Message.Format(_T("Switching removes %s, with the %i notes on them (in %i of the module's tracks). ")
+			_T("The effects there that set the speed or end the song move to a channel that stays. This can't be undone.\n\n")
+			_T("Switch the chips anyway?"), What.GetString(), Notes, static_cast<int>(Tracks.size()));
+		if (AfxMessageBox(Message, MB_YESNO | MB_ICONWARNING) != IDYES)
+			return false;
+	}
+
+	if (theApp.IsPlaying())
+		theApp.StopPlayerAndWait();
+
+	int Moved = 0;
+	::SwitchChips(m_pDocument, Chips, NamcoChannels, Moved);
+	m_pDocument->SetModifiedFlag();
+	m_pDocument->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+	return true;
+}
+
 void CModulePropertiesDlg::OnBnClickedOk()
 {
-	CComboBox *pExpansionChipBox = static_cast<CComboBox*>(GetDlgItem(IDC_EXPANSION));
 	CMainFrame *pMainFrame = static_cast<CMainFrame*>(GetParentFrame());
 
-	// Expansion chip
-	unsigned int iExpansionChip = theApp.GetChannelMap()->GetChipIdent(pExpansionChipBox->GetCurSel());
-	unsigned int iChannels = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS))->GetPos();
+	// Expansion chips
+	const unsigned char Chips = CheckedChips();
+	const unsigned int iChannels = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS))->GetPos();
 
-	if (m_pDocument->GetExpansionChip() != iExpansionChip || m_pDocument->GetNamcoChannels() != iChannels) {
-		m_pDocument->SetNamcoChannels(iChannels);
-		m_pDocument->SelectExpansionChip(iExpansionChip);
-		m_pDocument->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+	if (m_pDocument->GetExpansionChip() != Chips || ((Chips & SNDCHIP_N163) && m_pDocument->GetNamcoChannels() != iChannels)) {
+		if (!SwitchChips(Chips, iChannels))
+			return;		// the dialog stays open
 	}
 
 	// Vibrato 
@@ -294,37 +366,14 @@ void CModulePropertiesDlg::OnBnClickedSongImport()
 	FillSongList();
 }
 
-void CModulePropertiesDlg::OnCbnSelchangeExpansion()
+void CModulePropertiesDlg::OnBnClickedExpansion()
 {
-	CComboBox *pExpansionChipBox = static_cast<CComboBox*>(GetDlgItem(IDC_EXPANSION));
-	CSliderCtrl *pSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
-
-	// Expansion chip
-	unsigned int iExpansionChip = theApp.GetChannelMap()->GetChipIdent(pExpansionChipBox->GetCurSel());
-
-	CString channelsStr;
-	channelsStr.LoadString(IDS_PROPERTIES_CHANNELS);
-	if (iExpansionChip == SNDCHIP_N163) {
-		pSlider->EnableWindow(TRUE);
-		int Channels = m_pDocument->GetNamcoChannels();
-		pSlider->SetPos(Channels);
-		channelsStr.AppendFormat(_T(" %i"), Channels);
-	}
-	else {
-		pSlider->EnableWindow(FALSE);
-		channelsStr.Append(_T(" N/A"));
-	}
-	SetDlgItemText(IDC_CHANNELS_NR, channelsStr);
+	UpdateNamcoChannels();
 }
 
 void CModulePropertiesDlg::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar)
 {
-	CSliderCtrl *pSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
-
-	CString text;
-	text.LoadString(IDS_PROPERTIES_CHANNELS);
-	text.AppendFormat(_T(" %i"),  pSlider->GetPos());
-	SetDlgItemText(IDC_CHANNELS_NR, text);
+	UpdateNamcoChannels();
 
 	CDialog::OnHScroll(nSBCode, nPos, pScrollBar);
 }

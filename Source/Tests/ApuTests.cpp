@@ -19,15 +19,17 @@
 ** must bear this legend.
 */
 
-// Tests for the stereo mixer (Source/APU/Mixer.cpp, CVRC7::EndFrame,
-// CS5B::GetMixMono and the N163's one DAC): every chip's channels, played by
-// register writes the way a song plays them.
+// Tests for the stereo mixer (Source/APU/Mixer.cpp, CVRC7::EndFrame and the
+// N163's one DAC; the 5B's channels go through it as the VRC6's do): every
+// chip's channels, played by register writes the way a song plays them.
 //
 // With every channel in the middle, which is where a song that doesn't pan
 // has them, both sides are the mono mix sample for sample: MONO holds hashes
 // of what the mixer made before FamiTracker played in stereo (commit
-// fd5f822). A channel panned all the way over is on that side alone, as loud
-// as in the middle; halfway over, the other side has it at half its level.
+// fd5f822; the 5B's from the mono code of commit 555233a, whose emulation of
+// the chip replaced 0.4.6's). A channel panned all the way over is on that
+// side alone, as loud as in the middle; halfway over, the other side has it at
+// half its level.
 //
 // After a deliberate change to the emulation, the hashes are worked out again
 // from the mono code before stereo (with that change made to it too), with
@@ -85,7 +87,7 @@ const uint64_t MONO[CHIPS] = {
 	0xc991749aec17ea3bULL,	// FDS (32006 samples, peak 5882)
 	0x1481cadf677ca954ULL,	// N163 (32006 samples, peak 8840)
 	0x6e2ca61b182b3185ULL,	// VRC7 (32006 samples, peak 11708)
-	0x62d587cde6605ba4ULL,	// 5B (32006 samples, peak 14212)
+	0x94831a7e354267b1ULL,	// 5B (32006 samples, peak 5532)
 };
 #endif
 

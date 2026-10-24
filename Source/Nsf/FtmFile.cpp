@@ -107,7 +107,7 @@ struct BlockKind {
 const BlockKind BLOCKS[] = {
 	{ "PARAMS", 6 }, { "INFO", 1 }, { "HEADER", 3 }, { "INSTRUMENTS", 6 }, { "SEQUENCES", 6 }, { "FRAMES", 3 },
 	{ "PATTERNS", 5 }, { "DPCM SAMPLES", 1 }, { "COMMENTS", 1 }, { "SEQUENCES_VRC6", 6 }, { "SEQUENCES_N163", 1 },
-	{ "SEQUENCES_N106", 1 }
+	{ "SEQUENCES_N106", 1 }, { "SEQUENCES_S5B", 1 }
 };
 
 // Bytes and words as the signed values FamiTracker reads them as (char is
@@ -398,9 +398,11 @@ struct FtTrack {
 	}
 };
 
-// The channels FamiTracker has for a chip setting, as chan_id_t, in its
-// order (CSoundGen::RegisterChannels); the 5B's aren't made
-std::vector<int> ChannelsOf(unsigned Chip)
+// The channels FamiTracker has for the chips that are on (bits), as
+// chan_id_t, in its order (CSoundGen::RegisterChannels): the 2A03's, then
+// every chip's, the N163's it uses among them (Namco), then the N163's past
+// those. With one chip on, 0.4.6's order.
+std::vector<int> ChannelsOf(unsigned Chip, unsigned Namco)
 {
 	std::vector<int> c;
 	for (int i = 0; i < 5; ++i)
@@ -412,12 +414,18 @@ std::vector<int> ChannelsOf(unsigned Chip)
 		for (int i = 8; i < 10; ++i)
 			c.push_back(i);
 	if (Chip & EXP_N163)
-		for (int i = 11; i < 19; ++i)
+		for (int i = 11; i < 11 + int(std::min(Namco, 8u)); ++i)
 			c.push_back(i);
 	if (Chip & EXP_FDS)
 		c.push_back(CHANID_FDS);
 	if (Chip & EXP_VRC7)
 		for (int i = 20; i < 26; ++i)
+			c.push_back(i);
+	if (Chip & EXP_S5B)
+		for (int i = 26; i < 29; ++i)
+			c.push_back(i);
+	if (Chip & EXP_N163)
+		for (int i = 11 + int(std::min(Namco, 8u)); i < 19; ++i)
 			c.push_back(i);
 	return c;
 }
@@ -437,10 +445,10 @@ public:
 		m_FileVersion(FileVersion), m_Problems(Problems), m_Chip(0), m_ChannelsAvailable(5), m_Machine(NTSC), m_EngineSpeed(0),
 		m_Vibrato(0), m_SplitPoint(DEFAULT_SPLIT_POINT), m_NamcoChannels(DEFAULT_NAMCO_CHANNELS), m_FirstHighlight(4),
 		m_SecondHighlight(16), m_TrackCount(1), m_Tracks(MAX_TRACKS), m_Instruments(MAX_INSTRUMENTS),
-		m_Sequences(3 * MAX_SEQUENCES * SEQ_TYPES), m_Samples(MAX_DSAMPLES), m_SampleNames(MAX_DSAMPLES), m_AdjustFdsArpeggio(false),
-		m_HighNotes(0), m_UnknownEffects(0)
+		m_Sequences(MACRO_CHIPS * MAX_SEQUENCES * SEQ_TYPES), m_Samples(MAX_DSAMPLES), m_SampleNames(MAX_DSAMPLES),
+		m_AdjustFdsArpeggio(false), m_HighNotes(0), m_UnknownEffects(0)
 	{
-		m_ChannelTypes = ChannelsOf(0);
+		m_ChannelTypes = ChannelsOf(0, 0);
 		// Modules from before 2.10 have one track, made first
 		if (m_FileVersion < 0x0210)
 			Track(0);
@@ -460,7 +468,7 @@ private:
 	bool LoadFdsSequence(BlockReader &b, Sequence &Seq, std::string &Why);
 	bool ReadSequences(BlockReader &b, std::string &Why);
 	bool ReadSequencesVrc6(BlockReader &b, std::string &Why);
-	bool ReadSequencesN163(BlockReader &b, std::string &Why);
+	bool ReadSequencesN163(BlockReader &b, std::string &Why, int Chip);	// the N163's or the 5B's (the same block)
 	bool ReadFrames(BlockReader &b, std::string &Why);
 	bool ReadPatterns(BlockReader &b, std::string &Why);
 	bool ReadSamples(BlockReader &b, std::string &Why);
@@ -487,7 +495,7 @@ private:
 	unsigned m_TrackCount;
 	std::vector<FtTrack> m_Tracks;
 	std::vector<FtInstrument> m_Instruments;
-	std::vector<Sequence> m_Sequences;		// [chip: 2A03, VRC6, N163][index][type]
+	std::vector<Sequence> m_Sequences;		// [chip: 2A03, VRC6, N163, 5B (macro_chip)][index][type]
 	std::vector<OldSequence> m_TmpSequences;			// SEQUENCES 1: by index alone
 	std::vector<std::vector<OldSequence> > m_OldSequences;	// SEQUENCES 2, and 1 reordered: [index][type]
 	std::vector<std::vector<uint8_t> > m_Samples;
@@ -524,7 +532,7 @@ void Document::SetupChannels(unsigned Chip)
 	if (Chip != 0)
 		m_Machine = NTSC;
 	m_Chip = Chip;
-	m_ChannelTypes = ChannelsOf(Chip);
+	m_ChannelTypes = ChannelsOf(Chip, m_NamcoChannels);
 	m_ChannelsAvailable = unsigned(m_ChannelTypes.size());
 	if (Chip & EXP_N163)
 		m_ChannelsAvailable -= 8 - m_NamcoChannels;
@@ -592,7 +600,9 @@ bool Document::ReadBlock(const std::string &Id, BlockReader &b, std::string &Err
 	else if (Id == "SEQUENCES_VRC6")
 		Ok = ReadSequencesVrc6(b, Why);
 	else if (Id == "SEQUENCES_N163" || Id == "SEQUENCES_N106")	// its name before 0.4.0
-		Ok = ReadSequencesN163(b, Why);
+		Ok = ReadSequencesN163(b, Why, MACROS_N163);
+	else if (Id == "SEQUENCES_S5B")
+		Ok = ReadSequencesN163(b, Why, MACROS_S5B);
 	else if (Id == "BF CLIPS")
 		return true;	// beginner-friendly FamiTracker's clips (Clips.cpp): copies of what the patterns hold
 	else if (Id == "BF SECTIONS")
@@ -632,7 +642,7 @@ bool Document::ReadParams(BlockReader &b, std::string &Why)
 	m_EngineSpeed = b.UInt();
 	if (m_Machine != NTSC && m_Machine != PAL)
 		return Fail(Why, "the machine is " + Number(SignedWord(m_Machine)) + ", neither NTSC (0) nor PAL (1)");
-	if (m_ChannelsAvailable >= MAX_CHANNELS)
+	if (m_ChannelsAvailable > MAX_CHANNELS)	// every chip on has 28
 		return Fail(Why, "it has " + Number(SignedWord(m_ChannelsAvailable)) + " channels");
 
 	m_Vibrato = Version > 2 ? b.Int() : 0;
@@ -731,9 +741,7 @@ bool Document::ReadInstruments(BlockReader &b, std::string &Why)
 		if (Index < 0 || Index >= MAX_INSTRUMENTS)
 			return Fail(Why, "it has an instrument numbered " + Number(Index));
 		const int Type = b.Char();
-		if (Type == TYPE_S5B)
-			return Fail(Why, "instrument " + Number(Index) + " is a Sunsoft 5B instrument, which FamiTracker 0.4.6 doesn't load");
-		if (Type < TYPE_2A03 || Type > TYPE_N163)
+		if (Type < TYPE_2A03 || Type > TYPE_S5B)
 			return Fail(Why, "instrument " + Number(Index) + " is of a kind FamiTracker doesn't know (" + Number(Type) + ")");
 		FtInstrument Inst;
 		Inst.Type = Type;
@@ -754,11 +762,12 @@ bool Document::LoadInstrument(BlockReader &b, int Slot, FtInstrument &Inst, std:
 	switch (Inst.Type) {
 		case TYPE_2A03:
 		case TYPE_VRC6:
-		case TYPE_N163: {
+		case TYPE_N163:
+		case TYPE_S5B: {
 			const int SeqCount = b.Int();
 			if (SeqCount > SEQ_TYPES)
 				return Fail(Why, "instrument " + Number(Slot) + " has " + Number(SeqCount) + " kinds of sequences");
-			// The VRC6's and the N163's read all five
+			// The VRC6's, the N163's and the 5B's read all five
 			const int Read = Inst.Type == TYPE_2A03 ? SeqCount : SEQ_TYPES;
 			for (int i = 0; i < Read; ++i) {
 				Inst.SeqEnable[i] = b.Char();
@@ -1013,7 +1022,7 @@ bool Document::ReadSequencesVrc6(BlockReader &b, std::string &Why)
 	return true;
 }
 
-bool Document::ReadSequencesN163(BlockReader &b, std::string &Why)
+bool Document::ReadSequencesN163(BlockReader &b, std::string &Why, int Chip)
 {
 	const unsigned Count = b.UInt();
 	if (Count >= unsigned(MAX_SEQUENCES * SEQ_TYPES))
@@ -1028,8 +1037,9 @@ bool Document::ReadSequencesN163(BlockReader &b, std::string &Why)
 		if (Type >= unsigned(SEQ_TYPES))
 			return Fail(Why, "sequence " + Number(long(Index)) + " is of kind " + Number(SignedWord(Type)));
 		if (SeqCount > unsigned(MAX_SEQUENCE_ITEMS))
-			Problem("N163 sequence " + Number(long(Index)) + " has " + Number(long(SeqCount)) + " items; FamiTracker keeps 253");
-		Sequence &s = Seq(MACROS_N163, int(Index), int(Type));
+			Problem(std::string(Chip == MACROS_S5B ? "5B" : "N163") + " sequence " + Number(long(Index)) + " has " +
+				Number(long(SeqCount)) + " items; FamiTracker keeps 253");
+		Sequence &s = Seq(Chip, int(Index), int(Type));
 		s.Clear();
 		s.SetCount(SeqCount);
 		s.SetLoop(LoopPoint);
@@ -1418,8 +1428,8 @@ bool Document::MakeModule(Module &Out, FtmInfo &Info, std::string &Error)
 			LastInstrument = i;
 	M.Instruments.resize(size_t(LastInstrument + 1));
 	int LastSample = -1;
-	int LastMacro[3][SEQ_TYPES];
-	for (int Chip = 0; Chip < 3; ++Chip)
+	int LastMacro[MACRO_CHIPS][SEQ_TYPES];
+	for (int Chip = 0; Chip < MACRO_CHIPS; ++Chip)
 		for (int t = 0; t < SEQ_TYPES; ++t)
 			LastMacro[Chip][t] = -1;
 	for (int i = 0; i <= LastInstrument; ++i) {
@@ -1433,9 +1443,11 @@ bool Document::MakeModule(Module &Out, FtmInfo &Info, std::string &Error)
 		switch (f.Type) {
 			case TYPE_2A03:
 			case TYPE_VRC6:
-			case TYPE_N163: {
-				Inst.Kind = f.Type == TYPE_VRC6 ? INST_VRC6 : (f.Type == TYPE_N163 ? INST_N163 : INST_2A03);
-				const int Chip = f.Type == TYPE_VRC6 ? MACROS_VRC6 : (f.Type == TYPE_N163 ? MACROS_N163 : MACROS_2A03);
+			case TYPE_N163:
+			case TYPE_S5B: {
+				Inst.Kind = f.Type == TYPE_VRC6 ? INST_VRC6 : (f.Type == TYPE_N163 ? INST_N163 : (f.Type == TYPE_S5B ? INST_S5B : INST_2A03));
+				const int Chip = f.Type == TYPE_VRC6 ? MACROS_VRC6 : (f.Type == TYPE_N163 ? MACROS_N163 :
+					(f.Type == TYPE_S5B ? MACROS_S5B : MACROS_2A03));
 				for (int t = 0; t < SEQ_TYPES; ++t) {
 					if (!f.SeqEnable[t])
 						continue;
@@ -1490,7 +1502,7 @@ bool Document::MakeModule(Module &Out, FtmInfo &Info, std::string &Error)
 	}
 
 	// Macros by their numbers, up to the last with items or that an instrument plays
-	for (int Chip = 0; Chip < 3; ++Chip)
+	for (int Chip = 0; Chip < MACRO_CHIPS; ++Chip)
 		for (int t = 0; t < SEQ_TYPES; ++t) {
 			int Last = LastMacro[Chip][t];
 			for (int i = 0; i < MAX_SEQUENCES; ++i)

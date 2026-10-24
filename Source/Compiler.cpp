@@ -987,6 +987,22 @@ bool CCompiler::CompileData()
 	}
 	m_vChanOrder.push_back(CHANID_DPCM);
 
+	// The NSF drivers play one expansion chip, and none plays the 5B
+	const unsigned char Chips = m_pDocument->GetExpansionChip();
+	int ChipCount = 0;
+	for (int Bit = 0; Bit < 6; ++Bit)
+		ChipCount += (Chips >> Bit) & 1;
+	if (ChipCount > 1) {
+		Print(_T("Error: this module has %i expansion chips on, and NSF export plays one at a time. Export it as audio instead: ")
+			_T("File > Create WAV or File > Export for games (OGG).\n"), ChipCount);
+		return false;
+	}
+	if (Chips & SNDCHIP_S5B) {
+		Print(_T("Error: NSF export can't play the Sunsoft 5B: FamiTracker has no NSF driver for it. Export the module as audio ")
+			_T("instead: File > Create WAV or File > Export for games (OGG).\n"));
+		return false;
+	}
+
 	// Select driver and channel order
 	switch (m_pDocument->GetExpansionChip()) {
 		case SNDCHIP_NONE:

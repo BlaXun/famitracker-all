@@ -56,15 +56,41 @@ int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR N
 	return -1;
 }
 
-int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error, bool Notify)
+namespace {
+
+// The chip whose sequences an instrument type plays (2A03, VRC6 and 5B instruments)
+int SequenceChip(inst_type_t Type)
 {
-	const inst_type_t Type = VRC6 ? INST_VRC6 : INST_2A03;
-	const int ChipType = VRC6 ? SNDCHIP_VRC6 : SNDCHIP_NONE;
-	if (VRC6 && !pDoc->ExpansionEnabled(SNDCHIP_VRC6)) {
-		Error = _T("This song has no VRC6 channels.");
-		return -1;
+	return Type == INST_VRC6 ? SNDCHIP_VRC6 : (Type == INST_S5B ? SNDCHIP_S5B : SNDCHIP_NONE);
+}
+
+// Turns on an instrument's sequence of a type (2A03, VRC6 and 5B instruments)
+void UseSequence(CInstrument *pInstrument, int Type, int Slot)
+{
+	switch (pInstrument->GetType()) {
+	case INST_VRC6:
+		static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqEnable(Type, 1);
+		static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqIndex(Type, Slot);
+		break;
+	case INST_S5B:
+		static_cast<CInstrumentS5B*>(pInstrument)->SetSeqEnable(Type, 1);
+		static_cast<CInstrumentS5B*>(pInstrument)->SetSeqIndex(Type, Slot);
+		break;
+	case INST_2A03:
+		static_cast<CInstrument2A03*>(pInstrument)->SetSeqEnable(Type, 1);
+		static_cast<CInstrument2A03*>(pInstrument)->SetSeqIndex(Type, Slot);
+		break;
+	default:
+		break;
 	}
-	const CString Name(Sound.InstrumentName(Sawtooth).c_str());
+}
+
+// An instrument of Type (2A03, VRC6 or 5B) named Name playing Sequences, or the
+// one of that type and name already there
+int AddSequenceInstrument(CFamiTrackerDoc *pDoc, inst_type_t Type, const CString &Name,
+	const std::vector<ftapi::PresetSequence> &Sequences, bool Sawtooth, CString &Error, bool Notify)
+{
+	const int ChipType = SequenceChip(Type);
 	const int Existing = FindNamedInstrument(pDoc, Type, Name);
 	if (Existing >= 0)
 		return Existing;
@@ -85,12 +111,12 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 		return -1;
 	}
 	CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Index));	// retained
-	const std::vector<ftapi::PresetSequence> &Sequences = VRC6 ? Sound.SequencesVRC6 : Sound.Sequences2A03;
 	for (size_t s = 0; s < Sequences.size() && pInstrument != NULL; ++s) {
 		const ftapi::PresetSequence &Seq = Sequences[s];
 		if (Sawtooth && Seq.Type == ftapi::SEQUENCE_DUTY)
 			continue;	// on the sawtooth the duty's low bit adds to the volume, which would never fade out
-		const int Slot = VRC6 ? pDoc->GetFreeSequenceVRC6(Seq.Type) : pDoc->GetFreeSequence(Seq.Type);
+		const int Slot = Type == INST_VRC6 ? pDoc->GetFreeSequenceVRC6(Seq.Type) :
+			(Type == INST_S5B ? pDoc->GetFreeSequenceS5B(Seq.Type) : pDoc->GetFreeSequence(Seq.Type));
 		if (Slot < 0)
 			continue;	// all taken: the sound is plainer
 		CSequence *pSequence = pDoc->GetSequence(ChipType, static_cast<unsigned int>(Slot), Seq.Type);
@@ -104,14 +130,7 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 			pSequence->SetReleasePoint(static_cast<unsigned int>(Seq.Release));
 		if (Seq.Type == ftapi::SEQUENCE_ARPEGGIO)
 			pSequence->SetSetting(static_cast<unsigned int>(Seq.Setting));
-		if (VRC6) {
-			static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqEnable(Seq.Type, 1);
-			static_cast<CInstrumentVRC6*>(pInstrument)->SetSeqIndex(Seq.Type, Slot);
-		}
-		else {
-			static_cast<CInstrument2A03*>(pInstrument)->SetSeqEnable(Seq.Type, 1);
-			static_cast<CInstrument2A03*>(pInstrument)->SetSeqIndex(Seq.Type, Slot);
-		}
+		UseSequence(pInstrument, Seq.Type, Slot);
 	}
 	if (pInstrument != NULL)
 		pInstrument->Release();
@@ -119,6 +138,28 @@ int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool 
 	if (Notify)
 		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 	return Index;
+}
+
+}	// namespace
+
+int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error, bool Notify)
+{
+	if (VRC6 && !pDoc->ExpansionEnabled(SNDCHIP_VRC6)) {
+		Error = _T("This song has no VRC6 channels.");
+		return -1;
+	}
+	return AddSequenceInstrument(pDoc, VRC6 ? INST_VRC6 : INST_2A03, CString(Sound.InstrumentName(Sawtooth).c_str()),
+		VRC6 ? Sound.SequencesVRC6 : Sound.Sequences2A03, Sawtooth, Error, Notify);
+}
+
+int AddPreset5BInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, CString &Error, bool Notify)
+{
+	if (!pDoc->ExpansionEnabled(SNDCHIP_S5B)) {
+		Error = _T("This song has no 5B channels.");
+		return -1;
+	}
+	return AddSequenceInstrument(pDoc, INST_S5B, CString(Sound.InstrumentName(false).c_str()), ftapi::Preset5BSequences(Sound),
+		false, Error, Notify);
 }
 
 int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound, int WavePos, CString &Error)
@@ -321,7 +362,7 @@ namespace {
 int SequenceOf(CFamiTrackerDoc *pDoc, unsigned int Index, int Type)
 {
 	const inst_type_t Kind = pDoc->GetInstrumentType(Index);
-	if (Kind != INST_2A03 && Kind != INST_VRC6)
+	if (Kind != INST_2A03 && Kind != INST_VRC6 && Kind != INST_S5B)
 		return -1;
 	CInstrument *pInstrument = pDoc->GetInstrument(Index);	// retained
 	if (pInstrument == NULL)
@@ -331,6 +372,11 @@ int SequenceOf(CFamiTrackerDoc *pDoc, unsigned int Index, int Type)
 		const CInstrument2A03 *p2A03 = static_cast<CInstrument2A03*>(pInstrument);
 		if (p2A03->GetSeqEnable(Type))
 			Sequence = p2A03->GetSeqIndex(Type);
+	}
+	else if (Kind == INST_S5B) {
+		const CInstrumentS5B *p5B = static_cast<CInstrumentS5B*>(pInstrument);
+		if (p5B->GetSeqEnable(Type))
+			Sequence = p5B->GetSeqIndex(Type);
 	}
 	else {
 		const CInstrumentVRC6 *pVRC6 = static_cast<CInstrumentVRC6*>(pInstrument);
@@ -362,7 +408,7 @@ void RemoveInstrumentAndSequences(CFamiTrackerDoc *pDoc, unsigned int Index)
 			Shared = pDoc->IsInstrumentUsed(i) && pDoc->GetInstrumentType(i) == Type && SequenceOf(pDoc, i, s) == Used[s];
 		if (Shared)
 			continue;
-		CSequence *pSequence = pDoc->GetSequence(Type == INST_VRC6 ? SNDCHIP_VRC6 : SNDCHIP_NONE, static_cast<unsigned int>(Used[s]), s);
+		CSequence *pSequence = pDoc->GetSequence(SequenceChip(Type), static_cast<unsigned int>(Used[s]), s);
 		if (pSequence != NULL)
 			pSequence->Clear();
 	}
@@ -389,6 +435,7 @@ enum lib_kind_t {
 	LIB_MMC5,			// its pulses play 2A03 instruments
 	LIB_VRC7,
 	LIB_FDS,			// the FDS's wavetable sounds (kept as a number in the registry: new kinds go last)
+	LIB_S5B,			// its own sounds, then the presets
 };
 
 struct lib_target_t {
@@ -401,7 +448,7 @@ struct lib_sound_t {
 	CString Name;		// "Soft lead"; for the VRC7 "Piano"
 	CString Group;		// "Lead", "Bass", ...
 	CString Description;
-	const ftapi::Preset *pPreset;	// NULL for a VRC7 or FDS sound
+	const ftapi::Preset *pPreset;	// NULL for a VRC7 or FDS sound; for the 5B, one of its own sounds or a preset
 	const ftapi::FdsSound *pFds;	// an FDS sound, or NULL
 	int Patch;			// the VRC7's sound, 1-15
 	bool Low;			// a bass: heard low
@@ -409,13 +456,15 @@ struct lib_sound_t {
 
 LPCTSTR PresetGroup(const std::string &Name)
 {
-	if (Name == "soft lead" || Name == "bright lead" || Name == "thin lead" || Name == "singing lead" || Name == "brass")
+	if (Name == "soft lead" || Name == "bright lead" || Name == "thin lead" || Name == "singing lead" || Name == "brass" ||
+		Name == "square lead" || Name == "singing square")
 		return _T("Lead");
-	if (Name == "pluck" || Name == "bell")
+	if (Name == "pluck" || Name == "bell" || Name == "square pluck" || Name == "square bell")
 		return _T("Pluck or bell");
-	if (Name == "soft chords" || Name == "warm pad" || Name == "strings" || Name == "organ")
+	if (Name == "soft chords" || Name == "warm pad" || Name == "strings" || Name == "organ" || Name == "square pad" ||
+		Name == "lush chords")
 		return _T("Chords or pad");
-	if (Name == "bass" || Name == "plucky bass")
+	if (Name == "bass" || Name == "plucky bass" || Name == "thump bass" || Name == "buzz bass" || Name == "sync buzz")
 		return _T("Bass");
 	return _T("Drum");
 }
@@ -485,6 +534,8 @@ lib_kind_t KindOfChannel(int ChanID)
 		return LIB_VRC7;
 	case CHANID_FDS:
 		return LIB_FDS;
+	case CHANID_S5B_CH1: case CHANID_S5B_CH2: case CHANID_S5B_CH3:
+		return LIB_S5B;
 	default:
 		return LIB_PULSE;
 	}
@@ -626,6 +677,7 @@ void CInstrumentLibraryDlg::FillTargets()
 		{ LIB_MMC5, _T("MMC5 pulses") },
 		{ LIB_VRC7, _T("VRC7: FM sounds") },
 		{ LIB_FDS, _T("FDS: wavetable sounds") },
+		{ LIB_S5B, _T("Sunsoft 5B: squares, buzz and noise") },
 	};
 	m_Targets.clear();
 	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
@@ -633,7 +685,7 @@ void CInstrumentLibraryDlg::FillTargets()
 		for (int c = 0; c < Channels; ++c) {
 			const int ID = pDoc->GetChannelType(static_cast<unsigned int>(c));
 			if (ID == CHANID_DPCM || (ID >= CHANID_N163_CHAN1 && ID <= CHANID_N163_CHAN8) ||
-				ID == CHANID_MMC5_VOICE || ID >= CHANID_S5B_CH1 || KindOfChannel(ID) != KINDS[k].Kind)
+				ID == CHANID_MMC5_VOICE || ID > CHANID_S5B_CH3 || KindOfChannel(ID) != KINDS[k].Kind)
 				continue;
 			lib_target_t Target;
 			Target.Kind = KINDS[k].Kind;
@@ -706,6 +758,21 @@ void CInstrumentLibraryDlg::FillSounds()
 			}
 		}
 		else {
+			if (pTarget->Kind == LIB_S5B) {
+				// The 5B's own sounds first; the presets (but the drums, the noise channel's) follow
+				const std::vector<ftapi::Preset> &Own = ftapi::Sunsoft5BSounds();
+				for (size_t i = 0; i < Own.size(); ++i) {
+					lib_sound_t Sound;
+					Sound.Name = Own[i].InstrumentName(false).c_str();
+					Sound.Group = PresetGroup(Own[i].Name);
+					Sound.Description = Own[i].Description.c_str();
+					Sound.pPreset = &Own[i];
+					Sound.pFds = NULL;
+					Sound.Patch = 0;
+					Sound.Low = Sound.Group == _T("Bass");
+					m_Sounds.push_back(Sound);
+				}
+			}
 			const std::vector<ftapi::Preset> &Presets = ftapi::Presets();
 			for (size_t i = 0; i < Presets.size(); ++i) {
 				if (Presets[i].Drum != (pTarget->Kind == LIB_NOISE))
@@ -764,6 +831,8 @@ int CInstrumentLibraryDlg::ExistingInstrument(const lib_sound_t &Sound) const
 		Type = INST_FDS;
 	else if (pTarget->Kind == LIB_VRC6_PULSE || pTarget->Kind == LIB_SAWTOOTH)
 		Type = INST_VRC6;
+	else if (pTarget->Kind == LIB_S5B)
+		Type = INST_S5B;
 	return FindNamedInstrument(Doc(), Type, Sound.Name);
 }
 
@@ -776,6 +845,8 @@ int CInstrumentLibraryDlg::MakeInstrument(const lib_sound_t &Sound, CString &Err
 		return AddFdsSoundInstrument(Doc(), *Sound.pFds, Error);
 	if (Sound.pPreset == NULL)
 		return AddVrc7PatchInstrument(Doc(), Sound.Patch, Sound.Name, Error);
+	if (pTarget->Kind == LIB_S5B)
+		return AddPreset5BInstrument(Doc(), *Sound.pPreset, Error);
 	const bool VRC6 = pTarget->Kind == LIB_VRC6_PULSE || pTarget->Kind == LIB_SAWTOOTH;
 	return AddPresetInstrument(Doc(), *Sound.pPreset, VRC6, pTarget->Kind == LIB_SAWTOOTH, Error);
 }
@@ -820,8 +891,9 @@ void CInstrumentLibraryDlg::Play(const lib_sound_t &Sound, int Instrument)
 
 	// A few notes: up and back for a melody, low for a bass, a beat for a drum
 	m_Events.clear();
-	if (pTarget->Kind == LIB_NOISE) {
-		const int Pitch = DrumPitch(Sound.pPreset != NULL ? Sound.pPreset->Name : std::string());
+	const bool Square = pTarget->Kind == LIB_S5B;	// sounds an octave under the note written
+	if (pTarget->Kind == LIB_NOISE || (Square && Sound.Group == _T("Drum"))) {
+		const int Pitch = Square ? 48 : DrumPitch(Sound.pPreset != NULL ? Sound.pPreset->Name : std::string());	// 5B: C-4
 		static const DWORD HITS[] = { 0, 300, 600, 750, 900 };
 		for (size_t i = 0; i < sizeof(HITS) / sizeof(HITS[0]); ++i) {
 			play_event_t Hit = { HITS[i], Pitch };
@@ -837,8 +909,8 @@ void CInstrumentLibraryDlg::Play(const lib_sound_t &Sound, int Instrument)
 		const bool Low = Sound.Low || pTarget->Kind == LIB_TRIANGLE || pTarget->Kind == LIB_SAWTOOTH;
 		const int *pNotes = Low ? BASS : MELODY;
 		// The FDS sounds two octaves under the note written: the melody goes up two, where a pulse would play
-		// it, and a bass one, where the triangle plays it
-		const int Lift = pTarget->Kind == LIB_FDS ? (Low ? 12 : 24) : 0;
+		// it, and a bass one, where the triangle plays it; the 5B one octave under: a melody goes up one
+		const int Lift = pTarget->Kind == LIB_FDS ? (Low ? 12 : 24) : (Square && !Low ? 12 : 0);
 		for (size_t i = 0; i < 6; ++i) {
 			play_event_t Note = { STEP[i], pNotes[i] + Lift };
 			m_Events.push_back(Note);

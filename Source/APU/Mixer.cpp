@@ -46,7 +46,11 @@
 
  ---
 
- N163 & 5B are still unknown
+ N163 is still unknown
+
+ 5B: the real cartridge is very loud. Here a 5B square at volume 15 is as loud
+ as a 2A03 pulse of 50% duty at 15 (SynthS5B), as the VRC6's pulses are, and the
+ other chips make room for it as they do for the VRC6.
 
  Stereo (this FamiTracker's own; the NES plays in mono): every channel has a
  pan (the 8xx effect, CChannelHandler::SetPan), 0x00 left, 0x80 the middle,
@@ -56,10 +60,10 @@
  out on both sides sample for sample as the mono mix did. The 2A03's two
  outputs mix their channels nonlinearly (CalcPin1, CalcPin2): each side mixes
  its share of every channel with the same formula. The linear chips' channels
- (VRC6, MMC5, FDS) send each side its share of their level; the N163's one
- DAC plays its channels in turn, each with its own pan. The VRC7 and the 5B
- make their samples at the end of a frame, a side at a time with the pans
- then (CVRC7::EndFrame, CS5B::GetMixMono).
+ (VRC6, MMC5, FDS, and the 5B's, whose levels CS5B sends as they change) send
+ each side its share of their level; the N163's one DAC plays its channels in
+ turn, each with its own pan. The VRC7 makes its samples at the end of a
+ frame, a side at a time with the pans then (CVRC7::EndFrame).
 
 */
 
@@ -101,6 +105,7 @@ CMixer::CMixer()
 	m_fLevelMMC5 = 1.0f;
 	m_fLevelFDS = 1.0f;
 	m_fLevelN163 = 1.0f;
+	m_fLevelS5B = 1.0f;
 
 	m_iExternalChip = 0;
 	m_iSampleRate = 0;
@@ -172,6 +177,9 @@ void CMixer::SetChipLevel(chip_level_t Chip, float Level)
 		case CHIP_LEVEL_N163:
 			m_fLevelN163 = Level;
 			break;
+		case CHIP_LEVEL_S5B:
+			m_fLevelS5B = Level;
+			break;
 	}
 }
 
@@ -182,6 +190,7 @@ float CMixer::GetAttenuation() const
 	const float ATTENUATION_N163 = 0.70f;
 	const float ATTENUATION_MMC5 = 0.83f;
 	const float ATTENUATION_FDS  = 0.90f;
+	const float ATTENUATION_S5B  = 0.80f;
 
 	float Attenuation = 1.0f;
 
@@ -201,6 +210,9 @@ float CMixer::GetAttenuation() const
 
 	if (m_iExternalChip & SNDCHIP_FDS)
 		Attenuation *= ATTENUATION_FDS;
+
+	if (m_iExternalChip & SNDCHIP_S5B)
+		Attenuation *= ATTENUATION_S5B;
 
 	return Attenuation;
 }
@@ -248,7 +260,9 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 	
 	// Not checked
 	SynthN163.volume(Volume * 1.1f * m_fLevelN163);
-	//SynthS5B.volume(Volume * 1.0f);
+
+	// 5B: a channel at 15 (255) as a 2A03 pulse at 15 (CalcPin1 * AMP_2A03 = 59.75 of Synth2A03SS's 500)
+	SynthS5B.volume(Volume * 0.9373f * m_fLevelS5B);
 
 	m_iLowCut = LowCut;
 	m_iHighCut = HighCut;
@@ -432,10 +446,11 @@ void CMixer::MixMMC5(int ChanID, int Value, int Time)
 	MixSides(SynthMMC5, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
 }
 
-void CMixer::MixS5B(int Value, int Time)
+void CMixer::MixS5B(int ChanID, int Value, int Time)
 {
-	SynthS5B.offset(Time, Value, &BlipBuffer);
-	SynthS5B.offset(Time, Value, &BlipBufferRight);
+	// Each channel's level as it changes (CS5B), on each side as its pan has it
+	m_iLevel[ChanID] += Value;
+	MixSides(SynthS5B, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::PanGains(int Pan, double &Left, double &Right)
@@ -486,7 +501,9 @@ void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
 		default:
 			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
 				MixN163Sides(Time);
-			// The VRC7's and the 5B's channels: their samples are made at the end of the frame
+			if (ChanID >= CHANID_S5B_CH1 && ChanID <= CHANID_S5B_CH3)
+				MixSides(SynthS5B, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			// The VRC7's channels: their samples are made at the end of the frame
 			break;
 	}
 }
@@ -539,6 +556,9 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 			break;
 		case SNDCHIP_VRC6:
 			MixVRC6(ChanID, Value, FrameCycles);
+			break;
+		case SNDCHIP_S5B:
+			MixS5B(ChanID, Value, FrameCycles);
 			break;
 	}
 }

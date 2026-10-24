@@ -497,17 +497,30 @@ static bool ImportCellText(
 				return false;
 			}
 
-			int p=0;
 			TCHAR pC = sEff.GetAt(0);
 			if (pC >= TCHAR('a') && pC <= TCHAR('z')) pC += TCHAR('A') - TCHAR('a');
-			for (;p < EF_COUNT; ++p)
-				if (EFF_CHAR[p] == pC) break;
-			if (p >= EF_COUNT)
+
+			// The FDS's and the 5B's own effects share letters with the 2A03's (H, I, J):
+			// the channel's chip's come first (0.4.6 took the first letter that matched)
+			static const int FDS_EFFECTS[] = { EF_FDS_MOD_DEPTH, EF_FDS_MOD_SPEED_HI, EF_FDS_MOD_SPEED_LO };
+			static const int S5B_EFFECTS[] = { EF_SUNSOFT_ENV_TYPE, EF_SUNSOFT_ENV_HI, EF_SUNSOFT_ENV_LO };
+			const int Chip = static_cast<int>(channel) < pDoc->GetChannelCount() ? pDoc->GetChipType(static_cast<int>(channel)) : SNDCHIP_NONE;
+			int Effect = EF_NONE;
+			for (int k = 0; k < 3 && Effect == EF_NONE; ++k) {
+				if (Chip == SNDCHIP_FDS && EFF_CHAR[FDS_EFFECTS[k] - 1] == pC)
+					Effect = FDS_EFFECTS[k];
+				if (Chip == SNDCHIP_S5B && EFF_CHAR[S5B_EFFECTS[k] - 1] == pC)
+					Effect = S5B_EFFECTS[k];
+			}
+			// EFF_CHAR has an entry for each effect but EF_NONE
+			for (int p = 0; p < EF_COUNT - 1 && Effect == EF_NONE; ++p)
+				if (EFF_CHAR[p] == pC) Effect = p + 1;
+			if (Effect == EF_NONE)
 			{
 				sResult.Format(_T("Line %d column %d: unrecognized effect '%s'."), t.line, t.GetColumn(), sEff);
 				return false;
 			}
-			Cell.EffNumber[e] = p+1;
+			Cell.EffNumber[e] = Effect;
 
 			int h;
 			if (!ImportHex(sEff.Right(2), h, t.line, t.GetColumn(), sResult))

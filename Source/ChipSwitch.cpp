@@ -57,6 +57,54 @@ unsigned int ShownColumns(const CFamiTrackerDoc *pDoc, unsigned int Track, unsig
 
 }	// namespace
 
+std::vector<int> ChipChannels(unsigned char Chips, unsigned int NamcoChannels)
+{
+	const unsigned int Namco = std::max(1u, std::min(8u, NamcoChannels));
+	std::vector<int> Types;
+	for (int i = CHANID_SQUARE1; i <= CHANID_DPCM; ++i)
+		Types.push_back(i);
+	if (Chips & SNDCHIP_VRC6)
+		for (int i = CHANID_VRC6_PULSE1; i <= CHANID_VRC6_SAWTOOTH; ++i)
+			Types.push_back(i);
+	if (Chips & SNDCHIP_MMC5)
+		for (int i = CHANID_MMC5_SQUARE1; i <= CHANID_MMC5_SQUARE2; ++i)
+			Types.push_back(i);
+	if (Chips & SNDCHIP_N163)
+		for (int i = CHANID_N163_CHAN1; i < CHANID_N163_CHAN1 + static_cast<int>(Namco); ++i)
+			Types.push_back(i);
+	if (Chips & SNDCHIP_FDS)
+		Types.push_back(CHANID_FDS);
+	if (Chips & SNDCHIP_VRC7)
+		for (int i = CHANID_VRC7_CH1; i <= CHANID_VRC7_CH6; ++i)
+			Types.push_back(i);
+	if (Chips & SNDCHIP_S5B)
+		for (int i = CHANID_S5B_CH1; i <= CHANID_S5B_CH3; ++i)
+			Types.push_back(i);
+	return Types;
+}
+
+std::vector<int> ChannelSources(const std::vector<int> &OldTypes, const std::vector<int> &NewTypes)
+{
+	std::vector<int> Sources(NewTypes.size(), -1);
+	for (size_t i = 0; i < NewTypes.size(); ++i) {
+		const std::vector<int>::const_iterator It = std::find(OldTypes.begin(), OldTypes.end(), NewTypes[i]);
+		if (It != OldTypes.end())
+			Sources[i] = static_cast<int>(It - OldTypes.begin());
+	}
+	return Sources;
+}
+
+std::vector<unsigned int> LeavingChannels(const CFamiTrackerDoc *pDoc, unsigned char Chips, unsigned int NamcoChannels)
+{
+	const std::vector<int> Types = ChipChannels(Chips, NamcoChannels);
+	std::vector<unsigned int> Leaving;
+	for (unsigned int c = 0; c < pDoc->GetAvailableChannels(); ++c) {
+		if (std::find(Types.begin(), Types.end(), pDoc->GetChannelType(static_cast<int>(c))) == Types.end())
+			Leaving.push_back(c);
+	}
+	return Leaving;
+}
+
 int CountChannelNotes(const CFamiTrackerDoc *pDoc, const std::vector<unsigned int> &Channels, std::vector<int> &Tracks)
 {
 	Tracks.clear();
@@ -254,6 +302,32 @@ int PlaceSongEffects(CFamiTrackerDoc *pDoc, unsigned int Channel, const std::vec
 		}
 		if (Columns > Shown)
 			pDoc->SetEffColumns(t, Channel, Columns - 1);
+	}
+	return Lost;
+}
+
+int SwitchChips(CFamiTrackerDoc *pDoc, unsigned char Chips, unsigned int NamcoChannels, int &Moved)
+{
+	Moved = 0;
+	const unsigned int Namco = std::max(1u, std::min(8u, NamcoChannels));
+	const std::vector<unsigned int> Going = LeavingChannels(pDoc, Chips, Namco);
+
+	std::vector<song_effect_t> Effects;
+	pDoc->LockDocument();
+	GatherSongEffects(pDoc, Going, Effects);
+	EmptyChannels(pDoc, Going);
+	pDoc->UnlockDocument();
+
+	if (Chips & SNDCHIP_N163)
+		pDoc->SetNamcoChannels(Namco);
+	pDoc->SelectExpansionChip(Chips);
+
+	int Lost = 0;
+	if (!Effects.empty() && pDoc->GetAvailableChannels() > 0) {
+		pDoc->LockDocument();
+		Lost = PlaceSongEffects(pDoc, pDoc->GetAvailableChannels() - 1, Effects);
+		pDoc->UnlockDocument();
+		Moved = static_cast<int>(Effects.size()) - Lost;
 	}
 	return Lost;
 }
