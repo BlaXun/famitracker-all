@@ -108,6 +108,7 @@ CMixer::CMixer()
 		m_iOwnSent[i][0] = m_iOwnSent[i][1] = 0;
 		m_iLevel[i] = 0;
 		m_iSent[i][0] = m_iSent[i][1] = 0;
+		m_bSilent[i] = false;
 	}
 	m_iN163Level = 0;
 	m_iN163Chan = CHANID_N163_CHAN1;
@@ -460,6 +461,29 @@ int CMixer::FinishBuffer(int t)
 // Mixing
 //
 
+// The first pin's output from the pulses' inputs on a side, the mixer window's levels in: each pulse's share of the pin
+// (in proportion to its input, as the formula is) scaled, so the pin compresses them as it did
+double CMixer::Pin1(double Pulse1, double Pulse2)
+{
+	double Sum = CalcPin1(Pulse1, Pulse2);
+	if ((m_dLevel[CHANID_SQUARE1] != 1.0 || m_dLevel[CHANID_SQUARE2] != 1.0) && Pulse1 + Pulse2 > 0)
+		Sum *= (Pulse1 * m_dLevel[CHANID_SQUARE1] + Pulse2 * m_dLevel[CHANID_SQUARE2]) / (Pulse1 + Pulse2);
+	return Sum;
+}
+
+// ...and the second pin's, each channel's share scaled as on the first
+double CMixer::Pin2(double Triangle, double Noise, double Dpcm)
+{
+	double Sum = CalcPin2(Triangle, Noise, Dpcm);
+	if (m_dLevel[CHANID_TRIANGLE] != 1.0 || m_dLevel[CHANID_NOISE] != 1.0 || m_dLevel[CHANID_DPCM] != 1.0) {
+		const double Shares = Triangle / 8227.0 + Noise / 12241.0 + Dpcm / 22638.0;
+		if (Shares > 0)
+			Sum *= (Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE] + Noise / 12241.0 * m_dLevel[CHANID_NOISE] +
+				Dpcm / 22638.0 * m_dLevel[CHANID_DPCM]) / Shares;
+	}
+	return Sum;
+}
+
 void CMixer::MixInternal1(int Time)
 {
 	// Each side mixes its share of the pulses (a pulse in the middle has all of it on both)
@@ -469,11 +493,12 @@ void CMixer::MixInternal1(int Time)
 		SumR = ((m_iChannels[CHANID_SQUARE1].Right + m_iChannels[CHANID_SQUARE2].Right) *  0.00752) * InternalVol;
 #else
 		const double Pulse1 = m_iChannels[CHANID_SQUARE1] * m_dGain[CHANID_SQUARE1][s], Pulse2 = m_iChannels[CHANID_SQUARE2] * m_dGain[CHANID_SQUARE2][s];
-		double Sum = CalcPin1(Pulse1, Pulse2);
-		// The mixer window's levels: each pulse's share of the pin (in proportion to its input, as the
-		// formula is) scaled, so the pin compresses them as it did
-		if ((m_dLevel[CHANID_SQUARE1] != 1.0 || m_dLevel[CHANID_SQUARE2] != 1.0) && Pulse1 + Pulse2 > 0)
-			Sum *= (Pulse1 * m_dLevel[CHANID_SQUARE1] + Pulse2 * m_dLevel[CHANID_SQUARE2]) / (Pulse1 + Pulse2);
+		double Sum = Pin1(Pulse1, Pulse2);
+		// A render of some parts alone (SetChannelSilent): what the pin plays from the pulses left out alone comes off,
+		// so the rest is the other's sound in the mix, the pin's compression in
+		const bool Quiet1 = m_bSilent[CHANID_SQUARE1], Quiet2 = m_bSilent[CHANID_SQUARE2];
+		if (Quiet1 || Quiet2)
+			Sum = Quiet1 && Quiet2 ? 0.0 : Sum - Pin1(Quiet1 ? Pulse1 : 0.0, Quiet2 ? Pulse2 : 0.0);
 #endif
 
 		double Delta = (Sum - m_dSumSS[s]) * AMP_2A03;
@@ -481,7 +506,7 @@ void CMixer::MixInternal1(int Time)
 		if (m_bOwn[CHANID_SQUARE1] || m_bOwn[CHANID_SQUARE2] || m_iPinOwn[CHANID_SQUARE1][s] != 0 || m_iPinOwn[CHANID_SQUARE2][s] != 0) {
 			// Depth: a pulse in its own buffers gets its share of the pin there, out of the sides' step
 			static const int CHANS[2] = { CHANID_SQUARE1, CHANID_SQUARE2 };
-			const double Weighted[2] = { Pulse1 * m_dLevel[CHANID_SQUARE1], Pulse2 * m_dLevel[CHANID_SQUARE2] };
+			const double Weighted[2] = { Quiet1 ? 0.0 : Pulse1 * m_dLevel[CHANID_SQUARE1], Quiet2 ? 0.0 : Pulse2 * m_dLevel[CHANID_SQUARE2] };
 			Step -= SplitPin(Synth2A03SS, CHANS, Weighted, 2, Sum, s, Time);
 		}
 		Synth2A03SS.offset(Time, Step, &Side(s));
@@ -498,14 +523,11 @@ void CMixer::MixInternal2(int Time, bool Send)
 #else
 		const double Triangle = m_iChannels[CHANID_TRIANGLE] * m_dGain[CHANID_TRIANGLE][s], Noise = m_iChannels[CHANID_NOISE] * m_dGain[CHANID_NOISE][s],
 			Dpcm = m_iChannels[CHANID_DPCM] * m_dGain[CHANID_DPCM][s];
-		double Sum = CalcPin2(Triangle, Noise, Dpcm);
-		// The mixer window's levels, each channel's share scaled as on the first pin
-		if (m_dLevel[CHANID_TRIANGLE] != 1.0 || m_dLevel[CHANID_NOISE] != 1.0 || m_dLevel[CHANID_DPCM] != 1.0) {
-			const double Shares = Triangle / 8227.0 + Noise / 12241.0 + Dpcm / 22638.0;
-			if (Shares > 0)
-				Sum *= (Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE] + Noise / 12241.0 * m_dLevel[CHANID_NOISE] +
-					Dpcm / 22638.0 * m_dLevel[CHANID_DPCM]) / Shares;
-		}
+		double Sum = Pin2(Triangle, Noise, Dpcm);
+		// A render of some parts alone, as on the first pin: a DPCM level left out still softens the triangle and the noise
+		const bool QuietT = m_bSilent[CHANID_TRIANGLE], QuietN = m_bSilent[CHANID_NOISE], QuietD = m_bSilent[CHANID_DPCM];
+		if (QuietT || QuietN || QuietD)
+			Sum = QuietT && QuietN && QuietD ? 0.0 : Sum - Pin2(QuietT ? Triangle : 0.0, QuietN ? Noise : 0.0, QuietD ? Dpcm : 0.0);
 #endif
 
 		double Delta = (Sum - m_dSumTND[s]) * AMP_2A03;
@@ -513,8 +535,8 @@ void CMixer::MixInternal2(int Time, bool Send)
 		if (m_bOwn[CHANID_TRIANGLE] || m_bOwn[CHANID_NOISE] || m_bOwn[CHANID_DPCM] || m_iPinOwn[CHANID_TRIANGLE][s] != 0 ||
 			m_iPinOwn[CHANID_NOISE][s] != 0 || m_iPinOwn[CHANID_DPCM][s] != 0) {
 			static const int CHANS[3] = { CHANID_TRIANGLE, CHANID_NOISE, CHANID_DPCM };
-			const double Weighted[3] = { Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE], Noise / 12241.0 * m_dLevel[CHANID_NOISE],
-				Dpcm / 22638.0 * m_dLevel[CHANID_DPCM] };
+			const double Weighted[3] = { QuietT ? 0.0 : Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE], QuietN ? 0.0 : Noise / 12241.0 *
+				m_dLevel[CHANID_NOISE], QuietD ? 0.0 : Dpcm / 22638.0 * m_dLevel[CHANID_DPCM] };
 			Step -= SplitPin(Synth2A03TND, CHANS, Weighted, 3, Sum, s, Time, Send);
 		}
 		if (Send)
@@ -673,6 +695,15 @@ void CMixer::ClearOwn(int ChanID, int Time)
 			SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1].offset(Time, -Had, &Buffer(DestOf(ChanID), s));
 		m_iOwnSent[ChanID][s] = 0;
 	}
+}
+
+void CMixer::SetChannelSilent(int ChanID, bool Silent, int Time)
+{
+	// The 2A03's channels: the others mix their channels apart, and a level of nothing silences them
+	if (ChanID < CHANID_SQUARE1 || ChanID > CHANID_DPCM || m_bSilent[ChanID] == Silent)
+		return;
+	m_bSilent[ChanID] = Silent;
+	Remix(ChanID, Time);
 }
 
 double CMixer::GetChannelGain(int ChanID) const

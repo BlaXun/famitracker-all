@@ -81,6 +81,11 @@ public:
 	// of the output its two pins mix, so the chip compresses as before.
 	void	SetChannelGain(int ChanID, double Gain, int Time);
 	double	GetChannelGain(int ChanID) const;
+	// A render of some parts alone (this FamiTracker's own, measure_mix's stems): a 2A03 channel left out of the
+	// sound from Time on, its pin then playing the rest as it does with it, less what it plays with only the channels
+	// left out: their sound goes and their effect stays (a DPCM level still softens the triangle and the noise). The
+	// other chips mix their channels apart: a gain of 0 silences them.
+	void	SetChannelSilent(int ChanID, bool Silent, int Time);
 	// Depth (this FamiTracker's own, View > Mixer; Space.h): a channel's Soft (0 off to 100) and its send to the
 	// space (0-100), from Time on. A channel with either on is mixed into Blip_Buffers of its own, which
 	// ReadBuffer softens and sends before adding them to the sides; with every channel's at 0 nothing changes.
@@ -101,6 +106,8 @@ public:
 private:
 	inline double CalcPin1(double Val1, double Val2);
 	inline double CalcPin2(double Val1, double Val2, double Val3);
+	double Pin1(double Pulse1, double Pulse2);					// the pins' outputs with the mixer window's levels
+	double Pin2(double Triangle, double Noise, double Dpcm);
 
 	void MixInternal1(int Time);
 	void MixInternal2(int Time, bool Send = true);	// Send false: the pin's output taken in, nothing sent (StartAt)
@@ -167,6 +174,7 @@ private:
 	int			m_iPan[CHANNELS];			// 0x00-0xFF
 	double		m_dGain[CHANNELS][2];		// left and right, from the pan
 	double		m_dLevel[CHANNELS];			// the mixer window's level (1 as the channel plays)
+	bool		m_bSilent[CHANNELS];		// a 2A03 channel left out of a render's sound (SetChannelSilent)
 	double		m_dSide[CHANNELS][2];		// the pan's gains and the level together, for the FDS, N163, 5B and VRC7
 	int32		m_iLevel[CHANNELS];			// the linear chips' channels: the level the deltas sent add up to
 	int32		m_iSent[CHANNELS][2];		// ...and what each side has of it

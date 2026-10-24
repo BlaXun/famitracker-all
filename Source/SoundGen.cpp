@@ -437,9 +437,13 @@ void CSoundGen::ApplyChannelMix()
 		// The N163's channels play on the chip's in reverse order (see CChannelHandler::SetPan)
 		const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
 		const int Level = m_iMixLevel[i];
-		// A render of some parts alone (RenderToFile's pSilent): the others' sound gone, their effects playing on
-		const bool Silent = m_bRendering && m_bRenderSilent[i];
-		m_pAPU->SetChannelGain(Mixed, Silent ? 0.0 : Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
+		// A render of some parts alone (RenderToFile's pSilent): the others' sound gone, their effects playing on. The
+		// 2A03's channels share two pins that compress what they mix, so one left out comes off its pin as the pin
+		// plays it (CMixer::SetChannelSilent: a DPCM level still softens the triangle); the other chips mix their
+		// channels apart, and a level of nothing silences them
+		const bool Silent = m_bRendering && m_bRenderSilent[i], Pin = i <= CHANID_DPCM;
+		m_pAPU->SetChannelGain(Mixed, Silent && !Pin ? 0.0 : Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
+		m_pAPU->SetChannelSilent(Mixed, Silent && Pin);
 		m_pAPU->SetChannelDepth(Mixed, m_iMixSoft[i], m_iMixSpace[i]);
 		if (m_pChannels[i] != NULL)
 			m_pChannels[i]->MixerPanChanged();

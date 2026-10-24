@@ -563,6 +563,13 @@ void CAPU::SetChannelGain(int ChanID, double Gain)
 	m_pMixer->SetChannelGain(ChanID, Gain, m_iFrameCycles);
 }
 
+void CAPU::SetChannelSilent(int ChanID, bool Silent)
+{
+	// From now on, as the pan
+	Process();
+	m_pMixer->SetChannelSilent(ChanID, Silent, m_iFrameCycles);
+}
+
 double CAPU::GetChannelGain(int ChanID) const
 {
 	return m_pMixer->GetChannelGain(ChanID);
