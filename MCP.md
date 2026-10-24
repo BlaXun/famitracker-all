@@ -328,7 +328,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 
 `check_song` with `format` `json` gives its findings as data, for programs
 (the panel reads it): `track`, `track_name`, `from_bar`, `to_bar`, `key`
-(and `key_from_notes`), `pattern_length`, `rows_per_beat`, `rows_per_bar`,
+(and `key_from_notes` or `key_chosen`), `pattern_length`, `rows_per_beat`, `rows_per_bar`,
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy` and `key`, notes that vanish counted by the note), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
@@ -357,7 +357,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 
 | Tool | What it does |
 |---|---|
-| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the key found from the notes, the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
+| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, and whether the soundtrack has notes |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
@@ -380,6 +380,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
+| `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -465,6 +466,23 @@ its repeat ("A 2"), `remove_bars` takes a removed section's name with it,
 than a frame leave the sections where they were, and the reply says so.
 The names are saved in the module in a block of their own (`BF SECTIONS`)
 that other FamiTracker versions skip.
+
+### The key
+
+Each track has a key: the one chosen for it, with the Key button above
+FamiTracker's piano roll or with `set_key`, or else the one its notes fit
+(found as `get_song` finds it). The piano roll lights the key's notes, names
+the chords the parts play in its spelling (the same chords `get_song` lists)
+and, with Snap to key, lands the notes the user draws on the key's notes.
+`get_song` says whether the key is chosen or found (and, for a chosen one,
+what the notes alone fit), and every tool that takes a `key` uses the
+track's when it isn't given one. A key moves no notes: `transpose` with
+`to_key` (or `change_mood` for the whole song) moves them, and a chosen key
+goes along when the whole song moves, in the same undoable change. Versions
+(`keep_version`, `make_version`) keep it. A pentatonic key (a major or minor
+key's five notes) keeps the piano roll to those notes; the tools use the key
+itself. The choices are saved in the module in a block of their own
+(`BF KEYS`) that other FamiTracker versions skip.
 
 ## Speed and tempo
 

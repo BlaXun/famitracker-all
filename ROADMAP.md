@@ -117,9 +117,19 @@ way to hide a channel) and choosing the starter instruments.
 Done (see `RECORDER.md`): a horizontal view under the pattern editor, time
 left to right and pitch bottom to top, that follows playback. It shows every
 channel's notes with the edited one bright, and draws, paints a melody, moves,
-copies, resizes and erases notes, keeps new notes in a key, places clips with
-the mouse, and puts effects on notes (vibrato, tremolo, chords as arpeggios,
-slides, glides, bends and fades). Every change is one Ctrl+Z.
+copies, resizes and erases notes, places clips with the mouse, and puts
+effects on notes (vibrato, tremolo, chords as arpeggios, slides, glides, bends
+and fades). Every change is one Ctrl+Z.
+
+It shows the key and the chords, so you see which notes fit: the lanes of the
+key's notes are a little lighter, the key note's warmer, and a strip under the
+bar numbers names the chord of each bar (or half bar, where it changes) as
+the parts play it. The Key button finds the key from the notes (Auto) or
+takes one you choose: a key note and major, minor, their pentatonic five
+notes, dorian, mixolydian, lydian, phrygian, harmonic minor or locrian. A
+chosen key is saved with the track, and Claude Code's tools use it too. With
+Snap to key on, notes you draw or move land on the key's notes (hold Alt for
+any note). Point at a chord in the strip to see its notes lit.
 
 Still open from the plan:
 

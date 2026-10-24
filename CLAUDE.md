@@ -24,6 +24,15 @@ block) and keeps them with their frames in its frame functions; the frame
 editor draws them (`CFrameEditor::DrawSections`) and changes them with its
 right-click commands as `CFrameAction`s (every frame action snapshots the
 sections, so Undo puts them back), and the piano roll's ruler names them.
+A track's key (`Source/Api/Keys.cpp`, portable too) is chosen in the piano
+roll's Key menu or with `set_key` and kept in a `KeyStore`
+(`CFamiTrackerDoc::GetKeys`, saved in a `BF KEYS` block), changed as one
+undoable `CTrackKeyAction` (`SetTrackKey` in `InsertRecording.cpp`); without
+one, the key is found from the notes. The tools use it as their default
+(`TrackKey` and `KeyArg` in `Tools.cpp`), and the piano roll shades its notes,
+snaps notes to them (Snap to key) and names the chords the parts play in a
+strip under the ruler, from `ToolSet::Harmony` through
+`CMcpConnection::Harmony` (worked out a moment after a change, then kept).
 The overall plan is in `ROADMAP.md`. Unless a section says otherwise,
 everything below describes the 0.4.6 code as found on `master` and was
 checked against that source.
@@ -364,7 +373,11 @@ The application has no test suite of its own. What exists:
   read `check_song`'s JSON back as the problems panel reads it;
   `TestSections` and `TestSectionTools` cover sections as frames move, the
   `BF SECTIONS` block (read back, cut short at every byte and damaged) and
-  the tools that name them or take them in place of bars. Same three
+  the tools that name them or take them in place of bars; `TestKeyChoices`
+  and `TestKeyTools` the keys' shading, snapping and steps, the `BF KEYS`
+  block (the same way), `set_key`, the tools' default key, keys moving with
+  the whole song, versions, and the piano roll's chords (`ToolSet::Harmony`)
+  for known bars. Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -507,6 +520,14 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   Anything that changes a track's frame list must keep them in step
   (`SectionsInsertFrames`, `SectionsRemoveFrames`, `SectionsMoveFrames`,
   `SectionsCopyFrame`, `SectionStore::FitFrames`).
+- **`BF KEYS` block** (this branch; version 1, written after `BF SECTIONS`
+  only when a track has a chosen key): an `int32` count of tracks, then for
+  each, in order, `int32` track, tonic (0-11), mode (its place in
+  `Api/Music.cpp`'s `MODES`, so those stay append only) and flags (1:
+  pentatonic, for major and minor only). `KeyStore::Read` checks every read
+  and refuses a block longer than its tracks; a damaged block loads as no
+  chosen keys. Track removal, swaps and imports keep it in step
+  (`TrackRemoved`, `TracksSwapped`, `FitTracks` after loading).
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.
