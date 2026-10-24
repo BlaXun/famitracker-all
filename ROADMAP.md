@@ -366,6 +366,24 @@ keep working with the grid hidden. The drum grid (a dialog today) could
 become a panel toggled the same way, and the stamp mode (12) would be one
 more.
 
+## 14. Calm tracks by default (Claude Code)
+
+On the backlog (the user, 24 October 2026, after the first night song on
+the VRC6 Plus: "It finally manages to get melancholic and atmospheric
+non-aggressive songs done"). What made it calm was written into the
+composers' brief by hand; the tools should do it themselves when a track
+is calm:
+
+- A calm mix: the melody only 2-3 dB over the chords (the soft mix puts it
+  at 9 against chords at 6, and the leads' held envelopes add more).
+- Lead sounds with calm shapes, ready made: a music box (struck, fading
+  away in about a beat), a breath (swelling in over 10-14 frames, then
+  sinking a little), a strike that falls low. Today's presets and
+  design_instrument's lead hold their level from attack to release.
+- polish without accents (and no scoops or falls) on calm tracks.
+- check_song and the review warn about a lead that holds a high, steady
+  level, as the composers' calm scan did.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
