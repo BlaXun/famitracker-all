@@ -50,9 +50,17 @@ struct ChannelInfo {
 	// dB (0 as it plays; FamiTracker's mixer makes it that much louder) and the pan it starts at (0x80 the middle)
 	int MixLevel;
 	int MixPan;
+	// The chip as the user sees it when that isn't Chip: "VRC6 Plus" (Vrc6Plus.h) for the VRC6's channels and the soft
+	// layer's (whose Chip stays "VRC6" and "N163", as they play); "" otherwise
+	std::string Group;
+	std::string OldName;	// a VRC6 Plus soft channel's name as an N163 channel ("Namco 1"), which the tools still take
+	int ChipChannels;		// the channels its chip has in the song (the tools count them when they read it; the N163's
+							// count sets how loud it plays); 0 when not known
 
-	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false), MixLevel(0), MixPan(0x80) {}
-	std::string FullName() const { return Name == Chip ? Name : Chip + " " + Name; }	// "VRC6 Pulse 1"; "FDS"
+	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false), MixLevel(0), MixPan(0x80), ChipChannels(0) {}
+	const std::string &ShownChip() const { return Group.empty() ? Chip : Group; }
+	// "VRC6 Pulse 1"; "FDS"; "VRC6 Plus Soft 1"
+	std::string FullName() const { return Name == ShownChip() ? Name : ShownChip() + " " + Name; }
 };
 
 // One of an instrument's sequences, as FamiTracker stores it
@@ -114,6 +122,7 @@ struct SongInfo {
 	int FirstHighlight, SecondHighlight;
 	std::string Expansion;	// the expansion chips on: "VRC6", or several, "VRC6, N163, 5B" (in the order VRC6, VRC7,
 							// FDS, MMC5, N163, 5B); "" for none
+	bool Vrc6Plus;			// the VRC6 and the N163 (4 channels) are the VRC6 Plus (Vrc6Plus.h): Expansion still names them
 	std::vector<ChannelInfo> Channels;
 	std::vector<InstrumentInfo> Instruments;
 	std::vector<ClipInfo> Clips;
@@ -125,8 +134,8 @@ struct SongInfo {
 	int PlayRow;			// from the song's start, -1 when stopped
 
 	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Pal(false), Speed(6), Tempo(150), SplitPoint(32),
-		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), KeyChosen(false), DirectChanges(false),
-		Playing(false), PlayRow(-1) {}
+		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), Vrc6Plus(false), KeyChosen(false),
+		DirectChanges(false), Playing(false), PlayRow(-1) {}
 };
 
 // Names for the module and the selected track (name_song), in UTF-8; what
@@ -273,6 +282,8 @@ public:
 	// every track and switches; channels that come in start empty. The effects on the cleared
 	// channels that steer the song (speed and tempo, loops, skips, ends) move to the song's last
 	// channel: Moved of them, and Lost found no free effect column there. FamiTracker can't undo it.
+	// "VRC6 Plus" (Vrc6Plus.h, in place of "VRC6" and "N163") is the VRC6 and the N163 with 4 channels (Channels
+	// is 4 then), marked as VRC6 Plus; without it, a VRC6 Plus song stops being one (its chips can stay).
 	virtual int ExpansionNotes(const std::vector<std::string> &Chips, int Channels, std::vector<int> &Tracks) = 0;
 	virtual bool SetExpansion(const std::vector<std::string> &Chips, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
 	// Undoable

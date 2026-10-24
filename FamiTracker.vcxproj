@@ -552,6 +552,7 @@
     <ClCompile Include="Source\Api\Sections.cpp" />
     <ClCompile Include="Source\Api\Keys.cpp" />
     <ClCompile Include="Source\Api\ChannelMix.cpp" />
+    <ClCompile Include="Source\Api\Vrc6Plus.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
@@ -583,6 +584,7 @@
     <ClInclude Include="Source\Api\Sections.h" />
     <ClInclude Include="Source\Api\Keys.h" />
     <ClInclude Include="Source\Api\ChannelMix.h" />
+    <ClInclude Include="Source\Api\Vrc6Plus.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
     <ClInclude Include="Source\Api\Presets.h" />

@@ -223,6 +223,13 @@ public:
 	unsigned int	GetNamcoChannels() const;
 	void			SetNamcoChannels(unsigned int Channels);
 
+	// VRC6 Plus (Api/Vrc6Plus.h): the VRC6 with a soft layer of the N163's channels, shown as one chip. It is one
+	// while the module has the VRC6 and the N163 with 4 channels and is marked (saved in a BF VRC6PLUS block);
+	// switching chips away from those unmarks it. Setting it names the channels (Soft 1 to Soft 4).
+	bool			IsVrc6Plus() const;
+	void			SetVrc6Plus(bool On);
+	bool			IsVrc6PlusChannel(int Channel) const;	// a VRC6 or N163 channel (column) of a VRC6 Plus module
+
 	// Todo: remove this, use getchannelcount instead
 	unsigned int	GetAvailableChannels()	const { return m_iChannelsAvailable; };
 
@@ -392,6 +399,7 @@ private:
 	bool			WriteBlock_Sections(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_Keys(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_Mixer(CDocumentFile *pDocFile, const ftapi::MixStore &Mix) const;
+	bool			WriteBlock_Vrc6Plus(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesVRC6(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesN163(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesS5B(CDocumentFile *pDocFile) const;
@@ -408,6 +416,8 @@ private:
 	void			ReadBlock_Sections(CDocumentFile *pDocFile);
 	void			ReadBlock_Keys(CDocumentFile *pDocFile);
 	void			ReadBlock_Mixer(CDocumentFile *pDocFile);
+	void			ReadBlock_Vrc6Plus(CDocumentFile *pDocFile);
+	void			UpdateChannelNames();	// the soft layer's names on the N163's channels while VRC6 Plus, else theirs
 	bool			ReadBlock_SequencesVRC6(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesN163(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesS5B(CDocumentFile *pDocFile);
@@ -499,6 +509,7 @@ private:
 	// Module properties
 	unsigned char	m_iExpansionChip;							// Expansion chip
 	unsigned int	m_iNamcoChannels;
+	bool			m_bVrc6Plus;								// marked as VRC6 Plus (IsVrc6Plus)
 	vibrato_t		m_iVibratoStyle;							// 0 = old style, 1 = new style
 	bool			m_bLinearPitch;
 	unsigned int	m_iMachine;									// NTSC / PAL

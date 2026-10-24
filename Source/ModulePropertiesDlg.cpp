@@ -19,6 +19,7 @@
 */
 
 #include <vector>
+#include "Api/Vrc6Plus.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -28,6 +29,7 @@
 #include "ModuleImportDlg.h"
 #include "SoundGen.h"
 #include "ChipSwitch.h"
+#include "InstrumentLibrary.h"
 
 LPCTSTR TRACK_FORMAT = _T("#%02i %s");
 
@@ -85,6 +87,7 @@ BEGIN_MESSAGE_MAP(CModulePropertiesDlg, CDialog)
 	ON_BN_CLICKED(IDC_EXPANSION_MMC5, &CModulePropertiesDlg::OnBnClickedExpansion)
 	ON_BN_CLICKED(IDC_EXPANSION_N163, &CModulePropertiesDlg::OnBnClickedExpansion)
 	ON_BN_CLICKED(IDC_EXPANSION_S5B, &CModulePropertiesDlg::OnBnClickedExpansion)
+	ON_BN_CLICKED(IDC_EXPANSION_VRC6PLUS, &CModulePropertiesDlg::OnBnClickedVrc6Plus)
 	ON_WM_HSCROLL()
 	ON_NOTIFY(LVN_ITEMCHANGED, IDC_SONGLIST, &CModulePropertiesDlg::OnLvnItemchangedSonglist)
 END_MESSAGE_MAP()
@@ -119,7 +122,10 @@ BOOL CModulePropertiesDlg::OnInitDialog()
 	CSliderCtrl *pChanSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
 	pChanSlider->SetRange(1, 8);
 	pChanSlider->SetPos(m_pDocument->GetNamcoChannels());
-	UpdateNamcoChannels();
+
+	// VRC6 Plus (Api/Vrc6Plus.h): the VRC6 and four N163 channels as one chip
+	CheckDlgButton(IDC_EXPANSION_VRC6PLUS, m_pDocument->IsVrc6Plus() ? BST_CHECKED : BST_UNCHECKED);
+	UpdateVrc6Plus();
 
 	return TRUE;  // return TRUE unless you set the focus to a control
 	// EXCEPTION: OCX Property Pages should return FALSE
@@ -137,10 +143,13 @@ unsigned char CModulePropertiesDlg::CheckedChips() const
 
 void CModulePropertiesDlg::UpdateNamcoChannels()
 {
-	// The N163's channel count, which its check box turns on
+	// The N163's channel count, which its check box turns on (the VRC6 Plus's are four)
 	const bool Namco = (CheckedChips() & SNDCHIP_N163) != 0;
+	const bool Plus = IsDlgButtonChecked(IDC_EXPANSION_VRC6PLUS) == BST_CHECKED;
 	CSliderCtrl *pSlider = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS));
-	pSlider->EnableWindow(Namco ? TRUE : FALSE);
+	if (Plus)
+		pSlider->SetPos(ftapi::VRC6_PLUS_SOFT_CHANNELS);
+	pSlider->EnableWindow(Namco && !Plus ? TRUE : FALSE);
 	CString channelsStr;
 	channelsStr.LoadString(IDS_PROPERTIES_CHANNELS);
 	if (Namco)
@@ -150,16 +159,47 @@ void CModulePropertiesDlg::UpdateNamcoChannels()
 	SetDlgItemText(IDC_CHANNELS_NR, channelsStr);
 }
 
-bool CModulePropertiesDlg::SwitchChips(unsigned char Chips, unsigned int NamcoChannels)
+void CModulePropertiesDlg::UpdateVrc6Plus()
+{
+	// VRC6 Plus takes the place of the VRC6 and the N163: their boxes show ticked, and stay so while it is
+	const bool Plus = IsDlgButtonChecked(IDC_EXPANSION_VRC6PLUS) == BST_CHECKED;
+	if (Plus) {
+		CheckDlgButton(IDC_EXPANSION_VRC6, BST_CHECKED);
+		CheckDlgButton(IDC_EXPANSION_N163, BST_CHECKED);
+	}
+	GetDlgItem(IDC_EXPANSION_VRC6)->EnableWindow(Plus ? FALSE : TRUE);
+	GetDlgItem(IDC_EXPANSION_N163)->EnableWindow(Plus ? FALSE : TRUE);
+	UpdateNamcoChannels();
+}
+
+void CModulePropertiesDlg::OnBnClickedVrc6Plus()
+{
+	// Unticked, it's the plain VRC6 again: the soft layer's N163 goes (asking first, on OK)
+	if (IsDlgButtonChecked(IDC_EXPANSION_VRC6PLUS) != BST_CHECKED) {
+		CheckDlgButton(IDC_EXPANSION_VRC6, BST_CHECKED);
+		CheckDlgButton(IDC_EXPANSION_N163, BST_UNCHECKED);
+	}
+	UpdateVrc6Plus();
+}
+
+bool CModulePropertiesDlg::SwitchChips(unsigned char Chips, unsigned int NamcoChannels, bool Vrc6Plus)
 {
 	// The channels that go take their notes with them: ask first (ChipSwitch.h)
+	const bool WasPlus = m_pDocument->IsVrc6Plus();
 	const std::vector<unsigned int> Going = LeavingChannels(m_pDocument, Chips, NamcoChannels);
 	std::vector<int> Tracks;
 	const int Notes = CountChannelNotes(m_pDocument, Going, Tracks);
 	if (Notes > 0) {
 		const unsigned char Old = m_pDocument->GetExpansionChip();
 		CString What;
+		if (WasPlus) {	// its channels as the VRC6 Plus's
+			const bool Vrc6 = !(Chips & SNDCHIP_VRC6), Namco = !(Chips & SNDCHIP_N163);
+			What = Vrc6 && Namco ? _T("the VRC6 Plus's channels") : Namco ? _T("the VRC6 Plus's soft channels (Soft 1 to Soft 4)") :
+				Vrc6 ? _T("the VRC6 Plus's pulses and sawtooth") : _T("");
+		}
 		for (size_t i = 0; i < sizeof(CHIP_BOXES) / sizeof(CHIP_BOXES[0]); ++i) {
+			if (WasPlus && (CHIP_BOXES[i].Chip == SNDCHIP_VRC6 || CHIP_BOXES[i].Chip == SNDCHIP_N163))
+				continue;
 			if ((Old & CHIP_BOXES[i].Chip) && !(Chips & CHIP_BOXES[i].Chip)) {
 				if (!What.IsEmpty())
 					What += _T(" and ");
@@ -186,6 +226,9 @@ bool CModulePropertiesDlg::SwitchChips(unsigned char Chips, unsigned int NamcoCh
 
 	int Moved = 0;
 	::SwitchChips(m_pDocument, Chips, NamcoChannels, Moved);
+	m_pDocument->SetVrc6Plus(Vrc6Plus);
+	if (Vrc6Plus && !WasPlus)
+		AddSoftLayerSounds(m_pDocument);	// what's missing of its soft layer's sounds: choir pad, string pad, soft flute, sub bass
 	m_pDocument->SetModifiedFlag();
 	m_pDocument->UpdateAllViews(NULL, UPDATE_PROPERTIES);
 	return true;
@@ -195,12 +238,15 @@ void CModulePropertiesDlg::OnBnClickedOk()
 {
 	CMainFrame *pMainFrame = static_cast<CMainFrame*>(GetParentFrame());
 
-	// Expansion chips
+	// Expansion chips (VRC6 Plus: the VRC6 and the N163 with 4 channels, marked)
 	const unsigned char Chips = CheckedChips();
-	const unsigned int iChannels = static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS))->GetPos();
+	const bool Plus = IsDlgButtonChecked(IDC_EXPANSION_VRC6PLUS) == BST_CHECKED;
+	const unsigned int iChannels = Plus ? static_cast<unsigned int>(ftapi::VRC6_PLUS_SOFT_CHANNELS) :
+		static_cast<CSliderCtrl*>(GetDlgItem(IDC_CHANNELS))->GetPos();
 
-	if (m_pDocument->GetExpansionChip() != Chips || ((Chips & SNDCHIP_N163) && m_pDocument->GetNamcoChannels() != iChannels)) {
-		if (!SwitchChips(Chips, iChannels))
+	if (m_pDocument->GetExpansionChip() != Chips || ((Chips & SNDCHIP_N163) && m_pDocument->GetNamcoChannels() != iChannels) ||
+		m_pDocument->IsVrc6Plus() != Plus) {
+		if (!SwitchChips(Chips, iChannels, Plus))
 			return;		// the dialog stays open
 	}
 

@@ -1414,11 +1414,14 @@ void CPatternEditor::DrawCell(CDC *pDC, int PosX, int Column, int Channel, bool 
 
 // The channel's name in the header. With several expansion chips on, a name
 // another chip's channel has too ("Pulse 1") gets the chip's ("MMC5 Pulse 1").
+// The VRC6 Plus (Api/Vrc6Plus.h) is one chip: "Soft 1", "VRC6 Plus Pulse 1".
 static CString HeaderName(const CFamiTrackerDoc *pDocument, int Channel)
 {
 	const CTrackerChannel *pChannel = pDocument->GetChannel(Channel);
 	const CString Name = pChannel->GetChannelName();
-	const unsigned char Chips = pDocument->GetExpansionChip();
+	unsigned char Chips = pDocument->GetExpansionChip();
+	if (pDocument->IsVrc6Plus())
+		Chips = static_cast<unsigned char>(Chips & ~SNDCHIP_N163);
 	if ((Chips & (Chips - 1)) == 0 || pChannel->GetChip() == SNDCHIP_NONE)
 		return Name;
 	bool Shared = false;
@@ -1426,6 +1429,8 @@ static CString HeaderName(const CFamiTrackerDoc *pDocument, int Channel)
 		Shared = i != Channel && Name == pDocument->GetChannel(i)->GetChannelName();
 	if (!Shared)
 		return Name;
+	if (pDocument->IsVrc6PlusChannel(Channel))
+		return _T("VRC6 Plus ") + Name;
 	switch (pChannel->GetChip()) {
 		case SNDCHIP_VRC6: return _T("VRC6 ") + Name;
 		case SNDCHIP_MMC5: return _T("MMC5 ") + Name;
