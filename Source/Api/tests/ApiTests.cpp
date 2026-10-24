@@ -4457,8 +4457,21 @@ void TestProtocol()
 		std::string Text, Error;
 		Json Arguments = Json::MakeObject();
 		for (size_t a = 0; a < ToolSet::Prompts()[i].Arguments.size(); ++a)
-			Arguments.Set(ToolSet::Prompts()[i].Arguments[a].Name, "4");
+			Arguments.Set(ToolSet::Prompts()[i].Arguments[a].Name, ToolSet::Prompts()[i].Arguments[a].Name == "kind" ? "calm" : "4");
 		CHECK(ToolSet::PromptText(ToolSet::Prompts()[i].Name, Arguments, Text, Error) && !Text.empty());
+		if (ToolSet::Prompts()[i].Name == "compose_track") {
+			// Every kind's recipe, and the general one, are checked below too
+			std::string More;
+			for (const char *Kind : { "lively", "action" }) {
+				Arguments.Set("kind", Kind);
+				CHECK(ToolSet::PromptText("compose_track", Arguments, More, Error));
+				Text += "\n" + More;
+			}
+			Json General = Json::MakeObject();
+			General.Set("idea", "a town");
+			CHECK(ToolSet::PromptText("compose_track", General, More, Error));
+			Text += "\n" + More;
+		}
 		// Every tool a recipe names exists
 		size_t At = 0;
 		while ((At = Text.find('_', At)) != std::string::npos) {
@@ -4469,10 +4482,59 @@ void TestProtocol()
 				++To;
 			const std::string Word = Text.substr(From, To - From);
 			const bool Argument = Word == "as_clip" || Word == "clip_name" || Word == "from_bar" || Word == "to_bar" ||
-				Word == "chord_style" || Word == "bass_style";
+				Word == "chord_style" || Word == "bass_style" || Word == "arp_frames" || Word == "delay_beats" ||
+				Word == "bass_instrument";
 			Check(Argument || Tools.Has(Word), ("the recipe's tool exists: " + Word).c_str(), __LINE__);
 			At = To;
 		}
+	}
+
+	// compose_track's kinds: each recipe names its own styles, then the guide's topic of its name in numbers
+	{
+		std::string Text, Error;
+		Json Arguments = Json::MakeObject();
+		Arguments.Set("idea", "a quiet night by the lake");
+		Arguments.Set("kind", "calm");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "Compose a calm track in FamiTracker for this: a quiet night by the lake.");
+		CHECK_HAS(Text, "the form for 40 bars");
+		CHECK_HAS(Text, "design_instrument kind breath, falling strike or music box");
+		CHECK_HAS(Text, "polish style calm, then mix style calm last");
+		CHECK_HAS(Text, "check_song style calm (0 clicking, 0 vanishing, no clashes you didn't mean, no held lead)");
+		CHECK_HAS(Text, "measure_mix style calm (the melody 2-3 dB over the chords");
+		CHECK_HAS(Text, "export_for_game with loudness -22");
+		CHECK_HAS(Text, "Calm songs (a place to rest, a night scene, a lullaby");
+		CHECK_LACKS(Text, "add_drums");
+		Arguments.Set("kind", "Lively");
+		Arguments.Set("bars", "24");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "Compose a lively track");
+		CHECK_HAS(Text, "the form for 24 bars");
+		CHECK_HAS(Text, "then mix style lively last (the melody 3-4 dB over the parts)");
+		CHECK_HAS(Text, "export_for_game with loudness -20");
+		CHECK_HAS(Text, "Lively stages (bouncy and driving, never harsh)");
+		CHECK_LACKS(Text, "style calm");
+		Arguments.Set("kind", "action");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "polish (its default touches; scoops and falls on chosen bars), then mix (style soft, the default, or full) last");
+		CHECK_HAS(Text, "export_for_game with loudness -19");
+		CHECK_HAS(Text, "Action: battles, bosses and chases");
+		CHECK_LACKS(Text, "style calm");
+		CHECK_LACKS(Text, "style lively");
+		Arguments.Set("kind", "sleepy");
+		CHECK(!ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Error, "kind should be calm, lively or action");
+		// The general recipe points at the kinds without choosing one
+		Json General = Json::MakeObject();
+		General.Set("idea", "a calm lake");
+		CHECK(ToolSet::PromptText("compose_track", General, Text, Error));
+		CHECK_HAS(Text, "follow that kind's recipe instead: references action guide topic calm, lively or action");
+		CHECK_LACKS(Text, "style calm");
+		// The guide's topics come up by the words a composer uses
+		CHECK_HAS(StyleGuide("peaceful"), "Calm songs (a place to rest");
+		CHECK_HAS(StyleGuide("boss fight"), "Action: battles, bosses and chases");
+		CHECK_HAS(StyleGuide("stage"), "Lively stages");
+		CHECK_HAS(StyleGuide(""), "- calm: Calm songs");
 	}
 
 	// Per-request metadata (2026-07-28)

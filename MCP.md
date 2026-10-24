@@ -245,6 +245,23 @@ works through what makes the open song sound plain,
 choose from, and `/mcp__famitracker__study_track` explains what makes a track
 work, to reuse its ideas.
 
+`compose_track` takes a `kind` too, for a recipe of its own:
+
+- **calm**, only when you ask for a calm song (a place to rest, a night
+  scene, a lullaby). Its melody never presses: a lead that swells in, falls
+  low after its strike or fades away like a music box, only 2-3 dB over the
+  chords. It plays few, long notes by step over slow, colored chords, with
+  no drums.
+- **lively**, for a stage to explore. It bounces and drives, but its melody's
+  notes fade and it sits 3-4 dB over the parts, with soft drums.
+- **action**, for fights, bosses and chases. These stay punchy: the melody
+  on top, a backbeat, accents.
+
+Each recipe ends with its numbers from the built-in guide (topics `calm`,
+`lively` and `action`), so Claude reads them once instead of looking them
+up. Without a kind, the general recipe points at the three when your idea
+asks for one.
+
 ## How changes arrive
 
 - **As clips (default).** Claude's ideas are saved as clips, named
