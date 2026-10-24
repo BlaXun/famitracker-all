@@ -320,6 +320,39 @@ a click pluck that holds low.
 - `design_instrument` and `reference_sound` say so when the sound they add
   is gone within four frames.
 
+### The checks in FamiTracker, and as data
+
+FamiTracker runs `check_song` by itself too: **View > Problems** lists what
+it finds in the selected track while you work by hand, and marks it in the
+pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
+
+`check_song` with `format` `json` gives its findings as data, for programs
+(the panel reads it): `track`, `track_name`, `from_bar`, `to_bar`, `key`
+(and `key_from_notes`), `pattern_length`, `rows_per_beat`, `rows_per_bar`,
+`counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
+`busy` and `key`, notes that vanish counted by the note), `unused_channels`
+and `findings`, heard worst first as in the text. Each finding has:
+
+- `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
+  clicks and clashes, `medium` out of range, `low` for the rest;
+- `channel` (numbered from 1, as the tools take them; `null` for a silent
+  bar) and `channel_name`;
+- where it starts: `frame` and `row` (from 0, as the pattern editor shows
+  them), `bar` and `beat` (from 1), and `position` ("bar 3 beat 2.5"), and
+  `rows`, how long it lasts;
+- `notes`: the notes it's about, each with `channel`, `frame`, `row`,
+  `bar`, `beat`, `position`, `note` ("C#4", as written) and `rows`; a sound
+  that vanishes on a channel is one finding with all its notes;
+- `summary` (a few words) and `message` (the line the text gives);
+- by kind: `other_channel`, `other_channel_name` and `pitches` (as they
+  sound) for a clash; `clicks`, `boundary` and `nudge` for a click;
+  `instrument`, `instrument_name`, `heard_frames` and `held_instrument`
+  for notes that vanish; `reason` out of range; `note_count` for a busy
+  bar;
+- `fix`, for a click that can be nudged: the call that does it, `tool`
+  (`polish`) and `arguments` (the touch `clicks` on the note's channel and
+  bar), and `does`, in words. It's one Ctrl+Z.
+
 ## What Claude can do (the tools)
 
 | Tool | What it does |
@@ -360,7 +393,7 @@ a click pluck that holds low.
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -1101,7 +1134,9 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   from layers: slides, envelopes, repeats, gusts, flutters, crackle and
   drops), and
   `Tools` (the tools, against the `SongHost` interface in `Song.h`, the
-  server's instructions and the recipes served as MCP prompts). Tool
+  server's instructions and the recipes served as MCP prompts), and
+  `ProblemList` (`check_song`'s JSON read back for FamiTracker's problems
+  panel, and the marks the pattern editor and the piano roll draw). Tool
   results can carry an image after their text.
 - `Source/Transcribe/SoundEffect.cpp`: sound effects as layers of per-tick
   values and as FamiTracker instruments (each tick an absolute arpeggio picks

@@ -804,6 +804,9 @@
 #define IDC_NSF_NONE                    1436
 #define ID_FILE_IMPORTNSF               33171
 
+// View > Problems (ProblemsPanel.cpp)
+#define ID_VIEW_PROBLEMS                37250
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

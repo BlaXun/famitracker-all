@@ -148,6 +148,43 @@ FamiTracker.exe, with no rebuild.
 Still open: annotated example songs, since module comments can already pop
 up when a file is opened.
 
+## 7. Problems panel
+
+Done (October 2026, on `next`): **View > Problems** shows what Claude
+Code's `check_song` finds, for people working by hand, in a panel docked
+along the bottom of the main window (right-click it to dock it on the right
+instead; drag its edge to make it bigger). It comes back when FamiTracker
+starts if it was open.
+
+- Notes that vanish, notes that click, clashes, notes out of a channel's
+  range, silent and busy bars and notes outside the key, grouped by kind
+  with how many of each, the ones heard worst first. A click on a kind
+  folds or unfolds it.
+- It checks the selected track again a moment after each change, and after
+  an instrument's envelope, the speed or the track changed, but not while
+  the song plays. **Check** (F5 in the panel) checks at once; "Check as you
+  edit" in its right-click menu switches the checks off.
+- Double-click a finding, or select it and press Enter, to go there: the
+  pattern editor's cursor goes to its frame, row and channel, and the piano
+  roll scrolls to it.
+- The pattern editor marks each finding with a tick along the channel's
+  left edge on the note's row, the piano roll with a dot on the note: red
+  for what's heard worst (notes that vanish, clicks, clashes), amber for
+  notes out of range, grey blue for the rest. The finding selected in the
+  panel gets a tick as tall as the row and a ring around its notes.
+- Each finding has a button. **Nudge**, on a note that clicks, moves it a
+  hair sharper or flatter so its vibrato stays clear of the period where
+  the pulse restarts its wave, as `polish` with the touch `clicks` does on
+  that note's bar: one Ctrl+Z, and the count goes down. **Show**, on a note
+  that vanishes, selects that sound's notes in the piano roll, where its
+  Instrument button gives them a sound that lasts. **Explain** says what's
+  wrong with the rest (a clash, a note outside the key) and what helps.
+  Nothing changes without a click.
+
+The panel's keys: the arrows, Page Up and Down, Home and End to move, Enter
+to go there, Space for the button, Left and Right to fold, Ctrl+C to copy
+the message, Esc back to the pattern editor.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back

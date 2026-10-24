@@ -504,7 +504,7 @@ class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 {
 public:
 	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bAddressesRead(false), m_bBusy(false),
-		m_bStopping(false), m_bOwnDialog(false), m_pProgress(NULL), m_iPlayFirst(0),
+		m_bStopping(false), m_bOwnDialog(false), m_bByHand(false), m_pProgress(NULL), m_iPlayFirst(0),
 		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false), m_iPlayPart(0), m_iReturnTrack(-1)
 	{
 		m_Settings.Enabled = false;
@@ -841,7 +841,7 @@ public:
 				Clip.Sources.push_back(pClips->GetSource(i, c));
 			Info.Clips.push_back(Clip);
 		}
-		Info.DirectChanges = m_Settings.DirectChanges;
+		Info.DirectChanges = m_Settings.DirectChanges || m_bByHand;
 		Info.Playing = theApp.IsPlaying();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
 		if (Info.Playing && pSound != NULL && static_cast<unsigned int>(pSound->GetPlayerTrack()) == Track)
@@ -1403,6 +1403,37 @@ public:
 		CString Text = Ansi(Result.Text);
 		Text.Replace(_T("\n"), _T("\r\n"));
 		return Text;
+	}
+
+	bool IsBusy() const { return m_bBusy; }
+
+	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
+	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
+	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply)
+	{
+		if (m_bBusy) {
+			Reply = "FamiTracker is busy with Claude Code; try again in a moment.";
+			return false;
+		}
+		ftapi::Json Args;
+		if (!ftapi::ParseJson(Arguments, Args) || !Args.IsObject()) {
+			Reply = "The tool's arguments aren't JSON.";
+			return false;
+		}
+		m_bBusy = true;
+		m_bByHand = true;
+		ftapi::ToolResult Result;
+		try {
+			Result = m_Tools.Call(Name, Args);
+		}
+		catch (...) {
+			Result.Text = "FamiTracker couldn't do that.";
+			Result.IsError = true;
+		}
+		m_bByHand = false;
+		m_bBusy = false;
+		Reply = Result.Text;
+		return !Result.IsError;
 	}
 
 	bool CanChange(std::string &Why)
@@ -2046,6 +2077,8 @@ private:
 	bool m_bStopping;
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
 						// which may change the song
+	bool m_bByHand;		// working for a window of FamiTracker's (the problems panel): what the user asks of it goes
+						// into the song, whatever the Claude Code setting says
 	CWnd *m_pProgress;	// where a rendering's progress shows, or NULL
 	int m_iPlayFirst, m_iPlayEnd;	// the rows played for Claude; End at First: to the end
 	bool m_bPlayStarted;
@@ -2462,4 +2495,14 @@ void CMcpConnection::ShowGameExport()
 void CMcpConnection::ShowVoiceEffect()
 {
 	ShowVoiceEffectDialog(&m_pImpl->Link, AfxGetMainWnd());
+}
+
+bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply)
+{
+	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply);
+}
+
+bool CMcpConnection::IsBusy() const
+{
+	return m_pImpl->Link.IsBusy();
 }

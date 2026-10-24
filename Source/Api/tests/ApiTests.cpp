@@ -39,6 +39,7 @@
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
+#include "../ProblemList.h"
 #include "../PulseClicks.h"
 #include "../References.h"
 #include "../Song.h"
@@ -8914,6 +8915,413 @@ void TestVanishing()
 	}
 }
 
+// A finding of check_song's JSON by kind, the first of it (null when there's none)
+const Json *FindingOf(const Json &Out, const char *Kind)
+{
+	const Json *pList = Out.Get("findings");
+	for (size_t i = 0; pList != 0 && i < pList->Size(); ++i)
+		if (pList->At(i).Get("kind") != 0 && pList->At(i).Get("kind")->String() == Kind)
+			return &pList->At(i);
+	return 0;
+}
+
+long long IntegerOf(const Json *pObject, const char *Name)
+{
+	const Json *pValue = pObject != 0 ? pObject->Get(Name) : 0;
+	return pValue != 0 && pValue->IsNumber() ? pValue->Integer() : -999;
+}
+
+std::string TextOf(const Json *pObject, const char *Name)
+{
+	const Json *pValue = pObject != 0 ? pObject->Get(Name) : 0;
+	return pValue != 0 && pValue->IsString() ? pValue->String() : std::string("(none)");
+}
+
+// check_song's findings as data (format json), which FamiTracker's problems panel reads: each with its kind, severity,
+// channel, place and notes, the line the text gives, and for a click the polish call that nudges it
+void TestCheckJson()
+{
+	// TestCheck's song: notes outside the key, a clash, a note out of range and a silent bar
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	const std::string Text = Run(Song, "check_song", "{\"key\": \"C major\"}").Text;
+	const ToolResult Result = Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}");
+	CHECK(!Result.IsError);
+	const Json Out = Parse(Result.Text);
+	CHECK(Out.IsObject());
+	CHECK_EQ(IntegerOf(&Out, "track"), 1);
+	CHECK_EQ(TextOf(&Out, "track_name"), std::string("Town"));
+	CHECK_EQ(TextOf(&Out, "key"), std::string("C major"));
+	CHECK(Out.Get("key_from_notes") != 0 && Out.Get("key_from_notes")->IsBool() && !Out.Get("key_from_notes")->Bool());
+	CHECK_EQ(IntegerOf(&Out, "from_bar"), 1);
+	CHECK_EQ(IntegerOf(&Out, "to_bar"), 8);
+	CHECK_EQ(IntegerOf(&Out, "pattern_length"), 64);
+	CHECK_EQ(IntegerOf(&Out, "rows_per_beat"), 4);
+	CHECK_EQ(IntegerOf(&Out, "rows_per_bar"), 16);
+	// The counts are the text's
+	const Json *pCounts = Out.Get("counts");
+	CHECK_EQ(IntegerOf(pCounts, "vanishing"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "click"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "clash"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "range"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "silent"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "busy"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "key"), 2);
+	CHECK_HAS(Text, ": 2 outside the key, 1 clashes, 1 out of range, 0 busy, 1 silent, 0 clicking, 0 vanishing.");
+	const Json *pUnused = Out.Get("unused_channels");
+	CHECK(pUnused != 0 && pUnused->IsArray() && pUnused->Size() == 3 && pUnused->At(0).String() == "2A03 Pulse 2" &&
+		pUnused->At(1).String() == "2A03 Triangle" && pUnused->At(2).String() == "VRC6 Sawtooth");
+
+	// Every finding, heard worst first, with the line the text lists
+	const Json *pList = Out.Get("findings");
+	CHECK(pList != 0 && pList->Size() == 5);
+	static const char *const ORDER[] = { "clash", "range", "silent", "key", "key" };
+	for (size_t i = 0; pList != 0 && i < pList->Size() && i < 5; ++i) {
+		CHECK_EQ(TextOf(&pList->At(i), "kind"), std::string(ORDER[i]));
+		CHECK(Contains(Text, TextOf(&pList->At(i), "message").c_str()));
+	}
+
+	// A clash: both notes, where it starts and for how long
+	const Json *pClash = FindingOf(Out, "clash");
+	CHECK_EQ(TextOf(pClash, "severity"), std::string("high"));
+	CHECK_EQ(IntegerOf(pClash, "channel"), 6);
+	CHECK_EQ(TextOf(pClash, "channel_name"), std::string("VRC6 Pulse 1"));
+	CHECK_EQ(IntegerOf(pClash, "frame"), 0);
+	CHECK_EQ(IntegerOf(pClash, "row"), 0);
+	CHECK_EQ(IntegerOf(pClash, "bar"), 1);
+	CHECK_EQ(IntegerOf(pClash, "beat"), 1);
+	CHECK_EQ(TextOf(pClash, "position"), std::string("bar 1 beat 1"));
+	CHECK_EQ(IntegerOf(pClash, "rows"), 4);
+	CHECK_EQ(IntegerOf(pClash, "other_channel"), 7);
+	CHECK_EQ(TextOf(pClash, "other_channel_name"), std::string("VRC6 Pulse 2"));
+	CHECK_EQ(TextOf(pClash, "summary"), std::string("C-4 against C#4 on VRC6 Pulse 2 for 1 beat"));
+	CHECK_EQ(TextOf(pClash, "message"), std::string("Clash: C-4 on VRC6 Pulse 1 against C#4 on VRC6 Pulse 2 at bar 1 beat 1 for 1 beat."));
+	const Json *pNotes = pClash != 0 ? pClash->Get("notes") : 0;
+	CHECK(pNotes != 0 && pNotes->Size() == 2);
+	if (pNotes != 0 && pNotes->Size() == 2) {
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "channel"), 6);
+		CHECK_EQ(TextOf(&pNotes->At(0), "note"), std::string("C-4"));
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "row"), 0);
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "rows"), 4);
+		CHECK_EQ(IntegerOf(&pNotes->At(1), "channel"), 7);
+		CHECK_EQ(TextOf(&pNotes->At(1), "note"), std::string("C#4"));
+	}
+	const Json *pPitches = pClash != 0 ? pClash->Get("pitches") : 0;
+	CHECK(pPitches != 0 && pPitches->Size() == 2 && pPitches->At(0).String() == "C-4" && pPitches->At(1).String() == "C#4");
+	CHECK(pClash != 0 && pClash->Get("fix") == 0);
+
+	// A note out of range, a silent bar (no channel, no notes) and a note outside the key
+	const Json *pRange = FindingOf(Out, "range");
+	CHECK_EQ(TextOf(pRange, "severity"), std::string("medium"));
+	CHECK_EQ(IntegerOf(pRange, "channel"), 1);
+	CHECK_EQ(IntegerOf(pRange, "row"), 48);
+	CHECK_EQ(IntegerOf(pRange, "bar"), 4);
+	CHECK_EQ(TextOf(pRange, "reason"), std::string("below A-0, the lowest note its pulse can play"));
+	CHECK_EQ(TextOf(pRange, "summary"), std::string("G-0 is below A-0, the lowest note its pulse can play"));
+	CHECK(pRange != 0 && pRange->Get("notes")->Size() == 1 && TextOf(&pRange->Get("notes")->At(0), "note") == "G-0");
+	const Json *pSilent = FindingOf(Out, "silent");
+	CHECK_EQ(TextOf(pSilent, "severity"), std::string("low"));
+	CHECK(pSilent != 0 && pSilent->Get("channel") != 0 && pSilent->Get("channel")->IsNull());
+	CHECK(pSilent != 0 && pSilent->Get("channel_name") != 0 && pSilent->Get("channel_name")->IsNull());
+	CHECK_EQ(IntegerOf(pSilent, "bar"), 3);
+	CHECK_EQ(IntegerOf(pSilent, "row"), 32);
+	CHECK_EQ(IntegerOf(pSilent, "rows"), 16);
+	CHECK(pSilent != 0 && pSilent->Get("notes")->Size() == 0);
+	const Json *pKey = FindingOf(Out, "key");
+	CHECK_EQ(IntegerOf(pKey, "channel"), 6);
+	CHECK_EQ(IntegerOf(pKey, "bar"), 2);
+	CHECK_EQ(TextOf(pKey, "summary"), std::string("F#4 is outside C major"));
+
+	// Past the first frame: the frame and its row, as the pattern editor shows them
+	Song.Put(1, 70, "D-4", 2);
+	Song.Put(1, 71, "D#4");
+	Song.End(1, 72);
+	const Json Later = Parse(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\", \"from_bar\": 5}").Text);
+	const Json *pLater = FindingOf(Later, "key");
+	CHECK_EQ(IntegerOf(pLater, "frame"), 1);
+	CHECK_EQ(IntegerOf(pLater, "row"), 7);
+	CHECK_EQ(IntegerOf(pLater, "bar"), 5);
+	CHECK(pLater != 0 && pLater->Get("beat") != 0 && std::fabs(pLater->Get("beat")->Number() - 2.75) < 1e-9);
+	CHECK_EQ(TextOf(pLater, "position"), std::string("bar 5 beat 2.75"));
+	CHECK_EQ(IntegerOf(&Later, "from_bar"), 5);
+	CHECK(Run(Song, "check_song", "{\"format\": \"xml\"}").IsError);
+	CHECK_HAS(Run(Song, "check_song", "{\"format\": \"text\"}").Text, "Checked bars 1-8");
+
+	// Clicks: the note, how often it clicks, and the polish call that nudges it, one change each
+	{
+		FakeSong Clicky;
+		Clicky.Info.DirectChanges = true;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		const int Sing = Clicky.Info.Instruments.back().Index;
+		Clicky.Put(0, 0, "A-3", Sing);
+		Clicky.Put(0, 32, "A-3");
+		Clicky.Put(0, 48, "E-4");
+		Clicky.End(0, 56);
+		Json Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 2);
+		const Json *pClick = FindingOf(Found, "click");
+		CHECK_EQ(TextOf(pClick, "severity"), std::string("high"));
+		CHECK_EQ(IntegerOf(pClick, "channel"), 1);
+		CHECK_EQ(IntegerOf(pClick, "row"), 0);
+		CHECK_EQ(IntegerOf(pClick, "rows"), 32);
+		CHECK(IntegerOf(pClick, "clicks") >= 2);
+		CHECK_EQ(IntegerOf(pClick, "boundary"), 256);
+		CHECK_EQ(TextOf(pClick, "nudge"), std::string("P81, 7 cents sharp"));
+		CHECK_HAS(TextOf(pClick, "summary"), "A-3 clicks ");
+		CHECK_HAS(TextOf(pClick, "summary"), ": its vibrato crosses 256");
+		const Json *pFix = pClick != 0 ? pClick->Get("fix") : 0;
+		CHECK_EQ(TextOf(pFix, "tool"), std::string("polish"));
+		CHECK_EQ(TextOf(pFix, "does"), std::string("nudges it a hair (P81, 7 cents sharp), so its vibrato stays clear of 256"));
+		const Json *pArguments = pFix != 0 ? pFix->Get("arguments") : 0;
+		CHECK(pArguments != 0 && WriteJson(*pArguments) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		// The fix as it's given: one change. Its write reaches the next A-3, which would click with the pitch it had back,
+		// so the change nudges that one too (as any direct change does), and E-4 gets the fine pitch back
+		if (pFix != 0 && pArguments != 0) {
+			const int Writes = Clicky.Writes;
+			ToolSet Tools(Clicky);
+			const ToolResult Fixed = Tools.Call(TextOf(pFix, "tool"), *pArguments);
+			CHECK(!Fixed.IsError);
+			CHECK_HAS(Fixed.Text, "A-3 at bar 1 beat 1 (P81, 7 cents sharp)");
+			CHECK_EQ(Clicky.Writes, Writes + 1);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][0], EFF_PITCH), 0x81);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][32], EFF_PITCH), 0x81);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][48], EFF_PITCH), 0x80);
+		}
+		Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 0);
+		CHECK(FindingOf(Found, "click") == 0);
+		// Undone, they click again
+		CHECK(!Run(Clicky, "undo", "{}").IsError);
+		Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 2);
+		// The second one's fix: its own bar
+		const Json *pSecond = Found.Get("findings") != 0 && Found.Get("findings")->Size() == 2 ? &Found.Get("findings")->At(1) : 0;
+		CHECK_EQ(IntegerOf(pSecond, "row"), 32);
+		CHECK_EQ(IntegerOf(pSecond, "bar"), 3);
+		CHECK(pSecond != 0 && pSecond->Get("fix") != 0 &&
+			WriteJson(*pSecond->Get("fix")->Get("arguments")) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":3,\"to_bar\":3}");
+
+		// Too deep a vibrato to nudge clear: no fix
+		FakeSong Deep;
+		Deep.Info.DirectChanges = true;
+		CHECK(!Run(Deep, "design_instrument", "{\"name\": \"Wide\", \"kind\": \"organ\", \"channel\": \"2A03 Pulse 1\", \"attack\": "
+			"\"instant\", \"decay\": \"none\", \"sustain\": \"full\", \"vibrato\": \"strong\"}").IsError);
+		Run(Deep, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"Wide\", \"notes\": [{\"bar\": 1, \"beat\": 1, "
+			"\"pitch\": \"A-3\", \"beats\": 4}]}");
+		const Json DeepFound = Parse(Run(Deep, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pDeep = FindingOf(DeepFound, "click");
+		CHECK(pDeep != 0 && pDeep->Get("fix") == 0 && pDeep->Get("nudge") == 0);
+		CHECK_HAS(TextOf(pDeep, "summary"), ", too deep to nudge clear");
+	}
+
+	// Notes that vanish: one finding a sound on a channel, with all its notes
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		const Json Found = Parse(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "vanishing"), 3);
+		CHECK_EQ(TextOf(&Found.Get("findings")->At(0), "kind"), std::string("vanishing"));
+		const Json *pGone = FindingOf(Found, "vanishing");
+		CHECK_EQ(TextOf(pGone, "severity"), std::string("high"));
+		CHECK_EQ(IntegerOf(pGone, "channel"), 6);
+		CHECK_EQ(IntegerOf(pGone, "row"), 8);
+		CHECK_EQ(TextOf(pGone, "position"), std::string("bar 1 beat 3"));
+		CHECK_EQ(IntegerOf(pGone, "rows"), 10);
+		CHECK_EQ(IntegerOf(pGone, "instrument"), 3);
+		CHECK_EQ(TextOf(pGone, "instrument_name"), std::string("Fair pluck"));
+		CHECK_EQ(IntegerOf(pGone, "heard_frames"), 3);
+		CHECK_EQ(IntegerOf(pGone, "held_instrument"), 0);
+		CHECK_EQ(TextOf(pGone, "summary"), std::string("\"Fair pluck\" (03) is gone within 3 frames, between notes of the line that hold "
+			"(\"Lead\" (00))"));
+		CHECK_HAS(TextOf(pGone, "message"), "Vanishing: 3 notes on VRC6 Pulse 1 (bars 1-2) play \"Fair pluck\" (03)");
+		const Json *pNotes2 = pGone != 0 ? pGone->Get("notes") : 0;
+		CHECK(pNotes2 != 0 && pNotes2->Size() == 3);
+		if (pNotes2 != 0 && pNotes2->Size() == 3) {
+			CHECK_EQ(IntegerOf(&pNotes2->At(0), "row"), 8);
+			CHECK_EQ(TextOf(&pNotes2->At(0), "note"), std::string("D-4"));
+			CHECK_EQ(IntegerOf(&pNotes2->At(0), "rows"), 2);
+			CHECK_EQ(IntegerOf(&pNotes2->At(1), "row"), 10);
+			CHECK_EQ(TextOf(&pNotes2->At(1), "note"), std::string("E-4"));
+			CHECK_EQ(IntegerOf(&pNotes2->At(2), "row"), 16);
+			CHECK_EQ(IntegerOf(&pNotes2->At(2), "bar"), 2);
+			CHECK_EQ(TextOf(&pNotes2->At(2), "position"), std::string("bar 2 beat 1"));
+			CHECK_EQ(TextOf(&pNotes2->At(2), "note"), std::string("G-4"));
+		}
+		CHECK(pGone != 0 && pGone->Get("fix") == 0);
+	}
+
+	// An empty song: nothing found, the counts at 0
+	FakeSong Empty;
+	const Json Nothing = Parse(Run(Empty, "check_song", "{\"format\": \"json\"}").Text);
+	CHECK(Nothing.Get("key") != 0 && Nothing.Get("key")->IsNull());
+	CHECK(Nothing.Get("findings") != 0 && Nothing.Get("findings")->Size() == 0);
+	CHECK_EQ(IntegerOf(Nothing.Get("counts"), "key"), 0);
+}
+
+// check_song's JSON read back as the problems panel shows it (ProblemList.h): the findings by kind, a line each (a note
+// each of notes that vanish) in the song's order, and the marks the pattern editor and the piano roll draw
+void TestProblemList()
+{
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+	CHECK(Error.empty());
+	CHECK_EQ(List.Track(), 0);
+	CHECK_EQ(List.PatternLength(), 64);
+	CHECK_EQ(List.Key(), std::string("C major"));
+	CHECK_EQ(List.Count(PROBLEM_CLASH), 1);
+	CHECK_EQ(List.Count(PROBLEM_RANGE), 1);
+	CHECK_EQ(List.Count(PROBLEM_SILENT), 1);
+	CHECK_EQ(List.Count(PROBLEM_KEY), 2);
+	CHECK_EQ(List.Count(PROBLEM_VANISHING), 0);
+	CHECK_EQ(List.Total(), 5);
+	CHECK_EQ(List.Findings().size(), 5u);
+	CHECK_EQ(std::string(ProblemKindTitle(PROBLEM_VANISHING)), std::string("Notes that vanish"));
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_KEY)), std::string("key"));
+	CHECK(ProblemSeverity(PROBLEM_CLICK) == 3 && ProblemSeverity(PROBLEM_RANGE) == 2 && ProblemSeverity(PROBLEM_BUSY) == 1);
+
+	// The lines of a kind in the song's order: C#4 at bar 1 before F#4 at bar 2, though check_song found F#4 first
+	const std::vector<ProblemLine> &Key = List.Lines(PROBLEM_KEY);
+	CHECK_EQ(Key.size(), 2u);
+	if (Key.size() == 2) {
+		CHECK(Key[0].Row == 0 && Key[0].Channel == 6);
+		CHECK(Key[1].Row == 16 && Key[1].Channel == 5);
+		CHECK_EQ(List.LineText(Key[1]), std::string("F#4 is outside C major"));
+		CHECK(List.LineNote(Key[1]) != 0 && List.LineNote(Key[1])->Name == "F#4" && List.LineNote(Key[1])->Rows == 4);
+	}
+	const std::vector<ProblemLine> &Clash = List.Lines(PROBLEM_CLASH);
+	CHECK(Clash.size() == 1 && List.LineText(Clash[0]) == "C-4 against C#4 on VRC6 Pulse 2 for 1 beat");
+	const ProblemFinding &ClashFinding = List.Findings()[static_cast<size_t>(Clash.empty() ? 0 : Clash[0].Finding)];
+	CHECK_EQ(ClashFinding.Kind, static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ClashFinding.Channel, 5);
+	CHECK_EQ(ClashFinding.ChannelName, std::string("VRC6 Pulse 1"));
+	CHECK_EQ(ClashFinding.Position, std::string("bar 1 beat 1"));
+	CHECK_EQ(ClashFinding.Message, std::string("Clash: C-4 on VRC6 Pulse 1 against C#4 on VRC6 Pulse 2 at bar 1 beat 1 for 1 beat."));
+	CHECK(ClashFinding.Notes.size() == 2 && ClashFinding.Notes[1].Channel == 6 && ClashFinding.Notes[1].Name == "C#4");
+	CHECK(ClashFinding.FixTool.empty());
+	const std::vector<ProblemLine> &Silent = List.Lines(PROBLEM_SILENT);
+	CHECK(Silent.size() == 1 && Silent[0].Channel == -1 && Silent[0].Row == 32 && List.LineText(Silent[0]) == "Nothing plays in bar 3");
+	CHECK(Silent.size() == 1 && List.LineNote(Silent[0]) == 0);
+	CHECK(Silent.size() == 1 && List.LinePosition(Silent[0]) == "bar 3 beat 1");
+
+	// Marks: the worst kind on each note's row, none for the silent bar, none on another track
+	ProblemMarks Marks;
+	CHECK(Marks.IsEmpty());
+	Marks.Set(List, 8, 128, -1);
+	CHECK(!Marks.IsEmpty());
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));	// outside the key too, but a clash is worse
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 16)), static_cast<int>(PROBLEM_KEY));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 0, 48)), static_cast<int>(PROBLEM_RANGE));
+	CHECK_EQ(Marks.At(0, 5, 4), 0);
+	CHECK_EQ(Marks.At(0, 5, 32), 0);
+	CHECK_EQ(Marks.At(1, 5, 0), 0);		// another track
+	CHECK_EQ(Marks.At(0, 9, 0), 0);
+	CHECK_EQ(Marks.At(0, 5, 500), 0);
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 0)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 0, 48)), 0x001E96F0ul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 16)), 0x00AF8C78ul);
+	// The selected finding's notes are set apart
+	Marks.Set(List, 8, 128, Clash.empty() ? -1 : Clash[0].Finding);
+	CHECK(ProblemMarks::IsSelected(Marks.At(0, 5, 0)) && ProblemMarks::IsSelected(Marks.At(0, 6, 0)));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 16)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	Marks.Clear();
+	CHECK(Marks.IsEmpty() && Marks.At(0, 5, 0) == 0);
+
+	// Notes that vanish: a line each, with the note's name
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		ProblemList Gone;
+		CHECK(Gone.Read(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+		const std::vector<ProblemLine> &Lines = Gone.Lines(PROBLEM_VANISHING);
+		CHECK_EQ(Gone.Count(PROBLEM_VANISHING), 3);
+		CHECK_EQ(Lines.size(), 3u);
+		CHECK_EQ(Gone.Findings().size(), 1u);
+		if (Lines.size() == 3) {
+			CHECK(Lines[0].Row == 8 && Lines[1].Row == 10 && Lines[2].Row == 16 && Lines[2].Note == 2 && Lines[2].Channel == 5);
+			CHECK_EQ(Gone.LineText(Lines[0]), std::string("D-4: \"Fair pluck\" (03) is gone within 3 frames, between notes of the line "
+				"that hold (\"Lead\" (00))"));
+			CHECK(Gone.LineNote(Lines[2]) != 0 && Gone.LineNote(Lines[2])->Name == "G-4");
+			CHECK_EQ(Gone.LinePosition(Lines[1]), std::string("bar 1 beat 3.5"));
+			CHECK_EQ(Gone.LinePosition(Lines[2]), std::string("bar 2 beat 1"));
+		}
+		ProblemMarks GoneMarks;
+		GoneMarks.Set(Gone, 8, 128, 0);
+		CHECK(GoneMarks.At(0, 5, 8) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK(GoneMarks.At(0, 5, 16) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK_EQ(GoneMarks.At(0, 5, 12), 0);
+	}
+
+	// A click's fix, as the panel's Nudge runs it
+	{
+		FakeSong Clicky;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+		Clicky.End(0, 32);
+		ProblemList Clicks;
+		CHECK(Clicks.Read(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text, Error));
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixTool == "polish");
+		CHECK(Clicks.Findings().size() == 1 &&
+			Clicks.Findings()[0].FixArguments == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixDoes == "nudges it a hair (P81, 7 cents sharp), so its vibrato "
+			"stays clear of 256");
+		CHECK_HAS(Clicks.LineText(Clicks.Lines(PROBLEM_CLICK)[0]), "A-3 clicks ");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].Nudge == "P81, 7 cents sharp" && Clicks.Findings()[0].Boundary == 256);
+		CHECK(List.Findings().size() == 5 && List.Findings()[0].Nudge.empty() && List.Findings()[0].Boundary == 0);
+	}
+
+	// Not check_song's JSON
+	ProblemList Wrong;
+	CHECK(!Wrong.Read("Checked bars 1-8 in C major", Error) && !Error.empty());
+	CHECK(!Wrong.Read("{\"counts\": {}}", Error));
+	CHECK(Wrong.Findings().empty() && Wrong.Total() == 0);
+	// A kind of a later version is left out
+	CHECK(Wrong.Read("{\"track\": 2, \"pattern_length\": 32, \"counts\": {\"key\": 1}, \"findings\": [{\"kind\": \"later\"}, "
+		"{\"kind\": \"key\", \"channel\": 2, \"frame\": 1, \"row\": 3, \"notes\": [{\"channel\": 2, \"frame\": 1, \"row\": 3}]}]}", Error));
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Track() == 1 && Wrong.Findings()[0].Row == 35 && Wrong.Findings()[0].Channel == 1);
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Findings()[0].Notes.size() == 1 && Wrong.Findings()[0].Notes[0].Row == 35);
+}
+
 int main()
 {
 	TestJson();
@@ -8955,6 +9363,8 @@ int main()
 	TestCheck();
 	TestPulseClicks();
 	TestVanishing();
+	TestCheckJson();
+	TestProblemList();
 	TestNameSong();
 	TestLoudness();
 	TestPlayback();
