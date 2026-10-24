@@ -357,7 +357,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 
 | Tool | What it does |
 |---|---|
-| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, and where each part plays between the speakers (see [Stereo](#stereo)) |
+| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader or pan in FamiTracker's mixer is off its default (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)") |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
@@ -382,6 +382,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
+| `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add) and starting pans (`pan`) in FamiTracker's mixer, or puts them back (`reset`); `write_into_notes` writes the whole mixer into the notes for NSF files, in every track, and sets it back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -408,7 +409,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes, pans or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
-| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders and starting pans, see [The mixer](#the-mixer)) plays in them |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -601,7 +602,9 @@ part's accents one step and its fades three.
 `review_arrangement` mentions a mix where every part plays near full
 volume, and a melody that plays well under another part (a VRC7 melody at
 9 under the triangle, say). Tools that write parts afterwards use their own
-volumes, so mixing is a last step, or one to repeat at the end.
+volumes, so mixing is a last step, or one to repeat at the end. A channel
+with a fader in FamiTracker's mixer (see [The mixer](#the-mixer)) is mixed
+as it sounds with it: 3 dB down, its volumes come out higher to match.
 
 ## Stereo
 
@@ -645,6 +648,43 @@ In FamiTracker itself, type `8` in an effect column, or select notes in
 the piano roll and pick **Effects > Pan (stereo)**: Left, Halfway left,
 Center, Halfway right or Right. A panned note shows an arrow at the end it
 leans to.
+
+## The mixer
+
+**View > Mixer** opens a strip for every channel of the song along the
+bottom of the window, in channel order (the 2A03's, then each expansion
+chip's that's on). Each strip has the channel's name and chip, a meter
+that moves while the song plays, **M** and **S** (mute and solo, the same
+as clicking the channel's name in the pattern editor), a fader from -24 to
++6 dB and a pan from left to right.
+
+- Drag the fader (Shift for tenths of a dB) or the pan; double-click one to
+  put it back at 0 dB or the middle, or right-click a strip. Each change is
+  one Ctrl+Z, a drag one for the drag.
+- The faders and pans are saved with the song, the same in every track.
+  FamiTracker's playback, File > Create WAV and File > Export for games
+  play them; they aren't changes to the notes.
+- A pan is where the channel starts, before any `8xx`; an `8xx` still moves
+  it from there, and every time the song starts again it starts there.
+- NSF files play the notes as written, so NSF export leaves the mixer out
+  and says so. **Write into the notes** (the button, or Claude's
+  `set_mixer` with `write_into_notes`) puts it into every track: each
+  fader into the channel's volume column, as `mix` scales a part, and each
+  pan as `8xx` on the channel's first note. Then the faders go back to 0 dB
+  and the middle, so the NSF sounds as the mix did, give or take a
+  volume step. One Ctrl+Z undoes it all.
+  - The triangle and the DPCM have no volume column: their faders stay in
+    the mixer.
+  - A channel raised past its loudest notes' volume 15 can't play louder
+    in its notes. Then every channel comes down by that much instead,
+    which keeps the balance (the song plays a little quieter).
+
+Claude sees the mixer in `get_song`, sets it with `set_mixer`
+("put the triangle 3 dB down", "start the echo channel half left"), and
+counts the faders when it weighs how loud parts sound (`mix`, the review,
+the echo and the harmony). For a mix that NSF files keep too, the notes'
+own volumes (`mix`) are the better place; the mixer suits quick balancing
+while you listen, and the game's OGG files.
 
 ## Expansion chips
 
@@ -1256,7 +1296,8 @@ peak softened, makes them match).
 
 The song has to be saved, since the files go next to it; files of the same
 names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
-files. Every channel is in the files, also the ones muted in the pattern
+files. The files play the song as FamiTracker does, with the mixer's faders
+and pans (View > Mixer). Every channel is in the files, also the ones muted in the pattern
 editor; they're muted again afterwards.
 
 A track whose notes click on the 2A03's pulses (see "Clicks in held notes
@@ -1335,7 +1376,9 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   `Sections` (a track's named runs of frames, kept with their frames as
   frames go in, come out, move or are copied, and the `BF SECTIONS` block,
   read with every read checked; the frame editor, the piano roll's ruler
-  and `CFrameAction` use it too),
+  and `CFrameAction` use it too), `ChannelMix` (the mixer window's faders
+  and starting pans by channel ID, and the `BF MIXER` block, read the same
+  way),
   `Arrange` (chord parts in styles, bass lines, drum grooves with fills, a
   harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the

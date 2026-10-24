@@ -45,6 +45,7 @@ CChannelHandler::CChannelHandler(int MaxPeriod, int MaxVolume) :
 	m_pAPU(NULL),
 	m_iPitch(0),
 	m_iPan(PAN_CENTER),
+	m_bPanned(false),
 	m_iNote(0),
 	m_iSeqVolume(0),
 	m_iDefaultDuty(0),
@@ -172,8 +173,9 @@ void CChannelHandler::ResetChannel()
 
 	RegisterKeyState(-1);
 
-	// Every channel starts in the middle
-	SetPan(PAN_CENTER);
+	// Every channel starts where the mixer window pans it (the middle unless moved), until an 8xx
+	m_bPanned = false;
+	SetPan(m_pSoundGen != NULL ? m_pSoundGen->GetStartPan(m_iChannelID) : PAN_CENTER);
 
 	// Clear channel registers
 	ClearRegisters();
@@ -212,8 +214,10 @@ void CChannelHandler::HandleNoteData(stChanNote *pNoteData, int EffColumns)
 	for (int n = 0; n < EffColumns; n++) {
 		unsigned char EffNum   = pNoteData->EffNumber[n];
 		unsigned char EffParam = pNoteData->EffParam[n];
-		if (EffNum == EF_PAN)
+		if (EffNum == EF_PAN) {
 			SetPan(EffParam);	// the same on every channel, the DPCM's too (whose handler has no common effects)
+			m_bPanned = true;
+		}
 		else
 			HandleCustomEffects(EffNum, EffParam);
 	}
@@ -412,6 +416,14 @@ void CChannelHandler::SetPan(int Pan)
 		ChanID = CHANID_N163_CHAN8 - (ChanID - CHANID_N163_CHAN1);
 	if (m_pAPU != NULL)
 		m_pAPU->SetChannelPan(ChanID, Pan);
+}
+
+void CChannelHandler::MixerPanChanged()
+{
+	// Called from player thread: the mixer window's pan moved while the song plays; the channel goes there
+	// at once unless an 8xx has set its pan since it started
+	if (!m_bPanned && m_pSoundGen != NULL)
+		SetPan(m_pSoundGen->GetStartPan(m_iChannelID));
 }
 
 bool CChannelHandler::HandleDelay(stChanNote *pNoteData, int EffColumns)

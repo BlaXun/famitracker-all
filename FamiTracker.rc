@@ -225,6 +225,7 @@ BEGIN
         MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
         MENUITEM "Problems",                    ID_VIEW_PROBLEMS
+        MENUITEM "Mixer",                       ID_VIEW_MIXER
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -584,6 +585,7 @@ BEGIN
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
     ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
+    ID_VIEW_MIXER           "Each channel's level and pan, with meters, mute and solo, saved with the song\nMixer"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"

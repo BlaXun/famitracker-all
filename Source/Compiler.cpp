@@ -32,6 +32,7 @@
 #include "Driver.h"
 #include "SoundGen.h"
 #include "APU/APU.h"
+#include "Api/ChannelMix.h"
 
 //
 // This is the new NSF data compiler, music is compiled to an object list instead of a binary chunk
@@ -1039,6 +1040,13 @@ bool CCompiler::CompileData()
 			Print(_T("Error: Selected expansion chip is unsupported\n"));
 			return false;
 	}
+
+	// The mixer window's faders and pans are this FamiTracker's own: the driver plays the notes as written
+	ftapi::MixStore Mix = *m_pDocument->GetChannelMix();
+	Mix.KeepOnly(m_pDocument->GetModuleChannelIds());
+	if (!Mix.Empty())
+		Print(_T(" * The mixer's levels and pans (View > Mixer) aren't in the NSF, which plays the notes as written; ")
+			_T("the mixer's Write into the notes puts them there\n"));
 
 	// Driver size
 	m_iDriverSize = m_pDriverData->driver_size;

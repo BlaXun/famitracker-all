@@ -281,6 +281,39 @@ doesn't set its own, `KeepFollowing` the next note's), and `Commit` writes
 the loop's first note its pan when a change leaves the song's end panned
 otherwise (`KeepLoopPans`).
 
+View > Mixer (`Source/MixerPanel.cpp`, a control bar docked along the
+bottom like the problems panel, `AFX_IDW_CONTROLBAR_FIRST + 35`) gives every
+channel of the module a strip: name and chip, a meter (the
+`CTrackerChannel` volume meter the sound thread sets, read without a lock,
+scaled by the fader), mute and solo (`CFamiTrackerView::ToggleChannel` and
+`SoloChannel`, polled with the meters so the pattern editor's header and
+the strips agree), a fader (-24 to +6 dB) and a starting pan. The settings
+are `ftapi::MixStore` (`Source/Api/ChannelMix.cpp`, portable), kept by
+`chan_id_t` in `CFamiTrackerDoc::GetChannelMix` (the same in every track;
+`KeepOnly` drops channels a chip switch removes) and saved in a `BF MIXER`
+block. After changing them the document calls `ChannelMixChanged`, which
+copies them into plain arrays of `CSoundGen` (`SetChannelMix`, the UI
+thread, no lock); the sound thread's `ApplyChannelMix` (every frame in
+`OnIdle` and in `BeginPlayer`) gives `CMixer::SetChannelGain` the levels
+and starts each channel at its pan in `CChannelHandler::ResetChannel`
+(`GetStartPan`; `MixerPanChanged` moves a channel no `8xx` has moved yet).
+`CMixer` folds a level into the linear chips' side gains (`m_dSide`, which
+`MixSides` and `PanGains256` use) and, on the 2A03, scales the channel's
+share of its pin (the pin's formula is in proportion to its inputs), so
+the chip compresses as before; at 0 dB nothing changes, sample for sample
+(`ApuTests`' hashes; `TestLevels` checks halves and doubles). Every mixer
+change is one `CChannelMixAction` (`SetChannelMix` in `InsertRecording.cpp`;
+a drag is one, with the settings before it). NSF export leaves the mixer
+out and says so (`CCompiler::CompileData`). Write into the notes runs
+`set_mixer` with `write_into_notes` through `CMcpConnection::RunTool`:
+`WriteMixerIntoNotes` in `Tools.cpp` scales each channel's volume column
+in every track as `mix` scales a part (`WriteMixerTrack`), writes the pans
+as `8xx` on first notes and sets the mixer back, all inside
+`SongHost::BeginGroup`/`EndGroup`, which `CMainFrame::BeginActionGroup`
+makes one Ctrl+Z (`CActionGroup`). The tools see the faders and pans in
+`ChannelInfo::MixLevel` and `MixPan`; `LevelDb` and `VolumeForDb` count the
+fader, so every balance worked out from them does.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -455,7 +488,10 @@ The application has no test suite of its own. What exists:
   and `TestKeyTools` the keys' shading, snapping and steps, the `BF KEYS`
   block (the same way), `set_key`, the tools' default key, keys moving with
   the whole song, versions, and the piano roll's chords (`ToolSet::Harmony`)
-  for known bars. Same three
+  for known bars; `TestMixerStore` and `TestMixerTools` the `BF MIXER`
+  block (the same way), `set_mixer`, `get_song`'s list, `mix` counting a
+  fader, the fader and the pan in the rendered files, and Write into the
+  notes in two tracks (the same loudness after, one undo for all). Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -606,6 +642,13 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   and refuses a block longer than its tracks; a damaged block loads as no
   chosen keys. Track removal, swaps and imports keep it in step
   (`TrackRemoved`, `TracksSwapped`, `FitTracks` after loading).
+- **`BF MIXER` block** (this branch; version 1, written after `BF KEYS`
+  only when a channel of the module is off 0 dB or the middle): an `int32`
+  count, then for each channel, in increasing order, `int32` `chan_id_t`,
+  level in tenths of a dB (-240 to 60) and starting pan (0-255).
+  `MixStore::Read` checks every read and refuses a block longer than its
+  channels; a damaged block or another version loads as every channel at
+  0 dB in the middle. `chan_id_t` is append only, so the IDs stay valid.
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.

@@ -826,6 +826,9 @@
 // View > Problems (ProblemsPanel.cpp)
 #define ID_VIEW_PROBLEMS                37250
 
+// View > Mixer (MixerPanel.cpp; its button is IDC 1904 there)
+#define ID_VIEW_MIXER                   37400
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -72,6 +72,11 @@ public:
 	void	MixSamples(blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
 	// The N163's DAC plays the sample of another channel, at the level the last one had
 	void	N163Channel(int ChanID, int Time);
+	// The mixer window's level for a channel (this FamiTracker's own, View > Mixer): its sound
+	// multiplied by Gain from Time on, 1 as it plays. On the 2A03 it scales the channel's share
+	// of the output its two pins mix, so the chip compresses as before.
+	void	SetChannelGain(int ChanID, double Gain, int Time);
+	double	GetChannelGain(int ChanID) const;
 
 	int32	GetChanOutput(uint8 Chan) const;
 	void	SetChipLevel(chip_level_t Chip, float Level);
@@ -90,6 +95,7 @@ private:
 	void MixMMC5(int ChanID, int Value, int Time);
 	void MixS5B(int ChanID, int Value, int Time);
 	void MixN163Sides(int Time);
+	void Remix(int ChanID, int Time);	// a channel's pan or level changed: its sound to where it is now
 	template <class Synth> void MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time);
 	Blip_Buffer &Side(int Index) { return Index == 0 ? BlipBuffer : BlipBufferRight; }
 
@@ -120,6 +126,8 @@ private:
 	// Stereo
 	int			m_iPan[CHANNELS];			// 0x00-0xFF
 	double		m_dGain[CHANNELS][2];		// left and right, from the pan
+	double		m_dLevel[CHANNELS];			// the mixer window's level (1 as the channel plays)
+	double		m_dSide[CHANNELS][2];		// the pan's gains and the level together, for the chips mixed linearly
 	int32		m_iLevel[CHANNELS];			// the linear chips' channels: the level the deltas sent add up to
 	int32		m_iSent[CHANNELS][2];		// ...and what each side has of it
 	int32		m_iN163Level;				// the N163's DAC: its level, the channel it plays and what each side has of it

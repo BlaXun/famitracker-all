@@ -35,6 +35,7 @@
 #include "Api/Sections.h"
 #include "stdafx.h"
 #include "Api/Keys.h"
+#include "Api/ChannelMix.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -51,6 +52,7 @@ namespace {
 const int ACT_INSERT_RECORDING = 0x1000;
 const int ACT_EDIT_CLIP = 0x1001;
 const int ACT_TRACK_KEY = 0x1300;
+const int ACT_CHANNEL_MIX = 0x1400;
 
 // Volume envelopes, the same as wav2ftm writes (Transcribe/TextModule.cpp).
 // Both hold at 10 on their release point for as long as the note lasts, then
@@ -671,6 +673,48 @@ private:
 	ftapi::KeyChoice m_Key;
 	bool m_bOldChosen;
 	ftapi::KeyChoice m_OldKey;
+};
+
+// The mixer window's faders and pans (or set_mixer's), as one undoable step;
+// the sound generator plays them from then on
+class CChannelMixAction : public CAction
+{
+public:
+	CChannelMixAction(const ftapi::MixStore &Mix, const ftapi::MixStore *pBefore) :
+		CAction(ACT_CHANNEL_MIX), m_Mix(Mix), m_bBefore(pBefore != NULL)
+	{
+		if (pBefore != NULL)
+			m_Old = *pBefore;
+	}
+
+	bool SaveState(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (!m_bBefore)
+			m_Old = *pDoc->GetChannelMix();
+		if (m_Old == m_Mix)
+			return false;	// nothing changes
+		Redo(pMainFrm);
+		return true;
+	}
+
+	void Undo(CMainFrame *pMainFrm) { Set(pMainFrm, m_Old); }
+	void Redo(CMainFrame *pMainFrm) { Set(pMainFrm, m_Mix); }
+
+private:
+	static void Set(CMainFrame *pMainFrm, const ftapi::MixStore &Mix)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (*pDoc->GetChannelMix() != Mix) {
+			*pDoc->GetChannelMix() = Mix;
+			pDoc->ChannelMixChanged();
+		}
+		pDoc->SetModifiedFlag();
+	}
+
+	ftapi::MixStore m_Mix;
+	bool m_bBefore;
+	ftapi::MixStore m_Old;
 };
 
 // A clip edited in the clip editor, written into its linked copies. Undo puts
@@ -1711,6 +1755,13 @@ bool SetTrackKey(CMainFrame *pMainFrm, bool Chosen, const ftapi::KeyChoice &Key)
 {
 	const int Track = pMainFrm->GetSelectedTrack();
 	return Track >= 0 && pMainFrm->AddAction(new CTrackKeyAction(static_cast<unsigned int>(Track), Chosen, Key));
+}
+
+// The mixer window and set_mixer
+
+bool SetChannelMix(CMainFrame *pMainFrm, const ftapi::MixStore &Mix, const ftapi::MixStore *pBefore)
+{
+	return pMainFrm->AddAction(new CChannelMixAction(Mix, pBefore));
 }
 
 // The Claude Code connection

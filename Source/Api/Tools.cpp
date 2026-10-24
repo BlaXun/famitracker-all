@@ -21,6 +21,7 @@
 
 #include "Tools.h"
 #include "Arrange.h"
+#include "ChannelMix.h"
 #include "Chords.h"
 #include "DpcmKit.h"
 #include "GameAudio.h"
@@ -466,20 +467,27 @@ double FullDb(const ChannelInfo &Channel)
 	return Channel.Chip == "N163" ? N163_FULL_DB : Channel.Chip == "FDS" ? FDS_FULL_DB : 0.0;
 }
 
+// The mixer window's fader on a channel (View > Mixer, set_mixer), which FamiTracker's mixer adds to how loud it plays
+double FaderDb(const ChannelInfo &Channel)
+{
+	return Channel.MixLevel / 10.0;
+}
+
 double LevelDb(const ChannelInfo &Channel, int Volume)
 {
 	if (Volume <= 0)
 		return -60.0;
 	if (Channel.Kind == KIND_FM)
-		return FM_FULL_DB - FM_STEP_DB * (15 - std::min(15, Volume));
+		return FaderDb(Channel) + FM_FULL_DB - FM_STEP_DB * (15 - std::min(15, Volume));
 	if (Channel.Kind == KIND_SQUARE)
-		return S5B_FULL_DB - S5B_STEP_DB * (15 - std::min(15, Volume));
-	return FullDb(Channel) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
+		return FaderDb(Channel) + S5B_FULL_DB - S5B_STEP_DB * (15 - std::min(15, Volume));
+	return FaderDb(Channel) + FullDb(Channel) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
 }
 
-// The volume (1-15) at which a channel plays nearest a level in dB
+// The volume (1-15) at which a channel plays nearest a level in dB (its fader counted)
 int VolumeForDb(const ChannelInfo &Channel, double Db)
 {
+	Db -= FaderDb(Channel);
 	double Volume;
 	if (Channel.Kind == KIND_FM)
 		Volume = 15.0 - (FM_FULL_DB - Db) / FM_STEP_DB;
@@ -2154,6 +2162,27 @@ std::string RangeText(int From, int To)
 std::vector<BarSpan> SongBarSpans(const Session &S, int First, int End);
 std::vector<ChordAt> SongChords(Session &S, int First, int End, const Key &K, int Melody = -2);
 
+// The channels whose fader or starting pan in FamiTracker's mixer is off its default: "Pulse 1 -3.0 dB, Triangle
+// starting 30% left"
+std::string MixerText(const ChannelInfo &Channel)
+{
+	std::string Text = Channel.FullName();
+	if (Channel.MixLevel != 0)
+		Text += Format(" %+.1f dB", Channel.MixLevel / 10.0);
+	if (Channel.MixPan != PAN_CENTER)
+		Text += " starting " + PanName(Channel.MixPan);
+	return Text;
+}
+
+std::string MixerList(const Session &S)
+{
+	std::string Text;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).MixLevel != 0 || S.Channel(c).MixPan != PAN_CENTER)
+			Text += (Text.empty() ? "" : ", ") + MixerText(S.Channel(c));
+	return Text;
+}
+
 std::string SongOverview(Session &S, const Json &Args)
 {
 	const SongInfo &Song = S.Song;
@@ -2224,6 +2253,11 @@ std::string SongOverview(Session &S, const Json &Args)
 	Text += Stereo ? "Stereo: the parts pan (8xx, this FamiTracker's own: its playback and the game's OGG files have it; NSF "
 		"files and FamiTracker 0.4.6 play mono).\n" : "Stereo: every part in the middle (set_pan, or write_notes' pan, moves "
 		"parts left or right for the game's stereo OGG files).\n";
+	const std::string Mixer = MixerList(S);
+	if (!Mixer.empty())
+		Text += "Mixer (FamiTracker's View > Mixer, saved with the song, the same in every track; its playback, WAV files and "
+			"export_for_game play it, NSF files don't): " + Mixer + ". The tools count the faders in how loud parts sound; "
+			"set_mixer changes them, or writes them into the notes for NSF files.\n";
 
 	// Key and chords
 	Key K, Found;
@@ -6150,7 +6184,9 @@ std::string MixTool(Session &S, const Json &Args)
 		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
 		const int AsPulse = (Soft ? SOFT : FULL)[P.Role];
 		P.Level = 20.0 * std::log10(AsPulse / 15.0);
-		const double Over = P.Level - LevelDb(S.Channel(P.Channel), 15);
+		ChannelInfo Unfaded = S.Channel(P.Channel);
+		Unfaded.MixLevel = 0;	// a chip's shortfall is its own, whatever one channel's fader does
+		const double Over = P.Level - LevelDb(Unfaded, 15);
 		double &Most = Short[S.Channel(P.Channel).Chip];
 		Most = std::max(Most, Over);
 		P.Target = AsPulse;
@@ -6168,6 +6204,8 @@ std::string MixTool(Session &S, const Json &Args)
 			Quiet = Quiet || Info.Chip == "N163";
 			Loud = Loud || Info.Chip == "FDS";
 		}
+		else if (Info.MixLevel != 0)
+			P.Target = VolumeForDb(Info, P.Level);	// as loud as its role with FamiTracker's mixer's fader on it
 	}
 	const Json *pLevels = Arg(Args, "levels");
 	if (pLevels != 0) {
@@ -11980,6 +12018,306 @@ std::string SetKeyTool(Session &S, const Json &Args)
 	return Result + ".";
 }
 
+// FamiTracker's mixer (View > Mixer): each channel's fader and starting pan, saved with the song, the same in every
+// track, played by FamiTracker (CMixer) in playback, WAV files and export_for_game, not by NSF files
+
+// The channels that have a volume column the fader can be written into (the triangle and the DPCM have none)
+bool HasVolumeColumn(const ChannelInfo &Channel)
+{
+	return Channel.Kind != KIND_TRIANGLE && Channel.Kind != KIND_DPCM;
+}
+
+// set_mixer's write_into_notes, in the selected track: each channel's fader (Shifts, dB) into its volume column as
+// mix scales a part (each volume as FamiTracker plays it, its first note given the 15 it starts at, volume slides
+// with it), and its starting pan (Pans) as 8xx on its first note, unless an 8xx comes first. Counts what it did;
+// false when the track had nothing to change.
+struct MixerWrite {
+	std::vector<int> Volumes;		// per channel: volumes written
+	std::vector<int> PansWritten;	// per channel: 8xx written
+	std::vector<bool> PanLost;		// per channel: a first note with no free effect column for its pan
+	int SlidesLost = 0;
+};
+
+bool WriteMixerTrack(Session &S, const std::vector<double> &Shifts, const std::vector<int> &Pans, MixerWrite &W)
+{
+	Draft D(S);
+	const std::vector<int> Frames = RowFramesOf(S);
+	const int End = S.Time.TotalRows();
+	for (int c = 0; c < S.ChannelCount() && c < static_cast<int>(Shifts.size()); ++c) {
+		ChannelInfo Info = S.Channel(c);
+		Info.MixLevel = 0;	// the volumes as they play with the fader back at 0
+		const double Shift = Shifts[static_cast<size_t>(c)];
+		const size_t Index = static_cast<size_t>(c);
+		if (std::fabs(Shift) >= 0.05 && HasVolumeColumn(Info) && HasNotesIn(S, c, 0, End)) {
+			std::vector<Cell> &Cells = D.Cells(c);
+			auto Scaled = [&](int Volume) {
+				return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + Shift);
+			};
+			bool FirstNote = true;
+			const int Starting = StateAt(S.Cells(c), 0, Info.EffectColumns).Volume;	// 15, as every channel starts
+			for (int r = 0; r < End && r < static_cast<int>(Cells.size()); ++r) {
+				Cell &C = Cells[static_cast<size_t>(r)];
+				const int Was = C.Volume;
+				if (C.Volume < NO_VOLUME)
+					C.Volume = static_cast<unsigned char>(Scaled(C.Volume));
+				else if (FirstNote && C.HasNote())
+					C.Volume = static_cast<unsigned char>(Scaled(Starting));
+				if (C.Volume != Was)
+					++W.Volumes[Index];
+				if (C.HasNote())
+					FirstNote = false;
+			}
+			const SlideMix Slides = MixSlides(S.Cells(c), Cells, 0, End, Info.EffectColumns, Frames, std::pow(10.0, Shift / 20.0),
+				Shift / FM_STEP_DB, StepVolume(Info));
+			W.SlidesLost += Slides.Lost;
+		}
+		if (Pans[Index] != PAN_CENTER && HasNotesIn(S, c, 0, End)) {
+			std::vector<Cell> &Cells = D.Cells(c);
+			for (int r = 0; r < End && r < static_cast<int>(Cells.size()); ++r) {
+				Cell &C = Cells[static_cast<size_t>(r)];
+				if (HasEffect(C, EFF_PAN, Info.EffectColumns))
+					break;	// an 8xx before the first note sets the channel's pan itself
+				if (!C.HasNote())
+					continue;
+				if (AddEffect(C, EFF_PAN, Pans[Index], Info.EffectColumns))
+					++W.PansWritten[Index];
+				else
+					W.PanLost[Index] = true;
+				break;
+			}
+		}
+	}
+	std::vector<Change> Changes;
+	std::vector<std::string> Warnings;
+	int Start = 0;
+	if (!D.Collect(0, true, Changes, Start, Warnings, End))
+		return false;
+	Commit(S, Changes, Start, false, "", "the mixer written into the notes");
+	return true;
+}
+
+// The loudest volume a channel plays in a track (its column, the 15 a channel starts at for notes before one)
+int LoudestVolume(Session &S, int Channel)
+{
+	int Loudest = 0;
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Loudest = std::max(Loudest, Notes[i].Volume);
+	return Loudest;
+}
+
+std::string WriteMixerIntoNotes(Session &S)
+{
+	const int Channels = S.ChannelCount();
+	std::vector<double> Shifts(static_cast<size_t>(Channels), 0.0);
+	std::vector<int> Pans(static_cast<size_t>(Channels), PAN_CENTER);
+	bool Any = false;
+	for (int c = 0; c < Channels; ++c) {
+		Shifts[static_cast<size_t>(c)] = FaderDb(S.Channel(c));
+		Pans[static_cast<size_t>(c)] = S.Channel(c).MixPan;
+		Any = Any || S.Channel(c).MixLevel != 0 || S.Channel(c).MixPan != PAN_CENTER;
+	}
+	if (!Any)
+		throw Problem("Nothing to write: every channel is at 0 dB and in the middle in FamiTracker's mixer.");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+
+	// A channel raised past its loudest notes' 15 can't play louder in the notes: then every channel comes down by
+	// the most one would pass it, which keeps the balance (the song plays that much quieter)
+	const int Tracks = std::max(1, S.Song.Tracks);
+	std::string Error;
+	// The selected track again at the end, whatever happens
+	struct Reselect {
+		SongHost &Host;
+		int Track, Now;
+		Reselect(SongHost &H, int T) : Host(H), Track(T), Now(T) {}
+		~Reselect()
+		{
+			std::string Ignored;
+			if (Now != Track)
+				Host.SelectTrack(Track, Ignored);
+		}
+		void Go(int T)
+		{
+			std::string Why;
+			if (T != Now && !Host.SelectTrack(T, Why))
+				throw Problem(Why);
+			Now = T;
+		}
+	} Selection(S.Host(), S.Song.Track);
+	double Over = 0.0;
+	std::string OverName;
+	for (int t = 0; t < Tracks; ++t) {
+		Selection.Go(t);
+		Session Track(S.Host());
+		for (int c = 0; c < Channels && c < Track.ChannelCount(); ++c) {
+			ChannelInfo Info = Track.Channel(c);
+			Info.MixLevel = 0;
+			const double Shift = Shifts[static_cast<size_t>(c)];
+			const int Loudest = LoudestVolume(Track, c);
+			if (Shift <= 0.0 || !HasVolumeColumn(Info) || Loudest <= 0)
+				continue;
+			const double Past = LevelDb(Info, Loudest) + Shift - LevelDb(Info, 15);
+			if (Past > Over + 0.05) {
+				Over = Past;
+				OverName = Info.FullName();
+			}
+		}
+	}
+	if (Over > 0.0)
+		for (size_t c = 0; c < Shifts.size(); ++c)
+			Shifts[c] -= Over;
+
+	// Every track, as one undoable change with the mixer set back
+	struct Grouped {
+		SongHost &Host;
+		explicit Grouped(SongHost &H) : Host(H) { Host.BeginGroup(); }
+		~Grouped() { Host.EndGroup(); }
+	} Group(S.Host());
+	MixerWrite W;
+	W.Volumes.assign(static_cast<size_t>(Channels), 0);
+	W.PansWritten.assign(static_cast<size_t>(Channels), 0);
+	W.PanLost.assign(static_cast<size_t>(Channels), false);
+	int Changed = 0;
+	for (int t = 0; t < Tracks; ++t) {
+		Selection.Go(t);
+		Session Track(S.Host());
+		if (WriteMixerTrack(Track, Shifts, Pans, W))
+			++Changed;
+	}
+	Selection.Go(Selection.Track);
+
+	// What stays in the mixer: the faders of the channels without a volume column (and what a channel raised past
+	// 15 took from them), and pans that found no free effect column
+	std::vector<int> Levels(static_cast<size_t>(Channels), 0), Kept(static_cast<size_t>(Channels), PAN_CENTER);
+	std::vector<std::string> Stays, Written;
+	for (int c = 0; c < Channels; ++c) {
+		const size_t i = static_cast<size_t>(c);
+		const ChannelInfo &Info = S.Channel(c);
+		if (!HasVolumeColumn(Info) && std::fabs(Shifts[i]) >= 0.05) {
+			Levels[i] = std::max(MIX_LEVEL_LOWEST, std::min(MIX_LEVEL_HIGHEST, static_cast<int>(std::floor(Shifts[i] * 10.0 + 0.5))));
+			Stays.push_back(Format("%s's fader stays at %+.1f dB (it has no volume column; NSF files play it as loud as before)",
+				Info.FullName().c_str(), Levels[i] / 10.0));
+		}
+		if (W.PanLost[i]) {
+			Kept[i] = Pans[i];
+			Stays.push_back(Info.FullName() + "'s pan stays in the mixer (its first note has no free effect column for 8xx)");
+		}
+		std::string One;
+		if (W.Volumes[i] > 0)
+			One = Format("%s: %s %.1f dB %s", Info.FullName().c_str(), Plural(W.Volumes[i], "volume", "volumes").c_str(),
+				std::fabs(Shifts[i]), Shifts[i] < 0.0 ? "down" : "up");
+		if (W.PansWritten[i] > 0)
+			One += (One.empty() ? Info.FullName() + ": " : ", ") + Format("%s as 8%02X on its first note", PanName(Pans[i]).c_str(), Pans[i]);
+		if (!One.empty())
+			Written.push_back(One);
+	}
+	if (!S.Host().SetMixer(Levels, Kept, Error))
+		throw Problem(Error.empty() ? "FamiTracker couldn't set the mixer back." : Error);
+
+	std::string Text = Changed == 0 ? "No notes needed changing" : Format("Wrote FamiTracker's mixer into the notes, in %s",
+		Plural(Changed, "track", "tracks").c_str());
+	for (size_t i = 0; i < Written.size(); ++i)
+		Text += (i == 0 ? ": " : "; ") + Written[i];
+	Text += ". The mixer is back at 0 dB and the middle";
+	if (!Stays.empty()) {
+		Text += ", except:";
+		for (size_t i = 0; i < Stays.size(); ++i)
+			Text += (i == 0 ? " " : "; ") + Stays[i];
+	}
+	Text += ". NSF files now sound as FamiTracker played the mix.";
+	if (Over > 0.0)
+		Text += Format(" %s was raised past its loudest notes' volume 15, so every channel came down %.1f dB instead, which "
+			"keeps the balance (the song plays that much quieter; export_for_game brings its files back up).", OverName.c_str(), Over);
+	if (W.SlidesLost > 0)
+		Text += Format(" %s found no free column for its stop, so it climbs as it did.", Plural(W.SlidesLost, "swell", "swells").c_str());
+	return Text + " One Ctrl+Z in FamiTracker undoes it all.";
+}
+
+// A channel's fader and pan as set_mixer takes them
+std::string SetMixerTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("The mixer is part of the song, so changing it needs direct changes: the user can allow them in File > "
+			"Connect Claude Code, or move the faders in FamiTracker (View > Mixer).");
+	if (BoolArg(Args, "write_into_notes", false)) {
+		if (Arg(Args, "level") != 0 || Arg(Args, "change") != 0 || Arg(Args, "pan") != 0 || Arg(Args, "reset") != 0)
+			throw Problem("write_into_notes goes alone: set the faders first, then write them into the notes.");
+		return WriteMixerIntoNotes(S);
+	}
+	const bool Reset = BoolArg(Args, "reset", false);
+	const Json *pLevel = Arg(Args, "level"), *pChange = Arg(Args, "change"), *pPan = Arg(Args, "pan");
+	if (!Reset && pLevel == 0 && pChange == 0 && pPan == 0)
+		throw Problem("Say what to set: level (dB, -24 to 6), change (dB to add), pan, reset, or write_into_notes.");
+	if (pLevel != 0 && pChange != 0)
+		throw Problem("Give level or change, not both.");
+	if (Reset && (pLevel != 0 || pChange != 0 || pPan != 0))
+		throw Problem("reset sets the channels back to 0 dB and the middle; give it alone.");
+	// The channels: a name or number, a list, or all (every channel, the noise and the DPCM too)
+	std::vector<int> Chosen;
+	const Json *pChannels = Arg(Args, "channels");
+	if (pChannels == 0 || (pChannels->IsString() && Lowercase(Trim(pChannels->String())) == "all")) {
+		if (pChannels == 0 && !Reset)
+			throw Problem("Name the channels to set (channels: a name or number, a list, or \"all\").");
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			Chosen.push_back(c);
+	}
+	else
+		Chosen = ChannelsArg(S, Args, "channels");
+	const double Level = pLevel != 0 ? NumberArg(Args, "level", 0.0, MIX_LEVEL_LOWEST / 10.0, MIX_LEVEL_HIGHEST / 10.0) : 0.0;
+	const double By = pChange != 0 ? NumberArg(Args, "change", 0.0, -30.0, 30.0) : 0.0;
+	int Pan = PAN_CENTER;
+	if (pPan != 0 && !ParsePanValue(*pPan, Pan))
+		throw Problem("pan: left, right, center, a place between (\"half left\", \"30% right\"), or a number from -1 (left) to 1 "
+			"(right).");
+
+	std::vector<int> Levels, Pans;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Levels.push_back(S.Channel(c).MixLevel);
+		Pans.push_back(S.Channel(c).MixPan);
+	}
+	std::vector<std::string> Done;
+	bool Clamped = false;
+	for (size_t i = 0; i < Chosen.size(); ++i) {
+		const size_t c = static_cast<size_t>(Chosen[i]);
+		if (Reset) {
+			Levels[c] = 0;
+			Pans[c] = PAN_CENTER;
+		}
+		if (pLevel != 0)
+			Levels[c] = static_cast<int>(std::floor(Level * 10.0 + 0.5));
+		if (pChange != 0) {
+			const int Want = Levels[c] + static_cast<int>(std::floor(By * 10.0 + 0.5));
+			Levels[c] = std::max(MIX_LEVEL_LOWEST, std::min(MIX_LEVEL_HIGHEST, Want));
+			Clamped = Clamped || Levels[c] != Want;
+		}
+		if (pPan != 0)
+			Pans[c] = Pan;
+		ChannelInfo After = S.Channel(Chosen[i]);
+		After.MixLevel = Levels[c];
+		After.MixPan = Pans[c];
+		Done.push_back(After.MixLevel == 0 && After.MixPan == PAN_CENTER ? After.FullName() + " at 0 dB in the middle" : MixerText(After));
+	}
+	bool Changes = false;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Changes = Changes || Levels[static_cast<size_t>(c)] != S.Channel(c).MixLevel || Pans[static_cast<size_t>(c)] != S.Channel(c).MixPan;
+	std::string Text;
+	for (size_t i = 0; i < Done.size(); ++i)
+		Text += (i == 0 ? "" : ", ") + Done[i];
+	if (!Changes)
+		return "Nothing changed: FamiTracker's mixer has " + Text + " already.";
+	std::string Error;
+	if (!S.Host().SetMixer(Levels, Pans, Error))
+		throw Problem(Error.empty() ? "FamiTracker couldn't change the mixer." : Error);
+	Text = "Set FamiTracker's mixer (View > Mixer): " + Text + ".";
+	if (Clamped)
+		Text += " The faders go from -24 to +6 dB, so some stopped there.";
+	Text += " FamiTracker's playback, WAV files and export_for_game play it (a pan is where the channel starts, before any 8xx); "
+		"NSF files don't: set_mixer with write_into_notes puts it into the notes. One Ctrl+Z in FamiTracker undoes it.";
+	return Text;
+}
+
 // Versions to compare: the track as it is now, kept as a track of its own
 
 std::string KeepVersionTool(Session &S, const Json &Args)
@@ -12249,6 +12587,8 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
 	if (SongPans(S))
 		Text += ", in stereo (its parts pan)";
+	if (!MixerList(S).empty())
+		Text += ", mixed as FamiTracker's mixer has it (View > Mixer)";
 	if (Loudness < 0.0 && Measured > -70.0) {
 		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
 			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
@@ -14505,6 +14845,25 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"to find it from the notes."), true),
 		false, false, true);
 
+	AddTool("set_mixer", "Set the mixer",
+		"Sets channels' faders and starting pans in FamiTracker's mixer (View > Mixer): a channel's level in dB (-24 to +6, 0 "
+		"as it plays) and where it starts between the speakers, before any 8xx. They're saved with the song, the same in every "
+		"track; FamiTracker's playback, File > Create WAV and export_for_game play them, and the tools count the faders in how "
+		"loud parts sound. They aren't changes to the notes, so NSF files don't have them: write_into_notes puts the faders into "
+		"the volume columns (as mix scales a part) and the pans as 8xx on each channel's first note, in every track, then sets "
+		"the mixer back to 0 dB and the middle. get_song lists the channels off their default. Needs direct changes; each call "
+		"is one undoable change.",
+		Schema()
+			.Add("channels", ChannelListProp("The channels to set: a name or number, a list, or \"all\" (every channel)."))
+			.Add("level", Prop("number", "Their fader in dB, -24 to 6 (0: as they play)."))
+			.Add("change", Prop("number", "Instead: dB to add to their faders, like -3."))
+			.Add("pan", PanChoice("Where they start: left, right, center, a place between (\"half left\", \"30% right\", or a "
+				"number from -1 (left) to 1 (right)). An 8xx in their notes still moves them from there."))
+			.Add("reset", Prop("boolean", "Back to 0 dB and the middle (every channel when none are named)."))
+			.Add("write_into_notes", Prop("boolean", "Write the whole mixer into the notes for NSF files, in every track, and set "
+				"it back (alone, without the others).")),
+		false);
+
 	AddTool("export_for_game", "Export music for a game",
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
@@ -14895,6 +15254,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "name_section") Result.Text = NameSectionTool(S, Args);
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
+		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
@@ -15113,6 +15473,9 @@ std::string ToolSet::Instructions()
 		"counter-melody answering from the other side, hi-hats alternating; keep the melody, the bass, the kick and the snare "
 		"in the middle. mix with width wide sets that picture. Spread a little (halfway, not hard left and right): players "
 		"heard on one speaker or on headphones tire of parts that sit far to one side.\n"
+		"- FamiTracker's mixer (View > Mixer, set_mixer) gives each channel a fader and a starting pan, saved with the song; "
+		"get_song lists them, and the tools count the faders in how loud parts sound (mix, the review). Prefer the notes' own volumes for "
+		"a mix that NSF files keep; set_mixer write_into_notes moves the mixer into them.\n"
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"

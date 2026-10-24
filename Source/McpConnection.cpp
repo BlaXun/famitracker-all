@@ -33,6 +33,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "Api/ChannelMix.h"
 #include "Api/DpcmKit.h"
 #include "Api/FdsSounds.h"
 #include "Api/Http.h"
@@ -910,6 +911,8 @@ public:
 			Channel.Kind = KindOf(Channel.ChanId);
 			Channel.EffectColumns = static_cast<int>(pDoc->GetEffColumns(Track, static_cast<unsigned int>(c))) + 1;
 			Channel.Muted = pView != NULL && pView->IsChannelMuted(static_cast<unsigned int>(c));
+			Channel.MixLevel = pDoc->GetChannelMix()->Level(Channel.ChanId);
+			Channel.MixPan = pDoc->GetChannelMix()->Pan(Channel.ChanId);
 			Info.Channels.push_back(Channel);
 		}
 		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -1666,6 +1669,36 @@ public:
 			return false;
 		}
 		return true;
+	}
+
+	// The mixer window's faders and pans, as one undoable step (CChannelMixAction)
+	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		ftapi::MixStore Mix = *pDoc->GetChannelMix();
+		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+		for (int c = 0; c < Channels && c < static_cast<int>(Levels.size()) && c < static_cast<int>(Pans.size()); ++c)
+			Mix.Set(pDoc->GetChannelType(c), Levels[static_cast<size_t>(c)], Pans[static_cast<size_t>(c)]);
+		if (Mix == *pDoc->GetChannelMix())
+			return true;
+		if (!SetChannelMix(m_pMain, Mix)) {
+			Error = "The mixer couldn't be changed.";
+			return false;
+		}
+		return true;
+	}
+
+	// The changes until EndGroup are one Ctrl+Z (CMainFrame::BeginActionGroup)
+	void BeginGroup()
+	{
+		m_pMain->BeginActionGroup();
+	}
+
+	void EndGroup()
+	{
+		m_pMain->EndActionGroup();
 	}
 
 	bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<ftapi::Cell> > &Columns,

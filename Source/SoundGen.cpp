@@ -117,6 +117,8 @@ CSoundGen::CSoundGen() :
 	m_pTrackerView(NULL),
 	m_bRendering(false),
 	m_iRenderCount(0),
+	m_iMixVersion(0),
+	m_iMixApplied(0),
 	m_iRenderedSamples(0),
 	m_bPlaying(false),
 	m_bHaltRequest(false),
@@ -143,6 +145,11 @@ CSoundGen::CSoundGen() :
 	m_iSequenceTimeout(0)
 {
 	TRACE0("SoundGen: Object created\n");
+
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_iMixLevel[i] = 0;
+		m_iMixPan[i] = 0x80;
+	}
 
 	// DPCM sample interface
 	m_pSampleMem = new CSampleMem();
@@ -368,6 +375,39 @@ void CSoundGen::ForgetSequence(const CSequence *pSequence)
 	for (int i = 0; i < CHANNELS; ++i) {
 		if (m_pChannels[i] != NULL)
 			m_pChannels[i]->ForgetSequence(pSequence);
+	}
+}
+
+void CSoundGen::SetChannelMix(const int *pLevels, const int *pPans)
+{
+	// Called from the UI thread: plain numbers the sound thread reads, then a new version for it to apply
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_iMixLevel[i] = pLevels[i];
+		m_iMixPan[i] = std::max(0, std::min(0xFF, pPans[i]));
+	}
+	InterlockedIncrement(&m_iMixVersion);
+}
+
+int CSoundGen::GetStartPan(int ChanID) const
+{
+	return (ChanID >= 0 && ChanID < CHANNELS) ? m_iMixPan[ChanID] : 0x80;
+}
+
+void CSoundGen::ApplyChannelMix()
+{
+	// Called from player thread: the mixer window's levels into the mixer, and its pans for the channels
+	// no 8xx has moved since they started
+	const LONG Version = m_iMixVersion;
+	if (Version == m_iMixApplied)
+		return;
+	m_iMixApplied = Version;
+	for (int i = 0; i < CHANNELS; ++i) {
+		// The N163's channels play on the chip's in reverse order (see CChannelHandler::SetPan)
+		const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
+		const int Level = m_iMixLevel[i];
+		m_pAPU->SetChannelGain(Mixed, Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
+		if (m_pChannels[i] != NULL)
+			m_pChannels[i]->MixerPanChanged();
 	}
 }
 
@@ -920,6 +960,9 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 
 	ResetTempo();
 	ResetAPU();
+
+	// The mixer window's settings as they are now, before every channel starts at its pan
+	ApplyChannelMix();
 
 	MakeSilent();
 
@@ -1671,6 +1714,9 @@ BOOL CSoundGen::OnIdle(LONG lCount)
 		return TRUE;
 
 	++m_iFrameCounter;
+
+	// The mixer window's levels and pans, as the user moves them
+	ApplyChannelMix();
 
 	// Access the document object, skip if access wasn't granted to avoid gaps in audio playback
 	if (m_pDocument->LockDocument(0)) {

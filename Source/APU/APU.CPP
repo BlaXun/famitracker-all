@@ -556,6 +556,18 @@ void CAPU::SetChannelPan(int ChanID, int Pan)
 	m_pMixer->SetChannelPan(ChanID, Pan, m_iFrameCycles);
 }
 
+void CAPU::SetChannelGain(int ChanID, double Gain)
+{
+	// From now on, as the pan
+	Process();
+	m_pMixer->SetChannelGain(ChanID, Gain, m_iFrameCycles);
+}
+
+double CAPU::GetChannelGain(int ChanID) const
+{
+	return m_pMixer->GetChannelGain(ChanID);
+}
+
 void CAPU::LogExternalWrite(uint16 Address, uint8 Value)
 {
 	if (Address >= 0x9000 && Address <= 0x9003)

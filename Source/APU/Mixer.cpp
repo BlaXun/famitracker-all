@@ -92,6 +92,8 @@ CMixer::CMixer()
 	for (int i = 0; i < CHANNELS; ++i) {
 		m_iPan[i] = 0x80;
 		m_dGain[i][0] = m_dGain[i][1] = 1.0;
+		m_dLevel[i] = 1.0;
+		m_dSide[i][0] = m_dSide[i][1] = 1.0;
 		m_iLevel[i] = 0;
 		m_iSent[i][0] = m_iSent[i][1] = 0;
 	}
@@ -367,7 +369,12 @@ void CMixer::MixInternal1(int Time)
 		SumL = ((m_iChannels[CHANID_SQUARE1].Left + m_iChannels[CHANID_SQUARE2].Left) * 0.00752) * InternalVol;
 		SumR = ((m_iChannels[CHANID_SQUARE1].Right + m_iChannels[CHANID_SQUARE2].Right) *  0.00752) * InternalVol;
 #else
-		double Sum = CalcPin1(m_iChannels[CHANID_SQUARE1] * m_dGain[CHANID_SQUARE1][s], m_iChannels[CHANID_SQUARE2] * m_dGain[CHANID_SQUARE2][s]);
+		const double Pulse1 = m_iChannels[CHANID_SQUARE1] * m_dGain[CHANID_SQUARE1][s], Pulse2 = m_iChannels[CHANID_SQUARE2] * m_dGain[CHANID_SQUARE2][s];
+		double Sum = CalcPin1(Pulse1, Pulse2);
+		// The mixer window's levels: each pulse's share of the pin (in proportion to its input, as the
+		// formula is) scaled, so the pin compresses them as it did
+		if ((m_dLevel[CHANID_SQUARE1] != 1.0 || m_dLevel[CHANID_SQUARE2] != 1.0) && Pulse1 + Pulse2 > 0)
+			Sum *= (Pulse1 * m_dLevel[CHANID_SQUARE1] + Pulse2 * m_dLevel[CHANID_SQUARE2]) / (Pulse1 + Pulse2);
 #endif
 
 		double Delta = (Sum - m_dSumSS[s]) * AMP_2A03;
@@ -383,8 +390,16 @@ void CMixer::MixInternal2(int Time)
 		SumL = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Left + 0.00494 * m_iChannels[CHANID_NOISE].Left + 0.00335 * m_iChannels[CHANID_DPCM].Left)) * InternalVol;
 		SumR = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Right + 0.00494 * m_iChannels[CHANID_NOISE].Right + 0.00335 * m_iChannels[CHANID_DPCM].Right)) * InternalVol;
 #else
-		double Sum = CalcPin2(m_iChannels[CHANID_TRIANGLE] * m_dGain[CHANID_TRIANGLE][s], m_iChannels[CHANID_NOISE] * m_dGain[CHANID_NOISE][s],
-			m_iChannels[CHANID_DPCM] * m_dGain[CHANID_DPCM][s]);
+		const double Triangle = m_iChannels[CHANID_TRIANGLE] * m_dGain[CHANID_TRIANGLE][s], Noise = m_iChannels[CHANID_NOISE] * m_dGain[CHANID_NOISE][s],
+			Dpcm = m_iChannels[CHANID_DPCM] * m_dGain[CHANID_DPCM][s];
+		double Sum = CalcPin2(Triangle, Noise, Dpcm);
+		// The mixer window's levels, each channel's share scaled as on the first pin
+		if (m_dLevel[CHANID_TRIANGLE] != 1.0 || m_dLevel[CHANID_NOISE] != 1.0 || m_dLevel[CHANID_DPCM] != 1.0) {
+			const double Shares = Triangle / 8227.0 + Noise / 12241.0 + Dpcm / 22638.0;
+			if (Shares > 0)
+				Sum *= (Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE] + Noise / 12241.0 * m_dLevel[CHANID_NOISE] +
+					Dpcm / 22638.0 * m_dLevel[CHANID_DPCM]) / Shares;
+		}
 #endif
 
 		double Delta = (Sum - m_dSumTND[s]) * AMP_2A03;
@@ -419,38 +434,38 @@ void CMixer::N163Channel(int ChanID, int Time)
 	if (ChanID == m_iN163Chan)
 		return;
 	m_iN163Chan = ChanID;
-	if (m_iPan[ChanID] != 0x80 || m_iN163Sent[0] != m_iN163Level || m_iN163Sent[1] != m_iN163Level)
+	if (m_dSide[ChanID][0] != 1.0 || m_dSide[ChanID][1] != 1.0 || m_iN163Sent[0] != m_iN163Level || m_iN163Sent[1] != m_iN163Level)
 		MixN163Sides(Time);
 }
 
 void CMixer::MixN163Sides(int Time)
 {
-	MixSides(SynthN163, m_iN163Level, m_dGain[m_iN163Chan], m_iN163Sent, Time);
+	MixSides(SynthN163, m_iN163Level, m_dSide[m_iN163Chan], m_iN163Sent, Time);
 }
 
 void CMixer::MixFDS(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthFDS, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthFDS, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::MixVRC6(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthVRC6, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthVRC6, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::MixMMC5(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthMMC5, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthMMC5, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::MixS5B(int ChanID, int Value, int Time)
 {
 	// Each channel's level as it changes (CS5B), on each side as its pan has it
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthS5B, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthS5B, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 }
 
 void CMixer::PanGains(int Pan, double &Left, double &Right)
@@ -473,6 +488,27 @@ void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
 		return;
 	m_iPan[ChanID] = Pan;
 	PanGains(Pan, m_dGain[ChanID][0], m_dGain[ChanID][1]);
+	Remix(ChanID, Time);
+}
+
+void CMixer::SetChannelGain(int ChanID, double Gain, int Time)
+{
+	if (ChanID < 0 || ChanID >= CHANNELS || !(Gain >= 0.0) || Gain == m_dLevel[ChanID])
+		return;
+	m_dLevel[ChanID] = Gain;
+	Remix(ChanID, Time);
+}
+
+double CMixer::GetChannelGain(int ChanID) const
+{
+	return (ChanID >= 0 && ChanID < CHANNELS) ? m_dLevel[ChanID] : 1.0;
+}
+
+void CMixer::Remix(int ChanID, int Time)
+{
+	// The pan and the level together, for the chips mixed linearly (in the middle at 1: the pan's gains themselves)
+	for (int s = 0; s < 2; ++s)
+		m_dSide[ChanID][s] = m_dLevel[ChanID] == 1.0 ? m_dGain[ChanID][s] : m_dGain[ChanID][s] * m_dLevel[ChanID];
 
 	// What the channel sounds moves to its new place now
 	switch (ChanID) {
@@ -488,21 +524,21 @@ void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
 		case CHANID_VRC6_PULSE1:
 		case CHANID_VRC6_PULSE2:
 		case CHANID_VRC6_SAWTOOTH:
-			MixSides(SynthVRC6, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			MixSides(SynthVRC6, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 			break;
 		case CHANID_MMC5_SQUARE1:
 		case CHANID_MMC5_SQUARE2:
 		case CHANID_MMC5_VOICE:
-			MixSides(SynthMMC5, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			MixSides(SynthMMC5, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 			break;
 		case CHANID_FDS:
-			MixSides(SynthFDS, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+			MixSides(SynthFDS, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 			break;
 		default:
 			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
 				MixN163Sides(Time);
 			if (ChanID >= CHANID_S5B_CH1 && ChanID <= CHANID_S5B_CH3)
-				MixSides(SynthS5B, m_iLevel[ChanID], m_dGain[ChanID], m_iSent[ChanID], Time);
+				MixSides(SynthS5B, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
 			// The VRC7's channels: their samples are made at the end of the frame
 			break;
 	}
@@ -518,8 +554,8 @@ void CMixer::PanGains256(int ChanID, int32 &Left, int32 &Right) const
 	Left = Right = 256;
 	if (ChanID < 0 || ChanID >= CHANNELS)
 		return;
-	Left = static_cast<int32>(std::floor(m_dGain[ChanID][0] * 256.0 + 0.5));
-	Right = static_cast<int32>(std::floor(m_dGain[ChanID][1] * 256.0 + 0.5));
+	Left = static_cast<int32>(std::floor(m_dSide[ChanID][0] * 256.0 + 0.5));
+	Right = static_cast<int32>(std::floor(m_dSide[ChanID][1] * 256.0 + 0.5));
 }
 
 void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCycles)

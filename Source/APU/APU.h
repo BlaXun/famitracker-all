@@ -75,6 +75,8 @@ public:
 
 	void	SetChipLevel(chip_level_t Chip, float Level);
 	void	SetChannelPan(int ChanID, int Pan);		// 0x00 left, 0x80 the middle, 0xFF right (CMixer::SetChannelPan)
+	void	SetChannelGain(int ChanID, double Gain);	// the mixer window's level, 1 as it plays (CMixer::SetChannelGain)
+	double	GetChannelGain(int ChanID) const;
 
 #ifdef LOGGING
 	void	Log();

@@ -1257,6 +1257,9 @@
     <ClCompile Include="Source\Api\Keys.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\ChannelMix.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Chords.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1333,6 +1336,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Keys.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\ChannelMix.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Chords.h">
@@ -1488,6 +1494,12 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\ProblemsPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\MixerPanel.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\MixerPanel.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\InstrumentLibrary.cpp">
