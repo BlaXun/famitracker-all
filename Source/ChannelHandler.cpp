@@ -404,8 +404,14 @@ void CChannelHandler::SetPan(int Pan)
 	// of the channel from now on (CMixer::SetChannelPan). It lasts until the
 	// next 8xx, over notes, releases and halts.
 	m_iPan = Pan;
+	// The N163's channels play on the chip's in reverse order: the first on its eighth
+	// (CChannelHandlerN163::RefreshChannel writes 0x40 + (7 - index) * 8), which is the one
+	// the emulation mixes as CHANID_N163_CHAN8
+	int ChanID = m_iChannelID;
+	if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8)
+		ChanID = CHANID_N163_CHAN8 - (ChanID - CHANID_N163_CHAN1);
 	if (m_pAPU != NULL)
-		m_pAPU->SetChannelPan(m_iChannelID, Pan);
+		m_pAPU->SetChannelPan(ChanID, Pan);
 }
 
 bool CChannelHandler::HandleDelay(stChanNote *pNoteData, int EffColumns)

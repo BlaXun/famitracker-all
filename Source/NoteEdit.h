@@ -52,6 +52,11 @@ struct stChanNote;
 // them off; the notes after them sound as before, since a lasting effect
 // that changes for them is set again (or switched off) on their first row.
 //
+// The pan (8xx, this FamiTracker's stereo) lasts from note to note too, and
+// each note keeps the pan it plays at through the edits: a note moved, copied
+// or pasted plays at its pan where it lands, the notes it leaves play at
+// theirs, and a new note plays at the channel's pan where it goes.
+//
 // No MFC and no document: the logic is tested on Linux (Source/Tests).
 class CChannelNotes
 {
@@ -63,6 +68,7 @@ public:
 		int Written;		// the pitch in the cell
 		int Instrument;		// in effect, -1 if none was set yet
 		int Volume;			// in effect, 0-15
+		int Pan;			// in effect after its first row: 0x00 left, 0x80 the middle (PAN_CENTER), 0xFF right
 		bool Released;		// ends on a release (===)
 		bool Halted;		// ends on a halt (---)
 	};
@@ -136,9 +142,14 @@ public:
 	// A bend at the end of the notes, Before rows before it: Semitones up (negative: down, up to 15)
 	// at Speed (1-15), or none with 0. Notes too short to bend are left as they are.
 	bool SetBend(const int *pStarts, int Count, int Semitones, int Speed, int Before);
-	// Takes every effect off the notes but the song-wide ones; one that came from an earlier note is
-	// switched off. Notes that slid into their pitch now start there.
+	// Takes every effect off the notes but the song-wide ones and the pan; one that came from an
+	// earlier note is switched off. Notes that slid into their pitch now start there.
 	bool ClearEffects(const int *pStarts, int Count);
+	// The notes play at Pan (0x00 left, 0x80 the middle, 0xFF right) from their first row to their
+	// end; the notes after them keep the pan they had. A pan that changed while one of them sounded
+	// goes. When the channel's last note ends up panned otherwise than its first note starts, the
+	// first note gets its pan written, so it plays at it again when the song loops.
+	bool SetPan(const int *pStarts, int Count, unsigned char Pan);
 
 	// The first and last rows that differ from Other; false if none do
 	bool Compare(const CChannelNotes &Other, int &First, int &Last) const;

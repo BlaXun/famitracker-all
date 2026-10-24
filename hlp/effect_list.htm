@@ -19,6 +19,7 @@
         <li><a href="#Portamento">3xx - Automatic portamento</a></li>
         <li><a href="#Vibrato">4xy - Vibrato</a></li>
         <li><a href="#Tremolo">7xy - Tremolo</a></li>
+        <li><a href="#Pan">8xx - Pan (stereo)</a></li>
         <li><a href="#VolumeSlide">Axy - Volume slide</a></li>
         <li><a href="#Jump">Bxx - Jump</a></li>
         <li><a href="#Halt">Cxx - Halt</a></li>
@@ -78,6 +79,19 @@
     
     <a name="Tremolo" class="boldText">7xy - Tremolo</a><br />
     <p class="text">Applies sine tremolo to notes. <b>x</b> is speed (<b>0</b> to disable) and <b>y</b> is the depth of the tremolo.</p>
+    <br />
+    
+    <a name="Pan" class="boldText">8xx - Pan (stereo)</a><br />
+    <p class="text">Places the channel between the left and the right speaker, from this row until the next <b>8xx</b>:
+    <b>00</b> is all the way left, <b>80</b> the middle and <b>FF</b> all the way right (<b>40</b> halfway left,
+    <b>C0</b> halfway right). Every channel starts in the middle. The side the channel moves away from gets
+    quieter and the other side stays as loud as before, so a song without <b>8xx</b> sounds exactly as it did.<br />
+    <br />
+    Stereo is this FamiTracker's own: you hear it when FamiTracker plays the song, and in the WAV and OGG files
+    it makes. The NES and NSF files are mono, so NSF export leaves the effect out, and FamiTracker 0.4.6 opens
+    such a module but shows these cells as invalid and plays them in the middle.<br />
+    <br />
+    Example: <b>800</b> on a pulse channel and <b>8FF</b> on the other puts them on opposite sides.</p>
     <br />
     
     <a name="VolumeSlide" class="boldText">Axy - Volume slide</a><br />

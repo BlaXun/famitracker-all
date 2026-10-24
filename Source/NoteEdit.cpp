@@ -44,10 +44,11 @@ struct Effect {
 	int Column;
 };
 
-// What sounds at a note's start: the instrument (-1: none) and the volume in effect
+// What sounds at a note's start: the instrument (-1: none), the volume and the pan in effect
 struct Sound {
 	int Instrument;
 	int Volume;			// -1: whatever is in effect where it goes
+	int Pan;			// -1: whatever is in effect where it goes
 };
 typedef std::map<int, Sound> Sounds;	// by the row a note starts on
 
@@ -159,9 +160,25 @@ bool IsLasting(unsigned char Number)
 	case EF_VOLUME_SLIDE:
 	case EF_DUTY_CYCLE:
 	case EF_PITCH:
+	case EF_PAN:
 		return true;
 	}
 	return false;
+}
+
+// The pan a row leaves the channel at, from Pan before it: its last 8xx in the effect columns that play
+int PanAfter(int Pan, const stChanNote &Cell, int Columns)
+{
+	for (int i = 0; i < Columns; ++i) {
+		if (Cell.EffNumber[i] == EF_PAN)
+			Pan = Cell.EffParam[i];
+	}
+	return Pan;
+}
+
+bool SetsPan(const stChanNote &Cell, int Columns)
+{
+	return PanAfter(-1, Cell, Columns) >= 0;
 }
 
 // The lasting effects in force, as the channel handlers keep them from row to row (rows and notes
@@ -171,8 +188,9 @@ struct Lasting {
 	unsigned char PitchParam;
 	unsigned char Vibrato, Tremolo, VolumeSlide;
 	unsigned char Duty, FinePitch;
+	unsigned char Pan;
 
-	Lasting() : Pitch(EF_NONE), PitchParam(0), Vibrato(0), Tremolo(0), VolumeSlide(0), Duty(0), FinePitch(0x80)
+	Lasting() : Pitch(EF_NONE), PitchParam(0), Vibrato(0), Tremolo(0), VolumeSlide(0), Duty(0), FinePitch(0x80), Pan(PAN_CENTER)
 	{
 	}
 
@@ -190,7 +208,7 @@ struct Lasting {
 	bool operator==(const Lasting &Other) const
 	{
 		return SamePitch(Other) && Vibrato == Other.Vibrato && Tremolo == Other.Tremolo && VolumeSlide == Other.VolumeSlide &&
-			Duty == Other.Duty && FinePitch == Other.FinePitch;
+			Duty == Other.Duty && FinePitch == Other.FinePitch && Pan == Other.Pan;
 	}
 	bool operator!=(const Lasting &Other) const { return !(*this == Other); }
 
@@ -203,6 +221,7 @@ struct Lasting {
 		case EF_VOLUME_SLIDE: return VolumeSlide;
 		case EF_DUTY_CYCLE: return Duty;
 		case EF_PITCH: return FinePitch;
+		case EF_PAN: return Pan;
 		}
 		return PitchOn() == Number ? PitchParam : 0;
 	}
@@ -215,6 +234,7 @@ struct Lasting {
 		case EF_VOLUME_SLIDE: VolumeSlide = Param; break;
 		case EF_DUTY_CYCLE: Duty = Param; break;
 		case EF_PITCH: FinePitch = Param; break;
+		case EF_PAN: Pan = Param; break;
 		default:
 			if (IsPitchEffect(Number)) {
 				Pitch = Number;
@@ -272,10 +292,11 @@ struct CChannelNotes::Impl {
 		Parsed = true;
 		SpansParsed = false;
 		Notes.clear();
-		int Instrument = -1, Volume = FULL_VOLUME;
+		int Instrument = -1, Volume = FULL_VOLUME, Pan = PAN_CENTER;
 		bool Open = false;
 		for (int r = 0; r < Rows(); ++r) {
 			const stChanNote &Cell = Cells[static_cast<size_t>(r)];
+			Pan = PanAfter(Pan, Cell, Columns);
 			if (IsNote(Cell)) {
 				if (Open)
 					Notes.back().End = r;
@@ -286,6 +307,7 @@ struct CChannelNotes::Impl {
 				Found.Pitch = Clamp(Found.Written + SlideOf(Cell), 0, TOP_PITCH);
 				Found.Instrument = Cell.Instrument < MAX_INSTRUMENTS ? Cell.Instrument : Instrument;
 				Found.Volume = Cell.Vol < MAX_VOLUME ? Cell.Vol : Volume;
+				Found.Pan = Pan;
 				Found.Released = Found.Halted = false;
 				Notes.push_back(Found);
 				Open = true;
@@ -324,7 +346,7 @@ struct CChannelNotes::Impl {
 		Parse();
 		Sounds Out;
 		for (size_t i = 0; i < Notes.size(); ++i) {
-			Sound Now = { Notes[i].Instrument, Notes[i].Volume };
+			Sound Now = { Notes[i].Instrument, Notes[i].Volume, Notes[i].Pan };
 			Out[Notes[i].Start] = Now;
 		}
 		return Out;
@@ -456,6 +478,7 @@ struct CChannelNotes::Impl {
 		Out.EndCell = Out.HasEnd ? Owned(Cells[static_cast<size_t>(Which.End)]) : EmptyCell();
 		Out.Sounded.Instrument = Which.Instrument;
 		Out.Sounded.Volume = Which.Volume;
+		Out.Sounded.Pan = Which.Pan;
 		Out.Shift = 0;
 		return Out;
 	}
@@ -563,13 +586,14 @@ struct CChannelNotes::Impl {
 	}
 
 	// After an edit: the notes that were there before sound as they did, and the placed ones as
-	// where they came from. A volume or instrument they took over from earlier rows and would now
-	// take over differently is written into their own cell.
+	// where they came from. A volume, instrument or pan they took over from earlier rows and would
+	// now take over differently is written into their own cell.
 	void Keep(const Sounds &Before, const Sounds &Placed)
 	{
-		int Instrument = -1, Volume = FULL_VOLUME;
+		int Instrument = -1, Volume = FULL_VOLUME, Pan = PAN_CENTER;
 		for (int r = 0; r < Rows(); ++r) {
 			stChanNote &Cell = CellAt(r);
+			Pan = PanAfter(Pan, Cell, Columns);
 			if (IsNote(Cell)) {
 				const Sound *pWant = NULL;
 				Sounds::const_iterator It = Placed.find(r);
@@ -582,6 +606,9 @@ struct CChannelNotes::Impl {
 						Cell.Instrument = static_cast<unsigned char>(pWant->Instrument);
 					if (Cell.Vol >= MAX_VOLUME && pWant->Volume >= 0 && pWant->Volume != Volume)
 						Cell.Vol = static_cast<unsigned char>(pWant->Volume);
+					if (!SetsPan(Cell, Columns) && pWant->Pan >= 0 && pWant->Pan != Pan &&
+						AddEffect(r, EF_PAN, static_cast<unsigned char>(pWant->Pan), -1))
+						Pan = pWant->Pan;
 				}
 			}
 			if (Cell.Instrument < MAX_INSTRUMENTS && !IsEnd(Cell))
@@ -666,7 +693,7 @@ struct CChannelNotes::Impl {
 			else if (!IsSlide(Now.PitchOn()))	// a slide on the row is the note's own and stays
 				Fits = SetEffect(Row, Now.PitchOn(), 0) && Fits;
 		}
-		const unsigned char OTHERS[] = { EF_VIBRATO, EF_TREMOLO, EF_VOLUME_SLIDE, EF_DUTY_CYCLE, EF_PITCH };
+		const unsigned char OTHERS[] = { EF_VIBRATO, EF_TREMOLO, EF_VOLUME_SLIDE, EF_DUTY_CYCLE, EF_PITCH, EF_PAN };
 		for (size_t i = 0; i < sizeof(OTHERS); ++i) {
 			if (Now.Get(OTHERS[i]) != Want.Get(OTHERS[i]))
 				Fits = SetEffect(Row, OTHERS[i], Want.Get(OTHERS[i])) && Fits;
@@ -777,6 +804,7 @@ struct CChannelNotes::Impl {
 					}
 				}
 				// The other effects on the row: slides, the duty and fine pitch where they're set, and the rest
+				// (not the pan, which a note shows on its own: Note::Pan)
 				for (int i = 0; i < Columns; ++i) {
 					const unsigned char Number = Cell.EffNumber[i];
 					if (Number == EF_NONE || IsSongEffect(Number) || (IsLasting(Number) && Number != EF_DUTY_CYCLE && Number != EF_PITCH))
@@ -912,6 +940,7 @@ void CChannelNotes::Add(int Start, int End, int Pitch, int Instrument)
 	New.EndCell = EmptyCell();
 	New.Sounded.Instrument = HasInstrument ? Instrument : -1;
 	New.Sounded.Volume = -1;	// as loud as the notes around it
+	New.Sounded.Pan = -1;		// and where the channel is panned
 	New.Shift = 0;
 
 	const Sounds Before = d.SoundsNow();
@@ -1028,7 +1057,7 @@ void CChannelNotes::SetInstrument(const int *pStarts, int Count, int Instrument)
 		if (Index < 0)
 			continue;
 		d.CellAt(pStarts[k]).Instrument = static_cast<unsigned char>(Instrument);
-		const Sound Now = { Instrument, -1 };
+		const Sound Now = { Instrument, -1, -1 };
 		Placed[pStarts[k]] = Now;
 	}
 	d.Parsed = false;
@@ -1138,7 +1167,8 @@ void CChannelNotes::GetEffects(int Index, std::vector<EffectSpan> &Out) const
 bool CChannelNotes::SetLasting(const int *pStarts, int Count, unsigned char Number, const unsigned char *pParams, const int *pDelays)
 {
 	Impl &d = *m_pImpl;
-	if (!IsLasting(Number) || Number == EF_DUTY_CYCLE || Number == EF_PITCH || Number == EF_PORTA_UP || Number == EF_PORTA_DOWN)
+	if (!IsLasting(Number) || Number == EF_DUTY_CYCLE || Number == EF_PITCH || Number == EF_PAN || Number == EF_PORTA_UP ||
+		Number == EF_PORTA_DOWN)
 		return true;
 	d.Parse();
 	std::map<int, Lasting> Want;
@@ -1285,11 +1315,43 @@ bool CChannelNotes::ClearEffects(const int *pStarts, int Count)
 		}
 		if (Which.Written != Which.Pitch)
 			d.SetWritten(Which.Start, Which.Pitch);
-		// Nothing lasting works on it any more, but the duty and fine pitch it came in with
+		// Nothing lasting works on it any more, but the duty and fine pitch it came in with, and it
+		// stays where it was panned
 		Lasting None;
 		None.Duty = Coming[Which.Start].Duty;
 		None.FinePitch = Coming[Which.Start].FinePitch;
+		None.Pan = Want[Which.Start].Pan;
 		Want[Which.Start] = None;
 	}
 	return d.KeepLasting(Want);
+}
+
+bool CChannelNotes::SetPan(const int *pStarts, int Count, unsigned char Pan)
+{
+	Impl &d = *m_pImpl;
+	d.Parse();
+	std::map<int, Lasting> Want;
+	d.LastingNow(Want);
+	const std::vector<Note> Targets = d.Named(pStarts, Count);
+	for (size_t t = 0; t < Targets.size(); ++t) {
+		const Note &Which = Targets[t];
+		for (int r = Which.Start; r < Which.End; ++r)
+			d.RemoveEffects(r, [](unsigned char Number) { return Number == EF_PAN; });
+		Want[Which.Start].Pan = Pan;
+	}
+	bool Fits = d.KeepLasting(Want);
+
+	// When the song loops, the channel's first note comes after its last one: it gets its pan written
+	// if the last one leaves the channel elsewhere
+	d.Parse();
+	if (!Targets.empty() && !d.Notes.empty()) {
+		int End = PAN_CENTER;
+		for (int r = 0; r < d.Rows(); ++r)
+			End = PanAfter(End, d.Cells[static_cast<size_t>(r)], d.Columns);
+		const Note &First = d.Notes.front();
+		if (End != First.Pan && !SetsPan(d.Cells[static_cast<size_t>(First.Start)], d.Columns))
+			Fits = d.SetEffect(First.Start, EF_PAN, static_cast<unsigned char>(First.Pan)) && Fits;
+	}
+	d.Parsed = false;
+	return Fits;
 }
