@@ -219,6 +219,33 @@ talk about.
 - They're saved in a block of their own (`BF SECTIONS`), which other
   versions skip.
 
+## 9. Stereo
+
+Done (October 2026, on `feat-stereo`): FamiTracker plays in stereo, which
+the NES never did, so each note can play from the left, the middle or the
+right.
+
+- The pan effect `8xx` places a channel between the speakers from its row
+  on: `800` all the way left, `880` the middle, `8FF` all the way right
+  (`840` halfway left). It lasts until the next `8xx`, and every channel
+  starts in the middle, so a song without it sounds and saves exactly as
+  before. Type `8` in an effect column; Help > Effect list describes it.
+- The piano roll shows a panned note with an arrow at the end it leans to,
+  says where in its hover text, and its Effects menu (double-click a note,
+  or E) has **Pan (stereo)**: Left, Halfway left, Center, Halfway right and
+  Right for the selected notes, one Ctrl+Z. The notes after keep their pan,
+  and moving, copying or pasting notes keeps each where it played.
+- Every chip pans: the 2A03, VRC6, VRC7, FDS, MMC5, N163 and 5B. Playback,
+  File > Create WAV and File > Export for games are stereo; the OGG files'
+  loudness is measured over both channels.
+- Claude Code places notes, parts and echoes and sets a stereo picture with
+  `mix` (see `MCP.md`, Stereo).
+- NSF files and the NES are mono: NSF export leaves `8xx` out. FamiTracker
+  0.4.6 opens such a song, shows "(invalid)" on rows with `8xx` in their
+  first effect column and plays it in the middle. 0CC-FamiTracker and
+  Dn-FamiTracker number effects of their own after 0.4.6's, so they may
+  read `8xx` as one of theirs: an open question below.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
@@ -408,3 +435,9 @@ when ready.
 - Some recordings "don't sound correct" (maybe background noise). Waiting
   for a sample take from the `Recordings` folder next to FamiTracker.exe
   (`Documents\FamiTracker recordings` before 21 October 2026) to diagnose.
+- Stereo in other trackers: the pan is effect 33 in the pattern data, the
+  next number after 0.4.6's effects. 0CC-FamiTracker and Dn-FamiTracker
+  numbered their own added effects from there, so a song with pans may
+  play there with one of their effects in those cells. Not checked yet. If
+  it does, the pans could move to a block of their own (like `BF CLIPS`),
+  which other versions skip, with the pattern editor still showing them.

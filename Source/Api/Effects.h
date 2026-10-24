@@ -21,13 +21,14 @@
 
 #pragma once
 
-// FamiTracker 0.4.6's pattern effects for Claude: what each one does, which
-// channels play it, how long it lasts and what it's good for; the classic
-// techniques made with them; and the checks on the effects Claude writes,
-// which refuse letters 0.4.6 doesn't have (Lxx and the like, from later
-// versions and other trackers) and effects a channel can't play, saying
-// what to use instead. Checked against the channel handlers of 0.4.6
-// (Channels*.cpp, ChannelHandler.cpp) and hlp/effect_list.htm.
+// FamiTracker 0.4.6's pattern effects for Claude, and this FamiTracker's own
+// pan (8xx, stereo): what each one does, which channels play it, how long it
+// lasts and what it's good for; the classic techniques made with them; and
+// the checks on the effects Claude writes, which refuse letters 0.4.6 doesn't
+// have (Lxx and the like, from later versions and other trackers) and effects
+// a channel can't play, saying what to use instead. Checked against the
+// channel handlers of 0.4.6 (Channels*.cpp, ChannelHandler.cpp) and
+// hlp/effect_list.htm.
 
 #include <string>
 #include <vector>

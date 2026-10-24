@@ -565,6 +565,7 @@
     <ClCompile Include="Source\Api\Jingles.cpp" />
     <ClCompile Include="Source\Api\SoundEffects.cpp" />
     <ClCompile Include="Source\Api\Effects.cpp" />
+    <ClCompile Include="Source\Api\FdsSounds.cpp" />
     <ClCompile Include="Source\Api\Wavetables.cpp" />
     <ClCompile Include="Source\Api\PulseClicks.cpp" />
     <ClCompile Include="Source\Api\ProblemList.cpp" />
@@ -593,6 +594,7 @@
     <ClInclude Include="Source\Api\Jingles.h" />
     <ClInclude Include="Source\Api\SoundEffects.h" />
     <ClInclude Include="Source\Api\Effects.h" />
+    <ClInclude Include="Source\Api\FdsSounds.h" />
     <ClInclude Include="Source\Api\Wavetables.h" />
     <ClInclude Include="Source\Api\PulseClicks.h" />
     <ClInclude Include="Source\Api\ProblemList.h" />

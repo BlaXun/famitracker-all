@@ -638,6 +638,54 @@ void TestFds()
 	CHECK(Has(Text, ": C-3 00 . H3F\n"));
 }
 
+// A study keeps an FDS sound's wave and modulator besides its envelope, so
+// reference_sound can make the instrument again (Api's references)
+void TestFdsStudy()
+{
+	Writer w;
+	Params(w, EXP_FDS, 6);
+	Info(w, "FDS study", "", "");
+	Header(w, { "Disk" }, { { 0, 0, 0, 0, 0, 0 } });
+	w.Begin("INSTRUMENTS", 6).Int(1);
+	w.Int(0).U8(T_FDS);
+	FdsInstrument(w, 34, 5, 2, {
+		{ 0, 0, { 10, 20, 31, 28, 26 }, -1, 4, 0 },
+		{ 0, 1, {}, -1, -1, 0 },
+		{ 0, 2, {}, -1, -1, 0 },
+	});
+	w.Name("Disk lead");
+	w.End();
+	Frames3(w, { { 6, 150, 4, { { 0, 0, 0, 0, 0, 0 } } } });
+	w.Begin("PATTERNS", 5);
+	std::vector<RowData> Rows;
+	for (int r = 0; r < 16; ++r)
+		Rows.push_back(RowData{ r * 4, 1 + (r % 3) * 2, 5, 0, NO_VOL, {} });
+	PatternRows(w, 0, 5, 0, Rows, 1);
+	w.End();
+	Module M;
+	FtmInfo Info;
+	if (!ReadModule(w.Finish(), M, Info)) {
+		CHECK(false);
+		return;
+	}
+	const TrackStudy St = StudyTrack(M, 0, FtmTrackReport(M, Info, 0));
+	const StudySound *pFds = 0;
+	for (size_t i = 0; i < St.Sounds.size(); ++i)
+		if (St.Sounds[i].Kind == INST_FDS)
+			pFds = &St.Sounds[i];
+	CHECK(pFds != 0);
+	if (pFds == 0)
+		return;
+	CHECK(pFds->FdsWave.size() == 64 && pFds->FdsWave[1] == 2 && pFds->FdsWave[63] == 2);
+	CHECK(pFds->FdsMod.size() == 32 && pFds->FdsMod[9] == 1);
+	CHECK(pFds->ModRate == 34 && pFds->ModDepth == 5 && pFds->ModDelay == 2);
+	CHECK(Items(pFds->Macros[SEQ_VOLUME], { 10, 20, 31, 28, 26 }));
+	const std::string Text = DescribeStudy(St, true);
+	CHECK(Has(Text, "      FDS wave 0 2 4 6 8"));
+	CHECK(Has(Text, "; modulation 0 1 2 3 4 5 6 7 0 1"));
+	CHECK(Has(Text, ", speed 34, depth 5, delay 2\n"));
+}
+
 void TestN163()
 {
 	Writer w;
@@ -1319,6 +1367,7 @@ int main(int argc, char **argv)
 	TestVrc6();
 	TestVrc7();
 	TestFds();
+	TestFdsStudy();
 	TestN163();
 	TestMmc5();
 	TestVersion022();

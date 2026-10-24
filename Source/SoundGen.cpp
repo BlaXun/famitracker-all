@@ -67,6 +67,11 @@
 // Enable audio dithering
 //#define DITHERING
 
+// The sound comes out in stereo: the left side and the right, a sample of
+// each in turn (CMixer gives every channel its pan, the 8xx effect). A song
+// that doesn't pan sounds the same on both sides, as the mono output did.
+static const int OUTPUT_CHANNELS = 2;
+
 // The depth of each vibrato level
 const double CSoundGen::NEW_VIBRATO_DEPTH[] = {
 	1.0, 1.5, 2.5, 4.0, 5.0, 7.0, 10.0, 12.0, 14.0, 17.0, 22.0, 30.0, 44.0, 64.0, 96.0, 128.0
@@ -345,6 +350,14 @@ CChannelHandler *CSoundGen::GetChannel(int Index) const
 	return m_pChannels[Index];
 }
 
+void CSoundGen::ForgetSequence(const CSequence *pSequence)
+{
+	for (int i = 0; i < CHANNELS; ++i) {
+		if (m_pChannels[i] != NULL)
+			m_pChannels[i]->ForgetSequence(pSequence);
+	}
+}
+
 void CSoundGen::DocumentPropertiesChanged(CFamiTrackerDoc *pDocument)
 {
 	ASSERT(pDocument != NULL);
@@ -533,7 +546,7 @@ bool CSoundGen::ResetAudioDevice()
 		iBlocks += (BufferLen / 66);
 
 	// Create channel
-	m_pDSoundChannel = m_pDSound->OpenChannel(SampleRate, SampleSize, 1, BufferLen, iBlocks);
+	m_pDSoundChannel = m_pDSound->OpenChannel(SampleRate, SampleSize, OUTPUT_CHANNELS, BufferLen, iBlocks);
 
 	// Channel failed
 	if (m_pDSoundChannel == NULL) {
@@ -541,7 +554,7 @@ bool CSoundGen::ResetAudioDevice()
 		return false;
 	}
 
-	// Create a buffer
+	// Create a buffer (its samples: both sides', in turn)
 	m_iBufSizeBytes	  = m_pDSoundChannel->GetBlockSize();
 	m_iBufSizeSamples = m_iBufSizeBytes / (SampleSize / 8);
 
@@ -561,7 +574,7 @@ bool CSoundGen::ResetAudioDevice()
 
 	m_csVisualizerWndLock.Unlock();
 
-	if (!m_pAPU->SetupSound(SampleRate, 1, (m_iMachineType == NTSC) ? MACHINE_NTSC : MACHINE_PAL))
+	if (!m_pAPU->SetupSound(SampleRate, OUTPUT_CHANNELS, (m_iMachineType == NTSC) ? MACHINE_NTSC : MACHINE_PAL))
 		return false;
 
 	m_pAPU->SetChipLevel(CHIP_LEVEL_APU1, float(pSettings->ChipLevels.iLevelAPU1 / 10.0f));
@@ -669,53 +682,55 @@ template <class T, int SHIFT>
 void CSoundGen::FillBuffer(int16 *pBuffer, uint32 Size)
 {
 	// Called when the APU audio buffer is full and
-	// ready for playing
+	// ready for playing: Size samples of each side, the left and the right in turn
 
 	const int SAMPLE_MAX = 32768;
 
 	T *pConversionBuffer = (T*)m_pAccumBuffer;
 
 	for (uint32 i = 0; i < Size; ++i) {
-		int16 Sample = pBuffer[i];
+		// Visualizer: the two sides together
+		ASSERT(m_iBufferPtr + OUTPUT_CHANNELS <= m_iBufSizeSamples);
+		m_iGraphBuffer[m_iBufferPtr / OUTPUT_CHANNELS] = (short)((pBuffer[i * 2] + pBuffer[i * 2 + 1]) / 2);
 
-		// 1000 Hz test tone
+		for (int Side = 0; Side < OUTPUT_CHANNELS; ++Side) {
+			int16 Sample = pBuffer[i * 2 + Side];
+
+			// 1000 Hz test tone
 #ifdef AUDIO_TEST
-		static double sine_phase = 0;
-		Sample = int32(sin(sine_phase) * 10000.0);
+			static double sine_phase = 0;
+			Sample = int32(sin(sine_phase) * 10000.0);
 
-		static double freq = 1000;
-		// Sweep
-		//freq+=0.1;
-		if (freq > 20000)
-			freq = 20;
+			static double freq = 1000;
+			// Sweep
+			//freq+=0.1;
+			if (freq > 20000)
+				freq = 20;
 
-		sine_phase += freq / (double(m_pDSoundChannel->GetSampleRate()) / 6.283184);
-		if (sine_phase > 6.283184)
-			sine_phase -= 6.283184;
+			if (Side == 0)
+				sine_phase += freq / (double(m_pDSoundChannel->GetSampleRate()) / 6.283184);
+			if (sine_phase > 6.283184)
+				sine_phase -= 6.283184;
 #endif /* AUDIO_TEST */
 
-		// Clip detection
-		if (Sample == (SAMPLE_MAX - 1) || Sample == -SAMPLE_MAX) {
-			++m_iClipCounter;
-		}
+			// Clip detection
+			if (Sample == (SAMPLE_MAX - 1) || Sample == -SAMPLE_MAX) {
+				++m_iClipCounter;
+			}
 
-		ASSERT(m_iBufferPtr < m_iBufSizeSamples);
-
-		// Visualizer
-		m_iGraphBuffer[m_iBufferPtr] = (short)Sample;
-
-		// Convert sample and store in temp buffer
+			// Convert sample and store in temp buffer
 #ifdef DITHERING
-		if (SHIFT > 0)
-			Sample = (Sample + dither(1 << SHIFT)) >> SHIFT;
+			if (SHIFT > 0)
+				Sample = (Sample + dither(1 << SHIFT)) >> SHIFT;
 #else
-		Sample >>= SHIFT;
+			Sample >>= SHIFT;
 #endif
 
-		if (SHIFT == 8)
-			Sample ^= 0x80;
+			if (SHIFT == 8)
+				Sample ^= 0x80;
 
-		pConversionBuffer[m_iBufferPtr++] = (T)Sample;
+			pConversionBuffer[m_iBufferPtr++] = (T)Sample;
+		}
 
 		// If buffer is filled, throw it to direct sound
 		if (m_iBufferPtr >= m_iBufSizeSamples) {
@@ -762,7 +777,7 @@ bool CSoundGen::PlayBuffer()
 		m_csVisualizerWndLock.Lock();
 
 		if (m_pVisualizerWnd)
-			m_pVisualizerWnd->FlushSamples(m_iGraphBuffer, m_iBufSizeSamples);
+			m_pVisualizerWnd->FlushSamples(m_iGraphBuffer, m_iBufSizeSamples / OUTPUT_CHANNELS);
 
 		m_csVisualizerWndLock.Unlock();
 
@@ -1058,11 +1073,11 @@ void CSoundGen::RunFrame()
 //			}
 			m_bUpdateRow = true;
 			if (m_bRendering) {
-				// Where this row's sound begins in the file
+				// Where this row's sound begins in the file (in samples of each side)
 				render_mark_t Mark;
 				Mark.Frame = m_iPlayFrame;
 				Mark.Row = m_iPlayRow;
-				Mark.Sample = m_iRenderedSamples + m_iBufferPtr;
+				Mark.Sample = (m_iRenderedSamples + m_iBufferPtr) / OUTPUT_CHANNELS;
 				m_RenderMarks.Add(Mark);
 			}
 			ReadPatternRow();
@@ -1453,7 +1468,7 @@ bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEnd
 		m_iRenderEndParam = m_pDocument->ScanActualLength(Track, m_iRenderEndParam, m_iRenderRowCount);
 	}
 
-	if (!m_wfWaveFile.OpenFile(pFile, theApp.GetSettings()->Sound.iSampleRate, theApp.GetSettings()->Sound.iSampleSize, 1)) {
+	if (!m_wfWaveFile.OpenFile(pFile, theApp.GetSettings()->Sound.iSampleRate, theApp.GetSettings()->Sound.iSampleSize, OUTPUT_CHANNELS)) {
 		AfxMessageBox(IDS_FILE_OPEN_ERROR);
 		return false;
 	}

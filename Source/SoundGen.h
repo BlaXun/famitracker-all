@@ -126,6 +126,9 @@ public:
 	unsigned int GetPeriod(int Note) const;
 
 	CChannelHandler *GetChannel(int Index) const;
+	// No channel runs this sequence any longer: it's about to be deleted. Called from the main thread with the
+	// document locked, so the player isn't in the middle of a frame
+	void		ForgetSequence(const CSequence *pSequence);
 
 	void		DocumentPropertiesChanged(CFamiTrackerDoc *pDocument);
 

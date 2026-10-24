@@ -50,8 +50,23 @@ enum effect_id {
 	EFF_DUTY_CYCLE, EFF_SAMPLE_OFFSET, EFF_SLIDE_UP, EFF_SLIDE_DOWN, EFF_VOLUME_SLIDE, EFF_NOTE_CUT,
 	EFF_RETRIGGER, EFF_DELAYED_VOLUME, EFF_FDS_MOD_DEPTH, EFF_FDS_MOD_SPEED_HI, EFF_FDS_MOD_SPEED_LO,
 	EFF_DPCM_PITCH, EFF_SUNSOFT_ENV_LO, EFF_SUNSOFT_ENV_HI, EFF_SUNSOFT_ENV_TYPE,
+	EFF_PAN,	// 8xx, this FamiTracker's own stereo
 	EFF_COUNT
 };
+
+// Stereo (this FamiTracker's own; the NES, FamiTracker 0.4.6 and NSF files
+// are mono): 8xx sets where a channel sounds from, 00 hard left, 80 the
+// middle (where every channel starts), FF hard right. It lasts until the next
+// 8xx, over notes, releases and halts.
+const int PAN_LEFT = 0x00;
+const int PAN_CENTER = 0x80;
+const int PAN_RIGHT = 0xFF;
+int PanParam(double Position);		// the 8xx parameter for a place from -1 (left) through 0 (the middle) to 1 (right)
+double PanPosition(int Param);		// and back
+std::string PanName(int Param);		// "left", "right", "center", "40% left"
+// What each side has of a sound at this pan, as FamiTracker's mixer gives it
+// (CMixer::PanGains): 1 on both in the middle; away from it, the far side fades
+void PanGains(int Param, double &Left, double &Right);
 
 struct Cell {
 	unsigned char Note;			// NOTE_NONE, 1-12, NOTE_RELEASE, NOTE_HALT
@@ -90,11 +105,11 @@ std::string FormatNumber(double Value);		// "1", "1.5", "0.25"
 
 // Effects that keep working after their row until turned off: arpeggio,
 // portamento up and down, portamento, vibrato, tremolo and volume slide (with
-// a 00 parameter), and fine pitch (with P80). Speed, jump, skip and halt
-// steer the song instead of the channel; those stay where they are when
-// notes are written.
+// a 00 parameter), fine pitch (with P80) and the pan (with 880, the middle).
+// Speed, jump, skip and halt steer the song instead of the channel; those
+// stay where they are when notes are written.
 bool IsStickyEffect(int Effect);
-int StickyOff(int Effect);	// the parameter that turns a sticky effect off: 0x80 for fine pitch, 0 for the others
+int StickyOff(int Effect);	// the parameter that turns a sticky effect off: 0x80 for fine pitch and the pan, 0 for the others
 bool IsSongEffect(int Effect);
 
 // Bars and beats as FamiTracker's row highlight shows them: a bar starts on
@@ -218,6 +233,8 @@ struct NoteInfo {
 	int Volume;			// in effect, 15 if never set
 	bool InstrumentSet;	// on this note's row
 	bool VolumeSet;
+	int Pan = PAN_CENTER;	// in effect as it starts (8xx on its row or earlier), PAN_CENTER if never set
+	bool PanSet = false;	// on this note's row
 	int EndNote;		// NOTE_RELEASE or NOTE_HALT that ends it, NOTE_NONE for the next note or the song's end
 	std::vector<std::pair<int, std::pair<int, int> > > Effects;	// row offset, (effect, param), on its rows
 };
@@ -266,8 +283,11 @@ struct PartOptions {
 // skip and halt are cleared in the range; the notes get theirs. Effects still
 // on from before the range (vibrato, arpeggio...) are turned off at First, a
 // note sounding into the range stops there, and the last note gets a release
-// or halt when nothing follows it. With KeepFollowing, the next note after
-// the range gets back the instrument, volume and effects it played with.
+// or halt when nothing follows it. The pan stays: a note that doesn't set
+// one (an 8xx among its effects) plays from where the channel played at its
+// row before, until a note of the part sets one, which the notes after it
+// keep. With KeepFollowing, the next note after the range gets back the
+// instrument, volume and effects (its pan too) it played with.
 // Out holds the cells from First on and can be longer than End - First.
 // Notes must be in order, inside [First, End) and not overlap.
 void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vector<PartNote> &Notes,

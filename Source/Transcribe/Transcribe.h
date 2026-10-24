@@ -59,6 +59,10 @@ struct Audio {
 // to mono. Returns false and sets *error on failure.
 bool ReadWav(const std::string &path, Audio &out, std::string *error);
 
+// The left and right sides of a stereo WAV file (its first two channels; a
+// mono file's one channel on both), in the formats ReadWav reads.
+bool ReadWavSides(const std::string &path, Audio &left, Audio &right, std::string *error);
+
 // Writes 16-bit mono PCM. Used by tests and tools.
 bool WriteWav(const std::string &path, const Audio &audio, std::string *error);
 

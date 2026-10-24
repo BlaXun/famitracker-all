@@ -136,16 +136,18 @@ struct RollNote {
 	int Pitch;			// where it lands: 0 = C-0 ... 95 = B-7
 	int Written;		// the pitch in the cell (a Qxy or Rxy slide starts there)
 	int Instrument;		// -1 when none was set yet
+	int Pan;			// 0x00 left, 0x80 the middle, 0xFF right (the 8xx effect: this FamiTracker's stereo)
 	bool Released;		// ends on a release (===)
 	std::vector<CChannelNotes::EffectSpan> Effects;	// what works while it sounds
 };
 
 // Effects the Effects menu puts on notes
-enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR };
-enum effect_group_t { GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, EFFECT_GROUPS, GROUP_NONE = EFFECT_GROUPS };
+enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR, FX_PAN };
+enum effect_group_t { GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, GROUP_PAN, EFFECT_GROUPS,
+	GROUP_NONE = EFFECT_GROUPS };
 const TCHAR *const GROUP_NAMES[EFFECT_GROUPS] = {
 	_T("Vibrato"), _T("Tremolo (the volume wobbles)"), _T("Chord (arpeggio)"), _T("Slide into the note"), _T("Glide from the note before"),
-	_T("Bend at the end"), _T("Fade out")
+	_T("Bend at the end"), _T("Fade out"), _T("Pan (stereo)")
 };
 struct EffectChoice {
 	int Group;				// effect_group_t
@@ -194,7 +196,12 @@ const EffectChoice EFFECT_CHOICES[] = {
 	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x02, 0, _T("Medium") },
 	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x01, 0, _T("Slow") },
 	{ GROUP_FADE, FX_LASTING, EF_VOLUME_SLIDE, 0x00, 0, _T("No fade") },
-	{ GROUP_NONE, FX_CLEAR, 0, 0, 0, _T("Remove all effects") },
+	{ GROUP_PAN, FX_PAN, EF_PAN, PAN_LEFT, 0, _T("Left") },
+	{ GROUP_PAN, FX_PAN, EF_PAN, 0x40, 0, _T("Halfway left") },
+	{ GROUP_PAN, FX_PAN, EF_PAN, PAN_CENTER, 0, _T("Center") },
+	{ GROUP_PAN, FX_PAN, EF_PAN, 0xC0, 0, _T("Halfway right") },
+	{ GROUP_PAN, FX_PAN, EF_PAN, PAN_RIGHT, 0, _T("Right") },
+	{ GROUP_NONE, FX_CLEAR, 0, 0, 0, _T("Remove all effects (the pan stays)") },
 };
 const int EFFECT_CHOICE_COUNT = sizeof(EFFECT_CHOICES) / sizeof(EFFECT_CHOICES[0]);
 
@@ -212,8 +219,26 @@ CString EffectCode(const EffectChoice &Choice)
 		if (Choice.Value != 0)
 			Code.Format(_T("%c%X%X"), Choice.Value > 0 ? _T('Q') : _T('R'), Choice.Speed, std::min(15, std::abs(Choice.Value)));
 		break;
+	case FX_PAN:
+		Code.Format(_T("%c%02X"), EFF_CHAR[EF_PAN - 1], Choice.Value);
+		break;
 	}
 	return Code;
+}
+
+// A pan in words: "left", "center", "50% right"
+CString PanText(int Pan)
+{
+	if (Pan == PAN_CENTER)
+		return _T("center");
+	if (Pan <= PAN_LEFT)
+		return _T("left");
+	if (Pan >= PAN_RIGHT)
+		return _T("right");
+	const double Position = Pan < PAN_CENTER ? (Pan - PAN_CENTER) / 128.0 : (Pan - PAN_CENTER) / 127.0;
+	CString Text;
+	Text.Format(_T("%d%% %s"), std::max(1, static_cast<int>(std::fabs(Position) * 100.0 + 0.5)), Position < 0.0 ? _T("left") : _T("right"));
+	return Text;
 }
 
 // A chord's name from an arpeggio's two notes above the root
@@ -375,6 +400,7 @@ std::vector<RollNote> RollNotes(const CChannelNotes &Channel, int Rows)
 		Shown.Pitch = Note.Pitch;
 		Shown.Written = Note.Written;
 		Shown.Instrument = Note.Instrument;
+		Shown.Pan = Note.Pan;
 		Shown.Released = Note.Released;
 		Channel.GetEffects(i, Shown.Effects);
 		Out.push_back(Shown);
@@ -1275,15 +1301,21 @@ struct CPianoRollWnd::Impl {
 			return Notes_.SetBend(&Selection[0], Count, Choice.Value, Choice.Speed, std::max(1, BeatRows() / 2));
 		case FX_CLEAR:
 			return Notes_.ClearEffects(&Selection[0], Count);
+		case FX_PAN:
+			return Notes_.SetPan(&Selection[0], Count, static_cast<unsigned char>(Choice.Value));
 		}
 		return true;
 	}
 
-	// Which effects suit the bright channel: none for samples, no pitch effects for drums, nothing
-	// with the volume for the triangle (it has none)
+	// Which effects suit the bright channel: just the pan for samples, no pitch effects for drums,
+	// nothing with the volume for the triangle (it has none)
 	bool EffectFitsChannel(int Group) const
 	{
-		if (IsDPCM(Channel) || Channel >= static_cast<int>(ChanIDs.size()))
+		if (Channel >= static_cast<int>(ChanIDs.size()))
+			return false;
+		if (Group == GROUP_PAN)
+			return true;
+		if (IsDPCM(Channel))
 			return false;
 		if (IsNoise(Channel))
 			return Group == GROUP_TREMOLO || Group == GROUP_FADE || Group == GROUP_NONE;
@@ -1299,16 +1331,15 @@ struct CPianoRollWnd::Impl {
 			Read();
 		if (Notes.empty())
 			return;
-		const bool Any = !Selection.empty() && !IsDPCM(Channel);
+		const bool Any = !Selection.empty();
 		CMenu Menu;
 		Menu.CreatePopupMenu();
-		if (IsDPCM(Channel))
-			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("The DPCM channel plays samples, without effects"));
-		else if (Selection.empty())
+		if (Selection.empty())
 			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("Select notes first: click one, or drag around some with the Select tool (or Ctrl)"));
 		else {
 			CString Text;
-			Text.Format(_T("For the %s selected:"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
+			Text.Format(IsDPCM(Channel) ? _T("For the %s selected (samples play without effects, but they can be panned):") :
+				_T("For the %s selected:"), static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
 			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Text);
 		}
 		Menu.AppendMenu(MF_SEPARATOR);
@@ -1319,7 +1350,7 @@ struct CPianoRollWnd::Impl {
 				const EffectChoice &Choice = EFFECT_CHOICES[i];
 				if (Choice.Group != Group)
 					continue;
-				const bool Off = Choice.Action != FX_KEY_CHORD && Choice.Value == 0;
+				const bool Off = Choice.Action != FX_KEY_CHORD && Choice.Action != FX_PAN && Choice.Value == 0;
 				if (Off)
 					Choices.AppendMenu(MF_SEPARATOR);
 				CString Item = Choice.Name;
@@ -1335,13 +1366,13 @@ struct CPianoRollWnd::Impl {
 			}
 			CString Name = GROUP_NAMES[Group];
 			if (Any && !EffectFitsChannel(Group))
-				Name += IsNoise(Channel) ? _T(" (not for drums)") : _T(" (the triangle has no volume)");
+				Name += IsDPCM(Channel) ? _T(" (not for samples)") : IsNoise(Channel) ? _T(" (not for drums)") : _T(" (the triangle has no volume)");
 			Menu.AppendMenu(MF_POPUP | (Any && EffectFitsChannel(Group) ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(Choices.Detach()), Name);
 		}
 		Menu.AppendMenu(MF_SEPARATOR);
 		for (int i = 0; i < EFFECT_CHOICE_COUNT; ++i) {
 			if (EFFECT_CHOICES[i].Group == GROUP_NONE)
-				Menu.AppendMenu(MF_STRING | (Any ? 0 : MF_GRAYED), MENU_EFFECT + i, EFFECT_CHOICES[i].Name);
+				Menu.AppendMenu(MF_STRING | (Any && !IsDPCM(Channel) ? 0 : MF_GRAYED), MENU_EFFECT + i, EFFECT_CHOICES[i].Name);
 		}
 		const int Choice = static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
 			Point.x, Point.y, pWnd));
@@ -1373,6 +1404,8 @@ struct CPianoRollWnd::Impl {
 		else
 			Text.Format(_T("%s: %s%s%s%s on %s. Ctrl+Z undoes it."), GROUP_NAMES[Choice.Group], Choice.Name,
 				Code.IsEmpty() ? _T("") : _T(" ("), static_cast<LPCTSTR>(Code), Code.IsEmpty() ? _T("") : _T(")"), static_cast<LPCTSTR>(Notes_));
+		if (Choice.Action == FX_PAN && Changed)
+			Text += _T(" The notes after them keep their pan; you hear it in stereo (an NSF or the NES plays it in the middle).");
 		if (!Fitted)
 			Text += _T(" Some effects didn't fit: add an effect column with the small arrow at the channel's name in the pattern editor.");
 		else if (Choice.Action == FX_BEND && Choice.Value != 0)
@@ -2668,6 +2701,11 @@ struct CPianoRollWnd::Impl {
 		const CString Effects = EffectsText(Note);
 		if (!Effects.IsEmpty())
 			Text += _T(", ") + Effects;
+		if (Note.Pan != PAN_CENTER) {
+			CString Pan;
+			Pan.Format(_T(", panned %s (%c%02X)"), static_cast<LPCTSTR>(PanText(Note.Pan)), EFF_CHAR[EF_PAN - 1], Note.Pan);
+			Text += Pan;
+		}
 		if (Bar > 0) {
 			const int InFrame = Note.Start % static_cast<int>(Length);
 			const int BarsPerFrame = (static_cast<int>(Length) + Bar - 1) / Bar;
@@ -2917,6 +2955,35 @@ struct CPianoRollWnd::Impl {
 		dc.SelectClipRgn(NULL);
 	}
 
+	// Where a note is panned: an arrow inside it, at its left end pointing left (after the problems
+	// panel's dot, Dotted, when it has one) or at its right end pointing right, filled when it's
+	// (nearly) all the way over
+	void DrawPan(CDC &dc, const RollNote &Note, const CRect &Rect, COLORREF Color, bool Dotted) const
+	{
+		const bool Left = Note.Pan < PAN_CENTER;
+		const int Skip = (Left && Dotted) ? std::max(3, std::min(static_cast<int>(Rect.Height()) - 2, SY(6))) + std::max(1, SX(2)) + 2 : 0;
+		if (Note.Pan == PAN_CENTER || Rect.Width() < 6 + Skip || Rect.Height() < 5)
+			return;
+		const bool Far = Left ? Note.Pan <= 0x20 : Note.Pan >= 0xE0;
+		const int Height = Rect.Height() - 2, Middle = Rect.top + Rect.Height() / 2;
+		const int Width = std::max(2, std::min(Height / 2 + 1, (Rect.Width() - Skip) / 2 - 1));
+		const int Tip = Left ? Rect.left + 2 + Skip : Rect.right - 3, Base = Left ? Tip + Width : Tip - Width;
+		POINT Points[3];
+		Points[0].x = Tip;
+		Points[0].y = Middle;
+		Points[1].x = Base;
+		Points[1].y = Rect.top + 1;
+		Points[2].x = Base;
+		Points[2].y = Rect.top + Height;
+		CPen Pen(PS_SOLID, 1, Color);
+		CBrush Brush(Color);
+		CPen *pOldPen = dc.SelectObject(&Pen);
+		CBrush *pOldBrush = Far ? dc.SelectObject(&Brush) : static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
+		dc.Polygon(Points, 3);
+		dc.SelectObject(pOldBrush);
+		dc.SelectObject(pOldPen);
+	}
+
 	void Draw(CDC &dc)
 	{
 		if (Dirty)
@@ -3008,10 +3075,12 @@ struct CPianoRollWnd::Impl {
 					}
 					if (Bright && !Note.Effects.empty() && Rect.Height() >= 4)
 						DrawEffects(dc, List, i, Rect, Edge, Full, Back_);
+					const int Mark = (Bright && Previewing) ? 0 : ProblemMarkAt(static_cast<int>(Track), static_cast<int>(c), Note.Start);
+					if (Bright)
+						DrawPan(dc, Note, Rect, Edge, Mark != 0);
 					if (Bright && Keyed && !InKey(Note.Pitch))
 						Outline(dc, Rect, OffKey);
-					if (!(Bright && Previewing))
-						ProblemDot(dc, Rect, ProblemMarkAt(static_cast<int>(Track), static_cast<int>(c), Note.Start));
+					ProblemDot(dc, Rect, Mark);
 					if (Selected)
 						Outline(dc, Rect, Picked, Rect.Height() >= SY(8) ? std::max(1, SX(2)) : 1);
 					else if (static_cast<int>(c) == HoverChannel && static_cast<int>(i) == HoverNote)

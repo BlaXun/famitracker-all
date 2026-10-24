@@ -420,6 +420,7 @@ void CFamiTrackerDoc::DeleteContents()
 	// Instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
 		if (m_pInstruments[i] != NULL) {
+			ForgetFdsSequences(m_pInstruments[i]);
 			m_pInstruments[i]->Release();
 			m_pInstruments[i] = NULL;
 		}
@@ -3215,6 +3216,14 @@ void CFamiTrackerDoc::RemoveInstrument(unsigned int Index)
 	if (m_pInstruments[Index] == NULL)
 		return;
 
+	// An FDS instrument's sequences go with it: the channels forget them first, the document locked so that the
+	// player isn't running them meanwhile
+	const bool Fds = m_pInstruments[Index]->GetType() == INST_FDS;
+	if (Fds) {
+		m_csDocumentLock.Lock();
+		ForgetFdsSequences(m_pInstruments[Index]);
+	}
+
 	m_csInstrument.Lock();
 
 	m_pInstruments[Index]->Release();
@@ -3222,7 +3231,25 @@ void CFamiTrackerDoc::RemoveInstrument(unsigned int Index)
 
 	m_csInstrument.Unlock();
 
+	if (Fds)
+		m_csDocumentLock.Unlock();
+
 	SetModifiedFlag();
+}
+
+void CFamiTrackerDoc::ForgetFdsSequences(CInstrument *pInstrument) const
+{
+	// The FDS channel keeps pointers to the sequences of the instrument it played last, and looks at them every frame
+	// even after its note has ended (CSequenceHandler::RunSequence): an FDS instrument keeps its sequences itself, so
+	// they're deleted with it, and the channel must stop looking first. (The other chips' sequences belong to the
+	// document and are only ever cleared.) The caller holds the document's lock.
+	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
+	if (pInstrument == NULL || pInstrument->GetType() != INST_FDS || pSoundGen == NULL)
+		return;
+	const CInstrumentFDS *pFds = static_cast<const CInstrumentFDS*>(pInstrument);
+	pSoundGen->ForgetSequence(pFds->GetVolumeSeq());
+	pSoundGen->ForgetSequence(pFds->GetArpSeq());
+	pSoundGen->ForgetSequence(pFds->GetPitchSeq());
 }
 
 int CFamiTrackerDoc::CloneInstrument(unsigned int Index)

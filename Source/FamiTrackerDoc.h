@@ -282,6 +282,7 @@ public:
 	int				AddInstrument(CInstrument *pInstrument);
 	void			AddInstrument(CInstrument *pInstrument, unsigned int Slot);
 	void			RemoveInstrument(unsigned int Index);							// Remove an instrument
+	void			ForgetFdsSequences(CInstrument *pInstrument) const;				// No channel runs an FDS instrument's sequences any longer
 	void			SetInstrumentName(unsigned int Index, const char *pName);		// Set the name of an instrument
 	void			GetInstrumentName(unsigned int Index, char *pName) const;		// Get the name of an instrument
 	int				CloneInstrument(unsigned int Index);							// Create a copy of an instrument

@@ -34,6 +34,10 @@ enum seq_state_t {
 // Sequence handler class
 //
 class CSequenceHandler {
+public:
+	// A sequence about to be deleted (an FDS instrument's, which go with it): the channel stops running it
+	void ForgetSequence(const CSequence *pSequence);
+
 protected:
 	CSequenceHandler();
 
@@ -140,6 +144,7 @@ protected:
 
 	bool	CheckCommonEffects(unsigned char EffCmd, unsigned char EffParam);
 	bool	HandleDelay(stChanNote *NoteData, int EffColumns);
+	void	SetPan(int Pan);									// 8xx: 00 left, 80 the middle, FF right
 
 	int		GetVibrato() const;
 	int		GetTremolo() const;
@@ -235,6 +240,7 @@ protected:
 	unsigned int	m_iFinePitch;					// Fine pitch effect
 	unsigned char	m_iDefaultDuty;					// Duty effect
 	unsigned char	m_iVolSlide;					// Volume slide effect
+	int				m_iPan;							// Pan effect (stereo, this FamiTracker's own), 0x80 in the middle
 
 	// Misc 
 	CAPU			*m_pAPU;

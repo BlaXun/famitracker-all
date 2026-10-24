@@ -112,7 +112,8 @@ volume column by its role and
 sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
-5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under), as
+5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under, the
+FDS's about 5 dB over with its envelope at the top), as
 the echo, harmony, counter-melody, `polish` and the review do; `mix` and
 the review also play each note's instrument envelope (`HeldEnvelope`, from
 the volume sequence FamiTracker reports in `InstrumentInfo::Volume`, times
@@ -167,7 +168,21 @@ from the 0.4.6 channel handlers. `Source/Api/Wavetables.cpp` draws the N163's
 wave sounds (16-sample waves, in tune in 0.4.6, played in turn by their wave
 sequence) and places each one's wave in the chip's shared memory
 (`FindWavePlace`); `AddWaveSoundInstrument` in `InstrumentLibrary.cpp` makes
-the instrument. The server's
+the instrument. `Source/Api/FdsSounds.cpp` draws the FDS's sounds (a wave of
+64 samples of one cycle, the modulator's table, speed, depth and delay, and
+the volume, arpeggio and pitch sequences CInstrumentFDS keeps itself);
+`AddFdsSoundInstrument` in `InstrumentLibrary.cpp` makes the instrument, for
+the tools (`SongHost::AddFdsInstrument`) and for Instrument > Instrument
+library's FDS target; `DesignFdsSound` makes `design_instrument`'s FDS
+sounds (a wave by word, a `SoundDesign`'s sequences turned into the FDS's,
+the modulator by word). FamiTracker reports an FDS instrument's volume
+(0-31) as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and
+the vanish check hear it, and the tools write FDS notes two octaves up
+(`Written` in `Tools.cpp`; see Gotchas). A study keeps an FDS sound's wave
+and modulator (`nsf::StudySound`, then `ReferenceSound`'s `FdsWave` in the
+reference's JSON), which `ReferenceFdsSound` makes into an FDS instrument
+again (and another chip's sound into one, with a wave from its channel),
+and `ReferencePreset` counts its volume 0-15 for a pulse. The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
@@ -213,6 +228,40 @@ tutorials of `res/tutorials` (built in as RCDATA, read by
 `Source/TutorialScript.cpp`) and hears about commands through
 `CMainFrame::OnCommand`. New work goes to the `next` branch first; once its
 build has been tried, `beginner-friendly` is fast-forwarded to it.
+
+Stereo is this branch's own (the NES, NSF files and FamiTracker 0.4.6 are
+mono). Every channel has a pan, set by the `8xx` effect (`EF_PAN`, appended
+to `effect_t`; `00` left, `80` the middle, `FF` right, lasting until the next
+`8xx`, every channel starting in the middle at `ResetChannel`).
+`CChannelHandler::HandleNoteData` handles it for every channel, the DPCM's
+too, with `SetPan`, which tells `CAPU::SetChannelPan` and
+`CMixer::SetChannelPan` (mapping the N163's channels, see Gotchas). `CMixer`
+renders a left and a right Blip_Buffer with the pan law of `PanGains`: the
+side a channel moves away from fades out and the other keeps all of it, so
+a channel in the middle has a gain of exactly 1 on both sides. The 2A03's
+two outputs mix each side's share of their channels with the same
+nonlinear formulas; the VRC6's, MMC5's and FDS's channels send each side its
+share of their level (`MixSides`); the N163's one DAC is followed channel by
+channel (`N163Channel`); the VRC7 and the 5B make each side's samples with
+their channels weighed by `PanGains256` (`OPLL_calc_lr` in emu2413,
+`PSG_calc_lr` in emu2149). `CSoundGen` plays and writes WAV files in stereo
+(`OUTPUT_CHANNELS`), gives the visualizer the two sides together and counts
+`GetRenderMarks` in samples of each side; `export_for_game` encodes stereo
+OGG files (`EncodeOgg` with both sides; `transcribe::ReadWavSides` reads the
+rendering) and measures loudness over both channels as BS.1770 sums them. A
+song without `8xx` comes out on both sides sample for sample as the mono mix
+did (`Source/Tests/ApuTests.cpp` checks every chip against hashes of the
+mono code) and saves byte for byte as before; NSF export leaves `8xx` out
+(`CPatternCompiler`), so its NSF is the same as without the pans. The piano
+roll draws a note's pan as an arrow and pans notes from its Effects menu
+(`CChannelNotes::SetPan`; every note edit keeps each note at the pan it
+played at, and a new note plays where the channel is panned). The Claude
+Code tools read pans into `NoteInfo::Pan`, write them with `write_notes`'
+`pan`, `set_pan`, `add_echo`'s `opposite` and `mix`'s `width`, keep them
+through their other writes (`BuildPart` keeps the old pans where a part
+doesn't set its own, `KeepFollowing` the next note's), and `Commit` writes
+the loop's first note its pan when a change leaves the song's end panned
+otherwise (`KeepLoopPans`).
 
 ## What this repository is
 
@@ -345,9 +394,10 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips, note editing, chip switching, the drum grid and tutorials**
-  (`Source/Clips.cpp`, `Source/NoteEdit.cpp`, `Source/ChipSwitch.cpp`,
-  `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`): `Source/Tests` builds
+- **Clips, note editing, chip switching, the drum grid, tutorials and the
+  sound chips** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`,
+  `Source/ChipSwitch.cpp`, `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`,
+  `Source/APU`): `Source/Tests` builds
   them on Linux against working stand-ins for the MFC and document pieces
   they use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
   following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
@@ -361,7 +411,16 @@ The application has no test suite of its own. What exists:
   their own where frames share one. `DrumGridTests.cpp` covers reading the
   drums off a bar, putting them on and off, and the ready-made beats.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
-  the errors, and the built-in tutorials, which must stay ASCII. Same three
+  the errors, and the built-in tutorials, which must stay ASCII.
+  `ApuTests.cpp` plays every chip's channels by register writes (each
+  rendering forked, since the emulators keep state in globals): all in the
+  middle, both sides must be the mono mix of the code before stereo,
+  pinned by hashes (`MONO`; after a deliberate change to the emulation,
+  configure with `-DAPU_REFERENCE=<a folder with that code's APU and
+  Blip_Buffer>` and `apu_tests` prints them anew); two channels panned
+  apart must each be alone on their side as they sound in the middle. The
+  APU sources are copied under the names they're included by, next to
+  stand-ins for `stdafx.h` and `Common.h` (`standins/apu`). Same three
   commands with `Source/Tests` and `build/tests`; CI runs them in the Linux
   job. The stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
@@ -557,7 +616,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   `Vol = MAX_VOLUME (0x10)`, `EffNumber = EF_NONE (0)`. Notes 1-12 are C to B,
   13 is release and 14 is halt.
 - **Effect letters:** `EFF_CHAR[]` is indexed by `effect - 1`. FDS and 5B
-  reuse the letters H, I and J.
+  reuse the letters H, I and J. `8` is this branch's pan (`EF_PAN`, 33):
+  FamiTracker 0.4.6 loads a module with it (nothing checks effect numbers
+  on load), shows "(invalid)" on a row with it in the first effect column
+  (the other columns stay blank) and plays it in the middle. The Claude
+  Code tools (`Source/Api/Music.h`), `Source/Nsf/FtmFile.cpp` and
+  `Source/Transcribe/TextModule.cpp` keep their own copies of the letters.
 - **Instrument files (`.fti`):** `"FTI"` plus `INST_VERSION` "2.4".
   `CFamiTrackerDoc::SaveInstrument`/`LoadInstrument` write and read the header,
   version, type byte and name; each `CInstrument*::SaveFile/LoadFile` handles
@@ -573,7 +637,10 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
 2. If the letter is chip-specific, add it to that chip's table in
    `CFamiTrackerView::EditEffNumberColumn`.
 3. Playback: shared effects go in `CChannelHandler::CheckCommonEffects`,
-   chip-specific ones in the channel class's `HandleCustomEffects`.
+   chip-specific ones in the channel class's `HandleCustomEffects`. The DPCM
+   channel's handler never calls `CheckCommonEffects`; an effect that every
+   channel plays alike, the DPCM's too, can go in the effect loop of
+   `CChannelHandler::HandleNoteData`, as the pan (`8xx`) does.
 4. NSF export is `PatternCompiler.cpp`. The driver is binary-only, so an effect
    it does not understand can only be dropped or approximated at export.
 5. Check `TextExporter.cpp` and `hlp/effect_list.htm`.
@@ -631,6 +698,27 @@ NSF export still uses the 2A03 driver. Touch points:
   (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
   "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
   `Commit` and the checks in step with the channel handlers.
+- **The FDS in 0.4.6:**
+  - It sounds two octaves under the note written: with `TRANSPOSE_FDS`,
+    `CSoundGen::LoadMachineSettings` gives a wave of one cycle a quarter of
+    the note's frequency (A-5 sounds 440 Hz, A-3 110 Hz), and the loader
+    moved older files' FDS notes up two octaves. Its frequency register
+    tops out at 4095, so G#7 is the highest note in tune (A-7 plays 13
+    cents flat, A#7 and B-7 no higher), and FDS notes at written octave 2
+    and under round to a coarse register (tens of cents).
+  - Its emulator (`APU/FDSSound.cpp`) rounds the modulator's bend after the
+    shift rather than on the product, so the bend goes 2 (bias under 0) or
+    3 (bias 16 and over) 64ths of the pitch at the least, whatever the
+    depth: about 55 cents down or 79 up. The editor's own "sine" table at
+    depth 1 sits a quarter tone flat. `FdsSounds.cpp` makes gentle
+    vibratos with the pitch sequence (on the FDS a positive value raises
+    the pitch, and a unit is 1731 cents over the register) and modulator
+    tables whose bends average out (`MeanBendCents` in the tests checks
+    them).
+  - The emulator writes a volume change at once, so a smooth wave starting
+    at its peak at a random phase clicks; the sounds start over two frames
+    or more. `CChannelHandlerFDS` doesn't reset the wave's phase on a note.
+  - The mixer lowpasses it (`treble_eq(-48, 1000)` in `CMixer::UpdateSettings`).
 - **`check_song`'s JSON is read by the problems panel** (`ProblemList.cpp`):
   keep its field names, and give a new kind of finding a name in both
   (`CHECK_KIND` in `Tools.cpp`, `KIND_IDS` in `ProblemList.cpp`, heard worst
@@ -671,6 +759,12 @@ NSF export still uses the 2A03 driver. Touch points:
   `CustomExporter*` files. Turning PCH on breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
+- **The N163 plays its channels in reverse order:** `CChannelHandlerN163`
+  writes channel index i at `0x40 + (7 - i) * 8`, which `CN163` mixes as its
+  channel 7 - i (`CHANID_N163_CHAN8` for the first). Code that reaches the
+  emulation's N163 channels by `chan_id_t` maps them, as
+  `CMixer::StoreChannelLevel` does for the meters and
+  `CChannelHandler::SetPan` for the pan.
 - **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the
   Module Properties dialog and `CCompiler::CompileData` accept a single chip.
 - **Sunsoft 5B is half-built:** it is offered only in Debug builds, has no
