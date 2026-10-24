@@ -33,6 +33,7 @@
 #include "ColorScheme.h"
 #include "Graphics.h"
 #include "APU/APU.h"
+#include "ProblemsPanel.h"
 
 /*
  * CPatternEditor
@@ -1257,6 +1258,8 @@ void CPatternEditor::DrawRow(CDC *pDC, int Row, int Line, int Frame, bool bPrevi
 		colorInfo.Effect	 = BLEND(colorInfo.Effect, colorInfo.Back, SHADE_LEVEL.PREVIEW);
 	}
 
+	const int SongRow = Frame * static_cast<int>(m_pDocument->GetPatternLength(Track)) + Row;	// for the problems panel's marks
+
 	// Draw channels
 	for (int i = m_iFirstChannel; i < m_iFirstChannel + m_iChannelsVisible; ++i) {
 
@@ -1319,6 +1322,18 @@ void CPatternEditor::DrawRow(CDC *pDC, int Row, int Line, int Frame, bool bPrevi
 			PosX += COLUMN_SPACE[j];
 			SelStart += SELECT_WIDTH[j];
 			
+		}
+
+		// What the problems panel found here (ProblemsPanel.h): a tick along the channel's left edge, the whole row's
+		// height for the finding it has selected
+		const int Problem = ProblemMarkAt(Track, i, SongRow);
+		if (Problem != 0) {
+			const COLORREF Color = ProblemMarkColor(Problem);
+			const COLORREF Tick = bPreview ? DIM(Color, PREVIEW_SHADE_LEVEL) : Color;
+			if (ProblemMarkSelected(Problem))
+				pDC->FillSolidRect(0, 0, 3, m_iRowHeight, Tick);
+			else
+				pDC->FillSolidRect(0, 2, 2, std::max(1, m_iRowHeight - 4), Tick);
 		}
 
 		OffsetX += m_iChannelWidths[i];

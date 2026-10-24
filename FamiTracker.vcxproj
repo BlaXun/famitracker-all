@@ -547,6 +547,7 @@
     <ClCompile Include="Source\Api\Json.cpp" />
     <ClCompile Include="Source\Api\Http.cpp" />
     <ClCompile Include="Source\Api\Mcp.cpp" />
+    <ClCompile Include="Source\Api\Network.cpp" />
     <ClCompile Include="Source\Api\Music.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
@@ -564,6 +565,7 @@
     <ClCompile Include="Source\Api\Effects.cpp" />
     <ClCompile Include="Source\Api\Wavetables.cpp" />
     <ClCompile Include="Source\Api\PulseClicks.cpp" />
+    <ClCompile Include="Source\Api\ProblemList.cpp" />
     <ClCompile Include="Source\McpSocket.cpp" />
     <ClCompile Include="Source\McpConnection.cpp" />
     <ClCompile Include="Source\AppFolders.cpp" />
@@ -571,6 +573,7 @@
     <ClInclude Include="Source\Api\Json.h" />
     <ClInclude Include="Source\Api\Http.h" />
     <ClInclude Include="Source\Api\Mcp.h" />
+    <ClInclude Include="Source\Api\Network.h" />
     <ClInclude Include="Source\Api\Music.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
@@ -588,6 +591,7 @@
     <ClInclude Include="Source\Api\Effects.h" />
     <ClInclude Include="Source\Api\Wavetables.h" />
     <ClInclude Include="Source\Api\PulseClicks.h" />
+    <ClInclude Include="Source\Api\ProblemList.h" />
     <ClInclude Include="Source\McpSocket.h" />
     <ClInclude Include="Source\McpConnection.h" />
     <ClInclude Include="Source\AppFolders.h" />
@@ -613,6 +617,7 @@
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
+    <ClCompile Include="Source\ProblemsPanel.cpp" />
     <ClCompile Include="Source\DrumGrid.cpp" />
     <ClInclude Include="Source\DrumGrid.h" />
     <ClCompile Include="Source\DrumGridDlg.cpp" />
@@ -628,6 +633,7 @@
     <ClCompile Include="Source\KeyboardBar.cpp" />
     <ClInclude Include="Source\KeyboardBar.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
+    <ClInclude Include="Source\ProblemsPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />
     <ClCompile Include="Source\Transcribe\Take.cpp" />

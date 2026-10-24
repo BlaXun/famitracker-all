@@ -34,7 +34,29 @@ with `Source/ChipSwitch.cpp`. Claude Code in WSL connects
 through `famitracker-mcp.exe` (`Source/Api/tools/famitracker-mcp.cpp`, logic
 in `Source/Api/Bridge.cpp`), a stdio MCP server that WSL runs on Windows and
 that passes each message to 127.0.0.1; it is built by the `Source/Api` CMake
-project and ships next to FamiTracker.exe. File > Export for games saves
+project and ships next to FamiTracker.exe. Other computers on the user's
+home network connect when the dialog's "Allow connections from other
+computers on my network" is ticked (setting "Allow network"; see MCP.md,
+Connecting from another computer): `CMcpSocketServer::Start` then binds
+every IPv4 address and closes connections from addresses outside home
+networks (`MayConnect` in `Source/Api/Network.cpp`: loopback, 10/8,
+172.16/12, 192.168/16, 169.254/16, 100.64/10 for Tailscale, or this PC's
+own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
+`GetAdaptersAddresses`), and each request carries its client's address
+(`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
+again, accepts this PC's addresses and name in the Host header
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 18 tools of
+`ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
+prompts, for local models), `GET /files/<name>` (the OGG files next to the
+song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
+tool: `ToolSet::ReceiveFile` into the Inbox folder next to FamiTracker.exe,
+`InboxFolder` in `Source/AppFolders.cpp`, `SongHost::SaveInbox`); a
+request from the network gives `ToolSet::Call` a `Caller` whose `FilesUrl`
+makes `export_for_game` link its files. `famitracker-mcp --host <address>
+[--port N] [--token CODE] [--core]` reaches FamiTracker on another
+computer; its sources build alone as the `ftbridge` library, which CI links
+statically against musl on Alpine for the release's `famitracker-mcp-linux`.
+File > Export for games saves
 tracks as looping OGG files through the `export_for_game` tool
 (`Source/Api/GameAudio.cpp`, `Ogg.cpp`): FamiTracker renders with `CSoundGen`,
 which notes the sample where each row starts (`GetRenderMarks`), and libvorbis
@@ -107,6 +129,20 @@ leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
 within four frames between held notes of their line, which a user heard as
 missing notes, and `design_instrument` and `reference_sound` say when the
 sound they add is that short (`VanishRemark`).
+View > Problems (`Source/ProblemsPanel.cpp`, docked along the bottom or the
+right) shows those checks in FamiTracker: it runs `check_song` with
+`format` `json` (each finding as data: `CheckFinding` and `CheckJson` in
+`Tools.cpp`) through `CMcpConnection::RunTool`, which runs a tool for
+FamiTracker's own windows with direct changes whatever the Claude Code
+setting says. `Source/Api/ProblemList.cpp` reads the JSON back (a line a
+note for notes that vanish) and keeps the marks that
+`CPatternEditor::DrawRow` (a tick at the channel's edge) and the piano roll
+(a dot on the note) draw through `ProblemMarkAt`. The panel checks again a
+moment after `CMainFrame::SongChanged`, not while the song plays, and
+polls a signature of what changes unannounced (instruments' sequences,
+speed and tempo, the track); a click's Nudge runs the `fix` the JSON gives
+(`polish` with the touch `clicks` on its bar, one undoable action), and
+Show selects notes in the piano roll (`CPianoRollWnd::ShowNotes`).
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
@@ -275,9 +311,10 @@ replaced the VS2008 project:
     Latest; the others are pre-releases. Each release has a zip with
     `FamiTracker.exe`, plus `wav2ftm.exe`, `famitracker-mcp.exe` and
     `nsf2ftm.exe` when the branch builds them (`api` has no
-    `famitracker-mcp.exe`), and a debug-symbols zip. These tags are build
-    pointers and get deleted and recreated; never use them for real
-    releases.
+    `famitracker-mcp.exe`), `famitracker-mcp-linux` (the bridge for
+    Linux, built in the Linux job in an Alpine container), and a
+    debug-symbols zip. These tags are build pointers and get deleted and
+    recreated; never use them for real releases.
 - The baseline is 0 errors and 0 warnings at `/W3` in both configurations.
   Keep it that way so new warnings stand out.
 - On `master`, the VS2008 project needs the `DXSDK_DIR` and `BOOST_DIR`
@@ -327,7 +364,11 @@ The application has no test suite of its own. What exists:
   real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
-  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
+  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`);
+  `TestNetwork` covers other computers: the address filter, Host headers,
+  the core set, `send_file`, the file routes with traversal attempts and
+  `export_for_game`'s links, and `TestCheckJson` and `TestProblemList`
+  read `check_song`'s JSON back as the problems panel reads it. Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -540,6 +581,18 @@ NSF export still uses the 2A03 driver. Touch points:
 
 ## Gotchas
 
+- **Other computers (the connection over the network):** with the option
+  off, FamiTracker binds 127.0.0.1 only and `HandleMcp` refuses any request
+  whose `Peer` isn't loopback; keep both, so one mistake doesn't open it.
+  Every route needs the access code. The file routes take plain file names
+  only (`IsPlainFileName`: no folders, drive letters, streams or device
+  names), the Inbox only the kinds the tools read (`IsInboxFile`) and
+  `/files/` only `.ogg` (`IsExportFile`); never let them take paths. A tool
+  added later either joins `ToolSet::CoreTools` or not: the tests check that
+  `CoreInstructions` names only tools of the set and stays short, so keep
+  its rules (notes that vanish, clicks, 0.4.6's effects) in step with
+  `Instructions`. `famitracker-mcp` must keep building from `ftbridge`
+  alone.
 - **Pulse vibrato clicks:** `CSquare1Chan::RefreshChannel` (and the MMC5's)
   writes the period's high register (`$4003`) only when its value changes,
   and `CSquare::Write` resets the duty step on that write, as the 2A03
@@ -550,6 +603,10 @@ NSF export still uses the 2A03 driver. Touch points:
   (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
   "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
   `Commit` and the checks in step with the channel handlers.
+- **`check_song`'s JSON is read by the problems panel** (`ProblemList.cpp`):
+  keep its field names, and give a new kind of finding a name in both
+  (`CHECK_KIND` in `Tools.cpp`, `KIND_IDS` in `ProblemList.cpp`, heard worst
+  first); the panel leaves out kinds it doesn't know.
 - **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
   (BSD licensed) keep upstream's files and LF line endings; both builds turn
   their warnings off, and only `libogg/include/ogg/config_types.h` is ours.

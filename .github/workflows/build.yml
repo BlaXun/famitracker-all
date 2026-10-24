@@ -185,6 +185,26 @@ jobs:
           cmake --build build/api -j 4
           ctest --test-dir build/api --output-on-failure
 
+      # famitracker-mcp for Linux, linked statically against musl on Alpine so it
+      # runs on any x86-64 Linux: stdio MCP clients on another computer reach
+      # FamiTracker over the network with it (--host)
+      - name: Build famitracker-mcp for Linux
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src alpine:3.20 sh -c '
+            apk add --no-cache g++ cmake make >/dev/null &&
+            cmake -S Source/Api -B build/bridge-linux -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static &&
+            cmake --build build/bridge-linux --target famitracker-mcp -j 4 &&
+            strip -o famitracker-mcp-linux build/bridge-linux/famitracker-mcp'
+          file famitracker-mcp-linux
+          ./famitracker-mcp-linux --help | head -1
+
+      - name: Upload famitracker-mcp-linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: famitracker-mcp-linux
+          path: famitracker-mcp-linux
+          if-no-files-found: error
+
       # The NSF importer: the 6502, the chips, the conversion and the studies (Source/Nsf)
       - name: NSF importer tests
         run: |
@@ -199,12 +219,14 @@ jobs:
           cmake --build build/tests -j 4
           ctest --test-dir build/tests --output-on-failure
 
-  # After a green build on the main working branches, replace that branch's
-  # rolling release (tag build-<branch>) with the new FamiTracker.exe.
+  # After a green build on the main working branches (and on feat-* feature
+  # branches, so their builds can be tried before they're merged), replace
+  # that branch's rolling release (tag build-<branch>) with the new
+  # FamiTracker.exe.
   publish:
     name: Publish latest build
     needs: [build, transcribe-linux]
-    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'visual-cues' || github.ref_name == 'recorder' || github.ref_name == 'api')
+    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'visual-cues' || github.ref_name == 'recorder' || github.ref_name == 'api' || startsWith(github.ref_name, 'feat-'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -240,8 +262,22 @@ jobs:
           name: nsf2ftm-Win32
           path: dist/nsf2ftm
 
+      - name: Download famitracker-mcp-linux
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: famitracker-mcp-linux
+          path: dist/famitracker-mcp-linux
+
       - name: Package and publish
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
         run: bash .github/scripts/publish-build.sh
+
+      - name: Remove the builds and branches of merged features
+        if: github.ref_name == 'next'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/cleanup-feature-builds.sh

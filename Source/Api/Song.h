@@ -267,6 +267,15 @@ public:
 	// with Windows' backslashes), as the C library opens it: FamiTracker turns
 	// it into the Windows code page it runs in
 	virtual std::string LocalPath(const std::string &Path) = 0;
+	// A file sent from another computer (send_file), saved in the Inbox folder
+	// next to FamiTracker.exe (Documents\FamiTracker inbox where FamiTracker's
+	// folder can't be written), replacing one of that name (Name has no
+	// folders); its path as the tools are given paths comes back in Path
+	virtual bool SaveInbox(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &Error) = 0;
+	// A file next to the song (Name has no folders), all of it, for a client on
+	// another computer to fetch what export_for_game saved: false when there's
+	// none (Error empty) or it can't be read (Error says why)
+	virtual bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error) = 0;
 
 	// The reference library (References.h): files in the References folder
 	// next to FamiTracker.exe (Documents\FamiTracker references where

@@ -22,9 +22,14 @@
 #pragma once
 
 // The Claude Code connection's listener (see McpConnection.h): a thread that
-// takes HTTP connections on 127.0.0.1 only and hands every complete request
-// to a window on the UI thread with SendMessageTimeout, whose answer goes
-// back on the connection. Plain Win32 and Winsock, no MFC.
+// takes HTTP connections on 127.0.0.1 (and, when the user allows other
+// computers, on every IPv4 address of this computer, from home networks'
+// addresses only: Api/Network.h) and hands every complete request to a
+// window on the UI thread with SendMessageTimeout, whose answer goes back on
+// the connection. Plain Win32 and Winsock, no MFC.
+
+#include <string>
+#include <vector>
 
 namespace ftapi {
 struct HttpRequest;
@@ -47,15 +52,32 @@ struct mcp_exchange_t {
 bool BeginMcpExchange(mcp_exchange_t *pExchange);
 void EndMcpExchange(mcp_exchange_t *pExchange);
 
+// One of this computer's IPv4 addresses, which other computers reach it at
+struct mcp_address_t {
+	std::string Address;	// "192.168.1.10"
+	std::string Adapter;	// its network adapter's name as Windows shows it ("Ethernet", "WLAN", "Tailscale"), ANSI
+	bool Gateway;			// on a network with a router
+};
+
+// This computer's IPv4 addresses on network adapters that are up, loopback
+// left out: home networks with a router first, then Tailscale's (100.64/10),
+// then the others (virtual machines' networks, link-local, public)
+std::vector<mcp_address_t> ListNetworkAddresses();
+// This computer's name on the network ("DESKTOP-PC"); empty when unknown
+std::string NetworkComputerName();
+
 class CMcpSocketServer
 {
 public:
 	CMcpSocketServer();
 	~CMcpSocketServer();
 
-	// Listens on 127.0.0.1:Port; requests go to the window as Message. False
-	// with the reason (in English, for the user) when the port can't be used.
-	bool Start(int Port, void *hWindow, unsigned int Message, char *pError, int ErrorSize);
+	// Listens on 127.0.0.1:Port, or with Network on Port of every IPv4 address
+	// (connections from addresses outside home networks are closed at once);
+	// requests go to the window as Message, each with its client's address
+	// (HttpRequest::Peer). False with the reason (in English, for the user)
+	// when the port can't be used.
+	bool Start(int Port, bool Network, void *hWindow, unsigned int Message, char *pError, int ErrorSize);
 	// Closes the listener and every connection, and waits for the thread. Sent
 	// messages are still answered meanwhile, so call it on the window's thread.
 	// A thread still stuck after a few seconds (a client that doesn't read its
@@ -63,6 +85,7 @@ public:
 	void Stop();
 	bool IsRunning() const;
 	int GetPort() const;
+	bool IsNetwork() const;		// listening for other computers too
 
 private:
 	struct Impl;

@@ -26,6 +26,7 @@
 #include "GameAudio.h"
 #include "Jingles.h"
 #include "Music.h"
+#include "Network.h"
 #include "Ogg.h"
 #include "Picture.h"
 #include "Presets.h"
@@ -10772,8 +10773,9 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
 // Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
+// Saved: the file's name is added once it's written
 std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, double Loudness, std::vector<std::string> &Taken,
-	std::string &Code)
+	std::string &Code, std::vector<std::string> &Saved)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -10886,6 +10888,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	std::string Path;
 	if (!S.Host().SaveFile(File, Bytes, Path, Error))
 		throw Problem(Error);
+	Saved.push_back(File);
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
@@ -10915,7 +10918,8 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	return Text;
 }
 
-std::string ExportTool(Session &S, const Json &Args)
+// FilesUrl: where a client on another computer fetches the files (Caller::FilesUrl), or empty
+std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	const bool Normalize = BoolArg(Args, "normalize", true);
@@ -10948,7 +10952,7 @@ std::string ExportTool(Session &S, const Json &Args)
 
 	const int Selected = S.Song.Track;
 	int Current = Selected;
-	std::vector<std::string> Taken, Lines;
+	std::vector<std::string> Taken, Lines, Saved;
 	std::string Code;
 	std::string Error;
 	for (size_t i = 0; i < Tracks.size(); ++i) {
@@ -10961,7 +10965,7 @@ std::string ExportTool(Session &S, const Json &Args)
 		}
 		Session Track(S.Host());
 		try {
-			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code));
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code, Saved));
 			const int Clicking = static_cast<int>(SongClicks(Track, 0, Track.Time.TotalRows()).size());
 			if (Clicking > 0)
 				Lines.push_back(Format("Track %d: %s on the 2A03's pulses %s in the files (a vibrato that takes the period across a "
@@ -10981,6 +10985,12 @@ std::string ExportTool(Session &S, const Json &Args)
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty())
 		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
+	if (!FilesUrl.empty() && !Saved.empty()) {
+		Text += "\n\nYou're on another computer: fetch the files from FamiTracker with the access code you connect with (the same "
+			"Authorization header), like curl -H \"Authorization: Bearer <code>\" -o <file> <link>:";
+		for (size_t i = 0; i < Saved.size(); ++i)
+			Text += "\n- " + FilesUrl + UrlEncode(Saved[i]);
+	}
 	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
 		"points are in seconds.\n" + Code;
 	return Text;
@@ -11009,19 +11019,108 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 	}
 }
 
+// What check_song finds: the line its text lists, and the rest for its JSON (format "json"), which FamiTracker's
+// problems panel reads (Source/ProblemsPanel.cpp). The kinds go heard worst first, so a long list of notes outside the
+// key (a song that changes key) doesn't hide notes that vanish or click.
+enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
+const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key" };
+const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low" };
+
+// A note a finding is about
+struct CheckNote {
+	int Channel, Row, Rows, Pitch;
+};
+
+struct CheckFinding {
+	int Kind;				// check_kind
+	int Channel;			// -1 for none (a silent bar)
+	int Row, Rows;			// where it starts (a song row) and how long it lasts
+	std::string Line;		// as the text lists it
+	std::string Summary;	// a few words, for a list beside the song
+	std::vector<CheckNote> Notes;
+	Json Details;			// more about it, by kind
+	Json Fix;				// the tool call that fixes it (polish nudging a click), or null
+
+	CheckFinding() : Kind(0), Channel(-1), Row(0), Rows(0), Details(Json::MakeObject()) {}
+};
+
+// The note of a channel sounding on Row (the last one starting there or before)
+CheckNote SoundingNote(Session &S, int Channel, int Row)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = Notes.size(); i-- > 0; ) {
+		if (Notes[i].Row <= Row) {
+			const CheckNote Note = { Channel, Notes[i].Row, Notes[i].Rows, Notes[i].Pitch };
+			return Note;
+		}
+	}
+	const CheckNote None = { Channel, Row, 1, -1 };
+	return None;
+}
+
+// Where a song row is: its frame and its row there, as FamiTracker's pattern editor shows them (from 0), and its bar
+// and beat (from 1)
+void PutPlace(const Session &S, int Row, Json &Out)
+{
+	const int Length = std::max(1, S.Time.PatternLength);
+	Out.Set("frame", Row / Length);
+	Out.Set("row", Row % Length);
+	Out.Set("bar", S.Time.BarOf(Row));
+	Out.Set("beat", Json::NumberText(FormatNumber(S.Time.BeatOf(Row))));
+}
+
+Json CheckJson(Session &S, const CheckFinding &F)
+{
+	Json Out = Json::MakeObject();
+	Out.Set("kind", CHECK_KIND[F.Kind]);
+	Out.Set("severity", CHECK_SEVERITY[F.Kind]);
+	Out.Set("channel", F.Channel >= 0 ? Json(F.Channel + 1) : Json());
+	Out.Set("channel_name", F.Channel >= 0 ? Json(S.Channel(F.Channel).FullName()) : Json());
+	PutPlace(S, F.Row, Out);
+	Out.Set("position", S.Time.Position(F.Row));
+	Out.Set("rows", F.Rows);
+	Json Notes = Json::MakeArray();
+	for (size_t i = 0; i < F.Notes.size(); ++i) {
+		const CheckNote &N = F.Notes[i];
+		Json Note = Json::MakeObject();
+		Note.Set("channel", N.Channel + 1);
+		PutPlace(S, N.Row, Note);
+		Note.Set("position", S.Time.Position(N.Row));
+		Note.Set("note", N.Pitch >= 0 ? Json(PitchName(N.Pitch)) : Json());
+		Note.Set("rows", N.Rows);
+		Notes.Push(Note);
+	}
+	Out.Set("notes", Notes);
+	Out.Set("summary", F.Summary);
+	Out.Set("message", F.Line);
+	for (size_t i = 0; i < F.Details.Members().size(); ++i)
+		Out.Set(F.Details.Members()[i].first, F.Details.Members()[i].second);
+	if (!F.Fix.IsNull())
+		Out.Set("fix", F.Fix);
+	return Out;
+}
+
 std::string CheckTool(Session &S, const Json &Args)
 {
 	int From, To;
 	BarRange(S, Args, From, To);
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json.");
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
 	bool Found;
 	const Key K = KeyArg(S, Args, "key", First, End, Found);
-	// Findings by kind, the ones a listener hears worst first, so a long list of notes outside the key (a song that
-	// changes key) doesn't hide notes that vanish or click
-	enum { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
-	std::vector<std::string> Findings[FOUND_KINDS];
-	auto Report = [&](int Kind, const std::string &Text) {
-		Findings[Kind].push_back(Text);
+	std::vector<CheckFinding> Findings[FOUND_KINDS];
+	auto Report = [&](int Kind, int Channel, int Row, int Rows, const std::string &Line, const std::string &Summary) -> CheckFinding & {
+		CheckFinding F;
+		F.Kind = Kind;
+		F.Channel = Channel;
+		F.Row = Row;
+		F.Rows = Rows;
+		F.Line = Line;
+		F.Summary = Summary;
+		Findings[Kind].push_back(F);
+		return Findings[Kind].back();
 	};
 
 	// What sounds on each row, per melodic channel
@@ -11062,10 +11161,12 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (N.Row < First || N.Row >= End)
 				continue;
 			const std::string Where = Format("%s %s", Info.FullName().c_str(), S.Time.Position(N.Row).c_str());
+			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
 			if (Found && !InKey(LandedPitch(N), K)) {
 				++OutOfKey;
-				Report(FOUND_KEY, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(), Where.c_str(),
-					S.Time.Length(N.Rows).c_str()));
+				Report(FOUND_KEY, c, N.Row, N.Rows, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(),
+					Where.c_str(), S.Time.Length(N.Rows).c_str()), Format("%s is outside %s", PitchName(LandedPitch(N)).c_str(),
+					KeyName(K).c_str())).Notes.push_back(Note);
 			}
 			std::string Range;
 			if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && N.Pitch < 9)
@@ -11084,7 +11185,10 @@ std::string CheckTool(Session &S, const Json &Args)
 			}
 			if (!Range.empty()) {
 				++OutOfRange;
-				Report(FOUND_RANGE, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(), Where.c_str(), Range.c_str()));
+				CheckFinding &F = Report(FOUND_RANGE, c, N.Row, N.Rows, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(),
+					Where.c_str(), Range.c_str()), Format("%s is %s", PitchName(N.Pitch).c_str(), Range.c_str()));
+				F.Notes.push_back(Note);
+				F.Details.Set("reason", Range);
 			}
 		}
 	}
@@ -11161,10 +11265,19 @@ std::string CheckTool(Session &S, const Json &Args)
 				if (Run >= MinClash) {
 					const int Row = First + r - Run;
 					++Clashes;
-					Report(FOUND_CLASH, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.", PitchName(RunA).c_str(),
-						ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(), PitchName(RunB).c_str(),
-						ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(), S.Time.Position(Row).c_str(),
-						S.Time.Length(Run).c_str()));
+					CheckFinding &F = Report(FOUND_CLASH, a, Row, Run, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.",
+						PitchName(RunA).c_str(), ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(),
+						PitchName(RunB).c_str(), ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(),
+						S.Time.Position(Row).c_str(), S.Time.Length(Run).c_str()), Format("%s against %s on %s for %s",
+						PitchName(RunA).c_str(), PitchName(RunB).c_str(), S.Channel(b).FullName().c_str(), S.Time.Length(Run).c_str()));
+					F.Notes.push_back(SoundingNote(S, a, Row));
+					F.Notes.push_back(SoundingNote(S, b, Row));
+					F.Details.Set("other_channel", b + 1);
+					F.Details.Set("other_channel_name", S.Channel(b).FullName());
+					Json Heard = Json::MakeArray();
+					Heard.Push(PitchName(RunA));
+					Heard.Push(PitchName(RunB));
+					F.Details.Set("pitches", Heard);
 				}
 				Run = Clash ? 1 : 0;
 				RunA = PitchA;
@@ -11197,24 +11310,51 @@ std::string CheckTool(Session &S, const Json &Args)
 			if (IsMelodic(S.Channel(c)) && !Runs[static_cast<size_t>(c)] && BarEnd - BarFirst >= 8 &&
 				Starts * 4 >= (BarEnd - BarFirst) * 3) {
 				++Busy;
-				Report(FOUND_BUSY, Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(), Plural(Starts, "note", "notes").c_str(), Bar));
+				Report(FOUND_BUSY, c, BarFirst, BarEnd - BarFirst, Format("Busy: %s plays %s in bar %d.", S.Channel(c).FullName().c_str(),
+					Plural(Starts, "note", "notes").c_str(), Bar), Format("%s in bar %d", Plural(Starts, "note", "notes").c_str(),
+					Bar)).Details.Set("note_count", Starts);
 			}
 		}
 		if (!Anything && SongFirst >= 0 && BarFirst > SongFirst && BarFirst < SongLast) {
 			++Silent;
-			Report(FOUND_SILENT, Format("Silent: nothing plays in bar %d.", Bar));
+			Report(FOUND_SILENT, -1, BarFirst, BarEnd - BarFirst, Format("Silent: nothing plays in bar %d.", Bar),
+				Format("nothing plays in bar %d", Bar));
 		}
 	}
 	// Clicks: held notes on the 2A03's and MMC5's pulses whose vibrato takes the period across a multiple of 256, where
 	// the pulse restarts its wave (PulseClicks.h)
 	const std::vector<std::pair<int, ClickFix> > Clicks = SongClicks(S, First, End);
 	for (size_t i = 0; i < Clicks.size(); ++i) {
+		const int c = Clicks[i].first;
 		const ClickFix &F = Clicks[i].second;
-		Report(FOUND_CLICK, Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the period across %d, where the pulse "
-			"restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(Clicks[i].first).FullName().c_str(),
-			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), ClickBoundary(S.Song, F),
-			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + NudgeText(S, F) + ").").c_str() :
-			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."));
+		const int Boundary = ClickBoundary(S.Song, F);
+		const std::string Nudge = F.Shift != 0 ? NudgeText(S, F) : std::string();
+		CheckFinding &Out = Report(FOUND_CLICK, c, F.Row, 1, Format("Click: %s on %s at %s clicks %s as it plays: its vibrato takes the "
+			"period across %d, where the pulse restarts its wave. %s", PitchName(F.Pitch).c_str(), S.Channel(c).FullName().c_str(),
+			S.Time.Position(F.Row).c_str(), Plural(F.Clicks, "time", "times").c_str(), Boundary,
+			F.Shift != 0 ? ("polish with touches [\"clicks\"] nudges it (" + Nudge + ").").c_str() :
+			"Too deep a vibrato to nudge clear: a gentler one, or the note on another channel, stops it."),
+			Format("%s clicks %s: its vibrato crosses %d%s", PitchName(F.Pitch).c_str(), Plural(F.Clicks, "time", "times").c_str(), Boundary,
+			F.Shift != 0 ? "" : ", too deep to nudge clear"));
+		Out.Notes.push_back(SoundingNote(S, c, F.Row));
+		Out.Rows = Out.Notes.back().Rows;
+		Out.Details.Set("clicks", F.Clicks);
+		Out.Details.Set("boundary", Boundary);
+		if (F.Shift != 0) {
+			Out.Details.Set("nudge", Nudge);
+			// The note's bar on its channel, polished for clicks alone: one Ctrl+Z
+			Json Touches = Json::MakeArray(), Channels = Json::MakeArray(), Arguments = Json::MakeObject();
+			Touches.Push("clicks");
+			Channels.Push(c + 1);
+			Arguments.Set("touches", Touches);
+			Arguments.Set("channels", Channels);
+			Arguments.Set("from_bar", S.Time.BarOf(F.Row));
+			Arguments.Set("to_bar", S.Time.BarOf(F.Row));
+			Out.Fix = Json::MakeObject();
+			Out.Fix.Set("tool", "polish");
+			Out.Fix.Set("arguments", Arguments);
+			Out.Fix.Set("does", "nudges it a hair (" + Nudge + "), so its vibrato stays clear of " + Format("%d", Boundary));
+		}
 	}
 	const int Clicking = static_cast<int>(Clicks.size());
 	// Vanishing: notes of a line on a sound that's gone within a few frames, beside the line's notes that hold
@@ -11222,26 +11362,69 @@ std::string CheckTool(Session &S, const Json &Args)
 	{
 		const std::vector<int> RowFrames = RowFramesOf(S);
 		for (int c = 0; c < S.ChannelCount(); ++c) {
-			const std::vector<Vanishing> Found = VanishingNotes(S, c, First, End, RowFrames);
-			for (size_t i = 0; i < Found.size(); ++i) {
-				Vanished += static_cast<int>(Found[i].Rows.size());
-				Report(FOUND_VANISHING, "Vanishing: " + VanishingText(S, c, Found[i]));
+			const std::vector<Vanishing> Gone = VanishingNotes(S, c, First, End, RowFrames);
+			for (size_t i = 0; i < Gone.size(); ++i) {
+				const Vanishing &V = Gone[i];
+				Vanished += static_cast<int>(V.Rows.size());
+				CheckFinding &F = Report(FOUND_VANISHING, c, V.Rows.front(), 1, "Vanishing: " + VanishingText(S, c, V),
+					Format("%s is gone within %s, between notes of the line that hold (%s)", InstrumentLabel(S.Song, V.Instrument).c_str(),
+					Plural(V.Heard, "frame", "frames").c_str(), InstrumentLabel(S.Song, V.Held).c_str()));
+				for (size_t n = 0; n < V.Rows.size(); ++n)
+					F.Notes.push_back(SoundingNote(S, c, V.Rows[n]));
+				F.Rows = std::max(1, F.Notes.back().Row + F.Notes.back().Rows - F.Row);
+				const InstrumentInfo *pSound = FindInstrument(S.Song, V.Instrument);
+				F.Details.Set("instrument", V.Instrument);
+				F.Details.Set("instrument_name", pSound != 0 ? Json(pSound->Name) : Json());
+				F.Details.Set("heard_frames", V.Heard);
+				F.Details.Set("held_instrument", V.Held);
 			}
 		}
 	}
 
-	std::string Unused;
+	std::vector<std::string> Unused;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (IsMelodic(S.Channel(c)) && S.Notes(c).empty())
-			Unused += (Unused.empty() ? "" : ", ") + S.Channel(c).FullName();
+			Unused.push_back(S.Channel(c).FullName());
+	}
+	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey };
+
+	if (Form == "json") {
+		Json Out = Json::MakeObject();
+		Out.Set("track", S.Song.Track + 1);
+		Out.Set("track_name", S.Song.TrackName);
+		Out.Set("from_bar", From);
+		Out.Set("to_bar", To);
+		Out.Set("key", Found ? Json(KeyName(K)) : Json());
+		Out.Set("key_from_notes", Found && Arg(Args, "key") == 0);
+		Out.Set("pattern_length", S.Time.PatternLength);
+		Out.Set("rows_per_beat", S.Time.RowsPerBeat);
+		Out.Set("rows_per_bar", S.Time.RowsPerBar);
+		Json CountList = Json::MakeObject();
+		for (int k = 0; k < FOUND_KINDS; ++k)
+			CountList.Set(CHECK_KIND[k], Counts[k]);
+		Out.Set("counts", CountList);
+		Json UnusedList = Json::MakeArray();
+		for (size_t i = 0; i < Unused.size(); ++i)
+			UnusedList.Push(Unused[i]);
+		Out.Set("unused_channels", UnusedList);
+		Json List = Json::MakeArray();
+		for (int k = 0; k < FOUND_KINDS; ++k)
+			for (size_t i = 0; i < Findings[k].size(); ++i)
+				List.Push(CheckJson(S, Findings[k][i]));
+		Out.Set("findings", List);
+		return WriteJson(Out);
 	}
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
 	Text += Found ? " in " + KeyName(K) + (Arg(Args, "key") != 0 ? "" : " (found from the notes)") : " (no key: no notes)";
 	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing.", OutOfKey,
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
-	if (!Unused.empty())
-		Text += " Unused channels (free for harmony, an echo or a counter-melody): " + Unused + ".";
+	if (!Unused.empty()) {
+		Text += " Unused channels (free for harmony, an echo or a counter-melody): ";
+		for (size_t i = 0; i < Unused.size(); ++i)
+			Text += (i == 0 ? "" : ", ") + Unused[i];
+		Text += ".";
+	}
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
@@ -11260,7 +11443,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	for (int k = 0; k < FOUND_KINDS; ++k) {
 		for (int i = 0; i < Shown[k]; ++i)
-			Text += "\n" + Findings[k][static_cast<size_t>(i)];
+			Text += "\n" + Findings[k][static_cast<size_t>(i)].Line;
 		if (Shown[k] < static_cast<int>(Findings[k].size()))
 			Text += Format("\n... and %d more %s.", static_cast<int>(Findings[k].size()) - Shown[k], MORE[k]);
 	}
@@ -11921,7 +12104,7 @@ std::string ReferencesTool(Session &S, const Json &Args)
 		}
 		if (Broken > 0)
 			Out += Format("\n%s in the library folder couldn't be read.", Plural(Broken, "file", "files").c_str());
-		return Out + "\nThe built-in guide to the classic NES styles: action \"guide\".";
+		return Out + "\nThe built-in guide to the classic NES styles and to dark and melancholic music: action \"guide\".";
 	}
 	if (Action == "show")
 		return ReferenceText(FindReference(S, StringArg(Args, "reference")));
@@ -12977,7 +13160,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("references", "The reference library",
 		"The user's library of studied tracks (study_nsf and study_module add to it) and the built-in guide to the classic NES styles "
-		"(Konami, Capcom, Nintendo: grooves, bass figures, sounds, tricks). When the user wants music like a game, a composer "
+		"(Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music (grooves, bass figures, sounds, "
+		"tricks). When the user wants music like a game, a composer "
 		"or a reference, or in a style, search here first and lean on what you find: its tempo and feel, form, harmonic color, "
 		"how the channels share the parts, rhythm grids, drum grooves, tricks and sounds. Write your own melodies and chord "
 		"progressions; never copy a reference's notes. Actions: list (default), show (a reference's whole study and its "
@@ -12987,7 +13171,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete" }))
 			.Add("reference", Prop("string", "The reference's id, for show, tag and delete, like \"bucky-o-hare-08\"."))
 			.Add("query", Prop("string", "For search: words like \"konami echo\", \"gallop bass\", \"fast minor\", \"mega man\"."))
-			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"drums\", \"lead sounds\" or \"soundtrack\" (default: the contents)."))
+			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"square\", \"dark\", \"drums\" or \"soundtrack\" (default: the contents)."))
 			.Add("tags", WordListProp("For tag: tags to add."))
 			.Add("remove_tags", WordListProp("For tag: tags to take off."))
 			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
@@ -13032,6 +13216,20 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("tracks", Prop("string", "Which: \"music\" (default), \"all\", or numbers from 1 like \"1,3-5\" (at most 64).")),
 		false, true);
 
+	AddTool("send_file", "Send a file to FamiTracker",
+		"For a client on another computer, whose files FamiTracker can't open: puts a file into the Inbox folder next to "
+		"FamiTracker.exe on the user's PC and replies with its Windows path, for the tools that read files there: an NSF for "
+		"study_nsf and import_nsf (its .m3u playlist too, which names the tracks), a MOD, S3M, XM, IT, MIDI or FamiTracker "
+		"module for study_module, a WAV recording for make_sound_effect. Give the file's name and its bytes in base64, at most "
+		"5 MB. A file of that name in the Inbox is replaced. With a shell, sending the file itself is quicker, with the "
+		"same access code: curl -T song.nsf -H \"Authorization: Bearer <code>\" http://<FamiTracker's address>:<port>/inbox/"
+		"song.nsf.",
+		Schema()
+			.Add("name", Prop("string", "The file's name without folders, like \"Mega Man 2.nsf\": .nsf, .nsfe, .m3u, .mod, .s3m, .xm, "
+				".it, .mid, .midi, .rmi, .ftm or .wav."), true)
+			.Add("data", Prop("string", "The file's bytes in base64."), true),
+		false, false, true);
+
 	AddTool("review_arrangement", "Review the arrangement's depth",
 		"What makes the song sound plain, as a musician would hear it: which parts play (melody, chords, bass, drums, a "
 		"second line) and which are missing, bars where only one or two play, the chords (how many, plain triads or "
@@ -13054,8 +13252,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels. Run it "
-		"after writing.",
-		Schema().Add("key", Prop("string", "Key to check against. Default: found from the notes.")).Range(), true, false, true);
+		"after writing. format json gives every finding (its kind, severity, channel, frame, row, bar and beat, the notes "
+		"and the message, and for a click that can be nudged the polish call that fixes it) and the counts, for programs.",
+		Schema()
+			.Add("key", Prop("string", "Key to check against. Default: found from the notes."))
+			.Add("format", EnumProp("text (the default): a summary and the findings to read, the ones heard worst first; json: "
+				"all of them as data, for programs (FamiTracker's problems panel reads it).", std::vector<std::string>{ "text", "json" }))
+			.Range(),
+		true, false, true);
 
 	AddTool("look_at_song", "Look at the notes",
 		"A picture of the song's notes for you to look at: a piano roll with time left to right (bars numbered on top) and "
@@ -13098,7 +13302,7 @@ bool ToolSet::Has(const std::string &Name) const
 	return false;
 }
 
-ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
+ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
 	const Json Args = Arguments.IsObject() ? Arguments : Json::MakeObject();
@@ -13134,6 +13338,15 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "effects") Result.Text = EffectsTool(S, Args);
 		else if (Name == "reference_sound") Result.Text = ReferenceSoundTool(S, Args);
 		else if (Name == "import_nsf") Result.Text = ImportNsfTool(S, Args);
+		else if (Name == "send_file") {
+			std::string Bytes;
+			const std::string File = Trim(StringArg(Args, "name"));
+			if (File.empty())
+				throw Problem("send_file needs the file's name, like \"song.nsf\".");
+			if (!Base64Decode(StringArg(Args, "data"), Bytes))
+				throw Problem("data should be the file's bytes in base64.");
+			Result.IsError = !ReceiveFile(File, Bytes, Result.Text);
+		}
 		else if (Name == "add_sample_drums") Result.Text = AddSampleDrumsTool(S, Args);
 		else if (Name == "add_echo") Result.Text = AddEchoTool(S, Args);
 		else if (Name == "add_vibrato") Result.Text = AddVibratoTool(S, Args);
@@ -13152,7 +13365,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		else if (Name == "keep_version") Result.Text = KeepVersionTool(S, Args);
 		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
-		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args);
+		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {
 			S.Host().Stop();
@@ -13170,6 +13383,108 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments)
 		Result.IsError = true;
 	}
 	return Result;
+}
+
+bool ToolSet::ReceiveFile(const std::string &Name, const std::string &Bytes, std::string &Reply)
+{
+	if (!IsInboxFile(Name)) {
+		Reply = IsPlainFileName(Name) ? "FamiTracker's Inbox takes " + std::string(INBOX_FILE_KINDS) + " files (what study_nsf, "
+			"import_nsf, study_module and make_sound_effect read), not " + Name + "." :
+			"Give the file's name without folders, like \"song.nsf\" (\"" + ValidUtf8(Name) + "\" isn't one).";
+		return false;
+	}
+	if (Bytes.empty()) {
+		Reply = Name + " is empty.";
+		return false;
+	}
+	if (Bytes.size() > MAX_INBOX_FILE) {
+		Reply = Format("%s is %.1f MB; FamiTracker's Inbox takes files of at most 5 MB.", Name.c_str(),
+			static_cast<double>(Bytes.size()) / (1024.0 * 1024.0));
+		return false;
+	}
+	std::string Path, Error;
+	if (!m_Host.SaveInbox(Name, Bytes, Path, Error)) {
+		Reply = Error.empty() ? "FamiTracker couldn't save " + Name + "." : Error;
+		return false;
+	}
+	const std::string Kind = Lowercase(Name.substr(Name.rfind('.') + 1));
+	std::string Use;
+	if (Kind == "nsf" || Kind == "nsfe")
+		Use = "Give that path to study_nsf (to study its tracks) or import_nsf (to open them as a module). Its .m3u playlist, sent "
+			"with the same name, names the tracks.";
+	else if (Kind == "m3u")
+		Use = "It names the tracks of the NSF of the same name in the Inbox, for study_nsf.";
+	else if (Kind == "wav")
+		Use = "Give that path to make_sound_effect as its recording.";
+	else
+		Use = "Give that path to study_module.";
+	Reply = "Saved " + Path + Format(" (%d KB). ", static_cast<int>((Bytes.size() + 1023) / 1024)) + Use;
+	return true;
+}
+
+bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::string &Error)
+{
+	Error.clear();
+	Bytes.clear();
+	if (!IsExportFile(Name)) {
+		Error = "FamiTracker gives only the OGG files export_for_game saved next to the song.";
+		return false;
+	}
+	return m_Host.ReadExport(Name, Bytes, Error);
+}
+
+// The composing essentials, for local models that struggle with many tools: reading the song, writing notes,
+// instruments and sounds, chords and bass, drums, echo, tempo, mix, polish, the checks, playback, saving, export
+const std::vector<std::string> &ToolSet::CoreTools()
+{
+	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "add_instrument", "design_instrument",
+		"set_instrument", "add_chords_and_bass", "add_drums", "add_echo", "set_tempo", "polish", "mix", "check_song",
+		"review_arrangement", "play", "stop", "save_song", "export_for_game" };
+	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
+	return CORE;
+}
+
+bool ToolSet::IsCoreTool(const std::string &Name)
+{
+	const std::vector<std::string> &Core = CoreTools();
+	return std::find(Core.begin(), Core.end(), Name) != Core.end();
+}
+
+std::string ToolSet::CoreInstructions()
+{
+	return
+		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (two pulses, a triangle, noise, "
+		"DPCM), sometimes with an expansion chip. Bars and beats count from 1. Notes are written C-4, C#4, Db4 with "
+		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
+		"Work like this: get_song first, read_notes before you change a part. Unless the user allowed direct changes, each "
+		"change arrives as a clip the user plays and places; say where it goes. You can't hear: after writing, run check_song "
+		"and review_arrangement, play the bars for the user, then ask how it sounds. Say what you changed and why.\n"
+		"Write music that sounds composed, not generated:\n"
+		"- Plan: the mood gives the key and mode (major or lydian bright, minor or dorian sad, phrygian for danger), a tempo "
+		"(set_tempo; pick an even one it names, or the hi-hats wobble) and a form of 16-32 bars with an A part and a "
+		"different B part.\n"
+		"- Melody (write_notes, on a pulse): a short motif repeated and developed, phrases of 2 or 4 bars that end on a held "
+		"note or a rest, chord tones on strong beats, long and short notes mixed, mostly in octave 3 (C-3 to C-4).\n"
+		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\" or \"i VI III VII\"), "
+		"about one a bar, with a chord_style, color and bass_style that fit the mood (the defaults are the plainest); other "
+		"chords for the B part.\n"
+		"- Drums: add_drums on the noise channel, with fills where phrases end; lighter in calm parts.\n"
+		"- Space: add_echo copies the melody onto a free channel, later and quieter.\n"
+		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
+		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
+		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
+		"Rules that decide how it sounds:\n"
+		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 "
+		"1 0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give "
+		"a plucked melody a sound that settles to a level (design_instrument kind pluck, sustain half), and keep sounds that "
+		"vanish for echoes, stabs and drums. check_song lists such notes.\n"
+		"- Clicks: on the 2A03's pulses, a vibrato that takes a held note's period across a multiple of 256 restarts the "
+		"wave, a click several times a second (A-3 even with a gentle vibrato, F-1 with any). The tools nudge such notes a "
+		"few cents with Pxx and say so; check_song lists any left, and polish with touches [\"clicks\"] nudges them.\n"
+		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
+		"For a game: save_song, then export_for_game at about -20 LUFS (-22 for calm places, -19 for action).\n"
+		"This is FamiTracker's small set of tools (/mcp/core). Replies sometimes name tools it doesn't have (/mcp has them "
+		"all): skip those steps, or tell the user.";
 }
 
 std::string ToolSet::Instructions()
@@ -13249,6 +13564,9 @@ std::string ToolSet::Instructions()
 		"boss with phases can be a track per phase (make_version gives the second track to rewrite), and the game switches "
 		"between them. Credits or an ending that slows down and stops: set_tempo with from_bar and over_bars, then set_loop "
 		"with stop. For many tracks for one game, references action guide topic soundtrack has the plan.\n"
+		"- From another computer (FamiTracker lets the user's network connect): paths are the user's PC's, so send_file puts "
+		"your files (an NSF, a module, a WAV) into FamiTracker's Inbox and gives their paths, and export_for_game's reply links "
+		"to the files it saves.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. remove_unused_instruments lists the sounds nothing plays (removing them needs the user's OK). "
@@ -13262,7 +13580,11 @@ std::string ToolSet::Instructions()
 		"adds it as a new track. Night is much more than slower: the parts that sat high move down an octave, fast runs thin "
 		"to their outline, notes hold into each other without accents, chords become a held pad that swells in, the bass plays "
 		"long notes, the drums fade to a soft pulse or stop, the lead swells in with a slower and wider vibrato, and a longer, "
-		"softer echo adds space; make_version \"night\" does all of that by itself, and chords \"richer\" adds sevenths. A jingle (level up, quest complete, item found...) is make_jingle, and a sound effect (jump, "
+		"softer echo adds space; make_version \"night\" does all of that by itself, and chords \"richer\" adds sevenths. "
+		"Dungeons, caves, crypts and haunted places, sad scenes and laments want more than a darker mood: references action "
+		"guide topics dark and melancholy have the craft of the classic soundtracks (low, narrow registers, semitones and "
+		"tritones, pedals and ostinatos, no drums, quiet echoes, slow swells). A jingle (level up, quest complete, item "
+		"found...) is make_jingle, and a sound effect (jump, "
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
 		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
@@ -13270,9 +13592,9 @@ std::string ToolSet::Instructions()
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "
-		"is a built-in "
-		"guide to the classic NES styles. When the user "
-		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man...), or says to use the "
+		"is a built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and "
+		"melancholic music. When the user "
+		"wants music like a game, a composer or a track, or in a style (Konami, Capcom, Mega Man, Castlevania, Zelda...), or says to use the "
 		"references, search the library and the guide first and plan from what you find: the tempo and feel, the form, the "
 		"harmonic color (modes, borrowed chords, how often chords change), how the channels share the parts (lead, echo, "
 		"harmony, bass, drums), the rhythm grids and bass figures, the drum grooves, the tricks and the sounds. Take the craft, "

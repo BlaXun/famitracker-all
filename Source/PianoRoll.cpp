@@ -46,6 +46,7 @@
 #include "ClipsDlg.h"
 #include "InsertRecording.h"
 #include "NoteEdit.h"
+#include "ProblemsPanel.h"
 #include "PianoRoll.h"
 
 namespace {
@@ -295,6 +296,24 @@ void Cross(CDC &dc, const CRect &Rect, COLORREF Color)
 		dc.FillSolidRect(X + i, Y + i, 2, 1, Color);
 		dc.FillSolidRect(X + Size - 1 - i, Y + i, 2, 1, Color);
 	}
+}
+
+// What the problems panel found on a note (ProblemsPanel.h): a dot at its
+// start, and a ring around it when the panel has that finding selected
+void ProblemDot(CDC &dc, const CRect &Note, int Mark)
+{
+	if (Mark == 0)
+		return;
+	const COLORREF Color = ProblemMarkColor(Mark);
+	if (ProblemMarkSelected(Mark)) {
+		CRect Ring(Note);
+		Ring.InflateRect(std::max(1, SX(2)), std::max(1, SY(1)));
+		Outline(dc, Ring, Color, std::max(1, SX(2)));
+	}
+	const int Size = std::max(3, std::min(static_cast<int>(Note.Height()) - 2, SY(6)));
+	const int X = Note.left + std::max(1, SX(2)), Y = Note.top + (Note.Height() - Size) / 2;
+	dc.FillSolidRect(X - 1, Y - 1, Size + 2, Size + 2, RGB(255, 255, 255));
+	dc.FillSolidRect(X, Y, Size, Size, Color);
 }
 
 // The first of a channel's notes still sounding after Row (notes don't
@@ -906,6 +925,48 @@ struct CPianoRollWnd::Impl {
 		CursorFrame = pView->GetPatternEditor()->GetFrame();	// seen, so it doesn't scroll
 		CursorRow = pView->GetPatternEditor()->GetRow();
 		CursorChannel = pView->GetPatternEditor()->GetChannel();
+	}
+
+	// The problems panel's notes in sight (CPianoRollWnd::ShowNotes)
+	void ShowNotes(int ToChannel, const int *pStarts, int Count, bool Select)
+	{
+		CFamiTrackerView *pView = View();
+		if (pView == NULL || pStarts == NULL || Count <= 0)
+			return;
+		Layout();
+		if (Dirty)
+			Read();
+		if (ToChannel < 0 || ToChannel >= static_cast<int>(Notes.size()))
+			return;
+		CancelDrag();
+		PlacingClip = -1;
+		// The pattern editor's cursor as it is now, seen, so the next look leaves the bright channel and the selection be
+		CPatternEditor *pEditor = pView->GetPatternEditor();
+		if (Select)
+			pEditor->CancelSelection();		// one selection at a time
+		PatternSelecting = pEditor->IsSelecting();
+		CursorFrame = pEditor->GetFrame();
+		CursorRow = pEditor->GetRow();
+		CursorChannel = pEditor->GetChannel();
+		Channel = ToChannel;
+		Selection.clear();
+		int Low = PITCHES, High = -1;
+		for (int i = 0; i < Count; ++i) {
+			const int Index = FindStart(pStarts[i]);
+			if (Index < 0)
+				continue;
+			const RollNote &Note = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(Index)];
+			Low = std::min(Low, Note.Pitch);
+			High = std::max(High, Note.Pitch);
+			if (Select && !Contains(Selection, Note.Start))
+				Selection.push_back(Note.Start);
+		}
+		FollowRow(pStarts[0], false);
+		if (High >= 0 && (Low < PitchAt(Grid.bottom - 1) || High > PitchAt(Grid.top)))
+			ScrollY = (PITCHES - 1 - (Low + High) / 2) * KeyHeight() - Grid.Height() / 2;
+		Placed = true;
+		UpdateScrollBars();
+		pWnd->Invalidate(FALSE);
 	}
 
 	// The instrument list follows the note clicked
@@ -2757,6 +2818,8 @@ struct CPianoRollWnd::Impl {
 						DrawEffects(dc, List, i, Rect, Edge, Full, Back_);
 					if (Bright && Keyed && !InKey(Note.Pitch))
 						Outline(dc, Rect, OffKey);
+					if (!(Bright && Previewing))
+						ProblemDot(dc, Rect, ProblemMarkAt(static_cast<int>(Track), static_cast<int>(c), Note.Start));
 					if (Selected)
 						Outline(dc, Rect, Picked, Rect.Height() >= SY(8) ? std::max(1, SX(2)) : 1);
 					else if (static_cast<int>(c) == HoverChannel && static_cast<int>(i) == HoverNote)
@@ -2942,6 +3005,12 @@ void CPianoRollWnd::SongChanged()
 	m_pImpl->Dirty = true;
 	if (m_pImpl->Shown && GetSafeHwnd() != NULL)
 		Invalidate(FALSE);
+}
+
+void CPianoRollWnd::ShowNotes(int Channel, const int *pStarts, int Count, bool Select)
+{
+	if (GetSafeHwnd() != NULL && m_pImpl->Shown)
+		m_pImpl->ShowNotes(Channel, pStarts, Count, Select);
 }
 
 bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row)
