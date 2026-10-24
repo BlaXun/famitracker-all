@@ -119,6 +119,10 @@ CSoundGen::CSoundGen() :
 	m_iRenderCount(0),
 	m_iMixVersion(0),
 	m_iMixApplied(0),
+	m_iSpaceRoom(1),
+	m_iSpaceEcho(0),
+	m_iSpaceRepeats(3),
+	m_iRenderTail(0),
 	m_iRenderedSamples(0),
 	m_bPlaying(false),
 	m_bHaltRequest(false),
@@ -149,6 +153,8 @@ CSoundGen::CSoundGen() :
 	for (int i = 0; i < CHANNELS; ++i) {
 		m_iMixLevel[i] = 0;
 		m_iMixPan[i] = 0x80;
+		m_iMixSoft[i] = 0;
+		m_iMixSpace[i] = 0;
 	}
 
 	// DPCM sample interface
@@ -378,14 +384,36 @@ void CSoundGen::ForgetSequence(const CSequence *pSequence)
 	}
 }
 
-void CSoundGen::SetChannelMix(const int *pLevels, const int *pPans)
+void CSoundGen::SetChannelMix(const int *pLevels, const int *pPans, const int *pSofts, const int *pSpaces, int Room, int Echo,
+	int Repeats)
 {
 	// Called from the UI thread: plain numbers the sound thread reads, then a new version for it to apply
 	for (int i = 0; i < CHANNELS; ++i) {
 		m_iMixLevel[i] = pLevels[i];
 		m_iMixPan[i] = std::max(0, std::min(0xFF, pPans[i]));
+		m_iMixSoft[i] = pSofts[i];
+		m_iMixSpace[i] = pSpaces[i];
 	}
+	m_iSpaceRoom = Room;
+	m_iSpaceEcho = Echo;
+	m_iSpaceRepeats = Repeats;
 	InterlockedIncrement(&m_iMixVersion);
+}
+
+void CSoundGen::ApplySpace()
+{
+	// Called from player thread: the echo's time in the playing track's beats (its speed, tempo and first highlight;
+	// the speed effects inside the song leave it), up to the two seconds the space keeps
+	double Beat = 0.4;
+	if (m_pDocument != NULL && m_pDocument->IsFileLoaded() && m_iPlayTrack >= 0 &&
+		m_iPlayTrack < static_cast<int>(m_pDocument->GetTrackCount())) {
+		const int Speed = std::max(1, static_cast<int>(m_pDocument->GetSongSpeed(m_iPlayTrack)));
+		const int Tempo = static_cast<int>(m_pDocument->GetSongTempo(m_iPlayTrack));
+		const int Rows = std::max(1, static_cast<int>(m_pDocument->GetFirstHighlight(m_iPlayTrack)));
+		const int Rate = std::max(1, static_cast<int>(m_pDocument->GetFrameRate()));
+		Beat = (Tempo > 0 ? 2.5 * Speed / Tempo : static_cast<double>(Speed) / Rate) * Rows;
+	}
+	m_pAPU->SetSpace(m_iSpaceRoom, m_iSpaceEcho * Beat / 48.0, m_iSpaceRepeats);
 }
 
 int CSoundGen::GetStartPan(int ChanID) const
@@ -406,9 +434,11 @@ void CSoundGen::ApplyChannelMix()
 		const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
 		const int Level = m_iMixLevel[i];
 		m_pAPU->SetChannelGain(Mixed, Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
+		m_pAPU->SetChannelDepth(Mixed, m_iMixSoft[i], m_iMixSpace[i]);
 		if (m_pChannels[i] != NULL)
 			m_pChannels[i]->MixerPanChanged();
 	}
+	ApplySpace();
 }
 
 void CSoundGen::DocumentPropertiesChanged(CFamiTrackerDoc *pDocument)
@@ -961,8 +991,11 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	ResetTempo();
 	ResetAPU();
 
-	// The mixer window's settings as they are now, before every channel starts at its pan
+	// The mixer window's settings as they are now, before every channel starts at its pan, and the space's echo in
+	// this track's beats; the space silent, so every start (and render) sounds the same
 	ApplyChannelMix();
+	ApplySpace();
+	m_pAPU->ClearSpace();
 
 	MakeSilent();
 
@@ -1754,8 +1787,13 @@ BOOL CSoundGen::OnIdle(LONG lCount)
 
 	// Rendering
 	if (m_bRendering && m_bRequestRenderStop) {
-		if (!m_iDelayedEnd)
-			StopRendering();
+		// The mixer's space rings on after the song ends: the file has its tail, up to 15 seconds of it
+		if (!m_iDelayedEnd) {
+			if (m_pAPU->SpaceRinging() && m_iRenderTail < 15 * 60)
+				++m_iRenderTail;
+			else
+				StopRendering();
+		}
 		else
 			--m_iDelayedEnd;
 	}
@@ -1925,6 +1963,8 @@ void CSoundGen::OnStartRender(WPARAM wParam, LPARAM lParam)
 	m_bRendering = true;
 	m_iDelayedStart = 5;	// Wait 5 frames until player starts
 	m_iDelayedEnd = 5;
+	m_iRenderTail = 0;
+	m_pAPU->ClearSpace();	// what played before isn't in the file
 }
 
 void CSoundGen::OnStopRender(WPARAM wParam, LPARAM lParam)

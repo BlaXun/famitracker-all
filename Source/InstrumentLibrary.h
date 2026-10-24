@@ -54,6 +54,11 @@ int AddVrc7CustomInstrument(CFamiTrackerDoc *pDoc, const int *Regs, LPCTSTR Name
 // already there: its index, or -1 with the reason
 int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound, int WavePos, CString &Error);
 
+// What a VRC6 Plus song (Api/Vrc6Plus.h) is missing of its soft layer's starter
+// sounds, each with a wave of its own (ftapi::MissingSoftSounds), as
+// set_expansion adds them: how many it added
+int AddSoftLayerSounds(CFamiTrackerDoc *pDoc);
+
 // An FDS instrument playing one of the FDS's sounds (Api/FdsSounds.h): its
 // wave, modulation table, modulator speed, depth and delay, and its volume,
 // arpeggio and pitch sequences; or the FDS one of that name already there:

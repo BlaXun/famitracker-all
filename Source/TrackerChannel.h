@@ -37,6 +37,7 @@ public:
 	CTrackerChannel(LPCTSTR pName, const int iChip, const int iID);
 	~CTrackerChannel(void);
 	LPCTSTR GetChannelName() const;
+	void SetChannelName(LPCTSTR pName);		// a literal: the VRC6 Plus's soft layer renames the N163's (CFamiTrackerDoc::UpdateChannelNames)
 	const char GetChip() const;
 	const int GetID() const;
 	const int GetColumnCount() const;

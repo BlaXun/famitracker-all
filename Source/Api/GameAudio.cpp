@@ -32,7 +32,7 @@ namespace {
 // CutForGame on a render's sides (one, or the left and the right), as long as each other
 bool CutSides(const std::vector<const std::vector<float>*> &Sides, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
-	bool StartStep)
+	bool StartStep, bool Tail)
 {
 	const long long Fade = StartStep ? std::max(1, SampleRate / 25) : 0;	// 40 ms
 	Out = GameCut();
@@ -57,6 +57,20 @@ bool CutSides(const std::vector<const std::vector<float>*> &Sides, int SampleRat
 		Out.End = Size;
 		if (Marks.size() >= Rows.size())
 			Out.End = std::max(Out.Begin, std::min(Size, Marks[Rows.size() - 1].second));
+		if (Tail) {
+			// The space's tail after the halt, up to where it's 80 dB under full scale
+			long long Last = Out.End;
+			for (size_t s = 0; s < Sides.size(); ++s) {
+				const std::vector<float> &Render = *Sides[s];
+				for (long long k = Size - 1; k >= Last; --k)
+					if (std::fabs(Render[static_cast<size_t>(k)]) >= 1e-4f) {
+						Last = k + 1;
+						break;
+					}
+			}
+			Out.Tail = Last > Out.End;
+			Out.End = Last;
+		}
 		Out.FadeIn = std::min(Fade, Out.Length());
 		return true;
 	}
@@ -99,6 +113,14 @@ bool CutSides(const std::vector<const std::vector<float>*> &Sides, int SampleRat
 		To = S3;
 		Out.SecondPass = true;
 		Out.StartPops = true;
+		Out.Tail = Tail;
+	}
+	else if (Tail && Rendered) {
+		// The space rings on: the second time through starts with the first's tail, as the loop's start must
+		From = S2;
+		To = S3;
+		Out.SecondPass = true;
+		Out.Tail = true;
 	}
 	else if (!(Most < 0.01 || CleanSeam || !Rendered)) {
 		From = S2;
@@ -216,19 +238,20 @@ double GatedLoudness(const std::vector<double> &Squared, int SampleRate)
 
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
-	bool StartStep)
+	bool StartStep, bool Tail)
 {
-	return CutSides(std::vector<const std::vector<float>*>(1, &Render), SampleRate, Rows, Marks, Halts, CleanSeam, Out, Error, StartStep);
+	return CutSides(std::vector<const std::vector<float>*>(1, &Render), SampleRate, Rows, Marks, Halts, CleanSeam, Out, Error, StartStep,
+		Tail);
 }
 
 bool CutForGame(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
-	bool StartStep)
+	bool StartStep, bool Tail)
 {
 	std::vector<const std::vector<float>*> Sides;
 	Sides.push_back(&Left);
 	Sides.push_back(&Right);
-	return CutSides(Sides, SampleRate, Rows, Marks, Halts, CleanSeam, Out, Error, StartStep);
+	return CutSides(Sides, SampleRate, Rows, Marks, Halts, CleanSeam, Out, Error, StartStep, Tail);
 }
 
 std::string GameMakerName(const std::string &FileName)

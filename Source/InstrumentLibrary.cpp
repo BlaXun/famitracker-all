@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 #include "Api/Presets.h"
+#include "Api/Song.h"
+#include "Api/Vrc6Plus.h"
 #include "Api/Wavetables.h"
 #include "Api/FdsSounds.h"
 #include "stdafx.h"
@@ -222,6 +224,41 @@ int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound,
 	pDoc->SetModifiedFlag();
 	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
 	return Index;
+}
+
+int AddSoftLayerSounds(CFamiTrackerDoc *pDoc)
+{
+	if (!pDoc->IsVrc6Plus())
+		return 0;
+	// The song's N163 instruments, by name and where their waves are
+	std::vector<ftapi::InstrumentInfo> Have;
+	for (unsigned int i = 0; i < MAX_INSTRUMENTS; ++i) {
+		if (!pDoc->IsInstrumentUsed(i) || pDoc->GetInstrumentType(i) != INST_N163)
+			continue;
+		ftapi::InstrumentInfo Info;
+		Info.Index = static_cast<int>(i);
+		char Name[CInstrument::INST_NAME_MAX];
+		pDoc->GetInstrumentName(i, Name);
+		Name[CInstrument::INST_NAME_MAX - 1] = 0;
+		Info.Name = Name;
+		Info.Chip = "N163";
+		CInstrumentN163 *pN163 = static_cast<CInstrumentN163*>(pDoc->GetInstrument(i));	// retained
+		if (pN163 != NULL) {
+			Info.WavePos = pN163->GetWavePos();
+			Info.WaveSize = pN163->GetWaveSize();
+			pN163->Release();
+		}
+		Have.push_back(Info);
+	}
+	int Added = 0;
+	const std::vector<std::pair<const ftapi::WaveSound *, int> > Missing = ftapi::MissingSoftSounds(Have);
+	for (size_t s = 0; s < Missing.size(); ++s) {
+		CString Error;
+		if (AddWaveSoundInstrument(pDoc, *Missing[s].first, Missing[s].second, Error) < 0)
+			break;	// no free instrument slot: the song keeps the sounds it got
+		++Added;
+	}
+	return Added;
 }
 
 namespace {

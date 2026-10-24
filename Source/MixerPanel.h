@@ -25,9 +25,12 @@
 // (the 2A03's, then each expansion chip's that is on), with the channel's
 // name and chip, a level meter while the song plays, mute and solo (the
 // pattern editor's own channel mutes, kept in step), a fader in dB (-24 to
-// +6, 0 as the channel plays) and a pan (left to right, the middle unless
-// moved). The fader and the pan are saved with the song (Api/ChannelMix.h,
-// the BF MIXER block) and played by FamiTracker's mixer (CMixer, through
+// +6, 0 as the channel plays), a pan (left to right, the middle unless
+// moved) and two knobs, Soft and Space (0 off to 100: a gentle low-pass,
+// and the send to the space every channel shares, whose room, echo and
+// repeats are chosen beside the button at the top; APU/Space.h). They're
+// saved with the song (Api/ChannelMix.h, the BF MIXER block) and played by
+// FamiTracker's mixer (CMixer, through
 // CSoundGen::SetChannelMix) in playback, File > Create WAV and the game's
 // OGG files: they aren't edits to the notes, and the pan is where a channel
 // starts, before any 8xx. NSF files don't have them; "Write into the notes"
@@ -67,11 +70,12 @@ protected:
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
 	afx_msg void OnWriteIntoNotes();
+	afx_msg void OnSpaceChosen();
 
 	DECLARE_MESSAGE_MAP()
 
 private:
-	enum part_t { PART_NONE, PART_MUTE, PART_SOLO, PART_PAN, PART_FADER };
+	enum part_t { PART_NONE, PART_MUTE, PART_SOLO, PART_PAN, PART_FADER, PART_SOFT, PART_SPACE };
 
 	CFamiTrackerDoc *Doc() const;
 	int ChannelCount() const;
@@ -81,6 +85,7 @@ private:
 	CRect PanRect(int Channel) const;		// the pan's slider
 	CRect FaderRect(int Channel) const;		// the fader's track, top to bottom
 	CRect MeterRect(int Channel) const;
+	CRect KnobRect(int Channel, part_t Part) const;	// Soft's or Space's knob
 	int FaderY(int Channel, int Level) const;
 	int LevelAt(int Channel, int y, bool Fine) const;
 	int PanAt(int Channel, int x) const;
@@ -88,6 +93,9 @@ private:
 	void Change(int Channel, int Level, int Pan);	// live, while dragging: the song's settings and the sound
 	void Commit();							// the drag's change as one undoable step
 	void SetOne(int Channel, int Level, int Pan);	// one undoable step
+	void ChangeDepth(int Channel, part_t Part, int Value, bool Live);	// Soft or Space: live while dragging, else one step
+	void ShowSpace();						// the room, echo and repeats chosen in their boxes
+	void PaintKnob(CDC &dc, const CRect &Knob, int Value, LPCTSTR Label);
 	void ResetAll();
 	void UpdateScroll();
 	void PaintStrip(CDC &dc, int Channel, CFamiTrackerDoc *pDoc);
@@ -95,6 +103,8 @@ private:
 
 	CMainFrame *m_pMain;
 	CButton m_wndWrite;
+	CComboBox m_wndRoom, m_wndEcho, m_wndRepeats;	// the space
+	std::vector<int> m_EchoSteps;			// the echo box's choices, in 48ths of a beat
 	CFont m_Font, m_BoldFont, m_SmallFont;
 	bool m_bOpen;
 	int m_iScroll;							// pixels scrolled to the right
@@ -102,6 +112,7 @@ private:
 	part_t m_iDragPart;
 	int m_iDragChannel;
 	int m_iDragOffset;						// from the fader's knob to where it was grabbed
+	int m_iDragFrom, m_iDragValue;			// a knob: where the drag started (y) and its value then
 	bool m_bDragMoved;
 	ftapi::MixStore m_DragBefore;
 	// What was drawn, to draw again only when it changes

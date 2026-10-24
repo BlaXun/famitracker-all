@@ -1140,6 +1140,8 @@ CString RecordingChannelName(const CFamiTrackerDoc *pDoc, int Channel)
 	case SNDCHIP_N163: Chip = _T("N163"); break;
 	case SNDCHIP_S5B: Chip = _T("5B"); break;
 	}
+	if (pDoc->IsVrc6PlusChannel(Channel))	// one chip (Api/Vrc6Plus.h): "VRC6 Plus Soft 1"
+		Chip = _T("VRC6 Plus");
 	CString Name = Chip;
 	if (!Name.IsEmpty())
 		Name += _T(" ");

@@ -24,6 +24,7 @@
 #include "Types.h"
 #include "../Common.h"
 #include "../Blip_Buffer/blip_buffer.h"
+#include "Space.h"
 
 enum chip_level_t {
 	CHIP_LEVEL_APU1,
@@ -77,6 +78,17 @@ public:
 	// of the output its two pins mix, so the chip compresses as before.
 	void	SetChannelGain(int ChanID, double Gain, int Time);
 	double	GetChannelGain(int ChanID) const;
+	// Depth (this FamiTracker's own, View > Mixer; Space.h): a channel's Soft (0 off to 100) and its send to the
+	// space (0-100), from Time on. A channel with either on is mixed into Blip_Buffers of its own, which
+	// ReadBuffer softens and sends before adding them to the sides; with every channel's at 0 nothing changes.
+	void	SetChannelDepth(int ChanID, int Soft, int Space, int Time);
+	// The space all channels share: its room (CSpace's numbers), the echo's time in seconds (0: no echo) and
+	// its repeats
+	void	SetSpace(int Room, double EchoSeconds, int Repeats);
+	bool	SpaceRinging() const;				// the space's sound is still dying away
+	void	ClearSpace();						// the space silent (ClearBuffer leaves it ringing), as a song starts
+	bool	IsOwn(int ChanID) const;			// mixed into buffers of its own (the VRC7 makes its samples itself)
+	void	MixOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
 
 	int32	GetChanOutput(uint8 Chan) const;
 	void	SetChipLevel(chip_level_t Chip, float Level);
@@ -96,9 +108,21 @@ private:
 	void MixS5B(int ChanID, int Value, int Time);
 	void MixN163Sides(int Time);
 	void Remix(int ChanID, int Time);	// a channel's pan or level changed: its sound to where it is now
-	template <class Synth> void MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time);
-	template <class Synth> void MixSides(Synth &Synth_, Synth &Own, bool Faded, int32 Level, const double *pGain, int32 *pSent,
+	// Dest: where a channel's sound goes, -1 for the sides, or the channel whose own buffers have it (Depth)
+	template <class Synth> void MixSides(Synth &Synth_, int Dest, int32 Level, const double *pGain, int32 *pSent, int Time);
+	template <class Synth> void MixSides(Synth &Synth_, Synth &Own, bool Faded, int Dest, int32 Level, const double *pGain, int32 *pSent,
 		int32 *pOwnSent, int Time);
+	// The 2A03's pins with a channel in its own buffers: each such channel gets its share of the pin, the sides the rest
+	int SplitPin(Blip_Synth<blip_good_quality, -500> &Synth, const int *pChans, const double *pWeighted, int Count, double Sum,
+		int Side_, int Time);
+	int DestOf(int ChanID) const { return m_bOwn[ChanID] ? ChanID : -1; }
+	Blip_Buffer &Buffer(int Dest, int Index) { return Dest < 0 ? Side(Index) : m_OwnBuffer[Dest][Index]; }
+	template <class Synth> void Move(Synth &Synth_, int32 Amount, int From, int To, int Index, int Time);
+	void MoveOwn(int ChanID, int Time);		// the channel's sound now goes to its own buffers, or back to the sides
+	bool OwnActive(int ChanID) const { return m_bOwn[ChanID] || m_iOwnDrain[ChanID] > 0; }
+	void CountOwn();
+	int ReadDepth(int Size, blip_sample_t *pOut, bool Stereo);
+	void FreeDepth();
 	void SetOwnVolumes();					// the channels' own synths at their chips' volumes times their levels
 	void ClearOwn(int ChanID, int Time);	// what a channel's own synth has, taken out (before its volume changes)
 	Blip_Buffer &Side(int Index) { return Index == 0 ? BlipBuffer : BlipBufferRight; }
@@ -147,6 +171,22 @@ private:
 	int			m_iN163Chan;
 	int32		m_iN163Sent[2];
 	int32		m_iOwnSent[CHANNELS][2];	// what a channel's own synth has of its level on each side
+
+	// Depth: the channels with Soft or Space on, each mixed into its own two buffers (in step with the sides',
+	// read for a second after it left them, while what it had dies away), and the space they send to
+	Blip_Buffer	m_OwnBuffer[CHANNELS][2];
+	bool		m_bOwn[CHANNELS];
+	int			m_iOwnDrain[CHANNELS];		// frames it's still read after it left them
+	int			m_iOwnCount;				// channels in their own buffers or still read
+	int			m_iSoftOf[CHANNELS];
+	int			m_iSpaceOf[CHANNELS];
+	CSoftFilter	m_SoftFilter[CHANNELS];
+	int32		m_iPinOwn[CHANNELS][2];		// the 2A03's channels in their own buffers: their share of the pin there
+	int			m_iN163Dest;				// where the N163's DAC level is (Dest)
+	CSpace		m_Space;
+	float		*m_pDepth[4];				// for ReadDepth: the two sides, the two sends
+	blip_sample_t *m_pDepthRead;
+	long		m_iDepthSize;
 	uint8		m_iExternalChip;
 	uint32		m_iSampleRate;
 

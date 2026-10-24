@@ -1586,12 +1586,18 @@ void CMainFrame::OnUpdateSBChip(CCmdUI *pCmdUI)
 			String = _T("Sunsoft 5B");
 			break;
 		default: {
-			// Several chips: "VRC6+N163+5B" (the pane is as wide as "No expansion chip")
+			// Several chips: "VRC6+N163+5B" (the pane is as wide as "No expansion chip"); the VRC6 Plus (Api/Vrc6Plus.h)
+			// is one: "VRC6 Plus+FDS"
 			const struct { int Chip; LPCTSTR pName; } CHIPS[] = {
 				{ SNDCHIP_VRC6, _T("VRC6") }, { SNDCHIP_VRC7, _T("VRC7") }, { SNDCHIP_FDS, _T("FDS") },
 				{ SNDCHIP_MMC5, _T("MMC5") }, { SNDCHIP_N163, _T("N163") }, { SNDCHIP_S5B, _T("5B") },
 			};
+			const bool Plus = pDoc->IsVrc6Plus();
+			if (Plus)
+				String = _T("VRC6 Plus");
 			for (size_t i = 0; i < sizeof(CHIPS) / sizeof(CHIPS[0]); ++i) {
+				if (Plus && (CHIPS[i].Chip == SNDCHIP_VRC6 || CHIPS[i].Chip == SNDCHIP_N163))
+					continue;
 				if (Chip & CHIPS[i].Chip) {
 					if (!String.IsEmpty())
 						String += _T("+");

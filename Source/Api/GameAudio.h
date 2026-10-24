@@ -42,8 +42,10 @@ struct GameCut {
 	double Difference;			// the biggest difference between the loop's two starts, 0-1 of full scale
 	long long FadeIn;			// samples at the start that fade in over a step from silence (before the loop)
 	bool StartPops;				// the loop is the second time through since the song's start pops
+	bool Tail;					// the mixer's space rings on: the loop is the second time through, or the halt keeps it
 
-	GameCut() : Begin(0), End(0), LoopStart(0), Loops(false), SecondPass(false), Difference(0.0), FadeIn(0), StartPops(false) {}
+	GameCut() : Begin(0), End(0), LoopStart(0), Loops(false), SecondPass(false), Difference(0.0), FadeIn(0), StartPops(false),
+		Tail(false) {}
 	long long Length() const { return End - Begin; }
 };
 
@@ -58,16 +60,21 @@ struct GameCut {
 // it. StartStep: the song steps the DMC's level up from silence as it starts
 // (a Zxx on its first row), a pop the repeats don't have; the file fades in
 // over its first 40 ms, and a loop that starts with the song is taken from
-// its second time through, so the fade stays out of it. False with the
-// reason when the render doesn't fit the song.
+// its second time through, so the fade stays out of it. Tail: the mixer's
+// space (Space, a reverb and an echo) rings on after the notes, so the
+// loop's end carries into its start: the loop is its second time through,
+// whose start has the first's tail in it as the jump back needs, and a song
+// that halts keeps its tail (the render goes on until it dies away) up to
+// where it's 80 dB under full scale. False with the reason when the render
+// doesn't fit the song.
 bool CutForGame(const std::vector<float> &Render, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
-	bool StartStep = false);
+	bool StartStep = false, bool Tail = false);
 // The same for a stereo render, its left and right sides (as long as each
 // other): the loop's two starts are compared, and its ends matched, on both
 bool CutForGame(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, const std::vector<TimedRow> &Rows,
 	const std::vector<std::pair<int, long long> > &Marks, bool Halts, bool CleanSeam, GameCut &Out, std::string &Error,
-	bool StartStep = false);
+	bool StartStep = false, bool Tail = false);
 
 // The sound's name in GameMaker for an exported file: "Town (night).ogg"
 // becomes snd_town_night

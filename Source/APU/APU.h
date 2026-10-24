@@ -77,6 +77,11 @@ public:
 	void	SetChannelPan(int ChanID, int Pan);		// 0x00 left, 0x80 the middle, 0xFF right (CMixer::SetChannelPan)
 	void	SetChannelGain(int ChanID, double Gain);	// the mixer window's level, 1 as it plays (CMixer::SetChannelGain)
 	double	GetChannelGain(int ChanID) const;
+	// Depth, the mixer window's Soft and Space (CMixer::SetChannelDepth), and the space they share (CMixer::SetSpace)
+	void	SetChannelDepth(int ChanID, int Soft, int Space);
+	void	SetSpace(int Room, double EchoSeconds, int Repeats);
+	bool	SpaceRinging() const;
+	void	ClearSpace();							// as a song or a render starts: Reset leaves the space ringing
 
 #ifdef LOGGING
 	void	Log();

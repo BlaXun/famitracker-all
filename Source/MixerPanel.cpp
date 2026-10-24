@@ -46,8 +46,8 @@ namespace {
 LPCTSTR SECTION = _T("Mixer");			// registry section: open, its height
 
 // Sizes at 96 DPI (scaled with SX and SY)
-const int DEFAULT_HEIGHT = 240;
-const int MIN_HEIGHT = 200;
+const int DEFAULT_HEIGHT = 290;
+const int MIN_HEIGHT = 250;
 const int DIVIDER = 5;
 const int TOP_BAR = 28;					// the button and the line beside it
 const int STRIP_WIDTH = 68;
@@ -55,6 +55,8 @@ const int NAME_HEIGHT = 30;				// the channel's name, its chip under it
 const int BUTTON_ROW = 20;				// mute and solo
 const int BUTTON_WIDTH = 26;
 const int PAN_ROW = 28;					// the pan's slider, where it is under it
+const int DEPTH_ROW = 42;				// the Soft and Space knobs, their names under them
+const int KNOB_SIZE = 24;
 const int READOUT = 14;					// the fader's dB under it
 const int MARGIN = 4;
 const int MIN_FADER = 60;
@@ -77,7 +79,41 @@ const COLORREF BUTTON_OFF = RGB(225, 228, 233);
 const COLORREF METER_BACK = RGB(52, 56, 64);
 
 const int IDC_MIXER_WRITE = 1904;		// the mixer's range of control IDs (1900-1949)
-const UINT MENU_LEVEL = 1, MENU_PAN = 2, MENU_CHANNEL = 3, MENU_ALL = 4, MENU_WRITE = 5;
+const int IDC_MIXER_ROOM = 2000;		// the space's boxes (2000-2049)
+const int IDC_MIXER_ECHO = 2001;
+const int IDC_MIXER_REPEATS = 2002;
+const UINT MENU_LEVEL = 1, MENU_PAN = 2, MENU_CHANNEL = 3, MENU_ALL = 4, MENU_WRITE = 5, MENU_DEPTH = 6;
+
+// The top bar: the button, then the space's boxes with their names before them (x and width at 96 DPI)
+const int WRITE_WIDTH = 136;
+const int ROOM_LABEL = 150, ROOM_BOX = 192, ROOM_WIDTH = 104;
+const int ECHO_LABEL = 304, ECHO_BOX = 338, ECHO_WIDTH = 86;
+const int REPEATS_LABEL = 432, REPEATS_BOX = 486, REPEATS_WIDTH = 40;
+const int TOP_TEXT = 536;
+
+// The echo's choices, in 48ths of a beat
+const int ECHO_CHOICES[] = { 0, 12, 16, 24, 32, 36, 48, 72, 96 };
+
+CString EchoLabel(int Echo)
+{
+	CString Text;
+	if (Echo <= 0)
+		return _T("Off");
+	const int Whole = Echo / ftapi::ECHO_STEPS, Rest = Echo % ftapi::ECHO_STEPS;
+	int x = Rest, y = ftapi::ECHO_STEPS;
+	while (y != 0) {
+		const int t = x % y;
+		x = y;
+		y = t;
+	}
+	if (Rest == 0)
+		Text.Format(_T("%d beat%s"), Whole, Whole == 1 ? _T("") : _T("s"));
+	else if (Whole == 0)
+		Text.Format(_T("%d/%d beat"), Rest / x, ftapi::ECHO_STEPS / x);
+	else
+		Text.Format(_T("%d %d/%d beats"), Whole, Rest / x, ftapi::ECHO_STEPS / x);
+	return Text;
+}
 
 // The pan as 8xx has it from a place between -1 (left) and 1 (right), as the tools' PanParam
 int PanParam(double Position)
@@ -148,10 +184,13 @@ BEGIN_MESSAGE_MAP(CMixerPanelWnd, CWnd)
 	ON_WM_TIMER()
 	ON_WM_DESTROY()
 	ON_BN_CLICKED(IDC_MIXER_WRITE, OnWriteIntoNotes)
+	ON_CBN_SELCHANGE(IDC_MIXER_ROOM, OnSpaceChosen)
+	ON_CBN_SELCHANGE(IDC_MIXER_ECHO, OnSpaceChosen)
+	ON_CBN_SELCHANGE(IDC_MIXER_REPEATS, OnSpaceChosen)
 END_MESSAGE_MAP()
 
 CMixerPanelWnd::CMixerPanelWnd() : m_pMain(NULL), m_bOpen(false), m_iScroll(0), m_iDragPart(PART_NONE), m_iDragChannel(-1),
-	m_iDragOffset(0), m_bDragMoved(false)
+	m_iDragOffset(0), m_iDragFrom(0), m_iDragValue(0), m_bDragMoved(false)
 {
 }
 
@@ -182,11 +221,76 @@ bool CMixerPanelWnd::Create(CWnd *pParent, CMainFrame *pMain)
 	if (!CWnd::Create(Class, _T("Mixer"), WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_CLIPCHILDREN, CRect(0, 0, 0, 0), pParent, 1))
 		return false;
 	if (!m_wndWrite.Create(_T("Write into the notes"), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-		CRect(SX(MARGIN + 2), SY(4), SX(MARGIN + 2 + 136), SY(TOP_BAR - 4)), this, IDC_MIXER_WRITE))
+		CRect(SX(MARGIN + 2), SY(4), SX(MARGIN + 2 + WRITE_WIDTH), SY(TOP_BAR - 4)), this, IDC_MIXER_WRITE))
 		return false;
 	m_wndWrite.SetFont(&m_Font);
+	// The space the channels' Space sends to: its room, its echo and the echo's repeats
+	const DWORD Style = WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST;
+	if (!m_wndRoom.Create(Style, CRect(SX(ROOM_BOX), SY(3), SX(ROOM_BOX + ROOM_WIDTH), SY(200)), this, IDC_MIXER_ROOM) ||
+		!m_wndEcho.Create(Style, CRect(SX(ECHO_BOX), SY(3), SX(ECHO_BOX + ECHO_WIDTH), SY(240)), this, IDC_MIXER_ECHO) ||
+		!m_wndRepeats.Create(Style, CRect(SX(REPEATS_BOX), SY(3), SX(REPEATS_BOX + REPEATS_WIDTH), SY(240)), this, IDC_MIXER_REPEATS))
+		return false;
+	m_wndRoom.SetFont(&m_Font);
+	m_wndEcho.SetFont(&m_Font);
+	m_wndRepeats.SetFont(&m_Font);
+	static LPCTSTR const ROOMS[ftapi::SPACE_ROOMS] = { _T("Small room"), _T("Hall"), _T("Cathedral"), _T("Cave"), _T("None (echo only)") };
+	for (int r = 0; r < ftapi::SPACE_ROOMS; ++r)
+		m_wndRoom.AddString(ROOMS[r]);
+	for (int n = 1; n <= ftapi::ECHO_REPEATS_MOST; ++n) {
+		CString Text;
+		Text.Format(_T("%d"), n);
+		m_wndRepeats.AddString(Text);
+	}
+	ShowSpace();
 	UpdateScroll();
 	return true;
+}
+
+void CMixerPanelWnd::ShowSpace()
+{
+	// The boxes as the song has them (an echo Claude set between the choices gets a line of its own)
+	CFamiTrackerDoc *pDoc = Doc();
+	ftapi::MixStore None;
+	const ftapi::MixStore &Mix = pDoc != NULL ? *pDoc->GetChannelMix() : None;
+	if (m_wndRoom.GetSafeHwnd() == NULL)
+		return;
+	std::vector<int> Steps(ECHO_CHOICES, ECHO_CHOICES + sizeof(ECHO_CHOICES) / sizeof(ECHO_CHOICES[0]));
+	if (std::find(Steps.begin(), Steps.end(), Mix.Echo()) == Steps.end()) {
+		Steps.push_back(Mix.Echo());
+		std::sort(Steps.begin(), Steps.end());
+	}
+	if (Steps != m_EchoSteps) {
+		m_EchoSteps = Steps;
+		m_wndEcho.ResetContent();
+		for (size_t i = 0; i < Steps.size(); ++i)
+			m_wndEcho.AddString(EchoLabel(Steps[i]));
+	}
+	if (m_wndRoom.GetCurSel() != Mix.Room())
+		m_wndRoom.SetCurSel(Mix.Room());
+	const int Echo = static_cast<int>(std::find(m_EchoSteps.begin(), m_EchoSteps.end(), Mix.Echo()) - m_EchoSteps.begin());
+	if (m_wndEcho.GetCurSel() != Echo)
+		m_wndEcho.SetCurSel(Echo);
+	if (m_wndRepeats.GetCurSel() != Mix.Repeats() - 1)
+		m_wndRepeats.SetCurSel(Mix.Repeats() - 1);
+	const BOOL Song = pDoc != NULL;
+	m_wndRoom.EnableWindow(Song);
+	m_wndEcho.EnableWindow(Song);
+	m_wndRepeats.EnableWindow(Song);
+}
+
+void CMixerPanelWnd::OnSpaceChosen()
+{
+	// One undoable step for each choice
+	CFamiTrackerDoc *pDoc = Doc();
+	if (pDoc == NULL)
+		return;
+	const int Room = m_wndRoom.GetCurSel(), EchoAt = m_wndEcho.GetCurSel(), Repeats = m_wndRepeats.GetCurSel() + 1;
+	if (Room < 0 || EchoAt < 0 || EchoAt >= static_cast<int>(m_EchoSteps.size()) || Repeats < 1)
+		return;
+	ftapi::MixStore Mix = *pDoc->GetChannelMix();
+	if (Mix.SetSpace(Room, m_EchoSteps[static_cast<size_t>(EchoAt)], Repeats))
+		SetChannelMix(m_pMain, Mix);
+	Invalidate(FALSE);
 }
 
 void CMixerPanelWnd::Opened(bool Open)
@@ -195,6 +299,7 @@ void CMixerPanelWnd::Opened(bool Open)
 	if (Open) {
 		SetTimer(TMR_METERS, METER_MS, NULL);
 		SongChanged();
+		ShowSpace();
 	}
 	else
 		KillTimer(TMR_METERS);
@@ -205,6 +310,7 @@ void CMixerPanelWnd::SongChanged()
 	if (GetSafeHwnd() == NULL)
 		return;
 	UpdateScroll();
+	ShowSpace();
 	Invalidate(FALSE);
 }
 
@@ -227,7 +333,7 @@ CRect CMixerPanelWnd::StripRect(int Channel) const
 	CRect Client;
 	GetClientRect(&Client);
 	const int Left = SX(MARGIN) + Channel * SX(STRIP_WIDTH) - m_iScroll;
-	const int Least = SY(TOP_BAR + NAME_HEIGHT + BUTTON_ROW + PAN_ROW + 6 + MIN_FADER + 6 + READOUT);
+	const int Least = SY(TOP_BAR + NAME_HEIGHT + BUTTON_ROW + PAN_ROW + DEPTH_ROW + 6 + MIN_FADER + 6 + READOUT);
 	return CRect(Left, SY(TOP_BAR), Left + SX(STRIP_WIDTH) - SX(2), std::max(Least, static_cast<int>(Client.bottom) - SY(MARGIN)));
 }
 
@@ -255,7 +361,7 @@ CRect CMixerPanelWnd::PanRect(int Channel) const
 CRect CMixerPanelWnd::FaderRect(int Channel) const
 {
 	const CRect Strip = StripRect(Channel);
-	const int Top = Strip.top + SY(NAME_HEIGHT + BUTTON_ROW + PAN_ROW) + SY(6);
+	const int Top = Strip.top + SY(NAME_HEIGHT + BUTTON_ROW + PAN_ROW + DEPTH_ROW) + SY(6);
 	const int Bottom = std::max(Top + SY(MIN_FADER), static_cast<int>(Strip.bottom) - SY(READOUT) - SY(6));
 	const int x = Strip.left + SX(22);
 	return CRect(x - SX(2), Top, x + SX(2), Bottom);
@@ -266,6 +372,15 @@ CRect CMixerPanelWnd::MeterRect(int Channel) const
 	const CRect Fader = FaderRect(Channel);
 	const CRect Strip = StripRect(Channel);
 	return CRect(Strip.right - SX(20), Fader.top, Strip.right - SX(10), Fader.bottom);
+}
+
+CRect CMixerPanelWnd::KnobRect(int Channel, part_t Part) const
+{
+	// Soft on the left, Space on the right, under the pan
+	const CRect Strip = StripRect(Channel);
+	const int Top = Strip.top + SY(NAME_HEIGHT + BUTTON_ROW + PAN_ROW) + SY(2);
+	const int x = Strip.left + (Part == PART_SOFT ? Strip.Width() / 4 : Strip.Width() * 3 / 4) + SX(1);
+	return CRect(x - SX(KNOB_SIZE / 2), Top, x + SX(KNOB_SIZE / 2), Top + SY(KNOB_SIZE));
 }
 
 int CMixerPanelWnd::FaderY(int Channel, int Level) const
@@ -301,15 +416,22 @@ CMixerPanelWnd::part_t CMixerPanelWnd::HitTest(CPoint Point, int &Channel) const
 		if (!StripRect(c).PtInRect(Point))
 			continue;
 		Channel = c;
-		CRect Mute = MuteRect(c), Solo = SoloRect(c), Pan = PanRect(c), Fader = FaderRect(c);
+		CRect Mute = MuteRect(c), Solo = SoloRect(c), Pan = PanRect(c), Fader = FaderRect(c), Soft = KnobRect(c, PART_SOFT),
+			Space = KnobRect(c, PART_SPACE);
 		Pan.InflateRect(SX(6), SY(5));
 		Fader.InflateRect(SX(12), SY(8));
+		Soft.InflateRect(SX(4), SY(1), SX(4), SY(13));		// with its name under it
+		Space.InflateRect(SX(4), SY(1), SX(4), SY(13));
 		if (Mute.PtInRect(Point))
 			return PART_MUTE;
 		if (Solo.PtInRect(Point))
 			return PART_SOLO;
 		if (Pan.PtInRect(Point))
 			return PART_PAN;
+		if (Soft.PtInRect(Point))
+			return PART_SOFT;
+		if (Space.PtInRect(Point))
+			return PART_SPACE;
 		if (Fader.PtInRect(Point))
 			return PART_FADER;
 		return PART_NONE;
@@ -368,6 +490,38 @@ void CMixerPanelWnd::SetOne(int Channel, int Level, int Pan)
 	Invalidate(FALSE);
 }
 
+void CMixerPanelWnd::ChangeDepth(int Channel, part_t Part, int Value, bool Live)
+{
+	// Soft or Space: while a knob is dragged the song's settings and the sound change at once (one undoable step when
+	// the drag ends); otherwise one undoable step now
+	CFamiTrackerDoc *pDoc = Doc();
+	if (pDoc == NULL || Channel < 0 || Channel >= ChannelCount())
+		return;
+	const int ChanId = pDoc->GetChannelType(Channel);
+	Value = std::max(0, std::min(ftapi::MIX_DEPTH_MOST, Value));
+	ftapi::MixStore Mix = *pDoc->GetChannelMix();
+	const int Soft = Part == PART_SOFT ? Value : Mix.Soft(ChanId), Space = Part == PART_SPACE ? Value : Mix.Space(ChanId);
+	if (!Mix.SetDepth(ChanId, Soft, Space))
+		return;
+	if (Live) {
+		*pDoc->GetChannelMix() = Mix;
+		pDoc->ChannelMixChanged();
+		m_bDragMoved = true;
+	}
+	else
+		SetChannelMix(m_pMain, Mix);
+	CString Text;
+	if (Part == PART_SOFT)
+		Text.Format(_T("Soft %d: %s"), Value, Value == 0 ? _T("off, the channel as the chip plays it") :
+			_T("a gentle low-pass that rounds the channel's edges (NSF files don't have it)"));
+	else
+		Text.Format(_T("Space %d: %s"), Value, Value == 0 ? _T("off, nothing sent to the space") :
+			_T("this much of the channel goes to the space chosen at the top (NSF files don't have it)"));
+	if (m_pMain != NULL)
+		m_pMain->SetMessageText(Text);
+	Invalidate(FALSE);
+}
+
 void CMixerPanelWnd::ResetAll()
 {
 	CFamiTrackerDoc *pDoc = Doc();
@@ -387,13 +541,15 @@ void CMixerPanelWnd::OnWriteIntoNotes()
 		return;
 	ftapi::MixStore Mix = *pDoc->GetChannelMix();
 	Mix.KeepOnly(pDoc->GetModuleChannelIds());
-	if (Mix.Empty()) {
-		AfxMessageBox(_T("Every channel is at 0 dB and in the middle: there's nothing to write into the notes."), MB_ICONINFORMATION);
+	if (Mix.FadersDefault()) {
+		AfxMessageBox(_T("Every channel is at 0 dB and in the middle: there's nothing to write into the notes. (Soft and Space ")
+			_T("can't be written into notes: they stay in the mixer, and NSF files play without them.)"), MB_ICONINFORMATION);
 		return;
 	}
 	if (AfxMessageBox(_T("Write the mixer into the notes, in every track? The faders go into the channels' volume columns and the ")
 		_T("pans become 8xx on each channel's first note, so NSF files sound the same; then the faders go back to 0 dB and ")
-		_T("the middle.\n\nEdit > Undo puts everything back."), MB_ICONQUESTION | MB_OKCANCEL) != IDOK)
+		_T("the middle. Soft and Space stay in the mixer (notes can't have them).\n\nEdit > Undo puts everything back."),
+		MB_ICONQUESTION | MB_OKCANCEL) != IDOK)
 		return;
 	std::string Reply;
 	if (pTools->IsBusy())
@@ -439,11 +595,18 @@ void CMixerPanelWnd::OnPaint()
 	dc.SetBkMode(TRANSPARENT);
 
 	CFamiTrackerDoc *pDoc = Doc();
-	// Beside the button: what the mixer is for
-	CRect Line(SX(MARGIN + 2 + 136 + 10), 0, Client.right - SX(MARGIN), SY(TOP_BAR));
+	// Beside the button: the space's boxes, named, and what the mixer is for
+	dc.SetTextColor(TEXT_DARK);
+	const struct { int Left, Right; LPCTSTR Name; } NAMES[] = { { ROOM_LABEL, ROOM_BOX, _T("Space:") }, { ECHO_LABEL, ECHO_BOX, _T("Echo:") },
+		{ REPEATS_LABEL, REPEATS_BOX, _T("Repeats:") } };
+	for (int i = 0; i < 3; ++i) {
+		CRect Name(SX(NAMES[i].Left), 0, SX(NAMES[i].Right) - SX(4), SY(TOP_BAR));
+		dc.DrawText(NAMES[i].Name, Name, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+	}
+	CRect Line(SX(TOP_TEXT), 0, Client.right - SX(MARGIN), SY(TOP_BAR));
 	dc.SetTextColor(TEXT_DIM);
-	dc.DrawText(_T("Each channel's level and pan, saved with the song: FamiTracker, WAV and the game's OGG files play them. ")
-		_T("NSF files play the notes as written; Write into the notes puts the mix there."), Line,
+	dc.DrawText(_T("Each channel's level, pan, Soft and Space, saved with the song: FamiTracker, WAV and the game's OGG files play ")
+		_T("them. NSF files play the notes as written, without Soft and Space; Write into the notes puts the levels and pans there."), Line,
 		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
 	const int Count = ChannelCount();
@@ -491,7 +654,8 @@ void CMixerPanelWnd::PaintStrip(CDC &dc, int Channel, CFamiTrackerDoc *pDoc)
 	CRect Chip(Name.left, Name.bottom, Name.right, Name.bottom + SY(13));
 	dc.SelectObject(&m_SmallFont);
 	dc.SetTextColor(TEXT_DIM);
-	dc.DrawText(ChipLabel(pDoc->GetChipType(Channel)), Chip, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+	dc.DrawText(pDoc->IsVrc6PlusChannel(Channel) ? _T("VRC6 Plus") : ChipLabel(pDoc->GetChipType(Channel)), Chip,
+		DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 
 	// Mute and solo
 	const CRect MuteBox = MuteRect(Channel), SoloBox = SoloRect(Channel);
@@ -519,6 +683,10 @@ void CMixerPanelWnd::PaintStrip(CDC &dc, int Channel, CFamiTrackerDoc *pDoc)
 	dc.SetTextColor(Pan == ftapi::MIX_PAN_CENTER ? TEXT_DIM : TEXT_DARK);
 	CRect PanText(Strip.left, PanBox.bottom + SY(1), Strip.right, PanBox.bottom + SY(14));
 	dc.DrawText(PanLabel(Pan), PanText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+	// Soft and Space
+	PaintKnob(dc, KnobRect(Channel, PART_SOFT), Mix.Soft(ChanId), _T("Soft"));
+	PaintKnob(dc, KnobRect(Channel, PART_SPACE), Mix.Space(ChanId), _T("Space"));
 
 	// The fader: its track with marks at +6, 0, -6, -12, -18 and -24 dB, and its knob
 	const CRect Fader = FaderRect(Channel);
@@ -558,6 +726,56 @@ void CMixerPanelWnd::PaintStrip(CDC &dc, int Channel, CFamiTrackerDoc *pDoc)
 	dc.SelectObject(&m_Font);
 }
 
+void CMixerPanelWnd::PaintKnob(CDC &dc, const CRect &Knob, int Value, LPCTSTR Label)
+{
+	// A dial from 7 o'clock (0) round to 5 o'clock (100): an arc as far as the value, which is written in it; at 0 a
+	// pointer at the start. Its name under it.
+	const double Pi = 3.14159265358979323846;
+	const CPoint Center = Knob.CenterPoint();
+	CBrush Back(Value > 0 ? RGB(226, 234, 248) : BUTTON_OFF);
+	CPen Edge(PS_SOLID, 1, TRACK);
+	CBrush *pOldBrush = dc.SelectObject(&Back);
+	CPen *pOldPen = dc.SelectObject(&Edge);
+	dc.Ellipse(Knob);
+	const double Start = 225.0 * Pi / 180.0, End = Start - Value / 100.0 * 270.0 * Pi / 180.0;
+	CRect Ring = Knob;
+	Ring.DeflateRect(SX(2), SY(2));
+	const int Radius = Ring.Width() / 2;
+	auto At = [&](double Angle, int r) {
+		return CPoint(Center.x + static_cast<int>(std::floor(r * std::cos(Angle) + 0.5)), Center.y - static_cast<int>(std::floor(r * std::sin(Angle) + 0.5)));
+	};
+	if (Value > 0) {
+		CPen Arc(PS_SOLID, SX(3), KNOB);
+		dc.SelectObject(&Arc);
+		const int Direction = dc.SetArcDirection(AD_CLOCKWISE);
+		if (Value >= 100)
+			dc.Arc(Ring, At(Start, Radius), At(Start - 1.5 * Pi + 0.001, Radius));
+		else
+			dc.Arc(Ring, At(Start, Radius), At(End, Radius));
+		dc.SetArcDirection(Direction);
+		dc.SelectObject(&Edge);
+		CString Number;
+		Number.Format(_T("%d"), Value);
+		dc.SelectObject(&m_SmallFont);
+		dc.SetTextColor(TEXT_DARK);
+		CRect Inside = Knob;
+		dc.DrawText(Number, Inside, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+	}
+	else {
+		CPen Pointer(PS_SOLID, SX(2), TEXT_DIM);
+		dc.SelectObject(&Pointer);
+		dc.MoveTo(Center);
+		dc.LineTo(At(Start, Radius - SX(1)));
+		dc.SelectObject(&Edge);
+	}
+	dc.SelectObject(pOldPen);
+	dc.SelectObject(pOldBrush);
+	dc.SelectObject(&m_SmallFont);
+	dc.SetTextColor(Value > 0 ? TEXT_DARK : TEXT_DIM);
+	CRect Name(Knob.left - SX(8), Knob.bottom + SY(1), Knob.right + SX(8), Knob.bottom + SY(14));
+	dc.DrawText(Label, Name, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
+
 // The mouse
 
 void CMixerPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
@@ -579,6 +797,17 @@ void CMixerPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
 		if (pView != NULL)
 			pView->SoloChannel(static_cast<unsigned int>(Channel));
 		Invalidate(FALSE);
+		return;
+	case PART_SOFT:
+	case PART_SPACE:
+		// A knob turns as the mouse goes up or down from where it was grabbed
+		m_iDragPart = Part;
+		m_iDragChannel = Channel;
+		m_iDragFrom = point.y;
+		m_iDragValue = Part == PART_SOFT ? pDoc->GetChannelMix()->Soft(ChanId) : pDoc->GetChannelMix()->Space(ChanId);
+		m_bDragMoved = false;
+		m_DragBefore = *pDoc->GetChannelMix();
+		SetCapture();
 		return;
 	case PART_PAN:
 	case PART_FADER:
@@ -610,7 +839,12 @@ void CMixerPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 	if (m_iDragPart == PART_NONE || pDoc == NULL || m_iDragChannel >= ChannelCount())
 		return;
 	const int ChanId = pDoc->GetChannelType(m_iDragChannel);
-	if (m_iDragPart == PART_PAN)
+	if (m_iDragPart == PART_SOFT || m_iDragPart == PART_SPACE) {
+		// A step a pixel (a quarter of one with Shift held)
+		const int Moved = m_iDragFrom - point.y;
+		ChangeDepth(m_iDragChannel, m_iDragPart, m_iDragValue + ((nFlags & MK_SHIFT) != 0 ? Moved / 4 : Moved) * 96 / std::max(1, SY(96)), true);
+	}
+	else if (m_iDragPart == PART_PAN)
 		Change(m_iDragChannel, pDoc->GetChannelMix()->Level(ChanId), PanAt(m_iDragChannel, point.x));
 	else
 		Change(m_iDragChannel, LevelAt(m_iDragChannel, point.y - m_iDragOffset, (nFlags & MK_SHIFT) != 0), pDoc->GetChannelMix()->Pan(ChanId));
@@ -645,6 +879,8 @@ void CMixerPanelWnd::OnLButtonDblClk(UINT nFlags, CPoint point)
 	const int ChanId = pDoc->GetChannelType(Channel);
 	if (Part == PART_FADER)
 		SetOne(Channel, 0, pDoc->GetChannelMix()->Pan(ChanId));
+	else if (Part == PART_SOFT || Part == PART_SPACE)
+		ChangeDepth(Channel, Part, 0, false);	// off
 	else if (Part == PART_PAN)
 		SetOne(Channel, pDoc->GetChannelMix()->Level(ChanId), ftapi::MIX_PAN_CENTER);
 	else if (Part == PART_MUTE || Part == PART_SOLO)
@@ -653,12 +889,19 @@ void CMixerPanelWnd::OnLButtonDblClk(UINT nFlags, CPoint point)
 
 BOOL CMixerPanelWnd::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
-	// Over a fader: a dB a notch; elsewhere the strips scroll
+	// Over a fader: a dB a notch; over a knob 5 a notch; elsewhere the strips scroll
 	CPoint Point = pt;
 	ScreenToClient(&Point);
 	int Channel = -1;
 	CFamiTrackerDoc *pDoc = Doc();
-	if (pDoc != NULL && HitTest(Point, Channel) == PART_FADER && Channel >= 0) {
+	const part_t Over = pDoc != NULL ? HitTest(Point, Channel) : PART_NONE;
+	if ((Over == PART_SOFT || Over == PART_SPACE) && Channel >= 0) {
+		const int ChanId = pDoc->GetChannelType(Channel);
+		const int Now = Over == PART_SOFT ? pDoc->GetChannelMix()->Soft(ChanId) : pDoc->GetChannelMix()->Space(ChanId);
+		ChangeDepth(Channel, Over, Now + zDelta / WHEEL_DELTA * ((nFlags & MK_SHIFT) != 0 ? 1 : 5), false);
+		return TRUE;
+	}
+	if (Over == PART_FADER && Channel >= 0) {
 		const int ChanId = pDoc->GetChannelType(Channel);
 		const int Notches = zDelta / WHEEL_DELTA;
 		SetOne(Channel, pDoc->GetChannelMix()->Level(ChanId) + Notches * ((nFlags & MK_SHIFT) != 0 ? 1 : 10), pDoc->GetChannelMix()->Pan(ChanId));
@@ -708,9 +951,10 @@ void CMixerPanelWnd::OnRButtonUp(UINT nFlags, CPoint point)
 		Menu.AppendMenu(MF_STRING, MENU_LEVEL, _T("Level back to 0 dB"));
 		Menu.AppendMenu(MF_STRING, MENU_PAN, _T("Pan to the middle"));
 		Menu.AppendMenu(MF_STRING, MENU_CHANNEL, _T("Both, for ") + Name);
+		Menu.AppendMenu(MF_STRING, MENU_DEPTH, _T("Soft and Space off, for ") + Name);
 		Menu.AppendMenu(MF_SEPARATOR, 0, _T(""));
 	}
-	Menu.AppendMenu(MF_STRING, MENU_ALL, _T("Every channel back to 0 dB and the middle"));
+	Menu.AppendMenu(MF_STRING, MENU_ALL, _T("The whole mixer back as it starts (0 dB, the middle, no Soft or Space)"));
 	Menu.AppendMenu(MF_STRING, MENU_WRITE, _T("Write into the notes..."));
 	CPoint Screen = point;
 	ClientToScreen(&Screen);
@@ -720,6 +964,13 @@ void CMixerPanelWnd::OnRButtonUp(UINT nFlags, CPoint point)
 	case MENU_LEVEL: SetOne(Channel, 0, pDoc->GetChannelMix()->Pan(ChanId)); break;
 	case MENU_PAN: SetOne(Channel, pDoc->GetChannelMix()->Level(ChanId), ftapi::MIX_PAN_CENTER); break;
 	case MENU_CHANNEL: SetOne(Channel, 0, ftapi::MIX_PAN_CENTER); break;
+	case MENU_DEPTH: {
+		ftapi::MixStore Mix = *pDoc->GetChannelMix();
+		if (Mix.SetDepth(ChanId, 0, 0))
+			SetChannelMix(m_pMain, Mix);
+		Invalidate(FALSE);
+		break;
+	}
 	case MENU_ALL: ResetAll(); break;
 	case MENU_WRITE: OnWriteIntoNotes(); break;
 	}
@@ -736,6 +987,8 @@ void CMixerPanelWnd::OnTimer(UINT_PTR nIDEvent)
 	const int Count = ChannelCount();
 	// (and the settings, which a song opened or Claude changes)
 	bool Changed = static_cast<int>(m_Meters.size()) != Count || (pDoc != NULL && *pDoc->GetChannelMix() != m_Shown);
+	if (Changed)
+		ShowSpace();
 	const CFamiTrackerView *pView = CFamiTrackerView::GetView();
 	const bool Playing = theApp.IsPlaying();
 	for (int c = 0; c < Count && !Changed && pDoc != NULL; ++c) {

@@ -609,6 +609,8 @@ bool Document::ReadBlock(const std::string &Id, BlockReader &b, std::string &Err
 		return true;	// and its sections' names (Api/Sections.h), which change nothing that plays
 	else if (Id == "BF KEYS")
 		return true;	// and the keys chosen for its tracks (Api/Keys.h), which don't either
+	else if (Id == "BF VRC6PLUS")
+		return true;	// and its VRC6 Plus mark (Api/Vrc6Plus.h): the VRC6 and the N163 play as they are
 	else {
 		Problem("skipped the block \"" + Shown(Id) + "\", which FamiTracker 0.4.6 doesn't read");
 		return true;

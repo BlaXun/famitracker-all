@@ -48,6 +48,7 @@
 #include "../SoundEffects.h"
 #include "../SoundIndex.h"
 #include "../Tools.h"
+#include "../Vrc6Plus.h"
 #include "../Wavetables.h"
 #include "../../Nsf/tests/TestNsf.h"
 
@@ -277,7 +278,12 @@ public:
 		for (size_t c = 0; c < Info.Channels.size(); ++c) {
 			Info.Channels[c].MixLevel = Mix.Level(Info.Channels[c].ChanId);
 			Info.Channels[c].MixPan = Mix.Pan(Info.Channels[c].ChanId);
+			Info.Channels[c].MixSoft = Mix.Soft(Info.Channels[c].ChanId);
+			Info.Channels[c].MixSpace = Mix.Space(Info.Channels[c].ChanId);
 		}
+		Info.SpaceRoom = Mix.Room();
+		Info.SpaceEcho = Mix.Echo();
+		Info.SpaceRepeats = Mix.Repeats();
 		Info.Frames = static_cast<int>(Rows[0].size()) / Info.PatternLength;
 		Info.Track = Current;
 		Info.Tracks = static_cast<int>(Tracks.size());
@@ -462,16 +468,21 @@ public:
 		return true;
 	}
 
-	// As CChannelMixAction (InsertRecording.cpp) sets them: by channel ID, one undoable step
-	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error) override
+	// As CChannelMixAction (InsertRecording.cpp) sets them, through McpConnection's SetMixer: by channel ID, one
+	// undoable step
+	bool SetMixer(const MixerSettings &Mixer, std::string &Error) override
 	{
 		if (Busy) {
 			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
 			return false;
 		}
 		MixStore Next = Mix;
-		for (size_t c = 0; c < Info.Channels.size() && c < Levels.size() && c < Pans.size(); ++c)
-			Next.Set(Info.Channels[c].ChanId, Levels[c], Pans[c]);
+		for (size_t c = 0; c < Info.Channels.size() && c < Mixer.Levels.size() && c < Mixer.Pans.size(); ++c) {
+			Next.Set(Info.Channels[c].ChanId, Mixer.Levels[c], Mixer.Pans[c]);
+			if (c < Mixer.Softs.size() && c < Mixer.Spaces.size())
+				Next.SetDepth(Info.Channels[c].ChanId, Mixer.Softs[c], Mixer.Spaces[c]);
+		}
+		Next.SetSpace(Mixer.Room, Mixer.Echo, Mixer.Repeats);
 		if (Next == Mix)
 			return true;
 		Remember();
@@ -707,18 +718,32 @@ public:
 	// The expansion chips' channels as FamiTracker names them, in the order of the module's columns
 	// after the 2A03's (ChipSwitch.h): the VRC6's, the MMC5's, the N163's (Namco of them), the FDS's,
 	// the VRC7's, the 5B's
+	// As CFamiTrackerDoc names them: "VRC6 Plus" (Vrc6Plus.h) is the VRC6 and the N163 with 4 channels, its N163 channels
+	// named Soft 1 to Soft 4 (Namco 1 to 4 their old names), all of them shown as the VRC6 Plus's
 	static std::vector<ChannelInfo> ChipChannels(const std::vector<std::string> &Chips, int Namco)
 	{
 		std::vector<ChannelInfo> Out;
-		auto On = [&](const char *Chip) { return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end(); };
+		const bool Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+		auto On = [&](const char *Chip) {
+			return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end() || (Plus && (std::string(Chip) == "VRC6" ||
+				std::string(Chip) == "N163"));
+		};
 		auto Add = [&](const char *Chip, const std::string &Name, int Kind, int Id) {
 			ChannelInfo Channel;
 			Channel.Name = Name;
 			Channel.Chip = Chip;
 			Channel.Kind = Kind;
 			Channel.ChanId = Id;
+			if (Plus && (std::string(Chip) == "VRC6" || std::string(Chip) == "N163"))
+				Channel.Group = VRC6_PLUS;
+			if (Plus && std::string(Chip) == "N163") {
+				Channel.Name = SoftChannelName(Id - 11);
+				Channel.OldName = SoftChannelOldName(Id - 11);
+			}
 			Out.push_back(Channel);
 		};
+		if (Plus)
+			Namco = VRC6_PLUS_SOFT_CHANNELS;
 		if (On("VRC6")) {
 			Add("VRC6", "Pulse 1", KIND_PULSE, 5);
 			Add("VRC6", "Pulse 2", KIND_PULSE, 6);
@@ -821,7 +846,11 @@ public:
 		const std::vector<ChannelInfo> Added = ChipChannels(Chips, Channels);
 		for (size_t i = 0; i < Added.size(); ++i) {
 			const int Source = ColumnOf(Added[i]);
-			Next.push_back(Source >= 0 ? Info.Channels[static_cast<size_t>(Source)] : Added[i]);
+			ChannelInfo Kept = Source >= 0 ? Info.Channels[static_cast<size_t>(Source)] : Added[i];
+			Kept.Name = Added[i].Name;	// named as the chips are now (the VRC6 Plus's or not)
+			Kept.Group = Added[i].Group;
+			Kept.OldName = Added[i].OldName;
+			Next.push_back(Kept);
 			From.push_back(Source);
 		}
 		for (size_t t = 0; t < Tracks.size(); ++t) {
@@ -858,8 +887,13 @@ public:
 			++Moved;
 		}
 		Info.Expansion.clear();
-		for (size_t i = 0; i < Chips.size(); ++i)
-			Info.Expansion += (i == 0 ? "" : ", ") + Chips[i];
+		Info.Vrc6Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+		const char *const ORDER[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };	// as the host names them
+		for (size_t i = 0; i < sizeof(ORDER) / sizeof(ORDER[0]); ++i) {
+			const bool Part = Info.Vrc6Plus && (std::string(ORDER[i]) == "VRC6" || std::string(ORDER[i]) == "N163");
+			if (Part || std::find(Chips.begin(), Chips.end(), ORDER[i]) != Chips.end())
+				Info.Expansion += (Info.Expansion.empty() ? "" : ", ") + std::string(ORDER[i]);
+		}
 		if (!Chips.empty())
 			Info.FrameRate = 60;
 		Rows = Tracks[Current].Rows;
@@ -1001,6 +1035,17 @@ public:
 				}
 				Samples.push_back(static_cast<float>(Sum));
 				Right.push_back(static_cast<float>(SumRight));
+			}
+		}
+		if (Mix.SpaceHeard()) {
+			// The mixer's space, roughly: the whole render echoing every eighth of a second, each time 8 dB under, and
+			// a second more for its tail, as FamiTracker renders on while the space rings
+			Samples.resize(Samples.size() + static_cast<size_t>(SampleRate), 0.0f);
+			Right.resize(Right.size() + static_cast<size_t>(SampleRate), 0.0f);
+			const size_t Delay = static_cast<size_t>(SampleRate / 8);
+			for (size_t n = Delay; n < Samples.size(); ++n) {
+				Samples[n] += 0.4f * Samples[n - Delay];
+				Right[n] += 0.4f * Right[n - Delay];
 			}
 		}
 		return true;
@@ -8259,6 +8304,51 @@ void TestCut()
 	CHECK(Cut.LoopStart == 1000 && Cut.FadeIn == 320);
 }
 
+void TestCutTail()
+{
+	// A tone through its loop twice and a third start, with a tail (the mixer's space) from the first pass's end in
+	// the second's start: with Tail the loop is the second time through, whatever the notes do at the seam
+	std::vector<float> Render;
+	for (int i = 0; i < 26000; ++i) {
+		float v = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / 8000.0));
+		if (i >= 9100 && i < 9600)
+			v += static_cast<float>(0.2 * std::exp(-(i - 9100) / 100.0));	// the first pass's tail
+		Render.push_back(v);
+	}
+	std::vector<TimedRow> Rows(3);
+	Rows[0].Row = 0;
+	Rows[1].Row = 16;
+	Rows[1].LoopStart = true;
+	Rows[2].Row = 16;
+	Rows[2].LoopStart = true;
+	std::vector<std::pair<int, long long> > Marks;
+	Marks.push_back(std::make_pair(0, 100LL));
+	Marks.push_back(std::make_pair(16, 1100LL));
+	Marks.push_back(std::make_pair(16, 9100LL));
+	Marks.push_back(std::make_pair(16, 17100LL));	// the third time it starts (the render went on)
+	GameCut Cut;
+	std::string Error;
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error) && !Cut.SecondPass && !Cut.Tail);	// the notes alike
+	CHECK(CutForGame(Render, 8000, Rows, Marks, false, true, Cut, Error, false, true) && Cut.SecondPass && Cut.Tail);
+	CHECK(Cut.LoopStart + Cut.Begin >= 9090 && Cut.LoopStart + Cut.Begin <= 9110 && Cut.End - (Cut.LoopStart + Cut.Begin) == 8000);
+	// A song that halts keeps its tail up to where it's 80 dB under full scale
+	std::vector<float> Halting(12000, 0.0f);
+	for (int i = 0; i < 4000; ++i)
+		Halting[static_cast<size_t>(i)] = static_cast<float>(0.5 * std::sin(i * 0.3));
+	for (int i = 4000; i < 12000; ++i)
+		Halting[static_cast<size_t>(i)] = static_cast<float>(0.3 * std::exp(-(i - 4000) / 300.0));
+	std::vector<TimedRow> Once(2);
+	Once[0].Row = 0;
+	Once[1].Row = 8;
+	std::vector<std::pair<int, long long> > At;
+	At.push_back(std::make_pair(0, 0LL));
+	At.push_back(std::make_pair(8, 4000LL));
+	CHECK(CutForGame(Halting, Halting, 8000, Once, At, true, true, Cut, Error) && Cut.End == 4000 && !Cut.Tail);
+	CHECK(CutForGame(Halting, Halting, 8000, Once, At, true, true, Cut, Error, false, true) && Cut.Tail);
+	const long long Expected = 4000 + static_cast<long long>(std::ceil(300.0 * std::log(0.3 / 1e-4)));
+	CHECK(Cut.End >= Expected - 2 && Cut.End <= Expected + 2 && !Cut.Loops);
+}
+
 std::string Comment(const OggComments &Comments, const char *pKey)
 {
 	for (size_t i = 0; i < Comments.size(); ++i)
@@ -8307,29 +8397,30 @@ void TestMixerStore()
 	CHECK(!Store.Set(29, -10, PAN_CENTER) && !Store.Set(-1, -10, PAN_CENTER) && Store.Level(29) == 0 && Store.Pan(-1) == PAN_CENTER);
 	CHECK(Near(MixStore::Gain(-60), 0.501187, 1e-6) && MixStore::Gain(0) == 1.0 && Near(MixStore::Gain(60), 1.995262, 1e-6));
 	const std::vector<unsigned char> Data = Store.Write();
+	CHECK(Store.WriteVersion() == 1);	// faders and pans alone: version 1, as before Soft and Space
 	CHECK(Data.size() == 40u);	// the count, then each channel's ID, level (tenths of a dB) and pan
 	CHECK(Data[0] == 3 && Data[4] == 0 && Data[8] == 0xDD && Data[11] == 0xFF && Data[12] == 0x80 && Data[16] == 7 && Data[20] == 0 &&
 		Data[24] == 0x40 && Data[28] == 28 && Data[32] == 60 && Data[36] == 0xFF);
 	MixStore Back;
 	Back.Set(3, 10, PAN_CENTER);	// what was there goes
-	CHECK(Back.Read(&Data[0], Data.size(), MixStore::BLOCK_VERSION) && Back == Store && Back.Write() == Data);
+	CHECK(Back.Read(&Data[0], Data.size(), 1) && Back == Store && Back.Write() == Data);
 	CHECK(Back.Level(0) == -35 && Back.Pan(7) == 0x40 && Back.Level(3) == 0);
 	CHECK(std::string(MixStore::BLOCK_ID) == "BF MIXER");
 	// Cut short anywhere: every channel at its default, and no crash
 	for (size_t n = 0; n < Data.size(); ++n) {
 		MixStore Cut;
 		Cut.Set(1, 5, PAN_CENTER);
-		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, MixStore::BLOCK_VERSION) && Cut.Empty());
+		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, 1) && Cut.Empty());
 	}
 	// Longer than its channels, or damaged: the defaults
 	std::vector<unsigned char> Longer(Data);
 	Longer.push_back(0);
-	CHECK(!Back.Read(&Longer[0], Longer.size(), MixStore::BLOCK_VERSION) && Back.Empty());
+	CHECK(!Back.Read(&Longer[0], Longer.size(), 1) && Back.Empty());
 	auto Damaged = [&](size_t At, unsigned char Value) {
 		std::vector<unsigned char> Bad(Data);
 		Bad[At] = Value;
 		MixStore Read;
-		return !Read.Read(&Bad[0], Bad.size(), MixStore::BLOCK_VERSION) && Read.Empty();
+		return !Read.Read(&Bad[0], Bad.size(), 1) && Read.Empty();
 	};
 	CHECK(Damaged(4, 29));		// a channel past chan_id_t's
 	CHECK(Damaged(16, 0));		// channel 0 twice
@@ -8351,6 +8442,165 @@ void TestMixerStore()
 	CHECK(Store.Level(0) == -35 && Store.Pan(7) == PAN_CENTER && Store.Level(28) == 0 && !Store.Empty());
 	Store.Clear();
 	CHECK(Store.Empty() && Store == MixStore());
+}
+
+void TestMixerDepthTools()
+{
+	// set_mixer's soft and space on channels, and the space they send to
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 2, 12);
+	Song.Put(5, 0, "E-4", 0, 10);
+	ToolResult R = Run(Song, "set_mixer", "{\"channels\": \"VRC6 Pulse 1\", \"soft\": 30, \"space\": 25}");
+	CHECK(!R.IsError && Song.Mix.Soft(5) == 30 && Song.Mix.Space(5) == 25 && Song.MixWrites == 1);
+	CHECK_HAS(R.Text, "Set FamiTracker's mixer (View > Mixer): VRC6 Pulse 1 Soft 30 Space 25.");
+	CHECK_HAS(R.Text, "(Soft and Space, FamiTracker's own depth, stay in the mixer)");
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"VRC6 Pulse 1\", \"soft\": 30}").Text, "Nothing changed");
+	// The space alone: its room, echo and repeats, one undoable change
+	R = Run(Song, "set_mixer", "{\"room\": \"cave\", \"echo\": \"1/2\", \"repeats\": 4}");
+	CHECK(!R.IsError && Song.Mix.Room() == 3 && Song.Mix.Echo() == 24 && Song.Mix.Repeats() == 4 && Song.MixWrites == 2);
+	CHECK_HAS(R.Text, "the space a cave, an echo of 1/2 beat repeating 4 times.");
+	const char *const ECHOES[] = { "\"1 1/2\"", "0.75", "\"3/4 beat\"", "1", "\"2 beats\"", "\"1/3\"", "\"off\"" };
+	const int STEPS[] = { 72, 36, 36, 48, 96, 16, 0 };
+	for (int i = 0; i < 7; ++i) {
+		R = Run(Song, "set_mixer", std::string("{\"echo\": ") + ECHOES[i] + "}");
+		Check(!R.IsError && Song.Mix.Echo() == STEPS[i], ECHOES[i], __LINE__);
+	}
+	CHECK(Run(Song, "set_mixer", "{\"echo\": 3}").IsError && Run(Song, "set_mixer", "{\"echo\": \"soon\"}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"room\": \"kitchen\"}").IsError && Run(Song, "set_mixer", "{\"repeats\": 9}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"channels\": 1, \"soft\": 101}").IsError);
+	CHECK(Run(Song, "set_mixer", "{\"soft\": 20}").IsError);	// which channels?
+	CHECK(Run(Song, "set_mixer", "{\"room\": \"hall\", \"write_into_notes\": true}").IsError);
+	CHECK(!Run(Song, "set_mixer", "{\"room\": \"church\"}").IsError && Song.Mix.Room() == 2);
+	CHECK(!Run(Song, "set_mixer", "{\"room\": \"cave\"}").IsError);
+	// get_song lists them, and says the tools count a channel's level before them
+	const std::string Overview = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Overview, "VRC6 Pulse 1 Soft 30 Space 25; the space they send to: a cave, no echo.");
+	CHECK_HAS(Overview, "(a channel's level before its Soft and Space)");
+	// The drums blur; a space with no room and no echo sends to nothing
+	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": \"Noise\", \"space\": 20}").Text, "blurs the beat");
+	CHECK_HAS(Run(Song, "set_mixer", "{\"room\": \"none\"}").Text, "Space sends to nothing yet");
+	// One change undone at a time
+	std::string Message;
+	CHECK(Song.Undo(Message) && Song.Mix.Room() == 3 && Song.Undo(Message) && Song.Mix.Space(3) == 0 && Song.Mix.Space(5) == 25);
+
+	// mix counts a channel's level before Soft and Space: the same volumes with them as without
+	{
+		FakeSong Without, With;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "F-4", "A-4", "C-5", "A-4" };
+		for (int s = 0; s < 2; ++s) {
+			FakeSong &One = s == 0 ? Without : With;
+			One.Info.DirectChanges = true;
+			for (int i = 0; i < 8; ++i)
+				One.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+			One.Put(1, 0, "E-3", 2, 12);
+			One.Put(2, 0, "C-3", 1);
+		}
+		With.Mix.SetDepth(5, 60, 50);
+		With.Mix.SetDepth(1, 40, 0);
+		CHECK(!Run(Without, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(!Run(With, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(Without.Rows == With.Rows);
+	}
+
+	// Write into the notes moves the faders and pans; Soft, Space and the space stay
+	CHECK(!Run(Song, "set_mixer", "{\"channels\": \"Pulse 1\", \"level\": -3}").IsError);
+	R = Run(Song, "set_mixer", "{\"write_into_notes\": true}");
+	CHECK(!R.IsError && Song.Mix.Level(0) == 0 && Song.Mix.Soft(5) == 30 && Song.Mix.Space(5) == 25 && Song.Mix.Room() == 3);
+	CHECK_HAS(R.Text, "Soft and Space stay in the mixer");
+	// reset with no channels named: every channel and the space as they start
+	CHECK(!Run(Song, "set_mixer", "{\"reset\": true}").IsError && Song.Mix.Empty());
+
+	// The game's files: with the space ringing, the loop is the song's second time through, whose start has the
+	// end's tail, and a song that halts keeps its tail
+	{
+		FakeSong One;
+		One.Info.DirectChanges = true;
+		One.Put(0, 0, "A-3", 2, 15);
+		for (int r = 8; r < 128; r += 8)
+			One.Put(0, r, r % 16 == 0 ? "A-3" : "E-4");
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK(!R.IsError && !Contains(R.Text, "second time through"));
+		CHECK(!Run(One, "set_mixer", "{\"channels\": \"Pulse 1\", \"space\": 40}").IsError);
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK_HAS(R.Text, "The loop is the song's second time through, so the echo and reverb of its end (the mixer's Space) carry "
+			"into its start as the game loops.");
+		// ...not when the space sounds nothing (no room, no echo)
+		CHECK(!Run(One, "set_mixer", "{\"room\": \"none\"}").IsError);
+		CHECK(!Contains(Run(One, "export_for_game", "{\"normalize\": false}").Text, "second time through"));
+		CHECK(!Run(One, "set_mixer", "{\"room\": \"hall\"}").IsError);
+		One.Rows[0][120].Effect[0] = EFF_HALT;
+		One.Rows[0][120].Param[0] = 0;
+		R = Run(One, "export_for_game", "{\"normalize\": false}");
+		CHECK_HAS(R.Text, "plays once (the song halts), its last notes ringing out in the mixer's space.");
+	}
+}
+
+void TestMixerDepthStore()
+{
+	// Soft and Space, and the space they send to (version 2 of the block)
+	MixStore Store;
+	CHECK(Store.Soft(5) == 0 && Store.Space(5) == 0 && Store.Room() == SPACE_ROOM_DEFAULT && Store.Echo() == 0 &&
+		Store.Repeats() == ECHO_REPEATS_DEFAULT && !Store.SpaceHeard());
+	CHECK(std::string(SPACE_ROOM_NAMES[SPACE_ROOM_DEFAULT]) == "hall" && std::string(SPACE_ROOM_NAMES[SPACE_ROOM_NONE]) == "none");
+	CHECK(Store.SetDepth(5, 30, 0) && !Store.SetDepth(5, 30, 0) && !Store.Empty() && Store.FadersDefault() && !Store.SpaceHeard());
+	CHECK(Store.SetDepth(7, 150, -4) && Store.Soft(7) == MIX_DEPTH_MOST && Store.Space(7) == 0);	// kept in range
+	CHECK(!Store.SetDepth(29, 10, 10) && Store.Soft(29) == 0);
+	CHECK(Store.SetDepth(7, 0, 40) && Store.SpaceHeard());
+	CHECK(Store.SetSpace(SPACE_ROOM_NONE, 0, 3) && !Store.SpaceHeard());	// no room and no echo: nothing to hear
+	CHECK(Store.SetSpace(SPACE_ROOM_NONE, 24, 3) && Store.SpaceHeard());		// the echo alone
+	CHECK(Store.SetSpace(9, 200, 0) && Store.Room() == SPACE_ROOM_NONE && Store.Echo() == ECHO_LONGEST && Store.Repeats() == 1);
+	CHECK(Store.SetSpace(3, 24, 4) && !Store.SetSpace(3, 24, 4));
+	Store.Set(0, -20, 0x60);
+	CHECK(Store.WriteVersion() == 2 && MixStore::BLOCK_VERSION == 2);
+	const std::vector<unsigned char> Data = Store.Write();
+	// Three channels of five numbers (ID, level, pan, Soft, Space), then the room, the echo and the repeats
+	CHECK(Data.size() == 4u + 3u * 20u + 12u);
+	CHECK(Data[0] == 3 && Data[4] == 0 && Data[12] == 0x60 && Data[24] == 5 && Data[36] == 30 && Data[44] == 7 && Data[60] == 40 &&
+		Data[64] == 3 && Data[68] == 24 && Data[72] == 4);
+	MixStore Back;
+	Back.Set(3, 10, PAN_CENTER);
+	CHECK(Back.Read(&Data[0], Data.size(), 2) && Back == Store && Back.Write() == Data);
+	CHECK(Back.Soft(5) == 30 && Back.Space(7) == 40 && Back.Level(0) == -20 && Back.Room() == 3 && Back.Echo() == 24 && Back.Repeats() == 4);
+	// Cut short anywhere: the defaults, and no crash
+	for (size_t n = 0; n < Data.size(); ++n) {
+		MixStore Cut;
+		Cut.SetDepth(1, 5, 5);
+		CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, 2) && Cut.Empty());
+	}
+	// Longer, or damaged: the defaults
+	std::vector<unsigned char> Longer(Data);
+	Longer.push_back(0);
+	CHECK(!Back.Read(&Longer[0], Longer.size(), 2) && Back.Empty());
+	auto Damaged = [&](size_t At, unsigned char Value) {
+		std::vector<unsigned char> Bad(Data);
+		Bad[At] = Value;
+		MixStore Read;
+		return !Read.Read(&Bad[0], Bad.size(), 2) && Read.Empty();
+	};
+	CHECK(Damaged(36, 101));	// Soft over 100
+	CHECK(Damaged(60, 0xFF));	// Space over 100
+	CHECK(Damaged(64, 5));		// a room past the last
+	CHECK(Damaged(68, 97));		// an echo over two beats
+	CHECK(Damaged(72, 0));		// no repeats
+	CHECK(Damaged(72, 9));		// too many
+	CHECK(Damaged(0, 4));		// a channel more than the block holds
+	// Version 2's data read as version 1, and version 1's as version 2: damaged
+	CHECK(!Back.Read(&Data[0], Data.size(), 1) && Back.Empty());
+	MixStore Faders;
+	Faders.Set(2, -30, PAN_CENTER);
+	const std::vector<unsigned char> Old = Faders.Write();
+	CHECK(Faders.WriteVersion() == 1 && Old.size() == 16u && !Back.Read(&Old[0], Old.size(), 2) && Back.Read(&Old[0], Old.size(), 1) &&
+		Back == Faders);
+	// The space off its defaults alone is saved (version 2, no channels)
+	MixStore Room;
+	CHECK(Room.SetSpace(2, 0, 3) && !Room.Empty() && Room.WriteVersion() == 2 && Room.Write().size() == 16u);
+	// A chip switch keeps only the module's channels, their depth too; the space stays
+	std::vector<int> Kept(1, 0);
+	Store.KeepOnly(Kept);
+	CHECK(Store.Soft(5) == 0 && Store.Space(7) == 0 && Store.Level(0) == -20 && Store.Room() == 3 && !Store.SpaceHeard());
+	Store.Clear();
+	CHECK(Store.Empty() && Store.Room() == SPACE_ROOM_DEFAULT && Store.WriteVersion() == 1);
 }
 
 // Rows of a render, the two sides together: their loudness from First
@@ -8379,7 +8629,7 @@ void TestMixerTools()
 	ToolResult R = Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}");
 	CHECK(!R.IsError && Song.Mix.Level(0) == -60 && Song.MixWrites == 1);
 	CHECK_HAS(R.Text, "Set FamiTracker's mixer (View > Mixer): 2A03 Pulse 1 -6.0 dB.");
-	CHECK_HAS(R.Text, "NSF files don't: set_mixer with write_into_notes puts it into the notes.");
+	CHECK_HAS(R.Text, "NSF files don't: set_mixer with write_into_notes puts the faders and pans into the notes");
 	CHECK_HAS(Run(Song, "set_mixer", "{\"channels\": 1, \"level\": -6}").Text, "Nothing changed: FamiTracker's mixer has 2A03 Pulse 1 -6.0 dB already.");
 	R = Run(Song, "set_mixer", "{\"channels\": [\"Pulse 2\"], \"pan\": \"half left\"}");
 	CHECK(!R.IsError && Song.Mix.Pan(1) == 0x40 && Song.Mix.Level(1) == 0);
@@ -11824,6 +12074,223 @@ Reference ClickyReference()
 	return R;
 }
 
+// VRC6 Plus (Vrc6Plus.h): the VRC6 with a soft layer of four N163 channels, as one chip
+void TestVrc6Plus()
+{
+	// The mark: one int32 (4), read back; cut short at every byte, longer, damaged or another version, it says no
+	const std::vector<unsigned char> Mark = Vrc6PlusMark::Write();
+	CHECK(Mark == std::vector<unsigned char>({ 4, 0, 0, 0 }));
+	CHECK(std::string(Vrc6PlusMark::BLOCK_ID) == "BF VRC6PLUS" && std::string(Vrc6PlusMark::BLOCK_ID).size() <= 15u);
+	CHECK(Vrc6PlusMark::Read(&Mark[0], Mark.size(), Vrc6PlusMark::BLOCK_VERSION));
+	for (size_t n = 0; n < Mark.size(); ++n)
+		CHECK(!Vrc6PlusMark::Read(n == 0 ? 0 : &Mark[0], n, Vrc6PlusMark::BLOCK_VERSION));
+	std::vector<unsigned char> Longer(Mark);
+	Longer.push_back(0);
+	CHECK(!Vrc6PlusMark::Read(&Longer[0], Longer.size(), Vrc6PlusMark::BLOCK_VERSION));
+	for (const unsigned int Bad : { 0u, 3u, 5u, 8u, 0x104u, 0xFFFFFFFFu }) {
+		std::vector<unsigned char> Damaged;
+		for (int i = 0; i < 4; ++i)
+			Damaged.push_back(static_cast<unsigned char>((Bad >> (8 * i)) & 0xFF));
+		CHECK(!Vrc6PlusMark::Read(&Damaged[0], Damaged.size(), Vrc6PlusMark::BLOCK_VERSION));
+	}
+	CHECK(!Vrc6PlusMark::Read(&Mark[0], Mark.size(), Vrc6PlusMark::BLOCK_VERSION + 1) && !Vrc6PlusMark::Read(&Mark[0], Mark.size(), 0));
+	CHECK(SoftChannelName(0) == "Soft 1" && SoftChannelName(3) == "Soft 4" && SoftChannelOldName(1) == "Namco 2");
+
+	// The starter sounds: wave sounds of their own, found by their words
+	CHECK(SoftLayerSounds() == std::vector<std::string>({ "choir pad", "string pad", "soft flute", "sub bass" }));
+	for (size_t i = 0; i < SoftLayerSounds().size(); ++i) {
+		const WaveSound *pSound = FindWaveSound(SoftLayerSounds()[i]);
+		CHECK(pSound != 0 && pSound->Name == SoftLayerSounds()[i] && IsSoftLayerSound(pSound->InstrumentName()));
+	}
+	CHECK(!IsSoftLayerSound("glass bell") && !IsSoftLayerSound("choir"));
+	CHECK(FindWaveSound("soft choir")->Name == "choir pad" && FindWaveSound("sub")->Name == "sub bass" &&
+		FindWaveSound("soft strings")->Name == "string pad" && FindWaveSound("choir")->Name == "choir" &&
+		FindWaveSound("warm pad")->Name == "string pad");	// the preset's name on an N163 channel
+	CHECK(FindWaveSound("choir pad")->Releases() && FindWaveSound("string pad")->Waves.size() == 4u);
+	// What a song is missing, each wave in a place of its own under sample 128
+	std::vector<InstrumentInfo> Have;
+	std::vector<std::pair<const WaveSound *, int> > Missing = MissingSoftSounds(Have);
+	CHECK(Missing.size() == 4u && Missing[0].first->Name == "choir pad" && Missing[0].second == 0 &&
+		Missing[1].second == 16 && Missing[2].second == 32 && Missing[3].first->Name == "sub bass" && Missing[3].second == 48);
+	InstrumentInfo Choir;
+	Choir.Name = "Choir pad";
+	Choir.Chip = "N163";
+	Choir.WavePos = 0;
+	Choir.WaveSize = 16;
+	InstrumentInfo Bell = Choir, Flute = Choir;
+	Bell.Index = 1;
+	Bell.Name = "Glass bell";
+	Bell.WavePos = 16;
+	Flute.Index = 2;
+	Flute.Name = "Soft flute";
+	Flute.Chip = "2A03";	// a pulse's of that name isn't the soft layer's
+	Flute.WavePos = Flute.WaveSize = -1;
+	Have = { Choir, Bell, Flute };
+	Missing = MissingSoftSounds(Have);
+	CHECK(Missing.size() == 3u && Missing[0].first->Name == "string pad" && Missing[0].second == 32 &&
+		Missing[1].first->Name == "soft flute" && Missing[1].second == 48 && Missing[2].second == 64);
+	Have.clear();
+	for (int i = 0; i < 7; ++i) {
+		InstrumentInfo Wave = Choir;
+		Wave.Index = i;
+		Wave.Name = "Wave " + std::to_string(i);
+		Wave.WavePos = 16 * i;
+		Have.push_back(Wave);
+	}
+	Missing = MissingSoftSounds(Have);	// room for one more under 128
+	CHECK(Missing.size() == 1u && Missing[0].first->Name == "choir pad" && Missing[0].second == 112);
+
+	// set_expansion: the VRC6 song becomes VRC6 Plus, its VRC6 notes stay, the starter sounds come
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(7, 16, "C-2", 0);
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 Plus now: 7 more channels (VRC6 Plus Pulse 1, VRC6 Plus Pulse 2, VRC6 Plus "
+		"Sawtooth, VRC6 Plus Soft 1, VRC6 Plus Soft 2, VRC6 Plus Soft 3, VRC6 Plus Soft 4) besides the 2A03's five.");
+	CHECK_HAS(Result.Text, "The VRC6 Plus: the VRC6's two pulses and its sawtooth carry the music");
+	CHECK_HAS(Result.Text, "Its sounds: choir pad, string pad, soft flute and sub bass, and the N163's other wave sounds (drawbar organ, ");
+	CHECK_LACKS(Result.Text, "round bass, choir pad");
+	CHECK_HAS(Result.Text, "Added its soft layer's sounds: \"Choir pad\" (03), \"String pad\" (04), \"Soft flute\" (05) and "
+		"\"Sub bass\" (06), each with a wave of its own.");
+	CHECK_HAS(Result.Text, "the VRC6 Plus is two (the VRC6 and the N163)");
+	CHECK_LACKS(Result.Text, "Cleared");
+	CHECK(Song.Info.Vrc6Plus && Song.Info.Expansion == "VRC6, N163" && Song.Info.Channels.size() == 12u);
+	CHECK(Song.ExpansionsAsked.back() == std::vector<std::string>({ "VRC6 Plus" }));
+	CHECK(Song.Rows[5][0].HasNote() && Song.Rows[7][16].HasNote());
+	CHECK(Song.Info.Channels[8].Name == "Soft 1" && Song.Info.Channels[8].Chip == "N163" && Song.Info.Channels[8].OldName == "Namco 1" &&
+		Song.Info.Channels[11].FullName() == "VRC6 Plus Soft 4" && Song.Info.Channels[5].FullName() == "VRC6 Plus Pulse 1" &&
+		Song.Info.Channels[0].FullName() == "2A03 Pulse 1");
+	std::vector<std::string> Names;
+	std::vector<int> Places;
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Chip == "N163") {
+			Names.push_back(Song.Info.Instruments[i].Name);
+			Places.push_back(Song.Info.Instruments[i].WavePos);
+		}
+	CHECK(Names == std::vector<std::string>({ "Choir pad", "String pad", "Soft flute", "Sub bass" }));
+	CHECK(Places == std::vector<int>({ 0, 16, 32, 48 }));
+	// Asked again, in other words: it's there
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"vrc6+\"}")).Text, "The song uses the VRC6 Plus already.");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": \"VRC6 plus\"}")).Text, "already");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\", \"N163\", \"VRC6\"]}")).Text, "already");	// it has them
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"], \"n163_channels\": 8}")).Text,
+		"soft layer has four channels");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"none\", \"VRC6 Plus\"]}")).Text, "none goes alone");
+	// get_song names it and its channels
+	std::string Text = Tools.Call("get_song", Parse("{}")).Text;
+	CHECK_HAS(Text, "(expansion: VRC6 Plus (the VRC6 with a soft layer of four N163 wave channels))");
+	CHECK_HAS(Text, "  9 VRC6 Plus Soft 1: empty");
+	CHECK_HAS(Text, "  6 VRC6 Plus Pulse 1: 1 note");
+	// Its channels by their names, and by their old ones
+	const char *const ASKED[][2] = { { "Soft 2", "9" }, { "VRC6 Plus Soft 2", "9" }, { "Namco 2", "9" }, { "N163 Namco 2", "9" },
+		{ "VRC6 Pulse 2", "6" }, { "VRC6 Plus Sawtooth", "7" } };
+	for (size_t a = 0; a < sizeof(ASKED) / sizeof(ASKED[0]); ++a) {
+		Result = Tools.Call("write_notes", Parse(std::string("{\"channel\": \"") + ASKED[a][0] + "\", \"notes\": [{\"bar\": 2, "
+			"\"pitch\": \"E-3\", \"beats\": 1}]}"));
+		if (a == 0)	// without an instrument: the soft layer's sounds are named
+			CHECK_HAS(Result.Text, "or an N163 sound: the soft layer's choir pad, string pad, soft flute and sub bass, or soft flute, ");
+		if (Result.IsError)
+			Result = Tools.Call("write_notes", Parse(std::string("{\"channel\": \"") + ASKED[a][0] + "\", \"instrument\": \"" +
+				(ASKED[a][1][0] == '9' ? "Soft flute" : "Lead") + "\", \"notes\": [{\"bar\": 2, \"pitch\": \"E-3\", \"beats\": 1}]}"));
+		Check(!Result.IsError && Song.Rows[static_cast<size_t>(std::atoi(ASKED[a][1]))][16].HasNote(),
+			(std::string(ASKED[a][0]) + ": " + Result.Text).c_str(), __LINE__);
+		Song.Rows[static_cast<size_t>(std::atoi(ASKED[a][1]))][16] = Cell();
+	}
+	// The sound browser and find_sound: the soft layer's sounds under the VRC6 Plus, its starter sounds first
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(8, All, Error));
+	const SoundEntry *pPad = FindEntry(All, "Choir pad", TARGET_SOFT), *pBell = FindEntry(All, "Glass bell", TARGET_SOFT);
+	CHECK(pPad != 0 && pPad->Make == MAKE_N163 && pPad->Chip == "N163" && pPad->Home && pPad->ChannelName == "VRC6 Plus Soft 1" &&
+		pPad->Origin == "a starter sound of the VRC6 Plus's soft layer" && pPad->InSong >= 0);
+	CHECK(pBell != 0 && pBell->Origin == "ready-made for the N163" && pBell->InSong < 0);
+	CHECK(FindEntry(All, "Choir pad", TARGET_N163) == 0 && TargetName(TARGET_SOFT) == "VRC6 Plus soft layer" &&
+		TargetChip(TARGET_SOFT) == "N163" && TargetOf(Song.Info.Channels[8]) == TARGET_SOFT &&
+		TargetOf(Song.Info.Channels[5]) == TARGET_VRC6_PULSE);
+	CHECK_HAS(Tools.Call("find_sound", Parse("{\"query\": \"sub bass\", \"channel\": \"Soft 4\"}")).Text, "Sub bass");
+	CHECK(Tools.MakeSound(*pBell, Error) >= 0 && SongInstrument(Song, 7) != 0 && SongInstrument(Song, 7)->WavePos == 64);
+
+	// Voiced chords go on the soft layer, with its string pad
+	Result = Tools.Call("add_chords_and_bass", Parse("{\"chords\": \"| C | Am | F | G |\", \"chord_style\": \"voices\", "
+		"\"bass_channel\": \"none\", \"key\": \"C major\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Plus Soft 1");
+	int Pad = -1;
+	for (size_t r = 0; r < Song.Rows[8].size() && Pad < 0; ++r)
+		if (Song.Rows[8][r].HasNote())
+			Pad = Song.Rows[8][r].Instrument;
+	CHECK(SongInstrument(Song, Pad) != 0 && SongInstrument(Song, Pad)->Name == "String pad");
+	// mix keeps the soft layer under the VRC6
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"E-4\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}, {\"bar\": 3, \"pitch\": \"A-4\", \"beats\": 4}, "
+		"{\"bar\": 4, \"pitch\": \"G-4\", \"beats\": 4}]}")).IsError);
+	Result = Tools.Call("mix", Parse("{\"melody_channel\": \"VRC6 Pulse 1\", \"style\": \"soft\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The VRC6 Plus's soft layer sits 3 dB under its parts' roles, under the VRC6.");
+	int Loudest = 0;
+	for (size_t r = 0; r < Song.Rows[8].size(); ++r)
+		if (Song.Rows[8][r].HasNote() && Song.Rows[8][r].Volume != NO_VOLUME)
+			Loudest = std::max(Loudest, static_cast<int>(Song.Rows[8][r].Volume));
+	CHECK_EQ(Loudest, 9);	// a second line's level (7 on a pulse) 3 dB under, on the N163 with the pad's envelope
+	CHECK_HAS(Result.Text, "VRC6 Plus Soft 1 (a second line) loudest 10 to 9");
+
+	// Back to the VRC6: the soft layer's notes go, after asking; the VRC6's stay
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"Soft 4\", \"instrument\": \"sub bass\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"C-1\", \"beats\": 4}]}")).IsError);
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\"]}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "on the VRC6 Plus's soft layer (Soft 1 to Soft 4)");
+	CHECK_HAS(Result.Text, "confirm: true");
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\"], \"confirm\": true}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 now: 3 more channels (VRC6 Pulse 1, VRC6 Pulse 2, VRC6 Sawtooth)");
+	CHECK_HAS(Result.Text, "It's no VRC6 Plus any more.");
+	CHECK_HAS(Result.Text, "Cleared");
+	CHECK_LACKS(Result.Text, "The VRC6: two pulses");	// it was there
+	CHECK(!Song.Info.Vrc6Plus && Song.Info.Expansion == "VRC6" && Song.Info.Channels.size() == 8u && Song.Rows[5][0].HasNote() &&
+		Song.Info.Channels[5].FullName() == "VRC6 Pulse 1");
+
+	// The VRC6 and the N163 (4 channels) made VRC6 Plus keep their notes, the N163's on the soft layer; and back to plain
+	// N163 channels, notes and all; another chip can join it
+	FakeSong Both;
+	Both.Info.DirectChanges = true;
+	CHECK(!Run(Both, "set_expansion", "{\"chips\": [\"VRC6\", \"N163\"], \"n163_channels\": 4}").IsError);
+	Both.Put(8, 0, "A-3");
+	Result = Run(Both, "set_expansion", "{\"chips\": [\"VRC6 Plus\", \"FDS\"]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6 Plus and the FDS now");
+	CHECK_HAS(Result.Text, "The FDS:");
+	CHECK(Both.Info.Vrc6Plus && Both.Info.Expansion == "VRC6, FDS, N163" && Both.Rows[8][0].HasNote() &&
+		Both.Info.Channels[8].FullName() == "VRC6 Plus Soft 1" && Both.Info.Channels[12].FullName() == "FDS");
+	CHECK_HAS(Run(Both, "get_song", "{}").Text, "(expansion: VRC6 Plus (the VRC6 with a soft layer of four N163 wave channels), FDS)");
+	Result = Run(Both, "set_expansion", "{\"chips\": [\"VRC6\", \"N163\"]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "its soft channels are N163 channels again (Namco 1 to 4), notes and all");
+	CHECK(!Both.Info.Vrc6Plus && Both.Rows[8][0].HasNote() && Both.Info.Channels[8].FullName() == "N163 Namco 1");
+
+	// The N163's level follows its channel count: one channel plays about 5 dB louder than four, so mix gives the same part
+	// a lower volume there
+	int Volumes[2] = { 0, 0 };
+	for (int Count = 0; Count < 2; ++Count) {
+		FakeSong Waves;
+		Waves.Info.DirectChanges = true;
+		CHECK(!Run(Waves, "set_expansion", Count == 0 ? "{\"chip\": \"N163\", \"n163_channels\": 1, \"confirm\": true}" :
+			"{\"chip\": \"N163\", \"n163_channels\": 4, \"confirm\": true}").IsError);
+		CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"Square\", \"notes\": [{\"bar\": 1, \"pitch\": \"E-4\", \"beats\": 2}, "
+			"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 4}]}").IsError);
+		CHECK(!Run(Waves, "write_notes", "{\"channel\": \"Namco 1\", \"instrument\": \"soft flute\", \"notes\": [{\"bar\": 1, "
+			"\"pitch\": \"C-3\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"D-3\", \"beats\": 4}]}").IsError);
+		CHECK(!Run(Waves, "mix", "{\"melody_channel\": \"Pulse 1\", \"style\": \"soft\"}").IsError);
+		for (size_t r = 0; r < Waves.Rows[5].size(); ++r)
+			if (Waves.Rows[5][r].HasNote() && Waves.Rows[5][r].Volume != NO_VOLUME)
+				Volumes[Count] = std::max(Volumes[Count], static_cast<int>(Waves.Rows[5][r].Volume));
+	}
+	CHECK(Volumes[0] == 7 && Volumes[1] == 12);	// 4.6 dB apart (the old -8 dB for both put both at 15)
+}
+
 void TestSoundIndex()
 {
 	// The 2A03 alone: each preset once, where it's at home (the drums on the noise), and nothing for other chips
@@ -12217,6 +12684,9 @@ int main()
 	TestKeyTools();
 	TestMixerStore();
 	TestMixerTools();
+	TestMixerDepthStore();
+	TestMixerDepthTools();
+	TestCutTail();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestFdsSounds();
@@ -12241,6 +12711,7 @@ int main()
 	TestStereoExport();
 	TestSoundIndex();
 	TestFindSound();
+	TestVrc6Plus();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

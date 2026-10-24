@@ -55,6 +55,7 @@ enum sound_target {
 	TARGET_FDS,
 	TARGET_VRC7,
 	TARGET_S5B,
+	TARGET_SOFT,			// the VRC6 Plus's soft layer (Vrc6Plus.h): N163 channels, its starter sounds first
 	TARGET_COUNT
 };
 

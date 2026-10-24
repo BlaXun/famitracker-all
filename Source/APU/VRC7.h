@@ -48,6 +48,8 @@ private:
 
 	int16	*m_pBuffer;
 	int16	*m_pBufferRight;	// the right side (m_pBuffer is the left)
+	int16	*m_pOwn[6][2];		// the channels the mixer has in buffers of their own (Depth): each one's sides
+	int32	m_iOwnLast[6][2];
 	uint32	m_iBufferPtr;
 
 	uint8	m_iSoundReg;

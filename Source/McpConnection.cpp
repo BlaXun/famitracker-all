@@ -47,6 +47,7 @@
 #include "Api/SoundEffects.h"
 #include "Api/SoundIndex.h"
 #include "Api/Tools.h"
+#include "Api/Vrc6Plus.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
 #include <shlobj.h>
@@ -483,13 +484,21 @@ bool ChipFlag(const std::string &Chip, unsigned char &Flag)
 	return false;
 }
 
-// The expansion chips by the API's names, together (SNDCHIP_* bits); false if one isn't a chip FamiTracker has
-bool ChipFlags(const std::vector<std::string> &Chips, unsigned char &Flags)
+// The expansion chips by the API's names, together (SNDCHIP_* bits); false if one isn't a chip FamiTracker has.
+// "VRC6 Plus" (Api/Vrc6Plus.h) is the VRC6 and the N163, and Plus says it was asked for.
+bool ChipFlags(const std::vector<std::string> &Chips, unsigned char &Flags, bool *pPlus = NULL)
 {
 	Flags = SNDCHIP_NONE;
+	if (pPlus != NULL)
+		*pPlus = false;
 	for (size_t i = 0; i < Chips.size(); ++i) {
 		unsigned char Flag = SNDCHIP_NONE;
-		if (!ChipFlag(Chips[i], Flag))
+		if (Chips[i] == ftapi::VRC6_PLUS) {
+			Flag = SNDCHIP_VRC6 | SNDCHIP_N163;
+			if (pPlus != NULL)
+				*pPlus = true;
+		}
+		else if (!ChipFlag(Chips[i], Flag))
 			return false;
 		Flags |= Flag;
 	}
@@ -896,6 +905,7 @@ public:
 		Info.FirstHighlight = pDoc->GetFirstHighlight();
 		Info.SecondHighlight = pDoc->GetSecondHighlight();
 		const unsigned char Chips = pDoc->GetExpansionChip();
+		Info.Vrc6Plus = pDoc->IsVrc6Plus();
 		const unsigned char ALL[] = { SNDCHIP_VRC6, SNDCHIP_VRC7, SNDCHIP_FDS, SNDCHIP_MMC5, SNDCHIP_N163, SNDCHIP_S5B };
 		for (size_t i = 0; i < sizeof(ALL); ++i) {
 			if (Chips & ALL[i])
@@ -909,13 +919,23 @@ public:
 			Channel.Name = Utf8(pDoc->GetChannel(c)->GetChannelName());
 			Channel.Chip = ChipName(pDoc->GetChipType(c));
 			Channel.ChanId = pDoc->GetChannelType(c);
+			if (pDoc->IsVrc6PlusChannel(c)) {	// shown as one chip; the soft layer's old names still work
+				Channel.Group = ftapi::VRC6_PLUS;
+				if (Channel.ChanId >= CHANID_N163_CHAN1 && Channel.ChanId < CHANID_N163_CHAN1 + ftapi::VRC6_PLUS_SOFT_CHANNELS)
+					Channel.OldName = ftapi::SoftChannelOldName(Channel.ChanId - CHANID_N163_CHAN1);
+			}
 			Channel.Kind = KindOf(Channel.ChanId);
 			Channel.EffectColumns = static_cast<int>(pDoc->GetEffColumns(Track, static_cast<unsigned int>(c))) + 1;
 			Channel.Muted = pView != NULL && pView->IsChannelMuted(static_cast<unsigned int>(c));
 			Channel.MixLevel = pDoc->GetChannelMix()->Level(Channel.ChanId);
 			Channel.MixPan = pDoc->GetChannelMix()->Pan(Channel.ChanId);
+			Channel.MixSoft = pDoc->GetChannelMix()->Soft(Channel.ChanId);
+			Channel.MixSpace = pDoc->GetChannelMix()->Space(Channel.ChanId);
 			Info.Channels.push_back(Channel);
 		}
+		Info.SpaceRoom = pDoc->GetChannelMix()->Room();
+		Info.SpaceEcho = pDoc->GetChannelMix()->Echo();
+		Info.SpaceRepeats = pDoc->GetChannelMix()->Repeats();
 		for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
 			if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)))
 				continue;
@@ -1716,16 +1736,21 @@ public:
 		return true;
 	}
 
-	// The mixer window's faders and pans, as one undoable step (CChannelMixAction)
-	bool SetMixer(const std::vector<int> &Levels, const std::vector<int> &Pans, std::string &Error)
+	// The mixer window's faders, pans, Soft and Space and its space, as one undoable step (CChannelMixAction)
+	bool SetMixer(const ftapi::MixerSettings &Mixer, std::string &Error)
 	{
 		if (!CanChange(Error))
 			return false;
 		CFamiTrackerDoc *pDoc = Doc();
 		ftapi::MixStore Mix = *pDoc->GetChannelMix();
 		const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
-		for (int c = 0; c < Channels && c < static_cast<int>(Levels.size()) && c < static_cast<int>(Pans.size()); ++c)
-			Mix.Set(pDoc->GetChannelType(c), Levels[static_cast<size_t>(c)], Pans[static_cast<size_t>(c)]);
+		for (int c = 0; c < Channels && c < static_cast<int>(Mixer.Levels.size()) && c < static_cast<int>(Mixer.Pans.size()); ++c) {
+			const size_t i = static_cast<size_t>(c);
+			Mix.Set(pDoc->GetChannelType(c), Mixer.Levels[i], Mixer.Pans[i]);
+			if (i < Mixer.Softs.size() && i < Mixer.Spaces.size())
+				Mix.SetDepth(pDoc->GetChannelType(c), Mixer.Softs[i], Mixer.Spaces[i]);
+		}
+		Mix.SetSpace(Mixer.Room, Mixer.Echo, Mixer.Repeats);
 		if (Mix == *pDoc->GetChannelMix())
 			return true;
 		if (!SetChannelMix(m_pMain, Mix)) {
@@ -2008,7 +2033,10 @@ public:
 		unsigned char Flags = SNDCHIP_NONE;
 		if (pDoc == NULL || !pDoc->IsFileLoaded() || !ChipFlags(Chips, Flags))
 			return 0;
-		const unsigned int Namco = static_cast<unsigned int>(std::max(1, std::min(8, Channels)));
+		bool Plus = false;
+		ChipFlags(Chips, Flags, &Plus);
+		const unsigned int Namco = Plus ? static_cast<unsigned int>(ftapi::VRC6_PLUS_SOFT_CHANNELS) :
+			static_cast<unsigned int>(std::max(1, std::min(8, Channels)));
 		return CountChannelNotes(pDoc, LeavingChannels(pDoc, Flags, Namco), Tracks);
 	}
 
@@ -2021,7 +2049,8 @@ public:
 		if (!CanChange(Error))
 			return false;
 		unsigned char Flags = SNDCHIP_NONE;
-		if (!ChipFlags(Chips, Flags)) {
+		bool Plus = false;
+		if (!ChipFlags(Chips, Flags, &Plus)) {
 			Error = "FamiTracker can't switch to those chips.";
 			return false;
 		}
@@ -2029,7 +2058,9 @@ public:
 		Stop();
 		if (theApp.IsPlaying())
 			theApp.StopPlayerAndWait();
-		Lost = SwitchChips(pDoc, Flags, static_cast<unsigned int>(std::max(1, std::min(8, Channels))), Moved);
+		Lost = SwitchChips(pDoc, Flags, Plus ? static_cast<unsigned int>(ftapi::VRC6_PLUS_SOFT_CHANNELS) :
+			static_cast<unsigned int>(std::max(1, std::min(8, Channels))), Moved);
+		pDoc->SetVrc6Plus(Plus);	// the tools add its starter sounds (set_expansion)
 		pDoc->SetModifiedFlag();
 		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
 		m_pMain->UpdateControls();

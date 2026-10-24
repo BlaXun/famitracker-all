@@ -84,6 +84,12 @@ configure_file(${APU_FROM}/Blip_Buffer/Blip_Buffer.h ${APU_STAGE}/Blip_Buffer/bl
 foreach(file stdafx.h Common.h)
 	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/standins/apu/${file} ${APU_STAGE}/${file} COPYONLY)
 endforeach()
+# Soft and Space (APU/Space.cpp), when the code built has them
+if(EXISTS ${APU_FROM}/APU/Space.cpp)
+	configure_file(${APU_FROM}/APU/Space.cpp ${APU_STAGE}/APU/Space.cpp COPYONLY)
+	configure_file(${APU_FROM}/APU/Space.h ${APU_STAGE}/APU/Space.h COPYONLY)
+	list(APPEND APU_SOURCES ${APU_STAGE}/APU/Space.cpp)
+endif()
 add_library(apu STATIC ${APU_SOURCES} ${APU_STAGE}/Blip_Buffer/Blip_Buffer.cpp)
 target_include_directories(apu PUBLIC ${APU_STAGE})
 target_compile_options(apu PRIVATE -w)		# as released, warnings and all

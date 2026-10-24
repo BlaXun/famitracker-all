@@ -49,6 +49,7 @@
 #include "Api/Sections.h"
 #include "Api/Keys.h"
 #include "Api/ChannelMix.h"
+#include "Api/Vrc6Plus.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "ChipSwitch.h"
@@ -205,6 +206,7 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_bFileLoadFailed(false), 
 	m_iRegisteredChannels(0), 
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
+	m_bVrc6Plus(false),
 	m_bDisplayComment(false),
 	m_pClipLibrary(new CClipLibrary()),
 	m_pSections(new ftapi::SectionStore()),
@@ -466,6 +468,8 @@ void CFamiTrackerDoc::DeleteContents()
 	m_iMachine			 = DEFAULT_MACHINE_TYPE;
 	m_iEngineSpeed		 = 0;
 	m_iExpansionChip	 = SNDCHIP_NONE;
+	m_bVrc6Plus			 = false;
+	UpdateChannelNames();
 	m_iVibratoStyle		 = VIBRATO_OLD;
 	m_bLinearPitch		 = DEFAULT_LINEAR_PITCH;
 	m_iChannelsAvailable = CHANNELS_DEFAULT;
@@ -810,6 +814,9 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 	ftapi::MixStore Mix = *m_pChannelMix;
 	Mix.KeepOnly(GetModuleChannelIds());
 	if (!Mix.Empty() && !WriteBlock_Mixer(pDocFile, Mix))
+		return false;
+	// The VRC6 Plus's mark, only when it is one (a module without it saves as before)
+	if (IsVrc6Plus() && !WriteBlock_Vrc6Plus(pDocFile))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1332,11 +1339,21 @@ bool CFamiTrackerDoc::WriteBlock_Sections(CDocumentFile *pDocFile) const
 
 bool CFamiTrackerDoc::WriteBlock_Mixer(CDocumentFile *pDocFile, const ftapi::MixStore &Mix) const
 {
-	// Beginner-friendly: the mixer window's faders and pans (Api/ChannelMix.h), a block other versions skip
+	// Beginner-friendly: the mixer window's faders and pans (Api/ChannelMix.h), a block other versions skip; version 2
+	// only when Soft, Space or the space is used, so a song with faders alone saves as before
 	const std::vector<unsigned char> Data = Mix.Write();
-	pDocFile->CreateBlock(ftapi::MixStore::BLOCK_ID, ftapi::MixStore::BLOCK_VERSION);
+	pDocFile->CreateBlock(ftapi::MixStore::BLOCK_ID, Mix.WriteVersion());
 	if (!Data.empty())
 		pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
+	return pDocFile->FlushBlock();
+}
+
+bool CFamiTrackerDoc::WriteBlock_Vrc6Plus(CDocumentFile *pDocFile) const
+{
+	// Beginner-friendly: the module is VRC6 Plus (Api/Vrc6Plus.h), a block other versions skip: they open it as VRC6 + N163
+	const std::vector<unsigned char> Data = ftapi::Vrc6PlusMark::Write();
+	pDocFile->CreateBlock(ftapi::Vrc6PlusMark::BLOCK_ID, ftapi::Vrc6PlusMark::BLOCK_VERSION);
+	pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
 	return pDocFile->FlushBlock();
 }
 
@@ -1704,6 +1721,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		else if (!strcmp(BlockID, ftapi::MixStore::BLOCK_ID)) {
 			ReadBlock_Mixer(&DocumentFile);		// and a damaged mixer: every channel at 0 dB and in the middle
 		}
+		else if (!strcmp(BlockID, ftapi::Vrc6PlusMark::BLOCK_ID)) {
+			ReadBlock_Vrc6Plus(&DocumentFile);	// and a damaged mark: the song opens as VRC6 + N163
+		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
 		}
@@ -1949,6 +1969,16 @@ void CFamiTrackerDoc::ReadBlock_Mixer(CDocumentFile *pDocFile)
 	if (!Data.empty())
 		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
 	m_pChannelMix->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
+}
+
+void CFamiTrackerDoc::ReadBlock_Vrc6Plus(CDocumentFile *pDocFile)
+{
+	// Checked against the block's size; whether the chips fit is checked once the song is loaded (ApplyExpansionChip)
+	const int Size = pDocFile->GetBlockSize() - pDocFile->GetBlockPos();
+	std::vector<unsigned char> Data(static_cast<size_t>(std::max(0, Size)));
+	if (!Data.empty())
+		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
+	m_bVrc6Plus = ftapi::Vrc6PlusMark::Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
 }
 
 void CFamiTrackerDoc::ReadBlock_Keys(CDocumentFile *pDocFile)
@@ -4386,12 +4416,14 @@ void CFamiTrackerDoc::ChannelMixChanged()
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	if (pSoundGen == NULL || m_pChannelMix == NULL)
 		return;
-	int Levels[CHANNELS], Pans[CHANNELS];
+	int Levels[CHANNELS], Pans[CHANNELS], Softs[CHANNELS], Spaces[CHANNELS];
 	for (int i = 0; i < CHANNELS; ++i) {
 		Levels[i] = m_pChannelMix->Level(i);
 		Pans[i] = m_pChannelMix->Pan(i);
+		Softs[i] = m_pChannelMix->Soft(i);
+		Spaces[i] = m_pChannelMix->Space(i);
 	}
-	pSoundGen->SetChannelMix(Levels, Pans);
+	pSoundGen->SetChannelMix(Levels, Pans, Softs, Spaces, m_pChannelMix->Room(), m_pChannelMix->Echo(), m_pChannelMix->Repeats());
 }
 
 void CFamiTrackerDoc::MoveChannels(const int *pOldTypes, unsigned int OldCount)
@@ -4446,6 +4478,10 @@ void CFamiTrackerDoc::SetupChannels(unsigned char Chip)
 
 void CFamiTrackerDoc::ApplyExpansionChip()
 {
+	// VRC6 Plus only with its chips (a switch away from them, or a file whose chips don't fit its mark, unmarks it)
+	m_bVrc6Plus = IsVrc6Plus();
+	UpdateChannelNames();
+
 	// Tell the sound emulator to switch expansion chip
 	theApp.GetSoundGenerator()->SelectChip(m_iExpansionChip);
 
@@ -4470,6 +4506,46 @@ void CFamiTrackerDoc::SetNamcoChannels(unsigned int Channels)
 unsigned int CFamiTrackerDoc::GetNamcoChannels() const
 {
 	return m_iNamcoChannels;
+}
+
+bool CFamiTrackerDoc::IsVrc6Plus() const
+{
+	return m_bVrc6Plus && ExpansionEnabled(SNDCHIP_VRC6 | SNDCHIP_N163) &&
+		m_iNamcoChannels == static_cast<unsigned int>(ftapi::VRC6_PLUS_SOFT_CHANNELS);
+}
+
+void CFamiTrackerDoc::SetVrc6Plus(bool On)
+{
+	m_bVrc6Plus = On;
+	m_bVrc6Plus = IsVrc6Plus();	// only with the VRC6 and the N163 at 4 channels
+	UpdateChannelNames();
+}
+
+bool CFamiTrackerDoc::IsVrc6PlusChannel(int Channel) const
+{
+	if (!IsVrc6Plus() || Channel < 0 || Channel >= static_cast<int>(GetAvailableChannels()))
+		return false;
+	const int Chip = GetChipType(Channel);
+	return Chip == SNDCHIP_VRC6 || Chip == SNDCHIP_N163;
+}
+
+void CFamiTrackerDoc::UpdateChannelNames()
+{
+	// The tracker channels are the sound generator's, registered with the document: while it's VRC6 Plus, the
+	// N163's first four are the soft layer's
+	static const LPCTSTR SOFT[] = { _T("Soft 1"), _T("Soft 2"), _T("Soft 3"), _T("Soft 4") };
+	static const LPCTSTR NAMCO[] = { _T("Namco 1"), _T("Namco 2"), _T("Namco 3"), _T("Namco 4") };
+	static_assert(static_cast<int>(sizeof(SOFT) / sizeof(SOFT[0])) == ftapi::VRC6_PLUS_SOFT_CHANNELS, "a name for each soft channel");
+	if (theApp.GetSoundGenerator() == NULL)
+		return;		// its channels are gone with it
+	const bool Plus = IsVrc6Plus();
+	for (int i = 0; i < m_iRegisteredChannels && i < CHANNELS; ++i) {
+		if (m_pChannels[i] == NULL)
+			continue;
+		const int Id = m_pChannels[i]->GetID();
+		if (Id >= CHANID_N163_CHAN1 && Id < CHANID_N163_CHAN1 + ftapi::VRC6_PLUS_SOFT_CHANNELS)
+			m_pChannels[i]->SetChannelName((Plus ? SOFT : NAMCO)[Id - CHANID_N163_CHAN1]);
+	}
 }
 
 void CFamiTrackerDoc::ConvertSequence(stSequence *pOldSequence, CSequence *pNewSequence, int Type)

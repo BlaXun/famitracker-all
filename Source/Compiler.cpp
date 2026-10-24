@@ -1044,9 +1044,14 @@ bool CCompiler::CompileData()
 	// The mixer window's faders and pans are this FamiTracker's own: the driver plays the notes as written
 	ftapi::MixStore Mix = *m_pDocument->GetChannelMix();
 	Mix.KeepOnly(m_pDocument->GetModuleChannelIds());
-	if (!Mix.Empty())
+	if (!Mix.FadersDefault())
 		Print(_T(" * The mixer's levels and pans (View > Mixer) aren't in the NSF, which plays the notes as written; ")
 			_T("the mixer's Write into the notes puts them there\n"));
+	bool Depth = false;
+	for (int i = 0; i < ftapi::MIX_CHANNELS; ++i)
+		Depth = Depth || Mix.Soft(i) > 0 || Mix.Space(i) > 0;
+	if (Depth)
+		Print(_T(" * The mixer's Soft and Space (View > Mixer) are FamiTracker's own, so the NSF plays without them\n"));
 
 	// Driver size
 	m_iDriverSize = m_pDriverData->driver_size;
