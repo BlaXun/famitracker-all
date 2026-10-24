@@ -259,7 +259,7 @@ std::vector<WaveSound> MakeSounds()
 			{ 0.0, 0.08, 0.0, 0.15 }) }, WaveSteps(Steps({ { 0, 10 }, { 1, 10 } }), 0), Envelope(7, 0, 11, 0, 11, 10)));
 	{
 		// Struck every 12 frames, each strike a little softer down to a level it keeps striking, and after a release a fade,
-		// a moment's silence and a soft echo (Fearofdark's slow pads, snow-burn-ftm-01)
+		// a moment's silence and a soft echo, as the slow pads of atmospheric FamiTracker music do
 		const WaveSound Pulsing = Sound("pulsing pad", "struck pad, restruck pad, restrike pad, echo pad, throb pad, tremolo pad",
 			"a pad struck again every 12 frames, each strike softer (13, 11, then 10 again and again), with a soft echo after "
 			"a release: slow chords that keep moving",

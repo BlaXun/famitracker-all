@@ -847,7 +847,7 @@ properties** has a box for it.
   **quick pad**, in within 7 frames, for a chord every beat (the starter
   pads take 20-24 frames to swell); **pulsing pad**, struck again every 12
   frames, each strike softer down to one it repeats, with a soft echo after
-  a release (Fearofdark's slow pads); **music box**, a bright tine that
+  a release (the slow pads of atmospheric FamiTracker music); **music box**, a bright tine that
   mellows to a pure tone and is gone in 40 frames.
 - How loud they play at volume 15 against a 2A03 pulse at 15 (measured,
   with the soft layer's 4 channels): choir pad 8.3 dB under, string pad
