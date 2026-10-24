@@ -1237,6 +1237,23 @@ points are also in the files as `LOOPSTART`, `LOOPLENGTH` and `LOOPEND`
 comments (in samples), which RPG Maker and other engines read. A song that
 ends with a halt (`Cxx`) plays once, like a jingle.
 
+**Loudness** picks how loud the files come out, and is remembered:
+
+- "As loud as it goes (peak at -1 dB)", the default: each track is brought
+  up until its loudest peak is at -1 dBFS.
+- "Calm place (-22 LUFS)", "Most tracks (-20 LUFS)", "Action and bosses
+  (-19 LUFS)", or "Other..." with a number from -40 to -6: every track
+  exported (with All tracks, all of them) is brought to that loudness, as
+  EBU R128 measures its loop over both channels (the `loudness` of
+  `export_for_game`).
+
+Tracks at the same loudness sound equally loud in the game, one after
+another; tracks brought up to their loudest peak don't (a quiet track with
+one loud hit stays quiet). At a loudness, a track's loudest peak still stops
+at -1 dBFS: a track it holds back comes out a little quieter than the
+others, and the result says so (a lower loudness for all of them, or that
+peak softened, makes them match).
+
 The song has to be saved, since the files go next to it; files of the same
 names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
 files. Every channel is in the files, also the ones muted in the pattern

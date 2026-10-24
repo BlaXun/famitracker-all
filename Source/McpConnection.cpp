@@ -1493,7 +1493,8 @@ public:
 	}
 
 	// File > Export for games: the export_for_game tool, for the dialog
-	CString ExportForGames(bool All, double Quality, CWnd *pProgress)
+	// Loudness: the loudness in LUFS to bring every track to, or 0 for its loudest peak at -1 dBFS
+	CString ExportForGames(bool All, double Quality, double Loudness, CWnd *pProgress)
 	{
 		if (m_bBusy)
 			return _T("FamiTracker is busy with Claude Code; try again in a moment.");
@@ -1503,6 +1504,8 @@ public:
 		ftapi::Json Args = ftapi::Json::MakeObject();
 		Args.Set("tracks", All ? "all" : "this");
 		Args.Set("quality", Quality);
+		if (Loudness < 0.0)
+			Args.Set("loudness", Loudness);
 		ftapi::ToolResult Result;
 		try {
 			Result = m_Tools.Call("export_for_game", Args);
@@ -2520,6 +2523,7 @@ protected:
 	virtual void OnCancel();
 	afx_msg void OnExport();
 	afx_msg void OnCopy();
+	afx_msg void OnLoudnessChange();
 
 	DECLARE_MESSAGE_MAP()
 
@@ -2531,12 +2535,20 @@ private:
 BEGIN_MESSAGE_MAP(CGameExportDlg, CDialog)
 	ON_BN_CLICKED(IDC_GAME_EXPORT, OnExport)
 	ON_BN_CLICKED(IDC_GAME_COPY, OnCopy)
+	ON_CBN_SELCHANGE(IDC_GAME_LOUDNESS, OnLoudnessChange)
 END_MESSAGE_MAP()
 
 namespace {
 const TCHAR GAME_SECTION[] = _T("Game export");
 const double QUALITIES[] = { 0.3, 0.6, 0.9 };
 const LPCTSTR QUALITY_NAMES[] = { _T("Smaller files"), _T("Normal (for chiptunes)"), _T("Best") };
+// The loudness every track is brought to (LUFS, as export_for_game's loudness), or 0 for each one's loudest
+// peak at -1 dBFS; the last choice is a number of the user's (kept in tenths of a LUFS)
+const int LOUDNESS_CHOICES = 5, LOUDNESS_OTHER = 4;
+const double LOUDNESSES[] = { 0.0, -22.0, -20.0, -19.0 };
+const LPCTSTR LOUDNESS_NAMES[] = { _T("As loud as it goes (peak at -1 dB)"), _T("Calm place (-22 LUFS)"), _T("Most tracks (-20 LUFS)"),
+	_T("Action and bosses (-19 LUFS)"), _T("Other...") };
+const double LOUDEST = -6.0, QUIETEST = -40.0;	// the tool's range
 }
 
 BOOL CGameExportDlg::OnInitDialog()
@@ -2548,6 +2560,16 @@ BOOL CGameExportDlg::OnInitDialog()
 	for (int i = 0; i < 3; ++i)
 		pQuality->AddString(QUALITY_NAMES[i]);
 	pQuality->SetCurSel(std::max(0, std::min(2, static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Quality"), 1)))));
+	CComboBox *pLoudness = static_cast<CComboBox*>(GetDlgItem(IDC_GAME_LOUDNESS));
+	for (int i = 0; i < LOUDNESS_CHOICES; ++i)
+		pLoudness->AddString(LOUDNESS_NAMES[i]);
+	pLoudness->SetCurSel(std::max(0, std::min(LOUDNESS_CHOICES - 1, static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Loudness"), 0)))));
+	const int Tenths = std::max(static_cast<int>(QUIETEST * 10), std::min(static_cast<int>(LOUDEST * 10),
+		static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Other loudness"), -180)))));
+	CString Other;
+	Other.Format(Tenths % 10 == 0 ? _T("%.0f") : _T("%.1f"), Tenths / 10.0);
+	SetDlgItemText(IDC_GAME_LOUDNESS_OTHER, Other);
+	OnLoudnessChange();
 	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(static_cast<CFrameWnd*>(AfxGetMainWnd())->GetActiveDocument());
 	CString Text;
 	if (pDoc == NULL || pDoc->GetPathName().IsEmpty())
@@ -2561,21 +2583,49 @@ BOOL CGameExportDlg::OnInitDialog()
 	return TRUE;
 }
 
+// The number box beside the loudness, for Other... only
+void CGameExportDlg::OnLoudnessChange()
+{
+	const bool Other = static_cast<CComboBox*>(GetDlgItem(IDC_GAME_LOUDNESS))->GetCurSel() == LOUDNESS_OTHER;
+	GetDlgItem(IDC_GAME_LOUDNESS_OTHER)->EnableWindow(Other ? TRUE : FALSE);
+	GetDlgItem(IDC_GAME_LOUDNESS_UNIT)->EnableWindow(Other ? TRUE : FALSE);
+}
+
 void CGameExportDlg::OnExport()
 {
 	if (m_bWorking)
 		return;
-	m_bWorking = true;
 	const bool All = IsDlgButtonChecked(IDC_GAME_ALL) == BST_CHECKED;
 	const int Quality = std::max(0, static_cast<CComboBox*>(GetDlgItem(IDC_GAME_QUALITY))->GetCurSel());
+	const int Choice = std::max(0, std::min(LOUDNESS_CHOICES - 1, static_cast<CComboBox*>(GetDlgItem(IDC_GAME_LOUDNESS))->GetCurSel()));
+	double Loudness = Choice < LOUDNESS_OTHER ? LOUDNESSES[Choice] : 0.0;
+	if (Choice == LOUDNESS_OTHER) {
+		CString Typed;
+		GetDlgItemText(IDC_GAME_LOUDNESS_OTHER, Typed);
+		Typed.Trim();
+		Typed.Replace(_T(','), _T('.'));
+		LPTSTR pEnd = NULL;
+		Loudness = _tcstod(Typed, &pEnd);
+		if (Typed.IsEmpty() || pEnd == NULL || *pEnd != _T('\0') || !(Loudness >= QUIETEST && Loudness <= LOUDEST)) {
+			AfxMessageBox(_T("Type a loudness from -40 to -6 LUFS, like -18 (the higher, the louder)."), MB_ICONWARNING);
+			GetDlgItem(IDC_GAME_LOUDNESS_OTHER)->SetFocus();
+			return;
+		}
+		theApp.WriteProfileInt(GAME_SECTION, _T("Other loudness"), static_cast<int>(std::floor(Loudness * 10.0 + 0.5)));
+	}
+	m_bWorking = true;
 	theApp.WriteProfileInt(GAME_SECTION, _T("All tracks"), All ? 1 : 0);
 	theApp.WriteProfileInt(GAME_SECTION, _T("Quality"), Quality);
-	const int Buttons[] = { IDC_GAME_EXPORT, IDC_GAME_COPY, IDCANCEL, IDC_GAME_THIS, IDC_GAME_ALL, IDC_GAME_QUALITY };
-	for (int i = 0; i < 6; ++i)
+	theApp.WriteProfileInt(GAME_SECTION, _T("Loudness"), Choice);
+	const int Buttons[] = { IDC_GAME_EXPORT, IDC_GAME_COPY, IDCANCEL, IDC_GAME_THIS, IDC_GAME_ALL, IDC_GAME_QUALITY, IDC_GAME_LOUDNESS,
+		IDC_GAME_LOUDNESS_OTHER, IDC_GAME_LOUDNESS_UNIT };
+	const int Count = static_cast<int>(sizeof(Buttons) / sizeof(Buttons[0]));
+	for (int i = 0; i < Count; ++i)
 		GetDlgItem(Buttons[i])->EnableWindow(FALSE);
-	const CString Result = m_pLink->ExportForGames(All, QUALITIES[std::min(Quality, 2)], GetDlgItem(IDC_GAME_RESULT));
-	for (int i = 0; i < 6; ++i)
+	const CString Result = m_pLink->ExportForGames(All, QUALITIES[std::min(Quality, 2)], Loudness, GetDlgItem(IDC_GAME_RESULT));
+	for (int i = 0; i < Count; ++i)
 		GetDlgItem(Buttons[i])->EnableWindow(TRUE);
+	OnLoudnessChange();
 	SetDlgItemText(IDC_GAME_RESULT, Result);
 	m_bWorking = false;
 }

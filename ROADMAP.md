@@ -67,6 +67,11 @@ track, or all of them, as OGG files next to the song.
   (`audio_sound_loop_start` and `audio_sound_loop_end`, GameMaker 2023.2 and
   later), and the files carry `LOOPSTART`/`LOOPLENGTH` comments for other
   engines. A song that ends with a halt (`Cxx`) plays once, like a jingle.
+- The dialog's Loudness (remembered): each track's loudest peak at -1 dBFS,
+  as before, or every track brought to one loudness (-22 LUFS for calm
+  places, -20 for most tracks, -19 for action and bosses, or a number), so
+  the game's tracks sound equally loud; a peak that would pass -1 dBFS holds
+  a track back, and the result says so.
 
 ## 3. Sounds before settings
 

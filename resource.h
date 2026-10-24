@@ -728,6 +728,10 @@
 #define IDC_GAME_COPY                   1385
 #define IDC_GAME_EXPORT                 1386
 #define ID_FILE_EXPORTFORGAMES          33161
+#define IDC_GAME_LOUDNESS               1900
+#define IDC_GAME_LOUDNESS_OTHER         1901
+#define IDC_GAME_LOUDNESS_UNIT          1902
+#define IDC_GAME_LOUDNESS_HINT          1903
 
 // Edit > Sound effect from your voice (VoiceEffectDlg.cpp)
 #define IDD_VOICE_EFFECT                332

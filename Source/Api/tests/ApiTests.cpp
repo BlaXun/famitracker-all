@@ -8296,6 +8296,22 @@ void TestExport()
 		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.1, Held), 10.0, 1e-9) && !Held);	// the peak to -10 dBFS
 		CHECK(Near(LoudnessGain(-30.0, -20.0, 0.5, Held), -1.0 + 6.0206, 0.001) && Held);	// from -6 dBFS to -1
 		CHECK(Near(LoudnessGain(-14.0, -20.0, 0.9, Held), -6.0, 1e-9) && !Held);	// quieter: no peak holds that back
+		// A quiet loop with one loud chord: its peak holds it back, and the reply says what that means
+		{
+			FakeSong Peaky;
+			Peaky.Info.DirectChanges = true;
+			Peaky.Put(0, 0, "C-4", NO_INSTRUMENT, 1);
+			Peaky.Put(1, 0, "E-4", NO_INSTRUMENT, 15);
+			Peaky.Put(2, 0, "G-3");
+			Peaky.Put(5, 0, "C-5", NO_INSTRUMENT, 15);
+			for (int c : { 1, 2, 5 })
+				Peaky.End(c, 1);
+			ToolSet PeakyTools(Peaky);
+			const std::string HeldBack = PeakyTools.Call("export_for_game", Parse("{\"loudness\": -19.5}")).Text;
+			CHECK_HAS(HeldBack, "LU short of -19.5 LUFS, held back so its loudest peak stays at -1 dBFS");
+			CHECK_HAS(HeldBack, "\nOne track came out quieter than -19.5 LUFS: its loudest peak (a sharp hit or attack)");
+			CHECK_LACKS(PeakyTools.Call("export_for_game", Parse("{}")).Text, "came out quieter");
+		}
 		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).Text, "loudness");	// out of its range
 		CHECK(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).IsError);
 	}

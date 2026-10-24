@@ -12122,9 +12122,9 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
 // Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
-// Saved: the file's name is added once it's written
+// Saved: the file's name is added once it's written; HeldBack counts the tracks a peak kept under that loudness
 std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, double Loudness, std::vector<std::string> &Taken,
-	std::string &Code, std::vector<std::string> &Saved)
+	std::string &Code, std::vector<std::string> &Saved, int &HeldBack)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -12252,8 +12252,10 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (Loudness < 0.0 && Measured > -70.0) {
 		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
 			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
-		if (HeldByPeak)
-			Text += Format(": %.1f LU short of %.0f LUFS, where its loudest peak reaches -1 dBFS", Loudness - Measured - Raised, Loudness);
+		if (HeldByPeak) {
+			Text += Format(": %.1f LU short of %g LUFS, held back so its loudest peak stays at -1 dBFS", Loudness - Measured - Raised, Loudness);
+			++HeldBack;
+		}
 	}
 	else if (Loudness < 0.0)
 		Text += ", silent, so its level stayed";
@@ -12312,6 +12314,7 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	std::vector<std::string> Taken, Lines, Saved;
 	std::string Code;
 	std::string Error;
+	int HeldBack = 0;
 	for (size_t i = 0; i < Tracks.size(); ++i) {
 		if (Tracks[i] != Current) {
 			if (!S.Host().SelectTrack(Tracks[i], Error)) {
@@ -12322,7 +12325,7 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 		}
 		Session Track(S.Host());
 		try {
-			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code, Saved));
+			Lines.push_back(ExportTrack(Track, Tracks[i], Quality, Normalize, Loudness, Taken, Code, Saved, HeldBack));
 			const int Clicking = static_cast<int>(SongClicks(Track, 0, Track.Time.TotalRows()).size());
 			if (Clicking > 0)
 				Lines.push_back(Format("Track %d: %s on the 2A03's pulses %s in the files (a vibrato that takes the period across a "
@@ -12339,6 +12342,11 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	std::string Text = Format("Saved next to %s:", S.Song.FileName.c_str());
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += "\n- " + Lines[i];
+	if (HeldBack > 0)
+		Text += Format("\n%s quieter than %g LUFS: %s loudest peak (a sharp hit or attack) would have gone over -1 dBFS, so %s "
+			"a little quieter than the others in the game. A lower loudness for all of them, or that peak softened, makes them match.",
+			HeldBack == 1 ? "One track came out" : Format("%d tracks came out", HeldBack).c_str(), Loudness, HeldBack == 1 ? "its" : "their",
+			HeldBack == 1 ? "it sounds" : "they sound");
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty())
 		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
