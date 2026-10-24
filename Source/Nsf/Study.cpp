@@ -90,14 +90,21 @@ std::vector<int> ColumnKinds(const Module &M)
 		k.push_back(C_PULSE);
 		k.push_back(C_PULSE);
 	}
+	// In FamiTracker's order (ModuleChannelNames): the N163's past its count come last
 	if (M.Expansion & EXP_N163)
-		for (int i = 0; i < 8; ++i)
+		for (int i = 0; i < M.N163Channels && i < 8; ++i)
 			k.push_back(C_WAVE);
 	if (M.Expansion & EXP_FDS)
 		k.push_back(C_WAVE);
 	if (M.Expansion & EXP_VRC7)
 		for (int i = 0; i < 6; ++i)
 			k.push_back(C_FM);
+	if (M.Expansion & EXP_S5B)
+		for (int i = 0; i < 3; ++i)
+			k.push_back(C_WAVE);	// the 5B's squares: no duty to study
+	if (M.Expansion & EXP_N163)
+		for (int i = std::max(0, M.N163Channels); i < 8; ++i)
+			k.push_back(C_WAVE);
 	return k;
 }
 

@@ -273,9 +273,11 @@ Preset WithArpeggio(const Preset &Base, const std::vector<int> &Notes, int Frame
 	PresetSequence Arpeggio = Sequence(SEQUENCE_ARPEGGIO, std::vector<int>(), 0);
 	for (size_t i = 0; i < Notes.size(); ++i)
 		Arpeggio.Items.insert(Arpeggio.Items.end(), static_cast<size_t>(std::max(1, Frames)), Notes[i]);
-	std::vector<PresetSequence> *Lists[2] = { &P.Sequences2A03, &P.SequencesVRC6 };
-	for (int l = 0; l < 2; ++l) {
+	std::vector<PresetSequence> *Lists[3] = { &P.Sequences2A03, &P.SequencesVRC6, &P.Sequences5B };
+	for (int l = 0; l < 3; ++l) {
 		std::vector<PresetSequence> &List = *Lists[l];
+		if (l == 2 && List.empty())
+			continue;	// not a 5B sound: on the 5B it plays the 2A03's, arpeggio and all
 		for (size_t s = List.size(); s-- > 0; )
 			if (List[s].Type == SEQUENCE_ARPEGGIO)
 				List.erase(List.begin() + static_cast<std::ptrdiff_t>(s));
@@ -286,10 +288,159 @@ Preset WithArpeggio(const Preset &Base, const std::vector<int> &Notes, int Frame
 
 bool Preset::Releases() const
 {
-	for (size_t i = 0; i < Sequences2A03.size(); ++i)
-		if (Sequences2A03[i].Type == SEQUENCE_VOLUME)
-			return Sequences2A03[i].Release >= 0;
+	const std::vector<PresetSequence> &List = Sequences2A03.empty() ? Sequences5B : Sequences2A03;
+	for (size_t i = 0; i < List.size(); ++i)
+		if (List[i].Type == SEQUENCE_VOLUME)
+			return List[i].Release >= 0;
 	return false;
+}
+
+int Volume5B(int Volume)
+{
+	if (Volume <= 0)
+		return 0;
+	const double Steps = 15.0 + (20.0 / 3.0) * std::log10(std::min(15, Volume) / 15.0);
+	return std::max(1, std::min(15, static_cast<int>(std::floor(Steps + 0.5))));
+}
+
+std::vector<PresetSequence> Preset5BSequences(const Preset &Sound)
+{
+	if (!Sound.Sequences5B.empty())
+		return Sound.Sequences5B;
+	std::vector<PresetSequence> Out;
+	for (size_t i = 0; i < Sound.Sequences2A03.size(); ++i) {
+		PresetSequence S = Sound.Sequences2A03[i];
+		if (S.Type == SEQUENCE_DUTY)
+			continue;
+		if (S.Type == SEQUENCE_VOLUME)
+			for (size_t k = 0; k < S.Items.size(); ++k)
+				S.Items[k] = Volume5B(S.Items[k]);
+		Out.push_back(S);
+	}
+	return Out;
+}
+
+namespace {
+
+// A 5B sound: its volume envelope (3 dB a step), its noise / mode a frame at a
+// time (none: the square alone), an arpeggio or a pitch sequence
+Preset Sound5B(const char *Name, const char *Description, const std::vector<int> &Volume, int Release,
+	const std::vector<int> &Mode = std::vector<int>(), const std::vector<int> &Arpeggio = std::vector<int>())
+{
+	Preset P;
+	P.Name = Name;
+	P.Description = Description;
+	P.Drum = false;
+	P.Vrc7Patch = 0;
+	P.Sequences5B.push_back(Sequence(SEQUENCE_VOLUME, Volume, -1, Release));
+	if (!Arpeggio.empty())
+		P.Sequences5B.push_back(Sequence(SEQUENCE_ARPEGGIO, Arpeggio));
+	if (!Mode.empty())
+		P.Sequences5B.push_back(Sequence(SEQUENCE_DUTY, Mode));
+	return P;
+}
+
+std::vector<Preset> MakeSunsoft5BSounds()
+{
+	std::vector<Preset> All;
+	All.push_back(Sound5B("square lead", "plain, full square lead: strikes at full and holds 6 dB under it",
+		List({ 15, 15, 14, 14, 13, 11, 9, 7, 4, 0 }), 4));
+	Preset Singing = Sound5B("singing square", "the square lead with a gentle vibrato that comes in after a third of a second",
+		List({ 15, 15, 14, 14, 13, 11, 9, 7, 4, 0 }), 4);
+	int Loop;
+	PresetSequence Vibrato = Sequence(SEQUENCE_PITCH, VibratoItems(18, 1, 12, Loop));
+	Vibrato.Loop = Loop;
+	Singing.Sequences5B.push_back(Vibrato);
+	All.push_back(Singing);
+	Preset Pad = Sound5B("square pad", "soft square pad that swells in over a fifth of a second and holds, with a slow release",
+		List({ 8, 9, 10, 10, 11, 11, 12, 12, 12, 13, 12, 11, 10, 9, 8, 7, 5, 3, 0 }), 9);
+	PresetSequence Slow = Sequence(SEQUENCE_PITCH, VibratoItems(24, 1, 16, Loop));
+	Slow.Loop = Loop;
+	Pad.Sequences5B.push_back(Slow);
+	All.push_back(Pad);
+	All.push_back(Sound5B("square pluck", "plucked square that falls quickly to a level it holds (its notes don't vanish)",
+		List({ 15, 14, 13, 12, 12, 11, 11, 10, 8, 6, 3, 0 }), 7));
+	All.push_back(Sound5B("square bell", "bell: an octave blip on the strike, then a ring that settles low and holds",
+		List({ 15, 14, 13, 12, 12, 11, 11, 11, 10, 10, 10, 10, 9, 8, 6, 4, 0 }), 12, std::vector<int>(), List({ 12, 0 })));
+	All.push_back(Sound5B("buzz bass", "the 5B's buzz: its envelope as a falling saw at the note's pitch, no square; a strong, "
+		"bright bass. The envelope sets the level (the volume column doesn't change it; 0 silences it), and the chip has one: "
+		"play it on one channel at a time", List({ 15, 0 }), 0, List({ S5B_ENVELOPE })));
+	All.push_back(Sound5B("sync buzz", "the square and the envelope together: a hard, nasal buzz for a bass or a lead (the "
+		"envelope sets the level; one channel at a time)", List({ 15, 0 }), 0, List({ S5B_SQUARE | S5B_ENVELOPE })));
+	All.push_back(Sound5B("noise hat", "closed hi-hat: the noise at its highest pitch, gone in a few frames (any note plays it)",
+		List({ 13, 10, 7, 4, 1, 0 }), -1, List({ S5B_NOISE | 31 })));
+	All.push_back(Sound5B("noise crash", "crash: bright noise that rings out for most of a second (any note plays it)",
+		List({ 14, 13, 13, 12, 12, 11, 11, 11, 10, 10, 10, 9, 9, 9, 8, 8, 8, 7, 7, 6, 6, 5, 5, 4, 3, 2, 1, 0 }), -1,
+		List({ S5B_NOISE | 28 })));
+	All.push_back(Sound5B("noise snare", "snare: a square snap at the note's pitch, then noise",
+		List({ 15, 14, 13, 12, 11, 10, 9, 7, 5, 3, 0 }), -1,
+		List({ S5B_NOISE | S5B_SQUARE | 26, S5B_NOISE | 24, S5B_NOISE | 22, S5B_NOISE | 20 })));
+	All.push_back(Sound5B("square kick", "kick: a click, then a square that drops two octaves in a tenth of a second",
+		List({ 15, 15, 14, 13, 12, 10, 8, 5, 0 }), -1, List({ S5B_NOISE | S5B_SQUARE | 20, S5B_SQUARE }),
+		List({ 0, -4, -9, -14, -19, -24 })));
+	All.push_back(Sound5B("square tom", "tom: a square that drops a fifth as it fades (its pitch is the note's)",
+		List({ 15, 14, 13, 12, 11, 10, 8, 6, 3, 0 }), -1, std::vector<int>(), List({ 0, -1, -2, -3, -4, -5, -6, -7 })));
+	return All;
+}
+
+}	// namespace
+
+const std::vector<Preset> &Sunsoft5BSounds()
+{
+	static const std::vector<Preset> All = MakeSunsoft5BSounds();
+	return All;
+}
+
+const Preset *Find5BSound(const std::string &Name)
+{
+	static const char *const ALIASES[][2] = {
+		{ "lead", "square lead" }, { "square", "square lead" }, { "vibratosquare", "singing square" },
+		{ "pad", "square pad" }, { "softpad", "square pad" }, { "softsquarepad", "square pad" }, { "pluck", "square pluck" },
+		{ "bell", "square bell" }, { "chime", "square bell" }, { "buzz", "buzz bass" }, { "envelopebass", "buzz bass" },
+		{ "envelopebuzz", "buzz bass" }, { "buzzer", "buzz bass" }, { "sawbass", "buzz bass" }, { "sync", "sync buzz" },
+		{ "syncbass", "sync buzz" }, { "hat", "noise hat" }, { "hihat", "noise hat" }, { "closedhihat", "noise hat" },
+		{ "openhihat", "noise crash" }, { "crash", "noise crash" }, { "cymbal", "noise crash" }, { "snare", "noise snare" },
+		{ "snaredrum", "noise snare" }, { "clap", "noise snare" }, { "noise", "noise hat" }, { "kick", "square kick" },
+		{ "kickdrum", "square kick" }, { "bassdrum", "square kick" },
+		{ "tom", "square tom" }, { "toms", "square tom" },
+	};
+	const std::string Wanted = Simplified(Name);
+	if (Wanted.empty())
+		return 0;
+	const std::vector<Preset> &All = Sunsoft5BSounds();
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Simplified(All[i].Name) == Wanted)
+			return &All[i];
+	for (size_t a = 0; a < sizeof(ALIASES) / sizeof(ALIASES[0]); ++a) {
+		if (Wanted == ALIASES[a][0]) {
+			for (size_t i = 0; i < All.size(); ++i)
+				if (All[i].Name == ALIASES[a][1])
+					return &All[i];
+		}
+	}
+	return 0;
+}
+
+std::string Sound5BList()
+{
+	std::string Out;
+	const std::vector<Preset> &All = Sunsoft5BSounds();
+	for (size_t i = 0; i < All.size(); ++i)
+		Out += (i > 0 ? ", " : "") + All[i].Name;
+	return Out;
+}
+
+const Preset *FindSoundFor5B(const std::string &Name)
+{
+	const std::string Wanted = Simplified(Name);
+	const Preset *pOwn = Find5BSound(Name), *pPreset = FindPreset(Name);
+	if (pPreset != 0 && pPreset->Drum)
+		pPreset = 0;
+	if (pOwn != 0 && Simplified(pOwn->Name) == Wanted)
+		return pOwn;
+	if (pPreset != 0 && Simplified(pPreset->Name) == Wanted)
+		return pPreset;
+	return pOwn != 0 ? pOwn : pPreset;
 }
 
 std::string Preset::InstrumentName(bool Sawtooth) const
@@ -715,7 +866,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	}
 	static const char *const DUTIES[] = { "12.5%", "25%", "50%", "75%" };
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
-	const bool Pulse = Wave != "sawtooth" && Wave != "triangle";
+	const bool Pulse = Wave != "sawtooth" && Wave != "triangle" && Wave != "square";	// "square": the 5B's
 	std::string Out;
 	if (Wave == "triangle") {
 		// No volume: the envelope only starts the note and stops it at silence
@@ -728,7 +879,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	}
 	else {
 		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Wave == "noise" ? "noise envelope" : Pulse ?
-			(std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() :
+			(std::string(DUTIES[Clamp(D.Duty, 0, 3)]) + " pulse").c_str() : Wave == "square" ? "5B square (its levels as on a pulse)" :
 			"sawtooth", D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() :
 			"reaches", Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" :
 			(std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());

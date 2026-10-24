@@ -404,8 +404,8 @@ Reference MakeFtmReference(const nsf::Module &M, int Track, const nsf::TrackStud
 	R.Id = Slug(R.Game, "module") + "-ftm" + (M.Tracks.size() > 1 ? Format("-%02d", R.Track) : std::string());
 	R.Source = Source;
 	R.Added = Date;
-	static const char *const NAMES[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163" };
-	for (int i = 0; i < 5; ++i)
+	static const char *const NAMES[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };
+	for (int i = 0; i < 6; ++i)
 		if (M.Expansion & (1 << i))
 			R.Chips += (R.Chips.empty() ? "" : ", ") + std::string(NAMES[i]);
 	R.Bpm = Study.Bpm;

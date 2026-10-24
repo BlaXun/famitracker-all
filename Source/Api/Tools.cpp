@@ -338,12 +338,12 @@ bool IsBass(const ChannelInfo &Channel)
 	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_SAWTOOTH;
 }
 
-// The triangle and the VRC7 sound an octave below what's written (the VRC7's
-// A-3 is 220 Hz, a pulse's 440): a pitch that sounds as Sounding does on a
-// pulse, as written on Channel
+// The triangle, the VRC7 and the 5B sound an octave below what's written (the
+// VRC7's A-3 is 220 Hz, a pulse's 440): a pitch that sounds as Sounding does on
+// a pulse, as written on Channel
 int Written(const ChannelInfo &Channel, int Sounding)
 {
-	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_FM ? Sounding + 12 : Sounding;
+	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_FM || Channel.Kind == KIND_SQUARE ? Sounding + 12 : Sounding;
 }
 
 // A note written on one channel, as written on another to sound the same
@@ -363,10 +363,56 @@ std::string InstrumentChip(const ChannelInfo &Channel)
 	return Channel.Chip == "MMC5" ? "2A03" : Channel.Chip;
 }
 
+// The expansion chips the song has on ("VRC6", "N163", "5B"), as SongInfo::Expansion names them
+std::vector<std::string> SongChips(const SongInfo &Song)
+{
+	std::vector<std::string> Out;
+	size_t From = 0;
+	while (From < Song.Expansion.size()) {
+		size_t Comma = Song.Expansion.find(',', From);
+		if (Comma == std::string::npos)
+			Comma = Song.Expansion.size();
+		const std::string Chip = Trim(Song.Expansion.substr(From, Comma - From));
+		if (!Chip.empty())
+			Out.push_back(Chip);
+		From = Comma + 1;
+	}
+	return Out;
+}
+
+bool HasChip(const SongInfo &Song, const std::string &Chip)
+{
+	const std::vector<std::string> Chips = SongChips(Song);
+	return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end();
+}
+
+// A chip as asked for ("vrc6", "Sunsoft 5B", "namco"), named as the tools name it ("VRC6", "5B", "N163")
+std::string ChipWord(const std::string &Asked)
+{
+	std::string Chip;
+	for (size_t i = 0; i < Asked.size(); ++i)
+		if (std::isalnum(static_cast<unsigned char>(Asked[i])))
+			Chip += static_cast<char>(std::toupper(static_cast<unsigned char>(Asked[i])));
+	if (Chip == "S5B" || Chip == "SUNSOFT" || Chip == "SUNSOFT5B" || Chip == "FME7")
+		return "5B";
+	if (Chip == "NAMCO" || Chip == "NAMCO163" || Chip == "N106" || Chip == "NAMCO106")
+		return "N163";
+	if (Chip == "NES" || Chip == "RP2A03")
+		return "2A03";
+	return Chip;
+}
+
 // How loud a channel plays at a volume, in dB against a 2A03 pulse at 15, as FamiTracker renders
 // it (measured): the VRC7's sounds about 5 dB louder at 15, each volume step 3 dB softer; the
-// N163's wave sounds about 8 dB quieter; everything else in proportion to the volume
-const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0;
+// 5B's square as loud as a pulse at 15 (0.4 dB louder), each step 3 dB softer too; the N163's
+// wave sounds about 8 dB quieter; everything else in proportion to the volume
+const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, S5B_FULL_DB = 0.4, S5B_STEP_DB = 3.0, N163_FULL_DB = -8.0;
+
+// The channels whose volume counts in steps of 3 dB, the VRC7's and the 5B's, not in proportion to it
+bool StepVolume(const ChannelInfo &Channel)
+{
+	return Channel.Kind == KIND_FM || Channel.Kind == KIND_SQUARE;
+}
 
 double LevelDb(const ChannelInfo &Channel, int Volume)
 {
@@ -374,6 +420,8 @@ double LevelDb(const ChannelInfo &Channel, int Volume)
 		return -60.0;
 	if (Channel.Kind == KIND_FM)
 		return FM_FULL_DB - FM_STEP_DB * (15 - std::min(15, Volume));
+	if (Channel.Kind == KIND_SQUARE)
+		return S5B_FULL_DB - S5B_STEP_DB * (15 - std::min(15, Volume));
 	return (Channel.Chip == "N163" ? N163_FULL_DB : 0.0) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
 }
 
@@ -383,6 +431,8 @@ int VolumeForDb(const ChannelInfo &Channel, double Db)
 	double Volume;
 	if (Channel.Kind == KIND_FM)
 		Volume = 15.0 - (FM_FULL_DB - Db) / FM_STEP_DB;
+	else if (Channel.Kind == KIND_SQUARE)
+		Volume = 15.0 - (S5B_FULL_DB - Db) / S5B_STEP_DB;
 	else
 		Volume = 15.0 * std::pow(10.0, (Db - (Channel.Chip == "N163" ? N163_FULL_DB : 0.0)) / 20.0);
 	return std::max(1, std::min(15, static_cast<int>(std::floor(Volume + 1e-9 + 0.5))));
@@ -395,8 +445,8 @@ int MatchVolume(const ChannelInfo &From, int Volume, double Ratio, const Channel
 	return VolumeForDb(To, LevelDb(From, Volume) + 20.0 * std::log10(std::max(0.01, Ratio)));
 }
 
-// A part's default volume on a channel, given as on a pulse: the same, but nearer 15 on the VRC7,
-// whose steps are 3 dB each
+// A part's default volume on a channel, given as on a pulse: the same, but nearer 15 on the VRC7
+// and the 5B, whose steps are 3 dB each
 int PartVolume(const ChannelInfo &Channel, int Volume)
 {
 	return MatchVolume(Channel, 15, Volume / 15.0, Channel);
@@ -459,6 +509,30 @@ int PlayedVolume(int Column, int Envelope)
 	return std::max(1, Column * Envelope / 15);
 }
 
+// The same on a channel: on the 5B, as CChannelHandlerS5B works it out, the volume column's steps
+// under 15 and the envelope's add up (each 3 dB), and it's silent at 0
+int PlayedVolume(const ChannelInfo &Channel, int Column, int Envelope)
+{
+	if (Channel.Kind != KIND_SQUARE)
+		return PlayedVolume(Column, Envelope);
+	if (Column <= 0 || Envelope <= 0)
+		return 0;
+	return std::max(0, std::min(15, Column + Envelope - 15));
+}
+
+// How loud a note plays a frame, for comparing frames (HeardFrames, Vanishes): PlayedVolume's, and
+// with a 5B instrument the 5B's as a pulse's volume (in proportion to how loud), at least 1 while
+// it sounds
+int HeardVolume(const InstrumentInfo *pInfo, int Column, int Envelope)
+{
+	if (pInfo == 0 || pInfo->Chip != "5B")
+		return PlayedVolume(Column, Envelope);
+	if (Column <= 0 || Envelope <= 0 || Column + Envelope - 15 <= 0)
+		return 0;
+	const int Steps = 15 - std::min(15, Column + Envelope - 15);
+	return std::max(1, static_cast<int>(std::floor(15.0 * std::pow(10.0, -S5B_STEP_DB * Steps / 20.0) + 0.5)));
+}
+
 // Notes that vanish. A note heard for VANISH_FRAMES or fewer (what it plays falls under a sixth of the loudest it got, or
 // to silence) and over two frames or more before the next comes out as a blip: beside notes of its line that hold
 // (HOLD_FRAMES or more) it sounds like a missing note, a tick in its place. A user heard it at once in a tune that went
@@ -470,10 +544,11 @@ const int VANISH_FRAMES = 4, HOLD_FRAMES = 8;
 // long (or never sounds)
 int HeardFrames(const SongInfo &Song, const NoteInfo &N, int Limit)
 {
-	const std::vector<int> Envelope = HeldEnvelope(FindInstrument(Song, N.Instrument), Limit);
+	const InstrumentInfo *pInfo = FindInstrument(Song, N.Instrument);
+	const std::vector<int> Envelope = HeldEnvelope(pInfo, Limit);
 	int Peak = 0;
 	for (int f = 0; f < Limit; ++f) {
-		const int Level = PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]);
+		const int Level = HeardVolume(pInfo, N.Volume, Envelope[static_cast<size_t>(f)]);
 		if (Level > Peak)
 			Peak = Level;
 		else if (Peak > 0 && (Level == 0 || Level * 6 < Peak))
@@ -667,15 +742,19 @@ int ParseChannel(const Session &S, const Json &Value, const char *Name)
 			for (size_t a = 0; a < sizeof(ALIASES) / sizeof(ALIASES[0]); ++a)
 				if (Text == ALIASES[a][0])
 					Alias = ALIASES[a][1];
-			for (int Pass = 0; Pass < 2 && Number == 0; ++Pass) {
-				for (int c = 0; c < S.ChannelCount(); ++c) {
-					std::string Full = Lowercase(Pass == 0 ? S.Channel(c).FullName() : S.Channel(c).Name), Squeezed;
-					for (size_t i = 0; i < Full.size(); ++i)
-						if (Full[i] != ' ' && Full[i] != '-' && Full[i] != '_')
-							Squeezed += Full[i];
-					if (Squeezed == Text || Squeezed == Alias) {
-						Number = c + 1;
-						break;
+			// A channel's own name before a word for one: "Square 1" is the 5B's in a 5B song, else the first pulse
+			for (int Try = 0; Try < 2 && Number == 0; ++Try) {
+				const std::string &Wanted = Try == 0 ? Text : Alias;
+				for (int Pass = 0; Pass < 2 && Number == 0; ++Pass) {
+					for (int c = 0; c < S.ChannelCount(); ++c) {
+						std::string Full = Lowercase(Pass == 0 ? S.Channel(c).FullName() : S.Channel(c).Name), Squeezed;
+						for (size_t i = 0; i < Full.size(); ++i)
+							if (Full[i] != ' ' && Full[i] != '-' && Full[i] != '_')
+								Squeezed += Full[i];
+						if (Squeezed == Wanted) {
+							Number = c + 1;
+							break;
+						}
 					}
 				}
 			}
@@ -871,6 +950,24 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			return Index;
 		}
 	}
+	// 5B channels play the chip's own sounds (a buzz bass, a noise hat) and the presets, made for it
+	if (Chip == "5B") {
+		const Preset *pSound = FindSoundFor5B(Wanted);
+		if (pSound != 0 && pWrongChip != 0 && Squeezed(pSound->Name) != Squeezed(Wanted))
+			pSound = 0;	// the song's instrument of that name was meant
+		if (pSound != 0) {
+			const size_t Before = S.Song.Instruments.size();
+			std::string Error;
+			const int Index = S.Host().AddInstrument(*pSound, Chip, false, Error);
+			if (Index < 0)
+				throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+			S.Refresh();
+			if (S.Song.Instruments.size() > Before)
+				S.Remarks.push_back(Format("Added the instrument %s (5B: %s).", InstrumentLabel(S.Song, Index).c_str(),
+					pSound->Description.c_str()));
+			return Index;
+		}
+	}
 	// N163 channels play wave sounds drawn for them (a preset's name picks the one most like it)
 	if (Chip == "N163") {
 		const WaveSound *pSound = FindWaveSound(Wanted);
@@ -893,7 +990,7 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 		if (!pPreset->Drum && Info.Kind == KIND_NOISE)
 			throw Problem(Format("The noise channel needs a drum preset (kick, snare, hi-hat, open hi-hat), not \"%s\".", pPreset->Name.c_str()));
 		if (Chip != "2A03" && Chip != "VRC6")
-			throw Problem(Format("Presets are for 2A03, MMC5, VRC6 and VRC7 channels; %s needs one of the song's %s instruments.",
+			throw Problem(Format("Presets are for 2A03, MMC5, VRC6, VRC7 and 5B channels; %s needs one of the song's %s instruments.",
 				Info.FullName().c_str(), Chip.c_str()));
 		const size_t Before = S.Song.Instruments.size();
 		std::string Error;
@@ -938,6 +1035,9 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 	if (Chip == "N163")
 		throw Problem(Format("No instrument or N163 sound called \"%s\". N163 instruments in the song: %s. N163 sounds: %s.",
 			Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), WaveSoundList().c_str()));
+	if (Chip == "5B")
+		throw Problem(Format("No instrument, 5B sound or preset called \"%s\". 5B instruments in the song: %s. 5B sounds: %s; "
+			"presets: %s.", Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), Sound5BList().c_str(), PresetList().c_str()));
 	throw Problem(Format("No instrument or preset called \"%s\". %s instruments in the song: %s. Presets: %s.", Wanted.c_str(),
 		Chip.c_str(), Names.empty() ? "none" : Names.c_str(), PresetList().c_str()));
 }
@@ -1700,8 +1800,10 @@ std::string SongOverview(Session &S, const Json &Args)
 	if (Song.Playing && Song.PlayRow >= 0)
 		Text += "Playing, now at " + T.Position(Song.PlayRow) + ".\n";
 	Text += "Instrument presets: " + PresetList() + ".";
-	if (Song.Expansion == "N163")
+	if (HasChip(Song, "N163"))
 		Text += " N163 sounds (for the Namco channels): " + WaveSoundList() + ".";
+	if (HasChip(Song, "5B"))
+		Text += " 5B sounds (the presets play there too; its notes sound an octave under the note written): " + Sound5BList() + ".";
 	return Text;
 }
 
@@ -2056,9 +2158,7 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
 	}
 	else if (Arg(Args, "chip") != 0) {
-		Chip = StringArg(Args, "chip");
-		for (size_t i = 0; i < Chip.size(); ++i)
-			Chip[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(Chip[i])));
+		Chip = ChipWord(StringArg(Args, "chip"));
 		if (Chip == "MMC5")
 			Chip = "2A03";
 	}
@@ -2082,9 +2182,28 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 			pPatch->Description.c_str());
 	}
 
+	// The 5B plays its own sounds and the presets, made for it
+	if (Chip == "5B") {
+		if (!HasChip(S.Song, "5B"))
+			throw Problem("This song has no 5B channels; set_expansion turns the Sunsoft 5B on.");
+		const Preset *pSound = FindSoundFor5B(Name);
+		if (pSound == 0)
+			throw Problem(Format("No 5B sound or preset called \"%s\". 5B sounds: %s; presets: %s (not the drums, which are the "
+				"noise channel's: the 5B has its own).", Name.c_str(), Sound5BList().c_str(), PresetList().c_str()));
+		const size_t Before = S.Song.Instruments.size();
+		std::string Error;
+		const int Index = S.Host().AddInstrument(*pSound, Chip, false, Error);
+		if (Index < 0)
+			throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+		S.Refresh();
+		return Format("%s %s (5B instrument: %s). Use it by that name in write_notes or set_instrument; its notes sound an octave "
+			"under the note written.", S.Song.Instruments.size() > Before ? "Added" : "The song already has",
+			InstrumentLabel(S.Song, Index).c_str(), pSound->Description.c_str());
+	}
+
 	// The N163 plays wave sounds drawn for it
 	if (Chip == "N163") {
-		if (S.Song.Expansion != "N163")
+		if (!HasChip(S.Song, "N163"))
 			throw Problem("This song has no N163 channels; set_expansion switches it to the N163.");
 		const WaveSound *pSound = FindWaveSound(Name);
 		if (pSound == 0)
@@ -2104,7 +2223,7 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 	if (Channel >= 0 && pPreset->Drum && S.Channel(Channel).Kind != KIND_NOISE)
 		throw Problem(Format("\"%s\" is a drum for the noise channel.", pPreset->Name.c_str()));
 	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels), the VRC6 and the VRC7.");
+		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels), the VRC6, the VRC7 and the 5B.");
 	if (pPreset->Drum)
 		Chip = "2A03";
 	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
@@ -2385,18 +2504,18 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 			throw Problem("The DPCM channel plays samples; design_instrument makes sounds for the other channels.");
 	}
 	else if (Arg(Args, "chip") != 0) {
-		Chip = StringArg(Args, "chip");
-		for (size_t i = 0; i < Chip.size(); ++i)
-			Chip[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(Chip[i])));
+		Chip = ChipWord(StringArg(Args, "chip"));
 		if (Chip == "MMC5")
 			Chip = "2A03";
 	}
 	if (Chip == "VRC7")
 		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
-	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("design_instrument makes sounds for 2A03 (and MMC5) and VRC6 channels.");
-	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "5B")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5), VRC6 and 5B channels.");
+	if (Chip == "VRC6" && !HasChip(S.Song, "VRC6"))
 		throw Problem("This song has no VRC6 channels.");
+	if (Chip == "5B" && !HasChip(S.Song, "5B"))
+		throw Problem("This song has no 5B channels.");
 
 	SoundDesign D;
 	const std::string Kind = StringArg(Args, "kind");
@@ -2410,7 +2529,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	else
 		DesignOfKind(Low ? "bass" : "lead", D);
 	if (D.Drum && Arg(Args, "channel") != 0 && !Noise)
-		throw Problem("A drum is for the noise channel.");
+		throw Problem(Chip == "5B" ? "A drum is for the noise channel; on the 5B, add_instrument has the chip's own: " + Sound5BList() +
+			"." : std::string("A drum is for the noise channel."));
 	if (D.Drum) {
 		Chip = "2A03";
 		Sawtooth = false;
@@ -2550,10 +2670,13 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	std::string Without;
 	for (size_t i = 0; i < Dropped.size(); ++i)
 		Without += (i == 0 ? "" : i + 1 == Dropped.size() ? " or " : ", ") + Dropped[i];
+	const bool Square = Chip == "5B";
 	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate,
-		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : "pulse") +
+		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : Square ? "square" : "pulse") +
 		(Without.empty() ? std::string() : " (without the " + Without + " asked for: on the noise they'd make it warble or ring "
-			"metallic)") + "." + (D.Drum || Triangle || Noise ? std::string() : VanishRemark(S.Song, Index)) +
+			"metallic)") + "." + (Square && (Arg(Args, "duty") != 0 || Arg(Args, "duty_motion") != 0 || D.Click) ?
+			" The 5B's square is always 50%, so it plays without the duty." : "") +
+		(D.Drum || Triangle || Noise ? std::string() : VanishRemark(S.Song, Index)) +
 		" Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
 
@@ -3746,13 +3869,28 @@ int FreeChannel(Session &S, int First, int End, int Avoid, bool (*Fits)(const Ch
 bool IsChordChannel(const ChannelInfo &Channel)
 {
 	return (Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5")) ||
-		Channel.Kind == KIND_FM;
+		Channel.Kind == KIND_FM || Channel.Kind == KIND_SQUARE;
 }
 
-// A channel for lush chords: a pulse whose instruments can have arpeggios
+// A channel for lush chords: a pulse or 5B square whose instruments can have arpeggios
 bool IsLushChordChannel(const ChannelInfo &Channel)
 {
-	return Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5");
+	return (Channel.Kind == KIND_PULSE && (Channel.Chip == "2A03" || Channel.Chip == "VRC6" || Channel.Chip == "MMC5")) ||
+		Channel.Kind == KIND_SQUARE;
+}
+
+// The kinds of channel that voice chords together, in the order they're tried: the VRC7's, the
+// N163's, the 5B's, then the pulses
+const int CHORD_GROUPS = 4;
+
+bool InChordGroup(const ChannelInfo &Info, int Group)
+{
+	switch (Group) {
+	case 0: return Info.Kind == KIND_FM;
+	case 1: return Info.Chip == "N163";
+	case 2: return Info.Kind == KIND_SQUARE;
+	default: return Info.Kind == KIND_PULSE && IsLushChordChannel(Info);
+	}
 }
 
 bool IsBassChannel(const ChannelInfo &Channel)
@@ -3817,16 +3955,16 @@ int UsualInstrument(const std::vector<NoteInfo> &Notes)
 	return Best;
 }
 
-// Voiced chords: two to four channels of one kind (FM, N163 or pulses) beside
+// Voiced chords: two to four channels of one kind (FM, N163, 5B or pulses) beside
 // the melody, not an echo of it, whose notes there mostly start together; empty if none
 std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody)
 {
-	for (int Group = 0; Group < 3; ++Group) {
+	for (int Group = 0; Group < CHORD_GROUPS; ++Group) {
 		std::vector<int> Channels;
 		std::vector<std::set<int> > Starts;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			const ChannelInfo &Info = S.Channel(c);
-			const bool Fits = Group == 0 ? Info.Kind == KIND_FM : Group == 1 ? Info.Chip == "N163" : IsLushChordChannel(Info);
+			const bool Fits = InChordGroup(Info, Group);
 			if (!Fits || c == Melody || (Melody >= 0 && EchoDelayOf(S, c, Melody, First, End) > 0))
 				continue;
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
@@ -4099,10 +4237,10 @@ void LushInstruments(Session &S, int Channel, const std::string &Sound, int Patt
 	const std::string Chip = InstrumentChip(S.Channel(Channel));
 	const std::string ChannelName = S.Channel(Channel).FullName();
 	const bool Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
-	if (Chip != "2A03" && Chip != "VRC6")
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "5B")
 		throw Problem(Format("Lush chords are instruments with arpeggios, which %s can't play; give them a pulse channel "
-			"(2A03, MMC5 or VRC6), or choose another chord_style.", ChannelName.c_str()));
-	const Preset *pSound = FindPreset(Sound);
+			"(2A03, MMC5 or VRC6) or a 5B channel, or choose another chord_style.", ChannelName.c_str()));
+	const Preset *pSound = Chip == "5B" ? FindSoundFor5B(Sound) : FindPreset(Sound);
 	if (pSound == 0 || pSound->Drum)
 		throw Problem(Format("Lush chords are made from a preset's sound (lush chords, soft chords, pluck, bell, warm pad...); "
 			"\"%s\" isn't one.", Sound.c_str()));
@@ -4153,12 +4291,15 @@ bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern,
 		pSound = FindPreset("lush chords");
 		return pSound != 0;
 	}
-	const std::vector<Preset> &All = Presets();
-	for (size_t i = 0; i < All.size(); ++i) {
-		const std::string Prefix = Lowercase(All[i].Name) + " ";
-		if (!All[i].Drum && Rest.size() > Prefix.size() && Rest.compare(0, Prefix.size(), Prefix) == 0) {
-			pSound = &All[i];
-			return true;
+	const std::vector<Preset> *const LISTS[] = { &Presets(), &Sunsoft5BSounds() };	// a 5B sound's too
+	for (size_t l = 0; l < 2; ++l) {
+		const std::vector<Preset> &All = *LISTS[l];
+		for (size_t i = 0; i < All.size(); ++i) {
+			const std::string Prefix = Lowercase(All[i].Name) + " ";
+			if (!All[i].Drum && Rest.size() > Prefix.size() && Rest.compare(0, Prefix.size(), Prefix) == 0) {
+				pSound = &All[i];
+				return true;
+			}
 		}
 	}
 	return false;
@@ -4172,7 +4313,7 @@ bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern,
 int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, const Key &FromKey, const Key &ToKey, int &Unknown)
 {
 	const std::string Chip = InstrumentChip(S.Channel(Channel));
-	if (Chip != "2A03" && Chip != "VRC6")
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "5B")
 		return 0;
 	const std::vector<Cell> Old = S.Cells(Channel);
 	std::vector<Cell> &Cells = D.Cells(Channel);
@@ -4486,11 +4627,11 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		}
 		else if (pVoices == 0) {
 			// Free channels, or the one whose chords these replace
-			for (int Group = 0; Group < 3 && VoiceChannels.size() < 2; ++Group) {
+			for (int Group = 0; Group < CHORD_GROUPS && VoiceChannels.size() < 2; ++Group) {
 				VoiceChannels.clear();
 				for (int c = 0; c < S.ChannelCount() && VoiceChannels.size() < 3; ++c) {
 					const ChannelInfo &Info = S.Channel(c);
-					const bool Fits = Group == 0 ? Info.Kind == KIND_FM : Group == 1 ? Info.Chip == "N163" : IsLushChordChannel(Info);
+					const bool Fits = InChordGroup(Info, Group);
 					if (Fits && c != Melody && (c == OldChords || !HasNotesIn(S, c, First, End)))
 						VoiceChannels.push_back(c);
 				}
@@ -4503,7 +4644,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		}
 	}
 	const int ChordChannel = Style == CHORDS_VOICES ? (VoiceChannels.empty() ? -1 : VoiceChannels[0]) :
-		Style == CHORDS_LUSH ? Pick("chord_channel", IsLushChordChannel, "a 2A03, MMC5 or VRC6 pulse channel", OldChords) :
+		Style == CHORDS_LUSH ? Pick("chord_channel", IsLushChordChannel, "a 2A03, MMC5 or VRC6 pulse channel or a 5B channel", OldChords) :
 		Pick("chord_channel", IsChordChannel, "a pulse channel", OldChords);
 	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth", OldBass);
 	if (ChordChannel < 0 && BassChannel < 0)
@@ -4937,10 +5078,10 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem("The echo is already there.");
-	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter), the number written differs
+	// Where a chip counts volume otherwise (the VRC7 and the 5B in 3 dB steps, the N163 quieter), the number written differs
 	std::string Level = Format("at volume %d", Plan.Volume);
 	const ChannelInfo &Source = S.Channel(Plan.Source), &Target = S.Channel(Plan.Target);
-	if (Source.Kind == KIND_FM || Target.Kind == KIND_FM || Source.Chip == "N163" || Target.Chip == "N163") {
+	if (StepVolume(Source) || StepVolume(Target) || Source.Chip == "N163" || Target.Chip == "N163") {
 		int Loudest = 0;
 		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
 		for (size_t i = 0; i < Played.size(); ++i)
@@ -5329,15 +5470,16 @@ std::string MixTool(Session &S, const Json &Args)
 		Most = std::max(Most, Over);
 		P.Target = AsPulse;
 	}
-	bool Fm = false, Quiet = false;
+	bool Fm = false, Square = false, Quiet = false;
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
 		if (P.Target < 1)
 			continue;
 		const ChannelInfo &Info = S.Channel(P.Channel);
-		if (Info.Kind == KIND_FM || Info.Chip == "N163") {
+		if (StepVolume(Info) || Info.Chip == "N163") {
 			P.Target = VolumeForDb(Info, P.Level - Short[Info.Chip]);
 			Fm = Fm || Info.Kind == KIND_FM;
+			Square = Square || Info.Kind == KIND_SQUARE;
 			Quiet = Quiet || Info.Chip == "N163";
 		}
 	}
@@ -5405,8 +5547,9 @@ std::string MixTool(Session &S, const Json &Args)
 		int Loudest = 0, Column = 0, Envelope = 15;
 		auto Count = [&](int Volume, int Instrument) {
 			const int Peak = Fm ? 15 : EnvelopePeak(FindInstrument(S.Song, Instrument));
-			if (PlayedVolume(Volume, Peak) > Loudest || (PlayedVolume(Volume, Peak) == Loudest && Volume > Column)) {
-				Loudest = PlayedVolume(Volume, Peak);
+			const int Played = PlayedVolume(S.Channel(c), Volume, Peak);
+			if (Played > Loudest || (Played == Loudest && Volume > Column)) {
+				Loudest = Played;
 				Column = Volume;
 				Envelope = Peak;
 			}
@@ -5429,7 +5572,7 @@ std::string MixTool(Session &S, const Json &Args)
 			continue;
 		}
 		std::vector<Cell> &Cells = D.Cells(c);
-		// Each volume as much under the loudest as it was (the VRC7 counts 3 dB a step, the others in proportion)
+		// Each volume as much under the loudest as it was (the VRC7 and the 5B count 3 dB a step, the others in proportion)
 		const ChannelInfo &Info = S.Channel(c);
 		const double Shift = LevelDb(Info, Want) - LevelDb(Info, Loudest);
 		auto Scaled = [&](int Volume) {
@@ -5448,7 +5591,7 @@ std::string MixTool(Session &S, const Json &Args)
 		}
 		// Volume slides keep their shape at the new level
 		const SlideMix Slides = MixSlides(S.Cells(c), Cells, P.First, P.End, S.Channel(c).EffectColumns, Frames,
-			std::pow(10.0, Shift / 20.0), Shift / FM_STEP_DB, Fm);
+			std::pow(10.0, Shift / 20.0), Shift / FM_STEP_DB, StepVolume(Info));
 		SlidesLost += Slides.Lost;
 		std::string Also;
 		if (Slides.Scaled > 0)
@@ -5458,7 +5601,8 @@ std::string MixTool(Session &S, const Json &Args)
 				Slides.Stopped == 1 ? "it would" : "they would");
 		// An envelope that peaks under 15 can keep a part under its level, its volume at 15
 		if (LevelDb(Info, Column) + Shift > LevelDb(Info, 15) + 1.0)
-			Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Envelope, PlayedVolume(15, Envelope));
+			Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Envelope,
+				PlayedVolume(Info, 15, Envelope));
 		Done.push_back(Format("%s loudest %d to %d%s", Label.c_str(), Loudest, Want, Also.c_str()));
 	}
 
@@ -5542,6 +5686,9 @@ std::string MixTool(Session &S, const Json &Args)
 	if (Fm && !Style.empty())
 		Text += " The VRC7 plays louder than the pulses and counts its volume in steps of 3 dB, so its parts sit nearer 15 "
 			"for the same balance (9 there is 18 dB under 15).";
+	if (Square && !Style.empty())
+		Text += " The 5B counts its volume in steps of 3 dB, so its parts sit nearer 15 for the same balance (9 there is 18 dB "
+			"under 15).";
 	if (Quiet && !Style.empty())
 		Text += " The N163's wave sounds play quieter than the pulses, so its parts sit nearer 15 for the same balance.";
 	return WithRemarks(S, Text, Warnings);
@@ -5916,8 +6063,8 @@ int Accents(Session &S, Draft &D, int Channel, int First, int End)
 			continue;
 		const int InBar = N.Row - S.Time.BarStart(S.Time.BarOf(N.Row));
 		int Softer = InBar == 0 ? 0 : InBar % R == 0 ? 1 : (2 * InBar) % R == 0 ? 2 : 3;
-		if (S.Channel(Channel).Kind == KIND_FM)
-			Softer = Softer >= 2 ? 1 : 0;	// a VRC7 step is 3 dB: the notes between beats one softer
+		if (StepVolume(S.Channel(Channel)))
+			Softer = Softer >= 2 ? 1 : 0;	// a VRC7 or 5B step is 3 dB: the notes between beats one softer
 		const int Volume = std::max(1, std::min(15, N.Volume - Softer));
 		Cells[N.Row].Volume = static_cast<unsigned char>(Volume);
 		++Count;
@@ -5958,7 +6105,7 @@ int AddFades(Session &S, Draft &D, int Channel, int First, int End, bool &Lost)
 		if (Shaped)
 			continue;
 		int From = N.Row + N.Rows / 2;
-		const bool Fm = S.Channel(Channel).Kind == KIND_FM;
+		const bool Fm = StepVolume(S.Channel(Channel));
 		if (Fm)	// three steps of 3 dB, over the note's last frames
 			From = std::max(From, N.Row + N.Rows - std::max(1, (24 + Ticks - 1) / Ticks));
 		const int Rows = N.Row + N.Rows - From;
@@ -6153,7 +6300,7 @@ std::string PolishTool(Session &S, const Json &Args)
 			if (S.Channel(c).Kind == KIND_TRIANGLE || !IsMelodic(S.Channel(c)))
 				continue;	// the triangle has no volume
 			const int Count = Accents(S, D, c, First, End);
-			std::string &Into = S.Channel(c).Kind == KIND_FM ? Fm : List;
+			std::string &Into = StepVolume(S.Channel(c)) ? Fm : List;
 			if (Count > 0)
 				Into += (Into.empty() ? "" : ", ") + S.Channel(c).FullName();
 			else if (Count < 0)
@@ -6161,7 +6308,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		}
 		if (!List.empty())
 			Done.push_back("accents (beats a step softer than a bar's first note, the notes between them softer still) on " + List);
-		if (!Fm.empty())	// a VRC7 step is 3 dB
+		if (!Fm.empty())	// a VRC7 or 5B step is 3 dB
 			Done.push_back("accents (the notes between beats a step, 3 dB, softer than the beats) on " + Fm);
 	}
 	if (What.count("vibrato") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
@@ -6180,9 +6327,9 @@ std::string PolishTool(Session &S, const Json &Args)
 				S.Channel(Melody).FullName().c_str()));
 	}
 	if (What.count("fades")) {
-		std::string List;
+		std::string List, Steps;	// Steps: the chips counting 3 dB a step that got fades ("the VRC7 and the 5B")
 		int Total = 0;
-		bool Lost = false, Fm = false;
+		bool Lost = false;
 		for (size_t i = 0; i < Channels.size(); ++i) {
 			const int c = Channels[i];
 			if (!IsMelodic(S.Channel(c)) || S.Channel(c).Kind == KIND_TRIANGLE)
@@ -6191,15 +6338,16 @@ std::string PolishTool(Session &S, const Json &Args)
 			if (Count > 0) {
 				List += (List.empty() ? "" : ", ") + S.Channel(c).FullName();
 				Total += Count;
-				Fm = Fm || S.Channel(c).Kind == KIND_FM;
+				if (StepVolume(S.Channel(c)) && Steps.find("the " + S.Channel(c).Chip) == std::string::npos)
+					Steps += (Steps.empty() ? "the " : " and the ") + S.Channel(c).Chip;
 			}
 		}
 		if (Lost)
 			Warnings.push_back("Some held notes had no free effect column for a fade (all four were full).");
 		if (Total > 0)
 			Done.push_back(Format("fades on %s (a volume slide from halfway through, A0y, the next note at its own volume%s) on %s",
-				Plural(Total, "held note", "held notes").c_str(), Fm ? "; on the VRC7 three steps, 9 dB, over the note's end" : "",
-				List.c_str()));
+				Plural(Total, "held note", "held notes").c_str(), Steps.empty() ? "" :
+				("; on " + Steps + " three steps, 9 dB, over the note's end").c_str(), List.c_str()));
 	}
 	if (What.count("scoops") && Melody >= 0 && std::find(Channels.begin(), Channels.end(), Melody) != Channels.end()) {
 		bool Lost = false;
@@ -6381,7 +6529,7 @@ int NoteFrames(const NoteInfo &N, const std::vector<int> &RowFrames)
 // kicks are blips by design), the drums, or the VRC7, which shapes its own sounds
 bool CanVanish(const ChannelInfo &Info)
 {
-	return Info.Kind == KIND_PULSE || Info.Kind == KIND_SAWTOOTH || Info.Kind == KIND_OTHER;
+	return Info.Kind == KIND_PULSE || Info.Kind == KIND_SAWTOOTH || Info.Kind == KIND_OTHER || Info.Kind == KIND_SQUARE;
 }
 
 // Whether a note vanishes (Heard: the frames it's heard for), or holds. A sound struck again while the note lasts (an
@@ -6392,12 +6540,13 @@ bool Vanishes(const SongInfo &Song, const NoteInfo &N, const std::vector<int> &R
 	Heard = HeardFrames(Song, N, Frames);
 	if (N.Volume <= 0 || Heard > VANISH_FRAMES || Frames < Heard + 2)
 		return false;
-	const std::vector<int> Envelope = HeldEnvelope(FindInstrument(Song, N.Instrument), Frames);
+	const InstrumentInfo *pInfo = FindInstrument(Song, N.Instrument);
+	const std::vector<int> Envelope = HeldEnvelope(pInfo, Frames);
 	int Peak = 0;
 	for (int f = 0; f < Heard; ++f)
-		Peak = std::max(Peak, PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]));
+		Peak = std::max(Peak, HeardVolume(pInfo, N.Volume, Envelope[static_cast<size_t>(f)]));
 	for (int f = Heard; f < Frames; ++f)
-		if (PlayedVolume(N.Volume, Envelope[static_cast<size_t>(f)]) * 2 >= Peak)
+		if (HeardVolume(pInfo, N.Volume, Envelope[static_cast<size_t>(f)]) * 2 >= Peak)
 			return false;
 	return true;
 }
@@ -6503,7 +6652,7 @@ double NotePower(const Session &S, int Channel, const NoteInfo &N, int From, int
 		if (Info.Kind == KIND_TRIANGLE)
 			Sum += Level > 0 ? std::pow(10.0, -0.2) : 0.0;
 		else {
-			const int Volume = PlayedVolume(N.Volume, Level);
+			const int Volume = PlayedVolume(Info, N.Volume, Level);
 			Sum += Volume > 0 ? std::pow(10.0, LevelDb(Info, Volume) / 10.0) : 0.0;
 		}
 	}
@@ -6969,10 +7118,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Playing[p]), First, End);
 			int Loudest = 0;	// as it plays: an envelope that peaks under 15 keeps it softer
 			for (size_t i = 0; i < Notes.size(); ++i)
-				Loudest = std::max(Loudest, PlayedVolume(Notes[i].Volume, Kind == KIND_FM ? 15 :
+				Loudest = std::max(Loudest, PlayedVolume(S.Channel(Playing[p]), Notes[i].Volume, Kind == KIND_FM ? 15 :
 					EnvelopePeak(FindInstrument(S.Song, Notes[i].Instrument))));
 			++Parts;
-			if (Loudest >= 13)
+			if (Loudest >= (Kind == KIND_SQUARE ? 15 : 13))	// the 5B's 13 is 6 dB under its 15
 				++Loud;
 		}
 		if (Parts >= 2 && Loud == Parts) {
@@ -7021,7 +7170,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 				S.Channel(Over).FullName().c_str()));
 			Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
 				"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
-				S.Channel(Melody).Kind == KIND_FM ? " (the VRC7 counts its volume in steps of 3 dB: 9 is 18 dB under 15)" : ""));
+				StepVolume(S.Channel(Melody)) ? (" (the " + S.Channel(Melody).Chip + " counts its volume in steps of 3 dB: 9 is 18 dB "
+				"under 15)").c_str() : ""));
 		}
 	}
 
@@ -8382,7 +8532,8 @@ int EchoOf(Session &S, int Melody)
 bool HasPresets(const ChannelInfo &Channel)
 {
 	const std::string Chip = InstrumentChip(Channel);
-	return (Chip == "2A03" || Chip == "VRC6" || Chip == "VRC7") && Channel.Kind != KIND_NOISE && Channel.Kind != KIND_DPCM;
+	return (Chip == "2A03" || Chip == "VRC6" || Chip == "VRC7" || Chip == "5B") && Channel.Kind != KIND_NOISE &&
+		Channel.Kind != KIND_DPCM;
 }
 
 std::string MakeVersionTool(Session &S, const Json &Args)
@@ -8798,10 +8949,10 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 			throw Problem("harmony_channel needs a melodic channel other than the lead's, or \"none\".");
 	}
 	else {
-		// A pulse or FM channel: of the lead's chip and playing in the song if one is
+		// A pulse, FM or 5B channel: of the lead's chip and playing in the song if one is
 		int Best = -1;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
-			if (c == Lead || (S.Channel(c).Kind != KIND_PULSE && S.Channel(c).Kind != KIND_FM))
+			if (c == Lead || (S.Channel(c).Kind != KIND_PULSE && S.Channel(c).Kind != KIND_FM && S.Channel(c).Kind != KIND_SQUARE))
 				continue;
 			const int Score = (S.Channel(c).Chip == S.Channel(Lead).Chip ? 2 : 0) + (S.Notes(c).empty() ? 0 : 1);
 			if (Harmony < 0 || Score > Best) {
@@ -9493,45 +9644,144 @@ std::string SelectTrackTool(Session &S, const Json &Args)
 		static_cast<size_t>(Track) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(Track)].c_str() : "");
 }
 
-// The expansion chip
+// The expansion chips
 
-// "the VRC7", "no expansion chip"
-std::string ChipText(const std::string &Chip)
+// The expansion chips a song can have, in the order SongInfo::Expansion names them
+const char *const EXPANSION_CHIPS[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };
+
+// "no expansion chip", "the VRC7", "the VRC6, the N163 and the 5B"
+std::string ChipText(const std::vector<std::string> &Chips)
 {
-	return Chip.empty() ? std::string("no expansion chip") : "the " + Chip;
+	if (Chips.empty())
+		return "no expansion chip";
+	std::string Out;
+	for (size_t i = 0; i < Chips.size(); ++i)
+		Out += (i == 0 ? "" : i + 1 == Chips.size() ? " and " : ", ") + ("the " + Chips[i]);
+	return Out;
+}
+
+// The chips set_expansion is asked for: chips (a list, or a list in words: "VRC6 and 5B") or chip
+// (one, or none), in EXPANSION_CHIPS's order
+std::vector<std::string> ExpansionArg(const Json &Args)
+{
+	std::vector<std::string> Asked;
+	const Json *pChips = Arg(Args, "chips");
+	if (pChips != 0) {
+		if (pChips->IsArray()) {
+			for (size_t i = 0; i < pChips->Size(); ++i) {
+				if (!pChips->At(i).IsString())
+					throw Problem("chips: a list of chips by name, like [\"VRC6\", \"N163\"].");
+				Asked.push_back(pChips->At(i).String());
+			}
+		}
+		else if (pChips->IsString())
+			Asked.push_back(pChips->String());
+		else
+			throw Problem("chips: a list of chips by name, like [\"VRC6\", \"N163\"].");
+	}
+	else if (Arg(Args, "chip") != 0)
+		Asked.push_back(StringArg(Args, "chip"));
+	else
+		throw Problem("Say which chips with chips, like [\"VRC6\", \"5B\"], or chip: one of VRC6, VRC7, FDS, MMC5, N163 and 5B, or "
+			"none.");
+	std::vector<std::string> Words;
+	for (size_t a = 0; a < Asked.size(); ++a) {
+		std::string Text = Lowercase(Asked[a]);
+		for (size_t i = 0; i < Text.size(); ++i)
+			if (Text[i] == '+' || Text[i] == '/' || Text[i] == '&' || Text[i] == ';')
+				Text[i] = ',';
+		for (size_t And = Text.find(" and "); And != std::string::npos; And = Text.find(" and "))
+			Text.replace(And, 5, ",");
+		size_t From = 0;
+		while (From <= Text.size()) {
+			size_t Comma = Text.find(',', From);
+			if (Comma == std::string::npos)
+				Comma = Text.size();
+			const std::string Word = ChipWord(Text.substr(From, Comma - From));
+			if (!Word.empty())
+				Words.push_back(Word);
+			From = Comma + 1;
+		}
+	}
+	if (Words.empty())
+		throw Problem("Say which chips with chips, like [\"VRC6\", \"5B\"], or none for the 2A03 alone.");
+	std::set<std::string> Set;
+	bool None = false;
+	for (size_t w = 0; w < Words.size(); ++w) {
+		if (Words[w] == "NONE" || Words[w] == "2A03" || Words[w] == "OFF" || Words[w] == "NO") {
+			None = true;
+			continue;
+		}
+		bool Known = false;
+		for (size_t c = 0; c < sizeof(EXPANSION_CHIPS) / sizeof(EXPANSION_CHIPS[0]); ++c)
+			Known = Known || Words[w] == EXPANSION_CHIPS[c];
+		if (!Known)
+			throw Problem(Format("\"%s\" isn't an expansion chip. The chips: VRC6, VRC7, FDS, MMC5, N163 and 5B (the Sunsoft 5B), "
+				"any of them together, or none.", Words[w].c_str()));
+		Set.insert(Words[w]);
+	}
+	if (None && !Set.empty())
+		throw Problem("none goes alone: give the chips the song should have, or none for the 2A03's channels only.");
+	std::vector<std::string> Out;
+	for (size_t c = 0; c < sizeof(EXPANSION_CHIPS) / sizeof(EXPANSION_CHIPS[0]); ++c)
+		if (Set.count(EXPANSION_CHIPS[c]))
+			Out.push_back(EXPANSION_CHIPS[c]);
+	return Out;
+}
+
+// What a chip brings, for set_expansion's answer
+std::string ChipSounds(const std::string &Chip)
+{
+	if (Chip == "VRC6")
+		return "The VRC6: two pulses and a sawtooth, a strong bass; the presets work on them.";
+	if (Chip == "VRC7")
+		return "The VRC7: FM channels with the chip's built-in sounds: " + Vrc7PatchList() + ". Name one as an instrument in "
+			"write_notes, set_instrument or add_instrument (a preset's name picks the one most like it). Like the triangle, they "
+			"sound an octave under the note written (A-3 is 220 Hz there, 440 on a pulse): to play with a pulse, write their notes "
+			"an octave up. The tools that write parts for them (add_echo, add_harmony, add_counter_melody, voiced chords) do that "
+			"already.";
+	if (Chip == "MMC5")
+		return "The MMC5: two more pulses; the 2A03 presets work on them.";
+	if (Chip == "N163")
+		return "The N163: wavetable channels that play N163 sounds: " + WaveSoundList() + ". Their waves are drawn for them and can "
+			"change as a note plays (a shimmer, brass opening up, a bell mellowing); add_instrument, write_notes and set_instrument "
+			"take their names. Up to 6 channels keep the chip's switching whine above hearing (about 20 kHz); 7 or 8 bring it down "
+			"to 17 or 15 kHz.";
+	if (Chip == "FDS")
+		return "The FDS: a wavetable channel. It needs an FDS instrument, which you can't make yet; the user makes one in "
+			"FamiTracker's instrument editor.";
+	if (Chip == "5B")
+		return "The Sunsoft 5B: three square waves (always 50%, their volume in steps of 3 dB) that can each turn on the chip's "
+			"noise and its envelope. Its own sounds: " + Sound5BList() + "; the presets play there too, by name in add_instrument, "
+			"write_notes and set_instrument. Like the triangle, its notes sound an octave under the note written; the tools that "
+			"write parts for it do that already. The buzz bass plays the chip's one envelope, which its three channels share: one "
+			"buzz at a time. Hxy, Ixx and Jxx steer the envelope (effects explains them).";
+	return std::string();
 }
 
 std::string SetExpansionTool(Session &S, const Json &Args)
 {
-	std::string Chip;
-	const std::string Asked = StringArg(Args, "chip");
-	for (size_t i = 0; i < Asked.size(); ++i)
-		if (std::isalnum(static_cast<unsigned char>(Asked[i])))
-			Chip += static_cast<char>(std::toupper(static_cast<unsigned char>(Asked[i])));
-	if (Chip == "NONE" || Chip == "2A03" || Chip == "NES" || Chip == "OFF")
-		Chip.clear();
-	else if (Chip == "NAMCO" || Chip == "NAMCO163" || Chip == "N106")
-		Chip = "N163";
-	else if (Chip == "5B" || Chip == "S5B" || Chip == "SUNSOFT" || Chip == "SUNSOFT5B")
-		throw Problem("This FamiTracker doesn't play the Sunsoft 5B in songs.");
-	if (Asked.empty())
-		throw Problem("Say which chip with chip: none, VRC6, VRC7, FDS, MMC5 or N163.");
-	if (!Chip.empty() && Chip != "VRC6" && Chip != "VRC7" && Chip != "FDS" && Chip != "MMC5" && Chip != "N163")
-		throw Problem("chip should be none, VRC6, VRC7, FDS, MMC5 or N163 (FamiTracker plays one expansion chip at a time).");
-	const int Channels = IntArg(Args, "n163_channels", 4, 1, 8);
+	const std::vector<std::string> Chips = ExpansionArg(Args);
+	const std::vector<std::string> Old = SongChips(S.Song);
 	int Namco = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c)
 		Namco += S.Channel(c).Chip == "N163" ? 1 : 0;
-	if (S.Song.Expansion == Chip && (Chip != "N163" || Namco == Channels))
-		return "The song uses " + ChipText(Chip) + " already.";
+	const bool HasNamco = std::find(Chips.begin(), Chips.end(), "N163") != Chips.end();
+	const int Channels = IntArg(Args, "n163_channels", Namco > 0 ? Namco : 4, 1, 8);
+	if (Chips == Old && (!HasNamco || Namco == Channels))
+		return "The song uses " + ChipText(Chips) + " already.";
 	std::string Why;
 	if (!S.Host().CanChange(Why))
 		throw Problem(Why);
 
 	// Notes on the channels that go need the user's word
-	const bool Fewer = Chip == "N163" && S.Song.Expansion == Chip;	// only the N163's channel count changes
+	std::vector<std::string> Going;	// the chips switched off
+	for (size_t i = 0; i < Old.size(); ++i)
+		if (std::find(Chips.begin(), Chips.end(), Old[i]) == Chips.end())
+			Going.push_back(Old[i]);
+	const bool Fewer = HasNamco && Namco > Channels;	// the N163 channels past the new count go too
 	std::vector<int> Tracks;
-	const int Notes = S.Host().ExpansionNotes(Chip, Channels, Tracks);
+	const int Notes = S.Host().ExpansionNotes(Chips, Channels, Tracks);
 	if (Notes > 0 && !BoolArg(Args, "confirm", false)) {
 		std::string Where;
 		for (size_t i = 0; i < Tracks.size(); ++i) {
@@ -9539,60 +9789,51 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 			Where += Format("%s%d \"%s\"", i == 0 ? "" : ", ", t + 1,
 				static_cast<size_t>(t) < S.Song.TrackNames.size() ? S.Song.TrackNames[static_cast<size_t>(t)].c_str() : "");
 		}
-		const std::string Going = Fewer ? Format("the N163 channels after Namco %d", Channels) :
-			ChipText(S.Song.Expansion) + "'s channels";
-		const std::string Switching = Fewer ? Format("%d N163 channels removes those channels", Channels) :
-			ChipText(Chip) + " clears those channels";
-		throw Problem(Format("The song has %s on %s (track%s %s). Switching to %s in every track%s, and FamiTracker can't undo "
-			"it. Ask the user first; if they agree, call set_expansion again with confirm: true.", Plural(Notes, "note", "notes").c_str(),
-			Going.c_str(), Tracks.size() == 1 ? "" : "s", Where.c_str(), Switching.c_str(),
-			Fewer ? "" : ", since the new chip's channels take their place"));
+		std::string Lose;
+		for (size_t i = 0; i < Going.size(); ++i)
+			Lose += (i == 0 ? "" : i + 1 == Going.size() && !Fewer ? " and " : ", ") + ("the " + Going[i] + "'s channels");
+		if (Fewer)
+			Lose += (Lose.empty() ? "" : " and ") + Format("the N163 channels after Namco %d", Channels);
+		const std::string To = Going.empty() ? Format("%d N163 channels", Channels) : ChipText(Chips);	// or just fewer N163 channels
+		throw Problem(Format("The song has %s on %s (track%s %s). Switching to %s clears those channels in every track, and "
+			"FamiTracker can't undo it. Ask the user first; if they agree, call set_expansion again with confirm: true.",
+			Plural(Notes, "note", "notes").c_str(), Lose.c_str(), Tracks.size() == 1 ? "" : "s", Where.c_str(), To.c_str()));
 	}
 	const bool Pal = S.Song.FrameRate == 50;
 	std::string Error;
 	int Moved = 0, Lost = 0;
-	if (!S.Host().SetExpansion(Chip, Channels, Moved, Lost, Error))
-		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch the chip.") : Error);
+	if (!S.Host().SetExpansion(Chips, Channels, Moved, Lost, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch the chips.") : Error);
 	S.Load();
 
 	std::string Added;
 	int Count = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (!Chip.empty() && S.Channel(c).Chip == Chip) {
+		if (S.Channel(c).Chip != "2A03") {
 			Added += (Count == 0 ? "" : ", ") + S.Channel(c).FullName();
 			++Count;
 		}
 	}
-	std::string Text = "The song uses " + ChipText(Chip) + " now";
+	std::string Text = "The song uses " + ChipText(Chips) + " now";
 	Text += Count > 0 ? Format(": %s (%s) besides the 2A03's five.", Plural(Count, "more channel", "more channels").c_str(), Added.c_str()) :
 		": just the 2A03's five channels.";
-	if (Chip == "VRC6")
-		Text += " Two pulses and a sawtooth, a strong bass; the presets work on them.";
-	else if (Chip == "VRC7")
-		Text += " FM channels with the chip's built-in sounds: " + Vrc7PatchList() + ". Name one as an instrument in write_notes, "
-			"set_instrument or add_instrument (a preset's name picks the one most like it). Like the triangle, they sound an octave "
-			"under the note written (A-3 is 220 Hz there, 440 on a pulse): to play with a pulse, write their notes an octave up. "
-			"The tools that write parts for them (add_echo, add_harmony, add_counter_melody, voiced chords) do that already.";
-	else if (Chip == "MMC5")
-		Text += " Two more pulses; the 2A03 presets work on them.";
-	else if (Chip == "N163")
-		Text += " Wavetable channels that play N163 sounds: " + WaveSoundList() + ". Their waves are drawn for them and can change "
-			"as a note plays (a shimmer, brass opening up, a bell mellowing); add_instrument, write_notes and set_instrument take "
-			"their names. Up to 6 channels keep the chip's switching whine above hearing (about 20 kHz); 7 or 8 bring it down to "
-			"17 or 15 kHz.";
-	else if (Chip == "FDS")
-		Text += " A wavetable channel: it needs an FDS instrument, which you can't make yet; the user makes one in FamiTracker's "
-			"instrument editor.";
-	if (Notes > 0)
-		Text += Format(" Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str());
+	for (size_t i = 0; i < Chips.size(); ++i)
+		if (std::find(Old.begin(), Old.end(), Chips[i]) == Old.end())
+			Text += " " + ChipSounds(Chips[i]);
+	if (!Going.empty() || Fewer)
+		Text += Format(" %s", Notes > 0 ? Format("Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str()).c_str() :
+			"The channels that went were empty.");
 	if (Moved > 0 && S.ChannelCount() > 0)
 		Text += Format(" Moved %s that steer%s the song (speed, loops, ends) from the channels that went to %s.",
 			Plural(Moved, "effect", "effects").c_str(), Moved == 1 ? "s" : "", S.Channel(S.ChannelCount() - 1).FullName().c_str());
 	if (Lost > 0)
 		Text += Format(" %s that steered the song found no free effect column there and %s gone: check the loop with check_loop.",
 			Plural(Lost, "effect", "effects").c_str(), Lost == 1 ? "is" : "are");
-	if (Pal && !Chip.empty())
+	if (Pal && !Chips.empty())
 		Text += " Expansion chips play on NTSC machines, so the song is NTSC now.";
+	if (Chips.size() > 1 || std::find(Chips.begin(), Chips.end(), "5B") != Chips.end())
+		Text += " FamiTracker's NSF export plays one expansion chip, not the 5B, so it refuses this song; export_for_game (OGG) and "
+			"WAV export play every chip.";
 	Text += " FamiTracker can't undo switching chips: Module > Module properties switches back.";
 	return WithRemarks(S, Text);
 }
@@ -11070,6 +11311,8 @@ std::string CheckTool(Session &S, const Json &Args)
 			std::string Range;
 			if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && N.Pitch < 9)
 				Range = "below A-0, the lowest note its pulse can play";
+			else if (Info.Kind == KIND_SQUARE && N.Pitch < 12)
+				Range = "below C-1, which the 5B plays an octave under the note written: too low to be heard";
 			else if (Info.Kind == KIND_TRIANGLE && N.Pitch > 72)
 				Range = "above C-6, thin and shrill on the triangle";
 			else if (N.Pitch - Written(Info, 0) > 84)
@@ -12002,13 +12245,13 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = InstrumentChip(Info);
 		Sawtooth = Info.Kind == KIND_SAWTOOTH;
 		For = " for " + Info.FullName();
-		if (Chip != "2A03" && Chip != "VRC6")
-			throw Problem("A reference's sound can be an instrument for 2A03, MMC5 and VRC6 channels, not " + Info.FullName() + ".");
+		if (Chip != "2A03" && Chip != "VRC6" && Chip != "5B")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6 and 5B channels, not " + Info.FullName() + ".");
 		if (Sound.Noise != (Info.Kind == KIND_NOISE))
 			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
 				"other than the noise.");
 	}
-	else if (Sound.Chip == "VRC6" && S.Song.Expansion == "VRC6")
+	else if (Sound.Chip == "VRC6" && HasChip(S.Song, "VRC6"))
 		Chip = "VRC6";
 	std::string Name = StringArg(Args, "name");
 	if (Name.empty())
@@ -12021,7 +12264,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 	S.Refresh();
 	std::string Out = Format("Added %s, a %s instrument%s: sound %d of %s (%s, %s): %s.", InstrumentLabel(S.Song, Index).c_str(),
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
-	if (Sound.Chip != Chip && !Sound.Noise && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
+	if (Chip == "5B" && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
+		Out += " The 5B's square is always 50%, so it plays without the sound's duty.";
+	else if (Sound.Chip != Chip && !Sound.Noise && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
 		Out += " Its duty was translated from the " + Sound.Chip + "'s.";
 	if (Sound.Triangle && !Sawtooth && pChannel != 0 && S.Channel(ParseChannel(S, *pChannel, "channel")).Kind != KIND_TRIANGLE)
 		Out += " It was a triangle sound: on a pulse it plays with the pulse's duty.";
@@ -12850,19 +13095,29 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("loop", Prop("boolean", "Play them over and over until stop (default false).")),
 		true);
 
-	AddTool("set_expansion", "Switch the expansion chip",
-		"Switches the song's expansion sound chip, as Module > Module properties does: none (the 2A03's five channels only), "
-		"VRC6 (two more pulses and a sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 "
-		"(two more pulses), FDS or N163 (wavetables). Use it when the user asks for a VRC6 or VRC7 song, before writing. "
-		"FamiTracker plays one expansion chip at a time, for every track of the module: the old chip's channels are cleared, so "
-		"when they have notes this asks for confirm: true, which needs the user's OK. It can't be undone in FamiTracker.",
-		Schema()
-			.Add("chip", EnumProp("The chip.", std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163" }), true)
-			.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default 4). Up to 6 keep the chip's switching whine above "
-				"hearing, and fewer channels play high notes cleanly higher up. A song holds up to 8 N163 sounds whatever the "
-				"count (FamiTracker loads their waves only from the chip's first 128 samples)."))
-			.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the old chip's channels.")),
-		false, true);
+	{
+		Json Chips = Prop("array", "The expansion chips the song should have, any of them together, like [\"VRC6\", \"N163\"]; [] "
+			"for the 2A03 alone. The chips not listed are switched off.");
+		Chips.Set("items", EnumProp("A chip.", std::vector<std::string>{ "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" }));
+		AddTool("set_expansion", "Switch the expansion chips",
+			"Sets the song's expansion sound chips, as Module > Module properties does: any of VRC6 (two more pulses and a "
+			"sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 (two more pulses), FDS or "
+			"N163 (wavetables) and 5B (the Sunsoft 5B: three squares with noise and an envelope for buzz basses), together, or "
+			"none (the 2A03's five channels only). Use it when the user asks for a VRC6, VRC7 or 5B song, before writing. The "
+			"chips apply to every track of the module. The channels of the chips that stay keep their notes; the channels of "
+			"chips switched off are cleared, so when they have notes this asks for confirm: true, which needs the user's OK. It "
+			"can't be undone in FamiTracker. NSF export plays one expansion chip and not the 5B; OGG (export_for_game) and WAV "
+			"play any.",
+			Schema()
+				.Add("chips", Chips)
+				.Add("chip", EnumProp("Or one chip on its own (the others off), or none.",
+					std::vector<std::string>{ "none", "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" }))
+				.Add("n163_channels", Prop("integer", "N163's channels, 1-8 (default: as many as the song has, or 4). Up to 6 keep "
+					"the chip's switching whine above hearing, and fewer channels play high notes cleanly higher up. A song holds up "
+					"to 8 N163 sounds whatever the count (FamiTracker loads their waves only from the chip's first 128 samples)."))
+				.Add("confirm", Prop("boolean", "True once the user agreed to lose the notes on the channels that go.")),
+			false, true);
+	}
 
 	{
 		std::vector<std::string> Moods;
@@ -13264,9 +13519,10 @@ std::string ToolSet::Instructions()
 		"long notes, the drums fade to a soft pulse or stop, the lead swells in with a slower and wider vibrato, and a longer, "
 		"softer echo adds space; make_version \"night\" does all of that by itself, and chords \"richer\" adds sevenths. A jingle (level up, quest complete, item found...) is make_jingle, and a sound effect (jump, "
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
-		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
-		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
-		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written. set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them; set_meter sets 3/4 or 6/8 (before the notes). Tell the "
+		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7, MMC5 or 5B song, switch the chips with set_expansion "
+		"first (several can play together; it asks before clearing notes on the channels of chips switched off); VRC7 channels "
+		"play the chip's own sounds by name (piano, flute, brass...) and, like the triangle, sound an octave under the note "
+		"written, as the 5B's squares do (its own sounds: the buzz bass, noise hats and snares, square leads). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them; set_meter sets 3/4 or 6/8 (before the notes). Tell the "
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "

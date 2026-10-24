@@ -191,7 +191,7 @@ a click pluck that holds low.
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
-| `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, or an N163 wave sound |
+| `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, or an N163 wave sound |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind). It says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `remove_unused_instruments` | Lists the instruments no note plays in any track or clip (a template's starter sounds, sounds tried and replaced) and, with `confirm` once you agree, removes them and the sequences only they used, as Edit > Clean up > Remove unused instruments does (which now also keeps the instruments clips play). FamiTracker can't undo it; `keep` names any to keep |
@@ -219,10 +219,10 @@ a click pluck that holds low.
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle and the VRC7 an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
+| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle, the VRC7 and the 5B an octave under their written notes, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5 |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -230,7 +230,7 @@ a click pluck that holds low.
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `keep_version` | Keeps the selected track as it is now as a track of its own ("Town (version 1)", or named, like "Town (calm bridge)"), and stays on the selected track, so Claude can try something and you can compare or go back |
 | `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
-| `set_expansion` | Switches the expansion chip (none, VRC6, VRC7, FDS, MMC5, N163), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
+| `set_expansion` | Sets the expansion chips (any of VRC6, VRC7, FDS, MMC5, N163 and 5B, together, or none), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato) and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
@@ -245,8 +245,9 @@ chords, lush chords, warm pad, bass, thump bass (an octave blip into each
 note, the punch a triangle bass can't get from volume), plucky bass, singing
 lead (a vibrato that comes in by itself), strings, brass, organ, kick, snare,
 hi-hat, open hi-hat, crash, tom.
-Each is built for the 2A03 (also MMC5 channels) and the VRC6. VRC7 channels
-play the chip's own sounds instead (see [Expansion chips](#expansion-chips)).
+Each is built for the 2A03 (also MMC5 channels) and the VRC6, and plays on
+the Sunsoft 5B too. VRC7 channels play the chip's own sounds instead, and
+the 5B has its own besides (see [Expansion chips](#expansion-chips)).
 
 Notes are written the way FamiTracker shows them: C-4, C#4 (Db4 works too).
 FamiTracker's octave numbers are one lower than in most music software: C-3
@@ -369,12 +370,14 @@ about 5 dB louder than a 2A03 pulse at 15, and each step down is 3 dB
 (the YM2413's attenuation), so 9 there is 18 dB under 15 rather than
 4 dB; the soft mix puts a VRC7 melody at 12 and its echo at 10, and keeps
 each part's accents and fades as many dB under its loudest as they were.
-The N163's wave sounds play about 8 dB quieter than a pulse, so an N163
-melody stays at 15 and its other parts sit as far under it as the roles
-ask. The VRC6, MMC5 and 2A03 count volume alike. The echo, the harmony and
-the counter-melody take their volumes the same way (an echo three steps
-under a VRC7 melody, not nine), and `polish` makes a VRC7 part's accents
-one step and its fades three.
+The Sunsoft 5B's squares count volume in steps of 3 dB too, and at 15 play
+as loud as a 2A03 pulse at 15 (measured: 0.4 dB louder), so the soft mix
+puts a 5B melody at 13. The N163's wave sounds play about 8 dB quieter than
+a pulse, so an N163 melody stays at 15 and its other parts sit as far under
+it as the roles ask. The VRC6, MMC5 and 2A03 count volume alike. The echo,
+the harmony and the counter-melody take their volumes the same way (an echo
+three steps under a VRC7 or 5B melody, not nine), and `polish` makes a VRC7
+or 5B part's accents one step and its fades three.
 
 `review_arrangement` mentions a mix where every part plays near full
 volume, and a melody that plays well under another part (a VRC7 melody at
@@ -383,19 +386,26 @@ volumes, so mixing is a last step, or one to repeat at the end.
 
 ## Expansion chips
 
-Ask for "a VRC6 song", "a VRC7 song" or "an MMC5 song" and Claude switches
-the expansion chip with `set_expansion`, as **Module > Module properties**
-does. FamiTracker plays one expansion chip at a time, so the old chip's
-channels go and the new chip's take their place, in every track:
+Ask for "a VRC6 song", "a VRC7 song", "a 5B song" or "VRC6 and N163" and
+Claude sets the expansion chips with `set_expansion` (`chips`: a list, or
+`chip`: one), as **Module > Module properties** does with its checkboxes. A
+song can have any of the VRC6, VRC7, FDS, MMC5, N163 and Sunsoft 5B on at
+once, for every track; their channels follow the 2A03's in the order VRC6,
+MMC5, N163, FDS, VRC7, 5B. The channels of the chips that stay keep their
+notes (they move to their new place); the channels of chips switched off go,
+and new ones start empty:
 
-- When the old chip's channels have notes, Claude asks you first, since
+- When the channels that go have notes, Claude asks you first, since
   they're cleared and FamiTracker can't undo switching chips (Module >
   Module properties switches back, without the notes). Save a copy first if
-  you might want them.
+  you might want them. Fewer N163 channels count the same way.
 - Speed changes, loops and ends (`Fxx`, `Bxx`, `Dxx`, `Cxx`) on those
   channels move to the song's last channel, so the song still loops the way
   it did.
 - Expansion chips play on NTSC machines, so a PAL song becomes NTSC.
+- FamiTracker's NSF export plays one expansion chip, and not the 5B, so it
+  refuses a song with several chips or the 5B, saying why; `export_for_game`
+  (OGG) and WAV export play every chip.
 
 The **VRC6** adds two pulses and a sawtooth, and the **MMC5** two more pulses
 (FamiTracker has no MMC5 sample channel). The presets work on all of them:
@@ -453,6 +463,28 @@ Claude puts each sound's 16-sample wave there, in a place of its own.
   bring it down to 17 and 15 kHz. FamiTracker plays it too, so it's in the
   exports.
 
+The **Sunsoft 5B** adds three square waves (always 50%), each of which can
+also play the chip's noise and its envelope. Claude has sounds of its own for
+it: square lead, singing square, square pad, square pluck, square bell, buzz
+bass, sync buzz, noise hat, noise crash, noise snare, square kick and square
+tom, also in **Instrument > Instrument library**. The presets play there
+too ("soft lead", "warm pad"), their volume envelopes turned into the 5B's
+3 dB steps so they sound as loud as on a pulse; "snare", "hi-hat" and
+"kick" there are the 5B's own drums. Like the triangle and the VRC7, the 5B
+sounds an octave under the note written, and the tools that write parts
+for it allow for that.
+
+- The buzz bass plays the chip's envelope as a falling saw at the note's
+  pitch: a strong, bright bass. Until a song sets the envelope with `Hxy`
+  (`y` the shape, `x` how its speed follows the note: `C` at the note's
+  pitch), `Ixx` and `Jxx` (its period), envelope notes play `HC8`. The
+  envelope sets the level, so the volume column only silences it (at 0),
+  and the three channels share the one envelope: one buzz at a time.
+- An instrument's duty sequence is the 5B's noise and mode a frame at a
+  time: 64 the square, 128 the noise, 32 the envelope, added up, and the
+  noise's pitch (0-31) in the low bits; `Vxx` sets the mode for notes
+  without one (1 the square, 2 the noise, 4 the envelope).
+
 The FDS needs a wavetable instrument, which you make in FamiTracker's
 instrument editor.
 
@@ -478,10 +510,11 @@ avoid that, and gives it tools for each layer:
   Their instruments ("Lush maj7", "Lush m9") are made from a preset's sound
   (lush chords by default) when first needed; `pattern` turns their
   arpeggios down, up and back, leaping (alberti) or spread over two octaves
-  (rolling). They need a 2A03, MMC5 or VRC6 pulse, since VRC7 instruments
-  have no arpeggios.
+  (rolling). They need a 2A03, MMC5 or VRC6 pulse or a 5B channel, since
+  VRC7 instruments have no arpeggios.
   Or `voices`: the chord's notes on 2-4 channels of their own
-  (`chord_channels`, else free FM channels, then N163 ones, then pulses),
+  (`chord_channels`, else free FM channels, then N163 ones, then 5B ones,
+  then pulses),
   the third and seventh first, each voice moving to the next chord's
   nearest note without crossing: an electric piano comping on the VRC7's
   FM channels (its custom patch), held or struck on a rhythm, each voice a
@@ -926,8 +959,9 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   2025-03-26 to 2025-11-25, Host, Origin and token checks), `Music` (cells,
   note names, bars and beats, keys and modes, writing a part into a range of
   rows, and following the song through its jumps, skips and halts),
-  `Presets` (also the VRC7's patches, and `DesignPreset`: a sound described
-  in words as sequences), `Chords` (chords read from names and degrees,
+  `Presets` (also the VRC7's patches, the 5B's own sounds and the presets
+  as the 5B plays them, and `DesignPreset`: a sound described in words as
+  sequences), `Chords` (chords read from names and degrees,
   progressions laid out on bars, colors, and the chords heard in notes),
   `Arrange` (chord parts in styles, bass lines, drum grooves with fills, a
   harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
@@ -1019,9 +1053,11 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   meter and channel names), or a FamiTracker module with
   `Source/Nsf/FtmFile.cpp` (a track at a time), and studies it with
   `Study.cpp`.
-- `Source/ChipSwitch.cpp`: what `set_expansion` does to the patterns before
-  `SelectExpansionChip`: counting the notes on the channels that go,
-  emptying them in every track, and moving their `Fxx`, `Bxx`, `Dxx` and
-  `Cxx` to the last channel (a free effect column on the row; a frame whose
-  pattern other frames play differently gets its own). `Source/Tests`
-  checks it against the stand-in document.
+- `Source/ChipSwitch.cpp`: what `set_expansion` and Module > Module
+  properties do when the chips change: the module's channels for a set of
+  chips, counting the notes on the channels that go, emptying them in every
+  track, moving their `Fxx`, `Bxx`, `Dxx` and `Cxx` to the last channel (a
+  free effect column on the row; a frame whose pattern other frames play
+  differently gets its own), and `SelectExpansionChip` moving the channels
+  that stay to their new columns. `Source/Tests` checks it against the
+  stand-in document.

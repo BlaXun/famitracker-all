@@ -415,18 +415,21 @@ public:
 		}
 		AddInstrumentInfo(Next, Name.c_str(), Chip.c_str(), Sound.Releases());
 		Info.Instruments.back().Arpeggio = LoopingArpeggio(Sound);
-		// Its volume sequence, as FamiTracker reports it
-		const std::vector<PresetSequence> &Sequences = Chip == "VRC6" ? Sound.SequencesVRC6 : Sound.Sequences2A03;
+		// Its volume sequence, as FamiTracker reports it (a 5B instrument's: InstrumentLibrary.cpp makes it from
+		// Preset5BSequences)
+		const std::vector<PresetSequence> Sequences = Chip == "VRC6" ? Sound.SequencesVRC6 : Chip == "5B" ?
+			Preset5BSequences(Sound) : Sound.Sequences2A03;
 		for (size_t s = 0; s < Sequences.size(); ++s) {
 			if (Sequences[s].Type == SEQUENCE_VOLUME) {
 				Info.Instruments.back().Volume = Sequences[s].Items;
 				Info.Instruments.back().VolumeLoop = Sequences[s].Loop;
 				Info.Instruments.back().VolumeRelease = Sequences[s].Release;
 			}
-			// and its arpeggio, pitch and hi-pitch sequences
+			// and its arpeggio, pitch and hi-pitch sequences, and a 5B instrument's noise / mode sequence
 			SequenceInfo *pInto = Sequences[s].Type == SEQUENCE_ARPEGGIO ? &Info.Instruments.back().Steps :
 				Sequences[s].Type == SEQUENCE_PITCH ? &Info.Instruments.back().Pitch :
-				Sequences[s].Type == SEQUENCE_HIPITCH ? &Info.Instruments.back().HiPitch : 0;
+				Sequences[s].Type == SEQUENCE_HIPITCH ? &Info.Instruments.back().HiPitch :
+				Sequences[s].Type == SEQUENCE_DUTY && Chip == "5B" ? &Info.Instruments.back().Mode : 0;
 			if (pInto != 0 && !Sequences[s].Items.empty()) {
 				pInto->Items = Sequences[s].Items;
 				pInto->Loop = Sequences[s].Loop;
@@ -446,9 +449,16 @@ public:
 	std::map<int, Preset> Made;		// instrument -> the preset it was made from
 	std::map<int, WaveSound> MadeWaves;	// N163 instrument -> its sound
 
+	// Whether the song has an expansion chip on (Info.Expansion names them all: "VRC6, N163")
+	bool Has(const std::string &Chip) const
+	{
+		const std::string List = ", " + Info.Expansion + ",";
+		return List.find(", " + Chip + ",") != std::string::npos;
+	}
+
 	int AddN163Instrument(const WaveSound &Sound, int WavePos, std::string &Error) override
 	{
-		if (Info.Expansion != "N163") {
+		if (!Has("N163")) {
 			Error = "This song has no N163 channels.";
 			return -1;
 		}
@@ -487,7 +497,7 @@ public:
 
 	int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) override
 	{
-		if (Info.Expansion != "VRC7") {
+		if (!Has("VRC7")) {
 			Error = "This song has no VRC7 channels.";
 			return -1;
 		}
@@ -502,11 +512,14 @@ public:
 		return Next;
 	}
 
-	// An expansion chip's channels as FamiTracker names them
-	static std::vector<ChannelInfo> ChipChannels(const std::string &Chip, int Namco)
+	// The expansion chips' channels as FamiTracker names them, in the order of the module's columns
+	// after the 2A03's (ChipSwitch.h): the VRC6's, the MMC5's, the N163's (Namco of them), the FDS's,
+	// the VRC7's, the 5B's
+	static std::vector<ChannelInfo> ChipChannels(const std::vector<std::string> &Chips, int Namco)
 	{
 		std::vector<ChannelInfo> Out;
-		auto Add = [&](const std::string &Name, int Kind, int Id) {
+		auto On = [&](const char *Chip) { return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end(); };
+		auto Add = [&](const char *Chip, const std::string &Name, int Kind, int Id) {
 			ChannelInfo Channel;
 			Channel.Name = Name;
 			Channel.Chip = Chip;
@@ -514,47 +527,62 @@ public:
 			Channel.ChanId = Id;
 			Out.push_back(Channel);
 		};
-		if (Chip == "VRC6") {
-			Add("Pulse 1", KIND_PULSE, 5);
-			Add("Pulse 2", KIND_PULSE, 6);
-			Add("Sawtooth", KIND_SAWTOOTH, 7);
+		if (On("VRC6")) {
+			Add("VRC6", "Pulse 1", KIND_PULSE, 5);
+			Add("VRC6", "Pulse 2", KIND_PULSE, 6);
+			Add("VRC6", "Sawtooth", KIND_SAWTOOTH, 7);
 		}
-		else if (Chip == "MMC5") {
-			Add("Pulse 1", KIND_PULSE, 8);
-			Add("Pulse 2", KIND_PULSE, 9);
+		if (On("MMC5")) {
+			Add("MMC5", "Pulse 1", KIND_PULSE, 8);
+			Add("MMC5", "Pulse 2", KIND_PULSE, 9);
 		}
-		else if (Chip == "N163") {
+		if (On("N163")) {
 			for (int i = 0; i < Namco; ++i)
-				Add("Namco " + std::to_string(i + 1), KIND_OTHER, 11 + i);
+				Add("N163", "Namco " + std::to_string(i + 1), KIND_OTHER, 11 + i);
 		}
-		else if (Chip == "FDS")
-			Add("FDS", KIND_OTHER, 19);
-		else if (Chip == "VRC7") {
+		if (On("FDS"))
+			Add("FDS", "FDS", KIND_OTHER, 19);
+		if (On("VRC7")) {
 			for (int i = 0; i < 6; ++i)
-				Add("FM Channel " + std::to_string(i + 1), KIND_FM, 20 + i);
+				Add("VRC7", "FM Channel " + std::to_string(i + 1), KIND_FM, 20 + i);
+		}
+		if (On("5B")) {
+			for (int i = 0; i < 3; ++i)
+				Add("5B", "Square " + std::to_string(i + 1), KIND_SQUARE, 26 + i);
 		}
 		return Out;
 	}
 
-	// The channels switching to Chip clears (see SongHost)
-	std::vector<size_t> Leaving(const std::string &Chip, int Namco) const
+	// The song's column of a chip's channel, -1 when it has none
+	int ColumnOf(const ChannelInfo &Channel) const
 	{
+		for (size_t c = 0; c < Info.Channels.size(); ++c)
+			if (Info.Channels[c].Chip == Channel.Chip && Info.Channels[c].ChanId == Channel.ChanId)
+				return static_cast<int>(c);
+		return -1;
+	}
+
+	// The channels a switch to Chips clears: those the new channels don't have (see SongHost)
+	std::vector<size_t> Leaving(const std::vector<std::string> &Chips, int Namco) const
+	{
+		const std::vector<ChannelInfo> New = ChipChannels(Chips, Namco);
 		std::vector<size_t> Out;
-		int Kept = 0;
 		for (size_t c = 0; c < Info.Channels.size(); ++c) {
-			if (Info.Channels[c].Chip == "2A03")
-				continue;
-			if (Chip == Info.Expansion && (Chip != "N163" || Kept++ < Namco))
-				continue;
-			Out.push_back(c);
+			bool Stays = Info.Channels[c].Chip == "2A03";
+			for (size_t n = 0; n < New.size() && !Stays; ++n)
+				Stays = New[n].Chip == Info.Channels[c].Chip && New[n].ChanId == Info.Channels[c].ChanId;
+			if (!Stays)
+				Out.push_back(c);
 		}
 		return Out;
 	}
 
-	int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Found) override
+	std::vector<std::vector<std::string> > ExpansionsAsked;	// what SetExpansion was given, in order
+
+	int ExpansionNotes(const std::vector<std::string> &Chips, int Channels, std::vector<int> &Found) override
 	{
 		Found.clear();
-		const std::vector<size_t> Going = Leaving(Chip, Channels);
+		const std::vector<size_t> Going = Leaving(Chips, Channels);
 		int Total = 0;
 		for (size_t t = 0; t < Tracks.size(); ++t) {
 			const std::vector<std::vector<Cell> > &Cells = static_cast<int>(t) == Current ? Rows : Tracks[t].Rows;
@@ -570,11 +598,12 @@ public:
 		return Total;
 	}
 
-	bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &) override
+	bool SetExpansion(const std::vector<std::string> &Chips, int Channels, int &Moved, int &Lost, std::string &) override
 	{
 		Moved = Lost = 0;
+		ExpansionsAsked.push_back(Chips);
 		Switch(Current);	// the selected track's cells into Tracks
-		const std::vector<size_t> Going = Leaving(Chip, Channels);
+		const std::vector<size_t> Going = Leaving(Chips, Channels);
 		// The effects that steer the song, from the channels that go
 		struct Steering { size_t Track, Row; unsigned char Number, Param; };
 		std::vector<Steering> Effects;
@@ -587,19 +616,21 @@ public:
 							Effects.push_back(Steering{ t, r, Cells[r].Effect[k], Cells[r].Param[k] });
 			}
 		}
-		// The 2A03's channels and the ones that stay, then the new chip's
+		// The 2A03's channels, then every chip's: those that stay keep their cells (moved to their new column), the
+		// others come in empty
 		std::vector<ChannelInfo> Next;
 		std::vector<int> From;
 		for (size_t c = 0; c < Info.Channels.size(); ++c) {
-			if (Info.Channels[c].Chip == "2A03" || (Info.Channels[c].Chip == Chip && std::find(Going.begin(), Going.end(), c) == Going.end())) {
+			if (Info.Channels[c].Chip == "2A03") {
 				Next.push_back(Info.Channels[c]);
 				From.push_back(static_cast<int>(c));
 			}
 		}
-		const std::vector<ChannelInfo> Added = ChipChannels(Chip, Channels);
-		for (size_t i = Next.size() - 5; i < Added.size(); ++i) {
-			Next.push_back(Added[i]);
-			From.push_back(-1);
+		const std::vector<ChannelInfo> Added = ChipChannels(Chips, Channels);
+		for (size_t i = 0; i < Added.size(); ++i) {
+			const int Source = ColumnOf(Added[i]);
+			Next.push_back(Source >= 0 ? Info.Channels[static_cast<size_t>(Source)] : Added[i]);
+			From.push_back(Source);
 		}
 		for (size_t t = 0; t < Tracks.size(); ++t) {
 			const size_t Size = Tracks[t].Rows[0].size();
@@ -634,8 +665,10 @@ public:
 			Last.EffectColumns = std::max(Last.EffectColumns, Free + 1);
 			++Moved;
 		}
-		Info.Expansion = Chip;
-		if (!Chip.empty())
+		Info.Expansion.clear();
+		for (size_t i = 0; i < Chips.size(); ++i)
+			Info.Expansion += (i == 0 ? "" : ", ") + Chips[i];
+		if (!Chips.empty())
 			Info.FrameRate = 60;
 		Rows = Tracks[Current].Rows;
 		return true;
@@ -5197,20 +5230,22 @@ void TestExpansion()
 	// The N163: its channel count, and asking only about the channels that go
 	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 8}"));
 	CHECK_HAS(Result.Text, "The song uses the N163 now: 8 more channels");
-	CHECK_HAS(Result.Text, "Wavetable channels");
+	CHECK_HAS(Result.Text, "wavetable channels");
 	Song.Put(12, 0, "C-4");
 	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 8}")).Text, "already");
 	CHECK(!Tools.Call("set_expansion", Parse("{\"chip\": \"Namco\", \"n163_channels\": 8}")).IsError);
 	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 4}"));
 	CHECK(Result.IsError);
 	CHECK_HAS(Result.Text, "The song has 1 note on the N163 channels after Namco 4");
-	CHECK_HAS(Result.Text, "Switching to 4 N163 channels removes those channels in every track, and FamiTracker can't undo it.");
+	CHECK_HAS(Result.Text, "Switching to 4 N163 channels clears those channels in every track, and FamiTracker can't undo it.");
 	Song.Rows[12][0] = Cell();
 	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"N163\", \"n163_channels\": 4}"));
 	CHECK(!Result.IsError && Song.Info.Channels.size() == 9 && Song.Info.Channels[8].Name == "Namco 4");
 
 	// Mistakes
-	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chip\": \"5B\"}")).Text, "Sunsoft 5B");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\", \"SID\"]}")).Text, "\"SID\" isn't an expansion chip");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [\"none\", \"VRC6\"]}")).Text, "none goes alone");
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": [6]}")).Text, "a list of chips by name");
 	CHECK(Tools.Call("set_expansion", Parse("{\"chip\": \"SID\"}")).IsError);
 	CHECK(Tools.Call("set_expansion", Parse("{}")).IsError);
 	Song.Busy = true;
@@ -5223,6 +5258,161 @@ void TestExpansion()
 	ToolSet PalTools(Pal);
 	CHECK_HAS(PalTools.Call("set_expansion", Parse("{\"chip\": \"VRC7\"}")).Text, "so the song is NTSC now");
 	CHECK(Pal.Info.FrameRate == 60);
+}
+
+const InstrumentInfo *SongInstrument(const FakeSong &Song, int Index)
+{
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Index == Index)
+			return &Song.Info.Instruments[i];
+	return 0;
+}
+
+const PresetSequence *SequenceOf(const Preset &Sound, int Type);
+
+// Several expansion chips at once, and the Sunsoft 5B
+void TestSeveralChips()
+{
+	// The VRC6 song gets the N163 and the 5B besides: the VRC6's notes stay, nothing to ask
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(7, 16, "C-2", 0);
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"5B\", \"VRC6\", \"N163\"], \"n163_channels\": 2}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the VRC6, the N163 and the 5B now: 8 more channels (VRC6 Pulse 1, VRC6 Pulse 2, VRC6 "
+		"Sawtooth, N163 Namco 1, N163 Namco 2, 5B Square 1, 5B Square 2, 5B Square 3) besides the 2A03's five.");
+	CHECK_HAS(Result.Text, "The Sunsoft 5B: three square waves");
+	CHECK_HAS(Result.Text, "buzz bass");
+	CHECK_HAS(Result.Text, "The N163: wavetable channels");
+	CHECK_LACKS(Result.Text, "The VRC6:");	// it was on already
+	CHECK_LACKS(Result.Text, "Cleared");
+	CHECK_HAS(Result.Text, "NSF export plays one expansion chip, not the 5B");
+	CHECK(Song.Info.Expansion == "VRC6, N163, 5B" && Song.Info.Channels.size() == 13);
+	CHECK(Song.Info.Channels[10].Kind == KIND_SQUARE && Song.Info.Channels[12].FullName() == "5B Square 3");
+	CHECK(Song.Rows[5][0].HasNote() && Song.Rows[7][16].HasNote());
+	CHECK(Song.ExpansionsAsked.back() == std::vector<std::string>({ "VRC6", "N163", "5B" }));
+	CHECK_HAS(Tools.Call("set_expansion", Parse("{\"chips\": \"VRC6 + N163 and Sunsoft 5B\"}")).Text,
+		"The song uses the VRC6, the N163 and the 5B already.");
+	Result = Tools.Call("get_song", Parse("{}"));
+	CHECK_HAS(Result.Text, "(expansion: VRC6, N163, 5B)");
+	CHECK_HAS(Result.Text, "5B sounds (the presets play there too; its notes sound an octave under the note written): square lead");
+	CHECK_HAS(Result.Text, "N163 sounds (for the Namco channels)");
+
+	// The 5B's own sounds by name, and the presets made for it
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"5B Square 1\", \"instrument\": \"buzz\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-3\", \"beats\": 2}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added the instrument \"Buzz bass\"");
+	CHECK_HAS(Result.Text, "(5B: the 5B's buzz");
+	const int Buzz = Song.Rows[10][0].Instrument;
+	const InstrumentInfo *pBuzz = SongInstrument(Song, Buzz);
+	CHECK(pBuzz != 0 && pBuzz->Chip == "5B" && pBuzz->Name == "Buzz bass");
+	CHECK(pBuzz != 0 && pBuzz->Mode.Items == std::vector<int>({ S5B_ENVELOPE }));
+	// "Square 2" is the 5B's in a 5B song; a preset plays there as loud as on a pulse, 3 dB a step
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"Square 2\", \"instrument\": \"soft lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}]}"));
+	CHECK(!Result.IsError && Song.Rows[11][0].HasNote());
+	const InstrumentInfo *pLead = SongInstrument(Song, Song.Rows[11][0].Instrument);
+	CHECK(pLead != 0 && pLead->Chip == "5B" && pLead->Name == "Soft lead" && pLead->Mode.Items.empty());
+	const Preset *pSoft = FindPreset("soft lead");
+	CHECK(pSoft != 0 && pLead != 0 && SequenceOf(*pSoft, SEQUENCE_VOLUME) != 0 &&
+		pLead->Volume.size() == SequenceOf(*pSoft, SEQUENCE_VOLUME)->Items.size());
+	for (size_t i = 0; pSoft != 0 && pLead != 0 && i < pLead->Volume.size(); ++i)
+		CHECK_EQ(pLead->Volume[i], Volume5B(SequenceOf(*pSoft, SEQUENCE_VOLUME)->Items[i]));
+	CHECK_EQ(Volume5B(15), 15);
+	CHECK_EQ(Volume5B(7), 13);	// 6.6 dB under 15 on a pulse; the 5B's 13 is 6 under its 15
+	CHECK_EQ(Volume5B(1), 7);
+	CHECK_EQ(Volume5B(0), 0);
+	// Drums: the 5B's own
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"snare\", \"chip\": \"5B\"}")).Text, "Added \"Noise snare\"");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"hi-hat\", \"channel\": \"5B Square 3\"}")).Text, "\"Noise hat\"");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"lead\", \"chip\": \"Sunsoft 5B\"}")).Text, "\"Square lead\"");
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"kazoo\", \"chip\": \"5B\"}")).Text,
+		"No 5B sound or preset called \"kazoo\". 5B sounds: square lead");
+	CHECK_HAS(Tools.Call("write_notes", Parse("{\"channel\": \"5B Square 3\", \"instrument\": \"Bass\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-3\", \"beats\": 1}]}")).Text, "Added the instrument \"Bass\"");	// the preset, not the 2A03's
+	const InstrumentInfo *pBass = SongInstrument(Song, Song.Rows[12][0].Instrument);
+	CHECK(pBass != 0 && pBass->Chip == "5B");
+	// A sound designed for it, its levels as on a pulse
+	Result = Tools.Call("design_instrument", Parse("{\"name\": \"Glow\", \"kind\": \"pad\", \"channel\": \"5B Square 2\", "
+		"\"duty\": \"25%\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(5B instrument): a 5B square");
+	CHECK_HAS(Result.Text, "The 5B's square is always 50%");
+	CHECK(SongInstrument(Song, InstrumentIndex(Song, "Glow"))->Chip == "5B");
+	CHECK_HAS(Tools.Call("design_instrument", Parse("{\"name\": \"Thud\", \"kind\": \"kick\", \"channel\": \"5B Square 2\"}")).Text,
+		"on the 5B, add_instrument has the chip's own");
+
+	// Its effects: Hxy, Ixx and Jxx steer the envelope, Vxx what it plays
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"5B Square 1\", \"notes\": [{\"bar\": 2, \"pitch\": \"C-3\", \"beats\": 1, "
+		"\"effects\": [\"HC8\", \"V04\"]}, {\"bar\": 2, \"beat\": 2, \"pitch\": \"C-3\", \"beats\": 1, \"effects\": [\"I08\", \"J00\"]}]}"));
+	CHECK(!Result.IsError);
+	CHECK(HasEffectAt(Song, 10, 16, EFF_SUNSOFT_ENV_TYPE, 0xC8) && HasEffectAt(Song, 10, 16, EFF_DUTY_CYCLE, 4));
+	CHECK(HasEffectAt(Song, 10, 20, EFF_SUNSOFT_ENV_HI, 8) && HasEffectAt(Song, 10, 20, EFF_SUNSOFT_ENV_LO, 0));
+	CHECK_HAS(Tools.Call("write_notes", Parse("{\"channel\": \"5B Square 1\", \"notes\": [{\"bar\": 2, \"pitch\": \"C-3\", "
+		"\"beats\": 1, \"effects\": [\"V08\"]}]}")).Text, "5B Square 1 takes V00-V07 (1 the square, 2 the noise, 4 the envelope");
+	CHECK_HAS(Tools.Call("write_notes", Parse("{\"channel\": \"Pulse 1\", \"notes\": [{\"bar\": 2, \"pitch\": \"C-3\", "
+		"\"beats\": 1, \"effects\": [\"J10\"]}]}")).Text, "the envelope on the 5B's");
+	Result = Tools.Call("effects", Parse("{\"channel\": \"5B Square 1\"}"));
+	CHECK_HAS(Result.Text, "Hxy, Ixx and Jxx.");
+	CHECK_HAS(Result.Text, "Vxx: V00-V07 (1 the square, 2 the noise, 4 the envelope, added up).");
+	CHECK_LACKS(Result.Text, "Ixy");
+	CHECK_HAS(Tools.Call("effects", Parse("{\"effect\": \"H\", \"channel\": \"5B Square 2\"}")).Text, "Hxy 5B envelope: Starts the");
+	CHECK_HAS(Tools.Call("effects", Parse("{\"effect\": \"J\"}")).Text, "Jxx 5B envelope period, low");
+	CHECK_HAS(Tools.Call("effects", Parse("{\"effect\": \"H\"}")).Text, "on the 5B's its envelope");
+
+	// Parts written for it sound where they would on a pulse: an octave up, as on the triangle
+	Song.Put(0, 32, "E-4", 2);
+	Song.Put(0, 36, "G-4", 2);
+	Result = Tools.Call("add_echo", Parse("{\"channel\": \"Pulse 1\", \"to_channel\": \"5B Square 3\", \"from_bar\": 3, \"to_bar\": 3, "
+		"\"instrument\": \"soft lead\"}"));
+	CHECK(!Result.IsError);
+	int Echo = -1;
+	for (int r = 32; r < 48 && Echo < 0; ++r)
+		if (Song.Rows[12][static_cast<size_t>(r)].HasNote())
+			Echo = r;
+	CHECK(Echo > 32 && Song.Rows[12][static_cast<size_t>(Echo)].Pitch() == 52 + 12);
+	// at volume 6 as on a pulse: 3 dB steps, so 12
+	CHECK_HAS(Result.Text, "at volume 6 (as much softer as 6 is than 15 on a pulse: 12 where the melody plays 15)");
+
+	// A soft mix: the melody on the 5B nearer 15 than a pulse's 9
+	FakeSong Mixed;
+	Mixed.Info.DirectChanges = true;
+	CHECK(!Run(Mixed, "set_expansion", "{\"chip\": \"5B\", \"confirm\": true}").IsError);
+	CHECK(Mixed.Info.Channels.size() == 8 && Mixed.Info.Channels[5].Chip == "5B");
+	CHECK(!Run(Mixed, "write_notes", "{\"channel\": \"5B Square 1\", \"instrument\": \"square lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"A-4\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}]}").IsError);
+	CHECK(!Run(Mixed, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-3\", "
+		"\"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-2\", \"beats\": 4}]}").IsError);
+	Result = Run(Mixed, "mix", "{\"melody_channel\": \"5B Square 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "5B Square 1 (melody) loudest 15 to 13");
+	CHECK_HAS(Result.Text, "The 5B counts its volume in steps of 3 dB");
+
+	// Switching the VRC6 off: its notes go (asked first), the N163's and the 5B's move to their new columns
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"N163\", \"5B\"], \"n163_channels\": 2}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "The song has 2 notes on the VRC6's channels (track 1 \"Town\"). Switching to the N163 and the 5B clears "
+		"those channels in every track");
+	Song.Put(8, 0, "A-3");	// N163 Namco 1
+	Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"N163\", \"5B\"], \"confirm\": true}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The song uses the N163 and the 5B now: 5 more channels (N163 Namco 1, N163 Namco 2, 5B Square 1, "
+		"5B Square 2, 5B Square 3)");
+	CHECK_HAS(Result.Text, "Cleared 2 notes on the channels that went.");
+	CHECK_LACKS(Result.Text, "The Sunsoft 5B:");	// on already
+	CHECK(Song.Info.Expansion == "N163, 5B" && Song.Info.Channels.size() == 10);
+	CHECK(Song.Rows[5][0].Pitch() == 45 && Song.Rows[7][0].Instrument == Buzz);	// Namco 1's note, the buzz on Square 1
+	CHECK(Song.Info.Channels[7].FullName() == "5B Square 1");
+	// And the 5B alone again
+	Result = Tools.Call("set_expansion", Parse("{\"chip\": \"5B\", \"confirm\": true}"));
+	CHECK(!Result.IsError && Song.Info.Expansion == "5B" && Song.Info.Channels.size() == 8);
+	CHECK(Song.Rows[5][0].Instrument == Buzz);
+	CHECK_HAS(Result.Text, "NSF export plays one expansion chip, not the 5B, so it refuses this song");
 }
 
 const PresetSequence *SequenceOf(const Preset &Sound, int Type)
@@ -5778,8 +5968,8 @@ void TestMmc5()
 	Song.Info.DirectChanges = true;
 	ToolSet Tools(Song);
 	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chip\": \"mmc5\"}"));
-	CHECK_HAS(Result.Text, "The song uses the MMC5 now: 2 more channels (MMC5 Pulse 1, MMC5 Pulse 2) besides the 2A03's five. Two more "
-		"pulses; the 2A03 presets work on them.");
+	CHECK_HAS(Result.Text, "The song uses the MMC5 now: 2 more channels (MMC5 Pulse 1, MMC5 Pulse 2) besides the 2A03's five. The MMC5: "
+		"two more pulses; the 2A03 presets work on them.");
 	CHECK(Song.Info.Channels.size() == 7 && Song.Info.Channels[5].Kind == KIND_PULSE && Song.Info.Channels[6].Chip == "MMC5");
 	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "MMC5 Pulse 2");
 
@@ -8499,6 +8689,7 @@ int main()
 	TestJingleScores();
 	TestJingles();
 	TestExpansion();
+	TestSeveralChips();
 	TestMmc5();
 	TestSoundEffects();
 	TestDesignedSounds();

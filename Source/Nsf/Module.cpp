@@ -163,6 +163,7 @@ int Module::ChannelCount() const
 	if (Expansion & EXP_N163) n += 8;		// FamiTracker lists all eight, used or not
 	if (Expansion & EXP_FDS) n += 1;
 	if (Expansion & EXP_VRC7) n += 6;
+	if (Expansion & EXP_S5B) n += 3;
 	return n;
 }
 
@@ -189,13 +190,19 @@ std::vector<std::string> ModuleChannelNames(int Expansion, int N163Channels)
 		Names.push_back("MMC5 Pulse 2");
 	}
 	if (Expansion & EXP_N163)
-		for (int i = 0; i < 8; ++i)
-			Names.push_back(i < N163Channels ? "Namco " + std::to_string(i + 1) : "(unused)");
+		for (int i = 0; i < N163Channels && i < 8; ++i)
+			Names.push_back("Namco " + std::to_string(i + 1));
 	if (Expansion & EXP_FDS)
 		Names.push_back("FDS");
 	if (Expansion & EXP_VRC7)
 		for (int i = 0; i < 6; ++i)
 			Names.push_back("FM " + std::to_string(i + 1));
+	if (Expansion & EXP_S5B)
+		for (int i = 0; i < 3; ++i)
+			Names.push_back("5B Square " + std::to_string(i + 1));
+	if (Expansion & EXP_N163)
+		for (int i = std::max(0, N163Channels); i < 8; ++i)
+			Names.push_back("(unused)");
 	return Names;
 }
 
@@ -234,8 +241,8 @@ std::string WriteText(const Module &M)
 
 	// Empty macros and samples are free places in their lists, as in FamiTracker
 	Out << "# Macros\n";
-	static const char *const MACRO_COMMANDS[3] = { "MACRO", "MACROVRC6", "MACRON163" };
-	for (int Chip = 0; Chip < 3; ++Chip)
+	static const char *const MACRO_COMMANDS[MACRO_CHIPS] = { "MACRO", "MACROVRC6", "MACRON163", "MACROS5B" };
+	for (int Chip = 0; Chip < MACRO_CHIPS; ++Chip)
 		for (int Type = 0; Type < SEQ_TYPES; ++Type)
 			for (size_t i = 0; i < M.Macros[Chip][Type].size(); ++i)
 				if (!M.Macros[Chip][Type][i].Empty())
@@ -268,7 +275,8 @@ std::string WriteText(const Module &M)
 		// The macros' indices: as the instrument numbers them, or else found in its chip's list (an
 		// instrument's own macros are added to it by the converter)
 		int Seq[SEQ_TYPES];
-		const int Chip = Inst.Kind == INST_VRC6 ? MACROS_VRC6 : (Inst.Kind == INST_N163 ? MACROS_N163 : MACROS_2A03);
+		const int Chip = Inst.Kind == INST_VRC6 ? MACROS_VRC6 : (Inst.Kind == INST_N163 ? MACROS_N163 :
+			(Inst.Kind == INST_S5B ? MACROS_S5B : MACROS_2A03));
 		for (int t = 0; t < SEQ_TYPES; ++t) {
 			Seq[t] = Inst.MacroIndex[t];
 			if (Seq[t] >= 0 || Inst.Macros[t].Empty())
@@ -290,6 +298,11 @@ std::string WriteText(const Module &M)
 						Key.Sample, Key.Pitch & 0x0F, Key.Loop ? 1 : 0, 0, Key.Delta);
 					Out << Line;
 				}
+				break;
+			case INST_S5B:
+				std::snprintf(Line, sizeof(Line), "%-8s %3d   %3d %3d %3d %3d %3d %s\n", "INSTS5B", int(i), Seq[0], Seq[1], Seq[2],
+					Seq[3], Seq[4], Name.c_str());
+				Out << Line;
 				break;
 			case INST_VRC7:
 				std::snprintf(Line, sizeof(Line), "%-8s %3d   %3d %02X %02X %02X %02X %02X %02X %02X %02X %s\n", "INSTVRC7", int(i), Inst.Patch,

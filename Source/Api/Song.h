@@ -68,10 +68,13 @@ struct InstrumentInfo {
 								// 11}: a major seventh); empty when it has none, or one that doesn't loop
 	bool OddDuty;			// a VRC6 instrument whose duty sequence plays odd values: on the sawtooth they add 32 to
 							// its volume, and it overdrives
-	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6 and
-								// N163 instruments; empty when it has none
+	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6, N163
+								// and 5B instruments (on the 5B, 3 dB a step: the column's steps under 15 and the
+								// sequence's add up); empty when it has none
 	int VolumeLoop, VolumeRelease;	// where that sequence loops back to and where it waits for a release (-1: none)
-	SequenceInfo Steps, Pitch, HiPitch;	// its arpeggio, pitch and hi-pitch sequences (2A03, VRC6 and N163 instruments)
+	SequenceInfo Steps, Pitch, HiPitch;	// its arpeggio, pitch and hi-pitch sequences (2A03, VRC6, N163 and 5B instruments)
+	SequenceInfo Mode;		// a 5B instrument's noise / mode sequence: 64 the square, 128 the noise, 32 the envelope (whose
+							// level replaces the volume's), and the noise's pitch 0-31 in the low bits; empty otherwise
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
 		VolumeRelease(-1) {}
@@ -101,7 +104,8 @@ struct SongInfo {
 	int Speed, Tempo, SplitPoint;
 	int PatternLength, Frames, MaxFrames;
 	int FirstHighlight, SecondHighlight;
-	std::string Expansion;	// "VRC6", "" for none
+	std::string Expansion;	// the expansion chips on: "VRC6", or several, "VRC6, N163, 5B" (in the order VRC6, VRC7,
+							// FDS, MMC5, N163, 5B); "" for none
 	std::vector<ChannelInfo> Channels;
 	std::vector<InstrumentInfo> Instruments;
 	std::vector<ClipInfo> Clips;
@@ -194,7 +198,7 @@ public:
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,
 		std::string &Error) = 0;
-	// The preset as an instrument for a chip ("2A03" or "VRC6"), or the one of
+	// The preset as an instrument for a chip ("2A03", "VRC6" or "5B": Preset5BSequences), or the one of
 	// that name and chip already there: its index, -1 with the reason
 	virtual int AddInstrument(const Preset &Sound, const std::string &Chip, bool Sawtooth, std::string &Error) = 0;
 	// An N163 instrument playing a wave sound (Wavetables.h), its waves at WavePos (samples) of the chip's
@@ -221,16 +225,17 @@ public:
 	// with the reason. FamiTracker can't undo it.
 	virtual bool RemoveInstruments(const std::vector<int> &Indices, std::string &Error) = 0;
 
-	// The expansion chip: "" for none, "VRC6", "VRC7", "FDS", "MMC5" or "N163" (with Channels of it,
-	// 1-8). Switching to another clears the old chip's channels, since the new chip's take their
-	// place; a new N163 channel count clears the N163 channels past it. ExpansionNotes counts the
-	// notes on the channels that would be cleared, in every track (Tracks: the ones they're in, from
-	// 0). SetExpansion clears them in every track and switches; channels that come in start empty.
-	// The effects on the cleared channels that steer the song (speed and tempo, loops, skips, ends)
-	// move to the song's last channel: Moved of them, and Lost found no free effect column there.
-	// FamiTracker can't undo it.
-	virtual int ExpansionNotes(const std::string &Chip, int Channels, std::vector<int> &Tracks) = 0;
-	virtual bool SetExpansion(const std::string &Chip, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
+	// The expansion chips: any of "VRC6", "VRC7", "FDS", "MMC5", "N163" (with Channels of it, 1-8)
+	// and "5B", none for the 2A03 alone. The module's channels are the 2A03's, then every chip's in
+	// that order: VRC6, MMC5, N163, FDS, VRC7, 5B. Switching keeps the notes of the chips that stay
+	// (their channels move to their new place) and clears the channels of chips switched off, and
+	// the N163 channels past a new count. ExpansionNotes counts the notes on the channels that would
+	// be cleared, in every track (Tracks: the ones they're in, from 0). SetExpansion clears them in
+	// every track and switches; channels that come in start empty. The effects on the cleared
+	// channels that steer the song (speed and tempo, loops, skips, ends) move to the song's last
+	// channel: Moved of them, and Lost found no free effect column there. FamiTracker can't undo it.
+	virtual int ExpansionNotes(const std::vector<std::string> &Chips, int Channels, std::vector<int> &Tracks) = 0;
+	virtual bool SetExpansion(const std::vector<std::string> &Chips, int Channels, int &Moved, int &Lost, std::string &Error) = 0;
 	// Undoable
 	virtual bool SetSpeedTempo(int Speed, int Tempo, std::string &Error) = 0;
 	// The meter, undoable: the row highlights (rows a beat, rows a bar; one pair for the whole module in

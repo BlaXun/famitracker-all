@@ -103,8 +103,9 @@ std::vector<EffectInfo> MakeReference()
 		"staccato: S02-S04 make short, plucky notes; gated chords with 0xy; short drum hits on melodic channels." });
 	All.push_back({ "Vxx", "timbre",
 		"Changes the tone: a pulse's duty (2A03 and MMC5 pulses 00 12.5% thin, 01 25%, 02 50% round, 03 75%; VRC6 pulses "
-		"00-07, 1/16 to 8/16), the noise's mode (00 hiss, 01 metallic), an N163 channel's wave (00-0F).",
-		"pulses, the noise and the N163 channels", "until changed; an instrument's duty sequence takes over while it runs",
+		"00-07, 1/16 to 8/16), the noise's mode (00 hiss, 01 metallic), an N163 channel's wave (00-0F), what a 5B channel "
+		"plays (01 its square, 02 the noise, 04 the envelope, added up: 03 square and noise).",
+		"pulses, the noise, the N163 and the 5B channels", "until changed; an instrument's duty sequence takes over while it runs",
 		"a brighter or thinner lead for a section, duties alternating for a \"talking\" lead, metallic noise for hats and zaps." });
 	All.push_back({ "Wxx", "DPCM pitch",
 		"Plays the sample at rate xx (00-0F) instead of the instrument's.", "the DPCM channel", "this note",
@@ -126,6 +127,20 @@ std::vector<EffectInfo> MakeReference()
 		"The high part (00-0F) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Jxx, how fast the FDS tone wobbles." });
 	All.push_back({ "Jxx", "FDS modulation speed, low",
 		"The low part (00-FF) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Ixx, how fast the FDS tone wobbles." });
+	All.push_back({ "Hxy", "5B envelope",
+		"Starts the Sunsoft 5B's envelope, which a note plays when its instrument's noise / mode sequence (or V04-V07) turns it "
+		"on: y is its shape (8 a falling saw over and over, C a rising one, A and E triangles, 0 one fall to silence, D one rise "
+		"that holds); x makes its speed follow the note, C at the note's own pitch (a buzz), B an octave under it, D an octave "
+		"over, or 0 for the speed Ixx and Jxx set. The envelope sets the level (the volume column only silences it, at 0), and "
+		"the three 5B channels share the one envelope.", "the 5B channels", "until changed",
+		"the buzz bass (HC8, the 5B's envelope until a song sets one), a hard sync-like lead with the square on too (V05), slow "
+		"swells and tremolos (HxA or HxE with x 0 and a long period)." });
+	All.push_back({ "Ixx", "5B envelope period, high",
+		"The high byte (00-FF) of the 5B envelope's period, for Hxy with x 0: a saw shape repeats about 3500 / period times a "
+		"second (I08 J00: 1.7 times), a triangle half as often.", "the 5B channels", "until changed",
+		"with Jxx, a slow envelope for swells and tremolos." });
+	All.push_back({ "Jxx", "5B envelope period, low",
+		"The low byte (00-FF) of the 5B envelope's period.", "the 5B channels", "until changed", "with Ixx, the envelope's speed." });
 	return All;
 }
 
@@ -220,7 +235,26 @@ int MostTimbre(const ChannelInfo &C)
 		return 1;
 	if (C.Chip == "N163")
 		return 15;
+	if (C.Chip == "5B")
+		return 7;
 	return -1;
+}
+
+// The chip of an entry for H, I or J: those of the FDS and the 5B are theirs, the others (the 2A03 pulses' sweep) ""
+std::string EntryChip(const EffectInfo &E)
+{
+	const std::string Name = E.Name;
+	if (Name.compare(0, 3, "FDS") == 0)
+		return "FDS";
+	if (Name.compare(0, 2, "5B") == 0)
+		return "5B";
+	return std::string();
+}
+
+// The chip whose H, I and J a channel plays: the FDS's modulator, the 5B's envelope, "" for the others (H and I the sweep)
+std::string LetterChip(const ChannelInfo *pChannel)
+{
+	return pChannel != 0 && (pChannel->Chip == "FDS" || pChannel->Chip == "5B") ? pChannel->Chip : std::string();
 }
 
 std::string ChannelName(const ChannelInfo &C)
@@ -264,11 +298,12 @@ std::string ChannelProblem(const ChannelInfo &C, int Effect, int Param, int Spee
 	case EFF_DUTY_CYCLE: {
 		const int Most = MostTimbre(C);
 		if (Most < 0)
-			std::snprintf(Text, sizeof(Text), "Vxx changes the tone of pulses, the noise and the N163; %s has none to change.",
+			std::snprintf(Text, sizeof(Text), "Vxx changes the tone of pulses, the noise, the N163 and the 5B; %s has none to change.",
 				ChannelName(C).c_str());
 		else if (Param > Most)
 			std::snprintf(Text, sizeof(Text), "%s takes V00-V%02X%s.", ChannelName(C).c_str(), Most,
-				C.Kind == KIND_PULSE && Most == 3 ? " (12.5%, 25%, 50%, 75%)" : (C.Kind == KIND_NOISE ? " (hiss, metallic)" : ""));
+				C.Kind == KIND_PULSE && Most == 3 ? " (12.5%, 25%, 50%, 75%)" : (C.Kind == KIND_NOISE ? " (hiss, metallic)" :
+				(C.Chip == "5B" ? " (1 the square, 2 the noise, 4 the envelope, added up)" : "")));
 		break;
 	}
 	case EFF_DAC: case EFF_SAMPLE_OFFSET: case EFF_RETRIGGER: case EFF_DPCM_PITCH:
@@ -280,12 +315,20 @@ std::string ChannelProblem(const ChannelInfo &C, int Effect, int Param, int Spee
 			return "Wxx goes from W00 to W0F.";
 		break;
 	case EFF_FDS_MOD_DEPTH: case EFF_FDS_MOD_SPEED_HI: case EFF_FDS_MOD_SPEED_LO:
-		if (C.Chip != "FDS")
-			return "Hxx, Ixx and Jxx are the FDS's modulator here.";
+		if (C.Chip != "FDS") {
+			std::snprintf(Text, sizeof(Text), "Jxx (with Hxx and Ixx) is the FDS's modulator on the FDS channel and the envelope "
+				"on the 5B's; %s plays neither.", ChannelName(C).c_str());
+			break;
+		}
 		if (Effect == EFF_FDS_MOD_DEPTH && Param > 0x3F)
 			return "Hxx (the FDS's modulation depth) goes from H00 to H3F.";
 		if (Effect == EFF_FDS_MOD_SPEED_HI && Param > 0x0F)
 			return "Ixx (the FDS's modulation speed, high) goes from I00 to I0F.";
+		break;
+	case EFF_SUNSOFT_ENV_TYPE: case EFF_SUNSOFT_ENV_HI: case EFF_SUNSOFT_ENV_LO:
+		if (C.Chip != "5B")
+			return "Hxy, Ixx and Jxx steer the Sunsoft 5B's envelope on its channels; elsewhere H and I are the 2A03 pulses' sweep "
+				"and the FDS's modulator.";
 		break;
 	case EFF_DELAY:
 		if (Speed > 0 && Param >= Speed)
@@ -340,9 +383,10 @@ const char *const OVERVIEW =
 	"Pitch: 0xy arpeggio, 1xx and 2xx slide up and down, 3xx portamento, 4xy vibrato, Pxx fine pitch, Qxy and Rxy note slide "
 	"up and down, Hxy and Ixy the hardware sweep (2A03 pulses).\n"
 	"Volume and time: 7xy tremolo, Axy volume slide, Gxx note delay, Sxx note cut.\n"
-	"Tone: Vxx timbre (a pulse's duty, the noise's mode, an N163 wave).\n"
+	"Tone: Vxx timbre (a pulse's duty, the noise's mode, an N163 wave, what a 5B channel plays).\n"
 	"Samples (the DPCM channel): Wxx pitch, Xxx retrigger, Yxx sample offset, Zxx delta counter.\n"
 	"The FDS: Hxx modulation depth, Ixx and Jxx modulation speed.\n"
+	"The Sunsoft 5B: Hxy its envelope's shape and how it follows the note, Ixx and Jxx its period.\n"
 	"The song (set_tempo and set_loop write these): Fxx speed or tempo, Bxx jump, Dxx skip, Cxx halt. Exx (volume) is only kept "
 	"for old songs: use the volume column.\n"
 	"Not in 0.4.6: Lxx, Mxy, Oxx, Txy and the like come from later FamiTrackers (0CC); 5xy, 6xy, 8xx and 9xx from MOD and XM. "
@@ -400,20 +444,21 @@ bool EffectsText(const std::string &Effect, const std::string &Technique, const 
 		Letter.erase(std::remove_if(Letter.begin(), Letter.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; }),
 			Letter.end());
 		const char First = Letter.empty() ? 0 : static_cast<char>(std::toupper(static_cast<unsigned char>(Letter[0])));
-		const bool Fds = pChannel != 0 && pChannel->Chip == "FDS";
+		const std::string Own = LetterChip(pChannel);
 		for (size_t i = 0; i < Effects.size(); ++i) {
 			const EffectInfo &E = Effects[i];
 			if (E.Form[0] != First)
 				continue;
-			// H, I and J: the sweep on the 2A03 pulses, the modulator on the FDS
-			const bool FdsEntry = std::string(E.Name).compare(0, 3, "FDS") == 0;
-			if ((First == 'H' || First == 'I') && FdsEntry != Fds)
+			// H, I and J: the sweep on the 2A03 pulses, the modulator on the FDS, the envelope on the 5B (J: the FDS's and
+			// the 5B's, unless the channel is one of theirs)
+			if ((First == 'H' || First == 'I' || (First == 'J' && !Own.empty())) && EntryChip(E) != Own)
 				continue;
 			Text += (Text.empty() ? "" : "\n") + std::string(E.Form) + " " + E.Name + ": " + E.Does + " Channels: " + E.Channels +
 				". Lasts: " + E.Lasts + ". Good for: " + E.Uses;
 		}
-		if (First == 'H' || First == 'I')
-			Text += Fds ? "" : std::string("\n(On the FDS channel, ") + First + "xx is its modulator: ask with that channel.)";
+		if ((First == 'H' || First == 'I') && Own.empty())
+			Text += std::string("\n(On the FDS channel, ") + First + "xx is its modulator, and on the 5B's its envelope: ask with "
+				"that channel.)";
 		if (!Text.empty())
 			return true;
 		if (First == 'F' || First == 'B' || First == 'C' || First == 'D' || First == 'E') {
@@ -427,13 +472,14 @@ bool EffectsText(const std::string &Effect, const std::string &Technique, const 
 	if (pChannel != 0) {
 		const ChannelInfo &C = *pChannel;
 		std::vector<std::string> Can;
-		const bool Fds = C.Chip == "FDS";
+		const std::string Own = LetterChip(&C);
 		for (size_t i = 0; i < Effects.size(); ++i) {
 			const EffectInfo &E = Effects[i];
-			// H, I and J: the sweep on the 2A03 pulses, the modulator on the FDS
-			if (std::string(E.Name).compare(0, 3, "FDS") == 0 ? !Fds : (Fds && (E.Form[0] == 'H' || E.Form[0] == 'I')))
+			// H, I and J: the sweep on the 2A03 pulses, the modulator on the FDS, the envelope on the 5B
+			const char L = E.Form[0];
+			if ((L == 'H' || L == 'I' || L == 'J') && EntryChip(E) != Own)
 				continue;
-			const bool Pair = E.Form[0] == 'Q' || E.Form[0] == 'R' || (!Fds && (E.Form[0] == 'H' || E.Form[0] == 'I'));
+			const bool Pair = L == 'Q' || L == 'R' || (Own.empty() && (L == 'H' || L == 'I'));
 			int Id = 0, Param = 0;
 			std::string Problem;
 			if (ParseChannelEffect(std::string(1, E.Form[0]) + (Pair ? "11" : "01"), C, 0, Id, Param, Problem))
@@ -449,9 +495,12 @@ bool EffectsText(const std::string &Effect, const std::string &Technique, const 
 			Text += " The DPCM channel plays samples: no pitch or volume effects.";
 		if (C.Kind == KIND_PULSE && C.Chip != "2A03")
 			Text += " Only the 2A03's pulses have the hardware sweep (Hxy, Ixy).";
+		if (C.Chip == "5B")
+			Text += " Hxy, Ixx and Jxx steer the 5B's envelope, which its three channels share.";
 		if (MostTimbre(C) >= 0) {
-			char Line[64];
-			std::snprintf(Line, sizeof(Line), " Vxx: V00-V%02X.", MostTimbre(C));
+			char Line[96];
+			std::snprintf(Line, sizeof(Line), " Vxx: V00-V%02X%s.", MostTimbre(C), C.Chip == "5B" ?
+				" (1 the square, 2 the noise, 4 the envelope, added up)" : "");
 			Text += Line;
 		}
 		return true;
@@ -478,8 +527,10 @@ bool ParseChannelEffect(const std::string &Input, const ChannelInfo &Channel, in
 	Param = static_cast<int>(std::strtol(Text.substr(1).c_str(), 0, 16));
 	if (Channel.Chip == "FDS" && (Letter == 'H' || Letter == 'I' || Letter == 'J'))
 		Effect = Letter == 'H' ? EFF_FDS_MOD_DEPTH : (Letter == 'I' ? EFF_FDS_MOD_SPEED_HI : EFF_FDS_MOD_SPEED_LO);
+	else if (Channel.Chip == "5B" && (Letter == 'H' || Letter == 'I' || Letter == 'J'))
+		Effect = Letter == 'H' ? EFF_SUNSOFT_ENV_TYPE : (Letter == 'I' ? EFF_SUNSOFT_ENV_HI : EFF_SUNSOFT_ENV_LO);
 	else if (Letter == 'J')
-		Effect = EFF_FDS_MOD_SPEED_LO;	// its ChannelProblem says it's the FDS's
+		Effect = EFF_FDS_MOD_SPEED_LO;	// its ChannelProblem says it's the FDS's and the 5B's
 	else {
 		int Ignored = 0;
 		if (!ParseEffect(Text, Effect, Ignored)) {

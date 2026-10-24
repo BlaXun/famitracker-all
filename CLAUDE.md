@@ -20,6 +20,20 @@ action by `WriteChannelRows` in `InsertRecording.cpp`. The overall plan is in
 `ROADMAP.md`. Unless a section says otherwise, everything below describes the
 0.4.6 code as found on `master` and was checked against that source.
 
+The Sunsoft 5B is a working chip here, and a module can have several
+expansion chips on at once. The 5B's channels are `Source/ChannelsS5B.cpp`
+(emu2149 in `Source/APU/S5B.cpp`), its instruments and sequences
+`InstrumentS5B.cpp` and `InstrumentEditorS5B.cpp` (its duty sequence is the
+chip's noise and mode), and its envelope effects `Hxy`, `Ixx` and `Jxx`.
+Module > Module properties has a checkbox for each chip
+(`ModulePropertiesDlg.cpp`), `CAPU` and `CMixer` run every chip that's on,
+and `Source/ChipSwitch.cpp` works out the channels (`ChipChannels`) and,
+when the chips change, keeps the notes of the chips that stay
+(`CFamiTrackerDoc::SelectExpansionChip`, `CPatternData::MoveChannels`) after
+asking before the channels of the others are cleared. A module with one chip
+is saved byte for byte as 0.4.6 saves it; NSF export refuses several chips
+and the 5B, which OGG and WAV export play. See Gotchas.
+
 File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 (see `MCP.md`; built on the `api` branch and merged into `recorder`, then
 here). The protocol and the tools are in `Source/Api/` (portable, tested on
@@ -73,11 +87,13 @@ volume column by its role and
 sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
-5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under), as
+5 dB over a pulse at 15 and 3 dB a step, a 5B square 0.4 dB over and 3 dB a
+step, the N163's about 8 dB under), as
 the echo, harmony, counter-melody, `polish` and the review do; `mix` and
 the review also play each note's instrument envelope (`HeldEnvelope`, from
 the volume sequence FamiTracker reports in `InstrumentInfo::Volume`, times
-the volume column over 15: `PlayedVolume`), and `mix` moves volume slides
+the volume column over 15, on the 5B their steps added: `PlayedVolume`),
+and `mix` moves volume slides
 with the volumes (`MixSlides`, which follows a swell too slow to scale a
 step at a time). `remove_unused_instruments` counts each instrument's
 cells in every track and clip (`SongHost::CountInstrumentUses`) and
@@ -301,9 +317,10 @@ The application has no test suite of its own. What exists:
   instruments kept, switch-off effects, song-wide effects staying, copy and
   paste, and the effects the piano roll shows on notes and puts on them
   (lasting ones kept for the notes after). `ChipSwitchTests.cpp` covers the
-  notes counted on the channels a chip switch clears, the channels emptied,
-  and their song-wide effects moved to the last channel with patterns of
-  their own where frames share one. `DrumGridTests.cpp` covers reading the
+  channels a set of chips has, the notes counted on the channels a chip
+  switch clears, the channels emptied, their song-wide effects moved to the
+  last channel with patterns of their own where frames share one, and the
+  channels that stay moved to their new columns. `DrumGridTests.cpp` covers reading the
   drums off a bar, putting them on and off, and the ready-made beats.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
   the errors, and the built-in tutorials, which must stay ASCII. Same three
@@ -456,9 +473,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   of step.
 - **Serialized enums:** append only, never reorder `effect_t`, `inst_type_t`,
   `sequence_t`, `SNDCHIP_*` or `chan_id_t`. Patterns are stored by channel
-  index. On load, the index-to-channel mapping is rebuilt from the chip in
+  index. On load, the index-to-channel mapping is rebuilt from the chips in
   `chan_id_t` order (`CSoundGen::RegisterChannels`), so reordering `chan_id_t`
-  scrambles existing modules.
+  scrambles existing modules. With several chips on, the columns are the
+  2A03's, then each chip's (the N163's up to its count), as `ChipChannels`
+  in `ChipSwitch.cpp` lists them; the N163 channels past the count are
+  registered after them.
 - **Channel index vs. channel ID:**
   - Document and pattern APIs take the channel index: the column in the
     current module, `0..GetAvailableChannels()-1`. `GetChannelCount()` counts
@@ -565,11 +585,26 @@ NSF export still uses the 2A03 driver. Touch points:
   `CustomExporter*` files. Turning PCH on breaks them.
 - **Instrument references:** `CFamiTrackerDoc::GetInstrument()` returns a
   retained pointer. Call `Release()` or use `CInstrumentContainer<T>`.
-- **One expansion chip at a time:** `SNDCHIP_*` are bit flags, but the
-  Module Properties dialog and `CCompiler::CompileData` accept a single chip.
-- **Sunsoft 5B is half-built:** it is offered only in Debug builds, has no
-  channels (`#if 0` in `CreateChannels`) and no NSF driver, and saving such a
-  module is refused.
+- **Several expansion chips:** `SNDCHIP_*` are bit flags, and a module can
+  have any of them on (on `master`, 0.4.6's dialog takes one). The N163
+  channels past its count are registered last, so `GetChannelCount()` still
+  counts all eight and a channel index is a column of the module only below
+  `GetAvailableChannels()`. The PARAMS block holds the bits, so a file with
+  one chip is 0.4.6's. `CCompiler::CompileData` takes one chip: NSF export
+  refuses several, and the 5B, which has no NSF driver. The VRC7 is mixed
+  raw, as in 0.4.6, so it plays relatively loud beside the other chips.
+- **Sunsoft 5B:** its notes use the 2A03's period table, so they sound an
+  octave under the note written, as 0CC- and Dn-FamiTracker play them, whose
+  5B instruments and `SEQUENCES_S5B` block are saved the same way. `Hxy`
+  starts the envelope with shape y, x making its
+  period follow the note (C at the note's pitch, 0 for `Ixx` and `Jxx`'s);
+  `Vxx` and the instrument's duty sequence set what a channel plays (Vxx: 1
+  the square, 2 the noise, 4 the envelope; the sequence: 0x40, 0x80, 0x20,
+  the noise's pitch in bits 0-4). The volume column and the volume sequence
+  add in 3 dB steps. Until a song uses `Hxy`, `Ixx` or `Jxx`, envelope notes
+  play a falling saw at the note's pitch (`HC8`). The three channels share
+  the envelope and the noise pitch. Its level is set in `CMixer` against the
+  2A03 from rendered measurements.
 - **File associations:** Release builds register the `.ftm` file type on every
   start (per-user on Vista and later); Debug builds don't.
 - **Dead code:** `ConfigWindow.cpp` is not in the project, though `MainFrm.cpp`
@@ -589,7 +624,8 @@ Point these out rather than silently fixing them inside archive commits.
 - **Text import loses chip effects:** it takes the first matching letter in
   `EFF_CHAR`, so FDS and 5B `Hxx` and `Ixx` come back as the 2A03 sweep effects,
   and 5B `Jxx` becomes the FDS modulation-speed effect (FDS `Jxx` survives).
-  Such modules don't round-trip through `.txt`.
+  Such modules don't round-trip through `.txt`. (Fixed on this branch:
+  `TextExporter.cpp` reads H, I and J by the channel's chip.)
 - **No bounds checks on load:** `CDocumentFile::GetBlockInt`, `GetBlockChar`,
   `GetBlock` and `ReadString` don't check the block size, so a corrupt `.ftm`
   can read past the buffer.

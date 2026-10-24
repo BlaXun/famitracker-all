@@ -22,10 +22,11 @@
 #pragma once
 
 // Instruments made from FamiTracker's sound presets (Api/Presets.h: leads,
-// plucks, pads, basses and drums for the 2A03, MMC5 and VRC6, and the VRC7's
-// built-in sounds), for Claude Code's tools and for Instrument > Instrument
-// library, which lists them by the channel they're for and plays each one
-// before it goes into the song. Include after FamiTrackerDoc.h.
+// plucks, pads, basses and drums for the 2A03, MMC5, VRC6 and 5B, the 5B's
+// own sounds, and the VRC7's built-in sounds), for Claude Code's tools and for
+// Instrument > Instrument library, which lists them by the channel they're for
+// and plays each one before it goes into the song. Include after
+// FamiTrackerDoc.h.
 
 class CMainFrame;
 namespace ftapi { struct Preset; struct WaveSound; }
@@ -38,6 +39,9 @@ int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR N
 // the one of that name already there: its index, or -1 with the reason
 int AddPresetInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, bool VRC6, bool Sawtooth, CString &Error,
 	bool Notify = true);
+// The same as a 5B instrument: one of the 5B's own sounds, or a preset as the
+// 5B plays it (ftapi::Preset5BSequences)
+int AddPreset5BInstrument(CFamiTrackerDoc *pDoc, const ftapi::Preset &Sound, CString &Error, bool Notify = true);
 
 // A VRC7 instrument playing one of the chip's sounds (patch 1-15), named
 // Name, or the one of that name already there

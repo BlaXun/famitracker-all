@@ -39,6 +39,10 @@
 
 */
 
+// <vector> comes before stdafx.h (whose DEBUG_NEW would rewrite its placement
+// new), and with it the C runtime's headers: as stdafx.h does, this file uses
+// sscanf without the runtime's deprecation warning
+#define _CRT_SECURE_NO_WARNINGS
 #include <vector>
 #include "stdafx.h"
 #include <algorithm>
