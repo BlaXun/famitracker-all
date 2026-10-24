@@ -35,6 +35,7 @@
 #include "Song.h"
 #include "SoundEffects.h"
 #include "Effects.h"
+#include "FdsSounds.h"
 #include "Wavetables.h"
 #include "../Nsf/FtmFile.h"
 #include "../Nsf/Import.h"
@@ -105,6 +106,12 @@ std::string Squeezed(const std::string &Text)
 std::string Plural(int Count, const char *One, const char *Many)
 {
 	return Format("%d %s", Count, Count == 1 ? One : Many);
+}
+
+// A chip's name with its article, as it's said: "a VRC6", "an FDS"
+std::string AChip(const std::string &Chip)
+{
+	return (Chip == "FDS" || Chip == "MMC5" || Chip == "N163" ? "an " : "a ") + Chip;
 }
 
 // Building tool schemas
@@ -365,19 +372,31 @@ bool IsBass(const ChannelInfo &Channel)
 }
 
 // The triangle and the VRC7 sound an octave below what's written (the VRC7's
-// A-3 is 220 Hz, a pulse's 440): a pitch that sounds as Sounding does on a
-// pulse, as written on Channel
+// A-3 is 220 Hz, a pulse's 440), and the FDS two in FamiTracker 0.4.6 (its
+// A-5 sounds 440 Hz; see FdsSounds.h): a pitch that sounds as Sounding does on
+// a pulse, as written on Channel
 int Written(const ChannelInfo &Channel, int Sounding)
 {
+	if (Channel.Chip == "FDS")
+		return Sounding + 12 * FDS_OCTAVES_DOWN;
 	return Channel.Kind == KIND_TRIANGLE || Channel.Kind == KIND_FM ? Sounding + 12 : Sounding;
 }
 
+// The highest note a channel plays in tune: the FDS's pitch register tops out
+// at G#7 (A-7 plays 13 cents flat, A#7 and B-7 no higher)
+const int FDS_HIGHEST = 92;
+
+int HighestWritten(const ChannelInfo &Channel)
+{
+	return Channel.Chip == "FDS" ? FDS_HIGHEST : PITCHES - 1;
+}
+
 // A note written on one channel, as written on another to sound the same
-// (an octave further when that's outside FamiTracker's notes)
+// (an octave further when that's outside the notes the other plays)
 int WrittenOn(const ChannelInfo &From, const ChannelInfo &To, int Pitch)
 {
 	int Out = Pitch + Written(To, 0) - Written(From, 0);
-	while (Out >= PITCHES)
+	while (Out > HighestWritten(To))
 		Out -= 12;
 	while (Out < 0)
 		Out += 12;
@@ -391,8 +410,15 @@ std::string InstrumentChip(const ChannelInfo &Channel)
 
 // How loud a channel plays at a volume, in dB against a 2A03 pulse at 15, as FamiTracker renders
 // it (measured): the VRC7's sounds about 5 dB louder at 15, each volume step 3 dB softer; the
-// N163's wave sounds about 8 dB quieter; everything else in proportion to the volume
-const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0;
+// N163's wave sounds about 8 dB quieter; the FDS's sounds about 5 dB louder with their envelope
+// at its top (31; FdsSounds.h's from 4 to 6.5); everything else in proportion to the volume
+const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0, FDS_FULL_DB = 5.0;
+
+// A chip's level at 15 against a pulse's, where it counts volume in proportion
+double FullDb(const ChannelInfo &Channel)
+{
+	return Channel.Chip == "N163" ? N163_FULL_DB : Channel.Chip == "FDS" ? FDS_FULL_DB : 0.0;
+}
 
 double LevelDb(const ChannelInfo &Channel, int Volume)
 {
@@ -400,7 +426,7 @@ double LevelDb(const ChannelInfo &Channel, int Volume)
 		return -60.0;
 	if (Channel.Kind == KIND_FM)
 		return FM_FULL_DB - FM_STEP_DB * (15 - std::min(15, Volume));
-	return (Channel.Chip == "N163" ? N163_FULL_DB : 0.0) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
+	return FullDb(Channel) + 20.0 * std::log10(std::min(15, Volume) / 15.0);
 }
 
 // The volume (1-15) at which a channel plays nearest a level in dB
@@ -410,7 +436,7 @@ int VolumeForDb(const ChannelInfo &Channel, double Db)
 	if (Channel.Kind == KIND_FM)
 		Volume = 15.0 - (FM_FULL_DB - Db) / FM_STEP_DB;
 	else
-		Volume = 15.0 * std::pow(10.0, (Db - (Channel.Chip == "N163" ? N163_FULL_DB : 0.0)) / 20.0);
+		Volume = 15.0 * std::pow(10.0, (Db - FullDb(Channel)) / 20.0);
 	return std::max(1, std::min(15, static_cast<int>(std::floor(Volume + 1e-9 + 0.5))));
 }
 
@@ -828,7 +854,7 @@ int ParseChannel(const Session &S, const Json &Value, const char *Name)
 			std::string Alias = Text;
 			const char *const ALIASES[][2] = {
 				{ "square1", "pulse1" }, { "square2", "pulse2" }, { "tri", "triangle" }, { "saw", "sawtooth" },
-				{ "vrc6saw", "vrc6sawtooth" }, { "drums", "noise" }, { "samples", "dpcm" }, { "dmc", "dpcm" },
+				{ "vrc6saw", "vrc6sawtooth" }, { "drums", "noise" }, { "samples", "dpcm" }, { "dmc", "dpcm" }, { "fdsfds", "fds" },
 			};
 			for (size_t a = 0; a < sizeof(ALIASES) / sizeof(ALIASES[0]); ++a)
 				if (Text == ALIASES[a][0])
@@ -1042,6 +1068,20 @@ int AddWaveInstrument(Session &S, const WaveSound &Sound, std::string &Where)
 	return Index;
 }
 
+// An FDS sound as an instrument, or the FDS one of its name already there;
+// Added says whether it's new
+int AddFdsSound(Session &S, const FdsSound &Sound, bool &Added)
+{
+	const size_t Before = S.Song.Instruments.size();
+	std::string Error;
+	const int Index = S.Host().AddFdsInstrument(Sound, Error);
+	if (Index < 0)
+		throw Problem(Error.empty() ? "The instrument couldn't be added." : Error);
+	S.Refresh();
+	Added = S.Song.Instruments.size() > Before;
+	return Index;
+}
+
 // A pulse sound on the sawtooth: the odd values of its duty sequence add 32
 // to the sawtooth's volume, so it overdrives. Said once.
 void OddDutyRemark(Session &S, const InstrumentInfo &I, const ChannelInfo &Info)
@@ -1150,6 +1190,21 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			return Index;
 		}
 	}
+	// The FDS plays sounds drawn for it: a wave and its modulator (a preset's name picks the one most like it)
+	if (Chip == "FDS") {
+		const FdsSound *pSound = FindFdsSound(Wanted);
+		const Preset *pLike = pSound == 0 ? FindPreset(Wanted) : 0;
+		if (pLike != 0 && !pLike->Drum)
+			pSound = FindFdsSound(pLike->Name);	// a preset's word ("keys" is the organ): the FDS sound most like that preset
+		if (pSound != 0) {
+			bool Added = false;
+			const int Index = AddFdsSound(S, *pSound, Added);
+			if (Added)
+				S.Remarks.push_back(Format("Added the instrument %s (FDS: %s).", InstrumentLabel(S.Song, Index).c_str(),
+					pSound->Description.c_str()));
+			return Index;
+		}
+	}
 	const Preset *pPreset = FindPreset(Wanted);
 	if (pPreset != 0 && pWrongChip != 0 && Squeezed(pPreset->Name) != Squeezed(Wanted))
 		pPreset = 0;	// the song's instrument of that name was meant, not a preset it's a nickname of
@@ -1158,6 +1213,9 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			throw Problem(Format("The preset \"%s\" is a drum for the noise channel.", pPreset->Name.c_str()));
 		if (!pPreset->Drum && Info.Kind == KIND_NOISE)
 			throw Problem(Format("The noise channel needs a drum preset (kick, snare, hi-hat, open hi-hat), not \"%s\".", pPreset->Name.c_str()));
+		if (Chip == "FDS")
+			throw Problem(Format("The FDS channel plays the FDS's own sounds: %s. \"%s\" isn't one of them.", FdsSoundList().c_str(),
+				pPreset->Name.c_str()));
 		if (Chip != "2A03" && Chip != "VRC6")
 			throw Problem(Format("Presets are for 2A03, MMC5, VRC6 and VRC7 channels; %s needs one of the song's %s instruments.",
 				Info.FullName().c_str(), Chip.c_str()));
@@ -1179,16 +1237,16 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 		const InstrumentInfo *pInfo = FindInstrument(S.Song, Number);
 		if (pInfo != 0) {
 			if (pInfo->Chip != Chip)
-				throw Problem(Format("Instrument %02X \"%s\" is a %s instrument; %s needs a %s one. A preset name (like \"soft lead\") adds one.",
-					Number, pInfo->Name.c_str(), pInfo->Chip.c_str(), Info.FullName().c_str(), Chip.c_str()));
+				throw Problem(Format("Instrument %02X \"%s\" is %s instrument; %s needs %s one. A preset name (like \"soft lead\") adds one.",
+					Number, pInfo->Name.c_str(), AChip(pInfo->Chip).c_str(), Info.FullName().c_str(), AChip(Chip).c_str()));
 			if (Info.Kind == KIND_SAWTOOTH && pInfo->OddDuty)
 				OddDutyRemark(S, *pInfo, Info);
 			return Number;
 		}
 	}
 	if (pWrongChip != 0)
-		throw Problem(Format("\"%s\" is a %s instrument; %s needs a %s one. A preset name (like \"soft lead\") adds one.",
-			pWrongChip->Name.c_str(), pWrongChip->Chip.c_str(), Info.FullName().c_str(), Chip.c_str()));
+		throw Problem(Format("\"%s\" is %s instrument; %s needs %s one. A preset name (like \"soft lead\") adds one.",
+			pWrongChip->Name.c_str(), AChip(pWrongChip->Chip).c_str(), Info.FullName().c_str(), AChip(Chip).c_str()));
 	std::string Names;
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
 		if (S.Song.Instruments[i].Chip != Chip)
@@ -1204,6 +1262,9 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 	if (Chip == "N163")
 		throw Problem(Format("No instrument or N163 sound called \"%s\". N163 instruments in the song: %s. N163 sounds: %s.",
 			Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), WaveSoundList().c_str()));
+	if (Chip == "FDS")
+		throw Problem(Format("No instrument or FDS sound called \"%s\". FDS instruments in the song: %s. FDS sounds: %s.",
+			Wanted.c_str(), Names.empty() ? "none" : Names.c_str(), FdsSoundList().c_str()));
 	throw Problem(Format("No instrument or preset called \"%s\". %s instruments in the song: %s. Presets: %s.", Wanted.c_str(),
 		Chip.c_str(), Names.empty() ? "none" : Names.c_str(), PresetList().c_str()));
 }
@@ -1996,6 +2057,9 @@ std::string SongOverview(Session &S, const Json &Args)
 			RangeText(T.BarOf(Notes.front().Row), T.BarOf(Notes.back().Row)).c_str());
 		if (Channel.Kind != KIND_DPCM)
 			Text += Format(", %s to %s", PitchText(Channel, Low).c_str(), PitchText(Channel, High).c_str());
+		if (Channel.Chip == "FDS")	// FamiTracker 0.4.6 plays the FDS two octaves under the note written
+			Text += Format(" (sounding %s to %s)", PitchName(std::max(0, Low - Written(Channel, 0))).c_str(),
+				PitchName(std::max(0, High - Written(Channel, 0))).c_str());
 		if (!Instruments.empty()) {
 			Text += ", instruments";
 			for (std::set<int>::const_iterator it = Instruments.begin(); it != Instruments.end(); ++it)
@@ -2079,6 +2143,9 @@ std::string SongOverview(Session &S, const Json &Args)
 	Text += "Instrument presets: " + PresetList() + ".";
 	if (Song.Expansion == "N163")
 		Text += " N163 sounds (for the Namco channels): " + WaveSoundList() + ".";
+	if (Song.Expansion.find("FDS") != std::string::npos)
+		Text += " FDS sounds (for the FDS channel, which sounds two octaves under the note written: its A-5 is a pulse's A-3): " +
+			FdsSoundList() + ".";
 	return Text;
 }
 
@@ -2513,6 +2580,21 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 			pSound->Description.c_str(), Where.empty() ? "" : ("; " + Where).c_str());
 	}
 
+	// The FDS plays sounds drawn for it
+	if (Chip == "FDS") {
+		if (S.Song.Expansion.find("FDS") == std::string::npos)
+			throw Problem("This song has no FDS channel; set_expansion switches it to the FDS.");
+		const FdsSound *pSound = FindFdsSound(Name);
+		if (pSound == 0)
+			throw Problem(Format("No FDS sound called \"%s\". FDS sounds: %s.", Name.c_str(), FdsSoundList().c_str()));
+		bool Added = false;
+		const int Index = AddFdsSound(S, *pSound, Added);
+		return Format("%s %s (FDS instrument: %s). Use it by that name in write_notes or set_instrument. The FDS sounds two "
+			"octaves under the note written, so its notes go two octaves above where a pulse would play them (A-5 there is a "
+			"pulse's A-3, 440 Hz).", Added ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(),
+			pSound->Description.c_str());
+	}
+
 	const Preset *pPreset = FindPreset(Name);
 	if (pPreset == 0)
 		throw Problem(Format("No preset called \"%s\". Presets: %s; on VRC7 channels also: %s.", Name.c_str(), PresetList().c_str(),
@@ -2520,7 +2602,8 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 	if (Channel >= 0 && pPreset->Drum && S.Channel(Channel).Kind != KIND_NOISE)
 		throw Problem(Format("\"%s\" is a drum for the noise channel.", pPreset->Name.c_str()));
 	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels), the VRC6 and the VRC7.");
+		throw Problem("Presets are made for the 2A03 (also used by MMC5 channels), the VRC6 and the VRC7; the N163 and the FDS "
+			"have sounds of their own.");
 	if (pPreset->Drum)
 		Chip = "2A03";
 	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
@@ -2809,8 +2892,10 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	}
 	if (Chip == "VRC7")
 		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
-	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("design_instrument makes sounds for 2A03 (and MMC5) and VRC6 channels.");
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5), VRC6 and FDS channels.");
+	if (Chip == "FDS" && S.Song.Expansion.find("FDS") == std::string::npos)
+		throw Problem("This song has no FDS channel; set_expansion switches it to the FDS.");
 	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
 		throw Problem("This song has no VRC6 channels.");
 
@@ -2951,12 +3036,39 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		Sawtooth = false;
 	}
 
+	// The FDS: its wave by word (or the kind's), its modulator, the design's envelope, pitch and arpeggio
+	if (Chip == "FDS") {
+		std::string Wave = StringArg(Args, "wave");
+		if (Wave.empty() && Arg(Args, "duty") != 0 && IsFdsWave(StringArg(Args, "duty")))
+			Wave = StringArg(Args, "duty");	// "bright", "hollow", "nasal", "round", "square": the wave of that name
+		int ModDelay = 0;
+		if (Arg(Args, "modulation_delay_beats") != 0) {
+			const double Beats = NumberArg(Args, "modulation_delay_beats", 0.5, 0.0, 8.0);
+			const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+			const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
+			ModDelay = std::max(0, std::min(255, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+		}
+		FdsSound F;
+		std::string Why;
+		if (!DesignFdsSound(D, Kind.empty() ? "lead" : Kind, Wave, StringArg(Args, "modulation"), ModDelay, S.Song.FrameRate, F, Why))
+			throw Problem(Why);
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(F.InstrumentName()) && S.Song.Instruments[i].Chip == Chip)
+				throw Problem(Format("The song already has an FDS instrument called \"%s\"; give the new sound another name.",
+					S.Song.Instruments[i].Name.c_str()));
+		bool Added = false;
+		const int Index = AddFdsSound(S, F, Added);
+		return "Added " + InstrumentLabel(S.Song, Index) + " (FDS instrument): " + F.Description + "." + VanishRemark(S.Song, Index) +
+			" Use it by name in write_notes, set_instrument or a part tool's instrument; the FDS sounds two octaves under the note "
+			"written. Play a few notes so the user hears it.";
+	}
+
 	// A new name, so an instrument the song uses doesn't change under it
 	const Preset Sound = DesignPreset(D);
 	const std::string Final = Lowercase(Sound.InstrumentName(Sawtooth));
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
 		if (Lowercase(S.Song.Instruments[i].Name) == Final && S.Song.Instruments[i].Chip == Chip)
-			throw Problem(Format("The song already has a %s instrument called \"%s\"; give the new sound another name.", Chip.c_str(),
+			throw Problem(Format("The song already has %s instrument called \"%s\"; give the new sound another name.", AChip(Chip).c_str(),
 				S.Song.Instruments[i].Name.c_str()));
 	std::string Error;
 	const int Index = S.Host().AddInstrument(Sound, Chip, Sawtooth, Error);
@@ -5393,10 +5505,11 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings, Stop))
 		throw Problem("The echo is already there.");
-	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter), the number written differs
+	// Where a chip counts volume otherwise (the VRC7 in 3 dB steps, the N163 quieter, the FDS louder), the number written differs
 	std::string Level = Format("at volume %d", Plan.Volume);
 	const ChannelInfo &Source = S.Channel(Plan.Source), &Target = S.Channel(Plan.Target);
-	if (Source.Kind == KIND_FM || Target.Kind == KIND_FM || Source.Chip == "N163" || Target.Chip == "N163") {
+	if (Source.Kind == KIND_FM || Target.Kind == KIND_FM || Source.Chip == "N163" || Target.Chip == "N163" || Source.Chip == "FDS" ||
+		Target.Chip == "FDS") {
 		int Loudest = 0;
 		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
 		for (size_t i = 0; i < Played.size(); ++i)
@@ -5492,6 +5605,16 @@ bool PlaysTheBass(Session &S, int Channel, int First, int End)
 	return MiddleOf(Mine, 0) < 36;	// under C-3
 }
 
+// The FDS channel playing the bass: its notes in [First, End) sound under C-3
+// (written two octaves up, where the FDS's round and growling basses go)
+bool FdsBass(Session &S, int Channel, int First, int End)
+{
+	if (S.Channel(Channel).Chip != "FDS")
+		return false;
+	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
+	return !Mine.empty() && MiddleOf(Mine, 0) - Written(S.Channel(Channel), 0) < 36;
+}
+
 // What a channel plays in [First, End), for mixing
 int MixRole(Session &S, int Channel, int Melody, int First, int End)
 {
@@ -5504,7 +5627,7 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 		return ROLE_MELODY;
 	if (Melody >= 0 && EchoDelayOf(S, Channel, Melody, First, End) > 0)
 		return ROLE_ECHO;
-	if (IsBass(Info) && PlaysTheBass(S, Channel, First, End))
+	if ((IsBass(Info) && PlaysTheBass(S, Channel, First, End)) || FdsBass(S, Channel, First, End))
 		return ROLE_BASS;
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	for (size_t i = 0; i < Notes.size(); ++i)
@@ -5811,16 +5934,17 @@ std::string MixTool(Session &S, const Json &Args)
 		Most = std::max(Most, Over);
 		P.Target = AsPulse;
 	}
-	bool Fm = false, Quiet = false;
+	bool Fm = false, Quiet = false, Loud = false;
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
 		if (P.Target < 1)
 			continue;
 		const ChannelInfo &Info = S.Channel(P.Channel);
-		if (Info.Kind == KIND_FM || Info.Chip == "N163") {
+		if (Info.Kind == KIND_FM || Info.Chip == "N163" || Info.Chip == "FDS") {
 			P.Target = VolumeForDb(Info, P.Level - Short[Info.Chip]);
 			Fm = Fm || Info.Kind == KIND_FM;
 			Quiet = Quiet || Info.Chip == "N163";
+			Loud = Loud || Info.Chip == "FDS";
 		}
 	}
 	const Json *pLevels = Arg(Args, "levels");
@@ -6090,6 +6214,8 @@ std::string MixTool(Session &S, const Json &Args)
 			"for the same balance (9 there is 18 dB under 15).";
 	if (Quiet && !Style.empty())
 		Text += " The N163's wave sounds play quieter than the pulses, so its parts sit nearer 15 for the same balance.";
+	if (Loud && !Style.empty())
+		Text += " The FDS plays louder than the pulses, so its parts sit lower for the same balance.";
 	return WithRemarks(S, Text, Warnings);
 }
 
@@ -7111,7 +7237,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Samples = c;
 			continue;
 		}
-		if (IsBass(Info) && Bass < 0 && PlaysTheBass(S, c, First, End)) {
+		if (Bass < 0 && ((IsBass(Info) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))) {
 			Bass = c;
 			continue;
 		}
@@ -10285,8 +10411,12 @@ std::string SetExpansionTool(Session &S, const Json &Args)
 			"their names. Up to 6 channels keep the chip's switching whine above hearing (about 20 kHz); 7 or 8 bring it down to "
 			"17 or 15 kHz.";
 	else if (Chip == "FDS")
-		Text += " A wavetable channel: it needs an FDS instrument, which you can't make yet; the user makes one in FamiTracker's "
-			"instrument editor.";
+		Text += " A wavetable channel whose modulator bends its pitch, playing FDS sounds drawn for it: " + FdsSoundList() +
+			". add_instrument, write_notes and set_instrument take their names (a preset's name picks the one most like it). "
+			"FamiTracker 0.4.6 plays the FDS two octaves under the note written (its A-5 sounds 440 Hz, a pulse's A-3) and "
+			"no higher than G#7: write its notes two octaves up. The tools that write parts for it (add_echo, add_harmony, "
+			"add_counter_melody, the chords and the bass) do that already. Hxx, Ixx and Jxx on it set its modulator's depth "
+			"and speed.";
 	if (Notes > 0)
 		Text += Format(" Cleared %s on the channels that went.", Plural(Notes, "note", "notes").c_str());
 	if (Moved > 0 && S.ChannelCount() > 0)
@@ -12030,6 +12160,10 @@ std::string CheckTool(Session &S, const Json &Args)
 				Range = "below A-0, the lowest note its pulse can play";
 			else if (Info.Kind == KIND_TRIANGLE && N.Pitch > 72)
 				Range = "above C-6, thin and shrill on the triangle";
+			else if (Info.Chip == "FDS" && N.Pitch > FDS_HIGHEST)
+				Range = "above G#7, the highest the FDS plays: its pitch register tops out there, so the note sounds flat";
+			else if (Info.Chip == "FDS" && N.Pitch < 21)
+				Range = "below A-1, which the FDS plays two octaves down, under 28 Hz: felt more than heard";
 			else if (N.Pitch - Written(Info, 0) > 84)
 				Range = "above C-7, very high";
 			else if (Info.Chip == "N163") {
@@ -13073,17 +13207,31 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = InstrumentChip(Info);
 		Sawtooth = Info.Kind == KIND_SAWTOOTH;
 		For = " for " + Info.FullName();
-		if (Chip != "2A03" && Chip != "VRC6")
-			throw Problem("A reference's sound can be an instrument for 2A03, MMC5 and VRC6 channels, not " + Info.FullName() + ".");
+		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6 and FDS channels, not " + Info.FullName() + ".");
 		if (Sound.Noise != (Info.Kind == KIND_NOISE))
 			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
 				"other than the noise.");
 	}
 	else if (Sound.Chip == "VRC6" && S.Song.Expansion == "VRC6")
 		Chip = "VRC6";
+	else if (Sound.Chip == "FDS" && !Sound.Noise && S.Song.Expansion.find("FDS") != std::string::npos)
+		Chip = "FDS";
 	std::string Name = StringArg(Args, "name");
 	if (Name.empty())
 		Name = ReferenceSoundName(R, Sound);
+	// On the FDS: an FDS instrument, its own wave and modulator for an FDS sound, a wave from its channel for another's
+	if (Chip == "FDS") {
+		std::string How;
+		const FdsSound F = ReferenceFdsSound(Sound, Name, How);
+		bool Added = false;
+		const int Index = AddFdsSound(S, F, Added);
+		return Format("%s %s, an FDS instrument%s: sound %d of %s (%s, %s): %s. It plays %s.", Added ? "Added" : "The song already has",
+			InstrumentLabel(S.Song, Index).c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(),
+			Sound.Words.c_str(), How.c_str()) + (Sound.Chip != "FDS" ? std::string(" Its volume is counted as the FDS counts it "
+			"(0-31), its pitch sequence in the FDS's finer steps.") : std::string()) + VanishRemark(S.Song, Index) +
+			" Use it with write_notes or set_instrument; the FDS sounds two octaves under the note written.";
+	}
 	const Preset Made = ReferencePreset(Sound, Name);
 	std::string Error;
 	const int Index = S.Host().AddInstrument(Made, Chip, Sawtooth, Error);
@@ -13094,6 +13242,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
 	if (Sound.Chip != Chip && !Sound.Noise && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
 		Out += " Its duty was translated from the " + Sound.Chip + "'s.";
+	if (Sound.Chip == "FDS" && !Sound.Noise)
+		Out += " It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, its pitch sequence in the period's "
+			"coarser steps, and it plays a pulse as bright as its wave (an FDS song's FDS channel plays it as it was).";
 	if (Sound.Triangle && !Sawtooth && pChannel != 0 && S.Channel(ParseChannel(S, *pChannel, "channel")).Kind != KIND_TRIANGLE)
 		Out += " It was a triangle sound: on a pulse it plays with the pulse's duty.";
 	const bool OnTriangle = pChannel != 0 ? S.Channel(ParseChannel(S, *pChannel, "channel")).Kind == KIND_TRIANGLE : Sound.Triangle;
@@ -13165,13 +13316,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	Chips.push_back("VRC6");
 	Chips.push_back("VRC7");
 	Chips.push_back("N163");
-	std::vector<std::string> Sounds = PresetNames();	// and the VRC7's and the N163's
+	Chips.push_back("FDS");
+	std::vector<std::string> Sounds = PresetNames();	// and the VRC7's, the N163's and the FDS's
 	for (size_t i = 0; i < Vrc7Patches().size(); ++i)
 		if (std::find(Sounds.begin(), Sounds.end(), Vrc7Patches()[i].Name) == Sounds.end())
 			Sounds.push_back(Vrc7Patches()[i].Name);
 	for (size_t i = 0; i < WaveSounds().size(); ++i)
 		if (std::find(Sounds.begin(), Sounds.end(), WaveSounds()[i].Name) == Sounds.end())
 			Sounds.push_back(WaveSounds()[i].Name);
+	for (size_t i = 0; i < FdsSounds().size(); ++i)
+		if (std::find(Sounds.begin(), Sounds.end(), FdsSounds()[i].Name) == Sounds.end())
+			Sounds.push_back(FdsSounds()[i].Name);
 
 	Json NoteItem = Json::MakeObject();
 	{
@@ -13235,7 +13390,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"it covers. Each note lasts its beats; a gap is a rest. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
 		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "; on N163 channels the N163 sounds: " + WaveSoundList() +
-		"). Drums on the noise channel by name (kick, "
+		"; on the FDS channel the FDS sounds: " + FdsSoundList() + "). On the FDS, notes sound two octaves under the note written. "
+		"Drums on the noise channel by name (kick, "
 		"snare, hihat); on the DPCM channel the sampled drums of add_sample_drums (kick, snare, low tom, high tom).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
@@ -13261,7 +13417,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("add_instrument", "Add an instrument",
 		"Adds an instrument from a preset: " + Presets + ". 2A03, VRC6 and VRC7 channels need their own: give the channel it's "
 		"for. VRC7 channels play the chip's built-in sounds: " + Vrc7PatchList() + " (a preset's name picks the one most like "
-		"it). N163 channels play wave sounds drawn for them, whose timbre can move as a note plays: " + WaveSoundList() + ". An "
+		"it). N163 channels play wave sounds drawn for them, whose timbre can move as a note plays: " + WaveSoundList() + ". The "
+		"FDS channel plays sounds drawn for it, a wave and its modulator (a wobble, a growl): " + FdsSoundList() + ". An "
 		"instrument of that name for that chip is reused. write_notes and set_instrument also take these names directly.",
 		Schema()
 			.Add("preset", EnumProp("The sound.", Sounds), true)
@@ -13276,7 +13433,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"the attack, or a chord arpeggio; the articulations of the classic NES soundtracks: an attack that blooms, a duty "
 		"click, a decay in steps, held notes struck again, an echo after the note, a pitch flick, a bass that thumps; on the "
 		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer, or a swell that rises and "
-		"washes out (waves, wind; any other kind there is its volume envelope alone). Start from a kind (" +
+		"washes out (waves, wind; any other kind there is its volume envelope alone). On the FDS channel a wave by word and "
+		"its modulator: a wobble, a tremble, a growl. Start from a kind (" +
 		DesignKinds() + ") and change what should differ. Envelope times are in frames, 60 a second.",
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
@@ -13284,7 +13442,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"chiptune, swell (rises and washes out: waves and wind on the noise channel); the classic articulations: bloom lead, "
 				"stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
-			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
+			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS" }))
+			.Add("wave", Prop("string", ("FDS only: its wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad "
+				"a voice, a bass deep and round).").c_str()))
+			.Add("modulation", EnumProp("FDS only: what its modulator does to the pitch: none, wobble (widely, three times a "
+				"second), tremble (widely, five times a second), growl (35 times a second) or rumble (26).",
+				std::vector<std::string>{ "none", "wobble", "tremble", "growl", "rumble" }))
+			.Add("modulation_delay_beats", Prop("number", "FDS only: when the modulator comes in, in beats at the song's tempo "
+				"(default at once)."))
 			.Add("attack", LevelProp("instant, fast, medium, slow, swell, bloom (from about two thirds of the peak to it in two "
 				"frames, so notes open up), or frames (0-60)."))
 			.Add("attack_from", Prop("integer", "The level the attack starts at, 1-15 (0: from silence); with attack in frames, a "
@@ -13984,7 +14149,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("set_expansion", "Switch the expansion chip",
 		"Switches the song's expansion sound chip, as Module > Module properties does: none (the 2A03's five channels only), "
 		"VRC6 (two more pulses and a sawtooth), VRC7 (six FM channels with built-in sounds like piano, flute and brass), MMC5 "
-		"(two more pulses), FDS or N163 (wavetables). Use it when the user asks for a VRC6 or VRC7 song, before writing. "
+		"(two more pulses), FDS (a wavetable with a modulator, playing sounds drawn for it) or N163 (wavetables). Use it when "
+		"the user asks for a VRC6, VRC7, FDS or N163 song, before writing. "
 		"FamiTracker plays one expansion chip at a time, for every track of the module: the old chip's channels are cleared, so "
 		"when they have notes this asks for confirm: true, which needs the user's OK. It can't be undone in FamiTracker.",
 		Schema()
@@ -14143,11 +14309,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("reference_sound", "Use a reference's sound",
 		"Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes (volume, arpeggio, "
 		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
-		"number. The duty is translated between the 2A03 and the VRC6.",
+		"number. The duty is translated between the 2A03 and the VRC6. An FDS sound plays on the FDS channel with its own wave "
+		"and modulator (in an FDS song, also when no channel is given); elsewhere its volume is counted 0-15. Another chip's "
+		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave.",
 		Schema()
 			.Add("reference", Prop("string", "The reference's id."), true)
 			.Add("sound", Prop("integer", "The sound's number in the reference (default 1)."))
-			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5 or VRC6)."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6 or FDS)."))
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 
@@ -14482,7 +14650,10 @@ std::string ToolSet::Instructions()
 		"effects play, so none of the Lxx, Mxy, Oxx or Txy of later FamiTrackers. With the N163 (set_expansion), up to 8 more "
 		"channels play wave sounds whose timbre moves (an organ's rotating shimmer, strings and a choir that swell, brass "
 		"opening up, an electric piano and a bell that mellow, a pulse lead that sweeps, a bass that growls): rich chords "
-		"spread over several channels, each voice its own note.\n"
+		"spread over several channels, each voice its own note. With the FDS, one wavetable channel whose modulator bends "
+		"the pitch plays sounds drawn for it (a soft flute, a whistle, an eerie lead that trembles, a glass bell, a warm organ, "
+		"a nasal reed, strings and a choir that swell, a round or a growling bass, an underwater wobble, a cave drone) for a "
+		"dark, atmospheric lead or bass; it sounds two octaves under the note written.\n"
 		"- Depth and atmosphere, the warm and nostalgic sound of modern FamiTracker music: a soft mix (mix: the melody's "
 		"loudest at 9, echoes at 4, the triangle softened by the DPCM level), an echo under nearly every melodic line (add_echo "
 		"a beat later, volume 6, detune 1), chords as lush arpeggio instruments with sevenths and ninths (add_chords_and_bass "
@@ -14556,9 +14727,10 @@ std::string ToolSet::Instructions()
 		"tritones, pedals and ostinatos, no drums, quiet echoes, slow swells). A jingle (level up, quest complete, item "
 		"found...) is make_jingle, and a sound effect (jump, "
 		"coin, menu blip, \"pew\", wind, birds...) make_sound_effect, which also builds a sound described in words from layers "
-		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7 or MMC5 song, switch the chip with set_expansion "
+		"(a bird flying off: wing flaps as noise hits fading away, and a pulse chirping up) and loops ambience. For a VRC6, VRC7, FDS, N163 or MMC5 song, switch the chip with set_expansion "
 		"first (it asks before clearing notes on the old chip's channels); VRC7 channels play the chip's own sounds by name "
-		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written. set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them; set_meter sets 3/4 or 6/8 (before the notes). Tell the "
+		"(piano, flute, brass...) and, like the triangle, sound an octave under the note written; the FDS plays its sounds by "
+		"name too, two octaves under the note written (write its notes two octaves up). set_tempo takes a BPM, or FamiTracker's speed and tempo as the user names them; set_meter sets 3/4 or 6/8 (before the notes). Tell the "
 		"user what you changed and why.\n"
 		"References: the user keeps a library of studied tracks (study_nsf studies NSF files they have, study_module their "
 		"MOD, S3M, XM and IT modules and MIDI files; references lists, shows and searches them), and references action guide "
