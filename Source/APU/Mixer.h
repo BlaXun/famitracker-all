@@ -97,6 +97,10 @@ private:
 	void MixN163Sides(int Time);
 	void Remix(int ChanID, int Time);	// a channel's pan or level changed: its sound to where it is now
 	template <class Synth> void MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pSent, int Time);
+	template <class Synth> void MixSides(Synth &Synth_, Synth &Own, bool Faded, int32 Level, const double *pGain, int32 *pSent,
+		int32 *pOwnSent, int Time);
+	void SetOwnVolumes();					// the channels' own synths at their chips' volumes times their levels
+	void ClearOwn(int ChanID, int Time);	// what a channel's own synth has, taken out (before its volume changes)
 	Blip_Buffer &Side(int Index) { return Index == 0 ? BlipBuffer : BlipBufferRight; }
 
 	void StoreChannelLevel(int Channel, int Value);
@@ -113,6 +117,15 @@ private:
 	Blip_Synth<blip_good_quality, -1600>	SynthN163;
 	Blip_Synth<blip_good_quality, -3500>	SynthFDS;
 	Blip_Synth<blip_good_quality, -2000>	SynthS5B;
+
+	// The mixer window's levels on the VRC6 and the MMC5, whose channels' levels are small whole numbers
+	// (0-15): a channel off 0 dB sounds through a synth of its own at its chip's volume times its level
+	// (whole steps of the level itself would round the fader away at low volumes); at 0 dB through the
+	// chip's, as it always did. The other chips' levels are fine enough to scale (m_dSide), and the 5B's
+	// and the N163's synths count too coarsely for a gain of their own.
+	Blip_Synth<blip_good_quality, -500>		SynthVRC6Own[3];
+	Blip_Synth<blip_good_quality, -130>		SynthMMC5Own[3];
+	float		m_fVolumeVRC6, m_fVolumeMMC5;	// the chips' synths' volumes
 	
 	// Blip buffer objects: the left side, and the right
 	Blip_Buffer	BlipBuffer;
@@ -127,12 +140,13 @@ private:
 	int			m_iPan[CHANNELS];			// 0x00-0xFF
 	double		m_dGain[CHANNELS][2];		// left and right, from the pan
 	double		m_dLevel[CHANNELS];			// the mixer window's level (1 as the channel plays)
-	double		m_dSide[CHANNELS][2];		// the pan's gains and the level together, for the chips mixed linearly
+	double		m_dSide[CHANNELS][2];		// the pan's gains and the level together, for the FDS, N163, 5B and VRC7
 	int32		m_iLevel[CHANNELS];			// the linear chips' channels: the level the deltas sent add up to
 	int32		m_iSent[CHANNELS][2];		// ...and what each side has of it
 	int32		m_iN163Level;				// the N163's DAC: its level, the channel it plays and what each side has of it
 	int			m_iN163Chan;
 	int32		m_iN163Sent[2];
+	int32		m_iOwnSent[CHANNELS][2];	// what a channel's own synth has of its level on each side
 	uint8		m_iExternalChip;
 	uint32		m_iSampleRate;
 

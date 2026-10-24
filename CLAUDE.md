@@ -297,11 +297,16 @@ thread, no lock); the sound thread's `ApplyChannelMix` (every frame in
 `OnIdle` and in `BeginPlayer`) gives `CMixer::SetChannelGain` the levels
 and starts each channel at its pan in `CChannelHandler::ResetChannel`
 (`GetStartPan`; `MixerPanChanged` moves a channel no `8xx` has moved yet).
-`CMixer` folds a level into the linear chips' side gains (`m_dSide`, which
-`MixSides` and `PanGains256` use) and, on the 2A03, scales the channel's
-share of its pin (the pin's formula is in proportion to its inputs), so
-the chip compresses as before; at 0 dB nothing changes, sample for sample
-(`ApuTests`' hashes; `TestLevels` checks halves and doubles). Every mixer
+`CMixer` plays a VRC6 or MMC5 channel off 0 dB through a Blip synth of its
+own at the chip's volume times the level (`SynthVRC6Own`, `ClearOwn`: their
+levels are 0-15, so scaling them would round a fader away), folds the
+level into the side gains of the FDS, N163, 5B and VRC7 (`m_dSide`, which
+`MixSides` and `PanGains256` use; their synths count too coarsely for a
+gain of their own) and, on the 2A03, scales the channel's share of its pin
+(the pin's formula is in proportion to its inputs), so the chip
+compresses as before (its pins' whole steps leave a fader about 0.2 dB
+off). At 0 dB nothing changes, sample for sample (`ApuTests`' hashes;
+`TestLevels` checks halves, doubles and a silenced channel). Every mixer
 change is one `CChannelMixAction` (`SetChannelMix` in `InsertRecording.cpp`;
 a drag is one, with the settings before it). NSF export leaves the mixer
 out and says so (`CCompiler::CompileData`). Write into the notes runs

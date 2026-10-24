@@ -613,8 +613,12 @@ void TestLevels()
 	for (int Chip = 0; Chip < CHIPS; ++Chip) {
 		const Sides Middle = Render(Plain(Chip, 1));
 		const Sides Halved = Render(Leveled(Chip, 1, 0.5));
-		if (!Half(Middle.Left, Halved.Left) || !Same(Halved.Left, Halved.Right)) {
-			std::printf("FAIL: %s at half its level: %.3f of it\n", CHIP_NAMES[Chip], Rms(Halved.Left) / Rms(Middle.Left));
+		const double Half_ = Rms(Halved.Left) / Rms(Middle.Left);
+		// Exactly half on the VRC6, MMC5, FDS and VRC7 (the VRC6's and MMC5's small levels play through a synth of
+		// the channel's own, so they aren't rounded); the 2A03's pins and the 5B's and N163's levels go in whole steps
+		const bool Exact = Chip == CHIP_VRC6 || Chip == CHIP_MMC5 || Chip == CHIP_FDS || Chip == CHIP_VRC7;
+		if (!Half(Middle.Left, Halved.Left) || !Same(Halved.Left, Halved.Right) || (Exact && std::fabs(Half_ - 0.5) > 0.006)) {
+			std::printf("FAIL: %s at half its level: %.4f of it\n", CHIP_NAMES[Chip], Half_);
 			++g_fail;
 		}
 		++g_checks;

@@ -94,12 +94,14 @@ CMixer::CMixer()
 		m_dGain[i][0] = m_dGain[i][1] = 1.0;
 		m_dLevel[i] = 1.0;
 		m_dSide[i][0] = m_dSide[i][1] = 1.0;
+		m_iOwnSent[i][0] = m_iOwnSent[i][1] = 0;
 		m_iLevel[i] = 0;
 		m_iSent[i][0] = m_iSent[i][1] = 0;
 	}
 	m_iN163Level = 0;
 	m_iN163Chan = CHANID_N163_CHAN1;
 	m_iN163Sent[0] = m_iN163Sent[1] = 0;
+	m_fVolumeVRC6 = m_fVolumeMMC5 = 1.0f;
 
 	m_fLevelAPU1 = 1.0f;
 	m_fLevelAPU2 = 1.0f;
@@ -234,6 +236,10 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 	SynthVRC6.treble_eq(eq);
 	SynthMMC5.treble_eq(eq);
 	SynthS5B.treble_eq(eq);
+	for (int i = 0; i < 3; ++i) {
+		SynthVRC6Own[i].treble_eq(eq);
+		SynthMMC5Own[i].treble_eq(eq);
+	}
 
 	// N163 special filtering
 	double n163_treble = 24;
@@ -256,15 +262,18 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 	// Volume levels
 	Synth2A03SS.volume(Volume * m_fLevelAPU1);
 	Synth2A03TND.volume(Volume * m_fLevelAPU2);
-	SynthVRC6.volume(Volume * 3.98333f * m_fLevelVRC6);
+	m_fVolumeVRC6 = Volume * 3.98333f * m_fLevelVRC6;
+	SynthVRC6.volume(m_fVolumeVRC6);
 	SynthFDS.volume(Volume * 1.00f * m_fLevelFDS);
-	SynthMMC5.volume(Volume * 1.18421f * m_fLevelMMC5);
+	m_fVolumeMMC5 = Volume * 1.18421f * m_fLevelMMC5;
+	SynthMMC5.volume(m_fVolumeMMC5);
 	
 	// Not checked
 	SynthN163.volume(Volume * 1.1f * m_fLevelN163);
 
 	// 5B: a channel at 15 (255) as a 2A03 pulse at 15 (CalcPin1 * AMP_2A03 = 59.75 of Synth2A03SS's 500)
 	SynthS5B.volume(Volume * 0.9373f * m_fLevelS5B);
+	SetOwnVolumes();
 
 	m_iLowCut = LowCut;
 	m_iHighCut = HighCut;
@@ -277,6 +286,14 @@ void CMixer::SetNamcoVolume(float fVol)
 	float fVolume = fVol * m_fOverallVol * GetAttenuation();
 
 	SynthN163.volume(fVolume * 1.1f * m_fLevelN163);
+}
+
+void CMixer::SetOwnVolumes()
+{
+	for (int i = 0; i < 3; ++i) {
+		SynthVRC6Own[i].volume(m_fVolumeVRC6 * m_dLevel[CHANID_VRC6_PULSE1 + i]);
+		SynthMMC5Own[i].volume(m_fVolumeMMC5 * m_dLevel[CHANID_MMC5_SQUARE1 + i]);
+	}
 }
 
 void CMixer::MixSamples(blip_sample_t *pBuffer, uint32 Count)
@@ -421,6 +438,25 @@ void CMixer::MixSides(Synth &Synth_, int32 Level, const double *pGain, int32 *pS
 	}
 }
 
+// ...and where the mixer window's level lives in a synth of the channel's own: through that one when Faded (off 0 dB),
+// through the chip's otherwise (the levels move between the two as the fader leaves 0 dB or comes back)
+template <class Synth>
+void CMixer::MixSides(Synth &Synth_, Synth &Own, bool Faded, int32 Level, const double *pGain, int32 *pSent, int32 *pOwnSent, int Time)
+{
+	for (int s = 0; s < 2; ++s) {
+		const int32 Want = SideLevel(Level, pGain[s]);
+		const int32 Chip = Faded ? 0 : Want, Mine = Faded ? Want : 0;
+		if (Chip != pSent[s]) {
+			Synth_.offset(Time, Chip - pSent[s], &Side(s));
+			pSent[s] = Chip;
+		}
+		if (Mine != pOwnSent[s]) {
+			Own.offset(Time, Mine - pOwnSent[s], &Side(s));
+			pOwnSent[s] = Mine;
+		}
+	}
+}
+
 void CMixer::MixN163(int ChanID, int Value, int Time)
 {
 	// The DAC's level changed (Value), and it plays ChanID now
@@ -452,13 +488,15 @@ void CMixer::MixFDS(int ChanID, int Value, int Time)
 void CMixer::MixVRC6(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthVRC6, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthVRC6, SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1], m_dLevel[ChanID] != 1.0, m_iLevel[ChanID], m_dGain[ChanID],
+		m_iSent[ChanID], m_iOwnSent[ChanID], Time);
 }
 
 void CMixer::MixMMC5(int ChanID, int Value, int Time)
 {
 	m_iLevel[ChanID] += Value;
-	MixSides(SynthMMC5, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+	MixSides(SynthMMC5, SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1], m_dLevel[ChanID] != 1.0, m_iLevel[ChanID], m_dGain[ChanID],
+		m_iSent[ChanID], m_iOwnSent[ChanID], Time);
 }
 
 void CMixer::MixS5B(int ChanID, int Value, int Time)
@@ -495,8 +533,26 @@ void CMixer::SetChannelGain(int ChanID, double Gain, int Time)
 {
 	if (ChanID < 0 || ChanID >= CHANNELS || !(Gain >= 0.0) || Gain == m_dLevel[ChanID])
 		return;
+	// The channel's own synth changes its volume: what it has comes out at the old one first, and goes back in at
+	// the new one (Remix)
+	ClearOwn(ChanID, Time);
 	m_dLevel[ChanID] = Gain;
+	SetOwnVolumes();
 	Remix(ChanID, Time);
+}
+
+void CMixer::ClearOwn(int ChanID, int Time)
+{
+	for (int s = 0; s < 2; ++s) {
+		const int32 Had = m_iOwnSent[ChanID][s];
+		if (Had == 0)
+			continue;
+		if (ChanID >= CHANID_VRC6_PULSE1 && ChanID <= CHANID_VRC6_SAWTOOTH)
+			SynthVRC6Own[ChanID - CHANID_VRC6_PULSE1].offset(Time, -Had, &Side(s));
+		else if (ChanID >= CHANID_MMC5_SQUARE1 && ChanID <= CHANID_MMC5_VOICE)
+			SynthMMC5Own[ChanID - CHANID_MMC5_SQUARE1].offset(Time, -Had, &Side(s));
+		m_iOwnSent[ChanID][s] = 0;
+	}
 }
 
 double CMixer::GetChannelGain(int ChanID) const
@@ -506,7 +562,8 @@ double CMixer::GetChannelGain(int ChanID) const
 
 void CMixer::Remix(int ChanID, int Time)
 {
-	// The pan and the level together, for the chips mixed linearly (in the middle at 1: the pan's gains themselves)
+	// The pan and the level together, for the FDS, N163, 5B and VRC7 (in the middle at 1: the pan's gains themselves);
+	// the VRC6 and MMC5 play a level through the channel's own synth, the 2A03 through its share of the pin
 	for (int s = 0; s < 2; ++s)
 		m_dSide[ChanID][s] = m_dLevel[ChanID] == 1.0 ? m_dGain[ChanID][s] : m_dGain[ChanID][s] * m_dLevel[ChanID];
 
@@ -524,12 +581,12 @@ void CMixer::Remix(int ChanID, int Time)
 		case CHANID_VRC6_PULSE1:
 		case CHANID_VRC6_PULSE2:
 		case CHANID_VRC6_SAWTOOTH:
-			MixSides(SynthVRC6, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+			MixVRC6(ChanID, 0, Time);
 			break;
 		case CHANID_MMC5_SQUARE1:
 		case CHANID_MMC5_SQUARE2:
 		case CHANID_MMC5_VOICE:
-			MixSides(SynthMMC5, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+			MixMMC5(ChanID, 0, Time);
 			break;
 		case CHANID_FDS:
 			MixSides(SynthFDS, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
@@ -538,7 +595,7 @@ void CMixer::Remix(int ChanID, int Time)
 			if (ChanID >= CHANID_N163_CHAN1 && ChanID <= CHANID_N163_CHAN8 && ChanID == m_iN163Chan)
 				MixN163Sides(Time);
 			if (ChanID >= CHANID_S5B_CH1 && ChanID <= CHANID_S5B_CH3)
-				MixSides(SynthS5B, m_iLevel[ChanID], m_dSide[ChanID], m_iSent[ChanID], Time);
+				MixS5B(ChanID, 0, Time);
 			// The VRC7's channels: their samples are made at the end of the frame
 			break;
 	}
