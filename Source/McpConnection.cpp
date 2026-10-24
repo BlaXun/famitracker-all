@@ -951,6 +951,7 @@ public:
 			Info.Clips.push_back(Clip);
 		}
 		Info.Sections = Utf8Sections(pDoc->GetSections()->Get(static_cast<int>(Track)));
+		Info.KeyChosen = pDoc->GetKeys()->Get(static_cast<int>(Track), Info.ChosenKey);
 		Info.DirectChanges = m_Settings.DirectChanges || m_bByHand;
 		Info.Playing = theApp.IsPlaying();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
@@ -1519,6 +1520,24 @@ public:
 
 	bool IsBusy() const { return m_bBusy; }
 
+	// The piano roll's key and chords (ToolSet::Harmony); false when busy with Claude Code or without a song
+	bool Harmony(ftapi::TrackHarmony &Out)
+	{
+		if (m_bBusy || m_pMain == NULL)
+			return false;
+		m_bBusy = true;
+		bool Done = false;
+		try {
+			std::string Error;
+			Done = m_Tools.Harmony(Out, Error);
+		}
+		catch (...) {
+			Done = false;
+		}
+		m_bBusy = false;
+		return Done;
+	}
+
 	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
 	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
 	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply)
@@ -1594,10 +1613,13 @@ public:
 				return false;
 			}
 		}
+		ftapi::KeyStore Keys;	// track 0's key: the track's afterwards (none: back to auto)
+		if (Write.SetKey && Write.KeyChosen)
+			Keys.Set(0, Write.Key);
 		CString Message;
 		if (!WriteSongParts(m_pMain, Raw.empty() ? NULL : &Raw[0], static_cast<int>(Raw.size()), Write.First / Length,
 			Write.First % Length, Write.LinkClipId, Write.MoveFrame, Write.MoveBy, Write.Cursor, Message,
-			Write.SetSections ? &Sections : NULL)) {
+			Write.SetSections ? &Sections : NULL, Write.SetKey ? &Keys : NULL)) {
 			Error = Utf8(Message);
 			return false;
 		}
@@ -1623,6 +1645,21 @@ public:
 		pAction->SetSections(pStore);
 		if (!m_pMain->AddAction(pAction)) {
 			Error = "The sections couldn't be changed.";
+			return false;
+		}
+		return true;
+	}
+
+	bool SetKey(bool Chosen, const ftapi::KeyChoice &Choice, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		ftapi::KeyChoice Now;
+		const bool WasChosen = Doc()->GetKeys()->Get(static_cast<int>(Track()), Now);
+		if (WasChosen == Chosen && (!Chosen || Now == Choice))
+			return true;
+		if (!SetTrackKey(m_pMain, Chosen, Choice)) {
+			Error = "The track's key couldn't be changed.";
 			return false;
 		}
 		return true;
@@ -2617,6 +2654,11 @@ void CMcpConnection::ShowVoiceEffect()
 bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply)
 {
 	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply);
+}
+
+bool CMcpConnection::Harmony(ftapi::TrackHarmony &Out)
+{
+	return m_pImpl->Link.Harmony(Out);
 }
 
 bool CMcpConnection::IsBusy() const

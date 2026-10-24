@@ -607,6 +607,8 @@ bool Document::ReadBlock(const std::string &Id, BlockReader &b, std::string &Err
 		return true;	// beginner-friendly FamiTracker's clips (Clips.cpp): copies of what the patterns hold
 	else if (Id == "BF SECTIONS")
 		return true;	// and its sections' names (Api/Sections.h), which change nothing that plays
+	else if (Id == "BF KEYS")
+		return true;	// and the keys chosen for its tracks (Api/Keys.h), which don't either
 	else {
 		Problem("skipped the block \"" + Shown(Id) + "\", which FamiTracker 0.4.6 doesn't read");
 		return true;

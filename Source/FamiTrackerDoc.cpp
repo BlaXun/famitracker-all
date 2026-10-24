@@ -47,6 +47,7 @@
 #include "stdafx.h"
 #include <algorithm>
 #include "Api/Sections.h"
+#include "Api/Keys.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "ChipSwitch.h"
@@ -205,7 +206,8 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
 	m_bDisplayComment(false),
 	m_pClipLibrary(new CClipLibrary()),
-	m_pSections(new ftapi::SectionStore())
+	m_pSections(new ftapi::SectionStore()),
+	m_pKeys(new ftapi::KeyStore())
 {
 	// Initialize document object
 
@@ -231,6 +233,8 @@ CFamiTrackerDoc::~CFamiTrackerDoc()
 	m_pClipLibrary = NULL;
 	delete m_pSections;
 	m_pSections = NULL;
+	delete m_pKeys;
+	m_pKeys = NULL;
 
 	// DPCM samples
 	for (int i = 0; i < MAX_DSAMPLES; ++i) {
@@ -415,8 +419,9 @@ void CFamiTrackerDoc::DeleteContents()
 	// Clips
 	m_pClipLibrary->Clear();
 
-	// Sections
+	// Sections and keys
 	m_pSections->Clear();
+	m_pKeys->Clear();
 
 	// Instruments
 	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
@@ -790,6 +795,8 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 	if (!m_pClipLibrary->IsEmpty() && !m_pClipLibrary->Write(pDocFile))
 		return false;
 	if (!m_pSections->Empty() && !WriteBlock_Sections(pDocFile))
+		return false;
+	if (!m_pKeys->Empty() && !WriteBlock_Keys(pDocFile))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1310,6 +1317,16 @@ bool CFamiTrackerDoc::WriteBlock_Sections(CDocumentFile *pDocFile) const
 	return pDocFile->FlushBlock();
 }
 
+bool CFamiTrackerDoc::WriteBlock_Keys(CDocumentFile *pDocFile) const
+{
+	// Beginner-friendly: the keys chosen for the tracks (Api/Keys.h), a block other versions skip
+	const std::vector<unsigned char> Data = m_pKeys->Write();
+	pDocFile->CreateBlock(ftapi::KeyStore::BLOCK_ID, ftapi::KeyStore::BLOCK_VERSION);
+	if (!Data.empty())
+		pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
+	return pDocFile->FlushBlock();
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Document load functions
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1657,6 +1674,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		else if (!strcmp(BlockID, ftapi::SectionStore::BLOCK_ID)) {
 			ReadBlock_Sections(&DocumentFile);	// damaged sections are left out too
 		}
+		else if (!strcmp(BlockID, ftapi::KeyStore::BLOCK_ID)) {
+			ReadBlock_Keys(&DocumentFile);		// and damaged keys: the tracks find theirs from the notes
+		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
 		}
@@ -1701,6 +1721,7 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		const bool Used = i < static_cast<int>(m_iTrackCount) && m_pTracks[i] != NULL;
 		m_pSections->FitFrames(i, Used ? static_cast<int>(m_pTracks[i]->GetFrameCount()) : 0);
 	}
+	m_pKeys->FitTracks(static_cast<int>(m_iTrackCount));	// and keys only for tracks there are
 
 #ifdef TRANSPOSE_FDS
 	if (m_bAdjustFDSArpeggio) {
@@ -1890,6 +1911,17 @@ void CFamiTrackerDoc::ReadBlock_Sections(CDocumentFile *pDocFile)
 	if (!Data.empty())
 		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
 	m_pSections->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
+}
+
+void CFamiTrackerDoc::ReadBlock_Keys(CDocumentFile *pDocFile)
+{
+	// The same: every read checked against the block's size, and a damaged
+	// block leaves every track finding its key from its notes
+	const int Size = pDocFile->GetBlockSize() - pDocFile->GetBlockPos();
+	std::vector<unsigned char> Data(static_cast<size_t>(std::max(0, Size)));
+	if (!Data.empty())
+		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
+	m_pKeys->Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
 }
 
 bool CFamiTrackerDoc::ReadBlock_Instruments(CDocumentFile *pDocFile)
@@ -2688,8 +2720,13 @@ bool CFamiTrackerDoc::ImportTrack(int Track, CFamiTrackerDoc *pImported, int *pI
 	// Copy track name
 	SetTrackTitle(NewTrack, pImported->GetTrackTitle(Track));
 
-	// and its sections
+	// and its sections and key
 	m_pSections->Set(NewTrack, pImported->GetSections()->Get(Track));
+	ftapi::KeyChoice Key;
+	if (pImported->GetKeys()->Get(Track, Key))
+		m_pKeys->Set(NewTrack, Key);
+	else
+		m_pKeys->SetAuto(NewTrack);
 
 	// Copy frames
 	for (unsigned int f = 0; f < pImported->GetFrameCount(Track); ++f) {
@@ -4164,6 +4201,7 @@ int CFamiTrackerDoc::AddTrack()
 		return -1;
 
 	AllocateTrack(NewTrack);
+	m_pKeys->SetAuto(NewTrack);	// a new track finds its key from its notes
 
 	++m_iTrackCount;
 
@@ -4181,6 +4219,7 @@ void CFamiTrackerDoc::RemoveTrack(unsigned int Track)
 	delete m_pTracks[Track];
 	m_pClipLibrary->TrackRemoved(Track);
 	m_pSections->TrackRemoved(Track);
+	m_pKeys->TrackRemoved(Track);
 
 	// Move down all other tracks
 	for (unsigned int i = Track; i < m_iTrackCount - 1; ++i) {
@@ -4229,6 +4268,7 @@ void CFamiTrackerDoc::SwapTracks(unsigned int Track1, unsigned int Track2)
 {
 	m_pClipLibrary->TracksSwapped(Track1, Track2);
 	m_pSections->TracksSwapped(Track1, Track2);
+	m_pKeys->TracksSwapped(Track1, Track2);
 
 	CString Temp = m_sTrackNames[Track1];
 	m_sTrackNames[Track1] = m_sTrackNames[Track2];

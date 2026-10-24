@@ -1521,6 +1521,27 @@ bool FindKey(Session &S, int First, int End, Key &Out)
 	return false;
 }
 
+// The key the tools use where they're given none: the one chosen for the
+// track (Keys.h: in FamiTracker's piano roll, or with set_key), else the one
+// the notes in [First, End) fit. False when none is chosen and there are no
+// notes.
+bool TrackKey(Session &S, int First, int End, Key &Out)
+{
+	if (S.Song.KeyChosen) {
+		Out = S.Song.ChosenKey.K;
+		return true;
+	}
+	return FindKey(S, First, End, Out);
+}
+
+// Where a key the tools used came from, for their replies: "" when the call gave it
+std::string KeySource(const Session &S, const Json &Args, const char *Name = "key")
+{
+	if (!StringArg(Args, Name).empty())
+		return std::string();
+	return S.Song.KeyChosen ? " (the track's key, chosen for it)" : " (found from the notes)";
+}
+
 Key KeyArg(Session &S, const Json &Args, const char *Name, int First, int End, bool &Found)
 {
 	const std::string Text = StringArg(Args, Name);
@@ -1531,8 +1552,34 @@ Key KeyArg(Session &S, const Json &Args, const char *Name, int First, int End, b
 			throw Problem(Format("%s: \"%s\" isn't a key. Write it like \"C major\", \"A minor\", \"F# dorian\" or \"Bbm\".", Name, Text.c_str()));
 		return K;
 	}
-	Found = FindKey(S, First, End, K);
+	Found = TrackKey(S, First, End, K);
 	return K;
+}
+
+// The track's chosen key once every melodic note of the song moved from
+// FromKey to ToKey (transpose, change_mood, a version): the choice goes
+// along, so the piano roll and the tools follow the notes. False when it
+// stays: none is chosen, or it isn't the key the notes moved from.
+bool KeyAfterMove(const Session &S, const Key &FromKey, const Key &ToKey, KeyChoice &Out)
+{
+	if (!S.Song.KeyChosen || S.Song.ChosenKey.K.Tonic != FromKey.Tonic || S.Song.ChosenKey.K.Mode != FromKey.Mode)
+		return false;
+	Out = KeyChoice(ToKey, S.Song.ChosenKey.Pentatonic && CanBePentatonic(ToKey));
+	return Out != S.Song.ChosenKey;
+}
+
+// A version (keep_version, make_version, the selected track now) keeps the
+// track's chosen key, moved along when the version moved the whole song from
+// it to another key (pFrom, pTo)
+void KeyToVersion(Session &S, const Key *pFrom, const Key *pTo)
+{
+	if (!S.Song.KeyChosen)
+		return;
+	KeyChoice Kept = S.Song.ChosenKey, Moved;
+	if (pFrom != 0 && pTo != 0 && KeyAfterMove(S, *pFrom, *pTo, Moved))
+		Kept = Moved;
+	std::string Ignored;
+	S.Host().SetKey(true, Kept, Ignored);
 }
 
 // "| C | F C | G | C |", up to 32 bars
@@ -1985,7 +2032,7 @@ void KeepLoopPans(Session &S, std::vector<Change> &Changes, int &First, std::vec
 }
 
 std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsClip, const std::string &ClipName,
-	const std::string &What, const SectionList *pSections = 0)
+	const std::string &What, const SectionList *pSections = 0, const KeyChoice *pKey = 0)
 {
 	if (Changes.empty())
 		throw Problem("There was nothing to change.");
@@ -2014,6 +2061,11 @@ std::string Commit(Session &S, std::vector<Change> &Changes, int First, bool AsC
 		if (pSections != 0) {	// the track's sections afterwards, in the same change
 			Write.SetSections = true;
 			Write.Sections = *pSections;
+		}
+		if (pKey != 0) {	// the track's chosen key afterwards (the whole song in another key), in the same change
+			Write.SetKey = true;
+			Write.KeyChosen = true;
+			Write.Key = *pKey;
 		}
 		// Effects past the columns a channel shows: FamiTracker shows more there
 		std::string Wider;
@@ -2174,9 +2226,21 @@ std::string SongOverview(Session &S, const Json &Args)
 		"parts left or right for the game's stereo OGG files).\n";
 
 	// Key and chords
-	Key K;
-	if (FindKey(S, 0, T.TotalRows(), K)) {
-		Text += "Key: " + KeyName(K) + " (found from the notes)";
+	Key K, Found;
+	const bool HasFound = FindKey(S, 0, T.TotalRows(), Found);
+	const bool HasKey = Song.KeyChosen || HasFound;
+	if (HasKey) {
+		K = Song.KeyChosen ? Song.ChosenKey.K : Found;
+		if (Song.KeyChosen) {
+			Text += "Key: " + KeyChoiceName(Song.ChosenKey) + " (chosen for this track: the tools use it when not given a key";
+			if (Song.ChosenKey.Pentatonic)
+				Text += ", and FamiTracker's piano roll keeps to its five notes";
+			if (HasFound && (Found.Tonic != K.Tonic || Found.Mode != K.Mode))
+				Text += "; the notes alone fit " + KeyName(Found);
+			Text += ")";
+		}
+		else
+			Text += "Key: " + KeyName(K) + " (found from the notes; set_key chooses one for the track)";
 		int Melody = -1;
 		if (Arg(Args, "melody_channel") != 0)
 			Melody = ChannelArg(S, Args, "melody_channel");
@@ -2196,10 +2260,10 @@ std::string SongOverview(Session &S, const Json &Args)
 		Text += "\n";
 	}
 	else
-		Text += "Key: none yet (no notes)\n";
+		Text += "Key: none yet (no notes; set_key chooses one for the track)\n";
 	{
-		Key Played;
-		if (FindKey(S, 0, T.TotalRows(), Played)) {
+		if (HasKey) {
+			const Key Played = K;
 			const int Melody = GuessMelodyChannel(S, 0, T.TotalRows());
 			bool Backing = false;
 			for (int c = 0; c < S.ChannelCount() && !Backing; ++c)
@@ -3255,8 +3319,9 @@ bool KeyChangeArgs(Session &S, const Json &Args, int First, int End, Key &FromKe
 				"harmonic minor.", Text.c_str()));
 	}
 	if (ToKey.Tonic == FromKey.Tonic && ToKey.Mode == FromKey.Mode)
-		throw Problem("The notes are already in " + KeyName(FromKey) + (Arg(Args, "key") != 0 ? "" :
-			" (found from the notes; give key if that's wrong)") + ". Pick another to_mode or to_key.");
+		throw Problem("The notes are already in " + KeyName(FromKey) + (Arg(Args, "key") != 0 ? "" : S.Song.KeyChosen ?
+			" (the track's key, chosen for it; give key if they're in another)" : " (found from the notes; give key if that's wrong)") +
+			". Pick another to_mode or to_key.");
 	return true;
 }
 
@@ -3403,8 +3468,22 @@ std::string TransposeTool(Session &S, const Json &Args)
 			ByKey ? "Nothing moved: those notes are the same in both keys." : "Nothing moved: give semitones other than 0.");
 	const std::string What = Format("%s, %s, %s", How.c_str(), Plural(static_cast<int>(Changes.size()), "channel", "channels").c_str(),
 		RangeText(From, To).c_str());
-	std::string Result = Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
+	// Every melodic note of the song in another key: the track's chosen key goes along
+	KeyChoice NewKey;
+	bool KeyMoves = false;
+	if (S.Song.KeyChosen && Direct(S, AsClip) && First <= 0 && End >= S.Time.TotalRows()) {
+		bool Every = true;
+		for (int c = 0; c < S.ChannelCount() && Every; ++c)
+			if (IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, First, End) && std::find(Melodic.begin(), Melodic.end(), c) == Melodic.end())
+				Every = false;
+		const Key Now = S.Song.ChosenKey.K;
+		KeyMoves = Every && KeyAfterMove(S, ByKey ? FromKey : Now, ByKey ? ToKey : Key(((Now.Tonic + Semitones) % 12 + 12) % 12, Now.Mode),
+			NewKey);
+	}
+	std::string Result = Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What, 0, KeyMoves ? &NewKey : 0) +
 		Format(" (%s)", Plural(Count, "note", "notes").c_str());
+	if (KeyMoves)
+		Result += " The track's chosen key went along: " + KeyChoiceName(NewKey) + " now.";
 	const std::string Summary = ByKey ? MovesText(Moves, FromKey, ToKey) : std::string();
 	if (!Summary.empty())
 		Result += " Notes moved: " + Summary + ".";
@@ -8087,8 +8166,11 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	}
 	else {
 		Key Found;
-		const bool Any = FindKey(S, 0, S.Time.TotalRows(), Found);
+		const bool Any = TrackKey(S, 0, S.Time.TotalRows(), Found);
 		K = Key(Any ? Found.Tonic : (M.Minor ? 9 : 0), M.Minor ? MODE_MINOR : MODE_MAJOR);
+		if (S.Song.KeyChosen && (K.Tonic != Found.Tonic || K.Mode != Found.Mode))
+			S.Remarks.push_back("The track's key is chosen as " + KeyChoiceName(S.Song.ChosenKey) + "; the groove plays its key note in " +
+				KeyName(K) + ", the mood's mode (key gives another).");
 	}
 
 	auto Pick = [&](const char *Arg_, bool (*Fits)(const ChannelInfo &), const char *Kind) -> int {
@@ -8906,7 +8988,12 @@ std::string ChangeMoodTool(Session &S, const Json &Args)
 		std::string ClipName = StringArg(Args, "clip_name");
 		if (ClipName.empty())
 			ClipName = "Claude: " + (Mood.empty() ? std::string("new mood") : Mood) + ", " + RangeText(From, To);
-		Result = Commit(S, Changes, Start, AsClip, ClipName, What + ", " + RangeText(From, To));
+		// The whole song in another key: the track's chosen key goes along
+		KeyChoice NewKey;
+		const bool KeyMoves = Plan.ByKey && WholeSong && DirectChange && KeyAfterMove(S, Plan.FromKey, Plan.ToKey, NewKey);
+		Result = Commit(S, Changes, Start, AsClip, ClipName, What + ", " + RangeText(From, To), 0, KeyMoves ? &NewKey : 0);
+		if (KeyMoves)
+			Result += " The track's chosen key went along: " + KeyChoiceName(NewKey) + " now.";
 	}
 	Result += TempoLater;
 	if (NewTempo) {
@@ -9642,6 +9729,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 	if (Track < 0)
 		throw Problem("The version couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
 	SectionsToVersion(S, Channels);
+	KeyToVersion(S, Changes.ByKey ? &Changes.FromKey : 0, Changes.ByKey ? &Changes.ToKey : 0);
 
 	std::string What;
 	for (size_t i = 0; i < Done.size(); ++i)
@@ -9744,7 +9832,7 @@ std::string MakeJingleTool(Session &S, const Json &Args)
 	}
 	else {
 		Key Found;
-		if (FindKey(S, 0, Total, Found)) {
+		if (TrackKey(S, 0, Total, Found)) {
 			Used.Tonic = Found.Tonic;
 			KeyFrom = " (the song is in " + KeyName(Found) + ")";
 		}
@@ -11202,7 +11290,7 @@ std::string CheckLoopTool(Session &S, const Json &Args)
 
 	// How it sounds going round: the chords, the melody's step
 	Key K;
-	if (FindKey(S, 0, S.Time.TotalRows(), K)) {
+	if (TrackKey(S, 0, S.Time.TotalRows(), K)) {
 		const int EndBar = S.Time.BarOf(LastRow), StartBar = S.Time.BarOf(LoopRow);
 		int EndRoot, StartRoot;
 		bool EndMinor = false, StartMinor = false;
@@ -11852,6 +11940,46 @@ std::string NameSectionTool(Session &S, const Json &Args)
 		(S.Song.Sections.empty() ? std::string("none") : SectionsText(S, S.Song.Sections)) + ".";
 }
 
+// The track's key, chosen (Keys.h)
+
+std::string SetKeyTool(Session &S, const Json &Args)
+{
+	const std::string Text = Trim(StringArg(Args, "key"));
+	if (Text.empty())
+		throw Problem("Give the key, like \"D dorian\", \"A minor\" or \"C major pentatonic\", or \"auto\" to find it from the notes "
+			"again.");
+	if (!S.Song.DirectChanges)
+		throw Problem("Choosing the track's key changes the song, which needs direct changes: the user can allow them in File > "
+			"Connect Claude Code, or choose it in FamiTracker (the Key button above the piano roll).");
+	Key Found;
+	const bool HasFound = FindKey(S, 0, S.Time.TotalRows(), Found);
+	const std::string FoundText = HasFound ? KeyName(Found) : std::string("none yet, without notes");
+	const std::string Lower = Lowercase(Text);
+	std::string Error;
+	if (Lower == "auto" || Lower == "none" || Lower == "found") {
+		if (!S.Song.KeyChosen)
+			throw Problem("Nothing would change: the track's key is found from its notes already (" + FoundText + ").");
+		if (!S.Host().SetKey(false, KeyChoice(), Error))
+			throw Problem(Error.empty() ? "FamiTracker couldn't change the track's key." : Error);
+		return "Changed the song: the track's key is found from its notes again (" + FoundText + ", where it was " +
+			KeyChoiceName(S.Song.ChosenKey) + "). One Ctrl+Z in FamiTracker undoes it.";
+	}
+	KeyChoice Choice;
+	if (!ParseKeyChoice(Text, Choice))
+		throw Problem("key: \"" + Text + "\" isn't a key. Write it like \"D dorian\", \"A minor\", \"Bbm\" or \"C major pentatonic\" "
+			"(pentatonic goes with major and minor keys), or \"auto\" to find it from the notes.");
+	if (S.Song.KeyChosen && S.Song.ChosenKey == Choice)
+		throw Problem("Nothing would change: the track's key is " + KeyChoiceName(Choice) + " already.");
+	if (!S.Host().SetKey(true, Choice, Error))
+		throw Problem(Error.empty() ? "FamiTracker couldn't change the track's key." : Error);
+	std::string Result = "Changed the song: the track's key is " + KeyChoiceName(Choice) + " now. One Ctrl+Z in FamiTracker undoes it. "
+		"FamiTracker's piano roll shades its notes (and snaps the notes the user draws to them, with Snap to key on) and names the "
+		"chords in its spelling, and the tools use it when they're given no key. No notes moved";
+	if (HasFound && (Found.Tonic != Choice.K.Tonic || Found.Mode != Choice.K.Mode))
+		Result += " (by themselves they fit " + KeyName(Found) + "; transpose with key and to_key moves them into another)";
+	return Result + ".";
+}
+
 // Versions to compare: the track as it is now, kept as a track of its own
 
 std::string KeepVersionTool(Session &S, const Json &Args)
@@ -11871,6 +11999,7 @@ std::string KeepVersionTool(Session &S, const Json &Args)
 	if (Track < 0)
 		throw Problem("The version couldn't be kept: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
 	SectionsToVersion(S, Channels);
+	KeyToVersion(S, 0, 0);
 	if (!S.Host().SelectTrack(Here, Error))
 		throw Problem(Format("Kept it as track %d \"%s\", but FamiTracker shows that one now: %s", Track + 1, Name.c_str(),
 			Error.c_str()));
@@ -12630,7 +12759,8 @@ std::string CheckTool(Session &S, const Json &Args)
 		Out.Set("from_bar", From);
 		Out.Set("to_bar", To);
 		Out.Set("key", Found ? Json(KeyName(K)) : Json());
-		Out.Set("key_from_notes", Found && Arg(Args, "key") == 0);
+		Out.Set("key_from_notes", Found && Arg(Args, "key") == 0 && !S.Song.KeyChosen);
+		Out.Set("key_chosen", Found && Arg(Args, "key") == 0 && S.Song.KeyChosen);
 		Out.Set("pattern_length", S.Time.PatternLength);
 		Out.Set("rows_per_beat", S.Time.RowsPerBeat);
 		Out.Set("rows_per_bar", S.Time.RowsPerBar);
@@ -12651,7 +12781,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
-	Text += Found ? " in " + KeyName(K) + (Arg(Args, "key") != 0 ? "" : " (found from the notes)") : " (no key: no notes)";
+	Text += Found ? " in " + KeyName(K) + KeySource(S, Args) : " (no key: no notes)";
 	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing.", OutOfKey,
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
 	if (!Unused.empty()) {
@@ -12846,7 +12976,7 @@ std::string LookTool(Session &S, const Json &Args, std::string &Image)
 		Text += ".";
 	}
 	Key K;
-	if (FindKey(S, First, End, K)) {
+	if (TrackKey(S, First, End, K)) {
 		const std::vector<ChordAt> Heard = SongChords(S, First, End, K);
 		if (!Heard.empty())
 			Text += " Chords heard (" + KeyName(K) + "): " + ProgressionText(Heard, SongBarSpans(S, First, End), K) + ".";
@@ -13622,8 +13752,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("get_song", "Song overview",
 		"Overview of the song open in FamiTracker: title, tempo in BPM, bars and beats, each channel and what it plays (and "
-		"where it pans, when the song uses stereo), instruments, clips, the key found from the notes with chords that fit the "
-		"melody bar by bar, whether your changes go into the song or arrive as clips, and the instrument presets. Start here.",
+		"where it pans, when the song uses stereo), instruments, clips, the track's key (chosen for it, or found from the notes) "
+		"with chords that fit the melody bar by bar and the chords the parts play, whether your changes go into the song or "
+		"arrive as clips, and the instrument presets. Start here.",
 		Schema().Add("melody_channel", ChannelProp("Channel with the melody, for the chords. Default: the busiest one.")), true, false, true);
 
 	AddTool("read_notes", "Read a channel's notes",
@@ -13759,7 +13890,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("semitones", Prop("integer", "Up (positive) or down (negative) by this many semitones; 12 is an octave."))
 			.Add("to_mode", EnumProp("The mode to change into, keeping the tonic.", Modes))
 			.Add("to_key", Prop("string", "The key to change into, like \"A minor\" or \"F dorian\"."))
-			.Add("key", Prop("string", "The key the notes are in now. Default: found from the notes."))
+			.Add("key", Prop("string", "The key the notes are in now. Default: the track's (get_song says it)."))
 			.Range().ClipChoice(),
 		false, true);
 
@@ -13961,7 +14092,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("volume", Prop("integer", "Its volume, 1-15. Default: 3 softer than the melody."))
 				.Add("instrument", Prop("string", "Instrument or preset. Default: the melody's own (a soft lead on another chip)."))
 				.Add("chords", Chords)
-				.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+				.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
 				.Range().ClipChoice(),
 			false, true);
 
@@ -13977,7 +14108,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("volume", Prop("integer", "Its volume, 1-15. Default: 4 softer than the melody."))
 				.Add("instrument", Prop("string", "Instrument or preset (default \"soft lead\", a contrast to most leads)."))
 				.Add("chords", Chords)
-				.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+				.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
 				.Range().ClipChoice(),
 			false, true);
 
@@ -14108,7 +14239,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("mood", Prop("string", "The mood in a few words (\"darker\", \"underwater\"), for the clip's name."))
 				.Add("to_mode", EnumProp("The mode to change into, keeping the tonic.", Modes))
 				.Add("to_key", Prop("string", "The key to change into, like \"A minor\" or \"F dorian\"."))
-				.Add("key", Prop("string", "The key the notes are in now. Default: found from the notes."))
+				.Add("key", Prop("string", "The key the notes are in now. Default: the track's (get_song says it)."))
 				.Add("moves", Moves)
 				.Add("sounds", Sounds)
 				.Add("vibrato", VibratoProp)
@@ -14164,7 +14295,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					"softened to releases) and even dynamics without accents. Default: true for a calm version."))
 				.Add("to_mode", EnumProp("A mode to change into, keeping the tonic; \"keep\" keeps the mode.", KeepOrModes))
 				.Add("to_key", Prop("string", "A key to change into, like \"A minor\"."))
-				.Add("key", Prop("string", "The key the notes are in now. Default: found from the notes."))
+				.Add("key", Prop("string", "The key the notes are in now. Default: the track's (get_song says it)."))
 				.Add("moves", Moves)
 				.Add("sounds", Sounds)
 				.Add("vibrato", Prop("object", "Vibrato like add_vibrato's arguments, e.g. {\"channel\": \"VRC6 Pulse 1\", \"speed\": \"slow\", \"depth\": \"gentle\"}; false for none."))
@@ -14354,6 +14485,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("clear", Prop("boolean", "Take the name away; the bars stay as they are.")),
 		false, false, true);
 
+	AddTool("set_key", "Choose the track's key",
+		"Chooses the selected track's key, as the user does with the Key button above FamiTracker's piano roll: the piano roll "
+		"shades the key's notes (and snaps the notes the user draws to them, with Snap to key on) and names the chords in its "
+		"spelling, get_song gives it, and every tool uses it when it isn't given a key. Without one, the key is found from the "
+		"notes, which can guess wrong (a dorian or mixolydian tune, a song circling its relative key): choose it when you plan "
+		"a new song's key, or when the user names it. It names the key and moves no notes; to move them, transpose with key and "
+		"to_key (a chosen key goes along). Pentatonic keeps the piano roll to a major or minor key's five notes; \"auto\" finds "
+		"the key from the notes again. Each track has its own. Needs direct changes; undoable.",
+		Schema().Add("key", Prop("string", "The key, like \"D dorian\", \"A minor\", \"Bb major\" or \"C major pentatonic\"; \"auto\" "
+			"to find it from the notes."), true),
+		false, false, true);
+
 	AddTool("export_for_game", "Export music for a game",
 		"Saves tracks as OGG files for a game, next to the song: each rendered from FamiTracker, with the intro that plays once "
 		"and the loop cut so it repeats without a seam (the loop points are in the file and in the GameMaker code the reply "
@@ -14474,7 +14617,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("from_bar", BarProp("First bar."))
 			.Add("to_bar", BarProp("Last bar (default: the song's end)."))
 			.Add("section", SectionProp())
-			.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+			.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
 			.ClipChoice(),
 		false, true);
 
@@ -14615,7 +14758,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done. A calm "
 		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills or accents of it.",
 		Schema()
-			.Add("key", Prop("string", "Key, like \"C major\". Default: found from the notes."))
+			.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
 			.Add("style", EnumProp("any, or calm (also \"ambient\"): no tips for drums, fills or accents. Default: calm when the "
 				"track's name says so, like \"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient" }))
 			.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel (busy bells or arpeggios can take its "
@@ -14630,7 +14773,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"after writing. format json gives every finding (its kind, severity, channel, frame, row, bar and beat, the notes "
 		"and the message, and for a click that can be nudged the polish call that fixes it) and the counts, for programs.",
 		Schema()
-			.Add("key", Prop("string", "Key to check against. Default: found from the notes."))
+			.Add("key", Prop("string", "Key to check against. Default: the track's (get_song says it)."))
 			.Add("format", EnumProp("text (the default): a summary and the findings to read, the ones heard worst first; json: "
 				"all of them as data, for programs (FamiTracker's problems panel reads it).", std::vector<std::string>{ "text", "json" }))
 			.Range(),
@@ -14743,6 +14886,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "name_section") Result.Text = NameSectionTool(S, Args);
+		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
@@ -14762,6 +14906,40 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		Result.IsError = true;
 	}
 	return Result;
+}
+
+bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
+{
+	Out = TrackHarmony();
+	try {
+		Session S(m_Host);
+		const int Total = S.Time.TotalRows();
+		Out.HasFound = FindKey(S, 0, Total, Out.Found);
+		Out.Chosen = S.Song.KeyChosen;
+		Out.HasKey = Out.Chosen || Out.HasFound;
+		if (!Out.HasKey)
+			return true;
+		Out.Choice = Out.Chosen ? S.Song.ChosenKey : KeyChoice(Out.Found);
+		const Key &K = Out.Choice.K;
+		const std::vector<ChordAt> Heard = SongChords(S, 0, Total, K);
+		for (size_t i = 0; i < Heard.size(); ++i) {
+			HeardChord C;
+			C.Row = Heard[i].Row;
+			C.Rows = Heard[i].Rows;
+			C.Name = ChordName(Heard[i].C, K);
+			C.Degree = ChordDegree(Heard[i].C, K);
+			C.PitchClasses = Heard[i].C.PitchClasses();
+			C.InKey = true;
+			for (size_t p = 0; p < C.PitchClasses.size(); ++p)
+				C.InKey = C.InKey && InKey(C.PitchClasses[p], K);
+			Out.Chords.push_back(C);
+		}
+		return true;
+	}
+	catch (const Problem &P) {
+		Error = P.Text;
+		return false;
+	}
 }
 
 bool ToolSet::ReceiveFile(const std::string &Name, const std::string &Bytes, std::string &Reply)
@@ -14930,6 +15108,9 @@ std::string ToolSet::Instructions()
 		"- Repeats: copy_bars, then make the repeat different (vary_part, a counter-melody or harmony only the second time, "
 		"busier drums, another chord style). insert_bars makes room for a new section (an intro, a bridge, a break) and "
 		"remove_bars cuts bars; the rest of the song and its loop move along.\n"
+		"- The key: get_song gives the track's, chosen by the user in FamiTracker's piano roll (write in it) or found from the "
+		"notes. When you plan a new song's key, or the user names one, set_key chooses it: the piano roll shades its notes for "
+		"the user and names the chords, and the tools use it.\n"
 		"- Name the song's sections as you build its form (name_section: Intro, A, B, Bridge, Break, Outro). FamiTracker shows "
 		"them beside the frames and above the piano roll's bars, the user can point at them (\"make the bridge darker\"), and "
 		"every tool that takes bars takes section instead (play, look_at_song, add_drums, copy_bars, remove_bars...). They "

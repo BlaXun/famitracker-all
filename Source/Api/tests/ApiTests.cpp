@@ -121,6 +121,8 @@ public:
 		int Speed, Tempo;
 		std::vector<std::vector<Cell> > Rows;
 		SectionList Sections;
+		bool KeyChosen = false;
+		KeyChoice Key;
 	};
 
 	SongInfo Info;
@@ -132,6 +134,8 @@ public:
 	int RenderLatency;							// samples of silence before the song starts
 	std::vector<std::vector<std::vector<Cell> > > History;
 	std::vector<SectionList> SectionHistory;	// with History: the sections before each change
+	std::vector<std::pair<bool, KeyChoice> > KeyHistory;	// with History: the track's key before each change
+	int KeyWrites = 0;
 	int SectionWrites = 0;
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
@@ -181,12 +185,16 @@ public:
 		Tracks[Current].Tempo = Info.Tempo;
 		Tracks[Current].Rows = Rows;
 		Tracks[Current].Sections = Info.Sections;
+		Tracks[Current].KeyChosen = Info.KeyChosen;
+		Tracks[Current].Key = Info.ChosenKey;
 		Current = Track;
 		Info.TrackName = Tracks[Track].Name;
 		Info.Speed = Tracks[Track].Speed;
 		Info.Tempo = Tracks[Track].Tempo;
 		Rows = Tracks[Track].Rows;
 		Info.Sections = Tracks[Track].Sections;
+		Info.KeyChosen = Tracks[Track].KeyChosen;
+		Info.ChosenKey = Tracks[Track].Key;
 	}
 
 	// The notes a preset's looping arpeggio plays besides each note, as FamiTracker reports them
@@ -310,6 +318,7 @@ public:
 		}
 		History.push_back(Rows);
 		SectionHistory.push_back(Info.Sections);
+		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
 		const size_t At = static_cast<size_t>(Write.MoveFrame) * Length;
 		for (size_t c = 0; c < Rows.size(); ++c) {
 			if (Write.MoveBy > 0)
@@ -388,6 +397,11 @@ public:
 		if (Write.SetSections)
 			Info.Sections = Write.Sections;
 		SectionsFrameCount(Info.Sections, static_cast<int>(Rows[0].size() / Length));
+		// The track's key as asked, in the same change (as CInsertRecordingAction sets it)
+		if (Write.SetKey) {
+			Info.KeyChosen = Write.KeyChosen;
+			Info.ChosenKey = Write.KeyChosen ? Write.Key : KeyChoice();
+		}
 		++Writes;
 		LastLink = Write.LinkClipId;
 		LastWrite = Write;
@@ -406,8 +420,25 @@ public:
 		}
 		History.push_back(Rows);
 		SectionHistory.push_back(Info.Sections);
+		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
 		Info.Sections = Sections;
 		++SectionWrites;
+		return true;
+	}
+
+	// As CKeyAction (InsertRecording.cpp) sets it: the selected track's, one undoable step
+	bool SetKey(bool Chosen, const KeyChoice &Choice, std::string &Error) override
+	{
+		if (Busy) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		History.push_back(Rows);
+		SectionHistory.push_back(Info.Sections);
+		KeyHistory.push_back(std::make_pair(Info.KeyChosen, Info.ChosenKey));
+		Info.KeyChosen = Chosen;
+		Info.ChosenKey = Chosen ? Choice : KeyChoice();
+		++KeyWrites;
 		return true;
 	}
 
@@ -1070,6 +1101,11 @@ public:
 		if (!SectionHistory.empty()) {
 			Info.Sections = SectionHistory.back();
 			SectionHistory.pop_back();
+		}
+		if (!KeyHistory.empty()) {
+			Info.KeyChosen = KeyHistory.back().first;
+			Info.ChosenKey = KeyHistory.back().second;
+			KeyHistory.pop_back();
 		}
 		Message = "Undid it.";
 		return true;
@@ -11064,6 +11100,360 @@ void TestProblemList()
 	CHECK(Wrong.Findings().size() == 1 && Wrong.Findings()[0].Notes.size() == 1 && Wrong.Findings()[0].Notes[0].Row == 35);
 }
 
+// A track's chosen key (Keys.h)
+
+std::string Shading(const KeyChoice &C)
+{
+	std::string Out;
+	for (int p = 0; p < 12; ++p)
+		Out += KeyHasPitch(C, p) ? '#' : '.';
+	return Out;
+}
+
+void TestKeyChoices()
+{
+	KeyChoice C;
+	CHECK(ParseKeyChoice("D dorian", C) && C.K.Tonic == 2 && C.K.Mode == 1 && !C.Pentatonic);
+	CHECK(ParseKeyChoice("A minor pentatonic", C) && C.K.Tonic == 9 && C.K.Mode == MODE_MINOR && C.Pentatonic);
+	CHECK(ParseKeyChoice("C pentatonic", C) && C.K.Tonic == 0 && C.K.Mode == MODE_MAJOR && C.Pentatonic);
+	CHECK(ParseKeyChoice("  Am Pentatonic ", C) && C.K.Tonic == 9 && C.K.Mode == MODE_MINOR && C.Pentatonic);
+	CHECK(ParseKeyChoice("Bb", C) && C.K.Tonic == 10 && C.K.Mode == MODE_MAJOR && !C.Pentatonic);
+	CHECK(!ParseKeyChoice("D dorian pentatonic", C));	// a major or minor key's only
+	CHECK(!ParseKeyChoice("pentatonic", C));
+	CHECK(!ParseKeyChoice("H major", C));
+	CHECK(!ParseKeyChoice("", C));
+	CHECK_EQ(KeyChoiceName(KeyChoice(Key(9, MODE_MINOR), true)), std::string("A minor pentatonic"));
+	CHECK_EQ(KeyChoiceName(KeyChoice(Key(10, MODE_MAJOR))), std::string("Bb major"));
+	CHECK_EQ(KeyChoiceName(KeyChoice(Key(2, 1), true)), std::string("D dorian"));
+
+	// What the piano roll shades: the key's notes as the tools count them (a minor key's raised seventh too), or five
+	const KeyChoice CMajor((Key(0, MODE_MAJOR))), AMinor((Key(9, MODE_MINOR))), APent(Key(9, MODE_MINOR), true);
+	const KeyChoice CPent(Key(0, MODE_MAJOR), true), DDorian((Key(2, 1))), EHarmonic((Key(4, 7)));
+	CHECK_EQ(Shading(CMajor), std::string("#.#.##.#.#.#"));
+	CHECK_EQ(Shading(AMinor), std::string("#.#.##.###.#"));
+	CHECK_EQ(Shading(APent), std::string("#.#.#..#.#.."));
+	CHECK_EQ(Shading(CPent), std::string("#.#.#..#.#.."));
+	CHECK_EQ(Shading(DDorian), std::string("#.#.##.#.#.#"));
+	CHECK_EQ(Shading(EHarmonic), std::string("#..##.##.#.#"));	// E F# G A B C D#
+	CHECK(IsTonic(DDorian, 2) && IsTonic(DDorian, 26) && !IsTonic(DDorian, 0) && IsTonic(APent, 57));
+
+	// Snapping: the key's pitch nearest where the mouse is in a lane; of two as near, the lower
+	CHECK_EQ(SnapToKey(CMajor, 64.0, 0, 95), 64);			// in the key
+	CHECK_EQ(SnapToKey(CMajor, 64.45, 0, 95), 64);
+	CHECK_EQ(SnapToKey(CMajor, 61.0, 0, 95), 60);			// C#: as near C as D
+	CHECK_EQ(SnapToKey(CMajor, 61.3, 0, 95), 62);			// in the C# lane's upper half
+	CHECK_EQ(SnapToKey(CMajor, 60.8, 0, 95), 60);
+	CHECK_EQ(SnapToKey(APent, 53.0, 0, 95), 52);			// F: E is nearer than G
+	CHECK_EQ(SnapToKey(APent, 54.0, 0, 95), 55);			// F#: G is
+	CHECK_EQ(SnapToKey(APent, 55.0, 0, 95), 55);
+	CHECK_EQ(SnapToKey(CMajor, 95.6, 0, 95), 95);			// B-7, the highest
+	CHECK_EQ(SnapToKey(CMajor, 0.2, 1, 95), 2);			// only from 1 up
+	CHECK_EQ(SnapToKey(CMajor, -5.0, 0, 95), 0);
+	CHECK_EQ(SnapToKey(CMajor, 120.0, 0, 95), 95);
+	for (int p = 0; p < 96; ++p) {
+		const int Snapped = SnapToKey(DDorian, p + 0.25, 0, 95);
+		CHECK(KeyHasPitch(DDorian, Snapped) && std::abs(Snapped - p) <= 1);
+	}
+
+	// Steps of the key, as the piano roll moves notes with snapping on
+	CHECK_EQ(StepInKey(CMajor, 60, 1), 62);
+	CHECK_EQ(StepInKey(CMajor, 60, 2), 64);
+	CHECK_EQ(StepInKey(CMajor, 64, 1), 65);	// E to F, a semitone
+	CHECK_EQ(StepInKey(CMajor, 60, -1), 59);
+	CHECK_EQ(StepInKey(CMajor, 61, 1), 62);	// from outside the key, onto it
+	CHECK_EQ(StepInKey(CMajor, 61, -1), 60);
+	CHECK_EQ(StepInKey(APent, 57, 1), 60);		// A to C
+	CHECK_EQ(StepInKey(APent, 57, 0), 57);
+	CHECK_EQ(KeyStepsBetween(CMajor, 60, 64), 2);
+	CHECK_EQ(KeyStepsBetween(CMajor, 64, 60), -2);
+	CHECK_EQ(KeyStepsBetween(CMajor, 61, 62), 1);
+	CHECK_EQ(KeyStepsBetween(CMajor, 60, 60), 0);
+	CHECK_EQ(KeyStepsBetween(APent, 57, 64), 3);	// C D E
+	for (int p = 30; p < 70; ++p)
+		CHECK_EQ(StepInKey(AMinor, p, KeyStepsBetween(AMinor, p, SnapToKey(AMinor, p + 3.2, 0, 95))), SnapToKey(AMinor, p + 3.2, 0, 95));
+
+	// Every track's, and the module's block
+	{
+		KeyStore Store;
+		CHECK(Store.Empty() && Store.Write().size() == 4u);
+		Store.Set(0, DDorian);
+		Store.Set(3, APent);
+		KeyChoice Got;
+		CHECK(!Store.Empty() && Store.Get(0, Got) && Got == DDorian);
+		CHECK(!Store.Get(1, Got) && !Store.Get(2, Got) && !Store.Get(70, Got) && !Store.Get(-1, Got));
+		CHECK(Store.Get(3, Got) && Got == APent);
+		const std::vector<unsigned char> Data = Store.Write();
+		CHECK(Data.size() == 36u);	// the count, then each track's number, tonic, mode and flags
+		CHECK(Data[0] == 2 && Data[4] == 0 && Data[8] == 2 && Data[12] == 1 && Data[16] == 0 && Data[20] == 3 && Data[24] == 9 &&
+			Data[28] == 5 && Data[32] == 1);
+		KeyStore Back;
+		Back.Set(5, CMajor);	// what was there goes
+		CHECK(Back.Read(&Data[0], Data.size(), KeyStore::BLOCK_VERSION));
+		CHECK(Back.Get(0, Got) && Got == DDorian && Back.Get(3, Got) && Got == APent && !Back.Get(5, Got) && !Back.Get(1, Got));
+		CHECK(Back.Write() == Data);
+		CHECK(std::string(KeyStore::BLOCK_ID) == "BF KEYS");
+		// Cut short anywhere: nothing loaded, and no crash
+		for (size_t n = 0; n < Data.size(); ++n) {
+			KeyStore Cut;
+			Cut.Set(1, CMajor);
+			CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, KeyStore::BLOCK_VERSION) && Cut.Empty());
+		}
+		// Longer than its tracks, or damaged: nothing loaded
+		std::vector<unsigned char> Longer(Data);
+		Longer.push_back(0);
+		CHECK(!Back.Read(&Longer[0], Longer.size(), KeyStore::BLOCK_VERSION) && Back.Empty());
+		auto Damaged = [&](size_t At, unsigned char Value) {
+			std::vector<unsigned char> Bad(Data);
+			Bad[At] = Value;
+			KeyStore Read;
+			return !Read.Read(&Bad[0], Bad.size(), KeyStore::BLOCK_VERSION) && Read.Empty();
+		};
+		CHECK(Damaged(8, 12));		// a tonic past B
+		CHECK(Damaged(11, 0x80));	// a tonic below C
+		CHECK(Damaged(12, 8));		// a mode past harmonic minor
+		CHECK(Damaged(16, 1));		// D dorian with five notes
+		CHECK(Damaged(32, 2));		// a flag no version has
+		CHECK(Damaged(20, 0));		// track 0 twice
+		CHECK(Damaged(20, 64));		// a track past a module's
+		CHECK(Damaged(0, 65));		// more tracks than a module has
+		CHECK(Damaged(0, 3));		// a track more than the block holds
+		CHECK(Damaged(0, 1));		// a track less: longer than its tracks
+		// A newer version is left out
+		KeyStore Later;
+		Later.Set(0, CMajor);
+		CHECK(Later.Read(&Data[0], Data.size(), KeyStore::BLOCK_VERSION + 1) && Later.Empty());
+
+		// Tracks swapped and removed, and back to auto
+		Store.TracksSwapped(0, 1);
+		CHECK(!Store.Get(0, Got) && Store.Get(1, Got) && Got == DDorian);
+		Store.TrackRemoved(0);
+		CHECK(Store.Get(0, Got) && Got == DDorian && Store.Get(2, Got) && Got == APent && !Store.Get(3, Got));
+		Store.SetAuto(0);
+		Store.SetAuto(2);
+		Store.SetAuto(40);
+		CHECK(Store.Empty() && Store.Write().size() == 4u);
+		// Only what can be is kept
+		Store.Set(1, KeyChoice(Key(14, 1), true));
+		CHECK(Store.Get(1, Got) && Got.K.Tonic == 2 && Got.K.Mode == 1 && !Got.Pentatonic);
+		Store.Set(64, CMajor);
+		CHECK(!Store.Get(64, Got));
+		// Keys of tracks a module doesn't have go
+		Store.Set(5, CMajor);
+		Store.FitTracks(6);
+		CHECK(Store.Get(5, Got) && Store.Get(1, Got));
+		Store.FitTracks(2);
+		CHECK(!Store.Get(5, Got) && Store.Get(1, Got));
+		Store.FitTracks(1);
+		CHECK(Store.Empty());
+	}
+}
+
+// A chord a bar (two in bar 3) on the second pulse as arpeggios, the bass on the triangle and a melody over them:
+// | C | Am | F G | C |
+void PutProgression(FakeSong &Song, int Bars = 4)
+{
+	struct Step { int Row; const char *Root, *Bass, *Tune; int Arpeggio; };
+	const Step STEPS[] = { { 0, "C-3", "C-2", "E-4", 0x47 }, { 16, "A-2", "A-1", "C-4", 0x37 }, { 32, "F-2", "F-1", "A-3", 0x47 },
+		{ 40, "G-2", "G-1", "B-3", 0x47 }, { 48, "C-3", "C-2", "C-4", 0x47 } };
+	for (int Repeat = 0; Repeat * 4 < Bars; ++Repeat)
+		for (size_t i = 0; i < sizeof(STEPS) / sizeof(STEPS[0]); ++i) {
+			const int Row = STEPS[i].Row + Repeat * 64;
+			Song.Put(1, Row, STEPS[i].Root, 2, 10);
+			Song.Rows[1][static_cast<size_t>(Row)].Effect[0] = EFF_ARPEGGIO;
+			Song.Rows[1][static_cast<size_t>(Row)].Param[0] = static_cast<unsigned char>(STEPS[i].Arpeggio);
+			Song.Put(2, Row, STEPS[i].Bass, 1);
+			Song.Put(0, Row, STEPS[i].Tune, 0, 12);
+			Song.Put(0, Row + 4, STEPS[i].Tune, 0, 12);
+		}
+	// Then silence until the song's end
+	if (Bars * 16 < static_cast<int>(Song.Rows[0].size()))
+		for (int c = 0; c < 3; ++c)
+			Song.End(c, Bars * 16);
+}
+
+std::string ChordList(const TrackHarmony &H, bool Degrees = false)
+{
+	std::string Out;
+	for (size_t i = 0; i < H.Chords.size(); ++i) {
+		char Rows[32];
+		std::snprintf(Rows, sizeof(Rows), "@%d+%d", H.Chords[i].Row, H.Chords[i].Rows);
+		Out += (i == 0 ? "" : " ") + (Degrees ? H.Chords[i].Degree : H.Chords[i].Name) + Rows;
+	}
+	return Out;
+}
+
+void TestKeyTools()
+{
+	// The piano roll's chord strip: the chords the parts play, as get_song hears them, in the key's spelling
+	{
+		FakeSong Song;
+		PutProgression(Song);
+		ToolSet Tools(Song);
+		TrackHarmony H;
+		std::string Error;
+		CHECK(Tools.Harmony(H, Error));
+		CHECK(H.HasKey && !H.Chosen && H.HasFound && H.Found.Tonic == 0 && H.Found.Mode == MODE_MAJOR);
+		CHECK(H.Choice == KeyChoice(Key(0, MODE_MAJOR)));
+		CHECK_EQ(ChordList(H), std::string("C@0+16 Am@16+16 F@32+8 G@40+8 C@48+16"));
+		CHECK_EQ(ChordList(H, true), std::string("I@0+16 vi@16+16 IV@32+8 V@40+8 I@48+16"));
+		CHECK(H.Chords.size() == 5u && H.Chords[1].PitchClasses == std::vector<int>({ 9, 0, 4 }) && H.Chords[1].InKey);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Key: C major (found from the notes; set_key chooses one for the track)");
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Chords the parts play: | C | Am | F G | C |");
+
+		// Choosing a key needs direct changes
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"A minor\"}").Text, "needs direct changes");
+		CHECK(!Song.Info.KeyChosen);
+		Song.Info.DirectChanges = true;
+		ToolResult R = Run(Song, "set_key", "{\"key\": \"A minor\"}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "Changed the song: the track's key is A minor now. One Ctrl+Z in FamiTracker undoes it.");
+		CHECK_HAS(R.Text, "No notes moved (by themselves they fit C major;");
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey == KeyChoice(Key(9, MODE_MINOR)) && Song.KeyWrites == 1);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Key: A minor (chosen for this track: the tools use it when not given a key; "
+			"the notes alone fit C major)");
+		CHECK(Tools.Harmony(H, Error) && H.Chosen && H.Choice.K.Tonic == 9 && H.HasFound && H.Found.Tonic == 0);
+		CHECK_EQ(ChordList(H), std::string("C@0+16 Am@16+16 F@32+8 G@40+8 C@48+16"));
+		CHECK_EQ(ChordList(H, true), std::string("III@0+16 i@16+16 VI@32+8 VII@40+8 III@48+16"));
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"a minor\"}").Text, "Nothing would change: the track's key is A minor already.");
+		CHECK(Run(Song, "set_key", "{\"key\": \"D dorian pentatonic\"}").IsError);
+		CHECK(Run(Song, "set_key", "{}").IsError);
+		CHECK(Song.KeyWrites == 1);
+
+		// The tools use it where they're given no key
+		R = Run(Song, "check_song", "{}");
+		CHECK_HAS(R.Text, "in A minor (the track's key, chosen for it)");
+		Json Data = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK(Data.Get("key") != 0 && Data.Get("key")->IsString() && Data.Get("key")->String() == "A minor");
+		CHECK(Data.Get("key_chosen") != 0 && Data.Get("key_chosen")->Bool() && !Data.Get("key_from_notes")->Bool());
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"E major\"}").Text, "the track's key is E major now");
+		R = Run(Song, "check_song", "{}");
+		CHECK_HAS(R.Text, "in E major (the track's key, chosen for it)");
+		CHECK_LACKS(R.Text, ": 0 outside the key");
+		CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, "in C major: 0 outside the key");
+
+		// Back to auto, and undone
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"auto\"}").Text,
+			"the track's key is found from its notes again (C major, where it was E major)");
+		CHECK(!Song.Info.KeyChosen);
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"auto\"}").Text, "Nothing would change: the track's key is found from its notes already");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey.K.Tonic == 4);
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey.K.Tonic == 9);
+	}
+
+	// Spelled as the key spells it: a chord on A#/Bb
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		for (int Row = 0; Row < 64; Row += 16) {
+			Song.Put(1, Row, "A#2", 2, 10);
+			Song.Rows[1][static_cast<size_t>(Row)].Effect[0] = EFF_ARPEGGIO;
+			Song.Rows[1][static_cast<size_t>(Row)].Param[0] = 0x47;
+			Song.Put(2, Row, "A#1", 1);
+			Song.Put(0, Row, "D-4", 0, 12);
+		}
+		ToolSet Tools(Song);
+		TrackHarmony H;
+		std::string Error;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"F major\"}").IsError);
+		CHECK(Tools.Harmony(H, Error) && !H.Chords.empty() && H.Chords[0].Name == "Bb" && H.Chords[0].Degree == "IV");
+		CHECK(!Run(Song, "set_key", "{\"key\": \"B major\"}").IsError);
+		CHECK(Tools.Harmony(H, Error) && !H.Chords.empty() && H.Chords[0].Name == "A#" && !H.Chords[0].InKey);
+		CHECK(!Run(Song, "set_key", "{\"key\": \"Bb major pentatonic\"}").IsError);
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(10, MODE_MAJOR), true));
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Key: Bb major pentatonic (chosen for this track: the tools use it when not given "
+			"a key, and FamiTracker's piano roll keeps to its five notes)");
+	}
+
+	// No notes: no key, unless one is chosen
+	{
+		FakeSong Song;
+		ToolSet Tools(Song);
+		TrackHarmony H;
+		std::string Error;
+		CHECK(Tools.Harmony(H, Error) && !H.HasKey && !H.HasFound && H.Chords.empty());
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Key: none yet (no notes; set_key chooses one for the track)");
+		Song.Info.DirectChanges = true;
+		CHECK_HAS(Run(Song, "set_key", "{\"key\": \"G mixolydian\"}").Text, "the track's key is G mixolydian now");
+		CHECK(Tools.Harmony(H, Error) && H.HasKey && H.Chosen && !H.HasFound && H.Choice.K.Mode == 4 && H.Chords.empty());
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Key: G mixolydian (chosen for this track: the tools use it when not given a key)");
+		// A jingle takes the track's key note
+		CHECK_HAS(Run(Song, "make_jingle", "{\"kind\": \"item\"}").Text, "(the song is in G mixolydian)");
+	}
+
+	// The whole song moved to another key takes the chosen key along; some bars or channels don't
+	{
+		FakeSong Song;
+		PutProgression(Song, 8);
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"C major pentatonic\"}").IsError);
+		ToolResult R = Run(Song, "transpose", "{\"to_key\": \"D major\"}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "from C major to D major");
+		CHECK_HAS(R.Text, "The track's chosen key went along: D major pentatonic now.");
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey == KeyChoice(Key(2, MODE_MAJOR), true));
+		CHECK(Song.LastWrite.SetKey && Song.LastWrite.KeyChosen);
+		R = Run(Song, "transpose", "{\"semitones\": -2}");
+		CHECK_HAS(R.Text, "The track's chosen key went along: C major pentatonic now.");
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(0, MODE_MAJOR), true));
+		R = Run(Song, "transpose", "{\"semitones\": 12}");
+		CHECK(!R.IsError && Song.Info.ChosenKey.K.Tonic == 0);
+		CHECK_LACKS(R.Text, "went along");
+		R = Run(Song, "transpose", "{\"to_mode\": \"dorian\"}");
+		CHECK_HAS(R.Text, "The track's chosen key went along: C dorian now.");	// no five notes of a dorian key
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(0, 1)));
+		R = Run(Song, "transpose", "{\"to_mode\": \"major\", \"from_bar\": 1, \"to_bar\": 4}");
+		CHECK(!R.IsError && Song.Info.ChosenKey.K.Mode == 1);
+		CHECK_LACKS(R.Text, "went along");
+		CHECK(!Song.LastWrite.SetKey);
+		R = Run(Song, "transpose", "{\"to_mode\": \"minor\", \"channels\": \"Pulse 1\"}");
+		CHECK(!R.IsError && Song.Info.ChosenKey.K.Mode == 1);
+		CHECK_LACKS(R.Text, "went along");
+		// Undone with its notes
+		CHECK(!Run(Song, "undo", "{}").IsError && !Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(0, 1)));
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(0, MODE_MAJOR), true));
+		// A key given that isn't the chosen one: the chosen key stays
+		R = Run(Song, "transpose", "{\"key\": \"A minor\", \"to_key\": \"B minor\"}");
+		CHECK(!R.IsError && Song.Info.ChosenKey == KeyChoice(Key(0, MODE_MAJOR), true));
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		// As clips, the song and its key stay
+		R = Run(Song, "transpose", "{\"to_key\": \"E major\", \"as_clip\": true}");
+		CHECK(!R.IsError && Song.Info.ChosenKey.K.Tonic == 0);
+		CHECK_LACKS(R.Text, "went along");
+		// A mood for the whole song
+		R = Run(Song, "change_mood", "{\"to_mode\": \"minor\"}");
+		CHECK_HAS(R.Text, "The track's chosen key went along: C minor pentatonic now.");
+		CHECK(Song.Info.ChosenKey == KeyChoice(Key(0, MODE_MINOR), true));
+	}
+
+	// Versions keep it
+	{
+		FakeSong Song;
+		PutProgression(Song);
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"C lydian\"}").IsError);
+		CHECK(!Run(Song, "keep_version", "{}").IsError);
+		CHECK(Song.Current == 0 && Song.Tracks.size() == 2u && Song.Tracks[1].KeyChosen && Song.Tracks[1].Key == KeyChoice(Key(0, 3)));
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey == KeyChoice(Key(0, 3)));
+		CHECK(!Run(Song, "make_version", "{\"version\": \"rain\", \"to_mode\": \"minor\"}").IsError);
+		CHECK(Song.Current == 2 && Song.Info.KeyChosen && Song.Info.ChosenKey == KeyChoice(Key(0, MODE_MINOR)));
+		CHECK(Song.Tracks[0].KeyChosen && Song.Tracks[0].Key == KeyChoice(Key(0, 3)));
+		// Tracks keep their own (numbered from 1)
+		CHECK(!Run(Song, "select_track", "{\"track\": 2}").IsError);
+		CHECK(Song.Current == 1 && Song.Info.ChosenKey == KeyChoice(Key(0, 3)));
+		CHECK(!Run(Song, "set_key", "{\"key\": \"auto\"}").IsError);
+		CHECK(!Run(Song, "select_track", "{\"track\": 3}").IsError);
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey.K.Mode == MODE_MINOR);
+		CHECK(!Run(Song, "select_track", "{\"track\": 2}").IsError);
+		CHECK(!Song.Info.KeyChosen);
+		CHECK(!Run(Song, "select_track", "{\"track\": 1}").IsError);
+		CHECK(Song.Info.KeyChosen && Song.Info.ChosenKey == KeyChoice(Key(0, 3)));
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -11135,6 +11525,8 @@ int main()
 	TestBars();
 	TestSections();
 	TestSectionTools();
+	TestKeyChoices();
+	TestKeyTools();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestFdsSounds();

@@ -105,6 +105,7 @@ public:
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowKeyboard(bool Show);	// along the bottom of the window (KeyboardBar.h)
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
+	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
