@@ -51,7 +51,11 @@ struct StudySound {
 	int TypicalNote;			// a note it plays
 	std::string Words;			// its shape in words
 	Macro Macros[SEQ_TYPES];
-	StudySound() : Kind(INST_2A03), Sawtooth(false), Noise(false), Triangle(false), Notes(0), Share(0), TypicalNote(48) {}
+	std::vector<int> FdsWave;	// an FDS sound's wave (64 samples, 0-63) and modulation table (32 steps, 0-7), as its
+	std::vector<int> FdsMod;	// instrument has them; empty for the other chips' sounds
+	int ModRate, ModDepth, ModDelay;	// and its modulator's speed, depth and delay
+	StudySound() : Kind(INST_2A03), Sawtooth(false), Noise(false), Triangle(false), Notes(0), Share(0), TypicalNote(48), ModRate(0),
+		ModDepth(0), ModDelay(0) {}
 };
 
 struct TrackStudy {

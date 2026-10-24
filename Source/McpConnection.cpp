@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 #include "Api/DpcmKit.h"
+#include "Api/FdsSounds.h"
 #include "Api/Http.h"
 #include "Api/Json.h"
 #include "Api/Mcp.h"
@@ -189,38 +190,18 @@ std::string ChipName(int Chip)
 	return "?";
 }
 
-// An instrument with vibrato built in: a pitch sequence that goes up and
-// down in its loop (2A03, VRC6 and N163 instruments)
-bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
+// An FDS instrument's modulation table, as the tools read one
+std::vector<int> FdsModulation(const CInstrumentFDS *pFds)
 {
-	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
-	switch (pInstrument->GetType()) {
-	case INST_2A03: {
-		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
-		Enabled = p->GetSeqEnable(SEQ_PITCH);
-		Index = p->GetSeqIndex(SEQ_PITCH);
-		break;
-	}
-	case INST_VRC6: {
-		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
-		Chip = SNDCHIP_VRC6;
-		Enabled = p->GetSeqEnable(SEQ_PITCH);
-		Index = p->GetSeqIndex(SEQ_PITCH);
-		break;
-	}
-	case INST_N163: {
-		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
-		Chip = SNDCHIP_N163;
-		Enabled = p->GetSeqEnable(SEQ_PITCH);
-		Index = p->GetSeqIndex(SEQ_PITCH);
-		break;
-	}
-	default:
-		return false;
-	}
-	if (Enabled == 0)
-		return false;
-	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_PITCH);
+	std::vector<int> Table;
+	for (int i = 0; i < CInstrumentFDS::MOD_SIZE; ++i)
+		Table.push_back(pFds->GetModulation(i));
+	return Table;
+}
+
+// A pitch sequence that goes up and down in its loop
+bool LoopsUpAndDown(const CSequence *pSeq)
+{
 	if (pSeq == NULL)
 		return false;
 	const int Loop = static_cast<int>(pSeq->GetLoopPoint()), Count = static_cast<int>(pSeq->GetItemCount());
@@ -232,13 +213,67 @@ bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
 	return Up && Down;
 }
 
-// One of an instrument's sequences (2A03, VRC6 and N163 instruments): its
-// values, where it loops back to, where it waits for a release, its setting;
-// false when it has none
+// An instrument with vibrato built in: a pitch sequence that goes up and
+// down in its loop (2A03, VRC6, N163 and FDS instruments), or an FDS
+// modulator that wobbles the pitch slowly enough to hear as one
+bool HasVibrato(CFamiTrackerDoc *pDoc, CInstrument *pInstrument)
+{
+	if (pInstrument->GetType() == INST_FDS) {
+		const CInstrumentFDS *pFds = static_cast<const CInstrumentFDS *>(pInstrument);
+		return LoopsUpAndDown(pFds->GetPitchSeq()) || ftapi::FdsModulatorWobbles(pFds->GetModulationSpeed(),
+			pFds->GetModulationDepth(), FdsModulation(pFds));
+	}
+	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	switch (pInstrument->GetType()) {
+	case INST_2A03: {
+		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	case INST_VRC6: {
+		const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+		Chip = SNDCHIP_VRC6;
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	case INST_N163: {
+		const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+		Chip = SNDCHIP_N163;
+		Enabled = p->GetSeqEnable(SEQ_PITCH);
+		Index = p->GetSeqIndex(SEQ_PITCH);
+		break;
+	}
+	default:
+		return false;
+	}
+	if (Enabled == 0)
+		return false;
+	return LoopsUpAndDown(pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_PITCH));
+}
+
+// An FDS instrument's own sequence of a type (volume, arpeggio or pitch;
+// CInstrumentFDS keeps them itself), NULL for the others
+const CSequence *FdsSequence(const CInstrument *pInstrument, int Type)
+{
+	const CInstrumentFDS *pFds = static_cast<const CInstrumentFDS *>(pInstrument);
+	switch (Type) {
+	case SEQ_VOLUME: return pFds->GetVolumeSeq();
+	case SEQ_ARPEGGIO: return pFds->GetArpSeq();
+	case SEQ_PITCH: return pFds->GetPitchSeq();
+	}
+	return NULL;
+}
+
+// One of an instrument's sequences (2A03, VRC6, N163 and FDS instruments):
+// its values, where it loops back to, where it waits for a release, its
+// setting; false when it has none
 bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std::vector<int> &Items, int &Loop, int &Release,
 	int &Setting)
 {
 	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	const CSequence *pSeq = NULL;
 	switch (pInstrument->GetType()) {
 	case INST_2A03: {
 		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
@@ -260,12 +295,17 @@ bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std
 		Index = p->GetSeqIndex(Type);
 		break;
 	}
+	case INST_FDS:
+		pSeq = FdsSequence(pInstrument, Type);
+		Enabled = pSeq != NULL ? 1 : 0;
+		break;
 	default:
 		return false;
 	}
 	if (Enabled == 0)
 		return false;
-	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), Type);
+	if (pSeq == NULL)
+		pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), Type);
 	if (pSeq == NULL || pSeq->GetItemCount() == 0)
 		return false;
 	Items.clear();
@@ -277,11 +317,15 @@ bool ReadSequence(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, int Type, std
 	return true;
 }
 
-// An instrument's volume, arpeggio, pitch and hi-pitch sequences
+// An instrument's volume, arpeggio, pitch and hi-pitch sequences; an FDS
+// instrument's volume (0-31) counted as the others' (0-15)
 void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::InstrumentInfo &Info)
 {
 	int Setting = 0;
 	ReadSequence(pDoc, pInstrument, SEQ_VOLUME, Info.Volume, Info.VolumeLoop, Info.VolumeRelease, Setting);
+	if (pInstrument->GetType() == INST_FDS)
+		for (size_t i = 0; i < Info.Volume.size(); ++i)
+			Info.Volume[i] = ftapi::FdsVolumeAs15(Info.Volume[i]);
 	ftapi::SequenceInfo *const INTO[] = { &Info.Steps, &Info.Pitch, &Info.HiPitch };
 	const int TYPES[] = { SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH };
 	for (int i = 0; i < 3; ++i)
@@ -314,6 +358,7 @@ std::vector<int> LoopingArpeggio(CFamiTrackerDoc *pDoc, CInstrument *pInstrument
 {
 	std::vector<int> Out;
 	int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+	const CSequence *pSeq = NULL;
 	switch (pInstrument->GetType()) {
 	case INST_2A03: {
 		const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
@@ -335,12 +380,17 @@ std::vector<int> LoopingArpeggio(CFamiTrackerDoc *pDoc, CInstrument *pInstrument
 		Index = p->GetSeqIndex(SEQ_ARPEGGIO);
 		break;
 	}
+	case INST_FDS:
+		pSeq = FdsSequence(pInstrument, SEQ_ARPEGGIO);
+		Enabled = pSeq != NULL && pSeq->GetItemCount() > 0 ? 1 : 0;
+		break;
 	default:
 		return Out;
 	}
 	if (Enabled == 0)
 		return Out;
-	const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_ARPEGGIO);
+	if (pSeq == NULL)
+		pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), SEQ_ARPEGGIO);
 	if (pSeq == NULL || pSeq->GetSetting() != ARP_SETTING_ABSOLUTE)
 		return Out;
 	const int Loop = static_cast<int>(pSeq->GetLoopPoint()), Count = static_cast<int>(pSeq->GetItemCount());
@@ -1588,6 +1638,17 @@ public:
 			return -1;
 		CString Problem;
 		const int Index = AddWaveSoundInstrument(Doc(), Sound, WavePos, Problem);
+		if (Index < 0)
+			Error = Utf8(Problem);
+		return Index;
+	}
+
+	int AddFdsInstrument(const ftapi::FdsSound &Sound, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return -1;
+		CString Problem;
+		const int Index = AddFdsSoundInstrument(Doc(), Sound, Problem);
 		if (Index < 0)
 			Error = Utf8(Problem);
 		return Index;
