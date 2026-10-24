@@ -349,6 +349,8 @@ void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::Instr
 		ReadSequence(pDoc, pInstrument, TYPES[i], INTO[i]->Items, INTO[i]->Loop, INTO[i]->Release, INTO[i]->Setting);
 	if (pInstrument->GetType() == INST_S5B)	// the 5B's noise / mode sequence, in the duty sequence's place
 		ReadSequence(pDoc, pInstrument, SEQ_DUTYCYCLE, Info.Mode.Items, Info.Mode.Loop, Info.Mode.Release, Info.Mode.Setting);
+	else if (pInstrument->GetType() == INST_2A03 || pInstrument->GetType() == INST_VRC6)
+		ReadSequence(pDoc, pInstrument, SEQ_DUTYCYCLE, Info.Duty.Items, Info.Duty.Loop, Info.Duty.Release, Info.Duty.Setting);
 }
 
 // A VRC6 instrument whose duty sequence plays odd values: on the sawtooth the

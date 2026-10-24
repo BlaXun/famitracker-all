@@ -69,4 +69,9 @@ bool EffectsText(const std::string &Effect, const std::string &Technique, const 
 bool ParseChannelEffect(const std::string &Text, const ChannelInfo &Channel, int Speed, int &Effect, int &Param,
 	std::string &Problem);
 
+// Whether a channel plays an effect (an effect_id with its parameter) as
+// ParseChannelEffect would take it there, whatever the speed: its chip's own
+// (the FDS's modulator Hxx-Jxx only on the FDS) or one it shares
+bool ChannelPlaysEffect(const ChannelInfo &Channel, int Effect, int Param);
+
 }	// namespace ftapi

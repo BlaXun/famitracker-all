@@ -1130,11 +1130,12 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 		}
 	}
 
-	// Entering the range: a note still sounding stops, effects still on go off (the pan stays, below)
+	// Entering the range: a note still sounding stops, effects still on go off (the pan stays, below, and with KeepDetune the
+	// detune)
 	if (Before.Sounding && !Out[0].HasNote() && !Options.RingOut)
 		Out[0].Note = Local::Releases(Options, Before.SoundingInstrument) ? NOTE_RELEASE : NOTE_HALT;
 	for (int e = 0; e < EFF_COUNT; ++e) {
-		if (e == EFF_PAN)
+		if (e == EFF_PAN || (e == EFF_PITCH && Options.KeepDetune))
 			continue;
 		if (Before.Sticky[e] != StickyOff(e) && !HasEffect(Out[0], e, Columns) && !AddEffect(Out[0], e, StickyOff(e), Columns))
 			EffectsLost = true;
@@ -1168,6 +1169,35 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 			else if (C.HasNote() && !Set && Was[static_cast<size_t>(r - First)] != Now) {
 				if (AddEffect(C, EFF_PAN, Was[static_cast<size_t>(r - First)], Columns))
 					Now = Was[static_cast<size_t>(r - First)];
+				else
+					EffectsLost = true;
+			}
+		}
+	}
+
+	// The detune, with KeepDetune: as the channel had it on each row (an echo's P81 a step out of tune, its P80 back), put
+	// back on the rows where it changed and on notes that come in at another, until a note of the part sets its own
+	if (Options.KeepDetune) {
+		std::vector<int> Was(static_cast<size_t>(End - First), StickyOff(EFF_PITCH));
+		int Detune = StickyOff(EFF_PITCH);
+		for (int r = 0; r < End; ++r) {
+			if (r < SongRows)
+				for (int k = 0; k < Columns; ++k)
+					if (Old[r].Effect[k] == EFF_PITCH)
+						Detune = Old[r].Param[k];
+			if (r >= First)
+				Was[static_cast<size_t>(r - First)] = Detune;
+		}
+		int Now = Before.Sticky[EFF_PITCH];
+		for (int r = First; r < End && r - First < static_cast<int>(Out.size()); ++r) {
+			Cell &C = Out[r - First];
+			const int Wanted = Was[static_cast<size_t>(r - First)];
+			if (HasEffect(C, EFF_PITCH, Columns))
+				break;	// the part's own
+			const bool Changes = r == First ? Wanted != Before.Sticky[EFF_PITCH] : Wanted != Was[static_cast<size_t>(r - First - 1)];
+			if (Wanted != Now && (C.HasNote() || Changes)) {
+				if (AddEffect(C, EFF_PITCH, Wanted, Columns))
+					Now = Wanted;
 				else
 					EffectsLost = true;
 			}

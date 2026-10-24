@@ -96,6 +96,8 @@ struct InstrumentInfo {
 										// 5B instruments; an FDS pitch sequence moves the frequency register, up is sharper)
 	SequenceInfo Mode;		// a 5B instrument's noise / mode sequence: 64 the square, 128 the noise, 32 the envelope (whose
 							// level replaces the volume's), and the noise's pitch 0-31 in the low bits; empty otherwise
+	SequenceInfo Duty;		// a 2A03 or VRC6 instrument's duty sequence (a pulse's width; the 2A03's 0-3, the VRC6's 0-7); empty
+							// when it has none
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
 		VolumeRelease(-1) {}
