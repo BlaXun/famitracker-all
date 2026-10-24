@@ -367,8 +367,9 @@ const Section SECTIONS[] = {
 		"(set_mixer room hall, small room or cathedral for the place; space 15-30 on pads, 30-50 on the lead in a big place, "
 		"more on glints and events; soft 20-50 on a pulse that should sound warm; the bass dry).\n"
 		"- Checks: review_arrangement style calm (its tips that the melody doesn't stand out or has few, long notes are "
-		"expected here), check_song style calm (no held lead, 0 clicking, 0 vanishing), measure_mix style calm (the melody "
-		"2-3 dB over the chords, the intro 6-10 dB under the main part, the sides within 2 dB). export_for_game at -22 LUFS." },
+		"expected here), check_song style calm (no held lead, 0 clicking, 0 vanishing), measure_mix style calm with "
+		"melody_channel the lead (the melody 2-3 dB over the chords, the intro 6-10 dB under the main part, the sides within 2 "
+		"dB). export_for_game at -22 LUFS." },
 	{ "lively", "Lively stages (bouncy and driving, never harsh)",
 		"lively stage stages level levels platformer explore exploring bouncy bounce upbeat cheerful adventure jump run "
 		"forest meadow day playful",
@@ -393,7 +394,8 @@ const Section SECTIONS[] = {
 		"- Tempo 112-160 BPM, at an even one (150 is speed 6, 128.6 speed 7, 112.5 speed 8, at tempo 150), straight or a light "
 		"swing (set_swing with a percentage, 56-60).\n"
 		"- Checks: review_arrangement 8 or more (tips asking for a louder melody or accents go against this: leave them), "
-		"check_song 0 clicking and 0 vanishing, measure_mix style lively. export_for_game at -20 LUFS." },
+		"check_song 0 clicking and 0 vanishing, measure_mix style lively with melody_channel the lead. export_for_game at "
+		"-20 LUFS." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"
@@ -408,8 +410,8 @@ const Section SECTIONS[] = {
 		"- polish with its default touches (accents, vibrato, separate, clicks), then mix style soft (the default) or full, "
 		"last.\n"
 		"- Tempo 140-190 BPM, at an even one (150 is speed 6; speed 7 with tempo 191 gives even eighths at 163.7).\n"
-		"- Checks: review_arrangement 8 or more, check_song 0 clicking and 0 vanishing, measure_mix for the intro, the "
-		"sections and the sides. export_for_game at -19 LUFS." },
+		"- Checks: review_arrangement 8 or more, check_song 0 clicking and 0 vanishing, measure_mix with melody_channel the "
+		"lead for the intro, the sections and the sides. export_for_game at -19 LUFS." },
 	{ "leads", "Lead sounds and articulations","lead melody sound instrument envelope articulation duty click bloom vibrato",
 		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
 		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "

@@ -4494,7 +4494,7 @@ void TestProtocol()
 			const std::string Word = Text.substr(From, To - From);
 			const bool Argument = Word == "as_clip" || Word == "clip_name" || Word == "from_bar" || Word == "to_bar" ||
 				Word == "chord_style" || Word == "bass_style" || Word == "arp_frames" || Word == "delay_beats" ||
-				Word == "bass_instrument";
+				Word == "bass_instrument" || Word == "melody_channel";
 			Check(Argument || Tools.Has(Word), ("the recipe's tool exists: " + Word).c_str(), __LINE__);
 			At = To;
 		}
@@ -4512,8 +4512,9 @@ void TestProtocol()
 		CHECK_HAS(Text, "design_instrument kind breath, falling strike or music box");
 		CHECK_HAS(Text, "polish style calm, then mix style calm last");
 		CHECK_HAS(Text, "check_song style calm (0 clicking, 0 vanishing, no clashes you didn't mean, no held lead)");
-		CHECK_HAS(Text, "measure_mix style calm (the melody 2-3 dB over the chords");
-		CHECK_HAS(Text, "export_for_game with loudness -22");
+		CHECK_HAS(Text, "measure_mix style calm with melody_channel the lead (the melody 2-3 dB over the chords");
+		CHECK_HAS(Text, "measure_mix with loudness -22 and stems false");
+		CHECK_HAS(Text, "then export_for_game with that loudness");
 		CHECK_HAS(Text, "Calm songs (a place to rest, a night scene, a lullaby");
 		CHECK_LACKS(Text, "add_drums");
 		Arguments.Set("kind", "Lively");
@@ -4522,13 +4523,13 @@ void TestProtocol()
 		CHECK_HAS(Text, "Compose a lively track");
 		CHECK_HAS(Text, "the form for 24 bars");
 		CHECK_HAS(Text, "then mix style lively last (the melody 3-4 dB over the parts)");
-		CHECK_HAS(Text, "export_for_game with loudness -20");
+		CHECK_HAS(Text, "measure_mix with loudness -20 and stems false");
 		CHECK_HAS(Text, "Lively stages (bouncy and driving, never harsh)");
 		CHECK_LACKS(Text, "style calm");
 		Arguments.Set("kind", "action");
 		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
 		CHECK_HAS(Text, "polish (its default touches; scoops and falls on chosen bars), then mix (style soft, the default, or full) last");
-		CHECK_HAS(Text, "export_for_game with loudness -19");
+		CHECK_HAS(Text, "measure_mix with loudness -19 and stems false");
 		CHECK_HAS(Text, "Action: battles, bosses and chases");
 		CHECK_LACKS(Text, "style calm");
 		CHECK_LACKS(Text, "style lively");

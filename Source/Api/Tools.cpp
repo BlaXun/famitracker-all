@@ -17185,8 +17185,10 @@ std::string ToolSet::Instructions()
 		"parts (mix style lively), soft drums, no accents on the lead. Action (fights, bosses, chases): punchy as ever. The "
 		"tools treat a song as calm or lively only when asked (style), and say when one looks calm.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
-		"measure_mix renders the song and measures what the ear hears: each section's loudness, the intro against the main "
-		"part (6-10 dB under suits a game), the two sides, and each part against the melody. "
+		"measure_mix renders the song and measures what the ear hears, changing nothing: each section's loudness, the intro "
+		"against the main part (6-10 dB under suits a game), the two sides, and each part alone against the melody (name "
+		"melody_channel: its guess can take busy bells or crickets for it). set_mixer with change moves a channel's fader by "
+		"the dB it names; stems false measures the mix alone, quickly. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. remove_unused_instruments lists the sounds nothing plays (removing them needs the user's OK). "
 		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
@@ -17337,13 +17339,15 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 	T += "10. Check: review_arrangement" + Style + " (8 or more; " + (Calm ? "its tips that the melody doesn't stand out or "
 		"has few, long notes are expected here" : Lively ? "tips that ask for a louder melody or accents go against this "
 		"kind" : "fix what it lists") + "), check_song" + Style + " (0 clicking, 0 vanishing, no clashes you didn't mean" +
-		(Calm ? ", no held lead" : "") + "), measure_mix" + Style + " (" + (Calm ? "the melody 2-3 dB over the chords, " :
-		Lively ? "the melody 3-4 dB over the parts, " : "") + "the intro 6-10 dB under the main part, the two sides within 2 "
-		"dB); fix what they find and check again.\n"
+		(Calm ? ", no held lead" : "") + "), measure_mix" + Style + " with melody_channel the lead (" + (Calm ? "the melody 2-3 "
+		"dB over the chords, " : Lively ? "the melody 3-4 dB over the parts, " : "") + "the intro 6-10 dB under the main part, the "
+		"two sides within 2 dB); fix what they find (set_mixer with change moves the faders it names) and check again, "
+		"measure_mix with parts [\"chords\"] or stems false for a quick look, all the stems once at the end.\n"
 		"11. set_loop from the bar after the intro, then check_loop and fix_loop until the seam is clean; look_at_song on a "
 		"section or two.\n"
-		"12. save_song, then export_for_game with loudness " + (Calm ? "-22" : Lively ? "-20" : "-19") + ". Play it for me "
-		"and ask what I'd change; keep what I like in soundtrack_notes.\n\n";
+		"12. save_song; measure_mix with loudness " + std::string(Calm ? "-22" : Lively ? "-20" : "-19") + " and stems false "
+		"shows each section as the file will have it; then export_for_game with that loudness. Play it for me and ask what "
+		"I'd change; keep what I like in soundtrack_notes.\n\n";
 	T += StyleGuideTopic(Kind);
 	return T;
 }
@@ -17499,7 +17503,8 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"through and the pulses don't harshen; with width wide, for the game's stereo files: the echo opposite the melody, "
 			"chord voices apart, the melody, the bass and the drums in the middle.\n"
 			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it; "
-			"measure_mix for what the ear hears (the intro 6-10 dB under the main part, the two sides within 2 dB).\n"
+			"measure_mix with melody_channel the lead, for what the ear hears (the intro 6-10 dB under the main part, the two "
+			"sides within 2 dB).\n"
 			"9. set_loop where the loop starts, then check_loop and fix_loop, so the repeats start as the first time does (a "
 			"fade or an echo at the loop's end carries over otherwise). Then play it for me and ask what I'd change. Keep what "
 			"I like in soundtrack_notes.\n"
