@@ -12619,6 +12619,7 @@ void TestFindSound()
 
 
 
+
 // calm-sounds tests
 // A sequence of a song's instrument as it was made (FakeSong::Made), on its chip
 const PresetSequence *MadeSequence(const FakeSong &Song, int Index, int Type)
@@ -13117,6 +13118,34 @@ void TestSoftDesign()
 	FakeSong Plain;
 	CHECK_HAS(Run(Plain, "design_instrument", "{\"name\": \"Z\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
 }
+
+void TestSoftLevels()
+{
+	// The soft layer's sounds against a 2A03 pulse at 15 (50%), measured under Wine (October 2026, A-3, volume 15, the soft
+	// layer's 4 channels): their waves' level and their envelopes' (the N163's square 0.6 dB under the pulse) within 0.5 dB
+	const struct { const char *Name; double Db; bool Struck; } MEASURED[] = { { "choir pad", -8.29, false }, { "string pad", -7.34, false },
+		{ "soft flute", -5.33, false }, { "sub bass", -5.10, false }, { "breath", -7.40, false }, { "quick pad", -7.65, false },
+		{ "pulsing pad", -10.35, false }, { "music box", -4.84, true } };
+	for (size_t m = 0; m < sizeof(MEASURED) / sizeof(MEASURED[0]); ++m) {
+		const WaveSound *pSound = FindWaveSound(MEASURED[m].Name);
+		bool Struck = false;
+		const double Held = pSound != 0 ? HeldVolume(*pSound, Struck) : 0.0;
+		const double Db = pSound != 0 ? -0.6 + WaveLevelDb(*pSound, Struck) + 20.0 * std::log10(Held / 15.0) : 0.0;
+		char What[96];
+		std::snprintf(What, sizeof(What), "%s: %.2f dB, measured %.2f", MEASURED[m].Name, Db, MEASURED[m].Db);
+		Check(pSound != 0 && std::fabs(Db - MEASURED[m].Db) <= 0.5 && Struck == MEASURED[m].Struck, What, __LINE__);
+	}
+	// The tools say it when one is added
+	FakeSong Song;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"breath\", \"channel\": \"Soft 1\"}").Text,
+		"At volume 15 it holds about 7.4 dB under a 2A03 pulse at 15.");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"music box\", \"channel\": \"Soft 2\"}").Text, "At volume 15 it strikes about ");
+	// With one N163 channel the chip plays its channel louder
+	FakeSong One;
+	CHECK(!Run(One, "set_expansion", "{\"chip\": \"N163\", \"n163_channels\": 1, \"confirm\": true}").IsError);
+	CHECK_HAS(Run(One, "add_instrument", "{\"preset\": \"quick pad\", \"channel\": \"Namco 1\"}").Text, "At volume 15 it holds about 2.");
+}
 // end of calm-sounds tests
 
 int main()
@@ -13229,6 +13258,7 @@ int main()
 	TestSoftCalmSounds();
 	TestVrc6DutiesAndStrikes();
 	TestSoftDesign();
+	TestSoftLevels();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -492,6 +492,17 @@ double N163FullDb(int Channels)
 	return N163_SQUARE_DB + N163_WAVE_DB + 20.0 * std::log10(Share(n) / Share(4));
 }
 
+// How loud a wave sound plays at volume 15 against a 2A03 pulse at 15 with Channels N163 channels (Struck: at its strike,
+// for one that dies away): N163FullDb's square, its waves' level and its envelope's. Under Wine (October 2026, A-3, 4
+// channels, against a 50% pulse) the soft layer's eight sounds measured within 0.5 dB of it: choir pad -8.3, string pad
+// -7.3, soft flute -5.3, sub bass -5.1, breath -7.4, quick pad -7.7, pulsing pad -10.4 over its strikes, music box -4.8
+// struck.
+double WaveSoundDb(const WaveSound &Sound, int Channels, bool &Struck)
+{
+	const double Held = HeldVolume(Sound, Struck);
+	return N163FullDb(Channels) - N163_WAVE_DB + WaveLevelDb(Sound, Struck) + 20.0 * std::log10(std::max(1.0, Held) / 15.0);
+}
+
 // The channels whose volume counts in steps of 3 dB, the VRC7's and the 5B's, not in proportion to it
 bool StepVolume(const ChannelInfo &Channel)
 {
@@ -1173,6 +1184,18 @@ int SampleDrumsInstrument(Session &S)
 	S.Remarks.push_back(Format("Added the instrument %s: sampled drums for the DPCM channel (kick on C-3, snare on D-3, low tom on "
 		"F-3, high tom on A-3).", InstrumentLabel(S.Song, Index).c_str()));
 	return Index;
+}
+
+// What the tools say of a wave sound's level in the song (its N163 channels counted, WaveSoundDb)
+std::string WaveSoundLevel(Session &S, const WaveSound &Sound)
+{
+	int Channels = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
+	bool Struck = false;
+	const double Db = WaveSoundDb(Sound, Channels, Struck);
+	return Format(" At volume 15 it %s about %.1f dB %s a 2A03 pulse at 15.", Struck ? "strikes" : "holds", std::fabs(Db),
+		Db <= 0.0 ? "under" : "over");
 }
 
 // An N163 sound as an instrument, or the N163 one of its name already there:
@@ -2932,9 +2955,9 @@ std::string AddInstrumentTool(Session &S, const Json &Args)
 		const size_t Before = S.Song.Instruments.size();
 		std::string Where;
 		const int Index = AddWaveInstrument(S, *pSound, Where);
-		return Format("%s %s (N163 instrument: %s%s). Use it by that name in write_notes or set_instrument.",
+		return Format("%s %s (N163 instrument: %s%s).%s Use it by that name in write_notes or set_instrument.",
 			S.Song.Instruments.size() > Before ? "Added" : "The song already has", InstrumentLabel(S.Song, Index).c_str(),
-			pSound->Description.c_str(), Where.empty() ? "" : ("; " + Where).c_str());
+			pSound->Description.c_str(), Where.empty() ? "" : ("; " + Where).c_str(), WaveSoundLevel(S, *pSound).c_str());
 	}
 
 	// The FDS plays sounds drawn for it
@@ -3608,7 +3631,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		return "Added " + InstrumentLabel(S.Song, Index) + " (N163 instrument, the " + pBase->Name + "'s waves): " +
 			DescribeDesign(D, S.Song.FrameRate, "N163") + Unused + (Where.empty() ? std::string() : "; " + Where) + "." +
 			VolumeTimeline(SequencesInfo(Sound.Sequences, "N163"), FramesPerBeat, BeatsPerMinute(S.Song.Speed, S.Song.Tempo,
-			S.Song.FrameRate, S.Time.RowsPerBeat)) + NoRestrike + VanishRemark(S.Song, Index) + " Use it by name in write_notes, "
+			S.Song.FrameRate, S.Time.RowsPerBeat)) + WaveSoundLevel(S, Sound) + NoRestrike + VanishRemark(S.Song, Index) +
+			" Use it by name in write_notes, "
 			"set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 	}
 

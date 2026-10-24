@@ -342,6 +342,74 @@ std::string WaveSoundList()
 	return Out;
 }
 
+namespace {
+
+const PresetSequence *SequenceOfType(const WaveSound &Sound, int Type)
+{
+	for (size_t i = 0; i < Sound.Sequences.size(); ++i)
+		if (Sound.Sequences[i].Type == Type && !Sound.Sequences[i].Items.empty())
+			return &Sound.Sequences[i];
+	return 0;
+}
+
+// A wave's RMS around its mean against a 0-15 square's (7.5), as a power ratio
+double WavePower(const std::vector<int> &Wave)
+{
+	if (Wave.empty())
+		return 0.0;
+	double Mean = 0.0, Sum = 0.0;
+	for (size_t i = 0; i < Wave.size(); ++i)
+		Mean += Wave[i];
+	Mean /= Wave.size();
+	for (size_t i = 0; i < Wave.size(); ++i)
+		Sum += (Wave[i] - Mean) * (Wave[i] - Mean);
+	return Sum / Wave.size() / (7.5 * 7.5);
+}
+
+}	// namespace
+
+double WaveLevelDb(const WaveSound &Sound, bool Struck)
+{
+	if (Sound.Waves.empty())
+		return -60.0;
+	const PresetSequence *pSteps = SequenceOfType(Sound, SEQUENCE_DUTY);
+	std::vector<int> Playing;	// the waves heard, a frame each
+	if (pSteps == 0)
+		Playing.push_back(0);
+	else if (Struck)
+		Playing.push_back(pSteps->Items.front());
+	else if (pSteps->Loop >= 0 && pSteps->Loop < static_cast<int>(pSteps->Items.size()))
+		Playing.assign(pSteps->Items.begin() + pSteps->Loop, pSteps->Items.end());
+	else
+		Playing.push_back(pSteps->Items.back());
+	double Power = 0.0;
+	for (size_t i = 0; i < Playing.size(); ++i)
+		Power += WavePower(Sound.Waves[static_cast<size_t>(std::max(0, std::min(static_cast<int>(Sound.Waves.size()) - 1, Playing[i])))]);
+	Power /= Playing.size();
+	return Power > 0.0 ? 10.0 * std::log10(Power) : -60.0;
+}
+
+double HeldVolume(const WaveSound &Sound, bool &Struck)
+{
+	Struck = false;
+	const PresetSequence *pVolume = SequenceOfType(Sound, SEQUENCE_VOLUME);
+	if (pVolume == 0)
+		return 15.0;
+	const std::vector<int> &V = pVolume->Items;
+	const int Items = static_cast<int>(V.size());
+	const int End = pVolume->Release >= 0 && pVolume->Release < Items ? pVolume->Release : Items - 1;
+	if (pVolume->Loop >= 0 && pVolume->Loop <= End) {
+		double Power = 0.0;
+		for (int i = pVolume->Loop; i <= End; ++i)
+			Power += V[static_cast<size_t>(i)] * V[static_cast<size_t>(i)];
+		return std::sqrt(Power / (End - pVolume->Loop + 1));
+	}
+	if (pVolume->Release >= 0 && pVolume->Release < Items)
+		return V[static_cast<size_t>(pVolume->Release)];
+	Struck = V.back() == 0;
+	return Struck ? *std::max_element(V.begin(), V.end()) : V.back();
+}
+
 const WaveSound *WaveSoundForKind(const std::string &Kind)
 {
 	static const char *const KINDS[][2] = {
