@@ -285,6 +285,33 @@ channel along the bottom of the window (see `MCP.md`, The mixer).
   calm place, most tracks or action at -22, -20 or -19 LUFS), so the
   game's tracks can sound equally loud.
 
+## 11. VRC6 Plus
+
+Done (October 2026, on `feat-vrc6plus`): a chip of this FamiTracker's own,
+picked in **Module > Module properties** like the others: the real VRC6
+(two pulses and the sawtooth) with a soft layer of four wave channels for
+pads, a choir, a soft lead or a sub bass. It still sounds like the NES
+VRC6, with a bit of (optional) softness and depth: the soft layer only
+plays soft waves through the Namco 163's emulation (see `MCP.md`, VRC6
+Plus).
+
+- Its box takes the place of the VRC6 and N163 boxes while it's ticked
+  (they show ticked and greyed); another chip (FDS, VRC7, MMC5, 5B) can
+  still join it. Unticking it goes back to the plain VRC6, asking before
+  the soft channels' notes are cleared.
+- Its channels are named as one chip everywhere: Pulse 1, Pulse 2 and
+  Sawtooth of the VRC6 Plus, then Soft 1 to Soft 4.
+- Choosing it adds what's missing of its starter sounds: choir pad, string
+  pad, soft flute and sub bass, each with a wave of its own. The sound
+  browser lists them under VRC6 Plus.
+- Underneath, the song is VRC6 + N163 with 4 channels, marked with a small
+  `BF VRC6PLUS` block: other FamiTrackers open it as that and play it the
+  same. Like any song with two expansion chips, it goes to a game as OGG
+  files; NSF export plays one chip.
+- Claude Code knows it: `set_expansion` takes "VRC6 Plus", and the tools
+  keep the soft layer under the VRC6 and reach for it when you ask for
+  something softer, warmer or deeper.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back

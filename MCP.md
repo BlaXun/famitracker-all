@@ -406,7 +406,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `keep_version` | Keeps the selected track as it is now as a track of its own ("Town (version 1)", or named, like "Town (calm bridge)"), and stays on the selected track, so Claude can try something and you can compare or go back |
 | `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
-| `set_expansion` | Sets the expansion chips (any of VRC6, VRC7, FDS, MMC5, N163 and 5B, together, or none), as Module > Module properties does. See [Expansion chips](#expansion-chips) |
+| `set_expansion` | Sets the expansion chips (any of VRC6, VRC7, FDS, MMC5, N163 and 5B, together, or none, or the VRC6 Plus), as Module > Module properties does. See [Expansion chips](#expansion-chips) and [VRC6 Plus](#vrc6-plus) |
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes, pans or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
@@ -591,9 +591,15 @@ about 5 dB louder than a 2A03 pulse at 15, and each step down is 3 dB
 each part's accents and fades as many dB under its loudest as they were.
 The Sunsoft 5B's squares count volume in steps of 3 dB too, and at 15 play
 as loud as a 2A03 pulse at 15 (measured: 0.4 dB louder), so the soft mix
-puts a 5B melody at 13. The N163's wave sounds play about 8 dB quieter than a pulse, so an N163
-melody stays at 15 and its other parts sit as far under it as the roles
-ask. The FDS's sounds play about 5 dB louder than a pulse with their
+puts a 5B melody at 13. The N163 depends on its channel count: it plays
+its channels in turn, each a share of the time, which FamiTracker's mixer
+makes up in part, so a square wave at 15 plays 0.6 dB under a pulse with 4
+channels and 4.4 dB over with 1 (measured under Wine). Its wave sounds'
+waves are rounder than a square, 4.1 dB under it on average, so with 2 to 8
+channels they play about 5 dB quieter than a pulse: an N163 melody stays at
+15 and its other parts sit as far under it as the roles ask. With one
+channel they play about as loud as a pulse. On the VRC6 Plus, the soft
+layer's parts sit another 3 dB under their roles, under the VRC6. The FDS's sounds play about 5 dB louder than a pulse with their
 envelope at its top (from 4.5 to 6.5 dB, sound by sound), so its parts sit
 lower. The VRC6, MMC5 and 2A03 count volume alike. The echo, the harmony and
 the counter-melody take their volumes the same way (an echo three steps
@@ -707,8 +713,8 @@ and new ones start empty:
   it did.
 - Expansion chips play on NTSC machines, so a PAL song becomes NTSC.
 - FamiTracker's NSF export plays one expansion chip, and not the 5B, so it
-  refuses a song with several chips or the 5B, saying why; `export_for_game`
-  (OGG) and WAV export play every chip.
+  refuses a song with several chips (the VRC6 Plus is two) or the 5B,
+  saying why; `export_for_game` (OGG) and WAV export play every chip.
 
 The **VRC6** adds two pulses and a sawtooth, and the **MMC5** two more pulses
 (FamiTracker has no MMC5 sample channel). The presets work on all of them:
@@ -743,7 +749,8 @@ fine, which is how an electric piano comps chords across them.
 The **N163** (Namco 163) adds 1 to 8 wavetable channels, 13 in all with the
 2A03's, and Claude draws their sounds: soft flute, drawbar organ, string
 ensemble, choir, brass section, electric piano, glass bell, harp, marimba,
-pulse sweep lead, growl bass and round bass. Each plays waves of its own one
+pulse sweep lead, growl bass and round bass, and the VRC6 Plus's choir pad,
+string pad and sub bass. Each plays waves of its own one
 after the other, so its timbre moves as a note plays: the organ's upper
 drawbars turn like a rotating speaker, the strings and the choir shimmer,
 brass opens up from mellow to bright, the electric piano and the bell mellow
@@ -765,6 +772,41 @@ Claude puts each sound's 16-sample wave there, in a place of its own.
   channels are added: up to 6 keep it above hearing (about 20 kHz), 7 and 8
   bring it down to 17 and 15 kHz. FamiTracker plays it too, so it's in the
   exports.
+
+### VRC6 Plus
+
+The **VRC6 Plus** is this FamiTracker's own: the real VRC6 (its two pulses
+and its sawtooth) with a soft layer of four wave channels played by the
+N163, for when a VRC6 song should be a bit softer, warmer or deeper. It
+plays only soft waves through the N163's emulation, so it still sounds like
+the NES. Ask for "a VRC6 Plus song", or for something softer or deeper on a
+VRC6 song, and Claude sets it with `set_expansion` (`chips`:
+`["VRC6 Plus"]`, or with another chip beside it); **Module > Module
+properties** has a box for it.
+
+- It's one chip: its channels are Pulse 1, Pulse 2 and Sawtooth of the VRC6
+  Plus, then Soft 1 to Soft 4, in the pattern editor, the piano roll, the
+  mixer, the problems panel and the tools ("VRC6 Plus Soft 1"). The tools
+  still take the soft channels' N163 names ("Namco 1", "N163 Namco 1") and
+  the pulses' VRC6 ones.
+- The VRC6 carries the music (the melody, the sawtooth's bass and bite);
+  the soft layer sits underneath, quieter and optional: a pad or a choir
+  holding the chords (`add_chords_and_bass` with `chord_style` `voices`
+  puts them on the soft channels, the string pad by default), a soft echo
+  (`add_echo` onto Soft 1 with the soft flute), a sub bass an octave under
+  the sawtooth. Left empty, the song is plain VRC6. `mix` keeps the soft
+  layer 3 dB under its parts' roles. The style guide's topic `vrc6-plus`
+  (`references` with action `guide`) has more.
+- Choosing it adds what's missing of its starter sounds, each with a wave
+  of its own under sample 128: choir pad, string pad, soft flute and sub
+  bass. `find_sound` and the sound browser list them first, under "VRC6
+  Plus soft layer", with the N163's other sounds after them.
+- Underneath, the song is VRC6 + N163 with 4 channels, marked by a
+  `BF VRC6PLUS` block, so other FamiTrackers open it as that and play it
+  the same. Back to the VRC6 (`chips: ["VRC6"]`) clears the soft channels
+  after asking; `["VRC6", "N163"]` keeps them as plain N163 channels.
+  NSF export plays one chip, so a VRC6 Plus song goes to a game as OGG
+  files.
 
 The **Sunsoft 5B** adds three square waves (always 50%), each of which can
 also play the chip's noise and its envelope. Claude has sounds of its own for
