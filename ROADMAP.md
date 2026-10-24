@@ -356,6 +356,16 @@ over:
   a pig next to its piano and trumpet. A few novelty stamps, made like the
   sound effects from the voice, would fit.
 
+## 13. Views you can switch on and off
+
+On the backlog (the user's idea, 24 October 2026): every way of placing
+notes gets a View menu toggle, as View > Piano roll has. View > Pattern
+editor hides the channel grid and the piano roll fills its space; there's
+always one view to place notes in; the layout is remembered; the shortcuts
+keep working with the grid hidden. The drum grid (a dialog today) could
+become a panel toggled the same way, and the stamp mode (12) would be one
+more.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
