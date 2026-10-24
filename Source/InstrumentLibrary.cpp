@@ -31,6 +31,7 @@
 #include <vector>
 #include "Api/Presets.h"
 #include "Api/Wavetables.h"
+#include "Api/FdsSounds.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -223,6 +224,80 @@ int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound,
 	return Index;
 }
 
+namespace {
+
+// An FDS sequence (kept inside CInstrumentFDS) set to a sound's
+void SetFdsSequence(CSequence *pSequence, const ftapi::PresetSequence &Seq)
+{
+	pSequence->Clear();
+	const size_t Count = std::min(Seq.Items.size(), static_cast<size_t>(MAX_SEQUENCE_ITEMS));
+	for (size_t k = 0; k < Count; ++k)
+		pSequence->SetItem(static_cast<int>(k), static_cast<signed char>(Seq.Items[k]));
+	pSequence->SetItemCount(static_cast<unsigned int>(Count));
+	if (Seq.Loop >= 0 && static_cast<size_t>(Seq.Loop) < Count)
+		pSequence->SetLoopPoint(static_cast<unsigned int>(Seq.Loop));
+	if (Seq.Release >= 0 && static_cast<size_t>(Seq.Release) < Count)
+		pSequence->SetReleasePoint(static_cast<unsigned int>(Seq.Release));
+	if (Seq.Type == ftapi::SEQUENCE_ARPEGGIO)
+		pSequence->SetSetting(static_cast<unsigned int>(Seq.Setting));
+}
+
+}	// namespace
+
+int AddFdsSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::FdsSound &Sound, CString &Error, bool Notify)
+{
+	if (!pDoc->ExpansionEnabled(SNDCHIP_FDS)) {
+		Error = _T("This song has no FDS channel.");
+		return -1;
+	}
+	const CString Name(Sound.InstrumentName().c_str());
+	const int Existing = FindNamedInstrument(pDoc, INST_FDS, Name);
+	if (Existing >= 0)
+		return Existing;
+	if (Sound.Wave.size() != static_cast<size_t>(CInstrumentFDS::WAVE_SIZE) ||
+		Sound.Modulation.size() != static_cast<size_t>(CInstrumentFDS::MOD_SIZE)) {
+		Error = _T("That FDS sound can't be made.");
+		return -1;
+	}
+	CInstrument *pNew = theApp.GetChannelMap()->GetChipInstrument(SNDCHIP_FDS);	// as for presets: no Setup()
+	if (pNew == NULL) {
+		Error = _T("FamiTracker has no FDS instruments.");
+		return -1;
+	}
+	pNew->SetName(Name);
+	const int Index = pDoc->AddInstrument(pNew);
+	if (Index == INVALID_INSTRUMENT) {
+		pNew->Release();
+		Error = _T("There are no free instrument slots left (a song has at most 64).");
+		return -1;
+	}
+	CInstrumentFDS *pInstrument = static_cast<CInstrumentFDS*>(pDoc->GetInstrument(static_cast<unsigned int>(Index)));	// retained
+	if (pInstrument != NULL) {
+		// The wave and the modulator
+		for (int i = 0; i < CInstrumentFDS::WAVE_SIZE; ++i)
+			pInstrument->SetSample(i, std::max(0, std::min(63, Sound.Wave[static_cast<size_t>(i)])));
+		for (int i = 0; i < CInstrumentFDS::MOD_SIZE; ++i)
+			pInstrument->SetModulation(i, std::max(0, std::min(7, Sound.Modulation[static_cast<size_t>(i)])));
+		pInstrument->SetModulationSpeed(std::max(0, std::min(4095, Sound.ModSpeed)));
+		pInstrument->SetModulationDepth(std::max(0, std::min(63, Sound.ModDepth)));
+		pInstrument->SetModulationDelay(std::max(0, std::min(255, Sound.ModDelay)));
+		// Its volume (0-31), arpeggio and pitch, the sequences an FDS instrument keeps itself
+		for (size_t s = 0; s < Sound.Sequences.size(); ++s) {
+			const ftapi::PresetSequence &Seq = Sound.Sequences[s];
+			CSequence *pSequence = Seq.Type == ftapi::SEQUENCE_VOLUME ? pInstrument->GetVolumeSeq() :
+				Seq.Type == ftapi::SEQUENCE_ARPEGGIO ? pInstrument->GetArpSeq() :
+				Seq.Type == ftapi::SEQUENCE_PITCH ? pInstrument->GetPitchSeq() : NULL;
+			if (pSequence != NULL)
+				SetFdsSequence(pSequence, Seq);
+		}
+		pInstrument->Release();
+	}
+	pDoc->SetModifiedFlag();
+	if (Notify)
+		pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+	return Index;
+}
+
 int AddVrc7PatchInstrument(CFamiTrackerDoc *pDoc, int Patch, LPCTSTR Name, CString &Error)
 {
 	if (!pDoc->ExpansionEnabled(SNDCHIP_VRC7)) {
@@ -359,6 +434,7 @@ enum lib_kind_t {
 	LIB_SAWTOOTH,
 	LIB_MMC5,			// its pulses play 2A03 instruments
 	LIB_VRC7,
+	LIB_FDS,			// the FDS's wavetable sounds (kept as a number in the registry: new kinds go last)
 	LIB_S5B,			// its own sounds, then the presets
 };
 
@@ -372,7 +448,8 @@ struct lib_sound_t {
 	CString Name;		// "Soft lead"; for the VRC7 "Piano"
 	CString Group;		// "Lead", "Bass", ...
 	CString Description;
-	const ftapi::Preset *pPreset;	// NULL for a VRC7 sound; for the 5B, one of its own sounds or a preset
+	const ftapi::Preset *pPreset;	// NULL for a VRC7 or FDS sound; for the 5B, one of its own sounds or a preset
+	const ftapi::FdsSound *pFds;	// an FDS sound, or NULL
 	int Patch;			// the VRC7's sound, 1-15
 	bool Low;			// a bass: heard low
 };
@@ -390,6 +467,19 @@ LPCTSTR PresetGroup(const std::string &Name)
 	if (Name == "bass" || Name == "plucky bass" || Name == "thump bass" || Name == "buzz bass" || Name == "sync buzz")
 		return _T("Bass");
 	return _T("Drum");
+}
+
+LPCTSTR FdsGroup(const ftapi::FdsSound &Sound)
+{
+	if (Sound.Low)
+		return _T("Bass");
+	if (Sound.Name == "glass bell")
+		return _T("Pluck or bell");
+	if (Sound.Name == "warm organ" || Sound.Name == "swelling strings" || Sound.Name == "choir pad")
+		return _T("Chords or pad");
+	if (Sound.Name == "underwater wobble" || Sound.Name == "cave drone")
+		return _T("Atmosphere");
+	return _T("Lead");
 }
 
 LPCTSTR PatchGroup(int Patch)
@@ -442,6 +532,8 @@ lib_kind_t KindOfChannel(int ChanID)
 	case CHANID_VRC7_CH1: case CHANID_VRC7_CH2: case CHANID_VRC7_CH3:
 	case CHANID_VRC7_CH4: case CHANID_VRC7_CH5: case CHANID_VRC7_CH6:
 		return LIB_VRC7;
+	case CHANID_FDS:
+		return LIB_FDS;
 	case CHANID_S5B_CH1: case CHANID_S5B_CH2: case CHANID_S5B_CH3:
 		return LIB_S5B;
 	default:
@@ -584,6 +676,7 @@ void CInstrumentLibraryDlg::FillTargets()
 		{ LIB_SAWTOOTH, _T("VRC6 sawtooth: bass") },
 		{ LIB_MMC5, _T("MMC5 pulses") },
 		{ LIB_VRC7, _T("VRC7: FM sounds") },
+		{ LIB_FDS, _T("FDS: wavetable sounds") },
 		{ LIB_S5B, _T("Sunsoft 5B: squares, buzz and noise") },
 	};
 	m_Targets.clear();
@@ -591,7 +684,7 @@ void CInstrumentLibraryDlg::FillTargets()
 	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k) {
 		for (int c = 0; c < Channels; ++c) {
 			const int ID = pDoc->GetChannelType(static_cast<unsigned int>(c));
-			if (ID == CHANID_DPCM || ID == CHANID_FDS || (ID >= CHANID_N163_CHAN1 && ID <= CHANID_N163_CHAN8) ||
+			if (ID == CHANID_DPCM || (ID >= CHANID_N163_CHAN1 && ID <= CHANID_N163_CHAN8) ||
 				ID == CHANID_MMC5_VOICE || ID > CHANID_S5B_CH3 || KindOfChannel(ID) != KINDS[k].Kind)
 				continue;
 			lib_target_t Target;
@@ -644,8 +737,23 @@ void CInstrumentLibraryDlg::FillSounds()
 				Sound.Group = PatchGroup(Patches[i].Number);
 				Sound.Description = Patches[i].Description.c_str();
 				Sound.pPreset = NULL;
+				Sound.pFds = NULL;
 				Sound.Patch = Patches[i].Number;
 				Sound.Low = Patches[i].Number == 13;
+				m_Sounds.push_back(Sound);
+			}
+		}
+		else if (pTarget->Kind == LIB_FDS) {
+			const std::vector<ftapi::FdsSound> &Sounds = ftapi::FdsSounds();
+			for (size_t i = 0; i < Sounds.size(); ++i) {
+				lib_sound_t Sound;
+				Sound.Name = Sounds[i].InstrumentName().c_str();
+				Sound.Group = FdsGroup(Sounds[i]);
+				Sound.Description = Sounds[i].Description.c_str();
+				Sound.pPreset = NULL;
+				Sound.pFds = &Sounds[i];
+				Sound.Patch = 0;
+				Sound.Low = Sounds[i].Low;
 				m_Sounds.push_back(Sound);
 			}
 		}
@@ -659,6 +767,7 @@ void CInstrumentLibraryDlg::FillSounds()
 					Sound.Group = PresetGroup(Own[i].Name);
 					Sound.Description = Own[i].Description.c_str();
 					Sound.pPreset = &Own[i];
+					Sound.pFds = NULL;
 					Sound.Patch = 0;
 					Sound.Low = Sound.Group == _T("Bass");
 					m_Sounds.push_back(Sound);
@@ -673,6 +782,7 @@ void CInstrumentLibraryDlg::FillSounds()
 				Sound.Group = PresetGroup(Presets[i].Name);
 				Sound.Description = Presets[i].Description.c_str();
 				Sound.pPreset = &Presets[i];
+				Sound.pFds = NULL;
 				Sound.Patch = 0;
 				Sound.Low = Sound.Group == _T("Bass");
 				m_Sounds.push_back(Sound);
@@ -717,6 +827,8 @@ int CInstrumentLibraryDlg::ExistingInstrument(const lib_sound_t &Sound) const
 	inst_type_t Type = INST_2A03;
 	if (pTarget->Kind == LIB_VRC7)
 		Type = INST_VRC7;
+	else if (pTarget->Kind == LIB_FDS)
+		Type = INST_FDS;
 	else if (pTarget->Kind == LIB_VRC6_PULSE || pTarget->Kind == LIB_SAWTOOTH)
 		Type = INST_VRC6;
 	else if (pTarget->Kind == LIB_S5B)
@@ -729,6 +841,8 @@ int CInstrumentLibraryDlg::MakeInstrument(const lib_sound_t &Sound, CString &Err
 	const lib_target_t *pTarget = Target();
 	if (pTarget == NULL)
 		return -1;
+	if (Sound.pFds != NULL)
+		return AddFdsSoundInstrument(Doc(), *Sound.pFds, Error);
 	if (Sound.pPreset == NULL)
 		return AddVrc7PatchInstrument(Doc(), Sound.Patch, Sound.Name, Error);
 	if (pTarget->Kind == LIB_S5B)
@@ -794,8 +908,11 @@ void CInstrumentLibraryDlg::Play(const lib_sound_t &Sound, int Instrument)
 		static const DWORD STEP[] = { 0, 220, 440, 660, 880, 1100 };
 		const bool Low = Sound.Low || pTarget->Kind == LIB_TRIANGLE || pTarget->Kind == LIB_SAWTOOTH;
 		const int *pNotes = Low ? BASS : MELODY;
+		// The FDS sounds two octaves under the note written: the melody goes up two, where a pulse would play
+		// it, and a bass one, where the triangle plays it; the 5B one octave under: a melody goes up one
+		const int Lift = pTarget->Kind == LIB_FDS ? (Low ? 12 : 24) : (Square && !Low ? 12 : 0);
 		for (size_t i = 0; i < 6; ++i) {
-			play_event_t Note = { STEP[i], pNotes[i] + (Square && !Low ? 12 : 0) };	// a 5B melody as high as a pulse's
+			play_event_t Note = { STEP[i], pNotes[i] + Lift };
 			m_Events.push_back(Note);
 		}
 		play_event_t Release = { 1700, RELEASE };

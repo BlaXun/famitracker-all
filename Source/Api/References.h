@@ -46,6 +46,8 @@ struct Module;
 
 namespace ftapi {
 
+struct FdsSound;
+
 struct ReferenceSequence {
 	std::vector<int> Items;		// empty when the sound doesn't use it
 	int Loop, Release;			// -1 for none
@@ -60,8 +62,11 @@ struct ReferenceSound {
 	std::string Chip;			// whose instrument it was: "2A03", "VRC6", "N163" or "FDS"
 	bool Noise, Triangle, Sawtooth;
 	int Share;					// percent of its channel's notes
-	ReferenceSequence Sequences[5];	// volume, arpeggio, pitch, hi-pitch, duty (SEQUENCE_*)
-	ReferenceSound() : Noise(false), Triangle(false), Sawtooth(false), Share(0) {}
+	ReferenceSequence Sequences[5];	// volume, arpeggio, pitch, hi-pitch, duty (SEQUENCE_*); an FDS sound's volume 0-32
+	std::vector<int> FdsWave;	// an FDS sound's wave (64 samples, 0-63) and modulation table (32 steps, 0-7); empty for
+	std::vector<int> FdsMod;	// the others' and in references studied before these were kept
+	int ModSpeed, ModDepth, ModDelay;	// its modulator
+	ReferenceSound() : Noise(false), Triangle(false), Sawtooth(false), Share(0), ModSpeed(0), ModDepth(0), ModDelay(0) {}
 };
 
 struct Reference {
@@ -119,8 +124,16 @@ std::string ReferenceText(const Reference &R);
 int ReferenceMatch(const Reference &R, const std::string &Query);
 
 // One of a reference's sounds as an instrument preset, named Name, with the
-// duty translated for the other chip (2A03 or VRC6)
+// duty translated for the other chip (2A03 or VRC6); an FDS sound's volume
+// counted 0-15, its pitch sequence as the 2A03's period moves (four times
+// coarser, turned around), and a duty as bright as its wave
 Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name);
+// One of a reference's sounds as an FDS instrument, named Name: an FDS
+// sound's own wave, modulator and sequences; another chip's played on the
+// FDS, its volume counted 0-31, its pitch sequence four times finer and
+// turned around, and a wave from its channel (its duty's pulse, a sawtooth or
+// a triangle). How says in words what wave it plays.
+FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name, std::string &How);
 // A short name for an instrument from a sound: "Magma Tanker lead"
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound);
 

@@ -23,13 +23,13 @@
 
 // Instruments made from FamiTracker's sound presets (Api/Presets.h: leads,
 // plucks, pads, basses and drums for the 2A03, MMC5, VRC6 and 5B, the 5B's
-// own sounds, and the VRC7's built-in sounds), for Claude Code's tools and for
-// Instrument > Instrument library, which lists them by the channel they're for
-// and plays each one before it goes into the song. Include after
-// FamiTrackerDoc.h.
+// own sounds, and the VRC7's built-in sounds) and the FDS's sounds
+// (Api/FdsSounds.h), for Claude Code's tools and for Instrument > Instrument
+// library, which lists them by the channel they're for and plays each one
+// before it goes into the song. Include after FamiTrackerDoc.h.
 
 class CMainFrame;
-namespace ftapi { struct Preset; struct WaveSound; }
+namespace ftapi { struct Preset; struct WaveSound; struct FdsSound; }
 
 // The instrument of that type and name, -1 if there's none
 int FindNamedInstrument(const CFamiTrackerDoc *pDoc, inst_type_t Type, LPCTSTR Name);
@@ -53,6 +53,12 @@ int AddVrc7CustomInstrument(CFamiTrackerDoc *pDoc, const int *Regs, LPCTSTR Name
 // WavePos (samples) of the chip's memory, or the N163 one of that name
 // already there: its index, or -1 with the reason
 int AddWaveSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::WaveSound &Sound, int WavePos, CString &Error);
+
+// An FDS instrument playing one of the FDS's sounds (Api/FdsSounds.h): its
+// wave, modulation table, modulator speed, depth and delay, and its volume,
+// arpeggio and pitch sequences; or the FDS one of that name already there:
+// its index, or -1 with the reason
+int AddFdsSoundInstrument(CFamiTrackerDoc *pDoc, const ftapi::FdsSound &Sound, CString &Error, bool Notify = true);
 
 // Removes an instrument, and the sequences it used that no other instrument uses
 void RemoveInstrumentAndSequences(CFamiTrackerDoc *pDoc, unsigned int Index);

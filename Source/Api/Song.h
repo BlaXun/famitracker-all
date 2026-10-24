@@ -36,6 +36,7 @@ namespace ftapi {
 struct Preset;
 struct DpcmKit;
 struct WaveSound;
+struct FdsSound;
 
 struct ChannelInfo {
 	std::string Name;		// "Pulse 1", "Sawtooth"
@@ -46,7 +47,7 @@ struct ChannelInfo {
 	bool Muted;				// muted in FamiTracker, so the user doesn't hear it play
 
 	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false) {}
-	std::string FullName() const { return Chip + " " + Name; }	// "VRC6 Pulse 1"
+	std::string FullName() const { return Name == Chip ? Name : Chip + " " + Name; }	// "VRC6 Pulse 1"; "FDS"
 };
 
 // One of an instrument's sequences, as FamiTracker stores it
@@ -69,11 +70,12 @@ struct InstrumentInfo {
 								// 11}: a major seventh); empty when it has none, or one that doesn't loop
 	bool OddDuty;			// a VRC6 instrument whose duty sequence plays odd values: on the sawtooth they add 32 to
 							// its volume, and it overdrives
-	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6, N163
-								// and 5B instruments (on the 5B, 3 dB a step: the column's steps under 15 and the
-								// sequence's add up); empty when it has none
+	std::vector<int> Volume;	// its volume sequence (0-15 a frame, times the volume column over 15) for 2A03, VRC6,
+								// N163, FDS and 5B instruments (an FDS one's 0-31 as FdsVolumeAs15 counts them; on the 5B, 3 dB
+								// a step: the column's steps under 15 and the sequence's add up); empty when it has none
 	int VolumeLoop, VolumeRelease;	// where that sequence loops back to and where it waits for a release (-1: none)
-	SequenceInfo Steps, Pitch, HiPitch;	// its arpeggio, pitch and hi-pitch sequences (2A03, VRC6, N163 and 5B instruments)
+	SequenceInfo Steps, Pitch, HiPitch;	// its arpeggio, pitch and hi-pitch sequences (2A03, VRC6, N163, FDS and
+										// 5B instruments; an FDS pitch sequence moves the frequency register, up is sharper)
 	SequenceInfo Mode;		// a 5B instrument's noise / mode sequence: 64 the square, 128 the noise, 32 the envelope (whose
 							// level replaces the volume's), and the noise's pitch 0-31 in the low bits; empty otherwise
 
@@ -214,6 +216,9 @@ public:
 	// An N163 instrument playing a wave sound (Wavetables.h), its waves at WavePos (samples) of the chip's
 	// memory, named after it, or the N163 one of that name already there: its index, -1 with the reason
 	virtual int AddN163Instrument(const WaveSound &Sound, int WavePos, std::string &Error) = 0;
+	// An FDS instrument playing a sound (FdsSounds.h): its wave, modulator and sequences, named after
+	// it, or the FDS one of that name already there: its index, -1 with the reason
+	virtual int AddFdsInstrument(const FdsSound &Sound, std::string &Error) = 0;
 	// A VRC7 instrument playing one of the chip's patches (1-15), named Name, or the VRC7 one of that
 	// name already there: its index, -1 with the reason
 	virtual int AddVrc7Instrument(int Patch, const std::string &Name, std::string &Error) = 0;

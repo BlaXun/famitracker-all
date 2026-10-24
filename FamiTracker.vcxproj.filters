@@ -1287,6 +1287,9 @@
     <ClCompile Include="Source\Api\Effects.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\FdsSounds.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Wavetables.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1360,6 +1363,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Effects.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\FdsSounds.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Wavetables.h">
