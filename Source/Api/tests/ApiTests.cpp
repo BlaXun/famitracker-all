@@ -12857,7 +12857,7 @@ void TestMeasureMix()
 	Song.Put(3, 0, "kick", NO_INSTRUMENT, 10);
 	Song.End(3, 8);
 	R = Run(Song, "measure_mix", "{}");
-	CHECK_HAS(R.Text, "\nNot with the melody: Noise (drums).");
+	CHECK_HAS(R.Text, "\nNot with the melody: Noise.");
 	R = Run(Song, "measure_mix", "{\"to_bar\": 4, \"melody_channel\": \"VRC6 Pulse 1\"}");
 	CHECK_HAS(R.Text, "VRC6 Pulse 1 doesn't play in bars 1-4, so no part was measured against it.");
 	CHECK(Run(Song, "measure_mix", "{\"melody_channel\": \"Noise\"}").IsError);

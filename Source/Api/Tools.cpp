@@ -13549,10 +13549,8 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 		Part.Channels.push_back(c);
 		Part.Name = ShortChannelName(S, c);
 		const ChannelInfo &Info = S.Channel(c);
-		if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM) {
-			Part.Name += " (drums)";
-			Part.Around = false;
-		}
+		if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
+			Part.Around = false;	// drums, or a wind: not among lively's parts around the melody
 		else if (EchoDelayOf(S, c, Melody, First, End) > 0) {
 			Part.Name += " (echo)";
 			Part.Around = false;
