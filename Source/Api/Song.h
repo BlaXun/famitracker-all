@@ -210,6 +210,20 @@ struct PlayPart {
 	PlayPart() : Track(0), First(0), Rows(1) {}
 };
 
+// How SongHost::RenderTrack renders: the whole song as the game's files have it, or some parts alone (measure_mix's
+// stems)
+struct RenderOptions {
+	// Per channel of the module (empty: none): true for each left out of the sound. Its notes and effects still play,
+	// so a DPCM level (Zxx) still softens the triangle and the noise, and the song's speed, jumps and halts still steer
+	// it; only its sound is gone, its Space send with it (the space then holds only the channels heard)
+	std::vector<bool> Silent;
+	// After Seconds, rendering goes on while the mixer's space rings on (up to 15 s), as the game's files need; false
+	// stops at Seconds
+	bool Tail;
+	std::string What;			// what it renders, for the status bar meanwhile ("the chords alone"); empty for the game
+	RenderOptions() : Tail(true) {}
+};
+
 // What SongHost::Play plays
 struct PlayRequest {
 	int Track;                  // the track it plays (selected for it); -1 for the selected one
@@ -327,9 +341,10 @@ public:
 	// For games: a track (from 0) played from its start for Seconds as audio,
 	// its left and right sides (-1 to 1; the same on both when nothing pans),
 	// with the sample where each row began, as song rows in playing order.
-	// Every channel plays, muted ones too.
-	virtual bool RenderTrack(int Track, double Seconds, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
-		std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
+	// Every channel plays, muted ones too, but those Options leave silent.
+	// The song stays as it is: the mixer, the mutes and the selected track too.
+	virtual bool RenderTrack(int Track, double Seconds, const RenderOptions &Options, std::vector<float> &Left, std::vector<float> &Right,
+		int &SampleRate, std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
 	// Writes a file next to the song (FileName has no folders), replacing one
 	// of that name; the path written comes back in Path
 	virtual bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &Error) = 0;

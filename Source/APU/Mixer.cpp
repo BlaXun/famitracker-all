@@ -489,7 +489,7 @@ void CMixer::MixInternal1(int Time)
 	}
 }
 
-void CMixer::MixInternal2(int Time)
+void CMixer::MixInternal2(int Time, bool Send)
 {
 	for (int s = 0; s < 2; ++s) {
 #ifdef LINEAR_MIXING
@@ -515,11 +515,22 @@ void CMixer::MixInternal2(int Time)
 			static const int CHANS[3] = { CHANID_TRIANGLE, CHANID_NOISE, CHANID_DPCM };
 			const double Weighted[3] = { Triangle / 8227.0 * m_dLevel[CHANID_TRIANGLE], Noise / 12241.0 * m_dLevel[CHANID_NOISE],
 				Dpcm / 22638.0 * m_dLevel[CHANID_DPCM] };
-			Step -= SplitPin(Synth2A03TND, CHANS, Weighted, 3, Sum, s, Time);
+			Step -= SplitPin(Synth2A03TND, CHANS, Weighted, 3, Sum, s, Time, Send);
 		}
-		Synth2A03TND.offset(Time, Step, &Side(s));
+		if (Send)
+			Synth2A03TND.offset(Time, Step, &Side(s));
 		m_dSumTND[s] = Sum;
 	}
+}
+
+void CMixer::StartAt(int ChanID, int Value)
+{
+	// The pin's output with the channel at Value, taken as where it is: nothing sent, so the sound starts there without
+	// a step (a pop through the low cut), and the triangle and the noise play softened by the DPCM's level from the start
+	if (ChanID != CHANID_TRIANGLE && ChanID != CHANID_NOISE && ChanID != CHANID_DPCM)
+		return;
+	m_iChannels[ChanID] = Value;
+	MixInternal2(0, false);
 }
 
 // A linear chip's channel: each side gets its share of the channel's level
@@ -945,7 +956,7 @@ void CMixer::MoveOwn(int ChanID, int Time)
 }
 
 int CMixer::SplitPin(Blip_Synth<blip_good_quality, -500> &Synth, const int *pChans, const double *pWeighted, int Count, double Sum,
-	int Side_, int Time)
+	int Side_, int Time, bool Send)
 {
 	// Sum is what the pin puts out (with the mixer window's levels); each channel's share of it is in proportion to
 	// its input times its level, as the levels scale it. A channel in its own buffers has its share there, in whole
@@ -959,7 +970,8 @@ int CMixer::SplitPin(Blip_Synth<blip_good_quality, -500> &Synth, const int *pCha
 		const int c = pChans[i];
 		const int32 Want = m_bOwn[c] && Total > 0.0 ? static_cast<int32>(std::floor(Sum * pWeighted[i] / Total * AMP_2A03 + 0.5)) : 0;
 		if (Want != m_iPinOwn[c][Side_]) {
-			Synth.offset(Time, Want - m_iPinOwn[c][Side_], &m_OwnBuffer[c][Side_]);
+			if (Send)
+				Synth.offset(Time, Want - m_iPinOwn[c][Side_], &m_OwnBuffer[c][Side_]);
 			Moved += Want - m_iPinOwn[c][Side_];
 			m_iPinOwn[c][Side_] = Want;
 		}

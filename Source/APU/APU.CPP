@@ -590,6 +590,13 @@ void CAPU::ClearSpace()
 	m_pMixer->ClearSpace();
 }
 
+void CAPU::StartDAC(uint8 Level)
+{
+	// From now on, as a register written now would
+	Process();
+	m_pDPCM->StartAt(Level);
+}
+
 void CAPU::LogExternalWrite(uint16 Address, uint8 Value)
 {
 	if (Address >= 0x9000 && Address <= 0x9003)

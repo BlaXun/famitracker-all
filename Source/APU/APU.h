@@ -82,6 +82,9 @@ public:
 	void	SetSpace(int Room, double EchoSeconds, int Repeats);
 	bool	SpaceRinging() const;
 	void	ClearSpace();							// as a song or a render starts: Reset leaves the space ringing
+	// The DPCM's output at Level (0-127) as if it had always been there: as a song starts with the level its first row
+	// sets, which a $4011 write would step up to from silence, a pop (this FamiTracker's own)
+	void	StartDAC(uint8 Level);
 
 #ifdef LOGGING
 	void	Log();

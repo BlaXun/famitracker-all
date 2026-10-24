@@ -197,21 +197,24 @@ void AddKWeighted(const std::vector<float> &Samples, int SampleRate, size_t Firs
 	}
 }
 
-// The integrated loudness from the K-weighted squares (both sides' added)
-double GatedLoudness(const std::vector<double> &Squared, int SampleRate)
+// The mean squares of the K-weighted squares' blocks of 400 ms, one every 100 ms (from running sums), added to Blocks
+void AddBlocks(const std::vector<double> &Squared, int SampleRate, std::vector<double> &Blocks)
 {
-	const double Silent = -70.0;
 	const size_t Count = Squared.size();
-	// The blocks' mean squares, from running sums
 	const size_t Block = static_cast<size_t>(SampleRate) * 4 / 10, Hop = static_cast<size_t>(SampleRate) / 10;
 	if (Count < Block || Hop == 0)
-		return Silent;
+		return;
 	std::vector<double> Sum(Count + 1, 0.0);
 	for (size_t i = 0; i < Count; ++i)
 		Sum[i + 1] = Sum[i] + Squared[i];
-	std::vector<double> Blocks;
 	for (size_t b = 0; b + Block <= Count; b += Hop)
 		Blocks.push_back((Sum[b + Block] - Sum[b]) / static_cast<double>(Block));
+}
+
+// The integrated loudness of blocks' mean squares
+double GatedBlocks(const std::vector<double> &Blocks)
+{
+	const double Silent = -70.0;
 	auto Lufs = [](double MeanSquare) { return MeanSquare > 0.0 ? -0.691 + 10.0 * std::log10(MeanSquare) : -1000.0; };
 	// Gated: blocks over -70 LUFS, then those over 10 LU under their loudness
 	double Total = 0.0;
@@ -232,6 +235,14 @@ double GatedLoudness(const std::vector<double> &Squared, int SampleRate)
 			++Kept;
 		}
 	return Kept == 0 ? Silent : Lufs(Total / static_cast<double>(Kept));
+}
+
+// The integrated loudness from the K-weighted squares (both sides' added)
+double GatedLoudness(const std::vector<double> &Squared, int SampleRate)
+{
+	std::vector<double> Blocks;
+	AddBlocks(Squared, SampleRate, Blocks);
+	return GatedBlocks(Blocks);
 }
 
 }	// namespace
@@ -315,6 +326,23 @@ double IntegratedLoudness(const std::vector<float> &Left, const std::vector<floa
 	AddKWeighted(Left, SampleRate, First, Count, Squared);
 	AddKWeighted(Right, SampleRate, First, Count, Squared);
 	return GatedLoudness(Squared, SampleRate);
+}
+
+double SpansLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate,
+	const std::vector<std::pair<size_t, size_t> > &Spans)
+{
+	const size_t Size = std::min(Left.size(), Right.size());
+	std::vector<double> Blocks;
+	for (size_t i = 0; i < Spans.size() && SampleRate > 0; ++i) {
+		const size_t First = std::min(Spans[i].first, Size), End = std::min(Spans[i].second, Size);
+		if (End <= First)
+			continue;
+		std::vector<double> Squared(End - First, 0.0);
+		AddKWeighted(Left, SampleRate, First, End - First, Squared);
+		AddKWeighted(Right, SampleRate, First, End - First, Squared);
+		AddBlocks(Squared, SampleRate, Blocks);
+	}
+	return GatedBlocks(Blocks);
 }
 
 double LoudnessGain(double Measured, double Target, double Peak, bool &Held)

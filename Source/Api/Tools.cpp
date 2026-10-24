@@ -12880,7 +12880,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	std::vector<std::pair<int, long long> > Marks;
 	int SampleRate = 0;
 	std::string Error;
-	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, Left, Right, SampleRate, Marks, Error))
+	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, RenderOptions(), Left, Right, SampleRate, Marks, Error))
 		throw Problem("The track couldn't be rendered: " + Error);
 	Right.resize(Left.size());
 	// A DPCM level set on the song's first row steps the DMC's output up from silence there: a pop
@@ -13087,6 +13087,673 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	}
 	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
 		"points are in seconds.\n" + Code;
+	return Text;
+}
+
+// Measuring the mix (measure_mix): the track rendered as export_for_game renders it, the first time through (without
+// the space's tail after its end), and again with each part alone: the other channels silent, their notes and effects
+// still playing (the DPCM level still softens the triangle and the noise), the part's own Space send kept, so the
+// space holds only it. Loudness as export_for_game measures it, the two sides together as BS.1770 sums them.
+
+// A render, with where each song row sounds in it the first time through: [Begin, End) in samples, -1 where it didn't
+struct MixRender {
+	std::vector<float> Left, Right;
+	int Rate;
+	std::vector<long long> Begin, End;
+	MixRender() : Rate(0) {}
+};
+
+typedef std::vector<std::pair<size_t, size_t> > SampleSpans;
+
+// The track rendered for Seconds from its start, without the space's tail after, the channels Silent marks left out
+MixRender RenderMix(Session &S, double Seconds, const std::vector<bool> &Silent, const std::string &What)
+{
+	MixRender R;
+	RenderOptions Options;
+	Options.Silent = Silent;
+	Options.Tail = false;
+	Options.What = What;
+	std::vector<std::pair<int, long long> > Marks;
+	std::string Error;
+	if (!S.Host().RenderTrack(S.Song.Track, Seconds, Options, R.Left, R.Right, R.Rate, Marks, Error))
+		throw Problem("The track couldn't be rendered: " + Error);
+	R.Right.resize(R.Left.size());
+	const int Total = S.Time.TotalRows();
+	R.Begin.assign(static_cast<size_t>(Total), -1);
+	R.End.assign(static_cast<size_t>(Total), -1);
+	const long long Size = static_cast<long long>(R.Left.size());
+	for (size_t i = 0; i < Marks.size(); ++i) {
+		const int Row = Marks[i].first;
+		if (Row < 0 || Row >= Total || R.Begin[static_cast<size_t>(Row)] >= 0)
+			continue;
+		R.Begin[static_cast<size_t>(Row)] = std::min(Size, Marks[i].second);
+		R.End[static_cast<size_t>(Row)] = std::min(Size, i + 1 < Marks.size() ? Marks[i + 1].second : Size);
+	}
+	return R;
+}
+
+// The samples of song rows [First, End) in a render, the stretches of rows that follow each other joined
+SampleSpans RowSamples(const MixRender &R, int First, int End)
+{
+	SampleSpans Out;
+	for (int r = std::max(0, First); r < End && r < static_cast<int>(R.Begin.size()); ++r) {
+		const long long From = R.Begin[static_cast<size_t>(r)], To = R.End[static_cast<size_t>(r)];
+		if (From < 0 || To <= From)
+			continue;
+		if (!Out.empty() && Out.back().second == static_cast<size_t>(From))
+			Out.back().second = static_cast<size_t>(To);
+		else
+			Out.push_back(std::make_pair(static_cast<size_t>(From), static_cast<size_t>(To)));
+	}
+	return Out;
+}
+
+// ...and of whole bars, in the order listed
+SampleSpans BarSamples(const Session &S, const MixRender &R, const std::vector<int> &Bars)
+{
+	SampleSpans Out;
+	for (size_t b = 0; b < Bars.size(); ++b) {
+		const SampleSpans One = RowSamples(R, S.Time.BarStart(Bars[b]), S.Time.BarEnd(Bars[b]));
+		for (size_t i = 0; i < One.size(); ++i) {
+			if (!Out.empty() && Out.back().second == One[i].first)
+				Out.back().second = One[i].second;
+			else
+				Out.push_back(One[i]);
+		}
+	}
+	return Out;
+}
+
+double SpansLufs(const MixRender &R, const SampleSpans &Spans)
+{
+	return SpansLoudness(R.Left, R.Right, R.Rate, Spans);
+}
+
+// The loudest sample of either side in the spans, 0-1 of full scale; At, where it is
+float SpansPeak(const MixRender &R, const SampleSpans &Spans, size_t *pAt = 0)
+{
+	float Most = 0.0f;
+	size_t Where = 0;
+	for (size_t i = 0; i < Spans.size(); ++i)
+		for (size_t k = Spans[i].first; k < Spans[i].second && k < R.Left.size(); ++k) {
+			const float Value = std::max(std::fabs(R.Left[k]), std::fabs(R.Right[k]));
+			if (Value > Most) {
+				Most = Value;
+				Where = k;
+			}
+		}
+	if (pAt != 0)
+		*pAt = Where;
+	return Most;
+}
+
+double PeakDb(float Peak)
+{
+	return Peak > 0.0f ? 20.0 * std::log10(static_cast<double>(Peak)) : -120.0;
+}
+
+// Each side's sum of squares in the spans, and how many samples they have
+void SideSums(const MixRender &R, const SampleSpans &Spans, double &Left, double &Right, size_t &Count)
+{
+	Left = Right = 0.0;
+	Count = 0;
+	for (size_t i = 0; i < Spans.size(); ++i)
+		for (size_t k = Spans[i].first; k < Spans[i].second && k < R.Left.size(); ++k) {
+			Left += static_cast<double>(R.Left[k]) * R.Left[k];
+			Right += static_cast<double>(R.Right[k]) * R.Right[k];
+			++Count;
+		}
+}
+
+double PowerDb(double MeanSquare)
+{
+	return MeanSquare > 0.0 ? 10.0 * std::log10(MeanSquare) : -120.0;
+}
+
+// The bar a sample of a render is in (0 when none)
+int BarAtSample(const Session &S, const MixRender &R, size_t Sample)
+{
+	for (size_t r = 0; r < R.Begin.size(); ++r)
+		if (R.Begin[r] >= 0 && static_cast<long long>(Sample) >= R.Begin[r] && static_cast<long long>(Sample) < R.End[r])
+			return S.Time.BarOf(static_cast<int>(r));
+	return 0;
+}
+
+// A channel's name, short: its own where no other channel of the song has that name ("Soft 1", "Triangle"), else with
+// its chip ("VRC6 Pulse 1")
+std::string ShortChannelName(const Session &S, int Channel)
+{
+	const std::string &Name = S.Channel(Channel).Name;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (c != Channel && S.Channel(c).Name == Name)
+			return S.Channel(Channel).FullName();
+	return Name;
+}
+
+// Channels' short names, runs of numbered ones joined: "Soft 1-3", "VRC6 Pulse 2, Soft 1"
+std::string ShortChannelNames(const Session &S, const std::vector<int> &Channels)
+{
+	std::string Out;
+	for (size_t i = 0; i < Channels.size(); ) {
+		const std::string Name = ShortChannelName(S, Channels[i]);
+		const size_t Gap = Name.rfind(' ');
+		size_t j = i;
+		int Number = 0;
+		if (Gap != std::string::npos && Gap + 1 < Name.size() && std::isdigit(static_cast<unsigned char>(Name[Gap + 1]))) {
+			Number = std::atoi(Name.c_str() + Gap + 1);
+			while (j + 1 < Channels.size() && ShortChannelName(S, Channels[j + 1]) == Name.substr(0, Gap + 1) + Format("%d", Number + 1)) {
+				++j;
+				++Number;
+			}
+		}
+		Out += (Out.empty() ? "" : ", ") + (j > i ? Name + Format("-%d", Number) : Name);
+		i = j + 1;
+	}
+	return Out;
+}
+
+// The channels beside the melody whose notes in [First, End) mostly sound chords (an arpeggio or lush instrument, or 0xy),
+// as review_arrangement counts them, the bass aside
+std::vector<int> ArpeggioChannels(Session &S, int First, int End, int Melody)
+{
+	std::vector<int> Out;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Melody || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		if (Notes.empty() || (IsBass(S.Channel(c)) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))
+			continue;
+		int Chords = 0;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (SoundsChord(S, Notes[i]))
+				++Chords;
+		if (Chords * 3 >= static_cast<int>(Notes.size()))
+			Out.push_back(c);
+	}
+	return Out;
+}
+
+// A part measured alone: its channels, and the bars measured where it plays with the melody
+struct MixPart {
+	std::string Name;		// "chords (Soft 1-3)", "Triangle (bass)"
+	std::vector<int> Channels;
+	bool Chords;			// the chords together
+	bool Around;			// one of the parts around the melody (lively's): not an echo, a double or drums
+	std::vector<int> Bars;
+	MixPart() : Chords(false), Around(true) {}
+};
+
+// A line of the mix's loudness: a section, bars no section has, or four bars
+struct MixLine {
+	std::string Name;		// "A", or "" for bars alone
+	int From, To;
+	double Lufs, Peak;
+	MixLine() : From(1), To(1), Lufs(-70.0), Peak(-120.0) {}
+};
+
+// "the melody 2.7 dB over", "the melody 1.2 dB under"
+std::string OverText(double Diff)
+{
+	const double Shown = std::floor(std::fabs(Diff) * 10.0 + 0.5) / 10.0;
+	return Format("the melody %.1f dB %s", Shown, Diff < 0.0 && Shown > 0.0 ? "under" : "over");
+}
+
+std::string MeasureMixTool(Session &S, const Json &Args)
+{
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const std::string Style = Lowercase(StringArg(Args, "style", "any"));
+	if (Style != "any" && Style != "calm" && Style != "lively")
+		throw Problem("style: any (the default: the numbers alone), calm (the melody 2-3 dB over the chords) or lively (3-4 dB over the "
+			"parts around it).");
+	const bool Stems = BoolArg(Args, "stems", true);
+	const bool Leveled = Arg(Args, "loudness") != 0;
+	const double Target = Leveled ? NumberArg(Args, "loudness", -20.0, -40.0, -6.0) : 0.0;
+	int From = 1, To = S.Time.BarCount();
+	if (RangeGiven(Args))
+		BarRange(S, Args, From, To);
+	const int Total = S.Time.TotalRows();
+	const int First = S.Time.BarStart(From), End = std::min(Total, S.Time.BarEnd(To));
+	if (End <= First)
+		throw Problem("Those bars are past the song's end.");
+
+	// When each row ends the first time through, in ticks
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	const SongFlow F = Flow(S);
+	int EndTick = 0;
+	const std::vector<TimedRow> Timed = TimeRows(Cells, Columns, F, S.Time.PatternLength, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint,
+		S.Song.FrameRate, 1, EndTick);
+	if (Timed.empty())
+		throw Problem("The track has no rows.");
+	std::vector<int> RowEnd(static_cast<size_t>(Total), -1);
+	for (size_t i = 0; i < Timed.size(); ++i)
+		if (Timed[i].Row >= 0 && Timed[i].Row < Total && RowEnd[static_cast<size_t>(Timed[i].Row)] < 0)
+			RowEnd[static_cast<size_t>(Timed[i].Row)] = i + 1 < Timed.size() ? Timed[i + 1].Tick : EndTick;
+	const double Rate = std::max(1, S.Song.FrameRate);
+	// Seconds until the measured rows to the end of a bar have played (a moment more, for the next row's mark)
+	auto SecondsTo = [&](int Bar) {
+		int Last = 0;
+		for (int r = First; r < std::min(Total, S.Time.BarEnd(Bar)); ++r)
+			Last = std::max(Last, RowEnd[static_cast<size_t>(r)]);
+		return Last / Rate + 0.2;
+	};
+
+	// The loop (all of a song that halts), the first time through
+	const int LastRow = Timed.back().Row;
+	const int LoopRow = F.Halts() ? Timed.front().Row : F.LoopRow(S.Time.PatternLength);
+	const int LoopBar = S.Time.BarOf(std::max(0, LoopRow)), LastBar = S.Time.BarOf(LastRow);
+	const bool LoopMeasured = From <= LoopBar && To >= LastBar;
+	const bool Through = LoopMeasured || Leveled;	// rendered to the end of the first time through
+
+	// The mix
+	MixRender Mix = RenderMix(S, Through ? EndTick / Rate + 0.2 : SecondsTo(To), std::vector<bool>(), "the mix");
+	auto Bars = [](int A, int B) {
+		std::vector<int> Out;
+		for (int b = A; b <= B; ++b)
+			Out.push_back(b);
+		return Out;
+	};
+	const SampleSpans Range = BarSamples(S, Mix, Bars(From, To));
+	SampleSpans LoopSpans;
+	if (LoopRow >= 0 && Mix.Begin[static_cast<size_t>(LoopRow)] >= 0 && Mix.End[static_cast<size_t>(LastRow)] > Mix.Begin[static_cast<size_t>(LoopRow)])
+		LoopSpans.push_back(std::make_pair(static_cast<size_t>(Mix.Begin[static_cast<size_t>(LoopRow)]),
+			static_cast<size_t>(Mix.End[static_cast<size_t>(LastRow)])));
+	const double LoopLufs = SpansLufs(Mix, LoopSpans);
+	// Levels as the export at a loudness brings them (its loop to it, as far as its loudest peak allows), or as rendered
+	double Gain = 0.0;
+	bool Held = false;
+	if (Leveled && LoopLufs > -70.0) {
+		SampleSpans Whole;
+		const long long Start = Mix.Begin[static_cast<size_t>(Timed.front().Row)], Stop = Mix.End[static_cast<size_t>(LastRow)];
+		if (Start >= 0 && Stop > Start)
+			Whole.push_back(std::make_pair(static_cast<size_t>(Start), static_cast<size_t>(Stop)));
+		Gain = LoudnessGain(LoopLufs, Target, SpansPeak(Mix, Whole), Held);
+	}
+
+	// Loudness by section (the bars no section has too), or every 4 bars; the intro, the bars before the loop, apart
+	const bool Intro = !F.Halts() && LoopBar > 1;
+	std::vector<MixLine> Lines;
+	auto AddLine = [&](const std::string &Name, int A, int B) {
+		A = std::max(A, From);
+		B = std::min(B, To);
+		if (B < A)
+			return;
+		MixLine Line;
+		Line.Name = Name;
+		Line.From = A;
+		Line.To = B;
+		const SampleSpans Spans = BarSamples(S, Mix, Bars(A, B));
+		Line.Lufs = SpansLufs(Mix, Spans) + Gain;
+		Line.Peak = PeakDb(SpansPeak(Mix, Spans)) + Gain;
+		Lines.push_back(Line);
+	};
+	bool BySection = false;
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i)
+		BySection = BySection || (SectionFirstBar(S, S.Song.Sections[i]) <= To && SectionLastBar(S, S.Song.Sections[i]) >= From);
+	if (BySection) {
+		int Bar = From;
+		for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
+			const int A = SectionFirstBar(S, S.Song.Sections[i]), B = SectionLastBar(S, S.Song.Sections[i]);
+			if (B < From || A > To)
+				continue;
+			AddLine("", Bar, A - 1);
+			AddLine(S.Song.Sections[i].Name, A, B);
+			Bar = B + 1;
+		}
+		AddLine("", Bar, To);
+	}
+	else {
+		const int Split = Intro && LoopBar > From && LoopBar <= To ? LoopBar : From;
+		for (int Bar = From; Bar < Split; Bar += 4)
+			AddLine("", Bar, std::min(Split - 1, Bar + 3));
+		for (int Bar = Split; Bar <= To; Bar += 4)
+			AddLine("", Bar, std::min(To, Bar + 3));
+	}
+	auto LineName = [&](const MixLine &L) {
+		const bool Before = Intro && L.Name.empty() && L.To < LoopBar;	// bars before the loop: the intro
+		return (L.Name.empty() ? std::string(Before ? "intro, " : "") : L.Name + ", ") + RangeText(L.From, L.To);
+	};
+	// The intro: the bars before the loop, or a section called so
+	int IntroFrom = 0, IntroTo = -1;
+	if (Intro) {
+		IntroFrom = From;
+		IntroTo = std::min(To, LoopBar - 1);
+	}
+	else {
+		const int Found = FindSection(S.Song.Sections, "intro");
+		if (Found >= 0) {
+			IntroFrom = std::max(From, SectionFirstBar(S, S.Song.Sections[static_cast<size_t>(Found)]));
+			IntroTo = std::min(To, SectionLastBar(S, S.Song.Sections[static_cast<size_t>(Found)]));
+		}
+	}
+	auto InIntro = [&](const MixLine &L) { return L.From >= IntroFrom && L.To <= IntroTo; };
+	int Quietest = -1, Loudest = -1;
+	for (size_t i = 0; i < Lines.size(); ++i) {
+		if (Lines[i].Lufs <= -70.0)
+			continue;
+		if (!InIntro(Lines[i]) && (Quietest < 0 || Lines[i].Lufs < Lines[static_cast<size_t>(Quietest)].Lufs))
+			Quietest = static_cast<int>(i);
+		if (Loudest < 0 || Lines[i].Lufs > Lines[static_cast<size_t>(Loudest)].Lufs)
+			Loudest = static_cast<int>(i);
+	}
+	if (Lines.size() < 3 || Quietest < 0 || Lines[static_cast<size_t>(Loudest)].Lufs - Lines[static_cast<size_t>(Quietest)].Lufs < 0.5)
+		Quietest = Loudest = -1;	// two lines say it themselves, and sections within half a dB are alike
+
+	std::string Text = Format("Measured %s of \"%s\" as %s: LUFS (both sides, as BS.1770 sums them), peaks in dBFS.",
+		RangeText(From, To).c_str(), S.Song.TrackName.c_str(), Leveled ? Format("export_for_game {\"loudness\": %g} saves it", Target).c_str() :
+		"FamiTracker renders it (export_for_game with normalize false)");
+	for (size_t i = 0; i < Lines.size(); ++i) {
+		const MixLine &L = Lines[i];
+		Text += "\n- " + LineName(L) + ": " + (L.Lufs <= -70.0 ? std::string("silent") : Format("%.1f (peak %.1f)", L.Lufs, L.Peak));
+		if (static_cast<int>(i) == Loudest)
+			Text += ", the loudest";
+		if (static_cast<int>(i) == Quietest)
+			Text += IntroTo >= IntroFrom ? ", the quietest after the intro" : ", the quietest";
+	}
+	// The loop, and the intro against the main part
+	double Main = -70.0;
+	if (LoopMeasured && LoopLufs > -70.0) {
+		size_t At = 0;
+		const double Peak = PeakDb(SpansPeak(Mix, LoopSpans, &At)) + Gain;
+		Main = LoopLufs + Gain;
+		Text += Format("\n%s, %s: %.1f LUFS, peak %.1f dBFS in bar %d.", F.Halts() ? "The whole song (it halts)" : "Loop",
+			RangeText(LoopBar, LastBar).c_str(), Main, Peak, BarAtSample(S, Mix, At));
+		if (Leveled)
+			Text += Held ? Format(" The export holds it %.1f LU short of %g LUFS (%.1f dB up), its loudest peak at -1 dBFS.", Target - Main,
+				Target, Gain) : Format(" The export brings it %.1f dB %s.", std::fabs(Gain), Gain >= 0.0 ? "up" : "down");
+	}
+	else if (IntroTo >= IntroFrom && To > IntroTo) {
+		Main = SpansLufs(Mix, BarSamples(S, Mix, Bars(IntroTo + 1, To))) + Gain;
+	}
+	if (IntroTo >= IntroFrom && Main > -70.0) {
+		const double IntroLufs = SpansLufs(Mix, BarSamples(S, Mix, Bars(IntroFrom, IntroTo))) + Gain;
+		const double Under = Main - IntroLufs;
+		const std::string What = LoopMeasured ? "the loop" : "the bars after it";
+		if (IntroLufs <= -70.0)
+			Text += "\nThe intro is silent.";
+		else if (Under > 10.0)
+			Text += Format("\nThe intro is %.1f dB under %s: more than 10, which a game's players hear as silence (6-10 dB under reads as "
+				"an intro).", Under, What.c_str());
+		else if (Under < 6.0)
+			Text += Format("\nThe intro is %.1f dB %s %s: less than 6 dB under, it doesn't set itself apart (6-10 reads as an intro).",
+				std::fabs(Under), Under >= 0.0 ? "under" : "over", What.c_str());
+		else
+			Text += Format("\nThe intro is %.1f dB under %s.", Under, What.c_str());
+	}
+	// The two sides
+	double LeftPower = 0.0, RightPower = 0.0;
+	size_t Samples = 0;
+	SideSums(Mix, Range, LeftPower, RightPower, Samples);
+	const double Count = static_cast<double>(std::max<size_t>(1, Samples));
+	LeftPower /= Count;
+	RightPower /= Count;
+	const double Apart = PowerDb(LeftPower) - PowerDb(RightPower);
+	Text += Format("\nSides: left %.1f, right %.1f dB RMS, %.1f dB apart", PowerDb(LeftPower) + Gain, PowerDb(RightPower) + Gain, std::fabs(Apart));
+	const bool Lopsided = std::fabs(Apart) > 2.0 && LeftPower > 0.0 && RightPower > 0.0;
+	std::string SideText = ".";
+
+	// Each part alone, against the melody where both play
+	if (!Stems) {
+		Text += Lopsided ? Format(": more than 2, so a part sits too far %s (stems true tells which).", Apart > 0.0 ? "left" : "right") : ".";
+		return Text;
+	}
+	int Melody = -1;
+	bool Guessed = false;
+	if (Arg(Args, "melody_channel") != 0) {
+		Melody = ChannelArg(S, Args, "melody_channel");
+		if (!IsMelodic(S.Channel(Melody)))
+			throw Problem("The melody channel needs notes, not drums or samples.");
+	}
+	else {
+		Melody = GuessMelodyChannel(S, First, End);
+		Guessed = true;
+	}
+	std::vector<int> MelodyBars;
+	for (int b = From; b <= To && Melody >= 0; ++b)
+		if (HasNotesIn(S, Melody, S.Time.BarStart(b), S.Time.BarEnd(b)))
+			MelodyBars.push_back(b);
+	if (MelodyBars.empty()) {
+		Text += Lopsided ? Format(": more than 2, so a part sits too far %s.", Apart > 0.0 ? "left" : "right") : ".";
+		Text += Melody < 0 ? Format("\nNo melody plays in %s, so no part was measured against it.", RangeText(From, To).c_str()) :
+			Format("\n%s doesn't play in %s, so no part was measured against it.", S.Channel(Melody).FullName().c_str(), RangeText(From, To).c_str());
+		return Text;
+	}
+
+	// The parts: the chords (named, or those that sound chords, or else voiced chords), each other channel playing
+	std::vector<int> ChordChannels;
+	if (Arg(Args, "chords") != 0)
+		ChordChannels = ChannelsArg(S, Args, "chords");
+	else {
+		ChordChannels = ArpeggioChannels(S, First, End, Melody);
+		if (ChordChannels.empty())
+			ChordChannels = ChordVoicesIn(S, First, End, Melody);
+	}
+	ChordChannels.erase(std::remove(ChordChannels.begin(), ChordChannels.end(), Melody), ChordChannels.end());
+	std::vector<int> Voices;	// voiced chords beside chords that sound on their own (a pad under lush chords)
+	if (Arg(Args, "chords") == 0 && !ChordChannels.empty()) {
+		const std::vector<int> Found = ChordVoicesIn(S, First, End, Melody);
+		for (size_t i = 0; i < Found.size(); ++i)
+			if (std::find(ChordChannels.begin(), ChordChannels.end(), Found[i]) == ChordChannels.end())
+				Voices.push_back(Found[i]);
+		if (Voices.size() < 2)
+			Voices.clear();
+	}
+	auto ChannelPart = [&](int c) {
+		MixPart Part;
+		Part.Channels.push_back(c);
+		Part.Name = ShortChannelName(S, c);
+		const ChannelInfo &Info = S.Channel(c);
+		if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM) {
+			Part.Name += " (drums)";
+			Part.Around = false;
+		}
+		else if (EchoDelayOf(S, c, Melody, First, End) > 0) {
+			Part.Name += " (echo)";
+			Part.Around = false;
+		}
+		else if ((IsBass(Info) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))
+			Part.Name += " (bass)";
+		return Part;
+	};
+	// "chords (Soft 1-3)"; several channels named together: "VRC6 Pulse 2, Soft 1-3 together"
+	auto GroupPart = [&](const std::vector<int> &Channels, const char *Name) {
+		MixPart Part;
+		Part.Channels = Channels;
+		Part.Name = Name != 0 ? std::string(Name) + " (" + ShortChannelNames(S, Channels) + ")" : ShortChannelNames(S, Channels) + " together";
+		return Part;
+	};
+	std::vector<MixPart> Parts;
+	if (Arg(Args, "parts") != 0) {
+		const Json &Given = *Arg(Args, "parts");
+		std::vector<Json> Items;
+		if (Given.IsArray())
+			Items = Given.Items();
+		else
+			Items.push_back(Given);
+		for (size_t i = 0; i < Items.size(); ++i) {
+			const std::string Word = Items[i].IsString() ? Lowercase(Trim(Items[i].String())) : std::string();
+			if (Word == "chords") {
+				if (ChordChannels.empty())
+					throw Problem("parts: no channel plays chords beside the melody there (arpeggio or lush instruments, or voiced chords); "
+						"name them with chords, or name the channels in parts.");
+				MixPart Part = GroupPart(ChordChannels, "chords");
+				Part.Chords = true;
+				Parts.push_back(Part);
+				continue;
+			}
+			// One channel, or several joined with +, as one part
+			std::vector<int> Channels;
+			if (Items[i].IsString() && Items[i].String().find('+') != std::string::npos) {
+				const std::string &All = Items[i].String();
+				size_t At = 0;
+				while (At <= All.size()) {
+					size_t Plus = All.find('+', At);
+					if (Plus == std::string::npos)
+						Plus = All.size();
+					const int c = ParseChannel(S, Json(Trim(All.substr(At, Plus - At))), "parts");
+					if (std::find(Channels.begin(), Channels.end(), c) == Channels.end())
+						Channels.push_back(c);
+					At = Plus + 1;
+				}
+			}
+			else
+				Channels.push_back(ParseChannel(S, Items[i], "parts"));
+			Channels.erase(std::remove(Channels.begin(), Channels.end(), Melody), Channels.end());
+			if (Channels.empty())
+				continue;	// the melody is measured anyway
+			std::sort(Channels.begin(), Channels.end());
+			Parts.push_back(Channels.size() == 1 ? ChannelPart(Channels[0]) : GroupPart(Channels, 0));
+		}
+	}
+	else {
+		if (!ChordChannels.empty()) {
+			MixPart Part = GroupPart(ChordChannels, "chords");
+			Part.Chords = true;
+			Parts.push_back(Part);
+		}
+		if (!Voices.empty())
+			Parts.push_back(GroupPart(Voices, "chord voices"));
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == Melody || std::find(ChordChannels.begin(), ChordChannels.end(), c) != ChordChannels.end() ||
+				std::find(Voices.begin(), Voices.end(), c) != Voices.end() || !HasNotesIn(S, c, First, End))
+				continue;
+			Parts.push_back(ChannelPart(c));
+		}
+	}
+	// Where each plays with the melody
+	std::vector<std::string> Without;
+	for (size_t p = 0; p < Parts.size(); ++p) {
+		for (size_t b = 0; b < MelodyBars.size(); ++b) {
+			bool Plays = false;
+			for (size_t k = 0; k < Parts[p].Channels.size() && !Plays; ++k)
+				Plays = HasNotesIn(S, Parts[p].Channels[k], S.Time.BarStart(MelodyBars[b]), S.Time.BarEnd(MelodyBars[b]));
+			if (Plays)
+				Parts[p].Bars.push_back(MelodyBars[b]);
+		}
+		if (Parts[p].Bars.empty())
+			Without.push_back(Parts[p].Name);
+	}
+
+	// The melody alone, then each part
+	auto SilentBut = [&](const std::vector<int> &Heard) {
+		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
+		for (size_t k = 0; k < Heard.size(); ++k)
+			Silent[static_cast<size_t>(Heard[k])] = false;
+		return Silent;
+	};
+	const MixRender Lead = RenderMix(S, SecondsTo(MelodyBars.back()), SilentBut(std::vector<int>(1, Melody)), "the melody alone");
+	const std::string MelodyName = ShortChannelName(S, Melody);
+	const double LeadLufs = SpansLufs(Lead, BarSamples(S, Lead, MelodyBars)) + Gain;
+	std::string StemText = Format("\nAlone (the other channels silent, their effects still playing), LUFS where each plays with the melody:"
+		"\n- melody %s%s: %s, %s", MelodyName.c_str(), Guessed ? " (guessed; melody_channel names another)" : "",
+		LeadLufs <= -70.0 ? "silent" : Format("%.1f", LeadLufs).c_str(), MelodyBars.size() == 1 ? Format("bar %d", MelodyBars[0]).c_str() :
+		("bars " + BarList(MelodyBars)).c_str());
+	// For the sides: which part puts the most on the louder side (its sums over the mix's samples, so they add up)
+	double LeadLeft = 0.0, LeadRight = 0.0;
+	size_t Unused = 0;
+	SideSums(Lead, BarSamples(S, Lead, Bars(From, To)), LeadLeft, LeadRight, Unused);
+	std::string Leaning = MelodyName;
+	double Leans = (LeadLeft - LeadRight) / Count * (Apart > 0.0 ? 1.0 : -1.0);
+	double LeansDb = PowerDb(LeadLeft) - PowerDb(LeadRight);
+	// Lively: the part nearest the melody
+	double Nearest = 1000.0;
+	std::string NearestName;
+	bool ChordsFound = false;
+	for (size_t p = 0; p < Parts.size(); ++p) {
+		MixPart &Part = Parts[p];
+		if (Part.Bars.empty())
+			continue;
+		const MixRender Stem = RenderMix(S, SecondsTo(Part.Bars.back()), SilentBut(Part.Channels), Part.Name + " alone");
+		const double PartLufs = SpansLufs(Stem, BarSamples(S, Stem, Part.Bars)) + Gain;
+		const double MelodyThere = SpansLufs(Lead, BarSamples(S, Lead, Part.Bars)) + Gain;
+		StemText += "\n- " + Part.Name;
+		if (Part.Bars != MelodyBars)
+			StemText += Part.Bars.size() == 1 ? Format(", bar %d", Part.Bars[0]) : ", bars " + BarList(Part.Bars);
+		if (PartLufs <= -70.0 || MelodyThere <= -70.0) {
+			StemText += PartLufs <= -70.0 ? ": silent" : ": the melody is silent there";
+			continue;
+		}
+		const double Diff = MelodyThere - PartLufs;
+		StemText += Format(": %.1f, %s", PartLufs, OverText(Diff).c_str());
+		// ...section by section (or 4 bars at a time)
+		double Low = 1000.0, High = -1000.0;
+		int Counted = 0;
+		for (size_t i = 0; i < Lines.size(); ++i) {
+			std::vector<int> In;
+			for (size_t b = 0; b < Part.Bars.size(); ++b)
+				if (Part.Bars[b] >= Lines[i].From && Part.Bars[b] <= Lines[i].To)
+					In.push_back(Part.Bars[b]);
+			if (In.empty())
+				continue;
+			const double Mine = SpansLufs(Stem, BarSamples(S, Stem, In)), Theirs = SpansLufs(Lead, BarSamples(S, Lead, In));
+			if (Mine <= -70.0 || Theirs <= -70.0)
+				continue;
+			Low = std::min(Low, Theirs - Mine);
+			High = std::max(High, Theirs - Mine);
+			++Counted;
+		}
+		if (Counted >= 2 && Format("%.1f", Low) != Format("%.1f", High))
+			StemText += Format(" (%.1f to %.1f by %s)", Low, High, BySection ? "section" : "4 bars");
+		// The calm target, against the chords together
+		if (Part.Chords) {
+			ChordsFound = true;
+			const double Shown = std::floor(Diff * 10.0 + 0.5) / 10.0;
+			if (Style == "calm") {
+				if (Shown >= 2.0 && Shown <= 3.0)
+					StemText += "; within calm's 2-3";
+				else
+					StemText += Format("; calm wants 2-3: %s the chords about %.1f dB (set_mixer change on their channels) or %s the melody",
+						Shown > 3.0 ? "raise" : "lower", std::fabs(Diff - 2.5), Shown > 3.0 ? "lower" : "raise");
+			}
+		}
+		if (Part.Around && Diff < Nearest) {
+			Nearest = Diff;
+			NearestName = Part.Name;
+		}
+		// Its share of the sides
+		double PartLeft = 0.0, PartRight = 0.0;
+		SideSums(Stem, BarSamples(S, Stem, Bars(From, To)), PartLeft, PartRight, Unused);
+		const double Share = (PartLeft - PartRight) / Count * (Apart > 0.0 ? 1.0 : -1.0);
+		if (Share > Leans) {
+			Leans = Share;
+			Leaning = Part.Name;
+			LeansDb = PowerDb(PartLeft) - PowerDb(PartRight);
+		}
+	}
+	if (Lopsided) {
+		const double Whole = std::fabs(LeftPower - RightPower);
+		SideText = Format(": more than 2, so a part sits too far %s", Apart > 0.0 ? "left" : "right");
+		if (Leans > 0.3 * Whole && std::fabs(LeansDb) >= 1.0)
+			SideText += Format(", most of all %s (%.1f dB louder on the %s): pan it nearer the middle, or give it a part on the other side.",
+				Leaning.c_str(), std::fabs(LeansDb), Apart > 0.0 ? "left" : "right");
+		else
+			SideText += " (no part measured alone has most of it).";
+	}
+	Text += SideText + StemText;
+	if (!Without.empty()) {
+		Text += "\nNot with the melody:";
+		for (size_t i = 0; i < Without.size(); ++i)
+			Text += (i == 0 ? " " : ", ") + Without[i];
+		Text += ".";
+	}
+	if (Style == "calm" && !ChordsFound)
+		Text += "\nCalm: no chords measured against the melody (name their channels with chords).";
+	if (Style == "lively") {
+		if (NearestName.empty())
+			Text += "\nLively: no part around the melody was measured.";
+		else {
+			const double Shown = std::floor(Nearest * 10.0 + 0.5) / 10.0;
+			Text += Format("\nLively: the nearest part is %s, %s it", NearestName.c_str(), OverText(Nearest).c_str());
+			Text += Shown >= 3.0 && Shown <= 4.0 ? "; within lively's 3-4." : Format("; lively wants 3-4 over the parts: %s it about %.1f dB "
+				"(set_mixer change) or %s the melody.", Shown > 4.0 ? "raise" : "lower", std::fabs(Nearest - 3.5), Shown > 4.0 ? "lower" : "raise");
+		}
+	}
 	return Text;
 }
 
@@ -15522,6 +16189,27 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"The loudest peak still stays at -1 dBFS or under; a track it holds back says how loud it came out.")),
 		false);
 
+	AddTool("measure_mix", "Measure the mix",
+		"Measures the selected track as export_for_game renders it, changing nothing (no file is written): the loudness (LUFS, "
+		"both sides as BS.1770 sums them, as export_for_game measures) and peak of each section (every 4 bars without sections) "
+		"and of the loop, the intro against the loop (6-10 dB under reads as an intro), the two sides (more than 2 dB apart: which "
+		"part sits too far out), and each part alone, the other channels silent with their effects playing (stems): the chords "
+		"together and each other channel, against the melody in the bars where both play. style calm checks the melody 2-3 dB "
+		"over the chords, lively 3-4 dB over the parts around it. Each part alone is a render of its own: stems false measures "
+		"the mix alone, quickly.",
+		Schema().Range()
+			.Add("melody_channel", ChannelProp("The melody (default: guessed, as review_arrangement guesses it)."))
+			.Add("parts", ChannelListProp("The parts to measure alone, in place of the chords and each other channel that plays with "
+				"the melody: channels, \"chords\", or channels joined with + as one part, like \"Soft 1+Soft 2\"."))
+			.Add("chords", ChannelListProp("The channels that play the chords, measured together (default: those whose notes sound "
+				"chords, arpeggio or lush instruments, or else voiced chords on channels that start their notes together)."))
+			.Add("stems", Prop("boolean", "Measure each part alone too (default true); false is quicker."))
+			.Add("style", EnumProp("The targets it checks: any (the default: the numbers alone), calm (the melody 2-3 dB over the "
+				"chords) or lively (3-4 dB over the parts around it).", { "any", "calm", "lively" }))
+			.Add("loudness", Prop("number", "The loop's loudness the export will bring it to, in LUFS (-40 to -6, as export_for_game "
+				"takes it): the numbers then as that file has them. Default: as FamiTracker renders it.")),
+		true, false, true);
+
 	AddTool("select_track", "Switch tracks",
 		"Selects another track (song) of the module in FamiTracker, by number or name; the other tools work on the selected "
 		"one. get_song lists the tracks.",
@@ -15920,6 +16608,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
+		else if (Name == "measure_mix") Result.Text = MeasureMixTool(S, Args);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
 		else if (Name == "stop") {

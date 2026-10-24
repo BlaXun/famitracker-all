@@ -101,8 +101,9 @@ const uint64_t MONO[CHIPS] = {
 #endif
 
 // Single notes instead of a chip's script: a VRC6 pulse (50%) held at 291 Hz, the 2A03's triangle at the
-// same pitch, and the pulse for 10 frames, then silence
-enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP };
+// same pitch, and the pulse for 10 frames, then silence; the DPCM level set to 0x50 as it starts ($4011, as a
+// Zxx on a song's first row writes it), alone or with the triangle
+enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP, TONE_DAC, TONE_DAC_TRIANGLE };
 
 struct Run {
 	int Chip;
@@ -126,6 +127,9 @@ struct Run {
 	// with ClearSpace the space silenced too, as a song starts
 	int ResetAt;
 	bool ClearSpace;
+	// The DPCM's output started at this level before the first frame, as CSoundGen starts a song whose first row
+	// sets it (CAPU::StartDAC; 0: not)
+	int StartDac;
 };
 
 Run Plain(int Chip, unsigned Mask)
@@ -395,7 +399,13 @@ void PlayS5B(Writer &w, unsigned Mask, int f)
 void PlayTone(Writer &w, int Tone, int f)
 {
 	// Period 383 on the VRC6 (16 cycles a step) and 191 on the triangle (32 a step): both 291.3 Hz
-	if (Tone == TONE_TRIANGLE) {
+	if (Tone == TONE_DAC || Tone == TONE_DAC_TRIANGLE) {
+		if (f == 0)
+			w.W(0x4011, 0x50);
+		w.Next();
+		if (Tone == TONE_DAC_TRIANGLE && f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
+	}
+	else if (Tone == TONE_TRIANGLE) {
 		if (f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
 	}
 	else {
@@ -432,6 +442,10 @@ Sides RenderHere(const Run &R)
 	Apu.Write(0x4017, 0x00);
 	if (R.Chip == CHIP_MMC5)
 		Apu.ExternalWrite(0x5015, 0x03);
+#ifndef APU_REFERENCE
+	if (R.StartDac > 0)
+		Apu.StartDAC(static_cast<uint8>(R.StartDac));
+#endif
 
 	const uint32 Cycles = CAPU::BASE_FREQ_NTSC / CAPU::FRAME_RATE_NTSC;
 	const int Frames = R.Frames > 0 ? R.Frames : FRAMES;
@@ -945,6 +959,33 @@ void TestSpace()
 	CHECK(Ratio > 0.45 && Ratio < 0.55);
 }
 
+void TestDacStart()
+{
+	// A song that sets the DPCM level on its first row: written as it starts, the DMC's output steps up from silence,
+	// a pop through the low cut; started at that level (CAPU::StartDAC, as CSoundGen starts such a song), the same
+	// write sounds nothing, and the triangle plays softened by it from the start, as it does after the pop
+	Run Written = Plain(CHIP_2A03, 0);
+	Written.Tone = TONE_DAC;
+	Run Started = Written;
+	Started.StartDac = 0x50;
+	const Sides Pop = Render(Written), Quiet = Render(Started);
+	CHECK(Peak(Pop.Left) > 1000 && Peak(Pop.Left, 10 * FRAME_SAMPLES) < 2);
+	CHECK(Peak(Quiet.Left) == 0 && Peak(Quiet.Right) == 0 && Quiet.Left.size() == Pop.Left.size());
+	Written.Tone = Started.Tone = TONE_DAC_TRIANGLE;
+	const Sides Stepped = Render(Written), Softened = Render(Started);
+	Run Alone = Plain(CHIP_2A03, 0);
+	Alone.Tone = TONE_TRIANGLE;
+	const Sides Full = Render(Alone);
+	const size_t After = 20 * FRAME_SAMPLES;
+	bool Close = Stepped.Left.size() == Softened.Left.size() && Same(Softened.Left, Softened.Right);
+	for (size_t i = After; Close && i < Stepped.Left.size(); ++i)
+		Close = std::abs(Stepped.Left[i] - Softened.Left[i]) <= 2;
+	CHECK(Close);
+	CHECK(Peak(Softened.Left, 0, 2 * FRAME_SAMPLES) < Peak(Stepped.Left, 0, 2 * FRAME_SAMPLES));
+	const double Share = RmsOf(Softened.Left, After, Softened.Left.size()) / RmsOf(Full.Left, After, Full.Left.size());
+	CHECK(Share > 0.5 && Share < 0.75);		// 0.4.6's mixer: the triangle at about 57% under Z50
+}
+
 #endif
 
 }	// namespace
@@ -969,6 +1010,7 @@ int main()
 	TestOwnBuffers();
 	TestSoft();
 	TestSpace();
+	TestDacStart();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 #endif

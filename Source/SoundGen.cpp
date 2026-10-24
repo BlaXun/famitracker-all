@@ -123,6 +123,8 @@ CSoundGen::CSoundGen() :
 	m_iSpaceEcho(0),
 	m_iSpaceRepeats(3),
 	m_iRenderTail(0),
+	m_bRenderTail(true),
+	m_bMixAgain(false),
 	m_iRenderedSamples(0),
 	m_bPlaying(false),
 	m_bHaltRequest(false),
@@ -155,6 +157,7 @@ CSoundGen::CSoundGen() :
 		m_iMixPan[i] = 0x80;
 		m_iMixSoft[i] = 0;
 		m_iMixSpace[i] = 0;
+		m_bRenderSilent[i] = false;
 	}
 
 	// DPCM sample interface
@@ -426,14 +429,17 @@ void CSoundGen::ApplyChannelMix()
 	// Called from player thread: the mixer window's levels into the mixer, and its pans for the channels
 	// no 8xx has moved since they started
 	const LONG Version = m_iMixVersion;
-	if (Version == m_iMixApplied)
+	if (Version == m_iMixApplied && !m_bMixAgain)
 		return;
 	m_iMixApplied = Version;
+	m_bMixAgain = false;
 	for (int i = 0; i < CHANNELS; ++i) {
 		// The N163's channels play on the chip's in reverse order (see CChannelHandler::SetPan)
 		const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
 		const int Level = m_iMixLevel[i];
-		m_pAPU->SetChannelGain(Mixed, Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
+		// A render of some parts alone (RenderToFile's pSilent): the others' sound gone, their effects playing on
+		const bool Silent = m_bRendering && m_bRenderSilent[i];
+		m_pAPU->SetChannelGain(Mixed, Silent ? 0.0 : Level == 0 ? 1.0 : std::pow(10.0, Level / 200.0));
 		m_pAPU->SetChannelDepth(Mixed, m_iMixSoft[i], m_iMixSpace[i]);
 		if (m_pChannels[i] != NULL)
 			m_pChannels[i]->MixerPanChanged();
@@ -1000,6 +1006,28 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	MakeSilent();
 
 	m_pTrackerView->MakeSilent();
+
+	StartDacLevel();
+}
+
+void CSoundGen::StartDacLevel()
+{
+	// Called from player thread as a song starts, after MakeSilent: the DPCM level (Zxx) the first row played sets,
+	// taken in without a step (its last Zxx, as the channel handler plays them in turn); a muted DPCM channel doesn't
+	// play it (CFamiTrackerView::PlayerGetNote). Nothing changes for songs that don't set it there.
+	const int Channel = m_pDocument->GetChannelIndex(CHANID_DPCM);
+	if (Channel < 0 || m_pTrackerView->IsChannelMuted(Channel) || !m_pDocument->LockDocument(10))
+		return;
+	stChanNote Note;
+	m_pDocument->GetNoteData(m_iPlayTrack, m_iPlayFrame, Channel, m_iPlayRow, &Note);
+	const int Columns = std::min(MAX_EFFECT_COLUMNS, static_cast<int>(m_pDocument->GetEffColumns(m_iPlayTrack, Channel)) + 1);
+	m_pDocument->UnlockDocument();
+	int Level = -1;
+	for (int i = 0; i < Columns; ++i)
+		if (Note.EffNumber[i] == EF_DAC)
+			Level = Note.EffParam[i] & 0x7F;
+	if (Level > 0)
+		m_pAPU->StartDAC(static_cast<uint8>(Level));
 }
 
 void CSoundGen::HaltPlayer()
@@ -1530,7 +1558,7 @@ void CSoundGen::EvaluateGlobalEffects(stChanNote *NoteData, int EffColumns)
 
 // File rendering functions
 
-bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track)
+bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track, const bool *pSilent, bool Tail)
 {
 	// Called from main thread
 	ASSERT(GetCurrentThreadId() == theApp.m_nThreadID);
@@ -1541,6 +1569,12 @@ bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEnd
 		m_bHaltRequest = true;
 		WaitForStop();
 	}
+
+	// The channels left silent and the tail, read by the sound thread once the render starts (the message to it
+	// comes after)
+	for (int i = 0; i < CHANNELS; ++i)
+		m_bRenderSilent[i] = pSilent != NULL && pSilent[i];
+	m_bRenderTail = Tail;
 
 	m_iRenderEndWhen = SongEndType;
 	m_iRenderEndParam = SongEndParam;
@@ -1577,6 +1611,7 @@ void CSoundGen::StopRendering()
 
 	m_bPlaying = false;
 	m_bRendering = false;
+	m_bMixAgain = true;		// channels left silent for the render sound again
 	m_iPlayFrame = 0;
 	m_iPlayRow = 0;
 	m_wfWaveFile.CloseFile();
@@ -1787,9 +1822,10 @@ BOOL CSoundGen::OnIdle(LONG lCount)
 
 	// Rendering
 	if (m_bRendering && m_bRequestRenderStop) {
-		// The mixer's space rings on after the song ends: the file has its tail, up to 15 seconds of it
+		// The mixer's space rings on after the song ends: the file has its tail, up to 15 seconds of it (unless the
+		// render was asked to stop at its end)
 		if (!m_iDelayedEnd) {
-			if (m_pAPU->SpaceRinging() && m_iRenderTail < 15 * 60)
+			if (m_bRenderTail && m_pAPU->SpaceRinging() && m_iRenderTail < 15 * 60)
 				++m_iRenderTail;
 			else
 				StopRendering();
@@ -1961,6 +1997,7 @@ void CSoundGen::OnStartRender(WPARAM wParam, LPARAM lParam)
 	m_RenderMarks.SetSize(0, 4096);
 	m_bRequestRenderStop = false;
 	m_bRendering = true;
+	m_bMixAgain = true;		// the channels left silent for it (RenderToFile) from its first frame
 	m_iDelayedStart = 5;	// Wait 5 frames until player starts
 	m_iDelayedEnd = 5;
 	m_iRenderTail = 0;

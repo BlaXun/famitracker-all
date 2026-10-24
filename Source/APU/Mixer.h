@@ -57,6 +57,9 @@ public:
 
 	void	AddSample(int ChanID, int Value);
 	int		ReadBuffer(int Size, void *Buffer, bool Stereo);
+	// A channel of the 2A03's second pin at Value as if it had always been there (this FamiTracker's own): the
+	// pin's output taken in without a step, as a song starts with the DPCM level its first row sets
+	void	StartAt(int ChanID, int Value);
 
 	// Stereo (this FamiTracker's own, the NES being mono): a channel's pan,
 	// 0x00 left, 0x80 the middle (where every channel starts), 0xFF right,
@@ -100,7 +103,7 @@ private:
 	inline double CalcPin2(double Val1, double Val2, double Val3);
 
 	void MixInternal1(int Time);
-	void MixInternal2(int Time);
+	void MixInternal2(int Time, bool Send = true);	// Send false: the pin's output taken in, nothing sent (StartAt)
 	void MixN163(int ChanID, int Value, int Time);
 	void MixFDS(int ChanID, int Value, int Time);
 	void MixVRC6(int ChanID, int Value, int Time);
@@ -114,7 +117,7 @@ private:
 		int32 *pOwnSent, int Time);
 	// The 2A03's pins with a channel in its own buffers: each such channel gets its share of the pin, the sides the rest
 	int SplitPin(Blip_Synth<blip_good_quality, -500> &Synth, const int *pChans, const double *pWeighted, int Count, double Sum,
-		int Side_, int Time);
+		int Side_, int Time, bool Send = true);
 	int DestOf(int ChanID) const { return m_bOwn[ChanID] ? ChanID : -1; }
 	Blip_Buffer &Buffer(int Dest, int Index) { return Dest < 0 ? Side(Index) : m_OwnBuffer[Dest][Index]; }
 	template <class Synth> void Move(Synth &Synth_, int32 Amount, int From, int To, int Index, int Time);
