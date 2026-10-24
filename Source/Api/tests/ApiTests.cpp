@@ -8834,6 +8834,8 @@ void TestProblemList()
 		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixDoes == "nudges it a hair (P81, 7 cents sharp), so its vibrato "
 			"stays clear of 256");
 		CHECK_HAS(Clicks.LineText(Clicks.Lines(PROBLEM_CLICK)[0]), "A-3 clicks ");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].Nudge == "P81, 7 cents sharp" && Clicks.Findings()[0].Boundary == 256);
+		CHECK(List.Findings().size() == 5 && List.Findings()[0].Nudge.empty() && List.Findings()[0].Boundary == 0);
 	}
 
 	// Not check_song's JSON

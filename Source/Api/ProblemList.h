@@ -59,7 +59,9 @@ struct ProblemFinding {
 	std::string FixTool;		// the tool call that fixes it ("polish"), empty for none...
 	std::string FixArguments;	// ...with its arguments, as JSON...
 	std::string FixDoes;		// ...and what it does, in words
-	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1) {}
+	std::string Nudge;			// a click's nudge ("P81, 7 cents sharp"), empty when none stops it
+	int Boundary;				// the period a click's vibrato crosses (256), 0 for other kinds
+	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1), Boundary(0) {}
 };
 
 // A line of the panel: a finding, or one note of it (notes that vanish get a

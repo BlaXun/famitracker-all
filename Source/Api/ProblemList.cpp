@@ -122,6 +122,8 @@ bool ProblemList::Read(const std::string &Text, std::string &Error)
 		F.Position = TextOf(Item, "position");
 		F.Summary = TextOf(Item, "summary");
 		F.Message = TextOf(Item, "message");
+		F.Nudge = TextOf(Item, "nudge");
+		F.Boundary = std::max(0, IntOf(Item, "boundary", 0));
 		const Json *pNotes = Item.Get("notes");
 		for (size_t n = 0; pNotes != 0 && pNotes->IsArray() && n < pNotes->Size(); ++n) {
 			const Json &Note = pNotes->At(n);

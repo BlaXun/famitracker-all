@@ -674,8 +674,8 @@ struct CProblemsPanelWnd::Impl {
 			return;
 		const ftapi::ProblemNote *pNote = List.LineNote(*pLine);
 		CString Done;
-		Done.Format(_T("Nudged %s at %s: %s. Ctrl+Z undoes it."), pNote != NULL ? static_cast<LPCTSTR>(FromUtf8(pNote->Name)) : _T("the note"),
-			static_cast<LPCTSTR>(FromUtf8(pFinding->Position)), static_cast<LPCTSTR>(FromUtf8(pFinding->FixDoes)));
+		Done.Format(_T("Nudged %s at %s %s. Ctrl+Z undoes it."), pNote != NULL ? static_cast<LPCTSTR>(FromUtf8(pNote->Name)) : _T("the note"),
+			static_cast<LPCTSTR>(FromUtf8(pFinding->Position)), static_cast<LPCTSTR>(NudgeWords(*pFinding)));
 		std::string Reply;
 		if (!pTools->RunTool(pFinding->FixTool.c_str(), pFinding->FixArguments, Reply)) {
 			CString Text = FromUtf8(Reply);
@@ -721,14 +721,24 @@ struct CProblemsPanelWnd::Impl {
 		Say(Text);
 	}
 
+	// What Nudge does to a click: "a hair (P81, 7 cents sharp), so its vibrato stays clear of 256"
+	static CString NudgeWords(const ftapi::ProblemFinding &Finding)
+	{
+		if (Finding.Nudge.empty())
+			return FromUtf8(Finding.FixDoes);
+		CString Text;
+		Text.Format(_T("a hair (%s), so its vibrato stays clear of %d"), static_cast<LPCTSTR>(FromUtf8(Finding.Nudge)), Finding.Boundary);
+		return Text;
+	}
+
 	void Explain(int Index) const
 	{
 		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
 		if (pFinding == NULL)
 			return;
 		CString Text = FromUtf8(pFinding->Message);
-		if (!pFinding->FixDoes.empty())
-			Text += _T("\r\n\r\nNudge ") + FromUtf8(pFinding->FixDoes) + _T(", as one Ctrl+Z.");
+		if (!pFinding->FixTool.empty())
+			Text += _T("\r\n\r\nThe panel's Nudge button moves it ") + NudgeWords(*pFinding) + _T(", as one Ctrl+Z.");
 		Text.Replace(_T("\n"), _T("\r\n"));
 		Text.Replace(_T("\r\r\n"), _T("\r\n"));
 		AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
@@ -1260,7 +1270,7 @@ void CProblemsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 	CString Text;
 	switch (OnButton ? m_pImpl->ActionOf(Index) : ACTION_NONE) {
 	case ACTION_NUDGE:
-		Text = _T("Nudge: ") + FromUtf8(pFinding->FixDoes) + _T(", as one Ctrl+Z");
+		Text = _T("Nudge: moves the note ") + Impl::NudgeWords(*pFinding) + _T(", as one Ctrl+Z");
 		break;
 	case ACTION_SHOW:
 		Text = _T("Show: select these notes in the piano roll, to give them a sound that lasts");
