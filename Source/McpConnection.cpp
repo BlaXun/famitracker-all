@@ -2565,7 +2565,7 @@ BOOL CGameExportDlg::OnInitDialog()
 		pLoudness->AddString(LOUDNESS_NAMES[i]);
 	pLoudness->SetCurSel(std::max(0, std::min(LOUDNESS_CHOICES - 1, static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Loudness"), 0)))));
 	const int Tenths = std::max(static_cast<int>(QUIETEST * 10), std::min(static_cast<int>(LOUDEST * 10),
-		static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Other loudness"), -180)))));
+		static_cast<int>(theApp.GetProfileInt(GAME_SECTION, _T("Other loudness"), -180))));
 	CString Other;
 	Other.Format(Tenths % 10 == 0 ? _T("%.0f") : _T("%.1f"), Tenths / 10.0);
 	SetDlgItemText(IDC_GAME_LOUDNESS_OTHER, Other);
