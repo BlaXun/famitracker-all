@@ -431,6 +431,34 @@ sounds measured under Wine within 0.5 dB. `TestCalmKinds`,
 `TestSoftCalmSounds`, `TestVrc6DutiesAndStrikes`, `TestSoftDesign` and
 `TestSoftLevels` in `Source/Api/tests/ApiTests.cpp` cover them.
 
+Arranging fixes (from `feat-arrange-fixes`): chord parts keep the room
+the melody and the bass leave them (`ChordPartOptions::Above`, `Below`,
+`Ceiling` and `Floor`: `CHORD_ROOM` under the lowest melody note sounding,
+`BASS_ROOM` over the bass), worked out by `Room`, `RoomFor` and
+`RoomyPitch` in `Arrange.cpp` for every style (`ArpeggioVoicing`'s floor
+and ceiling, `BrokenTones`, `GuidePitch`, the lush chords' roots and
+`VoicedChordParts`, which `AddBackingTool` gives the melody's and the
+bass's notes as they sound); `WalkLine` picks approach notes that don't
+grind a semitone against the chord, and `ColorChords`' rich colors keep
+each chord's function. Lush chords from one of the song's own instruments
+take its sequences as a preset's (`SongInstrumentNamed` and
+`SoundOfInstrument` in `Tools.cpp`; FamiTracker reports a 2A03 or VRC6
+instrument's duty sequence in `InstrumentInfo::Duty`, read by
+`ReadSequences` in `McpConnection.cpp`). The counter-melody's rests are
+`CounterOptions::Rests` (`counter_rests`: `MelodyRests` and `Breathe` in
+`Arrange.cpp`), and a note it would hold past a bar steps on (`MoveOn`).
+`HarmonyPart` follows where each melody note lands (a slide on its first
+row counted, `SlideSemitones`) and slides to the voice's own notes. An
+echo note's volume is `EchoVolume` (each sound as `PlayedDb` plays it:
+the chip's level and the instrument's envelope, the fader left out); the
+echo's and the harmony's effects pass `CarriesEffect`
+(`ChannelPlaysEffect` in `Effects.cpp`), and `EchoWithoutRubs` counts only
+semitones and minor ninths, as the parts sound. `write_notes` keeps a
+channel's detune where it was (`PartOptions::KeepDetune` in `BuildPart`),
+`check_song`'s key check follows a note's slides (`SoundingRows`), and
+`Picture.cpp`'s font has the punctuation of section names.
+`TestArrangeFixes` in `Source/Api/tests/ApiTests.cpp` covers them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
