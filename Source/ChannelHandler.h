@@ -34,6 +34,10 @@ enum seq_state_t {
 // Sequence handler class
 //
 class CSequenceHandler {
+public:
+	// A sequence about to be deleted (an FDS instrument's, which go with it): the channel stops running it
+	void ForgetSequence(const CSequence *pSequence);
+
 protected:
 	CSequenceHandler();
 

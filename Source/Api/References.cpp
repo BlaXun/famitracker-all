@@ -684,8 +684,8 @@ std::string ReferenceText(const Reference &R)
 		Out += "Sounds (reference_sound adds one to the song as an instrument, by its number):\n";
 		for (size_t i = 0; i < R.Sounds.size(); ++i) {
 			const ReferenceSound &s = R.Sounds[i];
-			Out += Format("  %d. %s, %s (%d%% of its notes, a %s instrument): ", static_cast<int>(i + 1), s.Channel.c_str(), s.Role.c_str(),
-				s.Share, s.Chip.c_str()) + s.Words + "\n";
+			Out += Format("  %d. %s, %s (%d%% of its notes, %s %s instrument): ", static_cast<int>(i + 1), s.Channel.c_str(), s.Role.c_str(),
+				s.Share, s.Chip == "FDS" || s.Chip == "N163" || s.Chip == "MMC5" ? "an" : "a", s.Chip.c_str()) + s.Words + "\n";
 			std::vector<std::string> Seqs;
 			for (int t = 0; t < 5; ++t)
 				if (!s.Sequences[t].Items.empty())

@@ -345,6 +345,14 @@ CChannelHandler *CSoundGen::GetChannel(int Index) const
 	return m_pChannels[Index];
 }
 
+void CSoundGen::ForgetSequence(const CSequence *pSequence)
+{
+	for (int i = 0; i < CHANNELS; ++i) {
+		if (m_pChannels[i] != NULL)
+			m_pChannels[i]->ForgetSequence(pSequence);
+	}
+}
+
 void CSoundGen::DocumentPropertiesChanged(CFamiTrackerDoc *pDocument)
 {
 	ASSERT(pDocument != NULL);

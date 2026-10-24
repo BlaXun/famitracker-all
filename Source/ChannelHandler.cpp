@@ -879,6 +879,18 @@ void CSequenceHandler::RunSequence(int Index)
 	}
 }
 
+void CSequenceHandler::ForgetSequence(const CSequence *pSequence)
+{
+	// A halted sequence is still looked at every frame (RunSequence), so a deleted one must not stay here
+	for (int i = 0; i < SEQ_COUNT; ++i) {
+		if (pSequence != NULL && m_pSequence[i] == pSequence) {
+			m_iSeqState[i]	 = SEQ_STATE_DISABLED;
+			m_iSeqPointer[i] = 0;
+			m_pSequence[i]	 = NULL;
+		}
+	}
+}
+
 void CSequenceHandler::ClearSequences()
 {
 	for (int i = 0; i < SEQ_COUNT; ++i) {

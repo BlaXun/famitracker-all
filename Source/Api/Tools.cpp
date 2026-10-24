@@ -108,6 +108,12 @@ std::string Plural(int Count, const char *One, const char *Many)
 	return Format("%d %s", Count, Count == 1 ? One : Many);
 }
 
+// A chip's name with its article, as it's said: "a VRC6", "an FDS"
+std::string AChip(const std::string &Chip)
+{
+	return (Chip == "FDS" || Chip == "MMC5" || Chip == "N163" ? "an " : "a ") + Chip;
+}
+
 // Building tool schemas
 
 Json Prop(const char *Type, const char *Description)
@@ -1080,16 +1086,16 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 		const InstrumentInfo *pInfo = FindInstrument(S.Song, Number);
 		if (pInfo != 0) {
 			if (pInfo->Chip != Chip)
-				throw Problem(Format("Instrument %02X \"%s\" is a %s instrument; %s needs a %s one. A preset name (like \"soft lead\") adds one.",
-					Number, pInfo->Name.c_str(), pInfo->Chip.c_str(), Info.FullName().c_str(), Chip.c_str()));
+				throw Problem(Format("Instrument %02X \"%s\" is %s instrument; %s needs %s one. A preset name (like \"soft lead\") adds one.",
+					Number, pInfo->Name.c_str(), AChip(pInfo->Chip).c_str(), Info.FullName().c_str(), AChip(Chip).c_str()));
 			if (Info.Kind == KIND_SAWTOOTH && pInfo->OddDuty)
 				OddDutyRemark(S, *pInfo, Info);
 			return Number;
 		}
 	}
 	if (pWrongChip != 0)
-		throw Problem(Format("\"%s\" is a %s instrument; %s needs a %s one. A preset name (like \"soft lead\") adds one.",
-			pWrongChip->Name.c_str(), pWrongChip->Chip.c_str(), Info.FullName().c_str(), Chip.c_str()));
+		throw Problem(Format("\"%s\" is %s instrument; %s needs %s one. A preset name (like \"soft lead\") adds one.",
+			pWrongChip->Name.c_str(), AChip(pWrongChip->Chip).c_str(), Info.FullName().c_str(), AChip(Chip).c_str()));
 	std::string Names;
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
 		if (S.Song.Instruments[i].Chip != Chip)
@@ -2769,7 +2775,7 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	const std::string Final = Lowercase(Sound.InstrumentName(Sawtooth));
 	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
 		if (Lowercase(S.Song.Instruments[i].Name) == Final && S.Song.Instruments[i].Chip == Chip)
-			throw Problem(Format("The song already has a %s instrument called \"%s\"; give the new sound another name.", Chip.c_str(),
+			throw Problem(Format("The song already has %s instrument called \"%s\"; give the new sound another name.", AChip(Chip).c_str(),
 				S.Song.Instruments[i].Name.c_str()));
 	std::string Error;
 	const int Index = S.Host().AddInstrument(Sound, Chip, Sawtooth, Error);

@@ -7114,6 +7114,7 @@ void TestFdsReference()
 	CHECK(Back.Sounds[1].FdsWave.empty() && Back.Sounds[1].FdsMod.empty() && Back.Sounds[2].FdsWave.empty());
 	CHECK_HAS(ReferenceText(R), "\n     FDS wave 63 62 61 60 ");
 	CHECK_HAS(ReferenceText(R), " 2 1 0; modulator speed 34, depth 5, delay 0\n");
+	CHECK_HAS(ReferenceText(R), "  1. FDS, the lead (90% of its notes, an FDS instrument): ");
 	{
 		// A wave cut short isn't kept
 		Reference Cut = R;
@@ -7177,6 +7178,8 @@ void TestFdsReference()
 	CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32");
 	CHECK(Song.Made.count(1) == 1u && Song.Info.Instruments.size() == 2u &&
 		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"01\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-5\", "
+		"\"beats\": 1}]}").Text, "Instrument 01 \"Mirror lead\" is a 2A03 instrument; FDS needs an FDS one.");
 	// A pulse sound on the FDS: its duty's pulse as the wave, its volume 0-31, its pitch four times finer, turned around
 	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"sound\": 2, \"channel\": \"FDS\", \"name\": \"Disk harmony\"}");
 	CHECK(!Result.IsError);
