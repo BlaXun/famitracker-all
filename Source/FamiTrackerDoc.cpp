@@ -1663,11 +1663,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 				 !strcmp(BlockID, FILE_BLOCK_SEQUENCES_N106)) {	// Backward compatibility
 			ErrorFlag = ReadBlock_SequencesN163(&DocumentFile);
 		}
-#if 0
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_S5B)) {
 			ErrorFlag = ReadBlock_SequencesS5B(&DocumentFile);
 		}
-#endif
 		else if (!strcmp(BlockID, "END")) {
 			FileFinished = true;
 		}
@@ -2208,14 +2206,14 @@ bool CFamiTrackerDoc::ReadBlock_SequencesS5B(CDocumentFile *pDocFile)
 		CSequence *pSeq = GetSequenceS5B(Index, Type);
 
 		pSeq->Clear();
-		pSeq->SetItemCount(SeqCount);
+		pSeq->SetItemCount(SeqCount < MAX_SEQUENCE_ITEMS ? SeqCount : MAX_SEQUENCE_ITEMS);
 		pSeq->SetLoopPoint(LoopPoint);
 		pSeq->SetReleasePoint(ReleasePoint);
 		pSeq->SetSetting(Setting);
 
 		for (int j = 0; j < SeqCount; ++j) {
 			char Value = pDocFile->GetBlockChar();
-			if (j <= MAX_SEQUENCE_ITEMS)
+			if (j < MAX_SEQUENCE_ITEMS)		// the items past the sequence's room are read and left out
 				pSeq->SetItem(j, Value);
 		}
 	}
