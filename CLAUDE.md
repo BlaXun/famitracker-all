@@ -107,6 +107,20 @@ leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
 within four frames between held notes of their line, which a user heard as
 missing notes, and `design_instrument` and `reference_sound` say when the
 sound they add is that short (`VanishRemark`).
+View > Problems (`Source/ProblemsPanel.cpp`, docked along the bottom or the
+right) shows those checks in FamiTracker: it runs `check_song` with
+`format` `json` (each finding as data: `CheckFinding` and `CheckJson` in
+`Tools.cpp`) through `CMcpConnection::RunTool`, which runs a tool for
+FamiTracker's own windows with direct changes whatever the Claude Code
+setting says. `Source/Api/ProblemList.cpp` reads the JSON back (a line a
+note for notes that vanish) and keeps the marks that
+`CPatternEditor::DrawRow` (a tick at the channel's edge) and the piano roll
+(a dot on the note) draw through `ProblemMarkAt`. The panel checks again a
+moment after `CMainFrame::SongChanged`, not while the song plays, and
+polls a signature of what changes unannounced (instruments' sequences,
+speed and tempo, the track); a click's Nudge runs the `fix` the JSON gives
+(`polish` with the touch `clicks` on its bar, one undoable action), and
+Show selects notes in the piano roll (`CPianoRollWnd::ShowNotes`).
 `Source/Api/Effects.cpp`
 holds the `effects` tool's reference to 0.4.6's effects and techniques, and
 the checks `write_notes` makes on effects (`ParseChannelEffect`), taken
@@ -311,7 +325,9 @@ The application has no test suite of its own. What exists:
   job. The stand-ins must keep the real headers' signatures.
 - **Claude Code connection** (`Source/Api`): JSON, HTTP
   framing, the MCP protocol and every tool against a song in memory, and
-  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`). Same three
+  the WSL bridge, also over real sockets (`tests/ApiTests.cpp`), and
+  `check_song`'s JSON read back as the problems panel reads it
+  (`TestCheckJson`, `TestProblemList`). Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a
@@ -534,6 +550,10 @@ NSF export still uses the 2A03 driver. Touch points:
   (507), D-2 (761) and A-1 (1016) with deeper ones. A user heard these as
   "hiccups in long tones" in 19 of 30 tracks: keep `SmoothChanges` in
   `Commit` and the checks in step with the channel handlers.
+- **`check_song`'s JSON is read by the problems panel** (`ProblemList.cpp`):
+  keep its field names, and give a new kind of finding a name in both
+  (`CHECK_KIND` in `Tools.cpp`, `KIND_IDS` in `ProblemList.cpp`, heard worst
+  first); the panel leaves out kinds it doesn't know.
 - **Bundled libraries as released:** `Source/libogg` and `Source/libvorbis`
   (BSD licensed) keep upstream's files and LF line endings; both builds turn
   their warnings off, and only `libogg/include/ogg/config_types.h` is ours.
