@@ -21,9 +21,9 @@
 
 #pragma once
 
-// Moves famitracker-mcp's requests to FamiTracker on 127.0.0.1 and the
-// answers back (see Bridge.h): Winsock on Windows, BSD sockets elsewhere.
-// One connection per request, closed after the answer.
+// Moves famitracker-mcp's requests to FamiTracker on 127.0.0.1, or on
+// another computer, and the answers back (see Bridge.h): Winsock on Windows,
+// BSD sockets elsewhere. One connection per request, closed after the answer.
 
 #include <string>
 #include "Http.h"
@@ -33,11 +33,18 @@ namespace ftapi {
 enum BridgeExchangeResult {
 	EXCHANGE_ANSWERED,		// Answer holds FamiTracker's response
 	EXCHANGE_UNREACHABLE,	// nothing listens on the port: FamiTracker isn't running, or its connection is off
-	EXCHANGE_FAILED			// no proper answer came; Error says why
+	EXCHANGE_FAILED,		// no proper answer came; Error says why
+	EXCHANGE_NO_ANSWER		// the computer didn't answer at all: it's off, or a firewall keeps the port shut
 };
 
-// Sends Bytes (a whole request) to 127.0.0.1:Port and reads the response,
-// waiting at most TimeoutMs whenever the connection goes quiet
+const int BRIDGE_CONNECT_MS = 10000;	// how long a connection may take to open
+
+// Sends Bytes (a whole request) to Host:Port (an IPv4 address or a computer's
+// name; 127.0.0.1 when empty) and reads the response, waiting at most
+// TimeoutMs whenever the connection goes quiet
+BridgeExchangeResult BridgeExchange(const std::string &Host, int Port, const std::string &Bytes, int TimeoutMs, HttpResponse &Answer,
+	std::string &Error);
+// The same on 127.0.0.1
 BridgeExchangeResult BridgeExchange(int Port, const std::string &Bytes, int TimeoutMs, HttpResponse &Answer, std::string &Error);
 
 }	// namespace ftapi

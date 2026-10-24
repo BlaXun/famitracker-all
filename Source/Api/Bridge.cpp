@@ -103,7 +103,8 @@ std::string ErrorLine(const Json &Id, const std::string &Text)
 
 }	// namespace
 
-bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out)
+bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out, const std::string &Host,
+	const std::string &Path)
 {
 	std::string Text = Line;
 	while (!Text.empty() && (Text[Text.size() - 1] == '\r' || Text[Text.size() - 1] == '\n'))
@@ -114,11 +115,11 @@ bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, 
 	Out = BridgeMessage();
 	HttpRequest &Request = Out.Request;
 	Request.Method = "POST";
-	Request.Target = "/mcp";
+	Request.Target = Path.empty() ? std::string("/mcp") : Path;
 	Request.Version = "HTTP/1.1";
-	char Host[32];
-	std::snprintf(Host, sizeof(Host), "127.0.0.1:%d", Port);
-	AddHeader(Request, "Host", Host);
+	char PortText[16];
+	std::snprintf(PortText, sizeof(PortText), ":%d", Port);
+	AddHeader(Request, "Host", (Host.empty() ? std::string("127.0.0.1") : Host) + PortText);
 	if (!Token.empty())
 		AddHeader(Request, "Authorization", "Bearer " + Token);
 	AddHeader(Request, "Content-Type", "application/json");

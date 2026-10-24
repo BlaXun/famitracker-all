@@ -31,6 +31,8 @@
 // - Recordings: the takes of Edit > Record from microphone and Edit > Sound
 //   effect from your voice. Takes kept in Documents\FamiTracker recordings
 //   (where they were before) move into it.
+// - Inbox: files sent from another computer over the Claude Code connection
+//   (send_file), for the tools that read files (study_nsf, study_module...).
 //
 // Files move to another drive too; one of the same name already there stays
 // where it was. Where FamiTracker's folder can't be written (Program Files),
@@ -43,3 +45,4 @@ CString ExeFolder();
 
 CString ReferencesFolder(bool Create);
 CString RecordingsFolder(bool Create);
+CString InboxFolder(bool Create);

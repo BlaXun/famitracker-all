@@ -224,6 +224,7 @@ BEGIN
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
         MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
+        MENUITEM "Problems",                    ID_VIEW_PROBLEMS
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
         BEGIN
@@ -306,6 +307,14 @@ BEGIN
         MENUITEM "&Paste\tCtrl+V",              ID_FRAME_PASTE
         MENUITEM "Paste && duplicate",          ID_FRAME_PASTENEWPATTERNS
         MENUITEM "D&elete\tDel",                ID_FRAME_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Name section...",            ID_SECTION_NAME
+        MENUITEM "Rena&me section...",          ID_SECTION_RENAME
+        MENUITEM "Remo&ve section name",        ID_SECTION_REMOVE
+        MENUITEM "&Select section",             ID_SECTION_SELECT
+        MENUITEM "Move section up",             ID_SECTION_MOVE_UP
+        MENUITEM "Move section down",           ID_SECTION_MOVE_DOWN
+        MENUITEM "Duplicate section",           ID_SECTION_DUPLICATE
     END
 END
 
@@ -574,6 +583,7 @@ BEGIN
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
+    ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
@@ -1885,12 +1895,12 @@ BEGIN
     LTEXT           "60 Hz",IDC_SPEED,112,11,26,12
 END
 
-IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 300, 276
+IDD_CONNECT_CLAUDE DIALOGEX 0, 0, 590, 276
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Connect Claude Code"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Claude Code can work on the song open here: read it, write parts, change the key, the tempo or the sounds, check it for clashes and play it for you. It connects to FamiTracker on this computer only.",IDC_STATIC,7,7,286,26
+    LTEXT           "Claude Code can work on the song open here: read it, write parts, change the key, the tempo or the sounds, check it for clashes and play it for you. It connects to FamiTracker on this computer.",IDC_STATIC,7,7,286,26
     CONTROL         "Let Claude Code connect",IDC_MCP_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,38,140,10
     LTEXT           "Port:",IDC_STATIC,19,55,24,8
     EDITTEXT        IDC_MCP_PORT,45,52,40,14,ES_AUTOHSCROLL | ES_NUMBER
@@ -1905,8 +1915,28 @@ BEGIN
     PUSHBUTTON      "Copy",IDC_MCP_COPY,14,187,50,14,WS_GROUP
     PUSHBUTTON      "New access code",IDC_MCP_NEWTOKEN,70,187,72,14
     LTEXT           "",IDC_MCP_HINT,14,206,272,32
-    DEFPUSHBUTTON   "OK",IDOK,188,255,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,243,255,50,14
+    GROUPBOX        "Other computers on your network",IDC_STATIC,300,7,283,236
+    CONTROL         "Allow connections from other computers on my network",IDC_MCP_NETWORK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,307,21,268,10
+    LTEXT           "",IDC_MCP_NET_INFO,307,35,268,26
+    LTEXT           "",IDC_MCP_NET_NAME1,307,66,58,8,SS_ENDELLIPSIS | SS_NOPREFIX
+    EDITTEXT        IDC_MCP_NET_URL1,367,64,170,13,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_MCP_NET_COPY1,541,64,36,13
+    LTEXT           "",IDC_MCP_NET_NAME2,307,82,58,8,SS_ENDELLIPSIS | SS_NOPREFIX
+    EDITTEXT        IDC_MCP_NET_URL2,367,80,170,13,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_MCP_NET_COPY2,541,80,36,13
+    LTEXT           "",IDC_MCP_NET_NAME3,307,98,58,8,SS_ENDELLIPSIS | SS_NOPREFIX
+    EDITTEXT        IDC_MCP_NET_URL3,367,96,170,13,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_MCP_NET_COPY3,541,96,36,13
+    LTEXT           "",IDC_MCP_NET_NAME4,307,114,58,8,SS_ENDELLIPSIS | SS_NOPREFIX
+    EDITTEXT        IDC_MCP_NET_URL4,367,112,170,13,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_MCP_NET_COPY4,541,112,36,13
+    LTEXT           "Access code:",IDC_MCP_NET_CODELABEL,307,134,58,8
+    EDITTEXT        IDC_MCP_NET_CODE,367,132,170,13,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_MCP_NET_COPYCODE,541,132,36,13
+    CONTROL         "A small set of tools, for local models (the addresses end in /mcp/core)",IDC_MCP_NET_CORE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,307,151,268,10
+    LTEXT           "",IDC_MCP_NET_HINT,307,166,268,72
+    DEFPUSHBUTTON   "OK",IDOK,478,255,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,533,255,50,14
 END
 
 IDD_GAME_EXPORT DIALOGEX 0, 0, 320, 232

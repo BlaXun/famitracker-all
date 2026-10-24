@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include "Transcribe/Transcribe.h"
+#include "Api/Sections.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -269,8 +270,16 @@ public:
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
 		m_iOldFrameCount(0), m_iLinkClip(-1), m_bKeepLinks(false),
 		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row)),
-		m_iMoveFrame(0), m_iMoveBy(0)
+		m_iMoveFrame(0), m_iMoveBy(0), m_bSetSections(false)
 	{
+	}
+
+	// The track's sections afterwards (Api/Sections.h), set once the frames
+	// moved and the cells are written; otherwise they follow the frames moved
+	void SetSections(const ftapi::SectionList &Sections)
+	{
+		m_bSetSections = true;
+		m_SectionsAfter = Sections;
 	}
 
 	// Before the cells are written, By frames put in at Frame (each with new
@@ -328,6 +337,9 @@ private:
 	int m_iMoveFrame;
 	int m_iMoveBy;
 	std::vector<unsigned int> m_FrameList;	// the patterns of the frames before frames moved, a frame at a time
+	ftapi::SectionList m_SectionsBefore;	// the track's sections, which undo brings back
+	bool m_bSetSections;
+	ftapi::SectionList m_SectionsAfter;
 	std::vector<std::pair<unsigned int, unsigned int> > m_Widened;	// channels that show more effect columns, and what they showed
 };
 
@@ -364,8 +376,9 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 
 	pDoc->LockDocument();
 	m_iOldFrameCount = pDoc->GetFrameCount(m_iTrack);
+	m_SectionsBefore = pDoc->GetSections()->Get(static_cast<int>(m_iTrack));
 
-	// Frames put in or taken out first, the frame list kept for Undo
+	// Frames put in or taken out first, the frame list kept for Undo (the sections follow them)
 	if (m_iMoveBy != 0) {
 		const unsigned int Channels = pDoc->GetAvailableChannels();
 		m_FrameList.clear();
@@ -539,6 +552,12 @@ void CInsertRecordingAction::Redo(CMainFrame *pMainFrm)
 		}
 	}
 
+	// The sections as asked, inside the frames there are
+	if (m_bSetSections) {
+		pDoc->GetSections()->Set(static_cast<int>(m_iTrack), m_SectionsAfter);
+		pDoc->GetSections()->FitFrames(static_cast<int>(m_iTrack), static_cast<int>(pDoc->GetFrameCount(m_iTrack)));
+	}
+
 	pDoc->UnlockDocument();
 	if (!m_Widened.empty())
 		pDoc->UpdateAllViews(NULL, UPDATE_COLUMNS);
@@ -575,6 +594,7 @@ void CInsertRecordingAction::Undo(CMainFrame *pMainFrm)
 	}
 	for (size_t i = m_Widened.size(); i-- > 0; )
 		pDoc->SetEffColumns(m_iTrack, m_Widened[i].first, m_Widened[i].second);
+	pDoc->GetSections()->Set(static_cast<int>(m_iTrack), m_SectionsBefore);
 	pDoc->UnlockDocument();
 	if (!m_Widened.empty())
 		pDoc->UpdateAllViews(NULL, UPDATE_COLUMNS);
@@ -1617,7 +1637,7 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 // The Claude Code connection
 
 bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, int Frame, int Row, int LinkClipId,
-	int MoveFrame, int MoveBy, int Cursor, CString &Message)
+	int MoveFrame, int MoveBy, int Cursor, CString &Message, const ftapi::SectionStore *pSections)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
@@ -1677,6 +1697,8 @@ bool WriteSongParts(CMainFrame *pMainFrm, const song_part_t *pParts, int Count, 
 		pAction->LinkTo(LinkClipId);
 	if (MoveBy != 0)
 		pAction->MoveFrames(MoveFrame, MoveBy);
+	if (pSections != NULL)
+		pAction->SetSections(pSections->Get(0));
 	if (Cursor >= 0)
 		pAction->PlaceCursor(Cursor / Length, Cursor % Length);
 	if (!pMainFrm->AddAction(pAction)) {
