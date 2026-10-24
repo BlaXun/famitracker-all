@@ -589,6 +589,14 @@ std::vector<std::string> StyleGuideTopics()
 	return Out;
 }
 
+std::string StyleGuideTopic(const std::string &Name)
+{
+	for (size_t i = 0; i < SECTION_COUNT; ++i)
+		if (Name == SECTIONS[i].Topic)
+			return std::string(SECTIONS[i].Title) + "\n" + SECTIONS[i].Text + "\n";
+	return std::string();
+}
+
 std::string StyleGuide(const std::string &Topic)
 {
 	const std::vector<std::string> Asked = SplitWords(Topic);

@@ -4535,6 +4535,8 @@ void TestProtocol()
 		CHECK_HAS(StyleGuide("boss fight"), "Action: battles, bosses and chases");
 		CHECK_HAS(StyleGuide("stage"), "Lively stages");
 		CHECK_HAS(StyleGuide(""), "- calm: Calm songs");
+		CHECK(StyleGuideTopic("lively").find("Lively stages") == 0 && StyleGuideTopic("lively").find("Calm songs") == std::string::npos);
+		CHECK(StyleGuideTopic("no such topic").empty());
 	}
 
 	// Per-request metadata (2026-07-28)

@@ -16396,7 +16396,7 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"section or two.\n"
 		"12. save_song, then export_for_game with loudness " + (Calm ? "-22" : Lively ? "-20" : "-19") + ". Play it for me "
 		"and ask what I'd change; keep what I like in soundtrack_notes.\n\n";
-	T += StyleGuide(Kind);
+	T += StyleGuideTopic(Kind);
 	return T;
 }
 
