@@ -660,8 +660,10 @@ file written (the exported OGG files stay as they are).
   `normalize` false).
 
 Each part alone is a render of its own, from the song's start to the last
-bar it needs, without the space's tail after. `stems` false measures the mix
-alone, in one render.
+bar it needs, without the space's tail after: a two-minute song with seven
+parts is nine renders, about a minute on a slow computer. `stems` false
+measures the mix alone, in one render, and `parts` `["chords"]` checks the
+melody against the chords alone, in three.
 
 ## Stereo
 
