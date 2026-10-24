@@ -6444,8 +6444,6 @@ void TestFdsSounds()
 		"\"pitch\": \"C-5\", \"beats\": 4}]}").Text, "is a drum for the noise channel");
 	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"kazoo\", \"notes\": [{\"bar\": 1, "
 		"\"pitch\": \"C-5\", \"beats\": 4}]}").Text, "No instrument or FDS sound called \"kazoo\"");
-	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Mine\", \"kind\": \"lead\", \"channel\": \"FDS\"}").Text,
-		"The FDS channel plays the FDS's own sounds, drawn for it: add_instrument picks one by name");
 	Text = Run(Song, "get_song", "{}").Text;
 	CHECK_HAS(Text, "FDS sounds (for the FDS channel, which sounds two octaves under the note written: its A-5 is a pulse's A-3): "
 		"soft flute, whistle");
@@ -6453,6 +6451,61 @@ void TestFdsSounds()
 	// Not without an FDS channel
 	FakeSong Plain;
 	CHECK_HAS(Run(Plain, "add_instrument", "{\"preset\": \"soft flute\", \"chip\": \"FDS\"}").Text, "This song has no FDS channel");
+}
+
+void TestFdsDesign()
+{
+	// design_instrument on the FDS: a wave by word (or the kind's), the modulator by word, the design's envelope counted
+	// 0-31 with its first frame at most half the peak, its vibrato as the FDS's pitch sequence makes one
+	FakeSong Song = FdsSong();
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Ghost\", \"kind\": \"lead\", \"channel\": \"FDS\", "
+		"\"vibrato\": \"medium\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Ghost\" (00) (FDS instrument): a hollow, clarinet-like FDS wave that reaches 27 of 31 in 1 frame");
+	CHECK_HAS(Result.Text, "a medium vibrato from");
+	CHECK_HAS(Result.Text, "the FDS sounds two octaves under the note written");
+	CHECK(Song.MadeFds.count(0) == 1u && Song.Info.Instruments[0].Chip == "FDS" && Song.Info.Instruments[0].Vibrato);
+	const FdsSound &Ghost = Song.MadeFds[0];
+	CHECK(Ghost.Wave == FindFdsSound("eerie lead")->Wave && Ghost.ModDepth == 0);
+	bool Pitch = false;
+	for (size_t s = 0; s < Ghost.Sequences.size(); ++s) {
+		const PresetSequence &Seq = Ghost.Sequences[s];
+		CHECK(Seq.Type == SEQUENCE_VOLUME || Seq.Type == SEQUENCE_PITCH || Seq.Type == SEQUENCE_ARPEGGIO);
+		if (Seq.Type == SEQUENCE_PITCH && Seq.Loop >= 0) {
+			Pitch = true;
+			int Turn = 0, Deepest = 0;
+			for (size_t k = static_cast<size_t>(Seq.Loop); k < Seq.Items.size(); ++k) {
+				Turn += Seq.Items[k];
+				Deepest = std::max(Deepest, std::abs(Seq.Items[k]));
+			}
+			CHECK(Turn == 0 && Deepest == 8);	// a medium vibrato's step on the 2A03 is 2: four times finer and turned around
+		}
+	}
+	CHECK(Pitch);
+	// A pluck starting at its peak at once starts at half, so it doesn't click; a glassy wave that trembles after a beat
+	Result = Run(Song, "design_instrument", "{\"name\": \"Shard\", \"kind\": \"pluck\", \"channel\": \"FDS\", \"wave\": "
+		"\"glassy\", \"modulation\": \"tremble\", \"modulation_delay_beats\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a glassy FDS wave that reaches 31 of 31 at once (its first frame at half, so it doesn't click)");
+	CHECK_HAS(Result.Text, "its modulator trembles its pitch widely five times a second from 24 frames into each note");
+	const FdsSound &Shard = Song.MadeFds[1];
+	CHECK(Shard.Wave == FindFdsSound("glass bell")->Wave && Shard.ModSpeed == 12 && Shard.ModDepth == 1 && Shard.ModDelay == 24);
+	CHECK(std::fabs(MeanBendCents(Shard.Modulation, Shard.ModDepth)) < 3.0);
+	CHECK(Shard.Sequences[0].Type == SEQUENCE_VOLUME && Shard.Sequences[0].Items[0] == 16 && Shard.Sequences[0].Items[1] > 16);
+	// A duty word that names a wave picks it; unknown words say what there is; a name taken asks for another
+	CHECK(!Run(Song, "design_instrument", "{\"name\": \"Buzz\", \"kind\": \"bass\", \"channel\": \"FDS\", \"duty\": "
+		"\"bright\"}").IsError);
+	CHECK(Song.MadeFds[2].Wave != FindFdsSound("round bass")->Wave);	// a bass starts from the round one
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"FDS\", \"wave\": \"kazoo\"}").Text,
+		"wave: sine, round, hollow, square, bright");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"FDS\", \"modulation\": \"swirl\"}").Text,
+		"modulation: none, wobble, tremble, growl, rumble");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Ghost\", \"channel\": \"FDS\"}").Text,
+		"The song already has an FDS instrument called \"Ghost\"");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Kick\", \"kind\": \"kick\", \"channel\": \"FDS\"}").Text,
+		"A drum is for the noise channel.");
+	FakeSong Plain;
+	CHECK_HAS(Run(Plain, "design_instrument", "{\"name\": \"X\", \"chip\": \"FDS\"}").Text, "This song has no FDS channel");
 }
 
 void TestFdsOctave()
@@ -6514,7 +6567,7 @@ void TestFdsOctave()
 
 void TestFdsLevels()
 {
-	// The FDS plays louder than a pulse (about 4 dB at its envelope's top): its melody sits lower in a soft mix, its echo too
+	// The FDS plays louder than a pulse (about 5 dB at its envelope's top): its melody sits lower in a soft mix
 	FakeSong Song = FdsSong();
 	CHECK(!Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"soft flute\", \"notes\": ["
 		"{\"bar\": 1, \"pitch\": \"E-6\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"G-6\", \"beats\": 1}, "
@@ -6529,9 +6582,10 @@ void TestFdsLevels()
 	for (int r = 0; r < 32 && Melody < 0; ++r)
 		if (Song.Rows[5][static_cast<size_t>(r)].HasNote())
 			Melody = Song.Rows[5][static_cast<size_t>(r)].Volume;
-	// 9 on a pulse is 4.4 dB under 15; the flute's envelope peaks at 14 of 15 and the FDS plays 4 dB over a pulse at
-	// its top, so 15 * 10^((-4.4 - 4) / 20) * 15 / 14 is about 6
-	CHECK_EQ(Melody, 6);
+	// 9 on a pulse is 4.4 dB under 15; the flute's envelope peaks at 14 of 15 and the FDS plays 5 dB over a pulse at
+	// its top, so 15 * 10^((-4.4 - 5) / 20) * 15 / 14 is about 5
+	CHECK_EQ(Melody, 5);
+	CHECK_HAS(Result.Text, "FDS FDS (melody) loudest 14 to 5");
 }
 
 // Versions to compare
@@ -8816,6 +8870,7 @@ int main()
 	TestKeptVersions();
 	TestWaveSounds();
 	TestFdsSounds();
+	TestFdsDesign();
 	TestFdsOctave();
 	TestFdsLevels();
 	TestOgg();

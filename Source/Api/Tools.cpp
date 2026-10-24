@@ -378,9 +378,9 @@ std::string InstrumentChip(const ChannelInfo &Channel)
 
 // How loud a channel plays at a volume, in dB against a 2A03 pulse at 15, as FamiTracker renders
 // it (measured): the VRC7's sounds about 5 dB louder at 15, each volume step 3 dB softer; the
-// N163's wave sounds about 8 dB quieter; the FDS's sounds about 4 dB louder with their envelope
-// at its top (31); everything else in proportion to the volume
-const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0, FDS_FULL_DB = 4.0;
+// N163's wave sounds about 8 dB quieter; the FDS's sounds about 5 dB louder with their envelope
+// at its top (31; FdsSounds.h's from 4 to 6.5); everything else in proportion to the volume
+const double FM_FULL_DB = 5.0, FM_STEP_DB = 3.0, N163_FULL_DB = -8.0, FDS_FULL_DB = 5.0;
 
 // A chip's level at 15 against a pulse's, where it counts volume in proportion
 double FullDb(const ChannelInfo &Channel)
@@ -2470,11 +2470,10 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	}
 	if (Chip == "VRC7")
 		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
-	if (Chip == "FDS")
-		throw Problem("The FDS channel plays the FDS's own sounds, drawn for it: add_instrument picks one by name (" +
-			FdsSoundList() + ").");
-	if (Chip != "2A03" && Chip != "VRC6")
-		throw Problem("design_instrument makes sounds for 2A03 (and MMC5) and VRC6 channels.");
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5), VRC6 and FDS channels.");
+	if (Chip == "FDS" && S.Song.Expansion.find("FDS") == std::string::npos)
+		throw Problem("This song has no FDS channel; set_expansion switches it to the FDS.");
 	if (Chip == "VRC6" && S.Song.Expansion.find("VRC6") == std::string::npos)
 		throw Problem("This song has no VRC6 channels.");
 
@@ -2613,6 +2612,33 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		D.Arpeggio.clear();
 		Chip = "2A03";
 		Sawtooth = false;
+	}
+
+	// The FDS: its wave by word (or the kind's), its modulator, the design's envelope, pitch and arpeggio
+	if (Chip == "FDS") {
+		std::string Wave = StringArg(Args, "wave");
+		if (Wave.empty() && Arg(Args, "duty") != 0 && IsFdsWave(StringArg(Args, "duty")))
+			Wave = StringArg(Args, "duty");	// "bright", "hollow", "nasal", "round", "square": the wave of that name
+		int ModDelay = 0;
+		if (Arg(Args, "modulation_delay_beats") != 0) {
+			const double Beats = NumberArg(Args, "modulation_delay_beats", 0.5, 0.0, 8.0);
+			const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+			const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
+			ModDelay = std::max(0, std::min(255, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+		}
+		FdsSound F;
+		std::string Why;
+		if (!DesignFdsSound(D, Kind.empty() ? "lead" : Kind, Wave, StringArg(Args, "modulation"), ModDelay, S.Song.FrameRate, F, Why))
+			throw Problem(Why);
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(F.InstrumentName()) && S.Song.Instruments[i].Chip == Chip)
+				throw Problem(Format("The song already has an FDS instrument called \"%s\"; give the new sound another name.",
+					S.Song.Instruments[i].Name.c_str()));
+		bool Added = false;
+		const int Index = AddFdsSound(S, F, Added);
+		return "Added " + InstrumentLabel(S.Song, Index) + " (FDS instrument): " + F.Description + "." + VanishRemark(S.Song, Index) +
+			" Use it by name in write_notes, set_instrument or a part tool's instrument; the FDS sounds two octaves under the note "
+			"written. Play a few notes so the user hears it.";
 	}
 
 	// A new name, so an instrument the song uses doesn't change under it
@@ -12305,7 +12331,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"the attack, or a chord arpeggio; the articulations of the classic NES soundtracks: an attack that blooms, a duty "
 		"click, a decay in steps, held notes struck again, an echo after the note, a pitch flick, a bass that thumps; on the "
 		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer, or a swell that rises and "
-		"washes out (waves, wind; any other kind there is its volume envelope alone). Start from a kind (" +
+		"washes out (waves, wind; any other kind there is its volume envelope alone). On the FDS channel a wave by word and "
+		"its modulator: a wobble, a tremble, a growl. Start from a kind (" +
 		DesignKinds() + ") and change what should differ. Envelope times are in frames, 60 a second.",
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
@@ -12313,7 +12340,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"chiptune, swell (rises and washes out: waves and wind on the noise channel); the classic articulations: bloom lead, "
 				"stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
-			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6" }))
+			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS" }))
+			.Add("wave", Prop("string", ("FDS only: its wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad "
+				"a voice, a bass deep and round).").c_str()))
+			.Add("modulation", EnumProp("FDS only: what its modulator does to the pitch: none, wobble (widely, three times a "
+				"second), tremble (widely, five times a second), growl (35 times a second) or rumble (26).",
+				std::vector<std::string>{ "none", "wobble", "tremble", "growl", "rumble" }))
+			.Add("modulation_delay_beats", Prop("number", "FDS only: when the modulator comes in, in beats at the song's tempo "
+				"(default at once)."))
 			.Add("attack", LevelProp("instant, fast, medium, slow, swell, bloom (from about two thirds of the peak to it in two "
 				"frames, so notes open up), or frames (0-60)."))
 			.Add("attack_from", Prop("integer", "The level the attack starts at, 1-15 (0: from silence); with attack in frames, a "

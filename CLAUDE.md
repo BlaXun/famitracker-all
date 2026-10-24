@@ -74,7 +74,7 @@ sets the DPCM level (`Zxx`, also on every sample, since the kit's samples
 start from silence), counting each chip's volume as FamiTracker plays it
 (`LevelDb` and `VolumeForDb` in `Tools.cpp`, measured: a VRC7 sound about
 5 dB over a pulse at 15 and 3 dB a step, the N163's about 8 dB under, the
-FDS's about 4 dB over with its envelope at the top), as
+FDS's about 5 dB over with its envelope at the top), as
 the echo, harmony, counter-melody, `polish` and the review do; `mix` and
 the review also play each note's instrument envelope (`HeldEnvelope`, from
 the volume sequence FamiTracker reports in `InstrumentInfo::Volume`, times
@@ -120,9 +120,11 @@ the instrument. `Source/Api/FdsSounds.cpp` draws the FDS's sounds (a wave of
 the volume, arpeggio and pitch sequences CInstrumentFDS keeps itself);
 `AddFdsSoundInstrument` in `InstrumentLibrary.cpp` makes the instrument, for
 the tools (`SongHost::AddFdsInstrument`) and for Instrument > Instrument
-library's FDS target. FamiTracker reports an FDS instrument's volume (0-31)
-as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and the
-vanish check hear it, and the tools write FDS notes two octaves up
+library's FDS target; `DesignFdsSound` makes `design_instrument`'s FDS
+sounds (a wave by word, a `SoundDesign`'s sequences turned into the FDS's,
+the modulator by word). FamiTracker reports an FDS instrument's volume
+(0-31) as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and
+the vanish check hear it, and the tools write FDS notes two octaves up
 (`Written` in `Tools.cpp`; see Gotchas). The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`

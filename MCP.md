@@ -192,7 +192,7 @@ a click pluck that holds low.
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03 or VRC6 channel, one of the VRC7's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind). It says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)). It says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `remove_unused_instruments` | Lists the instruments no note plays in any track or clip (a template's starter sounds, sounds tried and replaced) and, with `confirm` once you agree, removes them and the sequences only they used, as Edit > Clean up > Remove unused instruments does (which now also keeps the instruments clips play). FamiTracker can't undo it; `keep` names any to keep |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
@@ -371,7 +371,9 @@ about 5 dB louder than a 2A03 pulse at 15, and each step down is 3 dB
 each part's accents and fades as many dB under its loudest as they were.
 The N163's wave sounds play about 8 dB quieter than a pulse, so an N163
 melody stays at 15 and its other parts sit as far under it as the roles
-ask. The VRC6, MMC5 and 2A03 count volume alike. The echo, the harmony and
+ask. The FDS's sounds play about 5 dB louder than a pulse with their
+envelope at its top (from 4.5 to 6.5 dB, sound by sound), so its parts sit
+lower. The VRC6, MMC5 and 2A03 count volume alike. The echo, the harmony and
 the counter-melody take their volumes the same way (an echo three steps
 under a VRC7 melody, not nine), and `polish` makes a VRC7 part's accents
 one step and its fades three.
@@ -477,7 +479,19 @@ sound, a vibrato or the modulator:
 Ask for them by name, or by a preset's name, which picks the sound most like
 it ("soft lead" is the flute, "bass" the round bass, "warm pad" the choir).
 **Instrument > Instrument library** offers the same sounds for the FDS
-channel.
+channel. `design_instrument` makes new ones there from words: a wave (sine,
+round, hollow, square, bright, strings, nasal, organ, voice, glassy, bass),
+the envelope, attack and vibrato as for the other chips, and what the
+modulator does (wobble, tremble, growl or rumble, from a moment into the
+note if asked).
+
+Measured in FamiTracker's own rendering against a 2A03 pulse at 15 playing
+the same notes where they sound, they play about 5 dB louder with their
+envelope at its top, so `mix` sets FDS parts lower. A wave of many
+harmonics in phase peaks high with little power in it, so the organ, the
+reed, the strings, the choir, the basses and the drone have their harmonics'
+phases picked for the most power: up to 5 dB louder at the same volume, the
+same harmonics.
 
 - FamiTracker 0.4.6 plays the FDS two octaves under the note written: its
   A-5 sounds 440 Hz, as a pulse's A-3 does. Every FDS instrument does,

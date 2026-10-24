@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 
 namespace ftapi {
 
@@ -33,7 +34,10 @@ const double PI = 3.14159265358979323846;
 // A wave from harmonics: Amplitudes[k] for harmonic k + 1, each a sine shifted
 // by Phases[k] turns, centred on 32 (the chip plays a sample as itself less
 // 32, so the wave carries nothing a volume change would thump with) and as
-// large as fits 0-63
+// large as fits 0-63. Harmonics in phase peak together, so a wave of many
+// fills 0-63 with little power; the phases of the organ, the reed, the
+// strings, the choir, the basses and the drone were picked for the most power
+// in it (up to 5 dB louder at the same volume, the same harmonics).
 std::vector<int> HarmonicWave(const std::vector<double> &Amplitudes, const std::vector<double> &Phases = std::vector<double>())
 {
 	double Values[FDS_WAVE_SIZE];
@@ -216,27 +220,29 @@ std::vector<FdsSound> MakeSounds()
 		Seqs{ Volume(2, 0, 30, 90, 4, 10), Strike({ 24, 12 }) }));
 	Out.push_back(Sound("warm organ", "organ, church organ, pipe organ, drawbar organ, soft chords, harmonium",
 		"a warm organ of five drawbars, steady as a pipe organ with a faint chorus",
-		HarmonicWave({ 1.0, 0.55, 0.35, 0.25, 0.0, 0.12, 0.0, 0.08 }),
+		HarmonicWave({ 1.0, 0.55, 0.35, 0.25, 0.0, 0.12, 0.0, 0.08 }, { 0.0, 0.704, 0.9, 0.767, 0.736, 0.719, 0.487, 0.549 }),
 		Seqs{ Volume(2, 0, 28, 0, 28, 3), Vibrato(0, 2, 7) }));
 	Out.push_back(Sound("nasal reed", "reed, oboe, bassoon, clarinet, shawm, bagpipe, bright lead, brass",
 		"a nasal double reed like an oboe, its sound in its middle harmonics, with a vibrato that waits",
-		HarmonicWave({ 0.45, 0.8, 1.0, 0.75, 0.5, 0.3, 0.2, 0.12, 0.08 }),
+		HarmonicWave({ 0.45, 0.8, 1.0, 0.75, 0.5, 0.3, 0.2, 0.12, 0.08 }, { 0.0, 0.123, 0.091, 0.548, 0.09, 0.259, 0.609, 0.407, 0.6 }),
 		Seqs{ Volume(3, 0, 27, 0, 25, 6), Vibrato(20, 8, 10) }));
 	Out.push_back(Sound("swelling strings", "strings, string pad, violin, viola, cello, ensemble, orchestra",
 		"bowed strings that swell in slowly and sing with a vibrato as they hold",
-		HarmonicWave(SawHarmonics(16, 8.0)),
+		HarmonicWave(SawHarmonics(16, 8.0), { 0.0, 0.375, 0.099, 0.319, 0.987, 0.487, 0.714, 0.739, 0.779, 0.606, 0.194, 0.126,
+			0.103, 0.583, 0.619, 0.401 }),
 		Seqs{ Volume(24, 6, 28, 0, 26, 18), Vibrato(18, 8, 10) }));
 	Out.push_back(Sound("choir pad", "choir, voices, vox, aah, ooh, singers, pad, warm pad, lush chords",
 		"voices singing \"aah\" that rise in softly and hold, with a slow vibrato",
-		HarmonicWave({ 0.8, 0.5, 1.0, 0.65, 0.35, 0.18, 0.12, 0.08 }),
+		HarmonicWave({ 0.8, 0.5, 1.0, 0.65, 0.35, 0.18, 0.12, 0.08 }, { 0.0, 0.823, 0.676, 0.032, 0.677, 0.217, 0.482, 0.794 }),
 		Seqs{ Volume(16, 0, 26, 0, 25, 22), Vibrato(20, 6, 13) }));
 	Out.push_back(Sound("round bass", "bass, deep bass, sub bass, soft bass, plucky bass, double bass",
 		"a deep, round bass: almost a sine, warmer than the triangle and with a volume of its own",
-		HarmonicWave({ 1.0, 0.4, 0.15 }),
+		HarmonicWave({ 1.0, 0.4, 0.15 }, { 0.0, 0.384, 0.129 }),
 		Seqs{ Volume(3, 0, 30, 10, 26, 4) }, true));
 	Out.push_back(Modulated(Sound("growl bass", "growl, growling bass, synth bass, buzz bass, dirty bass, thump bass, fuzz bass",
 		"a bright bass whose pitch the modulator shakes 35 times a second, so it growls",
-		HarmonicWave({ 1.0, 0.6, 0.45, 0.35, 0.28, 0.22, 0.18, 0.15, 0.12, 0.1 }),
+		HarmonicWave({ 1.0, 0.6, 0.45, 0.35, 0.28, 0.22, 0.18, 0.15, 0.12, 0.1 },
+			{ 0.0, 0.385, 0.159, 0.23, 0.97, 0.71, 0.49, 0.47, 0.301, 0.359 }),
 		Seqs{ Volume(2, 0, 30, 6, 27, 3) }, true), WOBBLE, 82, 1, 0));
 	Out.push_back(Modulated(Sound("underwater wobble", "underwater, water, wobble, warble, bubbles, wah, aquatic",
 		"a round tone that wobbles up and down a few times a second, like a sound heard under water",
@@ -244,7 +250,7 @@ std::vector<FdsSound> MakeSounds()
 		Seqs{ Volume(6, 0, 26, 0, 25, 12) }), WOBBLE, 7, 1, 4));
 	Out.push_back(Modulated(Sound("cave drone", "drone, cave, dark pad, rumble, ominous, dungeon, dark",
 		"a dark, hollow drone that breathes slowly in and out, a faint rumble in it, for caves and the night",
-		HarmonicWave({ 1.0, 0.25, 0.4, 0.1, 0.15 }),
+		HarmonicWave({ 1.0, 0.25, 0.4, 0.1, 0.15 }, { 0.0, 0.821, 0.123, 0.683, 0.029 }),
 		Seqs{ BreathingVolume(30, 27, 20, 150, 30) }), WOBBLE, 60, 1, 0));
 	return Out;
 }
@@ -256,6 +262,113 @@ std::string Simple(const std::string &Text)
 		if (std::isalnum(static_cast<unsigned char>(Text[i])))
 			Out += static_cast<char>(std::tolower(static_cast<unsigned char>(Text[i])));
 	return Out;
+}
+
+// The waves design_instrument draws on the FDS, by word: the first word is the
+// wave's name, the others ask for it too
+struct WaveWord {
+	const char *Words;
+	const char *Description;
+};
+
+const WaveWord WAVE_WORDS[] = {
+	{ "sine,pure", "pure sine" },
+	{ "round,soft,flute", "round, flute-like" },
+	{ "hollow,clarinet", "hollow, clarinet-like" },
+	{ "square,chiptune", "square" },
+	{ "bright,saw,sawtooth,buzzy", "bright sawtooth" },
+	{ "strings,warm,bowed", "warm, string-like" },
+	{ "nasal,reed,oboe,thin", "nasal, reed-like" },
+	{ "organ,drawbar", "organ" },
+	{ "voice,choir,vocal,aah", "voice-like" },
+	{ "glassy,glass,bell", "glassy" },
+	{ "bass,deep", "deep, round" },
+};
+
+// The wave of a word: its index in WAVE_WORDS, -1 if none
+int WaveIndex(const std::string &Word)
+{
+	const std::string Wanted = Simple(Word);
+	for (size_t i = 0; i < sizeof(WAVE_WORDS) / sizeof(WAVE_WORDS[0]) && !Wanted.empty(); ++i) {
+		const std::string Words = WAVE_WORDS[i].Words;
+		size_t Start = 0;
+		while (Start <= Words.size()) {
+			const size_t End = std::min(Words.find(',', Start), Words.size());
+			if (Words.substr(Start, End - Start) == Wanted)
+				return static_cast<int>(i);
+			Start = End + 1;
+		}
+	}
+	return -1;
+}
+
+std::vector<int> WaveOf(int Index)
+{
+	switch (Index) {
+	case 0: return HarmonicWave({ 1.0 });
+	case 1: return HarmonicWave({ 1.0, 0.16, 0.05 });
+	case 2: return HarmonicWave({ 1.0, 0.0, 0.33, 0.0, 0.12, 0.0, 0.05 });
+	case 3: return HarmonicWave({ 1.0, 0.0, 1.0 / 3, 0.0, 1.0 / 5, 0.0, 1.0 / 7, 0.0, 1.0 / 9, 0.0, 1.0 / 11, 0.0, 1.0 / 13 });
+	case 4: return HarmonicWave(SawHarmonics(20, 0.0));
+	case 5: return HarmonicWave(SawHarmonics(16, 8.0));
+	case 6: return HarmonicWave({ 0.45, 0.8, 1.0, 0.75, 0.5, 0.3, 0.2, 0.12, 0.08 });
+	case 7: return HarmonicWave({ 1.0, 0.55, 0.35, 0.25, 0.0, 0.12, 0.0, 0.08 });
+	case 8: return HarmonicWave({ 0.8, 0.5, 1.0, 0.65, 0.35, 0.18, 0.12, 0.08 });
+	case 9: return HarmonicWave({ 1.0, 0.0, 0.15, 0.0, 0.0, 0.05 });
+	default: return HarmonicWave({ 1.0, 0.4, 0.15 });
+	}
+}
+
+// The wave a design_instrument kind starts from
+int WaveOfKind(const std::string &Kind)
+{
+	const std::string K = Simple(Kind);
+	if (K == "pad")
+		return 8;
+	if (K == "keys" || K == "piano" || K.find("pluck") != std::string::npos || K == "harp" || K == "guitar")
+		return 1;
+	if (K.find("bass") != std::string::npos)
+		return 10;
+	if (K == "bell" || K == "chime")
+		return 9;
+	if (K == "brass" || K == "horn")
+		return 4;
+	if (K == "strings" || K == "violin")
+		return 5;
+	if (K == "organ")
+		return 7;
+	if (K == "chiptune" || K == "arp" || K == "arpeggio")
+		return 3;
+	return 2;	// a lead: hollow
+}
+
+// The modulator by word: the wobble of the eerie lead and the underwater tone, faster or slower, or a growl or a
+// rumble at audio rates; -1 if none
+struct ModulationWord {
+	const char *Word;
+	int Speed;
+	const char *Description;
+};
+
+const ModulationWord MODULATION_WORDS[] = {
+	{ "none", 0, "" },
+	{ "wobble", 7, "wobbles its pitch widely three times a second" },
+	{ "tremble", 12, "trembles its pitch widely five times a second" },
+	{ "growl", 82, "shakes its pitch 35 times a second, so it growls" },
+	{ "rumble", 60, "shakes its pitch 26 times a second, a rumble" },
+};
+
+int ModulationIndex(const std::string &Word)
+{
+	const std::string Wanted = Simple(Word);
+	for (size_t i = 0; i < sizeof(MODULATION_WORDS) / sizeof(MODULATION_WORDS[0]); ++i)
+		if (Wanted == MODULATION_WORDS[i].Word || (Wanted.empty() && i == 0))
+			return static_cast<int>(i);
+	if (Wanted == "warble" || Wanted == "underwater")
+		return 1;
+	if (Wanted == "tremolo" || Wanted == "shiver" || Wanted == "theremin")
+		return 2;
+	return -1;
 }
 
 }	// namespace
@@ -311,6 +424,135 @@ std::string FdsSoundList()
 	for (size_t i = 0; i < All.size(); ++i)
 		Out += (i == 0 ? "" : ", ") + All[i].Name;
 	return Out;
+}
+
+std::string FdsWaveWords()
+{
+	std::string Out;
+	for (size_t i = 0; i < sizeof(WAVE_WORDS) / sizeof(WAVE_WORDS[0]); ++i) {
+		const std::string Words = WAVE_WORDS[i].Words;
+		Out += (i == 0 ? "" : ", ") + Words.substr(0, Words.find(','));
+	}
+	return Out;
+}
+
+std::string FdsModulationWords()
+{
+	std::string Out;
+	for (size_t i = 0; i < sizeof(MODULATION_WORDS) / sizeof(MODULATION_WORDS[0]); ++i)
+		Out += std::string(i == 0 ? "" : ", ") + MODULATION_WORDS[i].Word;
+	return Out;
+}
+
+bool IsFdsWave(const std::string &Word)
+{
+	return WaveIndex(Word) >= 0;
+}
+
+bool DesignFdsSound(const SoundDesign &Design, const std::string &Kind, const std::string &Wave, const std::string &Modulation,
+	int ModDelay, int FrameRate, FdsSound &Out, std::string &Why)
+{
+	const int WaveAt = Wave.empty() ? WaveOfKind(Kind) : WaveIndex(Wave);
+	if (WaveAt < 0) {
+		Why = "wave: " + FdsWaveWords() + ".";
+		return false;
+	}
+	const int ModAt = ModulationIndex(Modulation);
+	if (ModAt < 0) {
+		Why = "modulation: " + FdsModulationWords() + ".";
+		return false;
+	}
+	const Preset Made = DesignPreset(Design);
+	Out = FdsSound();
+	Out.Name = Design.Name;
+	Out.Wave = WaveOf(WaveAt);
+	Out.Modulation.assign(FDS_MOD_SIZE, 0);
+	Out.Low = WaveAt == 10;
+	bool Softened = false;
+	for (size_t s = 0; s < Made.Sequences2A03.size(); ++s) {
+		PresetSequence Seq = Made.Sequences2A03[s];
+		if (Seq.Type == SEQUENCE_VOLUME) {
+			// 0-15 counted 0-31; the first frame at most half the peak, since a smooth wave started at its peak at a
+			// random point of its cycle clicks
+			int Peak = 0;
+			for (size_t k = 0; k < Seq.Items.size(); ++k) {
+				Seq.Items[k] = Seq.Items[k] <= 0 ? 0 : std::max(1, (Seq.Items[k] * FDS_VOLUME_MAX + 7) / 15);
+				Peak = std::max(Peak, Seq.Items[k]);
+			}
+			if (!Seq.Items.empty() && Seq.Items[0] * 2 > Peak + 1) {
+				Seq.Items[0] = (Peak + 1) / 2;
+				Softened = true;
+			}
+		}
+		else if (Seq.Type == SEQUENCE_PITCH) {
+			// The 2A03's period goes down as the pitch goes up, and a step of it is about four of the FDS's register
+			// where they sound alike (A-3 on a pulse, A-5 on the FDS)
+			for (size_t k = 0; k < Seq.Items.size(); ++k)
+				Seq.Items[k] = std::max(-127, std::min(127, -4 * Seq.Items[k]));
+		}
+		else if (Seq.Type != SEQUENCE_ARPEGGIO)
+			continue;	// the duty: the FDS has its wave instead
+		Out.Sequences.push_back(Seq);
+	}
+	if (ModAt > 0) {
+		Out.Modulation = Table(WOBBLE);
+		Out.ModSpeed = MODULATION_WORDS[ModAt].Speed;
+		Out.ModDepth = 1;
+		Out.ModDelay = std::max(0, std::min(255, ModDelay));
+	}
+
+	// In words: the envelope as the instrument editor shows it (0-31)
+	const double Rate = FrameRate > 0 ? FrameRate : 60;
+	const int Peak = std::max(1, (std::max(1, std::min(15, Design.Peak)) * FDS_VOLUME_MAX + 7) / 15);
+	const int Sustain = Design.Sustain <= 0 ? 0 : std::max(1, (std::min(Design.Sustain, Design.Peak) * FDS_VOLUME_MAX + 7) / 15);
+	char Buffer[256];
+	std::snprintf(Buffer, sizeof(Buffer), "a %s FDS wave that %s %d of 31 %s", WAVE_WORDS[WaveAt].Description,
+		Design.AttackFrom > 0 && Design.Attack > 0 ? "blooms to" : "reaches", Peak, Design.Attack <= 0 ? "at once" :
+		Design.Attack == 1 ? "in 1 frame" : ("in " + std::to_string(Design.Attack) + " frames").c_str());
+	std::string Text = Buffer;
+	if (Softened)
+		Text += " (its first frame at half, so it doesn't click)";
+	if (Sustain == 0)
+		std::snprintf(Buffer, sizeof(Buffer), ", then dies away over %d frames by itself", std::max(4, Design.Decay));
+	else if (Sustain >= Peak)
+		std::snprintf(Buffer, sizeof(Buffer), ", holds, and fades over %d frames after a release (===)", Design.Release);
+	else
+		std::snprintf(Buffer, sizeof(Buffer), ", settles to %d over %d frames, and fades over %d frames after a release (===)", Sustain,
+			Design.Decay, Design.Release);
+	Text += Buffer;
+	if (Design.Restrike >= 4 && Sustain > 0)
+		Text += "; struck again every " + std::to_string(Design.Restrike) + " frames while it holds";
+	if (Design.Echo)
+		Text += "; a soft echo after it";
+	if (Design.AttackPitch == PITCH_BLIP)
+		Text += "; an octave blip on the attack";
+	else if (Design.AttackPitch == PITCH_SCOOP)
+		Text += "; it scoops up into the note from a whole step below";
+	else if (Design.AttackPitch == PITCH_DROP)
+		Text += "; its pitch falls";
+	else if (Design.AttackPitch == PITCH_FLICK)
+		Text += "; a quick pitch flick up and back on the attack";
+	else if (Design.AttackPitch == PITCH_THUMP)
+		Text += "; it thumps: starts a fourth up and drops into the note";
+	if (!Design.Arpeggio.empty()) {
+		Text += "; it arpeggiates";
+		for (size_t i = 0; i < Design.Arpeggio.size(); ++i)
+			Text += (i == 0 ? " " : ", ") + std::to_string(Design.Arpeggio[i]);
+		Text += " semitones";
+	}
+	if (Design.Vibrato > 0) {
+		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong" };
+		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note",
+			DEPTHS[std::max(1, std::min(3, Design.Vibrato))], Design.VibratoDelay, Design.VibratoDelay / Rate);
+		Text += Buffer;
+	}
+	if (ModAt > 0) {
+		std::snprintf(Buffer, sizeof(Buffer), "; its modulator %s%s", MODULATION_WORDS[ModAt].Description,
+			Out.ModDelay > 0 ? (" from " + std::to_string(Out.ModDelay) + " frames into each note").c_str() : "");
+		Text += Buffer;
+	}
+	Out.Description = Text;
+	return true;
 }
 
 int FdsVolumeAs15(int Volume)

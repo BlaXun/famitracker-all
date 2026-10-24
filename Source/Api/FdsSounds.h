@@ -73,6 +73,19 @@ const std::vector<FdsSound> &FdsSounds();
 const FdsSound *FindFdsSound(const std::string &Name);	// by name or one of its words
 std::string FdsSoundList();							// "soft flute, whistle, ..."
 
+// A sound described in words for the FDS channel (design_instrument there):
+// Design's volume envelope (the 2A03's 0-15 counted 0-31, its first frame at
+// most half its peak), its attack's pitch, arpeggio and vibrato as the FDS's
+// sequences play them (its pitch sequence's units turned around and four
+// times finer), the wave named by Wave (FdsWaveWords; empty: the one Kind
+// starts from) and the modulator by Modulation (FdsModulationWords), which
+// waits ModDelay frames. False with Why for a word it doesn't know.
+bool DesignFdsSound(const SoundDesign &Design, const std::string &Kind, const std::string &Wave, const std::string &Modulation,
+	int ModDelay, int FrameRate, FdsSound &Out, std::string &Why);
+std::string FdsWaveWords();			// "sine, round, hollow, ..."
+std::string FdsModulationWords();	// "none, wobble, tremble, growl, rumble"
+bool IsFdsWave(const std::string &Word);
+
 // An FDS volume (0-31, or the 32 the chip holds) as the tools count an
 // instrument's envelope (0-15): nearest, and at least 1 while it sounds
 int FdsVolumeAs15(int Volume);
