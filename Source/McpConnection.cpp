@@ -44,6 +44,7 @@
 #include "Api/Sections.h"
 #include "Api/Song.h"
 #include "Api/SoundEffects.h"
+#include "Api/SoundIndex.h"
 #include "Api/Tools.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
@@ -1538,6 +1539,50 @@ public:
 		return Done;
 	}
 
+	// Instrument > Sound browser: every sound the song can get (ToolSet::Sounds), and one made into an instrument as
+	// add_instrument or reference_sound makes it (ToolSet::MakeSound), while the browser's dialog is open
+	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error)
+	{
+		if (m_bBusy || m_pMain == NULL) {
+			Error = "FamiTracker is busy with Claude Code; try again in a moment.";
+			return false;
+		}
+		m_bBusy = true;
+		m_bOwnDialog = true;
+		bool Done = false;
+		try {
+			Done = m_Tools.Sounds(Cursor, Out, Error);
+		}
+		catch (...) {
+			Error = "The sounds couldn't be listed.";
+			Done = false;
+		}
+		m_bOwnDialog = false;
+		m_bBusy = false;
+		return Done;
+	}
+
+	int MakeSound(const ftapi::SoundEntry &Sound, std::string &Error)
+	{
+		if (m_bBusy || m_pMain == NULL) {
+			Error = "FamiTracker is busy with Claude Code; try again in a moment.";
+			return -1;
+		}
+		m_bBusy = true;
+		m_bOwnDialog = true;
+		int Index = -1;
+		try {
+			Index = m_Tools.MakeSound(Sound, Error);
+		}
+		catch (...) {
+			Error = "The instrument couldn't be added.";
+			Index = -1;
+		}
+		m_bOwnDialog = false;
+		m_bBusy = false;
+		return Index;
+	}
+
 	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
 	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
 	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply)
@@ -2659,6 +2704,16 @@ bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, st
 bool CMcpConnection::Harmony(ftapi::TrackHarmony &Out)
 {
 	return m_pImpl->Link.Harmony(Out);
+}
+
+bool CMcpConnection::Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error)
+{
+	return m_pImpl->Link.Sounds(Cursor, Out, Error);
+}
+
+int CMcpConnection::MakeSound(const ftapi::SoundEntry &Sound, std::string &Error)
+{
+	return m_pImpl->Link.MakeSound(Sound, Error);
 }
 
 bool CMcpConnection::IsBusy() const

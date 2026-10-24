@@ -34,6 +34,7 @@
 namespace ftapi {
 
 class SongHost;
+struct SoundEntry;
 
 // The selected track's key and the chords its parts play, for FamiTracker's
 // piano roll (ToolSet::Harmony)
@@ -111,6 +112,12 @@ public:
 	// For FamiTracker's piano roll: the selected track's key (chosen, or found from the notes as the tools find it)
 	// and the chords its parts play, as get_song hears them; false with the reason when there's no song
 	bool Harmony(TrackHarmony &Out, std::string &Error);
+	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
+	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason
+	bool Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error);
+	// One of them made into an instrument, as add_instrument or reference_sound makes it (a song's own is
+	// itself): its index, or -1 with the reason
+	int MakeSound(const SoundEntry &Sound, std::string &Error);
 
 	// The small set of tools for local models (/mcp/core): the composing essentials
 	static const std::vector<std::string> &CoreTools();

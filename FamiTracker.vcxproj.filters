@@ -1266,6 +1266,9 @@
     <ClCompile Include="Source\Api\Presets.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\SoundIndex.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Tools.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1342,6 +1345,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Presets.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\SoundIndex.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Song.h">
@@ -1505,7 +1511,13 @@
     <ClCompile Include="Source\InstrumentLibrary.cpp">
       <Filter>Source Files\Dialog Boxes\Instrument</Filter>
     </ClCompile>
+    <ClCompile Include="Source\SoundBrowserDlg.cpp">
+      <Filter>Source Files\Dialog Boxes\Instrument</Filter>
+    </ClCompile>
     <ClInclude Include="Source\InstrumentLibrary.h">
+      <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\SoundBrowserDlg.h">
       <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\VoiceEffectDlg.h">
