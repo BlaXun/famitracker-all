@@ -1116,6 +1116,27 @@ std::vector<ChordAt> HearChords(const std::vector<HeardNote> &Notes, const std::
 		{ TonesOf({ 0, 2, 4, 7 }), 0.08, true }, { TonesOf({ 0, 5, 7, 10 }), 0.1, true }, { TonesOf({ 0, 3, 6, 9 }), 0.12, true },
 	};
 	const int Beat = std::max(1, RowsPerBeat);
+	// The notes sounding in a slot, found without going through all of them for each: short notes by their first row,
+	// from where the longest of them could have started; long ones (a drone) every time. Taken in their own order, so
+	// the sums come out exactly as going through them all
+	const int LONG_NOTE = 64;
+	std::vector<size_t> ByRow, Long;
+	int LongestShort = 0;
+	for (size_t n = 0; n < Notes.size(); ++n) {
+		if (Notes[n].Rows > LONG_NOTE)
+			Long.push_back(n);
+		else {
+			ByRow.push_back(n);
+			LongestShort = std::max(LongestShort, Notes[n].Rows);
+		}
+	}
+	auto EarlierRow = [&](size_t a, size_t b) { return Notes[a].Row < Notes[b].Row; };
+	std::stable_sort(ByRow.begin(), ByRow.end(), EarlierRow);
+	auto FirstFrom = [&](int Row) {
+		return std::lower_bound(ByRow.begin(), ByRow.end(), Row, [&](size_t n, int Value) { return Notes[n].Row < Value; });
+	};
+	std::vector<size_t> Sounding;
+	std::vector<double> Heard;
 	std::vector<ChordAt> Out;
 	for (size_t b = 0; b < Bars.size(); ++b) {
 		const BarSpan &Bar = Bars[b];
@@ -1131,27 +1152,32 @@ std::vector<ChordAt> HearChords(const std::vector<HeardNote> &Notes, const std::
 		for (size_t s = 0; s < Slots.size(); ++s) {
 			const int From = Slots[s].first, To = Slots[s].second;
 			double Weight[12] = { 0 }, BassWeight[12] = { 0 }, Total = 0.0;
+			Sounding.clear();
+			for (std::vector<size_t>::const_iterator it = FirstFrom(From - LongestShort), End = FirstFrom(To); it != End; ++it)
+				Sounding.push_back(*it);
+			Sounding.insert(Sounding.end(), Long.begin(), Long.end());
+			std::sort(Sounding.begin(), Sounding.end());
 			// The bass is one voice: its long, loud notes count for at most half as much as the parts over it,
 			// so a bass on the fifth (Dm7 over A) doesn't turn the chord into one on the fifth
-			std::vector<double> Heard(Notes.size(), 0.0);
+			Heard.assign(Sounding.size(), 0.0);
 			double Upper = 0.0, Low = 0.0;
-			for (size_t n = 0; n < Notes.size(); ++n) {
-				const HeardNote &N = Notes[n];
+			for (size_t k = 0; k < Sounding.size(); ++k) {
+				const HeardNote &N = Notes[Sounding[k]];
 				const int A = std::max(N.Row, From), Z = std::min(N.Row + N.Rows, To);
 				if (Z <= A)
 					continue;
 				double W = (Z - A) / static_cast<double>(Beat) * N.Weight;
 				if (N.Row >= From && N.Row < To && (N.Row - Bar.Row) % Beat == 0)
 					W *= 1.25;	// struck on a beat
-				Heard[n] = W;
+				Heard[k] = W;
 				(N.Bass ? Low : Upper) += W;
 			}
 			const double BassShare = Low > 0.0 && Upper > 0.0 ? std::min(1.0, 0.5 * Upper / Low) : 1.0;
-			for (size_t n = 0; n < Notes.size(); ++n) {
-				const HeardNote &N = Notes[n];
-				if (Heard[n] <= 0.0)
+			for (size_t k = 0; k < Sounding.size(); ++k) {
+				const HeardNote &N = Notes[Sounding[k]];
+				if (Heard[k] <= 0.0)
 					continue;
-				const double W = N.Bass ? Heard[n] * BassShare : Heard[n];
+				const double W = N.Bass ? Heard[k] * BassShare : Heard[k];
 				Weight[Mod12(N.PitchClass)] += W;
 				Total += W;
 				if (N.Bass)

@@ -93,6 +93,7 @@ add_library(ftapi STATIC
 	ProblemList.cpp
 	Music.cpp
 	Sections.cpp
+	Keys.cpp
 	Chords.cpp
 	Arrange.cpp
 	DpcmKit.cpp

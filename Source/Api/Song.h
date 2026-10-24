@@ -28,6 +28,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "Keys.h"
 #include "Music.h"
 #include "Sections.h"
 
@@ -107,12 +108,14 @@ struct SongInfo {
 	std::vector<InstrumentInfo> Instruments;
 	std::vector<ClipInfo> Clips;
 	SectionList Sections;	// the selected track's (Sections.h), names in UTF-8
+	bool KeyChosen;			// the selected track's key was chosen (Keys.h: in the piano roll, or with set_key)...
+	KeyChoice ChosenKey;	// ...and is this one; otherwise the tools find it from the notes
 	bool DirectChanges;		// the user lets Claude change the song (otherwise ideas become clips)
 	bool Playing;
 	int PlayRow;			// from the song's start, -1 when stopped
 
 	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Pal(false), Speed(6), Tempo(150), SplitPoint(32),
-		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), DirectChanges(false),
+		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), KeyChosen(false), DirectChanges(false),
 		Playing(false), PlayRow(-1) {}
 };
 
@@ -154,8 +157,14 @@ struct SongWrite {
 	// in the same undoable change. Otherwise they follow the frames moved.
 	bool SetSections;
 	SectionList Sections;
+	// With SetKey, the selected track's key afterwards (Keys.h): Key when
+	// KeyChosen, otherwise back to auto, in the same undoable change (a whole
+	// song moved to another key takes its chosen key along)
+	bool SetKey;
+	bool KeyChosen;
+	KeyChoice Key;
 
-	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1), SetSections(false) {}
+	SongWrite() : First(0), LinkClipId(-1), MoveFrame(0), MoveBy(0), Cursor(-1), SetSections(false), SetKey(false), KeyChosen(false) {}
 };
 
 // Rows of a track (from 0) to play
@@ -201,6 +210,9 @@ public:
 	// The selected track's sections become these (Sections.h, UTF-8 names), as
 	// one undoable change; false with the reason
 	virtual bool SetSections(const SectionList &Sections, std::string &Error) = 0;
+	// The selected track's key (Keys.h): Choice when Chosen, otherwise back to
+	// auto (found from the notes), as one undoable change; false with the reason
+	virtual bool SetKey(bool Chosen, const KeyChoice &Choice, std::string &Error) = 0;
 	// A new clip; Name is made unique (the name used comes back in it)
 	virtual bool AddClip(std::string &Name, const std::vector<int> &Sources, const std::vector<std::vector<Cell> > &Columns,
 		std::string &Error) = 0;

@@ -48,6 +48,7 @@ struct ModeInfo {
 	int ParentOffset;	// semitones from the major key with the same notes up to this mode's tonic
 };
 
+// Append only: modules keep a track's chosen key by its mode's place here (the BF KEYS block, Keys.h)
 const ModeInfo MODES[] = {
 	{ "major", { 0, 2, 4, 5, 7, 9, 11 }, 0 },
 	{ "dorian", { 0, 2, 3, 5, 7, 9, 10 }, 2 },

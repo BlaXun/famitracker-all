@@ -29,10 +29,32 @@
 #include <string>
 #include <vector>
 #include "Json.h"
+#include "Keys.h"
 
 namespace ftapi {
 
 class SongHost;
+
+// The selected track's key and the chords its parts play, for FamiTracker's
+// piano roll (ToolSet::Harmony)
+struct HeardChord {
+	int Row, Rows;					// song rows: a bar, or half of one
+	std::string Name;				// "Am", "G7", "C/E", spelled as the key spells them
+	std::string Degree;				// in the key: "vi", "V7", "bVII"
+	std::vector<int> PitchClasses;	// its notes, the root's first (0 = C)
+	bool InKey;						// all of them the key's
+	HeardChord() : Row(0), Rows(0), InKey(true) {}
+};
+
+struct TrackHarmony {
+	bool HasKey;		// a key is chosen for the track, or its notes fit one
+	bool Chosen;		// the key is the one chosen for the track (Keys.h)
+	KeyChoice Choice;	// the key: the chosen one, else the one the notes fit
+	bool HasFound;		// the notes fit a key...
+	Key Found;			// ...this one, as the tools find it, whether or not one is chosen
+	std::vector<HeardChord> Chords;	// the chords the parts play, as get_song hears them, in the key
+	TrackHarmony() : HasKey(false), Chosen(false), HasFound(false) {}
+};
 
 struct ToolInfo {
 	std::string Name;
@@ -86,6 +108,9 @@ public:
 	// A file export_for_game saved next to the song, for a client on another computer (GET /files): false when
 	// the name isn't one of those files' (Error says so) or there's none (Error empty)
 	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error);
+	// For FamiTracker's piano roll: the selected track's key (chosen, or found from the notes as the tools find it)
+	// and the chords its parts play, as get_song hears them; false with the reason when there's no song
+	bool Harmony(TrackHarmony &Out, std::string &Error);
 
 	// The small set of tools for local models (/mcp/core): the composing essentials
 	static const std::vector<std::string> &CoreTools();
