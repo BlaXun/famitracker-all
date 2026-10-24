@@ -2159,8 +2159,9 @@ void TestDesign()
 	Preset BP = DesignPreset(Bloom);
 	const PresetSequence &BV = BP.Sequences2A03[0];
 	CHECK(BV.Items[0] == 10 && BV.Items[1] == 12 && BV.Items[2] == 15);
-	CHECK(BV.Loop > 2 && BV.Release > BV.Loop && BV.Items[static_cast<size_t>(BV.Release)] < 12 &&
-		BV.Items[static_cast<size_t>(BV.Release - 1)] < BV.Items[static_cast<size_t>(BV.Release - 2)]);	// the dip before the loop goes round
+	// struck again every 12 frames from the note's start: a dip over two frames, then a strike over the held 12 that settles
+	CHECK(BV.Loop == 10 && BV.Release == BV.Loop + 11 && BV.Items[static_cast<size_t>(BV.Release)] == 12 &&
+		BV.Items[10] < 12 && BV.Items[11] < BV.Items[10] && BV.Items[11] <= 8 && BV.Items[12] > 12 && BV.Items[13] >= 12);
 	for (size_t i = 0; i < BP.Sequences2A03.size(); ++i)
 		if (BP.Sequences2A03[i].Type == SEQUENCE_DUTY)
 			CHECK(BP.Sequences2A03[i].Items == std::vector<int>({ 0, 1 }) && BP.SequencesVRC6[i].Items == std::vector<int>({ 1, 3 }));
@@ -12619,6 +12620,544 @@ void TestFindSound()
 	CHECK(Tools.Sounds(-1, All, Error) && FindEntry(All, "Soft lead", TARGET_VRC6_PULSE)->InSong == Index);
 }
 
+
+
+
+
+
+
+
+
+
+
+// calm-sounds tests
+// A sequence of a song's instrument as it was made (FakeSong::Made), on its chip
+const PresetSequence *MadeSequence(const FakeSong &Song, int Index, int Type)
+{
+	const std::map<int, Preset>::const_iterator it = Song.Made.find(Index);
+	if (it == Song.Made.end())
+		return 0;
+	const InstrumentInfo *pInfo = SongInstrument(Song, Index);
+	const std::vector<PresetSequence> &List = pInfo != 0 && pInfo->Chip == "VRC6" ? it->second.SequencesVRC6 : it->second.Sequences2A03;
+	for (size_t s = 0; s < List.size(); ++s)
+		if (List[s].Type == Type)
+			return &List[s];
+	return 0;
+}
+
+// The song's newest designed instrument
+int Newest(const FakeSong &Song)
+{
+	return Song.Made.empty() ? -1 : Song.Made.rbegin()->first;
+}
+
+// The frame from which a volume sequence stays at Level up to its release point (or its end) after its peak; -1 if it
+// doesn't end there
+int ReachesAt(const PresetSequence &V, int Level)
+{
+	const int End = V.Release >= 0 ? V.Release : static_cast<int>(V.Items.size()) - 1;
+	int Peak = 0;
+	for (int i = 1; i <= End; ++i)
+		if (V.Items[static_cast<size_t>(i)] > V.Items[static_cast<size_t>(Peak)])
+			Peak = i;
+	int At = End;
+	while (At > Peak && V.Items[static_cast<size_t>(At - 1)] == Level)
+		--At;
+	return V.Items[static_cast<size_t>(At)] == Level ? At : -1;
+}
+
+const PresetSequence *SequenceOf(const std::vector<PresetSequence> &List, int Type)
+{
+	for (size_t s = 0; s < List.size(); ++s)
+		if (List[s].Type == Type)
+			return &List[s];
+	return 0;
+}
+
+// The faint vibrato's pitch sequence after Delay frames: the period a step longer for half of each 12 frames
+std::vector<int> FaintVibrato(int Delay)
+{
+	std::vector<int> Out(static_cast<size_t>(Delay), 0);
+	const int CYCLE[] = { 1, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0 };
+	Out.insert(Out.end(), CYCLE, CYCLE + 12);
+	return Out;
+}
+
+void TestCalmKinds()
+{
+	// The music box at 75 BPM (48 frames a beat) is track 49's lead: struck at 15, silent in 0.9 of a beat, 50%, nothing else
+	FakeSong Song;
+	Song.Info.Speed = 12;
+	Song.Info.Tempo = 150;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Lamp box\", \"kind\": \"music box\", \"channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	const std::vector<int> LAMP = { 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10, 9, 9, 8, 8, 8, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3,
+		3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 0 };
+	const PresetSequence *pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Items == LAMP && pVolume->Release < 0 && pVolume->Loop < 0);
+	const PresetSequence *pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+	CHECK(pDuty != 0 && pDuty->Items == std::vector<int>({ 7 }));	// 50%, no click
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_PITCH) == 0 && MadeSequence(Song, Newest(Song), SEQUENCE_ARPEGGIO) == 0);
+	CHECK_HAS(Result.Text, "a 50% pulse that reaches 15 at once, then dies away over 43 frames by itself.");
+	CHECK_HAS(Result.Text, "Volume a frame at a time: 15 14 14 13 13 12 12 11 11 10 10 9 9 8 8 8 7 7 6 6 6 5 5 5 4 4 4 3 3 3 3 2 2 2 2 2 "
+		"1 1 1 1 1 1 1 0.");
+	CHECK_HAS(Result.Text, "At 75 BPM it is down to half (7) on frame 16 and is silent from frame 43 (0.9 of a beat).");
+	CHECK_LACKS(Result.Text, "vibrato");
+	CHECK_LACKS(Result.Text, "Its notes are gone");
+
+	// The breath is track 50's "Breath lead": in from 4 to 15 over 12 frames, 9 from frame 22, a fade of 24 frames after a
+	// release, and the faint vibrato half a beat in
+	Result = Run(Song, "design_instrument", "{\"name\": \"Night breath\", \"kind\": \"breath\", \"channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Release > 0 && pVolume->Loop < 0);
+	if (pVolume != 0 && pVolume->Release > 0) {
+		CHECK(std::vector<int>(pVolume->Items.begin(), pVolume->Items.begin() + 13) ==
+			std::vector<int>({ 4, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }));
+		CHECK_EQ(ReachesAt(*pVolume, 9), 22);
+		CHECK_EQ(static_cast<int>(pVolume->Items.size()) - 1 - pVolume->Release, 24);	// silent 24 frames after a release
+		CHECK(pVolume->Items.back() == 0 && pVolume->Items[static_cast<size_t>(pVolume->Release) + 1] <= 9);
+	}
+	const PresetSequence *pPitch = MadeSequence(Song, Newest(Song), SEQUENCE_PITCH);
+	CHECK(pPitch != 0 && pPitch->Items == FaintVibrato(24) && pPitch->Loop == 24);
+	pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+	CHECK(pDuty != 0 && pDuty->Items == std::vector<int>({ 7 }) && MadeSequence(Song, Newest(Song), SEQUENCE_ARPEGGIO) == 0);
+	CHECK_HAS(Result.Text, "a 50% pulse that blooms from 4 to 15 12 frames in, settles to 9 over 10 frames, and fades over 24 frames "
+		"after a release (===); a faint vibrato from 24 frames (0.4 s) into each note, about 3 cents either way at A-3.");
+	CHECK_HAS(Result.Text, "Volume a frame at a time: 4 4 5 6 7 8 9 10 11 12 13 14 15 14 13 13 12 11 11 10 10 10 9, holding 9 while the "
+		"note lasts; after a release (===): 9 8 8 8 7");
+	CHECK_HAS(Result.Text, "At 75 BPM it peaks on frame 12 (0.25 of a beat), holds 9 from frame 22 (0.46 of a beat) and fades out in 24 "
+		"frames after a release (half a beat).");
+
+	// The falling strike is Time Remains' lead: struck at 15, down to a low 6 within 12-16 frames, a short release, 25%
+	Result = Run(Song, "design_instrument", "{\"name\": \"Time strike\", \"kind\": \"falling strike\", \"channel\": \"Pulse 1\"}");
+	CHECK(!Result.IsError);
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Release > 0 && pVolume->Items[0] == 15);
+	if (pVolume != 0 && pVolume->Release > 0) {
+		const int At = ReachesAt(*pVolume, 6);
+		CHECK(At >= 12 && At <= 16);
+		CHECK(static_cast<int>(pVolume->Items.size()) - 1 - pVolume->Release <= 8 && pVolume->Items.back() == 0);
+	}
+	pPitch = MadeSequence(Song, Newest(Song), SEQUENCE_PITCH);
+	CHECK(pPitch != 0 && pPitch->Items == FaintVibrato(24));
+	pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+	CHECK(pDuty != 0 && pDuty->Items == std::vector<int>({ 1 }) && MadeSequence(Song, Newest(Song), SEQUENCE_ARPEGGIO) == 0);
+	CHECK_HAS(Result.Text, "(2A03 instrument): a 25% pulse that reaches 15 at once, settles to 6 over 14 frames");
+	CHECK_HAS(Result.Text, "holds 6 from frame 14 (0.29 of a beat)");
+	CHECK_LACKS(Result.Text, "clicks on");	// the faint vibrato takes no note across a multiple of 256
+
+	// Every other argument still changes them: a breath at 12 starts at 3 and holds 7 (in proportion), at 25%
+	Result = Run(Song, "design_instrument", "{\"name\": \"Soft breath\", \"kind\": \"breath\", \"volume\": 12, \"duty\": \"25%\"}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Items[0] == 3 && *std::max_element(pVolume->Items.begin(), pVolume->Items.end()) == 12 &&
+		pVolume->Release > 0 && pVolume->Items[static_cast<size_t>(pVolume->Release)] == 7);
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_DUTY)->Items == std::vector<int>({ 1 }));
+	// ...unless they're given too
+	Run(Song, "design_instrument", "{\"name\": \"Low breath\", \"kind\": \"breath\", \"volume\": 12, \"sustain\": 10, \"attack_from\": 6}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Items[0] == 6 && pVolume->Items[static_cast<size_t>(pVolume->Release)] == 10);
+	Run(Song, "design_instrument", "{\"name\": \"Plain breath\", \"kind\": \"breath\", \"vibrato\": \"none\"}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_PITCH) == 0);
+	Run(Song, "design_instrument", "{\"name\": \"Short box\", \"kind\": \"music box\", \"decay\": 30}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Items.size() == 31u && pVolume->Items[30] == 0 && pVolume->Items[29] > 0);
+	Run(Song, "design_instrument", "{\"name\": \"Bell box\", \"kind\": \"music box\", \"attack_pitch\": \"blip\", \"click\": true}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_ARPEGGIO) != 0 && MadeSequence(Song, Newest(Song), SEQUENCE_DUTY)->Items.size() == 2u);
+	Run(Song, "design_instrument", "{\"name\": \"Deep strike\", \"kind\": \"falling strike\", \"sustain\": 4}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && ReachesAt(*pVolume, 4) == 14);
+	// "decay": "long" goes by the kind's own: a long music box rings twice as long
+	Run(Song, "design_instrument", "{\"name\": \"Long box\", \"kind\": \"music box\", \"decay\": \"long\"}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME)->Items.size() == 87u);	// silent from frame 86
+
+	// At 150 BPM (24 frames a beat) the music box is gone in 22 frames, and the vibratos come in after 12
+	FakeSong Fast;
+	Result = Run(Fast, "design_instrument", "{\"name\": \"Quick box\", \"kind\": \"music box\"}");
+	pVolume = MadeSequence(Fast, Newest(Fast), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Items.size() == 23u && pVolume->Items[22] == 0 && pVolume->Items[21] > 0);
+	CHECK_HAS(Result.Text, "At 150 BPM it is down to half (7) on frame 8 and is silent from frame 22 (0.92 of a beat).");
+	Run(Fast, "design_instrument", "{\"name\": \"Quick breath\", \"kind\": \"breath\"}");
+	CHECK(MadeSequence(Fast, Newest(Fast), SEQUENCE_PITCH)->Items == FaintVibrato(12));
+
+	// The presets: as the kinds make them at 75 BPM, found by name, on every chip that takes presets
+	const char *const CALM[] = { "music box", "breath", "falling strike" };
+	for (size_t k = 0; k < 3; ++k) {
+		const Preset *pPreset = FindPreset(CALM[k]);
+		CHECK(pPreset != 0 && pPreset->Name == CALM[k] && !pPreset->Drum && pPreset->Vrc7Patch > 0);
+		SoundDesign D;
+		CHECK(DesignOfKind(CALM[k], D) && IsCalmKind(CALM[k]));
+		const Preset Made = DesignPreset(D);
+		if (pPreset != 0) {
+			CHECK(SequenceOf(pPreset->Sequences2A03, SEQUENCE_VOLUME)->Items == SequenceOf(Made.Sequences2A03, SEQUENCE_VOLUME)->Items);
+			CHECK(SequenceOf(pPreset->SequencesVRC6, SEQUENCE_DUTY)->Items == SequenceOf(Made.SequencesVRC6, SEQUENCE_DUTY)->Items);
+			CHECK(pPreset->Description.find("calm lead") == 0);
+		}
+	}
+	CHECK(FindPreset("music box")->Sequences2A03[0].Items == LAMP && FindPreset("breath lead") == FindPreset("breath") &&
+		!FindPreset("music box")->Releases() && FindPreset("breath")->Releases());
+	CHECK_HAS(PresetList(), "organ, music box, breath, falling strike, kick");
+	Result = Run(Song, "add_instrument", "{\"preset\": \"breath\", \"channel\": \"VRC6 Pulse 2\"}");
+	CHECK_HAS(Result.Text, "Added \"Breath\" (");
+	CHECK_HAS(Result.Text, "(VRC6 instrument, calm lead that breathes in from 4 to 15 over 12 frames");
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Pulse 2\", \"instrument\": \"falling strike\", \"notes\": [{\"bar\": 1, "
+		"\"pitch\": \"E-4\", \"beats\": 2}]}").IsError);
+	CHECK(SongInstrument(Song, Song.Rows[1][0].Instrument) != 0 && SongInstrument(Song, Song.Rows[1][0].Instrument)->Name == "Falling strike");
+	CHECK(FindVrc7Patch("music box")->Name == "soft bell" && FindVrc7Patch("breath")->Name == "flute");
+	// "breath" is a lead now; a swell is still a swell
+	SoundDesign Swell;
+	CHECK(DesignOfKind("wind", Swell) && Swell.Attack == 30 && DesignOfKind("breath", Swell) && Swell.Attack == 12);
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"kind\": \"kazoo\"}").Text, "the calm leads: music box");
+}
+
+void TestDecayFrames()
+{
+	// A decay of N frames gets to its sustain level (or silence) on frame N after the peak, not a quarter sooner
+	const int CASES[][3] = { { 15, 0, 4 }, { 15, 0, 24 }, { 15, 0, 40 }, { 15, 0, 43 }, { 14, 0, 80 }, { 15, 6, 14 }, { 13, 11, 8 },
+		{ 14, 3, 40 }, { 15, 12, 6 }, { 11, 10, 5 }, { 12, 8, 4 }, { 9, 2, 120 } };
+	for (size_t c = 0; c < sizeof(CASES) / sizeof(CASES[0]); ++c) {
+		for (int Attack = 0; Attack < 3; ++Attack) {
+			SoundDesign D;
+			D.Attack = Attack;
+			D.Peak = CASES[c][0];
+			D.Sustain = CASES[c][1];
+			D.Decay = CASES[c][2];
+			D.Release = 6;
+			const Preset Made = DesignPreset(D);
+			const PresetSequence &V = *SequenceOf(Made.Sequences2A03, SEQUENCE_VOLUME);
+			const int Reach = Attack + D.Decay;
+			bool Fine = static_cast<int>(V.Items.size()) > Reach && V.Items[static_cast<size_t>(Reach)] == D.Sustain &&
+				V.Items[static_cast<size_t>(Reach - 1)] > D.Sustain && V.Items[static_cast<size_t>(Attack)] == D.Peak;
+			for (int i = Attack + 1; i <= Reach && Fine; ++i)
+				Fine = V.Items[static_cast<size_t>(i)] <= V.Items[static_cast<size_t>(i - 1)];	// it only falls
+			if (D.Sustain > 0)
+				Fine = Fine && V.Release == Reach;
+			char What[64];
+			std::snprintf(What, sizeof(What), "decay %d from %d to %d after %d", D.Decay, D.Peak, D.Sustain, Attack);
+			Check(Fine, What, __LINE__);
+		}
+	}
+	// The tool says when it's down to half and when it's silent: a pluck of 40 at 150 BPM
+	FakeSong Song;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Pick\", \"kind\": \"pluck\", \"decay\": 40}");
+	CHECK_HAS(Result.Text, "dies away over 40 frames by itself");
+	CHECK_HAS(Result.Text, "At 150 BPM it is down to half (7) on frame 15 and is silent from frame 40 (1.7 beats).");
+	// The ready-made N163 sounds take as long as they say: the glass bell 70 frames, the harp 30, the electric piano 48
+	const struct { const char *Name; int Frames; int Level; } WAVES[] = { { "glass bell", 70, 0 }, { "harp", 30, 0 },
+		{ "electric piano", 48, 4 }, { "marimba", 18, 0 } };
+	for (size_t w = 0; w < sizeof(WAVES) / sizeof(WAVES[0]); ++w) {
+		const WaveSound *pWave = FindWaveSound(WAVES[w].Name);
+		const PresetSequence *pV = pWave != 0 ? SequenceOf(pWave->Sequences, SEQUENCE_VOLUME) : 0;
+		Check(pV != 0 && static_cast<int>(pV->Items.size()) > WAVES[w].Frames && pV->Items[static_cast<size_t>(WAVES[w].Frames)] ==
+			WAVES[w].Level && pV->Items[static_cast<size_t>(WAVES[w].Frames - 1)] > WAVES[w].Level, WAVES[w].Name, __LINE__);
+	}
+}
+
+void TestRestrikes()
+{
+	// A pluck struck again every half beat (24 frames at 75 BPM): its strike and fade looped while the note holds, a
+	// release lets it fade
+	FakeSong Song;
+	Song.Info.Speed = 12;
+	Song.Info.Tempo = 150;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Pick again\", \"kind\": \"pluck\", \"restrike_beats\": 0.5}");
+	CHECK(!Result.IsError);
+	const PresetSequence *pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Loop == 0 && pVolume->Release == 23 && pVolume->Items[0] == 15 && pVolume->Items.size() > 24u &&
+		pVolume->Items.back() == 0 && Song.Made[Newest(Song)].Releases());
+	CHECK_HAS(Result.Text, "struck again every 24 frames while it holds (until a release, ===)");
+	CHECK_HAS(Result.Text, "again from frame 0 while the note lasts");
+	CHECK_HAS(Result.Text, "is struck again every 24 frames (half a beat)");
+	CHECK_LACKS(Result.Text, "doesn't work");
+	// A music box struck again every beat: it dies away within the beat, then strikes again
+	Run(Song, "design_instrument", "{\"name\": \"Box again\", \"kind\": \"music box\", \"restrike_beats\": 1}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Loop == 0 && pVolume->Release == 47 && pVolume->Items[43] == 0 && pVolume->Items[47] == 0);
+	// Held sounds dip and rise back as before, up to two beats apart
+	Run(Song, "design_instrument", "{\"name\": \"Slow pulse\", \"kind\": \"pad\", \"restrike_beats\": 1.5}");
+	pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pVolume != 0 && pVolume->Loop > 0 && pVolume->Release - pVolume->Loop + 1 == 72);
+	// Not on drums or the triangle, and the reply says so
+	Result = Run(Song, "design_instrument", "{\"name\": \"Thud\", \"kind\": \"kick\", \"channel\": \"Noise\", \"restrike_beats\": 0.5}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "restrike_beats doesn't work on drums, which sound once a note: write the hits as notes.");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME)->Loop < 0);
+	Result = Run(Song, "design_instrument", "{\"name\": \"Tri\", \"kind\": \"bass\", \"channel\": \"Triangle\", \"restrike_beats\": 0.5}");
+	CHECK_HAS(Result.Text, "restrike_beats doesn't work on the triangle");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME)->Loop < 0);
+	// A swell on the noise channel takes it (its volume is all it has)
+	Result = Run(Song, "design_instrument", "{\"name\": \"Gusts\", \"kind\": \"swell\", \"channel\": \"Noise\", \"restrike_beats\": 1}");
+	CHECK_LACKS(Result.Text, "doesn't work");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME)->Loop > 0);
+}
+
+void TestFaintVibrato()
+{
+	// The faint vibrato: the period a step longer half the time, after its delay; it sums to nothing each cycle and takes
+	// no note of the 2A03's pulses across a multiple of 256, where the gentle one clicks on A-3 and F-1
+	SoundDesign D;
+	DesignOfKind("lead", D);
+	D.Vibrato = VIBRATO_FAINT;
+	D.VibratoDelay = 24;
+	const Preset Faint = DesignPreset(D);
+	const PresetSequence *pPitch = SequenceOf(Faint.Sequences2A03, SEQUENCE_PITCH);
+	CHECK(pPitch != 0 && pPitch->Items == FaintVibrato(24) && pPitch->Loop == 24);
+	CHECK(VibratoClickPitches(SequencesInfo(Faint.Sequences2A03, "2A03")).empty());
+	D.Vibrato = 1;
+	const std::vector<int> Gentle = VibratoClickPitches(SequencesInfo(DesignPreset(D).Sequences2A03, "2A03"));
+	CHECK(std::find(Gentle.begin(), Gentle.end(), 45) != Gentle.end() && std::find(Gentle.begin(), Gentle.end(), 17) != Gentle.end());
+	CHECK_HAS(DescribeDesign(D, 60), "a gentle vibrato from 24 frames (0.4 s) into each note, about 20 cents either way at A-3");
+
+	// The tool: "faint" comes in after 24 frames unless told; the reply names the notes a vibrato clicks on
+	FakeSong Song;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Faint lead\", \"kind\": \"lead\", \"vibrato\": \"faint\"}");
+	CHECK_HAS(Result.Text, "a faint vibrato from 24 frames (0.4 s) into each note, about 3 cents either way at A-3");
+	CHECK_LACKS(Result.Text, "clicks on");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_PITCH)->Items == FaintVibrato(24));
+	Result = Run(Song, "design_instrument", "{\"name\": \"Late faint\", \"kind\": \"lead\", \"vibrato\": \"faint\", \"vibrato_delay_beats\": 1}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_PITCH)->Items == FaintVibrato(24));	// a beat at 150 BPM
+	Result = Run(Song, "design_instrument", "{\"name\": \"Gentle lead\", \"kind\": \"lead\", \"vibrato\": \"gentle\"}");
+	CHECK_HAS(Result.Text, "Held on a 2A03 or MMC5 pulse its vibrato clicks on F-1 and A-3: the tools nudge such notes");
+	CHECK_LACKS(Run(Song, "design_instrument", "{\"name\": \"Gentle saw\", \"kind\": \"lead\", \"vibrato\": \"gentle\", \"channel\": "
+		"\"VRC6 Pulse 1\"}").Text, "clicks on");	// the VRC6's pulses don't click
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"vibrato\": \"wobbly\"}").Text,
+		"vibrato: none, faint, gentle, medium, strong.");
+	// On the FDS too
+	FakeSong Disk = FdsSong();
+	CHECK_HAS(Run(Disk, "design_instrument", "{\"name\": \"Ghost\", \"kind\": \"breath\", \"channel\": \"FDS\"}").Text,
+		"a faint vibrato from");
+	// add_vibrato's faint is 4x1, the shallowest 4xy; make_sound_effect's 0.06 semitones
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 2);
+	Song.End(0, 32);
+	Result = Run(Song, "add_vibrato", "{\"channel\": 1, \"depth\": \"faint\"}");
+	CHECK_HAS(Result.Text, "vibrato 451");
+	CHECK(HasEffectAt(Song, 0, 1, EFF_VIBRATO, 0x51));
+	CHECK_HAS(Run(Song, "make_sound_effect", "{\"name\": \"Hum\", \"layers\": [{\"channel\": \"pulse\", \"seconds\": 0.5, \"pitch\": \"A-3\", "
+		"\"vibrato\": \"faint\"}]}").Text, "vibrato of 0.06 semitones");
+}
+
+void TestSoftCalmSounds()
+{
+	// The soft layer's calm shapes: wave sounds of their own, found by name, not starters
+	CHECK(SoftLayerCalmSounds() == std::vector<std::string>({ "breath", "quick pad", "pulsing pad", "music box" }));
+	for (size_t i = 0; i < SoftLayerCalmSounds().size(); ++i) {
+		const WaveSound *pSound = FindWaveSound(SoftLayerCalmSounds()[i]);
+		CHECK(pSound != 0 && pSound->Name == SoftLayerCalmSounds()[i] && IsSoftLayerCalmSound(pSound->InstrumentName()) &&
+			!IsSoftLayerSound(pSound->Name) && pSound->Waves.size() >= 2u);
+	}
+	CHECK(!IsSoftLayerCalmSound("choir pad") && FindWaveSound("struck pad")->Name == "pulsing pad" &&
+		FindWaveSound("fast pad")->Name == "quick pad" && FindWaveSound("toy piano")->Name == "music box" && FindWaveSound("music box")->Name == "music box");
+	// Their shapes: the breath in from 4 over 11 frames, down to 10 by frame 21, the faint vibrato after 24 frames
+	const PresetSequence *pV = SequenceOf(FindWaveSound("breath")->Sequences, SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Items[0] == 4 && pV->Items[11] == 14 && pV->Release > 0 && ReachesAt(*pV, 10) == 21);
+	const PresetSequence *pP = SequenceOf(FindWaveSound("breath")->Sequences, SEQUENCE_PITCH);
+	CHECK(pP != 0 && pP->Items == FaintVibrato(24));
+	// the quick pad in within 7 frames, held
+	pV = SequenceOf(FindWaveSound("quick pad")->Sequences, SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Items[7] == 11 && pV->Items[6] < 11 && pV->Release == 7 && pV->Items.back() == 0);
+	// the pulsing pad struck every 12 frames, softer each time down to the strike it repeats; after a release a fade, a
+	// silence and an echo
+	pV = SequenceOf(FindWaveSound("pulsing pad")->Sequences, SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Loop == 24 && pV->Release == 35 && pV->Items[0] == 13 && pV->Items[12] == 11 && pV->Items[24] == 10);
+	if (pV != 0 && pV->Release == 35) {
+		bool Quiet = false, Echo = false;
+		for (size_t i = 36; i < pV->Items.size(); ++i) {
+			Quiet = Quiet || pV->Items[i] == 0;
+			Echo = Echo || (Quiet && pV->Items[i] > 0);
+		}
+		CHECK(Quiet && Echo && pV->Items.back() == 0);
+	}
+	// the music box struck at 15, silent from frame 40
+	pV = SequenceOf(FindWaveSound("music box")->Sequences, SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Items[0] == 15 && pV->Items.size() == 41u && pV->Items[40] == 0 && pV->Items[39] > 0 && pV->Release < 0);
+
+	// In a VRC6 Plus song: by name on a soft channel, each with a wave of its own after the starters'; the eight fill the memory
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"]}"));
+	CHECK_HAS(Result.Text, "For calm parts, by name (a song holds 8 soft sounds): breath (in from 4 over 11 frames, sinks to 10 and "
+		"holds), quick pad");
+	CHECK_HAS(Result.Text, "the N163's other wave sounds (drawbar organ, ");
+	CHECK_LACKS(Result.Text, "round bass, breath");
+	Result = Tools.Call("add_instrument", Parse("{\"preset\": \"breath\", \"channel\": \"Soft 1\"}"));
+	CHECK_HAS(Result.Text, "(N163 instrument: a breathy lead that breathes in from 4 over 11 frames");
+	CHECK_HAS(Result.Text, "its wave takes samples 64-79");
+	const char *const MORE[] = { "quick pad", "pulsing pad", "music box" };
+	for (int i = 0; i < 3; ++i) {
+		Result = Tools.Call("write_notes", Parse(std::string("{\"channel\": \"Soft ") + std::to_string(i + 2) + "\", \"instrument\": \"" +
+			MORE[i] + "\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}"));
+		CHECK(!Result.IsError);
+		const InstrumentInfo *pMade = SongInstrument(Song, Song.Rows[static_cast<size_t>(9 + i)][0].Instrument);
+		Check(pMade != 0 && pMade->Chip == "N163" && Lowercase(pMade->Name) == MORE[i] && pMade->WavePos == 80 + 16 * i, MORE[i], __LINE__);
+	}
+	CHECK_HAS(Tools.Call("add_instrument", Parse("{\"preset\": \"glass bell\", \"channel\": \"Soft 1\"}")).Text,
+		"The N163's wave memory is full");
+	// On a pulse, the same names are the pulses' calm leads
+	Result = Tools.Call("add_instrument", Parse("{\"preset\": \"breath\", \"channel\": \"VRC6 Pulse 1\"}"));
+	CHECK_HAS(Result.Text, "(VRC6 instrument, calm lead that breathes in");
+	// The sound index lists them under the soft layer after its starters, as made for it
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(8, All, Error));
+	int Choir = -1, Breath = -1, Bell = -1;
+	for (size_t i = 0; i < All.size(); ++i) {
+		if (All[i].Target != TARGET_SOFT)
+			continue;
+		if (All[i].Name == "Choir pad" && Choir < 0)
+			Choir = static_cast<int>(i);
+		if (All[i].Name == "Breath" && Breath < 0)
+			Breath = static_cast<int>(i);
+		if (All[i].Name == "Glass bell" && Bell < 0)
+			Bell = static_cast<int>(i);
+	}
+	CHECK(Choir >= 0 && Breath > Choir && Bell > Breath);
+	const SoundEntry *pBreath = FindEntry(All, "Breath", TARGET_SOFT), *pBox = FindEntry(All, "Music box", TARGET_SOFT),
+		*pPad = FindEntry(All, "Pulsing pad", TARGET_SOFT);
+	CHECK(pBreath != 0 && pBreath->Origin == "a calm sound made for the VRC6 Plus's soft layer" && pBreath->Kind == "lead" &&
+		pBreath->Make == MAKE_N163 && pBreath->InSong >= 0);
+	CHECK(pBox != 0 && pBox->Kind == "bell" && pPad != 0 && pPad->Kind == "pad" && !SoundVanishes(pBox->Heard));
+	CHECK(FindEntry(All, "Breath", TARGET_VRC6_PULSE) != 0 && FindEntry(All, "Breath", TARGET_VRC6_PULSE)->Make == MAKE_PRESET);
+	CHECK_HAS(Tools.Call("find_sound", Parse("{\"query\": \"pulsing pad\", \"channel\": \"Soft 3\"}")).Text,
+		"Pulsing pad (pad; a calm sound made for the VRC6 Plus's soft layer; plays on VRC6 Plus Soft 1)");
+}
+
+void TestVrc6DutiesAndStrikes()
+{
+	// The VRC6's pulses play every 6.25% up to 50%: as a share ("37.5%", 37.5) or a step (5)
+	FakeSong Song;
+	const char *const ASKED[][2] = { { "\"37.5%\"", "5" }, { "37.5", "5" }, { "5", "5" }, { "\"6.25%\"", "0" }, { "\"43.75\"", "6" },
+		{ "50", "7" }, { "\"12.5%\"", "1" }, { "\"25%\"", "3" }, { "\"75%\"", "7" }, { "\"round\"", "7" }, { "\"thin\"", "1" },
+		{ "\"18.75 %\"", "2" } };
+	for (size_t a = 0; a < sizeof(ASKED) / sizeof(ASKED[0]); ++a) {
+		const ToolResult R = Run(Song, "design_instrument", std::string("{\"name\": \"Duty ") + std::to_string(a) + "\", \"channel\": "
+			"\"VRC6 Pulse 1\", \"duty\": " + ASKED[a][0] + "}");
+		const PresetSequence *pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+		Check(!R.IsError && pDuty != 0 && pDuty->Items == std::vector<int>(1, std::atoi(ASKED[a][1])), (std::string(ASKED[a][0]) + ": " +
+			R.Text).c_str(), __LINE__);
+	}
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Castle lead\", \"kind\": \"breath\", \"channel\": \"VRC6 Pulse 2\", "
+		"\"duty\": \"37.5%\", \"click\": true}");
+	CHECK_HAS(Result.Text, "a 37.5% pulse that blooms from 4 to 15 12 frames in after a 12.5% duty click on the first frame");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_DUTY)->Items == std::vector<int>({ 1, 5 }));
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"VRC6 Pulse 1\", \"duty\": 60}").Text,
+		"duty on the VRC6's pulses: 6.25% to 50% in steps of 6.25% (6.25%, 12.5%, 18.75%, 25%, 31.25%, 37.5%, 43.75%, 50%), a step 0-7");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"VRC6 Pulse 1\", \"duty\": \"kazoo\"}").Text,
+		"duty on the VRC6's pulses");
+	// The 2A03's four, as a share or a step (0-3); 37.5% is the VRC6's, and the message says so
+	Run(Song, "design_instrument", "{\"name\": \"Step two\", \"channel\": \"Pulse 1\", \"duty\": 2}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_DUTY)->Items == std::vector<int>({ 2 }));
+	Run(Song, "design_instrument", "{\"name\": \"Quarter\", \"channel\": \"Pulse 1\", \"duty\": 25}");
+	CHECK(MadeSequence(Song, Newest(Song), SEQUENCE_DUTY)->Items == std::vector<int>({ 1 }));
+	Result = Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"Pulse 1\", \"duty\": \"37.5%\"}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "duty on the 2A03's pulses: 12.5%, 25%, 50% or 75%, a step 0-3, or thin, bright, round, hollow, nasal (the "
+		"VRC6's pulses also play 6.25% to 50% in steps of 6.25%).");
+	CHECK(Run(Song, "design_instrument", "{\"name\": \"X\", \"channel\": \"Pulse 1\", \"duty\": 5}").IsError);
+
+	// A held note struck again: a dip over two frames to half its level (at most 5 under), then a strike over it, on the
+	// beat's grid from the note's start; track 51's pad (a bloom to 15, holding 6) every half beat at 64.3 BPM (28 frames)
+	FakeSong Slow;
+	Slow.Info.Speed = 14;
+	Slow.Info.Tempo = 150;
+	Result = Run(Slow, "design_instrument", "{\"name\": \"Snow pad\", \"kind\": \"pad\", \"attack\": \"bloom\", \"volume\": 15, "
+		"\"sustain\": 6, \"restrike_beats\": 0.5, \"vibrato\": \"none\", \"channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	const PresetSequence *pV = MadeSequence(Slow, Newest(Slow), SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Loop == 26 && pV->Release == 53 && pV->Items[static_cast<size_t>(pV->Release)] == 6);
+	if (pV != 0 && pV->Loop == 26) {
+		CHECK(pV->Items[26] == 4 && pV->Items[27] == 3 && pV->Items[28] == 8 && pV->Items[29] == 7 && pV->Items[30] == 6);
+		CHECK(*std::min_element(pV->Items.begin() + 26, pV->Items.begin() + 54) == 3);	// never near silence
+	}
+	CHECK_HAS(Result.Text, "is struck again every 28 frames (half a beat)");
+	// The bloom lead's, every 12 frames at 150 BPM: from 12 down to 7 and up to 14
+	Run(Song, "design_instrument", "{\"name\": \"Konami 2\", \"kind\": \"bloom lead\"}");
+	pV = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Loop == 10 && pV->Items[10] == 9 && pV->Items[11] == 7 && pV->Items[12] == 14 && pV->Items[13] == 13 &&
+		pV->Release == 21);
+	// Short ones: every 4 frames, a dip and a strike
+	SoundDesign Quick;
+	DesignOfKind("lead", Quick);
+	Quick.Restrike = 4;
+	const Preset QuickMade = DesignPreset(Quick);
+	const PresetSequence &QV = *SequenceOf(QuickMade.Sequences2A03, SEQUENCE_VOLUME);
+	CHECK(QV.Release - QV.Loop + 1 == 4 && QV.Items[static_cast<size_t>(QV.Loop)] < 11 && QV.Items[static_cast<size_t>(QV.Loop) + 1] > 11 &&
+		(QV.Loop + 1) % 4 == 0);
+}
+
+void TestSoftDesign()
+{
+	// design_instrument on a soft channel: a wave sound's waves, in their order, with the design's volume, arpeggio and pitch
+	FakeSong Song;
+	Song.Info.Speed = 12;
+	Song.Info.Tempo = 150;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Night pad\", \"channel\": \"Soft 2\", \"wave\": \"string pad\", "
+		"\"attack\": 6, \"decay\": \"none\", \"sustain\": \"full\", \"volume\": 10, \"release\": \"long\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(N163 instrument, the string pad's waves): a wave sound that reaches 10 6 frames in, holds, and fades over "
+		"20 frames after a release (===);");
+	CHECK_HAS(Result.Text, "; its wave takes samples 64-79 of the 128");
+	CHECK_HAS(Result.Text, "Volume a frame at a time: 1 3 4 6 7 9 10, holding 10 while the note lasts");
+	const std::map<int, WaveSound>::const_reverse_iterator Pad = Song.MadeWaves.rbegin();
+	CHECK(Pad != Song.MadeWaves.rend() && Pad->second.Name == "Night pad" && Pad->second.Waves == FindWaveSound("string pad")->Waves);
+	if (Pad != Song.MadeWaves.rend()) {
+		CHECK(SequenceOf(Pad->second.Sequences, SEQUENCE_DUTY)->Items == SequenceOf(FindWaveSound("string pad")->Sequences,
+			SEQUENCE_DUTY)->Items);
+		const PresetSequence *pV = SequenceOf(Pad->second.Sequences, SEQUENCE_VOLUME);
+		CHECK(pV != 0 && pV->Items[6] == 10 && pV->Release == 6);
+		CHECK(SongInstrument(Song, Pad->first) != 0 && SongInstrument(Song, Pad->first)->WavePos == 64);
+	}
+	// By kind: a breath plays the soft layer's breath's waves, with the calm kind's envelope and its faint vibrato
+	Result = Run(Song, "design_instrument", "{\"name\": \"Soft night\", \"kind\": \"breath\", \"channel\": \"Soft 1\", \"duty\": \"50%\"}");
+	CHECK_HAS(Result.Text, "(N163 instrument, the breath's waves): a wave sound that blooms from 4 to 15 12 frames in");
+	CHECK_HAS(Result.Text, " (without the duty asked for: its timbre is the waves')");
+	CHECK(Song.MadeWaves.rbegin()->second.Waves == FindWaveSound("breath")->Waves &&
+		SequenceOf(Song.MadeWaves.rbegin()->second.Sequences, SEQUENCE_PITCH)->Items == FaintVibrato(24));
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Soft box\", \"kind\": \"music box\", \"channel\": \"Soft 3\"}").Text,
+		"(N163 instrument, the music box's waves)");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Plain\", \"channel\": \"Soft 4\"}").Text, "the soft flute's waves");
+	// Mistakes: a name the song has, a wave it doesn't, a full memory, no N163
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"night pad\", \"channel\": \"Soft 2\"}").Text,
+		"already has an N163 instrument called \"Night pad\"");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Y\", \"channel\": \"Soft 2\", \"wave\": \"kazoo\"}").Text,
+		"wave: on N163 channels, the wave sound whose waves it plays: soft flute, ");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Z\", \"channel\": \"Soft 2\"}").Text, "The N163's wave memory is full");
+	FakeSong Plain;
+	CHECK_HAS(Run(Plain, "design_instrument", "{\"name\": \"Z\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
+}
+
+void TestSoftLevels()
+{
+	// The soft layer's sounds against a 2A03 pulse at 15 (50%), measured under Wine (October 2026, A-3, volume 15, the soft
+	// layer's 4 channels): their waves' level and their envelopes' (the N163's square 0.6 dB under the pulse) within 0.5 dB
+	const struct { const char *Name; double Db; bool Struck; } MEASURED[] = { { "choir pad", -8.29, false }, { "string pad", -7.34, false },
+		{ "soft flute", -5.33, false }, { "sub bass", -5.10, false }, { "breath", -7.40, false }, { "quick pad", -7.65, false },
+		{ "pulsing pad", -10.35, false }, { "music box", -4.84, true } };
+	for (size_t m = 0; m < sizeof(MEASURED) / sizeof(MEASURED[0]); ++m) {
+		const WaveSound *pSound = FindWaveSound(MEASURED[m].Name);
+		bool Struck = false;
+		const double Held = pSound != 0 ? HeldVolume(*pSound, Struck) : 0.0;
+		const double Db = pSound != 0 ? -0.6 + WaveLevelDb(*pSound, Struck) + 20.0 * std::log10(Held / 15.0) : 0.0;
+		char What[96];
+		std::snprintf(What, sizeof(What), "%s: %.2f dB, measured %.2f", MEASURED[m].Name, Db, MEASURED[m].Db);
+		Check(pSound != 0 && std::fabs(Db - MEASURED[m].Db) <= 0.5 && Struck == MEASURED[m].Struck, What, __LINE__);
+	}
+	// The tools say it when one is added
+	FakeSong Song;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"breath\", \"channel\": \"Soft 1\"}").Text,
+		"At volume 15 it holds about 7.4 dB under a 2A03 pulse at 15.");
+	CHECK_HAS(Run(Song, "add_instrument", "{\"preset\": \"music box\", \"channel\": \"Soft 2\"}").Text, "At volume 15 it strikes about ");
+	// With one N163 channel the chip plays its channel louder
+	FakeSong One;
+	CHECK(!Run(One, "set_expansion", "{\"chip\": \"N163\", \"n163_channels\": 1, \"confirm\": true}").IsError);
+	CHECK_HAS(Run(One, "add_instrument", "{\"preset\": \"quick pad\", \"channel\": \"Namco 1\"}").Text, "At volume 15 it holds about 2.");
+}
+// end of calm-sounds tests
+
 int main()
 {
 	TestJson();
@@ -12722,6 +13261,14 @@ int main()
 	TestSoundIndex();
 	TestFindSound();
 	TestVrc6Plus();
+	TestCalmKinds();
+	TestDecayFrames();
+	TestRestrikes();
+	TestFaintVibrato();
+	TestSoftCalmSounds();
+	TestVrc6DutiesAndStrikes();
+	TestSoftDesign();
+	TestSoftLevels();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

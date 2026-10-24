@@ -63,6 +63,20 @@ const std::vector<WaveSound> &WaveSounds();
 const WaveSound *FindWaveSound(const std::string &Name);	// by name or one of its words
 std::string WaveSoundList();							// "soft flute, drawbar organ, ..."
 
+// How loud a wave sound's waves are against a square wave of 0-15, in dB (their RMS around their mean; a square's is
+// 7.5): those it plays while a note holds (the ones its wave sequence loops through, or the one it ends on), or for a
+// sound that dies away (Struck) the one it's struck with
+double WaveLevelDb(const WaveSound &Sound, bool Struck);
+// Its envelope's level while a note holds (its loop's on average, or its release point's), or its peak for a sound that
+// dies away by itself (Struck)
+double HeldVolume(const WaveSound &Sound, bool &Struck);
+
+// design_instrument on an N163 channel: the wave sound whose waves a sound of its Kind plays when no wave is named (the
+// soft flute for a lead, the string pad for a pad, the breath and the music box for theirs); never 0
+const WaveSound *WaveSoundForKind(const std::string &Kind);
+// Base's waves, following each other as in Base, with Design's volume, arpeggio and pitch, named Name
+WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, const std::string &Name);
+
 // The samples of wave memory with Channels N163 channels in use (16 go to
 // each channel's registers)
 int N163WaveMemory(int Channels);
