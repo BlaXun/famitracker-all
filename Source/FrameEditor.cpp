@@ -512,7 +512,8 @@ void CFrameEditor::DrawSections(CDC *pDC, int FirstVisibleFrame, int Start, int 
 	const int Loop = LoopFrame(pDoc, Track);
 	const CString LOOP_TEXT = _T("loop");
 
-	pDC->FillSolidRect(SX(Left), 0, SX(SECTION_WIDTH), m_iWinHeight, ColBackground);
+	// The column takes the rest of the width, so no row's highlight shows past it
+	pDC->FillSolidRect(SX(Left), 0, std::max(SX(SECTION_WIDTH), m_iWinWidth - SX(Left)), m_iWinHeight, ColBackground);
 	pDC->FillSolidRect(SX(Left - 1), 0, 1, m_iWinHeight, ColEdge);
 
 	for (int i = Start; i < End; ++i) {
@@ -1204,9 +1205,9 @@ void CFrameEditor::OnSectionName()
 
 	CString Prompt;
 	if (First == Last)
-		Prompt.Format(_T("A name for frame %s, like Intro, A, B, Chorus, Bridge or Outro:"), static_cast<LPCTSTR>(FrameText(First)));
+		Prompt.Format(_T("Name for frame %s (like Intro, A, B or Chorus):"), static_cast<LPCTSTR>(FrameText(First)));
 	else
-		Prompt.Format(_T("A name for frames %s to %s, like Intro, A, B, Chorus, Bridge or Outro:"),
+		Prompt.Format(_T("Name for frames %s to %s (Intro, A, B, Chorus...):"),
 			static_cast<LPCTSTR>(FrameText(First)), static_cast<LPCTSTR>(FrameText(Last)));
 	CClipNameDlg Dialog(_T("Name section"), Prompt, SuggestedName(List, First, Last), m_pMainFrame, ftapi::MAX_SECTION_NAME);
 	if (Dialog.DoModal() != IDOK)

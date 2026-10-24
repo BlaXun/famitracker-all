@@ -9,9 +9,10 @@ which plays the tracks as OGG files.
 - **Keep songs readable everywhere.** The piano roll is another view of the
   same pattern data, profiles live in program settings, and presets are
   ordinary `.fti` files. Songs must keep opening in vanilla FamiTracker,
-  0CC/Dn-FamiTracker and FamiStudio. The one addition to the `.ftm` file is
-  the recorder's clips, in a block of their own (`BF CLIPS`) that other
-  versions skip; there, linked copies are ordinary notes.
+  0CC/Dn-FamiTracker and FamiStudio. The additions to the `.ftm` file are
+  blocks of their own that other versions skip: the recorder's clips
+  (`BF CLIPS`; there, linked copies are ordinary notes) and the tracks'
+  named sections (`BF SECTIONS`).
 - **Stay in the UI and export layers.** The NSF driver is binary-only in this
   repo (see CLAUDE.md), so no feature may need new driver commands.
 - **Full FamiTracker stays one click away** through a "Show everything" option.
@@ -30,6 +31,16 @@ through the `next` branch (its build is the `build-next` pre-release, and
 library and the drum grid (3), profiles (4), tutorials (6), and the clips
 panel, which keeps the song's clips in sight beside the pattern editor.
 What's left of the plan is listed under each step.
+
+Named sections (`feat-sections`, October 2026): a track's frames can be
+named (Intro, A, B, Bridge, Outro), so a song's form is something to see
+and talk about. The frame editor shows each section as a coloured band
+beside its frames, with where the song loops back to; right-click names,
+renames, selects, moves and duplicates sections, each one Ctrl+Z, and
+frames inserted, removed, moved or duplicated keep their sections. The
+piano roll's ruler names them at their first bar, and Claude Code names
+them as it builds a song (`name_section`) and takes a section's name in
+place of bars (see `MCP.md`).
 
 ## 1. Foundation
 

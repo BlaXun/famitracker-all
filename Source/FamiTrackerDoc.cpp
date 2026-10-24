@@ -39,11 +39,9 @@
 
 */
 
-// The sections' standard headers come before stdafx.h, whose DEBUG_NEW macro
-// would otherwise rewrite the placement new inside the standard library
-#include "Api/Sections.h"
 #include "stdafx.h"
 #include <algorithm>
+#include "Api/Sections.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "TrackerChannel.h"

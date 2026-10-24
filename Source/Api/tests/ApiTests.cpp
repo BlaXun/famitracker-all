@@ -6825,6 +6825,23 @@ void TestSectionTools()
 		CHECK_HAS(Run(Song, "copy_bars", "{\"at_bar\": 5}").Text, "Say which bars to copy");
 	}
 
+	// A version, kept or made, has the sections too
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Info.Sections.push_back(Section("A", 0, 0));
+		Song.Info.Sections.push_back(Section("B", 1, 2));
+		CHECK(!Run(Song, "keep_version", "{}").IsError);
+		CHECK_EQ(Song.Current, 0);
+		CHECK_EQ(Layout(Song.Tracks.back().Sections), "A 0-0, B 1-2");
+		CHECK(!Run(Song, "make_version", "{\"version\": \"night\"}").IsError);
+		CHECK_EQ(Song.Current, 2);
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-2");
+		CHECK(!Run(Song, "select_track", "{\"track\": 1}").IsError);
+		Song.Info.Sections.clear();
+		CHECK(!Run(Song, "keep_version", "{}").IsError);
+		CHECK(Song.Tracks.back().Sections.empty());
+	}
+
 	// The instructions teach it
 	CHECK_HAS(ToolSet::Instructions(), "name_section");
 }

@@ -758,6 +758,24 @@ std::string SectionsText(const Session &S, const SectionList &List)
 	return Text;
 }
 
+// A version of the track, added as a track of its own laid out frame by
+// frame like this one (Channels its cells), keeps the sections; when it
+// can't, the version is there all the same
+void SectionsToVersion(Session &S, const std::vector<std::vector<Cell> > &Channels)
+{
+	if (S.Song.Sections.empty())
+		return;
+	const size_t Length = static_cast<size_t>(std::max(1, S.Song.PatternLength));
+	size_t Rows = Length;
+	for (size_t c = 0; c < Channels.size(); ++c)
+		Rows = std::max(Rows, Channels[c].size());
+	SectionList List = S.Song.Sections;
+	SectionsFrameCount(List, std::min(S.Song.MaxFrames, static_cast<int>((Rows + Length - 1) / Length)));
+	std::string Ignored;
+	if (!List.empty())
+		S.Host().SetSections(List, Ignored);
+}
+
 // The section an argument names; a Problem saying which there are when there's none of that name
 const Section &SectionArg(const Session &S, const Json &Args, const char *Name)
 {
@@ -8793,6 +8811,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 	const int Track = S.Host().AddTrack(Name, Channels, Speed, Tempo, Error);
 	if (Track < 0)
 		throw Problem("The version couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	SectionsToVersion(S, Channels);
 
 	std::string What;
 	for (size_t i = 0; i < Done.size(); ++i)
@@ -10921,6 +10940,7 @@ std::string KeepVersionTool(Session &S, const Json &Args)
 	const int Track = S.Host().AddTrack(Name, Channels, S.Song.Speed, S.Song.Tempo, Error);
 	if (Track < 0)
 		throw Problem("The version couldn't be kept: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
+	SectionsToVersion(S, Channels);
 	if (!S.Host().SelectTrack(Here, Error))
 		throw Problem(Format("Kept it as track %d \"%s\", but FamiTracker shows that one now: %s", Track + 1, Name.c_str(),
 			Error.c_str()));
