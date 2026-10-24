@@ -357,7 +357,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 
 | Tool | What it does |
 |---|---|
-| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader or pan in FamiTracker's mixer is off its default (see [The mixer](#the-mixer)) |
+| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)") |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
@@ -382,7 +382,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
-| `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add) and starting pans (`pan`) in FamiTracker's mixer, or puts them back (`reset`); `write_into_notes` writes the whole mixer into the notes for NSF files, in every track, and sets it back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
+| `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
@@ -410,7 +410,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes, pans or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
-| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders and starting pans, see [The mixer](#the-mixer)) plays in them |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -686,6 +686,44 @@ counts the faders when it weighs how loud parts sound (`mix`, the review,
 the echo and the harmony). For a mix that NSF files keep too, the notes'
 own volumes (`mix`) are the better place; the mixer suits quick balancing
 while you listen, and the game's OGG files.
+
+### Soft and Space
+
+Under each strip's pan are two knobs, **Soft** and **Space**, both off (0)
+unless you turn them up to 100. They add a little depth that the NES never
+had, so they're optional and meant for the game's OGG files: FamiTracker's
+playback, File > Create WAV and File > Export for games play them, NSF files
+never do (NSF export says so), and with both at 0 everywhere the sound is
+exactly what it was.
+
+- **Soft** rounds off a channel's edges with a gentle low-pass, from barely
+  there at 1 to warm at 100 (about 7 dB off the sound over 2 kHz). A pulse
+  or a sawtooth still sounds like that chip, never muffled: at 100 it's
+  still brighter than a triangle at the same pitch.
+- **Space** sends that much of the channel (after its fader) to the space
+  all channels share: a reverb in a room, with an echo, coming back on both
+  sides. Choose the room, the echo and its repeats at the top of the mixer:
+  a small room, a hall, a cathedral, a cave, or none (the echo alone); the
+  echo in beats of the playing track's tempo (off, 1/4 to 2 beats) and how
+  many times it repeats (1-8, each quieter). One space for the whole song.
+- Drag a knob up or down (Shift for finer steps), turn it with the mouse
+  wheel, or double-click it to turn it off. Each change is one Ctrl+Z, a drag
+  one for the drag; right-click a strip to turn both off.
+- Use them sparingly: a little Space on pads and chords, a lead or an echo
+  in a big place like a cave or a cathedral, Soft on a pulse or a sawtooth
+  that should sound warm. Leave the bass and the drums dry.
+- The space rings on after the notes: when a song stops, File > Create WAV
+  keeps rendering until its tail has died away, and **Export for games**
+  takes the loop from the song's second time through, whose start already
+  has the tail of the end, so the loop's jump back keeps the echo going. A
+  song that halts keeps its tail.
+- Write into the notes leaves Soft and Space in the mixer: notes can't hold
+  them.
+
+Claude sets them with `set_mixer` (`soft`, `space`, and `room`, `echo`,
+`repeats` for the space: "a little space on the pads in a hall", "put the
+lead in a cave with a half-beat echo") and counts each channel's level
+before them in `mix` and the review.
 
 ## Expansion chips
 
@@ -1297,8 +1335,8 @@ peak softened, makes them match).
 
 The song has to be saved, since the files go next to it; files of the same
 names are replaced. "Normal" quality suits chiptunes; "Best" makes bigger
-files. The files play the song as FamiTracker does, with the mixer's faders
-and pans (View > Mixer). Every channel is in the files, also the ones muted in the pattern
+files. The files play the song as FamiTracker does, with the mixer's faders,
+pans, Soft and Space (View > Mixer). Every channel is in the files, also the ones muted in the pattern
 editor; they're muted again afterwards.
 
 A track whose notes click on the 2A03's pulses (see "Clicks in held notes
@@ -1377,9 +1415,10 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   `Sections` (a track's named runs of frames, kept with their frames as
   frames go in, come out, move or are copied, and the `BF SECTIONS` block,
   read with every read checked; the frame editor, the piano roll's ruler
-  and `CFrameAction` use it too), `ChannelMix` (the mixer window's faders
-  and starting pans by channel ID, and the `BF MIXER` block, read the same
-  way),
+  and `CFrameAction` use it too), `ChannelMix` (the mixer window's faders,
+  starting pans, Soft and Space by channel ID, the space they send to, and
+  the `BF MIXER` block, version 2 only when Soft, Space or the space is
+  used, read the same way),
   `Arrange` (chord parts in styles, bass lines, drum grooves with fills, a
   harmony voice, a counter-melody), `Picture` and `Png` (the piano-roll
   picture, a palette PNG with its own small deflate), `Jingles` (the

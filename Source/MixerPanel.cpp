@@ -56,7 +56,7 @@ const int BUTTON_ROW = 20;				// mute and solo
 const int BUTTON_WIDTH = 26;
 const int PAN_ROW = 28;					// the pan's slider, where it is under it
 const int DEPTH_ROW = 42;				// the Soft and Space knobs, their names under them
-const int KNOB = 24;
+const int KNOB_SIZE = 24;
 const int READOUT = 14;					// the fader's dB under it
 const int MARGIN = 4;
 const int MIN_FADER = 60;
@@ -380,7 +380,7 @@ CRect CMixerPanelWnd::KnobRect(int Channel, part_t Part) const
 	const CRect Strip = StripRect(Channel);
 	const int Top = Strip.top + SY(NAME_HEIGHT + BUTTON_ROW + PAN_ROW) + SY(2);
 	const int x = Strip.left + (Part == PART_SOFT ? Strip.Width() / 4 : Strip.Width() * 3 / 4) + SX(1);
-	return CRect(x - SX(KNOB / 2), Top, x + SX(KNOB / 2), Top + SY(KNOB));
+	return CRect(x - SX(KNOB_SIZE / 2), Top, x + SX(KNOB_SIZE / 2), Top + SY(KNOB_SIZE));
 }
 
 int CMixerPanelWnd::FaderY(int Channel, int Level) const

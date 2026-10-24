@@ -284,6 +284,15 @@ channel along the bottom of the window (see `MCP.md`, The mixer).
 - File > Export for games has a Loudness choice (as loud as it goes, or a
   calm place, most tracks or action at -22, -20 or -19 LUFS), so the
   game's tracks can sound equally loud.
+- Done (October 2026, on `feat-space`): depth without using up channels.
+  Each strip has two knobs, Soft (a gentle low-pass that rounds a pulse's
+  or a sawtooth's edges) and Space (a send to one reverb with an echo that
+  the whole song shares: a small room, a hall, a cathedral, a cave or the
+  echo alone, the echo in beats of the track's tempo, 1-8 repeats). Both
+  are off unless turned up, not the NES's own, so NSF files leave them out;
+  playback, WAV files and the game's OGG files have them, the loops with
+  the space's tail carried into their start. Claude sets them with
+  `set_mixer`, sparingly.
 
 ## Feature branches
 
