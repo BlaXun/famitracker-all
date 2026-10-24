@@ -320,6 +320,15 @@ Plus).
 - Claude Code knows it: `set_expansion` takes "VRC6 Plus", and the tools
   keep the soft layer under the VRC6 and reach for it when you ask for
   something softer, warmer or deeper.
+- Later (on the backlog, the user's call on 24 October): sounds of your own
+  for the soft layer. `design_instrument` and `reference_sound` don't take
+  its channels yet, so it plays its built-in sounds as they are. Their
+  shapes cover pads, echoes, glints and bells; missing are a lead that
+  swells in and then sinks, a pad quick enough for a chord every beat (the
+  pads swell in over 20-24 frames), and a pad struck again and again with
+  a soft echo. The cheaper first step is three or four more built-in soft
+  sounds with those shapes; design support after that, if a track needs
+  more. A song holds at most 8 soft-layer sounds, 4 of them the starters.
 
 ## Feature branches
 
