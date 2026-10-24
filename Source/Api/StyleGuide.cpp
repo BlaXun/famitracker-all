@@ -42,8 +42,8 @@ struct Section {
 // Super Mario Bros. 2 and 3 found (study_nsf's numbers), and studies of
 // modern FamiTracker modules (the atmospheric section), as craft to write
 // with; and the studies of Castlevania, Castlevania III (the Japanese
-// version, Akumajou Densetsu, with the VRC6: its sawtooth plays every bass
-// line and the triangle never sounds), Super C, The Legend of Zelda,
+// version, Akumajou Densetsu, with the VRC6: its sawtooth plays the bass
+// and the triangle never sounds), Super C, The Legend of Zelda,
 // Kid Icarus (the Famicom Disk System original), Gyromite, Punch-Out!!,
 // Dr. Mario, Final Fantasy III, Journey to Silius, Strider and Nintendo World
 // Cup (October 2026): the sections from castlevania to technos, and the dark
@@ -106,15 +106,15 @@ const Section SECTIONS[] = {
 		"Feel: gothic and driven; 112.5-200 BPM at 4 rows a beat (129, speed 7, the commonest; 200 for Super C's late "
 		"stages and bosses and three of Castlevania III's stages), almost always minor (8 of 10 Castlevania tracks, 17 of "
 		"23 in Castlevania III, every Super C stage). The Castlevania III studied is the Japanese version, Akumajou "
-		"Densetsu, with the VRC6: two more pulses and a sawtooth, which plays every bass line while the triangle never "
-		"sounds.\n"
+		"Densetsu, with the VRC6: two more pulses and a sawtooth, which plays the bass while the triangle never sounds.\n"
 		"- Quiet pulses over a loud bass: Castlevania's lead and second part mostly at volume 4-6 over the triangle, which "
 		"has no volume and carries the weight; Castlevania III's sawtooth bass mostly at 12 (of 15) under a VRC6 lead at "
 		"7-9, its echo or second part at 4-5, and 2A03 pulses at 4-6 whose echoes drop to 2-3. mix style soft, then the "
 		"pulses' levels lower still.\n"
 		"- Seven voices with the VRC6: the lead on a VRC6 pulse in most of Castlevania III's tracks (17 of 23 by the "
-		"studies' count), the other VRC6 pulse its echo or a second part, the sawtooth the bass, the 2A03 pulses inner "
-		"lines, chords between them and the quietest echoes, the noise and DPCM the drums; the triangle stays silent.\n"
+		"studies' count), the other VRC6 pulse its echo or a second part, the sawtooth the bass (on the password screen "
+		"the tune, over a bass on the VRC6 pulses), the 2A03 pulses inner lines, chords between them and the quietest "
+		"echoes, the noise and DPCM the drums; the triangle stays silent.\n"
 		"- Duty by mood in Castlevania: 50% and 75% for the stages, 12.5% for the dark pieces (Dracula's quarters, a boss, "
 		"the final battle). Super C plays 25% with a duty click (a 12.5% or 50% first frame); Castlevania III's VRC6 "
 		"pulses mostly 31% (VRC6 duty 4; then 44%, 37.5% and 19%), a note's first frame most often at 6.25% (40 of their "
@@ -299,10 +299,10 @@ const Section SECTIONS[] = {
 		"attack.\n"
 		"- Expansion chips: Castlevania III's VRC6 version gives the bass to the sawtooth in octaves 0-2 and never sounds "
 		"the triangle; in its dark pieces the sawtooth holds a low pedal in notes of a bar or more that swell in, strikes "
-		"the tonic on every beat or doubles a pulse's line, the VRC6 pulses carry the lead (mostly 31-44% duty, often "
-		"after a 6.25% first frame) and its echo at about half its volume, and the 2A03 pulses take inner lines, carpets "
-		"and the quietest echoes (2-3). On the FDS, Kid Icarus's lead: a sawtooth-ramp wave, a slow modulator vibrato "
-		"(speed about 34, depth 5), a 5-9-frame swell and a 67-frame fade." },
+		"the tonic on every beat or doubles a pulse's line, the VRC6 pulses carry most leads (mostly 31-44% duty, often "
+		"after a 6.25% first frame) and their echoes at about half the volume, and the 2A03 pulses take inner lines, "
+		"carpets and the quietest echoes (2-3), or a low tune a VRC6 pulse doubles. On the FDS, Kid Icarus's lead: a "
+		"sawtooth-ramp wave, a slow modulator vibrato (speed about 34, depth 5), a 5-9-frame swell and a 67-frame fade." },
 	{ "melancholy", "Melancholic and sad (laments, night, loss, endings)",
 		"melancholy melancholic sad sorrow sorrowful tragic tragedy loss grief lament requiem mournful lonely night "
 		"nocturne farewell funeral memorial wistful bittersweet rain goodbye",
