@@ -12616,6 +12616,9 @@ void TestFindSound()
 
 
 
+
+
+
 // calm-sounds tests
 // A sequence of a song's instrument as it was made (FakeSong::Made), on its chip
 const PresetSequence *MadeSequence(const FakeSong &Song, int Index, int Type)
@@ -13072,6 +13075,48 @@ void TestVrc6DutiesAndStrikes()
 	CHECK(QV.Release - QV.Loop + 1 == 4 && QV.Items[static_cast<size_t>(QV.Loop)] < 11 && QV.Items[static_cast<size_t>(QV.Loop) + 1] > 11 &&
 		(QV.Loop + 1) % 4 == 0);
 }
+
+void TestSoftDesign()
+{
+	// design_instrument on a soft channel: a wave sound's waves, in their order, with the design's volume, arpeggio and pitch
+	FakeSong Song;
+	Song.Info.Speed = 12;
+	Song.Info.Tempo = 150;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Night pad\", \"channel\": \"Soft 2\", \"wave\": \"string pad\", "
+		"\"attack\": 6, \"decay\": \"none\", \"sustain\": \"full\", \"volume\": 10, \"release\": \"long\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(N163 instrument, the string pad's waves): a wave sound that reaches 10 6 frames in, holds, and fades over "
+		"20 frames after a release (===);");
+	CHECK_HAS(Result.Text, "; its wave takes samples 64-79 of the 128");
+	CHECK_HAS(Result.Text, "Volume a frame at a time: 1 3 4 6 7 9 10, holding 10 while the note lasts");
+	const std::map<int, WaveSound>::const_reverse_iterator Pad = Song.MadeWaves.rbegin();
+	CHECK(Pad != Song.MadeWaves.rend() && Pad->second.Name == "Night pad" && Pad->second.Waves == FindWaveSound("string pad")->Waves);
+	if (Pad != Song.MadeWaves.rend()) {
+		CHECK(SequenceOf(Pad->second.Sequences, SEQUENCE_DUTY)->Items == SequenceOf(FindWaveSound("string pad")->Sequences,
+			SEQUENCE_DUTY)->Items);
+		const PresetSequence *pV = SequenceOf(Pad->second.Sequences, SEQUENCE_VOLUME);
+		CHECK(pV != 0 && pV->Items[6] == 10 && pV->Release == 6);
+		CHECK(SongInstrument(Song, Pad->first) != 0 && SongInstrument(Song, Pad->first)->WavePos == 64);
+	}
+	// By kind: a breath plays the soft layer's breath's waves, with the calm kind's envelope and its faint vibrato
+	Result = Run(Song, "design_instrument", "{\"name\": \"Soft night\", \"kind\": \"breath\", \"channel\": \"Soft 1\", \"duty\": \"50%\"}");
+	CHECK_HAS(Result.Text, "(N163 instrument, the breath's waves): a wave sound that blooms from 4 to 15 12 frames in");
+	CHECK_HAS(Result.Text, " (without the duty asked for: its timbre is the waves')");
+	CHECK(Song.MadeWaves.rbegin()->second.Waves == FindWaveSound("breath")->Waves &&
+		SequenceOf(Song.MadeWaves.rbegin()->second.Sequences, SEQUENCE_PITCH)->Items == FaintVibrato(24));
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Soft box\", \"kind\": \"music box\", \"channel\": \"Soft 3\"}").Text,
+		"(N163 instrument, the music box's waves)");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Plain\", \"channel\": \"Soft 4\"}").Text, "the soft flute's waves");
+	// Mistakes: a name the song has, a wave it doesn't, a full memory, no N163
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"night pad\", \"channel\": \"Soft 2\"}").Text,
+		"already has an N163 instrument called \"Night pad\"");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Y\", \"channel\": \"Soft 2\", \"wave\": \"kazoo\"}").Text,
+		"wave: on N163 channels, the wave sound whose waves it plays: soft flute, ");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Z\", \"channel\": \"Soft 2\"}").Text, "The N163's wave memory is full");
+	FakeSong Plain;
+	CHECK_HAS(Run(Plain, "design_instrument", "{\"name\": \"Z\", \"chip\": \"N163\"}").Text, "This song has no N163 channels");
+}
 // end of calm-sounds tests
 
 int main()
@@ -13183,6 +13228,7 @@ int main()
 	TestFaintVibrato();
 	TestSoftCalmSounds();
 	TestVrc6DutiesAndStrikes();
+	TestSoftDesign();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

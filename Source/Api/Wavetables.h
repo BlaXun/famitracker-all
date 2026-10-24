@@ -63,6 +63,12 @@ const std::vector<WaveSound> &WaveSounds();
 const WaveSound *FindWaveSound(const std::string &Name);	// by name or one of its words
 std::string WaveSoundList();							// "soft flute, drawbar organ, ..."
 
+// design_instrument on an N163 channel: the wave sound whose waves a sound of its Kind plays when no wave is named (the
+// soft flute for a lead, the string pad for a pad, the breath and the music box for theirs); never 0
+const WaveSound *WaveSoundForKind(const std::string &Kind);
+// Base's waves, following each other as in Base, with Design's volume, arpeggio and pitch, named Name
+WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, const std::string &Name);
+
 // The samples of wave memory with Channels N163 channels in use (16 go to
 // each channel's registers)
 int N163WaveMemory(int Channels);

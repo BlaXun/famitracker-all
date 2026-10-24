@@ -3398,8 +3398,10 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	}
 	if (Chip == "VRC7")
 		throw Problem("VRC7 channels play the chip's own built-in sounds: add_instrument picks one by name (" + Vrc7PatchList() + ").");
-	if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B")
-		throw Problem("design_instrument makes sounds for 2A03 (and MMC5), VRC6, FDS and 5B channels.");
+	if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B" && Chip != "N163")
+		throw Problem("design_instrument makes sounds for 2A03 (and MMC5), VRC6, FDS, 5B and N163 channels.");
+	if (Chip == "N163" && !HasChip(S.Song, "N163"))
+		throw Problem("This song has no N163 channels; set_expansion switches it to the VRC6 Plus (a soft layer of four) or the N163.");
 	if (Chip == "FDS" && !HasChip(S.Song, "FDS"))
 		throw Problem("This song has no FDS channel; set_expansion switches it to the FDS.");
 	if (Chip == "VRC6" && !HasChip(S.Song, "VRC6"))
@@ -3585,6 +3587,29 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		return "Added " + InstrumentLabel(S.Song, Index) + " (FDS instrument): " + F.Description + "." + VanishRemark(S.Song, Index) +
 			" Use it by name in write_notes, set_instrument or a part tool's instrument; the FDS sounds two octaves under the note "
 			"written. Play a few notes so the user hears it.";
+	}
+
+	// N163 channels (the VRC6 Plus's soft layer): a wave sound's waves, following each other as in it, with the design's
+	// volume, arpeggio and pitch
+	if (Chip == "N163") {
+		const std::string WaveName = StringArg(Args, "wave");
+		const WaveSound *pBase = WaveName.empty() ? WaveSoundForKind(Kind.empty() ? "lead" : Kind) : FindWaveSound(WaveName);
+		if (pBase == 0)
+			throw Problem("wave: on N163 channels, the wave sound whose waves it plays: " + WaveSoundList() + ".");
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+			if (Lowercase(S.Song.Instruments[i].Name) == Lowercase(Name) && S.Song.Instruments[i].Chip == "N163")
+				throw Problem(Format("The song already has an N163 instrument called \"%s\"; give the new sound another name.",
+					S.Song.Instruments[i].Name.c_str()));
+		const WaveSound Sound = DesignedWaveSound(*pBase, D, Name);
+		std::string Where;
+		const int Index = AddWaveInstrument(S, Sound, Where);
+		const std::string Unused = Arg(Args, "duty") != 0 || Arg(Args, "duty_motion") != 0 || Arg(Args, "click") != 0 ?
+			" (without the duty asked for: its timbre is the waves')" : "";
+		return "Added " + InstrumentLabel(S.Song, Index) + " (N163 instrument, the " + pBase->Name + "'s waves): " +
+			DescribeDesign(D, S.Song.FrameRate, "N163") + Unused + (Where.empty() ? std::string() : "; " + Where) + "." +
+			VolumeTimeline(SequencesInfo(Sound.Sequences, "N163"), FramesPerBeat, BeatsPerMinute(S.Song.Speed, S.Song.Tempo,
+			S.Song.FrameRate, S.Time.RowsPerBeat)) + NoRestrike + VanishRemark(S.Song, Index) + " Use it by name in write_notes, "
+			"set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 	}
 
 	// A new name, so an instrument the song uses doesn't change under it
@@ -14968,7 +14993,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"click, a decay in steps, held notes struck again, an echo after the note, a pitch flick, a bass that thumps; on the "
 		"noise channel a kick, snare, hi-hat, crash or tom, darker or brighter, shorter or longer, or a swell that rises and "
 		"washes out (waves, wind; any other kind there is its volume envelope alone). On the FDS channel a wave by word and "
-		"its modulator: a wobble, a tremble, a growl. Start from a kind (" +
+		"its modulator: a wobble, a tremble, a growl. On N163 channels (the VRC6 Plus's soft layer) a wave sound's waves "
+		"(wave), shaped by the envelope, vibrato and pitch arguments. Start from a kind (" +
 		DesignKinds() + ") and change what should differ. Envelope times are in frames, 60 a second.",
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
@@ -14978,9 +15004,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"vibrato after half a beat), falling strike (struck, falls to 6 over 14 frames and holds); the classic articulations: "
 				"bloom lead, stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
-			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS" }))
-			.Add("wave", Prop("string", ("FDS only: its wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad "
-				"a voice, a bass deep and round).").c_str()))
+			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS",
+				"N163" }))
+			.Add("wave", Prop("string", ("The FDS's wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad a voice, "
+				"a bass deep and round); on N163 channels the wave sound whose waves it plays, " + WaveSoundList() + " (default: the "
+				"kind's: a lead the soft flute's, a pad the string pad's, a breath or a music box their own).").c_str()))
 			.Add("modulation", EnumProp("FDS only: what its modulator does to the pitch: none, wobble (widely, three times a "
 				"second), tremble (widely, five times a second), growl (35 times a second) or rumble (26).",
 				std::vector<std::string>{ "none", "wobble", "tremble", "growl", "rumble" }))

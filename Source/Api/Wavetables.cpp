@@ -342,6 +342,43 @@ std::string WaveSoundList()
 	return Out;
 }
 
+const WaveSound *WaveSoundForKind(const std::string &Kind)
+{
+	static const char *const KINDS[][2] = {
+		{ "breath", "breath" }, { "musicbox", "music box" }, { "fallingstrike", "electric piano" }, { "pad", "string pad" },
+		{ "strings", "string pad" }, { "violin", "string pad" }, { "swell", "choir pad" }, { "wind", "choir pad" },
+		{ "pluck", "harp" }, { "harp", "harp" }, { "guitar", "harp" }, { "clickpluck", "harp" }, { "echopluck", "harp" },
+		{ "bass", "sub bass" }, { "thumpbass", "sub bass" }, { "keys", "electric piano" }, { "piano", "electric piano" },
+		{ "bell", "glass bell" }, { "chime", "glass bell" }, { "brass", "brass section" }, { "horn", "brass section" },
+		{ "organ", "drawbar organ" }, { "chiptune", "pulse sweep lead" }, { "arp", "pulse sweep lead" },
+		{ "arpeggio", "pulse sweep lead" },
+	};
+	const std::string Wanted = Simple(Kind);
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k)
+		if (Wanted == KINDS[k][0] && FindWaveSound(KINDS[k][1]) != 0)
+			return FindWaveSound(KINDS[k][1]);
+	return FindWaveSound("soft flute");	// a lead
+}
+
+WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, const std::string &Name)
+{
+	WaveSound Out;
+	Out.Name = Name;
+	Out.Words = Base.Words;
+	Out.Description = "designed with design_instrument from the " + Base.Name + "'s waves";
+	Out.Waves = Base.Waves;
+	// The design's volume, arpeggio and pitch (its duty would pick waves), then Base's waves in their order
+	const Preset Made = DesignPreset(Design);
+	for (size_t i = 0; i < Made.Sequences2A03.size(); ++i)
+		if (Made.Sequences2A03[i].Type == SEQUENCE_VOLUME || Made.Sequences2A03[i].Type == SEQUENCE_ARPEGGIO ||
+			Made.Sequences2A03[i].Type == SEQUENCE_PITCH)
+			Out.Sequences.push_back(Made.Sequences2A03[i]);
+	for (size_t i = 0; i < Base.Sequences.size(); ++i)
+		if (Base.Sequences[i].Type == SEQUENCE_DUTY)
+			Out.Sequences.push_back(Base.Sequences[i]);
+	return Out;
+}
+
 int N163WaveMemory(int Channels)
 {
 	return 256 - 16 * std::max(1, std::min(8, Channels));

@@ -141,7 +141,7 @@ struct SoundDesign {
 Preset DesignPreset(const SoundDesign &Design);
 // The design in words: "a 25% pulse that reaches 13 in 2 frames, ..." (Wave
 // "sawtooth" or "triangle" for those channels, which have no duty, and the
-// triangle no volume)
+// triangle no volume; "N163" for a wave sound's waves)
 std::string DescribeDesign(const SoundDesign &Design, int FrameRate, const std::string &Wave = "pulse");
 // A starting point by kind: lead, pad, pluck, bass, keys, bell, brass, strings, organ,
 // chiptune; the calm leads music box, breath and falling strike (CALM_BEAT_FRAMES: as at 75 BPM,

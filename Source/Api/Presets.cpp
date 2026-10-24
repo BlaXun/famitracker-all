@@ -949,7 +949,8 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	static const char *const VRC6_DUTIES[] = { "6.25%", "12.5%", "18.75%", "25%", "31.25%", "37.5%", "43.75%", "50%" };
 	const std::string DutyText = D.Vrc6Duty >= 0 ? VRC6_DUTIES[Clamp(D.Vrc6Duty, 0, 7)] : DUTIES[Clamp(D.Duty, 0, 3)];
 	const int Sustain = Clamp(D.Sustain, 0, Clamp(D.Peak, 1, 15));
-	const bool Pulse = Wave != "sawtooth" && Wave != "triangle" && Wave != "square";	// "square": the 5B's
+	// "square": the 5B's; "N163": a wave sound's waves
+	const bool Pulse = Wave != "sawtooth" && Wave != "triangle" && Wave != "square" && Wave != "N163";
 	std::string Out;
 	if (Wave == "triangle") {
 		// No volume: the envelope only starts the note and stops it at silence
@@ -962,7 +963,7 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	}
 	else {
 		std::snprintf(Buffer, sizeof(Buffer), "a %s that %s %d %s", Wave == "noise" ? "noise envelope" : Pulse ?
-			(DutyText + " pulse").c_str() : Wave == "square" ? "5B square (its levels as on a pulse)" :
+			(DutyText + " pulse").c_str() : Wave == "square" ? "5B square (its levels as on a pulse)" : Wave == "N163" ? "wave sound" :
 			"sawtooth", D.AttackFrom > 0 && D.Attack > 0 ? ("blooms from " + std::to_string(Clamp(D.AttackFrom, 1, 15)) + " to").c_str() :
 			"reaches", Clamp(D.Peak, 1, 15), D.Attack <= 0 ? "at once" :
 			(std::to_string(D.Attack) + (D.Attack == 1 ? " frame in" : " frames in")).c_str());
