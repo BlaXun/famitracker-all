@@ -3221,6 +3221,91 @@ int WordArg(const Json &Args, const char *Name, int Default, const char *const *
 	return IntArg(Args, Name, Default, 0, Max);
 }
 
+// A share of a beat in words: "a beat", "half a beat", "0.9 of a beat", "1.5 beats"
+std::string BeatShare(double Beats)
+{
+	if (std::fabs(Beats - 1.0) < 0.05)
+		return "a beat";
+	if (std::fabs(Beats - 0.5) < 0.03)
+		return "half a beat";
+	return Format(Beats < 1.0 ? "%.2g of a beat" : "%.2g beats", Beats);
+}
+
+// An instrument's volume sequence a frame at a time, as FamiTracker reports it, and what it means in time at the song's
+// tempo (Bpm, FramesPerBeat): when it peaks, is down to half, holds or falls silent, is struck again, and how a release
+// fades it (design_instrument's answer, so the shape is known before a tune is written on it)
+std::string VolumeTimeline(const InstrumentInfo &Info, double FramesPerBeat, double Bpm)
+{
+	const std::vector<int> &V = Info.Volume;
+	const int Items = static_cast<int>(V.size());
+	if (Items == 0)
+		return std::string();
+	const int Release = Info.VolumeRelease >= 0 && Info.VolumeRelease < Items ? Info.VolumeRelease : -1;
+	const int Loop = Info.VolumeLoop >= 0 && Info.VolumeLoop < Items ? Info.VolumeLoop : -1;
+	const int Held = Release >= 0 ? Release : Items - 1;	// the last frame before a release
+	auto Join = [&V](int From, int To) {
+		std::string Out;
+		for (int i = From; i <= To; ++i)
+			Out += (i == From ? "" : " ") + std::to_string(V[static_cast<size_t>(i)]);
+		return Out;
+	};
+	// Frames, and in beats when that's a quarter of a beat or more
+	const double Beat = std::max(1.0, FramesPerBeat);
+	auto Frames = [Beat](const std::string &Before, int Count, const char *After) {
+		return Before + " " + std::to_string(Count) + After + (Count >= Beat / 4 ? " (" + BeatShare(Count / Beat) + ")" : std::string());
+	};
+	int PeakAt = 0;
+	for (int i = 1; i <= Held; ++i)
+		if (V[static_cast<size_t>(i)] > V[static_cast<size_t>(PeakAt)])
+			PeakAt = i;
+	const int Peak = V[static_cast<size_t>(PeakAt)];
+	int HalfAt = -1;
+	for (int i = PeakAt + 1; i <= Held && HalfAt < 0; ++i)
+		if (V[static_cast<size_t>(i)] * 2 <= Peak)
+			HalfAt = i;
+	std::vector<std::string> When;
+	if (PeakAt >= 4)	// a swell
+		When.push_back(Frames("peaks on frame", PeakAt, ""));
+	std::string Out = " Volume a frame at a time: " + Join(0, Held);
+	if (Loop >= 0 && Loop <= Held) {
+		Out += Format(", again from frame %d while the note lasts", Loop);
+		When.push_back(Frames("is struck again every", Held - Loop + 1, " frames"));
+	}
+	else if (Release >= 0) {
+		const int Hold = V[static_cast<size_t>(Release)];
+		int HoldAt = Release;
+		while (HoldAt > PeakAt && V[static_cast<size_t>(HoldAt - 1)] == Hold)
+			--HoldAt;
+		Out += Format(", holding %d while the note lasts", Hold);
+		if (HalfAt >= 0 && HalfAt < HoldAt)
+			When.push_back(Format("is down to half (%d) on frame %d", V[static_cast<size_t>(HalfAt)], HalfAt));
+		if (Hold < Peak)
+			When.push_back(Frames(Format("holds %d from frame", Hold), HoldAt, ""));
+	}
+	else {
+		int Silent = Items;	// silent for good from here
+		while (Silent > 0 && V[static_cast<size_t>(Silent - 1)] == 0)
+			--Silent;
+		if (HalfAt >= 0)
+			When.push_back(Format("is down to half (%d) on frame %d", V[static_cast<size_t>(HalfAt)], HalfAt));
+		When.push_back(Silent < Items ? Frames("is silent from frame", Silent, "") : Format("then holds %d until the next note", V.back()));
+	}
+	if (Release >= 0 && Release + 1 < Items) {
+		Out += "; after a release (===): " + Join(Release + 1, Items - 1);
+		int Fade = Release + 1;
+		while (Fade < Items && V[static_cast<size_t>(Fade)] > 0)
+			++Fade;
+		When.push_back(Frames("fades out in", Fade - Release, " frames after a release"));
+	}
+	Out += ".";
+	if (When.empty())
+		return Out;
+	Out += " At " + FormatNumber(std::floor(Bpm * 10 + 0.5) / 10) + " BPM it ";
+	for (size_t i = 0; i < When.size(); ++i)
+		Out += (i == 0 ? "" : i + 1 == When.size() ? " and " : ", ") + When[i];
+	return Out + ".";
+}
+
 std::string DesignInstrumentTool(Session &S, const Json &Args)
 {
 	const std::string Name = StringArg(Args, "name");
@@ -3275,6 +3360,10 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		Sawtooth = false;
 	}
 	D.Name = Name;
+	// The song's beat, which the arguments in beats go by, and the calm kinds' times (a music box gone within a beat)
+	const double RowsAMinute = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
+	const double FramesPerBeat = RowsAMinute > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / RowsAMinute : 24.0;
+	FitCalmTempo(Kind, FramesPerBeat, D);
 
 	static const char *const ATTACKS[] = { "instant", "fast", "medium", "slow", "swell" };
 	static const int ATTACK_FRAMES[] = { 0, 2, 5, 10, 20 };
@@ -3292,8 +3381,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	static const int DUTY_VALUES[] = { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 2, 2, 0 };
 	static const char *const MOTIONS[] = { "still", "none", "sweep", "open", "wobble", "chorus", "fade" };
 	static const int MOTION_VALUES[] = { DUTY_STILL, DUTY_STILL, DUTY_SWEEP, DUTY_SWEEP, DUTY_WOBBLE, DUTY_WOBBLE, DUTY_FADE };
-	static const char *const VIBRATOS[] = { "none", "gentle", "medium", "strong" };
-	static const int VIBRATO_DEPTHS[] = { 0, 1, 2, 3 };
+	static const char *const VIBRATOS[] = { "none", "faint", "gentle", "medium", "strong" };
+	static const int VIBRATO_DEPTHS[] = { 0, VIBRATO_FAINT, 1, 2, 3 };
 	static const char *const PITCHES_WORDS[] = { "none", "blip", "scoop", "drop", "flick", "thump" };
 	static const int PITCH_VALUES[] = { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP, PITCH_FLICK, PITCH_THUMP };
 	static const char *const DECAY_STYLES[] = { "smooth", "steps", "stepped" };
@@ -3314,6 +3403,15 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	D.Echo = BoolArg(Args, "echo", D.Echo);
 	D.Decay = WordArg(Args, "decay", D.Decay, DECAYS, DECAY_FRAMES, 4, 120);
 	D.Peak = IntArg(Args, "volume", D.Peak, 1, 15);
+	if (Arg(Args, "volume") != 0 && IsCalmKind(Kind)) {
+		// Where its swell starts and what it holds, in proportion to the peak given (unless given too)
+		SoundDesign Fit = D;
+		FitCalmPeak(Kind, Fit);
+		if (Arg(Args, "attack_from") == 0 && Lowercase(StringArg(Args, "attack")) != "bloom")
+			D.AttackFrom = Fit.AttackFrom;
+		if (Arg(Args, "sustain") == 0)
+			D.Sustain = Fit.Sustain;
+	}
 	if (Arg(Args, "decay") != 0 && D.Decay == 0 && Arg(Args, "sustain") == 0)
 		D.Sustain = D.Peak;	// no decay: it holds at its peak
 	D.Sustain = std::min(D.Peak, WordArg(Args, "sustain", D.Sustain, SUSTAINS, SUSTAIN_LEVELS, 5, 15));
@@ -3328,19 +3426,25 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	D.Release = WordArg(Args, "release", D.Release, RELEASES, RELEASE_FRAMES, 3, 60);
 	D.Duty = WordArg(Args, "duty", D.Duty, DUTIES, DUTY_VALUES, 14, 0);
 	D.Motion = WordArg(Args, "duty_motion", D.Motion, MOTIONS, MOTION_VALUES, 7, 0);
-	D.Vibrato = WordArg(Args, "vibrato", D.Vibrato, VIBRATOS, VIBRATO_DEPTHS, 4, 0);
+	D.Vibrato = WordArg(Args, "vibrato", D.Vibrato, VIBRATOS, VIBRATO_DEPTHS, 5, 0);
 	if (Arg(Args, "vibrato_delay_beats") != 0) {
 		const double Beats = NumberArg(Args, "vibrato_delay_beats", 0.5, 0.0, 8.0);
-		const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
-		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
 		D.VibratoDelay = std::max(0, std::min(200, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
 	}
+	else if (D.Vibrato == VIBRATO_FAINT && Arg(Args, "vibrato") != 0 && !IsCalmKind(Kind))
+		D.VibratoDelay = std::max(D.VibratoDelay, 24);	// as late as the calm references' comes in
 	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 6, 0);
 	if (Arg(Args, "restrike_beats") != 0) {
 		const double Beats = NumberArg(Args, "restrike_beats", 0.5, 0.0, 4.0);
-		const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
-		const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
-		D.Restrike = Beats <= 0 ? 0 : std::max(4, std::min(60, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+		D.Restrike = Beats <= 0 ? 0 : std::max(4, std::min(120, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
+	}
+	// A drum is struck once a note, and the triangle has no volume to dip: a restrike would do nothing there
+	std::string NoRestrike;
+	if (D.Restrike > 0 && (D.Drum || Triangle)) {
+		if (Arg(Args, "restrike_beats") != 0)
+			NoRestrike = D.Drum ? " restrike_beats doesn't work on drums, which sound once a note: write the hits as notes." :
+				" restrike_beats doesn't work on the triangle, which has no volume to dip: write the notes again instead.";
+		D.Restrike = 0;
 	}
 	const std::string Chord = Squeezed(StringArg(Args, "arpeggio"));
 	if (!Chord.empty()) {
@@ -3402,8 +3506,6 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		int ModDelay = 0;
 		if (Arg(Args, "modulation_delay_beats") != 0) {
 			const double Beats = NumberArg(Args, "modulation_delay_beats", 0.5, 0.0, 8.0);
-			const double Rows = RowsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
-			const double FramesPerBeat = Rows > 0 ? S.Time.RowsPerBeat * 60.0 * S.Song.FrameRate / Rows : 24.0;
 			ModDelay = std::max(0, std::min(255, static_cast<int>(std::floor(Beats * FramesPerBeat + 0.5))));
 		}
 		FdsSound F;
@@ -3437,11 +3539,27 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	for (size_t i = 0; i < Dropped.size(); ++i)
 		Without += (i == 0 ? "" : i + 1 == Dropped.size() ? " or " : ", ") + Dropped[i];
 	const bool Square = Chip == "5B";
+	const InstrumentInfo *pMade = FindInstrument(S.Song, Index);
+	std::string Timeline, Clicks;
+	if (pMade != 0 && !D.Drum && !Triangle && (Chip == "2A03" || Chip == "VRC6"))
+		Timeline = VolumeTimeline(*pMade, FramesPerBeat, BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate,
+			S.Time.RowsPerBeat));
+	if (pMade != 0 && Chip == "2A03" && !D.Drum && !Triangle && !Noise && D.Vibrato > 0) {
+		// On the 2A03's (and the MMC5's) pulses a vibrato that takes a held note's period across a multiple of 256 clicks
+		const std::vector<int> Pitches = VibratoClickPitches(*pMade);
+		const size_t Shown = std::min<size_t>(Pitches.size(), 4);
+		for (size_t p = 0; p < Shown; ++p)
+			Clicks += (p == 0 ? "" : p + 1 == Shown && Shown == Pitches.size() ? " and " : ", ") + PitchName(Pitches[p]);
+		if (!Clicks.empty())
+			Clicks = " Held on a 2A03 or MMC5 pulse its vibrato clicks on " + Clicks + (Pitches.size() > Shown ?
+				Format(" and %d more", static_cast<int>(Pitches.size() - Shown)) : std::string()) + ": the tools nudge such notes "
+				"with a fine pitch (Pxx) as they write them, and check_song lists any left.";
+	}
 	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + DescribeDesign(D, S.Song.FrameRate,
 		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : Square ? "square" : "pulse") +
 		(Without.empty() ? std::string() : " (without the " + Without + " asked for: on the noise they'd make it warble or ring "
 			"metallic)") + "." + (Square && (Arg(Args, "duty") != 0 || Arg(Args, "duty_motion") != 0 || D.Click) ?
-			" The 5B's square is always 50%, so it plays without the duty." : "") +
+			" The 5B's square is always 50%, so it plays without the duty." : "") + Timeline + Clicks + NoRestrike +
 		(D.Drum || Triangle || Noise ? std::string() : VanishRemark(S.Song, Index)) +
 		" Use it by name in write_notes, set_instrument or a part tool's instrument; play a few notes so the user hears it.";
 }
@@ -6654,14 +6772,14 @@ VibratoPlan VibratoArgs(Session &S, const Json &Args)
 {
 	static const char *const SPEEDS[] = { "slow", "medium", "fast" };
 	static const int SPEED_VALUES[] = { 3, 5, 8 };
-	static const char *const DEPTHS[] = { "none", "gentle", "medium", "strong" };
-	static const int DEPTH_VALUES[] = { 0, 2, 4, 7 };
+	static const char *const DEPTHS[] = { "none", "faint", "gentle", "medium", "strong" };
+	static const int DEPTH_VALUES[] = { 0, 1, 2, 4, 7 };
 	VibratoPlan Plan;
 	Plan.Channel = ChannelArg(S, Args, "channel");
 	if (!IsMelodic(S.Channel(Plan.Channel)))
 		throw Problem("Vibrato is for melodic channels.");
 	Plan.Speed = std::max(1, LevelArg(Args, "speed", 5, SPEEDS, SPEED_VALUES, 3));
-	Plan.Depth = LevelArg(Args, "depth", 2, DEPTHS, DEPTH_VALUES, 4);
+	Plan.Depth = LevelArg(Args, "depth", 2, DEPTHS, DEPTH_VALUES, 5);
 	bool Exact;
 	Plan.MinRows = S.Time.BeatsToRows(NumberArg(Args, "min_beats", 1.0, 0.01, 64.0), Exact);
 	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 0.25, 0.01, 16.0), Exact);
@@ -10560,7 +10678,7 @@ SfxLayerDesign SoundLayerArg(const Json &Item)
 	D.Step = NumberArg(Item, "step", 0.0, -24.0, 24.0);
 	D.Gusts = IntArg(Item, "gusts", 0, 0, 16);
 	D.Flutter = WordNumberArg(Item, "flutter", 0.0, 0.0, 30.0, { { "none", 0 }, { "slow", 4 }, { "medium", 8 }, { "fast", 14 } });
-	D.Vibrato = WordNumberArg(Item, "vibrato", 0.0, 0.0, 12.0, { { "none", 0 }, { "gentle", 0.3 }, { "medium", 0.8 }, { "strong", 2 },
+	D.Vibrato = WordNumberArg(Item, "vibrato", 0.0, 0.0, 12.0, { { "none", 0 }, { "faint", 0.06 }, { "gentle", 0.3 }, { "medium", 0.8 }, { "strong", 2 },
 		{ "wild", 5 } });
 	D.VibratoHz = NumberArg(Item, "vibrato_hz", 6.0, 0.5, 20.0);
 	D.Crackle = WordNumberArg(Item, "crackle", 0.0, 0.0, 1.0, { { "none", 0 }, { "few", 0.25 }, { "some", 0.5 }, { "many", 1 } });
@@ -14789,8 +14907,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema()
 			.Add("name", Prop("string", "The new instrument's name, like \"Hero lead\"."), true)
 			.Add("kind", Prop("string", "What it starts from: lead (default), pad, pluck, bass, keys, bell, brass, strings, organ, "
-				"chiptune, swell (rises and washes out: waves and wind on the noise channel); the classic articulations: bloom lead, "
-				"stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
+				"chiptune, swell (rises and washes out: waves and wind on the noise channel); the calm leads, fitted to the tempo: "
+				"music box (struck, silent in 0.9 of a beat), breath (in from 4 over 12 frames, sinks to 60% and holds, a faint "
+				"vibrato after half a beat), falling strike (struck, falls to 6 over 14 frames and holds); the classic articulations: "
+				"bloom lead, stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS" }))
 			.Add("wave", Prop("string", ("FDS only: its wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad "
@@ -14805,7 +14925,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("attack_from", Prop("integer", "The level the attack starts at, 1-15 (0: from silence); with attack in frames, a "
 				"bloom of your own."))
 			.Add("decay", LevelProp("none (holds at its peak), short, medium, long (by the kind: a bell's long rings longer than a "
-				"lead's), or frames (0-120): how long it takes to fall to the sustain level."))
+				"lead's), or frames (0-120): how long it takes to fall to the sustain level (or to silence), reached on that frame."))
 			.Add("decay_style", EnumProp("smooth (default), or steps: holds, then drops a few levels at a time, like the leads "
 				"of fast action tracks.", std::vector<std::string>{ "smooth", "steps" }))
 			.Add("sustain", LevelProp("The level it holds while the note lasts: none (dies away by itself, like a pluck), low, half, "
@@ -14813,14 +14933,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"frames turns quick notes into blips."))
 			.Add("release", LevelProp("short, medium, long, or frames (0-60): how it fades after a release (===)."))
 			.Add("restrike_beats", Prop("number", "Strike a held note again every so many beats (0.5: eighths), a dip and a rise, "
-				"so long notes keep the rhythm. 0 for none."))
+				"so long notes keep the rhythm; a sound that dies away (a pluck, a music box) is struck again from its peak until a "
+				"release. 0 for none. Not on drums or the triangle."))
 			.Add("echo", Prop("boolean", "A soft echo of the note after it dies away or is released."))
 			.Add("click", Prop("boolean", "A duty click: each note's first frame at another pulse width, so it speaks."))
 			.Add("volume", Prop("integer", "Its loudest, 1-15."))
 			.Add("duty", LevelProp("Pulse width: 12.5% (thin, nasal), 25% (bright), 50% (round, hollow), 75%."))
 			.Add("duty_motion", EnumProp("How the tone moves: still, sweep (opens from thin on the attack), wobble (shimmers to "
 				"and fro), fade (thins as it fades).", std::vector<std::string>{ "still", "sweep", "wobble", "fade" }))
-			.Add("vibrato", EnumProp("A vibrato built into the instrument.", std::vector<std::string>{ "none", "gentle", "medium", "strong" }))
+			.Add("vibrato", EnumProp("A vibrato built into the instrument, either way at A-3: faint (about 3 cents, the calm references'; "
+				"from 24 frames unless vibrato_delay_beats says), gentle (20), medium (40), strong (60).",
+				std::vector<std::string>{ "none", "faint", "gentle", "medium", "strong" }))
 			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
 				"a second)."))
 			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
@@ -15163,7 +15286,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("speed", LevelProp("slow, medium, fast, or 1-15 (default medium)."))
-			.Add("depth", LevelProp("none, gentle, medium, strong, or 0-15 (default gentle)."))
+			.Add("depth", LevelProp("none, faint (4x1, the shallowest), gentle, medium, strong, or 0-15 (default gentle)."))
 			.Add("min_beats", Prop("number", "Only notes at least this long, in beats (default 1)."))
 			.Add("delay_beats", Prop("number", "Start this long after the note begins (default 0.25 beat)."))
 			.Range().ClipChoice(),
@@ -15185,7 +15308,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema Vibrato;
 		Vibrato.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("speed", LevelProp("slow, medium, fast, or 1-15 (default medium)."))
-			.Add("depth", LevelProp("none, gentle, medium, strong, or 0-15 (default gentle)."))
+			.Add("depth", LevelProp("none, faint (4x1, the shallowest), gentle, medium, strong, or 0-15 (default gentle)."))
 			.Add("min_beats", Prop("number", "Only notes at least this long, in beats (default 1)."))
 			.Add("delay_beats", Prop("number", "Start this long after the note begins (default 0.25 beat)."));
 		Json VibratoProp = Vibrato.Get();
@@ -15341,7 +15464,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"for beeps going down."));
 			L.Add("gusts", Prop("integer", "Slow, uneven swells of its loudness and pitch, like wind: how many over its length (1-16)."));
 			L.Add("flutter", LevelProp("Its loudness wobbling, times a second: wings 8-12, a motor 15; or slow, medium, fast."));
-			L.Add("vibrato", LevelProp("Its pitch wavering, in semitones (0.3 gentle to 5 wild), or gentle, medium, strong, wild."));
+			L.Add("vibrato", LevelProp("Its pitch wavering, in semitones (0.06 faint, 0.3 gentle to 5 wild), or faint, gentle, medium, "
+				"strong, wild."));
 			L.Add("vibrato_hz", Prop("number", "How fast the vibrato wavers, times a second (default 6)."));
 			L.Add("crackle", LevelProp("Random pops on top of it, like fire or rain on a roof: 0-1, or few, some, many. With envelope "
 				"drops, how many drops."));

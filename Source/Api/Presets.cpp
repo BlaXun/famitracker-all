@@ -106,6 +106,20 @@ std::vector<int> VibratoItems(int Delay, int Depth, int Rate, int &Loop)
 	return Items;
 }
 
+// The faint vibrato (VIBRATO_FAINT): Delay frames of nothing, then the period one step longer for half of each cycle of
+// Rate frames and back for the other half, looping
+std::vector<int> FaintVibratoItems(int Delay, int Rate, int &Loop)
+{
+	std::vector<int> Items(static_cast<size_t>(std::max(0, Delay)), 0);
+	Loop = static_cast<int>(Items.size());
+	const int Half = std::max(2, Rate / 2);
+	Items.push_back(1);
+	Items.insert(Items.end(), static_cast<size_t>(Half - 1), 0);
+	Items.push_back(-1);
+	Items.insert(Items.end(), static_cast<size_t>(Half - 1), 0);
+	return Items;
+}
+
 // A melodic preset with a delayed vibrato built in
 Preset Singing(const char *Name, const char *Description, const std::vector<int> &Volume, int Release, int Duty2A03,
 	int DutyVRC6, int Delay, int Depth)
@@ -168,6 +182,26 @@ std::vector<Preset> MakePresets()
 		Organ.SequencesVRC6.back().Loop = 0;
 		All.push_back(Organ);
 	}
+	{
+		// The calm leads, as design_instrument's kinds of those names make them at 75 BPM (CALM_BEAT_FRAMES): none holds a
+		// high level from attack to release, which presses however soft the parts around it
+		static const char *const CALM[][2] = {
+			{ "music box", "calm lead struck at 15 that fades to silence by itself, half gone in 16 frames and silent in 43 (under "
+				"a beat at 64-82 BPM), like a music box (50% duty); design_instrument kind music box fits it to the tempo" },
+			{ "breath", "calm lead that breathes in from 4 to 15 over 12 frames, sinks to 9 by frame 22 and holds it, with a faint "
+				"vibrato after 24 frames, and fades over 24 frames after a release (50% duty)" },
+			{ "falling strike", "calm lead struck at 15 that falls to 6 over 14 frames and holds it there, with a faint vibrato "
+				"after 24 frames, fading quickly after a release (25% duty), as Final Fantasy III's Time Remains" },
+		};
+		for (size_t i = 0; i < sizeof(CALM) / sizeof(CALM[0]); ++i) {
+			SoundDesign D;
+			DesignOfKind(CALM[i][0], D);
+			Preset P = DesignPreset(D);
+			P.Name = CALM[i][0];
+			P.Description = CALM[i][1];
+			All.push_back(P);
+		}
+	}
 	All.push_back(Drum("kick", "punchy noise kick that falls from a click to a thump (play it as \"kick\" on the noise channel)",
 		List({ 15, 13, 10, 7, 4, 2, 1, 0 }), List({ 12, 8, 5, 3, 2, 1 })));
 	All.push_back(Drum("snare", "noise snare drum with a bright snap (\"snare\")", List({ 15, 13, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }),
@@ -184,7 +218,7 @@ std::vector<Preset> MakePresets()
 		{ "soft lead", 4 }, { "bright lead", 14 }, { "thin lead", 5 }, { "pluck", 2 }, { "bell", 1 }, { "soft chords", 8 },
 		{ "lush chords", 11 }, { "warm pad", 15 }, { "bass", 13 }, { "thump bass", 13 }, { "plucky bass", 13 }, { "singing lead", 5 },
 		{ "strings", 15 }, { "brass", 12 },
-		{ "organ", 8 },
+		{ "organ", 8 }, { "music box", 9 }, { "breath", 4 }, { "falling strike", 3 },
 	};
 	for (size_t i = 0; i < All.size(); ++i)
 		for (size_t k = 0; k < sizeof(ON_VRC7) / sizeof(ON_VRC7[0]); ++k)
@@ -476,7 +510,8 @@ const Preset *FindPreset(const std::string &Name)
 		{ "snaredrum", "snare" }, { "clap", "snare" }, { "hihat", "hi-hat" }, { "hat", "hi-hat" },
 		{ "closedhihat", "hi-hat" }, { "openhihat", "open hi-hat" }, { "openhat", "open hi-hat" }, { "cymbal", "crash" },
 		{ "crashcymbal", "crash" }, { "toms", "tom" }, { "hightom", "tom" }, { "midtom", "tom" }, { "lowtom", "tom" },
-		{ "floortom", "tom" },
+		{ "floortom", "tom" }, { "musicboxlead", "music box" }, { "breathlead", "breath" }, { "breathylead", "breath" },
+		{ "fallinglead", "falling strike" },
 	};
 	const std::string Wanted = Simplified(Name);
 	if (Wanted.empty())
@@ -615,6 +650,26 @@ int Clamp(int Value, int Low, int High)
 	return std::max(Low, std::min(High, Value));
 }
 
+// The Frames levels after the peak as it decays to Sustain, faster at first (a
+// quadratic, as a struck string or a music box dies away), reaching Sustain on
+// the last: stretched so its rounding gets there then, not a quarter sooner
+std::vector<int> DecayItems(int Peak, int Sustain, int Frames)
+{
+	std::vector<int> Out;
+	const int Fall = Peak - Sustain;
+	for (int i = 1; i <= Frames; ++i) {
+		if (Fall <= 0 || i == Frames) {
+			Out.push_back(Sustain);
+			continue;
+		}
+		// Sustain + Fall * Left^2 rounds to Sustain once Left^2 < 0.5 / Fall: on frame Frames, half a frame past Length * (1 - Edge)
+		const double Edge = std::sqrt(0.5 / Fall), Length = (Frames - 0.5) / (1.0 - Edge);
+		const double Left = 1.0 - i / Length;
+		Out.push_back(static_cast<int>(std::floor(Sustain + Fall * Left * Left + 0.5)));
+	}
+	return Out;
+}
+
 // Attack, decay to the sustain level (held at the release point, struck again
 // in a loop when it restrikes), release, and an echo after it
 std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint, int &LoopPoint)
@@ -642,16 +697,28 @@ std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint, int &LoopPoin
 				Out.push_back(Level);
 		}
 	}
-	else
-		for (int i = 1; i <= Decay; ++i) {
-			const double Left = 1.0 - i / static_cast<double>(Decay);
-			Out.push_back(static_cast<int>(std::floor(Sustain + (Peak - Sustain) * Left * Left + 0.5)));	// faster at first
-		}
+	else {
+		const std::vector<int> Fall = DecayItems(Peak, Sustain, Decay);
+		Out.insert(Out.end(), Fall.begin(), Fall.end());
+	}
 	if (Out.back() != Sustain)
 		Out.push_back(Sustain);
 	ReleasePoint = LoopPoint = -1;
+	if (Sustain == 0 && D.Restrike >= 4) {
+		// Struck again every Restrike frames while the note holds: the strike and as much of its fade as fits (or silence
+		// after it), looped; a release lets the last of it fade out
+		const int Cycle = std::max(Clamp(D.Restrike, 4, 120), Attack + 1);
+		Out.resize(static_cast<size_t>(Cycle), 0);
+		LoopPoint = 0;
+		ReleasePoint = Cycle - 1;
+		const int Last = Out.back();
+		for (int i = 1; i <= Release && Out.back() > 0; ++i)
+			Out.push_back(static_cast<int>(std::floor(Last * (1.0 - i / static_cast<double>(Release + 1)) + 0.5)));
+		if (Out.back() != 0)
+			Out.push_back(0);
+	}
 	if (Sustain > 0) {
-		const int Restrike = Clamp(D.Restrike, 0, 60);
+		const int Restrike = Clamp(D.Restrike, 0, 120);
 		if (Restrike >= 4) {
 			// Held: struck again every Restrike frames, a dip and a rise back
 			LoopPoint = static_cast<int>(Out.size());
@@ -661,7 +728,7 @@ std::vector<int> Envelope(const SoundDesign &D, int &ReleasePoint, int &LoopPoin
 			Out.push_back(std::max(1, Sustain - 2));
 		}
 		ReleasePoint = static_cast<int>(Out.size()) - 1;
-		for (int i = 1; i <= Release; ++i)
+		for (int i = 1; i <= Release && Out.back() > 0; ++i)
 			Out.push_back(static_cast<int>(std::floor(Sustain * (1.0 - i / static_cast<double>(Release + 1)) + 0.5)));
 		if (Out.back() != 0)
 			Out.push_back(0);
@@ -834,8 +901,9 @@ Preset DesignPreset(const SoundDesign &D)
 		Pitch = List({ -4, 3, 1 });		// up and back: the period's steps add up to nothing
 	if (D.Vibrato > 0) {
 		int Loop;
-		const std::vector<int> Wave = VibratoItems(std::max(0, D.VibratoDelay - static_cast<int>(Pitch.size())), Clamp(D.Vibrato, 1, 3),
-			std::max(4, D.VibratoRate / 4 * 4), Loop);
+		const int Delay = std::max(0, D.VibratoDelay - static_cast<int>(Pitch.size())), Rate = std::max(4, D.VibratoRate / 4 * 4);
+		const std::vector<int> Wave = D.Vibrato == VIBRATO_FAINT ? FaintVibratoItems(Delay, Rate, Loop) :
+			VibratoItems(Delay, Clamp(D.Vibrato, 1, 3), Rate, Loop);
 		PitchLoop = static_cast<int>(Pitch.size()) + Loop;
 		Pitch.insert(Pitch.end(), Wave.begin(), Wave.end());
 	}
@@ -900,8 +968,9 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 	Out += Buffer;
 	if (D.DecayStyle == DECAY_STEPS && D.Decay > 0 && Sustain < Clamp(D.Peak, 1, 15) && Wave != "triangle")
 		Out += " (stepping down a few levels at a time)";
-	if (D.Restrike >= 4 && Sustain > 0 && Wave != "triangle") {
-		std::snprintf(Buffer, sizeof(Buffer), "; struck again every %d frames while it holds", D.Restrike);
+	if (D.Restrike >= 4 && Wave != "triangle") {
+		std::snprintf(Buffer, sizeof(Buffer), "; struck again every %d frames while it holds%s", Sustain == 0 ?
+			std::max(D.Restrike, D.Attack + 1) : D.Restrike, Sustain == 0 ? " (until a release, ===)" : "");
 		Out += Buffer;
 	}
 	if (D.Echo && Wave != "triangle")
@@ -927,9 +996,12 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 		Out += " semitones";
 	}
 	if (D.Vibrato > 0) {
-		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong" };
-		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note", DEPTHS[Clamp(D.Vibrato, 1, 3)],
-			D.VibratoDelay, D.VibratoDelay / Rate);
+		// How far each takes A-3 (period 253, about 6.8 cents a step) either way: the faint one a step for half the time
+		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong", "faint" };
+		static const int CENTS[] = { 0, 20, 40, 60, 3 };
+		const int Depth = D.Vibrato == VIBRATO_FAINT ? VIBRATO_FAINT : Clamp(D.Vibrato, 1, 3);
+		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note, about %d cents either way at A-3",
+			DEPTHS[Depth], D.VibratoDelay, D.VibratoDelay / Rate, CENTS[Depth]);
 		Out += Buffer;
 	}
 	if (Wave == "noise")
@@ -972,7 +1044,21 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 		D.Attack = 0; D.Peak = 13; D.Decay = 10; D.Sustain = 9; D.Release = 4; D.Duty = 1;
 		D.Arpeggio = List({ 0, 4, 7 });
 	}
-	else if (K == "swell" || K == "wave" || K == "waves" || K == "wind" || K == "surf" || K == "breath") {
+	// The calm leads of the quiet references, none holding a high level (their times as at 75 BPM: FitCalmTempo)
+	else if (K == "musicbox") {		// struck, then fading to silence in 0.9 of a beat, like a music box (track 49's lead)
+		D.Attack = 0; D.Peak = 15; D.Decay = 43; D.Sustain = 0; D.Release = 6; D.Duty = 2;
+	}
+	else if (K == "breath") {		// breathes in from 4 over 12 frames, sinks to 60% and holds it, a faint vibrato after half a
+									// beat, a slow fade after a release (track 50's lead)
+		D.Attack = 12; D.AttackFrom = 4; D.Peak = 15; D.Decay = 10; D.Sustain = 9; D.Release = 24; D.Duty = 2;
+		D.Vibrato = VIBRATO_FAINT; D.VibratoDelay = CALM_BEAT_FRAMES / 2;
+	}
+	else if (K == "fallingstrike") {	// struck at once, falling to a low hold, a faint vibrato after half a beat, a short fade
+									// after a release (Final Fantasy III's Time Remains)
+		D.Attack = 0; D.Peak = 15; D.Decay = 14; D.Sustain = 6; D.Release = 6; D.Duty = 1;
+		D.Vibrato = VIBRATO_FAINT; D.VibratoDelay = CALM_BEAT_FRAMES / 2;
+	}
+	else if (K == "swell" || K == "wave" || K == "waves" || K == "wind" || K == "surf") {
 		// Rises slowly and washes out after a release: a wave or a gust on the noise channel, a swell on a pulse
 		D.Attack = 30; D.Peak = 12; D.Decay = 0; D.Sustain = 12; D.Release = 40; D.Duty = 0;
 	}
@@ -1015,8 +1101,37 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 std::string DesignKinds()
 {
 	return "lead, pad, pluck, bass, keys, bell, brass, strings, organ, chiptune (a chord arpeggio), swell (rises and washes out: "
-		"waves and wind on the noise channel); the classic articulations: bloom lead, stepped lead, click pluck, echo pluck, "
-		"thump bass; drums: kick, snare, hihat, open hihat, crash, tom";
+		"waves and wind on the noise channel); the calm leads: music box (struck, gone within a beat), breath (breathes in, "
+		"sinks to 60% and holds), falling strike (struck, falls to a low hold); the classic articulations: bloom lead, stepped "
+		"lead, click pluck, echo pluck, thump bass; drums: kick, snare, hihat, open hihat, crash, tom";
+}
+
+bool IsCalmKind(const std::string &Kind)
+{
+	const std::string K = Simplified(Kind);
+	return K == "musicbox" || K == "breath" || K == "fallingstrike";
+}
+
+void FitCalmTempo(const std::string &Kind, double FramesPerBeat, SoundDesign &D)
+{
+	if (!IsCalmKind(Kind) || FramesPerBeat <= 0.0)
+		return;
+	if (Simplified(Kind) == "musicbox")
+		D.Decay = Clamp(static_cast<int>(std::floor(0.9 * FramesPerBeat + 0.5)), 12, 120);
+	else
+		D.VibratoDelay = Clamp(static_cast<int>(std::floor(0.5 * FramesPerBeat + 0.5)), 12, 60);
+}
+
+void FitCalmPeak(const std::string &Kind, SoundDesign &D)
+{
+	const std::string K = Simplified(Kind);
+	const int Peak = Clamp(D.Peak, 1, 15);
+	if (K == "breath") {
+		D.AttackFrom = std::max(1, (Peak * 4 + 7) / 15);	// from 4 of 15
+		D.Sustain = std::max(1, (Peak * 9 + 7) / 15);		// 9 of 15
+	}
+	else if (K == "fallingstrike")
+		D.Sustain = std::max(1, (Peak * 6 + 7) / 15);		// 6 of 15
 }
 
 std::string Vrc7PatchList()

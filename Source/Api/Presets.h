@@ -98,6 +98,10 @@ enum duty_motion { DUTY_STILL, DUTY_SWEEP, DUTY_WOBBLE, DUTY_FADE };
 enum attack_pitch { PITCH_PLAIN, PITCH_BLIP, PITCH_SCOOP, PITCH_DROP, PITCH_FLICK, PITCH_THUMP };
 enum decay_style { DECAY_SMOOTH, DECAY_STEPS };
 enum drum_kind { DRUM_KICK, DRUM_SNARE, DRUM_HIHAT, DRUM_OPEN_HIHAT, DRUM_CRASH, DRUM_TOM };
+// SoundDesign::Vibrato's faintest: the calm references' (Final Fantasy III's Time Remains), the period one step longer
+// for half of each cycle, about 3 cents either way at A-3 (the gentle one swings 3 steps, about 20 cents). Going
+// only flatter, it takes no note of the 2A03's pulses across a multiple of 256, so it clicks on none.
+const int VIBRATO_FAINT = 4;
 
 struct SoundDesign {
 	std::string Name;
@@ -106,16 +110,17 @@ struct SoundDesign {
 	int Peak;					// 1-15
 	int Attack;					// frames to reach the peak; 0 at once
 	int AttackFrom;				// the level the attack starts at: 0 from silence; a bloom starts near two thirds of the peak
-	int Decay;					// frames from the peak to the sustain level
+	int Decay;					// frames from the peak to the sustain level (or to silence): it gets there on that frame
 	int DecayStyle;				// decay_style: smooth, or in steps that hold and then drop a few levels at a time
 	int Sustain;				// 0-15, held while the note lasts; 0 dies away by itself
 	int Release;				// frames to fade after a release (===)
-	int Restrike;				// frames between restrikes while a note holds (a dip and a rise back), 0 for none
+	int Restrike;				// frames between restrikes while a note holds (a dip and a rise back; a sound that dies away
+								// is struck again from its peak), 0 for none
 	bool Echo;					// a soft echo after the sound dies away or is released
 	int Duty;					// 0-3: 12.5%, 25%, 50%, 75% (the VRC6's nearest)
 	int Motion;					// duty_motion: still, thin to the duty on the attack, to and fro (a chorus), thinner as it fades
 	bool Click;					// a duty click: the first frame at another duty, so each note speaks
-	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong
+	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong, VIBRATO_FAINT
 	int VibratoDelay;			// frames before it comes in
 	int VibratoRate;			// frames a cycle, a multiple of 4
 	int AttackPitch;			// attack_pitch: plain, an octave up for two frames, up into the note from below, falling,
@@ -138,9 +143,19 @@ Preset DesignPreset(const SoundDesign &Design);
 // triangle no volume)
 std::string DescribeDesign(const SoundDesign &Design, int FrameRate, const std::string &Wave = "pulse");
 // A starting point by kind: lead, pad, pluck, bass, keys, bell, brass, strings, organ,
-// chiptune; kick, snare, hihat, open hihat, crash, tom. False if Kind isn't one.
+// chiptune; the calm leads music box, breath and falling strike (CALM_BEAT_FRAMES: as at 75 BPM,
+// which design_instrument fits to the song's tempo); kick, snare, hihat, open hihat, crash, tom.
+// False if Kind isn't one.
 bool DesignOfKind(const std::string &Kind, SoundDesign &Out);
 std::string DesignKinds();
+// The calm kinds (music box, breath, falling strike): their times go by the beat, and their levels by their peak
+bool IsCalmKind(const std::string &Kind);
+const int CALM_BEAT_FRAMES = 48;	// a beat at 75 BPM, the beat the calm kinds' times are given in
+// A calm kind's times at a tempo of FramesPerBeat: the music box dies away in 0.9 of a beat (43 frames at 75 BPM), the
+// vibratos come in after half a beat
+void FitCalmTempo(const std::string &Kind, double FramesPerBeat, SoundDesign &D);
+// A calm kind's levels for another peak (D.Peak): where its swell starts and what it holds, in proportion
+void FitCalmPeak(const std::string &Kind, SoundDesign &D);
 
 // A VRC7 patch, as FamiTracker's VRC7 instrument editor names it
 struct Vrc7Patch {
