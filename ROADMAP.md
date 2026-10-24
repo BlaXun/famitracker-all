@@ -384,6 +384,36 @@ is calm:
 - check_song and the review warn about a lead that holds a high, steady
   level, as the composers' calm scan did.
 
+## 15. Knowledge in the tools (Claude Code)
+
+Started on 24 October 2026 (the user's OK at 22:30): the knowledge that
+composers read in a 400-line brief goes into the tools, so that Claude
+composes as well at Extra High effort as at Maximum, and local models
+(Qwen through Hermes) get a fair chance. A night song cost a composer
+about 450,000-530,000 tokens and 60-120 tool calls, much of it reading
+rules and fixing tool output by hand.
+
+- Recipes per kind of song: `compose_track` takes `kind` (calm, lively or
+  action), and `get_recipe` gives the same on every connection, the small
+  set's too, whose steps name only that set's tools. The guide has the
+  numbers as the topics `calm`, `lively` and `action`.
+- The user's rules for the kinds (24 October): calm only when a song is
+  asked to be calm (the tools only suggest it when a song looks calm);
+  lively stages a little softer than the first 48 tracks (the melody 3-4
+  dB over the parts, notes that fade); action and bosses punchy, mixed as
+  before.
+- Calm tracks by default (14) when asked, the tool flaws the composers
+  found, and `measure_mix` (stems, each section's loudness, the intro and
+  the two sides in one call) on branches of their own.
+- Next: a track composed at Extra High against one at Maximum (53
+  Driftwood Rapids), then fewer tokens a song and better tracks.
+- On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
+  knowledge work, the one-time work every later song reuses (what makes a
+  track good, turned into the tools, the recipes and the guide), rather
+  than for composing each track. On a Max plan Fable draws on the same
+  weekly limit (at most half of it) and costs about 2.5 times Opus 5.5 a
+  token, so it pays off where its result is reused.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
