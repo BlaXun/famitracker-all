@@ -332,8 +332,8 @@ Plus).
 
 ## 12. Ideas from Mario Paint
 
-Not started (the user's idea, 24 October 2026: Mario Paint's music
-composer felt very intuitive). It has 15 sounds as pictures stamped on a
+On the backlog, the stamp mode first (the user's idea, 24 October 2026:
+Mario Paint's music composer felt very intuitive). It has 15 sounds as pictures stamped on a
 staff, at most three notes on a beat, quarter notes only, no sharps or
 flats (C major and A minor), and songs of up to 24 bars. Much of its ease
 comes from those limits and from never meeting a channel. What could carry
