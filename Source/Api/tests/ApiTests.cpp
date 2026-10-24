@@ -6552,8 +6552,8 @@ void TestFdsOctave()
 	Range.Put(5, 16, "G#7");
 	Range.End(5, 20);
 	const std::string Text = Run(Range, "check_song", "{}").Text;
-	CHECK_HAS(Text, "Range: A-7 at FDS FDS bar 1 beat 1 is above G#7, the highest the FDS plays");
-	CHECK_HAS(Text, "Range: G-1 at FDS FDS bar 1 beat 3 is below A-1, which the FDS plays two octaves down");
+	CHECK_HAS(Text, "Range: A-7 at FDS bar 1 beat 1 is above G#7, the highest the FDS plays");
+	CHECK_HAS(Text, "Range: G-1 at FDS bar 1 beat 3 is below A-1, which the FDS plays two octaves down");
 	CHECK_LACKS(Text, "G#7 at FDS");
 	// An echo from the FDS onto a pulse comes down two octaves; one onto the FDS that would land past G#7 goes an octave down
 	FakeSong High = FdsSong();
@@ -6585,7 +6585,170 @@ void TestFdsLevels()
 	// 9 on a pulse is 4.4 dB under 15; the flute's envelope peaks at 14 of 15 and the FDS plays 5 dB over a pulse at
 	// its top, so 15 * 10^((-4.4 - 5) / 20) * 15 / 14 is about 5
 	CHECK_EQ(Melody, 5);
-	CHECK_HAS(Result.Text, "FDS FDS (melody) loudest 14 to 5");
+	CHECK_HAS(Result.Text, "FDS (melody) loudest 14 to 5");
+}
+
+// An FDS sound kept in a reference with its wave and modulator, and reference_sound making it again: on the FDS
+// channel as it was, on a pulse counted 0-15, and another chip's sound played on the FDS
+void TestFdsReference()
+{
+	Reference R;
+	R.Id = "disk-game-01";
+	R.Title = "Mirror";
+	R.Game = "Disk Game";
+	R.Track = 1;
+	R.Study = "Mirror\n  Tempo: 150 BPM.";
+	ReferenceSound Lead;
+	Lead.Channel = "FDS";
+	Lead.Role = "the lead";
+	Lead.Words = "blooms from 10 to 32 in 5 frames";
+	Lead.Chip = "FDS";
+	Lead.Share = 90;
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 10, 15, 20, 26, 31, 32, 30, 28 };
+	Lead.Sequences[SEQUENCE_VOLUME].Release = 6;
+	Lead.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 0, 4, -4, -4, 4 };
+	Lead.Sequences[SEQUENCE_PITCH].Loop = 1;
+	for (int k = 0; k < FDS_WAVE_SIZE; ++k)
+		Lead.FdsWave.push_back(63 - k);		// a falling ramp
+	for (int k = 0; k < FDS_MOD_SIZE; ++k)
+		Lead.FdsMod.push_back(k < 16 ? 1 : 7);
+	Lead.ModSpeed = 34;
+	Lead.ModDepth = 5;
+	R.Sounds.push_back(Lead);
+	ReferenceSound Harmony;
+	Harmony.Channel = "Pulse 1";
+	Harmony.Role = "the harmony";
+	Harmony.Words = "25% duty";
+	Harmony.Chip = "2A03";
+	Harmony.Share = 70;
+	Harmony.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 12, 10 };
+	Harmony.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 1 };
+	Harmony.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 1, -1 };
+	Harmony.Sequences[SEQUENCE_PITCH].Loop = 0;
+	R.Sounds.push_back(Harmony);
+	ReferenceSound Older = Lead;		// studied before the waves were kept
+	Older.FdsWave.clear();
+	Older.FdsMod.clear();
+	Older.ModSpeed = Older.ModDepth = 0;
+	R.Sounds.push_back(Older);
+
+	// The file read back, and the text
+	Reference Back;
+	std::string Error;
+	CHECK(ReadReferenceFile(ReferenceFile(R), Back, Error));
+	CHECK(Back.Sounds.size() == 3u);
+	if (Back.Sounds.size() != 3u)
+		return;
+	CHECK(Back.Sounds[0].FdsWave == Lead.FdsWave && Back.Sounds[0].FdsMod == Lead.FdsMod && Back.Sounds[0].ModSpeed == 34 &&
+		Back.Sounds[0].ModDepth == 5 && Back.Sounds[0].ModDelay == 0);
+	CHECK(Back.Sounds[1].FdsWave.empty() && Back.Sounds[1].FdsMod.empty() && Back.Sounds[2].FdsWave.empty());
+	CHECK_HAS(ReferenceText(R), "\n     FDS wave 63 62 61 60 ");
+	CHECK_HAS(ReferenceText(R), " 2 1 0; modulator speed 34, depth 5, delay 0\n");
+	{
+		// A wave cut short isn't kept
+		Reference Cut = R;
+		Cut.Sounds[0].FdsWave.resize(10);
+		CHECK(ReadReferenceFile(ReferenceFile(Cut), Back, Error));
+		CHECK(Back.Sounds.size() == 3u && Back.Sounds[0].FdsWave.empty() && Back.Sounds[0].ModSpeed == 0);
+	}
+
+	// As a 2A03 instrument: its volume counted 0-15, its pitch in the period's coarser steps turned around, and a duty
+	// as bright as its wave (a ramp's: 25%)
+	const Preset P = ReferencePreset(Lead, "Mirror lead");
+	std::vector<int> Volume, Pitch, Duty;
+	int PitchLoop = -2;
+	for (size_t i = 0; i < P.Sequences2A03.size(); ++i) {
+		const PresetSequence &q = P.Sequences2A03[i];
+		if (q.Type == SEQUENCE_VOLUME)
+			Volume = q.Items;
+		else if (q.Type == SEQUENCE_PITCH) {
+			Pitch = q.Items;
+			PitchLoop = q.Loop;
+		}
+		else if (q.Type == SEQUENCE_DUTY)
+			Duty = q.Items;
+	}
+	CHECK(Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	CHECK(Pitch == std::vector<int>({ 0, -1, 1, 1, -1 }) && PitchLoop == 1);
+	CHECK(Duty == std::vector<int>({ 1 }));
+	CHECK(FdsWaveBrightness(Lead.FdsWave) > 0.3 && FdsWaveBrightness(FdsWaveOfWord("sine")) < 0.01);
+
+	// reference_sound in an FDS song: on the FDS channel, its own wave, modulator and envelope (0-32)
+	FakeSong Song = FdsSong();
+	Song.Library["disk-game-01.json"] = ReferenceFile(R);
+	ToolResult Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"FDS\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Mirror lead\" (00), an FDS instrument for FDS: sound 1 of disk-game-01 (FDS, the lead");
+	CHECK_HAS(Result.Text, "It plays its own wave and modulator (speed 34, depth 5).");
+	CHECK_HAS(Result.Text, "the FDS sounds two octaves under the note written");
+	CHECK_LACKS(Result.Text, "counted as the FDS counts it");
+	CHECK(Song.MadeFds.count(0) == 1u && Song.Info.Instruments.size() == 1u && Song.Info.Instruments[0].Chip == "FDS");
+	if (Song.MadeFds.count(0) == 1u) {
+		const FdsSound &F = Song.MadeFds[0];
+		CHECK(F.Wave == Lead.FdsWave && F.Modulation == Lead.FdsMod && F.ModSpeed == 34 && F.ModDepth == 5 && F.ModDelay == 0);
+		bool Envelope = false, Vibrato = false;
+		for (size_t i = 0; i < F.Sequences.size(); ++i) {
+			if (F.Sequences[i].Type == SEQUENCE_VOLUME)
+				Envelope = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_VOLUME].Items && F.Sequences[i].Release == 6;
+			if (F.Sequences[i].Type == SEQUENCE_PITCH)
+				Vibrato = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_PITCH].Items && F.Sequences[i].Loop == 1;
+		}
+		CHECK(Envelope && Vibrato);
+		CHECK(Song.Info.Instruments[0].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	}
+	// With no channel in an FDS song, it's the FDS's too: the same instrument
+	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\"}");
+	CHECK_HAS(Result.Text, "The song already has \"Mirror lead\" (00), an FDS instrument");
+	CHECK(Song.Info.Instruments.size() == 1u);
+	// On Pulse 1: a 2A03 instrument, counted 0-15
+	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a 2A03 instrument for 2A03 Pulse 1");
+	CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32");
+	CHECK(Song.Made.count(1) == 1u && Song.Info.Instruments.size() == 2u &&
+		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	// A pulse sound on the FDS: its duty's pulse as the wave, its volume 0-31, its pitch four times finer, turned around
+	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"sound\": 2, \"channel\": \"FDS\", \"name\": \"Disk harmony\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Disk harmony\" (02), an FDS instrument for FDS: sound 2 of disk-game-01 (Pulse 1, the harmony");
+	CHECK_HAS(Result.Text, "It plays a 25% pulse wave, its duty's.");
+	CHECK_HAS(Result.Text, "Its volume is counted as the FDS counts it (0-31)");
+	if (Song.MadeFds.count(2) == 1u) {
+		const FdsSound &F = Song.MadeFds[2];
+		CHECK(F.Wave == FdsPulseWave(16) && F.Wave[0] == 63 && F.Wave[15] == 63 && F.Wave[16] == 22 && F.ModDepth == 0);
+		bool Envelope = false, Vibrato = false;
+		for (size_t i = 0; i < F.Sequences.size(); ++i) {
+			if (F.Sequences[i].Type == SEQUENCE_VOLUME)
+				Envelope = F.Sequences[i].Items == std::vector<int>({ 31, 25, 21 });
+			if (F.Sequences[i].Type == SEQUENCE_PITCH)
+				Vibrato = F.Sequences[i].Items == std::vector<int>({ -4, 4 }) && F.Sequences[i].Loop == 0;
+		}
+		CHECK(Envelope && Vibrato);
+	}
+	else
+		CHECK(false);
+	// One studied before the waves were kept: a round wave, and how to get its own
+	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"sound\": 3, \"channel\": \"FDS\", \"name\": \"Old lead\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "It plays a round wave: the reference was studied before FDS waves were kept, so study its NSF again "
+		"(study_nsf)");
+	CHECK(Song.MadeFds.count(3) == 1u && Song.MadeFds[3].Wave == FdsWaveOfWord("round"));
+
+	// In a song without the FDS, an FDS sound is a 2A03 instrument, counted 0-15
+	FakeSong Plain;
+	Plain.Info.Instruments.clear();
+	Plain.Library["disk-game-01.json"] = ReferenceFile(R);
+	Result = Run(Plain, "reference_sound", "{\"reference\": \"disk-game-01\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a 2A03 instrument");
+	CHECK_HAS(Result.Text, "It was an FDS sound");
+	CHECK(Plain.MadeFds.empty() && !Plain.Info.Instruments.empty() &&
+		Plain.Info.Instruments.back().Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	CHECK_HAS(Run(Plain, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"FDS\"}").Text, "Unknown channel");
+	// The FDS channel is named once ("FDS", not "FDS FDS"), and found by either
+	CHECK_EQ(Song.Info.Channels[5].Name, std::string("FDS"));
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "6 FDS");
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"FDS FDS\", \"instrument\": \"Mirror lead\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-5\", \"beats\": 1}]}").IsError);
 }
 
 // Versions to compare
@@ -8873,6 +9036,7 @@ int main()
 	TestFdsDesign();
 	TestFdsOctave();
 	TestFdsLevels();
+	TestFdsReference();
 	TestOgg();
 	TestCut();
 	TestExport();

@@ -1682,6 +1682,14 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			const MacroSet Set = MacrosOf(Probe, *I);
 			for (int m = 0; m < SEQ_TYPES; ++m)
 				Sd.Macros[m] = Set.M[m];
+			if (I->Kind == INST_FDS) {
+				// What makes an FDS sound besides its envelope: its wave and modulator
+				Sd.FdsWave = I->FdsWave;
+				Sd.FdsMod = I->FdsMod;
+				Sd.ModRate = I->ModRate;
+				Sd.ModDepth = I->ModDepth;
+				Sd.ModDelay = I->ModDelay;
+			}
 			Sd.Words = DescribeSound(Set.M, I->Kind == INST_VRC6, Typical, false, Sd.Triangle, Sd.Sawtooth);
 			S.Sounds.push_back(Sd);
 		}
@@ -2093,6 +2101,15 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 						m.push_back(std::string(NAMES[t]) + " " + MacroText(d.Macros[t]));
 				if (!m.empty())
 					s += "      " + Join(m, "; ") + "\n";
+				if (!d.FdsWave.empty()) {
+					std::string Wave, Mod;
+					for (size_t k = 0; k < d.FdsWave.size(); ++k)
+						Wave += (k == 0 ? "" : " ") + std::to_string(d.FdsWave[k]);
+					for (size_t k = 0; k < d.FdsMod.size(); ++k)
+						Mod += (k == 0 ? "" : " ") + std::to_string(d.FdsMod[k]);
+					s += "      FDS wave " + Wave + "; modulation " + (Mod.empty() ? std::string("none") : Mod) +
+						Format(", speed %d, depth %d, delay %d\n", d.ModRate, d.ModDepth, d.ModDelay);
+				}
 			}
 		}
 	}

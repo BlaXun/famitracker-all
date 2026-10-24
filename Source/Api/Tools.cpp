@@ -682,7 +682,7 @@ int ParseChannel(const Session &S, const Json &Value, const char *Name)
 			std::string Alias = Text;
 			const char *const ALIASES[][2] = {
 				{ "square1", "pulse1" }, { "square2", "pulse2" }, { "tri", "triangle" }, { "saw", "sawtooth" },
-				{ "vrc6saw", "vrc6sawtooth" }, { "drums", "noise" }, { "samples", "dpcm" }, { "dmc", "dpcm" },
+				{ "vrc6saw", "vrc6sawtooth" }, { "drums", "noise" }, { "samples", "dpcm" }, { "dmc", "dpcm" }, { "fdsfds", "fds" },
 			};
 			for (size_t a = 0; a < sizeof(ALIASES) / sizeof(ALIASES[0]); ++a)
 				if (Text == ALIASES[a][0])
@@ -12130,17 +12130,31 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = InstrumentChip(Info);
 		Sawtooth = Info.Kind == KIND_SAWTOOTH;
 		For = " for " + Info.FullName();
-		if (Chip != "2A03" && Chip != "VRC6")
-			throw Problem("A reference's sound can be an instrument for 2A03, MMC5 and VRC6 channels, not " + Info.FullName() + ".");
+		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6 and FDS channels, not " + Info.FullName() + ".");
 		if (Sound.Noise != (Info.Kind == KIND_NOISE))
 			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
 				"other than the noise.");
 	}
 	else if (Sound.Chip == "VRC6" && S.Song.Expansion == "VRC6")
 		Chip = "VRC6";
+	else if (Sound.Chip == "FDS" && !Sound.Noise && S.Song.Expansion.find("FDS") != std::string::npos)
+		Chip = "FDS";
 	std::string Name = StringArg(Args, "name");
 	if (Name.empty())
 		Name = ReferenceSoundName(R, Sound);
+	// On the FDS: an FDS instrument, its own wave and modulator for an FDS sound, a wave from its channel for another's
+	if (Chip == "FDS") {
+		std::string How;
+		const FdsSound F = ReferenceFdsSound(Sound, Name, How);
+		bool Added = false;
+		const int Index = AddFdsSound(S, F, Added);
+		return Format("%s %s, an FDS instrument%s: sound %d of %s (%s, %s): %s. It plays %s.", Added ? "Added" : "The song already has",
+			InstrumentLabel(S.Song, Index).c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(),
+			Sound.Words.c_str(), How.c_str()) + (Sound.Chip != "FDS" ? std::string(" Its volume is counted as the FDS counts it "
+			"(0-31), its pitch sequence in the FDS's finer steps.") : std::string()) + VanishRemark(S.Song, Index) +
+			" Use it with write_notes or set_instrument; the FDS sounds two octaves under the note written.";
+	}
 	const Preset Made = ReferencePreset(Sound, Name);
 	std::string Error;
 	const int Index = S.Host().AddInstrument(Made, Chip, Sawtooth, Error);
@@ -12151,6 +12165,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
 	if (Sound.Chip != Chip && !Sound.Noise && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
 		Out += " Its duty was translated from the " + Sound.Chip + "'s.";
+	if (Sound.Chip == "FDS" && !Sound.Noise)
+		Out += " It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, its pitch sequence in the period's "
+			"coarser steps, and it plays a pulse as bright as its wave (an FDS song's FDS channel plays it as it was).";
 	if (Sound.Triangle && !Sawtooth && pChannel != 0 && S.Channel(ParseChannel(S, *pChannel, "channel")).Kind != KIND_TRIANGLE)
 		Out += " It was a triangle sound: on a pulse it plays with the pulse's duty.";
 	const bool OnTriangle = pChannel != 0 ? S.Channel(ParseChannel(S, *pChannel, "channel")).Kind == KIND_TRIANGLE : Sound.Triangle;
@@ -13151,11 +13168,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("reference_sound", "Use a reference's sound",
 		"Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes (volume, arpeggio, "
 		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
-		"number. The duty is translated between the 2A03 and the VRC6.",
+		"number. The duty is translated between the 2A03 and the VRC6. An FDS sound plays on the FDS channel with its own wave "
+		"and modulator (in an FDS song, also when no channel is given); elsewhere its volume is counted 0-15. Another chip's "
+		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave.",
 		Schema()
 			.Add("reference", Prop("string", "The reference's id."), true)
 			.Add("sound", Prop("integer", "The sound's number in the reference (default 1)."))
-			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5 or VRC6)."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6 or FDS)."))
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 

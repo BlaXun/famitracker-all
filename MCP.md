@@ -216,7 +216,7 @@ a click pluck that holds low.
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo) |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
-| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing |
+| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)) |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there |
@@ -480,9 +480,9 @@ Ask for them by name, or by a preset's name, which picks the sound most like
 it ("soft lead" is the flute, "bass" the round bass, "warm pad" the choir).
 **Instrument > Instrument library** offers the same sounds for the FDS
 channel. `design_instrument` makes new ones there from words: a wave (sine,
-round, hollow, square, bright, strings, nasal, organ, voice, glassy, bass),
-the envelope, attack and vibrato as for the other chips, and what the
-modulator does (wobble, tremble, growl or rumble, from a moment into the
+round, hollow, square, bright, strings, nasal, organ, voice, glassy, bass,
+triangle), the envelope, attack and vibrato as for the other chips, and what
+the modulator does (wobble, tremble, growl or rumble, from a moment into the
 note if asked).
 
 Measured in FamiTracker's own rendering against a 2A03 pulse at 15 playing
@@ -510,6 +510,17 @@ same harmonics.
   turns between those two smallest bends, which stays in tune on average.
 - `Hxx`, `Ixx` and `Jxx` on the FDS channel set its modulator's depth and
   speed as a part plays.
+
+A study of a Famicom Disk System game (`study_nsf`, or `study_module` on an
+FDS module) keeps each FDS sound's wave and modulator with its envelopes,
+and `reference_sound` makes the instrument again on the FDS channel as it
+was (in an FDS song also when no channel is given). On a pulse an FDS
+sound's volume is counted 0-15 from the FDS's 0-32, its pitch sequence in
+the pulse's coarser steps, and it plays the duty closest to how bright its
+wave is. Another chip's sound on the FDS channel plays its duty's pulse, a
+sawtooth or a triangle as its wave, its volume counted 0-31. References
+studied before the waves were kept give a round wave: study the NSF again
+for its own.
 
 ## Arrangements with depth
 

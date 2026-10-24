@@ -20,6 +20,7 @@
 */
 
 #include "References.h"
+#include "FdsSounds.h"
 #include "Json.h"
 #include "Music.h"
 #include "../Nsf/NsfFile.h"
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <map>
@@ -334,6 +336,14 @@ void AddStudySounds(Reference &R, const nsf::TrackStudy &Study)
 			q.Release = m.Release < static_cast<int>(q.Items.size()) ? m.Release : -1;
 			q.Fixed = t == nsf::SEQ_ARPEGGIO && m.Setting == nsf::ARP_FIXED;
 		}
+		if (s.Kind == nsf::INST_FDS && s.FdsWave.size() == static_cast<size_t>(FDS_WAVE_SIZE)) {
+			Sd.FdsWave = s.FdsWave;
+			if (s.FdsMod.size() == static_cast<size_t>(FDS_MOD_SIZE))
+				Sd.FdsMod = s.FdsMod;
+			Sd.ModSpeed = s.ModRate;
+			Sd.ModDepth = s.ModDepth;
+			Sd.ModDelay = s.ModDelay;
+		}
 		R.Sounds.push_back(Sd);
 	}
 }
@@ -528,6 +538,18 @@ std::string ReferenceFile(const Reference &R)
 		for (int t = 0; t < 5; ++t)
 			if (!s.Sequences[t].Items.empty())
 				Sd.Set(SEQUENCE_NAMES[t], SequenceJson(s.Sequences[t]));
+		if (!s.FdsWave.empty()) {
+			Json Wave = Json::MakeArray(), Mod = Json::MakeArray();
+			for (size_t k = 0; k < s.FdsWave.size(); ++k)
+				Wave.Push(s.FdsWave[k]);
+			for (size_t k = 0; k < s.FdsMod.size(); ++k)
+				Mod.Push(s.FdsMod[k]);
+			Sd.Set("fds_wave", Wave);
+			Sd.Set("fds_modulation", Mod);
+			Sd.Set("modulation_speed", s.ModSpeed);
+			Sd.Set("modulation_depth", s.ModDepth);
+			Sd.Set("modulation_delay", s.ModDelay);
+		}
 		Sounds.Push(Sd);
 	}
 	J.Set("sounds", Sounds);
@@ -587,6 +609,18 @@ bool ReadReferenceFile(const std::string &Text, Reference &Out, std::string &Err
 				const Json *pSeq = Sd.Get(SEQUENCE_NAMES[t]);
 				if (pSeq != 0 && pSeq->IsObject())
 					s.Sequences[t] = ReadSequence(*pSeq);
+			}
+			// An FDS sound's wave and modulator, when they're whole
+			const Json *pWave = Sd.Get("fds_wave"), *pMod = Sd.Get("fds_modulation");
+			if (pWave != 0 && pWave->IsArray() && pWave->Size() == static_cast<size_t>(FDS_WAVE_SIZE)) {
+				for (size_t k = 0; k < pWave->Size(); ++k)
+					s.FdsWave.push_back(pWave->At(k).IsNumber() ? std::max(0, std::min(63, static_cast<int>(pWave->At(k).Number()))) : 32);
+				if (pMod != 0 && pMod->IsArray() && pMod->Size() == static_cast<size_t>(FDS_MOD_SIZE))
+					for (size_t k = 0; k < pMod->Size(); ++k)
+						s.FdsMod.push_back(pMod->At(k).IsNumber() ? std::max(0, std::min(7, static_cast<int>(pMod->At(k).Number()))) : 0);
+				s.ModSpeed = std::max(0, std::min(4095, IntOf(Sd, "modulation_speed", 0)));
+				s.ModDepth = std::max(0, std::min(63, IntOf(Sd, "modulation_depth", 0)));
+				s.ModDelay = std::max(0, std::min(255, IntOf(Sd, "modulation_delay", 0)));
 			}
 			Out.Sounds.push_back(s);
 		}
@@ -659,6 +693,13 @@ std::string ReferenceText(const Reference &R)
 						(t == SEQUENCE_ARPEGGIO && s.Sequences[t].Fixed ? " (fixed)" : "") + " " + SequenceText(s.Sequences[t]));
 			if (!Seqs.empty())
 				Out += "     " + Join(Seqs, "; ") + "\n";
+			if (!s.FdsWave.empty()) {
+				std::string Wave;
+				for (size_t k = 0; k < s.FdsWave.size(); ++k)
+					Wave += (k == 0 ? "" : " ") + std::to_string(s.FdsWave[k]);
+				Out += "     FDS wave " + Wave + Format("; modulator speed %d, depth %d, delay %d", s.ModSpeed, s.ModDepth,
+					s.ModDelay) + "\n";
+			}
 		}
 	}
 	return Out;
@@ -693,6 +734,26 @@ int ReferenceMatch(const Reference &R, const std::string &Query)
 	return Matched == 0 ? 0 : Score * Matched / static_cast<int>(Asked.size());
 }
 
+namespace {
+
+// A pitch sequence's steps (each frame's added to the period or register) in another chip's units, Factor of them to
+// one: the running total scaled and rounded, so a loop that sums to nothing still does, and small steps add up
+std::vector<int> ScaledSteps(const std::vector<int> &Items, double Factor)
+{
+	std::vector<int> Out;
+	double Total = 0.0;
+	int Before = 0;
+	for (size_t k = 0; k < Items.size(); ++k) {
+		Total += Items[k] * Factor;
+		const int Now = static_cast<int>(std::floor(Total + 0.5));
+		Out.push_back(std::max(-127, std::min(127, Now - Before)));
+		Before = Now;
+	}
+	return Out;
+}
+
+}	// namespace
+
 Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name)
 {
 	Preset P;
@@ -700,14 +761,35 @@ Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name)
 	P.Description = Sound.Words;
 	P.Drum = Sound.Noise;
 	P.Vrc7Patch = 0;
+	// An FDS sound's volume goes 0-32 and its pitch sequence moves a frequency register, up being sharper, about four of
+	// its steps to one of the 2A03's period where they sound alike; it has no duty: one as bright as its wave
+	const bool Fds = Sound.Chip == "FDS" && !Sound.Noise;
+	if (Fds && Sound.Sequences[SEQUENCE_DUTY].Items.empty()) {
+		const int Duty = !Sound.FdsWave.empty() && FdsWaveBrightness(Sound.FdsWave) > 0.3 ? 1 : 2;
+		PresetSequence S;
+		S.Type = SEQUENCE_DUTY;
+		S.Items.push_back(Duty);
+		S.Loop = S.Release = -1;
+		S.Setting = SEQUENCE_ABSOLUTE;
+		P.Sequences2A03.push_back(S);
+		S.Items[0] = Vrc6Duty(Duty);
+		P.SequencesVRC6.push_back(S);
+	}
 	for (int t = 0; t < 5; ++t) {
 		const ReferenceSequence &q = Sound.Sequences[t];
 		if (q.Items.empty())
 			continue;
 		PresetSequence S;
 		S.Type = t;
-		for (size_t k = 0; k < q.Items.size() && k < static_cast<size_t>(MAX_ITEMS); ++k)
-			S.Items.push_back(std::max(-128, std::min(127, q.Items[k])));
+		std::vector<int> Items(q.Items.begin(), q.Items.begin() + static_cast<std::ptrdiff_t>(std::min(q.Items.size(),
+			static_cast<size_t>(MAX_ITEMS))));
+		if (Fds && t == SEQUENCE_VOLUME)
+			for (size_t k = 0; k < Items.size(); ++k)
+				Items[k] = FdsVolumeAs15(Items[k]);
+		else if (Fds && t == SEQUENCE_PITCH)
+			Items = ScaledSteps(Items, -0.25);
+		for (size_t k = 0; k < Items.size(); ++k)
+			S.Items.push_back(std::max(-128, std::min(127, Items[k])));
 		S.Loop = q.Loop < static_cast<int>(S.Items.size()) ? q.Loop : -1;
 		S.Release = q.Release < static_cast<int>(S.Items.size()) ? q.Release : -1;
 		S.Setting = t == SEQUENCE_ARPEGGIO && q.Fixed ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE;
@@ -728,6 +810,75 @@ Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name)
 		P.SequencesVRC6.push_back(OnVrc6);
 	}
 	return P;
+}
+
+FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name, std::string &How)
+{
+	FdsSound F;
+	F.Name = Name;
+	F.Description = Sound.Words;
+	F.Modulation.assign(FDS_MOD_SIZE, 0);
+	const bool Fds = Sound.Chip == "FDS";
+	if (Fds && Sound.FdsWave.size() == static_cast<size_t>(FDS_WAVE_SIZE)) {
+		for (size_t k = 0; k < Sound.FdsWave.size(); ++k)
+			F.Wave.push_back(std::max(0, std::min(63, Sound.FdsWave[k])));
+		for (size_t k = 0; k < Sound.FdsMod.size() && k < static_cast<size_t>(FDS_MOD_SIZE); ++k)
+			F.Modulation[k] = std::max(0, std::min(7, Sound.FdsMod[k]));
+		F.ModSpeed = std::max(0, std::min(4095, Sound.ModSpeed));
+		F.ModDepth = std::max(0, std::min(63, Sound.ModDepth));
+		F.ModDelay = std::max(0, std::min(255, Sound.ModDelay));
+		How = F.ModDepth > 0 && F.ModSpeed > 0 ? Format("its own wave and modulator (speed %d, depth %d%s)", F.ModSpeed, F.ModDepth,
+			F.ModDelay > 0 ? Format(", from %d frames in", F.ModDelay).c_str() : "") : "its own wave";
+	}
+	else if (Fds) {
+		F.Wave = FdsWaveOfWord("round");
+		How = "a round wave: the reference was studied before FDS waves were kept, so study its NSF again (study_nsf) for its "
+			"own wave and modulator";
+	}
+	else if (Sound.Sawtooth) {
+		F.Wave = FdsWaveOfWord("bright");
+		How = "a sawtooth wave, as its channel played it";
+	}
+	else if (Sound.Triangle) {
+		F.Wave = FdsWaveOfWord("triangle");
+		How = "a triangle wave, as its channel played it";
+	}
+	else if (Sound.Chip == "N163") {
+		F.Wave = FdsWaveOfWord("round");
+		How = "a round wave (the reference keeps no N163 wave)";
+	}
+	else {
+		// A pulse: the width of its first duty
+		const std::vector<int> &Duty = Sound.Sequences[SEQUENCE_DUTY].Items;
+		int Width = 32;
+		if (!Duty.empty())
+			Width = Sound.Chip == "VRC6" ? 4 * (std::max(0, std::min(7, Duty[0])) + 1) :
+				(Duty[0] == 0 ? 8 : Duty[0] == 1 ? 16 : Duty[0] == 3 ? 48 : 32);
+		F.Wave = FdsPulseWave(Width);
+		How = Format("a %s pulse wave, its duty's", Width == 8 ? "12.5%" : Format("%d%%", Width * 100 / 64).c_str());
+	}
+	static const int TYPES[] = { SEQUENCE_VOLUME, SEQUENCE_ARPEGGIO, SEQUENCE_PITCH };
+	for (int i = 0; i < 3; ++i) {
+		const ReferenceSequence &q = Sound.Sequences[TYPES[i]];
+		if (q.Items.empty())
+			continue;
+		PresetSequence S;
+		S.Type = TYPES[i];
+		S.Items.assign(q.Items.begin(), q.Items.begin() + static_cast<std::ptrdiff_t>(std::min(q.Items.size(), static_cast<size_t>(MAX_ITEMS))));
+		if (S.Type == SEQUENCE_VOLUME)
+			for (size_t k = 0; k < S.Items.size(); ++k)
+				S.Items[k] = Fds ? std::max(0, std::min(32, S.Items[k])) : (S.Items[k] <= 0 ? 0 :
+					std::max(1, (std::min(15, S.Items[k]) * FDS_VOLUME_MAX + 7) / 15));
+		else if (S.Type == SEQUENCE_PITCH && !Fds)
+			S.Items = ScaledSteps(S.Items, -4.0);
+		S.Loop = q.Loop < static_cast<int>(S.Items.size()) ? q.Loop : -1;
+		S.Release = q.Release < static_cast<int>(S.Items.size()) ? q.Release : -1;
+		S.Setting = S.Type == SEQUENCE_ARPEGGIO && q.Fixed ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE;
+		F.Sequences.push_back(S);
+	}
+	if (!Fds && !Sound.Sequences[SEQUENCE_HIPITCH].Items.empty())
+		How += " (its hi-pitch sequence left out)";
+	return F;
 }
 
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound)

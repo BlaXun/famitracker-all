@@ -82,16 +82,23 @@ PresetSequence Sequence(int Type, const std::vector<int> &Items, int Loop = -1, 
 	return Seq;
 }
 
-// A volume envelope, 0-31 a frame (60 a second): Attack frames from From up to
-// Peak along a curve that starts and lands gently (a smooth wave starting at
-// full volume would click), Decay frames falling to Sustain, held while the
-// note lasts (the release point), then Release frames to silence. With
-// Sustain 0 the sound dies away by itself over Decay frames, holding its last
-// whisper until the note ends.
+// A volume envelope, 0-31 a frame (60 a second): Attack frames from From (its
+// first frame; from silence with From 0) up to Peak along a curve that starts
+// and lands gently, Decay frames falling to Sustain, held while the note lasts
+// (the release point), then Release frames to silence. With Sustain 0 the
+// sound dies away by itself over Decay frames, holding its last whisper until
+// the note ends.
+//
+// FamiTracker's FDS changes its volume at once, wherever the wave is, so a
+// step of the volume clicks in proportion to its size: a smooth wave starting
+// at full volume pops. A held sound starts at about two fifths of its level,
+// which keeps both the step up from silence and the drop from a note still
+// sounding (legato, or a release's tail: each note starts its envelope again)
+// to well under its level.
 PresetSequence Volume(int Attack, int From, int Peak, int Decay, int Sustain, int Release)
 {
 	std::vector<int> Out;
-	for (int i = 1; i < Attack; ++i)
+	for (int i = From > 0 ? 0 : 1; i < Attack; ++i)
 		Out.push_back(std::max(1, int(std::floor(From + (Peak - From) * (1.0 - std::cos(PI * i / Attack)) / 2.0 + 0.5))));
 	Out.push_back(Peak);
 	const int Floor = Sustain > 0 ? Sustain : 1;
@@ -110,16 +117,16 @@ PresetSequence Volume(int Attack, int From, int Peak, int Decay, int Sustain, in
 	return Sequence(SEQUENCE_VOLUME, Out, -1, ReleasePoint);
 }
 
-// A volume envelope that breathes while the note holds: up to Low over
-// Attack frames, then slowly up to Peak and back to Low over Period frames,
+// A volume envelope that breathes while the note holds: from From up to Low
+// over Attack frames, then slowly up to Peak and back to Low over Period frames,
 // again and again, Release frames to silence after a release. A release
 // starts from Low (FamiTracker jumps to the release point, the loop's end),
 // so wherever the breath is, it falls a little and fades, never swells.
-PresetSequence BreathingVolume(int Attack, int Peak, int Low, int Period, int Release)
+PresetSequence BreathingVolume(int Attack, int From, int Peak, int Low, int Period, int Release)
 {
 	std::vector<int> Out;
-	for (int i = 1; i <= Attack; ++i)
-		Out.push_back(std::max(1, int(std::floor(Low * (1.0 - std::cos(PI * i / Attack)) / 2.0 + 0.5))));
+	for (int i = 0; i < Attack; ++i)
+		Out.push_back(std::max(1, int(std::floor(From + (Low - From) * (1.0 - std::cos(PI * i / Attack)) / 2.0 + 0.5))));
 	const int Loop = static_cast<int>(Out.size());
 	for (int i = 1; i <= Period; ++i)
 		Out.push_back(int(std::floor(Low + (Peak - Low) * (1.0 - std::cos(2.0 * PI * i / Period)) / 2.0 + 0.5)));
@@ -205,15 +212,15 @@ std::vector<FdsSound> MakeSounds()
 	Out.push_back(Sound("soft flute", "flute, soft lead, singing lead, recorder, ocarina, pan flute",
 		"a round, breathy flute that swells in gently, its vibrato coming in after a moment",
 		HarmonicWave({ 1.0, 0.16, 0.05 }),
-		Seqs{ Volume(5, 0, 28, 0, 28, 10), Vibrato(24, 8, 11) }));
+		Seqs{ Volume(5, 11, 28, 0, 28, 10), Vibrato(24, 8, 11) }));
 	Out.push_back(Sound("whistle", "thin lead, sine, sine lead, pure lead, piccolo, fife",
 		"a pure, high whistle with a quick, wide vibrato like a person whistling",
 		HarmonicWave({ 1.0 }),
-		Seqs{ Volume(3, 0, 28, 0, 27, 6), Vibrato(14, 14, 8) }));
+		Seqs{ Volume(3, 11, 28, 0, 27, 6), Vibrato(14, 14, 8) }));
 	Out.push_back(Modulated(Sound("eerie lead", "ghost, ghostly, haunted, spooky, theremin, hollow lead, eerie",
-		"a hollow lead whose pitch starts to wobble slowly and widely as it holds, like a theremin in the dark",
+		"a hollow lead that holds its note for half a second, then trembles widely, like a theremin in the dark",
 		HarmonicWave({ 1.0, 0.0, 0.33, 0.0, 0.12, 0.0, 0.05 }),
-		Seqs{ Volume(4, 0, 27, 0, 26, 14) }), WOBBLE, 12, 1, 30));
+		Seqs{ Volume(4, 10, 27, 0, 26, 14) }), WOBBLE, 12, 1, 30));
 	Out.push_back(Sound("glass bell", "bell, chime, glass, celesta, music box, glockenspiel, pluck",
 		"a glassy bell: a bright strike above the note that rings into a round, hollow tone and dies away slowly to a soft hum",
 		HarmonicWave({ 1.0, 0.0, 0.15, 0.0, 0.0, 0.05 }),
@@ -221,37 +228,37 @@ std::vector<FdsSound> MakeSounds()
 	Out.push_back(Sound("warm organ", "organ, church organ, pipe organ, drawbar organ, soft chords, harmonium",
 		"a warm organ of five drawbars, steady as a pipe organ with a faint chorus",
 		HarmonicWave({ 1.0, 0.55, 0.35, 0.25, 0.0, 0.12, 0.0, 0.08 }, { 0.0, 0.704, 0.9, 0.767, 0.736, 0.719, 0.487, 0.549 }),
-		Seqs{ Volume(2, 0, 28, 0, 28, 3), Vibrato(0, 2, 7) }));
+		Seqs{ Volume(2, 12, 28, 0, 28, 3), Vibrato(0, 2, 7) }));
 	Out.push_back(Sound("nasal reed", "reed, oboe, bassoon, clarinet, shawm, bagpipe, bright lead, brass",
 		"a nasal double reed like an oboe, its sound in its middle harmonics, with a vibrato that waits",
 		HarmonicWave({ 0.45, 0.8, 1.0, 0.75, 0.5, 0.3, 0.2, 0.12, 0.08 }, { 0.0, 0.123, 0.091, 0.548, 0.09, 0.259, 0.609, 0.407, 0.6 }),
-		Seqs{ Volume(3, 0, 27, 0, 25, 6), Vibrato(20, 8, 10) }));
+		Seqs{ Volume(3, 10, 27, 0, 25, 6), Vibrato(20, 8, 10) }));
 	Out.push_back(Sound("swelling strings", "strings, string pad, violin, viola, cello, ensemble, orchestra",
 		"bowed strings that swell in slowly and sing with a vibrato as they hold",
 		HarmonicWave(SawHarmonics(16, 8.0), { 0.0, 0.375, 0.099, 0.319, 0.987, 0.487, 0.714, 0.739, 0.779, 0.606, 0.194, 0.126,
 			0.103, 0.583, 0.619, 0.401 }),
-		Seqs{ Volume(24, 6, 28, 0, 26, 18), Vibrato(18, 8, 10) }));
+		Seqs{ Volume(20, 10, 28, 0, 26, 16), Vibrato(18, 8, 10) }));
 	Out.push_back(Sound("choir pad", "choir, voices, vox, aah, ooh, singers, pad, warm pad, lush chords",
 		"voices singing \"aah\" that rise in softly and hold, with a slow vibrato",
 		HarmonicWave({ 0.8, 0.5, 1.0, 0.65, 0.35, 0.18, 0.12, 0.08 }, { 0.0, 0.823, 0.676, 0.032, 0.677, 0.217, 0.482, 0.794 }),
-		Seqs{ Volume(16, 0, 26, 0, 25, 22), Vibrato(20, 6, 13) }));
+		Seqs{ Volume(14, 10, 26, 0, 25, 16), Vibrato(20, 6, 13) }));
 	Out.push_back(Sound("round bass", "bass, deep bass, sub bass, soft bass, plucky bass, double bass",
 		"a deep, round bass: almost a sine, warmer than the triangle and with a volume of its own",
 		HarmonicWave({ 1.0, 0.4, 0.15 }, { 0.0, 0.384, 0.129 }),
-		Seqs{ Volume(3, 0, 30, 10, 26, 4) }, true));
+		Seqs{ Volume(3, 11, 30, 10, 26, 4) }, true));
 	Out.push_back(Modulated(Sound("growl bass", "growl, growling bass, synth bass, buzz bass, dirty bass, thump bass, fuzz bass",
 		"a bright bass whose pitch the modulator shakes 35 times a second, so it growls",
 		HarmonicWave({ 1.0, 0.6, 0.45, 0.35, 0.28, 0.22, 0.18, 0.15, 0.12, 0.1 },
 			{ 0.0, 0.385, 0.159, 0.23, 0.97, 0.71, 0.49, 0.47, 0.301, 0.359 }),
-		Seqs{ Volume(2, 0, 30, 6, 27, 3) }, true), WOBBLE, 82, 1, 0));
+		Seqs{ Volume(2, 12, 30, 6, 27, 3) }, true), WOBBLE, 82, 1, 0));
 	Out.push_back(Modulated(Sound("underwater wobble", "underwater, water, wobble, warble, bubbles, wah, aquatic",
 		"a round tone that wobbles up and down a few times a second, like a sound heard under water",
 		HarmonicWave({ 1.0, 0.0, 0.2 }),
-		Seqs{ Volume(6, 0, 26, 0, 25, 12) }), WOBBLE, 7, 1, 4));
+		Seqs{ Volume(5, 10, 26, 0, 25, 10) }), WOBBLE, 7, 1, 4));
 	Out.push_back(Modulated(Sound("cave drone", "drone, cave, dark pad, rumble, ominous, dungeon, dark",
 		"a dark, hollow drone that breathes slowly in and out, a faint rumble in it, for caves and the night",
 		HarmonicWave({ 1.0, 0.25, 0.4, 0.1, 0.15 }, { 0.0, 0.821, 0.123, 0.683, 0.029 }),
-		Seqs{ BreathingVolume(30, 27, 20, 150, 30) }), WOBBLE, 60, 1, 0));
+		Seqs{ BreathingVolume(24, 8, 27, 20, 150, 24) }), WOBBLE, 60, 1, 0));
 	return Out;
 }
 
@@ -283,6 +290,7 @@ const WaveWord WAVE_WORDS[] = {
 	{ "voice,choir,vocal,aah", "voice-like" },
 	{ "glassy,glass,bell", "glassy" },
 	{ "bass,deep", "deep, round" },
+	{ "triangle", "triangle" },
 };
 
 // The wave of a word: its index in WAVE_WORDS, -1 if none
@@ -315,7 +323,8 @@ std::vector<int> WaveOf(int Index)
 	case 7: return HarmonicWave({ 1.0, 0.55, 0.35, 0.25, 0.0, 0.12, 0.0, 0.08 });
 	case 8: return HarmonicWave({ 0.8, 0.5, 1.0, 0.65, 0.35, 0.18, 0.12, 0.08 });
 	case 9: return HarmonicWave({ 1.0, 0.0, 0.15, 0.0, 0.0, 0.05 });
-	default: return HarmonicWave({ 1.0, 0.4, 0.15 });
+	case 11: return HarmonicWave({ 1.0, 0.0, -1.0 / 9, 0.0, 1.0 / 25, 0.0, -1.0 / 49, 0.0, 1.0 / 81, 0.0, -1.0 / 121 });
+	default: return HarmonicWave({ 1.0, 0.4, 0.15 }, { 0.0, 0.384, 0.129 });
 	}
 }
 
@@ -447,6 +456,42 @@ std::string FdsModulationWords()
 bool IsFdsWave(const std::string &Word)
 {
 	return WaveIndex(Word) >= 0;
+}
+
+std::vector<int> FdsWaveOfWord(const std::string &Word)
+{
+	const int Index = WaveIndex(Word);
+	return Index >= 0 ? WaveOf(Index) : std::vector<int>();
+}
+
+std::vector<int> FdsPulseWave(int Width)
+{
+	const int High = std::max(1, std::min(FDS_WAVE_SIZE - 1, Width));
+	// High samples at 32 + Up, the others at 32 - Down, Up * High = Down * (64 - High), the larger of them as far as fits
+	double Up = 31.0, Down = Up * High / (FDS_WAVE_SIZE - High);
+	if (Down > 32.0) {
+		Down = 32.0;
+		Up = Down * (FDS_WAVE_SIZE - High) / High;
+	}
+	std::vector<int> Wave;
+	for (int i = 0; i < FDS_WAVE_SIZE; ++i)
+		Wave.push_back(std::max(0, std::min(63, int(std::floor(32.0 + (i < High ? Up : -Down) + 0.5)))));
+	return Wave;
+}
+
+double FdsWaveBrightness(const std::vector<int> &Wave)
+{
+	double Fundamental = 0.0, Above = 0.0;
+	const size_t Size = Wave.size();
+	for (size_t k = 1; k <= Size / 2; ++k) {
+		double Re = 0.0, Im = 0.0;
+		for (size_t i = 0; i < Size; ++i) {
+			Re += Wave[i] * std::cos(2.0 * PI * double(k * i) / double(Size));
+			Im += Wave[i] * std::sin(2.0 * PI * double(k * i) / double(Size));
+		}
+		(k == 1 ? Fundamental : Above) += Re * Re + Im * Im;
+	}
+	return Fundamental + Above > 0.0 ? Above / (Fundamental + Above) : 0.0;
 }
 
 bool DesignFdsSound(const SoundDesign &Design, const std::string &Kind, const std::string &Wave, const std::string &Modulation,

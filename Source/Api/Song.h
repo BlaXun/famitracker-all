@@ -46,7 +46,7 @@ struct ChannelInfo {
 	bool Muted;				// muted in FamiTracker, so the user doesn't hear it play
 
 	ChannelInfo() : Kind(KIND_OTHER), ChanId(-1), EffectColumns(1), Muted(false) {}
-	std::string FullName() const { return Chip + " " + Name; }	// "VRC6 Pulse 1"
+	std::string FullName() const { return Name == Chip ? Name : Chip + " " + Name; }	// "VRC6 Pulse 1"; "FDS"
 };
 
 // One of an instrument's sequences, as FamiTracker stores it

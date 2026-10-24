@@ -86,6 +86,15 @@ std::string FdsWaveWords();			// "sine, round, hollow, ..."
 std::string FdsModulationWords();	// "none, wobble, tremble, growl, rumble"
 bool IsFdsWave(const std::string &Word);
 
+// Waves for other chips' sounds played on the FDS (reference_sound): the wave
+// of a word (FdsWaveWords; empty for one it doesn't know), and a pulse Width
+// of 64 samples high, its low part as far under the chip's zero as keeps the
+// wave centred (a narrow pulse otherwise thumps when its volume changes)
+std::vector<int> FdsWaveOfWord(const std::string &Word);
+std::vector<int> FdsPulseWave(int Width);
+// How bright a wave is: the share of its power above its fundamental, 0-1
+double FdsWaveBrightness(const std::vector<int> &Wave);
+
 // An FDS volume (0-31, or the 32 the chip holds) as the tools count an
 // instrument's envelope (0-15): nearest, and at least 1 while it sounds
 int FdsVolumeAs15(int Volume);

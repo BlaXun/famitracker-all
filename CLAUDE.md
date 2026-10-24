@@ -125,7 +125,11 @@ sounds (a wave by word, a `SoundDesign`'s sequences turned into the FDS's,
 the modulator by word). FamiTracker reports an FDS instrument's volume
 (0-31) as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and
 the vanish check hear it, and the tools write FDS notes two octaves up
-(`Written` in `Tools.cpp`; see Gotchas). The server's
+(`Written` in `Tools.cpp`; see Gotchas). A study keeps an FDS sound's wave
+and modulator (`nsf::StudySound`, then `ReferenceSound`'s `FdsWave` in the
+reference's JSON), which `ReferenceFdsSound` makes into an FDS instrument
+again (and another chip's sound into one, with a wave from its channel),
+and `ReferencePreset` counts its volume 0-15 for a pulse. The server's
 instructions (`ToolSet::Instructions`) teach the arranging craft, and the
 recipes of `ToolSet::Prompts` are served as MCP prompts. `soundtrack_notes`
 reads and writes a text file next to the song through `SongHost::ReadFile`
