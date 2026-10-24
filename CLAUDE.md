@@ -188,8 +188,8 @@ the instrument. `Source/Api/FdsSounds.cpp` draws the FDS's sounds (a wave of
 64 samples of one cycle, the modulator's table, speed, depth and delay, and
 the volume, arpeggio and pitch sequences CInstrumentFDS keeps itself);
 `AddFdsSoundInstrument` in `InstrumentLibrary.cpp` makes the instrument, for
-the tools (`SongHost::AddFdsInstrument`) and for Instrument > Instrument
-library's FDS target; `DesignFdsSound` makes `design_instrument`'s FDS
+the tools (`SongHost::AddFdsInstrument`) and for Instrument > Sound
+browser; `DesignFdsSound` makes `design_instrument`'s FDS
 sounds (a wave by word, a `SoundDesign`'s sequences turned into the FDS's,
 the modulator by word). FamiTracker reports an FDS instrument's volume
 (0-31) as the others' 0-15 (`FdsVolumeAs15`), so the mix, the review and
@@ -233,8 +233,34 @@ modules with `-study`, and ships next to FamiTracker.exe; `ftm2txt` writes a
 module's text.
 
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
-Instrument library in `Source/InstrumentLibrary.cpp` (instruments from the
-presets of `Source/Api/Presets.cpp`), Edit > Drum grid in
+Sound browser in `Source/SoundBrowserDlg.cpp` (the instrument library's
+menu command `ID_INSTRUMENT_LIBRARY` and Ctrl+Shift+L): one list of every
+sound the song can get, the index `Source/Api/SoundIndex.cpp` (portable,
+tested in `TestSoundIndex`): `ListSounds` lists the ready-made sounds for
+each kind of channel the song has (`sound_target`; the presets of
+`Source/Api/Presets.cpp`, the 5B's, the VRC7's patches and custom patches,
+the N163's and the FDS's sounds), every sound of the reference library's
+studies for each channel it can play on (at home where `reference_sound`
+puts it without a channel) and the song's own instruments (on the channel
+the track plays them most, `SongSoundUses` in `Tools.cpp`), each with its
+kind (`KindOfWords`), words, origin and the warnings of notes that vanish
+(`SoundHeardFrames`, `VanishWarning`: the check and text of `VanishRemark`)
+and of a vibrato that clicks on the 2A03's pulses (`VibratoClickPitches` in
+`PulseClicks.cpp`); `FindSounds` searches its precomputed words
+(`IndexWords`) and filters it, and `PreviewSteps` gives the notes a preview
+plays. The browser gets it through `CMcpConnection::Sounds` and makes a
+sound through `CMcpConnection::MakeSound` (`ToolSet::Sounds` and
+`MakeSound`, as `add_instrument` and `reference_sound` make them; the
+latter's making is `MakeReferenceInstrument`), with the connection's own
+dialog flag set so the host allows the change while the dialog is open;
+`find_sound` searches the same index. A sound not in the song is tried as
+an instrument and removed again with `RemoveInstrumentAndSequences` in
+`Source/InstrumentLibrary.cpp` (where the presets become instruments, for
+the tools too); `CFamiTrackerDoc::RemoveInstrument` makes the channels
+forget an FDS instrument's sequences first. The note keys play the sound
+picked through `CFamiTrackerView::NoteOfKey`, and MIDI notes come to the
+browser instead of the pattern editor while it's open
+(`CFamiTrackerView::SetNoteListener`). Edit > Drum grid in
 `Source/DrumGridDlg.cpp` (the arithmetic in `Source/DrumGrid.cpp`), View >
 Profile in `Source/Profile.cpp` (kept in `CSettings::Profile`; its template
 fills new songs in `CFamiTrackerDoc::OnNewDocument`, and
@@ -455,7 +481,10 @@ The application has no test suite of its own. What exists:
   and `TestKeyTools` the keys' shading, snapping and steps, the `BF KEYS`
   block (the same way), `set_key`, the tools' default key, keys moving with
   the whole song, versions, and the piano roll's chords (`ToolSet::Harmony`)
-  for known bars. Same three
+  for known bars; `TestSoundIndex` and `TestFindSound` the sound browser's
+  index on every chip (homes, kinds, words, the two warnings, previews, the
+  song's own instruments) and `find_sound`, `ToolSet::Sounds` and
+  `MakeSound` against `reference_sound`. Same three
   commands with `Source/Api` and `build/api`; CI runs it on Linux and with
   MSVC. The song in memory (`FakeSong`) writes changes the way
   `CInsertRecordingAction::Redo` does; keep the two in step, since a

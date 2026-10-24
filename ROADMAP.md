@@ -72,14 +72,26 @@ track, or all of them, as OGG files next to the song.
 
 Done:
 
-- **Instrument > Instrument library** (Ctrl+Shift+L, also under the
-  new-instrument button; `Source/InstrumentLibrary.cpp`): the sound presets
-  of `Source/Api/Presets.cpp` (13 for the 2A03, MMC5 and VRC6, plus the
-  VRC7's 15 built-in sounds) for the kinds of channel the song has, with what
-  each is for. Clicking a sound plays it with FamiTracker's own engine: it
-  goes into the song as an instrument while it's tried, one at a time,
-  playing a short phrase (or a beat, for drums), and comes out again unless
-  Add keeps it.
+- **Instrument > Sound browser** (Ctrl+Shift+L, also under the
+  new-instrument button; `Source/SoundBrowserDlg.cpp`, which grew out of the
+  instrument library): one list of every sound the song can use, for the
+  chips it has on: the ready-made sounds (the presets of
+  `Source/Api/Presets.cpp` for the 2A03, MMC5, VRC6 and 5B, the 5B's own, the
+  VRC7's 15 built-in sounds and custom patches, the N163's wave sounds and the
+  FDS's sounds), each sound of your reference library's studies (as
+  `reference_sound` makes it), and the song's own instruments. Find takes
+  words (bell, warm, pluck, bass, a game or a reference's title); filters
+  pick a kind (leads, basses, pads and chords, plucks, bells, keys, drums,
+  effects), where sounds come from and the channel. Each sound shows its
+  words, where it's from and the channel it plays on, and warns when its
+  notes are gone within four frames (a tune's notes on it sound missing) or
+  when its vibrato clicks on held notes of a 2A03 pulse. Clicking a sound
+  plays a short phrase (or a beat, for drums) on its channel with
+  FamiTracker's own engine, and while the list is picked the note keys (or a
+  MIDI keyboard) play it: a sound not in the song goes in as an instrument
+  while it's tried, one at a time, and comes out again unless Add to the
+  song keeps it (named, and picked in the instrument list). Claude's
+  `find_sound` searches the same list.
 - **Edit > Drum grid** (Ctrl+Shift+D; `Source/DrumGridDlg.cpp`, with the
   arithmetic in `Source/DrumGrid.cpp`, tested on Linux): the noise channel a
   bar at a time, a line each for a kick, a snare, a hi-hat and an open
