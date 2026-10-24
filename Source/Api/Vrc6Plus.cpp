@@ -84,6 +84,19 @@ bool IsSoftLayerSound(const std::string &Name)
 	return std::find(All.begin(), All.end(), Wanted) != All.end();
 }
 
+const std::vector<std::string> &SoftLayerCalmSounds()
+{
+	static const std::vector<std::string> SOUNDS = { "breath", "quick pad", "pulsing pad", "music box" };
+	return SOUNDS;
+}
+
+bool IsSoftLayerCalmSound(const std::string &Name)
+{
+	const std::string Wanted = Lower(Name);
+	const std::vector<std::string> &All = SoftLayerCalmSounds();
+	return std::find(All.begin(), All.end(), Wanted) != All.end();
+}
+
 std::vector<std::pair<const WaveSound *, int> > MissingSoftSounds(const std::vector<InstrumentInfo> &Instruments)
 {
 	std::vector<std::pair<int, int> > Used;

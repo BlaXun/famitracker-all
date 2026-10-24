@@ -565,8 +565,9 @@ bool DesignFdsSound(const SoundDesign &Design, const std::string &Kind, const st
 		std::snprintf(Buffer, sizeof(Buffer), ", settles to %d over %d frames, and fades over %d frames after a release (===)", Sustain,
 			Design.Decay, Design.Release);
 	Text += Buffer;
-	if (Design.Restrike >= 4 && Sustain > 0)
-		Text += "; struck again every " + std::to_string(Design.Restrike) + " frames while it holds";
+	if (Design.Restrike >= 4)
+		Text += "; struck again every " + std::to_string(Sustain > 0 ? Design.Restrike : std::max(Design.Restrike, Design.Attack + 1)) +
+			" frames while it holds";
 	if (Design.Echo)
 		Text += "; a soft echo after it";
 	if (Design.AttackPitch == PITCH_BLIP)
@@ -586,9 +587,10 @@ bool DesignFdsSound(const SoundDesign &Design, const std::string &Kind, const st
 		Text += " semitones";
 	}
 	if (Design.Vibrato > 0) {
-		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong" };
+		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong", "faint" };
 		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note",
-			DEPTHS[std::max(1, std::min(3, Design.Vibrato))], Design.VibratoDelay, Design.VibratoDelay / Rate);
+			DEPTHS[Design.Vibrato == VIBRATO_FAINT ? VIBRATO_FAINT : std::max(1, std::min(3, Design.Vibrato))], Design.VibratoDelay,
+			Design.VibratoDelay / Rate);
 		Text += Buffer;
 	}
 	if (ModAt > 0) {
