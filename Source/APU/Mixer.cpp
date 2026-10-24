@@ -400,7 +400,8 @@ void CMixer::ClearBuffer()
 	m_dSumSS[0] = m_dSumSS[1] = 0;
 	m_dSumTND[0] = m_dSumTND[1] = 0;
 
-	// Depth: the channels' own buffers empty as the sides, and the space silent
+	// Depth: the channels' own buffers empty as the sides; the space rings on (a song that stops or halts keeps
+	// its tail), until ClearSpace
 	for (int i = 0; i < CHANNELS; ++i) {
 		if (OwnActive(i)) {
 			m_OwnBuffer[i][0].clear();
@@ -409,6 +410,10 @@ void CMixer::ClearBuffer()
 		m_iPinOwn[i][0] = m_iPinOwn[i][1] = 0;
 		m_SoftFilter[i].Clear();
 	}
+}
+
+void CMixer::ClearSpace()
+{
 	m_Space.Clear();
 }
 

@@ -81,6 +81,7 @@ public:
 	void	SetChannelDepth(int ChanID, int Soft, int Space);
 	void	SetSpace(int Room, double EchoSeconds, int Repeats);
 	bool	SpaceRinging() const;
+	void	ClearSpace();							// as a song or a render starts: Reset leaves the space ringing
 
 #ifdef LOGGING
 	void	Log();

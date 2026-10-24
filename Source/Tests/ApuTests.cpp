@@ -122,6 +122,10 @@ struct Run {
 	int Off;
 	int Tone;				// tone_t
 	int Frames;				// 0: FRAMES
+	// The APU reset before frame ResetAt - 1 (0: never), as FamiTracker silences it when a song stops or halts;
+	// with ClearSpace the space silenced too, as a song starts
+	int ResetAt;
+	bool ClearSpace;
 };
 
 Run Plain(int Chip, unsigned Mask)
@@ -444,6 +448,11 @@ Sides RenderHere(const Run &R)
 			for (int v = 0; v < VOICES; ++v)
 				if (CHANNELS_OF[R.Chip][v] >= 0)
 					Apu.SetChannelDepth(CHANNELS_OF[R.Chip][v], 0, 0);
+		if (R.ResetAt > 0 && f == R.ResetAt - 1) {
+			Apu.Reset();
+			if (R.ClearSpace)
+				Apu.ClearSpace();
+		}
 		if (f == R.PanFrame) {
 			for (int v = 0; v < VOICES; ++v) {
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Pan[v] != 0x80)
@@ -903,6 +912,16 @@ void TestSpace()
 		// While the note sounds, it's there as it was (with the room's start added)
 		CHECK(RmsOf(A.Left, 2 * FRAME_SAMPLES, 9 * FRAME_SAMPLES) > Note * 0.9);
 	}
+	// A stop or a halt (the APU reset) leaves the space ringing; a song starting silences it
+	Run Stopped = Tone(TONE_BLIP, 0, 100, 1);
+	Stopped.Frames = 40;
+	Stopped.ResetAt = 14;
+	const Sides Rings = Render(Stopped);
+	Stopped.ClearSpace = true;
+	const Sides Cleared = Render(Stopped);
+	CHECK(RmsOf(Rings.Left, 16 * FRAME_SAMPLES, 30 * FRAME_SAMPLES) > Note * 0.01);
+	CHECK(Peak(Cleared.Left, 16 * FRAME_SAMPLES) < 4);
+
 	// The echo alone, a quarter of a second, 3 repeats: silent until the first, each repeat about 10 dB under the one
 	// before (and a little darker), the first at 0.6 of the note
 	Run E = Tone(TONE_BLIP, 0, 100, ROOM_NONE, 0.25, 3);

@@ -369,8 +369,10 @@ path, sample for sample, while no channel has its own buffers and the space
 is idle. `CSoundGen::ApplySpace` times the echo from the playing track's
 speed, tempo and first highlight (not its `Fxx`) as each song starts; a
 render goes on while `CAPU::SpaceRinging` (up to 15 s), so WAV files keep
-the tail, and `CMixer::ClearBuffer` silences the space, so renders repeat
-exactly. `export_for_game` passes `CutForGame` `Tail` when a channel sends
+the tail. `CMixer::ClearBuffer` (every `CAPU::Reset`, so every stop and
+halt through `MakeSilent`) leaves the space ringing; `CAPU::ClearSpace`
+silences it as a song starts (`BeginPlayer`) and as a render starts
+(`OnStartRender`), so renders repeat exactly. `export_for_game` passes `CutForGame` `Tail` when a channel sends
 to a space that sounds (`SpaceRings` in `Tools.cpp`): the loop is the second
 time through, and a halt keeps its tail. `set_mixer` takes `soft`, `space`,
 `room`, `echo` and `repeats` (`ParseRoom`, `ParseEcho`) through

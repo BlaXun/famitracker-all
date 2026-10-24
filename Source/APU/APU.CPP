@@ -585,6 +585,11 @@ bool CAPU::SpaceRinging() const
 	return m_pMixer->SpaceRinging();
 }
 
+void CAPU::ClearSpace()
+{
+	m_pMixer->ClearSpace();
+}
+
 void CAPU::LogExternalWrite(uint16 Address, uint8 Value)
 {
 	if (Address >= 0x9000 && Address <= 0x9003)

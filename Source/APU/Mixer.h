@@ -86,6 +86,7 @@ public:
 	// its repeats
 	void	SetSpace(int Room, double EchoSeconds, int Repeats);
 	bool	SpaceRinging() const;				// the space's sound is still dying away
+	void	ClearSpace();						// the space silent (ClearBuffer leaves it ringing), as a song starts
 	bool	IsOwn(int ChanID) const;			// mixed into buffers of its own (the VRC7 makes its samples itself)
 	void	MixOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
 

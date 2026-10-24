@@ -992,9 +992,10 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	ResetAPU();
 
 	// The mixer window's settings as they are now, before every channel starts at its pan, and the space's echo in
-	// this track's beats
+	// this track's beats; the space silent, so every start (and render) sounds the same
 	ApplyChannelMix();
 	ApplySpace();
+	m_pAPU->ClearSpace();
 
 	MakeSilent();
 
@@ -1963,6 +1964,7 @@ void CSoundGen::OnStartRender(WPARAM wParam, LPARAM lParam)
 	m_iDelayedStart = 5;	// Wait 5 frames until player starts
 	m_iDelayedEnd = 5;
 	m_iRenderTail = 0;
+	m_pAPU->ClearSpace();	// what played before isn't in the file
 }
 
 void CSoundGen::OnStopRender(WPARAM wParam, LPARAM lParam)
