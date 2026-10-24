@@ -33,11 +33,13 @@
 #include "../Jingles.h"
 #include "../Json.h"
 #include "../Mcp.h"
+#include "../Network.h"
 #include "../Music.h"
 #include "../Ogg.h"
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
+#include "../ProblemList.h"
 #include "../PulseClicks.h"
 #include "../References.h"
 #include "../Song.h"
@@ -117,6 +119,7 @@ public:
 		std::string Name;
 		int Speed, Tempo;
 		std::vector<std::vector<Cell> > Rows;
+		SectionList Sections;
 	};
 
 	SongInfo Info;
@@ -127,6 +130,8 @@ public:
 	std::map<std::string, std::string> Files;	// saved next to the song
 	int RenderLatency;							// samples of silence before the song starts
 	std::vector<std::vector<std::vector<Cell> > > History;
+	std::vector<SectionList> SectionHistory;	// with History: the sections before each change
+	int SectionWrites = 0;
 	std::vector<std::pair<int, int> > TempoUndo;
 	int Writes, LastLink, PlayFirst, PlayRows, NextClipId;
 	SongWrite LastWrite;
@@ -174,11 +179,13 @@ public:
 		Tracks[Current].Speed = Info.Speed;
 		Tracks[Current].Tempo = Info.Tempo;
 		Tracks[Current].Rows = Rows;
+		Tracks[Current].Sections = Info.Sections;
 		Current = Track;
 		Info.TrackName = Tracks[Track].Name;
 		Info.Speed = Tracks[Track].Speed;
 		Info.Tempo = Tracks[Track].Tempo;
 		Rows = Tracks[Track].Rows;
+		Info.Sections = Tracks[Track].Sections;
 	}
 
 	// The notes a preset's looping arpeggio plays besides each note, as FamiTracker reports them
@@ -296,7 +303,12 @@ public:
 			Error = "Those frames can't move.";
 			return false;
 		}
+		if (Write.SetSections && !ValidSections(Write.Sections, 0)) {
+			Error = "Those sections can't be.";
+			return false;
+		}
 		History.push_back(Rows);
+		SectionHistory.push_back(Info.Sections);
 		const size_t At = static_cast<size_t>(Write.MoveFrame) * Length;
 		for (size_t c = 0; c < Rows.size(); ++c) {
 			if (Write.MoveBy > 0)
@@ -305,6 +317,11 @@ public:
 				Rows[c].erase(Rows[c].begin() + static_cast<std::ptrdiff_t>(At),
 					Rows[c].begin() + static_cast<std::ptrdiff_t>(At + static_cast<size_t>(-Write.MoveBy) * Length));
 		}
+		// The sections follow the frames moved, as CFamiTrackerDoc's InsertFrame and RemoveFrame move them
+		if (Write.MoveBy > 0)
+			SectionsInsertFrames(Info.Sections, Write.MoveFrame, Write.MoveBy);
+		else if (Write.MoveBy < 0)
+			SectionsRemoveFrames(Info.Sections, Write.MoveFrame, -Write.MoveBy);
 		const size_t First = static_cast<size_t>(Write.First);
 		size_t Needed = Rows[0].size();
 		for (size_t p = 0; p < Parts.size(); ++p)
@@ -366,9 +383,30 @@ public:
 			int &Shown = Info.Channels[static_cast<size_t>(Parts[p].Channel)].EffectColumns;
 			Shown = std::max(Shown, Needed);
 		}
+		// The sections as asked, inside the frames there are (as CInsertRecordingAction sets them)
+		if (Write.SetSections)
+			Info.Sections = Write.Sections;
+		SectionsFrameCount(Info.Sections, static_cast<int>(Rows[0].size() / Length));
 		++Writes;
 		LastLink = Write.LinkClipId;
 		LastWrite = Write;
+		return true;
+	}
+
+	bool SetSections(const SectionList &Sections, std::string &Error) override
+	{
+		if (Busy) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		if (!ValidSections(Sections, static_cast<int>(Rows[0].size()) / Info.PatternLength)) {
+			Error = "Those sections can't be.";
+			return false;
+		}
+		History.push_back(Rows);
+		SectionHistory.push_back(Info.Sections);
+		Info.Sections = Sections;
+		++SectionWrites;
 		return true;
 	}
 
@@ -792,6 +830,23 @@ public:
 		return true;
 	}
 
+	std::map<std::string, std::string> Inbox;	// files sent from another computer
+
+	bool SaveInbox(const std::string &Name, const std::string &Bytes, std::string &Path, std::string &) override
+	{
+		Inbox[Name] = Bytes;
+		Path = "C:\\Games\\FamiTracker\\Inbox\\" + Name;
+		return true;
+	}
+
+	std::vector<std::string> Fetched;	// the files ReadExport was asked for
+
+	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error) override
+	{
+		Fetched.push_back(Name);
+		return ReadFile(Name, Bytes, Error);
+	}
+
 	std::vector<std::string> Kits;	// the kits of samples added
 
 	int AddDpcmKit(const DpcmKit &Kit, std::string &) override
@@ -928,6 +983,10 @@ public:
 			return false;
 		Rows = History.back();
 		History.pop_back();
+		if (!SectionHistory.empty()) {
+			Info.Sections = SectionHistory.back();
+			SectionHistory.pop_back();
+		}
 		Message = "Undid it.";
 		return true;
 	}
@@ -1117,6 +1176,17 @@ void TestHttp()
 		CHECK_HAS(Bytes, "Content-Length: 0\r\n");
 		CHECK_HAS(Bytes, "Connection: keep-alive\r\n");
 		CHECK(Bytes.size() >= 4 && Bytes.compare(Bytes.size() - 4, 4, "\r\n\r\n") == 0);
+	}
+	{
+		// A HEAD request's answer: the body's length, without the body
+		HttpResponse Response;
+		Response.Status = 405;
+		Response.ContentType = "application/json";
+		Response.Body = "{\"x\":1}";
+		const std::string Head = FormatHttpResponse(Response, true, true), Full = FormatHttpResponse(Response, true);
+		CHECK_HAS(Head, "Content-Length: 7\r\n");
+		CHECK(Head.size() >= 4 && Head.compare(Head.size() - 4, 4, "\r\n\r\n") == 0);
+		CHECK(Full == Head + Response.Body);
 	}
 }
 
@@ -2183,6 +2253,34 @@ void TestReferences()
 	CHECK_HAS(Result.Text, "A game's soundtrack (many tracks, one world)");
 	CHECK_HAS(Result.Text, "export_for_game with loudness -22 LUFS");
 	CHECK_HAS(Result.Text, "set_meter bars_per_frame 2");
+	// The studies of October 2026: Castlevania, Zelda, Final Fantasy III and others, and dark and melancholic music
+	Result = Run(Song, "references", "{\"action\": \"guide\"}");
+	CHECK_HAS(Result.Text, "- castlevania: Konami's gothic action");
+	CHECK_HAS(Result.Text, "- square: Square's RPG sound");
+	CHECK_HAS(Result.Text, "- sunsoft: Sunsoft's sound");
+	CHECK_HAS(Result.Text, "- dark: Dark and claustrophobic");
+	CHECK_HAS(Result.Text, "- melancholy: Melancholic and sad");
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"cave\"}");
+	CHECK_HAS(Result.Text, "Dark and claustrophobic (dungeons, caves, crypts, the underworld)");
+	CHECK_HAS(Result.Text, "No drums, or nearly none");
+	// A dungeon: the dark topic first, then the soundtrack's plan
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"dungeon\"}");
+	CHECK(Result.Text.find("Dark and claustrophobic") < Result.Text.find("A game's soundtrack"));
+	// Castlevania: Konami's gothic section and its action section
+	Result = Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"castlevania\"}");
+	CHECK_HAS(Result.Text, "Konami's gothic action (Castlevania, Castlevania III, Super C)");
+	CHECK_HAS(Result.Text, "Konami action (Bucky O'Hare");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"sad night\"}").Text, "Melancholic and sad");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"final fantasy\"}").Text, "Square's RPG sound");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"kid icarus fds\"}").Text, "sawtooth-ramp wave");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"journey to silius\"}").Text, "The sampled bass");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"strider\"}").Text, "75% duty for both pulses");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"technos\"}").Text, "Technos (Nintendo World Cup)");
+	// The guide is plain ASCII, as JSON carries it
+	for (size_t i = 0; i < StyleGuideTopics().size(); ++i) {
+		const std::string Text = StyleGuide(StyleGuideTopics()[i]);
+		CHECK(std::find_if(Text.begin(), Text.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x80; }) == Text.end());
+	}
 
 	// Studied again: the user's tags and notes stay
 	CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"1\"}").IsError);
@@ -4084,6 +4182,7 @@ void TestProtocol()
 	CHECK(Message.Get("result")->Get("capabilities")->Get("prompts") != 0);
 	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "review_arrangement");
 	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "about -22 LUFS for calm places");
+	CHECK_HAS(Message.Get("result")->Get("instructions")->String(), "guide topics dark and melancholy");
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/list\"}"), Config, Tools);
 	const Json Listed = Body(Response);
 	const Json *pPrompts = Listed.Get("result")->Get("prompts");
@@ -4222,6 +4321,378 @@ void TestProtocol()
 	// The command that connects Claude Code
 	CHECK_EQ(ClaudeAddCommand(Config), std::string("claude mcp add --transport http --scope user famitracker "
 		"http://127.0.0.1:46600/mcp --header \"Authorization: Bearer secret\""));
+}
+
+// A request from another computer: its address, and the Host it reached FamiTracker at
+HttpRequest FromNetwork(const std::string &Body, const std::string &Peer, const std::string &Host = "192.168.1.10:46600",
+	const std::string &Token = "secret")
+{
+	HttpRequest Request = Post(Body, Token);
+	Request.Peer = Peer;
+	Request.Headers[0].second = Host;
+	return Request;
+}
+
+HttpRequest FileRequest(const std::string &Method, const std::string &Target, const std::string &Body = std::string(),
+	const std::string &Token = "secret")
+{
+	HttpRequest Request;
+	Request.Method = Method;
+	Request.Target = Target;
+	Request.Version = "HTTP/1.1";
+	Request.Headers.push_back(std::make_pair(std::string("Host"), std::string("192.168.1.10:46600")));
+	if (!Token.empty())
+		Request.Headers.push_back(std::make_pair(std::string("Authorization"), "Bearer " + Token));
+	Request.Body = Body;
+	Request.Peer = "192.168.1.20";
+	return Request;
+}
+
+// The tool-like words of a text (lower case with underscores, like check_song)
+std::vector<std::string> ToolWords(const std::string &Text)
+{
+	std::vector<std::string> Words;
+	size_t At = 0;
+	while ((At = Text.find('_', At)) != std::string::npos) {
+		size_t From = At, To = At;
+		while (From > 0 && (std::islower(static_cast<unsigned char>(Text[From - 1])) || Text[From - 1] == '_'))
+			--From;
+		while (To < Text.size() && (std::islower(static_cast<unsigned char>(Text[To])) || Text[To] == '_'))
+			++To;
+		Words.push_back(Text.substr(From, To - From));
+		At = To;
+	}
+	return Words;
+}
+
+// Other computers on the user's network: who may connect, the Host they use,
+// the small set of tools, files sent in and fetched
+void TestNetwork()
+{
+	// Addresses
+	unsigned long Address = 0;
+	CHECK(ParseIpv4("192.168.1.10", Address) && Address == 0xC0A8010AUL && Ipv4Text(Address) == "192.168.1.10");
+	CHECK(ParseIpv4("0.0.0.0", Address) && Address == 0 && ParseIpv4("255.255.255.255", Address) && Address == 0xFFFFFFFFUL);
+	const char *const NOT_ADDRESSES[] = { "", "1.2.3", "1.2.3.4.5", "256.1.1.1", "01.2.3.4", "1.2.3.4 ", " 1.2.3.4", "1..2.3",
+		"a.b.c.d", "1.2.3.-4", "1234.1.1.1", "::1", "localhost" };
+	for (size_t i = 0; i < sizeof(NOT_ADDRESSES) / sizeof(NOT_ADDRESSES[0]); ++i)
+		Check(!ParseIpv4(NOT_ADDRESSES[i], Address), NOT_ADDRESSES[i], __LINE__);
+	const char *const HOME[] = { "127.0.0.1", "127.255.0.9", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255",
+		"192.168.0.1", "192.168.178.20", "169.254.10.20", "100.64.0.1", "100.101.102.103", "100.127.255.255" };
+	for (size_t i = 0; i < sizeof(HOME) / sizeof(HOME[0]); ++i)
+		Check(ParseIpv4(HOME[i], Address) && IsPrivateIpv4(Address), HOME[i], __LINE__);
+	const char *const OUTSIDE[] = { "8.8.8.8", "1.1.1.1", "172.15.255.255", "172.32.0.1", "192.167.1.1", "192.169.0.1",
+		"169.253.1.1", "100.63.255.255", "100.128.0.1", "11.0.0.1", "192.0.2.2", "0.0.0.0", "255.255.255.255", "224.0.0.1" };
+	for (size_t i = 0; i < sizeof(OUTSIDE) / sizeof(OUTSIDE[0]); ++i)
+		Check(ParseIpv4(OUTSIDE[i], Address) && !IsPrivateIpv4(Address), OUTSIDE[i], __LINE__);
+	CHECK(IsLoopbackIpv4(0x7F000001UL) && !IsLoopbackIpv4(0x0A000001UL));
+	std::vector<std::string> Own;
+	Own.push_back("192.168.1.10");
+	Own.push_back("100.90.1.2");
+	Own.push_back("203.0.113.7");		// this computer's own public address
+	CHECK(MayConnect("192.168.1.20", Own) && MayConnect("100.70.0.3", Own) && MayConnect("127.0.0.1", Own));
+	CHECK(MayConnect("203.0.113.7", Own));	// this computer at its own address
+	CHECK(!MayConnect("203.0.113.8", Own) && !MayConnect("8.8.8.8", Own) && !MayConnect("", Own) && !MayConnect("::1", Own));
+
+	// Host headers that name this computer
+	CHECK(NamesThisComputer("192.168.1.10:46600", Own, "DESKTOP-PC") && NamesThisComputer("192.168.1.10", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("100.90.1.2:46600", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("desktop-pc:46600", Own, "DESKTOP-PC") && NamesThisComputer("DESKTOP-PC", Own, "desktop-pc"));
+	CHECK(NamesThisComputer("desktop-pc.fritz.box:46600", Own, "DESKTOP-PC"));
+	CHECK(NamesThisComputer("desktop-pc.tail1234.ts.net", Own, "DESKTOP-PC") && NamesThisComputer("desktop-pc.local.", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("192.168.1.11:46600", Own, "DESKTOP-PC") && !NamesThisComputer("attacker.example", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("desktop-pcx:46600", Own, "DESKTOP-PC") && !NamesThisComputer("evil-desktop-pc", Own, "DESKTOP-PC"));
+	CHECK(!NamesThisComputer("desktop-pc", Own, "") && !NamesThisComputer("", Own, "DESKTOP-PC") &&
+		!NamesThisComputer("[fd7a::1]:46600", Own, "DESKTOP-PC") && !NamesThisComputer(".", Own, "DESKTOP-PC"));
+
+	// File names
+	const char *const PLAIN[] = { "song.nsf", "Mega Man 2 (Capcom).nsf", "Town (night).ogg", "\xC3\x9C" "berwelt.ogg", "a" };
+	for (size_t i = 0; i < sizeof(PLAIN) / sizeof(PLAIN[0]); ++i)
+		Check(IsPlainFileName(PLAIN[i]), PLAIN[i], __LINE__);
+	const char *const NOT_PLAIN[] = { "", ".", "..", "../x.nsf", "..\\x.nsf", "a/b.nsf", "C:x.nsf", "x.ogg:stream", "x?.nsf",
+		"x*.nsf", "\"x\".nsf", "<x>.nsf", "x|y.nsf", "x\tnsf", "x.nsf ", " x.nsf", "x.nsf.", "NUL.ogg", "nul", "con.nsf",
+		"COM1.ogg", "lpt9.mid", "aux.wav", "conout$.txt", "bad\xFF.nsf" };
+	for (size_t i = 0; i < sizeof(NOT_PLAIN) / sizeof(NOT_PLAIN[0]); ++i)
+		Check(!IsPlainFileName(NOT_PLAIN[i]), NOT_PLAIN[i], __LINE__);
+	CHECK(!IsPlainFileName(std::string(201, 'a')) && IsPlainFileName(std::string(200, 'a')));
+	CHECK(!IsPlainFileName(std::string("x\0y.nsf", 7)));
+	CHECK(IsPlainFileName("COM10.ogg") && IsPlainFileName("console.nsf"));
+	CHECK(IsInboxFile("game.NSF") && IsInboxFile("game.nsfe") && IsInboxFile("game.m3u") && IsInboxFile("song.xm") &&
+		IsInboxFile("song.it") && IsInboxFile("song.mod") && IsInboxFile("song.s3m") && IsInboxFile("town.mid") &&
+		IsInboxFile("town.midi") && IsInboxFile("town.rmi") && IsInboxFile("song.ftm") && IsInboxFile("pew.wav"));
+	CHECK(!IsInboxFile("tool.exe") && !IsInboxFile("x.dll") && !IsInboxFile("notes.txt") && !IsInboxFile(".nsf") &&
+		!IsInboxFile("nsf") && !IsInboxFile("../game.nsf") && !IsInboxFile("game.nsf.exe"));
+	CHECK(IsExportFile("Town.ogg") && IsExportFile("Town (night).OGG") && !IsExportFile("test.ftm") && !IsExportFile(".ogg") &&
+		!IsExportFile("../Town.ogg"));
+
+	// Links and base64
+	CHECK_EQ(UrlEncode("Town (night).ogg"), std::string("Town%20%28night%29.ogg"));
+	CHECK_EQ(UrlEncode("a-b_c.d~e"), std::string("a-b_c.d~e"));
+	CHECK_EQ(UrlEncode("\xC3\x9C" "ber/welt"), std::string("%C3%9Cber%2Fwelt"));
+	std::string Decoded;
+	CHECK(UrlDecode("Town%20%28night%29.ogg", Decoded) && Decoded == "Town (night).ogg");
+	CHECK(UrlDecode("%c3%9cber", Decoded) && Decoded == "\xC3\x9C" "ber");
+	CHECK(UrlDecode("a+b", Decoded) && Decoded == "a+b");
+	CHECK(!UrlDecode("bad%2", Decoded) && !UrlDecode("bad%zz", Decoded) && !UrlDecode("%", Decoded));
+	std::string Bytes;
+	for (int i = 0; i < 300; ++i)
+		Bytes += static_cast<char>(i * 7);
+	for (size_t Length = 0; Length < 8; ++Length) {
+		std::string Back;
+		Check(Base64Decode(Base64Encode(Bytes.substr(0, Length)), Back) && Back == Bytes.substr(0, Length), "base64 comes back", __LINE__);
+	}
+	std::string Back;
+	CHECK(Base64Decode(Base64Encode(Bytes), Back) && Back == Bytes);
+	CHECK(Base64Decode("TWFu\r\nTWE=", Back) && Back == "ManMa");
+	CHECK(Base64Decode("TWE", Back) && Back == "Ma");				// without its padding
+	CHECK(Base64Decode("-_8", Back) && Back == "\xFB\xFF");			// the URL alphabet
+	CHECK(!Base64Decode("TWFu!", Back) && !Base64Decode("T", Back) && !Base64Decode("TW=a", Back) && !Base64Decode("TWE===", Back));
+
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	Config.Addresses = Own;
+	Config.ComputerName = "DESKTOP-PC";
+	const std::string Ping = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+
+	// With the option off, only this computer: requests from elsewhere are refused (FamiTracker doesn't listen there then)
+	HttpResponse Response = HandleMcp(FromNetwork(Ping, "192.168.1.20"), Config, Tools);
+	CHECK_EQ(Response.Status, 403);
+	CHECK_HAS(Body(Response).Get("error")->Get("message")->String(), "Allow connections from other computers on my network");
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "127.0.0.1", "127.0.0.1:46600"), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "", "127.0.0.1:46600"), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(Post(Ping), Config, Tools).Status, 200);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "127.0.0.1", "192.168.1.10:46600"), Config, Tools).Status, 403);	// not its Host then
+
+	// With it on: home networks and Tailscale, never the internet
+	Config.Network = true;
+	const char *const ANSWERED[] = { "192.168.1.20", "10.0.0.5", "172.16.3.4", "172.31.0.9", "100.101.102.103", "169.254.1.1",
+		"127.0.0.1", "203.0.113.7" };
+	for (size_t i = 0; i < sizeof(ANSWERED) / sizeof(ANSWERED[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, ANSWERED[i]), Config, Tools).Status == 200, ANSWERED[i], __LINE__);
+	const char *const REFUSED[] = { "8.8.8.8", "172.32.0.1", "100.128.0.1", "203.0.113.8", "192.0.2.2", "garbage" };
+	for (size_t i = 0; i < sizeof(REFUSED) / sizeof(REFUSED[0]); ++i) {
+		Response = HandleMcp(FromNetwork(Ping, REFUSED[i]), Config, Tools);
+		Check(Response.Status == 403 && Contains(Body(Response).Get("error")->Get("message")->String(), "home network"), REFUSED[i],
+			__LINE__);
+	}
+	// The access code, always
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", "wrong"), Config, Tools).Status, 403);
+	// Its own addresses and name as the Host; nothing else
+	const char *const HOSTS[] = { "192.168.1.10:46600", "100.90.1.2:46600", "desktop-pc:46600", "DESKTOP-PC.fritz.box:46600",
+		"desktop-pc.tail1234.ts.net:46600", "localhost:46600", "127.0.0.1:46600" };
+	for (size_t i = 0; i < sizeof(HOSTS) / sizeof(HOSTS[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, "192.168.1.20", HOSTS[i]), Config, Tools).Status == 200, HOSTS[i], __LINE__);
+	const char *const OTHER_HOSTS[] = { "192.168.1.11:46600", "attacker.example:46600", "evil-desktop-pc:46600",
+		"desktop-pcx.fritz.box:46600", "[fd7a:115c::1]:46600" };
+	for (size_t i = 0; i < sizeof(OTHER_HOSTS) / sizeof(OTHER_HOSTS[0]); ++i)
+		Check(HandleMcp(FromNetwork(Ping, "192.168.1.20", OTHER_HOSTS[i]), Config, Tools).Status == 403, OTHER_HOSTS[i], __LINE__);
+	// Its name under any domain counts (routers and Tailscale add their own), so a page that knows the name could rebind one
+	// to it: the Origin check below and the access code keep such a page out
+	CHECK(NamesThisComputer("desktop-pc.attacker.example", Own, "DESKTOP-PC"));
+	// Web pages stay out, from anywhere
+	HttpRequest Page = FromNetwork(Ping, "192.168.1.20");
+	Page.Headers.push_back(std::make_pair(std::string("Origin"), std::string("http://192.168.1.10:46600")));
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+	Page.Headers.back().second = "https://evil.example";
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+	Page.Headers[0].second = "desktop-pc.attacker.example:46600";		// rebound to this computer
+	Page.Headers.back().second = "http://desktop-pc.attacker.example:46600";
+	CHECK_EQ(HandleMcp(Page, Config, Tools).Status, 403);
+
+	// The small set of tools for local models
+	const std::vector<std::string> &Core = ToolSet::CoreTools();
+	CHECK(Core.size() >= 15 && Core.size() <= 18);
+	for (size_t i = 0; i < Core.size(); ++i)
+		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
+	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
+	HttpRequest CoreList = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}", "192.168.1.20");
+	CoreList.Target = "/mcp/core";
+	Response = HandleMcp(CoreList, Config, Tools);
+	Json Message = Body(Response);
+	const Json *pTools = Message.Get("result")->Get("tools");
+	CHECK(pTools != 0 && pTools->Size() == Core.size());
+	{
+		// In the full list's order, each as described there
+		std::vector<std::string> Listed, InOrder;
+		for (size_t i = 0; pTools != 0 && i < pTools->Size(); ++i)
+			Listed.push_back(pTools->At(i).Get("name")->String());
+		for (size_t i = 0; i < Tools.List().size(); ++i)
+			if (ToolSet::IsCoreTool(Tools.List()[i].Name))
+				InOrder.push_back(Tools.List()[i].Name);
+		CHECK(Listed == InOrder);
+		CHECK(std::find(Listed.begin(), Listed.end(), "write_notes") != Listed.end() &&
+			std::find(Listed.begin(), Listed.end(), "export_for_game") != Listed.end() &&
+			std::find(Listed.begin(), Listed.end(), "add_chords_and_bass") != Listed.end());
+		// Under half the full list's text
+		const Json Full = Body(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), Config, Tools));
+		CHECK(WriteJson(*pTools).size() * 2 < WriteJson(*Full.Get("result")->Get("tools")).size());
+	}
+	HttpRequest CoreStart = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}");
+	CoreStart.Target = "/mcp/core/";
+	Message = Body(HandleMcp(CoreStart, Config, Tools));
+	const std::string Short = Message.Get("result")->Get("instructions")->String();
+	CHECK(Short == ToolSet::CoreInstructions());
+	CHECK(Short.size() < 4200 && Short.size() * 3 < ToolSet::Instructions().size());
+	CHECK(Message.Get("result")->Get("capabilities")->Get("tools") != 0 && Message.Get("result")->Get("capabilities")->Get("prompts") == 0);
+	// The craft and the rules that decide how it sounds are in them
+	CHECK_HAS(Short, "C-3 is middle C");
+	CHECK_HAS(Short, "Notes that vanish");
+	CHECK_HAS(Short, "a note's \"pan\" in write_notes");
+	CHECK_HAS(Short, "design_instrument kind pluck, sustain half");
+	CHECK_HAS(Short, "multiple of 256");
+	CHECK_HAS(Short, "polish with touches [\"clicks\"]");
+	CHECK_HAS(Short, "chord_style, color and bass_style");
+	CHECK_HAS(Short, "mix last");
+	CHECK_HAS(Short, "no Lxx, Mxy, Oxx or Txy");
+	{
+		// They name only tools of the set
+		const std::vector<std::string> Words = ToolWords(Short);
+		for (size_t i = 0; i < Words.size(); ++i)
+			Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style",
+				("a core tool: " + Words[i]).c_str(), __LINE__);
+		CHECK(Words.size() >= 15);
+	}
+	// The full instructions tell of send_file, and name only tools there are
+	CHECK_HAS(ToolSet::Instructions(), "send_file puts your files");
+	HttpRequest CoreCall = Post("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"make_jingle\"}}");
+	CoreCall.Target = "/mcp/core";
+	Response = HandleMcp(CoreCall, Config, Tools);
+	CHECK_EQ(ErrorCode(Response), -32602);
+	CHECK_HAS(Body(Response).Get("error")->Get("message")->String(), "small set of tools (/mcp/core)");
+	CoreCall.Body = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\",\"arguments\":{}}}";
+	Message = Body(HandleMcp(CoreCall, Config, Tools));
+	CHECK(!Message.Get("result")->Get("isError")->Bool());
+	CHECK_HAS(Message.Get("result")->Get("content")->At(0).Get("text")->String(), "VRC6 Pulse 1: 1 note");
+	CoreCall.Body = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"prompts/list\"}";
+	CHECK_EQ(ErrorCode(HandleMcp(CoreCall, Config, Tools)), -32601);
+	HttpRequest CoreDiscover = ModernPost("server/discover", "");
+	CoreDiscover.Target = "/mcp/core";
+	Message = Body(HandleMcp(CoreDiscover, Config, Tools));
+	CHECK(Message.Get("result")->Get("instructions")->String() == Short && Message.Get("result")->Get("capabilities")->Get("prompts") == 0);
+	HttpRequest CoreModernList = ModernPost("tools/list", "");
+	CoreModernList.Target = "/mcp/core";
+	CHECK(Body(HandleMcp(CoreModernList, Config, Tools)).Get("result")->Get("tools")->Size() == Core.size());
+	HttpRequest CorePrompts = ModernPost("prompts/list", "");
+	CorePrompts.Target = "/mcp/core";
+	Response = HandleMcp(CorePrompts, Config, Tools);
+	CHECK(Response.Status == 404 && ErrorCode(Response) == -32601);
+	HttpRequest Elsewhere = Post(Ping);
+	Elsewhere.Target = "/mcp/other";
+	CHECK_EQ(HandleMcp(Elsewhere, Config, Tools).Status, 404);
+	CHECK_EQ(NetworkUrl("192.168.1.10", 46600, false), std::string("http://192.168.1.10:46600/mcp"));
+	CHECK_EQ(NetworkUrl("100.90.1.2", 46601, true), std::string("http://100.90.1.2:46601/mcp/core"));
+
+	// send_file: a file into the Inbox, for the tools that read files on the user's PC
+	std::string Nsf = "NESM\x1A";
+	Nsf += std::string(200, '\x01');
+	ToolResult Sent = Tools.Call("send_file", Parse("{\"name\":\"Mega Man 2.nsf\",\"data\":\"" + Base64Encode(Nsf) + "\"}"));
+	CHECK(!Sent.IsError);
+	CHECK_HAS(Sent.Text, "Saved C:\\Games\\FamiTracker\\Inbox\\Mega Man 2.nsf (1 KB).");
+	CHECK_HAS(Sent.Text, "study_nsf");
+	CHECK(Song.Inbox["Mega Man 2.nsf"] == Nsf);
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"Mega Man 2.m3u\",\"data\":\"" + Base64Encode("x.nsf::NSF,1,Title") + "\"}")).Text,
+		"names the tracks of the NSF");
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"pew.wav\",\"data\":\"UklGRg==\"}")).Text, "make_sound_effect");
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"town.mid\",\"data\":\"TVRoZA==\"}")).Text, "study_module");
+	const char *const REFUSED_NAMES[] = { "..\\\\evil.nsf", "../evil.nsf", "C:\\\\Windows\\\\evil.nsf", "evil.exe", "NUL.nsf", "" };
+	for (size_t i = 0; i < sizeof(REFUSED_NAMES) / sizeof(REFUSED_NAMES[0]); ++i) {
+		const ToolResult Refused = Tools.Call("send_file", Parse(std::string("{\"name\":\"") + REFUSED_NAMES[i] + "\",\"data\":\"QUJD\"}"));
+		Check(Refused.IsError, REFUSED_NAMES[i], __LINE__);
+	}
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"evil.exe\",\"data\":\"QUJD\"}")).Text, ".nsf, .nsfe, .m3u");
+	CHECK(Song.Inbox.size() == 4);
+	CHECK(Tools.Call("send_file", Parse("{\"name\":\"x.nsf\",\"data\":\"not base64!\"}")).IsError);
+	CHECK(Tools.Call("send_file", Parse("{\"name\":\"x.nsf\",\"data\":\"\"}")).IsError);
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"name\":\"big.nsf\",\"data\":\"" + Base64Encode(std::string(MAX_INBOX_FILE + 1, 'x')) +
+		"\"}")).Text, "at most 5 MB");
+	CHECK(Song.Inbox.count("big.nsf") == 0 && Song.Inbox.count("x.nsf") == 0);
+	CHECK(!ToolSet::IsCoreTool("send_file") && Tools.Has("send_file"));
+
+	// PUT /inbox/<name>: the same with the file itself
+	Response = HandleMcp(FileRequest("PUT", "/inbox/Castle%20theme.xm", "Extended Module: "), Config, Tools);
+	CHECK_EQ(Response.Status, 200);
+	CHECK_HAS(Response.Body, "Saved C:\\Games\\FamiTracker\\Inbox\\Castle theme.xm");
+	CHECK(Song.Inbox["Castle theme.xm"] == "Extended Module: ");
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/x.nsf", "NESM", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/x.nsf", "NESM", "wrong"), Config, Tools).Status, 403);
+	Response = HandleMcp(FileRequest("GET", "/inbox/x.nsf"), Config, Tools);
+	CHECK(Response.Status == 405 && Response.Headers.size() == 1 && Response.Headers[0].second == "PUT");
+	const char *const BAD_UPLOADS[] = { "/inbox/..%2Fevil.nsf", "/inbox/..%5Cevil.nsf", "/inbox/evil.exe", "/inbox/%2e%2e",
+		"/inbox/a%00.nsf", "/inbox/bad%zz.nsf", "/inbox/C%3Aevil.nsf" };
+	for (size_t i = 0; i < sizeof(BAD_UPLOADS) / sizeof(BAD_UPLOADS[0]); ++i)
+		Check(HandleMcp(FileRequest("PUT", BAD_UPLOADS[i], "x"), Config, Tools).Status == 400, BAD_UPLOADS[i], __LINE__);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/big.nsf", std::string(MAX_INBOX_FILE + 1, 'x')), Config, Tools).Status, 413);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/", "x"), Config, Tools).Status, 404);
+	CHECK(Song.Inbox.size() == 5);
+
+	// GET /files/<name>: what export_for_game saved next to the song, and nothing else
+	Song.Files["Town.ogg"] = std::string("OggS\0\x02rest", 10);
+	Song.Files["Town (night).ogg"] = "OggS night";
+	Song.Files["Soundtrack notes.txt"] = "private";
+	Response = HandleMcp(FileRequest("GET", "/files/Town.ogg"), Config, Tools);
+	CHECK(Response.Status == 200 && Response.ContentType == "audio/ogg" && Response.Body == Song.Files["Town.ogg"]);
+	CHECK(Response.Headers.size() == 1 && Response.Headers[0].second == "attachment; filename=\"Town.ogg\"");
+	Response = HandleMcp(FileRequest("GET", "/files/Town%20%28night%29.ogg?x=1"), Config, Tools);
+	CHECK(Response.Status == 200 && Response.Body == "OggS night");
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Missing.ogg"), Config, Tools).Status, 404);
+	Song.Fetched.clear();
+	const char *const TRAVERSALS[] = { "/files/..%2F..%2Fsecret.ogg", "/files/..%5C..%5Csecret.ogg", "/files/../secret.ogg",
+		"/files/..\\secret.ogg", "/files/%2e%2e", "/files/C%3A%5Csecret.ogg", "/files/x.ogg%00.txt", "/files/test.ftm",
+		"/files/Soundtrack%20notes.txt", "/files/NUL.ogg", "/files/%2Fetc%2Fpasswd", "/files/bad%2", "/files/Town.ogg%3Astream" };
+	for (size_t i = 0; i < sizeof(TRAVERSALS) / sizeof(TRAVERSALS[0]); ++i)
+		Check(HandleMcp(FileRequest("GET", TRAVERSALS[i]), Config, Tools).Status == 400, TRAVERSALS[i], __LINE__);
+	CHECK(Song.Fetched.empty());	// none of them reached the song's folder
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", "wrong"), Config, Tools).Status, 403);
+	Response = HandleMcp(FileRequest("POST", "/files/Town.ogg"), Config, Tools);
+	CHECK(Response.Status == 405 && Response.Headers[0].second == "GET");
+	{
+		// From outside a home network, or with the option off, nothing
+		HttpRequest Outside = FileRequest("GET", "/files/Town.ogg");
+		Outside.Peer = "8.8.8.8";
+		CHECK_EQ(HandleMcp(Outside, Config, Tools).Status, 403);
+		McpConfig Off = Config;
+		Off.Network = false;
+		CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg"), Off, Tools).Status, 403);
+		HttpRequest Here = FileRequest("GET", "/files/Town.ogg");
+		Here.Peer = "127.0.0.1";
+		Here.Headers[0].second = "127.0.0.1:46600";
+		CHECK_EQ(HandleMcp(Here, Off, Tools).Status, 200);
+	}
+
+	// export_for_game links its files for a client on another computer, as it reached FamiTracker
+	{
+		FakeSong Exported;
+		Exported.Info.DirectChanges = true;
+		Exported.Put(5, 0, "C-4", 0);
+		Exported.Put(5, 64, "E-4");
+		ToolSet ExportTools(Exported);
+		HttpRequest Export = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"export_for_game\","
+			"\"arguments\":{}}}", "192.168.1.20", "desktop-pc:46600");
+		Export.Target = "/mcp/core";
+		std::string Text = Body(HandleMcp(Export, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
+		CHECK_HAS(Text, "Saved next to test.ftm:\n- Town.ogg");
+		CHECK_HAS(Text, "fetch the files from FamiTracker with the access code");
+		CHECK_HAS(Text, "\n- http://desktop-pc:46600/files/Town.ogg");
+		CHECK(Exported.Files.count("Town.ogg") == 1);
+		// The link works
+		HttpRequest Fetch = FileRequest("GET", "/files/Town.ogg");
+		Fetch.Headers[0].second = "desktop-pc:46600";
+		Response = HandleMcp(Fetch, Config, ExportTools);
+		CHECK(Response.Status == 200 && Response.Body == Exported.Files["Town.ogg"] && Response.Body.compare(0, 4, "OggS") == 0);
+		// On this computer, the files are next to the song: no links
+		HttpRequest Local = Post("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"export_for_game\","
+			"\"arguments\":{}}}");
+		Text = Body(HandleMcp(Local, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
+		CHECK_HAS(Text, "- Town.ogg");
+		CHECK_LACKS(Text, "/files/");
+		CHECK_LACKS(ExportTools.Call("export_for_game", Parse("{}")).Text, "http://");
+	}
 }
 
 // A session as Claude Code would run it, from the handshake to a melody in the song
@@ -6440,6 +6911,390 @@ void TestBars()
 	}
 }
 
+// Sections: named runs of a track's frames (Sections.h)
+
+// "Intro 0-0, A 1-3"
+std::string Layout(const SectionList &List)
+{
+	std::string Out;
+	for (size_t i = 0; i < List.size(); ++i) {
+		char Buffer[80];
+		std::snprintf(Buffer, sizeof(Buffer), "%s%s %d-%d", i == 0 ? "" : ", ", List[i].Name.c_str(), List[i].First, List[i].Last);
+		Out += Buffer;
+	}
+	return Out;
+}
+
+// Intro on frame 0, A on 1-3, B on 4-5 (frames 6 and 7 without one)
+SectionList ThreeSections()
+{
+	SectionList List;
+	List.push_back(Section("Intro", 0, 0));
+	List.push_back(Section("A", 1, 3));
+	List.push_back(Section("B", 4, 5));
+	return List;
+}
+
+void TestSections()
+{
+	// Lookups and names
+	{
+		SectionList List;
+		List.push_back(Section("Intro", 0, 0));
+		List.push_back(Section("A", 1, 2));
+		List.push_back(Section("Chorus 2", 5, 6));
+		CHECK(SectionAt(List, 0) == 0 && SectionAt(List, 2) == 1 && SectionAt(List, 3) == -1 && SectionAt(List, 6) == 2);
+		CHECK(FindSection(List, " intro ") == 0 && FindSection(List, "a") == 1 && FindSection(List, "B") == -1);
+		CHECK(!SectionNameProblem("").empty() && !SectionNameProblem("   ").empty() && !SectionNameProblem("A\tB").empty());
+		CHECK(SectionNameProblem(std::string(32, 'x')).empty() && !SectionNameProblem(std::string(33, 'x')).empty());
+		CHECK_EQ(TrimSectionName("  Bridge "), std::string("Bridge"));
+		CHECK_EQ(FreeSectionName(List, "Bridge"), std::string("Bridge"));
+		CHECK_EQ(FreeSectionName(List, "A"), std::string("A 2"));
+		CHECK_EQ(FreeSectionName(List, "Chorus"), std::string("Chorus"));
+		CHECK_EQ(FreeSectionName(List, "chorus 2"), std::string("chorus 3"));
+		CHECK_EQ(FreeSectionName(List, std::string(32, 'x')), std::string(32, 'x'));
+		List.push_back(Section(std::string(32, 'x'), 7, 7));
+		CHECK_EQ(FreeSectionName(List, std::string(32, 'x')), std::string(30, 'x') + " 2");
+		CHECK(ValidSections(List, 8) && !ValidSections(List, 7));
+		List.push_back(Section("a", 9, 9));
+		CHECK(!ValidSections(List, 0));	// a name twice
+		// Repeats share a color
+		CHECK(SectionColor("Chorus") == SectionColor("chorus 2") && SectionColor("A") == SectionColor("A 3"));
+		CHECK(SectionColor("Intro") >= 0 && SectionColor("Intro") < SECTION_COLORS);
+	}
+
+	// Naming frames: the others give them up, a name used elsewhere moves
+	{
+		SectionList List;
+		NameFrames(List, 2, 3, "Verse");
+		NameFrames(List, 0, 1, "Intro");
+		CHECK_EQ(Layout(List), "Intro 0-1, Verse 2-3");
+		NameFrames(List, 6, 9, "Chorus");
+		NameFrames(List, 7, 7, "Break");	// inside another: it keeps its frames before
+		CHECK_EQ(Layout(List), "Intro 0-1, Verse 2-3, Chorus 6-6, Break 7-7");
+		NameFrames(List, 1, 2, " Pickup ");	// over the end of one and the start of the next
+		CHECK_EQ(Layout(List), "Intro 0-0, Pickup 1-2, Verse 3-3, Chorus 6-6, Break 7-7");
+		NameFrames(List, 8, 9, "intro");
+		CHECK_EQ(Layout(List), "Pickup 1-2, Verse 3-3, Chorus 6-6, Break 7-7, intro 8-9");
+		NameFrames(List, 3, 3, "V");	// all of one: it goes
+		CHECK_EQ(Layout(List), "Pickup 1-2, V 3-3, Chorus 6-6, Break 7-7, intro 8-9");
+		UnnameFrames(List, 2, 6);
+		CHECK_EQ(Layout(List), "Pickup 1-1, Break 7-7, intro 8-9");
+		CHECK(!RenameSection(List, 0, "BREAK") && RenameSection(List, 0, " Lead-in ") && List[0].Name == "Lead-in");
+		CHECK(RenameSection(List, 1, "break") && List[1].Name == "break");	// its own name, written another way
+		RemoveSection(List, 1);
+		CHECK_EQ(Layout(List), "Lead-in 1-1, intro 8-9");
+	}
+
+	// The frame list changing
+	{
+		const SectionList Start = ThreeSections();
+		SectionList List = Start;
+		SectionsInsertFrames(List, 2, 1);	// between two frames of A: it's A's
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-4, B 5-6");
+		List = Start;
+		SectionsInsertFrames(List, 4, 2);	// where B starts: before it
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 6-7");
+		List = Start;
+		SectionsInsertFrames(List, 6, 1);	// after B ends
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-5");
+		List = Start;
+		SectionsCopyFrame(List, 3);			// a copy of A's last frame is A's
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-4, B 5-6");
+		List = Start;
+		SectionsCopyFrame(List, 0);			// of a section of one frame
+		CHECK_EQ(Layout(List), "Intro 0-1, A 2-4, B 5-6");
+		List = Start;
+		SectionsCopyFrame(List, 6);			// of a frame without a section
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-5");
+		List = Start;
+		SectionsInsertFrames(List, 1, 1);	// Duplicate patterns of frame 0: InsertFrame, then the copy joins
+		SectionsJoinBefore(List, 1);
+		CHECK_EQ(Layout(List), "Intro 0-1, A 2-4, B 5-6");
+		List = Start;
+		SectionsRemoveFrames(List, 0, 1);	// all of Intro: it goes
+		CHECK_EQ(Layout(List), "A 0-2, B 3-4");
+		List = Start;
+		SectionsRemoveFrames(List, 2, 3);	// A's last two frames and B's first
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-1, B 2-2");
+		List = Start;
+		SectionsFrameCount(List, 5);
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 4-4");
+		SectionsFrameCount(List, 4);
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3");
+
+		// Frames moved as a block
+		List = Start;
+		SectionsMoveFrames(List, 4, 5, 1);	// all of B, before A: B goes along
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-2, A 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 3, 3, 4);	// Move frame down on A's last: it leaves A, landing inside B
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-2, B 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 0, 0, 1);	// Intro into A, bringing its name: A ends there
+		CHECK_EQ(Layout(List), "A 0-0, Intro 1-1, B 4-5");
+		List = Start;
+		SectionsMoveFrames(List, 6, 7, 2);	// frames without a section into A: they join it
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-5, B 6-7");
+		List = Start;
+		SectionsMoveFrames(List, 1, 4, 3);	// A and B's first frame: A goes along, B gives that frame up
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-1, A 3-5");
+
+		// A whole section moving past its neighbour
+		CHECK(SectionMoveTarget(Start, 0, true, 8) == -1);	// Intro starts the song
+		CHECK(SectionMoveTarget(Start, 2, true, 8) == 1);	// B up past A: where A starts
+		CHECK(SectionMoveTarget(Start, 1, false, 8) == 3);	// A down past B's two frames
+		CHECK(SectionMoveTarget(Start, 2, false, 8) == 5);	// B down past a frame without a section
+		CHECK(SectionMoveTarget(Start, 2, false, 6) == -1);	// at the song's end
+		CHECK(SectionMoveTarget(Start, 3, false, 8) == -1);
+		List = Start;
+		SectionsMoveFrames(List, 1, 3, SectionMoveTarget(Start, 1, false, 8));
+		CHECK_EQ(Layout(List), "Intro 0-0, B 1-2, A 3-5");
+		List = Start;
+		SectionsMoveFrames(List, 4, 5, SectionMoveTarget(Start, 2, false, 8));
+		CHECK_EQ(Layout(List), "Intro 0-0, A 1-3, B 5-6");
+	}
+
+	// Rows moving (insert_bars and remove_bars), on 64-row frames: Intro 0, A 1-2, B 3
+	{
+		SectionList List;
+		List.push_back(Section("Intro", 0, 0));
+		List.push_back(Section("A", 1, 2));
+		List.push_back(Section("B", 3, 3));
+		bool Exact = false;
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 64, 64, 5, Exact)), "Intro 0-0, A 2-3, B 4-4");	// where A starts
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 80, 64, 5, Exact)), "Intro 0-0, A 1-3, B 4-4");	// inside A's first frame
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 256, 128, 6, Exact)), "Intro 0-0, A 1-2, B 3-3");	// at the end
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 64, -128, 2, Exact)), "Intro 0-0, B 1-1");		// A taken out
+		CHECK(Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 128, 32, 5, Exact)), "Intro 0-0, A 1-3, B 4-4");	// half a frame into A
+		CHECK(!Exact);
+		CHECK_EQ(Layout(SectionsShiftRows(List, 64, 0, -256, 1, Exact)), "");
+	}
+
+	// Every track's, and the module's block
+	{
+		SectionList Theme;
+		Theme.push_back(Section("Theme", 2, 4));
+		SectionStore Store;
+		CHECK(Store.Empty() && Store.Write().size() == 4u);
+		Store.Set(0, ThreeSections());
+		Store.Set(2, Theme);
+		CHECK(!Store.Empty() && Store.Get(1).empty() && Store.Get(2) == Theme && Store.Get(70).empty());
+		const std::vector<unsigned char> Data = Store.Write();
+		CHECK(Data.size() == 68u);
+		SectionStore Back;
+		Back.Set(5, Theme);	// what was there goes
+		CHECK(Back.Read(&Data[0], Data.size(), SectionStore::BLOCK_VERSION));
+		CHECK(Back.Get(0) == ThreeSections() && Back.Get(2) == Theme && Back.Get(1).empty() && Back.Get(5).empty());
+		CHECK(std::string(SectionStore::BLOCK_ID) == "BF SECTIONS");
+		// Cut short anywhere: nothing loaded, and no crash
+		for (size_t n = 0; n < Data.size(); ++n) {
+			SectionStore Cut;
+			Cut.Set(0, Theme);
+			CHECK(!Cut.Read(n == 0 ? 0 : &Data[0], n, SectionStore::BLOCK_VERSION) && Cut.Empty());
+		}
+		// Damaged: nothing loaded
+		auto Damaged = [&](size_t At, unsigned char Value) {
+			std::vector<unsigned char> Bad(Data);
+			Bad[At] = Value;
+			SectionStore Read;
+			return !Read.Read(&Bad[0], Bad.size(), SectionStore::BLOCK_VERSION) && Read.Empty();
+		};
+		CHECK(Damaged(12, 1));		// Intro's first frame after its last
+		CHECK(Damaged(25, 'x'));	// Intro's name without its end
+		CHECK(Damaged(26, 0));		// A starting on Intro's frame
+		CHECK(Damaged(46, 0));		// track 2 as track 0 again
+		CHECK(Damaged(50, 0));		// track 2 with no sections
+		CHECK(Damaged(0, 65));		// more tracks than a module has
+		CHECK(Damaged(34, 'b'));	// A renamed "b", which B is called too
+		CHECK(Damaged(20, 1));		// a control character in a name
+		// A newer version is left out
+		SectionStore Later;
+		CHECK(Later.Read(&Data[0], Data.size(), SectionStore::BLOCK_VERSION + 1) && Later.Empty());
+
+		// Tracks swapped and removed, and sections past a track's frames
+		Store.TracksSwapped(1, 2);
+		CHECK(Store.Get(1) == Theme && Store.Get(2).empty());
+		Store.TrackRemoved(0);
+		CHECK(Store.Get(0) == Theme && Store.Get(1).empty());
+		Store.FitFrames(0, 3);
+		CHECK_EQ(Layout(Store.Get(0)), "Theme 2-2");
+		Store.FitFrames(0, 2);
+		CHECK(Store.Empty());
+	}
+
+	// The picture: a band under the bar numbers names them
+	{
+		const Timing T(64, 2, 4, 16);
+		PictureSpec Spec(T);
+		Spec.First = 0;
+		Spec.End = 128;
+		PictureChannel Channel;
+		Channel.Color = 0;
+		Channel.Kind = KIND_PULSE;
+		NoteInfo Note = NoteInfo();
+		Note.Row = 0;
+		Note.Rows = 16;
+		Note.Pitch = 48;
+		Note.Volume = 15;
+		Channel.Notes.push_back(Note);
+		const Picture Plain = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		PictureSection Band;
+		Band.Name = "Chorus";
+		Band.First = 64;
+		Band.End = 128;
+		Band.Color = 2;
+		Spec.Sections.push_back(Band);
+		const Picture Named = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		CHECK(Named.Width == Plain.Width && Named.Height == Plain.Height + 16);
+		int Red, Green, Blue;
+		SectionRgb(2, Red, Green, Blue);
+		const Rgb &Fill = Named.Palette[Named.Pixels[static_cast<size_t>(30 * Named.Width + 1000)]];
+		CHECK(Fill.R == 255 - (255 - Red) * 45 / 100 && Fill.G == 255 - (255 - Green) * 45 / 100 && Fill.B == 255 - (255 - Blue) * 45 / 100);
+		const Rgb &Before = Named.Palette[Named.Pixels[static_cast<size_t>(30 * Named.Width + 300)]];
+		CHECK(Before.R == 255 && Before.G == 255 && Before.B == 255);	// bars 1-4 have none
+	}
+}
+
+void TestSectionTools()
+{
+	// Naming bars: whole frames, said when they're widened
+	{
+		FakeSong Song = BarSong(4, true);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: none named yet");
+		std::string Text = Run(Song, "name_section", "{\"name\": \"Intro\", \"from_bar\": 1, \"to_bar\": 4}").Text;
+		CHECK_HAS(Text, "Changed the song: named bars 1-4 \"Intro\". One Ctrl+Z in FamiTracker undoes it. Sections now: \"Intro\" "
+			"bars 1-4; bars 5-16 aren't in one.");
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0");
+		Text = Run(Song, "name_section", "{\"name\": \"A\", \"from_bar\": 6, \"to_bar\": 10}").Text;
+		CHECK_HAS(Text, "named bars 5-12 \"A\"");
+		CHECK_HAS(Text, "A section is whole frames (4 bars each), so bars 6-10 went out to the frames they're in: bars 5-12.");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"B\", \"from_bar\": 13}").Text,
+			"Sections now: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16.");
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16\n");
+		// A name is used once: refused for a rename, moved for bars
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"b\", \"name\": \"intro\"}").Text,
+			"A section is called \"intro\" already: \"Intro\" (bars 1-4).");
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"B\", \"name\": \"Bridge\"}").Text, "renamed \"B\" (bars 13-16) \"Bridge\"");
+		Text = Run(Song, "name_section", "{\"name\": \"Break\", \"from_bar\": 9, \"to_bar\": 12}").Text;
+		CHECK_HAS(Text, "\"A\" is bars 5-8 now (it was bars 5-12).");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"intro\", \"from_bar\": 5}").Text,
+			"The name \"Intro\" moved here from bars 1-4.");
+		// Undone, step by step
+		CHECK(!Run(Song, "undo", "{}").IsError && !Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "get_song", "{}").Text, "Sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"Bridge\" bars 13-16\n");
+		// A name taken away
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"Bridge\", \"clear\": true}").Text,
+			"took the name \"Bridge\" off bars 13-16 (the bars stay as they are)");
+		CHECK_HAS(Run(Song, "name_section", "{\"section\": \"Bridge\", \"clear\": true}").Text,
+			"No section is called \"Bridge\". The track's sections: \"Intro\" bars 1-4, \"A\" bars 5-12; bars 13-16 aren't in one.");
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 3, \"to_bar\": 6, \"clear\": true}").Text,
+			"\"Intro\" (bars 1-4) went. \"A\" is bars 9-12 now (it was bars 5-12). Sections now: \"A\" bars 9-12; bars 1-8 and "
+			"bars 13-16 aren't in one.");
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 1, \"to_bar\": 4, \"clear\": true}").Text, "Nothing would change");
+		// Asked properly
+		CHECK_HAS(Run(Song, "name_section", "{\"from_bar\": 1}").Text, "Give the section's name with name");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\"}").Text, "Say which bars");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\", \"section\": \"A\", \"from_bar\": 1}").Text, "not both");
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"A name much longer than thirty-two\", \"from_bar\": 1}").Text,
+			"at most 32 characters");
+		Song.Info.DirectChanges = false;
+		CHECK_HAS(Run(Song, "name_section", "{\"name\": \"X\", \"from_bar\": 1}").Text, "needs direct changes");
+	}
+
+	// Sections in place of bars
+	{
+		FakeSong Song = BarSong(4, true);
+		Song.Info.Sections.push_back(Section("Intro", 0, 0));
+		Song.Info.Sections.push_back(Section("A", 1, 2));
+		Song.Info.Sections.push_back(Section("B", 3, 3));
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"b\"}").Text, "VRC6 Pulse 1, bars 13-16 ");
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"C\"}").Text,
+			"No section is called \"C\". The track's sections: \"Intro\" bars 1-4, \"A\" bars 5-12, \"B\" bars 13-16.");
+		CHECK_HAS(Run(Song, "read_notes", "{\"channel\": 6, \"section\": \"A\", \"from_bar\": 2}").Text, "Give a section or bars");
+		CHECK_HAS(Run(Song, "check_song", "{\"section\": \"A\"}").Text, "bars 5-12");
+		CHECK_HAS(Run(Song, "play", "{\"section\": \"A\"}").Text, "Playing for the user from bar 5 for 8 bars.");
+		CHECK(Song.PlayFirst == 64 && Song.PlayRows == 128);
+		CHECK_HAS(Run(Song, "play", "{\"section\": \"A\", \"bars\": 2}").Text, "leave bars out");
+		const ToolResult Look = Run(Song, "look_at_song", "{\"section\": \"A\"}");
+		CHECK_HAS(Look.Text, "Piano roll of bars 5-12");
+		CHECK_HAS(Look.Text, "The band under the bar numbers names the song's sections: \"A\" (bars 5-12).");
+		CHECK(!Look.Image.empty());
+		CHECK_HAS(Run(Song, "set_loop", "{\"section\": \"A\"}").Text, "bars 1-4 play once as an intro, then bars 5-12 loop");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "set_tempo", "{\"section\": \"B\", \"bpm\": 100}").Text, "bar 13");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		// remove_bars takes a section out, and its name with it; undone, both come back
+		const std::string Text = Run(Song, "remove_bars", "{\"section\": \"A\"}").Text;
+		CHECK_HAS(Text, "bars 5-12 taken out");
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"B\" bars 5-8.");
+		CHECK(Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == -2 && Song.LastWrite.SetSections);
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2, B 3-3");
+	}
+
+	// insert_bars: before a section, inside one, named
+	{
+		FakeSong Song = BarSong(3, true);
+		Song.Info.Sections.push_back(Section("Intro", 0, 0));
+		Song.Info.Sections.push_back(Section("A", 1, 2));
+		std::string Text = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4, \"name\": \"Break\"}").Text;
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"Break\" bars 5-8, \"A\" bars 9-16.");
+		CHECK(Song.LastWrite.SetSections && Song.LastWrite.MoveFrame == 1 && Song.LastWrite.MoveBy == 1);
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2");
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 9, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "Sections now: \"Intro\" bars 1-4, \"A\" bars 5-16.");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}").Text;
+		CHECK_HAS(Text, "The new bars aren't in a section: name_section names them.");
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK_HAS(Run(Song, "insert_bars", "{\"at_bar\": 6, \"bars\": 1, \"name\": \"X\"}").Text,
+			"A section is whole frames, and those bars aren't");
+		Text = Run(Song, "insert_bars", "{\"at_bar\": 6, \"bars\": 1}").Text;
+		CHECK_HAS(Text, "moved by less than a frame, and a section is whole frames");
+		CHECK_EQ(Layout(Song.Info.Sections), "Intro 0-0, A 1-2");
+	}
+
+	// copy_bars: a whole section's copy is its repeat
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Info.Sections.push_back(Section("A", 0, 0));
+		Song.Info.Sections.push_back(Section("B", 1, 1));
+		std::string Text = Run(Song, "copy_bars", "{\"section\": \"A\", \"at_bar\": 13}").Text;
+		CHECK_HAS(Text, "The copy is a section of its own, the original's repeat: \"A 2\" (bars 13-16).");
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-1, A 2 3-3");
+		Text = Run(Song, "copy_bars", "{\"section\": \"A\", \"at_bar\": 5}").Text;	// onto B: no new section
+		CHECK_LACKS(Text, "a section of its own");
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-1, A 2 3-3");
+		CHECK_HAS(Run(Song, "copy_bars", "{\"at_bar\": 5}").Text, "Say which bars to copy");
+	}
+
+	// A version, kept or made, has the sections too
+	{
+		FakeSong Song = BarSong(3, false);
+		Song.Info.Sections.push_back(Section("A", 0, 0));
+		Song.Info.Sections.push_back(Section("B", 1, 2));
+		CHECK(!Run(Song, "keep_version", "{}").IsError);
+		CHECK_EQ(Song.Current, 0);
+		CHECK_EQ(Layout(Song.Tracks.back().Sections), "A 0-0, B 1-2");
+		CHECK(!Run(Song, "make_version", "{\"version\": \"night\"}").IsError);
+		CHECK_EQ(Song.Current, 2);
+		CHECK_EQ(Layout(Song.Info.Sections), "A 0-0, B 1-2");
+		CHECK(!Run(Song, "select_track", "{\"track\": 1}").IsError);
+		Song.Info.Sections.clear();
+		CHECK(!Run(Song, "keep_version", "{}").IsError);
+		CHECK(Song.Tracks.back().Sections.empty());
+	}
+
+	// The instructions teach it
+	CHECK_HAS(ToolSet::Instructions(), "name_section");
+}
+
 // OGG files for games
 
 void TestOgg()
@@ -6800,6 +7655,17 @@ void TestBridge()
 	Check(Contains(Bytes, Length), "the length before the body", __LINE__);
 	CHECK(BridgeRequest(Initialize, 46600, "", Message));
 	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("(none)"));
+	// FamiTracker on another computer (--host), and the small set of tools (--core)
+	CHECK(BridgeRequest(Initialize, 46601, "secret", Message, "192.168.1.10", "/mcp/core"));
+	CHECK_EQ(HeaderOf(Message.Request, "Host"), std::string("192.168.1.10:46601"));
+	CHECK_EQ(Message.Request.Target, std::string("/mcp/core"));
+	CHECK_EQ(HeaderOf(Message.Request, "Authorization"), std::string("Bearer secret"));
+	{
+		const std::string Head = "POST /mcp/core HTTP/1.1\r\nHost: 192.168.1.10:46601\r\n";
+		CHECK_EQ(FormatHttpRequest(Message.Request).compare(0, Head.size(), Head), 0);
+	}
+	CHECK(BridgeRequest(Initialize, 46600, "secret", Message, "desktop-pc"));
+	CHECK(HeaderOf(Message.Request, "Host") == "desktop-pc:46600" && Message.Request.Target == "/mcp");
 
 	// The 2026-07-28 protocol: the headers say what the body says
 	CHECK(BridgeRequest(std::string("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"tools/call\",\"params\":{\"name\":\"get_song\","
@@ -6996,6 +7862,9 @@ public:
 
 	int Port() const { return m_iPort; }
 	int Answered() const { return m_iAnswered; }
+	// The last request's Host header and target (read once it's answered)
+	std::string LastHost() const { return m_LastHost; }
+	std::string LastTarget() const { return m_LastTarget; }
 
 private:
 	void Run()
@@ -7007,9 +7876,13 @@ private:
 			timeval Wait = { 0, 20000 };
 			if (select(static_cast<int>(m_Listener) + 1, &Readable, 0, 0, &Wait) <= 0)
 				continue;
-			const test_socket_t Client = accept(m_Listener, 0, 0);
+			sockaddr_in From;
+			socklen_t FromSize = sizeof(From);
+			const test_socket_t Client = accept(m_Listener, reinterpret_cast<sockaddr*>(&From), &FromSize);
 			if (Client == NO_TEST_SOCKET)
 				continue;
+			char Peer[INET_ADDRSTRLEN] = "";
+			inet_ntop(AF_INET, &From.sin_addr, Peer, sizeof(Peer));
 			HttpRequestParser Parser;
 			HttpRequestParser::Result Result = HttpRequestParser::NEED_MORE;
 			char Buffer[4096];
@@ -7020,7 +7893,11 @@ private:
 				Result = Parser.Feed(Buffer, static_cast<size_t>(Count));
 			}
 			if (Result == HttpRequestParser::COMPLETE) {
-				const std::string Bytes = FormatHttpResponse(HandleMcp(Parser.Take(), m_Config, m_Tools), false);
+				HttpRequest Request = Parser.Take();
+				Request.Peer = Peer;	// as McpSocket.cpp gives it
+				m_LastHost = Request.Header("Host") != 0 ? *Request.Header("Host") : std::string();
+				m_LastTarget = Request.Target;
+				const std::string Bytes = FormatHttpResponse(HandleMcp(Request, m_Config, m_Tools), false);
 				++m_iAnswered;	// before the answer goes out: the client may check as soon as it has it
 				for (size_t Sent = 0; Sent < Bytes.size(); ) {
 					const long Count = static_cast<long>(send(Client, Bytes.data() + Sent, static_cast<int>(Bytes.size() - Sent), 0));
@@ -7040,6 +7917,7 @@ private:
 	std::atomic<bool> m_bStop;
 	std::atomic<int> m_iAnswered;
 	std::thread m_Thread;
+	std::string m_LastHost, m_LastTarget;
 };
 
 // famitracker-mcp's side over real sockets
@@ -7075,6 +7953,26 @@ void TestBridgeSockets()
 	Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"params\":{\"padding\":\"" + std::string(200000, 'x') + "\"}}", Error);
 	CHECK_EQ(Out, std::string("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}\n"));
 	CHECK_EQ(Endpoint.Answered(), 3);
+	// --host: FamiTracker named by its address or its name, the small set of tools with --core
+	const char *const HOSTS[] = { "127.0.0.1", "localhost" };
+	for (size_t i = 0; i < sizeof(HOSTS) / sizeof(HOSTS[0]); ++i) {
+		BridgeMessage Message;
+		BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/list\"}", Port, "t", Message, HOSTS[i], "/mcp/core");
+		HttpResponse Answer;
+		const BridgeExchangeResult Result = BridgeExchange(HOSTS[i], Port, FormatHttpRequest(Message.Request), 5000, Answer, Error);
+		Check(Result == EXCHANGE_ANSWERED, HOSTS[i], __LINE__);
+		Out = BridgeAnswer(Message, Answer);
+		Check(OneLine(Out) && Contains(Out, "\"name\":\"write_notes\"") && !Contains(Out, "\"name\":\"make_jingle\""), HOSTS[i], __LINE__);
+		CHECK_EQ(Endpoint.LastTarget(), std::string("/mcp/core"));
+		CHECK_EQ(Endpoint.LastHost(), std::string(HOSTS[i]) + ":" + std::to_string(Port));
+	}
+	{
+		BridgeMessage Message;
+		BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"ping\"}", Port, "t", Message, "no-such-computer.invalid");
+		HttpResponse Answer;
+		CHECK_EQ(BridgeExchange("no-such-computer.invalid", Port, FormatHttpRequest(Message.Request), 5000, Answer, Error), EXCHANGE_FAILED);
+		CHECK_HAS(Error, "No computer called no-such-computer.invalid");
+	}
 	Endpoint.Stop();
 
 	// Nobody listens: FamiTracker isn't running
@@ -9038,6 +9936,413 @@ void TestStereoExport()
 	CHECK(CutForGame(Steady, Moving, 8000, Rows, Marks, false, false, Cut, Error) && Cut.Difference > 0.1);
 }
 
+// A finding of check_song's JSON by kind, the first of it (null when there's none)
+const Json *FindingOf(const Json &Out, const char *Kind)
+{
+	const Json *pList = Out.Get("findings");
+	for (size_t i = 0; pList != 0 && i < pList->Size(); ++i)
+		if (pList->At(i).Get("kind") != 0 && pList->At(i).Get("kind")->String() == Kind)
+			return &pList->At(i);
+	return 0;
+}
+
+long long IntegerOf(const Json *pObject, const char *Name)
+{
+	const Json *pValue = pObject != 0 ? pObject->Get(Name) : 0;
+	return pValue != 0 && pValue->IsNumber() ? pValue->Integer() : -999;
+}
+
+std::string TextOf(const Json *pObject, const char *Name)
+{
+	const Json *pValue = pObject != 0 ? pObject->Get(Name) : 0;
+	return pValue != 0 && pValue->IsString() ? pValue->String() : std::string("(none)");
+}
+
+// check_song's findings as data (format json), which FamiTracker's problems panel reads: each with its kind, severity,
+// channel, place and notes, the line the text gives, and for a click the polish call that nudges it
+void TestCheckJson()
+{
+	// TestCheck's song: notes outside the key, a clash, a note out of range and a silent bar
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	const std::string Text = Run(Song, "check_song", "{\"key\": \"C major\"}").Text;
+	const ToolResult Result = Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}");
+	CHECK(!Result.IsError);
+	const Json Out = Parse(Result.Text);
+	CHECK(Out.IsObject());
+	CHECK_EQ(IntegerOf(&Out, "track"), 1);
+	CHECK_EQ(TextOf(&Out, "track_name"), std::string("Town"));
+	CHECK_EQ(TextOf(&Out, "key"), std::string("C major"));
+	CHECK(Out.Get("key_from_notes") != 0 && Out.Get("key_from_notes")->IsBool() && !Out.Get("key_from_notes")->Bool());
+	CHECK_EQ(IntegerOf(&Out, "from_bar"), 1);
+	CHECK_EQ(IntegerOf(&Out, "to_bar"), 8);
+	CHECK_EQ(IntegerOf(&Out, "pattern_length"), 64);
+	CHECK_EQ(IntegerOf(&Out, "rows_per_beat"), 4);
+	CHECK_EQ(IntegerOf(&Out, "rows_per_bar"), 16);
+	// The counts are the text's
+	const Json *pCounts = Out.Get("counts");
+	CHECK_EQ(IntegerOf(pCounts, "vanishing"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "click"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "clash"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "range"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "silent"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "busy"), 0);
+	CHECK_EQ(IntegerOf(pCounts, "key"), 2);
+	CHECK_HAS(Text, ": 2 outside the key, 1 clashes, 1 out of range, 0 busy, 1 silent, 0 clicking, 0 vanishing.");
+	const Json *pUnused = Out.Get("unused_channels");
+	CHECK(pUnused != 0 && pUnused->IsArray() && pUnused->Size() == 3 && pUnused->At(0).String() == "2A03 Pulse 2" &&
+		pUnused->At(1).String() == "2A03 Triangle" && pUnused->At(2).String() == "VRC6 Sawtooth");
+
+	// Every finding, heard worst first, with the line the text lists
+	const Json *pList = Out.Get("findings");
+	CHECK(pList != 0 && pList->Size() == 5);
+	static const char *const ORDER[] = { "clash", "range", "silent", "key", "key" };
+	for (size_t i = 0; pList != 0 && i < pList->Size() && i < 5; ++i) {
+		CHECK_EQ(TextOf(&pList->At(i), "kind"), std::string(ORDER[i]));
+		CHECK(Contains(Text, TextOf(&pList->At(i), "message").c_str()));
+	}
+
+	// A clash: both notes, where it starts and for how long
+	const Json *pClash = FindingOf(Out, "clash");
+	CHECK_EQ(TextOf(pClash, "severity"), std::string("high"));
+	CHECK_EQ(IntegerOf(pClash, "channel"), 6);
+	CHECK_EQ(TextOf(pClash, "channel_name"), std::string("VRC6 Pulse 1"));
+	CHECK_EQ(IntegerOf(pClash, "frame"), 0);
+	CHECK_EQ(IntegerOf(pClash, "row"), 0);
+	CHECK_EQ(IntegerOf(pClash, "bar"), 1);
+	CHECK_EQ(IntegerOf(pClash, "beat"), 1);
+	CHECK_EQ(TextOf(pClash, "position"), std::string("bar 1 beat 1"));
+	CHECK_EQ(IntegerOf(pClash, "rows"), 4);
+	CHECK_EQ(IntegerOf(pClash, "other_channel"), 7);
+	CHECK_EQ(TextOf(pClash, "other_channel_name"), std::string("VRC6 Pulse 2"));
+	CHECK_EQ(TextOf(pClash, "summary"), std::string("C-4 against C#4 on VRC6 Pulse 2 for 1 beat"));
+	CHECK_EQ(TextOf(pClash, "message"), std::string("Clash: C-4 on VRC6 Pulse 1 against C#4 on VRC6 Pulse 2 at bar 1 beat 1 for 1 beat."));
+	const Json *pNotes = pClash != 0 ? pClash->Get("notes") : 0;
+	CHECK(pNotes != 0 && pNotes->Size() == 2);
+	if (pNotes != 0 && pNotes->Size() == 2) {
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "channel"), 6);
+		CHECK_EQ(TextOf(&pNotes->At(0), "note"), std::string("C-4"));
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "row"), 0);
+		CHECK_EQ(IntegerOf(&pNotes->At(0), "rows"), 4);
+		CHECK_EQ(IntegerOf(&pNotes->At(1), "channel"), 7);
+		CHECK_EQ(TextOf(&pNotes->At(1), "note"), std::string("C#4"));
+	}
+	const Json *pPitches = pClash != 0 ? pClash->Get("pitches") : 0;
+	CHECK(pPitches != 0 && pPitches->Size() == 2 && pPitches->At(0).String() == "C-4" && pPitches->At(1).String() == "C#4");
+	CHECK(pClash != 0 && pClash->Get("fix") == 0);
+
+	// A note out of range, a silent bar (no channel, no notes) and a note outside the key
+	const Json *pRange = FindingOf(Out, "range");
+	CHECK_EQ(TextOf(pRange, "severity"), std::string("medium"));
+	CHECK_EQ(IntegerOf(pRange, "channel"), 1);
+	CHECK_EQ(IntegerOf(pRange, "row"), 48);
+	CHECK_EQ(IntegerOf(pRange, "bar"), 4);
+	CHECK_EQ(TextOf(pRange, "reason"), std::string("below A-0, the lowest note its pulse can play"));
+	CHECK_EQ(TextOf(pRange, "summary"), std::string("G-0 is below A-0, the lowest note its pulse can play"));
+	CHECK(pRange != 0 && pRange->Get("notes")->Size() == 1 && TextOf(&pRange->Get("notes")->At(0), "note") == "G-0");
+	const Json *pSilent = FindingOf(Out, "silent");
+	CHECK_EQ(TextOf(pSilent, "severity"), std::string("low"));
+	CHECK(pSilent != 0 && pSilent->Get("channel") != 0 && pSilent->Get("channel")->IsNull());
+	CHECK(pSilent != 0 && pSilent->Get("channel_name") != 0 && pSilent->Get("channel_name")->IsNull());
+	CHECK_EQ(IntegerOf(pSilent, "bar"), 3);
+	CHECK_EQ(IntegerOf(pSilent, "row"), 32);
+	CHECK_EQ(IntegerOf(pSilent, "rows"), 16);
+	CHECK(pSilent != 0 && pSilent->Get("notes")->Size() == 0);
+	const Json *pKey = FindingOf(Out, "key");
+	CHECK_EQ(IntegerOf(pKey, "channel"), 6);
+	CHECK_EQ(IntegerOf(pKey, "bar"), 2);
+	CHECK_EQ(TextOf(pKey, "summary"), std::string("F#4 is outside C major"));
+
+	// Past the first frame: the frame and its row, as the pattern editor shows them
+	Song.Put(1, 70, "D-4", 2);
+	Song.Put(1, 71, "D#4");
+	Song.End(1, 72);
+	const Json Later = Parse(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\", \"from_bar\": 5}").Text);
+	const Json *pLater = FindingOf(Later, "key");
+	CHECK_EQ(IntegerOf(pLater, "frame"), 1);
+	CHECK_EQ(IntegerOf(pLater, "row"), 7);
+	CHECK_EQ(IntegerOf(pLater, "bar"), 5);
+	CHECK(pLater != 0 && pLater->Get("beat") != 0 && std::fabs(pLater->Get("beat")->Number() - 2.75) < 1e-9);
+	CHECK_EQ(TextOf(pLater, "position"), std::string("bar 5 beat 2.75"));
+	CHECK_EQ(IntegerOf(&Later, "from_bar"), 5);
+	CHECK(Run(Song, "check_song", "{\"format\": \"xml\"}").IsError);
+	CHECK_HAS(Run(Song, "check_song", "{\"format\": \"text\"}").Text, "Checked bars 1-8");
+
+	// Clicks: the note, how often it clicks, and the polish call that nudges it, one change each
+	{
+		FakeSong Clicky;
+		Clicky.Info.DirectChanges = true;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		const int Sing = Clicky.Info.Instruments.back().Index;
+		Clicky.Put(0, 0, "A-3", Sing);
+		Clicky.Put(0, 32, "A-3");
+		Clicky.Put(0, 48, "E-4");
+		Clicky.End(0, 56);
+		Json Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 2);
+		const Json *pClick = FindingOf(Found, "click");
+		CHECK_EQ(TextOf(pClick, "severity"), std::string("high"));
+		CHECK_EQ(IntegerOf(pClick, "channel"), 1);
+		CHECK_EQ(IntegerOf(pClick, "row"), 0);
+		CHECK_EQ(IntegerOf(pClick, "rows"), 32);
+		CHECK(IntegerOf(pClick, "clicks") >= 2);
+		CHECK_EQ(IntegerOf(pClick, "boundary"), 256);
+		CHECK_EQ(TextOf(pClick, "nudge"), std::string("P81, 7 cents sharp"));
+		CHECK_HAS(TextOf(pClick, "summary"), "A-3 clicks ");
+		CHECK_HAS(TextOf(pClick, "summary"), ": its vibrato crosses 256");
+		const Json *pFix = pClick != 0 ? pClick->Get("fix") : 0;
+		CHECK_EQ(TextOf(pFix, "tool"), std::string("polish"));
+		CHECK_EQ(TextOf(pFix, "does"), std::string("nudges it a hair (P81, 7 cents sharp), so its vibrato stays clear of 256"));
+		const Json *pArguments = pFix != 0 ? pFix->Get("arguments") : 0;
+		CHECK(pArguments != 0 && WriteJson(*pArguments) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		// The fix as it's given: one change. Its write reaches the next A-3, which would click with the pitch it had back,
+		// so the change nudges that one too (as any direct change does), and E-4 gets the fine pitch back
+		if (pFix != 0 && pArguments != 0) {
+			const int Writes = Clicky.Writes;
+			ToolSet Tools(Clicky);
+			const ToolResult Fixed = Tools.Call(TextOf(pFix, "tool"), *pArguments);
+			CHECK(!Fixed.IsError);
+			CHECK_HAS(Fixed.Text, "A-3 at bar 1 beat 1 (P81, 7 cents sharp)");
+			CHECK_EQ(Clicky.Writes, Writes + 1);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][0], EFF_PITCH), 0x81);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][32], EFF_PITCH), 0x81);
+			CHECK_EQ(EffectAt(Clicky.Rows[0][48], EFF_PITCH), 0x80);
+		}
+		Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 0);
+		CHECK(FindingOf(Found, "click") == 0);
+		// Undone, they click again
+		CHECK(!Run(Clicky, "undo", "{}").IsError);
+		Found = Parse(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "click"), 2);
+		// The second one's fix: its own bar
+		const Json *pSecond = Found.Get("findings") != 0 && Found.Get("findings")->Size() == 2 ? &Found.Get("findings")->At(1) : 0;
+		CHECK_EQ(IntegerOf(pSecond, "row"), 32);
+		CHECK_EQ(IntegerOf(pSecond, "bar"), 3);
+		CHECK(pSecond != 0 && pSecond->Get("fix") != 0 &&
+			WriteJson(*pSecond->Get("fix")->Get("arguments")) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":3,\"to_bar\":3}");
+
+		// Too deep a vibrato to nudge clear: no fix
+		FakeSong Deep;
+		Deep.Info.DirectChanges = true;
+		CHECK(!Run(Deep, "design_instrument", "{\"name\": \"Wide\", \"kind\": \"organ\", \"channel\": \"2A03 Pulse 1\", \"attack\": "
+			"\"instant\", \"decay\": \"none\", \"sustain\": \"full\", \"vibrato\": \"strong\"}").IsError);
+		Run(Deep, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"Wide\", \"notes\": [{\"bar\": 1, \"beat\": 1, "
+			"\"pitch\": \"A-3\", \"beats\": 4}]}");
+		const Json DeepFound = Parse(Run(Deep, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pDeep = FindingOf(DeepFound, "click");
+		CHECK(pDeep != 0 && pDeep->Get("fix") == 0 && pDeep->Get("nudge") == 0);
+		CHECK_HAS(TextOf(pDeep, "summary"), ", too deep to nudge clear");
+	}
+
+	// Notes that vanish: one finding a sound on a channel, with all its notes
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		const Json Found = Parse(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Found.Get("counts"), "vanishing"), 3);
+		CHECK_EQ(TextOf(&Found.Get("findings")->At(0), "kind"), std::string("vanishing"));
+		const Json *pGone = FindingOf(Found, "vanishing");
+		CHECK_EQ(TextOf(pGone, "severity"), std::string("high"));
+		CHECK_EQ(IntegerOf(pGone, "channel"), 6);
+		CHECK_EQ(IntegerOf(pGone, "row"), 8);
+		CHECK_EQ(TextOf(pGone, "position"), std::string("bar 1 beat 3"));
+		CHECK_EQ(IntegerOf(pGone, "rows"), 10);
+		CHECK_EQ(IntegerOf(pGone, "instrument"), 3);
+		CHECK_EQ(TextOf(pGone, "instrument_name"), std::string("Fair pluck"));
+		CHECK_EQ(IntegerOf(pGone, "heard_frames"), 3);
+		CHECK_EQ(IntegerOf(pGone, "held_instrument"), 0);
+		CHECK_EQ(TextOf(pGone, "summary"), std::string("\"Fair pluck\" (03) is gone within 3 frames, between notes of the line that hold "
+			"(\"Lead\" (00))"));
+		CHECK_HAS(TextOf(pGone, "message"), "Vanishing: 3 notes on VRC6 Pulse 1 (bars 1-2) play \"Fair pluck\" (03)");
+		const Json *pNotes2 = pGone != 0 ? pGone->Get("notes") : 0;
+		CHECK(pNotes2 != 0 && pNotes2->Size() == 3);
+		if (pNotes2 != 0 && pNotes2->Size() == 3) {
+			CHECK_EQ(IntegerOf(&pNotes2->At(0), "row"), 8);
+			CHECK_EQ(TextOf(&pNotes2->At(0), "note"), std::string("D-4"));
+			CHECK_EQ(IntegerOf(&pNotes2->At(0), "rows"), 2);
+			CHECK_EQ(IntegerOf(&pNotes2->At(1), "row"), 10);
+			CHECK_EQ(TextOf(&pNotes2->At(1), "note"), std::string("E-4"));
+			CHECK_EQ(IntegerOf(&pNotes2->At(2), "row"), 16);
+			CHECK_EQ(IntegerOf(&pNotes2->At(2), "bar"), 2);
+			CHECK_EQ(TextOf(&pNotes2->At(2), "position"), std::string("bar 2 beat 1"));
+			CHECK_EQ(TextOf(&pNotes2->At(2), "note"), std::string("G-4"));
+		}
+		CHECK(pGone != 0 && pGone->Get("fix") == 0);
+	}
+
+	// An empty song: nothing found, the counts at 0
+	FakeSong Empty;
+	const Json Nothing = Parse(Run(Empty, "check_song", "{\"format\": \"json\"}").Text);
+	CHECK(Nothing.Get("key") != 0 && Nothing.Get("key")->IsNull());
+	CHECK(Nothing.Get("findings") != 0 && Nothing.Get("findings")->Size() == 0);
+	CHECK_EQ(IntegerOf(Nothing.Get("counts"), "key"), 0);
+}
+
+// check_song's JSON read back as the problems panel shows it (ProblemList.h): the findings by kind, a line each (a note
+// each of notes that vanish) in the song's order, and the marks the pattern editor and the piano roll draw
+void TestProblemList()
+{
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+	CHECK(Error.empty());
+	CHECK_EQ(List.Track(), 0);
+	CHECK_EQ(List.PatternLength(), 64);
+	CHECK_EQ(List.Key(), std::string("C major"));
+	CHECK_EQ(List.Count(PROBLEM_CLASH), 1);
+	CHECK_EQ(List.Count(PROBLEM_RANGE), 1);
+	CHECK_EQ(List.Count(PROBLEM_SILENT), 1);
+	CHECK_EQ(List.Count(PROBLEM_KEY), 2);
+	CHECK_EQ(List.Count(PROBLEM_VANISHING), 0);
+	CHECK_EQ(List.Total(), 5);
+	CHECK_EQ(List.Findings().size(), 5u);
+	CHECK_EQ(std::string(ProblemKindTitle(PROBLEM_VANISHING)), std::string("Notes that vanish"));
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_KEY)), std::string("key"));
+	CHECK(ProblemSeverity(PROBLEM_CLICK) == 3 && ProblemSeverity(PROBLEM_RANGE) == 2 && ProblemSeverity(PROBLEM_BUSY) == 1);
+
+	// The lines of a kind in the song's order: C#4 at bar 1 before F#4 at bar 2, though check_song found F#4 first
+	const std::vector<ProblemLine> &Key = List.Lines(PROBLEM_KEY);
+	CHECK_EQ(Key.size(), 2u);
+	if (Key.size() == 2) {
+		CHECK(Key[0].Row == 0 && Key[0].Channel == 6);
+		CHECK(Key[1].Row == 16 && Key[1].Channel == 5);
+		CHECK_EQ(List.LineText(Key[1]), std::string("F#4 is outside C major"));
+		CHECK(List.LineNote(Key[1]) != 0 && List.LineNote(Key[1])->Name == "F#4" && List.LineNote(Key[1])->Rows == 4);
+	}
+	const std::vector<ProblemLine> &Clash = List.Lines(PROBLEM_CLASH);
+	CHECK(Clash.size() == 1 && List.LineText(Clash[0]) == "C-4 against C#4 on VRC6 Pulse 2 for 1 beat");
+	const ProblemFinding &ClashFinding = List.Findings()[static_cast<size_t>(Clash.empty() ? 0 : Clash[0].Finding)];
+	CHECK_EQ(ClashFinding.Kind, static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ClashFinding.Channel, 5);
+	CHECK_EQ(ClashFinding.ChannelName, std::string("VRC6 Pulse 1"));
+	CHECK_EQ(ClashFinding.Position, std::string("bar 1 beat 1"));
+	CHECK_EQ(ClashFinding.Message, std::string("Clash: C-4 on VRC6 Pulse 1 against C#4 on VRC6 Pulse 2 at bar 1 beat 1 for 1 beat."));
+	CHECK(ClashFinding.Notes.size() == 2 && ClashFinding.Notes[1].Channel == 6 && ClashFinding.Notes[1].Name == "C#4");
+	CHECK(ClashFinding.FixTool.empty());
+	const std::vector<ProblemLine> &Silent = List.Lines(PROBLEM_SILENT);
+	CHECK(Silent.size() == 1 && Silent[0].Channel == -1 && Silent[0].Row == 32 && List.LineText(Silent[0]) == "Nothing plays in bar 3");
+	CHECK(Silent.size() == 1 && List.LineNote(Silent[0]) == 0);
+	CHECK(Silent.size() == 1 && List.LinePosition(Silent[0]) == "bar 3 beat 1");
+
+	// Marks: the worst kind on each note's row, none for the silent bar, none on another track
+	ProblemMarks Marks;
+	CHECK(Marks.IsEmpty());
+	Marks.Set(List, 8, 128, -1);
+	CHECK(!Marks.IsEmpty());
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));	// outside the key too, but a clash is worse
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 16)), static_cast<int>(PROBLEM_KEY));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 0, 48)), static_cast<int>(PROBLEM_RANGE));
+	CHECK_EQ(Marks.At(0, 5, 4), 0);
+	CHECK_EQ(Marks.At(0, 5, 32), 0);
+	CHECK_EQ(Marks.At(1, 5, 0), 0);		// another track
+	CHECK_EQ(Marks.At(0, 9, 0), 0);
+	CHECK_EQ(Marks.At(0, 5, 500), 0);
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 0)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 0, 48)), 0x001E96F0ul);
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 16)), 0x00AF8C78ul);
+	// The selected finding's notes are set apart
+	Marks.Set(List, 8, 128, Clash.empty() ? -1 : Clash[0].Finding);
+	CHECK(ProblemMarks::IsSelected(Marks.At(0, 5, 0)) && ProblemMarks::IsSelected(Marks.At(0, 6, 0)));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 6, 0)), static_cast<int>(PROBLEM_CLASH));
+	CHECK(!ProblemMarks::IsSelected(Marks.At(0, 5, 16)));
+	CHECK_EQ(ProblemMarks::Color(Marks.At(0, 5, 0)), 0x00323CEBul);
+	Marks.Clear();
+	CHECK(Marks.IsEmpty() && Marks.At(0, 5, 0) == 0);
+
+	// Notes that vanish: a line each, with the note's name
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		ProblemList Gone;
+		CHECK(Gone.Read(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+		const std::vector<ProblemLine> &Lines = Gone.Lines(PROBLEM_VANISHING);
+		CHECK_EQ(Gone.Count(PROBLEM_VANISHING), 3);
+		CHECK_EQ(Lines.size(), 3u);
+		CHECK_EQ(Gone.Findings().size(), 1u);
+		if (Lines.size() == 3) {
+			CHECK(Lines[0].Row == 8 && Lines[1].Row == 10 && Lines[2].Row == 16 && Lines[2].Note == 2 && Lines[2].Channel == 5);
+			CHECK_EQ(Gone.LineText(Lines[0]), std::string("D-4: \"Fair pluck\" (03) is gone within 3 frames, between notes of the line "
+				"that hold (\"Lead\" (00))"));
+			CHECK(Gone.LineNote(Lines[2]) != 0 && Gone.LineNote(Lines[2])->Name == "G-4");
+			CHECK_EQ(Gone.LinePosition(Lines[1]), std::string("bar 1 beat 3.5"));
+			CHECK_EQ(Gone.LinePosition(Lines[2]), std::string("bar 2 beat 1"));
+		}
+		ProblemMarks GoneMarks;
+		GoneMarks.Set(Gone, 8, 128, 0);
+		CHECK(GoneMarks.At(0, 5, 8) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK(GoneMarks.At(0, 5, 16) == ((PROBLEM_VANISHING + 1) | ProblemMarks::SELECTED));
+		CHECK_EQ(GoneMarks.At(0, 5, 12), 0);
+	}
+
+	// A click's fix, as the panel's Nudge runs it
+	{
+		FakeSong Clicky;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+		Clicky.End(0, 32);
+		ProblemList Clicks;
+		CHECK(Clicks.Read(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text, Error));
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixTool == "polish");
+		CHECK(Clicks.Findings().size() == 1 &&
+			Clicks.Findings()[0].FixArguments == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixDoes == "nudges it a hair (P81, 7 cents sharp), so its vibrato "
+			"stays clear of 256");
+		CHECK_HAS(Clicks.LineText(Clicks.Lines(PROBLEM_CLICK)[0]), "A-3 clicks ");
+		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].Nudge == "P81, 7 cents sharp" && Clicks.Findings()[0].Boundary == 256);
+		CHECK(List.Findings().size() == 5 && List.Findings()[0].Nudge.empty() && List.Findings()[0].Boundary == 0);
+	}
+
+	// Not check_song's JSON
+	ProblemList Wrong;
+	CHECK(!Wrong.Read("Checked bars 1-8 in C major", Error) && !Error.empty());
+	CHECK(!Wrong.Read("{\"counts\": {}}", Error));
+	CHECK(Wrong.Findings().empty() && Wrong.Total() == 0);
+	// A kind of a later version is left out
+	CHECK(Wrong.Read("{\"track\": 2, \"pattern_length\": 32, \"counts\": {\"key\": 1}, \"findings\": [{\"kind\": \"later\"}, "
+		"{\"kind\": \"key\", \"channel\": 2, \"frame\": 1, \"row\": 3, \"notes\": [{\"channel\": 2, \"frame\": 1, \"row\": 3}]}]}", Error));
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Track() == 1 && Wrong.Findings()[0].Row == 35 && Wrong.Findings()[0].Channel == 1);
+	CHECK(Wrong.Findings().size() == 1 && Wrong.Findings()[0].Notes.size() == 1 && Wrong.Findings()[0].Notes[0].Row == 35);
+}
+
 int main()
 {
 	TestJson();
@@ -9079,10 +10384,13 @@ int main()
 	TestCheck();
 	TestPulseClicks();
 	TestVanishing();
+	TestCheckJson();
+	TestProblemList();
 	TestNameSong();
 	TestLoudness();
 	TestPlayback();
 	TestProtocol();
+	TestNetwork();
 	TestSession();
 	TestBridge();
 	TestBridgeSockets();
@@ -9103,6 +10411,8 @@ int main()
 	TestLoops();
 	TestFixLoop();
 	TestBars();
+	TestSections();
+	TestSectionTools();
 	TestKeptVersions();
 	TestWaveSounds();
 	TestOgg();

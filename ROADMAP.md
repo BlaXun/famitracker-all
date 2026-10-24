@@ -9,9 +9,10 @@ which plays the tracks as OGG files.
 - **Keep songs readable everywhere.** The piano roll is another view of the
   same pattern data, profiles live in program settings, and presets are
   ordinary `.fti` files. Songs must keep opening in vanilla FamiTracker,
-  0CC/Dn-FamiTracker and FamiStudio. The one addition to the `.ftm` file is
-  the recorder's clips, in a block of their own (`BF CLIPS`) that other
-  versions skip; there, linked copies are ordinary notes.
+  0CC/Dn-FamiTracker and FamiStudio. The additions to the `.ftm` file are
+  blocks of their own that other versions skip: the recorder's clips
+  (`BF CLIPS`; there, linked copies are ordinary notes) and the tracks'
+  named sections (`BF SECTIONS`).
 - **Stay in the UI and export layers.** The NSF driver is binary-only in this
   repo (see CLAUDE.md), so no feature may need new driver commands.
 - **Full FamiTracker stays one click away** through a "Show everything" option.
@@ -147,6 +148,66 @@ FamiTracker.exe, with no rebuild.
 
 Still open: annotated example songs, since module comments can already pop
 up when a file is opened.
+
+## 7. Problems panel
+
+Done (October 2026, on `next`): **View > Problems** shows what Claude
+Code's `check_song` finds, for people working by hand, in a panel docked
+along the bottom of the main window (right-click it to dock it on the right
+instead; drag its edge to make it bigger). It comes back when FamiTracker
+starts if it was open.
+
+- Notes that vanish, notes that click, clashes, notes out of a channel's
+  range, silent and busy bars and notes outside the key, grouped by kind
+  with how many of each, the ones heard worst first. A click on a kind
+  folds or unfolds it.
+- It checks the selected track again a moment after each change, and after
+  an instrument's envelope, the speed or the track changed, but not while
+  the song plays. **Check** (F5 in the panel) checks at once; "Check as you
+  edit" in its right-click menu switches the checks off.
+- Double-click a finding, or select it and press Enter, to go there: the
+  pattern editor's cursor goes to its frame, row and channel, and the piano
+  roll scrolls to it.
+- The pattern editor marks each finding with a tick along the channel's
+  left edge on the note's row, the piano roll with a dot on the note: red
+  for what's heard worst (notes that vanish, clicks, clashes), amber for
+  notes out of range, grey blue for the rest. The finding selected in the
+  panel gets a tick as tall as the row and a ring around its notes.
+- Each finding has a button. **Nudge**, on a note that clicks, moves it a
+  hair sharper or flatter so its vibrato stays clear of the period where
+  the pulse restarts its wave, as `polish` with the touch `clicks` does on
+  that note's bar: one Ctrl+Z, and the count goes down. **Show**, on a note
+  that vanishes, selects that sound's notes in the piano roll, where its
+  Instrument button gives them a sound that lasts. **Explain** says what's
+  wrong with the rest (a clash, a note outside the key) and what helps.
+  Nothing changes without a click.
+
+The panel's keys: the arrows, Page Up and Down, Home and End to move, Enter
+to go there, Space for the button, Left and Right to fold, Ctrl+C to copy
+the message, Esc back to the pattern editor.
+
+## 8. Song sections
+
+Done (October 2026, on `feat-sections`): a track's frames can be named
+(Intro, A, B, Bridge, Outro), so a song's form is something to see and to
+talk about.
+
+- Select frames in the frame editor and right-click > **Name section**.
+  Each section is a coloured band beside its frames, named at its first
+  frame, with where the song loops back to; the column appears once the
+  module has a section. A double-click on a band renames it.
+- Right-click a section to rename it, take its name off, select its
+  frames, move it up or down past the section beside it (its patterns
+  with it) or duplicate it after itself (the copy plays the same
+  patterns). Each is one Ctrl+Z.
+- Frames inserted, removed, moved, dragged or duplicated keep their
+  sections: frames put in inside a section join it, removed ones leave it.
+- The piano roll's ruler names each section at its first bar.
+- Claude Code names the sections as it builds a song (`name_section`),
+  lists them in `get_song`, and its tools take a section's name in place
+  of bars (see `MCP.md`).
+- They're saved in a block of their own (`BF SECTIONS`), which other
+  versions skip.
 
 ## Feature branches
 

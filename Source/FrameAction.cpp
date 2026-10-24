@@ -18,6 +18,9 @@
 ** must bear this legend.
 */
 
+// The sections' standard headers come before stdafx.h, whose DEBUG_NEW macro
+// would otherwise rewrite the placement new inside the standard library
+#include "Api/Sections.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -35,7 +38,12 @@
 CFrameAction::CFrameAction(int iAction) : 
 	CAction(iAction),
 	m_pAllPatterns(NULL),
-	m_pClipData(NULL)
+	m_pClipData(NULL),
+	m_pSectionsBefore(NULL),
+	m_pSectionsAfter(NULL),
+	m_iBlockFirst(0),
+	m_iBlockLast(0),
+	m_iBlockTo(0)
 {
 }
 
@@ -43,6 +51,21 @@ CFrameAction::~CFrameAction()
 {
 	SAFE_RELEASE_ARRAY(m_pAllPatterns);
 	SAFE_RELEASE(m_pClipData);
+	SAFE_RELEASE(m_pSectionsBefore);
+	SAFE_RELEASE(m_pSectionsAfter);
+}
+
+void CFrameAction::SetSections(ftapi::SectionStore *pSections)
+{
+	SAFE_RELEASE(m_pSectionsAfter);
+	m_pSectionsAfter = pSections;
+}
+
+void CFrameAction::SetFrameBlock(int First, int Last, int To)
+{
+	m_iBlockFirst = First;
+	m_iBlockLast = Last;
+	m_iBlockTo = To;
 }
 
 void CFrameAction::SetFrameCount(unsigned int FrameCount)
@@ -142,6 +165,28 @@ void CFrameAction::ClearPatterns(CFamiTrackerDoc *pDoc, int Target)
 	pDoc->DeleteFrames(m_iUndoTrack, Target, Rows);
 }
 
+void CFrameAction::DuplicateFrames(CFamiTrackerDoc *pDoc) const
+{
+	// The block again right after it, sharing its patterns. Put in where a
+	// section ends, the copies aren't part of it; a copy of a whole section
+	// becomes its repeat ("Chorus 2").
+	const int Count = m_iBlockLast - m_iBlockFirst + 1;
+	const int Channels = pDoc->GetAvailableChannels();
+	for (int i = 0; i < Count; ++i) {
+		const unsigned int Frame = static_cast<unsigned int>(m_iBlockLast + 1 + i);
+		if (!pDoc->InsertFrame(m_iUndoTrack, Frame))
+			break;
+		for (int c = 0; c < Channels; ++c)
+			pDoc->SetPatternAtFrame(m_iUndoTrack, Frame, c, pDoc->GetPatternAtFrame(m_iUndoTrack, m_iBlockFirst + i, c));
+	}
+	ftapi::SectionList &List = pDoc->GetSections()->Edit(m_iUndoTrack);
+	const int Index = ftapi::SectionAt(List, m_iBlockFirst);
+	if (Index >= 0 && List[static_cast<size_t>(Index)].First == m_iBlockFirst && List[static_cast<size_t>(Index)].Last == m_iBlockLast) {
+		const std::string Name = ftapi::FreeSectionName(List, List[static_cast<size_t>(Index)].Name);
+		ftapi::NameFrames(List, m_iBlockLast + 1, m_iBlockLast + Count, Name);
+	}
+}
+
 bool CFrameAction::SaveState(CMainFrame *pMainFrm)
 {
 	// Save action state for undo
@@ -156,6 +201,11 @@ bool CFrameAction::SaveState(CMainFrame *pMainFrm)
 	m_iUndoChannelPos = m_iRedoChannelPos = pView->GetSelectedChannel();
 
 	pFrameEditor->GetSelectInfo(m_oSelInfo);
+
+	// The track's sections, which undo brings back (the frame functions move them along)
+	SAFE_RELEASE(m_pSectionsBefore);
+	m_pSectionsBefore = new ftapi::SectionStore();
+	m_pSectionsBefore->Set(0, pDocument->GetSections()->Get(m_iUndoTrack));
 
 	switch (m_iAction) {
 		case ACT_ADD:
@@ -211,6 +261,22 @@ bool CFrameAction::SaveState(CMainFrame *pMainFrm)
 		case ACT_DRAG_AND_DROP_COPY_NEW:
 		case ACT_DELETE_SELECTION:
 		case ACT_MERGE_DUPLICATED_PATTERNS:
+			SaveAllFrames(pDocument);
+			break;
+		case ACT_SECTIONS:
+			if (m_pSectionsAfter == NULL)
+				return false;
+			break;
+		case ACT_MOVE_FRAMES:
+			if (m_iBlockFirst < 0 || m_iBlockLast < m_iBlockFirst || m_iBlockTo < 0 || m_iBlockTo == m_iBlockFirst ||
+				m_iBlockTo + m_iBlockLast - m_iBlockFirst >= static_cast<int>(pDocument->GetFrameCount(m_iUndoTrack)))
+				return false;
+			SaveAllFrames(pDocument);
+			break;
+		case ACT_DUPLICATE_FRAMES:
+			if (m_iBlockFirst < 0 || m_iBlockLast < m_iBlockFirst || m_iBlockLast >= static_cast<int>(pDocument->GetFrameCount(m_iUndoTrack)) ||
+				static_cast<int>(pDocument->GetFrameCount(m_iUndoTrack)) + (m_iBlockLast - m_iBlockFirst + 1) > MAX_FRAMES)
+				return false;
 			SaveAllFrames(pDocument);
 			break;
 	}
@@ -298,7 +364,19 @@ void CFrameAction::Undo(CMainFrame *pMainFrm)
 		case ACT_MERGE_DUPLICATED_PATTERNS:
 			RestoreAllFrames(pDocument);
 			break;
+		case ACT_SECTIONS:
+			pDocument->SetModifiedFlag();
+			break;
+		case ACT_MOVE_FRAMES:
+		case ACT_DUPLICATE_FRAMES:
+			RestoreAllFrames(pDocument);
+			pMainFrm->UpdateControls();
+			break;
 	}
+
+	// The sections as they were (after the frames, which move them)
+	if (m_pSectionsBefore != NULL)
+		pDocument->GetSections()->Set(m_iUndoTrack, m_pSectionsBefore->Get(0));
 
 	pDocument->UpdateAllViews(NULL, UpdateHint);
 }
@@ -381,6 +459,29 @@ void CFrameAction::Redo(CMainFrame *pMainFrm)
 		case ACT_MERGE_DUPLICATED_PATTERNS:
 			pDocument->MergeDuplicatedPatterns();
 			break;
+		case ACT_SECTIONS:
+			pDocument->GetSections()->Set(m_iUndoTrack, m_pSectionsAfter->Get(0));
+			pDocument->SetModifiedFlag();
+			break;
+		case ACT_MOVE_FRAMES:
+		case ACT_DUPLICATE_FRAMES: {
+			// The frames moved or copied end up selected, the cursor on their first
+			int First = m_iBlockTo;
+			if (m_iAction == ACT_MOVE_FRAMES)
+				pDocument->MoveFrames(m_iUndoTrack, m_iBlockFirst, m_iBlockLast, m_iBlockTo);
+			else {
+				DuplicateFrames(pDocument);
+				First = m_iBlockLast + 1;
+			}
+			stSelectInfo Moved;
+			Moved.bSelecting = true;
+			Moved.iRowStart = First;
+			Moved.iRowEnd = First + m_iBlockLast - m_iBlockFirst;
+			pFrameEditor->SetSelectInfo(Moved);
+			pView->SelectFrame(First);
+			pMainFrm->UpdateControls();
+			break;
+		}
 	}
 
 	pDocument->UpdateAllViews(NULL, UpdateHint);

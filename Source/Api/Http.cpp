@@ -321,7 +321,7 @@ const char *HttpReason(int Status)
 	return "Unknown";
 }
 
-std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive)
+std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive, bool HeadersOnly)
 {
 	char Line[96];
 	std::snprintf(Line, sizeof(Line), "HTTP/1.1 %d %s\r\n", Response.Status, HttpReason(Response.Status));
@@ -342,7 +342,8 @@ std::string FormatHttpResponse(const HttpResponse &Response, bool KeepAlive)
 	Out += "Cache-Control: no-store\r\n";
 	Out += KeepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
 	Out += "\r\n";
-	Out += Response.Body;
+	if (!HeadersOnly)
+		Out += Response.Body;
 	return Out;
 }
 

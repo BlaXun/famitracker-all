@@ -44,6 +44,7 @@ class CInstrumentFileTree;
 class CPianoRollBar;
 class CPianoRollWnd;
 class CClipsBar;
+class CProblemsBar;
 class CAction;
 class CActionHandler;
 class CFrameEditor;
@@ -101,6 +102,7 @@ public:
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 	CPianoRollWnd *GetPianoRollWnd() const;	// NULL while the piano roll isn't shown
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
+	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
@@ -201,6 +203,7 @@ private:  // control bar embedded members
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
+	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
 
 	// The profile as shown (Profile.h)
 	bool				m_bFewerMenus;
@@ -281,6 +284,7 @@ public:
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewProblems(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCopy(CCmdUI *pCmdUI);
@@ -336,6 +340,7 @@ public:
 	afx_msg void OnViewControlpanel();
 	afx_msg void OnViewPianoRoll();
 	afx_msg void OnViewClipsPanel();
+	afx_msg void OnViewProblems();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
 	afx_msg void OnSelectPatternEditor();

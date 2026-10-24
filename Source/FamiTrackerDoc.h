@@ -97,6 +97,7 @@ struct stSequence {
 class CTrackerChannel;
 class CDocumentFile;
 class CClipLibrary;
+namespace ftapi { class SectionStore; }
 
 //
 // I'll try to organize this class, things are quite messy right now!
@@ -204,6 +205,8 @@ public:
 	bool			MoveFrameDown(unsigned int Track, unsigned int Frame);
 	bool			MoveFrameUp(unsigned int Track, unsigned int Frame);
 	void			DeleteFrames(unsigned int Track, unsigned int Frame, int Count);
+	// Frames First..Last moved as a block so that First is at To (counted without them), keeping their patterns
+	bool			MoveFrames(unsigned int Track, unsigned int First, unsigned int Last, unsigned int To);
 
 	// Global (module) data
 	void			SetEngineSpeed(unsigned int Speed);
@@ -253,6 +256,10 @@ public:
 
 	// Clips kept with the song (Clips.h)
 	CClipLibrary	*GetClips() const { return m_pClipLibrary; }
+
+	// The tracks' sections, named runs of frames (Api/Sections.h); the frame
+	// functions above keep them in step with the frame list
+	ftapi::SectionStore *GetSections() const { return m_pSections; }
 
 	// Track management functions
 	int				AddTrack();
@@ -369,6 +376,7 @@ private:
 	bool			WriteBlock_DSamples(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_Comments(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_ChannelLayout(CDocumentFile *pDocFile) const;
+	bool			WriteBlock_Sections(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesVRC6(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesN163(CDocumentFile *pDocFile) const;
 	bool			WriteBlock_SequencesS5B(CDocumentFile *pDocFile) const;
@@ -382,6 +390,7 @@ private:
 	bool			ReadBlock_DSamples(CDocumentFile *pDocFile);
 	bool			ReadBlock_Comments(CDocumentFile *pDocFile);
 	bool			ReadBlock_ChannelLayout(CDocumentFile *pDocFile);
+	void			ReadBlock_Sections(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesVRC6(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesN163(CDocumentFile *pDocFile);
 	bool			ReadBlock_SequencesS5B(CDocumentFile *pDocFile);
@@ -453,6 +462,7 @@ private:
 	// Patterns and song data
 	CPatternData	*m_pTracks[MAX_TRACKS];						// List of all tracks
 	CClipLibrary	*m_pClipLibrary;							// Clips and their linked copies
+	ftapi::SectionStore *m_pSections;							// Every track's sections
 	CString			m_sTrackNames[MAX_TRACKS];
 
 	unsigned int	m_iTrackCount;								// Number of tracks added
