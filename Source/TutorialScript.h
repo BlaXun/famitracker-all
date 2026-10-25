@@ -39,8 +39,11 @@
 //   wait: edit-mode
 //
 // "show" is a part of the window (window, pattern, frames, instruments,
-// song-settings, song-info, octave, toolbar, status-bar, clips, piano-roll),
-// a toolbar button ("button play") or a menu ("menu Edit"). "wait" is next
+// song-settings, song-info, octave, toolbar, status-bar, clips, piano-roll,
+// drum-grid), a toolbar button ("button play") or a menu ("menu Edit"); a
+// step about the pattern editor, the clips panel, the piano roll or the drum
+// grid shows it if it's hidden (View > Pattern editor hides the pattern
+// editor, and the piano roll takes its place). "wait" is next
 // (the default), edit-mode, edit-mode-off, play, stop, notes N, instrument,
 // clip, saved, or command NAME for a menu item, button or shortcut key; the
 // names are listed with TutorialCommandNames.

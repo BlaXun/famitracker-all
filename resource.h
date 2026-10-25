@@ -766,8 +766,7 @@
 // View > Clips panel (ClipsPanel.cpp)
 #define ID_VIEW_CLIPSPANEL              33164
 
-// Edit > Drum grid (DrumGridDlg.cpp)
-#define IDD_DRUM_GRID                   334
+// View > Drum grid (DrumGridPanel.cpp: the panel's buttons and its grid)
 #define IDC_DRUM_PREV                   1405
 #define IDC_DRUM_BAR                    1406
 #define IDC_DRUM_NEXT                   1407
@@ -834,6 +833,9 @@
 
 // View > Mixer (MixerPanel.cpp; its button is IDC 1904 there)
 #define ID_VIEW_MIXER                   37400
+
+// View > Pattern editor (MainFrm.cpp; View > Drum grid is ID_EDIT_DRUMGRID, in the Edit menu too)
+#define ID_VIEW_PATTERNEDITOR           37550
 
 // Next default values for new objects
 // 
