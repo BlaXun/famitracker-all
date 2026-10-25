@@ -127,6 +127,7 @@ BEGIN
         MENUITEM "Select &All\tCtrl+A",         ID_EDIT_SELECTALL
         MENUITEM SEPARATOR
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
+        MENUITEM "Record from your phone...",   ID_EDIT_RECORDPHONE
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
@@ -585,6 +586,7 @@ BEGIN
     ID_EDIT_PASTE           "Insert Clipboard contents\nPaste"
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
+    ID_EDIT_RECORDPHONE     "Record ideas on your phone over Wi-Fi: hum a tune and it arrives in the clips\nRecord from your phone"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
@@ -996,6 +998,13 @@ IDR_EXAMPLE_FIRST_WALK  RCDATA                  "res\\examples\\first-song.txt"
 IDR_EXAMPLE_TRICKS_WALK RCDATA                  "res\\examples\\nes-tricks.txt"
 IDR_EXAMPLE_VRC6_WALK   RCDATA                  "res\\examples\\vrc6.txt"
 IDR_EXAMPLE_SOFT_WALK   RCDATA                  "res\\examples\\soft-and-wide.txt"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RCDATA: the phone page (PhoneLink.cpp, Edit > Record from your phone)
+//
+
+IDR_PHONE_PAGE          RCDATA                  "res\\phone.html"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -2140,6 +2149,23 @@ BEGIN
     PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,271,76,14
     DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,271,50,14
     PUSHBUTTON      "Close",IDCANCEL,205,271,50,14
+END
+
+IDD_PHONE DIALOGEX 0, 0, 262, 298
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Record from your phone"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Scan this code with your phone's camera. It opens FamiTracker's recording page: hum or whistle an idea there, and it arrives in the clips.",IDC_STATIC,7,7,248,26
+    CONTROL         "",IDC_PHONE_QR,"Static",SS_OWNERDRAW,61,36,140,140
+    LTEXT           "Network:",IDC_STATIC,7,184,40,8
+    COMBOBOX        IDC_PHONE_NETWORKS,50,182,205,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_PHONE_ADDRESS,7,199,204,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy",IDC_PHONE_COPY,215,199,40,14
+    LTEXT           "",IDC_PHONE_HINT,7,218,248,18
+    PUSHBUTTON      "Allow connections from other computers on my network",IDC_PHONE_ALLOW,7,237,220,14
+    LTEXT           "",IDC_PHONE_TAKES,7,256,248,18
+    DEFPUSHBUTTON   "Close",IDCANCEL,205,277,50,14
 END
 
 IDD_BACKING DIALOGEX 0, 0, 262, 180

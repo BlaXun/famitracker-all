@@ -56,6 +56,11 @@ public:
 	// failed, or FamiTracker is busy answering Claude Code.
 	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply);
 	bool IsBusy() const;				// answering Claude Code right now (RunTool would refuse)
+	// Edit > Record from your phone (PhoneDlg.cpp): whether FamiTracker listens, for other computers too, on which
+	// port and with which access code; and listening for other computers, as File > Connect Claude Code's two boxes
+	// ticked would (false with the reason)
+	void GetAccess(bool &Listening, bool &Network, int &Port, std::string &Token) const;
+	bool AllowNetwork(std::string &Error);
 	// The piano roll's chord strip and key (Api/Tools.h, ToolSet::Harmony): the selected track's key, chosen or found
 	// from the notes, and the chords its parts play, as the tools hear them. False when busy or without a song.
 	bool Harmony(ftapi::TrackHarmony &Out);

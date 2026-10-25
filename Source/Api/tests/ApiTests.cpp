@@ -38,6 +38,7 @@
 #include "../Network.h"
 #include "../Music.h"
 #include "../Ogg.h"
+#include "../PhoneTakes.h"
 #include "../Picture.h"
 #include "../Png.h"
 #include "../Presets.h"
@@ -15263,6 +15264,199 @@ void TestEchoRubsAsChecked()
 }
 // end of stage-fixes tests
 
+// phone-takes tests
+
+// The phone page's host for the route's tests: takes kept in memory, each made a clip of the song as the tools add
+// clips (SongHost::AddClip)
+class PhoneRouteHost : public PhoneHost {
+public:
+	explicit PhoneRouteHost(FakeSong &Song) : Wakes(0), m_Song(Song) {}
+
+	bool SaveTake(const std::vector<std::string> &Names, const std::string &Bytes, std::string &Path, std::string &File,
+		std::string &) override
+	{
+		File = Names.front();
+		Path = "Recordings/" + File;
+		Saved.push_back(Bytes);
+		return true;
+	}
+
+	bool CanMakeClip(std::string &Why) override
+	{
+		return m_Song.CanChange(Why);
+	}
+
+	// A hummed idea's notes, kept as a clip of the idea's name
+	bool MakeClip(const std::string &, const std::string &Idea, std::string &Clip, std::string &Message) override
+	{
+		std::vector<std::vector<Cell> > Columns(1, std::vector<Cell>(16));
+		for (int r = 0; r < 12; r += 4) {
+			Columns[0][static_cast<size_t>(r)].SetPitch(48 + r);
+			Columns[0][static_cast<size_t>(r)].Instrument = 0;
+		}
+		Columns[0][12].Note = NOTE_RELEASE;
+		Clip = Idea.empty() ? "Idea" : Idea;
+		std::string Error;
+		if (!m_Song.AddClip(Clip, std::vector<int>(1, 5), Columns, Error))
+			return false;
+		Message = "In the clips as \"" + Clip + "\".";
+		return true;
+	}
+
+	std::string Now() override { return "2026-10-25 14-03-12"; }
+	void Wake() override { ++Wakes; }
+
+	std::vector<std::string> Saved;
+	int Wakes;
+
+private:
+	FakeSong &m_Song;
+};
+
+// A request from a phone at 192.168.1.20 to this computer at 192.168.1.10
+HttpRequest FromPhone(const std::string &Method, const std::string &Target, const std::string &Body = std::string())
+{
+	HttpRequest Request;
+	Request.Method = Method;
+	Request.Target = Target;
+	Request.Version = "HTTP/1.1";
+	Request.Headers.push_back(std::make_pair(std::string("Host"), std::string("192.168.1.10:46600")));
+	Request.Body = Body;
+	Request.Peer = "192.168.1.20";
+	return Request;
+}
+
+// A take as the page sends it: 16-bit mono PCM at 22050 Hz
+std::string PhoneTakeBytes(double Seconds)
+{
+	const unsigned long Samples = static_cast<unsigned long>(Seconds * 22050.0), Bytes = Samples * 2;
+	const unsigned long Fields[] = { 36 + Bytes, 16, 1 | 1UL << 16, 22050, 44100, 2 | 16UL << 16, Bytes };
+	const char *const Tags[] = { "RIFF", "WAVEfmt ", "", "", "", "", "data" };
+	std::string Out;
+	for (size_t i = 0; i < 7; ++i) {
+		Out += Tags[i];
+		for (int b = 0; b < 4; ++b)
+			Out += static_cast<char>((Fields[i] >> (8 * b)) & 0xFF);
+	}
+	for (unsigned long i = 0; i < Samples; ++i) {
+		const int Value = static_cast<int>(8000.0 * std::sin(2.0 * 3.14159265358979 * 220.0 * static_cast<double>(i) / 22050.0));
+		Out += static_cast<char>(Value & 0xFF);
+		Out += static_cast<char>((Value >> 8) & 0xFF);
+	}
+	return Out;
+}
+
+// The phone page's routes through FamiTracker's endpoint: the network's checks as the other routes have them (other
+// computers only when allowed, from home networks, at this computer's names), the page's own code (the access code
+// doesn't open it, nor its code the tools), its requests only from itself, and an idea placed by place_clip by its name
+void TestPhoneRoute()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	PhoneRouteHost Host(Song);
+	PhoneTakes Takes(Host);
+	Takes.SetPage("<!DOCTYPE html><title>Record an idea</title>");
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	Config.Addresses.push_back("192.168.1.10");
+	Config.Addresses.push_back("100.90.1.2");
+	Config.ComputerName = "DESKTOP-PC";
+	const std::string Code = PhoneCode("secret");
+	const std::string Page = "/phone?code=" + Code;
+
+	// Without the phone page, no such route
+	CHECK_EQ(HandleMcp(FromPhone("GET", Page), Config, Tools).Status, 403);	// and not from another computer anyway
+	HttpRequest Here = FromPhone("GET", Page);
+	Here.Peer.clear();
+	Here.Headers[0].second = "localhost:46600";
+	CHECK_EQ(HandleMcp(Here, Config, Tools).Status, 404);
+	Config.pPhone = &Takes;
+
+	// With the network option off, only this computer
+	HttpResponse Response = HandleMcp(FromPhone("GET", Page), Config, Tools);
+	CHECK_EQ(Response.Status, 403);
+	CHECK_HAS(Response.Body, "Allow connections from other computers on my network");
+	Response = HandleMcp(Here, Config, Tools);
+	CHECK_EQ(Response.Status, 200);
+	CHECK_HAS(Response.Body, "Record an idea");
+	HttpRequest Loopback = Here;
+	Loopback.Peer = "127.0.0.1";
+	CHECK_EQ(HandleMcp(Loopback, Config, Tools).Status, 200);
+	HttpRequest Rebound = Here;	// a page of another site renamed to this computer (DNS rebinding)
+	Rebound.Headers[0].second = "attacker.example:46600";
+	CHECK_EQ(HandleMcp(Rebound, Config, Tools).Status, 403);
+	Rebound.Headers[0].second = "192.168.1.10:46600";	// this computer's address, before other computers are allowed
+	CHECK_EQ(HandleMcp(Rebound, Config, Tools).Status, 403);
+
+	// Allowed: phones at home and on Tailscale, at this computer's addresses and name; others are refused
+	Config.Network = true;
+	CHECK_EQ(HandleMcp(FromPhone("GET", Page), Config, Tools).Status, 200);
+	HttpRequest Tailnet = FromPhone("GET", Page);
+	Tailnet.Peer = "100.70.0.3";
+	Tailnet.Headers[0].second = "100.90.1.2:46600";
+	CHECK_EQ(HandleMcp(Tailnet, Config, Tools).Status, 200);
+	Tailnet.Headers[0].second = "desktop-pc.tail1234.ts.net:46600";
+	CHECK_EQ(HandleMcp(Tailnet, Config, Tools).Status, 200);
+	HttpRequest Outside = FromPhone("GET", Page);
+	Outside.Peer = "8.8.8.8";
+	CHECK_EQ(HandleMcp(Outside, Config, Tools).Status, 403);
+	HttpRequest Elsewhere = FromPhone("GET", Page);
+	Elsewhere.Headers[0].second = "evil.example:46600";
+	CHECK_EQ(HandleMcp(Elsewhere, Config, Tools).Status, 403);
+
+	// The page's code: none, a wrong one, the access code; and the page's code doesn't reach the tools
+	CHECK_EQ(HandleMcp(FromPhone("GET", "/phone"), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FromPhone("GET", "/phone?code=" + Code.substr(1)), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FromPhone("GET", "/phone?code=secret"), Config, Tools).Status, 403);
+	HttpRequest Listed = FromPhone("GET", "/phone/takes");
+	Listed.Headers.push_back(std::make_pair(std::string("Authorization"), "Bearer " + Code));
+	CHECK_EQ(HandleMcp(Listed, Config, Tools).Status, 200);
+	Listed.Headers.back().second = "Bearer secret";
+	CHECK_EQ(HandleMcp(Listed, Config, Tools).Status, 403);
+	const std::string Ping = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", Code), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FromNetwork(Ping, "192.168.1.20", "192.168.1.10:46600", "secret"), Config, Tools).Status, 200);
+	HttpRequest Escape = FromPhone("GET", "/phone/../mcp?code=" + Code);
+	CHECK_EQ(HandleMcp(Escape, Config, Tools).Status, 404);
+
+	// A take from another site's page is refused; the page's own arrives (its Origin is the address it was sent to)
+	HttpRequest Foreign = FromPhone("POST", "/phone/take?name=Town%20melody&code=" + Code, PhoneTakeBytes(2.0));
+	Foreign.Headers.push_back(std::make_pair(std::string("Origin"), std::string("http://evil.example")));
+	CHECK_EQ(HandleMcp(Foreign, Config, Tools).Status, 403);
+	CHECK(Host.Saved.empty() && Host.Wakes == 0);
+	HttpRequest Own = Foreign;
+	Own.Headers.back().second = "http://192.168.1.10:46600";
+	Response = HandleMcp(Own, Config, Tools);
+	CHECK_EQ(Response.Status, 202);
+	CHECK_HAS(Response.Body, "\"state\":\"waiting\"");
+	CHECK(Host.Saved.size() == 1 && Host.Saved[0] == PhoneTakeBytes(2.0) && Host.Wakes == 1);
+	// Through Tailscale's https on this computer (tailscale serve), the Host its name
+	HttpRequest Served = FromPhone("POST", "/phone/take?name=Bridge&code=" + Code, PhoneTakeBytes(1.0));
+	Served.Peer.clear();
+	Served.Headers[0].second = "desktop-pc.tail1234.ts.net";
+	Served.Headers.push_back(std::make_pair(std::string("Origin"), std::string("https://desktop-pc.tail1234.ts.net")));
+	CHECK_EQ(HandleMcp(Served, Config, Tools).Status, 202);
+
+	// While FamiTracker is busy the takes wait; then they're clips, and place_clip finds them by the idea's name
+	Song.Busy = true;
+	CHECK(Takes.Process());
+	CHECK(Song.Clips.empty());
+	Song.Busy = false;
+	CHECK(!Takes.Process());
+	CHECK(Song.Clips.size() == 2 && Song.Clips[0].Name == "Town melody" && Song.Clips[1].Name == "Bridge");
+	const ToolResult Placed = Run(Song, "place_clip", "{\"clip\": \"town melody\", \"channel\": \"VRC6 Pulse 1\", \"bar\": 2}");
+	CHECK(!Placed.IsError);
+	CHECK_HAS(Placed.Text, "Placed the clip \"Town melody\"");
+	CHECK(Song.Rows[5][16].Pitch() == 48 && Song.Rows[5][20].Pitch() == 52 && Song.Rows[5][24].Pitch() == 56);
+	Listed.Headers.back().second = "Bearer " + Code;
+	Response = HandleMcp(Listed, Config, Tools);
+	CHECK_HAS(Response.Body, "\"clip\":\"Bridge\"");
+	CHECK_HAS(Response.Body, "\"state\":\"clip\"");
+}
+// end of phone-takes tests
+
 int main()
 {
 	TestJson();
@@ -15398,6 +15592,7 @@ int main()
 	TestBreathSpans();
 	TestHarmonyInKey();
 	TestEchoRubsAsChecked();
+	TestPhoneRoute();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

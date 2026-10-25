@@ -40,6 +40,8 @@
 // - PUT /inbox/<name>: a file into the Inbox folder next to FamiTracker.exe
 //   (the request's body, as the send_file tool takes it in base64), for the
 //   tools that read files on this computer (study_nsf, study_module...).
+// - /phone and below: the phone page that records ideas into the clips
+//   (PhoneTakes.h), with a code of its own, after the checks of the others.
 
 #include <string>
 #include <vector>
@@ -48,6 +50,7 @@
 namespace ftapi {
 
 class ToolSet;
+class PhoneTakes;
 
 struct McpConfig {
 	int Port;
@@ -59,8 +62,9 @@ struct McpConfig {
 	bool Network;
 	std::vector<std::string> Addresses;	// this computer's IPv4 addresses ("192.168.1.10")
 	std::string ComputerName;			// its name on the network ("desktop-pc")
+	PhoneTakes *pPhone;					// the phone page's takes (PhoneTakes.h), or none: no phone page
 
-	McpConfig() : Port(0), Network(false) {}
+	McpConfig() : Port(0), Network(false), pPhone(0) {}
 };
 
 const char *const MCP_MODERN_VERSION = "2026-07-28";
