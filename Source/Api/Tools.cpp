@@ -17593,15 +17593,12 @@ std::string StudyNsfTool(Session &S, const Json &Args)
 		}
 		Reference R = MakeReference(File, Studied[i].Track, Studied[i].Study, Path, Date);
 		if (Keep) {
-			// Studied again: what the user tagged and noted stays
+			// Studied again: what the user tagged and noted stays (the old
+			// study's own tags go with it)
 			std::string Old, Why;
 			Reference Before;
-			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why)) {
-				for (size_t t = 0; t < Before.Tags.size(); ++t)
-					if (std::find(R.Tags.begin(), R.Tags.end(), Before.Tags[t]) == R.Tags.end())
-						R.Tags.push_back(Before.Tags[t]);
-				R.Notes = Before.Notes;
-			}
+			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why))
+				KeepOwnTags(R, Before);
 			for (size_t t = 0; t < Tags.size(); ++t)
 				if (std::find(R.Tags.begin(), R.Tags.end(), Tags[t]) == R.Tags.end())
 					R.Tags.push_back(Tags[t]);

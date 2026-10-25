@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace nsf {
@@ -185,13 +186,21 @@ uint64_t Mix(uint64_t h, uint64_t v)
 	return h;
 }
 
+// Which channels a fingerprint takes: all, all but the drums (noise and
+// DPCM), or the drums alone
+enum print_parts { PARTS_ALL, PARTS_MELODIC, PARTS_DRUMS };
+
+bool DrumChannel(int Channel) { return Channel == CH_NOISE || Channel == CH_DPCM; }
+
 // What a tick sounds like, ignoring what wobbles (vibrato phases and the
 // like): the loop is found where these repeat
-uint64_t Fingerprint(const Recording &R, int Tick)
+uint64_t Fingerprint(const Recording &R, int Tick, int Parts = PARTS_ALL)
 {
 	uint64_t h = 1469598103934665603ull;
 	for (size_t i = 0; i < R.Channels.size(); ++i) {
 		const int c = R.Channels[i];
+		if ((Parts == PARTS_MELODIC && DrumChannel(c)) || (Parts == PARTS_DRUMS && !DrumChannel(c)))
+			continue;
 		const ChannelTick &t = R.Ticks[c][Tick];
 		if (!t.Sounding()) {
 			h = Mix(h, uint64_t(c) << 40);
@@ -228,13 +237,134 @@ bool Near(const Recording &R, int Channel, int Tick, int Other, int Ticks)
 	return (Other > 0 && v == Coarse(R, Channel, Other - 1)) || (Other + 1 < Ticks && v == Coarse(R, Channel, Other + 1));
 }
 
+// Where a loop of Period ticks starts that repeats exactly up to the end of
+// the fingerprints, for at least a whole period and Margin; -1 when it doesn't
+int ExactStart(const std::vector<uint64_t> &F, int Period, int Margin)
+{
+	const int N = int(F.size());
+	if (Period < 1 || N < 2 * Period + Margin)
+		return -1;
+	int x = N - 1 - Period;
+	while (x >= 0 && F[x] == F[x + Period])
+		--x;
+	return N - Period - (x + 1) >= Period + Margin ? x + 1 : -1;
+}
+
+// How long a loop of Period ticks has to have repeated after its first time
+// through before it's taken: a whole period and a margin; while the track
+// plays (Confirm), also two more times through and Confirm ticks, since a
+// passage that repeats once and then moves on is no loop
+int RepeatNeeded(int Period, int Margin, int Confirm)
+{
+	int Need = Period + Margin;
+	if (Confirm > 0)
+		Need = std::max(Need, std::max(2 * Period, Confirm));
+	return Need;
+}
+
+// How loud a channel sounds at a tick, 0 to 1
+double Level(const Recording &R, int Channel, int Tick)
+{
+	const ChannelTick &t = R.Ticks[Channel][Tick];
+	return t.Sounding() ? std::min(1.0, t.Volume / (Channel == CH_FDS ? 32.0 : 15.0)) : 0.0;
+}
+
+// Whether a channel plays the same at two ticks but for a note that starts
+// or ends a tick sooner or later in one of them
+bool Shifted(const Recording &R, int Channel, int A, int B)
+{
+	const int Last = R.Length - 1;
+	const int a = Coarse(R, Channel, A), b = Coarse(R, Channel, B);
+	return (a == Coarse(R, Channel, std::max(0, B - 1)) || a == Coarse(R, Channel, std::min(Last, B + 1))) &&
+		(b == Coarse(R, Channel, std::max(0, A - 1)) || b == Coarse(R, Channel, std::min(Last, A + 1)));
+}
+
+// How differently a channel sounds at two ticks: 0 the same, up to its level
+// for another note (or noise, or sample) or a note against silence; a
+// louder or softer note, or another duty, counts by how much it changes, a
+// note a tick longer or shorter not at all, and a hardware sweep that steps
+// a little sooner or later (its clock runs on its own) a quarter
+double Difference(const Recording &R, int Channel, int A, int B)
+{
+	const ChannelTick &a = R.Ticks[Channel][A], &b = R.Ticks[Channel][B];
+	const double La = Level(R, Channel, A), Lb = Level(R, Channel, B);
+	if (!a.Sounding() || !b.Sounding())
+		return Shifted(R, Channel, A, B) ? 0 : std::max(La, Lb);
+	// The noise's mode and the DPCM's rate are what it plays
+	const bool Same = Coarse(R, Channel, A) == Coarse(R, Channel, B) &&
+		(!DrumChannel(Channel) || a.Timbre == b.Timbre);
+	if (!Same && (a.Flags & TICK_SWEEP) && (b.Flags & TICK_SWEEP) && std::fabs(a.Pitch - b.Pitch) <= 2.5)
+		return 0.25 * std::max(La, Lb) + std::fabs(La - Lb);
+	if (!Same)
+		return Shifted(R, Channel, A, B) ? 0 : std::max(La, Lb);
+	double d = std::fabs(La - Lb);
+	if (a.Timbre != b.Timbre || a.Wave != b.Wave)
+		d += 0.3 * std::min(La, Lb);
+	return d;
+}
+
+// Whether a channel's sound at tick B is a note that has been sounding
+// since before tick From, without a new attack: the tail of a note from the
+// time through before, which goes on over the loop's start
+bool TailFrom(const Recording &R, int Channel, int B, int From)
+{
+	if (From < 1)
+		return false;
+	const int v = Coarse(R, Channel, B);
+	for (int k = B; k >= From - 1; --k) {
+		const ChannelTick &t = R.Ticks[Channel][k];
+		if (!t.Sounding() || Coarse(R, Channel, k) != v || (k >= From && (t.Flags & TICK_TRIGGER)))
+			return false;
+	}
+	return true;
+}
+
 }	// namespace
+
+// A loop's first time through can differ from the later ones in ways too
+// slight to hear: a quiet part's tails, a duty on a quiet pulse. Going back
+// from where it repeats exactly, a tick passes as the same as the one a
+// period later while what differs is quiet next to the music around it (a
+// channel at 3 or under, or a duty at a middling volume, against the rest);
+// the first tick that differs more ends it. Before a channel's first note,
+// a note of the time through before ringing on over the loop's start is the
+// same: the track looping there plays it the same way.
+int AudibleLoopStart(const Recording &R, int Start, int Period, bool MelodicOnly)
+{
+	if (Start <= 0 || Period <= 0 || Start + Period > R.Length)
+		return std::max(0, Start);
+	std::vector<int> FirstSound(CH_COUNT, R.Length);
+	for (size_t i = 0; i < R.Channels.size(); ++i) {
+		const int c = R.Channels[i];
+		for (int t = 0; t < Start && FirstSound[c] == R.Length; ++t)
+			if (R.Ticks[c][t].Sounding())
+				FirstSound[c] = t;
+	}
+	int S = Start;
+	for (int t = Start - 1; t >= 0; --t) {
+		double D = 0, Music = 0;
+		for (size_t i = 0; i < R.Channels.size(); ++i) {
+			const int c = R.Channels[i];
+			if (MelodicOnly && DrumChannel(c))
+				continue;
+			const double Level2 = std::max(Level(R, c, t), Level(R, c, t + Period));
+			Music += Level2;
+			if (t < FirstSound[c] && R.Ticks[c][t + Period].Sounding() && TailFrom(R, c, t + Period, Period))
+				continue;
+			D += Difference(R, c, t, t + Period);
+		}
+		if (D > std::max(0.2, 0.12 * Music))
+			break;
+		S = t;
+	}
+	return S;
+}
 
 // A loop whose length isn't a whole number of ticks (a tempo that runs a
 // fraction of a tick over each time round, a vibrato or tremolo on a clock
 // of its own) never repeats tick for tick: here the notes repeat, a tick
 // either way
-bool FindLoopApprox(const Recording &R, int Ticks, int MinPeriod, int Margin, int &Start, int &Period)
+bool FindLoopApprox(const Recording &R, int Ticks, int MinPeriod, int Margin, int &Start, int &Period, int Confirm)
 {
 	const int Window = std::min(Ticks / 3, 1200);
 	if (Window < 60 || Ticks < 2 * MinPeriod + Margin)
@@ -253,14 +383,32 @@ bool FindLoopApprox(const Recording &R, int Ticks, int MinPeriod, int Margin, in
 		return false;
 	const int Samples = (Window + 1) / 2 * int(Channels.size());
 	const int Allowed = Samples / 200;		// 99.5% of the window, sampled every other tick
-	for (int P = MinPeriod; P <= From; ++P) {
+	for (int First = MinPeriod; First <= From; ++First) {
 		int Misses = 0;
 		for (int t = From; t < Ticks && Misses <= Allowed; t += 2)
 			for (size_t i = 0; i < Channels.size() && Misses <= Allowed; ++i)
-				if (!Near(R, Channels[i], t - P, t, Ticks))
+				if (!Near(R, Channels[i], t - First, t, Ticks))
 					++Misses;
 		if (Misses > Allowed)
 			continue;
+		// A tick either way also matches the period a tick longer: that one
+		// when its notes fall on the very same ticks clearly more often (a
+		// loop a whole number of ticks long, its notes off by a tick now and
+		// then), rather than about as often (a loop between two lengths)
+		int P = First;
+		auto Same = [&](int Q) {
+			int n = 0;
+			for (int t = From; t < Ticks; t += 2)
+				for (size_t i = 0; i < Channels.size(); ++i)
+					n += Coarse(R, Channels[i], t - Q) == Coarse(R, Channels[i], t);
+			return n;
+		};
+		const int AtFirst = Same(First);
+		for (int Q = First + 1; Q <= First + 2 && Q <= From; ++Q)
+			if (Same(Q) * 50 > AtFirst * 51) {
+				P = Q;
+				break;
+			}
 		// Back from the window, to where it stops repeating
 		int S = From - P;
 		int Run = 0;
@@ -275,7 +423,7 @@ bool FindLoopApprox(const Recording &R, int Ticks, int MinPeriod, int Margin, in
 			else if (++Run > 2)
 				break;
 		}
-		if (Ticks - P - S >= P + Margin) {
+		if (Ticks - P - S >= RepeatNeeded(P, Margin, Confirm)) {
 			Start = S;
 			Period = P;
 			return true;
@@ -284,7 +432,7 @@ bool FindLoopApprox(const Recording &R, int Ticks, int MinPeriod, int Margin, in
 	return false;
 }
 
-bool FindLoop(const std::vector<uint64_t> &F, int MinPeriod, int Margin, int &Start, int &Period)
+bool FindLoop(const std::vector<uint64_t> &F, int MinPeriod, int Margin, int &Start, int &Period, int Confirm)
 {
 	const int N = int(F.size());
 	if (MinPeriod < 1)
@@ -320,7 +468,7 @@ bool FindLoop(const std::vector<uint64_t> &F, int MinPeriod, int Margin, int &St
 		while (x >= 0 && F[x] == F[x + P])
 			--x;
 		const int S = x + 1;
-		if (N - P - S >= P + Margin) {
+		if (N - P - S >= RepeatNeeded(P, Margin, Confirm)) {
 			Start = S;
 			Period = P;
 			return true;
@@ -377,7 +525,8 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 	const int MinLoop = std::max(1, int(Options.MinLoopSeconds * Out.TickRate));
 	const int Margin = int(4 * Out.TickRate);
 	const int CheckEvery = int(5 * Out.TickRate);
-	std::vector<uint64_t> Prints;
+	const int Confirm = std::max(1, int(Options.ConfirmSeconds * Out.TickRate));
+	std::vector<uint64_t> Prints, MelodicPrints;
 	int Quiet = 0, LastSound = -1, Overruns = 0;
 	int NextApprox = int(30 * Out.TickRate);
 	std::array<ChannelTick, CH_COUNT> Snap;
@@ -403,6 +552,7 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 		}
 		Out.Length = Tick + 1;
 		Prints.push_back(Fingerprint(Out, Tick));
+		MelodicPrints.push_back(Fingerprint(Out, Tick, PARTS_MELODIC));
 
 		if (Sound) {
 			Quiet = 0;
@@ -419,17 +569,28 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 			break;
 		}
 
+		// A loop, once it has gone on repeating long enough to be sure of
 		if ((Tick + 1) % CheckEvery == 0) {
 			int Start = 0, Period = 0;
-			if (FindLoop(Prints, MinLoop, Margin, Start, Period)) {
+			if (FindLoop(Prints, MinLoop, Margin, Start, Period, Confirm)) {
 				Out.LoopStart = Start;
 				Out.LoopLength = Period;
 				break;
 			}
-			// Now and then, a loop that repeats only a tick either way
+			// Now and then, a loop that repeats only a tick either way; one a
+			// tick or two longer that repeats exactly, though not yet as often,
+			// is the same loop
 			if (Tick + 1 >= NextApprox) {
 				NextApprox *= 2;
-				if (FindLoopApprox(Out, Tick + 1, MinLoop, Margin, Start, Period)) {
+				if (FindLoopApprox(Out, Tick + 1, MinLoop, Margin, Start, Period, Confirm)) {
+					for (int Q = Period; Q <= Period + 2; ++Q) {
+						const int S = ExactStart(Prints, Q, Margin);
+						if (S >= 0) {
+							Start = S;
+							Period = Q;
+							break;
+						}
+					}
 					Out.LoopStart = Start;
 					Out.LoopLength = Period;
 					break;
@@ -442,13 +603,52 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 		}
 	}
 
-	// Played to the end without finding one: one last look
-	if (Out.LoopStart < 0 && !Out.EndsInSilence) {
+	// Played to the end without one: the melodic channels' loop, heard often
+	// enough, when the drums repeat on a cycle of their own; else a loop
+	// heard twice, as long a one as the recording has room for
+	if (Out.LoopStart < 0 && !Out.EndsInSilence && LastSound >= 0) {
 		int Start = 0, Period = 0;
-		if (FindLoopApprox(Out, Out.Length, MinLoop, Margin, Start, Period)) {
+		if (FindLoop(MelodicPrints, MinLoop, Margin, Start, Period, Confirm)) {
+			bool Drums = false;
+			for (size_t i = 0; i < Out.Channels.size() && !Drums; ++i)
+				if (DrumChannel(Out.Channels[i]))
+					for (int t = Start; t < Start + Period && !Drums; ++t)
+						Drums = Out.Ticks[Out.Channels[i]][t].Sounding();
+			if (Drums) {
+				Out.LoopStart = Start;
+				Out.LoopLength = Period;
+				Out.DrumsApart = true;
+				std::vector<uint64_t> DrumPrints(Out.Length);
+				for (int t = 0; t < Out.Length; ++t)
+					DrumPrints[t] = Fingerprint(Out, t, PARTS_DRUMS);
+				int DrumStart = 0, DrumPeriod = 0;
+				if (FindLoop(DrumPrints, MinLoop, Margin, DrumStart, DrumPeriod))
+					Out.DrumLoop = DrumPeriod;
+			}
+		}
+		if (Out.LoopStart < 0 && (FindLoop(Prints, MinLoop, Margin, Start, Period) ||
+			FindLoopApprox(Out, Out.Length, MinLoop, Margin, Start, Period))) {
 			Out.LoopStart = Start;
 			Out.LoopLength = Period;
 		}
+	}
+	// The loop starts where it can first be heard to repeat: from the start,
+	// or a second or more before it repeats exactly (moved a moment, it would
+	// only leave the bar line it found)
+	if (Out.LoopStart > 0) {
+		const int Heard = AudibleLoopStart(Out, Out.LoopStart, Out.LoopLength, Out.DrumsApart);
+		if (Heard <= 2 || Out.LoopStart - Heard >= int(Out.TickRate))
+			Out.LoopStart = Heard;
+	}
+	if (Out.DrumsApart) {
+		char Words[200];
+		if (Out.DrumLoop > 0)
+			std::snprintf(Words, sizeof(Words), "the drums repeat every %.1f seconds, on a cycle of their own beside the music's loop "
+				"of %.1f seconds; the module's loop starts them over", Out.DrumLoop / Out.TickRate, Out.LoopLength / Out.TickRate);
+		else
+			std::snprintf(Words, sizeof(Words), "the drums don't repeat with the music's loop of %.1f seconds; the module's loop starts "
+				"them over", Out.LoopLength / Out.TickRate);
+		Out.Problems.push_back(Words);
 	}
 	if (Overruns > 0)
 		Out.Problems.push_back("the player's PLAY routine ran past its frame " + std::to_string(Overruns) + " times");
@@ -458,9 +658,10 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 	// Whatever was recorded past the loop's second time round isn't needed
 	if (Out.LoopStart >= 0) {
 		// A loop that holds one sound forever is an ending
+		const std::vector<uint64_t> &P = Out.DrumsApart ? MelodicPrints : Prints;
 		bool Constant = true;
 		for (int t = Out.LoopStart + 1; t < Out.LoopStart + Out.LoopLength && Constant; ++t)
-			Constant = Prints[t] == Prints[Out.LoopStart];
+			Constant = P[t] == P[Out.LoopStart];
 		if (Constant) {
 			Out.Length = std::min(Out.Length, Out.LoopStart + Out.LoopLength);
 			Out.LoopStart = -1;
@@ -472,6 +673,7 @@ bool RecordTrack(const NsfFile &File, int Track, const RecordOptions &Options, R
 	}
 	for (size_t i = 0; i < Out.Channels.size(); ++i)
 		Out.Ticks[Out.Channels[i]].resize(Out.Length);
+	Out.LastSound = std::min(LastSound, Out.Length - 1);
 	return true;
 }
 
