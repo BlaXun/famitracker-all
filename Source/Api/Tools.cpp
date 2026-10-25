@@ -21,6 +21,7 @@
 
 #include "Tools.h"
 #include "Arrange.h"
+#include "Grooves.h"
 #include "ChannelMix.h"
 #include "Chords.h"
 #include "DpcmKit.h"
@@ -11094,11 +11095,8 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	};
 	// Lush chords need a pulse; on another channel (a VRC7 one) they're held as the 0xy arpeggio
 	int ChordChannel = Pick("chord_channel", M.Style == CHORDS_LUSH ? IsLushChordChannel : IsChordChannel, "a pulse channel");
-	int ChordStyle = M.Style;
-	if (M.Style == CHORDS_LUSH && ChordChannel < 0 && Arg(Args, "chord_channel") == 0) {
-		ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");
-		ChordStyle = CHORDS_ARPEGGIO;
-	}
+	if (M.Style == CHORDS_LUSH && ChordChannel < 0 && Arg(Args, "chord_channel") == 0)
+		ChordChannel = Pick("chord_channel", IsChordChannel, "a pulse channel");	// they're the arpeggio there (MakeGrooveParts)
 	const int BassChannel = Pick("bass_channel", IsBassChannel, "the triangle or the sawtooth");
 	const int DrumChannel = M.Groove >= 0 ? Pick("drum_channel", Local::IsNoise, "the noise channel") : -1;
 	if (ChordChannel < 0 && BassChannel < 0 && DrumChannel < 0)
@@ -11110,32 +11108,43 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	if (Melody >= 0 && Melody != ChordChannel && Melody != BassChannel && !IsBass(S.Channel(Melody)))
 		Tune = NotesIn(S.Notes(Melody), First, End);
 
-	std::vector<ChordAt> Chords;
+	// The parts, as notes (Grooves.h), then their instruments and cells
+	GrooveRequest Q;
+	Q.Mood = M.Name;
+	Q.K = K;
+	Q.KeyGiven = true;
+	Q.Bars = Bars;
+	Q.RowsPerBeat = R;
+	Q.FrameRate = S.Song.FrameRate;
+	Q.Speed = S.Song.Speed;
+	Q.SplitPoint = S.Song.SplitPoint;
+	Q.Chords = ChordChannel >= 0;
+	Q.Bass = BassChannel >= 0;
+	Q.Drums = DrumChannel >= 0;
+	if (ChordChannel >= 0)
+		Q.ChordChannel = S.Channel(ChordChannel);
+	if (BassChannel >= 0)
+		Q.BassChannel = S.Channel(BassChannel);
+	Q.Melody = Tune;
+	if (!Tune.empty())
+		Q.MelodyChannel = S.Channel(Melody);
+	Q.PhraseStart = BarsIntoPhrase(From, PhraseAnchor(S), 4);
+	Q.Samples = Sampled;
+	GrooveParts P;
 	std::string Error;
-	if (!LayOutProgression(SplitProgression(M.Chords), Bars, R, K, Chords, Error))
+	if (!MakeGrooveParts(Q, P, Error))
 		throw Problem(Error);
-	chord_color Color;
-	ParseColor(M.Color, Color);
-	ColorChords(Chords, Tune, K, R, Color);
+	const std::vector<ChordAt> &Chords = P.Chords;
+	const int ChordStyle = P.ChordStyle;
 
 	std::vector<Change> Changes;
 	std::vector<std::string> Warnings, Parts;
 	if (ChordChannel >= 0) {
-		ChordPartOptions O;
-		O.Style = ChordStyle;
-		O.Rhythm = M.Rhythm;
-		O.Pattern = M.Pattern;
-		O.StepRows = std::max(1, R / 2);
-		O.RowsPerBeat = R;
-		O.RootInBass = BassChannel >= 0;
-		O.Volume = PartVolume(S.Channel(ChordChannel), ChordStyle == CHORDS_STABS ? 11 : ChordStyle == CHORDS_BROKEN ? 10 :
-			ChordStyle == CHORDS_LUSH ? 6 : 15);
-		ChordRegister(O, S.Channel(ChordChannel), Tune, Tune.empty() ? 0 : Written(S.Channel(Melody), 0));
-		std::vector<PartNote> Notes = ChordPart(Chords, Bars, O);
+		std::vector<PartNote> Notes = P.ChordNotes;
 		if (ChordStyle == CHORDS_LUSH)
-			LushInstruments(S, ChordChannel, M.ChordSound, O.Pattern, 2, Notes);
+			LushInstruments(S, ChordChannel, P.ChordSound, M.Pattern, 2, Notes);
 		else {
-			const int Instrument = ResolveInstrument(S, ChordStyle == M.Style ? M.ChordSound : "soft chords", ChordChannel);
+			const int Instrument = ResolveInstrument(S, P.ChordSound, ChordChannel);
 			for (size_t i = 0; i < Notes.size(); ++i)
 				Notes[i].Instrument = Instrument;
 		}
@@ -11151,13 +11160,8 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		Parts.push_back(Kind + " chords on " + S.Channel(ChordChannel).FullName());
 	}
 	if (BassChannel >= 0) {
-		BassOptions O;
-		O.Style = M.Bass;
-		O.RowsPerBeat = R;
-		O.K = K;
-		BassRegister(O, S.Channel(BassChannel));
 		const int Instrument = ResolveInstrument(S, "bass", BassChannel);
-		std::vector<PartNote> Notes = BassPart(Chords, Bars, O);
+		std::vector<PartNote> Notes = P.BassNotes;
 		for (size_t i = 0; i < Notes.size(); ++i)
 			Notes[i].Instrument = Instrument;
 		Change C;
@@ -11167,16 +11171,9 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 		Parts.push_back(std::string("a ") + BassStyles()[static_cast<size_t>(M.Bass)].Name + " bass on " + S.Channel(BassChannel).FullName());
 	}
 	if (DrumChannel >= 0) {
-		DrumOptions O;
-		O.Groove = M.Groove;
-		O.Intensity = M.Intensity;
-		O.FillEvery = 4;
-		O.PhraseStart = BarsIntoPhrase(From, PhraseAnchor(S), 4);
-		O.RowsPerBeat = R;
-		O.Samples = Sampled;
 		std::string Where;
-		DrumChanges(S, DrumChannel, Sampled ? DpcmChannel(S) : -1, DrumPart(Bars, O), First, End, GrooveLoudest(O.Groove), DirectChange, Changes,
-			Where, Warnings, GrooveLoudest(O.Groove));
+		DrumChanges(S, DrumChannel, Sampled ? DpcmChannel(S) : -1, P.Drums, First, End, P.DrumsLoudest, DirectChange, Changes, Where,
+			Warnings, P.DrumsLoudest);
 		Parts.push_back(std::string(Grooves()[static_cast<size_t>(M.Groove)].Name) + " drums" + Where);
 	}
 	std::string Summary;
@@ -18326,6 +18323,154 @@ std::string FindSoundTool(Session &S, const Json &Args)
 }
 
 }	// namespace
+
+// Grooves to start from (Grooves.h), from make_groove's moods
+
+std::vector<GrooveMood> GrooveMoods()
+{
+	std::vector<GrooveMood> Out;
+	for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i) {
+		GrooveMood M;
+		M.Name = MOODS[i].Name;
+		M.Use = MOODS[i].Use;
+		M.Bpm = MOODS[i].Bpm;
+		M.Minor = MOODS[i].Minor;
+		Out.push_back(M);
+	}
+	return Out;
+}
+
+bool FindGrooveMood(const std::string &Word, GrooveMood &Out)
+{
+	const Mood *pMood = FindMood(Word);
+	if (pMood == 0)
+		return false;
+	Out.Name = pMood->Name;
+	Out.Use = pMood->Use;
+	Out.Bpm = pMood->Bpm;
+	Out.Minor = pMood->Minor;
+	return true;
+}
+
+Key GrooveKey(const Key *pSongKey, bool Minor)
+{
+	const auto Mod12 = [](int Value) { return ((Value % 12) + 12) % 12; };
+	int Major = 0;	// the major key with the song's notes: C without a song key, so the white keys
+	if (pSongKey != 0) {
+		const int Tonic = Mod12(pSongKey->Tonic);
+		const int Mode = pSongKey->Mode >= 0 && pSongKey->Mode < ModeCount() ? pSongKey->Mode : MODE_MAJOR;
+		const int *pSteps = ModeSteps(Mode), *pMajor = ModeSteps(MODE_MAJOR);
+		unsigned Notes = 0;
+		for (int i = 0; i < 7; ++i)
+			Notes |= 1u << Mod12(Tonic + pSteps[i]);
+		Major = pSteps[2] == 3 ? Mod12(Tonic + 3) : Tonic;	// no major key has its notes (a harmonic minor): by its third
+		for (int t = 0; t < 12; ++t) {
+			unsigned Same = 0;
+			for (int i = 0; i < 7; ++i)
+				Same |= 1u << Mod12(t + pMajor[i]);
+			if (Same == Notes)
+				Major = t;
+		}
+	}
+	return Minor ? Key(Mod12(Major + 9), MODE_MINOR) : Key(Major, MODE_MAJOR);
+}
+
+GrooveRequest::GrooveRequest() : KeyGiven(false), RowsPerBeat(4), Bpm(0.0), FrameRate(60), Speed(6), SplitPoint(32), Chords(true),
+	Bass(true), Drums(true), PhraseStart(0), Samples(false)
+{
+	ChordChannel.Name = "Pulse 2";
+	ChordChannel.Chip = "2A03";
+	ChordChannel.Kind = KIND_PULSE;
+	BassChannel.Name = "Triangle";
+	BassChannel.Chip = "2A03";
+	BassChannel.Kind = KIND_TRIANGLE;
+}
+
+bool MakeGrooveParts(const GrooveRequest &Request, GrooveParts &Out, std::string &Error)
+{
+	Out = GrooveParts();
+	const Mood *pMood = FindMood(Request.Mood);
+	if (pMood == 0) {
+		std::string List;
+		for (size_t i = 0; i < sizeof(MOODS) / sizeof(MOODS[0]); ++i)
+			List += (i == 0 ? "" : ", ") + std::string(MOODS[i].Name);
+		Error = "mood: \"" + Request.Mood + "\" isn't one. Moods: " + List + " (other words for them work too).";
+		return false;
+	}
+	const Mood &M = *pMood;
+	FindGrooveMood(M.Name, Out.Mood);
+	if (Request.Bars.empty()) {
+		Error = "There are no bars for the groove.";
+		return false;
+	}
+	if (!Request.Chords && !Request.Bass && !Request.Drums) {
+		Error = "Ask for chords, a bass line or drums.";
+		return false;
+	}
+	const int R = std::max(1, Request.RowsPerBeat);
+	Out.K = Request.KeyGiven ? Request.K : Key(Request.K.Tonic, M.Minor ? MODE_MINOR : MODE_MAJOR);
+	const std::vector<BarSpan> &Bars = Request.Bars;
+
+	// The mood's progression, colored where the melody lets it
+	if (!LayOutProgression(SplitProgression(M.Chords), Bars, R, Out.K, Out.Chords, Error))
+		return false;
+	chord_color Color;
+	ParseColor(M.Color, Color);
+	ColorChords(Out.Chords, Request.Melody, Out.K, R, Color);
+	Out.ChordText = ProgressionText(Out.Chords, Bars, Out.K);
+
+	std::vector<std::string> Parts;
+	if (Request.Chords) {
+		// Lush chords need a pulse; on another channel (a VRC7 one) they're held as the 0xy arpeggio
+		Out.ChordStyle = M.Style == CHORDS_LUSH && !IsLushChordChannel(Request.ChordChannel) ? static_cast<int>(CHORDS_ARPEGGIO) : M.Style;
+		Out.ChordSound = Out.ChordStyle == M.Style ? M.ChordSound : "soft chords";
+		ChordPartOptions O;
+		O.Style = Out.ChordStyle;
+		O.Rhythm = M.Rhythm;
+		O.Pattern = M.Pattern;
+		O.StepRows = std::max(1, R / 2);
+		O.RowsPerBeat = R;
+		O.RootInBass = Request.Bass;
+		O.Volume = PartVolume(Request.ChordChannel, Out.ChordStyle == CHORDS_STABS ? 11 : Out.ChordStyle == CHORDS_BROKEN ? 10 :
+			Out.ChordStyle == CHORDS_LUSH ? 6 : 15);
+		ChordRegister(O, Request.ChordChannel, Request.Melody, Request.Melody.empty() ? 0 : Written(Request.MelodyChannel, 0));
+		Out.ChordNotes = ChordPart(Out.Chords, Bars, O);
+		std::string Kind = ChordStyles()[static_cast<size_t>(Out.ChordStyle)].Name;
+		if (Out.ChordStyle == CHORDS_BROKEN)
+			Kind += std::string(" (") + BrokenPatterns()[static_cast<size_t>(M.Pattern)].Name + ")";
+		else if (M.Rhythm >= 0)
+			Kind += std::string(" (") + ChordRhythms()[static_cast<size_t>(M.Rhythm)].Name + ")";
+		Parts.push_back(Kind + " chords");
+	}
+	if (Request.Bass) {
+		BassOptions O;
+		O.Style = M.Bass;
+		O.RowsPerBeat = R;
+		O.K = Out.K;
+		BassRegister(O, Request.BassChannel);
+		Out.BassNotes = BassPart(Out.Chords, Bars, O);
+		Parts.push_back(std::string("a ") + BassStyles()[static_cast<size_t>(M.Bass)].Name + " bass");
+	}
+	if (Request.Drums && M.Groove >= 0) {
+		DrumOptions O;
+		O.Groove = M.Groove;
+		O.Intensity = M.Intensity;
+		O.FillEvery = 4;
+		O.PhraseStart = Request.PhraseStart;
+		O.RowsPerBeat = R;
+		O.Samples = Request.Samples;
+		Out.Drums = DrumPart(Bars, O);
+		Out.DrumsLoudest = GrooveLoudest(M.Groove);
+		Parts.push_back(std::string(Grooves()[static_cast<size_t>(M.Groove)].Name) + " drums");
+	}
+	for (size_t i = 0; i < Parts.size(); ++i)
+		Out.Summary += (i == 0 ? "" : i + 1 == Parts.size() ? " and " : ", ") + Parts[i];
+
+	// The tempo
+	Out.Bpm = Request.Bpm > 0.0 ? Request.Bpm : static_cast<double>(M.Bpm);
+	ChooseSpeedTempo(Out.Bpm, R, Request.FrameRate, Request.Speed, Request.SplitPoint, Out.Speed, Out.Tempo);
+	return true;
+}
 
 // The sound browser's and find_sound's checks (SoundIndex.h), as the tools make them
 

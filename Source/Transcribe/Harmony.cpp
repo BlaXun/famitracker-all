@@ -83,8 +83,31 @@ double Correlation(const double *x, const double *y)
 	return (sxx > 0.0 && syy > 0.0) ? sxy / std::sqrt(sxx * syy) : 0.0;
 }
 
-int Third(const Chord &chord) { return chord.quality == Chord::Major ? 4 : 3; }
-int Fifth(const Chord &chord) { return chord.quality == Chord::Diminished ? 6 : 7; }
+bool HasTone(const std::vector<int> &tones, int interval)
+{
+	return std::find(tones.begin(), tones.end(), interval) != tones.end();
+}
+
+// The third (or, without one, the suspension) and the fifth above the root
+int Third(const Chord &chord)
+{
+	if (chord.tones.empty())
+		return chord.quality == Chord::Major ? 4 : 3;
+	static const int TRIES[] = { 4, 3, 5, 2 };
+	for (size_t i = 0; i < sizeof(TRIES) / sizeof(TRIES[0]); ++i)
+		if (HasTone(chord.tones, TRIES[i]))
+			return TRIES[i];
+	return chord.quality == Chord::Minor ? 3 : 4;
+}
+
+int Fifth(const Chord &chord)
+{
+	if (chord.tones.empty())
+		return chord.quality == Chord::Diminished ? 6 : 7;
+	if (HasTone(chord.tones, 7) || (!HasTone(chord.tones, 6) && !HasTone(chord.tones, 8)))
+		return 7;
+	return HasTone(chord.tones, 6) ? 6 : 8;
+}
 
 // How well a melody note fits a chord: chord tones fit, other notes of the key
 // pass, notes outside it clash, and a long note a semitone above a chord tone
@@ -214,6 +237,32 @@ MelodyCell NoteCell(int row, int midi)
 	return cell;
 }
 
+// Notes a step or two apart (a cluster) among the base and two notes x < y above it (0-15)
+int Bunched(int x, int y)
+{
+	return (x <= 2 ? 1 : 0) + (y - x <= 2 ? 1 : 0);
+}
+
+// The 0xy parameter for notes x < y above the base (0-11): one of them up an
+// octave when that unbunches them and fits under 16 semitones
+int Spread(int x, int y)
+{
+	int bestX = x, bestY = y;
+	if (Bunched(x, y) > 0) {
+		const int options[2][2] = { { x + 12, y }, { x, y + 12 } };
+		for (int k = 0; k < 2; ++k) {
+			int a = options[k][0], b = options[k][1];
+			if (a > b)
+				std::swap(a, b);
+			if (b <= 15 && Bunched(a, b) < Bunched(bestX, bestY)) {
+				bestX = a;
+				bestY = b;
+			}
+		}
+	}
+	return (bestX << 4) | bestY;
+}
+
 }	// namespace
 
 // ---------------------------------------------------------------------------
@@ -305,13 +354,50 @@ Key FindKey(const std::vector<MelodyNote> &melody)
 	return best;
 }
 
+std::vector<int> Chord::Tones() const
+{
+	if (!tones.empty())
+		return tones;
+	std::vector<int> triad;
+	triad.push_back(0);
+	triad.push_back(quality == Major ? 4 : 3);
+	triad.push_back(quality == Diminished ? 6 : 7);
+	return triad;
+}
+
 std::string ChordName(const Chord &chord, const Key &key)
 {
 	std::string name = NoteName(chord.root, key);
-	if (chord.quality == Chord::Minor)
+	// The usual names of a chord's notes over its root
+	struct Kind { int tones[6]; int count; const char *suffix; };
+	static const Kind KINDS[] = {
+		{ { 0, 4, 7 }, 3, "" }, { { 0, 3, 7 }, 3, "m" }, { { 0, 3, 6 }, 3, "dim" }, { { 0, 4, 8 }, 3, "aug" },
+		{ { 0, 2, 7 }, 3, "sus2" }, { { 0, 5, 7 }, 3, "sus4" }, { { 0, 7 }, 2, "5" },
+		{ { 0, 4, 7, 10 }, 4, "7" }, { { 0, 4, 7, 11 }, 4, "maj7" }, { { 0, 3, 7, 10 }, 4, "m7" },
+		{ { 0, 3, 6, 10 }, 4, "m7b5" }, { { 0, 3, 6, 9 }, 4, "dim7" }, { { 0, 4, 7, 9 }, 4, "6" }, { { 0, 3, 7, 9 }, 4, "m6" },
+		{ { 0, 2, 4, 7 }, 4, "add9" }, { { 0, 2, 3, 7 }, 4, "madd9" }, { { 0, 5, 7, 10 }, 4, "7sus4" },
+		{ { 0, 3, 7, 11 }, 4, "mmaj7" }, { { 0, 4, 8, 10 }, 4, "aug7" }, { { 0, 2, 4, 7, 10 }, 5, "9" },
+		{ { 0, 2, 4, 7, 11 }, 5, "maj9" }, { { 0, 2, 3, 7, 10 }, 5, "m9" },
+	};
+	const std::vector<int> tones = chord.Tones();
+	const char *suffix = 0;
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]) && suffix == 0; ++k) {
+		if (int(tones.size()) != KINDS[k].count)
+			continue;
+		bool same = true;
+		for (int i = 0; i < KINDS[k].count && same; ++i)
+			same = tones[size_t(i)] == KINDS[k].tones[i];
+		if (same)
+			suffix = KINDS[k].suffix;
+	}
+	if (suffix != 0)
+		name += suffix;
+	else if (chord.quality == Chord::Minor)	// notes no name says: named for their triad
 		name += "m";
 	else if (chord.quality == Chord::Diminished)
 		name += "dim";
+	if (chord.bass >= 0 && PitchClass(chord.bass) != PitchClass(chord.root))
+		name += std::string("/") + NoteName(chord.bass, key);
 	return name;
 }
 
@@ -497,18 +583,25 @@ std::vector<MelodyCell> BassCells(const std::vector<ChordSpan> &chords, const st
 	int end = 0;
 	for (size_t i = 0; i < segments.size(); ++i) {
 		const Segment &s = segments[i];
-		const int root = Nearest(s.chord.root, previous, lowMidi, highMidi);
-		cells.push_back(NoteCell(s.row, root));
-		previous = root;
+		// The root, or the note the chord is written over (C/E)
+		const bool slash = s.chord.bass >= 0 && PitchClass(s.chord.bass) != PitchClass(s.chord.root);
+		const int low = Nearest(slash ? s.chord.bass : s.chord.root, previous, lowMidi, highMidi);
+		cells.push_back(NoteCell(s.row, low));
+		previous = low;
 		end = s.end;
 
-		// The fifth halfway through a bar of four or more beats
+		// The fifth halfway through a bar of four or more beats (over a bass on the fifth already, the root)
 		const int beats = s.bar->length / beat;
 		if (beats >= 4 && s.row == s.bar->row) {
 			const int middle = s.bar->row + (beats / 2) * beat;
 			if (middle < s.end) {
-				const int fifth = root + Fifth(s.chord) <= highMidi ? root + Fifth(s.chord) : root + Fifth(s.chord) - 12;
-				cells.push_back(NoteCell(middle, fifth));
+				const int root = slash ? Nearest(s.chord.root, low, lowMidi, highMidi) : low;
+				int second = root + Fifth(s.chord);
+				if (slash && PitchClass(second) == PitchClass(s.chord.bass))
+					second = root;
+				if (second > highMidi)
+					second -= 12;
+				cells.push_back(NoteCell(middle, second));
 			}
 		}
 	}
@@ -530,21 +623,33 @@ std::vector<MelodyCell> ArpeggioCells(const std::vector<ChordSpan> &chords, cons
 	int end = 0;
 	for (size_t i = 0; i < segments.size(); ++i) {
 		const Segment &s = segments[i];
-		const int tones[3] = { s.chord.root, PitchClass(s.chord.root + Third(s.chord)), PitchClass(s.chord.root + Fifth(s.chord)) };
-
-		// Root position or an inversion, its lowest note nearest the last one
+		const std::vector<int> three = ArpeggioTones(s.chord);
 		int bestBase = 0, bestParam = 0;
-		double bestCost = 1e9;
-		for (int inversion = 0; inversion < 3; ++inversion) {
-			const int bass = tones[inversion];
-			const int base = Nearest(bass, previous, lowMidi, highMidi);
-			const int x = PitchClass(tones[(inversion + 1) % 3] - bass);
-			const int y = PitchClass(tones[(inversion + 2) % 3] - bass);
-			const double cost = std::abs(base - previous) + (inversion == 0 ? 0.0 : 0.5);
-			if (cost < bestCost) {
-				bestCost = cost;
-				bestBase = base;
-				bestParam = (std::min(x, y) << 4) | std::max(x, y);
+		if (three.size() == 3 && three[2] == 12) {
+			// A power chord: the root, the fifth and the octave
+			bestBase = Nearest(s.chord.root, previous, lowMidi, highMidi);
+			bestParam = (three[1] << 4) | 12;
+		}
+		else {
+			const int tones[3] = { PitchClass(s.chord.root + three[0]), PitchClass(s.chord.root + three[1]),
+				PitchClass(s.chord.root + three[2]) };
+
+			// Root position or an inversion, its lowest note nearest the last one, its notes not bunched up
+			double bestCost = 1e9;
+			for (int inversion = 0; inversion < 3; ++inversion) {
+				const int bass = tones[inversion];
+				const int base = Nearest(bass, previous, lowMidi, highMidi);
+				int x = PitchClass(tones[(inversion + 1) % 3] - bass);
+				int y = PitchClass(tones[(inversion + 2) % 3] - bass);
+				if (x > y)
+					std::swap(x, y);
+				const int param = Spread(x, y);
+				const double cost = std::abs(base - previous) + (inversion == 0 ? 0.0 : 0.5) + 3.0 * Bunched(param >> 4, param & 0x0F);
+				if (cost < bestCost) {
+					bestCost = cost;
+					bestBase = base;
+					bestParam = param;
+				}
 			}
 		}
 		MelodyCell cell = NoteCell(s.row, bestBase);
@@ -563,6 +668,33 @@ std::vector<MelodyCell> ArpeggioCells(const std::vector<ChordSpan> &chords, cons
 		cells.push_back(release);
 	}
 	return cells;
+}
+
+std::vector<int> ArpeggioTones(const Chord &chord)
+{
+	std::vector<int> tones = chord.Tones();
+	std::vector<int> three;
+	if (tones.size() <= 2) {
+		// A power chord (or a lone root): the root, the fifth and the octave
+		three.push_back(0);
+		three.push_back(tones.size() == 2 ? tones[1] : 7);
+		three.push_back(12);
+		return three;
+	}
+	if (tones.size() == 3)
+		return tones;
+	// The root, the third or suspension, and the note that says most what the chord is
+	const int third = Third(chord);
+	static const int TELLING[] = { 10, 11, 9, 6, 8, 2, 1, 3, 5, 7 };	// sevenths, the sixth, altered fifths, the ninths
+	three.push_back(0);
+	three.push_back(third);
+	for (size_t k = 0; k < sizeof(TELLING) / sizeof(TELLING[0]) && three.size() < 3; ++k)
+		if (TELLING[k] != third && HasTone(tones, TELLING[k]))
+			three.push_back(TELLING[k]);
+	if (three.size() < 3)
+		three.push_back(Fifth(chord));
+	std::sort(three.begin(), three.end());
+	return three;
 }
 
 }	// namespace transcribe

@@ -630,6 +630,15 @@
     <ClInclude Include="Source\MicRecorder.h" />
     <ClCompile Include="Source\RecordDlg.cpp" />
     <ClInclude Include="Source\RecordDlg.h" />
+    <ClCompile Include="Source\GrooveDlg.cpp" />
+    <ClInclude Include="Source\GrooveDlg.h" />
+    <ClCompile Include="Source\TapButton.cpp" />
+    <ClInclude Include="Source\TapButton.h" />
+    <ClCompile Include="Source\Transcribe\Tapping.cpp" />
+    <ClCompile Include="Source\Transcribe\Strums.cpp" />
+    <ClCompile Include="Source\Api\RecorderInput.cpp" />
+    <ClInclude Include="Source\Api\RecorderInput.h" />
+    <ClInclude Include="Source\Api\Grooves.h" />
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
     <ClCompile Include="Source\SoundBrowserDlg.cpp" />

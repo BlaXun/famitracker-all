@@ -165,7 +165,9 @@ the same chord on the next bar. One Ctrl+Z takes it back.
 Still open from the plan:
 
 - Mood starters that lay down chords, bass and drums for moods like "cozy
-  town" or "boss fight" (see "start from a groove" under the recorder).
+  town" or "boss fight". The recorder's Start from a groove does it for a
+  take, and its parts come from `ftapi::MakeGrooveParts` (`Api/Grooves.h`),
+  ready for the piano roll to use.
 
 ## 6. Tutorials
 
@@ -528,16 +530,16 @@ when ready.
     the NES would), and Claude Code's `make_sound_effect` (34 kinds with
     variants, ambience that loops, sounds described in words, or a
     recording).
+  - More natural input (October 2026, `feat-recorder-input`): Edit > Start
+    from a groove (a mood, a tempo and a key, and drums, a bass line and
+    chords to sing the melody over, which play during the count-in and the
+    take and stay in the song); a take sung over the selected rows only,
+    the song playing a bar before; tapping the tempo instead of setting
+    speed and tempo; chords typed by name ("C G Am F") or strummed on a
+    guitar for Add chords and bass line.
 
-  Still to do, in this order, on a branch made from `beginner-friendly`
-  again:
-  1. More natural input: start from a groove (pick a mood, tempo and key,
-     get a few bars of drums, bass and chords, and sing the melody over
-     them); re-sing just a selection (the song plays a bar before, the take
-     replaces only those rows); tap the tempo instead of setting speed and
-     tempo.
-  2. Chords by name ("C G Am F") or strummed on a guitar.
-  3. A small page on the phone that records ideas over Wi-Fi into the clips.
+  Still to do, on a branch made from `beginner-friendly` again: a small
+  page on the phone that records ideas over Wi-Fi into the clips.
 - **`api` (merged into `recorder`, and with it into `beginner-friendly`;
   see `MCP.md`):**
   FamiTracker is the MCP server itself, speaking Streamable HTTP on

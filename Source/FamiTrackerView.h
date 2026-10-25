@@ -357,7 +357,10 @@ public:
 	afx_msg void OnEditPastemix();
 	afx_msg void OnEditInsertRecording();
 	afx_msg void OnEditRecord();
+	afx_msg void OnEditGroove();
 	afx_msg void OnEditAddBacking();
+	void RecordFromMicrophone(bool GrooveFirst);				// Start from a groove opens it first
+	void AddBackingWith(const CString &Chords, int Row);		// chords heard, from the bar of song row Row
 	afx_msg void OnEditSaveClip();
 	afx_msg void OnUpdateEditSaveClip(CCmdUI *pCmdUI);
 	afx_msg void OnEditClips();
