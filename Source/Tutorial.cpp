@@ -778,16 +778,19 @@ void CTutorialBubble::Place(const CRect &Spot)
 // which is disabled meanwhile
 CWnd *CTutorialBubble::OpenDialog() const
 {
+	// The instrument editor too while it's open, though FamiTracker works on beside it: the walkthroughs have
+	// the user change an instrument there and play the step's bars with the note's Play button
 	if (m_pMainFrame->IsWindowEnabled())
-		return NULL;
+		return m_pMainFrame->GetOpenInstrumentEditor();
 	CWnd *pPopup = m_pMainFrame->GetLastActivePopup();
 	if (pPopup == NULL || pPopup == m_pMainFrame || pPopup == this || !pPopup->IsWindowVisible())
 		return NULL;
 	return pPopup;
 }
 
-// While a dialog is open it has the attention: no dimming, and the note out
-// of its way, beside it where the screen has room, or else under it
+// While a dialog (or the instrument editor) is open it has the attention: no
+// dimming, and the note out of its way, beside it where the screen has room,
+// or else under it
 void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
 {
 	m_Overlay.Hide();

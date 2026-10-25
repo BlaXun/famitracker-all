@@ -625,7 +625,10 @@ thread posts `WM_USER_PLAYER` 60 times a second, which under Wine kept
 the note's timer from running until the bars had stopped, so it never
 saw them play and `wait: heard` timed out: `CSoundGen::GetPlayStarts`
 counts the starts that began playing, and the note takes a moved count as
-its bars started (`Tick`).
+its bars started (`Tick`). The note keeps out of the way of the instrument
+editor while it's open (`OpenDialog`, `CMainFrame::GetOpenInstrumentEditor`)
+as it does of a dialog, so its Play button stays in reach while the user
+changes a sequence.
 
 Stage fixes (from `feat-stage-fixes`): `review_arrangement` hears whether
 the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans
