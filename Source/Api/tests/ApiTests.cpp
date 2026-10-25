@@ -973,14 +973,19 @@ public:
 	// note at its volume, the noise channel from a free-running noise
 	// generator, 8000 samples a second, each channel on the sides as its pan
 	// (8xx) puts it, as FamiTracker's mixer does (PanGains), from the mixer
-	// window's starting pan, and at its fader's level
-	bool RenderTrack(int Track, double Seconds, std::vector<float> &Samples, std::vector<float> &Right, int &SampleRate,
-		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
+	// window's starting pan, and at its fader's level; the channels Options
+	// leaves silent at a level of nothing, as CSoundGen leaves them out
+	int Renders = 0;
+	RenderOptions LastRender;
+	bool RenderTrack(int Track, double Seconds, const RenderOptions &Options, std::vector<float> &Samples, std::vector<float> &Right,
+		int &SampleRate, std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
 	{
 		if (Track != Current) {
 			Error = "Only the selected track renders here.";
 			return false;
 		}
+		++Renders;
+		LastRender = Options;
 		SampleRate = 8000;
 		Samples.assign(static_cast<size_t>(RenderLatency), 0.0f);
 		Right.assign(static_cast<size_t>(RenderLatency), 0.0f);
@@ -995,9 +1000,12 @@ public:
 		const long long Total = static_cast<long long>(Seconds * SampleRate) + RenderLatency;
 		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15), Pan(Rows.size(), PAN_CENTER);
 		std::vector<double> Phase(Rows.size(), 0.0), Gain(Rows.size(), 1.0);
+		bool Sends = false;	// a channel heard sends to the space
 		for (size_t c = 0; c < Rows.size(); ++c) {
+			const bool Silent = c < Options.Silent.size() && Options.Silent[c];
 			Pan[c] = Mix.Pan(Info.Channels[c].ChanId);
-			Gain[c] = MixStore::Gain(Mix.Level(Info.Channels[c].ChanId));
+			Gain[c] = Silent ? 0.0 : MixStore::Gain(Mix.Level(Info.Channels[c].ChanId));
+			Sends = Sends || (!Silent && Mix.Space(Info.Channels[c].ChanId) > 0);
 		}
 		unsigned int Noise = 1;
 		for (size_t i = 0; i < Timed.size() && static_cast<long long>(Samples.size()) < Total; ++i) {
@@ -1039,11 +1047,13 @@ public:
 				Right.push_back(static_cast<float>(SumRight));
 			}
 		}
-		if (Mix.SpaceHeard()) {
+		if (Mix.SpaceHeard() && Sends) {
 			// The mixer's space, roughly: the whole render echoing every eighth of a second, each time 8 dB under, and
-			// a second more for its tail, as FamiTracker renders on while the space rings
-			Samples.resize(Samples.size() + static_cast<size_t>(SampleRate), 0.0f);
-			Right.resize(Right.size() + static_cast<size_t>(SampleRate), 0.0f);
+			// a second more for its tail, as FamiTracker renders on while the space rings (unless asked to stop)
+			if (Options.Tail) {
+				Samples.resize(Samples.size() + static_cast<size_t>(SampleRate), 0.0f);
+				Right.resize(Right.size() + static_cast<size_t>(SampleRate), 0.0f);
+			}
 			const size_t Delay = static_cast<size_t>(SampleRate / 8);
 			for (size_t n = Delay; n < Samples.size(); ++n) {
 				Samples[n] += 0.4f * Samples[n - Delay];
@@ -8615,7 +8625,7 @@ double RenderedLoudness(FakeSong &Song, size_t First = 400)
 	std::vector<std::pair<int, long long> > Marks;
 	int Rate = 0;
 	std::string Error;
-	Song.RenderTrack(Song.Current, 6.0, Left, Right, Rate, Marks, Error);
+	Song.RenderTrack(Song.Current, 6.0, RenderOptions(), Left, Right, Rate, Marks, Error);
 	return IntegratedLoudness(Left, Right, Rate, First, Left.size() - First);
 }
 
@@ -8695,7 +8705,7 @@ void TestMixerTools()
 		std::vector<std::pair<int, long long> > Marks;
 		int Rate = 0;
 		std::string Error;
-		One.RenderTrack(0, 4.0, Left, Right, Rate, Marks, Error);
+		One.RenderTrack(0, 4.0, RenderOptions(), Left, Right, Rate, Marks, Error);
 		float LeftPeak = 0.0f, RightPeak = 0.0f;
 		for (size_t i = 0; i < Left.size(); ++i) {
 			LeftPeak = std::max(LeftPeak, std::fabs(Left[i]));
@@ -8705,7 +8715,7 @@ void TestMixerTools()
 		// An 8xx still moves it from there (rows last a tenth of a second)
 		One.Rows[0][16].Effect[0] = EFF_PAN;
 		One.Rows[0][16].Param[0] = 0xFF;
-		One.RenderTrack(0, 4.0, Left, Right, Rate, Marks, Error);
+		One.RenderTrack(0, 4.0, RenderOptions(), Left, Right, Rate, Marks, Error);
 		CHECK(Marks.size() > 30u);
 		CHECK(std::fabs(Right[static_cast<size_t>(Marks[20].second)]) > 0.04f && Right[static_cast<size_t>(Marks[10].second)] == 0.0f);
 	}
@@ -13059,6 +13069,265 @@ void TestArrangeFixes()
 	}
 }
 
+// A song for measure_mix: 16 bars of 1.6 s, an intro of 4 bars where voiced chords (2A03 Pulse 1 and 2, starting
+// together) play alone at IntroVolume, then the melody on VRC6 Pulse 1 at 15 over the chords at 8 and a triangle bass;
+// it jumps back to bar 5 at its end
+FakeSong MeasuredSong(int IntroVolume = 4)
+{
+	FakeSong Song(4);
+	for (int Bar = 0; Bar < 16; ++Bar) {
+		const int Row = Bar * 16;
+		Song.Put(0, Row, "C-3", 2, Bar < 4 ? IntroVolume : 8);
+		Song.Put(1, Row, "E-3", 2, Bar < 4 ? IntroVolume : 8);
+		if (Bar >= 4) {
+			for (int k = 0; k < 4; ++k)
+				Song.Put(5, Row + k * 4, k % 2 ? "E-4" : "G-4", 0, 15);
+			Song.Put(2, Row, "C-2");
+		}
+	}
+	Song.Rows[0][255].Effect[1] = EFF_JUMP;
+	Song.Rows[0][255].Param[1] = 1;
+	return Song;
+}
+
+// The loudness of bars From-To the first time through, in a render of the song with only the Heard channels sounding
+double HeardLoudness(FakeSong &Song, const std::vector<int> &Heard, int From, int To)
+{
+	RenderOptions Options;
+	Options.Silent.assign(Song.Rows.size(), true);
+	for (size_t i = 0; i < Heard.size(); ++i)
+		Options.Silent[static_cast<size_t>(Heard[i])] = false;
+	Options.Tail = false;
+	std::vector<float> Left, Right;
+	std::vector<std::pair<int, long long> > Marks;
+	int Rate = 0;
+	std::string Error;
+	Song.RenderTrack(Song.Current, 40.0, Options, Left, Right, Rate, Marks, Error);
+	const int First = (From - 1) * 16, Last = To * 16 - 1;
+	long long Begin = -1, Stop = -1;
+	for (size_t i = 0; i + 1 < Marks.size(); ++i) {
+		if (Marks[i].first == First && Begin < 0)
+			Begin = Marks[i].second;
+		if (Marks[i].first == Last && Stop < 0)
+			Stop = Marks[i + 1].second;
+	}
+	if (Begin < 0 || Stop <= Begin)
+		return -1000.0;
+	return SpansLoudness(Left, Right, Rate, std::vector<std::pair<size_t, size_t> >(1, std::make_pair(static_cast<size_t>(Begin),
+		static_cast<size_t>(Stop))));
+}
+
+// The number written after Label in Text, or after Then once past Label (-1000 when they aren't there)
+double NumberAfter(const std::string &Text, const std::string &Label, const std::string &Then = std::string())
+{
+	size_t At = Text.find(Label);
+	if (At == std::string::npos)
+		return -1000.0;
+	At += Label.size();
+	if (!Then.empty()) {
+		At = Text.find(Then, At);
+		if (At == std::string::npos)
+			return -1000.0;
+		At += Then.size();
+	}
+	return std::strtod(Text.c_str() + At, 0);
+}
+
+void TestMeasureMix()
+{
+	// Loudness over stretches: one is IntegratedLoudness's, two halves of a steady tone measure as the whole
+	{
+		std::vector<float> Tone(80000);
+		for (size_t i = 0; i < Tone.size(); ++i)
+			Tone[i] = static_cast<float>(0.25 * std::sin(2.0 * 3.14159265358979 * 440.0 * static_cast<double>(i) / 8000.0));
+		std::vector<std::pair<size_t, size_t> > One(1, std::make_pair(static_cast<size_t>(1000), static_cast<size_t>(70000)));
+		CHECK(SpansLoudness(Tone, Tone, 8000, One) == IntegratedLoudness(Tone, Tone, 8000, 1000, 69000));
+		std::vector<std::pair<size_t, size_t> > Two;
+		Two.push_back(std::make_pair(static_cast<size_t>(0), static_cast<size_t>(20000)));
+		Two.push_back(std::make_pair(static_cast<size_t>(50000), static_cast<size_t>(90000)));	// past the end: cut there
+		CHECK(Near(SpansLoudness(Tone, Tone, 8000, Two), IntegratedLoudness(Tone, Tone, 8000, 0, 80000), 0.05));
+		CHECK(SpansLoudness(Tone, Tone, 8000, std::vector<std::pair<size_t, size_t> >()) == -70.0);
+	}
+
+	FakeSong Song = MeasuredSong();
+	const std::vector<std::vector<Cell> > Before = Song.Rows;
+	const MixStore Mix = Song.Mix;
+	ToolResult R = Run(Song, "measure_mix", "{\"style\": \"calm\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Measured bars 1-16 of \"Town\" as FamiTracker renders it (export_for_game with normalize false): LUFS");
+	CHECK_HAS(R.Text, "\n- intro, bars 1-4: ");
+	CHECK_HAS(R.Text, "\n- bars 5-8: ");
+	CHECK_HAS(R.Text, "\nLoop, bars 5-16: ");
+	CHECK_HAS(R.Text, "more than 10, which a game's players hear as silence");
+	CHECK_HAS(R.Text, "\n- melody VRC6 Pulse 1 (guessed; melody_channel names another): ");
+	CHECK_HAS(R.Text, "\n- chords (2A03 Pulse 1-2): ");
+	CHECK_HAS(R.Text, "\n- Triangle (bass): ");
+	// It changes nothing: no undo step, the notes, the mixer, the files and the track as they were; four renders (the mix,
+	// the melody, the chords, the bass), none with the space's tail
+	CHECK(Song.Undos.empty() && Song.Writes == 0 && Song.MixWrites == 0 && Song.Files.empty() && Song.Current == 0 && Song.Rows == Before &&
+		Song.Mix == Mix);
+	CHECK(Song.Renders == 4 && !Song.LastRender.Tail && Song.LastRender.Silent.size() == Song.Rows.size());
+	// The last render, the bass alone: every other channel silent
+	CHECK(!Song.LastRender.Silent[2] && Song.LastRender.Silent[0] && Song.LastRender.Silent[5] && Song.LastRender.Silent[7]);
+	// The numbers are the parts' own, rendered alone, where they play with the melody (bars 5-16)
+	const double Lead = HeardLoudness(Song, std::vector<int>(1, 5), 5, 16);
+	std::vector<int> Chords;
+	Chords.push_back(0);
+	Chords.push_back(1);
+	const double Chord = HeardLoudness(Song, Chords, 5, 16), Bass = HeardLoudness(Song, std::vector<int>(1, 2), 5, 16);
+	CHECK(Near(NumberAfter(R.Text, "names another): "), Lead, 0.051));
+	CHECK(Near(NumberAfter(R.Text, "chords (2A03 Pulse 1-2): "), Chord, 0.051));
+	CHECK(Near(NumberAfter(R.Text, "Triangle (bass): "), Bass, 0.051));
+	CHECK(Near(NumberAfter(R.Text, "chords (2A03 Pulse 1-2): ", ", the melody "), Lead - Chord, 0.11));
+	// The intro against the loop, both as rendered
+	std::vector<int> All;
+	for (int c = 0; c < 8; ++c)
+		All.push_back(c);
+	const double Loop = HeardLoudness(Song, All, 5, 16), Intro = HeardLoudness(Song, All, 1, 4);
+	CHECK(Near(NumberAfter(R.Text, "\nLoop, bars 5-16: "), Loop, 0.051));
+	CHECK(Near(NumberAfter(R.Text, "\nThe intro is "), Loop - Intro, 0.051));
+	CHECK(Loop - Intro > 10.0);
+	// Calm: the melody 2-3 dB over the chords, which it isn't here
+	const double Over = Lead - Chord;
+	CHECK(Over > 3.0 && Over < 4.0);
+	CHECK_HAS(R.Text, "; calm wants 2-3: raise the chords about ");
+	CHECK_HAS(R.Text, "(set_mixer change on their channels) or lower the melody");
+	// The faders count: the chords 1 dB up are within it, and the sides stay together
+	Song.Mix.Set(0, 10, PAN_CENTER);
+	Song.Mix.Set(1, 10, PAN_CENTER);
+	R = Run(Song, "measure_mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(R.Text, "; within calm's 2-3");
+	CHECK_HAS(R.Text, "\n- melody VRC6 Pulse 1: ");
+	CHECK_HAS(R.Text, "dB RMS, 0.0 dB apart.");
+	CHECK_LACKS(R.Text, "guessed");
+	CHECK_LACKS(R.Text, "Lively");
+	// any: the numbers alone; lively: 3-4 dB over the nearest part around the melody (the chords here, 2-3 dB under it)
+	R = Run(Song, "measure_mix", "{}");
+	CHECK_LACKS(R.Text, "calm");
+	CHECK_LACKS(R.Text, "Lively");
+	R = Run(Song, "measure_mix", "{\"style\": \"lively\"}");
+	CHECK_HAS(R.Text, "\nLively: the nearest part is chords (2A03 Pulse 1-2), the melody ");
+	CHECK_HAS(R.Text, "; lively wants 3-4 over the parts: lower it about ");
+	// ...but not an echo of the melody: the bass nearest once the chords are down
+	Song.Mix.Set(0, -60, PAN_CENTER);
+	Song.Mix.Set(1, -60, PAN_CENTER);
+	R = Run(Song, "measure_mix", "{\"style\": \"lively\"}");
+	CHECK_HAS(R.Text, "\nLively: the nearest part is Triangle (bass), the melody ");
+	CHECK(Run(Song, "measure_mix", "{\"style\": \"loud\"}").IsError);
+
+	// An intro 6-10 dB under the loop says so plainly
+	{
+		FakeSong Softer = MeasuredSong(7);
+		R = Run(Softer, "measure_mix", "{\"stems\": false}");
+		const double Under = NumberAfter(R.Text, "\nThe intro is ");
+		CHECK(Under >= 6.0 && Under <= 10.0);
+		CHECK_HAS(R.Text, " dB under the loop.\nSides: ");
+		CHECK(Softer.Renders == 1);	// the mix alone
+		CHECK_LACKS(R.Text, "Alone");
+	}
+
+	// Sections: a line each, and the bars no section has; the stems' differences section by section
+	Song.Mix = Mix;
+	Song.Info.Sections.push_back(Section("Intro", 0, 0));
+	Song.Info.Sections.push_back(Section("A", 1, 2));
+	R = Run(Song, "measure_mix", "{}");
+	CHECK_HAS(R.Text, "\n- Intro, bars 1-4: ");
+	CHECK_HAS(R.Text, "\n- A, bars 5-12: ");
+	CHECK_HAS(R.Text, "\n- bars 13-16: ");
+	// A section in place of bars: only those, rendered only as far as they need
+	Song.Renders = 0;
+	R = Run(Song, "measure_mix", "{\"section\": \"A\", \"stems\": false}");
+	CHECK_HAS(R.Text, "Measured bars 5-12 of \"Town\"");
+	CHECK_HAS(R.Text, "\n- A, bars 5-12: ");
+	CHECK_LACKS(R.Text, "Loop");
+	CHECK_LACKS(R.Text, "intro");
+	CHECK(Song.Renders == 1);
+
+	// The export's loudness: every number as the file at that loudness has it
+	R = Run(Song, "measure_mix", "{\"loudness\": -20, \"stems\": false}");
+	CHECK_HAS(R.Text, "as export_for_game {\"loudness\": -20} saves it");
+	CHECK(Near(NumberAfter(R.Text, "\nLoop, bars 5-16: "), -20.0, 0.051));
+	CHECK_HAS(R.Text, "The export brings it ");
+	{
+		// A quiet song with one loud row: its peak holds the export back
+		FakeSong Peaky;
+		for (int Row = 0; Row < 128; Row += 4)
+			Peaky.Put(5, Row, "C-4", 0, 2);
+		for (int c = 0; c < 8; ++c) {
+			if (c == 4)
+				continue;
+			Peaky.Put(c, 64, "C-4", NO_INSTRUMENT, 15);
+			Peaky.End(c, 65);
+		}
+		R = Run(Peaky, "measure_mix", "{\"loudness\": -6, \"stems\": false}");
+		CHECK_HAS(R.Text, "The export holds it ");
+		CHECK_HAS(R.Text, "short of -6 LUFS");
+		CHECK(Near(NumberAfter(R.Text, "LUFS, peak "), -1.0, 0.051));
+		CHECK_HAS(R.Text, "\nLoop, bars 1-8: ");
+		CHECK_LACKS(R.Text, "intro");
+	}
+
+	// A part far to one side: the sides more than 2 dB apart, and which part does it
+	Song.Mix.Set(0, 60, 0x00);
+	Song.Mix.Set(1, 60, 0x00);
+	R = Run(Song, "measure_mix", "{}");
+	CHECK_HAS(R.Text, "dB apart: more than 2, so a part sits too far left, most of all chords (2A03 Pulse 1-2) (");
+	CHECK_HAS(R.Text, "dB louder on the left): pan it nearer the middle, or give it a part on the other side.");
+	R = Run(Song, "measure_mix", "{\"stems\": false}");
+	CHECK_HAS(R.Text, "so a part sits too far left (stems true tells which).");
+	Song.Mix = Mix;
+
+	// Parts named: one channel, several joined with + as one, the chords; the melody among them is measured anyway
+	Song.Renders = 0;
+	R = Run(Song, "measure_mix", "{\"parts\": [\"Triangle\", \"Pulse 1+Pulse 2\", \"VRC6 Pulse 1\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "\n- Triangle (bass): ");
+	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1-2 together: ");
+	CHECK_LACKS(R.Text, "\n- chords");
+	CHECK(Song.Renders == 4);
+	R = Run(Song, "measure_mix", "{\"parts\": \"chords\"}");
+	CHECK_HAS(R.Text, "\n- chords (2A03 Pulse 1-2): ");
+	CHECK_LACKS(R.Text, "Triangle");
+	CHECK(Run(Song, "measure_mix", "{\"parts\": [\"Kazoo\"]}").IsError);
+	// The chords named: measured together as such
+	R = Run(Song, "measure_mix", "{\"chords\": [\"Pulse 1\"], \"style\": \"calm\"}");
+	CHECK_HAS(R.Text, "\n- chords (2A03 Pulse 1): ");
+	CHECK_HAS(R.Text, "\n- 2A03 Pulse 2: ");
+	// No chords: calm says so, parts "chords" can't be
+	{
+		FakeSong Plain = MeasuredSong();
+		for (size_t r = 0; r < Plain.Rows[1].size(); ++r)
+			Plain.Rows[1][r] = Cell();
+		R = Run(Plain, "measure_mix", "{\"style\": \"calm\"}");
+		CHECK_HAS(R.Text, "\nCalm: no chords measured against the melody (name their channels with chords).");
+		CHECK(Run(Plain, "measure_mix", "{\"parts\": [\"chords\"]}").IsError);
+	}
+
+	// A part that never plays with the melody, and a melody that doesn't play in the bars asked for
+	Song.Put(3, 0, "kick", NO_INSTRUMENT, 10);
+	Song.End(3, 8);
+	R = Run(Song, "measure_mix", "{}");
+	CHECK_HAS(R.Text, "\nNot with the melody: Noise.");
+	R = Run(Song, "measure_mix", "{\"to_bar\": 4, \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(R.Text, "VRC6 Pulse 1 doesn't play in bars 1-4, so no part was measured against it.");
+	CHECK(Run(Song, "measure_mix", "{\"melody_channel\": \"Noise\"}").IsError);
+
+	// A song that halts: all of it, once
+	{
+		FakeSong Once = MeasuredSong(7);
+		Once.Rows[0][255].Effect[1] = EFF_HALT;
+		Once.Rows[0][255].Param[1] = 0;
+		R = Run(Once, "measure_mix", "{\"stems\": false}");
+		CHECK_HAS(R.Text, "\nThe whole song (it halts), bars 1-16: ");
+		CHECK_LACKS(R.Text, "intro");
+	}
+
+	// A dialog open in FamiTracker: it waits
+	Song.Busy = true;
+	CHECK_HAS(Run(Song, "measure_mix", "{}").Text, "A dialog is open");
+	Song.Busy = false;
+}
+
 
 
 
@@ -13701,6 +13970,7 @@ int main()
 	TestFindSound();
 	TestVrc6Plus();
 	TestArrangeFixes();
+	TestMeasureMix();
 	TestCalmKinds();
 	TestDecayFrames();
 	TestRestrikes();

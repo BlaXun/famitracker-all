@@ -35,6 +35,8 @@ public:
 	uint8	DidIRQ() const;
 	void	Process(uint32 Time);
 	void	Reload();
+	// The DAC at Level as if it had always been there, without the step of a $4011 write (this FamiTracker's own)
+	void	StartAt(uint8 Level);
 
 	uint8	GetSamplePos() const { return  (m_iDMA_Address - (m_iDMA_LoadReg << 6 | 0x4000)) >> 6; };
 	uint8	GetDeltaCounter() const { return m_iDeltaCounter; };

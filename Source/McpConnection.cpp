@@ -1118,9 +1118,11 @@ public:
 	}
 
 	// FamiTracker's own WAV rendering (stereo) into a temporary file, read
-	// back with the sample where each row began
-	bool RenderTrack(int Track, double Seconds, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
-		std::vector<std::pair<int, long long> > &Marks, std::string &Error)
+	// back with the sample where each row began; the channels Options leaves
+	// silent play with their sound gone (CSoundGen leaves them out of the
+	// mixer for the render, without touching the document)
+	bool RenderTrack(int Track, double Seconds, const ftapi::RenderOptions &Options, std::vector<float> &Left, std::vector<float> &Right,
+		int &SampleRate, std::vector<std::pair<int, long long> > &Marks, std::string &Error)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
@@ -1155,8 +1157,17 @@ public:
 			pView->SetChannelMute(static_cast<int>(c), false);
 		}
 
+		// The channels left silent, by their IDs as the sound generator knows them
+		bool Silent[CHANNELS] = { false };
+		for (size_t c = 0; c < Options.Silent.size() && c < pDoc->GetAvailableChannels(); ++c) {
+			const int Id = pDoc->GetChannelType(static_cast<unsigned int>(c));
+			if (Options.Silent[c] && Id >= 0 && Id < CHANNELS)
+				Silent[Id] = true;
+		}
+		const CString What = Options.What.empty() ? CString(_T("for the game")) : CString(_T("(")) + Ansi(Options.What) + _T(")");
+
 		const long Before = pSound->GetRenderCount();
-		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track) != false;
+		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track, Silent, Options.Tail) != false;
 		if (Started) {
 			// It starts on the sound thread a moment later and runs to its end;
 			// a short one can be over before it's seen running
@@ -1175,8 +1186,8 @@ public:
 				bool Done = false;
 				pSound->GetRenderStat(Frame, Time, Done, Frames, Row, Rows);
 				CString Text;
-				Text.Format(_T("Rendering \"%s\" for the game: %d of %d seconds..."), pDoc->GetTrackTitle(static_cast<unsigned int>(Track)).GetString(),
-					std::min(Time, Limit), Limit);
+				Text.Format(_T("Rendering \"%s\" %s: %d of %d seconds..."), pDoc->GetTrackTitle(static_cast<unsigned int>(Track)).GetString(),
+					What.GetString(), std::min(Time, Limit), Limit);
 				if (m_pProgress != NULL)
 					m_pProgress->SetWindowText(Text);
 				m_pMain->SetMessageText(Text);

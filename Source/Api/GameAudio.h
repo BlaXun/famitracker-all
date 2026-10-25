@@ -97,6 +97,12 @@ double IntegratedLoudness(const std::vector<float> &Samples, int SampleRate, siz
 // side of it alone
 double IntegratedLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, size_t First,
 	size_t Count);
+// The same over stretches of it ([first, end) in samples, in order), as one
+// program: each stretch K-weighted from its start, as ffmpeg measures a
+// stretch cut out of a file, and the blocks of all of them gated together.
+// One stretch measures as IntegratedLoudness measures it.
+double SpansLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate,
+	const std::vector<std::pair<size_t, size_t> > &Spans);
 
 // The gain in dB that brings audio measuring Measured LUFS to Target, as far
 // as its loudest peak (Peak, 0-1 of full scale) may rise: to -1 dBFS. Held
