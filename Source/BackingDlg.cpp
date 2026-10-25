@@ -20,6 +20,7 @@
 */
 
 #include "stdafx.h"
+#include "Api/Music.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -27,6 +28,7 @@
 #include "PatternEditor.h"
 #include "InsertRecording.h"
 #include "InsertRecordingDlg.h"
+#include "RecordDlg.h"
 #include "BackingDlg.h"
 
 IMPLEMENT_DYNAMIC(CBackingDlg, CDialog)
@@ -35,7 +37,10 @@ CBackingDlg::CBackingDlg(CFamiTrackerView *pView) :
 	CDialog(CBackingDlg::IDD, pView),
 	m_pView(pView),
 	m_pDocument(pView->GetDocument()),
-	m_iTrack(static_cast<unsigned int>(static_cast<CMainFrame*>(pView->GetParentFrame())->GetSelectedTrack()))
+	m_iTrack(static_cast<unsigned int>(static_cast<CMainFrame*>(pView->GetParentFrame())->GetSelectedTrack())),
+	m_iChordsRow(-1),
+	m_iCursorBar(0),
+	m_bSettingChords(false)
 {
 	m_Choice.MelodyChannel = -1;
 	m_Choice.ChordChannel = -1;
@@ -43,6 +48,13 @@ CBackingDlg::CBackingDlg(CFamiTrackerView *pView) :
 	m_Choice.KeyTonic = -1;
 	m_Choice.KeyMinor = false;
 	m_Choice.HalfBars = true;
+	m_Choice.ChordsRow = -1;
+}
+
+void CBackingDlg::SetChords(const CString &Names, int Row)
+{
+	m_sChords = Names;
+	m_iChordsRow = Row;
 }
 
 BEGIN_MESSAGE_MAP(CBackingDlg, CDialog)
@@ -51,6 +63,9 @@ BEGIN_MESSAGE_MAP(CBackingDlg, CDialog)
 	ON_CBN_SELCHANGE(IDC_BACK_CHORDS, &CBackingDlg::OnOptionChanged)
 	ON_CBN_SELCHANGE(IDC_BACK_BASS, &CBackingDlg::OnOptionChanged)
 	ON_CBN_SELCHANGE(IDC_BACK_CHANGES, &CBackingDlg::OnOptionChanged)
+	ON_EN_CHANGE(IDC_BACK_CHORDTEXT, &CBackingDlg::OnChordsChanged)
+	ON_BN_CLICKED(IDC_BACK_STRUM, &CBackingDlg::OnStrum)
+	ON_BN_CLICKED(IDC_REC_FROMFILE, &CBackingDlg::OnFromFile)
 END_MESSAGE_MAP()
 
 BOOL CBackingDlg::OnInitDialog()
@@ -67,7 +82,18 @@ BOOL CBackingDlg::OnInitDialog()
 	m_cChanges.AddString(_T("Once a bar"));
 	m_cChanges.SetCurSel(0);
 
-	FillMelody(m_pView->GetPatternEditor()->GetChannel());
+	// Typed chords without a melody start at the cursor's bar
+	CPatternEditor *pEditor = m_pView->GetPatternEditor();
+	const int Length = static_cast<int>(m_pDocument->GetPatternLength(m_iTrack));
+	const ftapi::Timing Time(Length, static_cast<int>(m_pDocument->GetFrameCount(m_iTrack)), m_pDocument->GetFirstHighlight(),
+		m_pDocument->GetSecondHighlight());
+	m_iCursorBar = Time.BarStart(Time.BarOf(pEditor->GetFrame() * Length + pEditor->GetRow()));
+	static_cast<CEdit*>(GetDlgItem(IDC_BACK_CHORDTEXT))->SetLimitText(400);
+	m_bSettingChords = true;
+	SetDlgItemText(IDC_BACK_CHORDTEXT, m_sChords);
+	m_bSettingChords = false;
+
+	FillMelody(pEditor->GetChannel());
 	FillChannels(m_cChords, true);
 	FillChannels(m_cBass, false);
 	FillKeys();
@@ -77,8 +103,10 @@ BOOL CBackingDlg::OnInitDialog()
 
 void CBackingDlg::FillMelody(int CursorChannel)
 {
-	// Channels with notes; the cursor's first, then the first VRC6 pulse
+	// Channels with notes; the cursor's first, then the first VRC6 pulse. Given chords need none.
 	m_cMelody.ResetContent();
+	const int None = m_cMelody.AddString(_T("No melody"));
+	m_cMelody.SetItemData(None, static_cast<DWORD_PTR>(-1));
 	const int Channels = static_cast<int>(m_pDocument->GetAvailableChannels());
 	int Cursor = -1, Pulse = -1;
 	for (int i = 0; i < Channels; ++i) {
@@ -91,8 +119,7 @@ void CBackingDlg::FillMelody(int CursorChannel)
 		if (Pulse < 0 && m_pDocument->GetChannelType(i) == CHANID_VRC6_PULSE1)
 			Pulse = Item;
 	}
-	if (m_cMelody.GetCount() > 0)
-		m_cMelody.SetCurSel(Cursor >= 0 ? Cursor : (Pulse >= 0 ? Pulse : 0));
+	m_cMelody.SetCurSel(Cursor >= 0 ? Cursor : (Pulse >= 0 ? Pulse : (m_cMelody.GetCount() > 1 ? 1 : None)));
 }
 
 void CBackingDlg::FillChannels(CComboBox &List, bool Chords)
@@ -165,18 +192,24 @@ backing_choice_t CBackingDlg::ReadChoice() const
 		Choice.KeyMinor = (Key % 2) != 0;
 	}
 	Choice.HalfBars = m_cChanges.GetCurSel() != 1;
+	GetDlgItemText(IDC_BACK_CHORDTEXT, Choice.Chords);
+	Choice.Chords.Trim();
+	Choice.ChordsRow = m_iChordsRow;
+	if (!Choice.Chords.IsEmpty() && Choice.ChordsRow < 0 && Choice.MelodyChannel < 0)
+		Choice.ChordsRow = m_iCursorBar;
 	return Choice;
 }
 
 void CBackingDlg::UpdatePreview()
 {
-	if (m_cMelody.GetCount() == 0) {
-		SetDlgItemText(IDC_BACK_PREVIEW, _T("There's no melody in this song yet. Record or write one first, then add ")
-			_T("chords and a bass line to it."));
+	const backing_choice_t Choice = ReadChoice();
+	m_cChanges.EnableWindow(Choice.Chords.IsEmpty());	// given chords change where they're written to
+	if (Choice.Chords.IsEmpty() && Choice.MelodyChannel < 0) {
+		SetDlgItemText(IDC_BACK_PREVIEW, m_cMelody.GetCount() > 1 ? _T("Pick the channel with the melody, or give the chords above.") :
+			_T("There's no melody in this song yet. Type the chords above or strum them, or record or write a melody first."));
 		GetDlgItem(IDOK)->EnableWindow(FALSE);
 		return;
 	}
-	const backing_choice_t Choice = ReadChoice();
 	CString Key, Chords, Message;
 	int First = 0, Last = 0;
 	if (!DescribeBacking(m_pDocument, m_iTrack, Choice, Key, Chords, First, Last, Message)) {
@@ -186,6 +219,8 @@ void CBackingDlg::UpdatePreview()
 	}
 	CString Text;
 	Text.Format(_T("In %s, frames %02X to %02X:\n%s"), static_cast<LPCTSTR>(Key), First, Last, static_cast<LPCTSTR>(Chords));
+	if (Choice.Chords.IsEmpty())
+		Text += _T("\n(found from the melody)");
 	SetDlgItemText(IDC_BACK_PREVIEW, Text);
 	GetDlgItem(IDOK)->EnableWindow(Choice.ChordChannel >= 0 || Choice.BassChannel >= 0);
 }
@@ -201,6 +236,64 @@ void CBackingDlg::OnMelodyChanged()
 void CBackingDlg::OnOptionChanged()
 {
 	UpdatePreview();
+}
+
+void CBackingDlg::OnChordsChanged()
+{
+	if (m_bSettingChords)
+		return;		// the dialog wrote them, and goes on itself
+	CString Text;
+	GetDlgItemText(IDC_BACK_CHORDTEXT, Text);
+	Text.Trim();
+	if (Text.IsEmpty())
+		m_iChordsRow = -1;	// typed again from nothing: from the melody's first bar
+	FillKeys();		// the key they're in
+	UpdatePreview();
+}
+
+void CBackingDlg::UseHeardChords(const CString &Names, int Row)
+{
+	m_iChordsRow = Row;
+	m_bSettingChords = true;
+	SetDlgItemText(IDC_BACK_CHORDTEXT, Names);
+	m_bSettingChords = false;
+	FillKeys();
+	UpdatePreview();
+}
+
+void CBackingDlg::OnStrum()
+{
+	// Strummed into the microphone, with the click and the song as for any take
+	CRecordDlg Dialog(m_pView, this, true);
+	if (Dialog.DoModal() == IDC_REC_CHORDS)
+		UseHeardChords(Dialog.GetChords(), Dialog.GetChordsRow());
+}
+
+void CBackingDlg::OnFromFile()
+{
+	// Strummed in a WAV file at the song's tempo, its first strum on the bar the chords start at
+	CFileDialog FileDialog(TRUE, _T("wav"), NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
+		_T("WAV recordings (*.wav)|*.wav|All files (*.*)|*.*||"), this);
+	if (FileDialog.DoModal() != IDOK)
+		return;
+	backing_choice_t Choice = ReadChoice();
+	Choice.Chords.Empty();
+	CString Key, Chords, Message;
+	int First = 0, Last = 0, Row = m_iCursorBar;
+	if (Choice.MelodyChannel >= 0 && DescribeBacking(m_pDocument, m_iTrack, Choice, Key, Chords, First, Last, Message, &Row) == false)
+		Row = m_iCursorBar;
+	CString Names;
+	int FirstRow = 0;
+	bool Heard;
+	{
+		CWaitCursor Wait;
+		Heard = HearRecordedChords(m_pDocument, m_iTrack, FileDialog.GetPathName(), Row, Names, FirstRow, Message);
+	}
+	if (!Heard) {
+		AfxMessageBox(Message, MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+	UseHeardChords(Names, FirstRow);
 }
 
 void CBackingDlg::OnOK()

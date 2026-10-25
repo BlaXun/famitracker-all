@@ -39,7 +39,7 @@ again, as copies or linked.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 499 checks, mostly on synthesized audio, covering:
+- [x] Tests: 667 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - sung syllables: repeated ones on one pitch, scoops, glides and drifts
@@ -53,7 +53,12 @@ again, as copies or linked.
     of drum hits, measuring the delay of taps, and lining takes up with rows,
   - keys, bars, chords for known tunes, the bass line and the arpeggios,
   - sound effects from a voice ("pew", "kssh", "boing"), and when a take of
-    one is over.
+    one is over,
+  - tapped tempos (missed taps, double taps, pauses), the click in the
+    song's bars, chords with more notes than three and over a bass note,
+    and strums: guitars and a piano synthesized string by string, their
+    onsets and the notes that sound together,
+  - a last note held past the end of the song ending on its last row.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -76,7 +81,9 @@ again, as copies or linked.
   channel for drums. It writes the notes into the open song from the cursor
   row on. It uses the song's
   speed and tempo, and runs on into the following frames, adding frames at
-  the end of the song if needed. A touched frame whose pattern other frames
+  the end of the song if needed; a last note that only rings a little past
+  the end ends on the song's last row instead, so the song keeps its length
+  and its loop. A touched frame whose pattern other frames
   also play first gets a copy of its own, so the rest of the song doesn't
   change. It adds Lead, Bass, Kick, Snare and Hi-hat instruments the first
   time and reuses them after that; on VRC7, FDS and N163 channels it uses
@@ -154,14 +161,47 @@ again, as copies or linked.
   `Api/PhoneTakes.cpp`, the page `res/phone.html`; see above): Edit > Record
   from your phone shows a QR code of a page FamiTracker serves on the home
   network, and an idea hummed into the phone becomes a clip of the open song.
-- [ ] Next, more natural input, built on the recorder:
-  - start from a groove: pick a mood (overworld, battle, dungeon, boss,
-    jingle), a tempo and a key, get a few bars of drums, bass and chords, and
-    sing the melody over them;
-  - re-sing just a selection: the song plays a bar before, and the take
-    replaces only the selected rows;
-  - tap the tempo instead of setting speed and tempo numbers;
-  - chords by name ("C G Am F") or strummed on a guitar.
+- [x] More natural input (October 2026; see Recording in FamiTracker):
+  - **Start from a groove** (Edit > Start from a groove, or the button in
+    Record from microphone): pick a mood (town, overworld, battle, boss,
+    dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert,
+    nostalgic), a tempo (typed or tapped), a key (the song's own when it has
+    one, or for a mood of the other kind its relative minor or major, which
+    has the same notes) and 4, 8 or 16 bars, and FamiTracker writes drums, a
+    bass line and chords from the cursor's bar, the same groove Claude
+    Code's `make_groove` writes, sets the song's speed and tempo and makes
+    the key the song's (as the piano roll's Key menu would), unless the song
+    has another already. One Ctrl+Z takes it out again. Then you record over
+    it: the groove plays during the count-in and the take, and stays in the
+    song as its own parts.
+  - **The bar before:** with "Play the song along", the song starts a bar
+    (the count-in) before the take, so you hear what leads into it. At the
+    song's first row, a song that loops plays its last bar, the way it
+    comes round again. The click's high "tock" stays on the song's first
+    beats when a take starts in the middle of a bar.
+  - **Re-sing just a selection:** select rows in the pattern editor (or
+    notes in the piano roll: their bars count), and "Replace only the
+    selected rows" makes the take replace just those rows of the channel.
+    The rest of the song plays as before: a note sounding into the
+    selection ends where it starts, and the note after it keeps its
+    instrument, volume and effects. A note sung up to half a beat early
+    counts as the selection's first. The song plays a bar before, and the
+    take stops by itself when the selection is over.
+  - **Tap the tempo:** the Tap button (or the T key) in Record from
+    microphone and Start from a groove. Tap four times or more with the
+    beat; when you stop, the song gets the nearest tempo whose rows all
+    last as long (when one is within 3% of the taps), otherwise the tempo
+    you tapped, with speed and tempo picked as Claude Code's `set_tempo`
+    picks them. Ctrl+Z puts the old tempo back.
+  - **Chords by name or strummed:** Add chords and bass line takes chords
+    typed in its Chords box ("C G Am F", a chord a bar, or "C | G | Am F"
+    with bar lines; sevenths, "sus", "C/E", "N.C.", "%" for the bar again,
+    or degrees like "I vi IV V") instead of finding them from the melody,
+    and then needs no melody. Strum them... records a strummed guitar (or a
+    piano) against the click, From a WAV file... reads one, and the chords
+    heard bar by bar (or half bar) fill the box, to check before Add.
+    Record from microphone's "Chords strummed on a guitar or played on a
+    piano" does the same and then opens Add chords and bass line.
 - [x] Claude Code connection, first version (`MCP.md`): File > Connect
   Claude Code lets Claude Code read the song in musical terms, write parts
   (as clips by default, or straight into the song, undoable), add sounds from
@@ -193,6 +233,27 @@ again, as copies or linked.
    level meter: it shouldn't say "Too loud!".
 5. Press Record, wait for "Get ready: 1 2 3 4", perform, and press Stop (or
    Enter).
+
+To start a new song from nothing, use Edit > Start from a groove instead of
+step 3: pick a mood, a tempo (or tap it) and a key, press Make the groove,
+and the Record dialog opens over the groove with "Play the song along" on.
+The groove plays while the click counts in. Sing a melody over it, and the
+notes go on the channel the groove left free; a last note held past the
+groove's end ends with it, so the song still loops as the groove did.
+
+To sing part of a melody again, select its rows in the pattern editor (or
+its notes in the piano roll) before step 3. The dialog says which rows; the
+song plays the bar before them while counting in, the take replaces only
+them, and it stops by itself at their end. Ctrl+Z gives the old notes back.
+
+To set the tempo by feel, press Tap (or T) in time with the beat, at least
+four times. The song's speed and tempo change when you stop tapping.
+
+For chords, pick "Chords strummed on a guitar or played on a piano" and
+strum along after the count-in, a chord or two a bar on the beat. Stop
+opens Add chords and bass line with the chords it heard, bar by bar; change
+any you like (they're names, like "Am" or "G7"), pick where the chords and
+the bass go, and press Add. Or type the chords there yourself.
 
 Use headphones, so the click and the song stay out of the take. On speakers,
 FamiTracker finds the click in the take and lines the notes up with it, and
@@ -696,6 +757,37 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
     The arpeggios pick root position or an inversion (`047`, `038`, `059` for
     major chords) whose lowest note is nearest the last chord's, in F3-F4,
     struck on every chord and bar; a release with `000` ends them.
+- **Tapping the tempo** (`Tapping.cpp`): the taps count from the last pause
+  (two seconds, or two and a half beats); a tap far too soon after another
+  is a double tap and a gap of about two beats a beat missed. The beat is a
+  least-squares line through the taps, each on the beat nearest it. Speed
+  and tempo: `ftapi::TappedSpeedTempo` (`Api/RecorderInput.cpp`).
+- **Strummed chords** (`Strums.cpp`): a strum starts where the spectral flux
+  (the growth of the log spectrum, 10 ms frames, 30 Hz-8 kHz) peaks well
+  over its surroundings in sound loud enough, at the start of its rise,
+  since the strings come one after another; strums under 100 ms apart are
+  one. Its notes come from the spectrum just after the pick's scrape, until
+  the next strum (up to 0.6 s), on a scale of thirds of a semitone: every
+  note from C2 to E6 as a set of harmonics, softer the higher they are and a
+  little sharp as strings are, fitted to what stands out of the spectrum
+  without going negative (multiplicative updates with a little push towards
+  fewer notes), so overtones aren't notes of their own. Up to six notes
+  count, from 15% of the strongest. The delay through the take comes out
+  first: where most strums agree they lie past the beats (up to three
+  quarters of a beat late or a quarter early, within a sixth of a beat of
+  one another), which a microphone delay not measured puts on every strum;
+  then a strum within a third of a beat of a beat counts from the beat
+  (strummed a little early or late). Each bar's (or half bar's) chord is
+  then named from the notes sounding in it, the lowest a strum's bass, as
+  the tools hear chords in a song's parts (`HearChords` in
+  `Api/Chords.cpp`).
+- **Typed chords** (`Api/RecorderInput.cpp`): read with the tools' chord
+  names (`Chords.cpp`) and laid on the bars from the first one on, repeating
+  over the melody's bars when it has more; the key is the one their notes
+  fit, the first chord's root the likeliest tonic. A chord with more notes
+  keeps them (`transcribe::Chord::tones`): the arpeggio plays its root, its
+  third (or suspension) and its most telling other note, spread out rather
+  than a step apart, and the bass plays a slash chord's bass note.
 - **Speed:** YIN's difference function comes from an FFT cross-correlation
   plus running energy sums, giving the same values as the direct sum. A
   34-second recording takes about half a second, where the direct sum took
@@ -716,6 +808,11 @@ ctest --test-dir build/transcribe --output-on-failure
   nail. Beatboxing gives clearer kick, snare and hi-hat differences.
 - WAV files have no click, so their first note lands on the cursor row and a
   steady tempo helps. Takes recorded in FamiTracker follow the click instead.
+  A WAV file of strummed chords has to be played at the song's tempo, its
+  first strum on the first bar of the chords.
+- Strummed chords are heard best strummed cleanly, a chord or two a bar;
+  ringing open strings and fast changes can blur a bar's chord, which you
+  can fix by name before pressing Add.
 - Timing on speakers relies on the microphone hearing the count-in. With
   headphones, Test timing measures the delay once; Bluetooth headphones can
   be slow enough that this is needed.

@@ -1137,6 +1137,134 @@ void CChannelNotes::Paste(const CChannelNotes &Clip, int Row, int Semitones)
 	d.Keep(Before, Placed);
 }
 
+void CChannelNotes::ReplaceRows(int First, int End, const CChannelNotes &Take)
+{
+	Impl &d = *m_pImpl;
+	const Impl &t = *Take.m_pImpl;
+	First = Clamp(First, 0, d.Rows());
+	End = Clamp(End, First, d.Rows());
+	if (End <= First)
+		return;
+
+	// How the channel played before
+	d.Parse();
+	const std::vector<Note> Before(d.Notes);
+	const Sounds OldSounds = d.SoundsNow();
+	std::map<int, Lasting> OldLasting;
+	d.LastingNow(OldLasting);
+	Lasting Coming;	// the lasting effects in force coming into First
+	for (int r = 0; r < First; ++r)
+		d.Step(Coming, d.Cells[static_cast<size_t>(r)]);
+	const Note *pInto = NULL;	// a note sounding into the rows from before
+	bool SoundedOn = false;		// a note sounded on at End into the rows after
+	for (size_t i = 0; i < Before.size(); ++i) {
+		if (Before[i].Start < First && Before[i].End > First)
+			pInto = &Before[i];
+		if (Before[i].Start < End && Before[i].End > End)
+			SoundedOn = true;
+	}
+
+	// The take's cells in place of what the notes owned there
+	Sounds Placed;
+	for (int r = First; r < End; ++r) {
+		if (r - First < t.Rows()) {
+			const stChanNote Cell = t.Owned(t.Cells[static_cast<size_t>(r - First)]);
+			d.PutOwned(r, Cell);
+			if (IsNote(Cell)) {
+				const Sound Own = { Cell.Instrument < MAX_INSTRUMENTS ? Cell.Instrument : -1, Cell.Vol < MAX_VOLUME ? Cell.Vol : -1, -1 };
+				Placed[r] = Own;
+			}
+		}
+		else
+			d.ClearOwned(r);
+	}
+	// The note sounding into the rows ends where they start, unless the take starts a note there
+	stChanNote &Start = d.CellAt(First);
+	if (pInto != NULL && !IsNote(Start) && !IsEnd(Start))
+		Start.Note = d.NewEnd(pInto->Instrument).Note;
+	// The take's notes start as they were played: lasting effects coming in are switched off
+	{
+		Lasting Now = Coming, Want = Coming;
+		Want.Pitch = EF_NONE;
+		Want.PitchParam = 0;
+		Want.Vibrato = Want.Tremolo = Want.VolumeSlide = 0;
+		d.Step(Now, d.Cells[static_cast<size_t>(First)]);
+		d.Step(Want, d.Cells[static_cast<size_t>(First)]);
+		if (Now != Want)
+			d.MakeLasting(First, Now, Want);
+	}
+	d.Parsed = false;
+
+	// The take's last note, still sounding at End: it carries on where a note did before, or ends there
+	if (End < d.Rows()) {
+		stChanNote &After = d.CellAt(End);
+		d.Parse();
+		const int Last = NoteAt(End - 1);
+		if (!IsNote(After) && !IsEnd(After) && Last >= 0 && d.Notes[static_cast<size_t>(Last)].End > End && !SoundedOn) {
+			After.Note = d.NewEnd(d.Notes[static_cast<size_t>(Last)].Instrument).Note;
+			After.Octave = 0;
+			d.Parsed = false;
+		}
+	}
+
+	// The notes after the rows sound as before: their instrument, volume and pan, and their lasting effects
+	Sounds Kept;
+	std::map<int, Lasting> KeptLasting;
+	for (size_t i = 0; i < Before.size(); ++i) {
+		if (Before[i].Start < First || Before[i].Start >= End) {
+			const Sounds::const_iterator It = OldSounds.find(Before[i].Start);
+			if (It != OldSounds.end())
+				Kept[Before[i].Start] = It->second;
+		}
+		if (Before[i].Start >= End && OldLasting.count(Before[i].Start) != 0)
+			KeptLasting[Before[i].Start] = OldLasting[Before[i].Start];
+	}
+	d.Keep(Kept, Placed);
+	d.KeepLasting(KeptLasting);
+}
+
+CChannelNotes CChannelNotes::TakeRows(int From, int Rows, int Early) const
+{
+	const Impl &d = *m_pImpl;
+	CChannelNotes Out(*this);	// how the channel plays
+	Impl &o = *Out.m_pImpl;
+	o.Cells.assign(static_cast<size_t>(std::max(0, Rows)), EmptyCell());
+	o.Hints.clear();
+	o.Parsed = false;
+	for (int r = 0; r < Rows; ++r)
+		if (From + r >= 0 && From + r < d.Rows())
+			o.Cells[static_cast<size_t>(r)] = d.Cells[static_cast<size_t>(From + r)];
+	// A note sung a little early starts where the rows do, with what its first row had
+	const int Index = NoteAt(From);
+	if (Rows > 0 && Index >= 0) {
+		const Note &N = d.Notes[static_cast<size_t>(Index)];
+		stChanNote &Cell = o.Cells[0];
+		if (N.Start < From && N.Start >= From - std::max(0, Early) && !IsNote(Cell) && !IsEnd(Cell)) {
+			const stChanNote &Start = d.Cells[static_cast<size_t>(N.Start)];
+			Cell.Note = Start.Note;
+			Cell.Octave = Start.Octave;
+			Cell.Instrument = Start.Instrument < MAX_INSTRUMENTS ? Start.Instrument :
+				(N.Instrument >= 0 ? static_cast<unsigned char>(N.Instrument) : Cell.Instrument);
+			if (Start.Vol < MAX_VOLUME)
+				Cell.Vol = Start.Vol;
+			for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+				if (Start.EffNumber[c] == EF_NONE || IsSongEffect(Start.EffNumber[c]))
+					continue;
+				bool Has = false;
+				for (int k = 0; k < MAX_EFFECT_COLUMNS; ++k)
+					Has = Has || Cell.EffNumber[k] == Start.EffNumber[c];
+				for (int k = 0; k < MAX_EFFECT_COLUMNS && !Has; ++k)
+					if (Cell.EffNumber[k] == EF_NONE) {
+						Cell.EffNumber[k] = Start.EffNumber[c];
+						Cell.EffParam[k] = Start.EffParam[c];
+						Has = true;
+					}
+			}
+		}
+	}
+	return Out;
+}
+
 bool CChannelNotes::Compare(const CChannelNotes &Other, int &First, int &Last) const
 {
 	const Impl &d = *m_pImpl, &o = *Other.m_pImpl;

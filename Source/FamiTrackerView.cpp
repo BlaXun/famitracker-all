@@ -120,6 +120,7 @@ BEGIN_MESSAGE_MAP(CFamiTrackerView, CView)
 	ON_COMMAND(ID_EDIT_PASTEMIX, OnEditPastemix)
 	ON_COMMAND(ID_EDIT_INSERTRECORDING, OnEditInsertRecording)
 	ON_COMMAND(ID_EDIT_RECORD, OnEditRecord)
+	ON_COMMAND(ID_EDIT_GROOVE, OnEditGroove)
 	ON_COMMAND(ID_EDIT_ADDBACKING, OnEditAddBacking)
 	ON_COMMAND(ID_EDIT_SAVECLIP, OnEditSaveClip)
 	ON_COMMAND(ID_EDIT_CLIPS, OnEditClips)
@@ -971,19 +972,41 @@ void CFamiTrackerView::OnEditRecord()
 {
 	// Record from the microphone into the song (see RecordDlg.cpp). The
 	// recorder plays the song itself when asked to.
+	RecordFromMicrophone(false);
+}
+
+void CFamiTrackerView::OnEditGroove()
+{
+	// A groove to sing over first, then the Record dialog (see GrooveDlg.cpp)
+	RecordFromMicrophone(true);
+}
+
+void CFamiTrackerView::RecordFromMicrophone(bool GrooveFirst)
+{
 	theApp.StopPlayerAndWait();
 	CRecordDlg Dialog(this);
+	if (GrooveFirst)
+		Dialog.OpenGrooveFirst();
 	const INT_PTR Result = Dialog.DoModal();
 	if (Result == IDOK)
 		GetParentFrame()->SetMessageText(Dialog.GetResult());
 	else if (Result == IDC_REC_FROMFILE)
 		OnEditInsertRecording();
+	else if (Result == IDC_REC_CHORDS)
+		AddBackingWith(Dialog.GetChords(), Dialog.GetChordsRow());	// strummed chords
 }
 
 void CFamiTrackerView::OnEditAddBacking()
 {
 	// Chords and a bass line for a melody (see InsertRecording.cpp)
+	AddBackingWith(CString(), -1);
+}
+
+void CFamiTrackerView::AddBackingWith(const CString &Chords, int Row)
+{
 	CBackingDlg Dialog(this);
+	if (!Chords.IsEmpty())
+		Dialog.SetChords(Chords, Row);
 	if (Dialog.DoModal() != IDOK)
 		return;
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(GetParentFrame());

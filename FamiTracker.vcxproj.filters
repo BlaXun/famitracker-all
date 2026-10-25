@@ -1475,6 +1475,33 @@
     <ClInclude Include="Source\RecordDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\GrooveDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GrooveDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\TapButton.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\TapButton.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\Transcribe\Tapping.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Transcribe\Strums.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\RecorderInput.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Api\RecorderInput.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Grooves.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\VoiceEffectDlg.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>

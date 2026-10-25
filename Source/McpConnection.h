@@ -53,8 +53,9 @@ public:
 	// A tool run for a window of FamiTracker's, on the selected track: View > Problems runs check_song (format json)
 	// and the fixes it gives. Arguments and the reply are JSON and text in UTF-8. What the tool changes goes into the
 	// song as one undoable step, whatever the Claude Code setting says. False with the reason in Reply when the tool
-	// failed, or FamiTracker is busy answering Claude Code.
-	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply);
+	// failed, or FamiTracker is busy answering Claude Code. FromDialog: for a dialog of FamiTracker's that's open
+	// (Edit > Start from a groove), which a change would otherwise wait for.
+	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog = false);
 	bool IsBusy() const;				// answering Claude Code right now (RunTool would refuse)
 	// Edit > Record from your phone (PhoneDlg.cpp): whether FamiTracker listens, for other computers too, on which
 	// port and with which access code; and listening for other computers, as File > Connect Claude Code's two boxes

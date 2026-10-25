@@ -27,12 +27,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace transcribe;
 
@@ -2049,6 +2052,361 @@ void TestVoiceTake()
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The recorder's input: tapping the tempo, the click in the song's bars,
+// chords with more notes, and strummed chords
+// ---------------------------------------------------------------------------
+
+void TestTapTempo()
+{
+	// Steady taps at 120 BPM
+	std::vector<double> taps;
+	for (int i = 0; i < 8; ++i)
+		taps.push_back(1.0 + 0.5 * i);
+	TapTempo tempo = TempoOfTaps(taps);
+	CHECK_NEAR(tempo.bpm, 120.0, 0.01);
+	CHECK(tempo.taps == 8 && tempo.spread < 0.01);
+
+	// Three taps aren't enough yet; four are
+	CHECK(TempoOfTaps(std::vector<double>(taps.begin(), taps.begin() + 3)).bpm == 0.0);
+	CHECK_NEAR(TempoOfTaps(std::vector<double>(taps.begin(), taps.begin() + 4)).bpm, 120.0, 0.01);
+	CHECK(TempoOfTaps(std::vector<double>()).bpm == 0.0 && TempoOfTaps(std::vector<double>(1, 2.0)).bpm == 0.0);
+
+	// Uneven hands: up to 25 ms early or late, still about 97 BPM
+	std::vector<double> loose;
+	const double offsets[] = { 0.0, 0.021, -0.017, 0.008, -0.025, 0.012, 0.019, -0.006, 0.0, -0.014 };
+	for (int i = 0; i < 10; ++i)
+		loose.push_back(0.4 + i * 60.0 / 97.0 + offsets[i]);
+	tempo = TempoOfTaps(loose);
+	CHECK_NEAR(tempo.bpm, 97.0, 1.0);
+	CHECK(tempo.spread > 0.01 && tempo.spread < 0.1);
+
+	// A tap missed (a gap of two beats) and a double tap (one 60 ms after another) change nothing
+	std::vector<double> missed;
+	for (int i = 0; i < 9; ++i)
+		if (i != 4)
+			missed.push_back(i * 0.6);
+	CHECK_NEAR(TempoOfTaps(missed).bpm, 100.0, 0.01);
+	std::vector<double> doubled = missed;
+	doubled.insert(doubled.begin() + 2, doubled[1] + 0.06);
+	tempo = TempoOfTaps(doubled);
+	CHECK_NEAR(tempo.bpm, 100.0, 0.01);
+	CHECK(tempo.taps == 8);
+
+	// After a pause the taps start over: the new run's tempo
+	std::vector<double> again = taps;
+	for (int i = 0; i < 5; ++i)
+		again.push_back(taps.back() + 3.0 + 0.75 * i);
+	tempo = TempoOfTaps(again);
+	CHECK_NEAR(tempo.bpm, 80.0, 0.01);
+	CHECK(tempo.taps == 5);
+
+	// Too slow or too fast to be a beat
+	std::vector<double> slow;
+	for (int i = 0; i < 5; ++i)
+		slow.push_back(i * 0.15);
+	CHECK(TempoOfTaps(slow).bpm == 0.0);
+}
+
+void TestClickBarPhase()
+{
+	// A take starting on the third beat of a bar: the count-in's third click is the bar's first
+	ClickTrack click;
+	click.sampleRate = RATE;
+	click.beatSeconds = 0.5;
+	click.beatsPerBar = 4;
+	click.countIn = 4;
+	click.clickAlong = true;
+	click.barPhase = 2;
+	CHECK(!click.StartsBar(0) && !click.StartsBar(1) && click.StartsBar(2) && !click.StartsBar(4) && click.StartsBar(6));
+	click.barsOnly = true;
+	CHECK(click.Clicks(0) && click.Clicks(3) && !click.Clicks(4) && click.Clicks(6) && !click.Clicks(8) && click.Clicks(10));
+	// The accent is the higher click: rising zero crossings over 20 ms after beat 2 and beat 3
+	const int total = 3 * RATE;
+	std::vector<float> samples(static_cast<size_t>(total));
+	click.Render(0, samples.data(), total);
+	auto crossings = [&](int beat) {
+		int n = 0;
+		const long long from = click.BeatSample(beat) + 10, to = from + RATE / 50;
+		for (long long i = from; i < to; ++i)
+			if (samples[size_t(i - 1)] < 0.0f && samples[size_t(i)] >= 0.0f)
+				++n;
+		return n;
+	};
+	CHECK(std::abs(crossings(2) - 21) <= 1);
+	CHECK(std::abs(crossings(3) - 16) <= 1);
+	CHECK(std::abs(crossings(0) - 16) <= 1);
+	click.barPhase = 0;
+	CHECK(click.StartsBar(0) && click.StartsBar(4) && !click.StartsBar(2));
+}
+
+Chord ChordOf(int root, std::initializer_list<int> tones, int bass = -1)
+{
+	Chord c;
+	c.root = root;
+	c.tones.assign(tones.begin(), tones.end());
+	c.quality = (std::find(c.tones.begin(), c.tones.end(), 3) != c.tones.end() &&
+		std::find(c.tones.begin(), c.tones.end(), 4) == c.tones.end()) ? Chord::Minor : Chord::Major;
+	c.bass = bass;
+	return c;
+}
+
+void TestChordTones()
+{
+	const Key c;
+	Key f;
+	f.tonic = 5;
+	// Names of chords with more notes, and over another bass note
+	CHECK(ChordName(ChordOf(0, { 0, 4, 7, 10 }), c) == "C7");
+	CHECK(ChordName(ChordOf(5, { 0, 4, 7, 11 }), c) == "Fmaj7");
+	CHECK(ChordName(ChordOf(9, { 0, 3, 7, 10 }), c) == "Am7");
+	CHECK(ChordName(ChordOf(7, { 0, 5, 7 }), c) == "Gsus4");
+	CHECK(ChordName(ChordOf(0, { 0, 2, 4, 7 }), c) == "Cadd9");
+	CHECK(ChordName(ChordOf(4, { 0, 7 }), c) == "E5");
+	CHECK(ChordName(ChordOf(0, { 0, 4, 7 }, 4), c) == "C/E");
+	CHECK(ChordName(ChordOf(10, { 0, 4, 7 }, 2), f) == "Bb/D");
+	CHECK(ChordName(ChordOf(2, { 0, 3, 7, 10, 5 }), c) == "Dm");	// no name for it: its triad's
+	Chord plain;
+	plain.root = 9;
+	plain.quality = Chord::Minor;
+	CHECK(plain.Tones() == std::vector<int>({ 0, 3, 7 }) && ChordName(plain, c) == "Am");
+
+	// The three notes an arpeggio plays
+	CHECK(ArpeggioTones(plain) == std::vector<int>({ 0, 3, 7 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 4, 7, 10 })) == std::vector<int>({ 0, 4, 10 }));	// the fifth makes way
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 4, 7, 11 })) == std::vector<int>({ 0, 4, 11 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 4, 7, 9 })) == std::vector<int>({ 0, 4, 9 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 3, 6, 10 })) == std::vector<int>({ 0, 3, 10 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 2, 4, 7 })) == std::vector<int>({ 0, 2, 4 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 7 })) == std::vector<int>({ 0, 7, 12 }));
+	CHECK(ArpeggioTones(ChordOf(0, { 0, 5, 7 })) == std::vector<int>({ 0, 5, 7 }));
+
+	// Cells: G7 as G-B-F, an add9 spread out (C E D: 04E), a power chord with its octave, C/E with E in the bass
+	const std::vector<Bar> bars = SongBars(0, 64, 64, 16);
+	std::vector<ChordSpan> spans(4);
+	const Chord chords[4] = { ChordOf(7, { 0, 4, 7, 10 }), ChordOf(0, { 0, 2, 4, 7 }), ChordOf(4, { 0, 7 }), ChordOf(0, { 0, 4, 7 }, 4) };
+	for (int i = 0; i < 4; ++i) {
+		spans[size_t(i)].row = 16 * i;
+		spans[size_t(i)].length = 16;
+		spans[size_t(i)].chord = chords[i];
+	}
+	const std::vector<MelodyCell> arp = ArpeggioCells(spans, bars);
+	CHECK(arp.size() == 5);
+	if (arp.size() == 5) {
+		// G-B-F: G4 (67) is nearest the middle (59) as G3 (55) with 4 and 10 above it, or B3 (59) with F and G (6, 8)
+		CHECK(arp[0].kind == MelodyCell::Note && arp[0].effect == '0');
+		const int base0 = arp[0].midi, x0 = arp[0].effectParam >> 4, y0 = arp[0].effectParam & 15;
+		std::vector<int> heard = { base0 % 12, (base0 + x0) % 12, (base0 + y0) % 12 };
+		std::sort(heard.begin(), heard.end());
+		CHECK(heard == std::vector<int>({ 5, 7, 11 }));
+		// Cadd9: C, E and D, never bunched a step apart
+		const int x1 = arp[1].effectParam >> 4, y1 = arp[1].effectParam & 15;
+		CHECK(x1 > 2 && y1 - x1 > 2 && y1 <= 15);
+		std::vector<int> add9 = { arp[1].midi % 12, (arp[1].midi + x1) % 12, (arp[1].midi + y1) % 12 };
+		std::sort(add9.begin(), add9.end());
+		CHECK(add9 == std::vector<int>({ 0, 2, 4 }));
+		// E5: E, B and the octave
+		CHECK(arp[2].midi % 12 == 4 && arp[2].effectParam == 0x7C);
+	}
+	const std::vector<MelodyCell> bass = BassCells(spans, bars, HarmonyOptions());
+	// G7: G and D; Cadd9: C and G; E5: E and B; C/E: E, then G (the fifth over C)
+	const int pitchClasses[] = { 7, 2, 0, 7, 4, 11, 4, 7 };
+	CHECK(bass.size() == 9);
+	for (size_t i = 0; i < 8 && i < bass.size(); ++i)
+		CHECK(bass[i].kind == MelodyCell::Note && bass[i].midi % 12 == pitchClasses[i] && bass[i].midi >= 36 && bass[i].midi <= 55);
+	// C/G: G in the bass, then the root (the fifth is in the bass already)
+	std::vector<ChordSpan> overG(1);
+	overG[0].row = 0;
+	overG[0].length = 16;
+	overG[0].chord = ChordOf(0, { 0, 4, 7 }, 7);
+	const std::vector<MelodyCell> pedal = BassCells(overG, SongBars(0, 16, 64, 16), HarmonyOptions());
+	CHECK(pedal.size() == 3 && pedal[0].midi % 12 == 7 && pedal[1].midi % 12 == 0);
+
+	// Chords found from a melody keep their three notes as before
+	std::vector<ChordSpan> triads(3);
+	const int roots[] = { 0, 9, 7 };
+	for (int i = 0; i < 3; ++i) {
+		triads[size_t(i)].row = 16 * i;
+		triads[size_t(i)].length = 16;
+		triads[size_t(i)].chord.root = roots[i];
+		triads[size_t(i)].chord.quality = i == 1 ? Chord::Minor : Chord::Major;
+	}
+	const std::vector<MelodyCell> found = ArpeggioCells(triads, SongBars(0, 48, 64, 16));
+	CHECK(found.size() == 4 && found[0].effectParam == 0x47 && found[1].effectParam == 0x49 && found[2].effectParam == 0x38);
+}
+
+// A plucked string: partials up to 8 kHz, each weaker the higher it is (as
+// plucked a fifth of the way along) and dying away the faster, a little
+// sharp up high, after a short scrape of the pick. It sounds for Seconds,
+// then the hand damps it within 30 ms (the next chord's fingers).
+void Pluck(Audio &audio, double time, int midi, double amp, double seconds)
+{
+	const double f0 = MidiToFrequency(midi);
+	const size_t from = size_t(time * RATE), held = size_t(seconds * RATE), damp = size_t(0.03 * RATE);
+	if (audio.samples.size() < from + held + damp)
+		audio.samples.resize(from + held + damp, 0.0f);
+	for (int h = 1; h <= 30; ++h) {
+		const double f = f0 * h * std::sqrt(1.0 + 0.00008 * h * h);
+		const double a = amp * std::fabs(std::sin(PI * h * 0.2)) / h;
+		if (f > 8000.0)
+			break;
+		if (a < 1e-4)
+			continue;
+		const double decay = 1.5 / (1.0 + 0.25 * h);	// seconds
+		// A decaying phasor: one complex multiplication a sample
+		const std::complex<double> turn = std::polar(std::exp(-1.0 / (decay * RATE)), 2.0 * PI * f / RATE);
+		std::complex<double> z = std::polar(a, 0.37 * h);
+		for (size_t i = 0; i < held + damp; ++i) {
+			double g = std::min(1.0, double(i) / (0.002 * RATE));
+			if (i >= held)
+				g *= 1.0 - double(i - held) / double(damp);
+			audio.samples[from + i] += float(g * z.imag());
+			z *= turn;
+		}
+	}
+	for (size_t i = 0; i < size_t(0.004 * RATE) && from + i < audio.samples.size(); ++i)
+		audio.samples[from + i] += float(0.05 * amp * Noise() * (1.0 - double(i) / (0.004 * RATE)));
+}
+
+// A strum: the strings from the lowest up, Spacing seconds apart
+void StrumChord(Audio &audio, double time, const std::vector<int> &midis, double amp, double seconds, double spacing = 0.012)
+{
+	for (size_t i = 0; i < midis.size(); ++i)
+		Pluck(audio, time + spacing * double(i), midis[i], amp, seconds);
+}
+
+// The pitch classes heard in a strum, those at least Share of its strongest note
+std::vector<int> HeardClasses(const Strum &strum, double share)
+{
+	std::vector<int> classes;
+	for (size_t i = 0; i < strum.notes.size(); ++i)
+		if (strum.notes[i].weight >= share && std::find(classes.begin(), classes.end(), strum.notes[i].midi % 12) == classes.end())
+			classes.push_back(strum.notes[i].midi % 12);
+	std::sort(classes.begin(), classes.end());
+	return classes;
+}
+
+bool Within(const std::vector<int> &classes, const std::vector<int> &chord)
+{
+	for (size_t i = 0; i < classes.size(); ++i)
+		if (std::find(chord.begin(), chord.end(), classes[i]) == chord.end())
+			return false;
+	return true;
+}
+
+bool Covers(const std::vector<int> &classes, const std::vector<int> &chord)
+{
+	for (size_t i = 0; i < chord.size(); ++i)
+		if (std::find(classes.begin(), classes.end(), chord[i]) == classes.end())
+			return false;
+	return true;
+}
+
+void TestStrums()
+{
+	// C, G, Am and F on a guitar, a strum a beat at 100 BPM, a bar each
+	const std::vector<int> C = { 48, 52, 55, 60, 64 }, G = { 43, 47, 50, 55, 59, 67 }, Am = { 45, 52, 57, 60, 64 },
+		F = { 41, 48, 53, 57, 60, 65 };
+	const std::vector<int> *chords[4] = { &C, &G, &Am, &F };
+	Audio audio;
+	audio.sampleRate = RATE;
+	audio.samples.assign(size_t(0.5 * RATE), 0.0f);
+	const double beat = 0.6;
+	for (int bar = 0; bar < 4; ++bar)
+		for (int b = 0; b < 4; ++b)
+			StrumChord(audio, 0.5 + (bar * 4 + b) * beat, *chords[bar], b == 0 ? 0.25 : 0.18, bar == 3 && b == 3 ? 1.6 : beat);
+	for (float &v : audio.samples)
+		v += float(0.002 * Noise());
+
+	const std::vector<Strum> strums = HearStrums(audio);
+	CHECK(strums.size() == 16);
+	const std::vector<std::vector<int> > classes = { { 0, 4, 7 }, { 7, 11, 2 }, { 9, 0, 4 }, { 5, 9, 0 } };
+	for (size_t i = 0; i < strums.size() && i < 16; ++i) {
+		CHECK_NEAR(strums[i].time, 0.5 + double(i) * beat, 0.03);
+		const std::vector<int> heard = HeardClasses(strums[i], 0.3);
+		CHECK(Within(heard, classes[i / 4]));
+		CHECK(Covers(HeardClasses(strums[i], 0.1), classes[i / 4]));
+		CHECK(strums[i].notes.size() <= 6);
+		if (i + 1 < strums.size())
+			CHECK_NEAR(strums[i].end, strums[i + 1].time, 1e-9);
+	}
+	if (!strums.empty()) {
+		CHECK_NEAR(strums.back().end, audio.Duration(), 1e-9);
+		CHECK(strums[0].level > -40.0 && strums[0].level < 0.0);
+	}
+
+	// A piano's block chords, every note struck at once with the bass an octave under: Dm, then E7
+	Audio piano;
+	piano.sampleRate = RATE;
+	const std::vector<int> Dm = { 38, 50, 53, 57, 62 }, E7 = { 40, 52, 56, 59, 62 };
+	StrumChord(piano, 0.2, Dm, 0.2, 1.4, 0.0);
+	StrumChord(piano, 1.6, E7, 0.2, 1.4, 0.0);
+	piano.samples.resize(size_t(3.2 * RATE), 0.0f);
+	const std::vector<Strum> blocks = HearStrums(piano);
+	CHECK(blocks.size() == 2);
+	if (blocks.size() == 2) {
+		CHECK(Within(HeardClasses(blocks[0], 0.3), { 2, 5, 9 }) && Covers(HeardClasses(blocks[0], 0.1), { 2, 5, 9 }));
+		CHECK(Within(HeardClasses(blocks[1], 0.3), { 4, 8, 11, 2 }) && Covers(HeardClasses(blocks[1], 0.1), { 4, 8, 11 }));
+		CHECK(blocks[0].notes.front().midi % 12 == 2);	// the lowest note heard is the bass's D
+	}
+
+	// Silence and a lone click: no strums
+	Audio quiet;
+	quiet.sampleRate = RATE;
+	quiet.samples.assign(size_t(2 * RATE), 0.0f);
+	CHECK(HearStrums(quiet).empty());
+	quiet.samples[size_t(RATE)] = 0.5f;
+	CHECK(HearStrums(quiet).empty());
+}
+
+// A take that runs a little past the song's end: the end of its last note goes on the song's last row
+void TestEndInside()
+{
+	// C-5 for 8 rows, then E-5 at row 8 for 10 rows: its vibrato from row 11, 400 on row 17, the release on 18
+	std::vector<GridNote> notes(2);
+	notes[0].row = 0;
+	notes[0].length = 8;
+	notes[0].midi = 72;
+	notes[1].row = 8;
+	notes[1].length = 10;
+	notes[1].midi = 76;
+	notes[1].vibratoHz = 5.6;
+	notes[1].vibratoCents = 12.0;
+	notes[1].vibratoRow = 3;
+	const std::vector<MelodyCell> take = MelodyCells(notes, ChannelVoice::Pulse, 60);
+	CHECK(take.size() == 5 && take.back().kind == MelodyCell::Release && take.back().row == 18);
+
+	// A song of 16 rows: the release goes on row 15, with the vibrato's 400
+	std::vector<MelodyCell> cells = take;
+	CHECK(EndInside(cells, 16));
+	CHECK(cells.size() == 4);
+	if (cells.size() == 4) {
+		CHECK(cells[2].kind == MelodyCell::Effect && cells[2].row == 11 && cells[2].effect == '4' && cells[2].effectParam != 0);
+		CHECK(cells[3].kind == MelodyCell::Release && cells[3].row == 15 && cells[3].effect == '4' && cells[3].effectParam == 0);
+	}
+	// A take that ends inside the song is left as it is
+	cells = take;
+	CHECK(!EndInside(cells, 19) && cells.size() == take.size());
+	CHECK(!EndInside(cells, 40) && cells.size() == take.size());
+	// The vibrato would start on the song's last row: the note ends there instead
+	cells = take;
+	CHECK(EndInside(cells, 12));
+	CHECK(cells.size() == 3 && cells.back().kind == MelodyCell::Release && cells.back().row == 11 && cells.back().effect == '4' &&
+		cells.back().effectParam == 0);
+	// The last note starts on the song's last row: it sounds on into the loop
+	cells = take;
+	CHECK(EndInside(cells, 9));
+	CHECK(cells.size() == 2 && cells.back().kind == MelodyCell::Note && cells.back().row == 8);
+	// A note starting past the end needs the rows: the song grows for it
+	cells = take;
+	CHECK(!EndInside(cells, 8) && cells.size() == take.size());
+	// Without a vibrato: the release alone
+	notes[1].vibratoHz = 0.0;
+	cells = MelodyCells(notes, ChannelVoice::Pulse, 60);
+	CHECK(cells.size() == 3 && EndInside(cells, 16));
+	CHECK(cells.size() == 3 && cells.back().kind == MelodyCell::Release && cells.back().row == 15 && cells.back().effect == 0);
+}
+
 int main()
 {
 	TestGridAndNames();
@@ -2081,6 +2439,11 @@ int main()
 	TestBackingCells();
 	TestVoiceEffects();
 	TestVoiceTake();
+	TestTapTempo();
+	TestClickBarPhase();
+	TestChordTones();
+	TestStrums();
+	TestEndInside();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

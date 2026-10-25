@@ -22,9 +22,17 @@
 // Edit > Record from microphone. The dialog listens to the microphone all the
 // time, for its level meter. Record starts the click (a count-in at the
 // song's tempo, then clicking along if asked) and keeps what the microphone
-// hears; the song starts playing with the downbeat after the count-in. Stop
-// turns the take into notes at the cursor (InsertTake) and saves it as a WAV
-// file in the Recordings folder next to FamiTracker.exe (AppFolders.h).
+// hears; the song starts playing a bar before the take (the count-in's
+// length), so the take's first row sounds with the downbeat after the
+// count-in. Stop turns the take into notes at the cursor (InsertTake), or over
+// the selected rows only, and saves it as a WAV file in the Recordings folder
+// next to FamiTracker.exe (AppFolders.h); a take of strummed chords is heard
+// bar by bar for Add chords and bass line (HearRecordedChords). A take over a
+// selection stops by itself when the selection is over.
+//
+// Tap tempo (TapButton.h) sets the song's speed and tempo from taps on the
+// button or the T key, and Start from a groove (GrooveDlg.cpp) writes drums, a
+// bass line and chords to sing over.
 //
 // Timing: the click is played and the microphone recorded by two separate
 // Windows streams. While the click plays, their sample counts are read
@@ -42,6 +50,7 @@
 #include "Transcribe/Transcribe.h"
 #include "MicRecorder.h"
 #include "stdafx.h"
+#include "Api/Music.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -52,6 +61,8 @@
 #include "InsertRecording.h"
 #include "InsertRecordingDlg.h"
 #include "Clips.h"
+#include "PianoRoll.h"
+#include "GrooveDlg.h"
 #include "RecordDlg.h"
 #include "AppFolders.h"
 
@@ -69,6 +80,7 @@ const double TEST_BEAT = 0.6;			// seconds between them (100 BPM)
 LPCTSTR SECTION = _T("Recorder");		// registry section for the dialog's options
 const int CLICK_VOLUME = 50;			// percent, at first
 const double LOUDEST_CLICK = 0.5;		// the click's peak level at 100%
+const double SELECTION_TAIL = 0.4;		// seconds a take over a selection goes on past it, for its last note's end
 
 transcribe::Grid SongGrid(CFamiTrackerDoc *pDoc, unsigned int Track)
 {
@@ -130,6 +142,25 @@ transcribe::Audio ForGuessing(const transcribe::Audio &Audio, const transcribe::
 	return Part;
 }
 
+// Does the song go back to its first frame after its last one (no jump, skip
+// or halt in the last frame)? Then the bar before the start is the song's last.
+bool LoopsToStart(CFamiTrackerDoc *pDoc, unsigned int Track)
+{
+	const unsigned int Frames = pDoc->GetFrameCount(Track), Length = pDoc->GetPatternLength(Track);
+	if (Frames == 0)
+		return false;
+	for (unsigned int c = 0; c < pDoc->GetAvailableChannels(); ++c) {
+		for (unsigned int r = 0; r < Length; ++r) {
+			stChanNote Note;
+			pDoc->GetNoteData(Track, Frames - 1, c, r, &Note);
+			for (int k = 0; k < MAX_EFFECT_COLUMNS; ++k)
+				if (Note.EffNumber[k] == EF_JUMP || Note.EffNumber[k] == EF_SKIP || Note.EffNumber[k] == EF_HALT)
+					return false;
+		}
+	}
+	return true;
+}
+
 }	// namespace
 
 // A take while it's recorded
@@ -151,12 +182,23 @@ struct stRecordTake
 	int Channel;
 	bool Expression;
 	bool AsClip;	// kept as a clip instead of going into the song
-	int Frame;
+	int Frame;		// where its row 0 goes
 	int Row;
+	int Cursor;		// song row the cursor goes back to afterwards
+	bool Selected;	// over the selected rows only
+	take_selection_t Selection;
+	double Seconds;	// from the downbeat until it stops by itself (over a selection), 0 until Stop
+
+	// The song along: from a bar before the take's row 0 (a bar of the song's end when that's the first row of a
+	// song that loops)
+	int PlayFrom;			// song row
+	double PreRoll;			// seconds from there to row 0
 
 	stRecordTake() : Offset(0), SongStart(-1), PlaySong(false), SongPlaying(false), MutedChannel(0), WasMuted(false),
-		Kind(RECORDING_WHISTLE), AutoKind(true), Channel(0), Expression(true), AsClip(false), Frame(0), Row(0)
+		Kind(RECORDING_WHISTLE), AutoKind(true), Channel(0), Expression(true), AsClip(false), Frame(0), Row(0), Cursor(0),
+		Selected(false), Seconds(0.0), PlayFrom(0), PreRoll(0.0)
 	{
+		Selection.First = Selection.End = Selection.Early = 0;
 	}
 
 	// Reads both sample counts while the click plays (the first half minute is plenty)
@@ -198,8 +240,8 @@ struct stRecordTake
 			Result.lineUpFirstNote = false;
 		}
 		else if (SongStart >= 0) {
-			// The song is heard once FamiTracker's sound buffer has played
-			Result.start = double(SongStart - Offset) / Audio.sampleRate + SoundBuffer + Delay;
+			// The song is heard once FamiTracker's sound buffer has played, row 0 after the bar before it
+			Result.start = double(SongStart - Offset) / Audio.sampleRate + SoundBuffer + Delay + PreRoll;
 			Result.lineUpFirstNote = false;
 		}
 		return Result;
@@ -210,8 +252,8 @@ struct stRecordTake
 
 IMPLEMENT_DYNAMIC(CRecordDlg, CDialog)
 
-CRecordDlg::CRecordDlg(CFamiTrackerView *pView) :
-	CDialog(CRecordDlg::IDD, pView),
+CRecordDlg::CRecordDlg(CFamiTrackerView *pView, CWnd *pParent, bool ChordsOnly) :
+	CDialog(CRecordDlg::IDD, pParent != NULL ? pParent : pView),
 	m_pView(pView),
 	m_pDocument(pView->GetDocument()),
 	m_pInput(new CMicInput()),
@@ -224,8 +266,13 @@ CRecordDlg::CRecordDlg(CFamiTrackerView *pView) :
 	m_iLoudTicks(0),
 	m_iQuietTicks(0),
 	m_iTick(0),
-	m_iPreviewTicks(0)
+	m_iPreviewTicks(0),
+	m_bChordsOnly(ChordsOnly),
+	m_bGrooveFirst(false),
+	m_iChordsRow(0),
+	m_bHasSelection(false)
 {
+	m_Selection.First = m_Selection.End = m_Selection.Early = 0;
 }
 
 CRecordDlg::~CRecordDlg()
@@ -241,11 +288,15 @@ BEGIN_MESSAGE_MAP(CRecordDlg, CDialog)
 	ON_BN_CLICKED(IDC_REC_RECORD, &CRecordDlg::OnRecord)
 	ON_BN_CLICKED(IDC_REC_TEST, &CRecordDlg::OnTest)
 	ON_BN_CLICKED(IDC_REC_FROMFILE, &CRecordDlg::OnFromFile)
+	ON_BN_CLICKED(IDC_REC_GROOVE, &CRecordDlg::OnGroove)
 	ON_BN_CLICKED(IDC_REC_AUTO, &CRecordDlg::OnKindChanged)
 	ON_BN_CLICKED(IDC_REC_WHISTLE, &CRecordDlg::OnKindChanged)
 	ON_BN_CLICKED(IDC_REC_VOICE, &CRecordDlg::OnKindChanged)
 	ON_BN_CLICKED(IDC_REC_DRUMS, &CRecordDlg::OnKindChanged)
+	ON_BN_CLICKED(IDC_REC_CHORDS, &CRecordDlg::OnKindChanged)
+	ON_BN_CLICKED(IDC_REC_SELECTION, &CRecordDlg::OnKindChanged)
 	ON_CBN_SELCHANGE(IDC_REC_DEVICE, &CRecordDlg::OnDeviceChanged)
+	ON_MESSAGE(WM_TEMPO_TAP, &CRecordDlg::OnTempoTap)
 	ON_WM_HSCROLL()
 END_MESSAGE_MAP()
 
@@ -258,6 +309,7 @@ BOOL CRecordDlg::OnInitDialog()
 	m_cClick.SubclassDlgItem(IDC_REC_CLICK, this);
 	m_cClickVolume.SubclassDlgItem(IDC_REC_CLICKVOLUME, this);
 	m_cLevel.SubclassDlgItem(IDC_REC_LEVEL, this);
+	m_cTap.SubclassDlgItem(IDC_TAP_TEMPO, this);
 	m_cLevel.SetRange(0, 100);
 	m_cClickVolume.SetRange(5, 100);
 	m_cClickVolume.SetPageSize(10);
@@ -273,22 +325,19 @@ BOOL CRecordDlg::OnInitDialog()
 		m_cClick.SetItemData(m_cClick.AddString(CLICKS[i].Text), static_cast<DWORD_PTR>(CLICKS[i].Mode));
 
 	LoadOptions();
+	ReadSelection();
 	FillChannels();
 	FillDevices();
+	if (m_bChordsOnly)
+		SetWindowText(_T("Record strummed chords"));
 
-	// The click's tempo, from the song's speed, tempo and row highlight
-	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
-	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
-	const double Rows = RowsPerSecond(m_pDocument, Track);
-	const transcribe::Beat Beat = SongBeat(m_pDocument, Track);
-	CString Tempo;
-	Tempo.Format(_T("%d BPM"), static_cast<int>(60.0 * Rows / Beat.rows + 0.5));
-	SetDlgItemText(IDC_REC_TEMPO, Tempo);
-
+	ShowTempo();
 	ShowDelay();
 	SetDefID(IDC_REC_RECORD);
 	OpenDevice();
 	SetTimer(TMR_POLL, TIMER_MS, NULL);
+	if (m_bGrooveFirst && !m_bChordsOnly)
+		PostMessage(WM_COMMAND, MAKEWPARAM(IDC_REC_GROOVE, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(IDC_REC_GROOVE)->GetSafeHwnd()));
 	if (m_pInput->IsOpen()) {
 		GotoDlgCtrl(GetDlgItem(IDC_REC_RECORD));
 		return FALSE;	// the focus is set
@@ -311,6 +360,21 @@ CString CRecordDlg::GetResult() const
 	return m_sResult;
 }
 
+void CRecordDlg::OpenGrooveFirst()
+{
+	m_bGrooveFirst = true;
+}
+
+CString CRecordDlg::GetChords() const
+{
+	return m_sChords;
+}
+
+int CRecordDlg::GetChordsRow() const
+{
+	return m_iChordsRow;
+}
+
 // Options
 
 recording_kind_t CRecordDlg::SelectedKind(bool &Auto) const
@@ -322,15 +386,77 @@ recording_kind_t CRecordDlg::SelectedKind(bool &Auto) const
 		return RECORDING_VOICE;
 	if (IsDlgButtonChecked(IDC_REC_DRUMS))
 		return RECORDING_DRUMS;
+	if (IsDlgButtonChecked(IDC_REC_CHORDS))
+		return RECORDING_CHORDS;
 	Auto = true;	// FamiTracker decides after listening
 	return RECORDING_WHISTLE;
+}
+
+void CRecordDlg::SetKind(int ID)
+{
+	static const int KINDS[] = { IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_CHORDS };
+	for (size_t i = 0; i < sizeof(KINDS) / sizeof(KINDS[0]); ++i)
+		CheckDlgButton(KINDS[i], KINDS[i] == ID ? BST_CHECKED : BST_UNCHECKED);
+}
+
+int CRecordDlg::CursorSongRow() const
+{
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	CPatternEditor *pEditor = m_pView->GetPatternEditor();
+	return pEditor->GetFrame() * static_cast<int>(m_pDocument->GetPatternLength(Track)) + pEditor->GetRow();
+}
+
+void CRecordDlg::ReadSelection()
+{
+	// The rows selected in the pattern editor (in the cursor's frame), or the bars of the notes selected in the
+	// piano roll: a take can go over them only
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const int Length = static_cast<int>(m_pDocument->GetPatternLength(Track));
+	CPatternEditor *pEditor = m_pView->GetPatternEditor();
+	CPianoRollWnd *pRoll = pMainFrm->GetPianoRollWnd();
+	int Channel = -1, First = 0, End = 0;
+	m_bHasSelection = false;
+	if (pEditor->IsSelecting()) {
+		const CSelection Selection = pEditor->GetSelection();
+		const int Top = std::max(0, Selection.GetRowStart()), Bottom = std::min(Length - 1, Selection.GetRowEnd());
+		if (Bottom >= Top) {
+			Channel = Selection.GetChanStart();
+			First = pEditor->GetFrame() * Length + Top;
+			End = pEditor->GetFrame() * Length + Bottom + 1;
+			m_bHasSelection = true;
+			m_sSelection.Format(_T("Replace only the selected rows (frame %02X, rows %02X to %02X)"), pEditor->GetFrame(), Top, Bottom);
+		}
+	}
+	else if (pRoll != NULL && pRoll->SelectedBars(Channel, First, End)) {
+		const ftapi::Timing Time(Length, static_cast<int>(m_pDocument->GetFrameCount(Track)), m_pDocument->GetFirstHighlight(),
+			m_pDocument->GetSecondHighlight());
+		const int FirstBar = Time.BarOf(First), LastBar = Time.BarOf(End - 1);
+		m_bHasSelection = true;
+		if (FirstBar == LastBar)
+			m_sSelection.Format(_T("Replace only the bar of the notes selected in the piano roll (bar %d)"), FirstBar);
+		else
+			m_sSelection.Format(_T("Replace only the bars of the notes selected in the piano roll (bars %d to %d)"), FirstBar, LastBar);
+	}
+	if (m_bHasSelection) {
+		m_Selection.First = First;
+		m_Selection.End = End;
+		m_Selection.Early = 1;
+		if (Channel >= 0 && Channel < static_cast<int>(m_pDocument->GetAvailableChannels()) && IsMelodyChannel(m_pDocument, Channel))
+			m_iMelodyChannel = Channel;
+	}
+	else
+		m_sSelection = _T("Replace only the selected rows (select some first)");
+	SetDlgItemText(IDC_REC_SELECTION, m_sSelection);
+	CheckDlgButton(IDC_REC_SELECTION, m_bHasSelection && !m_bChordsOnly ? BST_CHECKED : BST_UNCHECKED);
 }
 
 void CRecordDlg::LoadOptions()
 {
 	static const int KINDS[] = { IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS };
 	const int Kind = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Kind"), 0));
-	CheckRadioButton(IDC_REC_AUTO, IDC_REC_DRUMS, KINDS[(Kind >= 0 && Kind < 4) ? Kind : 0]);
+	SetKind(m_bChordsOnly ? IDC_REC_CHORDS : KINDS[(Kind >= 0 && Kind < 4) ? Kind : 0]);
 	const int Click = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Click"), CLICK_ALONG));
 	m_cClick.SetCurSel(0);
 	for (int i = 0; i < m_cClick.GetCount(); ++i)
@@ -355,7 +481,8 @@ void CRecordDlg::SaveOptions() const
 		Kind = 2;
 	else if (IsDlgButtonChecked(IDC_REC_DRUMS))
 		Kind = 3;
-	theApp.WriteProfileInt(SECTION, _T("Kind"), Kind);
+	if (!IsDlgButtonChecked(IDC_REC_CHORDS))	// chords are picked each time
+		theApp.WriteProfileInt(SECTION, _T("Kind"), Kind);
 	theApp.WriteProfileInt(SECTION, _T("Click"), ClickMode());
 	theApp.WriteProfileInt(SECTION, _T("Click volume"), m_cClickVolume.GetPos());
 	theApp.WriteProfileInt(SECTION, _T("Play song"), IsDlgButtonChecked(IDC_REC_PLAYSONG) == BST_CHECKED ? 1 : 0);
@@ -372,9 +499,33 @@ void CRecordDlg::FillChannels()
 		m_iMelodyChannel = Picked;
 
 	bool Auto;
-	const bool Drums = SelectedKind(Auto) == RECORDING_DRUMS;
+	const recording_kind_t Kind = SelectedKind(Auto);
+	const bool Drums = Kind == RECORDING_DRUMS, Chords = Kind == RECORDING_CHORDS;
 	FillRecordingChannels(m_cChannel, m_pDocument, Drums, m_iMelodyChannel);
-	GetDlgItem(IDC_REC_EXPRESSION)->EnableWindow(!Drums);	// drums keep their loudness anyway
+	if (Chords)
+		m_cChannel.EnableWindow(FALSE);	// they go to Add chords and bass line
+	GetDlgItem(IDC_REC_EXPRESSION)->EnableWindow(!Drums && !Chords);	// drums keep their loudness anyway
+	GetDlgItem(IDC_REC_ASCLIP)->EnableWindow(!Chords);
+	GetDlgItem(IDC_REC_SELECTION)->EnableWindow(m_bHasSelection && !Chords);
+	if (m_bChordsOnly) {
+		static const int OTHERS[] = { IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_GROOVE };
+		for (size_t i = 0; i < sizeof(OTHERS) / sizeof(OTHERS[0]); ++i)
+			GetDlgItem(OTHERS[i])->EnableWindow(FALSE);
+	}
+	if (m_iState == STATE_IDLE && m_pInput->IsOpen())
+		SetStatus(IdleStatus());
+}
+
+CString CRecordDlg::IdleStatus() const
+{
+	bool Auto;
+	if (SelectedKind(Auto) == RECORDING_CHORDS)
+		return _T("Press Record. After the count-in, strum along: a chord or two a bar, on the beat. Press Stop when you're ")
+			_T("done, and the chords go to Add chords and bass line.");
+	if (m_bHasSelection && IsDlgButtonChecked(IDC_REC_SELECTION) == BST_CHECKED)
+		return _T("Press Record. The song plays a bar before the selection while counting in; come in with the downbeat. ")
+			_T("The take stops by itself when the selection is over.");
+	return _T("Press Record. After the count-in, whistle, hum or tap; press Stop when you're done. The notes go in at the cursor.");
 }
 
 void CRecordDlg::FillDevices()
@@ -405,8 +556,7 @@ void CRecordDlg::OpenDevice()
 	const bool Opened = m_pInput->Open(Device, SAMPLE_RATE, Error);
 	GetDlgItem(IDC_REC_RECORD)->EnableWindow(Opened ? TRUE : FALSE);
 	if (Opened)
-		SetStatus(_T("Press Record. After the count-in, whistle, hum or tap; press Stop when you're done. ")
-			_T("The notes go in at the cursor."));
+		SetStatus(IdleStatus());
 	else
 		SetStatus(CString(Error.c_str()));
 	m_iQuietTicks = 0;
@@ -415,8 +565,9 @@ void CRecordDlg::OpenDevice()
 void CRecordDlg::EnableOptions(bool Enable)
 {
 	static const int IDS[] = {
-		IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_CHANNEL, IDC_REC_EXPRESSION,
-		IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_CLICKVOLUME, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_ASCLIP, IDC_REC_FROMFILE
+		IDC_REC_AUTO, IDC_REC_WHISTLE, IDC_REC_VOICE, IDC_REC_DRUMS, IDC_REC_CHORDS, IDC_REC_CHANNEL, IDC_REC_EXPRESSION,
+		IDC_REC_SELECTION, IDC_REC_DEVICE, IDC_REC_CLICK, IDC_REC_CLICKVOLUME, IDC_REC_TEST, IDC_REC_PLAYSONG, IDC_REC_ASCLIP,
+		IDC_REC_FROMFILE, IDC_TAP_TEMPO, IDC_REC_GROOVE
 	};
 	for (size_t i = 0; i < sizeof(IDS) / sizeof(IDS[0]); ++i)
 		GetDlgItem(IDS[i])->EnableWindow(Enable ? TRUE : FALSE);
@@ -445,6 +596,64 @@ void CRecordDlg::ShowDelay()
 	else
 		Text.Format(_T("%d ms (not measured yet)"), static_cast<int>(USUAL_DELAY * 1000.0 + 0.5));
 	SetDlgItemText(IDC_REC_DELAY, Text);
+}
+
+void CRecordDlg::ShowTempo()
+{
+	// The song's tempo, a beat being the first row highlight (as tapping and the tools count it)
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	SetDlgItemText(IDC_REC_TEMPO, BpmText(SongBpm(m_pDocument, Track)) + _T(" BPM"));
+}
+
+void CRecordDlg::UpdateTaps()
+{
+	// While the taps come, their tempo; once they stop, the song's speed and tempo for it
+	if (!m_Taps.Tapping() && !m_Taps.Done())
+		return;
+	const double Bpm = m_Taps.Bpm();
+	CString Text;
+	if (!m_Taps.Done()) {
+		if (Bpm > 0.0)
+			Text.Format(_T("Tapping: %d BPM. Stop tapping to set it."), static_cast<int>(std::floor(Bpm + 0.5)));
+		else
+			Text.Format(_T("Tapping (%d): keep going, in time with the beat."), m_Taps.Taps());
+		SetStatus(Text);
+		return;
+	}
+	m_Taps.Clear();
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	int Speed = 0, Tempo = 0;
+	double Played = 0.0;
+	if (!TappedSongTempo(m_pDocument, Track, Bpm, Speed, Tempo, Played)) {
+		SetStatus(_T("Tap at least four times, in time with the beat, to set the tempo."));
+		return;
+	}
+	SetSongTempo(pMainFrm, Speed, Tempo);
+	ShowTempo();
+	Text.Format(_T("You tapped %d BPM: the song plays at %s BPM now (speed %d, tempo %d). After closing, Ctrl+Z puts the old ")
+		_T("tempo back."), static_cast<int>(std::floor(Bpm + 0.5)), static_cast<LPCTSTR>(BpmText(Played)), Speed, Tempo);
+	SetStatus(Text);
+}
+
+LRESULT CRecordDlg::OnTempoTap(WPARAM, LPARAM)
+{
+	if (m_iState == STATE_IDLE) {
+		m_Taps.Tap();
+		UpdateTaps();
+	}
+	return 0;
+}
+
+BOOL CRecordDlg::PreTranslateMessage(MSG *pMsg)
+{
+	// The T key taps the tempo too
+	if (IsTapKey(pMsg) && m_iState == STATE_IDLE) {
+		OnTempoTap(IDC_TAP_TEMPO, 0);
+		return TRUE;
+	}
+	return CDialog::PreTranslateMessage(pMsg);
 }
 
 void CRecordDlg::ShowLevel(float Peak)
@@ -543,8 +752,65 @@ void CRecordDlg::OnTest()
 
 void CRecordDlg::OnFromFile()
 {
-	if (m_iState == STATE_IDLE)
-		EndDialog(IDC_REC_FROMFILE);
+	if (m_iState != STATE_IDLE)
+		return;
+	bool Auto;
+	if (SelectedKind(Auto) != RECORDING_CHORDS) {
+		EndDialog(IDC_REC_FROMFILE);	// Insert recording
+		return;
+	}
+	// Strummed chords in a WAV file, its first strum on the cursor's bar
+	CFileDialog FileDialog(TRUE, _T("wav"), NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
+		_T("WAV recordings (*.wav)|*.wav|All files (*.*)|*.*||"), this);
+	if (FileDialog.DoModal() != IDOK)
+		return;
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const ftapi::Timing Time(static_cast<int>(m_pDocument->GetPatternLength(Track)), static_cast<int>(m_pDocument->GetFrameCount(Track)),
+		m_pDocument->GetFirstHighlight(), m_pDocument->GetSecondHighlight());
+	CString Names, Message;
+	int FirstRow = 0;
+	bool Heard;
+	{
+		CWaitCursor Wait;
+		Heard = HearRecordedChords(m_pDocument, Track, FileDialog.GetPathName(), Time.BarStart(Time.BarOf(CursorSongRow())), Names,
+			FirstRow, Message);
+	}
+	if (!Heard) {
+		SetStatus(Message);
+		return;
+	}
+	m_sChords = Names;
+	m_iChordsRow = FirstRow;
+	m_sResult = _T("Heard these chords: ") + Names;
+	EndDialog(IDC_REC_CHORDS);
+}
+
+void CRecordDlg::OnGroove()
+{
+	// Drums, a bass line and chords to sing over, then back here to sing
+	if (m_iState != STATE_IDLE)
+		return;
+	const bool First = m_bGrooveFirst;
+	m_bGrooveFirst = false;
+	CGrooveDlg Dialog(m_pView, this);
+	if (Dialog.DoModal() != IDOK) {
+		if (First)
+			EndDialog(IDCANCEL);	// Start from a groove, called off
+		return;
+	}
+	m_iMelodyChannel = Dialog.GetMelodyChannel();
+	bool Auto;
+	const recording_kind_t Kind = SelectedKind(Auto);
+	if (Kind == RECORDING_DRUMS || Kind == RECORDING_CHORDS)
+		SetKind(IDC_REC_AUTO);
+	m_bHasSelection = false;	// the take goes where the groove starts
+	CheckDlgButton(IDC_REC_SELECTION, BST_UNCHECKED);
+	CheckDlgButton(IDC_REC_PLAYSONG, BST_CHECKED);
+	FillChannels();
+	ShowTempo();
+	SetStatus(Dialog.GetResult() + _T(" Press Record and sing over it: it plays while counting in."));
+	GotoDlgCtrl(GetDlgItem(IDC_REC_RECORD));
 }
 
 void CRecordDlg::OnKindChanged()
@@ -617,6 +883,8 @@ void CRecordDlg::OnTimer(UINT_PTR nIDEvent)
 	if (m_iPreviewTicks > 0 && --m_iPreviewTicks == 0 && m_iState == STATE_IDLE)
 		m_pClick->Close();	// the volume preview is over
 	ShowLevel(m_pInput->Received() != Before ? Peak : -1.0f);
+	if (m_iState == STATE_IDLE)
+		UpdateTaps();
 
 	if (m_iState == STATE_COUNT_IN)
 		UpdateCountIn();
@@ -638,6 +906,16 @@ long long CRecordDlg::Played() const
 	return m_pInput->Received() - m_pTake->Offset;
 }
 
+double CRecordDlg::SecondsIntoTake() const
+{
+	// From the downbeat (row 0 of the take) on
+	const stRecordTake &Take = *m_pTake;
+	if (Take.Click.countIn > 0)
+		return double(Played() - Take.Click.StartSample()) / SAMPLE_RATE;
+	const double Since = double(m_pInput->Received() - Take.Offset) / SAMPLE_RATE;
+	return Take.SongPlaying ? Since - Take.PreRoll - theApp.GetSettings()->Sound.iBufferLength / 1000.0 : Since;
+}
+
 void CRecordDlg::StartTake()
 {
 	if (!m_pInput->IsOpen())
@@ -648,21 +926,37 @@ void CRecordDlg::StartTake()
 
 	SaveOptions();
 	Take.Kind = SelectedKind(Take.AutoKind);
-	Take.Channel = PickedRecordingChannel(m_cChannel);
+	const bool Chords = Take.Kind == RECORDING_CHORDS;
+	Take.Channel = Chords ? -1 : PickedRecordingChannel(m_cChannel);
 	Take.Expression = IsDlgButtonChecked(IDC_REC_EXPRESSION) == BST_CHECKED;
-	Take.AsClip = IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED;
+	Take.AsClip = !Chords && IsDlgButtonChecked(IDC_REC_ASCLIP) == BST_CHECKED;
 	Take.PlaySong = IsDlgButtonChecked(IDC_REC_PLAYSONG) == BST_CHECKED;
+	m_Taps.Clear();
 
-	// The take goes in at the cursor
-	CPatternEditor *pEditor = m_pView->GetPatternEditor();
-	Take.Frame = pEditor->GetFrame();
-	Take.Row = pEditor->GetRow();
-
-	// The click, at the song's tempo: a beat is a row highlight
-	const click_t Click = ClickMode();
-	m_iPreviewTicks = 0;
+	// The take goes in at the cursor, or over the selection from the beat it starts in
+	const int Length = static_cast<int>(m_pDocument->GetPatternLength(Track));
+	const int Total = static_cast<int>(m_pDocument->GetFrameCount(Track)) * Length;
 	const double Rows = RowsPerSecond(m_pDocument, Track);
 	const transcribe::Beat Beat = SongBeat(m_pDocument, Track);
+	const int SecondHighlight = m_pDocument->GetSecondHighlight();
+	const int BarRows = SecondHighlight > 0 ? SecondHighlight : Beat.rows * Beat.perBar;
+	int Start = CursorSongRow();
+	Take.Cursor = Start;
+	Take.Selected = !Chords && m_bHasSelection && IsDlgButtonChecked(IDC_REC_SELECTION) == BST_CHECKED;
+	Take.Seconds = 0.0;
+	if (Take.Selected) {
+		Take.Selection = m_Selection;
+		Take.Selection.Early = std::max(1, Beat.rows / 2);	// a note sung up to half a beat early still counts
+		Start = Take.Selection.First - (Take.Selection.First % Length % BarRows) % Beat.rows;
+		Take.Cursor = Take.Selection.First;
+		Take.Seconds = (Take.Selection.End - Start) / Rows + SELECTION_TAIL;
+	}
+	Take.Frame = Start / Length;
+	Take.Row = Start % Length;
+
+	// The click, at the song's tempo: a beat is a row highlight, its bars as the song's
+	const click_t Click = ClickMode();
+	m_iPreviewTicks = 0;
 	Take.Click = transcribe::ClickTrack();
 	Take.Click.sampleRate = SAMPLE_RATE;
 	Take.Click.beatSeconds = Beat.rows / Rows;
@@ -671,6 +965,27 @@ void CRecordDlg::StartTake()
 	Take.Click.clickAlong = (Click == CLICK_ALONG || Click == CLICK_BARS);
 	Take.Click.barsOnly = (Click == CLICK_BARS);
 	Take.Click.level = ClickLevel();
+	if (BarRows == Beat.rows * Beat.perBar) {
+		const int BeatInBar = (Start % Length % BarRows) / Beat.rows;
+		Take.Click.barPhase = ((BeatInBar - Take.Click.countIn) % Beat.perBar + Beat.perBar) % Beat.perBar;
+	}
+
+	// The song along, from a bar before (the count-in's length): at the start of a song that loops, its end
+	Take.PlayFrom = Start;
+	Take.PreRoll = 0.0;
+	if (Take.PlaySong && Length > 0) {
+		const int Wanted = (Take.Click.countIn > 0 ? Take.Click.countIn : Beat.perBar) * Beat.rows;
+		int From = Start - Wanted;
+		if (From < 0 && Total >= Wanted && LoopsToStart(m_pDocument, Track))
+			From += Total;
+		else if (From < 0)
+			From = 0;
+		Take.PlayFrom = From;
+		Take.PreRoll = (From <= Start ? Start - From : Start + Total - From) / Rows;
+		const double Buffer = theApp.GetSettings()->Sound.iBufferLength / 1000.0;
+		if (Take.PreRoll > 0.0)
+			Take.Click.leadSeconds = std::max(Take.Click.leadSeconds, Buffer + 0.1);	// time to start the song
+	}
 
 	Take.Samples.clear();
 	Take.Skews.clear();
@@ -705,7 +1020,7 @@ void CRecordDlg::StartSong()
 	if (Take.SongPlaying)
 		return;
 
-	// The channel being recorded stays quiet, so an earlier take on it doesn't play along
+	// The channel being recorded stays quiet, so an earlier take on it doesn't play along (chords mute nothing)
 	int Channel = Take.Channel;
 	if (!Take.AutoKind && Take.Kind == RECORDING_DRUMS) {
 		for (int i = 0; i < static_cast<int>(m_pDocument->GetAvailableChannels()); ++i) {
@@ -721,6 +1036,14 @@ void CRecordDlg::StartSong()
 	else
 		Take.MutedChannel = -1;
 
+	// From a bar before the take
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const int Length = static_cast<int>(m_pDocument->GetPatternLength(static_cast<unsigned int>(pMainFrm->GetSelectedTrack())));
+	CPatternEditor *pEditor = m_pView->GetPatternEditor();
+	if (Length > 0) {
+		pEditor->MoveToFrame(Take.PlayFrom / Length);
+		pEditor->MoveToRow(Take.PlayFrom % Length);
+	}
 	theApp.StartPlayer(MODE_PLAY_CURSOR);
 	Take.SongStart = m_pInput->Position();
 	if (Take.SongStart < 0)
@@ -739,9 +1062,13 @@ void CRecordDlg::StopSong()
 		m_pView->SetChannelMute(Take.MutedChannel, Take.WasMuted);
 
 	// Playing moved the cursor along with the song: back to where the take goes
+	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
+	const int Length = static_cast<int>(m_pDocument->GetPatternLength(static_cast<unsigned int>(pMainFrm->GetSelectedTrack())));
 	CPatternEditor *pEditor = m_pView->GetPatternEditor();
-	pEditor->MoveToFrame(Take.Frame);
-	pEditor->MoveToRow(Take.Row);
+	if (Length > 0) {
+		pEditor->MoveToFrame(Take.Cursor / Length);
+		pEditor->MoveToRow(Take.Cursor % Length);
+	}
 	pEditor->InvalidateCursor();
 	m_pDocument->UpdateAllViews(NULL, UPDATE_FRAME);
 }
@@ -765,12 +1092,13 @@ void CRecordDlg::UpdateCountIn()
 	const long long Now = Played();
 	const long long Downbeat = Take.Click.StartSample();
 
-	// The song starts so that its first row is heard with the downbeat:
+	// The song starts so that the take's first row is heard with the downbeat, the bar before it with the count-in:
 	// FamiTracker's sound buffer takes its length to play
 	if (Take.PlaySong && !Take.SongPlaying) {
 		const long long Buffer = static_cast<long long>(theApp.GetSettings()->Sound.iBufferLength) * SAMPLE_RATE / 1000;
 		const long long HalfTick = static_cast<long long>(SAMPLE_RATE) * TIMER_MS / 2000;
-		if (Now + Buffer + HalfTick >= Downbeat)
+		const long long PreRoll = static_cast<long long>(Take.PreRoll * SAMPLE_RATE + 0.5);
+		if (Now + Buffer + HalfTick >= Downbeat - PreRoll)
 			StartSong();
 	}
 
@@ -798,14 +1126,19 @@ void CRecordDlg::UpdateRecording()
 	if (m_pClick->IsOpen())
 		Take.Measure(m_pInput->Position(), m_pClick->Position());
 
-	const long long Samples = (Take.Click.countIn > 0) ? Played() - Take.Click.StartSample() : m_pInput->Received() - Take.Offset;
-	const int Seconds = static_cast<int>(std::max(0LL, Samples) / SAMPLE_RATE);
-	if (Seconds >= MAX_SECONDS) {
-		FinishTake();
+	const double Into = SecondsIntoTake();
+	const int Seconds = static_cast<int>(std::max(0.0, Into));
+	if (Seconds >= MAX_SECONDS || (Take.Seconds > 0.0 && Into >= Take.Seconds)) {
+		FinishTake();	// over a selection: when it's over
 		return;
 	}
 	CString Text;
-	Text.Format(_T("Recording %d:%02d. Press Stop when you're done."), Seconds / 60, Seconds % 60);
+	if (Take.Seconds > 0.0) {
+		const int Left = static_cast<int>(std::ceil(std::max(0.0, Take.Seconds - SELECTION_TAIL - Into)));
+		Text.Format(_T("Recording the selection: %d:%02d to go. It stops by itself."), Left / 60, Left % 60);
+	}
+	else
+		Text.Format(_T("Recording %d:%02d. Press Stop when you're done."), Seconds / 60, Seconds % 60);
 	SetStatus(Text);
 }
 
@@ -846,9 +1179,26 @@ void CRecordDlg::FinishTake()
 
 	CMainFrame *pMainFrm = static_cast<CMainFrame*>(m_pView->GetParentFrame());
 	CString Message;
+	if (Kind == RECORDING_CHORDS) {
+		// Strummed chords, bar by bar, for Add chords and bass line
+		const int Length = static_cast<int>(m_pDocument->GetPatternLength(static_cast<unsigned int>(pMainFrm->GetSelectedTrack())));
+		CString Names;
+		int FirstRow = 0;
+		if (!HearRecordedChords(m_pDocument, static_cast<unsigned int>(pMainFrm->GetSelectedTrack()), Audio, Timing,
+				Take.Frame * Length + Take.Row, Names, FirstRow, Message)) {
+			Message += _T(" Press Record to try again.");
+			SetStatus(Message);
+			return;
+		}
+		m_sChords = Names;
+		m_iChordsRow = FirstRow;
+		m_sResult = _T("Heard these chords: ") + Names;
+		EndDialog(IDC_REC_CHORDS);
+		return;
+	}
 	const CString ClipName = m_pDocument->GetClips()->NewName(_T("Take"), true);
 	if (!InsertTake(pMainFrm, Audio, Timing, Kind, Take.Channel, Take.Expression, Take.Frame, Take.Row, Message,
-			Take.AsClip ? static_cast<LPCTSTR>(ClipName) : NULL)) {
+			Take.AsClip ? static_cast<LPCTSTR>(ClipName) : NULL, Take.Selected ? &Take.Selection : NULL)) {
 		Message += _T(" Press Record to try again.");
 		SetStatus(Message);
 		return;

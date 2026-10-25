@@ -128,6 +128,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Record from your phone...",   ID_EDIT_RECORDPHONE
+        MENUITEM "Start from a groove...",      ID_EDIT_GROOVE
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
@@ -587,6 +588,7 @@ BEGIN
     ID_EDIT_INSERTRECORDING "Turn a WAV recording (whistle, hum or taps) into notes at the cursor\nInsert recording"
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_RECORDPHONE     "Record ideas on your phone over Wi-Fi: hum a tune and it arrives in the clips\nRecord from your phone"
+    ID_EDIT_GROOVE          "Pick a mood, a tempo and a key, and get drums, a bass line and chords to sing a melody over\nStart from a groove"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
@@ -2115,40 +2117,45 @@ BEGIN
     PUSHBUTTON      "Close",IDCANCEL,223,207,50,14
 END
 
-IDD_RECORD DIALOGEX 0, 0, 262, 292
+IDD_RECORD DIALOGEX 0, 0, 262, 327
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Record from microphone"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "What will you record?",IDC_STATIC,7,7,248,64
+    GROUPBOX        "What will you record?",IDC_STATIC,7,7,248,77
     CONTROL         "Let FamiTracker decide",IDC_REC_AUTO,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,15,19,200,10
     CONTROL         "Whistling",IDC_REC_WHISTLE,"Button",BS_AUTORADIOBUTTON,15,32,200,10
     CONTROL         "Humming or singing",IDC_REC_VOICE,"Button",BS_AUTORADIOBUTTON,15,45,200,10
     CONTROL         "Finger taps or beatboxing (drums)",IDC_REC_DRUMS,"Button",BS_AUTORADIOBUTTON,15,58,200,10
-    LTEXT           "Channel:",IDC_STATIC,7,81,50,8
-    COMBOBOX        IDC_REC_CHANNEL,62,79,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,96,248,10
-    LTEXT           "Microphone:",IDC_STATIC,7,116,50,8
-    COMBOBOX        IDC_REC_DEVICE,62,114,193,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Level:",IDC_STATIC,7,132,50,8
-    CONTROL         "",IDC_REC_LEVEL,"msctls_progress32",WS_BORDER,62,131,130,10
-    LTEXT           "",IDC_REC_LEVELTEXT,197,132,58,8
-    LTEXT           "Click:",IDC_STATIC,7,150,50,8
-    COMBOBOX        IDC_REC_CLICK,62,148,130,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "",IDC_REC_TEMPO,197,150,58,8
-    LTEXT           "Volume:",IDC_STATIC,7,167,50,8
-    CONTROL         "",IDC_REC_CLICKVOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,58,164,138,14
-    LTEXT           "",IDC_REC_CLICKVOLUMETEXT,197,167,58,8
-    LTEXT           "Delay:",IDC_STATIC,7,184,50,8
-    LTEXT           "",IDC_REC_DELAY,62,184,130,8
-    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,181,58,14
-    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,200,248,10
-    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,213,248,10
-    LTEXT           "",IDC_REC_STATUS,7,229,248,26
-    LTEXT           "Tip: use headphones, so the click and the song stay out of the take.",IDC_STATIC,7,257,248,8
-    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,271,76,14
-    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,271,50,14
-    PUSHBUTTON      "Close",IDCANCEL,205,271,50,14
+    CONTROL         "Chords strummed on a guitar or played on a piano",IDC_REC_CHORDS,"Button",BS_AUTORADIOBUTTON,15,71,232,10
+    LTEXT           "Channel:",IDC_STATIC,7,93,50,8
+    COMBOBOX        IDC_REC_CHANNEL,62,91,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_GROUP | WS_TABSTOP
+    CONTROL         "Keep how it was played: loudness, slides and vibrato",IDC_REC_EXPRESSION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,107,248,10
+    CONTROL         "Replace only the selected rows",IDC_REC_SELECTION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,120,248,10
+    LTEXT           "Microphone:",IDC_STATIC,7,137,50,8
+    COMBOBOX        IDC_REC_DEVICE,62,135,193,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Level:",IDC_STATIC,7,153,50,8
+    CONTROL         "",IDC_REC_LEVEL,"msctls_progress32",WS_BORDER,62,152,130,10
+    LTEXT           "",IDC_REC_LEVELTEXT,197,153,58,8
+    LTEXT           "Tempo:",IDC_STATIC,7,170,50,8
+    LTEXT           "",IDC_REC_TEMPO,62,170,50,8
+    PUSHBUTTON      "Tap",IDC_TAP_TEMPO,114,167,40,14
+    PUSHBUTTON      "Start from a groove...",IDC_REC_GROOVE,170,167,85,14
+    LTEXT           "Click:",IDC_STATIC,7,188,50,8
+    COMBOBOX        IDC_REC_CLICK,62,186,130,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Volume:",IDC_STATIC,7,205,50,8
+    CONTROL         "",IDC_REC_CLICKVOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,58,202,138,14
+    LTEXT           "",IDC_REC_CLICKVOLUMETEXT,197,205,58,8
+    LTEXT           "Delay:",IDC_STATIC,7,222,50,8
+    LTEXT           "",IDC_REC_DELAY,62,222,130,8
+    PUSHBUTTON      "Test timing",IDC_REC_TEST,197,219,58,14
+    CONTROL         "Play the song along (the channel you record on stays quiet)",IDC_REC_PLAYSONG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,238,248,10
+    CONTROL         "Save the take as a clip instead of putting it in the song",IDC_REC_ASCLIP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,251,248,10
+    LTEXT           "",IDC_REC_STATUS,7,266,248,26
+    LTEXT           "Tip: use headphones, so the click and the song stay out of the take. Tap the tempo with T.",IDC_STATIC,7,293,248,16
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,309,76,14
+    DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,309,50,14
+    PUSHBUTTON      "Close",IDCANCEL,205,309,50,14
 END
 
 IDD_PHONE DIALOGEX 0, 0, 262, 298
@@ -2168,26 +2175,53 @@ BEGIN
     DEFPUSHBUTTON   "Close",IDCANCEL,205,277,50,14
 END
 
-IDD_BACKING DIALOGEX 0, 0, 262, 180
+IDD_BACKING DIALOGEX 0, 0, 262, 238
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Add chords and a bass line"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Melody:",IDC_STATIC,7,9,60,8
-    COMBOBOX        IDC_BACK_MELODY,72,7,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Key:",IDC_STATIC,7,27,60,8
-    COMBOBOX        IDC_BACK_KEY,72,25,130,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Chords:",IDC_STATIC,7,45,60,8
-    COMBOBOX        IDC_BACK_CHORDS,72,43,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "as arpeggios",IDC_STATIC,207,45,48,8
-    LTEXT           "Bass line:",IDC_STATIC,7,63,60,8
-    COMBOBOX        IDC_BACK_BASS,72,61,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Chord changes:",IDC_STATIC,7,81,60,8
-    COMBOBOX        IDC_BACK_CHANGES,72,79,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "",IDC_BACK_PREVIEW,7,99,248,42
-    LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,143,248,16
-    DEFPUSHBUTTON   "Add",IDOK,150,160,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,205,160,50,14
+    LTEXT           "Chords:",IDC_STATIC,7,9,60,8
+    EDITTEXT        IDC_BACK_CHORDTEXT,72,7,183,14,ES_AUTOHSCROLL
+    LTEXT           "Leave this empty and they're found from the melody. Or type them, a chord a bar: C G Am F (or with bar lines: C | G | Am F). Or strum them:",IDC_STATIC,72,24,183,24
+    PUSHBUTTON      "Strum them...",IDC_BACK_STRUM,72,50,64,14
+    PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,140,50,76,14
+    LTEXT           "Melody:",IDC_STATIC,7,73,60,8
+    COMBOBOX        IDC_BACK_MELODY,72,71,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Key:",IDC_STATIC,7,91,60,8
+    COMBOBOX        IDC_BACK_KEY,72,89,130,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chords go on:",IDC_STATIC,7,109,60,8
+    COMBOBOX        IDC_BACK_CHORDS,72,107,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "as arpeggios",IDC_STATIC,207,109,48,8
+    LTEXT           "Bass line:",IDC_STATIC,7,127,60,8
+    COMBOBOX        IDC_BACK_BASS,72,125,130,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Chord changes:",IDC_STATIC,7,145,60,8
+    COMBOBOX        IDC_BACK_CHANGES,72,143,130,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_BACK_PREVIEW,7,161,248,40
+    LTEXT           "Bars and beats follow the row highlight. What the chord and bass channels play there is replaced; Ctrl+Z undoes it.",IDC_STATIC,7,202,248,16
+    DEFPUSHBUTTON   "Add",IDOK,150,218,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,205,218,50,14
+END
+
+IDD_GROOVE DIALOGEX 0, 0, 262, 186
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Start from a groove"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Pick a mood, a tempo and a key: FamiTracker writes drums, a bass line and chords for you to sing a melody over.",IDC_STATIC,7,7,248,16
+    LTEXT           "Mood:",IDC_STATIC,7,31,50,8
+    COMBOBOX        IDC_GROOVE_MOOD,62,29,193,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Tempo:",IDC_STATIC,7,49,50,8
+    EDITTEXT        IDC_GROOVE_BPM,62,47,30,14,ES_NUMBER | ES_AUTOHSCROLL
+    LTEXT           "BPM",IDC_STATIC,96,49,20,8
+    PUSHBUTTON      "Tap",IDC_TAP_TEMPO,120,47,40,14
+    LTEXT           "Tap along with the beat (or press T)",IDC_STATIC,165,46,90,16
+    LTEXT           "Key:",IDC_STATIC,7,67,50,8
+    COMBOBOX        IDC_GROOVE_KEY,62,65,130,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "How long:",IDC_STATIC,7,85,50,8
+    COMBOBOX        IDC_GROOVE_BARS,62,83,130,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_BACK_PREVIEW,7,102,248,62
+    DEFPUSHBUTTON   "Make the groove",IDOK,133,166,67,14
+    PUSHBUTTON      "Cancel",IDCANCEL,205,166,50,14
 END
 
 IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230

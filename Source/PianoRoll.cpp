@@ -2662,6 +2662,27 @@ struct CPianoRollWnd::Impl {
 
 	// Clips
 
+	// The bars the selected notes start in (CPianoRollWnd::SelectedBars)
+	bool SelectedBars(int &Which, int &First, int &End) const
+	{
+		if (Selection.empty() || Channel < 0 || Channel >= static_cast<int>(Notes.size()) || Length == 0)
+			return false;
+		const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
+		int From = -1, Last = -1;
+		for (size_t i = 0; i < List.size(); ++i)
+			if (std::find(Selection.begin(), Selection.end(), List[i].Start) != Selection.end()) {
+				From = From < 0 ? List[i].Start : std::min(From, List[i].Start);
+				Last = std::max(Last, List[i].Start);
+			}
+		if (From < 0)
+			return false;
+		const int Rows = static_cast<int>(Length), BarRows = Bar > 0 ? std::min(Bar, Rows) : Rows;
+		First = From / Rows * Rows + From % Rows / BarRows * BarRows;
+		End = Last / Rows * Rows + std::min(Rows, (Last % Rows / BarRows + 1) * BarRows);
+		Which = Channel;
+		return true;
+	}
+
 	void SaveSelectionAsClip()
 	{
 		CFamiTrackerDoc *pDoc = Doc();
@@ -3806,6 +3827,11 @@ bool CPianoRollWnd::HideClipDrop()
 bool CPianoRollWnd::HasSelection() const
 {
 	return GetSafeHwnd() != NULL && m_pImpl->Shown && !m_pImpl->Selection.empty();
+}
+
+bool CPianoRollWnd::SelectedBars(int &Channel, int &First, int &End) const
+{
+	return HasSelection() && m_pImpl->SelectedBars(Channel, First, End);
 }
 
 void CPianoRollWnd::SaveSelectionAsClip()
