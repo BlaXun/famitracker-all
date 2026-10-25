@@ -33,7 +33,13 @@
 // time), which comes out of the song again, sequences and all, unless it's
 // kept. Removing an instrument makes the channels let go of an FDS
 // instrument's sequences first (CFamiTrackerDoc::RemoveInstrument), so a
-// channel never runs a removed trial's.
+// channel never runs a removed trial's. The studied sounds of the games
+// FamiTracker carries (Api/GameSounds.h) come with the reference library's,
+// game by game. The ready-made sounds of the chips the song doesn't have
+// (SoundEntry::AddsChip) are listed after the song's own, folded, and can't be
+// heard until their chip is in: Add to the song asks first
+// (SoundEntry::Question), then the chip comes in as Module > Module properties
+// puts it in (which can't be undone there either) and the sound with it.
 
 #include "stdafx.h"
 #include <algorithm>
@@ -118,6 +124,14 @@ CString Thousands(int Count)
 	for (int At = Text.GetLength() - 3; At > 0; At -= 3)
 		Text.Insert(At, _T(','));
 	return Text;
+}
+
+// A sound for a chip the song doesn't have yet: why it doesn't play here, and how it comes in
+CString ChipFirstText(const ftapi::SoundEntry &Sound)
+{
+	return FromUtf8("\"" + Sound.Name + "\" is for the " + (Sound.AddsChip == "VRC6 Plus" ? std::string("VRC6 Plus's soft layer") :
+		Sound.AddsChip) + ", which the song doesn't have yet, so it can't play here. Add to the song asks first, then adds the chip "
+		"and the sound, and it plays then.");
 }
 
 COLORREF Blend(COLORREF A, COLORREF B, int PercentA)
@@ -224,6 +238,7 @@ private:
 	void ListenTo(int Sound);
 	int SoundInstrument(int Sound, CString &Error);
 	void DropTrial();
+	void AddWithChip();
 	void PlayKey(int Note, bool Down);
 	void UpdateMarks();
 	void MakeMarks();
@@ -402,7 +417,7 @@ void CSoundBrowserDlg::FillFilters()
 	m_cFrom.ResetContent();
 	m_cFrom.AddString(_T("Everywhere"));
 	m_cFrom.AddString(_T("Ready-made sounds"));		// in sound_source's order
-	m_cFrom.AddString(_T("Reference library"));
+	m_cFrom.AddString(_T("Games and references"));	// the games' FamiTracker carries and the reference library's
 	m_cFrom.AddString(_T("This song"));
 	m_cFrom.SetCurSel(0);
 
@@ -416,8 +431,13 @@ void CSoundBrowserDlg::FillFilters()
 			}
 	m_cChannel.ResetContent();
 	m_cChannel.AddString(_T("All channels"));
-	for (size_t t = 0; t < m_Targets.size(); ++t)
-		m_cChannel.AddString(FromUtf8(ftapi::TargetName(m_Targets[t])));
+	for (size_t t = 0; t < m_Targets.size(); ++t) {
+		// A chip the song doesn't have yet: its sounds are there to discover
+		bool Missing = true;
+		for (size_t i = 0; i < m_All.size() && Missing; ++i)
+			Missing = m_All[i].Target != m_Targets[t] || !m_All[i].AddsChip.empty();
+		m_cChannel.AddString(FromUtf8(ftapi::TargetName(m_Targets[t])) + (Missing ? _T(" (not in the song yet)") : _T("")));
+	}
 	m_cChannel.SetCurSel(0);
 
 	std::vector<int> None(ftapi::SoundKinds().size(), 0);
@@ -620,6 +640,9 @@ void CSoundBrowserDlg::ShowSelected()
 			"; it plays on " + pSound->ChannelName + ".";
 		if (!pSound->Warning.empty())
 			About += " " + pSound->Warning;
+		if (!pSound->AddsChip.empty())
+			About += " It's for the " + pSound->AddsChip + ", which the song doesn't have yet: Add to the song asks first, then adds the "
+				"chip and the sound.";
 		if (pSound->Target == ftapi::TARGET_FDS)
 			About += " The FDS sounds two octaves under the note written: play it two octaves above where a pulse would.";
 		else if (pSound->Target == ftapi::TARGET_S5B)
@@ -633,6 +656,12 @@ void CSoundBrowserDlg::ShowSelected()
 		const CString Count = Thousands(R.Count) + (R.Count == 1 ? _T(" sound") : _T(" sounds"));
 		if (R.Type == ftapi::ROW_KIND)
 			Text = HeadingLabel(R) + _T(": ") + Count + _T(".");
+		else if (!G.Chip.empty())
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(" for a chip the song doesn't have yet. Add to the song asks first, then ")
+				_T("adds the chip (its channels come after the song's own, and every note stays) and the sound.");
+		else if (G.Source == ftapi::SOURCE_REFERENCE && G.Builtin)
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(" from the game's soundtrack, which FamiTracker comes with: each one the ")
+				_T("way a part of a track sounded.");
 		else if (G.Source == ftapi::SOURCE_PRESET)
 			Text = HeadingLabel(R) + _T(": ") + Count + _T(" made for the song's chips, good ones to start from.");
 		else if (G.Source == ftapi::SOURCE_SONG)
@@ -697,7 +726,13 @@ void CSoundBrowserDlg::DropTrial()
 // A sound's phrase, from the start: what played before stops
 void CSoundBrowserDlg::ListenTo(int Sound)
 {
-	if (Sound < 0 || static_cast<size_t>(Sound) >= m_All.size() || m_All[static_cast<size_t>(Sound)].Channel < 0)
+	if (Sound < 0 || static_cast<size_t>(Sound) >= m_All.size())
+		return;
+	if (!m_All[static_cast<size_t>(Sound)].AddsChip.empty()) {
+		SetStatus(ChipFirstText(m_All[static_cast<size_t>(Sound)]));
+		return;
+	}
+	if (m_All[static_cast<size_t>(Sound)].Channel < 0)
 		return;
 	CString Error;
 	const int Instrument = SoundInstrument(Sound, Error);
@@ -725,6 +760,8 @@ void CSoundBrowserDlg::PlayKey(int Note, bool Down)
 		return;
 	}
 	const ftapi::SoundEntry *pSound = Selected();
+	if (pSound != NULL && !pSound->AddsChip.empty())
+		SetStatus(ChipFirstText(*pSound));
 	if (pSound == NULL || pSound->Channel < 0)
 		return;
 	CString Error;
@@ -1027,6 +1064,10 @@ void CSoundBrowserDlg::OnAdd()
 	const ftapi::SoundEntry *pSound = Selected();
 	if (pSound == NULL)
 		return;
+	if (!pSound->AddsChip.empty()) {
+		AddWithChip();
+		return;
+	}
 	CString Error;
 	const bool Had = pSound->Make == ftapi::MAKE_NONE || (pSound->InSong >= 0 && pSound->InSong != m_iTrial &&
 		Doc()->IsInstrumentUsed(static_cast<unsigned int>(pSound->InSong)));
@@ -1063,7 +1104,8 @@ void CSoundBrowserDlg::OnAdd()
 		CString Origin;
 		Origin.Format(_T("this song's instrument %02X"), Instrument);
 		Own.Origin = ToUtf8(Origin);
-		Own.Words = "added from the " + ftapi::SourceName(E.Source) + (E.Words.empty() ? std::string() : ": " + E.Words);
+		Own.Words = (E.Builtin ? "added from " + E.Game + "'s sounds" : "added from the " + ftapi::SourceName(E.Source)) +
+			(E.Words.empty() ? std::string() : ": " + E.Words);
 		Own.About = Own.Words;
 		Own.Reference.reset();
 		ftapi::IndexWords(Own);
@@ -1072,6 +1114,57 @@ void CSoundBrowserDlg::OnAdd()
 	}
 	m_pMainFrame->SelectInstrument(Instrument);
 	m_cList.Invalidate();
+	SetStatus(Text);
+}
+
+// A sound for a chip the song doesn't have: asked first (what the chip brings, that every note stays, what NSF export
+// can't play), then the chip comes in as Module > Module properties puts it in (after the song's own channels; it
+// can't be undone, as there) and the sound with it. The song's channels are others then, so every sound comes again.
+void CSoundBrowserDlg::AddWithChip()
+{
+	const ftapi::SoundEntry E = m_All[static_cast<size_t>(m_iSelected)];
+	const std::string Asked = E.Question.empty() ? "Add the " + E.AddsChip + " to the song?" : E.Question;
+	if (AfxMessageBox(FromUtf8(Asked), MB_YESNO | MB_ICONQUESTION) != IDYES)
+		return;
+	Preview()->Stop();
+	DropTrial();
+	CFamiTrackerDoc *pDoc = Doc();
+	const unsigned char ChipsBefore = pDoc->GetExpansionChip();
+	const bool PlusBefore = pDoc->IsVrc6Plus();
+	CMcpConnection *pTools = m_pMainFrame->GetMcpConnection();
+	std::string Why;
+	int Instrument = -1;
+	{
+		CWaitCursor Wait;
+		Instrument = pTools != NULL ? pTools->MakeSound(E, Why) : -1;
+	}
+	if (Instrument >= 0 || pDoc->GetExpansionChip() != ChipsBefore || pDoc->IsVrc6Plus() != PlusBefore)
+		++m_iKept;		// the song changed: closing the browser leaves it changed
+	// Every sound again, the filters kept where they still are
+	const int From = m_cFrom.GetCurSel(), Kind = m_cKinds.GetCurSel();
+	m_iSelected = -1;
+	m_SelectedKey.clear();
+	m_iPlaying = -1;
+	m_iMarked = -1;
+	if (LoadSounds()) {
+		FillFilters();
+		m_cFrom.SetCurSel(From >= 0 && From < m_cFrom.GetCount() ? From : 0);
+		m_cKinds.SetCurSel(Kind >= 0 && Kind < m_cKinds.GetCount() ? Kind : 0);
+		for (size_t i = 0; i < m_All.size() && Instrument >= 0; ++i)
+			if (m_All[i].Source == ftapi::SOURCE_SONG && m_All[i].Number == Instrument && m_All[i].Home)
+				m_iSelected = static_cast<int>(i);
+		Refilter();
+	}
+	if (Instrument < 0 || Instrument >= MAX_INSTRUMENTS) {
+		SetStatus(Why.empty() ? CString(_T("The sound couldn't be added.")) : FromUtf8(Why));
+		return;
+	}
+	m_pMainFrame->SelectInstrument(Instrument);
+	const CString Chip = FromUtf8(E.AddsChip), Name = FromUtf8(E.Name);
+	CString Text;
+	Text.Format(_T("Added the %s to the song (its channels come after the song's own) and \"%s\" as instrument %02X, picked: ")
+		_T("click it to hear it, and type notes with it on the new channels."), static_cast<LPCTSTR>(Chip), static_cast<LPCTSTR>(Name),
+		Instrument);
 	SetStatus(Text);
 }
 

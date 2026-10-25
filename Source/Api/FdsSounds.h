@@ -63,6 +63,7 @@ struct FdsSound {
 	int ModDelay;				// frames before the modulator starts, 0-255
 	std::vector<PresetSequence> Sequences;	// volume (0-31), arpeggio and pitch
 	bool Low;					// a bass, heard low
+	std::string Kind;			// a SoundKinds() id (SoundIndex.h) where the sound says so (the library's); empty: from its words
 
 	FdsSound() : ModSpeed(0), ModDepth(0), ModDelay(0), Low(false) {}
 	bool Releases() const;			// fades out on a release (===)
@@ -70,6 +71,9 @@ struct FdsSound {
 };
 
 const std::vector<FdsSound> &FdsSounds();
+// FamiTracker's own sound library for the FDS (SoundLibrary.h): more sounds of distinct characters, each with its kind,
+// which FindFdsSound finds by their names after the sounds above and their words
+const std::vector<FdsSound> &LibraryFdsSounds();
 const FdsSound *FindFdsSound(const std::string &Name);	// by name or one of its words
 std::string FdsSoundList();							// "soft flute, whistle, ..."
 

@@ -20,9 +20,12 @@
 */
 
 #include "SoundIndex.h"
+#include "DpcmKit.h"
 #include "FdsSounds.h"
+#include "GameSounds.h"
 #include "Music.h"
 #include "PulseClicks.h"
+#include "SoundLibrary.h"
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 
@@ -142,6 +145,22 @@ const std::vector<int> &ClickPitchesOf(const InstrumentInfo &Info)
 	return it->second;
 }
 
+// The frames a note of a sound is heard for (SoundHeardFrames), worked out once for each envelope
+int HeardFramesOf(const InstrumentInfo &Info)
+{
+	static std::map<std::string, int> Known;
+	std::string Key = Info.Chip + ":" + std::to_string(Info.VolumeLoop) + "," + std::to_string(Info.VolumeRelease) + ":";
+	for (size_t i = 0; i < Info.Volume.size(); ++i)
+		Key += std::to_string(Info.Volume[i]) + " ";
+	std::map<std::string, int>::iterator it = Known.find(Key);
+	if (it == Known.end()) {
+		if (Known.size() > 4096)
+			Known.clear();
+		it = Known.insert(std::make_pair(Key, SoundHeardFrames(Info, HEARD_LIMIT))).first;
+	}
+	return it->second;
+}
+
 std::string PitchList(const std::vector<int> &Pitches)
 {
 	std::string Out;
@@ -181,6 +200,33 @@ int DrumPitch(int Kind)
 	return PITCHES[Kind];
 }
 
+// Where a kind of channel's sounds would play on a chip the song doesn't have: its first channel's name
+std::string WouldPlayOn(int Target)
+{
+	switch (Target) {
+	case TARGET_VRC6_PULSE: return "VRC6 Pulse 1";
+	case TARGET_SAWTOOTH: return "VRC6 Sawtooth";
+	case TARGET_MMC5: return "MMC5 Pulse 1";
+	case TARGET_N163: return "N163 Namco 1";
+	case TARGET_SOFT: return "VRC6 Plus Soft 1";
+	case TARGET_FDS: return "FDS";
+	case TARGET_VRC7: return "VRC7 FM Channel 1";
+	case TARGET_S5B: return "5B Square 1";
+	default: return std::string();
+	}
+}
+
+// A studied sound to list (a built-in game's or the library's): how it's named, made and found
+struct Studied {
+	std::shared_ptr<const ReferenceSound> pSound;
+	std::string Short;		// the instrument's name
+	std::string Key;		// the study's id, for reference_sound
+	int Number;				// its sound there, from 1
+	std::string Game, Origin, About, Extra;
+	bool Builtin;
+	Studied() : Number(0), Builtin(false) {}
+};
+
 class Lister {
 public:
 	Lister(const SongInfo &Song, int Cursor) :
@@ -208,230 +254,131 @@ public:
 		}
 	}
 
+	// The ready-made sounds of the song's chips
 	void ReadyMade()
 	{
-		const std::vector<Preset> &All = Presets();
-		const int Home = PresetHome();
 		static const int MELODIC[] = { TARGET_PULSE, TARGET_TRIANGLE, TARGET_MMC5, TARGET_VRC6_PULSE, TARGET_SAWTOOTH };
-		for (size_t t = 0; t < sizeof(MELODIC) / sizeof(MELODIC[0]); ++t) {
-			const int Target = MELODIC[t];
-			if (!Has(Target))
+		for (size_t t = 0; t < sizeof(MELODIC) / sizeof(MELODIC[0]); ++t)
+			if (Has(MELODIC[t]))
+				Melodic(MELODIC[t], false);
+		if (Has(TARGET_NOISE))
+			Drums();
+		if (Has(TARGET_DPCM))
+			Kits();
+		if (Has(TARGET_S5B))
+			Sounds5B(true);
+		if (Has(TARGET_VRC7))
+			Vrc7();
+		for (const int Target : { static_cast<int>(TARGET_N163), static_cast<int>(TARGET_SOFT) })
+			if (Has(Target))
+				Waves(Target, false);
+		if (Has(TARGET_FDS))
+			Fds();
+	}
+
+	// The ready-made sounds of the chips the song doesn't have, each at home where it would play there
+	void OtherChips()
+	{
+		const std::vector<std::string> &Chips = OtherChipNames();
+		for (size_t c = 0; c < Chips.size(); ++c) {
+			const std::string &Chip = Chips[c];
+			if (ChipsWith(m_Song, Chip).empty())
 				continue;
-			const bool VRC6 = Target == TARGET_VRC6_PULSE || Target == TARGET_SAWTOOTH, Saw = Target == TARGET_SAWTOOTH;
-			for (size_t i = 0; i < All.size(); ++i) {
-				if (All[i].Drum)
-					continue;
-				SoundEntry E = Base(All[i].InstrumentName(Saw), All[i].Description, Target, Target == Home);
-				E.Kind = KindOfPreset(All[i].Name, All[i].Description);
-				E.Make = MAKE_PRESET;
-				E.Chip = VRC6 ? "VRC6" : "2A03";
-				E.Sawtooth = Saw;
-				E.Key = All[i].Name;
-				E.Origin = "ready-made";
-				std::vector<PresetSequence> Sequences = VRC6 ? All[i].SequencesVRC6 : All[i].Sequences2A03;
-				if (Saw)	// as InstrumentLibrary.cpp makes it: the duty's low bit would add to the sawtooth's volume
-					Sequences.erase(std::remove_if(Sequences.begin(), Sequences.end(),
-						[](const PresetSequence &S) { return S.Type == SEQUENCE_DUTY; }), Sequences.end());
-				const InstrumentInfo Info = SequencesInfo(Sequences, E.Chip);
-				Finish(E, &Info);
+			m_Adding = Chip;
+			if (Chip == "VRC6") {
+				Library(TARGET_VRC6_PULSE, HOME_VRC6_PULSE);
+				Library(TARGET_SAWTOOTH, HOME_SAWTOOTH);
 			}
+			else if (Chip == VRC6_PLUS)
+				Waves(TARGET_SOFT, true);
+			else if (Chip == "MMC5")
+				Melodic(TARGET_MMC5, true);
+			else if (Chip == "N163")
+				Waves(TARGET_N163, false);
+			else if (Chip == "FDS")
+				Fds();
+			else if (Chip == "VRC7")
+				Vrc7();
+			else if (Chip == "5B")
+				Sounds5B(false);
+			m_Adding.clear();
 		}
-		if (Has(TARGET_NOISE)) {
-			for (size_t i = 0; i < All.size(); ++i) {
-				if (!All[i].Drum)
-					continue;
-				SoundEntry E = Base(All[i].InstrumentName(false), All[i].Description, TARGET_NOISE, true);
-				E.Kind = "drums";
-				E.Drum = true;
-				E.Make = MAKE_PRESET;
-				E.Chip = "2A03";
-				E.Key = All[i].Name;
-				E.Origin = "ready-made";
-				Finish(E, 0);
-			}
-		}
-		if (Has(TARGET_S5B)) {
-			const std::vector<Preset> &Own = Sunsoft5BSounds();
-			for (size_t i = 0; i < Own.size(); ++i) {
-				SoundEntry E = Base(Own[i].InstrumentName(false), Own[i].Description, TARGET_S5B, true);
-				E.Kind = Own[i].Drum ? "drums" : KindOfPreset(Own[i].Name, Own[i].Description);
-				E.Drum = E.Kind == "drums";
-				E.Make = MAKE_5B;
-				E.Chip = "5B";
-				E.Key = Own[i].Name;
-				E.Origin = "ready-made for the 5B";
-				const InstrumentInfo Info = SequencesInfo(Own[i].Sequences5B, "5B");
-				Finish(E, &Info);
-			}
-			for (size_t i = 0; i < All.size(); ++i) {
-				if (All[i].Drum || FindSoundFor5B(All[i].Name) != &All[i])
-					continue;	// the presets' drums are the noise channel's; and a 5B sound of the same name comes first
-				SoundEntry E = Base(All[i].InstrumentName(false), All[i].Description, TARGET_S5B, Home == TARGET_S5B);
-				E.Kind = KindOfPreset(All[i].Name, All[i].Description);
-				E.Make = MAKE_PRESET;
-				E.Chip = "5B";
-				E.Key = All[i].Name;
-				E.Origin = "ready-made";
-				const InstrumentInfo Info = SequencesInfo(Preset5BSequences(All[i]), "5B");
-				Finish(E, &Info);
-			}
-		}
-		if (Has(TARGET_VRC7)) {
-			const std::vector<Vrc7Patch> &Patches = Vrc7Patches();
-			for (size_t i = 0; i < Patches.size(); ++i) {
-				SoundEntry E = Base(Patches[i].InstrumentName(), Patches[i].Description, TARGET_VRC7, true);
-				E.Kind = KindOfWords(Patches[i].Name);
-				if (E.Kind.empty())
-					E.Kind = KindOfWords(Patches[i].Description);
-				if (E.Kind.empty())
-					E.Kind = "lead";
-				E.Make = MAKE_VRC7;
-				E.Chip = "VRC7";
-				E.Number = Patches[i].Number;
-				E.Key = Patches[i].Name;
-				E.Origin = "the VRC7's patch " + std::to_string(Patches[i].Number);
-				Finish(E, 0);
-			}
-			const std::vector<Vrc7Custom> &Customs = Vrc7Customs();
-			for (size_t i = 0; i < Customs.size(); ++i) {
-				SoundEntry E = Base(Customs[i].InstrumentName(), Customs[i].Description, TARGET_VRC7, true);
-				E.Kind = KindOfWords(Customs[i].Name);
-				if (E.Kind.empty())
-					E.Kind = KindOfWords(Customs[i].Description);
-				if (E.Kind.empty())
-					E.Kind = "other";
-				E.Make = MAKE_VRC7_CUSTOM;
-				E.Chip = "VRC7";
-				E.Key = Customs[i].Name;
-				E.Origin = "a VRC7 custom patch (the chip holds one at a time)";
-				Finish(E, 0);
-			}
-		}
-		for (const int Target : { static_cast<int>(TARGET_N163), static_cast<int>(TARGET_SOFT) }) {
-			if (!Has(Target))
+	}
+
+	// The studied sounds FamiTracker carries (GameSounds.h), by game, named and found as the library's are
+	void Games()
+	{
+		const std::vector<GameSound> &All = BuiltinGameSounds();
+		const std::vector<GameSoundGame> &Names = GameSoundGames();
+		for (size_t g = 0; g < All.size(); ++g) {
+			const GameSound &G = All[g];
+			if (G.Uses.empty())
 				continue;
-			// The VRC6 Plus's soft layer: its starter sounds first, then its calm shapes, then the N163's others
-			const std::vector<WaveSound> &All = WaveSounds();
-			std::vector<const WaveSound *> Waves;
-			for (int Group = 0; Group < (Target == TARGET_SOFT ? 3 : 1); ++Group)
-				for (size_t i = 0; i < All.size(); ++i)
-					if (Target != TARGET_SOFT || Group == (IsSoftLayerSound(All[i].Name) ? 0 : IsSoftLayerCalmSound(All[i].Name) ? 1 : 2))
-						Waves.push_back(&All[i]);
-			for (size_t w = 0; w < Waves.size(); ++w) {
-				const WaveSound &Wave = *Waves[w];
-				SoundEntry E = Base(Wave.InstrumentName(), Wave.Description, Target, true);
-				E.Kind = KindOf(Wave.Name, Wave.Words, Wave.Description);
-				E.Make = MAKE_N163;
-				E.Chip = "N163";
-				E.Key = Wave.Name;
-				E.Origin = Target == TARGET_SOFT && IsSoftLayerSound(Wave.Name) ? "a starter sound of the VRC6 Plus's soft layer" :
-					Target == TARGET_SOFT && IsSoftLayerCalmSound(Wave.Name) ? "a calm sound made for the VRC6 Plus's soft layer" :
-					"ready-made for the N163";
-				E.Extra = Wave.Words;
-				const InstrumentInfo Info = SequencesInfo(Wave.Sequences, "N163");
-				Finish(E, &Info);
+			const GameSoundUse &First = G.Uses[0];
+			Studied S;
+			S.pSound = G.Sound;
+			S.Short = G.Name;
+			S.Key = First.Id;
+			S.Number = First.Number;
+			S.Game = Names[G.Game].Name;
+			S.Builtin = true;
+			const std::string Track = "track " + std::to_string(First.Track);
+			const bool Named = !First.Title.empty() && Lowercase(First.Title) != Track;
+			S.About = (Named ? First.Title + " (" + Track + ")" : Track) + (First.Role.empty() ? std::string() : ", " + First.Role);
+			S.Origin = (Named ? First.Title + " (" + S.Game + ", " + Track + ")" : S.Game + ", " + Track) + ", sound " +
+				std::to_string(First.Number) + ": " + First.Channel + ", " + First.Role;
+			std::string Also;
+			for (size_t u = 1; u < G.Uses.size(); ++u) {
+				if (G.Uses[u].Track == G.Uses[u - 1].Track)
+					continue;
+				Also += (Also.empty() ? "" : ", ") + std::to_string(G.Uses[u].Track);
+				S.Extra += " " + G.Uses[u].Title;
 			}
-		}
-		if (Has(TARGET_FDS)) {
-			const std::vector<FdsSound> &Sounds = FdsSounds();
-			for (size_t i = 0; i < Sounds.size(); ++i) {
-				SoundEntry E = Base(Sounds[i].InstrumentName(), Sounds[i].Description, TARGET_FDS, true);
-				E.Kind = Sounds[i].Low ? "bass" : KindOf(Sounds[i].Name, Sounds[i].Words, Sounds[i].Description);
-				E.Low = Sounds[i].Low;
-				E.Make = MAKE_FDS;
-				E.Chip = "FDS";
-				E.Key = Sounds[i].Name;
-				E.Origin = "ready-made for the FDS";
-				E.Extra = Sounds[i].Words;
-				const InstrumentInfo Info = SequencesInfo(Sounds[i].Sequences, "FDS");
-				Finish(E, &Info);
+			if (!Also.empty()) {
+				const size_t Comma = Also.rfind(", ");
+				const std::string List = Comma == std::string::npos ? Also : Also.substr(0, Comma) + " and " + Also.substr(Comma + 2);
+				S.About += "; also " + std::string(Comma == std::string::npos ? "track " : "tracks ") + List;
+				S.Origin += "; the same sound plays in " + std::string(Comma == std::string::npos ? "track " : "tracks ") + List;
 			}
+			S.Extra = G.Uses[0].Id + S.Extra;
+			AddStudied(S);
 		}
 	}
 
 	void References(const std::vector<Reference> &Library)
 	{
-		static const int TARGETS[] = { TARGET_PULSE, TARGET_TRIANGLE, TARGET_NOISE, TARGET_MMC5, TARGET_VRC6_PULSE,
-			TARGET_SAWTOOTH, TARGET_FDS, TARGET_S5B, TARGET_N163, TARGET_SOFT };
 		for (size_t r = 0; r < Library.size(); ++r) {
 			const Reference &R = Library[r];
 			// Its sounds' names, numbered where two have the same ("Green Planet lead 2"), so each can be added
 			std::vector<std::string> Names;
 			for (size_t s = 0; s < R.Sounds.size(); ++s)
 				Names.push_back(ReferenceSoundName(R, R.Sounds[s]));
+			const bool Public = GameOfReference(R) >= 0;
 			for (size_t s = 0; s < R.Sounds.size(); ++s) {
-				const std::shared_ptr<const ReferenceSound> pSound = std::make_shared<ReferenceSound>(R.Sounds[s]);
-				const ReferenceSound &Sound = *pSound;
-				const int Home = ReferenceHome(Sound);
+				if (Public && m_Games && SameGameSound(R, R.Sounds[s]) != 0)
+					continue;	// one of the built-in games' sounds: listed once, as theirs
+				Studied S;
+				S.pSound = std::make_shared<ReferenceSound>(R.Sounds[s]);
+				const ReferenceSound &Sound = *S.pSound;
 				const int Same = static_cast<int>(std::count(Names.begin(), Names.begin() + static_cast<std::ptrdiff_t>(s), Names[s]));
-				const std::string Short = Same == 0 ? Names[s] : Names[s] + " " + std::to_string(Same + 1);
-				// As reference_sound makes it: a preset for the 2A03, the VRC6 and the 5B, an FDS sound for the FDS, a wave
-				// sound for the N163 (the VRC6 Plus's soft layer)
-				const Preset Made = ReferencePreset(Sound, Short);
-				const std::string Kind = ReferenceKind(Sound);
+				S.Short = Same == 0 ? Names[s] : Names[s] + " " + std::to_string(Same + 1);
 				const std::string Track = R.Game.empty() ? R.Id : R.Game + (R.Track > 0 ? ", track " + std::to_string(R.Track) :
 					std::string());
-				const std::string Origin = (R.Title.empty() ? Track : R.Title + " (" + Track + ")") + ", sound " +
-					std::to_string(s + 1) + ": " + Sound.Channel + ", " + Sound.Role;
-				std::string Extra = R.Id + " " + R.Composer;
+				S.Origin = (R.Title.empty() ? Track : R.Title + " (" + Track + ")") + ", sound " + std::to_string(s + 1) + ": " +
+					Sound.Channel + ", " + Sound.Role;
+				S.Extra = R.Id + " " + R.Composer;
 				for (size_t t = 0; t < R.Tags.size(); ++t)
-					Extra += " " + R.Tags[t];
-				InstrumentInfo Info[TARGET_COUNT];
-				bool Made2A03 = false, MadeVrc6 = false, MadeSaw = false, MadeWave = false;
-				std::string WaveName;
-				for (size_t t = 0; t < sizeof(TARGETS) / sizeof(TARGETS[0]); ++t) {
-					const int Target = TARGETS[t];
-					if (!Has(Target) || Sound.Noise != (Target == TARGET_NOISE))
-						continue;
-					std::string Name = Made.InstrumentName(Target == TARGET_SAWTOOTH);
-					InstrumentInfo &I = Info[Target];
-					if (Sound.Noise) {
-						// a drum: no checks
-					}
-					else if (Target == TARGET_FDS) {
-						std::string How;
-						const FdsSound F = ReferenceFdsSound(Sound, Short, How);
-						Name = F.InstrumentName();
-						I = SequencesInfo(F.Sequences, "FDS");
-					}
-					else if (Target == TARGET_S5B)
-						I = SequencesInfo(Preset5BSequences(Made), "5B");
-					else if (Target == TARGET_N163 || Target == TARGET_SOFT) {
-						if (!MadeWave) {
-							std::string How;
-							const WaveSound W = ReferenceWaveSound(Sound, Short, How);
-							WaveName = W.InstrumentName();
-							Info[TARGET_N163] = SequencesInfo(W.Sequences, "N163");
-							MadeWave = true;
-						}
-						Name = WaveName;
-						I = Info[TARGET_N163];
-					}
-					else if (Target == TARGET_SAWTOOTH) {
-						if (!MadeSaw) {
-							std::vector<PresetSequence> Sequences = Made.SequencesVRC6;
-							Sequences.erase(std::remove_if(Sequences.begin(), Sequences.end(),
-								[](const PresetSequence &S) { return S.Type == SEQUENCE_DUTY; }), Sequences.end());
-							Info[TARGET_SAWTOOTH] = SequencesInfo(Sequences, "VRC6");
-							MadeSaw = true;
-						}
-					}
-					else if (Target == TARGET_VRC6_PULSE) {
-						if (!MadeVrc6)
-							Info[TARGET_VRC6_PULSE] = SequencesInfo(Made.SequencesVRC6, "VRC6");
-						MadeVrc6 = true;
-					}
-					else {
-						// the 2A03's pulses, triangle and the MMC5's play the same instrument
-						if (!Made2A03)
-							Info[TARGET_PULSE] = SequencesInfo(Made.Sequences2A03, "2A03");
-						Made2A03 = true;
-						if (Target != TARGET_PULSE)
-							I = Info[TARGET_PULSE];
-					}
-					AddReference(R, Sound, pSound, static_cast<int>(s) + 1, Target, Target == Home, Name, Short, Kind, Origin, Extra,
-						Sound.Noise ? 0 : &I);
-				}
+					S.Extra += " " + R.Tags[t];
+				S.Key = R.Id;
+				S.Number = static_cast<int>(s) + 1;
+				S.Game = R.Game;
+				// Under its game's heading: the track and the part ("Needle Man (track 2), the lead"; "track 2, the lead" for a
+				// track the NSF names no better)
+				const std::string TrackWords = R.Track > 0 ? "track " + std::to_string(R.Track) : std::string();
+				const bool Named = !R.Title.empty() && Lowercase(R.Title) != TrackWords;
+				S.About = (!Named ? (TrackWords.empty() ? (R.Title.empty() ? R.Id : R.Title) : TrackWords) : R.Title + (TrackWords.empty() ?
+					std::string() : " (" + TrackWords + ")")) + (Sound.Role.empty() ? std::string() : ", " + Sound.Role);
+				AddStudied(S);
 			}
 		}
 	}
@@ -485,8 +432,253 @@ public:
 	}
 
 	std::vector<SoundEntry> &Out() { return m_Out; }
+	bool m_Games = true;		// the built-in games' sounds are listed: the library's that are theirs are left out
 
 private:
+	// The presets and the library's 2A03 pulse sounds on a melodic kind of channel (Backing: another chip's, only those
+	// that make a backing: pads, plucks and keys), and the library's sounds made for that channel
+	void Melodic(int Target, bool Backing)
+	{
+		const std::vector<Preset> &All = Presets();
+		const int Home = PresetHome();
+		const bool VRC6 = Target == TARGET_VRC6_PULSE || Target == TARGET_SAWTOOTH, Saw = Target == TARGET_SAWTOOTH;
+		for (size_t i = 0; i < All.size(); ++i) {
+			if (All[i].Drum)
+				continue;
+			const std::string Kind = KindOfPreset(All[i].Name, All[i].Description);
+			if (Backing && Kind != "pad" && Kind != "pluck" && Kind != "keys")
+				continue;
+			SoundEntry E = Base(All[i].InstrumentName(Saw), All[i].Description, Target, Backing || Target == Home);
+			E.Kind = Kind;
+			MakesPreset(E, All[i], VRC6, Saw, All[i].Name);
+		}
+		const std::vector<LibraryPreset> &Own = LibraryPresets();
+		for (size_t i = 0; i < Own.size(); ++i) {
+			if (Own[i].Home != HOME_PULSE || (Backing && Own[i].Kind != "pad" && Own[i].Kind != "pluck" && Own[i].Kind != "keys"))
+				continue;
+			SoundEntry E = Base(Own[i].Sound.InstrumentName(Saw), Own[i].Sound.Description, Target, Backing || Target == Home);
+			E.Kind = Own[i].Kind;
+			E.Extra = Own[i].Words;
+			E.Brief = Own[i].Short;
+			MakesPreset(E, Own[i].Sound, VRC6, Saw, Own[i].Sound.Name);
+		}
+		if (Target == TARGET_TRIANGLE)
+			Library(Target, HOME_TRIANGLE);
+		else if (Target == TARGET_VRC6_PULSE)
+			Library(Target, HOME_VRC6_PULSE);
+		else if (Target == TARGET_SAWTOOTH)
+			Library(Target, HOME_SAWTOOTH);
+	}
+
+	// The library's presets made for one channel (Home), at home there
+	void Library(int Target, int Home)
+	{
+		const std::vector<LibraryPreset> &Own = LibraryPresets();
+		const bool VRC6 = Target == TARGET_VRC6_PULSE || Target == TARGET_SAWTOOTH, Saw = Target == TARGET_SAWTOOTH;
+		for (size_t i = 0; i < Own.size(); ++i) {
+			if (Own[i].Home != Home)
+				continue;
+			SoundEntry E = Base(Own[i].Sound.InstrumentName(Saw), Own[i].Sound.Description, Target, true);
+			E.Kind = Own[i].Kind;
+			E.Extra = Own[i].Words;
+			E.Brief = Own[i].Short;
+			if (Home == HOME_NOISE) {
+				E.Drum = true;
+				E.Make = MAKE_PRESET;
+				E.Chip = "2A03";
+				E.Key = Own[i].Sound.Name;
+				E.Origin = "ready-made";
+				Finish(E, 0);
+			}
+			else if (Home == HOME_5B) {
+				E.Drum = E.Kind == "drums";
+				E.Make = MAKE_5B;
+				E.Chip = "5B";
+				E.Key = Own[i].Sound.Name;
+				E.Origin = "ready-made for the 5B";
+				const InstrumentInfo Info = SequencesInfo(Own[i].Sound.Sequences5B, "5B");
+				Finish(E, &Info);
+			}
+			else {
+				E.Drum = E.Kind == "drums";
+				MakesPreset(E, Own[i].Sound, VRC6, Saw, Own[i].Sound.Name);
+			}
+		}
+	}
+
+	// A preset (the presets', the library's) made as add_instrument makes it
+	void MakesPreset(SoundEntry &E, const Preset &Sound, bool VRC6, bool Saw, const std::string &Key)
+	{
+		E.Make = MAKE_PRESET;
+		E.Chip = VRC6 ? "VRC6" : "2A03";
+		E.Sawtooth = Saw;
+		E.Key = Key;
+		E.Origin = "ready-made";
+		std::vector<PresetSequence> Sequences = VRC6 ? Sound.SequencesVRC6 : Sound.Sequences2A03;
+		if (Saw)	// as InstrumentLibrary.cpp makes it: the duty's low bit would add to the sawtooth's volume
+			Sequences.erase(std::remove_if(Sequences.begin(), Sequences.end(),
+				[](const PresetSequence &S) { return S.Type == SEQUENCE_DUTY; }), Sequences.end());
+		const InstrumentInfo Info = SequencesInfo(Sequences, E.Chip);
+		Finish(E, &Info);
+	}
+
+	void Drums()
+	{
+		const std::vector<Preset> &All = Presets();
+		for (size_t i = 0; i < All.size(); ++i) {
+			if (!All[i].Drum)
+				continue;
+			SoundEntry E = Base(All[i].InstrumentName(false), All[i].Description, TARGET_NOISE, true);
+			E.Kind = "drums";
+			E.Drum = true;
+			E.Make = MAKE_PRESET;
+			E.Chip = "2A03";
+			E.Key = All[i].Name;
+			E.Origin = "ready-made";
+			Finish(E, 0);
+		}
+		Library(TARGET_NOISE, HOME_NOISE);
+	}
+
+	// The DPCM's kits of samples (DpcmKit.h)
+	void Kits()
+	{
+		const std::vector<DpcmKit> &All = DrumKits();
+		for (size_t i = 0; i < All.size(); ++i) {
+			SoundEntry E = Base(All[i].Name, All[i].Description, TARGET_DPCM, true);
+			E.Kind = "drums";
+			E.Drum = true;
+			E.Make = MAKE_DPCM_KIT;
+			E.Chip = "2A03";
+			E.Key = All[i].Name;
+			E.Origin = "ready-made samples";
+			Finish(E, 0);
+		}
+	}
+
+	// The 5B's own sounds, the library's for it and (Presets: on the song's 5B) the presets as it plays them
+	void Sounds5B(bool WithPresets)
+	{
+		const std::vector<Preset> &Own = Sunsoft5BSounds();
+		for (size_t i = 0; i < Own.size(); ++i) {
+			SoundEntry E = Base(Own[i].InstrumentName(false), Own[i].Description, TARGET_S5B, true);
+			E.Kind = Own[i].Drum ? "drums" : KindOfPreset(Own[i].Name, Own[i].Description);
+			E.Drum = E.Kind == "drums";
+			E.Make = MAKE_5B;
+			E.Chip = "5B";
+			E.Key = Own[i].Name;
+			E.Origin = "ready-made for the 5B";
+			const InstrumentInfo Info = SequencesInfo(Own[i].Sequences5B, "5B");
+			Finish(E, &Info);
+		}
+		Library(TARGET_S5B, HOME_5B);
+		if (!WithPresets)
+			return;
+		const std::vector<Preset> &All = Presets();
+		const int Home = PresetHome();
+		for (size_t i = 0; i < All.size(); ++i) {
+			if (All[i].Drum || FindSoundFor5B(All[i].Name) != &All[i])
+				continue;	// the presets' drums are the noise channel's; and a 5B sound of the same name comes first
+			SoundEntry E = Base(All[i].InstrumentName(false), All[i].Description, TARGET_S5B, Home == TARGET_S5B);
+			E.Kind = KindOfPreset(All[i].Name, All[i].Description);
+			E.Make = MAKE_PRESET;
+			E.Chip = "5B";
+			E.Key = All[i].Name;
+			E.Origin = "ready-made";
+			const InstrumentInfo Info = SequencesInfo(Preset5BSequences(All[i]), "5B");
+			Finish(E, &Info);
+		}
+	}
+
+	void Vrc7()
+	{
+		const std::vector<Vrc7Patch> &Patches = Vrc7Patches();
+		for (size_t i = 0; i < Patches.size(); ++i) {
+			SoundEntry E = Base(Patches[i].InstrumentName(), Patches[i].Description, TARGET_VRC7, true);
+			E.Kind = KindOfWords(Patches[i].Name);
+			if (E.Kind.empty())
+				E.Kind = KindOfWords(Patches[i].Description);
+			if (E.Kind.empty())
+				E.Kind = "lead";
+			E.Make = MAKE_VRC7;
+			E.Chip = "VRC7";
+			E.Number = Patches[i].Number;
+			E.Key = Patches[i].Name;
+			E.Origin = "the VRC7's patch " + std::to_string(Patches[i].Number);
+			Finish(E, 0);
+		}
+		const std::vector<Vrc7Custom> &Customs = Vrc7Customs();
+		const std::vector<LibraryVrc7> &More = LibraryVrc7Sounds();
+		for (size_t i = 0; i < Customs.size() + More.size(); ++i) {
+			const Vrc7Custom &C = i < Customs.size() ? Customs[i] : More[i - Customs.size()].Sound;
+			SoundEntry E = Base(C.InstrumentName(), C.Description, TARGET_VRC7, true);
+			if (i >= Customs.size()) {
+				E.Kind = More[i - Customs.size()].Kind;
+				E.Extra = More[i - Customs.size()].Words;
+			}
+			else {
+				E.Kind = KindOfWords(C.Name);
+				if (E.Kind.empty())
+					E.Kind = KindOfWords(C.Description);
+				if (E.Kind.empty())
+					E.Kind = "other";
+			}
+			E.Make = MAKE_VRC7_CUSTOM;
+			E.Chip = "VRC7";
+			E.Key = C.Name;
+			E.Origin = "a VRC7 custom patch (the chip holds one at a time)";
+			Finish(E, 0);
+		}
+	}
+
+	// The N163's wave sounds, the library's after them; the VRC6 Plus's soft layer's starter sounds first, then its calm
+	// shapes, then the others (SoftOnly: the soft layer's own)
+	void Waves(int Target, bool SoftOnly)
+	{
+		const std::vector<WaveSound> &All = WaveSounds();
+		std::vector<const WaveSound *> List;
+		for (int Group = 0; Group < (Target == TARGET_SOFT ? 3 : 1); ++Group)
+			for (size_t i = 0; i < All.size(); ++i)
+				if (Target != TARGET_SOFT || Group == (IsSoftLayerSound(All[i].Name) ? 0 : IsSoftLayerCalmSound(All[i].Name) ? 1 : 2))
+					if (!SoftOnly || Group < 2)
+						List.push_back(&All[i]);
+		const std::vector<WaveSound> &More = LibraryWaveSounds();
+		for (size_t i = 0; i < More.size() && !SoftOnly; ++i)
+			List.push_back(&More[i]);
+		for (size_t w = 0; w < List.size(); ++w) {
+			const WaveSound &Wave = *List[w];
+			SoundEntry E = Base(Wave.InstrumentName(), Wave.Description, Target, true);
+			E.Kind = !Wave.Kind.empty() ? Wave.Kind : KindOf(Wave.Name, Wave.Words, Wave.Description);
+			E.Make = MAKE_N163;
+			E.Chip = "N163";
+			E.Key = Wave.Name;
+			E.Origin = Target == TARGET_SOFT && IsSoftLayerSound(Wave.Name) ? "a starter sound of the VRC6 Plus's soft layer" :
+				Target == TARGET_SOFT && IsSoftLayerCalmSound(Wave.Name) ? "a calm sound made for the VRC6 Plus's soft layer" :
+				"ready-made for the N163";
+			E.Extra = Wave.Words;
+			const InstrumentInfo Info = SequencesInfo(Wave.Sequences, "N163");
+			Finish(E, &Info);
+		}
+	}
+
+	void Fds()
+	{
+		const std::vector<FdsSound> &All = FdsSounds(), &More = LibraryFdsSounds();
+		for (size_t i = 0; i < All.size() + More.size(); ++i) {
+			const FdsSound &Sound = i < All.size() ? All[i] : More[i - All.size()];
+			SoundEntry E = Base(Sound.InstrumentName(), Sound.Description, TARGET_FDS, true);
+			E.Kind = !Sound.Kind.empty() ? Sound.Kind : Sound.Low ? "bass" : KindOf(Sound.Name, Sound.Words, Sound.Description);
+			E.Low = Sound.Low;
+			E.Make = MAKE_FDS;
+			E.Chip = "FDS";
+			E.Key = Sound.Name;
+			E.Origin = "ready-made for the FDS";
+			E.Extra = Sound.Words;
+			const InstrumentInfo Info = SequencesInfo(Sound.Sequences, "FDS");
+			Finish(E, &Info);
+		}
+	}
+
 	bool PlaysOn(const SoundUse &Use, int Target) const
 	{
 		for (size_t c = 0; c < Use.Channels.size(); ++c)
@@ -505,6 +697,12 @@ private:
 		E.Home = Home;
 		E.Channel = m_First[static_cast<size_t>(Target)];
 		E.ChannelName = E.Channel >= 0 ? ChannelLabel(m_Song.Channels[static_cast<size_t>(E.Channel)]) : std::string();
+		if (!m_Adding.empty()) {
+			// A chip the song doesn't have: where it would play
+			E.Channel = -1;
+			E.ChannelName = WouldPlayOn(Target);
+			E.AddsChip = m_Adding;
+		}
 		return E;
 	}
 
@@ -544,34 +742,88 @@ private:
 		return Sound.Triangle ? TARGET_TRIANGLE : TARGET_PULSE;
 	}
 
-	void AddReference(const Reference &R, const ReferenceSound &Sound, const std::shared_ptr<const ReferenceSound> &pSound,
-		int Number, int Target, bool Home, const std::string &Name, const std::string &Short, const std::string &Kind,
-		const std::string &Origin, const std::string &Extra, const InstrumentInfo *pInfo)
+	// A studied sound on every kind of channel it can play on, as reference_sound makes it there: a preset for the
+	// 2A03, the VRC6 and the 5B, an FDS sound for the FDS, a wave sound for the N163 (the VRC6 Plus's soft layer)
+	void AddStudied(const Studied &S)
 	{
-		const std::string Chip = TargetChip(Target);
-		const bool Saw = Target == TARGET_SAWTOOTH;
-		SoundEntry E = Base(Name, Sound.Words, Target, Home);
-		E.Source = SOURCE_REFERENCE;
-		E.Game = R.Game;
-		// Under its game's heading: the track and the part ("Needle Man (track 2), the lead"; "track 2, the lead" for a
-		// track the NSF names no better)
-		const std::string Track = R.Track > 0 ? "track " + std::to_string(R.Track) : std::string();
-		const bool Named = !R.Title.empty() && Lowercase(R.Title) != Track;
-		E.About = (!Named ? (Track.empty() ? (R.Title.empty() ? R.Id : R.Title) : Track) : R.Title + (Track.empty() ? std::string() :
-			" (" + Track + ")")) + (Sound.Role.empty() ? std::string() : ", " + Sound.Role);
-		E.Kind = Kind;
-		E.Drum = Sound.Noise;
-		E.Low = E.Kind == "bass";
-		E.Make = MAKE_REFERENCE;
-		E.Chip = Chip;
-		E.Sawtooth = Saw;
-		E.Key = R.Id;
-		E.Number = Number;
-		E.Reference = pSound;
-		E.Short = Short;
-		E.Origin = Origin;
-		E.Extra = Extra;
-		Finish(E, pInfo);
+		static const int TARGETS[] = { TARGET_PULSE, TARGET_TRIANGLE, TARGET_NOISE, TARGET_MMC5, TARGET_VRC6_PULSE,
+			TARGET_SAWTOOTH, TARGET_FDS, TARGET_S5B, TARGET_N163, TARGET_SOFT };
+		const ReferenceSound &Sound = *S.pSound;
+		const int Home = ReferenceHome(Sound);
+		const Preset Made = ReferencePreset(Sound, S.Short);
+		const std::string Kind = ReferenceKind(Sound);
+		InstrumentInfo Info[TARGET_COUNT];
+		bool Made2A03 = false, MadeVrc6 = false, MadeSaw = false, MadeWave = false;
+		std::string WaveName;
+		for (size_t t = 0; t < sizeof(TARGETS) / sizeof(TARGETS[0]); ++t) {
+			const int Target = TARGETS[t];
+			if (!Has(Target) || Sound.Noise != (Target == TARGET_NOISE))
+				continue;
+			std::string Name = Made.InstrumentName(Target == TARGET_SAWTOOTH);
+			InstrumentInfo &I = Info[Target];
+			if (Sound.Noise) {
+				// a drum: no checks
+			}
+			else if (Target == TARGET_FDS) {
+				std::string How;
+				const FdsSound F = ReferenceFdsSound(Sound, S.Short, How);
+				Name = F.InstrumentName();
+				I = SequencesInfo(F.Sequences, "FDS");
+			}
+			else if (Target == TARGET_S5B)
+				I = SequencesInfo(Preset5BSequences(Made), "5B");
+			else if (Target == TARGET_N163 || Target == TARGET_SOFT) {
+				if (!MadeWave) {
+					std::string How;
+					const WaveSound W = ReferenceWaveSound(Sound, S.Short, How);
+					WaveName = W.InstrumentName();
+					Info[TARGET_N163] = SequencesInfo(W.Sequences, "N163");
+					MadeWave = true;
+				}
+				Name = WaveName;
+				I = Info[TARGET_N163];
+			}
+			else if (Target == TARGET_SAWTOOTH) {
+				if (!MadeSaw) {
+					std::vector<PresetSequence> Sequences = Made.SequencesVRC6;
+					Sequences.erase(std::remove_if(Sequences.begin(), Sequences.end(),
+						[](const PresetSequence &Seq) { return Seq.Type == SEQUENCE_DUTY; }), Sequences.end());
+					Info[TARGET_SAWTOOTH] = SequencesInfo(Sequences, "VRC6");
+					MadeSaw = true;
+				}
+			}
+			else if (Target == TARGET_VRC6_PULSE) {
+				if (!MadeVrc6)
+					Info[TARGET_VRC6_PULSE] = SequencesInfo(Made.SequencesVRC6, "VRC6");
+				MadeVrc6 = true;
+			}
+			else {
+				// the 2A03's pulses, triangle and the MMC5's play the same instrument
+				if (!Made2A03)
+					Info[TARGET_PULSE] = SequencesInfo(Made.Sequences2A03, "2A03");
+				Made2A03 = true;
+				if (Target != TARGET_PULSE)
+					I = Info[TARGET_PULSE];
+			}
+			SoundEntry E = Base(Name, Sound.Words, Target, Target == Home);
+			E.Source = SOURCE_REFERENCE;
+			E.Builtin = S.Builtin;
+			E.Game = S.Game;
+			E.About = S.About;
+			E.Kind = Kind;
+			E.Drum = Sound.Noise;
+			E.Low = E.Kind == "bass";
+			E.Make = MAKE_REFERENCE;
+			E.Chip = TargetChip(Target);
+			E.Sawtooth = Target == TARGET_SAWTOOTH;
+			E.Key = S.Key;
+			E.Number = S.Number;
+			E.Reference = S.pSound;
+			E.Short = S.Short;
+			E.Origin = S.Origin;
+			E.Extra = S.Extra;
+			Finish(E, Sound.Noise ? 0 : &I);
+		}
 	}
 
 	static std::string ReferenceKind(const ReferenceSound &Sound)
@@ -593,7 +845,7 @@ private:
 	// The rest of an entry: whether the song has it, its warnings and the words searched
 	void Finish(SoundEntry &E, const InstrumentInfo *pInfo)
 	{
-		if (E.Channel < 0)
+		if (E.Channel < 0 && E.AddsChip.empty())
 			return;
 		E.Low = E.Low || E.Kind == "bass";
 		if (E.Source != SOURCE_SONG)
@@ -603,7 +855,7 @@ private:
 		const bool Melodic = E.Target != TARGET_TRIANGLE && E.Target != TARGET_NOISE && E.Target != TARGET_DPCM &&
 			E.Target != TARGET_VRC7 && E.Kind != "drums";
 		if (pInfo != 0 && Melodic) {
-			E.Heard = SoundHeardFrames(*pInfo, HEARD_LIMIT);
+			E.Heard = HeardFramesOf(*pInfo);
 			if (SoundVanishes(E.Heard))
 				E.Warning += VanishWarning(E.Heard, false);
 		}
@@ -625,6 +877,7 @@ private:
 	const SongInfo &m_Song;
 	std::vector<int> m_First;	// the song's first channel of each kind, -1 for none
 	int m_Cursor;				// the kind of channel the user is on, -1 for none
+	std::string m_Adding;		// listing the sounds of a chip the song doesn't have: that chip
 	std::vector<SoundEntry> m_Out;
 };
 
@@ -729,6 +982,103 @@ std::string SourceName(int Source)
 	return Source == SOURCE_REFERENCE ? "reference library" : Source == SOURCE_SONG ? "this song" : "ready-made";
 }
 
+const std::vector<std::string> &OtherChipNames()
+{
+	static const std::vector<std::string> NAMES = { "VRC6", VRC6_PLUS, "MMC5", "N163", "FDS", "VRC7", "5B" };
+	return NAMES;
+}
+
+namespace {
+
+// The expansion chips a song has, by name, as SongInfo::Expansion lists them ("VRC6, N163, 5B")
+std::vector<std::string> SongChipList(const SongInfo &Song)
+{
+	std::vector<std::string> Out;
+	std::string Word;
+	for (size_t i = 0; i <= Song.Expansion.size(); ++i) {
+		const char c = i < Song.Expansion.size() ? Song.Expansion[i] : ',';
+		if (c == ',' || c == ' ') {
+			if (!Word.empty())
+				Out.push_back(Word);
+			Word.clear();
+		}
+		else
+			Word += c;
+	}
+	return Out;
+}
+
+bool HasChipNamed(const std::vector<std::string> &Chips, const std::string &Chip)
+{
+	return std::find(Chips.begin(), Chips.end(), Chip) != Chips.end();
+}
+
+}	// namespace
+
+std::vector<std::string> ChipsWith(const SongInfo &Song, const std::string &Chip)
+{
+	const std::vector<std::string> Have = SongChipList(Song);
+	std::vector<std::string> None;
+	const bool Plus = Chip == VRC6_PLUS;
+	if (Plus ? (Song.Vrc6Plus || HasChipNamed(Have, "N163")) : HasChipNamed(Have, Chip))
+		return None;	// it has it (the VRC6 Plus's N163 would change its channels: never offered then)
+	if (!Plus && Chip != "VRC6" && Chip != "MMC5" && Chip != "N163" && Chip != "FDS" && Chip != "VRC7" && Chip != "5B")
+		return None;
+	// The chips as the user knows them (the VRC6 Plus in place of its two), with this one
+	std::vector<std::string> Out;
+	if (Song.Vrc6Plus || Plus)
+		Out.push_back(VRC6_PLUS);
+	static const char *const ORDER[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };
+	for (size_t i = 0; i < sizeof(ORDER) / sizeof(ORDER[0]); ++i) {
+		const std::string Name = ORDER[i];
+		if ((Song.Vrc6Plus || Plus) && (Name == "VRC6" || Name == "N163"))
+			continue;
+		if (HasChipNamed(Have, Name) || Name == Chip)
+			Out.push_back(Name);
+	}
+	return Out;
+}
+
+std::string AddChipQuestion(const SongInfo &Song, const SoundEntry &Sound)
+{
+	const std::string &Chip = Sound.AddsChip;
+	const std::vector<std::string> Have = SongChipList(Song), After = ChipsWith(Song, Chip);
+	std::string Brings;
+	if (Chip == "VRC6")
+		Brings = "three more channels: two pulses with eight widths and a sawtooth";
+	else if (Chip == VRC6_PLUS)
+		Brings = !HasChipNamed(Have, "VRC6") ? "the VRC6's three channels (two pulses and a sawtooth) and under them a soft layer of "
+			"four wave channels, Soft 1 to Soft 4, with its four starter sounds" : "a soft layer of four wave channels under the "
+			"VRC6's, Soft 1 to Soft 4, with its four starter sounds";
+	else if (Chip == "MMC5")
+		Brings = "two more pulse channels, which play the 2A03's sounds";
+	else if (Chip == "N163")
+		Brings = "four wave channels, which play drawn waves";
+	else if (Chip == "FDS")
+		Brings = "one wave channel with a modulator that bends its pitch";
+	else if (Chip == "VRC7")
+		Brings = "six FM channels with the chip's own sounds";
+	else if (Chip == "5B")
+		Brings = "three square channels that can also play noise and a buzzing envelope";
+	std::string Text = "\"" + Sound.Name + "\" is a sound for the " + (Chip == VRC6_PLUS ? std::string("VRC6 Plus's soft layer") : Chip) +
+		", which this song doesn't have yet.\n\nAdd the " + Chip + " to the song? It brings " + Brings + ", after the song's own "
+		"channels. Every note you've written stays where it is.";
+	// NSF export plays one expansion chip, never the 5B
+	int Real = 0;
+	bool Has5B = false;
+	for (size_t i = 0; i < After.size(); ++i) {
+		Real += After[i] == VRC6_PLUS ? 2 : 1;
+		Has5B = Has5B || After[i] == "5B";
+	}
+	if (Real > 1 || Has5B)
+		Text += std::string(" FamiTracker's NSF export plays only one expansion chip") + (Has5B ? " and not the 5B" : "") + ", so the song "
+			"will export to OGG and WAV files only (File > Export for games and File > Create WAV).";
+	if (Song.FrameRate == 50)
+		Text += " Expansion chips play at NTSC speed, so the song will play at 60 frames a second instead of 50.";
+	Text += "\n\nCtrl+Z can't take this back; Module > Module properties takes the chip off again.";
+	return Text;
+}
+
 InstrumentInfo SequencesInfo(const std::vector<PresetSequence> &Sequences, const std::string &Chip)
 {
 	InstrumentInfo Info;
@@ -758,12 +1108,22 @@ InstrumentInfo SequencesInfo(const std::vector<PresetSequence> &Sequences, const
 }
 
 std::vector<SoundEntry> ListSounds(const SongInfo &Song, const std::vector<Reference> &Library, const std::vector<SoundUse> &Uses,
-	int Cursor)
+	int Cursor, const SoundListing &Listing)
 {
 	Lister L(Song, Cursor);
+	L.m_Games = Listing.Games;
 	L.ReadyMade();
+	if (Listing.Games)
+		L.Games();
 	L.References(Library);
 	L.Own(Uses);
+	if (Listing.OtherChips) {
+		L.OtherChips();
+		std::vector<SoundEntry> &Out = L.Out();
+		for (size_t i = 0; i < Out.size(); ++i)
+			if (!Out[i].AddsChip.empty())
+				Out[i].Question = AddChipQuestion(Song, Out[i]);
+	}
 	return L.Out();
 }
 
@@ -866,7 +1226,7 @@ std::vector<size_t> FindMatching(const std::vector<SoundEntry> &All, const Sound
 		const int Score = Words ? SoundMatch(E, Query.Words, Every) : 1;
 		if (Score <= 0)
 			continue;
-		const int Order = (KindOrder(E.Kind) * SOURCE_COUNT + E.Source) * TARGET_COUNT + E.Target;
+		const int Order = ((KindOrder(E.Kind) * 2 + (E.AddsChip.empty() ? 0 : 1)) * SOURCE_COUNT + E.Source) * TARGET_COUNT + E.Target;
 		Found.push_back(std::make_pair(std::make_pair(-Score, Order), i));
 	}
 	std::stable_sort(Found.begin(), Found.end(), [](const std::pair<std::pair<int, int>, size_t> &A,
@@ -894,13 +1254,22 @@ std::string GameOrder(const std::string &Game)
 	return Lower;
 }
 
-std::string GroupLabel(int Source, const std::string &Game)
+std::string GroupLabel(int Source, const std::string &Game, const std::string &Chip)
 {
+	if (!Chip.empty())
+		return (Chip == VRC6_PLUS ? std::string("VRC6 Plus soft layer") : Chip) + " (not in the song yet)";
 	if (Source == SOURCE_PRESET)
 		return "Ready-made sounds";
 	if (Source == SOURCE_SONG)
 		return "This song's instruments";
 	return Game.empty() ? "Other references" : Game;
+}
+
+// A chip's place among the others the song doesn't have
+int OtherChipOrder(const std::string &Chip)
+{
+	const std::vector<std::string> &Names = OtherChipNames();
+	return static_cast<int>(std::find(Names.begin(), Names.end(), Chip) - Names.begin());
 }
 
 }	// namespace
@@ -926,14 +1295,20 @@ std::vector<SoundGroup> GroupSounds(const std::vector<SoundEntry> &All, const st
 			const SoundEntry &E = All[Sounds[s]];
 			const int Source = E.Source == SOURCE_REFERENCE || E.Source == SOURCE_SONG ? E.Source : SOURCE_PRESET;
 			const std::string Game = Source == SOURCE_REFERENCE ? E.Game : std::string();
-			SoundGroup &G = Groups[std::make_pair(Source, Source == SOURCE_REFERENCE ? GameOrder(Game) : std::string())];
+			// The chips the song doesn't have come after its own sounds, each in a group of its own
+			const int Place = E.AddsChip.empty() ? Source : SOURCE_COUNT + OtherChipOrder(E.AddsChip);
+			SoundGroup &G = Groups[std::make_pair(Place, Source == SOURCE_REFERENCE ? GameOrder(Game) : std::string())];
 			if (G.Sounds.empty()) {
 				G.Kind = Kinds[k];
 				G.Source = Source;
 				G.Game = Game;
-				G.Label = GroupLabel(Source, Game);
-				G.Key = Kinds[k] + "/" + std::to_string(Source) + "/" + Lowercase(Game);
+				G.Chip = E.AddsChip;
+				G.Label = GroupLabel(Source, Game, E.AddsChip);
+				G.Key = E.AddsChip.empty() ? Kinds[k] + "/" + std::to_string(Source) + "/" + Lowercase(Game) : Kinds[k] + "/chip/" +
+					Lowercase(E.AddsChip);
+				G.Builtin = true;
 			}
+			G.Builtin = G.Builtin && E.Builtin;
 			G.Sounds.push_back(Sounds[s]);
 		}
 		for (std::map<std::pair<int, std::string>, SoundGroup>::iterator it = Groups.begin(); it != Groups.end(); ++it)
@@ -964,7 +1339,11 @@ bool GroupFolded(const std::vector<SoundGroup> &Groups, size_t Group, const Soun
 	const std::map<std::string, bool>::const_iterator Asked = View.Folds.find(G.Key);
 	if (Asked != View.Folds.end())
 		return Asked->second;
-	if (View.Words || G.Source != SOURCE_REFERENCE)
+	if (View.Words)
+		return false;
+	if (!G.Chip.empty())
+		return true;	// another chip's: there to discover, not in the way
+	if (G.Source != SOURCE_REFERENCE)
 		return false;
 	int References = 0;
 	for (size_t g = 0; g < Groups.size(); ++g)

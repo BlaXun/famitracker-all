@@ -21,6 +21,7 @@
 
 #include "Presets.h"
 #include "Music.h"
+#include "SoundLibrary.h"
 
 #include <algorithm>
 #include <cctype>
@@ -452,7 +453,9 @@ const Preset *Find5BSound(const std::string &Name)
 					return &All[i];
 		}
 	}
-	return 0;
+	// The sound library's for the 5B, by name
+	const LibraryPreset *pOwn = FindLibraryPreset(Name, HOME_5B);
+	return pOwn != 0 ? &pOwn->Sound : 0;
 }
 
 std::string Sound5BList()
@@ -527,7 +530,9 @@ const Preset *FindPreset(const std::string &Name)
 					return &All[i];
 		}
 	}
-	return 0;
+	// The sound library's for the 2A03's and the VRC6's channels, by name (the 5B's are Find5BSound's)
+	const LibraryPreset *pOwn = FindLibraryPreset(Name);
+	return pOwn != 0 && pOwn->Home != HOME_5B ? &pOwn->Sound : 0;
 }
 
 std::string PresetList()
@@ -584,7 +589,9 @@ const Vrc7Custom *FindVrc7Custom(const std::string &Name)
 			for (size_t i = 0; i < All.size(); ++i)
 				if (All[i].Name == WORDS[w][1])
 					return &All[i];
-	return 0;
+	// The sound library's, by name
+	const LibraryVrc7 *pOwn = FindLibraryVrc7(Name);
+	return pOwn != 0 ? &pOwn->Sound : 0;
 }
 
 std::string Vrc7CustomList()

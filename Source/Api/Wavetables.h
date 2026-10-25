@@ -54,12 +54,16 @@ struct WaveSound {
 	std::string Description;
 	std::vector<std::vector<int> > Waves;	// N163_WAVE_SIZE samples each, 0-15
 	std::vector<PresetSequence> Sequences;	// volume, arpeggio, and the wave that plays (SEQUENCE_DUTY)
+	std::string Kind;			// a SoundKinds() id (SoundIndex.h) where the sound says so (the library's); empty: from its words
 
 	bool Releases() const;			// fades out on a release (===)
 	std::string InstrumentName() const;	// "Glass bell"
 };
 
 const std::vector<WaveSound> &WaveSounds();
+// FamiTracker's own sound library for the N163 (SoundLibrary.h): more wave sounds of distinct characters, each with its
+// kind, which FindWaveSound finds by their names after the sounds above and their words
+const std::vector<WaveSound> &LibraryWaveSounds();
 const WaveSound *FindWaveSound(const std::string &Name);	// by name or one of its words
 std::string WaveSoundList();							// "soft flute, drawbar organ, ..."
 

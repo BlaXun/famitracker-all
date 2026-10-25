@@ -26,6 +26,7 @@
 #include "Chords.h"
 #include "DpcmKit.h"
 #include "GameAudio.h"
+#include "GameSounds.h"
 #include "GrowMelody.h"
 #include "Jingles.h"
 #include "Music.h"
@@ -38,6 +39,7 @@
 #include "Song.h"
 #include "SoundEffects.h"
 #include "SoundIndex.h"
+#include "SoundLibrary.h"
 #include "StepNotes.h"
 #include "Effects.h"
 #include "FdsSounds.h"
@@ -21323,6 +21325,21 @@ Reference FindReference(Session &S, const std::string &Id)
 		"references from NSF files)") : ". references lists them") + ".");
 }
 
+// The reference reference_sound takes a sound from: the library's, else a track of the built-in games (GameSounds.h:
+// its sounds alone), which every FamiTracker has
+Reference FindSoundReference(Session &S, const std::string &Id)
+{
+	Reference Builtin;
+	try {
+		return FindReference(S, Id);
+	}
+	catch (const Problem &) {
+		if (!BuiltinReference(Id, Builtin))
+			throw;
+	}
+	return Builtin;
+}
+
 void SaveReference(Session &S, const Reference &R, std::string &Path)
 {
 	std::string Error;
@@ -21788,7 +21805,7 @@ std::string SoftReferenceText(Session &S, const ReferenceSound &Sound, const std
 
 std::string ReferenceSoundTool(Session &S, const Json &Args)
 {
-	const Reference R = FindReference(S, StringArg(Args, "reference"));
+	const Reference R = FindSoundReference(S, StringArg(Args, "reference"));
 	if (R.Sounds.empty() && std::find(R.Tags.begin(), R.Tags.end(), "tracker-module") != R.Tags.end())
 		throw Problem("The reference " + R.Id + " is a tracker module's: its sounds are samples, which the NES's chips can't play. "
 			"design_instrument makes sounds in their spirit (its study names its instruments and what they play).");
@@ -21946,8 +21963,8 @@ std::vector<SoundUse> SongSoundUses(Session &S)
 }
 
 // Every sound the song can get (the sound browser's and find_sound's), the reference library's too unless it can't be
-// read; Cursor: the channel the user is on, -1 for none
-std::vector<SoundEntry> SongSounds(Session &S, int Cursor)
+// read; Cursor: the channel the user is on, -1 for none; Listing: the built-in games' sounds, the other chips'
+std::vector<SoundEntry> SongSounds(Session &S, int Cursor, const SoundListing &Listing = SoundListing())
 {
 	std::vector<Reference> Library;
 	try {
@@ -21956,7 +21973,35 @@ std::vector<SoundEntry> SongSounds(Session &S, int Cursor)
 	catch (const Problem &) {
 		Library.clear();	// the ready-made sounds and the song's own still list
 	}
-	return ListSounds(S.Song, Library, SongSoundUses(S), Cursor);
+	return ListSounds(S.Song, Library, SongSoundUses(S), Cursor, Listing);
+}
+
+// A sound of a chip the song doesn't have (SoundEntry::AddsChip): the chip goes in first, as set_expansion puts it in
+// (the N163 with 4 channels; the VRC6 Plus with its starter sounds), and never when a note would go
+void AddChipForSound(Session &S, const SoundEntry &E)
+{
+	const std::vector<std::string> Chips = ChipsWith(S.Song, E.AddsChip);
+	if (Chips.empty())
+		throw Problem("The song can't get the " + E.AddsChip + " here: Module > Module properties switches the chips.");
+	int Namco = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		Namco += S.Channel(c).Chip == "N163" ? 1 : 0;
+	const bool Plus = std::find(Chips.begin(), Chips.end(), VRC6_PLUS) != Chips.end();
+	const int Channels = Plus ? VRC6_PLUS_SOFT_CHANNELS : Namco > 0 ? Namco : 4;
+	std::vector<int> Tracks;
+	if (S.Host().ExpansionNotes(Chips, Channels, Tracks) > 0)
+		throw Problem("Getting the " + E.AddsChip + " would clear notes, so it wasn't added: Module > Module properties switches "
+			"the chips.");
+	std::string Why, Error;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const bool WasPlus = S.Song.Vrc6Plus;
+	int Moved = 0, Lost = 0;
+	if (!S.Host().SetExpansion(Chips, Channels, Moved, Lost, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker didn't add the chip.") : Error);
+	S.Load();
+	if (Plus && !WasPlus)
+		AddSoftSounds(S);
 }
 
 // A ready-made sound by its exact name
@@ -21973,11 +22018,17 @@ int MakeSoundIn(Session &S, const SoundEntry &E)
 {
 	std::string Error;
 	int Index = -1;
+	if (!E.AddsChip.empty() && E.Make != MAKE_NONE)
+		AddChipForSound(S, E);
 	switch (E.Make) {
 	case MAKE_NONE:
 		return E.Number;
 	case MAKE_PRESET: case MAKE_5B: {
 		const Preset *pSound = PresetNamed(E.Make == MAKE_5B ? Sunsoft5BSounds() : Presets(), E.Key);
+		if (pSound == 0) {
+			const LibraryPreset *pOwn = FindLibraryPreset(E.Key, E.Make == MAKE_5B ? HOME_5B : -1);	// the sound library's
+			pSound = pOwn != 0 ? &pOwn->Sound : 0;
+		}
 		if (pSound == 0)
 			throw Problem("There's no sound called \"" + E.Key + "\".");
 		Index = S.Host().AddInstrument(*pSound, E.Chip, E.Sawtooth, Error);
@@ -22014,6 +22065,15 @@ int MakeSoundIn(Session &S, const SoundEntry &E)
 		bool Added = false;
 		return MakeReferenceInstrument(S, *E.Reference, E.Short, E.Chip, E.Sawtooth, How, Added);
 	}
+	case MAKE_DPCM_KIT: {
+		const DpcmKit *pKit = FindDrumKit(E.Key);
+		if (pKit == 0)
+			throw Problem("There's no kit of samples called \"" + E.Key + "\".");
+		if (pKit->Name == SampleDrums().Name)
+			return SampleDrumsInstrument(S);
+		Index = S.Host().AddDpcmKit(*pKit, Error);
+		break;
+	}
 	default:
 		throw Problem("That sound can't be made.");
 	}
@@ -22024,8 +22084,21 @@ int MakeSoundIn(Session &S, const SoundEntry &E)
 }
 
 // How the tools add a sound, in a sentence (Channel: the one asked for, -1 for none)
-std::string HowToAdd(const SoundEntry &E, int Channel)
+std::string HowToAdd(const SongInfo &Song, const SoundEntry &E, int Channel)
 {
+	if (!E.AddsChip.empty()) {
+		// Another chip's: the chip first, then the sound on it
+		const std::vector<std::string> Chips = ChipsWith(Song, E.AddsChip);
+		std::string List;
+		for (size_t i = 0; i < Chips.size(); ++i)
+			List += (i == 0 ? "\"" : ", \"") + Chips[i] + "\"";
+		const std::string Then = E.Make == MAKE_VRC7_CUSTOM ? "set_instrument or write_notes on a VRC7 channel, instrument \"" + E.Key +
+			"\" (a custom patch)" : E.Target == TARGET_SAWTOOTH ? "add_instrument preset \"" + E.Key + "\" with channel the VRC6's "
+			"sawtooth (get_song numbers the channels)" : "add_instrument preset \"" + E.Key + "\"" + (E.Chip == "2A03" ? std::string() :
+			" chip \"" + E.Chip + "\"");
+		return "The song doesn't have the " + E.AddsChip + ": add it first with set_expansion chips [" + List + "] (every note stays), "
+			"then " + Then;
+	}
 	const std::string On = Format(" channel %d", (Channel >= 0 ? Channel : E.Channel) + 1);
 	switch (E.Make) {
 	case MAKE_NONE:
@@ -22035,6 +22108,8 @@ std::string HowToAdd(const SoundEntry &E, int Channel)
 			(Channel >= 0 ? On : std::string()) + " name \"" + E.Short + "\"";
 	case MAKE_VRC7_CUSTOM:
 		return "Add it with set_instrument or write_notes on a VRC7 channel, instrument \"" + E.Key + "\" (a custom patch)";
+	case MAKE_DPCM_KIT:
+		return E.Key == SampleDrums().Name ? "Add it with add_sample_drums" : "Add it with add_instrument preset \"" + E.Key + "\"";
 	default:
 		return "Add it with add_instrument preset \"" + E.Key + "\"" + ((E.Target == TARGET_PULSE || E.Target == TARGET_NOISE) &&
 			Channel < 0 ? std::string() : On);
@@ -22075,7 +22150,9 @@ std::string FindSoundTool(Session &S, const Json &Args)
 		if (Q.Target < 0)
 			throw Problem("No sounds are listed for " + S.Channel(Channel).FullName() + ".");
 	}
-	const std::vector<SoundEntry> All = SongSounds(S, Channel);
+	SoundListing Listing;
+	Listing.OtherChips = BoolArg(Args, "other_chips", false);
+	const std::vector<SoundEntry> All = SongSounds(S, Channel, Listing);
 	bool Some = false;
 	const std::vector<size_t> Found = FindSounds(All, Q, &Some);
 	std::string Asked;
@@ -22096,8 +22173,8 @@ std::string FindSoundTool(Session &S, const Json &Args)
 	for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i) {
 		const SoundEntry &E = All[Found[i]];
 		Out += "- " + E.Name + " (" + E.Kind + "; " + E.Origin + "; plays on " + E.ChannelName + ")" + (E.Words.empty() ? "" : ": " +
-			E.Words) + ". " + HowToAdd(E, Channel) + ".";
-		if (E.InSong >= 0 && E.Make != MAKE_NONE)
+			E.Words) + ". " + HowToAdd(S.Song, E, Channel) + ".";
+		if (E.InSong >= 0 && E.Make != MAKE_NONE && E.AddsChip.empty())
 			Out += Format(" The song has it already, as instrument %02X.", E.InSong);
 		if (SoundVanishes(E.Heard))
 			Out += VanishText(E.Heard, true);
@@ -25831,18 +25908,25 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Kinds.push_back(SoundKinds()[k].Id);
 	AddTool("find_sound", "Find a sound",
 		"Searches every sound the song can get, in one list, as FamiTracker's Instrument > Sound browser shows them: the "
-		"ready-made sounds for the chips it has on (the presets, the 5B's own, the VRC7's patches and custom patches, the "
-		"N163's and the FDS's sounds, the VRC6 Plus's soft layer's), each sound of the reference library's studies, and the song's own instruments. By "
+		"ready-made sounds for the chips it has on (the presets and the sound library's few hundred more for every chip and "
+		"kind, the 5B's own, the VRC7's patches and custom patches, the N163's and the FDS's sounds, the VRC6 Plus's soft "
+		"layer's, the DPCM's sample kits), the sounds studied from the soundtracks every FamiTracker carries (Castlevania, "
+		"Castlevania III, Dr. Mario, Final Fantasy III, Journey to Silius, Nintendo World Cup, Partena no Kagami, "
+		"Punch-Out!!, Robot Block, Strider, Super C, The Legend of Zelda), each sound of the reference library's studies, "
+		"and the song's own instruments; with other_chips, the ready-made sounds of the chips the song doesn't have too. By "
 		"words (\"warm bell\", \"pluck\", \"bass\", a game or a reference), kind and source. Each comes with its kind, where "
-		"it's from, the channel it plays on, its words, the call that adds it (add_instrument or reference_sound) and the "
-		"warnings: notes that vanish, a vibrato that clicks on the 2A03's pulses. Without a channel each sound is listed "
-		"once, where it's meant to play; with one, every sound that plays there.",
+		"it's from, the channel it plays on, its words, the call that adds it (add_instrument or reference_sound; for another "
+		"chip, set_expansion first) and the warnings: notes that vanish, a vibrato that clicks on the 2A03's pulses. Without "
+		"a channel each sound is listed once, where it's meant to play; with one, every sound that plays there.",
 		Schema()
 			.Add("query", Prop("string", "Words to look for: a kind (bell, pluck, bass, pad, drums), a quality (warm, soft, bright), a game, a reference's title or id. Empty: all of them."))
 			.Add("kind", EnumProp("Only this kind of sound.", Kinds))
 			.Add("from", EnumProp("Where from: all (default), presets (the ready-made sounds), references (the reference library) or song (its instruments).",
 				std::vector<std::string>{ "all", "presets", "references", "song" }))
-			.Add("channel", ChannelProp("The channel to find sounds for: every sound that plays there.")),
+			.Add("channel", ChannelProp("The channel to find sounds for: every sound that plays there."))
+			.Add("other_chips", Prop("boolean", "true: also the ready-made sounds of the chips the song doesn't have (the VRC6, the "
+				"VRC6 Plus's soft layer, the MMC5, the N163, the FDS, the VRC7, the 5B), each with the set_expansion call that adds "
+				"its chip first (every note stays). Default false.")),
 		true);
 
 	AddTool("add_sample_drums", "Add sampled drums",
@@ -26125,7 +26209,11 @@ bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Erro
 	try {
 		Session S(m_Host);
 		const int At = Cursor >= 0 && Cursor < S.ChannelCount() ? Cursor : -1;
-		Out = Library ? SongSounds(S, At) : ListSounds(S.Song, std::vector<Reference>(), SongSoundUses(S), At);
+		// The browser's: everything, the other chips' too; Listen's: the ready-made sounds of the song's chips and its own
+		SoundListing Listing;
+		Listing.Games = Library;
+		Listing.OtherChips = Library;
+		Out = Library ? SongSounds(S, At, Listing) : ListSounds(S.Song, std::vector<Reference>(), SongSoundUses(S), At, Listing);
 		return true;
 	}
 	catch (const Problem &P) {
