@@ -69,8 +69,12 @@ struct TrackStudy {
 	int Speed, Tempo;
 	int FirstBarRow;					// rows before the first bar line (a pickup)
 	int IntroBars, LoopBars;			// the intro plays once; LoopBars 0 when it doesn't loop
+	std::string Kind;					// "music", or for a short track that ends, "sting" or "sound" (an effect)
+	double Seconds;						// how long it plays (to its end, or the intro and the loop once), 0 when not known
+	double PlaylistSeconds;				// the length its playlist gave it, 0 for none
+	double DrumLoopBars;				// the drums' own cycle when they don't follow the loop, in bars; 0 when they do
 	std::string Form;					// the lead's four-bar phrases: "A A B A'"
-	std::string Key;					// "D minor", "" when unclear
+	std::string Key;					// "D minor", "C (major and minor)", "no clear key (around E)", "" when unclear
 	std::vector<std::string> Chords;	// a chord a bar, from the first bar line
 	int LoopStartBar;					// the chord where the loop starts, -1 when it doesn't loop
 	std::vector<std::string> Channels;	// a paragraph per channel that plays
@@ -78,7 +82,7 @@ struct TrackStudy {
 	std::vector<std::string> Tricks;	// techniques found, most used first
 	std::vector<StudySound> Sounds;		// by channel, most used first
 	TrackStudy() : Bpm(0), RowsPerBeat(4), BeatsPerBar(4), TicksPerRow(6), Tracker(false), Speed(6), Tempo(125), FirstBarRow(0), IntroBars(0), LoopBars(0),
-		LoopStartBar(-1) {}
+		Kind("music"), Seconds(0), PlaylistSeconds(0), DrumLoopBars(0), LoopStartBar(-1) {}
 };
 
 // Studies track Track of a converted module, with what the conversion said about it
@@ -97,11 +101,13 @@ std::string DescribeSound(const Macro Macros[SEQ_TYPES], bool Vrc6, int Note, bo
 std::string MacroText(const Macro &M);
 
 // Which of an NSF's tracks are music to study, rather than jingles and sound
-// effects: from the playlist's lengths, or else played for a while
+// effects: from the playlist's lengths, or else played for a while. A track
+// that falls silent for good well before its playlist's length is what it
+// plays: a jingle (a sting) or a sound effect of that length.
 struct TrackSurvey {
 	int Track;				// from 0
 	std::string Title;
-	double Seconds;			// its length, or how long it played before it looped or the survey stopped
+	double Seconds;			// its length, or how long it played before it looped, fell silent or the survey stopped
 	double LoopSeconds;		// the loop's length, 0 when it doesn't loop or isn't known
 	std::string Kind;		// "music", "jingle", "sound effect" or "silent"
 	TrackSurvey() : Track(0), Seconds(0), LoopSeconds(0) {}

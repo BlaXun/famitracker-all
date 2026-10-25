@@ -858,7 +858,16 @@ Agreement Compare(const Recording &A, const Recording &B, int Ticks, int Offset,
 			}
 			if (sa && sb) {
 				++Both;
-				if (c == CH_DPCM ? x.Wave == y.Wave || (x.Flags & TICK_TRIGGER) == 0 : Rounded(x.Pitch) == Rounded(y.Pitch))
+				// The DPCM's pitch: the sample (by its bytes) and the rate it starts at
+				bool Same;
+				if (c == CH_DPCM) {
+					const bool SameSample = x.Wave < A.Sounds.Samples.size() && y.Wave < B.Sounds.Samples.size() ?
+						A.Sounds.Samples[x.Wave] == B.Sounds.Samples[y.Wave] : x.Wave == y.Wave;
+					Same = (x.Flags & TICK_TRIGGER) == 0 || (SameSample && x.Timbre == y.Timbre);
+				}
+				else
+					Same = Rounded(x.Pitch) == Rounded(y.Pitch);
+				if (Same)
 					++PitchOk;
 				VolumeError += std::abs(int(x.Volume) - int(y.Volume));
 			}

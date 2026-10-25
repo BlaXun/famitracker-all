@@ -235,6 +235,37 @@ track (`FtmTrackReport` gives its tempo and beat) and keeps its sounds.
 modules with `-study`, and ships next to FamiTracker.exe; `ftm2txt` writes a
 module's text.
 
+Importer fixes (from `feat-importer-fixes`): while a track plays,
+`RecordTrack` takes a repeat for its loop only once it has gone on for
+`RecordOptions::ConfirmSeconds` and two more times through (`Confirm` in
+`FindLoop` and `FindLoopApprox`, `RepeatNeeded`), so a passage played
+twice inside a piece that moves on isn't the loop; a recording that runs
+to its end takes a loop heard once more. When only the melodic channels
+repeat, theirs is the loop and the drums' own cycle is
+`Recording::DrumLoop` (`DrumsApart`). `AudibleLoopStart` moves a loop's
+start back over a first time through that differs too quietly to hear (a
+quiet pulse's tails or duty, a note a tick early, a sweep's own clock),
+when that reaches the track's start or a second or more. A track that
+falls silent for good well before its playlist's length is surveyed and
+studied as what it plays (`Recording::LastSound`; `TrackStudy::Kind`
+"sting" or "sound", `Seconds`). A DPCM part whose samples sound four or
+more pitches as a line (`PlaysALine`; a sample's pitch at a rate from
+`SamplePeriod` and `SampleNote` in `Convert.cpp`) gets "DPCM bass"
+instruments whose keys play each sample at the note it sounds (the
+unpitched ones stay on the "DPCM samples" kit), and the study describes it
+as a part (`C_DPCM_LINE`, `FindDpcmLine`), the bass when it's the lowest.
+`KeyOf` in `Study.cpp` weighs the profiles' likeliest keys by the bars'
+chords, the bass and where the music comes to rest (the loop's first
+chord, a piece's first and last, a loop's end on the dominant): "C (major
+and minor)" when the tonic chord comes both ways, "no clear key (around
+E)" or nothing when the chords keep leaving the key in either mode.
+`FindGrid` takes rows of 4 and 5 ticks in turn when they fit. When
+`study_nsf` studies a track again, `KeepOwnTags` in `References.cpp`
+keeps the user's tags and drops the old study's own. `TestDpcmBass`,
+`TestShortOfPlaylist`, `TestQuietFirstPass`, `TestPassageRepeatedOnce`,
+`TestDrumsOnTheirOwn` and `TestKeys` in `Source/Nsf/tests/NsfTests.cpp`
+and `TestStudyTagsAgain` in `Source/Api/tests/ApiTests.cpp` cover them.
+
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Sound browser in `Source/SoundBrowserDlg.cpp` (the instrument library's
 menu command `ID_INSTRUMENT_LIBRARY` and Ctrl+Shift+L): one list of every
