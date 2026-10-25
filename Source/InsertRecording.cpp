@@ -274,7 +274,8 @@ public:
 		m_iTrack(0), m_iFrame(static_cast<unsigned int>(Frame)), m_iRow(static_cast<unsigned int>(Row)),
 		m_iOldFrameCount(0), m_iLinkClip(-1), m_bKeepLinks(false),
 		m_iCursorFrame(static_cast<unsigned int>(Frame)), m_iCursorRow(static_cast<unsigned int>(Row)),
-		m_iMoveFrame(0), m_iMoveBy(0), m_bSetSections(false), m_bKeyChosenBefore(false), m_bSetKey(false), m_bKeyChosenAfter(false)
+		m_iMoveFrame(0), m_iMoveBy(0), m_bSetSections(false), m_bKeyChosenBefore(false), m_bSetKey(false), m_bKeyChosenAfter(false),
+		m_bKeepChannel(false)
 	{
 	}
 
@@ -317,6 +318,10 @@ public:
 		m_iCursorRow = static_cast<unsigned int>(Row);
 	}
 
+	// The cursor stays in the channel and column it's in, rather than going to the first part's notes (the drum
+	// grid writes the noise channel from beside the song)
+	void KeepCursorChannel() { m_bKeepChannel = true; }
+
 	bool SaveState(CMainFrame *pMainFrm);
 	void Undo(CMainFrame *pMainFrm);
 	void Redo(CMainFrame *pMainFrm);
@@ -357,6 +362,7 @@ private:
 	bool m_bSetKey, m_bKeyChosenAfter;
 	ftapi::KeyChoice m_KeyAfter;
 	std::vector<std::pair<unsigned int, unsigned int> > m_Widened;	// channels that show more effect columns, and what they showed
+	bool m_bKeepChannel;
 };
 
 bool CInsertRecordingAction::SaveState(CMainFrame *pMainFrm)
@@ -805,10 +811,11 @@ private:
 void CInsertRecordingAction::Finish(CMainFrame *pMainFrm, CFamiTrackerDoc *pDoc, CPatternEditor *pEditor) const
 {
 	pEditor->MoveToFrame(static_cast<int>(std::min(m_iCursorFrame, pDoc->GetFrameCount(m_iTrack) - 1)));
-	if (!m_Parts.empty())
+	if (!m_Parts.empty() && !m_bKeepChannel)
 		pEditor->MoveToChannel(static_cast<int>(m_Parts.front().Channel));
 	pEditor->MoveToRow(static_cast<int>(m_iCursorRow));
-	pEditor->MoveToColumn(0);	// the note column
+	if (!m_bKeepChannel)
+		pEditor->MoveToColumn(0);	// the note column
 	pEditor->InvalidateCursor();
 
 	pDoc->SetModifiedFlag();
@@ -1704,7 +1711,7 @@ void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, in
 // The piano roll
 
 bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNote *pCells, int Count, int CursorRow,
-	CString &Message)
+	CString &Message, bool KeepChannel)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
@@ -1744,6 +1751,8 @@ bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNo
 	pAction->KeepLinks();
 	if (CursorRow >= 0)
 		pAction->PlaceCursor(CursorRow / Length, CursorRow % Length);
+	if (KeepChannel)
+		pAction->KeepCursorChannel();
 	if (!pMainFrm->AddAction(pAction)) {
 		Message = _T("The notes couldn't be changed.");
 		return false;

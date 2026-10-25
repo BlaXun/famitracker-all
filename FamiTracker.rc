@@ -130,7 +130,7 @@ BEGIN
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Sound effect from your voice...", ID_EDIT_VOICEEFFECT
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
-        MENUITEM "Drum grid...",                ID_EDIT_DRUMGRID
+        MENUITEM "Drum grid",                   ID_EDIT_DRUMGRID
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
         MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
@@ -222,7 +222,11 @@ BEGIN
         MENUITEM "&Toolbar",                    ID_VIEW_TOOLBAR
         MENUITEM "&Status Bar",                 ID_VIEW_STATUS_BAR
         MENUITEM "Control panel",               ID_VIEW_CONTROLPANEL
+        MENUITEM SEPARATOR
+        MENUITEM "Pattern editor",              ID_VIEW_PATTERNEDITOR
         MENUITEM "Piano roll",                  ID_VIEW_PIANOROLL
+        MENUITEM "Drum grid",                   ID_EDIT_DRUMGRID
+        MENUITEM SEPARATOR
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
         MENUITEM "Problems",                    ID_VIEW_PROBLEMS
         MENUITEM "Mixer",                       ID_VIEW_MIXER
@@ -272,7 +276,7 @@ BEGIN
         MENUITEM "Record from microphone...",   ID_EDIT_RECORD
         MENUITEM "Insert recording (WAV)...",   ID_EDIT_INSERTRECORDING
         MENUITEM "Add chords and bass line...", ID_EDIT_ADDBACKING
-        MENUITEM "Drum grid...",                ID_EDIT_DRUMGRID
+        MENUITEM "Drum grid",                   ID_EDIT_DRUMGRID
         MENUITEM "Save selection as clip...",   ID_EDIT_SAVECLIP
         MENUITEM "Clips",                       ID_EDIT_CLIPS
         MENUITEM SEPARATOR
@@ -584,7 +588,7 @@ BEGIN
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
-    ID_EDIT_DRUMGRID        "Put drums on the noise channel a bar at a time, on a grid of steps, or pick a ready-made beat\nDrum grid"
+    ID_EDIT_DRUMGRID        "Show or hide the drum grid: the noise channel's drums a bar at a time, on a grid of steps, with ready-made beats\nDrum grid"
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
@@ -598,6 +602,7 @@ BEGIN
     ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
     ID_VIEW_MIXER           "Each channel's level and pan, with meters, mute and solo, saved with the song\nMixer"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
+    ID_VIEW_PATTERNEDITOR   "Show or hide the pattern editor, the channel grid; while it's hidden, the piano roll takes its place\nPattern editor"
     ID_EDIT_REPEAT          "Repeat the last action\nRepeat"
     ID_EDIT_REPLACE         "Replace specific text with different text\nReplace"
     ID_EDIT_SELECT_ALL      "Select the entire document\nSelect All"
@@ -2051,30 +2056,6 @@ BEGIN
     LTEXT           "View > Show everything switches it all off at once, and back.",IDC_STATIC,14,152,272,10
     DEFPUSHBUTTON   "OK",IDOK,186,178,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,243,178,50,14
-END
-
-IDD_DRUM_GRID DIALOGEX 0, 0, 420, 214
-STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Drum grid"
-FONT 8, "MS Shell Dlg", 400, 0, 0x1
-BEGIN
-    LTEXT           "The drums on the noise channel, a bar at a time: a column for each row, a line for each drum. The noise channel plays one drum at a time.",IDC_STATIC,7,7,406,18
-    PUSHBUTTON      "<",IDC_DRUM_PREV,7,29,18,14
-    CTEXT           "",IDC_DRUM_BAR,27,32,64,8
-    PUSHBUTTON      ">",IDC_DRUM_NEXT,93,29,18,14
-    LTEXT           "",IDC_DRUM_WHERE,118,32,200,8
-    LTEXT           "",IDC_DRUM_GRID,7,48,406,90,WS_BORDER
-    LTEXT           "Beats:",IDC_STATIC,7,148,26,8
-    PUSHBUTTON      "",IDC_DRUM_BEAT1,36,145,56,14
-    PUSHBUTTON      "",IDC_DRUM_BEAT2,96,145,76,14
-    PUSHBUTTON      "",IDC_DRUM_BEAT3,176,145,56,14
-    PUSHBUTTON      "",IDC_DRUM_BEAT4,236,145,56,14
-    PUSHBUTTON      "Clear the bar",IDC_DRUM_CLEAR,296,145,62,14
-    PUSHBUTTON      "Play from this bar",IDC_DRUM_PLAY,7,166,80,14
-    PUSHBUTTON      "Copy to the next bar",IDC_DRUM_COPYNEXT,92,166,86,14
-    PUSHBUTTON      "Copy to every bar",IDC_DRUM_COPYALL,182,166,80,14
-    LTEXT           "",IDC_DRUM_STATUS,7,186,346,22
-    PUSHBUTTON      "Close",IDCANCEL,363,192,50,14
 END
 
 IDD_SOUND_BROWSER DIALOGEX 0, 0, 460, 304

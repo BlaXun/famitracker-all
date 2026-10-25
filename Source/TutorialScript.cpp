@@ -32,14 +32,14 @@ namespace {
 
 const char *const PARTS[] = {
 	"window", "pattern", "frames", "instruments", "song-settings", "song-info", "octave", "toolbar", "status-bar", "clips",
-	"piano-roll", "mixer", "button", "menu", "channel",
+	"piano-roll", "drum-grid", "mixer", "button", "menu", "channel",
 };
 
 const char *const COMMANDS[] = {
 	"play", "play-from-start", "stop", "edit-mode", "new", "open", "save", "save-as", "export-for-games", "create-wav",
 	"new-instrument", "instrument-library", "edit-instrument", "drum-grid", "save-clip", "clips", "piano-roll",
 	"clips-panel", "record", "insert-recording", "add-backing", "voice-effect", "insert-frame", "duplicate-frame",
-	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude",
+	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude", "pattern-editor",
 };
 
 // The channels a song can have, as FamiTracker names them (lower case), and

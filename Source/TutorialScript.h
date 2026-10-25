@@ -40,8 +40,11 @@
 //
 // "show" is a part of the window (window, pattern, frames, instruments,
 // song-settings, song-info, octave, toolbar, status-bar, clips, piano-roll,
-// mixer), a toolbar button ("button play"), a menu ("menu Edit") or a
-// channel's column in the pattern editor ("channel Triangle"). "wait" is next
+// drum-grid, mixer), a toolbar button ("button play"), a menu ("menu Edit")
+// or a channel's column in the pattern editor ("channel Triangle"); a step
+// about the pattern editor (or a channel), the clips panel, the piano roll,
+// the drum grid or the mixer shows it if it's hidden (View > Pattern editor
+// hides the pattern editor, and the piano roll takes its place). "wait" is next
 // (the default), edit-mode, edit-mode-off, play, stop, notes N, instrument,
 // clip, saved, heard, or command NAME for a menu item, button or shortcut
 // key; the names are listed with TutorialCommandNames.

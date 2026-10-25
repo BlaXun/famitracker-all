@@ -3,7 +3,8 @@
 # switching the expansion chip (Source/ChipSwitch.cpp), the drum grid
 # (Source/DrumGrid.cpp), reading tutorials (Source/TutorialScript.cpp,
 # with the built-in ones in res/tutorials and the example songs' walkthroughs
-# in res/examples) and the sound chips' emulation
+# in res/examples), the views shown (Source/NoteViews.cpp) and the sound
+# chips' emulation
 # with its stereo mixer (Source/APU), against working
 # stand-ins for the MFC and document pieces they use (standins/). Linux and
 # macOS:
@@ -111,3 +112,7 @@ target_include_directories(tutorial_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 target_compile_definitions(tutorial_tests PRIVATE TUTORIALS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/tutorials"
 	EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/examples")
 add_test(NAME tutorial_tests COMMAND tutorial_tests)
+
+add_executable(noteviews_tests NoteViewsTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../NoteViews.cpp)
+target_include_directories(noteviews_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_test(NAME noteviews_tests COMMAND noteviews_tests)

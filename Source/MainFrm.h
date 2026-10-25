@@ -46,6 +46,8 @@ class CPianoRollWnd;
 class CClipsBar;
 class CProblemsBar;
 class CMixerBar;
+class CDrumGridBar;
+struct note_views_t;
 class CAction;
 class CActionGroup;
 class CActionHandler;
@@ -105,8 +107,13 @@ public:
 	void	EndActionGroup();
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
+	// View > Pattern editor and View > Piano roll: one of them always shows, and the piano roll fills the
+	// pattern editor's place while it's hidden (NoteViews.h)
+	void	ShowPatternEditor(bool Show);
+	bool	IsPatternEditorShown() const { return m_bPatternShown; }
 	void	ShowPianoRoll(bool Show);	// under the pattern editor (PianoRoll.h)
 	CPianoRollWnd *GetPianoRollWnd() const;	// NULL while the piano roll isn't shown
+	void	ShowDrumGrid(bool Show);		// along the bottom or the right (DrumGridPanel.h)
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
@@ -115,7 +122,8 @@ public:
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
 	// screen ("pattern", "button" with a command, "menu" with its name, ...),
-	// and the clips panel, piano roll or mixer opened for a step about it
+	// and the pattern editor, clips panel, piano roll, drum grid or mixer
+	// shown for a step about it (or about a channel's column)
 	bool	GetTutorialRect(LPCTSTR Part, LPCTSTR Name, UINT Command, CRect &Rect);
 	void	ShowTutorialPart(LPCTSTR Part);
 
@@ -162,6 +170,12 @@ private:
 	bool	CheckRepeat() const;
 
 	void	CheckAudioStatus();
+
+	// The views shown (NoteViews.h), and the docked panels laid out in their order
+	note_views_t NoteViews() const;
+	void	ShowNoteViews(const note_views_t &Views);
+	void	ArrangeBars();
+	CPianoRollWnd *FocusedPianoRoll() const;	// the piano roll, when it has the keys
 
 private:  // control bar embedded members
 	CStatusBar			m_wndStatusBar;
@@ -213,6 +227,8 @@ private:  // control bar embedded members
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
 	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
 	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
+	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, along the bottom or the right; created when first shown
+	bool				m_bPatternShown;		// View > Pattern editor: the pattern editor shows (else the piano roll fills its place)
 	CActionGroup		*m_pActionGroup;		// the actions of a group being added (BeginActionGroup)
 	int					m_iActionGroupDepth;
 
@@ -294,6 +310,8 @@ public:
 	afx_msg void OnUpdatePrevSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewPatternEditor(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateEditDrumGrid(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewProblems(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewMixer(CCmdUI *pCmdUI);
@@ -352,6 +370,7 @@ public:
 	afx_msg void OnToggleFollow();
 	afx_msg void OnViewControlpanel();
 	afx_msg void OnViewPianoRoll();
+	afx_msg void OnViewPatternEditor();
 	afx_msg void OnViewClipsPanel();
 	afx_msg void OnViewProblems();
 	afx_msg void OnViewMixer();
