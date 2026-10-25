@@ -54,6 +54,14 @@ std::vector<GrooveMood> GrooveMoods();
 // "jazzy"), ignoring case and spaces; false if none
 bool FindGrooveMood(const std::string &Word, GrooveMood &Out);
 
+// The key a groove for a song starts in (FamiTracker's Start from a groove):
+// the song's own key in the mood's mode (Minor), which is the key itself or
+// its relative minor or major, with the same notes (G major's is E minor;
+// another mode counts as the major key with its notes, D dorian as C major,
+// and a harmonic minor as its minor); for a song without a key (pSongKey
+// NULL) C major or A minor, the white keys
+Key GrooveKey(const Key *pSongKey, bool Minor);
+
 // What a groove is made for
 struct GrooveRequest {
 	std::string Mood;			// a mood's name or another word for it

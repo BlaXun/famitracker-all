@@ -649,7 +649,8 @@ the `make_groove` tool (`MakeGroove` in `InsertRecording.cpp`, with
 `CMcpConnection::RunTool`'s `FromDialog` set, the speed and tempo in the
 same action group, and the key picked made the track's with `SetTrackKey`
 unless it has a chosen key or notes found in another; `CGrooveDlg` starts
-from the track's key, read with `CMcpConnection::Harmony`); the parts themselves come from `ftapi::MakeGrooveParts`
+from the track's key, read with `CMcpConnection::Harmony`, in the mood's
+mode: `ftapi::GrooveKey` gives its relative minor or major); the parts themselves come from `ftapi::MakeGrooveParts`
 (`Source/Api/Grooves.h`, implemented next to `MakeGrooveTool` in
 `Tools.cpp`: a `GrooveRequest` of mood, key, bars as `BarSpan`s, tempo and
 channels in, a `GrooveParts` of `PartNote`s and `DrumHit`s without

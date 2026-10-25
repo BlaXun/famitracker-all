@@ -17905,6 +17905,29 @@ bool FindGrooveMood(const std::string &Word, GrooveMood &Out)
 	return true;
 }
 
+Key GrooveKey(const Key *pSongKey, bool Minor)
+{
+	const auto Mod12 = [](int Value) { return ((Value % 12) + 12) % 12; };
+	int Major = 0;	// the major key with the song's notes: C without a song key, so the white keys
+	if (pSongKey != 0) {
+		const int Tonic = Mod12(pSongKey->Tonic);
+		const int Mode = pSongKey->Mode >= 0 && pSongKey->Mode < ModeCount() ? pSongKey->Mode : MODE_MAJOR;
+		const int *pSteps = ModeSteps(Mode), *pMajor = ModeSteps(MODE_MAJOR);
+		unsigned Notes = 0;
+		for (int i = 0; i < 7; ++i)
+			Notes |= 1u << Mod12(Tonic + pSteps[i]);
+		Major = pSteps[2] == 3 ? Mod12(Tonic + 3) : Tonic;	// no major key has its notes (a harmonic minor): by its third
+		for (int t = 0; t < 12; ++t) {
+			unsigned Same = 0;
+			for (int i = 0; i < 7; ++i)
+				Same |= 1u << Mod12(t + pMajor[i]);
+			if (Same == Notes)
+				Major = t;
+		}
+	}
+	return Minor ? Key(Mod12(Major + 9), MODE_MINOR) : Key(Major, MODE_MAJOR);
+}
+
 GrooveRequest::GrooveRequest() : KeyGiven(false), RowsPerBeat(4), Bpm(0.0), FrameRate(60), Speed(6), SplitPoint(32), Chords(true),
 	Bass(true), Drums(true), PhraseStart(0), Samples(false)
 {

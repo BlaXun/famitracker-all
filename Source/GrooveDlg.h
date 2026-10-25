@@ -76,7 +76,9 @@ private:
 	CTapTempo m_Taps;
 
 	bool m_bTempoSet;		// typed or tapped: a mood picked afterwards keeps it
-	bool m_bKeyPicked;
+	bool m_bKeyPicked;		// by the user: a mood picked afterwards keeps it
+	int m_iSongTonic;		// the song's own key (Api/Music.h): its tonic and mode, -1 for none
+	int m_iSongMode;
 	bool m_bSettingBpm;		// the dialog is writing the tempo, not the user
 	int m_iRow;				// song row of the bar the groove starts at
 	int m_iMelody;			// where the melody goes, and the channels the groove goes on (-1: none)

@@ -162,11 +162,12 @@ again, as copies or linked.
     Record from microphone): pick a mood (town, overworld, battle, boss,
     dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert,
     nostalgic), a tempo (typed or tapped), a key (the song's own when it
-    has one) and 4, 8 or 16 bars, and FamiTracker writes drums, a bass line
-    and chords from the cursor's bar, the same groove Claude Code's
-    `make_groove` writes, sets the song's speed and tempo and makes the key
-    the song's (as the piano roll's Key menu would), unless the song has
-    another already. One Ctrl+Z takes it out again. Then you record over
+    has one, or for a mood of the other kind its relative minor or major,
+    which has the same notes) and 4, 8 or 16 bars, and FamiTracker writes
+    drums, a bass line and chords from the cursor's bar, the same groove
+    Claude Code's `make_groove` writes, sets the song's speed and tempo and
+    makes the key the song's (as the piano roll's Key menu would), unless
+    the song has another already. One Ctrl+Z takes it out again. Then you record over
     it: the groove plays during the count-in and the take, and stays in the
     song as its own parts.
   - **The bar before:** with "Play the song along", the song starts a bar

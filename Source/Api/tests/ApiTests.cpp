@@ -15557,6 +15557,28 @@ void TestStrumDelay()
 	CHECK_EQ(Heard.Names, std::string("| C G | Am | F |"));
 }
 
+// The key a groove starts in for a song: the song's own in the mood's mode, with the same notes
+void TestGrooveKey()
+{
+	const auto Is = [](const Key &K, int Tonic, int Mode) { return K.Tonic == Tonic && K.Mode == Mode; };
+	// No key yet: the white keys
+	CHECK(Is(GrooveKey(NULL, false), 0, MODE_MAJOR) && Is(GrooveKey(NULL, true), 9, MODE_MINOR));
+	// G major: itself, or E minor; E minor: itself, or G major
+	const Key G(7, MODE_MAJOR), Em(4, MODE_MINOR);
+	CHECK(Is(GrooveKey(&G, false), 7, MODE_MAJOR) && Is(GrooveKey(&G, true), 4, MODE_MINOR));
+	CHECK(Is(GrooveKey(&Em, true), 4, MODE_MINOR) && Is(GrooveKey(&Em, false), 7, MODE_MAJOR));
+	// Another mode as the major key with its notes: D dorian and F lydian as C major (or A minor)
+	int Dorian = -1, Lydian = -1, Harmonic = -1;
+	CHECK(ParseMode("dorian", Dorian) && ParseMode("lydian", Lydian) && ParseMode("harmonic minor", Harmonic));
+	const Key D(2, Dorian), F(5, Lydian), Bb(10, MODE_MAJOR);
+	CHECK(Is(GrooveKey(&D, false), 0, MODE_MAJOR) && Is(GrooveKey(&D, true), 9, MODE_MINOR));
+	CHECK(Is(GrooveKey(&F, false), 0, MODE_MAJOR));
+	CHECK(Is(GrooveKey(&Bb, true), 7, MODE_MINOR));
+	// A harmonic minor: A minor, or C major
+	const Key A(9, Harmonic);
+	CHECK(Is(GrooveKey(&A, true), 9, MODE_MINOR) && Is(GrooveKey(&A, false), 0, MODE_MAJOR));
+}
+
 int main()
 {
 	TestJson();
@@ -15697,6 +15719,7 @@ int main()
 	TestStrummedChords();
 	TestTappedTempo();
 	TestStrumDelay();
+	TestGrooveKey();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

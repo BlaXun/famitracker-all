@@ -135,6 +135,8 @@ CGrooveDlg::CGrooveDlg(CFamiTrackerView *pView, CWnd *pParent) :
 	m_iTrack(static_cast<unsigned int>(static_cast<CMainFrame*>(pView->GetParentFrame())->GetSelectedTrack())),
 	m_bTempoSet(false),
 	m_bKeyPicked(false),
+	m_iSongTonic(0),
+	m_iSongMode(-1),
 	m_bSettingBpm(false),
 	m_iRow(0),
 	m_iMelody(0),
@@ -203,19 +205,12 @@ BOOL CGrooveDlg::OnInitDialog()
 	m_iMelody = MelodyChannelFor(m_pDocument, pEditor->GetChannel());
 	GrooveChannels(m_pDocument, m_iMelody, m_iChords, m_iBass, m_iDrums);
 
-	// The song's own key, chosen or found from its notes, so the groove fits what's there (a mood picked
-	// afterwards keeps it); a song without notes gets the mood's
+	// The song's own key, chosen or found from its notes, so the groove fits what's there (MoodDefaults)
 	ftapi::TrackHarmony Harmony;
 	CMcpConnection *pTools = static_cast<CMainFrame*>(m_pView->GetParentFrame())->GetMcpConnection();
 	if (pTools != NULL && pTools->Harmony(Harmony) && Harmony.HasKey) {
-		const int Mode = Harmony.Choice.K.Mode;
-		const bool Minor = Mode >= 0 && Mode < ftapi::ModeCount() && ftapi::ModeSteps(Mode)[2] == 3;	// a minor third
-		const int Wanted = ((Harmony.Choice.K.Tonic % 12 + 12) % 12) * 2 + (Minor ? 1 : 0);
-		for (int i = 0; i < m_cKey.GetCount(); ++i)
-			if (static_cast<int>(m_cKey.GetItemData(i)) == Wanted) {
-				m_cKey.SetCurSel(i);
-				m_bKeyPicked = true;
-			}
+		m_iSongTonic = Harmony.Choice.K.Tonic;
+		m_iSongMode = Harmony.Choice.K.Mode;
 	}
 
 	MoodDefaults();
@@ -238,8 +233,11 @@ void CGrooveDlg::MoodDefaults()
 	if (!m_bTempoSet)
 		SetBpm(Moods[static_cast<size_t>(Mood)].Bpm);
 	if (!m_bKeyPicked) {
-		// C major, or A minor: the white keys
-		const int Wanted = Moods[static_cast<size_t>(Mood)].Minor ? 9 * 2 + 1 : 0;
+		// The song's key in the mood's mode: itself, or its relative minor or major (the same notes); without one,
+		// C major or A minor, the white keys (ftapi::GrooveKey)
+		const ftapi::Key Song(m_iSongTonic, m_iSongMode);
+		const ftapi::Key K = ftapi::GrooveKey(m_iSongMode >= 0 ? &Song : NULL, Moods[static_cast<size_t>(Mood)].Minor);
+		const int Wanted = K.Tonic * 2 + (K.Mode == ftapi::MODE_MINOR ? 1 : 0);
 		for (int i = 0; i < m_cKey.GetCount(); ++i)
 			if (static_cast<int>(m_cKey.GetItemData(i)) == Wanted)
 				m_cKey.SetCurSel(i);
