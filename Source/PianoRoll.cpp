@@ -2048,25 +2048,25 @@ struct CPianoRollWnd::Impl {
 			}
 			break;
 		case 'D':
-			if (!Ctrl && !Shift && !Alt) {
+			if (!Ctrl && !Shift && !Alt && !TypesNotes()) {
 				SetTool(TOOL_DRAW);
 				Done = true;
 			}
 			break;
 		case 'B':
-			if (!Ctrl && !Shift && !Alt) {
+			if (!Ctrl && !Shift && !Alt && !TypesNotes()) {
 				SetTool(TOOL_PAINT);
 				Done = true;
 			}
 			break;
 		case 'S':
-			if (!Ctrl && !Shift && !Alt) {
+			if (!Ctrl && !Shift && !Alt && !TypesNotes()) {
 				SetTool(TOOL_SELECT);
 				Done = true;
 			}
 			break;
 		case 'E':
-			if (!Ctrl && !Shift && !Alt) {
+			if (!Ctrl && !Shift && !Alt && !TypesNotes()) {
 				// The Effects menu where the mouse is, for the selected notes or the one under it
 				CPoint Mouse;
 				::GetCursorPos(&Mouse);
@@ -2092,6 +2092,12 @@ struct CPianoRollWnd::Impl {
 	{
 		Tool = NewTool;
 		Save();
+	}
+
+	// In the pattern editor's place (View > Pattern editor), the note keys are notes
+	static bool TypesNotes()
+	{
+		return Main() != NULL && !Main()->IsPatternEditorShown() && View() != NULL;
 	}
 
 	void DeleteSelection()
@@ -3245,6 +3251,7 @@ BEGIN_MESSAGE_MAP(CPianoRollWnd, CWnd)
 	ON_WM_CAPTURECHANGED()
 	ON_WM_SETCURSOR()
 	ON_WM_KEYDOWN()
+	ON_WM_KEYUP()
 	ON_WM_GETDLGCODE()
 	ON_WM_SETFOCUS()
 	ON_WM_KILLFOCUS()
@@ -3341,6 +3348,32 @@ void CPianoRollWnd::SaveSelectionAsClip()
 {
 	m_pImpl->SaveSelectionAsClip();
 	Invalidate(FALSE);
+}
+
+bool CPianoRollWnd::EditCommand(UINT nID)
+{
+	Impl &d = *m_pImpl;
+	switch (nID) {
+	case ID_EDIT_CUT: return d.KeyDown('X', true, false, false);
+	case ID_EDIT_COPY: return d.KeyDown('C', true, false, false);
+	case ID_EDIT_PASTE: return d.KeyDown('V', true, false, false);
+	case ID_EDIT_DELETE: return d.KeyDown(VK_DELETE, false, false, false);
+	case ID_EDIT_SELECTALL: return d.KeyDown('A', true, false, false);
+	default: return false;
+	}
+}
+
+bool CPianoRollWnd::CanEditCommand(UINT nID) const
+{
+	const Impl &d = *m_pImpl;
+	if (d.Drag != Impl::DRAG_NONE)
+		return false;
+	switch (nID) {
+	case ID_EDIT_CUT: case ID_EDIT_COPY: case ID_EDIT_DELETE: return !d.Selection.empty();
+	case ID_EDIT_PASTE: return d.HasCopied;
+	case ID_EDIT_SELECTALL: return true;
+	default: return false;
+	}
 }
 
 BOOL CPianoRollWnd::PreTranslateMessage(MSG *pMsg)
@@ -3575,7 +3608,18 @@ void CPianoRollWnd::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 	case VK_HOME: OnHScroll(SB_LEFT, 0, NULL); return;
 	case VK_END: OnHScroll(SB_RIGHT, 0, NULL); return;
 	}
+	// In the pattern editor's place, its note keys play and write notes here (and the keypad's digits pick
+	// an instrument, F2-F9 an octave)
+	if (Impl::TypesNotes() && Impl::View()->PianoRollKey(nChar, true))
+		return;
 	CWnd::OnKeyDown(nChar, nRepCnt, nFlags);
+}
+
+void CPianoRollWnd::OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags)
+{
+	if (Impl::TypesNotes())
+		Impl::View()->PianoRollKey(nChar, false);
+	CWnd::OnKeyUp(nChar, nRepCnt, nFlags);
 }
 
 UINT CPianoRollWnd::OnGetDlgCode()
@@ -3637,7 +3681,7 @@ BEGIN_MESSAGE_MAP(CPianoRollBar, CControlBar)
 	ON_MESSAGE(WM_SIZEPARENT, OnSizeParent)
 END_MESSAGE_MAP()
 
-CPianoRollBar::CPianoRollBar() : m_iHeight(DEFAULT_HEIGHT), m_iRoom(0), m_iDragFrom(-1), m_iDragHeight(0), m_iDragMax(0)
+CPianoRollBar::CPianoRollBar() : m_bFill(false), m_iHeight(DEFAULT_HEIGHT), m_iRoom(0), m_iDragFrom(-1), m_iDragHeight(0), m_iDragMax(0)
 {
 }
 
@@ -3671,6 +3715,20 @@ void CPianoRollBar::Opened(bool Open)
 	theApp.WriteProfileInt(SECTION, _T("Open"), Open ? 1 : 0);
 }
 
+void CPianoRollBar::Fill(bool On)
+{
+	if (On == m_bFill)
+		return;
+	m_bFill = On;
+	m_iDragFrom = -1;
+	if (GetSafeHwnd() != NULL && m_wndRoll.GetSafeHwnd() != NULL) {
+		CRect Client;
+		GetClientRect(&Client);
+		m_wndRoll.MoveWindow(0, Divider(), Client.Width(), std::max(0, static_cast<int>(Client.Height()) - Divider()));
+		Invalidate(FALSE);
+	}
+}
+
 void CPianoRollBar::SongChanged()
 {
 	m_wndRoll.SongChanged();
@@ -3683,7 +3741,7 @@ bool CPianoRollBar::WasOpen()
 
 int CPianoRollBar::Divider() const
 {
-	return std::max(4, SY(DIVIDER));
+	return m_bFill ? 0 : std::max(4, SY(DIVIDER));	// nothing to share the room with in the pattern editor's place
 }
 
 int CPianoRollBar::MaxHeight() const
@@ -3701,7 +3759,7 @@ LRESULT CPianoRollBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
 
 CSize CPianoRollBar::CalcFixedLayout(BOOL bStretch, BOOL bHorz)
 {
-	return CSize(32767, std::max(0, std::min(m_iHeight, MaxHeight())));
+	return CSize(32767, std::max(0, m_bFill ? m_iRoom : std::min(m_iHeight, MaxHeight())));
 }
 
 void CPianoRollBar::OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler)
@@ -3728,6 +3786,8 @@ void CPianoRollBar::OnPaint()
 	CRect Rect;
 	GetClientRect(&Rect);
 	const int Line = Divider();
+	if (Line <= 0)
+		return;		// filling the pattern editor's place: the piano roll covers it all
 	dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), Line, ::GetSysColor(COLOR_3DFACE));
 	dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), 1, ::GetSysColor(COLOR_3DHILIGHT));
 	dc.FillSolidRect(Rect.left, Rect.top + Line - 1, Rect.Width(), 1, ::GetSysColor(COLOR_3DSHADOW));
@@ -3744,7 +3804,7 @@ BOOL CPianoRollBar::OnEraseBkgnd(CDC *pDC)
 
 void CPianoRollBar::OnLButtonDown(UINT nFlags, CPoint point)
 {
-	if (point.y >= Divider())
+	if (m_bFill || point.y >= Divider())
 		return;
 	// Drag the line to make the piano roll taller or shorter
 	CPoint Screen = point;

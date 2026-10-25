@@ -197,6 +197,11 @@ public:
 		bool	bFewerMenus;		// rarely used menu items hidden
 	} Profile;
 
+	// The views shown, as the View menu leaves them (CMainFrame::ShowNoteViews; the panels keep their own)
+	struct {
+		bool	bPatternEditor;		// the pattern editor; while it's hidden, the piano roll is in its place
+	} Views;
+
 private:
 	template<class T> void AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable);
 	void AddSetting(CSettingBase *pSetting);

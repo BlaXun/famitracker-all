@@ -229,6 +229,11 @@ public:
 	void		MoveToFrame(int Frame);
 	void		SetQueueFrame(int Frame);
 	int			GetQueueFrame() const;
+	// Help > Example songs: the next start plays from the cursor up to song row End (frame * pattern length + row,
+	// not included) and halts there, or wherever playing leaves the rows from First on or goes back (a jump, the
+	// loop); End -1 plays on as usual. Called on the UI thread just before StartPlayer; the start takes it.
+	void		SetNextPlayRange(int First, int End);
+	bool		PlayRangeEnded() const { return m_bPlayRangeEnded; }	// the last start halted at its range's end
 
 #ifdef EXPORT_TEST
 	bool		IsTestingExport() const { return m_bExportTesting; }
@@ -417,6 +422,12 @@ private:
 
 	// Player state
 	int					m_iQueuedFrame;					// Queued frame
+	volatile int		m_iNextRangeFirst;				// SetNextPlayRange, for the next start
+	volatile int		m_iNextRangeEnd;
+	int					m_iRangeFirst;					// the rows this start plays, End -1 for all
+	int					m_iRangeEnd;
+	int					m_iRangeLast;					// the row read last, to see the song go back
+	volatile bool		m_bPlayRangeEnded;
 	int					m_iPlayTrack;					// Current track that is playing
 	int					m_iPlayFrame;					// Current frame to play
 	int					m_iPlayRow;						// Current row to play

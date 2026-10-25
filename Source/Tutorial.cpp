@@ -32,7 +32,11 @@
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
+#include "PatternEditor.h"
+#include "SoundGen.h"
+#include "TrackerChannel.h"
 #include "Clips.h"
+#include "Api/Music.h"
 #include "Tutorial.h"
 
 namespace {
@@ -84,6 +88,7 @@ const command_id_t COMMAND_IDS[] = {
 	{ "insert-frame", ID_MODULE_INSERTFRAME }, { "duplicate-frame", ID_MODULE_DUPLICATEFRAME },
 	{ "remove-frame", ID_MODULE_REMOVEFRAME }, { "module-properties", ID_MODULE_MODULEPROPERTIES }, { "undo", ID_EDIT_UNDO },
 	{ "redo", ID_EDIT_REDO }, { "profile", ID_VIEW_PROFILE }, { "connect-claude", ID_FILE_CONNECTCLAUDE },
+	{ "pattern-editor", ID_VIEW_PATTERNEDITOR },
 };
 
 UINT CommandId(const std::string &Name)
@@ -92,6 +97,61 @@ UINT CommandId(const std::string &Name)
 		if (Name == COMMAND_IDS[i].Name)
 			return COMMAND_IDS[i].Id;
 	return 0;
+}
+
+// Help > Example songs: the songs in res/examples, in FamiTracker.exe as
+// RCDATA, each opened as a new song with its walkthrough
+struct example_song_t {
+	UINT Command;			// its menu item
+	UINT Song;				// the module
+	UINT Walkthrough;		// the tutorial that walks through it
+	LPCTSTR Title;			// the new song's name until it's saved
+};
+
+const example_song_t EXAMPLES[] = {
+	{ ID_HELP_EXAMPLE_FIRST, IDR_EXAMPLE_FIRST_SONG, IDR_EXAMPLE_FIRST_WALK, _T("First song (example)") },
+	{ ID_HELP_EXAMPLE_TRICKS, IDR_EXAMPLE_TRICKS_SONG, IDR_EXAMPLE_TRICKS_WALK, _T("NES tricks (example)") },
+	{ ID_HELP_EXAMPLE_VRC6, IDR_EXAMPLE_VRC6_SONG, IDR_EXAMPLE_VRC6_WALK, _T("The VRC6 (example)") },
+	{ ID_HELP_EXAMPLE_SOFT, IDR_EXAMPLE_SOFT_SONG, IDR_EXAMPLE_SOFT_WALK, _T("Soft and wide (example)") },
+};
+
+// The song's channels as a walkthrough names them (TutorialScript.h), in
+// column order
+std::vector<tutorial_channel_t> SongChannels(const CFamiTrackerDoc *pDoc)
+{
+	std::vector<tutorial_channel_t> List;
+	for (unsigned int i = 0; i < pDoc->GetAvailableChannels(); ++i) {
+		const CTrackerChannel *pChannel = pDoc->GetChannel(static_cast<int>(i));
+		const char *pChip = "2A03";
+		switch (pChannel->GetChip()) {
+			case SNDCHIP_VRC6: pChip = "VRC6"; break;
+			case SNDCHIP_VRC7: pChip = "VRC7"; break;
+			case SNDCHIP_FDS:  pChip = "FDS"; break;
+			case SNDCHIP_MMC5: pChip = "MMC5"; break;
+			case SNDCHIP_N163: pChip = "N163"; break;
+			case SNDCHIP_S5B:  pChip = "5B"; break;
+		}
+		const CStringA Name(pChannel->GetChannelName());
+		List.push_back(tutorial_channel_t(std::string(static_cast<LPCSTR>(Name)), pChip, pDoc->IsVrc6PlusChannel(static_cast<int>(i))));
+	}
+	return List;
+}
+
+// "Pulse 1", "Pulse 1 and Triangle", "Soft 1, 2 and 3" (a name like the one
+// before it but for its last word gives that word)
+CString ChannelList(const std::vector<std::string> &Names)
+{
+	CString Text;
+	for (size_t i = 0; i < Names.size(); ++i) {
+		if (i > 0)
+			Text += i + 1 == Names.size() ? _T(" and ") : _T(", ");
+		const size_t Space = Names[i].rfind(' ');
+		const bool Like = i > 0 && Space != std::string::npos && Space + 1 < Names[i].size() &&
+			Names[i - 1].size() > Space && Names[i - 1].compare(0, Space + 1, Names[i], 0, Space + 1) == 0 &&
+			Names[i - 1].find(' ', Space + 1) == std::string::npos;
+		Text += (Like ? Names[i].substr(Space + 1) : Names[i]).c_str();
+	}
+	return Text;
 }
 
 // Where tutorials come from
@@ -296,7 +356,8 @@ void CTutorialOverlay::Hide()
 class CTutorialBubble : public CWnd
 {
 public:
-	CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial);
+	// Example: a walkthrough of the example song that's open, which ends when another song comes
+	CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example);
 	bool Create();
 	void Command(UINT nID);
 	void Stop();
@@ -318,7 +379,7 @@ protected:
 	DECLARE_MESSAGE_MAP()
 
 private:
-	enum { BUTTON_BACK, BUTTON_NEXT, BUTTON_CLOSE, BUTTONS };
+	enum { BUTTON_BACK, BUTTON_NEXT, BUTTON_CLOSE, BUTTON_PLAY, BUTTONS };	// Play: the step's bars (play)
 
 	const tutorial_step_t &Step() const { return m_Tutorial.Steps[static_cast<size_t>(m_iStep)]; }
 	bool LastStep() const { return m_iStep + 1 >= static_cast<int>(m_Tutorial.Steps.size()); }
@@ -333,6 +394,16 @@ private:
 	int NoteCount() const;
 	int ButtonAt(const CPoint &Point) const;
 	CString ButtonText(int Button) const;
+	bool HasButton(int Button) const;
+	CFamiTrackerDoc *Doc() const;
+	// Walkthroughs: the rows of some bars, the cursor, the step's channels and bars heard
+	bool BarRows(int First, int Last, int &FirstRow, int &EndRow) const;
+	void MoveCursor(int Row, int Channel);
+	bool ChannelRect(const std::string &Name, CRect &Rect) const;
+	void BeginStepSound();
+	void EndStepSound();
+	void RestoreMutes();
+	void PlayBars();
 
 	CMainFrame *m_pMainFrame;
 	tutorial_t m_Tutorial;
@@ -353,6 +424,15 @@ private:
 	int m_iNotes, m_iInstruments, m_iClips;
 	bool m_bWasSaved;
 	std::vector<UINT> m_Commands;	// used since
+
+	// A walkthrough of an example song
+	bool m_bExample;
+	unsigned int m_iSong;			// the song it's about (CFamiTrackerDoc::GetSongSerial)
+	std::vector<bool> m_SavedMutes;	// the channels' mutes before the step's solo or mute, empty for none
+	bool m_bPlaying;				// the step's bars play (its Play button)
+	bool m_bPlayStarted;			// and the sound thread has started them
+	DWORD m_dwPlayPressed;
+	bool m_bHeard;					// they played to their end
 };
 
 namespace {
@@ -375,7 +455,7 @@ BEGIN_MESSAGE_MAP(CTutorialBubble, CWnd)
 	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
-CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial) :
+CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example) :
 	m_pMainFrame(pMainFrame),
 	m_Tutorial(Tutorial),
 	m_iStep(0),
@@ -390,8 +470,22 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_iNotes(0),
 	m_iInstruments(0),
 	m_iClips(0),
-	m_bWasSaved(false)
+	m_bWasSaved(false),
+	m_bExample(Example),
+	m_iSong(0),
+	m_bPlaying(false),
+	m_bPlayStarted(false),
+	m_dwPlayPressed(0),
+	m_bHeard(false)
 {
+	const CFamiTrackerDoc *pDoc = Doc();
+	if (pDoc != NULL)
+		m_iSong = pDoc->GetSongSerial();
+}
+
+CFamiTrackerDoc *CTutorialBubble::Doc() const
+{
+	return static_cast<CFamiTrackerDoc*>(m_pMainFrame->GetActiveDocument());
 }
 
 bool CTutorialBubble::Create()
@@ -420,6 +514,7 @@ bool CTutorialBubble::Create()
 
 void CTutorialBubble::Stop()
 {
+	EndStepSound();		// the song plays on as the user has it
 	KillTimer(TMR_STEP);
 	if (m_Overlay.GetSafeHwnd() != NULL)
 		m_Overlay.DestroyWindow();
@@ -487,10 +582,12 @@ void CTutorialBubble::Go(int Index)
 	if (Index < 0)
 		return;
 	if (Index >= static_cast<int>(m_Tutorial.Steps.size())) {
-		m_pMainFrame->SetMessageText(_T("Tutorial finished. Help > Tutorials has the others."));
+		m_pMainFrame->SetMessageText(m_bExample ? _T("Walkthrough finished. Help > Example songs has the other examples.") :
+			_T("Tutorial finished. Help > Tutorials has the others."));
 		Stop();
 		return;
 	}
+	EndStepSound();		// the step before: its bars stop, its channels come back
 	m_iStep = Index;
 	m_bMoved = false;
 	m_Commands.clear();
@@ -507,8 +604,10 @@ void CTutorialBubble::Go(int Index)
 	m_iClips = pDoc != NULL && pDoc->GetClips() != NULL ? pDoc->GetClips()->GetCount() : 0;
 	m_bWasSaved = pDoc != NULL && !pDoc->IsModified() && !pDoc->GetPathName().IsEmpty();
 
-	// A step about the clips panel or the piano roll opens it
+	// A step about the clips panel, the piano roll or the mixer opens it
 	m_pMainFrame->ShowTutorialPart(CString(Step().Show.c_str()));
+	// A walkthrough's step: the cursor to its bar and channel, its channels alone, its instrument
+	BeginStepSound();
 
 	Layout();
 	Invalidate(FALSE);
@@ -542,6 +641,8 @@ bool CTutorialBubble::Done() const
 			(!m_bWasSaved || Seen(ID_FILE_SAVE) || Seen(ID_FILE_SAVE_AS));
 	case WAIT_COMMAND:
 		return Seen(CommandId(Step().Command));
+	case WAIT_HEARD:
+		return m_bHeard;
 	default:
 		return false;
 	}
@@ -552,8 +653,33 @@ CString CTutorialBubble::ButtonText(int Button) const
 	switch (Button) {
 	case BUTTON_BACK: return _T("Back");
 	case BUTTON_NEXT: return LastStep() ? _T("Finish") : (Step().Wait == WAIT_NEXT ? _T("Next") : _T("Skip"));
+	case BUTTON_PLAY: {
+		// "Play bars 5-8: Triangle alone", or Stop while they play
+		if (m_bPlaying)
+			return _T("Stop");
+		const tutorial_step_t &Now = Step();
+		CString Text;
+		if (Now.PlayFirst == Now.PlayLast)
+			Text.Format(_T("Play bar %d"), Now.PlayFirst);
+		else
+			Text.Format(_T("Play bars %d-%d"), Now.PlayFirst, Now.PlayLast);
+		if (!Now.Solo.empty())
+			Text += _T(": ") + ChannelList(Now.Solo) + _T(" alone");
+		else if (!Now.Mute.empty())
+			Text += _T(" without ") + ChannelList(Now.Mute);
+		return Text;
+	}
 	default: return _T("Close");
 	}
+}
+
+bool CTutorialBubble::HasButton(int Button) const
+{
+	if (Button == BUTTON_BACK)
+		return m_iStep > 0;
+	if (Button == BUTTON_PLAY)
+		return Step().PlayFirst > 0;
+	return true;
 }
 
 void CTutorialBubble::Layout()
@@ -567,6 +693,14 @@ void CTutorialBubble::Layout()
 	CRect Text(0, 0, Inner, 0);
 	dc.DrawText(Paragraphs(Step().Text), &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
 	int Height = SY(MARGIN) + Header + SY(LINE_GAP) + Text.Height();
+	if (HasButton(BUTTON_PLAY)) {
+		// The step's Play button, the width of the text, under it
+		Height += SY(LINE_GAP);
+		m_Buttons[BUTTON_PLAY] = CRect(SX(MARGIN), Height, Width - SX(MARGIN), Height + SY(BUTTON_HEIGHT));
+		Height += SY(BUTTON_HEIGHT);
+	}
+	else
+		m_Buttons[BUTTON_PLAY].SetRectEmpty();
 	if (Step().Wait != WAIT_NEXT) {
 		dc.SelectObject(&m_SmallFont);
 		Height += SY(LINE_GAP) + dc.GetTextExtent(_T("Ag")).cy;
@@ -699,6 +833,27 @@ void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
 
 void CTutorialBubble::Tick()
 {
+	// A walkthrough is about its example song: another song ends it
+	const CFamiTrackerDoc *pDoc = Doc();
+	if (m_bExample && (pDoc == NULL || pDoc->GetSongSerial() != m_iSong)) {
+		m_SavedMutes.clear();	// they were the example's channels
+		m_bPlaying = false;
+		m_pMainFrame->SetMessageText(_T("The walkthrough ended, since another song is open now. Help > Example songs opens the example again."));
+		Stop();
+		return;
+	}
+	// The step's bars: the sound thread starts them, then they're over
+	if (m_bPlaying) {
+		if (theApp.IsPlaying())
+			m_bPlayStarted = true;
+		else if (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000) {
+			m_bPlaying = false;
+			if (m_bPlayStarted && theApp.GetSoundGenerator()->PlayRangeEnded())
+				m_bHeard = true;
+			Invalidate(FALSE);
+		}
+	}
+
 	if (!m_pMainFrame->IsWindowVisible() || m_pMainFrame->IsIconic()) {
 		if (IsWindowVisible())
 			ShowWindow(SW_HIDE);
@@ -732,8 +887,8 @@ void CTutorialBubble::Tick()
 		CRect Window, Spot;
 		m_pMainFrame->GetWindowRect(&Window);
 		const tutorial_step_t &Now = Step();
-		const bool HasSpot = Now.Show != "window" &&
-			m_pMainFrame->GetTutorialRect(CString(Now.Show.c_str()), CString(Now.ShowName.c_str()), CommandId(Now.ShowName), Spot) &&
+		const bool HasSpot = Now.Show != "window" && (Now.Show == "channel" ? ChannelRect(Now.ShowName, Spot) :
+			m_pMainFrame->GetTutorialRect(CString(Now.Show.c_str()), CString(Now.ShowName.c_str()), CommandId(Now.ShowName), Spot)) &&
 			!Spot.IsRectEmpty();
 		if (!HasSpot)
 			Spot.SetRectEmpty();
@@ -823,20 +978,24 @@ void CTutorialBubble::OnPaint()
 	Memory.DrawText(Body, &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
 	Memory.DrawText(Body, &Text, DT_WORDBREAK | DT_NOPREFIX);
 	y = Text.bottom + SY(LINE_GAP);
+	if (HasButton(BUTTON_PLAY))
+		y = m_Buttons[BUTTON_PLAY].bottom + SY(LINE_GAP);
 
 	if (Step().Wait != WAIT_NEXT) {
 		Memory.SelectObject(&m_SmallFont);
 		Memory.SetTextColor(TEXT_DIM);
 		CRect Note(SX(MARGIN), y, SX(MARGIN) + Width, y + Memory.GetTextExtent(_T("Ag")).cy);
-		Memory.DrawText(_T("Do it and the tutorial goes on by itself, or press Skip."), &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+		Memory.DrawText(Step().Wait == WAIT_HEARD ? _T("Press Play; it goes on by itself once they've played.") :
+			_T("Do it and the tutorial goes on by itself, or press Skip."), &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 	}
 
 	// The buttons
 	Memory.SelectObject(&m_Font);
 	for (int i = 0; i < BUTTONS; ++i) {
-		if (i == BUTTON_BACK && m_iStep == 0)
+		if (!HasButton(i))
 			continue;
-		const bool Main = i == BUTTON_NEXT && (Step().Wait == WAIT_NEXT || LastStep());
+		const bool Main = (i == BUTTON_NEXT && (Step().Wait == WAIT_NEXT || LastStep())) ||
+			(i == BUTTON_PLAY && Step().Wait == WAIT_HEARD && !m_bPlaying);
 		COLORREF Back = Main ? BUTTON_MAIN : BUTTON_FILL;
 		if (i == m_iHot)
 			Back = Main ? RGB(250, 200, 70) : BUTTON_HOT;
@@ -849,7 +1008,27 @@ void CTutorialBubble::OnPaint()
 		Memory.SelectObject(pOldPen);
 		Memory.SetTextColor(TEXT_COLOUR);
 		CRect Label = m_Buttons[i];
-		Memory.DrawText(ButtonText(i), &Label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		if (i == BUTTON_PLAY) {
+			// A play triangle, or a stop square while the bars play, then the label
+			const int Size = SY(8), Left = Label.left + SX(10), Middle = Label.CenterPoint().y;
+			CBrush Mark(TEXT_COLOUR);
+			CPen Edge(PS_SOLID, 1, TEXT_COLOUR);
+			CBrush *pBrush = Memory.SelectObject(&Mark);
+			CPen *pPen = Memory.SelectObject(&Edge);
+			if (m_bPlaying)
+				Memory.Rectangle(Left, Middle - Size / 2, Left + Size, Middle + Size / 2);
+			else {
+				const POINT Triangle[] = { { Left, Middle - Size / 2 }, { Left + Size, Middle }, { Left, Middle + Size / 2 } };
+				Memory.Polygon(Triangle, 3);
+			}
+			Memory.SelectObject(pBrush);
+			Memory.SelectObject(pPen);
+			Label.left = Left + Size + SX(8);
+			Label.right -= SX(6);
+			Memory.DrawText(ButtonText(i), &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		}
+		else
+			Memory.DrawText(ButtonText(i), &Label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 	}
 
 	dc.BitBlt(0, 0, Client.Width(), Client.Height(), &Memory, 0, 0, SRCCOPY);
@@ -865,7 +1044,7 @@ BOOL CTutorialBubble::OnEraseBkgnd(CDC *pDC)
 int CTutorialBubble::ButtonAt(const CPoint &Point) const
 {
 	for (int i = 0; i < BUTTONS; ++i) {
-		if (i == BUTTON_BACK && m_iStep == 0)
+		if (!HasButton(i))
 			continue;
 		if (m_Buttons[i].PtInRect(Point))
 			return i;
@@ -931,8 +1110,12 @@ void CTutorialBubble::OnLButtonUp(UINT nFlags, CPoint point)
 	case BUTTON_NEXT:
 		Go(m_iStep + 1);
 		break;
+	case BUTTON_PLAY:
+		PlayBars();
+		break;
 	default:
-		m_pMainFrame->SetMessageText(_T("Tutorial closed. Help > Tutorials starts it again."));
+		m_pMainFrame->SetMessageText(m_bExample ? _T("Walkthrough closed. Help > Example songs opens the example again.") :
+			_T("Tutorial closed. Help > Tutorials starts it again."));
 		Stop();
 		break;
 	}
@@ -942,6 +1125,161 @@ LRESULT CTutorialBubble::OnExitSizeMove(WPARAM wParam, LPARAM lParam)
 {
 	m_bMoved = true;		// dragged aside
 	return 0;
+}
+
+// Walkthroughs of the example songs: bars, the cursor, channels alone
+
+// The song rows of bars First to Last (from 1, as the piano roll's ruler
+// counts them); false when the song is shorter
+bool CTutorialBubble::BarRows(int First, int Last, int &FirstRow, int &EndRow) const
+{
+	const CFamiTrackerDoc *pDoc = Doc();
+	if (pDoc == NULL || !pDoc->IsFileLoaded() || First < 1 || Last < First)
+		return false;
+	const unsigned int Track = static_cast<unsigned int>(std::max(0, m_pMainFrame->GetSelectedTrack()));
+	const ftapi::Timing Time(static_cast<int>(pDoc->GetPatternLength(Track)), static_cast<int>(pDoc->GetFrameCount(Track)),
+		pDoc->GetFirstHighlight(), pDoc->GetSecondHighlight());
+	FirstRow = Time.BarStart(First);
+	EndRow = std::min(Time.BarEnd(Last), Time.TotalRows());
+	return FirstRow < EndRow;
+}
+
+void CTutorialBubble::MoveCursor(int Row, int Channel)
+{
+	const CFamiTrackerDoc *pDoc = Doc();
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	if (pDoc == NULL || pView == NULL)
+		return;
+	const unsigned int Track = static_cast<unsigned int>(std::max(0, m_pMainFrame->GetSelectedTrack()));
+	const int Length = static_cast<int>(std::max(1U, pDoc->GetPatternLength(Track)));
+	pView->SelectFrame(static_cast<unsigned int>(Row / Length));
+	pView->GetPatternEditor()->MoveToRow(Row % Length);
+	// (draws the cursor where it is now)
+	pView->SelectChannel(static_cast<unsigned int>(Channel >= 0 ? Channel : static_cast<int>(pView->GetSelectedChannel())));
+}
+
+// A channel's column in the pattern editor, on the screen
+bool CTutorialBubble::ChannelRect(const std::string &Name, CRect &Rect) const
+{
+	const CFamiTrackerDoc *pDoc = Doc();
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	if (pDoc == NULL || pView == NULL || !pDoc->IsFileLoaded() || !pView->IsWindowVisible())
+		return false;
+	const int Channel = FindTutorialChannel(Name, SongChannels(pDoc));
+	if (Channel < 0 || !pView->GetPatternEditor()->GetChannelRect(Channel, Rect))
+		return false;
+	pView->ClientToScreen(&Rect);
+	return true;
+}
+
+// As a step begins: the cursor goes to its bar (stopping the song, which
+// would move it again) and channel, only its channels are heard, its
+// instrument is picked
+void CTutorialBubble::BeginStepSound()
+{
+	CFamiTrackerDoc *pDoc = Doc();
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	if (pDoc == NULL || pView == NULL || !pDoc->IsFileLoaded())
+		return;
+	const tutorial_step_t &Now = Step();
+	const std::vector<tutorial_channel_t> Channels = SongChannels(pDoc);
+	const int Channel = Now.Show == "channel" ? FindTutorialChannel(Now.ShowName, Channels) : -1;
+	int Row = 0, End = 0;
+	if (Now.CursorBar() > 0 && BarRows(Now.CursorBar(), Now.CursorBar(), Row, End)) {
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();
+		MoveCursor(Row, Channel);
+	}
+	else if (Channel >= 0)
+		pView->SelectChannel(static_cast<unsigned int>(Channel));
+
+	if (!Now.Solo.empty() || !Now.Mute.empty()) {
+		const unsigned int Count = pDoc->GetAvailableChannels();
+		std::vector<bool> Heard(Count, Now.Solo.empty());
+		bool Found = false;
+		for (size_t i = 0; i < Now.Solo.size(); ++i) {
+			const int c = FindTutorialChannel(Now.Solo[i], Channels);
+			if (c >= 0 && c < static_cast<int>(Count))
+				Heard[static_cast<size_t>(c)] = Found = true;
+		}
+		for (size_t i = 0; i < Now.Mute.size(); ++i) {
+			const int c = FindTutorialChannel(Now.Mute[i], Channels);
+			if (c >= 0 && c < static_cast<int>(Count)) {
+				Heard[static_cast<size_t>(c)] = false;
+				Found = true;
+			}
+		}
+		if (Found) {
+			if (theApp.IsPlaying())
+				theApp.StopPlayerAndWait();		// no note left sounding on a channel muted now
+			for (unsigned int c = 0; c < Count; ++c) {
+				m_SavedMutes.push_back(pView->IsChannelMuted(c));
+				pView->SetChannelMute(static_cast<int>(c), !Heard[c]);
+			}
+			pView->GetPatternEditor()->InvalidateHeader();
+			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
+		}
+	}
+
+	if (Now.Instrument >= 0 && pDoc->IsInstrumentUsed(static_cast<unsigned int>(Now.Instrument)))
+		m_pMainFrame->SelectInstrument(Now.Instrument);
+}
+
+// As a step ends: its bars stop, and its channels are heard as before
+void CTutorialBubble::EndStepSound()
+{
+	if (m_bPlaying && theApp.IsPlaying())
+		theApp.StopPlayer();
+	m_bPlaying = false;
+	m_bPlayStarted = false;
+	m_bHeard = false;
+	RestoreMutes();
+}
+
+void CTutorialBubble::RestoreMutes()
+{
+	const CFamiTrackerDoc *pDoc = Doc();
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	if (!m_SavedMutes.empty() && pDoc != NULL && pView != NULL && pDoc->GetSongSerial() == m_iSong) {
+		for (unsigned int c = 0; c < m_SavedMutes.size() && c < pDoc->GetAvailableChannels(); ++c)
+			pView->SetChannelMute(static_cast<int>(c), m_SavedMutes[c]);
+		pView->GetPatternEditor()->InvalidateHeader();
+		pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
+	}
+	m_SavedMutes.clear();
+}
+
+// The Play button: the step's bars, from the first, stopping after the last
+// (CSoundGen::SetNextPlayRange); Stop while they play
+void CTutorialBubble::PlayBars()
+{
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	CSoundGen *pSound = theApp.GetSoundGenerator();
+	if (pView == NULL || pSound == NULL)
+		return;
+	if (m_bPlaying) {
+		theApp.StopPlayer();
+		m_bPlaying = false;
+		Invalidate(FALSE);
+		return;
+	}
+	int First = 0, End = 0;
+	if (!BarRows(Step().PlayFirst, Step().PlayLast, First, End)) {
+		m_pMainFrame->SetMessageText(_T("The song is shorter than that now."));
+		return;
+	}
+	if (theApp.IsPlaying())
+		theApp.StopPlayerAndWait();		// the cursor doesn't move while the song plays in follow mode
+	pSound->SetQueueFrame(-1);
+	const tutorial_step_t &Now = Step();
+	const CFamiTrackerDoc *pDoc = Doc();
+	MoveCursor(First, Now.Show == "channel" && pDoc != NULL ? FindTutorialChannel(Now.ShowName, SongChannels(pDoc)) : -1);
+	pSound->SetNextPlayRange(First, End);
+	theApp.StartPlayer(MODE_PLAY_CURSOR);
+	m_bPlaying = true;
+	m_bPlayStarted = false;
+	m_dwPlayPressed = ::GetTickCount();
+	Invalidate(FALSE);
 }
 
 // Help > Tutorials
@@ -1010,6 +1348,22 @@ void CTutorialsDlg::OnOK()
 	CDialog::OnOK();
 }
 
+namespace {
+
+void StartTutorial(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example)
+{
+	if (g_pTutorial != NULL)
+		g_pTutorial->Stop();
+	CTutorialBubble *pBubble = new CTutorialBubble(pMainFrame, Tutorial, Example);
+	g_pTutorial = pBubble;
+	if (!pBubble->Create()) {
+		g_pTutorial = NULL;
+		delete pBubble;
+	}
+}
+
+}	// namespace
+
 void ShowTutorials(CMainFrame *pMainFrame)
 {
 	const std::vector<tutorial_entry_t> List = FindTutorials();
@@ -1018,14 +1372,54 @@ void ShowTutorials(CMainFrame *pMainFrame)
 	CTutorialsDlg Dialog(pMainFrame, List);
 	if (Dialog.DoModal() != IDOK || Dialog.Chosen() < 0)
 		return;
-	if (g_pTutorial != NULL)
-		g_pTutorial->Stop();
-	CTutorialBubble *pBubble = new CTutorialBubble(pMainFrame, List[static_cast<size_t>(Dialog.Chosen())].Tutorial);
-	g_pTutorial = pBubble;
-	if (!pBubble->Create()) {
-		g_pTutorial = NULL;
-		delete pBubble;
+	StartTutorial(pMainFrame, List[static_cast<size_t>(Dialog.Chosen())].Tutorial, false);
+}
+
+void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
+{
+	const example_song_t *pExample = NULL;
+	for (size_t i = 0; i < sizeof(EXAMPLES) / sizeof(EXAMPLES[0]); ++i)
+		if (EXAMPLES[i].Command == nID)
+			pExample = &EXAMPLES[i];
+	std::string Walk, Song, Error;
+	tutorial_t Tutorial;
+	if (pExample == NULL || !BuiltInText(pExample->Walkthrough, Walk) || !ParseTutorial(Walk, Tutorial, Error) ||
+		!BuiltInText(pExample->Song, Song)) {
+		ASSERT(FALSE);
+		return;
 	}
+
+	// The song is opened from a file of its own, as any song is, and becomes a
+	// new one without a file: Save asks for a name, and the example stays
+	TCHAR Folder[MAX_PATH], Path[MAX_PATH];
+	if (::GetTempPath(MAX_PATH, Folder) == 0 || ::GetTempFileName(Folder, _T("ftx"), 0, Path) == 0) {
+		AfxMessageBox(_T("The example can't be opened: there's no room for it in the folder for temporary files."), MB_ICONEXCLAMATION);
+		return;
+	}
+	bool Written = false;
+	try {
+		CFile File(Path, CFile::modeCreate | CFile::modeWrite);
+		File.Write(Song.data(), static_cast<UINT>(Song.size()));
+		File.Close();
+		Written = true;
+	}
+	catch (CFileException *pException) {
+		pException->Delete();
+	}
+	if (!Written) {
+		::DeleteFile(Path);
+		AfxMessageBox(_T("The example can't be opened: it can't be written to the folder for temporary files."), MB_ICONEXCLAMATION);
+		return;
+	}
+	// Asks first whether to save the song that's open (a tutorial running goes on if the user keeps it), and not
+	// into the recent files
+	CDocument *pOpened = theApp.OpenDocumentFile(Path, FALSE);
+	::DeleteFile(Path);
+	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pOpened);
+	if (pDoc == NULL)
+		return;		// the song that was open stays
+	pDoc->MakeUntitled(pExample->Title);
+	StartTutorial(pMainFrame, Tutorial, true);
 }
 
 void TutorialCommand(UINT nID)

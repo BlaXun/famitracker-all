@@ -317,6 +317,14 @@ along its top to make it taller or shorter; the × in its top right corner,
 or View > Piano roll again, hides it. It comes back when FamiTracker starts
 if it was open when FamiTracker closed, and remembers its height and zoom.
 
+Untick View > Pattern editor and the piano roll fills the pattern editor's
+place; one of the two always shows, so hiding the piano roll then brings the
+pattern editor back. In the pattern editor's place the piano roll takes its
+keys: the note keys play notes and, with editing on (Space), type them at the
+cursor line a step apart, the keypad's digits pick an instrument and F2-F9
+an octave; the letters D, B, S and E are notes then, not the tools' keys.
+Edit > Cut, Copy, Paste and Delete work on its selection.
+
 Showing the song:
 
 - The ruler counts bars from the second row highlight (a bar), with thinner

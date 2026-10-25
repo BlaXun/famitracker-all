@@ -108,10 +108,11 @@ void ApplyClipEdit(CMainFrame *pMainFrm, int Index, const stChanNote *pCells, in
 // song when the cells run past it, and a frame that changes gets a pattern of
 // its own first if another frame plays the same one. Linked copies of clips
 // stay linked, so the clip and its other copies follow the edit. The cursor
-// goes to CursorRow (-1: the first row written). Returns false, with the
+// goes to CursorRow (-1: the first row written), in Channel's note column or,
+// with KeepChannel, in the channel and column it's in. Returns false, with the
 // reason in Message, when nothing was written.
 bool WriteChannelRows(CMainFrame *pMainFrm, int Channel, int Row, const stChanNote *pCells, int Count, int CursorRow,
-	CString &Message);
+	CString &Message, bool KeepChannel = false);
 
 // The selected track's key (Api/Keys.h): Key when Chosen, otherwise back to
 // auto (found from the notes), as one undoable action. False when nothing
