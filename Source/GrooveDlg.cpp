@@ -40,6 +40,8 @@
 #include "MainFrm.h"
 #include "PatternEditor.h"
 #include "InsertRecording.h"
+#include "McpConnection.h"
+#include "Api/Tools.h"
 #include "TapButton.h"
 #include "GrooveDlg.h"
 
@@ -200,6 +202,21 @@ BOOL CGrooveDlg::OnInitDialog()
 	m_iRow = Time.BarStart(Time.BarOf(pEditor->GetFrame() * Length + pEditor->GetRow()));
 	m_iMelody = MelodyChannelFor(m_pDocument, pEditor->GetChannel());
 	GrooveChannels(m_pDocument, m_iMelody, m_iChords, m_iBass, m_iDrums);
+
+	// The song's own key, chosen or found from its notes, so the groove fits what's there (a mood picked
+	// afterwards keeps it); a song without notes gets the mood's
+	ftapi::TrackHarmony Harmony;
+	CMcpConnection *pTools = static_cast<CMainFrame*>(m_pView->GetParentFrame())->GetMcpConnection();
+	if (pTools != NULL && pTools->Harmony(Harmony) && Harmony.HasKey) {
+		const int Mode = Harmony.Choice.K.Mode;
+		const bool Minor = Mode >= 0 && Mode < ftapi::ModeCount() && ftapi::ModeSteps(Mode)[2] == 3;	// a minor third
+		const int Wanted = ((Harmony.Choice.K.Tonic % 12 + 12) % 12) * 2 + (Minor ? 1 : 0);
+		for (int i = 0; i < m_cKey.GetCount(); ++i)
+			if (static_cast<int>(m_cKey.GetItemData(i)) == Wanted) {
+				m_cKey.SetCurSel(i);
+				m_bKeyPicked = true;
+			}
+	}
 
 	MoodDefaults();
 	UpdatePreview();

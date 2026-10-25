@@ -39,7 +39,7 @@ again, as copies or linked.
   artifact. Import Text always replaces the open song, so `wav2ftm` combines
   a melody, a drum part and a bass line from separate recordings into one
   song (`--drums`, `--bass`).
-- [x] Tests: 652 checks, mostly on synthesized audio, covering:
+- [x] Tests: 667 checks, mostly on synthesized audio, covering:
   - pitch of hums and whistles, and telling them and taps apart,
   - note lengths, quiet note endings, rounding to rows and short breaks,
   - sung syllables: repeated ones on one pitch, scoops, glides and drifts
@@ -57,7 +57,8 @@ again, as copies or linked.
   - tapped tempos (missed taps, double taps, pauses), the click in the
     song's bars, chords with more notes than three and over a bass note,
     and strums: guitars and a piano synthesized string by string, their
-    onsets and the notes that sound together.
+    onsets and the notes that sound together,
+  - a last note held past the end of the song ending on its last row.
 
   Also checked by hand on noisy recordings with room echo, pitch scoops and
   timing wobble.
@@ -80,7 +81,9 @@ again, as copies or linked.
   channel for drums. It writes the notes into the open song from the cursor
   row on. It uses the song's
   speed and tempo, and runs on into the following frames, adding frames at
-  the end of the song if needed. A touched frame whose pattern other frames
+  the end of the song if needed; a last note that only rings a little past
+  the end ends on the song's last row instead, so the song keeps its length
+  and its loop. A touched frame whose pattern other frames
   also play first gets a copy of its own, so the rest of the song doesn't
   change. It adds Lead, Bass, Kick, Snare and Hi-hat instruments the first
   time and reuses them after that; on VRC7, FDS and N163 channels it uses
@@ -158,10 +161,12 @@ again, as copies or linked.
   - **Start from a groove** (Edit > Start from a groove, or the button in
     Record from microphone): pick a mood (town, overworld, battle, boss,
     dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert,
-    nostalgic), a tempo (typed or tapped), a key and 4, 8 or 16 bars, and
-    FamiTracker writes drums, a bass line and chords from the cursor's bar,
-    the same groove Claude Code's `make_groove` writes, and sets the song's
-    speed and tempo. One Ctrl+Z takes it out again. Then you record over
+    nostalgic), a tempo (typed or tapped), a key (the song's own when it
+    has one) and 4, 8 or 16 bars, and FamiTracker writes drums, a bass line
+    and chords from the cursor's bar, the same groove Claude Code's
+    `make_groove` writes, sets the song's speed and tempo and makes the key
+    the song's (as the piano roll's Key menu would), unless the song has
+    another already. One Ctrl+Z takes it out again. Then you record over
     it: the groove plays during the count-in and the take, and stays in the
     song as its own parts.
   - **The bar before:** with "Play the song along", the song starts a bar
@@ -228,7 +233,8 @@ To start a new song from nothing, use Edit > Start from a groove instead of
 step 3: pick a mood, a tempo (or tap it) and a key, press Make the groove,
 and the Record dialog opens over the groove with "Play the song along" on.
 The groove plays while the click counts in. Sing a melody over it, and the
-notes go on the channel the groove left free.
+notes go on the channel the groove left free; a last note held past the
+groove's end ends with it, so the song still loops as the groove did.
 
 To sing part of a melody again, select its rows in the pattern editor (or
 its notes in the piano roll) before step 3. The dialog says which rows; the
@@ -686,9 +692,12 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   a little sharp as strings are, fitted to what stands out of the spectrum
   without going negative (multiplicative updates with a little push towards
   fewer notes), so overtones aren't notes of their own. Up to six notes
-  count, from 15% of the strongest. A strum within a third of a beat of a
-  beat counts from the beat (strummed a little early or late, or the
-  microphone's delay). Each bar's (or half bar's) chord is then named from
+  count, from 15% of the strongest. The delay through the take comes out
+  first: where most strums agree they lie past the beats (up to three
+  quarters of a beat late or a quarter early, within a sixth of a beat of
+  one another), which a microphone delay not measured puts on every strum;
+  then a strum within a third of a beat of a beat counts from the beat
+  (strummed a little early or late). Each bar's (or half bar's) chord is then named from
   the notes sounding in it, the lowest a strum's bass, as the tools hear
   chords in a song's parts (`HearChords` in `Api/Chords.cpp`).
 - **Typed chords** (`Api/RecorderInput.cpp`): read with the tools' chord

@@ -50,6 +50,7 @@
 #include "Clips.h"
 #include "NoteEdit.h"
 #include "McpConnection.h"
+#include "Api/Tools.h"
 #include "InsertRecording.h"
 
 namespace {
@@ -1572,7 +1573,13 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 
 		const transcribe::ChannelVoice Voice = ChanID == CHANID_TRIANGLE ? transcribe::ChannelVoice::Triangle :
 			(ChanID == CHANID_VRC6_SAWTOOTH ? transcribe::ChannelVoice::Sawtooth : transcribe::ChannelVoice::Pulse);
-		const std::vector<transcribe::MelodyCell> Line = transcribe::MelodyCells(Melody, Voice, Grid.frameRate);
+		std::vector<transcribe::MelodyCell> Line = transcribe::MelodyCells(Melody, Voice, Grid.frameRate);
+		if (pSelection == NULL && ClipName == NULL) {
+			// A last note held a little past the song's end (over a groove, say) ends on its last row: the song keeps
+			// its length and its loop rather than growing a frame for the end of one note
+			const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+			transcribe::EndInside(Line, static_cast<int>(pDoc->GetFrameCount(Track)) * Length - (StartFrame * Length + StartRow));
+		}
 		for (size_t i = 0; i < Line.size(); ++i)
 			Cells.push_back(ToCell(Line[i], Instrument, Release ? RELEASE : HALT, MAX_VOLUME));
 		Rows = Cells.back().Row + 1;
@@ -1955,12 +1962,23 @@ bool MakeGroove(CMainFrame *pMainFrm, const groove_choice_t &Choice, CString &Me
 	int Speed = 0, Tempo = 0;
 	SpeedTempoFor(pDoc, Track, Choice.Bpm, Speed, Tempo);
 
-	// The parts and the tempo, as one Ctrl+Z
+	// The key picked becomes the track's (the piano roll's shading, the problems panel's and the tools' key), unless
+	// it has one chosen already or notes in another key: a melody sung over the groove alone may suggest another
+	ftapi::TrackHarmony Before;
+	const bool Heard = pTools->Harmony(Before);
+	const ftapi::Key Picked(Choice.KeyTonic, Choice.KeyMinor ? ftapi::MODE_MINOR : ftapi::MODE_MAJOR);
+	const bool OwnKey = Heard && !Before.Chosen &&
+		(!Before.HasFound || (Before.Found.Tonic == Picked.Tonic && Before.Found.Mode == Picked.Mode));
+
+	// The parts, the tempo and the key, as one Ctrl+Z
 	std::string Reply;
 	pMainFrm->BeginActionGroup();
 	const bool Made = pTools->RunTool("make_groove", std::string(static_cast<LPCSTR>(CStringA(Args))), Reply, true);
-	if (Made)
+	if (Made) {
 		SetSongTempo(pMainFrm, Speed, Tempo);
+		if (OwnKey)
+			SetTrackKey(pMainFrm, true, ftapi::KeyChoice(Picked));
+	}
 	pMainFrm->EndActionGroup();
 	if (!Made) {
 		Message = CString(Reply.c_str());

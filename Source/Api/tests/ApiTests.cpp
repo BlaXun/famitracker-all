@@ -15526,6 +15526,37 @@ void TestTappedTempo()
 	CHECK(!TappedSpeedTempo(0.0, 4, 60, 6, 32, Speed, Tempo, Bpm));
 }
 
+// Strums heard late through the whole take (a microphone delay not measured, a slow device: more than a third of a
+// beat), or strummed down and up between the beats: each chord stays on its bar
+void TestStrumDelay()
+{
+	const std::vector<int> C = { -1, 48, 52, 55, 60, 64 }, G = { 43, 47, 50, 55, 59, 67 }, Am = { -1, 45, 52, 57, 60, 64 },
+		F = { 41, 48, 53, 57, 60, 65 };
+	// 150 BPM: a beat is 0.4 s (4 rows); a strum a beat, heard 0.15 s and 0.25 s late, and 0.08 s early
+	const std::vector<transcribe::Strum> Strums = transcribe::HearStrums(Strummed({ C, G, Am, F }, 0.4, 4, false));
+	CHECK_EQ(Strums.size(), static_cast<size_t>(16));
+	StrummedChords Heard;
+	std::string Error;
+	const double Offsets[] = { 0.15, 0.25, -0.08 };
+	for (size_t i = 0; i < sizeof(Offsets) / sizeof(Offsets[0]); ++i) {
+		CHECK(HearStrummedChords(Strums, 0.5 - Offsets[i], 0, 10.0, 64, 16, 4, Heard, Error) && Heard.FirstRow == 0 &&
+			Heard.BarCount == 4);
+		CHECK_EQ(Heard.Names, std::string("| C | G | Am | F |"));
+	}
+	// Down and up: eighths, on the beats and between them, on time and heard 0.1 s late
+	const std::vector<transcribe::Strum> Eighths = transcribe::HearStrums(Strummed({ C, G, Am, F }, 0.4, 8, false));
+	CHECK_EQ(Eighths.size(), static_cast<size_t>(32));
+	const double Late[] = { 0.0, 0.1 };
+	for (size_t i = 0; i < sizeof(Late) / sizeof(Late[0]); ++i) {
+		CHECK(HearStrummedChords(Eighths, 0.5 - Late[i], 0, 10.0, 64, 16, 4, Heard, Error) && Heard.FirstRow == 0);
+		CHECK_EQ(Heard.Names, std::string("| C | G | Am | F |"));
+	}
+	// Two chords a bar, a strum a beat, heard 0.2 s late (half a beat): the change stays halfway through the bar
+	const std::vector<transcribe::Strum> Halves = transcribe::HearStrums(Strummed({ C, G, Am, Am, F, F }, 0.2, 2, false));
+	CHECK(HearStrummedChords(Halves, 0.5 - 0.2, 0, 10.0, 64, 16, 4, Heard, Error));
+	CHECK_EQ(Heard.Names, std::string("| C G | Am | F |"));
+}
+
 int main()
 {
 	TestJson();
@@ -15665,6 +15696,7 @@ int main()
 	TestTypedChords();
 	TestStrummedChords();
 	TestTappedTempo();
+	TestStrumDelay();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -2335,7 +2335,7 @@ void TestStrums()
 		CHECK(strums[0].level > -40.0 && strums[0].level < 0.0);
 	}
 
-	// A piano's block chords, the bass note a beat before and held: Dm, then E7
+	// A piano's block chords, every note struck at once with the bass an octave under: Dm, then E7
 	Audio piano;
 	piano.sampleRate = RATE;
 	const std::vector<int> Dm = { 38, 50, 53, 57, 62 }, E7 = { 40, 52, 56, 59, 62 };
@@ -2355,6 +2355,56 @@ void TestStrums()
 	quiet.sampleRate = RATE;
 	quiet.samples.assign(size_t(2 * RATE), 0.0f);
 	CHECK(HearStrums(quiet).empty());
+	quiet.samples[size_t(RATE)] = 0.5f;
+	CHECK(HearStrums(quiet).empty());
+}
+
+// A take that runs a little past the song's end: the end of its last note goes on the song's last row
+void TestEndInside()
+{
+	// C-5 for 8 rows, then E-5 at row 8 for 10 rows: its vibrato from row 11, 400 on row 17, the release on 18
+	std::vector<GridNote> notes(2);
+	notes[0].row = 0;
+	notes[0].length = 8;
+	notes[0].midi = 72;
+	notes[1].row = 8;
+	notes[1].length = 10;
+	notes[1].midi = 76;
+	notes[1].vibratoHz = 5.6;
+	notes[1].vibratoCents = 12.0;
+	notes[1].vibratoRow = 3;
+	const std::vector<MelodyCell> take = MelodyCells(notes, ChannelVoice::Pulse, 60);
+	CHECK(take.size() == 5 && take.back().kind == MelodyCell::Release && take.back().row == 18);
+
+	// A song of 16 rows: the release goes on row 15, with the vibrato's 400
+	std::vector<MelodyCell> cells = take;
+	CHECK(EndInside(cells, 16));
+	CHECK(cells.size() == 4);
+	if (cells.size() == 4) {
+		CHECK(cells[2].kind == MelodyCell::Effect && cells[2].row == 11 && cells[2].effect == '4' && cells[2].effectParam != 0);
+		CHECK(cells[3].kind == MelodyCell::Release && cells[3].row == 15 && cells[3].effect == '4' && cells[3].effectParam == 0);
+	}
+	// A take that ends inside the song is left as it is
+	cells = take;
+	CHECK(!EndInside(cells, 19) && cells.size() == take.size());
+	CHECK(!EndInside(cells, 40) && cells.size() == take.size());
+	// The vibrato would start on the song's last row: the note ends there instead
+	cells = take;
+	CHECK(EndInside(cells, 12));
+	CHECK(cells.size() == 3 && cells.back().kind == MelodyCell::Release && cells.back().row == 11 && cells.back().effect == '4' &&
+		cells.back().effectParam == 0);
+	// The last note starts on the song's last row: it sounds on into the loop
+	cells = take;
+	CHECK(EndInside(cells, 9));
+	CHECK(cells.size() == 2 && cells.back().kind == MelodyCell::Note && cells.back().row == 8);
+	// A note starting past the end needs the rows: the song grows for it
+	cells = take;
+	CHECK(!EndInside(cells, 8) && cells.size() == take.size());
+	// Without a vibrato: the release alone
+	notes[1].vibratoHz = 0.0;
+	cells = MelodyCells(notes, ChannelVoice::Pulse, 60);
+	CHECK(cells.size() == 3 && EndInside(cells, 16));
+	CHECK(cells.size() == 3 && cells.back().kind == MelodyCell::Release && cells.back().row == 15 && cells.back().effect == 0);
 }
 
 int main()
@@ -2393,6 +2443,7 @@ int main()
 	TestClickBarPhase();
 	TestChordTones();
 	TestStrums();
+	TestEndInside();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

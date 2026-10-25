@@ -97,6 +97,38 @@ transcribe::Key KeyOfChords(const std::vector<ChordAt> &Chords)
 	return transcribe::FindKey(Notes);
 }
 
+// The delay through a take of strums (rows), from how far past a beat each strum lies (Phases, 0 to Beat): where
+// most of them agree, within a sixth of a beat, from a quarter of a beat early to three quarters late. A microphone
+// delay not measured (or a slow device) puts every strum the same way late; when as many strums agree on two
+// delays (strummed down and up, on the beats and between them), the smaller one, early ones counting double.
+double TakeDelay(const std::vector<double> &Phases, int RowsPerBeat)
+{
+	const double Beat = std::max(1, RowsPerBeat);
+	double Delay = 0.0, Cost = 0.0;
+	size_t Most = 0;
+	for (size_t i = 0; i < Phases.size(); ++i) {
+		size_t Count = 0;
+		double Sum = 0.0;
+		for (size_t k = 0; k < Phases.size(); ++k) {
+			double Apart = Phases[k] - Phases[i];
+			Apart -= Beat * std::floor(Apart / Beat + 0.5);	// the shorter way round the beat
+			if (std::fabs(Apart) <= Beat / 6.0) {
+				++Count;
+				Sum += Apart;
+			}
+		}
+		double Mean = Phases[i] + Sum / double(Count);
+		Mean -= Beat * std::floor((Mean + Beat / 4.0) / Beat);	// from a quarter of a beat early to three quarters late
+		const double Weight = Mean >= 0.0 ? Mean : -2.0 * Mean;
+		if (Count > Most || (Count == Most && Weight < Cost)) {
+			Most = Count;
+			Delay = Mean;
+			Cost = Weight;
+		}
+	}
+	return Delay;
+}
+
 }	// namespace
 
 int TypedChordBars(const std::string &Text)
@@ -144,12 +176,23 @@ bool HearStrummedChords(const std::vector<transcribe::Strum> &Strums, double Sta
 	for (size_t i = 0; i < Strums.size(); ++i)
 		Loudest = std::max(Loudest, Strums[i].level);
 
-	// Where each strum lands (from just before the start row on: earlier ones were the count-in): on the beat
-	// when it's within a third of a beat of one, so a strum a little early or late (or the microphone's
-	// delay) doesn't carry the chord before it into the bar
-	std::vector<int> Landed(Strums.size(), -1);
+	// The take's delay (TakeDelay), from the strums after the count-in
+	std::vector<double> Phases;
 	for (size_t i = 0; i < Strums.size(); ++i) {
 		const double At = StartRow + (Strums[i].time - Start) * RowsPerSecond;
+		if (At < StartRow - Beat / 2.0)
+			continue;
+		const double Pattern = std::floor(At / PatternLength) * PatternLength;
+		Phases.push_back(std::fmod(At - Pattern, double(Beat)));
+	}
+	const double Delay = TakeDelay(Phases, Beat);
+
+	// Where each strum lands, the delay taken out (from just before the start row on: earlier ones were the
+	// count-in): on the beat when it's within a third of a beat of one, so a strum a little early or late doesn't
+	// carry the chord before it into the bar
+	std::vector<int> Landed(Strums.size(), -1);
+	for (size_t i = 0; i < Strums.size(); ++i) {
+		const double At = StartRow + (Strums[i].time - Start) * RowsPerSecond - Delay;
 		int Row = static_cast<int>(std::floor(At + 0.5));
 		const double Pattern = std::floor(At / PatternLength) * PatternLength;
 		const double OnBeat = Pattern + std::floor((At - Pattern) / Beat + 0.5) * Beat;

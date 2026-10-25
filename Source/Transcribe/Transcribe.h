@@ -258,6 +258,15 @@ struct MelodyCell {
 // frameRate is the engine speed (60 for NTSC).
 std::vector<MelodyCell> MelodyCells(const std::vector<GridNote> &notes, ChannelVoice voice, int frameRate);
 
+// A take put into a song that it would outrun (rows: the song's rows from the
+// take's row 0 on) with nothing past the song's end but the end of its last
+// note (its release, and its vibrato's 400): that end goes on the song's last
+// row, so the song keeps its length and its loop instead of growing a frame
+// for it. A last note starting on that row sounds on into the loop. Takes with
+// notes past the end are left as they are (the song grows for them). True
+// when the cells changed.
+bool EndInside(std::vector<MelodyCell> &cells, int rows);
+
 // ---------------------------------------------------------------------------
 // Percussive hits (finger taps, beatboxing)
 // ---------------------------------------------------------------------------

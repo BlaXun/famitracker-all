@@ -647,7 +647,9 @@ groove (`Source/GrooveDlg.cpp`, also a button in Record from microphone)
 writes a mood's drums, bass line and chords from the cursor's bar through
 the `make_groove` tool (`MakeGroove` in `InsertRecording.cpp`, with
 `CMcpConnection::RunTool`'s `FromDialog` set, the speed and tempo in the
-same action group); the parts themselves come from `ftapi::MakeGrooveParts`
+same action group, and the key picked made the track's with `SetTrackKey`
+unless it has a chosen key or notes found in another; `CGrooveDlg` starts
+from the track's key, read with `CMcpConnection::Harmony`); the parts themselves come from `ftapi::MakeGrooveParts`
 (`Source/Api/Grooves.h`, implemented next to `MakeGrooveTool` in
 `Tools.cpp`: a `GrooveRequest` of mood, key, bars as `BarSpan`s, tempo and
 channels in, a `GrooveParts` of `PartNote`s and `DrumHit`s without
@@ -670,7 +672,14 @@ their notes and a bass (`tones`, `bass`, `ArpeggioTones`); strummed ones
 (a take of the kind `RECORDING_CHORDS`, or a WAV file) are found by
 `transcribe::HearStrums` (`Strums.cpp`: spectral-flux onsets, a
 non-negative fit of each note's harmonics) and named bar by bar by
-`ftapi::HearStrummedChords` (the tools' `HearChords`).
+`ftapi::HearStrummedChords` (the tools' `HearChords`), once the delay
+through the take is out (`TakeDelay`: where most strums agree they lie past
+the beats, since an unmeasured microphone delay makes every strum late). A
+take put into the
+song (not over a selection, not as a clip) whose last note rings past the
+song's end ends that note on the last row instead of adding a frame for it
+(`transcribe::EndInside` in `Expression.cpp`, called by `InsertTake`), so a
+groove's song keeps its length and its loop.
 
 ## What this repository is
 
