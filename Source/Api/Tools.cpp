@@ -2794,7 +2794,9 @@ std::string WriteNotes(Session &S, const Json &Args)
 		Notes.front().Volume = 15;	// the part starts at full volume unless it says otherwise
 
 	std::vector<Cell> Out;
-	BuildPart(S.Cells(Channel), First, End, Notes, OptionsFor(S, Channel, DirectChange), Out, Warnings);
+	PartOptions Options = OptionsFor(S, Channel, DirectChange);
+	Options.KeepDetune = true;	// notes rewritten over an echo play as far out of tune as the ones they replace (its P81, then P80)
+	BuildPart(S.Cells(Channel), First, End, Notes, Options, Out, Warnings);
 	if (Rounded)
 		Warnings.push_back(Format("Some beats fell between rows and were rounded to the nearest row (%d rows a beat).", S.Time.RowsPerBeat));
 	std::vector<Change> Changes(1);
@@ -4705,7 +4707,7 @@ std::string SetSwingTool(Session &S, const Json &Args)
 			"File > Connect Claude Code.");
 	// How much: the long unit's share of each pair
 	double Share = 0.5;
-	bool Light = false;	// at most a lilt: never a triplet shuffle where the speed allows nothing in between
+	bool Light = false;	// at most a lilt: never more than 61%, nor a triplet shuffle where the speed allows nothing in between
 	const Json *pAmount = Arg(Args, "amount");
 	if (pAmount == 0)
 		throw Problem("Give amount: none, light, medium, hard (triplet), or a percentage from 50 (straight) to 75.");
@@ -4724,7 +4726,7 @@ std::string SetSwingTool(Session &S, const Json &Args)
 		else if (Word == "none" || Word == "straight" || Word == "off" || Word == "even")
 			Share = 0.5;
 		else if (Word == "light" || Word == "subtle" || Word == "gentle" || Word == "lazy") {
-			Share = 0.6;	// at speed 9, 61% rather than 56%, which hardly swings
+			Share = 0.57;	// a lilt: 56% at speeds 8 and 9, 58% at 6 and 12
 			Light = true;
 		}
 		else if (Word == "medium" || Word == "normal")
@@ -4779,7 +4781,7 @@ std::string SetSwingTool(Session &S, const Json &Args)
 	const int Base = std::max(1, static_cast<int>((Ticks + (End - First) / 2) / std::max(1, End - First)));
 	int A, B;
 	SwingSpeeds(Base, std::min(31, Split - 1), Share, A, B);
-	if (Light && A > B && static_cast<double>(A) / (A + B) > 0.64)
+	if (Light && A > B && static_cast<double>(A) / (A + B) > 0.61)
 		A = B = Base;
 	std::string Fits;	// the swings the speed's ticks allow
 	for (int a = Base + 1; a <= std::min(31, Split - 1) && 2 * Base - a >= 1; ++a)
@@ -5244,9 +5246,70 @@ int LushInstrument(Session &S, const std::string &Chip, bool Sawtooth, const Pre
 	return Index;
 }
 
-// Lush chords' instruments: Sound's (a preset) with each chord's notes
-// looping as its arpeggio, Frames frames a note, one instrument a chord
-// shape, added when first needed and played by the notes with that shape
+// One of the song's instruments by its name (ignoring case) or its number as the instrument list shows it ("0D"); 0 if none
+const InstrumentInfo *SongInstrumentNamed(const Session &S, const std::string &Text)
+{
+	const std::string Lower = Lowercase(Trim(Text));
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (Lowercase(S.Song.Instruments[i].Name) == Lower)
+			return &S.Song.Instruments[i];
+	char *pEnd = 0;
+	const long Index = std::strtol(Lower.c_str(), &pEnd, 16);
+	if (!Lower.empty() && Lower.size() <= 2 && *pEnd == 0)
+		return FindInstrument(S.Song, static_cast<int>(Index));
+	return 0;
+}
+
+// One of the song's own instruments as a sound for lush chords on a channel of Chip (2A03, VRC6 or 5B): its volume,
+// pitch, hi-pitch and duty sequences as a preset's (each chord then gets its notes as the arpeggio), a 2A03 pulse's width
+// the nearest on the VRC6 and back, a 5B instrument on the 5B only. False for a sound lush chords can't be made from (the
+// N163's waves, the FDS's, the VRC7's patches, a 5B sound on a pulse).
+bool SoundOfInstrument(const InstrumentInfo &I, const std::string &Chip, Preset &Out)
+{
+	if ((I.Chip != "2A03" && I.Chip != "VRC6" && I.Chip != "5B") || (I.Chip == "5B" && Chip != "5B"))
+		return false;
+	Out = Preset();
+	Out.Name = I.Name;
+	Out.Drum = false;
+	Out.Vrc7Patch = 0;
+	std::vector<PresetSequence> List;
+	auto Add = [&](int Type, const std::vector<int> &Items, int Loop, int Release, int Setting) {
+		if (Items.empty())
+			return;
+		PresetSequence Sequence;
+		Sequence.Type = Type;
+		Sequence.Items = Items;
+		Sequence.Loop = Loop;
+		Sequence.Release = Release;
+		Sequence.Setting = Setting;
+		List.push_back(Sequence);
+	};
+	Add(SEQUENCE_VOLUME, I.Volume, I.VolumeLoop, I.VolumeRelease, 0);
+	Add(SEQUENCE_PITCH, I.Pitch.Items, I.Pitch.Loop, I.Pitch.Release, I.Pitch.Setting);
+	Add(SEQUENCE_HIPITCH, I.HiPitch.Items, I.HiPitch.Loop, I.HiPitch.Release, I.HiPitch.Setting);
+	if (I.Chip == "5B") {
+		Add(SEQUENCE_DUTY, I.Mode.Items, I.Mode.Loop, I.Mode.Release, I.Mode.Setting);
+		Out.Sequences5B = List;
+		return true;
+	}
+	// The pulse's width on the other pulse chip: the 2A03's 12.5%, 25%, 50% and 75% (25% turned over) as the VRC6's 2/16,
+	// 4/16 and 8/16, the VRC6's sixteenths as the nearest of the 2A03's; the 5B's square has none (Preset5BSequences)
+	const std::string Home = Chip == "5B" ? std::string("2A03") : Chip;
+	std::vector<int> Duty = I.Duty.Items;
+	for (size_t i = 0; i < Duty.size() && I.Chip != Home; ++i) {
+		static const int TO_VRC6[4] = { 1, 3, 7, 3 };
+		Duty[i] = I.Chip == "2A03" ? TO_VRC6[std::max(0, std::min(3, Duty[i]))] : Duty[i] <= 1 ? 0 : Duty[i] <= 4 ? 1 : 2;
+	}
+	if (Chip != "5B")
+		Add(SEQUENCE_DUTY, Duty, I.Duty.Loop, I.Duty.Release, I.Duty.Setting);
+	(Home == "VRC6" ? Out.SequencesVRC6 : Out.Sequences2A03) = List;
+	return true;
+}
+
+// Lush chords' instruments: Sound's (a preset, or one of the song's own
+// instruments by name or number) with each chord's notes looping as its
+// arpeggio, Frames frames a note, one instrument a chord shape, added when
+// first needed and played by the notes with that shape
 void LushInstruments(Session &S, int Channel, const std::string &Sound, int Pattern, int Frames, std::vector<PartNote> &Notes)
 {
 	const std::string Chip = InstrumentChip(S.Channel(Channel));
@@ -5256,9 +5319,19 @@ void LushInstruments(Session &S, int Channel, const std::string &Sound, int Patt
 		throw Problem(Format("Lush chords are instruments with arpeggios, which %s can't play; give them a pulse channel "
 			"(2A03, MMC5 or VRC6) or a 5B channel, or choose another chord_style.", ChannelName.c_str()));
 	const Preset *pSound = Chip == "5B" ? FindSoundFor5B(Sound) : FindPreset(Sound);
+	// A preset by its own name; else the song's instrument of that name (a designed one), before a preset a word names
+	Preset Own;
+	const InstrumentInfo *pOwn = pSound != 0 && Squeezed(pSound->Name) == Squeezed(Sound) ? 0 : SongInstrumentNamed(S, Sound);
+	if (pOwn != 0 && SoundOfInstrument(*pOwn, Chip, Own))
+		pSound = &Own;
+	else if (pOwn != 0)
+		throw Problem(Format("Lush chords on %s are made from a 2A03 or VRC6 sound (a 5B one on the 5B); %s is the %s's, so it "
+			"can't play them there: name a pulse instrument of the song, or a preset (lush chords, soft chords, pluck, bell...).",
+			ChannelName.c_str(), InstrumentLabel(S.Song, pOwn->Index).c_str(), pOwn->Chip.c_str()));
 	if (pSound == 0 || pSound->Drum)
-		throw Problem(Format("Lush chords are made from a preset's sound (lush chords, soft chords, pluck, bell, warm pad...); "
-			"\"%s\" isn't one.", Sound.c_str()));
+		throw Problem(Format("Lush chords are made from a preset's sound (lush chords, soft chords, pluck, bell, warm pad...) or "
+			"one of the song's own pulse instruments, by name or number (each chord gets a copy of it playing its notes); \"%s\" "
+			"is neither.", Sound.c_str()));
 	std::map<std::vector<int>, int> Made;
 	std::string Added;
 	int Count = 0;
@@ -5272,13 +5345,15 @@ void LushInstruments(Session &S, int Channel, const std::string &Sound, int Patt
 		Notes[i].Instrument = Found->second;
 	}
 	if (Count > 0)
-		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from the preset \"%s\"): %s.", Count, Count == 1 ? "" : "s",
-			Chip.c_str(), pSound->Name.c_str(), Added.c_str()));
+		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from %s \"%s\"): %s.", Count, Count == 1 ? "" : "s",
+			Chip.c_str(), pSound == &Own ? "the song's instrument" : "the preset", pSound->Name.c_str(), Added.c_str()));
 }
 
-// A lush chord's instrument's name (LushName) read back: its preset, pattern
+// A lush chord's instrument's name (LushName) read back: its preset (or the
+// song's instrument it was made from, as a sound on Chip, into Own), pattern
 // and frames; false for other instruments
-bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern, int &Frames)
+bool ParseLushName(const Session &S, const std::string &Chip, const std::string &Name, const Preset *&pSound, Preset &Own, int &Pattern,
+	int &Frames)
 {
 	std::string Rest = Lowercase(Trim(Name));
 	Frames = 2;
@@ -5317,7 +5392,17 @@ bool ParseLushName(const std::string &Name, const Preset *&pSound, int &Pattern,
 			}
 		}
 	}
-	return false;
+	// The song's own instrument it was made from: the longest name it starts with
+	const InstrumentInfo *pBest = 0;
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
+		const std::string Prefix = Lowercase(S.Song.Instruments[i].Name) + " ";
+		if (Rest.size() > Prefix.size() && Rest.compare(0, Prefix.size(), Prefix) == 0 && (pBest == 0 || Prefix.size() > pBest->Name.size() + 1))
+			pBest = &S.Song.Instruments[i];
+	}
+	if (pBest == 0 || !SoundOfInstrument(*pBest, Chip, Own))
+		return false;
+	pSound = &Own;
+	return true;
 }
 
 // Lush chords a key change moved (the cells in the draft moved by MapToKey):
@@ -5336,8 +5421,7 @@ int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, con
 	int Instrument = StateAt(Old, std::max(0, First), S.Channel(Channel).EffectColumns).Instrument;	// as the song had it
 	int Playing = Instrument;	// as the draft has it
 	int Changed = 0, Count = 0;
-	std::string Added;
-	const Preset *pSoundAdded = 0;
+	std::string Added, SoundAdded = "the preset \"lush chords\"";
 	for (int r = std::max(0, First); r < End && r < static_cast<int>(Old.size()) && r < static_cast<int>(Cells.size()); ++r) {
 		if (Old[r].Instrument != NO_INSTRUMENT && !Old[r].IsEnd())
 			Instrument = Old[r].Instrument;
@@ -5358,10 +5442,11 @@ int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, con
 			}
 			const InstrumentInfo *pInfo = FindInstrument(S.Song, Instrument);
 			const Preset *pSound = 0;
+			Preset Own;
 			int Pattern = BROKEN_UP, Frames = 2;
 			if (Same)
 				Wanted = Instrument;
-			else if (pInfo == 0 || !ParseLushName(pInfo->Name, pSound, Pattern, Frames))
+			else if (pInfo == 0 || !ParseLushName(S, Chip, pInfo->Name, pSound, Own, Pattern, Frames))
 				++Unknown;
 			else {
 				std::sort(Tones.begin(), Tones.end());
@@ -5370,7 +5455,7 @@ int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, con
 				Wanted = LushInstrument(S, Chip, Sawtooth, *pSound, LushShape(Chord(NewRoot % 12, Tones), Pattern), Pattern, Frames, Added,
 					Count);
 				if (Count > Before)
-					pSoundAdded = pSound;
+					SoundAdded = (pSound == &Own ? "the song's instrument \"" : "the preset \"") + pSound->Name + "\"";
 				++Changed;
 			}
 		}
@@ -5380,8 +5465,8 @@ int RevoiceLushChords(Session &S, Draft &D, int Channel, int First, int End, con
 		}
 	}
 	if (Count > 0)
-		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from the preset \"%s\"): %s.", Count, Count == 1 ? "" : "s",
-			Chip.c_str(), pSoundAdded != 0 ? pSoundAdded->Name.c_str() : "lush chords", Added.c_str()));
+		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from %s): %s.", Count, Count == 1 ? "" : "s",
+			Chip.c_str(), SoundAdded.c_str(), Added.c_str()));
 	return Changed;
 }
 
@@ -5718,6 +5803,63 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	if (Given && !MelodyNotes.empty())
 		RubWarnings(S, Chords, MelodyNotes, K, Warnings);
 
+	// The bass line first: the chords keep over it
+	BassOptions BassO;
+	std::vector<PartNote> BassNotes;
+	if (BassChannel >= 0) {
+		BassO.Style = BassStyle;
+		BassO.RowsPerBeat = R;
+		BassO.K = K;
+		BassRegister(BassO, S.Channel(BassChannel));
+		BassO.Volume = 15;
+		BassNotes = BassPart(Chords, Spans, BassO);
+	}
+	// The room the chords keep, as the parts sound: under the melody's notes and over the bass's while each chord sounds
+	// (ChordPartOptions::Above and Below), voiced under the melody's low notes where it doesn't play
+	std::vector<NoteInfo> MelodySounds, BassSounds;
+	for (size_t i = 0; i < MelodyNotes.size(); ++i) {
+		NoteInfo N = MelodyNotes[i];
+		N.Pitch = LandedPitch(N) - Written(S.Channel(Melody), 0);
+		MelodySounds.push_back(N);
+	}
+	for (size_t i = 0; i < BassNotes.size(); ++i) {
+		NoteInfo N = NoteInfo();
+		N.Row = BassNotes[i].Row;
+		N.Rows = BassNotes[i].Rows;
+		N.Pitch = BassNotes[i].Pitch - Written(S.Channel(BassChannel), 0);
+		BassSounds.push_back(N);
+	}
+	for (int c = 0; c < S.ChannelCount() && BassChannel < 0; ++c) {
+		// Another channel's bass line, which the new chords play over
+		const bool Voice = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) != VoiceChannels.end();
+		if (c == Melody || c == ChordChannel || Voice || !IsBass(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			NoteInfo N = Notes[i];
+			N.Pitch -= Written(S.Channel(c), 0);
+			BassSounds.push_back(N);
+		}
+	}
+	int UsualLow = -1;	// the melody's low notes, the ones it often dips to (a fifth of its notes are lower)
+	if (!MelodySounds.empty()) {
+		std::vector<int> Pitches;
+		for (size_t i = 0; i < MelodySounds.size(); ++i)
+			Pitches.push_back(MelodySounds[i].Pitch);
+		std::sort(Pitches.begin(), Pitches.end());
+		UsualLow = Pitches[Pitches.size() / 5];
+	}
+	// The room for a part written at Lift over its sound (Written(channel, 0))
+	auto KeepRoom = [&](ChordPartOptions &O, int Lift) {
+		O.Above = MelodySounds;
+		O.Below = BassSounds;
+		for (size_t i = 0; i < O.Above.size(); ++i)
+			O.Above[i].Pitch += Lift;
+		for (size_t i = 0; i < O.Below.size(); ++i)
+			O.Below[i].Pitch += Lift;
+		O.Ceiling = UsualLow >= 0 ? std::max(0, UsualLow - CHORD_ROOM + Lift) : -1;
+	};
+
 	std::vector<Change> Changes;
 	std::string Where;
 	if (Style == CHORDS_VOICES && !VoiceChannels.empty()) {
@@ -5726,19 +5868,16 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), -1);
 		O.RowsPerBeat = R;
 		// Under the melody, a voice to a channel: well under its middle, and under the low notes it often dips to,
-		// so the top voice doesn't blur it (as they sound: each voice is written for its channel below)
+		// so the top voice doesn't blur it (as they sound: each voice is written for its channel below); each chord then
+		// keeps under the melody's lowest note while it sounds and over the bass (KeepRoom)
 		const int Lifted = Melody >= 0 ? Written(S.Channel(Melody), 0) : 0;
 		int Top = MelodyNotes.empty() ? 50 : MiddleOf(MelodyNotes, 57) - Lifted - 9;
-		if (!MelodyNotes.empty()) {
-			std::vector<int> Pitches;
-			for (size_t i = 0; i < MelodyNotes.size(); ++i)
-				Pitches.push_back(MelodyNotes[i].Pitch - Lifted);
-			std::sort(Pitches.begin(), Pitches.end());
-			Top = std::min(Top, Pitches[Pitches.size() / 5] - 4);
-		}
-		Top = std::max(43, std::min(55, Top));
+		if (UsualLow >= 0)
+			Top = std::min(Top, UsualLow - 4);
+		Top = std::max(31, std::min(55, Top));
 		O.Low = Top - 10;
 		O.High = Top + 3;
+		KeepRoom(O, 0);
 		O.RootInBass = BassChannel >= 0;
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) == VoiceChannels.end() && IsBass(S.Channel(c)) &&
@@ -5784,6 +5923,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.StepRows = std::max(1, R / IntArg(Args, "notes_per_beat", 2, 1, 4));
 		O.RowsPerBeat = R;
 		ChordRegister(O, Info, MelodyNotes, Melody >= 0 ? Written(S.Channel(Melody), 0) : 0);
+		KeepRoom(O, Written(Info, 0));
 		O.RootInBass = BassChannel >= 0;
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
 			O.RootInBass = c != ChordChannel && IsBass(S.Channel(c)) && HasNotesIn(S, c, First, End);
@@ -5794,10 +5934,12 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		std::vector<PartNote> Notes = ChordPart(Chords, Spans, O);
 		if (Style == CHORDS_LUSH) {
 			const Json *pSound = Arg(Args, "chord_instrument");
-			if (pSound != 0 && !pSound->IsString())
-				throw Problem("chord_instrument: lush chords are made from a preset's sound, named like \"lush chords\" or \"pluck\".");
-			LushInstruments(S, ChordChannel, StringArg(Args, "chord_instrument", Sound), O.Pattern, IntArg(Args, "arp_frames", 2, 1, 6),
-				Notes);
+			if (pSound != 0 && !pSound->IsString() && !pSound->IsNumber())
+				throw Problem("chord_instrument: lush chords are made from a preset's sound, named like \"lush chords\" or \"pluck\", or "
+					"one of the song's instruments, by name or number.");
+			const std::string Named = pSound != 0 && pSound->IsNumber() ? Format("%02X", static_cast<int>(pSound->Number())) :
+				StringArg(Args, "chord_instrument", Sound);
+			LushInstruments(S, ChordChannel, Named, O.Pattern, IntArg(Args, "arp_frames", 2, 1, 6), Notes);
 		}
 		else {
 			const int Instrument = PartInstrument(S, Args, "chord_instrument", ChordChannel, Sound);
@@ -5817,14 +5959,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	}
 	if (BassChannel >= 0) {
 		const ChannelInfo &Info = S.Channel(BassChannel);
-		BassOptions O;
-		O.Style = BassStyle;
-		O.RowsPerBeat = R;
-		O.K = K;
-		BassRegister(O, Info);
-		O.Volume = 15;
 		const int Instrument = PartInstrument(S, Args, "bass_instrument", BassChannel, "bass");
-		std::vector<PartNote> Notes = BassPart(Chords, Spans, O);
+		std::vector<PartNote> Notes = BassNotes;
 		for (size_t i = 0; i < Notes.size(); ++i)
 			Notes[i].Instrument = Instrument;
 		Change C;
@@ -5961,65 +6097,51 @@ std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<Note
 	return Out;
 }
 
-// Echo notes that wouldn't grate: one a semitone (or a major seventh) from a
-// note another part plays as it starts is left out, one another part moves
-// against on its way is cut short there. Two tones of the chord sounding
-// there don't rub (the F# of a Gmaj7 over its G bass); a chord tone in the
-// echo against a passing note of the melody does. Dropped and Shortened
-// count them.
+// Echo notes that wouldn't grate: one a semitone or a minor ninth from a note
+// another part sounds as it starts (the melody, the chords, an arpeggio's
+// notes too) is left out, one another part moves against on its way is cut
+// short there. Only those intervals grate, counted as the parts sound (the
+// triangle and the VRC7 an octave under their notes): a major seventh, over
+// the bass or under the melody, is a chord's color (as in a maj7) and stays.
+// Dropped and Shortened count them.
 std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const std::vector<PartNote> &Notes, int &Dropped,
 	int &Shortened)
 {
-	struct Other { int Row, End; std::vector<int> Pitches; };
+	struct Other { int Row, End; std::vector<int> Pitches; };	// as they sound
 	std::vector<Other> Others;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (c == Target || !IsMelodic(S.Channel(c)))
 			continue;
+		const int Lift = Written(S.Channel(c), 0);
 		const std::vector<NoteInfo> Theirs = D.Notes(c);
 		const std::vector<int> Arps = StickyAt(D.Cells(c), Theirs, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
 		for (size_t i = 0; i < Theirs.size(); ++i) {
 			Other o;
 			o.Row = Theirs[i].Row;
 			o.End = Theirs[i].Row + Theirs[i].Rows;
-			o.Pitches.push_back(Theirs[i].Pitch);
+			o.Pitches.push_back(Theirs[i].Pitch - Lift);
 			const std::vector<int> Above = ChordAbove(S, Theirs[i], Arps[i]);
 			for (size_t a = 0; a < Above.size(); ++a)
-				o.Pitches.push_back(Theirs[i].Pitch + Above[a]);
+				o.Pitches.push_back(Theirs[i].Pitch - Lift + Above[a]);
 			Others.push_back(o);
 		}
 	}
-	// Whether a pitch is a tone of a chord another part sounds on a row
-	auto ChordTone = [&](int Pitch, int Row) {
-		for (size_t k = 0; k < Others.size(); ++k) {
-			const Other &o = Others[k];
-			if (o.Pitches.size() > 1 && o.Row <= Row && Row < o.End)
-				for (size_t p = 0; p < o.Pitches.size(); ++p)
-					if ((Pitch - o.Pitches[p]) % 12 == 0)
-						return true;
-		}
-		return false;
-	};
+	const int Lifted = Written(S.Channel(Target), 0);
 	Dropped = Shortened = 0;
 	std::vector<PartNote> Out;
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		PartNote E = Notes[i];
+		const int Sounds = E.Pitch - Lifted;
 		int CutAt = E.Row + E.Rows;
 		for (size_t k = 0; k < Others.size(); ++k) {
 			const Other &o = Others[k];
 			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
 				continue;
-			// A note of the other part's chord doesn't rub against it (the F# of a Gmaj7), nor two tones
-			// of the chord sounding there
-			const int At = std::max(o.Row, E.Row);
-			bool Rub = false, InChord = false;
 			for (size_t p = 0; p < o.Pitches.size(); ++p) {
-				const int d = ((E.Pitch - o.Pitches[p]) % 12 + 12) % 12;
-				if ((d == 1 || d == 11) && !(ChordTone(E.Pitch, At) && ChordTone(o.Pitches[p], At)))
-					Rub = true;
-				InChord = InChord || (d == 0 && o.Pitches.size() > 1);
+				const int Apart = std::abs(Sounds - o.Pitches[p]);
+				if (Apart == 1 || Apart == 13)
+					CutAt = std::min(CutAt, std::max(o.Row, E.Row));
 			}
-			if (Rub && !InChord)
-				CutAt = std::min(CutAt, At);
 		}
 		if (CutAt <= E.Row) {
 			++Dropped;
@@ -6032,6 +6154,54 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 		Out.push_back(E);
 	}
 	return Out;
+}
+
+double FramesPerRow(const Session &S);
+
+// Whether an effect on a note of From's means the same on To and To plays it: To's chip's own (the FDS's modulator Hxx-Jxx
+// only on the FDS: elsewhere H and I are a sweep or the 5B's envelope) or one every channel plays; a duty (Vxx) only
+// between channels of one chip, whose widths count alike
+bool CarriesEffect(const ChannelInfo &From, const ChannelInfo &To, int Effect, int Param)
+{
+	if (Effect == EFF_DUTY_CYCLE && InstrumentChip(From) != InstrumentChip(To))
+		return false;
+	return ChannelPlaysEffect(To, Effect, Param);
+}
+
+// How loud a note plays over its first Frames frames as FamiTracker works its volume out (the column times the
+// instrument's envelope, rounded down, at least 1 while both sound; the VRC7 has none), on the chip's level, in dB
+// against a pulse at 15 (the power's mean); the mixer's fader not counted
+double PlayedDb(const Session &S, const ChannelInfo &Channel, int Instrument, int Column, int Frames)
+{
+	ChannelInfo Info = Channel;
+	Info.MixLevel = 0;
+	const std::vector<int> Envelope = HeldEnvelope(Channel.Kind == KIND_FM ? 0 : FindInstrument(S.Song, Instrument), std::max(1, Frames));
+	double Power = 0.0;
+	for (size_t f = 0; f < Envelope.size(); ++f)
+		Power += std::pow(10.0, LevelDb(Info, PlayedVolume(Info, Column, Envelope[f])) / 10.0);
+	return 10.0 * std::log10(std::max(1e-12, Power / static_cast<double>(Envelope.size())));
+}
+
+// The volume column of an echo note on Target playing Instrument that sounds Ratio as loud as N does on Source (0.4: about
+// 8 dB under), both heard as FamiTracker plays them over the note's first two beats: each chip's level, each instrument's
+// envelope and the rounding of a low column counted (a pulse at 3 under an envelope of 12 plays 2). The mixer's faders aren't:
+// they stay the mixer's, so the column doesn't make up for one.
+int EchoVolume(const Session &S, const ChannelInfo &Source, const NoteInfo &N, const ChannelInfo &Target, int Instrument, double Ratio)
+{
+	if (N.Volume <= 0)
+		return 0;
+	const int Frames = std::max(1, static_cast<int>(std::ceil(std::min(N.Rows, 2 * S.Time.RowsPerBeat) * FramesPerRow(S))));
+	const double Want = PlayedDb(S, Source, N.Instrument, N.Volume, Frames) + 20.0 * std::log10(std::max(0.01, Ratio));
+	int Best = 1;
+	double BestMiss = 1e9;
+	for (int v = 1; v <= 15; ++v) {
+		const double Miss = std::fabs(PlayedDb(S, Target, Instrument, v, Frames) - Want);
+		if (Miss < BestMiss - 1e-9) {
+			BestMiss = Miss;
+			Best = v;
+		}
+	}
+	return Best;
 }
 
 // pStop: where the rows written end, for Draft::Collect, so the notes the echo wrote alike (a pan carried over
@@ -6063,9 +6233,10 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		E.Rows = std::min(N.Rows, Stop - E.Row);
 		E.Pitch = WrittenOn(S.Channel(Plan.Source), S.Channel(Plan.Target), N.Pitch);	// at the same pitch as it sounds
 		E.Instrument = Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument : N.Instrument;
-		E.Volume = MatchVolume(S.Channel(Plan.Source), N.Volume, Plan.Volume / 15.0, S.Channel(Plan.Target));
+		E.Volume = EchoVolume(S, S.Channel(Plan.Source), N, S.Channel(Plan.Target), E.Instrument, Plan.Volume / 15.0);
 		for (size_t e = 0; e < N.Effects.size(); ++e) {
-			if (N.Effects[e].second.first == EFF_PAN)
+			if (N.Effects[e].second.first == EFF_PAN ||
+				!CarriesEffect(S.Channel(Plan.Source), S.Channel(Plan.Target), N.Effects[e].second.first, N.Effects[e].second.second))
 				continue;
 			if (N.Effects[e].first == 0)
 				E.Effects.push_back(N.Effects[e].second);
@@ -6130,19 +6301,24 @@ std::string AddEchoTool(Session &S, const Json &Args)
 	int Start;
 	if (!D.Collect(First + Plan.Delay, Direct(S, AsClip), Changes, Start, Warnings, Stop))
 		throw Problem("The echo is already there.");
-	// Where a chip counts volume otherwise (the VRC7 and the 5B in 3 dB steps, the N163 quieter, the FDS louder), the number
-	// written differs
+	// The number written: each note's as far under it as both sounds play (each chip's level, the instruments' envelopes)
 	std::string Level = Format("at volume %d", Plan.Volume);
 	const ChannelInfo &Source = S.Channel(Plan.Source), &Target = S.Channel(Plan.Target);
-	if (StepVolume(Source) || StepVolume(Target) || Source.Chip == "N163" || Target.Chip == "N163" || Source.Chip == "FDS" ||
-		Target.Chip == "FDS") {
-		int Loudest = 0;
+	{
 		const std::vector<NoteInfo> Played = NotesIn(S.Notes(Plan.Source), First, End);
+		const NoteInfo *pLoudest = 0;
 		for (size_t i = 0; i < Played.size(); ++i)
-			Loudest = std::max(Loudest, Played[i].Volume);
-		if (Loudest > 0)
-			Level += Format(" (as much softer as %d is than 15 on a pulse: %d where the melody plays %d)", Plan.Volume,
-				MatchVolume(Source, Loudest, Plan.Volume / 15.0, Target), Loudest);
+			if (pLoudest == 0 || Played[i].Volume > pLoudest->Volume)
+				pLoudest = &Played[i];
+		if (pLoudest != 0 && pLoudest->Volume > 0) {
+			// Said where it isn't the plain share of the melody's: chips that count volume otherwise, or envelopes
+			const int Column = EchoVolume(S, Source, *pLoudest, Target, Plan.Instrument != NO_INSTRUMENT ? Plan.Instrument :
+				pLoudest->Instrument, Plan.Volume / 15.0);
+			const bool Alike = !StepVolume(Source) && !StepVolume(Target) && FullDb(Source) == FullDb(Target);
+			if (!Alike || Column != std::max(1, (Plan.Volume * pLoudest->Volume + 7) / 15))
+				Level += Format(" (%.0f dB under each note as both sounds play: %d where the melody plays %d)", -20.0 *
+					std::log10(Plan.Volume / 15.0), Column, pLoudest->Volume);
+		}
 	}
 	std::string Side;
 	if (Plan.Opposite) {
@@ -7111,6 +7287,18 @@ std::string AddHarmonyTool(Session &S, const Json &Args)
 	const int Instrument = Arg(Args, "instrument") != 0 || !SameChip ? PartInstrument(S, Args, "instrument", Target, "soft lead") : NO_INSTRUMENT;
 	for (size_t i = 0; i < Notes.size(); ++i) {
 		Notes[i].Pitch = std::max(0, std::min(PITCHES - 1, Notes[i].Pitch + Shift));
+		// The melody's effects that its channel plays alike (an FDS modulator's Hxx would be a sweep on a pulse)
+		std::vector<std::pair<int, int> > Effects;
+		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+			if (CarriesEffect(S.Channel(Melody), S.Channel(Target), Notes[i].Effects[e].first, Notes[i].Effects[e].second))
+				Effects.push_back(Notes[i].Effects[e]);
+		Notes[i].Effects = Effects;
+		std::vector<std::pair<int, std::pair<int, int> > > Later;
+		for (size_t e = 0; e < Notes[i].LaterEffects.size(); ++e)
+			if (CarriesEffect(S.Channel(Melody), S.Channel(Target), Notes[i].LaterEffects[e].second.first,
+				Notes[i].LaterEffects[e].second.second))
+				Later.push_back(Notes[i].LaterEffects[e]);
+		Notes[i].LaterEffects = Later;
 		for (size_t m = 0; m < Line.size(); ++m) {
 			if (Line[m].Row != Notes[i].Row)
 				continue;
@@ -7181,7 +7369,26 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 		Loudest = std::max(Loudest, Line[i].Volume);
 	O.Volume = Arg(Args, "volume") != 0 ? IntArg(Args, "volume", 11, 1, 15) :
 		MatchVolume(S.Channel(Melody), Loudest, std::max(4, Loudest - 4) / static_cast<double>(std::max(1, Loudest)), S.Channel(Target));
-	std::vector<PartNote> Notes = CounterMelody(Line, Chords, Bars, O);
+	// The melody's rests: as asked (rests), else by the style (calm: it breathes with the melody, answering only in rests of
+	// two beats or more), else it moves on through them, as a busier song wants
+	const std::string Style = Squeezed(StringArg(Args, "style", "any"));
+	if (Style != "any" && Style != "calm" && Style != "ambient")
+		throw Problem("style should be any or calm.");
+	O.Rests = Style == "any" ? RESTS_FILL : RESTS_ANSWER;
+	if (Arg(Args, "rests") != 0) {
+		const std::string Rests = Squeezed(StringArg(Args, "rests"));
+		if (Rests == "fill" || Rests == "move" || Rests == "through")
+			O.Rests = RESTS_FILL;
+		else if (Rests == "answer" || Rests == "answers")
+			O.Rests = RESTS_ANSWER;
+		else if (Rests == "leave" || Rests == "silent" || Rests == "breathe" || Rests == "none")
+			O.Rests = RESTS_LEAVE;
+		else
+			throw Problem("rests: fill (it moves on through the melody's rests), answer (it rests with the melody, but for a short "
+				"answer in rests of two beats or more) or leave (it rests with the melody).");
+	}
+	int Answers = 0;
+	std::vector<PartNote> Notes = CounterMelody(Line, Chords, Bars, O, &Answers);
 	if (Notes.empty())
 		throw Problem("There are no chords there for a counter-melody to follow.");
 	const int Instrument = PartInstrument(S, Args, "instrument", Target, IsBass(S.Channel(Target)) ? "bass" : "soft lead");
@@ -7198,9 +7405,19 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 	std::vector<Change> Changes(1, C);
 	const std::string What = std::string("a counter-melody ") + (O.Above ? "above " : "below ") + S.Channel(Melody).FullName() + " on " +
 		S.Channel(Target).FullName() + ", " + RangeText(From, To);
+	std::string How = "it holds where the melody moves and moves, at least every bar, where it holds";
+	if (O.Rests == RESTS_FILL)
+		How += " or rests";
+	else if (O.Rests == RESTS_LEAVE)
+		How += "; it rests where the melody does";
+	else if (Answers == 0)
+		How += "; it rests where the melody does (no rest of two beats or more to answer in)";
+	else
+		How += Format("; it rests where the melody does, but for %s in rests of two beats or more", Plural(Answers, "short answer",
+			"short answers").c_str());
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
-		Format(" (%s on %s in %s; it moves where the melody holds and holds where it moves. Shape it further with write_notes.)",
-			Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(), Source.c_str(), KeyName(K).c_str()), Warnings);
+		Format(" (%s on %s in %s; %s. Shape it further with write_notes.)", Plural(static_cast<int>(Notes.size()), "note",
+			"notes").c_str(), Source.c_str(), KeyName(K).c_str(), How.c_str()), Warnings);
 }
 
 // Finishing touches
@@ -14154,10 +14371,22 @@ std::string CheckTool(Session &S, const Json &Args)
 				continue;
 			const std::string Where = Format("%s %s", Info.FullName().c_str(), S.Time.Position(N.Row).c_str());
 			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
-			if (Found && !InKey(LandedPitch(N), K)) {
+			// Where it sounds: where a scoop lands, and where a slide later in the note takes it (a fall as it ends is a
+			// gesture, not a pitch), so a slide copied a semitone off its note shows
+			int Outside = -1;
+			if (Found) {
+				std::vector<int> Heard(static_cast<size_t>(std::max(1, N.Rows)), -1);
+				SoundingRows(N, S.Time.RowsPerBeat, N.Row, N.Row + std::max(1, N.Rows), Heard);
+				for (size_t r = 0; r < Heard.size() && Outside < 0; ++r)
+					if (Heard[r] >= 0 && !InKey(Heard[r], K))
+						Outside = Heard[r];
+			}
+			if (Outside >= 0) {
 				++OutOfKey;
-				Report(FOUND_KEY, c, N.Row, N.Rows, Format("Outside %s: %s at %s (%s).", KeyName(K).c_str(), PitchName(LandedPitch(N)).c_str(),
-					Where.c_str(), S.Time.Length(N.Rows).c_str()), Format("%s is outside %s", PitchName(LandedPitch(N)).c_str(),
+				const bool Slides = Outside != LandedPitch(N);
+				Report(FOUND_KEY, c, N.Row, N.Rows, Format("Outside %s: %s at %s (%s)%s.", KeyName(K).c_str(), PitchName(Outside).c_str(),
+					Where.c_str(), S.Time.Length(N.Rows).c_str(), Slides ? Format(", where its slide from %s goes",
+					PitchName(LandedPitch(N)).c_str()).c_str() : ""), Format("%s is outside %s", PitchName(Outside).c_str(),
 					KeyName(K).c_str())).Notes.push_back(Note);
 			}
 			std::string Range;
@@ -15855,8 +16084,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("set_swing", "Swing the rhythm",
 		"Makes the rhythm swing the way FamiTracker 0.4.6 can: the speed changes every half beat (Fxx), longer then shorter, "
 		"so every channel's off-beat notes come late together, and notes written later swing too. The two speeds average the "
-		"speed the song had, so the tempo stays. light is about 58%, medium 62%, hard a triplet feel (67%); the speed's ticks "
-		"decide which fit (speed 6: 58% or 67%; the reply says). none takes it off. unit sixteenths swings quarter beats "
+		"speed the song had, so the tempo stays. light is a lilt of about 57% (56-58%, never over 61%), medium 62%, hard a "
+		"triplet feel (67%); the speed's ticks decide which fit (speed 6: 58% or 67%; the reply says). none takes it off. unit "
+		"sixteenths swings quarter beats "
 		"instead (hip-hop, lo-fi). The speed changes go where the song's are, else on the last channel. Needs direct changes; "
 		"undoable. set_tempo with another speed afterwards needs set_swing again.",
 		Schema()
@@ -15894,8 +16124,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			StyleList(ChordStyles()) + ". rhythm (arpeggio, stabs and lush): " + StyleList(ChordRhythms()) + ". pattern (broken, "
 			"and the order of a lush chord's arpeggio, where alberti leaps and rolling spreads it over two octaves): " +
 			StyleList(BrokenPatterns()) + ". bass_style: " + StyleList(BassStyles()) + ". color adds sevenths (\"sevenths\") "
-			"or richer tones (\"rich\": add9, maj7, m9, a V7sus4 resolving) where the melody allows. Lush chords are "
-			"instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\"), added when first needed. Chords and a bass "
+			"or richer tones that keep each chord's part (\"rich\": add9, maj7 or 6 on I and IV, m7 and m9, add9 on the V) where "
+			"the melody allows. Every style keeps each chord under the melody's lowest note while it sounds (a minor third under "
+			"it) and over the bass. Lush chords are instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\") from a "
+			"preset or one of the song's own pulse sounds, added when first needed. Chords and a bass "
 			"line that play in those bars already are replaced (other chords for a section); else free channels are picked unless "
 			"named. The reply lists the chords by name and as degrees.",
 			Schema()
@@ -15925,8 +16157,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("half_bars", Prop("boolean", "Fitted chords may change halfway through a bar (default true)."))
 				.Add("chord_instrument", Prop("string", "Instrument or preset for the chords (default: soft chords for arpeggio, "
 					"pluck for stabs and broken, warm pad for guide). Lush chords are made from a preset's sound (default lush chords; "
-					"pluck, bell or soft chords work too). Voiced chords: a sound for every voice's channel (default electric piano on "
-					"VRC7 and N163 channels, soft chords on pulses)."))
+					"pluck, bell or soft chords work too) or one of the song's own 2A03 or VRC6 instruments, by name or number (a "
+					"designed pad: each chord gets a copy of it playing its notes). Voiced chords: a sound for every voice's channel "
+					"(default electric piano on VRC7 and N163 channels, soft chords on pulses)."))
 				.Add("chord_volume", Prop("integer", "The chords' volume, 1-15 (default 15 for arpeggio and guide, 11 for stabs, "
 					"10 for broken and voices, 6 for lush); beats a step softer than a bar's first note."))
 				.Add("bass_instrument", Prop("string", "Instrument or preset for the bass (default \"bass\")."))
@@ -15959,7 +16192,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 		AddTool("add_harmony", "Add a harmony voice",
 			"Writes a second voice that follows the melody note for note, a third under it by default, in the key; where the "
-			"melody holds or lands on a beat it takes the chord's note nearest that interval, so it doesn't rub. Intervals: " +
+			"melody holds or lands on a beat it takes the chord's note nearest that interval, so it doesn't rub. It follows "
+			"where each note lands (a scoop counts where it ends, the voice coming in on its own note). Intervals: " +
 			StyleList(HarmonyIntervals()) + ". It follows the chords given, the ones the song's other parts play, or chords "
 			"fitted to the melody. Best on a channel like the melody's (a free one is picked), quieter.",
 			Schema()
@@ -15977,13 +16211,19 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 		AddTool("add_counter_melody", "Add a counter-melody",
 			"Writes a counter-melody: a second line of its own, made from the chords' thirds and sevenths, that holds while the "
-			"melody moves and moves by step (a pickup into the next chord) while the melody holds or rests, never a semitone "
-			"from it. Below the melody (a tenor line) or above it (a descant). Gives a song depth; a starting point you can "
-			"shape further with write_notes.",
+			"melody moves and moves by step (a pickup into the next chord) while the melody holds or rests, at least every bar, "
+			"never a semitone from it. Below the melody (a tenor line) or above it (a descant). style calm leaves the melody "
+			"room to breathe: it rests where the melody does and answers only in rests of two beats or more, briefly. Gives a "
+			"song depth; a starting point you can shape further with write_notes.",
 			Schema()
 				.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel."))
 				.Add("channel", ChannelProp("Channel for it. Default: a free one like the melody's."))
 				.Add("position", EnumProp("below (default) or above the melody.", std::vector<std::string>{ "below", "above" }))
+				.Add("style", EnumProp("any (default), or calm (also \"ambient\"): rests answer, the melody's breathing left to it.",
+					std::vector<std::string>{ "any", "calm", "ambient" }))
+				.Add("rests", EnumProp("What it does where the melody rests: fill (moves on through them, the default), answer "
+					"(rests too, but for a short answer of up to three notes in rests of two beats or more; style calm's default) "
+					"or leave (rests too).", std::vector<std::string>{ "fill", "answer", "leave" }))
 				.Add("volume", Prop("integer", "Its volume, 1-15. Default: 4 softer than the melody."))
 				.Add("instrument", Prop("string", "Instrument or preset (default \"soft lead\", a contrast to most leads)."))
 				.Add("chords", Chords)
@@ -16031,8 +16271,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("add_echo", "Add an echo",
 		"Copies a channel's notes onto a free channel, a little later and quieter: the classic NES echo. Makes a part sound "
 		"spacious, dreamy or underwater. The echo follows the original's dynamics (volume 6 is about 40% of each note's "
-		"loudness, as atmospheric chiptune mixes it), plays the same instrument and octave (on another chip, the same preset "
-		"there), and can be detuned a step or two so it shimmers against the melody where they overlap.",
+		"loudness, 8 dB under it, as atmospheric chiptune mixes it: each chip's level and both instruments' envelopes counted, "
+		"the mixer's faders left to the mixer), plays the same instrument and octave (on another chip, the same preset there, "
+		"and only the effects that chip plays), and can be detuned a step or two so it shimmers against the melody where they "
+		"overlap. An echo note a semitone or a minor ninth from what sounds with it is left out or cut short; a major seventh "
+		"over the bass stays, a chord's color.",
 		Schema()
 			.Add("channel", ChannelProp("Channel to echo."), true)
 			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind, else another free one."))
@@ -16726,7 +16969,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("check_song", "Check the song",
-		"Checks what you can't hear: notes outside the key, two channels clashing a semitone apart, notes outside a channel's "
+		"Checks what you can't hear: notes outside the key (where their slides take them too), two channels clashing a "
+		"semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels. Run it "
 		"after writing. format json gives every finding (its kind, severity, channel, frame, row, bar and beat, the notes "

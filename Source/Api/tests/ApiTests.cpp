@@ -578,11 +578,13 @@ public:
 				Info.Instruments.back().VolumeLoop = Sequences[s].Loop;
 				Info.Instruments.back().VolumeRelease = Sequences[s].Release;
 			}
-			// and its arpeggio, pitch and hi-pitch sequences, and a 5B instrument's noise / mode sequence
+			// and its arpeggio, pitch and hi-pitch sequences, and its duty sequence (a 5B instrument's noise / mode sequence)
 			SequenceInfo *pInto = Sequences[s].Type == SEQUENCE_ARPEGGIO ? &Info.Instruments.back().Steps :
 				Sequences[s].Type == SEQUENCE_PITCH ? &Info.Instruments.back().Pitch :
 				Sequences[s].Type == SEQUENCE_HIPITCH ? &Info.Instruments.back().HiPitch :
-				Sequences[s].Type == SEQUENCE_DUTY && Chip == "5B" ? &Info.Instruments.back().Mode : 0;
+				Sequences[s].Type == SEQUENCE_DUTY && Chip == "5B" ? &Info.Instruments.back().Mode :
+				Sequences[s].Type == SEQUENCE_DUTY && (Chip == "2A03" || (Chip == "VRC6" && !Sawtooth)) ? &Info.Instruments.back().Duty :
+				0;	// (the sawtooth's version leaves the duty out, InstrumentLibrary.cpp)
 			if (pInto != 0 && !Sequences[s].Items.empty()) {
 				pInto->Items = Sequences[s].Items;
 				pInto->Loop = Sequences[s].Loop;
@@ -3328,16 +3330,16 @@ void TestChords()
 	CHECK_EQ(ProgressionText(Colored, FourFour(8), C), "| Cmaj7 | Am7 | Fmaj7 | G7 | Cmaj7 | Am7 | Fmaj7 | G7 |");
 	Colored = Chords;
 	ColorChords(Colored, std::vector<NoteInfo>(), C, 4, COLOR_RICH);
-	CHECK_EQ(ProgressionText(Colored, FourFour(8), C), "| Cadd9 | Am9 | Fmaj7 | G7sus4 G7 | Cadd9 | Am9 | Fmaj7 | G7 |");
+	CHECK_EQ(ProgressionText(Colored, FourFour(8), C), "| Cadd9 | Am9 | Fmaj7 | Gadd9 | Cadd9 | Am9 | Fmaj7 | Gadd9 |");	// a V stays one chord
 	std::vector<NoteInfo> Melody;
 	Melody.push_back(MelodyNote(0, 16, "C-4"));		// C under a Cmaj7's B: a semitone
-	Melody.push_back(MelodyNote(48, 8, "B-3"));		// B against the sus4's C
+	Melody.push_back(MelodyNote(48, 8, "B-3"));		// B beside the G's ninth, A: a step
 	Colored = Chords;
 	ColorChords(Colored, Melody, C, 4, COLOR_SEVENTHS);
 	CHECK_EQ(ProgressionText(Colored, FourFour(4), C), "| C | Am7 | Fmaj7 | G7 |");
 	Colored = Chords;
 	ColorChords(Colored, Melody, C, 4, COLOR_RICH);
-	CHECK_EQ(ProgressionText(Colored, FourFour(4), C), "| Cadd9 | Am9 | Fmaj7 | G7 |");
+	CHECK_EQ(ProgressionText(Colored, FourFour(4), C), "| Cadd9 | Am9 | Fmaj7 | Gadd9 |");
 	const Key Am(9, MODE_MINOR);
 	Colored = Progression("Am F Dm E", Am, 4);
 	ColorChords(Colored, std::vector<NoteInfo>(), Am, 4, COLOR_RICH);
@@ -3479,8 +3481,9 @@ void TestArrange()
 	B.Style = BASS_WALKING;
 	Part = BassPart(Chords, Bars, B);
 	CHECK(InOrder(Part, 0, 64) && Part.size() == 16 && Part[0].Pitch % 12 == 0 && Part[4].Pitch % 12 == 9);
-	CHECK(PitchName(Part[1].Pitch) == "E-2" && PitchName(Part[2].Pitch) == "G-2" && PitchName(Part[3].Pitch) == "G#2");	// up to A
-	CHECK(Part[3].Pitch == Part[4].Pitch - 1 || Part[3].Pitch == Part[4].Pitch + 1 || Part[3].Pitch == Part[4].Pitch + 2);	// an approach
+	// Up to A by the scale: G#, which would grind against the C chord's G, gives way to G
+	CHECK(PitchName(Part[1].Pitch) == "D-2" && PitchName(Part[2].Pitch) == "E-2" && PitchName(Part[3].Pitch) == "G-2");
+	CHECK(std::abs(Part[3].Pitch - Part[4].Pitch) <= 2 && Part[3].Pitch != Part[4].Pitch);	// an approach
 	B.Style = BASS_OCTAVES;
 	Part = BassPart(Chords, Bars, B);
 	CHECK(Part.size() == 32 && Part[1].Pitch == Part[0].Pitch + 12 && Part[0].Rows == 2);
@@ -4153,7 +4156,8 @@ void TestMood()
 	CHECK(Clip[3][8].Pitch() == 51 && Clip[3][8].Instrument == 3);	// E-4 became D#4, played by the pad
 	CHECK(Clip[3][1].Effect[0] == EFF_VIBRATO && Clip[3][1].Param[0] == 0x37);
 	CHECK(Clip[1][0].IsEmpty() && Clip[2][0].IsEmpty());	// noise and DPCM come along as they are
-	CHECK(Clip[4][3].Pitch() == 48 && Clip[4][3].Instrument == 3 && Clip[4][3].Volume == 6);	// the echo of the changed part
+	CHECK(Clip[4][3].Pitch() == 48 && Clip[4][3].Instrument == 3 && Clip[4][3].Volume == 7);	// the echo of the changed part, 8 dB under
+	// it as the pad's envelope plays both (the column times the envelope, rounded down)
 	CHECK(Clip[4][11].Pitch() == 51);
 	CHECK(Clip[4][4].Effect[0] == EFF_VIBRATO && Clip[4][4].Param[0] == 0x37);
 	CHECK(Clip[4].size() == 36 && Clip[4][35].Note == NOTE_RELEASE);
@@ -5542,7 +5546,7 @@ void TestVersions()
 	CHECK_EQ(Night[3][0].Volume, 7);			// the drums at 45%
 	CHECK(Night[3][0].Param[0] == 6 && Night[3][0].Param[1] == 120);
 	CHECK(HasEffectNear(Night[5], 0, 8, EFF_VIBRATO));
-	CHECK(Night[6][6].HasNote() && Night[6][6].Pitch() == Day[5][0].Pitch() - 12 && Night[6][6].Volume == 3);	// the echo, 6 rows later
+	CHECK(Night[6][6].HasNote() && Night[6][6].Pitch() == Day[5][0].Pitch() - 12 && Night[6][6].Volume == 4);	// the echo, 6 rows later
 	CHECK_HAS(Tools.Call("get_song", Parse("{}")).Text, "Tracks: 1 \"Town\", 2 \"Town (night)\" (selected)");
 
 	// Switching tracks
@@ -6190,8 +6194,8 @@ void TestSeveralChips()
 		if (Song.Rows[12][static_cast<size_t>(r)].HasNote())
 			Echo = r;
 	CHECK(Echo > 32 && Song.Rows[12][static_cast<size_t>(Echo)].Pitch() == 52 + 12);
-	// at volume 6 as on a pulse: 3 dB steps, so 12
-	CHECK_HAS(Result.Text, "at volume 6 (as much softer as 6 is than 15 on a pulse: 12 where the melody plays 15)");
+	// at volume 6 as on a pulse: 3 dB steps (and the soft lead's envelope added on the 5B), so 13
+	CHECK_HAS(Result.Text, "at volume 6 (8 dB under each note as both sounds play: 13 where the melody plays 15)");
 
 	// A soft mix: the melody on the 5B nearer 15 than a pulse's 9
 	FakeSong Mixed;
@@ -9459,15 +9463,15 @@ void TestLushChords()
 		"\"key\": \"C major\", \"bass_channel\": \"none\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "lush chords on 2A03 Pulse 1, bars 1-4, in C major");
-	CHECK_HAS(Result.Text, "Chords: | Cadd9 | Am9 | Fmaj7 | G7 |");
-	CHECK_HAS(Result.Text, "Added 4 lush chord instruments (2A03, from the preset \"lush chords\"): \"Lush add9\" (03), "
-		"\"Lush m9\" (04), \"Lush maj7\" (05), \"Lush 7\" (06).");
+	CHECK_HAS(Result.Text, "Chords: | Cadd9 | Am9 | Fmaj7 | Gadd9 |");
+	CHECK_HAS(Result.Text, "Added 3 lush chord instruments (2A03, from the preset \"lush chords\"): \"Lush add9\" (03), "
+		"\"Lush m9\" (04), \"Lush maj7\" (05).");
 	const PresetSequence *pArp = SequenceOf(Song.Made[3], SEQUENCE_ARPEGGIO);
 	CHECK(pArp != 0 && pArp->Items == std::vector<int>({ 0, 0, 4, 4, 7, 7, 14, 14 }) && pArp->Loop == 0 && pArp->Setting == SEQUENCE_ABSOLUTE);
 	CHECK(SequenceOf(Song.Made[3], SEQUENCE_VOLUME) != 0 && SequenceOf(Song.Made[3], SEQUENCE_DUTY) != 0);
 	CHECK(Song.Made[3].SequencesVRC6.size() == Song.Made[3].Sequences2A03.size());
 	CHECK(Song.Rows[0][0].HasNote() && Song.Rows[0][0].Pitch() % 12 == 0 && Song.Rows[0][0].Instrument == 3 && Song.Rows[0][0].Volume == 6);
-	CHECK(Song.Rows[0][16].Instrument == 4 && Song.Rows[0][16].Pitch() % 12 == 9 && Song.Rows[0][48].Instrument == 6);
+	CHECK(Song.Rows[0][16].Instrument == 4 && Song.Rows[0][16].Pitch() % 12 == 9 && Song.Rows[0][48].Instrument == 3);
 	bool Arpeggio = false;
 	for (int r = 0; r < 64; ++r)
 		Arpeggio = Arpeggio || Song.Rows[0][r].Effect[0] == EFF_ARPEGGIO || Song.Rows[0][r].Effect[1] == EFF_ARPEGGIO;
@@ -9480,13 +9484,13 @@ void TestLushChords()
 	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"Fmaj7\", \"chord_style\": \"lush\", \"pattern\": \"down\", "
 		"\"arp_frames\": 3, \"chord_instrument\": \"pluck\", \"key\": \"C major\", \"bass_channel\": \"none\", \"from_bar\": 7, \"to_bar\": 7}");
 	CHECK_HAS(Result.Text, "lush (down) chords on 2A03 Pulse 1");
-	CHECK_HAS(Result.Text, "\"Pluck maj7 down, 3 frames\" (07)");
-	pArp = SequenceOf(Song.Made[7], SEQUENCE_ARPEGGIO);
+	CHECK_HAS(Result.Text, "\"Pluck maj7 down, 3 frames\" (06)");
+	pArp = SequenceOf(Song.Made[6], SEQUENCE_ARPEGGIO);
 	CHECK(pArp != 0 && pArp->Items == std::vector<int>({ 11, 11, 11, 7, 7, 7, 4, 4, 4, 0, 0, 0 }));
 	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"kazoo\", "
 		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "made from a preset's sound");
 	CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"snare\", "
-		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "\"snare\" isn't one");
+		"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "\"snare\" is neither");
 	// Plain when asked
 	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"color\": \"plain\", "
 		"\"key\": \"C major\", \"bass_channel\": \"none\", \"from_bar\": 8, \"to_bar\": 8}");
@@ -9537,7 +9541,7 @@ void TestLushChords()
 	{
 		FakeSong Minor;
 		Minor.Info.DirectChanges = true;
-		CHECK(!Run(Minor, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"chord_style\": \"lush\", "
+		CHECK(!Run(Minor, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G7 |\", \"chord_style\": \"lush\", "
 			"\"key\": \"C major\", \"bass_channel\": \"none\"}").IsError);
 		Result = Run(Minor, "transpose", "{\"to_mode\": \"minor\", \"key\": \"C major\"}");
 		CHECK(!Result.IsError);
@@ -9609,7 +9613,7 @@ void TestLushChords()
 	Result = Run(Groove, "make_groove", "{\"mood\": \"wistful\", \"bars\": 4}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "a nostalgic groove: lush (half) chords on 2A03 Pulse 1");
-	CHECK_HAS(Result.Text, "Chords: | Fmaj7 | G7 | Em7 | Am7 |");
+	CHECK_HAS(Result.Text, "Chords: | Fmaj7 | Gadd9 | Em7 | Am7 |");
 	CHECK_HAS(Result.Text, "lush chord instruments");
 	CHECK(Groove.Rows[0][0].HasNote() && Groove.Rows[0][8].HasNote() && Groove.Rows[0][0].Volume == 6);
 	// A melody over lush chords: the key heard from both (the chords' sevenths too)
@@ -9654,11 +9658,12 @@ void TestSwing()
 	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"light\"}").Text,
 		"At speed 3 a beat can't swing that little; the swings that fit are 67%, 83%.");
 	CHECK_HAS(Run(Fast, "set_swing", "{\"amount\": \"hard\"}").Text, "speed 4 then 2");
-	// At speed 9 a light swing is 61% (11 then 7): 56% hardly swings. A percentage can come as text too
+	// At speed 9 a light swing is 56% (10 then 8), a lilt; 61% is more than light. A percentage can come as text too
 	FakeSong Nine;
 	Nine.Info.DirectChanges = true;
 	Nine.Info.Speed = 9;
-	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"light\"}").Text, "speed 11 then 7");
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"light\"}").Text, "a 56% swing on the eighths, bars 1-8: speed 10 then 8");
+	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"none\"}").Text, "swing taken off");
 	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"67%\"}").Text, "speed 12 then 6");
 	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"61\"}").Text, "speed 11 then 7");
 	CHECK_HAS(Run(Nine, "set_swing", "{\"amount\": \"90%\"}").Text, "amount: a percentage from 50 (straight) to 75");
@@ -10151,7 +10156,7 @@ void TestChipLevels()
 	// An echo on another FM channel: three steps (9 dB) under the melody, as volume 6 is on a pulse, not 27 dB
 	Result = Run(Song, "add_echo", "{\"channel\": \"FM Channel 1\", \"to_channel\": \"FM Channel 5\"}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "at volume 6 (as much softer as 6 is than 15 on a pulse: 12 where the melody plays 15)");
+	CHECK_HAS(Result.Text, "at volume 6 (8 dB under each note as both sounds play: 12 where the melody plays 15)");
 	CHECK(Song.Rows[9][3].HasNote() && Song.Rows[9][3].Volume == 12);
 	// Accents: the notes between beats a step softer, the beats as loud; a fade three steps over the end
 	Result = Run(Song, "polish", "{\"touches\": [\"accents\", \"fades\"], \"melody_channel\": \"FM Channel 1\"}");
@@ -12726,6 +12731,450 @@ void TestFindSound()
 	CHECK(Tools.Sounds(-1, All, Error) && FindEntry(All, "Soft lead", TARGET_VRC6_PULSE)->InSong == Index);
 }
 
+// The highest a channel's notes sound in [First, End) (as a pulse would play them: Lift under their written pitch), and
+// the lowest; -1000 and 1000 when none plays
+int HighestSounding(const FakeSong &Song, int Channel, int First, int End, int Lift)
+{
+	int High = -1000;
+	const std::vector<NoteInfo> Notes = ReadNotes(Song.Rows[Channel], 2);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row < End && Notes[i].Row + Notes[i].Rows > First)
+			High = std::max(High, Notes[i].Pitch - Lift);
+	return High;
+}
+
+int LowestSounding(const FakeSong &Song, int Channel, int First, int End, int Lift)
+{
+	int Low = 1000;
+	const std::vector<NoteInfo> Notes = ReadNotes(Song.Rows[Channel], 2);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row < End && Notes[i].Row + Notes[i].Rows > First)
+			Low = std::min(Low, Notes[i].Pitch - Lift);
+	return Low;
+}
+
+// One of the song's instruments by its number, 0 if none
+const InstrumentInfo *InstrumentOf(const FakeSong &Song, int Index)
+{
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Index == Index)
+			return &Song.Info.Instruments[i];
+	return 0;
+}
+
+// A tune of quarter notes from bar 1 on a channel, a bar a line of four pitches ("" for a rest), released at the end
+std::string QuarterNotes(const char *Channel, const char *const (*Bars)[4], int Count, const char *Instrument)
+{
+	std::string Notes;
+	for (int b = 0; b < Count; ++b)
+		for (int k = 0; k < 4; ++k)
+			if (Bars[b][k][0] != 0)
+				Notes += std::string(Notes.empty() ? "" : ", ") + "{\"bar\": " + std::to_string(b + 1) + ", \"beat\": " +
+					std::to_string(k + 1) + ", \"pitch\": \"" + Bars[b][k] + "\", \"beats\": 1}";
+	return std::string("{\"channel\": \"") + Channel + "\", \"instrument\": \"" + Instrument + "\", \"notes\": [" + Notes + "]}";
+}
+
+// The arranging tools' flaws the night songs' composers fixed by hand (24 October): chords voiced under the melody and
+// over the bass, rich colors that keep each chord's part, a walking bass that doesn't grind, a counter-melody that moves
+// and (style calm) breathes, an echo as loud as both sounds play, a harmony and check_song that follow slides, write_notes
+// keeping an echo's detune, a light swing that lilts, apostrophes in the picture, lush chords from the song's own sound
+void TestArrangeFixes()
+{
+	const Key C(0, MODE_MAJOR), FMajor(5, MODE_MAJOR);
+	{
+		// Voiced chords on the VRC7, which sounds an octave under its notes: under a low tune's lowest note in each bar (a
+		// minor third under it) and over the bass, in octave 2 where a composer had to move them by hand, not in the tune's
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_expansion", "{\"chip\": \"vrc7\", \"confirm\": true}").IsError);
+		const char *const TUNE[4][4] = { { "C-3", "G#3", "G-3", "F-3" }, { "D#3", "F-3", "C#4", "C-4" }, { "A#3", "G#3", "G-3", "E-3" },
+			{ "F-3", "G-3", "G#3", "G-3" } };
+		CHECK(!Run(Song, "write_notes", QuarterNotes("Pulse 1", TUNE, 4, "soft lead")).IsError);
+		const ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Fm7 | Dbmaj7 | Bbm7 | C7sus4 C7 |\", "
+			"\"chord_style\": \"voices\", \"key\": \"F minor\", \"melody_channel\": \"Pulse 1\", \"bass_style\": \"roots\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3");
+		for (int b = 0; b < 4; ++b) {
+			const int From = b * 16, To = From + 16;
+			const int Tune = LowestSounding(Song, 0, From, To, 0), Bass = HighestSounding(Song, 2, From, To, 12);
+			for (int v = 5; v <= 7; ++v) {
+				Check(HighestSounding(Song, v, From, To, 12) <= Tune - CHORD_ROOM, "the voices under the tune's lowest note", __LINE__);
+				Check(LowestSounding(Song, v, From, To, 12) > Bass, "the voices over the bass", __LINE__);
+			}
+		}
+	}
+	{
+		// Pads under a tune of C-4 to C-5: each chord's voices under the tune's lowest note while it sounds, so a
+		// maj7's top no longer rubs against the tune's root, and over the triangle's bass
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const char *const TUNE[4][4] = { { "A-4", "A-4", "G-4", "G-4" }, { "F-4", "", "D-4", "" }, { "E-4", "E-4", "G-4", "A-4" },
+			{ "G-4", "", "", "" } };
+		CHECK(!Run(Song, "write_notes", QuarterNotes("VRC6 Pulse 2", TUNE, 4, "soft lead")).IsError);
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| Fmaj7 | Bbmaj7 | Fmaj7 | C9sus4 |\", \"chord_style\": \"voices\", "
+			"\"key\": \"F major\", \"melody_channel\": \"VRC6 Pulse 2\", \"bass_style\": \"roots\"}").IsError);
+		for (int b = 0; b < 4; ++b) {
+			const int From = b * 16, To = From + 16;
+			const int Tune = LowestSounding(Song, 6, From, To, 0), Bass = HighestSounding(Song, 2, From, To, 12);
+			const int VOICES[3] = { 0, 1, 5 };
+			for (int v = 0; v < 3; ++v) {
+				Check(HighestSounding(Song, VOICES[v], From, To, 0) <= Tune - CHORD_ROOM, "the pads under the tune", __LINE__);
+				Check(LowestSounding(Song, VOICES[v], From, To, 0) > Bass, "the pads over the bass", __LINE__);
+			}
+		}
+	}
+	{
+		// Lush chords: the whole arpeggio, root to its top note, under the tune's lowest note and over the bass
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const char *const TUNE[4][4] = { { "A-4", "C-5", "A-4", "G-4" }, { "F-4", "D-4", "F-4", "" }, { "E-4", "G-4", "A-4", "C-5" },
+			{ "G-4", "E-4", "", "" } };
+		CHECK(!Run(Song, "write_notes", QuarterNotes("VRC6 Pulse 1", TUNE, 4, "soft lead")).IsError);
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| Fmaj7 | Bbmaj7 | Fmaj7 | C |\", \"chord_style\": \"lush\", "
+			"\"key\": \"F major\", \"melody_channel\": \"VRC6 Pulse 1\", \"chord_channel\": \"Pulse 1\", \"bass_style\": \"roots\"}").IsError);
+		for (int b = 0; b < 4; ++b) {
+			const Cell &Root = Song.Rows[0][static_cast<size_t>(b * 16)];
+			CHECK(Root.HasNote());
+			const InstrumentInfo *pInfo = InstrumentOf(Song, Root.Instrument);
+			CHECK(pInfo != 0 && !pInfo->Arpeggio.empty());
+			if (pInfo == 0 || pInfo->Arpeggio.empty())
+				continue;
+			const int Top = Root.Pitch() + *std::max_element(pInfo->Arpeggio.begin(), pInfo->Arpeggio.end());
+			// (a whole step under it at the least: Cadd9's arpeggio climbs a ninth, and an octave lower would sink it into the bass)
+			Check(Top <= LowestSounding(Song, 5, b * 16, b * 16 + 16, 0) - 2, "the lush chord under the tune", __LINE__);
+			Check(Root.Pitch() > HighestSounding(Song, 2, b * 16, b * 16 + 16, 12), "the lush chord over the bass", __LINE__);
+		}
+	}
+	{
+		// Broken chords (alberti) stay under the tune too, rather than climbing into its octave
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const char *const TUNE[4][4] = { { "A-4", "A-4", "G-4", "G-4" }, { "F-4", "", "D-4", "" }, { "E-4", "E-4", "G-4", "A-4" },
+			{ "G-4", "", "", "" } };
+		CHECK(!Run(Song, "write_notes", QuarterNotes("VRC6 Pulse 1", TUNE, 4, "soft lead")).IsError);
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| F | Bb | F | C |\", \"chord_style\": \"broken\", \"pattern\": "
+			"\"alberti\", \"key\": \"F major\", \"melody_channel\": \"VRC6 Pulse 1\", \"chord_channel\": \"VRC6 Pulse 2\", "
+			"\"bass_channel\": \"none\"}").IsError);
+		for (int b = 0; b < 4; ++b)
+			Check(HighestSounding(Song, 6, b * 16, b * 16 + 16, 0) <= LowestSounding(Song, 5, b * 16, b * 16 + 16, 0) - CHORD_ROOM,
+				"the broken chord under the tune", __LINE__);
+	}
+	{
+		// No two voices a semitone or a minor ninth apart: an F#m(add9) keeps its G# away from its A
+		const Key FsMinor(6, MODE_MINOR);
+		ChordPartOptions O;
+		O.Style = CHORDS_VOICES;
+		O.Low = 40;
+		O.High = 54;
+		const std::vector<std::vector<PartNote> > Parts = VoicedChordParts(Progression("| F#madd9 | Dmaj7 | F#madd9 | E |", FsMinor),
+			FourFour(4), O, 3);
+		CHECK(Parts.size() == 3);
+		for (size_t h = 0; Parts.size() == 3 && h < Parts[0].size(); ++h)
+			for (size_t a = 0; a < 3; ++a)
+				for (size_t z = a + 1; z < 3; ++z) {
+					const int Apart = std::abs(Parts[z][h].Pitch - Parts[a][h].Pitch);
+					Check(Apart != 1 && Apart != 13, "no voices a semitone or a minor ninth apart", __LINE__);
+				}
+		// A tone a long melody note rubs against gives way: no E (the maj7) under a tune holding F over Fmaj7
+		O.Above.push_back(MelodyNote(0, 16, "F-4"));
+		const std::vector<std::vector<PartNote> > Under = VoicedChordParts(Progression("Fmaj7", FMajor, 1), FourFour(1), O, 3);
+		for (size_t v = 0; v < Under.size(); ++v)
+			CHECK(!Under[v].empty() && Under[v][0].Pitch % 12 != 4);
+	}
+	{
+		// Rich colors keep each chord's part: the V gets an added ninth and stays one chord (no C7sus4 C7 before the tonic);
+		// a dominant from outside the key keeps its seventh (V/V), a borrowed chord gets the key's maj7
+		std::vector<ChordAt> Chords = Progression("| Bb | C | F |", FMajor, 3);
+		ColorChords(Chords, std::vector<NoteInfo>(), FMajor, 4, COLOR_RICH);
+		CHECK_EQ(ProgressionText(Chords, FourFour(3), FMajor), "| Bbmaj7 | Cadd9 | Fadd9 |");
+		Chords = Progression("| C | D | G | Ab |", C);
+		ColorChords(Chords, std::vector<NoteInfo>(), C, 4, COLOR_RICH);
+		CHECK_EQ(ProgressionText(Chords, FourFour(4), C), "| Cadd9 | D7 | Gadd9 | Abmaj7 |");
+	}
+	{
+		// A walking bass at a half cadence: over the G held two bars, no passing note a semitone against it (F# under G);
+		// into the next chord a step of the scale where the chromatic approach would grind
+		std::vector<ChordAt> Chords = Progression("| C | G | G | C |", C);
+		BassOptions B;
+		B.Style = BASS_WALKING;
+		B.K = C;
+		B.Low = 24;
+		B.High = 43;
+		const std::vector<PartNote> Walk = BassPart(Chords, FourFour(4), B);
+		CHECK(Walk.size() == 16);
+		for (size_t i = 0; i < Walk.size(); ++i) {
+			const ChordAt *pChord = ChordAtRow(Chords, Walk[i].Row);
+			const int pc = Walk[i].Pitch % 12;
+			bool Grinds = false;
+			if (pChord != 0 && !pChord->C.HasPitchClass(pc))
+				Grinds = pChord->C.HasPitchClass((pc + 1) % 12) || pChord->C.HasPitchClass((pc + 11) % 12);
+			Check(!Grinds, "no walking note grinds a semitone against its chord", __LINE__);
+		}
+	}
+	{
+		// A counter-melody under a busy tune over one chord moves at least every bar, by step mostly
+		std::vector<NoteInfo> Busy;
+		for (int i = 0; i < 32; ++i)
+			Busy.push_back(MelodyNote(i * 2, 2, i % 2 == 0 ? "E-4" : "G-4"));
+		CounterOptions Co;
+		Co.K = C;
+		Co.Low = 36;
+		Co.High = 50;
+		const std::vector<PartNote> Line = CounterMelody(Busy, Progression("| C | C | C | C |", C), FourFour(4), Co);
+		CHECK(Line.size() >= 4);
+		for (size_t i = 0; i < Line.size(); ++i) {
+			Check(Line[i].Rows <= 16, "no counter-melody note held for more than a bar", __LINE__);
+			if (i > 0)
+				Check(std::abs(Line[i].Pitch - Line[i - 1].Pitch) <= 4, "the line moves by step or a third", __LINE__);
+		}
+
+		// Breathing with the melody (style calm): nothing in its short breath, a short answer in its rests of two beats
+		const char *const PHRASES[4][4] = { { "E-4", "G-4", "A-4", "" }, { "G-4", "E-4", "", "" }, { "D-4", "E-4", "G-4", "E-4" },
+			{ "", "", "", "" } };
+		std::vector<NoteInfo> Tune;
+		for (int b = 0; b < 4; ++b)
+			for (int k = 0; k < 4; ++k)
+				if (PHRASES[b][k][0] != 0)
+					Tune.push_back(MelodyNote(b * 16 + k * 4, 4, PHRASES[b][k]));
+		const std::vector<ChordAt> Chords = Progression("| C | Am | F | G |", C);
+		auto Sounds = [](const std::vector<PartNote> &Notes, int From, int To) {
+			int Count = 0;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Count += Notes[i].Row < To && Notes[i].Row + Notes[i].Rows > From ? 1 : 0;
+			return Count;
+		};
+		Co.Rests = RESTS_FILL;
+		const std::vector<PartNote> Fill = CounterMelody(Tune, Chords, FourFour(4), Co);
+		CHECK(Sounds(Fill, 24, 32) > 0 && Sounds(Fill, 48, 64) > 0);	// the default moves on through the rests
+		Co.Rests = RESTS_ANSWER;
+		int Answers = 0;
+		const std::vector<PartNote> Calm = CounterMelody(Tune, Chords, FourFour(4), Co, &Answers);
+		CHECK(Sounds(Calm, 12, 16) == 0);	// a breath of a beat stays the melody's
+		CHECK(Answers == 2 && Sounds(Calm, 24, 26) == 0 && Sounds(Calm, 30, 32) == 0 && Sounds(Calm, 24, 32) >= 1 && Sounds(Calm, 24, 32) <= 3);
+		int Answered = 0, Last = 0;
+		for (size_t i = 0; i < Calm.size(); ++i)
+			if (Calm[i].Row >= 48) {
+				++Answered;
+				Last = Calm[i].Row + Calm[i].Rows;
+			}
+		CHECK(Answered >= 1 && Answered <= 3 && Sounds(Calm, 48, 50) == 0 && Last <= 50 + 8);	// briefly: two beats at most
+		CHECK(Sounds(Calm, 0, 12) > 0 && Sounds(Calm, 32, 48) > 0);	// under the phrases it plays on
+		Co.Rests = RESTS_LEAVE;
+		const std::vector<PartNote> Leave = CounterMelody(Tune, Chords, FourFour(4), Co);
+		CHECK(Sounds(Leave, 12, 16) == 0 && Sounds(Leave, 24, 32) == 0 && Sounds(Leave, 48, 64) == 0 && Sounds(Leave, 32, 48) > 0);
+
+		// The tool: style calm, and rests named
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "write_notes", QuarterNotes("VRC6 Pulse 1", PHRASES, 3, "soft lead")).IsError);
+		ToolResult Result = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"chords\": \"| C | Am | F | G |\", "
+			"\"key\": \"C major\", \"style\": \"calm\", \"to_bar\": 4}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "it rests where the melody does, but for 2 short answers in rests of two beats or more");
+		Result = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"chords\": \"| C | Am | F | G |\", "
+			"\"key\": \"C major\", \"rests\": \"leave\", \"to_bar\": 4}");
+		CHECK_HAS(Result.Text, "it rests where the melody does.");
+		CHECK_HAS(Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"rests\": \"sometimes\"}").Text,
+			"rests: fill");
+		CHECK_HAS(Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"style\": \"boss\"}").Text,
+			"style should be any or calm");
+		// A melody without a rest of two beats gets no answer, and the reply says so
+		Result = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"chords\": \"| C |\", "
+			"\"key\": \"C major\", \"style\": \"calm\", \"to_bar\": 1}");
+		CHECK_HAS(Result.Text, "it rests where the melody does (no rest of two beats or more to answer in)");
+	}
+	{
+		// The echo plays as far under each note as both sounds play: under an envelope holding 12, column 7 (5 played) is
+		// 8 dB under the melody's 15 (12 played), where 6 would come out 10 dB under (4); the faders stay the mixer's
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Info.Instruments[0].Volume = std::vector<int>(1, 12);
+		Song.Put(5, 0, "C-4", 0, 15);
+		Song.Put(5, 8, "E-4");
+		Song.End(5, 16, NOTE_RELEASE);
+		ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, "
+			"\"delay_beats\": 1}");
+		CHECK(!Result.IsError);
+		CHECK(Song.Rows[6][4].Pitch() == 48 && Song.Rows[6][4].Volume == 7);
+		CHECK_HAS(Result.Text, "at volume 6 (8 dB under each note as both sounds play: 7 where the melody plays 15)");
+		FakeSong Faded;
+		Faded.Info.DirectChanges = true;
+		Faded.Info.Instruments[0].Volume = std::vector<int>(1, 12);
+		Faded.Put(5, 0, "C-4", 0, 15);
+		Faded.End(5, 16, NOTE_RELEASE);
+		Faded.Mix.Set(6, -60, PAN_CENTER);	// VRC6 Pulse 2 at -6 dB in the mixer
+		Faded.Mix.Set(5, 30, PAN_CENTER);	// the melody's +3 dB
+		CHECK(!Run(Faded, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, "
+			"\"delay_beats\": 1}").IsError);
+		CHECK(Faded.Rows[6][4].Volume == 7);
+
+		// Only semitones and minor ninths grate, as the parts sound: an echo note a major seventh over the bass (E over the
+		// triangle's F, which sounds an octave under its note) stays; one a semitone from the melody goes
+		FakeSong Rub;
+		Rub.Info.DirectChanges = true;
+		Rub.Put(5, 0, "E-4", 0);
+		Rub.Put(5, 4, "G-4");
+		Rub.Put(5, 8, "F-4");
+		Rub.Put(5, 12, "E-4");
+		Rub.End(5, 16, NOTE_RELEASE);
+		Rub.Put(2, 0, "F-3", 1);
+		Rub.End(2, 16, NOTE_HALT);
+		Result = Run(Rub, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, \"delay_beats\": 1}");
+		CHECK(!Result.IsError);
+		CHECK(Rub.Rows[6][4].HasNote() && Rub.Rows[6][4].Pitch() == 52);	// E-4 over the F bass: Fmaj7's color
+		CHECK(!Rub.Rows[6][12].HasNote());	// F-4 against the melody's E-4
+		CHECK_HAS(Result.Text, "1 echo note was left out");
+	}
+	{
+		// From the FDS onto a pulse: its modulator's Hxx stays the FDS's (on the pulse H is the sweep)
+		FakeSong Song = FdsSong();
+		Song.Put(5, 0, "C-5", NO_INSTRUMENT, 15);
+		Song.Rows[5][0].Effect[0] = EFF_FDS_MOD_DEPTH;
+		Song.Rows[5][0].Param[0] = 0x05;
+		Song.Rows[5][2].Effect[0] = EFF_VIBRATO;
+		Song.Rows[5][2].Param[0] = 0x42;
+		Song.End(5, 16, NOTE_RELEASE);
+		const ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"FDS\", \"to_channel\": \"Pulse 1\", \"to_bar\": 1, \"delay_beats\": 1, "
+			"\"instrument\": \"soft lead\"}");
+		CHECK(!Result.IsError);
+		bool Modulator = false;
+		for (int r = 0; r < 32; ++r)
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				Modulator = Modulator || Song.Rows[0][r].Effect[k] == EFF_FDS_MOD_DEPTH || Song.Rows[0][r].Effect[k] == EFF_SWEEPUP;
+		CHECK(!Modulator && Song.Rows[0][4].HasNote() && HasEffectAt(Song, 0, 6, EFF_VIBRATO, 0x42));
+	}
+	{
+		// A harmony after polish's scoops: on where the melody lands (E-4, written D#4 sliding up a semitone), its own note
+		// in the key, no slide copied a semitone off it; a slide later in a note goes to the voice's own note
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Put(5, 0, "C-4", 0);
+		Song.Put(5, 4, "D#4");
+		Song.Rows[5][4].Effect[0] = EFF_SLIDE_UP;
+		Song.Rows[5][4].Param[0] = 0x61;
+		Song.Put(5, 12, "G-4");
+		Song.Put(5, 16, "C-4");
+		Song.Rows[5][20].Effect[0] = EFF_SLIDE_UP;
+		Song.Rows[5][20].Param[0] = 0x44;	// on to E-4, held
+		Song.End(5, 32, NOTE_RELEASE);
+		CHECK(!Run(Song, "add_harmony", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\", \"chords\": \"| C | C |\", "
+			"\"key\": \"C major\", \"to_bar\": 2}").IsError);
+		CHECK(Song.Rows[6][4].Pitch() == 48 && !HasEffectNear(Song.Rows[6], 4, 6, EFF_SLIDE_UP));	// C-4, a third under E-4
+		CHECK(Song.Rows[6][16].Pitch() == 40 && HasEffectAt(Song, 6, 20, EFF_SLIDE_UP, 0x43));	// E-3 (the chord's, a sixth under C-4)
+		// sliding on to G-3 with the melody, a third in the key as the melody's C-4 goes to E-4
+		CHECK_LACKS(Run(Song, "check_song", "{\"key\": \"C major\", \"to_bar\": 2}").Text, "Outside");
+		// check_song follows a slide later in a note to where it lands: G-4 on to G#4, outside C major
+		Song.Rows[5][20].Param[0] = 0x41;
+		Song.Put(5, 16, "G-4");
+		CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\", \"to_bar\": 2}").Text, "Outside C major: G#4 at VRC6 Pulse 1 bar 2 beat "
+			"1 (4 beats), where its slide from G-4 goes.");
+	}
+	{
+		// write_notes over an echo's bars keeps its detune where it was: rewritten notes play a step out of tune as the
+		// ones they replace (its P81), and in tune again where its P80 came
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Put(6, 4, "E-4", 0, 5);
+		Song.Rows[6][4].Effect[0] = EFF_PITCH;
+		Song.Rows[6][4].Param[0] = 0x81;
+		Song.Put(6, 12, "F-4");
+		Song.Put(6, 20, "G-4");
+		Song.End(6, 28, NOTE_RELEASE);
+		Song.Rows[6][28].Effect[0] = EFF_PITCH;
+		Song.Rows[6][28].Param[0] = 0x80;
+		Song.Put(6, 40, "A-4");
+		Song.End(6, 44, NOTE_RELEASE);
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"from_bar\": 1, \"to_bar\": 1, \"notes\": [{\"bar\": 1, "
+			"\"beat\": 2, \"pitch\": \"E-4\", \"beats\": 2}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"A-4\", \"beats\": 1}]}").IsError);
+		CHECK(HasEffectAt(Song, 6, 4, EFF_PITCH, 0x81) && StateAt(Song.Rows[6], 13, 2).Sticky[EFF_PITCH] == 0x81);
+		CHECK(StateAt(Song.Rows[6], 21, 2).Sticky[EFF_PITCH] == 0x81 && StateAt(Song.Rows[6], 41, 2).Sticky[EFF_PITCH] == 0x80);
+		// The bar where it came back in tune: the release that brought P80 goes, the detune doesn't run on
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"from_bar\": 2, \"to_bar\": 2, \"notes\": [{\"bar\": 2, "
+			"\"beat\": 2, \"pitch\": \"G-4\", \"beats\": 3}]}").IsError);
+		CHECK(StateAt(Song.Rows[6], 21, 2).Sticky[EFF_PITCH] == 0x81 && StateAt(Song.Rows[6], 41, 2).Sticky[EFF_PITCH] == 0x80);
+		CHECK(StateAt(Song.Rows[6], 29, 2).Sticky[EFF_PITCH] == 0x80);
+	}
+	{
+		// A light swing is a lilt: at speed 8, 56% (9 then 7), not 63%
+		FakeSong Eight;
+		Eight.Info.DirectChanges = true;
+		Eight.Info.Speed = 8;
+		CHECK_HAS(Run(Eight, "set_swing", "{\"amount\": \"light\"}").Text, "a 56% swing on the eighths, bars 1-8: speed 9 then 7");
+		FakeSong Four;
+		Four.Info.DirectChanges = true;
+		Four.Info.Speed = 4;
+		CHECK_HAS(Run(Four, "set_swing", "{\"amount\": \"light\"}").Text, "can't swing that little");
+	}
+	{
+		// The picture names A' and A'' with their apostrophes
+		const Timing T(64, 2, 4, 16);
+		PictureSpec Spec(T);
+		Spec.First = 0;
+		Spec.End = 64;
+		PictureChannel Channel;
+		Channel.Color = 0;
+		Channel.Kind = KIND_PULSE;
+		Channel.Notes.push_back(MelodyNote(0, 16, "C-4"));
+		PictureSection Band;
+		Band.Name = "A";
+		Band.First = 0;
+		Band.End = 64;
+		Band.Color = 1;
+		Spec.Sections.push_back(Band);
+		const Picture Plain = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		Spec.Sections[0].Name = "A'";
+		const Picture Primed = DrawNotes(std::vector<PictureChannel>(1, Channel), Spec);
+		CHECK(Plain.Width == Primed.Width && Plain.Height == Primed.Height && Plain.Pixels != Primed.Pixels);
+	}
+	{
+		// Lush chords from the song's own sound (a designed one, by name or number): each chord a copy of it with the chord's
+		// notes as its arpeggio, its volume and duty as they are, on a VRC6 pulse at the nearest width there
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.AddInstrumentInfo(3, "Struck pad", "2A03", true);
+		Song.Info.Instruments.back().Volume = { 15, 12, 10, 9 };
+		Song.Info.Instruments.back().VolumeRelease = 3;
+		Song.Info.Instruments.back().Duty.Items = std::vector<int>(1, 1);
+		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| Fmaj7 | Gm7 |\", \"chord_style\": \"lush\", \"key\": "
+			"\"F major\", \"chord_channel\": \"Pulse 1\", \"chord_instrument\": \"struck pad\", \"bass_channel\": \"none\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "Added 2 lush chord instruments (2A03, from the song's instrument \"Struck pad\"): \"Struck pad maj7\" (04), "
+			"\"Struck pad m7\" (05).");
+		const Preset &Made = Song.Made[4];
+		const PresetSequence *pVolume = SequenceOf(Made, SEQUENCE_VOLUME), *pDuty = SequenceOf(Made, SEQUENCE_DUTY);
+		const PresetSequence *pArp = SequenceOf(Made, SEQUENCE_ARPEGGIO);
+		CHECK(pVolume != 0 && pVolume->Items == std::vector<int>({ 15, 12, 10, 9 }) && pVolume->Release == 3);
+		CHECK(pDuty != 0 && pDuty->Items == std::vector<int>(1, 1));
+		CHECK(pArp != 0 && pArp->Items == std::vector<int>({ 0, 0, 4, 4, 7, 7, 11, 11 }) && pArp->Loop == 0);
+		CHECK(Song.Rows[0][0].Instrument == 4 && Song.Rows[0][16].Instrument == 5);
+		// By number, again: the same instruments
+		Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"Fmaj7\", \"chord_style\": \"lush\", \"key\": \"F major\", "
+			"\"chord_channel\": \"Pulse 1\", \"chord_instrument\": 3, \"bass_channel\": \"none\", \"from_bar\": 3, \"to_bar\": 3}");
+		CHECK(!Result.IsError && Result.Text.find("lush chord instrument") == std::string::npos && Song.Rows[0][32].Instrument == 4);
+		// On a VRC6 pulse: the 2A03's 25% as the VRC6's 4/16
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"Fmaj7\", \"chord_style\": \"lush\", \"key\": \"F major\", "
+			"\"chord_channel\": \"VRC6 Pulse 2\", \"chord_instrument\": \"Struck pad\", \"bass_channel\": \"none\", \"to_bar\": 1}").IsError);
+		const int Vrc6 = Song.Rows[6][0].Instrument;
+		CHECK(Song.Made.count(Vrc6) > 0 && InstrumentOf(Song, Vrc6) != 0 && InstrumentOf(Song, Vrc6)->Chip == "VRC6");
+		if (Song.Made.count(Vrc6) > 0) {
+			const PresetSequence *pWidth = 0;
+			for (size_t s = 0; s < Song.Made[Vrc6].SequencesVRC6.size(); ++s)
+				if (Song.Made[Vrc6].SequencesVRC6[s].Type == SEQUENCE_DUTY)
+					pWidth = &Song.Made[Vrc6].SequencesVRC6[s];
+			CHECK(pWidth != 0 && pWidth->Items == std::vector<int>(1, 3));
+		}
+		// A key change revoices them from the same sound
+		Result = Run(Song, "transpose", "{\"to_mode\": \"minor\", \"key\": \"F major\", \"to_bar\": 2}");
+		CHECK_HAS(Result.Text, "from the song's instrument \"Struck pad\"");
+		// A sound lush chords can't be made from, and a word for nothing
+		Song.AddInstrumentInfo(9, "Night choir", "N163", false);
+		CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"Night choir\", "
+			"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "\"Night choir\" (09) is the N163's");
+		CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"C\", \"chord_style\": \"lush\", \"chord_instrument\": \"kazoo\", "
+			"\"key\": \"C major\", \"bass_channel\": \"none\"}").Text, "or one of the song's own pulse instruments");
+	}
+}
+
 // A song for measure_mix: 16 bars of 1.6 s, an intro of 4 bars where voiced chords (2A03 Pulse 1 and 2, starting
 // together) play alone at IntroVolume, then the melody on VRC6 Pulse 1 at 15 over the chords at 8 and a triangle bass;
 // it jumps back to bar 5 at its end
@@ -13626,6 +14075,7 @@ int main()
 	TestSoundIndex();
 	TestFindSound();
 	TestVrc6Plus();
+	TestArrangeFixes();
 	TestMeasureMix();
 	TestCalmKinds();
 	TestDecayFrames();

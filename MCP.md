@@ -376,7 +376,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)") |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)) |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves. Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
@@ -385,14 +385,14 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow |
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers: the track's, or from a bar on (a section's own tempo, a ritardando or accelerando over some bars) with speed and tempo effects there (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
-| `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light, medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
+| `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light (a lilt of about 57%, never over 61%), medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
 | `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
-| `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
+| `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
-| `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds |
-| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's |
+| `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied |
+| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line rests where the melody does and answers only in rests of two beats or more, briefly; `rests` (fill, the default, answer or leave) chooses that directly |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
@@ -412,10 +412,10 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
-| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. An echo note that would rub a semitone against another part is left out or cut short, unless both are tones of the chord sounding there. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
+| `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone or a minor ninth from a note another part sounds with it is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key, clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
+| `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -484,7 +484,8 @@ and `get_song` lists them with their bars. The tools that take bars
 section's name instead: `play` with `section` "Bridge". `insert_bars` can
 name whole frames it puts in, `copy_bars` names a whole section's copy as
 its repeat ("A 2"), `remove_bars` takes a removed section's name with it,
-`look_at_song` labels the sections in its picture, and `keep_version` and
+`look_at_song` labels the sections in its picture (apostrophes, commas and
+the like in their names too), and `keep_version` and
 `make_version` keep them. A section is whole frames, so bars moved by less
 than a frame leave the sections where they were, and the reply says so.
 The names are saved in the module in a block of their own (`BF SECTIONS`)
@@ -553,8 +554,10 @@ speed changes every half beat, longer then shorter, so the rows themselves
 swing and every channel's off-beat notes come late together, notes written
 later too. The two speeds average the old one, so the tempo stays: at speed
 6, `F08` and `F04` in turn is a triplet feel (67%) and `F07` and `F05` a light
-one (58%). The speed's ticks decide which swings fit, and Claude says which
-when the one asked for doesn't; `unit` sixteenths swings quarter beats
+one (58%). Light is a lilt of 56-58%, never over 61% (at speed 8, `F09` and
+`F07`: 56%). The speed's ticks decide which swings fit, and Claude says which
+when the one asked for doesn't (at speed 4 the gentlest is 63%, too much for
+light); `unit` sixteenths swings quarter beats
 instead, and `none` takes it off. The speed changes go on the channel that
 has the song's speed effects, else the last one. Change the speed with
 `set_tempo` afterwards and the swing needs setting again; a BPM keeps the
@@ -622,8 +625,9 @@ layer's parts sit another 3 dB under their roles, under the VRC6. The FDS's soun
 envelope at its top (from 4.5 to 6.5 dB, sound by sound), so its parts sit
 lower. The VRC6, MMC5 and 2A03 count volume alike. The echo, the harmony and
 the counter-melody take their volumes the same way (an echo three steps
-under a VRC7 or 5B melody, not nine), and `polish` makes a VRC7 or 5B
-part's accents one step and its fades three.
+under a VRC7 or 5B melody, not nine; an echo counts both instruments'
+envelopes too, so one on a softer sound gets a higher column), and
+`polish` makes a VRC7 or 5B part's accents one step and its fades three.
 
 `review_arrangement` mentions a mix where every part plays near full
 volume, and a melody that plays well under another part (a VRC7 melody at
@@ -1033,17 +1037,25 @@ avoid that, and gives it tools for each layer:
   G7 |") or as degrees of the key ("I vi IV V", "V7/V"); "." holds a chord
   for a beat, "%" repeats a bar, and the progression repeats to fill the
   bars. Or fitted to the melody, with `color` sevenths (Imaj7, ii7, V7...) or
-  rich (add9, maj7, m9, a V7sus4 that resolves) where the melody doesn't rub
-  against them. Played as an `arpeggio` (the 0xy shimmer, held or struck on a
-  rhythm), `stabs` (short hits: offbeats, eighths, tresillo, charleston,
+  rich where the melody doesn't rub against them: colors that keep each
+  chord's part, add9, maj7 or 6 on the tonic and the subdominant, m7 and m9
+  on minor chords, add9 on the V (its own seventh where that fits better),
+  and a seventh that pulls only on a dominant, so each chord stays one chord
+  (a V doesn't turn into a V7sus4 and its V7). Played as an `arpeggio`
+  (the 0xy shimmer, held or struck on a rhythm),
+  `stabs` (short hits: offbeats, eighths, tresillo, charleston,
   waltz...), `broken` chords (up, down, updown, alberti, rolling), a
   `guide` line (one long note a chord on its third or seventh), or `lush`
   chords: an instrument for each chord whose arpeggio loops through four or
   more of its notes, two frames each (`arp_frames`), so sevenths and ninths
   ring, played softly (volume 6) and colored rich unless asked otherwise.
-  Their instruments ("Lush maj7", "Lush m9") are made from a preset's sound
-  (lush chords by default) when first needed; `pattern` turns their
-  arpeggios down, up and back, leaping (alberti) or spread over two octaves
+  Their instruments ("Lush maj7", "Lush m9") are made when first needed
+  from a preset's sound (lush chords by default) or from one of the song's
+  own 2A03 or VRC6 instruments that `chord_instrument` names, by name or
+  number (a pad you designed: each chord gets a copy of it, its volume,
+  pitch and duty sequences kept, playing the chord's notes); `pattern`
+  turns their arpeggios down, up and back, leaping (alberti) or spread
+  over two octaves
   (rolling). They need a 2A03, MMC5 or VRC6 pulse or a 5B channel, since
   VRC7 instruments have no arpeggios.
   Or `voices`: the chord's notes on 2-4 channels of their own
@@ -1053,13 +1065,23 @@ avoid that, and gives it tools for each layer:
   nearest note without crossing: an electric piano comping on the VRC7's
   FM channels (its custom patch), held or struck on a rhythm, each voice a
   frame after the one below it (`strum`, `Gxx`) as a hand rolls a chord.
+  Every style keeps out of the melody's way and the bass's: each chord's
+  notes stay a minor third under the lowest melody note sounding with it (a
+  whole step where the chord's shape fits no lower, never a semitone) and
+  over the bass's highest note, never in the bass's octave. Voiced chords
+  sit where they sound on the VRC7 too (it plays an octave under its
+  notes), a voice gives way where the melody passes through it, and no two
+  voices sit a semitone or a minor ninth apart where another voicing has
+  none.
   Chords asked for over bars that have chords and a bass line already (other
   chords for a section) take their place, on their channels (voiced chords
   on the voices' channels), rather than stacking a second part on them.
   Chords given for more bars than the melody plays (an intro of chords
   before it) start early enough to end with the melody.
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
-  approach notes into each chord), syncopated, arpeggio, driving, pedal. On
+  approach notes into each chord, none grinding a semitone against the
+  chord it walks under, a held V at a half cadence too), syncopated,
+  arpeggio, driving, pedal. On
   the triangle it sits where it sounds like a bass (the triangle plays an
   octave below what's written).
 - **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,
@@ -1075,7 +1097,8 @@ avoid that, and gives it tools for each layer:
   slid to silence when they started higher; a song with that kit has its
   samples brought up to date when the sampled drums are used again).
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
-  free channel.
+  free channel. In a calm track the counter-melody takes `style` calm, so
+  the melody's rests stay rests but for a short answer in the long ones.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
   between repeated triangle notes, a nudge for notes that click; when asked, fades on held notes, `A0y`
   from halfway through, scoops into held notes after a leap up, falls (a

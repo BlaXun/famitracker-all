@@ -80,8 +80,18 @@ struct ChordPartOptions {
 	int Low, High;		// where each chord's lowest note goes
 	int Volume;			// 1-15 on the strongest notes, a little softer on the others
 	bool RootInBass;	// a bass line plays the roots, so voicings may leave them out
+	// The room the chords keep, in the part's own pitches (as it writes them): each chord's notes stay
+	// CHORD_ROOM under the lowest of the melody's notes sounding while it sounds and over the highest of the
+	// bass's, as far as its shape fits; Ceiling and Floor are the limits where neither plays (-1: none).
+	// Empty and -1, the chords go by Low and High alone.
+	std::vector<NoteInfo> Above, Below;
+	int Ceiling, Floor;
 	ChordPartOptions();
 };
+
+// How far under the melody's lowest note a chord's notes stay (a minor third; a whole step where a chord's shape fits no
+// lower, never a semitone), and over the bass's highest
+const int CHORD_ROOM = 3, BASS_ROOM = 2;
 // Lush chords are held like the arpeggio's, each note at its chord's root,
 // its Arpeggio the chord's LushShape: the tool makes the instruments.
 std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const ChordPartOptions &Options);
@@ -90,7 +100,9 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 // wavetable chips play them: each chord in Voices notes (2-4), its color
 // first (the third and seventh, then a ninth or the fifth, then the root
 // when no bass plays it), each led to the next chord's by the smallest
-// moves without crossing, in [Low, High], struck on the rhythm (held, once
+// moves without crossing, in [Low, High] and the room the melody and the
+// bass leave it (Above, Below), no two voices a semitone or a minor ninth
+// apart where another voicing has none, struck on the rhythm (held, once
 // a bar and at chord changes, by default). A part per voice, lowest first.
 std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars,
 	const ChordPartOptions &Options, int Voices);
@@ -111,14 +123,16 @@ std::vector<int> LushShape(const Chord &C, int Pattern);
 
 // The 0xy arpeggio for a chord: three of its tones, the lowest (Base) within
 // [Low, High] near Near, and X and Y semitones above it (X < Y <= 15), led
-// smoothly from the one before when there is one
+// smoothly from the one before when there is one; with a room, its top
+// (Base + Y) at Ceiling or under and Base at Floor or over where they fit
 struct Voicing {
 	int Base;
 	int X, Y;
 	Voicing() : Base(0), X(4), Y(7) {}
 	int Param() const { return (X << 4) | Y; }
 };
-Voicing ArpeggioVoicing(const Chord &C, const Voicing *pPrevious, int Near, int Low, int High, bool RootInBass);
+Voicing ArpeggioVoicing(const Chord &C, const Voicing *pPrevious, int Near, int Low, int High, bool RootInBass, int Floor = -1000,
+	int Ceiling = 1000);
 
 // A bass line
 struct BassOptions {
@@ -153,7 +167,11 @@ struct DrumOptions {
 std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOptions &Options);
 
 // A second voice that follows the melody note for note, a third (or another
-// interval) away in the key, on the chords' notes where the melody holds
+// interval) away in the key, on the chords' notes where the melody holds.
+// It follows where each melody note lands (a scoop, written a semitone low
+// and sliding up, counts where it ends): the voice comes in on its own note,
+// a slide later in the note goes to the voice's own note for the melody's
+// new one, a fall as the note ends is copied, and 1xx/2xx stay the melody's.
 struct HarmonyOptions {
 	int Interval;		// harmony_interval
 	int MinRows;		// only melody notes this long; 0 for all of them
@@ -167,17 +185,27 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 
 // A counter-melody: the chords' guide tones (thirds and sevenths) as a line
 // that holds while the melody moves and moves, by step, while it holds or
-// rests; below the melody, or above it as a descant, never a semitone from it
+// rests; below the melody, or above it as a descant, never a semitone from it.
+// It moves at least every bar (a note held longer steps to a neighbour that
+// fits), and where the melody rests it does as Rests says.
+enum counter_rests {
+	RESTS_FILL,		// it moves on through the melody's rests (a pickup into the next chord)
+	RESTS_ANSWER,	// it breathes with the melody: silent in its rests, but for a short answer in rests of two beats or more
+	RESTS_LEAVE,	// silent in every rest of the melody
+};
 struct CounterOptions {
 	bool Above;
 	int RowsPerBeat;
 	Key K;
 	int Low, High;
 	int Volume;
+	int Rests;			// counter_rests
 	CounterOptions();
 };
+// The melody's rests: where none of its notes sound for half a beat or more, inside [First, End)
+std::vector<BarSpan> MelodyRests(const std::vector<NoteInfo> &Melody, int First, int End, int RowsPerBeat);
 std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const std::vector<ChordAt> &Chords,
-	const std::vector<BarSpan> &Bars, const CounterOptions &Options);
+	const std::vector<BarSpan> &Bars, const CounterOptions &Options, int *pAnswers = 0);	// pAnswers: how many answers (RESTS_ANSWER)
 
 // Notes in order inside [First, End), none overlapping, at least a row long,
 // a volume only where it changes
