@@ -900,6 +900,31 @@ did). The list of notes takes the old path untouched. `TestStepsWrite`,
 `TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
 in `Source/Api/tests/ApiTests.cpp` cover the tools.
 
+Sound groups (from `feat-sound-groups`): Instrument > Sound browser shows
+its sounds in groups. `GroupSounds` in `Source/Api/SoundIndex.cpp` puts the
+sounds found in groups (by kind; in each kind the ready-made sounds, the
+reference library's game by game, `SoundEntry::Game`, then the song's own),
+`KindCounts` counts them for the kinds list on the left, and `SoundRows`
+lays out the list's rows with headings (`SoundView`: every kind or one,
+headings folded by hand by `RowKey`, a kind's games folded while it has more
+than `FOLD_GAMES_OVER` reference sounds and no words are asked for).
+`SoundBrowserDlg.cpp` draws the headings by custom draw in its owner-data
+list (no list-view groups: owner-data lists have none, and Wine's comctl32
+draws them only in part; a heading is drawn as a row, then over it in
+`CDDS_ITEMPOSTPAINT`, since Wine puts the focus rectangle where it last drew
+the focused row itself), takes every click itself (`CSoundList`: a sound
+plays, the one picked too; a heading folds), lays itself out as it's resized
+(`Layout`) and stops the sound in `OnCancel`: under Wine without a window
+manager the UI thread waits a second or two after any modal dialog closes,
+before the dialog's `OnDestroy` runs. `PreviewSteps` plays a phrase for each kind (`PHRASES`,
+`DrumSteps`). `Source/SoundPreview.cpp` (`CSoundPreview`, timed by a
+message-only window) plays the previews and the note keys for the browser
+and for Instrument > Listen (`ID_INSTRUMENT_LISTEN`, the speaker button after
+Edit under the instrument list: `ListenToInstrument`, which lists the song's
+own with `ToolSet::Sounds`' `Library` false). `TestSoundGroups`,
+`TestSoundGroupsQuick`, `TestPreviewPhrases` and `TestSoundsWithoutLibrary`
+cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

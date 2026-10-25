@@ -20467,12 +20467,13 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 	}
 }
 
-bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error)
+bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error, bool Library)
 {
 	Out.clear();
 	try {
 		Session S(m_Host);
-		Out = SongSounds(S, Cursor >= 0 && Cursor < S.ChannelCount() ? Cursor : -1);
+		const int At = Cursor >= 0 && Cursor < S.ChannelCount() ? Cursor : -1;
+		Out = Library ? SongSounds(S, At) : ListSounds(S.Song, std::vector<Reference>(), SongSoundUses(S), At);
 		return true;
 	}
 	catch (const Problem &P) {

@@ -14,12 +14,12 @@ wait: command instrument-library
 
 step
 show: window
-text: In the browser, type what you look for in Find (like bell, bass or snare), click a sound to hear it, and press Add to keep the one you like. Add a sound, then close the browser.
+text: In the browser, pick a kind of sound on the left (leads, basses, drums...) or type what you look for in Find (like bell, bass or snare), click a sound to hear it, and press Add to keep the one you like. Add a sound, then close the browser.
 wait: instrument
 
 step
 show: instruments
-text: Your new instrument is in the list. Click an instrument to choose it: the notes you type from now on play with it, and double-clicking one opens it for changing its sound.
+text: Your new instrument is in the list. Click an instrument to choose it: the notes you type from now on play with it, and double-clicking one opens it for changing its sound. The speaker button under the list plays the one chosen, to hear it without opening it.
 
 step
 show: menu View
