@@ -1487,12 +1487,13 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	S.PlaylistSeconds = Report.PlaylistSeconds;
 	S.DrumLoopBars = Report.DrumLoopRows / RowsPerBar;
 	if (LoopRow < 0 && Report.Seconds > 0) {
-		// A short track that ends: a sting, or a sound effect rather than music
+		// A short track that ends: a sting (under 12 seconds), or a sound effect
+		// rather than music
 		int Playing = 0;
 		for (int c = 0; c < Columns; ++c)
 			Playing += Melodic(Kinds[c]) && !Notes[c].empty();
 		const std::string Kind = EndingKind(Report.Seconds, Playing);
-		S.Kind = Kind == "jingle" ? "sting" : (Kind == "sound effect" ? "sound" : "music");
+		S.Kind = Kind == "sound effect" ? "sound" : (Kind == "jingle" && Report.Seconds < 12 ? "sting" : "music");
 	}
 	auto InLoop = [&](int Row) { return LoopRow < 0 || Row >= LoopRow; };
 	const int LoopBarCount = std::max(1, S.LoopBars > 0 ? S.LoopBars : (TotalRows + RowsPerBar - 1) / RowsPerBar);
@@ -2179,7 +2180,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	int MelodicNotes = 0;
 	Traits Sum;
 	for (int c = 0; c < Columns; ++c) {
-		if (!Melodic(Kinds[c]))
+		// A sampled line has no instrument to shape its notes: it counts in none
+		if (!Melodic(Kinds[c]) || Kinds[c] == C_DPCM_LINE)
 			continue;
 		MelodicNotes += Tr[c].Notes;
 		Sum.Click += Tr[c].Click;

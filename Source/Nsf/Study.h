@@ -69,7 +69,7 @@ struct TrackStudy {
 	int Speed, Tempo;
 	int FirstBarRow;					// rows before the first bar line (a pickup)
 	int IntroBars, LoopBars;			// the intro plays once; LoopBars 0 when it doesn't loop
-	std::string Kind;					// "music", or for a short track that ends, "sting" or "sound" (an effect)
+	std::string Kind;					// "music", or for a short track that ends, "sting" (under 12 seconds) or "sound" (an effect)
 	double Seconds;						// how long it plays (to its end, or the intro and the loop once), 0 when not known
 	double PlaylistSeconds;				// the length its playlist gave it, 0 for none
 	double DrumLoopBars;				// the drums' own cycle when they don't follow the loop, in bars; 0 when they do
