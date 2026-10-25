@@ -563,6 +563,7 @@
     <ClCompile Include="Source\Api\Presets.cpp" />
     <ClCompile Include="Source\Api\SoundIndex.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
+    <ClCompile Include="Source\Api\WhatNext.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -599,6 +600,7 @@
     <ClInclude Include="Source\Api\SoundIndex.h" />
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
+    <ClInclude Include="Source\Api\WhatNext.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />

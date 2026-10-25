@@ -103,24 +103,32 @@ before.
 ### A small set of tools for local models
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
-and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 21
-of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
-`place_clip` (ideas hummed into the phone or the microphone are clips),
-`add_instrument`, `design_instrument`, `set_instrument`,
-`add_chords_and_bass`, `grow_melody` (a hook grown into phrases, in
-versions to pick from), `add_drums`, `add_echo`, `set_tempo`, `polish`,
-`mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song`,
-`export_for_game` and `get_recipe`. Its instructions are a page instead of four, but keep the
-craft (plan a key, tempo and form; a motif; chords and a bass in a style;
-drums with fills; an echo; polish, then mix) and the rules that decide how
-it sounds: notes on a sound that's gone at once vanish, a vibrato on the
+and shorter instructions than the 60 or so at `/mcp`, and they follow one
+clear step better than a list of eight tips. `/mcp/core` serves 34 of them:
+`what_next` and the tools its steps call. Reading and writing: `get_song`,
+`read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
+microphone are clips); sounds: `add_instrument`, `design_instrument`,
+`find_sound`, `reference_sound`, `set_instrument`; parts:
+`add_chords_and_bass`, `grow_melody` (a hook grown into phrases, in versions to
+pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
+`vary_part`, `copy_bars`, `insert_bars`, `name_section`, `set_loop`; the
+frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
+`check_song`, `review_arrangement`, `check_loop`, `fix_loop`; and `play`,
+`stop`, `save_song`, `export_for_game` and `get_recipe`. Not `set_mixer`:
+`mix` sets the volumes in the notes (a local model once used the faders as
+its mix). Its instructions are a page instead of four, built around a
+loop: ask `what_next`, make the call it gives, ask again until it says done
+(see [One step at a time](#one-step-at-a-time-what_next)). They keep the
+craft (a motif in phrases that breathe, written in steps; chords and a bass
+in a style; sounds found or designed) and the rules that decide how it
+sounds: notes on a sound that's gone at once vanish, a vibrato on the
 2A03's pulses can click, and only 0.4.6's effects play. It serves no
 prompts, so a client adds no tools of its own to list them; `get_recipe`
-gives the recipes for calm, lively and action songs instead, as steps that
-name only this set's tools. Its `check_song` and `review_arrangement`
-answer in a few lines unless a `format` is asked for (see
-[Short replies](#short-replies)), so a long reply doesn't push the song out
-of a small context. Tick **A small set of
+gives the recipes for calm, lively and action songs instead: the loop, the
+plan it follows in this set's tools, and a worked melody of 8 bars in
+steps over its chords. Its `check_song` and `review_arrangement` answer in
+a few lines unless a `format` is asked for (see [Short replies](#short-replies)),
+so a long reply doesn't push the song out of a small context. Tick **A small set of
 tools, for local models** in the dialog and its addresses end in
 `/mcp/core`. Both sets are always there; each client picks one by its
 address.
@@ -298,6 +306,55 @@ Each recipe ends with its numbers from the built-in guide (topics `calm`,
 `lively` and `action`), so Claude reads them once instead of looking them
 up. Without a kind, the general recipe points at the three when your idea
 asks for one.
+
+### One step at a time: `what_next`
+
+`what_next` looks at the open track and answers with the one step that
+matters most now: the tool to call, its arguments as JSON ready to send, and
+a sentence of why; then what's done and what's left. It works it out from
+the song itself (its notes, sections, key, loop, mixer and the game's file
+next to it), not from the calls before, so it gives the same answer after a
+restart, and a model can follow it a step at a time: ask, make the call,
+ask again, until it says the song is done and to play it for you. Its order
+is the recipes':
+
+1. What breaks the sound: `check_song`'s findings that come with a fix
+   (notes that click, notes that vanish, notes out of range). Its other
+   findings with a fix come later: the melody in one-bar pieces, a thin or
+   doubled bass and a sound its channel can't play once the parts are
+   there, before depth; faders doing the mix, a copied repeat and a short
+   loop with the review's tips. A fix of several calls (read the melody in
+   steps, then write it back held over the bar lines) comes as its first
+   call, with the calls after it, in order, in the why. Clashes are listed
+   for you to hear.
+2. The frame: an even tempo in the kind's range, the key.
+3. The parts and the form: the lead's sound, an A part's chords and bass,
+   its sections named, the melody, A again, a B part on other chords, A
+   once more, and drums (none for calm). A part's melody is `grow_melody`
+   with a hook: the song's own (its first notes in A) where it grows
+   without a clash, else one offered on the chords there, which a composer
+   replaces with a hook of its own; the model then picks the version whose
+   shape fits and shapes it by hand. Where a hook can't grow (fewer than
+   four bars), a phrase to start from comes as `write_notes`.
+4. Depth: a harmony in the repeat (cleaner beside the chords than a
+   counter-melody), the repeats made different (`vary_part`, a variation
+   that rubs against nothing), a break and an intro that plays once, filled
+   with the chords and the bass, and the loop after the intro.
+5. The review's tips that suit the kind.
+6. An echo, last of the parts, since it copies the melody's notes as they
+   are.
+7. `polish`, then the mix in the kind's style when another mix would change
+   the song, the loop's seam (`fix_loop`), saving, and the file for the game
+   at the kind's loudness (-20 LUFS; -22 calm, -19 action).
+
+It takes `kind` (calm, lively or action; without one, calm when the track's
+name says so, else the general recipe), `skip` (steps to leave out, like
+`["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found
+now, in order). With direct changes off it asks for them first, since each
+step works on what the one before wrote. `export_for_game` notes in each
+file what it was made from (a print of the song as it sounds and the
+loudness, as the `FAMITRACKER_PRINT` and `FAMITRACKER_LOUDNESS` comments), so
+`what_next` knows when the file is older than the song.
 
 ## How changes arrive
 
@@ -570,6 +627,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 
 | Tool | What it does |
 |---|---|
+| `what_next` | The one next step for the song, its call ready to send, and why; what's done and what's left. See [One step at a time](#one-step-at-a-time-what_next) |
 | `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it. With `format` `steps`, the part as a line of steps, a bar to a line, as `write_notes` takes a melody (see [Melodies in steps](#melodies-in-steps)) |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)). The reply warns at once of notes the channel doesn't play well, a bass too low to be heard or a melody an octave high, notes outside the key, a bass nearly silent and a sound the channel doesn't play as it's meant, each with what to do (see [Warnings as a part is written](#warnings-as-a-part-is-written)) |
@@ -1948,7 +2006,9 @@ audio_play_sound(snd_town_night, 0, true);
 
 Add each file as a sound with that name (snd_ and the file name). The loop
 points are also in the files as `LOOPSTART`, `LOOPLENGTH` and `LOOPEND`
-comments (in samples), which RPG Maker and other engines read. A song that
+comments (in samples), which RPG Maker and other engines read
+(`FAMITRACKER_PRINT` and `FAMITRACKER_LOUDNESS` say what the file was made
+from, for `what_next`). A song that
 ends with a halt (`Cxx`) plays once, like a jingle.
 
 **Loudness** picks how loud the files come out, and is remembered:
@@ -2116,7 +2176,11 @@ and file.
   `Tools` (the tools, against the `SongHost` interface in `Song.h`, the
   server's instructions and the recipes served as MCP prompts), and
   `ProblemList` (`check_song`'s JSON read back for FamiTracker's problems
-  panel, and the marks the pattern editor and the piano roll draw). Tool
+  panel, and the marks the pattern editor and the piano roll draw), and
+  `WhatNext` (`what_next`'s portable pieces: a dry run of a tool that keeps
+  its changes back and can read the song as they would leave it, the kinds'
+  choices, a new song's chords and the phrase offered for a melody; the tool
+  is `WhatNextTool` in `Tools.cpp`). Tool
   results can carry an image after their text.
 - `Source/Transcribe/SoundEffect.cpp`: sound effects as layers of per-tick
   values and as FamiTracker instruments (each tick an absolute arpeggio picks
