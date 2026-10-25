@@ -1059,11 +1059,18 @@ under. The reply says which, and why, gives the band together on a lively
 stage ("the band together 2.1 dB over the melody"), and says when the
 melody plays at one volume throughout (polish's accents first).
 Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
-soft layer) keep their place under it, together at least 3 dB under it;
-on a lively stage the layers together take the chords' place.
+soft layer) keep their place under it, together at least 3 dB under it.
+On a lively stage every chord part moves alike, so the chords together
+take their place as they play beside each other (a pad that joins the
+arpeggios at the climax keeps its place against them), and a second voice
+or a double that moves with the tune is a line, not a pad's voice; a part
+already within half a dB of its place stays as it is, so a second lively
+mix leaves a mixed song alone.
 The triangle, which has no volume, gets its place from the DPCM level,
 unless `dac` is given (the noise moves with it, and the drums make up for
-it). A second line quieter than its place keeps its level: it may be an
+it). With samples on the DPCM channel the level goes no higher than Z40,
+so under a lively lead at 9 the triangle can stay a little over it, as the
+first stages' did. A second line quieter than its place keeps its level: it may be an
 ornament (a bell that blinks, a bird). Over some bars the parts are set
 against the melody there, the melody keeping its level from the rest of
 the song. Volumes come in whole steps, and FamiTracker rounds a volume
@@ -1139,8 +1146,11 @@ file written (the exported OGG files stay as they are).
   names the melody; otherwise it's guessed as `review_arrangement` guesses
   it, and the reply says so (a high part of a few notes can win the guess).
 - **Targets:** `style` `calm` checks the melody 2-3 dB over the chords;
-  `lively` a stage's band: the melody 3-4 dB over the chords together, 0-2
-  over the bass and 6-8 over an echo, and the band together (every channel
+  `lively` a stage's band: the melody 3-4 dB over the chords together,
+  about level with the bass (from 1 dB under it to 2 over: the first
+  stages had it 1 under; with samples on the DPCM channel the triangle
+  comes down no further than Z40 lets it) and 6-8 over an echo, and the
+  band together (every channel
   but the melody's, a render of its own) louder than the melody. Each
   says how far to move the faders; `any`, the default, gives the numbers
   alone.
@@ -2088,9 +2098,9 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
 song as the one before left it:
 
 1. `polish` with the kind's touches, the ones `what_next`'s polish step
-   gives: polish's calm style on a calm track, the lively recipe's touches
-   in its lively style on a lively stage, and polish's own for action and
-   the general recipe.
+   gives: polish's calm style on a calm track, its lively style on a lively
+   stage (the default touches, accents and all), and polish's own for
+   action and the general recipe.
 2. `mix` in the kind's style: `calm`, `lively`, or `soft` for action and the
    general recipe. When the mixer's faders do the mix's work (the melody's 4
    dB down or more, or a part's 9 dB or more over it, as the review's finding
@@ -2118,15 +2128,15 @@ then what to listen for:
 
 ```
 Finished "Town" as a lively stage, the melody on VRC6 Pulse 1 (guessed; melody_channel names another):
-- Polish: 32 bass notes on VRC6 Sawtooth cut short after half a beat.
+- Polish: accents on VRC6 Pulse 1, VRC6 Sawtooth.
 - Faders: back to 0 dB (2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB), which did the mix's work: ...
-- Mix (lively): as heard, the melody (VRC6 Pulse 1) 4.9 dB over the chords, the bass 3.8 under and the drums 11.9 under.
+- Mix (lively): as heard, the melody (VRC6 Pulse 1) 3.0 dB over the chords, the bass 1.0 under and the drums 9.6 under; the band together 1.4 dB over the melody.
 - Loop: bars 5-16 (19.2 s), after an intro of 6.4 s; fix_loop wrote 400 on VRC6 Pulse 1 at bar 5 beat 1.
-- Export: Town.ogg: 25.6 s, 124 KB, its loop at -20.0 LUFS (...), the first 6.4 s once, then the loop from 6.4 s to the end.
-- GameMaker: audio_sound_loop_start(snd_town, 6.399125); audio_sound_loop_end(snd_town, 25.599125); ...
+- Export: Town.ogg: 25.6 s, 123 KB, its loop at -20.0 LUFS (...), the first 6.4 s once, then the loop from 6.4 s to the end.
+- GameMaker: audio_sound_loop_start(snd_town, 6.398000); audio_sound_loop_end(snd_town, 25.598000); ...
 One Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).
-Listen for: the melody clear on top of the parts, and the bass bouncing; the seam going round
-(play {"from_bar":15} plays the end into the loop; stop ends it).
+Listen for: the band carrying the tune, the lead's accents on the beats, and the climax lifting; the seam
+going round (play {"from_bar":15} plays the end into the loop; stop ends it).
 ```
 
 The result is what the calls one after the other would give (`polish`, `mix`

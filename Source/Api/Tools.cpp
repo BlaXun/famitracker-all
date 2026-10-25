@@ -8219,7 +8219,28 @@ std::vector<MixSpan> MixSpans(Session &S, int Melody, int First, int End, const 
 // As heard, the chords are every part that plays the harmony together: voiced chords on several channels (Voices) and
 // broken chords in a steady run, besides arpeggios. Lines on two or more channels that start every note together (a
 // pad's voices holding one chord, strummed a frame or two apart) are voiced chords too, and join Voices
-void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans)
+// Whether a line moves with the tune: in the bars it plays, it starts a note with two thirds or more of the melody's
+// (a second voice harmonizing it, a double an octave under), where a pad's voices start theirs with a chord's
+bool MovesWithTune(Session &S, const std::vector<NoteInfo> &Line, int Melody)
+{
+	std::set<int> Rows, Bars;
+	for (size_t i = 0; i < Line.size(); ++i) {
+		Rows.insert(Line[i].Row);
+		Bars.insert(S.Time.BarOf(Line[i].Row));
+	}
+	int Tune = 0, With = 0;
+	const std::vector<NoteInfo> &Melodic = S.Notes(Melody);
+	for (size_t i = 0; i < Melodic.size(); ++i)
+		if (Bars.count(S.Time.BarOf(Melodic[i].Row)) > 0) {
+			++Tune;
+			With += Rows.count(Melodic[i].Row) > 0 ? 1 : 0;
+		}
+	return Tune >= 4 && With * 3 >= Tune * 2;
+}
+
+// (Band: a lively stage's, whose lines that move with the tune stay lines, however many start their notes together: a
+// second voice harmonizing the tune and the sawtooth doubling it at a climax aren't a pad)
+void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans, bool Band = false)
 {
 	int Melody = -1;	// a sparkle over it (IsSparkle) starts its notes with a pad's, but is no voice of its chords
 	for (size_t i = 0; i < Spans.size(); ++i)
@@ -8230,6 +8251,8 @@ void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Span
 		if (Spans[i].Role != ROLE_LINE || IsSparkle(S, Spans[i].Channel, Melody, Spans[i].First, Spans[i].End))
 			continue;
 		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Spans[i].Channel), Spans[i].First, Spans[i].End);
+		if (Band && Melody >= 0 && MovesWithTune(S, Notes, Melody))
+			continue;
 		for (size_t n = 0; n < Notes.size(); ++n)
 			Starts[i].push_back(Notes[n].Row);
 	}
@@ -8505,6 +8528,11 @@ struct HeardPlaces {
 // hats 10.4 under [9.0, 12.1], and the band as a whole 3.3 dB louder than the melody [2.4, 3.9]. The lively places of 25
 // October (the melody kept at its level, the bass 3 dB under it, drums never raised) left the later stages' lead at 15 on
 // every note, 3.5 dB over its bass and as loud as the rest together, over sections within a dB of each other
+// A lively mix leaves a part within this of its place where it is (it only moves with the melody), and keeps a part's
+// volumes as they are unless another loudest volume lands this much nearer: a stage's parts sit lower than a calm track's
+// (the melody's loudest at 9), where a volume step is 2-3 dB, and a second mix would otherwise round them anew
+const double BAND_SLACK = 0.5;
+
 HeardPlaces PlacesFor(bool Calm)
 {
 	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -11.0, -3.0, -10.0, false }, LIVELY = { -3.5, -7.0, -3.5, -1.0, -10.0, -2.5, -7.0,
@@ -8747,10 +8775,10 @@ std::string MixTool(Session &S, const Json &Args)
 		Whole = MixSpans(S, Melody, 0, S.Time.TotalRows(), Leveled);
 	if (Heard) {
 		Voices = ChordVoicesIn(S, First, End, Melody);
-		HeardRoles(S, Voices, Spans);
+		HeardRoles(S, Voices, Spans, Band);
 		if (Range) {
 			std::vector<int> WholeVoices = ChordVoicesIn(S, 0, S.Time.TotalRows(), Melody);
-			HeardRoles(S, WholeVoices, Whole);
+			HeardRoles(S, WholeVoices, Whole, Band);
 		}
 	}
 	std::vector<std::vector<std::pair<int, int> > > Refs(Spans.size());
@@ -8996,7 +9024,29 @@ std::string MixTool(Session &S, const Json &Args)
 		// The chords' main layers at their place; the other layers playing with one keep their place under it, but
 		// together at least 3 dB under it (a soft layer's pad under the VRC6's chords)
 		std::vector<double> LayerShift(B.Layers.size(), 0.0);
-		for (size_t m = 0; m < B.Layers.size(); ++m) {
+		// Lively: every chord part moves alike, so the chords together reach their place as they play beside each other
+		// (a pad joining the arpeggios at the climax keeps its place against them); another layer is only brought down, to
+		// no louder together than SOFT_LAYER_DB under the main one it plays with. A second mix finds them there and moves
+		// nothing
+		if (Places.Band && B.ChordsRel > NO_LOUDNESS) {
+			const double Miss = Places.Chords - B.ChordsRel;
+			LayerShift.assign(B.Layers.size(), (std::fabs(Miss) < BAND_SLACK ? 0.0 : Miss) + MelodyShift);
+			for (size_t m = 0; m < B.Layers.size(); ++m) {
+				if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
+					continue;
+				double Together = 0.0;
+				std::vector<size_t> Others;
+				for (size_t l = 0; l < B.Layers.size(); ++l)
+					if (l != m && B.Main[l] == static_cast<int>(m) && B.LayerRel[l] > NO_LOUDNESS) {
+						Others.push_back(l);
+						Together += std::pow(10.0, (B.LayerRel[l] - B.LayerRel[m]) / 10.0);
+					}
+				const double Over = Others.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) + SOFT_LAYER_DB);
+				for (size_t o = 0; o < Others.size(); ++o)
+					LayerShift[Others[o]] -= Over;
+			}
+		}
+		for (size_t m = 0; m < B.Layers.size() && !(Places.Band && B.ChordsRel > NO_LOUDNESS); ++m) {
 			if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
 				continue;
 			LayerShift[m] = Places.Chords - B.LayerRel[m] + MelodyShift;
@@ -9010,13 +9060,6 @@ std::string MixTool(Session &S, const Json &Args)
 			const double Over = Others.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) - (Places.Chords - SOFT_LAYER_DB));
 			for (size_t o = 0; o < Others.size(); ++o)
 				LayerShift[Others[o]] = LayerShift[m] - Over;
-			// Lively: the layers together at the place (as they play together), each as far under the main one as above
-			if (Places.Band && !Others.empty()) {
-				const double All = 10.0 * std::log10(std::pow(10.0, Places.Chords / 10.0) + Together * std::pow(10.0, -Over / 10.0));
-				LayerShift[m] -= All - Places.Chords;
-				for (size_t o = 0; o < Others.size(); ++o)
-					LayerShift[Others[o]] -= All - Places.Chords;
-			}
 		}
 		for (size_t i = 0; i < Spans.size(); ++i) {
 			const MixSpan &P = Spans[i];
@@ -9045,7 +9088,8 @@ std::string MixTool(Session &S, const Json &Args)
 				if (Places.Band) {
 					DrumsWhy[i] = Format(" (from %.1f dB under the melody: a lively mix puts drums about %.0f dB under it)", Under,
 						-Places.Drums);
-					Shifts[i] = Place - B.Rel[i] + MelodyShift;
+					const double Own = Place - B.Rel[i];
+					Shifts[i] = (std::fabs(Own) < BAND_SLACK ? 0.0 : Own) + MelodyShift;
 					Aims[i] = Place;
 					continue;
 				}
@@ -9060,7 +9104,8 @@ std::string MixTool(Session &S, const Json &Args)
 				Aims[i] = Place;
 				continue;
 			}
-			Shifts[i] = Place - B.Rel[i] + MelodyShift;
+			const double Own = Place - B.Rel[i];
+			Shifts[i] = (Places.Band && std::fabs(Own) < BAND_SLACK ? 0.0 : Own) + MelodyShift;
 			Aims[i] = Place;
 		}
 		// The triangle has no volume: the DPCM level gives it its place (the noise moves with it, so the drums make up
@@ -9318,7 +9363,8 @@ std::string MixTool(Session &S, const Json &Args)
 				for (size_t u = 0; u < Unit.size(); ++u)
 					Shifts[Unit[u]] = Shift;
 				const HeardBalance Tries = BalanceOf(0);
-				const double Miss = Tries.Rel[i] > NO_LOUDNESS ? std::fabs(Tries.Rel[i] - Aims[i]) : 1e9;
+				const double Heard = Tries.Rel[i] > NO_LOUDNESS ? std::fabs(Tries.Rel[i] - Aims[i]) : 1e9;
+				const double Miss = Band && To == Highest ? Heard - BAND_SLACK : Heard;	// (lively: as they are, by a margin)
 				if (Miss < BestMiss - 0.05) {
 					Best = Shift;
 					BestMiss = Miss;
@@ -11841,7 +11887,7 @@ void FadersFinding(Session &S, Hearing &Ears, int Melody, int From, int To, bool
 	// The balance as heard, as the review hears it
 	std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
 	std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
-	HeardRoles(S, Voiced, Spans);
+	HeardRoles(S, Voiced, Spans, !Calm);
 	std::vector<std::vector<std::pair<int, int> > > Refs;
 	for (size_t i = 0; i < Spans.size(); ++i)
 		Refs.push_back(std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First, Spans[i].End)));
@@ -12923,7 +12969,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 	if ((Calm || Lively) && S.Channel(Melody).Kind != KIND_TRIANGLE) {
 		std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
 		std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
-		HeardRoles(S, Voiced, Spans);
+		HeardRoles(S, Voiced, Spans, Lively);
 		std::vector<std::vector<std::pair<int, int> > > Refs;
 		for (size_t i = 0; i < Spans.size(); ++i)
 			Refs.push_back(std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First, Spans[i].End)));
@@ -18578,21 +18624,21 @@ Json KindPolish(int Kind)
 
 // The balance as heard, as the review hears it (the melody against the chords, an echo, a second line, the bass and the
 // drums); empty without a melody to hear it against
-std::string FinishBalance(Session &S, int Melody)
+std::string FinishBalance(Session &S, int Melody, bool Band)
 {
 	if (Melody < 0 || Melody >= S.ChannelCount() || S.Channel(Melody).Kind == KIND_TRIANGLE)
 		return std::string();
 	const int First = 0, End = S.Time.TotalRows();
 	std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
 	std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
-	HeardRoles(S, Voiced, Spans);
+	HeardRoles(S, Voiced, Spans, Band);
 	std::vector<std::vector<std::pair<int, int> > > Refs;
 	for (size_t i = 0; i < Spans.size(); ++i)
 		Refs.push_back(std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First, Spans[i].End)));
 	Hearing Ears(S);
 	const HeardBalance B = HearBalance(S, Ears, Spans, Refs, Melody, Voiced, First, End);
 	double Least = NO_LOUDNESS, Most = NO_LOUDNESS;
-	return BalanceText(S, Spans, B, Melody, Least, Most);
+	return BalanceText(S, Spans, B, Melody, Least, Most, Band);
 }
 
 // A reply's text without what it says in brackets: "accents (beats a step softer...) on 2A03 Pulse 1" -> "accents on 2A03
@@ -18805,7 +18851,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 				const bool Mixed = Text.find("Changed the song") != std::string::npos || A.Get("faders") != 0;
 				Changed = Changed || Mixed;
 				Session After(S.Host());
-				const std::string Balance = FinishBalance(After, Melody);
+				const std::string Balance = FinishBalance(After, Melody, std::string(Recipe.MixStyle) == "lively");
 				Lines.push_back(Format("Mix (%s): %s", Recipe.MixStyle, Mixed ? "" : "mixed that way already; ") + (Balance.empty() ? std::string(
 					"done.") : "as heard, " + Balance + "."));
 			}
@@ -19294,7 +19340,7 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	const std::string Style = Lowercase(StringArg(Args, "style", "any"));
 	if (Style != "any" && Style != "calm" && Style != "lively")
 		throw Problem("style: any (the default: the numbers alone), calm (the melody 2-3 dB over the chords) or lively (a stage's band: "
-			"the melody 3-4 dB over the chords together, 0-2 over the bass, 6-8 over an echo, the band louder than it).");
+			"the melody 3-4 dB over the chords together, about level with the bass, 6-8 over an echo, the band louder than it).");
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "short")
 		throw Problem("format: text (the default: every section and part) or short (the loop, the intro, the sides and each part "
@@ -19705,8 +19751,9 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	std::string Leaning = MelodyName;
 	double Leans = (LeadLeft - LeadRight) / Count * (Apart > 0.0 ? 1.0 : -1.0);
 	double LeansDb = PowerDb(LeadLeft) - PowerDb(LeadRight);
-	// Lively: the parts within their places (mix style lively's: HeardPlaces), for the short form
+	// Lively: the parts within their places (mix style lively's: HeardPlaces), for the short form, and whether one missed
 	std::vector<std::string> LivelyWithin;
+	bool LivelyMissed = false;
 	bool ChordsFound = false;
 	size_t Next = 2;	// the parts' renders, in order
 	for (size_t p = 0; p < Parts.size(); ++p) {
@@ -19760,20 +19807,24 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 				}
 			}
 		}
-		// A stage's band: the chords together 3-4 dB under the melody, the bass 0-2, an echo 6-8 (the soundtrack's liked
-		// stages: about 3, 1 under the bass to 0.4 over it, 6.5)
+		// A stage's band: the chords together 3-4 dB under the melody, the bass about level with it (the melody from 1 dB
+		// under it to 2 over; mix aims at 1 over), an echo 6-8 under (the soundtrack's liked stages: about 3, the melody 1.0
+		// under its bass [-2.1, +0.4], 6.5). With samples on the DPCM channel a triangle comes down no further than Z40 lets it
 		if (Style == "lively" && (Part.Chords || Part.Role == ROLE_BASS || Part.Role == ROLE_ECHO)) {
-			const double Low = Part.Chords ? 3.0 : Part.Role == ROLE_BASS ? 0.0 : 6.0, High = Low + (Part.Chords ? 1.0 : 2.0);
-			const double Shown = std::floor(Diff * 10.0 + 0.5) / 10.0, Aim = (Low + High) / 2.0;
+			const double Low = Part.Chords ? 3.0 : Part.Role == ROLE_BASS ? -1.0 : 6.0, High = Part.Chords ? 4.0 : Part.Role == ROLE_BASS ?
+				2.0 : 8.0, Aim = Part.Chords ? 3.5 : Part.Role == ROLE_BASS ? 1.0 : 7.0;
+			const double Shown = std::floor(Diff * 10.0 + 0.5) / 10.0;
+			const std::string Range = Part.Role == ROLE_BASS ? "-1 to 2 (about level)" : Format("%.0f-%.0f", Low, High);
 			const char *const What = Part.Chords ? "the chords together" : Part.Role == ROLE_BASS ? "the bass" : "the echo";
 			if (Shown >= Low && Shown <= High) {
-				StemText += Format("; within lively's %.0f-%.0f", Low, High);
-				LivelyWithin.push_back(Format("%s %.1f dB under it", What, Diff));
+				StemText += "; within lively's " + Range;
+				LivelyWithin.push_back(Diff >= 0.0 ? Format("%s %.1f dB under it", What, Diff) : Format("%s %.1f dB over it", What, -Diff));
 			}
 			else {
-				StemText += Format("; lively wants %.0f-%.0f: %s it about %.1f dB (set_mixer change) or %s the melody", Low, High,
+				LivelyMissed = true;
+				StemText += Format("; lively wants %s: %s it about %.1f dB (set_mixer change) or %s the melody", Range.c_str(),
 					Shown > High ? "raise" : "lower", std::fabs(Diff - Aim), Shown > High ? "lower" : "raise");
-				Off.push_back(Format("The melody is %.1f dB over %s; lively wants %.0f-%.0f. ", Diff, What, Low, High) + FixText(MixerChange(S,
+				Off.push_back(Format("The melody is %.1f dB over %s; lively wants %s. ", Diff, What, Range.c_str()) + FixText(MixerChange(S,
 					Part.Channels, Diff - Aim), false));
 			}
 		}
@@ -19834,6 +19885,7 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 					LivelyWithin.push_back(Format("the band %.1f dB over it", Over));
 				}
 				else {
+					LivelyMissed = true;
 					Text += "; a stage's band is louder than its melody (about 3 dB): mix with style lively sets each part around it.";
 					Json Mix = Json::MakeObject();
 					Mix.Set("style", "lively");
@@ -19843,7 +19895,7 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 				}
 			}
 		}
-		if (!LivelyWithin.empty()) {
+		if (!LivelyWithin.empty() && !LivelyMissed) {
 			StyleTarget = "lively:";
 			for (size_t i = 0; i < LivelyWithin.size(); ++i)
 				StyleTarget += (i == 0 ? " " : ", ") + LivelyWithin[i];
@@ -23568,11 +23620,13 @@ Json WhatNext::MixArgs() const
 }
 
 // Mixed when another mix would move no note by more than 1.5 dB (mix rounds a part's volumes to its target as written,
-// and an envelope that peaks under 15 can leave its loudest note a step under as it plays, which the next mix corrects)
+// and an envelope that peaks under 15 can leave its loudest note a step under as it plays, which the next mix corrects);
+// 2 on a lively stage, whose parts sit at volumes 4-8 under a melody at 9, where a step is up to 2 dB: a note added to a
+// mixed stage can tip a part between two steps, which is rounding, not a mix to make again
 bool WhatNext::MixDue()
 {
 	if (m_MixDue < 0)
-		m_MixDue = m_HasMelody && WouldChange(S, "mix", MixArgs(), 1.5) ? 1 : 0;
+		m_MixDue = m_HasMelody && WouldChange(S, "mix", MixArgs(), std::string(Kind().MixStyle) == "lively" ? 2.0 : 1.5) ? 1 : 0;
 	return m_MixDue == 1;
 }
 
@@ -25031,8 +25085,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"and of the loop, the intro against the loop (6-10 dB under reads as an intro), the two sides (more than 2 dB apart: which "
 		"part sits too far out), and each part alone, the other channels silent with their effects playing (stems): the chords "
 		"together and each other channel, against the melody in the bars where both play. style calm checks the melody 2-3 dB "
-		"over the chords; lively a stage's band: the melody 3-4 dB over the chords together, 0-2 over the bass, 6-8 over an "
-		"echo, and the band together (a render of its own) louder than the melody. Each part alone is a render of its own: stems false measures "
+		"over the chords; lively a stage's band: the melody 3-4 dB over the chords together, about level with the bass (from 1 "
+		"dB under it to 2 over), 6-8 over an echo, and the band together (a render of its own) louder than the melody. Each part "
+		"alone is a render of its own: stems false measures "
 		"the mix alone, quickly. A song that halts is measured to the bar it halts in; a sound effect (speed 1, as "
 		"make_sound_effect writes one) as a whole, as export_for_game measures it, with each channel alone.",
 		Schema().Range()
@@ -25043,8 +25098,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"chords, arpeggio or lush instruments, or else voiced chords on channels that start their notes together)."))
 			.Add("stems", Prop("boolean", "Measure each part alone too (default true); false is quicker."))
 			.Add("style", EnumProp("The targets it checks: any (the default: the numbers alone), calm (the melody 2-3 dB over the "
-				"chords) or lively (a stage's band: the melody 3-4 dB over the chords together, 0-2 over the bass, 6-8 over an echo, "
-				"the band louder than it).", { "any", "calm", "lively" }))
+				"chords) or lively (a stage's band: the melody 3-4 dB over the chords together, about level with the bass, 6-8 over an "
+				"echo, the band louder than it).", { "any", "calm", "lively" }))
 			.Add("loudness", Prop("number", "The loop's loudness the export will bring it to, in LUFS (-40 to -6, as export_for_game "
 				"takes it): the numbers then as that file has them. Default: as FamiTracker renders it."))
 			.Add("format", EnumProp("text (the default: every section and part) or short: the loop, the intro, the sides and the "
@@ -26015,8 +26070,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"has few, long notes are expected here" : Lively ? "fix what it lists: a climax under 2 dB over the first A, a lead at "
 		"one volume, a band quieter than its melody" : "fix what it lists") + "), check_song" + Style + " (0 clicking, 0 "
 		"vanishing, no clashes you didn't mean" + (Calm ? ", no held lead" : "") + "), measure_mix" + Style + " with "
-		"melody_channel the lead (" + (Calm ? "the melody 2-3 dB over the chords, " : Lively ? "the melody 0-2 dB over the bass "
-		"and 3-4 over the chords together, the band louder than it, each section's loudness building to the climax, " : "") +
+		"melody_channel the lead (" + (Calm ? "the melody 2-3 dB over the chords, " : Lively ? "the melody about level with the "
+		"bass and 3-4 dB over the chords together, the band louder than it, each section's loudness building to the climax, " : "") +
 		"the intro 6-10 dB under the main part, the "
 		"two sides within 2 dB); fix what they find (set_mixer with change moves the faders it names) and check again, "
 		"measure_mix with parts [\"chords\"] or stems false for a quick look, all the stems once at the end.\n"

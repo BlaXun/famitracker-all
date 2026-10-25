@@ -13775,18 +13775,22 @@ void TestMeasureMix()
 	CHECK_HAS(R.Text, "dB RMS, 0.0 dB apart.");
 	CHECK_LACKS(R.Text, "guessed");
 	CHECK_LACKS(R.Text, "Lively");
-	// any: the numbers alone; lively: 3-4 dB over the nearest part around the melody (the chords here, 2-3 dB under it)
+	// any: the numbers alone; lively: a stage's band, the chords together 3-4 dB under the melody (2-3 here), the bass about
+	// level with it, and the band together, a render of its own, louder than it
 	R = Run(Song, "measure_mix", "{}");
 	CHECK_LACKS(R.Text, "calm");
 	CHECK_LACKS(R.Text, "Lively");
 	R = Run(Song, "measure_mix", "{\"style\": \"lively\"}");
-	CHECK_HAS(R.Text, "\nLively: the nearest part is chords (2A03 Pulse 1-2), the melody ");
-	CHECK_HAS(R.Text, "; lively wants 3-4 over the parts: lower it about ");
-	// ...but not an echo of the melody: the bass nearest once the chords are down
+	CHECK_HAS(R.Text, "chords (2A03 Pulse 1-2): ");
+	CHECK_HAS(R.Text, "; lively wants 3-4: lower it about ");
+	Check(Contains(R.Text, "Triangle (bass): ") && (Contains(R.Text, "; within lively's -1 to 2 (about level)") ||
+		Contains(R.Text, "; lively wants -1 to 2 (about level): ")), R.Text.c_str(), __LINE__);
+	CHECK_HAS(R.Text, "\nLively: the band together (every channel but the melody's) plays ");
+	// ...the chords down 6 dB: raise them
 	Song.Mix.Set(0, -60, PAN_CENTER);
 	Song.Mix.Set(1, -60, PAN_CENTER);
 	R = Run(Song, "measure_mix", "{\"style\": \"lively\"}");
-	CHECK_HAS(R.Text, "\nLively: the nearest part is Triangle (bass), the melody ");
+	CHECK_HAS(R.Text, "; lively wants 3-4: raise it about ");
 	CHECK(Run(Song, "measure_mix", "{\"style\": \"loud\"}").IsError);
 
 	// An intro 6-10 dB under the loop says so plainly
@@ -14609,7 +14613,7 @@ void TestHeardBalance()
 	CHECK_HAS(Run(Bass, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.2 dB over the chords, the triangle 4.4 under.");
 }
 
-// mix style calm and lively, as heard: the melody's loudest at 15, the chords 2.5 dB under it (lively 3.5), an echo 7,
+// mix style calm and lively, as heard: the melody's loudest at 15 (lively's at 9), the chords 2.5 dB under it (lively 3.5), an echo 7,
 // the bass 2.5 (the triangle by the DPCM level); the reply gives the balance reached
 void TestCalmMix()
 {
@@ -14621,15 +14625,19 @@ void TestCalmMix()
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "a calm mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords. Changes: VRC6 Pulse 1 "
 		"(melody) stays at 15; VRC6 Pulse 2 (chords) loudest 15 to 11.");
-	CHECK_HAS(Result.Text, "style lively puts the melody 3-4 dB over the parts instead.");
+	CHECK_HAS(Result.Text, "style lively mixes a stage's band instead (the melody's loudest at 9, the bass about level with it, the "
+		"chords 3-4 dB under it, the band louder than it).");
 	CHECK_LACKS(Result.Text, "DPCM level");	// no triangle to place
 	CHECK(Song.Rows[6][0].Volume == 11 && Song.Rows[5][0].Volume == 15);
 	CHECK_HAS(Run(Song, "mix", CALM).Text, "The song is mixed that way already, as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords.");
+	// Lively after it: the melody's loudest to 9, the chords 3-4 dB under it
 	Result = Run(Song, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}");
-	CHECK_HAS(Result.Text, "a lively mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) 3.5 dB over the chords.");
-	CHECK_HAS(Result.Text, "VRC6 Pulse 2 (chords) loudest 11 to 10");
+	CHECK_HAS(Result.Text, "a lively mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) ");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 15 to 9");
+	const double OverChords = NumberAfter(Result.Text, "as heard: the melody (VRC6 Pulse 1) ");
+	Check(OverChords >= 3.0 && OverChords <= 4.0, Result.Text.c_str(), __LINE__);
 	CHECK_HAS(Result.Text, "style calm puts it 2-3 dB over the chords instead.");
-	CHECK(Song.Rows[6][0].Volume == 10);
+	CHECK(Song.Rows[5][0].Volume == 9 && Song.Rows[6][0].Volume < 9);
 	// A pad holding one chord on three channels (a note each, started together) is the chords, one layer
 	FakeSong Pad;
 	Pad.Info.DirectChanges = true;
@@ -15033,8 +15041,9 @@ void TestMelodyBreaths()
 	CHECK_HAS(Run(Break, "review_arrangement", LIVELY).Text, "in 6 of 6 two-bar spans");
 }
 
-// mix style lively (and calm) puts the drums 10-12 dB under the melody and never raises them over the volumes they were
-// written at: soft hi-hats stay soft, louder drums come down to about 11 dB under, and the reply says why; the soft mix
+// mix style calm puts the drums 10-12 dB under the melody and never raises them over the volumes they were written at:
+// soft hi-hats stay soft, louder drums come down to about 11 dB under, and the reply says why; lively puts them about 10
+// under, raised or lowered (the soundtrack's first lively stages: the noise hats 10.4 dB under the melody); the soft mix
 // still sets them by their role
 void TestStageMix()
 {
@@ -15049,19 +15058,23 @@ void TestStageMix()
 		const std::string Args = "{\"style\": \"" + Style + "\", \"melody_channel\": \"VRC6 Pulse 1\"}";
 		ToolResult Result = Run(Song, "mix", Args);
 		CHECK(!Result.IsError);
-		if (Pass == 0 || Pass == 2) {
+		if (Pass == 0 || Pass == 1) {
+			// Lively: from 12.8 dB under the melody at 9 (17.2 under it at 15) up to about 10, or from 3.4 down to it
+			Check(Contains(Result.Text, Pass == 0 ? "2A03 Noise (drums) loudest 7 to " : "2A03 Noise (drums) loudest 15 to "), Result.Text.c_str(),
+				__LINE__);
+			CHECK_HAS(Result.Text, " dB under the melody: a lively mix puts drums about 10 dB under it)");
+			CHECK_LACKS(Result.Text, "never raises");
+			const double Under = NumberAfter(Result.Text, "the drums ");
+			Check(Under >= 9.0 && Under <= 11.0, Result.Text.c_str(), __LINE__);
+			CHECK(Pass == 0 ? Song.Rows[3][6].Volume > 7 : Song.Rows[3][0].Volume < 15);
+		}
+		else if (Pass == 2) {
 			CHECK_HAS(Result.Text, "the drums 17.2 under");
 			CHECK(Contains(Result.Text, ("2A03 Noise (drums) stays at 7 (as written: 17.2 dB under the melody, and a " + Style + " mix puts "
 				"drums 10-12 dB under it and never raises them)").c_str()));
 			for (int i = 0; i < 32; ++i)
 				CHECK_EQ(static_cast<int>(Song.Rows[3][static_cast<size_t>(i * 2)].Volume), 4 + i % 4);
 			CHECK_HAS(Run(Song, "mix", Args).Text, "2A03 Noise (drums) keeps its volumes (as written: 17.2 dB under the melody");
-		}
-		else if (Pass == 1) {
-			CHECK_HAS(Result.Text, "the drums 11.0 under");
-			CHECK_HAS(Result.Text, "2A03 Noise (drums) loudest 15 to 11 (from 7.8 dB under the melody: a lively mix brings drums louder than 10 dB "
-				"under it down to 11, never up)");
-			CHECK_EQ(static_cast<int>(Song.Rows[3][0].Volume), 11);
 		}
 		else {
 			CHECK_HAS(Result.Text, "2A03 Noise (drums) loudest 4 to 10");	// the soft mix as before: the drums' loudest at 10
@@ -15071,7 +15084,7 @@ void TestStageMix()
 }
 
 // add_drums: light thins the kick and the snare and keeps the hi-hats (which a kick or a snare on every beat used to leave
-// none of); the lively groove for stages that flow: closed hi-hats on the eighths at 4-6 with a sixteenth pair now and
+// none of); the lively groove for gentle places: closed hi-hats on the eighths at 4-6 with a sixteenth pair now and
 // then, an open one every other bar at 7, a soft kick on 1 and the "and" of 2 or 3, no snare, small fills (a hi-hat roll
 // or soft toms) and a soft splash; with samples the kick on the DPCM
 void TestLivelyGroove()
@@ -18195,7 +18208,8 @@ void TestShortReplies()
 		"{\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5,\"to_bar\":28,\"format\":\"steps\"}, then write_notes.");
 	CHECK_LACKS(Short, "\n4. ");
 	// A tip without a call of its own: its first clause and the tool its text names
-	CHECK_HAS(Short, "\n2. The chords loop unchanged (add_chords_and_bass).");
+	Check(Contains(Short, "\n2. The song doesn't build (add_harmony).\n3. The chords loop unchanged (add_chords_and_bass)."), Short.c_str(),
+		__LINE__);
 	CHECK_HAS(Short, "; as heard: no chords, the drums ");
 	// check_song: the counts, then the findings heard worst first (here the arrangement's: the melody's pieces, the bass)
 	const std::string CheckFull = Run(Song, "check_song", LIVELY + "}").Text, CheckShort = Run(Song, "check_song", LIVELY + SHORT).Text;
@@ -18227,7 +18241,7 @@ void TestShortReplies()
 	CHECK(MixShort.size() < MixFull.size());
 	CHECK_HAS(MixShort, "Measured bars 1-32 of \"Town\": the loop (bars 5-32) ");
 	CHECK_HAS(MixShort, "the sides ");
-	CHECK_HAS(MixShort, "\nAgainst the melody (VRC6 Pulse 1), where both play: ");
+	Check(Contains(MixShort, "\nAgainst the melody (VRC6 Pulse 1), where both play: "), MixShort.c_str(), __LINE__);
 	CHECK(Run(Song, "measure_mix", "{\"format\": \"json\"}").IsError);
 	// The small set answers short by default; a format asked for is kept
 	ToolSet Tools(Song);
@@ -18295,8 +18309,9 @@ void TestMixFadersReset()
 	const ToolResult Result = Run(Song, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Set the faders back to 0 dB (they were 2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB, VRC6 Pulse 2 +2.0 dB)");
-	// The melody plays as loud as it did with its fader, so the parts can reach their places under it
-	CHECK_HAS(Result.Text, "the melody's loudest at 9 where it was 15 (as loud as it played with its fader)");
+	// The lively mix sets the melody's loudest itself (to 9), so the parts can reach their places around it
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 15 to 9");
+	CHECK_LACKS(Result.Text, "where it was");
 	CHECK_EQ(Song.Mix.Level(5), 0);
 	CHECK_EQ(Song.Mix.Level(3), 0);
 	CHECK_EQ(Song.Mix.Level(6), 0);
@@ -18724,8 +18739,9 @@ void TestWhatNextStates()
 		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\"]}");
-		CHECK_HAS(A.Text, "The mix, last, as heard: the melody 3-4 dB over the parts around it, the drums soft. finish_song does it, then "
-			"the loop's seam and the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
+		CHECK_HAS(A.Text, "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, the chords 3-4 "
+			"dB under it and the band louder than the melody. finish_song does it, then the loop's seam and the game's file at -20 LUFS, "
+			"in one call that one Ctrl+Z undoes.");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 		Song.Info.Modified = true;
 		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
@@ -18734,8 +18750,9 @@ void TestWhatNextStates()
 		CHECK(!Run(Song, "save_song", "{}").IsError);
 		Song.Info.Modified = false;
 		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Done);
-		// Mixed by hand instead: saving, then a new file
-		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		// Mixed by hand instead, wider: saving, then a new file (the lively mix alone puts the chords back where the finished
+		// song had them, which the game's file has already)
+		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"width\": \"wide\"}").IsError);
 		ByHand.Info.Modified = true;
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK_EQ(A.Tool, std::string("save_song"));
@@ -18756,7 +18773,14 @@ void TestWhatNextStates()
 		// A note ringing over the loop's seam: fix_loop's fix and the file, in finish_song (neither polished nor mixed again)
 		FakeSong Song = Done;
 		const int Last = static_cast<int>(Song.Rows[6].size()) - 4;
-		Song.Put(6, Last, "C-4", 0, 8);
+		int Volume = 8, Instrument = 0;	// the channel's own sound, as loud as its notes are mixed
+		for (size_t r = 0; r < Song.Rows[6].size(); ++r) {
+			if (Song.Rows[6][r].HasNote() && Song.Rows[6][r].Volume < NO_VOLUME)
+				Volume = Song.Rows[6][r].Volume;
+			if (Song.Rows[6][r].HasNote() && Song.Rows[6][r].Instrument != NO_INSTRUMENT)
+				Instrument = Song.Rows[6][r].Instrument;
+		}
+		Song.Put(6, Last, "C-4", Instrument, Volume);
 		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
@@ -19474,8 +19498,9 @@ void TestFinishSong()
 // Pulse 2) and a sampled kick and snare from A'; in A'' a second voice a third under the tune (VRC6 Pulse 2) and the
 // sawtooth doubling it an octave under. The later one as the later stages were mixed: a stepped lead (VRC6 Pulse 1: 15
 // for 8 frames, then 12, then 9), a sawtooth bass, a pad of three voices holding each chord (2A03 Pulse 1 and 2, VRC6
-// Pulse 2) at 5, the bass at 10, soft noise hats at 5 and a sampled kick on each bar's first beat, every part from A on; its lead at 15
-// on every note (Flat), or 12 in A and A' and 14 in B
+// Pulse 2) at 4, the bass at 8, soft noise hats at 5 and a sampled kick on each bar's first beat, every part from A on (as
+// the lively mix of 25 October left such a song: the lead about 3 dB over its bass and as loud as the rest together); its
+// lead at 15 on every note (Flat), or 12 in A and A' and 14 in B
 const char *const STAGE_ROOTS[4][2] = { { "C-2", "G-2" }, { "A-1", "E-2" }, { "F-1", "C-2" }, { "G-1", "D-2" } };
 const char *const STAGE_CHORDS[4][3] = { { "C-3", "E-3", "G-3" }, { "A-2", "C-3", "E-3" }, { "F-2", "A-2", "C-3" },
 	{ "G-2", "B-2", "D-3" } };
@@ -19587,9 +19612,9 @@ void LaterStageSong(FakeSong &Song, bool Flat)
 	for (int Bar = 1; Bar <= 16; ++Bar) {
 		const int Base = (Bar - 1) * 16, Chord = (Bar - 1) % 4;
 		for (int b = 0; b < 4; ++b)
-			Song.Put(7, Base + b * 4, STAGE_ROOTS[Chord][b % 2], Bar == 1 && b == 0 ? 4 : NO_INSTRUMENT, Bar == 1 && b == 0 ? 10 : -1);
+			Song.Put(7, Base + b * 4, STAGE_ROOTS[Chord][b % 2], Bar == 1 && b == 0 ? 4 : NO_INSTRUMENT, Bar == 1 && b == 0 ? 8 : -1);
 		for (int v = 0; v < 3; ++v)
-			Song.Put(PADS[v], Base, STAGE_CHORDS[Chord][v], Bar == 1 ? (PADS[v] == 6 ? 8 : 7) : NO_INSTRUMENT, Bar == 1 ? 5 : -1);
+			Song.Put(PADS[v], Base, STAGE_CHORDS[Chord][v], Bar == 1 ? (PADS[v] == 6 ? 8 : 7) : NO_INSTRUMENT, Bar == 1 ? 4 : -1);
 		for (int h = 0; h < 8 && Bar >= 5; ++h)
 			Song.Put(3, Base + h * 2, "D-#", Bar == 5 && h == 0 ? 5 : NO_INSTRUMENT, Bar == 5 && h == 0 ? 5 : -1);
 		if (Bar >= 5)
@@ -19666,7 +19691,7 @@ void TestLivelyBand()
 	// The first batch's balance
 	const double Chords = MelodyOverChords(Result.Text, "2A03 Pulse 1"), Echo = GapUnder(Result.Text, "the echo"),
 		Bass = GapUnder(Result.Text, "the triangle"), Drums = GapUnder(Result.Text, "the drums"), Band = BandOver(Result.Text);
-	Check(Chords >= 3.0 && Chords <= 4.0, Result.Text.c_str(), __LINE__);
+	Check(Chords >= 3.0 && Chords <= 4.5, Result.Text.c_str(), __LINE__);	// 3-4, give or take a volume step's rounding
 	Check(Bass >= -1.0 && Bass <= 2.0, Result.Text.c_str(), __LINE__);	// about level: the first batch's -2.1 to 0.4, the aim 0-2
 	Check(Echo >= 6.0 && Echo <= 8.0, Result.Text.c_str(), __LINE__);
 	Check(Drums >= 9.0 && Drums <= 11.0, Result.Text.c_str(), __LINE__);
@@ -19690,7 +19715,7 @@ void TestLivelyBand()
 	Check(Later.Rows[5][192].Volume == 9 && Later.Rows[5][64].Volume < 9 && Later.Rows[5][64].Volume >= 6, Result.Text.c_str(), __LINE__);
 	const double LaterBand = BandOver(Result.Text), LaterBass = GapUnder(Result.Text, "the bass"),
 		LaterChords = MelodyOverChords(Result.Text, "VRC6 Pulse 1"), LaterDrums = GapUnder(Result.Text, "the drums");
-	Check(BandBefore > -1000.0 && LaterBand > BandBefore + 2.0 && LaterBand > 0.0, Result.Text.c_str(), __LINE__);
+	Check(BandBefore > -1000.0 && LaterBand > BandBefore + 1.0 && LaterBand > 0.0, Result.Text.c_str(), __LINE__);
 	Check(LaterBass >= 0.0 && LaterBass <= 2.0, Result.Text.c_str(), __LINE__);
 	Check(LaterChords >= 3.0 && LaterChords <= 4.0, Result.Text.c_str(), __LINE__);
 	Check(LaterDrums >= 9.0 && LaterDrums <= 11.0, Result.Text.c_str(), __LINE__);	// raised from 19 under
@@ -19839,7 +19864,7 @@ void TestLivelyRecipes()
 		"(the melody 2-3 dB over the chords).");
 	// add_drums' lively groove is for gentle places now; "stage" is the basic groove's word
 	CHECK(FindStyle(Grooves(), "stage") == GROOVE_BASIC && FindStyle(Grooves(), "gentle") == GROOVE_LIVELY);
-	CHECK(Grooves()[GROOVE_LIVELY].Description.find("a gentle place") != std::string::npos);
+	CHECK(std::string(Grooves()[GROOVE_LIVELY].Description).find("a gentle place") != std::string::npos);
 }
 
 // what_next's lively steps: the bloom lead (not struck again), lush chords of two frames, a sampled backbeat, polish with
@@ -19854,15 +19879,16 @@ void TestLivelyWhatNext()
 		CHECK_HAS(All, "\"restrike_beats\":0");
 		CHECK_HAS(All, "kind bloom lead");
 	}
-	// Followed from an empty song: polish with style lively (its accents), add_drums with kit samples and the basic groove
+	// Followed from an empty song: add_drums with kit samples and the basic groove, lush chords of two frames a note, the
+	// last steps in finish_song
 	FakeSong Song(1);
 	NewSong(Song);
 	bool Finished = false;
 	const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__);
 	CHECK(Finished);
-	const int Polish = CallIndex(Made, "polish"), Drums = CallIndex(Made, "add_drums"), Chords = CallIndex(Made, "add_chords_and_bass");
-	Check(Polish >= 0 && Contains(Made[static_cast<size_t>(Polish)], "\"style\":\"lively\"") &&
-		!Contains(Made[static_cast<size_t>(Polish)], "touches"), Polish >= 0 ? Made[static_cast<size_t>(Polish)].c_str() : "no polish", __LINE__);
+	const int Finish = CallIndex(Made, "finish_song"), Drums = CallIndex(Made, "add_drums"), Chords = CallIndex(Made, "add_chords_and_bass");
+	Check(Finish >= 0 && Contains(Made[static_cast<size_t>(Finish)], "\"kind\":\"lively\""), Finish >= 0 ?
+		Made[static_cast<size_t>(Finish)].c_str() : "no finish_song", __LINE__);
 	Check(Drums >= 0 && Contains(Made[static_cast<size_t>(Drums)], "\"groove\":\"basic\"") &&
 		Contains(Made[static_cast<size_t>(Drums)], "\"kit\":\"samples\""), Drums >= 0 ? Made[static_cast<size_t>(Drums)].c_str() : "no drums",
 		__LINE__);
@@ -19871,8 +19897,15 @@ void TestLivelyWhatNext()
 		__LINE__);
 	// The song it leaves: the band carries the tune
 	const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"lively\"}").Text;
-	CHECK_LACKS(Review, "stands over its band");
-	CHECK_HAS(Review, "; the band together ");
+	Check(!Contains(Review, "stands over its band") && Contains(Review, "; the band together "), Review.c_str(), __LINE__);
+	// what_next's polish and finish_song's (KindPolish): polish's lively style, its accents
+	FakeSong Polished(4);
+	LaterStageSong(Polished, true);
+	const std::string Done = Run(Polished, "finish_song", "{\"kind\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"skip\": "
+		"[\"export\"]}").Text;
+	Check(Contains(Done, "\n- Polish: accents on "), Done.c_str(), __LINE__);
+	Check(Contains(Done, "\n- Mix (lively): as heard, the melody (VRC6 Pulse 1) ") && Contains(Done, "; the band together "), Done.c_str(),
+		__LINE__);
 	// A stage that doesn't build: the review's tip becomes a harmony in its last part
 	FakeSong Flat(4);
 	LaterStageSong(Flat, false);

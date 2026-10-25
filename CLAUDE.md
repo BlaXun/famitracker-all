@@ -1072,23 +1072,38 @@ stages were (their numbers, measured as heard, are in the comment before
 `PlacesFor`). `HeardPlaces::Band` marks lively's places: `MixTool` lets the
 melody through the soft branch (`SOFT`'s 9, as on a pulse, scaled as
 written so accents and steps by section stay; `MelodyShift` follows it),
-the chord layers together take `Places.Chords` (`LayerShift`'s `All`), and
-the drums move up as well as down (`Room`, the search's `Top`, the DPCM
-compensation). `HearBalance` also gives `ChordsRel`, `ChordParts` and
+every chord part moves by one shift so the chords together
+(`ChordsRel`) take `Places.Chords` (another layer is only brought down,
+to `SOFT_LAYER_DB` under the main one), a part within `BAND_SLACK` of its
+place moves only with the melody and the search keeps a part's volumes
+unless another lands `BAND_SLACK` nearer (the parts sit low, where a step
+is 2-3 dB: without it a second mix rounded them anew and what_next asked
+for the mix again), and the drums move up as well as
+down (`Room`, the search's `Top`, the DPCM compensation; a triangle under
+DPCM samples comes down no further than Z40, so it can stay a little over
+the melody, as the first stages' did). `HeardRoles` with `Band` keeps
+lines that move with the tune (`MovesWithTune`: a harmony voice, a double
+an octave under) as lines rather than a pad's voices; calm keeps the old
+rule. `HearBalance` also gives `ChordsRel`, `ChordParts` and
 `BandRel` (every channel but the melody's), which `BalanceText` reports
-with `Band`. The review's lively tips are the band (`LIVELY_BASS_UNDER`),
+with `Band` (and `FinishBalance` for finish_song's lively mix). The review's lively tips are the band (`LIVELY_BASS_UNDER`),
 the lead at one volume ("Flat dynamics on the lead") and the lift
 (`LiftOf`, `SongLift`, `LIFT_LEAST`: the loudest named section, intro,
 break and outro aside, against the first A, or 4-bar blocks); it gives no
 held-lead or "presses" tip on a lively track, and neither does
 `check_song`. `polish` style lively gives the default touches (accents).
-`measure_mix` style lively checks the chords together, the bass and the
-echo (`MixPart::Role`) and renders the band as a stem of its own. `mix`
+`measure_mix` style lively checks the chords together (3-4 dB under the
+melody), the bass (about level: 1 under to 2 over) and the echo (6-8
+under) (`MixPart::Role`) and renders the band as a stem of its own. `mix`
 says when `width`, `levels` or `dac` without a style changed only those
 (`NoStyle`). `what_next`'s lively kind (`KINDS` in `WhatNext.cpp`) designs
 a `bloom lead` with `restrike_beats` 0, lush chords of `LushFrames` (2), the
-basic groove with kit samples, polish with its accents, and turns the
-review's lift tip into a harmony in the last part (`WhatNext::Climax`).
+basic groove with kit samples, polish with its accents (`KindPolish`,
+finish_song's too), turns the
+review's lift tip into a harmony in the last part (`WhatNext::Climax`), and
+takes a lively mix as done while another would move no note more than 2 dB
+(`MixDue`; 1.5 for the other kinds), since a step at its parts' volumes is
+up to 2 dB.
 The `lively` groove's aliases no longer include stage words (`basic` has
 them). `TestLivelyBand`, `TestLivelyPolish`, `TestLivelyChecks`,
 `TestLivelyRecipes`, `TestLivelyWhatNext` and `TestMixWithoutStyle` cover
