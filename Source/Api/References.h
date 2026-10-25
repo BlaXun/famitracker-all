@@ -136,6 +136,11 @@ int ReferenceMatch(const Reference &R, const std::string &Query);
 // counted 0-15, its pitch sequence as the 2A03's period moves (four times
 // coarser, turned around), and a duty as bright as its wave
 Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name);
+// A studied sound whose release ends above 0 holds there after a release (===): its notes drone on at that level until
+// the next note, as 535 of a library's 823 sounds did. The instruments made from it (ReferencePreset, ReferenceFdsSound,
+// ReferenceWaveSound) fade out from there, halving a frame, instead (in the volume sequence's last items when it has no
+// room for more); the frames that fade takes, 0 for a sound whose release ends in silence or that has none
+int ReleaseFadeFrames(const ReferenceSound &Sound);
 // One of a reference's sounds as an FDS instrument, named Name: an FDS
 // sound's own wave, modulator and sequences; another chip's played on the
 // FDS, its volume counted 0-31, its pitch sequence four times finer and
