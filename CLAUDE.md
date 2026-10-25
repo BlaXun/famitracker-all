@@ -1111,6 +1111,28 @@ its speed from 6, since the chooser keeps the current speed when it can). `TestS
 `TestReferenceReleaseEnds`, `TestDesignWords` and `TestBpmLayoutFrames`
 cover them.
 
+The sound library (from `feat-sound-library`): 234 ready-made sounds of
+our own beside the presets, in `SoundLibrary.cpp` (`LibraryPresets`,
+`LibraryVrc7Sounds`), `Wavetables.cpp`'s `LibraryWaveSounds`,
+`FdsSounds.cpp`'s `LibraryFdsSounds` and `DpcmKit.cpp`'s `DrumKits`, which
+the Find functions look up after their own, so a new name must differ from
+the old names and their aliases; `TestSoundLibrary` checks each against the
+vanish check, pulse clicks, the games' sequences and every other sound
+listed with it (none alike). `GameSounds.cpp` carries the sounds of the 12
+soundtracks the user made public (`GameSoundsData.h`, written by
+`tools/game_sounds.py` from the studies; it reads only the soundtracks in
+its `PUBLIC` list, so add one only when the user makes it public, and
+`TestGameSounds` checks every built-in one is there): each sound once a
+game, with the tracks it plays in (`SoundEntry::Builtin`), the library's
+copies shown as the game's (`SameGameSound`, `GameSoundKey`), and
+`reference_sound` takes a built-in track's id without a library
+(`BuiltinReference`). `SoundListing::OtherChips` lists the sounds of chips
+the song doesn't have (`ChipsWith`, `SoundEntry::AddsChip`), never one
+whose chip would clear notes; the browser asks `AddChipQuestion`'s
+question before `AddChipForSound` adds the chip as Module properties does
+(which clears the undo history), and `find_sound`'s `other_chips` gives
+the `set_expansion` call to make first. `TestOtherChips` covers them.
+
 Lively stages (from `feat-lively-fix`): the night songs' rules are for calm
 tracks only; a lively stage is made the way the soundtrack's first lively
 stages were (their numbers, measured as heard, are in the comment before

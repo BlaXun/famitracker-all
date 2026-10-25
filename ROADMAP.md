@@ -117,6 +117,29 @@ Done:
   them). Starting another sound or closing the browser stops the one
   playing. The window can be resized (the filters go to two rows when
   it's narrow) and keeps its place, kind and folds while FamiTracker runs.
+- **A sound library, twelve soundtracks' sounds and the other chips'**
+  (October 2026, `feat-sound-library`): the browser listed 32 sounds for a
+  new 2A03 song; it lists 975 now. FamiTracker's own sound library
+  (`Source/Api/SoundLibrary.cpp`, with the N163's, FDS's and DPCM's in
+  `Wavetables.cpp`, `FdsSounds.cpp` and `DpcmKit.cpp`) adds 234 sounds of
+  distinct characters in every kind: 156 for the 2A03's pulses, triangle
+  and noise, the VRC6's pulses and sawtooth and the 5B, 21 VRC7 custom
+  patches, 30 N163 and 25 FDS sounds and two more kits of samples. Each is
+  heard for more than a few frames unless it's meant to be short (and says
+  so), none of the 2A03's has a vibrato that clicks, and no two listed
+  together sound alike (the tests measure every pair's envelope, restrikes,
+  brightness, pitch and a wave's harmonics). The studied sounds of twelve
+  soundtracks come with FamiTracker (`Source/Api/GameSounds.cpp`: 615
+  sounds of 152 tracks of Castlevania, Castlevania 3, Dr. Mario, Final
+  Fantasy 3, Journey to Silius, Nintendo World Cup, Partena no Kagami,
+  Punch-Out!!, Robot Block, Strider Hiryu, Super C and The Legend of
+  Zelda), game by game, each sound once with the tracks it plays in, and
+  once when the reference library has it too. The ready-made sounds of the
+  chips the song doesn't have come last in each kind, folded under "FDS
+  (not in the song yet)" and the like; Add to the song asks, then adds the
+  chip as Module properties does (every note stays) and the sound. With the
+  355-study library the list takes the same time to make as before (the
+  games' sounds in it are listed once).
 - **Listen** (the speaker button at the end of the instrument list's
   toolbar, and in the Instrument menus): the instrument picked plays its
   kind's phrase on the channel the song plays it most, as the sound

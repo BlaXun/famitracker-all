@@ -279,6 +279,166 @@ std::vector<WaveSound> MakeSounds()
 	return Out;
 }
 
+// FamiTracker's own sound library for the N163 (SoundLibrary.h): a character each, by kind
+
+WaveSound Kinded(WaveSound Sound, const char *Kind)
+{
+	Sound.Kind = Kind;
+	return Sound;
+}
+
+SoundDesign WithAttackPitch(SoundDesign Design, int AttackPitch)
+{
+	Design.AttackPitch = AttackPitch;
+	return Design;
+}
+
+SoundDesign WithChord(SoundDesign Design, const std::vector<int> &Notes, int Frames)
+{
+	Design.Arpeggio = Notes;
+	Design.ArpeggioFrames = Frames;
+	return Design;
+}
+
+SoundDesign Restruck(SoundDesign Design, int Frames)
+{
+	Design.Restrike = Frames;
+	return Design;
+}
+
+// A sound's pitch sequence replaced: on the N163 a step moves a frequency, so a positive one raises the pitch
+WaveSound WithPitch(WaveSound Sound, const std::vector<int> &Items, int Loop)
+{
+	PresetSequence Seq;
+	Seq.Type = SEQUENCE_PITCH;
+	Seq.Items = Items;
+	Seq.Loop = Loop;
+	Seq.Release = -1;
+	Seq.Setting = SEQUENCE_ABSOLUTE;
+	for (size_t i = 0; i < Sound.Sequences.size(); ++i)
+		if (Sound.Sequences[i].Type == SEQUENCE_PITCH) {
+			Sound.Sequences[i] = Seq;
+			return Sound;
+		}
+	Sound.Sequences.push_back(Seq);
+	return Sound;
+}
+
+// A wave whose strongest overtone is harmonic Peak (2-7), as a resonance sweeping through a sawtooth's harmonics
+std::vector<int> Resonant(int Peak)
+{
+	std::vector<double> Amplitudes;
+	for (int k = 1; k <= 7; ++k)
+		Amplitudes.push_back((1.0 / k) * (1.0 + 2.5 * std::exp(-0.8 * (k - Peak) * (k - Peak))));
+	return HarmonicWave(Amplitudes);
+}
+
+std::vector<WaveSound> MakeLibrarySounds()
+{
+	typedef std::vector<std::vector<int> > Waves;
+	std::vector<WaveSound> Out;
+	const PresetSequence None = WaveSteps(Steps({ { 0, 1 } }), -1);
+	const std::vector<int> Sine = HarmonicWave({ 1.0 }), Saw = HarmonicWave(SawHarmonics(7, 0.0)), Square = PulseWave(8);
+	const std::vector<int> Ah = HarmonicWave({ 0.9, 0.55, 1.0, 0.6, 0.3, 0.15 }), Oh = HarmonicWave({ 1.0, 0.75, 0.25, 0.08 });
+
+	// Leads
+	Out.push_back(Kinded(Sound("hollow reed", "", "a hollow, woody lead in odd harmonics, like a clarinet, a vibrato after 24 frames",
+		Waves{ HarmonicWave({ 1.0, 0.05, 0.6, 0.0, 0.35, 0.0, 0.2 }) }, None, Envelope(2, 0, 13, 6, 12, 6, true, 24)), "lead"));
+	Out.push_back(Kinded(Sound("vowel lead", "", "a singing lead whose vowel moves slowly from ah to oh and back, a vibrato after 20 "
+		"frames", Waves{ Ah, Blend(Ah, Oh, 1.0 / 3.0), Blend(Ah, Oh, 2.0 / 3.0), Oh },
+		WaveSteps(Steps({ { 0, 8 }, { 1, 8 }, { 2, 8 }, { 3, 8 }, { 2, 8 }, { 1, 8 } }), 0), Envelope(3, 0, 13, 0, 13, 8, true, 20)), "lead"));
+	Out.push_back(Kinded(Sound("buzz lead", "", "a bright, buzzing sawtooth lead, a vibrato after half a second", Waves{ Saw }, None,
+		Envelope(1, 0, 13, 8, 11, 6, true, 30)), "lead"));
+	Out.push_back(Kinded(Sound("wave bloom lead", "", "a square lead that speaks through a narrow pulse, blooms in and is struck again "
+		"every 12 frames, a vibrato that waits", Waves{ PulseWave(4), Square }, WaveSteps(Steps({ { 0, 1 }, { 1, 1 } }), -1),
+		Restruck(Envelope(2, 9, 14, 6, 11, 6, true, 24), 12)), "lead"));
+	Out.push_back(Kinded(Sound("needle lead", "", "a thin, nasal lead on a narrow pulse, a faint vibrato", Waves{ PulseWave(2) }, None,
+		Faint(Envelope(1, 0, 13, 10, 10, 5), 16)), "lead"));
+	Out.push_back(Kinded(Sound("sync lead", "", "a lead whose overtone sweeps up and down as it holds, like a synthesizer's sync",
+		Waves{ Resonant(2), Resonant(3), Resonant(4), Resonant(5), Resonant(6) },
+		WaveSteps(Steps({ { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 3 }, { 4, 3 }, { 3, 3 }, { 2, 3 }, { 1, 3 } }), 0),
+		Envelope(1, 0, 13, 6, 12, 6)), "lead"));
+	Out.push_back(Kinded(Sound("phase lead", "", "a hollow lead whose tone phases slowly, as if two played it, a vibrato late in it",
+		Shimmer({ 1.0, 0.0, 0.33, 0.0, 0.2, 0.0, 0.14 }, 2), WaveSteps(Steps({ { 0, 6 }, { 1, 6 }, { 2, 6 }, { 3, 6 } }), 0),
+		Envelope(2, 0, 12, 0, 12, 8, true, 30)), "lead"));
+
+	// Basses
+	Out.push_back(Kinded(Sound("closing bass", "", "a bass that starts bright and closes to a round tone within 8 frames", Waves{ Saw,
+		Blend(Saw, Sine, 1.0 / 3.0), Blend(Saw, Sine, 2.0 / 3.0), Sine }, WaveSteps(Steps({ { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 1 } }), -1),
+		Envelope(0, 0, 15, 10, 10, 3)), "bass"));
+	Out.push_back(Kinded(Sound("hollow bass", "", "a full, hollow square bass", Waves{ Square }, None, Envelope(0, 0, 15, 4, 13, 3)), "bass"));
+	Out.push_back(Kinded(Sound("squelch bass", "", "a bass whose resonance falls through its overtones as each note starts: a squelch",
+		Waves{ Resonant(7), Resonant(6), Resonant(5), Resonant(4), Resonant(3), Resonant(2) },
+		WaveSteps(Steps({ { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 2 }, { 4, 2 }, { 5, 1 } }), -1), Envelope(0, 0, 15, 6, 12, 3)), "bass"));
+	Out.push_back(Kinded(Sound("knock bass", "", "a round bass whose notes drop in from a fourth above: a knock on each", Waves{
+		HarmonicWave({ 1.0, 0.35, 0.15 }) }, None, WithAttackPitch(Envelope(0, 0, 15, 8, 12, 3), PITCH_THUMP)), "bass"));
+
+	// Pads
+	Out.push_back(Kinded(Sound("vowel pad", "", "voices swelling in slowly, their vowel drifting from ah to oh and back",
+		Waves{ Ah, Blend(Ah, Oh, 1.0 / 3.0), Blend(Ah, Oh, 2.0 / 3.0), Oh },
+		WaveSteps(Steps({ { 0, 16 }, { 1, 16 }, { 2, 16 }, { 3, 16 }, { 2, 16 }, { 1, 16 } }), 0), Envelope(20, 0, 11, 0, 11, 20, true, 30)),
+		"pad"));
+	Out.push_back(Kinded(Sound("crystal pad", "", "a glassy pad of high, bell-like overtones that swells in slowly", Shimmer({ 1.0, 0.0, 0.0,
+		0.45, 0.0, 0.0, 0.25 }, 3), WaveSteps(Steps({ { 0, 10 }, { 1, 10 }, { 2, 10 }, { 3, 10 } }), 0), Faint(Envelope(24, 0, 11, 0, 11, 24), 30)),
+		"pad"));
+	Out.push_back(Kinded(Sound("silk pad", "", "a soft, warm sawtooth pad that rises slowly and shimmers", Shimmer(SawHarmonics(5, 2.0), 1),
+		WaveSteps(Steps({ { 0, 8 }, { 1, 8 }, { 2, 8 }, { 3, 8 } }), 0), Envelope(28, 0, 11, 0, 11, 26, true, 36)), "pad"));
+	Out.push_back(Kinded(Sound("flute pad", "", "a pure, airy pad like a choir of flutes, swelling in", Waves{ HarmonicWave({ 1.0, 0.0,
+		0.12, 0.08 }) }, None, Envelope(16, 0, 11, 0, 11, 16)), "pad"));
+	Out.push_back(Kinded(Sound("pipe pad", "", "a hollow pad in odd harmonics that swells in, a slow vibrato in it", Waves{
+		HarmonicWave({ 1.0, 0.0, 0.45, 0.0, 0.25 }) }, None, Envelope(18, 0, 11, 0, 11, 18, true, 28)), "pad"));
+
+	// Plucks
+	Out.push_back(Kinded(Sound("kalimba", "", "a thumb piano: a bright tine that rings into a pure tone and dies away", Waves{
+		HarmonicWave({ 1.0, 0.0, 0.0, 0.7 }), HarmonicWave({ 1.0, 0.0, 0.0, 0.3 }), Sine }, WaveSteps(Steps({ { 0, 1 }, { 1, 3 }, { 2, 1 } }),
+		-1), Envelope(0, 0, 15, 44, 0, 8)), "pluck"));
+	Out.push_back(Kinded(Sound("zither", "", "a bright plucked string that mellows as it rings", Waves{ Saw, Blend(Saw, Sine, 0.5), Sine },
+		WaveSteps(Steps({ { 0, 3 }, { 1, 5 }, { 2, 1 } }), -1), Envelope(0, 0, 15, 22, 0, 6)), "pluck"));
+	Out.push_back(Kinded(Sound("felt pluck", "", "a soft, muted pluck that settles to a quiet hold", Waves{ Square, Blend(Square, Sine, 0.6),
+		Sine }, WaveSteps(Steps({ { 0, 1 }, { 1, 2 }, { 2, 1 } }), -1), Envelope(0, 0, 14, 8, 4, 4)), "pluck"));
+	Out.push_back(Kinded(Sound("sitar", "", "a buzzing string that bends up into each note and rings long", Waves{
+		HarmonicWave({ 1.0, 0.5, 0.4, 0.6, 0.3, 0.5, 0.2 }), HarmonicWave({ 1.0, 0.5, 0.4, 0.6, 0.3, 0.5, 0.2 }, { 0.0, 0.25, 0.0, 0.25,
+		0.0, 0.25, 0.0 }) }, WaveSteps(Steps({ { 0, 2 }, { 1, 2 } }), 0), WithAttackPitch(Envelope(0, 0, 15, 40, 0, 8), PITCH_SCOOP)), "pluck"));
+
+	// Bells
+	Out.push_back(Kinded(Sound("temple bell", "", "a deep bell that rings long and mellows to a pure tone", Waves{
+		HarmonicWave({ 1.0, 0.0, 0.5, 0.0, 0.3 }), HarmonicWave({ 1.0, 0.0, 0.25 }), Sine }, WaveSteps(Steps({ { 0, 6 }, { 1, 14 }, { 2, 1 } }),
+		-1), Envelope(0, 0, 15, 70, 0, 14)), "bell"));
+	Out.push_back(Kinded(Sound("tin bell", "", "a small, tinny bell with an octave blip on the strike", Waves{ HarmonicWave({ 0.5, 0.0, 0.0,
+		1.0, 0.0, 0.6 }) }, None, WithAttackPitch(Envelope(0, 0, 14, 20, 0, 6), PITCH_BLIP)), "bell"));
+	Out.push_back(Kinded(Sound("ice bell", "", "a cold, clear bell whose high overtones fade slowly", Waves{ HarmonicWave({ 1.0, 0.0, 0.0,
+		0.5, 0.0, 0.0, 0.3 }), HarmonicWave({ 1.0, 0.0, 0.0, 0.2 }), Sine }, WaveSteps(Steps({ { 0, 10 }, { 1, 16 }, { 2, 1 } }), -1),
+		Envelope(0, 0, 15, 50, 0, 10)), "bell"));
+	{
+		// Struck, then held with a gentle tremolo of the vibraphone's motor; a fade after a release
+		const WaveSound Bars = Sound("vibe bars", "", "a vibraphone: a soft strike, then a tone with the motor's tremolo in it",
+			Waves{ HarmonicWave({ 1.0, 0.0, 0.0, 0.12 }) }, None, Envelope(0, 0, 15, 6, 10, 6));
+		const std::vector<int> Volume = { 15, 14, 13, 12, 11, 11, 10, 10,
+			10, 10, 9, 8, 7, 7, 8, 9,		// the motor's tremolo, again and again while it holds
+			7, 5, 3, 2, 1, 0 };
+		Out.push_back(Kinded(WithVolume(Bars, Volume, 8, 15), "bell"));
+	}
+
+	// Keys
+	Out.push_back(Kinded(Sound("funk clav", "", "a funky clavinet: a narrow pulse that widens as it's struck, then a short hold",
+		Waves{ PulseWave(3), PulseWave(5), Square }, WaveSteps(Steps({ { 0, 2 }, { 1, 2 }, { 2, 1 } }), -1), Envelope(0, 0, 14, 8, 6, 2)),
+		"keys"));
+	Out.push_back(Kinded(Sound("spinet", "", "a small harpsichord: a bright, short note", Waves{ HarmonicWave(SawHarmonics(7, 4.0)) }, None,
+		Envelope(0, 0, 15, 14, 3, 3)), "keys"));
+	Out.push_back(Kinded(Sound("percussion organ", "", "an organ whose notes speak with a click of high drawbars that fades",
+		Waves{ HarmonicWave({ 1.0, 0.8, 0.5, 0.7 }), HarmonicWave({ 1.0, 0.6, 0.4 }) }, WaveSteps(Steps({ { 0, 4 }, { 1, 1 } }), -1),
+		Envelope(0, 0, 14, 10, 11, 3)), "keys"));
+
+	// Effects
+	Out.push_back(Kinded(WithPitch(Sound("wave laser", "", "a sawtooth laser whose pitch falls fast", Waves{ Saw }, None,
+		Envelope(0, 0, 15, 16, 0, 4)), { 0, -4, -8, -12, -16, -20, -24, -28, -32 }, -1), "effect"));
+	Out.push_back(Kinded(Sound("wave alarm", "", "an alarm: a square hopping an octave every 4 frames", Waves{ Square }, None,
+		WithChord(Envelope(0, 0, 12, 0, 12, 3), { 0, 12 }, 4)), "effect"));
+	Out.push_back(Kinded(WithPitch(Sound("bubble", "", "a bubble: a pure tone that rises quickly and pops", Waves{ Sine }, None,
+		Envelope(0, 0, 13, 12, 0, 3)), { 0, 6, 6, 6, 6, 6, 6, 6, 6, 6 }, -1), "effect"));
+	return Out;
+}
+
 std::string Simple(const std::string &Text)
 {
 	std::string Out;
@@ -312,6 +472,12 @@ const std::vector<WaveSound> &WaveSounds()
 	return SOUNDS;
 }
 
+const std::vector<WaveSound> &LibraryWaveSounds()
+{
+	static const std::vector<WaveSound> SOUNDS = MakeLibrarySounds();
+	return SOUNDS;
+}
+
 const WaveSound *FindWaveSound(const std::string &Name)
 {
 	const std::string Wanted = Simple(Name);
@@ -331,6 +497,11 @@ const WaveSound *FindWaveSound(const std::string &Name)
 			Start = End + 1;
 		}
 	}
+	// The library's, by name
+	const std::vector<WaveSound> &Library = LibraryWaveSounds();
+	for (size_t i = 0; i < Library.size(); ++i)
+		if (Simple(Library[i].Name) == Wanted)
+			return &Library[i];
 	return 0;
 }
 

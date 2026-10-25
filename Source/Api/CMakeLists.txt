@@ -107,6 +107,8 @@ add_library(ftapi STATIC
 	PhoneTakes.cpp
 	DpcmKit.cpp
 	Presets.cpp
+	SoundLibrary.cpp
+	GameSounds.cpp
 	SoundIndex.cpp
 	References.cpp
 	StyleGuide.cpp

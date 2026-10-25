@@ -48,12 +48,17 @@ struct DpcmKey {
 
 struct DpcmKit {
 	std::string Name;				// the instrument's: "Sample drums"
+	std::string Description;		// what it sounds like
 	std::vector<DpcmSample> Samples;
 	std::vector<DpcmKey> Keys;
 };
 
 // The kit: kick on C-3, snare on D-3, low tom on F-3, high tom on A-3
 const DpcmKit &SampleDrums();
+// Every kit FamiTracker makes, SampleDrums() first, then the sound library's (SoundLibrary.h): each with its drums on
+// the same keys, so write_notes plays them by name on any of them; and one by its name, 0 for none
+const std::vector<DpcmKit> &DrumKits();
+const DpcmKit *FindDrumKit(const std::string &Name);
 // The key of a drum asked for by name ("kick", "snare", "low tom", "tom",
 // "high tom", "bass drum"...); 0 when the kit has none
 const DpcmKey *FindSampleDrum(const std::string &Name);
