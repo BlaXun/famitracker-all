@@ -126,7 +126,8 @@ BOOL CPhoneDlg::OnInitDialog()
 	ShowTakes();
 	SetTimer(TMR_REFRESH, REFRESH_MS, NULL);
 	CenterWindow(m_pMainFrame);
-	return TRUE;
+	GetDlgItem(IDCANCEL)->SetFocus();	// not the address, which would show selected from its end
+	return FALSE;
 }
 
 void CPhoneDlg::OnOK()
@@ -226,6 +227,7 @@ void CPhoneDlg::ShowAddress()
 		m_sUrl = Text;
 		m_bReachable = Reachable;
 		SetDlgItemText(IDC_PHONE_ADDRESS, m_sUrl);
+		static_cast<CEdit*>(GetDlgItem(IDC_PHONE_ADDRESS))->SetSel(0, 0);	// from its start, "http://..."
 		m_Symbol = ftapi::QrSymbol();
 		if (Reachable && !ftapi::MakeQrSymbol(Url, ftapi::QR_MEDIUM, m_Symbol))
 			m_Symbol = ftapi::QrSymbol();
