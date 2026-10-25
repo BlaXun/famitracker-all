@@ -1611,6 +1611,12 @@ the loop, cut so it repeats without a seam:
   playback and in the files. The file still fades in over its first 40 ms,
   before its level is measured, and a song that loops as a whole still
   repeats from its second time through, so the fade stays out of the loop.
+- A song or a sound effect played or exported after another used to start
+  with a thump: the triangle holds the step its wave stopped on, and
+  FamiTracker counted that step again with the next song's first sound, as
+  loud under a soft noise at volume 1 as under one at 15. Each song now
+  starts from the levels the last one left, so its first sound plays at its
+  own level.
 
 GameMaker (2023.2 or newer) loops a sound between two points. The dialog and
 Claude's reply give the code, for example:
