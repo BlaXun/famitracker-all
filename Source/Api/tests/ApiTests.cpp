@@ -15288,6 +15288,15 @@ void TestStudyTagsAgain()
 	Study.Kind = "sting";
 	Study.Seconds = 3.8;
 	CHECK(Has(MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25"), "sting"));
+	// A sampled bass is no drum kit; hits beside it on the DPCM are
+	Study.Kind = "music";
+	Study.Seconds = 0;
+	Study.Tricks.push_back("a sampled bass on the DPCM (5 bass samples played at the line's pitches, 12 different pitches), "
+		"a deep, physical low end that leaves the pulses and the triangle free for other parts");
+	R = MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25");
+	CHECK(Has(R, "dpcm-bass") && !Has(R, "dpcm-drums"));
+	Study.Channels.push_back("DPCM drums: sample 2 (17 bytes, a bright hit): 4 hits in all, about 0.3 a bar.");
+	CHECK(Has(MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25"), "dpcm-drums"));
 
 	// Studied again: the old study's "major", "sweep" and "dpcm-drums" go with
 	// it, the user's "favourite" stays

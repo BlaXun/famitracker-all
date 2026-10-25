@@ -2252,10 +2252,11 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		}
 		if (Levels >= 4)
 			S.Tricks.push_back(Format("the DPCM level set with Zxx, mostly Z%02X (%d times), so the triangle and the noise play "
-			"softer", Level, Levels));
+				"softer", Level, Levels));
 		// A sampled bass: a wave on the DPCM played at the line's pitches
+		// (no "DPCM:" in the words, which tag a study's DPCM drums)
 		if (Sampled.Column >= 0 && Sampled.Column == Bass)
-			S.Tricks.push_back(Format("a sampled bass on the DPCM: %s played at the line's pitches (%s), "
+			S.Tricks.push_back(Format("a sampled bass on the DPCM (%s played at the line's pitches, %s), "
 				"a deep, physical low end that leaves the pulses and the triangle free for other parts",
 				Count(int(Sampled.Samples.size()), "bass sample", "bass samples").c_str(), Count(Sampled.Notes, "pitch", "different pitches").c_str()));
 	}

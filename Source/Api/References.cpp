@@ -474,7 +474,7 @@ void AddTechniqueTags(Reference &R)
 		{ "doubles", "doubling" }, { "notes traded", "hocket" }, { "play in rhythm together", "pulse-chords" },
 		{ "syncopated", "syncopated" }, { "octave jumps", "octave-jumps" }, { "x.xx x.xx", "gallop" },
 		{ "snare-like (on beats 2 and 4)", "backbeat" }, { "on the off-beats", "offbeat-snare" }, { "dpcm:", "dpcm-drums" },
-		{ "hardware sweep", "sweep" }, { "a sampled bass on the dpcm", "dpcm-bass" }, { "a sting, not music to loop", "sting" },
+		{ "dpcm drums:", "dpcm-drums" }, { "hardware sweep", "sweep" }, { "a sampled bass on the dpcm", "dpcm-bass" }, { "a sting, not music to loop", "sting" },
 		{ "a sound effect rather than music", "sound-effect" },
 		// Tracker modules'
 		{ "written into the patterns (4xy)", "vibrato" }, { "glide into the next", "portamento" }, { "volume slides", "volume-slides" },
