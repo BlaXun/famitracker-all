@@ -21647,6 +21647,7 @@ private:
 	Key m_Key;
 	bool m_HasKey;
 	int m_MixDue;				// MixDue's answer: -1 not worked out yet
+	bool m_Finishing;			// finish_song is a step: the last steps after it are in it
 
 	const NextKind &Kind() const { return NextKindInfo(m_KindId); }
 	bool Wanted(const std::string &Id) const { return m_Skip.count(Id) == 0; }
@@ -21681,6 +21682,7 @@ private:
 	Json FlatParts() const;
 	bool MixDue();				// a mix in the kind's style would change the song (worked out once)
 	void LoopSeam();
+	bool FinishStep(const std::string &From, const std::string &Why);
 	void Finish();
 	bool TipStep(const std::string &Tip);
 	bool LeadSound(const std::string &Id, const std::string &KindWord, const std::string &Name, const std::string &Why);
@@ -21697,7 +21699,8 @@ private:
 };
 
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core(Core), m_All(BoolArg(Args, "all", false)),
-	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1)
+	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
+	m_Finishing(false)
 {
 	const std::string Asked = StringArg(Args, "kind");
 	if (!Asked.empty()) {
@@ -23285,10 +23288,12 @@ void WhatNext::Polish()
 		Due = WouldChange(S, "polish", A);
 	if (Milestone("polish", !Wanted("polish") || !Due, "polished"))
 		return;
-	Step("polish", "polish", A, std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
+	const std::string Why = std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
 		"long notes, no accents (a calm song's notes don't push)." : m_KindId == NEXT_LIVELY ? "a vibrato on long notes, gaps between "
 		"repeated notes, a short bass, no accents (the recipe's touches for a lively stage)." : "accents on the beats, a vibrato on "
-		"long notes and gaps between repeated notes, so the parts sound played rather than typed."));
+		"long notes and gaps between repeated notes, so the parts sound played rather than typed.");
+	if (!FinishStep("polish", Why))
+		Step("polish", "polish", A, Why);
 }
 
 // The mix in the kind's style, when it would change the song (a dry run of mix, so a mix once done isn't asked again)
@@ -23301,9 +23306,11 @@ void WhatNext::Mix()
 	const Json A = MixArgs();
 	if (Milestone("mix", !Wanted("mix") || !MixDue(), std::string("the mix (") + Kind().MixStyle + ")"))
 		return;
-	Step("mix", "mix", A, Calm() ? "The mix, last, as heard: the melody 2-3 dB over the chords, the echo and the rest well under it." :
+	const std::string Why = Calm() ? "The mix, last, as heard: the melody 2-3 dB over the chords, the echo and the rest well under it." :
 		m_KindId == NEXT_LIVELY ? "The mix, last, as heard: the melody 3-4 dB over the parts around it, the drums soft." :
-		"The mix, last: the melody's loudest at 9, an echo at 4, chords at 6, the pulses softer so the triangle comes through.");
+		"The mix, last: the melody's loudest at 9, an echo at 4, chords at 6, the pulses softer so the triangle comes through.";
+	if (!FinishStep("mix", Why))
+		Step("mix", "mix", A, Why);
 }
 
 // The loop's seam: what check_loop finds there that fix_loop writes
@@ -23325,28 +23332,61 @@ void WhatNext::LoopSeam()
 	const bool Fixable = !What.empty() && Wanted("seam") && WouldChange(S, "fix_loop", Json::MakeObject());
 	if (Milestone("seam", !Fixable, "the loop's seam"))
 		return;
-	Step("seam", "fix_loop", Json::MakeObject(), "check_loop finds the loop starting otherwise on repeat (" + What + "): fix_loop "
-		"writes what makes the repeats start as the first time does.");
+	const std::string Why = "check_loop finds the loop starting otherwise on repeat (" + What + "): fix_loop writes what makes the "
+		"repeats start as the first time does.";
+	if (!FinishStep("seam", Why))
+		Step("seam", "fix_loop", Json::MakeObject(), Why);
+}
+
+// The last steps in one call (finish_song, from feat-finish-guard): from this one on, the polish, the mix, the loop's seam
+// and the game's file, in this kind's way (finish_song's kinds are what_next's, at the same loudness). Polish is left out
+// when the mix comes first (once mixed, the song isn't polished again) and the mix when the seam does; so are the steps
+// the call skips. The file alone is export_for_game's
+bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
+{
+	if (m_Finishing)
+		return true;
+	if (!Looking() || (m_Core && !ToolSet::IsCoreTool("finish_song")))
+		return false;
+	const NextKind &K = Kind();
+	Json A = Json::MakeObject();
+	A.Set("kind", K.Name);
+	if (m_HasMelody)
+		A.Set("melody_channel", ChannelName(m_Melody));
+	Json Skip = Json::MakeArray();
+	if (From != "polish")
+		Skip.Push("polish");
+	if (From == "seam")
+		Skip.Push("mix");
+	if (!Wanted("seam"))
+		Skip.Push("loop");
+	if (!Wanted("export"))
+		Skip.Push("export");
+	if (Skip.Size() > 0)
+		A.Set("skip", Skip);
+	std::vector<std::string> After;
+	if (From == "polish")
+		After.push_back(std::string("the mix (") + K.MixStyle + ")");
+	if (From != "seam" && Wanted("seam"))
+		After.push_back("the loop's seam");
+	if (Wanted("export"))
+		After.push_back("the game's file at " + FormatNumber(K.Loudness) + " LUFS");
+	std::string Then;
+	for (size_t i = 0; i < After.size(); ++i)
+		Then += (i == 0 ? ", then " : i + 1 == After.size() ? " and " : ", ") + After[i];
+	if (!Step(From, "finish_song", A, Why + " finish_song does it" + Then + ", in one call that one Ctrl+Z undoes."))
+		return false;
+	m_Finishing = true;
+	return true;
 }
 
 // Saving, then the file for the game at the kind's loudness: done when the file next to the song is the song as it is now
 void WhatNext::Finish()
 {
-	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
-		if (S.Song.FileName.empty())
-			Ask("save", "The song hasn't been saved yet, and the game's file goes next to it: ask the user to save it (File > Save As), "
-				"then ask what_next again.");
-		else
-			Step("save", "save_song", Json::MakeObject(), "The song has changes that aren't saved: save it before the export.");
-	}
-	if (S.Song.FileName.empty()) {
-		m_Unmet.insert("exported");
-		return;
-	}
 	std::vector<std::string> Taken;
-	const std::string File = TrackFileName(S, S.Song.Track, Taken);
+	const std::string File = S.Song.FileName.empty() ? std::string() : TrackFileName(S, S.Song.Track, Taken);
 	std::string Bytes, Error, Print, Loudness;
-	if (S.Host().ReadFile(File, Bytes, Error)) {
+	if (!File.empty() && S.Host().ReadFile(File, Bytes, Error)) {
 		OggComments Comments;
 		if (ReadOggComments(Bytes, Comments, Error))
 			for (size_t i = 0; i < Comments.size(); ++i) {
@@ -23359,6 +23399,22 @@ void WhatNext::Finish()
 	const NextKind &K = Kind();
 	const bool Current = !Print.empty() && Print == SoundPrint(S);
 	const bool AtLoudness = !Loudness.empty() && std::fabs(std::atof(Loudness.c_str()) - K.Loudness) < 0.05;
+	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
+		if (S.Song.FileName.empty())
+			Ask("save", "The song hasn't been saved yet, and the game's file goes next to it: ask the user to save it (File > Save As), "
+				"then ask what_next again.");
+		else
+			Step("save", "save_song", Json::MakeObject(), (Current && AtLoudness) || m_Finishing ? "The song has changes that aren't "
+				"saved: save them (the game's file has them already)." : "The song has changes that aren't saved: save it before the export.");
+	}
+	if (S.Song.FileName.empty()) {
+		m_Unmet.insert("exported");
+		return;
+	}
+	if (m_Finishing) {
+		m_Unmet.insert("exported");	// finish_song makes it
+		return;
+	}
 	if (Milestone("exported", (Current && AtLoudness) || !Wanted("export"), "exported (" + File + ")"))
 		return;
 	Json A = Json::MakeObject();
@@ -25255,7 +25311,8 @@ bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::strin
 // The composing essentials, for local models that struggle with many tools: what_next and every tool its steps call
 // (the song's frame: tempo, key, sections; its parts: notes, sounds, chords and bass, a melody grown from a hook,
 // drums; its form: bars put in and copied; depth: a harmony (cleaner beside the chords than a counter-melody),
-// variations, an echo; the loop; polish, mix, the checks, saving, export), the sounds a part can find and take
+// variations, an echo; the loop; polish, mix, the checks, saving, export, and finish_song for the last of them in one
+// call), the sounds a part can find and take
 // (find_sound, reference_sound), the swing a local model reached for, playback, and the recipes. Not set_mixer: mix sets
 // the volumes in the notes.
 const std::vector<std::string> &ToolSet::CoreTools()
@@ -25264,7 +25321,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"get_recipe" };
+		"finish_song", "get_recipe" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }

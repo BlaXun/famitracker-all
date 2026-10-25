@@ -963,7 +963,8 @@ hook (`SongHook`) or one offered on the chords (`OfferedHook`, from
 depth (`Depth`: `add_harmony` in the repeat, a `vary_part` that adds no
 clash, a break and an intro, the loop), the review's tips (`TipStep` matches
 their words: keep them in step with `ReviewTool`'s), the echo last (it
-copies the melody), `Polish`, `Mix`, the seam, saving and the export.
+copies the melody), `Polish`, `Mix`, the seam (from the first of the three
+that's due, one `finish_song` step: `FinishStep`), saving and the export.
 Whether a tool would change the song is a dry run (`DryRunHost`,
 `WouldChange`, `DryChange` in dB): a mix that would move no note more than
 1.5 dB is done (mix rounds), and polish once no part plays at one volume and
@@ -973,7 +974,7 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call, 34, not
+(`CoreTools`) is `what_next` and every tool its steps call, 35, not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1042,8 +1043,13 @@ them) runs `PolishTool`, `MixTool` (with `faders` `reset` when
 `FixLoopTool` where `FindSeams` finds a seam to write and `ExportTrack`, each
 on a new `Session`, the first three inside `SongHost::BeginGroup`/`EndGroup`;
 `FinishBalance` hears the balance after the mix as the review does.
-`TestWritingWarnings` and `TestFinishSong` (the separate calls give the same
-notes, mixer and file; one undo) cover them.
+`what_next` gives `finish_song` for the last steps (`WhatNext::FinishStep`,
+from the first of polish, the mix and the seam that's due: polish skipped once
+the song is mixed and the mix when only the seam is left, as the call's own
+skips; the file alone stays `export_for_game`, and the save step after a
+finish says the file has the changes), and the small set has it.
+`TestWritingWarnings`, `TestFinishSong` (the separate calls give the same
+notes, mixer and file; one undo) and `TestWhatNextFinish` cover them.
 
 ## What this repository is
 

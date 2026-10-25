@@ -18512,9 +18512,10 @@ void TestWhatNextLoop()
 		const std::vector<std::string> Made = FollowWhatNext(Song, K.Asked, 60, Finished, __LINE__);
 		Check(Finished, K.Asked, __LINE__);
 		// The frame, the lead's sound, chords and bass, sections, the melody, the form, depth (a harmony in the repeat, a
-		// variation, a break and an intro), the echo last of the parts, the mix, saving, the file for the game
+		// variation, a break and an intro), the echo last of the parts, then finish_song (the polish, the mix, the seam and
+		// the file for the game in one call), saving
 		const char *const ORDER[] = { "set_tempo", "set_key", "design_instrument", "add_chords_and_bass", "name_section", "grow_melody",
-			"copy_bars", "add_harmony", "vary_part", "insert_bars", "add_echo", "mix", "save_song", "export_for_game" };
+			"copy_bars", "add_harmony", "vary_part", "insert_bars", "add_echo", "finish_song", "save_song" };
 		for (size_t i = 0; i + 1 < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
 			Check(CallIndex(Made, ORDER[i]) >= 0 && CallIndex(Made, ORDER[i]) < CallIndex(Made, ORDER[i + 1]),
 				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
@@ -18702,20 +18703,35 @@ void TestWhatNextStates()
 	FollowWhatNext(Done, "{\"kind\": \"lively\"}", 60, Finished, __LINE__);
 	CHECK(Finished);
 	{
-		// The chords turned down: the lively mix again, then saving and a new file
+		// The chords turned down: the lively mix again and a new file, in one finish_song (not polished again: the song was
+		// mixed), then saving, the file made of the song as it is
 		FakeSong Song = Done;
 		for (size_t r = 0; r < Song.Rows[0].size(); ++r)
 			if (Song.Rows[0][r].HasNote())
 				Song.Rows[0][r].Volume = 4;
+		FakeSong ByHand = Song;
 		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-		CHECK(A.Tool == "mix" && WriteJson(A.Arguments) == "{\"style\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\"}");
+		CHECK(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
+			"[\"polish\"]}");
+		CHECK_HAS(A.Text, "The mix, last, as heard: the melody 3-4 dB over the parts around it, the drums soft. finish_song does it, then "
+			"the loop's seam and the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 		Song.Info.Modified = true;
 		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		CHECK_EQ(A.Tool, std::string("save_song"));
+		CHECK_HAS(A.Text, "save them (the game's file has them already)");
 		CHECK(!Run(Song, "save_song", "{}").IsError);
 		Song.Info.Modified = false;
-		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Done);
+		// Mixed by hand instead: saving, then a new file
+		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		ByHand.Info.Modified = true;
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK_EQ(A.Tool, std::string("save_song"));
+		CHECK_HAS(A.Text, "save it before the export");
+		CHECK(!Run(ByHand, "save_song", "{}").IsError);
+		ByHand.Info.Modified = false;
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "export_for_game" && WriteJson(A.Arguments) == "{\"loudness\":-20}");
 		CHECK_HAS(A.Text, "The game's file next to the song is older than the song");
 		// A file made at another loudness: made again at the kind's
@@ -18726,15 +18742,18 @@ void TestWhatNextStates()
 		CHECK_HAS(A.Text, "The game's file has another loudness");
 	}
 	{
-		// A note ringing over the loop's seam: fix_loop
+		// A note ringing over the loop's seam: fix_loop's fix and the file, in finish_song (neither polished nor mixed again)
 		FakeSong Song = Done;
 		const int Last = static_cast<int>(Song.Rows[6].size()) - 4;
 		Song.Put(6, Last, "C-4", 0, 8);
 		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-		Check(A.Tool == "fix_loop" && WriteJson(A.Arguments) == "{}", A.Text.c_str(), __LINE__);
+		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
+			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
 		CHECK_HAS(A.Text, "check_loop finds the loop starting otherwise on repeat");
-		CHECK(!Run(Song, A.Tool.c_str(), "{}").IsError);
-		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool != "fix_loop");
+		CHECK_HAS(A.Text, "finish_song does it, then the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		const std::string After = AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool;
+		CHECK(After != "fix_loop" && After != "finish_song");
 	}
 }
 
@@ -18937,6 +18956,58 @@ void TestWhatNextDraft()
 		Check(IntegerOf(After.Get("counts"), Kind) == 0, Kind, __LINE__);
 	CHECK(IntegerOf(After.Get("counts"), "clash") <= IntegerOf(Before.Get("counts"), "clash"));
 	CHECK(Song.Mix.Level(5) == 0 && Song.Mix.Level(3) == 0);
+}
+
+// what_next's last steps in finish_song (feat-finish-guard): the polish, the mix, the seam and the file in one call, with
+// the kind and the melody, what the call skips left out of it; listed once among every step; on the small set too; then
+// saving, and done, the file current
+void TestWhatNextFinish()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "finish_song");
+	CHECK(!Finished);
+	const WhatNextAnswer First = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(First.Tool, std::string("finish_song"));
+	CHECK(TextOf(&First.Arguments, "kind") == "lively" && TextOf(&First.Arguments, "melody_channel") == "VRC6 Pulse 1");
+	CHECK(First.Arguments.Get("skip") == 0);	// the polish due, the mix after it
+	CHECK_HAS(First.Text, "finish_song does it, then the mix (lively), the loop's seam and the game's file at -20 LUFS, in one call "
+		"that one Ctrl+Z undoes.");
+	// Every step at once: finish_song once, and none of the steps it does after it
+	const std::string All = Run(Song, "what_next", "{\"kind\": \"lively\", \"all\": true}").Text;
+	CHECK_HAS(All, ". finish_song {");
+	CHECK_LACKS(All, ". mix {");
+	CHECK_LACKS(All, ". fix_loop {");
+	CHECK_LACKS(All, ". export_for_game {");
+	// The seam and the file skipped: left out of it
+	const WhatNextAnswer Skipped = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"seam\", \"export\"]}");
+	CHECK(Skipped.Tool == "finish_song" && Skipped.Arguments.Get("skip") != 0 && WriteJson(*Skipped.Arguments.Get("skip")) ==
+		"[\"loop\",\"export\"]");
+	CHECK_HAS(Skipped.Text, "finish_song does it, then the mix (lively), in one call that one Ctrl+Z undoes.");
+	// On the small set: one of its tools, and it runs there
+	{
+		FakeSong Small = Song;
+		ToolSet Tools(Small);
+		Caller Who;
+		Who.Core = true;
+		const WhatNextAnswer Core = ReadWhatNext(Tools.Call("what_next", Parse("{\"kind\": \"lively\"}"), Who).Text);
+		CHECK(Core.Tool == "finish_song" && ToolSet::IsCoreTool("finish_song"));
+		CHECK(!Tools.Call(Core.Tool, Core.Arguments, Who).IsError);
+	}
+	// Made as given: then saving, and done, the file of the song as it is at the kind's loudness
+	const ToolResult Did = Run(Song, "finish_song", WriteJson(First.Arguments));
+	CHECK(!Did.IsError);
+	CHECK_HAS(Did.Text, "Finished \"");
+	Song.Info.Modified = true;
+	const WhatNextAnswer Save = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(Save.Tool, std::string("save_song"));
+	CHECK(!Run(Song, "save_song", "{}").IsError);
+	Song.Info.Modified = false;
+	const std::string Last = Run(Song, "what_next", "{\"kind\": \"lively\"}").Text;
+	Check(ReadWhatNext(Last).Done, Last.c_str(), __LINE__);
+	CHECK_HAS(Last, "exported (Town.ogg)");
+	CHECK_LACKS(Last, "\nLeft:");
 }
 
 // write_notes' warnings as it writes, and finish_song (feat-finish-guard)
@@ -19558,6 +19629,7 @@ int main()
 	TestWhatNextDraft();
 	TestWritingWarnings();
 	TestFinishSong();
+	TestWhatNextFinish();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

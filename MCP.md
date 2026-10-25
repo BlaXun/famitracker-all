@@ -104,7 +104,7 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 34 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 35 of them:
 `what_next` and the tools its steps call. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
@@ -113,8 +113,9 @@ microphone are clips); sounds: `add_instrument`, `design_instrument`,
 pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
 `vary_part`, `copy_bars`, `insert_bars`, `name_section`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
-`check_song`, `review_arrangement`, `check_loop`, `fix_loop`; and `play`,
-`stop`, `save_song`, `export_for_game` and `get_recipe`. Not `set_mixer`:
+`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
+(the last of them in one call); and `play`, `stop`, `save_song`,
+`export_for_game` and `get_recipe`. Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -343,16 +344,21 @@ is the recipes':
 5. The review's tips that suit the kind.
 6. An echo, last of the parts, since it copies the melody's notes as they
    are.
-7. `polish`, then the mix in the kind's style when another mix would change
-   the song, the loop's seam (`fix_loop`), saving, and the file for the game
-   at the kind's loudness (-20 LUFS; -22 calm, -19 action).
+7. The last steps: `polish`, then the mix in the kind's style when another
+   mix would change the song, the loop's seam (`fix_loop`) and the file for
+   the game at the kind's loudness (-20 LUFS; -22 calm, -19 action), as one
+   `finish_song` call from the first of them that's due (see [The last steps
+   in one call](#the-last-steps-in-one-call)): polish isn't asked again once
+   the song is mixed, nor the mix when only the seam is left. Then saving.
+   The file alone, older than the song or at another loudness, is
+   `export_for_game`.
 
 It takes `kind` (calm, lively or action; without one, calm when the track's
 name says so, else the general recipe), `skip` (steps to leave out, like
 `["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found
 now, in order). With direct changes off it asks for them first, since each
-step works on what the one before wrote. `export_for_game` notes in each
-file what it was made from (a print of the song as it sounds and the
+step works on what the one before wrote. `export_for_game` (and
+`finish_song`'s export) notes in each file what it was made from (a print of the song as it sounds and the
 loudness, as the `FAMITRACKER_PRINT` and `FAMITRACKER_LOUDNESS` comments), so
 `what_next` knows when the file is older than the song.
 
@@ -2087,7 +2093,9 @@ going round (play {"from_bar":15} plays the end into the loop; stop ends it).
 
 The result is what the calls one after the other would give (`polish`, `mix`
 with the same melody, `fix_loop`, `export_for_game`): the same notes, mixer
-and file.
+and file, with the print of the song `what_next` reads. `what_next` gives it
+for the last steps, from the first of them that's due, with the kind and
+the melody it follows, and it's on the small set.
 
 ## Safety
 
