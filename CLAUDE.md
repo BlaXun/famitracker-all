@@ -572,7 +572,7 @@ they play together, `PlacesFor` where calm and lively put them, and
 from them; a part left half a dB or more off its place tries the volumes
 around its own (the envelope's rounding counted) and keeps the nearest.
 `ShapeOf` and `HeldLeads` find a lead whose sound holds a high, steady level (`check_song`'s `FOUND_HELD`,
-`PROBLEM_HELD` in `ProblemList.h`). `TestCalmChoice`, `TestHeardBalance`,
+`PROBLEM_HELD` in `ProblemList.h`; calm tracks only, see Lively stages below). `TestCalmChoice`, `TestHeardBalance`,
 `TestCalmMix`, `TestCalmPolish`, `TestHeldLead`, `TestMixFixes` and
 `TestReviewFixes` cover them.
 
@@ -635,10 +635,11 @@ the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans
 from `PhraseAnchor` with a rest of a beat or more or a note held two
 beats, as it sounds through `HeardFrames`; under `BREATHING_SHARE` of
 them, `CALM_BREATHING_SHARE` on a calm track, is a tip, and a busy part
-guessed as the melody is left out). The calm and lively mixes keep the
+guessed as the melody is left out). The calm mix keeps the
 drums at the volumes they were written at unless they play louder than
 `HeardPlaces::DrumsTop` under the melody (`PlacesFor`; the reply says why,
-`DrumsWhy`). `DrumPart` in `Arrange.cpp` has the `lively` groove
+`DrumsWhy`; the lively mix sets them to their place, see Lively stages
+below). `DrumPart` in `Arrange.cpp` has the `lively` groove, for gentle places
 (`GROOVE_LIVELY`, appended; `LIVELY_SECOND_KICK`, `AddLivelyFill`, its hits
 soft by design, which `volume` scales from `GrooveLoudest`), and light
 thins the kick and the snare (`LastBackbeat`) and keeps the hi-hats. A part
@@ -1131,6 +1132,52 @@ whose chip would clear notes; the browser asks `AddChipQuestion`'s
 question before `AddChipForSound` adds the chip as Module properties does
 (which clears the undo history), and `find_sound`'s `other_chips` gives
 the `set_expansion` call to make first. `TestOtherChips` covers them.
+
+Lively stages (from `feat-lively-fix`): the night songs' rules are for calm
+tracks only; a lively stage is made the way the soundtrack's first lively
+stages were (their numbers, measured as heard, are in the comment before
+`PlacesFor`). `HeardPlaces::Band` marks lively's places: `MixTool` lets the
+melody through the soft branch (`SOFT`'s 9, as on a pulse, scaled as
+written so accents and steps by section stay; `MelodyShift` follows it),
+every chord part moves by one shift so the chords together
+(`ChordsRel`) take `Places.Chords` (another layer is only brought down,
+to `SOFT_LAYER_DB` under the main one), no nearer the melody than
+`LIVELY_CHORDS_TOP` in their loudest part (`HeardBalance::ChordsTop`, each
+named section or four bars; the reply's `ChordsWhy`), a part within `BAND_SLACK` of its
+place moves only with the melody and the search keeps a part's volumes
+unless another lands `BAND_SLACK` nearer (the parts sit low, where a step
+is 2-3 dB: without it a second mix rounded them anew and what_next asked
+for the mix again), and the drums move up as well as
+down (`Room`, the search's `Top`, the DPCM compensation; a triangle under
+DPCM samples comes down no further than Z40, so it can stay a little over
+the melody, as the first stages' did). `HeardRoles` with `Band` keeps
+lines that move with the tune (`MovesWithTune`: a harmony voice, a double
+an octave under) as lines rather than a pad's voices; calm keeps the old
+rule. `HearBalance` also gives `ChordsRel`, `ChordParts` and
+`BandRel` (every channel but the melody's), which `BalanceText` reports
+with `Band` (and `FinishBalance` for finish_song's lively mix). The review's lively tips are the band (`LIVELY_BASS_UNDER`),
+the lead at one volume ("Flat dynamics on the lead") and the lift
+(`LiftOf`, `SongLift`, `LIFT_LEAST`: the loudest named section, intro,
+break and outro aside, against the first A, or 4-bar blocks); it gives no
+held-lead or "presses" tip on a lively track, and neither does
+`check_song`. `polish` style lively gives the default touches (accents).
+`measure_mix` style lively checks the chords together (3-4 dB under the
+melody), the bass (about level: 1 under to 2 over) and the echo (6-8
+under) (`MixPart::Role`) and renders the band as a stem of its own. `mix`
+says when `width`, `levels` or `dac` without a style changed only those
+(`NoStyle`). `what_next`'s lively kind (`KINDS` in `WhatNext.cpp`) designs
+a `bloom lead` with `restrike_beats` 0, lush chords of `LushFrames` (2), the
+basic groove with kit samples, polish with its accents (`KindPolish`,
+finish_song's too), turns the
+review's lift tip into a harmony in the last part (`WhatNext::Climax`), and
+takes a lively mix as done while another would move no note more than 2 dB
+(`MixDue`; 1.5 for the other kinds), since a step at its parts' volumes is
+up to 2 dB.
+The `lively` groove's aliases no longer include stage words (`basic` has
+them). `TestLivelyBand`, `TestLivelyPolish`, `TestLivelyChecks`,
+`TestLivelyRecipes`, `TestLivelyWhatNext`, `TestMixWithoutStyle` and
+`TestLivelyChordsTop` cover them; calm's results are the old ones (its
+tests unchanged).
 
 ## What this repository is
 

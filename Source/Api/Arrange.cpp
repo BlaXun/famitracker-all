@@ -102,7 +102,8 @@ const std::vector<StyleInfo> &BassStyles()
 const std::vector<StyleInfo> &Grooves()
 {
 	static const std::vector<StyleInfo> GROOVES = {
-		{ "basic", "rock beat: kick on 1 and 3, snare on 2 and 4, hi-hats every half beat", "rock|standard|pop|backbeat|normal" },
+		{ "basic", "rock beat: kick on 1 and 3, snare on 2 and 4, hi-hats every half beat; with kit samples, a stage's sampled "
+			"backbeat", "rock|standard|pop|backbeat|normal|stage|level|explore|platformer|bouncy" },
 		{ "four_on_floor", "kick every beat, snare on 2 and 4, open hi-hats between the beats: dance, disco, upbeat",
 			"fouronthefloor|dance|disco|house|fourfloor" },
 		{ "half_time", "kick on 1, snare on 3: heavy and slow", "halftime|heavy|slow" },
@@ -116,7 +117,8 @@ const std::vector<StyleInfo> &Grooves()
 		{ "waltz", "in three: kick on 1, soft snares on 2 and 3", "3/4|three|triple" },
 		{ "lively", "soft closed hi-hats on the eighths (sixteenth pairs now and then, more when busy), an open hi-hat every "
 			"other bar, a soft kick on 1 and the \"and\" of 2 or 3, no snare; small fills (a hi-hat roll or soft toms) and a "
-			"soft splash after: stages that flow", "stage|flowing|flow|gentle|bouncy|river|level|explore|platformer" },
+			"soft splash after: a gentle place, not too upbeat (a stage's beat is basic, with kit samples)",
+			"flowing|flow|gentle|river|soft stage|calm stage" },
 	};
 	return GROOVES;
 }

@@ -503,7 +503,8 @@ Action and bosses keep the soft mix and polish's accents. See MCP.md,
   widths, waves, faders, pans and Soft counted, checked against
   FamiTracker's renders), the melody 2.5 dB over the chords (lively 3.5),
   an echo 7 under, the bass 2.5 (the triangle by the DPCM level); the
-  reply gives the balance reached.
+  reply gives the balance reached. (The lively places were reset on
+  `feat-lively-fix`: see 15.)
 - Done (on `feat-calm-sounds`): lead sounds with calm shapes, ready made:
   `design_instrument` kinds and presets music box (struck, gone in 0.9 of
   a beat at the song's tempo), breath (in over 12 frames, sinking to 60%
@@ -513,7 +514,8 @@ Action and bosses keep the soft mix and polish's accents. See MCP.md,
 - Done: `polish` style calm without accents, scoops or falls, its vibrato
   the shallowest (`451`) about half a second into long notes.
 - Done: `check_song` and the review warn about a lead that holds a high,
-  steady level (a finding of its own, `held`; a tip on a lively track),
+  steady level (a finding of its own, `held`; on calm tracks only since
+  `feat-lively-fix`, see 15),
   and the review on a calm track hears the balance as the stems would.
 - Done: the mix's flaws the night songs found: a 5B lead counted as its
   sound holds, the 5B's buzz and noise swells kept as written, `levels`
@@ -536,11 +538,34 @@ rules and fixing tool output by hand.
   action), and `get_recipe` gives the same on every connection, the small
   set's too, whose steps name only that set's tools. The guide has the
   numbers as the topics `calm`, `lively` and `action`.
-- The user's rules for the kinds (24 October): calm only when a song is
-  asked to be calm (the tools only suggest it when a song looks calm);
-  lively stages a little softer than the first 48 tracks (the melody 3-4
-  dB over the parts, notes that fade); action and bosses punchy, mixed as
-  before.
+- The user's rules for the kinds (24 October, corrected on 25 October):
+  calm only when a song is asked to be calm (the tools only suggest it
+  when a song looks calm), and the calm rules (a lead that never holds a
+  level, the melody 2-3 dB over the chords, no accents, no drums) for calm
+  songs only. The user, 25 October: "Songs too active and direct was for
+  the songs where I said it needed to be calm and melancholic for the
+  night songs", and the night songs worked. Lively stages and action go
+  back to the way of the first 30 tracks, which the user liked nearly all
+  of: a lead with accents and steps by section inside a band louder than
+  it, a sampled kick and snare, sections that build to a climax 2-4 dB
+  over the first A.
+- Done (on `feat-lively-fix`, 25 October): the night songs' rules taken
+  out of lively stages. Measured on the first batch's lively tracks
+  against the later ones (52-57), the later ones had lost the lead's
+  dynamics (15 on every note where the first batch's sat at 8-9 with
+  accents), the band under the lead (the bass about level with it and the
+  band 3.3 dB louder, where the later lead sat 3.5 dB over its bass and as
+  loud as the rest), sections that build (3.2 dB from the first A to the
+  climax, against 0.95), the sampled snare and the lead's sound. `mix`
+  style lively now mixes a stage's band (the melody's loudest at 9, the
+  bass 1 dB under it, the chords together 3.5 under, the drums up or down
+  to 10 under), `polish` style lively keeps its accents, the `held`
+  finding is for calm tracks only, the review tips a stage that doesn't
+  build, a lead at one volume and a melody over its band, `measure_mix`
+  checks the band, the recipes, the style guide and `what_next` give the
+  first batch's lead (`bloom lead`, not struck again), lush arpeggios of
+  two frames a note and a sampled backbeat, and the `lively` groove is for
+  gentle places.
 - Calm tracks by default (14) when asked, the tool flaws the composers
   found, and `measure_mix` (stems, each section's loudness, the intro and
   the two sides in one call) on branches of their own.
@@ -551,8 +576,10 @@ rules and fixing tool output by hand.
   whether the melody breathes (a rest of a beat or a held note in its
   two-bar spans; the version the user heard as "no clean melody" paused in
   4 of 16, the two liked ones in 9 and 13); the lively and calm mixes put
-  the drums 10-12 dB under the melody and never raise them; `add_drums`
-  has a `lively` groove (soft hi-hats, a soft kick, no snare) and a light
+  the drums 10-12 dB under the melody and never raise them (the lively
+  mix sets them to their place again since `feat-lively-fix`); `add_drums`
+  has a `lively` groove (soft hi-hats, a soft kick, no snare; for gentle
+  places since `feat-lively-fix`) and a light
   intensity that keeps the hi-hats; voiced chords on the N163 give each
   voice its own sound; broken chords on a pulse stay over C-2;
   `read_notes` reads 64 bars and says which bars it read; `vary_part`
