@@ -425,8 +425,8 @@ plays from the silent channels alone), since the pin compresses what it
 mixes: a fader's share of the pin (a gain of 0, or the -24 dB stems
 composers made by hand) leaves a triangle under a DPCM level several dB
 louder than it sounds (`TestSilentParts`). The document's mixer, mutes and
-track stay as they are. Each render stops at the last row it needs, without
-the tail. A song that sets the
+track stay as they are. They're rendered in one pass (below), as far as the
+mix needs, without the tail. A song that sets the
 DPCM level (`Zxx`) on its first row starts with the DMC's output there
 (`CSoundGen::StartDacLevel` in `BeginPlayer`, `CAPU::StartDAC`,
 `CDPCM::StartAt`, and `CMixer::StartAt`, which takes the pin's output in
@@ -600,6 +600,27 @@ FakeSong's `AddN163Instrument` reports an N163 instrument's sequences as
 `ReadSequences` in `McpConnection.cpp` does. `TestN163Study` in
 `Source/Nsf/tests/FtmTests.cpp`, `TestSoftReferenceWaves` and
 `TestSoftReferenceTool` cover them.
+
+`measure_mix` in one pass (from `feat-soft-references`):
+`SongHost::RenderParts` asks for several renders at once (the mix, the
+melody alone, each part alone), which FamiTracker makes in one pass.
+`CSoundGen::RenderToFile` takes them as stems (`render_stem_t`: a WAV file
+and the channels left out, up to `MAX_RENDER_STEMS`), and `OnStartRender`
+gives them to `CAPU::SetStems` once the APU is reset and the space cleared.
+`CMixer::SetStems` makes each stem a mixer of its own as the main one is
+then (`MakeStemOf`: settings, channels, and the synths exactly as they are,
+`Blip_Synth::copy_state`, since `volume_unit` leaves a kernel attenuated
+after a small volume; empty buffers, a silent space), leaves its channels
+out as `ApplyChannelMix` does, and from then on the main mixer passes it
+every call it gets, keeping them out (in the order a separate render gets
+them: the 2A03's pins truncate each step). `CAPU::EndFrame` reads each stem
+after the mix (`IAudioCallback::FlushStem`, `CSoundGen::FlushStem`), and
+`CVRC7::EndFrame` makes each stem's samples from the channels' values
+(`OPLL_calc_lr_parts`). `TestStemsInOnePass` in `Source/Tests/ApuTests.cpp`
+finds each stem the same as the render of its part alone, sample for
+sample, on every chip. `CMcpLink::RenderParts` renders 16 stems a pass and
+reads each file back as the tool takes it (`CRenderFiles`); FakeSong's
+counts `Passes`.
 
 ## What this repository is
 

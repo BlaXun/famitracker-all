@@ -466,9 +466,9 @@ std::vector<int> N163TriangleWave()
 std::vector<int> N163SawtoothWave()
 {
 	// The VRC6's: its accumulator adds the rate seven times, every other clock, and its top five bits sound (at full
-	// rate, 42: 0, 5, 10, 15, 21, 26, 31), resampled. Rendered under Wine (October 2026) a VRC6 sawtooth's second to
-	// eighth harmonics came within 0.7 dB of this one's (but the fifth, 3 dB), its seventh missing as here, where a
-	// plain ramp's came 1-2 dB brighter, with a seventh
+	// rate, 42: 0, 5, 10, 15, 21, 26, 31), resampled. Rendered under Wine (October 2026) beside a VRC6 sawtooth, this
+	// one's second to eighth harmonics came within 0.8 dB of the VRC6's but the fifth (3.5 dB over), its seventh 9 dB
+	// under a plain ramp's (the VRC6 has none); a ramp's second to fourth came 1-2 dB brighter
 	std::vector<int> Steps;
 	for (int k = 0; k < 7; ++k)
 		for (int Clock = 0; Clock < 2; ++Clock)
