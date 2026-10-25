@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -806,7 +807,8 @@ private:
 
 	// The scale's steps a bar moves the motif: the way its plan goes, as near as fits (a run's second time through its
 	// opening a step further that way)
-	int BestShift(int Bar, const std::vector<Hit> &Hits, int Direction, bool Any, int Again = 0, int From = -1) const
+	int BestShift(int Bar, const std::vector<Hit> &Hits, int Direction, bool Any, int Again = 0, int From = -1,
+		const std::vector<int> &Used = std::vector<int>()) const
 	{
 		int Best = 0;
 		double BestCost = NEVER;
@@ -814,6 +816,8 @@ private:
 			if (k == 0 && !Any)
 				continue;
 			double Cost = FitCost(Bar, Hits, k, Again, From) + 0.35 * std::abs(k) + (std::abs(k) >= 3 ? 0.6 : 0.0);
+			if (std::find(Used.begin(), Used.end(), k) != Used.end())
+				Cost += 2.5;	// the same move over the same chord again: a phrase that comes back unchanged
 			if (!Any && (k > 0) != (Direction > 0))
 				Cost += 1.5;
 			Cost += 0.3 * (Mix(m_Seed + static_cast<uint32_t>(Bar) * 977u, static_cast<uint32_t>(k + 8)) % 1000) / 1000.0;
@@ -848,9 +852,18 @@ private:
 		return Cost;
 	}
 
+	// What a bar's role does over the chord its bar starts on, for telling a repeat
+	int Context(size_t b) const
+	{
+		const int Chord = m_Q.StepChord.empty() ? -1 : m_Q.StepChord[std::min(m_Q.StepChord.size() - 1, b * static_cast<size_t>(m_SPB))];
+		const int Root = Chord >= 0 ? m_Q.Chords[static_cast<size_t>(Chord)].Root : -1;
+		return (m_Plan[b].Role * 2 + m_Plan[b].MotifBar) * 16 + Root + 1;
+	}
+
 	void ChooseShifts()
 	{
 		const double First = StatementCost(0);
+		std::map<int, std::vector<int> > Used;	// the moves made by role and chord
 		for (size_t b = 0; b < m_Plan.size(); ++b) {
 			BarPlan &B = m_Plan[b];
 			const int Bar = static_cast<int>(b);
@@ -877,7 +890,9 @@ private:
 					B.Shift = m_Plan[b - 1].Shift;
 					continue;
 				}
-				B.Shift = BestShift(Bar, m_Hits[b], B.Direction, false, B.Role == BAR_RUN ? B.Direction : 0, From);
+				std::vector<int> &Before = Used[Context(b)];
+				B.Shift = BestShift(Bar, m_Hits[b], B.Direction, false, B.Role == BAR_RUN ? B.Direction : 0, From, Before);
+				Before.push_back(B.Shift);
 			}
 			else if (B.Role == BAR_VARIED) {
 				std::vector<Hit> Head;
@@ -1021,6 +1036,7 @@ private:
 	void Shape()
 	{
 		const int Tonic = NearestClass(m_Q.K.Tonic, m_Centre - 2), Dominant = NearestClass(m_Q.K.Tonic + 7, m_Centre);
+		std::map<int, std::vector<int> > Answered;	// where the answers over each chord started
 		int Level = m_Q.Motif.back().Pitch;
 		for (size_t b = 0; b < m_Plan.size(); ++b) {
 			const BarPlan &B = m_Plan[b];
@@ -1039,11 +1055,16 @@ private:
 						Reference = m_Q.Motif[j].Pitch;
 				const std::vector<const Chord *> Chords = StrongChords(S.Step, std::max(S.Steps, 1));
 				const Chord *pChord = Chords.empty() ? ChordAt(S.Step) : Chords.front();
-				const int Near = Level + m_MotifWay * 3;
-				for (int p = m_Low; p <= Ceiling(Section); ++p)
-					if (Allowed(p, S.Step, S.Steps) && (pChord == 0 || pChord->HasPitchClass(ClassOf(p))) &&
-						(Answer < 0 || std::abs(p - Near) < std::abs(Answer - Near)))
-						Answer = p;
+				// Over a chord answered before, from another of its notes, so the phrase doesn't come back unchanged
+				std::vector<int> &Starts = Answered[Context(b)];
+				const int Near = Level + m_MotifWay * (Starts.empty() ? 3 : -2);
+				for (int Pass = 0; Pass < 2 && Answer < 0; ++Pass)
+					for (int p = m_Low; p <= Ceiling(Section); ++p)
+						if (Allowed(p, S.Step, S.Steps) && (pChord == 0 || pChord->HasPitchClass(ClassOf(p))) &&
+							(Pass == 1 || std::find(Starts.begin(), Starts.end(), p) == Starts.end()) &&
+							(Answer < 0 || std::abs(p - Near) < std::abs(Answer - Near)))
+							Answer = p;
+				Starts.push_back(Answer);
 			}
 			for (int n = 0; n < Count; ++n) {
 				Slot &S = m_Slots[Mine[static_cast<size_t>(n)]];
