@@ -252,7 +252,8 @@ END_MESSAGE_MAP()
 bool CDrumGridWnd::Create(CDrumGridPanelWnd *pPanel, CWnd *pParent)
 {
 	m_pPanel = pPanel;
-	const CString Class = AfxRegisterWndClass(0, ::LoadCursor(NULL, IDC_HAND), NULL, NULL);
+	// Drawn again whole when its size changes: the steps and lines are as wide and tall as it is
+	const CString Class = AfxRegisterWndClass(CS_HREDRAW | CS_VREDRAW, ::LoadCursor(NULL, IDC_HAND), NULL, NULL);
 	if (!CWnd::CreateEx(WS_EX_CLIENTEDGE, Class, _T("Drums"), WS_CHILD | WS_VISIBLE, CRect(0, 0, 0, 0), pParent, IDC_DRUM_GRID))
 		return false;
 	LOGFONT Log;
@@ -979,6 +980,7 @@ void CDrumGridPanelWnd::Layout()
 	const int Room = std::max(0, static_cast<int>(Client.bottom) - SY(MARGIN) - SY(STATUS_HEIGHT) - Top);
 	const int Height = std::min(Room, SY(LANE_MOST) * (DRUM_LANES + 1));
 	m_Grid.MoveWindow(SX(MARGIN), Top, Inner, Height);
+	m_Grid.Invalidate(FALSE);
 	m_rcStatus = CRect(SX(MARGIN), Top + Height + SY(3), static_cast<int>(Client.right) - SX(MARGIN), Top + Height + SY(3) + SY(STATUS_HEIGHT));
 	Invalidate(FALSE);
 }

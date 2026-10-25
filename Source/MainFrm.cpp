@@ -1694,14 +1694,9 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
 			KillTimer(TMR_WELCOME);
-			// The views and panels come back as they were last time: the piano roll (in the pattern
-			// editor's place if that was hidden), the clips panel, the problems panel, the mixer and
-			// the drum grid
-			{
-				const note_views_t Views = StartingNoteViews(theApp.GetSettings()->Views.bPatternEditor, CPianoRollBar::WasOpen());
-				if (Views != NoteViews())
-					ShowNoteViews(Views);
-			}
+			// The panels and views come back as they were last time: the clips panel, the problems
+			// panel, the mixer and the drum grid, then the piano roll (in the pattern editor's place
+			// if that was hidden), which centres on the notes in the room the others leave it
 			if (CClipsBar::WasOpen())
 				ShowClipsPanel(true);
 			if (CProblemsBar::WasOpen())
@@ -1710,6 +1705,11 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowMixer(true);
 			if (CDrumGridBar::WasOpen())
 				ShowDrumGrid(true);
+			{
+				const note_views_t Views = StartingNoteViews(theApp.GetSettings()->Views.bPatternEditor, CPianoRollBar::WasOpen());
+				if (Views != NoteViews())
+					ShowNoteViews(Views);
+			}
 			// The first time: a simpler FamiTracker for game music? Then the
 			// untouched new song starts again from the template.
 			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
