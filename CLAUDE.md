@@ -641,6 +641,34 @@ Its types share namespace `ftapi` with the tools' (its cells are
 `VoiceCells`: a second `ftapi::ChannelCells` with another layout than
 `Song.h`'s let the linker mix the two, which only MSVC's run showed), so
 new portable code names its types apart.
+Sound effects and cues (from `feat-sfx-fixes`): `CMixer::ClearBuffer` (every
+`CAPU::Reset`, so every stop and start) takes the 2A03's pins as a reset
+leaves them, the pulses, the noise and the DMC silent and the triangle
+holding the step it stopped on, without sending a step; 0.4.6 started the
+pins' sums from 0 but kept the channels' levels, so the first change after a
+stop stepped by every level held (a held triangle thumped under the next
+song's first noise, as loud at volume 1 as at 15; `TestHeldLevels` in
+`ApuTests.cpp`). Sounds that play once ring out (`RingOut` in
+`SoundEffects.cpp`: a layer stopping above volume 1 dies away, halving a
+tick; not the triangle, which 0.4.6 plays whole at any volume, so a fade
+would only hold it longer) and their tracks halt `SFX_SILENT_TICKS` rows after the last tick that
+sounds (`SoundTrackRows`, used by `WriteSoundEffect`); the coin kind is a
+glint of our own. `SoundLoudness` in `GameAudio.cpp` measures a sound
+shorter than a 400 ms block over its whole length, ungated, for
+`ExportTrack` and `measure_mix`. `UseOfTrack` (before `ReviewTool` in
+`Tools.cpp`) tells music, a cue (it halts within `CUE_SECONDS`) and a sound
+effect (speed 1, the 2A03 alone, at most a sound's length) apart: the
+review's `Tip` keeps only the tips `CueTip` names (by their words, so a new
+tip for stages stays out of cues; add a kept one's words there), a sound
+effect gets `SoundEffectReview`, `measure_mix` `SoundMeasure`, and a song
+that halts is measured to `HaltBar`. The roles, for every track: an echo
+follows the melody's notes (`FollowDelay`: `EchoDelayOf` for four notes or
+more, fewer each at one delay and about as long), a quiet arpeggio over the
+melody is a line (`IsSparkle`, by `UsualDb`), and a low N163 voice a fifth
+under the rest is the bass (`SoftBass`, in `PlaysBassPart`), in the review,
+`MixRole`, `HeardRoles` and `measure_mix`'s parts. `TestSoundEffectEnds`
+(every kind's last 50 ms as `RenderEffect` plays it), `TestShortLoudness`
+and `TestCueJudging` in `Source/Api/tests/ApiTests.cpp` cover them.
 
 Studied sounds on N163 channels and the VRC6 Plus's soft layer (from
 `feat-soft-references`): a study keeps an N163 sound's waves and wave
@@ -690,9 +718,11 @@ after the mix (`IAudioCallback::FlushStem`, `CSoundGen::FlushStem`), and
 finds each stem the same as the render of its part alone, sample for
 sample, on every chip. `CMcpLink::RenderParts` renders 16 stems a pass and
 reads each file back as the tool takes it (`CRenderFiles`); FakeSong's
-counts `Passes`. Under Wine, a 40-bar VRC6 Plus track with nine parts
-took 6.4-6.9 s of FamiTracker's CPU in one pass against 13.3-16.5 s part
-by part (29-35 s against 62-75 s on a busy machine), with the same reply.
+counts `Passes`. `SoundMeasure` (a sound effect and each of its channels
+alone) asks for its renders the same way. Under Wine, a 40-bar VRC6
+Plus track with nine parts took 6.4-6.9 s of FamiTracker's CPU in one
+pass against 13.3-16.5 s part by part (29-35 s against 62-75 s on a busy
+machine), with the same reply.
 
 ## What this repository is
 

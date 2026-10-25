@@ -345,6 +345,30 @@ double SpansLoudness(const std::vector<float> &Left, const std::vector<float> &R
 	return GatedBlocks(Blocks);
 }
 
+double SoundLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, size_t First, size_t Count,
+	bool &Short)
+{
+	const double Silent = -70.0;
+	Short = false;
+	const size_t Size = std::min(Left.size(), Right.size());
+	if (SampleRate <= 0 || First >= Size)
+		return Silent;
+	Count = std::min(Count, Size - First);
+	if (Count >= static_cast<size_t>(SampleRate) * 4 / 10)
+		return IntegratedLoudness(Left, Right, SampleRate, First, Count);
+	// Shorter than a block: the whole of it as one
+	Short = true;
+	std::vector<double> Squared(Count, 0.0);
+	AddKWeighted(Left, SampleRate, First, Count, Squared);
+	AddKWeighted(Right, SampleRate, First, Count, Squared);
+	double Sum = 0.0;
+	for (size_t i = 0; i < Count; ++i)
+		Sum += Squared[i];
+	const double MeanSquare = Count > 0 ? Sum / static_cast<double>(Count) : 0.0;
+	const double Lufs = MeanSquare > 0.0 ? -0.691 + 10.0 * std::log10(MeanSquare) : -1000.0;
+	return Lufs > Silent ? Lufs : Silent;
+}
+
 double LoudnessGain(double Measured, double Target, double Peak, bool &Held)
 {
 	const double Gain = Target - Measured;

@@ -108,8 +108,11 @@ const uint64_t MONO[CHIPS] = {
 
 // Single notes instead of a chip's script: a VRC6 pulse (50%) held at 291 Hz, the 2A03's triangle at the
 // same pitch, and the pulse for 10 frames, then silence; the DPCM level set to 0x50 as it starts ($4011, as a
-// Zxx on a song's first row writes it), alone or with the triangle
-enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP, TONE_DAC, TONE_DAC_TRIANGLE };
+// Zxx on a song's first row writes it), alone or with the triangle. After a stop: the triangle (or the 2A03's
+// first pulse) for 7 frames, stopped mid-wave, then from frame 20 a noise (or the second pulse) at volume 1,
+// $4015 written again first as CSoundGen::ResetAPU writes it; or that soft note alone
+enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP, TONE_DAC, TONE_DAC_TRIANGLE, TONE_HELD_TRIANGLE, TONE_SOFT_NOISE,
+	TONE_HELD_PULSE, TONE_SOFT_PULSE };
 
 struct Run {
 	int Chip;
@@ -441,6 +444,22 @@ void PlayTone(Writer &w, int Tone, int f)
 	}
 	else if (Tone == TONE_TRIANGLE) {
 		if (f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
+	}
+	else if (Tone == TONE_HELD_TRIANGLE || Tone == TONE_SOFT_NOISE || Tone == TONE_HELD_PULSE || Tone == TONE_SOFT_PULSE) {
+		const bool Noise = Tone == TONE_HELD_TRIANGLE || Tone == TONE_SOFT_NOISE;
+		const bool Held = Tone == TONE_HELD_TRIANGLE || Tone == TONE_HELD_PULSE;
+		if (Held && f == 0) {
+			if (Noise) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
+			else { w.W(0x4000, 0xBF); w.W(0x4001, 0x08); w.W(0x4002, 0xFE); w.W(0x4003, 0x00); }
+		}
+		if (Held && Noise && f == 7)
+			w.W(0x4008, 0x00);	// stopped: it holds its step
+		w.Next();
+		if (f == 20) {
+			w.W(0x4015, 0x0F);
+			if (Noise) { w.W(0x400C, 0x31); w.W(0x400E, 0x04); w.W(0x400F, 0x00); }
+			else { w.W(0x4004, 0xB1); w.W(0x4005, 0x08); w.W(0x4006, 0xFE); w.W(0x4007, 0x00); }
+		}
 	}
 	else {
 		if (f == 0) { w.X(0x9000, 0x7F); w.X(0x9001, 0x7F); w.X(0x9002, 0x81); }
@@ -1087,6 +1106,29 @@ void TestDacStart()
 	CHECK(Share > 0.5 && Share < 0.75);		// 0.4.6's mixer: the triangle at about 57% under Z50
 }
 
+void TestHeldLevels()
+{
+	// After a stop (the APU reset), the triangle holds the step it stopped on, and a pulse its last level, as the chip's
+	// do: the next song's first noise (or pulse) at volume 1 starts at its own level, as it does alone, not with a step
+	// of what was held (a thump as loud as a noise at 15), and plays on as softly
+	const int Kinds[2][2] = { { TONE_HELD_TRIANGLE, TONE_SOFT_NOISE }, { TONE_HELD_PULSE, TONE_SOFT_PULSE } };
+	for (int k = 0; k < 2; ++k) {
+		Run After = Plain(CHIP_2A03, 0), Alone = Plain(CHIP_2A03, 0);
+		After.Tone = Kinds[k][0];
+		Alone.Tone = Kinds[k][1];
+		After.ResetAt = Alone.ResetAt = 15;
+		After.Frames = Alone.Frames = 40;
+		const Sides Then = Render(After), Fresh = Render(Alone);
+		const size_t From = 20 * FRAME_SAMPLES, Start = 23 * FRAME_SAMPLES;
+		const int Soft = Peak(Fresh.Left, From, Start);
+		std::printf("A soft %s after a stop: peak %d in its first frames (%d alone), RMS %.1f later (%.1f alone)\n", k == 0 ? "noise" :
+			"pulse", Peak(Then.Left, From, Start), Soft, RmsOf(Then.Left, Start, 40 * FRAME_SAMPLES), RmsOf(Fresh.Left, Start, 40 * FRAME_SAMPLES));
+		CHECK(Soft > 50 && Peak(Then.Left, From, Start) < Soft * 3 / 2);
+		CHECK(RmsOf(Then.Left, Start, 40 * FRAME_SAMPLES) < RmsOf(Fresh.Left, Start, 40 * FRAME_SAMPLES) * 1.3);
+		CHECK(Peak(Then.Left, 16 * FRAME_SAMPLES, From) < 4);	// and the stop itself sends nothing
+	}
+}
+
 // First less Second, sample for sample (as long as the shorter)
 std::vector<int16> Less(const std::vector<int16> &First, const std::vector<int16> &Second)
 {
@@ -1282,6 +1324,7 @@ int main()
 	TestSpace();
 	TestDacStart();
 	TestSilentParts();
+	TestHeldLevels();
 	TestStemsInOnePass();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;

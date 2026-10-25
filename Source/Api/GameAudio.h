@@ -104,6 +104,14 @@ double IntegratedLoudness(const std::vector<float> &Left, const std::vector<floa
 double SpansLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate,
 	const std::vector<std::pair<size_t, size_t> > &Spans);
 
+// A sound's loudness for a game: as IntegratedLoudness measures it, or, for
+// one shorter than a 400 ms block (a short sound effect, which has none to
+// gate), over its whole length, ungated: its K-weighted mean square, both
+// sides added, so a loudness given to the export applies to it too. Short
+// says which. -70 or less when it's (nearly) silent.
+double SoundLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, size_t First, size_t Count,
+	bool &Short);
+
 // The gain in dB that brings audio measuring Measured LUFS to Target, as far
 // as its loudest peak (Peak, 0-1 of full scale) may rise: to -1 dBFS. Held
 // when the peak holds it back.

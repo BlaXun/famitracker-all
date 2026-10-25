@@ -573,6 +573,26 @@ const Section SECTIONS[] = {
 		"pairs).\n"
 		"- Keep each track's notes in soundtrack_notes: where it plays, what you hear, its references and what each gave, "
 		"its techniques, checks and loop points." },
+	{ "cues", "Cues, jingles and sound effects (short sounds that play once)",
+		"cue cues jingle jingles fanfare fanfares sting stinger stingers sfx sound effect effects level up quest item found "
+		"pickup coin respawn victory menu blip",
+		"Short sounds for game events: cues and jingles (a few seconds of music that plays once and halts) and sound effects "
+		"(a jump, a pickup, a menu blip):\n"
+		"- A set of cues on the soundtrack's motif ties the game together: level up, quest done, item found, new area and "
+		"respawn, each the title's motif changed for its moment, 2-5 seconds, in the motif's key.\n"
+		"- make_jingle writes a jingle as a track of its own; a cue you write yourself halts with set_loop stop. Let the last "
+		"note die away before the halt, and keep a cue's drums on the noise channel: a sampled drum on the DPCM thumps at "
+		"the halt.\n"
+		"- review_arrangement judges a cue as a cue: no tips about its length, fills, a moving bass, chord colors or a beat, "
+		"which suit a looping stage. Don't chase them.\n"
+		"- make_sound_effect makes a sound effect from a kind, from layers described in words, or from the user's voice; its "
+		"sounds end in silence by themselves, so don't move the halt earlier. The review gives a sound effect a short check "
+		"instead of a score: play it and judge it by ear.\n"
+		"- Loudness: export_for_game measures a sound shorter than 400 ms over its whole length, so its loudness applies to "
+		"short sounds too: about -18 LUFS for sound effects and -20 for cues and jingles, beside the tracks' -20 (-22 calm, "
+		"-19 action).\n"
+		"- Sounds of our own: never a famous game's signature sound (the classic coin's two notes a fourth apart); the "
+		"pickup kind is our own." },
 };
 
 const size_t SECTION_COUNT = sizeof(SECTIONS) / sizeof(SECTIONS[0]);
