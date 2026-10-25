@@ -33,6 +33,7 @@
 #include "../FdsSounds.h"
 #include "../GameAudio.h"
 #include "../Grooves.h"
+#include "../GrowMelody.h"
 #include "../Http.h"
 #include "../Jingles.h"
 #include "../Json.h"
@@ -50,6 +51,7 @@
 #include "../Song.h"
 #include "../SoundEffects.h"
 #include "../SoundIndex.h"
+#include "../StepNotes.h"
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
 #include "../Wavetables.h"
@@ -4918,7 +4920,7 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 20);
+	CHECK(Core.size() >= 15 && Core.size() <= 22);
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -16920,6 +16922,494 @@ void TestStepsTaught()
 		}
 }
 
+// grow_melody (GrowMelody.h): a motif grown over chords, for the tests. Motif in steps of eighths, a progression a chord a
+// bar (repeated Repeat times), in 4/4 at 4 rows a beat; Sections the bars (from 0) where sections after the first start
+GrowRequest GrowCase(const char *MotifText, const char *Progression, const char *KeyText, int Kind, int Variant = 1, int Repeat = 1,
+	const std::vector<int> &Sections = std::vector<int>())
+{
+	GrowRequest Q;
+	CHECK(ParseKey(KeyText, Q.K));
+	StepLine Motif;
+	std::string Error;
+	CHECK(ParseStepLine(MotifText, 1, Motif, Error));
+	for (size_t i = 0; i < Motif.Notes.size(); ++i) {
+		int Pitch = 0;
+		CHECK(ParsePitch(Motif.Notes[i].Pitch, Pitch));
+		Q.Motif.push_back(GrowNote(Motif.Notes[i].Step, Motif.Notes[i].Steps, Pitch));
+	}
+	std::vector<std::string> Bars;
+	for (int r = 0; r < Repeat; ++r) {
+		const std::vector<std::string> Some = SplitProgression(Progression);
+		Bars.insert(Bars.end(), Some.begin(), Some.end());
+	}
+	Q.Bars = static_cast<int>(Bars.size());
+	Q.Kind = Kind;
+	Q.Variant = Variant;
+	Q.Sections = Sections;
+	std::vector<BarSpan> Spans;
+	for (int b = 0; b < Q.Bars; ++b)
+		Spans.push_back(BarSpan(b * 16, 16));
+	std::vector<ChordAt> Chords;
+	CHECK(LayOutProgression(Bars, Spans, 4, Q.K, Chords, Error));
+	for (size_t c = 0; c < Chords.size(); ++c)
+		Q.Chords.push_back(Chords[c].C);
+	for (int s = 0; s < Q.Bars * Q.StepsPerBar; ++s) {
+		const ChordAt *pChord = ChordAtRow(Chords, s * Q.RowsPerStep);
+		Q.StepChord.push_back(pChord != 0 ? static_cast<int>(pChord - &Chords[0]) : -1);
+	}
+	return Q;
+}
+
+std::vector<GrownVersion> Grown(const GrowRequest &Q)
+{
+	std::vector<GrownVersion> Out;
+	std::string Error;
+	Check(GrowMelody(Q, Out, Error), Error.c_str(), __LINE__);
+	return Out;
+}
+
+// The bars (from 0) a version states the hook in as written, both of a two-bar hook's
+bool InGrownHook(const GrowRequest &Q, const GrownVersion &V, int Step)
+{
+	const int MotifBars = (Q.Motif.back().Step + Q.Motif.back().Steps + Q.StepsPerBar - 1) / Q.StepsPerBar;
+	for (size_t h = 0; h < V.Hooks.size(); ++h)
+		if (Step / Q.StepsPerBar >= V.Hooks[h] && Step / Q.StepsPerBar < V.Hooks[h] + MotifBars)
+			return true;
+	return false;
+}
+
+// What a version breaks of the craft: phrases of 2 and 4 bars, a breath in 2 of every 3 two-bar spans (3 of 4 on a calm song),
+// chord tones on the strong beats (beats 1 and 3) and the key's notes outside the hook as written, one high point a
+// section over the hook's top, the register around the hook, the hook stated as written. "" when nothing
+std::string GrownFaults(const GrowRequest &Q, const GrownVersion &V)
+{
+	std::string Faults;
+	int Bars = 0;
+	for (size_t p = 0; p < V.Phrases.size(); ++p) {
+		Bars += V.Phrases[p];
+		if (V.Phrases[p] != 2 && V.Phrases[p] != 4)
+			Faults += "a phrase of " + std::to_string(V.Phrases[p]) + " bars; ";
+	}
+	if (Bars != Q.Bars)
+		Faults += "phrases of " + std::to_string(Bars) + " bars in all; ";
+	int Spans = 0, Breaths = 0;
+	GrowBreaths(V.Notes, Q.StepsPerBar, Q.StepsPerBeat, Q.Bars, Q.SpanOffset, Spans, Breaths);
+	if (Spans != V.Spans || Breaths != V.Breaths || Breaths * 3 < Spans * 2 || (Q.Kind == GROW_CALM && Breaths * 4 < Spans * 3))
+		Faults += "breathes in " + std::to_string(Breaths) + " of " + std::to_string(Spans) + "; ";
+	int MotifLow = 1000, MotifHigh = -1;
+	for (size_t i = 0; i < Q.Motif.size(); ++i) {
+		MotifLow = std::min(MotifLow, Q.Motif[i].Pitch);
+		MotifHigh = std::max(MotifHigh, Q.Motif[i].Pitch);
+	}
+	std::vector<int> Starts(1, 0);
+	for (size_t s = 0; s < Q.Sections.size(); ++s)
+		Starts.push_back(Q.Sections[s]);
+	for (size_t s = 0; s < Starts.size(); ++s) {
+		const int From = Starts[s] * Q.StepsPerBar, To = (s + 1 < Starts.size() ? Starts[s + 1] : Q.Bars) * Q.StepsPerBar;
+		int Top = -1, Count = 0;
+		for (size_t i = 0; i < V.Notes.size(); ++i) {
+			if (V.Notes[i].Step < From || V.Notes[i].Step >= To)
+				continue;
+			if (V.Notes[i].Pitch > Top) {
+				Top = V.Notes[i].Pitch;
+				Count = 1;
+			}
+			else if (V.Notes[i].Pitch == Top)
+				++Count;
+		}
+		if (Count != 1 || Top <= MotifHigh || Top > MotifHigh + 9)
+			Faults += "section " + std::to_string(s + 1) + "'s high point " + PitchName(Top) + " " + std::to_string(Count) + " times; ";
+		if (s < V.Peaks.size() && V.Peaks[s] != Top)
+			Faults += "a high point said wrong; ";
+	}
+	if (V.Hooks.empty() || V.Hooks[0] != 0)
+		Faults += "no hook at the start; ";
+	for (size_t i = 0; i < V.Notes.size(); ++i) {
+		const GrowNote &N = V.Notes[i];
+		if (i > 0 && N.Step < V.Notes[i - 1].Step + V.Notes[i - 1].Steps)
+			Faults += "notes overlap; ";
+		if (N.Pitch < MotifLow - 5)
+			Faults += PitchName(N.Pitch) + " under the register; ";
+		if (InGrownHook(Q, V, N.Step))
+			continue;
+		if (!InKey(N.Pitch, Q.K))
+			Faults += PitchName(N.Pitch) + " outside the key; ";
+		for (int s = N.Step; s < N.Step + N.Steps; ++s) {
+			const int Index = s % 4 == 0 ? Q.StepChord[static_cast<size_t>(s)] : -1;
+			if (Index >= 0 && !Q.Chords[static_cast<size_t>(Index)].HasPitchClass(N.Pitch % 12))
+				Faults += PitchName(N.Pitch) + " off the chord at bar " + std::to_string(s / 8 + 1) + " step " + std::to_string(s % 8 + 1) + "; ";
+		}
+	}
+	return Faults;
+}
+
+bool SameGrown(const std::vector<GrowNote> &a, const std::vector<GrowNote> &b)
+{
+	if (a.size() != b.size())
+		return false;
+	for (size_t i = 0; i < a.size(); ++i)
+		if (a[i].Step != b[i].Step || a[i].Steps != b[i].Steps || a[i].Pitch != b[i].Pitch)
+			return false;
+	return true;
+}
+
+// The craft in every version, over 8 and 16 bars, in major, minor and dorian, every kind: phrases of 2 and 4 bars, breaths,
+// chord tones on the strong beats, the key (a minor key's raised seventh over its dominant), the high points, the register
+// and the hook as written at the start and back where it fits as well
+void TestGrowPhrases()
+{
+	struct Case { const char *Motif, *Chords, *Key; };
+	const Case CASES[] = {
+		{ "D4 G4 A4 B4 - A4 G4 -", "G Em C D G Bm C D", "G major" },
+		{ "A3 A3 C4 E4 - D4 C4 -", "Am F G Am Am F E Am", "A minor" },
+		{ "D4 F4 A4 - G4 F4 E4 -", "Dm G Dm C Dm G C Dm", "D dorian" },
+		{ "E4 - G4 - A4 - - -", "Am F C G Am F G C", "C major" },
+		{ "E4 E4 G4 A4 - G4 E4 D4 | E4 - - - . . . .", "Em Em C C D D Em Em", "E minor" },
+	};
+	int Versions = 0, Returns = 0;
+	for (const Case &C : CASES)
+		for (int Kind = GROW_CALM; Kind <= GROW_ACTION; ++Kind)
+			for (int Repeat = 1; Repeat <= 2; ++Repeat) {
+				const GrowRequest Q = GrowCase(C.Motif, C.Chords, C.Key, Kind, 1, Repeat);
+				const std::vector<GrownVersion> Out = Grown(Q);
+				CHECK_EQ(Out.size(), 3u);
+				for (size_t v = 0; v < Out.size(); ++v) {
+					++Versions;
+					const std::string Faults = GrownFaults(Q, Out[v]);
+					Check(Faults.empty(), (std::string(C.Motif) + " " + C.Key + " kind " + std::to_string(Kind) + " bars " +
+						std::to_string(Q.Bars) + " version " + std::to_string(v + 1) + ": " + Faults).c_str(), __LINE__);
+					Returns += Out[v].Hooks.size() >= 2 ? 1 : 0;
+					// A minor key's dominant: its raised seventh, never the plain one against it
+					if (Q.K.Mode == MODE_MINOR)
+						for (size_t i = 0; i < Out[v].Notes.size(); ++i) {
+							const GrowNote &N = Out[v].Notes[i];
+							const int Index = Q.StepChord[static_cast<size_t>(N.Step)];
+							if (Index >= 0 && Q.Chords[static_cast<size_t>(Index)].HasPitchClass((Q.K.Tonic + 11) % 12) && !InGrownHook(Q, Out[v], N.Step))
+								CHECK((N.Pitch - Q.K.Tonic + 120) % 12 != 10);
+						}
+				}
+			}
+	CHECK_EQ(Versions, 90);
+	CHECK(Returns * 10 >= Versions * 8);	// the hook comes back as written in most
+	// Green Valley's hook over its own chords: it comes back as written over G in bar 5, a step higher over C in bar 3
+	const GrowRequest Q = GrowCase("D4 G4 A4 B4 - A4 G4 -", "G Em C D G Bm C D", "G major", GROW_LIVELY);
+	const std::vector<GrownVersion> Out = Grown(Q);
+	CHECK(std::find(Out[0].Hooks.begin(), Out[0].Hooks.end(), 4) != Out[0].Hooks.end());
+	CHECK_HAS(Out[0].Shape, "Question and answer: bars 1-4 the hook, an answer, the hook a step higher and a half close on");
+	CHECK_HAS(Out[0].Shape, "Phrases of 4 bars, the high point E5 in bar 7; it breathes in 4 of 4 two-bar spans.");
+	CHECK_EQ(Out[0].Phrases.size(), 2u);
+	CHECK_HAS(Out[2].Shape, "Two-bar calls: bars 1-2 the hook and an answer;");
+	// Bar 3 as the hook a step higher: E4 A4 B4 C5 - B4 A4 -
+	std::vector<int> Bar3;
+	for (size_t i = 0; i < Out[0].Notes.size(); ++i)
+		if (Out[0].Notes[i].Step >= 16 && Out[0].Notes[i].Step < 24)
+			Bar3.push_back(Out[0].Notes[i].Pitch);
+	CHECK(Bar3.size() >= 4u && Bar3[0] == 52 && Bar3[1] == 57 && Bar3[2] == 59 && Bar3[3] == 60);
+}
+
+// One high point a section, the register, the hook coming back, and the spans review_arrangement counts from where the
+// loop starts
+void TestGrowShape()
+{
+	// Two sections of 8 bars: a high point in each, over the hook's top
+	const std::vector<int> Second(1, 8);
+	for (int Kind = GROW_CALM; Kind <= GROW_ACTION; ++Kind) {
+		const GrowRequest Q = GrowCase("C4 D4 E4 G4 - - - -", "C Am F G C Am Dm G", "C major", Kind, 2, 2, Second);
+		const std::vector<GrownVersion> Out = Grown(Q);
+		for (size_t v = 0; v < Out.size(); ++v) {
+			const std::string Faults = GrownFaults(Q, Out[v]);
+			Check(Faults.empty(), Faults.c_str(), __LINE__);
+			CHECK_EQ(Out[v].Peaks.size(), 2u);
+			CHECK(Out[v].PeakBars.size() == 2u && Out[v].PeakBars[0] < 8 && Out[v].PeakBars[1] >= 8);
+			CHECK_HAS(Out[v].Shape, "the high points ");
+			// The hook at each section's start
+			CHECK(std::find(Out[v].Hooks.begin(), Out[v].Hooks.end(), 8) != Out[v].Hooks.end());
+		}
+	}
+	// A section of 2 bars is part of the one before
+	const GrowRequest Short = GrowCase("C4 D4 E4 G4 - - - -", "C Am F G C Am Dm G", "C major", GROW_LIVELY, 1, 1, std::vector<int>(1, 6));
+	const std::vector<GrownVersion> One = Grown(Short);
+	GrowRequest Joined = Short;
+	Joined.Sections.clear();
+	CHECK(One[0].Peaks.size() == 1u && GrownFaults(Joined, One[0]).empty());
+	// The register: the channel's highest note keeps the high point down, and the hook's own notes stay as written
+	GrowRequest Low = GrowCase("C4 D4 E4 G4 - - - -", "C Am F G C Am Dm G", "C major", GROW_ACTION);
+	Low.High = 57;	// A-4
+	const std::vector<GrownVersion> Kept = Grown(Low);
+	for (size_t v = 0; v < Kept.size(); ++v)
+		for (size_t i = 0; i < Kept[v].Notes.size(); ++i)
+			CHECK(Kept[v].Notes[i].Pitch <= 57 && Kept[v].Notes[i].Pitch >= 48 - 5);
+	// The spans from where the loop starts: the first bar the second of one, so the span before it isn't counted
+	GrowRequest Shifted = GrowCase("D4 G4 A4 B4 - A4 G4 -", "G Em C D G Bm C D", "G major", GROW_LIVELY);
+	Shifted.SpanOffset = 1;
+	const std::vector<GrownVersion> Late = Grown(Shifted);
+	CHECK_EQ(Late[0].Spans, 4);
+	int Spans = 0, Breaths = 0;
+	std::vector<GrowNote> Choppy;
+	for (int b = 0; b < 4; ++b) {
+		Choppy.push_back(GrowNote(b * 8, 2, 48));
+		Choppy.push_back(GrowNote(b * 8 + 2, 6, 50));	// held three beats: a breath in every bar
+	}
+	GrowBreaths(Choppy, 8, 2, 4, 0, Spans, Breaths);
+	CHECK(Spans == 2 && Breaths == 2);
+	Choppy.clear();
+	for (int s = 0; s < 32; s += 2)
+		Choppy.push_back(GrowNote(s, 2, 48 + (s / 2) % 5));	// quarters without a rest: no breath
+	GrowBreaths(Choppy, 8, 2, 4, 0, Spans, Breaths);
+	CHECK(Spans == 2 && Breaths == 0);
+	// Wrong motifs
+	std::vector<GrownVersion> None;
+	std::string Error;
+	GrowRequest Bad = GrowCase("C4 D4 E4 G4 - - - -", "C Am", "C major", GROW_LIVELY);
+	Bad.Motif.push_back(GrowNote(30, 2, 60));
+	CHECK(!GrowMelody(Bad, None, Error) && Contains(Error, "a bar or two"));
+	Bad = GrowCase("C4 D4 E4 G4 - - - - | C4 - - - - - - -", "C Am F", "C major", GROW_LIVELY);
+	CHECK(!GrowMelody(Bad, None, Error) && Contains(Error, "four bars or more"));
+}
+
+// The kinds (calm fewer, longer notes and steps; action more notes), variants and determinism
+void TestGrowKinds()
+{
+	double Notes[3] = { 0, 0, 0 }, Length[3] = { 0, 0, 0 }, Leaps[3] = { 0, 0, 0 };
+	int Count[3] = { 0, 0, 0 };
+	const char *const MOTIFS[] = { "D4 G4 A4 B4 - A4 G4 -", "E4 - G4 - A4 - - -", "C4 D4 E4 G4 - - - -" };
+	for (int Kind = GROW_CALM; Kind <= GROW_ACTION; ++Kind)
+		for (size_t m = 0; m < sizeof(MOTIFS) / sizeof(MOTIFS[0]); ++m)
+			for (int Variant = 1; Variant <= 3; ++Variant) {
+				const GrowRequest Q = GrowCase(MOTIFS[m], m == 0 ? "G Em C D G Bm C D" : "C Am F G C Am Dm G", m == 0 ? "G major" :
+					"C major", Kind, Variant, 2);
+				const std::vector<GrownVersion> Out = Grown(Q);
+				for (size_t v = 0; v < Out.size(); ++v) {
+					int Moves = 0, Leaping = 0;
+					for (size_t i = 0; i < Out[v].Notes.size(); ++i) {
+						if (InGrownHook(Q, Out[v], Out[v].Notes[i].Step))
+							continue;
+						Notes[Kind] += 1;
+						Length[Kind] += Out[v].Notes[i].Steps;
+						if (i > 0) {
+							++Moves;
+							Leaping += std::abs(Out[v].Notes[i].Pitch - Out[v].Notes[i - 1].Pitch) > 2 ? 1 : 0;
+						}
+					}
+					Leaps[Kind] += Moves > 0 ? static_cast<double>(Leaping) / Moves : 0.0;
+					++Count[Kind];
+					// Calm: phrases of 2 bars, each with its rest
+					if (Kind == GROW_CALM)
+						for (size_t p = 0; p < Out[v].Phrases.size(); ++p)
+							CHECK_EQ(Out[v].Phrases[p], 2);
+				}
+			}
+	CHECK(Notes[GROW_CALM] * 1.3 < Notes[GROW_LIVELY] && Notes[GROW_LIVELY] < Notes[GROW_ACTION]);
+	Check(Length[GROW_CALM] / Notes[GROW_CALM] > 1.4 * Length[GROW_LIVELY] / Notes[GROW_LIVELY], (std::to_string(Notes[0]) + " " +
+		std::to_string(Notes[1]) + " " + std::to_string(Notes[2]) + " " + std::to_string(Length[0] / Notes[0]) + " " +
+		std::to_string(Length[1] / Notes[1]) + " " + std::to_string(Length[2] / Notes[2]) + " " + std::to_string(Leaps[0] / Count[0]) + " " +
+		std::to_string(Leaps[1] / Count[1])).c_str(), __LINE__);
+	CHECK(Leaps[GROW_CALM] / Count[GROW_CALM] < Leaps[GROW_LIVELY] / Count[GROW_LIVELY]);
+	// Calm: 2-4 notes a bar outside the hook (its own notes as written)
+	CHECK(Notes[GROW_CALM] / Count[GROW_CALM] / 16.0 < 4.5);
+	// Variants: the same request gives the same versions; another variant others; the versions of one differ
+	const GrowRequest A = GrowCase("D4 G4 A4 B4 - A4 G4 -", "G Em C D G Bm C D", "G major", GROW_LIVELY, 1);
+	const std::vector<GrownVersion> First = Grown(A), Again = Grown(A);
+	GrowRequest B = A;
+	B.Variant = 2;
+	const std::vector<GrownVersion> Other = Grown(B);
+	CHECK(First.size() == 3u && Again.size() == 3u && Other.size() == 3u);
+	for (size_t v = 0; v < 3; ++v) {
+		CHECK(SameGrown(First[v].Notes, Again[v].Notes) && First[v].Shape == Again[v].Shape);
+		for (size_t w = 0; w < 3; ++w)
+			CHECK(!SameGrown(First[v].Notes, Other[w].Notes));
+		for (size_t w = v + 1; w < 3; ++w)
+			CHECK(!SameGrown(First[v].Notes, First[w].Notes));
+	}
+	// Variant 2 starts from the next form
+	CHECK(Other[0].Form == First[1].Form && Other[2].Form == First[0].Form);
+	// Over fewer than four bars, two versions
+	CHECK_EQ(Grown(GrowCase("D4 G4 A4 B4 - A4 G4 -", "G D", "G major", GROW_LIVELY)).size(), 2u);
+}
+
+// The versions of a reply, each its lines of steps
+std::vector<std::string> GrownLines(const std::string &Reply)
+{
+	std::vector<std::string> Out;
+	size_t At = Reply.find("\nVersion ");
+	while (At != std::string::npos) {
+		const size_t Next = Reply.find("\nVersion ", At + 1);
+		Out.push_back(StepLines(Reply.substr(At, Next == std::string::npos ? std::string::npos : Next - At)));
+		At = Next;
+	}
+	return Out;
+}
+
+std::string WithoutVolumes(const std::string &Line)
+{
+	std::string Out;
+	for (size_t i = 0; i < Line.size(); ++i) {
+		if (Line[i] == 'v' && i > 0 && Line[i - 1] != ' ') {
+			while (i + 1 < Line.size() && Line[i + 1] >= '0' && Line[i + 1] <= '9')
+				++i;
+			continue;
+		}
+		Out += Line[i];
+	}
+	return Out;
+}
+
+// The pauses review_arrangement counts: "in 3 of 4 two-bar spans"
+bool ReviewBreaths(const std::string &Review, int &Breaths, int &Spans)
+{
+	const size_t At = Review.find("or a note held two beats) in ");
+	if (At == std::string::npos)
+		return false;
+	return std::sscanf(Review.c_str() + At + 29, "%d of %d", &Breaths, &Spans) == 2;
+}
+
+// The tool on a song from make_groove: three versions as lines write_notes takes, each written, read back the same
+// (round trip), as the review counts its breaths, with no clash or note outside the key on its channel; pick writes the
+// same cells as write_notes with the line; the kind from the track's name; errors named
+void TestGrowTool()
+{
+	const char *const KEYS[] = { "G major", "A minor", "D dorian" };
+	// Hooks the grooves don't rub against (the town's Gmaj7 has an F# that a G over it rubs, the sad groove's Am9 a B)
+	const char *const MOTIFS[] = { "B4 A4 B4 D5 - B4 A4 -", "E4 - A4 G4 E4 - D4 -", "D4 - F4 G4 A4 - G4 -" };
+	for (int k = 0; k < 3; ++k)
+		for (int Long = 0; Long < 2; ++Long) {
+			FakeSong Song(Long ? 4 : 2);
+			Song.Info.DirectChanges = true;
+			const std::string Bars = Long ? "16" : "8";
+			// A groove for a mood, or for dorian (which no mood plays) its own chords
+			ToolResult Result = k == 2 ? Run(Song, "add_chords_and_bass", "{\"chords\": \"| Dm | G | Dm | C |\", \"key\": \"D dorian\", "
+				"\"chord_style\": \"broken\", \"bass_style\": \"root_fifth\", \"chord_channel\": \"Pulse 1\", \"from_bar\": 1, \"to_bar\": " +
+				Bars + "}") : Run(Song, "make_groove", std::string("{\"mood\": \"") + (k == 1 ? "sad" : "town") + "\", \"key\": \"" +
+				KEYS[k] + "\", \"bars\": " + Bars + ", \"chord_channel\": \"Pulse 1\"}");
+			Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+			const std::string Ask = std::string("{\"motif\": \"") + MOTIFS[k] + "\", \"channel\": \"VRC6 Pulse 1\", \"key\": \"" + KEYS[k] +
+				"\", \"to_bar\": " + Bars;
+			Result = Run(Song, "grow_melody", Ask + "}");
+			Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+			CHECK_HAS(Result.Text, "Three versions, each a line write_notes takes as notes");
+			CHECK_HAS(Result.Text, "pick 1, 2 or 3 with variant 1 writes one, and variant 2 gives others.");
+			Check(Contains(Result.Text, ("over bars 1-" + Bars + " on VRC6 Pulse 1, in " + KEYS[k] + ", lively").c_str()), Result.Text.c_str(),
+				__LINE__);
+			CHECK(Song.Writes == 1);	// only the groove: the versions are shown
+			const std::vector<std::string> Lines = GrownLines(Result.Text);
+			CHECK_EQ(Lines.size(), 3u);
+			for (size_t v = 0; v < Lines.size(); ++v) {
+				CHECK(Lines[v].compare(0, 3, "1: ") == 0);
+				FakeSong Copy = Song;
+				const ToolResult Written = Run(Copy, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": \"" +
+					StepsJson(Lines[v]) + "\"}");
+				Check(!Written.IsError, Written.Text.c_str(), __LINE__);
+				const ToolResult Read = Run(Copy, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"format\": \"steps\", \"to_bar\": " + Bars + "}");
+				Check(WithoutVolumes(StepLines(Read.Text)) == Lines[v], (StepLines(Read.Text) + "\n" + Lines[v]).c_str(), __LINE__);
+				// As the review hears it: a breath in 2 of every 3 two-bar spans or more
+				const ToolResult Review = Run(Copy, "review_arrangement", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+				int Breaths = 0, Spans = 0;
+				Check(ReviewBreaths(Review.Text, Breaths, Spans) && Spans >= 4 && Breaths * 3 >= Spans * 2, Review.Text.c_str(), __LINE__);
+				// check_song: nothing outside the key and no clash on its channel
+				const ToolResult Checked = Run(Copy, "check_song", "{\"key\": \"" + std::string(KEYS[k]) + "\", \"format\": \"json\"}");
+				const Json Findings = Parse(Checked.Text);
+				const Json *pList = Findings.Get("findings");
+				for (size_t f = 0; pList != 0 && f < pList->Size(); ++f) {
+					const Json &F = pList->At(f);
+					const std::string Kind = F.Get("kind") != 0 ? F.Get("kind")->String() : std::string();
+					const std::string Text = F.Get("message") != 0 ? F.Get("message")->String() : std::string();
+					Check(!((Kind == "clash" || Kind == "key" || Kind == "range") && Contains(Text, "VRC6 Pulse 1")), Text.c_str(), __LINE__);
+				}
+			}
+			// pick writes the version as write_notes writes its line
+			FakeSong Picked = Song, Listed = Song;
+			Result = Run(Picked, "grow_melody", Ask + ", \"pick\": 2, \"instrument\": \"Lead\"}");
+			Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+			CHECK_HAS(Result.Text, "Version 2 of the hook grown over bars 1-");
+			CHECK(!Run(Listed, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": \"" + StepsJson(Lines[1]) +
+				"\"}").IsError);
+			CHECK(Picked.Rows[5] == Listed.Rows[5]);
+			// Asked again, the same versions
+			CHECK_EQ(GrownLines(Run(Song, "grow_melody", Ask + "}").Text), Lines);
+		}
+
+	// The kind from the track's name, a free pulse by default, a soft lead on an empty channel, a clip without direct changes
+	FakeSong Night;
+	Night.Info.DirectChanges = true;
+	Night.Info.TrackName = "Village (night)";
+	CHECK(!Run(Night, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 8}").IsError);
+	ToolResult Result = Run(Night, "grow_melody", "{\"motif\": \"E4 - G4 - A4 - G4 -\"}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	// On the first free pulse (the groove's broken chords on 2A03 Pulse 1 aren't a melody to grow over)
+	Check(Contains(Result.Text, "over bars 1-8 on 2A03 Pulse 2, in C major, calm (the track's name says calm), over the chords the other "
+		"parts play:"), Result.Text.c_str(), __LINE__);
+	Night.Info.DirectChanges = false;
+	const int Writes = Night.Writes;
+	Result = Run(Night, "grow_melody", "{\"motif\": \"E4 - G4 - A4 - G4 -\", \"pick\": 1}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_EQ(Night.Writes, Writes);	// a clip: direct changes aren't allowed
+	Check(Night.Clips.size() == 1u && Night.Clips[0].Name == "Grown melody 1", Result.Text.c_str(), __LINE__);
+	Check(Contains(Result.Text, "Soft lead"), Result.Text.c_str(), __LINE__);
+	FakeSong Boss;
+	Boss.Info.DirectChanges = true;
+	Boss.Info.TrackName = "Boss battle";
+	CHECK(!Run(Boss, "make_groove", "{\"mood\": \"boss\", \"key\": \"A minor\", \"bars\": 8}").IsError);
+	Result = Run(Boss, "grow_melody", "{\"motif\": \"A3 A3 C4 E4 - D4 C4 -\", \"key\": \"A minor\"}");
+	Check(Contains(Result.Text, "in A minor, action (the track's name says so)"), Result.Text.c_str(), __LINE__);
+	// From the bar the motif's line names, 8 bars by default
+	FakeSong Later(4);
+	Later.Info.DirectChanges = true;
+	CHECK(!Run(Later, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 16}").IsError);
+	Result = Run(Later, "grow_melody", "{\"motif\": \"5: E4 - G4 - A4 - G4 -\"}");
+	Check(Contains(Result.Text, "grown over bars 5-12 on"), Result.Text.c_str(), __LINE__);
+	// The hook rubbing against the chords where it's first stated: said, and kept as written
+	FakeSong Rubbed;
+	Rubbed.Info.DirectChanges = true;
+	CHECK(!Run(Rubbed, "make_groove", "{\"mood\": \"town\", \"key\": \"G major\", \"bars\": 8, \"chord_channel\": \"Pulse 1\"}").IsError);
+	Result = Run(Rubbed, "grow_melody", "{\"motif\": \"D4 G4 A4 B4 - A4 G4 -\", \"channel\": \"VRC6 Pulse 1\"}");
+	Check(Contains(Result.Text, "The hook as written rubs a semitone against another part (G4 at bar 1 beat 1.5 against F#3 on 2A03 Pulse 1"),
+		Result.Text.c_str(), __LINE__);
+	CHECK(Contains(GrownLines(Result.Text)[0], "1: D4 G4 A4 B4 - A4 G4 -"));
+	// A short last bar holds its last note on; the motif's notes off the chord stay, said
+	Result = Run(Later, "grow_melody", "{\"motif\": \"F4 G4 A4 B4\", \"from_bar\": 1, \"to_bar\": 8}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "(its last bar had 4 steps of 8: its last note holds on to the bar line)");
+	CHECK_HAS(Result.Text, "off the chord on a strong beat; it stays as you wrote it");
+	// Errors
+	FakeSong Empty;
+	Result = Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\"}");
+	Check(Contains(Result.Text, "There are no chords in bars 1-8 to grow a melody over"), Result.Text.c_str(), __LINE__);
+	CHECK(!Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\", \"chords\": \"| C | Am | F | G |\"}").IsError);
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4\"}").Text, "a hook of 4-7 notes, a bar or two (this one has 3)");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - - - | A4\"}").Text, "its bar 1 has 9 steps, and a bar here holds 8");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"kind\": \"jazzy\"}").Text, "kind: calm");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"Noise\"}").Text, "not the noise");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"from_bar\": 1, \"to_bar\": 40}").Text, "32 bars");
+}
+
+// The descriptions, the instructions and the recipes say when to use it: write a hook, grow it, pick, then shape it by hand
+void TestGrowTaught()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	bool Listed = false;
+	for (size_t i = 0; i < Tools.List().size(); ++i) {
+		const ToolInfo &T = Tools.List()[i];
+		if (T.Name != "grow_melody")
+			continue;
+		const Json *pProps = T.InputSchema.Get("properties");
+		Listed = pProps->Get("motif") != 0 && pProps->Get("pick") != 0 && pProps->Get("variant") != 0 && pProps->Get("kind") != 0 &&
+			pProps->Get("chords") != 0 && Contains(T.Description, "pick the version that sings") && Contains(T.Description, "shape it by hand");
+	}
+	CHECK(Listed);
+	CHECK(ToolSet::IsCoreTool("grow_melody"));
+	CHECK_HAS(ToolSet::Instructions(), "grow_melody");
+	CHECK_HAS(ToolSet::CoreInstructions(), "grow_melody");
+	const char *const KINDS[] = { "calm", "lively", "action" };
+	for (int Core = 0; Core < 2; ++Core)
+		for (int k = 0; k < 3; ++k) {
+			Caller Who;
+			Who.Core = Core == 1;
+			const ToolResult Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + KINDS[k] + "\"}"), Who);
+			Check(Contains(Recipe.Text, "grow_melody"), Recipe.Text.c_str(), __LINE__);
+		}
+}
+
 int main()
 {
 	TestJson();
@@ -17073,6 +17563,11 @@ int main()
 	TestStepsMeters();
 	TestStepsRoundTrip();
 	TestStepsTaught();
+	TestGrowPhrases();
+	TestGrowShape();
+	TestGrowKinds();
+	TestGrowTool();
+	TestGrowTaught();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
