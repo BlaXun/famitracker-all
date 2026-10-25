@@ -104,7 +104,7 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 34 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 35 of them:
 `what_next` and the tools its steps call. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
@@ -113,8 +113,9 @@ microphone are clips); sounds: `add_instrument`, `design_instrument`,
 pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
 `vary_part`, `copy_bars`, `insert_bars`, `name_section`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
-`check_song`, `review_arrangement`, `check_loop`, `fix_loop`; and `play`,
-`stop`, `save_song`, `export_for_game` and `get_recipe`. Not `set_mixer`:
+`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
+(the last of them in one call); and `play`, `stop`, `save_song`,
+`export_for_game` and `get_recipe`. Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -343,16 +344,21 @@ is the recipes':
 5. The review's tips that suit the kind.
 6. An echo, last of the parts, since it copies the melody's notes as they
    are.
-7. `polish`, then the mix in the kind's style when another mix would change
-   the song, the loop's seam (`fix_loop`), saving, and the file for the game
-   at the kind's loudness (-20 LUFS; -22 calm, -19 action).
+7. The last steps: `polish`, then the mix in the kind's style when another
+   mix would change the song, the loop's seam (`fix_loop`) and the file for
+   the game at the kind's loudness (-20 LUFS; -22 calm, -19 action), as one
+   `finish_song` call from the first of them that's due (see [The last steps
+   in one call](#the-last-steps-in-one-call)): polish isn't asked again once
+   the song is mixed, nor the mix when only the seam is left. Then saving.
+   The file alone, older than the song or at another loudness, is
+   `export_for_game`.
 
 It takes `kind` (calm, lively or action; without one, calm when the track's
 name says so, else the general recipe), `skip` (steps to leave out, like
 `["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found
 now, in order). With direct changes off it asks for them first, since each
-step works on what the one before wrote. `export_for_game` notes in each
-file what it was made from (a print of the song as it sounds and the
+step works on what the one before wrote. `export_for_game` (and
+`finish_song`'s export) notes in each file what it was made from (a print of the song as it sounds and the
 loudness, as the `FAMITRACKER_PRINT` and `FAMITRACKER_LOUDNESS` comments), so
 `what_next` knows when the file is older than the song.
 
@@ -491,6 +497,65 @@ longer breathes in every span; a rest inside a bar, or a note held two
 beats, breathes as before. None of these findings comes up on the 56
 finished game tracks they were measured against.
 
+### Warnings as a part is written
+
+`write_notes` says at once what a composer would want to know about the part
+it just wrote, so a slip is caught before the song is built on it: the reply
+ends with a line starting "Warning:" for each, with what to do and, where one
+fits, the call that does it (after "Fix:"). It never refuses the part for
+them. A local model's first song had a lone short note every other bar on
+the triangle, on a pulse's soft sound, which nothing named until the song
+was done.
+
+- **Notes the channel doesn't play well**, in `check_song`'s words (the two
+  share the check): a 2A03 pulse under A-0, the triangle over C-6, the FDS
+  over G#7, where its pitch register tops out, an N163 wave over where the
+  chip turns it grainy (A#5 with 4 channels and a 16-sample wave).
+- **A bass too low to be heard as notes:** a note that sounds under 41 Hz,
+  E-0 on the sawtooth (E-1 on the triangle, which plays an octave under the
+  note written), a rumble on TV speakers and phones. FamiTracker's A-0 is
+  55 Hz, where the soundtrack's own sawtooth basses go; none of its finished
+  tracks goes under 41 Hz.
+- **A melody an octave too high:** a line sitting mostly in octave 5 and
+  reaching G-5 or higher, on a sound that holds (40% of its peak or more) at
+  a melody's volume, where melodies sing in octave 3 and reach into octave 4
+  at their high points (C-3 is middle C, A-3 440 Hz). Bells, music boxes and
+  sparkles, which fade or play softly, sit up there by design, and so do
+  echoes.
+- **Notes outside the track's key**, when the key was chosen (`set_key`, or
+  the piano roll's Key button): listed, with the question whether they're
+  meant and the key's notes a semitone away. A borrowed chord's notes are
+  meant: a note that another part also plays in that bar isn't asked about,
+  nor one that makes a major or minor chord with two notes the other parts
+  play there (a borrowed chord whose root only the bass plays, Db under F
+  and Ab in Eb major; a slip a semitone off a chord's note makes none), nor
+  a chromatic note of a beat or less stepping to or from its neighbour (an
+  approach, a passing note). With a key found from the notes
+  (major or minor, so a modal tune's own notes fall outside it), only a part
+  with a third of its notes outside is asked about.
+- **A bass nearly silent:** a lone short note now and then on the triangle
+  or the sawtooth, four bars or more from its first note to its last (a bass
+  that joins in an intro's last bars isn't, nor are bubbles over another
+  part playing in most of those bars, every one above its notes). The fix is
+  `add_chords_and_bass` with `chord_channel` none: a bass line there, on the
+  chords the parts play.
+- **A sound the channel doesn't play as it's meant:** on the triangle a
+  sound meant to be soft (its envelope peaks at 10 or under), which it plays
+  at full level until the envelope reaches 0, a hard blip (the fix:
+  `set_instrument` with the `bass` preset); another chip's instrument, whose
+  notes FamiTracker skips; on the sawtooth a VRC6 pulse sound that
+  overdrives it.
+
+The fixes move a whole part an octave with `transpose`; on the small set
+(`/mcp/core`), which hasn't `transpose`, a line of steps comes back moved an
+octave as a `write_notes` call. A part that became a clip gets the advice in
+words, since the song doesn't have it yet. The noise and the DPCM get none
+of these, and a sound effect only the first. On the soundtrack's 56
+finished tracks and its cues, written back part by part, they ask about one
+bar's notes outside a chosen key (a flat second coloring a harmonic minor)
+and repeat `check_song`'s N163 range findings in one track; the local
+model's draft gets its triangle warnings.
+
 ### Short replies
 
 `review_arrangement`, `check_song` and `measure_mix` take `format`
@@ -571,7 +636,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `what_next` | The one next step for the song, its call ready to send, and why; what's done and what's left. See [One step at a time](#one-step-at-a-time-what_next) |
 | `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it. With `format` `steps`, the part as a line of steps, a bar to a line, as `write_notes` takes a melody (see [Melodies in steps](#melodies-in-steps)) |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)) |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)). The reply warns at once of notes the channel doesn't play well, a bass too low to be heard or a melody an octave high, notes outside the key, a bass nearly silent and a sound the channel doesn't play as it's meant, each with what to do (see [Warnings as a part is written](#warnings-as-a-part-is-written)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves. Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
@@ -624,6 +689,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
+| `finish_song` | The last steps of a song in one call, for its kind: `polish` with the kind's touches, `mix` in the kind's style (its faders back at 0 dB first where they do the mix's work), `check_loop` and `fix_loop` where the seam needs it, and `export_for_game` at the kind's loudness; one Ctrl+Z undoes the song's changes, and the reply is a line a step and what to listen for. See [The last steps in one call](#the-last-steps-in-one-call) (direct changes only) |
 | `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play; `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
@@ -1977,6 +2043,61 @@ editor; they're muted again afterwards.
 A track whose notes click on the 2A03's pulses (see "Clicks in held notes
 on the 2A03's pulses") is exported as it is, and the reply says so:
 `polish` with the touch `clicks` nudges those notes, then export again.
+
+### The last steps in one call
+
+`finish_song` does the last steps the recipes ask for, in order, each on the
+song as the one before left it:
+
+1. `polish` with the kind's touches, the ones `what_next`'s polish step
+   gives: polish's calm style on a calm track, the lively recipe's touches
+   in its lively style on a lively stage, and polish's own for action and
+   the general recipe.
+2. `mix` in the kind's style: `calm`, `lively`, or `soft` for action and the
+   general recipe. When the mixer's faders do the mix's work (the melody's 4
+   dB down or more, or a part's 9 dB or more over it, as the review's finding
+   has it) it mixes with `faders` `reset`, so the balance goes into the
+   notes, as NSF files play it; `faders` `keep` leaves them, when you set
+   them, and `reset` sets every one back. Trims of a few dB stay, counted in
+   the mix.
+3. `check_loop`, and `fix_loop` where the seam needs it.
+4. `export_for_game` at the kind's loudness: -22 LUFS calm, -20 lively and
+   the general recipe, -19 action; a cue -20, a sound effect -18.
+
+The kind is `kind` (calm, lively, action or general), or calm when the
+track's name says so ("Town (night)"), else the general recipe's. A cue (a
+track that halts within half a minute) and a sound effect (a row a tick)
+keep their notes as written and only get their file. The melody is the one
+`melody_channel` names, or guessed once before the steps (so a step's
+changes can't move the guess), and the reply names it. `skip` leaves steps
+out (`polish`, `faders`, `mix`, `loop`, `export`), and `loudness` and
+`quality` go to the export. It needs direct changes (with `skip` `polish`,
+`mix` and `loop` it only exports), and the export a saved song: until then
+the reply gives the `export_for_game` call to make once it's saved.
+
+The song's changes are one Ctrl+Z, and the reply is short, a line a step and
+then what to listen for:
+
+```
+Finished "Town" as a lively stage, the melody on VRC6 Pulse 1 (guessed; melody_channel names another):
+- Polish: 32 bass notes on VRC6 Sawtooth cut short after half a beat.
+- Faders: back to 0 dB (2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB), which did the mix's work: ...
+- Mix (lively): as heard, the melody (VRC6 Pulse 1) 4.9 dB over the chords, the bass 3.8 under and the drums 11.9 under.
+- Loop: bars 5-16 (19.2 s), after an intro of 6.4 s; fix_loop wrote 400 on VRC6 Pulse 1 at bar 5 beat 1.
+- Export: Town.ogg: 25.6 s, 124 KB, its loop at -20.0 LUFS (...), the first 6.4 s once, then the loop from 6.4 s to the end.
+- GameMaker: audio_sound_loop_start(snd_town, 6.399125); audio_sound_loop_end(snd_town, 25.599125); ...
+One Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).
+Listen for: the melody clear on top of the parts, and the bass bouncing; the seam going round
+(play {"from_bar":15} plays the end into the loop; stop ends it).
+```
+
+The result is what the calls one after the other would give (`polish`, `mix`
+with the same melody, `fix_loop`, `export_for_game`): the same notes, mixer
+and file, with the print of the song `what_next` reads. The numbers are the
+tools' own (polish's and mix's styles), so a change to a style reaches the
+finish too. `what_next` gives it
+for the last steps, from the first of them that's due, with the kind and
+the melody it follows, and it's on the small set.
 
 ## Safety
 
