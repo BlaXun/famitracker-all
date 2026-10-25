@@ -53,6 +53,16 @@ int TemplateBPM();
 // beat (the first row highlight), and the speed and tempo for a BPM
 double SongBPM(int Speed, int Tempo, int FrameRate, int RowsPerBeat);
 void SpeedTempoForBPM(int Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo);
+// The BPM box shows BPM_LEAST to BPM_MOST. A song at speed 1 (a sound effect,
+// ambience) has no beat to count there, and its BPM read 900: the box shows
+// the frames a row lasts ("1 frame") under the label Speed, and 1 typed, a
+// BPM over BPM_MOST or a step past it set speed 1 at the default tempo, a row
+// a frame (FrameTempo); ftapi::LayoutWantsFrames in Api/Music.h decides
+const int BPM_LEAST = 20, BPM_MOST = 400;
+bool BPMShowsFrames(int Speed);
+CString BPMFramesText(int Speed, int Tempo, int FrameRate);
+bool BPMWantsFrames(int Bpm);
+int FrameTempo(int FrameRate);
 
 // Takes the rarely used items out of a copy of the main menu, and the
 // separators they leave doubled

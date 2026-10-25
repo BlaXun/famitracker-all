@@ -844,7 +844,45 @@ std::vector<int> ScaledSteps(const std::vector<int> &Items, double Factor)
 	return Out;
 }
 
+// A studied volume whose release ends above 0, as the instruments made from it play it (ReleaseFadeFrames): the fade
+// from its last level, halving a frame, after the items an instrument holds (MAX_ITEMS), or in place of its last items
+// when that's full (never the release point's own); *pFaded is how many frames it takes. The rest as it was
+ReferenceSequence FadedRelease(const ReferenceSequence &Volume, int *pFaded = 0)
+{
+	ReferenceSequence Out = Volume;
+	if (pFaded != 0)
+		*pFaded = 0;
+	if (Out.Items.size() > static_cast<size_t>(MAX_ITEMS))
+		Out.Items.resize(static_cast<size_t>(MAX_ITEMS));
+	if (Out.Release < 0 || Out.Release >= static_cast<int>(Out.Items.size()) || Out.Items.back() <= 0)
+		return Out;
+	std::vector<int> Fade;
+	for (int Level = Out.Items.back() / 2; ; Level /= 2) {
+		Fade.push_back(Level);
+		if (Level == 0)
+			break;
+	}
+	const size_t Keep = std::max(static_cast<size_t>(Out.Release + 1), std::min(Out.Items.size(), static_cast<size_t>(MAX_ITEMS) -
+		Fade.size()));
+	Out.Items.resize(Keep);
+	Out.Items.insert(Out.Items.end(), Fade.begin(), Fade.end());
+	if (Out.Items.size() > static_cast<size_t>(MAX_ITEMS)) {
+		Out.Items.resize(static_cast<size_t>(MAX_ITEMS));
+		Out.Items.back() = 0;
+	}
+	if (pFaded != 0)
+		*pFaded = static_cast<int>(Fade.size());
+	return Out;
+}
+
 }	// namespace
+
+int ReleaseFadeFrames(const ReferenceSound &Sound)
+{
+	int Faded = 0;
+	FadedRelease(Sound.Sequences[SEQUENCE_VOLUME], &Faded);
+	return Faded;
+}
 
 Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name)
 {
@@ -868,7 +906,8 @@ Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name)
 		P.SequencesVRC6.push_back(S);
 	}
 	for (int t = 0; t < 5; ++t) {
-		const ReferenceSequence &q = Sound.Sequences[t];
+		// a release that ends above 0 fades out (it would drone on)
+		const ReferenceSequence q = t == SEQUENCE_VOLUME ? FadedRelease(Sound.Sequences[t]) : Sound.Sequences[t];
 		if (q.Items.empty())
 			continue;
 		PresetSequence S;
@@ -958,7 +997,8 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 	}
 	static const int TYPES[] = { SEQUENCE_VOLUME, SEQUENCE_ARPEGGIO, SEQUENCE_PITCH };
 	for (int i = 0; i < 3; ++i) {
-		const ReferenceSequence &q = Sound.Sequences[TYPES[i]];
+		// a release that ends above 0 fades out (it would drone on)
+		const ReferenceSequence q = TYPES[i] == SEQUENCE_VOLUME ? FadedRelease(Sound.Sequences[TYPES[i]]) : Sound.Sequences[TYPES[i]];
 		if (q.Items.empty())
 			continue;
 		PresetSequence S;
@@ -1079,7 +1119,8 @@ WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Nam
 	// channels (a period of 253, a frequency of 241); the FDS's four times finer
 	static const int TYPES[] = { SEQUENCE_VOLUME, SEQUENCE_ARPEGGIO, SEQUENCE_PITCH, SEQUENCE_HIPITCH };
 	for (int i = 0; i < 4; ++i) {
-		const ReferenceSequence &q = Sound.Sequences[TYPES[i]];
+		// a release that ends above 0 fades out (it would drone on)
+		const ReferenceSequence q = TYPES[i] == SEQUENCE_VOLUME ? FadedRelease(Sound.Sequences[TYPES[i]]) : Sound.Sequences[TYPES[i]];
 		if (q.Items.empty())
 			continue;
 		PresetSequence S;

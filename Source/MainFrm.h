@@ -158,6 +158,9 @@ private:
 	void	RebuildMainMenu(bool Fewer);
 	void	LayoutSongSettings(bool BPM);
 	double	CurrentBPM() const;
+	bool	BPMFrames() const;		// the song shows as the frames a row lasts (speed 1, BPMShowsFrames)
+	void	ShowBPMLabel();			// the tempo row's label: Speed for such a song, else BPM
+	void	ShowBPMText();			// the box's BPM or frames, from its start, and the label
 	CString	BPMText() const;
 	void	SetBPM(int Bpm);
 

@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ftapi {
 
@@ -282,6 +283,33 @@ bool TappedSpeedTempo(double Tapped, int RowsPerBeat, int FrameRate, int Current
 	ChooseSpeedTempo(Wanted, Beat, FrameRate, CurrentSpeed, SplitPoint, Speed, Tempo);
 	Bpm = BeatsPerMinute(Speed, Tempo, FrameRate, Beat);
 	return true;
+}
+
+bool LayoutShowsFrames(int Speed)
+{
+	return Speed == 1;
+}
+
+std::string LayoutFramesText(int Speed, int Tempo, int FrameRate)
+{
+	const double Rows = RowsPerMinute(Speed, Tempo, FrameRate);
+	const double Frames = Rows > 0.0 ? 60.0 * FrameRate / Rows : static_cast<double>(Speed);
+	const double Whole = std::floor(Frames + 0.5);
+	char Text[32];
+	if (std::fabs(Frames - Whole) < 0.005) {
+		std::snprintf(Text, sizeof(Text), Whole == 1.0 ? "%.0f frame" : "%.0f frames", Whole);
+		return Text;
+	}
+	std::snprintf(Text, sizeof(Text), "%.2f", Frames);
+	std::string Shown = Text;
+	while (Shown[Shown.size() - 1] == '0')
+		Shown.erase(Shown.size() - 1);
+	return Shown + " frames";
+}
+
+bool LayoutWantsFrames(int Bpm)
+{
+	return Bpm == 1 || Bpm > LAYOUT_MOST_BPM;
 }
 
 }	// namespace ftapi

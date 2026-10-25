@@ -44,6 +44,8 @@ struct SoundEffectKind {
 	transcribe::SoundEffect (*Make)();
 	bool Loops;					// ambience a game plays over and over (wind, rain): its track loops, and its end
 								// goes on into its start
+	transcribe::SoundEffect (*MakeLong)(double Seconds);	// a loop whose random parts (gusts, drops, crackle) are
+								// drawn for as long as asked (LoopOfLength); 0 for one that plays its own loop over and over
 };
 
 const std::vector<SoundEffectKind> &SoundEffectKinds();
@@ -61,8 +63,11 @@ struct SoundEffectChanges {
 
 // A sound with the changes made: the pitch moved, stretched in time, louder
 // or softer. A variant moves the pitch and the length its own way, the same
-// each time, and every other one changes a pulse's duty.
-transcribe::SoundEffect ChangeSoundEffect(const transcribe::SoundEffect &Effect, const SoundEffectChanges &Changes);
+// each time, and every other one changes a pulse's duty. A layer longer than
+// Most ticks is cut there (an instrument's; a loop's layers play as pieces,
+// SoundPieces, so a loop passes its own most).
+transcribe::SoundEffect ChangeSoundEffect(const transcribe::SoundEffect &Effect, const SoundEffectChanges &Changes,
+	int Most = transcribe::SFX_MAX_TICKS);
 // Changes.LengthPercent made smaller when the changed sound would last more
 // than Most ticks, so it fits whole; true if it had to be
 bool FitSoundEffect(const transcribe::SoundEffect &Effect, int Most, SoundEffectChanges &Changes);
@@ -131,9 +136,10 @@ struct SfxLayerDesign {
 // channel share one when they don't sound at once. Loop: the sound repeats,
 // so what reaches its end goes on into its start, as gusts and wobbles do.
 // False with the reason when the layers don't fit the 2A03 (it has Pulses
-// pulse channels here, one triangle and one noise) or run too long.
+// pulse channels here, one triangle and one noise) or run too long: longer
+// than Most ticks (0: MaxSoundTicks(Loop); a loop in a song, MaxLoopTicks).
 bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds, int FrameRate, int Seed, bool Loop, int Pulses,
-	transcribe::SoundEffect &Out, std::string &Problem);
+	transcribe::SoundEffect &Out, std::string &Problem, int Most = 0);
 
 // A layer in words, as the tool reports it: "noise from 0.2 s for 1 s:
 // 6 hits, pitch 6 to 4, volume 9 fading to 2, a flutter at 8 Hz"
@@ -142,5 +148,31 @@ std::string DescribeLayerDesign(const SfxLayerDesign &Layer);
 // The longest a sound effect can be: a layer's ticks (FamiTracker's longest
 // sequence), one fewer for one that loops (its end mustn't fall silent)
 int MaxSoundTicks(bool Loop);
+
+// Loops as long as asked: ambience (rain, wind, a crowd) wants 30 seconds or
+// more, where an instrument's sequences hold 4.2 s. A layer longer than that
+// plays as pieces (SoundPieces), an instrument each, with a note where each
+// starts; FamiTracker's pulse writes its period's high byte only when it
+// changes and the noise its registers every tick, so the sound runs on across
+// the pieces. The longest loop a song holds: its frames' rows, a row a tick
+// (MaxFrames frames of PatternLength rows); its instruments limit it too
+// (make_sound_effect says so).
+int MaxLoopTicks(int MaxFrames, int PatternLength);
+// A layer as the pieces it plays in, each at most MaxSoundTicks(true) ticks
+// (its instrument's volume holds it and the 0 it ends with, which the next
+// piece's note replaces): the layer itself when it fits, else equal pieces,
+// or whole turns of a loop Period ticks long played over and over, as many
+// as divide its length, so its pieces are alike and share an instrument. A
+// piece silent throughout is left out: the one before it ends in silence.
+std::vector<transcribe::SfxLayer> SoundPieces(const transcribe::SfxLayer &Layer, int Period = 0);
+// A kind that loops, Seconds long (at 60 ticks a second, as the kinds are
+// made) with the changes made (ChangeSoundEffect; its length the one asked,
+// a variant's own stretch counted in): one with random parts (MakeLong:
+// wind's gusts, rain's drops, a fire's crackle) drawn for the whole length,
+// the others (an engine, an alarm, a heartbeat) their own loop played over and
+// over, as many whole times as come nearest. At most Most ticks. Period: that
+// loop's ticks, 0 for the drawn ones.
+transcribe::SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const SoundEffectChanges &Changes, int Most,
+	int &Period);
 
 }	// namespace ftapi

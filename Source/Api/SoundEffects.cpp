@@ -343,33 +343,50 @@ SoundEffect Designed(const std::vector<SfxLayerDesign> &Layers, bool Loop, doubl
 {
 	SoundEffect Out;
 	std::string Problem;
-	DesignSoundEffect(Layers, Seconds, 60, 1, Loop, 2, Out, Problem);
+	DesignSoundEffect(Layers, Seconds, 60, 1, Loop, 2, Out, Problem, Loop ? 1 << 20 : 0);	// a loop as long as it's made
 	return Out;
 }
 
-SoundEffect Wind()		// a heavy wind: dark noise in uneven gusts, louder and brighter as each one blows
+// The loops of ambience, Seconds long: their random parts drawn for the whole of it
+
+SoundEffect WindFor(double Seconds)	// a heavy wind: dark noise in uneven gusts, louder and brighter as each one blows
 {
-	SfxLayerDesign Air = Layer(NOISE, 0.0, 4.0, 6, -1, 10, SFX_STEADY);
-	Air.Gusts = 3;
+	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 6, -1, 10, SFX_STEADY);
+	Air.Gusts = std::max(1, Round(0.75 * Seconds));	// three in four seconds
 	return Designed({ Air }, true);
 }
 
-SoundEffect Rain()		// a soft, bright hiss with drops pattering on it, and now and then a drop plinking
+SoundEffect RainFor(double Seconds)	// a soft, bright hiss with drops pattering on it, and now and then a drop plinking
 {
-	SfxLayerDesign Hiss = Layer(NOISE, 0.0, 4.0, 13, -1, 3, SFX_STEADY);
+	SfxLayerDesign Hiss = Layer(NOISE, 0.0, Seconds, 13, -1, 3, SFX_STEADY);
 	Hiss.Crackle = 0.4;
-	SfxLayerDesign Plinks = Layer(PULSE, 0.0, 4.0, 84, -1, 4, SFX_DROPS);
+	SfxLayerDesign Plinks = Layer(PULSE, 0.0, Seconds, 84, -1, 4, SFX_DROPS);
 	Plinks.Crackle = 0.25;
 	Plinks.Duty = 0;
 	return Designed({ Hiss, Plinks }, true);
 }
 
-SoundEffect Fire()		// a dark, flickering roar with crackles popping out of it
+SoundEffect FireFor(double Seconds)	// a dark, flickering roar with crackles popping out of it
 {
-	SfxLayerDesign Roar = Layer(NOISE, 0.0, 4.0, 3, -1, 5, SFX_STEADY);
-	Roar.Gusts = 6;
+	SfxLayerDesign Roar = Layer(NOISE, 0.0, Seconds, 3, -1, 5, SFX_STEADY);
+	Roar.Gusts = std::max(1, Round(1.5 * Seconds));	// six in four seconds
 	Roar.Crackle = 0.6;
 	return Designed({ Roar }, true);
+}
+
+SoundEffect Wind()
+{
+	return WindFor(4.0);
+}
+
+SoundEffect Rain()
+{
+	return RainFor(4.0);
+}
+
+SoundEffect Fire()
+{
+	return FireFor(4.0);
 }
 
 SoundEffect Thunder()	// a bright crack, then a rough rumble rolling away in waves, over a low boom
@@ -453,6 +470,7 @@ SoundEffectKind Kind(const char *Name, const char *Use, std::vector<std::string>
 	K.Words = Words;
 	K.Make = Make;
 	K.Loops = Loops;
+	K.MakeLong = 0;
 	return K;
 }
 
@@ -487,10 +505,13 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.push_back(Kind("fall", "a long falling whistle, for falling into a pit", { "falling", "pit" }, Fall));
 	All.push_back(Kind("wind", "a heavy wind blowing in gusts (loops, for ambience)", { "breeze", "gale", "gust", "gusts", "heavy wind",
 		"howling wind", "windy", "blizzard" }, Wind, true));
+	All.back().MakeLong = WindFor;
 	All.push_back(Kind("rain", "rain: a soft hiss with drops pattering (loops, for ambience)", { "rainfall", "drizzle", "downpour",
 		"raining", "rainy", "shower" }, Rain, true));
+	All.back().MakeLong = RainFor;
 	All.push_back(Kind("fire", "a fire flickering and crackling (loops, for ambience)", { "flames", "campfire", "fireplace", "burning",
 		"crackle", "crackling", "torch", "bonfire" }, Fire, true));
+	All.back().MakeLong = FireFor;
 	All.push_back(Kind("thunder", "a crack of thunder rumbling away", { "thunderclap", "lightning", "thunderstorm", "rumble",
 		"storm" }, Thunder));
 	All.push_back(Kind("birds", "two birds chirping, one answering the other", { "bird", "chirp", "chirps", "tweet", "birdsong",
@@ -669,7 +690,7 @@ int SoundTrackRows(const SoundEffect &Effect, bool Loop)
 	return std::max(Effect.length(), Sounding + SFX_SILENT_TICKS) + 1;
 }
 
-SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChanges &Changes)
+SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChanges &Changes, int Most)
 {
 	int Semitones = Changes.Semitones;
 	double Stretch = Changes.LengthPercent / 100.0;
@@ -699,8 +720,8 @@ SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChange
 			const int Was = Layer.volume[t];
 			Layer.volume[t] = Was == 0 ? 0 : std::max(1, std::min(15, Round(Was * Changes.VolumePercent / 100.0)));
 		}
-		if (static_cast<int>(Layer.volume.size()) > transcribe::SFX_MAX_TICKS)
-			Layer.volume.resize(static_cast<size_t>(transcribe::SFX_MAX_TICKS));
+		if (static_cast<int>(Layer.volume.size()) > Most)
+			Layer.volume.resize(static_cast<size_t>(std::max(1, Most)));
 		Out.layers.push_back(Layer);
 	}
 	return Out;
@@ -717,6 +738,94 @@ SfxLayerDesign::SfxLayerDesign() : Channel(transcribe::SfxChannel::Pulse), Start
 int MaxSoundTicks(bool Loop)
 {
 	return transcribe::SFX_MAX_TICKS - (Loop ? 1 : 0);
+}
+
+int MaxLoopTicks(int MaxFrames, int PatternLength)
+{
+	return std::max(MaxSoundTicks(true), MaxFrames * PatternLength);
+}
+
+std::vector<SfxLayer> SoundPieces(const SfxLayer &Layer, int Period)
+{
+	std::vector<SfxLayer> Out;
+	const int Length = Layer.length(), Most = MaxSoundTicks(true);
+	if (Length <= Most || (Length == transcribe::SFX_MAX_TICKS && Layer.volume.back() == 0)) {
+		Out.push_back(Layer);
+		return Out;
+	}
+	// Equal pieces; for a loop played over and over, whole turns of it that divide its length, so every piece is alike
+	const int Count = (Length + Most - 1) / Most;
+	int Piece = (Length + Count - 1) / Count;
+	if (Period > 0 && Period <= Most) {
+		const int Turns = (Length + Period - 1) / Period;
+		int Each = Most / Period;
+		while (Each > 1 && Turns % Each != 0)
+			--Each;
+		Piece = Period * Each;
+	}
+	for (int From = 0; From < Length; From += Piece) {
+		SfxLayer P;
+		P.channel = Layer.channel;
+		P.start = Layer.start + From;
+		bool Sounds = false;
+		for (int t = From; t < std::min(Length, From + Piece); ++t) {
+			P.volume.push_back(Layer.volume[static_cast<size_t>(t)]);
+			P.pitch.push_back(Layer.pitchAt(t));
+			P.duty.push_back(Layer.dutyAt(t));
+			Sounds = Sounds || Layer.volume[static_cast<size_t>(t)] > 0;
+		}
+		if (Sounds)
+			Out.push_back(P);
+	}
+	return Out;
+}
+
+namespace {
+
+// A loop played Times times over, each layer one layer still, silent between its turns
+SoundEffect Repeated(const SoundEffect &Base, int Times)
+{
+	const int Length = Base.length();
+	SoundEffect Out;
+	for (size_t l = 0; l < Base.layers.size(); ++l) {
+		const SfxLayer &Layer = Base.layers[l];
+		SfxLayer Long;
+		Long.channel = Layer.channel;
+		Long.start = Layer.start;
+		for (int t = 0; t < Times * Length - Layer.start; ++t) {
+			const int In = (Layer.start + t) % Length - Layer.start;	// in its own time, below 0 before it starts again
+			const int At = std::max(0, std::min(Layer.length() - 1, In));
+			Long.volume.push_back(In >= 0 && In < Layer.length() ? Layer.volume[static_cast<size_t>(In)] : 0);
+			Long.pitch.push_back(Layer.pitchAt(At));
+			Long.duty.push_back(Layer.dutyAt(At));
+		}
+		Out.layers.push_back(Long);
+	}
+	return Out;
+}
+
+}	// namespace
+
+SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const SoundEffectChanges &Asked, int Most, int &Period)
+{
+	SoundEffectChanges Changes = Asked;
+	Changes.LengthPercent = 100;		// the length is the one asked
+	const double Stretch = StretchOf(Changes);	// a variant's own
+	Period = 0;
+	if (Kind.MakeLong != 0) {
+		const double Made = std::min(Seconds, Most / 60.0) / Stretch;
+		SoundEffect Out = ChangeSoundEffect(Kind.MakeLong(Made), Changes, 1 << 20);
+		while (Out.length() > Most && Changes.Variant > 1)	// rounding: a tick or two over
+			Out = ChangeSoundEffect(Kind.MakeLong(Made - (Out.length() - Most + 1) / (60.0 * Stretch)), Changes, 1 << 20);
+		return Out;
+	}
+	const SoundEffect Base = ChangeSoundEffect(Kind.Make(), Changes, 1 << 20);
+	const int Length = Base.length();
+	if (Length <= 0)
+		return Base;
+	const int Times = std::max(1, std::min(std::max(1, Most / Length), Round(Seconds * 60.0 / Length)));
+	Period = Length;
+	return Repeated(Base, Times);
 }
 
 namespace {
@@ -828,7 +937,7 @@ Shape MakeShape(const SfxLayerDesign &D, int FrameRate, bool Wraps, Random &R)
 {
 	const bool Noise = D.Channel == NOISE;
 	const int N = std::max(1, Round(D.Seconds * FrameRate));
-	const int Repeats = std::max(1, std::min(64, D.Repeats));
+	const int Repeats = std::max(1, std::min(256, D.Repeats));
 	const double Gap = D.Gap < 0.0 ? (Repeats > 1 ? 0.25 : 0.0) : std::max(0.0, std::min(0.9, D.Gap));
 	const double Loudest = std::max(1, std::min(15, D.Volume));
 	const double Last = D.VolumeTo < 0 ? Loudest : std::max(0, std::min(15, D.VolumeTo));
@@ -870,7 +979,7 @@ Shape MakeShape(const SfxLayerDesign &D, int FrameRate, bool Wraps, Random &R)
 
 	// Gusts: louder and higher, softer and lower, unevenly
 	if (D.Gusts > 0) {
-		const std::vector<double> G = GustCurve(N, std::min(D.Gusts, 32), R);
+		const std::vector<double> G = GustCurve(N, std::min(D.Gusts, 128), R);
 		for (int t = 0; t < N; ++t) {
 			const double g = G[static_cast<size_t>(t)];
 			S.Volume[static_cast<size_t>(t)] *= 0.3 + 0.7 * g;
@@ -958,11 +1067,11 @@ SfxLayer ToLayer(const Shape &S)
 }    // namespace
 
 bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds, int FrameRate, int Seed, bool Loop, int Pulses,
-	SoundEffect &Out, std::string &Problem)
+	SoundEffect &Out, std::string &Problem, int Longest)
 {
 	Out = SoundEffect();
 	FrameRate = std::max(1, FrameRate);
-	const int Most = MaxSoundTicks(Loop);
+	const int Most = Longest > 0 ? Longest : MaxSoundTicks(Loop);
 	const double MostSeconds = static_cast<double>(Most) / FrameRate;
 	if (Layers.empty()) {
 		Problem = "The sound has no layers.";

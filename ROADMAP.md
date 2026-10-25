@@ -170,7 +170,9 @@ shows; the songs themselves stay ordinary modules.
   instruments from the presets (a lead, chords, a bass, a kick, a snare, a
   hi-hat, a pad and a sawtooth bass); BPM shows in place of speed and tempo
   in the song settings (typing or stepping a BPM picks the speed and tempo,
-  as Claude Code does); and rarely used menu items are hidden (text import
+  as Claude Code does; a song at speed 1, a sound effect's, shows as "Speed
+  1 frame", and typing 1 or stepping past 400 BPM sets it); and rarely used
+  menu items are hidden (text import
   and export, the masks, expand and shrink, the register and DPCM displays,
   NTSC and PAL, the engine speed and a few more; their shortcuts still
   work).
