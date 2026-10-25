@@ -1065,11 +1065,12 @@ take their place as they play beside each other (a pad that joins the
 arpeggios at the climax keeps its place against them), and a second voice
 or a double that moves with the tune is a line, not a pad's voice; a part
 already within half a dB of its place stays as it is, so a second lively
-mix leaves a mixed song alone. The chords together stay at least 1 dB
+mix leaves a mixed song alone. The chords together stay at least 2 dB
 under the melody in every part of the song (each named section, or four
-bars at a time): where a pad joins them at the climax, their place over
-the whole song would put them over the melody there, so they stay further
-under it over the song, and the reply says where they play loudest.
+bars at a time; nearer, the review hears them cover it): where a pad
+joins them at the climax, their place over the whole song would put them
+over the melody there, so they stay further under it over the song, and
+the reply says where they play loudest.
 The triangle, which has no volume, gets its place from the DPCM level,
 unless `dac` is given (the noise moves with it, and the drums make up for
 it). With samples on the DPCM channel the level goes no higher than Z40,

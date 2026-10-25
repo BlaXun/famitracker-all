@@ -21203,7 +21203,7 @@ void TestMixWithoutStyle()
 	CHECK_HAS(Result.Text, "a lively mix");
 }
 
-// A lively mix keeps the chords together 1 dB under the melody in every part at the least: the later stage with its pads
+// A lively mix keeps the chords together 2 dB under the melody in every part at the least: the later stage with its pads
 // at 15 in B (bars 13-16) and at 4 before, where the chords' place over the whole song would put B's pads over the melody
 // (as it put a later stage's climax pads 1 dB over its melody under Wine)
 void TestLivelyChordsTop()
@@ -21217,12 +21217,13 @@ void TestLivelyChordsTop()
 			Song.Rows[static_cast<size_t>(PADS[v])][static_cast<size_t>((Bar - 1) * 16)].Volume = 15;
 	ToolResult Result = Run(Song, "mix", LATER);
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, " The chords together play loudest in B (bars 13-16), so they stay 1 dB under the melody there and further "
+	CHECK_HAS(Result.Text, " The chords together play loudest in B (bars 13-16), so they stay 2 dB under the melody there and further "
 		"under it over the song.");
 	const std::string Climax = Run(Song, "review_arrangement", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", "
 		"\"from_bar\": 13, \"to_bar\": 16}").Text;
 	const double There = MelodyOverChords(Climax, "VRC6 Pulse 1");
-	Check(There >= 0.5 && There <= 2.0, Climax.c_str(), __LINE__);	// 1, give or take a volume step's rounding
+	// 2, give or take half a volume step: the pads come down to 4 there, where a step is 2.5 dB
+	Check(There >= 1.0 && There <= 3.0, Climax.c_str(), __LINE__);
 	// The pads' step by section kept: B's louder than A's
 	Check(Song.Rows[0][0].Volume < NO_VOLUME && Song.Rows[0][192].Volume > Song.Rows[0][0].Volume, Result.Text.c_str(), __LINE__);
 	// A second mix leaves it, and says why the chords sit under their place

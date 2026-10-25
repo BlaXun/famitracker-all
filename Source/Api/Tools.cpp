@@ -9090,10 +9090,10 @@ struct HeardPlaces {
 // (the melody's loudest at 9), where a volume step is 2-3 dB, and a second mix would otherwise round them anew
 const double BAND_SLACK = 0.5;
 // ...and keeps the chords together this far under the melody in every part of the song at the least (a named section, or
-// four bars): a pad joining them at the climax would otherwise cover the melody there. (The soundtrack's first stages had
-// their chords from level with the melody to 3 dB under it by four bars; a later one, mixed to the chords' place over the
-// whole song, put its climax's pads 1 dB over its melody)
-const double LIVELY_CHORDS_TOP = 1.0;
+// four bars), where the review hears chords cover the melody: a pad joining them at the climax would otherwise cover it
+// there. (A later stage mixed to the chords' place over the whole song put its B's pads 1 dB over its melody under Wine;
+// the first stages' chords, mixed, ran 2-5 dB under theirs by four bars, which this leaves as they were)
+const double LIVELY_CHORDS_TOP = 2.0;
 
 HeardPlaces PlacesFor(bool Calm)
 {
