@@ -143,8 +143,8 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 // chip's with a wave from its channel (its duty's pulse, a wave for each duty its duty sequence steps through, the
 // triangle, the sawtooth, an FDS sound's wave resampled). Its volume counted 0-15 (an FDS sound's from 0-32, a
 // triangle's as it plays: full or silent), its arpeggio as it was, its pitch and hi-pitch sequences in the N163's
-// steps, which move a frequency (a 2A03 or VRC6 sound's turned around, alike around A-4 with four channels; an FDS
-// sound's four times coarser). How says in words what it plays.
+// steps, which move a frequency (a 2A03 or VRC6 sound's turned around, alike around A-3, 440 Hz, with four channels;
+// an FDS sound's four times coarser). How says in words what it plays.
 WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Name, std::string &How);
 // A short name for an instrument from a sound: "Magma Tanker lead"
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound);

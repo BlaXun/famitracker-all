@@ -476,18 +476,24 @@ std::vector<int> N163SawtoothWave()
 	return N163WaveOf(Steps, 31);
 }
 
+int N163CycleLength(const std::vector<int> &Samples)
+{
+	size_t Size = Samples.size();
+	while (Size >= 8 && Size % 2 == 0) {
+		const std::vector<int>::const_iterator Half = Samples.begin() + static_cast<std::ptrdiff_t>(Size / 2);
+		if (!std::equal(Samples.begin(), Half, Half, Half + static_cast<std::ptrdiff_t>(Size / 2)))
+			break;
+		Size /= 2;
+	}
+	return static_cast<int>(Size);
+}
+
 std::vector<int> N163WaveOf(const std::vector<int> &Samples, int Top)
 {
-	std::vector<int> Cycle(Samples);
-	if (Cycle.empty())
+	if (Samples.empty())
 		return std::vector<int>(N163_WAVE_SIZE, 8);
 	// One cycle: a wave drawn twice over its length plays an octave higher than its length says
-	while (Cycle.size() >= 8 && Cycle.size() % 2 == 0) {
-		const std::vector<int>::const_iterator Half = Cycle.begin() + static_cast<std::ptrdiff_t>(Cycle.size() / 2);
-		if (!std::equal(Cycle.cbegin(), Half, Half, Cycle.cend()))
-			break;
-		Cycle.resize(Cycle.size() / 2);
-	}
+	const std::vector<int> Cycle(Samples.begin(), Samples.begin() + static_cast<std::ptrdiff_t>(N163CycleLength(Samples)));
 	// Each of the 16 samples the mean of the stretch of the wave it covers (the wave held between its samples)
 	const double Size = static_cast<double>(Cycle.size()), Scale = 15.0 / std::max(1, Top);
 	std::vector<int> Out;

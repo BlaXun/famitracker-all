@@ -17594,6 +17594,23 @@ int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::
 	return Index;
 }
 
+// What reference_sound says of an N163 sound whose wave's cycle (Cycle samples) isn't the 16 FamiTracker plays in
+// tune: its notes sounded off the notes written (the importer writes the note of the frequency register, whatever
+// the wave's length), and as a wave of 16 they sound as written
+std::string N163RegisterRemark(int Cycle)
+{
+	if (Cycle <= 0 || Cycle == N163_WAVE_SIZE)
+		return std::string();
+	const double Semitones = 12.0 * std::log2(static_cast<double>(N163_WAVE_SIZE) / Cycle);
+	const int Steps = static_cast<int>(std::floor(std::fabs(Semitones) + 0.5));
+	const bool Octaves = Steps % 12 == 0 && std::fabs(std::fabs(Semitones) - Steps) < 0.01;
+	const std::string Far = Octaves ? (Steps == 12 ? std::string("an octave") : Format("%d octaves", Steps / 12)) :
+		Format("about %d semitones", Steps);
+	return Format(" Its wave is a cycle of %d samples, so its notes sounded %s %s the notes written (FamiTracker plays a "
+		"cycle of 16 in tune); here they sound as written, so write its part %s %s to keep its register.", Cycle, Far.c_str(),
+		Semitones < 0 ? "under" : "over", Far.c_str(), Semitones < 0 ? "lower" : "higher");
+}
+
 // What reference_sound says of a reference's sound it made an N163 instrument (a wave sound: the VRC6 Plus's soft layer
 // plays them), Index, named Name: what it plays (How, where its wave went), its level when it's new, what changed from
 // its own chip, and its notes when they vanish
@@ -17616,7 +17633,9 @@ std::string SoftReferenceText(Session &S, const ReferenceSound &Sound, const std
 			"part an octave lower to keep its register.";
 	else if (Sound.Chip != "N163" && Bends)
 		Out += " Its pitch sequence is turned around for the N163, whose steps raise the pitch where a pulse's lower it (alike "
-			"around A-4; lower notes bend more, higher ones less).";
+			"around A-3, 440 Hz; lower notes bend more, higher ones less).";
+	else if (Sound.Chip == "N163" && !Sound.N163Waves.empty())
+		Out += N163RegisterRemark(N163CycleLength(Sound.N163Waves[0]));
 	return Out + VanishRemark(S.Song, Index) + " Use it with write_notes or set_instrument.";
 }
 

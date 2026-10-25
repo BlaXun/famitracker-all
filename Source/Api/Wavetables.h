@@ -85,6 +85,9 @@ std::vector<int> N163PulseWave(int High);
 std::vector<int> N163TriangleWave();
 std::vector<int> N163SawtoothWave();
 std::vector<int> N163WaveOf(const std::vector<int> &Samples, int Top);
+// The samples of one cycle of a wave: half its length while its halves are the same, down to 4 (a wave drawn twice
+// plays an octave over its notes). FamiTracker plays a cycle of 16 in tune, of 32 an octave under its notes.
+int N163CycleLength(const std::vector<int> &Samples);
 
 // The samples of wave memory with Channels N163 channels in use (16 go to
 // each channel's registers)

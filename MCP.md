@@ -1031,8 +1031,11 @@ properties** has a box for it.
   a wave place of its own, so several play together without touching each
   other's waves, and the reply says how loud it plays, as `add_instrument`
   does. A triangle sound sounds as written there, an octave over where the
-  triangle played it. `find_sound` and the sound browser list the studied
-  sounds under the soft layer too (an N163 sound at home there).
+  triangle played it, and so does an N163 sound whose wave wasn't a cycle
+  of 16 samples (a cycle of 32 sounded an octave under its notes): the
+  reply says how far, so you can keep its register. `find_sound` and the
+  sound browser list the studied sounds under the soft layer too (an N163
+  sound at home there).
 - Underneath, the song is VRC6 + N163 with 4 channels, marked by a
   `BF VRC6PLUS` block, so other FamiTrackers open it as that and play it
   the same. Back to the VRC6 (`chips: ["VRC6"]`) clears the soft channels

@@ -657,11 +657,15 @@ sound's wave), its volume 0-15 (an FDS sound's `FdsVolumeAs15`, a
 triangle's full or silent as it plays) and its pitch sequences in the
 N163's steps: CSequenceHandler adds them to the period, which on the N163
 (and the FDS) is a frequency, so a 2A03 or VRC6 sound's turn around (alike
-around A-4 with four channels) and an FDS sound's go four times coarser.
+around A-3, 440 Hz, with four channels) and an FDS sound's go four times coarser.
 `MakeReferenceInstrument` places it with `AddWaveInstrument` (under 128,
 `FindWavePlace`), `SoftReferenceText` gives its level (`WaveSoundLevel`)
-and what changed, and the sound index lists every studied melodic sound
-for `TARGET_N163` and `TARGET_SOFT` (an N163 sound at home there).
+and what changed (an N163 sound whose wave's cycle, `N163CycleLength`,
+isn't 16 samples sounded off its written notes where it came from, since
+the importer writes the note of the frequency register: an octave under
+for 32, `N163RegisterRemark`), and the sound index lists every studied
+melodic sound for `TARGET_N163` and `TARGET_SOFT` (an N163 sound at home
+there).
 FakeSong's `AddN163Instrument` reports an N163 instrument's sequences as
 `ReadSequences` in `McpConnection.cpp` does. `TestN163Study` in
 `Source/Nsf/tests/FtmTests.cpp`, `TestSoftReferenceWaves` and

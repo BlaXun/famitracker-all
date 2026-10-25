@@ -15458,6 +15458,11 @@ void TestSoftReferenceWaves()
 	CHECK(N163WaveOf(Twice, 15) == N163TriangleWave());
 	CHECK(N163WaveOf(std::vector<int>({ 15, 15, 0, 0, 0, 0, 0, 0 }), 15) == N163PulseWave(4));
 	CHECK(N163WaveOf(std::vector<int>({ 63, 0 }), 63) == N163PulseWave(8));
+	// One cycle's length: the halves alike, down to 4 samples
+	CHECK(N163CycleLength(Twice) == 16 && N163CycleLength(R.Sounds[4].N163Waves[0]) == 32 && N163CycleLength(N163TriangleWave()) == 16);
+	CHECK(N163CycleLength(std::vector<int>({ 15, 15, 15, 15, 0, 0, 0, 0, 15, 15, 15, 15, 0, 0, 0, 0 })) == 8 &&
+		N163CycleLength(std::vector<int>({ 15, 15, 0, 0, 15, 15, 0, 0, 15, 15, 0, 0, 15, 15, 0, 0 })) == 4 &&
+		N163CycleLength(std::vector<int>({ 15, 0, 15, 0 })) == 4 && N163CycleLength(std::vector<int>()) == 0);
 	// A pulse on the FDS from an N163 sound: its first wave
 	std::string FdsHow;
 	const FdsSound F = ReferenceFdsSound(R.Sounds[4], "Ripple arp", FdsHow);
@@ -15529,6 +15534,8 @@ void TestSoftReferenceTool()
 		"sounds.");
 	CHECK_HAS(Result.Text, " At volume 15 it holds about ");
 	CHECK_LACKS(Result.Text, "turned around");
+	CHECK_HAS(Result.Text, " Its wave is a cycle of 32 samples, so its notes sounded an octave under the notes written (FamiTracker "
+		"plays a cycle of 16 in tune); here they sound as written, so write its part an octave lower to keep its register.");
 	CHECK(Song.MadeWaves.count(7) == 1u && SongInstrument(Song, 7) != 0 && SongInstrument(Song, 7)->WavePos == 64 &&
 		SongInstrument(Song, 7)->Chip == "N163");
 	std::string Unused;
@@ -15663,6 +15670,28 @@ void TestSoftReferenceTool()
 	CHECK(FindEntry(All, "Ripple arp", TARGET_N163) != 0 && FindEntry(All, "Ripple arp", TARGET_N163)->Home &&
 		FindEntry(All, "Ripple lead", TARGET_N163) != 0);
 	CHECK_HAS(Run(Namco, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 5}").Text, "an N163 instrument: sound 5");
+
+	// A wave drawn twice in its 16 samples played an octave over its notes: said so, and one cycle of it plays
+	Reference Twice = R;
+	Twice.Id = "soft-game-04";
+	std::vector<int> Square;
+	for (int i = 0; i < 16; ++i)
+		Square.push_back(i % 8 < 4 ? 15 : 0);
+	Twice.Sounds[4].N163Waves.assign(1, Square);
+	Twice.Sounds[4].N163WaveSteps = ReferenceSequence();
+	Twice.Sounds[7].N163Waves.assign(1, N163TriangleWave());	// one cycle of 16
+	FakeSong Up;
+	CHECK(!Run(Up, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	Up.Library["soft-game-04.json"] = ReferenceFile(Twice);
+	Result = Run(Up, "reference_sound", "{\"reference\": \"soft-game-04\", \"sound\": 5, \"channel\": \"Soft 1\"}");
+	CHECK_HAS(Result.Text, "It plays its own wave; its wave takes samples 64-79");
+	CHECK_HAS(Result.Text, " Its wave is a cycle of 8 samples, so its notes sounded an octave over the notes written (FamiTracker "
+		"plays a cycle of 16 in tune); here they sound as written, so write its part an octave higher to keep its register.");
+	CHECK(Up.MadeWaves.count(7) == 1u && Up.MadeWaves[7].Waves.size() == 1u && Up.MadeWaves[7].Waves[0] == N163PulseWave(8));
+	// ...and a wave of one cycle in 16 samples, in tune there too, says nothing of its register
+	Result = Run(Up, "reference_sound", "{\"reference\": \"soft-game-04\", \"sound\": 8, \"channel\": \"Soft 2\"}");
+	CHECK_HAS(Result.Text, "It plays its own wave; its wave takes samples 80-95");
+	CHECK_LACKS(Result.Text, "to keep its register");
 }
 // end of soft-references tests
 

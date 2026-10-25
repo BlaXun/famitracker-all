@@ -1048,8 +1048,8 @@ WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Nam
 	}
 
 	// Its volume, arpeggio, pitch and hi-pitch: the N163's steps of pitch move a frequency (up is sharper), as the FDS's
-	// do, where the 2A03's and the VRC6's move a period: theirs turned around, about as big at A-4 with four channels
-	// (a period of 253, a frequency of 241); the FDS's four times finer
+	// do, where the 2A03's and the VRC6's move a period: theirs turned around, about as big at A-3 (440 Hz) with four
+	// channels (a period of 253, a frequency of 241); the FDS's four times finer
 	static const int TYPES[] = { SEQUENCE_VOLUME, SEQUENCE_ARPEGGIO, SEQUENCE_PITCH, SEQUENCE_HIPITCH };
 	for (int i = 0; i < 4; ++i) {
 		const ReferenceSequence &q = Sound.Sequences[TYPES[i]];
