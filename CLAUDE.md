@@ -620,7 +620,12 @@ instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
 It checks that every `instrument:` a step picks is in its song too, and
 gives `sound-effects` (ten sounds at speed 1, a bar of 64 rows each, the
-last halting with `C00`) 13 steps, one a sound.
+last halting with `C00`) 13 steps, one a sound. At speed 1 the sound
+thread posts `WM_USER_PLAYER` 60 times a second, which under Wine kept
+the note's timer from running until the bars had stopped, so it never
+saw them play and `wait: heard` timed out: `CSoundGen::GetPlayStarts`
+counts the starts that began playing, and the note takes a moved count as
+its bars started (`Tick`).
 
 Stage fixes (from `feat-stage-fixes`): `review_arrangement` hears whether
 the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans

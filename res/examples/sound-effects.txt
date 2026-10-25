@@ -9,7 +9,7 @@ show: song-settings
 play: bars 1-10
 text: This example is ten sound effects for a game, one in each bar; the frame list names them. It's opened as a new song, so change what you like: saving asks for a name.
 
-  A sound effect plays once and stops, and it changes every frame, 60 times a second. So this song plays at speed 1: each row lasts one frame (where the tempo shows as BPM, that's the 900 here). Close the comments box in front, then press Play to hear all ten.
+  A sound effect plays once and stops, and it changes every frame, 60 times a second. So this song plays at speed 1: each row lasts one frame (where the song settings show BPM instead of speed, it's the 900 there). Close the comments box in front, then press Play to hear all ten.
 wait: heard
 
 step
@@ -85,10 +85,10 @@ text: The explosion is a long rumble on the noise channel (instrument 09: its Ar
   The triangle can't play softer, so its Volume sequence (instrument 0A) only switches it on, then off with the 0. Its Hi-pitch sequence drops it fast: Hi-pitch is the Pitch sequence times 16, for big bends.
 
 step
-show: channel Pulse 2
+show: channel Pulse 1
 play: bar 10
 instrument: 0B
-text: The 1-up is a little tune: quick notes on Pulse 1, and a second, softer voice under them on Pulse 2. On the last note, 443 adds a vibrato and A05 slides the volume down until it's gone.
+text: The 1-up is a little tune: quick notes on Pulse 1 (instrument 0B), and a second, softer voice under them on Pulse 2. While the last note rings, 443 adds a vibrato and A05 slides the volume down until it's gone.
 
   On the last row, C00 halts the song. That's how a sound effect ends in a game, as the last step shows.
 
@@ -100,6 +100,6 @@ text: To make your own, start from the sound that comes closest. Right-click its
 
 step
 show: menu File
-text: For a game, each sound needs a track of its own. Module > Module properties adds one: copy the sound's rows into it (select them, Ctrl+C, then Ctrl+V there), put F01 on its first row for speed 1, and C00 a few rows after the sound has died away. make_sound_effect writes its sounds that way.
+text: For a game, each sound needs a track of its own: add one in Module > Module properties, named after the sound, and pick it in the Songs box. Copy the sound's rows into it (select them, Ctrl+C, then Ctrl+V in the new track), put F01 on its first row for speed 1, and C00 a few rows after the sound has died away. make_sound_effect writes its sounds that way.
 
   File > Export for games then saves every track as an OGG file named after it, and a track that halts as a sound that plays once, without loop points.

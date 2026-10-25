@@ -432,6 +432,7 @@ private:
 	std::vector<bool> m_SavedMutes;	// the channels' mutes before the step's solo or mute, empty for none
 	bool m_bPlaying;				// the step's bars play (its Play button)
 	bool m_bPlayStarted;			// and the sound thread has started them
+	unsigned int m_iPlayStarts;		// its count of starts when Play was pressed (CSoundGen::GetPlayStarts)
 	DWORD m_dwPlayPressed;
 	bool m_bHeard;					// they played to their end
 };
@@ -476,6 +477,7 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_iSong(0),
 	m_bPlaying(false),
 	m_bPlayStarted(false),
+	m_iPlayStarts(0),
 	m_dwPlayPressed(0),
 	m_bHeard(false)
 {
@@ -843,13 +845,20 @@ void CTutorialBubble::Tick()
 		Stop();
 		return;
 	}
-	// The step's bars: the sound thread starts them, then they're over
+	// The step's bars: the sound thread starts them, then they're over. Its count of starts tells they started
+	// even when this timer didn't run while they played: at speed 1 the sound thread posts a message a row, 60
+	// a second, and a busy computer (Wine) then had no time for timers until they had stopped
 	if (m_bPlaying) {
-		if (theApp.IsPlaying())
+		const CSoundGen *pSound = theApp.GetSoundGenerator();
+		// (the count first: the sound thread moves it once the song plays, so a song seen not playing after it has
+		// moved has stopped)
+		const bool Started = pSound != NULL && pSound->GetPlayStarts() != m_iPlayStarts;
+		const bool Playing = theApp.IsPlaying();
+		if (Playing || Started)
 			m_bPlayStarted = true;
-		else if (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000) {
+		if (!Playing && (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000)) {
 			m_bPlaying = false;
-			if (m_bPlayStarted && theApp.GetSoundGenerator()->PlayRangeEnded())
+			if (m_bPlayStarted && pSound != NULL && pSound->PlayRangeEnded())
 				m_bHeard = true;
 			Invalidate(FALSE);
 		}
@@ -1276,6 +1285,7 @@ void CTutorialBubble::PlayBars()
 	const CFamiTrackerDoc *pDoc = Doc();
 	MoveCursor(First, Now.Show == "channel" && pDoc != NULL ? FindTutorialChannel(Now.ShowName, SongChannels(pDoc)) : -1);
 	pSound->SetNextPlayRange(First, End);
+	m_iPlayStarts = pSound->GetPlayStarts();
 	theApp.StartPlayer(MODE_PLAY_CURSOR);
 	m_bPlaying = true;
 	m_bPlayStarted = false;
