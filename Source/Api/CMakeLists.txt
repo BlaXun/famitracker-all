@@ -101,6 +101,7 @@ add_library(ftapi STATIC
 	RecorderInput.cpp
 	Arrange.cpp
 	ChordHelper.cpp
+	StepNotes.cpp
 	QrCode.cpp
 	PhoneTakes.cpp
 	DpcmKit.cpp
@@ -154,6 +155,11 @@ add_test(NAME api_tests COMMAND api_tests)
 add_executable(chord_helper_tests tests/ChordHelperTests.cpp)
 target_link_libraries(chord_helper_tests PRIVATE ftapi)
 add_test(NAME chord_helper_tests COMMAND chord_helper_tests)
+
+# Melodies written in steps (StepNotes.h)
+add_executable(step_notes_tests tests/StepNotesTests.cpp)
+target_link_libraries(step_notes_tests PRIVATE ftapi)
+add_test(NAME step_notes_tests COMMAND step_notes_tests)
 
 # The phone page (PhoneTakes.h) and its QR code (QrCode.h)
 add_executable(phone_tests tests/PhoneTests.cpp)
