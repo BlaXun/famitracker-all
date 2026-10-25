@@ -43,6 +43,12 @@
 // A note lasts until the next note, release or halt in its channel, the way
 // it plays. The main frame tells the piano roll when the song changes
 // (SongChanged).
+//
+// While the pattern editor is hidden (View > Pattern editor), the piano roll
+// fills its place and takes its note keys: they play notes, and while editing
+// is on write them at the cursor line, a step apart, as the pattern editor
+// does (CFamiTrackerView::PianoRollKey); the letters D, B, S and E are notes
+// then, not the tools' keys.
 class CPianoRollWnd : public CWnd
 {
 public:
@@ -75,6 +81,11 @@ public:
 	// the bright one from then on; with Select they're the selection
 	void ShowNotes(int Channel, const int *pStarts, int Count, bool Select);
 
+	// Edit > Cut, Copy, Paste, Delete and Select all while the piano roll has
+	// the keys: as Ctrl+X, Ctrl+C, Ctrl+V, Delete and Ctrl+A do in it
+	bool EditCommand(UINT nID);
+	bool CanEditCommand(UINT nID) const;
+
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:
@@ -93,6 +104,7 @@ protected:
 	afx_msg void OnCaptureChanged(CWnd *pWnd);
 	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
 	afx_msg void OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags);
+	afx_msg void OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags);
 	afx_msg UINT OnGetDlgCode();
 	afx_msg void OnSetFocus(CWnd *pOldWnd);
 	afx_msg void OnKillFocus(CWnd *pNewWnd);
@@ -111,7 +123,9 @@ private:
 
 // The piano roll docked along the bottom of the main window, under the
 // pattern editor. The line along its top is dragged to make it taller or
-// shorter. Its height is remembered, and so is whether it was open.
+// shorter. Its height is remembered, and so is whether it was open. While the
+// pattern editor is hidden, it fills the pattern editor's place (Fill), and
+// gets its own height back when the pattern editor shows again.
 class CPianoRollBar : public CControlBar
 {
 public:
@@ -120,6 +134,7 @@ public:
 
 	bool Create(CFrameWnd *pFrame);			// hidden at first
 	void Opened(bool Open);					// shown or hidden by the main frame
+	void Fill(bool On);						// all the room the other bars leave, without the line
 	void SongChanged();
 	static bool WasOpen();					// it was open when FamiTracker closed
 	CPianoRollWnd *GetRoll() { return &m_wndRoll; }
@@ -147,6 +162,7 @@ private:
 	int MaxHeight() const;					// leaving the pattern editor some room
 
 	CPianoRollWnd m_wndRoll;
+	bool m_bFill;							// in the pattern editor's place
 	int m_iHeight;
 	int m_iRoom;							// for the pattern editor and the piano roll, at the last layout
 	int m_iDragFrom;						// -1, or where the line was grabbed (screen y)

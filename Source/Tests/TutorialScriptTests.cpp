@@ -98,6 +98,14 @@ void TestWaits()
 		CHECK(ParseTutorial("title: T\nstep\nshow: button " + Name + "\ntext: x\nwait: command " + Name + "\n", T, Error));
 	}
 	CHECK(IsTutorialPart("piano-roll") && !IsTutorialPart("kitchen"));
+	CHECK(IsTutorialPart("drum-grid"));
+	{
+		// The drum grid's panel and the pattern editor's menu item
+		tutorial_t T;
+		std::string Error;
+		CHECK(ParseTutorial("title: T\nstep\nshow: drum-grid\ntext: x\nwait: command pattern-editor\n", T, Error));
+		CHECK(T.Steps.size() == 1 && T.Steps[0].Show == "drum-grid" && T.Steps[0].Command == "pattern-editor");
+	}
 }
 
 void TestErrors()

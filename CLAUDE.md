@@ -263,8 +263,8 @@ the tools too); `CFamiTrackerDoc::RemoveInstrument` makes the channels
 forget an FDS instrument's sequences first. The note keys play the sound
 picked through `CFamiTrackerView::NoteOfKey`, and MIDI notes come to the
 browser instead of the pattern editor while it's open
-(`CFamiTrackerView::SetNoteListener`). Edit > Drum grid in
-`Source/DrumGridDlg.cpp` (the arithmetic in `Source/DrumGrid.cpp`), View >
+(`CFamiTrackerView::SetNoteListener`). View > Drum grid in
+`Source/DrumGridPanel.cpp` (the arithmetic in `Source/DrumGrid.cpp`), View >
 Profile in `Source/Profile.cpp` (kept in `CSettings::Profile`; its template
 fills new songs in `CFamiTrackerDoc::OnNewDocument`, and
 `CMainFrame::ApplyProfile` rebuilds the main menu and lays the song settings
@@ -273,6 +273,34 @@ tutorials of `res/tutorials` (built in as RCDATA, read by
 `Source/TutorialScript.cpp`) and hears about commands through
 `CMainFrame::OnCommand`. New work goes to the `next` branch first; once its
 build has been tried, `beginner-friendly` is fast-forwarded to it.
+
+Views you can switch on and off (from `feat-views`): View > Pattern editor
+(`ID_VIEW_PATTERNEDITOR`), View > Piano roll and View > Drum grid (the same
+command as Edit > Drum grid, `ID_EDIT_DRUMGRID`) are check marks in
+`CMainFrame`. One of the pattern editor and the piano roll always shows
+(`Source/NoteViews.cpp`, portable, tested in `Source/Tests`):
+`CMainFrame::ShowNoteViews` shows the piano roll before it hides the view
+window, and `CPianoRollBar::Fill` gives the piano roll all the room the
+other bars leave. Hidden, `CFamiTrackerView` stays the active view (commands
+still route to it), keeps its pattern editor's size (`CalcWindowRect`),
+passes the focus on to the piano roll (`OnSetFocus`, so every
+`GetActiveView()->SetFocus()` lands there) and takes the piano roll's note
+keys through `PianoRollKey` (the piano roll's letters D, B, S and E are notes
+then); Edit > Cut, Copy, Paste, Delete and Select all go to the piano roll
+when it has the keys (`EditCommand`). The accelerators work whichever window
+has the keys. The program setting `Views.bPatternEditor` remembers the
+pattern editor; the piano roll and the drum grid keep their own registry
+sections, as the other panels do. `CMainFrame::ArrangeBars` lays the docked
+panels out in one order (mixer, problems, drum grid, then the piano roll and
+the clips panel, swapped while the piano roll fills), and each panel's
+creation calls it. The drum grid is a panel, `CDrumGridBar`, docked along
+the bottom or the right like the problems panel: it shows the bar the
+cursor is in (`FollowCursor` in `DrumGrid.cpp`; its < and > keep a bar until
+the cursor moves), flows its buttons into lines (`FlowDrumControls`), writes
+with `WriteChannelRows` leaving the cursor where it is, and a song change in
+the middle of a drag (Ctrl+Z, Claude) ends the drag unwritten. A tutorial
+step shows the hidden part it's about (`ShowTutorialPart`: pattern, clips,
+piano-roll, drum-grid).
 
 Stereo is this branch's own (the NES, NSF files and FamiTracker 0.4.6 are
 mono). Every channel has a pan, set by the `8xx` effect (`EF_PAN`, appended
@@ -646,10 +674,10 @@ The application has no test suite of its own. What exists:
   `cmake --build build/transcribe` and
   `ctest --test-dir build/transcribe --output-on-failure`. CI runs these tests on
   Linux and with MSVC, and lists the result in the Release build report.
-- **Clips, note editing, chip switching, the drum grid, tutorials and the
-  sound chips** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`,
+- **Clips, note editing, chip switching, the drum grid, tutorials, the
+  views and the sound chips** (`Source/Clips.cpp`, `Source/NoteEdit.cpp`,
   `Source/ChipSwitch.cpp`, `Source/DrumGrid.cpp`, `Source/TutorialScript.cpp`,
-  `Source/APU`): `Source/Tests` builds
+  `Source/NoteViews.cpp`, `Source/APU`): `Source/Tests` builds
   them on Linux against working stand-ins for the MFC and document pieces
   they use (`Source/Tests/standins/`). `ClipsTests.cpp` covers linked copies
   following edits, unlinking, undo snapshots, tracks, and the `BF CLIPS`
@@ -662,7 +690,10 @@ The application has no test suite of its own. What exists:
   switch clears, the channels emptied, their song-wide effects moved to the
   last channel with patterns of their own where frames share one, and the
   channels that stay moved to their new columns. `DrumGridTests.cpp` covers reading the
-  drums off a bar, putting them on and off, and the ready-made beats.
+  drums off a bar, putting them on and off, the ready-made beats, the bar
+  the panel follows and its buttons in lines. `NoteViewsTests.cpp` covers
+  View > Pattern editor and View > Piano roll from every layout: there's
+  always one view to place notes in.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
   the errors, and the built-in tutorials, which must stay ASCII.
   `ApuTests.cpp` plays every chip's channels by register writes (each

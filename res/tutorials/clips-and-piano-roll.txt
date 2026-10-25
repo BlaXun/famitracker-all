@@ -38,3 +38,5 @@ text: The piano roll shows the notes as bars: time from left to right, pitch fro
 step
 show: window
 text: Clips, the piano roll and the pattern editor all show the same notes, so use whichever feels easiest.
+
+  If you'd rather work in the piano roll alone, untick View > Pattern editor: the piano roll takes its place, and the note keys type notes into it while editing is on.

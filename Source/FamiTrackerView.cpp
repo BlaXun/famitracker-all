@@ -503,6 +503,13 @@ LRESULT CFamiTrackerView::OnUserNoteEvent(WPARAM wParam, LPARAM lParam)
 
 void CFamiTrackerView::CalcWindowRect(LPRECT lpClientRect, UINT nAdjustType)
 {
+	// Hidden (View > Pattern editor), the pattern editor keeps the size it had: the piano roll has its place
+	CMainFrame *pMainFrame = static_cast<CMainFrame*>(GetParentFrame());
+	if (pMainFrame != NULL && !pMainFrame->IsPatternEditorShown()) {
+		CView::CalcWindowRect(lpClientRect, nAdjustType);
+		return;
+	}
+
 	// Window size has changed
 	m_iWindowWidth	= lpClientRect->right - lpClientRect->left;
 	m_iWindowHeight	= lpClientRect->bottom - lpClientRect->top;
@@ -699,6 +706,15 @@ void CFamiTrackerView::OnKillFocus(CWnd* pNewWnd)
 
 void CFamiTrackerView::OnSetFocus(CWnd* pOldWnd)
 {
+	// Hidden (View > Pattern editor), the keys go to the piano roll in its place
+	CMainFrame *pMainFrame = static_cast<CMainFrame*>(GetParentFrame());
+	if (pMainFrame != NULL && !pMainFrame->IsPatternEditorShown()) {
+		CPianoRollWnd *pRoll = pMainFrame->GetPianoRollWnd();
+		if (pRoll != NULL) {
+			pRoll->SetFocus();
+			return;
+		}
+	}
 	CView::OnSetFocus(pOldWnd);
 	m_bHasFocus = true;
 	m_pPatternEditor->SetFocus(true);
@@ -2138,6 +2154,38 @@ void CFamiTrackerView::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 	}
 
 	CView::OnKeyDown(nChar, nRepCnt, nFlags);
+}
+
+bool CFamiTrackerView::PianoRollKey(UINT nChar, bool Pressed)
+{
+	// The keys this view takes for notes, from the piano roll in its place (see FamiTrackerView.h)
+	if (nChar > 0xFF)
+		return false;
+	const unsigned char Key = static_cast<unsigned char>(nChar);
+	const bool NoteKey = TranslateKey(Key) != -1 || CheckHaltKey(Key) || CheckReleaseKey(Key) || CheckClearKey(Key) ||
+		CheckRepeatKey(Key);
+	if (!Pressed) {
+		if (!NoteKey)
+			return false;
+		HandleKeyboardNote(static_cast<char>(Key), false);
+		m_cKeyList[Key] = 0;
+		return true;
+	}
+	if (nChar >= VK_NUMPAD0 && nChar <= VK_NUMPAD9) {
+		SetInstrument(static_cast<int>(nChar - VK_NUMPAD0));
+		return true;
+	}
+	if (nChar >= VK_F2 && nChar <= VK_F9) {
+		SetOctave(nChar - VK_F2);
+		return true;
+	}
+	if (!NoteKey)
+		return false;
+	// In the note column, where these keys are notes
+	if (m_pPatternEditor->GetColumn() != C_NOTE)
+		m_pPatternEditor->MoveToColumn(C_NOTE);
+	HandleKeyboardInput(static_cast<char>(Key));
+	return true;
 }
 
 void CFamiTrackerView::OnSysKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
