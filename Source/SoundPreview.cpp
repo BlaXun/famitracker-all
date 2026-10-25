@@ -94,7 +94,7 @@ void CSoundPreview::Close()
 bool CSoundPreview::Start(int Channel, int Instrument)
 {
 	CFamiTrackerDoc *pDoc = CFamiTrackerDoc::GetDoc();
-	if (pDoc == NULL || !pDoc->IsFileLoaded() || Channel < 0 || Channel >= pDoc->GetAvailableChannels() || Instrument < 0 ||
+	if (pDoc == NULL || !pDoc->IsFileLoaded() || Channel < 0 || Channel >= static_cast<int>(pDoc->GetAvailableChannels()) || Instrument < 0 ||
 		Instrument >= MAX_INSTRUMENTS || !pDoc->IsInstrumentUsed(static_cast<unsigned int>(Instrument)))
 		return false;
 	if (m_hWnd == NULL && !CreateEx(0, AfxRegisterWndClass(0), _T("Sound preview"), 0, 0, 0, 0, 0, HWND_MESSAGE, NULL))
@@ -166,7 +166,7 @@ int CSoundPreview::PlayingInstrument() const
 void CSoundPreview::Queue(int Note)
 {
 	CFamiTrackerDoc *pDoc = CFamiTrackerDoc::GetDoc();
-	if (pDoc == NULL || m_iChannel < 0 || m_iChannel >= pDoc->GetAvailableChannels())
+	if (pDoc == NULL || m_iChannel < 0 || m_iChannel >= static_cast<int>(pDoc->GetAvailableChannels()))
 		return;
 	stChanNote Cell;
 	memset(&Cell, 0, sizeof(Cell));

@@ -65,10 +65,10 @@ const UINT WM_SB_ROW_CLICK = WM_APP + 0x52;	// a row clicked (wParam the row; lP
 enum { MARK_PLAY, MARK_PLAYING, MARK_NONE };	// the list's images
 
 // The list's columns, in percent of its width
-const struct { LPCTSTR Name; int Percent; } COLUMNS[] = {
+const struct { LPCTSTR Name; int Percent; } LIST_COLUMNS[] = {
 	{ _T("Sound"), 28 }, { _T("Plays on"), 14 }, { _T("About"), 38 }, { _T("In song"), 8 }, { _T("Warning"), 12 },
 };
-const int COLUMN_COUNT = sizeof(COLUMNS) / sizeof(COLUMNS[0]);
+const int COLUMN_COUNT = sizeof(LIST_COLUMNS) / sizeof(LIST_COLUMNS[0]);
 
 // Kept while FamiTracker runs: where the browser was, the kind picked and the headings folded or opened by hand
 CRect g_Place(0, 0, 0, 0);
@@ -311,7 +311,7 @@ BOOL CSoundBrowserDlg::OnInitDialog()
 	Font.lfWeight = FW_BOLD;
 	m_BoldFont.CreateFontIndirect(&Font);
 	for (int c = 0; c < COLUMN_COUNT; ++c)
-		m_cList.InsertColumn(c, COLUMNS[c].Name, LVCFMT_LEFT, 60);
+		m_cList.InsertColumn(c, LIST_COLUMNS[c].Name, LVCFMT_LEFT, 60);
 
 	// Its smallest: room for the filters in two rows, a few sounds and the buttons
 	CRect Smallest(0, 0, 300, 230), Window, Client;
@@ -1168,7 +1168,7 @@ void CSoundBrowserDlg::Layout()
 	m_cList.GetClientRect(&List);
 	const int Width = std::max(List.Width() - ::GetSystemMetrics(SM_CXVSCROLL), Cx * 20);
 	for (int c = 0; c < COLUMN_COUNT; ++c)
-		m_cList.SetColumnWidth(c, Width * COLUMNS[c].Percent / 100);
+		m_cList.SetColumnWidth(c, Width * LIST_COLUMNS[c].Percent / 100);
 	Invalidate();
 }
 
