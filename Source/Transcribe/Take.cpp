@@ -111,7 +111,14 @@ bool ClickTrack::Clicks(int beat) const
 		return false;
 	if (beat < countIn)
 		return true;
-	return clickAlong && (!barsOnly || beatsPerBar <= 0 || beat % beatsPerBar == 0);
+	return clickAlong && (!barsOnly || beatsPerBar <= 0 || StartsBar(beat));
+}
+
+bool ClickTrack::StartsBar(int beat) const
+{
+	if (beatsPerBar <= 0 || beat < 0)
+		return false;
+	return ((beat + barPhase) % beatsPerBar + beatsPerBar) % beatsPerBar == 0;
 }
 
 void ClickTrack::Render(long long from, float *out, int count) const
@@ -132,7 +139,7 @@ void ClickTrack::Render(long long from, float *out, int count) const
 		if (!Clicks(beat))
 			continue;
 		const long long start = BeatSample(beat);
-		const bool accent = beatsPerBar > 0 && beat % beatsPerBar == 0;
+		const bool accent = StartsBar(beat);
 		const double frequency = accent ? HIGH_HZ : LOW_HZ;
 		const double amplitude = level * (accent ? 1.0 : 0.7);
 		const long long a = std::max(from, start), b = std::min(from + count, start + length);

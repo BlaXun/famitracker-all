@@ -36,6 +36,8 @@
 #include "stdafx.h"
 #include "Api/Keys.h"
 #include "Api/ChannelMix.h"
+#include "Api/ChordInput.h"
+#include "Api/Music.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
@@ -44,6 +46,7 @@
 #include "TrackerChannel.h"
 #include "Action.h"
 #include "Clips.h"
+#include "NoteEdit.h"
 #include "InsertRecording.h"
 
 namespace {
@@ -53,6 +56,7 @@ const int ACT_INSERT_RECORDING = 0x1000;
 const int ACT_EDIT_CLIP = 0x1001;
 const int ACT_TRACK_KEY = 0x1300;
 const int ACT_CHANNEL_MIX = 0x1400;
+const int ACT_SONG_TEMPO = 0x1600;
 
 // Volume envelopes, the same as wav2ftm writes (Transcribe/TextModule.cpp).
 // Both hold at 10 on their release point for as long as the note lasts, then
@@ -717,6 +721,49 @@ private:
 	ftapi::MixStore m_Old;
 };
 
+// The selected track's speed and tempo (tapped, or a groove's), as one undoable step
+class CSongTempoAction : public CAction
+{
+public:
+	CSongTempoAction(int Speed, int Tempo) :
+		CAction(ACT_SONG_TEMPO), m_iTrack(0), m_iSpeed(Speed), m_iTempo(Tempo), m_iOldSpeed(0), m_iOldTempo(0)
+	{
+	}
+
+	bool SaveState(CMainFrame *pMainFrm)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		m_iTrack = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+		if (m_iTrack >= pDoc->GetTrackCount())
+			return false;
+		m_iOldSpeed = static_cast<int>(pDoc->GetSongSpeed(m_iTrack));
+		m_iOldTempo = static_cast<int>(pDoc->GetSongTempo(m_iTrack));
+		if (m_iOldSpeed == m_iSpeed && m_iOldTempo == m_iTempo)
+			return false;	// nothing changes
+		Redo(pMainFrm);
+		return true;
+	}
+
+	void Undo(CMainFrame *pMainFrm) { Set(pMainFrm, m_iOldSpeed, m_iOldTempo); }
+	void Redo(CMainFrame *pMainFrm) { Set(pMainFrm, m_iSpeed, m_iTempo); }
+
+private:
+	void Set(CMainFrame *pMainFrm, int Speed, int Tempo)
+	{
+		CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pMainFrm->GetActiveDocument());
+		if (m_iTrack >= pDoc->GetTrackCount())
+			return;
+		pDoc->SetSongSpeed(m_iTrack, static_cast<unsigned int>(Speed));
+		pDoc->SetSongTempo(m_iTrack, static_cast<unsigned int>(Tempo));
+		theApp.GetSoundGenerator()->ResetTempo();
+		pDoc->SetModifiedFlag();
+		pMainFrm->UpdateControls();
+	}
+
+	unsigned int m_iTrack;
+	int m_iSpeed, m_iTempo, m_iOldSpeed, m_iOldTempo;
+};
+
 // A clip edited in the clip editor, written into its linked copies. Undo puts
 // the copies' patterns back, and the clip follows them (CMainFrame::SyncClips).
 class CEditClipAction : public CAction
@@ -998,12 +1045,83 @@ struct BackingPlan {
 	std::vector<transcribe::Bar> Bars;
 	std::vector<transcribe::ChordSpan> Chords;
 	transcribe::HarmonyOptions Options;
+	CString Names;		// chords given by name, as laid out: "| C | G | Am F |"
 };
+
+// Bars and beats as the row highlight shows them
+void SongMeter(const CFamiTrackerDoc *pDoc, int &BarRows, int &BeatRows)
+{
+	BarRows = pDoc->GetSecondHighlight();
+	if (BarRows <= 0 || BarRows > 256)
+		BarRows = 16;
+	BeatRows = pDoc->GetFirstHighlight();
+	if (BeatRows <= 0 || BeatRows > BarRows)
+		BeatRows = std::max(1, BarRows / 4);
+}
+
+// The chords given by name, on the bars from ChordsRow's (or the melody's first) on: as many bars as typed, or as
+// the melody covers when it covers more
+bool PlanGivenChords(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice,
+	const std::vector<transcribe::MelodyNote> &Melody, BackingPlan &Plan, CString &Message)
+{
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	const int Total = static_cast<int>(pDoc->GetFrameCount(Track)) * Length;
+	int BarRows, BeatRows;
+	SongMeter(pDoc, BarRows, BeatRows);
+	const std::string Text(static_cast<LPCSTR>(CStringA(Choice.Chords)));
+	const int Typed = ftapi::TypedChordBars(Text);
+	if (Typed < 1) {
+		Message = _T("Type the chords, like \"C G Am F\" (a chord a bar) or \"C | G | Am F\" (bars between the lines).");
+		return false;
+	}
+	std::vector<transcribe::Bar> MelodyBars;
+	if (!Melody.empty())
+		MelodyBars = transcribe::MelodyBars(Melody, Length, BarRows);
+	int Start = Choice.ChordsRow;
+	if (Start < 0)
+		Start = MelodyBars.empty() ? 0 : MelodyBars.front().row;
+	Start = std::max(0, std::min(Start, std::max(0, Total - 1)));
+	// The bars from the bar Start is in, past the song's end if need be (frames are added)
+	std::vector<transcribe::Bar> All = transcribe::SongBars(Start, MAX_FRAMES * Length, Length, BarRows);
+	size_t Count = static_cast<size_t>(Typed);
+	if (!MelodyBars.empty()) {
+		const int MelodyEnd = MelodyBars.back().row + MelodyBars.back().length;
+		size_t Covered = 0;
+		while (Covered < All.size() && All[Covered].row < MelodyEnd)
+			++Covered;
+		Count = std::max(Count, Covered);
+	}
+	if (All.empty()) {
+		Message = _T("There's no room for the chords there.");
+		return false;
+	}
+	Plan.Bars.assign(All.begin(), All.begin() + std::ptrdiff_t(std::min(Count, All.size())));
+	transcribe::Key Picked;
+	Picked.tonic = Choice.KeyTonic % 12;
+	Picked.minor = Choice.KeyMinor;
+	std::string Names, Error;
+	if (!ftapi::LayOutTypedChords(Text, Plan.Bars, BeatRows, Choice.KeyTonic >= 0 ? &Picked : NULL, Plan.Key, Plan.Chords, Names,
+		Error)) {
+		Message = CString(Error.c_str());
+		return false;
+	}
+	Plan.Names = Names.c_str();
+	Plan.Options.rowsPerBeat = BeatRows;
+	Plan.Options.halfBars = Choice.HalfBars;
+	return true;
+}
 
 bool PlanBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, BackingPlan &Plan,
 	CString &Message)
 {
 	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	if (!Choice.Chords.IsEmpty()) {
+		// Chords given: the melody, if any, sets how many bars they cover
+		std::vector<transcribe::MelodyNote> Melody;
+		if (Choice.MelodyChannel >= 0 && Choice.MelodyChannel < Channels)
+			Melody = ReadMelody(pDoc, Track, Choice.MelodyChannel);
+		return PlanGivenChords(pDoc, Track, Choice, Melody, Plan, Message);
+	}
 	if (Choice.MelodyChannel < 0 || Choice.MelodyChannel >= Channels) {
 		Message = _T("Pick the channel with the melody.");
 		return false;
@@ -1041,6 +1159,8 @@ bool PlanBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_
 // "| C | F C | G | C |", up to 32 bars
 CString ChordsText(const BackingPlan &Plan)
 {
+	if (!Plan.Names.IsEmpty())
+		return Plan.Names;
 	CString Text;
 	for (size_t b = 0; b < Plan.Bars.size(); ++b) {
 		if (b == 32) {
@@ -1113,6 +1233,110 @@ RecordedPart BackingPart(const CFamiTrackerDoc *pDoc, unsigned int Track, int Ch
 		Part.Cells.push_back(Cell);
 	}
 	return Part;
+}
+
+// A channel's cells over the whole song, as the piano roll reads them for editing
+void ReadChannelNotes(const CFamiTrackerDoc *pDoc, unsigned int Track, int Channel, CChannelNotes &Out)
+{
+	const unsigned int Length = pDoc->GetPatternLength(Track), Frames = pDoc->GetFrameCount(Track);
+	Out.Reset(static_cast<int>(Frames * Length));
+	Out.SetEffectColumns(static_cast<int>(pDoc->GetEffColumns(Track, static_cast<unsigned int>(Channel))) + 1);
+	Out.SetPitchRange(0, pDoc->GetChannelType(Channel) == CHANID_NOISE ? 15 : 95);
+	for (int i = 0; i < MAX_INSTRUMENTS; ++i) {
+		if (!pDoc->IsInstrumentUsed(static_cast<unsigned int>(i)))
+			continue;
+		CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(i));	// retained
+		if (pInstrument != NULL) {
+			Out.SetCanRelease(i, pInstrument->CanRelease());
+			pInstrument->Release();
+		}
+	}
+	for (unsigned int f = 0; f < Frames; ++f) {
+		for (unsigned int r = 0; r < Length; ++r) {
+			stChanNote Cell;
+			pDoc->GetNoteData(Track, f, static_cast<unsigned int>(Channel), r, &Cell);
+			Out.SetCell(static_cast<int>(f * Length + r), Cell);
+		}
+	}
+}
+
+stChanNote NoteOf(const RecordedCell &Cell)
+{
+	stChanNote Note;
+	Note.Note = Cell.Note;
+	Note.Octave = Cell.Octave;
+	Note.Vol = Cell.Vol;
+	Note.Instrument = Cell.Instrument;
+	for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+		Note.EffNumber[c] = Cell.Effect[c];
+		Note.EffParam[c] = Cell.EffectParam[c];
+	}
+	return Note;
+}
+
+// A take sung over the selected rows [Row of Frame, + Rows) of Channel: it replaces just them, and the rest of the
+// song sounds as it did (CChannelNotes::ReplaceRows), as one undoable action
+bool ReplaceSelection(CMainFrame *pMainFrm, int Channel, int Frame, int Row, int Rows, const std::vector<RecordedCell> &Cells,
+	const CString &What, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	const int Total = static_cast<int>(pDoc->GetFrameCount(Track)) * Length;
+	const int First = Frame * Length + Row, End = std::min(Total, First + Rows);
+	if (Length < 1 || First < 0 || End <= First) {
+		Message = _T("The selection is outside the song.");
+		return false;
+	}
+	CChannelNotes Song, Take;
+	ReadChannelNotes(pDoc, Track, Channel, Song);
+	Take.Reset(End - First);
+	Take.SetEffectColumns(MAX_EFFECT_COLUMNS);
+	for (size_t i = 0; i < Cells.size(); ++i)
+		if (Cells[i].Row >= 0 && Cells[i].Row < End - First)
+			Take.SetCell(Cells[i].Row, NoteOf(Cells[i]));
+	const CChannelNotes Before = Song;
+	Song.ReplaceRows(First, End, Take);
+	int A = 0, B = 0;
+	if (!Song.Compare(Before, A, B)) {
+		Message = _T("The take sounds just like what the selection had already.");
+		return true;
+	}
+
+	// The rows that changed, written as they are (frames that change get patterns of their own)
+	RecordedPart Part;
+	Part.Channel = static_cast<unsigned int>(Channel);
+	Part.Rows = B - A + 1;
+	Part.Replace = true;
+	Part.Exact = true;
+	for (int r = A; r <= B; ++r) {
+		stChanNote Cell;
+		Song.GetCell(r, Cell);
+		Part.Cells.push_back(CellOf(r - A, Cell));
+	}
+	const unsigned int FirstFrame = static_cast<unsigned int>(A / Length), LastFrame = static_cast<unsigned int>(B / Length);
+	std::vector<bool> Changes;
+	for (unsigned int f = FirstFrame; f <= LastFrame; ++f)
+		Changes.push_back(ChangesFrame(pDoc, Track, Part, FirstFrame, static_cast<unsigned int>(A % Length), f));
+	if (!EnoughPatterns(pDoc, Track, Part.Channel, FirstFrame, LastFrame, &Changes)) {
+		Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
+			static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)));
+		return false;
+	}
+	CInsertRecordingAction *pAction = new CInsertRecordingAction(std::vector<RecordedPart>(1, Part), static_cast<int>(FirstFrame),
+		A % Length);
+	pAction->PlaceCursor(Frame, Row);
+	if (!pMainFrm->AddAction(pAction)) {
+		Message = _T("The take couldn't be put in.");
+		return false;
+	}
+	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
+	const int LastRow = End - 1;
+	Message.Format(_T("Replaced the selected rows of %s with %s: frame %02X row %02X to frame %02X row %02X. The rest of the song ")
+		_T("plays as before; Ctrl+Z undoes it."), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)), static_cast<LPCTSTR>(What),
+		First / Length, First % Length, LastRow / Length, LastRow % Length);
+	return true;
 }
 
 bool ReadRecording(LPCTSTR Path, transcribe::Audio &Audio, CString &Message)
@@ -1195,8 +1419,13 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 }
 
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
-	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message, LPCTSTR ClipName)
+	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message, LPCTSTR ClipName,
+	int SelectionRows)
 {
+	if (Kind == RECORDING_CHORDS) {
+		Message = _T("Strummed chords go into Edit > Add chords and bass line.");
+		return false;
+	}
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
 	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
@@ -1354,6 +1583,26 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 			Cells.push_back(ToCell(Line[i], Instrument, Release ? RELEASE : HALT, MAX_VOLUME));
 		Rows = Cells.back().Row + 1;
 		What.Format(_T("%d notes"), static_cast<int>(Melody.size()));
+	}
+
+	if (SelectionRows > 0) {
+		// Sung over a selection: what's past it is left out, and the first note sounds as it was played
+		while (!Cells.empty() && Cells.back().Row >= SelectionRows)
+			Cells.pop_back();
+		if (Cells.empty()) {
+			Message = _T("Nothing was heard in the selected rows. Come in after the count-in, as the selection starts.");
+			return false;
+		}
+		Rows = SelectionRows;
+		for (size_t i = 0; i < Cells.size(); ++i) {
+			if (Cells[i].Note >= C && Cells[i].Note <= B) {
+				if (Cells[i].Vol >= MAX_VOLUME)
+					Cells[i].Vol = 15;
+				break;
+			}
+		}
+		if (ClipName == NULL)
+			return ReplaceSelection(pMainFrm, Channel, StartFrame, StartRow, SelectionRows, Cells, What, Message);
 	}
 
 	if (ClipName != NULL) {
@@ -1558,6 +1807,71 @@ bool AddBacking(CMainFrame *pMainFrm, const backing_choice_t &Choice, CString &M
 	Message.Format(_T("Added %s, in %s: %s Ctrl+Z undoes it."), static_cast<LPCTSTR>(Where), static_cast<LPCTSTR>(Key),
 		static_cast<LPCTSTR>(ChordsText(Plan)));
 	return true;
+}
+
+// Chords heard in a recording, for the backing
+
+bool HearRecordedChords(const CFamiTrackerDoc *pDoc, unsigned int Track, const transcribe::Audio &Audio,
+	const transcribe::TakeTiming &Timing, int StartRow, CString &Names, int &FirstRow, CString &Message)
+{
+	const std::vector<transcribe::Strum> Strums = transcribe::HearStrums(Audio);
+	if (Strums.empty()) {
+		Message = _T("No chords were heard in the recording. Strum a little louder, or nearer the microphone.");
+		return false;
+	}
+	transcribe::Grid Grid;
+	Grid.frameRate = static_cast<int>(pDoc->GetFrameRate());
+	Grid.speed = static_cast<int>(pDoc->GetSongSpeed(Track));
+	Grid.tempo = static_cast<int>(pDoc->GetSongTempo(Track));
+	if (Grid.tempo == 0)
+		Grid.tempo = Grid.frameRate * 5 / 2;
+	int BarRows, BeatRows;
+	SongMeter(pDoc, BarRows, BeatRows);
+	const double Start = Timing.lineUpFirstNote ? Strums.front().time : Timing.start;	// a WAV file: its first strum
+	ftapi::StrummedChords Heard;
+	std::string Error;
+	if (!ftapi::HearStrummedChords(Strums, Start, StartRow, Grid.RowsPerSecond(), static_cast<int>(pDoc->GetPatternLength(Track)),
+		BarRows, BeatRows, Heard, Error)) {
+		Message = CString(Error.c_str());
+		return false;
+	}
+	Names = Heard.Names.c_str();
+	FirstRow = Heard.FirstRow;
+	return true;
+}
+
+bool HearRecordedChords(const CFamiTrackerDoc *pDoc, unsigned int Track, LPCTSTR Path, int StartRow, CString &Names,
+	int &FirstRow, CString &Message)
+{
+	transcribe::Audio Audio;
+	if (!ReadRecording(Path, Audio, Message))
+		return false;
+	return HearRecordedChords(pDoc, Track, Audio, transcribe::TakeTiming(), StartRow, Names, FirstRow, Message);
+}
+
+// The tempo
+
+bool SetSongTempo(CMainFrame *pMainFrm, int Speed, int Tempo)
+{
+	return pMainFrm->AddAction(new CSongTempoAction(Speed, Tempo));
+}
+
+void SpeedTempoFor(const CFamiTrackerDoc *pDoc, unsigned int Track, double Bpm, int &Speed, int &Tempo)
+{
+	int BarRows, BeatRows;
+	SongMeter(pDoc, BarRows, BeatRows);
+	ftapi::ChooseSpeedTempo(Bpm, BeatRows, static_cast<int>(pDoc->GetFrameRate()), static_cast<int>(pDoc->GetSongSpeed(Track)),
+		pDoc->GetSpeedSplitPoint(), Speed, Tempo);
+}
+
+double SongBpm(const CFamiTrackerDoc *pDoc, unsigned int Track)
+{
+	int BarRows, BeatRows;
+	SongMeter(pDoc, BarRows, BeatRows);
+	int Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
+	if (Tempo == 0)
+		Tempo = ftapi::DefaultTempo(static_cast<int>(pDoc->GetFrameRate()));
+	return ftapi::BeatsPerMinute(static_cast<int>(pDoc->GetSongSpeed(Track)), Tempo, static_cast<int>(pDoc->GetFrameRate()), BeatRows);
 }
 
 // Clips

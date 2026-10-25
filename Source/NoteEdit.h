@@ -151,6 +151,16 @@ public:
 	// first note gets its pan written, so it plays at it again when the song loops.
 	bool SetPan(const int *pStarts, int Count, unsigned char Pan);
 
+	// A take sung (or tapped) over a selection: Take's cells, its row 0 at First, replace what the notes
+	// own in the rows [First, End) (Take's rows from End - First on are left out; song-wide effects stay).
+	// The rest of the channel sounds as before: a note sounding into the rows ends at First (unless Take
+	// starts a note there), and the lasting effects coming in are switched off there unless Take sets
+	// them, so its notes start as they were played; Take's last note, still sounding at End, carries on
+	// where a note sounded on before and otherwise ends at End; the first note after End takes over the
+	// instrument, volume, pan and lasting effects it did before (written into its cell where needed).
+	// Rows before First never change; from End on, only the first note after it and an end at End can.
+	void ReplaceRows(int First, int End, const CChannelNotes &Take);
+
 	// The first and last rows that differ from Other; false if none do
 	bool Compare(const CChannelNotes &Other, int &First, int &Last) const;
 

@@ -98,6 +98,7 @@ add_library(ftapi STATIC
 	ChannelMix.cpp
 	Vrc6Plus.cpp
 	Chords.cpp
+	ChordInput.cpp
 	Arrange.cpp
 	DpcmKit.cpp
 	Presets.cpp
@@ -115,6 +116,8 @@ add_library(ftapi STATIC
 	${TRANSCRIBE}/Harmony.cpp
 	${TRANSCRIBE}/TextModule.cpp
 	${TRANSCRIBE}/SoundEffect.cpp
+	${TRANSCRIBE}/Tapping.cpp
+	${TRANSCRIBE}/Strums.cpp
 	${NSF}/Cpu6502.cpp
 	${NSF}/NsfFile.cpp
 	${NSF}/Chips.cpp

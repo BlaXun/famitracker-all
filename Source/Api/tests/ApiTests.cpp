@@ -26,11 +26,13 @@
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../ChannelMix.h"
+#include "../ChordInput.h"
 #include "../Chords.h"
 #include "../DpcmKit.h"
 #include "../Effects.h"
 #include "../FdsSounds.h"
 #include "../GameAudio.h"
+#include "../Grooves.h"
 #include "../Http.h"
 #include "../Jingles.h"
 #include "../Json.h"
@@ -55,6 +57,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14482,6 +14485,237 @@ void TestReviewFixes()
 }
 // end of calm-defaults tests
 
+// The recorder's input (Grooves.h, ChordInput.h): a groove's parts made alone, chords typed by name and
+// chords heard from a strummed guitar
+
+void TestGrooveParts()
+{
+	// The moods, by name and by other words
+	const std::vector<GrooveMood> Moods = GrooveMoods();
+	CHECK(Moods.size() >= 10 && Moods[0].Name == "town" && Moods[1].Name == "overworld");
+	GrooveMood Mood;
+	CHECK(FindGrooveMood("Village", Mood) && Mood.Name == "town" && !Mood.Minor && Mood.Bpm == 112);
+	CHECK(FindGrooveMood("fight", Mood) && Mood.Name == "battle" && Mood.Minor && Mood.Bpm == 165);
+	CHECK(!FindGrooveMood("disco inferno", Mood));
+
+	// A battle groove over eight bars of 16 rows, as make_groove writes it (TestStructure)
+	GrooveRequest Q;
+	Q.Mood = "battle";
+	Q.K = Key(9, MODE_MAJOR);	// A, in the mood's mode: A minor
+	const std::vector<transcribe::Bar> Bars = transcribe::SongBars(0, 128, 64, 16);
+	for (size_t i = 0; i < Bars.size(); ++i)
+		Q.Bars.push_back(BarSpan(Bars[i].row, Bars[i].length));
+	GrooveParts P;
+	std::string Error;
+	CHECK(MakeGrooveParts(Q, P, Error));
+	CHECK(P.Mood.Name == "battle" && P.K.Tonic == 9 && P.K.Mode == MODE_MINOR);
+	CHECK_EQ(P.ChordText, std::string("| Am | F | G | Am | Am | F | G | Am |"));
+	CHECK_EQ(P.Summary, std::string("stabs (eighths) chords, a driving bass and driving drums"));
+	CHECK(P.ChordStyle == CHORDS_STABS && P.ChordSound == "pluck");
+	CHECK(!P.ChordNotes.empty() && !P.BassNotes.empty() && !P.Drums.empty());
+	bool Inside = true, Instruments = true;
+	for (size_t i = 0; i < P.ChordNotes.size(); ++i) {
+		Inside = Inside && P.ChordNotes[i].Row >= 0 && P.ChordNotes[i].Row < 128;
+		Instruments = Instruments && P.ChordNotes[i].Instrument == NO_INSTRUMENT;
+	}
+	for (size_t i = 0; i < P.BassNotes.size(); ++i)
+		Inside = Inside && P.BassNotes[i].Row >= 0 && P.BassNotes[i].Row < 128 && P.BassNotes[i].Pitch >= 9 + 12 &&
+			P.BassNotes[i].Pitch <= 28 + 12;	// the triangle's register, written an octave up
+	for (size_t i = 0; i < P.Drums.size(); ++i)
+		Inside = Inside && P.Drums[i].Row >= 0 && P.Drums[i].Row < 128 && !P.Drums[i].Sound.empty();
+	CHECK(Inside && Instruments);
+	CHECK(P.Bpm == 165.0 && BeatsPerMinute(P.Speed, P.Tempo, 60, 4) > 163.0 && BeatsPerMinute(P.Speed, P.Tempo, 60, 4) < 167.0);
+
+	// The same parts make_groove writes: the bass line note for note
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "make_groove", "{\"mood\": \"battle\", \"key\": \"A minor\"}").IsError);
+	int Same = 0;
+	for (size_t i = 0; i < P.BassNotes.size(); ++i)
+		Same += Song.Rows[2][static_cast<size_t>(P.BassNotes[i].Row)].HasNote() ? 1 : 0;
+	CHECK_EQ(Same, static_cast<int>(P.BassNotes.size()));
+
+	// A tempo of one's own, a key as given, parts left out; a lush mood off a pulse plays the arpeggio
+	Q.Mood = "nostalgic";
+	Q.K = Key(2, MODE_MAJOR);
+	Q.KeyGiven = true;
+	Q.Bpm = 90.0;
+	Q.Drums = false;
+	CHECK(MakeGrooveParts(Q, P, Error) && P.Drums.empty() && P.Bpm == 90.0 && P.ChordStyle == CHORDS_LUSH);
+	CHECK(BeatsPerMinute(P.Speed, P.Tempo, 60, 4) > 89.0 && BeatsPerMinute(P.Speed, P.Tempo, 60, 4) < 91.0);
+	CHECK(!P.ChordNotes.empty() && !P.ChordNotes[0].Arpeggio.empty());	// each note its chord's notes, for its instrument
+	Q.ChordChannel.Chip = "VRC7";
+	Q.ChordChannel.Kind = KIND_FM;
+	CHECK(MakeGrooveParts(Q, P, Error) && P.ChordStyle == CHORDS_ARPEGGIO && P.ChordSound == "soft chords");
+	Q.Chords = Q.Bass = false;
+	CHECK(!MakeGrooveParts(Q, P, Error) && Contains(Error, "Ask for chords"));
+	Q.Chords = true;
+	Q.Mood = "disco inferno";
+	CHECK(!MakeGrooveParts(Q, P, Error) && Contains(Error, "Moods: town, overworld"));
+	Q.Mood = "town";
+	Q.Bars.clear();
+	CHECK(!MakeGrooveParts(Q, P, Error));
+}
+
+void TestTypedChords()
+{
+	const std::vector<transcribe::Bar> Four = transcribe::SongBars(0, 64, 64, 16);
+	transcribe::Key K;
+	std::vector<transcribe::ChordSpan> Chords;
+	std::string Names, Error;
+
+	// A chord a bar, the key found from them
+	CHECK(LayOutTypedChords("C G Am F", Four, 4, NULL, K, Chords, Names, Error));
+	CHECK(K.tonic == 0 && !K.minor && Names == "| C | G | Am | F |" && Chords.size() == 4);
+	const int Roots[] = { 0, 7, 9, 5 };
+	for (size_t i = 0; i < Chords.size() && i < 4; ++i)
+		CHECK(Chords[i].row == 16 * static_cast<int>(i) && Chords[i].length == 16 && Chords[i].chord.root == Roots[i] &&
+			Chords[i].chord.tones.empty() && Chords[i].chord.bass == -1);
+	CHECK(Chords.size() == 4 && Chords[2].chord.quality == transcribe::Chord::Minor && Chords[1].chord.quality == transcribe::Chord::Major);
+	CHECK_EQ(TypedChordBars("C G Am F"), 4);
+	CHECK_EQ(TypedChordBars("| C | G | Am F |"), 3);
+	CHECK_EQ(TypedChordBars(""), 0);
+
+	// Bar lines, two chords in a bar, the bars repeating over more of them
+	const std::vector<transcribe::Bar> Six = transcribe::SongBars(0, 96, 64, 16);
+	CHECK(LayOutTypedChords("C | G | Am F", Six, 4, NULL, K, Chords, Names, Error));
+	CHECK_EQ(Names, std::string("| C | G | Am F | C | G | Am F |"));
+	CHECK(Chords.size() == 8 && Chords[2].row == 32 && Chords[2].length == 8 && Chords[3].row == 40 && Chords[3].chord.root == 5);
+
+	// A minor key, from the chords; sevenths, suspensions and a bass note keep their notes
+	CHECK(LayOutTypedChords("Am F C G", Four, 4, NULL, K, Chords, Names, Error) && K.tonic == 9 && K.minor);
+	CHECK(LayOutTypedChords("G7 Cmaj7 Dsus4 C/E", Four, 4, NULL, K, Chords, Names, Error));
+	CHECK(Chords.size() == 4 && Chords[0].chord.tones == std::vector<int>({ 0, 4, 7, 10 }) &&
+		Chords[1].chord.tones == std::vector<int>({ 0, 4, 7, 11 }) && Chords[2].chord.tones == std::vector<int>({ 0, 5, 7 }));
+	CHECK(Chords.size() == 4 && Chords[3].chord.root == 0 && Chords[3].chord.bass == 4 && Chords[3].chord.tones.empty());
+	CHECK_EQ(Names, std::string("| G7 | Cmaj7 | Dsus4 | C/E |"));
+	// The bass plays E under C/E, the arpeggio G7's B and F
+	const std::vector<transcribe::MelodyCell> Bass = transcribe::BassCells(Chords, Four, transcribe::HarmonyOptions());
+	CHECK(Bass.size() >= 7 && Bass[6].midi % 12 == 4);
+	const std::vector<transcribe::MelodyCell> Arp = transcribe::ArpeggioCells(Chords, Four);
+	CHECK(!Arp.empty() && Arp[0].effect == '0');
+	if (!Arp.empty()) {
+		std::vector<int> Heard = { Arp[0].midi % 12, (Arp[0].midi + (Arp[0].effectParam >> 4)) % 12, (Arp[0].midi + (Arp[0].effectParam & 15)) % 12 };
+		std::sort(Heard.begin(), Heard.end());
+		CHECK(Heard == std::vector<int>({ 5, 7, 11 }));
+	}
+
+	// Degrees in the key given; a key given spells the names
+	transcribe::Key G;
+	G.tonic = 7;
+	CHECK(LayOutTypedChords("I vi IV V", Four, 4, &G, K, Chords, Names, Error) && Names == "| G | Em | C | D |" && K.tonic == 7);
+	transcribe::Key F;
+	F.tonic = 5;
+	CHECK(LayOutTypedChords("F A#m C", Four, 4, &F, K, Chords, Names, Error) && Names == "| F | A#m | C | F |");	// as written
+
+	// What isn't a chord says so
+	CHECK(!LayOutTypedChords("C H7 F", Four, 4, NULL, K, Chords, Names, Error) && Contains(Error, "\"H7\" isn't a chord"));
+	CHECK(!LayOutTypedChords("   ", Four, 4, NULL, K, Chords, Names, Error) && Contains(Error, "Type the chords"));
+	CHECK(!LayOutTypedChords("C G", std::vector<transcribe::Bar>(), 4, NULL, K, Chords, Names, Error));
+}
+
+// A plucked string as a guitar's: partials up to 8 kHz, softer and dying away sooner the higher they are, a
+// little sharp up high; it sounds for Seconds, then is damped within 30 ms
+void StrumString(transcribe::Audio &Audio, double Time, int Midi, double Amp, double Seconds)
+{
+	const double Pi = 3.14159265358979323846, Rate = 44100.0;
+	const double F0 = 440.0 * std::pow(2.0, (Midi - 69) / 12.0);
+	const size_t From = static_cast<size_t>(Time * Rate), Held = static_cast<size_t>(Seconds * Rate);
+	const size_t Damp = static_cast<size_t>(0.03 * Rate);
+	if (Audio.samples.size() < From + Held + Damp)
+		Audio.samples.resize(From + Held + Damp, 0.0f);
+	for (int h = 1; h <= 30; ++h) {
+		const double F = F0 * h * std::sqrt(1.0 + 0.00008 * h * h), A = Amp * std::fabs(std::sin(Pi * h * 0.2)) / h;
+		if (F > 8000.0)
+			break;
+		if (A < 1e-4)
+			continue;
+		const std::complex<double> Turn = std::polar(std::exp(-1.0 / (1.5 / (1.0 + 0.25 * h) * Rate)), 2.0 * Pi * F / Rate);
+		std::complex<double> Z = std::polar(A, 0.37 * h);
+		for (size_t i = 0; i < Held + Damp; ++i) {
+			double G = std::min(1.0, i / (0.002 * Rate));
+			if (i >= Held)
+				G *= 1.0 - static_cast<double>(i - Held) / static_cast<double>(Damp);
+			Audio.samples[From + i] += static_cast<float>(G * Z.imag());
+			Z *= Turn;
+		}
+	}
+}
+
+// Chords strummed on a guitar's six strings (the low E first, -1 for one not played), StrumsABar strums to each
+// of Bars, from the lowest string up 12 ms apart: a string struck again stops sounding what it played. With Ring,
+// a string the next chord doesn't play rings on (as an open string does); otherwise every strum damps them all.
+transcribe::Audio Strummed(const std::vector<std::vector<int> > &Bars, double Beat, int StrumsABar, bool Ring)
+{
+	struct Pluck { double Time; int Midi; double Amp; };
+	std::vector<std::vector<Pluck> > Strings(6);
+	const int Total = static_cast<int>(Bars.size()) * StrumsABar;
+	const double Each = 4.0 * Beat / StrumsABar;
+	std::vector<double> Strums;
+	for (int s = 0; s < Total; ++s) {
+		const std::vector<int> &Chord = Bars[static_cast<size_t>(s / StrumsABar)];
+		Strums.push_back(0.5 + s * Each);
+		for (size_t k = 0; k < Chord.size() && k < 6; ++k)
+			if (Chord[k] >= 0) {
+				const Pluck P = { 0.5 + s * Each + 0.012 * k, Chord[k], s % StrumsABar == 0 ? 0.25 : 0.18 };
+				Strings[k].push_back(P);
+			}
+	}
+	transcribe::Audio Audio;
+	Audio.sampleRate = 44100;
+	Audio.samples.assign(22050, 0.0f);
+	for (size_t k = 0; k < Strings.size(); ++k)
+		for (size_t i = 0; i < Strings[k].size(); ++i) {
+			const Pluck &P = Strings[k][i];
+			double Until = i + 1 < Strings[k].size() ? Strings[k][i + 1].Time : P.Time + 2.0;
+			if (!Ring)	// damped at the next strum
+				for (size_t s = 0; s < Strums.size(); ++s)
+					if (Strums[s] > P.Time + 0.05) {
+						Until = std::min(Until, Strums[s]);
+						break;
+					}
+			StrumString(Audio, P.Time, P.Midi, P.Amp, Until - P.Time);
+		}
+	return Audio;
+}
+
+void TestStrummedChords()
+{
+	// C, G, Am and F on a guitar, a strum a beat, at 150 BPM (10 rows a second, 4 rows a beat, 16 a bar)
+	const std::vector<int> C = { -1, 48, 52, 55, 60, 64 }, G = { 43, 47, 50, 55, 59, 67 }, Am = { -1, 45, 52, 57, 60, 64 },
+		F = { 41, 48, 53, 57, 60, 65 };
+	const transcribe::Audio Take = Strummed({ C, G, Am, F }, 0.4, 4, false);
+	const std::vector<transcribe::Strum> Strums = transcribe::HearStrums(Take);
+	CHECK_EQ(Strums.size(), static_cast<size_t>(16));
+	StrummedChords Heard;
+	std::string Error;
+	CHECK(HearStrummedChords(Strums, 0.5, 0, 10.0, 64, 16, 4, Heard, Error));
+	CHECK_EQ(Heard.Names, std::string("| C | G | Am | F |"));
+	CHECK(Heard.FirstRow == 0 && Heard.BarCount == 4 && Heard.Key.tonic == 0 && !Heard.Key.minor);
+	// The names read back as typed chords on the same bars
+	transcribe::Key K;
+	std::vector<transcribe::ChordSpan> Spans;
+	std::string Names;
+	CHECK(LayOutTypedChords(Heard.Names, transcribe::SongBars(0, 64, 64, 16), 4, &Heard.Key, K, Spans, Names, Error) && Names == Heard.Names);
+
+	// Open strings ringing on into the next chord (F's low F under the C), and two chords in a bar
+	const transcribe::Audio Ringing = Strummed({ Am, F, C, G }, 0.4, 4, true);
+	CHECK(HearStrummedChords(transcribe::HearStrums(Ringing), 0.5, 0, 10.0, 64, 16, 4, Heard, Error));
+	CHECK_EQ(Heard.Names, std::string("| Am | F | C | G |"));
+	CHECK(Heard.Key.tonic == 9 && Heard.Key.minor);
+	transcribe::Audio Halves = Strummed({ C, G, Am, Am, F, F }, 0.2, 2, false);	// half a bar each, a strum a beat
+	CHECK(HearStrummedChords(transcribe::HearStrums(Halves), 0.5, 0, 10.0, 64, 16, 4, Heard, Error));
+	CHECK_EQ(Heard.Names, std::string("| C G | Am | F |"));
+
+	// A take recorded from bar 3 on: its bars count from there; strums of the count-in are left out
+	CHECK(HearStrummedChords(Strums, 0.5, 32, 10.0, 64, 16, 4, Heard, Error) && Heard.FirstRow == 32 && Heard.BarCount == 4);
+	CHECK(HearStrummedChords(Strums, 2.1, 0, 10.0, 64, 16, 4, Heard, Error) && Heard.Names == "| G | Am | F |");
+
+	// Nothing strummed
+	CHECK(!HearStrummedChords(std::vector<transcribe::Strum>(), 0.0, 0, 10.0, 64, 16, 4, Heard, Error) &&
+		Contains(Error, "No chords were heard"));
+}
+
 int main()
 {
 	TestJson();
@@ -14602,6 +14836,9 @@ int main()
 	TestHeldLead();
 	TestMixFixes();
 	TestReviewFixes();
+	TestGrooveParts();
+	TestTypedChords();
+	TestStrummedChords();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

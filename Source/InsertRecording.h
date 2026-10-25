@@ -35,7 +35,8 @@ namespace transcribe { struct Audio; struct TakeTiming; }
 enum recording_kind_t {
 	RECORDING_WHISTLE,		// a melody, listened for at 300-4200 Hz
 	RECORDING_VOICE,		// humming or singing, 70-1100 Hz
-	RECORDING_DRUMS			// finger taps or beatboxing
+	RECORDING_DRUMS,		// finger taps or beatboxing
+	RECORDING_CHORDS		// a strummed guitar or a piano's chords, for Add chords and bass line (HearRecordedChords)
 };
 
 // Guesses what a recording holds. Description says it in words ("whistling").
@@ -56,9 +57,35 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
 // success Message says what was inserted. With a ClipName, the notes are kept
-// as a new clip of that name instead of going into the song.
+// as a new clip of that name instead of going into the song. With
+// SelectionRows, the take is sung over a selection: it replaces just those
+// rows of the channel from Row of Frame on, and the rest of the song sounds
+// as it did (CChannelNotes::ReplaceRows in NoteEdit.h).
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
-	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message, LPCTSTR ClipName = NULL);
+	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message, LPCTSTR ClipName = NULL,
+	int SelectionRows = 0);
+
+// The chords strummed (or played on a piano) in a recording, bar by bar, as
+// names for Add chords and bass line to use ("| C | G | Am F |"): Timing says
+// which moment lands on song row StartRow (a WAV file's first strum, or the
+// downbeat after a take's count-in); the bars are the song's. FirstRow is the
+// row of the bar of the first strum. False with the reason in Message.
+bool HearRecordedChords(const CFamiTrackerDoc *pDoc, unsigned int Track, const transcribe::Audio &Audio,
+	const transcribe::TakeTiming &Timing, int StartRow, CString &Names, int &FirstRow, CString &Message);
+bool HearRecordedChords(const CFamiTrackerDoc *pDoc, unsigned int Track, LPCTSTR Path, int StartRow, CString &Names,
+	int &FirstRow, CString &Message);	// a WAV file
+
+// The selected track's speed and tempo, as one undoable action (Tap the
+// tempo, Start from a groove). False when nothing changed.
+bool SetSongTempo(CMainFrame *pMainFrm, int Speed, int Tempo);
+
+// The speed and tempo for a tempo in BPM, as the set_tempo tool picks them
+// (rows of even length first: ftapi::ChooseSpeedTempo), with the beat as the
+// song's first row highlight
+void SpeedTempoFor(const CFamiTrackerDoc *pDoc, unsigned int Track, double Bpm, int &Speed, int &Tempo);
+
+// The song's tempo in BPM, a beat being the first row highlight
+double SongBpm(const CFamiTrackerDoc *pDoc, unsigned int Track);
 
 // The same for the WAV file at Path, its first note on the cursor row.
 bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
@@ -101,12 +128,18 @@ bool SetChannelMix(CMainFrame *pMainFrm, const ftapi::MixStore &Mix, const ftapi
 // in one channel, written into two others, over the bars the melody covers
 // (bars and beats as the row highlight shows them).
 struct backing_choice_t {
-	int MelodyChannel;
+	int MelodyChannel;		// -1 for none (with chords given)
 	int ChordChannel;		// a pulse channel, -1 for no chords
 	int BassChannel;		// the triangle or sawtooth, -1 for no bass line
 	int KeyTonic;			// 0-11 (C-B), -1 to find the key
 	bool KeyMinor;
 	bool HalfBars;			// chords may change halfway through a bar
+	// Chords given by name ("C G Am F", a chord a bar, or "C | G | Am F"), typed or heard from a strummed
+	// guitar, instead of chords found from the melody; empty to find them. They start at the bar of
+	// ChordsRow (a song row), or with -1 at the melody's first bar, and cover the bars typed, repeating
+	// over the melody's when it has more.
+	CString Chords;
+	int ChordsRow;
 };
 
 // Has the channel any notes?
@@ -117,7 +150,8 @@ CString KeyName(int Tonic, bool Minor);
 
 // What the backing would be: its key ("C minor"), its chords bar by bar
 // ("| C | F C | G | C |") and the frames it covers. Returns false, with the
-// reason in Message, when there is no melody to fit chords to.
+// reason in Message, when there is no melody to fit chords to (or the chords
+// given can't be read).
 bool DescribeBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, CString &Key,
 	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message);
 
