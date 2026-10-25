@@ -89,10 +89,11 @@ struct GrooveParts {
 	std::vector<PartNote> ChordNotes;	// their instruments left out (NO_INSTRUMENT)
 	std::vector<PartNote> BassNotes;	// the "bass" preset plays them
 	std::vector<DrumHit> Drums;		// each with the preset that plays it (DrumHit::Sound)
+	int DrumsLoudest;				// the volume their loudest hit plays at (GrooveLoudest: softer for calm grooves)
 	double Bpm;						// the tempo, and FamiTracker's speed and tempo for it as set_tempo picks them
 	int Speed, Tempo;
 	std::string Summary;			// in words: "arpeggio (tresillo) chords, an octaves bass and basic drums"
-	GrooveParts() : ChordStyle(0), Bpm(0.0), Speed(6), Tempo(150) {}
+	GrooveParts() : ChordStyle(0), DrumsLoudest(15), Bpm(0.0), Speed(6), Tempo(150) {}
 };
 
 // The parts of a groove. False with the reason in Error: no such mood, no

@@ -53,7 +53,7 @@ enum broken_pattern { BROKEN_UP, BROKEN_DOWN, BROKEN_UPDOWN, BROKEN_ALBERTI, BRO
 enum bass_style { BASS_ROOT_FIFTH, BASS_ROOTS, BASS_HALF, BASS_OCTAVES, BASS_WALKING, BASS_SYNCOPATED, BASS_ARPEGGIO,
 	BASS_DRIVING, BASS_PEDAL };
 enum groove { GROOVE_BASIC, GROOVE_FOUR_ON_FLOOR, GROOVE_HALF_TIME, GROOVE_SHUFFLE, GROOVE_MARCH, GROOVE_BREAKBEAT,
-	GROOVE_CALM, GROOVE_DRIVING, GROOVE_WALTZ };
+	GROOVE_CALM, GROOVE_DRIVING, GROOVE_WALTZ, GROOVE_LIVELY };
 enum harmony_interval { HARMONY_THIRD_BELOW, HARMONY_SIXTH_BELOW, HARMONY_THIRD_ABOVE, HARMONY_FIFTH_BELOW, HARMONY_OCTAVE_BELOW };
 
 // In the order of the enums above
@@ -86,8 +86,13 @@ struct ChordPartOptions {
 	// Empty and -1, the chords go by Low and High alone.
 	std::vector<NoteInfo> Above, Below;
 	int Ceiling, Floor;
+	// Broken chords: no note under this (as the part writes it; -1 for none), whatever the room, an octave up
+	// where one would be: a pulse's ripple low under the bass turns to mud
+	int Lowest;
 	ChordPartOptions();
 };
+// Where a pulse's broken chords stop going down, as they sound: C-2
+const int PULSE_BROKEN_FLOOR = 24;
 
 // How far under the melody's lowest note a chord's notes stay (a minor third; a whole step where a chord's shape fits no
 // lower, never a semitone), and over the bass's highest
@@ -156,7 +161,7 @@ struct DrumHit {
 };
 struct DrumOptions {
 	int Groove;			// groove
-	int Intensity;		// 1 light, 2 as written, 3 busy
+	int Intensity;		// 1 light (fewer kicks and snares, the hi-hats kept), 2 as written, 3 busy
 	int FillEvery;		// a fill ends every so many bars; 0 for none
 	int PhraseStart;	// bars of the phrase before the first one, so fills land where phrases end
 	bool Crash;			// a crash where the drums start and after each fill
@@ -165,6 +170,9 @@ struct DrumOptions {
 	DrumOptions();
 };
 std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOptions &Options);
+// The loudest hit a groove's part has as DrumPart makes it (most grooves 15; lively, soft by design, 10), which a
+// part's loudest volume scales from
+int GrooveLoudest(int Groove);
 
 // A second voice that follows the melody note for note, a third (or another
 // interval) away in the key, on the chords' notes where the melody holds.
