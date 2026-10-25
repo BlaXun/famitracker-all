@@ -153,21 +153,32 @@ std::string PitchList(const std::vector<int> &Pitches)
 	return Out;
 }
 
-// The noise pitch a drum sounds best at, by its words (as the library played them)
-int DrumPitch(const std::string &Words)
+// The kinds of drum a preview tells apart, by their words
+enum drum_kind { DRUM_KICK, DRUM_SNARE, DRUM_OPEN, DRUM_CYMBAL, DRUM_TOM, DRUM_HAT, DRUM_OTHER };
+
+int DrumKind(const std::string &Words)
 {
 	const std::vector<std::string> W = WordsOf(Words);
 	if (HasWord(W, "kick"))
-		return 0x4;
+		return DRUM_KICK;
 	if (HasWord(W, "snare"))
-		return 0xA;
+		return DRUM_SNARE;
 	if (HasWord(W, "open"))
-		return 0xD;
+		return DRUM_OPEN;
 	if (HasWord(W, "crash") || HasWord(W, "cymbal"))
-		return 0xC;
+		return DRUM_CYMBAL;
 	if (HasWord(W, "tom"))
-		return 0x7;
-	return 0xE;
+		return DRUM_TOM;
+	if (HasWord(W, "hat") || HasWord(W, "hihat") || HasWord(W, "hi"))
+		return DRUM_HAT;
+	return DRUM_OTHER;
+}
+
+// The noise pitch a drum sounds best at, by its kind (as the library played them)
+int DrumPitch(int Kind)
+{
+	static const int PITCHES[] = { 0x4, 0xA, 0xD, 0xC, 0x7, 0xE, 0xE };
+	return PITCHES[Kind];
 }
 
 class Lister {
@@ -541,6 +552,11 @@ private:
 		const bool Saw = Target == TARGET_SAWTOOTH;
 		SoundEntry E = Base(Name, Sound.Words, Target, Home);
 		E.Source = SOURCE_REFERENCE;
+		E.Game = R.Game;
+		// Under its game's heading: the track and the part ("Needle Man (track 2), the lead")
+		const std::string Track = R.Track > 0 ? "track " + std::to_string(R.Track) : std::string();
+		E.About = (R.Title.empty() ? (Track.empty() ? R.Id : Track) : R.Title + (Track.empty() ? std::string() : " (" + Track + ")")) +
+			(Sound.Role.empty() ? std::string() : ", " + Sound.Role);
 		E.Kind = Kind;
 		E.Drum = Sound.Noise;
 		E.Low = E.Kind == "bass";
@@ -598,6 +614,8 @@ private:
 		}
 		if (!E.Warning.empty() && E.Warning[0] == ' ')
 			E.Warning.erase(0, 1);
+		if (E.About.empty())
+			E.About = E.Words;
 		IndexWords(E);
 		m_Out.push_back(E);
 	}
@@ -859,45 +877,298 @@ std::vector<size_t> FindMatching(const std::vector<SoundEntry> &All, const Sound
 
 }	// namespace
 
-std::vector<PreviewStep> PreviewSteps(const SoundEntry &Sound)
+// The sound browser's groups and rows ---------------------------------------------------------------------------
+
+namespace {
+
+// A game's place among the others: A to Z, "the" left out ("The Legend of Zelda" under L), the studies without one last
+std::string GameOrder(const std::string &Game)
+{
+	if (Game.empty())
+		return std::string(1, '\x7F');
+	std::string Lower = Lowercase(Game);
+	if (Lower.compare(0, 4, "the ") == 0 && Lower.size() > 4)
+		Lower.erase(0, 4);
+	return Lower;
+}
+
+std::string GroupLabel(int Source, const std::string &Game)
+{
+	if (Source == SOURCE_PRESET)
+		return "Ready-made sounds";
+	if (Source == SOURCE_SONG)
+		return "This song's instruments";
+	return Game.empty() ? "Other references" : Game;
+}
+
+}	// namespace
+
+std::vector<SoundGroup> GroupSounds(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found)
+{
+	// The kinds in the order they're first found: SoundKinds()'s without words, the best match's first with them
+	std::vector<std::string> Kinds;
+	std::map<std::string, std::vector<size_t> > OfKind;
+	for (size_t f = 0; f < Found.size(); ++f) {
+		const std::string &Kind = All[Found[f]].Kind;
+		std::vector<size_t> &Sounds = OfKind[Kind];
+		if (Sounds.empty())
+			Kinds.push_back(Kind);
+		Sounds.push_back(Found[f]);
+	}
+	std::vector<SoundGroup> Out;
+	for (size_t k = 0; k < Kinds.size(); ++k) {
+		const std::vector<size_t> &Sounds = OfKind[Kinds[k]];
+		// The ready-made sounds, the reference library's by game, the song's own
+		std::map<std::pair<int, std::string>, SoundGroup> Groups;		// (place, game's order)
+		for (size_t s = 0; s < Sounds.size(); ++s) {
+			const SoundEntry &E = All[Sounds[s]];
+			const int Source = E.Source == SOURCE_REFERENCE || E.Source == SOURCE_SONG ? E.Source : SOURCE_PRESET;
+			const std::string Game = Source == SOURCE_REFERENCE ? E.Game : std::string();
+			SoundGroup &G = Groups[std::make_pair(Source, Source == SOURCE_REFERENCE ? GameOrder(Game) : std::string())];
+			if (G.Sounds.empty()) {
+				G.Kind = Kinds[k];
+				G.Source = Source;
+				G.Game = Game;
+				G.Label = GroupLabel(Source, Game);
+				G.Key = Kinds[k] + "/" + std::to_string(Source) + "/" + Lowercase(Game);
+			}
+			G.Sounds.push_back(Sounds[s]);
+		}
+		for (std::map<std::pair<int, std::string>, SoundGroup>::iterator it = Groups.begin(); it != Groups.end(); ++it)
+			Out.push_back(it->second);
+	}
+	return Out;
+}
+
+std::vector<int> KindCounts(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found)
+{
+	std::vector<int> Counts(SoundKinds().size(), 0);
+	for (size_t f = 0; f < Found.size(); ++f) {
+		const size_t k = static_cast<size_t>(KindOrder(All[Found[f]].Kind));
+		if (k < Counts.size())
+			++Counts[k];
+	}
+	return Counts;
+}
+
+std::string KindKey(const std::string &Kind)
+{
+	return "kind/" + Kind;
+}
+
+bool GroupFolded(const std::vector<SoundGroup> &Groups, size_t Group, const SoundView &View)
+{
+	const SoundGroup &G = Groups[Group];
+	const std::map<std::string, bool>::const_iterator Asked = View.Folds.find(G.Key);
+	if (Asked != View.Folds.end())
+		return Asked->second;
+	if (View.Words || G.Source != SOURCE_REFERENCE)
+		return false;
+	int References = 0;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		if (Groups[g].Kind == G.Kind && Groups[g].Source == SOURCE_REFERENCE)
+			References += static_cast<int>(Groups[g].Sounds.size());
+	return References > FOLD_GAMES_OVER;
+}
+
+std::vector<SoundRow> SoundRows(const std::vector<SoundGroup> &Groups, const SoundView &View)
+{
+	std::vector<SoundRow> Rows;
+	for (size_t g = 0; g < Groups.size(); ) {
+		// The kind's groups follow each other
+		size_t End = g + 1;
+		while (End < Groups.size() && Groups[End].Kind == Groups[g].Kind)
+			++End;
+		if (View.EveryKind) {
+			SoundRow Kind;
+			Kind.Type = ROW_KIND;
+			Kind.Group = g;
+			for (size_t k = g; k < End; ++k)
+				Kind.Count += static_cast<int>(Groups[k].Sounds.size());
+			const std::map<std::string, bool>::const_iterator Asked = View.Folds.find(KindKey(Groups[g].Kind));
+			Kind.Folded = Asked != View.Folds.end() && Asked->second;
+			Rows.push_back(Kind);
+			if (Kind.Folded) {
+				g = End;
+				continue;
+			}
+		}
+		for (; g < End; ++g) {
+			SoundRow Heading;
+			Heading.Type = ROW_GROUP;
+			Heading.Group = g;
+			Heading.Count = static_cast<int>(Groups[g].Sounds.size());
+			Heading.Folded = GroupFolded(Groups, g, View);
+			Rows.push_back(Heading);
+			if (Heading.Folded)
+				continue;
+			for (size_t s = 0; s < Groups[g].Sounds.size(); ++s) {
+				SoundRow Sound;
+				Sound.Type = ROW_SOUND;
+				Sound.Group = g;
+				Sound.Sound = Groups[g].Sounds[s];
+				Rows.push_back(Sound);
+			}
+		}
+	}
+	return Rows;
+}
+
+std::string RowKey(const std::vector<SoundGroup> &Groups, const SoundRow &Row)
+{
+	if (Row.Group >= Groups.size() || Row.Type == ROW_SOUND)
+		return std::string();
+	return Row.Type == ROW_KIND ? KindKey(Groups[Row.Group].Kind) : Groups[Row.Group].Key;
+}
+
+int RowHeading(const std::vector<SoundRow> &Rows, int Row)
+{
+	if (Row < 0 || static_cast<size_t>(Row) >= Rows.size() || Rows[static_cast<size_t>(Row)].Type == ROW_KIND)
+		return -1;
+	const int Above = Rows[static_cast<size_t>(Row)].Type == ROW_SOUND ? ROW_GROUP : ROW_KIND;
+	for (int r = Row - 1; r >= 0; --r) {
+		if (Rows[static_cast<size_t>(r)].Type == Above)
+			return r;
+		if (Rows[static_cast<size_t>(r)].Type == ROW_KIND)
+			return -1;		// (a group's sounds never pass their kind's heading)
+	}
+	return -1;
+}
+
+int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound)
+{
+	for (size_t r = 0; r < Rows.size(); ++r)
+		if (Rows[r].Type == ROW_SOUND && Rows[r].Sound == Sound)
+			return static_cast<int>(r);
+	return -1;
+}
+
+// Previews --------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A phrase as a 2A03 pulse plays it (C-4 is 48): its notes (ms from the start, pitch), the last held until the
+// release, and the end, where it's cut
+struct PhraseNote {
+	int At;
+	int Pitch;
+};
+struct Phrase {
+	const char *Kind;		// the kind it's for
+	const PhraseNote *Notes;
+	size_t Count;
+	int Release;
+	int End;
+};
+
+// A lead: a short tune that ends on a long note, to hear its vibrato and how it holds (E G A G E D C)
+const PhraseNote LEAD_TUNE[] = { { 0, 52 }, { 180, 55 }, { 360, 57 }, { 540, 55 }, { 720, 52 }, { 900, 50 }, { 1080, 48 } };
+// A bass: octaves that bounce and walk down (C-2 C-3 G-2 C-3 A#1 A#2 G-1 G-2 C-2)
+const PhraseNote BASS_FIGURE[] = { { 0, 24 }, { 200, 36 }, { 400, 31 }, { 600, 36 }, { 800, 22 }, { 1000, 34 }, { 1200, 19 },
+	{ 1400, 31 }, { 1600, 24 } };
+// A pad: two held notes, to hear it swell and hold (C-4, then A-3)
+const PhraseNote PAD_NOTES[] = { { 0, 48 }, { 1000, 45 } };
+// A pluck: a quick broken chord, up and back (C E G C, G E C)
+const PhraseNote PLUCK_CHORD[] = { { 0, 48 }, { 150, 52 }, { 300, 55 }, { 450, 60 }, { 600, 55 }, { 750, 52 }, { 900, 48 } };
+// A bell: a few notes, far apart, each left to ring (C-5 G-4 E-4 C-4)
+const PhraseNote BELL_NOTES[] = { { 0, 60 }, { 500, 55 }, { 1000, 52 }, { 1500, 48 } };
+// Keys: a broken chord that turns into a tune (C E G C B G C)
+const PhraseNote KEYS_TUNE[] = { { 0, 48 }, { 200, 52 }, { 400, 55 }, { 600, 60 }, { 800, 59 }, { 1000, 55 }, { 1200, 60 } };
+// An effect: one long note
+const PhraseNote EFFECT_NOTE[] = { { 0, 48 } };
+
+#define PHRASE(Kind, Notes, Release, End) { Kind, Notes, sizeof(Notes) / sizeof(Notes[0]), Release, End }
+const Phrase PHRASES[] = {
+	PHRASE("lead", LEAD_TUNE, 2100, 2800),
+	PHRASE("bass", BASS_FIGURE, 2300, 2900),
+	PHRASE("pad", PAD_NOTES, 2000, 2800),
+	PHRASE("pluck", PLUCK_CHORD, 1700, 2300),
+	PHRASE("bell", BELL_NOTES, 2400, 3000),
+	PHRASE("keys", KEYS_TUNE, 2000, 2600),
+	PHRASE("effect", EFFECT_NOTE, 1800, 2600),
+};
+#undef PHRASE
+
+const Phrase &PhraseFor(const std::string &Kind)
+{
+	for (size_t i = 0; i < sizeof(PHRASES) / sizeof(PHRASES[0]); ++i)
+		if (Kind == PHRASES[i].Kind)
+			return PHRASES[i];
+	return PHRASES[0];		// "other": a lead's tune
+}
+
+// A beat: hits at their ms, a pitch each (into the pitches, in turn), and the end
+std::vector<PreviewStep> Beat(const std::vector<int> &At, const std::vector<int> &Pitches, int End)
 {
 	std::vector<PreviewStep> Out;
-	const bool Square = Sound.Target == TARGET_S5B;	// sounds an octave under the note written
-	if (Sound.Target == TARGET_NOISE || Sound.Target == TARGET_DPCM || (Square && Sound.Drum)) {
-		// A beat: the pitches the song plays it at, or where a drum of its kind sounds best (the 5B's at C-4, a
-		// sample kit's at its keys)
-		std::vector<int> Pitches = Sound.Pitches;
-		if (Pitches.empty())
-			Pitches.push_back(Square ? 48 : Sound.Target == TARGET_DPCM ? 36 : DrumPitch(Sound.Name + " " + Sound.Words));
-		if (Sound.Target == TARGET_DPCM && Sound.Pitches.empty()) {
-			Pitches.push_back(38);
-			Pitches.push_back(41);
-			Pitches.push_back(45);
-		}
-		static const int HITS[] = { 0, 300, 600, 750, 900 };
-		for (size_t i = 0; i < sizeof(HITS) / sizeof(HITS[0]); ++i) {
-			const PreviewStep Hit = { HITS[i], Pitches[i % Pitches.size()] };
-			Out.push_back(Hit);
-		}
-		const PreviewStep End = { 1500, PREVIEW_HALT };
-		Out.push_back(End);
-		return Out;
+	for (size_t i = 0; i < At.size(); ++i) {
+		const PreviewStep Hit = { At[i], Pitches[i % Pitches.size()] };
+		Out.push_back(Hit);
 	}
-	static const int MELODY[] = { 48, 52, 55, 60, 55, 60 };		// C-4 E-4 G-4 C-5 G-4 C-5
-	static const int BASS[] = { 36, 43, 46, 48, 43, 36 };		// C-3 G-3 A#3 C-4 G-3 C-3
-	static const int STEP[] = { 0, 220, 440, 660, 880, 1100 };
-	const bool Low = Sound.Low || Sound.Target == TARGET_TRIANGLE || Sound.Target == TARGET_SAWTOOTH;
-	const int *pNotes = Low ? BASS : MELODY;
-	// The FDS sounds two octaves under the note written: the melody goes up two, where a pulse would play it,
-	// and a bass one, where the triangle plays it; the 5B one octave under: a melody goes up one
-	const int Lift = Sound.Target == TARGET_FDS ? (Low ? 12 : 24) : (Square && !Low ? 12 : 0);
-	for (size_t i = 0; i < 6; ++i) {
-		const PreviewStep Note = { STEP[i], pNotes[i] + Lift };
+	const PreviewStep Last = { End, PREVIEW_HALT };
+	Out.push_back(Last);
+	return Out;
+}
+
+std::vector<PreviewStep> DrumSteps(const SoundEntry &Sound)
+{
+	if (!Sound.Pitches.empty())		// the song's own: a beat at the pitches the song plays it at
+		return Beat(std::vector<int>{ 0, 300, 600, 750, 900, 1200 }, Sound.Pitches, 1700);
+	if (Sound.Target == TARGET_DPCM)	// a sample kit: kick, snare, kick, kick, snare, low tom, high tom
+		return Beat(std::vector<int>{ 0, 300, 600, 750, 900, 1200, 1350 }, std::vector<int>{ 36, 38, 36, 36, 38, 41, 45 }, 1900);
+	if (Sound.Target != TARGET_NOISE)	// a drum on another channel (the 5B's noise and envelope drums): at C-4 on
+		// the 5B, C-5 on the FDS, C-3 elsewhere, which sound alike
+		return Beat(std::vector<int>{ 0, 300, 600, 750, 900 }, std::vector<int>(1, Sound.Target == TARGET_S5B ? 48 :
+			Sound.Target == TARGET_FDS ? 60 : 36), 1500);
+	// On the noise, a rhythm for its kind of drum, where it sounds best
+	const int Kind = DrumKind(Sound.Name + " " + Sound.Words);
+	const std::vector<int> Pitch(1, DrumPitch(Kind));
+	switch (Kind) {
+	case DRUM_KICK:
+		return Beat(std::vector<int>{ 0, 450, 600, 900 }, Pitch, 1500);
+	case DRUM_SNARE:
+		return Beat(std::vector<int>{ 0, 600, 900, 1050 }, Pitch, 1600);
+	case DRUM_HAT:
+		return Beat(std::vector<int>{ 0, 150, 300, 450, 600, 750, 900, 1050 }, Pitch, 1400);
+	case DRUM_OPEN:
+		return Beat(std::vector<int>{ 0, 600 }, Pitch, 1600);
+	case DRUM_CYMBAL:
+		return Beat(std::vector<int>{ 0 }, Pitch, 1800);
+	case DRUM_TOM:	// a fill, falling
+		return Beat(std::vector<int>{ 0, 200, 400, 600 }, std::vector<int>{ 0x9, 0x8, 0x7, 0x6 }, 1400);
+	default:
+		return Beat(std::vector<int>{ 0, 300, 600, 750, 900 }, Pitch, 1500);
+	}
+}
+
+}	// namespace
+
+std::vector<PreviewStep> PreviewSteps(const SoundEntry &Sound)
+{
+	if (Sound.Target == TARGET_NOISE || Sound.Target == TARGET_DPCM || Sound.Drum || Sound.Kind == "drums")
+		return DrumSteps(Sound);
+	// A bass's figure for a sound heard low, whatever its words
+	const std::string Kind = Sound.Low ? std::string("bass") : Sound.Kind;
+	const Phrase &P = PhraseFor(Kind);
+	// The FDS sounds two octaves under the note written and the 5B one: written up, where a pulse would play them
+	int Lift = Sound.Target == TARGET_FDS ? 24 : Sound.Target == TARGET_S5B ? 12 : 0;
+	if (Sound.Source == SOURCE_SONG && !Sound.Pitches.empty()) {
+		// The song's own: by octaves (at most one) toward the lowest note the song plays it at
+		int Lowest = P.Notes[0].Pitch;
+		for (size_t i = 1; i < P.Count; ++i)
+			Lowest = std::min(Lowest, P.Notes[i].Pitch);
+		const int Apart = Sound.Pitches[0] - (Lowest + Lift);
+		const int Octaves = Apart >= 0 ? (Apart + 6) / 12 : -((-Apart + 5) / 12);
+		Lift += 12 * std::max(-1, std::min(1, Octaves));
+	}
+	std::vector<PreviewStep> Out;
+	for (size_t i = 0; i < P.Count; ++i) {
+		const PreviewStep Note = { P.Notes[i].At, std::max(0, std::min(95, P.Notes[i].Pitch + Lift)) };
 		Out.push_back(Note);
 	}
-	const PreviewStep Release = { 1700, PREVIEW_RELEASE };
+	const PreviewStep Release = { P.Release, PREVIEW_RELEASE };
 	Out.push_back(Release);
-	const PreviewStep End = { 2600, PREVIEW_HALT };
+	const PreviewStep End = { P.End, PREVIEW_HALT };
 	Out.push_back(End);
 	return Out;
 }

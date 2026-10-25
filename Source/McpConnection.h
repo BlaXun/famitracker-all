@@ -66,9 +66,10 @@ public:
 	// from the notes, and the chords its parts play, as the tools hear them. False when busy or without a song.
 	bool Harmony(ftapi::TrackHarmony &Out);
 	// Instrument > Sound browser (SoundBrowserDlg.cpp): every sound the song can get (Api/SoundIndex.h, as find_sound
-	// lists them), Cursor the channel the user is on; and one made into an instrument as add_instrument or
+	// lists them), Cursor the channel the user is on (without Library, the ready-made sounds and the song's own only,
+	// quickly: the main window's Listen, SoundPreview.cpp); and one made into an instrument as add_instrument or
 	// reference_sound makes it: its index. False, or -1, with the reason when busy with Claude Code or without a song.
-	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error);
+	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error, bool Library = true);
 	int MakeSound(const ftapi::SoundEntry &Sound, std::string &Error);
 
 private:

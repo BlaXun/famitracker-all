@@ -81,6 +81,7 @@ BEGIN
     BUTTON      ID_INSTRUMENT_SAVE
     SEPARATOR
     BUTTON      ID_INSTRUMENT_EDIT
+    BUTTON      ID_INSTRUMENT_LISTEN
 END
 
 
@@ -190,6 +191,7 @@ BEGIN
         MENUITEM "Save to file...",             ID_INSTRUMENT_SAVE
         MENUITEM SEPARATOR
         MENUITEM "Edit\tCtrl+I",                ID_INSTRUMENT_EDIT
+        MENUITEM "Listen",                      ID_INSTRUMENT_LISTEN
     END
     POPUP "T&racker"
     BEGIN
@@ -347,6 +349,7 @@ BEGIN
         MENUITEM "Deep clone instrument",       ID_INSTRUMENT_DEEPCLONE
         MENUITEM SEPARATOR
         MENUITEM "Edit",                        ID_INSTRUMENT_EDIT
+        MENUITEM "Listen",                      ID_INSTRUMENT_LISTEN
     END
 END
 
@@ -591,6 +594,7 @@ BEGIN
     ID_EDIT_GROOVE          "Pick a mood, a tempo and a key, and get drums, a bass line and chords to sing a melody over\nStart from a groove"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
+    ID_INSTRUMENT_LISTEN    "Hear the selected instrument: a short tune, a bass line, a beat or held notes on its channel\nListen to the instrument"
     ID_EDIT_ADDBACKING      "Fit chords and a bass line to the melody in a channel\nAdd chords and bass line"
     ID_EDIT_DRUMGRID        "Show or hide the drum grid: the noise channel's drums a bar at a time, on a grid of steps, with ready-made beats\nDrum grid"
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
@@ -2069,27 +2073,26 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,243,178,50,14
 END
 
-IDD_SOUND_BROWSER DIALOGEX 0, 0, 460, 304
-STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_SOUND_BROWSER DIALOGEX 0, 0, 480, 300
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX
 CAPTION "Sound browser"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Every sound this song can use: ready-made sounds for its chips, the sounds of your reference library and the song's own instruments. Click one to hear it; while the list is picked, the note keys (or a MIDI keyboard) play it too.",IDC_STATIC,7,7,446,18
-    LTEXT           "Find:",IDC_STATIC,7,32,34,8
-    EDITTEXT        IDC_SB_FIND,44,30,166,12,ES_AUTOHSCROLL
-    LTEXT           "Kind:",IDC_STATIC,220,32,20,8
-    COMBOBOX        IDC_SB_KIND,242,30,86,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "From:",IDC_STATIC,336,32,20,8
-    COMBOBOX        IDC_SB_FROM,358,30,95,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Plays on:",IDC_STATIC,7,48,34,8
-    COMBOBOX        IDC_SB_CHANNEL,44,46,166,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    RTEXT           "",IDC_SB_COUNT,336,48,117,8
-    CONTROL         "",IDC_SB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA | WS_BORDER | WS_TABSTOP,7,62,446,140
-    LTEXT           "",IDC_SB_TEXT,7,206,446,42
-    PUSHBUTTON      "Listen",IDC_SB_LISTEN,7,252,60,14
-    DEFPUSHBUTTON   "Add to the song",IDC_SB_ADD,72,252,72,14
-    LTEXT           "",IDC_SB_STATUS,7,272,380,26
-    PUSHBUTTON      "Close",IDCANCEL,403,284,50,14
+    LTEXT           "Every sound this song can use, grouped by kind: in each kind the ready-made sounds come first, then your reference library's game by game (click a game to open it), then the song's own instruments. Click a sound to hear it, and click it again to hear it again.",IDC_SB_INTRO,7,7,466,18
+    LTEXT           "Find:",IDC_SB_FIND_LABEL,7,32,24,8
+    EDITTEXT        IDC_SB_FIND,34,30,180,12,ES_AUTOHSCROLL
+    LTEXT           "From:",IDC_SB_FROM_LABEL,222,32,22,8
+    COMBOBOX        IDC_SB_FROM,246,30,96,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Plays on:",IDC_SB_CHANNEL_LABEL,350,32,32,8
+    COMBOBOX        IDC_SB_CHANNEL,384,30,89,160,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LISTBOX         IDC_SB_KIND,7,48,100,128,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_SB_COUNT,7,180,100,18
+    CONTROL         "",IDC_SB_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA | WS_BORDER | WS_TABSTOP,112,48,361,150
+    LTEXT           "",IDC_SB_TEXT,7,204,466,34
+    PUSHBUTTON      "Listen",IDC_SB_LISTEN,7,244,60,14
+    DEFPUSHBUTTON   "Add to the song",IDC_SB_ADD,72,244,72,14
+    LTEXT           "",IDC_SB_STATUS,150,244,266,30
+    PUSHBUTTON      "Close",IDCANCEL,423,244,50,14
 END
 
 IDD_VOICE_EFFECT DIALOGEX 0, 0, 280, 228

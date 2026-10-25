@@ -31,9 +31,11 @@
 // warn of: notes that vanish (Tools.cpp's VanishRemark) and a vibrato that
 // clicks on the 2A03's pulses (PulseClicks.h). Searched by words and filtered
 // by kind, source and channel. FamiTracker's Instrument > Sound browser lists
-// them (ToolSet::Sounds) and find_sound searches them. Plain C++14, tested on
-// Linux.
+// them (ToolSet::Sounds) in groups and rows (GroupSounds, SoundRows) and plays
+// their previews (PreviewSteps), and find_sound searches them. Plain C++14,
+// tested on Linux.
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -107,6 +109,9 @@ struct SoundEntry {
 	std::vector<int> Pitches;	// the song's own: the pitches it plays on its channel (a few), for hearing a drum
 	std::string Extra;		// more words it's found by: a wave or FDS sound's, a reference's id, composer and tags
 	std::string Search;		// all its words in lower case, as SoundMatch looks for them (IndexWords)
+	std::string Game;		// a reference's game ("" when its study names none): the browser groups by it
+	std::string About;		// in a few words for the browser's list: a ready-made sound's description, a reference's
+							// track and part ("Needle Man (track 2), the lead"), how the song uses its own
 
 	SoundEntry() : Source(SOURCE_PRESET), Target(TARGET_PULSE), Channel(-1), Home(false), Low(false), Drum(false), InSong(-1),
 		Heard(60), Make(MAKE_NONE), Sawtooth(false), Number(0) {}
@@ -165,9 +170,71 @@ void IndexWords(SoundEntry &Sound);
 // sound has every word, the ones with some of them, and Some says so
 std::vector<size_t> FindSounds(const std::vector<SoundEntry> &All, const SoundQuery &Query, bool *pSome = 0);
 
+// The sound browser's groups: the sounds of one kind from one place (the ready-made sounds, a game's studies in
+// the reference library, the song's own instruments)
+struct SoundGroup {
+	std::string Kind;		// a SoundKinds() id
+	int Source;				// sound_source
+	std::string Game;		// SOURCE_REFERENCE: the game ("" for studies that name none)
+	std::string Label;		// "Ready-made sounds", "Castlevania 3", "Other references", "This song's instruments"
+	std::string Key;		// what tells it apart, and folds it: "lead/1/castlevania 3"
+	std::vector<size_t> Sounds;	// into All, in the order they were found
+	SoundGroup() : Source(SOURCE_PRESET) {}
+};
+// The sounds found (FindSounds' order) in groups: kind by kind, in SoundKinds()'s order (with words, the kind of
+// the best match first, as they were found), and inside each kind the ready-made sounds, then the reference
+// library's game by game (A to Z, the studies without a game last), then the song's own. Each sound found is in
+// exactly one group, and keeps the order it was found in.
+std::vector<SoundGroup> GroupSounds(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
+// How many of the sounds found are of each kind, in SoundKinds()'s order
+std::vector<int> KindCounts(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
+// A kind's heading key ("kind/lead"), for SoundView::Folds
+std::string KindKey(const std::string &Kind);
+
+// What the browser's list shows: every kind under headings of their own, or one kind
+struct SoundView {
+	bool EveryKind;			// a heading for each kind over its groups
+	bool Words;				// words were asked for: the groups all open unless folded by hand
+	std::map<std::string, bool> Folds;	// headings folded (true) or opened (false) by hand, by their keys
+	SoundView() : EveryKind(true), Words(false) {}
+};
+// More reference sounds of a kind than this, and no words asked for: its games' groups start folded, so the
+// ready-made sounds and every game's heading show at once
+const int FOLD_GAMES_OVER = 40;
+// Whether a group's sounds are hidden: as folded by hand, else a game's group while its kind has more than
+// FOLD_GAMES_OVER reference sounds and no words were asked for
+bool GroupFolded(const std::vector<SoundGroup> &Groups, size_t Group, const SoundView &View);
+
+// The list's rows: headings and sounds
+enum sound_row_type {
+	ROW_KIND,				// a kind's heading (with every kind showing)
+	ROW_GROUP,				// a group's heading
+	ROW_SOUND
+};
+struct SoundRow {
+	int Type;				// sound_row_type
+	size_t Group;			// the group it's in (a kind's heading: the kind's first group)
+	size_t Sound;			// ROW_SOUND: into All
+	int Count;				// a heading's: the sounds under it
+	bool Folded;			// a heading's: its sounds hidden
+	SoundRow() : Type(ROW_SOUND), Group(0), Sound(0), Count(0), Folded(false) {}
+};
+// The rows of the groups: with every kind, a kind's heading, then each of its groups' heading and (unless folded)
+// its sounds; with one kind, its groups' headings and sounds
+std::vector<SoundRow> SoundRows(const std::vector<SoundGroup> &Groups, const SoundView &View);
+// A heading row's key (its kind's or its group's), "" for a sound
+std::string RowKey(const std::vector<SoundGroup> &Groups, const SoundRow &Row);
+// The heading a row is under: a sound's group's, a group's kind's (with every kind showing); -1 for none
+int RowHeading(const std::vector<SoundRow> &Rows, int Row);
+// The row of a sound, -1 when it isn't shown
+int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound);
+
 // The notes a preview plays: ms from its start, and FamiTracker's pitch (C-0 = 0; a noise pitch 0-15 on the
-// noise), PREVIEW_RELEASE or PREVIEW_HALT. A melody up and back, low for a bass, a beat for a drum; the FDS's
-// two octaves up and the 5B's one, where a pulse would play them
+// noise), PREVIEW_RELEASE or PREVIEW_HALT. A phrase for its kind: a short tune for a lead, a bass figure for a
+// bass, held notes for a pad, a broken chord for a pluck or keys, ringing notes for a bell, a long note for an
+// effect and a beat for drums (the pitches the song plays its own at, a kind of drum's own rhythm); the FDS's
+// two octaves up and the 5B's one, where a pulse would play them, and the song's own instruments by octaves near
+// where the song plays them
 const int PREVIEW_RELEASE = -1, PREVIEW_HALT = -2;
 struct PreviewStep {
 	int At;

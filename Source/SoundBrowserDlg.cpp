@@ -20,16 +20,24 @@
 */
 
 // Instrument > Sound browser (see SoundBrowserDlg.h). The list comes from the
-// tools' index (CMcpConnection::Sounds, ToolSet::Sounds in Api/Tools.cpp), and
-// a sound is made into an instrument as add_instrument or reference_sound
-// makes it (CMcpConnection::MakeSound). A sound is heard with FamiTracker's
-// own engine: tried as an instrument of its own (one at a time), which comes
-// out of the song again, sequences and all, unless it's kept. Removing an
-// instrument makes the channels let go of an FDS instrument's sequences first
-// (CFamiTrackerDoc::RemoveInstrument), so a channel never runs a removed
-// trial's.
+// tools' index (CMcpConnection::Sounds, ToolSet::Sounds in Api/Tools.cpp) and
+// shows it in groups (ftapi::GroupSounds and SoundRows): with every kind, a
+// kind's heading over its groups' headings (the ready-made sounds, each game of
+// the reference library, the song's own), which fold. The rows are a list view
+// with owner data whose headings are drawn by custom draw, so it needs no
+// list-view groups (owner-data lists have none, and Wine's comctl32 draws them
+// only in part) and stays quick with thousands of sounds. A sound is made into
+// an instrument as add_instrument or reference_sound makes it
+// (CMcpConnection::MakeSound), and heard with FamiTracker's own engine
+// (CSoundPreview, SoundPreview.h): tried as an instrument of its own (one at a
+// time), which comes out of the song again, sequences and all, unless it's
+// kept. Removing an instrument makes the channels let go of an FDS
+// instrument's sequences first (CFamiTrackerDoc::RemoveInstrument), so a
+// channel never runs a removed trial's.
 
 #include "stdafx.h"
+#include <algorithm>
+#include <map>
 #include <string>
 #include <vector>
 #include "Api/SoundIndex.h"
@@ -41,15 +49,31 @@
 #include "TrackerChannel.h"
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
+#include "SoundPreview.h"
 #include "SoundBrowserDlg.h"
 
 namespace {
 
-const UINT_PTR TMR_PLAY = 1;		// the preview's notes
 const UINT_PTR TMR_FIND = 2;		// a moment after typing in Find
 const UINT_PTR TMR_RETRY = 3;		// the list again, when Claude Code kept FamiTracker busy
-const UINT PLAY_TIMER_MS = 15, FIND_DELAY_MS = 250, RETRY_MS = 1000;
+const UINT_PTR TMR_SETTLE = 4;		// an arrow key held down: the sound it stops on plays
+const UINT_PTR TMR_MARKS = 5;		// the play marks follow what plays
+const UINT FIND_DELAY_MS = 250, RETRY_MS = 1000, SETTLE_MS = 200, MARKS_MS = 100;
 const UINT WM_SB_MIDI_NOTE = WM_APP + 0x51;	// a MIDI key, from the view (CFamiTrackerView::SetNoteListener)
+const UINT WM_SB_ROW_CLICK = WM_APP + 0x52;	// a row clicked (wParam the row; lParam 1 for a double-click's second)
+
+enum { MARK_PLAY, MARK_PLAYING, MARK_NONE };	// the list's images
+
+// The list's columns, in percent of its width
+const struct { LPCTSTR Name; int Percent; } COLUMNS[] = {
+	{ _T("Sound"), 28 }, { _T("Plays on"), 14 }, { _T("About"), 38 }, { _T("In song"), 8 }, { _T("Warning"), 12 },
+};
+const int COLUMN_COUNT = sizeof(COLUMNS) / sizeof(COLUMNS[0]);
+
+// Kept while FamiTracker runs: where the browser was, the kind picked and the headings folded or opened by hand
+CRect g_Place(0, 0, 0, 0);
+int g_Kind = 0;
+std::map<std::string, bool> g_Folds;
 
 // Text from the tools (UTF-8) as FamiTracker shows it (the Windows code page), and back
 CString FromUtf8(const std::string &Text)
@@ -86,23 +110,65 @@ std::string ToUtf8(const CString &Text)
 	return std::string(Out.begin(), Out.end());
 }
 
-// A note for a channel: FamiTracker's note number (C-0 = 0; a noise pitch on the noise), RELEASE or HALT
-stChanNote MakeNote(int Note, int Instrument)
+// "2,343"
+CString Thousands(int Count)
 {
-	stChanNote Out;
-	memset(&Out, 0, sizeof(Out));
-	if (Note == RELEASE || Note == HALT)
-		Out.Note = static_cast<unsigned char>(Note);
-	else {
-		Out.Note = static_cast<unsigned char>(Note % 12 + 1);
-		Out.Octave = static_cast<unsigned char>(Note / 12);
-	}
-	Out.Vol = MAX_VOLUME;
-	Out.Instrument = static_cast<unsigned char>(Instrument);
-	return Out;
+	CString Text;
+	Text.Format(_T("%d"), Count);
+	for (int At = Text.GetLength() - 3; At > 0; At -= 3)
+		Text.Insert(At, _T(','));
+	return Text;
+}
+
+COLORREF Blend(COLORREF A, COLORREF B, int PercentA)
+{
+	return RGB((GetRValue(A) * PercentA + GetRValue(B) * (100 - PercentA)) / 100,
+		(GetGValue(A) * PercentA + GetGValue(B) * (100 - PercentA)) / 100,
+		(GetBValue(A) * PercentA + GetBValue(B) * (100 - PercentA)) / 100);
 }
 
 }	// namespace
+
+// The sound list: a click on a row is the dialog's, every time (a sound plays, the one picked too; a heading
+// folds), and no drag starts
+class CSoundList : public CListCtrl
+{
+protected:
+	afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
+	afx_msg void OnLButtonDblClk(UINT nFlags, CPoint point);
+	DECLARE_MESSAGE_MAP()
+
+private:
+	void Clicked(CPoint Point, bool Again);
+};
+
+BEGIN_MESSAGE_MAP(CSoundList, CListCtrl)
+	ON_WM_LBUTTONDOWN()
+	ON_WM_LBUTTONDBLCLK()
+END_MESSAGE_MAP()
+
+void CSoundList::Clicked(CPoint Point, bool Again)
+{
+	SetFocus();
+	LVHITTESTINFO Hit;
+	memset(&Hit, 0, sizeof(Hit));
+	Hit.pt = Point;
+	int Row = SubItemHitTest(&Hit);
+	if (Row < 0)
+		Row = HitTest(Point);
+	if (Row >= 0)
+		GetParent()->SendMessage(WM_SB_ROW_CLICK, static_cast<WPARAM>(Row), Again ? 1 : 0);
+}
+
+void CSoundList::OnLButtonDown(UINT nFlags, CPoint point)
+{
+	Clicked(point, false);
+}
+
+void CSoundList::OnLButtonDblClk(UINT nFlags, CPoint point)
+{
+	Clicked(point, true);
+}
 
 class CSoundBrowserDlg : public CDialog
 {
@@ -115,81 +181,107 @@ protected:
 	virtual void OnOK();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
+	afx_msg void OnSize(UINT nType, int cx, int cy);
+	afx_msg void OnGetMinMaxInfo(MINMAXINFO *pInfo);
 	afx_msg void OnFindChanged();
 	afx_msg void OnFilterChanged();
 	afx_msg void OnListen();
 	afx_msg void OnAdd();
 	afx_msg void OnGetDispInfo(NMHDR *pNMHDR, LRESULT *pResult);
 	afx_msg void OnItemChanged(NMHDR *pNMHDR, LRESULT *pResult);
-	afx_msg void OnItemActivate(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg void OnCustomDraw(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg LRESULT OnRowClick(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnMidiNote(WPARAM wParam, LPARAM lParam);
 
 	DECLARE_MESSAGE_MAP()
 
 private:
 	CFamiTrackerDoc *Doc() const;
+	CSoundPreview *Preview() const;
 	bool LoadSounds();
 	void FillFilters();
 	void Refilter();
+	void FillKinds(const std::vector<int> &Counts, int Total);
+	void ShowRows();
+	int FirstSoundRow() const;
+	void SelectRow(int Row);
+	void ToggleFold(int Row);
+	bool ListKey(UINT Key);
 	const ftapi::SoundEntry *Selected() const;
 	void ShowSelected();
+	CString HeadingLabel(const ftapi::SoundRow &Row) const;
+	void DrawHeading(CDC *pDC, int Row);
+	void ListenTo(int Sound);
 	int SoundInstrument(int Sound, CString &Error);
 	void DropTrial();
 	void PlayKey(int Note, bool Down);
-	void StopPlaying();
+	void UpdateMarks();
+	void MakeMarks();
+	void Layout();
+	int TextHeight(int Id, int Width);
 	void SetStatus(LPCTSTR Text);
 
 	CMainFrame *m_pMainFrame;
 	CEdit m_cFind;
-	CComboBox m_cKind, m_cFrom, m_cChannel;
-	CListCtrl m_cList;
+	CComboBox m_cFrom, m_cChannel;
+	CListBox m_cKinds;
+	CSoundList m_cList;
+	CImageList m_Marks;
+	CFont m_BoldFont;
 	std::vector<ftapi::SoundEntry> m_All;	// every sound
-	std::vector<size_t> m_Shown;			// the list's rows: sounds in m_All
+	std::vector<size_t> m_Found;			// what the words and the filters find, of every kind
+	std::vector<ftapi::SoundGroup> m_Groups;	// the kind picked's (or every kind's) in groups
+	std::vector<ftapi::SoundRow> m_Rows;	// the list's rows
+	ftapi::SoundView m_View;
 	std::vector<int> m_Targets;				// the channel filter's kinds of channel, after "All channels"
+	bool m_bSome;							// no sound had every word: these have some
 	int m_iSelected;						// the sound picked, in m_All; -1 for none
+	std::string m_SelectedKey;				// or the heading picked, by its key
 	int m_iTrial;							// the instrument a sound is tried in, -1 for none
 	int m_iTrialSound;						// the sound it was made for
 	int m_iKept;							// instruments added to the song
+	int m_iPlaying;							// the sound heard now (its play mark), -1 for none
+	int m_iMarked;							// the sound whose mark shows it playing
 	bool m_bWasModified;
-	bool m_bFilling;
-
-	std::vector<ftapi::PreviewStep> m_Events;	// what plays
-	size_t m_iNextEvent;
-	DWORD m_dwStart;
-	int m_iPlayChannel;						// -1 while nothing plays
-	int m_iPlayInstrument;
-	int m_iKeyNote;							// the note a key (or a MIDI key) holds, -1 for none
+	bool m_bFilling;						// the list being filled: its changes aren't the user's
+	bool m_bClicking;						// a click picks the row: the click plays it
+	bool m_bKeyHeld;						// an arrow key repeating: the sound plays when it rests
+	CSize m_MinSize;						// the window's, at its smallest
 };
 
 BEGIN_MESSAGE_MAP(CSoundBrowserDlg, CDialog)
 	ON_WM_TIMER()
 	ON_WM_DESTROY()
+	ON_WM_SIZE()
+	ON_WM_GETMINMAXINFO()
 	ON_EN_CHANGE(IDC_SB_FIND, OnFindChanged)
-	ON_CBN_SELCHANGE(IDC_SB_KIND, OnFilterChanged)
+	ON_LBN_SELCHANGE(IDC_SB_KIND, OnFilterChanged)
 	ON_CBN_SELCHANGE(IDC_SB_FROM, OnFilterChanged)
 	ON_CBN_SELCHANGE(IDC_SB_CHANNEL, OnFilterChanged)
 	ON_BN_CLICKED(IDC_SB_LISTEN, OnListen)
 	ON_BN_CLICKED(IDC_SB_ADD, OnAdd)
 	ON_NOTIFY(LVN_GETDISPINFO, IDC_SB_LIST, OnGetDispInfo)
 	ON_NOTIFY(LVN_ITEMCHANGED, IDC_SB_LIST, OnItemChanged)
-	ON_NOTIFY(NM_DBLCLK, IDC_SB_LIST, OnItemActivate)
+	ON_NOTIFY(NM_CUSTOMDRAW, IDC_SB_LIST, OnCustomDraw)
+	ON_MESSAGE(WM_SB_ROW_CLICK, OnRowClick)
 	ON_MESSAGE(WM_SB_MIDI_NOTE, OnMidiNote)
 END_MESSAGE_MAP()
 
 CSoundBrowserDlg::CSoundBrowserDlg(CMainFrame *pMainFrame) :
 	CDialog(IDD_SOUND_BROWSER, pMainFrame),
 	m_pMainFrame(pMainFrame),
+	m_bSome(false),
 	m_iSelected(-1),
 	m_iTrial(-1),
 	m_iTrialSound(-1),
 	m_iKept(0),
+	m_iPlaying(-1),
+	m_iMarked(-1),
 	m_bWasModified(false),
 	m_bFilling(false),
-	m_iNextEvent(0),
-	m_dwStart(0),
-	m_iPlayChannel(-1),
-	m_iPlayInstrument(MAX_INSTRUMENTS),
-	m_iKeyNote(-1)
+	m_bClicking(false),
+	m_bKeyHeld(false),
+	m_MinSize(0, 0)
 {
 }
 
@@ -198,39 +290,86 @@ CFamiTrackerDoc *CSoundBrowserDlg::Doc() const
 	return static_cast<CFamiTrackerDoc*>(m_pMainFrame->GetActiveDocument());
 }
 
+CSoundPreview *CSoundBrowserDlg::Preview() const
+{
+	return m_pMainFrame->GetSoundPreview();
+}
+
 BOOL CSoundBrowserDlg::OnInitDialog()
 {
 	CDialog::OnInitDialog();
 	m_cFind.SubclassDlgItem(IDC_SB_FIND, this);
-	m_cKind.SubclassDlgItem(IDC_SB_KIND, this);
+	m_cKinds.SubclassDlgItem(IDC_SB_KIND, this);
 	m_cFrom.SubclassDlgItem(IDC_SB_FROM, this);
 	m_cChannel.SubclassDlgItem(IDC_SB_CHANNEL, this);
 	m_cList.SubclassDlgItem(IDC_SB_LIST, this);
-	m_cList.SetExtendedStyle(m_cList.GetExtendedStyle() | LVS_EX_FULLROWSELECT);
-	CRect Rect;
-	m_cList.GetClientRect(&Rect);
-	const int Width = Rect.Width() - ::GetSystemMetrics(SM_CXVSCROLL);
-	static const struct { LPCTSTR Name; int Percent; } COLUMNS[] = {
-		{ _T("Sound"), 26 }, { _T("Kind"), 9 }, { _T("Plays on"), 15 }, { _T("From"), 28 }, { _T("In song"), 9 }, { _T("Warning"), 13 },
-	};
-	for (int c = 0; c < 6; ++c)
-		m_cList.InsertColumn(c, COLUMNS[c].Name, LVCFMT_LEFT, Width * COLUMNS[c].Percent / 100);
+	m_cList.SetExtendedStyle(m_cList.GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+	MakeMarks();
+	m_cList.SetImageList(&m_Marks, LVSIL_SMALL);
+	LOGFONT Font;
+	m_cList.GetFont()->GetLogFont(&Font);
+	Font.lfWeight = FW_BOLD;
+	m_BoldFont.CreateFontIndirect(&Font);
+	for (int c = 0; c < COLUMN_COUNT; ++c)
+		m_cList.InsertColumn(c, COLUMNS[c].Name, LVCFMT_LEFT, 60);
 
+	// Its smallest: room for the filters in two rows, a few sounds and the buttons
+	CRect Smallest(0, 0, 300, 230), Window, Client;
+	MapDialogRect(&Smallest);
+	GetWindowRect(&Window);
+	GetClientRect(&Client);
+	m_MinSize = CSize(Smallest.Width() + Window.Width() - Client.Width(), Smallest.Height() + Window.Height() - Client.Height());
+	// Where it was last time, when that's still on a screen
+	if (!g_Place.IsRectEmpty() && ::MonitorFromRect(&g_Place, MONITOR_DEFAULTTONULL) != NULL)
+		MoveWindow(&g_Place);
+	Layout();
+
+	m_View.Folds = g_Folds;
 	m_bWasModified = Doc()->IsModified() != FALSE;
 	CFamiTrackerView *pView = CFamiTrackerView::GetView();
 	if (pView != NULL)
 		pView->SetNoteListener(m_hWnd, WM_SB_MIDI_NOTE);
+	Preview()->Stop();		// what the main window played
 	if (LoadSounds()) {
 		FillFilters();
 		Refilter();
-		SetStatus(_T("Click a sound to hear it; with the list picked, the note keys play it too. Add to the song keeps it as an ")
-			_T("instrument, which you can change later in the instrument editor."));
+		SetStatus(_T("Click a sound (or its play mark) to hear it, and again to hear it again. The arrow keys play each sound ")
+			_T("they reach, and the note keys play the one picked at their notes. Add to the song keeps the one you like."));
 	}
 	else
-		SetTimer(TMR_RETRY, RETRY_MS, NULL);
-	SetTimer(TMR_PLAY, PLAY_TIMER_MS, NULL);
+		SetTimer(TMR_RETRY, RETRY_MS, NULL);	// (the status says why)
+	SetTimer(TMR_MARKS, MARKS_MS, NULL);
 	m_cFind.SetFocus();
 	return FALSE;	// the focus is set
+}
+
+// The play marks: a triangle in each sound's row, green while that sound plays
+void CSoundBrowserDlg::MakeMarks()
+{
+	const int Size = 16;
+	const COLORREF MASK = RGB(255, 0, 255);
+	CClientDC Screen(this);
+	CDC Dc;
+	Dc.CreateCompatibleDC(&Screen);
+	CBitmap Bitmap;
+	Bitmap.CreateCompatibleBitmap(&Screen, Size * 3, Size);
+	CBitmap *pOldBitmap = Dc.SelectObject(&Bitmap);
+	Dc.FillSolidRect(0, 0, Size * 3, Size, MASK);
+	const COLORREF COLORS[] = { RGB(80, 104, 150), RGB(24, 150, 56) };
+	for (int i = 0; i < 2; ++i) {
+		const int x = i * Size;
+		const POINT Triangle[] = { { x + 5, 3 }, { x + 5, 12 }, { x + 12, 7 } };
+		CBrush Brush(COLORS[i]);
+		CPen Pen(PS_SOLID, 1, COLORS[i]);
+		CBrush *pOldBrush = Dc.SelectObject(&Brush);
+		CPen *pOldPen = Dc.SelectObject(&Pen);
+		Dc.Polygon(Triangle, 3);
+		Dc.SelectObject(pOldBrush);
+		Dc.SelectObject(pOldPen);
+	}
+	Dc.SelectObject(pOldBitmap);
+	m_Marks.Create(Size, Size, ILC_COLOR24 | ILC_MASK, 3, 0);
+	m_Marks.Add(&Bitmap, MASK);
 }
 
 bool CSoundBrowserDlg::LoadSounds()
@@ -250,13 +389,6 @@ bool CSoundBrowserDlg::LoadSounds()
 
 void CSoundBrowserDlg::FillFilters()
 {
-	m_cKind.ResetContent();
-	m_cKind.AddString(_T("All kinds"));
-	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
-	for (size_t k = 0; k < Kinds.size(); ++k)
-		m_cKind.AddString(FromUtf8(Kinds[k].Label));
-	m_cKind.SetCurSel(0);
-
 	m_cFrom.ResetContent();
 	m_cFrom.AddString(_T("Everywhere"));
 	m_cFrom.AddString(_T("Ready-made sounds"));		// in sound_source's order
@@ -277,6 +409,26 @@ void CSoundBrowserDlg::FillFilters()
 	for (size_t t = 0; t < m_Targets.size(); ++t)
 		m_cChannel.AddString(FromUtf8(ftapi::TargetName(m_Targets[t])));
 	m_cChannel.SetCurSel(0);
+
+	std::vector<int> None(ftapi::SoundKinds().size(), 0);
+	FillKinds(None, 0);
+	m_cKinds.SetCurSel(g_Kind >= 0 && g_Kind < m_cKinds.GetCount() ? g_Kind : 0);
+}
+
+// The kinds on the left, each with how many sounds it has of those found
+void CSoundBrowserDlg::FillKinds(const std::vector<int> &Counts, int Total)
+{
+	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
+	const int Picked = std::max(0, m_cKinds.GetCurSel()), Top = m_cKinds.GetTopIndex();
+	m_cKinds.SetRedraw(FALSE);
+	m_cKinds.ResetContent();
+	m_cKinds.AddString(_T("All sounds (") + Thousands(Total) + _T(")"));
+	for (size_t k = 0; k < Kinds.size(); ++k)
+		m_cKinds.AddString(FromUtf8(Kinds[k].Label) + _T(" (") + Thousands(k < Counts.size() ? Counts[k] : 0) + _T(")"));
+	m_cKinds.SetCurSel(Picked < m_cKinds.GetCount() ? Picked : 0);
+	m_cKinds.SetTopIndex(Top >= 0 ? Top : 0);
+	m_cKinds.SetRedraw(TRUE);
+	m_cKinds.Invalidate();
 }
 
 void CSoundBrowserDlg::Refilter()
@@ -285,39 +437,139 @@ void CSoundBrowserDlg::Refilter()
 	CString Words;
 	m_cFind.GetWindowText(Words);
 	Query.Words = ToUtf8(Words);
-	const int Kind = m_cKind.GetCurSel();
-	if (Kind > 0 && static_cast<size_t>(Kind) <= ftapi::SoundKinds().size())
-		Query.Kind = ftapi::SoundKinds()[static_cast<size_t>(Kind - 1)].Id;
 	const int From = m_cFrom.GetCurSel();
 	Query.Source = From > 0 ? From - 1 : -1;
 	const int Channel = m_cChannel.GetCurSel();
 	Query.Target = Channel > 0 && static_cast<size_t>(Channel) <= m_Targets.size() ? m_Targets[static_cast<size_t>(Channel - 1)] : -1;
-	bool Some = false;
-	m_Shown = ftapi::FindSounds(m_All, Query, &Some);
+	m_Found = ftapi::FindSounds(m_All, Query, &m_bSome);
+	FillKinds(ftapi::KindCounts(m_All, m_Found), static_cast<int>(m_Found.size()));
 
-	// The sound picked stays picked while it's listed
+	// The kind picked on the left, or every kind under headings of their own
+	const int Kind = m_cKinds.GetCurSel();
+	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
+	std::vector<size_t> Shown;
+	if (Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size()) {
+		const std::string &Id = Kinds[static_cast<size_t>(Kind - 1)].Id;
+		for (size_t f = 0; f < m_Found.size(); ++f)
+			if (m_All[m_Found[f]].Kind == Id)
+				Shown.push_back(m_Found[f]);
+	}
+	else
+		Shown = m_Found;
+	m_Groups = ftapi::GroupSounds(m_All, Shown);
+	m_View.EveryKind = !(Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size());
+	Words.Trim();
+	m_View.Words = !Words.IsEmpty();
+	ShowRows();
+
+	CString Count;
+	if (m_bSome)
+		Count.Format(_T("None has all the words; %s with some"), static_cast<LPCTSTR>(Thousands(static_cast<int>(m_Found.size()))));
+	else if (!m_View.EveryKind)
+		Count = Thousands(static_cast<int>(Shown.size())) + _T(" of ") + Thousands(static_cast<int>(m_Found.size())) + _T(" sounds");
+	else
+		Count = Thousands(static_cast<int>(m_Found.size())) + (m_Found.size() == 1 ? _T(" sound") : _T(" sounds"));
+	SetDlgItemText(IDC_SB_COUNT, Count);
+}
+
+// The rows again, the sound or heading picked still picked while it shows
+void CSoundBrowserDlg::ShowRows()
+{
+	m_Rows = ftapi::SoundRows(m_Groups, m_View);
 	m_bFilling = true;
-	m_cList.SetItemCountEx(static_cast<int>(m_Shown.size()), LVSICF_NOSCROLL);
+	m_cList.SetItemCountEx(static_cast<int>(m_Rows.size()), LVSICF_NOSCROLL);
 	m_cList.SetItemState(-1, 0, LVIS_SELECTED | LVIS_FOCUSED);
-	int Row = -1;
-	for (size_t r = 0; r < m_Shown.size() && m_iSelected >= 0; ++r)
-		if (static_cast<int>(m_Shown[r]) == m_iSelected)
+	int Row = m_iSelected >= 0 ? ftapi::SoundRowOf(m_Rows, static_cast<size_t>(m_iSelected)) : -1;
+	for (size_t r = 0; r < m_Rows.size() && Row < 0 && !m_SelectedKey.empty(); ++r)
+		if (m_Rows[r].Type != ftapi::ROW_SOUND && ftapi::RowKey(m_Groups, m_Rows[r]) == m_SelectedKey)
 			Row = static_cast<int>(r);
 	if (Row >= 0) {
 		m_cList.SetItemState(Row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+		m_cList.SetSelectionMark(Row);
 		m_cList.EnsureVisible(Row, FALSE);
 	}
-	else
+	else {
 		m_iSelected = -1;
+		m_SelectedKey.clear();
+		if (!m_Rows.empty())
+			m_cList.EnsureVisible(0, FALSE);
+	}
 	m_cList.Invalidate();
 	m_bFilling = false;
-	CString Count;
-	if (Some)
-		Count.Format(_T("None has all the words; %d with some"), static_cast<int>(m_Shown.size()));
-	else
-		Count.Format(m_Shown.size() == 1 ? _T("%d sound") : _T("%d sounds"), static_cast<int>(m_Shown.size()));
-	SetDlgItemText(IDC_SB_COUNT, Count);
 	ShowSelected();
+}
+
+int CSoundBrowserDlg::FirstSoundRow() const
+{
+	for (size_t r = 0; r < m_Rows.size(); ++r)
+		if (m_Rows[r].Type == ftapi::ROW_SOUND)
+			return static_cast<int>(r);
+	return -1;
+}
+
+// Picks a row as the user would (OnItemChanged sees it)
+void CSoundBrowserDlg::SelectRow(int Row)
+{
+	if (Row < 0 || static_cast<size_t>(Row) >= m_Rows.size())
+		return;
+	if ((m_cList.GetItemState(Row, LVIS_SELECTED) & LVIS_SELECTED) == 0)
+		m_cList.SetItemState(-1, 0, LVIS_SELECTED);
+	m_cList.SetItemState(Row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+	m_cList.SetSelectionMark(Row);
+	m_cList.EnsureVisible(Row, FALSE);
+}
+
+// A heading folds its sounds away, or shows them again; it stays picked
+void CSoundBrowserDlg::ToggleFold(int Row)
+{
+	if (Row < 0 || static_cast<size_t>(Row) >= m_Rows.size() || m_Rows[static_cast<size_t>(Row)].Type == ftapi::ROW_SOUND)
+		return;
+	const ftapi::SoundRow &Heading = m_Rows[static_cast<size_t>(Row)];
+	const std::string Key = ftapi::RowKey(m_Groups, Heading);
+	m_View.Folds[Key] = !Heading.Folded;
+	g_Folds[Key] = !Heading.Folded;
+	m_iSelected = -1;
+	m_SelectedKey = Key;
+	ShowRows();
+}
+
+// The keys the list takes from the dialog: Space plays the sound picked again (or folds a heading), Enter folds a
+// heading (on a sound it adds it, as the dialog's button), Left and Right fold and open as in a tree
+bool CSoundBrowserDlg::ListKey(UINT Key)
+{
+	const int Row = m_cList.GetNextItem(-1, LVNI_SELECTED);
+	if (Row < 0 || static_cast<size_t>(Row) >= m_Rows.size())
+		return false;
+	const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(Row)];
+	const bool Heading = R.Type != ftapi::ROW_SOUND;
+	switch (Key) {
+	case VK_SPACE:
+		if (Heading)
+			ToggleFold(Row);
+		else {
+			KillTimer(TMR_SETTLE);
+			ListenTo(static_cast<int>(R.Sound));
+		}
+		return true;
+	case VK_RETURN:
+		if (!Heading)
+			return false;
+		ToggleFold(Row);
+		return true;
+	case VK_RIGHT:
+		if (Heading && R.Folded)
+			ToggleFold(Row);
+		else if (Heading && static_cast<size_t>(Row) + 1 < m_Rows.size())
+			SelectRow(Row + 1);
+		return true;
+	case VK_LEFT:
+		if (Heading && !R.Folded)
+			ToggleFold(Row);
+		else
+			SelectRow(ftapi::RowHeading(m_Rows, Row));
+		return true;
+	}
+	return false;
 }
 
 const ftapi::SoundEntry *CSoundBrowserDlg::Selected() const
@@ -325,10 +577,26 @@ const ftapi::SoundEntry *CSoundBrowserDlg::Selected() const
 	return m_iSelected >= 0 && static_cast<size_t>(m_iSelected) < m_All.size() ? &m_All[static_cast<size_t>(m_iSelected)] : NULL;
 }
 
+CString CSoundBrowserDlg::HeadingLabel(const ftapi::SoundRow &Row) const
+{
+	if (Row.Group >= m_Groups.size())
+		return CString();
+	const ftapi::SoundGroup &G = m_Groups[Row.Group];
+	if (Row.Type == ftapi::ROW_KIND) {
+		const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
+		for (size_t k = 0; k < Kinds.size(); ++k)
+			if (Kinds[k].Id == G.Kind)
+				return FromUtf8(Kinds[k].Label);
+		return FromUtf8(G.Kind);
+	}
+	return FromUtf8(G.Label);
+}
+
 void CSoundBrowserDlg::ShowSelected()
 {
 	const ftapi::SoundEntry *pSound = Selected();
 	CString Text;
+	const int Row = m_cList.GetSafeHwnd() != NULL ? m_cList.GetNextItem(-1, LVNI_SELECTED) : -1;
 	if (pSound != NULL) {
 		std::string About = pSound->Name + (pSound->Words.empty() ? std::string() : ": " + pSound->Words) + ". From " + pSound->Origin +
 			"; it plays on " + pSound->ChannelName + ".";
@@ -340,8 +608,24 @@ void CSoundBrowserDlg::ShowSelected()
 			About += " The 5B sounds an octave under the note written.";
 		Text = FromUtf8(About);
 	}
+	else if (Row >= 0 && static_cast<size_t>(Row) < m_Rows.size() && m_Rows[static_cast<size_t>(Row)].Type != ftapi::ROW_SOUND) {
+		// A heading: what's under it, and how it opens
+		const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(Row)];
+		const ftapi::SoundGroup &G = m_Groups[R.Group];
+		const CString Count = Thousands(R.Count) + (R.Count == 1 ? _T(" sound") : _T(" sounds"));
+		if (R.Type == ftapi::ROW_KIND)
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(".");
+		else if (G.Source == ftapi::SOURCE_PRESET)
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(" made for the song's chips, good ones to start from.");
+		else if (G.Source == ftapi::SOURCE_SONG)
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(" the song has already.");
+		else
+			Text = HeadingLabel(R) + _T(": ") + Count + _T(" from your reference library, each one the way a part of a track sounded.");
+		Text += R.Folded ? _T(" Click the heading (or press Right) to show them.") : _T(" Click the heading (or press Left) to fold them away.");
+	}
 	else
-		Text = m_All.empty() ? _T("") : _T("Pick a sound in the list, or type what you're looking for in Find (bell, warm, pluck, bass, a game).");
+		Text = m_All.empty() ? _T("") : _T("Pick a kind on the left and click a sound to hear it, or type what you're looking for in Find ")
+			_T("(bell, warm, pluck, bass, a game).");
 	SetDlgItemText(IDC_SB_TEXT, Text);
 	GetDlgItem(IDC_SB_LISTEN)->EnableWindow(pSound != NULL ? TRUE : FALSE);
 	GetDlgItem(IDC_SB_ADD)->EnableWindow(pSound != NULL ? TRUE : FALSE);
@@ -383,14 +667,42 @@ void CSoundBrowserDlg::DropTrial()
 {
 	if (m_iTrial < 0)
 		return;
-	StopPlaying();
+	Preview()->Stop();
 	RemoveInstrumentAndSequences(Doc(), static_cast<unsigned int>(m_iTrial));
 	m_iTrial = -1;
 	m_iTrialSound = -1;
 }
 
+// A sound's phrase, from the start: what played before stops
+void CSoundBrowserDlg::ListenTo(int Sound)
+{
+	if (Sound < 0 || static_cast<size_t>(Sound) >= m_All.size() || m_All[static_cast<size_t>(Sound)].Channel < 0)
+		return;
+	CString Error;
+	const int Instrument = SoundInstrument(Sound, Error);
+	if (Instrument < 0) {
+		SetStatus(Error);
+		return;
+	}
+	const ftapi::SoundEntry &E = m_All[static_cast<size_t>(Sound)];
+	if (Preview()->Play(E.Channel, Instrument, ftapi::PreviewSteps(E)))
+		m_iPlaying = Sound;
+	UpdateMarks();
+}
+
 void CSoundBrowserDlg::OnListen()
 {
+	KillTimer(TMR_SETTLE);
+	ListenTo(m_iSelected);
+}
+
+// A note key (or a MIDI key) pressed or let go while the list is picked: the sound picked plays it
+void CSoundBrowserDlg::PlayKey(int Note, bool Down)
+{
+	if (!Down) {
+		Preview()->KeyUp(Note);
+		return;
+	}
 	const ftapi::SoundEntry *pSound = Selected();
 	if (pSound == NULL || pSound->Channel < 0)
 		return;
@@ -400,78 +712,48 @@ void CSoundBrowserDlg::OnListen()
 		SetStatus(Error);
 		return;
 	}
-	StopPlaying();
-	if (theApp.IsPlaying())
-		theApp.StopPlayer();	// the song would play over it
-	m_Events = ftapi::PreviewSteps(*pSound);
-	m_iNextEvent = 0;
-	m_dwStart = ::GetTickCount();
-	m_iPlayChannel = pSound->Channel;
-	m_iPlayInstrument = Instrument;
-	OnTimer(TMR_PLAY);
+	if (Preview()->KeyDown(pSound->Channel, Instrument, Note))
+		m_iPlaying = m_iSelected;
+	UpdateMarks();
 }
 
-// A note key (or a MIDI key) pressed or let go while the list is picked: the sound picked plays it
-void CSoundBrowserDlg::PlayKey(int Note, bool Down)
+// The play marks: the sound heard shows a green one while it plays
+void CSoundBrowserDlg::UpdateMarks()
 {
-	const ftapi::SoundEntry *pSound = Selected();
-	if (pSound == NULL || pSound->Channel < 0 || Note < 0 || Note >= NOTE_RANGE * OCTAVE_RANGE)
+	if (m_iPlaying >= 0 && Preview()->PlayingInstrument() < 0)
+		m_iPlaying = -1;
+	if (m_iPlaying == m_iMarked)
 		return;
-	if (Down) {
-		CString Error;
-		const int Instrument = SoundInstrument(m_iSelected, Error);
-		if (Instrument < 0) {
-			SetStatus(Error);
-			return;
-		}
-		if (theApp.IsPlaying())
-			theApp.StopPlayer();
-		m_Events.clear();		// the preview's notes stop coming
-		m_iNextEvent = 0;
-		m_iPlayChannel = pSound->Channel;
-		m_iPlayInstrument = Instrument;
-		stChanNote Cell = MakeNote(Note, Instrument);
-		theApp.GetSoundGenerator()->QueueNote(m_iPlayChannel, Cell, NOTE_PRIO_2);
-		m_iKeyNote = Note;
+	for (const int Sound : { m_iMarked, m_iPlaying }) {
+		const int Row = Sound >= 0 ? ftapi::SoundRowOf(m_Rows, static_cast<size_t>(Sound)) : -1;
+		if (Row >= 0)
+			m_cList.RedrawItems(Row, Row);
 	}
-	else if (Note == m_iKeyNote && m_iPlayChannel >= 0) {
-		stChanNote Cell = MakeNote(RELEASE, m_iPlayInstrument);
-		theApp.GetSoundGenerator()->QueueNote(m_iPlayChannel, Cell, NOTE_PRIO_2);
-		m_iKeyNote = -1;
-		// and silence a moment later, for a sound that holds through a release
-		const ftapi::PreviewStep End = { 1500, ftapi::PREVIEW_HALT };
-		m_Events.assign(1, End);
-		m_iNextEvent = 0;
-		m_dwStart = ::GetTickCount();
-	}
-}
-
-void CSoundBrowserDlg::StopPlaying()
-{
-	if (m_iPlayChannel < 0)
-		return;
-	stChanNote Note = MakeNote(HALT, MAX_INSTRUMENTS);
-	theApp.GetSoundGenerator()->QueueNote(m_iPlayChannel, Note, NOTE_PRIO_2);
-	m_iPlayChannel = -1;
-	m_iKeyNote = -1;
-	m_Events.clear();
-	m_iNextEvent = 0;
+	m_iMarked = m_iPlaying;
 }
 
 BOOL CSoundBrowserDlg::PreTranslateMessage(MSG *pMsg)
 {
-	if (pMsg->message == WM_KEYDOWN && pMsg->wParam == VK_RETURN && pMsg->hwnd == m_cFind.GetSafeHwnd()) {
-		// Enter in Find: the first sound found is picked and heard
+	const bool Plain = ::GetKeyState(VK_CONTROL) >= 0 && ::GetKeyState(VK_MENU) >= 0;
+	if (pMsg->message == WM_KEYDOWN && pMsg->hwnd == m_cFind.GetSafeHwnd() && (pMsg->wParam == VK_RETURN || pMsg->wParam == VK_DOWN)) {
+		// Enter in Find: the first sound found is picked and heard; Down goes to the list
 		KillTimer(TMR_FIND);
 		Refilter();
-		if (!m_Shown.empty()) {
-			m_cList.SetItemState(0, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-			m_cList.EnsureVisible(0, FALSE);
-		}
+		m_cList.SetFocus();
+		const int Row = m_cList.GetNextItem(-1, LVNI_SELECTED);
+		if (pMsg->wParam == VK_RETURN || Row < 0)
+			SelectRow(FirstSoundRow());
 		return TRUE;
 	}
-	if ((pMsg->message == WM_KEYDOWN || pMsg->message == WM_KEYUP) && pMsg->hwnd == m_cList.GetSafeHwnd() &&
-		::GetKeyState(VK_CONTROL) >= 0 && ::GetKeyState(VK_MENU) >= 0) {
+	if ((pMsg->message == WM_KEYDOWN || pMsg->message == WM_KEYUP) && pMsg->hwnd == m_cList.GetSafeHwnd() && Plain) {
+		switch (pMsg->wParam) {
+		case VK_UP: case VK_DOWN: case VK_PRIOR: case VK_NEXT: case VK_HOME: case VK_END:
+			// The list moves; a key held down plays the sound it stops on
+			m_bKeyHeld = pMsg->message == WM_KEYDOWN && (pMsg->lParam & (1 << 30)) != 0;
+			return CDialog::PreTranslateMessage(pMsg);
+		}
+		if (pMsg->message == WM_KEYDOWN && ListKey(static_cast<UINT>(pMsg->wParam)))
+			return TRUE;
 		// The note keys play the sound picked, as they do in the pattern editor (the list's own search is Find's)
 		CFamiTrackerView *pView = CFamiTrackerView::GetView();
 		const int Note = pView != NULL ? pView->NoteOfKey(static_cast<unsigned char>(pMsg->wParam)) : 0;
@@ -492,40 +774,54 @@ LRESULT CSoundBrowserDlg::OnMidiNote(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+// A row clicked: a sound plays (from the start, the one picked too), a heading folds or opens
+LRESULT CSoundBrowserDlg::OnRowClick(WPARAM wParam, LPARAM lParam)
+{
+	const int Row = static_cast<int>(wParam);
+	if (Row < 0 || static_cast<size_t>(Row) >= m_Rows.size())
+		return 0;
+	const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(Row)];
+	if (R.Type != ftapi::ROW_SOUND) {
+		if (lParam == 0)	// (a double-click's second click leaves it as the first left it)
+			ToggleFold(Row);
+		return 0;
+	}
+	const int Sound = static_cast<int>(R.Sound);
+	m_bClicking = true;
+	SelectRow(Row);
+	m_bClicking = false;
+	KillTimer(TMR_SETTLE);
+	ListenTo(Sound);
+	return 0;
+}
+
 void CSoundBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 {
-	if (nIDEvent == TMR_FIND) {
+	switch (nIDEvent) {
+	case TMR_FIND:
 		KillTimer(TMR_FIND);
 		Refilter();
 		return;
-	}
-	if (nIDEvent == TMR_RETRY) {
+	case TMR_RETRY:
 		if (LoadSounds()) {
 			KillTimer(TMR_RETRY);
 			FillFilters();
 			Refilter();
-			SetStatus(_T("Click a sound to hear it; with the list picked, the note keys play it too."));
+			SetStatus(_T("Click a sound to hear it, and again to hear it again; the arrow keys and the note keys play too."));
 		}
 		return;
-	}
-	if (nIDEvent != TMR_PLAY) {
-		CDialog::OnTimer(nIDEvent);
+	case TMR_SETTLE:
+		KillTimer(TMR_SETTLE);
+		if (!m_bKeyHeld)
+			ListenTo(m_iSelected);
+		else
+			SetTimer(TMR_SETTLE, SETTLE_MS, NULL);	// still held: when it's let go
+		return;
+	case TMR_MARKS:
+		UpdateMarks();
 		return;
 	}
-	if (m_iPlayChannel < 0 || m_Events.empty())
-		return;
-	const DWORD Now = ::GetTickCount() - m_dwStart;
-	while (m_iNextEvent < m_Events.size() && static_cast<DWORD>(m_Events[m_iNextEvent].At) <= Now) {
-		const int Step = m_Events[m_iNextEvent].Note;
-		stChanNote Note = MakeNote(Step == ftapi::PREVIEW_RELEASE ? RELEASE : Step == ftapi::PREVIEW_HALT ? HALT : Step,
-			m_iPlayInstrument);
-		theApp.GetSoundGenerator()->QueueNote(m_iPlayChannel, Note, NOTE_PRIO_2);
-		++m_iNextEvent;
-	}
-	if (m_iNextEvent >= m_Events.size()) {
-		m_Events.clear();
-		m_iNextEvent = 0;
-	}
+	CDialog::OnTimer(nIDEvent);
 }
 
 void CSoundBrowserDlg::OnFindChanged()
@@ -535,6 +831,7 @@ void CSoundBrowserDlg::OnFindChanged()
 
 void CSoundBrowserDlg::OnFilterChanged()
 {
+	g_Kind = m_cKinds.GetCurSel();
 	Refilter();
 }
 
@@ -542,39 +839,44 @@ void CSoundBrowserDlg::OnGetDispInfo(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	*pResult = 0;
 	LVITEM &Item = reinterpret_cast<NMLVDISPINFO*>(pNMHDR)->item;
+	if (Item.iItem < 0 || static_cast<size_t>(Item.iItem) >= m_Rows.size())
+		return;
+	const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(Item.iItem)];
+	if ((Item.mask & LVIF_IMAGE) != 0)
+		Item.iImage = R.Type != ftapi::ROW_SOUND ? MARK_NONE : static_cast<int>(R.Sound) == m_iPlaying ? MARK_PLAYING : MARK_PLAY;
+	if ((Item.mask & LVIF_INDENT) != 0)
+		Item.iIndent = R.Type == ftapi::ROW_SOUND && m_View.EveryKind ? 1 : 0;
 	if ((Item.mask & LVIF_TEXT) == 0 || Item.pszText == NULL || Item.cchTextMax <= 0)
 		return;
 	Item.pszText[0] = 0;
-	if (Item.iItem < 0 || static_cast<size_t>(Item.iItem) >= m_Shown.size())
-		return;
-	const ftapi::SoundEntry &E = m_All[m_Shown[static_cast<size_t>(Item.iItem)]];
 	CString Text;
-	switch (Item.iSubItem) {
-	case 0:
-		Text = FromUtf8(E.Name);
-		break;
-	case 1:
-		Text = FromUtf8(E.Kind);
-		break;
-	case 2:
-		Text = FromUtf8(E.ChannelName);
-		break;
-	case 3:
-		if (E.Source == ftapi::SOURCE_REFERENCE)	// the track's: "Lava Caves (Lava Game, track 3)"
-			Text = FromUtf8(E.Origin.substr(0, E.Origin.rfind(", sound ")));
-		else
-			Text = FromUtf8(ftapi::SourceName(E.Source));
-		break;
-	case 4:
-		if (E.InSong >= 0 && E.InSong != m_iTrial)
-			Text.Format(_T("yes (%02X)"), E.InSong);
-		break;
-	case 5:
-		if (ftapi::SoundVanishes(E.Heard))
-			Text = _T("short notes");
-		if (!E.ClickPitches.empty())
-			Text += Text.IsEmpty() ? _T("vibrato clicks") : _T(", vibrato clicks");
-		break;
+	if (R.Type != ftapi::ROW_SOUND) {
+		if (Item.iSubItem == 0)		// (drawn by OnCustomDraw; for screen readers)
+			Text = HeadingLabel(R) + _T(" (") + Thousands(R.Count) + _T(")");
+	}
+	else {
+		const ftapi::SoundEntry &E = m_All[R.Sound];
+		switch (Item.iSubItem) {
+		case 0:
+			Text = FromUtf8(E.Name);
+			break;
+		case 1:
+			Text = FromUtf8(E.ChannelName);
+			break;
+		case 2:
+			Text = FromUtf8(E.About);
+			break;
+		case 3:
+			if (E.InSong >= 0 && E.InSong != m_iTrial)
+				Text.Format(_T("yes (%02X)"), E.InSong);
+			break;
+		case 4:
+			if (ftapi::SoundVanishes(E.Heard))
+				Text = _T("short notes");
+			if (!E.ClickPitches.empty())
+				Text += Text.IsEmpty() ? _T("vibrato clicks") : _T(", vibrato clicks");
+			break;
+		}
 	}
 	_tcsncpy_s(Item.pszText, static_cast<size_t>(Item.cchTextMax), Text, _TRUNCATE);
 }
@@ -583,27 +885,108 @@ void CSoundBrowserDlg::OnItemChanged(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	const NMLISTVIEW *pList = reinterpret_cast<NMLISTVIEW*>(pNMHDR);
 	*pResult = 0;
-	if (m_bFilling || (pList->uChanged & LVIF_STATE) == 0 || pList->iItem < 0 ||
-		static_cast<size_t>(pList->iItem) >= m_Shown.size())
+	if (m_bFilling || (pList->uChanged & LVIF_STATE) == 0 || pList->iItem < 0 || static_cast<size_t>(pList->iItem) >= m_Rows.size())
 		return;
 	const bool Now = (pList->uNewState & LVIS_SELECTED) != 0, Before = (pList->uOldState & LVIS_SELECTED) != 0;
 	if (Now == Before || !Now)
 		return;
-	const int Sound = static_cast<int>(m_Shown[static_cast<size_t>(pList->iItem)]);
-	if (Sound == m_iSelected)
+	const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(pList->iItem)];
+	if (R.Type != ftapi::ROW_SOUND) {
+		// A heading picked: nothing to hear
+		m_iSelected = -1;
+		m_SelectedKey = ftapi::RowKey(m_Groups, R);
+		ShowSelected();
 		return;
+	}
+	const int Sound = static_cast<int>(R.Sound);
+	const bool Other = Sound != m_iSelected;
 	m_iSelected = Sound;
+	m_SelectedKey.clear();
 	ShowSelected();
-	OnListen();		// a click plays it
+	if (m_bClicking || !Other)
+		return;		// the click plays it
+	if (m_bKeyHeld)
+		SetTimer(TMR_SETTLE, SETTLE_MS, NULL);	// the arrow key held down: when it rests
+	else
+		ListenTo(Sound);		// a step with the arrow keys plays it
 }
 
-void CSoundBrowserDlg::OnItemActivate(NMHDR *pNMHDR, LRESULT *pResult)
+void CSoundBrowserDlg::OnCustomDraw(NMHDR *pNMHDR, LRESULT *pResult)
 {
-	*pResult = 0;
-	OnListen();
+	NMLVCUSTOMDRAW *pDraw = reinterpret_cast<NMLVCUSTOMDRAW*>(pNMHDR);
+	*pResult = CDRF_DODEFAULT;
+	if (pDraw->nmcd.dwDrawStage == CDDS_PREPAINT)
+		*pResult = CDRF_NOTIFYITEMDRAW;
+	else if (pDraw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+		const int Row = static_cast<int>(pDraw->nmcd.dwItemSpec);
+		if (Row >= 0 && static_cast<size_t>(Row) < m_Rows.size() && m_Rows[static_cast<size_t>(Row)].Type != ftapi::ROW_SOUND) {
+			DrawHeading(CDC::FromHandle(pDraw->nmcd.hdc), Row);
+			*pResult = CDRF_SKIPDEFAULT;
+		}
+	}
 }
 
-// Enter, outside Find
+// A heading: a band across the list with a fold mark, its name and how many sounds it has
+void CSoundBrowserDlg::DrawHeading(CDC *pDC, int Row)
+{
+	const ftapi::SoundRow &R = m_Rows[static_cast<size_t>(Row)];
+	CRect Rect, Client;
+	m_cList.GetItemRect(Row, &Rect, LVIR_BOUNDS);
+	m_cList.GetClientRect(&Client);
+	Rect.left = Client.left;
+	Rect.right = std::max(Rect.right, Client.right);
+	const bool Picked = (m_cList.GetItemState(Row, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+	const bool Focused = ::GetFocus() == m_cList.GetSafeHwnd();
+	COLORREF Back, Fore;
+	if (Picked && Focused) {
+		Back = ::GetSysColor(COLOR_HIGHLIGHT);
+		Fore = ::GetSysColor(COLOR_HIGHLIGHTTEXT);
+	}
+	else if (R.Type == ftapi::ROW_KIND) {
+		Back = Blend(::GetSysColor(COLOR_HIGHLIGHT), ::GetSysColor(COLOR_WINDOW), Picked ? 45 : 22);
+		Fore = ::GetSysColor(COLOR_WINDOWTEXT);
+	}
+	else {
+		Back = Picked ? Blend(::GetSysColor(COLOR_BTNSHADOW), ::GetSysColor(COLOR_BTNFACE), 40) : ::GetSysColor(COLOR_BTNFACE);
+		Fore = ::GetSysColor(COLOR_BTNTEXT);
+	}
+	pDC->FillSolidRect(&Rect, Back);
+	// The fold mark: pointing right while folded, down while open
+	const int Unit = std::max(3, Rect.Height() / 5), Mid = Rect.CenterPoint().y;
+	const int Left = Rect.left + Unit + (R.Type == ftapi::ROW_GROUP && m_View.EveryKind ? Rect.Height() : 0);
+	POINT Mark[3];
+	if (R.Folded) {
+		Mark[0].x = Left + Unit / 2;		Mark[0].y = Mid - Unit;
+		Mark[1].x = Left + Unit / 2;		Mark[1].y = Mid + Unit;
+		Mark[2].x = Left + Unit / 2 + Unit;	Mark[2].y = Mid;
+	}
+	else {
+		Mark[0].x = Left;					Mark[0].y = Mid - Unit / 2;
+		Mark[1].x = Left + 2 * Unit;		Mark[1].y = Mid - Unit / 2;
+		Mark[2].x = Left + Unit;			Mark[2].y = Mid + Unit / 2 + 1;
+	}
+	CBrush Brush(Fore);
+	CPen Pen(PS_SOLID, 1, Fore);
+	CBrush *pOldBrush = pDC->SelectObject(&Brush);
+	CPen *pOldPen = pDC->SelectObject(&Pen);
+	pDC->Polygon(Mark, 3);
+	pDC->SelectObject(pOldBrush);
+	pDC->SelectObject(pOldPen);
+	// Its name in bold, then the count
+	const CString Label = HeadingLabel(R), Count = _T("  (") + Thousands(R.Count) + _T(")");
+	CRect Text(Left + 3 * Unit, Rect.top, Rect.right - Unit, Rect.bottom);
+	pDC->SetBkMode(TRANSPARENT);
+	pDC->SetTextColor(Fore);
+	CFont *pOldFont = pDC->SelectObject(&m_BoldFont);
+	pDC->DrawText(Label, &Text, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+	Text.left += pDC->GetTextExtent(Label).cx;
+	pDC->SelectObject(m_cList.GetFont());
+	if (Text.left < Text.right)
+		pDC->DrawText(Count, &Text, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+	pDC->SelectObject(pOldFont);
+}
+
+// Enter, outside Find (and on a sound in the list)
 void CSoundBrowserDlg::OnOK()
 {
 	OnAdd();
@@ -622,7 +1005,7 @@ void CSoundBrowserDlg::OnAdd()
 		SetStatus(Error);
 		return;
 	}
-	ftapi::SoundEntry &E = m_All[static_cast<size_t>(m_iSelected)];
+	const ftapi::SoundEntry E = m_All[static_cast<size_t>(m_iSelected)];
 	const CString Name = FromUtf8(E.Name);
 	CString Text;
 	if (Had)
@@ -646,13 +1029,16 @@ void CSoundBrowserDlg::OnAdd()
 		Own.Number = Instrument;
 		Own.InSong = Instrument;
 		Own.Home = true;
+		Own.Game.clear();
 		CString Origin;
 		Origin.Format(_T("this song's instrument %02X"), Instrument);
 		Own.Origin = ToUtf8(Origin);
 		Own.Words = "added from the " + ftapi::SourceName(E.Source) + (E.Words.empty() ? std::string() : ": " + E.Words);
+		Own.About = Own.Words;
 		Own.Reference.reset();
 		ftapi::IndexWords(Own);
 		m_All.push_back(Own);
+		Refilter();		// under the song's own now too
 	}
 	m_pMainFrame->SelectInstrument(Instrument);
 	m_cList.Invalidate();
@@ -661,18 +1047,129 @@ void CSoundBrowserDlg::OnAdd()
 
 void CSoundBrowserDlg::OnDestroy()
 {
-	KillTimer(TMR_PLAY);
+	GetWindowRect(&g_Place);
 	KillTimer(TMR_FIND);
 	KillTimer(TMR_RETRY);
+	KillTimer(TMR_SETTLE);
+	KillTimer(TMR_MARKS);
 	CFamiTrackerView *pView = CFamiTrackerView::GetView();
 	if (pView != NULL)
 		pView->SetNoteListener(NULL, 0);
-	StopPlaying();
+	Preview()->Stop();		// closing the browser stops the sound
 	DropTrial();
 	// Only trying sounds leaves the song as it was
 	if (m_iKept == 0 && !m_bWasModified)
 		Doc()->SetModifiedFlag(FALSE);
 	CDialog::OnDestroy();
+}
+
+void CSoundBrowserDlg::OnSize(UINT nType, int cx, int cy)
+{
+	CDialog::OnSize(nType, cx, cy);
+	if (nType != SIZE_MINIMIZED)
+		Layout();
+}
+
+void CSoundBrowserDlg::OnGetMinMaxInfo(MINMAXINFO *pInfo)
+{
+	if (m_MinSize.cx > 0) {
+		pInfo->ptMinTrackSize.x = m_MinSize.cx;
+		pInfo->ptMinTrackSize.y = m_MinSize.cy;
+	}
+	CDialog::OnGetMinMaxInfo(pInfo);
+}
+
+// How tall a text control's text is at a width
+int CSoundBrowserDlg::TextHeight(int Id, int Width)
+{
+	CString Text;
+	GetDlgItemText(Id, Text);
+	CClientDC Dc(this);
+	CFont *pOldFont = Dc.SelectObject(GetFont());
+	CRect Rect(0, 0, std::max(Width, 1), 0);
+	Dc.DrawText(Text, &Rect, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+	Dc.SelectObject(pOldFont);
+	return Rect.Height();
+}
+
+// The controls placed for the window's size: the filters in a row (or two, when narrow), the kinds on the left of
+// the sounds, which take the room left, and the words, the status and the buttons under them
+void CSoundBrowserDlg::Layout()
+{
+	if (m_cList.GetSafeHwnd() == NULL)
+		return;
+	CRect Client, Unit(0, 0, 4, 8);
+	GetClientRect(&Client);
+	MapDialogRect(&Unit);		// a character's average width and its height
+	const int Cx = Unit.Width(), Cy = Unit.Height();
+	const int W = Client.Width(), H = Client.Height();
+	const int Mx = Cx * 7 / 4, My = Cy * 7 / 8, Gap = Cx, VGap = Cy / 2;
+	const int Line = Cy, EditH = Cy * 12 / 8, ButtonH = Cy * 14 / 8, DropH = Cy * 16;
+	const int Inner = std::max(W - 2 * Mx, Cx * 40);
+	HDWP Defer = ::BeginDeferWindowPos(20);
+	auto Put = [&](int Id, int Left, int Top, int Wide, int High) {
+		CWnd *pWnd = GetDlgItem(Id);
+		if (pWnd != NULL && Defer != NULL)
+			Defer = ::DeferWindowPos(Defer, pWnd->GetSafeHwnd(), NULL, Left, Top, std::max(Wide, 1), std::max(High, 1),
+				SWP_NOZORDER | SWP_NOACTIVATE);
+	};
+	int y = My;
+	const int IntroH = std::min(TextHeight(IDC_SB_INTRO, Inner), 4 * Line);
+	Put(IDC_SB_INTRO, Mx, y, Inner, IntroH);
+	y += IntroH + VGap + Cy / 4;
+	// Find, From and Plays on
+	const int FindLabel = Cx * 6, FromLabel = Cx * 6, OnLabel = Cx * 9, FromW = Cx * 24, OnW = Cx * 26;
+	const int LabelDy = (EditH - Line) / 2;
+	if (Inner >= Cx * 100) {
+		const int FindW = Inner - FindLabel - FromLabel - FromW - OnLabel - OnW - 4 * Gap;
+		int x = Mx;
+		Put(IDC_SB_FIND_LABEL, x, y + LabelDy, FindLabel, Line);
+		x += FindLabel;
+		Put(IDC_SB_FIND, x, y, FindW, EditH);
+		x += FindW + 2 * Gap;
+		Put(IDC_SB_FROM_LABEL, x, y + LabelDy, FromLabel, Line);
+		x += FromLabel;
+		Put(IDC_SB_FROM, x, y, FromW, DropH);
+		x += FromW + 2 * Gap;
+		Put(IDC_SB_CHANNEL_LABEL, x, y + LabelDy, OnLabel, Line);
+		x += OnLabel;
+		Put(IDC_SB_CHANNEL, x, y, Mx + Inner - x, DropH);
+	}
+	else {
+		Put(IDC_SB_FIND_LABEL, Mx, y + LabelDy, FindLabel, Line);
+		Put(IDC_SB_FIND, Mx + FindLabel, y, Inner - FindLabel, EditH);
+		y += EditH + VGap;
+		const int Half = (Inner - 2 * Gap) / 2;
+		Put(IDC_SB_FROM_LABEL, Mx, y + LabelDy, FromLabel, Line);
+		Put(IDC_SB_FROM, Mx + FromLabel, y, Half - FromLabel, DropH);
+		Put(IDC_SB_CHANNEL_LABEL, Mx + Half + 2 * Gap, y + LabelDy, OnLabel, Line);
+		Put(IDC_SB_CHANNEL, Mx + Half + 2 * Gap + OnLabel, y, Inner - Half - 2 * Gap - OnLabel, DropH);
+	}
+	y += EditH + VGap + Cy / 4;
+	// From the bottom up: the buttons, the status over them, the sound's words over that
+	const int ButtonsY = H - My - ButtonH;
+	Put(IDC_SB_LISTEN, Mx, ButtonsY, Cx * 15, ButtonH);
+	Put(IDC_SB_ADD, Mx + Cx * 15 + Gap, ButtonsY, Cx * 18, ButtonH);
+	Put(IDCANCEL, Mx + Inner - Cx * 13, ButtonsY, Cx * 13, ButtonH);
+	const int StatusH = 2 * Line, StatusY = ButtonsY - VGap - StatusH;
+	Put(IDC_SB_STATUS, Mx, StatusY, Inner, StatusH);
+	const int TextH = 3 * Line, TextY = StatusY - VGap - TextH;
+	Put(IDC_SB_TEXT, Mx, TextY, Inner, TextH);
+	// The kinds, with the count under them, and the sounds
+	const int ListsBottom = std::max(TextY - VGap, y + 4 * Line);
+	const int KindsW = std::max(Cx * 19, std::min(Cx * 28, Inner / 5)), CountH = 2 * Line;
+	Put(IDC_SB_KIND, Mx, y, KindsW, ListsBottom - y - CountH - VGap / 2);
+	Put(IDC_SB_COUNT, Mx, ListsBottom - CountH, KindsW, CountH);
+	Put(IDC_SB_LIST, Mx + KindsW + Gap, y, Inner - KindsW - Gap, ListsBottom - y);
+	if (Defer != NULL)
+		::EndDeferWindowPos(Defer);
+	// The columns share the list's width
+	CRect List;
+	m_cList.GetClientRect(&List);
+	const int Width = std::max(List.Width() - ::GetSystemMetrics(SM_CXVSCROLL), Cx * 20);
+	for (int c = 0; c < COLUMN_COUNT; ++c)
+		m_cList.SetColumnWidth(c, Width * COLUMNS[c].Percent / 100);
+	Invalidate();
 }
 
 void CSoundBrowserDlg::SetStatus(LPCTSTR Text)

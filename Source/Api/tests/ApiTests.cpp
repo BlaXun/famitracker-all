@@ -60,6 +60,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -12637,20 +12638,22 @@ void TestSoundIndex()
 	Q.Target = TARGET_FDS;
 	Found = FindSounds(All, Q);
 	CHECK_EQ(Found.size(), FdsSounds().size());
-	// Previews: a melody, two octaves up on the FDS and one on the 5B; a beat on the noise at the drum's pitch
+	// Previews: a lead's tune, two octaves up on the FDS and one on the 5B; a beat on the noise at the drum's pitch
+	// (TestPreviewPhrases has the rest)
 	std::vector<PreviewStep> Steps = PreviewSteps(*FindEntry(All, "Soft lead", TARGET_PULSE));
-	CHECK(Steps.size() == 8 && Steps[0].Note == 48 && Steps[3].Note == 60 && Steps[6].Note == PREVIEW_RELEASE &&
-		Steps[7].Note == PREVIEW_HALT);
-	Steps = PreviewSteps(*pFds);
-	CHECK(Steps[0].Note == (pFds->Low ? 48 : 72));
+	CHECK(Steps.size() == 9 && Steps[0].Note == 52 && Steps[6].Note == 48 && Steps[7].Note == PREVIEW_RELEASE &&
+		Steps[8].Note == PREVIEW_HALT);
+	SoundEntry OnPulse = *pFds;
+	OnPulse.Target = TARGET_PULSE;
+	CHECK_EQ(PreviewSteps(*pFds)[0].Note, PreviewSteps(OnPulse)[0].Note + 24);
 	Steps = PreviewSteps(*FindEntry(All, "Soft lead", TARGET_S5B));
-	CHECK_EQ(Steps[0].Note, 60);
+	CHECK_EQ(Steps[0].Note, 64);
 	Steps = PreviewSteps(*FindEntry(All, "Snare", TARGET_NOISE));
-	CHECK(Steps.size() == 6 && Steps[0].Note == 0xA && Steps.back().Note == PREVIEW_HALT);
+	CHECK(Steps.size() == 5 && Steps[0].Note == 0xA && Steps.back().Note == PREVIEW_HALT);
 	Steps = PreviewSteps(*FindEntry(All, "Kick", TARGET_NOISE));
 	CHECK_EQ(Steps[0].Note, 0x4);
 	Steps = PreviewSteps(*pSaw);
-	CHECK_EQ(Steps[0].Note, 36);	// low
+	CHECK_EQ(Steps[0].Note, 24);	// a bass's figure, from C-2
 
 	// References: each sound at home where reference_sound puts it, on the other channels it can play on too; found
 	// by the game, the title, a tag; warned of a vibrato that clicks and notes that vanish
@@ -12816,6 +12819,362 @@ void TestFindSound()
 	const size_t Count = Song.Info.Instruments.size();
 	CHECK(pOwn != 0 && Tools.MakeSound(*pOwn, Error) == 1 && Song.Info.Instruments.size() == Count);
 	CHECK(Tools.Sounds(-1, All, Error) && FindEntry(All, "Soft lead", TARGET_VRC6_PULSE)->InSong == Index);
+}
+
+// The sounds without the reference library (the main window's Listen, ToolSet::Sounds with Library false): the
+// ready-made sounds and the song's own, as with it
+void TestSoundsWithoutLibrary()
+{
+	FakeSong Song;
+	Song.Library["lava-game-03.json"] = ReferenceFile(ClickyReference());
+	ToolSet Tools(Song);
+	std::vector<SoundEntry> All, Light;
+	std::string Error;
+	CHECK(Tools.Sounds(5, All, Error) && Tools.Sounds(5, Light, Error, false) && !Light.empty() && Light.size() < All.size());
+	size_t Same = 0;
+	bool NoReferences = true;
+	for (size_t i = 0; i < Light.size(); ++i) {
+		NoReferences = NoReferences && Light[i].Source != SOURCE_REFERENCE;
+		for (size_t j = 0; j < All.size(); ++j)
+			if (All[j].Name == Light[i].Name && All[j].Target == Light[i].Target && All[j].Source == Light[i].Source &&
+				All[j].Number == Light[i].Number) {
+				Same += All[j].Home == Light[i].Home && All[j].Channel == Light[i].Channel && All[j].Kind == Light[i].Kind ? 1 : 0;
+				break;
+			}
+	}
+	CHECK(NoReferences && Same == Light.size());
+	size_t References = 0;
+	for (size_t i = 0; i < All.size(); ++i)
+		References += All[i].Source == SOURCE_REFERENCE ? 1 : 0;
+	CHECK(References > 0 && Light.size() + References == All.size());
+}
+
+// A reference library for the sound browser's groups: Tracks tracks of each game ("" for studies without one), each
+// with a lead, a second part, a bass on the triangle and a hi-hat
+std::vector<Reference> GroupedLibrary(const std::vector<std::string> &Games, int Tracks)
+{
+	std::vector<Reference> Library;
+	for (size_t g = 0; g < Games.size(); ++g)
+		for (int t = 1; t <= Tracks; ++t) {
+			Reference R;
+			R.Game = Games[g];
+			R.Track = t;
+			R.Title = (Games[g].empty() ? std::string("Loose") : Games[g]) + " theme " + std::to_string(t);
+			R.Id = ReferenceId(Games[g].empty() ? std::string("loose") : Games[g], t);
+			ReferenceSound Lead;
+			Lead.Channel = "Pulse 1";
+			Lead.Role = "the lead";
+			Lead.Words = "a 25% pulse that holds at 10";
+			Lead.Chip = "2A03";
+			Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 10 };
+			ReferenceSound Second = Lead;
+			Second.Channel = "Pulse 2";
+			Second.Role = "a second part";
+			ReferenceSound Bass;
+			Bass.Channel = "Triangle";
+			Bass.Role = "bass";
+			Bass.Words = "a plain triangle";
+			Bass.Chip = "2A03";
+			Bass.Triangle = true;
+			ReferenceSound Hat;
+			Hat.Channel = "Noise";
+			Hat.Role = "hi-hat";
+			Hat.Words = "starts at 8 and dies away in 3 frames";
+			Hat.Chip = "2A03";
+			Hat.Noise = true;
+			Hat.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 8, 4, 1, 0 };
+			R.Sounds = std::vector<ReferenceSound>{ Lead, Second, Bass, Hat };
+			Library.push_back(R);
+		}
+	return Library;
+}
+
+size_t PlaceIn(const std::vector<size_t> &Found, size_t Sound)
+{
+	return static_cast<size_t>(std::find(Found.begin(), Found.end(), Sound) - Found.begin());
+}
+
+// The labels of a kind's groups, in order
+std::vector<std::string> GroupLabels(const std::vector<SoundGroup> &Groups, const std::string &Kind)
+{
+	std::vector<std::string> Out;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		if (Groups[g].Kind == Kind)
+			Out.push_back(Groups[g].Label);
+	return Out;
+}
+
+int RowsOfType(const std::vector<SoundRow> &Rows, int Type)
+{
+	int Count = 0;
+	for (size_t r = 0; r < Rows.size(); ++r)
+		Count += Rows[r].Type == Type ? 1 : 0;
+	return Count;
+}
+
+// Instrument > Sound browser's groups (SoundIndex.h): by kind, and inside each kind the ready-made sounds, the
+// reference library's game by game and the song's own; every sound in one group, counted, folded by hand or (a kind's
+// many games) by itself, and words and filters across the groups
+void TestSoundGroups()
+{
+	SongInfo Song = SongWithChips(std::vector<std::string>{ "VRC6" });
+	InstrumentInfo Mine;
+	Mine.Index = 0;
+	Mine.Name = "My lead";
+	Mine.Chip = "2A03";
+	Song.Instruments.push_back(Mine);
+	InstrumentInfo Kick;
+	Kick.Index = 1;
+	Kick.Name = "Kick";
+	Kick.Chip = "2A03";
+	Song.Instruments.push_back(Kick);
+	const std::vector<Reference> Library = GroupedLibrary(std::vector<std::string>{ "Lava Game", "The Ice Game", "Brass Game", "" }, 6);
+	const std::vector<SoundEntry> All = ListSounds(Song, Library, std::vector<SoundUse>(64), -1);
+	std::vector<size_t> Found = FindSounds(All, SoundQuery());
+	std::vector<SoundGroup> Groups = GroupSounds(All, Found);
+
+	// Every sound found in exactly one group of its kind and source (a reference's, of its game), in the order found
+	std::vector<int> Seen(All.size(), 0);
+	bool InPlace = true, Ordered = true;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		for (size_t s = 0; s < Groups[g].Sounds.size(); ++s) {
+			const size_t Sound = Groups[g].Sounds[s];
+			++Seen[Sound];
+			const SoundEntry &E = All[Sound];
+			InPlace = InPlace && E.Kind == Groups[g].Kind && E.Source == Groups[g].Source &&
+				(E.Source != SOURCE_REFERENCE || E.Game == Groups[g].Game);
+			Ordered = Ordered && (s == 0 || PlaceIn(Found, Groups[g].Sounds[s - 1]) < PlaceIn(Found, Sound));
+		}
+	bool Once = true;
+	for (size_t i = 0; i < All.size(); ++i)
+		Once = Once && Seen[i] == (PlaceIn(Found, i) < Found.size() ? 1 : 0);
+	CHECK(InPlace && Ordered && Once);
+	// The kinds in SoundKinds()'s order; inside each, the ready-made sounds, the games A to Z ("The Ice Game" under I),
+	// the studies without a game, then the song's own
+	CHECK(Groups.front().Kind == "lead" && Groups.back().Kind == "drums");
+	CHECK(GroupLabels(Groups, "lead") == std::vector<std::string>({ "Ready-made sounds", "Brass Game", "The Ice Game", "Lava Game",
+		"Other references", "This song's instruments" }));
+	CHECK(GroupLabels(Groups, "bass") == std::vector<std::string>({ "Ready-made sounds", "Brass Game", "The Ice Game", "Lava Game",
+		"Other references" }));
+	CHECK(GroupLabels(Groups, "drums") == std::vector<std::string>({ "Ready-made sounds", "Brass Game", "The Ice Game", "Lava Game",
+		"Other references", "This song's instruments" }));
+	CHECK(Groups[1].Game == "Brass Game" && Groups[1].Key == "lead/1/brass game" && Groups[0].Key == "lead/0/");
+	// Inside a game, its tracks in order: each track's lead, then its second part
+	CHECK(Groups[1].Sounds.size() == 12u && All[Groups[1].Sounds[0]].About == "Brass Game theme 1 (track 1), the lead" &&
+		All[Groups[1].Sounds[1]].About == "Brass Game theme 1 (track 1), a second part" &&
+		All[Groups[1].Sounds[2]].About == "Brass Game theme 2 (track 2), the lead");
+	CHECK(All[Groups[0].Sounds[0]].About == All[Groups[0].Sounds[0]].Words && !All[Groups[0].Sounds[0]].About.empty());
+	// The counts of each kind, as the groups have them
+	const std::vector<int> Counts = KindCounts(All, Found);
+	CHECK_EQ(Counts.size(), SoundKinds().size());
+	int Sum = 0, Leads = 0;
+	for (size_t k = 0; k < Counts.size(); ++k)
+		Sum += Counts[k];
+	for (size_t g = 0; g < Groups.size(); ++g)
+		Leads += Groups[g].Kind == "lead" ? static_cast<int>(Groups[g].Sounds.size()) : 0;
+	CHECK(Sum == static_cast<int>(Found.size()) && Counts[0] == Leads && Leads == 8 + 48 + 1);
+
+	// The rows: a heading for each kind and group; 48 reference leads (over 40) start with their games folded, the
+	// 24 basses and drums don't, and the ready-made and the song's own never do
+	int Kinds = 0;
+	for (size_t k = 0; k < Counts.size(); ++k)
+		Kinds += Counts[k] > 0 ? 1 : 0;
+	SoundView View;
+	std::vector<SoundRow> Rows = SoundRows(Groups, View);
+	CHECK(Rows[0].Type == ROW_KIND && Rows[0].Count == Leads && !Rows[0].Folded && RowKey(Groups, Rows[0]) == "kind/lead");
+	CHECK(Rows[1].Type == ROW_GROUP && Rows[1].Count == 8 && !Rows[1].Folded && RowKey(Groups, Rows[1]) == "lead/0/");
+	CHECK(Rows[2].Type == ROW_SOUND && Rows[2].Sound == Groups[0].Sounds[0] && RowKey(Groups, Rows[2]).empty());
+	CHECK(Rows[10].Type == ROW_GROUP && Rows[10].Folded && Rows[10].Count == 12 && Rows[11].Type == ROW_GROUP && Rows[11].Folded);
+	CHECK(Kinds >= 3 && RowsOfType(Rows, ROW_KIND) == Kinds);
+	CHECK_EQ(RowsOfType(Rows, ROW_GROUP), static_cast<int>(Groups.size()));
+	CHECK_EQ(RowsOfType(Rows, ROW_SOUND), static_cast<int>(Found.size()) - 48);
+	CHECK(SoundRowOf(Rows, Groups[1].Sounds[0]) == -1 && SoundRowOf(Rows, Groups[0].Sounds[3]) == 5);
+	CHECK(RowHeading(Rows, 5) == 1 && RowHeading(Rows, 1) == 0 && RowHeading(Rows, 0) == -1);
+	const int SongsLead = SoundRowOf(Rows, Groups[5].Sounds[0]);
+	CHECK(SongsLead > 0 && Rows[static_cast<size_t>(SongsLead) - 1].Type == ROW_GROUP && All[Rows[static_cast<size_t>(SongsLead)].Sound].Name == "My lead");
+	// With words asked for, every group opens; by hand, a group opens or folds and a kind folds
+	View.Words = true;
+	CHECK_EQ(RowsOfType(SoundRows(Groups, View), ROW_SOUND), static_cast<int>(Found.size()));
+	View.Words = false;
+	View.Folds[Groups[3].Key] = false;			// Lava Game's leads, opened
+	View.Folds[Groups[0].Key] = true;			// the ready-made leads, folded
+	Rows = SoundRows(Groups, View);
+	CHECK_EQ(RowsOfType(Rows, ROW_SOUND), static_cast<int>(Found.size()) - 48 + 12 - 8);
+	CHECK(SoundRowOf(Rows, Groups[3].Sounds[0]) > 0 && SoundRowOf(Rows, Groups[0].Sounds[0]) == -1 && Rows[1].Folded);
+	View.Folds[KindKey("bass")] = true;
+	Rows = SoundRows(Groups, View);
+	int BassRows = 0;
+	for (size_t r = 0; r < Rows.size(); ++r)
+		BassRows += Groups[Rows[r].Group].Kind == "bass" ? 1 : 0;
+	CHECK(BassRows == 1 && RowsOfType(Rows, ROW_KIND) == Kinds);		// its heading alone, folded
+	// One kind: its groups' headings only, which are under no kind's
+	SoundQuery Basses;
+	Basses.Kind = "bass";
+	const std::vector<size_t> FoundBasses = FindSounds(All, Basses);
+	const std::vector<SoundGroup> BassGroups = GroupSounds(All, FoundBasses);
+	SoundView One;
+	One.EveryKind = false;
+	Rows = SoundRows(BassGroups, One);
+	CHECK(BassGroups.size() == 5u && Rows[0].Type == ROW_GROUP && RowsOfType(Rows, ROW_KIND) == 0 && RowHeading(Rows, 0) == -1 &&
+		RowsOfType(Rows, ROW_SOUND) == static_cast<int>(FoundBasses.size()) && RowHeading(Rows, 1) == 0);
+
+	// Words across the groups: a game's sounds in every kind, the kind of the best match first
+	SoundQuery Q;
+	Q.Words = "lava";
+	Found = FindSounds(All, Q);
+	Groups = GroupSounds(All, Found);
+	bool Lava = Groups.size() == 3u;		// the leads (each track's lead and second part), the basses and the hi-hats
+	for (size_t g = 0; g < Groups.size(); ++g)
+		Lava = Lava && Groups[g].Game == "Lava Game" && Groups[g].Sounds.size() == (Groups[g].Kind == "lead" ? 12u : 6u);
+	CHECK(Lava);
+	Q.Words = "hi-hat";
+	Found = FindSounds(All, Q);
+	Groups = GroupSounds(All, Found);
+	CHECK(!Groups.empty() && Groups[0].Kind == "drums" && Groups[0].Source == SOURCE_PRESET && All[Groups[0].Sounds[0]].Name == "Hi-hat");
+	// The filters: from the reference library, on the triangle
+	Q = SoundQuery();
+	Q.Source = SOURCE_REFERENCE;
+	Groups = GroupSounds(All, FindSounds(All, Q));
+	bool References = Groups.size() == 3u * 4u;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		References = References && Groups[g].Source == SOURCE_REFERENCE;
+	CHECK(References);
+	Q = SoundQuery();
+	Q.Target = TARGET_TRIANGLE;
+	Found = FindSounds(All, Q);
+	Groups = GroupSounds(All, Found);
+	bool Triangle = !Groups.empty();
+	size_t Grouped = 0;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		for (size_t s = 0; s < Groups[g].Sounds.size(); ++s, ++Grouped)
+			Triangle = Triangle && All[Groups[g].Sounds[s]].Target == TARGET_TRIANGLE;
+	CHECK(Triangle && Grouped == Found.size());
+	CHECK(GroupSounds(All, std::vector<size_t>()).empty() && SoundRows(std::vector<SoundGroup>(), SoundView()).empty());
+}
+
+// Quick enough with a library of 2,500 sounds: finding, grouping and laying out the rows as the browser does while
+// the user types
+void TestSoundGroupsQuick()
+{
+	std::vector<std::string> Games;
+	for (int g = 0; g < 25; ++g)
+		Games.push_back("Game " + std::string(1, static_cast<char>('A' + g)));
+	const std::vector<Reference> Library = GroupedLibrary(Games, 25);
+	const SongInfo Song = SongWithChips(std::vector<std::string>{ "VRC6" });
+	const std::vector<SoundEntry> All = ListSounds(Song, Library, std::vector<SoundUse>(), -1);
+	CHECK(FindSounds(All, SoundQuery()).size() > 2500u);
+	const char *const ASKED[] = { "", "g", "ga", "game", "game c", "theme 12", "lead", "bass", "hat", "kazoo" };
+	const std::chrono::steady_clock::time_point Start = std::chrono::steady_clock::now();
+	size_t Shown = 0;
+	for (int Round = 0; Round < 2; ++Round)
+		for (size_t a = 0; a < sizeof(ASKED) / sizeof(ASKED[0]); ++a) {
+			SoundQuery Q;
+			Q.Words = ASKED[a];
+			bool Some = false;
+			const std::vector<size_t> Found = FindSounds(All, Q, &Some);
+			const std::vector<SoundGroup> Groups = GroupSounds(All, Found);
+			const std::vector<int> Counts = KindCounts(All, Found);
+			SoundView View;
+			View.Words = Q.Words.size() > 0;
+			const std::vector<SoundRow> Rows = SoundRows(Groups, View);
+			Shown += Rows.size() + Counts.size();
+			if (!Found.empty())
+				Shown += static_cast<size_t>(SoundRowOf(Rows, Found.back()) + 1);
+		}
+	const double Ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count();
+	Check(Ms < 2000.0 && Shown > 0, ("20 searches of 2,500 sounds, grouped, in " + std::to_string(static_cast<int>(Ms)) + " ms").c_str(),
+		__LINE__);
+}
+
+// The previews: a phrase for each kind, written where each chip plays it, and the song's own near where it plays them
+void TestPreviewPhrases()
+{
+	SoundEntry Sound;
+	Sound.Target = TARGET_PULSE;
+	Sound.Channel = 0;
+	// Each phrase: notes in time, then the release, then the end; the last note held before the release
+	const char *const KINDS[] = { "lead", "bass", "pad", "pluck", "bell", "keys", "effect", "other" };
+	std::map<std::string, std::vector<PreviewStep> > Of;
+	bool Shaped = true;
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k) {
+		Sound.Kind = KINDS[k];
+		Sound.Low = Sound.Kind == "bass";
+		const std::vector<PreviewStep> Steps = PreviewSteps(Sound);
+		Of[KINDS[k]] = Steps;
+		Shaped = Shaped && Steps.size() >= 3 && Steps[Steps.size() - 2].Note == PREVIEW_RELEASE && Steps.back().Note == PREVIEW_HALT &&
+			Steps.back().At > Steps[Steps.size() - 2].At && Steps[Steps.size() - 2].At - Steps[Steps.size() - 3].At >= 700;
+		for (size_t i = 0; i + 2 < Steps.size(); ++i)
+			Shaped = Shaped && Steps[i].Note >= 0 && Steps[i].Note < 96 && (i == 0 || Steps[i].At > Steps[i - 1].At);
+	}
+	CHECK(Shaped);
+	// A lead's tune; a bass's figure under it; a pad's two held notes; a pluck's quick broken chord; a bell's far apart;
+	// one long note for an effect; another kind plays the lead's tune
+	CHECK(Of["lead"].size() == 9u && Of["lead"][0].Note == 52 && Of["lead"][6].Note == 48 && Of["other"].size() == 9u &&
+		Of["other"][2].Note == Of["lead"][2].Note);
+	int HighestBass = 0;
+	for (size_t i = 0; i + 2 < Of["bass"].size(); ++i)
+		HighestBass = std::max(HighestBass, Of["bass"][i].Note);
+	CHECK(HighestBass < 48 && Of["bass"][0].Note == 24 && Of["bass"].size() == 11u && Of["bass"][8].Note == 24);
+	CHECK(Of["pad"].size() == 4u && Of["pad"][1].At - Of["pad"][0].At >= 900);
+	CHECK(Of["pluck"].size() == 9u && Of["pluck"][1].At - Of["pluck"][0].At <= 150 && Of["pluck"][3].Note == 60);
+	CHECK(Of["bell"].size() == 6u && Of["bell"][1].At - Of["bell"][0].At >= 500 && Of["bell"][0].Note == 60);
+	CHECK(Of["effect"].size() == 3u && Of["keys"].size() == 9u);
+	// Written where the chip plays it: the FDS two octaves up, the 5B one, the triangle and the sawtooth as written
+	Sound.Kind = "lead";
+	Sound.Low = false;
+	Sound.Target = TARGET_FDS;
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 52 + 24);
+	Sound.Target = TARGET_S5B;
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 52 + 12);
+	Sound.Target = TARGET_SAWTOOTH;
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 52);		// a lead on the sawtooth plays the tune
+	Sound.Kind = "bass";
+	Sound.Low = true;
+	Sound.Target = TARGET_TRIANGLE;
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 24);
+	// The song's own: by an octave toward where the song plays it, no more
+	Sound.Source = SOURCE_SONG;
+	Sound.Pitches = std::vector<int>{ 12 };		// a bass the song plays from C-1
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 12);
+	Sound.Kind = "lead";
+	Sound.Low = false;
+	Sound.Target = TARGET_PULSE;
+	Sound.Pitches = std::vector<int>{ 84 };		// a lead from C-7: an octave up, not three
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 64);
+	Sound.Pitches = std::vector<int>{ 45 };		// from A-3: where it is
+	CHECK_EQ(PreviewSteps(Sound)[0].Note, 52);
+
+	// Drums: each kind of drum its own rhythm at its pitch on the noise; the song's own at its pitches; a sample kit's
+	// keys on the DPCM
+	SoundEntry Drum;
+	Drum.Target = TARGET_NOISE;
+	Drum.Kind = "drums";
+	Drum.Drum = true;
+	const char *const DRUMS[][2] = { { "Kick", "4" }, { "Snare", "10" }, { "Hi-hat", "14" }, { "Open hi-hat", "13" }, { "Crash", "12" },
+		{ "Tom", "9" }, { "Clap", "14" } };
+	std::vector<size_t> Hits;
+	for (size_t d = 0; d < sizeof(DRUMS) / sizeof(DRUMS[0]); ++d) {
+		Drum.Name = DRUMS[d][0];
+		const std::vector<PreviewStep> Steps = PreviewSteps(Drum);
+		Check(Steps[0].Note == std::atoi(DRUMS[d][1]) && Steps[0].At == 0 && Steps.back().Note == PREVIEW_HALT, Drum.Name.c_str(), __LINE__);
+		Hits.push_back(Steps.size() - 1);
+	}
+	CHECK(Hits == std::vector<size_t>({ 4, 4, 8, 2, 1, 4, 5 }));
+	Drum.Name = "Tom";
+	const std::vector<PreviewStep> Fill = PreviewSteps(Drum);
+	CHECK(Fill[1].Note < Fill[0].Note && Fill[3].Note < Fill[2].Note);		// falling
+	Drum.Name = "Mine";
+	Drum.Source = SOURCE_SONG;
+	Drum.Pitches = std::vector<int>{ 0x3, 0xB };
+	std::vector<PreviewStep> Steps = PreviewSteps(Drum);
+	CHECK(Steps.size() == 7u && Steps[0].Note == 0x3 && Steps[1].Note == 0xB && Steps[2].Note == 0x3);
+	Drum.Source = SOURCE_PRESET;
+	Drum.Pitches.clear();
+	Drum.Target = TARGET_DPCM;
+	Steps = PreviewSteps(Drum);
+	CHECK(Steps[0].Note == 36 && Steps[1].Note == 38 && Steps[6].Note == 45 && Steps.back().Note == PREVIEW_HALT);
+	Drum.Target = TARGET_S5B;
+	CHECK_EQ(PreviewSteps(Drum)[0].Note, 48);
 }
 
 // The highest a channel's notes sound in [First, End) (as a pulse would play them: Lift under their written pitch), and
@@ -17073,6 +17432,10 @@ int main()
 	TestStepsMeters();
 	TestStepsRoundTrip();
 	TestStepsTaught();
+	TestSoundsWithoutLibrary();
+	TestSoundGroups();
+	TestSoundGroupsQuick();
+	TestPreviewPhrases();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
