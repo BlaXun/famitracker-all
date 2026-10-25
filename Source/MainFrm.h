@@ -115,7 +115,7 @@ public:
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
 	// screen ("pattern", "button" with a command, "menu" with its name, ...),
-	// and the clips panel or piano roll opened for a step about it
+	// and the clips panel, piano roll or mixer opened for a step about it
 	bool	GetTutorialRect(LPCTSTR Part, LPCTSTR Name, UINT Command, CRect &Rect);
 	void	ShowTutorialPart(LPCTSTR Part);
 
@@ -312,6 +312,7 @@ public:
 	afx_msg void OnInstrumentLibrary();
 	afx_msg void OnEditDrumGrid();
 	afx_msg void OnHelpTutorials();
+	afx_msg void OnHelpExample(UINT nID);
 	virtual BOOL OnCommand(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnViewProfile();
 	afx_msg void OnViewShowEverything();

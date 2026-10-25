@@ -809,6 +809,19 @@
 #define IDR_TUTORIAL_SOUNDS             341
 #define IDR_TUTORIAL_CLIPS              342
 #define IDR_TUTORIAL_GAME               343
+// Help > Example songs (Tutorial.cpp): the songs and their walkthroughs (res/examples, RCDATA)
+#define IDR_EXAMPLE_FIRST_SONG          620
+#define IDR_EXAMPLE_TRICKS_SONG         621
+#define IDR_EXAMPLE_VRC6_SONG           622
+#define IDR_EXAMPLE_SOFT_SONG           623
+#define IDR_EXAMPLE_FIRST_WALK          625
+#define IDR_EXAMPLE_TRICKS_WALK         626
+#define IDR_EXAMPLE_VRC6_WALK           627
+#define IDR_EXAMPLE_SOFT_WALK           628
+#define ID_HELP_EXAMPLE_FIRST           37570
+#define ID_HELP_EXAMPLE_TRICKS          37571
+#define ID_HELP_EXAMPLE_VRC6            37572
+#define ID_HELP_EXAMPLE_SOFT            37573
 
 // File > Import NSF (ImportNsfDlg.cpp)
 #define IDD_IMPORT_NSF                  337

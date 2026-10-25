@@ -1,0 +1,62 @@
+; Help > Example songs: the walkthrough of vrc6.ftm, which opens with it.
+; The format is in Source/TutorialScript.h.
+
+title: The VRC6
+about: The VRC6 chip's two extra pulses and its sawtooth, first as the bass and then as the lead. About five minutes.
+
+step
+show: window
+text: This example is about the VRC6, a sound chip that some Famicom cartridges carried (Castlevania III's has one). It's opened as a new song, so change what you like: saving asks for a name, and the example stays as it is.
+
+  The box in front holds the song's comments. Close it, then press Next.
+
+step
+show: pattern
+play: bars 1-16
+text: The VRC6 adds three channels, the last three columns: two more pulses and a sawtooth. The 2A03's own pulses rest in this song, so what you hear is mostly the VRC6. Press Play to hear it all once.
+wait: heard
+
+step
+show: channel VRC6 Pulse 1
+play: bars 3-4
+solo: VRC6 Pulse 1, VRC6 Pulse 2
+text: The VRC6's two pulses (its Pulse 1 and Pulse 2) play a duet in bars 1 to 8: the tune and a second voice under it.
+
+  Their wave comes in eight widths instead of the 2A03's four. The tune's instrument 00 is a little short of round (37.5%), the second voice's instrument 01 is thin (12.5%): that's why the two sound different.
+
+step
+show: channel Sawtooth
+play: bars 1-2
+solo: Sawtooth
+text: The sawtooth has a full, buzzing sound none of the 2A03's channels has. In bars 1 to 8 it plays the bass with instrument 02: low notes, eight in every bar.
+
+step
+show: channel Sawtooth
+play: bars 9-10
+solo: Sawtooth
+text: In bars 9 to 16 the same channel plays the tune instead, with instrument 03: higher notes, and a vibrato that comes in by itself on the long ones (it's part of the instrument). A sawtooth makes a strong lead as well as a bass.
+
+step
+show: channel Triangle
+play: bars 9-12
+solo: Triangle
+text: With the sawtooth on the tune, the 2A03's triangle takes over the bass: the same bass line, rounder and softer than the sawtooth's.
+
+step
+show: channel VRC6 Pulse 2
+play: bars 9-12
+solo: VRC6 Pulse 1, VRC6 Pulse 2
+text: And the two VRC6 pulses hold the chords under the tune now: one long note each in every bar, with instrument 04, which swells in gently.
+
+step
+show: pattern
+play: bars 7-10
+text: Hear the change in the middle of the song: in bar 9 the bass and the lead trade places.
+
+step
+show: menu Module
+text: A song's chips are switched on in Module > Module properties: tick VRC6 and its three channels appear in the pattern editor. (This song has it on already.)
+
+step
+show: window
+text: That's the VRC6. Try the sawtooth yourself: put the cursor in its column, pick instrument 02 or 03 and play the keys. Help > Example songs has one more, with soft sounds in stereo.

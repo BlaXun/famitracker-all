@@ -239,6 +239,13 @@ BEGIN
     POPUP "&Help"
     BEGIN
         MENUITEM "&Tutorials...",               ID_HELP_TUTORIALS
+        POPUP "&Example songs"
+        BEGIN
+            MENUITEM "&First song: a tune, a bass and drums on the NES's own chip", ID_HELP_EXAMPLE_FIRST
+            MENUITEM "&NES tricks: quick chords, an echo, a vibrato, slides and a sampled kick", ID_HELP_EXAMPLE_TRICKS
+            MENUITEM "The &VRC6: two more pulses, and a sawtooth as the bass and the lead", ID_HELP_EXAMPLE_VRC6
+            MENUITEM "&Soft and wide: soft pads, stereo, and the mixer's Soft and Space", ID_HELP_EXAMPLE_SOFT
+        END
         MENUITEM SEPARATOR
         MENUITEM "&Help Topics\tF1",            ID_HELP_FINDER
         MENUITEM "Effect table",                ID_HELP_EFFECTTABLE
@@ -581,6 +588,10 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
+    ID_HELP_EXAMPLE_FIRST   "A short song on the 2A03 alone, opened as a new song, with a walkthrough of what to listen for\nFirst song"
+    ID_HELP_EXAMPLE_TRICKS  "A short song of the NES's classic tricks, opened as a new song, with a walkthrough of what to listen for\nNES tricks"
+    ID_HELP_EXAMPLE_VRC6    "A short song for the VRC6 chip, opened as a new song, with a walkthrough of what to listen for\nThe VRC6"
+    ID_HELP_EXAMPLE_SOFT    "A calm song on the VRC6 Plus, in stereo, opened as a new song, with a walkthrough of what to listen for\nSoft and wide"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -966,6 +977,20 @@ IDR_TUTORIAL_FIRST      RCDATA                  "res\\tutorials\\first-tune.txt"
 IDR_TUTORIAL_SOUNDS     RCDATA                  "res\\tutorials\\sounds-and-drums.txt"
 IDR_TUTORIAL_CLIPS      RCDATA                  "res\\tutorials\\clips-and-piano-roll.txt"
 IDR_TUTORIAL_GAME       RCDATA                  "res\\tutorials\\game-music.txt"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RCDATA: the example songs and their walkthroughs (Tutorial.cpp, Help > Example songs)
+//
+
+IDR_EXAMPLE_FIRST_SONG  RCDATA                  "res\\examples\\first-song.ftm"
+IDR_EXAMPLE_TRICKS_SONG RCDATA                  "res\\examples\\nes-tricks.ftm"
+IDR_EXAMPLE_VRC6_SONG   RCDATA                  "res\\examples\\vrc6.ftm"
+IDR_EXAMPLE_SOFT_SONG   RCDATA                  "res\\examples\\soft-and-wide.ftm"
+IDR_EXAMPLE_FIRST_WALK  RCDATA                  "res\\examples\\first-song.txt"
+IDR_EXAMPLE_TRICKS_WALK RCDATA                  "res\\examples\\nes-tricks.txt"
+IDR_EXAMPLE_VRC6_WALK   RCDATA                  "res\\examples\\vrc6.txt"
+IDR_EXAMPLE_SOFT_WALK   RCDATA                  "res\\examples\\soft-and-wide.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //

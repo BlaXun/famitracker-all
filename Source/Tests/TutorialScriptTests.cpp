@@ -20,9 +20,12 @@
 */
 
 // Tests for reading tutorials (TutorialScript.cpp), and the built-in ones
-// in res/tutorials (TUTORIALS_DIR) all read
+// in res/tutorials (TUTORIALS_DIR) all read; the example songs' walkthroughs
+// in res/examples (EXAMPLES_DIR) too, with the bars and channels they name
+// found in their songs
 
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -155,6 +158,289 @@ void TestBuiltIn()
 	}
 }
 
+
+// The lines of the example songs' walkthroughs
+void TestWalkthroughLines()
+{
+	const std::string Text =
+		"title: First song\r\n"
+		"about: A tune, a bass and drums.\r\n"
+		"step\r\n"
+		"show: channel Triangle\r\n"
+		"play: bars 5-8\r\n"
+		"solo: Triangle\r\n"
+		"text: The bass alone.\r\n"
+		"wait: heard\r\n"
+		"step\r\n"
+		"show: channel vrc6 pulse 1\r\n"
+		"bar: 3\r\n"
+		"play: bar 12\r\n"
+		"mute: Noise, DPCM,VRC6 Plus Soft 2\r\n"
+		"instrument: 0A\r\n"
+		"text: Without the drums.\r\n"
+		"step\r\n"
+		"show: mixer\r\n"
+		"play: bars 2 - 2\r\n"
+		"text: The mixer.\r\n";
+	tutorial_t T;
+	std::string Error;
+	CHECK(ParseTutorial(Text, T, Error));
+	CHECK(Error.empty());
+	CHECK(T.Steps.size() == 3);
+	if (T.Steps.size() != 3)
+		return;
+	const tutorial_step_t &A = T.Steps[0], &B = T.Steps[1], &C = T.Steps[2];
+	CHECK(A.Show == "channel" && A.ShowName == "Triangle");
+	CHECK(A.PlayFirst == 5 && A.PlayLast == 8 && A.Bar == 0 && A.CursorBar() == 5);
+	CHECK(A.Solo.size() == 1 && A.Solo[0] == "Triangle" && A.Mute.empty());
+	CHECK(A.Wait == WAIT_HEARD && A.Instrument == -1);
+	CHECK(B.Show == "channel" && B.ShowName == "vrc6 pulse 1");
+	CHECK(B.Bar == 3 && B.PlayFirst == 12 && B.PlayLast == 12 && B.CursorBar() == 3);
+	CHECK(B.Mute.size() == 3 && B.Mute[0] == "Noise" && B.Mute[1] == "DPCM" && B.Mute[2] == "VRC6 Plus Soft 2");
+	CHECK(B.Solo.empty() && B.Instrument == 0x0A && B.Wait == WAIT_NEXT);
+	CHECK(C.Show == "mixer" && C.ShowName.empty() && C.PlayFirst == 2 && C.PlayLast == 2);
+	// A step without any of them, as before
+	CHECK(ParseTutorial("title: T\nstep\ntext: x\n", T, Error));
+	CHECK(T.Steps.size() == 1 && T.Steps[0].Bar == 0 && T.Steps[0].PlayFirst == 0 && T.Steps[0].CursorBar() == 0 &&
+		T.Steps[0].Instrument == -1 && T.Steps[0].Solo.empty() && T.Steps[0].Mute.empty());
+	CHECK(IsTutorialPart("mixer") && IsTutorialPart("channel"));
+}
+
+void TestWalkthroughErrors()
+{
+	struct { const char *Text; const char *Error; } Cases[] = {
+		{ "title: T\nstep\ntext: x\nbar: 0\n", "Line 4: \"bar\" takes the bar's number" },
+		{ "title: T\nstep\ntext: x\nbar: five\n", "Line 4: \"bar\" takes the bar's number" },
+		{ "title: T\nstep\ntext: x\nbar: 5 6\n", "Line 4: \"bar\" takes the bar's number" },
+		{ "title: T\nstep\ntext: x\nplay: 5\n", "Line 4: \"play\" takes the bars to play" },
+		{ "title: T\nstep\ntext: x\nplay: bars 8-5\n", "Line 4: \"play\" takes the bars to play" },
+		{ "title: T\nstep\ntext: x\nplay: bars 5\n", "Line 4: \"play\" takes the bars to play" },
+		{ "title: T\nstep\ntext: x\nplay: bar 0\n", "Line 4: \"play\" takes the bars to play" },
+		{ "title: T\nstep\ntext: x\nsolo: Triangel\n", "Line 4: there's no channel called \"Triangel\"." },
+		{ "title: T\nstep\ntext: x\nmute: Pulse 1,\n", "Line 4: \"mute\" takes channels apart by commas" },
+		{ "title: T\nstep\ntext: x\nmute: VRC9 Pulse 1\n", "Line 4: there's no channel called \"VRC9 Pulse 1\"." },
+		{ "title: T\nstep\nshow: channel\ntext: x\n", "Line 3: \"channel\" takes the channel's name" },
+		{ "title: T\nstep\nshow: channel Kazoo\ntext: x\n", "Line 3: there's no channel called \"Kazoo\"." },
+		{ "title: T\nstep\nshow: mixer now\ntext: x\n", "Line 3: \"mixer\" takes nothing after it." },
+		{ "title: T\nstep\ntext: x\ninstrument: 40\n", "Line 4: \"instrument\" takes the instrument's number" },
+		{ "title: T\nstep\ntext: x\ninstrument: lead\n", "Line 4: \"instrument\" takes the instrument's number" },
+		{ "title: T\nplay: bar 1\n", "Line 2: \"play\" belongs to a step" },
+		{ "title: T\nstep\ntext: x\nwait: heard\n", "Step 1 waits for its bars to be heard, but has no \"play\" line." },
+		{ "title: T\nstep\ntext: x\nsolo: Noise\nmute: DPCM\n", "Step 1 both solos and mutes channels" },
+	};
+	for (size_t i = 0; i < sizeof(Cases) / sizeof(Cases[0]); ++i) {
+		tutorial_t T;
+		std::string Error;
+		const bool Read = ParseTutorial(Cases[i].Text, T, Error);
+		CHECK(!Read);
+		const bool Same = Error.compare(0, std::string(Cases[i].Error).size(), Cases[i].Error) == 0;
+		CHECK(Same);
+		if (Read || !Same)
+			std::printf("  walkthrough case %d: \"%s\"\n", static_cast<int>(i), Error.c_str());
+	}
+}
+
+// The 2A03's channels, then each chip's in FamiTracker's order (as
+// ChipSwitch.cpp lists them); the N163's renamed for the VRC6 Plus
+std::vector<tutorial_channel_t> SongChannels(int Chips, int Namco, bool Plus)
+{
+	std::vector<tutorial_channel_t> List;
+	const char *const BASE[] = { "Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM" };
+	for (int i = 0; i < 5; ++i)
+		List.push_back(tutorial_channel_t(BASE[i], "2A03"));
+	if (Chips & 1) {
+		const char *const VRC6[] = { "Pulse 1", "Pulse 2", "Sawtooth" };
+		for (int i = 0; i < 3; ++i)
+			List.push_back(tutorial_channel_t(VRC6[i], "VRC6", Plus));
+	}
+	if (Chips & 8) {
+		List.push_back(tutorial_channel_t("Pulse 1", "MMC5"));
+		List.push_back(tutorial_channel_t("Pulse 2", "MMC5"));
+	}
+	if (Chips & 16) {
+		for (int i = 0; i < Namco; ++i) {
+			char Name[16];
+			std::snprintf(Name, sizeof(Name), Plus ? "Soft %d" : "Namco %d", i + 1);
+			List.push_back(tutorial_channel_t(Name, "N163", Plus));
+		}
+	}
+	if (Chips & 4)
+		List.push_back(tutorial_channel_t("FDS", "FDS"));
+	if (Chips & 2) {
+		for (int i = 0; i < 6; ++i) {
+			char Name[16];
+			std::snprintf(Name, sizeof(Name), "FM Channel %d", i + 1);
+			List.push_back(tutorial_channel_t(Name, "VRC7"));
+		}
+	}
+	if (Chips & 32) {
+		for (int i = 0; i < 3; ++i) {
+			char Name[16];
+			std::snprintf(Name, sizeof(Name), "Square %d", i + 1);
+			List.push_back(tutorial_channel_t(Name, "5B"));
+		}
+	}
+	return List;
+}
+
+void TestChannels()
+{
+	const std::vector<tutorial_channel_t> Vrc6 = SongChannels(1, 0, false);
+	CHECK(FindTutorialChannel("Pulse 1", Vrc6) == 0);
+	CHECK(FindTutorialChannel("2A03 Pulse 2", Vrc6) == 1);
+	CHECK(FindTutorialChannel("triangle", Vrc6) == 2);
+	CHECK(FindTutorialChannel("DPCM", Vrc6) == 4);
+	CHECK(FindTutorialChannel("VRC6 Pulse 1", Vrc6) == 5);
+	CHECK(FindTutorialChannel("vrc6 pulse 2", Vrc6) == 6);
+	CHECK(FindTutorialChannel("Sawtooth", Vrc6) == 7);
+	CHECK(FindTutorialChannel("VRC6 Sawtooth", Vrc6) == 7);
+	CHECK(FindTutorialChannel("2A03 Sawtooth", Vrc6) == -1);
+	CHECK(FindTutorialChannel("MMC5 Pulse 1", Vrc6) == -1);
+	CHECK(FindTutorialChannel("Soft 1", Vrc6) == -1);
+	CHECK(FindTutorialChannel("VRC6 Plus Pulse 1", Vrc6) == -1);	// not a VRC6 Plus song
+	// The VRC6 Plus: its VRC6 channels and the soft layer by either name
+	const std::vector<tutorial_channel_t> Plus = SongChannels(1 | 16, 4, true);
+	CHECK(Plus.size() == 12);
+	CHECK(FindTutorialChannel("Soft 1", Plus) == 8);
+	CHECK(FindTutorialChannel("VRC6 Plus Soft 2", Plus) == 9);
+	CHECK(FindTutorialChannel("N163 Soft 4", Plus) == 11);
+	CHECK(FindTutorialChannel("VRC6 Plus Pulse 1", Plus) == 5);
+	CHECK(FindTutorialChannel("VRC6 Pulse 2", Plus) == 6);
+	CHECK(FindTutorialChannel("VRC6 Plus Triangle", Plus) == -1);
+	CHECK(FindTutorialChannel("Namco 1", Plus) == -1);
+	// Several chips: the name the 2A03 has too goes to it, the chip finds the others
+	const std::vector<tutorial_channel_t> Many = SongChannels(1 | 8 | 32, 0, false);
+	CHECK(FindTutorialChannel("MMC5 Pulse 2", Many) == 9);
+	CHECK(FindTutorialChannel("5B Square 3", Many) == 12);
+	CHECK(FindTutorialChannel("Square 1", Many) == 10);
+	CHECK(IsTutorialChannel("Namco 8") && IsTutorialChannel("FM Channel 6") && IsTutorialChannel("FDS") &&
+		IsTutorialChannel("5B Square 2") && IsTutorialChannel("VRC6 Plus Soft 4"));
+	CHECK(!IsTutorialChannel("Triangel") && !IsTutorialChannel("Pulse 3") && !IsTutorialChannel("") &&
+		!IsTutorialChannel("VRC6"));
+}
+
+// What the walkthrough needs to know of an example song: its bars (counted as
+// the piano roll's ruler counts them) and channels, read from the .ftm
+struct song_facts_t {
+	int Bars;
+	std::vector<tutorial_channel_t> Channels;
+	bool Comments;			// shown when it's opened
+	std::string Title;
+	song_facts_t() : Bars(0), Comments(false) {}
+};
+
+int ReadInt(const std::string &Data, size_t At)
+{
+	if (At + 4 > Data.size())
+		return -1;
+	return static_cast<int>(static_cast<unsigned char>(Data[At]) | (static_cast<unsigned char>(Data[At + 1]) << 8) |
+		(static_cast<unsigned char>(Data[At + 2]) << 16) | (static_cast<unsigned int>(static_cast<unsigned char>(Data[At + 3])) << 24));
+}
+
+bool ReadSong(const std::string &Data, song_facts_t &Facts)
+{
+	if (Data.size() < 25 || Data.compare(0, 18, "FamiTracker Module") != 0 || Data.compare(Data.size() - 3, 3, "END") != 0)
+		return false;
+	int Chips = -1, Namco = 0, Second = 0, Frames = 0, Length = 0;
+	bool Plus = false;
+	for (size_t At = 22; At + 24 <= Data.size() - 3; ) {
+		const std::string Id = Data.substr(At, 16).c_str();
+		const int Size = ReadInt(Data, At + 20);
+		if (Size < 0 || At + 24 + static_cast<size_t>(Size) > Data.size() - 3)
+			return false;
+		const std::string Body = Data.substr(At + 24, static_cast<size_t>(Size));
+		if (Id == "PARAMS" && Body.size() >= 25) {
+			Chips = static_cast<unsigned char>(Body[0]);
+			Second = ReadInt(Body, 21);
+			Namco = (Chips & 16) != 0 ? ReadInt(Body, 25) : 0;
+		}
+		else if (Id == "INFO" && Body.size() >= 32)
+			Facts.Title = Body.substr(0, 32).c_str();
+		else if (Id == "FRAMES" && Body.size() >= 16) {
+			Frames = ReadInt(Body, 0);
+			Length = ReadInt(Body, 12);
+		}
+		else if (Id == "COMMENTS" && Body.size() >= 5)
+			Facts.Comments = ReadInt(Body, 0) == 1 && Body[4] != 0;
+		else if (Id == "BF VRC6PLUS")
+			Plus = true;
+		At += 24 + static_cast<size_t>(Size);
+	}
+	if (Chips < 0 || Frames < 1 || Length < 1)
+		return false;
+	const int BarRows = Second > 0 && Second <= Length ? Second : 16;
+	Facts.Bars = Frames * ((Length + BarRows - 1) / BarRows);
+	Facts.Channels = SongChannels(Chips, Namco, Plus && (Chips & 17) == 17 && Namco == 4);
+	return true;
+}
+
+std::string ReadFile(const std::string &Path)
+{
+	std::ifstream In(Path.c_str(), std::ios::binary);
+	std::stringstream Text;
+	Text << In.rdbuf();
+	return In.good() || !Text.str().empty() ? Text.str() : std::string();
+}
+
+// The example songs that go into FamiTracker.exe (Tutorial.cpp's EXAMPLES):
+// each walkthrough read, about 6 to 12 steps, plain ASCII, and every bar and
+// channel it names in its song, a small module that shows its comments
+void TestExamples()
+{
+	const char *const Names[] = { "first-song", "nes-tricks", "vrc6", "soft-and-wide" };
+	for (size_t i = 0; i < sizeof(Names) / sizeof(Names[0]); ++i) {
+		const std::string Base = std::string(EXAMPLES_DIR) + "/" + Names[i];
+		const std::string Text = ReadFile(Base + ".txt"), Song = ReadFile(Base + ".ftm");
+		CHECK(!Text.empty() && !Song.empty());
+		tutorial_t T;
+		std::string Error;
+		const bool Read = ParseTutorial(Text, T, Error);
+		CHECK(Read);
+		if (!Read)
+			std::printf("  %s.txt: %s\n", Names[i], Error.c_str());
+		CHECK(T.Steps.size() >= 6 && T.Steps.size() <= 12 && !T.About.empty());
+		bool Ascii = true;
+		for (size_t k = 0; k < Text.size(); ++k)
+			if (static_cast<unsigned char>(Text[k]) > 126)
+				Ascii = false;
+		CHECK(Ascii);
+		song_facts_t Facts;
+		const bool Opened = ReadSong(Song, Facts);
+		CHECK(Opened);
+		if (!Opened) {
+			std::printf("  %s.ftm can't be read\n", Names[i]);
+			continue;
+		}
+		CHECK(Song.size() <= 24 * 1024);
+		CHECK(Facts.Bars >= 8 && Facts.Bars <= 24);
+		CHECK(Facts.Comments && !Facts.Title.empty());
+		bool Plays = false;
+		for (size_t s = 0; s < T.Steps.size(); ++s) {
+			const tutorial_step_t &Step = T.Steps[s];
+			const bool Bars = Step.Bar <= Facts.Bars && Step.PlayLast <= Facts.Bars;
+			CHECK(Bars);
+			if (!Bars)
+				std::printf("  %s step %d: a bar past the song's %d\n", Names[i], static_cast<int>(s + 1), Facts.Bars);
+			std::vector<std::string> Named(Step.Solo);
+			Named.insert(Named.end(), Step.Mute.begin(), Step.Mute.end());
+			if (Step.Show == "channel")
+				Named.push_back(Step.ShowName);
+			for (size_t n = 0; n < Named.size(); ++n) {
+				const bool Found = FindTutorialChannel(Named[n], Facts.Channels) >= 0;
+				CHECK(Found);
+				if (!Found)
+					std::printf("  %s step %d: the song has no channel \"%s\"\n", Names[i], static_cast<int>(s + 1), Named[n].c_str());
+			}
+			Plays = Plays || Step.PlayFirst > 0;
+		}
+		CHECK(Plays);	// a walkthrough lets the user hear the song
+	}
+	// The reader itself: a module cut short isn't one
+	const std::string Song = ReadFile(std::string(EXAMPLES_DIR) + "/first-song.ftm");
+	song_facts_t Facts;
+	CHECK(!Song.empty() && !ReadSong(Song.substr(0, Song.size() / 2), Facts));
+}
+
 }	// namespace
 
 int main()
@@ -163,6 +449,10 @@ int main()
 	TestWaits();
 	TestErrors();
 	TestBuiltIn();
+	TestWalkthroughLines();
+	TestWalkthroughErrors();
+	TestChannels();
+	TestExamples();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

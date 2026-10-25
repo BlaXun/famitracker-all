@@ -515,6 +515,33 @@ through `/mcp/core` (`Caller::Core`, set in `Mcp.cpp`) it gives
 `CoreRecipe`'s steps, which name only the small set's tools. The tests
 check that every tool a recipe names exists, and on the small set is in it.
 
+Example songs (from `feat-examples`): Help > Example songs (a submenu of
+`ID_HELP_EXAMPLE_*`, `CMainFrame::OnHelpExample`) opens one of the songs in
+`res/examples` with its walkthrough, both in FamiTracker.exe as RCDATA
+(`IDR_EXAMPLE_*`, the table `EXAMPLES` in `Tutorial.cpp`). `OpenExampleSong`
+writes the module to a temporary file, opens it with
+`theApp.OpenDocumentFile(Path, FALSE)` (which asks to save the open song;
+no recent-files entry) and makes it untitled
+(`CFamiTrackerDoc::MakeUntitled`), so Save asks for a name; the module's
+comments show as it opens. A walkthrough is a tutorial with more step lines
+(`TutorialScript.h`): `show: channel NAME` (the column, from
+`CPatternEditor::GetChannelRect`) and `show: mixer`, `bar: N`, `play: bars
+N-M` (a Play button in the note), `solo:` and `mute:` (the step's channels,
+put back after it), `instrument: NN` and `wait: heard`. Channels are named
+as the header names them, with the chip in front where two share a name
+(`IsTutorialChannel`, `FindTutorialChannel`). The bars play through
+`CSoundGen::SetNextPlayRange`: the next start halts before the first row past
+them (or out of them, or back), with nothing read from that row, and
+`PlayRangeEnded` says it got there; only a start that set it is affected.
+A walkthrough ends when another song comes (`GetSongSerial`, counted in
+`DeleteContents`). To add an example: compose it (check_song,
+review_arrangement, measure_mix, check_loop), give it comments shown on
+open (Module > Comments), put `name.ftm` and `name.txt` in `res/examples`,
+add the RCDATA lines, IDs, a menu item with its prompt, a row of `EXAMPLES`
+and the name to `TestExamples` in `Source/Tests/TutorialScriptTests.cpp`,
+which reads every walkthrough and checks each bar and channel it names
+against its song (a module of at most 24 KB, 8-24 bars, comments shown).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

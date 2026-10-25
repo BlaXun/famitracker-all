@@ -60,4 +60,4 @@ step
 show: window
 text: That's it: you've written, played and saved a song!
 
-  Help > Tutorials has more: sounds and drums, clips and the piano roll, and getting the music into your game.
+  Help > Tutorials has more: sounds and drums, clips and the piano roll, and getting the music into your game. Help > Example songs opens short songs that walk you through what you hear in them.

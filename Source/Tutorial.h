@@ -33,5 +33,8 @@
 class CMainFrame;
 
 void ShowTutorials(CMainFrame *pMainFrame);	// the list; the one picked starts
+// Help > Example songs: the example of that menu item opens as a new song
+// (res/examples, also RCDATA) and its walkthrough starts
+void OpenExampleSong(CMainFrame *pMainFrame, UINT nID);
 void TutorialCommand(UINT nID);				// CMainFrame::OnCommand: a menu item, button or shortcut was used
 bool TutorialRunning();

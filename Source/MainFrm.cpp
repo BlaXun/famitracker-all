@@ -222,6 +222,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
+	ON_COMMAND_RANGE(ID_HELP_EXAMPLE_FIRST, ID_HELP_EXAMPLE_SOFT, OnHelpExample)
 	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_SHOWEVERYTHING, OnUpdateViewShowEverything)
@@ -1935,6 +1936,12 @@ void CMainFrame::OnHelpTutorials()
 	ShowTutorials(this);
 }
 
+// Help > Example songs: a song that opens as a new one, with its walkthrough
+void CMainFrame::OnHelpExample(UINT nID)
+{
+	OpenExampleSong(this, nID);
+}
+
 BOOL CMainFrame::OnCommand(WPARAM wParam, LPARAM lParam)
 {
 	// A running tutorial may be waiting for this menu item, button or shortcut
@@ -1967,6 +1974,8 @@ bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRe
 		pWnd = m_pClipsBar;
 	else if (Part == _T("piano-roll"))
 		pWnd = m_pPianoRoll;
+	else if (Part == _T("mixer"))
+		pWnd = m_pMixerBar;
 	else if (Part == _T("song-info")) {
 		// The title, author and copyright boxes together
 		static const UINT BOXES[] = { IDC_SONG_NAME, IDC_SONG_ARTIST, IDC_SONG_COPYRIGHT };
@@ -2019,6 +2028,8 @@ void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
 		ShowClipsPanel(true);
 	else if (Part == _T("piano-roll") && (m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible()))
 		ShowPianoRoll(true);
+	else if (Part == _T("mixer") && (m_pMixerBar == NULL || !m_pMixerBar->IsVisible()))
+		ShowMixer(true);
 }
 
 void CMainFrame::OnViewProfile()

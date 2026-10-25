@@ -173,8 +173,19 @@ built-in tutorials included). Four come with FamiTracker, from
 roll, and music for your game. More can go in a `Tutorials` folder next to
 FamiTracker.exe, with no rebuild.
 
-Still open: annotated example songs, since module comments can already pop
-up when a file is opened.
+Done too (October 2026): **Help > Example songs**, four short songs written
+for the purpose, each opening as a new, untitled song (saving asks for a
+name, so the example stays as it is) with its comments and a walkthrough:
+a first song on the 2A03 alone (a tune, a bass, drums, and what an
+instrument's volume envelope does), the NES's classic tricks (chords as
+`0xy` arpeggios, an echo, a duty change, a vibrato that comes in late,
+slides and a sampled kick), the VRC6 (its two pulses, and the sawtooth as
+the bass and then the lead), and this FamiTracker's own (the VRC6 Plus's
+soft layer, stereo with `8xx`, the mixer's Soft and Space). A walkthrough
+points at a channel's column, says what to listen for and plays a few bars
+with a button in its note, often with one part alone; the songs and
+walkthroughs are in `res/examples`, built into FamiTracker.exe. The first
+tutorial ends by pointing at them.
 
 ## 7. Problems panel
 
