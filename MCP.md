@@ -767,11 +767,13 @@ file written (the exported OGG files stay as they are).
   the numbers are as FamiTracker renders (`export_for_game` with
   `normalize` false).
 
-Each part alone is a render of its own, from the song's start to the last
-bar it needs, without the space's tail after: a two-minute song with seven
-parts is nine renders, about a minute on a slow computer. `stems` false
-measures the mix alone, in one render, and `parts` `["chords"]` checks the
-melody against the chords alone, in three.
+FamiTracker renders the mix and every part alone together, in one pass
+through the song without the space's tail after, and each part comes out
+exactly as a render of it alone would (a song of more than 16 parts takes
+another pass). Each part makes that pass a little slower than a render of
+the mix alone, but it's much faster than rendering the parts one by one,
+as earlier versions did. `stems` false measures the mix alone, and `parts`
+`["chords"]` checks the melody against the chords alone.
 
 ## Stereo
 
