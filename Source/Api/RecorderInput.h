@@ -21,12 +21,14 @@
 
 #pragma once
 
-// Chords for Edit > Add chords and bass line (InsertRecording.cpp) that the
-// user gives instead of FamiTracker finding them from the melody: typed by
-// name, or strummed on a guitar (or played on a piano) and heard. Names are
-// read as the tools read them (Chords.h), and the chords come back in the
-// transcription engine's terms (Transcribe.h), whose bass line and arpeggios
-// play them. Plain C++14, independent of MFC, tested on Linux.
+// What the user gives the recorder by hand (InsertRecording.cpp, RecordDlg.cpp,
+// BackingDlg.cpp, GrooveDlg.cpp): chords for Edit > Add chords and bass line
+// instead of FamiTracker finding them from the melody, typed by name or
+// strummed on a guitar (or played on a piano) and heard, and a tempo tapped
+// along with the beat. Names are read as the tools read them (Chords.h), and
+// the chords come back in the transcription engine's terms (Transcribe.h),
+// whose bass line and arpeggios play them. Plain C++14, independent of MFC,
+// tested on Linux.
 
 #include "../Transcribe/Transcribe.h"
 
@@ -69,5 +71,14 @@ struct StrummedChords {
 // could be heard.
 bool HearStrummedChords(const std::vector<transcribe::Strum> &Strums, double Start, int StartRow, double RowsPerSecond,
 	int PatternLength, int RowsPerBar, int RowsPerBeat, StrummedChords &Out, std::string &Error);
+
+// The speed and tempo for a tempo tapped along with the beat (BPM, from
+// transcribe::TempoOfTaps): the nearest tempo whose rows all last as long
+// (EvenRows in Music.h) when one is within 3% of the taps, closer than anyone
+// taps, otherwise the tapped tempo as a whole BPM; either way speed and tempo
+// as set_tempo picks them for it (ChooseSpeedTempo). Bpm: the tempo the song
+// plays at then. False for a tempo of 0 or less.
+bool TappedSpeedTempo(double Tapped, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed,
+	int &Tempo, double &Bpm);
 
 }	// namespace ftapi

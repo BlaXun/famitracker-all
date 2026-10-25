@@ -1223,6 +1223,48 @@ void CChannelNotes::ReplaceRows(int First, int End, const CChannelNotes &Take)
 	d.KeepLasting(KeptLasting);
 }
 
+CChannelNotes CChannelNotes::TakeRows(int From, int Rows, int Early) const
+{
+	const Impl &d = *m_pImpl;
+	CChannelNotes Out(*this);	// how the channel plays
+	Impl &o = *Out.m_pImpl;
+	o.Cells.assign(static_cast<size_t>(std::max(0, Rows)), EmptyCell());
+	o.Hints.clear();
+	o.Parsed = false;
+	for (int r = 0; r < Rows; ++r)
+		if (From + r >= 0 && From + r < d.Rows())
+			o.Cells[static_cast<size_t>(r)] = d.Cells[static_cast<size_t>(From + r)];
+	// A note sung a little early starts where the rows do, with what its first row had
+	const int Index = NoteAt(From);
+	if (Rows > 0 && Index >= 0) {
+		const Note &N = d.Notes[static_cast<size_t>(Index)];
+		stChanNote &Cell = o.Cells[0];
+		if (N.Start < From && N.Start >= From - std::max(0, Early) && !IsNote(Cell) && !IsEnd(Cell)) {
+			const stChanNote &Start = d.Cells[static_cast<size_t>(N.Start)];
+			Cell.Note = Start.Note;
+			Cell.Octave = Start.Octave;
+			Cell.Instrument = Start.Instrument < MAX_INSTRUMENTS ? Start.Instrument :
+				(N.Instrument >= 0 ? static_cast<unsigned char>(N.Instrument) : Cell.Instrument);
+			if (Start.Vol < MAX_VOLUME)
+				Cell.Vol = Start.Vol;
+			for (int c = 0; c < MAX_EFFECT_COLUMNS; ++c) {
+				if (Start.EffNumber[c] == EF_NONE || IsSongEffect(Start.EffNumber[c]))
+					continue;
+				bool Has = false;
+				for (int k = 0; k < MAX_EFFECT_COLUMNS; ++k)
+					Has = Has || Cell.EffNumber[k] == Start.EffNumber[c];
+				for (int k = 0; k < MAX_EFFECT_COLUMNS && !Has; ++k)
+					if (Cell.EffNumber[k] == EF_NONE) {
+						Cell.EffNumber[k] = Start.EffNumber[c];
+						Cell.EffParam[k] = Start.EffParam[c];
+						Has = true;
+					}
+			}
+		}
+	}
+	return Out;
+}
+
 bool CChannelNotes::Compare(const CChannelNotes &Other, int &First, int &Last) const
 {
 	const Impl &d = *m_pImpl, &o = *Other.m_pImpl;

@@ -27,6 +27,7 @@
 // Standard and engine headers come before stdafx.h, whose DEBUG_NEW macro
 // would otherwise rewrite the placement new inside the standard library.
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <string>
@@ -36,7 +37,7 @@
 #include "stdafx.h"
 #include "Api/Keys.h"
 #include "Api/ChannelMix.h"
-#include "Api/ChordInput.h"
+#include "Api/RecorderInput.h"
 #include "Api/Music.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -47,6 +48,7 @@
 #include "Action.h"
 #include "Clips.h"
 #include "NoteEdit.h"
+#include "McpConnection.h"
 #include "InsertRecording.h"
 
 namespace {
@@ -1281,67 +1283,51 @@ stChanNote NoteOf(const RecordedCell &Cell)
 	return Note;
 }
 
-// A take sung over the selected rows [Row of Frame, + Rows) of Channel: it replaces just them, and the rest of the
-// song sounds as it did (CChannelNotes::ReplaceRows), as one undoable action
-bool ReplaceSelection(CMainFrame *pMainFrm, int Channel, int Frame, int Row, int Rows, const std::vector<RecordedCell> &Cells,
-	const CString &What, CString &Message)
+// A take sung over a selection of Channel, its row 0 at song row TakeStart: it replaces just the selected rows,
+// and the rest of the song sounds as it did (CChannelNotes::ReplaceRows), as one undoable action
+bool ReplaceSelection(CMainFrame *pMainFrm, int Channel, int TakeStart, const take_selection_t &Selection,
+	const std::vector<RecordedCell> &Cells, int Rows, const CString &What, CString &Message)
 {
 	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
 	CFamiTrackerDoc *pDoc = pView->GetDocument();
 	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
 	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
 	const int Total = static_cast<int>(pDoc->GetFrameCount(Track)) * Length;
-	const int First = Frame * Length + Row, End = std::min(Total, First + Rows);
-	if (Length < 1 || First < 0 || End <= First) {
+	const int First = Selection.First, End = std::min(Total, Selection.End);
+	if (Length < 1 || First < TakeStart || First < 0 || End <= First) {
 		Message = _T("The selection is outside the song.");
 		return false;
 	}
 	CChannelNotes Song, Take;
 	ReadChannelNotes(pDoc, Track, Channel, Song);
-	Take.Reset(End - First);
+	Take.Reset(std::max(Rows, End - TakeStart));
 	Take.SetEffectColumns(MAX_EFFECT_COLUMNS);
 	for (size_t i = 0; i < Cells.size(); ++i)
-		if (Cells[i].Row >= 0 && Cells[i].Row < End - First)
+		if (Cells[i].Row >= 0 && Cells[i].Row < Take.GetRows())
 			Take.SetCell(Cells[i].Row, NoteOf(Cells[i]));
+	const CChannelNotes Sung = Take.TakeRows(First - TakeStart, End - First, Selection.Early);
+	if (Sung.GetNoteCount() == 0) {
+		Message = _T("Nothing was heard in the selected rows: come in where the selection starts, after the count-in.");
+		return false;
+	}
 	const CChannelNotes Before = Song;
-	Song.ReplaceRows(First, End, Take);
-	int A = 0, B = 0;
-	if (!Song.Compare(Before, A, B)) {
+	Song.ReplaceRows(First, End, Sung);
+	int From = 0, To = 0;
+	if (!Song.Compare(Before, From, To)) {
 		Message = _T("The take sounds just like what the selection had already.");
 		return true;
 	}
 
 	// The rows that changed, written as they are (frames that change get patterns of their own)
-	RecordedPart Part;
-	Part.Channel = static_cast<unsigned int>(Channel);
-	Part.Rows = B - A + 1;
-	Part.Replace = true;
-	Part.Exact = true;
-	for (int r = A; r <= B; ++r) {
-		stChanNote Cell;
-		Song.GetCell(r, Cell);
-		Part.Cells.push_back(CellOf(r - A, Cell));
-	}
-	const unsigned int FirstFrame = static_cast<unsigned int>(A / Length), LastFrame = static_cast<unsigned int>(B / Length);
-	std::vector<bool> Changes;
-	for (unsigned int f = FirstFrame; f <= LastFrame; ++f)
-		Changes.push_back(ChangesFrame(pDoc, Track, Part, FirstFrame, static_cast<unsigned int>(A % Length), f));
-	if (!EnoughPatterns(pDoc, Track, Part.Channel, FirstFrame, LastFrame, &Changes)) {
-		Message.Format(_T("%s has run out of free patterns. Edit > Clean up > Remove unused patterns may make room."),
-			static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)));
+	std::vector<stChanNote> Changed(static_cast<size_t>(To - From + 1));
+	for (int r = From; r <= To; ++r)
+		Song.GetCell(r, Changed[static_cast<size_t>(r - From)]);
+	if (!WriteChannelRows(pMainFrm, Channel, From, &Changed[0], To - From + 1, First, Message))
 		return false;
-	}
-	CInsertRecordingAction *pAction = new CInsertRecordingAction(std::vector<RecordedPart>(1, Part), static_cast<int>(FirstFrame),
-		A % Length);
-	pAction->PlaceCursor(Frame, Row);
-	if (!pMainFrm->AddAction(pAction)) {
-		Message = _T("The take couldn't be put in.");
-		return false;
-	}
 	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// new instruments, if any
 	const int LastRow = End - 1;
-	Message.Format(_T("Replaced the selected rows of %s with %s: frame %02X row %02X to frame %02X row %02X. The rest of the song ")
-		_T("plays as before; Ctrl+Z undoes it."), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)), static_cast<LPCTSTR>(What),
+	Message.Format(_T("Put %s in the selected rows of %s (frame %02X row %02X to frame %02X row %02X); the rest of the song ")
+		_T("plays as before. Ctrl+Z undoes it."), static_cast<LPCTSTR>(What), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel)),
 		First / Length, First % Length, LastRow / Length, LastRow % Length);
 	return true;
 }
@@ -1427,7 +1413,7 @@ bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, 
 
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
 	recording_kind_t Kind, int Channel, bool Expression, int StartFrame, int StartRow, CString &Message, LPCTSTR ClipName,
-	int SelectionRows)
+	const take_selection_t *pSelection)
 {
 	if (Kind == RECORDING_CHORDS) {
 		Message = _T("Strummed chords go into Edit > Add chords and bass line.");
@@ -1592,15 +1578,8 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 		What.Format(_T("%d notes"), static_cast<int>(Melody.size()));
 	}
 
-	if (SelectionRows > 0) {
-		// Sung over a selection: what's past it is left out, and the first note sounds as it was played
-		while (!Cells.empty() && Cells.back().Row >= SelectionRows)
-			Cells.pop_back();
-		if (Cells.empty()) {
-			Message = _T("Nothing was heard in the selected rows. Come in after the count-in, as the selection starts.");
-			return false;
-		}
-		Rows = SelectionRows;
+	if (pSelection != NULL) {
+		// Sung over a selection: just the selected rows of it, the first note as loud as it was sung
 		for (size_t i = 0; i < Cells.size(); ++i) {
 			if (Cells[i].Note >= C && Cells[i].Note <= B) {
 				if (Cells[i].Vol >= MAX_VOLUME)
@@ -1608,8 +1587,30 @@ bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const tran
 				break;
 			}
 		}
+		const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+		const int TakeStart = StartFrame * Length + StartRow;
 		if (ClipName == NULL)
-			return ReplaceSelection(pMainFrm, Channel, StartFrame, StartRow, SelectionRows, Cells, What, Message);
+			return ReplaceSelection(pMainFrm, Channel, TakeStart, *pSelection, Cells, Rows, What, Message);
+		// As a clip: the take's rows over the selection
+		CChannelNotes Take;
+		Take.Reset(std::max(Rows, pSelection->End - TakeStart));
+		Take.SetEffectColumns(MAX_EFFECT_COLUMNS);
+		for (size_t i = 0; i < Cells.size(); ++i)
+			if (Cells[i].Row >= 0 && Cells[i].Row < Take.GetRows())
+				Take.SetCell(Cells[i].Row, NoteOf(Cells[i]));
+		const CChannelNotes Sung = Take.TakeRows(pSelection->First - TakeStart, pSelection->End - pSelection->First, pSelection->Early);
+		Cells.clear();
+		for (int r = 0; r < Sung.GetRows(); ++r) {
+			stChanNote Cell;
+			Sung.GetCell(r, Cell);
+			if (!IsEmptyCell(Cell))
+				Cells.push_back(CellOf(r, Cell));
+		}
+		if (Cells.empty()) {
+			Message = _T("Nothing was heard in the selected rows: come in where the selection starts, after the count-in.");
+			return false;
+		}
+		Rows = Sung.GetRows();
 	}
 
 	if (ClipName != NULL) {
@@ -1717,11 +1718,13 @@ bool IsChordChannel(const CFamiTrackerDoc *pDoc, int Channel)
 }
 
 bool DescribeBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, CString &Key,
-	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message)
+	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message, int *pFirstRow)
 {
 	BackingPlan Plan;
 	if (!PlanBacking(pDoc, Track, Choice, Plan, Message))
 		return false;
+	if (pFirstRow != NULL)
+		*pFirstRow = Plan.Bars.front().row;
 	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
 	Key = transcribe::KeyName(Plan.Key).c_str();
 	Chords = ChordsText(Plan);
@@ -1742,12 +1745,12 @@ bool AddBacking(CMainFrame *pMainFrm, const backing_choice_t &Choice, CString &M
 		return false;
 	}
 	if (Choice.ChordChannel >= Channels || (Choice.ChordChannel >= 0 && !IsChordChannel(pDoc, Choice.ChordChannel)) ||
-		Choice.ChordChannel == Choice.MelodyChannel) {
+		(Choice.ChordChannel >= 0 && Choice.ChordChannel == Choice.MelodyChannel)) {
 		Message = _T("The chords need a pulse channel other than the melody's.");
 		return false;
 	}
 	if (Choice.BassChannel >= Channels || (Choice.BassChannel >= 0 && !IsBassChannel(pDoc, Choice.BassChannel)) ||
-		Choice.BassChannel == Choice.MelodyChannel) {
+		(Choice.BassChannel >= 0 && Choice.BassChannel == Choice.MelodyChannel)) {
 		Message = _T("The bass line needs the triangle or the sawtooth, other than the melody's channel.");
 		return false;
 	}
@@ -1879,6 +1882,117 @@ double SongBpm(const CFamiTrackerDoc *pDoc, unsigned int Track)
 	if (Tempo == 0)
 		Tempo = ftapi::DefaultTempo(static_cast<int>(pDoc->GetFrameRate()));
 	return ftapi::BeatsPerMinute(static_cast<int>(pDoc->GetSongSpeed(Track)), Tempo, static_cast<int>(pDoc->GetFrameRate()), BeatRows);
+}
+
+bool TappedSongTempo(const CFamiTrackerDoc *pDoc, unsigned int Track, double Tapped, int &Speed, int &Tempo, double &Bpm)
+{
+	int BarRows, BeatRows;
+	SongMeter(pDoc, BarRows, BeatRows);
+	return ftapi::TappedSpeedTempo(Tapped, BeatRows, static_cast<int>(pDoc->GetFrameRate()), static_cast<int>(pDoc->GetSongSpeed(Track)),
+		pDoc->GetSpeedSplitPoint(), Speed, Tempo, Bpm);
+}
+
+// Grooves to start from
+
+void GrooveChannels(const CFamiTrackerDoc *pDoc, int MelodyChannel, int &Chords, int &Bass, int &Drums)
+{
+	static const int CHORDS[] = { CHANID_VRC6_PULSE2, CHANID_SQUARE2, CHANID_VRC6_PULSE1, CHANID_SQUARE1, CHANID_MMC5_SQUARE2,
+		CHANID_MMC5_SQUARE1 };
+	static const int BASS[] = { CHANID_VRC6_SAWTOOTH, CHANID_TRIANGLE };
+	const int Channels = static_cast<int>(pDoc->GetAvailableChannels());
+	Chords = Bass = Drums = -1;
+	for (size_t k = 0; k < sizeof(CHORDS) / sizeof(CHORDS[0]) && Chords < 0; ++k)
+		for (int i = 0; i < Channels && Chords < 0; ++i)
+			if (i != MelodyChannel && pDoc->GetChannelType(i) == CHORDS[k])
+				Chords = i;
+	for (size_t k = 0; k < sizeof(BASS) / sizeof(BASS[0]) && Bass < 0; ++k)
+		for (int i = 0; i < Channels && Bass < 0; ++i)
+			if (i != MelodyChannel && pDoc->GetChannelType(i) == BASS[k])
+				Bass = i;
+	for (int i = 0; i < Channels && Drums < 0; ++i)
+		if (i != MelodyChannel && pDoc->GetChannelType(i) == CHANID_NOISE)
+			Drums = i;
+}
+
+bool MakeGroove(CMainFrame *pMainFrm, const groove_choice_t &Choice, CString &Message)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(pMainFrm->GetActiveView());
+	CFamiTrackerDoc *pDoc = pView->GetDocument();
+	const unsigned int Track = static_cast<unsigned int>(pMainFrm->GetSelectedTrack());
+	CMcpConnection *pTools = pMainFrm->GetMcpConnection();
+	if (pTools == NULL || pTools->IsBusy()) {
+		Message = _T("FamiTracker is busy with Claude Code; try again in a moment.");
+		return false;
+	}
+	if (Choice.ChordChannel < 0 && Choice.BassChannel < 0 && Choice.DrumChannel < 0) {
+		Message = _T("This song has no channels for a groove.");
+		return false;
+	}
+	const int Length = static_cast<int>(pDoc->GetPatternLength(Track));
+	const ftapi::Timing Time(Length, static_cast<int>(pDoc->GetFrameCount(Track)), pDoc->GetFirstHighlight(), pDoc->GetSecondHighlight());
+	if (Length < 1 || Choice.Row < 0 || Choice.Bars < 1) {
+		Message = _T("There's no room for a groove there.");
+		return false;
+	}
+	const int Bar = Time.BarOf(Choice.Row);
+
+	// make_groove, as Claude Code would ask for it
+	const CString Key = KeyName(Choice.KeyTonic, Choice.KeyMinor);
+	const auto Channel = [](int Index) {
+		CString Text;
+		if (Index >= 0)
+			Text.Format(_T("%d"), Index + 1);	// the tools number channels from 1
+		else
+			Text = _T("\"none\"");
+		return Text;
+	};
+	CString Args;
+	Args.Format(_T("{\"mood\": \"%s\", \"key\": \"%s\", \"from_bar\": %d, \"bars\": %d, \"chord_channel\": %s, ")
+		_T("\"bass_channel\": %s, \"drum_channel\": %s}"), static_cast<LPCTSTR>(Choice.Mood), static_cast<LPCTSTR>(Key), Bar, Choice.Bars,
+		static_cast<LPCTSTR>(Channel(Choice.ChordChannel)), static_cast<LPCTSTR>(Channel(Choice.BassChannel)),
+		static_cast<LPCTSTR>(Channel(Choice.DrumChannel)));
+	int Speed = 0, Tempo = 0;
+	SpeedTempoFor(pDoc, Track, Choice.Bpm, Speed, Tempo);
+
+	// The parts and the tempo, as one Ctrl+Z
+	std::string Reply;
+	pMainFrm->BeginActionGroup();
+	const bool Made = pTools->RunTool("make_groove", std::string(static_cast<LPCSTR>(CStringA(Args))), Reply, true);
+	if (Made)
+		SetSongTempo(pMainFrm, Speed, Tempo);
+	pMainFrm->EndActionGroup();
+	if (!Made) {
+		Message = CString(Reply.c_str());
+		return false;
+	}
+
+	// The melody goes where the groove starts
+	CPatternEditor *pEditor = pView->GetPatternEditor();
+	pEditor->MoveToFrame(Choice.Row / Length);
+	if (Choice.MelodyChannel >= 0 && Choice.MelodyChannel < static_cast<int>(pDoc->GetAvailableChannels()))
+		pEditor->MoveToChannel(Choice.MelodyChannel);
+	pEditor->MoveToRow(Choice.Row % Length);
+	pEditor->MoveToColumn(0);
+	pEditor->InvalidateCursor();
+	pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);	// its instruments
+	pDoc->UpdateAllViews(NULL, UPDATE_FRAME);
+
+	const double Bpm = ftapi::BeatsPerMinute(Speed, Tempo, static_cast<int>(pDoc->GetFrameRate()), std::max(1, Time.RowsPerBeat));
+	Message.Format(_T("Made a %s groove in %s, %d bars from bar %d, at %s BPM (speed %d, tempo %d). Ctrl+Z takes it out again."),
+		static_cast<LPCTSTR>(Choice.Mood), static_cast<LPCTSTR>(Key), Choice.Bars, Bar, static_cast<LPCTSTR>(BpmText(Bpm)), Speed, Tempo);
+	return true;
+}
+
+CString BpmText(double Bpm)
+{
+	// "112.5", "150"
+	CString Text;
+	const double Tenths = std::floor(Bpm * 10.0 + 0.5);
+	if (std::fmod(Tenths, 10.0) == 0.0)
+		Text.Format(_T("%d"), static_cast<int>(Tenths / 10.0));
+	else
+		Text.Format(_T("%.1f"), Tenths / 10.0);
+	return Text;
 }
 
 // Clips

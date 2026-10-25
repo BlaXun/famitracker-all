@@ -24,9 +24,10 @@
 // Tapping the tempo, for the recorder's dialogs (Record from microphone,
 // Start from a groove): a button that counts a tap the moment it's pressed
 // (not when it's let go, as a click is), and the taps' tempo
-// (transcribe::TempoOfTaps). The T key taps too, where a dialog passes it on.
+// (transcribe::TempoOfTaps). The T key taps too, where a dialog passes it on
+// (IsTapKey in its PreTranslateMessage).
 
-#include <vector>	// the files including this one include it before stdafx.h
+#include <vector>
 
 // Sent to the button's parent on every tap: wParam is the button's ID
 const UINT WM_TEMPO_TAP = WM_APP + 0x260;
@@ -56,3 +57,7 @@ private:
 	static double Now();
 	std::vector<double> m_Times;
 };
+
+// Is this the T key pressed (not held, without Ctrl or Alt) outside a box the
+// user types or picks in? Then it's a tap.
+bool IsTapKey(const MSG *pMsg);

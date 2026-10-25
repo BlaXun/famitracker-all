@@ -26,7 +26,7 @@
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../ChannelMix.h"
-#include "../ChordInput.h"
+#include "../RecorderInput.h"
 #include "../Chords.h"
 #include "../DpcmKit.h"
 #include "../Effects.h"
@@ -14485,7 +14485,7 @@ void TestReviewFixes()
 }
 // end of calm-defaults tests
 
-// The recorder's input (Grooves.h, ChordInput.h): a groove's parts made alone, chords typed by name and
+// The recorder's input (Grooves.h, RecorderInput.h): a groove's parts made alone, chords typed by name and
 // chords heard from a strummed guitar
 
 void TestGrooveParts()
@@ -14716,6 +14716,28 @@ void TestStrummedChords()
 		Contains(Error, "No chords were heard"));
 }
 
+// A tempo tapped along: the nearest tempo with rows of even length when one is near, else the taps' as set_tempo sets it
+void TestTappedTempo()
+{
+	int Speed = 0, Tempo = 0;
+	double Bpm = 0.0;
+	// NTSC, 4 rows a beat: 98 tapped is 100 (9 frames a row), 151 is 150 (speed 6 at the default tempo); 96 is
+	// more than 3% off 100: 96 itself
+	CHECK(TappedSpeedTempo(98.0, 4, 60, 6, 32, Speed, Tempo, Bpm) && Speed == 9 && Tempo == 150 && std::fabs(Bpm - 100.0) < 1e-9);
+	CHECK(TappedSpeedTempo(96.0, 4, 60, 6, 32, Speed, Tempo, Bpm) && std::fabs(Bpm - 96.0) < 0.5);
+	CHECK(TappedSpeedTempo(151.3, 4, 60, 6, 32, Speed, Tempo, Bpm) && Speed == 6 && Tempo == 150 && std::fabs(Bpm - 150.0) < 1e-9);
+	CHECK(EvenRows(Speed, Tempo, 60));
+	// 120 has no even tempo near it (112.5 and 128.6 are 6% away): 120 itself, at the speed the song has
+	CHECK(TappedSpeedTempo(119.6, 4, 60, 6, 32, Speed, Tempo, Bpm) && Speed == 6 && Tempo == 120 && std::fabs(Bpm - 120.0) < 1e-9);
+	CHECK(!EvenRows(Speed, Tempo, 60));
+	// PAL: 125 tapped near 6 frames a row
+	CHECK(TappedSpeedTempo(123.0, 4, 50, 6, 32, Speed, Tempo, Bpm) && std::fabs(Bpm - 125.0) < 1e-9 && EvenRows(Speed, Tempo, 50));
+	// Two rows a beat: 150 BPM is three frames a row
+	CHECK(TappedSpeedTempo(146.0, 2, 60, 6, 32, Speed, Tempo, Bpm) && std::fabs(Bpm - 150.0) < 1e-9 && EvenRows(Speed, Tempo, 60));
+	// Nothing tapped
+	CHECK(!TappedSpeedTempo(0.0, 4, 60, 6, 32, Speed, Tempo, Bpm));
+}
+
 int main()
 {
 	TestJson();
@@ -14839,6 +14861,7 @@ int main()
 	TestGrooveParts();
 	TestTypedChords();
 	TestStrummedChords();
+	TestTappedTempo();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

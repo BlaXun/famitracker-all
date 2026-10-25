@@ -871,6 +871,37 @@ static void TestReplaceRows()
 	CHECK(!same.Compare(before, first, last));
 }
 
+// The part of a take that goes over a selection: a note sung a little early starts with the selection
+static void TestTakeRows()
+{
+	// A take from the beat before the selection (rows 0-3 before it): F-4 one row before it starts (a
+	// vibrato on it), G-4 inside, A-4 past the selection's 8 rows
+	CChannelNotes take = Channel(16, 1);
+	take.SetCell(1, Cell(D, 4, 2, 15));
+	take.SetCell(2, Cell(RELEASE));
+	take.SetCell(3, With(Cell(F, 4, 2, 12), 0, EF_VIBRATO, 0x34));
+	take.SetCell(7, Cell(G, 4, 2, 15));
+	take.SetCell(12, Cell(A, 4, 2, 15));
+	const CChannelNotes window = take.TakeRows(4, 8, 2);
+	CHECK(window.GetRows() == 8);
+	CHECK_EQ(Notes(window), "F-4 0-3> G-4 3-8|");
+	CHECK(At(window, 0).Instrument == 2 && At(window, 0).Vol == 12 && HasEffect(window, 0, EF_VIBRATO, 0x34));
+	CHECK_EQ(Heard(window), "2 12, 2 15");
+	// Too early to count: F-4, two rows before the rows, moves to them only with Early 2
+	CHECK_EQ(Notes(take.TakeRows(5, 8, 1)), "G-4 2-7> A-4 7-8|");
+	CHECK_EQ(Notes(take.TakeRows(5, 8, 2)), "F-4 0-2> G-4 2-7> A-4 7-8|");
+	// A note that starts on the selection's first row stays as it is; rows past the take are empty
+	CHECK_EQ(Notes(take.TakeRows(7, 12, 4)), "G-4 0-5> A-4 5-12|");
+	CHECK(take.TakeRows(20, 4, 2).GetNoteCount() == 0 && take.TakeRows(20, 4, 2).GetRows() == 4);
+	// Replacing rows with it: the selection gets the take as sung there
+	CChannelNotes song = Channel(32, 1);
+	song.SetCell(0, Cell(C, 4, 1, 10));
+	song.SetCell(16, Cell(E, 4));
+	song.ReplaceRows(8, 16, window);
+	CHECK_EQ(Notes(song), "C-4 0-8> F-4 8-11> G-4 11-16> E-4 16-32|");
+	CHECK(At(song, 16).Instrument == 1 && At(song, 16).Vol == 10);	// E-4 sounds as before
+}
+
 int main()
 {
 	TestReading();
@@ -888,6 +919,7 @@ int main()
 	TestPan();
 	TestCompare();
 	TestReplaceRows();
+	TestTakeRows();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 }

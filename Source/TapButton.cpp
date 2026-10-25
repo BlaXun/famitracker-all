@@ -121,3 +121,15 @@ double CTapTempo::Spread() const
 {
 	return transcribe::TempoOfTaps(m_Times).spread;
 }
+
+bool IsTapKey(const MSG *pMsg)
+{
+	if (pMsg->message != WM_KEYDOWN || pMsg->wParam != 'T' || (pMsg->lParam & (1 << 30)) != 0)
+		return false;
+	if (GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0)
+		return false;
+	// The window with the focus gets the key: not while typing a number or picking from a list
+	TCHAR Class[16] = { 0 };
+	::GetClassName(pMsg->hwnd, Class, 16);
+	return _tcsicmp(Class, _T("Edit")) != 0 && _tcsicmp(Class, _T("ComboBox")) != 0;
+}

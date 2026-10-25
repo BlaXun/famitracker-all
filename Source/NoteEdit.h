@@ -160,6 +160,10 @@ public:
 	// instrument, volume, pan and lasting effects it did before (written into its cell where needed).
 	// Rows before First never change; from End on, only the first note after it and an end at End can.
 	void ReplaceRows(int First, int End, const CChannelNotes &Take);
+	// The part of a take that goes over a selection: its Rows rows from From on, as row 0 on, with a note
+	// that started up to Early rows before From and still sounds there (sung a little early, or the take
+	// started on the beat before the selection) starting at From instead; what came before it is left out.
+	CChannelNotes TakeRows(int From, int Rows, int Early) const;
 
 	// The first and last rows that differ from Other; false if none do
 	bool Compare(const CChannelNotes &Other, int &First, int &Last) const;

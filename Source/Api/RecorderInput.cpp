@@ -19,11 +19,11 @@
 ** must bear this legend.
 */
 
-// Chords typed or strummed for Edit > Add chords and bass line (see
-// ChordInput.h): read with the tools' chord names, given back as the
-// transcription engine's chord spans.
+// Chords typed or strummed for Edit > Add chords and bass line, read with the
+// tools' chord names and given back as the transcription engine's chord
+// spans, and tapped tempos as speed and tempo (see RecorderInput.h).
 
-#include "ChordInput.h"
+#include "RecorderInput.h"
 #include "Chords.h"
 #include "Music.h"
 
@@ -199,6 +199,29 @@ bool HearStrummedChords(const std::vector<transcribe::Strum> &Strums, double Sta
 	Out.FirstRow = Bars.front().row;
 	Out.BarCount = static_cast<int>(Bars.size());
 	Out.Names = ProgressionText(Chords, BarSpans, ToolKey(Out.Key), false, 1000);
+	return true;
+}
+
+bool TappedSpeedTempo(double Tapped, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed,
+	int &Tempo, double &Bpm)
+{
+	if (!(Tapped > 0.0))
+		return false;
+	const int Beat = std::max(1, RowsPerBeat);
+	// The nearest tempo with rows of even length, over every speed and tempo FamiTracker has
+	const int MaxSpeed = std::max(1, std::min(31, SplitPoint - 1));
+	const int MinTempo = std::max(32, SplitPoint);
+	double Even = 0.0;
+	for (int s = 1; s <= MaxSpeed; ++s)
+		for (int t = MinTempo; t <= 255; ++t)
+			if (EvenRows(s, t, FrameRate)) {
+				const double Played = BeatsPerMinute(s, t, FrameRate, Beat);
+				if (Even <= 0.0 || std::fabs(Played - Tapped) < std::fabs(Even - Tapped) - 1e-9)
+					Even = Played;
+			}
+	const double Wanted = Even > 0.0 && std::fabs(Even - Tapped) <= 0.03 * Tapped ? Even : std::floor(Tapped + 0.5);
+	ChooseSpeedTempo(Wanted, Beat, FrameRate, CurrentSpeed, SplitPoint, Speed, Tempo);
+	Bpm = BeatsPerMinute(Speed, Tempo, FrameRate, Beat);
 	return true;
 }
 

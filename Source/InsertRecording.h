@@ -46,6 +46,17 @@ void GuessRecording(const transcribe::Audio &Audio, recording_kind_t &Kind, CStr
 // the reason in Message, when the file can't be read.
 bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, CString &Message);
 
+// A take sung over a selection (Record from microphone with rows selected):
+// the song rows [First, End) of its channel (frame * pattern length + row).
+// The take replaces them and nothing else, and the rest of the song sounds as
+// it did (CChannelNotes::ReplaceRows in NoteEdit.h); a note sung a little
+// early, up to Early rows before First, starts at First.
+struct take_selection_t {
+	int First;
+	int End;
+	int Early;
+};
+
 // Transcribes a recording as Kind and writes the notes into Channel (drums
 // always into the noise channel), from row Row of frame Frame on and into the
 // following frames; frames are added at the end of the song when needed.
@@ -57,13 +68,16 @@ bool GuessRecording(LPCTSTR Path, recording_kind_t &Kind, CString &Description, 
 //
 // Returns false, with the reason in Message, when nothing was inserted. On
 // success Message says what was inserted. With a ClipName, the notes are kept
-// as a new clip of that name instead of going into the song. With
-// SelectionRows, the take is sung over a selection: it replaces just those
-// rows of the channel from Row of Frame on, and the rest of the song sounds
-// as it did (CChannelNotes::ReplaceRows in NoteEdit.h).
+// as a new clip of that name instead of going into the song. With pSelection,
+// the take (whose row 0 is at Row of Frame, at or before the selection) goes
+// over the selected rows only; as a clip, the clip holds those rows of it.
 bool InsertTake(CMainFrame *pMainFrm, const transcribe::Audio &Audio, const transcribe::TakeTiming &Timing,
 	recording_kind_t Kind, int Channel, bool Expression, int Frame, int Row, CString &Message, LPCTSTR ClipName = NULL,
-	int SelectionRows = 0);
+	const take_selection_t *pSelection = NULL);
+
+// The same for the WAV file at Path, its first note on the cursor row.
+bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
+	CString &Message, LPCTSTR ClipName = NULL);
 
 // The chords strummed (or played on a piano) in a recording, bar by bar, as
 // names for Add chords and bass line to use ("| C | G | Am F |"): Timing says
@@ -79,6 +93,12 @@ bool HearRecordedChords(const CFamiTrackerDoc *pDoc, unsigned int Track, LPCTSTR
 // tempo, Start from a groove). False when nothing changed.
 bool SetSongTempo(CMainFrame *pMainFrm, int Speed, int Tempo);
 
+// The speed and tempo for a tempo tapped along with the beat, a beat being
+// the song's first row highlight (ftapi::TappedSpeedTempo: the nearest tempo
+// with rows of even length, when one is near). Bpm: what the song plays at
+// then. False for no tempo.
+bool TappedSongTempo(const CFamiTrackerDoc *pDoc, unsigned int Track, double Tapped, int &Speed, int &Tempo, double &Bpm);
+
 // The speed and tempo for a tempo in BPM, as the set_tempo tool picks them
 // (rows of even length first: ftapi::ChooseSpeedTempo), with the beat as the
 // song's first row highlight
@@ -86,10 +106,30 @@ void SpeedTempoFor(const CFamiTrackerDoc *pDoc, unsigned int Track, double Bpm, 
 
 // The song's tempo in BPM, a beat being the first row highlight
 double SongBpm(const CFamiTrackerDoc *pDoc, unsigned int Track);
+CString BpmText(double Bpm);	// "112.5", "150"
 
-// The same for the WAV file at Path, its first note on the cursor row.
-bool InsertRecording(CMainFrame *pMainFrm, LPCTSTR Path, recording_kind_t Kind, int Channel, bool Expression,
-	CString &Message, LPCTSTR ClipName = NULL);
+// Edit > Start from a groove (GrooveDlg.cpp): a mood's chords, bass line and
+// drums from the start of a bar on, written by the make_groove tool (whose
+// parts ftapi::MakeGrooveParts in Api/Grooves.h makes), and the song's speed
+// and tempo for Bpm, as one undoable step. The cursor goes to the start of the
+// groove on MelodyChannel, where the melody is sung. False with the reason in
+// Message; otherwise Message says what was written.
+struct groove_choice_t {
+	CString Mood;			// a mood's name, as make_groove takes it ("town")
+	double Bpm;
+	int KeyTonic;			// 0-11 (C-B)
+	bool KeyMinor;
+	int Row;				// song row of the bar it starts at
+	int Bars;
+	int ChordChannel, BassChannel, DrumChannel;	// -1 for none
+	int MelodyChannel;		// left free for the melody
+};
+bool MakeGroove(CMainFrame *pMainFrm, const groove_choice_t &Choice, CString &Message);
+
+// The channels a groove goes on, with the melody's left free: the chords on a
+// pulse (the VRC6's second, else the 2A03's second, else another), the bass on
+// the sawtooth or else the triangle, the drums on the noise; -1 for none
+void GrooveChannels(const CFamiTrackerDoc *pDoc, int MelodyChannel, int &Chords, int &Bass, int &Drums);
 
 // Clips (Clips.h): saving the selection in the pattern editor as a new clip,
 // and placing a clip at the cursor (its first column on the cursor's channel,
@@ -154,7 +194,7 @@ CString KeyName(int Tonic, bool Minor);
 // reason in Message, when there is no melody to fit chords to (or the chords
 // given can't be read).
 bool DescribeBacking(const CFamiTrackerDoc *pDoc, unsigned int Track, const backing_choice_t &Choice, CString &Key,
-	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message);
+	CString &Chords, int &FirstFrame, int &LastFrame, CString &Message, int *pFirstRow = NULL);	// the first bar's song row
 
 // Writes the backing into the song as one undoable action, replacing what
 // the chord and bass channels played over those bars. Adds Chords and Bass
