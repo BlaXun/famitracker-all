@@ -88,7 +88,7 @@ enum {
 };
 
 // What a finding's button does
-enum action_t { ACTION_NONE, ACTION_NUDGE, ACTION_SHOW, ACTION_EXPLAIN };
+enum action_t { ACTION_NONE, ACTION_NUDGE, ACTION_SHOW, ACTION_EXPLAIN, ACTION_FIX };
 
 // What the pattern editor and the piano roll mark (ProblemMarkAt)
 ftapi::ProblemMarks g_Marks;
@@ -246,8 +246,10 @@ struct CProblemsPanelWnd::Impl {
 		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
 		if (pFinding == NULL)
 			return ACTION_NONE;
-		if (!pFinding->FixTool.empty())
-			return ACTION_NUDGE;
+		// A fix of one call the panel makes itself (a click's nudge, the arrangement's sound, faders, cleared double...);
+		// one of several calls (read a melody in steps, then write it back) is Claude's to make
+		if (!pFinding->FixTool.empty() && pFinding->FixCalls <= 1)
+			return pFinding->Kind == ftapi::PROBLEM_CLICK ? ACTION_NUDGE : ACTION_FIX;
 		if (pFinding->Kind == ftapi::PROBLEM_VANISHING && !pFinding->Notes.empty())
 			return ACTION_SHOW;
 		return ACTION_EXPLAIN;
@@ -257,6 +259,7 @@ struct CProblemsPanelWnd::Impl {
 	{
 		switch (Action) {
 		case ACTION_NUDGE: return _T("Nudge");
+		case ACTION_FIX: return _T("Fix");
 		case ACTION_SHOW: return _T("Show");
 		case ACTION_EXPLAIN: return _T("Explain");
 		default: return _T("");
@@ -687,6 +690,25 @@ struct CProblemsPanelWnd::Impl {
 		Say(Done);
 	}
 
+	// Fix: the call check_song gives for one of the arrangement's findings (a sound the triangle can play, the faders
+	// back at 0 and a mix, a doubled part cleared, a bass line, a repeat varied), one undoable step; then a check
+	void Fix(int Index)
+	{
+		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
+		if (pFinding == NULL || pFinding->FixTool.empty() || pTools == NULL)
+			return;
+		const CString Done = _T("Done: it ") + FromUtf8(pFinding->FixDoes) + _T(". Ctrl+Z undoes it.");
+		std::string Reply;
+		if (!pTools->RunTool(pFinding->FixTool.c_str(), pFinding->FixArguments, Reply)) {
+			CString Text = FromUtf8(Reply);
+			Text.Replace(_T("\n"), _T("\r\n"));
+			AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
+			return;
+		}
+		Check(true, true);
+		Say(Done);
+	}
+
 	// Show: notes that vanish, selected in the piano roll (opened for them), where another instrument can be given
 	// them; the cursor on the line's own note
 	void ShowNotes(int Index)
@@ -737,8 +759,11 @@ struct CProblemsPanelWnd::Impl {
 		if (pFinding == NULL)
 			return;
 		CString Text = FromUtf8(pFinding->Message);
-		if (!pFinding->FixTool.empty())
+		const action_t Action = ActionOf(Index);
+		if (Action == ACTION_NUDGE)
 			Text += _T("\r\n\r\nThe panel's Nudge button moves it ") + NudgeWords(*pFinding) + _T(", as one Ctrl+Z.");
+		else if (Action == ACTION_FIX)
+			Text += _T("\r\n\r\nThe panel's Fix button ") + FromUtf8(pFinding->FixDoes) + _T(", as one Ctrl+Z.");
 		Text.Replace(_T("\n"), _T("\r\n"));
 		Text.Replace(_T("\r\r\n"), _T("\r\n"));
 		AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
@@ -748,6 +773,7 @@ struct CProblemsPanelWnd::Impl {
 	{
 		switch (ActionOf(Index)) {
 		case ACTION_NUDGE: Nudge(Index); break;
+		case ACTION_FIX: Fix(Index); break;
 		case ACTION_SHOW: ShowNotes(Index); break;
 		case ACTION_EXPLAIN: Explain(Index); break;
 		default: break;
@@ -787,6 +813,8 @@ struct CProblemsPanelWnd::Impl {
 			Popup.AppendMenu(MF_STRING, MENU_GO, _T("Go there\tEnter"));
 			if (Action == ACTION_NUDGE)
 				Popup.AppendMenu(MF_STRING, MENU_ACTION, _T("Nudge it\tSpace"));
+			else if (Action == ACTION_FIX)
+				Popup.AppendMenu(MF_STRING, MENU_ACTION, _T("Fix it\tSpace"));
 			else if (Action == ACTION_SHOW)
 				Popup.AppendMenu(MF_STRING, MENU_ACTION, _T("Select them in the piano roll\tSpace"));
 			Popup.AppendMenu(MF_STRING, MENU_EXPLAIN, Action == ACTION_EXPLAIN ? _T("Explain...\tSpace") : _T("Explain..."));
@@ -929,7 +957,10 @@ struct CProblemsPanelWnd::Impl {
 		static const LPCTSTR WORDS[ftapi::PROBLEM_KINDS][2] = {
 			{ _T("note vanishes"), _T("notes vanish") }, { _T("note clicks"), _T("notes click") }, { _T("clash"), _T("clashes") },
 			{ _T("out of range"), _T("out of range") }, { _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
-			{ _T("outside the key"), _T("outside the key") }, { _T("lead holds steady"), _T("leads hold steady") }
+			{ _T("outside the key"), _T("outside the key") }, { _T("lead holds steady"), _T("leads hold steady") },
+			{ _T("melody in pieces"), _T("melodies in pieces") }, { _T("bass to fix"), _T("bass parts to fix") },
+			{ _T("sound unsuited"), _T("sounds unsuited") }, { _T("fader doing the mix"), _T("faders doing the mix") },
+			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
@@ -1271,6 +1302,9 @@ void CProblemsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 	switch (OnButton ? m_pImpl->ActionOf(Index) : ACTION_NONE) {
 	case ACTION_NUDGE:
 		Text = _T("Nudge: moves the note ") + Impl::NudgeWords(*pFinding) + _T(", as one Ctrl+Z");
+		break;
+	case ACTION_FIX:
+		Text = _T("Fix: it ") + FromUtf8(pFinding->FixDoes) + _T(", as one Ctrl+Z");
 		break;
 	case ACTION_SHOW:
 		Text = _T("Show: select these notes in the piano roll, to give them a sound that lasts");
