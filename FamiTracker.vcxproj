@@ -557,6 +557,7 @@
     <ClCompile Include="Source\Api\Vrc6Plus.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
+    <ClCompile Include="Source\Api\ChordHelper.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
     <ClCompile Include="Source\Api\SoundIndex.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
@@ -589,6 +590,7 @@
     <ClInclude Include="Source\Api\Vrc6Plus.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
+    <ClInclude Include="Source\Api\ChordHelper.h" />
     <ClInclude Include="Source\Api\Presets.h" />
     <ClInclude Include="Source\Api\SoundIndex.h" />
     <ClInclude Include="Source\Api\Song.h" />
@@ -664,6 +666,8 @@
     <ClInclude Include="Source\ClipsDlg.h" />
     <ClCompile Include="Source\PianoRoll.cpp" />
     <ClInclude Include="Source\PianoRoll.h" />
+    <ClCompile Include="Source\PianoRollChords.cpp" />
+    <ClInclude Include="Source\PianoRollChords.h" />
     <ClCompile Include="Source\NoteEdit.cpp" />
     <ClInclude Include="Source\NoteEdit.h" />
   </ItemGroup>
