@@ -342,7 +342,8 @@ struct song_facts_t {
 	std::string Title;
 	std::vector<std::vector<cell_t> > Rows;	// each channel's song rows (track 1)
 	std::vector<bool> Duty;	// each instrument: plays a duty sequence of its own (2A03, VRC6)
-	song_facts_t() : Bars(0), Length(0), BarRows(16), Frames(0), Comments(false), Duty(64, false) {}
+	std::vector<bool> Instruments;	// each instrument: the song has it
+	song_facts_t() : Bars(0), Length(0), BarRows(16), Frames(0), Comments(false), Duty(64, false), Instruments(64, false) {}
 	int BarStart(int Bar) const {
 		const int PerFrame = (Length + BarRows - 1) / BarRows;
 		return (Bar - 1) / PerFrame * Length + (Bar - 1) % PerFrame * BarRows;
@@ -369,6 +370,7 @@ bool ReadInstruments(const std::string &Body, song_facts_t &Facts)
 		if (Index < 0 || Index >= 64 || At + 9 > Body.size())
 			return false;
 		const int Type = static_cast<unsigned char>(Body[At + 4]);
+		Facts.Instruments[static_cast<size_t>(Index)] = true;
 		At += 5;
 		if (Type == 1 || Type == 2 || Type == 5 || Type == 6) {
 			const int Sequences = ReadInt(Body, At);
@@ -569,14 +571,17 @@ std::string ReadFile(const std::string &Path)
 }
 
 // The example songs that go into FamiTracker.exe (Tutorial.cpp's EXAMPLES):
-// each walkthrough read, about 6 to 12 steps, plain ASCII, and every bar and
-// channel it names in its song, a small module that shows its comments; the
-// bars a step plays sound as they do in the whole song (FamiTracker starts
-// each channel afresh where it starts playing)
+// each walkthrough read, about 6 to 12 steps, plain ASCII, and every bar,
+// channel and instrument it names in its song, a small module that shows its
+// comments; the bars a step plays sound as they do in the whole song
+// (FamiTracker starts each channel afresh where it starts playing). The sound
+// effects take a step for each of their ten sounds, after one that plays them
+// all and before two on making your own and getting them into a game: 13.
 void TestExamples()
 {
-	const char *const Names[] = { "first-song", "nes-tricks", "vrc6", "soft-and-wide" };
+	const char *const Names[] = { "first-song", "nes-tricks", "vrc6", "soft-and-wide", "sound-effects" };
 	for (size_t i = 0; i < sizeof(Names) / sizeof(Names[0]); ++i) {
+		const size_t MostSteps = std::string(Names[i]) == "sound-effects" ? 13 : 12;
 		const std::string Base = std::string(EXAMPLES_DIR) + "/" + Names[i];
 		const std::string Text = ReadFile(Base + ".txt"), Song = ReadFile(Base + ".ftm");
 		CHECK(!Text.empty() && !Song.empty());
@@ -586,7 +591,7 @@ void TestExamples()
 		CHECK(Read);
 		if (!Read)
 			std::printf("  %s.txt: %s\n", Names[i], Error.c_str());
-		CHECK(T.Steps.size() >= 6 && T.Steps.size() <= 12 && !T.About.empty());
+		CHECK(T.Steps.size() >= 6 && T.Steps.size() <= MostSteps && !T.About.empty());
 		bool Ascii = true;
 		for (size_t k = 0; k < Text.size(); ++k)
 			if (static_cast<unsigned char>(Text[k]) > 126)
@@ -619,6 +624,11 @@ void TestExamples()
 				if (!Found)
 					std::printf("  %s step %d: the song has no channel \"%s\"\n", Names[i], static_cast<int>(s + 1), Named[n].c_str());
 			}
+			// and the instrument it picks
+			const bool Instrument = Step.Instrument < 0 || (Step.Instrument < 64 && Facts.Instruments[static_cast<size_t>(Step.Instrument)]);
+			CHECK(Instrument);
+			if (!Instrument)
+				std::printf("  %s step %d: the song has no instrument %02X\n", Names[i], static_cast<int>(s + 1), Step.Instrument);
 			Plays = Plays || Step.PlayFirst > 0;
 			// The bars play as they do in the whole song
 			if (Step.PlayFirst > 0) {

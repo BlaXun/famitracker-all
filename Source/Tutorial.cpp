@@ -113,6 +113,7 @@ const example_song_t EXAMPLES[] = {
 	{ ID_HELP_EXAMPLE_TRICKS, IDR_EXAMPLE_TRICKS_SONG, IDR_EXAMPLE_TRICKS_WALK, _T("NES tricks (example)") },
 	{ ID_HELP_EXAMPLE_VRC6, IDR_EXAMPLE_VRC6_SONG, IDR_EXAMPLE_VRC6_WALK, _T("The VRC6 (example)") },
 	{ ID_HELP_EXAMPLE_SOFT, IDR_EXAMPLE_SOFT_SONG, IDR_EXAMPLE_SOFT_WALK, _T("Soft and wide (example)") },
+	{ ID_HELP_EXAMPLE_SFX, IDR_EXAMPLE_SFX_SONG, IDR_EXAMPLE_SFX_WALK, _T("Sound effects (example)") },
 };
 
 // The song's channels as a walkthrough names them (TutorialScript.h), in

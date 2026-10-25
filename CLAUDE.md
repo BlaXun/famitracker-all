@@ -618,6 +618,9 @@ playing, so every channel's first note there names its instrument and
 volume and sets again the lasting effects set before it (`Vxx` unless its
 instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
+It checks that every `instrument:` a step picks is in its song too, and
+gives `sound-effects` (ten sounds at speed 1, a bar of 64 rows each, the
+last halting with `C00`) 13 steps, one a sound.
 
 Stage fixes (from `feat-stage-fixes`): `review_arrangement` hears whether
 the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans
