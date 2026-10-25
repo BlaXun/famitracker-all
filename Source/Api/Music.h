@@ -278,7 +278,9 @@ struct PartOptions {
 									// would reset the DPCM level (0.4.6 writes $4011 = 0 as it cuts a sample)
 	bool KeepDetune;					// the channel's detune (Pxx) stays where it was, as its pan does: notes rewritten
 										// over an echo's P81 play as out of tune as the ones they replace (write_notes)
-	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false), KeepDetune(false) {}
+	bool KeepVolume;					// the same for the volume: notes that give none play as loud as the channel did
+										// on their rows, so a soft part rewritten stays soft (write_notes)
+	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false), KeepDetune(false), KeepVolume(false) {}
 };
 
 // A channel's new cells for rows [First, End), its notes replaced by Notes,
@@ -291,7 +293,9 @@ struct PartOptions {
 // one (an 8xx among its effects) plays from where the channel played at its
 // row before, until a note of the part sets one, which the notes after it
 // keep; with KeepDetune the detune (Pxx) does the same, and where it changed
-// in the range it changes on that row again. With KeepFollowing, the next
+// in the range it changes on that row again; with KeepVolume each note that
+// gives no volume, until one does, plays at the volume the channel had on
+// its row (the notes it replaces'). With KeepFollowing, the next
 // note after the range gets back the instrument, volume and effects (its pan
 // too) it played with.
 // Out holds the cells from First on and can be longer than End - First.

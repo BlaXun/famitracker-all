@@ -576,6 +576,50 @@ volume and sets again the lasting effects set before it (`Vxx` unless its
 instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
 
+Stage fixes (from `feat-stage-fixes`): `review_arrangement` hears whether
+the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans
+from `PhraseAnchor` with a rest of a beat or more or a note held two
+beats, as it sounds through `HeardFrames`; under `BREATHING_SHARE` of
+them, `CALM_BREATHING_SHARE` on a calm track, is a tip, and a busy part
+guessed as the melody is left out). The calm and lively mixes keep the
+drums at the volumes they were written at unless they play louder than
+`HeardPlaces::DrumsTop` under the melody (`PlacesFor`; the reply says why,
+`DrumsWhy`). `DrumPart` in `Arrange.cpp` has the `lively` groove
+(`GROOVE_LIVELY`, appended; `LIVELY_SECOND_KICK`, `AddLivelyFill`, its hits
+soft by design, which `volume` scales from `GrooveLoudest`), and light
+thins the kick and the snare (`LastBackbeat`) and keeps the hi-hats. A part
+on an N163 channel gets a sound of its own where another N163 channel plays
+its sound there (`OwnWaveSound`, `OwnWaveSounds`, `N163SoundsBeside`: a
+copy at a wave place of its own, `WaveSoundOfInstrument`, named like
+"String pad 2", `CopyBase`), for voiced chords (the soft layer's pads in
+turn), `MakeEcho`, `add_harmony` and `add_counter_melody`; `VoiceSound`
+counts the soft layer's pads as one sound when telling voiced chords from
+a melody. `ChordPartOptions::Lowest` keeps a pulse's broken chords over
+`PULSE_BROKEN_FLOOR` (`ChordRegister` sets it). `read_notes` reads up to
+`MAX_READ_BARS` bars or the bars of `MAX_READ_NOTES` notes and says first
+which, and `vary_part`'s embellish works on notes of two sixteenths or
+more. A key change into another mode (`transpose`, `change_mood`) goes
+through `KeyMove`, which keeps a dominant's ninth natural (`MapPitches`
+passes each note's row); `HarmonyWithoutRubs` moves `add_harmony`'s notes
+off semitones against the other parts; `write_notes` keeps the volume of
+the notes it replaces (`PartOptions::KeepVolume` in `BuildPart`) and the
+bars its notes leave empty between them, writing the rest a piece at a
+time; `vary_part`'s ending fits the chord under it. A held note breathes
+in the span it starts in. `add_harmony`'s thirds and sixths are the key's
+own: `ScaleStep` in `Arrange.cpp` steps over a harmonic minor's augmented
+second, `HarmonyPart` gives a melody note outside the key the interval's
+size that lands in it, and `ChordsForMelody` leaves the target's old notes
+out (`HeardNotes`' `Also`). `HeardNotes`, `FindKey` and `SoundingChord`
+take a note's `0xy` from the cells (`StickyAt`), since a `000` on a
+release's row isn't in any note's effects. `SemitoneRub` is the one rule
+for a semitone that rubs (and octaves over it), used by `check_song`'s
+clashes, `EchoWithoutRubs` and `HarmonyWithoutRubs`. `TestMelodyBreaths`,
+`TestStageMix`, `TestLivelyGroove`, `TestOwnWaveSounds`, `TestBrokenFloor`,
+`TestReadNotesLimit`, `TestEmbellishShortNotes`, `TestDominantNinth`,
+`TestHarmonyRubs`, `TestWriteNotesVolume`, `TestWriteNotesGaps`,
+`TestEndingFitsChord`, `TestBreathSpans`, `TestHarmonyInKey` and
+`TestEchoRubsAsChecked` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
