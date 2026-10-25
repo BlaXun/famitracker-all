@@ -85,8 +85,9 @@ typedef std::vector<std::pair<int, int> > Frame;
 
 // An NSF whose PLAY writes a frame's registers each call from a list (a
 // count, then register and value pairs), going back to frame LoopFrame
-// after the last
-inline std::vector<uint8_t> BuildNsf(const std::vector<Frame> &Frames, int LoopFrame, const char *Title)
+// after the last; with DPCM samples at $C000 (Samples, for $4012 = 0)
+inline std::vector<uint8_t> BuildNsf(const std::vector<Frame> &Frames, int LoopFrame, const char *Title,
+	const std::vector<uint8_t> &Samples = std::vector<uint8_t>())
 {
 	Asm a(0x8000);
 	// INIT: the list's start, the channels on
@@ -133,6 +134,11 @@ inline std::vector<uint8_t> BuildNsf(const std::vector<Frame> &Frames, int LoopF
 		}
 	}
 	a.Op(0xFF);
+	if (!Samples.empty()) {
+		while (a.Here() < 0xC000)
+			a.Op(0);
+		a.Bytes.insert(a.Bytes.end(), Samples.begin(), Samples.end());
+	}
 	a.Resolve();
 
 	std::vector<uint8_t> h(128, 0);

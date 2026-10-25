@@ -620,6 +620,15 @@ when ready.
     runs free, and track names from an `.m3u` playlist. Measured against
     FamiTracker's own playback of the result: most tracks 95-100% the same
     sound and pitch.
+  - Fixed after the soundtracks studied in October 2026: a sampled bass on
+    the DPCM (Journey to Silius) is a bass, its samples on the keys of the
+    notes they sound, not a drum kit; the loop is what keeps on repeating
+    (not a passage played twice in a piece that ends, nor a short vamp in a
+    long loop), from the start when the first time through differs only too
+    quietly to hear, and found when the drums cycle on their own; a track
+    that falls silent long before its playlist length is a sting or a sound
+    effect; the key is weighed by the chords, the bass and where phrases
+    rest, and "no clear key" when the chords drift.
   - File > Import NSF picks out the music from the jingles and sound
     effects; `import_nsf` does it for Claude; `nsf2ftm` from a command line.
   - Studies: what makes a track work, in words a composer uses (form,
