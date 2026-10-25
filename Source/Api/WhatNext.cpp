@@ -455,9 +455,10 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 		}
 	}
 
-	// The pitches: the tonic in octave 3 as home (as a pulse plays it); the phrase rises from its third to a high point
-	// past the middle and comes home, its open cell ending on the fifth
-	const int Home = 36 + Mod12(K.Tonic), Low = Home - 5, High = Home + 12;
+	// The pitches: the tonic as home, from G-3 to F#4 (as a pulse plays it), so the phrase sits over chords written before
+	// it (a D major one around D-4, not D-3); it rises from its third to a high point past the middle and comes home, its
+	// open cell ending on the fifth
+	const int Home = 36 + Mod12(K.Tonic) + (Mod12(K.Tonic) < 7 ? 12 : 0), Low = Home - 5, High = Home + 12;
 	const int Third = Home + ((K.Mode == MODE_MINOR || K.Mode == 1 || K.Mode == 2 || K.Mode == 6 || K.Mode == 7) ? 3 : 4);
 	const int Rows = Bars * BeatsPerBar * RowsPerBeat;
 	auto RowOf = [&](const Hit &H) {

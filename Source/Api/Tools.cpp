@@ -20815,6 +20815,7 @@ private:
 	std::map<std::string, std::string> m_Met;	// milestones done, with what to say of each
 	std::set<std::string> m_Unmet, m_Away;		// milestones left; and those that don't apply here
 	std::vector<std::string> m_Notes;
+	std::string m_Review;		// review_arrangement's reply, once the tips' stage has asked for it
 
 	// The song, read once
 	int m_Melody;				// the melody's channel: where it plays, or where it goes (-1 when the song has no channel for one)
@@ -22105,6 +22106,7 @@ void WhatNext::Tips()
 	std::string Review;
 	try {
 		Review = ReviewTool(S, Asked);
+		m_Review = Review;
 	}
 	catch (const Problem &) {
 		Milestone("review tips", !Found, "the review's tips");
@@ -22271,22 +22273,47 @@ bool WhatNext::TipStep(const std::string &Tip)
 			Step("tips", "vary_part", A, "review_arrangement: " + Tip);
 	}
 	if (Has("Phrases come back unchanged") || Has("A repeat with nothing new")) {
-		// The bars whose melody plays the bar four before it again: the last run of them, varied (a whole part varied alike
-		// would keep its two halves alike)
-		const std::vector<NoteInfo> &Tune = S.Notes(m_Melody);
+		// The bars the review hears repeating the bar four before them in every part ("Bars 9, 25 repeat the bars four before
+		// them in every part."): the melody varied in the last of them, a bar at a time (each named bar ends the list sooner)
 		std::vector<int> Again;
-		for (int Bar = 5; Bar <= S.Time.BarCount(); ++Bar) {
-			const std::string Print = BarPrint(Tune, S.Time.BarStart(Bar), S.Time.BarEnd(Bar));
-			if (!Print.empty() && Print == BarPrint(Tune, S.Time.BarStart(Bar - 4), S.Time.BarEnd(Bar - 4)))
-				Again.push_back(Bar);
+		bool EveryPart = false;
+		if (Has("A repeat with nothing new")) {
+			const size_t Stop = m_Review.find(" in every part.");
+			if (Stop != std::string::npos) {
+				const size_t Start = m_Review.rfind('\n', Stop) == std::string::npos ? 0 : m_Review.rfind('\n', Stop) + 1;
+				const std::string Line = m_Review.substr(Start, Stop - Start);
+				int Number = -1;
+				for (size_t i = 0; i <= Line.size(); ++i) {
+					if (i < Line.size() && std::isdigit(static_cast<unsigned char>(Line[i])))
+						Number = (Number < 0 ? 0 : Number * 10) + (Line[i] - '0');
+					else if (Number >= 0) {
+						Again.push_back(Number);
+						Number = -1;
+					}
+				}
+				EveryPart = !Again.empty();
+			}
+		}
+		// Else the bars whose melody plays the bar four before it again: the last run of two or more, varied (a whole part
+		// varied alike would keep its two halves alike)
+		if (Again.empty()) {
+			const std::vector<NoteInfo> &Tune = S.Notes(m_Melody);
+			for (int Bar = 5; Bar <= S.Time.BarCount(); ++Bar) {
+				const std::string Print = BarPrint(Tune, S.Time.BarStart(Bar), S.Time.BarEnd(Bar));
+				if (!Print.empty() && Print == BarPrint(Tune, S.Time.BarStart(Bar - 4), S.Time.BarEnd(Bar - 4)))
+					Again.push_back(Bar);
+			}
 		}
 		if (Again.empty() || !Wanted("variation"))
 			return false;
+		std::sort(Again.begin(), Again.end());
 		int From = Again.back();
-		while (std::find(Again.begin(), Again.end(), From - 1) != Again.end())
+		while (!EveryPart && std::find(Again.begin(), Again.end(), From - 1) != Again.end())
 			--From;
-		static const char *const VARIATIONS[] = { "embellish", "syncopate" };
-		for (int v = 0; v < 2; ++v) {
+		if (!EveryPart && From == Again.back())
+			return false;	// a bar alone is the hook coming back, as a melody's phrases bring it: varying it bar by bar never ends
+		static const char *const VARIATIONS[] = { "embellish", "syncopate", "ending" };
+		for (int v = 0; v < 3; ++v) {
 			Json V = Json::MakeObject();
 			V.Set("channel", ChannelName(m_Melody));
 			V.Set("variation", VARIATIONS[v]);
@@ -22294,8 +22321,9 @@ bool WhatNext::TipStep(const std::string &Tip)
 			V.Set("to_bar", Again.back());
 			int Added = 0;
 			if (TryWrite(S, "vary_part", V, From, Again.back(), m_Melody, Added) && Added <= 0)
-				return Step("variation", "vary_part", V, "review_arrangement: " + Tip + Format(" Bars %d-%d play the four before them "
-					"again: %s there.", From, Again.back(), v == 0 ? "passing and neighbour notes" : "syncopation"));
+				return Step("variation", "vary_part", V, "review_arrangement: " + Tip + (From == Again.back() ? Format(" Bar %d plays the "
+					"bar four before it again", From) : Format(" Bars %d-%d play the four before them again", From, Again.back())) + ": " +
+					(v == 0 ? "passing and neighbour notes" : v == 1 ? "syncopation" : "a new ending") + " there.");
 		}
 		return false;
 	}

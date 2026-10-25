@@ -153,7 +153,7 @@ struct TuneNote {
 // on a held note and its last on a held note and a rest, so it breathes; each
 // note of a beat or more, and each on a strong beat, a tone of the chord under
 // it, the others stepping between them; none a semitone from what another part
-// sounds then; mostly in octave 3, rising to a high point and coming home.
+// sounds then; around the tonic from G-3 to F#4, rising to a high point and coming home.
 // Chord and Sounding have a row each from the phrase's first row (RowsPerBeat
 // rows a beat, BeatsPerBar beats a bar): the pitch classes of the chord there
 // and of the notes the other parts sound (empty for none).
