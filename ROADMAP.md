@@ -511,6 +511,32 @@ rules and fixing tool output by hand.
   than for composing each track. On a Max plan Fable draws on the same
   weekly limit (at most half of it) and costs about 2.5 times Opus 5.5 a
   token, so it pays off where its result is reused.
+- Local models (25 October 2026): the user's local model (Qwen 3.8 Flash
+  Next, through Hermes Agent) composed "Green Valley" with the full set of
+  tools. It was clean on every check, but its melody came in one-bar pieces
+  (a release before 23 of its 28 bar lines), its bass was thin, its drums
+  loud and its loop short (52 s); a refiner fixed those by hand. Done:
+  melodies in steps (`write_notes` and `read_notes`). Being built, the
+  user's OK: `what_next` (the one next step with its tool call) and the
+  small set fitted to how a local model works (with `find_sound`,
+  `reference_sound` and a worked example of a melody); checks for what it
+  missed, each with a ready fix call, and short replies; a melody grown
+  from a motif. Then a "finish" call (polish, mix, the loop checked and
+  fixed, the export at the kind's loudness) and warnings as `write_notes`
+  writes (a register too high or low for the channel, notes outside the
+  key, a lone short note on the triangle).
+- On the backlog (the user's OK, 25 October):
+  - You hum, the local model arranges: the phone page brings the user's
+    melody in as a clip, and the model places it and builds the chords,
+    bass, drums and depth around it. The melody is a local model's weakest
+    part and the user's strongest.
+  - A fixed test set: three to five requests (a calm night, a lively stage,
+    a boss fight) run on the local model after each change, scored by the
+    review, the checks, the melody's breaths and the balance, to see what
+    actually helps.
+  - Learning from the good songs: the soundtrack's tracks and the tool calls
+    of the composers who made them as examples for the local model, a few
+    in its prompt or as data for a LoRA on the user's EVO X3.
 
 ## Feature branches
 
