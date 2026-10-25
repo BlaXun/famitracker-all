@@ -2555,6 +2555,9 @@ void TestReferences()
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"journey to silius\"}").Text, "The sampled bass");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"strider\"}").Text, "75% duty for both pulses");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"technos\"}").Text, "Technos (Nintendo World Cup)");
+	// Short sounds that play once: cues, jingles and sound effects (2026-10-25)
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"jingle\"}").Text, "Cues, jingles and sound effects");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"cues\"}").Text, "sounds end in silence by themselves");
 	// The guide is plain ASCII, as JSON carries it
 	for (size_t i = 0; i < StyleGuideTopics().size(); ++i) {
 		const std::string Text = StyleGuide(StyleGuideTopics()[i]);
