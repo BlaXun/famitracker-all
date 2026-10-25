@@ -97,6 +97,15 @@ CString Capitalized(const std::string &Text)
 	return Out;
 }
 
+// The tools' words for a groove's parts, as words: "root_fifth" is "root fifth", "updown" "up and down"
+CString Plain(const std::string &Text)
+{
+	CString Out(Text.c_str());
+	Out.Replace(_T("_"), _T(" "));
+	Out.Replace(_T("updown"), _T("up and down"));
+	return Out;
+}
+
 // Where the melody goes: the cursor's channel when a melody (not a bass line) can go there, otherwise the VRC6's
 // first pulse, otherwise the 2A03's
 int MelodyChannelFor(const CFamiTrackerDoc *pDoc, int Cursor)
@@ -285,7 +294,7 @@ void CGrooveDlg::UpdatePreview()
 			const double Played = ftapi::BeatsPerMinute(P.Speed, P.Tempo, Q.FrameRate, std::max(1, Q.RowsPerBeat));
 			Text.Format(_T("%s\r\n%s: %s, from bar %d (frame %02X row %02X). You sing on %s.\r\nThe song plays at %s BPM ")
 				_T("(speed %d, tempo %d). What those channels had there is replaced; Ctrl+Z takes the groove out again."),
-				static_cast<LPCTSTR>(CString(P.ChordText.c_str())), static_cast<LPCTSTR>(Capitalized(P.Summary)),
+				static_cast<LPCTSTR>(CString(P.ChordText.c_str())), static_cast<LPCTSTR>(Capitalized(std::string(CStringA(Plain(P.Summary))))),
 				static_cast<LPCTSTR>(Where), First, m_iRow / Length, m_iRow % Length,
 				static_cast<LPCTSTR>(RecordingChannelName(m_pDocument, m_iMelody)), static_cast<LPCTSTR>(BpmText(Played)), P.Speed,
 				P.Tempo);

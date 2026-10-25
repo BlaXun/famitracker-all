@@ -2207,23 +2207,22 @@ struct CPianoRollWnd::Impl {
 
 	// Clips
 
-	// The bars the selected notes are in (CPianoRollWnd::SelectedBars)
+	// The bars the selected notes start in (CPianoRollWnd::SelectedBars)
 	bool SelectedBars(int &Which, int &First, int &End) const
 	{
 		if (Selection.empty() || Channel < 0 || Channel >= static_cast<int>(Notes.size()) || Length == 0)
 			return false;
 		const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
-		int From = -1, To = -1;
+		int From = -1, Last = -1;
 		for (size_t i = 0; i < List.size(); ++i)
 			if (std::find(Selection.begin(), Selection.end(), List[i].Start) != Selection.end()) {
 				From = From < 0 ? List[i].Start : std::min(From, List[i].Start);
-				To = std::max(To, List[i].End);
+				Last = std::max(Last, List[i].Start);
 			}
-		if (From < 0 || To <= From)
+		if (From < 0)
 			return false;
 		const int Rows = static_cast<int>(Length), BarRows = Bar > 0 ? std::min(Bar, Rows) : Rows;
 		First = From / Rows * Rows + From % Rows / BarRows * BarRows;
-		const int Last = To - 1;
 		End = Last / Rows * Rows + std::min(Rows, (Last % Rows / BarRows + 1) * BarRows);
 		Which = Channel;
 		return true;

@@ -14707,6 +14707,12 @@ void TestStrummedChords()
 	CHECK(HearStrummedChords(transcribe::HearStrums(Halves), 0.5, 0, 10.0, 64, 16, 4, Heard, Error));
 	CHECK_EQ(Heard.Names, std::string("| C G | Am | F |"));
 
+	// Strummed (or heard) up to a third of a beat late or early: the same chords
+	CHECK(HearStrummedChords(Strums, 0.5 - 0.09, 0, 10.0, 64, 16, 4, Heard, Error) && Heard.Names == "| C | G | Am | F |" &&
+		Heard.FirstRow == 0);
+	CHECK(HearStrummedChords(transcribe::HearStrums(Ringing), 0.5 + 0.08, 0, 10.0, 64, 16, 4, Heard, Error) &&
+		Heard.Names == "| Am | F | C | G |");
+
 	// A take recorded from bar 3 on: its bars count from there; strums of the count-in are left out
 	CHECK(HearStrummedChords(Strums, 0.5, 32, 10.0, 64, 16, 4, Heard, Error) && Heard.FirstRow == 32 && Heard.BarCount == 4);
 	CHECK(HearStrummedChords(Strums, 2.1, 0, 10.0, 64, 16, 4, Heard, Error) && Heard.Names == "| G | Am | F |");

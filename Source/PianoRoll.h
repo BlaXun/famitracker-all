@@ -74,7 +74,7 @@ public:
 	// has no selection: there is one selection at a time
 	bool HasSelection() const;
 	void SaveSelectionAsClip();				// asks for a name
-	// The bars the selected notes are in, for Record from microphone to sing over: the bright channel and the
+	// The bars the selected notes start in, for Record from microphone to sing over: the bright channel and the
 	// song rows [First, End) from the first note's bar to the end of the last one's; false without a selection
 	bool SelectedBars(int &Channel, int &First, int &End) const;
 

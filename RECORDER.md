@@ -648,9 +648,11 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   a little sharp as strings are, fitted to what stands out of the spectrum
   without going negative (multiplicative updates with a little push towards
   fewer notes), so overtones aren't notes of their own. Up to six notes
-  count, from 15% of the strongest. Each bar's (or half bar's) chord is
-  then named from the notes sounding in it, the lowest a strum's bass, as
-  the tools hear chords in a song's parts (`HearChords` in `Api/Chords.cpp`).
+  count, from 15% of the strongest. A strum within a third of a beat of a
+  beat counts from the beat (strummed a little early or late, or the
+  microphone's delay). Each bar's (or half bar's) chord is then named from
+  the notes sounding in it, the lowest a strum's bass, as the tools hear
+  chords in a song's parts (`HearChords` in `Api/Chords.cpp`).
 - **Typed chords** (`Api/RecorderInput.cpp`): read with the tools' chord
   names (`Chords.cpp`) and laid on the bars from the first one on, repeating
   over the melody's bars when it has more; the key is the one their notes

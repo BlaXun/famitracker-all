@@ -64,7 +64,8 @@ struct StrummedChords {
 
 // The chords heard in strums (transcribe::HearStrums), each bar's or half
 // bar's from the notes sounding there (the lowest one counted as the bass),
-// as the tools hear chords in a song's parts. Start: the second of the take
+// as the tools hear chords in a song's parts; a strum within a third of a
+// beat of a beat counts from the beat. Start: the second of the take
 // that lands on song row StartRow; the song plays RowsPerSecond, its bars as
 // FamiTracker highlights them (a bar starts on each pattern's first row and
 // every RowsPerBar rows after it). False, with the reason, when no chord

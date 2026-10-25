@@ -144,18 +144,34 @@ bool HearStrummedChords(const std::vector<transcribe::Strum> &Strums, double Sta
 	for (size_t i = 0; i < Strums.size(); ++i)
 		Loudest = std::max(Loudest, Strums[i].level);
 
-	// Each strum's notes on the rows it sounds (from just before the start row on: earlier ones were the count-in)
+	// Where each strum lands (from just before the start row on: earlier ones were the count-in): on the beat
+	// when it's within a third of a beat of one, so a strum a little early or late (or the microphone's
+	// delay) doesn't carry the chord before it into the bar
+	std::vector<int> Landed(Strums.size(), -1);
+	for (size_t i = 0; i < Strums.size(); ++i) {
+		const double At = StartRow + (Strums[i].time - Start) * RowsPerSecond;
+		int Row = static_cast<int>(std::floor(At + 0.5));
+		const double Pattern = std::floor(At / PatternLength) * PatternLength;
+		const double OnBeat = Pattern + std::floor((At - Pattern) / Beat + 0.5) * Beat;
+		if (std::fabs(At - OnBeat) <= Beat / 3.0)
+			Row = static_cast<int>(OnBeat);
+		if (Row >= StartRow - Beat / 2)
+			Landed[i] = std::max(Row, StartRow);
+	}
+
+	// Each strum's notes on the rows it sounds: until the next strum, at most a bar
 	std::vector<HeardNote> Heard;
 	std::vector<transcribe::MelodyNote> ForKey;
 	int First = -1, Last = -1;
 	for (size_t i = 0; i < Strums.size(); ++i) {
 		const transcribe::Strum &S = Strums[i];
-		int Row = StartRow + static_cast<int>(std::floor((S.time - Start) * RowsPerSecond + 0.5));
-		if (Row < StartRow - Beat / 2)
+		const int Row = Landed[i];
+		if (Row < 0)
 			continue;
-		Row = std::max(Row, StartRow);
-		const double Until = std::min(S.end, S.time + RowsPerBar / RowsPerSecond);
-		const int Rows = std::max(1, static_cast<int>(std::floor((Until - S.time) * RowsPerSecond + 0.5)));
+		int Rows = static_cast<int>(std::floor((std::min(S.end, S.time + RowsPerBar / RowsPerSecond) - S.time) * RowsPerSecond + 0.5));
+		if (i + 1 < Strums.size() && Landed[i + 1] >= 0)
+			Rows = Landed[i + 1] - Row;
+		Rows = std::max(1, std::min(Rows, RowsPerBar));
 		const double Loudness = std::max(0.2, std::pow(10.0, (S.level - Loudest) / 20.0));
 		int Lowest = -1;
 		for (size_t k = 0; k < S.notes.size() && Lowest < 0; ++k)
