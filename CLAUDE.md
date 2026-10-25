@@ -684,6 +684,7 @@ Its types share namespace `ftapi` with the tools' (its cells are
 `VoiceCells`: a second `ftapi::ChannelCells` with another layout than
 `Song.h`'s let the linker mix the two, which only MSVC's run showed), so
 new portable code names its types apart.
+
 Sound effects and cues (from `feat-sfx-fixes`): `CMixer::ClearBuffer` (every
 `CAPU::Reset`, so every stop and start) takes the 2A03's pins as a reset
 leaves them, the pulses, the noise and the DMC silent and the triangle
