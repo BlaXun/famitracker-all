@@ -53,6 +53,7 @@ class CActionGroup;
 class CActionHandler;
 class CFrameEditor;
 class CMcpConnection;
+class CSoundPreview;
 
 class CMainFrame : public CFrameWnd
 {
@@ -118,6 +119,7 @@ public:
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
 	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
+	CSoundPreview *GetSoundPreview();	// what plays a sound for the sound browser and Instrument > Listen (SoundPreview.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
 
 	// Help > Tutorials (Tutorial.h): where a part of the window is on the
@@ -222,6 +224,7 @@ private:  // control bar embedded members
 	int					m_iFrameEditorPos;
 
 	CMcpConnection		*m_pMcpConnection;		// File > Connect Claude Code
+	CSoundPreview		*m_pSoundPreview;		// a sound heard (SoundPreview.h), made when first needed
 
 	CInstrumentFileTree	*m_pInstrumentFileTree;
 
@@ -332,6 +335,8 @@ public:
 	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnEditRecordPhone();
 	afx_msg void OnInstrumentLibrary();
+	afx_msg void OnInstrumentListen();
+	afx_msg void OnUpdateInstrumentListen(CCmdUI *pCmdUI);
 	afx_msg void OnEditDrumGrid();
 	afx_msg void OnHelpTutorials();
 	afx_msg void OnHelpExample(UINT nID);

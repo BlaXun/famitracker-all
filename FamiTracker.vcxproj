@@ -557,6 +557,7 @@
     <ClCompile Include="Source\Api\Vrc6Plus.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
+    <ClCompile Include="Source\Api\GrowMelody.cpp" />
     <ClCompile Include="Source\Api\ChordHelper.cpp" />
     <ClCompile Include="Source\Api\StepNotes.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
@@ -592,6 +593,7 @@
     <ClInclude Include="Source\Api\Vrc6Plus.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
+    <ClInclude Include="Source\Api\GrowMelody.h" />
     <ClInclude Include="Source\Api\ChordHelper.h" />
     <ClInclude Include="Source\Api\StepNotes.h" />
     <ClInclude Include="Source\Api\Presets.h" />
@@ -646,6 +648,7 @@
     <ClCompile Include="Source\VoiceEffectDlg.cpp" />
     <ClCompile Include="Source\InstrumentLibrary.cpp" />
     <ClCompile Include="Source\SoundBrowserDlg.cpp" />
+    <ClCompile Include="Source\SoundPreview.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
     <ClCompile Include="Source\ProblemsPanel.cpp" />
     <ClCompile Include="Source\MixerPanel.cpp" />
@@ -666,6 +669,7 @@
     <ClInclude Include="Source\MixerPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\SoundBrowserDlg.h" />
+    <ClInclude Include="Source\SoundPreview.h" />
     <ClInclude Include="Source\VoiceEffectDlg.h" />
     <ClCompile Include="Source\Transcribe\Take.cpp" />
     <ClCompile Include="Source\BackingDlg.cpp" />

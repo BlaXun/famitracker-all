@@ -100,6 +100,7 @@ add_library(ftapi STATIC
 	Chords.cpp
 	RecorderInput.cpp
 	Arrange.cpp
+	GrowMelody.cpp
 	ChordHelper.cpp
 	StepNotes.cpp
 	QrCode.cpp

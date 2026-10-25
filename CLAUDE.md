@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 33 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 34 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -900,6 +900,51 @@ did). The list of notes takes the old path untouched. `TestStepsWrite`,
 `TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
 in `Source/Api/tests/ApiTests.cpp` cover the tools.
 
+Melodies grown from a hook (from `feat-grow-melody`): `grow_melody`
+(`GrowMelodyTool` in `Tools.cpp`, after `AddCounterMelodyTool`) reads the
+hook as a line of steps and asks `GrowMelody` (`Source/Api/GrowMelody.cpp`,
+portable) for three versions over the chords `ChordsForMelody` hears (the
+channel's own notes left out). A `Grower` plans the bars (`SectionPlan`:
+blocks of four in the forms question and answer, hook and sequence, two-bar
+calls; a calm song's phrases two bars long), gives each bar a rhythm (the
+hook's own, its opening twice for a run, the kind's beat figures for climbs
+and closes; `Tie` holds notes over inner bar lines), picks each section's
+high point (`ChoosePeaks`) and the hook's moves up or down the scale
+(`ChooseShifts`, `FitCost`; the hook stays as written where it fits as well
+as where it's first stated), then chooses every pitch at once by dynamic
+programming over the notes' candidates (`Choose`: chord tones on beats 1
+and 3, the key's notes, nothing a semitone from another part for half a
+beat, as `check_song` hears a clash, leaps paid by size and kind). A variant
+seeds its own `GrowRandom`, so the same request gives the same versions on
+every computer. `pick` writes one through `WriteNotesInSteps`, and
+`GrowBreaths` counts the two-bar spans as `BreathsOf` does. It's in the
+small set (`CoreTools`). `TestGrowPhrases`, `TestGrowShape`,
+`TestGrowKinds`, `TestGrowTool` and `TestGrowTaught` cover it.
+
+Sound groups (from `feat-sound-groups`): Instrument > Sound browser shows
+its sounds in groups. `GroupSounds` in `Source/Api/SoundIndex.cpp` puts the
+sounds found in groups (by kind; in each kind the ready-made sounds, the
+reference library's game by game, `SoundEntry::Game`, then the song's own),
+`KindCounts` counts them for the kinds list on the left, and `SoundRows`
+lays out the list's rows with headings (`SoundView`: every kind or one,
+headings folded by hand by `RowKey`, a kind's games folded while it has more
+than `FOLD_GAMES_OVER` reference sounds and no words are asked for).
+`SoundBrowserDlg.cpp` draws the headings by custom draw in its owner-data
+list (no list-view groups: owner-data lists have none, and Wine's comctl32
+draws them only in part; a heading is drawn as a row, then over it in
+`CDDS_ITEMPOSTPAINT`, since Wine puts the focus rectangle where it last drew
+the focused row itself), takes every click itself (`CSoundList`: a sound
+plays, the one picked too; a heading folds), lays itself out as it's resized
+(`Layout`) and stops the sound in `OnCancel`: under Wine without a window
+manager the UI thread waits a second or two after any modal dialog closes,
+before the dialog's `OnDestroy` runs. `PreviewSteps` plays a phrase for each kind (`PHRASES`,
+`DrumSteps`). `Source/SoundPreview.cpp` (`CSoundPreview`, timed by a
+message-only window) plays the previews and the note keys for the browser
+and for Instrument > Listen (`ID_INSTRUMENT_LISTEN`, the speaker button after
+Edit under the instrument list: `ListenToInstrument`, which lists the song's
+own with `ToolSet::Sounds`' `Library` false). `TestSoundGroups`,
+`TestSoundGroupsQuick`, `TestPreviewPhrases` and `TestSoundsWithoutLibrary`
+cover them.
 What next (from `feat-what-next`): `what_next` (`WhatNextTool` and the
 `WhatNext` class at the end of `Tools.cpp`'s anonymous namespace; its
 portable pieces in `Source/Api/WhatNext.cpp`) gives the one next step for
@@ -909,8 +954,11 @@ sections, key, loop, the game's file next to it), in the recipes' order:
 doesn't know that carries a `fix` is a step of that kind's name, severity
 high at once, the others with the tips), the frame (`Frame`), the parts and
 the form (`Parts`: `SongForm` reads the sections, `NameSections` names
-unnamed bars by their chords, `MelodyStep` offers `ExampleTune`'s phrase in
-steps, `GrowForm` grows A, A again, B on `NextProgression`'s chords, A),
+unnamed bars by their chords, `MelodyStep` gives `grow_melody` the song's
+hook (`SongHook`) or one offered on the chords (`OfferedHook`, from
+`ExampleTune`), the first that grows without a clash (`TryWrite`), else
+`ExampleTune`'s phrase as `write_notes`, `GrowForm` grows A, A again, B on
+`NextProgression`'s chords, A),
 depth (`Depth`: `add_harmony` in the repeat, a `vary_part` that adds no
 clash, a break and an intro, the loop), the review's tips (`TipStep` matches
 their words: keep them in step with `ReviewTool`'s), the echo last (it
@@ -920,11 +968,11 @@ Whether a tool would change the song is a dry run (`DryRunHost`,
 1.5 dB is done (mix rounds), and polish once no part plays at one volume and
 its other touches change nothing (its accents re-accent a part left with two
 volumes, a step softer each time). `DryRunHost::Overlay` reads the cells as
-the writes kept back would leave them, so `TryVariation` hears a variation's
-clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
+the writes kept back would leave them, so `TryWrite` hears a variation's
+or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call, 33, not
+(`CoreTools`) is `what_next` and every tool its steps call, 34, not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done

@@ -40,7 +40,7 @@ namespace ftapi {
 // The song as Host has it, with every change a tool asks for kept back and
 // counted (Changes; the cells it would write are in Writes, the other changes
 // counted in Others): a tool run on it shows whether it would change the song
-// (mix, polish, vary_part, fix_loop) and leaves the song as it is. It reports
+// (mix, polish, vary_part, fix_loop, grow_melody) and leaves the song as it is. It reports
 // that direct changes are allowed, so a tool takes the path that writes; tools
 // that add instruments, tracks or chips, or play, can't run on it (those calls
 // fail). With Overlay set (once the tool has run), it reads the cells as the writes kept back would leave them, so

@@ -97,6 +97,31 @@ Done:
   while it's tried, one at a time, and comes out again unless Add to the
   song keeps it (named, and picked in the instrument list). Claude's
   `find_sound` searches the same list.
+- **The sound browser in groups, and listening by clicking** (October 2026,
+  `feat-sound-groups`): the kinds sit on the left with their counts (all
+  sounds, leads, basses, pads and chords, plucks, bells, keys, drums,
+  effects), and the list has a heading for each kind and, inside it, for
+  the ready-made sounds, each game of the reference library (A to Z) and
+  the song's own instruments. A click on a heading folds it or opens it
+  again; a kind with more than 40 sounds from the library starts with its
+  games folded, so the ready-made sounds and every game's name show at
+  once, and words in Find open everything they find (and show every kind
+  when the kind picked has none of it). Every click on a
+  sound plays it, the one already picked too, and each row has a play mark
+  that turns green while it plays; the arrow keys play each sound they
+  reach (held down, the one they stop on), Space plays it again. The
+  phrase suits the kind: a short tune for a lead, a bass figure for a
+  bass, two held notes for a pad, a broken chord for a pluck or keys,
+  ringing notes for a bell, one long note for an effect, a beat for drums
+  in each drum's own rhythm (the song's own drums at the pitches it plays
+  them). Starting another sound or closing the browser stops the one
+  playing. The window can be resized (the filters go to two rows when
+  it's narrow) and keeps its place, kind and folds while FamiTracker runs.
+- **Listen** (the speaker button at the end of the instrument list's
+  toolbar, and in the Instrument menus): the instrument picked plays its
+  kind's phrase on the channel the song plays it most, as the sound
+  browser plays it, without opening its editor. A plain click in the list
+  still only picks the instrument for writing notes.
 - **View > Drum grid** (also in the Edit menu, Ctrl+Shift+D;
   `Source/DrumGridPanel.cpp`, with the arithmetic in `Source/DrumGrid.cpp`,
   tested on Linux): the noise channel a bar at a time, a line each for a

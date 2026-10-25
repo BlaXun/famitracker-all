@@ -1275,6 +1275,9 @@
     <ClCompile Include="Source\Api\Arrange.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\GrowMelody.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\ChordHelper.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1369,6 +1372,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Arrange.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\GrowMelody.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\ChordHelper.h">
@@ -1577,10 +1583,16 @@
     <ClCompile Include="Source\SoundBrowserDlg.cpp">
       <Filter>Source Files\Dialog Boxes\Instrument</Filter>
     </ClCompile>
+    <ClCompile Include="Source\SoundPreview.cpp">
+      <Filter>Source Files\Dialog Boxes\Instrument</Filter>
+    </ClCompile>
     <ClInclude Include="Source\InstrumentLibrary.h">
       <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\SoundBrowserDlg.h">
+      <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\SoundPreview.h">
       <Filter>Header Files\Dialog Boxes Headers\Instrument Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\VoiceEffectDlg.h">

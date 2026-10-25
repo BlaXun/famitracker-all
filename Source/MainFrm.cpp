@@ -52,6 +52,7 @@
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
 #include "SoundBrowserDlg.h"
+#include "SoundPreview.h"
 #include "PhoneDlg.h"
 #include "PhoneLink.h"
 #include "DrumGridPanel.h"
@@ -169,6 +170,7 @@ CMainFrame::CMainFrame() :
 	m_iFrameEditorPos(FRAME_EDIT_POS_TOP),
 	m_pMcpConnection(NULL),
 	m_pInstrumentFileTree(NULL),
+	m_pSoundPreview(NULL),
 	m_pPianoRoll(NULL),
 	m_pClipsBar(NULL),
 	m_pProblemsBar(NULL),
@@ -211,6 +213,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pDrumGridBar);
 	SAFE_RELEASE(m_pActionGroup);
 	SAFE_RELEASE(m_pInstrumentFileTree);
+	SAFE_RELEASE(m_pSoundPreview);
 }
 
 BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
@@ -261,6 +264,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_INSTRUMENT_SAVE, OnSaveInstrument)
 	ON_COMMAND(ID_INSTRUMENT_LOAD, OnLoadInstrument)
 	ON_COMMAND(ID_INSTRUMENT_EDIT, OnEditInstrument)
+	ON_COMMAND(ID_INSTRUMENT_LISTEN, OnInstrumentListen)
 	ON_COMMAND(ID_INSTRUMENT_ADD_2A03, OnAddInstrument2A03)
 	ON_COMMAND(ID_INSTRUMENT_ADD_VRC6, OnAddInstrumentVRC6)
 	ON_COMMAND(ID_INSTRUMENT_ADD_VRC7, OnAddInstrumentVRC7)
@@ -346,6 +350,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_CLONE, OnUpdateInstrumentClone)
 	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_DEEPCLONE, OnUpdateInstrumentDeepClone)
 	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_EDIT, OnUpdateInstrumentEdit)
+	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_LISTEN, OnUpdateInstrumentListen)
 	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_LOAD, OnUpdateInstrumentLoad)
 	ON_UPDATE_COMMAND_UI(ID_INSTRUMENT_SAVE, OnUpdateInstrumentSave)
 	ON_UPDATE_COMMAND_UI(ID_INDICATOR_INSTRUMENT, OnUpdateSBInstrument)
@@ -690,7 +695,7 @@ bool CMainFrame::CreateInstrumentToolbar()
 	// Setup the instrument toolbar
 	REBARBANDINFO rbi;
 
-	if (!m_wndInstToolBarWnd.CreateEx(0, NULL, _T(""), WS_CHILD | WS_VISIBLE, CRect(SX(288), SY(173), SX(472), SY(199)), (CWnd*)&m_wndDialogBar, 0))
+	if (!m_wndInstToolBarWnd.CreateEx(0, NULL, _T(""), WS_CHILD | WS_VISIBLE, CRect(SX(288), SY(173), SX(504), SY(199)), (CWnd*)&m_wndDialogBar, 0))
 		return false;
 
 	if (!m_wndInstToolReBar.Create(WS_CHILD | WS_VISIBLE, CRect(0, 0, 0, 0), &m_wndInstToolBarWnd, AFX_IDW_REBAR))
@@ -790,7 +795,7 @@ void CMainFrame::ResizeFrameWindow()
 	m_wndDialogBar.MoveWindow(DialogStartPos, 2, ParentRect.Width() - DialogStartPos, ParentRect.Height() - 4);
 	m_wndDialogBar.GetWindowRect(&ChildRect);
 	m_wndDialogBar.GetDlgItem(IDC_INSTRUMENTS)->MoveWindow(SX(288), SY(10), ChildRect.Width() - SX(296), SY(158));
-	m_wndDialogBar.GetDlgItem(IDC_INSTNAME)->MoveWindow(SX(478), SY(175), ChildRect.Width() - SX(486), SY(22));
+	m_wndDialogBar.GetDlgItem(IDC_INSTNAME)->MoveWindow(SX(510), SY(175), ChildRect.Width() - SX(518), SY(22));
 
 	m_pFrameEditor->RedrawWindow();
 }
@@ -1825,6 +1830,24 @@ void CMainFrame::OnEditRecordPhone()
 void CMainFrame::OnInstrumentLibrary()
 {
 	ShowSoundBrowser(this);
+}
+
+CSoundPreview *CMainFrame::GetSoundPreview()
+{
+	if (m_pSoundPreview == NULL)
+		m_pSoundPreview = new CSoundPreview();
+	return m_pSoundPreview;
+}
+
+void CMainFrame::OnInstrumentListen()
+{
+	// The play button under the instrument list: the instrument picked plays a short phrase of its kind
+	ListenToInstrument(this, GetSelectedInstrument());
+}
+
+void CMainFrame::OnUpdateInstrumentListen(CCmdUI *pCmdUI)
+{
+	pCmdUI->Enable(m_pInstrumentList->GetItemCount() > 0);
 }
 
 void CMainFrame::OnEditDrumGrid()
@@ -2867,6 +2890,8 @@ void CMainFrame::OnDestroy()
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->Stop();	// no more requests from Claude Code
 	ClosePhoneTakes();				// nor from the phone page (PhoneLink.h)
+	if (m_pSoundPreview != NULL)
+		m_pSoundPreview->Close();	// a sound playing stops
 
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	
