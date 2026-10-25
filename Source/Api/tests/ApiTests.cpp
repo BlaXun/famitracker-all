@@ -17322,6 +17322,18 @@ void TestWhatNextChoices()
 	CHECK_HAS(All, "\n2. set_key {\"key\":");
 	CHECK_HAS(All, "\n3. design_instrument {\"name\":\"Stage lead\"");
 	const std::string One = ReadWhatNext(Run(Song, "what_next", "{\"kind\": \"lively\"}").Text).Line;
+	// The lead's step names find_sound for another sound: that call runs as given too
+	{
+		const std::string Lead = Run(Song, "what_next", "{\"skip\": [\"tempo\", \"key\"]}").Text;
+		const size_t At = Lead.find("find_sound {");
+		CHECK(At != std::string::npos);
+		if (At != std::string::npos) {
+			const size_t End = Lead.find('}', At);
+			const ToolResult Found = Run(Song, "find_sound", Lead.substr(At + 11, End - At - 10));
+			CHECK(!Found.IsError);
+			CHECK_HAS(Found.Text, "lead");
+		}
+	}
 	CHECK_EQ(ReadWhatNext(All).Line.substr(ReadWhatNext(All).Line.find("): ")), One.substr(One.find("): ")));
 	// Asking changes nothing
 	const std::vector<std::vector<Cell> > Before = Song.Rows;
