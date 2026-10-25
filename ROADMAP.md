@@ -151,10 +151,19 @@ chosen key is saved with the track, and Claude Code's tools use it too. With
 Snap to key on, notes you draw or move land on the key's notes (hold Alt for
 any note). Point at a chord in the strip to see its notes lit.
 
+The Chords button (October 2026, on `feat-chord-helper`) spreads a chord
+across the channels that play nothing in its bars, a held note on each,
+voiced together under the melody and over the bass. Pick one of the key's
+chords, the ones the strip names there, or type a chord ("Am7", "C/E") or a
+chord a bar ("C G Am F"); it goes on the bar at the cursor or over a
+selection. Each voice gets a quiet sound for its chip (on the VRC6 Plus's
+soft layer a string pad of its own, since two N163 channels can't share
+one). When fewer channels are free than the chord has notes, it says so and
+offers fewer voices or the chord as an arpeggio on one channel; Again puts
+the same chord on the next bar. One Ctrl+Z takes it back.
+
 Still open from the plan:
 
-- A chord helper that spreads a chord across free channels (a chord as a
-  `0xy` arpeggio on one note is done).
 - Mood starters that lay down chords, bass and drums for moods like "cozy
   town" or "boss fight" (see "start from a groove" under the recorder).
 
@@ -457,6 +466,26 @@ rules and fixing tool output by hand.
   the two sides in one call) on branches of their own.
 - Next: a track composed at Extra High against one at Maximum (53
   Driftwood Rapids), then fewer tokens a song and better tracks.
+- Done (on `feat-stage-fixes`, 25 October): what three composers of 53
+  Driftwood Rapids found on a lively stage. `review_arrangement` hears
+  whether the melody breathes (a rest of a beat or a held note in its
+  two-bar spans; the version the user heard as "no clean melody" paused in
+  4 of 16, the two liked ones in 9 and 13); the lively and calm mixes put
+  the drums 10-12 dB under the melody and never raise them; `add_drums`
+  has a `lively` groove (soft hi-hats, a soft kick, no snare) and a light
+  intensity that keeps the hi-hats; voiced chords on the N163 give each
+  voice its own sound; broken chords on a pulse stay over C-2;
+  `read_notes` reads 64 bars and says which bars it read; `vary_part`
+  embellishes melodies of short notes. Then five more the user approved:
+  a change to minor keeps a dominant's ninth natural, `add_harmony` steps
+  off semitones against a pad, and `write_notes` keeps the volume of the
+  notes it replaces and the bars its notes leave empty; `vary_part`'s
+  ending fits the chord under it. And three the lead added: `add_harmony`'s
+  thirds and sixths are the key's own (a harmonic minor's too), over the
+  chords as FamiTracker plays them; `add_echo` and `check_song` agree on
+  which semitones rub (an echo F-4 over a pad's E-2 too); the breath check
+  counts the spans the melody plays in and a held note in the span it
+  starts in (a desert stage's draft paused in 3 of 16, its rewrite in 15).
 - On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
   knowledge work, the one-time work every later song reuses (what makes a
   track good, turned into the tools, the recipes and the guide), rather
