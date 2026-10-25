@@ -44,12 +44,13 @@ step
 show: mixer
 text: View > Mixer gives every channel a strip: a fader for its level, M and S to mute it or hear it alone, and two knobs, Soft and Space. Soft rounds a channel's sound off; Space sends it into a room, a hall in this song (the bar at the top chooses it), where it rings on after the notes.
 
-  The tune has Space 35, the music box 50 and the strings 20; the bass has none.
+  The tune's strip (Pulse 1, with VRC6 Plus under it) has Space 35, the music box's (Pulse 1, 2A03) 50 and the strings' 20; the bass has none.
 
 step
 show: mixer
 play: bars 5-8
-text: Hear what Space does: double-click the Space knob on the tune's strip (VRC6 Pulse 1) to turn it off, then press Play. The tune sounds dry and close now. Ctrl+Z puts the knob back. (Dragging a knob up or down turns it.)
+solo: VRC6 Pulse 1
+text: Hear what Space does, on the tune alone: press Play and listen to each note ring on after it ends. Then double-click the Space knob on the tune's strip to turn it off and press Play again: now each note stops dry. Ctrl+Z puts the knob back. (Dragging a knob up or down turns it.)
 
 step
 show: channel Triangle

@@ -22,7 +22,7 @@ play: bars 3-4
 solo: VRC6 Pulse 1, VRC6 Pulse 2
 text: The VRC6's two pulses (its Pulse 1 and Pulse 2) play a duet in bars 1 to 8: the tune and a second voice under it.
 
-  Their wave comes in eight widths instead of the 2A03's four. The tune's instrument 00 is a little short of round (37.5%), the second voice's instrument 01 is thin (12.5%): that's why the two sound different.
+  Their wave comes in eight widths instead of the 2A03's four. The tune's instrument 00 is a little short of round (37.5%); the second voice's instrument 01 is narrower and brighter (18.75%), a width the 2A03's pulses can't play.
 
 step
 show: channel Sawtooth

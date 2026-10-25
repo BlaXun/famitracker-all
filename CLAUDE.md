@@ -541,6 +541,12 @@ add the RCDATA lines, IDs, a menu item with its prompt, a row of `EXAMPLES`
 and the name to `TestExamples` in `Source/Tests/TutorialScriptTests.cpp`,
 which reads every walkthrough and checks each bar and channel it names
 against its song (a module of at most 24 KB, 8-24 bars, comments shown).
+It also checks that the bars a step plays sound as in the whole song
+(`CarriedIn`): FamiTracker starts each channel afresh where it starts
+playing, so every channel's first note there names its instrument and
+volume and sets again the lasting effects set before it (`Vxx` unless its
+instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
+`Axy`); the tools leave them out where nothing changes, so put them in.
 
 ## What this repository is
 

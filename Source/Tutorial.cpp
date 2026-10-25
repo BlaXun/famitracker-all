@@ -136,14 +136,19 @@ std::vector<tutorial_channel_t> SongChannels(const CFamiTrackerDoc *pDoc)
 	return List;
 }
 
-// "Pulse 1", "Pulse 1 and Triangle", "Pulse 1, Pulse 2 and Triangle"
+// "Pulse 1", "Pulse 1 and Triangle", "Soft 1, 2 and 3" (a name like the one
+// before it but for its last word gives that word)
 CString ChannelList(const std::vector<std::string> &Names)
 {
 	CString Text;
 	for (size_t i = 0; i < Names.size(); ++i) {
 		if (i > 0)
 			Text += i + 1 == Names.size() ? _T(" and ") : _T(", ");
-		Text += Names[i].c_str();
+		const size_t Space = Names[i].rfind(' ');
+		const bool Like = i > 0 && Space != std::string::npos && Space + 1 < Names[i].size() &&
+			Names[i - 1].size() > Space && Names[i - 1].compare(0, Space + 1, Names[i], 0, Space + 1) == 0 &&
+			Names[i - 1].find(' ', Space + 1) == std::string::npos;
+		Text += (Like ? Names[i].substr(Space + 1) : Names[i]).c_str();
 	}
 	return Text;
 }
@@ -979,7 +984,7 @@ void CTutorialBubble::OnPaint()
 		Memory.SelectObject(&m_SmallFont);
 		Memory.SetTextColor(TEXT_DIM);
 		CRect Note(SX(MARGIN), y, SX(MARGIN) + Width, y + Memory.GetTextExtent(_T("Ag")).cy);
-		Memory.DrawText(Step().Wait == WAIT_HEARD ? _T("Press Play, and it goes on once they've played; or press Skip.") :
+		Memory.DrawText(Step().Wait == WAIT_HEARD ? _T("Press Play; it goes on by itself once they've played.") :
 			_T("Do it and the tutorial goes on by itself, or press Skip."), &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 	}
 

@@ -961,6 +961,13 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	ASSERT(m_pDocument != NULL);
 	ASSERT(m_pTrackerView != NULL);
 
+	// Some bars only (SetNextPlayRange): this start takes them, whether it plays or not
+	m_iRangeFirst = m_iNextRangeFirst;
+	m_iRangeEnd = m_iNextRangeEnd;
+	m_iNextRangeEnd = -1;
+	m_iRangeLast = -1;
+	m_bPlayRangeEnded = false;
+
 	if (!m_pDocument || !m_pDSoundChannel || !m_pDocument->IsFileLoaded())
 		return;
 
@@ -1001,13 +1008,6 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	m_iPlayMode			= Mode;
 	m_bDirty			= true;
 	m_iPlayTrack		= Track;
-
-	// Some bars only (SetNextPlayRange), this start alone
-	m_iRangeFirst = m_iNextRangeFirst;
-	m_iRangeEnd = m_iNextRangeEnd;
-	m_iNextRangeEnd = -1;
-	m_iRangeLast = -1;
-	m_bPlayRangeEnded = false;
 
 	memset(m_bFramePlayed, false, sizeof(bool) * MAX_FRAMES);
 

@@ -320,13 +320,25 @@ void TestChannels()
 }
 
 // What the walkthrough needs to know of an example song: its bars (counted as
-// the piano roll's ruler counts them) and channels, read from the .ftm
+// the piano roll's ruler counts them), channels and notes, read from the .ftm
+struct cell_t {
+	int Note, Instrument, Volume;	// 0 / 0x40 / 0x10 for none; notes 1-12, 13 release, 14 halt
+	int Effect[4], Param[4];
+	cell_t() : Note(0), Instrument(0x40), Volume(0x10) { for (int i = 0; i < 4; ++i) Effect[i] = Param[i] = 0; }
+};
+
 struct song_facts_t {
-	int Bars;
+	int Bars, Length, BarRows, Frames;
 	std::vector<tutorial_channel_t> Channels;
 	bool Comments;			// shown when it's opened
 	std::string Title;
-	song_facts_t() : Bars(0), Comments(false) {}
+	std::vector<std::vector<cell_t> > Rows;	// each channel's song rows (track 1)
+	std::vector<bool> Duty;	// each instrument: plays a duty sequence of its own (2A03, VRC6)
+	song_facts_t() : Bars(0), Length(0), BarRows(16), Frames(0), Comments(false), Duty(64, false) {}
+	int BarStart(int Bar) const {
+		const int PerFrame = (Length + BarRows - 1) / BarRows;
+		return (Bar - 1) / PerFrame * Length + (Bar - 1) % PerFrame * BarRows;
+	}
 };
 
 int ReadInt(const std::string &Data, size_t At)
@@ -337,12 +349,54 @@ int ReadInt(const std::string &Data, size_t At)
 		(static_cast<unsigned char>(Data[At + 2]) << 16) | (static_cast<unsigned int>(static_cast<unsigned char>(Data[At + 3])) << 24));
 }
 
+// The instruments block: which instruments play a duty sequence of their own
+// (index 4 of a 2A03 or VRC6 instrument's sequences); false for a layout it
+// doesn't know
+bool ReadInstruments(const std::string &Body, song_facts_t &Facts)
+{
+	const int Count = ReadInt(Body, 0);
+	size_t At = 4;
+	for (int i = 0; i < Count; ++i) {
+		const int Index = ReadInt(Body, At);
+		if (Index < 0 || Index >= 64 || At + 9 > Body.size())
+			return false;
+		const int Type = static_cast<unsigned char>(Body[At + 4]);
+		At += 5;
+		if (Type == 1 || Type == 2 || Type == 5 || Type == 6) {
+			const int Sequences = ReadInt(Body, At);
+			if (Sequences < 0 || Sequences > 5 || At + 4 + 2 * Sequences > Body.size())
+				return false;
+			if ((Type == 1 || Type == 2) && Sequences > 4)
+				Facts.Duty[static_cast<size_t>(Index)] = Body[At + 4 + 2 * 4] != 0;
+			At += 4 + 2 * static_cast<size_t>(Sequences);
+			if (Type == 1)
+				At += 8 * 12 * 3;	// the DPCM samples of each key
+			else if (Type == 5) {
+				const int Size = ReadInt(Body, At), Waves = ReadInt(Body, At + 8);
+				if (Size < 0 || Waves < 0 || Size * Waves > 4096)
+					return false;
+				At += 12 + static_cast<size_t>(Size * Waves);
+			}
+		}
+		else if (Type == 3)
+			At += 4 + 8;			// the VRC7's patch and registers
+		else
+			return false;			// the FDS's
+		const int Name = ReadInt(Body, At);
+		if (Name < 0 || Name > 256 || At + 4 + static_cast<size_t>(Name) > Body.size())
+			return false;
+		At += 4 + static_cast<size_t>(Name);
+	}
+	return true;
+}
+
 bool ReadSong(const std::string &Data, song_facts_t &Facts)
 {
 	if (Data.size() < 25 || Data.compare(0, 18, "FamiTracker Module") != 0 || Data.compare(Data.size() - 3, 3, "END") != 0)
 		return false;
-	int Chips = -1, Namco = 0, Second = 0, Frames = 0, Length = 0;
+	int Chips = -1, Namco = 0, Second = 0, Available = 0;
 	bool Plus = false;
+	std::string Header, Frames, Patterns;
 	for (size_t At = 22; At + 24 <= Data.size() - 3; ) {
 		const std::string Id = Data.substr(At, 16).c_str();
 		const int Size = ReadInt(Data, At + 20);
@@ -351,27 +405,151 @@ bool ReadSong(const std::string &Data, song_facts_t &Facts)
 		const std::string Body = Data.substr(At + 24, static_cast<size_t>(Size));
 		if (Id == "PARAMS" && Body.size() >= 25) {
 			Chips = static_cast<unsigned char>(Body[0]);
+			Available = ReadInt(Body, 1);
 			Second = ReadInt(Body, 21);
 			Namco = (Chips & 16) != 0 ? ReadInt(Body, 25) : 0;
 		}
 		else if (Id == "INFO" && Body.size() >= 32)
 			Facts.Title = Body.substr(0, 32).c_str();
+		else if (Id == "HEADER")
+			Header = Body;
+		else if (Id == "INSTRUMENTS" && !ReadInstruments(Body, Facts))
+			return false;
 		else if (Id == "FRAMES" && Body.size() >= 16) {
-			Frames = ReadInt(Body, 0);
-			Length = ReadInt(Body, 12);
+			Facts.Frames = ReadInt(Body, 0);
+			Facts.Length = ReadInt(Body, 12);
+			Frames = Body;
 		}
+		else if (Id == "PATTERNS")
+			Patterns = Body;
 		else if (Id == "COMMENTS" && Body.size() >= 5)
 			Facts.Comments = ReadInt(Body, 0) == 1 && Body[4] != 0;
 		else if (Id == "BF VRC6PLUS")
 			Plus = true;
 		At += 24 + static_cast<size_t>(Size);
 	}
-	if (Chips < 0 || Frames < 1 || Length < 1)
+	if (Chips < 0 || Facts.Frames < 1 || Facts.Length < 1 || Facts.Length > 256 || Available < 5 || Available > 28 || Header.empty())
 		return false;
-	const int BarRows = Second > 0 && Second <= Length ? Second : 16;
-	Facts.Bars = Frames * ((Length + BarRows - 1) / BarRows);
+	Facts.BarRows = Second > 0 && Second <= Facts.Length ? Second : 16;
+	Facts.Bars = Facts.Frames * ((Facts.Length + Facts.BarRows - 1) / Facts.BarRows);
 	Facts.Channels = SongChannels(Chips, Namco, Plus && (Chips & 17) == 17 && Namco == 4);
+
+	// The effect columns each channel shows in track 1 (after the tracks' names)
+	const int Tracks = static_cast<unsigned char>(Header[0]) + 1;
+	size_t At = 1;
+	for (int t = 0; t < Tracks; ++t) {
+		At = Header.find('\0', At);
+		if (At == std::string::npos)
+			return false;
+		++At;
+	}
+	std::vector<int> Columns;
+	for (int c = 0; c < Available; ++c, At += 1 + static_cast<size_t>(Tracks)) {
+		if (At + 1 >= Header.size())
+			return false;
+		Columns.push_back(static_cast<unsigned char>(Header[At + 1]) + 1);
+	}
+	if (Frames.size() < 16 + static_cast<size_t>(Facts.Frames * Available))
+		return false;
+
+	// Track 1's patterns, then its song rows frame by frame
+	std::vector<std::vector<std::vector<cell_t> > > Pattern(static_cast<size_t>(Available),
+		std::vector<std::vector<cell_t> >(128, std::vector<cell_t>(static_cast<size_t>(Facts.Length))));
+	for (size_t p = 0; p + 16 <= Patterns.size(); ) {
+		const int Track = ReadInt(Patterns, p), Channel = ReadInt(Patterns, p + 4), Index = ReadInt(Patterns, p + 8);
+		const int Items = ReadInt(Patterns, p + 12);
+		if (Channel < 0 || Channel >= Available || Index < 0 || Index >= 128 || Items < 0)
+			return false;
+		p += 16;
+		const size_t ItemSize = 8 + 2 * static_cast<size_t>(Columns[static_cast<size_t>(Channel)]);
+		for (int i = 0; i < Items; ++i, p += ItemSize) {
+			if (p + ItemSize > Patterns.size())
+				return false;
+			const int Row = ReadInt(Patterns, p);
+			if (Track != 0 || Row < 0 || Row >= Facts.Length)
+				continue;
+			cell_t &Cell = Pattern[static_cast<size_t>(Channel)][static_cast<size_t>(Index)][static_cast<size_t>(Row)];
+			Cell.Note = static_cast<unsigned char>(Patterns[p + 4]);
+			Cell.Instrument = static_cast<unsigned char>(Patterns[p + 6]);
+			Cell.Volume = static_cast<unsigned char>(Patterns[p + 7]);
+			for (int e = 0; e < Columns[static_cast<size_t>(Channel)] && e < 4; ++e) {
+				Cell.Effect[e] = static_cast<unsigned char>(Patterns[p + 8 + 2 * static_cast<size_t>(e)]);
+				Cell.Param[e] = static_cast<unsigned char>(Patterns[p + 9 + 2 * static_cast<size_t>(e)]);
+			}
+		}
+	}
+	Facts.Rows.assign(static_cast<size_t>(Available), std::vector<cell_t>());
+	for (int f = 0; f < Facts.Frames; ++f)
+		for (int c = 0; c < Available; ++c) {
+			const int Index = static_cast<unsigned char>(Frames[16 + static_cast<size_t>(f * Available + c)]);
+			if (Index >= 128)
+				return false;
+			const std::vector<cell_t> &Rows = Pattern[static_cast<size_t>(c)][static_cast<size_t>(Index)];
+			Facts.Rows[static_cast<size_t>(c)].insert(Facts.Rows[static_cast<size_t>(c)].end(), Rows.begin(), Rows.end());
+		}
 	return true;
+}
+
+// What playing from song row Start leaves out that the rows before it set:
+// each channel's first note there names its instrument and volume, and sets
+// again the lasting effects it would play with (the duty, unless its
+// instrument has a duty sequence; the pan, the arpeggio, portamento, vibrato,
+// tremolo, detune and volume slide). Empty when nothing is left out.
+std::string CarriedIn(const song_facts_t &Song, int Start)
+{
+	// EF_DUTY_CYCLE, EF_PAN, EF_ARPEGGIO, EF_PORTAMENTO, EF_VIBRATO, EF_TREMOLO, EF_PITCH, EF_VOLUME_SLIDE, and
+	// the parameter that's none of them
+	const int LASTING[] = { 18, 33, 10, 6, 11, 12, 13, 22 };
+	const int OFF[] = { -1, 0x80, 0, 0, 0, 0, 0x80, 0 };
+	std::string Problems;
+	for (size_t c = 0; c < Song.Rows.size(); ++c) {
+		const std::vector<cell_t> &Rows = Song.Rows[c];
+		int Instrument = -1, Volume = -1, Lasting[8];
+		for (int k = 0; k < 8; ++k)
+			Lasting[k] = -1;
+		for (int r = 0; r < Start && r < static_cast<int>(Rows.size()); ++r) {
+			const cell_t &Cell = Rows[static_cast<size_t>(r)];
+			if (Cell.Instrument < 0x40)
+				Instrument = Cell.Instrument;
+			if (Cell.Volume < 0x10)
+				Volume = Cell.Volume;
+			for (int e = 0; e < 4; ++e)
+				for (int k = 0; k < 8; ++k)
+					if (Cell.Effect[e] == LASTING[k])
+						Lasting[k] = Cell.Param[e];
+		}
+		bool Played[8] = { false, false, false, false, false, false, false, false };
+		for (int r = Start; r < static_cast<int>(Rows.size()); ++r) {
+			const cell_t &Cell = Rows[static_cast<size_t>(r)];
+			for (int e = 0; e < 4; ++e)
+				for (int k = 0; k < 8; ++k)
+					if (Cell.Effect[e] == LASTING[k])
+						Played[k] = true;
+			if (Cell.Note < 1 || Cell.Note > 12)
+				continue;
+			char Text[160];
+			if (Instrument >= 0 && Cell.Instrument >= 0x40) {
+				std::snprintf(Text, sizeof(Text), " channel %d: no instrument (row %d);", static_cast<int>(c + 1), r);
+				Problems += Text;
+			}
+			if (Volume >= 0 && Volume != 15 && Cell.Volume >= 0x10) {
+				std::snprintf(Text, sizeof(Text), " channel %d: no volume (row %d);", static_cast<int>(c + 1), r);
+				Problems += Text;
+			}
+			const int Plays = Cell.Instrument < 0x40 ? Cell.Instrument : Instrument;
+			for (int k = 0; k < 8; ++k) {
+				if (Lasting[k] < 0 || Lasting[k] == OFF[k] || Played[k])
+					continue;
+				if (LASTING[k] == 18 && Plays >= 0 && Song.Duty[static_cast<size_t>(Plays)])
+					continue;
+				std::snprintf(Text, sizeof(Text), " channel %d: effect %d %02X from before (row %d);", static_cast<int>(c + 1),
+					LASTING[k], Lasting[k], r);
+				Problems += Text;
+			}
+			break;
+		}
+	}
+	return Problems;
 }
 
 std::string ReadFile(const std::string &Path)
@@ -384,7 +562,9 @@ std::string ReadFile(const std::string &Path)
 
 // The example songs that go into FamiTracker.exe (Tutorial.cpp's EXAMPLES):
 // each walkthrough read, about 6 to 12 steps, plain ASCII, and every bar and
-// channel it names in its song, a small module that shows its comments
+// channel it names in its song, a small module that shows its comments; the
+// bars a step plays sound as they do in the whole song (FamiTracker starts
+// each channel afresh where it starts playing)
 void TestExamples()
 {
 	const char *const Names[] = { "first-song", "nes-tricks", "vrc6", "soft-and-wide" };
@@ -432,6 +612,13 @@ void TestExamples()
 					std::printf("  %s step %d: the song has no channel \"%s\"\n", Names[i], static_cast<int>(s + 1), Named[n].c_str());
 			}
 			Plays = Plays || Step.PlayFirst > 0;
+			// The bars play as they do in the whole song
+			if (Step.PlayFirst > 0) {
+				const std::string Left = CarriedIn(Facts, Facts.BarStart(Step.PlayFirst));
+				CHECK(Left.empty());
+				if (!Left.empty())
+					std::printf("  %s step %d, from bar %d:%s\n", Names[i], static_cast<int>(s + 1), Step.PlayFirst, Left.c_str());
+			}
 		}
 		CHECK(Plays);	// a walkthrough lets the user hear the song
 	}
@@ -439,6 +626,33 @@ void TestExamples()
 	const std::string Song = ReadFile(std::string(EXAMPLES_DIR) + "/first-song.ftm");
 	song_facts_t Facts;
 	CHECK(!Song.empty() && !ReadSong(Song.substr(0, Song.size() / 2), Facts));
+	// and the check of what playing from a bar leaves out: a volume, a duty and a pan set before it
+	song_facts_t Made;
+	Made.Length = 32;
+	Made.Rows.assign(2, std::vector<cell_t>(64));
+	Made.Rows[0][0].Note = 1;
+	Made.Rows[0][0].Instrument = 0;
+	Made.Rows[0][0].Volume = 9;
+	Made.Rows[0][0].Effect[0] = 18;
+	Made.Rows[0][0].Param[0] = 2;
+	Made.Rows[0][20].Note = 3;
+	Made.Rows[0][20].Instrument = 0;
+	Made.Rows[1][4].Note = 5;
+	Made.Rows[1][4].Instrument = 1;
+	Made.Rows[1][4].Effect[0] = 33;
+	Made.Rows[1][4].Param[0] = 0xC0;
+	Made.Rows[1][40].Note = 5;
+	Made.Rows[1][40].Instrument = 1;
+	CHECK(CarriedIn(Made, 0).empty());
+	const std::string Left = CarriedIn(Made, 16);
+	CHECK(Left.find("channel 1: no volume") != std::string::npos && Left.find("channel 1: effect 18 02") != std::string::npos);
+	CHECK(Left.find("channel 2: effect 33 C0") != std::string::npos);
+	Made.Duty[0] = true;	// an instrument's own duty sequence takes over from V
+	CHECK(CarriedIn(Made, 16).find("effect 18") == std::string::npos);
+	Made.Rows[0][20].Volume = 9;
+	Made.Rows[1][36].Effect[1] = 33;
+	Made.Rows[1][36].Param[1] = 0xC0;	// set again before the note
+	CHECK(CarriedIn(Made, 16).empty());
 }
 
 }	// namespace
