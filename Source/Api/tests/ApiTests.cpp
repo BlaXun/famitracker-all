@@ -67,6 +67,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16572,6 +16573,96 @@ void TestSoftReferenceTool()
 }
 // end of soft-references tests
 
+// what_next's answer: the call its first line gives ("Next (lively, 3 of 19 done): tool {json}"), the step's kind
+struct WhatNextAnswer {
+	std::string Tool;		// empty when it asks the user
+	Json Arguments;
+	bool Done;				// it says the song is done (and gives play)
+	bool AskUser;
+	std::string Line;		// its first line
+};
+
+WhatNextAnswer ReadWhatNext(const std::string &Text)
+{
+	WhatNextAnswer Out;
+	Out.Done = Out.AskUser = false;
+	Out.Arguments = Json::MakeObject();
+	Out.Line = Text.substr(0, Text.find('\n'));
+	const size_t Colon = Out.Line.find("): ");
+	if (Out.Line.compare(0, 6, "Next (") != 0 || Colon == std::string::npos)
+		return Out;
+	Out.Done = Out.Line.find(", done): ") != std::string::npos;
+	const std::string Call = Out.Line.substr(Colon + 3);
+	if (Call == "ask the user") {
+		Out.AskUser = true;
+		return Out;
+	}
+	const size_t Space = Call.find(' ');
+	Out.Tool = Call.substr(0, Space);
+	if (Space != std::string::npos)
+		ParseJson(Call.substr(Space + 1), Out.Arguments);
+	return Out;
+}
+
+// A small model following what_next on a song: ask, make the call it gives as given, ask again, until it's done (or asks
+// for the user). Every answer must be a call that works, and every answer must move on from the one before. The calls
+// made, a line each
+std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked, int Most, bool &Finished, int Line)
+{
+	ToolSet Tools(Song);
+	std::vector<std::string> Made;
+	std::set<std::string> Seen;
+	const bool Show = std::getenv("WHAT_NEXT_SHOW") != 0;
+	Finished = false;
+	for (int i = 0; i < Most; ++i) {
+		const ToolResult Next = Tools.Call("what_next", Parse(Asked));
+		Check(!Next.IsError, ("what_next answers: " + Next.Text).c_str(), Line);
+		if (Next.IsError)
+			break;
+		const WhatNextAnswer N = ReadWhatNext(Next.Text);
+		if (Show)
+			std::printf("--- %s\n", Next.Text.c_str());
+		if (N.Done) {
+			Finished = true;
+			break;
+		}
+		if (N.AskUser || N.Tool.empty())
+			break;
+		const std::string Call = N.Tool + " " + WriteJson(N.Arguments);
+		const bool New = Seen.insert(Call).second;
+		Check(New, ("moves on from " + Call).c_str(), Line);
+		if (!New)
+			break;
+		const ToolResult Did = Tools.Call(N.Tool, N.Arguments);
+		if (Show)
+			std::printf("=== %s\n", Did.Text.substr(0, 400).c_str());
+		Check(!Did.IsError, ("the call works: " + Call + " -> " + Did.Text).c_str(), Line);
+		Made.push_back(Call);
+		if (Did.IsError)
+			break;
+	}
+	return Made;
+}
+
+// what_next on a new song of each kind, followed to the end; and the steps along the way
+void TestWhatNext()
+{
+	const char *const KINDS[] = { "{\"kind\": \"lively\"}", "{\"kind\": \"calm\"}", "{\"kind\": \"action\"}", "{}" };
+	for (const char *Kind : KINDS) {
+		FakeSong Song(1);
+		Song.Info.DirectChanges = true;
+		Song.Info.Tempo = 120;	// the template's: rows of 7 and 8 frames
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, Kind, 80, Finished, __LINE__);
+		CHECK(Finished);
+		if (std::getenv("WHAT_NEXT_SHOW") != 0) {
+			std::printf("### %s\n", Kind);
+			for (size_t i = 0; i < Made.size(); ++i)
+				std::printf("%d. %s\n", static_cast<int>(i) + 1, Made[i].c_str());
+		}
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -16720,6 +16811,7 @@ int main()
 	TestPhoneRoute();
 	TestSoftReferenceWaves();
 	TestSoftReferenceTool();
+	TestWhatNext();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
