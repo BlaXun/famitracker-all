@@ -262,6 +262,96 @@ std::vector<FdsSound> MakeSounds()
 	return Out;
 }
 
+// FamiTracker's own sound library for the FDS (SoundLibrary.h): a character each, by kind
+
+FdsSound Kinded(FdsSound S, const char *Kind)
+{
+	S.Kind = Kind;
+	S.Low = S.Low || std::string(Kind) == "bass";
+	return S;
+}
+
+// A pitch sequence played once: on the FDS a step raises the pitch (1.7 cents at A-5)
+PresetSequence PitchOnce(const std::vector<int> &Items)
+{
+	return Sequence(SEQUENCE_PITCH, Items);
+}
+
+std::vector<FdsSound> MakeLibrarySounds()
+{
+	std::vector<FdsSound> Out;
+	typedef std::vector<PresetSequence> Seqs;
+	// Leads
+	Out.push_back(Kinded(Sound("square horn", "", "a hollow, square-toned horn in odd harmonics, a vibrato after a third of a second",
+		HarmonicWave({ 1.0, 0.0, 1.0 / 3, 0.0, 1.0 / 5, 0.0, 1.0 / 7, 0.0, 1.0 / 9 }, { 0.0, 0.0, 0.31, 0.0, 0.73, 0.0, 0.12, 0.0, 0.55 }),
+		Seqs{ Volume(4, 11, 28, 0, 27, 8), Vibrato(20, 8, 10) }), "lead"));
+	Out.push_back(Kinded(Sound("bright saw", "", "a bright sawtooth lead with a vibrato that waits half a second",
+		HarmonicWave(SawHarmonics(14, 0.0), { 0.0, 0.375, 0.099, 0.319, 0.987, 0.487, 0.714, 0.739, 0.779, 0.606, 0.194, 0.126, 0.103, 0.583 }),
+		Seqs{ Volume(2, 12, 28, 6, 24, 6), Vibrato(30, 10, 10) }), "lead"));
+	Out.push_back(Kinded(Sound("singing voice", "", "a voice singing a bright vowel, with a vibrato after 18 frames",
+		HarmonicWave({ 0.6, 0.5, 1.0, 0.8, 0.3, 0.15, 0.1 }, { 0.0, 0.823, 0.676, 0.032, 0.677, 0.217, 0.482 }),
+		Seqs{ Volume(6, 10, 27, 0, 26, 12), Vibrato(18, 10, 11) }), "lead"));
+	Out.push_back(Kinded(Sound("muted trumpet", "", "a muted trumpet that scoops up into each note from a whole step below",
+		HarmonicWave({ 1.0, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12 }, { 0.0, 0.385, 0.159, 0.23, 0.97, 0.71, 0.49 }),
+		Seqs{ Volume(5, 8, 28, 6, 25, 6), Strike({ -2, -1 }) }), "lead"));
+	Out.push_back(Kinded(Sound("bloom wave", "", "a round lead that blooms in, settles and holds, a vibrato after 24 frames",
+		HarmonicWave({ 1.0, 0.4, 0.2, 0.1 }), Seqs{ Volume(2, 20, 30, 8, 22, 8), Vibrato(24, 8, 10) }), "lead"));
+	Out.push_back(Kinded(Sound("pulse wave lead", "", "the FDS playing a 25% pulse, a vibrato after 24 frames", FdsPulseWave(16),
+		Seqs{ Volume(1, 12, 28, 6, 24, 6), Vibrato(24, 8, 10) }), "lead"));
+
+	// Basses
+	Out.push_back(Kinded(Sound("brass bass", "", "a brassy, bright bass", HarmonicWave(SawHarmonics(10, 4.0), { 0.0, 0.385, 0.159, 0.23,
+		0.97, 0.71, 0.49, 0.47, 0.301, 0.359 }), Seqs{ Volume(2, 12, 30, 6, 26, 3) }), "bass"));
+	Out.push_back(Kinded(Sound("hollow low", "", "a hollow, square-toned bass", HarmonicWave({ 1.0, 0.0, 0.33, 0.0, 0.2 }, { 0.0, 0.0, 0.31,
+		0.0, 0.73 }), Seqs{ Volume(2, 12, 30, 4, 28, 3) }), "bass"));
+	Out.push_back(Kinded(Sound("plucked low", "", "a plucked bass that falls to a soft hold", HarmonicWave({ 1.0, 0.5, 0.25, 0.12 },
+		{ 0.0, 0.384, 0.129, 0.6 }), Seqs{ Volume(2, 12, 30, 20, 8, 4) }), "bass"));
+	Out.push_back(Kinded(Sound("deep sine", "", "a pure sine bass, felt more than heard", HarmonicWave({ 1.0 }), Seqs{ Volume(3, 12, 30, 0,
+		30, 4) }), "bass"));
+
+	// Pads
+	Out.push_back(Kinded(Sound("velvet strings", "", "soft strings that rise slowly with a slow vibrato", HarmonicWave(SawHarmonics(12, 3.0),
+		{ 0.0, 0.375, 0.099, 0.319, 0.987, 0.487, 0.714, 0.739, 0.779, 0.606, 0.194, 0.126 }), Seqs{ Volume(24, 8, 26, 0, 26, 20),
+		Vibrato(26, 6, 13) }), "pad"));
+	Out.push_back(Kinded(Sound("glass wave pad", "", "a glassy pad of bell-like overtones that swells in", HarmonicWave({ 1.0, 0.0, 0.0, 0.4,
+		0.0, 0.0, 0.25 }), Seqs{ Volume(20, 8, 26, 0, 26, 20) }), "pad"));
+	Out.push_back(Kinded(Sound("tide wave", "", "a pad that rises and falls slowly while it holds, like breathing", HarmonicWave({ 1.0, 0.3,
+		0.15 }), Seqs{ BreathingVolume(20, 8, 26, 18, 90, 20) }), "pad"));
+	Out.push_back(Kinded(Sound("hollow organ pad", "", "a hollow pad in odd harmonics, a faint vibrato late in it", HarmonicWave({ 1.0, 0.0,
+		0.4, 0.0, 0.2 }, { 0.0, 0.0, 0.31, 0.0, 0.73 }), Seqs{ Volume(16, 8, 26, 0, 26, 16), Vibrato(30, 4, 14) }), "pad"));
+
+	// Plucks
+	Out.push_back(Kinded(Sound("wave harp", "", "a round harp string that rings out slowly", HarmonicWave({ 1.0, 0.4, 0.2, 0.1 }),
+		Seqs{ Volume(1, 14, 30, 40, 1, 8) }), "pluck"));
+	Out.push_back(Kinded(Sound("wave koto", "", "a bright plucked string that bends up into its note", HarmonicWave({ 1.0, 0.6, 0.5, 0.3, 0.25,
+		0.1 }), Seqs{ Volume(1, 14, 30, 26, 1, 6), Strike({ -1 }) }), "pluck"));
+	Out.push_back(Kinded(Sound("wood mallet", "", "a short, hollow mallet knock", HarmonicWave({ 1.0, 0.0, 0.0, 0.5 }), Seqs{ Volume(1, 14, 30,
+		14, 1, 4) }), "pluck"));
+
+	// Bells
+	Out.push_back(Kinded(Sound("deep bell", "", "a deep bell struck an octave up that rings long", HarmonicWave({ 1.0, 0.0, 0.6, 0.0, 0.35,
+		0.0, 0.2 }), Seqs{ Volume(1, 14, 30, 90, 1, 14), Strike({ 12 }) }), "bell"));
+	Out.push_back(Kinded(Sound("wind chime", "", "a high, clear chime struck two octaves up", HarmonicWave({ 0.4, 0.0, 0.0, 1.0, 0.0, 0.0,
+		0.6 }), Seqs{ Volume(1, 14, 28, 40, 1, 8), Strike({ 24 }) }), "bell"));
+	Out.push_back(Kinded(Sound("toy bell", "", "a little toy bell: tinny and short", HarmonicWave({ 0.3, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5 }),
+		Seqs{ Volume(1, 14, 26, 16, 1, 4), Strike({ 12 }) }), "bell"));
+
+	// Keys
+	Out.push_back(Kinded(Sound("tine piano", "", "an electric piano: a tine struck an octave up that mellows to a soft hold",
+		HarmonicWave({ 1.0, 0.25, 0.1 }), Seqs{ Volume(1, 14, 28, 40, 8, 8), Strike({ 12 }) }), "keys"));
+	Out.push_back(Kinded(Sound("wave clav", "", "a bright, short clavinet stab", HarmonicWave({ 0.5, 1.0, 0.7, 0.5, 0.4, 0.3 }, { 0.0, 0.385,
+		0.159, 0.23, 0.97, 0.71 }), Seqs{ Volume(1, 14, 28, 8, 10, 2) }), "keys"));
+
+	// Effects
+	Out.push_back(Kinded(Sound("wave zap", "", "a zap falling an octave in a fifth of a second", HarmonicWave(SawHarmonics(8, 0.0)),
+		Seqs{ Volume(1, 14, 30, 16, 1, 3), PitchOnce({ 0, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60 }) }), "effect"));
+	Out.push_back(Kinded(Modulated(Sound("flying saucer", "", "a flying saucer: a pure tone wobbling widely three times a second",
+		HarmonicWave({ 1.0 }), Seqs{ Volume(4, 11, 26, 0, 26, 10) }), "11111111777777771111111177777777", 8, 20, 0), "effect"));
+	Out.push_back(Kinded(Sound("wave siren", "", "a siren whose pitch swings slowly up and down", HarmonicWave({ 1.0, 0.3, 0.1 }),
+		Seqs{ Volume(2, 12, 26, 0, 26, 6), Vibrato(0, 120, 40) }), "effect"));
+	return Out;
+}
+
 std::string Simple(const std::string &Text)
 {
 	std::string Out;
@@ -404,6 +494,12 @@ const std::vector<FdsSound> &FdsSounds()
 	return SOUNDS;
 }
 
+const std::vector<FdsSound> &LibraryFdsSounds()
+{
+	static const std::vector<FdsSound> SOUNDS = MakeLibrarySounds();
+	return SOUNDS;
+}
+
 const FdsSound *FindFdsSound(const std::string &Name)
 {
 	const std::string Wanted = Simple(Name);
@@ -423,6 +519,11 @@ const FdsSound *FindFdsSound(const std::string &Name)
 			Start = End + 1;
 		}
 	}
+	// The library's, by name
+	const std::vector<FdsSound> &Library = LibraryFdsSounds();
+	for (size_t i = 0; i < Library.size(); ++i)
+		if (Simple(Library[i].Name) == Wanted)
+			return &Library[i];
 	return 0;
 }
 

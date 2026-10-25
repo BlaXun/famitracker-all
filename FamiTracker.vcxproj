@@ -562,6 +562,8 @@
     <ClCompile Include="Source\Api\StepNotes.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
     <ClCompile Include="Source\Api\SoundIndex.cpp" />
+    <ClCompile Include="Source\Api\SoundLibrary.cpp" />
+    <ClCompile Include="Source\Api\GameSounds.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
@@ -597,6 +599,9 @@
     <ClInclude Include="Source\Api\StepNotes.h" />
     <ClInclude Include="Source\Api\Presets.h" />
     <ClInclude Include="Source\Api\SoundIndex.h" />
+    <ClInclude Include="Source\Api\SoundLibrary.h" />
+    <ClInclude Include="Source\Api\GameSounds.h" />
+    <ClInclude Include="Source\Api\GameSoundsData.h" />
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />

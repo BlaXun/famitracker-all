@@ -2078,7 +2078,7 @@ STYLE DS_SETFONT | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU 
 CAPTION "Sound browser"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Every sound this song can use, grouped by kind: in each kind the ready-made sounds first, then your reference library's game by game (click a game to open it), then the song's own. Click a sound to hear it, and again to hear it again.",IDC_SB_INTRO,7,7,466,18
+    LTEXT           "Every sound this song can use, grouped by kind: in each kind the ready-made sounds first, then classic games' sounds (and your reference library's) game by game, the song's own, and last the sounds of chips the song doesn't have yet. Click a heading to open it; click a sound to hear it, and again to hear it again.",IDC_SB_INTRO,7,7,466,18
     LTEXT           "Find:",IDC_SB_FIND_LABEL,7,32,24,8
     EDITTEXT        IDC_SB_FIND,34,30,180,12,ES_AUTOHSCROLL
     LTEXT           "From:",IDC_SB_FROM_LABEL,222,32,22,8

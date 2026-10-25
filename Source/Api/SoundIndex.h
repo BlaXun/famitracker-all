@@ -24,9 +24,14 @@
 // Every sound a song can get, in one list: the ready-made sounds for each
 // chip it has on (the presets of Presets.h for the 2A03, MMC5, VRC6 and 5B,
 // the 5B's own, the VRC7's patches and custom patches, the N163's wave sounds
-// of Wavetables.h and the FDS's of FdsSounds.h), the sounds of the user's
-// reference library (each study's, as reference_sound makes them), and the
-// song's own instruments. Each says what kind of sound it is, where it comes
+// of Wavetables.h and the FDS's of FdsSounds.h, and the sound library's of
+// SoundLibrary.h for every chip, with the DPCM's kits of DpcmKit.h), the
+// sounds of the studies FamiTracker carries of the soundtracks that may be
+// public (GameSounds.h) and of the user's reference library (each study's,
+// as reference_sound makes them; a library's sound that's one of the
+// built-in games' once), the song's own instruments, and when asked the
+// ready-made sounds of the chips the song doesn't have, each adding its chip
+// when it's made. Each says what kind of sound it is, where it comes
 // from, the channel it plays on and its words, and warns of what the tools
 // warn of: notes that vanish (Tools.cpp's VanishRemark) and a vibrato that
 // clicks on the 2A03's pulses (PulseClicks.h). Searched by words and filtered
@@ -78,7 +83,8 @@ enum sound_make {
 	MAKE_VRC7_CUSTOM,		// a VRC7 custom patch (Key)
 	MAKE_N163,				// an N163 wave sound (Key)
 	MAKE_FDS,				// an FDS sound (Key)
-	MAKE_REFERENCE			// a reference's sound (Reference, Number from 1) for Chip, as reference_sound makes it
+	MAKE_REFERENCE,			// a reference's sound (Reference, Number from 1) for Chip, as reference_sound makes it
+	MAKE_DPCM_KIT			// a kit of samples for the DPCM channel (DpcmKit.h: Key, its name)
 };
 
 struct SoundEntry {
@@ -112,9 +118,15 @@ struct SoundEntry {
 	std::string Game;		// a reference's game ("" when its study names none): the browser groups by it
 	std::string About;		// in a few words for the browser's list: a ready-made sound's description, a reference's
 							// track and part ("Needle Man (track 2), the lead"), how the song uses its own
+	bool Builtin;			// SOURCE_REFERENCE: one of the studied sounds FamiTracker carries (GameSounds.h), not the library's
+	bool Brief;				// meant to be short (a blip, a staccato bass): its words say so
+	std::string AddsChip;	// a sound for a chip the song doesn't have: the chip it gets when the sound is made ("VRC6",
+							// "VRC6 Plus", "MMC5", "N163", "FDS", "VRC7", "5B"); Channel is -1 then, and ChannelName the
+							// channel's it would play on ("VRC6 Pulse 1"); "" for the song's chips' sounds
+	std::string Question;	// AddsChip: what the browser asks before the chip comes in (AddChipQuestion)
 
 	SoundEntry() : Source(SOURCE_PRESET), Target(TARGET_PULSE), Channel(-1), Home(false), Low(false), Drum(false), InSong(-1),
-		Heard(60), Make(MAKE_NONE), Sawtooth(false), Number(0) {}
+		Heard(60), Make(MAKE_NONE), Sawtooth(false), Number(0), Builtin(false), Brief(false) {}
 };
 
 // The kinds of sound, for the filter: id ("lead"), label ("Leads") and the words that mean it
@@ -146,11 +158,30 @@ struct SoundUse {
 	SoundUse() : Channel(-1), Notes(0) {}
 };
 
-// Every sound the song can get, for every kind of channel it has: the ready-made sounds of its chips, each
-// sound of the references in Library, and its own instruments (Uses: by instrument, 0-63). Cursor is the
-// channel the user is on, -1 for none: the ready-made sounds that play there are at home there.
+// What else ListSounds lists
+struct SoundListing {
+	bool Games;				// the studied sounds FamiTracker carries (GameSounds.h)
+	bool OtherChips;		// the ready-made sounds of the chips the song doesn't have (AddsChip)
+	SoundListing() : Games(true), OtherChips(false) {}
+};
+// Every sound the song can get, for every kind of channel it has: the ready-made sounds of its chips, the built-in
+// games' studied sounds, each sound of the references in Library (but those that are one of the built-in games'),
+// and its own instruments (Uses: by instrument, 0-63); with OtherChips, the ready-made sounds of the other chips too,
+// each where it's at home there. Cursor is the channel the user is on, -1 for none: the ready-made sounds that play
+// there are at home there.
 std::vector<SoundEntry> ListSounds(const SongInfo &Song, const std::vector<Reference> &Library,
-	const std::vector<SoundUse> &Uses, int Cursor);
+	const std::vector<SoundUse> &Uses, int Cursor, const SoundListing &Listing = SoundListing());
+
+// The chips a song can get for a sound of another chip (SoundEntry::AddsChip), in the order the browser shows them:
+// the VRC6, the VRC6 Plus (the VRC6 with a soft layer of N163 channels), the MMC5, the N163, the FDS, the VRC7, the 5B
+const std::vector<std::string> &OtherChipNames();
+// The chips the song has and Chip, as set_expansion takes them ("VRC6 Plus" in place of the VRC6 and the N163); empty
+// when the song can't get it without a channel going (it has the N163 already, for the VRC6 Plus)
+std::vector<std::string> ChipsWith(const SongInfo &Song, const std::string &Chip);
+// What getting Chip does to the song, in plain words, for the question asked before a sound of it is made: the
+// channels it brings, that every note stays, what NSF export makes of the chips then, and that Ctrl+Z can't take it
+// back (Module > Module properties can)
+std::string AddChipQuestion(const SongInfo &Song, const SoundEntry &Sound);
 
 // What to look for
 struct SoundQuery {
@@ -176,15 +207,19 @@ struct SoundGroup {
 	std::string Kind;		// a SoundKinds() id
 	int Source;				// sound_source
 	std::string Game;		// SOURCE_REFERENCE: the game ("" for studies that name none)
-	std::string Label;		// "Ready-made sounds", "Castlevania 3", "Other references", "This song's instruments"
-	std::string Key;		// what tells it apart, and folds it: "lead/1/castlevania 3"
+	std::string Chip;		// the ready-made sounds of a chip the song doesn't have (SoundEntry::AddsChip); "" for the others
+	std::string Label;		// "Ready-made sounds", "Castlevania 3", "Other references", "This song's instruments", "VRC7 (not
+							// in the song yet)"
+	std::string Key;		// what tells it apart, and folds it: "lead/1/castlevania 3", "lead/chip/vrc7"
+	bool Builtin;			// a game's group with only the studied sounds FamiTracker carries (none of the library's)
 	std::vector<size_t> Sounds;	// into All, in the order they were found
-	SoundGroup() : Source(SOURCE_PRESET) {}
+	SoundGroup() : Source(SOURCE_PRESET), Builtin(false) {}
 };
 // The sounds found (FindSounds' order) in groups: kind by kind, in SoundKinds()'s order (with words, the kind of
-// the best match first, as they were found), and inside each kind the ready-made sounds, then the reference
-// library's game by game (A to Z, the studies without a game last), then the song's own. Each sound found is in
-// exactly one group, and keeps the order it was found in.
+// the best match first, as they were found), and inside each kind the ready-made sounds, then the studied sounds
+// game by game (the built-in games' and the reference library's together, A to Z, the studies without a game last),
+// then the song's own, then the ready-made sounds of each chip the song doesn't have (OtherChipNames' order). Each
+// sound found is in exactly one group, and keeps the order it was found in.
 std::vector<SoundGroup> GroupSounds(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
 // How many of the sounds found are of each kind, in SoundKinds()'s order
 std::vector<int> KindCounts(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
@@ -202,7 +237,7 @@ struct SoundView {
 // ready-made sounds and every game's heading show at once
 const int FOLD_GAMES_OVER = 40;
 // Whether a group's sounds are hidden: as folded by hand, else a game's group while its kind has more than
-// FOLD_GAMES_OVER reference sounds and no words were asked for
+// FOLD_GAMES_OVER reference sounds, or another chip's group, while no words were asked for
 bool GroupFolded(const std::vector<SoundGroup> &Groups, size_t Group, const SoundView &View);
 
 // The list's rows: headings and sounds

@@ -1114,7 +1114,9 @@ std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound)
 	std::string Title = R.Title;
 	const std::vector<std::string> TitleWords = Words(Title);
 	if (TitleWords.size() == 2 && TitleWords[0] == "track") {
-		const std::vector<std::string> Game = Words(R.Game);
+		std::vector<std::string> Game = Words(R.Game);
+		while (Game.size() > 1 && (Game[0] == "the" || Game[0] == "a" || Game[0] == "an"))
+			Game.erase(Game.begin());	// "The Legend of Zelda": by "legend", not "the"
 		Title = (Game.empty() ? std::string("Track") : Game[0]) + " " + TitleWords[1];
 		Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 	}

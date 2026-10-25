@@ -70,11 +70,59 @@ std::vector<double> Levels(const Hit &h, unsigned int Seed)
 	return Out;
 }
 
+struct Drum { const char *Name, *SampleName; int Pitch; Hit Sound; };
+
+// A kit of four drums, each synthesized (its own seed, so the kits' noises differ) and encoded from silence
+DpcmKit MakeKitOf(const char *Name, const char *Description, const Drum (&DRUMS)[4], unsigned int Seed)
+{
+	DpcmKit Kit;
+	Kit.Name = Name;
+	Kit.Description = Description;
+	for (size_t d = 0; d < 4; ++d) {
+		DpcmSample Sample;
+		Sample.Name = DRUMS[d].SampleName;
+		Sample.Data = EncodeDpcm(Levels(DRUMS[d].Sound, Seed + static_cast<unsigned int>(d) * 977u), 0);
+		DpcmKey Key;
+		Key.Drum = DRUMS[d].Name;
+		Key.Pitch = DRUMS[d].Pitch;
+		Key.Sample = static_cast<int>(Kit.Samples.size());
+		Key.Rate = 15;
+		Key.Delta = 0;
+		Kit.Samples.push_back(Sample);
+		Kit.Keys.push_back(Key);
+	}
+	return Kit;
+}
+
+// The sound library's other kits (SoundLibrary.h), on the same keys as the first
+std::vector<DpcmKit> MakeKits()
+{
+	std::vector<DpcmKit> Out;
+	const Drum DEEP[4] = {
+		{ "kick", "Deep kick", 36, { 0.22, 150, 40, 0.035, 38, 0.12, 0, 1, 36 } },
+		{ "snare", "Deep snare", 38, { 0.22, 200, 160, 0.03, 18, 0.05, 30, 0.09, 40 } },
+		{ "low tom", "Deep low tom", 41, { 0.24, 120, 65, 0.05, 32, 0.12, 4, 0.03, 34 } },
+		{ "high tom", "Deep high tom", 45, { 0.2, 180, 100, 0.045, 30, 0.1, 4, 0.03, 34 } },
+	};
+	Out.push_back(MakeKitOf("Deep sample drums", "sampled drums that boom: a long, low kick, a heavy snare and deep toms (kick on "
+		"C-3, snare on D-3, toms on F-3 and A-3)", DEEP, 0xD33Fu));
+	const Drum TIGHT[4] = {
+		{ "kick", "Tight kick", 36, { 0.08, 240, 60, 0.012, 36, 0.035, 6, 0.004, 36 } },
+		{ "snare", "Tight snare", 38, { 0.1, 280, 220, 0.012, 12, 0.02, 40, 0.035, 40 } },
+		{ "low tom", "Tight low tom", 41, { 0.12, 170, 100, 0.025, 30, 0.06, 4, 0.02, 34 } },
+		{ "high tom", "Tight high tom", 45, { 0.1, 260, 160, 0.02, 28, 0.05, 4, 0.02, 34 } },
+	};
+	Out.push_back(MakeKitOf("Tight sample drums", "short, punchy sampled drums for fast tracks: a clicky kick, a snappy snare and "
+		"quick toms (kick on C-3, snare on D-3, toms on F-3 and A-3)", TIGHT, 0x7167u));
+	return Out;
+}
+
 DpcmKit MakeKit()
 {
 	DpcmKit Kit;
 	Kit.Name = "Sample drums";
-	struct Drum { const char *Name, *SampleName; int Pitch; Hit Sound; };
+	Kit.Description = "a punchy kick, a snare and two toms, the kit add_sample_drums adds (kick on C-3, snare on D-3, toms on F-3 "
+		"and A-3)";
 	const Drum DRUMS[] = {
 		{ "kick", "Kit kick", 36, { 0.14, 170, 48, 0.022, 34, 0.07, 0, 1, 36 } },
 		{ "snare", "Kit snare", 38, { 0.16, 230, 185, 0.02, 16, 0.035, 34, 0.055, 40 } },
@@ -186,6 +234,27 @@ const DpcmKit &SampleDrums()
 {
 	static const DpcmKit Kit = MakeKit();
 	return Kit;
+}
+
+const std::vector<DpcmKit> &DrumKits()
+{
+	static const std::vector<DpcmKit> All = [] {
+		std::vector<DpcmKit> Kits(1, SampleDrums());
+		const std::vector<DpcmKit> More = MakeKits();
+		Kits.insert(Kits.end(), More.begin(), More.end());
+		return Kits;
+	}();
+	return All;
+}
+
+const DpcmKit *FindDrumKit(const std::string &Name)
+{
+	const std::string Wanted = Simple(Name);
+	const std::vector<DpcmKit> &All = DrumKits();
+	for (size_t i = 0; i < All.size() && !Wanted.empty(); ++i)
+		if (Simple(All[i].Name) == Wanted)
+			return &All[i];
+	return 0;
 }
 
 const DpcmKey *FindSampleDrum(const std::string &Name)
