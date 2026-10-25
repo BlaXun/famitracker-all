@@ -17786,6 +17786,557 @@ void TestGrowTaught()
 		}
 }
 
+// What drafts miss (ArrangeFindings in Tools.cpp), on a song made like a local model's first stage, clean on every other
+// check: VRC6 Pulse 1 plays the melody in one-bar pieces (three beats, then a release on beat 4) in A (bars 5-12), B
+// (13-20) and A2 (21-28: A again, with one slow line added on 2A03 Pulse 1); the sawtooth an eighth on beats 1 and 3; the
+// triangle an eighth on its root every other bar, on a soft chord sound; hi-hats on every beat; the melody's fader at
+// -4.5 dB and the noise's at +6; the loop bars 5-32, 45 s at 150 BPM (speed 6). In C major: C, Am, F, G a bar each
+void DraftSong(FakeSong &Song)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.Sections.clear();
+	Song.Info.Sections.push_back(Section("Intro", 0, 0));
+	Song.Info.Sections.push_back(Section("A", 1, 2));
+	Song.Info.Sections.push_back(Section("B", 3, 4));
+	Song.Info.Sections.push_back(Section("A2", 5, 6));
+	Song.Info.Sections.push_back(Section("Break", 7, 7));
+	Song.AddInstrumentInfo(5, "Soft chords", "2A03", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 4, 6, 7, 8, 8, 7, 5, 4, 3, 2, 1, 0 };
+	Song.AddInstrumentInfo(6, "Hi-hat", "2A03", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 12, 6, 3, 1, 0 };
+	const char *const A[4][3] = { { "C-4", "E-4", "G-4" }, { "A-3", "C-4", "E-4" }, { "F-3", "A-3", "C-4" }, { "G-3", "B-3", "D-4" } };
+	const char *const B[4][3] = { { "G-4", "E-4", "C-4" }, { "E-4", "C-4", "A-3" }, { "C-4", "A-3", "F-3" }, { "D-4", "B-3", "G-3" } };
+	const char *const ROOTS[4] = { "C-1", "A-0", "F-0", "G-0" }, *const FIFTHS[4] = { "G-1", "E-1", "C-1", "D-1" };
+	const char *const LOW[4] = { "C-2", "A-1", "F-1", "G-1" };	// the triangle, an octave under as it sounds
+	for (int Bar = 5; Bar <= 28; ++Bar) {
+		const int Row = (Bar - 1) * 16, k = (Bar - 1) % 4;
+		const bool InB = Bar >= 13 && Bar <= 20;
+		for (int n = 0; n < 3; ++n)
+			Song.Put(5, Row + n * 4, InB ? B[k][n] : A[k][n], Bar == 5 && n == 0 ? 0 : NO_INSTRUMENT, Bar == 5 && n == 0 ? 15 : -1);
+		Song.End(5, Row + 12, NOTE_RELEASE);
+		for (int b = 0; b < 4; ++b)
+			Song.Put(3, Row + b * 4, "D-#", Bar == 5 && b == 0 ? 6 : NO_INSTRUMENT, Bar == 5 && b == 0 ? 15 : -1);
+		if (Bar >= 21) {
+			Song.Put(0, Row, LOW[k], Bar == 21 ? 2 : NO_INSTRUMENT, Bar == 21 ? 10 : -1);	// the slow line, an octave over the triangle
+			Song.End(0, Row + 8, NOTE_RELEASE);
+		}
+	}
+	for (int Bar = 3; Bar <= 32; ++Bar) {
+		const int Row = (Bar - 1) * 16, k = (Bar - 1) % 4;
+		Song.Put(7, Row, ROOTS[k], Bar == 3 ? 0 : NO_INSTRUMENT, Bar == 3 ? 15 : -1);
+		Song.End(7, Row + 2, NOTE_RELEASE);
+		Song.Put(7, Row + 8, FIFTHS[k]);
+		Song.End(7, Row + 10, NOTE_RELEASE);
+	}
+	for (int Bar = 5; Bar <= 27; Bar += 2) {
+		const int Row = (Bar - 1) * 16;
+		Song.Put(2, Row, LOW[(Bar - 1) % 4], Bar == 5 ? 5 : NO_INSTRUMENT, Bar == 5 ? 10 : -1);
+		Song.End(2, Row + 2, NOTE_RELEASE);
+	}
+	Song.Rows[1][8 * 64 - 1].Effect[0] = EFF_JUMP;	// back to frame 1, bar 5
+	Song.Rows[1][8 * 64 - 1].Param[0] = 1;
+	Song.Mix.Set(5, -45, PAN_CENTER);
+	Song.Mix.Set(3, 60, PAN_CENTER);
+}
+
+// The draft's noise channel as DraftSong writes it
+std::vector<Cell> DraftHats()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	return Song.Rows[3];
+}
+
+// check_song's findings of a kind (its JSON), and the one whose details give a problem
+std::vector<const Json *> FindingsOf(const Json &Out, const char *Kind, const char *Problem = 0)
+{
+	std::vector<const Json *> Found;
+	const Json *pList = Out.Get("findings");
+	for (size_t i = 0; pList != 0 && i < pList->Size(); ++i) {
+		const Json &F = pList->At(i);
+		if (F.Get("kind") != 0 && F.Get("kind")->String() == Kind && (Problem == 0 || TextOf(&F, "problem") == Problem))
+			Found.push_back(&F);
+	}
+	return Found;
+}
+
+// A finding's fix as a model sends it: its call, then the calls after it (a call without arguments of its own skipped)
+bool RunFix(FakeSong &Song, const Json &Finding, std::string *pReply = 0)
+{
+	const Json *pFix = Finding.Get("fix");
+	if (pFix == 0 || pFix->Get("tool") == 0 || pFix->Get("arguments") == 0)
+		return false;
+	std::vector<const Json *> Calls(1, pFix);
+	const Json *pThen = pFix->Get("then");
+	for (size_t i = 0; pThen != 0 && i < pThen->Size(); ++i)
+		Calls.push_back(&pThen->At(i));
+	for (size_t i = 0; i < Calls.size(); ++i) {
+		ToolSet Tools(Song);
+		const ToolResult R = Tools.Call(Calls[i]->Get("tool")->String(), *Calls[i]->Get("arguments"));
+		if (pReply != 0)
+			*pReply += R.Text + "\n";
+		if (R.IsError)
+			return false;
+	}
+	return true;
+}
+
+// The phrases finding's fix as a model makes it: the bars read in steps, a - in place of each . at the end of the bars
+// it names, written back
+bool HoldBarEnds(FakeSong &Song, const Json &Finding)
+{
+	const Json *pFix = Finding.Get("fix"), *pThen = pFix != 0 ? pFix->Get("then") : 0;
+	const Json *pEnds = Finding.Get("hold_bar_ends");
+	if (pFix == 0 || pThen == 0 || pThen->Size() != 1 || pEnds == 0)
+		return false;
+	std::vector<int> Ends;
+	for (size_t i = 0; i < pEnds->Size(); ++i)
+		Ends.push_back(static_cast<int>(pEnds->At(i).Integer()));
+	ToolSet Tools(Song);
+	const ToolResult Read = Tools.Call(pFix->Get("tool")->String(), *pFix->Get("arguments"));
+	if (Read.IsError)
+		return false;
+	std::string Line;
+	size_t At = 0;
+	while (At < Read.Text.size()) {
+		size_t Stop = Read.Text.find('\n', At);
+		if (Stop == std::string::npos)
+			Stop = Read.Text.size();
+		std::string Bar = Read.Text.substr(At, Stop - At);
+		At = Stop + 1;
+		const size_t Colon = Bar.find(": ");
+		if (Colon == std::string::npos || Colon == 0 || Bar.find_first_not_of("0123456789") != Colon)
+			continue;
+		if (std::find(Ends.begin(), Ends.end(), std::atoi(Bar.c_str())) != Ends.end())
+			while (Bar.size() >= 2 && Bar.compare(Bar.size() - 2, 2, " .") == 0) {
+				std::string Held = Bar.substr(0, Bar.size() - 2), Tail = " -";
+				while (Held.size() >= 2 && Held.compare(Held.size() - 2, 2, " .") == 0) {
+					Held.erase(Held.size() - 2);
+					Tail += " -";
+				}
+				Bar = Held + Tail;
+			}
+		Line += (Line.empty() ? "" : "\n") + Bar;
+	}
+	Json Write = *pThen->At(0).Get("arguments");
+	Write.Set("notes", Line);
+	return !Tools.Call("write_notes", Write).IsError;
+}
+
+// Each finding on the draft: what it says, its numbers and its call
+void TestDraftFindings()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	const Json Out = Parse(Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
+	const Json *pCounts = Out.Get("counts");
+	CHECK_EQ(IntegerOf(pCounts, "phrases"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "bass"), 2);
+	CHECK_EQ(IntegerOf(pCounts, "sound"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "faders"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "repeat"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "short_loop"), 1);
+	CHECK_EQ(IntegerOf(pCounts, "vanishing") + IntegerOf(pCounts, "click") + IntegerOf(pCounts, "clash"), 0);
+	// The melody in one-bar pieces: it stops at all 23 of its bar lines; the bars whose ends hold over: the first of each
+	// two-bar phrase from the loop's start
+	const Json *pPieces = FindingOf(Out, "phrases");
+	CHECK_EQ(TextOf(pPieces, "severity"), std::string("medium"));
+	CHECK_EQ(IntegerOf(pPieces, "channel"), 6);
+	CHECK_EQ(IntegerOf(pPieces, "bar"), 5);
+	CHECK_EQ(IntegerOf(pPieces, "bar_lines"), 23);
+	CHECK_EQ(IntegerOf(pPieces, "stops"), 23);
+	CHECK(pPieces != 0 && pPieces->Get("hold_bar_ends") != 0 && WriteJson(*pPieces->Get("hold_bar_ends")) ==
+		"[5,7,9,11,13,15,17,19,21,23,25,27]");
+	CHECK_HAS(TextOf(pPieces, "message"), "The melody on VRC6 Pulse 1 stops at 23 of its 23 bar lines");
+	CHECK_HAS(TextOf(pPieces, "message"), "Fix: read_notes {\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5,\"to_bar\":28,\"format\":\"steps\"}, "
+		"then write_notes {\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5} (notes: that line, a - in place of each . at the end of bars 5, 7,");
+	const Json *pFix = pPieces != 0 ? pPieces->Get("fix") : 0;
+	CHECK_EQ(TextOf(pFix, "tool"), std::string("read_notes"));
+	CHECK(pFix != 0 && pFix->Get("then") != 0 && pFix->Get("then")->Size() == 1 && TextOf(&pFix->Get("then")->At(0), "tool") == "write_notes");
+	// The bass: the triangle doubles the sawtooth's roots now and then; the sawtooth sounds a quarter of the time
+	const std::vector<const Json *> Doubled = FindingsOf(Out, "bass", "doubled"), Thin = FindingsOf(Out, "bass", "thin");
+	CHECK(Doubled.size() == 1 && Thin.size() == 1);
+	if (Doubled.size() == 1 && Thin.size() == 1) {
+		CHECK_EQ(IntegerOf(Doubled[0], "channel"), 3);
+		CHECK_EQ(IntegerOf(Doubled[0], "bass_channel"), 8);
+		CHECK_EQ(WriteJson(*Doubled[0]->Get("fix")->Get("arguments")), std::string("{\"channel\":\"2A03 Triangle\",\"from_bar\":5,"
+			"\"to_bar\":27,\"notes\":[]}"));
+		CHECK_EQ(IntegerOf(Thin[0], "channel"), 8);
+		CHECK_EQ(TextOf(Thin[0], "summary"), std::string("the bass on VRC6 Sawtooth is thin: it sounds 25% of the time"));
+		const Json *pArguments = Thin[0]->Get("fix")->Get("arguments");
+		CHECK_EQ(TextOf(pArguments, "bass_style"), std::string("octaves"));
+		CHECK_EQ(TextOf(pArguments, "chord_channel"), std::string("none"));
+		CHECK_HAS(TextOf(pArguments, "chords"), "| F C | G Dm | C G | Am Em | F C |");	// as the parts sound: the fifth on beat 3
+		CHECK_EQ(IntegerOf(pArguments, "from_bar"), 3);
+		CHECK_EQ(IntegerOf(pArguments, "to_bar"), 32);
+	}
+	// The soft chord sound on the triangle; the faders; A2 copying A; the loop
+	const Json *pSound = FindingOf(Out, "sound");
+	CHECK_EQ(TextOf(pSound, "instrument_name"), std::string("Soft chords"));
+	CHECK_EQ(IntegerOf(pSound, "envelope_peak"), 8);
+	CHECK_HAS(TextOf(pSound, "message"), "Fix: set_instrument {\"channel\":\"2A03 Triangle\",\"instrument\":\"bass\",\"from_bar\":5,\"to_bar\":27}.");
+	const Json *pFaders = FindingOf(Out, "faders");
+	CHECK(pFaders != 0 && pFaders->Get("channel") != 0 && pFaders->Get("channel")->IsNull());
+	CHECK_HAS(TextOf(pFaders, "message"), "The faders do the mix's work (2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB)");
+	CHECK_HAS(TextOf(pFaders, "message"), "Fix: mix {\"style\":\"lively\",\"faders\":\"reset\"}.");
+	const Json *pRepeat = FindingOf(Out, "repeat");
+	CHECK_EQ(TextOf(pRepeat, "section"), std::string("A2"));
+	CHECK_EQ(TextOf(pRepeat, "repeats"), std::string("A"));
+	CHECK_HAS(TextOf(pRepeat, "message"), "\"A2\" (bars 21-28) repeats \"A\" (bars 5-12) note for note with one slow line added on 2A03 Pulse 1");
+	CHECK_HAS(TextOf(pRepeat, "message"), "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"section\":\"A2\"}.");
+	const Json *pLoop = FindingOf(Out, "short_loop");
+	CHECK(pLoop != 0 && pLoop->Get("loop_seconds") != 0 && std::fabs(pLoop->Get("loop_seconds")->Number() - 44.8) < 0.05);
+	CHECK_HAS(TextOf(pLoop, "message"), "Fix: copy_bars {\"section\":\"B\",\"at_bar\":33}, then set_loop {\"from_bar\":5,\"to_bar\":40}");
+	// The text lists them all, each with its call, after the count
+	const std::string Text = Run(Song, "check_song", "{\"style\": \"lively\"}").Text;
+	CHECK_HAS(Text, ", 0 vanishing. In the arrangement: 7 findings, each with the call that fixes it.");
+	CHECK_HAS(Text, "\nTwo channels play the bass's roots: 2A03 Triangle (12 notes) doubles VRC6 Sawtooth, the bass");
+	// The review: the same, as tips with their calls, most first; the sawtooth is the bass, its roots doubled on the triangle
+	const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"lively\"}").Text;
+	CHECK_HAS(Review, "; bass on VRC6 Sawtooth (its roots doubled on 2A03 Triangle)");
+	CHECK_HAS(Review, "What would help, most first:\n1. The melody on VRC6 Pulse 1 stops at 23 of its 23 bar lines");
+	CHECK_HAS(Review, "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"section\":\"A2\"}.");
+	CHECK_LACKS(Review, "hardly pauses");			// the one-bar pieces say it
+	CHECK_LACKS(Review, "The bass mostly holds roots");	// the thin bass says it
+	// Without style lively the loop isn't held to a stage's minute
+	CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "short_loop") == 0);
+}
+
+// Each finding's call, run as a model sends it, takes the finding away (and only it)
+void TestDraftFixes()
+{
+	const char *const KINDS[] = { "phrases", "doubled", "thin", "sound", "faders", "repeat", "short_loop" };
+	for (size_t k = 0; k < sizeof(KINDS) / sizeof(KINDS[0]); ++k) {
+		FakeSong Song(8);
+		DraftSong(Song);
+		const std::string Kind = KINDS[k];
+		const bool Bass = Kind == "doubled" || Kind == "thin";
+		const Json Before = Parse(Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
+		const std::vector<const Json *> Found = FindingsOf(Before, Bass ? "bass" : Kind.c_str(), Bass ? Kind.c_str() : 0);
+		Check(Found.size() == 1, Kind.c_str(), __LINE__);
+		if (Found.size() != 1)
+			continue;
+		std::string Reply;
+		const bool Fixed = Kind == "phrases" ? HoldBarEnds(Song, *Found[0]) : RunFix(Song, *Found[0], &Reply);
+		Check(Fixed, (Kind + ": " + Reply).c_str(), __LINE__);
+		const Json After = Parse(Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
+		Check(FindingsOf(After, Bass ? "bass" : Kind.c_str(), Bass ? Kind.c_str() : 0).empty(), (Kind + " fixed").c_str(), __LINE__);
+		// No fix makes a clash (a walking bass's approach notes, an ornament against another part)
+		Check(IntegerOf(After.Get("counts"), "clash") <= IntegerOf(Before.Get("counts"), "clash"), (Kind + " adds no clash").c_str(),
+			__LINE__);
+		// The others stay (the doubled triangle cleared takes its sound with it; a longer loop has a copy that repeats)
+		const char *const OTHERS[] = { "phrases", "faders" };
+		for (size_t o = 0; o < 2; ++o)
+			if (Kind != OTHERS[o])
+				Check(FindingOf(After, OTHERS[o]) != 0, (Kind + " leaves " + OTHERS[o]).c_str(), __LINE__);
+		if (Kind == "faders") {
+			CHECK_EQ(Song.Mix.Level(5), 0);
+			CHECK_EQ(Song.Mix.Level(3), 0);
+		}
+		if (Kind == "doubled")
+			CHECK(FindingOf(After, "sound") == 0 && ReadNotes(Song.Rows[2], 2).empty());
+	}
+}
+
+// Where the findings stay quiet: phrases of two bars, a march's half-beat breaths at its bar lines, a sparse line; a
+// bouncy bass, one held, a low line carrying it; a triangle with a line of its own and a sound for it; faders that trim;
+// a repeat with busier drums; a longer loop, and any style but lively
+void TestFindingsQuiet()
+{
+	auto Finds = [](FakeSong &Song, const char *Kind, const char *Problem, const char *Style) {
+		const Json Out = Parse(Run(Song, "check_song", std::string("{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"") +
+			(Style != 0 ? std::string(", \"style\": \"") + Style + "\"" : std::string()) + "}").Text);
+		return !FindingsOf(Out, Kind, Problem).empty();
+	};
+	// Phrases of two bars: the first bar of each held into the second
+	{
+		FakeSong Song(8);
+		DraftSong(Song);
+		CHECK(Finds(Song, "phrases", 0, "lively"));
+		for (int Bar = 5; Bar <= 27; Bar += 2)
+			Song.Rows[5][static_cast<size_t>((Bar - 1) * 16 + 12)] = Cell();
+		CHECK(!Finds(Song, "phrases", 0, "lively"));
+		const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"lively\"}").Text;
+		CHECK_HAS(Review, "in 12 of 12 two-bar spans");
+		CHECK_LACKS(Review, "hardly pauses");
+	}
+	// A march's half-beat breath before each bar line, and a sparse line of a note a bar
+	{
+		FakeSong March(8), Sparse(8);
+		DraftSong(March);
+		DraftSong(Sparse);
+		for (int Bar = 5; Bar <= 28; ++Bar) {
+			const int Row = (Bar - 1) * 16;
+			March.Rows[5][static_cast<size_t>(Row + 12)] = Cell();
+			March.End(5, Row + 14, NOTE_RELEASE);
+			Sparse.Rows[5][static_cast<size_t>(Row + 4)] = Cell();
+			Sparse.Rows[5][static_cast<size_t>(Row + 8)] = Cell();
+		}
+		CHECK(!Finds(March, "phrases", 0, "lively"));
+		CHECK(!Finds(Sparse, "phrases", 0, "lively"));
+	}
+	// The bass: bouncy (an eighth on every beat), held (a bar a note), or thin beside a low pulse line in eighths
+	{
+		FakeSong Bouncy(8), Held(8), Carried(8);
+		for (int s = 0; s < 3; ++s) {
+			FakeSong &Song = s == 0 ? Bouncy : s == 1 ? Held : Carried;
+			DraftSong(Song);
+			for (int Bar = 3; Bar <= 32; ++Bar) {
+				const int Row = (Bar - 1) * 16;
+				if (s == 0)
+					for (int b = 1; b < 4; b += 2) {
+						Song.Put(7, Row + b * 4, "C-1");
+						Song.End(7, Row + b * 4 + 2, NOTE_RELEASE);
+					}
+				else if (s == 1)
+					for (int r = 2; r < 16; ++r)
+						Song.Rows[7][static_cast<size_t>(Row + r)] = Cell();
+				else
+					for (int e = 0; e < 8; ++e)
+						Song.Put(1, Row + e * 2, e % 2 == 0 ? "C-2" : "G-2", Bar == 3 && e == 0 ? 2 : NO_INSTRUMENT);
+			}
+			Check(!Finds(Song, "bass", "thin", "lively"), s == 0 ? "bouncy" : s == 1 ? "held" : "carried", __LINE__);
+		}
+		CHECK(Finds(Bouncy, "bass", "doubled", "lively"));	// the triangle still doubles its roots
+	}
+	// The triangle: a line of its own (the third over the root), and a sound for it (peaking at 15)
+	{
+		FakeSong Own(8), Sound(8);
+		DraftSong(Own);
+		DraftSong(Sound);
+		const char *const THIRDS[4] = { "E-2", "C-2", "A-1", "B-1" };
+		for (int Bar = 5; Bar <= 27; Bar += 2)
+			Own.Put(2, (Bar - 1) * 16, THIRDS[(Bar - 1) % 4]);
+		CHECK(!Finds(Own, "bass", "doubled", "lively"));
+		Sound.Rows[2][4 * 16].Instrument = 1;	// "Bass", no envelope
+		CHECK(!Finds(Sound, "sound", 0, "lively"));
+		CHECK(Finds(Sound, "bass", "doubled", "lively"));
+	}
+	// Faders that trim: the melody at 0, a part 4 dB up and the noise 3 down; the melody at -3, the noise at 0
+	{
+		FakeSong Trim(8), Lead(8);
+		DraftSong(Trim);
+		DraftSong(Lead);
+		Trim.Mix.Set(5, 0, PAN_CENTER);
+		Trim.Mix.Set(7, 40, PAN_CENTER);
+		Trim.Mix.Set(3, -30, PAN_CENTER);
+		Lead.Mix.Set(5, -30, PAN_CENTER);
+		Lead.Mix.Set(3, 0, PAN_CENTER);
+		CHECK(!Finds(Trim, "faders", 0, "lively"));
+		CHECK(!Finds(Lead, "faders", 0, "lively"));
+	}
+	// A2 with busier hi-hats: a hit between the beats too, in every bar
+	{
+		FakeSong Song(8);
+		DraftSong(Song);
+		for (int Bar = 21; Bar <= 28; ++Bar)
+			for (int b = 0; b < 4; ++b)
+				Song.Put(3, (Bar - 1) * 16 + b * 4 + 2, "D-#");
+		CHECK(!Finds(Song, "repeat", 0, "lively"));
+	}
+	// The loop: 60 s at speed 8 (and 52 at 7); any style but lively
+	{
+		FakeSong Song(8);
+		DraftSong(Song);
+		Song.Info.Speed = 7;
+		CHECK(Finds(Song, "short_loop", 0, "lively"));
+		Song.Info.Speed = 8;
+		CHECK(!Finds(Song, "short_loop", 0, "lively"));
+		Song.Info.Speed = 6;
+		CHECK(!Finds(Song, "short_loop", 0, "any"));
+		CHECK(!Finds(Song, "short_loop", 0, "calm"));
+	}
+	// A cue (it halts within half a minute), ambience at speed 1: none of them
+	{
+		FakeSong Cue(8);
+		DraftSong(Cue);
+		Cue.Rows[1][16 * 16 - 1].Effect[0] = EFF_HALT;
+		Cue.Rows[1][16 * 16 - 1].Param[0] = 0;
+		CHECK(!Finds(Cue, "phrases", 0, "lively") && !Finds(Cue, "bass", 0, "lively") && !Finds(Cue, "short_loop", 0, "lively"));
+		FakeSong Ambience(8);
+		DraftSong(Ambience);
+		Ambience.Info.Speed = 1;
+		CHECK(!Finds(Ambience, "phrases", 0, 0) && !Finds(Ambience, "faders", 0, 0));
+	}
+}
+
+// The short forms (format short): review_arrangement's score, parts, numbers and three tips with their calls;
+// check_song's counts and its three findings that matter most; measure_mix's loop, intro, sides and the parts nearest the
+// melody. On the small set (/mcp/core) they're the default, unless a format is asked for
+void TestShortReplies()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	const std::string LIVELY = "{\"style\": \"lively\"", SHORT = ", \"format\": \"short\"}";
+	const std::string Full = Run(Song, "review_arrangement", LIVELY + "}").Text, Short = Run(Song, "review_arrangement", LIVELY + SHORT).Text;
+	CHECK(Short.size() * 3 < Full.size());
+	CHECK(Short.size() < 1500);
+	const int Score = std::atoi(Full.substr(Full.find(": ") + 2).c_str());
+	Check(Contains(Short, ("Review (lively), bars 3-32 in C major: " + std::to_string(Score) + "/10.\nParts: melody on VRC6 Pulse 1;").c_str()),
+		"the short review's head", __LINE__);
+	CHECK_HAS(Short, "\nNumbers: 30 bars, ");
+	CHECK_HAS(Short, "the bass 2 notes a bar");
+	CHECK_HAS(Short, "Most of all (3 of ");
+	CHECK_HAS(Short, "\n1. The melody stops at 23 of its 23 bar lines: one-bar pieces, not phrases. Fix: read_notes "
+		"{\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5,\"to_bar\":28,\"format\":\"steps\"}, then write_notes.");
+	CHECK_LACKS(Short, "\n4. ");
+	// A tip without a call of its own: its first clause and the tool its text names
+	CHECK_HAS(Short, "\n2. The chords loop unchanged (add_chords_and_bass).");
+	CHECK_HAS(Short, "; as heard: no chords, the drums ");
+	// check_song: the counts, then the findings heard worst first (here the arrangement's: the melody's pieces, the bass)
+	const std::string CheckFull = Run(Song, "check_song", LIVELY + "}").Text, CheckShort = Run(Song, "check_song", LIVELY + SHORT).Text;
+	CHECK(CheckShort.size() * 2 < CheckFull.size());
+	CHECK_HAS(CheckShort, ", 0 vanishing. In the arrangement: 7 findings, each with the call that fixes it.\nMost of all (3 of 7; format "
+		"text lists them):\n1. The melody stops at 23 of its 23 bar lines: one-bar pieces, not phrases (bars 5-28). Fix: read_notes");
+	CHECK_HAS(CheckShort, "\n2. 2A03 Triangle doubles the bass's roots now and then (a thump, not a part) (bars 5-27). Fix: write_notes "
+		"{\"channel\":\"2A03 Triangle\",\"from_bar\":5,\"to_bar\":27,\"notes\":[]}.");
+	CHECK_LACKS(CheckShort, "\n4. ");
+	// A click heard first, with its call
+	{
+		FakeSong Clicky;
+		Clicky.Info.DirectChanges = true;
+		CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+		Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+		Clicky.End(0, 32);
+		const std::string Text = Run(Clicky, "check_song", "{\"format\": \"short\"}").Text;
+		CHECK_HAS(Text, "\nFound:\n1. A-3 clicks ");
+		CHECK_HAS(Text, "(2A03 Pulse 1 bar 1 beat 1). Fix: polish {\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}.");
+	}
+	FakeSong Empty;
+	CHECK_HAS(Run(Empty, "check_song", "{\"format\": \"short\"}").Text, "Nothing stands out.");
+	CHECK(Run(Song, "check_song", "{\"format\": \"long\"}").IsError);
+	CHECK(Run(Song, "review_arrangement", "{\"format\": \"json\"}").IsError);
+	// measure_mix: the loop, the sides, the parts nearest the melody and what's off its target, with its call
+	const std::string MixFull = Run(Song, "measure_mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	const std::string MixShort = Run(Song, "measure_mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"format\": "
+		"\"short\"}").Text;
+	CHECK(MixShort.size() < MixFull.size());
+	CHECK_HAS(MixShort, "Measured bars 1-32 of \"Town\": the loop (bars 5-32) ");
+	CHECK_HAS(MixShort, "the sides ");
+	CHECK_HAS(MixShort, "\nAgainst the melody (VRC6 Pulse 1), where both play: ");
+	CHECK(Run(Song, "measure_mix", "{\"format\": \"json\"}").IsError);
+	// The small set answers short by default; a format asked for is kept
+	ToolSet Tools(Song);
+	Caller Core;
+	Core.Core = true;
+	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + "}"), Core).Text, Short);
+	CHECK_EQ(Tools.Call("check_song", Parse(LIVELY + "}"), Core).Text, CheckShort);
+	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + ", \"format\": \"text\"}"), Core).Text, Full);
+	CHECK_EQ(Tools.Call("check_song", Parse("{\"style\": \"lively\", \"format\": \"json\"}"), Core).Text,
+		Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
+	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + "}")).Text, Full);	// the full set: the full reply
+}
+
+// The arrangement's findings as FamiTracker's problems panel reads them (ProblemList.h): their kinds and titles, the
+// calls of one step its Fix button makes (FixCalls 1) and those a model makes (a melody read in steps, then written)
+void TestProblemListArrangement()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text, Error));
+	CHECK_EQ(List.Count(PROBLEM_PHRASES), 1);
+	CHECK_EQ(List.Count(PROBLEM_BASS), 2);
+	CHECK_EQ(List.Count(PROBLEM_SOUND), 1);
+	CHECK_EQ(List.Count(PROBLEM_FADERS), 1);
+	CHECK_EQ(List.Count(PROBLEM_REPEAT), 1);
+	CHECK_EQ(List.Count(PROBLEM_LOOP), 1);
+	CHECK_EQ(List.Total(), 7);
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_LOOP)), std::string("short_loop"));
+	CHECK_EQ(std::string(ProblemKindTitle(PROBLEM_PHRASES)), std::string("A melody in one-bar pieces"));
+	CHECK_EQ(ProblemSeverity(PROBLEM_BASS), 2);
+	CHECK_EQ(ProblemSeverity(PROBLEM_FADERS), 1);
+	for (size_t i = 0; i < List.Findings().size(); ++i) {
+		const ProblemFinding &F = List.Findings()[i];
+		CHECK(!F.FixTool.empty());
+		CHECK_EQ(F.FixCalls, F.Kind == PROBLEM_PHRASES || F.Kind == PROBLEM_LOOP ? 2 : 1);
+		if (F.Kind == PROBLEM_FADERS)
+			CHECK(F.Channel == -1 && F.FixTool == "mix" && F.FixArguments == "{\"style\":\"lively\",\"faders\":\"reset\"}");
+		if (F.Kind == PROBLEM_SOUND)
+			CHECK(F.Channel == 2 && F.FixDoes == "gives 2A03 Triangle's notes in bars 5-27 the bass preset, made for the triangle");
+	}
+	// Marked where they start: the triangle's first note, the melody's first bar
+	ProblemMarks Marks;
+	Marks.Set(List, 8, 8 * 64, -1);
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 2, 4 * 16)), static_cast<int>(PROBLEM_BASS));
+	CHECK_EQ(ProblemMarks::KindOf(Marks.At(0, 5, 4 * 16)), static_cast<int>(PROBLEM_PHRASES));
+	// A click's nudge stays a nudge
+	FakeSong Clicky;
+	CHECK(!Run(Clicky, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+	Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+	Clicky.End(0, 32);
+	CHECK(List.Read(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text, Error));
+	CHECK(List.Count(PROBLEM_CLICK) == 1 && List.Findings()[0].FixCalls == 1 && List.Findings()[0].FixTool == "polish");
+}
+
+// mix with faders reset: every fader back to 0 dB (pans, Soft and Space kept), then the mix, one Ctrl+Z for both
+void TestMixFadersReset()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	Song.Mix.Set(6, 20, 0x40);
+	Song.Mix.SetDepth(6, 10, 30);
+	const std::vector<Cell> Before = Song.Rows[5];
+	const ToolResult Result = Run(Song, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Set the faders back to 0 dB (they were 2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB, VRC6 Pulse 2 +2.0 dB)");
+	// The melody plays as loud as it did with its fader, so the parts can reach their places under it
+	CHECK_HAS(Result.Text, "the melody's loudest at 9 where it was 15 (as loud as it played with its fader)");
+	CHECK_EQ(Song.Mix.Level(5), 0);
+	CHECK_EQ(Song.Mix.Level(3), 0);
+	CHECK_EQ(Song.Mix.Level(6), 0);
+	CHECK_EQ(Song.Mix.Pan(6), 0x40);
+	CHECK_EQ(Song.Mix.Soft(6), 10);
+	CHECK_EQ(Song.Mix.Space(6), 30);
+	CHECK(Song.Rows[3] != DraftHats());	// the drums came down in the notes
+	CHECK(!Run(Song, "undo", "{}").IsError);
+	CHECK_EQ(Song.Mix.Level(5), -45);
+	CHECK_EQ(Song.Mix.Level(3), 60);
+	CHECK(Song.Rows[5] == Before);
+	CHECK(Song.Rows[3] == DraftHats());
+	// With every fader at 0 already it mixes; another word is refused
+	FakeSong Plain(8);
+	DraftSong(Plain);
+	Plain.Mix.Set(5, 0, PAN_CENTER);
+	Plain.Mix.Set(3, 0, PAN_CENTER);
+	CHECK_HAS(Run(Plain, "mix", "{\"style\": \"lively\", \"faders\": \"reset\"}").Text, "Every fader is at 0 dB already. ");
+	CHECK(Run(Plain, "mix", "{\"faders\": \"zero\"}").IsError);
+}
+
+// vary_part's embellish (the fix for a repeat that copies) keeps its ornaments off a semitone against the other parts,
+// as check_song hears a clash: a passing D-4 between C-4 and E-4 would rub against the D#4 VRC6 Pulse 2 sounds there, so
+// that one is left out and the bar's other two are kept
+void TestEmbellishWithoutRubs()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "E-4");
+	Song.End(5, 16, NOTE_RELEASE);
+	Song.Put(6, 2, "D#4", 0);
+	Song.End(6, 4, NOTE_RELEASE);
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, " 0 clashes,");
+	const ToolResult Result = Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, "
+		"\"to_bar\": 1, \"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(2 changes; 1 ornament left out, a semitone from another part)");
+	CHECK_HAS(Notes(Song, 5, 0, 16), "0:C-4 4:E-4 6:F-4 8:G-4 10:F-4 12:E-4 ");
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, " 0 clashes,");
+	// Without the other part the passing note comes
+	FakeSong Alone;
+	Alone.Info.DirectChanges = true;
+	Alone.Put(5, 0, "C-4", 0);
+	Alone.Put(5, 4, "E-4");
+	Alone.Put(5, 8, "G-4");
+	Alone.End(5, 12, NOTE_RELEASE);
+	CHECK_LACKS(Run(Alone, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, \"to_bar\": 1, "
+		"\"key\": \"C major\"}").Text, "left out");
+	CHECK_HAS(Notes(Alone, 5, 0, 12), "0:C-4 2:D-4 4:E-4 6:F-4 8:G-4 ");
+}
+
 int main()
 {
 	TestJson();
@@ -17948,6 +18499,13 @@ int main()
 	TestGrowKinds();
 	TestGrowTool();
 	TestGrowTaught();
+	TestDraftFindings();
+	TestDraftFixes();
+	TestFindingsQuiet();
+	TestShortReplies();
+	TestMixFadersReset();
+	TestProblemListArrangement();
+	TestEmbellishWithoutRubs();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

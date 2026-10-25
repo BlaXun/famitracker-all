@@ -33,9 +33,12 @@
 namespace ftapi {
 
 // check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
-// holds a high, steady level from attack to release, comes last
+// holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
+// in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
+// repeats another note for note, a lively stage's short loop
 enum problem_kind {
 	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
+	PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
 	PROBLEM_KINDS
 };
 
@@ -61,9 +64,10 @@ struct ProblemFinding {
 	std::string FixTool;		// the tool call that fixes it ("polish"), empty for none...
 	std::string FixArguments;	// ...with its arguments, as JSON...
 	std::string FixDoes;		// ...and what it does, in words
+	int FixCalls;				// the calls the fix takes: 1, or more where calls follow it (a model's to make), 0 for none
 	std::string Nudge;			// a click's nudge ("P81, 7 cents sharp"), empty when none stops it
 	int Boundary;				// the period a click's vibrato crosses (256), 0 for other kinds
-	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1), Boundary(0) {}
+	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1), FixCalls(0), Boundary(0) {}
 };
 
 // A line of the panel: a finding, or one note of it (notes that vanish get a

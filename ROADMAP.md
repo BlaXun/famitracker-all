@@ -242,8 +242,10 @@ starts if it was open.
 
 - Notes that vanish, notes that click, clashes, notes out of a channel's
   range, silent and busy bars and notes outside the key, grouped by kind
-  with how many of each, the ones heard worst first. A click on a kind
-  folds or unfolds it.
+  with how many of each, the ones heard worst first, then what drafts miss
+  in the arrangement (a melody in one-bar pieces, a thin or doubled bass, a
+  sound its channel can't play, faders doing the mix, a repeat that copies,
+  a lively stage's short loop). A click on a kind folds or unfolds it.
 - It checks the selected track again a moment after each change, and after
   an instrument's envelope, the speed or the track changed, but not while
   the song plays. **Check** (F5 in the panel) checks at once; "Check as you
@@ -261,8 +263,13 @@ starts if it was open.
   the pulse restarts its wave, as `polish` with the touch `clicks` does on
   that note's bar: one Ctrl+Z, and the count goes down. **Show**, on a note
   that vanishes, selects that sound's notes in the piano roll, where its
-  Instrument button gives them a sound that lasts. **Explain** says what's
-  wrong with the rest (a clash, a note outside the key) and what helps.
+  Instrument button gives them a sound that lasts. **Fix**, on one of the
+  arrangement's findings whose fix is a single call (a bass line, a
+  doubled bass cleared, a sound the channel can play, the faders back at
+  0 dB and a mix, a repeat varied), makes that call: one Ctrl+Z.
+  **Explain** says what's wrong with the rest (a clash, a note outside the
+  key) and what helps, and for a fix of several calls (a melody joined
+  into phrases, a longer loop) gives the calls, for Claude to make.
   Nothing changes without a click.
 
 The panel's keys: the arrows, Page Up and Down, Home and End to move, Enter
