@@ -101,6 +101,8 @@ add_library(ftapi STATIC
 	RecorderInput.cpp
 	Arrange.cpp
 	ChordHelper.cpp
+	QrCode.cpp
+	PhoneTakes.cpp
 	DpcmKit.cpp
 	Presets.cpp
 	SoundIndex.cpp
@@ -152,3 +154,9 @@ add_test(NAME api_tests COMMAND api_tests)
 add_executable(chord_helper_tests tests/ChordHelperTests.cpp)
 target_link_libraries(chord_helper_tests PRIVATE ftapi)
 add_test(NAME chord_helper_tests COMMAND chord_helper_tests)
+
+# The phone page (PhoneTakes.h) and its QR code (QrCode.h)
+add_executable(phone_tests tests/PhoneTests.cpp)
+target_link_libraries(phone_tests PRIVATE ftapi)
+target_compile_definitions(phone_tests PRIVATE PHONE_PAGE="${CMAKE_CURRENT_SOURCE_DIR}/../../res/phone.html")
+add_test(NAME phone_tests COMMAND phone_tests)

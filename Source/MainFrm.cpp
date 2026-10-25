@@ -52,6 +52,8 @@
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
 #include "SoundBrowserDlg.h"
+#include "PhoneDlg.h"
+#include "PhoneLink.h"
 #include "DrumGridPanel.h"
 #include "NoteViews.h"
 #include "Profile.h"
@@ -223,6 +225,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
 	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
+	ON_COMMAND(ID_EDIT_RECORDPHONE, OnEditRecordPhone)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_DRUMGRID, OnUpdateEditDrumGrid)
@@ -1813,6 +1816,11 @@ void CMainFrame::OnEditVoiceEffect()
 		m_pMcpConnection->ShowVoiceEffect();
 }
 
+void CMainFrame::OnEditRecordPhone()
+{
+	ShowPhoneWindow(this);	// PhoneDlg.h
+}
+
 void CMainFrame::OnInstrumentLibrary()
 {
 	ShowSoundBrowser(this);
@@ -2842,6 +2850,7 @@ void CMainFrame::OnDestroy()
 
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->Stop();	// no more requests from Claude Code
+	ClosePhoneTakes();				// nor from the phone page (PhoneLink.h)
 
 	CSoundGen *pSoundGen = theApp.GetSoundGenerator();
 	

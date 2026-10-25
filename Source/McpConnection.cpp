@@ -56,6 +56,7 @@
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
 #include "PatternEditor.h"
+#include "PhoneLink.h"
 #include "SoundGen.h"
 #include "TrackerChannel.h"
 #include "ChannelMap.h"
@@ -736,6 +737,23 @@ public:
 		return true;
 	}
 
+	// Edit > Record from your phone: who may connect, and on the network too (the dialog's two boxes ticked)
+	void Access(bool &Listening, bool &Network, int &Port, std::string &Token) const
+	{
+		Listening = m_Server.IsRunning();
+		Network = m_Server.IsNetwork();
+		Port = Listening ? m_Server.GetPort() : m_Settings.Port;
+		Token = std::string(static_cast<LPCSTR>(CStringA(m_Settings.Token)));
+	}
+
+	bool AllowNetwork(CString &Error)
+	{
+		mcp_settings_t Settings = m_Settings;
+		Settings.Enabled = true;
+		Settings.Network = true;
+		return Apply(Settings, Error);
+	}
+
 	LRESULT Answer(mcp_exchange_t *pExchange)
 	{
 		if (m_bStopping || m_bBusy || pExchange == NULL || m_pMain == NULL)
@@ -753,6 +771,7 @@ public:
 			char Version[32];
 			_snprintf_s(Version, sizeof(Version), _TRUNCATE, "%d.%d.%d-beginner-friendly", VERSION_MAJ, VERSION_MIN, VERSION_REV);
 			Config.Version = Version;
+			Config.pPhone = GetPhoneTakes(m_pMain);	// the phone page (PhoneLink.h)
 			*pExchange->pResponse = ftapi::HandleMcp(*pExchange->pRequest, Config, m_Tools);
 		}
 		catch (...) {
@@ -2857,4 +2876,18 @@ int CMcpConnection::MakeSound(const ftapi::SoundEntry &Sound, std::string &Error
 bool CMcpConnection::IsBusy() const
 {
 	return m_pImpl->Link.IsBusy();
+}
+
+void CMcpConnection::GetAccess(bool &Listening, bool &Network, int &Port, std::string &Token) const
+{
+	m_pImpl->Link.Access(Listening, Network, Port, Token);
+}
+
+bool CMcpConnection::AllowNetwork(std::string &Error)
+{
+	CString Problem;
+	if (m_pImpl->Link.AllowNetwork(Problem))
+		return true;
+	Error = static_cast<LPCSTR>(CStringA(Problem));
+	return false;
 }

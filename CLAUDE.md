@@ -755,6 +755,34 @@ instead of adding a frame for it (`transcribe::EndInside` in
 `Expression.cpp`, called by `InsertTake`), so a groove's song keeps its
 length and its loop.
 
+Phone takes (from `feat-phone-takes`): Edit > Record from your phone
+(`ID_EDIT_RECORDPHONE`) opens `Source/PhoneDlg.cpp`, a modeless window with
+a QR code of `PhonePageUrl` (this PC's home-network addresses, then its
+name, `NetworkComputerName`, for Tailscale's MagicDNS) drawn from
+`Source/Api/QrCode.cpp` (portable: byte mode, versions 1-40, levels L-H, the
+penalty rules' mask; `tests/PhoneTests.cpp` compares it with codes
+qrcodegen made, kept in `tests/QrReference.h`), and it offers
+`CMcpConnection::AllowNetwork` while FamiTracker only listens to this PC. The
+page is `res/phone.html` (RCDATA `IDR_PHONE_PAGE`, ASCII, nothing from
+elsewhere): it records with `MediaRecorder` on a secure page or takes the
+phone recorder's file (`<input type=file capture>`) elsewhere, decodes it
+(`decodeAudioData`), mixes it to 16-bit mono WAV at 22050 Hz and posts it.
+Its routes are `Source/Api/PhoneTakes.cpp` (`/phone`, `/phone/takes`,
+`POST /phone/take`), which `HandleMcp` hands on after its peer and Host
+checks (`McpConfig::pPhone`); they take `PhoneCode` (HMAC-SHA-256 of the
+access code, so the code in a phone's history drives nothing else) and only
+same-origin requests, and `CheckPhoneWav` and `IsIdeaName` check every take
+before it's kept. `Source/PhoneLink.cpp` is the `PhoneHost`: it saves the
+take in `RecordingsFolder` (never over a file) and, from a thread timer once
+the answer has gone, makes it a clip with `GuessRecording` and
+`InsertRecording` with a clip name (on `DefaultRecordingChannel(pDoc, -1)`,
+the lead's channel), shows the clips panel and calls `SongChanged`. While the
+main window is disabled, Claude Code is being answered
+(`CMcpConnection::IsBusy`) or the mouse is captured, the take waits:
+`PhoneTakes::Process` returns true and the timer tries again.
+`TestPhoneRoute` in `ApiTests.cpp` covers the route through `HandleMcp`
+and `place_clip` finding an idea by its name.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

@@ -22,6 +22,7 @@
 #include "Mcp.h"
 #include "Json.h"
 #include "Network.h"
+#include "PhoneTakes.h"
 #include "Tools.h"
 
 #include <cstdio>
@@ -584,11 +585,13 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker only answers computers on a home network (or Tailscale), not " +
 			ValidUtf8(Request.Peer) + ".");
 
-	enum { ROUTE_MCP, ROUTE_CORE, ROUTE_FILES, ROUTE_INBOX } Route;
+	enum { ROUTE_MCP, ROUTE_CORE, ROUTE_FILES, ROUTE_INBOX, ROUTE_PHONE } Route;
 	const std::string Path = Request.Path();
 	std::string Rest;
 	if (Path == "/mcp" || Path == "/mcp/")
 		Route = ROUTE_MCP;
+	else if (Path == "/phone" || Path.compare(0, 7, "/phone/") == 0)
+		Route = ROUTE_PHONE;
 	else if (Path == "/mcp/core" || Path == "/mcp/core/")
 		Route = ROUTE_CORE;
 	else if (Path.compare(0, 7, "/files/") == 0 && Path.size() > 7) {
@@ -608,6 +611,10 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 	if (pHost != 0 && !IsAcceptedHost(*pHost, Config))
 		return Failure(403, NoId, ACCESS_DENIED, Config.Network ? "FamiTracker only answers requests to this computer's addresses or "
 			"name, 127.0.0.1 or localhost." : "FamiTracker only answers requests to 127.0.0.1 or localhost.");
+	// The phone page is a web page: it takes its own requests (same origin) with its own code
+	if (Route == ROUTE_PHONE)
+		return Config.pPhone != 0 ? Config.pPhone->Handle(Request, Config.Token) :
+			TextResponse(404, "This FamiTracker has no phone page.");
 	const std::string *pOrigin = Request.Header("Origin");
 	if (pOrigin != 0 && !IsLocalOrigin(*pOrigin))
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker doesn't answer requests from web pages.");
