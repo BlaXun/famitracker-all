@@ -239,4 +239,31 @@ bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &Sample
 	return Good;
 }
 
+bool ReadOggComments(const std::string &File, OggComments &Comments, std::string &Error)
+{
+	Comments.clear();
+	MemoryFile Source = { &File, 0 };
+	// Read as a stream that can't seek: only its headers, so the start of a file is enough (a host may read only its first
+	// megabyte)
+	ov_callbacks Callbacks;
+	Callbacks.read_func = &ReadMemory;
+	Callbacks.seek_func = NULL;
+	Callbacks.close_func = NULL;
+	Callbacks.tell_func = NULL;
+	OggVorbis_File Vorbis;
+	if (ov_open_callbacks(&Source, &Vorbis, NULL, 0, Callbacks) < 0) {
+		Error = "It isn't an OGG Vorbis file.";
+		return false;
+	}
+	const vorbis_comment *pComment = ov_comment(&Vorbis, -1);
+	for (int i = 0; pComment != NULL && i < pComment->comments; ++i) {
+		const std::string Text(pComment->user_comments[i], static_cast<size_t>(pComment->comment_lengths[i]));
+		const size_t Equals = Text.find('=');
+		Comments.push_back(Equals == std::string::npos ? std::make_pair(Text, std::string()) :
+			std::make_pair(Text.substr(0, Equals), Text.substr(Equals + 1)));
+	}
+	ov_clear(&Vorbis);
+	return true;
+}
+
 }	// namespace ftapi

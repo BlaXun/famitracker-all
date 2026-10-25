@@ -253,6 +253,7 @@ BEGIN
             MENUITEM "&NES tricks: quick chords, an echo, a vibrato, slides and a sampled kick", ID_HELP_EXAMPLE_TRICKS
             MENUITEM "The &VRC6: two more pulses, and a sawtooth as the bass and the lead", ID_HELP_EXAMPLE_VRC6
             MENUITEM "&Soft and wide: soft pads, stereo, and the mixer's Soft and Space", ID_HELP_EXAMPLE_SOFT
+            MENUITEM "Sound &effects: a jump, a coin, a laser and more, made the NES's way", ID_HELP_EXAMPLE_SFX
         END
         MENUITEM SEPARATOR
         MENUITEM "&Help Topics\tF1",            ID_HELP_FINDER
@@ -604,6 +605,7 @@ BEGIN
     ID_HELP_EXAMPLE_TRICKS  "A short song of the NES's classic tricks, opened as a new song, with a walkthrough of what to listen for\nNES tricks"
     ID_HELP_EXAMPLE_VRC6    "A short song for the VRC6 chip, opened as a new song, with a walkthrough of what to listen for\nThe VRC6"
     ID_HELP_EXAMPLE_SOFT    "A calm song on the VRC6 Plus, in stereo, opened as a new song, with a walkthrough of what to listen for\nSoft and wide"
+    ID_HELP_EXAMPLE_SFX     "Ten sound effects for a game on the 2A03, opened as a new song, with a walkthrough of how each one is made\nSound effects"
     ID_EDIT_SAVECLIP        "Keep the selected rows as a clip, to place again later as a copy or linked\nSave selection as clip"
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
@@ -1000,10 +1002,12 @@ IDR_EXAMPLE_FIRST_SONG  RCDATA                  "res\\examples\\first-song.ftm"
 IDR_EXAMPLE_TRICKS_SONG RCDATA                  "res\\examples\\nes-tricks.ftm"
 IDR_EXAMPLE_VRC6_SONG   RCDATA                  "res\\examples\\vrc6.ftm"
 IDR_EXAMPLE_SOFT_SONG   RCDATA                  "res\\examples\\soft-and-wide.ftm"
+IDR_EXAMPLE_SFX_SONG    RCDATA                  "res\\examples\\sound-effects.ftm"
 IDR_EXAMPLE_FIRST_WALK  RCDATA                  "res\\examples\\first-song.txt"
 IDR_EXAMPLE_TRICKS_WALK RCDATA                  "res\\examples\\nes-tricks.txt"
 IDR_EXAMPLE_VRC6_WALK   RCDATA                  "res\\examples\\vrc6.txt"
 IDR_EXAMPLE_SOFT_WALK   RCDATA                  "res\\examples\\soft-and-wide.txt"
+IDR_EXAMPLE_SFX_WALK    RCDATA                  "res\\examples\\sound-effects.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //

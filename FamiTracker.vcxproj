@@ -565,6 +565,7 @@
     <ClCompile Include="Source\Api\SoundLibrary.cpp" />
     <ClCompile Include="Source\Api\GameSounds.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
+    <ClCompile Include="Source\Api\WhatNext.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -604,6 +605,7 @@
     <ClInclude Include="Source\Api\GameSoundsData.h" />
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
+    <ClInclude Include="Source\Api\WhatNext.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />

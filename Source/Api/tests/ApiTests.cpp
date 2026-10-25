@@ -57,6 +57,7 @@
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
 #include "../Wavetables.h"
+#include "../WhatNext.h"
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
@@ -4924,7 +4925,7 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 22);
+	CHECK(Core.size() >= 15 && Core.size() <= 36);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25)
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -4948,9 +4949,10 @@ void TestNetwork()
 		CHECK(std::find(Listed.begin(), Listed.end(), "write_notes") != Listed.end() &&
 			std::find(Listed.begin(), Listed.end(), "export_for_game") != Listed.end() &&
 			std::find(Listed.begin(), Listed.end(), "add_chords_and_bass") != Listed.end());
-		// Under half the full list's text
+		// Well under the full list's text: under three fifths of it (56% on 25 October 2026, with what_next and the tools
+		// its steps call; the twenty before them were 40%)
 		const Json Full = Body(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), Config, Tools));
-		CHECK(WriteJson(*pTools).size() * 2 < WriteJson(*Full.Get("result")->Get("tools")).size());
+		CHECK(WriteJson(*pTools).size() * 5 < WriteJson(*Full.Get("result")->Get("tools")).size() * 3);
 	}
 	HttpRequest CoreStart = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}");
 	CoreStart.Target = "/mcp/core/";
@@ -19235,6 +19237,1120 @@ void TestOtherChips()
 		"write_notes on a VRC7 channel, instrument \"fm tine\" (a custom patch).");
 }
 
+// what_next's answer: the call its first line gives ("Next (lively, 3 of 20 done): tool {json}")
+struct WhatNextAnswer {
+	std::string Tool;		// empty when it asks the user
+	Json Arguments;
+	bool Done;				// it says the song is done (and gives play)
+	bool AskUser;
+	std::string Line;		// its first line
+	std::string Text;		// the whole reply
+};
+
+WhatNextAnswer ReadWhatNext(const std::string &Text)
+{
+	WhatNextAnswer Out;
+	Out.Done = Out.AskUser = false;
+	Out.Arguments = Json::MakeObject();
+	Out.Text = Text;
+	Out.Line = Text.substr(0, Text.find('\n'));
+	const size_t Colon = Out.Line.find("): ");
+	if (Out.Line.compare(0, 6, "Next (") != 0 || Colon == std::string::npos)
+		return Out;
+	Out.Done = Out.Line.find(", done): ") != std::string::npos;
+	const std::string Call = Out.Line.substr(Colon + 3);
+	if (Call == "ask the user") {
+		Out.AskUser = true;
+		return Out;
+	}
+	const size_t Space = Call.find(' ');
+	Out.Tool = Call.substr(0, Space);
+	if (Space != std::string::npos)
+		ParseJson(Call.substr(Space + 1), Out.Arguments);
+	return Out;
+}
+
+WhatNextAnswer AskWhatNext(FakeSong &Song, const std::string &Asked)
+{
+	return ReadWhatNext(Run(Song, "what_next", Asked).Text);
+}
+
+// What FamiTracker does between calls that FakeSong leaves out: a change marks the song modified, save_song saves it
+void NoteCall(FakeSong &Song, const std::string &Tool)
+{
+	static const char *const READING[] = { "get_song", "what_next", "read_notes", "check_song", "review_arrangement", "check_loop",
+		"find_sound", "get_recipe", "play", "stop", "export_for_game", "measure_mix", "look_at_song" };
+	if (Tool == "save_song") {
+		Song.Info.Modified = false;
+		return;
+	}
+	for (const char *Name : READING)
+		if (Tool == Name)
+			return;
+	Song.Info.Modified = true;
+}
+
+// A small model following what_next on a song: ask, make the call it gives as given, ask again, until it's done (or asks
+// for the user, or gives StopAt's tool, which is left uncalled). Every answer must be a call that works (on the small set,
+// with its tools), and every answer must move on from the ones before. The calls made, a line each
+std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked, int Most, bool &Finished, int Line,
+	bool Core = false, const char *StopAt = 0)
+{
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Core = Core;
+	std::vector<std::string> Made;
+	std::set<std::string> Seen;
+	const bool Show = !Environment("WHAT_NEXT_SHOW").empty();	// to see each step
+	Finished = false;
+	for (int i = 0; i < Most; ++i) {
+		const ToolResult Next = Tools.Call("what_next", Parse(Asked), Who);
+		Check(!Next.IsError, ("what_next answers: " + Next.Text).c_str(), Line);
+		if (Next.IsError)
+			break;
+		const WhatNextAnswer N = ReadWhatNext(Next.Text);
+		if (Show)
+			std::printf("--- %s\n", Next.Text.c_str());
+		if (N.Done) {
+			Finished = true;
+			break;
+		}
+		if (N.AskUser || N.Tool.empty() || (StopAt != 0 && N.Tool == StopAt))
+			break;
+		if (Core)
+			Check(ToolSet::IsCoreTool(N.Tool), ("a tool of the small set: " + N.Tool).c_str(), Line);
+		const std::string Call = N.Tool + " " + WriteJson(N.Arguments);
+		const bool New = Seen.insert(Call).second;
+		Check(New, ("moves on from " + Call).c_str(), Line);
+		if (!New)
+			break;
+		ToolResult Did = Tools.Call(N.Tool, N.Arguments, Who);
+		if (Show)
+			std::printf("=== %s\n", Did.Text.substr(0, 400).c_str());
+		Check(!Did.IsError, ("the call works: " + Call + " -> " + Did.Text).c_str(), Line);
+		Made.push_back(Call);
+		// grow_melody shows its versions: the model picks one (here the first) with the same arguments
+		if (!Did.IsError && N.Tool == "grow_melody" && N.Arguments.Get("pick") == 0) {
+			Json Picked = N.Arguments;
+			Picked.Set("pick", 1);
+			Did = Tools.Call(N.Tool, Picked, Who);
+			if (Show)
+				std::printf("=== %s\n", Did.Text.substr(0, 400).c_str());
+			Check(!Did.IsError, ("the pick works: " + Did.Text).c_str(), Line);
+			Made.push_back(N.Tool + " " + WriteJson(Picked));
+		}
+		// A fix that reads the melody in steps, to write it back held over its bar lines: the model's part, done as the
+		// finding says (HoldBarEnds)
+		if (!Did.IsError && N.Tool == "read_notes" && Contains(N.Text, "; then write_notes")) {
+			const Json Asking = Parse(Asked);
+			const std::string Kind = Asking.Get("kind") != 0 ? Asking.Get("kind")->String() : std::string();
+			const Json Report = Parse(Tools.Call("check_song", Parse(std::string("{\"format\": \"json\"") + (Kind == "calm" ||
+				Kind == "lively" ? ", \"style\": \"" + Kind + "\"" : std::string()) + "}")).Text);
+			const std::vector<const Json *> Found = FindingsOf(Report, "phrases");
+			Check(!Found.empty() && HoldBarEnds(Song, *Found[0]), "the melody held over its bar lines", Line);
+			Made.push_back("write_notes (the line read, held over its bar lines)");
+		}
+		NoteCall(Song, N.Tool);
+		if (Did.IsError)
+			break;
+	}
+	if (Show)
+		for (size_t i = 0; i < Made.size(); ++i)
+			std::printf("%d. %s\n", static_cast<int>(i) + 1, Made[i].c_str());
+	return Made;
+}
+
+// The first call of a tool among the calls made; -1 for none
+int CallIndex(const std::vector<std::string> &Made, const char *Tool)
+{
+	const std::string Head = std::string(Tool) + " ";
+	for (size_t i = 0; i < Made.size(); ++i)
+		if (Made[i].compare(0, Head.size(), Head) == 0)
+			return static_cast<int>(i);
+	return -1;
+}
+
+// review_arrangement's score ("...: 9/10."); -1 for none
+int ReviewScore(const std::string &Text)
+{
+	const size_t Out = Text.find("/10.");
+	if (Out == std::string::npos)
+		return -1;
+	size_t From = Out;
+	while (From > 0 && std::isdigit(static_cast<unsigned char>(Text[From - 1])))
+		--From;
+	return std::atoi(Text.substr(From, Out - From).c_str());
+}
+
+// A new song as FamiTracker's template starts it (speed 6, tempo 120: rows of 7 and 8 frames), changes allowed
+void NewSong(FakeSong &Song)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.Tempo = 120;
+}
+
+// what_next followed from an empty song to the end, for each kind: every call it gives works as given, every answer moves
+// on, the steps come in the recipe's order, and the song it leaves is clean, its file for the game made
+void TestWhatNextLoop()
+{
+	struct Kind {
+		const char *Asked;
+		const char *Style;		// check_song's and review_arrangement's for it
+		const char *Loudness;
+		bool Drums;
+	};
+	const Kind KINDS[] = { { "{\"kind\": \"lively\"}", "lively", "-20", true }, { "{\"kind\": \"calm\"}", "calm", "-22", false },
+		{ "{\"kind\": \"action\"}", "", "-19", true }, { "{}", "", "-20", true } };
+	int Reused = 0;
+	for (const Kind &K : KINDS) {
+		FakeSong Song(1);
+		NewSong(Song);
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, K.Asked, 60, Finished, __LINE__);
+		Check(Finished, K.Asked, __LINE__);
+		// The frame, the lead's sound, chords and bass, sections, the melody, the form, depth (a harmony in the repeat, a
+		// variation, a break and an intro), the echo last of the parts, then finish_song (the polish, the mix, the seam and
+		// the file for the game in one call), saving
+		const char *const ORDER[] = { "set_tempo", "set_key", "design_instrument", "add_chords_and_bass", "name_section", "grow_melody",
+			"copy_bars", "add_harmony", "vary_part", "insert_bars", "add_echo", "finish_song", "save_song" };
+		for (size_t i = 0; i + 1 < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
+			Check(CallIndex(Made, ORDER[i]) >= 0 && CallIndex(Made, ORDER[i]) < CallIndex(Made, ORDER[i + 1]),
+				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
+		Check((CallIndex(Made, "add_drums") >= 0) == K.Drums, K.Asked, __LINE__);
+		// The B part's melody grows from the song's own hook (A's first notes, as A's grew from its motif) where that adds no
+		// clash, else from one offered on B's chords
+		std::map<std::string, std::string> Motifs;
+		for (size_t i = 0; i < Made.size(); ++i) {
+			Json Call;
+			if (Made[i].compare(0, 12, "grow_melody ") == 0 && ParseJson(Made[i].substr(12), Call) && Call.Get("pick") == 0)
+				Motifs[TextOf(&Call, "section")] = TextOf(&Call, "motif");
+		}
+		Check(Motifs.count("A") == 1 && Motifs.count("B") == 1, K.Asked, __LINE__);
+		Reused += Motifs["A"] == Motifs["B"] ? 1 : 0;
+		CHECK(CallIndex(Made, "add_counter_melody") < 0);
+		Check(Made.size() >= 18 && Made.size() <= 30, K.Asked, __LINE__);
+		// Clean: nothing vanishes, clicks, clashes or plays out of range; the review hears depth
+		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
+		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
+			"}").Text);
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range" };
+		for (const char *Kind : CLEAN)
+			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
+		const std::string Review = Run(Song, "review_arrangement", "{" + Style + "}").Text;
+		Check(ReviewScore(Review) >= 8, Review.c_str(), __LINE__);
+		// Done now, and the same after a restart (a new connection: it reads the song, not the calls before)
+		const std::string Again = Run(Song, "what_next", K.Asked).Text;
+		const WhatNextAnswer Last = ReadWhatNext(Again);
+		Check(Last.Done && Last.Tool == "play", Again.c_str(), __LINE__);
+		CHECK_HAS(Again, "exported (Town.ogg)");
+		CHECK_LACKS(Again, "\nLeft:");
+		CHECK_EQ(Run(Song, "what_next", K.Asked).Text, Again);
+		// The file for the game says what it was made from: the song as it is, at the kind's loudness
+		OggComments Comments;
+		std::string Error, Print, Loudness;
+		CHECK(Song.Files.count("Town.ogg") == 1 && ReadOggComments(Song.Files["Town.ogg"], Comments, Error));
+		for (size_t i = 0; i < Comments.size(); ++i) {
+			if (Comments[i].first == "FAMITRACKER_PRINT")
+				Print = Comments[i].second;
+			else if (Comments[i].first == "FAMITRACKER_LOUDNESS")
+				Loudness = Comments[i].second;
+		}
+		CHECK_EQ(Print.size(), 16u);
+		Check(Loudness == K.Loudness, Loudness.c_str(), __LINE__);
+		// Read from the file's start alone too (FamiTracker reads at most a megabyte of a file next to the song)
+		OggComments Start;
+		CHECK(ReadOggComments(Song.Files["Town.ogg"].substr(0, 8192), Start, Error) && Start.size() == Comments.size());
+	}
+
+	CHECK(Reused >= 2);
+
+	// The same on the small set (/mcp/core): every step one of its tools
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, true);
+	CHECK(Finished);
+	// Without drums and an echo, as the user asked: none written; and without the lead's sound designed first, the melody
+	// on the song's own lead (until the review asks for notes that fade)
+	FakeSong Plain(1);
+	NewSong(Plain);
+	const std::vector<std::string> Made = FollowWhatNext(Plain, "{\"kind\": \"lively\", \"skip\": [\"drums\", \"echo\", \"lead\"]}",
+		60, Finished, __LINE__);
+	CHECK(Finished && CallIndex(Made, "add_drums") < 0 && CallIndex(Made, "add_echo") < 0 && CallIndex(Made, "add_harmony") >= 0);
+	CHECK(Notes(Plain, 3).empty());
+	CHECK(CallIndex(Made, "grow_melody") >= 0 && CallIndex(Made, "grow_melody") < CallIndex(Made, "design_instrument") &&
+		Contains(Made[static_cast<size_t>(CallIndex(Made, "grow_melody"))], "\"instrument\":\"Lead\""));	// the song's own lead
+}
+
+// what_next on songs in each state: the step it gives, which runs as given, and the next answer moves on
+void TestWhatNextStates()
+{
+	// Direct changes off: the user first, since each step works on what the one before wrote
+	{
+		FakeSong Song(1);
+		const WhatNextAnswer A = AskWhatNext(Song, "{}");
+		CHECK(A.AskUser && A.Tool.empty());
+		CHECK_HAS(A.Text, "Direct changes are off");
+		CHECK_HAS(A.Text, "Then call what_next {} again.");
+	}
+	// An empty song at an even tempo in the kind's range (speed 6, tempo 150): its key first, one of the kind's
+	{
+		FakeSong Song(1);
+		Song.Info.DirectChanges = true;
+		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK_EQ(A.Tool, std::string("set_key"));
+		const std::string Key = TextOf(&A.Arguments, "key");
+		CHECK(Key == "G major" || Key == "D major" || Key == "A major");
+		CHECK_HAS(A.Line, "Next (lively, 1 of ");
+		CHECK_HAS(A.Text, "Done: tempo 150 BPM.");
+		// A calm song at 150 BPM: a calm tempo first
+		const WhatNextAnswer Calm = AskWhatNext(Song, "{\"kind\": \"calm\"}");
+		CHECK(Calm.Tool == "set_tempo" && WriteJson(Calm.Arguments) == "{\"bpm\":75}");
+		CHECK_HAS(Calm.Text, "150 BPM is fast for a calm song (60-90 BPM)");
+	}
+	// A melody only: chords fitted to it, with a bass, then its sections named, then the form grows
+	{
+		FakeSong Song(1);
+		Song.Info.DirectChanges = true;
+		Run(Song, "set_key", "{\"key\": \"C major\"}");
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": \"1: E3 - G3 - C4 - - B3 | "
+			"2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | 5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | "
+			"7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .\"}").IsError);
+		WhatNextAnswer A = AskWhatNext(Song, "{}");
+		CHECK_EQ(A.Tool, std::string("add_chords_and_bass"));
+		CHECK(A.Arguments.Get("chords") == 0 && TextOf(&A.Arguments, "melody_channel") == "VRC6 Pulse 1");
+		CHECK_HAS(A.Text, "The melody plays alone");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		A = AskWhatNext(Song, "{}");
+		CHECK(A.Tool == "name_section" && WriteJson(A.Arguments) == "{\"name\":\"A\",\"from_bar\":1,\"to_bar\":8}");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		A = AskWhatNext(Song, "{}");
+		CHECK(A.Tool == "copy_bars" && WriteJson(A.Arguments) == "{\"section\":\"A\",\"at_bar\":9}");
+	}
+	// A lively stage with its melody, chords and bass and its form, without drums: the lively groove where the body plays
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"lively\"}", 40, Finished, __LINE__, false, "add_drums");
+		CHECK(!Finished && CallIndex(Made, "grow_melody") >= 0 && CallIndex(Made, "add_chords_and_bass") >= 0);
+		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "add_drums" && WriteJson(A.Arguments) == "{\"groove\":\"lively\",\"from_bar\":1,\"to_bar\":32}");
+		CHECK_HAS(A.Text, "Done: tempo 128.6 BPM, key ");
+		CHECK_HAS(A.Text, "the form (4 parts, 32 bars), ");
+		// Skipped: the next step after it
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\"]}").Tool == "add_harmony");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool == "add_harmony");
+	}
+	// Notes that click: one polish nudges them all
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Run(Song, "add_instrument", "{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}");
+		Song.Put(0, 0, "A-3", Song.Info.Instruments.back().Index);
+		Song.Put(0, 32, "A-3");
+		Song.Put(0, 48, "E-4");
+		Song.End(0, 56);
+		const WhatNextAnswer A = AskWhatNext(Song, "{}");
+		CHECK(A.Tool == "polish" && WriteJson(A.Arguments) == "{\"touches\":[\"clicks\"]}");
+		CHECK_HAS(A.Text, "A held note on 2A03 Pulse 1 clicks (bar 1)");
+		CHECK(AskWhatNext(Song, "{\"skip\": [\"clicks\"]}").Tool != "polish");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, ", 0 clicking,");
+		CHECK(AskWhatNext(Song, "{}").Tool != "polish");
+	}
+	// Notes that vanish between held notes of their line: they take the line's own lasting sound
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Song.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Song.Put(5, 0, "C-4", 0);
+		Song.Put(5, 8, "D-4", 3);
+		Song.Put(5, 10, "E-4");
+		Song.Put(5, 12, "F-4", 0);
+		Song.Put(5, 16, "G-4", 3);
+		Song.Put(5, 18, "A-4", 0);
+		Song.End(5, 32);
+		const WhatNextAnswer A = AskWhatNext(Song, "{}");
+		CHECK(A.Tool == "set_instrument" && TextOf(&A.Arguments, "channel") == "VRC6 Pulse 1" && TextOf(&A.Arguments, "instrument") ==
+			"Lead");
+		CHECK_HAS(A.Text, "they sound like missing notes");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		CHECK_EQ(IntegerOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text).Get("counts"), "vanishing"), 0);
+		CHECK(AskWhatNext(Song, "{}").Tool != "set_instrument");
+	}
+	// A note out of the channel's range: an octave over its bars
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Put(0, 48, "G-0", 2);
+		Song.End(0, 52);
+		const WhatNextAnswer A = AskWhatNext(Song, "{}");
+		CHECK(A.Tool == "vary_part" && WriteJson(A.Arguments) == "{\"channel\":\"2A03 Pulse 1\",\"variation\":\"octave_up\",\"from_bar\":4,"
+			"\"to_bar\":4}");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		CHECK_EQ(IntegerOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text).Get("counts"), "range"), 0);
+	}
+	// A finished stage: a mix that's off, a change since the file was made, a note over the loop's seam
+	FakeSong Done(1);
+	NewSong(Done);
+	bool Finished = false;
+	FollowWhatNext(Done, "{\"kind\": \"lively\"}", 60, Finished, __LINE__);
+	CHECK(Finished);
+	{
+		// The chords turned down: the lively mix again and a new file, in one finish_song (not polished again: the song was
+		// mixed), then saving, the file made of the song as it is
+		FakeSong Song = Done;
+		for (size_t r = 0; r < Song.Rows[0].size(); ++r)
+			if (Song.Rows[0][r].HasNote())
+				Song.Rows[0][r].Volume = 4;
+		FakeSong ByHand = Song;
+		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
+			"[\"polish\"]}");
+		CHECK_HAS(A.Text, "The mix, last, as heard: the melody 3-4 dB over the parts around it, the drums soft. finish_song does it, then "
+			"the loop's seam and the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		Song.Info.Modified = true;
+		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK_EQ(A.Tool, std::string("save_song"));
+		CHECK_HAS(A.Text, "save them (the game's file has them already)");
+		CHECK(!Run(Song, "save_song", "{}").IsError);
+		Song.Info.Modified = false;
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Done);
+		// Mixed by hand instead: saving, then a new file
+		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		ByHand.Info.Modified = true;
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK_EQ(A.Tool, std::string("save_song"));
+		CHECK_HAS(A.Text, "save it before the export");
+		CHECK(!Run(ByHand, "save_song", "{}").IsError);
+		ByHand.Info.Modified = false;
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "export_for_game" && WriteJson(A.Arguments) == "{\"loudness\":-20}");
+		CHECK_HAS(A.Text, "The game's file next to the song is older than the song");
+		// A file made at another loudness: made again at the kind's
+		FakeSong Quiet = Done;
+		CHECK(!Run(Quiet, "export_for_game", "{\"loudness\": -23}").IsError);
+		A = AskWhatNext(Quiet, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "export_for_game" && WriteJson(A.Arguments) == "{\"loudness\":-20}");
+		CHECK_HAS(A.Text, "The game's file has another loudness");
+	}
+	{
+		// A note ringing over the loop's seam: fix_loop's fix and the file, in finish_song (neither polished nor mixed again)
+		FakeSong Song = Done;
+		const int Last = static_cast<int>(Song.Rows[6].size()) - 4;
+		Song.Put(6, Last, "C-4", 0, 8);
+		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
+			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
+		CHECK_HAS(A.Text, "check_loop finds the loop starting otherwise on repeat");
+		CHECK_HAS(A.Text, "finish_song does it, then the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
+		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		const std::string After = AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool;
+		CHECK(After != "fix_loop" && After != "finish_song");
+	}
+}
+
+// Kinds, skips, every step at once, the same answer every time; the phrase it offers and its dry runs
+void TestWhatNextChoices()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"battle\"}").Text, "Next (action, ");
+	CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"Stage\"}").Text, "Next (lively, ");
+	const ToolResult Bad = Run(Song, "what_next", "{\"kind\": \"jazz\"}");
+	CHECK(Bad.IsError);
+	CHECK_HAS(Bad.Text, "kind should be calm, lively or action");
+	// No kind: calm when the track's name says so, else the general recipe
+	const std::string General = Run(Song, "what_next", "{}").Text;
+	CHECK_HAS(General, "Next (general, ");
+	CHECK_HAS(General, "Kind: none given, so the general recipe");
+	FakeSong Night(1);
+	NewSong(Night);
+	Night.Info.TrackName = "Night sky";
+	const std::string Calm = Run(Night, "what_next", "{}").Text;
+	CHECK_HAS(Calm, "Next (calm, ");
+	CHECK_HAS(Calm, "Kind: calm, as the track's name says");
+	CHECK_HAS(Calm, "Then call what_next {\"kind\":\"calm\"} again.");
+	// Skips: a list or words with commas; a step's own name or a kind of check_song's finding
+	const ToolResult Skip = Run(Song, "what_next", "{\"skip\": [\"tempo\"]}");
+	CHECK(!Skip.IsError && ReadWhatNext(Skip.Text).Tool == "set_key");
+	CHECK_HAS(Skip.Text, "Then call what_next {\"skip\":[\"tempo\"]} again.");
+	CHECK_EQ(ReadWhatNext(Run(Song, "what_next", "{\"skip\": \"tempo, key\"}").Text).Tool, std::string("design_instrument"));
+	CHECK(!Run(Song, "what_next", "{\"skip\": [\"vanishing\", \"held\", \"Drums\", \"counter-melody\"]}").IsError);
+	const ToolResult Unknown = Run(Song, "what_next", "{\"skip\": [\"nope\"]}");
+	CHECK(Unknown.IsError);
+	CHECK_HAS(Unknown.Text, "skip: \"nope\" isn't a step. Steps: tempo, key, lead, chords,");
+	CHECK(Run(Song, "what_next", "{\"skip\": 3}").IsError);
+	// Every step found now: the first is the one given alone
+	const std::string All = Run(Song, "what_next", "{\"kind\": \"lively\", \"all\": true}").Text;
+	CHECK_HAS(All, "Every step found now, in order");
+	CHECK_HAS(All, "\n1. set_tempo {\"bpm\":128.6}: ");
+	CHECK_HAS(All, "\n2. set_key {\"key\":");
+	CHECK_HAS(All, "\n3. design_instrument {\"name\":\"Stage lead\"");
+	const std::string One = ReadWhatNext(Run(Song, "what_next", "{\"kind\": \"lively\"}").Text).Line;
+	// The lead's step names find_sound for another sound: that call runs as given too
+	{
+		const std::string Lead = Run(Song, "what_next", "{\"skip\": [\"tempo\", \"key\"]}").Text;
+		const size_t At = Lead.find("find_sound {");
+		CHECK(At != std::string::npos);
+		if (At != std::string::npos) {
+			const size_t End = Lead.find('}', At);
+			const ToolResult Found = Run(Song, "find_sound", Lead.substr(At + 11, End - At - 10));
+			CHECK(!Found.IsError);
+			CHECK_HAS(Found.Text, "lead");
+		}
+	}
+	CHECK_EQ(ReadWhatNext(All).Line.substr(ReadWhatNext(All).Line.find("): ")), One.substr(One.find("): ")));
+	// Asking changes nothing
+	const std::vector<std::vector<Cell> > Before = Song.Rows;
+	const int Writes = Song.Writes;
+	Run(Song, "what_next", "{\"all\": true}");
+	CHECK(Song.Rows == Before && Song.Writes == Writes);
+
+	// The phrase it offers for a melody: in the key and the register, a chord tone on each strong beat, ending in a rest,
+	// nothing a semitone from what sounds with it
+	for (int Quiet = 0; Quiet < 2; ++Quiet)
+		for (int Variant = 0; Variant < 8; ++Variant) {
+			const Key K(7, MODE_MAJOR);
+			std::vector<std::vector<int> > Chord(64, std::vector<int>{ 7, 11, 2 });
+			for (int r = 32; r < 48; ++r)
+				Chord[static_cast<size_t>(r)] = std::vector<int>{ 0, 4, 7 };
+			const std::vector<std::vector<int> > Sounding = Chord;
+			const std::vector<TuneNote> Tune = ExampleTune(K, 1, 4, 4, 4, Chord, Sounding, Quiet == 1, Variant);
+			Check(Tune.size() >= 6, "a phrase", __LINE__);
+			double End = 0.0;
+			for (size_t i = 0; i < Tune.size(); ++i) {
+				const TuneNote &N = Tune[i];
+				Check(InKey(N.Pitch, K) && N.Pitch >= 30 && N.Pitch <= 60, "in the key and the register", __LINE__);
+				const int Row = (N.Bar - 1) * 16 + static_cast<int>((N.Beat - 1.0) * 4 + 0.5);
+				const int Class = N.Pitch % 12;
+				const std::vector<int> &Tones = Chord[static_cast<size_t>(Row)];
+				if (N.Beat == 1.0 || N.Beat == 3.0)
+					Check(std::find(Tones.begin(), Tones.end(), Class) != Tones.end(), "a chord tone on a strong beat", __LINE__);
+				for (size_t o = 0; o < Tones.size(); ++o)
+					Check((Class - Tones[o] + 12) % 12 != 1 && (Tones[o] - Class + 12) % 12 != 1, "no semitone", __LINE__);
+				End = std::max(End, (N.Bar - 1) * 4 + N.Beat - 1.0 + N.Beats);
+			}
+			Check(End < 16.0, "it ends in a rest", __LINE__);
+		}
+	CHECK_EQ(NextProgression(NEXT_LIVELY, false, false), std::string("| I | V | vi | IV | I | V | IV | V |"));
+	CHECK(NextProgression(NEXT_ACTION, true, true) != NextProgression(NEXT_ACTION, true, false));
+	int Kind = -1;
+	CHECK(ParseNextKind("Boss", Kind) && Kind == NEXT_ACTION && ParseNextKind("ambient", Kind) && Kind == NEXT_CALM &&
+		!ParseNextKind("town", Kind));
+
+	// A dry run keeps every change back, and reads the song as its writes would leave it
+	FakeSong Dry(1);
+	Dry.Info.DirectChanges = true;
+	Dry.Put(5, 0, "C-4", 0);
+	Dry.End(5, 16);
+	DryRunHost Host(Dry);
+	ToolSet Tools(Host);
+	CHECK(!Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"notes\": \"1: E4 - - - - - - - | 2: G4 - - - - - - -\"}")).IsError);
+	CHECK(Host.Changes == 1 && Host.Others == 0 && Host.Writes.size() == 1u);
+	CHECK(Dry.Rows[5][0].Note == 1 && Dry.Rows[5][16].Note == NOTE_HALT && Dry.Writes == 0);
+	std::vector<Cell> Read;
+	Host.ReadCells(5, 0, 32, Read);
+	CHECK(Read.size() == 32u && Read[0].Note == 1);
+	Host.Overlay = true;
+	Host.ReadCells(5, 0, 32, Read);
+	CHECK(Read.size() == 32u && Read[0].Note == 5 && Read[16].Note == 8);	// E and G
+	CHECK(Tools.Call("add_instrument", Parse("{\"preset\": \"pluck\"}")).IsError);	// not in a dry run
+}
+
+// The small set fitted to the loop: what_next and the tools its steps call, the instructions and recipes around it
+void TestWhatNextCore()
+{
+	const char *const IN_SET[] = { "what_next", "add_harmony", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key",
+		"set_swing", "check_loop", "fix_loop", "set_loop", "find_sound", "reference_sound" };	// (IN is a macro of windows.h)
+	for (const char *Name : IN_SET)
+		Check(ToolSet::IsCoreTool(Name), Name, __LINE__);
+	CHECK(!ToolSet::IsCoreTool("add_counter_melody") && !ToolSet::IsCoreTool("set_mixer"));
+	const std::string Short = ToolSet::CoreInstructions();
+	CHECK_HAS(Short, "Work in a loop: get_song, then what_next");
+	CHECK_HAS(Short, "Make that call, then ask what_next again, until it says done.");
+	CHECK_HAS(Short, "find_sound to look for one");
+	CHECK_HAS(Short, "get_recipe shows a whole melody of 8 bars.");
+	CHECK_HAS(ToolSet::Instructions(), "what_next gives the one next step for the song as it is");
+	// get_recipe on the small set: the loop, and a worked melody of 8 bars in steps, which write_notes takes as it is
+	const std::string Example = "1: E3 - G3 - C4 - - B3 | 2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | "
+		"5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | 7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .";
+	const char *const KINDS[] = { "calm", "lively", "action", "" };
+	FakeSong Song(1);
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Core = true;
+	for (const char *Kind : KINDS) {
+		const ToolResult Recipe = Tools.Call("get_recipe", Parse(*Kind ? std::string("{\"kind\": \"") + Kind + "\"}" : std::string("{}")),
+			Who);
+		CHECK(!Recipe.IsError);
+		CHECK_HAS(Recipe.Text, "in a loop: what_next");
+		Check(Contains(Recipe.Text, ("\"" + Example + "\"").c_str()), Kind, __LINE__);
+	}
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": \"" + Example + "\"}").IsError);
+	const std::string Back = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"format\": \"steps\"}").Text;
+	CHECK_HAS(Back, "1: E3v15 - G3 - C4 - - B3\n2: A3 - - - E3 - . .");
+	CHECK_HAS(Back, "8: C4 - - - - - . .");
+	// A part without its melody: a hook grown with grow_melody (one offered on the chords, 4-7 notes in steps), to pick a
+	// version of; on the small set the step points at the worked melody too
+	FakeSong Tune(1);
+	NewSong(Tune);
+	bool Finished = false;
+	FollowWhatNext(Tune, "{}", 10, Finished, __LINE__, true, "grow_melody");
+	ToolSet Core(Tune);
+	const std::string Step = Core.Call("what_next", Parse("{}"), Who).Text;
+	const WhatNextAnswer Grow = ReadWhatNext(Step);
+	CHECK_HAS(Step, "Next (general, ");
+	CHECK(Grow.Tool == "grow_melody" && TextOf(&Grow.Arguments, "section") == "A" && TextOf(&Grow.Arguments, "channel") ==
+		"VRC6 Pulse 1" && TextOf(&Grow.Arguments, "instrument") == "Melody lead" && Grow.Arguments.Get("pick") == 0);
+	StepLine Hook;
+	std::string Error;
+	CHECK(ParseStepLine(TextOf(&Grow.Arguments, "motif"), 0, Hook, Error) && Hook.Notes.size() >= 4 && Hook.Notes.size() <= 7 &&
+		Hook.Bars.size() == 2u);
+	CHECK_HAS(Step, "Write a hook of your own in motif, 4-7 notes in steps");
+	CHECK_HAS(Step, "call grow_melody again with the same arguments and pick 1, 2 or 3");
+	CHECK_HAS(Step, "get_recipe shows a whole melody of 8 bars in steps");
+	CHECK_LACKS(Core.Call("what_next", Parse("{}")).Text, "get_recipe shows");
+	const ToolResult Versions = Core.Call("grow_melody", Grow.Arguments, Who);
+	CHECK(!Versions.IsError);
+	CHECK_HAS(Versions.Text, "Version 3. ");
+	// Picked, the part has its melody; the next part grows the song's own hook
+	Json Picked = Grow.Arguments;
+	Picked.Set("pick", 2);
+	CHECK(!Core.Call("grow_melody", Picked, Who).IsError);
+	const WhatNextAnswer After = ReadWhatNext(Core.Call("what_next", Parse("{}"), Who).Text);
+	CHECK(After.Tool != "grow_melody" || TextOf(&After.Arguments, "section") != "A");
+}
+
+// what_next on a draft like a local model's first stage (DraftSong: clean on the older checks, but its melody in one-bar
+// pieces, its bass thin and doubled, a chord sound on the triangle, faders doing the mix, a repeat that copies, a short
+// loop): each finding's fix comes as a step, the calls after its first in its why, at its stage; a model that follows
+// them (holding the melody over its bar lines by hand, as the fix says) ends with none of those findings, and no clash
+void TestWhatNextDraft()
+{
+	FakeSong Song(8);
+	DraftSong(Song);
+	const Json Before = Parse(Run(Song, "check_song", "{\"format\": \"json\", \"style\": \"lively\"}").Text);
+	const char *const KINDS[] = { "phrases", "bass", "sound", "faders", "repeat", "short_loop" };
+	for (const char *Kind : KINDS)
+		Check(IntegerOf(Before.Get("counts"), Kind) > 0, Kind, __LINE__);
+	// The melody's phrases first of them, a part's fix before depth: read in steps, then written back
+	const WhatNextAnswer All = AskWhatNext(Song, "{\"kind\": \"lively\", \"all\": true}");
+	CHECK_HAS(All.Text, "read_notes {\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5,\"to_bar\":28,\"format\":\"steps\"}: check_song: ");
+	CHECK_HAS(All.Text, "; then write_notes {\"channel\":\"VRC6 Pulse 1\",\"from_bar\":5} (notes: that line, ");
+	CHECK_HAS(All.Text, ": make them in that order, then ask what_next again.");
+	CHECK_HAS(All.Text, "mix {\"style\":\"lively\",\"faders\":\"reset\"");
+	bool Finished = false;
+	const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, true);
+	CHECK(Finished);
+	const Json After = Parse(Run(Song, "check_song", "{\"format\": \"json\", \"style\": \"lively\"}").Text);
+	for (const char *Kind : KINDS)
+		Check(IntegerOf(After.Get("counts"), Kind) == 0, Kind, __LINE__);
+	CHECK(IntegerOf(After.Get("counts"), "clash") <= IntegerOf(Before.Get("counts"), "clash"));
+	CHECK(Song.Mix.Level(5) == 0 && Song.Mix.Level(3) == 0);
+}
+
+// what_next's last steps in finish_song (feat-finish-guard): the polish, the mix, the seam and the file in one call, with
+// the kind and the melody, what the call skips left out of it; listed once among every step; on the small set too; then
+// saving, and done, the file current
+void TestWhatNextFinish()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "finish_song");
+	CHECK(!Finished);
+	const WhatNextAnswer First = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(First.Tool, std::string("finish_song"));
+	CHECK(TextOf(&First.Arguments, "kind") == "lively" && TextOf(&First.Arguments, "melody_channel") == "VRC6 Pulse 1");
+	CHECK(First.Arguments.Get("skip") == 0);	// the polish due, the mix after it
+	CHECK_HAS(First.Text, "finish_song does it, then the mix (lively), the loop's seam and the game's file at -20 LUFS, in one call "
+		"that one Ctrl+Z undoes.");
+	// Every step at once: finish_song once, and none of the steps it does after it
+	const std::string All = Run(Song, "what_next", "{\"kind\": \"lively\", \"all\": true}").Text;
+	CHECK_HAS(All, ". finish_song {");
+	CHECK_LACKS(All, ". mix {");
+	CHECK_LACKS(All, ". fix_loop {");
+	CHECK_LACKS(All, ". export_for_game {");
+	// The seam and the file skipped: left out of it
+	const WhatNextAnswer Skipped = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"seam\", \"export\"]}");
+	CHECK(Skipped.Tool == "finish_song" && Skipped.Arguments.Get("skip") != 0 && WriteJson(*Skipped.Arguments.Get("skip")) ==
+		"[\"loop\",\"export\"]");
+	CHECK_HAS(Skipped.Text, "finish_song does it, then the mix (lively), in one call that one Ctrl+Z undoes.");
+	// On the small set: one of its tools, and it runs there
+	{
+		FakeSong Small = Song;
+		ToolSet Tools(Small);
+		Caller Who;
+		Who.Core = true;
+		const WhatNextAnswer Core = ReadWhatNext(Tools.Call("what_next", Parse("{\"kind\": \"lively\"}"), Who).Text);
+		CHECK(Core.Tool == "finish_song" && ToolSet::IsCoreTool("finish_song"));
+		CHECK(!Tools.Call(Core.Tool, Core.Arguments, Who).IsError);
+	}
+	// Made as given: then saving, and done, the file of the song as it is at the kind's loudness
+	const ToolResult Did = Run(Song, "finish_song", WriteJson(First.Arguments));
+	CHECK(!Did.IsError);
+	CHECK_HAS(Did.Text, "Finished \"");
+	Song.Info.Modified = true;
+	const WhatNextAnswer Save = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(Save.Tool, std::string("save_song"));
+	CHECK(!Run(Song, "save_song", "{}").IsError);
+	Song.Info.Modified = false;
+	const std::string Last = Run(Song, "what_next", "{\"kind\": \"lively\"}").Text;
+	Check(ReadWhatNext(Last).Done, Last.c_str(), __LINE__);
+	CHECK_HAS(Last, "exported (Town.ogg)");
+	CHECK_LACKS(Last, "\nLeft:");
+}
+
+// write_notes' warnings as it writes, and finish_song (feat-finish-guard)
+
+// A tool called as a client of the full set or of the small set (/mcp/core) calls it
+ToolResult RunAs(FakeSong &Song, const char *Tool, const std::string &Arguments, bool Core)
+{
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Core = Core;
+	return Tools.Call(Tool, Parse(Arguments), Who);
+}
+
+int WarningCount(const std::string &Text)
+{
+	int Count = 0;
+	for (size_t At = Text.find("\nWarning: "); At != std::string::npos; At = Text.find("\nWarning: ", At + 1))
+		++Count;
+	return Count;
+}
+
+// The call the first warning (from At) gives as its fix, "Fix: tool {...}": the tool and its arguments
+bool FixOf(const std::string &Text, std::string &Tool, std::string &Arguments, size_t At = 0)
+{
+	const size_t Fix = Text.find("Fix: ", At);
+	if (Fix == std::string::npos)
+		return false;
+	const size_t Space = Text.find(' ', Fix + 5), Open = Text.find('{', Fix);
+	if (Space == std::string::npos || Open == std::string::npos)
+		return false;
+	int Depth = 0;
+	bool Quoted = false;
+	size_t End = Open;
+	for (; End < Text.size(); ++End) {
+		const char c = Text[End];
+		if (Quoted) {
+			if (c == '\\')
+				++End;
+			else if (c == '"')
+				Quoted = false;
+			continue;
+		}
+		if (c == '"')
+			Quoted = true;
+		else if (c == '{')
+			++Depth;
+		else if (c == '}' && --Depth == 0)
+			break;
+	}
+	Tool = Text.substr(Fix + 5, Space - Fix - 5);
+	Arguments = Text.substr(Open, End - Open + 1);
+	return End < Text.size();
+}
+
+void TestWritingWarnings()
+{
+	// A song in G major, chosen: a melody in octaves 3-4 on a lead that holds, a triangle bass, a sawtooth bass down to A-0
+	// (55 Hz, where the soundtrack's own sawtooth basses go): nothing to warn of
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
+		ToolResult R = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, "
+			"\"notes\": \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 - | C5 B4 A4 G4 - - . . | A4 - - - - - . .\"}");
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 0);
+		R = Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"G2 - - - D3 - - - | "
+			"E2 - - - B2 - - - | C3 - - - G2 - - - | D3 - - - A2 - - -\"}");
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 0);
+		R = Run(Song, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"G-1\", "
+			"\"beats\": 2}, {\"bar\": 2, \"beat\": 1, \"pitch\": \"E-1\", \"beats\": 2}, {\"bar\": 3, \"beat\": 1, \"pitch\": \"C-1\", \"beats\": 2}, "
+			"{\"bar\": 4, \"beat\": 1, \"pitch\": \"A-0\", \"beats\": 2}]}");
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 0);
+		CHECK_LACKS(R.Text, "41 Hz");
+	}
+
+	// A bass too low to be heard as notes: under E-0 as a pulse plays it, 41 Hz (on the triangle, which plays an octave
+	// under the note written, E-1); the fix runs, and writing it again an octave up is quiet
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		ToolResult R = Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, \"beat\": 1, "
+			"\"pitch\": \"D#1\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"C-1\", \"beats\": 2}]}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: D#1 at bar 1 beat 1, C-1 at bar 1 beat 3 on 2A03 Triangle sound under 41 Hz (it plays an octave under "
+			"the note written), a rumble more than a note on TV speakers and phones: a bass line sits from E-1 up there. Write them an "
+			"octave up. Fix: transpose {\"channels\":\"2A03 Triangle\",\"semitones\":12,\"from_bar\":1,\"to_bar\":1}.");
+		std::string Tool, Arguments;
+		CHECK(FixOf(R.Text, Tool, Arguments) && Tool == "transpose");
+		CHECK(!Run(Song, Tool.c_str(), Arguments).IsError);
+		CHECK(Song.Rows[2][0].Pitch() == 27 && Song.Rows[2][8].Pitch() == 24);	// D#2, C-2
+		// E-1 on the triangle sounds 41 Hz: a bass's lowest, no warning
+		R = Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"notes\": [{\"bar\": 2, \"beat\": 1, \"pitch\": \"E-1\", \"beats\": 4}]}");
+		CHECK(!R.IsError && WarningCount(R.Text) == 0);
+		// On the sawtooth, which plays the note written, E-0 is the lowest
+		R = Run(Song, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"D#0\", "
+			"\"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"E-0\", \"beats\": 2}]}");
+		CHECK_HAS(R.Text, "\nWarning: D#0 at bar 1 beat 1 on VRC6 Sawtooth sounds under 41 Hz, a rumble more than a note on TV speakers and "
+			"phones: a bass line sits from E-0 up there. Write it an octave up.");
+		CHECK_LACKS(R.Text, "Fix:");	// only some of the part: no call for all of it
+		// On the small set (no transpose there) the line written again, which runs and is quiet
+		R = RunAs(Song, "write_notes", "{\"channel\": \"Triangle\", \"from_bar\": 3, \"notes\": \"C1 - - - - - - - | D1 - - - - - - -\"}", true);
+		CHECK_HAS(R.Text, "Fix: write_notes {\"channel\":\"2A03 Triangle\",\"from_bar\":3,\"notes\":\"C-2 - - - - - - - | D-2 - - - - - - -\"}.");
+		CHECK(FixOf(R.Text, Tool, Arguments) && Tool == "write_notes");
+		R = RunAs(Song, Tool.c_str(), Arguments, true);
+		CHECK(!R.IsError && WarningCount(R.Text) == 0);
+		CHECK(Song.Rows[2][32].Pitch() == 24 && Song.Rows[2][48].Pitch() == 26);
+	}
+
+	// A melody an octave over where melodies sing: mostly in octave 5, up to G-5 and over, on a lead's sound; the fix moves it
+	// down. A bell up there (it fades), a quiet line and a B part around C-5 that peaks at E-5 aren't
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const char *const HIGH = "\"from_bar\": 1, \"notes\": \"D5 G5 A5 B5 - A5 G5 - | B5 - - - . . D6 - | C6 B5 A5 G5 - - . . | A5 - - - - - . .\"";
+		ToolResult R = Run(Song, "write_notes", std::string("{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", ") + HIGH + "}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: VRC6 Pulse 1 sits high for a melody: mostly in octave 5 (its notes around A-5, up to D-6), where a "
+			"melody sings in octave 3, reaching into octave 4 at its high points (C-3 is middle C, A-3 440 Hz). Bells, sparkles and a "
+			"descant sit up there; a melody, an octave lower. Fix: transpose {\"channels\":\"VRC6 Pulse 1\",\"semitones\":-12,\"from_bar\":1,"
+			"\"to_bar\":4}.");
+		std::string Tool, Arguments;
+		CHECK(FixOf(R.Text, Tool, Arguments) && !Run(Song, Tool.c_str(), Arguments).IsError);
+		CHECK(Song.Rows[5][0].Pitch() == 50);	// D-4
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"instrument\": \"bell\", \"from_bar\": 1, \"notes\": \"D6 G5 "
+			"A5 B5 - A5 G5 - | B5 - - - . . D6 - | C6 B5 A5 G5 - - . . | A5 - - - - - . .\"}").Text), 0);
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": "
+			"\"D5v4 G5v4 A5v4 B5v4 - A5v4 G5v4 - | B5v4 - - - . . D6v4 - | C6v4 B5v4 A5v4 G5v4 - - . . | A5v4 - - - - - . .\"}").Text), 0);
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"notes\": \"C5 - B4 - C5 - E5 - | D5 - - - "
+			"C5 - B4 - | C5 - A4 - B4 - C5 - | D5 - - - - - . .\"}").Text), 0);
+	}
+
+	// Notes the chip doesn't play in tune, in check_song's words: an N163 wave turning grainy over A#5 with 4 channels, and
+	// the FDS's top
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_expansion", "{\"chip\": \"N163\", \"n163_channels\": 4, \"confirm\": true}").IsError);
+		ToolResult R = Run(Song, "write_notes", "{\"channel\": \"N163 Namco 1\", \"instrument\": \"soft flute\", \"notes\": [{\"bar\": 1, \"beat\": 1, "
+			"\"pitch\": \"B-5\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"C-6\", \"beats\": 2}]}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: B-5 at bar 1 beat 1, C-6 at bar 1 beat 3 on N163 Namco 1 are above A#5, where 4 N163 channels turn a "
+			"16-sample wave grainy (the chip skips some of its samples; fewer N163 channels play higher): write them an octave lower. "
+			"Fix: transpose {\"channels\":\"N163 Namco 1\",\"semitones\":-12,\"from_bar\":1,\"to_bar\":1}.");
+		CHECK_HAS(Run(Song, "check_song", "{}").Text, "Range: B-5 at N163 Namco 1 bar 1 beat 1 is above A#5, where 4 N163 channels turn a "
+			"16-sample wave grainy");
+		FakeSong Fds = FdsSong();
+		R = Run(Fds, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"soft flute\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"A-7\", "
+			"\"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"G#7\", \"beats\": 1}]}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: A-7 at bar 1 beat 1 on FDS is above G#7, the highest the FDS plays: its pitch register tops out there, "
+			"so the note sounds flat: write it an octave lower.");
+	}
+
+	// Outside the chosen key: listed and asked about, unless a short note steps to its neighbour or the other parts play
+	// it in that bar too (a borrowed chord); with a key found from the notes, only a part a third of whose notes fall outside
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
+		const char *const BORROWED = "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": \"D4 - F4 - - - A4 - | "
+			"G4 G#4 A4 B4 - - . .\"}";
+		ToolResult R = Run(Song, "write_notes", BORROWED);
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: Outside G major (the track's key, chosen for it): F-4 at bar 1 beat 2 on VRC6 Pulse 1. Meant? A borrowed "
+			"chord's notes are, but the other parts don't play them there; if not, each moves a semitone into the key (F to E or F#).");
+		CHECK_LACKS(R.Text, "G#4");	// a passing note
+		CHECK_EQ(WarningCount(R.Text), 1);
+		// An F major chord under it in bar 1 (bVII): the borrowed chord's note, meant
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"instrument\": \"soft chords\", \"from_bar\": 1, \"notes\": \"F3 A3 C4 "
+			"A3 F3 A3 C4 A3 | G3 B3 D4 B3 G3 B3 D4 B3\"}").IsError);
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", BORROWED).Text), 0);
+		// No key chosen and nothing else in the song: the part makes the key
+		FakeSong First;
+		First.Info.DirectChanges = true;
+		CHECK_EQ(WarningCount(Run(First, "write_notes", BORROWED).Text), 0);
+		// A key found from the notes (F major, from the melody's F and the bass): a part in another key is asked about, a note
+		// or two outside isn't
+		CHECK(!Run(First, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"C3 - - - G2 - - - | "
+			"F2 - - - G2 - - - | C3 - - - G2 - - - | F2 - - - C3 - - -\"}").IsError);
+		R = Run(First, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": \"F#4 - A#4 - C#5 - "
+			"A#4 - | F#4 - - - D#4 - - - | C#4 - - - F#4 - - - | A#4 - - - - - - -\"}");
+		CHECK_HAS(R.Text, "\nWarning: Outside F major (found from the song's notes): F#4 at bar 1 beat 1, C#5 at bar 1 beat 3, F#4 at bar 2 "
+			"beat 1, D#4 at bar 2 beat 3 and 2 more on VRC6 Pulse 2. Meant? A borrowed chord's notes are, but the other parts don't play "
+			"them there; if not, each moves a semitone into the key (F# to F or G, C# to C or D, D# to D or E).");
+	}
+
+	// A borrowed chord whose root only the bass plays (Db under the chord part's F and Ab in Eb major, bVII, as the soundtrack's
+	// cave tracks have it): a triad with notes the other parts sound in that bar, meant. A slip a semitone off a chord's
+	// root (A under Ab, C and Eb) makes none, and is asked about
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"Eb major\"}").IsError);
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"instrument\": \"soft chords\", \"from_bar\": 1, \"notes\": \"G3 - Bb3 - "
+			"Eb4 - Bb3 - | F3 - Ab3 - Eb4 - Ab3 - | Ab3 - C4 - Eb4 - C4 - | G3 - Bb3 - Eb4 - Bb3 -\"}").IsError);
+		auto Bass = [](const std::string &Root) {
+			return "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"Eb3 - Eb3 - Bb2 - Bb2 - | Db3 - Db3 - "
+				"Ab2 - Db3 - | " + Root + " - " + Root + " - Eb2 - Eb2 - | Eb3 - Eb3 - Bb2 - Bb2 -\"}";
+		};
+		ToolResult R = Run(Song, "write_notes", Bass("Ab2"));
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 0);
+		R = Run(Song, "write_notes", Bass("A2"));
+		CHECK_HAS(R.Text, "\nWarning: Outside Eb major (the track's key, chosen for it): A-2 at bar 3 beat 1, A-2 at bar 3 beat 2 on 2A03 "
+			"Triangle. Meant?");
+		CHECK_LACKS(R.Text, "C#");	// the Db the chord's root
+		CHECK_EQ(WarningCount(R.Text), 1);
+		// Alone, the bass's Db is asked about: no other part sounds a chord with it
+		FakeSong Alone;
+		Alone.Info.DirectChanges = true;
+		CHECK(!Run(Alone, "set_key", "{\"key\": \"Eb major\"}").IsError);
+		CHECK_HAS(Run(Alone, "write_notes", Bass("Ab2")).Text, "\nWarning: Outside Eb major (the track's key, chosen for it): "
+			"C#3 at bar 2 beat 1, C#3 at bar 2 beat 2, C#3 at bar 2 beat 4 on 2A03 Triangle.");
+	}
+
+	// A bass nearly silent: a lone short note every other bar on the triangle, as the local model's draft had it, on its
+	// pulse sound ("soft chords", meant to be soft: the triangle plays it at full level). Both say what to do, and their
+	// fixes run
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": \"D4 G4 A4 B4 - "
+			"A4 G4 - | B4 - - - . . D5 - | C5 B4 A4 G4 - - . . | A4 - - - - - . . | D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 - | C5 B4 A4 G4 - "
+			"- . . | G4 - - - - - . .\"}").IsError);
+		const char *const LONE = "{\"channel\": \"Triangle\", \"instrument\": \"soft chords\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"G-2\", "
+			"\"beats\": 0.5, \"volume\": 10}, {\"bar\": 3, \"beat\": 1, \"pitch\": \"C-3\", \"beats\": 0.5, \"volume\": 10}, {\"bar\": 5, \"beat\": 1, "
+			"\"pitch\": \"G-2\", \"beats\": 0.5, \"volume\": 10}, {\"bar\": 7, \"beat\": 1, \"pitch\": \"C-3\", \"beats\": 0.5, \"volume\": 10}]}";
+		ToolResult R = Run(Song, "write_notes", LONE);
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 2);
+		CHECK_HAS(R.Text, "\nWarning: 2A03 Triangle plays 4 notes in bars 1-7, each a beat or shorter, heard ");
+		CHECK_HAS(R.Text, "of the time: a lone short note now and then leaves the bass nearly silent. A bass holds its roots or plays a "
+			"figure in every bar. Fix: add_chords_and_bass {\"bass_channel\":\"2A03 Triangle\",\"chord_channel\":\"none\",\"from_bar\":1,"
+			"\"to_bar\":7} (a bass line there, on the chords the parts play).");
+		CHECK_HAS(R.Text, "\nWarning: 2A03 Triangle plays \"Soft chords\" (04), a sound meant to be soft (its envelope peaks at 8): the "
+			"triangle has no volume and no duty, so it plays it at full level until the envelope reaches 0, a hard blip. Give it a triangle "
+			"sound (a bass, or a thump bass for an attack). Fix: set_instrument {\"channel\":\"2A03 Triangle\",\"instrument\":\"bass\","
+			"\"from_bar\":1,\"to_bar\":7}.");
+		std::string Tool, Arguments;
+		CHECK(FixOf(R.Text, Tool, Arguments, R.Text.find("meant to be soft")) && Tool == "set_instrument");
+		CHECK(!Run(Song, Tool.c_str(), Arguments).IsError);
+		bool Bass = false;
+		for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+			Bass = Bass || (Song.Info.Instruments[i].Index == Song.Rows[2][0].Instrument && Song.Info.Instruments[i].Name == "Bass");
+		CHECK(Bass);
+		CHECK(FixOf(R.Text, Tool, Arguments) && Tool == "add_chords_and_bass");
+		CHECK(!Run(Song, Tool.c_str(), Arguments).IsError);
+		int Notes = 0;
+		for (size_t r = 0; r < Song.Rows[2].size(); ++r)
+			Notes += Song.Rows[2][r].HasNote() ? 1 : 0;
+		CHECK(Notes >= 8);
+		// A bass that joins in an intro's last bars, and sparse sparkles on a pulse, aren't silent parts
+		FakeSong Intro;
+		Intro.Info.DirectChanges = true;
+		CHECK_EQ(WarningCount(Run(Intro, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"from_bar\": 1, \"to_bar\": 4, "
+			"\"notes\": [{\"bar\": 3, \"beat\": 1, \"pitch\": \"G-1\", \"beats\": 0.5}, {\"bar\": 4, \"beat\": 1, \"pitch\": \"D-1\", \"beats\": 0.5}]}").Text), 0);
+		CHECK_EQ(WarningCount(Run(Intro, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"bell\", \"notes\": [{\"bar\": 1, \"beat\": 3, "
+			"\"pitch\": \"E-5\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 2, \"pitch\": \"B-5\", \"beats\": 0.25}, {\"bar\": 7, \"beat\": 4, \"pitch\": "
+			"\"G-5\", \"beats\": 0.25}]}").Text), 0);
+		// Bubbles on the sawtooth over a triangle bass playing in every bar, every one above its notes (as a cave track has
+		// them): a color of their own. Where they reach under the bass's notes, they're asked about
+		FakeSong Bubbles;
+		Bubbles.Info.DirectChanges = true;
+		CHECK(!Run(Bubbles, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"G2 - . . D3 - . . | "
+			"C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . "
+			".\"}").IsError);
+		CHECK_EQ(WarningCount(Run(Bubbles, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 2, \"beat\": "
+			"4.5, \"pitch\": \"G-2\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 4.5, \"pitch\": \"D-3\", \"beats\": 0.25}, {\"bar\": 6, \"beat\": 4.5, "
+			"\"pitch\": \"G-2\", \"beats\": 0.25}]}").Text), 0);
+		CHECK_HAS(Run(Bubbles, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 2, \"beat\": 4.5, "
+			"\"pitch\": \"G-1\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 4.5, \"pitch\": \"D-2\", \"beats\": 0.25}, {\"bar\": 6, \"beat\": 4.5, "
+			"\"pitch\": \"G-1\", \"beats\": 0.25}]}").Text, "\nWarning: VRC6 Sawtooth plays 3 notes in bars 2-6, each a beat or shorter, heard ");
+		// As a clip (no direct changes), the warning says to write it again: the song doesn't have it yet
+		FakeSong Clip;
+		R = Run(Clip, "write_notes", LONE);
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "a hard blip. Give it a triangle sound (a bass, or a thump bass for an attack). Write the part again with "
+			"\"instrument\": \"bass\".");
+		CHECK_LACKS(R.Text, "Fix:");
+	}
+
+	// Another chip's instrument: a note kept as it was in a line of steps plays it; FamiTracker skips such notes
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Put(2, 0, "C-3", 0);	// "Lead", a VRC6 instrument, on the triangle
+		ToolResult R = Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"from_bar\": 1, \"notes\": \"C3 - - - - - - - | . . . . . . . .\"}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "\nWarning: 2A03 Triangle plays \"Lead\" (00), a VRC6 instrument, on 1 note: FamiTracker skips a note whose "
+			"instrument is another chip's, so it doesn't play. Fix: set_instrument {\"channel\":\"2A03 Triangle\",\"instrument\":\"bass\","
+			"\"from_bar\":1,\"to_bar\":2}.");
+		// The noise and the DPCM get none of these
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 1, \"notes\": \"kick . . . . . . . | kick . . . . . . .\"}").Text), 0);
+	}
+}
+
+// A small stage for finish_song: an intro of four bars, then bars 5-16 loop; a melody at one volume on VRC6 Pulse 1, broken
+// chords on VRC6 Pulse 2, a sawtooth bass and lively drums. The melody's last note leaves a vibrato on into the loop's start,
+// and the mixer's faders do the mix's work (the lead 4.5 dB down, the noise 6 up)
+FakeSong FinishTestSong()
+{
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_key", "{\"key\": \"C major\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"singing lead\", \"from_bar\": 1, \"notes\": "
+		"\"E4 - G4 - C5 - - - | B4 - A4 - G4 - - - | A4 - F4 - E4 - D4 - | G4 - - - - - . . | E4 - G4 - C5 - - - | B4 - A4 - G4 - - - | "
+		"A4 - F4 - E4 - D4 - | C4 - - - - - . . | E4 - G4 - C5 - - - | B4 - A4 - G4 - - - | A4 - F4 - E4 - D4 - | G4 - - - - - . . | "
+		"C5 - B4 - A4 - G4 - | F4 - E4 - D4 - - - | E4 - D4 - B3 - - - | C4 - - - - - - -\"}").IsError);
+	CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"chord_channel\": \"VRC6 Pulse 2\", \"bass_channel\": "
+		"\"Sawtooth\", \"chord_style\": \"broken\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+	CHECK(!Run(Song, "add_drums", "{\"groove\": \"lively\", \"from_bar\": 5, \"to_bar\": 16}").IsError);
+	CHECK(!Run(Song, "set_loop", "{\"from_bar\": 5}").IsError);
+	// The melody's last note's vibrato carries over the seam
+	int Last = -1;
+	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
+		if (Song.Rows[5][r].HasNote())
+			Last = static_cast<int>(r);
+	CHECK(Last > 200);
+	CHECK(AddEffect(Song.Rows[5][static_cast<size_t>(Last)], EFF_VIBRATO, 0x52, 2));
+	Song.Mix.Set(Song.Info.Channels[5].ChanId, -45, PAN_CENTER);
+	Song.Mix.Set(Song.Info.Channels[3].ChanId, 60, PAN_CENTER);
+	Song.Undos.clear();
+	return Song;
+}
+
+void TestFinishSong()
+{
+	// Lively: polish with the lively touches, the faders back at 0 dB, the lively mix, the seam fixed, the file at -20
+	// LUFS; the same as the separate calls, and one undo
+	{
+		FakeSong Song = FinishTestSong();
+		const FakeSong Before = Song;
+		FakeSong Separate = Song;
+		const ToolResult R = Run(Song, "finish_song", "{\"kind\": \"lively\"}");
+		CHECK(!R.IsError);
+		CHECK_HAS(R.Text, "Finished \"Town\" as a lively stage, the melody on VRC6 Pulse 1 (guessed; melody_channel names another):\n- Polish: ");
+		CHECK_HAS(R.Text, "\n- Faders: back to 0 dB (2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB), which did the mix's work: the mix sets the "
+			"balance in the notes, as NSF files play it too (faders keep leaves them, when the user set them).");
+		CHECK_HAS(R.Text, "\n- Mix (lively): as heard, the melody");
+		CHECK_HAS(R.Text, "\n- Loop: bars 5-16 (");
+		CHECK_HAS(R.Text, "), after an intro of ");
+		CHECK_HAS(R.Text, "; fix_loop wrote ");
+		CHECK_HAS(R.Text, "\n- Export: Town.ogg: ");
+		CHECK_HAS(R.Text, "its loop at -20.0 LUFS");
+		CHECK_HAS(R.Text, "\n- GameMaker: audio_sound_loop_start(snd_town, ");
+		CHECK_HAS(R.Text, "\nOne Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).");
+		CHECK_HAS(R.Text, "\nListen for: the melody clear on top of the parts, and the bass bouncing; the seam going round (play "
+			"{\"from_bar\":15} plays the end into the loop; stop ends it).");
+		CHECK(R.Text.size() < 2500u);
+		// The lively recipe's touches (KindPolish's, what_next's polish step's too) in polish's lively style
+		CHECK(!Run(Separate, "polish", "{\"style\": \"lively\", \"touches\": [\"vibrato\", \"separate\", \"clicks\", \"staccato\"], "
+			"\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(!Run(Separate, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}").IsError);
+		CHECK(!Run(Separate, "fix_loop", "{}").IsError);
+		CHECK(!Run(Separate, "export_for_game", "{\"loudness\": -20}").IsError);
+		CHECK(Song.Rows == Separate.Rows);
+		CHECK(Song.Mix == Separate.Mix && Song.Mix.Level(Song.Info.Channels[5].ChanId) == 0);
+		CHECK(Song.Files.size() == 1u && Song.Files == Separate.Files);
+		CHECK(Song.Rows != Before.Rows);
+		CHECK(Song.Undos.size() == 1u && Song.Groups == Before.Groups + 1);
+		std::string Message;
+		CHECK(Song.Undo(Message));
+		CHECK(Song.Rows == Before.Rows && Song.Mix == Before.Mix);
+		// Again on the finished song: the seam is clean, the faders at 0
+		FakeSong Twice = Separate;
+		const std::string Again = Run(Twice, "finish_song", "{\"kind\": \"lively\"}").Text;
+		CHECK_HAS(Again, "; the seam is clean.");
+		CHECK_LACKS(Again, "Faders:");
+	}
+
+	// The kinds: calm when the track's name says so (-22 LUFS), action (-19, the soft mix), the general recipe without a
+	// kind (-20); a cue and a sound effect keep their notes and get their files (-20 and -18)
+	{
+		FakeSong Calm = FinishTestSong();
+		Calm.Info.TrackName = "Town (night)";
+		std::string Text = Run(Calm, "finish_song", "{}").Text;
+		CHECK_HAS(Text, "as a calm track (the track's name says so; kind general to change)");
+		CHECK_HAS(Text, "\n- Mix (calm): ");
+		CHECK_HAS(Text, "at -22.0 LUFS");
+		CHECK_HAS(Text, "\nListen for: the melody floating only a little over the chords");
+		FakeSong Action = FinishTestSong();
+		Text = Run(Action, "finish_song", "{\"kind\": \"action\"}").Text;
+		CHECK_HAS(Text, "as an action track, the melody");
+		CHECK_HAS(Text, "\n- Polish: accents on ");
+		CHECK_HAS(Text, "\n- Mix (soft): ");
+		CHECK_HAS(Text, "at -19.0 LUFS");
+		FakeSong General = FinishTestSong();
+		Text = Run(General, "finish_song", "{}").Text;
+		CHECK_HAS(Text, "as a track of the general recipe (no kind given: kind lively for a stage, action for a fight)");
+		CHECK_HAS(Text, "at -20.0 LUFS");
+		FakeSong Cue = CueSong(true);
+		Cue.Info.DirectChanges = true;
+		Text = Run(Cue, "finish_song", "{}").Text;
+		CHECK_HAS(Text, "as a cue (it plays once and stops after ");
+		CHECK_HAS(Text, "\n- Polish and mix: left out: a cue keeps its notes as written.");
+		CHECK_HAS(Text, "\n- Loop: none: it plays once and stops (a halt).");
+		CHECK_HAS(Text, "at -20.0 LUFS");
+		CHECK_HAS(Text, "\nThe song needed no changes.");
+		FakeSong Effect;
+		Effect.Info.DirectChanges = true;
+		CHECK(!Run(Effect, "make_sound_effect", "{\"kind\": \"jump\"}").IsError);
+		Text = Run(Effect, "finish_song", "{}").Text;
+		CHECK_HAS(Text, "as a sound effect (it plays a row a tick, as make_sound_effect writes one)");
+		CHECK_HAS(Text, "at -18.0 LUFS");
+	}
+
+	// Steps left out, the faders kept, trims left alone, no direct changes, a song not yet saved
+	{
+		FakeSong Song = FinishTestSong();
+		std::string Text = Run(Song, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"export\"]}").Text;
+		CHECK_LACKS(Text, "\n- Polish:");
+		CHECK_LACKS(Text, "\n- Export:");
+		CHECK(Song.Files.empty());
+		CHECK_HAS(Text, "\n- Mix (lively): ");
+		Song = FinishTestSong();
+		Text = Run(Song, "finish_song", "{\"kind\": \"lively\", \"faders\": \"keep\", \"skip\": \"export\"}").Text;
+		CHECK_LACKS(Text, "Faders:");
+		CHECK(Song.Mix.Level(Song.Info.Channels[5].ChanId) == -45);
+		Song = FinishTestSong();
+		Song.Mix.Set(Song.Info.Channels[5].ChanId, 0, PAN_CENTER);
+		Song.Mix.Set(Song.Info.Channels[3].ChanId, 0, PAN_CENTER);
+		Song.Mix.Set(Song.Info.Channels[6].ChanId, 40, PAN_CENTER);
+		Text = Run(Song, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"export\"]}").Text;
+		CHECK_HAS(Text, "\n- Faders: kept (VRC6 Pulse 2 +4.0 dB), counted in the mix.");
+		CHECK(Song.Mix.Level(Song.Info.Channels[6].ChanId) == 40);
+		CHECK(Run(Song, "finish_song", "{\"skip\": \"mixer\"}").IsError);
+		FakeSong Clips = FinishTestSong();
+		Clips.Info.DirectChanges = false;
+		ToolResult R = Run(Clips, "finish_song", "{\"kind\": \"lively\"}");
+		CHECK(R.IsError);
+		CHECK_HAS(R.Text, "needs direct changes");
+		R = Run(Clips, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}");
+		CHECK(!R.IsError && Clips.Files.size() == 1u);
+		FakeSong Unsaved = FinishTestSong();
+		Unsaved.Info.FileName.clear();
+		Text = Run(Unsaved, "finish_song", "{\"kind\": \"lively\", \"loudness\": -21}").Text;
+		CHECK_HAS(Text, "\n- Export: not made: the song hasn't been saved yet, and the file goes next to it. Ask the user to save it (File > "
+			"Save As), then export_for_game {\"loudness\":-21}.");
+		CHECK_HAS(Text, "\n- Mix (lively): ");
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -19407,6 +20523,14 @@ int main()
 	TestSoundLibrary();
 	TestGameSounds();
 	TestOtherChips();
+	TestWhatNextLoop();
+	TestWhatNextStates();
+	TestWhatNextChoices();
+	TestWhatNextCore();
+	TestWhatNextDraft();
+	TestWritingWarnings();
+	TestFinishSong();
+	TestWhatNextFinish();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
