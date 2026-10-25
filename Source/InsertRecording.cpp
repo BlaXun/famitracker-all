@@ -44,6 +44,7 @@
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
 #include "PatternEditor.h"
+#include "SoundGen.h"
 #include "TrackerChannel.h"
 #include "Action.h"
 #include "Clips.h"

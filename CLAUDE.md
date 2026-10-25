@@ -576,6 +576,36 @@ volume and sets again the lasting effects set before it (`Vxx` unless its
 instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
 
+The recorder's input (from `feat-recorder-input`): Edit > Start from a
+groove (`Source/GrooveDlg.cpp`, also a button in Record from microphone)
+writes a mood's drums, bass line and chords from the cursor's bar through
+the `make_groove` tool (`MakeGroove` in `InsertRecording.cpp`, with
+`CMcpConnection::RunTool`'s `FromDialog` set, the speed and tempo in the
+same action group); the parts themselves come from `ftapi::MakeGrooveParts`
+(`Source/Api/Grooves.h`, implemented next to `MakeGrooveTool` in
+`Tools.cpp`: a `GrooveRequest` of mood, key, bars as `BarSpan`s, tempo and
+channels in, a `GrooveParts` of `PartNote`s and `DrumHit`s without
+instruments out), which the piano roll's mood starters can call. In
+`RecordDlg.cpp` the song plays from a bar before the take (`PreRoll`; at
+row 0 of a song that loops, its last bar, `LoopsToStart`), the click's
+accents follow the song's bars (`ClickTrack::barPhase`), a take over the
+selection (the pattern editor's rows, or the piano roll's notes by their
+bars: `CPianoRollWnd::SelectedBars`) replaces only those rows through
+`CChannelNotes::TakeRows` and `ReplaceRows` (`NoteEdit.cpp`) and
+`WriteChannelRows`, and stops by itself after them. Tapping the tempo is
+`Source/TapButton.cpp` (`CTapButton` counts a tap on the button going down,
+`IsTapKey` the T key) with `transcribe::TempoOfTaps` (`Tapping.cpp`) and
+`ftapi::TappedSpeedTempo` (`Source/Api/RecorderInput.cpp`: the nearest tempo
+with even rows within 3%, else `ChooseSpeedTempo` for the whole BPM).
+Chords given to Add chords and bass line (`BackingDlg.cpp`,
+`backing_choice_t::Chords`) are read by `ftapi::LayOutTypedChords` with the
+tools' chord names (`Chords.cpp`) into `transcribe::Chord`s, which now carry
+their notes and a bass (`tones`, `bass`, `ArpeggioTones`); strummed ones
+(a take of the kind `RECORDING_CHORDS`, or a WAV file) are found by
+`transcribe::HearStrums` (`Strums.cpp`: spectral-flux onsets, a
+non-negative fit of each note's harmonics) and named bar by bar by
+`ftapi::HearStrummedChords` (the tools' `HearChords`).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
