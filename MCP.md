@@ -639,7 +639,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)). The reply warns at once of notes the channel doesn't play well, a bass too low to be heard or a melody an octave high, notes outside the key, a bass nearly silent and a sound the channel doesn't play as it's meant, each with what to do (see [Warnings as a part is written](#warnings-as-a-part-is-written)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
-| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves. Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
+| `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves; on the 5B its noise at a pitch. `words` takes it as you'd say it ("a plain 50% square that holds at full volume"). Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
 | `set_instrument` | Gives a channel's notes another instrument or preset |
 | `remove_unused_instruments` | Lists the instruments no note plays in any track or clip (a template's starter sounds, sounds tried and replaced) and, with `confirm` once you agree, removes them and the sequences only they used, as Edit > Clean up > Remove unused instruments does (which now also keeps the instruments clips play). FamiTracker can't undo it; `keep` names any to keep |
 | `transpose` | Moves notes by semitones, or into another key or mode (C major to C minor, lydian, dorian...); arpeggiated chords follow. Into another mode a dominant's ninth stays natural (E add9's F# in A major stays F# in A minor, where the scale's F would be a flat nine against the chord), and the reply says where |
@@ -679,8 +679,8 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
-| `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
-| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops. See [Sound effects](#sound-effects) |
+| `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds (the music's, never a sound effect's) |
+| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops, as long as asked (30 seconds of rain or wind). See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `keep_version` | Keeps the selected track as it is now as a track of its own ("Town (version 1)", or named, like "Town (calm bridge)"), and stays on the selected track, so Claude can try something and you can compare or go back |
 | `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
@@ -690,7 +690,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
 | `finish_song` | The last steps of a song in one call, for its kind: `polish` with the kind's touches, `mix` in the kind's style (its faders back at 0 dB first where they do the mix's work), `check_loop` and `fix_loop` where the seam needs it, and `export_for_game` at the kind's loudness; one Ctrl+Z undoes the song's changes, and the reply is a line a step and what to listen for. See [The last steps in one call](#the-last-steps-in-one-call) (direct changes only) |
-| `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play; `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
+| `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play, or against the whole when there's no melody (ambience); `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z (direct changes only) |
@@ -1116,9 +1116,18 @@ file written (the exported OGG files stay as they are).
   the numbers are as FamiTracker renders (`export_for_game` with
   `normalize` false).
 - **Cues and sound effects:** a song that halts is measured to the bar it
-  halts in. A sound effect (speed 1, as `make_sound_effect` writes one) is
-  measured as a whole, a sound shorter than 400 ms over its whole length
-  as `export_for_game` measures it, with each channel alone.
+  halts in. A sound effect (speed 1, as `make_sound_effect` writes one, a
+  long loop of ambience too) is measured as a whole, a sound shorter than
+  400 ms over its whole length as `export_for_game` measures it, with each
+  channel alone.
+- **Without a melody** (ambience: a rain loop, wind): when no channel plays
+  a tune, or the likeliest only plays a note now and then (heard for under a
+  fifth of the bars it plays in, and fewer than a note and a half a bar
+  there: drips, plinks), or `melody_channel` is `none`, each part is
+  measured alone against the whole where it plays ("4.6 dB under the
+  whole"), and the reply says why. `parts` names the parts then too.
+  `check_song` checks no key in such a track (a rain's drips fall at any
+  pitch) unless one is chosen for it or given.
 - **Roles:** a part is an echo only when it follows the melody's notes (one
   delay, notes about as long as the ones it copies), so a pad holding a
   note the melody touched isn't one; a quiet arpeggio over the melody (a
@@ -1424,6 +1433,11 @@ for it allow for that.
   time: 64 the square, 128 the noise, 32 the envelope, added up, and the
   noise's pitch (0-31) in the low bits; `Vxx` sets the mode for notes
   without one (1 the square, 2 the noise, 4 the envelope).
+- A note that plays the noise alone (by its instrument's mode sequence, or
+  `V02`) has no pitch you hear: `check_song` leaves it out of the key, the
+  range and the clashes, and the tools leave it out of the key they find,
+  the chords they hear and the melody they guess. `design_instrument` makes
+  such sounds at a pitch (`noise_pitch`, see [Sounds in words](#sounds-in-words)).
 
 ### FDS sounds
 
@@ -1624,6 +1638,16 @@ attack, or a chord played as a fast arpeggio from every note (major, minor,
 sus2, sus4, 6, m6, maj7, m7, 7, add9, m(add9), diminished, m7b5, dim7,
 augmented). A sound that holds under its peak (a pad at half) swells to that
 level, or settles to it, rather than dropping straight after its attack.
+`words` takes the sound as you'd say it ("a plain 50% square that holds at
+full volume", "a soft pad with a gentle vibrato"): a kind, plain (nothing
+added: no vibrato, duty motion, click, attack pitch or echo, struck at
+once), held (no decay: at its peak while the note lasts), its loudness
+(full, loud, soft, quiet, volume 12), a duty (50%, square, thin, bright,
+round), a vibrato (none, faint, gentle, medium, strong), an attack
+(instant, slow, swells in), dies away or rings, a long or short release, an
+echo, a click, darker or brighter. What the words say stands where the
+kind's defaults would, an argument given wins over the words, and the reply
+says what was heard and which words weren't understood.
 Drums can be darker or brighter, shorter or longer (a hi-hat sits at the
 noise's D-#: at E-# most of its sound lies above hearing). The instrument
 gets a new name, so notes that use another one don't change. The reply
@@ -1654,7 +1678,15 @@ On the noise channel, a kind that isn't a drum makes a volume envelope: a
 `swell` rises over half a second and washes out after a release, for waves
 and gusts of wind (the note picks the noise's pitch, 0-# deep to F-#
 bright). Anything that would move its pitch or make it metallic (vibrato,
-an attack's pitch, an arpeggio, a duty) is left out. A pulse sound played on
+an attack's pitch, an arpeggio, a duty) is left out. On a Sunsoft 5B
+channel, `noise_pitch` (0-31, 31 the brightest hiss, or lowest, low, mid,
+high, highest) makes a sound of the chip's noise at that pitch, as its own
+noise sounds are made: alone (`noise` `only`, the default with a pitch: a
+drum or a texture like a rain's wash, the notes' pitch not heard) or over
+the square at the note's pitch (`with square`); words work too ("a soft
+noise at pitch 8 that swells in"). The 5B's three channels share one noise
+pitch, so two noise sounds playing at once both take the one set last. A
+pulse sound played on
 the VRC6 sawtooth overdrives it (the odd values of its duty sequence add 32
 to the sawtooth's volume), so a sound asked for there by name plays its
 sawtooth version when the song has one ("Horn (saw)", made by
@@ -1734,7 +1766,11 @@ to FamiTracker.exe. Where FamiTracker's folder can't be written (under
 Program Files), the library stays in Documents. When you ask for music "like Bucky O'Hare", "in a Mega Man
 style" or "lean on the references", Claude searches the library
 (`references`) and plans from what it finds, and `reference_sound` brings
-in a reference's instrument exactly. The melodies aren't kept: Claude
+in a reference's instrument exactly. Only its release can differ: a studied
+sound whose release ended above 0 held that level after a release (`===`),
+droning on until the next note (535 of one library's 823 sounds), so its
+instrument fades out from there instead, halving a frame, in the sound
+browser and `find_sound` too, and the reply says so. The melodies aren't kept: Claude
 takes the craft (grooves, bass figures, harmonic color, how the channels
 share the parts, the sounds) and writes its own tunes and progressions.
 Built in, without any NSF, is a guide to the classic NES styles from
@@ -1874,7 +1910,10 @@ done") and Claude adds it as a new track: a short tune with a lead, a
 harmony line below it, a bass and drums. It's in the song's key note, near
 its melody's register and with its sounds (the lead's instrument, the bass's),
 and it ends with a halt (`C00`), so the export for games saves it as a sound
-that plays once.
+that plays once. Those come from the music: when the selected track is a
+sound effect (as right after `make_sound_effect`, which selects its new
+track), the jingle takes the key and the sounds of the nearest music track,
+never an effect's instruments.
 
 | Kind | For | Length |
 |---|---|---|
@@ -1925,13 +1964,27 @@ shimmering duty), not a famous game's coin.
 
 Every kind has variants (variant 2, 3, ... are a little higher or lower,
 shorter or longer, some with another duty), and Claude can move a sound by
-semitones, stretch it, or make it softer. A sound lasts at most 4.2 seconds.
+semitones, stretch it, or make it softer. A sound that plays once lasts at
+most 4.2 seconds; a loop as long as you ask (below).
 
 **Ambience loops** instead of halting: its track ends with a jump back to
 its start (`B00`), and what reaches its end (a gust, a flutter) goes on into
 its start, so the export for games saves an OGG that loops without a seam
 (stop it with `audio_stop_sound`). Any sound can loop if you ask, and a kind
 that loops can play once instead.
+
+**Long loops for ambience.** Rain or wind that repeats every few seconds
+shows; ask for a loop as long as you like (`seconds`, 30 or more for
+ambience) and the kinds with random parts (wind's gusts, rain's drops, a
+fire's crackle) are drawn for all of it, while the engine, the alarm and the
+heartbeat play their own loop over and over. A loop lasts as long as the
+track's frames hold, a row a tick (136 seconds at 64 rows a frame). A layer
+longer than 4.2 seconds, the most an instrument's sequences hold, plays as
+pieces in turn, an instrument each with a note where it starts ("SFX Rain",
+"SFX Rain (part 2)", ...), pieces alike sharing one; the chip plays on across
+them, so there's no seam. A module holds 64 instruments and 32 seconds of
+rain takes 16, so Claude says when there's no room: keep sound effects in a
+module of their own.
 
 **Sounds described in words.** For anything else ("a bird flying away", "a
 heavy wind through a ruin", "a robot powering down"), Claude builds the

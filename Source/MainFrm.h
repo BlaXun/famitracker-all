@@ -158,6 +158,7 @@ private:
 	void	RebuildMainMenu(bool Fewer);
 	void	LayoutSongSettings(bool BPM);
 	double	CurrentBPM() const;
+	bool	BPMFrames() const;		// the song shows as the frames a row lasts (speed 1, BPMShowsFrames)
 	CString	BPMText() const;
 	void	SetBPM(int Bpm);
 

@@ -1065,6 +1065,49 @@ finish says the file has the changes), and the small set has it.
 `TestWritingWarnings`, `TestFinishSong` (the separate calls give the same
 notes, mixer and file; one undo) and `TestWhatNextFinish` cover them.
 
+Sounds, sound effects and the 5B (from `feat-fixes-sounds`):
+`make_sound_effect`'s loops last as long as asked within the song
+(`MaxLoopTicks`: its frames' rows, a row a tick). A layer longer than an
+instrument's 251 ticks plays as pieces (`SoundPieces` in
+`SoundEffects.cpp`), an instrument each with a note where it starts, alike
+pieces sharing one (a loop played over and over is cut in whole turns that
+divide it, `LoopOfLength`'s `Period`) and a silent piece left out;
+`WriteSoundEffect` refuses a sound needing more instruments than the song
+has room for. The pulse writes its period's high byte only when it changes
+and the noise its registers every tick, so the pieces join without a seam.
+Wind, rain and fire are drawn at the length asked (`MakeLong`: `WindFor`,
+`RainFor`, `FireFor`), the other loops repeat; `ChangeSoundEffect` no
+longer cuts a layer at 252 ticks (`FitSoundEffect` keeps a sound in its
+limit), and `UseOfTrack` takes a looping 2A03 track at speed 1 and the
+default tempo as a sound however long. `design_instrument` reads `words`
+(`ReadDesignWords`, `ApplyDesignWords`, `DesignWordsText`) where the kind's
+defaults stand, the arguments over them, and on the 5B makes the chip's
+noise at a pitch (`noise`, `noise_pitch`: `Preset5BSequences` and a mode
+sequence of `S5B_NOISE` and the pitch; `DescribeDesign`'s wave "5B noise").
+A 5B note that plays the noise alone (`PlaysNoiseOnly`: its mode sequence,
+or `V02` for an instrument without one) has no pitch heard: `PitchedNotes`
+leaves it out of `FindKey`, `GuessMelodyChannel`, `HeardNotes` and
+`check_song`'s key, range and clash checks. `measure_mix` without a melody
+(none playing, `melody_channel` none, or the guess heard for under a fifth
+of its bars and playing under a note and a half a bar there: `Presence`,
+`MELODY_HEARD_SHARE`, `MELODY_NOTES_A_BAR`, measured on the soundtrack)
+measures each part against the whole and says why, and `check_song` checks
+no key there unless one is chosen or given (`CarriesTune`). `make_jingle` takes its
+key, lead and sounds from the music (`FindJingleMusic`: the nearest music
+track when the selected one is a sound effect; never an effect's
+instruments). A studied sound whose release ends above 0 droned on after a
+release: `FadedRelease` in `References.cpp` fades it out, halving a frame,
+in `ReferencePreset`, `ReferenceFdsSound` and `ReferenceWaveSound` (so the
+sound index too), and `reference_sound` says so (`ReleaseFadeFrames`). In
+the BPM layout a song at speed 1 shows the frames a row lasts under the
+label Speed (`LayoutShowsFrames`, `LayoutFramesText` in `RecorderInput.cpp`;
+`CMainFrame::BPMFrames`), and 1, a BPM over 400 or a step past it sets
+speed 1 at the default tempo (`LayoutWantsFrames`, `CMainFrame::SetBPM`,
+`OnDeltaposTempoSpin`). `TestSfxLongLoops`, `TestS5BNoiseDesign`,
+`TestS5BNoiseChecks`, `TestMeasureAmbience`, `TestJingleAfterEffect`,
+`TestReferenceReleaseEnds`, `TestDesignWords` and `TestBpmLayoutFrames`
+cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

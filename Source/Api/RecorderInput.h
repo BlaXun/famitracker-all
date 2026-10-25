@@ -85,4 +85,16 @@ bool HearStrummedChords(const std::vector<transcribe::Strum> &Strums, double Sta
 bool TappedSpeedTempo(double Tapped, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed,
 	int &Tempo, double &Bpm);
 
+// FamiTracker's song settings in the BPM layout (View > Profile) show BPM
+// from LAYOUT_LEAST_BPM to LAYOUT_MOST_BPM. A song at speed 1 (a sound
+// effect, ambience: a row a frame at the default tempo) has no beat to count
+// there, and its BPM read 900 at four rows a beat: the layout shows the
+// frames each row lasts instead (LayoutFramesText, "1 frame", under the
+// label Speed), and a BPM typed or stepped to that LayoutWantsFrames (1, as
+// the box shows it, or past the most) sets speed 1 at the default tempo.
+const int LAYOUT_LEAST_BPM = 20, LAYOUT_MOST_BPM = 400;
+bool LayoutShowsFrames(int Speed);
+std::string LayoutFramesText(int Speed, int Tempo, int FrameRate);	// "1 frame", "1.25 frames"
+bool LayoutWantsFrames(int Bpm);
+
 }	// namespace ftapi
