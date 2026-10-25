@@ -557,6 +557,7 @@
     <ClCompile Include="Source\Api\Vrc6Plus.cpp" />
     <ClCompile Include="Source\Api\Chords.cpp" />
     <ClCompile Include="Source\Api\Arrange.cpp" />
+    <ClCompile Include="Source\Api\GrowMelody.cpp" />
     <ClCompile Include="Source\Api\ChordHelper.cpp" />
     <ClCompile Include="Source\Api\StepNotes.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
@@ -591,6 +592,7 @@
     <ClInclude Include="Source\Api\Vrc6Plus.h" />
     <ClInclude Include="Source\Api\Chords.h" />
     <ClInclude Include="Source\Api\Arrange.h" />
+    <ClInclude Include="Source\Api\GrowMelody.h" />
     <ClInclude Include="Source\Api\ChordHelper.h" />
     <ClInclude Include="Source\Api\StepNotes.h" />
     <ClInclude Include="Source\Api\Presets.h" />

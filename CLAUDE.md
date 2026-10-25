@@ -900,6 +900,27 @@ did). The list of notes takes the old path untouched. `TestStepsWrite`,
 `TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
 in `Source/Api/tests/ApiTests.cpp` cover the tools.
 
+Melodies grown from a hook (from `feat-grow-melody`): `grow_melody`
+(`GrowMelodyTool` in `Tools.cpp`, after `AddCounterMelodyTool`) reads the
+hook as a line of steps and asks `GrowMelody` (`Source/Api/GrowMelody.cpp`,
+portable) for three versions over the chords `ChordsForMelody` hears (the
+channel's own notes left out). A `Grower` plans the bars (`SectionPlan`:
+blocks of four in the forms question and answer, hook and sequence, two-bar
+calls; a calm song's phrases two bars long), gives each bar a rhythm (the
+hook's own, its opening twice for a run, the kind's beat figures for climbs
+and closes; `Tie` holds notes over inner bar lines), picks each section's
+high point (`ChoosePeaks`) and the hook's moves up or down the scale
+(`ChooseShifts`, `FitCost`; the hook stays as written where it fits as well
+as where it's first stated), then chooses every pitch at once by dynamic
+programming over the notes' candidates (`Choose`: chord tones on beats 1
+and 3, the key's notes, nothing a semitone from another part for half a
+beat, as `check_song` hears a clash, leaps paid by size and kind). A variant
+seeds its own `GrowRandom`, so the same request gives the same versions on
+every computer. `pick` writes one through `WriteNotesInSteps`, and
+`GrowBreaths` counts the two-bar spans as `BreathsOf` does. It's in the
+small set (`CoreTools`). `TestGrowPhrases`, `TestGrowShape`,
+`TestGrowKinds`, `TestGrowTool` and `TestGrowTaught` cover it.
+
 Sound groups (from `feat-sound-groups`): Instrument > Sound browser shows
 its sounds in groups. `GroupSounds` in `Source/Api/SoundIndex.cpp` puts the
 sounds found in groups (by kind; in each kind the ready-made sounds, the
