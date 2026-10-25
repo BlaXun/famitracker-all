@@ -347,11 +347,13 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 (the panel reads it): `track`, `track_name`, `from_bar`, `to_bar`, `key`
 (and `key_from_notes` or `key_chosen`), `pattern_length`, `rows_per_beat`, `rows_per_bar`,
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
-`busy` and `key`, notes that vanish counted by the note), `unused_channels`
+`busy`, `key` and `held`, notes that vanish counted by the note), `style`
+(`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
 - `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
-  clicks and clashes, `medium` out of range, `low` for the rest;
+  clicks and clashes, `medium` out of range and for a held lead, `low` for
+  the rest;
 - `channel` (numbered from 1, as the tools take them; `null` for a silent
   bar) and `channel_name`;
 - where it starts: `frame` and `row` (from 0, as the pattern editor shows
@@ -365,7 +367,9 @@ and `findings`, heard worst first as in the text. Each finding has:
   sound) for a clash; `clicks`, `boundary` and `nudge` for a click;
   `instrument`, `instrument_name`, `heard_frames` and `held_instrument`
   for notes that vanish; `reason` out of range; `note_count` for a busy
-  bar;
+  bar; `instrument`, `instrument_name`, `attack_frames`, `hold` and
+  `note_count` for a held lead (on a calm track, see
+  [Calm and lively tracks](#calm-and-lively-tracks));
 - `fix`, for a click that can be nudged: the call that does it, `tool`
   (`polish`) and `arguments` (the touch `clicks` on the note's channel and
   bar), and `does`, in words. It's one Ctrl+Z.
@@ -386,14 +390,14 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers: the track's, or from a bar on (a section's own tempo, a ritardando or accelerando over some bars) with speed and tempo effects there (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light (a lilt of about 57%, never over 61%), medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
-| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel and the DPCM level (dac) alone (direct changes only; undoable). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
+| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel (each one's loudest volume as written) and the DPCM level (dac) alone (direct changes only; undoable). style calm (night and ambient tracks) and lively (stages that bounce without pressing) mix as heard: the melody keeps its level, the chords 2.5 dB under it (lively 3.5), and the reply gives the balance reached; see [Calm and lively tracks](#calm-and-lively-tracks). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line rests where the melody does and answers only in rests of two beats or more, briefly; `rests` (fill, the default, answer or leave) chooses that directly |
-| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
@@ -401,7 +405,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). A calm track (a night version, ambient music) isn't asked for drums, fills or accents |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB) |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
@@ -415,7 +419,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone or a minor ninth from a note another part sounds with it is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong |
 | `change_mood` | Several changes for a mood at once: key or mode, parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
+| `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels, notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. `format` `json` gives every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds |
@@ -582,7 +586,11 @@ level, keeping its accents and fades. style soft (the default) puts the
 melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, a
 bass on a pulse or the sawtooth at 10 and the drums at 10, which with the
 instruments' own envelopes is about where those tracks sit; style full
-goes back to near full volume; `levels` sets channels by hand. A sawtooth
+goes back to near full volume; `levels` sets channels by hand, each one's
+loudest volume as written (a pad's 8 stays 8, whatever its envelope). A
+noise channel of swells (wind, waves) keeps its volumes, and so do the
+5B's envelope notes (a buzz plays the envelope at its own level whatever
+its volume). A sawtooth
 well over a triangle bass (or high up, with none) plays a second line or
 chords, not the bass.
 
@@ -634,7 +642,79 @@ volume, and a melody that plays well under another part (a VRC7 melody at
 9 under the triangle, say). Tools that write parts afterwards use their own
 volumes, so mixing is a last step, or one to repeat at the end. A channel
 with a fader in FamiTracker's mixer (see [The mixer](#the-mixer)) is mixed
-as it sounds with it: 3 dB down, its volumes come out higher to match.
+as it sounds with it: 3 dB down, its volumes come out higher to match. The
+triangle's fader counts too, though it has no volume of its own.
+
+Over some bars (`from_bar`, `to_bar`), each part keeps its level from the
+rest of the song: the soft and full mixes scale those bars as they would
+scale the whole song, by the part's loudest anywhere, so a quiet section
+stays quieter ("loudest 10 to 6, as the song's 15 to 9"), and `dac` over
+bars whose DPCM levels step (`Zxx` written on purpose) moves the steps
+with it.
+
+### Calm and lively tracks
+
+A lead that holds a steady level from attack to release, 5 to 8 dB over the
+chords, sounds direct, even aggressive, however soft the parts around it.
+Calm tracks (night versions, ambient music) keep the melody only a little
+over the chords; lively stages a little more, with notes that fade. `mix`,
+`polish`, `check_song` and `review_arrangement` take a `style` for them.
+Calm applies only when asked, or when the track's name says so ("Town
+(night)"; night, calm, evening, sleep, peaceful, quiet or relaxed), and the
+reply then says so in a few words; `style` `soft` (for `mix`) or `any` takes
+it back. A song that only looks calm, about 90 BPM or slower with no drum
+kit (no drum hits on the noise, no samples; a swell of wind on the noise
+isn't a drum), gets a line suggesting the style, and nothing else changes:
+the soft mix and polish's accents stay as they are, for action and bosses.
+
+`mix` with `style` `calm` or `lively` mixes as heard. It estimates each
+part's loudness as its stem would measure it, frame by frame from its
+volume, its instrument's envelope, the pulse's width or the wave, the
+fader, the pan and Soft, over 400 ms blocks gated as the meters gate them
+(against FamiTracker's renders, within about half a dB), where the part
+plays with the melody, and sets the volumes so that each part sits under
+the melody, which keeps its level (`levels` sets it):
+
+| Part | calm | lively |
+|---|---|---|
+| the chords (their loudest layer) | 2.5 dB under | 3.5 under |
+| an echo of the melody | 7 under | 7 under |
+| a second line or an answering voice | no louder than 3 under (to 4) | no louder than 2.5 under (to 3.5) |
+| the bass | 2.5 under | 3 under |
+| the drums | 9 under | 6 under |
+
+Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
+soft layer) keep their place under it, together at least 3 dB under it.
+The triangle, which has no volume, gets its place from the DPCM level,
+unless `dac` is given (the noise moves with it, and the drums make up for
+it). A second line quieter than its place keeps its level: it may be an
+ornament (a bell that blinks, a bird). Over some bars the parts are set
+against the melody there, the melody keeping its level from the rest of
+the song. Volumes come in whole steps, and FamiTracker rounds a volume
+times its envelope down (on a sound that holds 12, volumes 5 and 6 both
+play 4), so each part off its place tries the volumes around its own and
+keeps the one heard nearest. The reply gives the balance reached ("as
+heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.6
+under and the triangle 2.5 under") and names a part still half a dB or
+more off, between two steps or at 15 or 1, with how far: a fader in
+`set_mixer` moves it the rest. `review_arrangement` with the style hears the same balance and
+tips a melody more than 4 dB over the chords (lively 5) or under 1 dB (2).
+`measure_mix` renders the stems themselves.
+
+`polish` with `style` `calm` leaves out accents, scoops and falls (its
+touches are vibrato, separate and clicks). Its vibrato is the shallowest
+(`451`), coming in about half a second into each long note that still
+sounds then, and none on an instrument with a vibrato of its own. Accents,
+scoops or falls asked for are done, with a line saying they go against the
+calm style.
+
+`check_song` and `review_arrangement` with `style` `calm` warn about a lead
+whose sound holds a high, steady level from attack to release: it reaches
+its peak in under 10 frames and holds 11 or more of 15 (on the 5B, as loud
+as that on a pulse). A swell of 10 frames or more, a strike that falls to 7
+or under, or a sound that fades away doesn't; `design_instrument`'s kinds
+breath, falling strike and music box are made that way. It's a finding of
+its own (`held` in the JSON); with `lively` it's a tip.
 
 ### Measuring the mix
 
@@ -715,7 +795,8 @@ their places, the note after a change keeps its own, and when a change
 leaves the song's end panned otherwise than the loop's first note plays the
 first time through, that note gets its own pan written (the reply says so),
 so every repeat starts like the first time. `get_song`, `read_notes`,
-`look_at_song` and `review_arrangement` say where the parts play.
+`look_at_song` and `review_arrangement` say where the parts play
+(`get_song` and the review with the mixer's starting pans in).
 
 You hear stereo in FamiTracker's playback, in File > Create WAV and in the
 game's OGG files (`export_for_game`, whose loudness is measured over both

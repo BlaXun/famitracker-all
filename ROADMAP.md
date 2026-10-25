@@ -367,25 +367,41 @@ keep working with the grid hidden. The drum grid (a dialog today) could
 become a panel toggled the same way, and the stamp mode (12) would be one
 more.
 
-## 14. Calm tracks by default (Claude Code)
+## 14. Calm and lively tracks (Claude Code)
 
-On the backlog (the user, 24 October 2026, after the first night song on
+Done in October 2026 (the user, 24 October, after the first night song on
 the VRC6 Plus: "It finally manages to get melancholic and atmospheric
 non-aggressive songs done"). What made it calm was written into the
-composers' brief by hand; the tools should do it themselves when a track
-is calm:
+composers' brief by hand; the tools do it now when a track is calm. Calm
+applies only when asked (the user: "depends on the song"), or when the
+track's name says so; a slow song without drums gets a line suggesting it.
+Action and bosses keep the soft mix and polish's accents. See MCP.md,
+"Calm and lively tracks".
 
-- A calm mix: the melody only 2-3 dB over the chords (the soft mix puts it
-  at 9 against chords at 6, and the leads' held envelopes add more).
+- Done (on `feat-calm-defaults`): `mix` style calm and lively, as heard:
+  each part's loudness estimated as its stem measures it (envelopes,
+  widths, waves, faders, pans and Soft counted, checked against
+  FamiTracker's renders), the melody 2.5 dB over the chords (lively 3.5),
+  an echo 7 under, the bass 2.5 (the triangle by the DPCM level); the
+  reply gives the balance reached.
 - Done (on `feat-calm-sounds`): lead sounds with calm shapes, ready made:
   `design_instrument` kinds and presets music box (struck, gone in 0.9 of
   a beat at the song's tempo), breath (in over 12 frames, sinking to 60%
   and holding) and falling strike (struck, falling to a low hold), with a
   faint vibrato (about 3 cents) that never clicks; the same shapes on the
   VRC6 Plus's soft layer.
-- polish without accents (and no scoops or falls) on calm tracks.
-- check_song and the review warn about a lead that holds a high, steady
-  level, as the composers' calm scan did.
+- Done: `polish` style calm without accents, scoops or falls, its vibrato
+  the shallowest (`451`) about half a second into long notes.
+- Done: `check_song` and the review warn about a lead that holds a high,
+  steady level (a finding of its own, `held`; a tip on a lively track),
+  and the review on a calm track hears the balance as the stems would.
+- Done: the mix's flaws the night songs found: a 5B lead counted as its
+  sound holds, the 5B's buzz and noise swells kept as written, `levels`
+  by the volume column, a part's level over some bars kept from the rest
+  of the song, stepped DPCM levels moved together; the review counts the
+  mixer's starting pans and the triangle's fader, tips an intro more than
+  10 dB under the rest, and doesn't take one deep triangle note for the
+  bass.
 
 ## 15. Knowledge in the tools (Claude Code)
 
