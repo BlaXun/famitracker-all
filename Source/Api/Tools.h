@@ -115,8 +115,9 @@ public:
 	// and the chords its parts play, as get_song hears them; false with the reason when there's no song
 	bool Harmony(TrackHarmony &Out, std::string &Error);
 	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
-	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason
-	bool Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error);
+	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason. Without
+	// Library, the ready-made sounds and the song's own only, quickly (the main window's Listen)
+	bool Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error, bool Library = true);
 	// One of them made into an instrument, as add_instrument or reference_sound makes it (a song's own is
 	// itself): its index, or -1 with the reason
 	int MakeSound(const SoundEntry &Sound, std::string &Error);

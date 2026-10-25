@@ -762,6 +762,13 @@
 #define IDC_SB_STATUS                   1858
 #define IDC_SB_COUNT                    1859
 #define ID_INSTRUMENT_LIBRARY           33163
+// ...its kinds in groups and its labels laid out as it's resized (feat-sound-groups), and Instrument > Listen, the
+// play button under the instrument list (SoundPreview.cpp)
+#define IDC_SB_INTRO                    2120
+#define IDC_SB_FIND_LABEL               2121
+#define IDC_SB_FROM_LABEL               2122
+#define IDC_SB_CHANNEL_LABEL            2123
+#define ID_INSTRUMENT_LISTEN            37620
 
 // View > Clips panel (ClipsPanel.cpp)
 #define ID_VIEW_CLIPSPANEL              33164

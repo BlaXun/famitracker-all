@@ -97,6 +97,31 @@ Done:
   while it's tried, one at a time, and comes out again unless Add to the
   song keeps it (named, and picked in the instrument list). Claude's
   `find_sound` searches the same list.
+- **The sound browser in groups, and listening by clicking** (October 2026,
+  `feat-sound-groups`): the kinds sit on the left with their counts (all
+  sounds, leads, basses, pads and chords, plucks, bells, keys, drums,
+  effects), and the list has a heading for each kind and, inside it, for
+  the ready-made sounds, each game of the reference library (A to Z) and
+  the song's own instruments. A click on a heading folds it or opens it
+  again; a kind with more than 40 sounds from the library starts with its
+  games folded, so the ready-made sounds and every game's name show at
+  once, and words in Find open everything they find (and show every kind
+  when the kind picked has none of it). Every click on a
+  sound plays it, the one already picked too, and each row has a play mark
+  that turns green while it plays; the arrow keys play each sound they
+  reach (held down, the one they stop on), Space plays it again. The
+  phrase suits the kind: a short tune for a lead, a bass figure for a
+  bass, two held notes for a pad, a broken chord for a pluck or keys,
+  ringing notes for a bell, one long note for an effect, a beat for drums
+  in each drum's own rhythm (the song's own drums at the pitches it plays
+  them). Starting another sound or closing the browser stops the one
+  playing. The window can be resized (the filters go to two rows when
+  it's narrow) and keeps its place, kind and folds while FamiTracker runs.
+- **Listen** (the speaker button at the end of the instrument list's
+  toolbar, and in the Instrument menus): the instrument picked plays its
+  kind's phrase on the channel the song plays it most, as the sound
+  browser plays it, without opening its editor. A plain click in the list
+  still only picks the instrument for writing notes.
 - **View > Drum grid** (also in the Edit menu, Ctrl+Shift+D;
   `Source/DrumGridPanel.cpp`, with the arithmetic in `Source/DrumGrid.cpp`,
   tested on Linux): the noise channel a bar at a time, a line each for a
@@ -511,6 +536,32 @@ rules and fixing tool output by hand.
   than for composing each track. On a Max plan Fable draws on the same
   weekly limit (at most half of it) and costs about 2.5 times Opus 5.5 a
   token, so it pays off where its result is reused.
+- Local models (25 October 2026): the user's local model (Qwen 3.8 Flash
+  Next, through Hermes Agent) composed "Green Valley" with the full set of
+  tools. It was clean on every check, but its melody came in one-bar pieces
+  (a release before 23 of its 28 bar lines), its bass was thin, its drums
+  loud and its loop short (52 s); a refiner fixed those by hand. Done:
+  melodies in steps (`write_notes` and `read_notes`). Being built, the
+  user's OK: `what_next` (the one next step with its tool call) and the
+  small set fitted to how a local model works (with `find_sound`,
+  `reference_sound` and a worked example of a melody); checks for what it
+  missed, each with a ready fix call, and short replies; a melody grown
+  from a motif. Then a "finish" call (polish, mix, the loop checked and
+  fixed, the export at the kind's loudness) and warnings as `write_notes`
+  writes (a register too high or low for the channel, notes outside the
+  key, a lone short note on the triangle).
+- On the backlog (the user's OK, 25 October):
+  - You hum, the local model arranges: the phone page brings the user's
+    melody in as a clip, and the model places it and builds the chords,
+    bass, drums and depth around it. The melody is a local model's weakest
+    part and the user's strongest.
+  - A fixed test set: three to five requests (a calm night, a lively stage,
+    a boss fight) run on the local model after each change, scored by the
+    review, the checks, the melody's breaths and the balance, to see what
+    actually helps.
+  - Learning from the good songs: the soundtrack's tracks and the tool calls
+    of the composers who made them as examples for the local model, a few
+    in its prompt or as data for a LoRA on the user's EVO X3.
 
 ## Feature branches
 
