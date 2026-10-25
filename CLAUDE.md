@@ -620,6 +620,28 @@ clashes, `EchoWithoutRubs` and `HarmonyWithoutRubs`. `TestMelodyBreaths`,
 `TestEndingFitsChord`, `TestBreathSpans`, `TestHarmonyInKey` and
 `TestEchoRubsAsChecked` cover them.
 
+Chord helper (from `feat-chord-helper`): the piano roll's Chords button
+(also H while the pattern editor shows, and a right-click on the chord
+strip: `ChordsMenu` and `PutChords` in `PianoRoll.cpp`) puts a chord, or a
+progression a chord a bar, on the channels with nothing sounding in its
+bars. `Source/Api/ChordHelper.cpp` (portable, tested by its own
+`chord_helper_tests`, `tests/ChordHelperTests.cpp`) works it out on a
+`HelperSong`: `FreeChannels` (the channels `TakesVoice` allows, in the
+order the kinds take voices), the melody and bass it keeps room for
+(`RoomIn`, guessed as the tools guess them), the voices from
+`VoicedChordParts` (or `ChordPart`'s arpeggio on one channel) and each
+voice's sound (`ChooseSounds`: soft chords as each chip makes it, and on
+the N163 a string pad of its own for each voice, copies placed in free wave
+memory, since two channels on one instrument share its wave); `PlanCells`
+writes the cells with `BuildPart`. `Source/PianoRollChords.cpp` reads the
+track (`ReadChordSong`), makes the sounds and writes every voice with
+`WriteChannelRows` between `BeginActionGroup` and `EndActionGroup`
+(`WriteChordPlan`): one Ctrl+Z, though the instruments it made stay.
+Its types share namespace `ftapi` with the tools' (its cells are
+`VoiceCells`: a second `ftapi::ChannelCells` with another layout than
+`Song.h`'s let the linker mix the two, which only MSVC's run showed), so
+new portable code names its types apart.
+
 The recorder's input (from `feat-recorder-input`): Edit > Start from a
 groove (`Source/GrooveDlg.cpp`, also a button in Record from microphone)
 writes a mood's drums, bass line and chords from the cursor's bar through

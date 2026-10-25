@@ -151,10 +151,19 @@ chosen key is saved with the track, and Claude Code's tools use it too. With
 Snap to key on, notes you draw or move land on the key's notes (hold Alt for
 any note). Point at a chord in the strip to see its notes lit.
 
+The Chords button (October 2026, on `feat-chord-helper`) spreads a chord
+across the channels that play nothing in its bars, a held note on each,
+voiced together under the melody and over the bass. Pick one of the key's
+chords, the ones the strip names there, or type a chord ("Am7", "C/E") or a
+chord a bar ("C G Am F"); it goes on the bar at the cursor or over a
+selection. Each voice gets a quiet sound for its chip (on the VRC6 Plus's
+soft layer a string pad of its own, since two N163 channels can't share
+one). When fewer channels are free than the chord has notes, it says so and
+offers fewer voices or the chord as an arpeggio on one channel; Again puts
+the same chord on the next bar. One Ctrl+Z takes it back.
+
 Still open from the plan:
 
-- A chord helper that spreads a chord across free channels (a chord as a
-  `0xy` arpeggio on one note is done).
 - Mood starters that lay down chords, bass and drums for moods like "cozy
   town" or "boss fight". The recorder's Start from a groove does it for a
   take, and its parts come from `ftapi::MakeGrooveParts` (`Api/Grooves.h`),

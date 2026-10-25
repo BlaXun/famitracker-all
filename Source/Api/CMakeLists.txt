@@ -100,6 +100,7 @@ add_library(ftapi STATIC
 	Chords.cpp
 	RecorderInput.cpp
 	Arrange.cpp
+	ChordHelper.cpp
 	DpcmKit.cpp
 	Presets.cpp
 	SoundIndex.cpp
@@ -146,3 +147,8 @@ enable_testing()
 add_executable(api_tests tests/ApiTests.cpp)
 target_link_libraries(api_tests PRIVATE ftapi Threads::Threads)
 add_test(NAME api_tests COMMAND api_tests)
+
+# The piano roll's chord helper (ChordHelper.h)
+add_executable(chord_helper_tests tests/ChordHelperTests.cpp)
+target_link_libraries(chord_helper_tests PRIVATE ftapi)
+add_test(NAME chord_helper_tests COMMAND chord_helper_tests)
