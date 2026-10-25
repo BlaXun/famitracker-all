@@ -101,6 +101,7 @@ const stAccelEntry CAccelerator::DEFAULT_TABLE[] = {
 	{_T("Sound effect from your voice"),	MOD_NONE,		0,				ID_EDIT_VOICEEFFECT},
 	{_T("Sound browser"),				MOD_CONTROL | MOD_SHIFT,	'L',	ID_INSTRUMENT_LIBRARY},
 	{_T("Drum grid"),					MOD_CONTROL | MOD_SHIFT,	'D',	ID_EDIT_DRUMGRID},
+	{_T("Pattern editor"),				MOD_NONE,		0,				ID_VIEW_PATTERNEDITOR},
 };
 
 const int CAccelerator::ACCEL_COUNT = sizeof(CAccelerator::DEFAULT_TABLE) / sizeof(stAccelEntry);

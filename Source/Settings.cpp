@@ -175,6 +175,9 @@ void CSettings::SetupSettings()
 	SETTING_BOOL("Profile", "Song template", true, &Profile.bTemplate);
 	SETTING_BOOL("Profile", "BPM", true, &Profile.bBPM);
 	SETTING_BOOL("Profile", "Fewer menu items", true, &Profile.bFewerMenus);
+
+	// View > Pattern editor (the piano roll's, the drum grid's and the other panels' places are in their own sections)
+	SETTING_BOOL("View", "Pattern editor", true, &Views.bPatternEditor);
 }
 
 template<class T> void CSettings::AddSetting(LPCTSTR pSection, LPCTSTR pEntry, T tDefault, T* pVariable)

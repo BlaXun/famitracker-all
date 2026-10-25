@@ -1,0 +1,71 @@
+; Help > Example songs: the walkthrough of nes-tricks.ftm, which opens with it.
+; The format is in Source/TutorialScript.h.
+
+title: NES tricks
+about: Chords from one channel, an echo, a change of tone, a vibrato that comes in late, slides and a sampled kick. About six minutes.
+
+step
+show: window
+text: This example shows tricks NES composers used to get more out of five channels. It's opened as a new song, so change what you like: saving asks for a name, and the example stays as it is.
+
+  The box in front holds the song's comments. Close it, then press Next.
+
+step
+show: frames
+play: bars 1-16
+text: The song has four parts of four bars, named in the frame list after the trick each one shows: Arpeggios, Echo, Vibrato and Slides. Press Play to hear it all once.
+wait: heard
+
+step
+show: channel Pulse 2
+play: bars 1-2
+solo: Pulse 2
+text: A pulse channel plays one note at a time, yet listen to Pulse 2 alone: you hear chords. The effect 037 or 047 next to its notes makes it run through three notes so fast, one every sixtieth of a second, that the ear hears them together.
+
+  037 makes a sad (minor) chord, 047 a bright (major) one.
+
+step
+show: channel DPCM
+play: bars 3-4
+solo: DPCM
+text: From bar 3 the kick and the snare are short recordings, samples, played by the DPCM channel. They punch harder than noise drums, and the noise channel is left free for the hi-hats.
+
+step
+show: channel Pulse 2
+play: bars 5-6
+solo: Pulse 1, Pulse 2
+text: At bar 5 the tune comes in on Pulse 1, and Pulse 2 plays the same notes three rows later and softer: an echo, made by copying the notes. Hear the two pulses together.
+
+step
+show: channel Pulse 1
+play: bars 8-10
+solo: Pulse 1
+text: At bar 9 the effect V01 changes the width of Pulse 1's wave: the same instrument sounds thinner and brighter than with V02, which bars 5 to 8 play with. V00 is the thinnest and V02 the roundest.
+
+  (V works with an instrument that leaves the width to the pattern, as instrument 00 does.)
+
+step
+show: channel Pulse 1
+play: bars 11-12
+solo: Pulse 1
+text: The long note in bar 11 starts plain, and a moment later it starts to wobble: the effect 453 there is a vibrato (4), quite fast (5) and gentle (3), and 400 ends it. Letting the vibrato come in late makes a long note sing.
+
+step
+show: channel Pulse 1
+play: bars 13-16
+solo: Pulse 1
+text: In bars 13 to 15 some notes slide into place instead of jumping there: 306 glides to the note (the 06 is how fast), and 300 stops the gliding.
+
+  The last note falls away at the end: R5C slides it down twelve steps (C in hex) at speed 5.
+
+step
+show: channel Triangle
+play: bars 3-4
+solo: Triangle, DPCM
+text: Under it all the triangle plays an octave bass, jumping between a low note and the same note an octave up on every half beat, which keeps the song moving. Here with the sampled drums.
+
+step
+show: window
+text: Those are the tricks. Try them on your own notes: 047 on a long note, V00 to make it thin, 443 on the row after a long note starts. Help > Effect table lists every effect.
+
+  Help > Example songs has more: the VRC6 chip, and soft sounds in stereo.

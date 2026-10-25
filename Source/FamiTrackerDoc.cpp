@@ -203,6 +203,7 @@ static int GetChipFromInstrument(int Type)
 
 CFamiTrackerDoc::CFamiTrackerDoc() : 
 	m_bFileLoaded(false), 
+	m_iSongSerial(0),
 	m_bFileLoadFailed(false), 
 	m_iRegisteredChannels(0), 
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
@@ -407,6 +408,8 @@ void CFamiTrackerDoc::DeleteContents()
 
 	// Make sure player is stopped
 	theApp.StopPlayerAndWait();
+
+	++m_iSongSerial;	// another song comes
 
 	m_csDocumentLock.Lock();
 
@@ -4712,6 +4715,16 @@ bool CFamiTrackerDoc::IsFileLoaded() const
 bool CFamiTrackerDoc::HasLastLoadFailed() const
 {
 	return m_bFileLoadFailed;
+}
+
+void CFamiTrackerDoc::MakeUntitled(LPCTSTR Title)
+{
+	m_strPathName.Empty();
+	SetTitle(Title);
+	SetModifiedFlag(FALSE);
+	CFrameWnd *pFrameWnd = dynamic_cast<CFrameWnd*>(theApp.m_pMainWnd);
+	if (pFrameWnd != NULL && pFrameWnd->GetActiveDocument() == this)
+		pFrameWnd->OnUpdateFrameTitle(TRUE);	// the window's title
 }
 
 #ifdef AUTOSAVE

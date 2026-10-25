@@ -21,14 +21,15 @@
 
 #pragma once
 
-// Edit > Drum grid: a bar of the noise channel as steps, a row each, and the
+// View > Drum grid: a bar of the noise channel as steps, a row each, and the
 // drums on them: a kick, a snare, a hi-hat and an open hi-hat, each an
 // instrument of the song played at the noise pitch it sounds best at (as
 // Claude Code and the recorder write them). The noise channel plays one
 // sound at a time, so a step holds one drum at most.
 //
-// This is the grid's arithmetic on a bar of cells; DrumGridDlg.cpp shows it
-// and writes the bars back into the song.
+// This is the grid's arithmetic on a bar of cells, the bar it shows and where
+// its buttons go; DrumGridPanel.cpp shows it and writes the bars back into
+// the song.
 
 #include <vector>
 
@@ -79,3 +80,33 @@ void ApplyBeat(std::vector<stChanNote> &Bar, int Beat, int StepsPerBeat, const d
 
 // The drums a beat uses, which the kit needs instruments for
 bool BeatUses(int Beat, int Lane);
+
+// The bar the drum grid shows: the one the pattern editor's cursor is in. It
+// goes with the cursor into another bar (in follow mode the cursor moves with
+// the song as it plays); between moves, the bar picked with the grid's < and
+// > buttons stays. Bar is the bar shown, CursorBar the cursor's bar when it
+// was last looked at (-1 before the first look).
+struct drum_follow_t {
+	int Bar;
+	int CursorBar;
+	drum_follow_t() : Bar(0), CursorBar(-1) {}
+};
+
+// After a look at the cursor, in bar CursorBar of a track of Bars bars: true
+// when the bar shown changed. (The grid doesn't look while a bar is being
+// edited, so it goes where the cursor went once the edit is over.)
+bool FollowCursor(drum_follow_t &Follow, int CursorBar, int Bars);
+
+// Where the grid's buttons go, in lines Width wide: Widths are the controls
+// left to right, Gap apart, and Groups[i] numbers the run of controls that
+// control i belongs to (GroupGap apart). A group goes on the line it starts
+// on when it fits there, else on a new line, and a group longer than a line
+// breaks where it must. Places gets each control's line and x; returns the
+// number of lines, 1 at least.
+struct drum_place_t {
+	int Line;
+	int X;
+};
+
+int FlowDrumControls(const std::vector<int> &Widths, const std::vector<int> &Groups, int Width, int Gap, int GroupGap,
+	std::vector<drum_place_t> &Places);

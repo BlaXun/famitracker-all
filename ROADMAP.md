@@ -97,16 +97,19 @@ Done:
   while it's tried, one at a time, and comes out again unless Add to the
   song keeps it (named, and picked in the instrument list). Claude's
   `find_sound` searches the same list.
-- **Edit > Drum grid** (Ctrl+Shift+D; `Source/DrumGridDlg.cpp`, with the
-  arithmetic in `Source/DrumGrid.cpp`, tested on Linux): the noise channel a
-  bar at a time, a line each for a kick, a snare, a hi-hat and an open
-  hi-hat and a column for each row. Clicking a step puts a drum on or takes
-  it off and plays it; dragging along a line fills the empty steps. Ready-made
-  beats fill a bar, which can be copied to the next bar or to every bar. Bars
-  and beats follow the row highlights, the step playing lights up (and in
-  follow mode the grid turns to the bar playing), each change is one Ctrl+Z
-  (which works inside the grid too), and the drums' instruments are made
-  from the presets the first time they're needed.
+- **View > Drum grid** (also in the Edit menu, Ctrl+Shift+D;
+  `Source/DrumGridPanel.cpp`, with the arithmetic in `Source/DrumGrid.cpp`,
+  tested on Linux): the noise channel a bar at a time, a line each for a
+  kick, a snare, a hi-hat and an open hi-hat and a column for each row, in a
+  panel docked under the piano roll (right-click it to dock it on the right).
+  Clicking a step puts a drum on or takes it off and plays it; dragging along
+  a line fills the empty steps. Ready-made beats fill a bar, which can be
+  copied to the next bar or to every bar. It shows the bar the cursor is in
+  and goes with it (in follow mode, with the song as it plays); < and > show
+  another bar until the cursor moves. Bars and beats follow the row
+  highlights, the step playing lights up, each change is one Ctrl+Z, and the
+  drums' instruments are made from the presets the first time they're
+  needed.
 
 ## 4. Profiles
 
@@ -173,8 +176,19 @@ built-in tutorials included). Four come with FamiTracker, from
 roll, and music for your game. More can go in a `Tutorials` folder next to
 FamiTracker.exe, with no rebuild.
 
-Still open: annotated example songs, since module comments can already pop
-up when a file is opened.
+Done too (October 2026): **Help > Example songs**, four short songs written
+for the purpose, each opening as a new, untitled song (saving asks for a
+name, so the example stays as it is) with its comments and a walkthrough:
+a first song on the 2A03 alone (a tune, a bass, drums, and what an
+instrument's volume envelope does), the NES's classic tricks (chords as
+`0xy` arpeggios, an echo, a duty change, a vibrato that comes in late,
+slides and a sampled kick), the VRC6 (its two pulses, and the sawtooth as
+the bass and then the lead), and this FamiTracker's own (the VRC6 Plus's
+soft layer, stereo with `8xx`, the mixer's Soft and Space). A walkthrough
+points at a channel's column, says what to listen for and plays a few bars
+with a button in its note, often with one part alone; the songs and
+walkthroughs are in `res/examples`, built into FamiTracker.exe. The first
+tutorial ends by pointing at them.
 
 ## 7. Problems panel
 
@@ -359,13 +373,30 @@ over:
 
 ## 13. Views you can switch on and off
 
-On the backlog (the user's idea, 24 October 2026): every way of placing
-notes gets a View menu toggle, as View > Piano roll has. View > Pattern
-editor hides the channel grid and the piano roll fills its space; there's
-always one view to place notes in; the layout is remembered; the shortcuts
-keep working with the grid hidden. The drum grid (a dialog today) could
-become a panel toggled the same way, and the stamp mode (12) would be one
-more.
+Done (October 2026, on `feat-views`; the user's idea of 24 October): every
+way of placing notes has a check mark in the View menu.
+
+- **View > Pattern editor** hides the channel grid, and the piano roll fills
+  the space it leaves. There's always one view to place notes in: unticking
+  the pattern editor while the piano roll is hidden shows the piano roll, and
+  unticking the piano roll while the pattern editor is hidden brings the
+  pattern editor back (so either menu item switches between the two).
+- **With the grid hidden** the shortcuts keep working: play, stop, play from
+  the cursor, the octave and instrument keys, undo and redo, saving. The
+  note keys play notes in the piano roll, and with editing on (Space) type
+  them at its cursor line a step apart, as in the pattern editor (the
+  piano roll's letter keys for its tools are notes then; its buttons still
+  pick the tools). Edit > Cut, Copy, Paste and Delete work on the piano
+  roll's selection.
+- **View > Drum grid** is a panel now (it was a dialog): docked under the
+  piano roll or, from its right-click menu, on the right, beside the song.
+- **The layout is remembered**: which views and panels show, the piano
+  roll's height and the drum grid's place and size come back when
+  FamiTracker starts.
+- The tutorials show a part a step is about if it's hidden (the pattern
+  editor too), and point at the drum grid's panel.
+
+Still open: the stamp mode (12) would be one more view.
 
 ## 14. Calm and lively tracks (Claude Code)
 

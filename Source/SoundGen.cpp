@@ -139,6 +139,12 @@ CSoundGen::CSoundGen() :
 	m_bBufferTimeout(false),
 	m_bDirty(false),
 	m_iQueuedFrame(-1),
+	m_iNextRangeFirst(0),
+	m_iNextRangeEnd(-1),
+	m_iRangeFirst(0),
+	m_iRangeEnd(-1),
+	m_iRangeLast(-1),
+	m_bPlayRangeEnded(false),
 	m_iPlayFrame(0),
 	m_iPlayRow(0),
 	m_iPlayTrack(0),
@@ -955,6 +961,13 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	ASSERT(m_pDocument != NULL);
 	ASSERT(m_pTrackerView != NULL);
 
+	// Some bars only (SetNextPlayRange): this start takes them, whether it plays or not
+	m_iRangeFirst = m_iNextRangeFirst;
+	m_iRangeEnd = m_iNextRangeEnd;
+	m_iNextRangeEnd = -1;
+	m_iRangeLast = -1;
+	m_bPlayRangeEnded = false;
+
 	if (!m_pDocument || !m_pDSoundChannel || !m_pDocument->IsFileLoaded())
 		return;
 
@@ -1193,6 +1206,15 @@ void CSoundGen::RunFrame()
 				m_iTempoFrames = 0;
 //			}
 			m_bUpdateRow = true;
+			bool RangeOver = false;
+			if (m_iRangeEnd >= 0 && !m_bRendering) {
+				// Some bars only: past them (or jumped out, or back), it halts before this row sounds
+				const int Row = m_iPlayFrame * static_cast<int>(m_pDocument->GetPatternLength(m_iPlayTrack)) + m_iPlayRow;
+				RangeOver = Row < m_iRangeFirst || Row >= m_iRangeEnd || Row <= m_iRangeLast;
+				if (RangeOver)
+					m_bHaltRequest = true;
+				m_iRangeLast = Row;
+			}
 			if (m_bRendering) {
 				// Where this row's sound begins in the file (in samples of each side)
 				render_mark_t Mark;
@@ -1201,7 +1223,8 @@ void CSoundGen::RunFrame()
 				Mark.Sample = (m_iRenderedSamples + m_iBufferPtr) / OUTPUT_CHANNELS;
 				m_RenderMarks.Add(Mark);
 			}
-			ReadPatternRow();
+			if (!RangeOver)
+				ReadPatternRow();
 			++m_iRenderRow;
 		}
 		else {
@@ -1820,7 +1843,10 @@ BOOL CSoundGen::OnIdle(LONG lCount)
 #endif /* EXPORT_TEST */
 
 	if (m_bHaltRequest) {
-		// Halt has been requested, abort playback here
+		// Halt has been requested, abort playback here; some bars played (SetNextPlayRange) have ended
+		if (m_iRangeEnd >= 0 && m_bPlaying && !m_bRendering)
+			m_bPlayRangeEnded = true;
+		m_iRangeEnd = -1;
 		HaltPlayer();
 	}
 
@@ -2215,6 +2241,13 @@ void CSoundGen::MoveToFrame(int Frame)
 void CSoundGen::SetQueueFrame(int Frame)
 {
 	m_iQueuedFrame = Frame;
+}
+
+void CSoundGen::SetNextPlayRange(int First, int End)
+{
+	// Called from the UI thread, before StartPlayer
+	m_iNextRangeFirst = First;
+	m_iNextRangeEnd = End;
 }
 
 int CSoundGen::GetQueueFrame() const
