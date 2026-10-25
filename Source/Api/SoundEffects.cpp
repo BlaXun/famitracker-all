@@ -178,9 +178,16 @@ SoundEffect Land()		// a low drop on the triangle and a dull puff of noise
 	return Effect(Maker(TRIANGLE).Go(5, 15, 15, 36, 28, 0.7), Maker(NOISE).Go(7, 8, 1, 3, 2));
 }
 
-SoundEffect Coin()		// B, then the E above ringing out
+SoundEffect Coin()		// a glint of our own: A, then the F# a sixth above ringing out, shimmering
 {
-	return Effect(Maker(PULSE).Duty(1).Hold(4, 12, 59).Go(22, 13, 1, 64, 64, 1.0, 0.8));
+	// A bright 25% pulse; while the F# rings, its duty flickers to 12.5% and back every two ticks, a metallic shimmer.
+	// (Not a famous game's coin, whose two notes are a fourth apart, B to E.)
+	SfxLayer Glint = Maker(PULSE).Duty(1).Hold(3, 12, 57).Go(24, 13, 0, 66, 66, 1.0, 0.7).Make();
+	for (size_t t = 3; t < Glint.duty.size(); ++t)
+		Glint.duty[t] = ((t - 3) / 2) % 2 == 0 ? 1 : 0;
+	SoundEffect Out;
+	Out.layers.push_back(Glint);
+	return Out;
 }
 
 SoundEffect Pickup()	// up a C major chord quickly
@@ -454,7 +461,7 @@ std::vector<SoundEffectKind> MakeKinds()
 	std::vector<SoundEffectKind> All;
 	All.push_back(Kind("jump", "a quick rising blip for jumping", { "hop", "jumping" }, Jump));
 	All.push_back(Kind("land", "a soft thud for landing", { "landing", "thud" }, Land));
-	All.push_back(Kind("coin", "two bright notes, for coins and gems", { "gem", "ring", "money" }, Coin));
+	All.push_back(Kind("coin", "a bright glint of two notes, for coins and gems", { "gem", "ring", "money" }, Coin));
 	All.push_back(Kind("pickup", "a short rising arpeggio, for picking up an item", { "item", "pick up", "collect", "get item" }, Pickup));
 	All.push_back(Kind("power-up", "three rising runs and a shimmer, for power-ups and upgrades", { "powerup", "upgrade", "power" }, PowerUp));
 	All.push_back(Kind("hurt", "a harsh falling buzz with a hit, for taking damage", { "damage", "hit", "ouch", "pain" }, Hurt));
@@ -614,6 +621,52 @@ bool FitSoundEffect(const SoundEffect &Effect, int Most, SoundEffectChanges &Cha
 		Shortened = true;
 	}
 	return Shortened;
+}
+
+void RingOut(SoundEffect &Effect)
+{
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		SfxLayer &Layer = Effect.layers[l];
+		// The triangle has no volume (0.4.6 plays it whole at any volume above 0): a fade would only hold its last pitch
+		// longer at full level. It stops where it ends, its wave holding the step it stopped on, which makes no sound
+		if (Layer.channel == transcribe::SfxChannel::Triangle)
+			continue;
+		// From its last tick that sounds, halving a tick (15, 7, 3, 1), over the silence after it and on, then the 0 its
+		// instrument ends with (its sequence holds SFX_MAX_TICKS)
+		int Last = Layer.length() - 1;
+		while (Last >= 0 && Layer.volume[static_cast<size_t>(Last)] <= 0)
+			--Last;
+		int Volume = Last >= 0 ? Layer.volume[static_cast<size_t>(Last)] : 0;
+		for (int t = Last + 1; Volume > 1 && t < transcribe::SFX_MAX_TICKS - 1; ++t) {
+			Volume /= 2;
+			if (t < Layer.length())
+				Layer.volume[static_cast<size_t>(t)] = Volume;
+			else
+				Layer.volume.push_back(Volume);
+			Last = t;
+		}
+		// One as long as a layer can be fades within its last ticks instead: at most 1, 3, 7 from where it stops
+		for (int k = 0, Most = 1; Volume > 1 && Last - k >= 0 && Most < 15; ++k, Most = Most * 2 + 1) {
+			int &Tick = Layer.volume[static_cast<size_t>(Last - k)];
+			Tick = std::min(Tick, Most);
+		}
+	}
+}
+
+int SoundTrackRows(const SoundEffect &Effect, bool Loop)
+{
+	if (Loop)
+		return Effect.length();
+	int Sounding = 0;	// the tick after the last that sounds
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		const SfxLayer &Layer = Effect.layers[l];
+		for (int t = Layer.length() - 1; t >= 0; --t)
+			if (Layer.volume[static_cast<size_t>(t)] > 0) {
+				Sounding = std::max(Sounding, Layer.start + t + 1);
+				break;
+			}
+	}
+	return std::max(Effect.length(), Sounding + SFX_SILENT_TICKS) + 1;
 }
 
 SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChanges &Changes)

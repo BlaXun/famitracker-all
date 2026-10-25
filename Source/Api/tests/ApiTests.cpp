@@ -2558,6 +2558,9 @@ void TestReferences()
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"journey to silius\"}").Text, "The sampled bass");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"strider\"}").Text, "75% duty for both pulses");
 	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"technos\"}").Text, "Technos (Nintendo World Cup)");
+	// Short sounds that play once: cues, jingles and sound effects (2026-10-25)
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"jingle\"}").Text, "Cues, jingles and sound effects");
+	CHECK_HAS(Run(Song, "references", "{\"action\": \"guide\", \"topic\": \"cues\"}").Text, "sounds end in silence by themselves");
 	// The guide is plain ASCII, as JSON carries it
 	for (size_t i = 0; i < StyleGuideTopics().size(); ++i) {
 		const std::string Text = StyleGuide(StyleGuideTopics()[i]);
@@ -6397,7 +6400,7 @@ void TestSoundEffects()
 	CHECK_HAS(Result.Text, "audio_play_sound(snd_sfx_jump, 0, false)");
 	CHECK(Song.Tracks.size() == 2 && Song.Current == 1 && Song.Info.TrackName == "SFX Jump" && Song.Info.Speed == 1 && Song.Info.Tempo == 150);
 	CHECK(Song.Rows[0][0].Pitch() == 38 && Song.Rows[0][0].Instrument == 3);
-	CHECK(Song.Rows[0][16].Note == NOTE_HALT && EffectAt(Song.Rows[0][16], EFF_HALT) == 0);
+	CHECK(Song.Rows[0][16].Note == NOTE_HALT && EffectAt(Song.Rows[0][21], EFF_HALT) == 0);	// 0.08 s after its sound
 	bool Quiet = true;
 	for (size_t c = 1; c < Song.Rows.size(); ++c)
 		for (size_t r = 0; r < Song.Rows[c].size(); ++r)
@@ -6411,7 +6414,7 @@ void TestSoundEffects()
 
 	// It plays once in the game
 	std::string Text = Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Jump\"]}")).Text;
-	CHECK_HAS(Text, "- SFX Jump.ogg: 0.3 s");
+	CHECK_HAS(Text, "- SFX Jump.ogg: 0.4 s");
 	CHECK_HAS(Text, "plays once (the song halts)");
 
 	// Another take gets its own name and instruments; two parts on two channels
@@ -6431,7 +6434,7 @@ void TestSoundEffects()
 	CHECK(Song.Rows[3][0].HasNote() && Song.Rows[3][0].Pitch() == 9 && Song.Rows[2][0].Pitch() == 30);	// crackling: 8, up 1
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"semitones\": 12, \"length_percent\": 50, \"volume_percent\": 60}"));
 	CHECK_HAS(Result.Text, "Changed: 12 semitones, 50% of the length, 60% of the volume.");
-	CHECK(Song.Rows[0][0].Pitch() == 71 && Song.Made[9].Sequences2A03[0].Items[0] == 7);
+	CHECK(Song.Rows[0][0].Pitch() == 69 && Song.Made[9].Sequences2A03[0].Items[0] == 7);	// A, a glint of our own
 
 	// From a recording of the user's voice: "pew", falling from 800 to 300 Hz
 	{
@@ -6450,7 +6453,7 @@ void TestSoundEffects()
 		Result = Tools.Call("make_sound_effect", Parse("{\"recording\": \"pew.wav\"}"));
 		CHECK(!Result.IsError);
 		CHECK_HAS(Result.Text, "\"SFX Pew\" from the recording (pew.wav): the voice's pitch and loudness on a pulse, as sung.");
-		CHECK_HAS(Result.Text, "It's 0.28 s long, on 2A03 Pulse 1 with \"SFX Pew\"");
+		CHECK_HAS(Result.Text, "It's 0.32 s long, on 2A03 Pulse 1 with \"SFX Pew\"");	// its end dying away
 		CHECK_HAS(Result.Text, "audio_play_sound(snd_sfx_pew, 0, false)");
 		const int Note = Song.Rows[0][0].Pitch();
 		CHECK(Note >= 53 && Note <= 56);	// 800 Hz is about G-4 (55)
@@ -6653,7 +6656,7 @@ void TestDesignedSounds()
 		"(03), 2A03 Pulse 1 with \"SFX Bird flies off (pulse 1)\" (04).");
 	CHECK_HAS(Result.Text, "1. noise from 0 s for 1.1 s: 7 hits, noise pitch 7 to 5, volume 10 fading to 2");
 	CHECK_HAS(Result.Text, "2. pulse from 0 s for 0.12 s: a hit, D-6 to A-6 (quickly), volume 13, 50% duty");
-	CHECK_HAS(Result.Text, "halts at its end (C00)");
+	CHECK_HAS(Result.Text, "halts (C00) once it has died away, so export_for_game saves it as a sound that plays once and ends in silence");
 	CHECK(Song.Rows[3][0].HasNote() && Song.Rows[3][0].Pitch() == 7 && Song.Rows[0][0].Pitch() == 74);
 	CHECK(EffectAt(Song.Rows[3][66], EFF_HALT) == 0 || EffectAt(Song.Rows[0][66], EFF_HALT) == 0);
 	// Ambience loops: B00 on its last row, no halt
@@ -6672,7 +6675,7 @@ void TestDesignedSounds()
 	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Wind\"]}")).Text, "loops as a whole");
 	// ...unless asked to play once; a loop too long is shortened to the most a loop lasts
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
-	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"loop\": false}")).Text, "halts at its end (C00)");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"loop\": false}")).Text, "halts (C00) once it has died away");
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"rain\", \"length_percent\": 200}"));
 	CHECK_HAS(Result.Text, "A sound can last at most 4.2 s as a loop, so it was made shorter to fit.");
@@ -15579,6 +15582,303 @@ void TestGrooveKey()
 	CHECK(Is(GrooveKey(&A, true), 9, MODE_MINOR) && Is(GrooveKey(&A, false), 0, MODE_MAJOR));
 }
 
+// The last Seconds of a sound effect's file: rendered as FamiTracker plays its instruments (RenderEffect), cut where
+// export_for_game cuts its track, at the row with the halt (SoundTrackRows), at 44.1 kHz; and the loudest stretch of as long
+void SoundEffectEnd(const transcribe::SoundEffect &Effect, double Seconds, double &Last, double &Loudest)
+{
+	const transcribe::Audio A = transcribe::RenderEffect(Effect, 44100, false);
+	std::vector<float> File(A.samples);
+	File.resize(static_cast<size_t>((SoundTrackRows(Effect, false) - 1) * 44100 / 60), 0.0f);	// silent after its instruments end
+	const size_t Window = static_cast<size_t>(Seconds * 44100);
+	auto Rms = [&](size_t From) {
+		double Sum = 0.0;
+		for (size_t i = From; i < From + Window && i < File.size(); ++i)
+			Sum += static_cast<double>(File[i]) * File[i];
+		return std::sqrt(Sum / static_cast<double>(std::max<size_t>(1, Window)));
+	};
+	Last = Rms(File.size() > Window ? File.size() - Window : 0);
+	Loudest = 0.0;
+	for (size_t From = 0; From + Window <= File.size(); From += Window / 4)
+		Loudest = std::max(Loudest, Rms(From));
+}
+
+void TestSoundEffectEnds()
+{
+	// Every kind that plays once rings out to silence, as make_sound_effect makes it, every variant and changed far: no
+	// layer stops above volume 1 (but the triangle's, which has no volume), and its file's last 50 ms are silent (50 dB
+	// and more under its loudest 50 ms, as RenderEffect plays it), where the coin, heal, power-up, warp and chest sounds
+	// ended still sounding, 20-35 dB under
+	const std::vector<SoundEffectKind> &Kinds = SoundEffectKinds();
+	int Rung = 0;
+	for (size_t k = 0; k < Kinds.size(); ++k) {
+		if (Kinds[k].Loops)
+			continue;
+		for (int Variant = 1; Variant <= 9; ++Variant) {
+			for (int Far = 0; Far < 3; ++Far) {
+				SoundEffectChanges Changes;
+				Changes.Variant = Variant;
+				Changes.LengthPercent = Far == 0 ? 100 : (Far == 1 ? 25 : 300);
+				Changes.VolumePercent = Far == 2 ? 200 : 100;
+				FitSoundEffect(Kinds[k].Make(), MaxSoundTicks(false), Changes);
+				transcribe::SoundEffect Effect = ChangeSoundEffect(Kinds[k].Make(), Changes);
+				RingOut(Effect);
+				bool Quiet = true;	// each layer's last tick that sounds at volume 1
+				for (size_t l = 0; l < Effect.layers.size(); ++l) {
+					int Last = 0;
+					for (size_t t = 0; t < Effect.layers[l].volume.size(); ++t)
+						Last = Effect.layers[l].volume[t] > 0 ? Effect.layers[l].volume[t] : Last;
+					Quiet = Quiet && (Last <= 1 || Effect.layers[l].channel == transcribe::SfxChannel::Triangle) &&
+						Holdable(Effect.layers[l]);
+				}
+				double Last = 0.0, Loudest = 0.0;
+				SoundEffectEnd(Effect, 0.05, Last, Loudest);
+				const bool Silent = Loudest > 0.0 && Last <= Loudest * 0.00316;	// 50 dB under
+				if (!Quiet || !Silent) {
+					std::printf("%s, variant %d, change %d: the last 50 ms %.1f dB under its loudest, %d rows:", Kinds[k].Name.c_str(), Variant,
+						Far, 20.0 * std::log10(std::max(1e-12, Last) / std::max(1e-12, Loudest)), SoundTrackRows(Effect, false));
+					for (size_t l = 0; l < Effect.layers.size(); ++l) {
+						std::printf(" [%d from %d:", static_cast<int>(Effect.layers[l].channel), Effect.layers[l].start);
+						for (int t = std::max(0, Effect.layers[l].length() - 6); t < Effect.layers[l].length(); ++t)
+							std::printf(" %d", Effect.layers[l].volume[static_cast<size_t>(t)]);
+						std::printf(" len %d]", Effect.layers[l].length());
+					}
+					std::printf("\n");
+				}
+				Check(Quiet && Silent, Kinds[k].Name.c_str(), __LINE__);
+				Rung += Quiet && Silent ? 1 : 0;
+			}
+		}
+	}
+	CHECK(Rung >= 25 * 27);
+	// The coin: a glint of our own
+	transcribe::SoundEffect Coin = FindSoundEffect("coin")->Make();
+	RingOut(Coin);
+	CHECK(Coin.layers.size() == 1 && Coin.layers[0].pitch.front() == 57.0 && Coin.layers[0].pitch.back() == 66.0);	// A, then F#
+	CHECK(Coin.layers[0].dutyAt(5) != Coin.layers[0].dutyAt(7));	// shimmering
+	// The triangle stops where it ends: 0.4.6 plays it whole at any volume, so a fade would hold its last pitch longer
+	transcribe::SoundEffect Land = FindSoundEffect("land")->Make();
+	const std::vector<int> Thud = Land.layers[0].volume;
+	RingOut(Land);
+	CHECK(Land.layers[0].channel == transcribe::SfxChannel::Triangle && Land.layers[0].volume == Thud && Thud.back() == 15);
+	CHECK(Land.layers[1].volume.back() <= 1);	// its puff of noise dies away
+	// A layer that stops loud dies away, halving a tick, before the 0 its instrument ends with
+	transcribe::SoundEffect Cut;
+	transcribe::SfxLayer Steady;
+	Steady.volume.assign(10, 12);
+	Steady.pitch = { 60.0 };
+	Cut.layers.push_back(Steady);
+	RingOut(Cut);
+	CHECK(Cut.layers[0].volume.size() == 13 && Cut.layers[0].volume[10] == 6 && Cut.layers[0].volume[11] == 3 && Cut.layers[0].volume[12] == 1);
+	CHECK_EQ(SoundTrackRows(Cut, false), 13 + SFX_SILENT_TICKS + 1);	// the halt 5 rows after the last tick that sounds
+	CHECK_EQ(SoundTrackRows(Cut, true), 13);
+	Cut.layers[0].volume.resize(20, 0);	// silent after it already
+	CHECK_EQ(SoundTrackRows(Cut, false), 21);
+	// ...over the silence after its last sound: a hit cut short dies away there
+	transcribe::SoundEffect Hit;
+	Steady.volume = { 9, 6, 0, 0, 0, 0 };
+	Hit.layers.push_back(Steady);
+	RingOut(Hit);
+	CHECK(Hit.layers[0].volume == std::vector<int>({ 9, 6, 3, 1, 0, 0 }));
+	// ...and a layer as long as one can be fades in its last ticks
+	transcribe::SoundEffect Long;
+	Steady.volume.assign(static_cast<size_t>(transcribe::SFX_MAX_TICKS - 1), 12);
+	Long.layers.push_back(Steady);
+	RingOut(Long);
+	const std::vector<int> &End = Long.layers[0].volume;
+	CHECK(End.size() == static_cast<size_t>(transcribe::SFX_MAX_TICKS - 1) && End.back() == 1 && End[End.size() - 2] == 3 &&
+		End[End.size() - 3] == 7 && End[End.size() - 4] == 12);
+	// A sound designed in words and one from a voice ring out too (the tool rings out every sound that plays once)
+	FakeSong Song;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"Buzz\", \"layers\": [{\"channel\": \"pulse\", \"seconds\": 0.2, "
+		"\"volume\": 12}]}"));
+	CHECK(!Result.IsError);
+	const Preset &Buzz = Song.Made[Song.Rows[0][0].Instrument];
+	const std::vector<int> &Volume = SequenceOf(Buzz, SEQUENCE_VOLUME)->Items;
+	CHECK(Volume.size() >= 14 && Volume.back() == 0 && Volume[Volume.size() - 2] == 1);	// 12, ..., a short fade, halving, then 0
+	int HaltRow = -1;
+	for (size_t r = 0; r < Song.Rows[0].size(); ++r)
+		if (EffectAt(Song.Rows[0][r], EFF_HALT) == 0)
+			HaltRow = static_cast<int>(r);
+	CHECK_EQ(HaltRow, static_cast<int>(Volume.size()) - 2 + 1 + SFX_SILENT_TICKS);	// the last tick that sounds, then 3 silent
+}
+
+void TestShortLoudness()
+{
+	// A sound shorter than a 400 ms block: measured over its whole length, ungated, as a steady tone measures over
+	// longer; a longer one as BS.1770 measures it
+	std::vector<float> Tone(16000), Brief(1600);
+	for (size_t i = 0; i < Tone.size(); ++i)
+		Tone[i] = static_cast<float>(0.25 * std::sin(2.0 * 3.14159265358979 * 440.0 * static_cast<double>(i) / 8000.0));
+	std::copy(Tone.begin(), Tone.begin() + 1600, Brief.begin());
+	bool Short = true;
+	const double Whole = SoundLoudness(Tone, Tone, 8000, 0, Tone.size(), Short);
+	CHECK(!Short && Whole == IntegratedLoudness(Tone, Tone, 8000, 0, Tone.size()));
+	CHECK(IntegratedLoudness(Brief, Brief, 8000, 0, Brief.size()) <= -70.0);	// no block to gate
+	const double Part = SoundLoudness(Brief, Brief, 8000, 0, Brief.size(), Short);
+	CHECK(Short && Near(Part, Whole, 0.3));
+	CHECK(SoundLoudness(std::vector<float>(1600, 0.0f), std::vector<float>(1600, 0.0f), 8000, 0, 1600, Short) <= -70.0);
+	CHECK(SoundLoudness(Brief, Brief, 8000, 1600, 100, Short) <= -70.0);
+
+	// The export brings a short sound to the loudness asked, and says how it measured it
+	FakeSong Song;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("make_sound_effect", Parse("{\"kind\": \"confirm\"}")).IsError);
+	const std::string Text = Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Confirm\"], \"loudness\": -18}")).Text;
+	CHECK_HAS(Text, "- SFX Confirm.ogg: 0.3 s");
+	CHECK_HAS(Text, ", it at -18.0 LUFS (");
+	CHECK_HAS(Text, "shorter than the 400 ms blocks loudness is gated in, so ungated)");
+	CHECK_LACKS(Text, "silent, so its level stayed");
+	std::vector<float> Left, Right;
+	int Rate = 0, Channels = 0;
+	OggComments Comments;
+	std::string Error;
+	CHECK(DecodeOgg(Song.Files["SFX Confirm.ogg"], Left, Rate, Channels, Comments, Error, &Right));
+	CHECK(Near(SoundLoudness(Left, Right, Rate, 0, Left.size(), Short), -18.0, 0.3) && Short);
+	// A silent one stays as it was
+	FakeSong Quiet;
+	ToolSet QuietTools(Quiet);
+	QuietTools.Call("make_sound_effect", Parse("{\"kind\": \"confirm\"}"));
+	for (size_t c = 0; c < Quiet.Rows.size(); ++c)
+		for (size_t r = 0; r < Quiet.Rows[c].size(); ++r)
+			if (Quiet.Rows[c][r].HasNote())
+				Quiet.Rows[c][r].Volume = 0;
+	CHECK_HAS(QuietTools.Call("export_for_game", Parse("{\"loudness\": -18}")).Text, "silent, so its level stayed");
+}
+
+// A cue on the VRC6 Plus, two bars that halt: a run up to a held high note on the VRC6's first pulse, a quiet sparkle
+// arpeggio over it on the 2A03's first pulse, the high note echoed on the second, a pad on Soft 1 holding a note the
+// melody touched, and a sub bass held on Soft 4
+FakeSong CueSong(bool Halts)
+{
+	FakeSong Song(1);
+	Run(Song, "set_expansion", "{\"chip\": \"VRC6 Plus\", \"confirm\": true}");
+	const char *const RUN[] = { "A-3", "D-4", "E-4", "F#4" };
+	for (int i = 0; i < 4; ++i)
+		Song.Put(5, i * 2, RUN[i], 0, 12);
+	Song.Put(5, 8, "A-4", 0, 13);
+	Song.End(5, 24, NOTE_RELEASE);
+	Song.Put(0, 8, "D-5", 2, 5);
+	Song.Rows[0][8].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][8].Param[0] = 0x47;
+	Song.End(0, 24);
+	Song.Put(1, 9, "A-4", 2, 6);
+	Song.End(1, 25);
+	Song.Put(8, 7, "E-4", NO_INSTRUMENT, 9);
+	Song.End(8, 28, NOTE_RELEASE);
+	Song.Put(11, 0, "D-2", NO_INSTRUMENT, 10);
+	Song.End(11, 28, NOTE_RELEASE);
+	if (Halts) {
+		Song.Rows[5][31].Effect[0] = EFF_HALT;
+		Song.Rows[5][31].Param[0] = 0;
+	}
+	return Song;
+}
+
+void TestCueJudging()
+{
+	// review_arrangement on a cue: the tips for looping stages left out, the parts' roles right
+	FakeSong Cue = CueSong(true);
+	CHECK(Cue.Info.Channels.size() == 12 && Cue.Info.Channels[11].Name == "Soft 4" && Cue.Info.Channels[8].Chip == "N163");
+	std::string R = Run(Cue, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(R, "Judged as a cue: it plays once and halts after 3.1 s");
+	Check(Contains(R, ("; bass on " + Cue.Info.Channels[11].FullName()).c_str()), "the soft bass", __LINE__);	// a held low soft voice
+	CHECK_HAS(R, "; an echo on 2A03 Pulse 2.");						// it follows the melody's high note
+	Check(Contains(R, ("; another line on 2A03 Pulse 1, " + Cue.Info.Channels[8].FullName()).c_str()), "the sparkle, the pad", __LINE__);
+	CHECK_LACKS(R, "chords on 2A03 Pulse 1");
+	CHECK_LACKS(R, "Under half a minute");
+	CHECK_LACKS(R, "No drums");
+	CHECK_LACKS(R, "No bass line");
+	CHECK_LACKS(R, "plain triad");
+	CHECK_LACKS(R, "The melody has no company");
+	// ...as a stage (it loops) the stage's tips come back, and the roles stay right
+	FakeSong Stage = CueSong(false);
+	R = Run(Stage, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_LACKS(R, "Judged as a cue");
+	CHECK_HAS(R, "Under half a minute before it loops");
+	CHECK_HAS(R, "No drums");
+	Check(Contains(R, ("; bass on " + Stage.Info.Channels[11].FullName()).c_str()), "the soft bass on a stage", __LINE__);
+	CHECK_HAS(R, "; an echo on 2A03 Pulse 2.");
+	CHECK_LACKS(R, "chords on 2A03 Pulse 1");
+	// A cue's tips that still matter stay: a part on the melody's own notes blurs it
+	FakeSong Crowded = CueSong(true);
+	for (int i = 0; i < 4; ++i)
+		Crowded.Put(6, 9 + i * 2, i % 2 ? "B-4" : "G-4", 0, 10);
+	Crowded.End(6, 17);
+	R = Run(Crowded, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(R, "Judged as a cue");
+	CHECK_HAS(R, "Parts in the melody's register blur it");
+
+	// measure_mix on the cue: the bars it plays (it halts in bar 2), the sub bass as the bass, the echo, the sparkle a line
+	R = Run(Cue, "measure_mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(R, "Measured bars 1-2 of ");
+	CHECK_HAS(R, "\n- Soft 4 (bass): ");
+	CHECK_HAS(R, "\n- 2A03 Pulse 2 (echo)");
+	CHECK_HAS(R, "\n- 2A03 Pulse 1");
+	CHECK_LACKS(R, "chords (2A03 Pulse 1");
+	CHECK_LACKS(R, "Soft 1 (echo)");
+	// mix hears the same roles
+	FakeSong Mixed = CueSong(true);
+	Mixed.Info.DirectChanges = true;
+	R = Run(Mixed, "mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	Check(Contains(R, (Mixed.Info.Channels[11].FullName() + " (bass)").c_str()), "mix's soft bass", __LINE__);
+	CHECK_HAS(R, "2A03 Pulse 1 (a second line)");
+	CHECK_HAS(R, "2A03 Pulse 2 (echo)");
+	CHECK_LACKS(R, "2A03 Pulse 1 (chords)");
+	// An arpeggio as loud as the melody, or under it, is the chords
+	FakeSong Loud = CueSong(true);
+	Loud.Rows[0][8].Volume = 15;
+	Loud.Rows[0][8].Instrument = 0;
+	Loud.Rows[0][8].SetPitch(Loud.Rows[0][8].Pitch() - 12);
+	R = Run(Loud, "measure_mix", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(R, "\n- chords (2A03 Pulse 1)");
+
+	// A sound effect: reviewed and measured as one
+	FakeSong Song;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("make_sound_effect", Parse("{\"kind\": \"confirm\"}")).IsError);
+	R = Tools.Call("review_arrangement", Parse("{}")).Text;
+	CHECK_HAS(R, "Sound effect review: \"SFX Confirm\" is a sound effect (speed 1, a row a tick, as make_sound_effect writes one), ");
+	CHECK_HAS(R, "playing once (it halts). There's no arrangement to weigh");
+	CHECK_HAS(R, "Layers: 2A03 Pulse 1 with \"SFX Confirm\" (03) from 0.00 s.");
+	CHECK_HAS(R, "It dies away to silence 0.08 s before it halts, so its file ends quiet.");
+	CHECK_LACKS(R, "/10");
+	CHECK_LACKS(R, "What would help");
+	R = Tools.Call("measure_mix", Parse("{\"loudness\": -18}")).Text;
+	CHECK_HAS(R, "Measured \"SFX Confirm\", a sound effect (speed 1, a row a tick: 0.30 s, playing once), as export_for_game "
+		"{\"loudness\": -18} saves it");
+	CHECK_HAS(R, "\nThe sound: -18.0 LUFS, peak ");
+	CHECK_HAS(R, ", measured over its whole 0.30 s: shorter than the 400 ms blocks loudness is gated in");
+	// Each layer alone against the whole: a number under it, about as loud as it, or over it, never "-0.1 dB under"
+	CHECK(!Tools.Call("make_sound_effect", Parse("{\"kind\": \"chest\"}")).IsError);
+	R = Tools.Call("measure_mix", Parse("{}")).Text;
+	CHECK_HAS(R, "\nEach channel alone (the others silent), over the whole sound:\n- 2A03 Pulse 1: ");
+	CHECK_HAS(R, "\n- 2A03 Pulse 2: ");
+	CHECK_LACKS(R, ", -");
+	// One the halt cuts while it sounds says so
+	FakeSong Hand;
+	Hand.Info.Speed = 1;
+	Hand.Info.TrackName = "Beep";
+	Hand.Put(0, 0, "C-4", 2, 12);
+	Hand.Rows[0][10].Effect[0] = EFF_HALT;
+	Hand.Rows[0][10].Param[0] = 0;
+	R = Run(Hand, "review_arrangement", "{}").Text;
+	CHECK_HAS(R, "It's cut while it still sounds: 2A03 Pulse 1 stops at volume 12 as it halts at 0.17 s.");
+
+	// A jingle make_jingle made is a cue too: it halts within half a minute
+	FakeSong Tune;
+	const char *const LINE[] = { "G-3", "B-3", "D-4", "G-4" };
+	for (int i = 0; i < 4; ++i)
+		Tune.Put(5, i * 8, LINE[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Tune.End(5, 32);
+	ToolSet TuneTools(Tune);
+	CHECK(!TuneTools.Call("make_jingle", Parse("{\"kind\": \"level up\"}")).IsError);
+	R = TuneTools.Call("review_arrangement", Parse("{}")).Text;
+	CHECK_HAS(R, "Judged as a cue: it plays once and halts after 3.");
+	CHECK_LACKS(R, "before it loops");
+	CHECK_HAS(TuneTools.Call("measure_mix", Parse("{\"stems\": false}")).Text, "The whole song (it halts)");
+}
+
 int main()
 {
 	TestJson();
@@ -15720,6 +16020,9 @@ int main()
 	TestTappedTempo();
 	TestStrumDelay();
 	TestGrooveKey();
+	TestSoundEffectEnds();
+	TestShortLoudness();
+	TestCueJudging();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
