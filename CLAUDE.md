@@ -978,6 +978,37 @@ for `Caller::Core` in `ToolSet::Call`. `TestDraftFindings`,
 `TestMixFadersReset` and `TestProblemListArrangement` cover them, on
 `DraftSong`, a small copy of that stage.
 
+Warnings as a part is written, and the last steps in one call (from
+`feat-finish-guard`): `WritingWarnings` (with `FinishSongTool`, after
+`ExportTool` in `Tools.cpp`; declared before `WriteNotesInSteps`) gives
+`write_notes`' reply its "Warning:" lines, both paths and `grow_melody`'s
+`pick`, from the channel's cells as the write leaves them (a copy of the
+session hears the song so, `Session::Assume`), before `Commit`: the range
+`check_song` checks (`NoteRangeReason`, which both use now, with
+`N163HighestWhole`), a bass sounding under `GUARD_LOWEST`, a line on a sound
+that holds whose middle reaches `GUARD_LEAD_MIDDLE` and top `GUARD_LEAD_TOP`,
+notes outside the key (`PitchOutsideKey`, check_song's too) that no other
+part plays in that bar, that make no major or minor triad with the notes the
+others sound with them (`Chorded`: a borrowed chord's root in the bass under
+its other notes) and that aren't short chromatic steps (only a chosen key's,
+or a third of the part outside a key found from the notes), a bass of
+lone short notes over four bars from its first note, and a sound the channel
+doesn't play as meant (`TRIANGLE_SOFT_PEAK`, another chip's, `OddDutyRemark`).
+Each fix is a call (`GuardCall`, `CallText`): `transpose` on the full set, the
+line moved an octave (`StepLineMoved`) on the small set (`WriteNotes` takes
+`Caller::Core`). On the soundtrack's 56 finished tracks and its cues, written
+back section by section, they ask one key question and repeat check_song's
+N163 range findings in one track (the newest tracks' drafts, none); widen them
+only against that. `finish_song`
+(`FinishSongTool`, a `FinishKind` of `FINISH_KINDS`, as the recipes have
+them) runs `PolishTool`, `MixTool` (with `faders` `reset` when
+`MELODY_DOWN` or `FADER_LIFT` says the faders do the mix's work),
+`FixLoopTool` where `FindSeams` finds a seam to write and `ExportTrack`, each
+on a new `Session`, the first three inside `SongHost::BeginGroup`/`EndGroup`;
+`FinishBalance` hears the balance after the mix as the review does.
+`TestWritingWarnings` and `TestFinishSong` (the separate calls give the same
+notes, mixer and file; one undo) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

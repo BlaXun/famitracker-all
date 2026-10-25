@@ -18049,10 +18049,12 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 
 	// Outside the track's key: the key chosen for it, or found from the song's notes with the part in them (a song's first
 	// part makes its key). Left out: a chromatic note of a beat or less stepping to or from its neighbour (an approach, a
-	// passing or a neighbour note), and one the other parts sound in that bar too (a borrowed chord they share). A key
-	// found from the notes is major or minor, so a modal tune's own notes fall outside it: then only a part with a third of
-	// its notes or more outside is asked about (the soundtrack's 57 tracks, their keys mostly found: none; asked of every
-	// note outside, 20 of them). Not for a sound effect
+	// passing or a neighbour note), one the other parts sound in that bar too (a borrowed chord they share), and one that
+	// makes a major or minor triad with two notes they sound with it (a borrowed chord whose root only the bass plays, Db
+	// under F and Ab in Eb major; a slip a semitone off a chord's note makes a diminished or an augmented one, or none). A
+	// key found from the notes is major or minor, so a modal tune's own notes fall outside it: then only a part with a third
+	// of its notes or more outside is asked about (the soundtrack's 57 tracks, their keys mostly found: none; asked of
+	// every note outside, 20 of them). Not for a sound effect
 	if (UseOfTrack(S).Use != TRACK_SOUND) {
 		Session View(S);
 		View.Assume(Channel, Cells);
@@ -18069,6 +18071,42 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 				Others = c != Channel && IsMelodic(S.Channel(c)) && !S.Notes(c).empty();
 			Have = Others && FindKey(View, 0, View.Time.TotalRows(), K);
 			Source = "found from the song's notes";
+		}
+		// The bars where a class outside the key is a chord's note: one of its notes makes a major or minor triad with two
+		// notes the other parts sound from its start for two beats or while it lasts, within the bar (a broken chord's notes
+		// come one after another; the whole bar's would make chance triads with a melody's), and so do its other notes there
+		// (a bass repeating its root under the chord)
+		std::set<int> Chorded;	// bar * 12 + class
+		for (size_t i = 0; i < Part.size() && Have; ++i) {
+			const NoteInfo &N = Part[i];
+			const int Pitch = PitchOutsideKey(N, S.Time.RowsPerBeat, K);
+			const int Bar = S.Time.BarOf(N.Row);
+			if (Pitch < 0 || Chorded.count(Bar * 12 + Pitch % 12) > 0)
+				continue;
+			const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
+			std::vector<bool> With(12, false);	// the classes the other parts sound with it
+			for (int c = 0; c < View.ChannelCount(); ++c) {
+				if (c == Channel || !IsMelodic(View.Channel(c)))
+					continue;
+				const std::vector<NoteInfo> &Theirs = View.Notes(c);
+				for (size_t j = 0; j < Theirs.size(); ++j) {
+					if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
+						continue;
+					With[Theirs[j].Pitch % 12] = true;
+					const std::vector<int> &Above = InstrumentChord(View, Theirs[j].Instrument);
+					for (size_t k = 0; k < Above.size(); ++k)
+						With[(Theirs[j].Pitch + Above[k]) % 12] = true;
+				}
+			}
+			// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them
+			static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
+			for (int t = 0; t < 6; ++t) {
+				const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
+				if (With[(Root + TRIADS[t][1]) % 12] && With[(Root + TRIADS[t][2]) % 12]) {
+					Chorded.insert(Bar * 12 + Pitch % 12);
+					break;
+				}
+			}
 		}
 		std::vector<size_t> Asked;
 		std::vector<int> Classes;	// the pitch classes asked about, in order
@@ -18100,7 +18138,7 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 						Shared = (Theirs[j].Pitch + Above[k]) % 12 == Class;
 				}
 			}
-			if (Embellishes || Shared)
+			if (Embellishes || Shared || Chorded.count(Bar * 12 + Class) > 0)
 				continue;
 			Asked.push_back(i);
 			if (std::find(Classes.begin(), Classes.end(), Class) == Classes.end())
@@ -18137,8 +18175,9 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 	}
 
 	// A bass nearly silent: a lone short note now and then, from its first note's bar to its last's, four bars or more (a
-	// bass that joins at an intro's end isn't; drips and sparkles on other channels are meant so). What a sound plays: a
-	// note on the triangle until its envelope reaches 0, on the sawtooth until it fades away (HeardFramesOf)
+	// bass that joins at an intro's end isn't; drips and sparkles on other channels are meant so, and so are bubbles on a
+	// bass channel over another part playing in most of those bars, every one above its notes there). What a sound plays:
+	// a note on the triangle until its envelope reaches 0, on the sawtooth until it fades away (HeardFramesOf)
 	if (IsBass(Info)) {
 		const int Since = S.Time.BarOf(Part.front().Row), Until = S.Time.BarOf(Part.back().Row), Count = Until - Since + 1;
 		if (Count >= 4 && static_cast<int>(Part.size()) <= Count) {
@@ -18162,7 +18201,29 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 					For = std::min(Frames, HeardFramesOf(pSound, N.Volume, Frames));
 				Heard += For;
 			}
-			if (Short && Total > 0 && static_cast<double>(Heard) < GUARD_SILENT_SHARE * static_cast<double>(Total)) {
+			int Lowest = 1000;	// as they sound
+			for (size_t i = 0; i < Part.size(); ++i)
+				Lowest = std::min(Lowest, Part[i].Pitch - Offset);
+			bool Over = false;
+			const int From = S.Time.BarStart(Since), To = S.Time.BarEnd(Until);
+			for (int c = 0; c < S.ChannelCount() && !Over; ++c) {
+				if (c == Channel || !IsMelodic(S.Channel(c)))
+					continue;
+				const int TheirOffset = Written(S.Channel(c), 0);
+				const std::vector<NoteInfo> &Theirs = S.Notes(c);
+				std::vector<bool> Playing(static_cast<size_t>(Count), false);
+				int Highest = -1000;
+				for (size_t j = 0; j < Theirs.size(); ++j) {
+					const NoteInfo &O = Theirs[j];
+					if (O.Row >= To || O.Row + O.Rows <= From || O.Volume <= 0)
+						continue;
+					for (int b = S.Time.BarOf(std::max(O.Row, From)); b <= S.Time.BarOf(std::min(O.Row + std::max(1, O.Rows), To) - 1); ++b)
+						Playing[static_cast<size_t>(b - Since)] = true;
+					Highest = std::max(Highest, O.Pitch - TheirOffset);
+				}
+				Over = static_cast<int>(std::count(Playing.begin(), Playing.end(), true)) * 2 >= Count && Highest < Lowest;
+			}
+			if (Short && !Over && Total > 0 && static_cast<double>(Heard) < GUARD_SILENT_SHARE * static_cast<double>(Total)) {
 				std::string Text = Format("%s plays %s in %s, each a beat or shorter, heard %d%% of the time: a lone short note now and "
 					"then leaves the bass nearly silent. A bass holds its roots or plays a figure in every bar.", Name.c_str(),
 					Plural(static_cast<int>(Part.size()), "note", "notes").c_str(), RangeText(Since, Until).c_str(),

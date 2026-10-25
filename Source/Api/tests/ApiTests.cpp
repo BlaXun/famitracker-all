@@ -18524,6 +18524,35 @@ void TestWritingWarnings()
 			"them there; if not, each moves a semitone into the key (F# to F or G, C# to C or D, D# to D or E).");
 	}
 
+	// A borrowed chord whose root only the bass plays (Db under the chord part's F and Ab in Eb major, bVII, as the soundtrack's
+	// cave tracks have it): a triad with notes the other parts sound in that bar, meant. A slip a semitone off a chord's
+	// root (A under Ab, C and Eb) makes none, and is asked about
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		CHECK(!Run(Song, "set_key", "{\"key\": \"Eb major\"}").IsError);
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 2\", \"instrument\": \"soft chords\", \"from_bar\": 1, \"notes\": \"G3 - Bb3 - "
+			"Eb4 - Bb3 - | F3 - Ab3 - Eb4 - Ab3 - | Ab3 - C4 - Eb4 - C4 - | G3 - Bb3 - Eb4 - Bb3 -\"}").IsError);
+		auto Bass = [](const std::string &Root) {
+			return "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"Eb3 - Eb3 - Bb2 - Bb2 - | Db3 - Db3 - "
+				"Ab2 - Db3 - | " + Root + " - " + Root + " - Eb2 - Eb2 - | Eb3 - Eb3 - Bb2 - Bb2 -\"}";
+		};
+		ToolResult R = Run(Song, "write_notes", Bass("Ab2"));
+		CHECK(!R.IsError);
+		CHECK_EQ(WarningCount(R.Text), 0);
+		R = Run(Song, "write_notes", Bass("A2"));
+		CHECK_HAS(R.Text, "\nWarning: Outside Eb major (the track's key, chosen for it): A-2 at bar 3 beat 1, A-2 at bar 3 beat 2 on 2A03 "
+			"Triangle. Meant?");
+		CHECK_LACKS(R.Text, "C#");	// the Db the chord's root
+		CHECK_EQ(WarningCount(R.Text), 1);
+		// Alone, the bass's Db is asked about: no other part sounds a chord with it
+		FakeSong Alone;
+		Alone.Info.DirectChanges = true;
+		CHECK(!Run(Alone, "set_key", "{\"key\": \"Eb major\"}").IsError);
+		CHECK_HAS(Run(Alone, "write_notes", Bass("Ab2")).Text, "\nWarning: Outside Eb major (the track's key, chosen for it): "
+			"C#3 at bar 2 beat 1, C#3 at bar 2 beat 2, C#3 at bar 2 beat 4 on 2A03 Triangle.");
+	}
+
 	// A bass nearly silent: a lone short note every other bar on the triangle, as the local model's draft had it, on its
 	// pulse sound ("soft chords", meant to be soft: the triangle plays it at full level). Both say what to do, and their
 	// fixes run
@@ -18569,6 +18598,19 @@ void TestWritingWarnings()
 		CHECK_EQ(WarningCount(Run(Intro, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"bell\", \"notes\": [{\"bar\": 1, \"beat\": 3, "
 			"\"pitch\": \"E-5\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 2, \"pitch\": \"B-5\", \"beats\": 0.25}, {\"bar\": 7, \"beat\": 4, \"pitch\": "
 			"\"G-5\", \"beats\": 0.25}]}").Text), 0);
+		// Bubbles on the sawtooth over a triangle bass playing in every bar, every one above its notes (as a cave track has
+		// them): a color of their own. Where they reach under the bass's notes, they're asked about
+		FakeSong Bubbles;
+		Bubbles.Info.DirectChanges = true;
+		CHECK(!Run(Bubbles, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"G2 - . . D3 - . . | "
+			"C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . . | G2 - . . D3 - . . | C3 - . . G2 - . "
+			".\"}").IsError);
+		CHECK_EQ(WarningCount(Run(Bubbles, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 2, \"beat\": "
+			"4.5, \"pitch\": \"G-2\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 4.5, \"pitch\": \"D-3\", \"beats\": 0.25}, {\"bar\": 6, \"beat\": 4.5, "
+			"\"pitch\": \"G-2\", \"beats\": 0.25}]}").Text), 0);
+		CHECK_HAS(Run(Bubbles, "write_notes", "{\"channel\": \"Sawtooth\", \"instrument\": \"bass\", \"notes\": [{\"bar\": 2, \"beat\": 4.5, "
+			"\"pitch\": \"G-1\", \"beats\": 0.25}, {\"bar\": 4, \"beat\": 4.5, \"pitch\": \"D-2\", \"beats\": 0.25}, {\"bar\": 6, \"beat\": 4.5, "
+			"\"pitch\": \"G-1\", \"beats\": 0.25}]}").Text, "\nWarning: VRC6 Sawtooth plays 3 notes in bars 2-6, each a beat or shorter, heard ");
 		// As a clip (no direct changes), the warning says to write it again: the song doesn't have it yet
 		FakeSong Clip;
 		R = Run(Clip, "write_notes", LONE);
