@@ -1554,6 +1554,8 @@ transcribe::Key HarmonyKey(const Key &K)
 	return Out;
 }
 
+std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<NoteInfo> &Notes, int Columns, int Effect);
+
 // The key from the notes of every melodic channel in [First, End), or the
 // whole song when that's too few. False when there are no notes.
 bool FindKey(Session &S, int First, int End, Key &Out)
@@ -1566,17 +1568,15 @@ bool FindKey(Session &S, int First, int End, Key &Out)
 			const int From = Pass == 0 ? First : 0, To = Pass == 0 ? End : S.Time.TotalRows();
 			const std::vector<transcribe::MelodyNote> Part = MelodyOf(S.Notes(c), From, To);
 			All.insert(All.end(), Part.begin(), Part.end());
-			// The chords arpeggios sound (0xy, or the instrument's own) count too, a little less
+			// The chords arpeggios sound (0xy, or the instrument's own) count too, a little less; a 0xy lasts until a 000,
+			// wherever that is (on a release's row too)
 			const std::vector<NoteInfo> &Notes = S.Notes(c);
-			int Arpeggio = 0;
+			const std::vector<int> Arpeggios = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
 			for (size_t i = 0; i < Notes.size(); ++i) {
 				const NoteInfo &N = Notes[i];
-				for (size_t e = 0; e < N.Effects.size(); ++e)
-					if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
-						Arpeggio = N.Effects[e].second.second;
 				if (N.Row < From || N.Row >= To)
 					continue;
-				const std::vector<int> Above = ChordAbove(S, N, Arpeggio);
+				const std::vector<int> Above = ChordAbove(S, N, Arpeggios[i]);
 				for (size_t a = 0; a < Above.size(); ++a) {
 					transcribe::MelodyNote M;
 					M.row = N.Row;
@@ -5899,22 +5899,21 @@ void RubWarnings(const Session &S, const std::vector<ChordAt> &Chords, const std
 			". Another chord there, or another melody note, would sound cleaner.");
 }
 
-// The notes the song's parts other than one play, as pitch classes, with
-// the chords their 0xy arpeggios and arpeggio instruments sound
-std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End)
+// The notes the song's parts other than one (and Also, a part about to be
+// written over) play, as pitch classes, with the chords their 0xy arpeggios
+// (lasting until a 000, wherever it is) and arpeggio instruments sound
+std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End, int Also = -1)
 {
 	std::vector<HeardNote> Out;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (c == Except || !IsMelodic(S.Channel(c)))
+		if (c == Except || c == Also || !IsMelodic(S.Channel(c)))
 			continue;
 		const bool Bass = IsBass(S.Channel(c));
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
-		int Arpeggio = 0;
+		const std::vector<int> Arpeggios = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
 		for (size_t i = 0; i < Notes.size(); ++i) {
 			const NoteInfo &N = Notes[i];
-			for (size_t e = 0; e < N.Effects.size(); ++e)
-				if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
-					Arpeggio = N.Effects[e].second.second;
+			const int Arpeggio = Arpeggios[i];
 			if (N.Row >= End || N.Row + N.Rows <= First)
 				continue;
 			HeardNote H;
@@ -5937,9 +5936,11 @@ std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End)
 
 // The chords a part around a melody follows: the ones given (chords), the
 // ones the song's other parts play when they cover most of the bars, or
-// chords fitted to the melody. Source says which.
+// chords fitted to the melody. Source says which. Target's own notes there,
+// which the part replaces, aren't heard (a harmony written again would follow
+// its own old notes).
 std::vector<ChordAt> ChordsForMelody(Session &S, const Json &Args, int Melody, const std::vector<BarSpan> &Bars, const Key &K,
-	std::string &Source)
+	std::string &Source, int Target = -1)
 {
 	std::vector<ChordAt> Chords;
 	const std::vector<std::string> Progression = ProgressionArg(Args, "chords");
@@ -5951,7 +5952,7 @@ std::vector<ChordAt> ChordsForMelody(Session &S, const Json &Args, int Melody, c
 		return Chords;
 	}
 	const int First = Bars.front().Row, End = Bars.back().Row + Bars.back().Rows;
-	Chords = HearChords(HeardNotes(S, Melody, First, End), Bars, S.Time.RowsPerBeat, K, true);
+	Chords = HearChords(HeardNotes(S, Melody, First, End, Target), Bars, S.Time.RowsPerBeat, K, true);
 	int Covered = 0;
 	for (size_t i = 0; i < Chords.size(); ++i)
 		Covered += Chords[i].Rows;
@@ -6503,13 +6504,22 @@ std::vector<int> StickyAt(const std::vector<Cell> &Cells, const std::vector<Note
 	return Out;
 }
 
-// Echo notes that wouldn't grate: one a semitone or a minor ninth from a note
-// another part sounds as it starts (the melody, the chords, an arpeggio's
-// notes too) is left out, one another part moves against on its way is cut
-// short there. Only those intervals grate, counted as the parts sound (the
-// triangle and the VRC7 an octave under their notes): a major seventh, over
-// the bass or under the melody, is a chord's color (as in a maj7) and stays.
-// Dropped and Shortened count them.
+// Whether two pitches, as they sound, rub: a semitone apart, or a semitone and
+// octaves (a minor ninth, an echo's F-4 over a pad's E-2). check_song hears
+// these as clashes, and add_echo and add_harmony keep their notes off them,
+// by this one rule; a major seventh is a chord's color (as in a maj7)
+bool SemitoneRub(int Sounds, int Other)
+{
+	return std::abs(Sounds - Other) % 12 == 1;
+}
+
+// Echo notes that wouldn't grate: one a semitone (or a semitone and octaves,
+// SemitoneRub) from a note another part sounds as it starts (the melody, the
+// chords, an arpeggio's notes too) is left out, one another part moves against
+// on its way is cut short there. Only those intervals grate, counted as the
+// parts sound (the triangle and the VRC7 an octave under their notes): a major
+// seventh, over the bass or under the melody, is a chord's color (as in a
+// maj7) and stays. Dropped and Shortened count them.
 std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const std::vector<PartNote> &Notes, int &Dropped,
 	int &Shortened)
 {
@@ -6543,11 +6553,9 @@ std::vector<PartNote> EchoWithoutRubs(Session &S, Draft &D, int Target, const st
 			const Other &o = Others[k];
 			if (o.Row >= E.Row + E.Rows || o.End <= E.Row)
 				continue;
-			for (size_t p = 0; p < o.Pitches.size(); ++p) {
-				const int Apart = std::abs(Sounds - o.Pitches[p]);
-				if (Apart == 1 || Apart == 13)
+			for (size_t p = 0; p < o.Pitches.size(); ++p)
+				if (SemitoneRub(Sounds, o.Pitches[p]))
 					CutAt = std::min(CutAt, std::max(o.Row, E.Row));
-			}
 		}
 		if (CutAt <= E.Row) {
 			++Dropped;
@@ -8853,7 +8861,7 @@ std::vector<PartNote> HarmonyWithoutRubs(Session &S, int Target, int Melody, con
 			if (Others[k].Row >= End || Others[k].End <= Row)
 				continue;
 			for (size_t p = 0; p < Others[k].Pitches.size(); ++p)
-				if (std::abs(Sounds - Others[k].Pitches[p]) % 12 == 1)
+				if (SemitoneRub(Sounds, Others[k].Pitches[p]))
 					return true;
 		}
 		return false;
@@ -8923,7 +8931,7 @@ std::string AddHarmonyTool(Session &S, const Json &Args)
 	if (!Found)
 		K = Key(0, MODE_MAJOR);
 	std::string Source;
-	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, SongBarSpans(S, First, End), K, Source);
+	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, SongBarSpans(S, First, End), K, Source, Target);
 
 	HarmonyOptions O;
 	O.Interval = StyleArg(Args, "interval", HarmonyIntervals(), HARMONY_THIRD_BELOW);
@@ -9023,7 +9031,7 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 		K = Key(0, MODE_MAJOR);
 	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
 	std::string Source;
-	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, Bars, K, Source);
+	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, Bars, K, Source, Target);
 
 	CounterOptions O;
 	const std::string Place = Lowercase(StringArg(Args, "position", "below"));
@@ -9880,8 +9888,9 @@ double NotePower(Session &S, int Channel, const NoteInfo &N, int From, int To, d
 
 // Where a melody pauses, as a listener hears its phrases end: a rest of a beat or more, or a note held two beats or more,
 // as it sounds (a note on a sound that has faded away rests from there, HeardFrames; a note at volume 0 is a rest).
-// Counted in the two-bar spans phrases make (from PhraseAnchor) inside bars From-To where the melody plays at all; a pause
-// is the span's where it starts (a rest where the sound stops, a held note where it has held two beats)
+// Counted in the two-bar spans phrases make (from PhraseAnchor) inside bars From-To where the melody plays at all (a
+// break without it is left out, not a miss); a pause is the span's where it starts (a rest where the sound stops, a held
+// note where it's struck, so a phrase ending on a long note over the bar line breathes in its own span)
 struct MelodyBreaths {
 	int Spans, Breaths;
 	std::vector<int> RunOn;		// the first bars of the spans it runs through without a pause
@@ -9920,7 +9929,7 @@ MelodyBreaths BreathsOf(Session &S, int Melody, int From, int To)
 		for (int Span = SpanOf(Start); Span <= SpanOf(Stop - 1); Span += 2)
 			Playing.insert(Span);
 		if (Stop - Start >= 2 * R)
-			Paused.insert(SpanOf(Start + 2 * R));
+			Paused.insert(SpanOf(Start));
 		const int Next = i + 1 < Heard.size() ? Heard[i + 1].first : Total;
 		if (Next - Stop >= R)
 			Paused.insert(SpanOf(Stop));
@@ -9939,8 +9948,9 @@ MelodyBreaths BreathsOf(Session &S, int Melody, int From, int To)
 
 // How few of a melody's two-bar spans may pause before the review says it hardly does (MelodyBreaths), as a share of them.
 // Measured on three versions of a lively stage (bars 5-40, its break without the melody left out): 13 and 9 of 16 spans
-// breathe in the two the user heard as melodies, 4 of 16 in the one heard as "all over the place, no clean melody"; the
-// user's earlier stages breathe in 53-94% of theirs. A calm melody breathes more (the calm recipe asks for a rest of a beat
+// breathe in the two the user heard as melodies, 4 of 16 in the one heard as "all over the place, no clean melody"; a
+// desert stage's draft that ran on 3 of 16, its version rewritten in phrases 15 of 16; the user's earlier stages breathe
+// in 53-94% of theirs. A calm melody breathes more (the calm recipe asks for a rest of a beat
 // or more every two bars; the user's night songs pause in every span)
 const double BREATHING_SHARE = 0.45, CALM_BREATHING_SHARE = 0.75;
 
@@ -13590,12 +13600,10 @@ bool SoundingChord(Session &S, int First, int End, int &Root, bool &Minor)
 		if (!IsMelodic(S.Channel(c)))
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
-		int Arpeggio = 0;
+		const std::vector<int> Arpeggios = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
 		for (size_t i = 0; i < Notes.size(); ++i) {
 			const NoteInfo &N = Notes[i];
-			for (size_t e = 0; e < N.Effects.size(); ++e)
-				if (N.Effects[e].first == 0 && N.Effects[e].second.first == EFF_ARPEGGIO)
-					Arpeggio = N.Effects[e].second.second;
+			const int Arpeggio = Arpeggios[i];
 			const int From = std::max(First, N.Row), To = std::min(End, N.Row + N.Rows);
 			if (To <= From)
 				continue;
@@ -16542,7 +16550,7 @@ std::string CheckTool(Session &S, const Json &Args)
 					const std::vector<int> PA = Pitches(a, r), PB = Pitches(b, r);
 					for (size_t i = 0; i < PA.size() && !Clash; ++i)
 						for (size_t j = 0; j < PB.size() && !Clash; ++j)
-							if (std::abs(PA[i] - PB[j] + Apart) % 12 == 1) {
+							if (SemitoneRub(PA[i] + Apart, PB[j])) {
 								Clash = true;
 								PitchA = PA[i];
 								PitchB = PB[j];
@@ -18397,8 +18405,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"loudness, 8 dB under it, as atmospheric chiptune mixes it: each chip's level and both instruments' envelopes counted, "
 		"the mixer's faders left to the mixer), plays the same instrument and octave (on another chip, the same preset there, "
 		"and only the effects that chip plays), and can be detuned a step or two so it shimmers against the melody where they "
-		"overlap. An echo note a semitone or a minor ninth from what sounds with it is left out or cut short; a major seventh "
-		"over the bass stays, a chord's color.",
+		"overlap. An echo note a semitone from what sounds with it (or a semitone and octaves, a minor ninth: what check_song "
+		"hears as a clash) is left out or cut short; a major seventh over the bass stays, a chord's color.",
 		Schema()
 			.Add("channel", ChannelProp("Channel to echo."), true)
 			.Add("to_channel", ChannelProp("Channel for the echo. Default: a free one of the same kind, else another free one."))

@@ -471,7 +471,12 @@ rules and fixing tool output by hand.
   a change to minor keeps a dominant's ninth natural, `add_harmony` steps
   off semitones against a pad, and `write_notes` keeps the volume of the
   notes it replaces and the bars its notes leave empty; `vary_part`'s
-  ending fits the chord under it.
+  ending fits the chord under it. And three the lead added: `add_harmony`'s
+  thirds and sixths are the key's own (a harmonic minor's too), over the
+  chords as FamiTracker plays them; `add_echo` and `check_song` agree on
+  which semitones rub (an echo F-4 over a pad's E-2 too); the breath check
+  counts the spans the melody plays in and a held note in the span it
+  starts in (a desert stage's draft paused in 3 of 16, its rewrite in 15).
 - On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
   knowledge work, the one-time work every later song reuses (what makes a
   track good, turned into the tools, the recipes and the guide), rather

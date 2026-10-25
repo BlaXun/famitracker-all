@@ -15119,6 +15119,148 @@ void TestEndingFitsChord()
 	CHECK_HAS(Result.Text, "VRC6 Pulse 1 ending on C#4, which A7 under it has (the tonic would clash with it), bars 1-2");
 	CHECK_EQ(PitchName(Song.Rows[5][16].Pitch()), std::string("C#4"));
 }
+// The breath check counts the two-bar spans the melody plays in (a break without it is left out, not a miss) and credits
+// a note held two beats or more to the span it starts in: a phrase ending on a long note over the bar line breathes there,
+// and the next phrase, which it runs into, doesn't
+void TestBreathSpans()
+{
+	const std::string LIVELY = "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	// Eighths for 16 bars, but bars 2, 6 and 10 end on a note held two beats, into bars 3, 7 and 11
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "D-4", "E-4", "G-4", "A-4", "G-4", "E-4", "D-4" };
+	for (int Bar = 0; Bar < 16; ++Bar)
+		for (int k = 0; k < 8; ++k) {
+			const bool Holds = Bar == 1 || Bar == 5 || Bar == 9, After = Bar == 2 || Bar == 6 || Bar == 10;
+			if ((Holds && k == 7) || (After && k < 2))
+				continue;
+			const int Row = Bar * 16 + k * 2;
+			if (Bar == 3 && k == 7) {	// a rest of half a beat: a rest, not a breath
+				Song.End(5, Row, NOTE_RELEASE);
+				continue;
+			}
+			Song.Put(5, Row, TUNE[(Bar + k) % 8], Row == 0 ? 0 : NO_INSTRUMENT, Row == 0 ? 15 : -1);
+		}
+	ToolResult Result = Run(Song, "review_arrangement", LIVELY);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "it pauses (a rest of a beat or more, or a note held two beats) in 3 of 8 two-bar spans.");
+	CHECK_HAS(Result.Text, "The melody hardly pauses: 3 of 8 two-bar spans have a rest of a beat or more or a note held two beats, and it "
+		"runs on through bars 3-4, 7-8 and 11-16.");
+	// A rest of a beat every two bars, but bar 12 ends on a note held two beats, and bars 13-14 are a break without the
+	// melody: the held note breathes in bars 11-12 (the rest after it starts in the break, which isn't counted)
+	FakeSong Break(4);
+	EighthsTune(Break, 2);
+	for (int r = 184; r < 224; ++r)
+		Break.Rows[5][static_cast<size_t>(r)] = Cell();
+	Break.Put(5, 184, "C-4");
+	Break.End(5, 192, NOTE_RELEASE);
+	Result = Run(Break, "review_arrangement", LIVELY);
+	CHECK_HAS(Result.Text, "in 7 of 7 two-bar spans.");
+	CHECK_LACKS(Result.Text, "hardly pauses");
+}
+
+// add_harmony's thirds and sixths are the key's own: a 0xy chord the chord part stopped with a 000 on a release's row
+// isn't heard on (it made D minor's chords D major), the voice's own old notes aren't heard as the chords, a harmonic
+// minor's scale steps over its augmented second (a sixth under A is C#, not B), and a note outside the key gets the
+// interval's size that lands in it (a sixth under D# in D minor is G, not the F a scale's steps make, a seventh)
+void TestHarmonyInKey()
+{
+	const Key HARMONIC(2, 7);
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	// Bars 1-4: F major as a 047 arpeggio, stopped by a 000 on the release that ends bar 4; bars 5-8 broken D minor chords
+	for (int Bar = 0; Bar < 4; ++Bar)
+		Song.Put(0, Bar * 16, "F-3", Bar == 0 ? 2 : NO_INSTRUMENT, Bar == 0 ? 10 : -1);
+	Song.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][0].Param[0] = 0x47;
+	Song.End(0, 63, NOTE_RELEASE);
+	Song.Rows[0][63].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][63].Param[0] = 0x00;
+	const char *const BROKEN[] = { "D-3", "F-3", "A-3", "D-4", "A-3", "F-3", "D-3", "F-3" };
+	const char *const TUNE[] = { "D-4", "F-4", "A-4", "G-4", "F-4" };
+	const int AT[] = { 0, 2, 4, 10, 12 };
+	for (int Bar = 4; Bar < 8; ++Bar) {
+		for (int k = 0; k < 8; ++k)
+			Song.Put(0, Bar * 16 + k * 2, BROKEN[k]);
+		Song.Put(7, Bar * 16, "D-2", Bar == 4 ? 1 : NO_INSTRUMENT);
+		for (int k = 0; k < 5; ++k)
+			Song.Put(5, Bar * 16 + AT[k], TUNE[k], Bar == 4 && k == 0 ? 0 : NO_INSTRUMENT);
+		// An old harmony out of the key, which a harmony written again used to follow
+		Song.Put(6, Bar * 16, "F#3", Bar == 4 ? 0 : NO_INSTRUMENT);
+		Song.Put(6, Bar * 16 + 8, "C-4");
+	}
+	Song.End(0, 128, NOTE_RELEASE);
+	Song.End(5, 128, NOTE_RELEASE);
+	Song.End(6, 128, NOTE_RELEASE);
+	Song.End(7, 128, NOTE_RELEASE);
+	ToolResult Result = Run(Song, "add_harmony", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\", \"interval\": "
+		"\"sixth_below\", \"key\": \"D harmonic minor\", \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "on the chords the other parts play in D harmonic minor");
+	int Written = 0, Outside = 0;
+	for (int r = 64; r < 128; ++r)
+		if (Song.Rows[6][static_cast<size_t>(r)].HasNote()) {
+			++Written;
+			Outside += InKey(Song.Rows[6][static_cast<size_t>(r)].Pitch(), HARMONIC) ? 0 : 1;
+		}
+	CHECK(Written >= 16);
+	CHECK_EQ(Outside, 0);
+	CHECK_EQ(PitchName(Song.Rows[6][64].Pitch()), std::string("F-3"));	// under D-4: not F#3
+	// The scale's steps over the augmented second: over A7, a quick A-4 off the beat gets C#4 a sixth under it
+	FakeSong Steps;
+	Steps.Info.DirectChanges = true;
+	Steps.Put(5, 0, "E-4", 0);
+	Steps.Put(5, 6, "A-4");
+	Steps.Put(5, 8, "G-4");
+	Steps.Put(5, 12, "E-4");
+	Steps.End(5, 16, NOTE_RELEASE);
+	Result = Run(Steps, "add_harmony", "{\"channel\": \"VRC6 Pulse 2\", \"interval\": \"sixth_below\", \"key\": \"D harmonic minor\", "
+		"\"chords\": \"| A7 |\"}");
+	CHECK(!Result.IsError);
+	CHECK_EQ(Notes(Steps, 6, 0, 17), std::string("0:G-3 6:C#4 8:E-3 12:G-3 16:=== "));
+	// A note outside the key: a sixth under the melody's D#4 in D minor is G-3, the key's
+	FakeSong Chromatic;
+	Chromatic.Info.DirectChanges = true;
+	Chromatic.Put(5, 0, "D-4", 0);
+	Chromatic.Put(5, 6, "D#4");
+	Chromatic.Put(5, 8, "F-4");
+	Chromatic.Put(5, 12, "D-4");
+	Chromatic.End(5, 16, NOTE_RELEASE);
+	Result = Run(Chromatic, "add_harmony", "{\"channel\": \"VRC6 Pulse 2\", \"interval\": \"sixth_below\", \"key\": \"D minor\", "
+		"\"chords\": \"| Dm |\"}");
+	CHECK(!Result.IsError);
+	CHECK_EQ(Notes(Chromatic, 6, 0, 17), std::string("0:F-3 6:G-3 8:A-3 12:F-3 16:=== "));
+}
+
+// add_echo and check_song hear a semitone rub by one rule (SemitoneRub): a semitone, or a semitone and octaves. An echo F-4
+// over a pad's E-2, 25 semitones apart, used to stay in the echo while check_song found it a clash; now the echo leaves it
+// out and check_song finds none
+void TestEchoRubsAsChecked()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "F-4", "A-4", "C-5", "E-4" };
+	for (int i = 0; i < 4; ++i)
+		Song.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Song.End(5, 16, NOTE_RELEASE);
+	Song.Put(0, 4, "E-2", 2, 8);	// a pad from beat 2, after the melody's F-4
+	Song.End(0, 16, NOTE_RELEASE);
+	CHECK_HAS(Run(Song, "check_song", "{\"from_bar\": 1, \"to_bar\": 2}").Text, " 0 clashes");
+	const ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"delay_beats\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Where the echo would grate a semitone against another part, 1 echo note was left out.");
+	CHECK_LACKS(Notes(Song, 6), "F-4");
+	CHECK_HAS(Notes(Song, 6), "8:A-4 12:C-5 16:E-4");
+	CHECK_HAS(Run(Song, "check_song", "{\"from_bar\": 1, \"to_bar\": 2}").Text, " 0 clashes");
+	// Two octaves and a semitone is a clash to check_song, as one octave and a semitone is
+	FakeSong Wide;
+	Wide.Info.DirectChanges = true;
+	Wide.Put(5, 0, "F-4", 0);
+	Wide.End(5, 8, NOTE_RELEASE);
+	Wide.Put(0, 0, "E-2", 2, 8);
+	Wide.End(0, 8, NOTE_RELEASE);
+	CHECK_HAS(Run(Wide, "check_song", "{\"from_bar\": 1, \"to_bar\": 1}").Text, "Clash: E-2 on 2A03 Pulse 1 against F-4 on VRC6 Pulse 1");
+}
 // end of stage-fixes tests
 
 int main()
@@ -15253,6 +15395,9 @@ int main()
 	TestWriteNotesVolume();
 	TestWriteNotesGaps();
 	TestEndingFitsChord();
+	TestBreathSpans();
+	TestHarmonyInKey();
+	TestEchoRubsAsChecked();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

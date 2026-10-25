@@ -236,10 +236,11 @@ int BassPitch(int PitchClass, int Previous, int Low, int High)
 	return Best;
 }
 
-// The next pitch of the key's scale above (Direction 1) or below (-1)
+// The next pitch of the key's scale above (Direction 1) or below (-1); in a
+// harmonic minor that's three semitones between its sixth and its raised seventh
 int ScaleStep(int Pitch, int Direction, const Key &K)
 {
-	for (int Step = 1; Step <= 2; ++Step)
+	for (int Step = 1; Step <= 3; ++Step)
 		if (InKey(Pitch + Direction * Step, K) && !(K.Mode == MODE_MINOR && Mod12(Pitch + Direction * Step - K.Tonic) == 11 &&
 			Step == 1 && InKey(Pitch + Direction * 2, K) && Direction < 0))
 			return Pitch + Direction * Step;
@@ -1556,8 +1557,19 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 	std::vector<PartNote> Out;
 	const int R = std::max(1, O.RowsPerBeat);
 	int Previous = -1;
-	// The interval's own note for a melody note, in the key
+	// The interval's own note for a melody note, in the key: its scale's steps, and for a note outside the scale (a
+	// chromatic passing note, a phrygian second's) the size of the interval that lands in the key (a sixth under D#
+	// in D minor is G, not the F a scale's steps would give, a seventh)
 	auto Plain = [&](int m) {
+		if (O.Interval != HARMONY_OCTAVE_BELOW && !InKey(m, O.K)) {
+			static const int THIRDS[] = { -3, -4 }, SIXTHS[] = { -8, -9 }, ABOVE[] = { 3, 4 }, FIFTHS[] = { -7, -8, -6 };
+			const int *pSizes = O.Interval == HARMONY_SIXTH_BELOW ? SIXTHS : O.Interval == HARMONY_THIRD_ABOVE ? ABOVE :
+				O.Interval == HARMONY_FIFTH_BELOW ? FIFTHS : THIRDS;
+			const int Count = O.Interval == HARMONY_FIFTH_BELOW ? 3 : 2;
+			for (int k = 0; k < Count; ++k)
+				if (InKey(m + pSizes[k], O.K))
+					return m + pSizes[k];
+		}
 		switch (O.Interval) {
 		case HARMONY_SIXTH_BELOW: return ScaleDegrees(m, 2, O.K) - 12;
 		case HARMONY_THIRD_ABOVE: return ScaleDegrees(m, 2, O.K);

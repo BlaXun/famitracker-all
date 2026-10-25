@@ -604,11 +604,21 @@ passes each note's row); `HarmonyWithoutRubs` moves `add_harmony`'s notes
 off semitones against the other parts; `write_notes` keeps the volume of
 the notes it replaces (`PartOptions::KeepVolume` in `BuildPart`) and the
 bars its notes leave empty between them, writing the rest a piece at a
-time; `vary_part`'s ending fits the chord under it. `TestMelodyBreaths`,
+time; `vary_part`'s ending fits the chord under it. A held note breathes
+in the span it starts in. `add_harmony`'s thirds and sixths are the key's
+own: `ScaleStep` in `Arrange.cpp` steps over a harmonic minor's augmented
+second, `HarmonyPart` gives a melody note outside the key the interval's
+size that lands in it, and `ChordsForMelody` leaves the target's old notes
+out (`HeardNotes`' `Also`). `HeardNotes`, `FindKey` and `SoundingChord`
+take a note's `0xy` from the cells (`StickyAt`), since a `000` on a
+release's row isn't in any note's effects. `SemitoneRub` is the one rule
+for a semitone that rubs (and octaves over it), used by `check_song`'s
+clashes, `EchoWithoutRubs` and `HarmonyWithoutRubs`. `TestMelodyBreaths`,
 `TestStageMix`, `TestLivelyGroove`, `TestOwnWaveSounds`, `TestBrokenFloor`,
 `TestReadNotesLimit`, `TestEmbellishShortNotes`, `TestDominantNinth`,
-`TestHarmonyRubs`, `TestWriteNotesVolume`, `TestWriteNotesGaps` and
-`TestEndingFitsChord` cover them.
+`TestHarmonyRubs`, `TestWriteNotesVolume`, `TestWriteNotesGaps`,
+`TestEndingFitsChord`, `TestBreathSpans`, `TestHarmonyInKey` and
+`TestEchoRubsAsChecked` cover them.
 
 ## What this repository is
 
