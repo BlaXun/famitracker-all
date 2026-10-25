@@ -24,6 +24,7 @@
 // them, so the preview goes on under modal dialogs too.
 
 #include "stdafx.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "Api/SoundIndex.h"
@@ -71,6 +72,7 @@ CSoundPreview::CSoundPreview() :
 	m_dwStart(0),
 	m_iChannel(-1),
 	m_iInstrument(-1),
+	m_iVolume(MAX_VOLUME - 1),
 	m_iKeyNote(-1),
 	m_bSongStopped(true),
 	m_iSerial(0)
@@ -90,8 +92,8 @@ void CSoundPreview::Close()
 		DestroyWindow();
 }
 
-// Ready to play the instrument on the channel, what played before stopped
-bool CSoundPreview::Start(int Channel, int Instrument)
+// Ready to play the instrument on the channel at the volume, what played before stopped
+bool CSoundPreview::Start(int Channel, int Instrument, int Volume)
 {
 	CFamiTrackerDoc *pDoc = CFamiTrackerDoc::GetDoc();
 	if (pDoc == NULL || !pDoc->IsFileLoaded() || Channel < 0 || Channel >= static_cast<int>(pDoc->GetAvailableChannels()) || Instrument < 0 ||
@@ -106,6 +108,7 @@ bool CSoundPreview::Start(int Channel, int Instrument)
 	m_bSongStopped = !theApp.IsPlaying();
 	m_iChannel = Channel;
 	m_iInstrument = Instrument;
+	m_iVolume = std::max(0, std::min(MAX_VOLUME - 1, Volume));
 	m_Steps.clear();
 	m_iNext = 0;
 	++m_iSerial;
@@ -113,9 +116,9 @@ bool CSoundPreview::Start(int Channel, int Instrument)
 	return true;
 }
 
-bool CSoundPreview::Play(int Channel, int Instrument, const std::vector<ftapi::PreviewStep> &Steps)
+bool CSoundPreview::Play(int Channel, int Instrument, const std::vector<ftapi::PreviewStep> &Steps, int Volume)
 {
-	if (!Start(Channel, Instrument))
+	if (!Start(Channel, Instrument, Volume))
 		return false;
 	m_iKeyNote = -1;
 	for (size_t i = 0; i < Steps.size(); ++i) {
@@ -127,9 +130,9 @@ bool CSoundPreview::Play(int Channel, int Instrument, const std::vector<ftapi::P
 	return true;
 }
 
-bool CSoundPreview::KeyDown(int Channel, int Instrument, int Note)
+bool CSoundPreview::KeyDown(int Channel, int Instrument, int Note, int Volume)
 {
-	if (Note < 0 || Note >= NOTE_RANGE * OCTAVE_RANGE || !Start(Channel, Instrument))
+	if (Note < 0 || Note >= NOTE_RANGE * OCTAVE_RANGE || !Start(Channel, Instrument, Volume))
 		return false;
 	Queue(Note);
 	m_iKeyNote = Note;
@@ -178,7 +181,9 @@ void CSoundPreview::Queue(int Note)
 		Cell.Note = static_cast<unsigned char>(Note % NOTE_RANGE + 1);
 		Cell.Octave = static_cast<unsigned char>(Note / NOTE_RANGE);
 	}
-	Cell.Vol = MAX_VOLUME;
+	// A note at the preview's volume (a release or a halt leaves it); without one it played at whatever volume the song
+	// left the channel at
+	Cell.Vol = static_cast<unsigned char>(Note >= 0 ? m_iVolume : MAX_VOLUME);
 	Cell.Instrument = static_cast<unsigned char>(Note == ftapi::PREVIEW_HALT ? MAX_INSTRUMENTS : m_iInstrument);
 	theApp.GetSoundGenerator()->QueueNote(m_iChannel, Cell, NOTE_PRIO_2);
 }
@@ -258,7 +263,7 @@ void ListenToInstrument(CMainFrame *pMainFrame, int Instrument)
 		pMainFrame->SetMessageText(Text);
 		return;
 	}
-	if (!pMainFrame->GetSoundPreview()->Play(pSound->Channel, Instrument, ftapi::PreviewSteps(*pSound))) {
+	if (!pMainFrame->GetSoundPreview()->Play(pSound->Channel, Instrument, ftapi::PreviewSteps(*pSound), pSound->Volume)) {
 		pMainFrame->SetMessageText(_T("The instrument couldn't be played."));
 		return;
 	}

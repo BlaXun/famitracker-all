@@ -140,6 +140,21 @@ Done:
   chip as Module properties does (every note stays) and the sound. With the
   355-study library the list takes the same time to make as before (the
   games' sounds in it are listed once).
+- **The browser's fixes** (October 2026, `feat-fixes-browser`): Enter in
+  Find picks the sound that matches best, wherever it is in the list (the
+  song's own "Choir pad" after the ready-made pads), opens its heading if
+  it was folded, plays it and says it's the best match; the kinds on the
+  left leave out a kind with no sounds ("Other (0)"). Every sound plays at
+  about the level of a 2A03 pulse at 15, from a click, the note keys or
+  Listen (a VRC7 sound at volume 13, an FDS sound at 8), so browsing
+  doesn't jump in loudness, and never at a volume the song left on its
+  channel. After File > Create WAV or an export for the game, the 2A03's
+  sounds are heard at once (they stayed silent until a song played, as in
+  0.4.6). A studied sound's name starts with its track's title before a
+  parenthesis ("Vampire Killer lead", "Beginning bass", where it was
+  "Killer (Courtyard) lead"), and names that come out alike in two studies
+  are numbered. Adding a sound's chip says plainly that it clears the undo
+  history.
 - **Listen** (the speaker button at the end of the instrument list's
   toolbar, and in the Instrument menus): the instrument picked plays its
   kind's phrase on the channel the song plays it most, as the sound
@@ -171,7 +186,8 @@ shows; the songs themselves stay ordinary modules.
   hi-hat, a pad and a sawtooth bass); BPM shows in place of speed and tempo
   in the song settings (typing or stepping a BPM picks the speed and tempo,
   as Claude Code does; a song at speed 1, a sound effect's, shows as "Speed
-  1 frame", and typing 1 or stepping past 400 BPM sets it); and rarely used
+  1 frame", and typing 1 or stepping past 400 BPM sets it, and the status
+  bar says "1 frame a row" for it where it said 900 BPM); and rarely used
   menu items are hidden (text import
   and export, the masks, expand and shrink, the register and DPCM displays,
   NTSC and PAL, the engine speed and a few more; their shortcuts still

@@ -62,6 +62,10 @@ const int BPM_LEAST = 20, BPM_MOST = 400;
 bool BPMShowsFrames(int Speed);
 CString BPMFramesText(int Speed, int Tempo, int FrameRate);
 bool BPMWantsFrames(int Bpm);
+// The status bar's tempo for such a song, in place of 900 BPM: "1 frame a row" (ftapi::StatusFramesText), and the longest
+// it can be, for the pane's width
+CString BPMStatusText(int Speed, int Tempo, int FrameRate);
+CString BPMStatusLongest();
 int FrameTempo(int FrameRate);
 
 // Takes the rarely used items out of a copy of the main menu, and the

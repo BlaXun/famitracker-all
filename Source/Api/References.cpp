@@ -1149,9 +1149,116 @@ WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Nam
 	return W;
 }
 
+namespace {
+
+// The most letters a title keeps in a sound's name (a number that ended it may come after them)
+const size_t TITLE_LETTERS = 20;
+
+std::string TrimTitle(const std::string &Text)
+{
+	const size_t First = Text.find_first_not_of(" \t");
+	if (First == std::string::npos)
+		return std::string();
+	return Text.substr(First, Text.find_last_not_of(" \t") - First + 1);
+}
+
+// The number that ends a title, as a name keeps it ("1", "3" for "-3-", "II"); "" for none
+std::string EndingNumber(const std::string &Title)
+{
+	const std::string Trimmed = TrimTitle(Title);
+	const size_t Space = Trimmed.find_last_of(" \t");
+	std::string Token = Space == std::string::npos ? Trimmed : Trimmed.substr(Space + 1);
+	const std::string Marks = "-()[]#.~";
+	while (!Token.empty() && Marks.find(Token[0]) != std::string::npos)
+		Token.erase(0, 1);
+	while (!Token.empty() && Marks.find(Token[Token.size() - 1]) != std::string::npos)
+		Token.erase(Token.size() - 1);
+	if (Token.empty())
+		return std::string();
+	bool Digits = Token.size() <= 3;
+	for (size_t i = 0; i < Token.size() && Digits; ++i)
+		Digits = std::isdigit(static_cast<unsigned char>(Token[i])) != 0;
+	static const char *const ROMAN[] = { "II", "III", "IV", "VI", "VII", "VIII", "IX" };
+	for (size_t i = 0; i < sizeof(ROMAN) / sizeof(ROMAN[0]) && !Digits; ++i)
+		Digits = Token == ROMAN[i];
+	return Digits ? Token : std::string();
+}
+
+// A word a name doesn't end with: it only leads on to the next ("Deep Under the")
+bool LeadsOn(const std::string &Word)
+{
+	static const char *const WORDS[] = { "the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "for", "with", "from", "by",
+		"&", "-" };
+	std::string Lower;
+	for (size_t i = 0; i < Word.size(); ++i)
+		Lower += static_cast<char>(std::tolower(static_cast<unsigned char>(Word[i])));
+	for (size_t i = 0; i < sizeof(WORDS) / sizeof(WORDS[0]); ++i)
+		if (Lower == WORDS[i])
+			return true;
+	return false;
+}
+
+}	// namespace
+
+std::string ShortTitle(const std::string &Title)
+{
+	// The title before its parenthesis, bracket or subtitle in tildes: "Vampire Killer (Courtyard)" by "Vampire Killer"
+	std::string Main = TrimTitle(Title);
+	const size_t Mark = Main.find_first_of("([~");
+	if (Mark != std::string::npos && !TrimTitle(Main.substr(0, Mark)).empty())
+		Main = TrimTitle(Main.substr(0, Mark));
+	// A long one up to where its first clause ends ("Stage 4 - Mechanic Factory" by "Stage 4")...
+	if (Main.size() > TITLE_LETTERS) {
+		static const char *const CLAUSES[] = { " - ", ", ", ": ", " / " };
+		size_t Cut = std::string::npos;
+		for (size_t c = 0; c < sizeof(CLAUSES) / sizeof(CLAUSES[0]); ++c) {
+			const size_t At = Main.find(CLAUSES[c]);
+			if (At != std::string::npos && At >= 3)
+				Cut = std::min(Cut, At);
+		}
+		if (Cut != std::string::npos)
+			Main = TrimTitle(Main.substr(0, Cut));
+	}
+	// ...and the words from its start that fit, without a word at their end that only leads on to the next
+	if (Main.size() > TITLE_LETTERS) {
+		std::vector<std::string> Kept;
+		size_t Letters = 0;
+		size_t Start = 0;
+		while (Start < Main.size()) {
+			const size_t Space = Main.find(' ', Start);
+			const std::string Word = Main.substr(Start, Space == std::string::npos ? std::string::npos : Space - Start);
+			Start = Space == std::string::npos ? Main.size() : Space + 1;
+			if (Word.empty())
+				continue;
+			if (Kept.empty() && Word.size() > TITLE_LETTERS) {
+				Kept.push_back(Word.substr(0, TITLE_LETTERS));
+				break;
+			}
+			if (!Kept.empty() && Letters + 1 + Word.size() > TITLE_LETTERS)
+				break;
+			Letters += (Kept.empty() ? 0 : 1) + Word.size();
+			Kept.push_back(Word);
+		}
+		while (Kept.size() > 1 && LeadsOn(Kept.back()))
+			Kept.pop_back();
+		Main.clear();
+		for (size_t k = 0; k < Kept.size(); ++k)
+			Main += (k == 0 ? "" : " ") + Kept[k];
+	}
+	while (!Main.empty() && std::string(" -,:;/&").find(Main[Main.size() - 1]) != std::string::npos)
+		Main.erase(Main.size() - 1);
+	if (Main.empty())
+		Main = TrimTitle(Title).substr(0, TITLE_LETTERS);
+	// A number that ended the title stays, when the name lost it ("Hazardous Short 1", "The Everlasting 2")
+	const std::string Number = EndingNumber(Title);
+	if (!Number.empty() && EndingNumber(Main).empty())
+		Main += " " + Number;
+	return Main;
+}
+
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound)
 {
-	// The title, or its last words when it's long; a numbered track by its game
+	// The title, or the start of it (ShortTitle); a numbered track by its game
 	std::string Title = R.Title;
 	const std::vector<std::string> TitleWords = Words(Title);
 	if (TitleWords.size() == 2 && TitleWords[0] == "track") {
@@ -1161,21 +1268,8 @@ std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound)
 		Title = (Game.empty() ? std::string("Track") : Game[0]) + " " + TitleWords[1];
 		Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 	}
-	else if (Title.size() > 18) {
-		std::string Short;
-		size_t End = Title.size();
-		while (End > 0) {
-			size_t Space = Title.rfind(' ', End - 1);
-			const std::string Tail = Title.substr(Space == std::string::npos ? 0 : Space + 1);
-			if (Tail.size() > 18 && !Short.empty())
-				break;
-			Short = Tail;
-			if (Space == std::string::npos)
-				break;
-			End = Space;
-		}
-		Title = Short.size() > 18 ? Short.substr(0, 18) : Short;
-	}
+	else
+		Title = ShortTitle(Title);
 	std::string Role = Sound.Role;
 	if (Role == "the lead")
 		Role = "lead";

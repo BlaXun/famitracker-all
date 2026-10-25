@@ -26067,12 +26067,154 @@ bool ToolSet::Has(const std::string &Name) const
 	return false;
 }
 
+// A call's arguments against the tool's: one it doesn't take is refused by name, so a model that guessed one (find_sound
+// with "words" for its query) corrects the call, instead of getting the answer to another question (every sound)
+
+// An argument's name in lower case, without what joins its words ("fromBar", "from-bar" and "from_bar" alike)
+static std::string ArgumentKey(const std::string &Name)
+{
+	std::string Out;
+	for (size_t i = 0; i < Name.size(); ++i)
+		if (std::isalnum(static_cast<unsigned char>(Name[i])))
+			Out += static_cast<char>(std::tolower(static_cast<unsigned char>(Name[i])));
+	return Out;
+}
+
+// How many letters it takes to change, add or take away to make one word the other
+static int EditDistance(const std::string &A, const std::string &B)
+{
+	std::vector<int> Row(B.size() + 1);
+	for (size_t j = 0; j <= B.size(); ++j)
+		Row[j] = static_cast<int>(j);
+	for (size_t i = 1; i <= A.size(); ++i) {
+		int Diagonal = Row[0];
+		Row[0] = static_cast<int>(i);
+		for (size_t j = 1; j <= B.size(); ++j) {
+			const int Above = Row[j];
+			Row[j] = std::min(std::min(Row[j] + 1, Row[j - 1] + 1), Diagonal + (A[i - 1] == B[j - 1] ? 0 : 1));
+			Diagonal = Above;
+		}
+	}
+	return Row[B.size()];
+}
+
+// Whether a description's opening words (up to its first colon, period or parenthesis) say a word: "Words to look for: ..."
+// says "words"
+static bool OpensWith(const std::string &Description, const std::string &Key)
+{
+	const size_t End = Description.find_first_of(":.;(");
+	const std::string Opening = Description.substr(0, End);
+	std::string Word;
+	for (size_t i = 0; i <= Opening.size(); ++i) {
+		const char c = i < Opening.size() ? Opening[i] : ' ';
+		if (std::isalnum(static_cast<unsigned char>(c)))
+			Word += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		else {
+			if (!Word.empty() && Word == Key)
+				return true;
+			Word.clear();
+		}
+	}
+	return false;
+}
+
+// Whether an argument's name has a word ("motion" in duty_motion)
+static bool NameHasWord(const std::string &Name, const std::string &Key)
+{
+	size_t Start = 0;
+	while (Start <= Name.size()) {
+		const size_t End = std::min(Name.find('_', Start), Name.size());
+		if (ArgumentKey(Name.substr(Start, End - Start)) == Key)
+			return true;
+		Start = End + 1;
+	}
+	return false;
+}
+
+// The argument of the tool's an unknown one likely meant: the same written another way, a letter or two off (a plural
+// for a singular), the only one with its word in its name ("motion" for duty_motion), or the only one whose description
+// opens with its word ("words" for find_sound's query, "Words to look for"); "" for none, or when several would do
+static std::string NearestArgument(const Json &Properties, const std::string &Unknown)
+{
+	const std::string Key = ArgumentKey(Unknown);
+	if (Key.empty())
+		return std::string();
+	const int Allowed = Key.size() >= 7 ? 2 : Key.size() >= 4 ? 1 : 0;
+	std::vector<std::string> Close, Named, Described;
+	for (size_t i = 0; i < Properties.Members().size(); ++i) {
+		const std::string &Name = Properties.Members()[i].first;
+		const std::string Other = ArgumentKey(Name);
+		if (Other == Key)
+			return Name;
+		if (EditDistance(Key, Other) <= Allowed)
+			Close.push_back(Name);
+		if (NameHasWord(Name, Key))
+			Named.push_back(Name);
+		const Json *pDescription = Properties.Members()[i].second.Get("description");
+		if (pDescription != 0 && pDescription->IsString() && OpensWith(pDescription->String(), Key))
+			Described.push_back(Name);
+	}
+	if (Close.size() == 1)
+		return Close[0];
+	if (Close.empty() && Named.size() == 1)
+		return Named[0];
+	if (Close.empty() && Named.empty() && Described.size() == 1)
+		return Described[0];
+	return std::string();
+}
+
+std::string ToolSet::UnknownArguments(const std::string &Name, const Json &Arguments) const
+{
+	const ToolInfo *pTool = 0;
+	for (size_t i = 0; i < m_Tools.size() && pTool == 0; ++i)
+		if (m_Tools[i].Name == Name)
+			pTool = &m_Tools[i];
+	if (pTool == 0 || !Arguments.IsObject())
+		return std::string();
+	const Json *pProperties = pTool->InputSchema.Get("properties");
+	const Json None = Json::MakeObject();
+	const Json &Properties = pProperties != 0 && pProperties->IsObject() ? *pProperties : None;
+	std::vector<std::string> Unknown;
+	for (size_t i = 0; i < Arguments.Members().size(); ++i)
+		if (Properties.Get(Arguments.Members()[i].first) == 0)
+			Unknown.push_back(Arguments.Members()[i].first);
+	if (Unknown.empty())
+		return std::string();
+	// find_sound has no argument "words" (did you mean "query"?), so nothing was done. Its arguments: query, kind, ...
+	std::string Text = Name + " has no " + (Unknown.size() == 1 ? "argument " : "arguments ");
+	for (size_t u = 0; u < Unknown.size(); ++u) {
+		const std::string Meant = NearestArgument(Properties, Unknown[u]);
+		Text += (u == 0 ? "" : u + 1 == Unknown.size() ? " or " : ", ") + std::string("\"") + ValidUtf8(Unknown[u]) + "\"" +
+			(Meant.empty() ? std::string() : " (did you mean \"" + Meant + "\"?)");
+	}
+	Text += ", so nothing was done.";
+	if (Properties.Size() == 0)
+		return Text + " It takes no arguments: call it with {}.";
+	const Json *pRequired = pTool->InputSchema.Get("required");
+	Text += " Its arguments: ";
+	for (size_t i = 0; i < Properties.Members().size(); ++i) {
+		const std::string &Argument = Properties.Members()[i].first;
+		bool Required = false;
+		for (size_t r = 0; pRequired != 0 && pRequired->IsArray() && r < pRequired->Size(); ++r)
+			Required = Required || (pRequired->At(r).IsString() && pRequired->At(r).String() == Argument);
+		Text += (i == 0 ? "" : ", ") + Argument + (Required ? " (required)" : "");
+	}
+	return Text + ". Call " + Name + " again with those (its description says what each one takes).";
+}
+
 static std::string RecipeTool(const Json &Args, bool Core);
 
 ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
 	const Json Args = Arguments.IsObject() ? Arguments : Json::MakeObject();
+	// An argument the tool doesn't take: refused, by name, with the tool's own (UnknownArguments)
+	const std::string Unknown = UnknownArguments(Name, Args);
+	if (!Unknown.empty()) {
+		Result.Text = Unknown;
+		Result.IsError = true;
+		return Result;
+	}
 	try {
 		if (Name == "get_recipe") {	// needs no song
 			Result.Text = RecipeTool(Args, Who.Core);
@@ -26203,6 +26345,21 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 	}
 }
 
+// The volume a sound is heard at in FamiTracker's sound browser and Instrument > Listen (SoundEntry::Volume): about as loud
+// as a 2A03 pulse at 15, its chip's level counted as the tools count it (VolumeForDb: the VRC7 at 13, which plays about
+// 5 dB over a pulse at 15 and counts 3 dB a step; the FDS at 8; the others at 15), the mixer window's fader left out (the
+// channel plays it after). Measured under Wine (October 2026), the VRC7's ready-made sounds at 15 played from 0.6 to 8 dB
+// over a pulse at 15, a jump from sound to sound while browsing; a preview note without a volume also played at whatever
+// volume the song had left its channel at
+static int PreviewVolume(Session &S, const SoundEntry &Sound)
+{
+	if (Sound.Channel < 0 || Sound.Channel >= S.ChannelCount())
+		return 15;
+	ChannelInfo Channel = S.Channel(Sound.Channel);
+	Channel.MixLevel = 0;
+	return VolumeForDb(Channel, 0.0);
+}
+
 bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Error, bool Library)
 {
 	Out.clear();
@@ -26214,6 +26371,8 @@ bool ToolSet::Sounds(int Cursor, std::vector<SoundEntry> &Out, std::string &Erro
 		Listing.Games = Library;
 		Listing.OtherChips = Library;
 		Out = Library ? SongSounds(S, At, Listing) : ListSounds(S.Song, std::vector<Reference>(), SongSoundUses(S), At, Listing);
+		for (size_t i = 0; i < Out.size(); ++i)
+			Out[i].Volume = PreviewVolume(S, Out[i]);
 		return true;
 	}
 	catch (const Problem &P) {
