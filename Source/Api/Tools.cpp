@@ -12722,7 +12722,7 @@ SongLift LiftOf(Session &S, Hearing &Ears, int First, int End)
 		Parts[i].Db = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(S.Time.BarStart(Parts[i].FirstBar),
 			std::min(End, S.Time.BarEnd(Parts[i].LastBar)))));
 	Parts.erase(std::remove_if(Parts.begin(), Parts.end(), [](const Part &P) { return P.Db <= NO_LOUDNESS; }), Parts.end());
-	if (Parts.size() < 2 + (Named ? 0 : 1))
+	if (Parts.size() < (Named ? 2u : 3u))
 		return Out;
 	size_t A = Parts.size();
 	for (size_t i = 0; i < Parts.size() && A == Parts.size(); ++i)
