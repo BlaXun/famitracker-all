@@ -453,11 +453,20 @@ void CSoundBrowserDlg::Refilter()
 	const int Channel = m_cChannel.GetCurSel();
 	Query.Target = Channel > 0 && static_cast<size_t>(Channel) <= m_Targets.size() ? m_Targets[static_cast<size_t>(Channel - 1)] : -1;
 	m_Found = ftapi::FindSounds(m_All, Query, &m_bSome);
-	FillKinds(ftapi::KindCounts(m_All, m_Found), static_cast<int>(m_Found.size()));
+	const std::vector<int> Counts = ftapi::KindCounts(m_All, m_Found);
+	FillKinds(Counts, static_cast<int>(m_Found.size()));
 
-	// The kind picked on the left, or every kind under headings of their own
-	const int Kind = m_cKinds.GetCurSel();
+	// The kind picked on the left, or every kind under headings of their own: words that find nothing of the kind
+	// picked, but sounds of other kinds, show every kind
+	int Kind = m_cKinds.GetCurSel();
 	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
+	Words.Trim();
+	if (!Words.IsEmpty() && Kind > 0 && static_cast<size_t>(Kind) <= Counts.size() && Counts[static_cast<size_t>(Kind - 1)] == 0 &&
+		!m_Found.empty()) {
+		Kind = 0;
+		g_Kind = 0;
+		m_cKinds.SetCurSel(0);
+	}
 	std::vector<size_t> Shown;
 	if (Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size()) {
 		const std::string &Id = Kinds[static_cast<size_t>(Kind - 1)].Id;
@@ -469,7 +478,6 @@ void CSoundBrowserDlg::Refilter()
 		Shown = m_Found;
 	m_Groups = ftapi::GroupSounds(m_All, Shown);
 	m_View.EveryKind = !(Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size());
-	Words.Trim();
 	m_View.Words = !Words.IsEmpty();
 	ShowRows();
 
@@ -634,6 +642,9 @@ void CSoundBrowserDlg::ShowSelected()
 			Text = HeadingLabel(R) + _T(": ") + Count + _T(" from your reference library, each one the way a part of a track sounded.");
 		Text += R.Folded ? _T(" Click the heading (or press Right) to show them.") : _T(" Click the heading (or press Left) to fold them away.");
 	}
+	else if (m_View.Words && m_Found.empty())
+		Text = _T("No sound has those words. Try fewer or other words: a kind of sound (bell, pluck, pad, bass), how it sounds ")
+			_T("(warm, soft, bright) or a game.");
 	else
 		Text = m_All.empty() ? _T("") : _T("Pick a kind on the left and click a sound to hear it, or type what you're looking for in Find ")
 			_T("(bell, warm, pluck, bass, a game).");
