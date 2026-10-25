@@ -56,7 +56,8 @@ fi
 	echo "FamiTracker, $branch branch, build $short ($date)"
 	echo
 	echo "FamiTracker.exe   The tracker. 32-bit Windows, no installation needed."
-	echo "                  New here? Help > Tutorials shows you around, and View >"
+	echo "                  New here? Help > Tutorials shows you around, Help > Example"
+	echo "                  songs opens short songs that explain themselves, and View >"
 	echo "                  Profile makes FamiTracker simpler for writing game music."
 	echo "                  File > Import NSF opens game music (NSF files) as modules."
 	if [ -n "$wav2ftm" ]; then
