@@ -6485,12 +6485,12 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS, ROLE_AMBIENCE };
 
 // Whether a channel that can play the bass plays it in [First, End): over a
-// triangle bass, a sawtooth plays it only where it doubles the triangle's
-// notes (on others it's a second line or a pad's voice, however low); with
-// no triangle there, where it's low
+// triangle bass, a sawtooth (or an N163 voice, SoftBass) plays it only where
+// it doubles the triangle's notes (on others it's a second line or a pad's
+// voice, however low); with no triangle there, where it's low
 bool PlaysTheBass(Session &S, int Channel, int First, int End)
 {
-	if (S.Channel(Channel).Kind != KIND_SAWTOOTH)
+	if (S.Channel(Channel).Kind != KIND_SAWTOOTH && S.Channel(Channel).Chip != "N163")
 		return true;
 	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
 	for (int c = 0; c < S.ChannelCount(); ++c) {
@@ -6523,6 +6523,104 @@ bool FdsBass(Session &S, int Channel, int First, int End)
 	return !Mine.empty() && MiddleOf(Mine, 0) - Written(S.Channel(Channel), 0) < 36;
 }
 
+// A soft voice holding the bass: an N163 channel (the VRC6 Plus's soft layer, or the N163's own) whose notes in
+// [First, End) sound under C-3, as a cue's sub bass holds its root, however few, a fifth or more under every other part
+// there (a pad's low voice sits a third or a fourth under the next); over a triangle bass, only where it doubles the
+// triangle's notes (PlaysTheBass)
+bool SoftBass(Session &S, int Channel, int First, int End)
+{
+	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
+	if (S.Channel(Channel).Chip != "N163" || Mine.empty() || !PlaysTheBass(S, Channel, First, End))
+		return false;
+	const int Low = MiddleOf(Mine, 0) - Written(S.Channel(Channel), 0);	// as they sound
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Theirs = NotesIn(S.Notes(c), First, End);
+		if (!Theirs.empty() && MiddleOf(Theirs, 0) - Written(S.Channel(c), 0) < Low + 7)
+			return false;
+	}
+	return true;
+}
+
+// Whether a channel plays the song's bass part in [First, End): the triangle or a sawtooth there, the FDS low, or a soft
+// voice holding it
+bool PlaysBassPart(Session &S, int Channel, int First, int End)
+{
+	return (IsBass(S.Channel(Channel)) && PlaysTheBass(S, Channel, First, End)) || FdsBass(S, Channel, First, End) ||
+		SoftBass(S, Channel, First, End);
+}
+
+// How many rows later Channel follows Source's notes in [First, End), as an echo does: EchoDelayOf for four notes or more;
+// fewer (the echo of a cue's high note) each start that many rows after a note of Source's of their pitch and last about
+// as long (at most twice, and the delay), so a pad holding a chord's note the melody touched isn't one. 0 if not
+int FollowDelay(Session &S, int Channel, int Source, int First, int End)
+{
+	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
+	if (Mine.empty())
+		return 0;
+	if (Mine.size() >= 4)
+		return EchoDelayOf(S, Channel, Source, First, End);
+	const std::vector<NoteInfo> &Theirs = S.Notes(Source);
+	const int Lift = Written(S.Channel(Channel), 0) - Written(S.Channel(Source), 0);	// the same note as it sounds
+	for (int Delay = 1; Delay <= 3 * S.Time.RowsPerBeat; ++Delay) {
+		bool All = true;
+		for (size_t i = 0; i < Mine.size() && All; ++i) {
+			bool Found = false;
+			for (size_t k = 0; k < Theirs.size() && !Found; ++k)
+				Found = Theirs[k].Row == Mine[i].Row - Delay && (Theirs[k].Pitch == Mine[i].Pitch || Theirs[k].Pitch + Lift == Mine[i].Pitch) &&
+					Mine[i].Rows <= 2 * std::max(1, Theirs[k].Rows) + Delay;
+			All = Found;
+		}
+		if (All)
+			return Delay;
+	}
+	return 0;
+}
+
+// How loud a channel's notes in [First, End) usually play: the louder quarter's level, each note over its first beat as
+// FamiTracker plays it (its chip's level, its instrument's envelope and the channel's fader), in dB against a pulse at
+// 15; the triangle a little under that. -60 with no notes
+double UsualDb(Session &S, int Channel, int First, int End)
+{
+	const ChannelInfo &Info = S.Channel(Channel);
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+	const double RowFrames = FramesPerRow(S);
+	std::vector<double> Levels;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Frames = std::max(1, static_cast<int>(std::floor(std::min(std::max(1, Notes[i].Rows), S.Time.RowsPerBeat) * RowFrames + 0.5)));
+		Levels.push_back(FaderDb(Info) + (Info.Kind == KIND_TRIANGLE ? -1.0 : PlayedDb(S, Info, Notes[i].Instrument, Notes[i].Volume, Frames)));
+	}
+	if (Levels.empty())
+		return -60.0;
+	std::sort(Levels.begin(), Levels.end());
+	return Levels[Levels.size() * 3 / 4];
+}
+
+// A sparkle: a quiet arpeggio over the melody (a cue's shimmer on top, a bell's glint), a line of its own rather than the
+// song's chords. Its notes in [First, End) mostly sound chords (0xy, or an arpeggio instrument), two in three or more
+// start over the melody's note sounding then (as they sound), and it plays 3 dB or more under the melody (UsualDb)
+bool IsSparkle(Session &S, int Channel, int Melody, int First, int End)
+{
+	if (Melody < 0 || Channel == Melody || S.Channel(Channel).Kind == KIND_TRIANGLE)
+		return false;
+	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
+	const std::vector<NoteInfo> &Tune = S.Notes(Melody);
+	const int Lift = Written(S.Channel(Channel), 0), Lead = Written(S.Channel(Melody), 0);
+	int Chords = 0, Over = 0;
+	for (size_t i = 0; i < Mine.size(); ++i) {
+		if (SoundsChord(S, Mine[i]))
+			++Chords;
+		for (size_t k = 0; k < Tune.size(); ++k)
+			if (Tune[k].Row <= Mine[i].Row && Tune[k].Row + std::max(1, Tune[k].Rows) > Mine[i].Row) {
+				Over += Mine[i].Pitch - Lift > Tune[k].Pitch - Lead ? 1 : 0;
+				break;
+			}
+	}
+	const int Count = static_cast<int>(Mine.size());
+	return Count > 0 && Chords * 3 >= Count && Over * 3 >= Count * 2 && UsualDb(S, Channel, First, End) <= UsualDb(S, Melody, First, End) - 3.0;
+}
+
 // What a channel plays in [First, End), for mixing
 int MixRole(Session &S, int Channel, int Melody, int First, int End)
 {
@@ -6541,14 +6639,14 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 	}
 	if (Channel == Melody)
 		return ROLE_MELODY;
-	if (Melody >= 0 && EchoDelayOf(S, Channel, Melody, First, End) > 0)
+	if (Melody >= 0 && FollowDelay(S, Channel, Melody, First, End) > 0)
 		return ROLE_ECHO;
-	if ((IsBass(Info) && PlaysTheBass(S, Channel, First, End)) || FdsBass(S, Channel, First, End))
+	if (PlaysBassPart(S, Channel, First, End))
 		return ROLE_BASS;
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	for (size_t i = 0; i < Notes.size(); ++i)
 		if (Notes[i].Row >= First && Notes[i].Row < End && SoundsChord(S, Notes[i]))
-			return ROLE_CHORDS;
+			return IsSparkle(S, Channel, Melody, First, End) ? ROLE_LINE : ROLE_CHORDS;	// a sparkle over the melody is a line
 	return ROLE_LINE;
 }
 
@@ -7240,9 +7338,13 @@ std::vector<MixSpan> MixSpans(Session &S, int Melody, int First, int End, const 
 // pad's voices holding one chord, strummed a frame or two apart) are voiced chords too, and join Voices
 void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans)
 {
+	int Melody = -1;	// a sparkle over it (IsSparkle) starts its notes with a pad's, but is no voice of its chords
+	for (size_t i = 0; i < Spans.size(); ++i)
+		if (Spans[i].Role == ROLE_MELODY)
+			Melody = Spans[i].Channel;
 	std::vector<std::vector<int> > Starts(Spans.size());
 	for (size_t i = 0; i < Spans.size(); ++i) {
-		if (Spans[i].Role != ROLE_LINE)
+		if (Spans[i].Role != ROLE_LINE || IsSparkle(S, Spans[i].Channel, Melody, Spans[i].First, Spans[i].End))
 			continue;
 		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Spans[i].Channel), Spans[i].First, Spans[i].End);
 		for (size_t n = 0; n < Notes.size(); ++n)
@@ -9420,8 +9522,150 @@ double NotePower(Session &S, int Channel, const NoteInfo &N, int From, int To, d
 	return Sum / (Last - First);
 }
 
+// Cues, jingles and sound effects, judged as what they are (review_arrangement, measure_mix). A cue or a jingle is short
+// music that plays once and halts (a level-up, a quest done, make_jingle's): it has no loop to fill or vary, its bass
+// holds a cadence's roots, and a sampled drum would thump at its halt. A sound effect plays a row a tick
+// (make_sound_effect's) and has no arrangement at all.
+enum track_use { TRACK_MUSIC, TRACK_CUE, TRACK_SOUND };
+
+struct TrackUse {
+	int Use;			// track_use: music that loops (a stage, a town), or plays once for longer than a cue does
+	double Seconds;		// how long it plays the first time through: until the row with its halt (as export_for_game keeps it),
+						// or until it loops
+	bool Halts;
+	TrackUse() : Use(TRACK_MUSIC), Seconds(0.0), Halts(false) {}
+};
+
+const double CUE_SECONDS = 30.0;	// the longest a cue or a jingle plays
+
+// What the selected track is: a sound effect at speed 1 with every note on the 2A03 (the MMC5's pulses play its
+// instruments too), lasting no longer than one can; a cue when it halts within CUE_SECONDS; else music
+TrackUse UseOfTrack(Session &S)
+{
+	TrackUse Out;
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	bool Chip2A03 = true;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+		Chip2A03 = Chip2A03 && (S.Notes(c).empty() || InstrumentChip(S.Channel(c)) == "2A03");
+	}
+	const SongFlow F = Flow(S);
+	int EndTick = 0;
+	const std::vector<TimedRow> Rows = TimeRows(Cells, Columns, F, S.Time.PatternLength, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint,
+		S.Song.FrameRate, 1, EndTick);
+	Out.Halts = F.Halts();
+	Out.Seconds = (Out.Halts && !Rows.empty() ? Rows.back().Tick : EndTick) / static_cast<double>(std::max(1, S.Song.FrameRate));
+	if (S.Song.Speed == 1 && Chip2A03 && EndTick <= transcribe::SFX_MAX_TICKS + SFX_SILENT_TICKS + 1)
+		Out.Use = TRACK_SOUND;
+	else if (Out.Halts && Out.Seconds <= CUE_SECONDS)
+		Out.Use = TRACK_CUE;
+	return Out;
+}
+
+// The bar a song that halts halts in (its last bar otherwise)
+int HaltBar(Session &S)
+{
+	const SongFlow F = Flow(S);
+	return F.Halts() ? S.Time.BarOf(std::max(0, F.EndRow(S.Time.PatternLength) - 1)) : S.Time.BarCount();
+}
+
+// The review's tips that still matter for a cue: notes that vanish, parts that clash with the melody (on its notes, in
+// octaves with it), the balance (the melody under another part, everything loud, the sides, a bass lost low). The
+// others are for looping stage tracks: the length, sections, variety and loudness swings, fills and a sampled kit, a bass
+// that moves, chord colors, a beat, a melody's shape and rests, accents, a lead holding a steady level. By the tips'
+// words, so a tip added for stages stays out of cues
+bool CueTip(const std::string &Text)
+{
+	static const char *const KEPT[] = { "Melody notes vanish", "Most of the melody's notes are gone", "Parts in the melody's register",
+		"A bass moving in octaves with the melody", "The melody sits about", "The chords cover the melody", "The melody plays about",
+		"Everything near full volume", "plays very low, where small speakers lose it", "For width in the game's stereo", "The echo on ",
+		"The bass on ", "The drums on ", "The melody plays from one side" };
+	for (size_t i = 0; i < sizeof(KEPT) / sizeof(KEPT[0]); ++i)
+		if (Text.find(KEPT[i]) != std::string::npos)
+			return true;
+	return false;
+}
+
+// review_arrangement's line for a cue: how it was judged
+std::string CueText(const TrackUse &Use)
+{
+	return Format("Judged as a cue: it plays once and halts after %.1f s, so the tips for looping stage tracks are left out (its "
+		"length and variety, fills and a sampled kit, which would thump at the halt, a bass that moves, chord colors, a beat, a lead "
+		"ringing at a steady level); notes that vanish, parts that clash with the melody and the balance stay. check_song lists "
+		"clashes and clicks.", Use.Seconds);
+}
+
+// review_arrangement on a sound effect: what it is and its layers, then what still matters as its file will play it: a
+// sound the halt cuts while it sounds, and notes that click on the 2A03's pulses. It has no arrangement to weigh, so no
+// score
+std::string SoundEffectReview(Session &S, const TrackUse &Use)
+{
+	const double Rate = std::max(1, S.Song.FrameRate), RowFrames = FramesPerRow(S);
+	const int Total = S.Time.TotalRows();
+	const int Stop = static_cast<int>(std::floor(Use.Seconds * Rate + 0.5));	// the frame it halts at, or loops back from
+	std::string Layers;
+	std::vector<std::string> Tips;
+	int Last = 0;		// the frame after the last that sounds, as the instruments' volume sequences play
+	std::string Cut;	// a note the halt cuts while it's still loud
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			const int From = static_cast<int>(std::floor(N.Row * RowFrames + 0.5));
+			if (From >= Stop)
+				continue;	// after the halt: it never plays
+			const int Frames = std::max(1, std::min(Stop - From, static_cast<int>(std::floor(std::max(1, N.Rows) * RowFrames + 0.5))));
+			Layers += Format("%s%s with %s from %.2f s", Layers.empty() ? "" : "; ", S.Channel(c).FullName().c_str(),
+				InstrumentLabel(S.Song, N.Instrument).c_str(), From / Rate);
+			// Its volume a frame at a time over the note, as FamiTracker plays it (the triangle sounds at any volume)
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+			const std::vector<int> Envelope = HeldEnvelope(pInfo, Frames + 1);
+			const int Column = S.Channel(c).Kind == KIND_TRIANGLE ? 15 : N.Volume;
+			int Heard = 0;
+			for (int f = 0; f < Frames; ++f)
+				if (PlayedVolume(S.Channel(c), Column, Envelope[static_cast<size_t>(f)]) > 0)
+					Heard = f + 1;
+			Last = std::max(Last, From + Heard);
+			const int Ending = PlayedVolume(S.Channel(c), Column, Envelope[static_cast<size_t>(Frames)]);
+			if (Cut.empty() && Use.Halts && From + Frames >= Stop && Heard == Frames && Ending >= 2 && S.Channel(c).Kind != KIND_TRIANGLE)
+				Cut = Format("%s stops at volume %d as it halts at %.2f s", S.Channel(c).FullName().c_str(), Ending, Stop / Rate);
+		}
+	}
+	std::string Text = Format("Sound effect review: \"%s\" is a sound effect (speed 1, a row a tick, as make_sound_effect writes one), "
+		"%.2f s, %s. There's no arrangement to weigh (no melody, chords, bass or drums), so no score: play it for the user and judge "
+		"it by ear.\n", S.Song.TrackName.c_str(), Use.Seconds, Use.Halts ? "playing once (it halts)" : "looping, as ambience does");
+	Text += "Layers: " + (Layers.empty() ? std::string("none") : Layers) + ".\n";
+	const double After = Use.Seconds - Last / Rate;
+	if (Use.Halts && !Cut.empty())
+		Tips.push_back("It's cut while it still sounds: " + Cut + ". make_sound_effect rings its sounds out to silence; for this one, "
+			"let the note run until its instrument dies away (its halt later), or its volume sequence fade sooner.");
+	else if (Use.Halts && Last > 0)
+		Text += After >= 0.045 ? Format("It dies away to silence %.2f s before it halts, so its file ends quiet.\n", After) :
+			Format("It sounds until it halts, %.2f s before: a game's file of it ends without a moment of silence (make it again: "
+			"make_sound_effect halts its sounds 0.05 s after they die away).\n", std::max(0.0, After));
+	const int Clicking = static_cast<int>(SongClicks(S, 0, Total).size());
+	if (Clicking > 0)
+		Tips.push_back(Format("%s on the 2A03's pulses %s (a pitch that takes the period across a multiple of 256 restarts the wave): "
+			"polish with touches [\"clicks\"] nudges them; check_song lists them.", Plural(Clicking, "note", "notes").c_str(),
+			Clicking == 1 ? "clicks" : "click"));
+	Text += "make_sound_effect with variant, semitones, length_percent or volume_percent makes other takes, and export_for_game with "
+		"a loudness (like -18) sets its level in the game.";
+	if (!Tips.empty()) {
+		Text += "\nWhat would help:";
+		for (size_t i = 0; i < Tips.size(); ++i)
+			Text += Format("\n%d. ", static_cast<int>(i) + 1) + Tips[i];
+	}
+	return Text;
+}
+
 std::string ReviewTool(Session &S, const Json &Args)
 {
+	// A sound effect has no arrangement; a cue isn't judged as a looping stage
+	const TrackUse Use = UseOfTrack(S);
+	if (Use.Use == TRACK_SOUND)
+		return SoundEffectReview(S, Use);
 	int From, To;
 	if (RangeGiven(Args))
 		BarRange(S, Args, From, To);
@@ -9444,6 +9688,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 	std::vector<std::string> Lines, Tips;
 	double Missing = 0.0;	// what the tips take off the score, out of 10
 	auto Tip = [&](double Weight, const std::string &Text) {
+		if (Use.Use == TRACK_CUE && !CueTip(Text))
+			return;	// for looping stage tracks
 		Tips.push_back(Text);
 		Missing += Weight;
 	};
@@ -9479,7 +9725,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		// A lone deep note or two on the triangle (the loudest thing in a quiet bar) isn't a bass part, nor any part
 		if (Info.Kind == KIND_TRIANGLE && Notes.size() < 3)
 			continue;
-		if (Bass < 0 && ((IsBass(Info) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))) {
+		if (Bass < 0 && PlaysBassPart(S, c, First, End)) {
 			Bass = c;
 			continue;
 		}
@@ -9510,8 +9756,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 			}
 		}
 		if (Arpeggios * 3 >= static_cast<int>(Notes.size()))
-			Chords.push_back(c);
-		else if (Delayed * 2 >= static_cast<int>(Notes.size()))
+			(IsSparkle(S, c, Melody, First, End) ? Voices : Chords).push_back(c);	// a sparkle over the melody is a line of its own
+		else if (Delayed * 2 >= static_cast<int>(Notes.size()) && FollowDelay(S, c, Melody, First, End) > 0)
 			Echoes.push_back(c);
 		else if (Doubled * 10 >= static_cast<int>(Notes.size()) * 6)
 			Doubles.push_back(c);
@@ -10153,6 +10399,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 	std::string Text = "Depth review, " + RangeText(From, To) + " in " + KeyName(K) + Format(": %d/10.\n", Score);
 	if (!Chosen.Note.empty())
 		Text += Chosen.Note + "\n";
+	if (Use.Use == TRACK_CUE)
+		Text += CueText(Use) + "\n";
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += Lines[i] + "\n";
 	if (Tips.empty())
@@ -12145,9 +12393,9 @@ PresetSequence SoundSequence(int Type, const std::vector<int> &Items, int Settin
 
 // Writes a sound effect as a track of its own at speed 1, a row a tick: a
 // 2A03 instrument for each layer whose sequences shape it, its note where the
-// layer starts, a halt where it ends and C00 after the last; one that loops
-// has B00 on its last row instead. Its number from 0; Parts says which
-// channels play what.
+// layer starts, a halt where it ends and C00 once the sound has been silent
+// for SFX_SILENT_TICKS rows (SoundTrackRows); one that loops has B00 on its
+// last row instead. Its number from 0; Parts says which channels play what.
 int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const std::string &Name, std::string &Parts, bool Loop = false)
 {
 	if (Effect.layers.empty() || Effect.length() <= 0)
@@ -12196,7 +12444,7 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 
 	// An instrument for each layer, named after the track
 	const bool Pal = S.Song.FrameRate == 50;
-	const int Rows = Loop ? Effect.length() : Effect.length() + 1;
+	const int Rows = SoundTrackRows(Effect, Loop);
 	std::vector<std::vector<Cell> > Channels(static_cast<size_t>(S.ChannelCount()), std::vector<Cell>(static_cast<size_t>(Rows)));
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
 		const transcribe::SfxLayer &Layer = Effect.layers[l];
@@ -12297,6 +12545,7 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
 	const bool Shortened = FitSoundEffect(Effect, MaxSoundTicks(false), Changes);
 	Effect = ChangeSoundEffect(Effect, Changes);
+	RingOut(Effect);
 
 	// Named after the file: pew.wav makes "SFX Pew", and a take FamiTracker
 	// kept ("Voice 2026-10-21 18-30-00.wav") "SFX Voice"
@@ -12330,7 +12579,7 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	if (Info.noisy)
 		How += std::string(How.empty() ? "" : ", and ") + "its breathy and hissy part on the noise channel";
 	return WithRemarks(S, Format("Made track %d \"%s\" from the recording (%s): %s. It's %.2f s long, on %s.%s%s It plays at speed 1 "
-		"(a row a tick) and halts at its end (C00), so export_for_game saves it as a sound that plays once (in GameMaker: "
+		"(a row a tick) and halts (C00) once it has died away, so export_for_game saves it as a sound that plays once and ends in silence (in GameMaker: "
 		"audio_play_sound(%s, 0, false)). Its instruments' sequences hold the shape, so the user can smooth it in FamiTracker's "
 		"instrument editor. FamiTracker shows the new track now: play it for the user. octaves moves the pitch by whole octaves, "
 		"and noise: false leaves the noise out. FamiTracker can't undo adding a track.", Track + 1, Name.c_str(), File.c_str(),
@@ -12348,8 +12597,8 @@ std::string SoundPlayText(const std::string &Name, bool Loop)
 		return Format("It plays at speed 1 (a row a tick) and loops: B00 on its last row takes it back to its start, so "
 			"export_for_game saves an OGG that loops seamlessly, for ambience, with the GameMaker code that plays %s "
 			"(audio_stop_sound ends it).", GameMakerName(Name + ".ogg").c_str());
-	return Format("It plays at speed 1 (a row a tick) and halts at its end (C00), so export_for_game saves it as a sound that "
-		"plays once (in GameMaker: audio_play_sound(%s, 0, false)).", GameMakerName(Name + ".ogg").c_str());
+	return Format("It plays at speed 1 (a row a tick) and halts (C00) once it has died away, so export_for_game saves it as a "
+		"sound that plays once and ends in silence (in GameMaker: audio_play_sound(%s, 0, false)).", GameMakerName(Name + ".ogg").c_str());
 }
 
 // The 2A03's pulse channels in the song, the MMC5's too (they play its instruments)
@@ -12530,7 +12779,9 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 	if (!DesignSoundEffect(Layers, Seconds, std::max(1, S.Song.FrameRate), Changes.Variant, Loop, SoundPulses(S), Designed, Error))
 		throw Problem(Error);
 	const bool Shortened = FitSoundEffect(Designed, MaxSoundTicks(Loop), Changes);
-	const transcribe::SoundEffect Effect = ChangeSoundEffect(Designed, Changes);
+	transcribe::SoundEffect Effect = ChangeSoundEffect(Designed, Changes);
+	if (!Loop)
+		RingOut(Effect);
 
 	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX Sound");
 	const std::string Taken = SoundNameProblem(S.Song, Name);
@@ -12589,7 +12840,9 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	const bool Loop = BoolArg(Args, "loop", pKind->Loops);
 	const transcribe::SoundEffect Original = pKind->Make();
 	const bool Shortened = FitSoundEffect(Original, MaxSoundTicks(Loop), Changes);
-	const transcribe::SoundEffect Effect = ChangeSoundEffect(Original, Changes);
+	transcribe::SoundEffect Effect = ChangeSoundEffect(Original, Changes);
+	if (!Loop)
+		RingOut(Effect);
 	std::string Title = pKind->Name;
 	Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Title);
@@ -14838,10 +15091,11 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	double Raised = 0.0;	// dB
 	double Measured = -70.0;	// the loop's loudness as rendered, LUFS, the two sides together
 	bool HeldByPeak = false;
+	bool Short = false;		// shorter than a 400 ms block: measured over its whole length
 	if (Loudness < 0.0) {
 		// The loop (all of a song that plays once) to the loudness asked, its loudest peak no higher than -1 dBFS
 		const size_t From = Cut.Loops ? static_cast<size_t>(std::max(0LL, Cut.LoopStart)) : 0;
-		Measured = IntegratedLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From);
+		Measured = SoundLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From, Short);
 		if (Measured > -70.0 && Peak > 0.0001f) {
 			const double Gain = LoudnessGain(Measured, Loudness, Peak, HeldByPeak);
 			const double Factor = std::pow(10.0, Gain / 20.0);
@@ -14888,6 +15142,9 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (Loudness < 0.0 && Measured > -70.0) {
 		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
 			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
+		if (Short)	// BS.1770 gates in blocks of 400 ms, which a sound this short doesn't fill
+			Text += Format(", measured over its whole %.2f s (shorter than the 400 ms blocks loudness is gated in, so ungated)",
+				static_cast<double>(Kept.size()) / SampleRate);
 		if (HeldByPeak) {
 			Text += Format(": %.1f LU short of %g LUFS, held back so its loudest peak stays at -1 dBFS", Loudness - Measured - Raised, Loudness);
 			++HeldBack;
@@ -15172,13 +15429,13 @@ std::vector<int> ArpeggioChannels(Session &S, int First, int End, int Melody)
 		if (c == Melody || !IsMelodic(S.Channel(c)))
 			continue;
 		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
-		if (Notes.empty() || (IsBass(S.Channel(c)) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))
+		if (Notes.empty() || PlaysBassPart(S, c, First, End))
 			continue;
 		int Chords = 0;
 		for (size_t i = 0; i < Notes.size(); ++i)
 			if (SoundsChord(S, Notes[i]))
 				++Chords;
-		if (Chords * 3 >= static_cast<int>(Notes.size()))
+		if (Chords * 3 >= static_cast<int>(Notes.size()) && !IsSparkle(S, c, Melody, First, End))	// a sparkle is a line of its own
 			Out.push_back(c);
 	}
 	return Out;
@@ -15209,6 +15466,93 @@ std::string OverText(double Diff)
 	return Format("the melody %.1f dB %s", Shown, Diff < 0.0 && Shown > 0.0 ? "under" : "over");
 }
 
+// measure_mix on a sound effect (UseOfTrack): the whole sound as export_for_game renders and measures it (a sound shorter
+// than a 400 ms block over its whole length, ungated), its peak and sides, and each channel alone over the whole sound;
+// a sound effect has no melody to measure the parts against
+std::string SoundMeasure(Session &S, const Json &Args, const TrackUse &Use)
+{
+	const bool Stems = BoolArg(Args, "stems", true);
+	const bool Leveled = Arg(Args, "loudness") != 0;
+	const double Target = Leveled ? NumberArg(Args, "loudness", -20.0, -40.0, -6.0) : 0.0;
+	const int Total = S.Time.TotalRows();
+	// The rows played, to the row with the halt (as the export keeps it) or to the loop's end
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	int EndTick = 0;
+	const std::vector<TimedRow> Timed = TimeRows(Cells, Columns, Flow(S), S.Time.PatternLength, S.Song.Speed, S.Song.Tempo,
+		S.Song.SplitPoint, S.Song.FrameRate, 1, EndTick);
+	if (Timed.empty())
+		throw Problem("The track has no rows.");
+	const double Seconds = EndTick / static_cast<double>(std::max(1, S.Song.FrameRate)) + 0.2;
+	auto Whole = [&](const MixRender &R) {
+		SampleSpans Out;
+		const int A = Timed.front().Row, Z = Timed.back().Row;
+		const long long From = A < Total ? R.Begin[static_cast<size_t>(A)] : -1;
+		const long long To = Z < Total ? (Use.Halts ? R.Begin[static_cast<size_t>(Z)] : R.End[static_cast<size_t>(Z)]) : -1;
+		if (From >= 0 && To > From)
+			Out.push_back(std::make_pair(static_cast<size_t>(From), static_cast<size_t>(To)));
+		return Out;
+	};
+	auto Loudness = [&](const MixRender &R, const SampleSpans &Spans, bool &Short) {
+		Short = false;
+		return Spans.empty() ? -70.0 : SoundLoudness(R.Left, R.Right, R.Rate, Spans[0].first, Spans[0].second - Spans[0].first, Short);
+	};
+	const MixRender Mix = RenderMix(S, Seconds, std::vector<bool>(), "the sound");
+	const SampleSpans Sound = Whole(Mix);
+	bool Short = false;
+	const double Lufs = Loudness(Mix, Sound, Short);
+	const float Peak = SpansPeak(Mix, Sound);
+	double Gain = 0.0;
+	bool Held = false;
+	if (Leveled && Lufs > -70.0)
+		Gain = LoudnessGain(Lufs, Target, Peak, Held);
+	const double Length = Sound.empty() ? 0.0 : static_cast<double>(Sound[0].second - Sound[0].first) / std::max(1, Mix.Rate);
+	std::string Text = Format("Measured \"%s\", a sound effect (speed 1, a row a tick: %.2f s, %s), as %s: LUFS (both sides, as BS.1770 "
+		"sums them), peaks in dBFS.", S.Song.TrackName.c_str(), Length, Use.Halts ? "playing once" : "looping", Leveled ?
+		Format("export_for_game {\"loudness\": %g} saves it", Target).c_str() : "FamiTracker renders it (export_for_game with normalize false)");
+	if (Lufs <= -70.0)
+		Text += "\nThe sound: silent.";
+	else {
+		Text += Format("\nThe sound: %.1f LUFS, peak %.1f dBFS", Lufs + Gain, PeakDb(Peak) + Gain);
+		Text += Short ? Format(", measured over its whole %.2f s: shorter than the 400 ms blocks loudness is gated in, so ungated, as "
+			"export_for_game measures it.", Length) : ".";
+		if (Leveled)
+			Text += Held ? Format(" The export holds it %.1f LU short of %g LUFS (%.1f dB up), its loudest peak at -1 dBFS.", Target - Lufs - Gain,
+				Target, Gain) : Format(" The export brings it %.1f dB %s.", std::fabs(Gain), Gain >= 0.0 ? "up" : "down");
+	}
+	double Left = 0.0, Right = 0.0;
+	size_t Count = 0;
+	SideSums(Mix, Sound, Left, Right, Count);
+	const double Samples = static_cast<double>(std::max<size_t>(1, Count));
+	Text += Format("\nSides: left %.1f, right %.1f dB RMS, %.1f dB apart.", PowerDb(Left / Samples) + Gain, PowerDb(Right / Samples) + Gain,
+		std::fabs(PowerDb(Left / Samples) - PowerDb(Right / Samples)));
+	if (!Stems)
+		return Text;
+	// Each channel alone, its effects playing
+	std::vector<int> Playing;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (!S.Notes(c).empty())
+			Playing.push_back(c);
+	if (Playing.size() < 2)
+		return Text;
+	Text += "\nEach channel alone (the others silent), over the whole sound:";
+	for (size_t p = 0; p < Playing.size(); ++p) {
+		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
+		Silent[static_cast<size_t>(Playing[p])] = false;
+		const MixRender Alone = RenderMix(S, Seconds, Silent, ShortChannelName(S, Playing[p]) + " alone");
+		bool Brief = false;
+		const SampleSpans Spans = Whole(Alone);
+		const double Mine = Loudness(Alone, Spans, Brief);
+		Text += "\n- " + ShortChannelName(S, Playing[p]) + ": " + (Mine <= -70.0 ? std::string("silent") :
+			Format("%.1f (peak %.1f), %.1f dB under the whole", Mine + Gain, PeakDb(SpansPeak(Alone, Spans)) + Gain, Lufs - Mine));
+	}
+	return Text;
+}
+
 std::string MeasureMixTool(Session &S, const Json &Args)
 {
 	std::string Why;
@@ -15221,9 +15565,14 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	const bool Stems = BoolArg(Args, "stems", true);
 	const bool Leveled = Arg(Args, "loudness") != 0;
 	const double Target = Leveled ? NumberArg(Args, "loudness", -20.0, -40.0, -6.0) : 0.0;
+	const TrackUse Use = UseOfTrack(S);
+	if (Use.Use == TRACK_SOUND)
+		return SoundMeasure(S, Args, Use);
 	int From = 1, To = S.Time.BarCount();
 	if (RangeGiven(Args))
 		BarRange(S, Args, From, To);
+	else if (Use.Halts)
+		To = std::max(From, std::min(To, HaltBar(S)));	// the bars after the halt never play
 	const int Total = S.Time.TotalRows();
 	const int First = S.Time.BarStart(From), End = std::min(Total, S.Time.BarEnd(To));
 	if (End <= First)
@@ -15462,11 +15811,11 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 		const ChannelInfo &Info = S.Channel(c);
 		if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
 			Part.Around = false;	// drums, or a wind: not among lively's parts around the melody
-		else if (EchoDelayOf(S, c, Melody, First, End) > 0) {
+		else if (FollowDelay(S, c, Melody, First, End) > 0) {
 			Part.Name += " (echo)";
 			Part.Around = false;
 		}
-		else if ((IsBass(Info) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))
+		else if (PlaysBassPart(S, c, First, End))
 			Part.Name += " (bass)";
 		return Part;
 	};
@@ -18020,7 +18369,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		AddTool("make_sound_effect", "Make a sound effect",
 			"Makes a sound effect for a game as a new track in the module, the NES's way: a pulse, the triangle and the noise "
 			"channel moving their volume, pitch and duty 60 times a second, through instruments whose sequences shape the sound. "
-			"It halts at its end, so export_for_game saves it as a sound that plays once; ambience (wind, rain, fire, an engine) "
+			"It rings out to silence (a layer that stops loud dies away) and halts 0.08 s later, so export_for_game saves it as a "
+			"sound that plays once, ending quiet; ambience (wind, rain, fire, an engine) "
 			"loops instead. FamiTracker then shows the new track: play it for the user, and offer other takes (variant 2, 3..., "
 			"semitones, length_percent, volume_percent) to choose from. Besides the kinds, it builds a sound described in words "
 			"from layers (layers), or turns a recording of the user's voice into one. Suggest keeping sound effects in a module of "
@@ -18179,7 +18529,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("normalize", Prop("boolean", "Bring the loudest peak up to -1 dBFS, by at most 12 dB (default true); false keeps "
 				"FamiTracker's own level, as it plays."))
 			.Add("loudness", Prop("number", "Instead: the loop's loudness in LUFS, -40 to -6, like -20 (calm tracks -22 or -23). "
-				"The loudest peak still stays at -1 dBFS or under; a track it holds back says how loud it came out.")),
+				"The loudest peak still stays at -1 dBFS or under; a track it holds back says how loud it came out. A sound shorter "
+				"than the 400 ms blocks loudness is gated in is measured over its whole length.")),
 		false);
 
 	AddTool("measure_mix", "Measure the mix",
@@ -18189,7 +18540,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"part sits too far out), and each part alone, the other channels silent with their effects playing (stems): the chords "
 		"together and each other channel, against the melody in the bars where both play. style calm checks the melody 2-3 dB "
 		"over the chords, lively 3-4 dB over the parts around it. Each part alone is a render of its own: stems false measures "
-		"the mix alone, quickly.",
+		"the mix alone, quickly. A song that halts is measured to the bar it halts in; a sound effect (speed 1, as "
+		"make_sound_effect writes one) as a whole, as export_for_game measures it, with each channel alone.",
 		Schema().Range()
 			.Add("melody_channel", ChannelProp("The melody (default: guessed, as review_arrangement guesses it)."))
 			.Add("parts", ChannelListProp("The parts to measure alone, in place of the chords and each other channel that plays with "
@@ -18469,7 +18821,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done. A calm "
 		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills, accents, busier bass or "
 		"shorter notes of it, and hears its balance as the stems do (the melody 2-3 dB over the chords) and whether its lead's "
-		"sound holds a steady level (which presses); \"lively\" hears a stage's (the melody 3-4 dB over the parts).",
+		"sound holds a steady level (which presses); \"lively\" hears a stage's (the melody 3-4 dB over the parts). A cue or a "
+		"jingle (a track that halts within half a minute) is judged as one: the stage's tips (length, variety, fills, a moving "
+		"bass, chord colors, a beat) are left out, those about notes that vanish, clashing parts and the balance stay; a sound "
+		"effect (speed 1, as make_sound_effect writes one) gets a short check of its own, without a score.",
 		Schema()
 			.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
 			.Add("style", EnumProp("any, calm (also \"ambient\") or lively. Default: calm when the track's name says so, like "

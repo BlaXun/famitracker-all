@@ -576,6 +576,34 @@ volume and sets again the lasting effects set before it (`Vxx` unless its
 instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
 
+Sound effects and cues (from `feat-sfx-fixes`): `CMixer::ClearBuffer` (every
+`CAPU::Reset`, so every stop and start) takes the 2A03's pins as a reset
+leaves them, the pulses, the noise and the DMC silent and the triangle
+holding the step it stopped on, without sending a step; 0.4.6 started the
+pins' sums from 0 but kept the channels' levels, so the first change after a
+stop stepped by every level held (a held triangle thumped under the next
+song's first noise, as loud at volume 1 as at 15; `TestHeldLevels` in
+`ApuTests.cpp`). Sounds that play once ring out (`RingOut` in
+`SoundEffects.cpp`: a layer stopping above volume 1 dies away, halving a
+tick) and their tracks halt `SFX_SILENT_TICKS` rows after the last tick that
+sounds (`SoundTrackRows`, used by `WriteSoundEffect`); the coin kind is a
+glint of our own. `SoundLoudness` in `GameAudio.cpp` measures a sound
+shorter than a 400 ms block over its whole length, ungated, for
+`ExportTrack` and `measure_mix`. `UseOfTrack` (before `ReviewTool` in
+`Tools.cpp`) tells music, a cue (it halts within `CUE_SECONDS`) and a sound
+effect (speed 1, the 2A03 alone, at most a sound's length) apart: the
+review's `Tip` keeps only the tips `CueTip` names (by their words, so a new
+tip for stages stays out of cues; add a kept one's words there), a sound
+effect gets `SoundEffectReview`, `measure_mix` `SoundMeasure`, and a song
+that halts is measured to `HaltBar`. The roles, for every track: an echo
+follows the melody's notes (`FollowDelay`: `EchoDelayOf` for four notes or
+more, fewer each at one delay and about as long), a quiet arpeggio over the
+melody is a line (`IsSparkle`, by `UsualDb`), and a low N163 voice a fifth
+under the rest is the bass (`SoftBass`, in `PlaysBassPart`), in the review,
+`MixRole`, `HeardRoles` and `measure_mix`'s parts. `TestSoundEffectEnds`
+(every kind's last 50 ms as `RenderEffect` plays it), `TestShortLoudness`
+and `TestCueJudging` in `Source/Api/tests/ApiTests.cpp` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
