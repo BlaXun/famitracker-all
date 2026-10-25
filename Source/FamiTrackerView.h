@@ -100,6 +100,11 @@ public:
 	void		 PreviewRelease(unsigned char Key);
 	// The note a key plays in the pattern editor (FamiTracker's MIDI note: C-0 = 0, at the octave picked), 0 for none
 	int			 NoteOfKey(unsigned char Key) const { return TranslateKey(Key); }
+	// A key pressed (or let go) in the piano roll while it's in this view's place (View > Pattern editor hides
+	// the pattern editor): the note keys play a note, and while editing write it at the cursor in its channel's
+	// note column, a step apart, as they do here; the keypad's digits pick an instrument and F2-F9 an octave.
+	// True if it was one of those keys.
+	bool		 PianoRollKey(UINT nChar, bool Pressed);
 	// A window that plays the notes of a MIDI keyboard itself while it's open (the sound browser): sent Message
 	// with the note (C-0 = 0) and its velocity, 0 when the key is let go, in place of the pattern editor getting
 	// them. NULL for none.

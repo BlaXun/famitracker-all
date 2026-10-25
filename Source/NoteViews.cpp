@@ -19,16 +19,39 @@
 ** must bear this legend.
 */
 
-#pragma once
+// The views notes are placed in (see NoteViews.h)
 
-// Edit > Drum grid: the noise channel a bar at a time, as a grid of steps
-// (a row each) with a line for each drum (DrumGrid.h). Clicking a step, or
-// dragging along a line, puts drums on or takes them off, and plays them;
-// ready-made beats fill a bar, which can be copied to the next bar or to
-// every bar. Each change is written into the song at once, as one undoable
-// action (WriteChannelRows), and the drums' instruments are added from the
-// sound presets the first time they're needed.
+#include "NoteViews.h"
 
-class CMainFrame;
+note_views_t ShowNoteView(const note_views_t &Now, note_view_t Which, bool Show)
+{
+	note_views_t Views = Now;
+	if (Which == NOTE_VIEW_PATTERN)
+		Views.Pattern = Show;
+	else
+		Views.Roll = Show;
+	// Never neither: the other one takes over
+	if (!Views.Pattern && !Views.Roll) {
+		if (Which == NOTE_VIEW_PATTERN)
+			Views.Roll = true;
+		else
+			Views.Pattern = true;
+	}
+	return Views;
+}
 
-void ShowDrumGrid(CMainFrame *pMainFrame);
+note_views_t ToggleNoteView(const note_views_t &Now, note_view_t Which)
+{
+	const bool Shown = Which == NOTE_VIEW_PATTERN ? Now.Pattern : Now.Roll;
+	return ShowNoteView(Now, Which, !Shown);
+}
+
+note_views_t StartingNoteViews(bool Pattern, bool Roll)
+{
+	return note_views_t(Pattern || !Roll, Roll);
+}
+
+bool RollFillsPattern(const note_views_t &Views)
+{
+	return Views.Roll && !Views.Pattern;
+}
