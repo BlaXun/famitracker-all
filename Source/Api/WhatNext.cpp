@@ -41,6 +41,47 @@ bool DryRunHost::GetSong(SongInfo &Info, std::string &Error)
 void DryRunHost::ReadCells(int Channel, int First, int Rows, std::vector<Cell> &Out)
 {
 	m_Host.ReadCells(Channel, First, Rows, Out);
+	if (!Overlay)
+		return;
+	// The cells as the writes kept back would leave them, as FamiTracker writes a part (CInsertRecordingAction): an exact
+	// part's cells as they are, another's notes, volumes and effects with the song's own effects (speed, tempo, jumps)
+	// kept where they were. Writes that move frames aren't followed.
+	if (Out.size() < static_cast<size_t>(std::max(0, Rows)))
+		Out.resize(static_cast<size_t>(std::max(0, Rows)));
+	for (size_t w = 0; w < Writes.size(); ++w) {
+		const SongWrite &Write = Writes[w].first;
+		if (Write.MoveBy != 0)
+			continue;
+		for (size_t p = 0; p < Writes[w].second.size(); ++p) {
+			const ChannelCells &Part = Writes[w].second[p];
+			if (Part.Channel != Channel)
+				continue;
+			for (size_t r = 0; r < Part.Cells.size(); ++r) {
+				const int Row = Write.First + static_cast<int>(r);
+				if (Row < First || Row >= First + Rows)
+					continue;
+				Cell &Old = Out[static_cast<size_t>(Row - First)];
+				const Cell &New = Part.Cells[r];
+				if (Part.Exact) {
+					Old = New;
+					continue;
+				}
+				Cell Kept = New;
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (IsSongEffect(Old.Effect[k])) {
+						int Column = Kept.Effect[k] == EFF_NONE ? k : -1;
+						for (int j = 0; j < EFFECT_COLUMNS && Column < 0; ++j)
+							if (Kept.Effect[j] == EFF_NONE)
+								Column = j;
+						if (Column >= 0) {
+							Kept.Effect[Column] = Old.Effect[k];
+							Kept.Param[Column] = Old.Param[k];
+						}
+					}
+				Old = Kept;
+			}
+		}
+	}
 }
 
 bool DryRunHost::ReadClip(int Index, std::vector<std::vector<Cell> > &Columns)
@@ -53,33 +94,38 @@ bool DryRunHost::CanChange(std::string &)
 	return true;
 }
 
-bool DryRunHost::WriteSong(const std::vector<ChannelCells> &, const SongWrite &, std::string &)
+bool DryRunHost::WriteSong(const std::vector<ChannelCells> &Parts, const SongWrite &Write, std::string &)
 {
 	++Changes;
+	Writes.push_back(std::make_pair(Write, Parts));
 	return true;
 }
 
 bool DryRunHost::SetSections(const SectionList &, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
 bool DryRunHost::SetKey(bool, const KeyChoice &, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
 bool DryRunHost::SetMixer(const MixerSettings &, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
 bool DryRunHost::AddClip(std::string &, const std::vector<int> &, const std::vector<std::vector<Cell> > &, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
@@ -156,18 +202,21 @@ bool DryRunHost::SetExpansion(const std::vector<std::string> &, int, int &Moved,
 bool DryRunHost::SetSpeedTempo(int, int, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
 bool DryRunHost::SetMeter(int, int, int, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
 bool DryRunHost::SetNames(const SongNames &, std::string &)
 {
 	++Changes;
+	++Others;
 	return true;
 }
 
@@ -198,6 +247,7 @@ std::unique_ptr<RenderSet> DryRunHost::RenderParts(int Track, double Seconds, co
 bool DryRunHost::SaveFile(const std::string &FileName, const std::string &, std::string &Path, std::string &)
 {
 	++Changes;
+	++Others;
 	Path = FileName;
 	return true;
 }
@@ -279,11 +329,11 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 namespace {
 
 const NextKind KINDS[] = {
-	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "walking", "walking", "basic", "soft", "any",
+	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "arpeggio", "arpeggio", "basic", "soft", "any",
 		-20.0, { "C major", "G major", "D major" } },
 	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "breath", "lush", "roots", "half", "", "calm", "calm", -22.0,
 		{ "F major", "D major", "G major" } },
-	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "stepped lead", "broken", "walking", "walking", "lively", "lively",
+	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "stepped lead", "broken", "arpeggio", "arpeggio", "lively", "lively",
 		"lively", -20.0, { "G major", "D major", "A major" } },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
 		-19.0, { "A minor", "D minor", "E minor" } },
@@ -429,12 +479,13 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 	for (size_t i = 0; i < Count; ++i) {
 		const Hit &H = Rhythm[i];
 		const int From = RowOf(H), To = std::min(Rows, From + Length(H));
-		// Where the line heads: up from the third to a high point two thirds in, then home
+		// Where the line heads: up from the third to a high point (the sixth above home) three fifths in, then home; the
+		// open cell rests on the fifth, and the last note on home or the third
 		const double Along = Count > 1 ? static_cast<double>(i) / static_cast<double>(Count - 1) : 1.0;
-		double Target = Along < 0.65 ? Third + (Home + 9 - Third) * (Along / 0.65) : Home + 9 - (9.0 * (Along - 0.65) / 0.35);
+		double Target = Along < 0.6 ? Third + (Home + 9 - Third) * (Along / 0.6) : Home + 9 - 9.0 * (Along - 0.6) / 0.4;
 		const bool OpenEnd = Bars == 4 && i + 1 < Count && Rhythm[i + 1].Bar >= 2 && H.Bar < 2;
 		if (OpenEnd)
-			Target = Home + 7;	// the open cell rests on the fifth
+			Target = Home + 7;
 		if (i + 1 == Count)
 			Target = (Variant & 4) != 0 ? Third : Home;	// bit 2: it ends on the third
 		const bool Strong = H.Beats >= 1.0 || std::fabs(H.Beat - 1.0) < 1e-9 || (BeatsPerBar == 4 && std::fabs(H.Beat - 3.0) < 1e-9);
@@ -446,17 +497,22 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 			for (int p = Low; p <= High; ++p) {
 				if (!InKey(p, K))
 					continue;
-				if (Pass == 0 && Strong && !Under.empty() && !Has(Under, p))
+				if ((Pass == 0 || Pass == 2) && Strong && !Under.empty() && !Has(Under, p))
 					continue;
 				if (Pass < 2 && Rubs(p, From, To))
 					continue;
-				if (Pass == 2 && Strong && !Under.empty() && !Has(Under, p))
-					continue;
-				double Cost = std::fabs(p - Target) + 0.6 * std::fabs(static_cast<double>(p - Previous));
-				if (!Strong && std::abs(p - Previous) > 2)
-					Cost += 3.0;	// between strong notes, a step
-				if (p == Previous && !Strong)
-					Cost += 1.5;	// and moving
+				// Near where the line heads; a step from the note before between strong notes, a step or a third onto
+				// one; seldom the same note again; moving the way the line heads
+				const int Move = p - Previous, Size = std::abs(Move);
+				double Cost = 0.5 * std::fabs(p - Target);
+				if (i > 0) {
+					if (Strong)
+						Cost += Size == 0 ? 2.0 : Size <= 2 ? 0.0 : Size <= 4 ? 0.5 : Size <= 7 ? 1.5 : 4.0;
+					else
+						Cost += Size == 0 ? 3.0 : Size <= 2 ? 0.0 : Size <= 4 ? 1.5 : 4.0;
+					if (Size > 0 && (Target > Previous + 0.5) != (Move > 0) && std::fabs(Target - Previous) > 0.5)
+						Cost += 0.75;
+				}
 				if (Best < 0 || Cost < BestCost - 1e-9) {
 					Best = p;
 					BestCost = Cost;

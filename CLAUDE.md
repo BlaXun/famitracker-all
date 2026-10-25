@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 20 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 33 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -899,6 +899,39 @@ a kept last note that rang on past the line rings on (the write ends where it
 did). The list of notes takes the old path untouched. `TestStepsWrite`,
 `TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
 in `Source/Api/tests/ApiTests.cpp` cover the tools.
+
+What next (from `feat-what-next`): `what_next` (`WhatNextTool` and the
+`WhatNext` class at the end of `Tools.cpp`'s anonymous namespace; its
+portable pieces in `Source/Api/WhatNext.cpp`) gives the one next step for
+the selected track with its call, worked out from the song alone (notes,
+sections, key, loop, the game's file next to it), in the recipes' order:
+`check_song`'s findings with a fix (`Breakers`: a finding of a kind it
+doesn't know that carries a `fix` is a step of that kind's name, severity
+high at once, the others with the tips), the frame (`Frame`), the parts and
+the form (`Parts`: `SongForm` reads the sections, `NameSections` names
+unnamed bars by their chords, `MelodyStep` offers `ExampleTune`'s phrase in
+steps, `GrowForm` grows A, A again, B on `NextProgression`'s chords, A),
+depth (`Depth`: `add_harmony` in the repeat, a `vary_part` that adds no
+clash, a break and an intro, the loop), the review's tips (`TipStep` matches
+their words: keep them in step with `ReviewTool`'s), the echo last (it
+copies the melody), `Polish`, `Mix`, the seam, saving and the export.
+Whether a tool would change the song is a dry run (`DryRunHost`,
+`WouldChange`, `DryChange` in dB): a mix that would move no note more than
+1.5 dB is done (mix rounds), and polish once no part plays at one volume and
+its other touches change nothing (its accents re-accent a part left with two
+volumes, a step softer each time). `DryRunHost::Overlay` reads the cells as
+the writes kept back would leave them, so `TryVariation` hears a variation's
+clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
+(`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
+(`ReadOggComments` in `Ogg.cpp` reads them back). The small set
+(`CoreTools`) is `what_next` and every tool its steps call, 33, not
+`set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
+the recipe with a worked melody of 8 bars in steps (First song's, from
+`res/examples`). `TestWhatNextLoop` follows it from an empty song to done
+for each kind and on the small set (each call run as given, each answer
+new, the result clean), and `TestWhatNextStates`, `TestWhatNextChoices` and
+`TestWhatNextCore` cover the states, kinds, skips, the phrase, the dry run
+and the small set.
 
 ## What this repository is
 

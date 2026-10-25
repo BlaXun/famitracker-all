@@ -38,15 +38,20 @@
 namespace ftapi {
 
 // The song as Host has it, with every change a tool asks for kept back and
-// counted (Changes): a tool run on it shows whether it would change the song
+// counted (Changes; the cells it would write are in Writes, the other changes
+// counted in Others): a tool run on it shows whether it would change the song
 // (mix, polish, vary_part, fix_loop) and leaves the song as it is. It reports
 // that direct changes are allowed, so a tool takes the path that writes; tools
 // that add instruments, tracks or chips, or play, can't run on it (those calls
-// fail).
+// fail). With Overlay set (once the tool has run), it reads the cells as the writes kept back would leave them, so
+// the checks can hear the song as the tool would leave it.
 class DryRunHost : public SongHost {
 public:
-	explicit DryRunHost(SongHost &Host) : Changes(0), m_Host(Host) {}
+	explicit DryRunHost(SongHost &Host) : Changes(0), Others(0), Overlay(false), m_Host(Host) {}
 	int Changes;
+	int Others;		// changes that aren't cells written: sections, the key, the mixer, the tempo, names, clips, files
+	std::vector<std::pair<SongWrite, std::vector<ChannelCells> > > Writes;
+	bool Overlay;
 
 	bool GetSong(SongInfo &Info, std::string &Error) override;
 	void ReadCells(int Channel, int First, int Rows, std::vector<Cell> &Out) override;
