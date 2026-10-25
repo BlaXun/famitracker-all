@@ -1622,6 +1622,12 @@
     <ClInclude Include="Source\PianoRollChords.h">
       <Filter>Piano roll</Filter>
     </ClInclude>
+    <ClCompile Include="Source\PianoRollUi.cpp">
+      <Filter>Piano roll</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PianoRollUi.h">
+      <Filter>Piano roll</Filter>
+    </ClInclude>
     <ClCompile Include="Source\NoteEdit.cpp">
       <Filter>Piano roll</Filter>
     </ClCompile>

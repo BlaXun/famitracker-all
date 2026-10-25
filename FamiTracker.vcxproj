@@ -679,6 +679,8 @@
     <ClInclude Include="Source\PianoRoll.h" />
     <ClCompile Include="Source\PianoRollChords.cpp" />
     <ClInclude Include="Source\PianoRollChords.h" />
+    <ClCompile Include="Source\PianoRollUi.cpp" />
+    <ClInclude Include="Source\PianoRollUi.h" />
     <ClCompile Include="Source\NoteEdit.cpp" />
     <ClInclude Include="Source\NoteEdit.h" />
     <ClCompile Include="Source\Api\QrCode.cpp" />

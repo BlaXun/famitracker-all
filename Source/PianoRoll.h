@@ -40,6 +40,13 @@
 // (CChannelNotes in NoteEdit.h works out the cells, WriteChannelRows in
 // InsertRecording.h writes them).
 //
+// The Groove button (and, in an empty song, "Start from a groove" in the
+// middle) lays a mood's drums, bass line and chords under the selected bars
+// or from the cursor's bar on, as Edit > Start from a groove does (MakeGroove
+// in InsertRecording.h), one Ctrl+Z. The buttons along the top go on as many
+// rows as the width needs (FlowRollButtons in PianoRollUi.h), and a click
+// that only closed a menu does nothing here (ClosedAMenu).
+//
 // A note lasts until the next note, release or halt in its channel, the way
 // it plays. The main frame tells the piano roll when the song changes
 // (SongChanged).
@@ -89,6 +96,12 @@ public:
 	bool EditCommand(UINT nID);
 	bool CanEditCommand(UINT nID) const;
 
+	// The keys left the program's window while the piano roll had them (a
+	// dialog, a message box, another program): true once, while it shows. As
+	// the window is activated again MFC gives them to the pattern editor, so
+	// the main frame gives them back (CMainFrame::OnActivate).
+	bool TakeKeysBack();
+
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:
@@ -137,6 +150,7 @@ public:
 
 	bool Create(CFrameWnd *pFrame);			// hidden at first
 	void Opened(bool Open);					// shown or hidden by the main frame
+	bool IsOpen() const { return m_bOpen; }	// between Opened(true) and Opened(false): View > Piano roll's check mark
 	void Fill(bool On);						// all the room the other bars leave, without the line
 	void SongChanged();
 	static bool WasOpen();					// it was open when FamiTracker closed
@@ -165,6 +179,7 @@ private:
 	int MaxHeight() const;					// leaving the pattern editor some room
 
 	CPianoRollWnd m_wndRoll;
+	bool m_bOpen;
 	bool m_bFill;							// in the pattern editor's place
 	int m_iHeight;
 	int m_iRoom;							// for the pattern editor and the piano roll, at the last layout

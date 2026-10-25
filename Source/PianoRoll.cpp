@@ -31,6 +31,7 @@
 #include "Transcribe/Transcribe.h"
 #include "Api/Sections.h"
 #include "Api/ChordHelper.h"
+#include "PianoRollUi.h"
 #include "stdafx.h"
 #pragma push_macro("new")
 #undef new
@@ -51,6 +52,8 @@
 #include "ProblemsPanel.h"
 #include "McpConnection.h"
 #include "Api/Tools.h"
+#include "Api/Grooves.h"
+#include "GrooveDlg.h"
 #include "PianoRoll.h"
 #include "PianoRollChords.h"
 
@@ -115,9 +118,14 @@ const KeyMenuScale KEY_SCALES[] = {
 };
 const int KEY_SCALE_COUNT = sizeof(KEY_SCALES) / sizeof(KEY_SCALES[0]);
 
-// The buttons along the top
+// The buttons along the top (and an empty song's "Start from a groove" in the middle)
 enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_SNAP, BUTTON_INSTRUMENT, BUTTON_EFFECTS,
-	BUTTON_CHORDS, BUTTON_CLIPS, BUTTON_CLOSE };
+	BUTTON_CHORDS, BUTTON_GROOVE, BUTTON_CLIPS, BUTTON_CLOSE, BUTTON_GROOVE_HINT, BUTTON_MORE };
+const int BUTTON_GAP = 4, GROUP_GAP = 12;	// between buttons, and between their groups
+const int MIN_GRID_HEIGHT = 48;			// the notes keep this much room: buttons past the rows that leave it go under More
+const TCHAR MORE_TEXT[] = _T("More");
+const int GROOVE_BAR_CHOICES[] = { 4, 8, 16 };	// a groove's length when no bars are selected
+const TCHAR GROOVE_SECTION[] = _T("Recorder");	// where Start from a groove keeps its mood and length (GrooveDlg.cpp)
 
 // Menu items (TrackPopupMenu returns them; they are never sent as commands)
 const UINT MENU_CHANNEL = 100;			// + channel
@@ -141,6 +149,10 @@ const UINT MENU_CHORD_VOICES = 5040;	// + 0 (as many as a chord has notes) or 2-
 const UINT MENU_CHORD_FEWER = 5050;		// too few free channels: fewer voices...
 const UINT MENU_CHORD_ARPEGGIO = 5051;	// ...or the arpeggio on one
 const UINT MENU_CHORD_CANCEL = 5052;
+const UINT MENU_GROOVE = 6000;			// + mood (ftapi::GrooveMoods)
+const UINT MENU_GROOVE_BARS = 6100;		// + bars
+const UINT MENU_GROOVE_MORE = 6200;		// Start from a groove's dialog
+const UINT MENU_MORE = 7000;			// + button_t: a button with no room along the top
 
 struct RollNote {
 	int Start;			// rows from the start of the song
@@ -447,6 +459,47 @@ CString PitchClassList(const std::vector<int> &Classes, const ftapi::Key &K)
 	return Text;
 }
 
+// "Town" from "town"
+CString Capitalized(const std::string &Text)
+{
+	CString Out(Text.c_str());
+	if (!Out.IsEmpty() && Out[0] >= _T('a') && Out[0] <= _T('z'))
+		Out.SetAt(0, static_cast<TCHAR>(Out[0] - _T('a') + _T('A')));
+	return Out;
+}
+
+// A click that only closed a menu (PianoRollUi.h): a mouse button pressed outside an open menu closes it, and Wine (and
+// Windows at times) then passes the click on to the window under the mouse, where it would draw a note or start a box.
+// Every menu of the program (the menu bar, the piano roll's, the other windows') looks at its messages through the
+// WH_MSGFILTER hooks with MSGF_MENU, so the piano roll's hook keeps the last button press a menu looked at.
+HHOOK g_hMenuHook = NULL;
+roll_menu_click_t g_MenuClick;
+
+LRESULT CALLBACK MenuClickHook(int Code, WPARAM wParam, LPARAM lParam)
+{
+	if (Code == MSGF_MENU && lParam != 0) {
+		const MSG *pMsg = reinterpret_cast<const MSG*>(lParam);
+		switch (pMsg->message) {
+		case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK:
+		case WM_NCLBUTTONDOWN: case WM_NCRBUTTONDOWN:
+			g_MenuClick.Seen = true;
+			g_MenuClick.Time = static_cast<std::uint32_t>(pMsg->time);
+			g_MenuClick.X = pMsg->pt.x;
+			g_MenuClick.Y = pMsg->pt.y;
+			break;
+		}
+	}
+	return ::CallNextHookEx(g_hMenuHook, Code, wParam, lParam);
+}
+
+// The button message being handled is the click that closed a menu
+bool ClickClosedMenu()
+{
+	const DWORD Pos = ::GetMessagePos();
+	return ClosedAMenu(g_MenuClick, static_cast<std::uint32_t>(::GetMessageTime()), static_cast<short>(LOWORD(Pos)),
+		static_cast<short>(HIWORD(Pos)));
+}
+
 }	// namespace
 
 struct CPianoRollWnd::Impl {
@@ -557,12 +610,33 @@ struct CPianoRollWnd::Impl {
 	int AgainVoices;				// ...how many there were...
 	bool AgainArpeggio;				// ...or the arpeggio on one
 
-	// The buttons along the top, where they were drawn last
+	// The buttons along the top, in as many rows as the width needs (LayOutButtons), with an empty song's "Start from a
+	// groove" in the middle
 	struct Button {
 		int Id;
 		CRect Rect;
+		CString Text;
+		bool Pressed;
+		bool Menu;			// it opens a menu: an arrow
+		COLORREF Swatch;	// a channel's colour, or CLR_INVALID
 	};
 	std::vector<Button> Buttons;
+	std::vector<Button> Overflow;		// in the More menu: no room for them in the rows the notes leave
+	int HeaderRows;
+	CString LaidOut;					// the texts the buttons were measured for...
+	std::vector<int> ButtonWidths;		// ...their widths...
+	int MoreWidth;						// ...and More's
+	std::vector<roll_place_t> Places;	// their rows and places in them
+	CRect GrooveHint;					// "Start from a groove" in an empty song, empty when not shown...
+	int GrooveHintLines;				// ...in three lines, or one where the notes' grid is short
+
+	// Mood starters (the Groove button)
+	int GrooveBars;		// a groove's length without bars selected
+
+	// The mouse and the keys
+	bool KeysAway;		// the keys left the program's window while the piano roll had them (TakeKeysBack)
+	bool IgnoredClick;	// the last left click only closed a menu...
+	DWORD IgnoredTime;	// ...at this time, so a double-click right after is a click
 
 	CBitmap Back;		// the picture is drawn here, then copied to the window
 	CSize BackSize;
@@ -579,7 +653,8 @@ struct CPianoRollWnd::Impl {
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
 		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), RangeKept(false), HasCopied(false), PlacingClip(-1),
 		PlaceRow(-1), PanelDrop(false), ChordVoices(0), AgainTrack(static_cast<unsigned int>(-1)), AgainRow(-1), AgainVoices(0),
-		AgainArpeggio(false), BackSize(0, 0)
+		AgainArpeggio(false), HeaderRows(1), MoreWidth(60), GrooveHintLines(3), GrooveBars(8), KeysAway(false), IgnoredClick(false),
+		IgnoredTime(0), BackSize(0, 0)
 	{
 	}
 
@@ -607,6 +682,12 @@ struct CPianoRollWnd::Impl {
 		ChordVoices = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Chord voices"), 0));
 		if (ChordVoices != 0 && (ChordVoices < 2 || ChordVoices > 4))
 			ChordVoices = 0;
+		// As long as Start from a groove made them last (GrooveDlg.cpp)
+		const int Bars = static_cast<int>(theApp.GetProfileInt(GROOVE_SECTION, _T("Groove bars"), 8));
+		GrooveBars = 8;
+		for (size_t i = 0; i < sizeof(GROOVE_BAR_CHOICES) / sizeof(GROOVE_BAR_CHOICES[0]); ++i)
+			if (GROOVE_BAR_CHOICES[i] == Bars)
+				GrooveBars = Bars;
 	}
 
 	void Save() const
@@ -636,13 +717,167 @@ struct CPianoRollWnd::Impl {
 	void Layout()
 	{
 		pWnd->GetClientRect(&Client);
-		Header = CRect(Client.left, Client.top, Client.right, Client.top + SY(HEADER_HEIGHT));
-		Keys = CRect(Client.left, Header.bottom + SY(RULER_HEIGHT) + SY(CHORDS_HEIGHT), Client.left + SX(KEYS_WIDTH),
-			Client.bottom - SY(STATUS_HEIGHT));
+		const int RowsBefore = HeaderRows;
+		LayOutButtons();
+		Header = CRect(Client.left, Client.top, Client.right, Client.top + SY(HEADER_HEIGHT) * HeaderRows);
+		const int KeysTop = Header.bottom + SY(RULER_HEIGHT) + SY(CHORDS_HEIGHT);
+		Keys = CRect(Client.left, KeysTop, Client.left + SX(KEYS_WIDTH), std::max(KeysTop, static_cast<int>(Client.bottom) - SY(STATUS_HEIGHT)));
 		Ruler = CRect(Keys.right, Header.bottom, Client.right, Header.bottom + SY(RULER_HEIGHT));
 		ChordStrip = CRect(Keys.right, Ruler.bottom, Client.right, Keys.top);
 		Grid = CRect(Keys.right, Keys.top, Client.right, Keys.bottom);
-		Status = CRect(Client.left, Keys.bottom, Client.right, Client.bottom);
+		Status = CRect(Client.left, Keys.bottom, Client.right, std::max(Keys.bottom, Client.bottom));
+		LayOutGrooveHint();
+		if (HeaderRows != RowsBefore && pWnd->GetSafeHwnd() != NULL)
+			UpdateScrollBars();		// the notes' grid got taller or shorter
+	}
+
+	// The buttons along the top and what they show, left to right, each with its group (FlowRollButtons): the channel;
+	// the tools; the grid, the key and snapping; what goes on notes
+	void ListButtons(std::vector<Button> &List, std::vector<int> &Groups) const
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || Notes.empty() || Channel >= static_cast<int>(ChanIDs.size()))
+			return;
+		const auto Add = [&List, &Groups](int Id, const CString &Text, bool Pressed, bool Menu, int Group, COLORREF Swatch) {
+			const Button Made = { Id, CRect(), Text, Pressed, Menu, Swatch };
+			List.push_back(Made);
+			Groups.push_back(Group);
+		};
+		Add(BUTTON_CHANNEL, RecordingChannelName(pDoc, Channel), false, true, 0, ChannelColor(ChanIDs[static_cast<size_t>(Channel)], Channel));
+		Add(BUTTON_DRAW, _T("Draw"), Tool == TOOL_DRAW, false, 1, CLR_INVALID);
+		Add(BUTTON_PAINT, _T("Paint melody"), Tool == TOOL_PAINT, false, 1, CLR_INVALID);
+		Add(BUTTON_SELECT, _T("Select"), Tool == TOOL_SELECT, false, 1, CLR_INVALID);
+		CString Text;
+		Text.Format(_T("Grid: %s"), GRID_NAMES[GridChoice]);
+		Add(BUTTON_GRID, Text, false, true, 2, CLR_INVALID);
+		if (!HasKey())
+			Text = _T("Key: auto");
+		else
+			Text.Format(KeyChosen ? _T("Key: %s") : _T("Key: %s (auto)"), static_cast<LPCTSTR>(KeyText()));
+		Add(BUTTON_KEY, Text, KeyChosen, true, 2, CLR_INVALID);
+		Add(BUTTON_SNAP, _T("Snap to key"), Snap, false, 2, CLR_INVALID);
+		CString Name = InstrumentText(NewInstrument(CursorFrame * static_cast<int>(Length) + std::max(0, CursorRow)));
+		if (Name.GetLength() > 22)
+			Name = Name.Left(21) + _T("...");
+		Text.Format(_T("Instrument: %s"), static_cast<LPCTSTR>(Name));
+		Add(BUTTON_INSTRUMENT, Text, false, true, 3, CLR_INVALID);
+		Add(BUTTON_EFFECTS, _T("Effects"), false, true, 3, CLR_INVALID);
+		Add(BUTTON_CHORDS, _T("Chords"), false, true, 3, CLR_INVALID);
+		Add(BUTTON_GROOVE, _T("Groove"), false, true, 3, CLR_INVALID);
+		Add(BUTTON_CLIPS, PlacingClip >= 0 ? _T("Placing a clip") : _T("Clips"), PlacingClip >= 0, true, 3, CLR_INVALID);
+	}
+
+	// The buttons in rows, as many as the piano roll's width needs, so a narrow window keeps every one of them; the close
+	// button at the first row's right end. A piano roll too short for those rows and some notes keeps the rows that leave
+	// the notes MIN_GRID_HEIGHT, and the buttons with no room go under More, at the end of the last. Measured again when
+	// a text changes.
+	void LayOutButtons()
+	{
+		std::vector<Button> List;
+		std::vector<int> Groups;
+		ListButtons(List, Groups);
+		const int Left = Client.left + SX(6), CloseLeft = Client.right - SX(26), RowHeight = SY(HEADER_HEIGHT);
+		CString Key;
+		for (size_t i = 0; i < List.size(); ++i)
+			Key += List[i].Text + _T("\n");
+		if (Key != LaidOut || ButtonWidths.size() != List.size()) {
+			ButtonWidths.clear();
+			if (pWnd->GetSafeHwnd() != NULL && !List.empty()) {
+				CClientDC dc(pWnd);
+				CFont *pOldFont = static_cast<CFont*>(dc.SelectStockObject(DEFAULT_GUI_FONT));
+				for (size_t i = 0; i < List.size(); ++i)
+					ButtonWidths.push_back(dc.GetTextExtent(List[i].Text).cx + SX(16) + (List[i].Menu ? SX(12) : 0) +
+						(List[i].Swatch != CLR_INVALID ? SX(14) : 0));
+				MoreWidth = dc.GetTextExtent(MORE_TEXT).cx + SX(16) + SX(12);
+				dc.SelectObject(pOldFont);
+				LaidOut = Key;
+			}
+			else
+				LaidOut.Empty();
+			ButtonWidths.resize(List.size(), SX(60));
+		}
+		const int Spare = Client.Height() - SY(RULER_HEIGHT) - SY(CHORDS_HEIGHT) - SY(STATUS_HEIGHT) - SY(MIN_GRID_HEIGHT);
+		roll_place_t More;
+		HeaderRows = FlowRollButtons(ButtonWidths, Groups, std::max(1, CloseLeft - SX(6) - Left),
+			std::max(1, static_cast<int>(Client.right) - SX(6) - Left), SX(BUTTON_GAP), SX(GROUP_GAP), std::max(1, Spare / RowHeight),
+			MoreWidth, Places, More);
+		Buttons.clear();
+		Overflow.clear();
+		const Button Closing = { BUTTON_CLOSE, CRect(CloseLeft, Client.top + SY(3), Client.right - SX(4), Client.top + RowHeight - SY(3)),
+			CString(), false, false, CLR_INVALID };
+		Buttons.push_back(Closing);
+		for (size_t i = 0; i < List.size() && i < Places.size(); ++i) {
+			if (Places[i].Row < 0) {
+				Overflow.push_back(List[i]);
+				continue;
+			}
+			Button Item = List[i];
+			const int Top = Client.top + Places[i].Row * RowHeight;
+			Item.Rect = CRect(Left + Places[i].X, Top + SY(3), Left + Places[i].X + ButtonWidths[i], Top + RowHeight - SY(3));
+			Buttons.push_back(Item);
+		}
+		if (More.Row >= 0 && !Overflow.empty()) {
+			const int Top = Client.top + More.Row * RowHeight;
+			const Button Opens = { BUTTON_MORE, CRect(Left + More.X, Top + SY(3), Left + More.X + MoreWidth, Top + RowHeight - SY(3)),
+				CString(MORE_TEXT), false, true, CLR_INVALID };
+			Buttons.push_back(Opens);
+		}
+	}
+
+	// The song has no notes in any channel
+	bool SongEmpty() const
+	{
+		if (Notes.empty())
+			return false;
+		for (size_t c = 0; c < Notes.size(); ++c)
+			if (!Notes[c].empty())
+				return false;
+		return true;
+	}
+
+	// An empty song: "Start from a groove" in the middle of the notes' grid, until a note is drawn; Line -1 is all of it
+	// on one line, for a short grid
+	static const TCHAR *GrooveHintLine(int Line, int Tool)
+	{
+		switch (Line) {
+		case -1: return _T("Start from a groove: pick a mood, and drums, a bass line and chords come in");
+		case 0: return _T("Start from a groove");
+		case 1: return _T("Pick a mood, and drums, a bass line and chords come in.");
+		default:
+			return Tool == TOOL_PAINT ? _T("Or drag anywhere else to paint a melody.") :
+				Tool == TOOL_SELECT ? _T("Or pick Draw, then click anywhere else to add a note.") : _T("Or click anywhere else to add a note.");
+		}
+	}
+
+	void LayOutGrooveHint()
+	{
+		GrooveHint.SetRectEmpty();
+		if (!SongEmpty() || Drag != DRAG_NONE || PlacingClip >= 0 || Grid.Width() < SX(160) || pWnd->GetSafeHwnd() == NULL)
+			return;
+		CClientDC dc(pWnd);
+		CFont *pOldFont = static_cast<CFont*>(dc.SelectStockObject(DEFAULT_GUI_FONT));
+		int Wide = 0, Line = 0;
+		for (int i = 0; i < 3; ++i) {
+			const CSize Size = dc.GetTextExtent(GrooveHintLine(i, Tool));
+			Wide = std::max(Wide, static_cast<int>(Size.cx));
+			Line = std::max(Line, static_cast<int>(Size.cy));
+		}
+		GrooveHintLines = 3;
+		int Height = Line * 3 + SY(28);
+		if (Height + SY(8) > Grid.Height()) {
+			// One line, where the grid has room for it
+			GrooveHintLines = 1;
+			Wide = dc.GetTextExtent(GrooveHintLine(-1, Tool)).cx;
+			Height = Line + SY(12);
+		}
+		dc.SelectObject(pOldFont);
+		if (Height + SY(4) > Grid.Height())
+			return;
+		const int Width = std::min(Wide + SX(32), Grid.Width() - SX(8));
+		const CPoint Middle = Grid.CenterPoint();
+		GrooveHint = CRect(Middle.x - Width / 2, Middle.y - Height / 2, Middle.x - Width / 2 + Width, Middle.y - Height / 2 + Height);
+		const Button Hint = { BUTTON_GROOVE_HINT, GrooveHint, CString(), false, true, CLR_INVALID };
+		Buttons.push_back(Hint);
 	}
 
 	int RowX(int Row) const { return Grid.left + Row * RowWidth() - ScrollX; }
@@ -2660,6 +2895,182 @@ struct CPianoRollWnd::Impl {
 		pWnd->Invalidate(FALSE);
 	}
 
+	// Mood starters (the Groove button, or an empty song's "Start from a groove"): a mood's drums, bass line and chords,
+	// as Edit > Start from a groove makes them (MakeGroove in InsertRecording.h, through the make_groove tool, whose parts
+	// ftapi::MakeGrooveParts makes), under the selection's bars or from the bar the cursor is in, the melody left on the
+	// channel being edited. One Ctrl+Z takes the groove, its tempo and its key back.
+
+	// The bars a groove goes on: the whole bars of the selection (the rows dragged along the ruler, the selected notes'
+	// bars or the pattern editor's selection, as for chords: ChordSpan), else GrooveBars from the bar the cursor is in
+	void GrooveSpan(int &First, int &Bars, bool &Selected) const
+	{
+		int From = 0, To = 0;
+		bool Grow = false;
+		ChordSpan(From, To, Grow);
+		const ftapi::Timing T = SongTiming();
+		const int FirstBar = T.BarOf(From);
+		First = T.BarStart(FirstBar);
+		Selected = !Grow;
+		Bars = Grow ? GrooveBars : T.BarOf(std::max(From, To - 1)) - FirstBar + 1;
+		Bars = std::max(1, std::min(Bars, 64));		// as many as make_groove takes
+	}
+
+	// Where the melody goes, left out of the groove: the channel being edited when a melody (not a bass line) can go there,
+	// otherwise the VRC6's first pulse, otherwise the 2A03's (as Start from a groove picks it)
+	int GrooveMelody() const
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		const int Channels = static_cast<int>(ChanIDs.size());
+		if (Channel >= 0 && Channel < Channels && IsMelodyChannel(pDoc, Channel) && !IsBassChannel(pDoc, Channel))
+			return Channel;
+		for (int i = 0; i < Channels; ++i)
+			if (ChanIDs[static_cast<size_t>(i)] == CHANID_VRC6_PULSE1)
+				return i;
+		for (int i = 0; i < Channels; ++i)
+			if (ChanIDs[static_cast<size_t>(i)] == CHANID_SQUARE1)
+				return i;
+		return 0;
+	}
+
+	// The Groove menu at Point (screen coordinates): the moods, how many bars without a selection, and the dialog
+	void GrooveMenu(CPoint Point)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (Dirty)
+			Read();
+		if (pDoc == NULL || Notes.empty())
+			return;
+		int First = 0, Bars = 0;
+		bool Selected = false;
+		GrooveSpan(First, Bars, Selected);
+		const int Melody = GrooveMelody();
+		int Chords = -1, Bass = -1, Drums = -1;
+		GrooveChannels(pDoc, Melody, Chords, Bass, Drums);
+		const bool Empty = SongEmpty();
+		const ftapi::Timing T = SongTiming();
+		const std::vector<ftapi::GrooveMood> Moods = ftapi::GrooveMoods();
+
+		CMenu Menu, Length;
+		Menu.CreatePopupMenu();
+		Length.CreatePopupMenu();
+		CString Item;
+		if (Selected)
+			Item.Format(_T("Drums, a bass line and chords under %s (the selection): pick a mood"),
+				static_cast<LPCTSTR>(BarsText(First, T.BarStart(T.BarOf(First) + Bars - 1) + 1)));
+		else
+			Item.Format(_T("Drums, a bass line and chords for %d bars from bar %d: pick a mood"), Bars, T.BarOf(First));
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Item);
+		// Where the parts go, and the tempo
+		const bool Any = Chords >= 0 || Bass >= 0 || Drums >= 0;
+		if (Any) {
+			CString Where;
+			const int Parts[3] = { Chords, Bass, Drums };
+			const LPCTSTR Names[3] = { _T("chords on "), _T("bass on "), _T("drums on ") };
+			for (int p = 0; p < 3; ++p)
+				if (Parts[p] >= 0)
+					Where += (Where.IsEmpty() ? _T("") : _T(", ")) + CString(Names[p]) + RecordingChannelName(pDoc, Parts[p]);
+			Item.Format(_T("%s (what those play there makes way); the melody stays on %s"),
+				static_cast<LPCTSTR>(Capitalized(std::string(CStringA(Where)))), static_cast<LPCTSTR>(RecordingChannelName(pDoc, Melody)));
+		}
+		else
+			Item = _T("This song has no channels for a groove: it needs a pulse, the triangle or sawtooth, or the noise");
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Item);
+		if (Empty)
+			Item = _T("At the tempo each mood suits (the song has no notes yet)");
+		else
+			Item.Format(_T("At the song's tempo, %s BPM (More choices sets another)"), static_cast<LPCTSTR>(BpmText(SongBpm(pDoc, Track))));
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Item);
+		Menu.AppendMenu(MF_SEPARATOR);
+		for (size_t m = 0; m < Moods.size() && m < MENU_GROOVE_BARS - MENU_GROOVE; ++m) {
+			Item = Capitalized(Moods[m].Name) + _T(": ") + CString(Moods[m].Use.c_str());
+			if (Empty) {
+				CString Bpm;
+				Bpm.Format(_T("\t%d BPM"), Moods[m].Bpm);
+				Item += Bpm;
+			}
+			Menu.AppendMenu(MF_STRING | (Any ? 0 : MF_GRAYED), MENU_GROOVE + m, Item);
+		}
+		Menu.AppendMenu(MF_SEPARATOR);
+		if (!Selected) {
+			for (size_t i = 0; i < sizeof(GROOVE_BAR_CHOICES) / sizeof(GROOVE_BAR_CHOICES[0]); ++i) {
+				Item.Format(_T("%d bars"), GROOVE_BAR_CHOICES[i]);
+				Length.AppendMenu(MF_STRING | (GROOVE_BAR_CHOICES[i] == GrooveBars ? MF_CHECKED : 0), MENU_GROOVE_BARS + GROOVE_BAR_CHOICES[i], Item);
+			}
+			Item.Format(_T("Length: %d bars (or select the bars first)"), GrooveBars);
+			Menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(Length.Detach()), Item);
+		}
+		Menu.AppendMenu(MF_STRING | (Any ? 0 : MF_GRAYED), MENU_GROOVE_MORE, _T("More choices (tempo, key, length)..."));
+
+		const int Choice = static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			Point.x, Point.y, pWnd));
+		if (Choice >= static_cast<int>(MENU_GROOVE) && Choice < static_cast<int>(MENU_GROOVE + Moods.size()))
+			PutGroove(Moods[static_cast<size_t>(Choice - static_cast<int>(MENU_GROOVE))], First, Bars, Melody, Chords, Bass, Drums, Empty);
+		else if (Choice > static_cast<int>(MENU_GROOVE_BARS) && Choice < static_cast<int>(MENU_GROOVE_MORE)) {
+			GrooveBars = Choice - static_cast<int>(MENU_GROOVE_BARS);
+			theApp.WriteProfileInt(GROOVE_SECTION, _T("Groove bars"), GrooveBars);
+			CString Text;
+			Text.Format(_T("Grooves are %d bars long now, from the bar the cursor is in; select bars first for a groove under them."),
+				GrooveBars);
+			Say(Text);
+		}
+		else if (Choice == static_cast<int>(MENU_GROOVE_MORE))
+			MoreGrooveChoices(First, Melody);
+		pWnd->Invalidate(FALSE);
+	}
+
+	// Writes the groove: at the mood's tempo when the song has no notes yet (as Start from a groove does), otherwise at the
+	// song's own, in the song's key in the mood's mode (ftapi::GrooveKey: its relative minor or major, the same notes)
+	void PutGroove(const ftapi::GrooveMood &Mood, int First, int Bars, int Melody, int Chords, int Bass, int Drums, bool Empty)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CMainFrame *pMain = Main();
+		if (pDoc == NULL || pMain == NULL)
+			return;
+		const ftapi::Key SongKey = TheKey().K;
+		const ftapi::Key K = ftapi::GrooveKey(HasKey() ? &SongKey : NULL, Mood.Minor);
+		groove_choice_t Choice;
+		Choice.Mood = Mood.Name.c_str();
+		Choice.Bpm = Empty ? Mood.Bpm : 0.0;	// 0: the song's own speed and tempo
+		Choice.KeyTonic = K.Tonic;
+		Choice.KeyMinor = K.Mode == ftapi::MODE_MINOR;
+		Choice.Row = First;
+		Choice.Bars = Bars;
+		Choice.ChordChannel = Chords;
+		Choice.BassChannel = Bass;
+		Choice.DrumChannel = Drums;
+		Choice.MelodyChannel = Melody;
+		theApp.WriteProfileString(GROOVE_SECTION, _T("Groove mood"), Choice.Mood);
+		const double Before = SongBpm(pDoc, Track);
+		CString Message;
+		bool Made;
+		{
+			CWaitCursor Wait;
+			Made = MakeGroove(pMain, Choice, Message);
+		}
+		if (Made && !Empty && std::fabs(Before - Mood.Bpm) > 8.0) {
+			CString Tempo;
+			Tempo.Format(_T(" The mood suits about %d BPM; the song stays at %s (the song settings change it, or More choices in the ")
+				_T("Groove menu)."), Mood.Bpm, static_cast<LPCTSTR>(BpmText(Before)));
+			Message += Tempo;
+		}
+		Dirty = true;
+		Say(Message, CHORD_MESSAGE_MS);
+	}
+
+	// Start from a groove's dialog (tempo, key, length), from the groove's first bar, the melody on its channel
+	void MoreGrooveChoices(int First, int Melody)
+	{
+		CFamiTrackerView *pView = View();
+		if (pView == NULL)
+			return;
+		GoTo(Melody, First);	// the dialog starts at the cursor's bar, leaving the cursor's channel to the melody
+		CGrooveDlg Dialog(pView, pWnd);
+		if (Dialog.DoModal() == IDOK) {
+			Dirty = true;
+			Say(Dialog.GetResult(), CHORD_MESSAGE_MS);
+		}
+	}
+
 	// Clips
 
 	// The bars the selected notes start in (CPianoRollWnd::SelectedBars)
@@ -2831,12 +3242,34 @@ struct CPianoRollWnd::Impl {
 	CPoint Below(int Id) const
 	{
 		CPoint Point(0, 0);
+		bool Found = false;
 		for (size_t i = 0; i < Buttons.size(); ++i) {
-			if (Buttons[i].Id == Id)
+			if (Buttons[i].Id == Id) {
+				Point = CPoint(Buttons[i].Rect.left, Buttons[i].Rect.bottom);
+				Found = true;
+			}
+		}
+		for (size_t i = 0; i < Buttons.size() && !Found; ++i) {
+			if (Buttons[i].Id == BUTTON_MORE)	// it's under More: its menu opens there
 				Point = CPoint(Buttons[i].Rect.left, Buttons[i].Rect.bottom);
 		}
 		pWnd->ClientToScreen(&Point);
 		return Point;
+	}
+
+	// The buttons with no room along the top (a short piano roll): a tool or Snap to key ticked while it's on; the others
+	// open their menus where More is
+	void MoreMenu()
+	{
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		for (size_t i = 0; i < Overflow.size(); ++i)
+			Menu.AppendMenu(MF_STRING | (Overflow[i].Pressed ? MF_CHECKED : 0), MENU_MORE + Overflow[i].Id, Overflow[i].Text);
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("A taller piano roll has room for them along its top"));
+		const int Choice = PopUp(Menu, BUTTON_MORE);
+		if (Choice >= static_cast<int>(MENU_MORE) && Choice < static_cast<int>(MENU_MORE) + BUTTON_MORE)
+			Press(Choice - static_cast<int>(MENU_MORE));
 	}
 
 	int PopUp(CMenu &Menu, int Id) const
@@ -2957,6 +3390,13 @@ struct CPianoRollWnd::Impl {
 			break;
 		case BUTTON_CHORDS:
 			ChordsMenu(Below(Id), -1);
+			break;
+		case BUTTON_GROOVE:
+		case BUTTON_GROOVE_HINT:
+			GrooveMenu(Below(Id));
+			break;
+		case BUTTON_MORE:
+			MoreMenu();
 			break;
 		case BUTTON_CLOSE:
 			Main()->PostMessage(WM_COMMAND, ID_VIEW_PIANOROLL);
@@ -3150,25 +3590,15 @@ struct CPianoRollWnd::Impl {
 		if (HoverChannel >= 0 && HoverChannel < static_cast<int>(Notes.size()) && HoverNote >= 0 &&
 			HoverNote < static_cast<int>(Visible(HoverChannel).size()))
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
-		if (!Selection.empty()) {
-			Text.Format(_T("%s selected   |   Ctrl+Shift+C: save as a clip. Drag to move (Shift: copy), arrows to move, ")
-				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, %s: chords on their bars, Esc: none"),
-				static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))), TypesNotes() ? _T("Chords") : _T("H"));
-			return Text;
-		}
-		if (Tool == TOOL_PAINT)
-			return _T("Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.");
-		if (Tool == TOOL_SELECT)
-			return TypesNotes() ? _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: ")
-				_T("more). Then Ctrl+Shift+C saves them as a clip, and Chords puts chords on their bars.") :
-				_T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
-				_T("Then Ctrl+Shift+C saves them as a clip, and H puts chords on their bars.");
-		if (SnapsToKey())
-			return _T("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Drag a note to move it ")
-				_T("(Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. E: effects. Ctrl+Z undoes.");
-		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
-			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. ") +
-			CString(TypesNotes() ? _T("Chords: a chord on the free channels. ") : _T("H: chords. ")) + _T("Ctrl+Z undoes.");
+		// What the mouse and the keys do now (PianoRollUi.h): in the pattern editor's place the letters type notes, so the
+		// hints name the buttons instead of E and H
+		roll_hint_t Hint;
+		Hint.Selected = static_cast<int>(Selection.size());
+		Hint.Tool = Tool == TOOL_PAINT ? ROLL_TOOL_PAINT : Tool == TOOL_SELECT ? ROLL_TOOL_SELECT : ROLL_TOOL_DRAW;
+		Hint.Snaps = SnapsToKey();
+		Hint.TypesNotes = TypesNotes();
+		Hint.Empty = SongEmpty();
+		return CString(RollHint(Hint).c_str());
 	}
 
 	CString NoteText(int Which, const RollNote &Note) const
@@ -3218,76 +3648,68 @@ struct CPianoRollWnd::Impl {
 
 	// Drawing
 
-	void DrawButton(CDC &dc, int Id, const CString &Text, int &X, int Right, bool Pressed, bool Menu, COLORREF Swatch = CLR_INVALID)
+	void DrawButton(CDC &dc, const Button &Which)
 	{
 		const CSettings *pSettings = theApp.GetSettings();
 		const COLORREF Back_ = pSettings->Appearance.iColBackground, TextColor = pSettings->Appearance.iColPatternText;
-		const CSize Size = dc.GetTextExtent(Text);
-		const int Width = Size.cx + SX(16) + (Menu ? SX(12) : 0) + (Swatch != CLR_INVALID ? SX(14) : 0);
-		if (X + Width > Right)
-			return;	// no room
-		const CRect Rect(X, Header.top + SY(3), X + Width, Header.bottom - SY(3));
-		dc.FillSolidRect(&Rect, Pressed ? Mix(Back_, pSettings->Appearance.iColCursor, 0.45) : Mix(Back_, TextColor, 0.20));
+		const CRect &Rect = Which.Rect;
+		dc.FillSolidRect(&Rect, Which.Pressed ? Mix(Back_, pSettings->Appearance.iColCursor, 0.45) : Mix(Back_, TextColor, 0.20));
 		Outline(dc, Rect, Mix(Back_, TextColor, 0.42));
 		int TextX = Rect.left + SX(8);
-		if (Swatch != CLR_INVALID) {
+		if (Which.Swatch != CLR_INVALID) {
 			const int Size_ = SY(9);
-			dc.FillSolidRect(TextX, Rect.top + (Rect.Height() - Size_) / 2, Size_, Size_, Swatch);
+			dc.FillSolidRect(TextX, Rect.top + (Rect.Height() - Size_) / 2, Size_, Size_, Which.Swatch);
 			TextX += SX(14);
 		}
 		dc.SetTextColor(TextColor);
 		CRect Label(TextX, Rect.top, Rect.right, Rect.bottom);
-		dc.DrawText(Text, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-		if (Menu)
+		dc.DrawText(Which.Text, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		if (Which.Menu)
 			Arrow(dc, Rect.right - SX(14), Rect.top + Rect.Height() / 2 - 1, TextColor);
-		const Button Made = { Id, Rect };
-		Buttons.push_back(Made);
-		X = Rect.right + SX(4);
 	}
 
+	// The buttons where LayOutButtons put them, in as many rows as they need, and the close button on the right
 	void DrawHeader(CDC &dc, COLORREF Panel)
 	{
 		const CSettings *pSettings = theApp.GetSettings();
 		const COLORREF Back_ = pSettings->Appearance.iColBackground, TextColor = pSettings->Appearance.iColPatternText;
 		dc.FillSolidRect(&Header, Focused ? Mix(Panel, pSettings->Appearance.iColCursor, 0.22) : Panel);
 		dc.FillSolidRect(Header.left, Header.bottom - 1, Header.Width(), 1, Mix(Back_, TextColor, 0.30));
-		Buttons.clear();
+		for (size_t i = 0; i < Buttons.size(); ++i) {
+			if (Buttons[i].Id == BUTTON_CLOSE)
+				Cross(dc, Buttons[i].Rect, TextColor);
+			else if (Buttons[i].Id != BUTTON_GROOVE_HINT)
+				DrawButton(dc, Buttons[i]);
+		}
+	}
 
-		// The close button on the right
-		const CRect Close(Header.right - SX(26), Header.top + SY(3), Header.right - SX(4), Header.bottom - SY(3));
-		Cross(dc, Close, TextColor);
-		const Button Closing = { BUTTON_CLOSE, Close };
-		Buttons.push_back(Closing);
-
-		CFamiTrackerDoc *pDoc = Doc();
-		if (pDoc == NULL || Notes.empty() || Channel >= static_cast<int>(ChanIDs.size()))
+	// An empty song's "Start from a groove", which opens the Groove menu
+	void DrawGrooveHint(CDC &dc)
+	{
+		if (GrooveHint.IsRectEmpty())
 			return;
-		const int Right = Close.left - SX(6);
-		int X = Header.left + SX(6);
-		DrawButton(dc, BUTTON_CHANNEL, RecordingChannelName(pDoc, Channel), X, Right, false, true,
-			ChannelColor(ChanIDs[static_cast<size_t>(Channel)], Channel));
-		X += SX(8);
-		DrawButton(dc, BUTTON_DRAW, _T("Draw"), X, Right, Tool == TOOL_DRAW, false);
-		DrawButton(dc, BUTTON_PAINT, _T("Paint melody"), X, Right, Tool == TOOL_PAINT, false);
-		DrawButton(dc, BUTTON_SELECT, _T("Select"), X, Right, Tool == TOOL_SELECT, false);
-		X += SX(8);
-		CString Text;
-		Text.Format(_T("Grid: %s"), GRID_NAMES[GridChoice]);
-		DrawButton(dc, BUTTON_GRID, Text, X, Right, false, true);
-		if (!HasKey())
-			Text = _T("Key: auto");
-		else
-			Text.Format(KeyChosen ? _T("Key: %s") : _T("Key: %s (auto)"), static_cast<LPCTSTR>(KeyText()));
-		DrawButton(dc, BUTTON_KEY, Text, X, Right, KeyChosen, true);
-		DrawButton(dc, BUTTON_SNAP, _T("Snap to key"), X, Right, Snap, false);
-		CString Name = InstrumentText(NewInstrument(CursorFrame * static_cast<int>(Length) + std::max(0, CursorRow)));
-		if (Name.GetLength() > 22)
-			Name = Name.Left(21) + _T("...");
-		Text.Format(_T("Instrument: %s"), static_cast<LPCTSTR>(Name));
-		DrawButton(dc, BUTTON_INSTRUMENT, Text, X, Right, false, true);
-		DrawButton(dc, BUTTON_EFFECTS, _T("Effects"), X, Right, false, true);
-		DrawButton(dc, BUTTON_CHORDS, _T("Chords"), X, Right, false, true);
-		DrawButton(dc, BUTTON_CLIPS, PlacingClip >= 0 ? _T("Placing a clip") : _T("Clips"), X, Right, PlacingClip >= 0, true);
+		const CSettings *pSettings = theApp.GetSettings();
+		const COLORREF Back_ = pSettings->Appearance.iColBackground, TextColor = pSettings->Appearance.iColPatternText;
+		const COLORREF Cursor = pSettings->Appearance.iColCursor;
+		dc.FillSolidRect(&GrooveHint, Mix(Back_, TextColor, 0.16));
+		Outline(dc, GrooveHint, Mix(TextColor, Cursor, 0.4), std::max(1, SX(2)));
+		if (GrooveHintLines == 1) {
+			CRect Row(GrooveHint);
+			Row.DeflateRect(SX(12), 0);
+			dc.SetTextColor(Mix(TextColor, RGB(255, 255, 255), 0.35));
+			dc.DrawText(GrooveHintLine(-1, Tool), &Row, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+			Arrow(dc, GrooveHint.right - SX(14), GrooveHint.top + GrooveHint.Height() / 2 - 1, TextColor);
+			return;
+		}
+		CRect Line(GrooveHint);
+		Line.DeflateRect(SX(12), SY(10));
+		const int Step = Line.Height() / 3;
+		for (int i = 0; i < 3; ++i) {
+			CRect Row(Line.left, Line.top + i * Step, Line.right, Line.top + (i + 1) * Step);
+			dc.SetTextColor(i == 0 ? Mix(TextColor, RGB(255, 255, 255), 0.35) : i == 1 ? TextColor : Mix(Back_, TextColor, 0.65));
+			dc.DrawText(GrooveHintLine(i, Tool), &Row, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		}
+		Arrow(dc, GrooveHint.right - SX(16), GrooveHint.top + SY(10) + Step / 2 - 1, TextColor);
 	}
 
 	// What works on a note, drawn on it with the pen selected: vibrato as a wave, tremolo dotted along
@@ -3476,8 +3898,10 @@ struct CPianoRollWnd::Impl {
 
 	void Draw(CDC &dc)
 	{
-		if (Dirty)
+		if (Dirty) {
 			Read();
+			Layout();	// the buttons' texts and an empty song's groove box go with the notes
+		}
 		Clamp();
 		const CSettings *pSettings = theApp.GetSettings();
 		const COLORREF Back_ = pSettings->Appearance.iColBackground;
@@ -3611,6 +4035,7 @@ struct CPianoRollWnd::Impl {
 			dc.FillSolidRect(RowX(CursorFrame * static_cast<int>(Length) + CursorRow), Grid.top, 1, Grid.Height(), Cursor);
 		if (Playing && PlayRow >= 0)
 			dc.FillSolidRect(RowX(PlayRow), Grid.top, std::max(2, SX(2)), Grid.Height(), Play);
+		DrawGrooveHint(dc);
 		dc.SelectClipRgn(NULL);
 
 		// The ruler: bar numbers (frame numbers without a bar highlight)
@@ -3756,6 +4181,9 @@ CPianoRollWnd::~CPianoRollWnd()
 bool CPianoRollWnd::Create(CWnd *pParent)
 {
 	m_pImpl->Load();
+	// The clicks menus look at, on this (the UI) thread, so a click that only closed a menu is told apart
+	if (g_hMenuHook == NULL)
+		g_hMenuHook = ::SetWindowsHookEx(WH_MSGFILTER, MenuClickHook, NULL, ::GetCurrentThreadId());
 	const CString Class = AfxRegisterWndClass(CS_DBLCLKS, ::LoadCursor(NULL, IDC_ARROW), NULL, NULL);
 	return CreateEx(0, Class, _T("Piano roll"), WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL | WS_CLIPSIBLINGS,
 		CRect(0, 0, 0, 0), pParent, 1) != FALSE;
@@ -3770,11 +4198,13 @@ void CPianoRollWnd::Activate(bool Shown)
 		d.StopPreview();
 		d.PlacingClip = -1;
 		d.PanelDrop = false;
+		d.KeysAway = false;
 		KillTimer(TIMER_ID);
 		return;
 	}
 	d.Layout();
 	d.Read();
+	d.Layout();				// the buttons' rows for the song's channel, instrument and key
 	d.CursorChannel = -1;	// the bright channel is the cursor's
 	d.Poll();
 	if (!d.Placed && d.Grid.Height() > 0) {
@@ -3993,6 +4423,12 @@ BOOL CPianoRollWnd::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 
 void CPianoRollWnd::OnLButtonDown(UINT nFlags, CPoint point)
 {
+	// A click that only closed a menu does nothing more here (see ClickClosedMenu)
+	m_pImpl->IgnoredClick = ClickClosedMenu();
+	if (m_pImpl->IgnoredClick) {
+		m_pImpl->IgnoredTime = static_cast<DWORD>(::GetMessageTime());
+		return;
+	}
 	SetFocus();
 	m_pImpl->MouseDown(point, nFlags, false);
 	if (m_pImpl->Drag != Impl::DRAG_NONE)
@@ -4002,8 +4438,16 @@ void CPianoRollWnd::OnLButtonDown(UINT nFlags, CPoint point)
 
 void CPianoRollWnd::OnLButtonDblClk(UINT nFlags, CPoint point)
 {
+	if (ClickClosedMenu())
+		return;
+	// The second click of a double-click whose first only closed a menu is a click
+	const bool AfterMenu = m_pImpl->IgnoredClick && static_cast<DWORD>(::GetMessageTime()) - m_pImpl->IgnoredTime <= ::GetDoubleClickTime();
+	m_pImpl->IgnoredClick = false;
 	SetFocus();
-	m_pImpl->DoubleClick(point, nFlags);
+	if (AfterMenu)
+		m_pImpl->MouseDown(point, nFlags, false);
+	else
+		m_pImpl->DoubleClick(point, nFlags);
 	if (m_pImpl->Drag != Impl::DRAG_NONE)
 		SetCapture();
 	Invalidate(FALSE);
@@ -4020,6 +4464,8 @@ void CPianoRollWnd::OnLButtonUp(UINT nFlags, CPoint point)
 
 void CPianoRollWnd::OnRButtonDown(UINT nFlags, CPoint point)
 {
+	if (ClickClosedMenu())
+		return;		// it only closed a menu: nothing is erased
 	SetFocus();
 	m_pImpl->MouseDown(point, nFlags, true);
 	if (m_pImpl->Drag != Impl::DRAG_NONE)
@@ -4065,7 +4511,9 @@ BOOL CPianoRollWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 	case Impl::DRAG_DRAW:
 	case Impl::DRAG_PAINT: Shape = IDC_CROSS; break;
 	case Impl::DRAG_NONE:
-		if (d.Grid.PtInRect(Point) && !d.Notes.empty()) {
+		if (d.HitButton(Point) >= 0)
+			Shape = IDC_HAND;		// the buttons, and an empty song's "Start from a groove"
+		else if (d.Grid.PtInRect(Point) && !d.Notes.empty()) {
 			int HitChannel = -1, HitIndex = -1;
 			if (d.PlacingClip >= 0)
 				Shape = IDC_CROSS;
@@ -4076,8 +4524,6 @@ BOOL CPianoRollWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 			else if (d.RowAt(Point.x) < d.EditRows())
 				Shape = IDC_CROSS;
 		}
-		else if (d.HitButton(Point) >= 0)
-			Shape = IDC_HAND;
 		break;
 	default:
 		break;
@@ -4121,6 +4567,7 @@ void CPianoRollWnd::OnSetFocus(CWnd *pOldWnd)
 {
 	CWnd::OnSetFocus(pOldWnd);
 	m_pImpl->Focused = true;
+	m_pImpl->KeysAway = false;
 	Invalidate(FALSE);
 }
 
@@ -4128,7 +4575,18 @@ void CPianoRollWnd::OnKillFocus(CWnd *pNewWnd)
 {
 	CWnd::OnKillFocus(pNewWnd);
 	m_pImpl->Focused = false;
+	// The keys go out of the program's window (a dialog, a message box, another program), not to another part of it
+	const CWnd *pMain = AfxGetMainWnd();
+	const HWND hNew = pNewWnd != NULL ? pNewWnd->GetSafeHwnd() : NULL;
+	m_pImpl->KeysAway = pMain != NULL && (hNew == NULL || ::GetAncestor(hNew, GA_ROOT) != pMain->GetSafeHwnd());
 	Invalidate(FALSE);
+}
+
+bool CPianoRollWnd::TakeKeysBack()
+{
+	const bool Back = m_pImpl->KeysAway && m_pImpl->Shown && GetSafeHwnd() != NULL && IsWindowVisible();
+	m_pImpl->KeysAway = false;
+	return Back;
 }
 
 void CPianoRollWnd::OnTimer(UINT_PTR nIDEvent)
@@ -4153,6 +4611,10 @@ void CPianoRollWnd::OnDestroy()
 	KillTimer(TIMER_ID);
 	m_pImpl->StopPreview();
 	m_pImpl->Save();
+	if (g_hMenuHook != NULL) {
+		::UnhookWindowsHookEx(g_hMenuHook);
+		g_hMenuHook = NULL;
+	}
 	CWnd::OnDestroy();
 }
 
@@ -4171,7 +4633,8 @@ BEGIN_MESSAGE_MAP(CPianoRollBar, CControlBar)
 	ON_MESSAGE(WM_SIZEPARENT, OnSizeParent)
 END_MESSAGE_MAP()
 
-CPianoRollBar::CPianoRollBar() : m_bFill(false), m_iHeight(DEFAULT_HEIGHT), m_iRoom(0), m_iDragFrom(-1), m_iDragHeight(0), m_iDragMax(0)
+CPianoRollBar::CPianoRollBar() : m_bOpen(false), m_bFill(false), m_iHeight(DEFAULT_HEIGHT), m_iRoom(0), m_iDragFrom(-1), m_iDragHeight(0),
+	m_iDragMax(0)
 {
 }
 
@@ -4194,6 +4657,7 @@ bool CPianoRollBar::Create(CFrameWnd *pFrame)
 
 void CPianoRollBar::Opened(bool Open)
 {
+	m_bOpen = Open;
 	m_wndRoll.Activate(Open);
 	if (!Open && ::GetFocus() == m_wndRoll.GetSafeHwnd()) {
 		// The keys go back to the pattern editor
@@ -4294,7 +4758,7 @@ BOOL CPianoRollBar::OnEraseBkgnd(CDC *pDC)
 
 void CPianoRollBar::OnLButtonDown(UINT nFlags, CPoint point)
 {
-	if (m_bFill || point.y >= Divider())
+	if (m_bFill || point.y >= Divider() || ClickClosedMenu())
 		return;
 	// Drag the line to make the piano roll taller or shorter
 	CPoint Screen = point;
