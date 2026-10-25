@@ -243,11 +243,13 @@ bool ReadOggComments(const std::string &File, OggComments &Comments, std::string
 {
 	Comments.clear();
 	MemoryFile Source = { &File, 0 };
+	// Read as a stream that can't seek: only its headers, so the start of a file is enough (a host may read only its first
+	// megabyte)
 	ov_callbacks Callbacks;
 	Callbacks.read_func = &ReadMemory;
-	Callbacks.seek_func = &SeekMemory;
+	Callbacks.seek_func = NULL;
 	Callbacks.close_func = NULL;
-	Callbacks.tell_func = &TellMemory;
+	Callbacks.tell_func = NULL;
 	OggVorbis_File Vorbis;
 	if (ov_open_callbacks(&Source, &Vorbis, NULL, 0, Callbacks) < 0) {
 		Error = "It isn't an OGG Vorbis file.";

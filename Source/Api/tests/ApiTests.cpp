@@ -17110,6 +17110,9 @@ void TestWhatNextLoop()
 		}
 		CHECK_EQ(Print.size(), 16u);
 		Check(Loudness == K.Loudness, Loudness.c_str(), __LINE__);
+		// Read from the file's start alone too (FamiTracker reads at most a megabyte of a file next to the song)
+		OggComments Start;
+		CHECK(ReadOggComments(Song.Files["Town.ogg"].substr(0, 8192), Start, Error) && Start.size() == Comments.size());
 	}
 
 	// The same on the small set (/mcp/core): every step one of its tools

@@ -46,7 +46,8 @@ bool DecodeOgg(const std::string &File, std::vector<float> &Samples, int &Sample
 	std::string &Error, std::vector<float> *pSecond = 0);
 
 // An OGG Vorbis file's comments alone, its sound left undecoded (what_next
-// reads what export_for_game wrote in them); false with the reason
+// reads what export_for_game wrote in them); the file's start is enough.
+// False with the reason
 bool ReadOggComments(const std::string &File, OggComments &Comments, std::string &Error);
 
 }	// namespace ftapi
