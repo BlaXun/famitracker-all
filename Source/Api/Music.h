@@ -276,7 +276,9 @@ struct PartOptions {
 	bool StopAtEnd;						// the end marker after the range goes on the range's last row instead (clips)
 	bool RingOut;						// nothing ends the notes: the DPCM channel's samples play out, and a halt there
 									// would reset the DPCM level (0.4.6 writes $4011 = 0 as it cuts a sample)
-	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false) {}
+	bool KeepDetune;					// the channel's detune (Pxx) stays where it was, as its pan does: notes rewritten
+										// over an echo's P81 play as out of tune as the ones they replace (write_notes)
+	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false), KeepDetune(false) {}
 };
 
 // A channel's new cells for rows [First, End), its notes replaced by Notes,
@@ -288,8 +290,10 @@ struct PartOptions {
 // or halt when nothing follows it. The pan stays: a note that doesn't set
 // one (an 8xx among its effects) plays from where the channel played at its
 // row before, until a note of the part sets one, which the notes after it
-// keep. With KeepFollowing, the next note after the range gets back the
-// instrument, volume and effects (its pan too) it played with.
+// keep; with KeepDetune the detune (Pxx) does the same, and where it changed
+// in the range it changes on that row again. With KeepFollowing, the next
+// note after the range gets back the instrument, volume and effects (its pan
+// too) it played with.
 // Out holds the cells from First on and can be longer than End - First.
 // Notes must be in order, inside [First, End) and not overlap.
 void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vector<PartNote> &Notes,

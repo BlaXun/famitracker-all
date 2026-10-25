@@ -552,4 +552,9 @@ bool ParseChannelEffect(const std::string &Input, const ChannelInfo &Channel, in
 	return Problem.empty();
 }
 
+bool ChannelPlaysEffect(const ChannelInfo &Channel, int Effect, int Param)
+{
+	return ChannelProblem(Channel, Effect, Param, 0, std::string()).empty();
+}
+
 }	// namespace ftapi
