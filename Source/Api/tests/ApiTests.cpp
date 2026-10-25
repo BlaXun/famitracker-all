@@ -17964,7 +17964,7 @@ void TestDraftFindings()
 		CHECK_EQ(IntegerOf(Thin[0], "channel"), 8);
 		CHECK_EQ(TextOf(Thin[0], "summary"), std::string("the bass on VRC6 Sawtooth is thin: it sounds 25% of the time"));
 		const Json *pArguments = Thin[0]->Get("fix")->Get("arguments");
-		CHECK_EQ(TextOf(pArguments, "bass_style"), std::string("walking"));
+		CHECK_EQ(TextOf(pArguments, "bass_style"), std::string("octaves"));
 		CHECK_EQ(TextOf(pArguments, "chord_channel"), std::string("none"));
 		CHECK_HAS(TextOf(pArguments, "chords"), "| F C | G Dm | C G | Am Em | F C |");	// as the parts sound: the fifth on beat 3
 		CHECK_EQ(IntegerOf(pArguments, "from_bar"), 3);
@@ -18021,6 +18021,9 @@ void TestDraftFixes()
 		Check(Fixed, (Kind + ": " + Reply).c_str(), __LINE__);
 		const Json After = Parse(Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
 		Check(FindingsOf(After, Bass ? "bass" : Kind.c_str(), Bass ? Kind.c_str() : 0).empty(), (Kind + " fixed").c_str(), __LINE__);
+		// No fix makes a clash (a walking bass's approach notes, an ornament against another part)
+		Check(IntegerOf(After.Get("counts"), "clash") <= IntegerOf(Before.Get("counts"), "clash"), (Kind + " adds no clash").c_str(),
+			__LINE__);
 		// The others stay (the doubled triangle cleared takes its sound with it; a longer loop has a copy that repeats)
 		const char *const OTHERS[] = { "phrases", "faders" };
 		for (size_t o = 0; o < 2; ++o)

@@ -11544,11 +11544,15 @@ void BassFindings(Session &S, int Melody, int From, int To, bool Calm, const Key
 	F.ToBar = Main.ToBar;
 	F.Weight = 1.0;
 	const std::string Name = S.Channel(Bass).FullName();
-	const char *const Style = Calm ? "roots" : "walking";
+	// Its roots alone, held on a calm track and jumping octaves on the others: a walking bass's approach notes rubbed a
+	// semitone against the local model's melody five times, the roots never (a held root, or a fifth, set the review asking
+	// for a bass that moves)
+	const char *const Style = Calm ? "roots" : "octaves";
 	F.Text = Format("The bass on %s is thin: short notes with gaps, it sounds %d%% of the time in the bars it plays and is silent for "
-		"a beat or more %d%% of it, so the low end comes and goes. A line that holds, or moves a note a beat, carries the song: "
-		"add_chords_and_bass with bass_style %s on the chords the parts play.", Name.c_str(),
-		static_cast<int>(std::floor(Main.Share * 100 + 0.5)), static_cast<int>(std::floor(Main.GapShare * 100 + 0.5)), Style);
+		"a beat or more %d%% of it, so the low end comes and goes. A line that keeps sounding carries the song: "
+		"add_chords_and_bass with bass_style %s (%s) on the chords the parts play, their roots alone, so it can't rub against the "
+		"melody.", Name.c_str(), static_cast<int>(std::floor(Main.Share * 100 + 0.5)), static_cast<int>(std::floor(Main.GapShare * 100 +
+		0.5)), Style, Calm ? "each root held" : "each root jumping octaves every half beat");
 	F.Summary = Format("the bass on %s is thin: it sounds %d%% of the time", Name.c_str(), static_cast<int>(std::floor(Main.Share *
 		100 + 0.5)));
 	F.Details.Set("problem", "thin");
@@ -11562,8 +11566,8 @@ void BassFindings(Session &S, int Melody, int From, int To, bool Calm, const Key
 	Backing.Set("chords", ChordsOfBars(S, Main.FromBar, Main.ToBar, K, Melody));
 	Backing.Set("from_bar", Main.FromBar);
 	Backing.Set("to_bar", Main.ToBar);
-	F.Fix = ToolCall("add_chords_and_bass", Backing, std::string("writes a ") + Style + " bass line on " + Name + " in " +
-		RangeText(Main.FromBar, Main.ToBar) + ", on the chords the parts play there, in place of the old one");
+	F.Fix = ToolCall("add_chords_and_bass", Backing, std::string("writes a bass line of ") + (Calm ? "held roots" : "roots jumping octaves") +
+		" on " + Name + " in " + RangeText(Main.FromBar, Main.ToBar) + ", on the chords the parts play there, in place of the old one");
 	Out.push_back(F);
 }
 

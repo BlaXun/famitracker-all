@@ -395,8 +395,9 @@ JSON as `fix`.
 - **A thin bass** (`bass`): the bass silent for a beat or more half the
   time or more, in short notes, over 8 bars or more, unless another low
   part carries the low end. Fix: `add_chords_and_bass` with `chord_channel`
-  none and a walking bass (roots on a calm track) on the chords the parts
-  play there.
+  none and an `octaves` bass (`roots`, held, on a calm track) on the chords
+  the parts play there: their roots alone, so it can't rub against the
+  melody, as a walking bass's approach notes can.
 - **A doubled bass** (`bass`): another channel on the bass's roots now and
   then, sounding in under a quarter of its bars: a thump, not a part. Fix:
   `write_notes` with no notes on that channel there, or give it a part of
