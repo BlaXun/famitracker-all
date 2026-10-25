@@ -1204,6 +1204,27 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 		}
 	}
 
+	// The volume, with KeepVolume: the notes play as loud as the channel did on their rows (a soft part's 7 where it's
+	// rewritten), until a note of the part gives its own, which the notes after it keep
+	if (Options.KeepVolume) {
+		int Was = 15;	// the volume the channel had on each row
+		for (int r = 0; r < First && r < SongRows; ++r)
+			if (Old[r].Volume < NO_VOLUME)
+				Was = Old[r].Volume;
+		int Now = Before.Volume;
+		for (int r = First; r < End && r - First < static_cast<int>(Out.size()); ++r) {
+			if (r < SongRows && Old[r].Volume < NO_VOLUME)
+				Was = Old[r].Volume;
+			Cell &C = Out[r - First];
+			if (C.Volume < NO_VOLUME)
+				break;	// the part's own
+			if (C.HasNote() && Was != Now) {
+				C.Volume = static_cast<unsigned char>(Was);
+				Now = Was;
+			}
+		}
+	}
+
 	// The next note after the range plays as it did
 	if (Options.KeepFollowing && !KeepFollowing(Old, First, End, Out, Columns))
 		EffectsLost = true;

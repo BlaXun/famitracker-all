@@ -1275,6 +1275,9 @@
     <ClCompile Include="Source\Api\Arrange.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\ChordHelper.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Presets.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1360,6 +1363,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Arrange.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\ChordHelper.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Presets.h">
@@ -1575,6 +1581,12 @@
       <Filter>Piano roll</Filter>
     </ClCompile>
     <ClInclude Include="Source\PianoRoll.h">
+      <Filter>Piano roll</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\PianoRollChords.cpp">
+      <Filter>Piano roll</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PianoRollChords.h">
       <Filter>Piano roll</Filter>
     </ClInclude>
     <ClCompile Include="Source\NoteEdit.cpp">
