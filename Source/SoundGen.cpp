@@ -75,6 +75,9 @@
 // that doesn't pan sounds the same on both sides, as the mono output did.
 static const int OUTPUT_CHANNELS = 2;
 
+// A render's stems are the mixer's (CAPU::SetStems)
+static_assert(CSoundGen::MAX_RENDER_STEMS <= CMixer::MAX_STEMS, "a render has more stems than the mixer makes");
+
 // The depth of each vibrato level
 const double CSoundGen::NEW_VIBRATO_DEPTH[] = {
 	1.0, 1.5, 2.5, 4.0, 5.0, 7.0, 10.0, 12.0, 14.0, 17.0, 22.0, 30.0, 44.0, 64.0, 96.0, 128.0
@@ -124,6 +127,7 @@ CSoundGen::CSoundGen() :
 	m_iSpaceRepeats(3),
 	m_iRenderTail(0),
 	m_bRenderTail(true),
+	m_iRenderStems(0),
 	m_bMixAgain(false),
 	m_iRenderedSamples(0),
 	m_bPlaying(false),
@@ -837,6 +841,27 @@ void CSoundGen::FillBuffer(int16 *pBuffer, uint32 Size)
 				return;
 		}
 	}
+}
+
+void CSoundGen::FlushStem(int Stem, int16 *pBuffer, uint32 Size)
+{
+	// Called from player thread: a stem's samples into its file, as FillBuffer and PlayBuffer write the render's
+	ASSERT(GetCurrentThreadId() == m_nThreadID);
+
+	if (!m_bRendering || Stem < 0 || Stem >= m_iRenderStems)
+		return;
+	const uint32 Count = Size * OUTPUT_CHANNELS;
+	if (m_iSampleSize == 8) {
+		uint8 Bytes[512];
+		for (uint32 i = 0; i < Count; ) {
+			int n = 0;
+			for (; n < static_cast<int>(sizeof(Bytes)) && i < Count; ++n, ++i)
+				Bytes[n] = static_cast<uint8>((pBuffer[i] >> 8) ^ 0x80);
+			m_wfStemFile[Stem].WriteWave(reinterpret_cast<char*>(Bytes), n);
+		}
+	}
+	else
+		m_wfStemFile[Stem].WriteWave(reinterpret_cast<char*>(pBuffer), static_cast<int>(Count * sizeof(int16)));
 }
 
 bool CSoundGen::PlayBuffer()
@@ -1585,7 +1610,8 @@ void CSoundGen::EvaluateGlobalEffects(stChanNote *NoteData, int EffColumns)
 
 // File rendering functions
 
-bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track, const bool *pSilent, bool Tail)
+bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track, const bool *pSilent, bool Tail,
+	const render_stem_t *pStems, int Stems)
 {
 	// Called from main thread
 	ASSERT(GetCurrentThreadId() == theApp.m_nThreadID);
@@ -1602,6 +1628,11 @@ bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEnd
 	for (int i = 0; i < CHANNELS; ++i)
 		m_bRenderSilent[i] = pSilent != NULL && pSilent[i];
 	m_bRenderTail = Tail;
+	m_iRenderStems = 0;
+	const int StemCount = pStems != NULL ? std::max(0, std::min(Stems, static_cast<int>(MAX_RENDER_STEMS))) : 0;
+	for (int k = 0; k < StemCount; ++k)
+		for (int i = 0; i < CHANNELS; ++i)
+			m_bStemSilent[k][i] = pStems[k].Silent[i];
 
 	m_iRenderEndWhen = SongEndType;
 	m_iRenderEndParam = SongEndParam;
@@ -1621,8 +1652,22 @@ bool CSoundGen::RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEnd
 		AfxMessageBox(IDS_FILE_OPEN_ERROR);
 		return false;
 	}
-	else
-		PostThreadMessage(WM_USER_START_RENDER, 0, 0);
+	// The stems' files, as the render's own
+	for (int k = 0; k < StemCount; ++k) {
+		CString Name(pStems[k].File);
+		const bool Opened = m_wfStemFile[k].OpenFile(Name.GetBuffer(), theApp.GetSettings()->Sound.iSampleRate,
+			theApp.GetSettings()->Sound.iSampleSize, OUTPUT_CHANNELS);
+		Name.ReleaseBuffer();
+		if (!Opened) {
+			for (int j = 0; j < k; ++j)
+				m_wfStemFile[j].CloseFile();
+			m_wfWaveFile.CloseFile();
+			AfxMessageBox(IDS_FILE_OPEN_ERROR);
+			return false;
+		}
+	}
+	m_iRenderStems = StemCount;
+	PostThreadMessage(WM_USER_START_RENDER, 0, 0);
 
 	return true;
 }
@@ -1642,6 +1687,10 @@ void CSoundGen::StopRendering()
 	m_iPlayFrame = 0;
 	m_iPlayRow = 0;
 	m_wfWaveFile.CloseFile();
+	for (int k = 0; k < m_iRenderStems; ++k)
+		m_wfStemFile[k].CloseFile();
+	m_iRenderStems = 0;
+	m_pAPU->SetStems(0, NULL);
 	InterlockedIncrement(&m_iRenderCount);
 
 	MakeSilent();
@@ -2032,6 +2081,17 @@ void CSoundGen::OnStartRender(WPARAM wParam, LPARAM lParam)
 	m_iDelayedEnd = 5;
 	m_iRenderTail = 0;
 	m_pAPU->ClearSpace();	// what played before isn't in the file
+	// The stems (RenderToFile's pStems), made now, with nothing in the mixer's buffers, by the mixer's IDs (the N163's
+	// turned around, as ApplyChannelMix gives them), before the mixer is given its levels again on the first frame
+	if (m_iRenderStems > 0) {
+		bool Silent[MAX_RENDER_STEMS][CHANNELS];
+		for (int k = 0; k < m_iRenderStems; ++k)
+			for (int i = 0; i < CHANNELS; ++i) {
+				const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
+				Silent[k][Mixed] = m_bStemSilent[k][i];
+			}
+		m_pAPU->SetStems(m_iRenderStems, Silent);
+	}
 }
 
 void CSoundGen::OnStopRender(WPARAM wParam, LPARAM lParam)

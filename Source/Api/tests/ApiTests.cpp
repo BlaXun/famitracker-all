@@ -56,6 +56,7 @@
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
+#include "../../Nsf/Study.h"
 
 #include <algorithm>
 #include <atomic>
@@ -112,6 +113,33 @@ bool Contains(const std::string &Text, const char *Part)
 
 #define CHECK_HAS(text, part) Check(Contains((text), (part)), "\"" part "\" in " #text, __LINE__)
 #define CHECK_LACKS(text, part) Check(!Contains((text), (part)), "no \"" part "\" in " #text, __LINE__)
+
+// Renders made together, kept until each is taken (FakeSong::RenderParts)
+class FakeRenderSet : public RenderSet {
+public:
+	struct Made {
+		std::vector<float> Left, Right;
+		int Rate;
+		std::vector<std::pair<int, long long> > Marks;
+		bool Taken;
+	};
+	std::vector<Made> Renders;
+	bool Take(size_t Index, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
+	{
+		if (Index >= Renders.size() || Renders[Index].Taken) {
+			Error = "There's no such render.";
+			return false;
+		}
+		Made &One = Renders[Index];
+		Left.swap(One.Left);
+		Right.swap(One.Right);
+		SampleRate = One.Rate;
+		Marks.swap(One.Marks);
+		One.Taken = true;
+		return true;
+	}
+};
 
 // A song in memory: 2A03 and VRC6 channels, 64-row patterns, 4 rows a beat,
 // 16 a bar (4 bars a frame)
@@ -998,6 +1026,25 @@ public:
 	// (8xx) puts it, as FamiTracker's mixer does (PanGains), from the mixer
 	// window's starting pan, and at its fader's level; the channels Options
 	// leaves silent at a level of nothing, as CSoundGen leaves them out
+	// Several in one pass, as FamiTracker renders them: each as RenderTrack renders it (counted there too), their Tail
+	// the first's
+	int Passes = 0;
+	std::unique_ptr<RenderSet> RenderParts(int Track, double Seconds, const std::vector<RenderOptions> &Renders_, std::string &Error)
+		override
+	{
+		++Passes;
+		std::unique_ptr<FakeRenderSet> Set(new FakeRenderSet());
+		for (size_t i = 0; i < Renders_.size(); ++i) {
+			RenderOptions Options = Renders_[i];
+			Options.Tail = Renders_[0].Tail;
+			FakeRenderSet::Made One;
+			One.Taken = false;
+			if (!RenderTrack(Track, Seconds, Options, One.Left, One.Right, One.Rate, One.Marks, Error))
+				return std::unique_ptr<RenderSet>();
+			Set->Renders.push_back(One);
+		}
+		return std::unique_ptr<RenderSet>(Set.release());
+	}
 	int Renders = 0;
 	RenderOptions LastRender;
 	bool RenderTrack(int Track, double Seconds, const RenderOptions &Options, std::vector<float> &Samples, std::vector<float> &Right,
@@ -13313,6 +13360,7 @@ void TestMeasureMix()
 	CHECK(Song.Undos.empty() && Song.Writes == 0 && Song.MixWrites == 0 && Song.Files.empty() && Song.Current == 0 && Song.Rows == Before &&
 		Song.Mix == Mix);
 	CHECK(Song.Renders == 4 && !Song.LastRender.Tail && Song.LastRender.Silent.size() == Song.Rows.size());
+	CHECK(Song.Passes == 1);	// all four made together
 	// The last render, the bass alone: every other channel silent
 	CHECK(!Song.LastRender.Silent[2] && Song.LastRender.Silent[0] && Song.LastRender.Silent[5] && Song.LastRender.Silent[7]);
 	// The numbers are the parts' own, rendered alone, where they play with the melody (bars 5-16)
@@ -13368,7 +13416,7 @@ void TestMeasureMix()
 		const double Under = NumberAfter(R.Text, "\nThe intro is ");
 		CHECK(Under >= 6.0 && Under <= 10.0);
 		CHECK_HAS(R.Text, " dB under the loop.\nSides: ");
-		CHECK(Softer.Renders == 1);	// the mix alone
+		CHECK(Softer.Renders == 1 && Softer.Passes == 1);	// the mix alone
 		CHECK_LACKS(R.Text, "Alone");
 	}
 
@@ -13382,12 +13430,13 @@ void TestMeasureMix()
 	CHECK_HAS(R.Text, "\n- bars 13-16: ");
 	// A section in place of bars: only those, rendered only as far as they need
 	Song.Renders = 0;
+	Song.Passes = 0;
 	R = Run(Song, "measure_mix", "{\"section\": \"A\", \"stems\": false}");
 	CHECK_HAS(R.Text, "Measured bars 5-12 of \"Town\"");
 	CHECK_HAS(R.Text, "\n- A, bars 5-12: ");
 	CHECK_LACKS(R.Text, "Loop");
 	CHECK_LACKS(R.Text, "intro");
-	CHECK(Song.Renders == 1);
+	CHECK(Song.Renders == 1 && Song.Passes == 1);
 
 	// The export's loudness: every number as the file at that loudness has it
 	R = Run(Song, "measure_mix", "{\"loudness\": -20, \"stems\": false}");
@@ -13425,12 +13474,13 @@ void TestMeasureMix()
 
 	// Parts named: one channel, several joined with + as one, the chords; the melody among them is measured anyway
 	Song.Renders = 0;
+	Song.Passes = 0;
 	R = Run(Song, "measure_mix", "{\"parts\": [\"Triangle\", \"Pulse 1+Pulse 2\", \"VRC6 Pulse 1\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
 	CHECK(!R.IsError);
 	CHECK_HAS(R.Text, "\n- Triangle (bass): ");
 	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1-2 together: ");
 	CHECK_LACKS(R.Text, "\n- chords");
-	CHECK(Song.Renders == 4);
+	CHECK(Song.Renders == 4 && Song.Passes == 1);
 	R = Run(Song, "measure_mix", "{\"parts\": \"chords\"}");
 	CHECK_HAS(R.Text, "\n- chords (2A03 Pulse 1-2): ");
 	CHECK_LACKS(R.Text, "Triangle");
@@ -16140,6 +16190,388 @@ void TestStudyTagsAgain()
 	std::remove("api_tests_tags_again.m3u");
 }
 
+// soft-references tests (2026-10-25): a reference's sounds as N163 wave sounds, for the VRC6 Plus's soft layer
+
+// A reference with a sound of each kind: a 2A03 pulse, a VRC6 pulse with a duty click, a triangle bass, a VRC6
+// sawtooth, an N163 sound with two waves of 32 samples and a wave sequence, an FDS sound with its wave, an echo that's
+// gone in three frames, one N163 sound studied before the waves were kept, and a drum
+Reference SoftReference()
+{
+	Reference R;
+	R.Id = "soft-game-02";
+	R.Title = "Ripple";
+	R.Game = "Soft Game";
+	R.Composer = "Tester";
+	R.Track = 2;
+	R.Tags.push_back("namco");
+	auto Sound = [&](const char *Channel, const char *Role, const char *Chip, const char *Words) {
+		ReferenceSound S;
+		S.Channel = Channel;
+		S.Role = Role;
+		S.Chip = Chip;
+		S.Words = Words;
+		S.Share = 80;
+		return S;
+	};
+	ReferenceSound Lead = Sound("Pulse 1", "the lead", "2A03", "a 50% pulse that holds at 15 with a vibrato");
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15 };
+	Lead.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 2 };
+	Lead.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 0, 2, 2, -2, -2, -2, -2, 2, 2 };
+	Lead.Sequences[SEQUENCE_PITCH].Loop = 1;
+	R.Sounds.push_back(Lead);
+	ReferenceSound Click = Sound("Pulse 1", "a second part", "VRC6", "25% after a 50% click");
+	Click.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 14, 13 };
+	Click.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 7, 3 };
+	Click.Sequences[SEQUENCE_DUTY].Loop = 1;
+	R.Sounds.push_back(Click);
+	ReferenceSound Bass = Sound("Triangle", "bass", "2A03", "a plain, steady tone");
+	Bass.Triangle = true;
+	Bass.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 0, 2, 4 };
+	R.Sounds.push_back(Bass);
+	ReferenceSound Saw = Sound("Sawtooth", "a low part", "VRC6", "starts at 15, holds 12");
+	Saw.Sawtooth = true;
+	Saw.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 12 };
+	R.Sounds.push_back(Saw);
+	ReferenceSound Pad = Sound("Namco 1", "chords as arpeggios", "N163", "a plain, steady tone");
+	Pad.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 12 };
+	Pad.Sequences[SEQUENCE_ARPEGGIO].Items = std::vector<int>{ 0, 4, 7 };
+	Pad.Sequences[SEQUENCE_ARPEGGIO].Loop = 0;
+	Pad.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 1, -1 };
+	Pad.Sequences[SEQUENCE_PITCH].Loop = 0;
+	std::vector<int> Ramp, Quarter;
+	for (int i = 0; i < 32; ++i) {
+		Ramp.push_back(i / 2);
+		Quarter.push_back(i < 8 ? 15 : 0);
+	}
+	Pad.N163Waves = { Ramp, Quarter };
+	Pad.N163WaveSteps.Items = std::vector<int>{ 0, 0, 1, 1 };
+	Pad.N163WaveSteps.Loop = 2;
+	R.Sounds.push_back(Pad);
+	ReferenceSound Disk = Sound("FDS", "the lead", "FDS", "blooms from 10 to 32 in 5 frames");
+	Disk.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 10, 15, 20, 26, 31, 32, 30, 28 };
+	Disk.Sequences[SEQUENCE_VOLUME].Release = 6;
+	Disk.Sequences[SEQUENCE_PITCH].Items = std::vector<int>{ 0, 4, -4, -4, 4 };
+	Disk.Sequences[SEQUENCE_PITCH].Loop = 1;
+	for (int k = 0; k < FDS_WAVE_SIZE; ++k)
+		Disk.FdsWave.push_back(63 - k);		// a falling ramp
+	Disk.FdsMod.assign(FDS_MOD_SIZE, 1);
+	Disk.ModSpeed = 34;
+	Disk.ModDepth = 5;
+	R.Sounds.push_back(Disk);
+	ReferenceSound Echo = Sound("Pulse 2", "an echo of Pulse 1", "2A03", "a 25% pulse that falls 15 10 5 2 1 0");
+	Echo.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+	Echo.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 1 };
+	R.Sounds.push_back(Echo);
+	ReferenceSound Older = Sound("Namco 2", "the lead", "N163", "a plain, steady tone");
+	R.Sounds.push_back(Older);
+	ReferenceSound Snare = Sound("Noise", "snare", "2A03", "a short burst");
+	Snare.Noise = true;
+	Snare.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 9, 4, 0 };
+	R.Sounds.push_back(Snare);
+	return R;
+}
+
+// ReferenceWaveSound: each kind's wave and sequences, the waves kept in the file and the study
+void TestSoftReferenceWaves()
+{
+	const Reference R = SoftReference();
+	std::string How;
+	// A pulse: its duty's width, its pitch sequence turned around (the N163's steps move a frequency)
+	WaveSound W = ReferenceWaveSound(R.Sounds[0], "Ripple lead", How);
+	CHECK(W.Name == "Ripple lead" && W.Description == R.Sounds[0].Words && W.Waves.size() == 1u && W.Waves[0] == N163PulseWave(8));
+	CHECK_EQ(How, std::string("a 50% pulse wave, its duty's"));
+	CHECK(N163PulseWave(8) == std::vector<int>({ 15, 15, 15, 15, 15, 15, 15, 15, 0, 0, 0, 0, 0, 0, 0, 0 }));
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME) != 0 && SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 15 }));
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_PITCH) != 0 && SequenceOf(W.Sequences, SEQUENCE_PITCH)->Items ==
+		std::vector<int>({ 0, -2, -2, 2, 2, 2, 2, -2, -2 }) && SequenceOf(W.Sequences, SEQUENCE_PITCH)->Loop == 1);
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_DUTY) == 0);		// one wave: none picks among them
+	// A VRC6 duty click: a wave for each width (7: 50%, 3: 25%), the duty sequence picking them, its loop kept
+	W = ReferenceWaveSound(R.Sounds[1], "Ripple second", How);
+	CHECK(W.Waves.size() == 2u && W.Waves[0] == N163PulseWave(8) && W.Waves[1] == N163PulseWave(4));
+	CHECK_EQ(How, std::string("pulse waves of its duties (50% and 25%), in turn as its duty sequence played them"));
+	const PresetSequence *pSteps = SequenceOf(W.Sequences, SEQUENCE_DUTY);
+	CHECK(pSteps != 0 && pSteps->Items == std::vector<int>({ 0, 1 }) && pSteps->Loop == 1);
+	// A 2A03 duty sequence of all four widths
+	ReferenceSound Four = R.Sounds[0];
+	Four.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 0, 1, 2, 3, 1 };
+	W = ReferenceWaveSound(Four, "Four", How);
+	CHECK(W.Waves.size() == 4u && W.Waves[0] == N163PulseWave(2) && W.Waves[3] == N163PulseWave(12) &&
+		SequenceOf(W.Sequences, SEQUENCE_DUTY)->Items == std::vector<int>({ 0, 1, 2, 3, 1 }));
+	CHECK_EQ(How, std::string("pulse waves of its duties (12.5%, 25%, 50% and 75%), in turn as its duty sequence played them"));
+	// The triangle: its 32 steps taken every other one, and its volume as the triangle plays it, full or silent
+	W = ReferenceWaveSound(R.Sounds[2], "Ripple bass", How);
+	CHECK(W.Waves.size() == 1u && W.Waves[0] == std::vector<int>({ 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10, 12, 14 }));
+	CHECK_EQ(How, std::string("a triangle wave, as its channel played it"));
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 0, 15, 15 }));
+	// The sawtooth: the VRC6's seven steps, resampled
+	W = ReferenceWaveSound(R.Sounds[3], "Ripple low", How);
+	CHECK(W.Waves.size() == 1u && W.Waves[0] == N163SawtoothWave() &&
+		N163SawtoothWave() == std::vector<int>({ 0, 0, 2, 2, 3, 5, 5, 7, 7, 10, 10, 12, 13, 13, 15, 15 }));
+	CHECK_EQ(How, std::string("a sawtooth wave, as its channel played it"));
+	// An N163 sound: its own waves resampled from 32 samples to 16, its wave sequence, its pitch as it was
+	W = ReferenceWaveSound(R.Sounds[4], "Ripple arp", How);
+	CHECK(W.Waves.size() == 2u && W.Waves[0] == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }) &&
+		W.Waves[1] == N163PulseWave(4));
+	CHECK_EQ(How, std::string("its own 2 waves, in turn as its wave sequence played them, resampled from 32 samples to the 16 that play in tune"));
+	pSteps = SequenceOf(W.Sequences, SEQUENCE_DUTY);
+	CHECK(pSteps != 0 && pSteps->Items == std::vector<int>({ 0, 0, 1, 1 }) && pSteps->Loop == 2);
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_PITCH)->Items == std::vector<int>({ 1, -1 }) &&
+		SequenceOf(W.Sequences, SEQUENCE_ARPEGGIO)->Items == std::vector<int>({ 0, 4, 7 }));
+	// An FDS sound: its wave resampled (64 to 16, 0-63 to 0-15), its volume counted 0-15, its pitch four times coarser
+	W = ReferenceWaveSound(R.Sounds[5], "Ripple disk", How);
+	CHECK(W.Waves.size() == 1u && W.Waves[0] == std::vector<int>({ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }));
+	CHECK_EQ(How, std::string("its FDS wave, resampled to the N163's 16 samples (without its modulator, which the N163 hasn't)"));
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }) &&
+		SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Release == 6);
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_PITCH)->Items == std::vector<int>({ 0, 1, -1, -1, 1 }));
+	// One studied before the waves were kept: a round wave, and how to get its own
+	W = ReferenceWaveSound(R.Sounds[7], "Old", How);
+	CHECK(W.Waves.size() == 1u && W.Waves[0] == N163WaveOf(FdsWaveOfWord("round"), 63));
+	CHECK_HAS(How, "the reference was studied before N163 waves were kept, so study its NSF or module again");
+	// Resampling: a wave drawn twice is one cycle of it (it played an octave up); a shorter one held; 0-Top to 0-15
+	const std::vector<int> Triangle = N163TriangleWave();
+	std::vector<int> Twice(Triangle);
+	Twice.insert(Twice.end(), Triangle.begin(), Triangle.end());
+	CHECK(N163WaveOf(Twice, 15) == N163TriangleWave());
+	CHECK(N163WaveOf(std::vector<int>({ 15, 15, 0, 0, 0, 0, 0, 0 }), 15) == N163PulseWave(4));
+	CHECK(N163WaveOf(std::vector<int>({ 63, 0 }), 63) == N163PulseWave(8));
+	// One cycle's length: the halves alike, down to 4 samples
+	CHECK(N163CycleLength(Twice) == 16 && N163CycleLength(R.Sounds[4].N163Waves[0]) == 32 && N163CycleLength(N163TriangleWave()) == 16);
+	CHECK(N163CycleLength(std::vector<int>({ 15, 15, 15, 15, 0, 0, 0, 0, 15, 15, 15, 15, 0, 0, 0, 0 })) == 8 &&
+		N163CycleLength(std::vector<int>({ 15, 15, 0, 0, 15, 15, 0, 0, 15, 15, 0, 0, 15, 15, 0, 0 })) == 4 &&
+		N163CycleLength(std::vector<int>({ 15, 0, 15, 0 })) == 4 && N163CycleLength(std::vector<int>()) == 0);
+	// A pulse on the FDS from an N163 sound: its first wave
+	std::string FdsHow;
+	const FdsSound F = ReferenceFdsSound(R.Sounds[4], "Ripple arp", FdsHow);
+	CHECK(F.Wave.size() == 64u && F.Wave[0] == 0 && F.Wave[63] == 63 && FdsHow == "its first N163 wave (the FDS plays one)");
+
+	// The waves in the reference's file, and its text; damaged ones aren't kept
+	Reference Back;
+	std::string Error;
+	CHECK(ReadReferenceFile(ReferenceFile(R), Back, Error) && Back.Sounds.size() == R.Sounds.size());
+	if (Back.Sounds.size() == R.Sounds.size()) {
+		CHECK(Back.Sounds[4].N163Waves == R.Sounds[4].N163Waves && Back.Sounds[4].N163WaveSteps.Items == R.Sounds[4].N163WaveSteps.Items &&
+			Back.Sounds[4].N163WaveSteps.Loop == 2);
+		CHECK(Back.Sounds[0].N163Waves.empty() && Back.Sounds[7].N163Waves.empty() && Back.Sounds[5].N163Waves.empty());
+	}
+	CHECK_HAS(ReferenceFile(R), "\"n163_waves\": [\n");
+	CHECK_HAS(ReferenceText(R), "\n     N163 wave 0: 0 0 1 1 2 2 ");
+	CHECK_HAS(ReferenceText(R), " 0 0 0 0; wave sequence 0 0 [1 1\n");
+	{
+		Reference Cut = R;
+		Cut.Sounds[4].N163Waves[1].resize(20);	// two sizes
+		CHECK(ReadReferenceFile(ReferenceFile(Cut), Back, Error) && Back.Sounds[4].N163Waves.empty() &&
+			Back.Sounds[4].N163WaveSteps.Items.empty());
+		Cut.Sounds[4].N163Waves.assign(1, std::vector<int>(3, 8));	// too short
+		CHECK(ReadReferenceFile(ReferenceFile(Cut), Back, Error) && Back.Sounds[4].N163Waves.empty());
+	}
+	// A study's N163 sound keeps them in the reference (MakeFtmReference, as study_module makes it)
+	nsf::Module M;
+	M.Title = "Wave Test";
+	M.Expansion = nsf::EXP_N163;
+	M.N163Channels = 1;
+	M.Tracks.resize(1);
+	nsf::TrackStudy St;
+	St.Name = "Waves";
+	nsf::StudySound Sd;
+	Sd.Channel = "Namco 1";
+	Sd.Role = "the lead";
+	Sd.Kind = nsf::INST_N163;
+	Sd.Words = "a plain, steady tone";
+	Sd.N163Waves = R.Sounds[4].N163Waves;
+	Sd.N163WaveSteps = nsf::Macro(std::vector<int>{ 0, 1, 1, 7 }, 1);
+	St.Sounds.push_back(Sd);
+	nsf::StudySound Square = Sd;
+	Square.Kind = nsf::INST_2A03;
+	Square.Channel = "Pulse 1";
+	St.Sounds.push_back(Square);
+	const Reference Made = MakeFtmReference(M, 0, St, "C:\\music\\waves.ftm", "2026-10-25");
+	CHECK(Made.Sounds.size() == 2u);
+	if (Made.Sounds.size() == 2u) {
+		CHECK(Made.Sounds[0].Chip == "N163" && Made.Sounds[0].N163Waves == R.Sounds[4].N163Waves &&
+			Made.Sounds[0].N163WaveSteps.Items == std::vector<int>({ 0, 1, 1, 1 }) && Made.Sounds[0].N163WaveSteps.Loop == 1);
+		CHECK(Made.Sounds[1].N163Waves.empty() && Made.Sounds[1].N163WaveSteps.Items.empty());	// the 2A03's keeps none
+	}
+}
+
+// reference_sound on the VRC6 Plus's soft layer: each sound a wave sound in a place of its own, its level, what changed;
+// the sound browser's list and find_sound with the studied sounds for the soft layer
+void TestSoftReferenceTool()
+{
+	FakeSong Song;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);	// its starters take 0-63 of the wave memory
+	const Reference R = SoftReference();
+	Song.Library["soft-game-02.json"] = ReferenceFile(R);
+	// Without a channel, an N163 sound goes on the N163
+	ToolResult Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 5}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Ripple arp\" (07), an N163 instrument: sound 5 of soft-game-02 (Namco 1, chords as arpeggios): a "
+		"plain, steady tone. It plays its own 2 waves, in turn as its wave sequence played them, resampled from 32 samples to the 16 "
+		"that play in tune; its wave takes samples 64-79 of the 128 FamiTracker loads N163 waves from, which have room for 3 more "
+		"sounds.");
+	CHECK_HAS(Result.Text, " At volume 15 it holds about ");
+	CHECK_LACKS(Result.Text, "turned around");
+	CHECK_HAS(Result.Text, " Its wave is a cycle of 32 samples, so its notes sounded an octave under the notes written (FamiTracker "
+		"plays a cycle of 16 in tune); here they sound as written, so write its part an octave lower to keep its register.");
+	CHECK(Song.MadeWaves.count(7) == 1u && SongInstrument(Song, 7) != 0 && SongInstrument(Song, 7)->WavePos == 64 &&
+		SongInstrument(Song, 7)->Chip == "N163");
+	std::string Unused;
+	if (Song.MadeWaves.count(7) == 1u)
+		CHECK(Song.MadeWaves[7].Waves == ReferenceWaveSound(R.Sounds[4], "Ripple arp", Unused).Waves);
+	// The pulse lead on Soft 1: a 50% pulse wave, as loud as the N163's square (0.6 dB under a pulse with four channels)
+	Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 1, \"channel\": \"Soft 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"Ripple lead\" (08), an N163 instrument for VRC6 Plus Soft 1: sound 1 of soft-game-02 (Pulse 1, "
+		"the lead): a 50% pulse that holds at 15 with a vibrato. It plays a 50% pulse wave, its duty's; its wave takes samples 80-95");
+	CHECK_HAS(Result.Text, "At volume 15 it holds about 0.6 dB under a 2A03 pulse at 15.");
+	CHECK_HAS(Result.Text, "Its pitch sequence is turned around for the N163, whose steps raise the pitch where a pulse's lower it");
+	CHECK_LACKS(Result.Text, "gone within");
+	// Asked again: the one it has
+	Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 1, \"channel\": \"Soft 2\"}");
+	CHECK_HAS(Result.Text, "The song already has \"Ripple lead\" (08), an N163 instrument for VRC6 Plus Soft 2");
+	CHECK_LACKS(Result.Text, "At volume 15");
+	// The triangle bass on Soft 4: the octave it sounded in, and its level (a triangle's: 4.2 dB under the square)
+	Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 3, \"channel\": \"Soft 4\"}");
+	CHECK_HAS(Result.Text, "It plays a triangle wave, as its channel played it; its wave takes samples 96-111");
+	CHECK_HAS(Result.Text, "At volume 15 it holds about 4.8 dB under a 2A03 pulse at 15.");
+	CHECK_HAS(Result.Text, "It was a triangle sound: the triangle sounds an octave under the notes written, the N163 as written, so "
+		"write its part an octave lower to keep its register.");
+	// The echo on Soft 3 (the last place under 128): gone within three frames, which the tools say
+	Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 7, \"channel\": \"Soft 3\", \"name\": "
+		"\"Ripple echo\"}");
+	CHECK_HAS(Result.Text, "Added \"Ripple echo\" (0A)");
+	CHECK_HAS(Result.Text, "samples 112-127 of the 128 FamiTracker loads N163 waves from, which have room for 0 more sounds.");
+	// Its notes are gone within three frames, which the tools say from the instrument's volume sequence as FamiTracker
+	// reports it (McpConnection's ReadSequences; the song in memory here leaves an N163 instrument's out)
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Index == 10 && Song.MadeWaves.count(10) == 1u)
+			Song.Info.Instruments[i].Volume = SequenceOf(Song.MadeWaves[10].Sequences, SEQUENCE_VOLUME)->Items;
+	CHECK(SongInstrument(Song, 10) != 0 && SongInstrument(Song, 10)->Volume == std::vector<int>({ 15, 10, 5, 2, 1, 0 }));
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 7, \"channel\": \"Soft 3\", \"name\": "
+		"\"Ripple echo\"}").Text, "Its notes are gone within 3 frames");
+	// Every place taken: said so
+	Result = Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 6, \"channel\": \"Soft 3\", \"name\": "
+		"\"Disk lead\"}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "The N163's wave memory is full");
+	// Each wave in a place of its own, none touching another's (the starters', 0-63, and these)
+	std::vector<int> Places;
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Chip == "N163")
+			Places.push_back(Song.Info.Instruments[i].WavePos);
+	CHECK(Places == std::vector<int>({ 0, 16, 32, 48, 64, 80, 96, 112 }));
+	// A drum doesn't go on the soft layer; nor anything on the VRC7
+	CHECK_HAS(Run(Song, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 9, \"channel\": \"Soft 1\"}").Text,
+		"That sound is a drum: give the noise channel.");
+	FakeSong Fm;
+	CHECK(!Run(Fm, "set_expansion", "{\"chip\": \"VRC7\", \"confirm\": true}").IsError);
+	Fm.Library = Song.Library;
+	CHECK_HAS(Run(Fm, "reference_sound", "{\"reference\": \"soft-game-02\", \"channel\": \"FM Channel 1\"}").Text,
+		"A reference's sound can be an instrument for 2A03, MMC5, VRC6, FDS, N163 (the VRC6 Plus's soft layer too) and 5B channels, "
+		"not ");
+
+	// The FDS sound and the sawtooth's in another VRC6 Plus song: what changed, and how loud
+	FakeSong Other;
+	CHECK(!Run(Other, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	Other.Library = Song.Library;
+	Result = Run(Other, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 6, \"channel\": \"Soft 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "It plays its FDS wave, resampled to the N163's 16 samples (without its modulator, which the N163 hasn't);");
+	CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, its pitch sequence in the N163's "
+		"coarser steps, and its notes sound as written (on the FDS they sounded two octaves under).");
+	{
+		// ...without a pitch sequence, nothing said of one
+		Reference Plain = R;
+		Plain.Id = "soft-game-03";
+		Plain.Sounds[5].Sequences[SEQUENCE_PITCH] = ReferenceSequence();
+		FakeSong Disk;
+		CHECK(!Run(Disk, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+		Disk.Library["soft-game-03.json"] = ReferenceFile(Plain);
+		Result = Run(Disk, "reference_sound", "{\"reference\": \"soft-game-03\", \"sound\": 6, \"channel\": \"Soft 1\"}");
+		CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, and its notes sound as written");
+		CHECK_LACKS(Result.Text, "pitch sequence");
+	}
+	CHECK(Other.MadeWaves.count(7) == 1u && SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME) != 0 &&
+		SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	Result = Run(Other, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 4, \"channel\": \"Soft 2\"}");
+	CHECK_HAS(Result.Text, "It plays a sawtooth wave, as its channel played it; its wave takes samples 80-95");
+	CHECK_HAS(Result.Text, "At volume 15 it holds about 5.9 dB under a 2A03 pulse at 15.");	// held at 12
+	// The studied N163 sound from before the waves were kept: a round wave, and how to get its own
+	CHECK_HAS(Run(Other, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 8, \"channel\": \"Soft 3\", \"name\": "
+		"\"Old lead\"}").Text,
+		"a round wave: the reference was studied before N163 waves were kept");
+
+	// The sound browser on the soft layer (the user on Soft 1): every studied melodic sound, at home where reference_sound
+	// puts it without a channel (the N163's on the soft layer, the others on the 2A03), with the warnings of notes that vanish
+	FakeSong Browse;
+	CHECK(!Run(Browse, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	Browse.Library = Song.Library;
+	ToolSet Tools(Browse);
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(8, All, Error));
+	const SoundEntry *pArp = FindEntry(All, "Ripple arp", TARGET_SOFT), *pLead = FindEntry(All, "Ripple lead", TARGET_SOFT);
+	CHECK(pArp != 0 && pArp->Home && pArp->Make == MAKE_REFERENCE && pArp->Chip == "N163" && pArp->Source == SOURCE_REFERENCE &&
+		pArp->ChannelName == "VRC6 Plus Soft 1" && pArp->Kind == "pad");
+	CHECK(pLead != 0 && !pLead->Home && pLead->Chip == "N163" && FindEntry(All, "Ripple lead", TARGET_PULSE) != 0 &&
+		FindEntry(All, "Ripple lead", TARGET_PULSE)->Home);
+	CHECK(FindEntry(All, "Ripple snare", TARGET_SOFT) == 0 && FindEntry(All, "Ripple arp", TARGET_PULSE) != 0 &&
+		!FindEntry(All, "Ripple arp", TARGET_PULSE)->Home);
+	const SoundEntry *pEcho = FindEntry(All, "Ripple echo", TARGET_SOFT);
+	CHECK(pEcho != 0 && pEcho->Heard <= 4);
+	if (pEcho != 0)
+		CHECK_HAS(pEcho->Warning, "Its notes are gone within ");
+	SoundQuery Q;
+	Q.Target = TARGET_SOFT;
+	Q.Source = SOURCE_REFERENCE;
+	CHECK_EQ(FindSounds(All, Q).size(), static_cast<size_t>(8));		// all but the drum
+	// Made from the list, as reference_sound makes it for that channel
+	if (pLead != 0) {
+		const int Made = Tools.MakeSound(*pLead, Error);
+		CHECK(Made >= 0 && Browse.MadeWaves.count(Made) == 1u && SongInstrument(Browse, Made)->Name == "Ripple lead" &&
+			SongInstrument(Browse, Made)->WavePos == 64);
+		if (Browse.MadeWaves.count(Made) == 1u)
+			CHECK(Browse.MadeWaves[Made].Waves == Song.MadeWaves[8].Waves &&
+				SequenceOf(Browse.MadeWaves[Made].Sequences, SEQUENCE_PITCH)->Items == SequenceOf(Song.MadeWaves[8].Sequences,
+				SEQUENCE_PITCH)->Items);
+	}
+	// find_sound names the call that adds it there
+	Result = Run(Browse, "find_sound", "{\"query\": \"ripple lead\", \"channel\": \"Soft 2\"}");
+	CHECK_HAS(Result.Text, "Add it with reference_sound reference \"soft-game-02\" sound 1 channel 10 name \"Ripple lead\"");
+	// A plain N163 song lists them too, and puts an N163 sound there without a channel
+	FakeSong Namco;
+	CHECK(!Run(Namco, "set_expansion", "{\"chip\": \"N163\", \"n163_channels\": 4, \"confirm\": true}").IsError);
+	Namco.Library = Song.Library;
+	ToolSet NamcoTools(Namco);
+	CHECK(NamcoTools.Sounds(-1, All, Error));
+	CHECK(FindEntry(All, "Ripple arp", TARGET_N163) != 0 && FindEntry(All, "Ripple arp", TARGET_N163)->Home &&
+		FindEntry(All, "Ripple lead", TARGET_N163) != 0);
+	CHECK_HAS(Run(Namco, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 5}").Text, "an N163 instrument: sound 5");
+
+	// A wave drawn twice in its 16 samples played an octave over its notes: said so, and one cycle of it plays
+	Reference Twice = R;
+	Twice.Id = "soft-game-04";
+	std::vector<int> Square;
+	for (int i = 0; i < 16; ++i)
+		Square.push_back(i % 8 < 4 ? 15 : 0);
+	Twice.Sounds[4].N163Waves.assign(1, Square);
+	Twice.Sounds[4].N163WaveSteps = ReferenceSequence();
+	Twice.Sounds[7].N163Waves.assign(1, N163TriangleWave());	// one cycle of 16
+	FakeSong Up;
+	CHECK(!Run(Up, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	Up.Library["soft-game-04.json"] = ReferenceFile(Twice);
+	Result = Run(Up, "reference_sound", "{\"reference\": \"soft-game-04\", \"sound\": 5, \"channel\": \"Soft 1\"}");
+	CHECK_HAS(Result.Text, "It plays its own wave; its wave takes samples 64-79");
+	CHECK_HAS(Result.Text, " Its wave is a cycle of 8 samples, so its notes sounded an octave over the notes written (FamiTracker "
+		"plays a cycle of 16 in tune); here they sound as written, so write its part an octave higher to keep its register.");
+	CHECK(Up.MadeWaves.count(7) == 1u && Up.MadeWaves[7].Waves.size() == 1u && Up.MadeWaves[7].Waves[0] == N163PulseWave(8));
+	// ...and a wave of one cycle in 16 samples, in tune there too, says nothing of its register
+	Result = Run(Up, "reference_sound", "{\"reference\": \"soft-game-04\", \"sound\": 8, \"channel\": \"Soft 2\"}");
+	CHECK_HAS(Result.Text, "It plays its own wave; its wave takes samples 80-95");
+	CHECK_LACKS(Result.Text, "to keep its register");
+}
+// end of soft-references tests
+
 int main()
 {
 	TestJson();
@@ -16286,6 +16718,8 @@ int main()
 	TestCueJudging();
 	TestStudyTagsAgain();
 	TestPhoneRoute();
+	TestSoftReferenceWaves();
+	TestSoftReferenceTool();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

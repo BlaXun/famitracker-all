@@ -686,6 +686,60 @@ void TestFdsStudy()
 	CHECK(Has(Text, ", speed 34, depth 5, delay 2\n"));
 }
 
+// A study keeps an N163 sound's waves and its wave sequence too, so reference_sound can play them on N163 channels (the
+// VRC6 Plus's soft layer)
+void TestN163Study()
+{
+	Writer w;
+	Params(w, EXP_N163, 6, 0, 0, 1, 1);		// one N163 channel: 6 with the 2A03's
+	Info(w, "N163 study", "", "");
+	Header(w, { "Waves" }, { { 0, 0, 0, 0, 0, 0 } });
+	w.Begin("INSTRUMENTS", 6).Int(1);
+	w.Int(0).U8(T_N163);
+	InstSequences(w, { 1, -1, -1, -1, 0 });
+	w.Int(32).Int(0).Int(2);		// waves of 32 samples, at 0, two of them
+	for (int i = 0; i < 32; ++i)
+		w.U8(i / 2);				// a ramp
+	for (int i = 0; i < 32; ++i)
+		w.U8(i < 8 ? 15 : 0);		// a pulse, a quarter of it up
+	w.Name("Wave lead");
+	w.End();
+	Frames3(w, { { 6, 150, 64, { { 0, 0, 0, 0, 0, 0 } } } });
+	w.Begin("PATTERNS", 5);
+	std::vector<RowData> Rows;
+	for (int r = 0; r < 16; ++r)
+		Rows.push_back(RowData{ r * 4, 1 + (r % 3) * 2, 4, 0, NO_VOL, {} });
+	PatternRows(w, 0, 5, 0, Rows, 1);
+	w.End();
+	SequencesN163(w, {
+		{ 0, SEQ_DUTY, { 0, 0, 1, 1 }, 2, -1, 0 },
+		{ 1, SEQ_VOLUME, { 15, 13, 12 }, -1, -1, 0 },
+	});
+	Module M;
+	FtmInfo Info;
+	if (!ReadModule(w.Finish(), M, Info)) {
+		CHECK(false);
+		return;
+	}
+	const TrackStudy St = StudyTrack(M, 0, FtmTrackReport(M, Info, 0));
+	const StudySound *pWave = 0;
+	for (size_t i = 0; i < St.Sounds.size(); ++i)
+		if (St.Sounds[i].Kind == INST_N163)
+			pWave = &St.Sounds[i];
+	CHECK(pWave != 0);
+	if (pWave == 0)
+		return;
+	CHECK(pWave->N163Waves.size() == 2 && pWave->N163Waves[0].size() == 32 && pWave->N163Waves[0][31] == 15 &&
+		pWave->N163Waves[1][7] == 15 && pWave->N163Waves[1][8] == 0);
+	CHECK(Items(pWave->N163WaveSteps, { 0, 0, 1, 1 }) && pWave->N163WaveSteps.Loop == 2);
+	CHECK(pWave->Macros[SEQ_DUTY].Empty() && Items(pWave->Macros[SEQ_VOLUME], { 15, 13, 12 }));	// its duty isn't a pulse's
+	CHECK(pWave->FdsWave.empty());
+	const std::string Text = DescribeStudy(St, true);
+	CHECK(Has(Text, "      N163 wave 0: 0 0 1 1 2 2 "));
+	CHECK(Has(Text, "      N163 wave 1: 15 15 15 15 15 15 15 15 0 0 "));
+	CHECK(Has(Text, " 0 0; wave sequence 0 0 [1 1\n"));
+}
+
 void TestN163()
 {
 	Writer w;
@@ -1431,6 +1485,7 @@ int main(int argc, char **argv)
 	TestOtherFiles();
 	TestBroken();
 	TestSettingsAndReport();
+	TestN163Study();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures ? 1 : 0;
 }

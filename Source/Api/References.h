@@ -47,6 +47,7 @@ struct Module;
 namespace ftapi {
 
 struct FdsSound;
+struct WaveSound;
 
 struct ReferenceSequence {
 	std::vector<int> Items;		// empty when the sound doesn't use it
@@ -66,6 +67,9 @@ struct ReferenceSound {
 	std::vector<int> FdsWave;	// an FDS sound's wave (64 samples, 0-63) and modulation table (32 steps, 0-7); empty for
 	std::vector<int> FdsMod;	// the others' and in references studied before these were kept
 	int ModSpeed, ModDepth, ModDelay;	// its modulator
+	std::vector<std::vector<int> > N163Waves;	// an N163 sound's waves (1-16 of 4-32 samples, 0-15) and the sequence that
+	ReferenceSequence N163WaveSteps;	// picks among them (empty for one wave); empty for the others' and in references
+										// studied before these were kept
 	ReferenceSound() : Noise(false), Triangle(false), Sawtooth(false), Share(0), ModSpeed(0), ModDepth(0), ModDelay(0) {}
 };
 
@@ -138,6 +142,14 @@ Preset ReferencePreset(const ReferenceSound &Sound, const std::string &Name);
 // turned around, and a wave from its channel (its duty's pulse, a sawtooth or
 // a triangle). How says in words what wave it plays.
 FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name, std::string &How);
+// One of a reference's sounds as an N163 wave sound (Wavetables.h; the VRC6 Plus's soft layer plays them), named Name:
+// an N163 sound's own waves and wave sequence, each wave resampled to the 16 samples that play in tune; another
+// chip's with a wave from its channel (its duty's pulse, a wave for each duty its duty sequence steps through, the
+// triangle, the sawtooth, an FDS sound's wave resampled). Its volume counted 0-15 (an FDS sound's from 0-32, a
+// triangle's as it plays: full or silent), its arpeggio as it was, its pitch and hi-pitch sequences in the N163's
+// steps, which move a frequency (a 2A03 or VRC6 sound's turned around, alike around A-3, 440 Hz, with four channels;
+// an FDS sound's four times coarser). How says in words what it plays.
+WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Name, std::string &How);
 // A short name for an instrument from a sound: "Magma Tanker lead"
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound);
 

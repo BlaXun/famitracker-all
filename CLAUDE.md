@@ -468,8 +468,8 @@ plays from the silent channels alone), since the pin compresses what it
 mixes: a fader's share of the pin (a gain of 0, or the -24 dB stems
 composers made by hand) leaves a triangle under a DPCM level several dB
 louder than it sounds (`TestSilentParts`). The document's mixer, mutes and
-track stay as they are. Each render stops at the last row it needs, without
-the tail. A song that sets the
+track stay as they are. They're rendered in one pass (below), as far as the
+mix needs, without the tail. A song that sets the
 DPCM level (`Zxx`) on its first row starts with the DMC's output there
 (`CSoundGen::StartDacLevel` in `BeginPlayer`, `CAPU::StartDAC`,
 `CDPCM::StartAt`, and `CMixer::StartAt`, which takes the pin's output in
@@ -782,6 +782,67 @@ main window is disabled, Claude Code is being answered
 `PhoneTakes::Process` returns true and the timer tries again.
 `TestPhoneRoute` in `ApiTests.cpp` covers the route through `HandleMcp`
 and `place_clip` finding an idea by its name.
+
+Studied sounds on N163 channels and the VRC6 Plus's soft layer (from
+`feat-soft-references`): a study keeps an N163 sound's waves and wave
+sequence (`nsf::StudySound::N163Waves` and `N163WaveSteps`, from the
+module's instrument; `ReferenceSound`'s, `n163_waves` and
+`n163_wave_sequence` in the reference's JSON, whole or not at all), and
+`ReferenceWaveSound` in `References.cpp` makes any melodic sound a
+`WaveSound`: an N163 sound's own waves (`N163WaveOf` in `Wavetables.cpp`
+resamples each to 16 samples, one cycle of a wave drawn twice, each sample
+the mean of what it covers), another chip's a wave from its channel
+(`N163PulseWave` for each width its duty sequence steps through, the duty
+sequence picking them; `N163TriangleWave`, `N163SawtoothWave`, an FDS
+sound's wave), its volume 0-15 (an FDS sound's `FdsVolumeAs15`, a
+triangle's full or silent as it plays) and its pitch sequences in the
+N163's steps: CSequenceHandler adds them to the period, which on the N163
+(and the FDS) is a frequency, so a 2A03 or VRC6 sound's turn around (alike
+around A-3, 440 Hz, with four channels) and an FDS sound's go four times coarser.
+`MakeReferenceInstrument` places it with `AddWaveInstrument` (under 128,
+`FindWavePlace`), `SoftReferenceText` gives its level (`WaveSoundLevel`)
+and what changed (an N163 sound whose wave's cycle, `N163CycleLength`,
+isn't 16 samples sounded off its written notes where it came from, since
+the importer writes the note of the frequency register: an octave under
+for 32, `N163RegisterRemark`), and the sound index lists every studied
+melodic sound for `TARGET_N163` and `TARGET_SOFT` (an N163 sound at home
+there).
+FakeSong's `AddN163Instrument` reports an N163 instrument's sequences as
+`ReadSequences` in `McpConnection.cpp` does. `TestN163Study` in
+`Source/Nsf/tests/FtmTests.cpp`, `TestSoftReferenceWaves` and
+`TestSoftReferenceTool` cover them.
+
+`measure_mix` in one pass (from `feat-soft-references`):
+`SongHost::RenderParts` asks for several renders at once (the mix, the
+melody alone, each part alone), which FamiTracker makes in one pass.
+`CSoundGen::RenderToFile` takes them as stems (`render_stem_t`: a WAV file
+and the channels left out, up to `MAX_RENDER_STEMS`), and `OnStartRender`
+gives them to `CAPU::SetStems` once the APU is reset and the space cleared.
+`CMixer::SetStems` makes each stem a mixer of its own as the main one is
+then (`MakeStemOf`: settings, channels, and the synths exactly as they are,
+`Blip_Synth::copy_state`, since `volume_unit` leaves a kernel attenuated
+after a small volume; empty buffers, a silent space), leaves its channels
+out as `ApplyChannelMix` does, and from then on the main mixer passes it
+every call it gets, keeping them out (in the order a separate render gets
+them: the 2A03's pins truncate each step). `CAPU::EndFrame` reads each stem
+after the mix (`IAudioCallback::FlushStem`, `CSoundGen::FlushStem`), and
+`CVRC7::EndFrame` makes each stem's samples from the channels' values
+(`OPLL_calc_lr_parts`). `TestStemsInOnePass` in `Source/Tests/ApuTests.cpp`
+finds each stem the same as the render of its part alone, sample for
+sample, on every chip. `CMcpLink::RenderParts` renders 16 stems a pass and
+reads each file back as the tool takes it (`CRenderFiles`); FakeSong's
+counts `Passes`. `SoundMeasure` (a sound effect and each of its channels
+alone) asks for its renders the same way. Under Wine, a 40-bar VRC6
+Plus track with nine parts took 6.4-6.9 s of FamiTracker's CPU in one
+pass against 13.3-16.5 s part by part (29-35 s against 62-75 s on a busy
+machine), with the same reply. A short sound's renders depend on where the
+chip was left (a reset keeps the triangle's step, as the chip does, and
+the pins start there since `feat-sfx-fixes`, so a noise over it sounds
+louder or softer): part by part, each render started where the one before
+ended, and a 0.88 s explosion's parts came out up to 2 dB apart from one
+call to the next; in one pass every part starts where its mix does, so
+builds before and after differ there by that much. The whole sound still
+moves by a few tenths of a dB from call to call.
 
 ## What this repository is
 

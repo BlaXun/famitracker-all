@@ -77,6 +77,18 @@ const WaveSound *WaveSoundForKind(const std::string &Kind);
 // Base's waves, following each other as in Base, with Design's volume, arpeggio and pitch, named Name
 WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, const std::string &Name);
 
+// Waves of 16 samples (0-15) for sounds from other chips (References.h's ReferenceWaveSound): a pulse with High of its
+// samples up; the 2A03's triangle and the VRC6's sawtooth (its seven steps), resampled; and any wave of Samples (0-Top)
+// as one of 16: one cycle of it (a wave that repeats itself within its length, once), each sample the mean of what it
+// covers (a shorter wave's held), scaled to 0-15
+std::vector<int> N163PulseWave(int High);
+std::vector<int> N163TriangleWave();
+std::vector<int> N163SawtoothWave();
+std::vector<int> N163WaveOf(const std::vector<int> &Samples, int Top);
+// The samples of one cycle of a wave: half its length while its halves are the same, down to 4 (a wave drawn twice
+// plays an octave over its notes). FamiTracker plays a cycle of 16 in tune, of 32 an octave under its notes.
+int N163CycleLength(const std::vector<int> &Samples);
+
 // The samples of wave memory with Channels N163 channels in use (16 go to
 // each channel's registers)
 int N163WaveMemory(int Channels);

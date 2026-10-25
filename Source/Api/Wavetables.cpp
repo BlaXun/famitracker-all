@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 
 namespace ftapi {
 
@@ -444,6 +445,66 @@ WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, co
 	for (size_t i = 0; i < Base.Sequences.size(); ++i)
 		if (Base.Sequences[i].Type == SEQUENCE_DUTY)
 			Out.Sequences.push_back(Base.Sequences[i]);
+	return Out;
+}
+
+std::vector<int> N163PulseWave(int High)
+{
+	return PulseWave(std::max(0, std::min(N163_WAVE_SIZE, High)));
+}
+
+std::vector<int> N163TriangleWave()
+{
+	// The 2A03's 32 steps (15 down to 0 and up again) taken every other one: 15 13 ... 1 0 2 ... 14, whose harmonics are
+	// the triangle's within a dB up to the seventh (averaging the steps in pairs dulls them more)
+	std::vector<int> Wave;
+	for (int i = 0; i < N163_WAVE_SIZE; ++i)
+		Wave.push_back(i < 8 ? 15 - 2 * i : 2 * (i - 8));
+	return Wave;
+}
+
+std::vector<int> N163SawtoothWave()
+{
+	// The VRC6's: its accumulator adds the rate seven times, every other clock, and its top five bits sound (at full
+	// rate, 42: 0, 5, 10, 15, 21, 26, 31), resampled. Rendered under Wine (October 2026) beside a VRC6 sawtooth, this
+	// one's second to eighth harmonics came within 0.8 dB of the VRC6's but the fifth (3.5 dB over), its seventh 9 dB
+	// under a plain ramp's (the VRC6 has none); a ramp's second to fourth came 1-2 dB brighter
+	std::vector<int> Steps;
+	for (int k = 0; k < 7; ++k)
+		for (int Clock = 0; Clock < 2; ++Clock)
+			Steps.push_back((k * 42) >> 3);
+	return N163WaveOf(Steps, 31);
+}
+
+int N163CycleLength(const std::vector<int> &Samples)
+{
+	size_t Size = Samples.size();
+	while (Size >= 8 && Size % 2 == 0) {
+		const std::vector<int>::const_iterator Half = Samples.begin() + static_cast<std::ptrdiff_t>(Size / 2);
+		if (!std::equal(Samples.begin(), Half, Half, Half + static_cast<std::ptrdiff_t>(Size / 2)))
+			break;
+		Size /= 2;
+	}
+	return static_cast<int>(Size);
+}
+
+std::vector<int> N163WaveOf(const std::vector<int> &Samples, int Top)
+{
+	if (Samples.empty())
+		return std::vector<int>(N163_WAVE_SIZE, 8);
+	// One cycle: a wave drawn twice over its length plays an octave higher than its length says
+	const std::vector<int> Cycle(Samples.begin(), Samples.begin() + static_cast<std::ptrdiff_t>(N163CycleLength(Samples)));
+	// Each of the 16 samples the mean of the stretch of the wave it covers (the wave held between its samples)
+	const double Size = static_cast<double>(Cycle.size()), Scale = 15.0 / std::max(1, Top);
+	std::vector<int> Out;
+	for (int i = 0; i < N163_WAVE_SIZE; ++i) {
+		const double From = i * Size / N163_WAVE_SIZE, To = (i + 1) * Size / N163_WAVE_SIZE;
+		double Sum = 0.0;
+		for (int k = static_cast<int>(std::floor(From)); k < static_cast<int>(std::ceil(To)) && k < static_cast<int>(Cycle.size()); ++k)
+			Sum += Cycle[static_cast<size_t>(k)] * (std::min(To, k + 1.0) - std::max(From, static_cast<double>(k)));
+		const double Mean = Sum / (To - From) * Scale;
+		Out.push_back(std::max(0, std::min(15, static_cast<int>(std::floor(Mean + 0.5)))));
+	}
 	return Out;
 }
 

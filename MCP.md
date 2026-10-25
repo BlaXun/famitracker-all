@@ -444,7 +444,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
-| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)) |
+| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
 | `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips, each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. A study's sounds of the same name are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
@@ -808,11 +808,14 @@ file written (the exported OGG files stay as they are).
   N163 voice (the soft layer's sub bass) is the bass. `mix` and
   `review_arrangement` hear the parts the same way.
 
-Each part alone is a render of its own, from the song's start to the last
-bar it needs, without the space's tail after: a two-minute song with seven
-parts is nine renders, about a minute on a slow computer. `stems` false
-measures the mix alone, in one render, and `parts` `["chords"]` checks the
-melody against the chords alone, in three.
+FamiTracker renders the mix and every part alone together, in one pass
+through the song without the space's tail after, and each part comes out
+exactly as a render of it alone would (a song of more than 16 parts takes
+another pass). Each part makes that pass a little slower than a render of
+the mix alone, but it's much faster than rendering the parts one by one,
+as earlier versions did: a 40-bar song with nine parts takes about half
+the time. `stems` false measures the mix alone, and `parts` `["chords"]`
+checks the melody against the chords alone.
 
 ## Stereo
 
@@ -1059,6 +1062,22 @@ properties** has a box for it.
   (`wave`, or the kind's: the soft flute's for a lead, the string pad's for
   a pad, the breath's and the music box's for theirs) with the envelope,
   vibrato and pitch you describe, each with a wave place of its own.
+- The sounds of your reference library play there too: `reference_sound`
+  with a soft channel makes a studied lead, pad or bass a wave sound with
+  the original's envelopes. An N163 game's or module's sound brings its
+  own waves and the sequence that steps through them (studies keep them
+  now; study a track again for one studied before), each wave resampled to
+  the 16 samples that play in tune; another chip's sound gets a wave from
+  its channel: its duty's pulse (a wave for each width a duty click steps
+  through), the triangle, the sawtooth, or an FDS sound's wave. Each takes
+  a wave place of its own, so several play together without touching each
+  other's waves, and the reply says how loud it plays, as `add_instrument`
+  does. A triangle sound sounds as written there, an octave over where the
+  triangle played it, and so does an N163 sound whose wave wasn't a cycle
+  of 16 samples (a cycle of 32 sounded an octave under its notes): the
+  reply says how far, so you can keep its register. `find_sound` and the
+  sound browser list the studied sounds under the soft layer too (an N163
+  sound at home there).
 - Underneath, the song is VRC6 + N163 with 4 channels, marked by a
   `BF VRC6PLUS` block, so other FamiTrackers open it as that and play it
   the same. Back to the VRC6 (`chips: ["VRC6"]`) clears the soft channels

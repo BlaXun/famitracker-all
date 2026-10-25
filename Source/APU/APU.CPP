@@ -243,6 +243,11 @@ void CAPU::EndFrame()
 	int SamplesAvail = m_pMixer->FinishBuffer(m_iFrameCycles);
 	int ReadSamples	= m_pMixer->ReadBuffer(SamplesAvail, m_pSoundBuffer, m_bStereoEnabled);
 	m_pParent->FlushBuffer(m_pSoundBuffer, ReadSamples);
+	// Stems (SetStems): each one's samples, in step with the mix's
+	for (int k = 0; k < m_pMixer->StemCount(); ++k) {
+		const int Read = m_pMixer->Stem(k)->ReadBuffer(SamplesAvail, m_pSoundBuffer, m_bStereoEnabled);
+		m_pParent->FlushStem(k, m_pSoundBuffer, Read);
+	}
 	
 	m_iFrameClock /*+*/= m_iFrameCycleCount;
 	m_iFrameCycles = 0;
@@ -595,6 +600,15 @@ bool CAPU::SpaceRinging() const
 void CAPU::ClearSpace()
 {
 	m_pMixer->ClearSpace();
+}
+
+void CAPU::SetStems(int Count, const bool (*pSilent)[CHANNELS])
+{
+	// From now on, as the pan (freed as a render ends, with nothing to run)
+	if (Count > 0)
+		Process();
+	m_pMixer->SetStems(Count, pSilent, m_iFrameCycles);
+	m_pVRC7->SetStems(m_pMixer->StemCount());
 }
 
 void CAPU::StartDAC(uint8 Level)
