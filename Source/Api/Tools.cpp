@@ -49,6 +49,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -57,6 +58,7 @@
 #include <ctime>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <set>
 
 namespace ftapi {
@@ -880,11 +882,29 @@ double PanPositionOf(const std::vector<NoteInfo> &Notes)
 	return Rows > 0.0 ? Sum / Rows : 0.0;
 }
 
-// Whether any of the song's notes play anywhere but the middle
+// A channel's notes with the pan each starts at as it plays: the ones before the channel's first 8xx where
+// FamiTracker's mixer starts the channel (ChannelInfo::MixPan), not in the middle
+std::vector<NoteInfo> PannedNotes(Session &S, int Channel)
+{
+	std::vector<NoteInfo> Notes = S.Notes(Channel);
+	const int Start = S.Channel(Channel).MixPan;
+	if (Start == PAN_CENTER)
+		return Notes;
+	const std::vector<Cell> &Cells = S.Cells(Channel);
+	int First = static_cast<int>(Cells.size());
+	for (int r = 0; r < First; ++r)
+		if (HasEffect(Cells[static_cast<size_t>(r)], EFF_PAN, S.Channel(Channel).EffectColumns))
+			First = r;
+	for (size_t i = 0; i < Notes.size() && Notes[i].Row < First; ++i)
+		Notes[i].Pan = Start;
+	return Notes;
+}
+
+// Whether any of the song's notes play anywhere but the middle (the mixer's starting pans counted)
 bool SongPans(Session &S)
 {
 	for (int c = 0; c < S.ChannelCount(); ++c) {
-		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		const std::vector<NoteInfo> Notes = PannedNotes(S, c);
 		for (size_t i = 0; i < Notes.size(); ++i)
 			if (Notes[i].Pan != PAN_CENTER)
 				return true;
@@ -1849,6 +1869,91 @@ bool HasNotesIn(Session &S, int Channel, int First, int End)
 	return false;
 }
 
+// Calm and lively tracks. mix, polish, check_song and review_arrangement take a style: calm (a night or ambient track:
+// the melody only a little over the chords, no accents, a lead whose sound never holds a high, steady level, which
+// sounds aggressive) or lively (a stage that bounces without pressing: the melody 3-4 dB
+// over the parts, notes that fade). Calm applies only when asked, or when the track's name says so ("Town (night)"),
+// a label the user gave it; a track that only looks calm (slow, no drums) gets a line suggesting it, and nothing changes
+enum track_style { STYLE_ANY, STYLE_CALM, STYLE_LIVELY };
+
+struct TrackStyle {
+	int Style;			// track_style
+	std::string Note;	// for the reply: why the tool chose calm by itself, or that the track looks calm; empty for neither
+	TrackStyle() : Style(STYLE_ANY) {}
+};
+
+bool NameSaysCalm(const std::string &TrackName);	// VersionMood's calm (with the depth review)
+double FramesPerRow(const Session &S);
+
+// A hit of a drum kit on the noise channel: a sound that strikes (at its peak within three frames) and is gone within
+// half a second, or cut as short (Frames: how long the note lasts); a swell of wind or waves, or a held hiss, isn't one
+bool IsDrumHit(Session &S, const NoteInfo &N, int Frames)
+{
+	const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+	const std::vector<int> Envelope = HeldEnvelope(pInfo, 64);
+	const int Peak = *std::max_element(Envelope.begin(), Envelope.end());
+	int Attack = 0;
+	while (Attack < 63 && Envelope[static_cast<size_t>(Attack)] * 10 < Peak * 9)
+		++Attack;
+	return Peak > 0 && N.Volume > 0 && Attack <= 3 && std::min(Frames, HeardFramesOf(pInfo, N.Volume, 64)) <= 30;
+}
+
+// A track that sounds calm by its numbers: slow (about 90 BPM or under, at its tempo) with no drum kit (no drum hits on
+// the noise channel and no samples on the DPCM channel); Bpm its tempo
+bool LooksCalm(Session &S, double &Bpm)
+{
+	Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	if (Bpm >= 90.5)
+		return false;
+	const double RowFrames = FramesPerRow(S);
+	bool Any = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const int Kind = S.Channel(c).Kind;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		Any = Any || !Notes.empty();
+		for (size_t i = 0; i < Notes.size() && (Kind == KIND_NOISE || Kind == KIND_DPCM); ++i)
+			if (Kind == KIND_DPCM || IsDrumHit(S, Notes[i], static_cast<int>(std::floor(Notes[i].Rows * RowFrames + 0.5))))
+				return false;
+	}
+	return Any;
+}
+
+// The style a tool works in: Given (track_style; -1 when the call gave none). Without one, calm when the track's name
+// says so; otherwise none, and when the track looks calm a line suggests it (CalmDoes: what style calm does there;
+// Usual: the style that keeps a calm-named track out of calm)
+TrackStyle ChooseStyle(Session &S, int Given, const char *CalmDoes, const char *Usual)
+{
+	TrackStyle Out;
+	if (Given >= 0) {
+		Out.Style = Given;
+		return Out;
+	}
+	if (NameSaysCalm(S.Song.TrackName)) {
+		Out.Style = STYLE_CALM;
+		Out.Note = Format("Calm: the track's name says so (style %s to change).", Usual);
+		return Out;
+	}
+	double Bpm = 0.0;
+	if (LooksCalm(S, Bpm))
+		Out.Note = Format("This looks calm (%s BPM, no drums): style calm %s.", FormatNumber(std::floor(Bpm + 0.5)).c_str(), CalmDoes);
+	return Out;
+}
+
+// polish's, check_song's and review_arrangement's style argument: any, calm (or ambient), lively; -1 when not given
+int StyleArg(const Json &Args)
+{
+	if (Arg(Args, "style") == 0)
+		return -1;
+	const std::string Word = Squeezed(StringArg(Args, "style"));
+	if (Word == "calm" || Word == "ambient" || Word == "night" || Word == "peaceful")
+		return STYLE_CALM;
+	if (Word == "lively")
+		return STYLE_LIVELY;
+	if (Word == "any" || Word == "none" || Word == "normal")
+		return STYLE_ANY;
+	throw Problem("style should be any or calm (also \"ambient\"), or lively.");
+}
+
 // Changes go into the song, or become a clip
 
 struct Change {
@@ -2407,7 +2512,7 @@ std::string SongOverview(Session &S, const Json &Args)
 				Text += " " + InstrumentLabel(Song, *it);
 		}
 		if (Stereo)
-			Text += ", " + PanText(Notes);
+			Text += ", " + PanText(PannedNotes(S, c));
 		Text += "\n";
 	}
 	Text += Stereo ? "Stereo: the parts pan (8xx, this FamiTracker's own: its playback and the game's OGG files have it; NSF "
@@ -6376,7 +6481,8 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 	return BestHits * 2 >= Count ? Best : 0;
 }
 
-enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS };
+// AMBIENCE: a noise channel that only plays swells (wind, waves), not drums: it keeps its level
+enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS, ROLE_AMBIENCE };
 
 // Whether a channel that can play the bass plays it in [First, End): over a
 // triangle bass, a sawtooth plays it only where it doubles the triangle's
@@ -6423,8 +6529,16 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 	const ChannelInfo &Info = S.Channel(Channel);
 	if (Info.Kind == KIND_DPCM || Info.Kind == KIND_TRIANGLE || !HasNotesIn(S, Channel, First, End))
 		return ROLE_NONE;	// no volume of their own (the DPCM level softens the triangle)
-	if (Info.Kind == KIND_NOISE)
-		return ROLE_DRUMS;
+	if (Info.Kind == KIND_NOISE) {
+		// Drums, unless it only plays swells (wind, waves), whose level is the song's own
+		const double RowFrames = FramesPerRow(S);
+		const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row >= First && Notes[i].Row < End &&
+				IsDrumHit(S, Notes[i], static_cast<int>(std::floor(Notes[i].Rows * RowFrames + 0.5))))
+				return ROLE_DRUMS;
+		return ROLE_AMBIENCE;
+	}
 	if (Channel == Melody)
 		return ROLE_MELODY;
 	if (Melody >= 0 && EchoDelayOf(S, Channel, Melody, First, End) > 0)
@@ -6447,6 +6561,7 @@ const char *RoleName(int Role)
 	case ROLE_LINE: return "a second line";
 	case ROLE_BASS: return "bass";
 	case ROLE_DRUMS: return "drums";
+	case ROLE_AMBIENCE: return "swells, not drums";
 	}
 	return "";
 }
@@ -6633,54 +6748,455 @@ SlideMix MixSlides(const std::vector<Cell> &Original, std::vector<Cell> &Cells, 
 	return Out;
 }
 
-std::string MixTool(Session &S, const Json &Args)
-{
-	if (!S.Song.DirectChanges)
-		throw Problem("Mixing changes the volumes of the whole song, which needs direct changes; the user can allow them in "
-			"File > Connect Claude Code.");
-	const std::string Style = Squeezed(StringArg(Args, "style", Arg(Args, "levels") != 0 || Arg(Args, "dac") != 0 ||
-		Arg(Args, "width") != 0 ? "" : "soft"));
-	// The stereo picture: how far the parts that aren't the melody, the bass or the drums go to the sides (-1: as they are)
-	double Width = -1.0;
-	{
-		const std::string Word = Squeezed(StringArg(Args, "width", "keep"));
-		if (Word == "mono" || Word == "center" || Word == "centre" || Word == "middle" || Word == "none")
-			Width = 0.0;
-		else if (Word == "narrow")
-			Width = 0.25;
-		else if (Word == "wide")
-			Width = 0.5;
-		else if (Word == "full" || Word == "widest")
-			Width = 1.0;
-		else if (Word != "keep")
-			throw Problem("width: keep (the pans as they are, the default), mono (every part in the middle), narrow, wide or "
-				"full (how far the side parts go).");
-	}
-	if (!Style.empty() && Style != "soft" && Style != "full" && Style != "quiet" && Style != "loud" && Style != "atmospheric")
-		throw Problem("style: soft (quiet pulses under a warm triangle, as atmospheric tracks mix) or full (everything near "
-			"full volume).");
-	const bool Soft = Style == "soft" || Style == "quiet" || Style == "atmospheric";
-	int From = 1, To = S.Time.BarCount();
-	if (RangeGiven(Args))
-		BarRange(S, Args, From, To);
-	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
-	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+// How loud parts sound, as the soundtrack's stems are measured (BS.1770 loudness, as ffmpeg's ebur128 and
+// export_for_game count it), for mix's calm and lively styles and the review: each frame of each note as FamiTracker
+// plays it (the volume column, volume slides and the instrument's envelope, duty, wave and arpeggio a frame at a time,
+// as each chip plays them; the fader, the pan and Soft), its timbre and pitch weighed as loudness meters weigh sound
+// (K-weighting: a high shelf of +4 dB over about 2 kHz, deep bass counting less), over 400 ms blocks with the meters'
+// gates, so rests don't count and a short note counts with the silence after it. Measured under Wine against
+// FamiTracker's renders (October 2026): the 2A03's and the VRC6's pulses of every width at every pitch and volume within
+// 0.2 dB (the 2A03's DAC is nonlinear, so its quiet notes play a little louder), the sawtooth, the N163's waves and the
+// triangle within 0.5 (the triangle about 1 dB louder under a high DPCM level than it plays), and the parts of two calm
+// tracks, each measured alone, within about 0.5. In dB against a 2A03 pulse of 50% at 15 playing A-3 in the middle
+// (-20.9 LUFS as FamiTracker renders it). Space isn't counted: it adds little to a part's loudness.
+const double HEARD_SAW_DB = 4.55, HEARD_TRIANGLE_DB = 4.0, HEARD_N163_DB = -0.9, HEARD_NOISE_DB = 0.9;
+const double NO_LOUDNESS = -99.0;
 
-	// What each channel plays, frame by frame where that changes: a channel that echoes the melody in some
-	// frames and plays a line of its own in others (a harmony at the climax) is mixed as each, there
-	struct MixSpan { int Channel, First, End, Role, Target; double Level; };
-	std::vector<MixSpan> Spans;
-	std::set<int> Leveled;	// channels given a level: mixed as one part
-	{
-		const Json *pGiven = Arg(Args, "levels");
-		if (pGiven != 0 && pGiven->IsObject())
-			for (size_t i = 0; i < pGiven->Members().size(); ++i)
-				Leveled.insert(ParseChannel(S, Json(pGiven->Members()[i].first), "levels"));
+// The shapes the estimate hears a note's timbre in (FLAT: no timbre counted, for the noise, the VRC7 and the FDS)
+enum heard_shape { SHAPE_FLAT, SHAPE_PULSE, SHAPE_SAW, SHAPE_TRIANGLE, SHAPE_WAVE };
+
+struct KFilter {
+	double B[2][3], A[2][3];
+};
+
+// BS.1770's two filters at 48 kHz, made from their analog prototypes as libebur128 makes them
+KFilter MakeKFilter()
+{
+	const double FS = 48000.0, PI = 3.14159265358979323846;
+	KFilter F;
+	double K = std::tan(PI * 1681.974450955533 / FS), Q = 0.7071752369554196;
+	const double Vh = std::pow(10.0, 3.999843853973347 / 20.0), Vb = std::pow(Vh, 0.4996667741545416);
+	double A0 = 1.0 + K / Q + K * K;
+	F.B[0][0] = (Vh + Vb * K / Q + K * K) / A0;
+	F.B[0][1] = 2.0 * (K * K - Vh) / A0;
+	F.B[0][2] = (Vh - Vb * K / Q + K * K) / A0;
+	F.A[0][0] = 1.0;
+	F.A[0][1] = 2.0 * (K * K - 1.0) / A0;
+	F.A[0][2] = (1.0 - K / Q + K * K) / A0;
+	K = std::tan(PI * 38.13547087602444 / FS);
+	Q = 0.5003270373238773;
+	A0 = 1.0 + K / Q + K * K;
+	F.B[1][0] = 1.0;
+	F.B[1][1] = -2.0;
+	F.B[1][2] = 1.0;
+	F.A[1][0] = 1.0;
+	F.A[1][1] = 2.0 * (K * K - 1.0) / A0;
+	F.A[1][2] = (1.0 - K / Q + K * K) / A0;
+	return F;
+}
+
+// K-weighting's power gain at a frequency (Hz); 0 past half of 48 kHz
+double KWeightPower(double Hz)
+{
+	static const KFilter F = MakeKFilter();
+	if (Hz <= 0.0 || Hz >= 24000.0)
+		return 0.0;
+	const std::complex<double> Z1 = std::polar(1.0, -2.0 * 3.14159265358979323846 * Hz / 48000.0), Z2 = Z1 * Z1;
+	double Gain = 1.0;
+	for (int s = 0; s < 2; ++s)
+		Gain *= std::norm(F.B[s][0] + F.B[s][1] * Z1 + F.B[s][2] * Z2) / std::norm(F.A[s][0] + F.A[s][1] * Z1 + F.A[s][2] * Z2);
+	return Gain;
+}
+
+// Soft's low-pass (the mixer's CSoftFilter): its cutoff in Hz, from 12 kHz at 1 to 1.8 kHz at 100; 0 when off
+double SoftCutoff(int Soft)
+{
+	return Soft <= 0 ? 0.0 : 12000.0 * std::pow(1800.0 / 12000.0, std::min(100, Soft) / 100.0);
+}
+
+// The K-weighted power of a waveform of peak to peak 1 at a pitch (Hz), through Soft (its cutoff, 0 for none):
+// a pulse of Duty (0-1), a sawtooth, a triangle, or a stepped wave of 0-15 samples (an N163's)
+double ShapePower(int Shape, double Duty, const std::vector<int> *pWave, double Hz, double SoftHz)
+{
+	const double PI = 3.14159265358979323846;
+	const int N = Shape == SHAPE_WAVE && pWave != 0 ? static_cast<int>(pWave->size()) : 0;
+	std::vector<std::complex<double> > X(static_cast<size_t>(std::max(1, N)));
+	if (N > 0) {
+		double Mean = 0.0;
+		for (int j = 0; j < N; ++j)
+			Mean += (*pWave)[static_cast<size_t>(j)] / 15.0;
+		Mean /= N;
+		for (int k = 0; k < N; ++k)
+			for (int j = 0; j < N; ++j)
+				X[static_cast<size_t>(k)] += ((*pWave)[static_cast<size_t>(j)] / 15.0 - Mean) * std::polar(1.0 / N, -2.0 * PI * k * j / N);
 	}
+	const double SoftA = SoftHz > 0.0 ? 1.0 - std::exp(-2.0 * PI * SoftHz / 48000.0) : 1.0;
+	double Sum = 0.0;
+	for (int k = 1; k <= 512 && k * Hz < 20000.0; ++k) {
+		double P = 0.0;
+		if (Shape == SHAPE_PULSE)
+			P = std::pow(2.0 / (k * PI), 2) * std::pow(std::sin(k * PI * Duty), 2) / 2.0;
+		else if (Shape == SHAPE_SAW)
+			P = 1.0 / (2.0 * std::pow(k * PI, 2));
+		else if (Shape == SHAPE_TRIANGLE)
+			P = k % 2 != 0 ? 8.0 / std::pow(k * PI, 4) : 0.0;
+		else if (N > 0 && k % N != 0) {
+			const double Hold = std::sin(PI * k / N) / (PI * k / N);	// the steps' sample and hold
+			P = 2.0 * std::norm(X[static_cast<size_t>(k % N)]) * Hold * Hold;
+		}
+		const double W = 2.0 * PI * k * Hz / 48000.0;
+		const double Soft = SoftHz > 0.0 ? SoftA * SoftA / (1.0 - 2.0 * (1.0 - SoftA) * std::cos(W) + (1.0 - SoftA) * (1.0 - SoftA)) : 1.0;
+		Sum += P * KWeightPower(k * Hz) * Soft;
+	}
+	return Sum;
+}
+
+// A timbre's loudness against a 50% pulse playing A-3, in dB (0 for SHAPE_FLAT)
+double TimbreDb(int Shape, double Duty, const std::vector<int> *pWave, double Hz, double SoftHz)
+{
+	static const double REFERENCE = ShapePower(SHAPE_PULSE, 0.5, 0, 440.0, 0.0);
+	if (Shape == SHAPE_FLAT)
+		return 0.0;
+	const double Power = ShapePower(Shape, Duty, pWave, Hz, SoftHz);
+	return Power > 0.0 ? 10.0 * std::log10(Power / REFERENCE) : -60.0;
+}
+
+// The dB a pan takes off a part's loudness as the mixer pans it (PanGains: the side it moves away from fades out, the
+// other keeps all of it; meters add the two sides' powers)
+double PanDb(int Pan)
+{
+	double Left = 1.0, Right = 1.0;
+	if (Pan < 0x80)
+		Right = std::max(0, Pan) / 128.0;
+	else if (Pan > 0x80)
+		Left = (0xFF - std::min(0xFF, Pan)) / 127.0;
+	return 10.0 * std::log10(std::max(1e-9, (Left * Left + Right * Right) / 2.0));
+}
+
+// An instrument's sequence as CSequenceHandler runs it, a frame at a time: from the start, back to its loop point at
+// its end or past its release point (waiting there without a loop), its last value once it ends; a release sends it on
+// from its release point (ReleaseSequence)
+class SequenceRun {
+public:
+	SequenceRun() : m_pItems(0), m_Loop(-1), m_Release(-1), m_Pointer(0), m_Value(0), m_Ended(true), m_Releasing(false) {}
+	void Start(const std::vector<int> &Items, int Loop, int Release, int Default)
+	{
+		m_pItems = Items.empty() ? 0 : &Items;
+		m_Loop = Loop;
+		m_Release = Release;
+		m_Pointer = 0;
+		m_Value = Default;
+		m_Ended = m_pItems == 0;
+		m_Releasing = false;
+	}
+	void Release()
+	{
+		m_Releasing = true;
+		if (m_pItems != 0 && !m_Ended && m_Release >= 0)
+			m_Pointer = m_Release;
+	}
+	bool Has() const { return m_pItems != 0; }
+	int Step()
+	{
+		if (m_pItems == 0 || m_Ended)
+			return m_Value;
+		const int Items = static_cast<int>(m_pItems->size());
+		m_Value = (*m_pItems)[static_cast<size_t>(std::max(0, std::min(m_Pointer, Items - 1)))];
+		++m_Pointer;
+		if (m_Pointer == m_Release + 1 || m_Pointer >= Items) {
+			if (m_Loop >= 0 && m_Loop < Items && !(m_Releasing && m_Release >= 0))
+				m_Pointer = m_Loop;
+			else if (m_Pointer >= Items)
+				m_Ended = true;
+			else if (!m_Releasing)
+				--m_Pointer;
+		}
+		return m_Value;
+	}
+
+private:
+	const std::vector<int> *m_pItems;
+	int m_Loop, m_Release, m_Pointer, m_Value;
+	bool m_Ended, m_Releasing;
+};
+
+// The triangle's level through the 2A03's second pin (the triangle, the noise and the DPCM mixed as 159.79 / (1 / (t /
+// 8227 + n / 12241 + d / 22638) + 100)) against its level alone at 0 dB: the DPCM's level narrows its swing
+// (TriangleShare), and a fader (Gain) scales only the triangle's share of the pin, so under a high DPCM level it takes
+// off more than its dB (at Z50 a fader of -2 dB takes 2.8)
+double TrianglePinShare(int Dac, double Gain)
+{
+	auto Pin = [](double Sum) { return Sum <= 0.0 ? 0.0 : 159.79 / (1.0 / Sum + 100.0); };
+	const double T = 15.0 / 8227.0, D = std::max(0, Dac) / 22638.0;
+	const double Full = Pin(T + D), Share = T / (T + D);
+	return std::max(0.0, Gain * Share * Full + (1.0 - Share) * Full - Pin(D)) / Pin(T);
+}
+
+// A 2A03 pulse's level at a volume against its level at 15: its DAC (95.88 / (8128 / v + 100)) is nonlinear
+double PulseDacDb(int Volume)
+{
+	auto Out = [](int v) { return v <= 0 ? 0.0 : 95.88 / (8128.0 / v + 100.0); };
+	return Volume <= 0 ? -60.0 : 20.0 * std::log10(Out(Volume) / Out(15));
+}
+
+// The song as heard: each channel's loudness frame by frame (the first time through, its rows in order), for measuring
+// parts as the stems would; with a draft, the song as the draft has it
+class Hearing {
+public:
+	explicit Hearing(Session &S, Draft *pDraft = 0) : m_S(S), m_pDraft(pDraft), m_RowFrames(RowFramesOf(S))
+	{
+		m_FrameStart.push_back(0);
+		for (size_t r = 0; r < m_RowFrames.size(); ++r)
+			m_FrameStart.push_back(m_FrameStart.back() + m_RowFrames[r]);
+		// The DPCM level on each row (the triangle and the noise share its pin)
+		m_Dac.assign(m_RowFrames.size(), 0);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (S.Channel(c).Kind != KIND_DPCM)
+				continue;
+			const std::vector<Cell> &Cells = CellsOf(c);
+			int Level = 0;
+			for (size_t r = 0; r < m_Dac.size(); ++r) {
+				if (r < Cells.size())
+					for (int k = 0; k < std::min(EFFECT_COLUMNS, S.Channel(c).EffectColumns); ++k)
+						if (Cells[r].Effect[k] == EFF_DAC)
+							Level = Cells[r].Param[k] & 0x7F;
+				m_Dac[r] = Level;
+			}
+			break;
+		}
+	}
+
+	// A channel's power on each frame (1: a 2A03 pulse of 50% at 15 playing A-3 in the middle; 0 where it's silent)
+	const std::vector<double> &Power(int Channel)
+	{
+		std::map<int, std::vector<double> >::iterator it = m_Power.find(Channel);
+		if (it == m_Power.end())
+			it = m_Power.insert(std::make_pair(Channel, Hear(Channel))).first;
+		return it->second;
+	}
+
+	// The loudness of some channels together over some spans of song rows ([first, end) each), as a meter measures it
+	// (dB as above); NO_LOUDNESS when they're silent there
+	double Loudness(const std::vector<int> &Channels, const std::vector<std::pair<int, int> > &Rows)
+	{
+		std::vector<double> Frames;
+		for (size_t s = 0; s < Rows.size(); ++s) {
+			const int A = FrameOf(Rows[s].first), Z = FrameOf(Rows[s].second);
+			const size_t At = Frames.size();
+			Frames.resize(At + static_cast<size_t>(std::max(0, Z - A)), 0.0);
+			for (size_t c = 0; c < Channels.size(); ++c) {
+				const std::vector<double> &P = Power(Channels[c]);
+				for (int f = A; f < Z && f < static_cast<int>(P.size()); ++f)
+					Frames[At + static_cast<size_t>(f - A)] += P[static_cast<size_t>(f)];
+			}
+		}
+		// 400 ms blocks, a quarter of one apart; the meters' gates: 70 LUFS under full scale (49 dB under a pulse at
+		// 15), then 10 dB under the blocks' mean
+		const int Block = std::max(1, static_cast<int>(std::floor(0.4 * m_S.Song.FrameRate + 0.5))), Hop = std::max(1, Block / 4);
+		std::vector<double> Means;
+		for (int b = 0; b == 0 || b + Block <= static_cast<int>(Frames.size()); b += Hop) {
+			const int Count = std::min(Block, static_cast<int>(Frames.size()) - b);
+			if (Count <= 0)
+				break;
+			double Sum = 0.0;
+			for (int f = b; f < b + Count; ++f)
+				Sum += Frames[static_cast<size_t>(f)];
+			if (Sum / Block > std::pow(10.0, -4.9))
+				Means.push_back(Sum / Block);
+		}
+		if (Means.empty())
+			return NO_LOUDNESS;
+		double Mean = 0.0;
+		for (size_t i = 0; i < Means.size(); ++i)
+			Mean += Means[i];
+		Mean /= Means.size();
+		double Sum = 0.0;
+		int Kept = 0;
+		for (size_t i = 0; i < Means.size(); ++i)
+			if (Means[i] >= Mean / 10.0) {
+				Sum += Means[i];
+				++Kept;
+			}
+		return 10.0 * std::log10(Sum / std::max(1, Kept));
+	}
+
+	int FrameOf(int Row) const
+	{
+		return m_FrameStart[static_cast<size_t>(std::max(0, std::min(Row, static_cast<int>(m_FrameStart.size()) - 1)))];
+	}
+
+private:
+	const std::vector<Cell> &CellsOf(int Channel)
+	{
+		return m_pDraft != 0 ? m_pDraft->View(Channel) : m_S.Cells(Channel);
+	}
+
+	double Timbre(int Shape, double Duty, const std::vector<int> *pWave, int WaveKey, int Sounding, double SoftHz)
+	{
+		if (Shape == SHAPE_FLAT)
+			return 0.0;
+		const long long Key = ((((static_cast<long long>(Shape) * 64 + static_cast<int>(Duty * 32.0 + 0.5)) * 4096 + WaveKey) * 256 +
+			(Sounding + 64)) * 32768) + static_cast<long long>(SoftHz);
+		std::map<long long, double>::const_iterator it = m_Timbre.find(Key);
+		if (it != m_Timbre.end())
+			return it->second;
+		const double Db = TimbreDb(Shape, Duty, pWave, 440.0 * std::pow(2.0, (Sounding - 45) / 12.0), SoftHz);
+		m_Timbre[Key] = Db;
+		return Db;
+	}
+
+	std::vector<double> Hear(int Channel)
+	{
+		const ChannelInfo &Info = m_S.Channel(Channel);
+		std::vector<double> Out(static_cast<size_t>(m_FrameStart.back()), 0.0);
+		if (Info.Kind == KIND_DPCM)
+			return Out;
+		const std::vector<Cell> &Cells = CellsOf(Channel);
+		const int Columns = std::min(EFFECT_COLUMNS, Info.EffectColumns), Lift = Written(Info, 0);
+		const double SoftHz = SoftCutoff(Info.MixSoft), Fader = FaderDb(Info);
+		const bool Dac2A03 = Info.Chip == "2A03" && Info.Kind == KIND_PULSE;
+		int Level = 127, Slide = 0, Pan = Info.MixPan, Duty = 0, Mode = 64, Instrument = NO_INSTRUMENT, Pitch = 0, Arp = 0;
+		bool Sounding = false;
+		const InstrumentInfo *pInfo = 0;
+		SequenceRun Volume, Duties, Steps;
+		for (size_t r = 0; r < m_RowFrames.size(); ++r) {
+			const Cell C = r < Cells.size() ? Cells[r] : Cell();
+			for (int k = 0; k < Columns; ++k) {
+				if (C.Effect[k] == EFF_PAN)
+					Pan = C.Param[k];
+				else if (C.Effect[k] == EFF_DUTY_CYCLE) {
+					Duty = C.Param[k];
+					if (Info.Kind == KIND_SQUARE)	// Vxx: 1 the square, 2 the noise, 4 the envelope
+						Mode = ((C.Param[k] & 1) ? 64 : 0) | ((C.Param[k] & 2) ? 128 : 0) | ((C.Param[k] & 4) ? 32 : 0);
+				}
+			}
+			SlideRow(C, Columns, Level, Slide);
+			if (C.Instrument != NO_INSTRUMENT && !C.IsEnd())
+				Instrument = C.Instrument;
+			if (C.HasNote()) {
+				pInfo = FindInstrument(m_S.Song, Instrument);
+				Pitch = C.Pitch();
+				Arp = 0;
+				Sounding = true;
+				static const std::vector<int> NONE;
+				if (pInfo != 0) {
+					Volume.Start(pInfo->Volume, pInfo->VolumeLoop, pInfo->VolumeRelease, 15);
+					const SequenceInfo &D = Info.Kind == KIND_SQUARE ? pInfo->Mode : pInfo->Duty;
+					Duties.Start(D.Items, D.Loop, D.Release, Info.Kind == KIND_SQUARE ? Mode : Duty);
+					Steps.Start(pInfo->Steps.Items, pInfo->Steps.Loop, pInfo->Steps.Release, 0);
+				}
+				else {
+					Volume.Start(NONE, -1, -1, 15);
+					Duties.Start(NONE, -1, -1, Info.Kind == KIND_SQUARE ? Mode : Duty);
+					Steps.Start(NONE, -1, -1, 0);
+				}
+			}
+			else if (C.Note == NOTE_RELEASE) {
+				Volume.Release();
+				Duties.Release();
+				Steps.Release();
+			}
+			else if (C.Note == NOTE_HALT)
+				Sounding = false;
+			for (int f = 0; f < m_RowFrames[r]; ++f) {
+				SlideFrames(Level, Slide, 1);
+				if (!Sounding)
+					continue;
+				const int Envelope = Volume.Step();
+				const int Shape = Duties.Has() ? Duties.Step() : (Info.Kind == KIND_SQUARE ? Mode : Duty);
+				if (Steps.Has()) {
+					const int Value = Steps.Step();
+					Arp = pInfo != 0 && pInfo->Steps.Setting == 2 ? Arp + Value : Value;
+				}
+				const int Note = pInfo != 0 && pInfo->Steps.Setting == 1 && Steps.Has() ? Arp : Pitch + Arp;
+				const int Sound = std::max(-60, std::min(180, Note - Lift));
+				double Db;
+				if (Info.Kind == KIND_TRIANGLE) {
+					// Its fader works through the pin it shares with the noise and the DPCM
+					if (Envelope <= 0 || (Level >> 3) <= 0)
+						continue;
+					Db = HEARD_TRIANGLE_DB + 20.0 * std::log10(std::max(0.01, TrianglePinShare(m_Dac[r], std::pow(10.0, Fader / 20.0)))) +
+						Timbre(SHAPE_TRIANGLE, 0.0, 0, 0, Sound, SoftHz) - Fader;
+				}
+				else if (Info.Kind == KIND_NOISE) {
+					const int Played = PlayedVolume(Level >> 3, Envelope);
+					if (Played <= 0)
+						continue;
+					Db = 20.0 * std::log10(Played / 15.0) + HEARD_NOISE_DB + 20.0 * std::log10(std::max(0.01, TriangleShare(m_Dac[r])));
+				}
+				else if (Info.Kind == KIND_SQUARE) {
+					// The 5B: the envelope (a buzz) plays at its own full level whatever the volume, unless that's 0
+					const int Played = PlayedVolume(Info, Level >> 3, Envelope);
+					if (Played <= 0)
+						continue;
+					ChannelInfo Unfaded = Info;
+					Unfaded.MixLevel = 0;
+					if (Shape & 32)
+						Db = LevelDb(Unfaded, 15) + Timbre(SHAPE_SAW, 0.0, 0, 0, Sound, SoftHz);
+					else if (Shape & 64)
+						Db = LevelDb(Unfaded, Played) + Timbre(SHAPE_PULSE, 0.5, 0, 0, Sound, SoftHz);
+					else
+						Db = LevelDb(Unfaded, Played);	// the noise alone
+				}
+				else {
+					const int Played = PlayedVolume(Level >> 3, Envelope);
+					if (Played <= 0)
+						continue;
+					if (Info.Chip == "N163") {
+						const std::vector<int> *pWave = 0;
+						int WaveKey = 0;
+						if (pInfo != 0 && !pInfo->Waves.empty()) {
+							const int Wave = std::max(0, std::min(static_cast<int>(pInfo->Waves.size()) - 1, Shape));
+							pWave = &pInfo->Waves[static_cast<size_t>(Wave)];
+							WaveKey = pInfo->Index * 64 + Wave + 1;
+						}
+						// A wave not known plays as much rounder than a square as the ready-made ones do on average
+						static const std::vector<int> SQUARE = { 15, 15, 15, 15, 15, 15, 15, 15, 0, 0, 0, 0, 0, 0, 0, 0 };
+						Db = HEARD_N163_DB + (N163FullDb(Info.ChipChannels) - N163FullDb(4)) + 20.0 * std::log10(Played / 15.0) +
+							(pWave != 0 ? Timbre(SHAPE_WAVE, 0.0, pWave, WaveKey, Sound, SoftHz) :
+							Timbre(SHAPE_WAVE, 0.0, &SQUARE, 0, Sound, SoftHz) + N163_WAVE_DB);
+					}
+					else if (Info.Kind == KIND_SAWTOOTH)
+						Db = HEARD_SAW_DB + 20.0 * std::log10(Played / 15.0) + Timbre(SHAPE_SAW, 0.0, 0, 0, Sound, SoftHz);
+					else if (Info.Kind == KIND_PULSE) {
+						static const double WIDTHS[4] = { 0.125, 0.25, 0.5, 0.75 };
+						const double Width = Info.Chip == "VRC6" ? ((Shape & 7) + 1) / 16.0 : WIDTHS[Shape & 3];
+						Db = (Dac2A03 ? PulseDacDb(Played) : 20.0 * std::log10(Played / 15.0)) + Timbre(SHAPE_PULSE, Width, 0, 0, Sound, SoftHz);
+					}
+					else {
+						ChannelInfo Unfaded = Info;	// the VRC7 and the FDS, by their measured levels
+						Unfaded.MixLevel = 0;
+						Db = LevelDb(Unfaded, Played);
+					}
+				}
+				Out[static_cast<size_t>(m_FrameStart[r] + f)] = std::pow(10.0, (Db + Fader + PanDb(Pan)) / 10.0);
+			}
+		}
+		return Out;
+	}
+
+	Session &m_S;
+	Draft *m_pDraft;
+	std::vector<int> m_RowFrames, m_FrameStart, m_Dac;
+	std::map<int, std::vector<double> > m_Power;
+	std::map<long long, double> m_Timbre;
+};
+
+// What each channel plays in [First, End), frame by frame where that changes: a channel that echoes the melody in some
+// frames and plays a line of its own in others (a harmony at the climax) is mixed as each, there (Leveled: the channels
+// given a level, mixed as one part)
+struct MixSpan {
+	int Channel, First, End, Role, Target;
+	double Level;
+};
+
+std::vector<MixSpan> MixSpans(Session &S, int Melody, int First, int End, const std::set<int> &Leveled)
+{
+	std::vector<MixSpan> Spans;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const MixSpan All = { c, First, End, MixRole(S, c, Melody, First, End), -1, 0.0 };
 		std::vector<int> Starts, Echo;	// each frame's first row, and 1 where the channel echoes the melody (-1: too few notes)
-		if (All.Role != ROLE_NONE && All.Role != ROLE_DRUMS && All.Role != ROLE_MELODY && Melody >= 0) {
+		if (All.Role != ROLE_NONE && All.Role != ROLE_DRUMS && All.Role != ROLE_AMBIENCE && All.Role != ROLE_MELODY && Melody >= 0) {
 			for (int f = First; f < End; ) {
 				const int FrameEnd = std::min(End, (f / S.Time.PatternLength + 1) * S.Time.PatternLength);
 				const int Count = static_cast<int>(NotesIn(S.Notes(c), f, FrameEnd).size());
@@ -6716,6 +7232,411 @@ std::string MixTool(Session &S, const Json &Args)
 			i = j + 1;
 		}
 	}
+	return Spans;
+}
+
+// As heard, the chords are every part that plays the harmony together: voiced chords on several channels (Voices) and
+// broken chords in a steady run, besides arpeggios. Lines on two or more channels that start every note together (a
+// pad's voices holding one chord, strummed a frame or two apart) are voiced chords too, and join Voices
+void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans)
+{
+	std::vector<std::vector<int> > Starts(Spans.size());
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		if (Spans[i].Role != ROLE_LINE)
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Spans[i].Channel), Spans[i].First, Spans[i].End);
+		for (size_t n = 0; n < Notes.size(); ++n)
+			Starts[i].push_back(Notes[n].Row);
+	}
+	std::vector<char> Held(Spans.size(), 0);
+	for (size_t i = 0; i < Spans.size(); ++i)
+		for (size_t k = i + 1; k < Spans.size(); ++k) {
+			if (Starts[i].empty() || Starts[i].size() != Starts[k].size() || Spans[i].Channel == Spans[k].Channel)
+				continue;
+			bool Together = true;
+			for (size_t n = 0; n < Starts[i].size() && Together; ++n)
+				Together = std::abs(Starts[i][n] - Starts[k][n]) <= 1;
+			if (Together)
+				Held[i] = Held[k] = 1;
+		}
+	for (size_t i = 0; i < Spans.size(); ++i)
+		if (Held[i] && std::find(Voices.begin(), Voices.end(), Spans[i].Channel) == Voices.end())
+			Voices.push_back(Spans[i].Channel);
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		MixSpan &P = Spans[i];
+		if (P.Role == ROLE_LINE && (std::find(Voices.begin(), Voices.end(), P.Channel) != Voices.end() ||
+			RunsSteadily(S, NotesIn(S.Notes(P.Channel), P.First, P.End))))
+			P.Role = ROLE_CHORDS;
+	}
+}
+
+// The bars of some song rows ([first, end) each) where any of Channels sounds and the melody does too, as rows
+std::vector<std::pair<int, int> > BarsWithMelody(Session &S, const std::vector<int> &Channels, int Melody,
+	const std::vector<std::pair<int, int> > &Rows)
+{
+	std::vector<std::pair<int, int> > Out;
+	for (size_t s = 0; s < Rows.size(); ++s) {
+		if (Rows[s].second <= Rows[s].first)
+			continue;
+		for (int Bar = S.Time.BarOf(Rows[s].first); Bar <= S.Time.BarOf(Rows[s].second - 1); ++Bar) {
+			const int A = std::max(Rows[s].first, S.Time.BarStart(Bar)), Z = std::min(Rows[s].second, S.Time.BarEnd(Bar));
+			bool Part = false;
+			for (size_t c = 0; c < Channels.size() && !Part; ++c)
+				Part = HasNotesIn(S, Channels[c], A, Z);
+			if (Z <= A || !Part || (Melody >= 0 && !HasNotesIn(S, Melody, A, Z)))
+				continue;
+			if (!Out.empty() && Out.back().second == A)
+				Out.back().second = Z;
+			else
+				Out.push_back(std::make_pair(A, Z));
+		}
+	}
+	return Out;
+}
+
+// The balance as heard: each part's loudness against the melody's where they play together (dB; NO_LOUDNESS for a part
+// that never plays with it), the chords as layers (a voicing's voices together, any other chord part alone), and of the
+// layers that play together the loudest the main one
+struct HeardBalance {
+	std::vector<double> Rel;					// per span
+	std::vector<int> Layer;						// per span: its chord layer, -1 for none
+	std::vector<std::vector<size_t> > Layers;	// each layer's spans
+	std::vector<double> LayerRel;				// each layer against the melody
+	std::vector<int> Main;						// each layer's main layer (itself when it's the loudest of those it plays with)
+	int Triangle;								// the triangle's channel when it plays with the melody, else -1...
+	double TriangleRel;							// ...and its loudness against the melody's
+};
+
+HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spans,
+	const std::vector<std::vector<std::pair<int, int> > > &Refs, int Melody, const std::vector<int> &Voices, int First, int End)
+{
+	HeardBalance B;
+	B.Rel.assign(Spans.size(), NO_LOUDNESS);
+	B.Layer.assign(Spans.size(), -1);
+	B.Triangle = -1;
+	B.TriangleRel = NO_LOUDNESS;
+	if (Melody < 0)
+		return B;
+	std::vector<std::pair<int, int> > MelodyRows;
+	for (size_t i = 0; i < Spans.size(); ++i)
+		if (Spans[i].Role == ROLE_MELODY)
+			MelodyRows.insert(MelodyRows.end(), Refs[i].begin(), Refs[i].end());
+	const double LeadAlone = H.Loudness(std::vector<int>(1, Melody), MelodyRows);
+	// Against the melody where they play together; a part that never does, against the melody as a whole
+	auto Against = [&](const std::vector<int> &Channels, const std::vector<std::pair<int, int> > &Rows, std::vector<std::pair<int, int> > *pBars) {
+		const std::vector<std::pair<int, int> > Bars = BarsWithMelody(S, Channels, Melody, Rows);
+		if (pBars != 0)
+			*pBars = Bars;
+		const double Part = H.Loudness(Channels, Bars.empty() ? Rows : Bars);
+		const double Lead = Bars.empty() ? LeadAlone : H.Loudness(std::vector<int>(1, Melody), Bars);
+		return Part <= NO_LOUDNESS || Lead <= NO_LOUDNESS ? NO_LOUDNESS : Part - Lead;
+	};
+	std::vector<std::vector<std::pair<int, int> > > LayerBars;
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		if (Spans[i].Role != ROLE_CHORDS)
+			continue;
+		const bool Voice = std::find(Voices.begin(), Voices.end(), Spans[i].Channel) != Voices.end();
+		int Into = -1;
+		for (size_t l = 0; l < B.Layers.size() && Into < 0 && Voice; ++l) {
+			const MixSpan &Other = Spans[B.Layers[l].front()];
+			if (std::find(Voices.begin(), Voices.end(), Other.Channel) != Voices.end() && Other.First < Spans[i].End &&
+				Spans[i].First < Other.End)
+				Into = static_cast<int>(l);
+		}
+		if (Into < 0) {
+			Into = static_cast<int>(B.Layers.size());
+			B.Layers.push_back(std::vector<size_t>());
+		}
+		B.Layers[static_cast<size_t>(Into)].push_back(i);
+		B.Layer[i] = Into;
+	}
+	for (size_t l = 0; l < B.Layers.size(); ++l) {
+		std::vector<int> Channels;
+		std::vector<std::pair<int, int> > Rows;
+		for (size_t k = 0; k < B.Layers[l].size(); ++k) {
+			const size_t i = B.Layers[l][k];
+			if (std::find(Channels.begin(), Channels.end(), Spans[i].Channel) == Channels.end())
+				Channels.push_back(Spans[i].Channel);
+			Rows.insert(Rows.end(), Refs[i].begin(), Refs[i].end());
+		}
+		std::vector<std::pair<int, int> > Bars;
+		B.LayerRel.push_back(Against(Channels, Rows, &Bars));
+		LayerBars.push_back(Bars);
+		for (size_t k = 0; k < B.Layers[l].size(); ++k)
+			B.Rel[B.Layers[l][k]] = B.LayerRel.back();
+	}
+	// The main layer of each: the loudest of the layers sharing bars with it
+	for (size_t l = 0; l < B.Layers.size(); ++l) {
+		int Main = static_cast<int>(l);
+		for (size_t m = 0; m < B.Layers.size(); ++m) {
+			bool Together = false;
+			for (size_t a = 0; a < LayerBars[l].size() && !Together; ++a)
+				for (size_t b = 0; b < LayerBars[m].size() && !Together; ++b)
+					Together = LayerBars[l][a].first < LayerBars[m][b].second && LayerBars[m][b].first < LayerBars[l][a].second;
+			if (Together && B.LayerRel[m] > B.LayerRel[static_cast<size_t>(Main)])
+				Main = static_cast<int>(m);
+		}
+		B.Main.push_back(Main);
+	}
+	for (size_t i = 0; i < Spans.size(); ++i)
+		if (Spans[i].Role == ROLE_ECHO || Spans[i].Role == ROLE_LINE || Spans[i].Role == ROLE_BASS || Spans[i].Role == ROLE_DRUMS)
+			B.Rel[i] = Against(std::vector<int>(1, Spans[i].Channel), Refs[i], 0);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind == KIND_TRIANGLE && HasNotesIn(S, c, First, End)) {
+			std::vector<std::pair<int, int> > Bars;
+			const double Rel = Against(std::vector<int>(1, c), std::vector<std::pair<int, int> >(1, std::make_pair(First, End)), &Bars);
+			if (!Bars.empty() && Rel > NO_LOUDNESS) {
+				B.Triangle = c;
+				B.TriangleRel = Rel;
+			}
+			break;
+		}
+	return B;
+}
+
+// How far a part plays under the melody (Low to High dB, negative over it) in words: "7.1 under", "1.2 over", "level with
+// it", "from 1.0 over to 2.0 under"; for the chords (Chords) the melody's way round: "2.6 dB over" the chords, "1.5 dB
+// under", "level with"
+std::string GapText(double Low, double High, bool Chords)
+{
+	const char *const Plus = Chords ? "over" : "under", *const Minus = Chords ? "under" : "over";
+	const char *const Unit = Chords ? " dB" : "";
+	if (High - Low < 0.6) {
+		const double Mid = (Low + High) / 2.0;
+		if (std::fabs(Mid) < 0.05)
+			return Chords ? "level with" : "level with it";
+		return Format("%.1f%s %s", std::fabs(Mid), Unit, Mid > 0.0 ? Plus : Minus);
+	}
+	if (Low > -0.05)
+		return Format("%.1f-%.1f%s %s", std::max(0.0, Low), High, Unit, Plus);
+	if (High < 0.05)
+		return Format("%.1f-%.1f%s %s", std::max(0.0, -High), -Low, Unit, Minus);
+	return Format("from %.1f%s %s to %.1f%s %s", -Low, Unit, Minus, High, Unit, Plus);
+}
+
+// The balance in words, for mix's and the review's replies: "the melody (VRC6 Pulse 1) 2.6 dB over the chords, the echo
+// 7.1 under, the bass 2.4 under and the triangle 2.5 under", each role's spread where it varies; Least and Most: how far
+// the melody sits over the chords' main layers at the least and the most (NO_LOUDNESS for both without chords)
+std::string BalanceText(Session &S, const std::vector<MixSpan> &Spans, const HeardBalance &B, int Melody, double &Least, double &Most)
+{
+	auto Spread = [&](int Role, double *pLow, double *pHigh) {
+		double Low = 1e9, High = -1e9;
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (Spans[i].Role != Role || B.Rel[i] <= NO_LOUDNESS)
+				continue;
+			if (Role == ROLE_CHORDS && (B.Layer[i] < 0 || B.Main[static_cast<size_t>(B.Layer[i])] != B.Layer[i]))
+				continue;
+			Low = std::min(Low, -B.Rel[i]);
+			High = std::max(High, -B.Rel[i]);
+		}
+		if (pLow != 0) {
+			*pLow = High < -1e8 ? NO_LOUDNESS : Low;
+			*pHigh = High < -1e8 ? NO_LOUDNESS : High;
+		}
+		if (High < -1e8)
+			return std::string();
+		return GapText(Low, High, Role == ROLE_CHORDS);
+	};
+	const std::string Chords = Spread(ROLE_CHORDS, &Least, &Most), Echo = Spread(ROLE_ECHO, 0, 0), Line = Spread(ROLE_LINE, 0, 0),
+		Bass = Spread(ROLE_BASS, 0, 0), Drums = Spread(ROLE_DRUMS, 0, 0);
+	std::vector<std::string> Parts;
+	if (!Echo.empty())
+		Parts.push_back("the echo " + Echo);
+	if (!Line.empty())
+		Parts.push_back("a second line " + Line);
+	if (!Bass.empty())
+		Parts.push_back("the bass " + Bass);
+	if (B.Triangle >= 0)
+		Parts.push_back("the triangle " + GapText(-B.TriangleRel, -B.TriangleRel, false));
+	if (!Drums.empty())
+		Parts.push_back("the drums " + Drums);
+	std::string Text = "the melody (" + S.Channel(Melody).FullName() + ")" + (Chords.empty() ? std::string(" with no chords") :
+		" " + Chords + " the chords");
+	for (size_t i = 0; i < Parts.size(); ++i)
+		Text += (i + 1 == Parts.size() && Parts.size() > 1 ? " and " : ", ") + Parts[i];
+	return Text;
+}
+
+// Where a calm or a lively mix puts each part as heard, in dB against the melody: the chords' main layer, an echo of the
+// melody, a second line or an answering voice, the bass, the drums
+struct HeardPlaces {
+	double Chords, Echo, Line, Bass, Drums;
+	double LineTop;	// a second line louder than this comes down to Line; a quieter one (an ornament too: a bell that
+					// blinks, a bird) keeps its level
+};
+
+HeardPlaces PlacesFor(bool Calm)
+{
+	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -9.0, -3.0 }, LIVELY = { -3.5, -7.0, -3.5, -3.0, -6.0, -2.5 };
+	return Calm ? CALM : LIVELY;
+}
+
+// A 5B note that plays the chip's envelope (a buzz, or a sync buzz with the square), whose level the envelope sets
+// whatever the note's volume (Sticky: the Vxx in effect as it starts, for an instrument without a mode sequence)
+bool PlaysEnvelope(const Session &S, const NoteInfo &N, int Sticky)
+{
+	const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+	if (pInfo != 0 && !pInfo->Mode.Items.empty()) {
+		for (size_t i = 0; i < pInfo->Mode.Items.size(); ++i)
+			if (pInfo->Mode.Items[i] & 32)
+				return true;
+		return false;
+	}
+	return (Sticky & 4) != 0;
+}
+
+// The level an instrument's envelope holds a long note at, from a third of a second to a second in (the loudest there,
+// for one that loops); 0 for a sound that dies away
+int EnvelopeHold(const InstrumentInfo *pInfo)
+{
+	const std::vector<int> Held = HeldEnvelope(pInfo, 60);
+	return *std::max_element(Held.begin() + 20, Held.end());
+}
+
+// A part's loudest as mix counts it, over some rows: the loudest it plays (each note's volume as its instrument's
+// envelope lets it peak, and as high as a volume slide swells it), the volume and the envelope's peak that play it, the
+// highest volume written, and its level in dB as a pulse's (on the 5B, whose steps are 3 dB, an envelope counts as it
+// holds, as a pulse's would: a hold two steps under the peak takes 6 dB off there, not 1; Hold is that level, 0 when
+// the peak counted)
+struct PartPeak {
+	int Played, Column, Envelope, Highest, Hold;
+	double Db;
+	PartPeak() : Played(0), Column(0), Envelope(15), Highest(0), Hold(0), Db(-60.0) {}
+};
+
+PartPeak PeakOf(Session &S, int Channel, const std::vector<std::pair<int, int> > &Rows, const std::vector<int> &Frames,
+	const std::vector<char> &Buzz)
+{
+	const ChannelInfo &Info = S.Channel(Channel);
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	PartPeak Out;
+	auto Count = [&](int Volume, int Instrument) {
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, Instrument);
+		const int Peak = Info.Kind == KIND_FM ? 15 : EnvelopePeak(pInfo);
+		const int Hold = Info.Kind == KIND_SQUARE ? EnvelopeHold(pInfo) : 0;
+		const int Plays = PlayedVolume(Info, Volume, Hold > 0 ? Hold : Peak);
+		const double Db = Plays <= 0 ? -60.0 : LevelDb(Info, Plays) - (Hold > 0 ? 20.0 * std::log10(Hold / 15.0) : 0.0);
+		Out.Highest = std::max(Out.Highest, Volume);
+		if (Db > Out.Db + 1e-9 || (std::fabs(Db - Out.Db) < 1e-9 && Volume > Out.Column)) {
+			Out.Played = Plays;
+			Out.Column = Volume;
+			Out.Envelope = Peak;
+			Out.Hold = Hold;
+			Out.Db = Db;
+		}
+	};
+	for (size_t s = 0; s < Rows.size(); ++s) {
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int Row = Notes[i].Row;
+			if (Row >= Rows[s].first && Row < Rows[s].second && !(Row < static_cast<int>(Buzz.size()) && Buzz[static_cast<size_t>(Row)]))
+				Count(Notes[i].Volume, Notes[i].Instrument);
+		}
+		int Swelling = NO_INSTRUMENT;
+		const int Swell = SlidePeak(S.Cells(Channel), Rows[s].first, Rows[s].second, Info.EffectColumns, Frames, Swelling);
+		if (Swell > 0)
+			Count(Swell, Swelling);
+	}
+	return Out;
+}
+
+// The DPCM level (Zxx) a DPCM channel's rows play at, each row's own counted (0 before any)
+std::vector<int> DacLevels(const std::vector<Cell> &Cells, int Columns)
+{
+	std::vector<int> Out(Cells.size(), 0);
+	int Level = 0;
+	for (size_t r = 0; r < Cells.size(); ++r) {
+		for (int k = 0; k < std::min(EFFECT_COLUMNS, Columns); ++k)
+			if (Cells[r].Effect[k] == EFF_DAC)
+				Level = Cells[r].Param[k] & 0x7F;
+		Out[r] = Level;
+	}
+	return Out;
+}
+
+std::string MixTool(Session &S, const Json &Args)
+{
+	if (!S.Song.DirectChanges)
+		throw Problem("Mixing changes the volumes of the whole song, which needs direct changes; the user can allow them in "
+			"File > Connect Claude Code.");
+	// The style: soft (the default) or full, each part's loudest note at its role's level; or as heard, calm or lively,
+	// each part's loudness (as the stems measure it) set against the melody's
+	const bool Picked = Arg(Args, "levels") != 0 || Arg(Args, "dac") != 0 || Arg(Args, "width") != 0;
+	std::string Style = Squeezed(StringArg(Args, "style", Picked ? "" : "soft"));
+	TrackStyle Chosen;
+	if (Arg(Args, "style") == 0 && !Picked) {
+		Chosen = ChooseStyle(S, -1, "gives the calm mix (the melody 2-3 dB over the chords, as heard)", "soft");
+		if (Chosen.Style == STYLE_CALM)
+			Style = "calm";
+	}
+	if (Style == "ambient" || Style == "night" || Style == "peaceful")
+		Style = "calm";
+	else if (Style == "any" || Style == "normal")
+		Style = "soft";
+	// The stereo picture: how far the parts that aren't the melody, the bass or the drums go to the sides (-1: as they are)
+	double Width = -1.0;
+	{
+		const std::string Word = Squeezed(StringArg(Args, "width", "keep"));
+		if (Word == "mono" || Word == "center" || Word == "centre" || Word == "middle" || Word == "none")
+			Width = 0.0;
+		else if (Word == "narrow")
+			Width = 0.25;
+		else if (Word == "wide")
+			Width = 0.5;
+		else if (Word == "full" || Word == "widest")
+			Width = 1.0;
+		else if (Word != "keep")
+			throw Problem("width: keep (the pans as they are, the default), mono (every part in the middle), narrow, wide or "
+				"full (how far the side parts go).");
+	}
+	if (!Style.empty() && Style != "soft" && Style != "full" && Style != "quiet" && Style != "loud" && Style != "atmospheric" &&
+		Style != "calm" && Style != "lively")
+		throw Problem("style: soft (quiet pulses under a warm triangle, as atmospheric tracks mix), full (everything near "
+			"full volume), calm (as heard, the melody only 2-3 dB over the chords: night and ambient tracks) or lively (as heard, "
+			"the melody 3-4 dB over the parts: stages that bounce without pressing).");
+	const bool Soft = Style == "soft" || Style == "quiet" || Style == "atmospheric";
+	const bool Calm = Style == "calm", Heard = Calm || Style == "lively";
+	int From = 1, To = S.Time.BarCount();
+	const bool Range = RangeGiven(Args);
+	if (Range)
+		BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
+	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+
+	std::set<int> Leveled;	// channels given a level: mixed as one part
+	{
+		const Json *pGiven = Arg(Args, "levels");
+		if (pGiven != 0 && pGiven->IsObject())
+			for (size_t i = 0; i < pGiven->Members().size(); ++i)
+				Leveled.insert(ParseChannel(S, Json(pGiven->Members()[i].first), "levels"));
+	}
+	std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, Leveled);
+	// Over some bars, each part keeps its place in the rest of the song: its loudest (or its loudness, as heard) is
+	// counted where it plays that role in the whole song, so mixing section after section doesn't even them out
+	std::vector<int> Voices;
+	std::vector<MixSpan> Whole;
+	if (Range)
+		Whole = MixSpans(S, Melody, 0, S.Time.TotalRows(), Leveled);
+	if (Heard) {
+		Voices = ChordVoicesIn(S, First, End, Melody);
+		HeardRoles(S, Voices, Spans);
+		if (Range) {
+			std::vector<int> WholeVoices = ChordVoicesIn(S, 0, S.Time.TotalRows(), Melody);
+			HeardRoles(S, WholeVoices, Whole);
+		}
+	}
+	std::vector<std::vector<std::pair<int, int> > > Refs(Spans.size());
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		for (size_t w = 0; Range && Leveled.count(Spans[i].Channel) == 0 && w < Whole.size(); ++w)
+			if (Whole[w].Channel == Spans[i].Channel && Whole[w].Role == Spans[i].Role)
+				Refs[i].push_back(std::make_pair(Whole[w].First, Whole[w].End));
+		if (Refs[i].empty())
+			Refs[i].push_back(std::make_pair(Spans[i].First, Spans[i].End));
+	}
+	// As heard, the parts are set against the melody where they play with it in these bars (the melody keeping its own
+	// level from the rest of the song): a quiet intro's parts follow its quiet melody down
+	std::vector<std::vector<std::pair<int, int> > > Local(Spans.size());
+	for (size_t i = 0; i < Spans.size(); ++i)
+		Local[i].push_back(std::make_pair(Spans[i].First, Spans[i].End));
 	std::vector<int> SpanCount(static_cast<size_t>(S.ChannelCount()), 0);
 	for (size_t i = 0; i < Spans.size(); ++i)
 		++SpanCount[static_cast<size_t>(Spans[i].Channel)];
@@ -6727,7 +7648,7 @@ std::string MixTool(Session &S, const Json &Args)
 	bool Under = false;						// parts on the VRC6 Plus's soft layer, kept under the VRC6
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
-		if (Style.empty() || P.Role == ROLE_NONE)
+		if (Style.empty() || Heard || P.Role == ROLE_NONE || P.Role == ROLE_AMBIENCE)
 			continue;
 		static const int SOFT[] = { -1, 9, 4, 6, 7, 10, 10 }, FULL[] = { -1, 15, 6, 12, 13, 15, 15 };
 		const int AsPulse = (Soft ? SOFT : FULL)[P.Role];
@@ -6775,7 +7696,8 @@ std::string MixTool(Session &S, const Json &Args)
 					Spans[k].Target = static_cast<int>(Value.Number());
 		}
 	}
-	// The DPCM level: soft mixes soften the triangle and the noise a little
+	// The DPCM level: soft mixes soften the triangle and the noise a little; calm and lively ones set the triangle's
+	// place with it where it plays with the melody (below), and otherwise leave it
 	int Dac = Soft ? 0x30 : (Style == "full" || Style == "loud") ? 0 : -1;
 	const Json *pDac = Arg(Args, "dac");
 	if (pDac != 0) {
@@ -6806,87 +7728,56 @@ std::string MixTool(Session &S, const Json &Args)
 				throw Problem("dac: full (Z00), warm (Z30), soft (Z50), softest (Z7F), keep, or a level 0-127.");
 		}
 	}
+	int Dpcm = -1;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind == KIND_DPCM)
+			Dpcm = c;
+	if (Dac >= 0 && Dpcm < 0)
+		throw Problem("The song has no DPCM channel to set the level on.");
+	const bool Samples = Dpcm >= 0 && HasNotesIn(S, Dpcm, 0, S.Time.TotalRows());
 
-	Draft D(S);
-	std::vector<std::string> Done;
-	const std::vector<int> Frames = RowFramesOf(S);
-	int SlidesLost = 0;
-	for (size_t p = 0; p < Spans.size(); ++p) {
-		const MixSpan &P = Spans[p];
-		const int c = P.Channel, Want = P.Target;
-		if (Want < 1)
+	// The 5B's envelope notes (a buzz, a sync buzz) play at the envelope's own level whatever their volume: the rows of
+	// each channel's that do keep their volumes
+	std::vector<std::vector<char> > Buzz(static_cast<size_t>(S.ChannelCount()));
+	std::vector<int> Buzzes(static_cast<size_t>(S.ChannelCount()), 0);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (S.Channel(c).Kind != KIND_SQUARE)
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
-		const bool Fm = S.Channel(c).Kind == KIND_FM;
-		// The loudest the part plays: each note's volume as its instrument's envelope lets it peak (a pad held at 9 of
-		// 15 plays 9 at volume 15), and as high as a volume slide swells it
-		int Loudest = 0, Column = 0, Envelope = 15;
-		auto Count = [&](int Volume, int Instrument) {
-			const int Peak = Fm ? 15 : EnvelopePeak(FindInstrument(S.Song, Instrument));
-			const int Played = PlayedVolume(S.Channel(c), Volume, Peak);
-			if (Played > Loudest || (Played == Loudest && Volume > Column)) {
-				Loudest = Played;
-				Column = Volume;
-				Envelope = Peak;
-			}
-		};
-		for (size_t i = 0; i < Notes.size(); ++i)
-			if (Notes[i].Row >= P.First && Notes[i].Row < P.End)
-				Count(Notes[i].Volume, Notes[i].Instrument);
-		int Swelling = NO_INSTRUMENT;
-		const int Swell = SlidePeak(S.Cells(c), P.First, P.End, S.Channel(c).EffectColumns, Frames, Swelling);
-		if (Swell > 0)
-			Count(Swell, Swelling);
-		if (Loudest <= 0)
-			continue;
+		const std::vector<int> Sticky = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_DUTY_CYCLE);
+		std::vector<char> &Rows = Buzz[static_cast<size_t>(c)];
+		Rows.assign(S.Cells(c).size(), 0);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			if (!PlaysEnvelope(S, Notes[i], Sticky[i]))
+				continue;
+			if (Notes[i].Row >= First && Notes[i].Row < End)
+				++Buzzes[static_cast<size_t>(c)];
+			for (int r = Notes[i].Row; r < Notes[i].Row + std::max(1, Notes[i].Rows) && r < static_cast<int>(Rows.size()); ++r)
+				Rows[static_cast<size_t>(r)] = 1;
+		}
+	}
+	const std::vector<int> Frames = RowFramesOf(S);
+	std::vector<PartPeak> Peaks, Own;	// each part's loudest where it plays its role in the song (Refs), and in these bars
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		const std::vector<char> &Buzzing = Buzz[static_cast<size_t>(Spans[i].Channel)];
+		Peaks.push_back(PeakOf(S, Spans[i].Channel, Refs[i], Frames, Buzzing));
+		Own.push_back(Range ? PeakOf(S, Spans[i].Channel, std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First,
+			Spans[i].End)), Frames, Buzzing) : Peaks.back());
+	}
+
+	auto LabelOf = [&](const MixSpan &P) {
+		const int c = P.Channel;
 		std::string Label = S.Channel(c).FullName();
 		if (P.Role != ROLE_NONE || SpanCount[static_cast<size_t>(c)] > 1)
 			Label += std::string(" (") + (P.Role != ROLE_NONE ? RoleName(P.Role) : "") + (SpanCount[static_cast<size_t>(c)] > 1 ?
 				(std::string(P.Role != ROLE_NONE ? ", " : "") + RangeText(S.Time.BarOf(P.First), S.Time.BarOf(P.End - 1))) : "") + ")";
-		if (Loudest == Want) {
-			Done.push_back(Format("%s stays at %d", Label.c_str(), Want));
-			continue;
-		}
-		std::vector<Cell> &Cells = D.Cells(c);
-		// Each volume as much under the loudest as it was (the VRC7 and the 5B count 3 dB a step, the others in proportion)
-		const ChannelInfo &Info = S.Channel(c);
-		const double Shift = LevelDb(Info, Want) - LevelDb(Info, Loudest);
-		auto Scaled = [&](int Volume) {
-			return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + Shift);
-		};
-		bool FirstNote = true;
-		const int Entering = StateAt(S.Cells(c), P.First, S.Channel(c).EffectColumns).Volume;	// as the song has it, before any mixing
-		for (int r = P.First; r < P.End && r < static_cast<int>(Cells.size()); ++r) {
-			Cell &C = Cells[static_cast<size_t>(r)];
-			if (C.Volume < NO_VOLUME)
-				C.Volume = static_cast<unsigned char>(Scaled(C.Volume));
-			else if (FirstNote && C.HasNote())
-				C.Volume = static_cast<unsigned char>(Scaled(Entering));
-			if (C.HasNote())
-				FirstNote = false;
-		}
-		// Volume slides keep their shape at the new level
-		const SlideMix Slides = MixSlides(S.Cells(c), Cells, P.First, P.End, S.Channel(c).EffectColumns, Frames,
-			std::pow(10.0, Shift / 20.0), Shift / FM_STEP_DB, StepVolume(Info));
-		SlidesLost += Slides.Lost;
-		std::string Also;
-		if (Slides.Scaled > 0)
-			Also += Format(", %s with it", Plural(Slides.Scaled, "volume slide", "volume slides").c_str());
-		if (Slides.Stopped > 0)
-			Also += Format(" (%s stopped where %s climb past the part's level)", Plural(Slides.Stopped, "swell", "swells").c_str(),
-				Slides.Stopped == 1 ? "it would" : "they would");
-		// An envelope that peaks under 15 can keep a part under its level, its volume at 15
-		if (LevelDb(Info, Column) + Shift > LevelDb(Info, 15) + 1.0)
-			Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Envelope,
-				PlayedVolume(Info, 15, Envelope));
-		Done.push_back(Format("%s loudest %d to %d%s", Label.c_str(), Loudest, Want, Also.c_str()));
-	}
+		return Label;
+	};
 
 	// The stereo picture: the melody, the bass and the drums in the middle; the other parts out to the sides by Width,
 	// an echo first to the right, then each part to the side with fewer, and chord voices sounding together spread
 	// over the width, the lowest on the left
-	int PansLost = 0;
-	if (Width >= 0.0) {
+	auto ApplyPans = [&](Draft &Into, std::vector<std::string> *pDone, int &Lost) {
 		std::vector<double> Place(Spans.size(), 0.0);
 		std::vector<bool> Placed(Spans.size(), false);
 		int Lefts = 0, Rights = 0;
@@ -6925,8 +7816,8 @@ std::string MixTool(Session &S, const Json &Args)
 			std::vector<std::pair<int, int> > Want;
 			for (size_t n = 0; n < Notes.size(); ++n)
 				Want.push_back(std::make_pair(Notes[n].Row, PanParam(Place[i])));
-			if (!PutPans(D.Cells(P.Channel), P.First, P.End, S.Channel(P.Channel).EffectColumns, Want))
-				++PansLost;
+			if (!PutPans(Into.Cells(P.Channel), P.First, P.End, S.Channel(P.Channel).EffectColumns, Want))
+				++Lost;
 			if (Notes.empty())
 				continue;
 			const std::string Label = S.Channel(P.Channel).FullName() + (P.Role != ROLE_NONE ? std::string(" (") + RoleName(P.Role) + ")" : "") +
@@ -6938,26 +7829,114 @@ std::string MixTool(Session &S, const Json &Args)
 			else
 				Sides += (Sides.empty() ? "" : ", ") + Label + " " + PanName(PanParam(Place[i]));
 		}
-		Done.push_back(Width == 0.0 || Sides.empty() ? "every part in the middle (mono)" :
-			"stereo: " + Sides + (Middles.empty() ? "" : "; in the middle " + Middles));
+		if (pDone != 0)
+			pDone->push_back(Width == 0.0 || Sides.empty() ? "every part in the middle (mono)" :
+				"stereo: " + Sides + (Middles.empty() ? "" : "; in the middle " + Middles));
+	};
+
+	// As heard: each part's shift in dB, so that it plays at its place against the melody (which keeps its level, unless
+	// levels gives it one); for the parts mixed by a given level or with no role, none
+	const HeardPlaces Places = PlacesFor(Calm);
+	std::vector<double> Shifts(Spans.size(), 0.0), Aims(Spans.size(), NO_LOUDNESS);
+	std::vector<char> ByEar(Spans.size(), 0);
+	double MelodyShift = 0.0;
+	int TriangleDac = -1, TriangleNow = 0;
+	if (Heard && Melody >= 0) {
+		Draft Panned(S);	// the pans as the mix leaves them (width), which the loudness hears
+		int Ignored = 0;
+		if (Width >= 0.0)
+			ApplyPans(Panned, 0, Ignored);
+		Hearing H(S, &Panned);
+		const HeardBalance B = HearBalance(S, H, Spans, Local, Melody, Voices, First, End);
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (Spans[i].Role != ROLE_MELODY || Peaks[i].Played <= 0)
+				continue;
+			const ChannelInfo &Info = S.Channel(Spans[i].Channel);
+			// The melody keeps its level: raised, it would leave behind what keeps its own (a swell of wind, a buzz) and
+			// the parts that can't follow it past 15
+			MelodyShift = Spans[i].Target >= 1 ? LevelDb(Info, Spans[i].Target) - LevelDb(Info, Peaks[i].Highest) : 0.0;
+			if (Spans[i].Target < 1) {
+				Shifts[i] = 0.0;
+				ByEar[i] = 1;
+			}
+		}
+		// The chords' main layers at their place; the other layers playing with one keep their place under it, but
+		// together at least 3 dB under it (a soft layer's pad under the VRC6's chords)
+		std::vector<double> LayerShift(B.Layers.size(), 0.0);
+		for (size_t m = 0; m < B.Layers.size(); ++m) {
+			if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
+				continue;
+			LayerShift[m] = Places.Chords - B.LayerRel[m] + MelodyShift;
+			double Together = 0.0;
+			std::vector<size_t> Others;
+			for (size_t l = 0; l < B.Layers.size(); ++l)
+				if (l != m && B.Main[l] == static_cast<int>(m) && B.LayerRel[l] > NO_LOUDNESS) {
+					Others.push_back(l);
+					Together += std::pow(10.0, (B.LayerRel[l] + LayerShift[m] - MelodyShift) / 10.0);
+				}
+			const double Over = Others.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) - (Places.Chords - SOFT_LAYER_DB));
+			for (size_t o = 0; o < Others.size(); ++o)
+				LayerShift[Others[o]] = LayerShift[m] - Over;
+		}
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			const MixSpan &P = Spans[i];
+			if (P.Target >= 1 || B.Rel[i] <= NO_LOUDNESS || Peaks[i].Played <= 0)
+				continue;
+			if (P.Role == ROLE_CHORDS && B.Layer[i] >= 0) {
+				Shifts[i] = LayerShift[static_cast<size_t>(B.Layer[i])];
+				Aims[i] = B.Rel[i] + Shifts[i] - MelodyShift;
+				ByEar[i] = 1;
+				continue;
+			}
+			const double Place = P.Role == ROLE_ECHO ? Places.Echo : P.Role == ROLE_LINE ? Places.Line : P.Role == ROLE_BASS ?
+				Places.Bass : P.Role == ROLE_DRUMS ? Places.Drums : NO_LOUDNESS;
+			if (Place <= NO_LOUDNESS)
+				continue;
+			ByEar[i] = 1;
+			if (P.Role == ROLE_LINE && B.Rel[i] <= Places.LineTop) {
+				Shifts[i] = MelodyShift;	// with the melody, where levels moves it
+				continue;
+			}
+			Shifts[i] = Place - B.Rel[i] + MelodyShift;
+			Aims[i] = Place;
+		}
+		// The triangle has no volume: the DPCM level gives it its place (the noise moves with it, so the drums make up
+		// for it), unless dac was given
+		if (B.Triangle >= 0 && pDac == 0) {
+			const double Gain = std::pow(10.0, FaderDb(S.Channel(B.Triangle)) / 20.0);
+			const std::vector<int> Levels = DacLevels(S.Cells(Dpcm), S.Channel(Dpcm).EffectColumns);
+			TriangleNow = First < static_cast<int>(Levels.size()) ? Levels[static_cast<size_t>(First)] : 0;
+			const double Base = B.TriangleRel - MelodyShift - 20.0 * std::log10(std::max(0.01, TrianglePinShare(TriangleNow, Gain)));
+			double BestMiss = 1e9;
+			for (int Level = 0; Level <= (Samples ? 0x40 : 0x7F); ++Level) {
+				const double Miss = std::fabs(Base + 20.0 * std::log10(std::max(0.01, TrianglePinShare(Level, Gain))) - Places.Bass);
+				if (Miss < BestMiss - 1e-9) {
+					BestMiss = Miss;
+					TriangleDac = Level;
+				}
+			}
+			Dac = TriangleDac;
+			for (size_t i = 0; i < Spans.size(); ++i)
+				if (ByEar[i] && Spans[i].Role == ROLE_DRUMS)
+					Shifts[i] -= 20.0 * std::log10(std::max(0.01, TriangleShare(Dac)) / std::max(0.01, TriangleShare(TriangleNow)));
+		}
 	}
 
-	// The level at the start and where the loop comes back
+	// The DPCM level where the mix starts and where the loop comes back, and on every sample there (a sample can start
+	// from a level of its own: the sampled drums start from silence, and would leave the channel there). Over some bars
+	// whose levels step (Zxx written on purpose), the steps move by as much as the first, rather than all becoming one
 	std::string DacText, DacWarning;
-	if (Dac >= 0) {
-		int Dpcm = -1;
-		for (int c = 0; c < S.ChannelCount(); ++c)
-			if (S.Channel(c).Kind == KIND_DPCM)
-				Dpcm = c;
-		if (Dpcm < 0)
-			throw Problem("The song has no DPCM channel to set the level on.");
+	auto WriteDac = [&](Draft &Into) {
+		DacText.clear();
+		DacWarning.clear();
+		if (Dac < 0)
+			return;
+		const int Columns = S.Channel(Dpcm).EffectColumns;
+		const std::vector<Cell> &Old = S.Cells(Dpcm);
 		std::vector<int> Rows(1, First);
-		const SongFlow Flow_ = Flow(S);
-		const int Loop = Flow_.LoopRow(S.Time.PatternLength);
+		const int Loop = Flow(S).LoopRow(S.Time.PatternLength);
 		if (Loop > First && Loop < End)
 			Rows.push_back(Loop);
-		// And on every sample the channel plays: a sample can start from a level of its own (the sampled drums
-		// start from silence) and leave the channel there, which would undo the level until the loop comes round
 		std::vector<int> Hits;
 		if (Dac > 0) {
 			const std::vector<NoteInfo> Played = NotesIn(S.Notes(Dpcm), First, End);
@@ -6967,17 +7946,32 @@ std::string MixTool(Session &S, const Json &Args)
 		}
 		const size_t Marks = Rows.size();
 		Rows.insert(Rows.end(), Hits.begin(), Hits.end());
-		std::vector<Cell> &Cells = D.Cells(Dpcm);
+		// The levels the song has, row by row
+		const std::vector<int> Levels = DacLevels(Old, Columns);
+		auto LevelAt = [&](int Row) { return Row < static_cast<int>(Levels.size()) ? Levels[static_cast<size_t>(Row)] : 0; };
+		bool Steps = false;
+		const int Start = LevelAt(First);
+		for (int r = First + 1; Range && r < End && !Steps; ++r)
+			Steps = LevelAt(r) != Start;
+		const int Move = Dac - Start;
+		auto LevelFor = [&](int Row) { return Steps ? std::max(0, std::min(127, LevelAt(Row) + Move)) : Dac; };
+		std::vector<Cell> &Cells = Into.Cells(Dpcm);
 		int Missed = 0;
+		if (Steps)
+			for (int r = First + 1; r < End && r < static_cast<int>(Cells.size()); ++r)
+				for (int k = 0; k < std::min(EFFECT_COLUMNS, Columns); ++k)
+					if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_DAC)
+						Cells[static_cast<size_t>(r)].Param[k] = static_cast<unsigned char>(LevelFor(r));
 		for (size_t i = 0; i < Rows.size(); ++i) {
 			Cell &C = Cells[static_cast<size_t>(Rows[i])];
+			const int Level = LevelFor(Rows[i]);
 			bool Placed = false;
 			for (int k = 0; k < EFFECT_COLUMNS && !Placed; ++k)
 				if (C.Effect[k] == EFF_DAC) {
-					C.Param[k] = static_cast<unsigned char>(Dac);
+					C.Param[k] = static_cast<unsigned char>(Level);
 					Placed = true;
 				}
-			if (!Placed && !AddEffect(C, EFF_DAC, Dac, S.Channel(Dpcm).EffectColumns)) {
+			if (!Placed && !AddEffect(C, EFF_DAC, Level, Columns)) {
 				if (i >= Marks) {
 					++Missed;
 					continue;
@@ -6994,9 +7988,212 @@ std::string MixTool(Session &S, const Json &Args)
 			S.Time.Position(First).c_str(), Marks > 1 ? (" and where the loop starts (" + S.Time.Position(Rows[1]) + ")").c_str() : "",
 			Hits.empty() ? "" : (" and with each of its " + Plural(static_cast<int>(Hits.size()), "sample", "samples") +
 				" (which would reset it)").c_str(), Share);
-		if (HasNotesIn(S, Dpcm, 0, S.Time.TotalRows()) && Dac > 0x40)
+		if (Steps)
+			DacText += Format(", its later steps in these bars moved with it (%+d)", Move);
+		if (Samples && Dac > 0x40)
 			DacText += " (samples on the DPCM channel start from that level: at a high one they have less room and can clip; "
 				"Z30-Z40 suits songs with samples)";
+	};
+
+	// Each part's volumes scaled, each as much under its loudest as it was (the VRC7 and the 5B count 3 dB a step, the
+	// others in proportion), its volume slides with them; the 5B's envelope notes keep theirs
+	int SlidesLost = 0;
+	std::vector<double> Missed(Spans.size(), 0.0);	// as heard: how far a part fell short of its place at volume 15 or 1
+	auto Scale = [&](Draft &Into, std::vector<std::string> *pDone) {
+		SlidesLost = 0;
+		for (size_t p = 0; p < Spans.size(); ++p) {
+			const MixSpan &P = Spans[p];
+			const PartPeak &Peak = Peaks[p];
+			const int c = P.Channel, Want = P.Target;
+			if ((Want < 1 && !ByEar[p]) || Peak.Played <= 0)
+				continue;
+			const ChannelInfo &Info = S.Channel(c);
+			const std::string Label = LabelOf(P);
+			// A level given in levels is the loudest volume as written (a pad's 8 stays 8, whatever its envelope); a
+			// style's, as the part plays
+			const bool Given = Leveled.count(c) > 0;
+			double Shift = ByEar[p] ? Shifts[p] : Given ? LevelDb(Info, Want) - LevelDb(Info, Peak.Highest) : LevelDb(Info, Want) - Peak.Db;
+			if (ByEar[p]) {
+				// Its highest volume here can't pass 15, nor its softest go under 1
+				const double Room = LevelDb(Info, 15) - LevelDb(Info, Own[p].Highest), Floor = LevelDb(Info, 1) - LevelDb(Info, Own[p].Highest);
+				Missed[p] = Shift > Room ? Shift - Room : Shift < Floor ? Shift - Floor : 0.0;
+				Shift = std::max(Floor, std::min(Room, Shift));
+			}
+			auto Scaled = [&](int Volume) {
+				return Volume <= 0 ? 0 : VolumeForDb(Info, LevelDb(Info, Volume) + Shift);
+			};
+			bool Same = true;	// as heard, or for an envelope counted as it holds: every volume there stays as it is
+			for (int r = P.First; r < P.End && r < static_cast<int>(S.Cells(c).size()) && Same; ++r)
+				Same = S.Cells(c)[static_cast<size_t>(r)].Volume >= NO_VOLUME || Scaled(S.Cells(c)[static_cast<size_t>(r)].Volume) ==
+					S.Cells(c)[static_cast<size_t>(r)].Volume;
+			Same = Same && Scaled(StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume) == StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;
+			if (ByEar[p] || Given || Peak.Hold > 0 ? Same : Peak.Played == Want) {
+				if (pDone != 0)
+					pDone->push_back(Format("%s stays at %d", Label.c_str(), ByEar[p] || Given || Peak.Hold > 0 ? Own[p].Highest :
+						Own[p].Played));
+				continue;
+			}
+			// The change in words; over some bars without the part's loudest in the song, these bars' own loudest, then
+			// the song's
+			auto Told = [&](int From, int To) {
+				if (Own[p].Highest == Peak.Highest && Own[p].Played == Peak.Played)
+					return Format("%s loudest %d to %d", Label.c_str(), From, To);
+				return Format("%s loudest %d to %d, as the song's %d to %d", Label.c_str(), Own[p].Highest, Scaled(Own[p].Highest), From, To);
+			};
+			std::vector<Cell> &Cells = Into.Cells(c);
+			bool FirstNote = true;
+			const int Entering = StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;	// as the song has it, before any mixing
+			const std::vector<char> &Buzzing = Buzz[static_cast<size_t>(c)];
+			for (int r = P.First; r < P.End && r < static_cast<int>(Cells.size()); ++r) {
+				Cell &C = Cells[static_cast<size_t>(r)];
+				if (r < static_cast<int>(Buzzing.size()) && Buzzing[static_cast<size_t>(r)]) {
+					FirstNote = FirstNote && !C.HasNote();
+					continue;
+				}
+				if (C.Volume < NO_VOLUME)
+					C.Volume = static_cast<unsigned char>(Scaled(C.Volume));
+				else if (FirstNote && C.HasNote())
+					C.Volume = static_cast<unsigned char>(Scaled(Entering));
+				if (C.HasNote())
+					FirstNote = false;
+			}
+			// Volume slides keep their shape at the new level
+			const SlideMix Slides = MixSlides(S.Cells(c), Cells, P.First, P.End, Info.EffectColumns, Frames,
+				std::pow(10.0, Shift / 20.0), Shift / FM_STEP_DB, StepVolume(Info));
+			SlidesLost += Slides.Lost;
+			if (pDone == 0)
+				continue;
+			std::string Also;
+			if (Slides.Scaled > 0)
+				Also += Format(", %s with it", Plural(Slides.Scaled, "volume slide", "volume slides").c_str());
+			if (Slides.Stopped > 0)
+				Also += Format(" (%s stopped where %s climb past the part's level)", Plural(Slides.Stopped, "swell", "swells").c_str(),
+					Slides.Stopped == 1 ? "it would" : "they would");
+			if (ByEar[p] || Given) {
+				pDone->push_back(Format("%s loudest %d to %d%s", Label.c_str(), Own[p].Highest, Scaled(Own[p].Highest), Also.c_str()));
+				continue;
+			}
+			if (Peak.Hold > 0) {
+				pDone->push_back(Format("%s (its sound holds %d; on the 5B, 3 dB a step, that counts)%s", Told(Peak.Column,
+					Scaled(Peak.Column)).c_str(), Peak.Hold, Also.c_str()));
+				continue;
+			}
+			// An envelope that peaks under 15 can keep a part under its level, its volume at 15
+			if (LevelDb(Info, Peak.Column) + Shift > LevelDb(Info, 15) + 1.0)
+				Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Peak.Envelope,
+					PlayedVolume(Info, 15, Peak.Envelope));
+			pDone->push_back(Told(Peak.Played, Want) + Also);
+		}
+		// What keeps its level
+		for (size_t p = 0; p < Spans.size() && pDone != 0; ++p)
+			if (Spans[p].Role == ROLE_AMBIENCE && NoteStartsIn(S, Spans[p].Channel, Spans[p].First, Spans[p].End) && !Style.empty())
+				pDone->push_back(LabelOf(Spans[p]) + " stays as written");
+		for (int c = 0; c < S.ChannelCount() && pDone != 0; ++c)
+			if (Buzzes[static_cast<size_t>(c)] > 0)
+				pDone->push_back(Format("%s's %s play the envelope at its own level whatever their volume, so they stay as written",
+					S.Channel(c).FullName().c_str(), Plural(Buzzes[static_cast<size_t>(c)], "envelope note (a buzz)", "envelope notes (a buzz)").c_str()));
+	};
+
+	std::vector<std::string> Done;
+	int PansLost = 0;
+	std::unique_ptr<Draft> pDraft(new Draft(S));
+	Scale(*pDraft, &Done);
+	if (Width >= 0.0)
+		ApplyPans(*pDraft, &Done, PansLost);
+	WriteDac(*pDraft);
+
+	// As heard: the balance the mix leaves. Whole steps of volume, and the envelope they multiply (FamiTracker rounds the
+	// product down, so on a sound that holds 12, volumes 5 and 6 both play 4), can leave a part half a dB or more off its
+	// place: such a part (a chord layer as one) tries each loudest volume around its own, and keeps the one heard nearest
+	std::string Balance;
+	if (Heard && Melody >= 0) {
+		// The balance of a draft, or (null) of the mix as the shifts are now
+		auto BalanceOf = [&](Draft *pTry) {
+			std::unique_ptr<Draft> pOwn;
+			if (pTry == 0) {
+				pOwn.reset(new Draft(S));
+				pTry = pOwn.get();
+				int Lost = 0;
+				Scale(*pTry, 0);
+				if (Width >= 0.0)
+					ApplyPans(*pTry, 0, Lost);
+				WriteDac(*pTry);
+			}
+			Hearing Ears(S, pTry);
+			return HearBalance(S, Ears, Spans, Local, Melody, Voices, First, End);
+		};
+		HeardBalance B = BalanceOf(pDraft.get());
+		const std::vector<double> MissedFirst = Missed;
+		std::vector<char> Tried(Spans.size(), 0);
+		bool Searched = false, Changed = false;
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (Tried[i] || !ByEar[i] || Aims[i] <= NO_LOUDNESS || B.Rel[i] <= NO_LOUDNESS || std::fabs(MissedFirst[i]) >= 0.05 ||
+				std::fabs(B.Rel[i] - Aims[i]) < 0.5)
+				continue;
+			std::vector<size_t> Unit;
+			for (size_t k = 0; k < Spans.size(); ++k)
+				if (k == i || (B.Layer[i] >= 0 && B.Layer[k] == B.Layer[i]))
+					Unit.push_back(k);
+			for (size_t u = 0; u < Unit.size(); ++u)
+				Tried[Unit[u]] = 1;
+			Searched = true;
+			const ChannelInfo &Info = S.Channel(Spans[i].Channel);
+			const int Highest = Own[i].Highest;
+			const double Was = Shifts[i];
+			double Best = Was, BestMiss = std::fabs(B.Rel[i] - Aims[i]);
+			for (int To = std::max(1, Highest - 7); To <= std::min(15, Highest + 7); ++To) {
+				const double Shift = LevelDb(Info, To) - LevelDb(Info, Highest);
+				if (std::fabs(Shift - Was) < 0.01)
+					continue;
+				for (size_t u = 0; u < Unit.size(); ++u)
+					Shifts[Unit[u]] = Shift;
+				const HeardBalance Tries = BalanceOf(0);
+				const double Miss = Tries.Rel[i] > NO_LOUDNESS ? std::fabs(Tries.Rel[i] - Aims[i]) : 1e9;
+				if (Miss < BestMiss - 0.05) {
+					Best = Shift;
+					BestMiss = Miss;
+				}
+			}
+			for (size_t u = 0; u < Unit.size(); ++u)
+				Shifts[Unit[u]] = Best;
+			Changed = Changed || Best != Was;
+		}
+		if (Searched) {
+			// The mix with the volumes found (and what Scale and WriteDac tell of it, which the tries changed)
+			Done.clear();
+			PansLost = 0;
+			pDraft.reset(new Draft(S));
+			Scale(*pDraft, &Done);
+			if (Width >= 0.0)
+				ApplyPans(*pDraft, &Done, PansLost);
+			WriteDac(*pDraft);
+			if (Changed)
+				B = BalanceOf(pDraft.get());
+		}
+		double Least, Most;
+		Balance = BalanceText(S, Spans, B, Melody, Least, Most);
+		// What lands half a dB or more off its place (at 15 or 1, or between two volumes' steps), a chord layer as one:
+		// a fader moves it the rest of the way
+		std::string Off;
+		std::vector<char> Named(Spans.size(), 0);
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (!ByEar[i] || Named[i] || Aims[i] <= NO_LOUDNESS || B.Rel[i] <= NO_LOUDNESS)
+				continue;
+			const double By = B.Rel[i] - Aims[i];	// over its place (under it, negative)
+			if (std::fabs(By) < 0.5)
+				continue;
+			std::string Names;
+			for (size_t k = i; k < Spans.size(); ++k)
+				if (k == i || (B.Layer[i] >= 0 && B.Layer[k] == B.Layer[i] && !Named[k])) {
+					Named[k] = 1;
+					Names += (Names.empty() ? "" : " and ") + S.Channel(Spans[k].Channel).FullName();
+				}
+			Off += (Off.empty() ? "" : ", ") + Format("%s (%s) %.1f dB too %s%s", Names.c_str(), RoleName(Spans[i].Role),
+				std::fabs(By), By > 0 ? "loud" : "quiet", std::fabs(Missed[i]) >= 0.05 ? (Missed[i] > 0 ? " at 15" : " at 1") :
+				" (between volume steps)");
+		}
+		if (!Off.empty())
+			Balance += " (off their places: " + Off + "; set_mixer's faders move them the rest)";
 	}
 
 	std::vector<Change> Changes;
@@ -7010,31 +8207,38 @@ std::string MixTool(Session &S, const Json &Args)
 		Warnings.push_back(Format("%s had a note with no free effect column for its pan, which plays where the note before it "
 			"does.", Plural(PansLost, "part", "parts").c_str()));
 	int Start = First;
-	std::string What = Soft ? "a soft mix" : (Style == "full" || Style == "loud") ? "a full mix" :
-		(Style.empty() && Width >= 0.0 && Arg(Args, "levels") == 0 && Dac < 0) ? "the stereo picture" : "the mix";
-	What += ", " + RangeText(From, To) + ": ";
+	std::string What = Calm ? "a calm mix" : Heard ? "a lively mix" : Soft ? "a soft mix" : (Style == "full" || Style == "loud") ?
+		"a full mix" : (Style.empty() && Width >= 0.0 && Arg(Args, "levels") == 0 && Dac < 0) ? "the stereo picture" : "the mix";
+	What += ", " + RangeText(From, To) + (Balance.empty() ? ": " : ", as heard: " + Balance + ". Changes: ");
 	for (size_t i = 0; i < Done.size(); ++i)
 		What += (i == 0 ? "" : "; ") + Done[i];
 	if (!DacText.empty())
 		What += (Done.empty() ? "" : "; ") + DacText;
-	if (!D.Collect(First, true, Changes, Start, Warnings, End))
-		return "The song is mixed that way already: " + What.substr(What.find(": ") + 2) + ".";
+	if (!pDraft->Collect(First, true, Changes, Start, Warnings, End))
+		return (Chosen.Note.empty() ? std::string() : Chosen.Note + " ") + (Balance.empty() ? "The song is mixed that way already: " +
+			What.substr(What.find(": ") + 2) + "." : "The song is mixed that way already, as heard: " + Balance + ".");
 	std::string Text = Commit(S, Changes, Start, false, "", What);
+	if (Heard)
+		Text += std::string(" As heard: as stems measure each part where it plays with the melody (envelopes, faders, pans and "
+			"Soft counted); ") + (Calm ? "style lively puts the melody 3-4 dB over the parts instead." :
+			"style calm puts it 2-3 dB over the chords instead.");
 	if (Soft)
 		Text += " Soft pulses leave the low end to the triangle and make the sound warmer; turn the playback volume up rather "
 			"than the pulses. Volumes the tools write later start from the song's own, so mix again at the end.";
-	if (Fm && !Style.empty())
+	if (Fm && !Style.empty() && !Heard)
 		Text += " The VRC7 plays louder than the pulses and counts its volume in steps of 3 dB, so its parts sit nearer 15 "
 			"for the same balance (9 there is 18 dB under 15).";
-	if (Square && !Style.empty())
+	if (Square && !Style.empty() && !Heard)
 		Text += " The 5B counts its volume in steps of 3 dB, so its parts sit nearer 15 for the same balance (9 there is 18 dB "
 			"under 15).";
-	if (Quiet && !Style.empty())
+	if (Quiet && !Style.empty() && !Heard)
 		Text += " The N163's wave sounds play quieter than the pulses, so its parts sit nearer 15 for the same balance.";
-	if (Under && !Style.empty())
+	if (Under && !Style.empty() && !Heard)
 		Text += Format(" The VRC6 Plus's soft layer sits %.0f dB under its parts' roles, under the VRC6.", SOFT_LAYER_DB);
-	if (Loud && !Style.empty())
+	if (Loud && !Style.empty() && !Heard)
 		Text += " The FDS plays louder than the pulses, so its parts sit lower for the same balance.";
+	if (!Chosen.Note.empty())
+		Text += " " + Chosen.Note;
 	return WithRemarks(S, Text, Warnings);
 }
 
@@ -7075,18 +8279,32 @@ VibratoPlan VibratoArgs(Session &S, const Json &Args)
 	return Plan;
 }
 
-// Vibrato in the draft; how many notes it changed
-int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost, bool SkipBuiltIn = false)
+// A calm track's vibrato comes in this many rows into a long note: nearest 27 frames (24-30, about half a beat at a
+// calm tempo)
+int CalmVibratoRows(const Session &S)
+{
+	const double RowFrames = FramesPerRow(S);
+	int Rows = 1;
+	for (int r = 2; r <= 8 * S.Time.RowsPerBeat; ++r)
+		if (std::fabs(r * RowFrames - 27.0) < std::fabs(Rows * RowFrames - 27.0) - 1e-9)
+			Rows = r;
+	return Rows;
+}
+
+// Vibrato in the draft; how many notes it changed. HeardFor: only on notes whose sound is still heard that many frames
+// in (0: any), so a struck sound that has faded by then gets none
+int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost, bool SkipBuiltIn = false,
+	int HeardFor = 0)
 {
 	const int Columns = S.Channel(Plan.Channel).EffectColumns;
 	std::vector<Cell> &Cells = D.Cells(Plan.Channel);
 	std::vector<NoteInfo> Notes = D.Notes(Plan.Channel);
-	if (SkipBuiltIn) {
+	if (SkipBuiltIn || HeardFor > 0) {
 		// Notes whose instrument has a vibrato of its own keep just that one
 		std::vector<NoteInfo> Plain;
 		for (size_t i = 0; i < Notes.size(); ++i) {
 			const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
-			if (pInfo == 0 || !pInfo->Vibrato)
+			if ((!SkipBuiltIn || pInfo == 0 || !pInfo->Vibrato) && (HeardFor <= 0 || HeardFrames(S.Song, Notes[i], HeardFor) >= HeardFor))
 				Plain.push_back(Notes[i]);
 		}
 		Notes = Plain;
@@ -7648,10 +8866,15 @@ std::string PolishTool(Session &S, const Json &Args)
 	BarRange(S, Args, From, To);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const bool AsClip = BoolArg(Args, "as_clip", false);
+	// A calm or a lively track gets no accents unless asked (they make a melody press), and on a calm
+	// one the vibrato is the shallowest, waiting about half a beat
+	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "leaves out accents and waits longer with a shallower vibrato", "any");
+	const bool Calm = Chosen.Style == STYLE_CALM;
 	std::set<std::string> What;
 	const Json *pWhat = Arg(Args, "touches");
 	if (pWhat == 0) {
-		What.insert("accents");
+		if (Chosen.Style == STYLE_ANY)
+			What.insert("accents");
 		What.insert("vibrato");
 		What.insert("separate");
 		What.insert("clicks");
@@ -7703,11 +8926,23 @@ std::string PolishTool(Session &S, const Json &Args)
 		Plan.Depth = 2;
 		Plan.MinRows = S.Time.RowsPerBeat * 3 / 2;
 		Plan.Delay = std::max(1, S.Time.RowsPerBeat / 2);
+		int HeardFor = 0;
+		if (Calm) {
+			// The shallowest (451, about 1.5 period steps), coming in nearest 27 frames in (24-30, about half a beat at a
+			// calm tempo), on the long notes whose sound still sounds then
+			Plan.Depth = 1;
+			Plan.Delay = CalmVibratoRows(S);
+			HeardFor = static_cast<int>(std::floor(Plan.Delay * FramesPerRow(S) + 0.5)) + 6;
+		}
 		bool Lost = false;
-		const int Count = MakeVibrato(S, D, Plan, First, End, Lost, true);
+		const int Count = MakeVibrato(S, D, Plan, First, End, Lost, true, HeardFor);
 		if (Lost)
 			Warnings.push_back("Some notes had no free effect column for the vibrato (all four were full).");
-		if (Count > 0)
+		if (Count > 0 && Calm)
+			Done.push_back(Format("the shallowest vibrato (4%X%X) coming in %d frames into %s of %s", Plan.Speed, Plan.Depth,
+				static_cast<int>(std::floor(Plan.Delay * FramesPerRow(S) + 0.5)), Plural(Count, "long note", "long notes").c_str(),
+				S.Channel(Melody).FullName().c_str()));
+		else if (Count > 0)
 			Done.push_back(Format("a gentle vibrato that comes in after half a beat on %s of %s", Plural(Count, "long note", "long notes").c_str(),
 				S.Channel(Melody).FullName().c_str()));
 	}
@@ -7821,13 +9056,27 @@ std::string PolishTool(Session &S, const Json &Args)
 	std::vector<Change> Changes;
 	int Start;
 	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
-		throw Problem("There was nothing to polish there: no notes for accents, no long melody notes for vibrato, no repeated "
-			"triangle notes and no notes that click.");
+		throw Problem(Calm ? "There was nothing to polish there: no long melody notes for vibrato (sounding when it would come "
+			"in, without a vibrato of their own), no repeated triangle notes and no notes that click." : "There was nothing to "
+			"polish there: no notes for accents, no long melody notes for vibrato, no repeated triangle notes and no notes that click.");
 	std::string Summary;
 	for (size_t i = 0; i < Done.size(); ++i)
 		Summary += (i == 0 ? "" : "; ") + Done[i];
+	// Asked for on a calm track, accents, scoops and falls are done, and said to work against it
+	std::vector<std::string> Against;
+	static const char *const PRESSING[] = { "accents", "scoops", "falls" };
+	for (int k = 0; k < 3 && Calm; ++k)
+		if (What.count(PRESSING[k]))
+			Against.push_back(PRESSING[k]);
+	if (!Against.empty()) {
+		std::string List;
+		for (size_t i = 0; i < Against.size(); ++i)
+			List += (i == 0 ? "" : i + 1 == Against.size() ? " and " : ", ") + Against[i];
+		List[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(List[0])));
+		Summary += ". " + List + " go against the calm style: they make a melody press, where a calm one swells in or fades by itself";
+	}
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), "finishing touches, " + RangeText(From, To)) +
-		"\nTouches: " + Summary + ".", Warnings);
+		"\nTouches: " + Summary + "." + (Chosen.Note.empty() ? "" : " " + Chosen.Note), Warnings);
 }
 
 // The chords a song's parts play in [First, End): the melody left out when
@@ -7899,6 +9148,121 @@ int VersionMood(const std::string &Version)
 	if (Calm == Tense)
 		return MOOD_OTHER;
 	return Calm ? MOOD_CALM : MOOD_TENSE;
+}
+
+bool NameSaysCalm(const std::string &TrackName)
+{
+	return VersionMood(TrackName) == MOOD_CALM;
+}
+
+// How a sound shapes a long note, read from its volume sequence: one that reaches its peak in
+// under 10 frames and holds 11 or more (as on a pulse's 0-15) presses, an organ key held down however soft the parts
+// around it, which sounds aggressive; a swell of 10 frames or more, a strike that
+// falls to 7 or under, or one that fades away doesn't. On the 5B its levels count as a pulse's would sound (3 dB a step)
+struct SoundShape {
+	bool Known;			// it has a volume sequence the tools can read (the VRC7's sounds have none)
+	int Attack, Peak, Hold;	// frames to its peak (90% of it), its peak and the level a long note holds (0: it fades away)
+	bool Presses;
+	std::string Words;	// "reaches 15 in 2 frames and holds 12"
+	SoundShape() : Known(false), Attack(0), Peak(15), Hold(15), Presses(false) {}
+};
+
+SoundShape ShapeOf(const InstrumentInfo *pInfo)
+{
+	SoundShape Out;
+	if (pInfo == 0 || pInfo->Chip == "VRC7")
+		return Out;
+	Out.Known = true;
+	std::vector<int> Values = pInfo->Volume;
+	if (pInfo->Chip == "5B")
+		for (size_t i = 0; i < Values.size(); ++i)
+			Values[i] = Values[i] <= 0 ? 0 : static_cast<int>(std::floor(15.0 * std::pow(10.0, -3.0 * (15 - std::min(15, Values[i])) / 20.0) + 0.5));
+	if (Values.empty()) {
+		Out.Words = "holds 15 (no volume sequence)";
+		Out.Presses = true;
+		return Out;
+	}
+	const int Loop = pInfo->VolumeLoop, Release = pInfo->VolumeRelease, Items = static_cast<int>(Values.size());
+	Out.Peak = std::max(1, *std::max_element(Values.begin(), Values.end()));
+	while (Out.Attack < Items - 1 && Values[static_cast<size_t>(Out.Attack)] * 10 < Out.Peak * 9)
+		++Out.Attack;
+	int Run = Items;
+	if (Release >= 0 && Release < Items) {
+		Out.Hold = Values[static_cast<size_t>(Release)];
+		Run = Release + 1;
+	}
+	else if (Loop >= 0 && Loop < Items)
+		Out.Hold = *std::max_element(Values.begin() + Loop, Values.end());
+	else
+		Out.Hold = Values.back();
+	if (Out.Hold == 0 || (Release < 0 && Loop < 0 && Out.Hold <= 2)) {
+		int Gone = Out.Attack + 1;
+		while (Gone < Run && Values[static_cast<size_t>(Gone)] > std::max(1, Out.Peak / 6))
+			++Gone;
+		Out.Hold = 0;
+		Out.Words = Format("strikes and fades away in %d frames", Gone);
+		return Out;
+	}
+	if (Out.Attack >= 8) {
+		Out.Words = Format("swells in over %d frames, then holds %d", Out.Attack, Out.Hold);
+		Out.Presses = Out.Attack < 10 && Out.Hold >= 11;
+		return Out;
+	}
+	if (Out.Hold <= 7) {
+		int Fall = Out.Attack + 1;
+		while (Fall < Run && Values[static_cast<size_t>(Fall)] > Out.Hold)
+			++Fall;
+		Out.Words = Format("strikes and falls to %d in %d frames", Out.Hold, Fall);
+		return Out;
+	}
+	Out.Words = Format("reaches %d in %s and holds %d", Out.Peak, Plural(Out.Attack + 1, "frame", "frames").c_str(), Out.Hold);
+	Out.Presses = Out.Hold >= 11;
+	return Out;
+}
+
+// The melody's sounds that hold a high, steady level from attack to release, by how many of its notes in [First, End)
+// play each (two or more): the instrument, its shape and that count
+struct HeldLead {
+	int Instrument, Notes, Of, Row;	// Row: its first note's
+	SoundShape Shape;
+};
+
+std::vector<HeldLead> HeldLeads(Session &S, int Melody, int First, int End)
+{
+	std::vector<HeldLead> Out;
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)) || S.Channel(Melody).Kind == KIND_TRIANGLE)
+		return Out;
+	const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
+	std::map<int, std::pair<int, int> > By;	// instrument -> notes, first row
+	for (size_t i = 0; i < Tune.size(); ++i) {
+		std::map<int, std::pair<int, int> >::iterator it = By.find(Tune[i].Instrument);
+		if (it == By.end())
+			By[Tune[i].Instrument] = std::make_pair(1, Tune[i].Row);
+		else
+			++it->second.first;
+	}
+	for (std::map<int, std::pair<int, int> >::const_iterator it = By.begin(); it != By.end(); ++it) {
+		const SoundShape Shape = ShapeOf(FindInstrument(S.Song, it->first));
+		if (!Shape.Known || !Shape.Presses || it->second.first < 2)
+			continue;
+		HeldLead H;
+		H.Instrument = it->first;
+		H.Notes = it->second.first;
+		H.Of = static_cast<int>(Tune.size());
+		H.Row = it->second.second;
+		H.Shape = Shape;
+		Out.push_back(H);
+	}
+	return Out;
+}
+
+// What check_song and the review say of one, and what to do
+std::string HeldLeadText(Session &S, int Melody, const HeldLead &H)
+{
+	return Format("%s on %s %s (%d of %d melody notes): a calm lead shouldn't hold a high, steady level from attack to "
+		"release. design_instrument kind breath (swells in), falling strike (falls to 6) or music box (fades away), or a "
+		"volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
+		H.Shape.Words.c_str(), H.Notes, H.Of);
 }
 
 // The frames a note lasts, from the frames each row does (RowFramesOf)
@@ -8023,7 +9387,7 @@ std::string VanishingText(Session &S, int Channel, const Vanishing &V)
 // a pulse at 15: its volume times its instrument's envelope frame by frame (a
 // pluck dies away, a pad swells), as FamiTracker plays each chip; the triangle
 // a little under a pulse at 15 while its envelope lets it sound
-double NotePower(const Session &S, int Channel, const NoteInfo &N, int From, int To, double RowFrames)
+double NotePower(Session &S, int Channel, const NoteInfo &N, int From, int To, double RowFrames)
 {
 	const ChannelInfo &Info = S.Channel(Channel);
 	if (To <= From)
@@ -8031,14 +9395,26 @@ double NotePower(const Session &S, int Channel, const NoteInfo &N, int From, int
 	const int First = std::max(0, static_cast<int>(std::floor((From - N.Row) * RowFrames)));
 	const int Last = std::max(First + 1, static_cast<int>(std::floor((To - N.Row) * RowFrames)));
 	const std::vector<int> Envelope = HeldEnvelope(Info.Kind == KIND_FM ? 0 : FindInstrument(S.Song, N.Instrument), Last);
+	// A 5B note that plays the chip's envelope (a buzz) plays it at full level whatever its volume, unless that's 0
+	bool Buzz = false;
+	if (Info.Kind == KIND_SQUARE) {
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+		int Sticky = 0;	// the Vxx in effect, for an instrument without a mode sequence
+		const std::vector<Cell> &Cells = S.Cells(Channel);
+		for (int r = 0; (pInfo == 0 || pInfo->Mode.Items.empty()) && r <= N.Row && r < static_cast<int>(Cells.size()); ++r)
+			for (int k = 0; k < std::min(EFFECT_COLUMNS, Info.EffectColumns); ++k)
+				if (Cells[static_cast<size_t>(r)].Effect[k] == EFF_DUTY_CYCLE)
+					Sticky = Cells[static_cast<size_t>(r)].Param[k];
+		Buzz = PlaysEnvelope(S, N, Sticky);
+	}
 	double Sum = 0.0;
 	for (int f = First; f < Last; ++f) {
 		const int Level = Envelope[static_cast<size_t>(f)];
 		if (Info.Kind == KIND_TRIANGLE)
-			Sum += Level > 0 ? std::pow(10.0, -0.2) : 0.0;
+			Sum += Level > 0 ? std::pow(10.0, (-2.0 + FaderDb(Info)) / 10.0) : 0.0;	// its fader in, as every channel's
 		else {
 			const int Volume = PlayedVolume(Info, N.Volume, Level);
-			Sum += Volume > 0 ? std::pow(10.0, LevelDb(Info, Volume) / 10.0) : 0.0;
+			Sum += Volume > 0 ? std::pow(10.0, LevelDb(Info, Buzz ? 15 : Volume) / 10.0) : 0.0;
 		}
 	}
 	return Sum / (Last - First);
@@ -8059,11 +9435,12 @@ std::string ReviewTool(Session &S, const Json &Args)
 	if (!Found)
 		K = Key(0, MODE_MAJOR);
 	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
-	// A calm track (a night version, an ambient one) floats: no drums, fills or accents are asked of it
-	const std::string Style = Lowercase(StringArg(Args, "style", VersionMood(S.Song.TrackName) == MOOD_CALM ? "calm" : "any"));
-	if (Style != "any" && Style != "calm" && Style != "ambient")
-		throw Problem("style should be any or calm.");
-	const bool Calm = Style != "any";
+	// A calm track (a night version, an ambient one) floats: no drums, fills or accents are asked of it, nor a melody that
+	// stands out, more notes or shorter ones, and its balance and its lead's sound are heard as calm tracks want them; a
+	// lively stage's are heard as stages that bounce without pressing want them. Calm when asked, or when the track's
+	// name says so
+	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "reviews it as a calm track", "any");
+	const bool Calm = Chosen.Style == STYLE_CALM, Lively = Chosen.Style == STYLE_LIVELY;
 	std::vector<std::string> Lines, Tips;
 	double Missing = 0.0;	// what the tips take off the score, out of 10
 	auto Tip = [&](double Weight, const std::string &Text) {
@@ -8099,6 +9476,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Samples = c;
 			continue;
 		}
+		// A lone deep note or two on the triangle (the loudest thing in a quiet bar) isn't a bass part, nor any part
+		if (Info.Kind == KIND_TRIANGLE && Notes.size() < 3)
+			continue;
 		if (Bass < 0 && ((IsBass(Info) && PlaysTheBass(S, c, First, End)) || FdsBass(S, c, First, End))) {
 			Bass = c;
 			continue;
@@ -8290,6 +9670,28 @@ std::string ReviewTool(Session &S, const Json &Args)
 			"Well-arranged tracks swing 8-12 dB in loudness between sections; the triangle is loud, so bars with it stay "
 			"loud. write_notes with an empty list of notes clears a part from bars.", static_cast<int>(std::floor(Swing + 0.5))));
 
+	// The intro (the bars before the loop starts, or a section named Intro at the start), as the stems measure it: more
+	// than 10 dB under the rest it reads as silence in a game (6-10 dB under is the soundtrack's target)
+	Hearing Ears(S);
+	{
+		int IntroEnd = Flow(S).LoopRow(S.Time.PatternLength);
+		for (size_t i = 0; IntroEnd <= 0 && i < S.Song.Sections.size(); ++i)
+			if (Lowercase(S.Song.Sections[i].Name) == "intro" && S.Song.Sections[i].First == 0)
+				IntroEnd = (S.Song.Sections[i].Last + 1) * S.Time.PatternLength;
+		if (IntroEnd > First && IntroEnd < End) {
+			std::vector<int> All;
+			for (int c = 0; c < S.ChannelCount(); ++c)
+				if (S.Channel(c).Kind != KIND_DPCM)
+					All.push_back(c);
+			const double Intro = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(First, IntroEnd)));
+			const double Rest = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(IntroEnd, End)));
+			if (Intro > NO_LOUDNESS && Rest > NO_LOUDNESS && Rest - Intro > 10.0)
+				Tip(0.5, Format("The intro (%s) plays about %d dB under the rest: more than 10 dB under reads as silence in a game "
+					"(6-10 dB under is the target), so bring a part in sooner or play it louder.", RangeText(S.Time.BarOf(First),
+					S.Time.BarOf(IntroEnd - 1)).c_str(), static_cast<int>(std::floor(Rest - Intro + 0.5))));
+		}
+	}
+
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
 	const std::vector<ChordAt> Heard = SongChords(S, First, End, K, Melody);
@@ -8340,7 +9742,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		const int Middle = MiddleOf(Notes, 30) - Written(S.Channel(Bass), 0);	// as it sounds
 		Line += ", around " + PitchName(Written(S.Channel(Bass), Middle)) + " as written.";
 		Lines.push_back(Line);
-		if (PerBar <= 2.0)
+		if (PerBar <= 2.0 && !Calm)
 			Tip(1.0, "The bass mostly holds roots: bass_style walking (towns, jazz), octaves (action), syncopated (pop) "
 				"or arpeggio (adventure) in add_chords_and_bass gives it a pulse.");
 		if (Middle < 8)
@@ -8398,6 +9800,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
 			if (S.Song.Instruments[i].Vibrato)
 				Wobbly.insert(S.Song.Instruments[i].Index);
+		// On a calm track a vibrato waits about half a beat: a struck sound gone by then (a pluck) wants none
+		const int Waits = Calm ? static_cast<int>(std::floor(CalmVibratoRows(S) * FramesPerRow(S) + 0.5)) + 6 : 0;
 		for (size_t i = 0; i < Tune.size(); ++i) {
 			const NoteInfo &N = Tune[i];
 			Low = std::min(Low, N.Pitch);
@@ -8410,7 +9814,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			bool Expression = (Sticky[i] & 0x0F) != 0 || Wobbly.count(N.Instrument) > 0;
 			for (size_t e = 0; e < N.Effects.size(); ++e)
 				Expression = Expression || N.Effects[e].second.first == EFF_VIBRATO;
-			if (N.Rows >= 2 * R && !Expression)
+			if (N.Rows >= 2 * R && !Expression && (Waits <= 0 || HeardFrames(S.Song, N, Waits) >= Waits))
 				++LongBare;
 		}
 		std::string Line = "Melody: " + PitchName(Low) + " to " + PitchName(High) + Format(" (%d semitones), %s, %s", High - Low,
@@ -8429,7 +9833,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		else if (!Repeats.empty())
 			Line += "; bars " + BarList(Repeats) + " repeat the bars four before them";
 		Lines.push_back(Line + ".");
-		if (Lengths.size() <= 2 && Tune.size() >= 8)
+		if (Lengths.size() <= 2 && Tune.size() >= 8 && !Calm)
 			Tip(1.0, "The melody keeps one or two note lengths: mix long and short notes (a dotted rhythm, a held note "
 				"at each phrase end, a run of quick notes) with write_notes.");
 		if (Rests == 0 && BarCount >= 8)
@@ -8441,8 +9845,22 @@ std::string ReviewTool(Session &S, const Json &Args)
 			Tip(1.0, "Phrases come back unchanged: vary the repeat (another ending, an octave up, a counter-melody "
 				"only the second time, busier drums).");
 		if (LongBare > 0)
-			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(" no vibrato: polish adds a "
+			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(Calm ? " no vibrato: polish "
+				"with style calm adds the shallowest one, coming in about half a second into each." : " no vibrato: polish adds a "
 				"gentle one that comes in after half a beat."));
+		// A lead whose sound holds a high, steady level from attack to release presses, however soft the parts around it:
+		// what makes a melody sound aggressive
+		if (Calm || Lively) {
+			const std::vector<HeldLead> Held = HeldLeads(S, Melody, First, End);
+			for (size_t i = 0; i < Held.size(); ++i) {
+				if (Calm)
+					Tip(1.5, "The lead presses: " + HeldLeadText(S, Melody, Held[i]));
+				else if (Held[i].Notes * 4 >= Held[i].Of)
+					Tip(0.5, Format("%s %s from attack to release; a lively stage's lead wants notes that fade (a stepped decay, or "
+						"design_instrument kind falling strike).", InstrumentLabel(S.Song, Held[i].Instrument).c_str(),
+						Held[i].Shape.Words.c_str()));
+			}
+		}
 		// Notes that vanish: a tune on a sound that's gone within a few frames, or some of its notes beside ones that hold.
 		// The user hears them as missing notes, so they cost the most
 		if (CanVanish(S.Channel(Melody))) {
@@ -8509,7 +9927,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			if (Loudest >= (Kind == KIND_SQUARE ? 15 : 13))	// the 5B's 13 is 6 dB under its 15
 				++Loud;
 		}
-		if (Parts >= 2 && Loud == Parts) {
+		if (Parts >= 2 && Loud == Parts && !Calm && !Lively) {
 			Lines.push_back(Format("Mix: %s near full volume.", Parts == 2 ? "both parts with a volume play" :
 				"every part with a volume plays"));
 			Tip(0.5, "Everything near full volume buries the triangle and sounds harsh: mix (style soft) brings the melody to 9, "
@@ -8518,8 +9936,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 	}
 
 	// Levels: the melody well under another part, counted as FamiTracker plays each chip (the VRC7
-	// louder and 3 dB a step, the N163 quieter); a soft mix keeps the triangle a little over the melody
-	if (S.Channel(Melody).Kind != KIND_TRIANGLE) {
+	// louder and 3 dB a step, the N163 quieter, every channel's fader in); a soft mix keeps the triangle a little over the
+	// melody. Calm and lively tracks are heard as the stems measure them instead (below)
+	if (S.Channel(Melody).Kind != KIND_TRIANGLE && !Calm && !Lively) {
 		const double RowFrames = FramesPerRow(S);
 		auto Typical = [&](int c) {
 			// Each note over its first beat as it plays (its envelope in), the louder ones
@@ -8543,7 +9962,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			const int Kind = S.Channel(c).Kind;
 			if (c == Melody || Kind == KIND_NOISE || Kind == KIND_DPCM || std::find(Echoes.begin(), Echoes.end(), c) != Echoes.end())
 				continue;
-			const double Above = (Kind == KIND_TRIANGLE ? -1.0 : Typical(c)) - Lead - (Kind == KIND_TRIANGLE ? 8.0 : 3.0);
+			const double Above = (Kind == KIND_TRIANGLE ? -1.0 + FaderDb(S.Channel(c)) : Typical(c)) - Lead - (Kind == KIND_TRIANGLE ? 8.0 : 3.0);
 			if (Above > Most) {
 				Most = Above;
 				Over = c;
@@ -8551,21 +9970,62 @@ std::string ReviewTool(Session &S, const Json &Args)
 		}
 		if (Over >= 0) {
 			const double Under = Most + (S.Channel(Over).Kind == KIND_TRIANGLE ? 8.0 : 3.0);
-			Lines.push_back(Format("Levels: the melody plays about %d dB under %s.", static_cast<int>(std::floor(Under + 0.5)),
-				S.Channel(Over).FullName().c_str()));
-			Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
-				"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
-				StepVolume(S.Channel(Melody)) ? (" (the " + S.Channel(Melody).Chip + " counts its volume in steps of 3 dB: 9 is 18 dB "
-				"under 15)").c_str() : ""));
+			// A 5B buzz plays the envelope at its own full level, whatever the volume column: mix leaves it
+			bool Buzzing = false;
+			if (S.Channel(Over).Kind == KIND_SQUARE) {
+				const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Over), First, End);
+				const std::vector<int> Sticky = StickyAt(S.Cells(Over), Notes, S.Channel(Over).EffectColumns, EFF_DUTY_CYCLE);
+				for (size_t i = 0; i < Notes.size() && !Buzzing; ++i)
+					Buzzing = PlaysEnvelope(S, Notes[i], Sticky[i]);
+			}
+			Lines.push_back(Format("Levels: the melody plays about %d dB under %s%s.", static_cast<int>(std::floor(Under + 0.5)),
+				S.Channel(Over).FullName().c_str(), Buzzing ? " (its buzz plays at full level whatever its volume)" : ""));
+			if (Buzzing)
+				Tip(1.0, Format("The melody plays about %d dB under %s, whose buzz plays the envelope at full level whatever its "
+					"volume, so mix leaves it: a softer sound there (a square bass), or the melody on a louder channel.",
+					static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str()));
+			else
+				Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
+					"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
+					StepVolume(S.Channel(Melody)) ? (" (the " + S.Channel(Melody).Chip + " counts its volume in steps of 3 dB: 9 is 18 dB "
+					"under 15)").c_str() : ""));
 		}
 	}
 
-	// Stereo (this FamiTracker's own; the game's OGG files have it): where the parts play between the speakers. An echo
-	// on the melody's side blurs it; the bass and the drums carry the song from the middle
+	// As heard (calm and lively): the melody against the chords, an echo, a second line and the bass, as the stems measure
+	// them where they play together, the way mix sets them in those styles
+	if ((Calm || Lively) && S.Channel(Melody).Kind != KIND_TRIANGLE) {
+		std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
+		std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
+		HeardRoles(S, Voiced, Spans);
+		std::vector<std::vector<std::pair<int, int> > > Refs;
+		for (size_t i = 0; i < Spans.size(); ++i)
+			Refs.push_back(std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First, Spans[i].End)));
+		const HeardBalance B = HearBalance(S, Ears, Spans, Refs, Melody, Voiced, First, End);
+		double Least = NO_LOUDNESS, Most = NO_LOUDNESS;
+		const std::string Text = BalanceText(S, Spans, B, Melody, Least, Most);
+		Lines.push_back("Balance as heard: " + Text + ".");
+		const double Want = Calm ? 2.5 : 3.5, Top = Calm ? 4.0 : 5.0, Bottom = Calm ? 1.0 : 2.0;
+		const char *const Word = Calm ? "a calm track wants 2-3, or it presses" : "a lively stage wants 3-4, or it presses";
+		if (Most > NO_LOUDNESS && Most > Top)
+			Tip(1.0, Format("The melody sits about %.1f dB over the chords as heard (%s): mix with style %s puts it at %.1f.", Most, Word,
+				Calm ? "calm" : "lively", Want));
+		else if (Least > NO_LOUDNESS && Least < Bottom)
+			Tip(1.0, Format("The chords cover the melody as heard (it sits %s them; %s): mix with style %s puts it at %.1f.",
+				GapText(Least, Least, true).c_str(), Calm ? "a calm track wants 2-3" : "a lively stage wants 3-4", Calm ? "calm" : "lively", Want));
+	}
+
+	// Stereo (this FamiTracker's own; the game's OGG files have it): where the parts play between the speakers, the
+	// mixer's starting pans counted. An echo on the melody's side blurs it; the bass and the drums carry the song from
+	// the middle
 	{
+		std::map<int, std::vector<NoteInfo> > Panned;
+		for (size_t p = 0; p < Playing.size(); ++p)
+			Panned[Playing[p]] = NotesIn(PannedNotes(S, Playing[p]), First, End);
+		const std::vector<NoteInfo> PannedTune = Panned[Melody];
 		bool Pans = false;
 		for (size_t p = 0; p < Playing.size() && !Pans; ++p) {
-			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Playing[p]), First, End);
+			const std::vector<NoteInfo> &Notes = Panned[Playing[p]];
 			for (size_t i = 0; i < Notes.size() && !Pans; ++i)
 				Pans = Notes[i].Pan != PAN_CENTER;
 		}
@@ -8579,27 +10039,26 @@ std::string ReviewTool(Session &S, const Json &Args)
 		else {
 			std::string Line = "Stereo:";
 			for (size_t p = 0; p < Playing.size(); ++p)
-				Line += (p == 0 ? " " : "; ") + S.Channel(Playing[p]).FullName() + " " + PanText(NotesIn(S.Notes(Playing[p]), First, End));
+				Line += (p == 0 ? " " : "; ") + S.Channel(Playing[p]).FullName() + " " + PanText(Panned[Playing[p]]);
 			Lines.push_back(Line + ".");
-			const double Lead = PanPositionOf(Tune);
+			const double Lead = PanPositionOf(PannedTune);
 			for (size_t i = 0; i < Echoes.size(); ++i) {
-				const double Echo = PanPositionOf(NotesIn(S.Notes(Echoes[i]), First, End));
+				const double Echo = PanPositionOf(Panned[Echoes[i]]);
 				if ((std::fabs(Echo) < 0.15 && std::fabs(Lead) < 0.15) || Echo * Lead > 0.0)
 					Tip(0.5, Format("The echo on %s plays on the melody's side (%s, the melody %s): on the other side (set_pan, or "
 						"add_echo again with pan \"opposite\") it stops blurring the melody and the song widens.",
-						S.Channel(Echoes[i]).FullName().c_str(), PanText(NotesIn(S.Notes(Echoes[i]), First, End)).c_str(),
-						PanText(Tune).c_str()));
+						S.Channel(Echoes[i]).FullName().c_str(), PanText(Panned[Echoes[i]]).c_str(), PanText(PannedTune).c_str()));
 			}
-			if (Bass >= 0 && std::fabs(PanPositionOf(NotesIn(S.Notes(Bass), First, End))) >= 0.25)
+			if (Bass >= 0 && std::fabs(PanPositionOf(Panned[Bass])) >= 0.25)
 				Tip(0.5, "The bass on " + S.Channel(Bass).FullName() + " plays from one side: keep it in the middle (set_pan with pan "
 					"center), as the low end anchors the song and some players hear only one speaker.");
 			const int Kit[2] = { Drums, Samples };
 			for (int k = 0; k < 2; ++k)
-				if (Kit[k] >= 0 && std::fabs(PanPositionOf(NotesIn(S.Notes(Kit[k]), First, End))) >= 0.25)
+				if (Kit[k] >= 0 && std::fabs(PanPositionOf(Panned[Kit[k]])) >= 0.25)
 					Tip(0.5, "The drums on " + S.Channel(Kit[k]).FullName() + " play from one side: the kick and the snare belong in "
 						"the middle (set_pan with pan center).");
 			if (std::fabs(Lead) >= 0.5)
-				Tip(0.5, "The melody plays from one side (" + PanText(Tune) + "): it belongs in the middle, with its echo or a "
+				Tip(0.5, "The melody plays from one side (" + PanText(PannedTune) + "): it belongs in the middle, with its echo or a "
 					"second line to the sides.");
 		}
 	}
@@ -8692,6 +10151,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	const int Score = std::max(1, std::min(10, static_cast<int>(std::floor(10.0 - Missing + 0.5))));
 	std::string Text = "Depth review, " + RangeText(From, To) + " in " + KeyName(K) + Format(": %d/10.\n", Score);
+	if (!Chosen.Note.empty())
+		Text += Chosen.Note + "\n";
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += Lines[i] + "\n";
 	if (Tips.empty())
@@ -14231,9 +15692,10 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // What check_song finds: the line its text lists, and the rest for its JSON (format "json"), which FamiTracker's
 // problems panel reads (Source/ProblemsPanel.cpp). The kinds go heard worst first, so a long list of notes outside the
 // key (a song that changes key) doesn't hide notes that vanish or click.
-enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_KINDS };
-const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key" };
-const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low" };
+// HELD: on a calm track, the melody's sound holding a high, steady level from attack to release (HeldLeads)
+enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD, FOUND_KINDS };
+const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held" };
+const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium" };
 
 // A note a finding is about
 struct CheckNote {
@@ -14319,6 +15781,9 @@ std::string CheckTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
 	bool Found;
 	const Key K = KeyArg(S, Args, "key", First, End, Found);
+	// A calm track also hears its lead's sound: one that holds a high, steady level presses (calm when asked, or when the
+	// track's name says so); a lively one gets a tip about it
+	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "also warns about a lead whose sound holds a steady level", "any");
 	std::vector<CheckFinding> Findings[FOUND_KINDS];
 	auto Report = [&](int Kind, int Channel, int Row, int Rows, const std::string &Line, const std::string &Summary) -> CheckFinding & {
 		CheckFinding F;
@@ -14608,12 +16073,42 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
+	// Held leads: the melody's sounds holding a high, steady level from attack to release, a finding on a calm track, a
+	// tip on a lively one
+	int Held = 0;
+	std::string HeldTip;
+	if (Chosen.Style != STYLE_ANY) {
+		const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+		const std::vector<HeldLead> Leads = HeldLeads(S, Melody, First, End);
+		for (size_t i = 0; i < Leads.size(); ++i) {
+			const HeldLead &H = Leads[i];
+			if (Chosen.Style == STYLE_LIVELY) {
+				if (H.Notes * 4 >= H.Of)
+					HeldTip += Format("\nTip: %s on %s %s from attack to release; a lively stage's lead wants notes that fade (a "
+						"stepped decay, or design_instrument kind falling strike).", InstrumentLabel(S.Song, H.Instrument).c_str(),
+						S.Channel(Melody).FullName().c_str(), H.Shape.Words.c_str());
+				continue;
+			}
+			++Held;
+			CheckFinding &F = Report(FOUND_HELD, Melody, H.Row, 1, "Held lead: " + HeldLeadText(S, Melody, H),
+				Format("%s %s from attack to release", InstrumentLabel(S.Song, H.Instrument).c_str(), H.Shape.Words.c_str()));
+			F.Notes.push_back(SoundingNote(S, Melody, H.Row));
+			F.Rows = F.Notes.back().Rows;
+			const InstrumentInfo *pSound = FindInstrument(S.Song, H.Instrument);
+			F.Details.Set("instrument", H.Instrument);
+			F.Details.Set("instrument_name", pSound != 0 ? Json(pSound->Name) : Json());
+			F.Details.Set("attack_frames", H.Shape.Attack + 1);
+			F.Details.Set("hold", H.Shape.Hold);
+			F.Details.Set("note_count", H.Notes);
+		}
+	}
+
 	std::vector<std::string> Unused;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (IsMelodic(S.Channel(c)) && S.Notes(c).empty())
 			Unused.push_back(S.Channel(c).FullName());
 	}
-	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey };
+	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -14627,6 +16122,7 @@ std::string CheckTool(Session &S, const Json &Args)
 		Out.Set("pattern_length", S.Time.PatternLength);
 		Out.Set("rows_per_beat", S.Time.RowsPerBeat);
 		Out.Set("rows_per_bar", S.Time.RowsPerBar);
+		Out.Set("style", Chosen.Style == STYLE_CALM ? "calm" : Chosen.Style == STYLE_LIVELY ? "lively" : "any");
 		Json CountList = Json::MakeObject();
 		for (int k = 0; k < FOUND_KINDS; ++k)
 			CountList.Set(CHECK_KIND[k], Counts[k]);
@@ -14645,8 +16141,11 @@ std::string CheckTool(Session &S, const Json &Args)
 
 	std::string Text = Format("Checked %s", RangeText(From, To).c_str());
 	Text += Found ? " in " + KeyName(K) + KeySource(S, Args) : " (no key: no notes)";
-	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing.", OutOfKey,
-		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished);
+	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing%s.", OutOfKey,
+		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished, Chosen.Style == STYLE_CALM ? (", " + Plural(Held, "held lead",
+		"held leads")).c_str() : "");
+	if (!Chosen.Note.empty())
+		Text += " " + Chosen.Note;
 	if (!Unused.empty()) {
 		Text += " Unused channels (free for harmony, an echo or a counter-melody): ";
 		for (size_t i = 0; i < Unused.size(); ++i)
@@ -14656,7 +16155,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key" };
+		"silent bars", "busy bars", "notes outside the key", "held leads" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = 0; k < FOUND_KINDS; ++k) {
@@ -14677,7 +16176,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	if (!Any)
 		Text += "\nNothing stands out.";
-	return Text;
+	return Text + HeldTip;
 }
 
 // A picture of the notes
@@ -16051,8 +17550,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		false, false, true);
 
 	{
-		Json Levels = Prop("object", "Each channel's loudest volume, 1-15, like {\"VRC6 Pulse 1\": 9, \"Noise\": 10}; the "
-			"channel's other volumes scale with it. Overrides the style for those channels.");
+		Json Levels = Prop("object", "Each channel's loudest volume as written (its volume column, whatever its envelope), 1-15, "
+			"like {\"VRC6 Pulse 1\": 9, \"Noise\": 10}; the channel's other volumes scale with it. Overrides the style for those "
+			"channels.");
 		AddTool("mix", "Balance the mix",
 			"Sets how loud each part plays, keeping each part's own dynamics: its volume column scales so its loudest note plays "
 			"at a level, as it plays (its instrument's envelope in, and how high a volume slide swells it; the slides move with "
@@ -16062,10 +17562,16 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"gets warmer. style full puts them near full volume again. levels sets channels yourself, dac the DPCM level alone "
 			"(full Z00, warm Z30, soft Z50, softest Z7F, or 0-127), set where the song starts and where its loop starts; width "
 			"sets the stereo picture (wide: the echo opposite the lead, chord voices apart, the melody, bass and drums in the "
-			"middle). The reply says what each channel plays (melody, echo, chords...) and what changed. Needs direct changes; "
-			"undoable.",
+			"middle). style calm (night and ambient tracks) and lively (stages that bounce without pressing) mix as heard instead: "
+			"each part's loudness as the stems measure it (notes, envelopes, faders, pans and Soft), where it plays with the "
+			"melody, which keeps its level: the chords 2.5 dB under it (lively 3.5), an echo 7, a second line no louder than 3 "
+			"(2.5), the bass 2.5 (3), drums 9 (6), the DPCM level placing the triangle; the reply gives the balance reached. A track named "
+			"calm (\"Town (night)\") mixes calm unless given a style. Over some bars a part keeps its level from the rest of the "
+			"song; noise swells (wind, waves) and the 5B's envelope notes keep theirs. The reply says what each channel plays "
+			"(melody, echo, chords...) and what changed. Needs direct changes; undoable.",
 			Schema()
-				.Add("style", EnumProp("soft (default) or full.", std::vector<std::string>{ "soft", "full" }))
+				.Add("style", EnumProp("soft (default), full, calm (as heard, the melody 2-3 dB over the chords) or lively (as heard, "
+					"3-4 over the parts).", std::vector<std::string>{ "soft", "full", "calm", "lively" }))
 				.Add("levels", Levels)
 				.Add("dac", Prop("string", "The DPCM level that softens the triangle and the noise: full, warm, soft, softest, keep, or "
 					"0-127 (default warm for soft, full for full)."))
@@ -16262,6 +17768,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"volumes keep them. Run it after the parts are written.",
 			Schema()
 				.Add("touches", Touches)
+				.Add("style", EnumProp("any, calm (also \"ambient\") or lively: calm and lively leave out accents unless asked; on a calm "
+					"track the vibrato is the shallowest (451), comes in about 27 frames in, and only on long notes still sounding "
+					"then. Default: calm when the track's name says so.", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
 				.Add("melody_channel", ChannelProp("The melody, for the vibrato. Default: the busiest channel."))
 				.Range().ClipChoice(),
@@ -16958,11 +18467,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"sections that repeat unchanged, flat dynamics, parts crowding the "
 		"melody's register, a bass in octaves with the melody, and the length. It scores the depth out of 10 and lists "
 		"what would help most, with the tool for each. Run it after a draft and before telling the user it's done. A calm "
-		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills or accents of it.",
+		"track (a night version, ambient music) is meant to float: style \"calm\" asks no drums, fills, accents, busier bass or "
+		"shorter notes of it, and hears its balance as the stems do (the melody 2-3 dB over the chords) and whether its lead's "
+		"sound holds a steady level (which presses); \"lively\" hears a stage's (the melody 3-4 dB over the parts).",
 		Schema()
 			.Add("key", Prop("string", "Key, like \"C major\". Default: the track's (get_song says it)."))
-			.Add("style", EnumProp("any, or calm (also \"ambient\"): no tips for drums, fills or accents. Default: calm when the "
-				"track's name says so, like \"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient" }))
+			.Add("style", EnumProp("any, calm (also \"ambient\") or lively. Default: calm when the track's name says so, like "
+				"\"Town (night)\".", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
 			.Add("melody_channel", ChannelProp("The melody. Default: the busiest channel (busy bells or arpeggios can take its "
 				"place: name it then)."))
 			.Range(),
@@ -16974,9 +18485,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels. Run it "
 		"after writing. format json gives every finding (its kind, severity, channel, frame, row, bar and beat, the notes "
-		"and the message, and for a click that can be nudged the polish call that fixes it) and the counts, for programs.",
+		"and the message, and for a click that can be nudged the polish call that fixes it) and the counts, for programs. "
+		"style calm (a night or ambient track; the default when the track's name says so) also lists a melody whose sound "
+		"holds a high, steady level from attack to release, which presses; lively tips about one.",
 		Schema()
 			.Add("key", Prop("string", "Key to check against. Default: the track's (get_song says it)."))
+			.Add("style", EnumProp("any, calm (also \"ambient\") or lively. Default: calm when the track's name says so.",
+				std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
+			.Add("melody_channel", ChannelProp("The melody, for a calm lead's check. Default: the busiest channel."))
 			.Add("format", EnumProp("text (the default): a summary and the findings to read, the ones heard worst first; json: "
 				"all of them as data, for programs (FamiTracker's problems panel reads it).", std::vector<std::string>{ "text", "json" }))
 			.Range(),

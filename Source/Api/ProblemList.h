@@ -32,9 +32,11 @@
 
 namespace ftapi {
 
-// check_song's kinds, heard worst first (the order of its text and its JSON)
+// check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
+// holds a high, steady level from attack to release, comes last
 enum problem_kind {
-	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_KINDS
+	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
+	PROBLEM_KINDS
 };
 
 const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it

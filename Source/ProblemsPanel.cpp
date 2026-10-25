@@ -929,7 +929,7 @@ struct CProblemsPanelWnd::Impl {
 		static const LPCTSTR WORDS[ftapi::PROBLEM_KINDS][2] = {
 			{ _T("note vanishes"), _T("notes vanish") }, { _T("note clicks"), _T("notes click") }, { _T("clash"), _T("clashes") },
 			{ _T("out of range"), _T("out of range") }, { _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
-			{ _T("outside the key"), _T("outside the key") }
+			{ _T("outside the key"), _T("outside the key") }, { _T("lead holds steady"), _T("leads hold steady") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
