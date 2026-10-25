@@ -4498,7 +4498,7 @@ void TestProtocol()
 			const std::string Word = Text.substr(From, To - From);
 			const bool Argument = Word == "as_clip" || Word == "clip_name" || Word == "from_bar" || Word == "to_bar" ||
 				Word == "chord_style" || Word == "bass_style" || Word == "arp_frames" || Word == "delay_beats" ||
-				Word == "bass_instrument" || Word == "melody_channel";
+				Word == "bass_instrument" || Word == "melody_channel" || Word == "chord_instrument";
 			Check(Argument || Tools.Has(Word), ("the recipe's tool exists: " + Word).c_str(), __LINE__);
 			At = To;
 		}

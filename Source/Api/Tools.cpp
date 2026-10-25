@@ -17554,8 +17554,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"before writing the tune.\n";
 	T += std::string("5. Chords and bass: add_chords_and_bass with chords you choose, ") + (Calm ? "slow and colored (a chord a "
 		"bar or two: m7, maj7, add9, sus2; plagal turns and the minor iv; the loop's last bar open), chord_style lush "
-		"(arp_frames 3-4) or voices on the soft layer, under the melody, and a bass of few long notes kept out of the intro "
-		"and the break" : Lively ? "colored (a chord a bar: sevenths, add9, sus; bVI and bVII for a lift), with a chord_style "
+		"(arp_frames 3-4; chord_instrument a pad you designed, which each chord copies) or voices on the soft layer, under "
+		"the melody, and a bass of few long notes kept out of the intro and the break" : Lively ? "colored (a chord a bar: sevenths, add9, sus; bVI and bVII for a lift), with a chord_style "
 		"and a bass_style that bounce (root and fifth, walking, octaves)" : "with tension (minor, phrygian or harmonic minor; "
 		"bVI-bVII-i), a driving chord_style and bass_style (octaves, a gallop; bass_instrument \"thump bass\" for punch)") +
 		". Other chords for the B part.\n";
@@ -17566,8 +17566,10 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		".\n";
 	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
 		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
-		"different (") + (Calm ? "an echo or a second voice joining, the soft layer, another register; never drums" :
-		"a counter-melody or harmony only the second time, busier drums, another voicing") + "), and a break before the loop "
+		"different (") + (Calm ? "an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
+		"rests), the soft layer, another register; never drums" : Lively ? "a counter-melody (add_counter_melody rests "
+		"answer) or harmony only the second time, busier drums, another voicing" : "a counter-melody or harmony only the "
+		"second time, busier drums, another voicing") + "), and a break before the loop "
 		"comes round.\n";
 	T += std::string("8. Depth: ") + (Calm ? "add_echo a beat behind (delay_beats 1, detune 1, pan opposite; on the VRC6 Plus "
 		"onto a soft channel with the soft flute), a pad or choir under the chords, and set_mixer's Soft and Space for the "
