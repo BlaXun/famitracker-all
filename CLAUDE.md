@@ -722,7 +722,14 @@ counts `Passes`. `SoundMeasure` (a sound effect and each of its channels
 alone) asks for its renders the same way. Under Wine, a 40-bar VRC6
 Plus track with nine parts took 6.4-6.9 s of FamiTracker's CPU in one
 pass against 13.3-16.5 s part by part (29-35 s against 62-75 s on a busy
-machine), with the same reply.
+machine), with the same reply. A short sound's renders depend on where the
+chip was left (a reset keeps the triangle's step, as the chip does, and
+the pins start there since `feat-sfx-fixes`, so a noise over it sounds
+louder or softer): part by part, each render started where the one before
+ended, and a 0.88 s explosion's parts came out up to 2 dB apart from one
+call to the next; in one pass every part starts where its mix does, so
+builds before and after differ there by that much. The whole sound still
+moves by a few tenths of a dB from call to call.
 
 ## What this repository is
 
