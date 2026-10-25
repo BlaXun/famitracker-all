@@ -900,6 +900,27 @@ did). The list of notes takes the old path untouched. `TestStepsWrite`,
 `TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
 in `Source/Api/tests/ApiTests.cpp` cover the tools.
 
+Melodies grown from a hook (from `feat-grow-melody`): `grow_melody`
+(`GrowMelodyTool` in `Tools.cpp`, after `AddCounterMelodyTool`) reads the
+hook as a line of steps and asks `GrowMelody` (`Source/Api/GrowMelody.cpp`,
+portable) for three versions over the chords `ChordsForMelody` hears (the
+channel's own notes left out). A `Grower` plans the bars (`SectionPlan`:
+blocks of four in the forms question and answer, hook and sequence, two-bar
+calls; a calm song's phrases two bars long), gives each bar a rhythm (the
+hook's own, its opening twice for a run, the kind's beat figures for climbs
+and closes; `Tie` holds notes over inner bar lines), picks each section's
+high point (`ChoosePeaks`) and the hook's moves up or down the scale
+(`ChooseShifts`, `FitCost`; the hook stays as written where it fits as well
+as where it's first stated), then chooses every pitch at once by dynamic
+programming over the notes' candidates (`Choose`: chord tones on beats 1
+and 3, the key's notes, nothing a semitone from another part for half a
+beat, as `check_song` hears a clash, leaps paid by size and kind). A variant
+seeds its own `GrowRandom`, so the same request gives the same versions on
+every computer. `pick` writes one through `WriteNotesInSteps`, and
+`GrowBreaths` counts the two-bar spans as `BreathsOf` does. It's in the
+small set (`CoreTools`). `TestGrowPhrases`, `TestGrowShape`,
+`TestGrowKinds`, `TestGrowTool` and `TestGrowTaught` cover it.
+
 Sound groups (from `feat-sound-groups`): Instrument > Sound browser shows
 its sounds in groups. `GroupSounds` in `Source/Api/SoundIndex.cpp` puts the
 sounds found in groups (by kind; in each kind the ready-made sounds, the
@@ -924,6 +945,38 @@ Edit under the instrument list: `ListenToInstrument`, which lists the song's
 own with `ToolSet::Sounds`' `Library` false). `TestSoundGroups`,
 `TestSoundGroupsQuick`, `TestPreviewPhrases` and `TestSoundsWithoutLibrary`
 cover them.
+
+Checks for drafts and short replies (from `feat-checks-short`): what a
+local model's first stage missed while every other check was clean is
+`ArrangeFindings` (before `ReviewTool` in `Tools.cpp`): `PhrasesFinding`
+(a melody that stops at most bar lines, `StopsAtBarLines`), `BassFindings`
+(the bass, `MainBass`, thin as `HearLine` hears it, or another channel
+doubling its roots now and then, `DoublingShare`), `SoundFindings` (a soft
+sound on the triangle, odd duties on the sawtooth), `FadersFinding`,
+`RepeatFindings` (named sections compared bar by bar, `BarsAlike`) and
+`LoopFinding` (style lively only, `SHORT_LOOP_SECONDS`); none for cues,
+sound effects or songs at speed 1. Each `ArrangeFinding` carries its fix as
+a call (`ToolCall`, the calls after it in `then` with `ThenCall`, written
+out by `FixText`), and its constants say what they were measured on.
+`check_song` reports them as the kinds `phrases`, `bass`, `sound`,
+`faders`, `repeat` and `short_loop` (after `held` in `CHECK_KIND`, and in
+`KIND_IDS`, `problem_kind` and the panel's `WORDS`), every one listed; the
+problems panel's Fix (`ACTION_FIX`) makes a fix of one call
+(`ProblemFinding::FixCalls`), and Explain gives the others' calls. The
+review weighs them into its score and tips (`ReviewTip`), and `BreathsOf`
+counts a rest before a bar line as a breath only where it ends a phrase of
+two bars or more (`MelodyBreaths::PhraseEnds` for the finding). `mix`
+takes `faders` `reset` (the faders to 0 dB in the mix's action group; calm
+and lively give the melody, through `levels`, the level its fader played
+it at, less what the others' faders lifted them past their volumes' room), and
+`vary_part`'s embellish leaves out an ornament that would rub a semitone
+against another part (`SemitoneRub`; `TestEmbellishWithoutRubs`).
+`review_arrangement`, `check_song` and `measure_mix` take `format` `short`
+(`ShortReview`, `ShortTip`, `ShortFinding`, `ShortMeasure`), the default
+for `Caller::Core` in `ToolSet::Call`. `TestDraftFindings`,
+`TestDraftFixes`, `TestFindingsQuiet`, `TestShortReplies`,
+`TestMixFadersReset` and `TestProblemListArrangement` cover them, on
+`DraftSong`, a small copy of that stage.
 
 ## What this repository is
 

@@ -28,12 +28,14 @@ namespace ftapi {
 
 namespace {
 
-const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held" };
+const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
+	"sound", "faders", "repeat", "short_loop" };
 const char *const KIND_TITLES[PROBLEM_KINDS] = {
 	"Notes that vanish", "Notes that click", "Clashes", "Out of range", "Silent bars", "Busy bars", "Outside the key",
-	"Leads that hold steady"
+	"Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass", "Sounds the channel can't play",
+	"Faders doing the mix", "Repeats that copy", "A short loop"
 };
-const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 2, 1, 1, 1, 2 };
+const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1 };
 
 int IntOf(const Json &Object, const char *Name, int Default)
 {
@@ -144,6 +146,8 @@ bool ProblemList::Read(const std::string &Text, std::string &Error)
 			F.FixTool = TextOf(*pFix, "tool");
 			F.FixArguments = WriteJson(*pFix->Get("arguments"));
 			F.FixDoes = TextOf(*pFix, "does");
+			const Json *pThen = pFix->Get("then");
+			F.FixCalls = 1 + (pThen != 0 && pThen->IsArray() ? static_cast<int>(pThen->Size()) : 0);
 		}
 		m_Findings.push_back(F);
 	}
