@@ -84,6 +84,7 @@ const command_id_t COMMAND_IDS[] = {
 	{ "insert-frame", ID_MODULE_INSERTFRAME }, { "duplicate-frame", ID_MODULE_DUPLICATEFRAME },
 	{ "remove-frame", ID_MODULE_REMOVEFRAME }, { "module-properties", ID_MODULE_MODULEPROPERTIES }, { "undo", ID_EDIT_UNDO },
 	{ "redo", ID_EDIT_REDO }, { "profile", ID_VIEW_PROFILE }, { "connect-claude", ID_FILE_CONNECTCLAUDE },
+	{ "pattern-editor", ID_VIEW_PATTERNEDITOR },
 };
 
 UINT CommandId(const std::string &Name)

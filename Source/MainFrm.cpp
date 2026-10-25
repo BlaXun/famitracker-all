@@ -52,7 +52,8 @@
 #include "McpConnection.h"
 #include "InstrumentLibrary.h"
 #include "SoundBrowserDlg.h"
-#include "DrumGridDlg.h"
+#include "DrumGridPanel.h"
+#include "NoteViews.h"
 #include "Profile.h"
 #include "ImportNsfDlg.h"
 #include "Tutorial.h"
@@ -170,6 +171,8 @@ CMainFrame::CMainFrame() :
 	m_pClipsBar(NULL),
 	m_pProblemsBar(NULL),
 	m_pMixerBar(NULL),
+	m_pDrumGridBar(NULL),
+	m_bPatternShown(true),
 	m_pActionGroup(NULL),
 	m_iActionGroupDepth(0),
 	m_bFewerMenus(false),
@@ -203,6 +206,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pClipsBar);
 	SAFE_RELEASE(m_pProblemsBar);
 	SAFE_RELEASE(m_pMixerBar);
+	SAFE_RELEASE(m_pDrumGridBar);
 	SAFE_RELEASE(m_pActionGroup);
 	SAFE_RELEASE(m_pInstrumentFileTree);
 }
@@ -221,6 +225,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
+	ON_UPDATE_COMMAND_UI(ID_EDIT_DRUMGRID, OnUpdateEditDrumGrid)
 	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
 	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
@@ -279,6 +284,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_TRACKER_DISPLAYREGISTERSTATE, OnTrackerDisplayRegisterState)
 	ON_COMMAND(ID_VIEW_CONTROLPANEL, OnViewControlpanel)
 	ON_COMMAND(ID_VIEW_PIANOROLL, OnViewPianoRoll)
+	ON_COMMAND(ID_VIEW_PATTERNEDITOR, OnViewPatternEditor)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
 	ON_COMMAND(ID_VIEW_MIXER, OnViewMixer)
@@ -353,6 +359,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_TRACKER_SWITCHTOTRACKINSTRUMENT, OnUpdateTrackerSwitchToInstrument)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CONTROLPANEL, OnUpdateViewControlpanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PIANOROLL, OnUpdateViewPianoRoll)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_PATTERNEDITOR, OnUpdateViewPatternEditor)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_MIXER, OnUpdateViewMixer)
@@ -1687,15 +1694,22 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 			AfxFormatString1(text, IDS_WELCOME_VER_FORMAT, str);
 			SetMessageText(text);
 			KillTimer(TMR_WELCOME);
-			// The piano roll and the clips panel come back if they were open last time
-			if (CPianoRollBar::WasOpen())
-				ShowPianoRoll(true);
+			// The views and panels come back as they were last time: the piano roll (in the pattern
+			// editor's place if that was hidden), the clips panel, the problems panel, the mixer and
+			// the drum grid
+			{
+				const note_views_t Views = StartingNoteViews(theApp.GetSettings()->Views.bPatternEditor, CPianoRollBar::WasOpen());
+				if (Views != NoteViews())
+					ShowNoteViews(Views);
+			}
 			if (CClipsBar::WasOpen())
 				ShowClipsPanel(true);
 			if (CProblemsBar::WasOpen())
 				ShowProblemsPanel(true);
 			if (CMixerBar::WasOpen())
 				ShowMixer(true);
+			if (CDrumGridBar::WasOpen())
+				ShowDrumGrid(true);
 			// The first time: a simpler FamiTracker for game music? Then the
 			// untouched new song starts again from the template.
 			if (theApp.GetSettings()->Profile.iProfile == PROFILE_UNSET && AskForProfile(this)) {
@@ -1805,7 +1819,13 @@ void CMainFrame::OnInstrumentLibrary()
 
 void CMainFrame::OnEditDrumGrid()
 {
-	ShowDrumGrid(this);
+	// View > Drum grid, also in the Edit menu
+	ShowDrumGrid(m_pDrumGridBar == NULL || !m_pDrumGridBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateEditDrumGrid(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pDrumGridBar != NULL && m_pDrumGridBar->IsVisible() ? 1 : 0);
 }
 
 // Profiles (Profile.h)
@@ -1967,6 +1987,8 @@ bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRe
 		pWnd = m_pClipsBar;
 	else if (Part == _T("piano-roll"))
 		pWnd = m_pPianoRoll;
+	else if (Part == _T("drum-grid"))
+		pWnd = m_pDrumGridBar;
 	else if (Part == _T("song-info")) {
 		// The title, author and copyright boxes together
 		static const UINT BOXES[] = { IDC_SONG_NAME, IDC_SONG_ARTIST, IDC_SONG_COPYRIGHT };
@@ -2014,11 +2036,16 @@ bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRe
 
 void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
 {
+	// A step about a part that's hidden shows it (the pattern editor too, which View > Pattern editor hides)
 	const CString Part(pPart);
 	if (Part == _T("clips") && (m_pClipsBar == NULL || !m_pClipsBar->IsVisible()))
 		ShowClipsPanel(true);
 	else if (Part == _T("piano-roll") && (m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible()))
 		ShowPianoRoll(true);
+	else if (Part == _T("pattern") && !m_bPatternShown)
+		ShowPatternEditor(true);
+	else if (Part == _T("drum-grid") && (m_pDrumGridBar == NULL || !m_pDrumGridBar->IsVisible()))
+		ShowDrumGrid(true);
 }
 
 void CMainFrame::OnViewProfile()
@@ -2402,7 +2429,7 @@ void CMainFrame::OnUpdateViewControlpanel(CCmdUI *pCmdUI)
 
 void CMainFrame::OnViewPianoRoll()
 {
-	ShowPianoRoll(m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible());
+	ShowNoteViews(ToggleNoteView(NoteViews(), NOTE_VIEW_ROLL));
 }
 
 void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
@@ -2412,24 +2439,134 @@ void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
 
 void CMainFrame::ShowPianoRoll(bool Show)
 {
+	ShowNoteViews(ShowNoteView(NoteViews(), NOTE_VIEW_ROLL, Show));
+}
+
+void CMainFrame::OnViewPatternEditor()
+{
+	ShowNoteViews(ToggleNoteView(NoteViews(), NOTE_VIEW_PATTERN));
+}
+
+void CMainFrame::OnUpdateViewPatternEditor(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_bPatternShown ? 1 : 0);
+}
+
+void CMainFrame::ShowPatternEditor(bool Show)
+{
+	ShowNoteViews(ShowNoteView(NoteViews(), NOTE_VIEW_PATTERN, Show));
+}
+
+note_views_t CMainFrame::NoteViews() const
+{
+	return note_views_t(m_bPatternShown, m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsVisible());
+}
+
+// The pattern editor and the piano roll as Wanted has them (NoteViews.h). The
+// one that shows goes first, so the keys always have a view to go to; while
+// the pattern editor is hidden, the piano roll fills its place and takes the
+// note keys (CPianoRollWnd), and the pattern editor keeps its size for when
+// it comes back (CFamiTrackerView::CalcWindowRect).
+void CMainFrame::ShowNoteViews(const note_views_t &Wanted)
+{
+	note_views_t Views = Wanted;
 	// The piano roll docked under the pattern editor (see PianoRoll.h), made the first time
-	if (Show && m_pPianoRoll == NULL) {
+	if (Views.Roll && m_pPianoRoll == NULL) {
 		m_pPianoRoll = new CPianoRollBar();
 		if (!m_pPianoRoll->Create(this)) {
 			delete m_pPianoRoll;
 			m_pPianoRoll = NULL;
-			return;
 		}
 	}
 	if (m_pPianoRoll == NULL)
-		return;
-	ShowControlBar(m_pPianoRoll, Show ? TRUE : FALSE, FALSE);
-	m_pPianoRoll->Opened(Show);
-	if (m_pClipsBar != NULL) {
-		// The clips panel stays laid out last: beside the pattern editor, above the piano roll
-		m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-		RecalcLayout();
+		Views = note_views_t(true, false);		// the notes need somewhere to go
+	const note_views_t Before = NoteViews();
+	CView *pView = GetActiveView();
+	const bool HidePattern = !Views.Pattern && Before.Pattern, ShowPattern = Views.Pattern && !Before.Pattern;
+
+	// Hidden first, so the pattern editor keeps its size as the piano roll takes its place
+	if (HidePattern) {
+		m_bPatternShown = false;
+		theApp.GetSettings()->Views.bPatternEditor = false;
 	}
+	if (Views.Roll && !Before.Roll) {
+		m_pPianoRoll->Fill(!m_bPatternShown);
+		ShowControlBar(m_pPianoRoll, TRUE, FALSE);
+		m_pPianoRoll->Opened(true);
+	}
+	if (HidePattern) {
+		m_pPianoRoll->Fill(true);
+		if (pView != NULL) {
+			// The keys go to the piano roll
+			if (::GetFocus() == pView->GetSafeHwnd() && GetPianoRollWnd() != NULL)
+				GetPianoRollWnd()->SetFocus();
+			pView->ShowWindow(SW_HIDE);
+		}
+	}
+	if (ShowPattern) {
+		m_bPatternShown = true;
+		theApp.GetSettings()->Views.bPatternEditor = true;
+		if (m_pPianoRoll != NULL)
+			m_pPianoRoll->Fill(false);
+		ArrangeBars();		// its place back first, at its size, then it shows
+		if (pView != NULL)
+			pView->ShowWindow(SW_SHOW);
+	}
+	if (!Views.Roll && Before.Roll) {
+		ShowControlBar(m_pPianoRoll, FALSE, FALSE);
+		m_pPianoRoll->Opened(false);
+	}
+	ArrangeBars();
+
+	if (HidePattern)
+		SetMessageText(_T("The piano roll is in the pattern editor's place: the note keys play notes in it, and type them at ")
+			_T("the cursor line while editing is on (Space). View > Pattern editor brings the pattern editor back."));
+	else if (ShowPattern && !Views.Roll)
+		SetMessageText(_T("The pattern editor is back in the piano roll's place: one of the two always shows."));
+}
+
+// The panels docked in the main window are laid out in this order, each along
+// the edge of the room the ones before it leave: the mixer, the problems panel
+// and the drum grid outermost, then the piano roll under the pattern editor
+// and the clips panel beside the pattern editor. While the piano roll fills
+// the pattern editor's place, the clips panel goes beside the piano roll.
+void CMainFrame::ArrangeBars()
+{
+	const bool Fill = !m_bPatternShown;
+	CControlBar *const ORDER[] = {
+		m_pMixerBar, m_pProblemsBar, m_pDrumGridBar,
+		Fill ? static_cast<CControlBar*>(m_pClipsBar) : static_cast<CControlBar*>(m_pPianoRoll),
+		Fill ? static_cast<CControlBar*>(m_pPianoRoll) : static_cast<CControlBar*>(m_pClipsBar),
+	};
+	for (size_t i = 0; i < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
+		if (ORDER[i] != NULL && ORDER[i]->GetSafeHwnd() != NULL)
+			ORDER[i]->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	RecalcLayout();
+}
+
+CPianoRollWnd *CMainFrame::FocusedPianoRoll() const
+{
+	CPianoRollWnd *pRoll = GetPianoRollWnd();
+	return pRoll != NULL && ::GetFocus() == pRoll->GetSafeHwnd() ? pRoll : NULL;
+}
+
+void CMainFrame::ShowDrumGrid(bool Show)
+{
+	// The noise channel's drums a bar at a time, along the bottom of the main window or its right (see
+	// DrumGridPanel.h), made the first time
+	if (Show && m_pDrumGridBar == NULL) {
+		m_pDrumGridBar = new CDrumGridBar();
+		if (!m_pDrumGridBar->Create(this)) {
+			delete m_pDrumGridBar;
+			m_pDrumGridBar = NULL;
+			return;
+		}
+		ArrangeBars();
+	}
+	if (m_pDrumGridBar == NULL)
+		return;
+	ShowControlBar(m_pDrumGridBar, Show ? TRUE : FALSE, FALSE);
+	m_pDrumGridBar->Opened(Show);
 }
 
 CPianoRollWnd *CMainFrame::GetPianoRollWnd() const
@@ -2457,6 +2594,7 @@ void CMainFrame::ShowClipsPanel(bool Show, bool Focus)
 			m_pClipsBar = NULL;
 			return;
 		}
+		ArrangeBars();
 	}
 	if (m_pClipsBar == NULL)
 		return;
@@ -2487,10 +2625,7 @@ void CMainFrame::ShowProblemsPanel(bool Show)
 			return;
 		}
 		// Laid out before the piano roll and the clips panel, so it's along the window's edge, outside them
-		if (m_pPianoRoll != NULL)
-			m_pPianoRoll->SetWindowPos(m_pProblemsBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-		if (m_pClipsBar != NULL)
-			m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		ArrangeBars();
 	}
 	if (m_pProblemsBar == NULL)
 		return;
@@ -2519,12 +2654,7 @@ void CMainFrame::ShowMixer(bool Show)
 			return;
 		}
 		// Laid out before the piano roll, the problems panel and the clips panel: along the window's bottom edge
-		if (m_pPianoRoll != NULL)
-			m_pPianoRoll->SetWindowPos(m_pMixerBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-		if (m_pProblemsBar != NULL)
-			m_pProblemsBar->SetWindowPos(m_pMixerBar, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-		if (m_pClipsBar != NULL)
-			m_pClipsBar->SetWindowPos(&CWnd::wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		ArrangeBars();
 	}
 	if (m_pMixerBar == NULL)
 		return;
@@ -2542,6 +2672,8 @@ void CMainFrame::SongChanged()
 		m_pClipsBar->SongChanged();
 	if (m_pProblemsBar != NULL)
 		m_pProblemsBar->SongChanged();
+	if (m_pDrumGridBar != NULL)
+		m_pDrumGridBar->SongChanged();
 	// The frame editor shows the sections' column while the module has sections, and where the song loops
 	if (m_pFrameEditor != NULL && m_pFrameEditor->GetSafeHwnd() != NULL) {
 		if (m_pFrameEditor->NeedsResize())
@@ -2616,7 +2748,9 @@ void CMainFrame::OnModuleMoveframeup()
 
 void CMainFrame::OnUpdateEditCut(CCmdUI *pCmdUI)
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		pCmdUI->Enable(FocusedPianoRoll()->CanEditCommand(ID_EDIT_CUT) ? 1 : 0);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnUpdateEditCut(pCmdUI);
 	else if (GetFocus() == GetFrameEditor())
 		pCmdUI->Enable(TRUE);
@@ -2624,13 +2758,19 @@ void CMainFrame::OnUpdateEditCut(CCmdUI *pCmdUI)
 
 void CMainFrame::OnUpdateEditCopy(CCmdUI *pCmdUI)
 {
+	if (FocusedPianoRoll() != NULL) {
+		pCmdUI->Enable(FocusedPianoRoll()->CanEditCommand(ID_EDIT_COPY) ? 1 : 0);
+		return;
+	}
 	CFamiTrackerView *pView	= static_cast<CFamiTrackerView*>(GetActiveView());
 	pCmdUI->Enable((pView->IsSelecting() || GetFocus() == m_pFrameEditor) ? 1 : 0);
 }
 
 void CMainFrame::OnUpdateEditPaste(CCmdUI *pCmdUI)
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		pCmdUI->Enable(FocusedPianoRoll()->CanEditCommand(ID_EDIT_PASTE) ? 1 : 0);
+	else if (GetFocus() == GetActiveView())
 		pCmdUI->Enable(static_cast<CFamiTrackerView*>(GetActiveView())->IsClipboardAvailable() ? 1 : 0);
 	else if (GetFocus() == GetFrameEditor())
 		pCmdUI->Enable(GetFrameEditor()->IsClipboardAvailable() ? 1 : 0);
@@ -2638,6 +2778,10 @@ void CMainFrame::OnUpdateEditPaste(CCmdUI *pCmdUI)
 
 void CMainFrame::OnUpdateEditDelete(CCmdUI *pCmdUI)
 {
+	if (FocusedPianoRoll() != NULL) {
+		pCmdUI->Enable(FocusedPianoRoll()->CanEditCommand(ID_EDIT_DELETE) ? 1 : 0);
+		return;
+	}
 	CFamiTrackerView *pView	= static_cast<CFamiTrackerView*>(GetActiveView());
 	pCmdUI->Enable((pView->IsSelecting() || GetFocus() == m_pFrameEditor) ? 1 : 0);
 }
@@ -3045,7 +3189,9 @@ void CMainFrame::UpdateMenu(CMenu *pMenu)
 
 void CMainFrame::OnEditCut()
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		FocusedPianoRoll()->EditCommand(ID_EDIT_CUT);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnEditCut();
 	else if (GetFocus() == GetFrameEditor())
 		GetFrameEditor()->OnEditCut();
@@ -3053,7 +3199,9 @@ void CMainFrame::OnEditCut()
 
 void CMainFrame::OnEditCopy()
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		FocusedPianoRoll()->EditCommand(ID_EDIT_COPY);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnEditCopy();
 	else if (GetFocus() == GetFrameEditor())
 		GetFrameEditor()->OnEditCopy();
@@ -3061,7 +3209,9 @@ void CMainFrame::OnEditCopy()
 
 void CMainFrame::OnEditPaste()
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		FocusedPianoRoll()->EditCommand(ID_EDIT_PASTE);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnEditPaste();
 	else if (GetFocus() == GetFrameEditor())
 		GetFrameEditor()->OnEditPaste();
@@ -3069,7 +3219,9 @@ void CMainFrame::OnEditPaste()
 
 void CMainFrame::OnEditDelete()
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		FocusedPianoRoll()->EditCommand(ID_EDIT_DELETE);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnEditCut();
 	else if (GetFocus() == GetFrameEditor())
 		GetFrameEditor()->OnEditDelete();
@@ -3077,7 +3229,9 @@ void CMainFrame::OnEditDelete()
 
 void CMainFrame::OnEditSelectall()
 {
-	if (GetFocus() == GetActiveView())
+	if (FocusedPianoRoll() != NULL)
+		FocusedPianoRoll()->EditCommand(ID_EDIT_SELECTALL);
+	else if (GetFocus() == GetActiveView())
 		static_cast<CFamiTrackerView*>(GetActiveView())->OnEditSelectall();
 }
 

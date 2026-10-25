@@ -162,6 +162,59 @@ void TestBeats()
 	CHECK(Pattern(Bar2, NoSnare) == "K.h...h.K.h...h.");
 }
 
+// The bar the grid shows: the cursor's, and the one picked between the cursor's moves
+void TestFollow()
+{
+	drum_follow_t F;
+	CHECK(F.Bar == 0 && F.CursorBar == -1);
+	CHECK(FollowCursor(F, 3, 8) && F.Bar == 3 && F.CursorBar == 3);	// the first look goes to the cursor
+	CHECK(!FollowCursor(F, 3, 8) && F.Bar == 3);					// it stays there
+	F.Bar = 2;														// the < button
+	CHECK(!FollowCursor(F, 3, 8) && F.Bar == 2);					// stays while the cursor does
+	CHECK(FollowCursor(F, 5, 8) && F.Bar == 5 && F.CursorBar == 5);	// and follows it when it moves
+	F.Bar = 4;
+	CHECK(!FollowCursor(F, 4, 8) && F.Bar == 4 && F.CursorBar == 4);	// into the bar shown: noted, nothing changes
+	// Fewer bars (frames removed, longer bars): the last one
+	F.Bar = 7;
+	CHECK(FollowCursor(F, 4, 3) && F.Bar == 2);
+	CHECK(FollowCursor(F, 9, 8) && F.Bar == 7 && F.CursorBar == 9);	// the cursor past the end
+	// Without a cursor, the bar stays
+	drum_follow_t None;
+	None.Bar = 1;
+	CHECK(!FollowCursor(None, -1, 4) && None.Bar == 1);
+	CHECK(FollowCursor(None, -1, 0) && None.Bar == 0);				// no bars: the first
+}
+
+// The buttons along the top, in lines
+void TestFlow()
+{
+	const int W[] = { 10, 10, 10, 20, 20, 30 };
+	const int G[] = { 0, 0, 0, 1, 1, 2 };
+	const std::vector<int> Widths(W, W + 6), Groups(G, G + 6);
+	std::vector<drum_place_t> P;
+	// All on one line: 2 apart in a group, 8 between groups
+	CHECK(FlowDrumControls(Widths, Groups, 200, 2, 8, P) == 1);
+	CHECK(P.size() == 6 && P[0].X == 0 && P[1].X == 12 && P[2].X == 24 && P[3].X == 42 && P[4].X == 64 && P[5].X == 92);
+	CHECK(P[5].Line == 0);
+	// Narrower: each group on a line of its own, kept together
+	CHECK(FlowDrumControls(Widths, Groups, 60, 2, 8, P) == 3);
+	CHECK(P[2].Line == 0 && P[2].X == 24 && P[3].Line == 1 && P[3].X == 0 && P[4].X == 22 && P[5].Line == 2 && P[5].X == 0);
+	// Two groups fit on a line, the third doesn't
+	CHECK(FlowDrumControls(Widths, Groups, 90, 2, 8, P) == 2);
+	CHECK(P[3].Line == 0 && P[4].Line == 0 && P[4].X == 64 && P[5].Line == 1);
+	// A group longer than a line breaks where it must
+	CHECK(FlowDrumControls(Widths, Groups, 25, 2, 8, P) == 5);
+	CHECK(P[0].Line == 0 && P[1].Line == 0 && P[1].X == 12 && P[2].Line == 1 && P[2].X == 0);
+	CHECK(P[3].Line == 2 && P[4].Line == 3 && P[5].Line == 4);
+	// A control wider than the line still gets a line of its own
+	const std::vector<int> Wide(1, 50);
+	CHECK(FlowDrumControls(Wide, std::vector<int>(1, 0), 20, 2, 8, P) == 1 && P[0].X == 0);
+	// Without groups, each control is a group of its own
+	CHECK(FlowDrumControls(Widths, std::vector<int>(), 200, 2, 8, P) == 1 && P[1].X == 18);
+	// Nothing to place
+	CHECK(FlowDrumControls(std::vector<int>(), std::vector<int>(), 100, 2, 8, P) == 1 && P.empty());
+}
+
 }	// namespace
 
 int main()
@@ -169,6 +222,8 @@ int main()
 	TestReading();
 	TestToggling();
 	TestBeats();
+	TestFollow();
+	TestFlow();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

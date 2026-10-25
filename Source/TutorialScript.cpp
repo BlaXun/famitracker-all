@@ -32,14 +32,14 @@ namespace {
 
 const char *const PARTS[] = {
 	"window", "pattern", "frames", "instruments", "song-settings", "song-info", "octave", "toolbar", "status-bar", "clips",
-	"piano-roll", "button", "menu",
+	"piano-roll", "drum-grid", "button", "menu",
 };
 
 const char *const COMMANDS[] = {
 	"play", "play-from-start", "stop", "edit-mode", "new", "open", "save", "save-as", "export-for-games", "create-wav",
 	"new-instrument", "instrument-library", "edit-instrument", "drum-grid", "save-clip", "clips", "piano-roll",
 	"clips-panel", "record", "insert-recording", "add-backing", "voice-effect", "insert-frame", "duplicate-frame",
-	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude",
+	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude", "pattern-editor",
 };
 
 std::string Trim(const std::string &Text)

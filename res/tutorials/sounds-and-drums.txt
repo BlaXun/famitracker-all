@@ -22,15 +22,15 @@ show: instruments
 text: Your new instrument is in the list. Click an instrument to choose it: the notes you type from now on play with it, and double-clicking one opens it for changing its sound.
 
 step
-show: menu Edit
-text: Now some drums. The NES plays them on the Noise channel, and the drum grid makes that easy: open Edit > Drum grid (or Ctrl+Shift+D).
+show: menu View
+text: Now some drums. The NES plays them on the Noise channel, and the drum grid makes that easy: open View > Drum grid (it's in the Edit menu too, or press Ctrl+Shift+D).
 wait: command drum-grid
 
 step
-show: window
+show: drum-grid
 text: The drum grid shows a bar of the Noise channel: a line for each drum, a column for each row. Click the steps to put a kick, a snare or a hi-hat on them, or press one of the beats to fill the bar at once.
 
-  "Copy to every bar" repeats it all through the song. Close the grid when you're done.
+  It shows the bar the cursor is in, and < and > go to the bar before or after. "Copy to every bar" repeats it all through the song. It stays open while you work; View > Drum grid hides it again.
 
 step
 show: button play

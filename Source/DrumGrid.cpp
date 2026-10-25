@@ -185,3 +185,54 @@ void ApplyBeat(std::vector<stChanNote> &Bar, int Beat, int StepsPerBeat, const d
 		SetDrum(Bar[static_cast<size_t>(s)], (Lane >= 0 && Kit.Instruments[Lane] >= 0) ? Lane : DRUM_NONE, Kit);
 	}
 }
+
+bool FollowCursor(drum_follow_t &Follow, int CursorBar, int Bars)
+{
+	const int Last = Bars > 0 ? Bars - 1 : 0;
+	const int Before = Follow.Bar;
+	if (CursorBar != Follow.CursorBar) {
+		Follow.CursorBar = CursorBar;
+		if (CursorBar >= 0)
+			Follow.Bar = CursorBar;
+	}
+	Follow.Bar = Follow.Bar < 0 ? 0 : (Follow.Bar > Last ? Last : Follow.Bar);
+	return Follow.Bar != Before;
+}
+
+int FlowDrumControls(const std::vector<int> &Widths, const std::vector<int> &Groups, int Width, int Gap, int GroupGap,
+	std::vector<drum_place_t> &Places)
+{
+	const size_t Count = Widths.size();
+	Places.assign(Count, drum_place_t());
+	// A control without a group number is a group of its own
+	const auto GroupOf = [&Groups](size_t i) { return i < Groups.size() ? Groups[i] : -1 - static_cast<int>(i); };
+	int Line = 0, X = 0;
+	bool Empty = true;		// nothing on the line yet
+	for (size_t First = 0; First < Count; ) {
+		size_t End = First;
+		int Long = 0;
+		while (End < Count && GroupOf(End) == GroupOf(First)) {
+			Long += (End > First ? Gap : 0) + Widths[End];
+			++End;
+		}
+		if (!Empty && X + GroupGap + Long > Width) {
+			++Line;
+			X = 0;
+			Empty = true;
+		}
+		for (size_t i = First; i < End; ++i) {
+			const int Space = i == First ? GroupGap : Gap;
+			if (!Empty && X + Space + Widths[i] > Width) {
+				++Line;
+				X = 0;
+				Empty = true;
+			}
+			Places[i].Line = Line;
+			Places[i].X = Empty ? 0 : X + Space;
+			X = Places[i].X + Widths[i];
+			Empty = false;
+		}
+		First = End;
+	}
+	return Line + 1;
+}
