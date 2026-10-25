@@ -30,6 +30,7 @@
 #include <vector>
 #include "Transcribe/Transcribe.h"
 #include "Api/Sections.h"
+#include "Api/ChordHelper.h"
 #include "stdafx.h"
 #pragma push_macro("new")
 #undef new
@@ -51,6 +52,7 @@
 #include "McpConnection.h"
 #include "Api/Tools.h"
 #include "PianoRoll.h"
+#include "PianoRollChords.h"
 
 namespace {
 
@@ -114,7 +116,7 @@ const int KEY_SCALE_COUNT = sizeof(KEY_SCALES) / sizeof(KEY_SCALES[0]);
 
 // The buttons along the top
 enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_SNAP, BUTTON_INSTRUMENT, BUTTON_EFFECTS,
-	BUTTON_CLIPS, BUTTON_CLOSE };
+	BUTTON_CHORDS, BUTTON_CLIPS, BUTTON_CLOSE };
 
 // Menu items (TrackPopupMenu returns them; they are never sent as commands)
 const UINT MENU_CHANNEL = 100;			// + channel
@@ -129,6 +131,15 @@ const UINT MENU_CLIP_LINKED = 2000;
 const UINT MENU_CLIP_SAVE = 2001;
 const UINT MENU_CLIP_MANAGE = 2002;
 const UINT MENU_EFFECT = 3000;			// + index into EFFECT_CHOICES
+const UINT MENU_CHORD_HEARD = 5000;		// the chords the parts play there (the chord strip's)
+const UINT MENU_CHORD_KEY = 5010;		// + degree (0-6): the key's chords
+const UINT MENU_CHORD_SEVENTH = 5020;	// + degree: with sevenths
+const UINT MENU_CHORD_TYPE = 5030;		// typed in a box
+const UINT MENU_CHORD_AGAIN = 5031;		// the last chords again on the next bar
+const UINT MENU_CHORD_VOICES = 5040;	// + 0 (as many as a chord has notes) or 2-4
+const UINT MENU_CHORD_FEWER = 5050;		// too few free channels: fewer voices...
+const UINT MENU_CHORD_ARPEGGIO = 5051;	// ...or the arpeggio on one
+const UINT MENU_CHORD_CANCEL = 5052;
 
 struct RollNote {
 	int Start;			// rows from the start of the song
@@ -521,6 +532,7 @@ struct CPianoRollWnd::Impl {
 	CRect Band;			// selecting with Ctrl+drag
 	int RangeFrom, RangeTo;	// selecting whole rows along the ruler (the Select tool)
 	bool PatternSelecting;	// the pattern editor had a selection at the last look
+	bool RangeKept;		// the rows last dragged along the ruler with the Select tool are where chords go (Chords)
 
 	// Copied notes
 	CChannelNotes Copied;
@@ -531,6 +543,17 @@ struct CPianoRollWnd::Impl {
 	int PlaceRow;		// where it goes, -1 off the grid
 	std::vector<std::vector<RollNote> > ClipNotes;	// per column
 	bool PanelDrop;		// PlacingClip is dragged in from the clips panel, which places it
+
+	// The chord helper (the Chords button: Api/ChordHelper.h works chords out, PianoRollChords.h writes them)
+	int ChordVoices;				// the voices a chord gets: 0 for as many as it has notes, or 2-4
+	CString TypedChords;			// typed last
+	unsigned int AgainTrack;		// the chords written last, for Again on the next bar: their track...
+	int AgainRow;					// ...the row after them (-1: none yet)...
+	CString AgainChords;			// ...their last bar's chords ("| Am |", "| F G |")...
+	std::vector<ftapi::ChordAt> AgainLead;	// ...as chords, for the voices to lead from...
+	std::vector<int> AgainChannels;	// ...the channels of the voices, lowest first...
+	int AgainVoices;				// ...how many there were...
+	bool AgainArpeggio;				// ...or the arpeggio on one
 
 	// The buttons along the top, where they were drawn last
 	struct Button {
@@ -552,8 +575,9 @@ struct CPianoRollWnd::Impl {
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
-		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), HasCopied(false), PlacingClip(-1), PlaceRow(-1),
-		PanelDrop(false), BackSize(0, 0)
+		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), RangeKept(false), HasCopied(false), PlacingClip(-1),
+		PlaceRow(-1), PanelDrop(false), ChordVoices(0), AgainTrack(static_cast<unsigned int>(-1)), AgainRow(-1), AgainVoices(0),
+		AgainArpeggio(false), BackSize(0, 0)
 	{
 	}
 
@@ -578,6 +602,9 @@ struct CPianoRollWnd::Impl {
 		const int OldKey = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Key"), static_cast<UINT>(-1)));
 		Snap = theApp.GetProfileInt(SECTION, _T("Snap to key"), OldKey >= 0 && OldKey <= 11 ? 1 : 0) != 0;
 		LinkedClips = theApp.GetProfileInt(SECTION, _T("Linked clips"), 0) != 0;
+		ChordVoices = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Chord voices"), 0));
+		if (ChordVoices != 0 && (ChordVoices < 2 || ChordVoices > 4))
+			ChordVoices = 0;
 	}
 
 	void Save() const
@@ -587,6 +614,7 @@ struct CPianoRollWnd::Impl {
 		theApp.WriteProfileInt(SECTION, _T("Grid"), GridChoice);
 		theApp.WriteProfileInt(SECTION, _T("Snap to key"), Snap ? 1 : 0);
 		theApp.WriteProfileInt(SECTION, _T("Linked clips"), LinkedClips ? 1 : 0);
+		theApp.WriteProfileInt(SECTION, _T("Chord voices"), ChordVoices);
 	}
 
 	void Say(LPCTSTR Text)
@@ -1087,6 +1115,8 @@ struct CPianoRollWnd::Impl {
 			pDoc->GetFrameCount(Track) != Frames || pDoc->GetPatternLength(Track) != Length ||
 			pDoc->GetAvailableChannels() != Notes.size() || pDoc->GetFirstHighlight() != Beat || pDoc->GetSecondHighlight() != Bar) {
 			CancelDrag();
+			if (static_cast<unsigned int>(pMain->GetSelectedTrack()) != Track)
+				RangeKept = false;
 			Read();
 			UpdateScrollBars();
 			Changed = true;
@@ -1096,8 +1126,9 @@ struct CPianoRollWnd::Impl {
 		const CPatternEditor *pEditor = pView->GetPatternEditor();
 		// One selection at a time: one made in the pattern editor ends the piano roll's
 		const bool PatternSelects = pEditor->IsSelecting();
-		if (PatternSelects && !PatternSelecting && !Selection.empty() && Drag == DRAG_NONE) {
+		if (PatternSelects && !PatternSelecting && (!Selection.empty() || RangeKept) && Drag == DRAG_NONE) {
 			Selection.clear();
+			RangeKept = false;
 			Changed = true;
 		}
 		PatternSelecting = PatternSelects;
@@ -1581,6 +1612,14 @@ struct CPianoRollWnd::Impl {
 		}
 		if (Notes.empty())
 			return;
+		if (Right && ChordStrip.PtInRect(Point) && PlacingClip < 0) {
+			// Chords for the bar under the mouse (or the selection it's in)
+			CPoint Screen = Point;
+			pWnd->ClientToScreen(&Screen);
+			ChordsMenu(Screen, std::max(0, std::min(RowAt(Point.x), EditRows() - 1)));
+			return;
+		}
+		RangeKept = false;
 		if (PlacingClip >= 0) {
 			if (Right)
 				PlacingClip = -1;	// never mind
@@ -1841,8 +1880,10 @@ struct CPianoRollWnd::Impl {
 			Band.SetRectEmpty();
 			break;
 		case DRAG_RANGE:
-			if (DragMoved)
+			if (DragMoved) {
 				SelectRows(std::min(RangeFrom, RangeTo), std::max(RangeFrom, RangeTo) + 1);
+				RangeKept = true;
+			}
 			break;
 		default:
 			break;
@@ -1981,8 +2022,10 @@ struct CPianoRollWnd::Impl {
 				CancelDrag();
 			else if (PlacingClip >= 0)
 				PlacingClip = -1;
-			else
+			else {
 				Selection.clear();
+				RangeKept = false;
+			}
 			pWnd->Invalidate(FALSE);
 			return true;
 		}
@@ -2004,6 +2047,7 @@ struct CPianoRollWnd::Impl {
 		case 'A':
 			if (Ctrl && !Shift && !Alt) {
 				Selection.clear();
+				RangeKept = false;
 				const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
 				for (size_t i = 0; i < List.size(); ++i)
 					Selection.push_back(List[i].Start);
@@ -2079,6 +2123,17 @@ struct CPianoRollWnd::Impl {
 				pWnd->Invalidate(FALSE);
 				pWnd->UpdateWindow();
 				EffectsMenu(Mouse);
+				Done = true;
+			}
+			break;
+		case 'H':
+			if (!Ctrl && !Shift && !Alt && !TypesNotes()) {
+				// The Chords menu where the mouse is
+				CPoint Mouse;
+				::GetCursorPos(&Mouse);
+				pWnd->Invalidate(FALSE);
+				pWnd->UpdateWindow();
+				ChordsMenu(Mouse, -1);
 				Done = true;
 			}
 			break;
@@ -2203,6 +2258,368 @@ struct CPianoRollWnd::Impl {
 		GiveInstrument = Instrument;
 		Recompute();
 		Commit(Selection.front());
+	}
+
+	// The chord helper (the Chords button, H, or a right-click on the chord strip): a chord, or a chord a bar, on the
+	// channels with nothing to play over some bars, a held voice on each, under the melody and over the bass. Api/ChordHelper.h
+	// works the voices out, PianoRollChords.h makes their sounds and writes them, one Ctrl+Z.
+
+	ftapi::Timing SongTiming() const
+	{
+		return ftapi::Timing(static_cast<int>(Length), static_cast<int>(Frames), Beat, Bar);
+	}
+
+	// The rows the chords go on: the selected notes' bars (where they start, and the bar the last one ends in when it fills
+	// half of it), the rows dragged along the ruler with the Select tool, the pattern editor's selection, or the bar the
+	// cursor is in, after which chords for more bars go on (Grow)
+	void ChordSpan(int &From, int &To, bool &Grow) const
+	{
+		Grow = false;
+		const ftapi::Timing T = SongTiming();
+		if (!Selection.empty() && Channel < static_cast<int>(Notes.size())) {
+			int First = -1, LastStart = 0, LastEnd = 0;
+			for (size_t i = 0; i < Selection.size(); ++i) {
+				const int Index = FindStart(Selection[i]);
+				if (Index < 0)
+					continue;
+				const RollNote &Note = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(Index)];
+				First = First < 0 ? Note.Start : std::min(First, Note.Start);
+				LastStart = std::max(LastStart, Note.Start);
+				LastEnd = std::max(LastEnd, Note.End);
+			}
+			if (First >= 0) {
+				From = First;
+				To = std::max(First + 1, LastEnd);
+				const int Tail = T.BarOf(To - 1);
+				if (Tail > T.BarOf(LastStart) && (To - T.BarStart(Tail)) * 2 < T.BarLength(Tail))
+					To = T.BarStart(Tail);
+				return;
+			}
+		}
+		if (RangeKept) {
+			From = std::min(RangeFrom, RangeTo);
+			To = std::max(RangeFrom, RangeTo) + 1;
+			return;
+		}
+		CFamiTrackerView *pView = View();
+		if (pView != NULL && pView->GetPatternEditor()->IsSelecting()) {
+			const CSelection Rows = pView->GetPatternEditor()->GetSelection();
+			const int Frame = std::max(0, pView->GetPatternEditor()->GetFrame());
+			const int Top = std::max(0, Rows.GetRowStart()), Bottom = std::min(static_cast<int>(Length) - 1, Rows.GetRowEnd());
+			if (Bottom >= Top) {
+				From = Frame * static_cast<int>(Length) + Top;
+				To = Frame * static_cast<int>(Length) + Bottom + 1;
+				return;
+			}
+		}
+		From = std::max(0, CursorFrame) * static_cast<int>(Length) + std::max(0, CursorRow);
+		To = From + 1;
+		Grow = true;
+	}
+
+	// "bar 5", "bars 5-8"
+	CString BarsText(int First, int End) const
+	{
+		const ftapi::Timing T = SongTiming();
+		const int From = T.BarOf(First), To = T.BarOf(std::max(First, End - 1));
+		CString Text;
+		if (From == To)
+			Text.Format(_T("bar %d"), From);
+		else
+			Text.Format(_T("bars %d-%d"), From, To);
+		return Text;
+	}
+
+	// The chords the strip names over [First, End), a bar at a time ("| Am | F G |"); empty when it names none there
+	CString HeardChords(int First, int End) const
+	{
+		const std::vector<ftapi::HeardChord> &Chords = ShownChords();
+		const ftapi::Timing T = SongTiming();
+		CString Text;
+		bool Any = false;
+		for (int Row = First; Row < End; ) {
+			const int To = std::min(End, T.BarStart(T.BarOf(Row)) + T.BarLength(T.BarOf(Row)));
+			if (To <= Row)
+				break;
+			CString Part;
+			int Covered = Row;
+			for (size_t i = 0; i < Chords.size(); ++i) {
+				const ftapi::HeardChord &Chord = Chords[i];
+				if (Chord.Row + Chord.Rows <= Row || Chord.Row >= To)
+					continue;
+				if (Chord.Row > Covered)
+					Part += _T(" N.C.");	// none before it in the bar
+				Part += _T(" ") + CString(Chord.Name.c_str());
+				Covered = Chord.Row + Chord.Rows;
+				Any = true;
+			}
+			Text += _T("|") + (Part.IsEmpty() ? CString(_T(" N.C.")) : Part) + _T(" ");
+			Row = To;
+		}
+		return Any ? Text + _T("|") : CString();
+	}
+
+	// A progression to show, without its bar lines and empty shares: "| Am | F G |" is "Am F G"
+	static CString ChordsShown(const CString &Progression)
+	{
+		CString Out;
+		int Start = 0;
+		for (CString Word = Progression.Tokenize(_T(" |"), Start); !Word.IsEmpty(); Word = Progression.Tokenize(_T(" |"), Start)) {
+			if (Word.CompareNoCase(_T("N.C.")) == 0)
+				continue;
+			if (!Out.IsEmpty())
+				Out += _T(" ");
+			Out += Word;
+		}
+		return Out;
+	}
+
+	ftapi::HelperSong ChordSong() const
+	{
+		ftapi::HelperSong Song;
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc != NULL)
+			ReadChordSong(pDoc, Track, TheKey().K, HasKey(), Song);
+		return Song;
+	}
+
+	// The Chords menu at Point (screen coordinates), for the span; AtRow: a row of the chord strip right-clicked, whose bar it
+	// is for unless that's in the selection
+	void ChordsMenu(CPoint Point, int AtRow)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (Dirty)
+			Read();
+		if (pDoc == NULL || Notes.empty())
+			return;
+		int From = 0, To = 0;
+		bool Grow = false;
+		ChordSpan(From, To, Grow);
+		if (AtRow >= 0 && (Grow || AtRow < From || AtRow >= To)) {
+			From = AtRow;
+			To = AtRow + 1;
+			Grow = true;
+		}
+		const ftapi::HelperSong Song = ChordSong();
+		int First = 0, End = 0;
+		ftapi::WholeBars(Song, From, To, First, End);
+		End = std::max(First + 1, std::min(End, EditRows()));
+		const std::vector<int> Free = ftapi::FreeChannels(Song, First, End);
+		const ftapi::Key K = TheKey().K;
+		const CString Where = BarsText(First, End);
+
+		CMenu Menu, KeyChords, Sevenths, Voices;
+		Menu.CreatePopupMenu();
+		KeyChords.CreatePopupMenu();
+		Sevenths.CreatePopupMenu();
+		Voices.CreatePopupMenu();
+		CString Item;
+		if (Free.empty())
+			Item.Format(_T("No channel is free in %s: each one that can play a chord's notes plays there"), static_cast<LPCTSTR>(Where));
+		else
+			Item.Format(_T("Chords on %s%s, a note on each free channel (%s)"), static_cast<LPCTSTR>(Where), Grow ? _T("") :
+				_T(" (the selection)"), static_cast<LPCTSTR>(Plural(static_cast<int>(Free.size()), _T("is free"), _T("are free"))));
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Item);
+		Menu.AppendMenu(MF_SEPARATOR);
+		const UINT Can = Free.empty() ? MF_GRAYED : 0;
+		const CString Heard = HeardChords(First, End);
+		if (!Heard.IsEmpty()) {
+			Item.Format(_T("%s: the chords the parts play there"), static_cast<LPCTSTR>(ChordsShown(Heard)));
+			Menu.AppendMenu(MF_STRING | Can, MENU_CHORD_HEARD, Item);
+		}
+		for (int d = 0; d < 7; ++d) {
+			const ftapi::Chord Plain = ftapi::DiatonicChord(K, d, false), Seventh = ftapi::DiatonicChord(K, d, true);
+			Item.Format(_T("%s%s\t%s"), ftapi::ChordName(Plain, K).c_str(), d == 0 ? _T(" (home)") : _T(""), ftapi::ChordDegree(Plain, K).c_str());
+			KeyChords.AppendMenu(MF_STRING | Can, MENU_CHORD_KEY + d, Item);
+			Item.Format(_T("%s\t%s"), ftapi::ChordName(Seventh, K).c_str(), ftapi::ChordDegree(Seventh, K).c_str());
+			Sevenths.AppendMenu(MF_STRING | Can, MENU_CHORD_SEVENTH + d, Item);
+		}
+		KeyChords.AppendMenu(MF_SEPARATOR);
+		KeyChords.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(Sevenths.Detach()), _T("With sevenths (richer)"));
+		if (HasKey())
+			Item.Format(_T("The chords of %s"), static_cast<LPCTSTR>(KeyText()));
+		else
+			Item = _T("The key's chords (no key yet: draw some notes, or choose one with Key)");
+		Menu.AppendMenu(MF_POPUP | (HasKey() ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(KeyChords.Detach()), Item);
+		Menu.AppendMenu(MF_STRING | Can, MENU_CHORD_TYPE, _T("Type a chord, or a chord a bar..."));
+		Menu.AppendMenu(MF_SEPARATOR);
+		const bool Again = AgainRow >= 0 && AgainTrack == Track && AgainRow < EditRows();
+		if (Again)
+			Item.Format(_T("Again on the next bar: %s on %s"), static_cast<LPCTSTR>(ChordsShown(AgainChords)),
+				static_cast<LPCTSTR>(BarsText(AgainRow, AgainRow + 1)));
+		else
+			Item = _T("Again on the next bar (once chords are in)");
+		Menu.AppendMenu(MF_STRING | (Again ? 0 : MF_GRAYED), MENU_CHORD_AGAIN, Item);
+		Menu.AppendMenu(MF_SEPARATOR);
+		Voices.AppendMenu(MF_STRING | (ChordVoices == 0 ? MF_CHECKED : 0), MENU_CHORD_VOICES,
+			_T("As many as the chord has notes (3, or 4 with a seventh)"));
+		for (int n = 2; n <= 4; ++n) {
+			Item.Format(_T("%d voices"), n);
+			Voices.AppendMenu(MF_STRING | (ChordVoices == n ? MF_CHECKED : 0), MENU_CHORD_VOICES + n, Item);
+		}
+		Menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(Voices.Detach()), _T("Voices"));
+
+		const int Choice = static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			Point.x, Point.y, pWnd));
+		if (Choice == static_cast<int>(MENU_CHORD_HEARD))
+			PutChords(Heard, First, End, false, Point);
+		else if (Choice >= static_cast<int>(MENU_CHORD_KEY) && Choice < static_cast<int>(MENU_CHORD_KEY) + 7)
+			PutChords(CString(ftapi::ChordName(ftapi::DiatonicChord(K, Choice - static_cast<int>(MENU_CHORD_KEY), false), K).c_str()),
+				From, To, Grow, Point);
+		else if (Choice >= static_cast<int>(MENU_CHORD_SEVENTH) && Choice < static_cast<int>(MENU_CHORD_SEVENTH) + 7)
+			PutChords(CString(ftapi::ChordName(ftapi::DiatonicChord(K, Choice - static_cast<int>(MENU_CHORD_SEVENTH), true), K).c_str()),
+				From, To, Grow, Point);
+		else if (Choice == static_cast<int>(MENU_CHORD_TYPE)) {
+			CClipNameDlg Dialog(_T("Chords"), _T("A chord (Am, F, G7), or a chord a bar (C G Am F):"),
+				!TypedChords.IsEmpty() ? TypedChords : ChordsShown(Heard), pWnd, 200);
+			if (Dialog.DoModal() != IDOK)
+				return;
+			TypedChords = Dialog.GetName();
+			PutChords(TypedChords, From, To, Grow, Point);
+		}
+		else if (Choice == static_cast<int>(MENU_CHORD_AGAIN) && Again)
+			PutChords(AgainChords, AgainRow, AgainRow + 1, false, Point, true);
+		else if (Choice == static_cast<int>(MENU_CHORD_VOICES) || (Choice >= static_cast<int>(MENU_CHORD_VOICES) + 2 &&
+			Choice <= static_cast<int>(MENU_CHORD_VOICES) + 4)) {
+			ChordVoices = Choice - static_cast<int>(MENU_CHORD_VOICES);
+			Save();
+			if (ChordVoices == 0)
+				Say(_T("Chords get a voice for each of their notes now: 3, or 4 with a seventh."));
+			else {
+				CString Text;
+				Text.Format(_T("Chords get %d voices now, each on a channel of its own."), ChordVoices);
+				Say(Text);
+			}
+		}
+		pWnd->Invalidate(FALSE);
+	}
+
+	// Too few channels are free for the voices the chords want: fewer voices, the arpeggio on one channel, or nothing
+	int FewerMenu(const ftapi::HelperSong &Song, const ftapi::ChordPlan &Plan, CPoint Point) const
+	{
+		CString Free;
+		for (size_t i = 0; i < Plan.Free.size(); ++i) {
+			if (i > 0)
+				Free += i + 1 == Plan.Free.size() ? _T(" and ") : _T(", ");
+			Free += Song.Channels[static_cast<size_t>(Plan.Free[i])].Name.c_str();
+		}
+		bool One = true;
+		for (size_t i = 1; i < Plan.Chords.size(); ++i)
+			One = One && Plan.Chords[i].C == Plan.Chords[0].C;
+		CString Head, Item;
+		const CString Where = BarsText(Plan.First, Plan.End);
+		const LPCTSTR Is = Plan.Free.size() == 1 ? _T("is") : _T("are");
+		if (One && !Plan.Chords.empty())
+			Head.Format(_T("%s has %d notes, but only %s %s free in %s"), ftapi::ChordName(Plan.Chords[0].C, Song.K).c_str(), Plan.Wanted,
+				static_cast<LPCTSTR>(Free), Is, static_cast<LPCTSTR>(Where));
+		else
+			Head.Format(_T("The chords have up to %d notes, but only %s %s free in %s"), Plan.Wanted, static_cast<LPCTSTR>(Free), Is,
+				static_cast<LPCTSTR>(Where));
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Head);
+		Menu.AppendMenu(MF_SEPARATOR);
+		if (Plan.Free.size() >= 2) {
+			Item.Format(_T("Play %d of %s notes, one on each"), static_cast<int>(Plan.Free.size()), One ? _T("its") : _T("their"));
+			Menu.AppendMenu(MF_STRING, MENU_CHORD_FEWER, Item);
+		}
+		if (!Plan.Free.empty()) {
+			Item.Format(_T("Play all %s notes in turn on %s, as an arpeggio (0xy)"), One ? _T("its") : _T("their"),
+				Song.Channels[static_cast<size_t>(Plan.Free[0])].Name.c_str());
+			Menu.AppendMenu(MF_STRING, MENU_CHORD_ARPEGGIO, Item);
+		}
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING, MENU_CHORD_CANCEL, _T("Never mind"));
+		return static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			Point.x, Point.y, pWnd));
+	}
+
+	// Writes the chords Text on the rows [From, To) (whole bars of them), asking first when too few channels are free; with
+	// Again, on the voices' channels of the chords written last, led from them
+	void PutChords(const CString &Text, int From, int To, bool Grow, CPoint Point, bool Again = false)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CMainFrame *pMain = Main();
+		if (pDoc == NULL || pMain == NULL)
+			return;
+		ftapi::HelperSong Song = ChordSong();
+		ftapi::ChordRequest Request;
+		Request.Chords = static_cast<LPCSTR>(CStringA(Text));
+		Request.First = From;
+		Request.End = To;
+		Request.Grow = Grow;
+		Request.Limit = EditRows();
+		Request.Voices = ChordVoices;
+		if (Again) {
+			Request.Prefer = AgainChannels;
+			Request.LeadFrom = AgainLead;
+			Request.Voices = AgainArpeggio ? 0 : AgainVoices;
+			Request.Arpeggio = AgainArpeggio;
+		}
+		ftapi::ChordPlan Plan;
+		if (!ftapi::PlanChords(Song, Request, Plan)) {
+			Say(CString(Plan.Error.c_str()));
+			return;
+		}
+		if (Plan.TooFew) {
+			pWnd->Invalidate(FALSE);
+			pWnd->UpdateWindow();
+			const int Choice = FewerMenu(Song, Plan, Point);
+			if (Choice == static_cast<int>(MENU_CHORD_FEWER))
+				Request.Voices = static_cast<int>(Plan.Free.size());
+			else if (Choice == static_cast<int>(MENU_CHORD_ARPEGGIO))
+				Request.Arpeggio = true;
+			else
+				return;
+			if (!ftapi::PlanChords(Song, Request, Plan)) {
+				Say(CString(Plan.Error.c_str()));
+				return;
+			}
+		}
+		if (Plan.Voices.empty()) {
+			Say(_T("There's no channel there for the chord's notes."));
+			return;
+		}
+		CString Sounds, Message;
+		const int Cursor = std::max(0, CursorFrame) * static_cast<int>(Length) + std::max(0, CursorRow);
+		if (!WriteChordPlan(pMain, Song, Plan, Cursor, Sounds, Message)) {
+			Say(Message);
+			return;
+		}
+		Dirty = true;
+
+		// For Again: the last bar's chords, the channels and how many
+		const ftapi::Timing T = SongTiming();
+		const int LastBar = std::max(Plan.First, T.BarStart(T.BarOf(Plan.End - 1)));
+		AgainLead.clear();
+		for (size_t i = 0; i < Plan.Chords.size(); ++i) {
+			ftapi::ChordAt A = Plan.Chords[i];
+			if (A.Row + A.Rows <= LastBar)
+				continue;
+			if (A.Row < LastBar) {
+				A.Rows -= LastBar - A.Row;
+				A.Row = LastBar;
+			}
+			AgainLead.push_back(A);
+		}
+		AgainChords = ftapi::ProgressionText(AgainLead, std::vector<ftapi::BarSpan>(1, ftapi::BarSpan(LastBar, Plan.End - LastBar)),
+			TheKey().K).c_str();
+		AgainTrack = Track;
+		AgainRow = Plan.End;
+		AgainChannels.clear();
+		for (size_t v = 0; v < Plan.Voices.size(); ++v)
+			AgainChannels.push_back(Plan.Voices[v].Channel);
+		AgainVoices = static_cast<int>(Plan.Voices.size());
+		AgainArpeggio = Plan.Arpeggio;
+
+		CString Said;
+		Said.Format(_T("%s: %s (%s). Ctrl+Z undoes it; Chords > Again puts %s on the next bar."), ftapi::PlanChordsText(Song, Plan).c_str(),
+			ftapi::PlanVoicesText(Song, Plan).c_str(), static_cast<LPCTSTR>(Sounds), static_cast<LPCTSTR>(ChordsShown(AgainChords)));
+		for (size_t i = 0; i < Plan.Remarks.size(); ++i)
+			Said += CString(_T(" ")) + Plan.Remarks[i].c_str();
+		Said += Message;
+		Say(Said);
+		pWnd->Invalidate(FALSE);
 	}
 
 	// Clips
@@ -2479,6 +2896,9 @@ struct CPianoRollWnd::Impl {
 		case BUTTON_EFFECTS:
 			EffectsMenu(Below(Id));
 			break;
+		case BUTTON_CHORDS:
+			ChordsMenu(Below(Id), -1);
+			break;
 		case BUTTON_CLOSE:
 			Main()->PostMessage(WM_COMMAND, ID_VIEW_PIANOROLL);
 			break;
@@ -2613,6 +3033,7 @@ struct CPianoRollWnd::Impl {
 			Text += _T("They fit best while it sounds (the lit lanes); the key's other notes pass between them.");
 		else
 			Text += _T("It borrows notes from outside the key (the lit lanes), which fit while it sounds.");
+		Text += _T(" Right-click: chords on the free channels.");
 		return Text;
 	}
 
@@ -2672,7 +3093,7 @@ struct CPianoRollWnd::Impl {
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
 		if (!Selection.empty()) {
 			Text.Format(_T("%s selected   |   Ctrl+Shift+C: save as a clip. Drag to move (Shift: copy), arrows to move, ")
-				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, Esc: none"),
+				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, H: chords on their bars, Esc: none"),
 				static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
 			return Text;
 		}
@@ -2680,12 +3101,12 @@ struct CPianoRollWnd::Impl {
 			return _T("Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.");
 		if (Tool == TOOL_SELECT)
 			return _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
-				_T("Then Ctrl+Shift+C saves them as a clip.");
+				_T("Then Ctrl+Shift+C saves them as a clip, and H puts chords on their bars.");
 		if (SnapsToKey())
 			return _T("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Drag a note to move it ")
 				_T("(Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. E: effects. Ctrl+Z undoes.");
 		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
-			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. Ctrl+Z undoes.");
+			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. H: chords. Ctrl+Z undoes.");
 	}
 
 	CString NoteText(int Which, const RollNote &Note) const
@@ -2803,6 +3224,7 @@ struct CPianoRollWnd::Impl {
 		Text.Format(_T("Instrument: %s"), static_cast<LPCTSTR>(Name));
 		DrawButton(dc, BUTTON_INSTRUMENT, Text, X, Right, false, true);
 		DrawButton(dc, BUTTON_EFFECTS, _T("Effects"), X, Right, false, true);
+		DrawButton(dc, BUTTON_CHORDS, _T("Chords"), X, Right, false, true);
 		DrawButton(dc, BUTTON_CLIPS, PlacingClip >= 0 ? _T("Placing a clip") : _T("Clips"), X, Right, PlacingClip >= 0, true);
 	}
 
@@ -3118,8 +3540,9 @@ struct CPianoRollWnd::Impl {
 		// Selecting with Ctrl+drag (or the Select tool), or rows along the ruler
 		if (Drag == DRAG_SELECT && !Band.IsRectEmpty())
 			Outline(dc, Band, Cursor);
-		if (Drag == DRAG_RANGE && DragMoved)
-			Outline(dc, CRect(RowX(std::min(RangeFrom, RangeTo)), Grid.top, RowX(std::max(RangeFrom, RangeTo) + 1), Grid.bottom), Cursor);
+		if ((Drag == DRAG_RANGE && DragMoved) || (RangeKept && Drag == DRAG_NONE))
+			Outline(dc, CRect(RowX(std::min(RangeFrom, RangeTo)), Grid.top, RowX(std::max(RangeFrom, RangeTo) + 1), Grid.bottom),
+				Drag == DRAG_RANGE ? Cursor : Mix(Back_, Cursor, 0.6));
 
 		// The cursor and the play position
 		if (CursorFrame >= 0 && CursorRow >= 0)
