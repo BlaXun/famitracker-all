@@ -537,9 +537,17 @@ a melody. `ChordPartOptions::Lowest` keeps a pulse's broken chords over
 `PULSE_BROKEN_FLOOR` (`ChordRegister` sets it). `read_notes` reads up to
 `MAX_READ_BARS` bars or the bars of `MAX_READ_NOTES` notes and says first
 which, and `vary_part`'s embellish works on notes of two sixteenths or
-more. `TestMelodyBreaths`, `TestStageMix`, `TestLivelyGroove`,
-`TestOwnWaveSounds`, `TestBrokenFloor`, `TestReadNotesLimit` and
-`TestEmbellishShortNotes` cover them.
+more. A key change into another mode (`transpose`, `change_mood`) goes
+through `KeyMove`, which keeps a dominant's ninth natural (`MapPitches`
+passes each note's row); `HarmonyWithoutRubs` moves `add_harmony`'s notes
+off semitones against the other parts; `write_notes` keeps the volume of
+the notes it replaces (`PartOptions::KeepVolume` in `BuildPart`) and the
+bars its notes leave empty between them, writing the rest a piece at a
+time; `vary_part`'s ending fits the chord under it. `TestMelodyBreaths`,
+`TestStageMix`, `TestLivelyGroove`, `TestOwnWaveSounds`, `TestBrokenFloor`,
+`TestReadNotesLimit`, `TestEmbellishShortNotes`, `TestDominantNinth`,
+`TestHarmonyRubs`, `TestWriteNotesVolume`, `TestWriteNotesGaps` and
+`TestEndingFitsChord` cover them.
 
 ## What this repository is
 

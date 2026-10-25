@@ -436,7 +436,11 @@ rules and fixing tool output by hand.
   intensity that keeps the hi-hats; voiced chords on the N163 give each
   voice its own sound; broken chords on a pulse stay over C-2;
   `read_notes` reads 64 bars and says which bars it read; `vary_part`
-  embellishes melodies of short notes.
+  embellishes melodies of short notes. Then five more the user approved:
+  a change to minor keeps a dominant's ninth natural, `add_harmony` steps
+  off semitones against a pad, and `write_notes` keeps the volume of the
+  notes it replaces and the bars its notes leave empty; `vary_part`'s
+  ending fits the chord under it.
 - On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
   knowledge work, the one-time work every later song reuses (what makes a
   track good, turned into the tools, the recipes and the guide), rather

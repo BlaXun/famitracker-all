@@ -14940,6 +14940,185 @@ void TestEmbellishShortNotes()
 		"embellish needs notes of half a beat or more that run straight into the next one a third away, into a repeat of themselves "
 		"or into a long note");
 }
+// A key change to minor (transpose, change_mood with to_mode) keeps a dominant's ninth natural: E add9's F# in A major
+// would become F, a flat nine; a chord on another degree moves as the scale does
+void TestDominantNinth()
+{
+	for (int Tool = 0; Tool < 2; ++Tool) {
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		// Bar 1 A (an arpeggio), bar 2 E add9 (E's arpeggio and its F# on 2A03 Pulse 2), bar 3 D (its F# on Pulse 2); a melody
+		const char *const ROOTS[3] = { "A-2", "E-2", "D-2" };
+		for (int b = 0; b < 3; ++b) {
+			Song.Put(0, b * 16, ROOTS[b], b == 0 ? 2 : NO_INSTRUMENT, b == 0 ? 10 : -1);
+			Song.Rows[0][static_cast<size_t>(b * 16)].Effect[0] = EFF_ARPEGGIO;
+			Song.Rows[0][static_cast<size_t>(b * 16)].Param[0] = 0x47;
+		}
+		Song.Put(1, 0, "C#3", 2, 10);
+		Song.Put(1, 16, "F#3");
+		Song.Put(1, 32, "F#3");
+		const char *const TUNE[] = { "A-3", "C#4", "E-4", "C#4", "B-3", "G#3", "B-3", "E-4", "A-3", "D-4", "F#4", "D-4" };
+		for (int i = 0; i < 12; ++i)
+			Song.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+		Song.End(5, 48, NOTE_RELEASE);
+		const ToolResult Result = Tool == 0 ? Run(Song, "transpose", "{\"to_mode\": \"minor\", \"key\": \"A major\", \"to_bar\": 3}") :
+			Run(Song, "change_mood", "{\"to_mode\": \"minor\", \"key\": \"A major\", \"from_bar\": 1, \"to_bar\": 3}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "A dominant's ninth kept: Eadd9's F# in bar 2 stays natural (A minor's F would be a flat nine, a semitone "
+			"over the chord's root).");
+		CHECK_EQ(PitchName(Song.Rows[1][16].Pitch()), std::string("F#3"));	// the dominant's ninth
+		CHECK_EQ(PitchName(Song.Rows[1][32].Pitch()), std::string("F-3"));		// D's third goes as the scale does (D minor)
+		CHECK_EQ(PitchName(Song.Rows[1][0].Pitch()), std::string("C-3"));
+		CHECK(Song.Rows[0][16].Pitch() == Song.Rows[0][16].Pitch() && Song.Rows[0][16].Param[0] == 0x37);	// E minor, the scale's
+		CHECK_EQ(PitchName(Song.Rows[5][20].Pitch()), std::string("G-3"));	// the melody's G# as the scale has it
+	}
+	// The same mode, another tonic: nothing to keep
+	FakeSong Same;
+	Same.Info.DirectChanges = true;
+	Same.Put(0, 0, "E-2", 2);
+	Same.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Same.Rows[0][0].Param[0] = 0x47;
+	Same.Put(1, 0, "F#3", 2);
+	Same.Put(5, 0, "B-3", 0);
+	CHECK_LACKS(Run(Same, "transpose", "{\"to_key\": \"D major\", \"key\": \"A major\"}").Text, "ninth kept");
+}
+
+// add_harmony steps off the notes a semitone from what the other parts sound (a held maj7 pad's seventh under the voice's
+// note): to the nearest chord tone that doesn't rub, as add_echo leaves an echo's out; check_song then finds no clash
+void TestHarmonyRubs()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	// A Cmaj7 pad held over the bar (G-3 and B-3 on the 2A03 pulses), a melody on E-4 and G-4
+	Song.Put(0, 0, "G-3", 2, 8);
+	Song.Put(1, 0, "B-3", 2, 8);
+	Song.End(0, 16, NOTE_RELEASE);
+	Song.End(1, 16, NOTE_RELEASE);
+	Song.Put(5, 0, "E-4", 0);
+	Song.Put(5, 8, "G-4");
+	Song.End(5, 16, NOTE_RELEASE);
+	ToolResult Result = Run(Song, "add_harmony", "{\"chords\": \"| Cmaj7 |\", \"key\": \"C major\", \"channel\": \"VRC6 Pulse 2\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Where the harmony would rub a semitone against another part (a chord's seventh, as check_song hears a clash), 1 note "
+		"went to the nearest chord tone that doesn't.");
+	CHECK_EQ(Notes(Song, 6, 0, 17), std::string("0:B-3 8:E-4 16:=== "));	// not C-4 a semitone over the pad's B-3
+	CHECK_HAS(Run(Song, "check_song", "{\"from_bar\": 1, \"to_bar\": 1}").Text, " 0 clashes");
+	// An octave below doubles the melody as it is
+	FakeSong Octave;
+	Octave.Info.DirectChanges = true;
+	Octave.Put(0, 0, "G-3", 2, 8);
+	Octave.Put(1, 0, "B-3", 2, 8);
+	Octave.Put(5, 0, "E-4", 0);
+	Octave.Put(5, 8, "G-4");
+	Octave.End(5, 16, NOTE_RELEASE);
+	Result = Run(Octave, "add_harmony", "{\"chords\": \"| Cmaj7 |\", \"key\": \"C major\", \"channel\": \"VRC6 Pulse 2\", \"interval\": "
+		"\"octave_below\"}");
+	CHECK_LACKS(Result.Text, "would rub");
+	CHECK_EQ(Notes(Octave, 6, 0, 17), std::string("0:E-3 8:G-3 16:=== "));
+}
+
+// write_notes over a part's bars keeps the volume the channel had there where the notes give none (a soft part rewritten
+// stays soft, as the detune stays); in bars that had no notes the part starts at full volume, as before
+void TestWriteNotesVolume()
+{
+	const std::string NEW = "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"D-4\", \"beats\": 2}, {\"bar\": 1, "
+		"\"beat\": 3, \"pitch\": \"F-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 4}]}";
+	FakeSong Soft;
+	Soft.Info.DirectChanges = true;
+	Soft.Put(5, 0, "C-4", 0, 7);
+	Soft.Put(5, 8, "E-4");
+	Soft.Put(5, 16, "G-4", NO_INSTRUMENT, 10);
+	Soft.End(5, 32, NOTE_RELEASE);
+	CHECK(!Run(Soft, "write_notes", NEW).IsError);
+	CHECK(Soft.Rows[5][0].Volume == 7 && Soft.Rows[5][8].Volume == NO_VOLUME && Soft.Rows[5][16].Volume == 10);
+	// A volume given wins, and the notes after it keep it
+	CHECK(!Run(Soft, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 1, \"pitch\": \"D-4\", \"beats\": 2, "
+		"\"volume\": 12}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"F-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"A-4\", \"beats\": 4}]}").IsError);
+	CHECK(Soft.Rows[5][0].Volume == 12 && Soft.Rows[5][8].Volume == NO_VOLUME && Soft.Rows[5][16].Volume == NO_VOLUME);
+	// Bars with no notes: full volume, whatever came before
+	FakeSong Fresh;
+	Fresh.Info.DirectChanges = true;
+	Fresh.Put(5, 0, "C-4", 0, 6);
+	Fresh.End(5, 4, NOTE_RELEASE);
+	CHECK(!Run(Fresh, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 2, \"pitch\": \"D-4\", \"beats\": 2}]}").IsError);
+	CHECK(Fresh.Rows[5][16].Volume == 15);
+}
+// write_notes replaces the bars its notes cover: whole bars its notes leave empty between them keep the channel's notes
+// (an intro and a break written in one call used to clear the drums between them), and the reply names them; from_bar
+// and to_bar together clear their range as before
+void TestWriteNotesGaps()
+{
+	// A kick every bar of the intro (1-4) and of the break (29-32)
+	std::string PART = "{\"channel\": \"Noise\", \"notes\": [";
+	const int BARS[8] = { 1, 2, 3, 4, 29, 30, 31, 32 };
+	for (int i = 0; i < 8; ++i)
+		PART += std::string(i == 0 ? "" : ", ") + "{\"bar\": " + std::to_string(BARS[i]) + ", \"pitch\": \"kick\", \"beats\": 1}";
+	PART += "]";
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		FakeSong Song(8);	// 32 bars
+		Song.Info.DirectChanges = true;
+		for (int r = 0; r < 512; r += 4)
+			Song.Put(3, r, "D-#", r == 0 ? 2 : NO_INSTRUMENT);
+		const ToolResult Result = Run(Song, "write_notes", PART + (Pass == 0 ? "}" : ", \"from_bar\": 1, \"to_bar\": 32}"));
+		CHECK(!Result.IsError);
+		if (Pass == 0) {
+			CHECK_HAS(Result.Text, "8 notes on 2A03 Noise, bars 1-4 and 29-32");
+			CHECK_HAS(Result.Text, "Bars 5-28 keep their notes: the part has none there, and write_notes replaces only the bars its notes "
+				"cover (from_bar and to_bar together clear a range, every bar of it).");
+			for (int r = 64; r < 448; r += 4)
+				CHECK(Song.Rows[3][static_cast<size_t>(r)].HasNote() && Song.Rows[3][static_cast<size_t>(r)].Pitch() == 0xD);
+		}
+		else {
+			CHECK_LACKS(Result.Text, "keep their notes");
+			for (int r = 64; r < 448; ++r)
+				CHECK(!Song.Rows[3][static_cast<size_t>(r)].HasNote());
+		}
+		CHECK(!Song.Rows[3][4].HasNote() && Song.Rows[3][0].Pitch() == 0x4 && Song.Rows[3][448].Pitch() == 0x4);	// the part's own bars
+	}
+	// Bars that had no notes between the part's: written as one, as before
+	FakeSong Empty;
+	Empty.Info.DirectChanges = true;
+	CHECK_LACKS(Run(Empty, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": [{\"bar\": 1, \"pitch\": "
+		"\"C-4\", \"beats\": 4}, {\"bar\": 4, \"pitch\": \"E-4\", \"beats\": 4}]}").Text, "keep");
+	// The sampled drums ring on in their piece only
+	FakeSong Kit(8);
+	Kit.Info.DirectChanges = true;
+	CHECK(!Run(Kit, "add_drums", "{\"groove\": \"basic\", \"kit\": \"samples\"}").IsError);
+	const Cell Middle = Kit.Rows[4][static_cast<size_t>(16 * 10)];
+	CHECK(Middle.HasNote());
+	CHECK(!Run(Kit, "write_notes", "{\"channel\": \"DPCM\", \"notes\": [{\"bar\": 1, \"pitch\": \"kick\", \"beats\": 1}, {\"bar\": 32, "
+		"\"pitch\": \"snare\", \"beats\": 1}]}").IsError);
+	CHECK(Kit.Rows[4][static_cast<size_t>(16 * 10)] == Middle);
+}
+
+// vary_part's ending lands on the tonic, or over a chord without it (a turnaround's A7 in D major, where D would clash
+// with its C#) on the chord's tone nearest the note
+void TestEndingFitsChord()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "D-4", "E-4", "F#4", "E-4" };
+	for (int i = 0; i < 4; ++i)
+		Song.Put(5, i * 4, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Song.Put(5, 16, "D-4");
+	Song.End(5, 32, NOTE_RELEASE);
+	// D, then A7: A with its arpeggio (A C# E) and G on the other pulse
+	Song.Put(0, 0, "D-3", 2, 10);
+	Song.Rows[0][0].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][0].Param[0] = 0x47;
+	Song.Put(0, 16, "A-2");
+	Song.Rows[0][16].Effect[0] = EFF_ARPEGGIO;
+	Song.Rows[0][16].Param[0] = 0x47;
+	Song.Put(1, 0, "F#3", 2, 10);
+	Song.Put(1, 16, "G-3");
+	Song.End(0, 32, NOTE_RELEASE);
+	Song.End(1, 32, NOTE_RELEASE);
+	const ToolResult Result = Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"ending\", \"from_bar\": 1, \"to_bar\": "
+		"2, \"key\": \"D major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 ending on C#4, which A7 under it has (the tonic would clash with it), bars 1-2");
+	CHECK_EQ(PitchName(Song.Rows[5][16].Pitch()), std::string("C#4"));
+}
 // end of stage-fixes tests
 
 int main()
@@ -15069,6 +15248,11 @@ int main()
 	TestBrokenFloor();
 	TestReadNotesLimit();
 	TestEmbellishShortNotes();
+	TestDominantNinth();
+	TestHarmonyRubs();
+	TestWriteNotesVolume();
+	TestWriteNotesGaps();
+	TestEndingFitsChord();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
