@@ -1101,9 +1101,11 @@ in `ReferencePreset`, `ReferenceFdsSound` and `ReferenceWaveSound` (so the
 sound index too), and `reference_sound` says so (`ReleaseFadeFrames`). In
 the BPM layout a song at speed 1 shows the frames a row lasts under the
 label Speed (`LayoutShowsFrames`, `LayoutFramesText` in `RecorderInput.cpp`;
-`CMainFrame::BPMFrames`), and 1, a BPM over 400 or a step past it sets
-speed 1 at the default tempo (`LayoutWantsFrames`, `CMainFrame::SetBPM`,
-`OnDeltaposTempoSpin`). `TestSfxLongLoops`, `TestS5BNoiseDesign`,
+`CMainFrame::BPMFrames` and `ShowBPMText`, the box starting just after its
+label in `LayoutSongSettings` so "1 frame" fits), and 1, a BPM over 400 or a
+step past it sets speed 1 at the default tempo (`LayoutWantsFrames`,
+`CMainFrame::SetBPM`, `OnDeltaposTempoSpin`; a BPM set from speed 1 picks
+its speed from 6, since the chooser keeps the current speed when it can). `TestSfxLongLoops`, `TestS5BNoiseDesign`,
 `TestS5BNoiseChecks`, `TestMeasureAmbience`, `TestJingleAfterEffect`,
 `TestReferenceReleaseEnds`, `TestDesignWords` and `TestBpmLayoutFrames`
 cover them.

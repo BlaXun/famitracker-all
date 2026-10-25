@@ -24755,7 +24755,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"bloom lead, stepped lead, click pluck, echo pluck, thump bass; kick, snare, hihat, open hihat, crash, tom."))
 			.Add("channel", ChannelProp("The channel it's for (picks the chip; on the noise channel a drum or a swell)."))
 			.Add("chip", EnumProp("The chip, when no channel is given. Default 2A03.", std::vector<std::string>{ "2A03", "VRC6", "FDS",
-				"N163" }))
+				"N163", "5B" }))
 			.Add("wave", Prop("string", ("The FDS's wave, " + FdsWaveWords() + " (default: the kind's: a lead hollow, a pad a voice, "
 				"a bass deep and round); on N163 channels the wave sound whose waves it plays, " + WaveSoundList() + " (default: the "
 				"kind's: a lead the soft flute's, a pad the string pad's, a breath or a music box their own).").c_str()))
