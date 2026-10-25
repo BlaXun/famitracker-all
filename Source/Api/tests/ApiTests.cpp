@@ -15286,8 +15286,9 @@ void SoundEffectEnd(const transcribe::SoundEffect &Effect, double Seconds, doubl
 void TestSoundEffectEnds()
 {
 	// Every kind that plays once rings out to silence, as make_sound_effect makes it, every variant and changed far: no
-	// layer stops above volume 1, and its file's last 50 ms are silent (50 dB and more under its loudest 50 ms, as
-	// RenderEffect plays it), where the coin, heal, power-up, warp and chest sounds ended still sounding, 20-35 dB under
+	// layer stops above volume 1 (but the triangle's, which has no volume), and its file's last 50 ms are silent (50 dB
+	// and more under its loudest 50 ms, as RenderEffect plays it), where the coin, heal, power-up, warp and chest sounds
+	// ended still sounding, 20-35 dB under
 	const std::vector<SoundEffectKind> &Kinds = SoundEffectKinds();
 	int Rung = 0;
 	for (size_t k = 0; k < Kinds.size(); ++k) {
@@ -15307,7 +15308,8 @@ void TestSoundEffectEnds()
 					int Last = 0;
 					for (size_t t = 0; t < Effect.layers[l].volume.size(); ++t)
 						Last = Effect.layers[l].volume[t] > 0 ? Effect.layers[l].volume[t] : Last;
-					Quiet = Quiet && Last <= 1 && Holdable(Effect.layers[l]);
+					Quiet = Quiet && (Last <= 1 || Effect.layers[l].channel == transcribe::SfxChannel::Triangle) &&
+						Holdable(Effect.layers[l]);
 				}
 				double Last = 0.0, Loudest = 0.0;
 				SoundEffectEnd(Effect, 0.05, Last, Loudest);
@@ -15334,6 +15336,12 @@ void TestSoundEffectEnds()
 	RingOut(Coin);
 	CHECK(Coin.layers.size() == 1 && Coin.layers[0].pitch.front() == 57.0 && Coin.layers[0].pitch.back() == 66.0);	// A, then F#
 	CHECK(Coin.layers[0].dutyAt(5) != Coin.layers[0].dutyAt(7));	// shimmering
+	// The triangle stops where it ends: 0.4.6 plays it whole at any volume, so a fade would hold its last pitch longer
+	transcribe::SoundEffect Land = FindSoundEffect("land")->Make();
+	const std::vector<int> Thud = Land.layers[0].volume;
+	RingOut(Land);
+	CHECK(Land.layers[0].channel == transcribe::SfxChannel::Triangle && Land.layers[0].volume == Thud && Thud.back() == 15);
+	CHECK(Land.layers[1].volume.back() <= 1);	// its puff of noise dies away
 	// A layer that stops loud dies away, halving a tick, before the 0 its instrument ends with
 	transcribe::SoundEffect Cut;
 	transcribe::SfxLayer Steady;
@@ -15522,6 +15530,12 @@ void TestCueJudging()
 		"{\"loudness\": -18} saves it");
 	CHECK_HAS(R, "\nThe sound: -18.0 LUFS, peak ");
 	CHECK_HAS(R, ", measured over its whole 0.30 s: shorter than the 400 ms blocks loudness is gated in");
+	// Each layer alone against the whole: a number under it, about as loud as it, or over it, never "-0.1 dB under"
+	CHECK(!Tools.Call("make_sound_effect", Parse("{\"kind\": \"chest\"}")).IsError);
+	R = Tools.Call("measure_mix", Parse("{}")).Text;
+	CHECK_HAS(R, "\nEach channel alone (the others silent), over the whole sound:\n- 2A03 Pulse 1: ");
+	CHECK_HAS(R, "\n- 2A03 Pulse 2: ");
+	CHECK_LACKS(R, ", -");
 	// One the halt cuts while it sounds says so
 	FakeSong Hand;
 	Hand.Info.Speed = 1;

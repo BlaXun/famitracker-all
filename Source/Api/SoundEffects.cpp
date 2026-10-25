@@ -627,6 +627,10 @@ void RingOut(SoundEffect &Effect)
 {
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
 		SfxLayer &Layer = Effect.layers[l];
+		// The triangle has no volume (0.4.6 plays it whole at any volume above 0): a fade would only hold its last pitch
+		// longer at full level. It stops where it ends, its wave holding the step it stopped on, which makes no sound
+		if (Layer.channel == transcribe::SfxChannel::Triangle)
+			continue;
 		// From its last tick that sounds, halving a tick (15, 7, 3, 1), over the silence after it and on, then the 0 its
 		// instrument ends with (its sequence holds SFX_MAX_TICKS)
 		int Last = Layer.length() - 1;

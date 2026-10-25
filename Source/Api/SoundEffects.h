@@ -69,7 +69,8 @@ bool FitSoundEffect(const transcribe::SoundEffect &Effect, int Most, SoundEffect
 std::string VariantText(int Variant);	// "3 semitones higher, 15% shorter, another duty"; "" for 1
 
 // A sound that plays once rings out to silence: a layer that stops above volume 1 dies away first, halving a
-// tick (its length counts the fade), and its track halts SFX_SILENT_TICKS rows after the last tick that sounds
+// tick (its length counts the fade; the triangle, which has no volume, stops where it ends, as the 2A03's
+// does), and its track halts SFX_SILENT_TICKS rows after the last tick that sounds
 // (SoundTrackRows: the track's rows, the halt on the last), so the sound is never cut while it sounds, and a
 // game's file of it ends quiet: the step of its last tick fades through the mixer's low cut in a few ms, and
 // its last 50 ms are silent. A sound that loops (Loop) runs on into its start instead: its rows are its

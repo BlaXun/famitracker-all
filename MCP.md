@@ -1521,7 +1521,8 @@ sequences shape the sound, named after the track ("SFX Jump"), so you can
 change it in the instrument editor.
 
 Every sound that plays once **rings out to silence**: a part that would stop
-while still loud dies away first (its volume halving a tick, down to 1), and
+while still loud dies away first (its volume halving a tick, down to 1; the
+triangle, which has no volume control on the NES, stops where it ends), and
 the track halts five ticks (0.08 s) after the last tick that sounds, so no
 sound is cut while it plays and the game's file of it ends quiet. The coin
 is a glint of our own (A, then the F# a sixth above ringing out with a

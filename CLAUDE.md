@@ -650,7 +650,8 @@ stop stepped by every level held (a held triangle thumped under the next
 song's first noise, as loud at volume 1 as at 15; `TestHeldLevels` in
 `ApuTests.cpp`). Sounds that play once ring out (`RingOut` in
 `SoundEffects.cpp`: a layer stopping above volume 1 dies away, halving a
-tick) and their tracks halt `SFX_SILENT_TICKS` rows after the last tick that
+tick; not the triangle, which 0.4.6 plays whole at any volume, so a fade
+would only hold it longer) and their tracks halt `SFX_SILENT_TICKS` rows after the last tick that
 sounds (`SoundTrackRows`, used by `WriteSoundEffect`); the coin kind is a
 glint of our own. `SoundLoudness` in `GameAudio.cpp` measures a sound
 shorter than a 400 ms block over its whole length, ungated, for

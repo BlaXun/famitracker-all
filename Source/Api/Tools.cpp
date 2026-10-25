@@ -16162,9 +16162,13 @@ std::string SoundMeasure(Session &S, const Json &Args, const TrackUse &Use)
 		const MixRender Alone = RenderMix(S, Seconds, Silent, ShortChannelName(S, Playing[p]) + " alone");
 		bool Brief = false;
 		const SampleSpans Spans = Whole(Alone);
-		const double Mine = Loudness(Alone, Spans, Brief);
+		const double Mine = Loudness(Alone, Spans, Brief), Under = Lufs - Mine;
+		// A layer that carries the sound measures about as loud as the whole (the 2A03's pins compress what they mix, and
+		// BS.1770's gating leaves a part's quiet blocks out), at times a little over it
+		const std::string Against = Under >= 0.5 ? Format("%.1f dB under the whole", Under) : (Under > -0.5 ? std::string("about as "
+			"loud as the whole") : Format("%.1f dB over the whole", -Under));
 		Text += "\n- " + ShortChannelName(S, Playing[p]) + ": " + (Mine <= -70.0 ? std::string("silent") :
-			Format("%.1f (peak %.1f), %.1f dB under the whole", Mine + Gain, PeakDb(SpansPeak(Alone, Spans)) + Gain, Lufs - Mine));
+			Format("%.1f (peak %.1f), %s", Mine + Gain, PeakDb(SpansPeak(Alone, Spans)) + Gain, Against.c_str()));
 	}
 	return Text;
 }
