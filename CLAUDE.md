@@ -950,9 +950,10 @@ What next (from `feat-what-next`): `what_next` (`WhatNextTool` and the
 portable pieces in `Source/Api/WhatNext.cpp`) gives the one next step for
 the selected track with its call, worked out from the song alone (notes,
 sections, key, loop, the game's file next to it), in the recipes' order:
-`check_song`'s findings with a fix (`Breakers`: a finding of a kind it
-doesn't know that carries a `fix` is a step of that kind's name, severity
-high at once, the others with the tips), the frame (`Frame`), the parts and
+`check_song`'s findings with a fix (`Breakers`: any finding that carries a
+`fix` is a step of its kind's name, its `then` calls in the why; severity
+high at once, medium after the parts (`PartFixes`), low with the tips), the
+frame (`Frame`), the parts and
 the form (`Parts`: `SongForm` reads the sections, `NameSections` names
 unnamed bars by their chords, `MelodyStep` gives `grow_melody` the song's
 hook (`SongHook`) or one offered on the chords (`OfferedHook`, from
@@ -980,6 +981,38 @@ for each kind and on the small set (each call run as given, each answer
 new, the result clean), and `TestWhatNextStates`, `TestWhatNextChoices` and
 `TestWhatNextCore` cover the states, kinds, skips, the phrase, the dry run
 and the small set.
+
+Checks for drafts and short replies (from `feat-checks-short`): what a
+local model's first stage missed while every other check was clean is
+`ArrangeFindings` (before `ReviewTool` in `Tools.cpp`): `PhrasesFinding`
+(a melody that stops at most bar lines, `StopsAtBarLines`), `BassFindings`
+(the bass, `MainBass`, thin as `HearLine` hears it, or another channel
+doubling its roots now and then, `DoublingShare`), `SoundFindings` (a soft
+sound on the triangle, odd duties on the sawtooth), `FadersFinding`,
+`RepeatFindings` (named sections compared bar by bar, `BarsAlike`) and
+`LoopFinding` (style lively only, `SHORT_LOOP_SECONDS`); none for cues,
+sound effects or songs at speed 1. Each `ArrangeFinding` carries its fix as
+a call (`ToolCall`, the calls after it in `then` with `ThenCall`, written
+out by `FixText`), and its constants say what they were measured on.
+`check_song` reports them as the kinds `phrases`, `bass`, `sound`,
+`faders`, `repeat` and `short_loop` (after `held` in `CHECK_KIND`, and in
+`KIND_IDS`, `problem_kind` and the panel's `WORDS`), every one listed; the
+problems panel's Fix (`ACTION_FIX`) makes a fix of one call
+(`ProblemFinding::FixCalls`), and Explain gives the others' calls. The
+review weighs them into its score and tips (`ReviewTip`), and `BreathsOf`
+counts a rest before a bar line as a breath only where it ends a phrase of
+two bars or more (`MelodyBreaths::PhraseEnds` for the finding). `mix`
+takes `faders` `reset` (the faders to 0 dB in the mix's action group; calm
+and lively give the melody, through `levels`, the level its fader played
+it at, less what the others' faders lifted them past their volumes' room), and
+`vary_part`'s embellish leaves out an ornament that would rub a semitone
+against another part (`SemitoneRub`; `TestEmbellishWithoutRubs`).
+`review_arrangement`, `check_song` and `measure_mix` take `format` `short`
+(`ShortReview`, `ShortTip`, `ShortFinding`, `ShortMeasure`), the default
+for `Caller::Core` in `ToolSet::Call`. `TestDraftFindings`,
+`TestDraftFixes`, `TestFindingsQuiet`, `TestShortReplies`,
+`TestMixFadersReset` and `TestProblemListArrangement` cover them, on
+`DraftSong`, a small copy of that stage.
 
 ## What this repository is
 
