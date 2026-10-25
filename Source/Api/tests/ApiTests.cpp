@@ -15545,6 +15545,19 @@ void TestCueJudging()
 	Hand.Rows[0][10].Param[0] = 0;
 	R = Run(Hand, "review_arrangement", "{}").Text;
 	CHECK_HAS(R, "It's cut while it still sounds: 2A03 Pulse 1 stops at volume 12 as it halts at 0.17 s.");
+
+	// A jingle make_jingle made is a cue too: it halts within half a minute
+	FakeSong Tune;
+	const char *const LINE[] = { "G-3", "B-3", "D-4", "G-4" };
+	for (int i = 0; i < 4; ++i)
+		Tune.Put(5, i * 8, LINE[i], i == 0 ? 0 : NO_INSTRUMENT);
+	Tune.End(5, 32);
+	ToolSet TuneTools(Tune);
+	CHECK(!TuneTools.Call("make_jingle", Parse("{\"kind\": \"level up\"}")).IsError);
+	R = TuneTools.Call("review_arrangement", Parse("{}")).Text;
+	CHECK_HAS(R, "Judged as a cue: it plays once and halts after 3.");
+	CHECK_LACKS(R, "before it loops");
+	CHECK_HAS(TuneTools.Call("measure_mix", Parse("{\"stems\": false}")).Text, "The whole song (it halts)");
 }
 
 int main()
