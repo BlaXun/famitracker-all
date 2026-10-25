@@ -18292,32 +18292,47 @@ std::string WarningLines(const std::vector<std::string> &Warnings)
 // finish_song: the last steps a recipe asks for, in one call, for the kind of song: polish with the kind's touches, the
 // mixer's faders back at 0 dB where they do the mix's work, mix in the kind's style, check_loop and fix_loop where the
 // seam needs it, and export_for_game at the kind's loudness. Each step works on the song as the one before left it, and
-// the song's changes are one Ctrl+Z (SongHost::BeginGroup). The kinds are the recipes' (get_recipe; what_next's are the
-// same): a cue or a sound effect, as UseOfTrack tells them, keeps its notes as written and gets its file
+// the song's changes are one Ctrl+Z (SongHost::BeginGroup). The kinds of music are what_next's (NextKindInfo gives the
+// mix's style, the styles of polish and the checks, and the loudness; KindPolish polish's arguments), so a change to a
+// kind reaches both, and the tools' own styles decide the numbers: a cue or a sound effect, as UseOfTrack tells them,
+// keeps its notes as written and gets its file
 enum finish_kind { FINISH_GENERAL, FINISH_CALM, FINISH_LIVELY, FINISH_ACTION, FINISH_CUE, FINISH_SOUND, FINISH_KIND_COUNT };
 
 struct FinishKind {
 	const char *Name;			// as the reply names it: "a lively stage"
-	bool Arranged;				// polish and mix apply (not to a cue or a sound effect)
-	const char *PolishStyle;	// polish's style
-	bool LivelyTouches;			// the lively recipe's touches: vibrato, separate, clicks, staccato (no accents)
-	const char *MixStyle;		// mix's style
-	double Loudness;			// export_for_game's, in LUFS
-	const char *Listen;			// what to listen for
+	int Next;					// what_next's kind (next_kind), whose polish, mix and loudness it gets; -1 for a cue or a sound effect
+	double Loudness;			// export_for_game's for a cue or a sound effect, in LUFS
+	const char *Listen;			// what to listen for (no numbers of the tools', which their styles keep)
 };
 
 const FinishKind FINISH_KINDS[FINISH_KIND_COUNT] = {
-	{ "a track of the general recipe", true, "any", false, "soft", -20.0,
+	{ "a track of the general recipe", NEXT_GENERAL, 0.0,
 		"the melody clear over the chords, the triangle and the drums coming through the softer pulses" },
-	{ "a calm track", true, "calm", false, "calm", -22.0,
+	{ "a calm track", NEXT_CALM, 0.0,
 		"the melody floating only a little over the chords, never pressing, and the vibrato coming in late on long notes" },
-	{ "a lively stage", true, "lively", true, "lively", -20.0,
-		"the melody 3-4 dB over the parts with the drums soft under it, and the bass bouncing" },
-	{ "an action track", true, "any", false, "soft", -19.0,
-		"the melody on top with accents on the beats, and the drums driving" },
-	{ "a cue", false, "", false, "", -20.0, "its last notes dying away before it stops" },
-	{ "a sound effect", false, "", false, "", -18.0, "how it ends: quietly, without a click" },
+	{ "a lively stage", NEXT_LIVELY, 0.0, "the melody clear on top of the parts, and the bass bouncing" },
+	{ "an action track", NEXT_ACTION, 0.0, "the melody on top with accents on the beats, and the drums driving" },
+	{ "a cue", -1, -20.0, "its last notes dying away before it stops" },
+	{ "a sound effect", -1, -18.0, "how it ends: quietly, without a click" },
 };
+
+// polish's arguments for a kind of music as the recipes have them, for what_next's polish step and finish_song's (one
+// list, so a change to a kind's touches reaches both): a calm song in polish's calm style, a lively stage the recipe's
+// touches, the general recipe and action polish's own
+Json KindPolish(int Kind)
+{
+	Json A = Json::MakeObject();
+	if (Kind == NEXT_CALM)
+		A.Set("style", "calm");
+	else if (Kind == NEXT_LIVELY) {
+		Json T = Json::MakeArray();
+		static const char *const TOUCHES[] = { "vibrato", "separate", "clicks", "staccato" };
+		for (size_t i = 0; i < sizeof(TOUCHES) / sizeof(TOUCHES[0]); ++i)
+			T.Push(TOUCHES[i]);
+		A.Set("touches", T);
+	}
+	return A;
+}
 
 // The balance as heard, as the review hears it (the melody against the chords, an echo, a second line, the bass and the
 // drums); empty without a melody to hear it against
@@ -18415,6 +18430,9 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 			Why = " (no kind given: kind lively for a stage, action for a fight)";
 	}
 	const FinishKind &Plan = FINISH_KINDS[Kind];
+	const bool Arranged = Plan.Next >= 0;	// polish and mix apply (not to a cue or a sound effect)
+	const NextKind &Recipe = NextKindInfo(Arranged ? Plan.Next : NEXT_GENERAL);
+	const double KindLoudness = Arranged ? Recipe.Loudness : Plan.Loudness;
 
 	// The steps to skip
 	std::set<std::string> Skip;
@@ -18453,9 +18471,9 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 	if (Faders != "auto" && Faders != "keep" && Faders != "reset")
 		throw Problem("faders: auto (the default: back to 0 dB when they do the mix's work), keep (as the user set them) or reset "
 			"(every fader to 0 dB).");
-	const bool Polishing = Plan.Arranged && !Skip.count("polish"), Mixing = Plan.Arranged && !Skip.count("mix");
+	const bool Polishing = Arranged && !Skip.count("polish"), Mixing = Arranged && !Skip.count("mix");
 	const bool Looping = !Skip.count("loop"), Exporting = !Skip.count("export");
-	const double Loudness = Arg(Args, "loudness") != 0 ? NumberArg(Args, "loudness", Plan.Loudness, -40.0, -6.0) : Plan.Loudness;
+	const double Loudness = Arg(Args, "loudness") != 0 ? NumberArg(Args, "loudness", KindLoudness, -40.0, -6.0) : KindLoudness;
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	if (!S.Song.DirectChanges && (Polishing || Mixing || Looping))
 		throw Problem("finish_song changes the song (polish, the mix, the loop's seam), which needs direct changes: the user can allow "
@@ -18485,17 +18503,12 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 			~Grouped() { Host.EndGroup(); }
 		} Group(S.Host());
 
-		// polish, with the kind's touches
+		// polish, with the kind's touches (in the kind's style, so a calm name doesn't make another kind's polish calm)
 		if (Polishing) {
 			Session Step(S.Host());
-			Json A = Json::MakeObject();
-			A.Set("style", Plan.PolishStyle);
-			if (Plan.LivelyTouches) {
-				Json Touches = Json::MakeArray();
-				for (const char *Touch : { "vibrato", "separate", "clicks", "staccato" })
-					Touches.Push(Touch);
-				A.Set("touches", Touches);
-			}
+			Json A = KindPolish(Plan.Next);
+			if (A.Get("style") == 0)
+				A.Set("style", Recipe.Style);
 			WithMelody(A);
 			try {
 				const std::string Text = PolishTool(Step, A);
@@ -18517,7 +18530,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 		if (Mixing) {
 			Session Step(S.Host());
 			Json A = Json::MakeObject();
-			A.Set("style", Plan.MixStyle);
+			A.Set("style", Recipe.MixStyle);
 			WithMelody(A);
 			std::string FaderLine;	// said once the mix is done (a mix that fails puts its faders back)
 			if (!Skip.count("faders") && Faders != "keep") {
@@ -18551,7 +18564,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 				Changed = Changed || Mixed;
 				Session After(S.Host());
 				const std::string Balance = FinishBalance(After, Melody);
-				Lines.push_back(Format("Mix (%s): %s", Plan.MixStyle, Mixed ? "" : "mixed that way already; ") + (Balance.empty() ? std::string(
+				Lines.push_back(Format("Mix (%s): %s", Recipe.MixStyle, Mixed ? "" : "mixed that way already; ") + (Balance.empty() ? std::string(
 					"done.") : "as heard, " + Balance + "."));
 			}
 			catch (const Problem &P) {
@@ -18641,7 +18654,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 	std::string Text = Format("Finished \"%s\" as %s%s, the melody %s:", S.Song.TrackName.empty() ? S.Song.Title.c_str() :
 		S.Song.TrackName.c_str(), Plan.Name, Why.c_str(), Melody >= 0 ? ("on " + S.Channel(Melody).FullName() +
 		(Arg(Args, "melody_channel") != 0 ? "" : " (guessed; melody_channel names another)")).c_str() : "not found");
-	if (!Plan.Arranged)
+	if (!Arranged)
 		Text += Format("\n- Polish and mix: left out: %s keeps its notes as written.", Kind == FINISH_CUE ? "a cue" : "a sound effect");
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += "\n- " + Lines[i];
@@ -18655,7 +18668,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 			Text += " save_song keeps them in the song's file.";
 	}
 	std::string Listen = Plan.Listen;
-	if (Looping && Plan.Arranged) {
+	if (Looping && Arranged) {
 		Session Now(S.Host());
 		const SongFlow F = Flow(Now);
 		if (!F.Halts()) {
@@ -23261,16 +23274,7 @@ void WhatNext::Polish()
 		m_Unmet.insert("polish");
 		return;
 	}
-	Json A = Json::MakeObject();
-	if (Calm())
-		A.Set("style", "calm");
-	else if (m_KindId == NEXT_LIVELY) {
-		Json T = Json::MakeArray();
-		static const char *const TOUCHES[] = { "vibrato", "separate", "clicks", "staccato" };
-		for (size_t i = 0; i < sizeof(TOUCHES) / sizeof(TOUCHES[0]); ++i)
-			T.Push(TOUCHES[i]);
-		A.Set("touches", T);
-	}
+	Json A = KindPolish(m_KindId);	// as finish_song polishes
 	A.Set("melody_channel", ChannelName(m_Melody));
 	// Polished when no part plays at one volume (what accents shape) and the other touches would change nothing: accents
 	// on a part whose notes all fall on beats leave two volumes, which the next polish accents again, a step softer each time
@@ -24683,11 +24687,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		SkipItem.Set("enum", SkipNames);
 		Skips.Set("items", SkipItem);
 		AddTool("finish_song", "Finish the song",
-			"The last steps of a song in one call, as the recipes ask for them for its kind: polish with the kind's touches "
-			"(calm: no accents and the shallowest vibrato; lively: vibrato, separate, clicks and staccato; action and the "
-			"general recipe: accents too), the mixer's faders back at 0 dB where they do the mix's work (the melody turned down "
-			"4 dB or more, or a part 9 dB or more over it), mix in the kind's style (calm, lively, or soft for action and the "
-			"general recipe), check_loop and fix_loop where the seam needs it, and export_for_game at the kind's loudness (-22 "
+			"The last steps of a song in one call, as the recipes (and what_next) ask for them for its kind: polish with the "
+			"kind's touches, the mixer's faders back at 0 dB where they do the mix's work (as check_song's faders finding has it), "
+			"mix in the kind's style (calm, lively, or soft for action and the general recipe), check_loop and fix_loop where "
+			"the seam needs it, and export_for_game at the kind's loudness (-22 "
 			"LUFS calm, -20 lively and general, -19 action; a cue -20, a sound effect -18). Without a kind it's calm when the "
 			"track's name says so, else the general recipe's; a cue or a sound effect keeps its notes as written and gets its "
 			"file. The song's changes are one Ctrl+Z; the reply is a line a step, then what to listen for. Run it once the "

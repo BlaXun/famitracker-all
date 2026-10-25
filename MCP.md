@@ -2049,10 +2049,10 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
 `finish_song` does the last steps the recipes ask for, in order, each on the
 song as the one before left it:
 
-1. `polish` with the kind's touches: on a calm track the calm ones (no
-   accents, the shallowest vibrato, coming in late); on a lively stage
-   `vibrato`, `separate`, `clicks` and `staccato` (no accents); for action
-   and the general recipe the default ones, accents too.
+1. `polish` with the kind's touches, the ones `what_next`'s polish step
+   gives: polish's calm style on a calm track, the lively recipe's touches
+   in its lively style on a lively stage, and polish's own for action and
+   the general recipe.
 2. `mix` in the kind's style: `calm`, `lively`, or `soft` for action and the
    general recipe. When the mixer's faders do the mix's work (the melody's 4
    dB down or more, or a part's 9 dB or more over it, as the review's finding
@@ -2087,13 +2087,15 @@ Finished "Town" as a lively stage, the melody on VRC6 Pulse 1 (guessed; melody_c
 - Export: Town.ogg: 25.6 s, 124 KB, its loop at -20.0 LUFS (...), the first 6.4 s once, then the loop from 6.4 s to the end.
 - GameMaker: audio_sound_loop_start(snd_town, 6.399125); audio_sound_loop_end(snd_town, 25.599125); ...
 One Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).
-Listen for: the melody 3-4 dB over the parts with the drums soft under it, and the bass bouncing; the seam
-going round (play {"from_bar":15} plays the end into the loop; stop ends it).
+Listen for: the melody clear on top of the parts, and the bass bouncing; the seam going round
+(play {"from_bar":15} plays the end into the loop; stop ends it).
 ```
 
 The result is what the calls one after the other would give (`polish`, `mix`
 with the same melody, `fix_loop`, `export_for_game`): the same notes, mixer
-and file, with the print of the song `what_next` reads. `what_next` gives it
+and file, with the print of the song `what_next` reads. The numbers are the
+tools' own (polish's and mix's styles), so a change to a style reaches the
+finish too. `what_next` gives it
 for the last steps, from the first of them that's due, with the kind and
 the melody it follows, and it's on the small set.
 

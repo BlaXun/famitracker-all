@@ -1037,8 +1037,11 @@ line moved an octave (`StepLineMoved`) on the small set (`WriteNotes` takes
 back section by section, they ask one key question and repeat check_song's
 N163 range findings in one track (the newest tracks' drafts, none); widen them
 only against that. `finish_song`
-(`FinishSongTool`, a `FinishKind` of `FINISH_KINDS`, as the recipes have
-them) runs `PolishTool`, `MixTool` (with `faders` `reset` when
+(`FinishSongTool`, a `FinishKind` of `FINISH_KINDS` naming what_next's kind,
+whose `NextKindInfo` gives the mix's style and the loudness, and whose polish
+arguments are `KindPolish`'s, shared with what_next's polish step; keep the
+kinds' numbers in the tools' styles, not here) runs `PolishTool`, `MixTool`
+(with `faders` `reset` when
 `MELODY_DOWN` or `FADER_LIFT` says the faders do the mix's work),
 `FixLoopTool` where `FindSeams` finds a seam to write and `ExportTrack`, each
 on a new `Session`, the first three inside `SongHost::BeginGroup`/`EndGroup`;

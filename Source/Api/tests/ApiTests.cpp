@@ -19358,9 +19358,10 @@ void TestFinishSong()
 		CHECK_HAS(R.Text, "its loop at -20.0 LUFS");
 		CHECK_HAS(R.Text, "\n- GameMaker: audio_sound_loop_start(snd_town, ");
 		CHECK_HAS(R.Text, "\nOne Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).");
-		CHECK_HAS(R.Text, "\nListen for: the melody 3-4 dB over the parts with the drums soft under it, and the bass bouncing; the seam "
-			"going round (play {\"from_bar\":15} plays the end into the loop; stop ends it).");
+		CHECK_HAS(R.Text, "\nListen for: the melody clear on top of the parts, and the bass bouncing; the seam going round (play "
+			"{\"from_bar\":15} plays the end into the loop; stop ends it).");
 		CHECK(R.Text.size() < 2500u);
+		// The lively recipe's touches (KindPolish's, what_next's polish step's too) in polish's lively style
 		CHECK(!Run(Separate, "polish", "{\"style\": \"lively\", \"touches\": [\"vibrato\", \"separate\", \"clicks\", \"staccato\"], "
 			"\"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
 		CHECK(!Run(Separate, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}").IsError);
