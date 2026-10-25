@@ -68,4 +68,4 @@ step
 show: window
 text: Those are the tricks. Try them on your own notes: 047 on a long note, V00 to make it thin, 443 on the row after a long note starts. Help > Effect table lists every effect.
 
-  Help > Example songs has more: the VRC6 chip, and soft sounds in stereo.
+  Help > Example songs has more: the VRC6 chip, soft sounds in stereo, and sound effects for a game.

@@ -59,4 +59,4 @@ text: A song's chips are switched on in Module > Module properties: tick VRC6 an
 
 step
 show: window
-text: That's the VRC6. Try the sawtooth yourself: put the cursor in its column, pick instrument 02 or 03 and play the keys. Help > Example songs has one more, with soft sounds in stereo.
+text: That's the VRC6. Try the sawtooth yourself: put the cursor in its column, pick instrument 02 or 03 and play the keys. Help > Example songs has two more: soft sounds in stereo, and sound effects for a game.

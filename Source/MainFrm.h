@@ -128,6 +128,8 @@ public:
 	// shown for a step about it (or about a channel's column)
 	bool	GetTutorialRect(LPCTSTR Part, LPCTSTR Name, UINT Command, CRect &Rect);
 	void	ShowTutorialPart(LPCTSTR Part);
+	// The instrument editor while it's open, else NULL (a walkthrough's note keeps out of its way)
+	CWnd	*GetOpenInstrumentEditor() { return m_wndInstEdit.IsOpened() && m_wndInstEdit.IsWindowVisible() ? &m_wndInstEdit : NULL; }
 
 	bool	ChangeAllPatterns() const;
 

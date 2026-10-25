@@ -113,6 +113,7 @@ const example_song_t EXAMPLES[] = {
 	{ ID_HELP_EXAMPLE_TRICKS, IDR_EXAMPLE_TRICKS_SONG, IDR_EXAMPLE_TRICKS_WALK, _T("NES tricks (example)") },
 	{ ID_HELP_EXAMPLE_VRC6, IDR_EXAMPLE_VRC6_SONG, IDR_EXAMPLE_VRC6_WALK, _T("The VRC6 (example)") },
 	{ ID_HELP_EXAMPLE_SOFT, IDR_EXAMPLE_SOFT_SONG, IDR_EXAMPLE_SOFT_WALK, _T("Soft and wide (example)") },
+	{ ID_HELP_EXAMPLE_SFX, IDR_EXAMPLE_SFX_SONG, IDR_EXAMPLE_SFX_WALK, _T("Sound effects (example)") },
 };
 
 // The song's channels as a walkthrough names them (TutorialScript.h), in
@@ -431,6 +432,7 @@ private:
 	std::vector<bool> m_SavedMutes;	// the channels' mutes before the step's solo or mute, empty for none
 	bool m_bPlaying;				// the step's bars play (its Play button)
 	bool m_bPlayStarted;			// and the sound thread has started them
+	unsigned int m_iPlayStarts;		// its count of starts when Play was pressed (CSoundGen::GetPlayStarts)
 	DWORD m_dwPlayPressed;
 	bool m_bHeard;					// they played to their end
 };
@@ -475,6 +477,7 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_iSong(0),
 	m_bPlaying(false),
 	m_bPlayStarted(false),
+	m_iPlayStarts(0),
 	m_dwPlayPressed(0),
 	m_bHeard(false)
 {
@@ -775,16 +778,19 @@ void CTutorialBubble::Place(const CRect &Spot)
 // which is disabled meanwhile
 CWnd *CTutorialBubble::OpenDialog() const
 {
+	// The instrument editor too while it's open, though FamiTracker works on beside it: the walkthroughs have
+	// the user change an instrument there and play the step's bars with the note's Play button
 	if (m_pMainFrame->IsWindowEnabled())
-		return NULL;
+		return m_pMainFrame->GetOpenInstrumentEditor();
 	CWnd *pPopup = m_pMainFrame->GetLastActivePopup();
 	if (pPopup == NULL || pPopup == m_pMainFrame || pPopup == this || !pPopup->IsWindowVisible())
 		return NULL;
 	return pPopup;
 }
 
-// While a dialog is open it has the attention: no dimming, and the note out
-// of its way, beside it where the screen has room, or else under it
+// While a dialog (or the instrument editor) is open it has the attention: no
+// dimming, and the note out of its way, beside it where the screen has room,
+// or else under it
 void CTutorialBubble::KeepClear(CWnd *pDialog, bool Front)
 {
 	m_Overlay.Hide();
@@ -842,13 +848,20 @@ void CTutorialBubble::Tick()
 		Stop();
 		return;
 	}
-	// The step's bars: the sound thread starts them, then they're over
+	// The step's bars: the sound thread starts them, then they're over. Its count of starts tells they started
+	// even when this timer didn't run while they played: at speed 1 the sound thread posts a message a row, 60
+	// a second, and a busy computer (Wine) then had no time for timers until they had stopped
 	if (m_bPlaying) {
-		if (theApp.IsPlaying())
+		const CSoundGen *pSound = theApp.GetSoundGenerator();
+		// (the count first: the sound thread moves it once the song plays, so a song seen not playing after it has
+		// moved has stopped)
+		const bool Started = pSound != NULL && pSound->GetPlayStarts() != m_iPlayStarts;
+		const bool Playing = theApp.IsPlaying();
+		if (Playing || Started)
 			m_bPlayStarted = true;
-		else if (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000) {
+		if (!Playing && (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000)) {
 			m_bPlaying = false;
-			if (m_bPlayStarted && theApp.GetSoundGenerator()->PlayRangeEnded())
+			if (m_bPlayStarted && pSound != NULL && pSound->PlayRangeEnded())
 				m_bHeard = true;
 			Invalidate(FALSE);
 		}
@@ -1275,6 +1288,7 @@ void CTutorialBubble::PlayBars()
 	const CFamiTrackerDoc *pDoc = Doc();
 	MoveCursor(First, Now.Show == "channel" && pDoc != NULL ? FindTutorialChannel(Now.ShowName, SongChannels(pDoc)) : -1);
 	pSound->SetNextPlayRange(First, End);
+	m_iPlayStarts = pSound->GetPlayStarts();
 	theApp.StartPlayer(MODE_PLAY_CURSOR);
 	m_bPlaying = true;
 	m_bPlayStarted = false;

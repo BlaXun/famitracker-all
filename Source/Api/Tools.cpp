@@ -348,6 +348,16 @@ public:
 		return it->second;
 	}
 
+	// A channel's cells as a change would leave them, in this session alone (write_notes' warnings hear the song as the part
+	// it writes leaves it, in a copy of the session); the song stays as it is
+	void Assume(int Channel, const std::vector<Cell> &Cells)
+	{
+		std::vector<Cell> Read(Cells);
+		Read.resize(Time.TotalRows());
+		m_Cache[Channel] = Read;
+		m_Notes.erase(Channel);
+	}
+
 	int ChannelCount() const { return static_cast<int>(Song.Channels.size()); }
 	const ChannelInfo &Channel(int Index) const { return Song.Channels[Index]; }
 	int MaxRows() const { return Song.MaxFrames * Song.PatternLength; }
@@ -2898,11 +2908,17 @@ bool SameEffects(const Cell &A, const Cell &B)
 	return X == Y;
 }
 
+// write_notes' warnings as it writes a part, and how its reply ends with them (defined with finish_song, after
+// export_for_game)
+std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vector<Cell> &Cells,
+	const std::vector<std::pair<int, int> > &Spans, bool Direct, bool Core, const StepLine *pLine);
+std::string WarningLines(const std::vector<std::string> &Warnings);
+
 // write_notes with notes as text: a melody in steps, from from_bar (or the bar number the text starts with). Every bar
 // holds the meter's steps. A note at the same step with the same pitch as the song's there is kept as it was (its
 // instrument, its effects within its length, the release or halt that ends it where it ends as before); a - at the
 // line's start holds the note sounding into it, and a kept last note that rang on past the line rings on.
-std::string WriteNotesInSteps(Session &S, const Json &Args)
+std::string WriteNotesInSteps(Session &S, const Json &Args, bool Core = false)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
 	const ChannelInfo &Info = S.Channel(Channel);
@@ -3170,7 +3186,11 @@ std::string WriteNotesInSteps(Session &S, const Json &Args)
 				"2 or 4 bars breathes at its end; inside it, let the notes run up to the bar line or hold one across it (- after the |).",
 				Breaks, Bars - 1));
 	}
-	return WithRemarks(S, Commit(S, Changes, RangeFirst, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+	// What a composer would want to hear of at once: notes out of range or out of the key, a bass that leaves its channel
+	// nearly silent, a sound the channel doesn't play as it's meant
+	const std::vector<std::string> Guard = WritingWarnings(S, Channel, Work, std::vector<std::pair<int, int> >(1, std::make_pair(First,
+		End)), DirectChange, Core, &Line);
+	return WithRemarks(S, Commit(S, Changes, RangeFirst, AsClip, StringArg(Args, "clip_name"), What), Warnings) + WarningLines(Guard);
 }
 
 std::string ReadChannel(Session &S, const Json &Args)
@@ -3266,14 +3286,14 @@ std::string ReadChannel(Session &S, const Json &Args)
 
 // Writing a part
 
-std::string WriteNotes(Session &S, const Json &Args)
+std::string WriteNotes(Session &S, const Json &Args, bool Core)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
 	const ChannelInfo &Info = S.Channel(Channel);
 	const bool Dpcm = Info.Kind == KIND_DPCM;
 	const Json *pNotes = Arg(Args, "notes");
 	if (pNotes != 0 && pNotes->IsString())
-		return WriteNotesInSteps(S, Args);
+		return WriteNotesInSteps(S, Args, Core);
 	if (pNotes == 0 || !pNotes->IsArray())
 		throw Problem("notes should be a list of notes like {\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}, or a melody "
 			"in steps as text, like \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\" from from_bar.");
@@ -3552,7 +3572,13 @@ std::string WriteNotes(Session &S, const Json &Args)
 		else if (PanText(Written) != "in the middle")
 			What += ", " + PanText(Written) + " where the channel played before";
 	}
-	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+	// What a composer would want to hear of at once (in the pieces written; the bars kept between them aside)
+	std::vector<Cell> After(S.Cells(Channel));
+	if (After.size() < First + Out.size())
+		After.resize(First + Out.size());
+	std::copy(Out.begin(), Out.end(), After.begin() + First);
+	const std::vector<std::string> Guard = WritingWarnings(S, Channel, After, Pieces, DirectChange, Core, 0);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings) + WarningLines(Guard);
 }
 
 std::string PlaceClipTool(Session &S, const Json &Args)
@@ -18058,6 +18084,845 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	return Text;
 }
 
+// write_notes' warnings as it writes a part, and finish_song: the last steps of a song in one call (from
+// feat-finish-guard)
+
+// SoundingRows (with the checks, below) gives where a note's slides take it
+void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::vector<int> &Sound);
+
+// The N163 plays its channels in turn, each once every 15 CPU cycles times their count, so a wave of so many samples
+// skips some above a pitch (and turns grainy): the highest that plays whole, with Channels N163 channels in the song
+int N163HighestWhole(int Channels, int WaveSize)
+{
+	const double Hz = 1789773.0 / (15.0 * std::max(1, Channels) * std::max(4, WaveSize));
+	return static_cast<int>(std::floor(12.0 * std::log2(Hz / 32.7032) + 0.2));	// C-0 is 32.7 Hz; a skip in 100 steps is nothing
+}
+
+// Why a note (as written, on the instrument it plays) is outside what its channel plays well, as check_song lists it
+// and write_notes warns of it as it writes; empty when it's fine
+std::string NoteRangeReason(const Session &S, const ChannelInfo &Info, int Pitch, int Instrument)
+{
+	if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && Pitch < 9)
+		return "below A-0, the lowest note its pulse can play";
+	if (Info.Kind == KIND_SQUARE && Pitch < 12)
+		return "below C-1, which the 5B plays an octave under the note written: too low to be heard";
+	if (Info.Kind == KIND_TRIANGLE && Pitch > 72)
+		return "above C-6, thin and shrill on the triangle";
+	if (Info.Chip == "FDS" && Pitch > FDS_HIGHEST)
+		return "above G#7, the highest the FDS plays: its pitch register tops out there, so the note sounds flat";
+	if (Info.Chip == "FDS" && Pitch < 21)
+		return "below A-1, which the FDS plays two octaves down, under 28 Hz: felt more than heard";
+	if (Pitch - Written(Info, 0) > 84)
+		return "above C-7, very high";
+	if (Info.Chip == "N163") {
+		int Channels = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
+		const InstrumentInfo *pInstrument = FindInstrument(S.Song, Instrument);
+		const int Wave = pInstrument != 0 && pInstrument->WaveSize > 0 ? pInstrument->WaveSize : 16;
+		const int Highest = N163HighestWhole(Channels, Wave);
+		if (Pitch > Highest)
+			return Format("above %s, where %s turn a %d-sample wave grainy (the chip skips some of its samples; fewer N163 channels "
+				"play higher)", PitchName(Highest).c_str(), Plural(Channels, "N163 channel", "N163 channels").c_str(), Wave);
+	}
+	return std::string();
+}
+
+// The first pitch a note sounds outside a key, where its slides take it too, as check_song hears it; -1 for none
+int PitchOutsideKey(const NoteInfo &N, int RowsPerBeat, const Key &K)
+{
+	std::vector<int> Heard(static_cast<size_t>(std::max(1, N.Rows)), -1);
+	SoundingRows(N, RowsPerBeat, N.Row, N.Row + std::max(1, N.Rows), Heard);
+	for (size_t r = 0; r < Heard.size(); ++r)
+		if (Heard[r] >= 0 && !InKey(Heard[r], K))
+			return Heard[r];
+	return -1;
+}
+
+// write_notes' warnings, in its reply as it writes a part, each with what to do: a local model's first song had a
+// sawtooth bass reaching low and a lone short note every other bar on the triangle, on a pulse's soft sound, and no
+// check said so until the song was done. They are: notes outside what the channel plays well (check_song's range), a
+// bass under GUARD_LOWEST and a lead sitting mostly an octave over where melodies sing, notes outside the track's key
+// that the chords the song plays there don't account for (a borrowed chord's do), a part that leaves its channel
+// nearly silent, and a sound the channel doesn't play as it's meant (a soft one on the triangle, as the review's
+// finding about it says; one that overdrives the sawtooth; another chip's, whose notes FamiTracker skips). None stops
+// the write. Measured on the soundtrack's 57 finished tracks: no triangle there goes under F#1 (46 Hz) nor a sawtooth
+// under A-0 (55 Hz), and their leads sit in octaves 3-4, while bells, music boxes and drips play in octaves 5-6.
+const int GUARD_LOWEST = 4;				// E-0 as a pulse plays it, 41 Hz: a bass is heard from there up (the triangle's E-1)
+// A melody whose middle sits at C-5 (as a pulse plays it) and that reaches G-5 is an octave over its own (the soundtrack's
+// leads sit in octaves 3-4 and peak at A-4 to E-5, a B part around C-5)
+const int GUARD_LEAD_MIDDLE = 60, GUARD_LEAD_TOP = 67;
+const double GUARD_SILENT_SHARE = 0.12;	// heard for less of its bars than this, a part leaves its channel nearly silent
+const int GUARD_LISTED = 4;				// notes a warning names
+
+// A call as a warning gives it, as the checks' findings write theirs: set_instrument {"channel":"2A03 Triangle",...}
+std::string GuardCall(const char *Tool, const Json &Arguments)
+{
+	return CallText(ToolCall(Tool, Arguments, std::string()));
+}
+
+// A line of steps again, Semitones away (as write_notes takes it); empty when a note would leave FamiTracker's notes
+std::string StepLineMoved(const StepLine &Line, int Semitones)
+{
+	StepLine Moved = Line;
+	for (size_t i = 0; i < Moved.Notes.size(); ++i) {
+		int Pitch = 0;
+		if (!ParsePitch(Moved.Notes[i].Pitch, Pitch) || Pitch + Semitones < 0 || Pitch + Semitones >= PITCHES)
+			return std::string();
+		Moved.Notes[i].Pitch = PitchName(Pitch + Semitones);
+	}
+	std::string Text = FormatStepLine(Moved), Out;	// a bar to a text line there: here | between them, on one line
+	for (size_t i = 0; i < Text.size(); ++i)
+		Out += Text[i] == '\n' ? std::string(" | ") : std::string(1, Text[i]);
+	return Out;
+}
+
+// The warnings for the part write_notes writes on Channel: Cells are the channel's as the write leaves them (from the
+// song's first row) and Spans the rows it wrote ([first, end), the bars it leaves alone between them out). Direct: the
+// write went into the song, so a fix can change it there; Core: the reply names only the small set's tools; pLine: the
+// line of steps written, for a fix that writes it again an octave away (null for a list of notes)
+std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vector<Cell> &Cells,
+	const std::vector<std::pair<int, int> > &Spans, bool Direct, bool Core, const StepLine *pLine)
+{
+	std::vector<std::string> Out;
+	const ChannelInfo &Info = S.Channel(Channel);
+	if (!IsMelodic(Info) || Spans.empty())
+		return Out;
+	const int First = Spans.front().first, End = Spans.back().second;
+	std::vector<NoteInfo> Part;	// the notes written, the ones at volume 0 aside (they play nothing, on the triangle too)
+	{
+		const std::vector<NoteInfo> All = NotesIn(ReadNotes(Cells, Info.EffectColumns), First, End);
+		for (size_t i = 0; i < All.size(); ++i) {
+			bool Written = false;
+			for (size_t s = 0; s < Spans.size() && !Written; ++s)
+				Written = All[i].Row >= Spans[s].first && All[i].Row < Spans[s].second;
+			if (Written && All[i].Volume > 0)
+				Part.push_back(All[i]);
+		}
+	}
+	if (Part.empty())
+		return Out;
+	const int FromBar = S.Time.BarOf(First), ToBar = S.Time.BarOf(std::max(First, End - 1));
+	const std::string Name = Info.FullName();
+	const int Offset = Written(Info, 0);	// what the channel writes over a pulse's note for the same sound
+	auto Listed = [&](const std::vector<size_t> &Which) {
+		std::string Text;
+		for (size_t k = 0; k < Which.size() && k < static_cast<size_t>(GUARD_LISTED); ++k)
+			Text += (k == 0 ? "" : ", ") + PitchName(Part[Which[k]].Pitch) + " at " + S.Time.Position(Part[Which[k]].Row);
+		if (Which.size() > static_cast<size_t>(GUARD_LISTED))
+			Text += Format(" and %d more", static_cast<int>(Which.size()) - GUARD_LISTED);
+		return Text;
+	};
+	auto Bars = [&](Json &A) {
+		A.Set("from_bar", FromBar);
+		A.Set("to_bar", ToBar);
+	};
+	// The whole part an octave away: transpose, or on the small set the line written again (a list of notes is too long
+	// for a reply); none for a clip, which the song doesn't have yet
+	auto OctaveFix = [&](int Semitones) -> std::string {
+		if (!Direct)
+			return std::string();
+		Json A = Json::MakeObject();
+		if (!Core) {
+			A.Set("channels", Name);
+			A.Set("semitones", Semitones);
+			Bars(A);
+			return " Fix: " + GuardCall("transpose", A) + ".";
+		}
+		const std::string Moved = pLine != 0 ? StepLineMoved(*pLine, Semitones) : std::string();
+		if (Moved.empty() || Moved.size() > 600)
+			return std::string();
+		A.Set("channel", Name);
+		A.Set("from_bar", FromBar);
+		A.Set("notes", Moved);
+		return " Fix: " + GuardCall("write_notes", A) + ".";
+	};
+	// set_instrument with a sound that suits the channel, over the part's bars (a clip gets it in a new write instead)
+	auto SoundFix = [&](const char *Sound) -> std::string {
+		if (!Direct)
+			return Format(" Write the part again with \"instrument\": \"%s\".", Sound);
+		Json A = Json::MakeObject();
+		A.Set("channel", Name);
+		A.Set("instrument", Sound);
+		Bars(A);
+		return " Fix: " + GuardCall("set_instrument", A) + ".";
+	};
+
+	// Notes outside what the channel plays well, and a bass too low to be heard as notes
+	std::vector<size_t> Outside, Low;
+	std::string Reason;
+	bool Below = false;
+	for (size_t i = 0; i < Part.size(); ++i) {
+		const std::string Why = NoteRangeReason(S, Info, Part[i].Pitch, Part[i].Instrument);
+		if (!Why.empty()) {
+			if (Outside.empty()) {
+				Reason = Why;
+				Below = Why.compare(0, 5, "below") == 0;
+			}
+			Outside.push_back(i);
+		}
+		else if (Part[i].Pitch - Offset < GUARD_LOWEST)
+			Low.push_back(i);
+	}
+	if (!Outside.empty())
+		Out.push_back(Format("%s on %s %s %s: write %s an octave %s.", Listed(Outside).c_str(), Name.c_str(), Outside.size() == 1 ? "is" :
+			"are", Reason.c_str(), Outside.size() == 1 ? "it" : "them", Below ? "higher" : "lower") +
+			(Outside.size() == Part.size() ? OctaveFix(Below ? 12 : -12) : std::string()));
+	if (!Low.empty())
+		Out.push_back(Format("%s on %s sound%s under 41 Hz%s, a rumble more than a note on TV speakers and phones: a bass line sits "
+			"from %s up there. Write %s an octave up.", Listed(Low).c_str(), Name.c_str(), Low.size() == 1 ? "s" : "", Offset >= 24 ?
+			" (it plays two octaves under the note written)" : Offset >= 12 ? " (it plays an octave under the note written)" : "",
+			PitchName(GUARD_LOWEST + Offset).c_str(), Low.size() == 1 ? "it" : "them") + (Low.size() == Part.size() ? OctaveFix(12) :
+			std::string()));
+
+	// A lead an octave over where melodies sing: a line on a sound that holds, at a melody's volume (bells, music boxes and
+	// sparkles, which fade or play softly, sit high by design, as do echoes)
+	if (!IsBass(Info) && Part.size() >= 4 && !EchoesAnother(S, Channel, Part, First, End) && UseOfTrack(S).Use != TRACK_SOUND) {
+		int Chords = 0, Top = 0, Main = NO_INSTRUMENT, Most = 0;
+		std::map<int, int> Uses;
+		std::vector<int> Volumes;
+		for (size_t i = 0; i < Part.size(); ++i) {
+			Chords += SoundsChord(S, Part[i]) ? 1 : 0;
+			Top = std::max(Top, Part[i].Pitch);
+			Volumes.push_back(Part[i].Volume);
+			if (++Uses[Part[i].Instrument] > Most) {
+				Most = Uses[Part[i].Instrument];
+				Main = Part[i].Instrument;
+			}
+		}
+		std::sort(Volumes.begin(), Volumes.end());
+		const SoundShape Shape = ShapeOf(FindInstrument(S.Song, Main));
+		const bool Holds = !Shape.Known || Shape.Hold * 10 >= Shape.Peak * 4;
+		const int Middle = MiddleOf(Part, 0) - Offset;
+		if (Chords * 3 < static_cast<int>(Part.size()) && Holds && Volumes[Volumes.size() / 2] >= 6 && Middle >= GUARD_LEAD_MIDDLE &&
+			Top - Offset >= GUARD_LEAD_TOP)
+			Out.push_back(Format("%s sits high for a melody: mostly in octave %d (its notes around %s, up to %s%s), where a melody sings "
+				"in octave 3, reaching into octave 4 at its high points (C-3 is middle C, A-3 440 Hz). Bells, sparkles and a descant "
+				"sit up there; a melody, an octave lower.", Name.c_str(), Middle / 12, PitchName(Middle + Offset).c_str(),
+				PitchName(Top).c_str(), Offset > 0 ? ", which sound lower" : "") + OctaveFix(-12));
+	}
+
+	// Outside the track's key: the key chosen for it, or found from the song's notes with the part in them (a song's first
+	// part makes its key). Left out: a chromatic note of a beat or less stepping to or from its neighbour (an approach, a
+	// passing or a neighbour note), one the other parts sound in that bar too (a borrowed chord they share), and one that
+	// makes a major or minor triad with two notes they sound with it (a borrowed chord whose root only the bass plays, Db
+	// under F and Ab in Eb major; a slip a semitone off a chord's note makes a diminished or an augmented one, or none). A
+	// key found from the notes is major or minor, so a modal tune's own notes fall outside it: then only a part with a third
+	// of its notes or more outside is asked about (the soundtrack's 57 tracks, their keys mostly found: none; asked of
+	// every note outside, 20 of them). Not for a sound effect
+	if (UseOfTrack(S).Use != TRACK_SOUND) {
+		Session View(S);
+		View.Assume(Channel, Cells);
+		Key K;
+		bool Have = false;
+		const char *Source = "the track's key, chosen for it";
+		if (S.Song.KeyChosen) {
+			K = S.Song.ChosenKey.K;
+			Have = true;
+		}
+		else {
+			bool Others = false;
+			for (int c = 0; c < S.ChannelCount() && !Others; ++c)
+				Others = c != Channel && IsMelodic(S.Channel(c)) && !S.Notes(c).empty();
+			Have = Others && FindKey(View, 0, View.Time.TotalRows(), K);
+			Source = "found from the song's notes";
+		}
+		// The bars where a class outside the key is a chord's note: one of its notes makes a major or minor triad with two
+		// notes the other parts sound from its start for two beats or while it lasts, within the bar (a broken chord's notes
+		// come one after another; the whole bar's would make chance triads with a melody's), and so do its other notes there
+		// (a bass repeating its root under the chord)
+		std::set<int> Chorded;	// bar * 12 + class
+		for (size_t i = 0; i < Part.size() && Have; ++i) {
+			const NoteInfo &N = Part[i];
+			const int Pitch = PitchOutsideKey(N, S.Time.RowsPerBeat, K);
+			const int Bar = S.Time.BarOf(N.Row);
+			if (Pitch < 0 || Chorded.count(Bar * 12 + Pitch % 12) > 0)
+				continue;
+			const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
+			std::vector<bool> With(12, false);	// the classes the other parts sound with it
+			for (int c = 0; c < View.ChannelCount(); ++c) {
+				if (c == Channel || !IsMelodic(View.Channel(c)))
+					continue;
+				const std::vector<NoteInfo> &Theirs = View.Notes(c);
+				for (size_t j = 0; j < Theirs.size(); ++j) {
+					if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
+						continue;
+					With[Theirs[j].Pitch % 12] = true;
+					const std::vector<int> &Above = InstrumentChord(View, Theirs[j].Instrument);
+					for (size_t k = 0; k < Above.size(); ++k)
+						With[(Theirs[j].Pitch + Above[k]) % 12] = true;
+				}
+			}
+			// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them
+			static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
+			for (int t = 0; t < 6; ++t) {
+				const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
+				if (With[(Root + TRIADS[t][1]) % 12] && With[(Root + TRIADS[t][2]) % 12]) {
+					Chorded.insert(Bar * 12 + Pitch % 12);
+					break;
+				}
+			}
+		}
+		std::vector<size_t> Asked;
+		std::vector<int> Classes;	// the pitch classes asked about, in order
+		for (size_t i = 0; i < Part.size() && Have; ++i) {
+			const NoteInfo &N = Part[i];
+			const int Pitch = PitchOutsideKey(N, S.Time.RowsPerBeat, K);
+			if (Pitch < 0)
+				continue;
+			const int Class = Pitch % 12;
+			auto Step = [&](const NoteInfo &O) {
+				const int Apart = std::abs(O.Pitch - N.Pitch);
+				return Apart >= 1 && Apart <= 2;
+			};
+			const bool Embellishes = N.Rows <= S.Time.RowsPerBeat && ((i + 1 < Part.size() && Part[i + 1].Row <= N.Row + N.Rows +
+				S.Time.RowsPerBeat && Step(Part[i + 1])) || (i > 0 && Part[i - 1].Row + Part[i - 1].Rows + S.Time.RowsPerBeat >= N.Row &&
+				Step(Part[i - 1])));
+			bool Shared = false;
+			const int Bar = S.Time.BarOf(N.Row), A = S.Time.BarStart(Bar), Z = S.Time.BarEnd(Bar);
+			for (int c = 0; c < View.ChannelCount() && !Shared && !Embellishes; ++c) {
+				if (c == Channel || !IsMelodic(View.Channel(c)))
+					continue;
+				const std::vector<NoteInfo> &Theirs = View.Notes(c);
+				for (size_t j = 0; j < Theirs.size() && !Shared; ++j) {
+					if (Theirs[j].Row >= Z || Theirs[j].Row + Theirs[j].Rows <= A || Theirs[j].Volume <= 0)
+						continue;
+					Shared = Theirs[j].Pitch % 12 == Class;
+					const std::vector<int> &Above = InstrumentChord(View, Theirs[j].Instrument);
+					for (size_t k = 0; k < Above.size() && !Shared; ++k)
+						Shared = (Theirs[j].Pitch + Above[k]) % 12 == Class;
+				}
+			}
+			if (Embellishes || Shared || Chorded.count(Bar * 12 + Class) > 0)
+				continue;
+			Asked.push_back(i);
+			if (std::find(Classes.begin(), Classes.end(), Class) == Classes.end())
+				Classes.push_back(Class);
+		}
+		if (!S.Song.KeyChosen && (Asked.size() < 4 || Asked.size() * 3 < Part.size()))
+			Asked.clear();
+		{
+			if (!Asked.empty()) {
+				// Named as FamiTracker writes them, with sharps: "F#4" above, "F# to F or G" here
+				auto ClassName = [](int Class) {
+					std::string Name = PitchName(Class + 36);
+					Name.erase(Name.size() - 1);
+					if (!Name.empty() && Name.back() == '-')
+						Name.erase(Name.size() - 1);
+					return Name;
+				};
+				std::string Near;
+				for (size_t k = 0; k < Classes.size() && k < 3; ++k) {
+					std::string Into;
+					for (int Step = -1; Step <= 1; Step += 2) {
+						const int Class = (Classes[k] + Step + 12) % 12;
+						if (InKey(Class + 36, K))
+							Into += (Into.empty() ? "" : " or ") + ClassName(Class);
+					}
+					if (!Into.empty())
+						Near += (Near.empty() ? "" : ", ") + ClassName(Classes[k]) + " to " + Into;
+				}
+				Out.push_back(Format("outside %s (%s): %s on %s. Meant? A borrowed chord's notes are, but the other parts don't play "
+					"them there%s.", KeyName(K).c_str(), Source, Listed(Asked).c_str(), Name.c_str(), Near.empty() ? "" :
+					("; if not, each moves a semitone into the key (" + Near + ")").c_str()));
+			}
+		}
+	}
+
+	// A bass nearly silent: a lone short note now and then, from its first note's bar to its last's, four bars or more (a
+	// bass that joins at an intro's end isn't; drips and sparkles on other channels are meant so, and so are bubbles on a
+	// bass channel over another part playing in most of those bars, every one above its notes there). What a sound plays:
+	// a note on the triangle until its envelope reaches 0, on the sawtooth until it fades away (HeardFramesOf)
+	if (IsBass(Info)) {
+		const int Since = S.Time.BarOf(Part.front().Row), Until = S.Time.BarOf(Part.back().Row), Count = Until - Since + 1;
+		if (Count >= 4 && static_cast<int>(Part.size()) <= Count) {
+			const std::vector<int> RowFrames = RowFramesOf(S);
+			long long Total = 0, Heard = 0;
+			bool Short = true;
+			for (int r = S.Time.BarStart(Since); r < S.Time.BarEnd(Until) && r < static_cast<int>(RowFrames.size()); ++r)
+				Total += RowFrames[static_cast<size_t>(r)];
+			for (size_t i = 0; i < Part.size(); ++i) {
+				const NoteInfo &N = Part[i];
+				Short = Short && N.Rows <= S.Time.RowsPerBeat;
+				const int Frames = NoteFrames(N, RowFrames);
+				const InstrumentInfo *pSound = FindInstrument(S.Song, N.Instrument);
+				int For = 0;
+				if (Info.Kind == KIND_TRIANGLE) {
+					const std::vector<int> Envelope = HeldEnvelope(pSound, Frames);
+					while (For < Frames && Envelope[static_cast<size_t>(For)] > 0)
+						++For;
+				}
+				else
+					For = std::min(Frames, HeardFramesOf(pSound, N.Volume, Frames));
+				Heard += For;
+			}
+			int Lowest = 1000;	// as they sound
+			for (size_t i = 0; i < Part.size(); ++i)
+				Lowest = std::min(Lowest, Part[i].Pitch - Offset);
+			bool Over = false;
+			const int From = S.Time.BarStart(Since), To = S.Time.BarEnd(Until);
+			for (int c = 0; c < S.ChannelCount() && !Over; ++c) {
+				if (c == Channel || !IsMelodic(S.Channel(c)))
+					continue;
+				const int TheirOffset = Written(S.Channel(c), 0);
+				const std::vector<NoteInfo> &Theirs = S.Notes(c);
+				std::vector<bool> Playing(static_cast<size_t>(Count), false);
+				int Highest = -1000;
+				for (size_t j = 0; j < Theirs.size(); ++j) {
+					const NoteInfo &O = Theirs[j];
+					if (O.Row >= To || O.Row + O.Rows <= From || O.Volume <= 0)
+						continue;
+					for (int b = S.Time.BarOf(std::max(O.Row, From)); b <= S.Time.BarOf(std::min(O.Row + std::max(1, O.Rows), To) - 1); ++b)
+						Playing[static_cast<size_t>(b - Since)] = true;
+					Highest = std::max(Highest, O.Pitch - TheirOffset);
+				}
+				Over = static_cast<int>(std::count(Playing.begin(), Playing.end(), true)) * 2 >= Count && Highest < Lowest;
+			}
+			if (Short && !Over && Total > 0 && static_cast<double>(Heard) < GUARD_SILENT_SHARE * static_cast<double>(Total)) {
+				std::string Text = Format("%s plays %s in %s, each a beat or shorter, heard %d%% of the time: a lone short note now and "
+					"then leaves the bass nearly silent. A bass holds its roots or plays a figure in every bar.", Name.c_str(),
+					Plural(static_cast<int>(Part.size()), "note", "notes").c_str(), RangeText(Since, Until).c_str(),
+					static_cast<int>(std::floor(100.0 * Heard / Total + 0.5)));
+				if (Direct) {
+					Json A = Json::MakeObject();
+					A.Set("bass_channel", Name);
+					A.Set("chord_channel", "none");
+					Bars(A);
+					Text += " Fix: " + GuardCall("add_chords_and_bass", A) + " (a bass line there, on the chords the parts play).";
+				}
+				Out.push_back(Text);
+			}
+		}
+	}
+
+	// Sounds the channel doesn't play as they're meant
+	{
+		std::map<int, int> Uses;
+		for (size_t i = 0; i < Part.size(); ++i)
+			++Uses[Part[i].Instrument];
+		for (std::map<int, int>::const_iterator it = Uses.begin(); it != Uses.end(); ++it) {
+			const InstrumentInfo *pSound = FindInstrument(S.Song, it->first);
+			if (pSound == 0)
+				continue;
+			const std::string Sound = InstrumentLabel(S.Song, it->first);
+			if (pSound->Chip != InstrumentChip(Info)) {
+				const bool Pulse = Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5" || Info.Chip == "VRC6");
+				Out.push_back(Format("%s plays %s, %s instrument, on %s: FamiTracker skips a note whose instrument is another chip's, so "
+					"%s play.", Name.c_str(), Sound.c_str(), AChip(pSound->Chip).c_str(), Plural(it->second, "note", "notes").c_str(),
+					it->second == 1 ? "it doesn't" : "they don't") + (IsBass(Info) ? SoundFix("bass") : Pulse ? SoundFix("soft lead") :
+					Format(" Give them one of the song's %s instruments, or add one (add_instrument).", InstrumentChip(Info).c_str())));
+			}
+			else if (Info.Kind == KIND_TRIANGLE && EnvelopePeak(pSound) <= TRIANGLE_SOFT_PEAK)	// as the review's finding has it
+				Out.push_back(Format("%s plays %s, a sound meant to be soft (its envelope peaks at %d): the triangle has no volume and no "
+					"duty, so it plays it at full level until the envelope reaches 0, a hard blip. Give it a triangle sound (a bass, or a "
+					"thump bass for an attack).", Name.c_str(), Sound.c_str(), EnvelopePeak(pSound)) + SoundFix("bass"));
+			else if (Info.Kind == KIND_SAWTOOTH && pSound->OddDuty)
+				OddDutyRemark(S, *pSound, Info);	// as when it's named
+		}
+	}
+	return Out;
+}
+
+// The warnings as write_notes' reply ends with them
+std::string WarningLines(const std::vector<std::string> &Warnings)
+{
+	std::string Text;
+	for (size_t i = 0; i < Warnings.size(); ++i) {
+		std::string Line = Warnings[i];
+		if (!Line.empty())
+			Line[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Line[0])));
+		Text += "\nWarning: " + Line;
+	}
+	return Text;
+}
+
+// finish_song: the last steps a recipe asks for, in one call, for the kind of song: polish with the kind's touches, the
+// mixer's faders back at 0 dB where they do the mix's work, mix in the kind's style, check_loop and fix_loop where the
+// seam needs it, and export_for_game at the kind's loudness. Each step works on the song as the one before left it, and
+// the song's changes are one Ctrl+Z (SongHost::BeginGroup). The kinds of music are what_next's (NextKindInfo gives the
+// mix's style, the styles of polish and the checks, and the loudness; KindPolish polish's arguments), so a change to a
+// kind reaches both, and the tools' own styles decide the numbers: a cue or a sound effect, as UseOfTrack tells them,
+// keeps its notes as written and gets its file
+enum finish_kind { FINISH_GENERAL, FINISH_CALM, FINISH_LIVELY, FINISH_ACTION, FINISH_CUE, FINISH_SOUND, FINISH_KIND_COUNT };
+
+struct FinishKind {
+	const char *Name;			// as the reply names it: "a lively stage"
+	int Next;					// what_next's kind (next_kind), whose polish, mix and loudness it gets; -1 for a cue or a sound effect
+	double Loudness;			// export_for_game's for a cue or a sound effect, in LUFS
+	const char *Listen;			// what to listen for (no numbers of the tools', which their styles keep)
+};
+
+const FinishKind FINISH_KINDS[FINISH_KIND_COUNT] = {
+	{ "a track of the general recipe", NEXT_GENERAL, 0.0,
+		"the melody clear over the chords, the triangle and the drums coming through the softer pulses" },
+	{ "a calm track", NEXT_CALM, 0.0,
+		"the melody floating only a little over the chords, never pressing, and the vibrato coming in late on long notes" },
+	{ "a lively stage", NEXT_LIVELY, 0.0, "the band carrying the tune, the lead's accents on the beats, and the climax lifting" },
+	{ "an action track", NEXT_ACTION, 0.0, "the melody on top with accents on the beats, and the drums driving" },
+	{ "a cue", -1, -20.0, "its last notes dying away before it stops" },
+	{ "a sound effect", -1, -18.0, "how it ends: quietly, without a click" },
+};
+
+// polish's arguments for a kind of music as the recipes have them, for what_next's polish step and finish_song's (one
+// list, so a change to a kind's touches reaches both): a calm song in polish's calm style, a lively stage in its lively
+// style (the default touches, accents and all), the general recipe and action polish's own
+Json KindPolish(int Kind)
+{
+	Json A = Json::MakeObject();
+	if (Kind == NEXT_CALM)
+		A.Set("style", "calm");
+	else if (Kind == NEXT_LIVELY)
+		A.Set("style", "lively");
+	return A;
+}
+
+// The balance as heard, as the review hears it (the melody against the chords, an echo, a second line, the bass and the
+// drums); empty without a melody to hear it against
+std::string FinishBalance(Session &S, int Melody)
+{
+	if (Melody < 0 || Melody >= S.ChannelCount() || S.Channel(Melody).Kind == KIND_TRIANGLE)
+		return std::string();
+	const int First = 0, End = S.Time.TotalRows();
+	std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
+	std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
+	HeardRoles(S, Voiced, Spans);
+	std::vector<std::vector<std::pair<int, int> > > Refs;
+	for (size_t i = 0; i < Spans.size(); ++i)
+		Refs.push_back(std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First, Spans[i].End)));
+	Hearing Ears(S);
+	const HeardBalance B = HearBalance(S, Ears, Spans, Refs, Melody, Voiced, First, End);
+	double Least = NO_LOUDNESS, Most = NO_LOUDNESS;
+	return BalanceText(S, Spans, B, Melody, Least, Most);
+}
+
+// A reply's text without what it says in brackets: "accents (beats a step softer...) on 2A03 Pulse 1" -> "accents on 2A03
+// Pulse 1"
+std::string WithoutAsides(const std::string &Text)
+{
+	std::string Out;
+	int Depth = 0;
+	for (size_t i = 0; i < Text.size(); ++i) {
+		if (Text[i] == '(') {
+			if (Depth++ == 0 && !Out.empty() && Out.back() == ' ')
+				Out.erase(Out.size() - 1);
+			continue;
+		}
+		if (Text[i] == ')' && Depth > 0) {
+			--Depth;
+			continue;
+		}
+		if (Depth == 0)
+			Out += Text[i];
+	}
+	return Out;
+}
+
+// The line of a reply that starts with Label, without it ("" when there's none)
+std::string ReplyLine(const std::string &Text, const char *Label)
+{
+	const size_t At = Text.find(Label);
+	if (At == std::string::npos)
+		return std::string();
+	const size_t From = At + std::strlen(Label), To = Text.find('\n', From);
+	return Text.substr(From, To == std::string::npos ? std::string::npos : To - From);
+}
+
+std::string FinishSongTool(Session &S, const Json &Args, const std::string &FilesUrl)
+{
+	// The kind: as given; else a sound effect or a cue as the track plays, calm when its name says so, the general recipe's
+	// otherwise
+	int Kind = FINISH_GENERAL;
+	std::string Why;
+	const TrackUse Use = UseOfTrack(S);
+	if (Arg(Args, "kind") != 0) {
+		const std::string Word = Squeezed(StringArg(Args, "kind"));
+		if (Word == "calm" || Word == "ambient" || Word == "night" || Word == "peaceful")
+			Kind = FINISH_CALM;
+		else if (Word == "lively" || Word == "stage")
+			Kind = FINISH_LIVELY;
+		else if (Word == "action" || Word == "battle" || Word == "boss" || Word == "fight")
+			Kind = FINISH_ACTION;
+		else if (Word == "general" || Word == "any")
+			Kind = FINISH_GENERAL;
+		else if (Word == "cue" || Word == "jingle")
+			Kind = FINISH_CUE;
+		else if (Word == "soundeffect" || Word == "sfx" || Word == "effect")
+			Kind = FINISH_SOUND;
+		else
+			throw Problem("kind: calm, lively or action (or general; a cue or a sound effect is told by how the track plays).");
+	}
+	else if (Use.Use == TRACK_SOUND) {
+		Kind = FINISH_SOUND;
+		Why = " (it plays a row a tick, as make_sound_effect writes one)";
+	}
+	else if (Use.Use == TRACK_CUE) {
+		Kind = FINISH_CUE;
+		Why = Format(" (it plays once and stops after %s)", SecondsText(Use.Seconds).c_str());
+	}
+	else {
+		double Bpm = 0.0;
+		if (NameSaysCalm(S.Song.TrackName)) {
+			Kind = FINISH_CALM;
+			Why = " (the track's name says so; kind general to change)";
+		}
+		else if (LooksCalm(S, Bpm))
+			Why = Format(" (no kind given; it looks calm, %s BPM without drums: kind calm finishes it as a calm track)",
+				FormatNumber(std::floor(Bpm + 0.5)).c_str());
+		else
+			Why = " (no kind given: kind lively for a stage, action for a fight)";
+	}
+	const FinishKind &Plan = FINISH_KINDS[Kind];
+	const bool Arranged = Plan.Next >= 0;	// polish and mix apply (not to a cue or a sound effect)
+	const NextKind &Recipe = NextKindInfo(Arranged ? Plan.Next : NEXT_GENERAL);
+	const double KindLoudness = Arranged ? Recipe.Loudness : Plan.Loudness;
+
+	// The steps to skip
+	std::set<std::string> Skip;
+	{
+		std::vector<std::string> Words;
+		const Json *pSkip = Arg(Args, "skip");
+		if (pSkip != 0 && pSkip->IsArray()) {
+			for (size_t i = 0; i < pSkip->Size(); ++i)
+				if (pSkip->At(i).IsString())
+					Words.push_back(pSkip->At(i).String());
+		}
+		else if (pSkip != 0 && pSkip->IsString()) {
+			const std::string Text = pSkip->String();
+			size_t From = 0;
+			while (From <= Text.size()) {
+				const size_t Comma = std::min(Text.find(',', From), Text.size());
+				Words.push_back(Text.substr(From, Comma - From));
+				From = Comma + 1;
+			}
+		}
+		for (size_t i = 0; i < Words.size(); ++i) {
+			const std::string Word = Squeezed(Words[i]);
+			if (Word.empty())
+				continue;
+			if (Word == "polish" || Word == "mix" || Word == "faders" || Word == "export")
+				Skip.insert(Word);
+			else if (Word == "loop" || Word == "seam" || Word == "checkloop" || Word == "fixloop")
+				Skip.insert("loop");
+			else if (Word == "exportforgame" || Word == "file" || Word == "ogg")
+				Skip.insert("export");
+			else
+				throw Problem("skip: polish, faders, mix, loop or export.");
+		}
+	}
+	const std::string Faders = Squeezed(StringArg(Args, "faders", "auto"));
+	if (Faders != "auto" && Faders != "keep" && Faders != "reset")
+		throw Problem("faders: auto (the default: back to 0 dB when they do the mix's work), keep (as the user set them) or reset "
+			"(every fader to 0 dB).");
+	const bool Polishing = Arranged && !Skip.count("polish"), Mixing = Arranged && !Skip.count("mix");
+	const bool Looping = !Skip.count("loop"), Exporting = !Skip.count("export");
+	const double Loudness = Arg(Args, "loudness") != 0 ? NumberArg(Args, "loudness", KindLoudness, -40.0, -6.0) : KindLoudness;
+	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
+	if (!S.Song.DirectChanges && (Polishing || Mixing || Looping))
+		throw Problem("finish_song changes the song (polish, the mix, the loop's seam), which needs direct changes: the user can allow "
+			"them in File > Connect Claude Code. With skip [\"polish\", \"mix\", \"loop\"] it only exports.");
+	std::string Busy;
+	if (!S.Host().CanChange(Busy))
+		throw Problem(Busy);
+	bool Any = false;
+	for (int c = 0; c < S.ChannelCount() && !Any; ++c)
+		Any = !S.Notes(c).empty();
+	if (!Any)
+		throw Problem("The track has no notes to finish yet.");
+	// The melody, as given or guessed once, so a step's changes don't move the guess to another part
+	const int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") :
+		GuessMelodyChannel(S, 0, S.Time.TotalRows());
+	auto WithMelody = [&](Json &A) {
+		if (Melody >= 0)
+			A.Set("melody_channel", S.Channel(Melody).FullName());
+	};
+
+	std::vector<std::string> Lines;
+	bool Changed = false;
+	{
+		struct Grouped {
+			SongHost &Host;
+			explicit Grouped(SongHost &H) : Host(H) { Host.BeginGroup(); }
+			~Grouped() { Host.EndGroup(); }
+		} Group(S.Host());
+
+		// polish, with the kind's touches (in the kind's style, so a calm name doesn't make another kind's polish calm)
+		if (Polishing) {
+			Session Step(S.Host());
+			Json A = KindPolish(Plan.Next);
+			if (A.Get("style") == 0)
+				A.Set("style", Recipe.Style);
+			WithMelody(A);
+			try {
+				const std::string Text = PolishTool(Step, A);
+				const std::string Touches = WithoutAsides(ReplyLine(Text, "\nTouches: "));
+				Lines.push_back("Polish: " + (Touches.empty() ? std::string("done.") : Touches));
+				Changed = true;
+			}
+			catch (const Problem &P) {
+				Lines.push_back(P.Text.find("nothing to polish") != std::string::npos ? "Polish: nothing to change." :
+					"Polish: not done: " + P.Text);
+			}
+		}
+
+		// mix, in the kind's style; first its faders back at 0 dB (mix's faders reset) where they do the mix's work, as the
+		// review's finding about them has it (the melody MELODY_DOWN dB down or more, or a part with a role in the mix
+		// FADER_LIFT dB or more over it: a local model's stage had its lead at -4.5 dB and the noise at +6), so the mix sets
+		// the balance in the notes, as NSF files play it; trims of a few dB (the soundtrack's: a pad 5.5 dB down, chords 4-6
+		// up) stay, counted in the mix
+		if (Mixing) {
+			Session Step(S.Host());
+			Json A = Json::MakeObject();
+			A.Set("style", Recipe.MixStyle);
+			WithMelody(A);
+			std::string FaderLine;	// said once the mix is done (a mix that fails puts its faders back)
+			if (!Skip.count("faders") && Faders != "keep") {
+				const double Lead = Melody >= 0 ? FaderDb(Step.Channel(Melody)) : 0.0;
+				bool Far = Faders == "reset";
+				std::string Set;
+				for (int c = 0; c < Step.ChannelCount(); ++c) {
+					const double Db = FaderDb(Step.Channel(c));
+					if (Step.Channel(c).MixLevel == 0)
+						continue;
+					Set += (Set.empty() ? "" : ", ") + Format("%s %+.1f dB", Step.Channel(c).FullName().c_str(), Db);
+					if (Far || Melody < 0)
+						continue;
+					const int Role = MixRole(Step, c, Melody, 0, Step.Time.TotalRows());
+					Far = (c == Melody && Db <= -MELODY_DOWN) || (c != Melody && Role != ROLE_NONE && Role != ROLE_AMBIENCE &&
+						Db - Lead >= FADER_LIFT);
+				}
+				if (!Set.empty() && Far) {
+					A.Set("faders", "reset");
+					FaderLine = "Faders: back to 0 dB (" + Set + ")" + (Faders == "reset" ? std::string(".") : ", which did the mix's work: "
+						"the mix sets the balance in the notes, as NSF files play it too (faders keep leaves them, when the user set them).");
+				}
+				else if (!Set.empty())
+					FaderLine = "Faders: kept (" + Set + "), counted in the mix.";
+			}
+			try {
+				const std::string Text = MixTool(Step, A);
+				if (!FaderLine.empty())
+					Lines.push_back(FaderLine);
+				const bool Mixed = Text.find("Changed the song") != std::string::npos || A.Get("faders") != 0;
+				Changed = Changed || Mixed;
+				Session After(S.Host());
+				const std::string Balance = FinishBalance(After, Melody);
+				Lines.push_back(Format("Mix (%s): %s", Recipe.MixStyle, Mixed ? "" : "mixed that way already; ") + (Balance.empty() ? std::string(
+					"done.") : "as heard, " + Balance + "."));
+			}
+			catch (const Problem &P) {
+				Lines.push_back("Mix: not done: " + P.Text);
+			}
+		}
+
+		// check_loop, and fix_loop where the seam needs it
+		if (Looping) {
+			Session Step(S.Host());
+			const LoopPlay P = PlayLoop(Step);
+			if (P.Rows.empty())
+				Lines.push_back("Loop: the track has no rows.");
+			else if (P.Played.Halts())
+				Lines.push_back("Loop: none: it plays once and stops (a halt).");
+			else if (P.First >= P.Rows.size() || P.Second >= P.Rows.size())
+				Lines.push_back("Loop: it couldn't be followed.");
+			else {
+				const int PL = Step.Time.PatternLength;
+				const double Rate = std::max(1, Step.Song.FrameRate);
+				const int LoopBar = Step.Time.BarOf(P.LoopRow), LastBar = Step.Time.BarOf(std::max(0, P.Played.EndRow(PL) - 1));
+				const std::string Seconds = SecondsText((P.Rows[P.Second].Tick - P.Rows[P.First].Tick) / Rate);
+				std::string Line = P.First == 0 ? Format("Loop: the whole song, %s (%s)", RangeText(1, LastBar).c_str(), Seconds.c_str()) :
+					Format("Loop: %s (%s), after an intro of %s", RangeText(LoopBar, LastBar).c_str(), Seconds.c_str(),
+					SecondsText(P.Rows[P.First].Tick / Rate).c_str());
+				const std::vector<Seam> Seams = FindSeams(Step, P.Cells, P.Columns, P.Rows, P.First, P.Second, P.LoopRow);
+				std::string Done, Left;
+				for (size_t i = 0; i < Seams.size(); ++i) {
+					if (Seams[i].What != SEAM_NONE && !Seams[i].Done.empty())
+						Done += (Done.empty() ? "" : "; ") + Seams[i].Done;
+					else if (Left.empty())
+						Left = Seams[i].Text;
+				}
+				if (Seams.empty())
+					Line += "; the seam is clean.";
+				else if (!Done.empty()) {
+					Session Fix(S.Host());
+					const std::string Text = FixLoopTool(Fix, Json::MakeObject());
+					if (Text.find("Changed the song") != std::string::npos) {
+						Changed = true;
+						Line += "; fix_loop wrote " + Done + ".";
+					}
+					const size_t Still = Text.find("\nStill at the seam:\n- ");
+					if (Still != std::string::npos)
+						Line += " Still at the seam: " + ReplyLine(Text, "\nStill at the seam:\n- ");
+				}
+				else
+					Line += "; at the seam: " + Left;
+				Lines.push_back(Line);
+			}
+		}
+	}
+
+	// export_for_game at the kind's loudness: the song as the steps left it (it changes nothing in it)
+	if (Exporting) {
+		Session Step(S.Host());
+		Json Call = Json::MakeObject();
+		Call.Set("loudness", Json::NumberText(FormatNumber(Loudness)));
+		if (Step.Song.FileName.empty())
+			Lines.push_back("Export: not made: the song hasn't been saved yet, and the file goes next to it. Ask the user to save it "
+				"(File > Save As), then " + GuardCall("export_for_game", Call) + ".");
+		else {
+			std::vector<std::string> Taken, Saved;
+			std::string Code;
+			int HeldBack = 0;
+			try {
+				Lines.push_back("Export: " + ExportTrack(Step, Step.Song.Track, Quality, true, Loudness, Taken, Code, Saved, HeldBack));
+				const int Clicking = static_cast<int>(SongClicks(Step, 0, Step.Time.TotalRows()).size());
+				if (Clicking > 0)
+					Lines.back() += Format(" %s on the 2A03's pulses %s in it (polish with touches [\"clicks\"] nudges them, then export "
+						"again).", Plural(Clicking, "note", "notes").c_str(), Clicking == 1 ? "clicks" : "click");
+				if (!MutedChannels(Step).empty())
+					Lines.back() += " Every channel is in it, the muted " + MutedChannels(Step) + " too.";
+				std::string OneLine = Code;
+				std::replace(OneLine.begin(), OneLine.end(), '\n', ' ');
+				Lines.push_back("GameMaker: " + OneLine);
+				if (!FilesUrl.empty() && !Saved.empty())
+					Lines.push_back("From another computer, fetch it with the access code you connect with (the Authorization header): " +
+						FilesUrl + UrlEncode(Saved[0]));
+			}
+			catch (const Problem &P) {
+				Lines.push_back("Export: not made: " + P.Text);
+			}
+		}
+	}
+
+	std::string Text = Format("Finished \"%s\" as %s%s, the melody %s:", S.Song.TrackName.empty() ? S.Song.Title.c_str() :
+		S.Song.TrackName.c_str(), Plan.Name, Why.c_str(), Melody >= 0 ? ("on " + S.Channel(Melody).FullName() +
+		(Arg(Args, "melody_channel") != 0 ? "" : " (guessed; melody_channel names another)")).c_str() : "not found");
+	if (!Arranged)
+		Text += Format("\n- Polish and mix: left out: %s keeps its notes as written.", Kind == FINISH_CUE ? "a cue" : "a sound effect");
+	for (size_t i = 0; i < Lines.size(); ++i)
+		Text += "\n- " + Lines[i];
+	if (Changed)
+		Text += "\nOne Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).";
+	else
+		Text += "\nThe song needed no changes.";
+	{
+		Session Now(S.Host());
+		if (Changed && Now.Song.Modified && !Now.Song.FileName.empty())
+			Text += " save_song keeps them in the song's file.";
+	}
+	std::string Listen = Plan.Listen;
+	if (Looping && Arranged) {
+		Session Now(S.Host());
+		const SongFlow F = Flow(Now);
+		if (!F.Halts()) {
+			const int Last = Now.Time.BarOf(std::max(0, F.EndRow(Now.Time.PatternLength) - 1));
+			Json Play = Json::MakeObject();
+			Play.Set("from_bar", std::max(1, Last - 1));
+			Listen += "; the seam going round (" + GuardCall("play", Play) + " plays the end into the loop; stop ends it)";
+		}
+	}
+	return Text + "\nListen for: " + Listen + ".";
+}
+
 // Measuring the mix (measure_mix): the track rendered as export_for_game renders it, the first time through (without
 // the space's tail after its end), and again with each part alone: the other channels silent, their notes and effects
 // still playing (the DPCM level still softens the triangle and the noise), the part's own Space send kept, so the
@@ -19159,16 +20024,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			SoundingRows(Notes[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
-	// Outside the key, and outside the channel's range. The N163 plays its channels in turn, each once every 15 CPU cycles
-	// times their count, so a wave of so many samples skips some above a pitch (and turns grainy): the highest that plays
-	// whole, for a wave size
-	int N163Channels = 0;
-	for (int c = 0; c < S.ChannelCount(); ++c)
-		N163Channels += S.Channel(c).Chip == "N163" ? 1 : 0;
-	auto HighestWhole = [&](int WaveSize) {
-		const double Hz = 1789773.0 / (15.0 * std::max(1, N163Channels) * std::max(4, WaveSize));
-		return static_cast<int>(std::floor(12.0 * std::log2(Hz / 32.7032) + 0.2));	// C-0 is 32.7 Hz; a skip in 100 steps is nothing
-	};
+	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them)
 	int OutOfKey = 0, OutOfRange = 0;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
@@ -19183,14 +20039,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
 			// Where it sounds: where a scoop lands, and where a slide later in the note takes it (a fall as it ends is a
 			// gesture, not a pitch), so a slide copied a semitone off its note shows
-			int Outside = -1;
-			if (Found) {
-				std::vector<int> Heard(static_cast<size_t>(std::max(1, N.Rows)), -1);
-				SoundingRows(N, S.Time.RowsPerBeat, N.Row, N.Row + std::max(1, N.Rows), Heard);
-				for (size_t r = 0; r < Heard.size() && Outside < 0; ++r)
-					if (Heard[r] >= 0 && !InKey(Heard[r], K))
-						Outside = Heard[r];
-			}
+			const int Outside = Found ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
 			if (Outside >= 0) {
 				++OutOfKey;
 				const bool Slides = Outside != LandedPitch(N);
@@ -19199,27 +20048,7 @@ std::string CheckTool(Session &S, const Json &Args)
 					PitchName(LandedPitch(N)).c_str()).c_str() : ""), Format("%s is outside %s", PitchName(Outside).c_str(),
 					KeyName(K).c_str())).Notes.push_back(Note);
 			}
-			std::string Range;
-			if (Info.Kind == KIND_PULSE && (Info.Chip == "2A03" || Info.Chip == "MMC5") && N.Pitch < 9)
-				Range = "below A-0, the lowest note its pulse can play";
-			else if (Info.Kind == KIND_SQUARE && N.Pitch < 12)
-				Range = "below C-1, which the 5B plays an octave under the note written: too low to be heard";
-			else if (Info.Kind == KIND_TRIANGLE && N.Pitch > 72)
-				Range = "above C-6, thin and shrill on the triangle";
-			else if (Info.Chip == "FDS" && N.Pitch > FDS_HIGHEST)
-				Range = "above G#7, the highest the FDS plays: its pitch register tops out there, so the note sounds flat";
-			else if (Info.Chip == "FDS" && N.Pitch < 21)
-				Range = "below A-1, which the FDS plays two octaves down, under 28 Hz: felt more than heard";
-			else if (N.Pitch - Written(Info, 0) > 84)
-				Range = "above C-7, very high";
-			else if (Info.Chip == "N163") {
-				const InstrumentInfo *pInstrument = FindInstrument(S.Song, N.Instrument);
-				const int Wave = pInstrument != 0 && pInstrument->WaveSize > 0 ? pInstrument->WaveSize : 16;
-				if (N.Pitch > HighestWhole(Wave))
-					Range = Format("above %s, where %s turn a %d-sample wave grainy (the chip skips some of its samples; fewer "
-						"N163 channels play higher)", PitchName(HighestWhole(Wave)).c_str(),
-						Plural(N163Channels, "N163 channel", "N163 channels").c_str(), Wave);
-			}
+			const std::string Range = NoteRangeReason(S, Info, N.Pitch, N.Instrument);
 			if (!Range.empty()) {
 				++OutOfRange;
 				CheckFinding &F = Report(FOUND_RANGE, c, N.Row, N.Rows, Format("Range: %s at %s is %s.", PitchName(N.Pitch).c_str(),
@@ -21111,6 +21940,7 @@ private:
 	Key m_Key;
 	bool m_HasKey;
 	int m_MixDue;				// MixDue's answer: -1 not worked out yet
+	bool m_Finishing;			// finish_song is a step: the last steps after it are in it
 
 	const NextKind &Kind() const { return NextKindInfo(m_KindId); }
 	bool Wanted(const std::string &Id) const { return m_Skip.count(Id) == 0; }
@@ -21148,6 +21978,7 @@ private:
 	Json FlatParts() const;
 	bool MixDue();				// a mix in the kind's style would change the song (worked out once)
 	void LoopSeam();
+	bool FinishStep(const std::string &From, const std::string &Why);
 	void Finish();
 	bool TipStep(const std::string &Tip);
 	bool Climax(const std::string &Tip);
@@ -21165,7 +21996,8 @@ private:
 };
 
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core(Core), m_All(BoolArg(Args, "all", false)),
-	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1)
+	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
+	m_Finishing(false)
 {
 	const std::string Asked = StringArg(Args, "kind");
 	if (!Asked.empty()) {
@@ -22753,11 +23585,7 @@ void WhatNext::Polish()
 		m_Unmet.insert("polish");
 		return;
 	}
-	Json A = Json::MakeObject();
-	if (Calm())
-		A.Set("style", "calm");
-	else if (m_KindId == NEXT_LIVELY)
-		A.Set("style", "lively");
+	Json A = KindPolish(m_KindId);	// as finish_song polishes
 	A.Set("melody_channel", ChannelName(m_Melody));
 	// Polished when no part plays at one volume (what accents shape) and the other touches would change nothing: accents
 	// on a part whose notes all fall on beats leave two volumes, which the next polish accents again, a step softer each time
@@ -22775,10 +23603,12 @@ void WhatNext::Polish()
 		Due = WouldChange(S, "polish", A);
 	if (Milestone("polish", !Wanted("polish") || !Due, "polished"))
 		return;
-	Step("polish", "polish", A, std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
+	const std::string Why = std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
 		"long notes, no accents (a calm song's notes don't push)." : m_KindId == NEXT_LIVELY ? "accents on the beats (a lively stage's "
 		"lead is a step louder on a bar's first note), a vibrato on long notes and gaps between repeated notes." : "accents on the "
-		"beats, a vibrato on long notes and gaps between repeated notes, so the parts sound played rather than typed."));
+		"beats, a vibrato on long notes and gaps between repeated notes, so the parts sound played rather than typed.");
+	if (!FinishStep("polish", Why))
+		Step("polish", "polish", A, Why);
 }
 
 // The mix in the kind's style, when it would change the song (a dry run of mix, so a mix once done isn't asked again)
@@ -22791,10 +23621,12 @@ void WhatNext::Mix()
 	const Json A = MixArgs();
 	if (Milestone("mix", !Wanted("mix") || !MixDue(), std::string("the mix (") + Kind().MixStyle + ")"))
 		return;
-	Step("mix", "mix", A, Calm() ? "The mix, last, as heard: the melody 2-3 dB over the chords, the echo and the rest well under it." :
+	const std::string Why = Calm() ? "The mix, last, as heard: the melody 2-3 dB over the chords, the echo and the rest well under it." :
 		m_KindId == NEXT_LIVELY ? "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, "
 		"the chords 3-4 dB under it and the band louder than the melody." :
-		"The mix, last: the melody's loudest at 9, an echo at 4, chords at 6, the pulses softer so the triangle comes through.");
+		"The mix, last: the melody's loudest at 9, an echo at 4, chords at 6, the pulses softer so the triangle comes through.";
+	if (!FinishStep("mix", Why))
+		Step("mix", "mix", A, Why);
 }
 
 // The loop's seam: what check_loop finds there that fix_loop writes
@@ -22816,28 +23648,61 @@ void WhatNext::LoopSeam()
 	const bool Fixable = !What.empty() && Wanted("seam") && WouldChange(S, "fix_loop", Json::MakeObject());
 	if (Milestone("seam", !Fixable, "the loop's seam"))
 		return;
-	Step("seam", "fix_loop", Json::MakeObject(), "check_loop finds the loop starting otherwise on repeat (" + What + "): fix_loop "
-		"writes what makes the repeats start as the first time does.");
+	const std::string Why = "check_loop finds the loop starting otherwise on repeat (" + What + "): fix_loop writes what makes the "
+		"repeats start as the first time does.";
+	if (!FinishStep("seam", Why))
+		Step("seam", "fix_loop", Json::MakeObject(), Why);
+}
+
+// The last steps in one call (finish_song, from feat-finish-guard): from this one on, the polish, the mix, the loop's seam
+// and the game's file, in this kind's way (finish_song's kinds are what_next's, at the same loudness). Polish is left out
+// when the mix comes first (once mixed, the song isn't polished again) and the mix when the seam does; so are the steps
+// the call skips. The file alone is export_for_game's
+bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
+{
+	if (m_Finishing)
+		return true;
+	if (!Looking() || (m_Core && !ToolSet::IsCoreTool("finish_song")))
+		return false;
+	const NextKind &K = Kind();
+	Json A = Json::MakeObject();
+	A.Set("kind", K.Name);
+	if (m_HasMelody)
+		A.Set("melody_channel", ChannelName(m_Melody));
+	Json Skip = Json::MakeArray();
+	if (From != "polish")
+		Skip.Push("polish");
+	if (From == "seam")
+		Skip.Push("mix");
+	if (!Wanted("seam"))
+		Skip.Push("loop");
+	if (!Wanted("export"))
+		Skip.Push("export");
+	if (Skip.Size() > 0)
+		A.Set("skip", Skip);
+	std::vector<std::string> After;
+	if (From == "polish")
+		After.push_back(std::string("the mix (") + K.MixStyle + ")");
+	if (From != "seam" && Wanted("seam"))
+		After.push_back("the loop's seam");
+	if (Wanted("export"))
+		After.push_back("the game's file at " + FormatNumber(K.Loudness) + " LUFS");
+	std::string Then;
+	for (size_t i = 0; i < After.size(); ++i)
+		Then += (i == 0 ? ", then " : i + 1 == After.size() ? " and " : ", ") + After[i];
+	if (!Step(From, "finish_song", A, Why + " finish_song does it" + Then + ", in one call that one Ctrl+Z undoes."))
+		return false;
+	m_Finishing = true;
+	return true;
 }
 
 // Saving, then the file for the game at the kind's loudness: done when the file next to the song is the song as it is now
 void WhatNext::Finish()
 {
-	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
-		if (S.Song.FileName.empty())
-			Ask("save", "The song hasn't been saved yet, and the game's file goes next to it: ask the user to save it (File > Save As), "
-				"then ask what_next again.");
-		else
-			Step("save", "save_song", Json::MakeObject(), "The song has changes that aren't saved: save it before the export.");
-	}
-	if (S.Song.FileName.empty()) {
-		m_Unmet.insert("exported");
-		return;
-	}
 	std::vector<std::string> Taken;
-	const std::string File = TrackFileName(S, S.Song.Track, Taken);
+	const std::string File = S.Song.FileName.empty() ? std::string() : TrackFileName(S, S.Song.Track, Taken);
 	std::string Bytes, Error, Print, Loudness;
-	if (S.Host().ReadFile(File, Bytes, Error)) {
+	if (!File.empty() && S.Host().ReadFile(File, Bytes, Error)) {
 		OggComments Comments;
 		if (ReadOggComments(Bytes, Comments, Error))
 			for (size_t i = 0; i < Comments.size(); ++i) {
@@ -22850,6 +23715,22 @@ void WhatNext::Finish()
 	const NextKind &K = Kind();
 	const bool Current = !Print.empty() && Print == SoundPrint(S);
 	const bool AtLoudness = !Loudness.empty() && std::fabs(std::atof(Loudness.c_str()) - K.Loudness) < 0.05;
+	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
+		if (S.Song.FileName.empty())
+			Ask("save", "The song hasn't been saved yet, and the game's file goes next to it: ask the user to save it (File > Save As), "
+				"then ask what_next again.");
+		else
+			Step("save", "save_song", Json::MakeObject(), (Current && AtLoudness) || m_Finishing ? "The song has changes that aren't "
+				"saved: save them (the game's file has them already)." : "The song has changes that aren't saved: save it before the export.");
+	}
+	if (S.Song.FileName.empty()) {
+		m_Unmet.insert("exported");
+		return;
+	}
+	if (m_Finishing) {
+		m_Unmet.insert("exported");	// finish_song makes it
+		return;
+	}
 	if (Milestone("exported", (Current && AtLoudness) || !Wanted("export"), "exported (" + File + ")"))
 		return;
 	Json A = Json::MakeObject();
@@ -23245,7 +24126,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"a step of rest; a note lasts until the next pitch or rest. \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\" is two bars "
 		"of 4/4. Each bar holds the meter's steps (8 eighths in 4/4, 6 in 3/4 or 6/8); B4v12 gives a volume; notes left where "
 		"they were (read_notes with format steps) keep their instrument and effects. A phrase of 2 or 4 bars breathes at its "
-		"end, not at every bar line. Unless the user allowed direct changes, the part becomes a clip "
+		"end, not at every bar line. The reply warns at once of notes outside the channel's range, a bass too low to be heard "
+		"or a melody an octave high, notes outside the key, a bass that leaves its channel nearly silent and a sound the channel "
+		"doesn't play as it's meant, each with what to do. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
 		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "; on N163 channels the N163 sounds: " + WaveSoundList() +
 		"; on the FDS channel the FDS sounds: " + FdsSoundList() + "). On the FDS, notes sound two octaves under the note written. "
@@ -24111,6 +24994,37 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"than the 400 ms blocks loudness is gated in is measured over its whole length.")),
 		false);
 
+	{
+		Json Skips = Prop("array", "Steps to leave out: polish, faders, mix, loop (check_loop and fix_loop) or export.");
+		Json SkipItem = Json::MakeObject();
+		SkipItem.Set("type", "string");
+		Json SkipNames = Json::MakeArray();
+		for (const char *Step : { "polish", "faders", "mix", "loop", "export" })
+			SkipNames.Push(Step);
+		SkipItem.Set("enum", SkipNames);
+		Skips.Set("items", SkipItem);
+		AddTool("finish_song", "Finish the song",
+			"The last steps of a song in one call, as the recipes (and what_next) ask for them for its kind: polish with the "
+			"kind's touches, the mixer's faders back at 0 dB where they do the mix's work (as check_song's faders finding has it), "
+			"mix in the kind's style (calm, lively, or soft for action and the general recipe), check_loop and fix_loop where "
+			"the seam needs it, and export_for_game at the kind's loudness (-22 "
+			"LUFS calm, -20 lively and general, -19 action; a cue -20, a sound effect -18). Without a kind it's calm when the "
+			"track's name says so, else the general recipe's; a cue or a sound effect keeps its notes as written and gets its "
+			"file. The song's changes are one Ctrl+Z; the reply is a line a step, then what to listen for. Run it once the "
+			"parts are written and check_song and review_arrangement are clean. Needs direct changes; the export needs the song "
+			"saved.",
+			Schema()
+				.Add("kind", EnumProp("calm, lively or action (default: calm when the track's name says so, else general).",
+					std::vector<std::string>{ "calm", "lively", "action", "general" }))
+				.Add("skip", Skips)
+				.Add("faders", EnumProp("auto (the default: back to 0 dB when they do the mix's work), keep (as the user set them) or "
+					"reset (every fader to 0 dB before the mix).", std::vector<std::string>{ "auto", "keep", "reset" }))
+				.Add("melody_channel", ChannelProp("The melody (default: guessed, and named in the reply)."))
+				.Add("loudness", Prop("number", "The export's loudness in LUFS, -40 to -6, instead of the kind's."))
+				.Add("quality", Prop("number", "The OGG file's quality from 0 (small) to 1 (best); default 0.6.")),
+			false, true);
+	}
+
 	AddTool("measure_mix", "Measure the mix",
 		"Measures the selected track as export_for_game renders it, changing nothing (no file is written): the loudness (LUFS, "
 		"both sides as BS.1770 sums them, as export_for_game measures) and peak of each section (every 4 bars without sections) "
@@ -24525,7 +25439,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
-		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args);
+		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
 		else if (Name == "place_clip") Result.Text = PlaceClipTool(S, Args);
 		else if (Name == "add_instrument") Result.Text = AddInstrumentTool(S, Args);
 		else if (Name == "design_instrument") Result.Text = DesignInstrumentTool(S, Args);
@@ -24586,6 +25500,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
+		else if (Name == "finish_song") Result.Text = FinishSongTool(S, Args, Who.FilesUrl);
 		else if (Name == "measure_mix") Result.Text = MeasureMixTool(S, Checked);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
@@ -24719,7 +25634,8 @@ bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::strin
 // The composing essentials, for local models that struggle with many tools: what_next and every tool its steps call
 // (the song's frame: tempo, key, sections; its parts: notes, sounds, chords and bass, a melody grown from a hook,
 // drums; its form: bars put in and copied; depth: a harmony (cleaner beside the chords than a counter-melody),
-// variations, an echo; the loop; polish, mix, the checks, saving, export), the sounds a part can find and take
+// variations, an echo; the loop; polish, mix, the checks, saving, export, and finish_song for the last of them in one
+// call), the sounds a part can find and take
 // (find_sound, reference_sound), the swing a local model reached for, playback, and the recipes. Not set_mixer: mix sets
 // the volumes in the notes.
 const std::vector<std::string> &ToolSet::CoreTools()
@@ -24728,7 +25644,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"get_recipe" };
+		"finish_song", "get_recipe" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
