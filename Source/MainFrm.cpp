@@ -3126,10 +3126,12 @@ void CMainFrame::OnEditUndo()
 {
 	ASSERT(m_pActionHandler != NULL);
 
+	const int RollChannel = RollChannelBefore();
 	CAction *pAction = m_pActionHandler->PopUndo();
 
 	if (pAction != NULL) {
 		pAction->Undo(this);
+		RollChannelAfter(RollChannel);
 		SyncClips();
 		SongChanged();
 	}
@@ -3139,13 +3141,32 @@ void CMainFrame::OnEditRedo()
 {
 	ASSERT(m_pActionHandler != NULL);
 
+	const int RollChannel = RollChannelBefore();
 	CAction *pAction = m_pActionHandler->PopRedo();
 
 	if (pAction != NULL) {
 		pAction->Redo(this);
+		RollChannelAfter(RollChannel);
 		SyncClips();
 		SongChanged();
 	}
+}
+
+// Ctrl+Z and Ctrl+Y in the piano roll leave it on the channel it edits: undoing a groove or a Claude Code change would
+// put the cursor on the first channel it wrote, which the piano roll follows, dropping its selection
+int CMainFrame::RollChannelBefore() const
+{
+	const CFamiTrackerView *pView = static_cast<const CFamiTrackerView*>(GetActiveView());
+	return FocusedPianoRoll() != NULL && pView != NULL ? pView->GetPatternEditor()->GetChannel() : -1;
+}
+
+void CMainFrame::RollChannelAfter(int Channel)
+{
+	CFamiTrackerView *pView = static_cast<CFamiTrackerView*>(GetActiveView());
+	if (Channel < 0 || pView == NULL || pView->GetPatternEditor()->GetChannel() == Channel ||
+		Channel >= static_cast<int>(pView->GetDocument()->GetAvailableChannels()))
+		return;
+	pView->SelectChannel(static_cast<unsigned int>(Channel));
 }
 
 void CMainFrame::SyncClips()

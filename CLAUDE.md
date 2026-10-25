@@ -777,7 +777,12 @@ right after it is a click. MFC focuses the active view whenever the main
 window is activated again (after any dialog or message box,
 `CView::OnActivateView`), so `CPianoRollWnd::OnKillFocus` notes when the
 keys leave the window from the piano roll and `CMainFrame::OnActivate` gives
-them back (`TakeKeysBack`; not on `WA_CLICKACTIVE`, where the click decides).
+them back (`TakeKeysBack`; not on `WA_CLICKACTIVE`, where the click decides),
+and Ctrl+Z and Ctrl+Y pressed in the piano roll put the cursor back on its
+channel after the action moved it (`RollChannelBefore` and
+`RollChannelAfter` in `OnEditUndo` and `OnEditRedo`: undoing a groove or
+another tool's change put it on the first channel written, and the piano
+roll, following it, dropped its selection).
 View > Piano roll's check mark, `NoteViews` and `GetPianoRollWnd` use
 `CPianoRollBar::IsOpen` (set by `Opened`): `CControlBar::IsVisible` reported
 the bar hidden in some layouts under Wine (the pattern editor hidden, the

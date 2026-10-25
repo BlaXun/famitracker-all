@@ -434,7 +434,8 @@ lost; when the piano roll is too short for those rows and its notes, the
 buttons that don't fit go under More, at the end of the last row (a taller
 piano roll shows them again). A click that only closes a menu (a button's, or any other) does
 nothing else in the piano roll, and after a dialog or a message box the keys
-come back to the piano roll if it had them.
+come back to the piano roll if it had them. Ctrl+Z and Ctrl+Y there keep it
+on its channel, with its selection, whatever channels the change was on.
 
 Editing, in the bright channel:
 

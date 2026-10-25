@@ -176,6 +176,8 @@ private:
 	void	ShowNoteViews(const note_views_t &Views);
 	void	ArrangeBars();
 	CPianoRollWnd *FocusedPianoRoll() const;	// the piano roll, when it has the keys
+	int RollChannelBefore() const;			// Ctrl+Z and Ctrl+Y in the piano roll keep its channel...
+	void RollChannelAfter(int Channel);		// ...putting the cursor back on it
 
 private:  // control bar embedded members
 	CStatusBar			m_wndStatusBar;
