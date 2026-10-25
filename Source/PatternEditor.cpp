@@ -1949,6 +1949,19 @@ int CPatternEditor::GetChannelAtPoint(int PointX) const
 	return m_iFirstChannel + m_iChannelsVisible;
 }
 
+bool CPatternEditor::GetChannelRect(int Channel, CRect &Rect) const
+{
+	Rect.SetRectEmpty();
+	if (Channel < m_iFirstChannel || Channel >= m_iFirstChannel + m_iChannelsVisible || Channel >= GetChannelCount())
+		return false;
+	const int Left = ROW_COLUMN_WIDTH + m_iChannelOffsets[Channel] - m_iChannelOffsets[m_iFirstChannel];
+	const int Right = std::min(Left + m_iChannelWidths[Channel], m_iWinWidth);
+	if (Right <= Left)
+		return false;
+	Rect.SetRect(Left, 0, Right, m_iWinHeight);
+	return true;
+}
+
 int CPatternEditor::GetColumnAtPoint(int PointX) const
 {
 	// Convert X position to column number

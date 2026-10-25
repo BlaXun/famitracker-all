@@ -1,0 +1,70 @@
+; Help > Example songs: the walkthrough of first-song.ftm, which opens with it.
+; The format is in Source/TutorialScript.h.
+
+title: First song
+about: A tune, a bass and drums on the NES's own chip, and what an instrument's volume envelope does. About five minutes.
+
+step
+show: window
+text: This is an example song, opened as a new song: change anything you like. When you save it, FamiTracker asks for a name, so the example itself stays as it is.
+
+  The box in front holds the song's comments, a few lines on what it shows (Module > Comments shows them again). Close it, then press Next.
+
+step
+show: pattern
+play: bars 1-16
+text: First the whole song: 16 bars, about half a minute. Press Play below and watch the pattern editor follow the music down the rows. The walkthrough goes on when it's done.
+wait: heard
+
+step
+show: channel Pulse 1
+play: bars 1-4
+solo: Pulse 1
+text: The tune is on Pulse 1, the first column. Each row with a note is a moment a note starts: E-3 is the note E, and the 3 says how high (a higher number, higher notes). The 00 next to it is the instrument it plays with.
+
+  This step lets only Pulse 1 be heard, so the other channels' names at the top turn grey. Listen to the tune alone.
+
+step
+show: channel Triangle
+play: bars 1-4
+solo: Triangle
+text: The triangle plays the bass, the low notes under the tune: a few in every bar, now and then the same note an octave higher.
+
+  The triangle can't play louder or softer: a note is on or off. That's why the bass sounds as strong as it does.
+
+step
+show: channel Noise
+play: bars 1-4
+solo: Noise
+text: The drums are on the noise channel. A kick, a snare and a hi-hat are noise at different pitches, each with a short instrument of its own (03 to 07). The noise channel plays one drum at a time.
+
+step
+show: channel Pulse 1
+play: bars 7-10
+solo: Pulse 1
+text: At bar 9 the tune starts again with instrument 01 instead of 00. The notes are the same. Listen across the change: up to bar 8 each note stays loud while it lasts; from bar 9 each one fades away by itself, like a plucked string.
+
+step
+show: instruments
+instrument: 01
+text: What makes the difference is the instrument's volume envelope. Instrument 01 is picked in the list: double-click it to open it.
+
+  The bars of its Volume graph are its loudness a sixtieth of a second at a time: high at the start, then falling to nothing. Instrument 00's bars fall a little and then stay up. Close the editor when you've had a look.
+
+step
+show: channel Pulse 2
+play: bars 9-12
+solo: Pulse 1, Pulse 2
+text: In bars 9 to 16, Pulse 2 joins in with a second voice a little under the tune, so two notes sound together. Here are the two pulses together.
+
+step
+show: frames
+text: The frame list is the song's order. Each line plays one pattern for every channel, two bars here, and after the last line the song starts again from the top.
+
+  The coloured bands beside it name the song's parts: "Held" for bars 1 to 8 and "Plucked" for bars 9 to 16.
+
+step
+show: window
+text: That's the whole song. Now make it yours: switch editing on (space) and type new notes over the tune, or pick instrument 01 and play the keys. Ctrl+S saves your version under a name of your own.
+
+  Help > Example songs has three more: NES tricks, the VRC6, and soft sounds in stereo.

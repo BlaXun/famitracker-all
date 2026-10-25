@@ -1,0 +1,64 @@
+; Help > Example songs: the walkthrough of soft-and-wide.ftm, which opens with it.
+; The format is in Source/TutorialScript.h.
+
+title: Soft and wide
+about: This FamiTracker's own: the VRC6 Plus's soft layer, notes placed left and right, and the mixer's Soft and Space knobs. Headphones help. About six minutes.
+
+step
+show: window
+text: This calm example shows three things only this FamiTracker has: a soft layer of extra channels, stereo, and a mixer that rounds sounds and gives them a room to ring in. Headphones help to hear them. It's opened as a new song: saving asks for a name, and the example stays as it is.
+
+  The box in front holds the song's comments. Close it, then press Next.
+
+step
+show: pattern
+play: bars 1-16
+text: The whole song first, about three quarters of a minute: four bars of strings and a music box, the tune from bar 5, and a soft ending. Press Play.
+wait: heard
+
+step
+show: channel Soft 1
+play: bars 1-4
+solo: Soft 1, Soft 2, Soft 3
+text: The song uses the VRC6 Plus: the VRC6 with a soft layer under it, four more channels called Soft 1 to Soft 4, whose sounds are smooth waves. Here Soft 1, Soft 2 and Soft 3 hold the chords with a string pad: one note each, three together make a chord.
+
+step
+show: channel Pulse 1
+play: bars 1-2
+solo: Pulse 1
+text: In the intro a music box plays on the 2A03's Pulse 1. With headphones, hear its notes go left, right, left: the effect 8 places a note between the speakers, 800 far left, 880 the middle, 8FF far right. These notes alternate between 833 and 8CC.
+
+step
+show: channel VRC6 Pulse 1
+play: bars 5-8
+solo: VRC6 Pulse 1
+text: The tune comes in at bar 5 on the VRC6's first pulse, with an instrument that breathes in softly, then settles. It stays in the middle, between the speakers.
+
+step
+show: channel VRC6 Pulse 2
+play: bars 5-8
+solo: VRC6 Pulse 1, VRC6 Pulse 2
+text: The VRC6's second pulse echoes the tune a beat later, softer and over on the right (8C0), so the echo doesn't blur the tune in the middle.
+
+step
+show: mixer
+text: View > Mixer gives every channel a strip: a fader for its level, M and S to mute it or hear it alone, and two knobs, Soft and Space. Soft rounds a channel's sound off; Space sends it into a room, a hall in this song (the bar at the top chooses it), where it rings on after the notes.
+
+  The tune's strip (Pulse 1, with VRC6 Plus under it) has Space 35, the music box's (Pulse 1, 2A03) 50 and the strings' 20; the bass has none.
+
+step
+show: mixer
+play: bars 5-8
+solo: VRC6 Pulse 1
+text: Hear what Space does, on the tune alone: press Play and listen to each note ring on after it ends. Then double-click the Space knob on the tune's strip to turn it off and press Play again: now each note stops dry. Ctrl+Z puts the knob back. (Dragging a knob up or down turns it.)
+
+step
+show: channel Triangle
+play: bars 9-12
+text: All together in bars 9 to 12: the strings, the tune, its echo on the right, and the triangle's bass, one long note in every bar.
+
+step
+show: window
+text: These things are this FamiTracker's own. Other FamiTrackers play the song in mono and without Soft and Space, and see the soft layer as a Namco N163 chip. File > Export for games keeps them all in the OGG files for your game.
+
+  That's the last example. Help > Tutorials has the tours of FamiTracker itself.

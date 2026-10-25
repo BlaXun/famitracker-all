@@ -40,13 +40,38 @@
 //
 // "show" is a part of the window (window, pattern, frames, instruments,
 // song-settings, song-info, octave, toolbar, status-bar, clips, piano-roll,
-// drum-grid), a toolbar button ("button play") or a menu ("menu Edit"); a
-// step about the pattern editor, the clips panel, the piano roll or the drum
-// grid shows it if it's hidden (View > Pattern editor hides the pattern
-// editor, and the piano roll takes its place). "wait" is next
+// drum-grid, mixer), a toolbar button ("button play"), a menu ("menu Edit")
+// or a channel's column in the pattern editor ("channel Triangle"); a step
+// about the pattern editor (or a channel), the clips panel, the piano roll,
+// the drum grid or the mixer shows it if it's hidden (View > Pattern editor
+// hides the pattern editor, and the piano roll takes its place). "wait" is next
 // (the default), edit-mode, edit-mode-off, play, stop, notes N, instrument,
-// clip, saved, or command NAME for a menu item, button or shortcut key; the
-// names are listed with TutorialCommandNames.
+// clip, saved, heard, or command NAME for a menu item, button or shortcut
+// key; the names are listed with TutorialCommandNames.
+//
+// The example songs (Help > Example songs, res/examples) come with
+// walkthroughs: tutorials whose steps also take the user to a bar, play some
+// bars and let one part be heard alone:
+//
+//   step
+//   show: channel Triangle
+//   play: bars 5-8
+//   solo: Triangle
+//   text: The bass, on its own.
+//   wait: heard
+//
+// "bar: N" puts the cursor at the start of bar N as the step begins (bars
+// count from 1, as the piano roll's ruler numbers them). "play: bar N" or
+// "play: bars N-M" gives the note a Play button that plays those bars and
+// stops after them (the cursor goes to the first unless "bar" says
+// otherwise); "wait: heard" goes on once they've played to the end. "solo:
+// A, B" lets only those channels be heard while the step lasts, and "mute:
+// A, B" silences them; the channels come back as they were after it.
+// "instrument: NN" picks an instrument, numbered in hex as the list shows it.
+// Channels are named as the pattern editor's header names them ("Pulse 1",
+// "Triangle", "Sawtooth", "Soft 1"), with the chip in front where two chips
+// have a channel of that name ("VRC6 Pulse 1"; without it, the first one,
+// which is the 2A03's).
 //
 // This is plain C++ that the tests build on Linux (Source/Tests).
 
@@ -64,17 +89,25 @@ enum tutorial_wait_t {
 	WAIT_CLIP,				// another clip
 	WAIT_SAVED,				// the song saved to a file
 	WAIT_COMMAND,			// the command Name (a menu item, toolbar button or shortcut key)
+	WAIT_HEARD,				// the step's bars (play) played to their end
 };
 
 struct tutorial_step_t {
-	std::string Show;		// "pattern", "button", "menu", ...
-	std::string ShowName;	// what follows: "play" for "button play", "Edit" for "menu Edit"
+	std::string Show;		// "pattern", "button", "menu", "channel"...
+	std::string ShowName;	// what follows: "play" for "button play", "Edit" for "menu Edit", "Triangle" for "channel Triangle"
 	std::string Text;		// paragraphs apart by "\n"
 	tutorial_wait_t Wait;
 	int Count;				// WAIT_NOTES
 	std::string Command;	// WAIT_COMMAND
+	int Bar;				// the bar the cursor goes to as the step begins (from 1), 0 for none
+	int PlayFirst;			// the bars the step's Play button plays (from 1, both in), 0 for no button
+	int PlayLast;
+	std::vector<std::string> Solo;	// the channels heard alone while the step lasts
+	std::vector<std::string> Mute;	// the channels silent while it lasts
+	int Instrument;			// picked as the step begins, -1 for none
 
-	tutorial_step_t() : Wait(WAIT_NEXT), Count(1) {}
+	tutorial_step_t() : Wait(WAIT_NEXT), Count(1), Bar(0), PlayFirst(0), PlayLast(0), Instrument(-1) {}
+	int CursorBar() const { return Bar > 0 ? Bar : PlayFirst; }	// where the step puts the cursor, 0 for nowhere
 };
 
 struct tutorial_t {
@@ -91,3 +124,19 @@ bool ParseTutorial(const std::string &Text, tutorial_t &Tutorial, std::string &E
 // or show the toolbar button of (Tutorial.cpp knows their IDs)
 bool IsTutorialPart(const std::string &Name);
 const std::vector<std::string> &TutorialCommandNames();
+
+// A channel as the song has it, for finding the one a tutorial names
+struct tutorial_channel_t {
+	std::string Name;		// as FamiTracker names it: "Pulse 1", "Triangle", "Soft 1"
+	std::string Chip;		// "2A03", "VRC6", "VRC7", "FDS", "MMC5", "N163" or "5B"
+	bool Vrc6Plus;			// one of the VRC6 Plus's channels (its VRC6 channels and the soft layer)
+	tutorial_channel_t(const std::string &Name, const std::string &Chip, bool Vrc6Plus = false) :
+		Name(Name), Chip(Chip), Vrc6Plus(Vrc6Plus) {}
+};
+
+// Whether Name names a channel FamiTracker can have ("Triangle", "VRC6 Pulse
+// 1"), whatever the case
+bool IsTutorialChannel(const std::string &Name);
+// The column of the song's channel that Name names (Channels in column
+// order), or -1 when the song has none of that name
+int FindTutorialChannel(const std::string &Name, const std::vector<tutorial_channel_t> &Channels);
