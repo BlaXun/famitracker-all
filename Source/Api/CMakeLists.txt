@@ -111,6 +111,7 @@ add_library(ftapi STATIC
 	References.cpp
 	StyleGuide.cpp
 	Tools.cpp
+	WhatNext.cpp
 	${TRANSCRIBE}/WavReader.cpp
 	${TRANSCRIBE}/PitchTracker.cpp
 	${TRANSCRIBE}/Guess.cpp
