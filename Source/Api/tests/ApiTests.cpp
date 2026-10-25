@@ -18299,6 +18299,39 @@ void TestMixFadersReset()
 	CHECK(Run(Plain, "mix", "{\"faders\": \"zero\"}").IsError);
 }
 
+// vary_part's embellish (the fix for a repeat that copies) keeps its ornaments off a semitone against the other parts,
+// as check_song hears a clash: a passing D-4 between C-4 and E-4 would rub against the D#4 VRC6 Pulse 2 sounds there, so
+// that one is left out and the bar's other two are kept
+void TestEmbellishWithoutRubs()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "E-4");
+	Song.End(5, 16, NOTE_RELEASE);
+	Song.Put(6, 2, "D#4", 0);
+	Song.End(6, 4, NOTE_RELEASE);
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, " 0 clashes,");
+	const ToolResult Result = Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, "
+		"\"to_bar\": 1, \"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(2 changes; 1 ornament left out, a semitone from another part)");
+	CHECK_HAS(Notes(Song, 5, 0, 16), "0:C-4 4:E-4 6:F-4 8:G-4 10:F-4 12:E-4 ");
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, " 0 clashes,");
+	// Without the other part the passing note comes
+	FakeSong Alone;
+	Alone.Info.DirectChanges = true;
+	Alone.Put(5, 0, "C-4", 0);
+	Alone.Put(5, 4, "E-4");
+	Alone.Put(5, 8, "G-4");
+	Alone.End(5, 12, NOTE_RELEASE);
+	CHECK_LACKS(Run(Alone, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, \"to_bar\": 1, "
+		"\"key\": \"C major\"}").Text, "left out");
+	CHECK_HAS(Notes(Alone, 5, 0, 12), "0:C-4 2:D-4 4:E-4 6:F-4 8:G-4 ");
+}
+
 int main()
 {
 	TestJson();
@@ -18467,6 +18500,7 @@ int main()
 	TestShortReplies();
 	TestMixFadersReset();
 	TestProblemListArrangement();
+	TestEmbellishWithoutRubs();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -13352,7 +13352,7 @@ std::string VaryPartTool(Session &S, const Json &Args)
 				return Pitch + Direction * s;
 		return Pitch + Direction;
 	};
-	int Changed = 0;
+	int Changed = 0, Rubbing = 0;
 	std::vector<PartNote> Out;
 	std::string EndingChord;	// the ending: the chord under it, when that hasn't the tonic
 	switch (Variation) {
@@ -13361,6 +13361,39 @@ std::string VaryPartTool(Session &S, const Json &Args)
 				// shorter one (two sixteenths or more, as a lively melody's are) gives its last sixteenth
 		std::map<int, int> PerBar;
 		const int Sixteenth = std::max(1, R / 4);
+		// An ornament stays off a semitone rub (SemitoneRub, as check_song hears a clash) against what the other parts sound
+		// over its rows, as add_harmony's notes do: one that would rub is left out (Rubbing counts them)
+		struct Sounding { int Row, End; std::vector<int> Pitches; };
+		std::vector<Sounding> Others;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == Channel || !IsMelodic(S.Channel(c)))
+				continue;
+			const int Lift = Written(S.Channel(c), 0);
+			const std::vector<NoteInfo> &Theirs = S.Notes(c);
+			const std::vector<int> Arps = StickyAt(S.Cells(c), Theirs, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+			for (size_t i = 0; i < Theirs.size(); ++i) {
+				const int Stop = Theirs[i].Row + std::max(1, Theirs[i].Rows);
+				if (Theirs[i].Volume <= 0 || Stop <= First || Theirs[i].Row >= End)
+					continue;
+				Sounding o;
+				o.Row = Theirs[i].Row;
+				o.End = Stop;
+				o.Pitches.push_back(Theirs[i].Pitch - Lift);
+				const std::vector<int> Chord = ChordAbove(S, Theirs[i], Arps[i]);
+				for (size_t a = 0; a < Chord.size(); ++a)
+					o.Pitches.push_back(Theirs[i].Pitch - Lift + Chord[a]);
+				Others.push_back(o);
+			}
+		}
+		const int Lifted = Written(Info, 0);
+		auto Rubs = [&](int Pitch, int Row, int Rows) {
+			for (size_t k = 0; k < Others.size(); ++k)
+				if (Others[k].Row < Row + Rows && Others[k].End > Row)
+					for (size_t p = 0; p < Others[k].Pitches.size(); ++p)
+						if (SemitoneRub(Pitch - Lifted, Others[k].Pitches[p]))
+							return true;
+			return false;
+		};
 		auto Ornament = [&](const PartNote &From, int Row, int Rows, int Pitch) {
 			PartNote B = From;
 			B.Row = Row;
@@ -13386,6 +13419,11 @@ std::string VaryPartTool(Session &S, const Json &Args)
 			if (A.Rows >= R && (Third || Gap == 0)) {
 				const int Half = std::max(1, (A.Rows / 2) / std::max(1, R / 2) * std::max(1, R / 2));
 				const PartNote B = Ornament(A, A.Row + Half, A.Rows - Half, Gap == 0 ? Step(A.Pitch, 1) : Step(A.Pitch, Gap > 0 ? 1 : -1));
+				if (Rubs(B.Pitch, B.Row, B.Rows)) {
+					++Rubbing;
+					Out.push_back(A);
+					continue;
+				}
 				A.Rows = Half;
 				A.LaterEffects.clear();
 				Out.push_back(A);
@@ -13394,6 +13432,12 @@ std::string VaryPartTool(Session &S, const Json &Args)
 			else if (IntoLong && A.Rows >= 4 * Sixteenth) {
 				// A turn: above, on and below the long note's pitch in the last three sixteenths, then the long note
 				const int Target = Notes[i + 1].Pitch, Turn[3] = { Step(Target, 1), Target, Step(Target, -1) };
+				const int At = A.Row + A.Rows - 3 * Sixteenth;
+				if (Rubs(Turn[0], At, Sixteenth) || Rubs(Turn[1], At + Sixteenth, Sixteenth) || Rubs(Turn[2], At + 2 * Sixteenth, Sixteenth)) {
+					++Rubbing;
+					Out.push_back(A);
+					continue;
+				}
 				A.Rows -= 3 * Sixteenth;
 				A.LaterEffects.clear();
 				Out.push_back(A);
@@ -13407,6 +13451,11 @@ std::string VaryPartTool(Session &S, const Json &Args)
 				const int Pitch = Gap == 0 ? Step(A.Pitch, 1) : Third ? Step(A.Pitch, Gap > 0 ? 1 : -1) :
 					std::abs(Gap) <= 2 ? Step(Target, Gap > 0 ? 1 : -1) : Step(Target, Gap > 0 ? -1 : 1);
 				if (Pitch == A.Pitch || Pitch == Target) {
+					Out.push_back(A);
+					continue;
+				}
+				if (Rubs(Pitch, A.Row + A.Rows - Sixteenth, Sixteenth)) {
+					++Rubbing;
 					Out.push_back(A);
 					continue;
 				}
@@ -13509,7 +13558,8 @@ std::string VaryPartTool(Session &S, const Json &Args)
 		PitchName(Out.back().Pitch) + ", which " + EndingChord + " under it has (the tonic would clash with it)") + ", " +
 		RangeText(From, To);
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
-		Format(" (%s)", Plural(Changed, "change", "changes").c_str()), Warnings);
+		Format(" (%s%s)", Plural(Changed, "change", "changes").c_str(), Rubbing > 0 ? Format("; %s left out, a semitone from another "
+		"part", Plural(Rubbing, "ornament", "ornaments").c_str()).c_str() : ""), Warnings);
 }
 
 // The soundtrack's notes (SOUNDTRACK_NOTES): a text file beside the song,
