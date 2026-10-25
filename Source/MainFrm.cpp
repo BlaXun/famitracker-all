@@ -1782,12 +1782,7 @@ void CMainFrame::OnUpdateTempoEdit(CCmdUI *pCmdUI)
 		}
 		else if (m_bBPM) {
 			pCmdUI->SetText(BPMText());
-			// A song shown as the frames a row lasts says so: Speed, 1 frame
-			CString Label;
-			m_wndDialogBar.GetDlgItemText(IDC_TEMPO_LABEL, Label);
-			const CString Wanted = BPMFrames() ? _T("Speed") : _T("BPM");
-			if (Label != Wanted)
-				m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, Wanted);
+			ShowBPMLabel();	// another track's speed
 		}
 		else {
 			pCmdUI->SetText(MakeIntString(static_cast<CFamiTrackerDoc*>(GetActiveDocument())->GetSongTempo(m_iTrack)));
@@ -1945,6 +1940,14 @@ void CMainFrame::LayoutSongSettings(bool BPM)
 			Rect.bottom -= Row;
 		else if (BPM && !Speed)
 			Rect.OffsetRect(0, -Row);
+		if (BPM && IDS[i] == IDC_TEMPO) {
+			// Room for "1 frame" (a song at speed 1, BPMFrames): the box starts just after its label's longest word
+			CClientDC Dc(&m_wndDialogBar);
+			CFont *pOld = Dc.SelectObject(m_wndDialogBar.GetDlgItem(IDC_TEMPO_LABEL)->GetFont());
+			const int Label = Dc.GetTextExtent(CString(_T("Speed "))).cx;
+			Dc.SelectObject(pOld);
+			Rect.left = std::min(Rect.left, std::max(m_rcSongSettings[4].left + Label, Rect.left - Rect.Width() / 2));
+		}
 		pWnd->MoveWindow(&Rect, FALSE);
 		pWnd->ShowWindow(BPM && Speed ? SW_HIDE : SW_SHOW);
 	}
@@ -1964,6 +1967,15 @@ double CMainFrame::CurrentBPM() const
 	const unsigned int Track = static_cast<unsigned int>(m_iTrack);
 	return SongBPM(static_cast<int>(pDoc->GetSongSpeed(Track)), static_cast<int>(pDoc->GetSongTempo(Track)),
 		static_cast<int>(pDoc->GetFrameRate()), pDoc->GetFirstHighlight());
+}
+
+void CMainFrame::ShowBPMLabel()
+{
+	CString Label;
+	m_wndDialogBar.GetDlgItemText(IDC_TEMPO_LABEL, Label);
+	const CString Wanted = BPMFrames() ? _T("Speed") : _T("BPM");
+	if (Label != Wanted)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, Wanted);
 }
 
 bool CMainFrame::BPMFrames() const
@@ -2003,12 +2015,13 @@ void CMainFrame::SetBPM(int Bpm)
 		Speed = 1;
 		Tempo = FrameTempo(static_cast<int>(pDoc->GetFrameRate()));
 	}
-	else
+	else	// a BPM leaves speed 1 (the chooser keeps the current speed when it can; from a row a frame it starts at 6)
 		SpeedTempoForBPM(std::max(BPM_LEAST, std::min(BPM_MOST, Bpm)), pDoc->GetFirstHighlight(), static_cast<int>(pDoc->GetFrameRate()),
-			Speed, pDoc->GetSpeedSplitPoint(), Speed, Tempo);
+			BPMShowsFrames(Speed) ? 6 : Speed, pDoc->GetSpeedSplitPoint(), Speed, Tempo);
 	SetSpeed(Speed);
 	SetTempo(Tempo);
 	m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPMText());
+	ShowBPMLabel();
 	pDoc->SetModifiedFlag();
 }
 
