@@ -553,10 +553,12 @@ private:
 		SoundEntry E = Base(Name, Sound.Words, Target, Home);
 		E.Source = SOURCE_REFERENCE;
 		E.Game = R.Game;
-		// Under its game's heading: the track and the part ("Needle Man (track 2), the lead")
+		// Under its game's heading: the track and the part ("Needle Man (track 2), the lead"; "track 2, the lead" for a
+		// track the NSF names no better)
 		const std::string Track = R.Track > 0 ? "track " + std::to_string(R.Track) : std::string();
-		E.About = (R.Title.empty() ? (Track.empty() ? R.Id : Track) : R.Title + (Track.empty() ? std::string() : " (" + Track + ")")) +
-			(Sound.Role.empty() ? std::string() : ", " + Sound.Role);
+		const bool Named = !R.Title.empty() && Lowercase(R.Title) != Track;
+		E.About = (!Named ? (Track.empty() ? (R.Title.empty() ? R.Id : R.Title) : Track) : R.Title + (Track.empty() ? std::string() :
+			" (" + Track + ")")) + (Sound.Role.empty() ? std::string() : ", " + Sound.Role);
 		E.Kind = Kind;
 		E.Drum = Sound.Noise;
 		E.Low = E.Kind == "bass";

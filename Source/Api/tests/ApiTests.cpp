@@ -12964,6 +12964,16 @@ void TestSoundGroups()
 		All[Groups[1].Sounds[1]].About == "Brass Game theme 1 (track 1), a second part" &&
 		All[Groups[1].Sounds[2]].About == "Brass Game theme 2 (track 2), the lead");
 	CHECK(All[Groups[0].Sounds[0]].About == All[Groups[0].Sounds[0]].Words && !All[Groups[0].Sounds[0]].About.empty());
+	// A track the NSF names no better than "Track 2" is just that
+	std::vector<Reference> Untitled = GroupedLibrary(std::vector<std::string>{ "Plain Game" }, 2);
+	Untitled[1].Title = "Track 2";
+	const std::vector<SoundEntry> Plain = ListSounds(Song, Untitled, std::vector<SoundUse>(64), -1);
+	bool Short = false, Long = false;
+	for (size_t i = 0; i < Plain.size(); ++i) {
+		Short = Short || Plain[i].About == "track 2, the lead";
+		Long = Long || Plain[i].About == "Plain Game theme 1 (track 1), the lead";
+	}
+	CHECK(Short && Long);
 	// The counts of each kind, as the groups have them
 	const std::vector<int> Counts = KindCounts(All, Found);
 	CHECK_EQ(Counts.size(), SoundKinds().size());

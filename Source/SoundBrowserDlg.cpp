@@ -66,7 +66,7 @@ enum { MARK_PLAY, MARK_PLAYING, MARK_NONE };	// the list's images
 
 // The list's columns, in percent of its width
 const struct { LPCTSTR Name; int Percent; } LIST_COLUMNS[] = {
-	{ _T("Sound"), 28 }, { _T("Plays on"), 14 }, { _T("About"), 38 }, { _T("In song"), 8 }, { _T("Warning"), 12 },
+	{ _T("Sound"), 25 }, { _T("Plays on"), 12 }, { _T("About"), 35 }, { _T("In song"), 11 }, { _T("Warning"), 17 },
 };
 const int COLUMN_COUNT = sizeof(LIST_COLUMNS) / sizeof(LIST_COLUMNS[0]);
 
@@ -130,12 +130,14 @@ COLORREF Blend(COLORREF A, COLORREF B, int PercentA)
 }	// namespace
 
 // The sound list: a click on a row is the dialog's, every time (a sound plays, the one picked too; a heading
-// folds), and no drag starts
+// folds), and no drag starts. It's painted again after a key moves it: Wine draws the focus rectangle by XOR over
+// the rows, and a step that scrolls left pieces of it over the headings
 class CSoundList : public CListCtrl
 {
 protected:
 	afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
 	afx_msg void OnLButtonDblClk(UINT nFlags, CPoint point);
+	afx_msg void OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags);
 	DECLARE_MESSAGE_MAP()
 
 private:
@@ -145,6 +147,7 @@ private:
 BEGIN_MESSAGE_MAP(CSoundList, CListCtrl)
 	ON_WM_LBUTTONDOWN()
 	ON_WM_LBUTTONDBLCLK()
+	ON_WM_KEYDOWN()
 END_MESSAGE_MAP()
 
 void CSoundList::Clicked(CPoint Point, bool Again)
@@ -170,6 +173,12 @@ void CSoundList::OnLButtonDblClk(UINT nFlags, CPoint point)
 	Clicked(point, true);
 }
 
+void CSoundList::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
+{
+	CListCtrl::OnKeyDown(nChar, nRepCnt, nFlags);
+	Invalidate(FALSE);
+}
+
 class CSoundBrowserDlg : public CDialog
 {
 public:
@@ -179,6 +188,7 @@ protected:
 	virtual BOOL OnInitDialog();
 	virtual BOOL PreTranslateMessage(MSG *pMsg);
 	virtual void OnOK();
+	virtual void OnCancel();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
 	afx_msg void OnSize(UINT nType, int cx, int cy);
@@ -304,6 +314,7 @@ BOOL CSoundBrowserDlg::OnInitDialog()
 	m_cChannel.SubclassDlgItem(IDC_SB_CHANNEL, this);
 	m_cList.SubclassDlgItem(IDC_SB_LIST, this);
 	m_cList.SetExtendedStyle(m_cList.GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+	m_cList.SendMessage(WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS), 0);	// the picked row's color shows it
 	MakeMarks();
 	m_cList.SetImageList(&m_Marks, LVSIL_SMALL);
 	LOGFONT Font;
@@ -992,6 +1003,14 @@ void CSoundBrowserDlg::OnOK()
 	OnAdd();
 }
 
+// Close, Escape or the window's X: the sound stops at once, before the main window is woken again (which can take
+// a while under Wine)
+void CSoundBrowserDlg::OnCancel()
+{
+	Preview()->Stop();
+	CDialog::OnCancel();
+}
+
 void CSoundBrowserDlg::OnAdd()
 {
 	const ftapi::SoundEntry *pSound = Selected();
@@ -1151,7 +1170,7 @@ void CSoundBrowserDlg::Layout()
 	Put(IDC_SB_LISTEN, Mx, ButtonsY, Cx * 15, ButtonH);
 	Put(IDC_SB_ADD, Mx + Cx * 15 + Gap, ButtonsY, Cx * 18, ButtonH);
 	Put(IDCANCEL, Mx + Inner - Cx * 13, ButtonsY, Cx * 13, ButtonH);
-	const int StatusH = 2 * Line, StatusY = ButtonsY - VGap - StatusH;
+	const int StatusH = TextHeight(IDC_SB_STATUS, Inner) > 2 * Line ? 3 * Line : 2 * Line, StatusY = ButtonsY - VGap - StatusH;
 	Put(IDC_SB_STATUS, Mx, StatusY, Inner, StatusH);
 	const int TextH = 3 * Line, TextY = StatusY - VGap - TextH;
 	Put(IDC_SB_TEXT, Mx, TextY, Inner, TextH);
@@ -1175,6 +1194,7 @@ void CSoundBrowserDlg::Layout()
 void CSoundBrowserDlg::SetStatus(LPCTSTR Text)
 {
 	SetDlgItemText(IDC_SB_STATUS, Text);
+	Layout();		// (two lines or three)
 }
 
 void ShowSoundBrowser(CMainFrame *pMainFrame)
