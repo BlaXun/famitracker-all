@@ -2823,7 +2823,7 @@ void TestSampleDrums()
 	Groove.Info.DirectChanges = true;
 	Result = Run(Groove, "make_groove", "{\"mood\": \"town\", \"key\": \"C major\", \"bars\": 4, \"kit\": \"samples\"}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "drums: sampled kick and snare on 2A03 DPCM, hi-hats on 2A03 Noise");
+	CHECK_HAS(Result.Text, "drums: a sampled kick and toms on 2A03 DPCM, hi-hats on 2A03 Noise");	// the calm groove's snare is a ghost
 	Result = Run(Groove, "mix", "{}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "the DPCM level Z30 at bar 1 beat 1 and with each of its ");
@@ -3418,7 +3418,7 @@ void TestArrange()
 	CHECK(FindStyle(ChordStyles(), "Broken") == CHORDS_BROKEN && FindStyle(Grooves(), "four on the floor") == GROOVE_FOUR_ON_FLOOR);
 	CHECK(FindStyle(Grooves(), "battle") == GROOVE_DRIVING && FindStyle(BassStyles(), "walk") == BASS_WALKING);
 	CHECK(FindStyle(ChordRhythms(), "kazoo") < 0);
-	CHECK(StyleNames(BassStyles()).size() == 9 && StyleNames(Grooves()).size() == 9);
+	CHECK(StyleNames(BassStyles()).size() == 9 && StyleNames(Grooves()).size() == 10);
 
 	// The 0xy voicings: three of the chord's tones, the lowest in range, no semitone steps
 	Voicing V = ArpeggioVoicing(Chords[0].C, 0, 37, 31, 43, true);
@@ -3546,8 +3546,17 @@ void TestArrange()
 	D.FillEvery = 0;
 	D.Crash = false;
 	Hits = DrumPart(FourFour(2), D);
-	for (size_t i = 0; i < Hits.size(); ++i)
-		CHECK(Hits[i].Row % 4 == 0 && Hits[i].Sound != "crash" && Hits[i].Sound != "tom");
+	// Light thins the kick and the snare (on 1 and 3; one soft backbeat, on 4) and keeps the hi-hats between them
+	int LightHats = 0;
+	for (size_t i = 0; i < Hits.size(); ++i) {
+		CHECK(Hits[i].Row % 2 == 0 && Hits[i].Sound != "crash" && Hits[i].Sound != "tom");
+		if (Hits[i].Sound == "kick")
+			CHECK(Hits[i].Row % 16 == 0 || Hits[i].Row % 16 == 8);
+		if (Hits[i].Sound == "snare")
+			CHECK(Hits[i].Row % 16 == 12 && Hits[i].Volume == 11);
+		LightHats += Hits[i].Sound == "hi-hat" ? 1 : 0;
+	}
+	CHECK_EQ(LightHats, 10);
 	D.Intensity = 3;
 	D.Groove = GROOVE_DRIVING;
 	CHECK(DrumPart(FourFour(1), D).size() == 16);
@@ -14482,6 +14491,457 @@ void TestReviewFixes()
 }
 // end of calm-defaults tests
 
+// Stage fixes: what three composers of a lively stage found
+
+// 16 bars of eighth notes on VRC6 Pulse 1 (the melody); a rest of a beat ends every RestEvery-th bar before bar Upto + 1,
+// or (RestEvery 0) only bar 8
+void EighthsTune(FakeSong &Song, int RestEvery, int Upto = 16)
+{
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "D-4", "E-4", "G-4", "A-4", "G-4", "E-4", "D-4" };
+	for (int Bar = 0; Bar < 16; ++Bar)
+		for (int k = 0; k < 8; ++k) {
+			const int Row = Bar * 16 + k * 2;
+			const bool Rest = RestEvery > 0 ? (Bar % RestEvery == RestEvery - 1 && Bar < Upto && k >= 6) : (Bar == 7 && k >= 6);
+			if (Rest) {
+				if (k == 6)
+					Song.End(5, Row, NOTE_RELEASE);
+				continue;
+			}
+			Song.Put(5, Row, TUNE[(Bar + k) % 8], Row == 0 ? 0 : NO_INSTRUMENT, Row == 0 ? 15 : -1);
+		}
+}
+
+// review_arrangement hears whether the melody breathes: the two-bar spans with a rest of a beat or more or a note held two
+// beats, as it sounds (a note on a sound gone by then rests from there). Under 45% of the spans (calm 75%) is a tip that
+// costs a point and names the bars that run on; a steady run taken for the melody isn't checked
+void TestMelodyBreaths()
+{
+	const std::string LIVELY = "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	const std::string CALM = "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong RunOn(4), Breathes(4);
+	EighthsTune(RunOn, 0);
+	EighthsTune(Breathes, 2);
+	ToolResult Result = Run(RunOn, "review_arrangement", LIVELY);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "1 note length, 1 rest; it pauses (a rest of a beat or more, or a note held two beats) in 1 of 8 two-bar spans.");
+	CHECK_HAS(Result.Text, "The melody hardly pauses: 1 of 8 two-bar spans have a rest of a beat or more or a note held two beats, and it "
+		"runs on through bars 1-6 and 9-16. End each 2- or 4-bar phrase with a rest of a beat or a held note, so it's heard as phrases.");
+	CHECK_LACKS(Result.Text, "never rests");
+	Result = Run(Breathes, "review_arrangement", LIVELY);
+	CHECK_HAS(Result.Text, "in 8 of 8 two-bar spans.");
+	CHECK_LACKS(Result.Text, "hardly pauses");
+	// It costs a point, the rest of the arrangement alike
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		FakeSong &Song = Pass == 0 ? RunOn : Breathes;
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"key\": \"C major\", \"melody_channel\": "
+			"\"VRC6 Pulse 1\", \"chord_style\": \"stabs\", \"color\": \"sevenths\", \"bass_style\": \"walking\"}").IsError);
+		CHECK(!Run(Song, "add_drums", "{}").IsError);
+	}
+	const std::string Short = Run(RunOn, "review_arrangement", LIVELY).Text, Long = Run(Breathes, "review_arrangement", LIVELY).Text;
+	CHECK_HAS(Short, "hardly pauses");
+	CHECK_EQ(std::atoi(Long.substr(Long.find(": ") + 2).c_str()) - std::atoi(Short.substr(Short.find(": ") + 2).c_str()), 1);
+	// 5 of 8 spans: enough for a lively stage, not for a calm track
+	FakeSong Some(4);
+	EighthsTune(Some, 2, 10);
+	CHECK_LACKS(Run(Some, "review_arrangement", LIVELY).Text, "hardly pauses");
+	CHECK_HAS(Run(Some, "review_arrangement", CALM).Text, "The melody hardly pauses: 5 of 8 two-bar spans have a rest of a beat or more "
+		"or a note held two beats, and it runs on through bars 11-16. A calm melody breathes every two bars: end each phrase with a "
+		"rest of a beat or more, so it's heard as phrases.");
+	// Notes of a beat and a half one after the other: on a sound that holds they run on (and the melody never rests); on one
+	// gone within a few frames each leaves a rest
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		FakeSong Song(4);
+		Song.Info.DirectChanges = true;
+		const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "D-4", "F-4" };
+		for (int i = 0; i * 6 < 256; ++i)
+			Song.Put(5, i * 6, TUNE[i % 6], i == 0 ? 3 : NO_INSTRUMENT, i == 0 ? 15 : -1);
+		Song.AddInstrumentInfo(3, "Blip", "VRC6", false);
+		Song.Info.Instruments.back().Volume = Pass == 0 ? std::vector<int>{ 12 } : std::vector<int>{ 15, 10, 5, 0 };
+		Result = Run(Song, "review_arrangement", LIVELY);
+		CHECK(Contains(Result.Text, Pass == 0 ? "in 0 of 8 two-bar spans" : "in 8 of 8 two-bar spans"));
+		CHECK_LACKS(Result.Text, "hardly pauses");
+		if (Pass == 0)
+			CHECK_HAS(Result.Text, "The melody never rests");
+	}
+	// A steady run of sixteenths taken for the melody: not a melody's phrases
+	FakeSong Run16(4);
+	Run16.Info.DirectChanges = true;
+	const char *const ARP[] = { "C-4", "E-4", "G-4", "E-4" };
+	for (int r = 0; r < 256; ++r) {
+		if (r >= 124 && r < 128) {
+			if (r == 124)
+				Run16.End(5, r, NOTE_RELEASE);
+			continue;
+		}
+		Run16.Put(5, r, ARP[r % 4], r == 0 ? 0 : NO_INSTRUMENT, r == 0 ? 15 : -1);
+	}
+	Result = Run(Run16, "review_arrangement", "{\"style\": \"lively\"}");
+	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1");
+	CHECK_LACKS(Result.Text, "two-bar spans");
+	// Spans where the melody doesn't play (a break) are left out, and they count from where the loop starts
+	FakeSong Break(4);
+	EighthsTune(Break, 2);
+	for (int r = 64; r < 128; ++r)
+		Break.Rows[5][static_cast<size_t>(r)] = Cell();
+	Break.End(5, 64, NOTE_HALT);
+	CHECK_HAS(Run(Break, "review_arrangement", LIVELY).Text, "in 6 of 6 two-bar spans");
+}
+
+// mix style lively (and calm) puts the drums 10-12 dB under the melody and never raises them over the volumes they were
+// written at: soft hi-hats stay soft, louder drums come down to about 11 dB under, and the reply says why; the soft mix
+// still sets them by their role
+void TestStageMix()
+{
+	for (int Pass = 0; Pass < 4; ++Pass) {
+		FakeSong Song;
+		CalmTestSong(Song, 15, 6);
+		Song.AddInstrumentInfo(3, "Hi-hat", "2A03", false);
+		Song.Info.Instruments.back().Volume = { 10, 6, 3, 1, 0 };
+		for (int i = 0; i < 32; ++i)
+			Song.Put(3, i * 2, "D-#", i == 0 ? 3 : NO_INSTRUMENT, Pass == 1 ? (i == 0 ? 15 : -1) : 4 + i % 4);
+		const std::string Style = Pass == 2 ? "calm" : Pass == 3 ? "soft" : "lively";
+		const std::string Args = "{\"style\": \"" + Style + "\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+		ToolResult Result = Run(Song, "mix", Args);
+		CHECK(!Result.IsError);
+		if (Pass == 0 || Pass == 2) {
+			CHECK_HAS(Result.Text, "the drums 17.2 under");
+			CHECK(Contains(Result.Text, ("2A03 Noise (drums) stays at 7 (as written: 17.2 dB under the melody, and a " + Style + " mix puts "
+				"drums 10-12 dB under it and never raises them)").c_str()));
+			for (int i = 0; i < 32; ++i)
+				CHECK_EQ(static_cast<int>(Song.Rows[3][static_cast<size_t>(i * 2)].Volume), 4 + i % 4);
+			CHECK_HAS(Run(Song, "mix", Args).Text, "2A03 Noise (drums) keeps its volumes (as written: 17.2 dB under the melody");
+		}
+		else if (Pass == 1) {
+			CHECK_HAS(Result.Text, "the drums 11.0 under");
+			CHECK_HAS(Result.Text, "2A03 Noise (drums) loudest 15 to 11 (from 7.8 dB under the melody: a lively mix brings drums louder than 10 dB "
+				"under it down to 11, never up)");
+			CHECK_EQ(static_cast<int>(Song.Rows[3][0].Volume), 11);
+		}
+		else {
+			CHECK_HAS(Result.Text, "2A03 Noise (drums) loudest 4 to 10");	// the soft mix as before: the drums' loudest at 10
+			CHECK_LACKS(Result.Text, "never raises");
+		}
+	}
+}
+
+// add_drums: light thins the kick and the snare and keeps the hi-hats (which a kick or a snare on every beat used to leave
+// none of); the lively groove for stages that flow: closed hi-hats on the eighths at 4-6 with a sixteenth pair now and
+// then, an open one every other bar at 7, a soft kick on 1 and the "and" of 2 or 3, no snare, small fills (a hi-hat roll
+// or soft toms) and a soft splash; with samples the kick on the DPCM
+void TestLivelyGroove()
+{
+	CHECK(FindStyle(Grooves(), "lively") == GROOVE_LIVELY && FindStyle(Grooves(), "stage") == GROOVE_LIVELY &&
+		FindStyle(Grooves(), "flowing") == GROOVE_LIVELY && FindStyle(Grooves(), "gentle") == GROOVE_LIVELY &&
+		FindStyle(Grooves(), "bouncy") == GROOVE_LIVELY);
+	CHECK(FindStyle(Grooves(), "soft") == GROOVE_CALM && FindStyle(Grooves(), "swing") == GROOVE_SHUFFLE);
+	CHECK(GrooveLoudest(GROOVE_LIVELY) == 10 && GrooveLoudest(GROOVE_BASIC) == 15);
+	// Light, every groove: the hi-hats stay (the march has none), the kick on 1 and 3 at most, one soft backbeat a bar
+	for (int g = 0; g < static_cast<int>(Grooves().size()); ++g) {
+		DrumOptions L;
+		L.Groove = g;
+		L.Intensity = 1;
+		L.FillEvery = 0;
+		L.Crash = false;
+		const int BarRows = g == GROOVE_WALTZ ? 12 : 16;
+		const std::vector<DrumHit> Hits = DrumPart(std::vector<BarSpan>{ BarSpan(0, BarRows), BarSpan(BarRows, BarRows) }, L);
+		int Hats = 0, Snares = 0;
+		for (size_t i = 0; i < Hits.size(); ++i) {
+			const int InBar = Hits[i].Row % BarRows;
+			Hats += Hits[i].Sound == "hi-hat" || Hits[i].Sound == "open hi-hat" ? 1 : 0;
+			if (Hits[i].Sound == "kick")
+				CHECK(InBar == 0 || InBar * 2 == BarRows);
+			if (Hits[i].Sound == "snare") {
+				++Snares;
+				CHECK(Hits[i].Volume <= 11);
+			}
+		}
+		CHECK(g == GROOVE_MARCH ? Hats == 0 : Hats >= 6);
+		CHECK(g == GROOVE_MARCH ? Snares == 4 : Snares <= 2);	// the march's on 2 and 4 (the kick has 1 and 3)
+	}
+	// The lively groove over 8 bars
+	DrumOptions D;
+	D.Groove = GROOVE_LIVELY;
+	std::vector<DrumHit> Hits = DrumPart(FourFour(8), D);
+	int Pairs = 0, Open = 0, Toms = 0, HatRoll = 0;
+	for (size_t i = 0; i < Hits.size(); ++i) {
+		const DrumHit &H = Hits[i];
+		const int Bar = H.Row / 16, InBar = H.Row % 16;
+		CHECK(H.Sound != "snare");
+		if (H.Sound == "kick") {
+			CHECK(InBar == 0 ? H.Volume == 10 : H.Volume == 8);
+			CHECK(InBar == 0 || InBar == (Bar % 2 == 0 ? 6 : 10));
+		}
+		if (H.Sound == "hi-hat" && Bar % 4 != 3)
+			CHECK(H.Volume >= 4 && H.Volume <= 6);
+		if (H.Sound == "hi-hat" && InBar % 2 == 1 && InBar < 12)
+			++Pairs;
+		if (H.Sound == "open hi-hat") {
+			++Open;
+			CHECK(H.Volume == 7 && InBar == 14 && Bar % 2 == 1);
+		}
+		if (H.Sound == "crash")
+			CHECK(H.Volume == 7 && InBar == 0 && (Bar == 0 || Bar == 4));
+		if (Bar == 3 && InBar >= 12)
+			HatRoll += H.Sound == "hi-hat" ? H.Volume : 0;	// the first fill: hi-hats rising from 4 to 7
+		if (H.Sound == "tom") {
+			++Toms;
+			CHECK(Bar == 7 && InBar >= 12 && H.Volume >= 6 && H.Volume <= 9);	// the second: soft toms
+		}
+	}
+	CHECK_EQ(HatRoll, 4 + 5 + 6 + 7);
+	CHECK(Pairs == 4 && Open == 2 && Toms == 4);
+	D.Intensity = 3;	// busy: more pairs
+	Hits = DrumPart(FourFour(2), D);
+	Pairs = 0;
+	for (size_t i = 0; i < Hits.size(); ++i)
+		Pairs += Hits[i].Sound == "hi-hat" && Hits[i].Row % 2 == 1 ? 1 : 0;
+	CHECK(Pairs >= 3);
+	D.Intensity = 1;	// light: the kick on 1 alone, no pairs, the open hi-hat kept
+	Hits = DrumPart(FourFour(2), D);
+	Open = 0;
+	for (size_t i = 0; i < Hits.size(); ++i) {
+		CHECK(Hits[i].Row % 2 == 0 && (Hits[i].Sound != "kick" || Hits[i].Row % 16 == 0));
+		Open += Hits[i].Sound == "open hi-hat" ? 1 : 0;
+	}
+	CHECK(Open == 1);
+	D.Intensity = 2;
+	D.Samples = true;	// the kick on the DPCM, the hi-hats kept on its rows
+	Hits = DrumPart(FourFour(2), D);
+	bool SampledKick = false, HatWithKick = false;
+	for (size_t i = 0; i < Hits.size(); ++i) {
+		if (Hits[i].Sound == "kick") {
+			SampledKick = Hits[i].Sampled;
+			for (size_t k = 0; k < Hits.size(); ++k)
+				HatWithKick = HatWithKick || (k != i && Hits[k].Row == Hits[i].Row && Hits[k].Sound == "hi-hat");
+		}
+	}
+	CHECK(SampledKick && HatWithKick);
+
+	// The tool: by a word for it, at its own volumes; volume scales from its loudest (the kick's 10)
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	for (int i = 0; i < 8; ++i)
+		Song.Put(5, i * 16, "C-4", i == 0 ? 0 : NO_INSTRUMENT);
+	ToolResult Result = Run(Song, "add_drums", "{\"groove\": \"flowing\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "lively drums on 2A03 Noise (hi-hats at 4-7, a soft kick at 8-10, no snare), a fill every 4 bars (a hi-hat roll or "
+		"soft toms, in turn, and a soft splash after), bars 1-8");
+	CHECK_EQ(static_cast<int>(Song.Rows[3][16].Volume), 10);
+	Result = Run(Song, "add_drums", "{\"groove\": \"lively\", \"volume\": 5}");
+	CHECK_HAS(Result.Text, "(hi-hats at 2-4, a soft kick at 4-5, no snare)");
+	Result = Run(Song, "add_drums", "{\"groove\": \"lively\", \"kit\": \"samples\"}");
+	CHECK_HAS(Result.Text, "lively drums: a sampled kick and toms on 2A03 DPCM, hi-hats on 2A03 Noise (hi-hats at 4-7, no snare)");
+	CHECK_HAS(Result.Text, "The sampled kick plays at the sample's own level: set_mixer's fader on 2A03 DPCM (2-3 dB down) softens it");
+	CHECK(Song.Rows[4][16].HasNote() && Song.Rows[3][16].HasNote());	// the kick sampled, a hi-hat with it
+	CHECK_HAS(Run(Song, "add_drums", "{\"groove\": \"basic\", \"kit\": \"samples\"}").Text, "basic drums: sampled kick and snare on 2A03 DPCM");
+	CHECK_HAS(Run(Song, "add_drums", "{\"groove\": \"basic\", \"intensity\": \"light\"}").Text, "light basic drums on 2A03 Noise");
+}
+
+// Voiced chords on the N163 give each voice its own sound: an N163 sound whose wave changes rewrites its waves as it plays,
+// so it plays on one channel at a time. On the soft layer the pads in turn; a sound asked for, copies of it at wave places
+// of their own; an echo, a harmony or a counter-melody onto an N163 channel copies a sound another one plays there; a
+// sound of one wave can be shared
+void TestOwnWaveSounds()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chip\": \"VRC6 Plus\", \"confirm\": true}").IsError);
+	const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4", "F-4", "A-4", "C-5", "A-4" };
+	for (int i = 0; i < 8; ++i)
+		Song.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 15 : -1);
+	auto NameOf = [](const FakeSong &In, int Channel, int Row) {
+		const int Index = In.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(Row)].Instrument;
+		for (size_t i = 0; i < In.Info.Instruments.size(); ++i)
+			if (In.Info.Instruments[i].Index == Index)
+				return In.Info.Instruments[i].Name;
+		return std::string();
+	};
+	auto SoundOn = [&](int Channel, int Row) { return NameOf(Song, Channel, Row); };
+	auto PlaceOf = [&](const std::string &Name) {
+		for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+			if (Song.Info.Instruments[i].Name == Name)
+				return Song.Info.Instruments[i].WavePos;
+		return -1;
+	};
+	ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F |\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"chord_channels\": [\"Soft 1\", \"Soft 2\", \"Soft 3\"], \"bass_channel\": \"none\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "(the N163 voices' sounds: Soft 1 \"String pad\"");
+	CHECK(SoundOn(8, 0) == "String pad" && SoundOn(9, 0) == "Choir pad" && SoundOn(10, 0) == "String ensemble");
+	CHECK(PlaceOf("String ensemble") >= 0 && PlaceOf("String ensemble") != PlaceOf("String pad") && PlaceOf("String ensemble") != PlaceOf("Choir pad"));
+	// One sound asked for: a copy of it for each voice after the first, at a wave place of its own, the same waves
+	Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F |\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"chord_channels\": [\"Soft 1\", \"Soft 2\", \"Soft 3\"], \"bass_channel\": \"none\", \"melody_channel\": \"VRC6 Pulse 1\", "
+		"\"chord_instrument\": \"choir pad\"}");
+	CHECK_HAS(Result.Text, "Added \"Choir pad 2\"");
+	CHECK_HAS(Result.Text, "a copy of \"Choir pad\"");
+	CHECK(SoundOn(8, 0) == "Choir pad" && SoundOn(9, 0) == "Choir pad 2" && SoundOn(10, 0) == "Choir pad 3");
+	CHECK(PlaceOf("Choir pad 2") >= 0 && PlaceOf("Choir pad 2") != PlaceOf("Choir pad") && PlaceOf("Choir pad 3") != PlaceOf("Choir pad 2"));
+	const size_t Count = Song.Info.Instruments.size();
+	CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F |\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"chord_channels\": [\"Soft 1\", \"Soft 2\", \"Soft 3\"], \"bass_channel\": \"none\", \"melody_channel\": \"VRC6 Pulse 1\", "
+		"\"chord_instrument\": \"choir pad\"}").IsError);
+	CHECK_EQ(Song.Info.Instruments.size(), Count);	// the copies are the song's now
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Name == "Choir pad 2")
+			CHECK(Song.Info.Instruments[i].Waves == FindWaveSound("choir pad")->Waves);
+	// Voiced chords with no melody over them: their top voice isn't taken for one, whatever pads they play
+	FakeSong Pads;
+	Pads.Info.DirectChanges = true;
+	CHECK(!Run(Pads, "set_expansion", "{\"chip\": \"VRC6 Plus\", \"confirm\": true}").IsError);
+	CHECK(!Run(Pads, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"chord_channels\": [\"Soft 1\", \"Soft 2\", \"Soft 3\"], \"bass_channel\": \"none\"}").IsError);
+	Result = Run(Pads, "add_chords_and_bass", "{\"chords\": \"| Am | F | G | C |\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"bass_channel\": \"none\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "voices chords on VRC6 Plus Soft 1, VRC6 Plus Soft 2 and VRC6 Plus Soft 3");
+	CHECK_HAS(Result.Text, "in place of the chords");
+
+	// A melody on Soft 1 with the string pad: an echo onto Soft 4, a harmony onto Soft 2 and a counter-melody with the string
+	// pad onto Soft 3 each get a copy of it; the soft flute (one wave) is shared
+	FakeSong Soft;
+	Soft.Info.DirectChanges = true;
+	CHECK(!Run(Soft, "set_expansion", "{\"chip\": \"VRC6 Plus\", \"confirm\": true}").IsError);
+	CHECK(!Run(Soft, "write_notes", "{\"channel\": \"Soft 1\", \"instrument\": \"string pad\", \"notes\": [{\"bar\": 1, \"pitch\": \"E-4\", "
+		"\"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"C-5\", \"beats\": 2}, "
+		"{\"bar\": 2, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, {\"bar\": 3, \"pitch\": \"F-4\", \"beats\": 4}, {\"bar\": 4, \"pitch\": "
+		"\"E-4\", \"beats\": 4}]}").IsError);
+	Result = Run(Soft, "add_echo", "{\"channel\": \"Soft 1\", \"to_channel\": \"Soft 4\", \"delay_beats\": 1, \"from_bar\": 1, \"to_bar\": 4}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Added \"String pad 2\"");
+	CHECK(NameOf(Soft, 11, 4) == "String pad 2");
+	Result = Run(Soft, "add_harmony", "{\"melody_channel\": \"Soft 1\", \"channel\": \"Soft 2\", \"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	CHECK(NameOf(Soft, 9, 0) == "String pad 3");
+	Result = Run(Soft, "add_counter_melody", "{\"melody_channel\": \"Soft 1\", \"channel\": \"Soft 3\", \"instrument\": \"string pad\", "
+		"\"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(NameOf(Soft, 10, 0), "String pad ");
+	CHECK(NameOf(Soft, 10, 0) != "String pad 2" && NameOf(Soft, 10, 0) != "String pad 3");
+	FakeSong Flute;
+	Flute.Info.DirectChanges = true;
+	CHECK(!Run(Flute, "set_expansion", "{\"chip\": \"VRC6 Plus\", \"confirm\": true}").IsError);
+	CHECK(!Run(Flute, "write_notes", "{\"channel\": \"Soft 1\", \"instrument\": \"soft flute\", \"notes\": [{\"bar\": 1, \"pitch\": \"E-4\", "
+		"\"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 2}, {\"bar\": 2, \"pitch\": \"C-5\", \"beats\": 4}]}").IsError);
+	Result = Run(Flute, "add_harmony", "{\"melody_channel\": \"Soft 1\", \"channel\": \"Soft 2\", \"key\": \"C major\"}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "a copy of");
+	CHECK(NameOf(Flute, 9, 0) == "Soft flute");
+}
+
+// Broken chords on a pulse stay over C-2 however little room the melody leaves them: a rolling pattern under a low melody
+// went down to C#1, mud on a pulse
+void TestBrokenFloor()
+{
+	const std::vector<ChordAt> Chords = Progression("| C | Am | F | G |");
+	ChordPartOptions O;
+	O.Style = CHORDS_BROKEN;
+	O.Pattern = BROKEN_ROLLING;
+	O.Low = 13;
+	O.High = 25;
+	std::vector<PartNote> Part = ChordPart(Chords, FourFour(4), O);
+	int Lowest = 1000;
+	for (size_t i = 0; i < Part.size(); ++i)
+		Lowest = std::min(Lowest, Part[i].Pitch);
+	CHECK(Lowest < 24);
+	O.Lowest = 24;
+	Part = ChordPart(Chords, FourFour(4), O);
+	for (size_t i = 0; i < Part.size(); ++i)
+		CHECK(Part[i].Pitch >= 24);
+	CHECK(Part.size() == 32);
+	// The tool, under a melody around E-3 to A-3 over a low bass, on a 2A03 pulse
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "E-3", "G-3", "A-3", "G-3", "F-3", "A-3", "G-3", "E-3" };
+	for (int i = 0; i < 8; ++i) {
+		Song.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT);
+		Song.Put(7, i * 8, i % 2 ? "G-0" : "C-1", i == 0 ? 1 : NO_INSTRUMENT);
+	}
+	for (int Pattern = 0; Pattern < 2; ++Pattern) {
+		CHECK(!Run(Song, "add_chords_and_bass", std::string("{\"chords\": \"| C | Am | F | G |\", \"key\": \"C major\", \"chord_style\": "
+			"\"broken\", \"pattern\": \"") + (Pattern == 0 ? "rolling" : "updown") + "\", \"notes_per_beat\": 4, \"chord_channel\": "
+			"\"Pulse 1\", \"bass_channel\": \"none\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		int Notes = 0;
+		for (size_t r = 0; r < 64; ++r)
+			if (Song.Rows[0][r].HasNote()) {
+				++Notes;
+				CHECK(Song.Rows[0][r].Pitch() >= 24);
+			}
+		CHECK(Notes == 64);
+	}
+}
+
+// read_notes reads up to 64 bars, or the whole bars of up to 600 notes, and says first which bars it read and how to read
+// the rest
+void TestReadNotesLimit()
+{
+	FakeSong Song(12);	// 48 bars
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "D-4", "E-4", "G-4" };
+	for (int r = 0; r < 768; ++r) {
+		Song.Put(5, r, TUNE[r % 4], r == 0 ? 0 : NO_INSTRUMENT);	// sixteenths: 16 notes a bar
+		if (r % 4 == 0 && r % 16 != 12)
+			Song.Put(6, r, TUNE[(r / 4) % 4], r == 0 ? 0 : NO_INSTRUMENT);	// three a bar
+	}
+	ToolResult Result = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 2\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 2, bars 1-48 (4 beats a bar, 4 rows a beat):");
+	CHECK_HAS(Result.Text, "bar 48 beat 3: ");
+	CHECK_LACKS(Result.Text, "Not read");
+	Result = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}");
+	const std::string First = "VRC6 Pulse 1, bars 1-37 only, not bars 38-48 (a call reads up to 64 bars or 600 notes): read bars 38-48 "
+		"with from_bar 38 before rewriting the part, or the rewrite clears them (4 beats a bar, 4 rows a beat):\n";
+	CHECK(Result.Text.compare(0, First.size(), First) == 0);
+	CHECK_HAS(Result.Text, "bar 37 beat 4.75: ");
+	CHECK_LACKS(Result.Text, "\nbar 38 ");
+	CHECK_HAS(Result.Text, "\n(Not read: bars 38-48, from from_bar 38 on.)");
+	Result = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 38}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1, bars 38-48 (");
+	FakeSong Long(20);	// 80 bars
+	for (int Bar = 0; Bar < 80; ++Bar)
+		Long.Put(5, Bar * 16, "C-4", Bar == 0 ? 0 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Long, "read_notes", "{\"channel\": \"VRC6 Pulse 1\"}").Text, "bars 1-64 only, not bars 65-80");
+}
+
+// vary_part's embellish on a lively melody of short notes: passing notes, a note from beside into a long note and a turn
+// before one, at most two a bar; notes too short for it, a reason
+void TestEmbellishShortNotes()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	// Bar 1: G#3 (3 rows) E-3 (3) F#3 (2) E-3 (4), a release; bar 2: B-3 (2) C#4 (6, long), A-3 (4) B-3 (4, long enough? no)
+	Song.Put(5, 0, "G#3", 0);
+	Song.Put(5, 3, "E-3");
+	Song.Put(5, 6, "F#3");
+	Song.Put(5, 8, "E-3");
+	Song.End(5, 12, NOTE_RELEASE);
+	Song.Put(5, 16, "B-3");
+	Song.Put(5, 18, "C#4");
+	Song.Put(5, 24, "A-3");
+	Song.Put(5, 28, "B-3");
+	Song.End(5, 32, NOTE_RELEASE);
+	// Bar 3: A-3 (a beat) into B-3 (two beats): a turn
+	Song.Put(5, 36, "A-3");
+	Song.Put(5, 40, "B-3");
+	Song.End(5, 48, NOTE_RELEASE);
+	ToolResult Result = Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, \"to_bar\": 3, "
+		"\"key\": \"A major\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 passing and neighbour notes added, bars 1-3");
+	CHECK_HAS(Notes(Song, 5, 0, 12), "0:G#3 2:F#3 3:E-3 ");	// a passing note, the last sixteenth of the G#3
+	CHECK_HAS(Notes(Song, 5, 16, 24), "16:B-3 17:D-4 18:C#4 ");	// into the long C#4 from above
+	CHECK_HAS(Notes(Song, 5, 36, 48), "36:A-3 37:C#4 38:B-3 39:A-3 40:B-3 ");	// a turn before the long B-3
+	FakeSong Quick;
+	Quick.Info.DirectChanges = true;
+	for (int r = 0; r < 16; ++r)
+		Quick.Put(5, r, r % 2 ? "E-4" : "C-4", r == 0 ? 0 : NO_INSTRUMENT);
+	Quick.End(5, 16, NOTE_RELEASE);
+	CHECK_HAS(Run(Quick, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 1, \"to_bar\": 1}").Text,
+		"embellish needs notes of half a beat or more that run straight into the next one a third away, into a repeat of themselves "
+		"or into a long note");
+}
+// end of stage-fixes tests
+
 int main()
 {
 	TestJson();
@@ -14602,6 +15062,13 @@ int main()
 	TestHeldLead();
 	TestMixFixes();
 	TestReviewFixes();
+	TestMelodyBreaths();
+	TestStageMix();
+	TestLivelyGroove();
+	TestOwnWaveSounds();
+	TestBrokenFloor();
+	TestReadNotesLimit();
+	TestEmbellishShortNotes();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

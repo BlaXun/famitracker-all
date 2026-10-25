@@ -106,14 +106,17 @@ const std::vector<StyleInfo> &Grooves()
 		{ "four_on_floor", "kick every beat, snare on 2 and 4, open hi-hats between the beats: dance, disco, upbeat",
 			"fouronthefloor|dance|disco|house|fourfloor" },
 		{ "half_time", "kick on 1, snare on 3: heavy and slow", "halftime|heavy|slow" },
-		{ "shuffle", "swung hi-hats: bouncy, swing, blues", "swing|swung|blues|bouncy" },
+		{ "shuffle", "swung hi-hats: swing, blues", "swing|swung|blues" },
 		{ "march", "snare on and between the beats: military, heroic", "military|marching|heroic|snareroll" },
 		{ "breakbeat", "syncopated kick and ghost snares: funky", "funk|funky|breaks|break" },
 		{ "calm", "soft kick on 1, a quiet snare on 3, hi-hats on the beats: ambient, town, ballad",
-			"soft|light|ambient|ballad|gentle|quiet" },
+			"soft|light|ambient|ballad|quiet" },
 		{ "driving", "kicks on 1 and 3 and their \"and\"s, hi-hats every quarter beat: battle and action",
 			"battle|action|fast|intense|boss" },
 		{ "waltz", "in three: kick on 1, soft snares on 2 and 3", "3/4|three|triple" },
+		{ "lively", "soft closed hi-hats on the eighths (sixteenth pairs now and then, more when busy), an open hi-hat every "
+			"other bar, a soft kick on 1 and the \"and\" of 2 or 3, no snare; small fills (a hi-hat roll or soft toms) and a "
+			"soft splash after: stages that flow", "stage|flowing|flow|gentle|bouncy|river|level|explore|platformer" },
 	};
 	return GROOVES;
 }
@@ -555,7 +558,7 @@ int GuidePitch(const Chord &C, int Near, int Low, int High, const Room &Space)
 // Chords
 
 ChordPartOptions::ChordPartOptions() : Style(CHORDS_ARPEGGIO), Rhythm(-1), Pattern(BROKEN_UP), StepRows(0), RowsPerBeat(4),
-	Low(31), High(43), Volume(15), RootInBass(true), Ceiling(-1), Floor(-1)
+	Low(31), High(43), Volume(15), RootInBass(true), Ceiling(-1), Floor(-1), Lowest(-1)
 {
 }
 
@@ -682,7 +685,18 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 		int Near = O.Pattern == BROKEN_ROLLING ? Low + 2 : Middle;
 		for (size_t s = 0; s < Segs.size(); ++s) {
 			const Segment &S = Segs[s];
-			const std::vector<int> Tones = BrokenTones(S.pChord->C, O.Pattern, Near, Low, High, O.RootInBass, RoomFor(O, S.Row, S.End));
+			std::vector<int> Tones = BrokenTones(S.pChord->C, O.Pattern, Near, Low, High, O.RootInBass, RoomFor(O, S.Row, S.End));
+			if (O.Lowest >= 0) {
+				// Out of the mud: a tone under the floor an octave up (or two), the chord's shape filled out again where
+				// two of its tones then meet
+				for (size_t t = 0; t < Tones.size(); ++t)
+					while (Tones[t] < O.Lowest && Tones[t] + 12 < PITCHES)
+						Tones[t] += 12;
+				std::sort(Tones.begin(), Tones.end());
+				Tones.erase(std::unique(Tones.begin(), Tones.end()), Tones.end());
+				while (Tones.size() < 4)
+					Tones.push_back(Tones[Tones.size() >= 2 ? Tones.size() - 2 : 0] + 12);
+			}
 			// The softest a note gets in this bar (offbeat-only bars aren't softer)
 			for (int Row = S.Row, k = 0; Row < S.End; Row += Step, ++k) {
 				const int Pitch = Tones[static_cast<size_t>(pOrder[k % Length])];
@@ -1277,7 +1291,13 @@ const GrooveDef GROOVE_DEFS[] = {
 	{ "x...............", "........g.......", "x...x...x...x..." },	// calm
 	{ "x.x.....x.x.....", "....x.......x...", "xxxxxxxxxxxxxxxx" },	// driving
 	{ "x...........", "....g...g...", "x.x.x.x.x.x." },				// waltz
+	{ "x.....x.........", "................", "x.x.x.x.x.x.x.x." },	// lively (every other bar: LIVELY_SECOND_KICK)
 };
+
+// The lively groove's kick in every other bar: on 1 and the "and" of 3 (the first bar's is on the "and" of 2), so two bars
+// make its phrase; its hits are soft by design, the loudest LIVELY_LOUDEST
+const char *const LIVELY_SECOND_KICK = "x.........x.....";
+const int LIVELY_LOUDEST = 10;
 
 // The hi-hats at D-#: at E-# most of the noise's sound lies above hearing and they come out about 4 dB quieter
 const int KICK_PITCH = 0x4, SNARE_PITCH = 0xA, HAT_PITCH = 0xD, OPEN_PITCH = 0xD, CRASH_PITCH = 0xC;
@@ -1336,8 +1356,35 @@ void AddFill(std::vector<DrumHit> &Hits, int Kind, int Start, int Steps, int Bar
 	}
 }
 
+// A lively stage's fill, small: from Start (a sixteenth) to the bar's end, a roll of closed hi-hats in sixteenths rising
+// from 4 to 7, or soft toms, high to low, rising from 6 to 9 (eighths, then sixteenths in the last beat), in turn by Kind
+void AddLivelyFill(std::vector<DrumHit> &Hits, int Kind, int Start, int Steps, int BarRow, const std::vector<int> &StepRows)
+{
+	const int Count = Steps - Start;
+	for (int k = 0; k < Count; ++k) {
+		const int Row = BarRow + StepRows[static_cast<size_t>(Start + k)];
+		if (Kind % 2 == 0) {
+			Hits.push_back(Hit(Row, HAT_PITCH, 4 + (3 * (k + 1)) / Count, "hi-hat"));
+			continue;
+		}
+		if (Count > 4 && k < Count - 4 && k % 2 == 1)
+			continue;
+		const int Tom = std::min(2, 3 * k / std::max(1, Count));
+		Hits.push_back(Hit(Row, TOM_PITCHES[Tom], 6 + (3 * (k + 1)) / Count, "tom"));
+	}
+}
+
 }	// namespace
 
+int GrooveLoudest(int Groove)
+{
+	return Groove == GROOVE_LIVELY ? LIVELY_LOUDEST : 15;
+}
+
+// Light (Intensity 1) thins the kick and the snare first: the kick on the bar's first beat and its middle only, the snare's
+// backbeat only on the bar's last beat that has one, softer (the march's snares, its groove, on the beats), no ghost
+// notes; the hi-hats keep the groove's eighths (the noise channel plays one sound at a time, so with a kick or a snare on
+// every beat, hi-hats on the beats alone were all lost). Busy (3) adds pushes, ghost notes and sixteenths.
 std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOptions &O)
 {
 	std::vector<DrumHit> Hits;
@@ -1346,6 +1393,7 @@ std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOption
 	const GrooveDef &G = GROOVE_DEFS[GrooveIndex];
 	const int PatternSteps = static_cast<int>(std::string(G.Kick).size());
 	const int Intensity = Clamp(O.Intensity, 1, 3);
+	const bool Lively = GrooveIndex == GROOVE_LIVELY;
 	int Fills = 0;
 
 	for (size_t b = 0; b < Bars.size(); ++b) {
@@ -1361,63 +1409,79 @@ std::vector<DrumHit> DrumPart(const std::vector<BarSpan> &Bars, const DrumOption
 		const bool Second = BarInPhrase % 2 == 1;
 		int FillStart = Steps;
 		if (Fill) {
-			const int FillBeats = Intensity == 1 ? 1 : Intensity == 3 ? 2 : (Fills % 2 == 0 ? 1 : 2);
+			const int FillBeats = Lively ? (Intensity == 3 ? 2 : 1) : Intensity == 1 ? 1 : Intensity == 3 ? 2 : (Fills % 2 == 0 ? 1 : 2);
 			FillStart = std::max(0, Steps - 4 * std::min(FillBeats, Beats - 1));
 		}
+		// Light: the bar's last backbeat, the one snare it keeps
+		int LastBackbeat = -1;
+		for (int s = 0; s < FillStart; s += 4)
+			if (G.Snare[s % PatternSteps] == 'x')
+				LastBackbeat = s;
 
 		std::vector<DrumHit> Bar16;
 		for (int s = 0; s < FillStart; ++s) {
 			const int p = s % PatternSteps;
 			const int Row = Bar.Row + StepRows[static_cast<size_t>(s)];
 			const bool OnBeat = s % 4 == 0, Eighth = s % 2 == 0;
-			// Kick
-			char k = G.Kick[p];
-			if (Intensity == 1 && !OnBeat)
+			// Kick (the lively groove's soft, its second bar's on the "and" of 3)
+			char k = (Lively && Second ? LIVELY_SECOND_KICK : G.Kick)[p];
+			if (Intensity == 1 && (!OnBeat || (s != 0 && s * 2 != Steps)))
 				k = '.';
-			if (Intensity == 3 && k == '.' && Second && s == Steps - 2 && GrooveIndex != GROOVE_CALM)
+			if (Intensity == 3 && k == '.' && Second && s == Steps - 2 && GrooveIndex != GROOVE_CALM && !Lively)
 				k = 'o';	// a push into the next bar
 			if (k != '.')
-				Bar16.push_back(Hit(Row, KICK_PITCH, k == 'o' ? 12 : s == 0 ? 15 : OnBeat ? 14 : 13, "kick"));
+				Bar16.push_back(Hit(Row, KICK_PITCH, Lively ? (s == 0 ? LIVELY_LOUDEST : 8) : k == 'o' ? 12 : s == 0 ? 15 : OnBeat ? 14 : 13,
+					"kick"));
 			// Snare
 			char sn = G.Snare[p];
-			if (Intensity == 1 && sn == 'g')
+			if (Intensity == 1 && (sn == 'g' || (sn == 'x' && (GrooveIndex == GROOVE_MARCH ? !OnBeat : s != LastBackbeat))))
 				sn = '.';
-			if (Intensity == 3 && sn == '.' && (s % 8 == 7) && GrooveIndex != GROOVE_CALM && GrooveIndex != GROOVE_MARCH)
+			if (Intensity == 3 && sn == '.' && (s % 8 == 7) && GrooveIndex != GROOVE_CALM && GrooveIndex != GROOVE_MARCH && !Lively)
 				sn = 'g';	// ghost notes before the backbeats
 			if (sn != '.') {
 				int Volume = sn == 'g' ? 6 : 14;
 				if (GrooveIndex == GROOVE_MARCH && sn == 'x')
 					Volume = OnBeat ? 14 : 10;
-				if (GrooveIndex == GROOVE_CALM || GrooveIndex == GROOVE_WALTZ)
+				if (GrooveIndex == GROOVE_CALM || GrooveIndex == GROOVE_WALTZ || Intensity == 1)
 					Volume = sn == 'g' ? 7 : 11;
 				Bar16.push_back(Hit(Row, SNARE_PITCH, Volume, "snare"));
 			}
-			// Hi-hats
+			// Hi-hats (a shuffle's swung ones are its eighths)
 			char h = G.Hat[p];
-			if (Intensity == 1 && h == 'x' && !OnBeat)
+			if (Intensity == 1 && h == 'x' && !Eighth && GrooveIndex != GROOVE_SHUFFLE)
 				h = '.';
+			if (Lively && Intensity >= 2 && ((Second && s == 7) || (Intensity == 3 && (Second ? s == 11 : s == 7 || s == 15))))
+				h = 'x';	// a sixteenth pair now and then (busy: more of them)
 			if (Intensity == 3 && h == '.' && GrooveIndex != GROOVE_CALM && GrooveIndex != GROOVE_MARCH &&
-				GrooveIndex != GROOVE_FOUR_ON_FLOOR && GrooveIndex != GROOVE_SHUFFLE && !Eighth)
+				GrooveIndex != GROOVE_FOUR_ON_FLOOR && GrooveIndex != GROOVE_SHUFFLE && !Lively && !Eighth)
 				h = 'x';	// sixteenths in between
-			if (h == 'x' && Second && s == Steps - 2 && Intensity >= 2 && GrooveIndex != GROOVE_CALM)
+			if (h == 'x' && Second && s == Steps - 2 && (Intensity >= 2 || Lively) && GrooveIndex != GROOVE_CALM)
 				h = 'o';	// an open hi-hat into the next bar, every other bar
 			if (h != '.') {
 				int Volume = OnBeat ? 10 : Eighth ? 8 : 6;
-				if (GrooveIndex == GROOVE_CALM)
-					Volume -= 2;
-				if (Intensity == 1)
-					Volume -= 1;
-				Bar16.push_back(h == 'o' ? Hit(Row, OPEN_PITCH, Intensity == 1 ? 9 : 11, "open hi-hat") : Hit(Row, HAT_PITCH, Volume, "hi-hat"));
+				if (Lively)
+					Volume = OnBeat ? 6 : Eighth ? 5 : 4;
+				else {
+					if (GrooveIndex == GROOVE_CALM)
+						Volume -= 2;
+					if (Intensity == 1)
+						Volume -= 1;
+				}
+				Bar16.push_back(h == 'o' ? Hit(Row, OPEN_PITCH, Lively ? 7 : Intensity == 1 ? 9 : 11, "open hi-hat") :
+					Hit(Row, HAT_PITCH, Volume, "hi-hat"));
 			}
 		}
 		if (Fill) {
-			AddFill(Bar16, Fills, FillStart, Steps, Bar.Row, StepRows);
+			if (Lively)
+				AddLivelyFill(Bar16, Fills, FillStart, Steps, Bar.Row, StepRows);
+			else
+				AddFill(Bar16, Fills, FillStart, Steps, Bar.Row, StepRows);
 			++Fills;
 		}
-		// A crash where the drums start, and after a fill
+		// A crash where the drums start, and after a fill (on a lively stage a soft splash)
 		const bool AfterFill = O.FillEvery > 0 && BarInPhrase % O.FillEvery == 0 && (b > 0 || O.PhraseStart > 0);
 		if (O.Crash && ((b == 0 && O.PhraseStart == 0) || AfterFill))
-			Bar16.push_back(Hit(Bar.Row, CRASH_PITCH, 15, "crash"));
+			Bar16.push_back(Hit(Bar.Row, CRASH_PITCH, Lively ? 7 : 15, "crash"));
 
 		// Sampled drums: the kick, the snare (its ghost notes stay soft on the
 		// noise) and the toms

@@ -515,6 +515,32 @@ through `/mcp/core` (`Caller::Core`, set in `Mcp.cpp`) it gives
 `CoreRecipe`'s steps, which name only the small set's tools. The tests
 check that every tool a recipe names exists, and on the small set is in it.
 
+Stage fixes (from `feat-stage-fixes`): `review_arrangement` hears whether
+the melody breathes (`BreathsOf` before `ReviewTool`: the two-bar spans
+from `PhraseAnchor` with a rest of a beat or more or a note held two
+beats, as it sounds through `HeardFrames`; under `BREATHING_SHARE` of
+them, `CALM_BREATHING_SHARE` on a calm track, is a tip, and a busy part
+guessed as the melody is left out). The calm and lively mixes keep the
+drums at the volumes they were written at unless they play louder than
+`HeardPlaces::DrumsTop` under the melody (`PlacesFor`; the reply says why,
+`DrumsWhy`). `DrumPart` in `Arrange.cpp` has the `lively` groove
+(`GROOVE_LIVELY`, appended; `LIVELY_SECOND_KICK`, `AddLivelyFill`, its hits
+soft by design, which `volume` scales from `GrooveLoudest`), and light
+thins the kick and the snare (`LastBackbeat`) and keeps the hi-hats. A part
+on an N163 channel gets a sound of its own where another N163 channel plays
+its sound there (`OwnWaveSound`, `OwnWaveSounds`, `N163SoundsBeside`: a
+copy at a wave place of its own, `WaveSoundOfInstrument`, named like
+"String pad 2", `CopyBase`), for voiced chords (the soft layer's pads in
+turn), `MakeEcho`, `add_harmony` and `add_counter_melody`; `VoiceSound`
+counts the soft layer's pads as one sound when telling voiced chords from
+a melody. `ChordPartOptions::Lowest` keeps a pulse's broken chords over
+`PULSE_BROKEN_FLOOR` (`ChordRegister` sets it). `read_notes` reads up to
+`MAX_READ_BARS` bars or the bars of `MAX_READ_NOTES` notes and says first
+which, and `vary_part`'s embellish works on notes of two sixteenths or
+more. `TestMelodyBreaths`, `TestStageMix`, `TestLivelyGroove`,
+`TestOwnWaveSounds`, `TestBrokenFloor`, `TestReadNotesLimit` and
+`TestEmbellishShortNotes` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

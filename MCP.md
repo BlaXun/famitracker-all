@@ -381,7 +381,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | Tool | What it does |
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
-| `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)") |
+| `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
@@ -396,7 +396,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
-| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28) |
+| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for stages that flow: soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line rests where the melody does and answers only in rests of two beats or more, briefly; `rests` (fill, the default, answer or leave) chooses that directly |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes |
@@ -406,8 +406,8 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
-| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests, melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB) |
+| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more) |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests or one that hardly pauses (a rest of a beat or more, or a note held two beats, as it sounds, in under 45% of its two-bar spans, 75% on a calm track; the bars that run on named, and a busy part taken for the melody left out), melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB) |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
@@ -683,8 +683,13 @@ the melody, which keeps its level (`levels` sets it):
 | an echo of the melody | 7 under | 7 under |
 | a second line or an answering voice | no louder than 3 under (to 4) | no louder than 2.5 under (to 3.5) |
 | the bass | 2.5 under | 3 under |
-| the drums | 9 under | 6 under |
+| the drums | 10-12 under, never raised | 10-12 under, never raised |
 
+The drums keep the volumes they were written at while they play 10 dB or
+more under the melody (soft hi-hats at 4-7 stay soft; three composers of a
+lively stage ended with their drums 10-13 dB under the melody, where the
+mix used to raise them to 6 under); louder ones come down to 11 under. The
+reply says which, and why.
 Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
 soft layer) keep their place under it, together at least 3 dB under it.
 The triangle, which has no volume, gets its place from the DPCM level,
@@ -1148,10 +1153,21 @@ avoid that, and gives it tools for each layer:
   nearest note without crossing: an electric piano comping on the VRC7's
   FM channels (its custom patch), held or struck on a rhythm, each voice a
   frame after the one below it (`strum`, `Gxx`) as a hand rolls a chord.
+  On the N163 each voice plays a sound of its own: a sound whose wave
+  changes as it plays rewrites its waves in the chip's memory, so two
+  channels playing it at once play each other's waves. On the VRC6 Plus's
+  soft layer the voices take the string pad, the choir pad and the string
+  ensemble, lowest first; a sound `chord_instrument` names gets copies
+  ("Choir pad 2") with their waves at places of their own. `add_echo`,
+  `add_harmony` and `add_counter_melody` onto an N163 channel do the same
+  when another N163 channel plays their sound there (a sound of one wave
+  can be shared).
   Every style keeps out of the melody's way and the bass's: each chord's
   notes stay a minor third under the lowest melody note sounding with it (a
   whole step where the chord's shape fits no lower, never a semitone) and
-  over the bass's highest note, never in the bass's octave. Voiced chords
+  over the bass's highest note, never in the bass's octave; broken chords
+  on a pulse stay over C-2 however little room the melody leaves them
+  (lower, a ripple turns to mud). Voiced chords
   sit where they sound on the VRC7 too (it plays an octave under its
   notes), a voice gives way where the melody passes through it, and no two
   voices sit a semitone or a minor ninth apart where another voicing has
@@ -1168,7 +1184,9 @@ avoid that, and gives it tools for each layer:
   the triangle it sits where it sounds like a bass (the triangle plays an
   octave below what's written).
 - **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,
-  breakbeat, calm, driving, waltz; light, normal or busy; an open hi-hat into
+  breakbeat, calm, driving, waltz, lively (for stages that flow: soft
+  hi-hats, a soft kick, no snare); light (fewer kicks and snares, the
+  hi-hats kept), normal or busy; an open hi-hat into
   every other bar, fills that take turns (toms, a snare roll, kick and snare)
   and crashes. With `kit` samples (also in `make_groove`) the kick, the snare
   and the fills' toms are the sampled drums of `add_sample_drums` on the DPCM
