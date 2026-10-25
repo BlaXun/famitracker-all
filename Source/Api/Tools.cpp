@@ -18942,8 +18942,9 @@ std::string ToolSet::Instructions()
 		"breath, falling strike or music box), the melody only 2-3 dB over the chords (mix style calm), few long notes by "
 		"step, slow colored chords, no drums, polish, check_song, review_arrangement and measure_mix with style calm. A "
 		"lively stage: notes that fade (kind stepped lead, falling strike, a pluck that settles), the melody 3-4 dB over the "
-		"parts (mix style lively), soft drums, no accents on the lead. Action (fights, bosses, chases): punchy as ever. The "
-		"tools treat a song as calm or lively only when asked (style), and say when one looks calm.\n"
+		"parts (mix style lively), soft drums, no accents on the lead (polish style lively). Action (fights, bosses, chases): "
+		"punchy as ever. The tools treat a song as calm or lively only when asked (style, or a track named \"(night)\"), "
+		"and say when one looks calm. mix style calm or lively mixes as heard, last: no other mix after it.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
 		"measure_mix renders the song and measures what the ear hears, changing nothing: each section's loudness, the intro "
 		"against the main part (6-10 dB under suits a game), the two sides, and each part alone against the melody (name "
@@ -19094,10 +19095,11 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"the VRC6 Plus's soft layer for the B part, a little Space" : "add_drums with kit samples (a sampled kick and snare "
 		"under noise hats) and fills where phrases end, add_echo where it leaves room, a counter-melody or harmony in the "
 		"repeats") + ".\n";
-	T += std::string("9. Finish: ") + (Calm ? "polish style calm" : Lively ? "polish with touches [\"vibrato\", \"separate\", "
-		"\"clicks\", \"staccato\"]" : "polish (its default touches; scoops and falls on chosen bars)") + ", then mix" +
-		(Calm || Lively ? Style : " (style soft, the default, or full)") + " last" + (Calm ? " (its reply says how far the melody "
-		"sits over the chords)" : Lively ? " (the melody 3-4 dB over the parts)" : "") + ".\n";
+	T += std::string("9. Finish: ") + (Calm ? "polish style calm" : Lively ? "polish style lively (touches [\"vibrato\", "
+		"\"separate\", \"clicks\", \"staccato\"] for a bass that bounces)" : "polish (its default touches; scoops and falls on "
+		"chosen bars)") + ", then mix" + (Calm || Lively ? Style : " (style soft, the default, or full)") + " last" + (Calm ?
+		" (it mixes as heard and its reply says how far each part sits under the melody; no other mix after it)" : Lively ?
+		" (as heard: the melody 3-4 dB over the parts; no other mix after it)" : "") + ".\n";
 	T += "10. Check: review_arrangement" + Style + " (8 or more; " + (Calm ? "its tips that the melody doesn't stand out or "
 		"has few, long notes are expected here" : Lively ? "tips that ask for a louder melody or accents go against this "
 		"kind" : "fix what it lists") + "), check_song" + Style + " (0 clicking, 0 vanishing, no clashes you didn't mean" +

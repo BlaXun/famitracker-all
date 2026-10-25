@@ -4543,7 +4543,8 @@ void TestProtocol()
 		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
 		CHECK_HAS(Text, "Compose a lively track");
 		CHECK_HAS(Text, "the form for 24 bars");
-		CHECK_HAS(Text, "then mix style lively last (the melody 3-4 dB over the parts)");
+		CHECK_HAS(Text, "polish style lively (touches [\"vibrato\", \"separate\", \"clicks\", \"staccato\"] for a bass that bounces)");
+		CHECK_HAS(Text, "then mix style lively last (as heard: the melody 3-4 dB over the parts; no other mix after it)");
 		CHECK_HAS(Text, "measure_mix with loudness -20 and stems false");
 		CHECK_HAS(Text, "Lively stages (bouncy and driving, never harsh)");
 		CHECK_LACKS(Text, "style calm");
