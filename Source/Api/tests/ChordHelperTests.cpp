@@ -598,6 +598,78 @@ void TestFmVoices()
 	CHECK(P.Voices.size() == 3 && P.Voices[0].Sound.Sound == "soft chords");
 }
 
+void TestOtherChips()
+{
+	// The 5B (written an octave over how it sounds, 3 dB volume steps), the FDS (two octaves over) and the MMC5 (pulses
+	// with the 2A03's instruments): the 5B's squares take the voices first, all three of one kind
+	HelperSong S;
+	S.PatternLength = 64;
+	S.Frames = 1;
+	S.K = Key(0, MODE_MAJOR);
+	S.HasKey = true;
+	S.Channels.push_back(MakeChannel("Pulse 1", "2A03", KIND_PULSE, 64));
+	S.Channels.push_back(MakeChannel("Pulse 2", "2A03", KIND_PULSE, 64));
+	S.Channels.push_back(MakeChannel("Triangle", "2A03", KIND_TRIANGLE, 64));
+	S.Channels.push_back(MakeChannel("MMC5 Pulse 1", "MMC5", KIND_PULSE, 64));
+	S.Channels.push_back(MakeChannel("MMC5 Pulse 2", "MMC5", KIND_PULSE, 64));
+	S.Channels.push_back(MakeChannel("FDS", "FDS", KIND_OTHER, 64));
+	for (int i = 0; i < 3; ++i) {
+		char Name[32];
+		std::snprintf(Name, sizeof(Name), "5B %d", i + 1);
+		S.Channels.push_back(MakeChannel(Name, "5B", KIND_SQUARE, 64));
+	}
+	Put(S, 0, 0, 60, 0, 15);	// the melody, C-5
+	Put(S, 2, 0, 36, 1);		// the bass, C-3 written on the triangle (C-2 as it sounds)
+	S.Instruments.push_back(MakeInstrument(0, "Lead", "2A03"));
+	S.Instruments.push_back(MakeInstrument(1, "Bass", "2A03"));
+	S.Instruments.push_back(MakeInstrument(2, "Soft chords", "5B", true));
+	CHECK(TakesVoice(S.Channels[5]) && TakesVoice(S.Channels[3]) && TakesVoice(S.Channels[6]));
+	const std::vector<int> Free = FreeChannels(S, 0, 16);
+	CHECK(Free.size() == 7 && Free[0] == 6 && Free[1] == 7 && Free[2] == 8 && Free[3] == 1 && Free[4] == 3 && Free[5] == 4 &&
+		Free[6] == 5);
+	ChordPlan P;
+	CHECK(PlanChords(S, Asking("F", 0, 16), P));
+	CHECK(P.Voices.size() == 3 && P.Voices[0].Channel == 6 && P.Voices[1].Channel == 7 && P.Voices[2].Channel == 8);
+	CHECK(ClassesIn(S, P, 0, 16) == Classes({ 5, 9, 0 }));
+	for (size_t v = 0; v < P.Voices.size(); ++v) {
+		CHECK_EQ(P.Voices[v].Sound.Instrument, 2);			// the song's own 5B soft chords
+		if (P.Voices[v].Notes.empty())
+			continue;
+		CHECK(P.Voices[v].Notes[0].Pitch - 12 < 60 - 2);	// sounds under the melody...
+		CHECK(P.Voices[v].Notes[0].Pitch - 12 > 24);		// ...and over the bass
+		CHECK_EQ(P.Voices[v].Notes[0].Volume, 14);
+	}
+
+	// Four voices: no kind has four free, so the first four in their order take them, the 5B's and Pulse 2; the 2A03's
+	// and the MMC5's sound is the 2A03's soft chords, made for them
+	ChordRequest Four = Asking("Fmaj7", 0, 16);
+	CHECK(PlanChords(S, Four, P));
+	CHECK(P.Voices.size() == 4 && !P.TooFew);
+	CHECK(P.Voices.size() == 4 && P.Voices[0].Channel == 1 && P.Voices[1].Channel == 6 && P.Voices[3].Channel == 8);
+	if (P.Voices.size() == 4) {
+		CHECK(P.Voices[0].Sound.Instrument < 0 && P.Voices[0].Sound.Sound == "soft chords");
+		CHECK_EQ(P.Voices[0].Notes.size(), 1u);
+		if (!P.Voices[0].Notes.empty())
+			CHECK_EQ(P.Voices[0].Notes[0].Volume, 10);	// a pulse's volume as it is
+	}
+	CHECK(ClassesIn(S, P, 0, 16) == Classes({ 5, 9, 0, 4 }));
+
+	// The 5B and the 2A03's Pulse 2 busy: the MMC5's pulses and the FDS, the FDS's notes written two octaves up (and
+	// never over G#7)
+	for (int c : { 1, 6, 7, 8 })
+		Put(S, c, 0, 50, 0, 8);
+	CHECK(PlanChords(S, Asking("F", 0, 16), P));
+	CHECK(P.Voices.size() == 3 && P.Voices[0].Channel == 3 && P.Voices[1].Channel == 4 && P.Voices[2].Channel == 5);
+	if (P.Voices.size() == 3 && !P.Voices[2].Notes.empty()) {
+		const int Sounding = P.Voices[2].Notes[0].Pitch - 24;
+		CHECK(Sounding < 60 && Sounding > 24);
+		CHECK(P.Voices[2].Notes[0].Pitch <= 92);
+		CHECK(P.Voices[2].Sound.Sound == "soft chords" && P.Voices[2].Sound.Instrument < 0);
+		CHECK(VoiceFdsSound("soft chords") != 0);
+	}
+	CHECK(ClassesIn(S, P, 0, 16) == Classes({ 5, 9, 0 }));
+}
+
 }	// namespace
 
 int main()
@@ -610,6 +682,7 @@ int main()
 	TestSoftLayerVoices();
 	TestEndOfSong();
 	TestFmVoices();
+	TestOtherChips();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

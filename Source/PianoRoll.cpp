@@ -61,6 +61,7 @@ const int NOISE_PITCHES = 16;			// the noise channel's 0-F
 const UINT_PTR TIMER_ID = 1;
 const UINT TIMER_MS = 30;
 const DWORD MESSAGE_MS = 7000;			// how long a message stays in the status line
+const DWORD CHORD_MESSAGE_MS = 15000;	// the chord helper's, which say where the voices went and what to look out for
 const DWORD NUDGE_SOUND_MS = 220;		// how long a note sounds after moving it with the keys
 const TCHAR SECTION[] = _T("Piano roll");
 const DWORD HARMONY_DELAY = 400;		// the key and chords are worked out again this long after the song changed
@@ -496,7 +497,8 @@ struct CPianoRollWnd::Impl {
 	bool LinkedClips;	// clips are placed as linked copies
 	std::vector<int> Selection;		// where the selected notes of the bright channel start
 	CString Message;	// the last message for the status line...
-	DWORD MessageTime;	// ...and when it came
+	DWORD MessageTime;	// ...and when it came...
+	DWORD MessageMs;	// ...and how long it stays
 
 	// What the mouse or a key is doing to the notes
 	enum drag_t { DRAG_NONE, DRAG_KEYS, DRAG_RULER, DRAG_DRAW, DRAG_MOVE, DRAG_RESIZE, DRAG_ERASE, DRAG_SELECT, DRAG_PAINT, DRAG_RANGE };
@@ -571,7 +573,7 @@ struct CPianoRollWnd::Impl {
 		Zoom(DEFAULT_ZOOM), ScrollX(0), ScrollY(0), Channel(0), Placed(false), Shown(false), Focused(false),
 		CursorFrame(-1), CursorRow(-1), CursorChannel(-1), Playing(false), PlayRow(-1),
 		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0),
-		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), Snap(false), LinkedClips(false), MessageTime(0),
+		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), Snap(false), LinkedClips(false), MessageTime(0), MessageMs(MESSAGE_MS),
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
@@ -617,10 +619,11 @@ struct CPianoRollWnd::Impl {
 		theApp.WriteProfileInt(SECTION, _T("Chord voices"), ChordVoices);
 	}
 
-	void Say(LPCTSTR Text)
+	void Say(LPCTSTR Text, DWORD Ms = MESSAGE_MS)
 	{
 		Message = Text;
 		MessageTime = ::GetTickCount();
+		MessageMs = Ms;
 	}
 
 	// Geometry
@@ -1170,7 +1173,7 @@ struct CPianoRollWnd::Impl {
 		// A note played with the keys stops; a message goes away
 		if (PreviewUntil != 0 && static_cast<int>(::GetTickCount() - PreviewUntil) >= 0)
 			StopPreview();
-		if (!Message.IsEmpty() && ::GetTickCount() - MessageTime >= MESSAGE_MS) {
+		if (!Message.IsEmpty() && ::GetTickCount() - MessageTime >= MessageMs) {
 			Message.Empty();
 			Changed = true;
 		}
@@ -2443,7 +2446,7 @@ struct CPianoRollWnd::Impl {
 		Menu.AppendMenu(MF_POPUP | (HasKey() ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(KeyChords.Detach()), Item);
 		Menu.AppendMenu(MF_STRING | Can, MENU_CHORD_TYPE, _T("Type a chord, or a chord a bar..."));
 		Menu.AppendMenu(MF_SEPARATOR);
-		const bool Again = AgainRow >= 0 && AgainTrack == Track && AgainRow < EditRows();
+		const bool Again = AgainHolds();
 		if (Again)
 			Item.Format(_T("Again on the next bar: %s on %s"), static_cast<LPCTSTR>(ChordsShown(AgainChords)),
 				static_cast<LPCTSTR>(BarsText(AgainRow, AgainRow + 1)));
@@ -2494,6 +2497,27 @@ struct CPianoRollWnd::Impl {
 		pWnd->Invalidate(FALSE);
 	}
 
+	// The chords written last are still there for Again to go on from (not undone, nor another song): each of their
+	// voices' channels has a note sounding where their last bar starts
+	bool AgainHolds() const
+	{
+		if (AgainRow <= 0 || AgainTrack != Track || AgainRow >= EditRows() || AgainChannels.empty())
+			return false;
+		const int Last = AgainLead.empty() ? AgainRow - 1 : AgainLead.front().Row;
+		for (size_t i = 0; i < AgainChannels.size(); ++i) {
+			const int Column = AgainChannels[i];
+			if (Column < 0 || Column >= static_cast<int>(Notes.size()))
+				return false;
+			const std::vector<RollNote> &List = Notes[static_cast<size_t>(Column)];
+			bool Sounds = false;
+			for (size_t n = 0; n < List.size() && !Sounds; ++n)
+				Sounds = List[n].Start <= Last && List[n].End > Last;
+			if (!Sounds)
+				return false;
+		}
+		return true;
+	}
+
 	// Too few channels are free for the voices the chords want (for their notes, as Voices sets, or as the chord before had,
 	// Why): fewer voices, the arpeggio on one channel, or nothing
 	enum fewer_t { FEWER_NOTES, FEWER_ASKED, FEWER_AGAIN };
@@ -2535,8 +2559,11 @@ struct CPianoRollWnd::Impl {
 			Menu.AppendMenu(MF_STRING, MENU_CHORD_FEWER, Item);
 		}
 		if (!Plan.Free.empty()) {
-			Item.Format(_T("Play all %s notes in turn on %s, as an arpeggio (0xy)"), One ? _T("its") : _T("their"),
-				Song.Channels[static_cast<size_t>(Plan.Free[0])].Name.c_str());
+			size_t Most = 0;	// an arpeggio (0xy) plays three notes
+			for (size_t i = 0; i < Plan.Chords.size(); ++i)
+				Most = std::max(Most, Plan.Chords[i].C.PitchClasses().size());
+			Item.Format(_T("Play %s%s notes in turn on %s, as an arpeggio (0xy)"), Most > 3 ? _T("three of ") : _T(""),
+				One ? _T("its") : _T("their"), Song.Channels[static_cast<size_t>(Plan.Free[0])].Name.c_str());
 			Menu.AppendMenu(MF_STRING, MENU_CHORD_ARPEGGIO, Item);
 		}
 		Menu.AppendMenu(MF_SEPARATOR);
@@ -2569,7 +2596,7 @@ struct CPianoRollWnd::Impl {
 		}
 		ftapi::ChordPlan Plan;
 		if (!ftapi::PlanChords(Song, Request, Plan)) {
-			Say(CString(Plan.Error.c_str()));
+			Say(CString(Plan.Error.c_str()), CHORD_MESSAGE_MS);
 			return;
 		}
 		if (Plan.TooFew) {
@@ -2583,18 +2610,18 @@ struct CPianoRollWnd::Impl {
 			else
 				return;
 			if (!ftapi::PlanChords(Song, Request, Plan)) {
-				Say(CString(Plan.Error.c_str()));
+				Say(CString(Plan.Error.c_str()), CHORD_MESSAGE_MS);
 				return;
 			}
 		}
 		if (Plan.Voices.empty()) {
-			Say(_T("There's no channel there for the chord's notes."));
+			Say(_T("There's no channel there for the chord's notes."), CHORD_MESSAGE_MS);
 			return;
 		}
 		CString Sounds, Message;
 		const int Cursor = std::max(0, CursorFrame) * static_cast<int>(Length) + std::max(0, CursorRow);
 		if (!WriteChordPlan(pMain, Song, Plan, Cursor, Sounds, Message)) {
-			Say(Message);
+			Say(Message, CHORD_MESSAGE_MS);
 			return;
 		}
 		Dirty = true;
@@ -2629,7 +2656,7 @@ struct CPianoRollWnd::Impl {
 		for (size_t i = 0; i < Plan.Remarks.size(); ++i)
 			Said += CString(_T(" ")) + Plan.Remarks[i].c_str();
 		Said += Message;
-		Say(Said);
+		Say(Said, CHORD_MESSAGE_MS);
 		pWnd->Invalidate(FALSE);
 	}
 
