@@ -37,6 +37,7 @@
 #include "Song.h"
 #include "SoundEffects.h"
 #include "SoundIndex.h"
+#include "StepNotes.h"
 #include "Effects.h"
 #include "FdsSounds.h"
 #include "Vrc6Plus.h"
@@ -2642,8 +2643,546 @@ std::string EffectsText(const Session &S, const NoteInfo &Note)
 
 std::string BarList(const std::vector<int> &Bars);	// "3, 5-8, 12"
 
+// Notes in steps (StepNotes.h): write_notes takes a melody as text, a token a step of a grid, and read_notes with
+// format steps gives a part back that way
+
+// A grid's step. An eighth is half a beat, or a third of one where a beat's rows divide by three, as set_meter makes
+// 6/8, 9/8 and 12/8 (a beat of three eighths); a sixteenth is half an eighth, a quarter two
+struct StepGrid {
+	int Sixteenths;		// 1, 2 or 4
+	int Rows;			// a step's rows; 0 where that isn't a whole number
+};
+
+StepGrid GridOf(const Timing &T, int Sixteenths)
+{
+	StepGrid G;
+	G.Sixteenths = Sixteenths;
+	const int Beat = std::max(1, T.RowsPerBeat);
+	const int PerBeat = Beat % 3 == 0 ? 6 : 4;	// sixteenths to a beat
+	G.Rows = Beat * Sixteenths % PerBeat == 0 ? Beat * Sixteenths / PerBeat : 0;
+	return G;
+}
+
+const char *StepName(int Sixteenths, bool Many = false)
+{
+	return Sixteenths == 1 ? (Many ? "sixteenths" : "sixteenth") : Sixteenths == 4 ? (Many ? "quarters" : "quarter") :
+		(Many ? "eighths" : "eighth");
+}
+
+// step: eighth (the default), sixteenth or quarter
+int StepArg(const Json &Args)
+{
+	const std::string Text = Squeezed(StringArg(Args, "step"));
+	if (Text.empty() || Text == "eighth" || Text == "eighths" || Text == "8th" || Text == "8ths" || Text == "18")
+		return 2;
+	if (Text == "sixteenth" || Text == "sixteenths" || Text == "16th" || Text == "16ths" || Text == "116")
+		return 1;
+	if (Text == "quarter" || Text == "quarters" || Text == "4th" || Text == "4ths" || Text == "14")
+		return 4;
+	throw Problem("step is eighth (the default), sixteenth or quarter.");
+}
+
+// "eighths of 2 rows, 2 to a beat and 8 to a bar of 4 beats"
+std::string GridText(const Session &S, const StepGrid &G, int Bar)
+{
+	std::string Text = Format("%s of %s, ", StepName(G.Sixteenths, true), Plural(G.Rows, "row", "rows").c_str());
+	if (S.Time.RowsPerBeat % G.Rows == 0)
+		Text += Format("%d to a beat and ", S.Time.RowsPerBeat / G.Rows);
+	return Text + Format("%d to a bar of %s", S.Time.BarLength(Bar) / G.Rows, Plural(S.Time.BeatsPerBar(Bar), "beat", "beats").c_str());
+}
+
+// The steps that make a grid of whole rows here: "eighth or sixteenth"
+std::string GridsThatFit(const Timing &T)
+{
+	std::string Out;
+	for (int k = 4; k >= 1; k /= 2)
+		if (GridOf(T, k).Rows > 0)
+			Out += std::string(Out.empty() ? "" : " or ") + StepName(k);
+	return Out;
+}
+
+// A pitch as the steps write it: "D4", "C#4"; the noise's "D-#"
+std::string StepPitch(const ChannelInfo &Info, int Pitch)
+{
+	std::string Text = PitchText(Info, Pitch);
+	if (Info.Kind != KIND_NOISE && Text.size() == 3 && Text[1] == '-')
+		Text.erase(1, 1);
+	return Text;
+}
+
+const char *const STEP_HELP = " In steps, every token is a step: a pitch (D4, C#4, Bb3) starts a note, - holds it a step more "
+	"(across | too), . is a step of rest, and | or a new line ends a bar: \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\".";
+
+// read_notes with format steps: the part as a line of steps, a bar to a line, with what the line doesn't show (the
+// instruments, effects, a note held into it or ringing on past it). Empty, with Why, when its notes don't sit on any
+// grid the song's rows make, so they're read as notes.
+std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
+{
+	const int Channel = ChannelArg(S, Args, "channel");
+	int From, To;
+	BarRange(S, Args, From, To);
+	const int Asked = To;
+	To = std::min(To, From + MAX_READ_BARS - 1);
+	const ChannelInfo &Info = S.Channel(Channel);
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
+	const int Wanted = StepArg(Args);
+
+	// The grid asked for, else a finer one the notes sit on
+	StepGrid Grid = GridOf(S.Time, Wanted);
+	Grid.Rows = 0;
+	int OffAt = -1;		// the first row off the grid asked for
+	for (int k = Wanted; k >= 1 && Grid.Rows == 0; k /= 2) {
+		const StepGrid G = GridOf(S.Time, k);
+		if (G.Rows == 0)
+			continue;
+		int Off = -1;
+		for (int Bar = From; Bar <= To && Off < 0; ++Bar)
+			if (S.Time.BarLength(Bar) % G.Rows != 0)
+				Off = S.Time.BarEnd(Bar);
+		for (size_t i = 0; i < Notes.size() && Off < 0; ++i) {
+			const NoteInfo &N = Notes[i];
+			const int Z = N.Row + N.Rows;
+			if (Z <= First || N.Row >= End)
+				continue;
+			if (N.Row >= First && (N.Row - First) % G.Rows != 0)
+				Off = N.Row;
+			else if (Z < End && (Z - First) % G.Rows != 0)
+				Off = Z;
+		}
+		if (Off < 0)
+			Grid = G;
+		else if (OffAt < 0)
+			OffAt = Off;
+	}
+	if (Grid.Rows == 0) {
+		Why = Format("(Not in steps: %s isn't on a grid of %s%s, so these are the notes.)\n", OffAt >= 0 ?
+			("what plays at " + S.Time.Position(OffAt)).c_str() : "the part", StepName(Wanted, true),
+			Wanted > 1 ? " or finer" : "");
+		return std::string();
+	}
+
+	StepLine Line;
+	Line.FirstBar = From;
+	for (int Bar = From; Bar <= To; ++Bar) {
+		StepLineBar B;
+		B.First = (S.Time.BarStart(Bar) - First) / Grid.Rows;
+		B.Steps = S.Time.BarLength(Bar) / Grid.Rows;
+		B.Number = Bar;
+		Line.Bars.push_back(B);
+	}
+	const NoteInfo *pHeld = 0, *pOn = 0;
+	std::vector<const NoteInfo *> Shown;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		const int Z = std::min(End, N.Row + N.Rows);
+		if (Z <= First || N.Row >= End)
+			continue;
+		if (N.Row < First) {
+			Line.Held = (Z - First) / Grid.Rows;
+			pHeld = &N;
+		}
+		else {
+			StepLineNote L;
+			L.Step = (N.Row - First) / Grid.Rows;
+			L.Steps = std::max(1, (Z - N.Row) / Grid.Rows);
+			L.Pitch = StepPitch(Info, N.Pitch);
+			L.Volume = N.VolumeSet ? N.Volume : -1;
+			Line.Notes.push_back(L);
+			Shown.push_back(&N);
+		}
+		if (N.Row + N.Rows > End)
+			pOn = &N;
+	}
+
+	bool Volumes = false;
+	for (size_t n = 0; n < Line.Notes.size(); ++n)
+		Volumes = Volumes || Line.Notes[n].Volume >= 0;
+	std::string Text = Format("%s, %s in %s", Info.FullName().c_str(), RangeText(From, To).c_str(), GridText(S, Grid, From).c_str());
+	if (Grid.Sixteenths != Wanted && OffAt >= 0)
+		Text += Format(" (not %s: notes fall between them, the first at %s)", StepName(Wanted, true), S.Time.Position(OffAt).c_str());
+	Text += std::string(". A pitch starts a note, - holds it a step more, . is a step of rest") + (Volumes ? ", and v after a "
+		"pitch is its volume (the notes after it keep it)" : "") + ":";
+	if (pHeld != 0)
+		Text += Format("\nIt starts by holding %s from %s (the - at its start).", PitchText(Info, pHeld->Pitch).c_str(),
+			S.Time.Position(pHeld->Row).c_str());
+	// The instruments, where they change
+	{
+		std::vector<const NoteInfo *> Playing(Shown);
+		if (pHeld != 0)
+			Playing.insert(Playing.begin(), pHeld);
+		std::string List;
+		int Instrument = NO_INSTRUMENT, Count = 0;
+		for (size_t i = 0; i < Playing.size(); ++i) {
+			if (Playing[i]->Instrument == Instrument || Playing[i]->Instrument == NO_INSTRUMENT)
+				continue;
+			List += (Count == 0 ? std::string() : Format(", from %s ", S.Time.Position(Playing[i]->Row).c_str())) +
+				InstrumentLabel(S.Song, Playing[i]->Instrument);
+			Instrument = Playing[i]->Instrument;
+			++Count;
+		}
+		if (Count > 0)
+			Text += Format("\n%s %s.", Count > 1 ? "Instruments:" : "Instrument", List.c_str());
+	}
+	if (!Shown.empty() && pHeld == 0 && !Shown[0]->VolumeSet && Shown[0]->Volume != 15)
+		Text += Format("\nVolume %d until a note gives another.", Shown[0]->Volume);
+	if (!Shown.empty() && pHeld == 0 && !Shown[0]->PanSet && Shown[0]->Pan != PAN_CENTER)
+		Text += Format("\nPan: %s (8%02X).", PanName(Shown[0]->Pan).c_str(), Shown[0]->Pan);
+	Text += "\n" + FormatStepLine(Line);
+
+	if (pOn != 0)
+		Text += Format("\n%s rings on into bar %d: left as it is, it goes on ringing; a . at the line's end stops it there.",
+			PitchText(Info, pOn->Pitch).c_str(), To + 1);
+	{
+		std::string List;
+		int Count = 0;
+		for (size_t i = 0; i < Shown.size(); ++i) {
+			if (Shown[i]->Effects.empty())
+				continue;
+			if (++Count > MAX_LISTED)
+				continue;
+			std::string Effects;
+			for (size_t e = 0; e < Shown[i]->Effects.size(); ++e)
+				Effects += (e == 0 ? "" : " ") + EffectText(Shown[i]->Effects[e].second.first, Shown[i]->Effects[e].second.second);
+			List += Format("%s%s %s %s", List.empty() ? "" : ", ", S.Time.Position(Shown[i]->Row).c_str(),
+				StepPitch(Info, Shown[i]->Pitch).c_str(), Effects.c_str());
+		}
+		if (Count > MAX_LISTED)
+			List += Format(" and %d more", Count - MAX_LISTED);
+		if (Count > 0)
+			Text += "\nEffects (not in the line; they stay on the notes left where they are): " + List + ".";
+	}
+	Text += Format("\nTo change it, edit the line and give it back to write_notes as notes, with from_bar %d%s. Notes left at "
+		"the same step with the same pitch keep their instrument and effects.", From, Grid.Sixteenths == 2 ? "" :
+		(std::string(" and step ") + StepName(Grid.Sixteenths)).c_str());
+	if (To < Asked)
+		Text += Format("\n(Not read: %s, from from_bar %d on.)", RangeText(To + 1, Asked).c_str(), To + 1);
+	return Text;
+}
+
+// A note of the song kept by a line in steps starts with the effects that were on as it played before (a vibrato set
+// on a note before it, one turned off on a release): where the new cells leave another on after its row, its row
+// says so
+void KeepEffectsOn(const std::vector<Cell> &Old, std::vector<Cell> &Work, int Row, int Columns, bool &Lost)
+{
+	const ChannelState Was = StateAt(Old, Row + 1, Columns), Now = StateAt(Work, Row + 1, Columns);
+	const ChannelState Entering = StateAt(Work, Row, Columns);
+	Cell &C = Work[static_cast<size_t>(Row)];
+	for (int e = 0; e < EFF_COUNT; ++e) {
+		if (!IsStickyEffect(e) || Was.Sticky[e] == Now.Sticky[e])
+			continue;
+		for (int k = 0; k < Columns; ++k)
+			if (C.Effect[k] == e) {
+				C.Effect[k] = EFF_NONE;
+				C.Param[k] = 0;
+			}
+		if (Entering.Sticky[e] != Was.Sticky[e] && !AddEffect(C, e, Was.Sticky[e], Columns))
+			Lost = true;
+	}
+}
+
+// The same effects on two rows, whichever columns they're in
+bool SameEffects(const Cell &A, const Cell &B)
+{
+	std::vector<std::pair<int, int> > X, Y;
+	for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+		if (A.Effect[k] != EFF_NONE)
+			X.push_back(std::make_pair(int(A.Effect[k]), int(A.Param[k])));
+		if (B.Effect[k] != EFF_NONE)
+			Y.push_back(std::make_pair(int(B.Effect[k]), int(B.Param[k])));
+	}
+	std::sort(X.begin(), X.end());
+	std::sort(Y.begin(), Y.end());
+	return X == Y;
+}
+
+// write_notes with notes as text: a melody in steps, from from_bar (or the bar number the text starts with). Every bar
+// holds the meter's steps. A note at the same step with the same pitch as the song's there is kept as it was (its
+// instrument, its effects within its length, the release or halt that ends it where it ends as before); a - at the
+// line's start holds the note sounding into it, and a kept last note that rang on past the line rings on.
+std::string WriteNotesInSteps(Session &S, const Json &Args)
+{
+	const int Channel = ChannelArg(S, Args, "channel");
+	const ChannelInfo &Info = S.Channel(Channel);
+	const bool Dpcm = Info.Kind == KIND_DPCM, Noise = Info.Kind == KIND_NOISE;
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	const bool DirectChange = Direct(S, AsClip);
+	const int Sixteenths = StepArg(Args);
+	const StepGrid Grid = GridOf(S.Time, Sixteenths);
+	if (Grid.Rows == 0)
+		throw Problem(Format("At %s a beat, %s %s isn't a whole number of rows: give step %s.", Plural(S.Time.RowsPerBeat, "row",
+			"rows").c_str(), Sixteenths == 2 ? "an" : "a", StepName(Sixteenths), GridsThatFit(S.Time).c_str()));
+
+	// The line, its bars from from_bar (or the bar number it starts with)
+	int FirstBar = 0;
+	if (Arg(Args, "from_bar") != 0)
+		FirstBar = IntArg(Args, "from_bar", 1, 1, S.MaxBars());
+	StepLine Line;
+	std::string Error;
+	if (!ParseStepLine(Arg(Args, "notes")->String(), FirstBar, Line, Error))
+		throw Problem(Error + STEP_HELP);
+	if (Line.FirstBar < 1)
+		throw Problem("Say where the line starts: from_bar 5, or begin it with the bar's number (\"5: D4 G4 A4 B4 - A4 G4 -\").");
+	FirstBar = Line.FirstBar;
+	const int Bars = static_cast<int>(Line.Bars.size()), LastBar = FirstBar + Bars - 1;
+	if (LastBar > S.MaxBars())
+		throw Problem(Format("The line runs to bar %d, past the longest a song can be (%d bars).", LastBar, S.MaxBars()));
+	if (Arg(Args, "to_bar") != 0) {
+		const int Said = IntArg(Args, "to_bar", LastBar, 1, S.MaxBars());
+		if (Said != LastBar)
+			throw Problem(Format("The line covers %s, but to_bar says %d. In steps the line's bars are the ones it replaces: leave "
+				"to_bar out (a bar of rests is . . . . . . . ., a . for each step).", RangeText(FirstBar, LastBar).c_str(), Said));
+	}
+	// Every bar holds the meter's steps; the bars that don't are named with their counts, so all of them can be fixed
+	{
+		std::vector<std::string> Wrong;
+		const int Usual = S.Time.BarLength(FirstBar) / Grid.Rows;
+		bool Same = true;
+		for (int b = 0; b < Bars; ++b) {
+			const int Bar = FirstBar + b, Length = S.Time.BarLength(Bar);
+			if (Length % Grid.Rows != 0)
+				throw Problem(Format("Bar %d is %s long (the last of its frame), which steps of %s don't fill: write it with step %s, "
+					"or as a list of notes.", Bar, Plural(Length, "row", "rows").c_str(), Plural(Grid.Rows, "row", "rows").c_str(),
+					Grid.Sixteenths > 1 && GridOf(S.Time, Grid.Sixteenths / 2).Rows > 0 ? StepName(Grid.Sixteenths / 2) : "sixteenth"));
+			Same = Same && Length / Grid.Rows == Usual;
+		}
+		for (int b = 0; b < Bars; ++b) {
+			const int Bar = FirstBar + b, Want = S.Time.BarLength(Bar) / Grid.Rows;
+			if (Line.Bars[static_cast<size_t>(b)].Steps != Want)
+				Wrong.push_back(Format("bar %d has %d", Bar, Line.Bars[static_cast<size_t>(b)].Steps) + (Same ? std::string() :
+					Format(" of %d", Want)));
+		}
+		if (!Wrong.empty()) {
+			std::string List;
+			for (size_t i = 0; i < Wrong.size() && i < 8; ++i)
+				List += (i == 0 ? "" : i + 1 == Wrong.size() ? " and " : ", ") + Wrong[i];
+			if (Wrong.size() > 8)
+				List += Format(" and %d more", static_cast<int>(Wrong.size()) - 8);
+			List[0] = 'B';
+			throw Problem(Format("A bar here holds %s: %s. %s: make %s (- holds a note a step more, . is a step of rest), then "
+				"write the line again.", Same ? Plural(Usual, "step", "steps").c_str() : "the steps of its length",
+				GridText(S, Grid, FirstBar).c_str(), List.c_str(), Same ? Format("%s %d steps", Wrong.size() == 1 ? "it" : "each",
+				Usual).c_str() : "each that long"));
+		}
+	}
+	const int First = S.Time.BarStart(FirstBar), End = S.Time.BarEnd(LastBar);
+	if (End > S.MaxRows())
+		throw Problem(Format("The line runs past the longest a song can be (%d bars).", S.MaxBars()));
+
+	// The notes: the song's own where they stay, new ones from the line
+	const std::vector<NoteInfo> &Old = S.Notes(Channel);
+	const std::vector<Cell> &OldCells = S.Cells(Channel);
+	const bool InstrumentGiven = Arg(Args, "instrument") != 0;
+	const int Given = InstrumentGiven ? InstrumentArg(S, Args, "instrument", Channel, NO_INSTRUMENT) : NO_INSTRUMENT;
+	auto Keep = [&](size_t i, int Rows, bool OnLine) {
+		const NoteInfo &O = Old[i];
+		PartNote N;
+		N.Row = O.Row;
+		N.Rows = Rows;
+		N.Pitch = O.Pitch;
+		N.Instrument = InstrumentGiven && OnLine ? Given : O.InstrumentSet ? O.Instrument : NO_INSTRUMENT;
+		for (size_t e = 0; e < O.Effects.size(); ++e) {
+			if (O.Effects[e].first == 0)
+				N.Effects.push_back(O.Effects[e].second);
+			else if (O.Effects[e].first < Rows)
+				N.LaterEffects.push_back(O.Effects[e]);
+		}
+		return N;
+	};
+	std::vector<PartNote> Notes;
+	std::vector<int> Kept;		// per note, the song's note it is (the same start and pitch), -1 for a new one
+	int Held = -1;				// the song's note the line's - at its start holds
+	if (Line.Held > 0) {
+		// The note sounding into the line, or up to its start (a note, release or halt there, which the line rewrites, ended
+		// it: a tie onto a line written before)
+		for (size_t i = 0; i < Old.size(); ++i)
+			if (Old[i].Row < First && Old[i].Row + Old[i].Rows >= First)
+				Held = static_cast<int>(i);
+		if (Held < 0)
+			throw Problem(Format("The line starts with -, which holds the note sounding into bar %d, but none does: start it with a "
+				"pitch, or with . for a rest.", FirstBar));
+		PartNote N = Keep(static_cast<size_t>(Held), First + Line.Held * Grid.Rows - Old[static_cast<size_t>(Held)].Row, false);
+		N.Volume = Old[static_cast<size_t>(Held)].VolumeSet ? Old[static_cast<size_t>(Held)].Volume : -1;
+		Notes.push_back(N);
+		Kept.push_back(Held);
+	}
+	int KeptEffects = 0;
+	for (size_t n = 0; n < Line.Notes.size(); ++n) {
+		const StepLineNote &L = Line.Notes[n];
+		int InBar = 0;
+		const int b = StepLineBarOf(Line, L.Step, &InBar);
+		const std::string Which = Format("Bar %d, step %d", FirstBar + b, InBar + 1);
+		const int Row = First + L.Step * Grid.Rows, Rows = L.Steps * Grid.Rows;
+		int Pitch = 0;
+		std::string Drum;
+		if (Dpcm) {
+			const DpcmKey *pKey = FindSampleDrum(L.Pitch);
+			if (pKey != 0) {
+				Pitch = pKey->Pitch;
+				Drum = "sample drums";
+			}
+			else if (!ParsePitch(L.Pitch, Pitch))
+				throw Problem(Format("%s: \"%s\" isn't a drum or a key. On the DPCM channel: kick, snare, low tom or high tom (the "
+					"sampled drums of add_sample_drums), or the key a sample is on, like C-3.", Which.c_str(), L.Pitch.c_str()));
+		}
+		else if (Noise) {
+			if (!ParseNoisePitch(L.Pitch, Pitch, Drum))
+				throw Problem(Format("%s: \"%s\" isn't a noise sound. Use kick, snare, hihat, open hihat or a noise pitch 0-# to F-#.",
+					Which.c_str(), L.Pitch.c_str()));
+		}
+		else if (!ParsePitch(L.Pitch, Pitch))
+			throw Problem(Format("%s: \"%s\" isn't a note, a hold (-) or a rest (.). Write a note like D4, C#4, Bb3 or D-4 "
+				"(FamiTracker octaves: C-3 is middle C, from C-0 to B-7).", Which.c_str(), L.Pitch.c_str()));
+		int Same = -1;
+		for (size_t i = 0; i < Old.size() && Same < 0 && Old[i].Row <= Row; ++i)
+			if (Old[i].Row == Row && (Noise ? (Old[i].Pitch & 15) == (Pitch & 15) : Old[i].Pitch == Pitch))
+				Same = static_cast<int>(i);
+		PartNote N;
+		if (Same >= 0) {
+			N = Keep(static_cast<size_t>(Same), Rows, true);
+			KeptEffects += Old[static_cast<size_t>(Same)].Effects.empty() ? 0 : 1;
+		}
+		else {
+			N.Row = Row;
+			N.Rows = Rows;
+			N.Pitch = Pitch;
+			if (InstrumentGiven)
+				N.Instrument = Given;
+			else if (Drum == "sample drums")
+				N.Instrument = SampleDrumsInstrument(S);
+			else if (!Drum.empty())
+				N.Instrument = ResolveInstrument(S, Drum, Channel);
+		}
+		N.Volume = L.Volume;
+		Notes.push_back(N);
+		Kept.push_back(Same);
+	}
+
+	// A kept last note that rang on past the line rings on as it did (a change in place only: a clip ends with its bars)
+	int RangeEnd = End;
+	std::string RingsOn;
+	if (DirectChange && !Notes.empty() && Kept.back() >= 0 && Notes.back().Row + Notes.back().Rows == End) {
+		const NoteInfo &O = Old[static_cast<size_t>(Kept.back())];
+		if (O.Row + O.Rows > End) {
+			const int Volume = Notes.back().Volume;
+			Notes.back() = Keep(static_cast<size_t>(Kept.back()), O.Rows, !(Held >= 0 && Notes.size() == 1));
+			Notes.back().Volume = Volume;
+			RangeEnd = O.Row + O.Rows;
+			RingsOn = Format("%s rings on into bar %d as it did; a . at the line's end stops it there.", PitchText(Info, O.Pitch).c_str(),
+				LastBar + 1);
+		}
+	}
+	const int RangeFirst = Held >= 0 ? Old[static_cast<size_t>(Held)].Row : First;
+	// A sample plays to its end: hits ring until the next one
+	if (Dpcm)
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Notes[i].Rows = (i + 1 < Notes.size() ? Notes[i + 1].Row : RangeEnd) - Notes[i].Row;
+
+	// The instrument when none was named: what the channel played with
+	{
+		const int Playing = InstrumentAt(S, Channel, RangeFirst);
+		int Current = Playing;
+		bool NeedInstrument = false;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			if (Notes[i].Instrument != NO_INSTRUMENT)
+				Current = Notes[i].Instrument;
+			else if (Current == NO_INSTRUMENT)
+				NeedInstrument = NeedInstrument || Kept[i] < 0;
+			else if (i == 0 && (Kept[i] < 0 || !DirectChange))
+				Notes[i].Instrument = Current;
+		}
+		if (NeedInstrument)
+			throw Problem(Format("%s has no instrument to play these notes with yet: give an instrument (one of the song's, or %s: %s).",
+				Info.FullName().c_str(), Info.Chip == "N163" ? "an N163 sound" : "a preset", Info.Chip == "N163" ?
+				(IsSoftLayer(Info) ? "the soft layer's choir pad, string pad, soft flute and sub bass, or " + WaveSoundList() :
+				WaveSoundList()).c_str() : PresetList().c_str()));
+	}
+	PartOptions Options = OptionsFor(S, Channel, DirectChange);
+	Options.KeepDetune = true;
+	Options.KeepVolume = NoteStartsIn(S, Channel, RangeFirst, RangeEnd);
+	if (!Options.KeepVolume && !Notes.empty() && Notes.front().Volume < 0)
+		Notes.front().Volume = 15;
+	// The note after the line plays as it did once the kept notes have their effects (below), not before
+	const bool Following = Options.KeepFollowing;
+	Options.KeepFollowing = false;
+	std::vector<std::string> Warnings;
+	std::vector<Cell> Piece;
+	BuildPart(OldCells, RangeFirst, RangeEnd, Notes, Options, Piece, Warnings);
+	std::vector<Cell> Work(OldCells);
+	if (Work.size() < RangeFirst + Piece.size())
+		Work.resize(RangeFirst + Piece.size());
+	std::copy(Piece.begin(), Piece.end(), Work.begin() + RangeFirst);
+	const int Written = RangeFirst + static_cast<int>(Piece.size());
+	const int OldRows = static_cast<int>(OldCells.size());
+
+	// The song's notes kept: each ends as it did where it ends as before (a release or a halt), as does the note sounding
+	// into the line that a rest at its start stops; each starts with the effects that were on as it played; and rows
+	// with the effects they had keep them in their columns
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Z = Notes[i].Row + Notes[i].Rows;
+		if (Kept[i] >= 0 && Z == Old[static_cast<size_t>(Kept[i])].Row + Old[static_cast<size_t>(Kept[i])].Rows && Z < Written &&
+			Z < OldRows && Work[Z].IsEnd() && OldCells[Z].IsEnd())
+			Work[Z].Note = OldCells[Z].Note;
+	}
+	if (Held < 0 && First < Written && First < OldRows && Work[First].IsEnd() && OldCells[First].IsEnd())
+		Work[First].Note = OldCells[First].Note;
+	bool Lost = false;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Kept[i] >= 0)
+			KeepEffectsOn(OldCells, Work, Notes[i].Row, Options.EffectColumns, Lost);
+	for (int r = RangeFirst; r < Written && r < OldRows; ++r)
+		if (SameEffects(OldCells[r], Work[r]))
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				Work[r].Effect[k] = OldCells[r].Effect[k];
+				Work[r].Param[k] = OldCells[r].Param[k];
+			}
+	std::vector<Change> Changes(1);
+	Changes[0].Channel = Channel;
+	Changes[0].Cells.assign(Work.begin() + RangeFirst, Work.begin() + Written);
+	if (Following && !KeepFollowing(OldCells, RangeFirst, RangeEnd, Changes[0].Cells, Options.EffectColumns))
+		Lost = true;
+	if (Lost)
+		Warnings.push_back("Some effects didn't fit in the channel's visible effect columns and were left out.");
+	const std::string What = Format("%s on %s, %s in %s", Plural(static_cast<int>(Line.Notes.size()), "note", "notes").c_str(),
+		Info.FullName().c_str(), RangeText(FirstBar, LastBar).c_str(), StepName(Sixteenths, true));
+	if (Held >= 0)
+		Warnings.push_back(Format("The line starts by holding %s from %s.", PitchText(Info, Old[static_cast<size_t>(Held)].Pitch).c_str(),
+			S.Time.Position(Old[static_cast<size_t>(Held)].Row).c_str()));
+	if (!RingsOn.empty())
+		Warnings.push_back(RingsOn);
+	if (KeptEffects > 0)
+		Warnings.push_back(Format("The song's notes left where they were keep their effects (%s with some).",
+			Plural(KeptEffects, "note", "notes").c_str()));
+	// A rest before most bar lines: a melody that stops at every bar
+	{
+		int Breaks = 0;
+		for (int b = 0; b + 1 < Bars; ++b) {
+			const int Last = Line.Bars[static_cast<size_t>(b)].First + Line.Bars[static_cast<size_t>(b)].Steps - 1;
+			bool Rest = Last >= Line.Held;
+			for (size_t n = 0; n < Line.Notes.size() && Rest; ++n)
+				Rest = !(Line.Notes[n].Step <= Last && Line.Notes[n].Step + Line.Notes[n].Steps > Last);
+			Breaks += Rest ? 1 : 0;
+		}
+		if (Bars >= 4 && Breaks >= 3 && Breaks * 4 >= (Bars - 1) * 3 && IsMelodic(Info) && Info.Kind != KIND_TRIANGLE)
+			Warnings.push_back(Format("%d of the line's %d bar lines come after a rest, so the line stops at every bar. A phrase of "
+				"2 or 4 bars breathes at its end; inside it, let the notes run up to the bar line or hold one across it (- after the |).",
+				Breaks, Bars - 1));
+	}
+	return WithRemarks(S, Commit(S, Changes, RangeFirst, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+}
+
 std::string ReadChannel(Session &S, const Json &Args)
 {
+	// In steps (format steps), when the notes sit on a grid of them
+	std::string NotSteps;
+	const std::string Form = Lowercase(StringArg(Args, "format"));
+	if (Form == "steps" || Form == "step") {
+		const std::string Steps = ReadNotesInSteps(S, Args, NotSteps);
+		if (!Steps.empty())
+			return Steps;
+	}
+	else if (!Form.empty() && Form != "notes" && Form != "list")
+		throw Problem("format is notes (the default) or steps.");
 	const int Channel = ChannelArg(S, Args, "channel");
 	int From, To;
 	BarRange(S, Args, From, To);
@@ -2720,7 +3259,7 @@ std::string ReadChannel(Session &S, const Json &Args)
 		Text += "\n(No notes in these bars.)";
 	if (End > S.Time.TotalRows())
 		Text += "\n(The song ends before that.)";
-	return Text + More;
+	return NotSteps + Text + More;
 }
 
 // Writing a part
@@ -2731,8 +3270,11 @@ std::string WriteNotes(Session &S, const Json &Args)
 	const ChannelInfo &Info = S.Channel(Channel);
 	const bool Dpcm = Info.Kind == KIND_DPCM;
 	const Json *pNotes = Arg(Args, "notes");
+	if (pNotes != 0 && pNotes->IsString())
+		return WriteNotesInSteps(S, Args);
 	if (pNotes == 0 || !pNotes->IsArray())
-		throw Problem("notes should be a list of notes like {\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}.");
+		throw Problem("notes should be a list of notes like {\"bar\": 1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}, or a melody "
+			"in steps as text, like \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\" from from_bar.");
 	const bool AsClip = BoolArg(Args, "as_clip", false);
 	const bool DirectChange = Direct(S, AsClip);
 	const bool Noise = Info.Kind == KIND_NOISE;
@@ -20198,8 +20740,16 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		N.Add("pan", Pan);
 		NoteItem = N.Get();
 	}
-	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}.");
+	Json NotesProp = Prop("array", "The notes, each {bar, beat, pitch, beats}; or a melody in steps as text, like \"D4 G4 A4 B4 - "
+		"A4 G4 - | B4 - - - . . D5 -\" (see the description).");
 	NotesProp.Set("items", NoteItem);
+	{
+		Json Types = Json::MakeArray();
+		Types.Push("array");
+		Types.Push("string");
+		NotesProp.Set("type", Types);
+	}
+	const std::vector<std::string> Steps = { "eighth", "sixteenth", "quarter" };
 
 	struct Add {
 		std::vector<ToolInfo> &Tools;
@@ -20247,14 +20797,24 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("read_notes", "Read a channel's notes",
 		"The notes of one channel in musical terms: bar, beat, note, length in beats, instrument, volume, effects and pan "
 		"(where it changes). Up to 64 bars or 600 notes per call (whole bars); when it reads fewer bars than asked, its first "
-		"line says which and how to read the rest.",
-		Schema().Add("channel", ChannelProp("Channel name (\"VRC6 Pulse 1\", \"Triangle\") or number from get_song."), true).Range(),
+		"line says which and how to read the rest. With format steps, the part as write_notes takes a melody in steps, a bar "
+		"to a line, to change and give back (notes between the steps read at a finer step, or as notes).",
+		Schema().Add("channel", ChannelProp("Channel name (\"VRC6 Pulse 1\", \"Triangle\") or number from get_song."), true).Range()
+			.Add("format", EnumProp("notes (the default: each note's bar, beat and length) or steps (a line of steps, as write_notes "
+				"takes a melody).", std::vector<std::string>{ "notes", "steps" }))
+			.Add("step", EnumProp("With format steps: eighth (the default), sixteenth or quarter.", Steps)),
 		true, false, true);
 
 	AddTool("write_notes", "Write a part",
 		"Writes a part (melody, counter-melody, bass line, drums...) on one channel, replacing that channel's notes in the bars "
 		"it covers (whole bars its notes leave empty between them keep their notes, unless from_bar and to_bar give the range). "
-		"Each note lasts its beats; a gap is a rest; notes that give no volume play as loud as the ones they replace. Unless the user allowed direct changes, the part becomes a clip "
+		"Each note lasts its beats; a gap is a rest; notes that give no volume play as loud as the ones they replace. "
+		"A melody is easiest in steps: notes as text from from_bar, every token one step (an eighth; step sixteenth or "
+		"quarter), | between bars. A pitch starts a note, - holds it a step more (across | too: a tie into the next bar), . is "
+		"a step of rest; a note lasts until the next pitch or rest. \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\" is two bars "
+		"of 4/4. Each bar holds the meter's steps (8 eighths in 4/4, 6 in 3/4 or 6/8); B4v12 gives a volume; notes left where "
+		"they were (read_notes with format steps) keep their instrument and effects. A phrase of 2 or 4 bars breathes at its "
+		"end, not at every bar line. Unless the user allowed direct changes, the part becomes a clip "
 		"for the user to listen to and place. Name an instrument (one of the song's or a preset, which is added: " + Presets +
 		"; on VRC7 channels also the VRC7's sounds: " + Vrc7PatchList() + "; on N163 channels the N163 sounds: " + WaveSoundList() +
 		"; on the FDS channel the FDS sounds: " + FdsSoundList() + "). On the FDS, notes sound two octaves under the note written. "
@@ -20264,9 +20824,12 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("notes", NotesProp, true)
 			.Add("instrument", Prop("string", "Instrument for the notes: a name from get_song, or a preset. Default: what the channel played with."))
-			.Add("from_bar", BarProp("First bar to replace. Default: the first note's bar."))
+			.Add("from_bar", BarProp("First bar to replace. Default: the first note's bar. Notes in steps start there (or at the bar "
+				"number the text starts with, \"5: D4 ...\")."))
 			.Add("to_bar", BarProp("Last bar to replace. Default: the last note's bar. With from_bar, every bar between is replaced, those the "
-				"notes leave empty too; give both with no notes to clear bars."))
+				"notes leave empty too; give both with no notes to clear bars. Notes in steps replace their own bars."))
+			.Add("step", EnumProp("For notes in steps, what a step is: eighth (the default; half a beat, a third of one in 6/8), "
+				"sixteenth or quarter.", Steps))
 			.ClipChoice(),
 		false, true);
 
@@ -21691,7 +22254,8 @@ std::string ToolSet::CoreInstructions()
 		"(set_tempo; pick an even one it names, or the hi-hats wobble) and a form of 16-32 bars with an A part and a "
 		"different B part.\n"
 		"- Melody (write_notes, on a pulse): a short motif repeated and developed, phrases of 2 or 4 bars that end on a held "
-		"note or a rest, chord tones on strong beats, long and short notes mixed, mostly in octave 3 (C-3 to C-4).\n"
+		"note or a rest (not at every bar line), chord tones on strong beats, long and short notes mixed, mostly in octave 3. "
+		"Write it in steps, a token an eighth: \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests).\n"
 		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\" or \"i VI III VII\"), "
 		"about one a bar, with a chord_style, color and bass_style that fit the mood (the defaults are the plainest); other "
 		"chords for the B part.\n"
@@ -21749,7 +22313,10 @@ std::string ToolSet::Instructions()
 		"strong beats and steps between them; one high point in each section; long and short notes mixed (dotted rhythms, "
 		"syncopation). Not a scale run, not eighth notes without a rest. For warmth, a pulse lead lives mostly in octave 3 "
 		"(C-3 to C-4) and reaches into octave 4 at its high points: higher, the pulses turn thin and the warm middle of the "
-		"sound is left empty.\n"
+		"sound is left empty. Write a melody in steps (write_notes' notes as text, a token an eighth, | between bars: a pitch "
+		"starts a note, - holds it a step more, across | too, . is a step of rest): \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\". "
+		"A phrase breathes at its end, not at every bar line: inside it, let notes run up to the bar line or hold one across "
+		"it. read_notes with format steps gives a part back that way, to change and write again.\n"
 		"- Harmony with direction: tonic, subdominant, dominant, home; a B part on other chords (IV, vi, the relative key); "
 		"sevenths, added ninths and suspensions resolving into V (color sevenths or rich); chords changing about once a bar, "
 		"not every beat. Bass: walking for towns and jazz, octaves for action, syncopated for pop, arpeggio for adventure. "
@@ -21990,7 +22557,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"notes a frame or two late (Gxx 01-02)" : "a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
 		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 3") +
 		". The melody must breathe: about 2 of every 3 two-bar spans end on a rest of a beat or more or a note held two "
-		"beats or more (review_arrangement counts them and names the bars that run on).\n";
+		"beats or more (review_arrangement counts them and names the bars that run on). Write it in steps (notes as text: "
+		"\"5: D4 G4 A4 B4 - A4 G4 -\", - holds across | too): it breathes at a phrase's end, not at every bar line.\n";
 	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
 		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
 		"different (") + (Calm ? "an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
@@ -22042,9 +22610,9 @@ static std::string CoreRecipe(const std::string &Kind)
 		"3. add_chords_and_bass with chords you choose, a chord a bar or two, colored (m7, maj7, add9, sus2), iv-i or "
 		"IV-I rather than V-I, the last bar open (a sus2 or a maj7): chord_style lush with arp_frames 3 for a slow "
 		"shimmer, bass_style roots.\n"
-		"4. write_notes for the melody, two bars at a time: 2-4 notes a bar (quarters, halves, wholes), mostly by "
-		"step and repeated notes, each two-bar phrase ending with a rest of a beat or more, one gentle high point per "
-		"section, no slides.\n"
+		"4. write_notes for the melody, two bars at a time, in steps (\"5: D4 - - - E4 - - - | 6: F4 - - - - - . .\"): 2-4 "
+		"notes a bar (quarters, halves, wholes), mostly by step and repeated notes, each two-bar phrase ending with a rest "
+		"of a beat or more (not at every bar line), one gentle high point per section, no slides.\n"
 		"5. add_echo a beat behind (delay_beats 1, detune 1, pan opposite, volume 5). No drums.\n"
 		"6. polish with style calm, then mix with style calm (the melody 2-3 dB over the chords).\n"
 		"7. check_song with style calm (0 clicking, 0 vanishing, no held lead) and review_arrangement with style calm "
@@ -22061,8 +22629,9 @@ static std::string CoreRecipe(const std::string &Kind)
 		"strike, or pluck with sustain half (settles to about 9). Read its volume sequence in the reply.\n"
 		"3. add_chords_and_bass with colored chords you choose (a chord a bar: sevenths, add9, sus; bVI and bVII for "
 		"a lift), chord_style broken or stabs, bass_style root_fifth or walking.\n"
-		"4. write_notes for the melody, phrase by phrase: a motif a player would hum, phrases of 2 or 4 bars ending "
-		"on a held note or a rest, chord tones on strong beats, one high point per section, mostly in octave 3.\n"
+		"4. write_notes for the melody, phrase by phrase, in steps (\"5: D4 G4 A4 B4 - A4 G4 -\"): a motif a player "
+		"would hum, phrases of 2 or 4 bars ending on a held note or a rest (not at every bar line), chord tones on strong "
+		"beats, one high point per section, mostly in octave 3.\n"
 		"5. add_drums with groove lively (soft hats and kick, no hard backbeat), and add_echo a beat behind on the "
 		"other side (delay_beats 1, pan opposite).\n"
 		"6. polish with touches [\"vibrato\", \"separate\", \"clicks\", \"staccato\"], then mix with style lively.\n"
@@ -22078,8 +22647,9 @@ static std::string CoreRecipe(const std::string &Kind)
 		"lead or stepped lead with click true.\n"
 		"3. add_chords_and_bass with chords that build tension (i bVI bVII i; a sus4 climbing a semitone a bar), "
 		"chord_style stabs or arpeggio, bass_style octaves or driving (bass_instrument \"thump bass\" for punch).\n"
-		"4. write_notes for the melody: a motif with a rhythm you'd recognize, repeated and developed, phrases of 2 "
-		"or 4 bars, one high point per section, long and short notes mixed.\n"
+		"4. write_notes for the melody, in steps (\"5: D4 G4 A4 B4 - A4 G4 -\"): a motif with a rhythm you'd "
+		"recognize, repeated and developed, phrases of 2 or 4 bars that breathe at their end, not at every bar line, one "
+		"high point per section, long and short notes mixed.\n"
 		"5. add_drums with groove driving and fills where phrases end; add_echo where the melody leaves room.\n"
 		"6. polish (its default touches: accents, vibrato, separate, clicks), then mix (style soft).\n"
 		"7. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more). Fix what they find and check again.\n"

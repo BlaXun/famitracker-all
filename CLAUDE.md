@@ -844,6 +844,62 @@ call to the next; in one pass every part starts where its mix does, so
 builds before and after differ there by that much. The whole sound still
 moves by a few tenths of a dB from call to call.
 
+Piano roll polish (from `feat-piano-polish`): the piano roll's Groove
+button (and an empty song's "Start from a groove" box, `LayOutGrooveHint`)
+opens `GrooveMenu` in `PianoRoll.cpp`, the moods of `ftapi::GrooveMoods`
+written by `MakeGroove` over `GrooveSpan` (the chord helper's `ChordSpan` in
+whole bars, else `GrooveBars` from the cursor's bar, kept in the "Recorder"
+settings with the groove dialog's) with the melody left on the bright
+channel (`GrooveMelody`); `groove_choice_t::Bpm` 0 keeps the song's speed
+and tempo, which a song with notes does. More choices opens `CGrooveDlg`.
+`Source/PianoRollUi.cpp` (portable, `pianoroll_ui_tests` in `Source/Tests`)
+flows the toolbar into rows (`FlowRollButtons`; `LayOutButtons` measures the
+buttons when a text changes, and the header is `HeaderRows` tall; a piano
+roll too short for the rows and `MIN_GRID_HEIGHT` of notes keeps the rows
+that fit, and the buttons with no room go under More, `MoreMenu`), writes the idle status hints (`RollHint`: E and H only while the
+pattern editor shows) and tells a click that only closed a menu
+(`ClosedAMenu`): a `WH_MSGFILTER` hook (`MenuClickHook`, installed in
+`CPianoRollWnd::Create`) keeps the last button press a menu looked at
+(`MSGF_MENU`), which Wine (and Windows at times) then passes on to the
+window under the mouse; the button handlers ignore it, and a double-click
+right after it is a click. MFC focuses the active view whenever the main
+window is activated again (after any dialog or message box,
+`CView::OnActivateView`), so `CPianoRollWnd::OnKillFocus` notes when the
+keys leave the window from the piano roll and `CMainFrame::OnActivate` gives
+them back (`TakeKeysBack`; not on `WA_CLICKACTIVE`, where the click decides),
+and Ctrl+Z and Ctrl+Y pressed in the piano roll put the cursor back on its
+channel after the action moved it (`RollChannelBefore` and
+`RollChannelAfter` in `OnEditUndo` and `OnEditRedo`: undoing a groove or
+another tool's change put it on the first channel written, and the piano
+roll, following it, dropped its selection).
+View > Piano roll's check mark, `NoteViews` and `GetPianoRollWnd` use
+`CPianoRollBar::IsOpen` (set by `Opened`): `CControlBar::IsVisible` reported
+the bar hidden in some layouts under Wine (the pattern editor hidden, the
+drum grid closed).
+
+Melodies in steps (from `feat-step-notes`): `write_notes` takes `notes`
+as text, a token a step of a grid (`D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -`:
+a pitch starts a note, `-` holds it a step more, across `|` too, `.` rests),
+and `read_notes` with `format` `steps` gives a part back so, a bar a line.
+`Source/Api/StepNotes.cpp` (portable, tested by its own `step_notes_tests`)
+reads and writes the text (`ParseStepLine`, `FormatStepLine`: bars, bar
+numbers `5:` checked against where the bar falls, holds, rests, `B4v12`
+volumes, drums of two words). `WriteNotesInSteps` and `ReadNotesInSteps`
+(before `ReadChannel` in `Tools.cpp`) put it on the song's grid (`GridOf`:
+an eighth is half a beat, a third of one where a beat's rows divide by three,
+as `set_meter` makes 6/8), refuse a line whose bars don't each hold their
+steps (naming every such bar with its count), and keep a note at the same
+step and pitch as the song's as it was: its instrument, its effects (`Keep`),
+the release or halt it ended with, the sticky effects it played with
+(`KeepEffectsOn`) and their columns (`SameEffects`), so a line read and
+written back gives the same cells (`TestStepsRoundTrip`). A `-` at the
+line's start holds the note sounding into it (or ending at its first row, a
+tie onto a line written before), so the write starts at that note's row, and
+a kept last note that rang on past the line rings on (the write ends where it
+did). The list of notes takes the old path untouched. `TestStepsWrite`,
+`TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
+in `Source/Api/tests/ApiTests.cpp` cover the tools.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

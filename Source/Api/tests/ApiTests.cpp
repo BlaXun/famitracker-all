@@ -16573,6 +16573,354 @@ void TestSoftReferenceTool()
 }
 // end of soft-references tests
 
+// Melodies in steps (StepNotes.h): the lines of a read_notes reply in steps (those that start with a bar's number),
+// and text as a JSON string
+std::string StepLines(const std::string &Reply)
+{
+	std::string Out;
+	size_t Start = 0;
+	while (Start < Reply.size()) {
+		size_t End = Reply.find('\n', Start);
+		if (End == std::string::npos)
+			End = Reply.size();
+		const std::string Line = Reply.substr(Start, End - Start);
+		size_t Digits = 0;
+		while (Digits < Line.size() && Line[Digits] >= '0' && Line[Digits] <= '9')
+			++Digits;
+		if (Digits > 0 && Digits < Line.size() && Line[Digits] == ':')
+			Out += (Out.empty() ? "" : "\n") + Line;
+		Start = End + 1;
+	}
+	return Out;
+}
+
+std::string StepsJson(const std::string &Text)
+{
+	std::string Out;
+	for (size_t i = 0; i < Text.size(); ++i)
+		Out += Text[i] == '\n' ? std::string("\\n") : Text[i] == '"' ? std::string("\\\"") : std::string(1, Text[i]);
+	return Out;
+}
+
+// write_notes with a melody in steps: eighths of 2 rows in 4/4, the cells of the list of notes it stands for, a note
+// held across a bar line, a wrong count named by bar with its count, where the line starts (from_bar or its bar
+// number), mistakes named by bar and step, volumes, and a tie onto a line written before
+void TestStepsWrite()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, "
+		"\"notes\": \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "8 notes on VRC6 Pulse 1, bars 1-2 in eighths");
+	CHECK_EQ(Notes(Song, 5), "0:D-4 2:G-4 4:A-4 6:B-4 10:A-4 12:G-4 16:B-4 24:=== 28:D-5 32:=== ");
+	CHECK(Song.Rows[5][0].Instrument == 0 && Song.Rows[5][28].Instrument == 0 && Song.Rows[5][0].Volume == 15);
+	CHECK_LACKS(Result.Text, "stops at every bar");
+	// The list of notes it stands for writes the same cells, as before
+	FakeSong Listed;
+	Listed.Info.DirectChanges = true;
+	CHECK(!Run(Listed, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": ["
+		"{\"bar\": 1, \"beat\": 1, \"pitch\": \"D-4\", \"beats\": 0.5}, {\"bar\": 1, \"beat\": 1.5, \"pitch\": \"G-4\", \"beats\": 0.5}, "
+		"{\"bar\": 1, \"beat\": 2, \"pitch\": \"A-4\", \"beats\": 0.5}, {\"bar\": 1, \"beat\": 2.5, \"pitch\": \"B-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3.5, \"pitch\": \"A-4\", \"beats\": 0.5}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"G-4\", \"beats\": 1}, "
+		"{\"bar\": 2, \"beat\": 1, \"pitch\": \"B-4\", \"beats\": 2}, {\"bar\": 2, \"beat\": 4, \"pitch\": \"D-5\", \"beats\": 1}]}").IsError);
+	CHECK(Listed.Rows[5] == Song.Rows[5]);
+
+	// Held across the bar line: no release between
+	FakeSong Tied;
+	Tied.Info.DirectChanges = true;
+	CHECK(!Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 2, \"notes\": "
+		"\"C4 - - - - - - - | - - - - E4 - - -\"}").IsError);
+	CHECK_EQ(Notes(Tied, 5), "16:C-4 40:E-4 48:=== ");
+	// A wrong count: each bar named with its count, nothing written
+	Result = Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"notes\": "
+		"\"D4 G4 A4 | B4 - - - . . D5 - - | E4 - - - - - - -\"}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "A bar here holds 8 steps: eighths of 2 rows, 2 to a beat and 8 to a bar of 4 beats. Bar 3 has 3 and bar 4 "
+		"has 9: make each 8 steps");
+	CHECK_EQ(Notes(Tied, 5), "16:C-4 40:E-4 48:=== ");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"notes\": \"D4 - - - - - - - - | E4\"}").Text,
+		"Bar 3 has 9 and bar 4 has 1: make each 8 steps");
+	// Where it starts: from_bar, or the number its first bar starts with (checked against from_bar)
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": \"D4 - - - - - - -\"}").Text, "Say where the line starts");
+	CHECK(!Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": \"5: D4 - - - - - - -\\n6: . . . . . . . .\"}").IsError);
+	CHECK_EQ(Notes(Tied, 5, 64), "64:D-4 80:=== ");
+	CHECK(Tied.Rows[5][64].Instrument == 0);	// what the channel played with
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 4, \"notes\": \"5: D4 - - - - - - -\"}").Text,
+		"says bar 5 where its bar 1 is bar 4");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"to_bar\": 7, \"notes\": \"D4 - - - - - - -\"}").Text,
+		"The line covers bar 5, but to_bar says 7");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"notes\": \"D4 - H4 - - - - -\"}").Text,
+		"Bar 5, step 3: \"H4\" isn't a note, a hold (-) or a rest (.)");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"notes\": \"D4 - - - | | E4 - - -\"}").Text,
+		"bar 6 is empty");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 7, \"notes\": \"- - D4 - - - - -\"}").Text,
+		"holds the note sounding into bar 7, but none does");
+	CHECK_HAS(Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 7, \"step\": \"half\", \"notes\": \"D4\"}").Text,
+		"step is eighth (the default), sixteenth or quarter");
+	CHECK_EQ(Notes(Tied, 5), "16:C-4 40:E-4 48:=== 64:D-4 80:=== ");
+	// A volume after a pitch, which the notes after it keep
+	CHECK(!Run(Tied, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 7, \"notes\": \"G4v9 - A4 - B4v12 - - -\"}").IsError);
+	CHECK(Tied.Rows[5][96].Volume == 9 && Tied.Rows[5][100].Volume == NO_VOLUME && Tied.Rows[5][104].Volume == 12);
+
+	// A tie onto a line written before: - at its start holds the last note on
+	FakeSong Calls;
+	Calls.Info.DirectChanges = true;
+	CHECK(!Run(Calls, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, \"notes\": "
+		"\"C4 - - - - - - - | E4 - - - G4 - - -\"}").IsError);
+	CHECK_EQ(Notes(Calls, 5), "0:C-4 16:E-4 24:G-4 32:=== ");
+	Result = Run(Calls, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"notes\": \"- - - - A4 - - - | B4 - - - - - - .\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "The line starts by holding G-4 from bar 2 beat 3.");
+	CHECK_EQ(Notes(Calls, 5), "0:C-4 16:E-4 24:G-4 40:A-4 48:B-4 62:=== ");
+	CHECK(Calls.Rows[5][24].Instrument == 0 && Calls.Rows[5][40].Instrument == NO_INSTRUMENT);
+	Result = Run(Calls, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 4, \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1, bars 3-4 in eighths of 2 rows, 2 to a beat and 8 to a bar of 4 beats. A pitch starts a note, "
+		"- holds it a step more, . is a step of rest:");
+	CHECK_HAS(Result.Text, "\nIt starts by holding G-4 from bar 2 beat 3 (the - at its start).");
+	CHECK_HAS(Result.Text, "\n3: - - - - A4 - - -\n4: B4 - - - - - - .\n");
+	CHECK_HAS(Result.Text, "give it back to write_notes as notes, with from_bar 3.");
+
+	// A melody that stops at every bar line hears about phrases
+	FakeSong Choppy;
+	Choppy.Info.DirectChanges = true;
+	Result = Run(Choppy, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, \"notes\": "
+		"\"C4 - D4 - E4 - . . | E4 - D4 - C4 - . . | D4 - E4 - F4 - . . | G4 - - - - - . .\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "3 of the line's 3 bar lines come after a rest, so the line stops at every bar. A phrase of 2 or 4 bars "
+		"breathes at its end");
+}
+
+// read_notes with format steps: a finer step where notes fall between the eighths (and a list of notes where they fall
+// between the sixteenths too), the instruments where they change, a volume coming in, the effects the line doesn't
+// show, a note ringing on past the bars read, and the other channels' sounds by name
+void TestStepsRead()
+{
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0, 12);
+	Song.Put(5, 5, "E-4");
+	Song.End(5, 8, NOTE_RELEASE);
+	ToolResult Result = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1, \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1, bar 1 in sixteenths of 1 row, 4 to a beat and 16 to a bar of 4 beats (not eighths: notes fall "
+		"between them, the first at bar 1 beat 2.25). A pitch starts a note, - holds it a step more, . is a step of rest, and v after "
+		"a pitch is its volume (the notes after it keep it):");
+	CHECK_HAS(Result.Text, "\n1: C4v12 - - - - E4 - - . . . . . . . .\n");
+	CHECK_HAS(Result.Text, "with from_bar 1 and step sixteenth.");
+	CHECK_HAS(Result.Text, "Instrument \"Lead\" (00).");
+	CHECK_HAS(Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1, \"format\": \"steps\", \"step\": \"sixteenth\"}").Text,
+		"bar 1 in sixteenths of 1 row, 4 to a beat and 16 to a bar of 4 beats. A pitch");
+	CHECK_HAS(Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"format\": \"words\"}").Text, "format is notes (the default) or steps");
+	// Between the sixteenths too: the notes as a list
+	FakeSong Fine;
+	Fine.Info.FirstHighlight = 8;
+	Fine.Info.SecondHighlight = 32;
+	Fine.Put(5, 0, "C-4", 0);
+	Fine.Put(5, 3, "D-4");
+	Result = Run(Fine, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1, \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "(Not in steps: what plays at bar 1 beat 1.375 isn't on a grid of eighths or finer, so these are the "
+		"notes.)\nVRC6 Pulse 1, bar 1 (4 beats a bar, 8 rows a beat):");
+	CHECK_HAS(Result.Text, "\nbar 1 beat 1.375: D-4");
+	// The instruments, a volume coming in, the effects, and a note that rings on into the next bar
+	FakeSong Parts;
+	Parts.Put(5, 0, "A-3", 1, 9);
+	Parts.Put(5, 16, "C-4", 0);
+	Parts.Rows[5][16].Effect[0] = EFF_VIBRATO;
+	Parts.Rows[5][16].Param[0] = 0x45;
+	Parts.Put(5, 24, "E-4", 2);
+	Parts.Put(5, 40, "G-4");
+	Parts.End(5, 56, NOTE_HALT);
+	Result = Run(Parts, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 2, \"to_bar\": 3, \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "\nInstruments: \"Lead\" (00), from bar 2 beat 3 \"Square\" (02).");
+	CHECK_HAS(Result.Text, "\nVolume 9 until a note gives another.");
+	CHECK_HAS(Result.Text, "\n2: C4 - - - E4 - - -\n3: - - - - G4 - - -\n");
+	CHECK_HAS(Result.Text, "\nG-4 rings on into bar 4: left as it is, it goes on ringing; a . at the line's end stops it there.");
+	CHECK_HAS(Result.Text, "\nEffects (not in the line; they stay on the notes left where they are): bar 2 beat 1 C4 445.");
+	// Bars past the most a call reads
+	FakeSong Long(20);	// 80 bars
+	Long.Put(5, 0, "C-4", 0);
+	Result = Run(Long, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1, bars 1-64 in eighths");
+	CHECK_HAS(Result.Text, "\n64: - - - - - - - -\n");
+	CHECK_HAS(Result.Text, "\n(Not read: bars 65-80, from from_bar 65 on.)");
+	// The noise channel's notes by their noise pitches, written back as they are
+	FakeSong Drums;
+	Drums.Info.DirectChanges = true;
+	CHECK(!Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 1, \"notes\": \"kick . hihat . snare . open hihat .\"}").IsError);
+	Result = Run(Drums, "read_notes", "{\"channel\": \"Noise\", \"to_bar\": 1, \"format\": \"steps\"}");
+	const std::string Line = StepLines(Result.Text);
+	CHECK_EQ(Line, "1: 4-#v15 . D-# . A-# . D-# .");
+	const std::vector<Cell> Before = Drums.Rows[3];
+	CHECK(!Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 1, \"notes\": \"" + StepsJson(Line) + "\"}").IsError);
+	CHECK(Drums.Rows[3] == Before);
+}
+
+// Other meters and grids: 6/8 (a beat of three eighths), 3/4, sixteenths and quarters in 4/4, and a step the rows
+// can't make
+void TestStepsMeters()
+{
+	// 6/8 as set_meter makes it: 6 rows a beat, 12 a bar
+	FakeSong Jig;
+	Jig.Info.DirectChanges = true;
+	Jig.Info.PatternLength = 48;
+	Jig.Info.FirstHighlight = 6;
+	Jig.Info.SecondHighlight = 12;
+	for (size_t c = 0; c < Jig.Rows.size(); ++c)
+		Jig.Rows[c].assign(96, Cell());
+	ToolResult Result = Run(Jig, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, "
+		"\"notes\": \"D4 - E4 F4 - G4 | A4 - - - - - | B4 - - - -\"}");
+	CHECK_HAS(Result.Text, "A bar here holds 6 steps: eighths of 2 rows, 3 to a beat and 6 to a bar of 2 beats. Bar 3 has 5: make it "
+		"6 steps");
+	CHECK(!Run(Jig, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, \"notes\": "
+		"\"D4 - E4 F4 - G4 | A4 - - - - -\"}").IsError);
+	CHECK_EQ(Notes(Jig, 5), "0:D-4 4:E-4 6:F-4 10:G-4 12:A-4 24:=== ");
+	Result = Run(Jig, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 2, \"format\": \"steps\"}");
+	CHECK_HAS(Result.Text, "bars 1-2 in eighths of 2 rows, 3 to a beat and 6 to a bar of 2 beats.");
+	CHECK_HAS(Result.Text, "\n1: D4v15 - E4 F4 - G4\n2: A4 - - - - -\n");
+	// Quarters in 6/8: three to a bar
+	CHECK(!Run(Jig, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"step\": \"quarter\", \"notes\": \"B4 - C5\"}").IsError);
+	CHECK_EQ(Notes(Jig, 5, 24), "24:B-4 32:C-5 36:=== ");
+	// 3/4: 6 eighths a bar
+	FakeSong Waltz;
+	Waltz.Info.DirectChanges = true;
+	Waltz.Info.PatternLength = 48;
+	Waltz.Info.SecondHighlight = 12;
+	for (size_t c = 0; c < Waltz.Rows.size(); ++c)
+		Waltz.Rows[c].assign(96, Cell());
+	CHECK(!Run(Waltz, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 2, \"notes\": "
+		"\"E4 - - - G4 - | C5 - - - - - | - - . . . .\"}").IsError);
+	CHECK_EQ(Notes(Waltz, 5), "12:E-4 20:G-4 24:C-5 40:=== ");
+	// Sixteenths and quarters in 4/4
+	FakeSong Grid;
+	Grid.Info.DirectChanges = true;
+	CHECK(!Run(Grid, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"from_bar\": 1, \"step\": \"sixteenth\", "
+		"\"notes\": \"C4 D4 E4 F4 G4 - - - - - - - . . . .\"}").IsError);
+	CHECK_EQ(Notes(Grid, 5, 0, 16), "0:C-4 1:D-4 2:E-4 3:F-4 4:G-4 12:=== ");
+	CHECK(!Run(Grid, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 2, \"step\": \"1/4\", \"notes\": \"A4 - B4 .\"}").IsError);
+	CHECK_EQ(Notes(Grid, 5, 16, 32), "16:A-4 24:B-4 28:=== ");
+	CHECK_HAS(Run(Grid, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"step\": \"quarter\", \"notes\": "
+		"\"A4 - B4 . C5\"}").Text, "A bar here holds 4 steps: quarters of 4 rows, 1 to a beat and 4 to a bar of 4 beats. Bar 3 has 5");
+	// A step the rows can't make: a sixteenth at 2 rows a beat
+	FakeSong Coarse;
+	Coarse.Info.DirectChanges = true;
+	Coarse.Info.FirstHighlight = 2;
+	Coarse.Info.SecondHighlight = 8;
+	CHECK_HAS(Run(Coarse, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 1, \"step\": \"sixteenth\", \"notes\": \"C4\"}").Text,
+		"At 2 rows a beat, a sixteenth isn't a whole number of rows: give step quarter or eighth.");
+}
+
+// read_notes in steps and write_notes with that line give back the same cells: instruments changing, volumes, effects
+// (one in the second column), a vibrato later notes inherit and one turned off, pans, a halt where a release would be
+// written and a release where a halt would, a note held into the bars read and one ringing on past them. A note changed
+// loses its effects, and the note after it keeps the vibrato it inherited; a clip of the line is the same notes.
+void TestStepsRoundTrip()
+{
+	const int V = 5;	// VRC6 Pulse 1
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	auto Effect = [&](int Row, int Column, int Effect, int Param) {
+		Song.Rows[V][static_cast<size_t>(Row)].Effect[Column] = static_cast<unsigned char>(Effect);
+		Song.Rows[V][static_cast<size_t>(Row)].Param[Column] = static_cast<unsigned char>(Param);
+	};
+	Song.Put(V, 0, "C-4", 0, 12);
+	Effect(0, 0, EFF_VIBRATO, 0x45);
+	Song.Put(V, 4, "E-4");					// inherits the vibrato
+	Song.End(V, 6, NOTE_RELEASE);
+	Song.Put(V, 8, "G-4");
+	Effect(8, 0, EFF_PAN, 0x40);
+	Song.Put(V, 12, "A-4", NO_INSTRUMENT, 9);	// held into bar 2
+	Song.End(V, 20, NOTE_HALT);				// Lead would end with a release
+	Song.Put(V, 24, "F-4", 2);
+	Effect(24, 1, EFF_SLIDE_UP, 0x31);		// in the second column
+	Song.Put(V, 28, "D-4");					// held into bar 3
+	Song.End(V, 36, NOTE_RELEASE);			// Square would end with a halt
+	Song.Put(V, 40, "C-5", 0);
+	Effect(40, 0, EFF_VIBRATO, 0x00);
+	Effect(40, 1, EFF_PAN, 0x80);
+	Song.Put(V, 52, "B-4");					// from bar 3 into bar 4
+	Song.End(V, 56, NOTE_RELEASE);
+	Song.Put(V, 64, "G-4");
+	Song.End(V, 80, NOTE_RELEASE);
+	const std::vector<Cell> Before = Song.Rows[V];
+	const int RANGES[][2] = { { 1, 4 }, { 2, 3 }, { 3, 3 }, { 4, 4 }, { 5, 5 }, { 6, 6 }, { 1, 8 }, { 2, 2 } };
+	for (size_t i = 0; i < sizeof(RANGES) / sizeof(RANGES[0]); ++i) {
+		const std::string Range = "\"from_bar\": " + std::to_string(RANGES[i][0]) + ", \"to_bar\": " + std::to_string(RANGES[i][1]);
+		const ToolResult Read = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"format\": \"steps\", " + Range + "}");
+		const std::string Line = StepLines(Read.Text);
+		Check(!Line.empty() && Read.Text.find("Not in steps") == std::string::npos, Read.Text.c_str(), __LINE__);
+		const int Writes = Song.Writes;
+		const ToolResult Written = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": " +
+			std::to_string(RANGES[i][0]) + ", \"notes\": \"" + StepsJson(Line) + "\"}");
+		Check(!Written.IsError, Written.Text.c_str(), __LINE__);
+		CHECK_EQ(Song.Writes, Writes + 1);
+		Check(Song.Rows[V] == Before, (Range + ": " + Notes(Song, V) + "\n" + Line).c_str(), __LINE__);
+		Song.Rows[V] = Before;
+	}
+	{
+		const ToolResult Read = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 1, \"to_bar\": 4, \"format\": \"steps\"}");
+		CHECK_HAS(Read.Text, "\n1: C4v12 - E4 . G4 - A4v9 -\n2: - - . . F4 - D4 -\n3: - - . . C5 - - -\n4: - - B4 - . . . .\n");
+		CHECK_HAS(Read.Text, "Instruments: \"Lead\" (00), from bar 2 beat 3 \"Square\" (02), from bar 3 beat 3 \"Lead\" (00).");
+		CHECK_HAS(Read.Text, "bar 1 beat 1 C4 445, bar 1 beat 3 G4 840, bar 2 beat 3 F4 Q31, bar 3 beat 3 C5 400 880.");
+		const ToolResult Some = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 2, \"to_bar\": 3, \"format\": \"steps\"}");
+		CHECK_HAS(Some.Text, "\nIt starts by holding A-4 from bar 1 beat 4 (the - at its start).");
+		CHECK_HAS(Some.Text, "\nC-5 rings on into bar 4: left as it is");
+		const ToolResult Written = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": \"" + StepsJson(StepLines(Some.Text)) + "\"}");
+		CHECK_HAS(Written.Text, "Note: The line starts by holding A-4 from bar 1 beat 4.");
+		CHECK_HAS(Written.Text, "Note: C-5 rings on into bar 4 as it did");
+		CHECK_HAS(Written.Text, "Note: The song's notes left where they were keep their effects (2 notes with some).");
+		CHECK(Song.Rows[V] == Before);
+	}
+	// The first note changed: it has no vibrato of its own now, and the note after it keeps the one it inherited
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 1, \"notes\": \"D4v12 - E4 . G4 - A4v9 -\"}").IsError);
+	CHECK(Song.Rows[V][0].Pitch() == Before[0].Pitch() + 2 && !HasEffectAt(Song, V, 0, EFF_VIBRATO, 0x45));
+	CHECK(Song.Rows[V][0].Instrument == 0 && Song.Rows[V][0].Volume == 12);
+	CHECK(HasEffectAt(Song, V, 4, EFF_VIBRATO, 0x45));
+	CHECK(HasEffectAt(Song, V, 8, EFF_PAN, 0x40) && Song.Rows[V][20].Note == NOTE_HALT);
+	for (int r = 16; r < 128; ++r)
+		CHECK(Song.Rows[V][static_cast<size_t>(r)] == Before[static_cast<size_t>(r)]);
+	Song.Rows[V] = Before;
+	// The line as a clip: the same notes, the held one from its start, ending with the line
+	Song.Info.DirectChanges = false;
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 2, \"notes\": \"- - . . F4 - D4 -\"}").IsError);
+	CHECK(Song.Rows[V] == Before && Song.Clips.size() == 1u);
+	const std::vector<Cell> &Clip = Song.Clips[0].Columns[0];
+	CHECK(Clip.size() == 20u && Clip[0].Pitch() == Before[12].Pitch() && Clip[0].Volume == 9 && Clip[8].Note == NOTE_HALT &&
+		Clip[12] == Before[24]);
+	CHECK(Clip[0].Instrument == 0);	// a clip names its first note's instrument
+}
+
+// The tools' descriptions and the server's instructions teach the steps
+void TestStepsTaught()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	bool Write = false, Read = false;
+	for (size_t i = 0; i < Tools.List().size(); ++i) {
+		const ToolInfo &T = Tools.List()[i];
+		const Json *pProps = T.InputSchema.Get("properties");
+		if (T.Name == "write_notes") {
+			const Json *pNotes = pProps->Get("notes");
+			Write = pNotes->Get("type")->IsArray() && pNotes->Get("type")->Size() == 2u && pProps->Get("step") != 0 &&
+				Contains(T.Description, "\"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\"") &&
+				Contains(T.Description, "breathes at its end, not at every bar line");
+		}
+		if (T.Name == "read_notes")
+			Read = pProps->Get("format") != 0 && pProps->Get("step") != 0 && Contains(T.Description, "format steps");
+	}
+	CHECK(Write && Read);
+	CHECK_HAS(ToolSet::Instructions(), "D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -");
+	CHECK_HAS(ToolSet::CoreInstructions(), "D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -");
+	CHECK_HAS(ToolSet::Instructions(), "not at every bar line");
+	CHECK_HAS(ToolSet::CoreInstructions(), "not at every bar line");
+	const char *const KINDS[] = { "calm", "lively", "action" };
+	for (int Core = 0; Core < 2; ++Core)
+		for (int k = 0; k < 3; ++k) {
+			Caller Who;
+			Who.Core = Core == 1;
+			const ToolResult Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + KINDS[k] + "\"}"), Who);
+			Check(Contains(Recipe.Text, "in steps") && Contains(Recipe.Text, "not at every bar line"), Recipe.Text.c_str(), __LINE__);
+		}
+}
+
 // what_next's answer: the call its first line gives ("Next (lively, 3 of 19 done): tool {json}"), the step's kind
 struct WhatNextAnswer {
 	std::string Tool;		// empty when it asks the user
@@ -16811,6 +17159,11 @@ int main()
 	TestPhoneRoute();
 	TestSoftReferenceWaves();
 	TestSoftReferenceTool();
+	TestStepsWrite();
+	TestStepsRead();
+	TestStepsMeters();
+	TestStepsRoundTrip();
+	TestStepsTaught();
 	TestWhatNext();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;

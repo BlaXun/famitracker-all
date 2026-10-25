@@ -412,8 +412,8 @@ and `findings`, heard worst first as in the text. Each finding has:
 | Tool | What it does |
 |---|---|
 | `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
-| `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it |
-| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other |
+| `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it. With `format` `steps`, the part as a line of steps, a bar to a line, as `write_notes` takes a melody (see [Melodies in steps](#melodies-in-steps)) |
+| `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
 | `add_instrument` | Adds a sound from a preset for a 2A03, VRC6 or 5B channel, one of the VRC7's or the 5B's own sounds, an N163 wave sound or an FDS sound (see [FDS sounds](#fds-sounds)) |
 | `design_instrument` | Makes a new instrument from a description: attack, decay, sustain and release, the pulse width and how it moves, a vibrato that comes in after a moment, a blip, scoop, fall, flick or thump on the attack, a chord arpeggio, the calm leads (a music box, a breath, a falling strike), and the classic NES articulations (an attack that blooms, a duty click, a decay in steps, held notes struck again, an echo after the note); or a drum, darker or brighter, shorter or longer, or a swell on the noise channel (waves, wind); on the FDS channel a wave by word and what its modulator does (see [FDS sounds](#fds-sounds)); on the VRC6 Plus's soft layer a wave sound's waves. Its reply gives the volume a frame at a time and what that means at the song's tempo, and says when a sound is gone so fast that a tune's notes on it would sound missing. See [Sounds in words](#sounds-in-words) |
@@ -486,6 +486,52 @@ FamiTracker's octave numbers are one lower than in most music software: C-3
 is middle C and A-3 is 440 Hz. Bars and beats count from 1, as the row
 highlight shows them (the first highlight is a beat, the second a bar).
 Claude works on the track that's selected.
+
+### Melodies in steps
+
+A melody is easiest to write as a line of steps: there are no beats to add
+up, so a note can't end early by a slip of arithmetic. `write_notes` takes
+`notes` as text, from `from_bar` (or from the bar number the text starts
+with, `5:`):
+
+    5: D4 G4 A4 B4 - A4 G4 -
+    6: B4 - - - . . D5 -
+
+Every token is one step of a grid: an eighth, unless `step` says
+`sixteenth` or `quarter`. A pitch starts a note (`D4`, `C#4`, `Bb3`, or
+FamiTracker's `D-4`), `-` holds the note before it one step more, across a
+bar line too (a tie into the next bar), and `.` is a step of rest. A note
+lasts until the next pitch or rest, so a phrase is legato unless a gap is
+written, and it breathes where its 2 or 4 bars end, not at every bar line.
+`|` or a new line ends a bar, and every bar holds the meter's steps: 8
+eighths in 4/4, 6 in 3/4 and 6 in 6/8, where a beat is three eighths (an
+eighth is a third of a beat wherever a beat has 3, 6, 9 or 12 rows, as
+`set_meter` makes 6/8; half a beat otherwise). A line with a bar of more or
+fewer steps is refused, every such bar named with its count, and nothing is
+written. A pitch may carry its volume, `B4v12` (0-15), which the notes after
+it keep; on the noise channel the drums go by name (`kick . hihat . snare .
+open hihat .`). A line that rests before most of its bar lines gets a note
+in the reply about phrases.
+
+`read_notes` with `format` `steps` gives a part back the same way, a bar to
+a line with its number, to change and write again. Notes that fall between
+the eighths read in sixteenths (the reply says so, and the line goes back
+with `step` `sixteenth`); a part with notes between the sixteenths too
+reads as the usual list. What the line doesn't show is listed with it: the
+instruments where they change, the effects, a note held into the first bar
+(the line starts with `-`) and one ringing on past the last.
+
+Written back, a note at the same step with the same pitch as the song's is
+the song's note kept as it was: its instrument, its effects (those within
+its length), the release or halt that ends it where it ends as before, and
+the effects that were on as it started (a vibrato it inherited from the
+note before), so a line read and written back unchanged gives the same
+cells. A new or moved note gets the line's instrument (`instrument`, or
+what the channel played with) and no effects. A `-` at the line's start
+holds the note sounding into it, the last note of a line written before
+too (a tie from one call to the next), and a kept last note that rang on
+into the next bar goes on ringing, as before; a `.` at the line's end stops
+it there. The list of notes works as before.
 
 ### Meter
 

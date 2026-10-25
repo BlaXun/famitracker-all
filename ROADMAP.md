@@ -162,12 +162,18 @@ one). When fewer channels are free than the chord has notes, it says so and
 offers fewer voices or the chord as an arpeggio on one channel; Again puts
 the same chord on the next bar. One Ctrl+Z takes it back.
 
-Still open from the plan:
+Mood starters (October 2026, on `feat-piano-polish`): the Groove button
+lays down drums, a bass line and chords for a mood, the moods of Start from
+a groove (town, overworld, battle, boss, dungeon, calm and eight more),
+under the selected bars or for 4, 8 or 16 bars from the cursor's bar, on the
+channels the melody doesn't use. An empty song shows "Start from a groove"
+in the middle of the piano roll and takes the mood's tempo; a song with
+notes keeps its own. More choices opens the groove dialog for the tempo and
+the key. One Ctrl+Z takes it all back. On a narrow window the piano roll's
+buttons now go on two rows (or more) instead of dropping off the end, and
+a piano roll too short for that keeps the rest under More.
 
-- Mood starters that lay down chords, bass and drums for moods like "cozy
-  town" or "boss fight". The recorder's Start from a groove does it for a
-  take, and its parts come from `ftapi::MakeGrooveParts` (`Api/Grooves.h`),
-  ready for the piano roll to use.
+With that, everything planned for the piano roll is in.
 
 ## 6. Tutorials
 

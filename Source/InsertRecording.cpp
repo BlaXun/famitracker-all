@@ -1960,7 +1960,16 @@ bool MakeGroove(CMainFrame *pMainFrm, const groove_choice_t &Choice, CString &Me
 		static_cast<LPCTSTR>(Channel(Choice.ChordChannel)), static_cast<LPCTSTR>(Channel(Choice.BassChannel)),
 		static_cast<LPCTSTR>(Channel(Choice.DrumChannel)));
 	int Speed = 0, Tempo = 0;
-	SpeedTempoFor(pDoc, Track, Choice.Bpm, Speed, Tempo);
+	const bool OwnTempo = Choice.Bpm > 0.0;
+	if (OwnTempo)
+		SpeedTempoFor(pDoc, Track, Choice.Bpm, Speed, Tempo);
+	else {
+		// The song's own (the piano roll's mood starters, under notes already there)
+		Speed = static_cast<int>(pDoc->GetSongSpeed(Track));
+		Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
+		if (Tempo == 0)
+			Tempo = ftapi::DefaultTempo(static_cast<int>(pDoc->GetFrameRate()));
+	}
 
 	// The key picked becomes the track's (the piano roll's shading, the problems panel's and the tools' key), unless
 	// it has one chosen already or notes in another key: a melody sung over the groove alone may suggest another
@@ -1975,7 +1984,8 @@ bool MakeGroove(CMainFrame *pMainFrm, const groove_choice_t &Choice, CString &Me
 	pMainFrm->BeginActionGroup();
 	const bool Made = pTools->RunTool("make_groove", std::string(static_cast<LPCSTR>(CStringA(Args))), Reply, true);
 	if (Made) {
-		SetSongTempo(pMainFrm, Speed, Tempo);
+		if (OwnTempo)
+			SetSongTempo(pMainFrm, Speed, Tempo);
 		if (OwnKey)
 			SetTrackKey(pMainFrm, true, ftapi::KeyChoice(Picked));
 	}
