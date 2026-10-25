@@ -59,6 +59,8 @@ struct stDPCMState {
 class IAudioCallback {
 public:
 	virtual void FlushBuffer(int16 *Buffer, uint32 Size) = 0;
+	// A stem's samples, after the mix's (CAPU::SetStems, this FamiTracker's own)
+	virtual void FlushStem(int /*Stem*/, int16 * /*Buffer*/, uint32 /*Size*/) {}
 };
 
 

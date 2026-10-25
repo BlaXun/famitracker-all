@@ -108,6 +108,33 @@ bool Contains(const std::string &Text, const char *Part)
 #define CHECK_HAS(text, part) Check(Contains((text), (part)), "\"" part "\" in " #text, __LINE__)
 #define CHECK_LACKS(text, part) Check(!Contains((text), (part)), "no \"" part "\" in " #text, __LINE__)
 
+// Renders made together, kept until each is taken (FakeSong::RenderParts)
+class FakeRenderSet : public RenderSet {
+public:
+	struct Made {
+		std::vector<float> Left, Right;
+		int Rate;
+		std::vector<std::pair<int, long long> > Marks;
+		bool Taken;
+	};
+	std::vector<Made> Renders;
+	bool Take(size_t Index, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error) override
+	{
+		if (Index >= Renders.size() || Renders[Index].Taken) {
+			Error = "There's no such render.";
+			return false;
+		}
+		Made &One = Renders[Index];
+		Left.swap(One.Left);
+		Right.swap(One.Right);
+		SampleRate = One.Rate;
+		Marks.swap(One.Marks);
+		One.Taken = true;
+		return true;
+	}
+};
+
 // A song in memory: 2A03 and VRC6 channels, 64-row patterns, 4 rows a beat,
 // 16 a bar (4 bars a frame)
 class FakeSong : public SongHost {
@@ -993,6 +1020,25 @@ public:
 	// (8xx) puts it, as FamiTracker's mixer does (PanGains), from the mixer
 	// window's starting pan, and at its fader's level; the channels Options
 	// leaves silent at a level of nothing, as CSoundGen leaves them out
+	// Several in one pass, as FamiTracker renders them: each as RenderTrack renders it (counted there too), their Tail
+	// the first's
+	int Passes = 0;
+	std::unique_ptr<RenderSet> RenderParts(int Track, double Seconds, const std::vector<RenderOptions> &Renders_, std::string &Error)
+		override
+	{
+		++Passes;
+		std::unique_ptr<FakeRenderSet> Set(new FakeRenderSet());
+		for (size_t i = 0; i < Renders_.size(); ++i) {
+			RenderOptions Options = Renders_[i];
+			Options.Tail = Renders_[0].Tail;
+			FakeRenderSet::Made One;
+			One.Taken = false;
+			if (!RenderTrack(Track, Seconds, Options, One.Left, One.Right, One.Rate, One.Marks, Error))
+				return std::unique_ptr<RenderSet>();
+			Set->Renders.push_back(One);
+		}
+		return std::unique_ptr<RenderSet>(Set.release());
+	}
 	int Renders = 0;
 	RenderOptions LastRender;
 	bool RenderTrack(int Track, double Seconds, const RenderOptions &Options, std::vector<float> &Samples, std::vector<float> &Right,
@@ -13294,6 +13340,7 @@ void TestMeasureMix()
 	CHECK(Song.Undos.empty() && Song.Writes == 0 && Song.MixWrites == 0 && Song.Files.empty() && Song.Current == 0 && Song.Rows == Before &&
 		Song.Mix == Mix);
 	CHECK(Song.Renders == 4 && !Song.LastRender.Tail && Song.LastRender.Silent.size() == Song.Rows.size());
+	CHECK(Song.Passes == 1);	// all four made together
 	// The last render, the bass alone: every other channel silent
 	CHECK(!Song.LastRender.Silent[2] && Song.LastRender.Silent[0] && Song.LastRender.Silent[5] && Song.LastRender.Silent[7]);
 	// The numbers are the parts' own, rendered alone, where they play with the melody (bars 5-16)
@@ -13349,7 +13396,7 @@ void TestMeasureMix()
 		const double Under = NumberAfter(R.Text, "\nThe intro is ");
 		CHECK(Under >= 6.0 && Under <= 10.0);
 		CHECK_HAS(R.Text, " dB under the loop.\nSides: ");
-		CHECK(Softer.Renders == 1);	// the mix alone
+		CHECK(Softer.Renders == 1 && Softer.Passes == 1);	// the mix alone
 		CHECK_LACKS(R.Text, "Alone");
 	}
 
@@ -13363,12 +13410,13 @@ void TestMeasureMix()
 	CHECK_HAS(R.Text, "\n- bars 13-16: ");
 	// A section in place of bars: only those, rendered only as far as they need
 	Song.Renders = 0;
+	Song.Passes = 0;
 	R = Run(Song, "measure_mix", "{\"section\": \"A\", \"stems\": false}");
 	CHECK_HAS(R.Text, "Measured bars 5-12 of \"Town\"");
 	CHECK_HAS(R.Text, "\n- A, bars 5-12: ");
 	CHECK_LACKS(R.Text, "Loop");
 	CHECK_LACKS(R.Text, "intro");
-	CHECK(Song.Renders == 1);
+	CHECK(Song.Renders == 1 && Song.Passes == 1);
 
 	// The export's loudness: every number as the file at that loudness has it
 	R = Run(Song, "measure_mix", "{\"loudness\": -20, \"stems\": false}");
@@ -13406,12 +13454,13 @@ void TestMeasureMix()
 
 	// Parts named: one channel, several joined with + as one, the chords; the melody among them is measured anyway
 	Song.Renders = 0;
+	Song.Passes = 0;
 	R = Run(Song, "measure_mix", "{\"parts\": [\"Triangle\", \"Pulse 1+Pulse 2\", \"VRC6 Pulse 1\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
 	CHECK(!R.IsError);
 	CHECK_HAS(R.Text, "\n- Triangle (bass): ");
 	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1-2 together: ");
 	CHECK_LACKS(R.Text, "\n- chords");
-	CHECK(Song.Renders == 4);
+	CHECK(Song.Renders == 4 && Song.Passes == 1);
 	R = Run(Song, "measure_mix", "{\"parts\": \"chords\"}");
 	CHECK_HAS(R.Text, "\n- chords (2A03 Pulse 1-2): ");
 	CHECK_LACKS(R.Text, "Triangle");

@@ -97,21 +97,20 @@ public:
 	void	ClearSpace();						// the space silent (ClearBuffer leaves it ringing), as a song starts
 	bool	IsOwn(int ChanID) const;			// mixed into buffers of its own (the VRC7 makes its samples itself)
 	void	MixOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
-	// Stems (this FamiTracker's own, measure_mix's parts alone in one pass): up to MAX_STEMS renders of some channels
-	// alone, made with the mix, each sample for sample as a render that leaves the other channels out has it (the
-	// 2A03's ones SetChannelSilent, the others' at a level of 0): a stem's 2A03 channels come off their pins as there,
-	// the other chips' channels sound as in the mix, each with its Soft, and its sends go to a space of the stem's own.
-	// StemOf[ChanID] is the stem a channel is heard in (-1: none; each channel in one at most); Count 0 for none. Set
-	// as a render starts, with nothing sounding.
+	// Stems (this FamiTracker's own, measure_mix's parts alone in one pass): renders of some channels alone made with
+	// this mixer's, each sample for sample as a render that leaves the others out has it (CSoundGen leaves a 2A03
+	// channel out with SetChannelSilent, another chip's at a level of 0). A stem is a mixer of its own made as this
+	// one is now (its settings, synths and channels as they are; its buffers empty and its space silent, as after
+	// ClearBuffer and ClearSpace, where a render starts), its channels left out as CSoundGen leaves them out (in the
+	// order it does), and then gets every call this one gets, with their levels and silences kept so: a 2A03 channel
+	// left out comes off its pins as there, the others sound as in the mix, each with its Soft, and its sends go to a
+	// space of the stem's own. pSilent[Stem][ChanID]: the channels left out of each, by the mixer's IDs (the N163's
+	// as the chip numbers them); Count 0 for none. Made and freed by the caller's thread, with nothing playing. A
+	// stem's samples are Stem(i)->ReadBuffer's, read after this one's; the VRC7 makes each stem's samples itself.
 	static const int MAX_STEMS = 16;
-	void	SetStems(int Count, const int *pStemOf);
-	int		StemCount() const { return m_iStems; }
-	int		StemOf(int ChanID) const;
-	// A stem's samples, read after ReadBuffer has read the mix's: as many
-	int		ReadStem(int Stem, int Size, void *Buffer, bool Stereo);
-	// For the VRC7: a stem's samples for each side, and a channel in buffers of its own its samples there for its stem
-	void	MixStemSamples(int Stem, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
-	void	MixStemOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
+	void	SetStems(int Count, const bool (*pSilent)[CHANNELS], int Time);
+	int		StemCount() const { return m_iStemCount; }
+	CMixer	*Stem(int Index) const { return Index >= 0 && Index < m_iStemCount ? m_pStem[Index] : NULL; }
 
 	int32	GetChanOutput(uint8 Chan) const;
 	void	SetChipLevel(chip_level_t Chip, float Level);
@@ -231,6 +230,18 @@ private:
 	float		m_fLevelFDS;
 	float		m_fLevelN163;
 	float		m_fLevelS5B;
+
+	// Stems (SetStems)
+	void		MakeStemOf(const CMixer &Mixer);	// its settings, synths and channels; its buffers empty, its space silent
+	void		FreeStems();
+	CMixer		*m_pStem[MAX_STEMS];
+	bool		m_bStemSilent[MAX_STEMS][CHANNELS];	// each one's channels left out
+	int			m_iStemCount;
+	unsigned int m_iBufferLength;				// AllocateBuffer's, for a stem's buffers
+	uint8		m_iNrChannels;
+
+	CMixer(const CMixer &);
+	CMixer &operator=(const CMixer &);
 };
 
 #endif /* MIXER_H */

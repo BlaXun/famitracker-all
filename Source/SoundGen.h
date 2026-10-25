@@ -112,6 +112,7 @@ public:
 	// Sound
 	bool		InitializeSound(HWND hWnd);
 	void		FlushBuffer(int16 *Buffer, uint32 Size);
+	void		FlushStem(int Stem, int16 *Buffer, uint32 Size);	// a stem's samples (RenderToFile's pStems)
 	CDSound		*GetSoundInterface() const { return m_pDSound; };
 
 	void		Interrupt() const;
@@ -165,8 +166,16 @@ public:
 	// Rendering. pSilent (by chan_id_t, CHANNELS of them; NULL for none): channels left out of the sound, whose
 	// notes and effects play on (a DPCM level still softens the triangle and the noise) and whose Space sends go
 	// with them (measure_mix's stems). Tail: go on while the mixer's space rings after the end (up to 15 s).
+	// pStems (Stems of them, up to MAX_RENDER_STEMS): renders made with this one (measure_mix's parts alone in one
+	// pass), each into a WAV file of its own, with the channels its Silent marks (by chan_id_t) left out as pSilent
+	// leaves them, sample for sample as a render of it alone (CAPU::SetStems)
+	static const int MAX_RENDER_STEMS = 16;
+	struct render_stem_t {
+		CString File;
+		bool Silent[CHANNELS];
+	};
 	bool		 RenderToFile(LPTSTR pFile, render_end_t SongEndType, int SongEndParam, int Track, const bool *pSilent = NULL,
-		bool Tail = true);
+		bool Tail = true, const render_stem_t *pStems = NULL, int Stems = 0);
 	void		 StopRendering();
 	void		 GetRenderStat(int &Frame, int &Time, bool &Done, int &FramesToRender, int &Row, int &RowCount) const;
 	bool		 IsRendering() const;	
@@ -391,6 +400,9 @@ private:
 	int					m_iRenderTail;						// frames rendered after the end while the space rang on
 	bool				m_bRenderSilent[CHANNELS];			// left out of the render's sound, by chan_id_t (RenderToFile)
 	bool				m_bRenderTail;						// the render goes on while the space rings after its end
+	int					m_iRenderStems;						// RenderToFile's pStems: how many, each one's channels left out
+	bool				m_bStemSilent[MAX_RENDER_STEMS][CHANNELS];	// (by chan_id_t), each one's file
+	CWaveFile			m_wfStemFile[MAX_RENDER_STEMS];
 	bool				m_bMixAgain;						// ApplyChannelMix again: a render with silent channels starts or ends
 	// A song that sets the DPCM level (Zxx) on its first row starts with the DMC's output there, as if it had
 	// always been at that level: stepping it up from silence as the row plays would pop

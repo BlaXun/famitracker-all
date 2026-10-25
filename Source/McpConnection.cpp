@@ -609,6 +609,49 @@ private:
 	int m_iFirst, m_iSecond, m_iLength, m_iOldFirst, m_iOldSecond, m_iOldLength;
 };
 
+// A rendering's temporary WAV file read back, then removed
+bool ReadRenderFile(const CString &File, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate, std::string &Error)
+{
+	transcribe::Audio LeftSide, RightSide;
+	std::string Problem;
+	const bool Read = transcribe::ReadWavSides(std::string(static_cast<LPCSTR>(CStringA(File))), LeftSide, RightSide, &Problem);
+	DeleteFile(File);
+	if (!Read) {
+		Error = "The rendering couldn't be read: " + Problem;
+		return false;
+	}
+	Left.swap(LeftSide.samples);
+	Right.swap(RightSide.samples);
+	SampleRate = LeftSide.sampleRate;
+	return true;
+}
+
+// Renders made together (CMcpLink::RenderParts): their temporary files, each
+// read back when it's taken, the rest removed with the set
+class CRenderFiles : public ftapi::RenderSet {
+public:
+	std::vector<CString> Files;
+	std::vector<std::pair<int, long long> > Marks;	// the same for all of them
+	~CRenderFiles()
+	{
+		for (size_t i = 0; i < Files.size(); ++i)
+			if (!Files[i].IsEmpty())
+				DeleteFile(Files[i]);
+	}
+	bool Take(size_t Index, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Taken, std::string &Error)
+	{
+		if (Index >= Files.size() || Files[Index].IsEmpty()) {
+			Error = "There's no such rendering.";
+			return false;
+		}
+		const CString File = Files[Index];
+		Files[Index].Empty();
+		Taken = Marks;
+		return ReadRenderFile(File, Left, Right, SampleRate, Error);
+	}
+};
+
 }	// namespace
 
 struct mcp_settings_t {
@@ -1132,6 +1175,67 @@ public:
 	bool RenderTrack(int Track, double Seconds, const ftapi::RenderOptions &Options, std::vector<float> &Left, std::vector<float> &Right,
 		int &SampleRate, std::vector<std::pair<int, long long> > &Marks, std::string &Error)
 	{
+		const CString What = Options.What.empty() ? CString(_T("for the game")) : CString(_T("(")) + Ansi(Options.What) + _T(")");
+		CString File;
+		std::vector<CString> None;
+		if (!RenderFiles(Track, Seconds, Options, std::vector<std::vector<bool> >(), What, File, None, Marks, Error))
+			return false;
+		return ReadRenderFile(File, Left, Right, SampleRate, Error);
+	}
+
+	// Several renders in one pass (measure_mix's parts alone): the first as
+	// RenderTrack renders it, with up to MAX_RENDER_STEMS of the others made by
+	// the mixer as it renders (CSoundGen's stems: the channels each marks
+	// silent left out); a pass after the first renders the first again, not
+	// kept. Their files are read back as they're taken.
+	std::unique_ptr<ftapi::RenderSet> RenderParts(int Track, double Seconds, const std::vector<ftapi::RenderOptions> &Renders,
+		std::string &Error)
+	{
+		if (Renders.empty()) {
+			Error = "There's nothing to render.";
+			return std::unique_ptr<ftapi::RenderSet>();
+		}
+		std::unique_ptr<CRenderFiles> Set(new CRenderFiles());
+		Set->Files.resize(Renders.size());
+		size_t Next = 1;
+		for (bool First = true; First || Next < Renders.size(); First = false) {
+			std::vector<std::vector<bool> > Stems;
+			std::vector<size_t> Which;
+			for (; Next < Renders.size() && Stems.size() < static_cast<size_t>(CSoundGen::MAX_RENDER_STEMS); ++Next) {
+				Stems.push_back(Renders[Next].Silent);
+				Which.push_back(Next);
+			}
+			CString What = CString(_T("(")) + Ansi(Renders[0].What.empty() ? std::string("the track") : Renders[0].What);
+			if (!Stems.empty()) {
+				CString More;
+				More.Format(_T(" and %d part%s alone"), static_cast<int>(Stems.size()), Stems.size() == 1 ? _T("") : _T("s"));
+				What += More;
+			}
+			What += _T(")");
+			CString Main;
+			std::vector<CString> StemFiles;
+			std::vector<std::pair<int, long long> > Marks;
+			if (!RenderFiles(Track, Seconds, Renders[0], Stems, What, Main, StemFiles, Marks, Error))
+				return std::unique_ptr<ftapi::RenderSet>();
+			if (First) {
+				Set->Files[0] = Main;
+				Set->Marks = Marks;
+			}
+			else
+				DeleteFile(Main);
+			for (size_t k = 0; k < Which.size() && k < StemFiles.size(); ++k)
+				Set->Files[Which[k]] = StemFiles[k];
+		}
+		return std::unique_ptr<ftapi::RenderSet>(Set.release());
+	}
+
+	// The rendering itself: the track as Options has it into a temporary file
+	// and with it each of Stems into its own (the channels it marks silent
+	// left out), with the sample where each row began
+	bool RenderFiles(int Track, double Seconds, const ftapi::RenderOptions &Options, const std::vector<std::vector<bool> > &Stems,
+		const CString &What, CString &MainFile, std::vector<CString> &StemFiles, std::vector<std::pair<int, long long> > &Marks,
+		std::string &Error)
+	{
 		CFamiTrackerDoc *pDoc = Doc();
 		CSoundGen *pSound = theApp.GetSoundGenerator();
 		if (pDoc == NULL || pSound == NULL) {
@@ -1146,10 +1250,34 @@ public:
 			Error = "FamiTracker is rendering something else.";
 			return false;
 		}
+		if (Stems.size() > static_cast<size_t>(CSoundGen::MAX_RENDER_STEMS)) {
+			Error = "Too many parts to render at once.";
+			return false;
+		}
 		TCHAR Folder[MAX_PATH], File[MAX_PATH];
 		if (GetTempPath(MAX_PATH, Folder) == 0 || GetTempFileName(Folder, _T("ftg"), 0, File) == 0) {
 			Error = "No temporary file could be made for the rendering.";
 			return false;
+		}
+		// The stems' files, and each one's channels left out, by their IDs as the sound generator knows them
+		std::vector<CSoundGen::render_stem_t> Parts(Stems.size());
+		for (size_t k = 0; k < Stems.size(); ++k) {
+			TCHAR Name[MAX_PATH];
+			if (GetTempFileName(Folder, _T("ftg"), 0, Name) == 0) {
+				DeleteFile(File);
+				for (size_t j = 0; j < k; ++j)
+					DeleteFile(Parts[j].File);
+				Error = "No temporary file could be made for the rendering.";
+				return false;
+			}
+			Parts[k].File = Name;
+			for (int i = 0; i < CHANNELS; ++i)
+				Parts[k].Silent[i] = false;
+			for (size_t c = 0; c < Stems[k].size() && c < pDoc->GetAvailableChannels(); ++c) {
+				const int Id = pDoc->GetChannelType(static_cast<unsigned int>(c));
+				if (Stems[k][c] && Id >= 0 && Id < CHANNELS)
+					Parts[k].Silent[Id] = true;
+			}
 		}
 		const int Limit = static_cast<int>(std::ceil(Seconds));
 		CWaitCursor Wait;
@@ -1172,10 +1300,10 @@ public:
 			if (Options.Silent[c] && Id >= 0 && Id < CHANNELS)
 				Silent[Id] = true;
 		}
-		const CString What = Options.What.empty() ? CString(_T("for the game")) : CString(_T("(")) + Ansi(Options.What) + _T(")");
 
 		const long Before = pSound->GetRenderCount();
-		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track, Silent, Options.Tail) != false;
+		bool Started = pSound->RenderToFile(File, SONG_TIME_LIMIT, Limit, Track, Silent, Options.Tail, Parts.empty() ? NULL : &Parts[0],
+			static_cast<int>(Parts.size())) != false;
 		if (Started) {
 			// It starts on the sound thread a moment later and runs to its end;
 			// a short one can be over before it's seen running
@@ -1213,18 +1341,17 @@ public:
 
 		CArray<CSoundGen::render_mark_t> Raw;
 		pSound->GetRenderMarks(Raw);
-		transcribe::Audio LeftSide, RightSide;
-		std::string Problem;
-		const bool Read = Started && transcribe::ReadWavSides(std::string(static_cast<LPCSTR>(CStringA(File))), LeftSide, RightSide,
-			&Problem);
-		DeleteFile(File);
-		if (!Read) {
-			Error = Started ? "The rendering couldn't be read: " + Problem : "FamiTracker didn't start rendering.";
+		if (!Started) {
+			DeleteFile(File);
+			for (size_t k = 0; k < Parts.size(); ++k)
+				DeleteFile(Parts[k].File);
+			Error = "FamiTracker didn't start rendering.";
 			return false;
 		}
-		Left.swap(LeftSide.samples);
-		Right.swap(RightSide.samples);
-		SampleRate = LeftSide.sampleRate;
+		MainFile = File;
+		StemFiles.clear();
+		for (size_t k = 0; k < Parts.size(); ++k)
+			StemFiles.push_back(Parts[k].File);
 		const int Length = static_cast<int>(pDoc->GetPatternLength(static_cast<unsigned int>(Track)));
 		Marks.clear();
 		for (INT_PTR i = 0; i < Raw.GetCount(); ++i)

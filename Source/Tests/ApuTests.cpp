@@ -45,9 +45,15 @@
 // rings on after a note in each room, the same every time, unlike on the two
 // sides, and its echo repeats when it should, each repeat quieter.
 //
+// Stems (CAPU::SetStems, measure_mix's parts alone in one pass): each is,
+// sample for sample, the render that leaves the other channels out as
+// CSoundGen does (a 2A03 channel off its pins, another at a level of 0), and
+// the mix beside them is what it is without them.
+//
 // Each rendering runs in a process of its own (fork), since the emulators
 // keep some of their state in globals.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -131,6 +137,21 @@ struct Run {
 	// The DPCM's output started at this level before the first frame, as CSoundGen starts a song whose first row
 	// sets it (CAPU::StartDAC; 0: not)
 	int StartDac;
+	// Mixed: at PanFrame the mixer gets its settings as CSoundGen::ApplyChannelMix gives them (every channel in its
+	// order: its level, left out or not, its depth), then the voices' pans. At StemFrame (with Mixed) they're given
+	// again as a render starts: with LeaveOut the channels not in Heard (a mask of voices) left out, as a render of
+	// some parts alone leaves them; with Stems (each a mask of voices heard) after CAPU::SetStems. MoveFrame: the
+	// second voice moves to 0xC0 before that frame's writes (0: never)
+	bool Mixed;
+	bool LeaveOut;
+	unsigned Heard;
+	int StemFrame;
+	std::vector<unsigned> Stems;
+	int MoveFrame;
+	// The first voice at this level from the start until PanFrame (0: not): a level so low leaves a VRC6 or MMC5
+	// channel's synth counting more coarsely after it (Blip_Synth_::volume_unit), as a fader pulled down before a
+	// render can
+	double EarlyGain;
 };
 
 Run Plain(int Chip, unsigned Mask)
@@ -189,19 +210,31 @@ struct Sides {
 	std::vector<int16> Left, Right;
 };
 
-// FamiTracker's sound output: the APU's samples, in turn for each side when in stereo
+// FamiTracker's sound output: the APU's samples, in turn for each side when in stereo, and each stem's
 class Output : public IAudioCallback {
 public:
 	explicit Output(bool Stereo) : m_bStereo(Stereo) {}
 	void FlushBuffer(int16 *pBuffer, uint32 Size)
 	{
-		for (uint32 i = 0; i < Size; ++i) {
-			m_Sides.Left.push_back(m_bStereo ? pBuffer[i * 2] : pBuffer[i]);
-			m_Sides.Right.push_back(m_bStereo ? pBuffer[i * 2 + 1] : pBuffer[i]);
-		}
+		Add(m_Sides, pBuffer, Size);
+	}
+	void FlushStem(int Stem, int16 *pBuffer, uint32 Size)
+	{
+		if (Stem >= 0 && static_cast<size_t>(Stem) >= m_Stems.size())
+			m_Stems.resize(static_cast<size_t>(Stem) + 1);
+		if (Stem >= 0)
+			Add(m_Stems[static_cast<size_t>(Stem)], pBuffer, Size);
 	}
 	Sides m_Sides;
+	std::vector<Sides> m_Stems;
 private:
+	void Add(Sides &To, const int16 *pBuffer, uint32 Size) const
+	{
+		for (uint32 i = 0; i < Size; ++i) {
+			To.Left.push_back(m_bStereo ? pBuffer[i * 2] : pBuffer[i]);
+			To.Right.push_back(m_bStereo ? pBuffer[i * 2 + 1] : pBuffer[i]);
+		}
+	}
 	bool m_bStereo;
 };
 
@@ -419,7 +452,27 @@ void PlayTone(Writer &w, int Tone, int f)
 // Samples for the DPCM channel
 char g_Samples[0x4000];
 
-Sides RenderHere(const Run &R)
+#ifndef APU_REFERENCE
+// The mixer's settings for every channel as CSoundGen::ApplyChannelMix gives them (by its channels, the N163's turned
+// around for the chip's), the channels not in Heard left out when LeaveOut
+void ApplyMix(CAPU &Apu, const Run &R, bool LeaveOut, unsigned Heard)
+{
+	for (int i = 0; i < CHANNELS; ++i) {
+		const int Mixed = (i >= CHANID_N163_CHAN1 && i <= CHANID_N163_CHAN8) ? CHANID_N163_CHAN8 - (i - CHANID_N163_CHAN1) : i;
+		int v = -1;
+		for (int k = 0; k < VOICES; ++k)
+			if (CHANNELS_OF[R.Chip][k] == Mixed)
+				v = k;
+		const bool Out = LeaveOut && !(v >= 0 && (Heard & (1u << v)));
+		Apu.SetChannelGain(Mixed, Out && Mixed > CHANID_DPCM ? 0.0 : v >= 0 ? R.Gain[v] : 1.0);
+		Apu.SetChannelSilent(Mixed, Out && Mixed <= CHANID_DPCM);
+		Apu.SetChannelDepth(Mixed, v >= 0 && R.Depth ? R.Soft[v] : 0, v >= 0 && R.Depth ? R.Space[v] : 0);
+	}
+}
+#endif
+
+// The mix, then each stem
+std::vector<Sides> RenderHere(const Run &R)
 {
 #ifdef APU_REFERENCE
 	const bool Stereo = false;
@@ -468,7 +521,15 @@ Sides RenderHere(const Run &R)
 			if (R.ClearSpace)
 				Apu.ClearSpace();
 		}
-		if (f == R.PanFrame) {
+		if (f == 0 && R.EarlyGain > 0.0 && CHANNELS_OF[R.Chip][0] >= 0)
+			Apu.SetChannelGain(CHANNELS_OF[R.Chip][0], R.EarlyGain);
+		if (f == R.PanFrame && R.Mixed) {
+			ApplyMix(Apu, R, false, 0);
+			for (int v = 0; v < VOICES; ++v)
+				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Pan[v] != 0x80)
+					Apu.SetChannelPan(CHANNELS_OF[R.Chip][v], R.Pan[v]);
+		}
+		else if (f == R.PanFrame) {
 			for (int v = 0; v < VOICES; ++v) {
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Pan[v] != 0x80)
 					Apu.SetChannelPan(CHANNELS_OF[R.Chip][v], R.Pan[v]);
@@ -478,6 +539,24 @@ Sides RenderHere(const Run &R)
 					Apu.SetChannelSilent(CHANNELS_OF[R.Chip][v], true);
 			}
 		}
+		if (f == R.StemFrame && R.Mixed) {
+			if (!R.Stems.empty()) {
+				bool Silent[CMixer::MAX_STEMS][CHANNELS];
+				const int Count = std::min(static_cast<int>(R.Stems.size()), static_cast<int>(CMixer::MAX_STEMS));
+				for (int k = 0; k < Count; ++k)
+					for (int c = 0; c < CHANNELS; ++c) {
+						int v = -1;
+						for (int n = 0; n < VOICES; ++n)
+							if (CHANNELS_OF[R.Chip][n] == c)
+								v = n;
+						Silent[k][c] = !(v >= 0 && (R.Stems[static_cast<size_t>(k)] & (1u << v)));
+					}
+				Apu.SetStems(Count, Silent);
+			}
+			ApplyMix(Apu, R, R.LeaveOut, R.Heard);
+		}
+		if (R.MoveFrame > 0 && f == R.MoveFrame && CHANNELS_OF[R.Chip][1] >= 0)
+			Apu.SetChannelPan(CHANNELS_OF[R.Chip][1], 0xC0);
 		if (R.Tone != TONE_NONE) {
 			PlayTone(w, R.Tone, f);
 			Apu.AddTime(static_cast<int32>(Cycles - w.Used()));
@@ -497,7 +576,9 @@ Sides RenderHere(const Run &R)
 		Apu.AddTime(static_cast<int32>(Cycles - w.Used()));
 		Apu.Process();
 	}
-	return Out.m_Sides;
+	std::vector<Sides> All(1, Out.m_Sides);
+	All.insert(All.end(), Out.m_Stems.begin(), Out.m_Stems.end());
+	return All;
 }
 
 bool WriteAll(int File, const void *pData, size_t Size)
@@ -526,8 +607,8 @@ bool ReadAll(int File, void *pData, size_t Size)
 	return true;
 }
 
-// A rendering, in a process of its own
-Sides Render(const Run &R)
+// A rendering, in a process of its own: the mix, then each stem
+std::vector<Sides> RenderAll(const Run &R)
 {
 	int Pipe[2];
 	if (pipe(Pipe) != 0) {
@@ -541,21 +622,32 @@ Sides Render(const Run &R)
 	}
 	if (Child == 0) {
 		close(Pipe[0]);
-		const Sides Made = RenderHere(R);
-		const uint32_t Count = static_cast<uint32_t>(Made.Left.size());
-		const bool Sent = WriteAll(Pipe[1], &Count, sizeof(Count)) && WriteAll(Pipe[1], Made.Left.data(), Count * sizeof(int16)) &&
-			WriteAll(Pipe[1], Made.Right.data(), Count * sizeof(int16));
+		const std::vector<Sides> Made = RenderHere(R);
+		const uint32_t Renders = static_cast<uint32_t>(Made.size());
+		bool Sent = WriteAll(Pipe[1], &Renders, sizeof(Renders));
+		for (size_t k = 0; k < Made.size() && Sent; ++k) {
+			const uint32_t Count = static_cast<uint32_t>(Made[k].Left.size());
+			Sent = WriteAll(Pipe[1], &Count, sizeof(Count)) && WriteAll(Pipe[1], Made[k].Left.data(), Count * sizeof(int16)) &&
+				WriteAll(Pipe[1], Made[k].Right.data(), Count * sizeof(int16));
+		}
 		close(Pipe[1]);
 		_exit(Sent ? 0 : 3);
 	}
 	close(Pipe[1]);
-	Sides Got;
-	uint32_t Count = 0;
-	if (ReadAll(Pipe[0], &Count, sizeof(Count)) && Count < 10000000) {
-		Got.Left.resize(Count);
-		Got.Right.resize(Count);
-		if (!ReadAll(Pipe[0], Got.Left.data(), Count * sizeof(int16)) || !ReadAll(Pipe[0], Got.Right.data(), Count * sizeof(int16)))
-			Got = Sides();
+	std::vector<Sides> Got;
+	uint32_t Renders = 0;
+	if (ReadAll(Pipe[0], &Renders, sizeof(Renders)) && Renders < 100) {
+		for (uint32_t k = 0; k < Renders; ++k) {
+			uint32_t Count = 0;
+			Sides One;
+			if (!ReadAll(Pipe[0], &Count, sizeof(Count)) || Count >= 10000000)
+				break;
+			One.Left.resize(Count);
+			One.Right.resize(Count);
+			if (!ReadAll(Pipe[0], One.Left.data(), Count * sizeof(int16)) || !ReadAll(Pipe[0], One.Right.data(), Count * sizeof(int16)))
+				break;
+			Got.push_back(One);
+		}
 	}
 	close(Pipe[0]);
 	int Status = 0;
@@ -565,6 +657,12 @@ Sides Render(const Run &R)
 		++g_fail;
 	}
 	return Got;
+}
+
+Sides Render(const Run &R)
+{
+	const std::vector<Sides> All = RenderAll(R);
+	return All.empty() ? Sides() : All[0];
 }
 
 uint64_t Hash(const std::vector<int16> &Samples)
@@ -1051,6 +1149,113 @@ void TestSilentParts()
 	CHECK(Peak(Render(Dac).Left) == 0);
 }
 
+// Stems for each voice alone, the first two together, all of them and none
+std::vector<unsigned> StemMasks(int Chip)
+{
+	std::vector<unsigned> Masks;
+	for (int v = 0; v < VOICES; ++v)
+		if (CHANNELS_OF[Chip][v] >= 0)
+			Masks.push_back(1u << v);
+	Masks.push_back(3);
+	Masks.push_back(ALL);
+	Masks.push_back(0);
+	return Masks;
+}
+
+// The last Count samples of a render
+std::vector<int16> LastOf(const std::vector<int16> &Samples, size_t Count)
+{
+	return Count <= Samples.size() ? std::vector<int16>(Samples.end() - static_cast<std::ptrdiff_t>(Count), Samples.end()) :
+		std::vector<int16>();
+}
+
+// R with Stems, against R rendered with each stem's channels heard alone: true when each is the same, sample for
+// sample (from where the stems start, at StemFrame), and the mix is R's
+bool StemsAlike(const Run &R, const std::vector<unsigned> &Masks, const char *What)
+{
+	Run Together = R;
+	Together.Stems = Masks;
+	const std::vector<Sides> All = RenderAll(Together);
+	const Sides Mix = Render(R);
+	bool Ok = All.size() == Masks.size() + 1 && Rms(Mix.Left) > 100.0;
+	if (Ok && (!Same(All[0].Left, Mix.Left) || !Same(All[0].Right, Mix.Right))) {
+		std::printf("FAIL: %s %s: the mix isn't what it is without stems\n", CHIP_NAMES[R.Chip], What);
+		Ok = false;
+	}
+	for (size_t k = 0; Ok && k < Masks.size(); ++k) {
+		Run Alone = R;
+		Alone.LeaveOut = true;
+		Alone.Heard = Masks[k];
+		const Sides Part = Render(Alone);
+		const size_t Count = All[k + 1].Left.size();
+		const std::vector<int16> Left = LastOf(Part.Left, Count), Right = LastOf(Part.Right, Count);
+		if (Count + static_cast<size_t>(R.StemFrame + 1) * FRAME_SAMPLES < Part.Left.size() || !Same(All[k + 1].Left, Left) ||
+			!Same(All[k + 1].Right, Right)) {
+			std::printf("FAIL: %s %s: the stem of voices %X isn't the render of them alone (%d apart)\n", CHIP_NAMES[R.Chip], What, Masks[k],
+				std::max(MostApart(All[k + 1].Left, Left), MostApart(All[k + 1].Right, Right)));
+			Ok = false;
+		}
+	}
+	return Ok;
+}
+
+void TestStemsInOnePass()
+{
+	// measure_mix's parts alone in one pass (CAPU::SetStems): each stem is the render that leaves the other channels
+	// out as CSoundGen does, sample for sample, on every chip, with a pan (another moving as it plays), a fader, Soft
+	// and Space (and the space's echo), from the start, and from an APU reset as a song plays (where a render after a
+	// song finds the channels' levels), there with the depth taken off later; the mix beside them as it is without
+	for (int Chip = 0; Chip < CHIPS; ++Chip) {
+		for (int Later = 0; Later < 2; ++Later) {
+			Run R = Plain(Chip, ALL);
+			R.Mixed = true;
+			R.Pan[0] = 0x30;
+			R.Gain[1] = 0.5;
+			R.Depth = true;
+			R.Soft[2] = 40;
+			R.Space[2] = 60;
+			R.Soft[0] = 20;
+			R.Room = 1;
+			R.Echo = 0.1;
+			R.Repeats = 2;
+			R.MoveFrame = 25;
+			if (Later) {
+				R.ResetAt = 15;
+				R.ClearSpace = true;
+				R.StemFrame = 14;
+				R.Off = 31;
+			}
+			++g_checks;
+			if (!StemsAlike(R, StemMasks(Chip), Later ? "after a reset" : "from the start"))
+				++g_fail;
+		}
+	}
+	// The triangle under a DPCM level the song starts with (StartAt); and a VRC6 pulse at half its level through its own
+	// synth, which counts more coarsely after a level of 0.01 (Blip_Synth_::volume_unit), as a stem keeps it
+	Run Dac = Plain(CHIP_2A03, 0);
+	Dac.Tone = TONE_DAC_TRIANGLE;
+	Dac.StartDac = 0x50;
+	Dac.Mixed = true;
+	std::vector<unsigned> DacMasks;
+	DacMasks.push_back(4);
+	DacMasks.push_back(16);
+	DacMasks.push_back(20);
+	++g_checks;
+	if (!StemsAlike(Dac, DacMasks, "under a DPCM level"))
+		++g_fail;
+	Run Faded = Plain(CHIP_VRC6, ALL);
+	Faded.Mixed = true;
+	Faded.EarlyGain = 0.01;
+	Faded.Gain[0] = 0.5;
+	Faded.PanFrame = 5;
+	Faded.ResetAt = 11;
+	Faded.ClearSpace = true;
+	Faded.StemFrame = 10;
+	++g_checks;
+	if (!StemsAlike(Faded, StemMasks(CHIP_VRC6), "after a level of 0.01"))
+		++g_fail;
+}
+
 #endif
 
 }	// namespace
@@ -1077,6 +1282,7 @@ int main()
 	TestSpace();
 	TestDacStart();
 	TestSilentParts();
+	TestStemsInOnePass();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 #endif

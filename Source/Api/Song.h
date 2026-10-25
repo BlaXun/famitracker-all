@@ -25,6 +25,7 @@
 // the changes they ask for. McpConnection.cpp implements it over the open
 // FamiTracker document; the tests implement it in memory.
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -227,6 +228,15 @@ struct RenderOptions {
 	RenderOptions() : Tail(true) {}
 };
 
+// Renders made together (SongHost::RenderParts), each taken once when it's wanted
+class RenderSet {
+public:
+	virtual ~RenderSet() {}
+	// The Index-th render, as RenderTrack gives one; false with the reason when it can't be had
+	virtual bool Take(size_t Index, std::vector<float> &Left, std::vector<float> &Right, int &SampleRate,
+		std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
+};
+
 // What SongHost::Play plays
 struct PlayRequest {
 	int Track;                  // the track it plays (selected for it); -1 for the selected one
@@ -348,6 +358,12 @@ public:
 	// The song stays as it is: the mixer, the mutes and the selected track too.
 	virtual bool RenderTrack(int Track, double Seconds, const RenderOptions &Options, std::vector<float> &Left, std::vector<float> &Right,
 		int &SampleRate, std::vector<std::pair<int, long long> > &Marks, std::string &Error) = 0;
+	// Several renders of a track for Seconds (measure_mix: the mix and each part alone), each as RenderTrack renders
+	// it with its own Options' Silent; their Tail and What are the first's. FamiTracker makes them in one pass: its
+	// mixer makes each part alone as it makes the mix (CAPU::SetStems), sample for sample as a render of it alone.
+	// Null, with the reason, when they can't be made.
+	virtual std::unique_ptr<RenderSet> RenderParts(int Track, double Seconds, const std::vector<RenderOptions> &Renders,
+		std::string &Error) = 0;
 	// Writes a file next to the song (FileName has no folders), replacing one
 	// of that name; the path written comes back in Path
 	virtual bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &Error) = 0;

@@ -146,10 +146,20 @@ CMixer::CMixer()
 		m_pDepth[i] = NULL;
 	m_pDepthRead = NULL;
 	m_iDepthSize = 0;
+
+	for (int k = 0; k < MAX_STEMS; ++k) {
+		m_pStem[k] = NULL;
+		for (int i = 0; i < CHANNELS; ++i)
+			m_bStemSilent[k][i] = false;
+	}
+	m_iStemCount = 0;
+	m_iBufferLength = 0;
+	m_iNrChannels = 2;
 }
 
 CMixer::~CMixer()
 {
+	FreeStems();
 	FreeDepth();
 }
 
@@ -195,11 +205,15 @@ inline double CMixer::CalcPin2(double Val1, double Val2, double Val3)
 void CMixer::ExternalSound(int Chip)
 {
 	m_iExternalChip = Chip;
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->m_iExternalChip = Chip;		// UpdateSettings tells them the rest
 	UpdateSettings(m_iLowCut, m_iHighCut, m_iHighDamp, m_fOverallVol);
 }
 
 void CMixer::SetChipLevel(chip_level_t Chip, float Level)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetChipLevel(Chip, Level);
 	switch (Chip) {
 		case CHIP_LEVEL_APU1:
 			m_fLevelAPU1 = Level;
@@ -261,6 +275,9 @@ float CMixer::GetAttenuation() const
 
 void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float OverallVol)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->UpdateSettings(LowCut, HighCut, HighDamp, OverallVol);
+
 	float Volume = OverallVol * GetAttenuation();
 
 	// Blip-buffer filtering
@@ -325,6 +342,9 @@ void CMixer::UpdateSettings(int LowCut,	int HighCut, int HighDamp, float Overall
 
 void CMixer::SetNamcoVolume(float fVol)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetNamcoVolume(fVol);
+
 	float fVolume = fVol * m_fOverallVol * GetAttenuation();
 
 	SynthN163.volume(fVolume * 1.1f * m_fLevelN163);
@@ -359,7 +379,12 @@ uint32 CMixer::GetMixSampleCount(int t) const
 
 bool CMixer::AllocateBuffer(unsigned int BufferLength, uint32 SampleRate, uint8 NrChannels)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->AllocateBuffer(BufferLength, SampleRate, NrChannels);
+
 	m_iSampleRate = SampleRate;
+	m_iBufferLength = BufferLength;
+	m_iNrChannels = NrChannels;
 	BlipBuffer.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
 	BlipBufferRight.sample_rate(SampleRate, (BufferLength * 1000 * 2) / SampleRate);
 
@@ -383,6 +408,9 @@ bool CMixer::AllocateBuffer(unsigned int BufferLength, uint32 SampleRate, uint8 
 
 void CMixer::SetClockRate(uint32 Rate)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetClockRate(Rate);
+
 	// Change the clockrate
 	BlipBuffer.clock_rate(Rate);
 	BlipBufferRight.clock_rate(Rate);
@@ -394,6 +422,9 @@ void CMixer::SetClockRate(uint32 Rate)
 
 void CMixer::ClearBuffer()
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->ClearBuffer();
+
 	BlipBuffer.clear();
 	BlipBufferRight.clear();
 
@@ -415,6 +446,8 @@ void CMixer::ClearBuffer()
 
 void CMixer::ClearSpace()
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->ClearSpace();
 	m_Space.Clear();
 }
 
@@ -425,6 +458,9 @@ int CMixer::SamplesAvail() const
 
 int CMixer::FinishBuffer(int t)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->FinishBuffer(t);
+
 	BlipBuffer.end_frame(t);
 	BlipBufferRight.end_frame(t);
 	for (int i = 0; i < CHANNELS && m_iOwnCount > 0; ++i)
@@ -549,6 +585,8 @@ void CMixer::StartAt(int ChanID, int Value)
 {
 	// The pin's output with the channel at Value, taken as where it is: nothing sent, so the sound starts there without
 	// a step (a pop through the low cut), and the triangle and the noise play softened by the DPCM's level from the start
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->StartAt(ChanID, Value);
 	if (ChanID != CHANID_TRIANGLE && ChanID != CHANID_NOISE && ChanID != CHANID_DPCM)
 		return;
 	m_iChannels[ChanID] = Value;
@@ -598,6 +636,8 @@ void CMixer::MixN163(int ChanID, int Value, int Time)
 
 void CMixer::N163Channel(int ChanID, int Time)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->N163Channel(ChanID, Time);
 	if (ChanID == m_iN163Chan)
 		return;
 	m_iN163Chan = ChanID;
@@ -661,6 +701,8 @@ void CMixer::PanGains(int Pan, double &Left, double &Right)
 
 void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetChannelPan(ChanID, Pan, Time);
 	if (ChanID < 0 || ChanID >= CHANNELS)
 		return;
 	Pan = std::max(0, std::min(0xFF, Pan));
@@ -673,6 +715,9 @@ void CMixer::SetChannelPan(int ChanID, int Pan, int Time)
 
 void CMixer::SetChannelGain(int ChanID, double Gain, int Time)
 {
+	// A stem's channels left out of it stay at a level of nothing, but the 2A03's, which SetChannelSilent leaves out
+	for (int k = 0; k < m_iStemCount && ChanID >= 0 && ChanID < CHANNELS; ++k)
+		m_pStem[k]->SetChannelGain(ChanID, m_bStemSilent[k][ChanID] && ChanID > CHANID_DPCM ? 0.0 : Gain, Time);
 	if (ChanID < 0 || ChanID >= CHANNELS || !(Gain >= 0.0) || Gain == m_dLevel[ChanID])
 		return;
 	// The channel's own synth changes its volume: what it has comes out at the old one first, and goes back in at
@@ -700,6 +745,8 @@ void CMixer::ClearOwn(int ChanID, int Time)
 void CMixer::SetChannelSilent(int ChanID, bool Silent, int Time)
 {
 	// The 2A03's channels: the others mix their channels apart, and a level of nothing silences them
+	for (int k = 0; k < m_iStemCount && ChanID >= CHANID_SQUARE1 && ChanID <= CHANID_DPCM; ++k)
+		m_pStem[k]->SetChannelSilent(ChanID, Silent || m_bStemSilent[k][ChanID], Time);
 	if (ChanID < CHANID_SQUARE1 || ChanID > CHANID_DPCM || m_bSilent[ChanID] == Silent)
 		return;
 	m_bSilent[ChanID] = Silent;
@@ -771,6 +818,9 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 	// Add sound to mixer
 	//
 	
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->AddValue(ChanID, Chip, Value, AbsValue, FrameCycles);
+
 	int Delta = Value - m_iChannels[ChanID];
 	StoreChannelLevel(ChanID, AbsValue);
 	m_iChannels[ChanID] = Value;
@@ -881,6 +931,8 @@ static const int OWN_DRAIN_FRAMES = 60;		// a second: what a channel had in its 
 
 void CMixer::SetChannelDepth(int ChanID, int Soft, int Space, int Time)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetChannelDepth(ChanID, Soft, Space, Time);
 	if (ChanID < 0 || ChanID >= CHANNELS)
 		return;
 	Soft = std::max(0, std::min(100, Soft));
@@ -913,12 +965,17 @@ void CMixer::SetChannelDepth(int ChanID, int Soft, int Space, int Time)
 
 void CMixer::SetSpace(int Room, double EchoSeconds, int Repeats)
 {
+	for (int k = 0; k < m_iStemCount; ++k)
+		m_pStem[k]->SetSpace(Room, EchoSeconds, Repeats);
 	m_Space.Set(Room, EchoSeconds, Repeats);
 }
 
 bool CMixer::SpaceRinging() const
 {
-	return !m_Space.Idle();
+	bool Ringing = !m_Space.Idle();
+	for (int k = 0; k < m_iStemCount && !Ringing; ++k)
+		Ringing = m_pStem[k]->SpaceRinging();
+	return Ringing;
 }
 
 bool CMixer::IsOwn(int ChanID) const
@@ -1071,4 +1128,112 @@ int CMixer::ReadDepth(int Size, blip_sample_t *pOut, bool Stereo)
 			pOut[i] = static_cast<blip_sample_t>((Left + Right) / 2);
 	}
 	return static_cast<int>(Count);
+}
+
+// Stems
+
+void CMixer::FreeStems()
+{
+	for (int k = 0; k < m_iStemCount; ++k) {
+		delete m_pStem[k];
+		m_pStem[k] = NULL;
+	}
+	m_iStemCount = 0;
+}
+
+void CMixer::SetStems(int Count, const bool (*pSilent)[CHANNELS], int Time)
+{
+	FreeStems();
+	Count = pSilent != NULL ? std::max(0, std::min(static_cast<int>(MAX_STEMS), Count)) : 0;
+	for (int k = 0; k < Count; ++k) {
+		CMixer *pStem = new CMixer();
+		pStem->MakeStemOf(*this);
+		// Its channels left out as CSoundGen leaves them out of a render of some parts alone (ApplyChannelMix): one at
+		// a time, the 2A03's off their pins and the others' at a level of nothing
+		for (int i = 0; i < CHANNELS; ++i) {
+			m_bStemSilent[k][i] = pSilent[k][i];
+			if (!pSilent[k][i])
+				continue;
+			if (i <= CHANID_DPCM)
+				pStem->SetChannelSilent(i, true, Time);
+			else
+				pStem->SetChannelGain(i, 0.0, Time);
+		}
+		m_pStem[k] = pStem;
+	}
+	m_iStemCount = Count;
+}
+
+void CMixer::MakeStemOf(const CMixer &M)
+{
+	// The settings
+	m_fLevelAPU1 = M.m_fLevelAPU1;
+	m_fLevelAPU2 = M.m_fLevelAPU2;
+	m_fLevelVRC6 = M.m_fLevelVRC6;
+	m_fLevelMMC5 = M.m_fLevelMMC5;
+	m_fLevelFDS = M.m_fLevelFDS;
+	m_fLevelN163 = M.m_fLevelN163;
+	m_fLevelS5B = M.m_fLevelS5B;
+	m_iExternalChip = M.m_iExternalChip;
+	m_iLowCut = M.m_iLowCut;
+	m_iHighCut = M.m_iHighCut;
+	m_iHighDamp = M.m_iHighDamp;
+	m_fOverallVol = M.m_fOverallVol;
+	m_fVolumeVRC6 = M.m_fVolumeVRC6;
+	m_fVolumeMMC5 = M.m_fVolumeMMC5;
+
+	// The channels, as they are
+	for (int i = 0; i < CHANNELS; ++i) {
+		m_iChannels[i] = M.m_iChannels[i];
+		m_iPan[i] = M.m_iPan[i];
+		m_dLevel[i] = M.m_dLevel[i];
+		m_bSilent[i] = M.m_bSilent[i];
+		m_iLevel[i] = M.m_iLevel[i];
+		m_bOwn[i] = M.m_bOwn[i];
+		m_iOwnDrain[i] = M.m_iOwnDrain[i];
+		m_iSoftOf[i] = M.m_iSoftOf[i];
+		m_iSpaceOf[i] = M.m_iSpaceOf[i];
+		for (int s = 0; s < 2; ++s) {
+			m_dGain[i][s] = M.m_dGain[i][s];
+			m_dSide[i][s] = M.m_dSide[i][s];
+			m_iSent[i][s] = M.m_iSent[i][s];
+			m_iOwnSent[i][s] = M.m_iOwnSent[i][s];
+			m_iPinOwn[i][s] = M.m_iPinOwn[i][s];
+		}
+	}
+	m_iN163Level = M.m_iN163Level;
+	m_iN163Chan = M.m_iN163Chan;
+	m_iN163Dest = M.m_iN163Dest;
+	for (int s = 0; s < 2; ++s) {
+		m_iN163Sent[s] = M.m_iN163Sent[s];
+		m_dSumSS[s] = M.m_dSumSS[s];
+		m_dSumTND[s] = M.m_dSumTND[s];
+	}
+
+	// Its buffers, empty, at the same rates and with the same low cut: the clock rate first, which the buffers' sample
+	// rates take in (the own buffers get the low cut from AllocateBuffer)
+	SetClockRate(M.BlipBuffer.clock_rate());
+	AllocateBuffer(M.m_iBufferLength, M.m_iSampleRate, M.m_iNrChannels);
+	BlipBuffer.bass_freq(m_iLowCut);
+	BlipBufferRight.bass_freq(m_iLowCut);
+
+	// The synths exactly as they are: a small volume given once attenuates a kernel for good (Blip_Synth_::volume_unit)
+	Synth2A03SS.copy_state(M.Synth2A03SS);
+	Synth2A03TND.copy_state(M.Synth2A03TND);
+	SynthVRC6.copy_state(M.SynthVRC6);
+	SynthMMC5.copy_state(M.SynthMMC5);
+	SynthN163.copy_state(M.SynthN163);
+	SynthFDS.copy_state(M.SynthFDS);
+	SynthS5B.copy_state(M.SynthS5B);
+	for (int i = 0; i < 3; ++i) {
+		SynthVRC6Own[i].copy_state(M.SynthVRC6Own[i]);
+		SynthMMC5Own[i].copy_state(M.SynthMMC5Own[i]);
+	}
+
+	// Soft as it is, and the space with its settings, silent
+	for (int i = 0; i < CHANNELS; ++i)
+		m_SoftFilter[i] = M.m_SoftFilter[i];
+	m_Space.Set(M.m_Space.Room(), M.m_Space.EchoSeconds(), M.m_Space.Repeats());
+	m_Space.Clear();
+	CountOwn();
 }

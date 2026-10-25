@@ -148,6 +148,18 @@ private:
 		Blip_Synth_( short* impulses, int width );
 		void treble_eq( blip_eq_t const& );
 		void volume_unit( double );
+		// This FamiTracker's own: the state of another synth of the same width, its kernel as the eq and the
+		// volumes it was given left it (volume_unit attenuates it for a small volume, and keeps it so), for a
+		// mixer made as another one is (CMixer::SetStems)
+		void copy_state( Blip_Synth_ const& other )
+		{
+			for ( int i = impulses_size(); i--; )
+				impulses [i] = other.impulses [i];
+			volume_unit_ = other.volume_unit_;
+			kernel_unit = other.kernel_unit;
+			last_amp = other.last_amp;
+			delta_factor = other.delta_factor;
+		}
 	};
 
 // Quality level. Start with blip_good_quality.
@@ -166,6 +178,9 @@ public:
 	
 	// Configure low-pass filter (see notes.txt)
 	void treble_eq( blip_eq_t const& eq )       { impl.treble_eq( eq ); }
+	
+	// This FamiTracker's own: the eq and volume of another synth of the same kind, exactly as it has them
+	void copy_state( Blip_Synth const& other )  { impl.copy_state( other.impl ); }
 	
 	// Get/set Blip_Buffer used for output
 	Blip_Buffer* output() const                 { return impl.buf; }
