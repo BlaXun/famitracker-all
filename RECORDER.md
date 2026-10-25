@@ -161,13 +161,13 @@ again, as copies or linked.
   - **Start from a groove** (Edit > Start from a groove, or the button in
     Record from microphone): pick a mood (town, overworld, battle, boss,
     dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert,
-    nostalgic), a tempo (typed or tapped), a key (the song's own when it
-    has one, or for a mood of the other kind its relative minor or major,
-    which has the same notes) and 4, 8 or 16 bars, and FamiTracker writes
-    drums, a bass line and chords from the cursor's bar, the same groove
-    Claude Code's `make_groove` writes, sets the song's speed and tempo and
-    makes the key the song's (as the piano roll's Key menu would), unless
-    the song has another already. One Ctrl+Z takes it out again. Then you record over
+    nostalgic), a tempo (typed or tapped), a key (the song's own when it has
+    one, or for a mood of the other kind its relative minor or major, which
+    has the same notes) and 4, 8 or 16 bars, and FamiTracker writes drums, a
+    bass line and chords from the cursor's bar, the same groove Claude
+    Code's `make_groove` writes, sets the song's speed and tempo and makes
+    the key the song's (as the piano roll's Key menu would), unless the song
+    has another already. One Ctrl+Z takes it out again. Then you record over
     it: the groove plays during the count-in and the take, and stays in the
     song as its own parts.
   - **The bar before:** with "Play the song along", the song starts a bar
@@ -689,8 +689,8 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   since the strings come one after another; strums under 100 ms apart are
   one. Its notes come from the spectrum just after the pick's scrape, until
   the next strum (up to 0.6 s), on a scale of thirds of a semitone: every
-  note from C2 to E6 as a set of harmonics, softer the higher they are and
-  a little sharp as strings are, fitted to what stands out of the spectrum
+  note from C2 to E6 as a set of harmonics, softer the higher they are and a
+  little sharp as strings are, fitted to what stands out of the spectrum
   without going negative (multiplicative updates with a little push towards
   fewer notes), so overtones aren't notes of their own. Up to six notes
   count, from 15% of the strongest. The delay through the take comes out
@@ -698,9 +698,10 @@ formats to WAV first, e.g. `ffmpeg -i memo.m4a memo.wav`.
   quarters of a beat late or a quarter early, within a sixth of a beat of
   one another), which a microphone delay not measured puts on every strum;
   then a strum within a third of a beat of a beat counts from the beat
-  (strummed a little early or late). Each bar's (or half bar's) chord is then named from
-  the notes sounding in it, the lowest a strum's bass, as the tools hear
-  chords in a song's parts (`HearChords` in `Api/Chords.cpp`).
+  (strummed a little early or late). Each bar's (or half bar's) chord is
+  then named from the notes sounding in it, the lowest a strum's bass, as
+  the tools hear chords in a song's parts (`HearChords` in
+  `Api/Chords.cpp`).
 - **Typed chords** (`Api/RecorderInput.cpp`): read with the tools' chord
   names (`Chords.cpp`) and laid on the bars from the first one on, repeating
   over the melody's bars when it has more; the key is the one their notes

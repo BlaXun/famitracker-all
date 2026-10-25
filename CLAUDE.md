@@ -650,37 +650,38 @@ the `make_groove` tool (`MakeGroove` in `InsertRecording.cpp`, with
 same action group, and the key picked made the track's with `SetTrackKey`
 unless it has a chosen key or notes found in another; `CGrooveDlg` starts
 from the track's key, read with `CMcpConnection::Harmony`, in the mood's
-mode: `ftapi::GrooveKey` gives its relative minor or major); the parts themselves come from `ftapi::MakeGrooveParts`
-(`Source/Api/Grooves.h`, implemented next to `MakeGrooveTool` in
-`Tools.cpp`: a `GrooveRequest` of mood, key, bars as `BarSpan`s, tempo and
-channels in, a `GrooveParts` of `PartNote`s and `DrumHit`s without
-instruments out), which the piano roll's mood starters can call. In
-`RecordDlg.cpp` the song plays from a bar before the take (`PreRoll`; at
-row 0 of a song that loops, its last bar, `LoopsToStart`), the click's
-accents follow the song's bars (`ClickTrack::barPhase`), a take over the
-selection (the pattern editor's rows, or the piano roll's notes by their
-bars: `CPianoRollWnd::SelectedBars`) replaces only those rows through
+mode: `ftapi::GrooveKey` gives its relative minor or major); the parts
+themselves come from `ftapi::MakeGrooveParts` (`Source/Api/Grooves.h`,
+implemented next to `MakeGrooveTool` in `Tools.cpp`: a `GrooveRequest` of
+mood, key, bars as `BarSpan`s, tempo and channels in, a `GrooveParts` of
+`PartNote`s and `DrumHit`s without instruments out), which the piano
+roll's mood starters can call. In `RecordDlg.cpp` the song plays from a
+bar before the take (`PreRoll`; at row 0 of a song that loops, its last
+bar, `LoopsToStart`), the click's accents follow the song's bars
+(`ClickTrack::barPhase`), a take over the selection (the pattern editor's
+rows, or the piano roll's notes by their bars:
+`CPianoRollWnd::SelectedBars`) replaces only those rows through
 `CChannelNotes::TakeRows` and `ReplaceRows` (`NoteEdit.cpp`) and
 `WriteChannelRows`, and stops by itself after them. Tapping the tempo is
-`Source/TapButton.cpp` (`CTapButton` counts a tap on the button going down,
-`IsTapKey` the T key) with `transcribe::TempoOfTaps` (`Tapping.cpp`) and
-`ftapi::TappedSpeedTempo` (`Source/Api/RecorderInput.cpp`: the nearest tempo
-with even rows within 3%, else `ChooseSpeedTempo` for the whole BPM).
-Chords given to Add chords and bass line (`BackingDlg.cpp`,
-`backing_choice_t::Chords`) are read by `ftapi::LayOutTypedChords` with the
-tools' chord names (`Chords.cpp`) into `transcribe::Chord`s, which now carry
-their notes and a bass (`tones`, `bass`, `ArpeggioTones`); strummed ones
-(a take of the kind `RECORDING_CHORDS`, or a WAV file) are found by
+`Source/TapButton.cpp` (`CTapButton` counts a tap on the button going
+down, `IsTapKey` the T key) with `transcribe::TempoOfTaps` (`Tapping.cpp`)
+and `ftapi::TappedSpeedTempo` (`Source/Api/RecorderInput.cpp`: the nearest
+tempo with even rows within 3%, else `ChooseSpeedTempo` for the whole
+BPM). Chords given to Add chords and bass line (`BackingDlg.cpp`,
+`backing_choice_t::Chords`) are read by `ftapi::LayOutTypedChords` with
+the tools' chord names (`Chords.cpp`) into `transcribe::Chord`s, which now
+carry their notes and a bass (`tones`, `bass`, `ArpeggioTones`); strummed
+ones (a take of the kind `RECORDING_CHORDS`, or a WAV file) are found by
 `transcribe::HearStrums` (`Strums.cpp`: spectral-flux onsets, a
 non-negative fit of each note's harmonics) and named bar by bar by
 `ftapi::HearStrummedChords` (the tools' `HearChords`), once the delay
-through the take is out (`TakeDelay`: where most strums agree they lie past
-the beats, since an unmeasured microphone delay makes every strum late). A
-take put into the
-song (not over a selection, not as a clip) whose last note rings past the
-song's end ends that note on the last row instead of adding a frame for it
-(`transcribe::EndInside` in `Expression.cpp`, called by `InsertTake`), so a
-groove's song keeps its length and its loop.
+through the take is out (`TakeDelay`: where most strums agree they lie
+past the beats, since an unmeasured microphone delay makes every strum
+late). A take put into the song (not over a selection, not as a clip)
+whose last note rings past the song's end ends that note on the last row
+instead of adding a frame for it (`transcribe::EndInside` in
+`Expression.cpp`, called by `InsertTake`), so a groove's song keeps its
+length and its loop.
 
 ## What this repository is
 
