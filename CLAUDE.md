@@ -454,6 +454,28 @@ sounds measured under Wine within 0.5 dB. `TestCalmKinds`,
 `TestSoftCalmSounds`, `TestVrc6DutiesAndStrikes`, `TestSoftDesign` and
 `TestSoftLevels` in `Source/Api/tests/ApiTests.cpp` cover them.
 
+Calm and lively tracks (from `feat-calm-defaults`): `ChooseStyle` in
+`Tools.cpp` (near the top, with `NameSaysCalm`, `LooksCalm` and `IsDrumHit`)
+gives `mix`, `polish`, `check_song` and `review_arrangement` their style:
+calm only when asked or when the track's name says so (`VersionMood`), and
+a line suggesting it when a song only looks calm (slow, no drum kit). The
+estimate of a part's loudness as heard is the `Hearing` class before
+`MixTool`: each channel's power frame by frame as the 0.4.6 handlers play
+it (`SequenceRun`; `TimbreDb`, the K-weighted timbre of each pulse width,
+the sawtooth, the triangle and the N163's waves, which
+`InstrumentInfo::Duty` and `Waves` report; `PulseDacDb`, `TrianglePinShare`
+for the triangle under the DPCM level and its fader, `PanDb`,
+`SoftCutoff`), and `Loudness` gates 400 ms blocks as BS.1770 does, with
+the `HEARD_*` constants measured against FamiTracker's renders.
+`HearBalance` and `BalanceText` give each role against the melody where
+they play together, `PlacesFor` where calm and lively put them, and
+`MixTool`'s heard path sets the volumes (and the triangle's DPCM level)
+from them, measuring again once. `ShapeOf` and `HeldLeads` find a lead
+whose sound holds a high, steady level (`check_song`'s `FOUND_HELD`,
+`PROBLEM_HELD` in `ProblemList.h`). `TestCalmChoice`, `TestHeardBalance`,
+`TestCalmMix`, `TestCalmPolish`, `TestHeldLead`, `TestMixFixes` and
+`TestReviewFixes` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
