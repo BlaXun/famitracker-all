@@ -96,6 +96,10 @@ std::string ReferenceId(const std::string &Game, int Track);
 // found from it (tempo, mode, chips, techniques)
 Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStudy &Study, const std::string &Source,
 	const std::string &Date);
+// Studied again: R, made from the new study, keeps the notes and the tags the
+// user gave the reference before; those its old study gave itself go with it
+// (a key found minor now loses the old "major")
+void KeepOwnTags(Reference &R, const Reference &Before);
 
 // A reference from the study of a tracker module (MOD, S3M, XM or IT) or a
 // MIDI file, from Source, its path: no game or track, tagged with its format

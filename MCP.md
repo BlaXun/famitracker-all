@@ -1361,6 +1361,21 @@ traded) and the techniques in the sounds (duty clicks, attacks that bloom,
 echoes in the envelope, decays in steps, scoops, pitch flicks, vibrato
 with its delay, triangle thumps), with the main sounds' envelopes.
 
+The loop is the stretch the track keeps on repeating, from where you can
+first hear it repeat: a passage played twice inside a piece that then
+moves on isn't a loop, a first time through that differs only in a part
+you can barely hear (a quiet pulse's tails) loops from the start, and
+drums that run on a cycle of their own beside the tune don't hide the
+tune's loop. A track that falls silent long before its playlist says is
+studied for what it plays: a sting or a sound effect of the seconds it
+sounds. A sampled bass on the DPCM channel (Sunsoft's sound: one wave
+played at many rates) is studied as the bass, with its range and how it
+moves, and `import_nsf` puts its samples on the keys of the notes they
+sound, as FamiTracker's DPCM tab does. The key comes from the chords, the
+bass and where the phrases come to rest; music whose chords keep drifting
+gets "no clear key", and a tonic that comes both ways "C (major and
+minor)". Studying a track again keeps your tags and notes.
+
 Each study is kept as a reference in a library of yours, the `References`
 folder next to FamiTracker.exe (a JSON file each), for every song and every
 session, so it moves with FamiTracker. References kept in

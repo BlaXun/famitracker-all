@@ -22,6 +22,7 @@
 #include "Import.h"
 #include "Player.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -140,6 +141,7 @@ bool ImportNsf(const NsfFile &File, const ImportOptions &Options, ImportResult &
 
 	std::vector<std::unique_ptr<Recording> > Recordings;
 	std::vector<TrackSource> Sources;
+	std::vector<int> SourceTracks;		// the NSF's track of each source
 	std::vector<std::string> Skipped;
 	for (size_t i = 0; i < Tracks.size(); ++i) {
 		const std::string Title = TrackTitle(File, Tracks[i]);
@@ -167,6 +169,7 @@ bool ImportNsf(const NsfFile &File, const ImportOptions &Options, ImportResult &
 		Source.Name = Title;
 		Source.Rec = R.get();
 		Sources.push_back(Source);
+		SourceTracks.push_back(Tracks[i]);
 		Recordings.push_back(std::move(R));
 	}
 	if (Sources.empty()) {
@@ -176,6 +179,9 @@ bool ImportNsf(const NsfFile &File, const ImportOptions &Options, ImportResult &
 
 	if (!ConvertTracks(File, Sources, Options.Convert, Out.Song, Out.Report, Error))
 		return false;
+	// A track each source, in order
+	for (size_t i = 0; i < Out.Report.Tracks.size() && i < SourceTracks.size(); ++i)
+		Out.Report.Tracks[i].PlaylistSeconds = std::max(0, File.TrackTime(SourceTracks[i])) / 1000.0;
 	Out.Text = WriteText(Out.Song);
 
 	// In words

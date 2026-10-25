@@ -36,7 +36,8 @@ namespace nsf {
 
 namespace {
 
-enum col_kind { C_PULSE, C_TRIANGLE, C_NOISE, C_DPCM, C_SAW, C_WAVE, C_FM, C_SAMPLE, C_DRUMS };	// C_SAMPLE, C_DRUMS: a tracker module's
+enum col_kind { C_PULSE, C_TRIANGLE, C_NOISE, C_DPCM, C_SAW, C_WAVE, C_FM, C_SAMPLE, C_DRUMS,	// C_SAMPLE, C_DRUMS: a tracker module's
+	C_DPCM_LINE };		// the DPCM playing pitched samples as a line of notes (a sampled bass)
 
 std::string Format(const char *Fmt, ...)
 #if defined(__GNUC__)
@@ -109,6 +110,23 @@ std::vector<int> ColumnKinds(const Module &M)
 }
 
 bool Melodic(int Kind) { return Kind != C_NOISE && Kind != C_DPCM && Kind != C_DRUMS; }
+
+// What a short track that ends is from its length and the channels that play
+// notes: a sound effect, a jingle, or music that plays once
+std::string EndingKind(double Seconds, int Melodic)
+{
+	if (Seconds < 2.5 || Melodic <= 1)
+		return Seconds >= 20 && Melodic == 1 ? "music" : "sound effect";
+	return Seconds >= 25 ? "music" : "jingle";
+}
+
+// A length in seconds, in words
+std::string SecondsText(double Seconds)
+{
+	char Buf[32];
+	std::snprintf(Buf, sizeof(Buf), Seconds < 10 ? "%.1f seconds" : "%.0f seconds", Seconds);
+	return Buf;
+}
 
 // A note as the track plays it
 struct Played {
@@ -248,6 +266,117 @@ std::vector<std::vector<Played> > PlayedNotes(const Module &M, const Track &T, i
 		if (!Out[c].empty() && Out[c].back().Length < 0)
 			Out[c].back().Length = std::max(1, TotalRows - Out[c].back().Row);
 	return Out;
+}
+
+// The DPCM playing pitched samples as a line of notes (a sampled bass, one
+// wave at many rates) rather than drums
+struct DpcmLine {
+	int Column;					// the DPCM's column, -1 when it plays no line
+	int Shift;					// octaves its notes are written up, as its lowest are under C-0
+	int Notes;					// the different notes the samples sound
+	int LowRate, HighRate;
+	std::set<int> Sizes;		// the pitched samples' sizes, in bytes
+	std::set<int> Samples;
+	DpcmLine() : Column(-1), Shift(0), Notes(0), LowRate(15), HighRate(0) {}
+};
+
+// Finds the line and makes it a melodic column: each note as its sample
+// sounds at its rate (from the wave's period, SamplePeriod), as long as the
+// sample plays; drum hits among them go to a column of their own
+DpcmLine FindDpcmLine(const Module &M, std::vector<int> &Kinds, std::vector<std::vector<Played> > &Notes,
+	std::vector<std::string> &Names, double TicksPerRow)
+{
+	static const int NTSC[16] = { 428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54 };
+	static const int PAL[16] = { 398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50 };
+	DpcmLine L;
+	const bool Pal = M.Machine == 1;
+	const double FrameRate = M.FrameRate > 0 ? M.FrameRate : (Pal ? 50.0 : 60.0);
+	std::vector<double> Periods(M.Samples.size(), -1);
+	for (size_t c = 0; c < Notes.size() && c < Kinds.size(); ++c) {
+		if (Kinds[c] != C_DPCM || Notes[c].empty())
+			continue;
+		std::vector<int> Pitches, Samples, Rates;
+		std::vector<bool> Loops;
+		std::set<std::pair<int, int> > Sounds;
+		for (size_t i = 0; i < Notes[c].size(); ++i) {
+			const Played &p = Notes[c][i];
+			int Sample = -1, Rate = 15;
+			bool Loop = false;
+			if (p.Inst >= 0 && p.Inst < int(M.Instruments.size()) && !M.Instruments[p.Inst].Unused) {
+				const Instrument &I = M.Instruments[p.Inst];
+				for (size_t k = 0; k < I.Keys.size(); ++k)
+					if (I.Keys[k].Note == p.Note) {
+						Sample = I.Keys[k].Sample;
+						Rate = I.Keys[k].Pitch;
+						Loop = I.Keys[k].Loop;
+					}
+			}
+			Samples.push_back(Sample);
+			Rates.push_back(Rate);
+			Loops.push_back(Loop);
+			if (Sample >= 0 && Sample < int(M.Samples.size()))
+				Sounds.insert(std::make_pair(Sample, Rate));
+		}
+		if (Sounds.size() < 4)
+			continue;	// too few sounds to be a line of notes
+		for (size_t i = 0; i < Samples.size(); ++i) {
+			int Pitch = UNPITCHED;
+			const int Sample = Samples[i];
+			if (Sample >= 0 && Sample < int(M.Samples.size())) {
+				if (Periods[Sample] < 0)
+					Periods[Sample] = SamplePeriod(M.Samples[Sample]);
+				if (Periods[Sample] > 0)
+					Pitch = int(std::floor(SampleNote(Periods[Sample], Rates[i], Pal) + 0.5));
+			}
+			Pitches.push_back(Pitch);
+		}
+		if (!PlaysALine(Pitches))
+			continue;
+		int Low = 96;
+		std::set<int> Distinct;
+		for (size_t i = 0; i < Pitches.size(); ++i)
+			if (Pitches[i] != UNPITCHED) {
+				Low = std::min(Low, Pitches[i]);
+				Distinct.insert(Pitches[i]);
+			}
+		while (Low + 12 * L.Shift < 0 && L.Shift < 4)
+			++L.Shift;
+		std::vector<Played> Line, Hits;
+		for (size_t i = 0; i < Pitches.size(); ++i) {
+			if (Pitches[i] == UNPITCHED) {
+				Hits.push_back(Notes[c][i]);
+				continue;
+			}
+			Played q = Notes[c][i];
+			q.Note = std::max(0, std::min(95, Pitches[i] + 12 * L.Shift));
+			if (!Loops[i] && TicksPerRow > 0) {
+				// It sounds as long as its sample plays
+				const int Rate = Rates[i] < 0 ? 0 : (Rates[i] > 15 ? 15 : Rates[i]);
+				const double Seconds = M.Samples[Samples[i]].size() * 8.0 * (Pal ? PAL : NTSC)[Rate] / (Pal ? 1662607.0 : 1789773.0);
+				const int SampleRows = int(std::ceil(Seconds * FrameRate / TicksPerRow));
+				if (q.Length > SampleRows)
+					q.Length = SampleRows > 1 ? SampleRows : 1;
+			}
+			Line.push_back(q);
+			L.Samples.insert(Samples[i]);
+			L.Sizes.insert(int(M.Samples[Samples[i]].size()));
+			L.LowRate = std::min(L.LowRate, Rates[i]);
+			L.HighRate = std::max(L.HighRate, Rates[i]);
+		}
+		L.Notes = int(Distinct.size());
+		L.Column = int(c);
+		Notes[c] = Line;
+		Kinds[c] = C_DPCM_LINE;
+		Kinds.resize(Notes.size(), C_PULSE);
+		Names.resize(Notes.size());
+		if (!Hits.empty()) {
+			Notes.push_back(Hits);
+			Kinds.push_back(C_DPCM);
+			Names.push_back(Names[c] + " drums");
+		}
+		break;
+	}
+	return L;
 }
 
 // --- How an instrument's macros shape its notes ---
@@ -554,18 +683,17 @@ std::string Items(const std::vector<int> &v, size_t From, size_t To)
 
 const char *const PITCH_NAMES[12] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
 
-std::string KeyOf(const std::vector<double> &Weights)
+// How well the pitch classes' weights fit each key (Krumhansl-Kessler
+// profiles): a correlation for each, [Root * 2 + Minor]; false when nothing sounds
+bool KeyFits(const std::vector<double> &Weights, double Fit[24])
 {
-	// Krumhansl-Kessler profiles
 	static const double MAJOR[12] = { 6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88 };
 	static const double MINOR[12] = { 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17 };
 	double Total = 0;
 	for (int i = 0; i < 12; ++i)
 		Total += Weights[i];
 	if (Total <= 0)
-		return std::string();
-	double Best = -1e9;
-	std::string Name;
+		return false;
 	for (int Root = 0; Root < 12; ++Root)
 		for (int Minor = 0; Minor < 2; ++Minor) {
 			const double *P = Minor ? MINOR : MAJOR;
@@ -583,13 +711,193 @@ std::string KeyOf(const std::vector<double> &Weights)
 				Sxx += x * x;
 				Syy += y * y;
 			}
-			const double r = Sxx > 0 && Syy > 0 ? Sxy / std::sqrt(Sxx * Syy) : 0;
-			if (r > Best) {
-				Best = r;
-				Name = std::string(PITCH_NAMES[Root]) + (Minor ? " minor" : " major");
-			}
+			Fit[Root * 2 + Minor] = Sxx > 0 && Syy > 0 ? Sxy / std::sqrt(Sxx * Syy) : 0;
 		}
-	return Best > 0.5 ? Name : std::string();
+	return true;
+}
+
+// A chord's name as ChordOf gives it ("C#m", "Ebsus4"): its root and shape
+// (0 major, 1 minor, 2 diminished, 3 suspended); false for "-"
+bool ParseChord(const std::string &Name, int &Root, int &Shape)
+{
+	for (int r = 0; r < 12; ++r) {
+		const std::string p = PITCH_NAMES[r];
+		if (Name.compare(0, p.size(), p) != 0 || (p.size() == 1 && Name.size() > 1 && (Name[1] == '#' || Name[1] == 'b')))
+			continue;
+		const std::string Rest = Name.substr(p.size());
+		Root = r;
+		Shape = Rest.empty() ? 0 : (Rest == "m" ? 1 : (Rest == "dim" ? 2 : (Rest == "sus4" ? 3 : -1)));
+		return Shape >= 0;
+	}
+	return false;
+}
+
+// Whether a chord belongs to a key: its own triads (and the major V and the
+// leading tone's in minor), or what music in it often borrows: in major the
+// minor iv, bVII, bVI, bIII and the major II and III; in minor the major IV,
+// the major and minor bII, the major I. A suspended chord fits where a triad
+// on its root does.
+bool InKey(int Root, int Shape, int Tonic, bool Minor)
+{
+	static const int MAJOR_CHORDS[][2] = { { 0, 0 }, { 2, 1 }, { 4, 1 }, { 5, 0 }, { 7, 0 }, { 9, 1 }, { 11, 2 },
+		{ 5, 1 }, { 10, 0 }, { 8, 0 }, { 3, 0 }, { 2, 0 }, { 4, 0 } };
+	static const int MINOR_CHORDS[][2] = { { 0, 1 }, { 2, 2 }, { 3, 0 }, { 5, 1 }, { 7, 1 }, { 7, 0 }, { 8, 0 }, { 10, 0 }, { 11, 2 },
+		{ 5, 0 }, { 1, 0 }, { 1, 1 }, { 0, 0 } };
+	const int Degree = (Root - Tonic + 12) % 12;
+	const int (*Chords)[2] = Minor ? MINOR_CHORDS : MAJOR_CHORDS;
+	const int Count = Minor ? int(sizeof(MINOR_CHORDS) / sizeof(MINOR_CHORDS[0])) : int(sizeof(MAJOR_CHORDS) / sizeof(MAJOR_CHORDS[0]));
+	for (int i = 0; i < Count; ++i)
+		if (Chords[i][0] == Degree && (Chords[i][1] == Shape || (Shape == 3 && Chords[i][1] < 2)))
+			return true;
+	return false;
+}
+
+// The key of a track, from the pitch classes it plays (Weights), the chords
+// of its bars and their bass notes (-1 for none) and where its phrases come
+// to rest: the loop's first chord (LoopBar), or a piece's first and last.
+// The profiles' likeliest keys are weighed by how much the music rests on
+// their tonic chord. "D minor"; "C (major and minor)" when its tonic chord
+// comes both ways; "no clear key (around D)", or "", when its chords drift
+// from key to key or it has none.
+std::string KeyOf(const std::vector<double> &Weights, const std::vector<std::string> &Chords, const std::vector<int> &Bass, int LoopBar)
+{
+	double Fit[24];
+	if (!KeyFits(Weights, Fit))
+		return std::string();
+	struct BarChord { int Root, Shape; };
+	std::vector<BarChord> Bars;
+	std::vector<int> BarOf;		// the bar of each chord
+	for (size_t b = 0; b < Chords.size(); ++b) {
+		BarChord c;
+		if (ParseChord(Chords[b], c.Root, c.Shape)) {
+			Bars.push_back(c);
+			BarOf.push_back(int(b));
+		}
+	}
+	double BestFit = -2;
+	int BestKey = 0;
+	for (int k = 0; k < 24; ++k)
+		if (Fit[k] > BestFit) {
+			BestFit = Fit[k];
+			BestKey = k;
+		}
+	if (Bars.empty())	// no chords to weigh: the notes alone
+		return BestFit > 0.5 ? std::string(PITCH_NAMES[BestKey / 2]) + (BestKey & 1 ? " minor" : " major") : std::string();
+	// Where the music comes to rest: the loop's first chord, or the first and last
+	int First = 0;
+	for (size_t i = 0; i < Bars.size(); ++i)
+		if (LoopBar >= 0 && BarOf[i] == LoopBar)
+			First = int(i);
+	const bool Loops = LoopBar >= 0;
+	std::vector<int> BassCount(12, 0), RootCount(12, 0);
+	int BassBars = 0;
+	for (size_t b = 0; b < Bass.size(); ++b)
+		if (Bass[b] >= 0 && Bass[b] < 12) {
+			++BassCount[Bass[b]];
+			++BassBars;
+		}
+	for (size_t i = 0; i < Bars.size(); ++i)
+		++RootCount[Bars[i].Root];
+	struct Candidate { int Root; bool Minor; double Fit, Score, Rest; };
+	std::vector<Candidate> Candidates;
+	for (int k = 0; k < 24; ++k) {
+		if (Fit[k] < BestFit - 0.12)
+			continue;
+		Candidate c = { k / 2, (k & 1) != 0, Fit[k], 0, 0 };
+		const int Tonic = c.Minor ? 1 : 0;
+		auto OnTonic = [&](const BarChord &b, double Partly) {
+			return b.Root != c.Root ? 0.0 : (b.Shape == Tonic ? 1.0 : (b.Shape != 2 ? Partly : 0.0));
+		};
+		double Share = 0;
+		for (size_t i = 0; i < Bars.size(); ++i)
+			Share += OnTonic(Bars[i], 0.4);
+		Share /= Bars.size();
+		double Rest = OnTonic(Bars[First], 0.5) + (Loops ? 0 : OnTonic(Bars.back(), 0.5)) + 2 * Share +
+			(BassBars > 0 ? double(BassCount[c.Root]) / BassBars : 0);
+		// The loop's end leading back to the tonic at its start: its dominant
+		const BarChord &End = Bars.back();
+		const int EndDegree = (End.Root - c.Root + 12) % 12;
+		if (Loops && OnTonic(Bars[First], 0) > 0 && ((EndDegree == 7 && (End.Shape == 0 || End.Shape == 3)) || (EndDegree == 11 && End.Shape == 2)))
+			Rest += 0.5;
+		c.Rest = Rest;
+		c.Score = c.Fit + 0.2 * Rest;
+		Candidates.push_back(c);
+	}
+	std::sort(Candidates.begin(), Candidates.end(), [](const Candidate &a, const Candidate &b) { return a.Score > b.Score; });
+	// The tonic: the best's; one with another tonic as likely leaves it to the
+	// notes, and to no key when they can't tell either
+	int Tonic = Candidates[0].Root;
+	for (size_t i = 1; i < Candidates.size(); ++i)
+		if (Candidates[i].Root != Tonic && Candidates[0].Score - Candidates[i].Score < 0.02) {
+			if (std::fabs(Candidates[i].Fit - Candidates[0].Fit) < 0.05)
+				Tonic = -1;
+			else if (Candidates[i].Fit > Candidates[0].Fit)
+				Tonic = Candidates[i].Root;
+			break;
+		}
+	// A tonic that stands out, in the chords or in the bass, even without a key
+	const int Home = Tonic >= 0 ? Tonic : Candidates[0].Root;
+	int NextRoot = 0, NextBass = 0;
+	for (int r = 0; r < 12; ++r)
+		if (r != Home) {
+			NextRoot = std::max(NextRoot, RootCount[r]);
+			NextBass = std::max(NextBass, BassCount[r]);
+		}
+	const bool Around = (RootCount[Home] * 4 >= int(Bars.size()) && RootCount[Home] * 2 >= NextRoot * 3) ||
+		(BassCount[Home] * 5 >= BassBars * 2 && BassCount[Home] * 2 >= NextBass * 3);
+	const std::string NoKey = Around ? "no clear key (around " + std::string(PITCH_NAMES[Home]) + ")" : std::string();
+	if (Tonic < 0)
+		return std::string();
+	// No key: the notes fit none well, or the chords keep leaving the key in
+	// either mode (more than a third of the bars, on three roots or more)
+	bool RestsOnTonic = false;
+	for (int Mode = 0; Mode < 2; ++Mode) {
+		const BarChord &a = Bars[First], &b = Bars.back();
+		RestsOnTonic = RestsOnTonic || (a.Root == Tonic && (a.Shape == Mode || a.Shape == 3)) ||
+			(!Loops && b.Root == Tonic && (b.Shape == Mode || b.Shape == 3));
+	}
+	if (BestFit < (RestsOnTonic ? 0.45 : 0.5))
+		return NoKey;
+	bool Drifts = true;
+	for (int Mode = 0; Mode < 2; ++Mode) {
+		int Foreign = 0;
+		std::set<int> ForeignRoots;
+		for (size_t i = 0; i < Bars.size(); ++i)
+			if (!InKey(Bars[i].Root, Bars[i].Shape, Tonic, Mode == 1)) {
+				++Foreign;
+				ForeignRoots.insert(Bars[i].Root);
+			}
+		if (Foreign * 100 < int(Bars.size()) * 35 || ForeignRoots.size() < 3)
+			Drifts = false;
+	}
+	if (Drifts)
+		return NoKey;
+	// A short piece that plays once and stops on a chord of neither mode
+	// never comes home: a fanfare that moves off a tritone away
+	if (!Loops && Bars.size() <= 8 && !InKey(Bars.back().Root, Bars.back().Shape, Tonic, false) &&
+		!InKey(Bars.back().Root, Bars.back().Shape, Tonic, true))
+		return NoKey;
+	// The mode: the notes' (the third, sixth and seventh they play), unless
+	// they fit both nearly as well; then the tonic chord's, or both when it
+	// comes both ways (a third of the time the other, or the other way round
+	// from the notes)
+	const double MinorFit = Fit[Tonic * 2 + 1], MajorFit = Fit[Tonic * 2];
+	const std::string Name = PITCH_NAMES[Tonic];
+	if (std::fabs(MinorFit - MajorFit) >= 0.04)
+		return Name + (MinorFit > MajorFit ? " minor" : " major");
+	int Major = 0, Minor = 0;
+	for (size_t i = 0; i < Bars.size(); ++i)
+		if (Bars[i].Root == Tonic) {
+			Major += Bars[i].Shape == 0;
+			Minor += Bars[i].Shape == 1;
+		}
+	if (Major + Minor == 0)
+		return Name + (MinorFit > MajorFit ? " minor" : " major");
+	const bool ChordsMinor = Minor > Major;
+	const int Fewer = std::min(Major, Minor);
+	if (Fewer * 4 >= Major + Minor || (Fewer > 0 && ChordsMinor != (MinorFit > MajorFit)))
+		return Name + " (major and minor)";
+	return Name + (ChordsMinor ? " minor" : " major");
 }
 
 // The chord of a bar, from how long each pitch class sounds in it and the
@@ -1131,12 +1439,13 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	S.Tracker = !M.ChannelKinds.empty() || Report.Written;
 	S.Speed = Report.Speed;
 	S.Tempo = Report.Tempo;
-	const std::vector<int> Kinds = ColumnKinds(M);
-	const std::vector<std::string> Names = ChannelNamesOf(M);
+	std::vector<int> Kinds = ColumnKinds(M);
+	std::vector<std::string> Names = ChannelNamesOf(M);
 	int TotalRows = 0, LoopRow = -1;
 	TrackUse Use;
-	const std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow, Report.Written, Use);
+	std::vector<std::vector<Played> > Notes = PlayedNotes(M, T, TotalRows, LoopRow, Report.Written, Use);
 	const int RowsPerBar = S.RowsPerBeat * S.BeatsPerBar;
+	const DpcmLine Sampled = FindDpcmLine(M, Kinds, Notes, Names, S.TicksPerRow);
 	const int Columns = int(Notes.size());
 	const int StepsPerBeat = StepsInBeat(S.RowsPerBeat, S.BeatsPerBar), Steps = StepsPerBeat * S.BeatsPerBar;
 	// A compound meter's beat (6/8's) is three eighths rather than a triplet
@@ -1160,6 +1469,9 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	for (int c = 0; c < Columns; ++c)
 		if (Kinds[c] == C_TRIANGLE && Notes[c].size() >= 8)
 			Bass = c;
+	// A sampled bass on the DPCM, under the triangle
+	if (Sampled.Column >= 0 && (Bass < 0 || AvgPitch[Sampled.Column] - 12 * Sampled.Shift < AvgPitch[Bass]))
+		Bass = Sampled.Column;
 	if (Bass < 0)
 		for (int c = 0; c < Columns; ++c)
 			if (Melodic(Kinds[c]) && Notes[c].size() >= 8 && (Bass < 0 || AvgPitch[c] < AvgPitch[Bass]))
@@ -1170,6 +1482,18 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	if (LoopRow >= 0) {
 		S.IntroBars = LoopRow > 0 ? std::max(1, (LoopRow + RowsPerBar / 2) / RowsPerBar) : 0;
 		S.LoopBars = std::max(1, (TotalRows - LoopRow + RowsPerBar / 2) / RowsPerBar);
+	}
+	S.Seconds = Report.Seconds;
+	S.PlaylistSeconds = Report.PlaylistSeconds;
+	S.DrumLoopBars = Report.DrumLoopRows / RowsPerBar;
+	if (LoopRow < 0 && Report.Seconds > 0) {
+		// A short track that ends: a sting (under 12 seconds), or a sound effect
+		// rather than music
+		int Playing = 0;
+		for (int c = 0; c < Columns; ++c)
+			Playing += Melodic(Kinds[c]) && !Notes[c].empty();
+		const std::string Kind = EndingKind(Report.Seconds, Playing);
+		S.Kind = Kind == "sound effect" ? "sound" : (Kind == "jingle" && Report.Seconds < 12 ? "sting" : "music");
 	}
 	auto InLoop = [&](int Row) { return LoopRow < 0 || Row >= LoopRow; };
 	const int LoopBarCount = std::max(1, S.LoopBars > 0 ? S.LoopBars : (TotalRows + RowsPerBar - 1) / RowsPerBar);
@@ -1298,8 +1622,9 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			}
 		}
 	}
-	S.Key = KeyOf(KeyWeights);
-	for (int b = 0; b < Bars && b < 96; ++b) {
+	std::vector<std::string> BarChords;
+	std::vector<int> BarBass;
+	for (int b = 0; b < Bars; ++b) {
 		int BassTone = -1;
 		double Most = 0;
 		for (int k = 0; k < 12; ++k)
@@ -1307,8 +1632,12 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				Most = BassWeights[b][k];
 				BassTone = k;
 			}
-		S.Chords.push_back(ChordOf(BarWeights[b], BassTone));
+		BarChords.push_back(ChordOf(BarWeights[b], BassTone));
+		BarBass.push_back(BassTone);
+		if (b < 96)
+			S.Chords.push_back(BarChords.back());
 	}
+	S.Key = KeyOf(KeyWeights, BarChords, BarBass, S.LoopStartBar);
 
 	// --- The lead: the melodic channel with the most going on, up high ---
 	int Lead = -1, NamedLead = -1;
@@ -1622,6 +1951,23 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			Line += Format("; volume slides on %s of its notes (Axy)", Percent(t.Fade, t.Notes).c_str());
 		if (t.PatTremolo * 10 >= t.Notes)
 			Line += Format("; tremolo on %s of its notes (7xy)", Percent(t.PatTremolo, t.Notes).c_str());
+		if (Kinds[c] == C_DPCM_LINE) {
+			// Its samples: the waves played at many rates
+			std::vector<std::string> Sizes;
+			for (std::set<int>::const_iterator it = Sampled.Sizes.begin(); it != Sampled.Sizes.end(); ++it)
+				Sizes.push_back(std::to_string(*it));
+			std::string Bytes = Sizes.empty() ? std::string() : Sizes.back();
+			if (Sizes.size() > 1)
+				Bytes = Join(std::vector<std::string>(Sizes.begin(), Sizes.end() - 1), ", ") + " and " + Bytes;
+			Line += Format("; %s: %s (%s bytes) played at DPCM rates %d to %d, each at the pitches it sounds (%s)",
+				c == Bass ? "a sampled bass" : "sampled", Count(int(Sampled.Samples.size()), "sample", "samples").c_str(), Bytes.c_str(),
+				Sampled.LowRate, Sampled.HighRate, Count(Sampled.Notes, "pitch", "different pitches").c_str());
+			if (Sampled.Shift > 0)
+				Line += Format(" (written %s up: its lowest notes are under C-0)", Sampled.Shift == 1 ? "an octave" :
+					Count(Sampled.Shift, "octave", "octaves").c_str());
+			S.Channels.push_back(Line + ".");
+			continue;	// no chip sound to build again: the samples are the sound
+		}
 		if (Kinds[c] == C_SAMPLE) {
 			// A tracker module's channel: the instruments it plays, by name
 			std::map<int, int> Uses;
@@ -1840,7 +2186,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 	int MelodicNotes = 0;
 	Traits Sum;
 	for (int c = 0; c < Columns; ++c) {
-		if (!Melodic(Kinds[c]))
+		// A sampled line has no instrument to shape its notes: it counts in none
+		if (!Melodic(Kinds[c]) || Kinds[c] == C_DPCM_LINE)
 			continue;
 		MelodicNotes += Tr[c].Notes;
 		Sum.Click += Tr[c].Click;
@@ -1894,6 +2241,12 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		const std::string Speeds = SpeedPattern(Use, TotalRows, std::max(1, T.Speed), S.RowsPerBeat);
 		if (!Speeds.empty())
 			S.Tricks.push_back(Speeds);
+		// The drums on a cycle of their own beside the loop
+		if (S.DrumLoopBars > 0 && S.LoopBars > 0) {
+			const double Beats = Report.DrumLoopRows / S.RowsPerBeat;
+			S.Tricks.push_back(Format("drums on a cycle of their own: they repeat every %.3g bars (%.3g beats) beside the "
+				"%d-bar loop, so the groove falls differently against the tune each time round", S.DrumLoopBars, Beats, S.LoopBars));
+		}
 		// The DPCM level written (Zxx), which softens the triangle and the noise
 		int Levels = 0, Most = 0, Level = 0;
 		for (std::map<int, int>::const_iterator it = Use.Dac.begin(); it != Use.Dac.end(); ++it) {
@@ -1906,6 +2259,12 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		if (Levels >= 4)
 			S.Tricks.push_back(Format("the DPCM level set with Zxx, mostly Z%02X (%d times), so the triangle and the noise play "
 				"softer", Level, Levels));
+		// A sampled bass: a wave on the DPCM played at the line's pitches
+		// (no "DPCM:" in the words, which tag a study's DPCM drums)
+		if (Sampled.Column >= 0 && Sampled.Column == Bass)
+			S.Tricks.push_back(Format("a sampled bass on the DPCM (%s played at the line's pitches, %s), "
+				"a deep, physical low end that leaves the pulses and the triangle free for other parts",
+				Count(int(Sampled.Samples.size()), "bass sample", "bass samples").c_str(), Count(Sampled.Notes, "pitch", "different pitches").c_str()));
 	}
 	if (PairTricks.size() > 8)
 		PairTricks.resize(8);		// many channels (a tracker module's): the first found
@@ -2006,8 +2365,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			std::vector<int> AtStep(Steps, 0);
 			for (size_t i = 0; i < k.Steps.size(); ++i)
 				++AtStep[k.Steps[i]];
-			std::string w = Format("%s: %s in the loop, about %.1f a bar", Name.c_str(), Count(k.Hits, "hit", "hits").c_str(),
-				double(k.Hits) / LoopBarCount);
+			std::string w = Format("%s: %s %s, about %.1f a bar", Name.c_str(), Count(k.Hits, "hit", "hits").c_str(),
+				LoopRow >= 0 ? "in the loop" : "in all", double(k.Hits) / LoopBarCount);
 			int Uses = 0;
 			const std::string Grid = Commonest(k.Grids, Uses);
 			int BarsPlayed = 0;
@@ -2074,13 +2433,23 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 	if (S.LoopBars > 0)
 		s += S.IntroBars > 0 ? Format("; an intro of %s, then a loop of %s", Count(S.IntroBars, "bar", "bars").c_str(),
 			Count(S.LoopBars, "bar", "bars").c_str()) : Format("; a loop of %s", Count(S.LoopBars, "bar", "bars").c_str());
+	else if (S.Kind == "sting")
+		s += "; a sting, not music to loop: it plays " + SecondsText(S.Seconds) + " and ends";
+	else if (S.Kind == "sound")
+		s += "; a sound effect rather than music: it plays " + SecondsText(S.Seconds);
 	else
-		s += "; it plays once";
+		s += S.Seconds > 0 ? "; it plays once, for " + SecondsText(S.Seconds) : std::string("; it plays once");
+	if (S.LoopBars == 0 && S.PlaylistSeconds > S.Seconds + 5 && S.Seconds > 0)
+		s += ", though its playlist gives it " + SecondsText(S.PlaylistSeconds);
 	s += ".";
 	if (S.FirstBarRow > 0)
 		s += Format(" The first bar line is %s in.", Count(S.FirstBarRow, "row", "rows").c_str());
-	if (!S.Key.empty())
+	if (S.Key.compare(0, 12, "no clear key") == 0)
+		s += " No clear key" + S.Key.substr(12) + ".";
+	else if (!S.Key.empty())
 		s += " Key: " + S.Key + ".";
+	else if (S.Kind == "music")
+		s += " No clear key.";
 	s += "\n";
 	if (!S.Form.empty())
 		s += "  The lead's four-bar phrases through the loop: " + S.Form + "\n";
@@ -2137,6 +2506,59 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 	return s;
 }
 
+namespace {
+
+// What a recorded track is, how long it sounds and how long its loop is
+void SurveyRecording(const Recording &R, TrackSurvey &Sv)
+{
+	int Channels = 0, Melodic = 0, LastSound = -1;
+	for (size_t c = 0; c < R.Channels.size(); ++c) {
+		const int Ch = R.Channels[c];
+		int Sounding = 0;
+		for (int k = 0; k < R.Length; ++k)
+			if (R.Ticks[Ch][k].Sounding()) {
+				++Sounding;
+				LastSound = std::max(LastSound, k);
+			}
+		if (Sounding > 0) {
+			++Channels;
+			Melodic += Ch != CH_NOISE && Ch != CH_DPCM;
+		}
+	}
+	Sv.Seconds = (LastSound + 1) / R.TickRate;
+	Sv.LoopSeconds = R.LoopStart >= 0 ? R.LoopLength / R.TickRate : 0;
+	if (Channels == 0)
+		Sv.Kind = "silent";
+	else if (R.LoopStart >= 0 && Sv.LoopSeconds >= 4 && Melodic >= 2)
+		Sv.Kind = "music";
+	else if (R.LoopStart >= 0)
+		Sv.Kind = Melodic >= 2 ? "jingle" : "sound effect";
+	else
+		Sv.Kind = EndingKind(Sv.Seconds, Melodic);
+}
+
+// Whether a track falls silent for good well before the length its playlist
+// gives it (a few seconds of sound in a 40-second entry): played up to that
+// length, or MaxSeconds, it has stopped by three quarters of it and nothing
+// sounds again. Out is the recording that ended.
+bool SilentBeforePlaylist(const NsfFile &File, int Track, double PlaylistSeconds, double MaxSeconds, Recording &Out)
+{
+	RecordOptions Record;
+	Record.MaxSeconds = std::min(MaxSeconds, PlaylistSeconds);
+	std::string Why;
+	if (!RecordTrack(File, Track, Record, Out, Why) || !Out.EndsInSilence || Out.LastSound < 0)
+		return false;
+	const double Ends = (Out.LastSound + 1) / Out.TickRate;
+	if (Ends > 0.75 * PlaylistSeconds - 2)
+		return false;
+	// Silent for good: played on without stopping at the silence
+	Recording Longer;
+	Record.SilenceSeconds = Record.MaxSeconds + 1;
+	return RecordTrack(File, Track, Record, Longer, Why) && Longer.LastSound == Out.LastSound;
+}
+
+}	// namespace
+
 std::vector<TrackSurvey> SurveyTracks(const NsfFile &File, double MaxSeconds, const std::function<bool(int, int)> &Progress)
 {
 	std::vector<TrackSurvey> Out;
@@ -2147,14 +2569,20 @@ std::vector<TrackSurvey> SurveyTracks(const NsfFile &File, double MaxSeconds, co
 		Sv.Track = t;
 		Sv.Title = TrackTitle(File, t);
 		const int Ms = File.TrackTime(t);
+		Recording R;
 		if (Ms > 0) {
-			// The playlist's length: a loop or two of a tune, a few seconds of a jingle
-			Sv.Seconds = Ms / 1000.0;
-			Sv.Kind = Sv.Seconds >= 20 ? "music" : (Sv.Seconds >= 2.5 ? "jingle" : "sound effect");
+			// The playlist's length: a loop or two of a tune, a few seconds of a
+			// jingle; unless the track falls silent long before it
+			const double Listed = Ms / 1000.0;
+			if (Listed >= 2.5 && SilentBeforePlaylist(File, t, Listed, MaxSeconds, R))
+				SurveyRecording(R, Sv);
+			else {
+				Sv.Seconds = Listed;
+				Sv.Kind = Sv.Seconds >= 20 ? "music" : (Sv.Seconds >= 2.5 ? "jingle" : "sound effect");
+			}
 			Out.push_back(Sv);
 			continue;
 		}
-		Recording R;
 		RecordOptions Record;
 		Record.MaxSeconds = MaxSeconds;
 		std::string Why;
@@ -2163,33 +2591,7 @@ std::vector<TrackSurvey> SurveyTracks(const NsfFile &File, double MaxSeconds, co
 			Out.push_back(Sv);
 			continue;
 		}
-		int Channels = 0, Melodic = 0, LastSound = -1;
-		for (size_t c = 0; c < R.Channels.size(); ++c) {
-			const int Ch = R.Channels[c];
-			int Sounding = 0;
-			for (int k = 0; k < R.Length; ++k)
-				if (R.Ticks[Ch][k].Sounding()) {
-					++Sounding;
-					LastSound = std::max(LastSound, k);
-				}
-			if (Sounding > 0) {
-				++Channels;
-				Melodic += Ch != CH_NOISE && Ch != CH_DPCM;
-			}
-		}
-		Sv.Seconds = (LastSound + 1) / R.TickRate;
-		if (R.LoopStart >= 0)
-			Sv.LoopSeconds = R.LoopLength / R.TickRate;
-		if (Channels == 0)
-			Sv.Kind = "silent";
-		else if (R.LoopStart >= 0 && Sv.LoopSeconds >= 4 && Melodic >= 2)
-			Sv.Kind = "music";
-		else if (R.LoopStart >= 0)
-			Sv.Kind = Melodic >= 2 ? "jingle" : "sound effect";
-		else if (Sv.Seconds < 2.5 || Melodic <= 1)
-			Sv.Kind = Sv.Seconds >= 20 && Melodic == 1 ? "music" : "sound effect";
-		else
-			Sv.Kind = Sv.Seconds >= 25 ? "music" : "jingle";
+		SurveyRecording(R, Sv);
 		Out.push_back(Sv);
 	}
 	return Out;

@@ -90,7 +90,8 @@ struct Note {
 	int Patch;			// VRC7: 1-15 built in, 0 custom
 	int ModRate, ModDepth, ModTable;	// FDS
 	int WaveSize;		// N163, in samples
-	int Key;			// DPCM: sample, rate and loop together; the key's index
+	int Key;			// DPCM: the key that plays its sample, rate and loop
+	int DpcmInst;		// DPCM: which of the DPCM instruments: 0 the kit, 1 and on the bass's
 	int ConstDuty;		// a duty that holds for the whole note, set with Vxx instead of a macro; -1
 	// Decided later
 	int Inst, Column;
@@ -103,7 +104,7 @@ struct Note {
 	int TailStart;		// the tick (from the start) where the release begins, -1 for none
 	bool Released;		// a release (===) was written for it
 	Note() : Channel(0), Start(0), SoundEnd(0), Next(0), Base(0), Loudest(0), Arp(0), Sweep(-1), Wave(-1), Patch(0),
-		ModRate(0), ModDepth(0), ModTable(0), WaveSize(32), Key(-1), ConstDuty(-1), Inst(-1), Column(15), Row(0), Delay(0), Keep(true),
+		ModRate(0), ModDepth(0), ModTable(0), WaveSize(32), Key(-1), DpcmInst(-1), ConstDuty(-1), Inst(-1), Column(15), Row(0), Delay(0), Keep(true),
 		EndNeeded(false), EndRow(0), EndDelay(0), FadesOut(false), TailStart(-1), Released(false) {}
 	int Length() const { return SoundEnd - Start; }
 };
@@ -801,8 +802,11 @@ bool FindGrid(const std::vector<std::pair<int, double> > &Onsets, double &TicksP
 		}
 	}
 	TicksPerRow = (Low + High) / 2;
+	const double Half = Round(2 * TicksPerRow) / 2.0;
 	if (Round(TicksPerRow) >= Low - 0.001 && Round(TicksPerRow) <= High + 0.001)
 		TicksPerRow = Round(TicksPerRow);
+	else if (Half >= Low - 0.001 && Half <= High + 0.001)
+		TicksPerRow = Half;		// rows of 4 and 5 ticks in turn, as drivers play a tempo between two speeds
 	else {
 		// A fraction: where the starts lie closest to the rows on average
 		double Best = 1e9;
@@ -846,6 +850,122 @@ void SpeedTempo(double TicksPerRow, double FrameRate, int &Speed, int &Tempo)
 			Tempo = t;
 		}
 	}
+}
+
+namespace {
+
+// How alike a signal is to itself Lag steps later, -1 to 1 (step: every
+// how many points are counted)
+double SelfLikeness(const std::vector<double> &y, int Lag, int Step)
+{
+	double xy = 0, xx = 0, yy = 0;
+	for (size_t i = 0; i + Lag < y.size(); i += Step) {
+		xy += y[i] * y[i + Lag];
+		xx += y[i] * y[i];
+		yy += y[i + Lag] * y[i + Lag];
+	}
+	return xx > 0 && yy > 0 ? xy / std::sqrt(xx * yy) : 0;
+}
+
+}	// namespace
+
+double SamplePeriod(const std::vector<uint8_t> &Data)
+{
+	// The levels the DMC plays, smoothed over 8 bits (its own up-down ripple out)
+	std::vector<int> Levels;
+	int Level = 64;
+	for (size_t i = 0; i < Data.size(); ++i)
+		for (int Bit = 0; Bit < 8; ++Bit) {
+			if ((Data[i] >> Bit) & 1) {
+				if (Level <= 125)
+					Level += 2;
+			}
+			else if (Level >= 2)
+				Level -= 2;
+			Levels.push_back(Level);
+		}
+	if (Levels.size() < 256)
+		return 0;
+	std::vector<double> y;
+	double Sum = 0;
+	for (int i = 0; i < 8; ++i)
+		Sum += Levels[i];
+	for (size_t i = 8; i < Levels.size(); ++i) {
+		y.push_back(Sum / 8);
+		Sum += Levels[i] - Levels[i - 8];
+	}
+	double Mean = 0;
+	for (size_t i = 0; i < y.size(); ++i)
+		Mean += y[i];
+	Mean /= y.size();
+	double Energy = 0;
+	for (size_t i = 0; i < y.size(); ++i) {
+		y[i] -= Mean;
+		Energy += y[i] * y[i];
+	}
+	if (Energy / y.size() < 1.0)
+		return 0;		// hardly moves: silence, or a click
+	// Coarsely, every 4 bits: the first lag that repeats nearly as well as
+	// the best (the wave's own period rather than twice it), with at least
+	// four times through in the sample
+	std::vector<double> Coarse;
+	for (size_t i = 0; i + 4 <= y.size(); i += 4)
+		Coarse.push_back((y[i] + y[i + 1] + y[i + 2] + y[i + 3]) / 4);
+	const int Longest = std::min(int(Coarse.size()) / 4, 400);
+	if (Longest < 6)
+		return 0;
+	std::vector<double> r(Longest + 2, 0);
+	double Best = -1;
+	for (int L = 4; L <= Longest + 1; ++L) {
+		r[L] = SelfLikeness(Coarse, L, 1);
+		if (L <= Longest)
+			Best = std::max(Best, r[L]);
+	}
+	if (Best < 0.8)
+		return 0;
+	int Found = -1;
+	for (int L = 5; L <= Longest && Found < 0; ++L)
+		if (r[L] >= r[L - 1] && r[L] >= r[L + 1] && r[L] >= std::max(0.8, 0.92 * Best))
+			Found = L;
+	if (Found < 0)
+		return 0;
+	// Then bit by bit around it
+	int Lag = Found * 4;
+	double Peak = -2;
+	for (int L = Found * 4 - 6; L <= Found * 4 + 6; ++L) {
+		const double v = SelfLikeness(y, L, 2);
+		if (v > Peak) {
+			Peak = v;
+			Lag = L;
+		}
+	}
+	const double Before = SelfLikeness(y, Lag - 1, 2), After = SelfLikeness(y, Lag + 1, 2);
+	const double Curve = Before - 2 * Peak + After;
+	const double Shift = Curve < 0 ? 0.5 * (Before - After) / Curve : 0;
+	return Lag + std::max(-0.5, std::min(0.5, Shift));
+}
+
+double SampleNote(double PeriodBits, int Rate, bool Pal)
+{
+	static const int NTSC[16] = { 428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54 };
+	static const int PAL[16] = { 398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50 };
+	if (PeriodBits <= 0)
+		return -1;
+	const int r = std::max(0, std::min(15, Rate));
+	const double Hz = (Pal ? 1662607.0 / PAL[r] : 1789773.0 / NTSC[r]) / PeriodBits;
+	return 45 + 12 * std::log2(Hz / 440.0);
+}
+
+bool PlaysALine(const std::vector<int> &Pitches, int MinNotes)
+{
+	std::set<int> Notes;
+	int Pitched = 0;
+	for (size_t i = 0; i < Pitches.size(); ++i)
+		if (Pitches[i] != UNPITCHED) {
+			Notes.insert(Pitches[i]);
+			++Pitched;
+		}
+	return int(Notes.size()) >= MinNotes && Pitched >= 8 && Pitched * 2 >= int(Pitches.size());
 }
 
 bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources, const ConvertOptions &Options, Module &Out,
@@ -1058,6 +1178,9 @@ bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources,
 			w.LoopRow = -1;
 		w.Report.Rows = w.Rows;
 		w.Report.LoopRow = w.LoopRow;
+		w.Report.Seconds = (R.EndsInSilence && R.LastSound >= 0 ? R.LastSound + 1 : w.Ticks) / R.TickRate;
+		if (R.DrumsApart && R.DrumLoop > 0)
+			w.Report.DrumLoopRows = R.DrumLoop / w.U;
 	}
 
 	// Instruments, shared by all tracks: notes with the same macros and a
@@ -1171,13 +1294,151 @@ bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources,
 		Insts[Found].ChannelUses[n.Channel]++;
 	}
 
+	// DPCM: instruments whose keys play the samples. A drum kit's samples sit
+	// on keys from C-3 up, a key for each sample at each rate, so the notes
+	// read like a drum kit's. A part that plays pitched samples as a line (a
+	// sampled bass: a wave played at many rates) has them on the keys of the
+	// notes they sound, as FamiTracker's DPCM tab puts a sample on keys at
+	// different pitches: an octave or more up where the line goes under C-0,
+	// and on a second instrument where two of them sound the same note.
+	std::vector<Instrument> DpcmInsts(1);		// the kit, then the bass's
+	DpcmInsts[0].Kind = INST_2A03;
+	DpcmInsts[0].Name = "DPCM samples";
+	{
+		std::map<std::pair<int, int>, int> SampleIndex;		// (track, recording's sample) -> module sample
+		struct DpcmUse { Note *N; std::vector<int> KeyId; };	// (module sample, rate, loop, delta)
+		std::vector<DpcmUse> Uses;
+		for (size_t s = 0; s < Works.size(); ++s) {
+			Work &w = Works[s];
+			for (size_t k = 0; k < w.Notes.size(); ++k) {
+				Note &n = w.Notes[k];
+				if (!n.Keep || KindOf(n.Channel) != K_DPCM)
+					continue;
+				const ChannelTick &t = w.Rec->Ticks[CH_DPCM][n.Start];
+				const std::pair<int, int> Id(int(s), t.Wave);
+				int Sample;
+				if (SampleIndex.count(Id))
+					Sample = SampleIndex[Id];
+				else {
+					const std::vector<uint8_t> &Bytes = w.Rec->Sounds.Samples[t.Wave];
+					Sample = -1;
+					for (size_t i = 0; i < Out.Samples.size(); ++i)
+						if (Out.Samples[i] == Bytes)
+							Sample = int(i);
+					if (Sample < 0 && Out.Samples.size() < 64) {
+						Out.Samples.push_back(Bytes);
+						char Buf[48];
+						std::snprintf(Buf, sizeof(Buf), "Sample %d (%d bytes)", int(Out.Samples.size()), int(Bytes.size()));
+						Out.SampleNames.push_back(Buf);
+						Sample = int(Out.Samples.size()) - 1;
+					}
+					SampleIndex[Id] = Sample;
+				}
+				if (Sample < 0) {
+					n.Keep = false;
+					continue;
+				}
+				DpcmUse u = { &n, { Sample, t.Timbre, (t.Flags & TICK_LOOP) ? 1 : 0, t.Extra ? t.Extra - 1 : -1 } };
+				Uses.push_back(u);
+			}
+		}
+		// The notes the samples sound, where they hold a tone (a line needs
+		// four sounds at least)
+		const bool Pal = Out.Machine == 1;
+		std::vector<double> Periods(Out.Samples.size(), -1);
+		std::vector<int> Pitches;
+		std::set<std::pair<int, int> > Sounds;
+		for (size_t u = 0; u < Uses.size(); ++u)
+			Sounds.insert(std::make_pair(Uses[u].KeyId[0], Uses[u].KeyId[1]));
+		for (size_t u = 0; u < Uses.size() && Sounds.size() >= 4; ++u) {
+			const int Sample = Uses[u].KeyId[0];
+			if (Periods[Sample] < 0)
+				Periods[Sample] = SamplePeriod(Out.Samples[Sample]);
+			Pitches.push_back(Periods[Sample] > 0 ? Round(SampleNote(Periods[Sample], Uses[u].KeyId[1], Pal)) : UNPITCHED);
+		}
+		const bool Line = PlaysALine(Pitches);
+		int Low = 96, High = -96;
+		for (size_t u = 0; u < Uses.size() && Line; ++u)
+			if (Pitches[u] != UNPITCHED) {
+				Low = std::min(Low, Pitches[u]);
+				High = std::max(High, Pitches[u]);
+			}
+		int Shift = 0;
+		while (Line && Low + Shift < 0 && High + Shift + 12 <= 95)
+			Shift += 12;
+		// The bass's keys, the commonest sounds first
+		std::map<std::vector<int>, int> Count;
+		std::map<std::vector<int>, int> Pitch;
+		for (size_t u = 0; u < Uses.size(); ++u)
+			if (Line && Periods[Uses[u].KeyId[0]] > 0) {
+				++Count[Uses[u].KeyId];
+				Pitch[Uses[u].KeyId] = Round(SampleNote(Periods[Uses[u].KeyId[0]], Uses[u].KeyId[1], Pal));
+			}
+		std::vector<std::pair<int, std::vector<int> > > ByUse;
+		for (std::map<std::vector<int>, int>::const_iterator it = Count.begin(); it != Count.end(); ++it)
+			ByUse.push_back(std::make_pair(-it->second, it->first));
+		std::sort(ByUse.begin(), ByUse.end());
+		std::map<std::vector<int>, std::pair<int, int> > Placed;	// (instrument, key) of each sound
+		for (size_t i = 0; i < ByUse.size(); ++i) {
+			const std::vector<int> &KeyId = ByUse[i].second;
+			const int Key = std::max(0, std::min(95, Pitch[KeyId] + Shift));
+			size_t Inst = 1;
+			for (; Inst < DpcmInsts.size(); ++Inst) {
+				bool Taken = false;
+				for (size_t k = 0; k < DpcmInsts[Inst].Keys.size() && !Taken; ++k)
+					Taken = DpcmInsts[Inst].Keys[k].Note == Key;
+				if (!Taken)
+					break;
+			}
+			if (Inst >= 4)
+				continue;	// a key on the kit's instrument instead
+			if (Inst == DpcmInsts.size()) {
+				Instrument Bass;
+				Bass.Kind = INST_2A03;
+				Bass.Name = std::string("DPCM bass") + (Inst > 1 ? " " + std::to_string(Inst) : std::string()) +
+					(Shift == 12 ? " (an octave up)" : (Shift > 12 ? " (" + std::to_string(Shift / 12) + " octaves up)" : std::string()));
+				DpcmInsts.push_back(Bass);
+			}
+			DpcmKey Dk;
+			Dk.Note = Key;
+			Dk.Sample = KeyId[0];
+			Dk.Pitch = KeyId[1];
+			Dk.Loop = KeyId[2] != 0;
+			Dk.Delta = KeyId[3];
+			DpcmInsts[Inst].Keys.push_back(Dk);
+			Placed[KeyId] = std::make_pair(int(Inst), Key);
+		}
+		// The kit's keys in the order the sounds are first played
+		for (size_t u = 0; u < Uses.size(); ++u) {
+			Note &n = *Uses[u].N;
+			const std::vector<int> &KeyId = Uses[u].KeyId;
+			if (!Placed.count(KeyId)) {
+				Instrument &Kit = DpcmInsts[0];
+				if (Kit.Keys.size() >= 96) {
+					n.Keep = false;
+					continue;
+				}
+				DpcmKey Dk;
+				Dk.Note = (36 + int(Kit.Keys.size())) % 96;
+				Dk.Sample = KeyId[0];
+				Dk.Pitch = KeyId[1];
+				Dk.Loop = KeyId[2] != 0;
+				Dk.Delta = KeyId[3];
+				Kit.Keys.push_back(Dk);
+				Placed[KeyId] = std::make_pair(0, Dk.Note);
+			}
+			n.DpcmInst = Placed[KeyId].first;
+			n.Base = Placed[KeyId].second;
+			n.Key = n.Base;
+		}
+	}
+	int DpcmCount = 0;
+	for (size_t i = 0; i < DpcmInsts.size(); ++i)
+		DpcmCount += !DpcmInsts[i].Keys.empty();
+
 	// Too many: merge the least used into the closest that fits them
-	// (FamiTracker has room for 64, the DPCM instrument included)
-	bool HaveDpcm = false;
-	for (size_t i = 0; i < All.size(); ++i)
-		if (KindOf(All[i]->Channel) == K_DPCM)
-			HaveDpcm = true;
-	const int Room = Options.MaxInstruments - (HaveDpcm ? 1 : 0);
+	// (FamiTracker has room for 64, the DPCM instruments included)
+	const int Room = Options.MaxInstruments - DpcmCount;
 	std::vector<int> Map(Insts.size());
 	for (size_t i = 0; i < Insts.size(); ++i)
 		Map[i] = int(i);
@@ -1292,72 +1553,8 @@ bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources,
 		return s;
 	};
 
-	// DPCM: one instrument, a key for each sample at each rate
-	int DpcmSlot = -1;
-	std::map<std::pair<int, int>, int> SampleIndex;		// (track, recording's sample) -> module sample
-	std::map<std::vector<int>, int> KeyIndex;			// (module sample, rate, loop, delta) -> key
-	Instrument DpcmInst;
-	DpcmInst.Kind = INST_2A03;
-	DpcmInst.Name = "DPCM samples";
-
-	for (size_t s = 0; s < Works.size(); ++s) {
-		Work &w = Works[s];
-		for (size_t k = 0; k < w.Notes.size(); ++k) {
-			Note &n = w.Notes[k];
-			if (!n.Keep)
-				continue;
-			if (KindOf(n.Channel) == K_DPCM) {
-				const ChannelTick &t = w.Rec->Ticks[CH_DPCM][n.Start];
-				const std::pair<int, int> Id(int(s), t.Wave);
-				int Sample;
-				if (SampleIndex.count(Id))
-					Sample = SampleIndex[Id];
-				else {
-					const std::vector<uint8_t> &Bytes = w.Rec->Sounds.Samples[t.Wave];
-					Sample = -1;
-					for (size_t i = 0; i < Out.Samples.size(); ++i)
-						if (Out.Samples[i] == Bytes)
-							Sample = int(i);
-					if (Sample < 0 && Out.Samples.size() < 64) {
-						Out.Samples.push_back(Bytes);
-						char Buf[48];
-						std::snprintf(Buf, sizeof(Buf), "Sample %d (%d bytes)", int(Out.Samples.size()), int(Bytes.size()));
-						Out.SampleNames.push_back(Buf);
-						Sample = int(Out.Samples.size()) - 1;
-					}
-					SampleIndex[Id] = Sample;
-				}
-				if (Sample < 0) {
-					n.Keep = false;
-					continue;
-				}
-				const std::vector<int> KeyId = { Sample, t.Timbre, (t.Flags & TICK_LOOP) ? 1 : 0, t.Extra ? t.Extra - 1 : -1 };
-				int Key;
-				if (KeyIndex.count(KeyId))
-					Key = KeyIndex[KeyId];
-				else {
-					Key = int(KeyIndex.size());
-					if (Key >= 96) {
-						n.Keep = false;
-						continue;
-					}
-					KeyIndex[KeyId] = Key;
-					DpcmKey Dk;
-					// Keys from C-3 up, so the notes read like a drum kit's
-					Dk.Note = (36 + Key) % 96;
-					Dk.Sample = Sample;
-					Dk.Pitch = t.Timbre;
-					Dk.Loop = KeyId[2] != 0;
-					Dk.Delta = KeyId[3];
-					DpcmInst.Keys.push_back(Dk);
-				}
-				n.Base = DpcmInst.Keys[Key].Note;
-				n.Key = Key;
-			}
-		}
-	}
-
 	// Slots in the order instruments are first played
+	std::vector<int> DpcmSlots(DpcmInsts.size(), -1);
 	for (size_t s = 0; s < Works.size(); ++s) {
 		Work &w = Works[s];
 		std::vector<Note *> ByTime;
@@ -1368,11 +1565,12 @@ bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources,
 		for (size_t k = 0; k < ByTime.size(); ++k) {
 			Note &n = *ByTime[k];
 			if (KindOf(n.Channel) == K_DPCM) {
-				if (DpcmSlot < 0) {
-					DpcmSlot = int(Out.Instruments.size());
-					Out.Instruments.push_back(DpcmInst);
+				const int d = std::max(0, n.DpcmInst);
+				if (DpcmSlots[d] < 0) {
+					DpcmSlots[d] = int(Out.Instruments.size());
+					Out.Instruments.push_back(DpcmInsts[d]);
 				}
-				n.Inst = DpcmSlot;
+				n.Inst = DpcmSlots[d];
 				continue;
 			}
 			if (n.Inst < 0)
@@ -1386,8 +1584,9 @@ bool ConvertTracks(const NsfFile &File, const std::vector<TrackSource> &Sources,
 			n.Column = std::max(1, std::min(15, n.Column));
 		}
 	}
-	if (DpcmSlot >= 0)
-		Out.Instruments[DpcmSlot] = DpcmInst;
+	for (size_t d = 0; d < DpcmInsts.size(); ++d)
+		if (DpcmSlots[d] >= 0)
+			Out.Instruments[DpcmSlots[d]] = DpcmInsts[d];
 
 	// The instruments' macros and chip data
 	for (size_t i = 0; i < Insts.size(); ++i) {

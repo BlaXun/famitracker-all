@@ -372,18 +372,44 @@ void AddStudySounds(Reference &R, const nsf::TrackStudy &Study)
 	}
 }
 
+// The mode's tag: none for a key in both modes ("C (major and minor)"), whose
+// words find it either way, or for no clear key
+void AddModeTag(Reference &R)
+{
+	if (Contains(R.Key, "major and minor"))
+		return;
+	if (Contains(R.Key, "minor"))
+		AddTag(R.Tags, "minor");
+	else if (Contains(R.Key, "major"))
+		AddTag(R.Tags, "major");
+}
+
 // Tags for the tempo, the mode and the chips
 void AddMusicTags(Reference &R)
 {
 	if (R.Bpm > 0)
 		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
-	if (Contains(R.Key, "minor"))
-		AddTag(R.Tags, "minor");
-	else if (Contains(R.Key, "major"))
-		AddTag(R.Tags, "major");
+	AddModeTag(R);
 	const std::vector<std::string> Chips = Words(R.Chips);
 	for (size_t i = 0; i < Chips.size(); ++i)
 		AddTag(R.Tags, Chips[i]);
+}
+
+// The tags an NSF's study gives its reference: the maker, the tempo, the
+// mode, the chips and the techniques
+void AddNsfStudyTags(Reference &R)
+{
+	const std::string Maker = Lowercase(R.Copyright + " " + R.Composer);
+	static const char *const MAKERS[] = { "konami", "capcom", "nintendo", "sunsoft", "namco", "square", "enix", "taito", "tecmo",
+		"hudson", "jaleco", "natsume", "irem", "rare", "technos", "bandai", "data east", "sega", "ultra", "hal" };
+	for (size_t i = 0; i < sizeof(MAKERS) / sizeof(MAKERS[0]); ++i) {
+		const std::vector<std::string> In = Words(Maker);
+		const std::string Want = MAKERS[i];
+		if (Want.find(' ') != std::string::npos ? Contains(Maker, MAKERS[i]) : std::find(In.begin(), In.end(), Want) != In.end())
+			AddTag(R.Tags, Want);
+	}
+	AddMusicTags(R);
+	AddTechniqueTags(R);
 }
 }
 
@@ -407,18 +433,21 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 	AddStudySounds(R, Study);
 
 	// Tags to find it by: the maker, the tempo, the mode, the chips and the techniques
-	const std::string Maker = Lowercase(File.Copyright + " " + File.Artist);
-	static const char *const MAKERS[] = { "konami", "capcom", "nintendo", "sunsoft", "namco", "square", "enix", "taito", "tecmo",
-		"hudson", "jaleco", "natsume", "irem", "rare", "technos", "bandai", "data east", "sega", "ultra", "hal" };
-	for (size_t i = 0; i < sizeof(MAKERS) / sizeof(MAKERS[0]); ++i) {
-		const std::vector<std::string> In = Words(Maker);
-		const std::string Want = MAKERS[i];
-		if (Want.find(' ') != std::string::npos ? Contains(Maker, MAKERS[i]) : std::find(In.begin(), In.end(), Want) != In.end())
-			AddTag(R.Tags, Want);
-	}
-	AddMusicTags(R);
-	AddTechniqueTags(R);
+	AddNsfStudyTags(R);
 	return R;
+}
+
+void KeepOwnTags(Reference &R, const Reference &Before)
+{
+	Reference Old = Before;
+	Old.Tags.clear();
+	AddNsfStudyTags(Old);
+	for (size_t t = 0; t < Before.Tags.size(); ++t) {
+		const std::string &Tag = Before.Tags[t];
+		if (std::find(Old.Tags.begin(), Old.Tags.end(), Tag) == Old.Tags.end() && std::find(R.Tags.begin(), R.Tags.end(), Tag) == R.Tags.end())
+			R.Tags.push_back(Tag);
+	}
+	R.Notes = Before.Notes;
 }
 
 Reference MakeFtmReference(const nsf::Module &M, int Track, const nsf::TrackStudy &Study, const std::string &Source,
@@ -469,7 +498,8 @@ void AddTechniqueTags(Reference &R)
 		{ "doubles", "doubling" }, { "notes traded", "hocket" }, { "play in rhythm together", "pulse-chords" },
 		{ "syncopated", "syncopated" }, { "octave jumps", "octave-jumps" }, { "x.xx x.xx", "gallop" },
 		{ "snare-like (on beats 2 and 4)", "backbeat" }, { "on the off-beats", "offbeat-snare" }, { "dpcm:", "dpcm-drums" },
-		{ "hardware sweep", "sweep" },
+		{ "dpcm drums:", "dpcm-drums" }, { "hardware sweep", "sweep" }, { "a sampled bass on the dpcm", "dpcm-bass" }, { "a sting, not music to loop", "sting" },
+		{ "a sound effect rather than music", "sound-effect" },
 		// Tracker modules'
 		{ "written into the patterns (4xy)", "vibrato" }, { "glide into the next", "portamento" }, { "volume slides", "volume-slides" },
 		{ "held notes (a pad)", "pads" }, { "(drums):", "drums" }, { " drums:", "drums" },
@@ -510,10 +540,7 @@ Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStud
 		AddTag(R.Tags, Study.Meter);
 	if (R.Bpm > 0)
 		AddTag(R.Tags, R.Bpm < 100 ? "slow" : (R.Bpm < 140 ? "moderate" : "fast"));
-	if (Contains(R.Key, "minor"))
-		AddTag(R.Tags, "minor");
-	else if (Contains(R.Key, "major"))
-		AddTag(R.Tags, "major");
+	AddModeTag(R);
 	AddTechniqueTags(R);
 	return R;
 }

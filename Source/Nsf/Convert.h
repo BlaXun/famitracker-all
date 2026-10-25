@@ -55,14 +55,17 @@ struct TrackReport {
 	double Bpm;
 	int Rows;				// played once through
 	int LoopRow;			// where it loops back to, -1 when it ends
+	double Seconds;			// how long it plays: to its last sound when it ends, else the intro and the loop once
+	double PlaylistSeconds;	// the length its playlist gives it, 0 when it has none
+	double DrumLoopRows;	// the drums' own cycle, in rows, when they don't follow the loop; 0 when they do
 	int Notes;
 	int Delayed;			// notes that start between rows, given a Gxx
 	int Dropped;			// notes too short to keep, on a row another note took
 	std::vector<std::string> Channels;	// "Pulse 1: 120 notes, lead", ...
 	std::vector<std::string> Problems;
 	bool Written;			// a FamiTracker module's own track: its tempo is the speed and tempo written in it
-	TrackReport() : TicksPerRow(0), RowsPerBeat(4), BeatsPerBar(4), FirstBarRow(-1), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Notes(0), Delayed(0), Dropped(0),
-		Written(false) {}
+	TrackReport() : TicksPerRow(0), RowsPerBeat(4), BeatsPerBar(4), FirstBarRow(-1), Speed(6), Tempo(150), Bpm(0), Rows(0), LoopRow(-1), Seconds(0),
+		PlaylistSeconds(0), DrumLoopRows(0), Notes(0), Delayed(0), Dropped(0), Written(false) {}
 };
 
 struct ConvertReport {
@@ -89,5 +92,19 @@ bool FindGrid(const std::vector<std::pair<int, double> > &Onsets, double &TicksP
 
 // FamiTracker's speed and tempo that make TicksPerRow at an engine rate
 void SpeedTempo(double TicksPerRow, double FrameRate, int &Speed, int &Tempo);
+
+// A DPCM sample as a pitched sound: the period of the wave it plays, in the
+// sample's bits (fractional), when it holds a tone that repeats (a sampled
+// bass wave); 0 when it doesn't (a drum, a voice)
+double SamplePeriod(const std::vector<uint8_t> &Data);
+// The FamiTracker note (C-0 = 0, fractional) that a wave of PeriodBits bits
+// sounds at a DPCM rate (0-15)
+double SampleNote(double PeriodBits, int Rate, bool Pal);
+// Whether a DPCM part plays its samples as a line of notes (a sampled bass)
+// rather than as drums: most of its notes are pitched samples, sounding at
+// least MinNotes different notes. Pitches has, for each note played, its
+// sample's note at its rate (SampleNote, rounded), or UNPITCHED.
+const int UNPITCHED = -1000;
+bool PlaysALine(const std::vector<int> &Pitches, int MinNotes = 4);
 
 }	// namespace nsf

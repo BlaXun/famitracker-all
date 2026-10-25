@@ -17633,15 +17633,12 @@ std::string StudyNsfTool(Session &S, const Json &Args)
 		}
 		Reference R = MakeReference(File, Studied[i].Track, Studied[i].Study, Path, Date);
 		if (Keep) {
-			// Studied again: what the user tagged and noted stays
+			// Studied again: what the user tagged and noted stays (the old
+			// study's own tags go with it)
 			std::string Old, Why;
 			Reference Before;
-			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why)) {
-				for (size_t t = 0; t < Before.Tags.size(); ++t)
-					if (std::find(R.Tags.begin(), R.Tags.end(), Before.Tags[t]) == R.Tags.end())
-						R.Tags.push_back(Before.Tags[t]);
-				R.Notes = Before.Notes;
-			}
+			if (S.Host().ReadLibrary(R.Id + REFERENCE_EXTENSION, Old, Why) && ReadReferenceFile(Old, Before, Why))
+				KeepOwnTags(R, Before);
 			for (size_t t = 0; t < Tags.size(); ++t)
 				if (std::find(R.Tags.begin(), R.Tags.end(), Tags[t]) == R.Tags.end())
 					R.Tags.push_back(Tags[t]);
@@ -20067,8 +20064,10 @@ std::string ToolSet::Instructions()
 		"not the tunes: write your own melodies, motifs and chord progressions, and never copy a reference's notes or its exact "
 		"progression. reference_sound gives a song a reference's instrument as it was (its duty click, bloom, echo, vibrato); "
 		"design_instrument makes your own in the same spirit; add_drums with kit samples (or add_sample_drums and write_notes) "
-		"gives the DPCM channel a sampled kick, snare and toms for the punch of those soundtracks. Tell the user which "
-		"references you leaned on and how.";
+		"gives the DPCM channel a sampled kick, snare and toms for the punch of those soundtracks. A study's key \"no clear "
+		"key (around E)\" means E is home while the chords drift, and \"C (major and minor)\" that the tonic chord comes both "
+		"ways; a study marked a sting or a sound effect is a model for make_jingle or make_sound_effect, not for a whole "
+		"track. Tell the user which references you leaned on and how.";
 }
 
 const std::vector<PromptInfo> &ToolSet::Prompts()

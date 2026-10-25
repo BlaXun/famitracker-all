@@ -32,6 +32,7 @@
 #include "../NsfFile.h"
 #include "../Player.h"
 #include "../Simulate.h"
+#include "../Study.h"
 #include "TestNsf.h"
 
 #include <algorithm>
@@ -513,6 +514,413 @@ void TestImport()
 	CHECK(!ImportNsf(f, o, r, Error));
 }
 
+
+// ---------------------------------------------------------------------------
+// The importer's fixes of October 2026: what the studies of real soundtracks
+// got wrong, each rebuilt here
+// ---------------------------------------------------------------------------
+
+// Plays a frame list as an NSF (looping back to LoopFrame) for Seconds
+bool Record(const std::vector<Frame> &Frames, int LoopFrame, double Seconds, Recording &Out, NsfFile &File,
+	const std::vector<uint8_t> &Samples = std::vector<uint8_t>())
+{
+	std::string Error;
+	if (!ParseNsf(BuildNsf(Frames, LoopFrame, "Fixes", Samples), File, Error))
+		return false;
+	RecordOptions Options;
+	Options.MaxSeconds = Seconds;
+	return RecordTrack(File, 0, Options, Out, Error);
+}
+
+// Pulse 1 playing a tune of 16 notes, a note every 12 frames, from frame
+// Start (volume Volume), and the frames up to Total
+void AddTune(std::vector<Frame> &F, int Start, int Volume, int Shift = 0)
+{
+	static const int NOTES[16] = { 48, 52, 55, 60, 59, 55, 52, 50, 48, 53, 57, 60, 59, 57, 55, 52 };
+	for (int i = 0; i < 16; ++i) {
+		const int Period = PulsePeriod(NOTES[i] + Shift);
+		for (int k = 0; k < 10; ++k) {
+			Frame &f = F[Start + 12 * i + k];
+			f.push_back(std::make_pair(0x00, 0x80 | 0x30 | (k < 2 ? Volume : Volume * 3 / 4)));
+			if (k == 0) {
+				f.push_back(std::make_pair(0x01, 0x08));
+				f.push_back(std::make_pair(0x02, Period & 0xFF));
+				f.push_back(std::make_pair(0x03, ((Period >> 8) & 7) | 0x08));
+			}
+		}
+		F[Start + 12 * i + 10].push_back(std::make_pair(0x00, 0x80 | 0x30));
+	}
+}
+
+// A sampled bass: one wave (192 bits a period) on the DPCM played at seven
+// rates as a line, with a drum hit among its notes. The module has the wave
+// on the keys of the notes it sounds and the drum on the kit's C-3, and
+// plays like the NSF; the study calls the line the bass.
+void TestDpcmBass()
+{
+	std::vector<uint8_t> Samples;
+	for (int k = 0; k < 10; ++k) {
+		Samples.insert(Samples.end(), 12, 0xAB);	// rising 4 steps a byte
+		Samples.insert(Samples.end(), 12, 0x54);	// falling
+	}
+	Samples.push_back(0x55);				// 241 bytes ($4013 = 15)
+	const std::vector<uint8_t> Wave(Samples);
+	while (Samples.size() % 64)
+		Samples.push_back(0x55);
+	const int DrumAt = int(Samples.size()) / 64;
+	std::vector<uint8_t> Drum;
+	for (int i = 0; i < 17; ++i)
+		Drum.push_back(uint8_t((i * 73 + 41) & 0xFF));	// 17 bytes of noise ($4013 = 1)
+	Samples.insert(Samples.end(), Drum.begin(), Drum.end());
+	CHECK(std::fabs(SamplePeriod(Wave) - 192) < 1);
+	CHECK(SamplePeriod(Drum) == 0);
+	CHECK(std::fabs(SampleNote(192, 12, false) - 17.1) < 0.1);	// F-1 at rate 12
+
+	// Twelve notes of the line at rates 9 to 15, every fourth place a drum
+	const int RATES[12] = { 12, 9, 10, 13, 14, 15, 11, 12, 10, 9, 12, 14 };
+	const int NOTES[16] = { 9, 10, 12, 14, 17, 21, 24, 29 };	// the notes the rates 8-15 sound, from 9
+	std::vector<Frame> F(192);
+	AddTune(F, 0, 10, 12);		// a tune over the line
+	std::vector<int> Expected;
+	for (int i = 0, Bass = 0; i < 16; ++i) {
+		Frame &f = F[12 * i];
+		const bool Hit = i % 4 == 3;
+		const int Rate = Hit ? 15 : RATES[Bass++];
+		f.push_back(std::make_pair(0x15, 0x0F));
+		f.push_back(std::make_pair(0x10, Rate));
+		f.push_back(std::make_pair(0x12, Hit ? DrumAt : 0));
+		f.push_back(std::make_pair(0x13, Hit ? 1 : 15));
+		f.push_back(std::make_pair(0x15, 0x1F));
+		Expected.push_back(Hit ? 36 : NOTES[Rate - 8]);
+	}
+	Converted c;
+	std::string Error;
+	CHECK(ParseNsf(BuildNsf(F, 0, "Bass", Samples), c.File, Error));
+	RecordOptions Options;
+	Options.MaxSeconds = 60;
+	CHECK(RecordTrack(c.File, 0, Options, c.Rec, Error));
+	std::vector<TrackSource> Sources(1);
+	Sources[0].Name = "Test";
+	Sources[0].Rec = &c.Rec;
+	c.Ok = ConvertTracks(c.File, Sources, ConvertOptions(), c.Song, c.Report, Error);
+	CHECK(c.Ok);
+	if (!c.Ok)
+		return;
+	// The keys: the wave at seven notes on the bass's instrument, the drum on the kit's
+	const Instrument *Bass = nullptr, *Kit = nullptr;
+	for (size_t i = 0; i < c.Song.Instruments.size(); ++i) {
+		if (c.Song.Instruments[i].Name == "DPCM bass")
+			Bass = &c.Song.Instruments[i];
+		if (c.Song.Instruments[i].Name == "DPCM samples")
+			Kit = &c.Song.Instruments[i];
+	}
+	CHECK(Bass != nullptr && Kit != nullptr);
+	if (Bass == nullptr || Kit == nullptr)
+		return;
+	CHECK(Bass->Keys.size() == 7 && Kit->Keys.size() == 1 && Kit->Keys[0].Note == 36 && Kit->Keys[0].Pitch == 15);
+	bool KeysRight = Bass->Keys.size() == 7;
+	for (size_t k = 0; k < Bass->Keys.size(); ++k)
+		KeysRight = KeysRight && Bass->Keys[k].Note == NOTES[Bass->Keys[k].Pitch - 8] && c.Song.Samples[Bass->Keys[k].Sample] == Wave;
+	CHECK(KeysRight);
+	// The notes on the DPCM's column: the line's pitches, the drum on C-3
+	const std::vector<std::pair<int, Cell> > n = ColumnNotes(c.Song, 4);
+	CHECK(n.size() == 16);
+	bool NotesRight = n.size() == 16;
+	for (size_t i = 0; i < n.size() && NotesRight; ++i)
+		NotesRight = n[i].second.Note == Expected[i];
+	CHECK(NotesRight);
+	// It plays as the NSF did: each sample at its rate
+	Recording Sim;
+	CHECK(SimulateTrack(c.Song, 0, 192 + 32, Sim, Error));
+	const Agreement a = Compare(c.Rec, Sim, 192, BestOffset(c.Rec, Sim, 192, 8), CH_DPCM);
+	CHECK(a.Sound > 0.98 && a.Pitch > 0.99);
+	// The study: the DPCM the bass, a line from A#0 to F-2, its samples
+	const TrackStudy St = StudyTrack(c.Song, 0, c.Report.Tracks[0]);
+	const std::string Text = DescribeStudy(St);
+	CHECK(Text.find("DPCM, bass: 12 notes from A#0 to F-2") != std::string::npos);
+	CHECK(Text.find("a sampled bass: 1 sample (241 bytes) played at DPCM rates 9 to 15, each at the pitches it sounds (7 different pitches)") !=
+		std::string::npos);
+	CHECK(Text.find("DPCM drums: ") != std::string::npos);
+	CHECK(Text.find("a sampled bass on the DPCM") != std::string::npos);
+}
+
+// A track that plays two seconds and then stays silent, though its playlist
+// gives it 40: the survey and the study go by what it plays
+void TestShortOfPlaylist()
+{
+	std::vector<Frame> F(500);
+	AddTune(F, 0, 12);		// 16 notes over 192 frames with a bass on the triangle, then silence
+	for (int i = 0; i < 4; ++i) {
+		const double Hz = 440.0 * std::pow(2.0, (24 + 5 * (i % 2) - 45) / 12.0);
+		const int Period = int(1789773.0 / (32.0 * Hz) - 1.0 + 0.5);
+		F[48 * i].push_back(std::make_pair(0x08, 0xFF));
+		F[48 * i].push_back(std::make_pair(0x0A, Period & 0xFF));
+		F[48 * i].push_back(std::make_pair(0x0B, ((Period >> 8) & 7) | 0x08));
+		F[48 * i + 40].push_back(std::make_pair(0x08, 0x80));
+	}
+	for (size_t i = 192; i < F.size(); ++i)
+		F[i].push_back(std::make_pair(0x00, 0x30));
+	// And a tick of noise: a sound
+	std::vector<Frame> G(400);
+	G[0].push_back(std::make_pair(0x0C, 0x3F));
+	G[0].push_back(std::make_pair(0x0E, 0x05));
+	G[0].push_back(std::make_pair(0x0F, 0x08));
+	G[3].push_back(std::make_pair(0x0C, 0x30));
+	for (int Which = 0; Which < 2; ++Which) {
+		NsfFile File;
+		std::string Error;
+		CHECK(ParseNsf(BuildNsf(Which ? G : F, Which ? 399 : 499, "Short"), File, Error));
+		CHECK(ApplyPlaylist("short.nsf::NSF,1,Short,0:00:40,,\n", File) == 1);
+		CHECK(File.TrackTime(0) == 40000);
+		const std::vector<TrackSurvey> Survey = SurveyTracks(File);
+		CHECK(Survey.size() == 1);
+		if (Survey.size() != 1)
+			continue;
+		CHECK(Survey[0].Kind == (Which ? "sound effect" : "jingle"));
+		CHECK(Which ? Survey[0].Seconds < 0.5 : std::fabs(Survey[0].Seconds - 3.2) < 0.2);
+		std::vector<StudiedTrack> Studied;
+		StudyOptions Options;
+		Options.MaxSeconds = 60;
+		CHECK(StudyTracks(File, std::vector<int>(1, 0), Options, Studied, Error) && Studied.size() == 1);
+		if (Studied.size() != 1 || !Studied[0].Problem.empty())
+			continue;
+		const TrackStudy &S = Studied[0].Study;
+		CHECK(S.Kind == (Which ? "sound" : "sting") && S.LoopBars == 0 && S.PlaylistSeconds == 40);
+		const std::string Text = DescribeStudy(S);
+		CHECK(Text.find(Which ? "a sound effect rather than music: it plays " : "a sting, not music to loop: it plays 3.2 seconds and ends") !=
+			std::string::npos);
+		CHECK(Text.find("though its playlist gives it 40 seconds") != std::string::npos);
+	}
+	// A track the playlist says is music, and that plays on, stays music
+	std::vector<Frame> H(192);
+	AddTune(H, 0, 12);
+	NsfFile File;
+	std::string Error;
+	CHECK(ParseNsf(BuildNsf(H, 0, "Tune"), File, Error));
+	ApplyPlaylist("tune.nsf::NSF,1,Tune,0:00:40,,\n", File);
+	const std::vector<TrackSurvey> Survey = SurveyTracks(File);
+	CHECK(Survey.size() == 1 && Survey[0].Kind == "music" && Survey[0].Seconds == 40);
+}
+
+// A loop whose first time through differs from the rest only in a quiet
+// pulse (tails at volume 2, another duty at 6): it loops from the start.
+// The same notes louder are an intro.
+void TestQuietFirstPass()
+{
+	for (int Loud = 0; Loud < 2; ++Loud) {
+		std::vector<Frame> F(384);
+		AddTune(F, 0, 12);
+		AddTune(F, 192, 12);
+		// The first time through, Pulse 2 plays an octave down at volume 2 (or 10), and at another duty
+		for (int i = 0; i < 16; ++i) {
+			Frame &f = F[12 * i + 2];
+			const int Period = PulsePeriod(36 + i);
+			f.push_back(std::make_pair(0x04, (i % 2 ? 0x40 : 0x00) | 0x30 | (Loud ? 10 : 2)));
+			f.push_back(std::make_pair(0x05, 0x08));
+			f.push_back(std::make_pair(0x06, Period & 0xFF));
+			f.push_back(std::make_pair(0x07, ((Period >> 8) & 7) | 0x08));
+			F[12 * i + 6].push_back(std::make_pair(0x04, 0x30));
+		}
+		Recording R;
+		NsfFile File;
+		CHECK(Record(F, 192, 90, R, File));
+		CHECK(R.LoopLength == 192);
+		CHECK(Loud ? R.LoopStart >= 180 && R.LoopStart <= 192 : R.LoopStart <= 2);
+	}
+	// Directly: tails at volume 2 the first time through are barely heard
+	std::vector<Frame> F(384);
+	AddTune(F, 0, 12);
+	AddTune(F, 192, 12);
+	Recording R;
+	NsfFile File;
+	CHECK(Record(F, 192, 60, R, File));
+	CHECK(AudibleLoopStart(R, 100, 192) <= 1);
+}
+
+// A piece that plays once: an opening, a passage played four times, an
+// ending, then silence. The passage repeats long enough for the old finder
+// to take it for the loop; it isn't one, since the piece moves on.
+void TestPassageRepeatedOnce()
+{
+	std::vector<Frame> F(360 + 4 * 192 + 360 + 400);
+	AddTune(F, 0, 12, 3);			// the opening, higher
+	AddTune(F, 192, 12, 5);
+	for (int k = 0; k < 4; ++k)		// the passage, four times
+		AddTune(F, 360 + 192 * k, 12);
+	AddTune(F, 360 + 4 * 192, 12, -5);	// the ending, lower, and silence
+	Recording R;
+	NsfFile File;
+	CHECK(Record(F, int(F.size()) - 1, 120, R, File));
+	CHECK(R.LoopStart < 0 && R.EndsInSilence);
+	// The fingerprints of such a piece: the old rule took the passage for a
+	// loop while it repeated; confirmed, it isn't until it has gone on
+	std::vector<uint64_t> v;
+	for (int i = 0; i < 30; ++i)
+		v.push_back(1000 + i);
+	for (int k = 0; k < 4; ++k)
+		for (int i = 0; i < 20; ++i)
+			v.push_back(i * 7 % 13);
+	int Start = -1, Period = -1;
+	CHECK(FindLoop(v, 8, 4, Start, Period) && Start == 30 && Period == 20);
+	CHECK(!FindLoop(v, 8, 4, Start, Period, 200));
+	CHECK(FindLoop(v, 8, 4, Start, Period, 40) && Start == 30 && Period == 20);
+}
+
+// A tune that loops whole, with a passage played four times inside it (Dr.
+// Mario's Chill): the old finder took the passage for the loop as soon as
+// it had repeated; the loop is the whole tune, from its start.
+void TestLoopAroundARepeat()
+{
+	std::vector<Frame> F(1152);
+	AddTune(F, 0, 12, 3);			// the opening, higher
+	for (int k = 0; k < 4; ++k)		// the passage, four times
+		AddTune(F, 192 + 192 * k, 12);
+	AddTune(F, 960, 12, -5);		// the ending, lower, then back to the start
+	Recording R;
+	NsfFile File;
+	CHECK(Record(F, 0, 120, R, File));
+	CHECK(R.LoopLength == 1152 && R.LoopStart >= 0 && R.LoopStart <= 2);
+}
+
+// A loop the old finder missed: the tune repeats every 144 frames, the
+// noise's hi-hats every 150, so the whole only repeats after a minute, too
+// long to hear twice. The tune's loop is the loop, the drums on a cycle of
+// their own.
+void TestDrumsOnTheirOwn()
+{
+	static const int NOTES[16] = { 48, 52, 55, 60, 59, 55, 52, 50, 48, 53, 57, 60, 59, 57, 55, 52 };
+	std::vector<Frame> F(3600);
+	for (int t = 0; t < int(F.size()); t += 9) {
+		const int Period = PulsePeriod(NOTES[(t / 9) % 16]);
+		F[t].push_back(std::make_pair(0x00, 0x80 | 0x30 | 12));
+		F[t].push_back(std::make_pair(0x01, 0x08));
+		F[t].push_back(std::make_pair(0x02, Period & 0xFF));
+		F[t].push_back(std::make_pair(0x03, ((Period >> 8) & 7) | 0x08));
+		F[t + 8].push_back(std::make_pair(0x00, 0x80 | 0x30));
+	}
+	static const bool REST[25] = { false, true, true, false, false, false, false, true, false, false, false, false, false, false, false,
+		true, true, false, false, false, false, false, true, false, false };	// 25 places, six of them left out
+	for (int t = 0; t < int(F.size()); ++t) {
+		const int Step = t % 150;
+		if (REST[Step / 6])
+			continue;
+		static const int DECAY[5] = { 10, 7, 4, 2, 0 };
+		if (Step % 6 < 5)
+			F[t].push_back(std::make_pair(0x0C, 0x30 | DECAY[Step % 6]));
+		if (Step % 6 == 0) {
+			F[t].push_back(std::make_pair(0x0E, 0x02));
+			F[t].push_back(std::make_pair(0x0F, 0x08));
+		}
+	}
+	Recording R;
+	NsfFile File;
+	CHECK(Record(F, 0, 60, R, File));
+	CHECK(R.LoopStart == 0 && R.LoopLength == 144);
+	CHECK(R.DrumsApart && R.DrumLoop == 150);
+	CHECK(!R.Problems.empty() && R.Problems[0].find("on a cycle of their own") != std::string::npos);
+	// The study names the drums' own cycle
+	std::vector<TrackSource> Sources(1);
+	Sources[0].Name = "Drums";
+	Sources[0].Rec = &R;
+	Module M;
+	ConvertReport Report;
+	std::string Error;
+	CHECK(ConvertTracks(File, Sources, ConvertOptions(), M, Report, Error) && Report.Tracks.size() == 1);
+	if (Report.Tracks.size() == 1) {
+		const TrackStudy S = StudyTrack(M, 0, Report.Tracks[0]);
+		CHECK(S.DrumLoopBars > 0 && DescribeStudy(S).find("drums on a cycle of their own: they repeat every") != std::string::npos);
+	}
+}
+
+// A module built here: a track of Bars bars of 16 rows, Pulse 1's tune (a
+// note a beat), Pulse 2's chord (its notes in turn, a beat each) and the
+// triangle's bass (a note a beat, Short: cut after two rows), looping to
+// its start (Once: it stops at its end)
+Module KeyTrack(const std::vector<std::vector<int> > &Tune, const std::vector<std::vector<int> > &Chords, const std::vector<int> &Bass,
+	bool Short, bool Once = false)
+{
+	Module M;
+	Instrument I;
+	I.Macros[SEQ_VOLUME] = Macro(std::vector<int>(1, 15));
+	M.Instruments.push_back(I);
+	Track T;
+	T.Name = "Key";
+	T.PatternLength = 16;
+	T.Speed = 6;
+	T.Tempo = 150;
+	T.Columns.assign(5, 1);
+	T.Patterns.assign(5, std::vector<std::vector<Cell> >());
+	for (size_t b = 0; b < Bass.size(); ++b) {
+		for (int c = 0; c < 5; ++c)
+			T.Patterns[c].push_back(std::vector<Cell>(16));
+		for (int k = 0; k < 4; ++k) {
+			Cell &m = T.Patterns[0][b][k * 4], &h = T.Patterns[1][b][k * 4], &t = T.Patterns[2][b][k * 4];
+			m.Note = Tune[b][k % Tune[b].size()];
+			h.Note = Chords[b][k % Chords[b].size()];
+			t.Note = Bass[b];
+			m.Instrument = h.Instrument = t.Instrument = 0;
+			if (Short)
+				T.Patterns[2][b][k * 4 + 2].Note = NOTE_HALT;
+		}
+		T.Frames.push_back(std::vector<int>(5, int(b)));
+	}
+	T.Patterns[4][Bass.size() - 1][15].AddEffect(Once ? 'C' : 'B', 0);
+	M.Tracks.push_back(T);
+	return M;
+}
+
+// Keys from the chords, the bass and where the phrases come to rest: a minor
+// piece the pitch profile alone calls major (its relative major; its
+// dominant's major key, a toll on G over C minor), and chords that drift
+// with no key
+void TestKeys()
+{
+	TrackReport R;
+	R.RowsPerBeat = 4;
+	R.TicksPerRow = 6;
+	R.Bpm = 150;
+	// D minor, then A, F and Bb minor, the dominant at the end (the profile: F major)
+	const std::vector<std::vector<int> > RisingTune = { { 50, 53, 57, 60 }, { 57, 53, 60, 57 }, { 60, 52, 60, 57 }, { 60, 57, 52, 60 },
+		{ 60, 53, 60, 53 }, { 53, 58, 53, 60 }, { 60, 53, 60, 53 }, { 52, 57, 61, 64 } };
+	const std::vector<std::vector<int> > RisingChords = { { 38, 41, 45 }, { 38, 41, 45 }, { 45, 48, 52 }, { 45, 48, 52 },
+		{ 41, 44, 48 }, { 46, 49, 53 }, { 41, 44, 48 }, { 45, 49, 52 } };
+	const std::vector<int> RisingBass = { 26, 26, 21, 21, 29, 22, 29, 21 };
+	TrackStudy S = StudyTrack(KeyTrack(RisingTune, RisingChords, RisingBass, false), 0, R);
+	CHECK(S.Key == "D minor");
+	CHECK(DescribeStudy(S).find("Key: D minor.") != std::string::npos);
+	// C minor three bars, G the fourth, a toll on G every beat (the profile: G major)
+	const std::vector<std::vector<int> > TollTune(4, std::vector<int>(1, 55));
+	const std::vector<std::vector<int> > TollChords = { { 48, 51, 55, 51 }, { 48, 51, 55, 51 }, { 48, 51, 55, 51 }, { 47, 50, 55, 50 } };
+	const std::vector<int> TollBass = { 36, 36, 36, 31 };
+	S = StudyTrack(KeyTrack(TollTune, TollChords, TollBass, true), 0, R);
+	CHECK(S.Key == "C minor");
+	// Chords drifting by semitones and tritones, A at either end: no clear key
+	const std::vector<std::vector<int> > DriftTune = { { 57, 60, 64 }, { 59, 63, 66 }, { 55, 58, 62 }, { 57, 61, 64 },
+		{ 53, 56, 60 }, { 52, 56, 59 }, { 57, 61, 64 }, { 57, 60, 64 } };
+	const std::vector<std::vector<int> > DriftChords = { { 45, 48, 52 }, { 47, 51, 54 }, { 43, 46, 50 }, { 45, 49, 52 },
+		{ 41, 44, 48 }, { 40, 44, 47 }, { 45, 49, 52 }, { 45, 48, 52 } };
+	const std::vector<int> DriftBass = { 21, 23, 19, 21, 17, 16, 21, 21 };
+	S = StudyTrack(KeyTrack(DriftTune, DriftChords, DriftBass, false), 0, R);
+	CHECK(S.Key == "no clear key (around A)");
+	CHECK(DescribeStudy(S).find("No clear key (around A).") != std::string::npos);
+	// A plain major tune stays major
+	const std::vector<std::vector<int> > MajorTune = { { 60, 64, 67, 64 }, { 65, 69, 72, 69 }, { 67, 71, 74, 71 }, { 72, 67, 64, 60 } };
+	const std::vector<std::vector<int> > MajorChords = { { 48, 52, 55 }, { 53, 57, 60 }, { 55, 59, 62 }, { 48, 52, 55 } };
+	const std::vector<int> MajorBass = { 36, 41, 43, 36 };
+	S = StudyTrack(KeyTrack(MajorTune, MajorChords, MajorBass, false), 0, R);
+	CHECK(S.Key == "C major");
+	// Played once, it ends at home: still C major
+	S = StudyTrack(KeyTrack(MajorTune, MajorChords, MajorBass, false, true), 0, R);
+	CHECK(S.LoopBars == 0 && S.Key == "C major");
+	// A fanfare on G that stops on the chord a tritone away (C#) has no key,
+	// though its notes would make one of G: at most a home
+	const std::vector<std::vector<int> > FanfareTune = { { 67, 71, 74, 79 }, { 79, 74, 71, 74 }, { 73, 77, 80, 85 } };
+	const std::vector<std::vector<int> > FanfareChords = { { 55, 59, 62 }, { 55, 59, 62 }, { 61, 65, 68 } };
+	const std::vector<int> FanfareBass = { 43, 43, 37 };
+	S = StudyTrack(KeyTrack(FanfareTune, FanfareChords, FanfareBass, false, true), 0, R);
+	CHECK(S.LoopBars == 0 && S.Key == "no clear key (around G)");
+}
+
 }	// namespace
 
 int main()
@@ -526,6 +934,13 @@ int main()
 	TestDuties();
 	TestDrums();
 	TestImport();
+	TestDpcmBass();
+	TestShortOfPlaylist();
+	TestQuietFirstPass();
+	TestPassageRepeatedOnce();
+	TestLoopAroundARepeat();
+	TestDrumsOnTheirOwn();
+	TestKeys();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

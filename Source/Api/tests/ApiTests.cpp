@@ -50,6 +50,8 @@
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
 #include "../Wavetables.h"
+#include "../../Nsf/Study.h"
+#include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
 #include "../../Nsf/Study.h"
 
@@ -15613,6 +15615,69 @@ void TestCueJudging()
 	CHECK_HAS(TuneTools.Call("measure_mix", Parse("{\"stems\": false}")).Text, "The whole song (it halts)");
 }
 
+// The importer's fixes as the library keeps them (2026-10-25): a key in both
+// modes gets no mode tag, a sting and a sampled bass get theirs, and a track
+// studied again keeps the user's tags but not the old study's own
+void TestStudyTagsAgain()
+{
+	auto Has = [](const Reference &R, const char *Tag) { return std::find(R.Tags.begin(), R.Tags.end(), Tag) != R.Tags.end(); };
+	nsf::TrackerSong Module = nsf::TrackerSong();
+	Module.Format = "MOD";
+	Module.Title = "Tag Test";
+	nsf::TrackStudy Study;
+	Study.Name = "Tag Test";
+	Study.Bpm = 150;
+	Study.Key = "C (major and minor)";
+	Reference R = MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25");
+	CHECK(!Has(R, "major") && !Has(R, "minor") && Has(R, "fast"));
+	Study.Key = "D minor";
+	CHECK(Has(MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25"), "minor"));
+	Study.Key = "no clear key (around E)";
+	R = MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25");
+	CHECK(!Has(R, "major") && !Has(R, "minor"));
+	Study.Kind = "sting";
+	Study.Seconds = 3.8;
+	CHECK(Has(MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25"), "sting"));
+	// A sampled bass is no drum kit; hits beside it on the DPCM are
+	Study.Kind = "music";
+	Study.Seconds = 0;
+	Study.Tricks.push_back("a sampled bass on the DPCM (5 bass samples played at the line's pitches, 12 different pitches), "
+		"a deep, physical low end that leaves the pulses and the triangle free for other parts");
+	R = MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25");
+	CHECK(Has(R, "dpcm-bass") && !Has(R, "dpcm-drums"));
+	Study.Channels.push_back("DPCM drums: sample 2 (17 bytes, a bright hit): 4 hits in all, about 0.3 a bar.");
+	CHECK(Has(MakeModuleReference(Module, Study, "tag_test.mod", "2026-10-25"), "dpcm-drums"));
+
+	// Studied again: the old study's "major", "sweep" and "dpcm-drums" go with
+	// it, the user's "favourite" stays
+	const std::string Path = "api_tests_tags_again.nsf";
+	WriteTestNsf(Path);
+	FakeSong Song;
+	Reference Before;
+	Before.Id = "tester-song-01";
+	Before.Game = "Tester Song";
+	Before.Composer = "Tester";
+	Before.Title = "Lava Run";
+	Before.Track = 1;
+	Before.Bpm = 150;
+	Before.Key = "F major";
+	Before.Study = "Pulse 1, the lead: the hardware sweep on 4 notes. DPCM: sample 0 (993 bytes, a low thump).";
+	Before.Tags = { "fast", "major", "sweep", "dpcm-drums", "favourite" };
+	Before.Notes = "the user's favourite";
+	Song.Library["tester-song-01.json"] = ReferenceFile(Before);
+	CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tracks\": \"1\"}").IsError);
+	Reference Kept;
+	std::string Error;
+	CHECK(ReadReferenceFile(Song.Library["tester-song-01.json"], Kept, Error));
+	CHECK(Has(Kept, "favourite") && Kept.Notes == "the user's favourite");
+	CHECK(Kept.Key.find("major") == std::string::npos && !Has(Kept, "major"));
+	CHECK(Kept.Study.find("hardware sweep") == std::string::npos && !Has(Kept, "sweep"));
+	CHECK(Kept.Study.find("DPCM") == std::string::npos && !Has(Kept, "dpcm-drums"));
+	CHECK(Has(Kept, "bloom"));		// the new study's own
+	std::remove(Path.c_str());
+	std::remove("api_tests_tags_again.m3u");
+}
+
 // soft-references tests (2026-10-25): a reference's sounds as N163 wave sounds, for the VRC6 Plus's soft layer
 
 // A reference with a sound of each kind: a 2A03 pulse, a VRC6 pulse with a duty click, a triangle bass, a VRC6
@@ -16133,6 +16198,7 @@ int main()
 	TestSoundEffectEnds();
 	TestShortLoudness();
 	TestCueJudging();
+	TestStudyTagsAgain();
 	TestSoftReferenceWaves();
 	TestSoftReferenceTool();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
