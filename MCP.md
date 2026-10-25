@@ -103,17 +103,19 @@ before.
 ### A small set of tools for local models
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
-and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 18
+and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 19
 of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
 `add_instrument`, `design_instrument`, `set_instrument`,
 `add_chords_and_bass`, `add_drums`, `add_echo`, `set_tempo`, `polish`,
-`mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song` and
-`export_for_game`. Its instructions are a page instead of four, but keep the
+`mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song`,
+`export_for_game` and `get_recipe`. Its instructions are a page instead of four, but keep the
 craft (plan a key, tempo and form; a motif; chords and a bass in a style;
 drums with fills; an echo; polish, then mix) and the rules that decide how
 it sounds: notes on a sound that's gone at once vanish, a vibrato on the
-2A03's pulses can click, and only 0.4.6's effects play. It has no recipes,
-so a client adds no tools of its own to list them. Tick **A small set of
+2A03's pulses can click, and only 0.4.6's effects play. It serves no
+prompts, so a client adds no tools of its own to list them; `get_recipe`
+gives the recipes for calm, lively and action songs instead, as steps that
+name only this set's tools. Tick **A small set of
 tools, for local models** in the dialog and its addresses end in
 `/mcp/core`. Both sets are always there; each client picks one by its
 address.
