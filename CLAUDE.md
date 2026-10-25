@@ -966,7 +966,9 @@ problems panel's Fix (`ACTION_FIX`) makes a fix of one call
 review weighs them into its score and tips (`ReviewTip`), and `BreathsOf`
 counts a rest before a bar line as a breath only where it ends a phrase of
 two bars or more (`MelodyBreaths::PhraseEnds` for the finding). `mix`
-takes `faders` `reset` (the faders to 0 dB in the mix's action group), and
+takes `faders` `reset` (the faders to 0 dB in the mix's action group; calm
+and lively give the melody, through `levels`, the level its fader played
+it at, less what the others' faders lifted them past their volumes' room), and
 `vary_part`'s embellish leaves out an ornament that would rub a semitone
 against another part (`SemitoneRub`; `TestEmbellishWithoutRubs`).
 `review_arrangement`, `check_song` and `measure_mix` take `format` `short`

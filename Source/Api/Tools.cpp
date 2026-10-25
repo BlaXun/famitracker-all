@@ -8575,6 +8575,51 @@ std::string MixTool(Session &S, const Json &Args)
 				Rest.Set(Args.Members()[i].first, Args.Members()[i].second);
 		if (Moved.empty())
 			return "Every fader is at 0 dB already. " + MixTool(S, Rest);
+		// As heard (calm, lively), the melody keeps its level and the parts are set against it: it plays as loud as it did
+		// with its fader, less the lift the others' faders gave them beyond what their volumes can make up (the drums aside,
+		// which the mix only brings down), so each part can still reach its place in the notes. Left at 15, the local model's
+		// lead (-4.5 dB) came out 8.9 dB over its chords, which were at 15 already
+		std::string Carried;
+		if ((Style == "calm" || Style == "lively") && Arg(Rest, "levels") == 0) {
+			int From = 1, To = S.Time.BarCount();
+			if (RangeGiven(Rest))
+				BarRange(S, Rest, From, To);
+			const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
+			const int Melody = Arg(Rest, "melody_channel") != 0 ? ChannelArg(S, Rest, "melody_channel") : GuessMelodyChannel(S, First, End);
+			auto Loudest = [&](int c) {
+				int Most = 0;
+				const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+				for (size_t i = 0; i < Notes.size(); ++i)
+					Most = std::max(Most, Notes[i].Volume);
+				return Most;
+			};
+			auto HasVolume = [&](int c) { return S.Channel(c).Kind != KIND_TRIANGLE && S.Channel(c).Kind != KIND_DPCM; };
+			if (Melody >= 0 && HasVolume(Melody)) {
+				double Lift = 0.0;
+				for (int c = 0; c < S.ChannelCount(); ++c) {
+					const int Role = c == Melody ? ROLE_NONE : MixRole(S, c, Melody, First, End);
+					if (Role != ROLE_CHORDS && Role != ROLE_LINE && Role != ROLE_BASS && Role != ROLE_ECHO)
+						continue;
+					ChannelInfo Unfaded = S.Channel(c);
+					Unfaded.MixLevel = 0;
+					const int Most = Loudest(c);
+					const double Room = HasVolume(c) && Most > 0 ? LevelDb(Unfaded, std::min(15, Most + 7)) - LevelDb(Unfaded, Most) : 0.0;
+					Lift = std::max(Lift, FaderDb(S.Channel(c)) - Room);
+				}
+				const ChannelInfo &Lead = S.Channel(Melody);
+				ChannelInfo Unfaded = Lead;
+				Unfaded.MixLevel = 0;
+				const int Most = Loudest(Melody);
+				const int Level = Most > 0 ? VolumeForDb(Unfaded, LevelDb(Lead, Most) - Lift) : Most;
+				if (Level < Most) {
+					Json Levels = Json::MakeObject();
+					Levels.Set(Lead.FullName(), Level);
+					Rest.Set("levels", Levels);
+					Carried = Format(", the melody's loudest at %d where it was %d (%s)", Level, Most, Lift >= 0.5 ? "under its fader's "
+						"level by what the others' faders lifted them" : "as loud as it played with its fader");
+				}
+			}
+		}
 		std::string Error, Text;
 		S.Host().BeginGroup();
 		try {
@@ -8590,8 +8635,8 @@ std::string MixTool(Session &S, const Json &Args)
 			throw;
 		}
 		S.Host().EndGroup();
-		return "Set the faders back to 0 dB (they were " + Moved + "), so the notes' volumes set the balance; one Ctrl+Z undoes "
-			"that and the mix. " + Text;
+		return "Set the faders back to 0 dB (they were " + Moved + "), so the notes' volumes set the balance" + Carried + "; one Ctrl+Z "
+			"undoes that and the mix. " + Text;
 	}
 	const bool Soft = Style == "soft" || Style == "quiet" || Style == "atmospheric";
 	const bool Calm = Style == "calm", Heard = Calm || Style == "lively";

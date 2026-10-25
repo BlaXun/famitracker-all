@@ -18281,6 +18281,8 @@ void TestMixFadersReset()
 	const ToolResult Result = Run(Song, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Set the faders back to 0 dB (they were 2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB, VRC6 Pulse 2 +2.0 dB)");
+	// The melody plays as loud as it did with its fader, so the parts can reach their places under it
+	CHECK_HAS(Result.Text, "the melody's loudest at 9 where it was 15 (as loud as it played with its fader)");
 	CHECK_EQ(Song.Mix.Level(5), 0);
 	CHECK_EQ(Song.Mix.Level(3), 0);
 	CHECK_EQ(Song.Mix.Level(6), 0);
