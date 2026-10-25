@@ -793,7 +793,7 @@ void CDrumGridPanelWnd::Commit()
 		return;
 	m_bDirty = false;
 	CString Message;
-	if (!WriteChannelRows(m_pMainFrame, m_iNoise, BarStart(), &m_Cells[0], Steps(), CursorRow(), Message))
+	if (!WriteChannelRows(m_pMainFrame, m_iNoise, BarStart(), &m_Cells[0], Steps(), CursorRow(), Message, true))
 		Status(Message);
 	Load();		// as the song has it now
 }
@@ -848,7 +848,7 @@ void CDrumGridPanelWnd::CopyTo(int First, int Last)
 		Cell.Vol = Source.Vol;
 	}
 	CString Message;
-	if (!WriteChannelRows(m_pMainFrame, m_iNoise, From, &Cells[0], To - From, CursorRow(), Message)) {
+	if (!WriteChannelRows(m_pMainFrame, m_iNoise, From, &Cells[0], To - From, CursorRow(), Message, true)) {
 		Status(Message);
 		return;
 	}
