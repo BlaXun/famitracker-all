@@ -593,6 +593,10 @@ writes the cells with `BuildPart`. `Source/PianoRollChords.cpp` reads the
 track (`ReadChordSong`), makes the sounds and writes every voice with
 `WriteChannelRows` between `BeginActionGroup` and `EndActionGroup`
 (`WriteChordPlan`): one Ctrl+Z, though the instruments it made stay.
+Its types share namespace `ftapi` with the tools' (its cells are
+`VoiceCells`: a second `ftapi::ChannelCells` with another layout than
+`Song.h`'s let the linker mix the two, which only MSVC's run showed), so
+new portable code names its types apart.
 
 ## What this repository is
 

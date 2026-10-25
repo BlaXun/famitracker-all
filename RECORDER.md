@@ -458,13 +458,14 @@ Chords:
   Warm organ on the FDS, and on the VRC6 Plus's soft layer a String pad of
   its own for each voice ("String pad 2", "String pad 3"...), since two
   N163 channels can't share an instrument.
-- With fewer free channels than the chord has notes, a menu says so and
-  offers the chord on as many voices as there are channels, or all its
-  notes in turn on one channel as an arpeggio (`0xy`). Voices sets how many
-  a chord gets: one for each of its notes (3, or 4 with a seventh), or 2, 3
-  or 4.
+- Voices sets how many voices a chord gets: one for each of its notes (3,
+  or 4 with a seventh), or 2, 3 or 4. With fewer free channels than that, a
+  menu says so and offers as many voices as there are free channels, one
+  on each, or the chord in turn on one channel as an arpeggio (`0xy`, which
+  plays three notes).
 - Again on the next bar puts the last bar's chords on the bar after the
-  ones written, on the same channels, led on from them.
+  ones written, on the same channels, led on from them (while those chords
+  are still there: not after Ctrl+Z took them back).
 - The status line says what went where, and when the melody rubs a
   semitone against a chord's note. One Ctrl+Z takes the whole chord back
   (the instruments it made stay in the song).
