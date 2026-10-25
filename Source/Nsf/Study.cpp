@@ -1697,6 +1697,12 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 				Sd.ModDepth = I->ModDepth;
 				Sd.ModDelay = I->ModDelay;
 			}
+			if (I->Kind == INST_N163 && !I->Waves.empty()) {
+				// ...and an N163 sound's: its waves, and the sequence that picks among them (its duty sequence's place)
+				Sd.N163Waves = I->Waves;
+				if (I->Waves.size() > 1)
+					Sd.N163WaveSteps = I->Macros[SEQ_DUTY];
+			}
 			Sd.Words = DescribeSound(Set.M, I->Kind == INST_VRC6, Typical, false, Sd.Triangle, Sd.Sawtooth);
 			S.Sounds.push_back(Sd);
 		}
@@ -2116,6 +2122,14 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 						Mod += (k == 0 ? "" : " ") + std::to_string(d.FdsMod[k]);
 					s += "      FDS wave " + Wave + "; modulation " + (Mod.empty() ? std::string("none") : Mod) +
 						Format(", speed %d, depth %d, delay %d\n", d.ModRate, d.ModDepth, d.ModDelay);
+				}
+				for (size_t w = 0; w < d.N163Waves.size(); ++w) {
+					std::string Wave;
+					for (size_t k = 0; k < d.N163Waves[w].size(); ++k)
+						Wave += (k == 0 ? "" : " ") + std::to_string(d.N163Waves[w][k]);
+					s += (d.N163Waves.size() == 1 ? std::string("      N163 wave ") : Format("      N163 wave %d: ", static_cast<int>(w))) +
+						Wave + (w + 1 == d.N163Waves.size() && !d.N163WaveSteps.Empty() ? "; wave sequence " + MacroText(d.N163WaveSteps) :
+						std::string()) + "\n";
 				}
 			}
 		}

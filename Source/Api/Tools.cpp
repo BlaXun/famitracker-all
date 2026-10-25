@@ -16919,14 +16919,23 @@ std::string ReferencesTool(Session &S, const Json &Args)
 	throw Problem("action: list, show, search, guide, tag or delete.");
 }
 
-// A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS" or "5B"; Sawtooth for the VRC6's sawtooth),
-// named Name, as reference_sound makes it (the sound browser too): its index, Added when it's new; on the FDS, How
-// says what wave it plays
+// A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS", "N163" or "5B"; Sawtooth for the VRC6's
+// sawtooth), named Name, as reference_sound makes it (the sound browser too): its index, Added when it's new; on the
+// FDS and the N163, How says what wave it plays (on the N163, when it's new, then where its wave went)
 int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::string &Name, const std::string &Chip,
 	bool Sawtooth, std::string &How, bool &Added)
 {
 	if (Chip == "FDS")
 		return AddFdsSound(S, ReferenceFdsSound(Sound, Name, How), Added);
+	if (Chip == "N163") {
+		// A wave sound (the VRC6 Plus's soft layer plays them), its wave where no other N163 instrument's is
+		std::string Where;
+		const int Index = AddWaveInstrument(S, ReferenceWaveSound(Sound, Name, How), Where);
+		Added = !Where.empty();
+		if (Added)
+			How += "; " + Where;
+		return Index;
+	}
 	const size_t Before = S.Song.Instruments.size();
 	std::string Error;
 	const int Index = S.Host().AddInstrument(ReferencePreset(Sound, Name), Chip, Sawtooth, Error);
@@ -16935,6 +16944,32 @@ int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::
 	S.Refresh();
 	Added = S.Song.Instruments.size() > Before;
 	return Index;
+}
+
+// What reference_sound says of a reference's sound it made an N163 instrument (a wave sound: the VRC6 Plus's soft layer
+// plays them), Index, named Name: what it plays (How, where its wave went), its level when it's new, what changed from
+// its own chip, and its notes when they vanish
+std::string SoftReferenceText(Session &S, const ReferenceSound &Sound, const std::string &Name, int Index, bool Added,
+	const std::string &How, const std::string &For, int Number, const std::string &Id)
+{
+	std::string Out = Format("%s %s, an N163 instrument%s: sound %d of %s (%s, %s): %s. It plays %s.", Added ? "Added" :
+		"The song already has", InstrumentLabel(S.Song, Index).c_str(), For.c_str(), Number, Id.c_str(), Sound.Channel.c_str(),
+		Sound.Role.c_str(), Sound.Words.c_str(), How.c_str());
+	if (Added) {
+		std::string Unused;
+		Out += WaveSoundLevel(S, ReferenceWaveSound(Sound, Name, Unused));
+	}
+	const bool Bends = !Sound.Sequences[SEQUENCE_PITCH].Items.empty() || !Sound.Sequences[SEQUENCE_HIPITCH].Items.empty();
+	if (Sound.Chip == "FDS")
+		Out += " It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, its pitch sequence in the N163's coarser steps, "
+			"and its notes sound as written (on the FDS they sounded two octaves under).";
+	else if (Sound.Triangle)
+		Out += " It was a triangle sound: the triangle sounds an octave under the notes written, the N163 as written, so write its "
+			"part an octave lower to keep its register.";
+	else if (Sound.Chip != "N163" && Bends)
+		Out += " Its pitch sequence is turned around for the N163, whose steps raise the pitch where a pulse's lower it (alike "
+			"around A-4; lower notes bend more, higher ones less).";
+	return Out + VanishRemark(S.Song, Index) + " Use it with write_notes or set_instrument.";
 }
 
 std::string ReferenceSoundTool(Session &S, const Json &Args)
@@ -16961,9 +16996,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = InstrumentChip(Info);
 		Sawtooth = Info.Kind == KIND_SAWTOOTH;
 		For = " for " + Info.FullName();
-		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B")
-			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6, FDS and 5B channels, not " +
-				Info.FullName() + ".");
+		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B" && Chip != "N163")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6, FDS, N163 (the VRC6 Plus's soft layer "
+				"too) and 5B channels, not " + Info.FullName() + ".");
 		if (Sound.Noise != (Info.Kind == KIND_NOISE))
 			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
 				"other than the noise.");
@@ -16972,6 +17007,8 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = "VRC6";
 	else if (Sound.Chip == "FDS" && !Sound.Noise && S.Song.Expansion.find("FDS") != std::string::npos)
 		Chip = "FDS";
+	else if (Sound.Chip == "N163" && !Sound.Noise && HasChip(S.Song, "N163"))
+		Chip = "N163";
 	std::string Name = StringArg(Args, "name");
 	if (Name.empty())
 		Name = ReferenceSoundName(R, Sound);
@@ -16986,6 +17023,8 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 			"(0-31), its pitch sequence in the FDS's finer steps.") : std::string()) + VanishRemark(S.Song, Index) +
 			" Use it with write_notes or set_instrument; the FDS sounds two octaves under the note written.";
 	}
+	if (Chip == "N163")
+		return SoftReferenceText(S, Sound, Name, Index, Added, How, For, Number, R.Id);
 	std::string Out = Format("Added %s, a %s instrument%s: sound %d of %s (%s, %s): %s.", InstrumentLabel(S.Song, Index).c_str(),
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
 	if (Chip == "5B" && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
@@ -18402,11 +18441,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
 		"number. The duty is translated between the 2A03 and the VRC6. An FDS sound plays on the FDS channel with its own wave "
 		"and modulator (in an FDS song, also when no channel is given); elsewhere its volume is counted 0-15. Another chip's "
-		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave.",
+		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave. On an N163 channel (the VRC6 Plus's "
+		"soft layer: Soft 1-4) it becomes a wave sound: an N163 sound's own waves (in an N163 song, also when no channel is "
+		"given), another's a wave from its channel (its duty's pulse, a wave for each duty it steps through, the triangle, the "
+		"sawtooth, an FDS sound's wave), each in a place of its own in the chip's memory; the reply gives its level.",
 		Schema()
 			.Add("reference", Prop("string", "The reference's id."), true)
 			.Add("sound", Prop("integer", "The sound's number in the reference (default 1)."))
-			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6 or FDS)."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6, FDS, 5B, or N163 and the VRC6 Plus's soft layer)."))
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 

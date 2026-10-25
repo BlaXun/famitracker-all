@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 
 namespace ftapi {
 
@@ -444,6 +445,58 @@ WaveSound DesignedWaveSound(const WaveSound &Base, const SoundDesign &Design, co
 	for (size_t i = 0; i < Base.Sequences.size(); ++i)
 		if (Base.Sequences[i].Type == SEQUENCE_DUTY)
 			Out.Sequences.push_back(Base.Sequences[i]);
+	return Out;
+}
+
+std::vector<int> N163PulseWave(int High)
+{
+	return PulseWave(std::max(0, std::min(N163_WAVE_SIZE, High)));
+}
+
+std::vector<int> N163TriangleWave()
+{
+	// The 2A03's 32 steps (15 down to 0 and up again) taken every other one: 15 13 ... 1 0 2 ... 14, whose harmonics are
+	// the triangle's within a dB up to the seventh (averaging the steps in pairs dulls them more)
+	std::vector<int> Wave;
+	for (int i = 0; i < N163_WAVE_SIZE; ++i)
+		Wave.push_back(i < 8 ? 15 - 2 * i : 2 * (i - 8));
+	return Wave;
+}
+
+std::vector<int> N163SawtoothWave()
+{
+	// A ramp of 16 steps: the VRC6's sawtooth (seven steps, the top five bits of an accumulator) has a ramp's harmonics
+	// within half a dB up to the sixth, and lacks only the seventh; its seven steps drawn over 16 samples come out
+	// uneven, a dB off
+	std::vector<int> Wave;
+	for (int i = 0; i < N163_WAVE_SIZE; ++i)
+		Wave.push_back(i);
+	return Wave;
+}
+
+std::vector<int> N163WaveOf(const std::vector<int> &Samples, int Top)
+{
+	std::vector<int> Cycle(Samples);
+	if (Cycle.empty())
+		return std::vector<int>(N163_WAVE_SIZE, 8);
+	// One cycle: a wave drawn twice over its length plays an octave higher than its length says
+	while (Cycle.size() >= 8 && Cycle.size() % 2 == 0) {
+		const std::vector<int>::const_iterator Half = Cycle.begin() + static_cast<std::ptrdiff_t>(Cycle.size() / 2);
+		if (!std::equal(Cycle.cbegin(), Half, Half, Cycle.cend()))
+			break;
+		Cycle.resize(Cycle.size() / 2);
+	}
+	// Each of the 16 samples the mean of the stretch of the wave it covers (the wave held between its samples)
+	const double Size = static_cast<double>(Cycle.size()), Scale = 15.0 / std::max(1, Top);
+	std::vector<int> Out;
+	for (int i = 0; i < N163_WAVE_SIZE; ++i) {
+		const double From = i * Size / N163_WAVE_SIZE, To = (i + 1) * Size / N163_WAVE_SIZE;
+		double Sum = 0.0;
+		for (int k = static_cast<int>(std::floor(From)); k < static_cast<int>(std::ceil(To)) && k < static_cast<int>(Cycle.size()); ++k)
+			Sum += Cycle[static_cast<size_t>(k)] * (std::min(To, k + 1.0) - std::max(From, static_cast<double>(k)));
+		const double Mean = Sum / (To - From) * Scale;
+		Out.push_back(std::max(0, std::min(15, static_cast<int>(std::floor(Mean + 0.5)))));
+	}
 	return Out;
 }
 

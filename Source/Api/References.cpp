@@ -23,6 +23,7 @@
 #include "FdsSounds.h"
 #include "Json.h"
 #include "Music.h"
+#include "Wavetables.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
 #include "../Nsf/Tracker.h"
@@ -216,6 +217,17 @@ Json SequenceJson(const ReferenceSequence &S)
 	return Out;
 }
 
+// An N163 sound's waves as FamiTracker's instruments hold them: 1-16 of them, each of the same 4-32 samples
+bool WholeN163Waves(const std::vector<std::vector<int> > &Waves)
+{
+	if (Waves.empty() || Waves.size() > 16)
+		return false;
+	for (size_t w = 0; w < Waves.size(); ++w)
+		if (Waves[w].size() < 4 || Waves[w].size() > 32 || Waves[w].size() != Waves[0].size())
+			return false;
+	return true;
+}
+
 ReferenceSequence ReadSequence(const Json &J)
 {
 	ReferenceSequence S;
@@ -343,6 +355,18 @@ void AddStudySounds(Reference &R, const nsf::TrackStudy &Study)
 			Sd.ModSpeed = s.ModRate;
 			Sd.ModDepth = s.ModDepth;
 			Sd.ModDelay = s.ModDelay;
+		}
+		if (s.Kind == nsf::INST_N163 && WholeN163Waves(s.N163Waves)) {
+			Sd.N163Waves = s.N163Waves;
+			for (size_t w = 0; w < Sd.N163Waves.size(); ++w)
+				for (size_t k = 0; k < Sd.N163Waves[w].size(); ++k)
+					Sd.N163Waves[w][k] = std::max(0, std::min(15, Sd.N163Waves[w][k]));
+			const nsf::Macro &m = s.N163WaveSteps;
+			ReferenceSequence &q = Sd.N163WaveSteps;
+			for (size_t k = 0; k < m.Items.size() && k < static_cast<size_t>(MAX_ITEMS) && Sd.N163Waves.size() > 1; ++k)
+				q.Items.push_back(std::max(0, std::min(static_cast<int>(Sd.N163Waves.size()) - 1, m.Items[k])));
+			q.Loop = m.Loop < static_cast<int>(q.Items.size()) ? m.Loop : -1;
+			q.Release = m.Release < static_cast<int>(q.Items.size()) ? m.Release : -1;
 		}
 		R.Sounds.push_back(Sd);
 	}
@@ -550,6 +574,18 @@ std::string ReferenceFile(const Reference &R)
 			Sd.Set("modulation_depth", s.ModDepth);
 			Sd.Set("modulation_delay", s.ModDelay);
 		}
+		if (!s.N163Waves.empty()) {
+			Json Waves = Json::MakeArray();
+			for (size_t w = 0; w < s.N163Waves.size(); ++w) {
+				Json Wave = Json::MakeArray();
+				for (size_t k = 0; k < s.N163Waves[w].size(); ++k)
+					Wave.Push(s.N163Waves[w][k]);
+				Waves.Push(Wave);
+			}
+			Sd.Set("n163_waves", Waves);
+			if (!s.N163WaveSteps.Items.empty())
+				Sd.Set("n163_wave_sequence", SequenceJson(s.N163WaveSteps));
+		}
 		Sounds.Push(Sd);
 	}
 	J.Set("sounds", Sounds);
@@ -621,6 +657,27 @@ bool ReadReferenceFile(const std::string &Text, Reference &Out, std::string &Err
 				s.ModSpeed = std::max(0, std::min(4095, IntOf(Sd, "modulation_speed", 0)));
 				s.ModDepth = std::max(0, std::min(63, IntOf(Sd, "modulation_depth", 0)));
 				s.ModDelay = std::max(0, std::min(255, IntOf(Sd, "modulation_delay", 0)));
+			}
+			// An N163 sound's waves and wave sequence, when they're whole
+			const Json *pN163 = Sd.Get("n163_waves");
+			if (pN163 != 0 && pN163->IsArray()) {
+				std::vector<std::vector<int> > Waves;
+				for (size_t w = 0; w < pN163->Size() && w <= 16; ++w) {
+					const Json &Wave = pN163->At(w);
+					std::vector<int> Samples;
+					for (size_t k = 0; Wave.IsArray() && k < Wave.Size() && k <= 32; ++k)
+						Samples.push_back(Wave.At(k).IsNumber() ? std::max(0, std::min(15, static_cast<int>(Wave.At(k).Number()))) : 8);
+					Waves.push_back(Samples);
+				}
+				if (WholeN163Waves(Waves)) {
+					s.N163Waves = Waves;
+					const Json *pSteps = Sd.Get("n163_wave_sequence");
+					if (pSteps != 0 && pSteps->IsObject() && Waves.size() > 1) {
+						s.N163WaveSteps = ReadSequence(*pSteps);
+						for (size_t k = 0; k < s.N163WaveSteps.Items.size(); ++k)
+							s.N163WaveSteps.Items[k] = std::max(0, std::min(static_cast<int>(Waves.size()) - 1, s.N163WaveSteps.Items[k]));
+					}
+				}
 			}
 			Out.Sounds.push_back(s);
 		}
@@ -699,6 +756,14 @@ std::string ReferenceText(const Reference &R)
 					Wave += (k == 0 ? "" : " ") + std::to_string(s.FdsWave[k]);
 				Out += "     FDS wave " + Wave + Format("; modulator speed %d, depth %d, delay %d", s.ModSpeed, s.ModDepth,
 					s.ModDelay) + "\n";
+			}
+			for (size_t w = 0; w < s.N163Waves.size(); ++w) {
+				std::string Wave;
+				for (size_t k = 0; k < s.N163Waves[w].size(); ++k)
+					Wave += (k == 0 ? "" : " ") + std::to_string(s.N163Waves[w][k]);
+				Out += (s.N163Waves.size() == 1 ? std::string("     N163 wave ") : Format("     N163 wave %d: ", static_cast<int>(w))) + Wave +
+					(w + 1 == s.N163Waves.size() && !s.N163WaveSteps.Items.empty() ? "; wave sequence " + SequenceText(s.N163WaveSteps) :
+					std::string()) + "\n";
 			}
 		}
 	}
@@ -843,6 +908,13 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 		F.Wave = FdsWaveOfWord("triangle");
 		How = "a triangle wave, as its channel played it";
 	}
+	else if (Sound.Chip == "N163" && !Sound.N163Waves.empty()) {
+		// Its first wave, each sample held over the FDS's 64 (0-15 counted 0-63)
+		const std::vector<int> &Wave = Sound.N163Waves[0];
+		for (int k = 0; k < FDS_WAVE_SIZE; ++k)
+			F.Wave.push_back((std::max(0, std::min(15, Wave[static_cast<size_t>(k) * Wave.size() / FDS_WAVE_SIZE])) * 63 + 7) / 15);
+		How = Sound.N163Waves.size() > 1 ? "its first N163 wave (the FDS plays one)" : "its N163 wave";
+	}
 	else if (Sound.Chip == "N163") {
 		F.Wave = FdsWaveOfWord("round");
 		How = "a round wave (the reference keeps no N163 wave)";
@@ -879,6 +951,134 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 	if (!Fds && !Sound.Sequences[SEQUENCE_HIPITCH].Items.empty())
 		How += " (its hi-pitch sequence left out)";
 	return F;
+}
+
+namespace {
+
+// A pulse's width in sixteenths: a 2A03 duty (12.5%, 25%, 50%, 75%), a VRC6 one (n + 1 sixteenths); a value neither
+// knows (a 5B sound's mode) as a square
+int PulseSixteenths(int Duty, bool Vrc6)
+{
+	if (Vrc6)
+		return (Duty & 7) + 1;
+	static const int WIDTHS[4] = { 2, 4, 8, 12 };
+	return Duty >= 0 && Duty < 4 ? WIDTHS[Duty] : 8;
+}
+
+std::string WidthText(int Sixteenths)
+{
+	return Format("%g%%", Sixteenths * 100.0 / 16.0);
+}
+
+}	// namespace
+
+WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Name, std::string &How)
+{
+	WaveSound W;
+	W.Name = Name;
+	W.Description = Sound.Words;
+	const bool Fds = Sound.Chip == "FDS", N163 = Sound.Chip == "N163", Vrc6 = Sound.Chip == "VRC6";
+	// The waves, and the sequence that picks among them (an N163 instrument's "duty" sequence)
+	ReferenceSequence Steps;
+	if (N163 && !Sound.N163Waves.empty()) {
+		for (size_t w = 0; w < Sound.N163Waves.size() && w < static_cast<size_t>(N163_MAX_WAVES); ++w)
+			W.Waves.push_back(N163WaveOf(Sound.N163Waves[w], 15));
+		if (W.Waves.size() > 1)
+			Steps = Sound.N163WaveSteps;
+		const int Size = static_cast<int>(Sound.N163Waves[0].size());
+		How = W.Waves.size() == 1 ? std::string("its own wave") : !Steps.Items.empty() ? Format("its own %d waves, in turn as its wave "
+			"sequence played them", static_cast<int>(W.Waves.size())) : Format("its own %d waves (the first, or the one Vxx picks)",
+			static_cast<int>(W.Waves.size()));
+		if (Size != N163_WAVE_SIZE)
+			How += Format(", resampled from %d samples to the 16 that play in tune", Size);
+	}
+	else if (N163) {
+		W.Waves.push_back(N163WaveOf(FdsWaveOfWord("round"), 63));
+		How = "a round wave: the reference was studied before N163 waves were kept, so study its NSF or module again (study_nsf, "
+			"study_module) for its own";
+	}
+	else if (Fds && Sound.FdsWave.size() == static_cast<size_t>(FDS_WAVE_SIZE)) {
+		W.Waves.push_back(N163WaveOf(Sound.FdsWave, 63));
+		How = "its FDS wave, resampled to the N163's 16 samples";
+		if (Sound.ModDepth > 0 && Sound.ModSpeed > 0)
+			How += " (without its modulator, which the N163 hasn't)";
+	}
+	else if (Fds) {
+		W.Waves.push_back(N163WaveOf(FdsWaveOfWord("round"), 63));
+		How = "a round wave: the reference was studied before FDS waves were kept, so study its NSF again (study_nsf) for its own";
+	}
+	else if (Sound.Sawtooth) {
+		W.Waves.push_back(N163SawtoothWave());
+		How = "a sawtooth wave, as its channel played it";
+	}
+	else if (Sound.Triangle) {
+		W.Waves.push_back(N163TriangleWave());
+		How = "a triangle wave, as its channel played it";
+	}
+	else {
+		// A pulse: a wave for each width its duty sequence steps through (as many as the 2A03 has 4 and the VRC6 8), the
+		// sequence picking them in turn; 50% without one
+		const ReferenceSequence &Duty = Sound.Sequences[SEQUENCE_DUTY];
+		std::vector<int> Widths;
+		for (size_t k = 0; k < Duty.Items.size(); ++k) {
+			const int Width = PulseSixteenths(Duty.Items[k], Vrc6);
+			std::vector<int>::const_iterator Found = std::find(Widths.begin(), Widths.end(), Width);
+			if (Found == Widths.end() && Widths.size() < static_cast<size_t>(N163_MAX_WAVES)) {
+				Widths.push_back(Width);
+				Found = Widths.end() - 1;
+			}
+			Steps.Items.push_back(Found == Widths.end() ? 0 : static_cast<int>(Found - Widths.begin()));
+		}
+		if (Widths.empty())
+			Widths.push_back(8);
+		for (size_t i = 0; i < Widths.size(); ++i)
+			W.Waves.push_back(N163PulseWave(Widths[i]));
+		if (Widths.size() > 1) {
+			Steps.Loop = Duty.Loop;
+			Steps.Release = Duty.Release;
+			std::string Named;
+			for (size_t i = 0; i < Widths.size(); ++i)
+				Named += (i == 0 ? "" : i + 1 == Widths.size() ? " and " : ", ") + WidthText(Widths[i]);
+			How = "pulse waves of its duties (" + Named + "), in turn as its duty sequence played them";
+		}
+		else {
+			Steps = ReferenceSequence();
+			How = Duty.Items.empty() ? std::string("a 50% pulse wave") : "a " + WidthText(Widths[0]) + " pulse wave, its duty's";
+		}
+	}
+
+	// Its volume, arpeggio, pitch and hi-pitch: the N163's steps of pitch move a frequency (up is sharper), as the FDS's
+	// do, where the 2A03's and the VRC6's move a period: theirs turned around, about as big at A-4 with four channels
+	// (a period of 253, a frequency of 241); the FDS's four times finer
+	static const int TYPES[] = { SEQUENCE_VOLUME, SEQUENCE_ARPEGGIO, SEQUENCE_PITCH, SEQUENCE_HIPITCH };
+	for (int i = 0; i < 4; ++i) {
+		const ReferenceSequence &q = Sound.Sequences[TYPES[i]];
+		if (q.Items.empty())
+			continue;
+		PresetSequence S;
+		S.Type = TYPES[i];
+		S.Items.assign(q.Items.begin(), q.Items.begin() + static_cast<std::ptrdiff_t>(std::min(q.Items.size(), static_cast<size_t>(MAX_ITEMS))));
+		if (S.Type == SEQUENCE_VOLUME)
+			for (size_t k = 0; k < S.Items.size(); ++k)
+				S.Items[k] = Fds ? FdsVolumeAs15(S.Items[k]) : Sound.Triangle ? (S.Items[k] > 0 ? 15 : 0) : std::max(0, std::min(15, S.Items[k]));
+		else if ((S.Type == SEQUENCE_PITCH || S.Type == SEQUENCE_HIPITCH) && !N163)
+			S.Items = ScaledSteps(S.Items, Fds ? 0.25 : -1.0);
+		S.Loop = q.Loop < static_cast<int>(S.Items.size()) ? q.Loop : -1;
+		S.Release = q.Release < static_cast<int>(S.Items.size()) ? q.Release : -1;
+		S.Setting = S.Type == SEQUENCE_ARPEGGIO && q.Fixed ? SEQUENCE_FIXED : SEQUENCE_ABSOLUTE;
+		W.Sequences.push_back(S);
+	}
+	if (W.Waves.size() > 1 && !Steps.Items.empty()) {
+		PresetSequence S;
+		S.Type = SEQUENCE_DUTY;
+		for (size_t k = 0; k < Steps.Items.size() && k < static_cast<size_t>(MAX_ITEMS); ++k)
+			S.Items.push_back(std::max(0, std::min(static_cast<int>(W.Waves.size()) - 1, Steps.Items[k])));
+		S.Loop = Steps.Loop < static_cast<int>(S.Items.size()) ? Steps.Loop : -1;
+		S.Release = Steps.Release < static_cast<int>(S.Items.size()) ? Steps.Release : -1;
+		S.Setting = 0;
+		W.Sequences.push_back(S);
+	}
+	return W;
 }
 
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound)

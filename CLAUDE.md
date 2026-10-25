@@ -515,6 +515,31 @@ through `/mcp/core` (`Caller::Core`, set in `Mcp.cpp`) it gives
 `CoreRecipe`'s steps, which name only the small set's tools. The tests
 check that every tool a recipe names exists, and on the small set is in it.
 
+Studied sounds on N163 channels and the VRC6 Plus's soft layer (from
+`feat-soft-references`): a study keeps an N163 sound's waves and wave
+sequence (`nsf::StudySound::N163Waves` and `N163WaveSteps`, from the
+module's instrument; `ReferenceSound`'s, `n163_waves` and
+`n163_wave_sequence` in the reference's JSON, whole or not at all), and
+`ReferenceWaveSound` in `References.cpp` makes any melodic sound a
+`WaveSound`: an N163 sound's own waves (`N163WaveOf` in `Wavetables.cpp`
+resamples each to 16 samples, one cycle of a wave drawn twice, each sample
+the mean of what it covers), another chip's a wave from its channel
+(`N163PulseWave` for each width its duty sequence steps through, the duty
+sequence picking them; `N163TriangleWave`, `N163SawtoothWave`, an FDS
+sound's wave), its volume 0-15 (an FDS sound's `FdsVolumeAs15`, a
+triangle's full or silent as it plays) and its pitch sequences in the
+N163's steps: CSequenceHandler adds them to the period, which on the N163
+(and the FDS) is a frequency, so a 2A03 or VRC6 sound's turn around (alike
+around A-4 with four channels) and an FDS sound's go four times coarser.
+`MakeReferenceInstrument` places it with `AddWaveInstrument` (under 128,
+`FindWavePlace`), `SoftReferenceText` gives its level (`WaveSoundLevel`)
+and what changed, and the sound index lists every studied melodic sound
+for `TARGET_N163` and `TARGET_SOFT` (an N163 sound at home there).
+FakeSong's `AddN163Instrument` reports an N163 instrument's sequences as
+`ReadSequences` in `McpConnection.cpp` does. `TestN163Study` in
+`Source/Nsf/tests/FtmTests.cpp`, `TestSoftReferenceWaves` and
+`TestSoftReferenceTool` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
