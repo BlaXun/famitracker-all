@@ -325,7 +325,9 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 }
 
 // The kinds of song, as the recipes (get_recipe, compose_track) and the style guide's topics have them: their tempos,
-// the lead's sound, how the chords, the bass and the drums play, the mix and the export's loudness
+// the lead's sound, how the chords, the bass and the drums play, the mix and the export's loudness. A lively stage's
+// are the soundtrack's first lively stages' (the user liked nearly all of them): a lead that blooms in and settles, fast
+// lush arpeggios, a sampled backbeat (the basic groove with kit samples)
 namespace {
 
 const NextKind KINDS[] = {
@@ -333,7 +335,7 @@ const NextKind KINDS[] = {
 		-20.0, { "C major", "G major", "D major" } },
 	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "breath", "lush", "roots", "half", "", "calm", "calm", -22.0,
 		{ "F major", "D major", "G major" } },
-	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "stepped lead", "broken", "arpeggio", "arpeggio", "lively", "lively",
+	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "bloom lead", "lush", "arpeggio", "arpeggio", "basic", "lively",
 		"lively", -20.0, { "G major", "D major", "A major" } },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
 		-19.0, { "A minor", "D minor", "E minor" } },
