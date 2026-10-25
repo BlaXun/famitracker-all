@@ -2238,7 +2238,7 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		// The drums on a cycle of their own beside the loop
 		if (S.DrumLoopBars > 0 && S.LoopBars > 0) {
 			const double Beats = Report.DrumLoopRows / S.RowsPerBeat;
-			S.Tricks.push_back(Format("drums on a cycle of their own: the noise and DPCM repeat every %.3g bars (%.3g beats) beside the "
+			S.Tricks.push_back(Format("drums on a cycle of their own: they repeat every %.3g bars (%.3g beats) beside the "
 				"%d-bar loop, so the groove falls differently against the tune each time round", S.DrumLoopBars, Beats, S.LoopBars));
 		}
 		// The DPCM level written (Zxx), which softens the triangle and the noise

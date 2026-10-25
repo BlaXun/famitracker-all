@@ -818,6 +818,18 @@ void TestDrumsOnTheirOwn()
 	CHECK(R.LoopStart == 0 && R.LoopLength == 144);
 	CHECK(R.DrumsApart && R.DrumLoop == 150);
 	CHECK(!R.Problems.empty() && R.Problems[0].find("on a cycle of their own") != std::string::npos);
+	// The study names the drums' own cycle
+	std::vector<TrackSource> Sources(1);
+	Sources[0].Name = "Drums";
+	Sources[0].Rec = &R;
+	Module M;
+	ConvertReport Report;
+	std::string Error;
+	CHECK(ConvertTracks(File, Sources, ConvertOptions(), M, Report, Error) && Report.Tracks.size() == 1);
+	if (Report.Tracks.size() == 1) {
+		const TrackStudy S = StudyTrack(M, 0, Report.Tracks[0]);
+		CHECK(S.DrumLoopBars > 0 && DescribeStudy(S).find("drums on a cycle of their own: they repeat every") != std::string::npos);
+	}
 }
 
 // A module built here: a track of Bars bars of 16 rows, Pulse 1's tune (a
