@@ -2494,8 +2494,10 @@ struct CPianoRollWnd::Impl {
 		pWnd->Invalidate(FALSE);
 	}
 
-	// Too few channels are free for the voices the chords want: fewer voices, the arpeggio on one channel, or nothing
-	int FewerMenu(const ftapi::HelperSong &Song, const ftapi::ChordPlan &Plan, CPoint Point) const
+	// Too few channels are free for the voices the chords want (for their notes, as Voices sets, or as the chord before had,
+	// Why): fewer voices, the arpeggio on one channel, or nothing
+	enum fewer_t { FEWER_NOTES, FEWER_ASKED, FEWER_AGAIN };
+	int FewerMenu(const ftapi::HelperSong &Song, const ftapi::ChordPlan &Plan, fewer_t Why, CPoint Point) const
 	{
 		CString Free;
 		for (size_t i = 0; i < Plan.Free.size(); ++i) {
@@ -2509,7 +2511,13 @@ struct CPianoRollWnd::Impl {
 		CString Head, Item;
 		const CString Where = BarsText(Plan.First, Plan.End);
 		const LPCTSTR Is = Plan.Free.size() == 1 ? _T("is") : _T("are");
-		if (One && !Plan.Chords.empty())
+		if (Why == FEWER_ASKED)
+			Head.Format(_T("Chords get %d voices (Voices), but only %s %s free in %s"), Plan.Wanted, static_cast<LPCTSTR>(Free), Is,
+				static_cast<LPCTSTR>(Where));
+		else if (Why == FEWER_AGAIN)
+			Head.Format(_T("The chord before had %d voices, but only %s %s free in %s"), Plan.Wanted, static_cast<LPCTSTR>(Free), Is,
+				static_cast<LPCTSTR>(Where));
+		else if (One && !Plan.Chords.empty())
 			Head.Format(_T("%s has %d notes, but only %s %s free in %s"), ftapi::ChordName(Plan.Chords[0].C, Song.K).c_str(), Plan.Wanted,
 				static_cast<LPCTSTR>(Free), Is, static_cast<LPCTSTR>(Where));
 		else
@@ -2520,7 +2528,10 @@ struct CPianoRollWnd::Impl {
 		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Head);
 		Menu.AppendMenu(MF_SEPARATOR);
 		if (Plan.Free.size() >= 2) {
-			Item.Format(_T("Play %d of %s notes, one on each"), static_cast<int>(Plan.Free.size()), One ? _T("its") : _T("their"));
+			if (Why != FEWER_NOTES)
+				Item.Format(_T("Play %d voices, one on each"), static_cast<int>(Plan.Free.size()));
+			else
+				Item.Format(_T("Play %d of %s notes, one on each"), static_cast<int>(Plan.Free.size()), One ? _T("its") : _T("their"));
 			Menu.AppendMenu(MF_STRING, MENU_CHORD_FEWER, Item);
 		}
 		if (!Plan.Free.empty()) {
@@ -2564,7 +2575,7 @@ struct CPianoRollWnd::Impl {
 		if (Plan.TooFew) {
 			pWnd->Invalidate(FALSE);
 			pWnd->UpdateWindow();
-			const int Choice = FewerMenu(Song, Plan, Point);
+			const int Choice = FewerMenu(Song, Plan, Again ? FEWER_AGAIN : Request.Voices > 0 ? FEWER_ASKED : FEWER_NOTES, Point);
 			if (Choice == static_cast<int>(MENU_CHORD_FEWER))
 				Request.Voices = static_cast<int>(Plan.Free.size());
 			else if (Choice == static_cast<int>(MENU_CHORD_ARPEGGIO))

@@ -633,7 +633,7 @@ bool PlanChords(const HelperSong &Song, const ChordRequest &Request, ChordPlan &
 			"Clear one, or put the chord on a note as an arpeggio (Effects > Chord).";
 		return false;
 	}
-	Plan.TooFew = !Request.Arpeggio && Request.Voices == 0 && Plan.Free.size() < static_cast<size_t>(Plan.Wanted);
+	Plan.TooFew = !Request.Arpeggio && Plan.Free.size() < static_cast<size_t>(Plan.Wanted);
 	if (Chosen.empty() || (!Request.Arpeggio && Chosen.size() < 2) || Sounds.size() != Chosen.size()) {
 		Plan.TooFew = !Request.Arpeggio;
 		return true;	// a single free channel: only the arpeggio fits
@@ -733,10 +733,10 @@ bool PlanChords(const HelperSong &Song, const ChordRequest &Request, ChordPlan &
 	return true;
 }
 
-std::vector<ChannelCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan, const std::vector<int> &Instruments,
+std::vector<VoiceCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan, const std::vector<int> &Instruments,
 	std::vector<std::string> &Warnings)
 {
-	std::vector<ChannelCells> Out;
+	std::vector<VoiceCells> Out;
 	if (Plan.Voices.empty() || Plan.End <= Plan.First)
 		return Out;
 	// Where the song goes on after its end: a voice held to the end shouldn't ring on there
@@ -771,7 +771,7 @@ std::vector<ChannelCells> PlanCells(const HelperSong &Song, const ChordPlan &Pla
 				Last.Rows = Plan.End - 1 - Last.Row;
 		}
 		Options.EffectColumns = Channel.EffectColumns;
-		ChannelCells Written;
+		VoiceCells Written;
 		Written.Channel = Voice.Channel;
 		Written.Row = Plan.First;
 		BuildPart(Channel.Cells, Plan.First, Plan.End, Notes, Options, Written.Cells, Warnings);

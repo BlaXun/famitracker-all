@@ -576,6 +576,24 @@ volume and sets again the lasting effects set before it (`Vxx` unless its
 instrument has a duty sequence, `8xx`, `0xy`, `3xx`, `4xy`, `7xy`, `Pxx`,
 `Axy`); the tools leave them out where nothing changes, so put them in.
 
+Chord helper (from `feat-chord-helper`): the piano roll's Chords button
+(also H while the pattern editor shows, and a right-click on the chord
+strip: `ChordsMenu` and `PutChords` in `PianoRoll.cpp`) puts a chord, or a
+progression a chord a bar, on the channels with nothing sounding in its
+bars. `Source/Api/ChordHelper.cpp` (portable, tested by its own
+`chord_helper_tests`, `tests/ChordHelperTests.cpp`) works it out on a
+`HelperSong`: `FreeChannels` (the channels `TakesVoice` allows, in the
+order the kinds take voices), the melody and bass it keeps room for
+(`RoomIn`, guessed as the tools guess them), the voices from
+`VoicedChordParts` (or `ChordPart`'s arpeggio on one channel) and each
+voice's sound (`ChooseSounds`: soft chords as each chip makes it, and on
+the N163 a string pad of its own for each voice, copies placed in free wave
+memory, since two channels on one instrument share its wave); `PlanCells`
+writes the cells with `BuildPart`. `Source/PianoRollChords.cpp` reads the
+track (`ReadChordSong`), makes the sounds and writes every voice with
+`WriteChannelRows` between `BeginActionGroup` and `EndActionGroup`
+(`WriteChordPlan`): one Ctrl+Z, though the instruments it made stay.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

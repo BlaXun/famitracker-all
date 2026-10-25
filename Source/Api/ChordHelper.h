@@ -115,7 +115,7 @@ struct ChordPlan {
 	std::vector<ChordAt> Chords;	// on Bars
 	std::vector<int> Free;			// the channels free there that can take a voice, in the order they take them
 	int Wanted;						// the voices the chords want (2-4)
-	bool TooFew;					// fewer free channels than Wanted, and Voices wasn't asked for: Voices has those there are
+	bool TooFew;					// fewer free channels than Wanted (asked for or not): Voices has those there are
 	bool Arpeggio;					// on one channel as arpeggios
 	std::vector<ChordVoice> Voices;	// lowest first; one for an arpeggio; none when there's nothing to write
 	int Melody, Bass;				// the channels heard playing the melody and the bass there, -1 for none
@@ -146,23 +146,24 @@ int VoicesWanted(const std::vector<ChordAt> &Chords);
 
 // The chords of Request on the song: their bars, the free channels, the voices (or the arpeggio) with their notes and
 // sounds. False, with Plan.Error, when nothing can be written: chords that don't read, no free channel. Too few free
-// channels for the voices wanted is no error: Plan.TooFew says so, and Plan.Voices has as many voices as channels are
-// free (none with only one: then only the arpeggio can go there, which Request.Arpeggio asks for).
+// channels for the voices wanted (Request.Voices, or as many as the chords have notes) is no error: Plan.TooFew says so,
+// for the user to choose fewer voices or the arpeggio, and Plan.Voices has as many voices as channels are free (none
+// with only one: then only the arpeggio can go there, which Request.Arpeggio asks for).
 bool PlanChords(const HelperSong &Song, const ChordRequest &Request, ChordPlan &Plan);
 
 // A channel's new cells, from Row on
-struct ChannelCells {
+struct VoiceCells {
 	int Channel;
 	int Row;
 	std::vector<Cell> Cells;
-	ChannelCells() : Channel(-1), Row(0) {}
+	VoiceCells() : Channel(-1), Row(0) {}
 };
 
 // The cells the plan writes into its voices' channels, voice v playing the song's instrument Instruments[v] (Song's
 // instruments say which end their notes with a release), as the tools write parts (BuildPart): what follows each voice
 // plays on as before, and a voice held to the end of a song that loops stops on the last row, rather than ringing on
 // into the loop on a channel that has nothing there
-std::vector<ChannelCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan, const std::vector<int> &Instruments,
+std::vector<VoiceCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan, const std::vector<int> &Instruments,
 	std::vector<std::string> &Warnings);
 
 // The plan in words, for the piano roll's status line: "Am on bar 5", "C G Am F on bars 5-8"

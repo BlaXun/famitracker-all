@@ -270,7 +270,7 @@ void TestVoicesPlaced()
 	for (size_t v = 0; v < P.Voices.size(); ++v)
 		Instruments.push_back(P.Voices[v].Sound.Instrument);
 	std::vector<std::string> Warnings;
-	const std::vector<ChannelCells> Cells = PlanCells(S, P, Instruments, Warnings);
+	const std::vector<VoiceCells> Cells = PlanCells(S, P, Instruments, Warnings);
 	CHECK_EQ(Cells.size(), 3u);
 	for (size_t i = 0; i < Cells.size(); ++i) {
 		CHECK_EQ(Cells[i].Row, 16);
@@ -323,11 +323,22 @@ void TestTooFewChannels()
 	Two.Voices = 2;
 	CHECK(PlanChords(S, Two, P));
 	CHECK(!P.TooFew && P.Voices.size() == 2);
-	// Asked for more than there are: as many as there are
+	// Asked for more than there are: too few all the same (the user is asked), with as many as there are
 	ChordRequest Four = Asking("Am7", 0, 16);
 	Four.Voices = 4;
 	CHECK(PlanChords(S, Four, P));
+	CHECK(P.TooFew);
 	CHECK_EQ(P.Voices.size(), 3u);
+	// A triad asked for on four voices where three are free: too few too
+	ChordRequest TriadOnFour = Asking("Am", 0, 16);
+	TriadOnFour.Voices = 4;
+	CHECK(PlanChords(S, TriadOnFour, P));
+	CHECK(P.TooFew && P.Wanted == 4 && P.Voices.size() == 3);
+	CHECK(ClassesIn(S, P, 0, 16) == Classes({ 9, 0, 4 }));
+	// Three asked for and three free: none too few
+	TriadOnFour.Voices = 3;
+	CHECK(PlanChords(S, TriadOnFour, P));
+	CHECK(!P.TooFew && P.Voices.size() == 3);
 
 	// One free channel: no voices, only the arpeggio
 	for (int b = 0; b < 4; ++b) {
@@ -517,7 +528,7 @@ void TestEndOfSong()
 	std::vector<int> Instruments(P.Voices.size(), 7);
 	S.Instruments.push_back(MakeInstrument(7, "Soft chords", "2A03", true));
 	std::vector<std::string> Warnings;
-	std::vector<ChannelCells> Cells = PlanCells(S, P, Instruments, Warnings);
+	std::vector<VoiceCells> Cells = PlanCells(S, P, Instruments, Warnings);
 	CHECK_EQ(Cells.size(), 3u);
 	for (size_t i = 0; i < Cells.size(); ++i) {
 		CHECK(Cells[i].Row == 48 && Cells[i].Cells.size() == 16);

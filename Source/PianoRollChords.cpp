@@ -261,7 +261,7 @@ bool WriteChordPlan(CMainFrame *pMainFrm, ftapi::HelperSong &Song, const ftapi::
 
 	// The voices, as one undoable action
 	std::vector<std::string> Warnings;
-	const std::vector<ftapi::ChannelCells> Parts = ftapi::PlanCells(Song, Plan, Instruments, Warnings);
+	const std::vector<ftapi::VoiceCells> Parts = ftapi::PlanCells(Song, Plan, Instruments, Warnings);
 	if (Parts.empty()) {
 		Message = _T("There's nothing to write.");
 		return false;

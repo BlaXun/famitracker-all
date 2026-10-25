@@ -360,6 +360,7 @@ The buttons along the top:
   notes" changes theirs. An instrument for another chip is skipped for the
   instrument the channel already plays.
 - Effects: effects for the selected notes (see Effects below).
+- Chords: a chord on the channels that are free there (see Chords below).
 - Clips: place a clip with the mouse (as a copy, or linked when "Place
   linked copies" is ticked), save the selected notes as a clip
   (Ctrl+Shift+C), or show the clips panel.
@@ -431,6 +432,42 @@ Effects:
   wedge, other effects as a small mark on their row. Hovering a note lists
   its effects in words, including ones it takes over from an earlier note.
 - Ctrl+Z undoes each one.
+
+Chords:
+
+- The Chords button, the H key (while the pattern editor shows; in its
+  place H is a note) or a right-click on the chord strip under the ruler
+  puts a chord on the channels that play nothing in its bars: a note on
+  each, held through the bar, close together under the melody and over the
+  bass, so the chord fills the space between them.
+- The chord: one of the key's chords (with sevenths in a submenu), the ones
+  the strip names there, or one typed: a name like `Am`, `G7`, `Fmaj7` or
+  `C/E`, a degree of the key like `vi`, or a chord a bar like `C G Am F`
+  (`| Am | F G |` puts two in the second bar).
+- Where: the bar the cursor is in (chords typed for more bars go on over
+  the bars after it), or the bars of a selection: rows dragged along the
+  ruler with the Select tool, the selected notes, or the pattern editor's
+  selection. Chords for fewer bars than the selection repeat over it.
+- Free channels are those with no note sounding in those bars that play a
+  chord's note at a volume of their own: not the triangle, the noise or the
+  DPCM. The VRC7's channels take the voices first, then the soft layer
+  (N163), the 5B's, the pulses, the FDS and last the sawtooth, all on one
+  kind of channel where enough of it is free.
+- Each voice gets a quiet sound for its chip, made the first time: Soft
+  chords on the pulses, the 5B and the sawtooth, Reed organ on the VRC7,
+  Warm organ on the FDS, and on the VRC6 Plus's soft layer a String pad of
+  its own for each voice ("String pad 2", "String pad 3"...), since two
+  N163 channels can't share an instrument.
+- With fewer free channels than the chord has notes, a menu says so and
+  offers the chord on as many voices as there are channels, or all its
+  notes in turn on one channel as an arpeggio (`0xy`). Voices sets how many
+  a chord gets: one for each of its notes (3, or 4 with a seventh), or 2, 3
+  or 4.
+- Again on the next bar puts the last bar's chords on the bar after the
+  ones written, on the same channels, led on from them.
+- The status line says what went where, and when the melody rubs a
+  semitone against a chord's note. One Ctrl+Z takes the whole chord back
+  (the instruments it made stay in the song).
 
 How edits keep the song sounding right:
 
