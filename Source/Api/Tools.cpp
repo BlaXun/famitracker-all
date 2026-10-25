@@ -19572,7 +19572,7 @@ int ClashesIn(Session &S, int FromBar, int ToBar, int Melody)
 	return pClashes != 0 && pClashes->IsNumber() ? static_cast<int>(pClashes->Number()) : 0;
 }
 
-// A tool that writes notes (vary_part, grow_melody with pick), tried on a dry run: false when it can't run or changes
+// A tool that writes notes (vary_part, grow_melody with pick, add_chords_and_bass), tried on a dry run: false when it can't run or changes
 // nothing; else true, with the clashes it would add in bars [FromBar, ToBar] (Added; fewer than none when it clears
 // some), as check_song hears them after it
 bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromBar, int ToBar, int Melody, int &Added)
@@ -19584,6 +19584,8 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 			VaryPartTool(S, Args);
 		else if (Tool == "grow_melody")
 			GrowMelodyTool(S, Args);
+		else if (Tool == "add_chords_and_bass")
+			AddBackingTool(S, Args);
 		else
 			return false;
 	}
@@ -21002,10 +21004,14 @@ bool WhatNext::TipStep(const std::string &Tip)
 		A.Set("from_bar", S.Time.BarOf(First));
 		A.Set("to_bar", S.Time.BarOf(End - 1));
 		A.Set("melody_channel", ChannelName(m_Melody));
+		// The first that adds no clash with the parts around it (a bass that moves can rub against the chords' notes)
+		std::vector<std::string> Styles;
 		if (Bass) {
 			A.Set("chord_channel", "none");
 			A.Set("bass_channel", ChannelName(Channel));
-			A.Set("bass_style", K.MovingBass);
+			Styles.push_back(K.MovingBass);
+			if (std::string(K.MovingBass) != "root_fifth")
+				Styles.push_back("root_fifth");
 			if (m_KindId == NEXT_ACTION)
 				A.Set("bass_instrument", "thump bass");
 		}
@@ -21016,9 +21022,17 @@ bool WhatNext::TipStep(const std::string &Tip)
 			A.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
 			if (std::string(K.ChordStyle) == "lush")
 				A.Set("arp_frames", 3);
+			Styles.push_back(std::string());
 		}
-		return Step("tips", "add_chords_and_bass", A, "review_arrangement: " + Tip + (Bass ? std::string(" The same chords, a bass "
-			"that moves (") + K.MovingBass + ")." : std::string(" The same chords, with color.")));
+		for (size_t i = 0; i < Styles.size(); ++i) {
+			if (!Styles[i].empty())
+				A.Set("bass_style", Styles[i]);
+			int Added = 0;
+			if (TryWrite(S, "add_chords_and_bass", A, S.Time.BarOf(First), S.Time.BarOf(End - 1), m_Melody, Added) && Added <= 0)
+				return Step("tips", "add_chords_and_bass", A, "review_arrangement: " + Tip + (Bass ? " The same chords, a bass that moves (" +
+					Styles[i] + ")." : std::string(" The same chords, with color.")));
+		}
+		return false;	// each would rub against the parts there: the tip stays a note
 	}
 	if (Has("plays very low, where small speakers lose it") && m_Parts.Bass >= 0) {
 		Json A = Json::MakeObject();
@@ -21026,7 +21040,9 @@ bool WhatNext::TipStep(const std::string &Tip)
 		A.Set("variation", "octave_up");
 		A.Set("from_bar", 1);
 		A.Set("to_bar", S.Time.BarCount());
-		return Wanted("tips") && WouldChange(S, "vary_part", A) && Step("tips", "vary_part", A, "review_arrangement: " + Tip);
+		int Added = 0;	// an octave up, nearer the chords: as long as it rubs against nothing
+		return Wanted("tips") && TryWrite(S, "vary_part", A, 1, S.Time.BarCount(), m_Melody, Added) && Added <= 0 &&
+			Step("tips", "vary_part", A, "review_arrangement: " + Tip);
 	}
 	if (Has("Phrases come back unchanged") || Has("A repeat with nothing new")) {
 		// The bars whose melody plays the bar four before it again: the last run of them, varied (a whole part varied alike
