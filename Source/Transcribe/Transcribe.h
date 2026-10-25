@@ -258,6 +258,15 @@ struct MelodyCell {
 // frameRate is the engine speed (60 for NTSC).
 std::vector<MelodyCell> MelodyCells(const std::vector<GridNote> &notes, ChannelVoice voice, int frameRate);
 
+// A take put into a song that it would outrun (rows: the song's rows from the
+// take's row 0 on) with nothing past the song's end but the end of its last
+// note (its release, and its vibrato's 400): that end goes on the song's last
+// row, so the song keeps its length and its loop instead of growing a frame
+// for it. A last note starting on that row sounds on into the loop. Takes with
+// notes past the end are left as they are (the song grows for them). True
+// when the cells changed.
+bool EndInside(std::vector<MelodyCell> &cells, int rows);
+
 // ---------------------------------------------------------------------------
 // Percussive hits (finger taps, beatboxing)
 // ---------------------------------------------------------------------------
@@ -309,6 +318,9 @@ struct ClickTrack {
 	bool clickAlong = true;		// keep clicking after the count-in...
 	bool barsOnly = false;		// ...on the first beat of each bar only
 	double level = 0.25;		// peak level of an accented click, 0-1
+	int barPhase = 0;			// the first count-in beat is this many beats into its bar (a take that starts
+								// mid-bar keeps the song's bars), so beat k starts a bar when k + barPhase
+								// is a multiple of beatsPerBar
 
 	// A soft wooden "tock" rather than a beep: a tone that fades within a
 	// few milliseconds, a fifth lower on the beats between bar starts
@@ -320,6 +332,7 @@ struct ClickTrack {
 	double BeatTime(int beat) const;		// the same in seconds
 	long long StartSample() const;			// row 0: BeatSample(countIn)
 	bool Clicks(int beat) const;			// does this beat click?
+	bool StartsBar(int beat) const;			// is this beat the first of a bar (the higher click)?
 	// Writes samples [from, from + count) of the click track to out
 	void Render(long long from, float *out, int count) const;
 };
@@ -416,11 +429,23 @@ struct Chord {
 	enum Quality { Major, Minor, Diminished };
 	int root = 0;		// pitch class
 	Quality quality = Major;
-	bool operator==(const Chord &other) const { return root == other.root && quality == other.quality; }
+	// A chord typed by name or heard in a recording can have other notes than
+	// its quality's three: its notes as semitones above the root (0-11, from
+	// 0, ascending: { 0, 4, 7, 10 } for C7). Empty: the triad of its quality.
+	std::vector<int> tones;
+	int bass = -1;		// the pitch class under it when that isn't the root (C/E), -1 for the root
+
+	std::vector<int> Tones() const;		// its notes above the root: tones, or the triad's
+	bool operator==(const Chord &other) const
+	{
+		return root == other.root && quality == other.quality && tones == other.tones && bass == other.bass;
+	}
 	bool operator!=(const Chord &other) const { return !(*this == other); }
 };
 
-std::string ChordName(const Chord &chord, const Key &key);	// "C", "Am", "Bb", "F#m", "Bdim"
+// "C", "Am", "Bb", "F#m", "Bdim"; with tones "C7", "Fmaj7", "Gsus4", "Cadd9",
+// "Am7", "C5"; and a bass "C/E"
+std::string ChordName(const Chord &chord, const Key &key);
 
 // The chords of a key: I ii iii IV V vi in major; i iv v V VI III VII in minor
 std::vector<Chord> KeyChords(const Key &key);
@@ -461,9 +486,10 @@ struct ChordSpan {
 std::vector<ChordSpan> ChooseChords(const std::vector<MelodyNote> &melody, const std::vector<Bar> &bars,
 	const Key &key, const HarmonyOptions &options);
 
-// The bass line: the chord's root on every chord change and bar, and in bars
-// of four or more beats the fifth halfway through; a release where the chords
-// end. Around lowMidi-highMidi, moving as little as it can.
+// The bass line: the chord's root (or the bass it's written over, C/E) on
+// every chord change and bar, and in bars of four or more beats the fifth
+// halfway through; a release where the chords end. Around lowMidi-highMidi,
+// moving as little as it can.
 std::vector<MelodyCell> BassCells(const std::vector<ChordSpan> &chords, const std::vector<Bar> &bars,
 	const HarmonyOptions &options, int lowMidi = 36, int highMidi = 55);
 
@@ -471,8 +497,68 @@ std::vector<MelodyCell> BassCells(const std::vector<ChordSpan> &chords, const st
 // every chord change and bar, each voiced (root position or an inversion) as
 // close as it can to the one before, its lowest note around lowMidi-highMidi.
 // Where the chords end: a release with 000, so later notes don't arpeggiate.
+// The arpeggio plays three notes (ArpeggioTones), spread over an octave and
+// a bit rather than bunched up a step or two apart.
 std::vector<MelodyCell> ArpeggioCells(const std::vector<ChordSpan> &chords, const std::vector<Bar> &bars,
 	int lowMidi = 53, int highMidi = 65);
+
+// The three notes of a chord the 0xy arpeggio plays, as semitones above the
+// root: a triad's own; a power chord's root, fifth and octave; of a bigger
+// chord the root, its third (or suspension) and its most telling other note
+// (a seventh, a sixth, a ninth, an altered fifth), the plain fifth left out.
+std::vector<int> ArpeggioTones(const Chord &chord);
+
+// ---------------------------------------------------------------------------
+// Tapping the tempo
+// ---------------------------------------------------------------------------
+
+struct TapTempo {
+	double bpm = 0.0;		// beats a minute, 0 until enough taps came
+	int taps = 0;			// the taps it counted: the last run of them
+	double spread = 0.0;	// how unevenly they came: the middle half of the taps' distances from a
+							// steady beat, as a share of the beat
+};
+
+// The tempo of a key or button tapped along with the beat, from when each tap
+// came (seconds, in order). The taps count from the last pause (over two
+// seconds, or two and a half beats, without a tap), so tapping again later
+// starts over. Each tap is on a beat: a gap about twice the others is a beat
+// missed, and a tap far too soon after another (a double tap) is left out.
+// The beat is the steady one that fits the taps best, once at least minTaps
+// count; 30-300 BPM.
+TapTempo TempoOfTaps(const std::vector<double> &times, int minTaps = 4);
+
+// ---------------------------------------------------------------------------
+// Strummed chords (a guitar, a piano)
+// ---------------------------------------------------------------------------
+
+struct StrumOptions {
+	int lowestMidi = 36;			// C2: a guitar's low E is MIDI 40, a piano's left hand goes lower
+	int highestMidi = 88;			// E6
+	double minIntervalSeconds = 0.10;	// two strums closer than this are one
+	double noteShare = 0.15;		// a note counts from this share of the strum's strongest one
+	int maxNotes = 6;				// a guitar's six strings
+	double silenceDb = -40.0;		// strums this far below the loudest are left out
+};
+
+struct StrumNote {
+	int midi = 0;
+	double weight = 0.0;	// how strongly it sounds, 0-1 (1: the strum's strongest note)
+};
+
+struct Strum {
+	double time = 0.0;		// seconds, when it was struck
+	double end = 0.0;		// seconds: when the next strum comes, or the recording ends
+	double level = 0.0;		// dB (full scale), its loudness just after it was struck
+	std::vector<StrumNote> notes;	// the notes that sound together, lowest first
+};
+
+// The strums in a recording of chords, and the notes heard sounding together
+// in each. A strum starts where the sound's spectrum rises suddenly (spectral
+// flux); its notes come from the spectrum just after it, explained as notes
+// with their overtones (a non-negative fit of each note's harmonics, so a
+// note's overtones don't count as notes of their own).
+std::vector<Strum> HearStrums(const Audio &audio, const StrumOptions &options = StrumOptions());
 
 // ---------------------------------------------------------------------------
 // FamiTracker text module (File > Import Text in FamiTracker 0.4.6)

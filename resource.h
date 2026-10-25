@@ -850,6 +850,23 @@
 // View > Pattern editor (MainFrm.cpp; View > Drum grid is ID_EDIT_DRUMGRID, in the Edit menu too)
 #define ID_VIEW_PATTERNEDITOR           37550
 
+// The recorder's input: Edit > Start from a groove (GrooveDlg.cpp), and in the Record dialog
+// (RecordDlg.cpp) strummed chords, tapping the tempo, the groove and the selection; typed and
+// strummed chords in Add chords and bass line (BackingDlg.cpp). The groove's preview is
+// IDC_BACK_PREVIEW and the backing's WAV file button IDC_REC_FROMFILE.
+#define IDD_GROOVE                      630
+#define ID_EDIT_GROOVE                  37590
+#define IDC_REC_CHORDS                  2090
+#define IDC_TAP_TEMPO                   2091
+#define IDC_REC_GROOVE                  2092
+#define IDC_REC_SELECTION               2093
+#define IDC_GROOVE_MOOD                 2094
+#define IDC_GROOVE_BPM                  2095
+#define IDC_GROOVE_KEY                  2096
+#define IDC_GROOVE_BARS                 2097
+#define IDC_BACK_CHORDTEXT              2098
+#define IDC_BACK_STRUM                  2099
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

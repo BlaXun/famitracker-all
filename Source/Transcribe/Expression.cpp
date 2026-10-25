@@ -316,4 +316,38 @@ std::vector<MelodyCell> MelodyCells(const std::vector<GridNote> &notes, ChannelV
 	return cells;
 }
 
+bool EndInside(std::vector<MelodyCell> &cells, int rows)
+{
+	if (rows < 1 || cells.empty() || cells.back().row < rows)
+		return false;	// it fits
+	for (size_t i = 0; i < cells.size(); ++i)
+		if (cells[i].row >= rows && cells[i].kind == MelodyCell::Note)
+			return false;	// notes past the end need the rows
+
+	// What lies past the end: the last note's release, and its vibrato's 4xy
+	bool vibrato = false;
+	while (!cells.empty() && cells.back().row >= rows) {
+		vibrato = vibrato || cells.back().effect == '4';
+		cells.pop_back();
+	}
+	const int last = rows - 1;
+	if (!cells.empty() && cells.back().row == last && cells.back().kind == MelodyCell::Note)
+		return true;	// the last note starts on the last row: it sounds on until the loop's first note
+
+	// The end on the last row (in place of the vibrato starting there, which the note no longer gets to)
+	MelodyCell end;
+	end.kind = MelodyCell::Release;
+	end.row = last;
+	if (!cells.empty() && cells.back().row == last) {
+		vibrato = vibrato || cells.back().effect == '4';
+		cells.pop_back();
+	}
+	if (vibrato) {
+		end.effect = '4';
+		end.effectParam = 0;
+	}
+	cells.push_back(end);
+	return true;
+}
+
 }	// namespace transcribe

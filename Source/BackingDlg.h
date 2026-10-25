@@ -26,9 +26,11 @@
 class CFamiTrackerView;
 class CFamiTrackerDoc;
 
-// Edit > Add chords and bass line: which channel has the melody, the key
-// (found, or picked), where the chords and the bass line go and how often the
-// chords change, with a preview of the chords.
+// Edit > Add chords and bass line: the chords (found from the melody, typed by
+// name, or strummed on a guitar into the microphone or a WAV file and heard),
+// which channel has the melody, the key (found, or picked), where the chords
+// and the bass line go and how often found chords change, with a preview of
+// the chords.
 class CBackingDlg : public CDialog
 {
 	DECLARE_DYNAMIC(CBackingDlg)
@@ -38,6 +40,9 @@ public:
 
 	enum { IDD = IDD_BACKING };
 
+	// Chords to start with, heard in a strummed take ("| C | G | Am F |"), from the bar of song row Row on
+	void SetChords(const CString &Names, int Row);
+
 	backing_choice_t GetChoice() const;
 
 protected:
@@ -45,6 +50,9 @@ protected:
 	virtual void OnOK();
 	afx_msg void OnMelodyChanged();
 	afx_msg void OnOptionChanged();
+	afx_msg void OnChordsChanged();
+	afx_msg void OnStrum();
+	afx_msg void OnFromFile();
 
 	DECLARE_MESSAGE_MAP()
 
@@ -55,10 +63,16 @@ private:
 	void FillChannels(CComboBox &List, bool Chords);
 	void UpdatePreview();
 
+	void UseHeardChords(const CString &Names, int Row);
+
 	CFamiTrackerView *m_pView;
 	CFamiTrackerDoc *m_pDocument;
 	unsigned int m_iTrack;
 	backing_choice_t m_Choice;
+	CString m_sChords;		// heard or given before the dialog opened
+	int m_iChordsRow;		// song row of the bar the chords start in, -1: the melody's first (or the cursor's)
+	int m_iCursorBar;		// song row of the cursor's bar
+	bool m_bSettingChords;	// the dialog is writing the chords, not the user
 
 	CComboBox m_cMelody;
 	CComboBox m_cKey;
