@@ -16987,7 +16987,7 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 	Who.Core = Core;
 	std::vector<std::string> Made;
 	std::set<std::string> Seen;
-	const bool Show = std::getenv("WHAT_NEXT_SHOW") != 0;
+	const bool Show = !Environment("WHAT_NEXT_SHOW").empty();	// to see each step
 	Finished = false;
 	for (int i = 0; i < Most; ++i) {
 		const ToolResult Next = Tools.Call("what_next", Parse(Asked), Who);
@@ -17395,9 +17395,9 @@ void TestWhatNextChoices()
 // The small set fitted to the loop: what_next and the tools its steps call, the instructions and recipes around it
 void TestWhatNextCore()
 {
-	const char *const IN[] = { "what_next", "add_harmony", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key",
-		"set_swing", "check_loop", "fix_loop", "set_loop", "find_sound", "reference_sound" };
-	for (const char *Name : IN)
+	const char *const IN_SET[] = { "what_next", "add_harmony", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key",
+		"set_swing", "check_loop", "fix_loop", "set_loop", "find_sound", "reference_sound" };	// (IN is a macro of windows.h)
+	for (const char *Name : IN_SET)
 		Check(ToolSet::IsCoreTool(Name), Name, __LINE__);
 	CHECK(!ToolSet::IsCoreTool("add_counter_melody") && !ToolSet::IsCoreTool("set_mixer"));
 	const std::string Short = ToolSet::CoreInstructions();
