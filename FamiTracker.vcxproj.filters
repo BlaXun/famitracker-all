@@ -1796,4 +1796,30 @@
       <Filter>NSF importer</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Api\QrCode.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Api\QrCode.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\Api\PhoneTakes.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\Api\PhoneTakes.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\PhoneLink.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PhoneLink.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\PhoneDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PhoneDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>

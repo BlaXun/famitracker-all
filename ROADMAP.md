@@ -361,6 +361,14 @@ Plus).
   song holds at most 8 soft-layer sounds, 4 of them the starters, so the
   new ones come by name rather than with the starters. `reference_sound`
   still doesn't take its channels.
+- Done (25 October, on `feat-soft-references`): `reference_sound` takes
+  the soft channels. A studied sound becomes a wave sound there with the
+  original's envelopes: an N163 game's or module's sound with its own
+  waves (studies keep them now), another chip's with a wave from its
+  channel (its duty's pulse, a wave for each width of a duty click, the
+  triangle, the sawtooth, an FDS sound's wave). Each gets a wave place of
+  its own, and the sound browser and `find_sound` list the studied sounds
+  for the soft layer.
 
 ## 12. Ideas from Mario Paint
 
@@ -494,6 +502,9 @@ rules and fixing tool output by hand.
   which semitones rub (an echo F-4 over a pad's E-2 too); the breath check
   counts the spans the melody plays in and a held note in the span it
   starts in (a desert stage's draft paused in 3 of 16, its rewrite in 15).
+- Done (25 October, on `feat-soft-references`): `measure_mix` renders the
+  mix and every part alone in one pass, each part exactly as before, in
+  about half the time (a 40-bar track with nine parts).
 - On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
   knowledge work, the one-time work every later song reuses (what makes a
   track good, turned into the tools, the recipes and the guide), rather
@@ -532,9 +543,14 @@ when ready.
     the song playing a bar before; tapping the tempo instead of setting
     speed and tempo; chords typed by name ("C G Am F") or strummed on a
     guitar for Add chords and bass line.
+  - Ideas from the phone (October 2026, `feat-phone-takes`): Edit >
+    Record from your phone shows a QR code; the phone opens a page
+    FamiTracker serves on the home network, records a hummed idea (or
+    takes the phone's own recording) and sends it, and it becomes a clip
+    of the open song, named after the idea. See `RECORDER.md`, Ideas from
+    your phone.
 
-  Still to do, on a branch made from `beginner-friendly` again: a small
-  page on the phone that records ideas over Wi-Fi into the clips.
+  The steps planned for the recorder are all done now.
 - **`api` (merged into `recorder`, and with it into `beginner-friendly`;
   see `MCP.md`):**
   FamiTracker is the MCP server itself, speaking Streamable HTTP on

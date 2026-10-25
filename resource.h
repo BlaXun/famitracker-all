@@ -850,6 +850,18 @@
 // View > Pattern editor (MainFrm.cpp; View > Drum grid is ID_EDIT_DRUMGRID, in the Edit menu too)
 #define ID_VIEW_PATTERNEDITOR           37550
 
+// Edit > Record from your phone (PhoneDlg.cpp, PhoneLink.cpp; the page is res\phone.html)
+#define IDR_PHONE_PAGE                  640
+#define IDD_PHONE                       641
+#define ID_EDIT_RECORDPHONE             37600
+#define IDC_PHONE_QR                    2100
+#define IDC_PHONE_NETWORKS              2101
+#define IDC_PHONE_ADDRESS               2102
+#define IDC_PHONE_COPY                  2103
+#define IDC_PHONE_HINT                  2104
+#define IDC_PHONE_ALLOW                 2105
+#define IDC_PHONE_TAKES                 2106
+
 // The recorder's input: Edit > Start from a groove (GrooveDlg.cpp), and in the Record dialog
 // (RecordDlg.cpp) strummed chords, tapping the tempo, the groove and the selection; typed and
 // strummed chords in Add chords and bass line (BackingDlg.cpp). The groove's preview is

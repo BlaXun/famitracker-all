@@ -140,6 +140,8 @@ EMU2413_API void OPLL_calc_stereo(OPLL *, int32 out[2]) ;
    it (256: all of the channel); with every gain 256, both sides are what OPLL_calc gives */
 EMU2413_API void OPLL_calc_lr(OPLL *, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right) ;
 EMU2413_API void OPLL_calc_lr_ch(OPLL *, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval) ;
+EMU2413_API void OPLL_calc_lr_parts(OPLL *, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval,
+  int32 *extra) ;
 
 /* Misc */
 EMU2413_API void OPLL_setPatch(OPLL *, const uint8 *dump) ;

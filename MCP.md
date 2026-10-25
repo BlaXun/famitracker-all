@@ -103,8 +103,9 @@ before.
 ### A small set of tools for local models
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
-and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 19
+and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 20
 of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
+`place_clip` (ideas hummed into the phone or the microphone are clips),
 `add_instrument`, `design_instrument`, `set_instrument`,
 `add_chords_and_bass`, `add_drums`, `add_echo`, `set_tempo`, `polish`,
 `mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song`,
@@ -191,6 +192,33 @@ curl -H "Authorization: Bearer 1f3a..." -o Town.ogg http://192.168.1.10:46600/fi
 
 Only the OGG files next to the song can be fetched, by their names.
 
+### The phone page
+
+Edit > Record from your phone serves a page for recording ideas on a phone
+(see `RECORDER.md`, Ideas from your phone) at `/phone`, on the same port and
+with the same checks as the routes above. Its routes take a code of their own
+instead of the access code: `/phone?code=CODE` in the address the window's
+QR code carries, or `Authorization: Bearer CODE`. The code is worked out from
+the access code (the first 24 hex digits of its HMAC-SHA-256), so it opens
+only these routes: the access code doesn't open them, and their code doesn't
+reach `/mcp` or the files.
+
+- `GET /phone`: the page.
+- `GET /phone/takes`: the takes sent so far, newest first, as JSON: `takes`,
+  each with `idea`, `state` (`waiting`, `clip` or `failed`), `clip`,
+  `message`, `seconds`, `arrived` and `file`; and `waiting`.
+- `POST /phone/take?name=NAME`: a take, the request's body a WAV file of
+  16-bit PCM on one channel at 8000-48000 Hz, half a second to 3 minutes
+  (8 MB at most). The answer (202) has the take; it becomes a clip of the open
+  song a moment later, named after the idea, and `place_clip` takes it by
+  that name.
+
+A client with a shell sends a take itself:
+
+```
+curl -H "Authorization: Bearer CODE" -H "Content-Type: audio/wav" --data-binary @idea.wav "http://192.168.1.10:46600/phone/take?name=Town%20melody"
+```
+
 ### Over the network, safely
 
 - FamiTracker only answers addresses of home networks (10.x, 172.16-31.x,
@@ -198,9 +226,12 @@ Only the OGG files next to the song can be fetched, by their names.
   computer; any other address is closed off at once.
 - Every request needs the access code, files too. Web pages are turned away
   as before.
+- The phone page is the one web page FamiTracker answers, and only its own
+  requests, with its own code; other pages can't send it takes.
 - Never forward the port on your router: from outside, use Tailscale.
 - **New access code** in the dialog makes the old one stop working on the
-  other computer too: give it the new one.
+  other computer too: give it the new one. The phone page's code changes with
+  it: scan the QR code in Edit > Record from your phone again.
 
 ## Asking
 
@@ -413,7 +444,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
-| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)) |
+| `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
 | `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips, each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. A study's sounds of the same name are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
@@ -777,11 +808,14 @@ file written (the exported OGG files stay as they are).
   N163 voice (the soft layer's sub bass) is the bass. `mix` and
   `review_arrangement` hear the parts the same way.
 
-Each part alone is a render of its own, from the song's start to the last
-bar it needs, without the space's tail after: a two-minute song with seven
-parts is nine renders, about a minute on a slow computer. `stems` false
-measures the mix alone, in one render, and `parts` `["chords"]` checks the
-melody against the chords alone, in three.
+FamiTracker renders the mix and every part alone together, in one pass
+through the song without the space's tail after, and each part comes out
+exactly as a render of it alone would (a song of more than 16 parts takes
+another pass). Each part makes that pass a little slower than a render of
+the mix alone, but it's much faster than rendering the parts one by one,
+as earlier versions did: a 40-bar song with nine parts takes about half
+the time. `stems` false measures the mix alone, and `parts` `["chords"]`
+checks the melody against the chords alone.
 
 ## Stereo
 
@@ -1028,6 +1062,22 @@ properties** has a box for it.
   (`wave`, or the kind's: the soft flute's for a lead, the string pad's for
   a pad, the breath's and the music box's for theirs) with the envelope,
   vibrato and pitch you describe, each with a wave place of its own.
+- The sounds of your reference library play there too: `reference_sound`
+  with a soft channel makes a studied lead, pad or bass a wave sound with
+  the original's envelopes. An N163 game's or module's sound brings its
+  own waves and the sequence that steps through them (studies keep them
+  now; study a track again for one studied before), each wave resampled to
+  the 16 samples that play in tune; another chip's sound gets a wave from
+  its channel: its duty's pulse (a wave for each width a duty click steps
+  through), the triangle, the sawtooth, or an FDS sound's wave. Each takes
+  a wave place of its own, so several play together without touching each
+  other's waves, and the reply says how loud it plays, as `add_instrument`
+  does. A triangle sound sounds as written there, an octave over where the
+  triangle played it, and so does an N163 sound whose wave wasn't a cycle
+  of 16 samples (a cycle of 32 sounded an octave under its notes): the
+  reply says how far, so you can keep its register. `find_sound` and the
+  sound browser list the studied sounds under the soft layer too (an N163
+  sound at home there).
 - Underneath, the song is VRC6 + N163 with 4 channels, marked by a
   `BF VRC6PLUS` block, so other FamiTrackers open it as that and play it
   the same. Back to the VRC6 (`chips: ["VRC6"]`) clears the soft channels
@@ -1867,3 +1917,14 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   differently gets its own), and `SelectExpansionChip` moving the channels
   that stay to their new columns. `Source/Tests` checks it against the
   stand-in document.
+- `Source/Api/PhoneTakes.cpp` and `QrCode.cpp`: the phone page's routes
+  (`PhoneTakes::Handle`, which `HandleMcp` calls after its peer and Host
+  checks; `PhoneCode`, the page's code, HMAC-SHA-256 of the access code;
+  `CheckPhoneWav` and `IsIdeaName`, the checks before anything is kept), the
+  takes waiting until the song can take them (`Process`, through the
+  `PhoneHost` interface), and the QR encoder (byte mode, versions 1 to 40,
+  levels L to H, the mask the penalty rules pick), which `tests/PhoneTests.cpp`
+  compares with a reference encoder's codes. On Windows `Source/PhoneLink.cpp`
+  is the host (the `Recordings` folder, `GuessRecording` and `InsertRecording`
+  with a clip name), `Source/PhoneDlg.cpp` the window with the QR code, and
+  `res/phone.html` the page, built in as RCDATA.

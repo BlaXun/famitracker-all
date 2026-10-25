@@ -1486,7 +1486,7 @@ OPLL_calc (OPLL * opll)
 /* calc with channels 0-5 on each side by their gains (256: all of a channel), the others in the middle;
    chanval (when not NULL) gets channels 0-5's own values, before their gains */
 static void
-calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval)
+calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval, int32 *extra)
 {
   int32 inst = 0, perc = 0, instL = 0, instR = 0, outL, outR;
   int32 i;
@@ -1558,6 +1558,8 @@ calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16
   /* As calc ends: with gains of 256, (x * 256 + 128) >> 8 is x itself */
   outL = ((instL + 128) >> 8) + inst + (perc << 1);
   outR = ((instR + 128) >> 8) + inst + (perc << 1);
+  if (extra != NULL)
+    *extra = inst + (perc << 1);
   *left = (int16) ((int16) outL << 3);
   *right = (int16) ((int16) outR << 3);
 }
@@ -1572,7 +1574,7 @@ OPLL_calc_lr (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, 
     return;
   }
 #endif
-  calc_lr (opll, gainL, gainR, left, right, NULL);
+  calc_lr (opll, gainL, gainR, left, right, NULL, NULL);
 }
 
 /* The same, with channels 0-5's own values in chanval (6 of them; all 0 with the rate converter, which mixes
@@ -1590,7 +1592,27 @@ OPLL_calc_lr_ch (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *lef
     return;
   }
 #endif
-  calc_lr (opll, gainL, gainR, left, right, chanval);
+  calc_lr (opll, gainL, gainR, left, right, chanval, NULL);
+}
+
+/* The same, and in extra what channels 6-8 add to both sides (the rhythm, in FamiTracker nothing), so that a mix of
+   some of channels 0-5 can be made from chanval as calc_lr makes its own (CMixer::SetStems, this FamiTracker's own);
+   with the rate converter chanval and extra are 0 */
+void
+OPLL_calc_lr_parts (OPLL * opll, const int32 *gainL, const int32 *gainR, int16 *left, int16 *right, int32 *chanval, int32 *extra)
+{
+#ifndef EMU2413_COMPACTION
+  if (opll->quality)
+  {
+    int i;
+    for (i = 0; i < 6; i++)
+      chanval[i] = 0;
+    *extra = 0;
+    *left = *right = OPLL_calc (opll);
+    return;
+  }
+#endif
+  calc_lr (opll, gainL, gainR, left, right, chanval, extra);
 }
 
 uint32

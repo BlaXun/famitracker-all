@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<!-- FamiTracker's phone page (Edit > Record from your phone; Source/Api/PhoneTakes.h, RECORDER.md).
+     Records an idea, or takes what the phone's own recorder made, turns it into a 16-bit mono WAV file
+     at 22050 Hz and sends it to FamiTracker, which makes it a clip. Plain ASCII, nothing from elsewhere. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>FamiTracker: record an idea</title>
+<style>
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0 auto; padding: 16px; max-width: 520px;
+	line-height: 1.4; background: #f6f4ef; color: #222; }
+h1 { font-size: 1.35em; margin: 6px 0 4px; }
+h2 { font-size: 1.1em; margin: 22px 0 4px; }
+.hint, .what, footer { color: #555; }
+label { display: block; margin: 16px 0 6px; font-weight: 600; }
+input[type=text] { width: 100%; box-sizing: border-box; font-size: 1.15em; padding: 10px; border: 1px solid #aaa; border-radius: 8px; }
+#record { display: block; width: 100%; height: 120px; margin: 18px 0 8px; border: none; border-radius: 60px; background: #d33;
+	color: #fff; font-size: 1.45em; font-weight: 700; cursor: pointer; }
+#record.recording { background: #333; }
+#record:disabled { opacity: 0.5; }
+#level { height: 8px; background: #ddd; border-radius: 4px; overflow: hidden; visibility: hidden; }
+#level div { height: 100%; width: 0; background: #3a3; }
+#status { min-height: 1.4em; margin: 8px 0; font-weight: 600; }
+ul { list-style: none; padding: 0; margin: 0; }
+li { padding: 10px 0; border-bottom: 1px solid #ddd; }
+li .title { font-weight: 600; }
+li.failed .what { color: #a22; }
+button.again { margin-top: 6px; font-size: 1em; padding: 6px 14px; }
+footer { margin-top: 20px; font-size: 0.88em; }
+@media (prefers-color-scheme: dark) {
+	body { background: #1d1d1f; color: #eee; }
+	.hint, .what, footer { color: #aaa; }
+	input[type=text] { background: #2a2a2c; color: #eee; border-color: #555; }
+	li { border-color: #333; }
+	li.failed .what { color: #f77; }
+}
+</style>
+</head>
+<body>
+<h1>Record an idea</h1>
+<p class="hint">Hum, sing or whistle a tune. It goes into FamiTracker's clips, ready to drag into a song.</p>
+<label for="name">Name of the idea</label>
+<input type="text" id="name" placeholder="Idea" autocomplete="off" enterkeyhint="done">
+<button id="record" type="button">&#9679; Record</button>
+<input type="file" id="file" accept="audio/*" capture hidden>
+<div id="level"><div></div></div>
+<div id="status" role="status"></div>
+<h2>Sent so far</h2>
+<ul id="takes"></ul>
+<footer id="foot">Your phone and the PC must be on the same home network.</footer>
+<script>
+(function () {
+	'use strict';
+	var RATE = 22050, MAX_SECONDS = 180, MIN_SECONDS = 0.5, MAX_NAME_BYTES = 60;
+	var code = new URLSearchParams(location.search).get('code') || '';
+	var nameBox = document.getElementById('name'), button = document.getElementById('record');
+	var fileInput = document.getElementById('file'), statusLine = document.getElementById('status');
+	var list = document.getElementById('takes'), foot = document.getElementById('foot'), level = document.getElementById('level');
+	// The microphone works only on a secure page (https, or localhost); elsewhere the phone's own recorder records
+	var inPage = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+	var pending = [], sent = [], recorder = null, stream = null, chunks = [], startedAt = 0, clock = 0, meter = null, poll = 0;
+	var busy = false;
+
+	function say(text) { statusLine.textContent = text; }
+
+	function idleLabel() {
+		button.textContent = inPage ? '\u25CF Record' : '\u25CF Record with the phone\'s recorder';
+	}
+
+	function utf8Bytes(text) { return unescape(encodeURIComponent(text)).length; }
+
+	// What a file and a clip can be called: no \ / : * ? " < > | or control characters, at most 60 bytes
+	function cleanName(text) {
+		var chars = Array.from(text.replace(/[\\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim());
+		while (chars.length && utf8Bytes(chars.join('')) > MAX_NAME_BYTES)
+			chars.pop();
+		return chars.join('').trim();
+	}
+
+	function errorText(status, body) {
+		if (body && typeof body.error === 'string')
+			return body.error;
+		if (body && body.error && body.error.message)
+			return body.error.message;
+		return 'FamiTracker refused it (' + status + ').';
+	}
+
+	function item(title, what, kind) {
+		var li = document.createElement('li'), a = document.createElement('div'), b = document.createElement('div');
+		if (kind)
+			li.className = kind;
+		a.className = 'title';
+		a.textContent = title;
+		b.className = 'what';
+		b.textContent = what;
+		li.appendChild(a);
+		li.appendChild(b);
+		return li;
+	}
+
+	function render() {
+		list.textContent = '';
+		pending.forEach(function (take) {
+			var li = item(take.name || 'Idea', take.sending ? 'Sending...' : take.error || 'Not sent yet.', take.error ? 'failed' : '');
+			if (!take.sending) {
+				var again = document.createElement('button');
+				again.type = 'button';
+				again.className = 'again';
+				again.textContent = 'Send again';
+				again.onclick = function () { send(take); };
+				li.appendChild(again);
+			}
+			list.appendChild(li);
+		});
+		sent.forEach(function (take) {
+			list.appendChild(item(take.clip || take.idea || 'Idea', take.message + ' (' + take.arrived + ', ' + take.seconds + ' s)',
+				take.state));
+		});
+		if (!pending.length && !sent.length)
+			list.appendChild(item('Nothing yet', 'Your ideas show here once they arrive.', ''));
+	}
+
+	function refresh() {
+		clearTimeout(poll);
+		fetch('/phone/takes', { headers: { 'Authorization': 'Bearer ' + code }, cache: 'no-store' }).then(function (response) {
+			return response.json().then(function (body) {
+				if (!response.ok)
+					throw new Error(errorText(response.status, body));
+				sent = body.takes || [];
+				render();
+				if (body.waiting)
+					poll = setTimeout(refresh, 1500);
+			});
+		}).catch(function (problem) {
+			say(problem && problem.message ? problem.message : 'FamiTracker didn\'t answer.');
+			poll = setTimeout(refresh, 8000);
+		});
+	}
+
+	function send(take) {
+		take.sending = true;
+		take.error = '';
+		render();
+		fetch('/phone/take?name=' + encodeURIComponent(take.name), { method: 'POST', cache: 'no-store',
+			headers: { 'Authorization': 'Bearer ' + code, 'Content-Type': 'audio/wav' }, body: take.wav }).then(function (response) {
+			return response.json().catch(function () { return {}; }).then(function (body) {
+				take.sending = false;
+				if (!response.ok) {
+					take.error = errorText(response.status, body);
+					say('That take wasn\'t sent.');
+					render();
+					return;
+				}
+				pending.splice(pending.indexOf(take), 1);
+				say('Sent' + (take.name ? ' "' + take.name + '"' : '') + '.' + (take.cut ? ' (Only its first 3 minutes.)' : ''));
+				refresh();
+			});
+		}, function () {
+			take.sending = false;
+			take.error = 'FamiTracker didn\'t answer. Is the PC on, with FamiTracker open, and the phone on the same network?';
+			say('That take wasn\'t sent.');
+			render();
+		});
+	}
+
+	function readBlob(blob) {
+		if (blob.arrayBuffer)
+			return blob.arrayBuffer();
+		return new Promise(function (resolve, reject) {
+			var reader = new FileReader();
+			reader.onload = function () { resolve(reader.result); };
+			reader.onerror = function () { reject(reader.error); };
+			reader.readAsArrayBuffer(blob);
+		});
+	}
+
+	function decode(bytes) {
+		var Context = window.AudioContext || window.webkitAudioContext;
+		var context = new Context();
+		return new Promise(function (resolve, reject) {
+			var promise = context.decodeAudioData(bytes, resolve, reject);
+			if (promise && promise.then)
+				promise.then(resolve, reject);
+		}).then(function (buffer) {
+			if (context.close)
+				context.close();
+			return buffer;
+		}, function (problem) {
+			if (context.close)
+				context.close();
+			throw problem;
+		});
+	}
+
+	// One channel at 22050 Hz, as FamiTracker reads it
+	function toMono(buffer, length) {
+		var Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+		if (Offline) {
+			try {
+				var offline = new Offline(1, length, RATE), source = offline.createBufferSource();
+				source.buffer = buffer;
+				source.connect(offline.destination);
+				source.start(0);
+				return new Promise(function (resolve, reject) {
+					offline.oncomplete = function (event) { resolve(event.renderedBuffer.getChannelData(0)); };
+					var promise = offline.startRendering();
+					if (promise && promise.then)
+						promise.then(function (rendered) { resolve(rendered.getChannelData(0)); }, reject);
+				});
+			}
+			catch (problem) {
+				// below, by hand
+			}
+		}
+		var out = new Float32Array(length), channels = [], step = buffer.sampleRate / RATE;
+		for (var c = 0; c < buffer.numberOfChannels; c++)
+			channels.push(buffer.getChannelData(c));
+		for (var i = 0; i < length; i++) {
+			var at = i * step, k = Math.floor(at), part = at - k, sum = 0;
+			for (var n = 0; n < channels.length; n++) {
+				var a = channels[n][k] || 0, b = channels[n][k + 1] || 0;
+				sum += a + (b - a) * part;
+			}
+			out[i] = sum / channels.length;
+		}
+		return Promise.resolve(out);
+	}
+
+	function wavFile(samples) {
+		var count = samples.length, bytes = new ArrayBuffer(44 + count * 2), view = new DataView(bytes);
+		function text(at, value) {
+			for (var i = 0; i < value.length; i++)
+				view.setUint8(at + i, value.charCodeAt(i));
+		}
+		text(0, 'RIFF');
+		view.setUint32(4, 36 + count * 2, true);
+		text(8, 'WAVE');
+		text(12, 'fmt ');
+		view.setUint32(16, 16, true);
+		view.setUint16(20, 1, true);		// PCM
+		view.setUint16(22, 1, true);		// mono
+		view.setUint32(24, RATE, true);
+		view.setUint32(28, RATE * 2, true);
+		view.setUint16(32, 2, true);
+		view.setUint16(34, 16, true);
+		text(36, 'data');
+		view.setUint32(40, count * 2, true);
+		for (var i = 0; i < count; i++) {
+			var s = Math.max(-1, Math.min(1, samples[i]));
+			view.setInt16(44 + i * 2, s < 0 ? s * 32768 : s * 32767, true);
+		}
+		return new Blob([bytes], { type: 'audio/wav' });
+	}
+
+	function takeAudio(blob) {
+		var name = cleanName(nameBox.value);
+		busy = true;
+		button.disabled = true;
+		say('Getting the take ready...');
+		readBlob(blob).then(decode).then(function (buffer) {
+			var seconds = Math.min(buffer.duration, MAX_SECONDS);
+			if (seconds < MIN_SECONDS)
+				throw new Error('That was too short. Record a little longer.');
+			return toMono(buffer, Math.round(seconds * RATE)).then(function (samples) {
+				var peak = 0;
+				for (var i = 0; i < samples.length; i++)
+					peak = Math.max(peak, Math.abs(samples[i]));
+				if (peak < 0.0005)
+					throw new Error('That take is silent. Did the phone hear you?');
+				var gain = Math.min(0.7 / peak, 30);	// a quiet take a little louder, as FamiTracker hears it best
+				if (gain > 1)
+					for (var k = 0; k < samples.length; k++)
+						samples[k] *= gain;
+				var take = { name: name, wav: wavFile(samples), cut: buffer.duration > MAX_SECONDS };
+				pending.unshift(take);
+				nameBox.value = '';
+				send(take);
+			});
+		}).catch(function (problem) {
+			var known = problem && problem.message && /too short|silent/.test(problem.message);
+			say(known ? problem.message : 'This recording couldn\'t be read here. Record it again, or use a recorder app that saves ' +
+				'm4a, mp3 or webm.');
+		}).then(function () {
+			busy = false;
+			button.disabled = false;
+		});
+	}
+
+	function showLevel(source) {
+		try {
+			var Context = window.AudioContext || window.webkitAudioContext, context = new Context();
+			var analyser = context.createAnalyser(), data = new Uint8Array(1024);
+			analyser.fftSize = 1024;
+			context.createMediaStreamSource(source).connect(analyser);
+			meter = { context: context, frame: 0 };
+			level.style.visibility = 'visible';
+			(function draw() {
+				analyser.getByteTimeDomainData(data);
+				var peak = 0;
+				for (var i = 0; i < data.length; i++)
+					peak = Math.max(peak, Math.abs(data[i] - 128));
+				level.firstChild.style.width = Math.min(100, peak / 128 * 150) + '%';
+				meter.frame = requestAnimationFrame(draw);
+			})();
+		}
+		catch (problem) {
+			meter = null;
+		}
+	}
+
+	function hideLevel() {
+		if (meter) {
+			cancelAnimationFrame(meter.frame);
+			if (meter.context.close)
+				meter.context.close();
+			meter = null;
+		}
+		level.style.visibility = 'hidden';
+	}
+
+	function tick() {
+		var seconds = Math.floor((Date.now() - startedAt) / 1000);
+		button.textContent = '\u25A0 Stop   ' + Math.floor(seconds / 60) + ':' + ('0' + seconds % 60).slice(-2);
+		if (seconds >= MAX_SECONDS)
+			stopRecording();
+	}
+
+	function pickType() {
+		var types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+		for (var i = 0; i < types.length; i++)
+			if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(types[i]))
+				return types[i];
+		return '';
+	}
+
+	function startRecording() {
+		say('Asking for the microphone...');
+		navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+			.then(function (source) {
+				var type = pickType();
+				stream = source;
+				chunks = [];
+				recorder = type ? new MediaRecorder(source, { mimeType: type }) : new MediaRecorder(source);
+				recorder.ondataavailable = function (event) {
+					if (event.data && event.data.size)
+						chunks.push(event.data);
+				};
+				recorder.onstop = function () {
+					var blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' });
+					stream.getTracks().forEach(function (track) { track.stop(); });
+					recorder = null;
+					idleLabel();
+					takeAudio(blob);
+				};
+				recorder.start(1000);
+				startedAt = Date.now();
+				button.classList.add('recording');
+				say('Recording: hum your idea, then press Stop.');
+				tick();
+				clock = setInterval(tick, 250);
+				showLevel(source);
+			}, function (problem) {
+				say(problem && problem.name === 'NotAllowedError' ? 'The browser didn\'t let this page use the microphone: allow it ' +
+					'for this page in the browser\'s settings and try again.' : 'The microphone didn\'t start (' +
+					(problem && problem.message ? problem.message : problem) + ').');
+			});
+	}
+
+	function stopRecording() {
+		clearInterval(clock);
+		button.classList.remove('recording');
+		hideLevel();
+		if (recorder && recorder.state !== 'inactive')
+			recorder.stop();
+	}
+
+	button.onclick = function () {
+		if (busy)
+			return;
+		if (!inPage)
+			fileInput.click();
+		else if (recorder)
+			stopRecording();
+		else
+			startRecording();
+	};
+	fileInput.onchange = function () {
+		var file = fileInput.files && fileInput.files[0];
+		fileInput.value = '';
+		if (file)
+			takeAudio(file);
+	};
+	document.addEventListener('visibilitychange', function () {
+		if (!document.hidden)
+			refresh();
+	});
+
+	idleLabel();
+	if (!inPage)
+		foot.textContent = 'Your phone and the PC must be on the same home network. This page can\'t use the microphone itself ' +
+			'on a plain http address, so the button opens your phone\'s recorder; through Tailscale\'s https address it records ' +
+			'right here.';
+	if (!code)
+		say('This address has no code: in FamiTracker, open Edit > Record from your phone and scan the QR code again.');
+	render();
+	refresh();
+})();
+</script>
+</body>
+</html>

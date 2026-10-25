@@ -158,6 +158,10 @@ again, as copies or linked.
   Sound effect from your voice records "pew", "boing" or "kssh", stops by
   itself when the sound is over, plays it as the NES would and adds it as a
   track that plays once, for the export for games.
+- [x] Ideas from your phone (`PhoneDlg.cpp`, `PhoneLink.cpp`,
+  `Api/PhoneTakes.cpp`, the page `res/phone.html`; see above): Edit > Record
+  from your phone shows a QR code of a page FamiTracker serves on the home
+  network, and an idea hummed into the phone becomes a clip of the open song.
 - [x] More natural input (October 2026; see Recording in FamiTracker):
   - **Start from a groove** (Edit > Start from a groove, or the button in
     Record from microphone): pick a mood (town, overworld, battle, boss,
@@ -258,6 +262,81 @@ takes the clicks out of drum takes, but a song playing along can still end up
 in a melody. If the notes come out late, press Test timing once and tap
 along. If the meter says "No sound?", check that Windows' privacy settings let
 apps use the microphone.
+
+## Ideas from your phone
+
+A tune often comes when you're away from the PC. Edit > Record from your
+phone lets the phone keep it: hum it into the phone, and it arrives in the
+song's clips.
+
+1. In FamiTracker: **Edit > Record from your phone...** A small window shows
+   a QR code and its address. Your phone and the PC must be on the same home
+   network (the same Wi-Fi).
+2. The first time, FamiTracker only listens to this PC: press **Allow
+   connections from other computers on my network** (the same setting as in
+   File > Connect Claude Code). Windows may ask whether FamiTracker may use
+   the network: allow private networks.
+3. Scan the code with the phone's camera. The page opens: a name for the
+   idea, one big button and the takes sent so far. Bookmark it, or add it to
+   the home screen, to record later without opening the window again.
+4. Type a name, press the button, hum or whistle, and press it again (or, on
+   the plain home-network address, record with the phone's recorder: below).
+   The page sends the take, and a moment later it's a clip of the open song,
+   named after the idea ("Idea 1" without a name), in the clips panel. The
+   page's list says "In the clips as ...".
+
+The take is transcribed as Record from microphone transcribes a take, but
+without a click: its first note lands on the clip's first row, at the
+selected track's speed and tempo, on the lead's channel (the first VRC6
+pulse, or the 2A03's first pulse). Humming, singing and whistling become a
+melody, taps drums. The song's patterns don't change: drag the clip where you
+want it, or ask Claude Code to place it (`place_clip` takes it by its name).
+The take is kept in the `Recordings` folder next to FamiTracker.exe as
+"Phone <date> <time> <name>.wav". While FamiTracker is busy (a dialog is open,
+say), the take waits there and the page says so; it becomes a clip as soon as
+FamiTracker is free. The page makes a quiet take louder before it sends it
+(up to 30 times), and takes up to 3 minutes; the window lists the last ideas
+that arrived.
+
+### The phone's microphone, and Tailscale
+
+Browsers only let a page use the microphone on a secure address (https, or
+the computer itself). The address in the QR code is plain http on your home
+network, so there the button opens the phone's own recorder (on Android; an
+iPhone may offer its files instead: record a voice memo first, save it to
+Files, then pick it). The page reads what the recorder made (m4a, webm, 3gp, mp3), turns
+it into a WAV file of one channel at 22050 Hz itself and sends that, so
+FamiTracker only ever reads WAV files. To record right in the page:
+
+- **Tailscale's https:** with Tailscale on the PC and the phone, and HTTPS
+  certificates turned on for your tailnet, run `tailscale serve --bg 46600`
+  on the PC once. Then open `https://<pc-name>.<tailnet>.ts.net/phone?code=...`
+  on the phone, with the code from the window's address. FamiTracker must
+  allow connections from other computers (it checks the name a request is
+  sent to), and the PC's name on Tailscale must be its Windows name.
+- **Chrome on Android:** in chrome://flags, add the window's address
+  (`http://192.168.1.10:46600`) under "Insecure origins treated as secure"
+  and restart Chrome.
+
+The window's Network list also has this PC's name. With Tailscale on the
+phone, a code of the name works wherever the phone is (Tailscale's MagicDNS
+finds the PC by its name), and some home routers know the name too; it's
+plain http, so there the phone's recorder records.
+
+### Safe at home
+
+- Every request needs the code in the QR code's address. It's a code of its
+  own, worked out from the access code, so the address in the phone's history
+  (perhaps synced to the cloud) can only send takes and list them, never drive
+  Claude Code's tools. New access code (File > Connect Claude Code) changes
+  it: scan the code again.
+- A take must be a WAV file of 16-bit sound on one channel, half a second to
+  3 minutes long; anything else is refused before FamiTracker reads it, and
+  a name can't hold folders.
+- With "Allow connections from other computers on my network" off, nothing
+  but this PC is answered; with it on, only home networks' and Tailscale's
+  addresses, never the internet. Other web pages can't send takes. See
+  `MCP.md`, Over the network, safely.
 
 ## Sound effects from your voice
 

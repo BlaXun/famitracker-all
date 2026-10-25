@@ -36,6 +36,9 @@ public:
 	uint8 Read(uint16 Address, bool &Mapped);
 	void EndFrame();
 	void Process(uint32 Time);
+	// Stems (CMixer::SetStems, this FamiTracker's own): each one's samples, made from the channels' values as the mix's
+	// are, with the levels and pans its mixer has; Count 0 for none
+	void SetStems(int Count);
 
 protected:
 	static const float  AMPLIFY;
@@ -51,6 +54,18 @@ private:
 	int16	*m_pOwn[6][2];		// the channels the mixer has in buffers of their own (Depth): each one's sides
 	int32	m_iOwnLast[6][2];
 	uint32	m_iBufferPtr;
+	int32	m_iLastSample[2];	// each side's last sample (a sample is the average with the one before)
+
+	// Stems: for each, its two sides and each channel's own two (as m_pOwn), m_iMaxSamples samples each, and the last
+	// sample of each of them
+	static const int STEM_BUFFERS = 14;
+	int		m_iStems;
+	int16	*m_pStemSamples;
+	int32	*m_pStemLast;
+	int16	*StemBuffer(int Stem, int Buffer) const { return m_pStemSamples + (Stem * STEM_BUFFERS + Buffer) * m_iMaxSamples; }
+	int32	&StemLast(int Stem, int Buffer) const { return m_pStemLast[Stem * STEM_BUFFERS + Buffer]; }
+	int16	Finished(int32 RawSample, int32 &Last) const;	// clipped, at the volume, the average with the one before
+	void	FreeStems();
 
 	uint8	m_iSoundReg;
 

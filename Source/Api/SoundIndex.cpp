@@ -341,7 +341,7 @@ public:
 	void References(const std::vector<Reference> &Library)
 	{
 		static const int TARGETS[] = { TARGET_PULSE, TARGET_TRIANGLE, TARGET_NOISE, TARGET_MMC5, TARGET_VRC6_PULSE,
-			TARGET_SAWTOOTH, TARGET_FDS, TARGET_S5B };
+			TARGET_SAWTOOTH, TARGET_FDS, TARGET_S5B, TARGET_N163, TARGET_SOFT };
 		for (size_t r = 0; r < Library.size(); ++r) {
 			const Reference &R = Library[r];
 			// Its sounds' names, numbered where two have the same ("Green Planet lead 2"), so each can be added
@@ -354,7 +354,8 @@ public:
 				const int Home = ReferenceHome(Sound);
 				const int Same = static_cast<int>(std::count(Names.begin(), Names.begin() + static_cast<std::ptrdiff_t>(s), Names[s]));
 				const std::string Short = Same == 0 ? Names[s] : Names[s] + " " + std::to_string(Same + 1);
-				// As reference_sound makes it: a preset for the 2A03, the VRC6 and the 5B, an FDS sound for the FDS
+				// As reference_sound makes it: a preset for the 2A03, the VRC6 and the 5B, an FDS sound for the FDS, a wave
+				// sound for the N163 (the VRC6 Plus's soft layer)
 				const Preset Made = ReferencePreset(Sound, Short);
 				const std::string Kind = ReferenceKind(Sound);
 				const std::string Track = R.Game.empty() ? R.Id : R.Game + (R.Track > 0 ? ", track " + std::to_string(R.Track) :
@@ -365,7 +366,8 @@ public:
 				for (size_t t = 0; t < R.Tags.size(); ++t)
 					Extra += " " + R.Tags[t];
 				InstrumentInfo Info[TARGET_COUNT];
-				bool Made2A03 = false, MadeVrc6 = false, MadeSaw = false;
+				bool Made2A03 = false, MadeVrc6 = false, MadeSaw = false, MadeWave = false;
+				std::string WaveName;
 				for (size_t t = 0; t < sizeof(TARGETS) / sizeof(TARGETS[0]); ++t) {
 					const int Target = TARGETS[t];
 					if (!Has(Target) || Sound.Noise != (Target == TARGET_NOISE))
@@ -383,6 +385,17 @@ public:
 					}
 					else if (Target == TARGET_S5B)
 						I = SequencesInfo(Preset5BSequences(Made), "5B");
+					else if (Target == TARGET_N163 || Target == TARGET_SOFT) {
+						if (!MadeWave) {
+							std::string How;
+							const WaveSound W = ReferenceWaveSound(Sound, Short, How);
+							WaveName = W.InstrumentName();
+							Info[TARGET_N163] = SequencesInfo(W.Sequences, "N163");
+							MadeWave = true;
+						}
+						Name = WaveName;
+						I = Info[TARGET_N163];
+					}
 					else if (Target == TARGET_SAWTOOTH) {
 						if (!MadeSaw) {
 							std::vector<PresetSequence> Sequences = Made.SequencesVRC6;
@@ -505,7 +518,8 @@ private:
 	}
 
 	// Where reference_sound puts a sound when it's given no channel: a VRC6 sound on the VRC6 (its sawtooth's on
-	// the sawtooth) and an FDS sound on the FDS when the song has them, the others on the 2A03's channel of their kind
+	// the sawtooth), an FDS sound on the FDS and an N163 sound on the N163 (the VRC6 Plus's soft layer) when the song
+	// has them, the others on the 2A03's channel of their kind
 	int ReferenceHome(const ReferenceSound &Sound) const
 	{
 		if (Sound.Noise)
@@ -514,6 +528,8 @@ private:
 			return Sound.Sawtooth && Has(TARGET_SAWTOOTH) ? TARGET_SAWTOOTH : TARGET_VRC6_PULSE;
 		if (Sound.Chip == "FDS" && Has(TARGET_FDS))
 			return TARGET_FDS;
+		if (Sound.Chip == "N163" && (Has(TARGET_SOFT) || Has(TARGET_N163)))
+			return Has(TARGET_SOFT) ? TARGET_SOFT : TARGET_N163;
 		return Sound.Triangle ? TARGET_TRIANGLE : TARGET_PULSE;
 	}
 

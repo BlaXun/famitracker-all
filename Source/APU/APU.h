@@ -86,6 +86,11 @@ public:
 	// The DPCM's output at Level (0-127) as if it had always been there: as a song starts with the level its first row
 	// sets, which a $4011 write would step up to from silence, a pop (this FamiTracker's own)
 	void	StartDAC(uint8 Level);
+	// Stems (CMixer::SetStems, this FamiTracker's own): renders of some channels alone made with this one's, each
+	// frame's samples given to IAudioCallback::FlushStem after FlushBuffer has the mix's. Set them as a render starts
+	// (after Reset and ClearSpace); pSilent[Stem][ChanID] the channels left out of each, by the mixer's IDs; Count 0
+	// for none
+	void	SetStems(int Count, const bool (*pSilent)[CHANNELS]);
 
 #ifdef LOGGING
 	void	Log();

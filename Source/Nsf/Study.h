@@ -54,6 +54,8 @@ struct StudySound {
 	std::vector<int> FdsWave;	// an FDS sound's wave (64 samples, 0-63) and modulation table (32 steps, 0-7), as its
 	std::vector<int> FdsMod;	// instrument has them; empty for the other chips' sounds
 	int ModRate, ModDepth, ModDelay;	// and its modulator's speed, depth and delay
+	std::vector<std::vector<int> > N163Waves;	// an N163 sound's waves (its instrument's wave size each, 0-15) and its
+	Macro N163WaveSteps;		// wave sequence (which of them plays, frame by frame; empty for one wave); empty for the others
 	StudySound() : Kind(INST_2A03), Sawtooth(false), Noise(false), Triangle(false), Notes(0), Share(0), TypicalNote(48), ModRate(0),
 		ModDepth(0), ModDelay(0) {}
 };

@@ -84,6 +84,9 @@ public:
 	// sends while it's silent it does nothing.
 	void Process(const float *pSendLeft, const float *pSendRight, float *pLeft, float *pRight, int Count);
 	bool Idle() const { return m_bIdle; }		// silent and nothing in its lines
+	int Room() const { return m_iRoom; }		// as Set was given them
+	double EchoSeconds() const { return m_dEchoSeconds; }
+	int Repeats() const { return m_iRepeats; }
 
 	// What a repeat of the echo is of the one before it, for a number of repeats: the repeat after
 	// the last comes 30 dB under the first

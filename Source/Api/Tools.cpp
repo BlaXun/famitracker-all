@@ -15886,18 +15886,19 @@ struct MixRender {
 
 typedef std::vector<std::pair<size_t, size_t> > SampleSpans;
 
-// The track rendered for Seconds from its start, without the space's tail after, the channels Silent marks left out
-MixRender RenderMix(Session &S, double Seconds, const std::vector<bool> &Silent, const std::string &What)
+// A render of the track from its start without the space's tail after, the channels Silent marks left out
+RenderOptions MixOptions(const std::vector<bool> &Silent, const std::string &What)
 {
-	MixRender R;
 	RenderOptions Options;
 	Options.Silent = Silent;
 	Options.Tail = false;
 	Options.What = What;
-	std::vector<std::pair<int, long long> > Marks;
-	std::string Error;
-	if (!S.Host().RenderTrack(S.Song.Track, Seconds, Options, R.Left, R.Right, R.Rate, Marks, Error))
-		throw Problem("The track couldn't be rendered: " + Error);
+	return Options;
+}
+
+// Where each song row sounds in a render, from its marks
+void MarkRows(const Session &S, MixRender &R, const std::vector<std::pair<int, long long> > &Marks)
+{
 	R.Right.resize(R.Left.size());
 	const int Total = S.Time.TotalRows();
 	R.Begin.assign(static_cast<size_t>(Total), -1);
@@ -15910,6 +15911,17 @@ MixRender RenderMix(Session &S, double Seconds, const std::vector<bool> &Silent,
 		R.Begin[static_cast<size_t>(Row)] = std::min(Size, Marks[i].second);
 		R.End[static_cast<size_t>(Row)] = std::min(Size, i + 1 < Marks.size() ? Marks[i + 1].second : Size);
 	}
+}
+
+// The Index-th of renders made together (SongHost::RenderParts)
+MixRender TakeMix(const Session &S, RenderSet &Made, size_t Index)
+{
+	MixRender R;
+	std::vector<std::pair<int, long long> > Marks;
+	std::string Error;
+	if (!Made.Take(Index, R.Left, R.Right, R.Rate, Marks, Error))
+		throw Problem("The track couldn't be rendered: " + Error);
+	MarkRows(S, R, Marks);
 	return R;
 }
 
@@ -16114,7 +16126,24 @@ std::string SoundMeasure(Session &S, const Json &Args, const TrackUse &Use)
 		Short = false;
 		return Spans.empty() ? -70.0 : SoundLoudness(R.Left, R.Right, R.Rate, Spans[0].first, Spans[0].second - Spans[0].first, Short);
 	};
-	const MixRender Mix = RenderMix(S, Seconds, std::vector<bool>(), "the sound");
+	// The sound, and with it each channel alone (the others silent, their effects playing), all in one pass (RenderParts)
+	std::vector<int> Playing;
+	for (int c = 0; c < S.ChannelCount() && Stems; ++c)
+		if (!S.Notes(c).empty())
+			Playing.push_back(c);
+	if (Playing.size() < 2)
+		Playing.clear();
+	std::vector<RenderOptions> Renders(1, MixOptions(std::vector<bool>(), "the sound"));
+	for (size_t p = 0; p < Playing.size(); ++p) {
+		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
+		Silent[static_cast<size_t>(Playing[p])] = false;
+		Renders.push_back(MixOptions(Silent, ShortChannelName(S, Playing[p]) + " alone"));
+	}
+	std::string RenderError;
+	const std::unique_ptr<RenderSet> Made = S.Host().RenderParts(S.Song.Track, Seconds, Renders, RenderError);
+	if (!Made)
+		throw Problem("The track couldn't be rendered: " + RenderError);
+	const MixRender Mix = TakeMix(S, *Made, 0);
 	const SampleSpans Sound = Whole(Mix);
 	bool Short = false;
 	const double Lufs = Loudness(Mix, Sound, Short);
@@ -16143,20 +16172,12 @@ std::string SoundMeasure(Session &S, const Json &Args, const TrackUse &Use)
 	const double Samples = static_cast<double>(std::max<size_t>(1, Count));
 	Text += Format("\nSides: left %.1f, right %.1f dB RMS, %.1f dB apart.", PowerDb(Left / Samples) + Gain, PowerDb(Right / Samples) + Gain,
 		std::fabs(PowerDb(Left / Samples) - PowerDb(Right / Samples)));
-	if (!Stems)
-		return Text;
-	// Each channel alone, its effects playing
-	std::vector<int> Playing;
-	for (int c = 0; c < S.ChannelCount(); ++c)
-		if (!S.Notes(c).empty())
-			Playing.push_back(c);
-	if (Playing.size() < 2)
+	// Each channel alone, its effects playing (none without stems, or with one channel playing)
+	if (Playing.empty())
 		return Text;
 	Text += "\nEach channel alone (the others silent), over the whole sound:";
 	for (size_t p = 0; p < Playing.size(); ++p) {
-		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
-		Silent[static_cast<size_t>(Playing[p])] = false;
-		const MixRender Alone = RenderMix(S, Seconds, Silent, ShortChannelName(S, Playing[p]) + " alone");
+		const MixRender Alone = TakeMix(S, *Made, p + 1);
 		bool Brief = false;
 		const SampleSpans Spans = Whole(Alone);
 		const double Mine = Loudness(Alone, Spans, Brief), Under = Lufs - Mine;
@@ -16228,8 +16249,160 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	const bool LoopMeasured = From <= LoopBar && To >= LastBar;
 	const bool Through = LoopMeasured || Leveled;	// rendered to the end of the first time through
 
-	// The mix
-	MixRender Mix = RenderMix(S, Through ? EndTick / Rate + 0.2 : SecondsTo(To), std::vector<bool>(), "the mix");
+	// The parts measured alone, worked out first: FamiTracker renders the mix and each of them in one pass (RenderParts)
+	int Melody = -1;
+	bool Guessed = false;
+	std::vector<int> MelodyBars;
+	std::vector<MixPart> Parts;
+	std::vector<std::string> Without;
+	if (Stems) {
+		if (Arg(Args, "melody_channel") != 0) {
+			Melody = ChannelArg(S, Args, "melody_channel");
+			if (!IsMelodic(S.Channel(Melody)))
+				throw Problem("The melody channel needs notes, not drums or samples.");
+		}
+		else {
+			Melody = GuessMelodyChannel(S, First, End);
+			Guessed = true;
+		}
+		for (int b = From; b <= To && Melody >= 0; ++b)
+			if (HasNotesIn(S, Melody, S.Time.BarStart(b), S.Time.BarEnd(b)))
+				MelodyBars.push_back(b);
+	}
+	if (!MelodyBars.empty()) {
+		// The parts: the chords (named, or those that sound chords, or else voiced chords), each other channel playing
+		std::vector<int> ChordChannels;
+		if (Arg(Args, "chords") != 0)
+			ChordChannels = ChannelsArg(S, Args, "chords");
+		else {
+			ChordChannels = ArpeggioChannels(S, First, End, Melody);
+			if (ChordChannels.empty())
+				ChordChannels = ChordVoicesIn(S, First, End, Melody);
+		}
+		ChordChannels.erase(std::remove(ChordChannels.begin(), ChordChannels.end(), Melody), ChordChannels.end());
+		std::vector<int> Voices;	// voiced chords beside chords that sound on their own (a pad under lush chords)
+		if (Arg(Args, "chords") == 0 && !ChordChannels.empty()) {
+			const std::vector<int> Found = ChordVoicesIn(S, First, End, Melody);
+			for (size_t i = 0; i < Found.size(); ++i)
+				if (std::find(ChordChannels.begin(), ChordChannels.end(), Found[i]) == ChordChannels.end())
+					Voices.push_back(Found[i]);
+			if (Voices.size() < 2)
+				Voices.clear();
+		}
+		auto ChannelPart = [&](int c) {
+			MixPart Part;
+			Part.Channels.push_back(c);
+			Part.Name = ShortChannelName(S, c);
+			const ChannelInfo &Info = S.Channel(c);
+			if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
+				Part.Around = false;	// drums, or a wind: not among lively's parts around the melody
+			else if (FollowDelay(S, c, Melody, First, End) > 0) {
+				Part.Name += " (echo)";
+				Part.Around = false;
+			}
+			else if (PlaysBassPart(S, c, First, End))
+				Part.Name += " (bass)";
+			return Part;
+		};
+		// "chords (Soft 1-3)"; several channels named together: "VRC6 Pulse 2, Soft 1-3 together"
+		auto GroupPart = [&](const std::vector<int> &Channels, const char *Name) {
+			MixPart Part;
+			Part.Channels = Channels;
+			Part.Name = Name != 0 ? std::string(Name) + " (" + ShortChannelNames(S, Channels) + ")" : ShortChannelNames(S, Channels) + " together";
+			return Part;
+		};
+		if (Arg(Args, "parts") != 0) {
+			const Json &Given = *Arg(Args, "parts");
+			std::vector<Json> Items;
+			if (Given.IsArray())
+				Items = Given.Items();
+			else
+				Items.push_back(Given);
+			for (size_t i = 0; i < Items.size(); ++i) {
+				const std::string Word = Items[i].IsString() ? Lowercase(Trim(Items[i].String())) : std::string();
+				if (Word == "chords") {
+					if (ChordChannels.empty())
+						throw Problem("parts: no channel plays chords beside the melody there (arpeggio or lush instruments, or voiced chords); "
+							"name them with chords, or name the channels in parts.");
+					MixPart Part = GroupPart(ChordChannels, "chords");
+					Part.Chords = true;
+					Parts.push_back(Part);
+					continue;
+				}
+				// One channel, or several joined with +, as one part
+				std::vector<int> Channels;
+				if (Items[i].IsString() && Items[i].String().find('+') != std::string::npos) {
+					const std::string &All = Items[i].String();
+					size_t At = 0;
+					while (At <= All.size()) {
+						size_t Plus = All.find('+', At);
+						if (Plus == std::string::npos)
+							Plus = All.size();
+						const int c = ParseChannel(S, Json(Trim(All.substr(At, Plus - At))), "parts");
+						if (std::find(Channels.begin(), Channels.end(), c) == Channels.end())
+							Channels.push_back(c);
+						At = Plus + 1;
+					}
+				}
+				else
+					Channels.push_back(ParseChannel(S, Items[i], "parts"));
+				Channels.erase(std::remove(Channels.begin(), Channels.end(), Melody), Channels.end());
+				if (Channels.empty())
+					continue;	// the melody is measured anyway
+				std::sort(Channels.begin(), Channels.end());
+				Parts.push_back(Channels.size() == 1 ? ChannelPart(Channels[0]) : GroupPart(Channels, 0));
+			}
+		}
+		else {
+			if (!ChordChannels.empty()) {
+				MixPart Part = GroupPart(ChordChannels, "chords");
+				Part.Chords = true;
+				Parts.push_back(Part);
+			}
+			if (!Voices.empty())
+				Parts.push_back(GroupPart(Voices, "chord voices"));
+			for (int c = 0; c < S.ChannelCount(); ++c) {
+				if (c == Melody || std::find(ChordChannels.begin(), ChordChannels.end(), c) != ChordChannels.end() ||
+					std::find(Voices.begin(), Voices.end(), c) != Voices.end() || !HasNotesIn(S, c, First, End))
+					continue;
+				Parts.push_back(ChannelPart(c));
+			}
+		}
+		// Where each plays with the melody
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			for (size_t b = 0; b < MelodyBars.size(); ++b) {
+				bool Plays = false;
+				for (size_t k = 0; k < Parts[p].Channels.size() && !Plays; ++k)
+					Plays = HasNotesIn(S, Parts[p].Channels[k], S.Time.BarStart(MelodyBars[b]), S.Time.BarEnd(MelodyBars[b]));
+				if (Plays)
+					Parts[p].Bars.push_back(MelodyBars[b]);
+			}
+			if (Parts[p].Bars.empty())
+				Without.push_back(Parts[p].Name);
+		}
+	}
+
+	// The mix, and with it the melody alone and each part alone: the other channels silent, their notes and effects
+	// still playing
+	auto SilentBut = [&](const std::vector<int> &Heard) {
+		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
+		for (size_t k = 0; k < Heard.size(); ++k)
+			Silent[static_cast<size_t>(Heard[k])] = false;
+		return Silent;
+	};
+	std::vector<RenderOptions> Renders(1, MixOptions(std::vector<bool>(), "the mix"));
+	if (!MelodyBars.empty()) {
+		Renders.push_back(MixOptions(SilentBut(std::vector<int>(1, Melody)), "the melody alone"));
+		for (size_t p = 0; p < Parts.size(); ++p)
+			if (!Parts[p].Bars.empty())
+				Renders.push_back(MixOptions(SilentBut(Parts[p].Channels), Parts[p].Name + " alone"));
+	}
+	std::string RenderError;
+	const std::unique_ptr<RenderSet> Made = S.Host().RenderParts(S.Song.Track, Through ? EndTick / Rate + 0.2 : SecondsTo(To), Renders,
+		RenderError);
+	if (!Made)
+		throw Problem("The track couldn't be rendered: " + RenderError);
+	MixRender Mix = TakeMix(S, *Made, 0);
 	auto Bars = [](int A, int B) {
 		std::vector<int> Out;
 		for (int b = A; b <= B; ++b)
@@ -16380,21 +16553,6 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 		Text += Lopsided ? Format(": more than 2, so a part sits too far %s (stems true tells which).", Apart > 0.0 ? "left" : "right") : ".";
 		return Text;
 	}
-	int Melody = -1;
-	bool Guessed = false;
-	if (Arg(Args, "melody_channel") != 0) {
-		Melody = ChannelArg(S, Args, "melody_channel");
-		if (!IsMelodic(S.Channel(Melody)))
-			throw Problem("The melody channel needs notes, not drums or samples.");
-	}
-	else {
-		Melody = GuessMelodyChannel(S, First, End);
-		Guessed = true;
-	}
-	std::vector<int> MelodyBars;
-	for (int b = From; b <= To && Melody >= 0; ++b)
-		if (HasNotesIn(S, Melody, S.Time.BarStart(b), S.Time.BarEnd(b)))
-			MelodyBars.push_back(b);
 	if (MelodyBars.empty()) {
 		Text += Lopsided ? Format(": more than 2, so a part sits too far %s.", Apart > 0.0 ? "left" : "right") : ".";
 		Text += Melody < 0 ? Format("\nNo melody plays in %s, so no part was measured against it.", RangeText(From, To).c_str()) :
@@ -16402,127 +16560,8 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 		return Text;
 	}
 
-	// The parts: the chords (named, or those that sound chords, or else voiced chords), each other channel playing
-	std::vector<int> ChordChannels;
-	if (Arg(Args, "chords") != 0)
-		ChordChannels = ChannelsArg(S, Args, "chords");
-	else {
-		ChordChannels = ArpeggioChannels(S, First, End, Melody);
-		if (ChordChannels.empty())
-			ChordChannels = ChordVoicesIn(S, First, End, Melody);
-	}
-	ChordChannels.erase(std::remove(ChordChannels.begin(), ChordChannels.end(), Melody), ChordChannels.end());
-	std::vector<int> Voices;	// voiced chords beside chords that sound on their own (a pad under lush chords)
-	if (Arg(Args, "chords") == 0 && !ChordChannels.empty()) {
-		const std::vector<int> Found = ChordVoicesIn(S, First, End, Melody);
-		for (size_t i = 0; i < Found.size(); ++i)
-			if (std::find(ChordChannels.begin(), ChordChannels.end(), Found[i]) == ChordChannels.end())
-				Voices.push_back(Found[i]);
-		if (Voices.size() < 2)
-			Voices.clear();
-	}
-	auto ChannelPart = [&](int c) {
-		MixPart Part;
-		Part.Channels.push_back(c);
-		Part.Name = ShortChannelName(S, c);
-		const ChannelInfo &Info = S.Channel(c);
-		if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
-			Part.Around = false;	// drums, or a wind: not among lively's parts around the melody
-		else if (FollowDelay(S, c, Melody, First, End) > 0) {
-			Part.Name += " (echo)";
-			Part.Around = false;
-		}
-		else if (PlaysBassPart(S, c, First, End))
-			Part.Name += " (bass)";
-		return Part;
-	};
-	// "chords (Soft 1-3)"; several channels named together: "VRC6 Pulse 2, Soft 1-3 together"
-	auto GroupPart = [&](const std::vector<int> &Channels, const char *Name) {
-		MixPart Part;
-		Part.Channels = Channels;
-		Part.Name = Name != 0 ? std::string(Name) + " (" + ShortChannelNames(S, Channels) + ")" : ShortChannelNames(S, Channels) + " together";
-		return Part;
-	};
-	std::vector<MixPart> Parts;
-	if (Arg(Args, "parts") != 0) {
-		const Json &Given = *Arg(Args, "parts");
-		std::vector<Json> Items;
-		if (Given.IsArray())
-			Items = Given.Items();
-		else
-			Items.push_back(Given);
-		for (size_t i = 0; i < Items.size(); ++i) {
-			const std::string Word = Items[i].IsString() ? Lowercase(Trim(Items[i].String())) : std::string();
-			if (Word == "chords") {
-				if (ChordChannels.empty())
-					throw Problem("parts: no channel plays chords beside the melody there (arpeggio or lush instruments, or voiced chords); "
-						"name them with chords, or name the channels in parts.");
-				MixPart Part = GroupPart(ChordChannels, "chords");
-				Part.Chords = true;
-				Parts.push_back(Part);
-				continue;
-			}
-			// One channel, or several joined with +, as one part
-			std::vector<int> Channels;
-			if (Items[i].IsString() && Items[i].String().find('+') != std::string::npos) {
-				const std::string &All = Items[i].String();
-				size_t At = 0;
-				while (At <= All.size()) {
-					size_t Plus = All.find('+', At);
-					if (Plus == std::string::npos)
-						Plus = All.size();
-					const int c = ParseChannel(S, Json(Trim(All.substr(At, Plus - At))), "parts");
-					if (std::find(Channels.begin(), Channels.end(), c) == Channels.end())
-						Channels.push_back(c);
-					At = Plus + 1;
-				}
-			}
-			else
-				Channels.push_back(ParseChannel(S, Items[i], "parts"));
-			Channels.erase(std::remove(Channels.begin(), Channels.end(), Melody), Channels.end());
-			if (Channels.empty())
-				continue;	// the melody is measured anyway
-			std::sort(Channels.begin(), Channels.end());
-			Parts.push_back(Channels.size() == 1 ? ChannelPart(Channels[0]) : GroupPart(Channels, 0));
-		}
-	}
-	else {
-		if (!ChordChannels.empty()) {
-			MixPart Part = GroupPart(ChordChannels, "chords");
-			Part.Chords = true;
-			Parts.push_back(Part);
-		}
-		if (!Voices.empty())
-			Parts.push_back(GroupPart(Voices, "chord voices"));
-		for (int c = 0; c < S.ChannelCount(); ++c) {
-			if (c == Melody || std::find(ChordChannels.begin(), ChordChannels.end(), c) != ChordChannels.end() ||
-				std::find(Voices.begin(), Voices.end(), c) != Voices.end() || !HasNotesIn(S, c, First, End))
-				continue;
-			Parts.push_back(ChannelPart(c));
-		}
-	}
-	// Where each plays with the melody
-	std::vector<std::string> Without;
-	for (size_t p = 0; p < Parts.size(); ++p) {
-		for (size_t b = 0; b < MelodyBars.size(); ++b) {
-			bool Plays = false;
-			for (size_t k = 0; k < Parts[p].Channels.size() && !Plays; ++k)
-				Plays = HasNotesIn(S, Parts[p].Channels[k], S.Time.BarStart(MelodyBars[b]), S.Time.BarEnd(MelodyBars[b]));
-			if (Plays)
-				Parts[p].Bars.push_back(MelodyBars[b]);
-		}
-		if (Parts[p].Bars.empty())
-			Without.push_back(Parts[p].Name);
-	}
-
 	// The melody alone, then each part
-	auto SilentBut = [&](const std::vector<int> &Heard) {
-		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
-		for (size_t k = 0; k < Heard.size(); ++k)
-			Silent[static_cast<size_t>(Heard[k])] = false;
-		return Silent;
-	};
-	const MixRender Lead = RenderMix(S, SecondsTo(MelodyBars.back()), SilentBut(std::vector<int>(1, Melody)), "the melody alone");
+	const MixRender Lead = TakeMix(S, *Made, 1);
 	const std::string MelodyName = ShortChannelName(S, Melody);
 	const double LeadLufs = SpansLufs(Lead, BarSamples(S, Lead, MelodyBars)) + Gain;
 	std::string StemText = Format("\nAlone (the other channels silent, their effects still playing), LUFS where each plays with the melody:"
@@ -16540,11 +16579,12 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	double Nearest = 1000.0;
 	std::string NearestName;
 	bool ChordsFound = false;
+	size_t Next = 2;	// the parts' renders, in order
 	for (size_t p = 0; p < Parts.size(); ++p) {
 		MixPart &Part = Parts[p];
 		if (Part.Bars.empty())
 			continue;
-		const MixRender Stem = RenderMix(S, SecondsTo(Part.Bars.back()), SilentBut(Part.Channels), Part.Name + " alone");
+		const MixRender Stem = TakeMix(S, *Made, Next++);
 		const double PartLufs = SpansLufs(Stem, BarSamples(S, Stem, Part.Bars)) + Gain;
 		const double MelodyThere = SpansLufs(Lead, BarSamples(S, Lead, Part.Bars)) + Gain;
 		StemText += "\n- " + Part.Name;
@@ -17882,14 +17922,23 @@ std::string ReferencesTool(Session &S, const Json &Args)
 	throw Problem("action: list, show, search, guide, tag or delete.");
 }
 
-// A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS" or "5B"; Sawtooth for the VRC6's sawtooth),
-// named Name, as reference_sound makes it (the sound browser too): its index, Added when it's new; on the FDS, How
-// says what wave it plays
+// A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS", "N163" or "5B"; Sawtooth for the VRC6's
+// sawtooth), named Name, as reference_sound makes it (the sound browser too): its index, Added when it's new; on the
+// FDS and the N163, How says what wave it plays (on the N163, when it's new, then where its wave went)
 int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::string &Name, const std::string &Chip,
 	bool Sawtooth, std::string &How, bool &Added)
 {
 	if (Chip == "FDS")
 		return AddFdsSound(S, ReferenceFdsSound(Sound, Name, How), Added);
+	if (Chip == "N163") {
+		// A wave sound (the VRC6 Plus's soft layer plays them), its wave where no other N163 instrument's is
+		std::string Where;
+		const int Index = AddWaveInstrument(S, ReferenceWaveSound(Sound, Name, How), Where);
+		Added = !Where.empty();
+		if (Added)
+			How += "; " + Where;
+		return Index;
+	}
 	const size_t Before = S.Song.Instruments.size();
 	std::string Error;
 	const int Index = S.Host().AddInstrument(ReferencePreset(Sound, Name), Chip, Sawtooth, Error);
@@ -17898,6 +17947,51 @@ int MakeReferenceInstrument(Session &S, const ReferenceSound &Sound, const std::
 	S.Refresh();
 	Added = S.Song.Instruments.size() > Before;
 	return Index;
+}
+
+// What reference_sound says of an N163 sound whose wave's cycle (Cycle samples) isn't the 16 FamiTracker plays in
+// tune: its notes sounded off the notes written (the importer writes the note of the frequency register, whatever
+// the wave's length), and as a wave of 16 they sound as written
+std::string N163RegisterRemark(int Cycle)
+{
+	if (Cycle <= 0 || Cycle == N163_WAVE_SIZE)
+		return std::string();
+	const double Semitones = 12.0 * std::log2(static_cast<double>(N163_WAVE_SIZE) / Cycle);
+	const int Steps = static_cast<int>(std::floor(std::fabs(Semitones) + 0.5));
+	const bool Octaves = Steps % 12 == 0 && std::fabs(std::fabs(Semitones) - Steps) < 0.01;
+	const std::string Far = Octaves ? (Steps == 12 ? std::string("an octave") : Format("%d octaves", Steps / 12)) :
+		Format("about %d semitones", Steps);
+	return Format(" Its wave is a cycle of %d samples, so its notes sounded %s %s the notes written (FamiTracker plays a "
+		"cycle of 16 in tune); here they sound as written, so write its part %s %s to keep its register.", Cycle, Far.c_str(),
+		Semitones < 0 ? "under" : "over", Far.c_str(), Semitones < 0 ? "lower" : "higher");
+}
+
+// What reference_sound says of a reference's sound it made an N163 instrument (a wave sound: the VRC6 Plus's soft layer
+// plays them), Index, named Name: what it plays (How, where its wave went), its level when it's new, what changed from
+// its own chip, and its notes when they vanish
+std::string SoftReferenceText(Session &S, const ReferenceSound &Sound, const std::string &Name, int Index, bool Added,
+	const std::string &How, const std::string &For, int Number, const std::string &Id)
+{
+	std::string Out = Format("%s %s, an N163 instrument%s: sound %d of %s (%s, %s): %s. It plays %s.", Added ? "Added" :
+		"The song already has", InstrumentLabel(S.Song, Index).c_str(), For.c_str(), Number, Id.c_str(), Sound.Channel.c_str(),
+		Sound.Role.c_str(), Sound.Words.c_str(), How.c_str());
+	if (Added) {
+		std::string Unused;
+		Out += WaveSoundLevel(S, ReferenceWaveSound(Sound, Name, Unused));
+	}
+	const bool Bends = !Sound.Sequences[SEQUENCE_PITCH].Items.empty() || !Sound.Sequences[SEQUENCE_HIPITCH].Items.empty();
+	if (Sound.Chip == "FDS")
+		Out += std::string(" It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, ") + (Bends ? "its pitch sequence in "
+			"the N163's coarser steps, " : "") + "and its notes sound as written (on the FDS they sounded two octaves under).";
+	else if (Sound.Triangle)
+		Out += " It was a triangle sound: the triangle sounds an octave under the notes written, the N163 as written, so write its "
+			"part an octave lower to keep its register.";
+	else if (Sound.Chip != "N163" && Bends)
+		Out += " Its pitch sequence is turned around for the N163, whose steps raise the pitch where a pulse's lower it (alike "
+			"around A-3, 440 Hz; lower notes bend more, higher ones less).";
+	else if (Sound.Chip == "N163" && !Sound.N163Waves.empty())
+		Out += N163RegisterRemark(N163CycleLength(Sound.N163Waves[0]));
+	return Out + VanishRemark(S.Song, Index) + " Use it with write_notes or set_instrument.";
 }
 
 std::string ReferenceSoundTool(Session &S, const Json &Args)
@@ -17924,9 +18018,9 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = InstrumentChip(Info);
 		Sawtooth = Info.Kind == KIND_SAWTOOTH;
 		For = " for " + Info.FullName();
-		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B")
-			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6, FDS and 5B channels, not " +
-				Info.FullName() + ".");
+		if (Chip != "2A03" && Chip != "VRC6" && Chip != "FDS" && Chip != "5B" && Chip != "N163")
+			throw Problem("A reference's sound can be an instrument for 2A03, MMC5, VRC6, FDS, N163 (the VRC6 Plus's soft layer "
+				"too) and 5B channels, not " + Info.FullName() + ".");
 		if (Sound.Noise != (Info.Kind == KIND_NOISE))
 			throw Problem(Sound.Noise ? "That sound is a drum: give the noise channel." : "That sound is melodic: give a channel "
 				"other than the noise.");
@@ -17935,6 +18029,8 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 		Chip = "VRC6";
 	else if (Sound.Chip == "FDS" && !Sound.Noise && S.Song.Expansion.find("FDS") != std::string::npos)
 		Chip = "FDS";
+	else if (Sound.Chip == "N163" && !Sound.Noise && HasChip(S.Song, "N163"))
+		Chip = "N163";
 	std::string Name = StringArg(Args, "name");
 	if (Name.empty())
 		Name = ReferenceSoundName(R, Sound);
@@ -17949,6 +18045,8 @@ std::string ReferenceSoundTool(Session &S, const Json &Args)
 			"(0-31), its pitch sequence in the FDS's finer steps.") : std::string()) + VanishRemark(S.Song, Index) +
 			" Use it with write_notes or set_instrument; the FDS sounds two octaves under the note written.";
 	}
+	if (Chip == "N163")
+		return SoftReferenceText(S, Sound, Name, Index, Added, How, For, Number, R.Id);
 	std::string Out = Format("Added %s, a %s instrument%s: sound %d of %s (%s, %s): %s.", InstrumentLabel(S.Song, Index).c_str(),
 		Chip.c_str(), For.c_str(), Number, R.Id.c_str(), Sound.Channel.c_str(), Sound.Role.c_str(), Sound.Words.c_str());
 	if (Chip == "5B" && !Sound.Sequences[SEQUENCE_DUTY].Items.empty())
@@ -19521,11 +19619,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"pitch, duty): a lead with its duty click and echo, a bass, a drum. references show lists a reference's sounds by "
 		"number. The duty is translated between the 2A03 and the VRC6. An FDS sound plays on the FDS channel with its own wave "
 		"and modulator (in an FDS song, also when no channel is given); elsewhere its volume is counted 0-15. Another chip's "
-		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave.",
+		"sound on the FDS plays its duty's pulse (or a sawtooth or triangle) as its wave. On an N163 channel (the VRC6 Plus's "
+		"soft layer: Soft 1-4) it becomes a wave sound: an N163 sound's own waves (in an N163 song, also when no channel is "
+		"given), another's a wave from its channel (its duty's pulse, a wave for each duty it steps through, the triangle, the "
+		"sawtooth, an FDS sound's wave), each in a place of its own in the chip's memory; the reply gives its level.",
 		Schema()
 			.Add("reference", Prop("string", "The reference's id."), true)
 			.Add("sound", Prop("integer", "The sound's number in the reference (default 1)."))
-			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6 or FDS)."))
+			.Add("channel", ChannelProp("The channel it's for (picks the chip: 2A03, MMC5, VRC6, FDS, 5B, or N163 and the VRC6 Plus's soft layer)."))
 			.Add("name", Prop("string", "The instrument's name (default: the track's and the sound's role, like \"Magma Tanker lead\").")),
 		false, false, true);
 
@@ -19881,7 +19982,7 @@ bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::strin
 // instruments and sounds, chords and bass, drums, echo, tempo, mix, polish, the checks, playback, saving, export
 const std::vector<std::string> &ToolSet::CoreTools()
 {
-	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "add_instrument", "design_instrument",
+	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "place_clip", "add_instrument", "design_instrument",
 		"set_instrument", "add_chords_and_bass", "add_drums", "add_echo", "set_tempo", "polish", "mix", "check_song",
 		"review_arrangement", "play", "stop", "save_song", "export_for_game", "get_recipe" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
@@ -19922,6 +20023,7 @@ std::string ToolSet::CoreInstructions()
 		"the melody, bass and drums in the middle.\n"
 		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
 		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
+		"- Ideas the user hummed (on the phone or the microphone) are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
 		"- Kinds of song: get_recipe gives the steps for a calm song (only when one is asked for), a lively stage or an "
 		"action track. A calm song's lead comes from design_instrument kind breath, falling strike or music box, and polish, "
