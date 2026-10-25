@@ -251,8 +251,12 @@ quietly to hear (a quiet pulse's tails or duty, a note a tick early, a
 sweep's own clock), when that reaches the track's start or a second or
 more. A track that falls silent for good well before its playlist's
 length is surveyed (`SilentBeforePlaylist`) and studied as what it plays
-(`Recording::LastSound`; `TrackStudy::Kind` "sting" or "sound", `Seconds`,
-`PlaylistSeconds`). A DPCM part whose samples sound four or more pitches
+(`Recording::LastSound`; `TrackStudy::Kind` "sting", a jingle under 12
+seconds, or "sound", `Seconds`, `PlaylistSeconds`). So `SurveyTracks`
+plays every track with a playlist length too (up to its 45 seconds),
+which File > Import NSF does on the UI thread behind a wait cursor: about
+2 seconds for Castlevania III's 28 tracks on the slow Linux test machine.
+A DPCM part whose samples sound four or more pitches
 as a line (`PlaysALine`; a sample's pitch at a rate from `SamplePeriod`,
 its wave's period by autocorrelation, and `SampleNote` in `Convert.cpp`)
 gets "DPCM bass" instruments whose keys play each sample at the note it
