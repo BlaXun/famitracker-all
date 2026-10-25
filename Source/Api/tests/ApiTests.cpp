@@ -17260,7 +17260,14 @@ bool ReviewBreaths(const std::string &Review, int &Breaths, int &Spans)
 	const size_t At = Review.find("or a note held two beats) in ");
 	if (At == std::string::npos)
 		return false;
-	return std::sscanf(Review.c_str() + At + 29, "%d of %d", &Breaths, &Spans) == 2;
+	const char *p = Review.c_str() + At + 29;
+	char *pEnd = 0;
+	Breaths = static_cast<int>(std::strtol(p, &pEnd, 10));
+	if (pEnd == p || std::strncmp(pEnd, " of ", 4) != 0)
+		return false;
+	p = pEnd + 4;
+	Spans = static_cast<int>(std::strtol(p, &pEnd, 10));
+	return pEnd != p;
 }
 
 // The tool on a song from make_groove: three versions as lines write_notes takes, each written, read back the same
