@@ -235,6 +235,49 @@ track (`FtmTrackReport` gives its tempo and beat) and keeps its sounds.
 modules with `-study`, and ships next to FamiTracker.exe; `ftm2txt` writes a
 module's text.
 
+Importer fixes (from `feat-importer-fixes`): while a track plays,
+`RecordTrack` takes a repeat for its loop only once it has gone on for
+`RecordOptions::ConfirmSeconds` (40) and two more times through (`Confirm`
+in `FindLoop` and `FindLoopApprox`, `RepeatNeeded`), so neither a passage
+played twice inside a piece that then moves on nor a vamp inside a long
+loop is taken for the loop; a recording that runs to its end takes a loop
+heard once more. A loop found a tick either way takes the length a tick
+longer when its notes fall on the very same ticks clearly more often, and
+an exact repeat a tick or two longer when there is one (`ExactStart`).
+When only the melodic channels repeat, theirs is the loop and the drums'
+own cycle is `Recording::DrumLoop` (`DrumsApart`). `AudibleLoopStart`
+moves a loop's start back over a first time through that differs too
+quietly to hear (a quiet pulse's tails or duty, a note a tick early, a
+sweep's own clock), when that reaches the track's start or a second or
+more. A track that falls silent for good well before its playlist's
+length is surveyed (`SilentBeforePlaylist`) and studied as what it plays
+(`Recording::LastSound`; `TrackStudy::Kind` "sting", a jingle under 12
+seconds, or "sound", `Seconds`, `PlaylistSeconds`). So `SurveyTracks`
+plays every track with a playlist length too (up to its 45 seconds),
+which File > Import NSF does on the UI thread behind a wait cursor: about
+2 seconds for Castlevania III's 28 tracks on the slow Linux test machine.
+A DPCM part whose samples sound four or more pitches
+as a line (`PlaysALine`; a sample's pitch at a rate from `SamplePeriod`,
+its wave's period by autocorrelation, and `SampleNote` in `Convert.cpp`)
+gets "DPCM bass" instruments whose keys play each sample at the note it
+sounds (all written octaves up, and named so, when the line goes under
+C-0; the unpitched samples stay on the "DPCM samples" kit), and the study
+describes it as a part (`C_DPCM_LINE`, `FindDpcmLine`), the bass when it's
+the lowest, so its notes count in the chords. `KeyOf` in `Study.cpp`
+weighs the profiles' likeliest keys by the bars' chords, the bass and
+where the music comes to rest (the loop's first chord, a piece's first and
+last, a loop's end on the dominant): "C (major and minor)" when the tonic
+chord comes both ways, "no clear key (around E)" or nothing when the
+chords keep leaving the key in either mode or a short piece that plays
+once stops on a chord of neither. `FindGrid` takes rows of 4 and 5 ticks
+in turn when they fit. `SimulateTrack` keeps the samples it plays, so
+`Compare` knows the DPCM's by their bytes. When `study_nsf` studies a
+track again, `KeepOwnTags` in `References.cpp` keeps the user's tags and
+drops the old study's own. `TestDpcmBass`, `TestShortOfPlaylist`,
+`TestQuietFirstPass`, `TestPassageRepeatedOnce`, `TestLoopAroundARepeat`,
+`TestDrumsOnTheirOwn` and `TestKeys` in `Source/Nsf/tests/NsfTests.cpp`
+and `TestStudyTagsAgain` in `Source/Api/tests/ApiTests.cpp` cover them.
+
 The steps of `ROADMAP.md` that make FamiTracker itself simpler: Instrument >
 Sound browser in `Source/SoundBrowserDlg.cpp` (the instrument library's
 menu command `ID_INSTRUMENT_LIBRARY` and Ctrl+Shift+L): one list of every
@@ -641,6 +684,34 @@ Its types share namespace `ftapi` with the tools' (its cells are
 `VoiceCells`: a second `ftapi::ChannelCells` with another layout than
 `Song.h`'s let the linker mix the two, which only MSVC's run showed), so
 new portable code names its types apart.
+Sound effects and cues (from `feat-sfx-fixes`): `CMixer::ClearBuffer` (every
+`CAPU::Reset`, so every stop and start) takes the 2A03's pins as a reset
+leaves them, the pulses, the noise and the DMC silent and the triangle
+holding the step it stopped on, without sending a step; 0.4.6 started the
+pins' sums from 0 but kept the channels' levels, so the first change after a
+stop stepped by every level held (a held triangle thumped under the next
+song's first noise, as loud at volume 1 as at 15; `TestHeldLevels` in
+`ApuTests.cpp`). Sounds that play once ring out (`RingOut` in
+`SoundEffects.cpp`: a layer stopping above volume 1 dies away, halving a
+tick; not the triangle, which 0.4.6 plays whole at any volume, so a fade
+would only hold it longer) and their tracks halt `SFX_SILENT_TICKS` rows after the last tick that
+sounds (`SoundTrackRows`, used by `WriteSoundEffect`); the coin kind is a
+glint of our own. `SoundLoudness` in `GameAudio.cpp` measures a sound
+shorter than a 400 ms block over its whole length, ungated, for
+`ExportTrack` and `measure_mix`. `UseOfTrack` (before `ReviewTool` in
+`Tools.cpp`) tells music, a cue (it halts within `CUE_SECONDS`) and a sound
+effect (speed 1, the 2A03 alone, at most a sound's length) apart: the
+review's `Tip` keeps only the tips `CueTip` names (by their words, so a new
+tip for stages stays out of cues; add a kept one's words there), a sound
+effect gets `SoundEffectReview`, `measure_mix` `SoundMeasure`, and a song
+that halts is measured to `HaltBar`. The roles, for every track: an echo
+follows the melody's notes (`FollowDelay`: `EchoDelayOf` for four notes or
+more, fewer each at one delay and about as long), a quiet arpeggio over the
+melody is a line (`IsSparkle`, by `UsualDb`), and a low N163 voice a fifth
+under the rest is the bass (`SoftBass`, in `PlaysBassPart`), in the review,
+`MixRole`, `HeardRoles` and `measure_mix`'s parts. `TestSoundEffectEnds`
+(every kind's last 50 ms as `RenderEffect` plays it), `TestShortLoudness`
+and `TestCueJudging` in `Source/Api/tests/ApiTests.cpp` cover them.
 
 Phone takes (from `feat-phone-takes`): Edit > Record from your phone
 (`ID_EDIT_RECORDPHONE`) opens `Source/PhoneDlg.cpp`, a modeless window with
