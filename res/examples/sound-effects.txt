@@ -44,7 +44,7 @@ play: bar 4
 instrument: 03
 text: The laser plays C-6 and lets the NES drop it: the effect I13 next to the note starts the pulse channel's own sweep, which lowers the pitch by itself every frame. The 1 says how often it steps (0 the most often), the 3 how far (1 the furthest). H sweeps up the same way.
 
-  Try it: switch editing on with the space bar, click the 3 of I13, type 1 and play the bar: a zap. With a 5 it hardly falls.
+  Try it: click the 3 of I13, switch editing on with the space bar (the row turns red), type 1 and play the bar: a zap. With a 5 it hardly falls.
 
 step
 show: channel Pulse 1
@@ -52,7 +52,7 @@ play: bar 5
 instrument: 04
 text: The power-up plays four notes, C-4, F-4, G-4 and C-5, eight rows apart, and each runs up its chord: the Arpeggio sequence 0 0 4 4 7 7 12 adds 4, 7 and 12 semitones, two frames each. The volume holds for eight frames, so only the last note rings out.
 
-  Try it: with editing on, type other notes over the four (the keys Z to M are C to B) and play the bar.
+  Try it: with editing on, click one of the four notes and type another over it (the keys Z to M are C to B, and Q to U an octave higher), then play the bar.
 
 step
 show: channel Noise
