@@ -19881,7 +19881,7 @@ bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::strin
 // instruments and sounds, chords and bass, drums, echo, tempo, mix, polish, the checks, playback, saving, export
 const std::vector<std::string> &ToolSet::CoreTools()
 {
-	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "add_instrument", "design_instrument",
+	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "place_clip", "add_instrument", "design_instrument",
 		"set_instrument", "add_chords_and_bass", "add_drums", "add_echo", "set_tempo", "polish", "mix", "check_song",
 		"review_arrangement", "play", "stop", "save_song", "export_for_game", "get_recipe" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
@@ -19922,6 +19922,7 @@ std::string ToolSet::CoreInstructions()
 		"the melody, bass and drums in the middle.\n"
 		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
 		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
+		"- Ideas the user hummed (on the phone or the microphone) are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
 		"- Kinds of song: get_recipe gives the steps for a calm song (only when one is asked for), a lively stage or an "
 		"action track. A calm song's lead comes from design_instrument kind breath, falling strike or music box, and polish, "

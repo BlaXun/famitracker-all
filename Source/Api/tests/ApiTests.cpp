@@ -4875,6 +4875,8 @@ void TestNetwork()
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
+	// Ideas hummed into the phone are clips: local models place them too (2026-10-25)
+	CHECK(ToolSet::IsCoreTool("place_clip") && ToolSet::CoreInstructions().find("place_clip puts one at a bar") != std::string::npos);
 	HttpRequest CoreList = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}", "192.168.1.20");
 	CoreList.Target = "/mcp/core";
 	Response = HandleMcp(CoreList, Config, Tools);

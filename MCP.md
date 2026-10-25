@@ -103,8 +103,9 @@ before.
 ### A small set of tools for local models
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
-and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 19
+and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 20
 of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
+`place_clip` (ideas hummed into the phone or the microphone are clips),
 `add_instrument`, `design_instrument`, `set_instrument`,
 `add_chords_and_bass`, `add_drums`, `add_echo`, `set_tempo`, `polish`,
 `mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song`,
