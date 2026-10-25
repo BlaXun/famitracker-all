@@ -111,14 +111,14 @@ Chord DiatonicChord(const Key &K, int Degree, bool Seventh);
 enum chord_color {
 	COLOR_PLAIN,		// as they are
 	COLOR_SEVENTHS,		// the key's sevenths: Imaj7, ii7, V7...
-	COLOR_RICH,			// added ninths, major sevenths, minor ninths, and a V that suspends before it resolves
+	COLOR_RICH,			// colors that keep each chord's part: add9, maj7 and 6 on the tonic and subdominant, m7 and m9 on minor
+						// chords, add9 on the V (its own seventh where that fits better), a seventh only on dominants
 };
 bool ParseColor(const std::string &Text, chord_color &Out);	// "plain", "sevenths", "rich"
 
 // Gives Chords the color: a tone the color adds that a melody note heard for
 // a while rubs against a semitone away is left out, and the next color tried
-// instead. Only triads change; with COLOR_RICH a V of a beat or more that
-// resolves to the tonic splits into a suspended fourth and its resolution.
+// instead. Only triads change, each into one chord.
 void ColorChords(std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melody, const Key &K, int RowsPerBeat,
 	chord_color Color);
 

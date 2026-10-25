@@ -1007,7 +1007,6 @@ void ColorChords(std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melo
 {
 	if (Color == COLOR_PLAIN)
 		return;
-	const int Beat = std::max(1, RowsPerBeat);
 	std::vector<ChordAt> Out;
 	for (size_t i = 0; i < Chords.size(); ++i) {
 		ChordAt A = Chords[i];
@@ -1036,28 +1035,13 @@ void ColorChords(std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melo
 			KeyOnly = false;	// a V7 in minor has its seventh in the key, its third isn't
 		}
 		else if (Major) {
+			// Colors that keep what the chord does: one chord stays one (no V split into a sus4 and its seventh), and a
+			// seventh that pulls only goes on a dominant. The tonic and the subdominant rest (add9, maj7, 6); the V keeps
+			// its pull with an added ninth, or its own seventh where that fits better; a chord a fifth over the next one
+			// (a secondary dominant, V/V) keeps its seventh; another from outside the key (bVI, bVII) gets the key's colors
 			const bool Tonic = Relative == 0, Subdominant = Relative == 5, Dominant = Relative == 7;
-			const bool Resolves = i + 1 < Chords.size() && Chords[i + 1].Row == End && Chords[i + 1].C.Root == K.Tonic;
-			if (Dominant && Resolves && A.Rows >= 2 * Beat) {
-				// A suspended fourth that resolves: V7sus4 for the first half, then V7
-				const int Half = (A.Rows / Beat + 1) / 2 * Beat;
-				const int SusPitch = Mod12(Base.Root + 5), Seventh = Mod12(Base.Root + 10);
-				if (MelodyRub(Melody, A.Row, A.Row + Half, SusPitch, RowsPerBeat) < RUB_LIMIT &&
-					MelodyRub(Melody, A.Row, End, Seventh, RowsPerBeat) < RUB_LIMIT) {
-					ChordAt First = A;
-					First.Rows = Half;
-					First.C = Base;
-					First.C.Tones = TonesOf({ 0, 5, 7, 10 });
-					ChordAt Second = A;
-					Second.Row = A.Row + Half;
-					Second.Rows = A.Rows - Half;
-					Second.C = Base;
-					Second.C.Tones = TonesOf({ 0, 4, 7, 10 });
-					Out.push_back(First);
-					Out.push_back(Second);
-					continue;
-				}
-			}
+			const bool Leads = i + 1 < Chords.size() && Chords[i + 1].Row == End && Mod12(Base.Root - Chords[i + 1].C.Root) == 7 &&
+				(Degree < 0 || !InScale(Mod12(Base.Root + 4), K));	// its third from outside the key, as V/V's is
 			if (Tonic) {
 				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
 				Candidates.push_back(TonesOf({ 0, 4, 7, 11 }));
@@ -1066,18 +1050,25 @@ void ColorChords(std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melo
 			else if (Subdominant) {
 				Candidates.push_back(TonesOf({ 0, 4, 7, 11 }));
 				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
+				Candidates.push_back(TonesOf({ 0, 4, 7, 9 }));
 			}
-			else if (Dominant || Degree < 0) {
+			else if (Dominant) {
+				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
 				Candidates.push_back(TonesOf({ 0, 4, 7, 10 }));
-				KeyOnly = false;
 			}
-			else if (KeySeventh == 11) {
+			else if (Leads) {
+				Candidates.push_back(TonesOf({ 0, 4, 7, 10 }));
+				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
+				KeyOnly = false;	// the seventh of a dominant from outside the key (Bb7 before Eb) is outside it too
+			}
+			else if (KeySeventh == 11 || Degree < 0) {
 				Candidates.push_back(TonesOf({ 0, 4, 7, 11 }));
 				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
+				KeyOnly = true;		// a borrowed chord's colors from the key (Abmaj7 in C major, not Abadd9)
 			}
 			else {
 				Candidates.push_back(TonesOf({ 0, 2, 4, 7 }));
-				Candidates.push_back(TonesOf({ 0, 4, 7, 10 }));
+				Candidates.push_back(TonesOf({ 0, 4, 7, 9 }));
 			}
 		}
 		else if (Minor) {
