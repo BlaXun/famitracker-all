@@ -133,6 +133,13 @@ public:
 	bool IsFileLoaded() const;
 	bool HasLastLoadFailed() const;
 
+	// Help > Example songs: the song just opened from a file of its own becomes a new one without a file, named
+	// Title until it's saved (Save asks for a name)
+	void MakeUntitled(LPCTSTR Title);
+	// Counts the songs this document has held (each new, opened or imported one), so a walkthrough of an example
+	// song sees another song come
+	unsigned int GetSongSerial() const { return m_iSongSerial; }
+
 	// Import
 	CFamiTrackerDoc* LoadImportFile(LPCTSTR lpszPathName) const;
 	// A new, empty document without the game music profile's template (for text imports)
@@ -468,6 +475,7 @@ private:
 	//
 
 	bool			m_bFileLoaded;			// Is a file loaded?
+	unsigned int	m_iSongSerial;			// GetSongSerial
 	bool			m_bFileLoadFailed;		// Last file load operation failed
 	unsigned int	m_iFileVersion;			// Loaded file version
 

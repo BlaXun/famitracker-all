@@ -130,6 +130,9 @@ public:
 	bool IsInsidePattern(const CPoint &point) const;
 	bool IsInsideRowColumn(const CPoint &point) const;
 	int GetChannelAtPoint(int PointX) const;
+	// Where a channel's column is in the view, its header too, cut to the window's width; false when it's
+	// scrolled out of sight (Help > Tutorials points at it)
+	bool GetChannelRect(int Channel, CRect &Rect) const;
 	// A clip dragged in from the clips panel (ClipsPanel.cpp, through CFamiTrackerView::ShowClipDrop):
 	// the cells it would cover, Channels wide and Rows long from the cell under the point, are shaded
 	// as in a drag and drop, and the cursor stays where it is. With Scroll, a point close to an edge
