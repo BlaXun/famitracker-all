@@ -24,7 +24,7 @@ step
 show: window
 text: The export shows the GameMaker code that loops the music (audio_sound_loop_start and audio_sound_loop_end), and other engines can read the loop points from the files.
 
-  Sound effects work the same way: Edit > Sound effect from your voice records a "pew" or a "boing" and turns it into an NES sound.
+  Sound effects work the same way: Edit > Sound effect from your voice records a "pew" or a "boing" and turns it into an NES sound, and Help > Example songs > Sound effects shows how ten of them are made.
 
 step
 show: window

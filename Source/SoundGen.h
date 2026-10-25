@@ -243,6 +243,9 @@ public:
 	// loop); End -1 plays on as usual. Called on the UI thread just before StartPlayer; the start takes it.
 	void		SetNextPlayRange(int First, int End);
 	bool		PlayRangeEnded() const { return m_bPlayRangeEnded; }	// the last start halted at its range's end
+	// How many starts have begun playing, so the UI thread knows its own did even when it never saw the song
+	// playing (at speed 1 the rows' messages can keep its timers from running until the song has stopped)
+	unsigned int GetPlayStarts() const { return m_iPlayStarts; }
 
 #ifdef EXPORT_TEST
 	bool		IsTestingExport() const { return m_bExportTesting; }
@@ -440,6 +443,7 @@ private:
 	int					m_iRangeEnd;
 	int					m_iRangeLast;					// the row read last, to see the song go back
 	volatile bool		m_bPlayRangeEnded;
+	volatile unsigned int m_iPlayStarts;				// the starts that began playing (GetPlayStarts)
 	int					m_iPlayTrack;					// Current track that is playing
 	int					m_iPlayFrame;					// Current frame to play
 	int					m_iPlayRow;						// Current row to play
