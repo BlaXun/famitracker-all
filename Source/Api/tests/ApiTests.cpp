@@ -592,6 +592,15 @@ public:
 				pInto->Setting = Sequences[s].Setting;
 			}
 		}
+		// A vibrato built in, as FamiTracker reports it (HasVibrato in McpConnection.cpp: a pitch sequence that goes up and
+		// down in its loop)
+		const SequenceInfo &Pitch = Info.Instruments.back().Pitch;
+		bool Up = false, Down = false;
+		for (size_t k = static_cast<size_t>(std::max(0, Pitch.Loop)); Pitch.Loop >= 0 && k < Pitch.Items.size(); ++k) {
+			Up = Up || Pitch.Items[k] > 0;
+			Down = Down || Pitch.Items[k] < 0;
+		}
+		Info.Instruments.back().Vibrato = Up && Down;
 		// As FamiTracker reports a VRC6 sound whose duty sequence plays odd values (its sawtooth version has none)
 		for (size_t s = 0; Chip == "VRC6" && !Sawtooth && s < Sound.SequencesVRC6.size(); ++s)
 			if (Sound.SequencesVRC6[s].Type == SEQUENCE_DUTY)
@@ -14074,12 +14083,15 @@ void TestCalmMix()
 	Result = Run(Pad, "mix", CALM);
 	CHECK_HAS(Result.Text, "as heard: the melody (VRC6 Pulse 1) 2.2 dB over the chords. Changes: 2A03 Pulse 1 (chords) loudest 15 to 6; "
 		"2A03 Pulse 2 (chords) loudest 15 to 6; VRC6 Pulse 1 (melody) stays at 15; VRC6 Pulse 2 (chords) loudest 15 to 6.");
-	// A melody at 12 goes to 15 with the rest
+	// A melody at 12 keeps its level, the chords going under it; levels sets it
 	FakeSong Low;
 	CalmTestSong(Low, 15, 6);
 	Low.Rows[5][0].Volume = 12;
-	CHECK_HAS(Run(Low, "mix", CALM).Text, "VRC6 Pulse 1 (melody) loudest 12 to 15");
-	CHECK(Low.Rows[5][0].Volume == 15);
+	CHECK_HAS(Run(Low, "mix", CALM).Text, "VRC6 Pulse 1 (melody) stays at 12; VRC6 Pulse 2 (chords) loudest 15 to 9.");
+	CHECK(Low.Rows[5][0].Volume == 12 && Low.Rows[6][0].Volume == 9);
+	Result = Run(Low, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\", \"levels\": {\"VRC6 Pulse 1\": 15}}");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) loudest 12 to 15; VRC6 Pulse 2 (chords) loudest 9 to 11.");
+	CHECK(Low.Rows[5][0].Volume == 15 && Low.Rows[6][0].Volume == 11);
 
 	// An echo two rows behind on 2A03 Pulse 2 and a triangle bass: the echo about 7 dB under, the triangle 2.5 under by
 	// the DPCM level
@@ -14106,15 +14118,32 @@ void TestCalmMix()
 	CHECK_HAS(Result.Text, "the triangle 1.6 over.");
 
 	// Over some bars the melody keeps its level from the rest of the song (at 10 in bars 3-4, under bars 1-2's 15), and
-	// the parts there are set against it (as near 2.5 dB under it as whole steps of volume go: 7 would be 3.1)
+	// the parts there are set against it (as near 2.5 dB under it as whole steps of volume go: 8 would be 1.9)
 	FakeSong Quiet;
 	CalmTestSong(Quiet, 15, 6);
 	Quiet.Rows[5][32].Volume = 10;
 	Quiet.Rows[6][32].Volume = 10;
 	Result = Run(Quiet, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 4}");
-	CHECK_HAS(Result.Text, "a calm mix, bars 3-4, as heard: the melody (VRC6 Pulse 1) 1.9 dB over the chords.");
-	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) stays at 10; VRC6 Pulse 2 (chords) loudest 10 to 8");
-	CHECK(Quiet.Rows[5][0].Volume == 15 && Quiet.Rows[5][32].Volume == 10 && Quiet.Rows[6][0].Volume == 15 && Quiet.Rows[6][32].Volume == 8);
+	CHECK_HAS(Result.Text, "a calm mix, bars 3-4, as heard: the melody (VRC6 Pulse 1) 3.1 dB over the chords (off their places: "
+		"VRC6 Pulse 2 (chords) 0.6 dB too quiet (between volume steps); set_mixer's faders move them the rest).");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) stays at 10; VRC6 Pulse 2 (chords) loudest 10 to 7");
+	CHECK(Quiet.Rows[5][0].Volume == 15 && Quiet.Rows[5][32].Volume == 10 && Quiet.Rows[6][0].Volume == 15 && Quiet.Rows[6][32].Volume == 7);
+
+	// An echo on a sound that holds 12, at 5 with its fader 1.8 dB down, plays 4 (FamiTracker rounds 5 x 12 / 15 down), as
+	// 6 would: 8.8 dB under. 7 plays 5, about 7 under; 8 would play 6, 5.3 under (where taking the first step's shortfall
+	// again went)
+	FakeSong Held;
+	CalmTestSong(Held, 15, 6);
+	Held.AddInstrumentInfo(3, "Hold", "VRC6", false);
+	Held.Info.Instruments.back().Volume = std::vector<int>{ 12 };
+	for (int i = 0; i < 8; ++i)
+		Held.Put(7, i * 8 + 2, TUNE[i % 4], i == 0 ? 3 : NO_INSTRUMENT, i == 0 ? 5 : -1);
+	Held.Mix.Set(7, -18, 0x80);
+	CHECK_HAS(Run(Held, "review_arrangement", CALM).Text, "the echo 8.8 under.");
+	Result = Run(Held, "mix", CALM);
+	CHECK_HAS(Result.Text, "the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.9 under.");
+	CHECK_HAS(Result.Text, "VRC6 Sawtooth (echo) loudest 5 to 7.");
+	CHECK(Held.Rows[7][2].Volume == 7);
 
 	// A soft mix over some bars scales them as the whole song's (its loudest, 15, to the melody's 9), so a quieter
 	// section stays quieter (each pass used to bring its own loudest to 9)
@@ -14172,6 +14201,14 @@ void TestCalmPolish()
 	Result = Run(Pluck, "polish", "{\"style\": \"calm\", \"channels\": [\"VRC6 Pulse 1\"]}");
 	CHECK_LACKS(Result.Text, "(451)");
 	CHECK(EffectAt(Pluck.Rows[5][2], EFF_VIBRATO) < 0);
+	// A breath has a faint vibrato built in: none on top of it
+	FakeSong Breath;
+	Breath.Info.DirectChanges = true;
+	Breath.Info.Speed = 12;
+	CHECK(!Run(Breath, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"breath\", \"notes\": [{\"bar\": 1, \"pitch\": "
+		"\"E-4\", \"beats\": 4}, {\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}]}").IsError);
+	CHECK(Breath.Info.Instruments.back().Vibrato);
+	CHECK_LACKS(Run(Breath, "polish", "{\"style\": \"calm\", \"channels\": [\"VRC6 Pulse 1\"]}").Text, "(451)");
 	// Without a style, polish adds its accents as ever
 	FakeSong Plain;
 	Plain.Info.DirectChanges = true;

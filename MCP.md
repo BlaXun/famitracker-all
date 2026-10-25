@@ -373,7 +373,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_tempo` | Sets the speed and tempo, from a BPM or as FamiTracker's own numbers: the track's, or from a bar on (a section's own tempo, a ritardando or accelerando over some bars) with speed and tempo effects there (direct changes only; undoable). See [Speed and tempo](#speed-and-tempo) |
 | `set_meter` | Sets the meter (3/4, 6/8, 2/4, 12/8...) as FamiTracker's row highlights, which every tool counts bars and beats by; a track without notes also gets patterns of whole bars (direct changes only; undoable). See [Meter](#meter) |
 | `set_swing` | Swings the rhythm: the speed alternates every half beat (or quarter beat), longer then shorter, averaging the old speed so the tempo stays; light (a lilt of about 57%, never over 61%), medium, hard or a percentage, as the speed's ticks allow; none takes it off; `by` delays swings only the channels named, with Gxx (direct changes only; undoable) |
-| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel (each one's loudest volume as written) and the DPCM level (dac) alone (direct changes only; undoable). style calm (night and ambient tracks) and lively (stages that bounce without pressing) mix as heard: the melody's loudest at 15, the chords 2.5 dB under it (lively 3.5), and the reply gives the balance reached; see [Calm and lively tracks](#calm-and-lively-tracks). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
+| `mix` | Balances the parts, keeping each one's dynamics: style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel (each one's loudest volume as written) and the DPCM level (dac) alone (direct changes only; undoable). style calm (night and ambient tracks) and lively (stages that bounce without pressing) mix as heard: the melody keeps its level, the chords 2.5 dB under it (lively 3.5), and the reply gives the balance reached; see [Calm and lively tracks](#calm-and-lively-tracks). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
@@ -656,13 +656,13 @@ volume, its instrument's envelope, the pulse's width or the wave, the
 fader, the pan and Soft, over 400 ms blocks gated as the meters gate them
 (against FamiTracker's renders, within about half a dB), where the part
 plays with the melody, and sets the volumes so that each part sits under
-the melody's loudest, which goes to 15:
+the melody, which keeps its level (`levels` sets it):
 
 | Part | calm | lively |
 |---|---|---|
 | the chords (their loudest layer) | 2.5 dB under | 3.5 under |
 | an echo of the melody | 7 under | 7 under |
-| a second line or an answering voice | 4 under | 3.5 under |
+| a second line or an answering voice | no louder than 3 under (to 4) | no louder than 2.5 under (to 3.5) |
 | the bass | 2.5 under | 3 under |
 | the drums | 9 under | 6 under |
 
@@ -670,13 +670,17 @@ Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
 soft layer) keep their place under it, together at least 3 dB under it.
 The triangle, which has no volume, gets its place from the DPCM level,
 unless `dac` is given (the noise moves with it, and the drums make up for
-it). Over some bars the parts are set against the melody there, the melody
-keeping its level from the rest of the song. Volumes come in whole steps,
-so a part can land half a dB or so off its place; the reply gives the
-balance reached ("as heard: the melody (VRC6 Pulse 1) 2.7 dB over the
-chords, the echo 6.6 under and the triangle 2.5 under") and names a part
-that can't reach its place at 15 or 1 (a fader in `set_mixer` moves it
-further). `review_arrangement` with the style hears the same balance and
+it). A second line quieter than its place keeps its level: it may be an
+ornament (a bell that blinks, a bird). Over some bars the parts are set
+against the melody there, the melody keeping its level from the rest of
+the song. Volumes come in whole steps, and FamiTracker rounds a volume
+times its envelope down (on a sound that holds 12, volumes 5 and 6 both
+play 4), so each part off its place tries the volumes around its own and
+keeps the one heard nearest. The reply gives the balance reached ("as
+heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.6
+under and the triangle 2.5 under") and names a part still half a dB or
+more off, between two steps or at 15 or 1, with how far: a fader in
+`set_mixer` moves it the rest. `review_arrangement` with the style hears the same balance and
 tips a melody more than 4 dB over the chords (lively 5) or under 1 dB (2).
 `measure_mix` renders the stems themselves.
 

@@ -7461,11 +7461,13 @@ std::string BalanceText(Session &S, const std::vector<MixSpan> &Spans, const Hea
 // melody, a second line or an answering voice, the bass, the drums
 struct HeardPlaces {
 	double Chords, Echo, Line, Bass, Drums;
+	double LineTop;	// a second line louder than this comes down to Line; a quieter one (an ornament too: a bell that
+					// blinks, a bird) keeps its level
 };
 
 HeardPlaces PlacesFor(bool Calm)
 {
-	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -9.0 }, LIVELY = { -3.5, -7.0, -3.5, -3.0, -6.0 };
+	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -9.0, -3.0 }, LIVELY = { -3.5, -7.0, -3.5, -3.0, -6.0, -2.5 };
 	return Calm ? CALM : LIVELY;
 }
 
@@ -7832,8 +7834,8 @@ std::string MixTool(Session &S, const Json &Args)
 				"stereo: " + Sides + (Middles.empty() ? "" : "; in the middle " + Middles));
 	};
 
-	// As heard: each part's shift in dB, so that it plays at its place against the melody (the melody's loudest volume
-	// goes to 15); for the parts mixed by a given level or with no role, none
+	// As heard: each part's shift in dB, so that it plays at its place against the melody (which keeps its level, unless
+	// levels gives it one); for the parts mixed by a given level or with no role, none
 	const HeardPlaces Places = PlacesFor(Calm);
 	std::vector<double> Shifts(Spans.size(), 0.0), Aims(Spans.size(), NO_LOUDNESS);
 	std::vector<char> ByEar(Spans.size(), 0);
@@ -7850,9 +7852,11 @@ std::string MixTool(Session &S, const Json &Args)
 			if (Spans[i].Role != ROLE_MELODY || Peaks[i].Played <= 0)
 				continue;
 			const ChannelInfo &Info = S.Channel(Spans[i].Channel);
-			MelodyShift = LevelDb(Info, Spans[i].Target >= 1 ? Spans[i].Target : 15) - LevelDb(Info, Peaks[i].Highest);
+			// The melody keeps its level: raised, it would leave behind what keeps its own (a swell of wind, a buzz) and
+			// the parts that can't follow it past 15
+			MelodyShift = Spans[i].Target >= 1 ? LevelDb(Info, Spans[i].Target) - LevelDb(Info, Peaks[i].Highest) : 0.0;
 			if (Spans[i].Target < 1) {
-				Shifts[i] = MelodyShift;
+				Shifts[i] = 0.0;
 				ByEar[i] = 1;
 			}
 		}
@@ -7888,9 +7892,13 @@ std::string MixTool(Session &S, const Json &Args)
 				Places.Bass : P.Role == ROLE_DRUMS ? Places.Drums : NO_LOUDNESS;
 			if (Place <= NO_LOUDNESS)
 				continue;
+			ByEar[i] = 1;
+			if (P.Role == ROLE_LINE && B.Rel[i] <= Places.LineTop) {
+				Shifts[i] = MelodyShift;	// with the melody, where levels moves it
+				continue;
+			}
 			Shifts[i] = Place - B.Rel[i] + MelodyShift;
 			Aims[i] = Place;
-			ByEar[i] = 1;
 		}
 		// The triangle has no volume: the DPCM level gives it its place (the noise moves with it, so the drums make up
 		// for it), unless dac was given
@@ -8094,20 +8102,64 @@ std::string MixTool(Session &S, const Json &Args)
 		ApplyPans(*pDraft, &Done, PansLost);
 	WriteDac(*pDraft);
 
-	// As heard: the balance the mix leaves; where the volumes' whole steps (or the 2A03's nonlinear DAC) left a part half
-	// a dB or more off its place, once more from the song as it was
+	// As heard: the balance the mix leaves. Whole steps of volume, and the envelope they multiply (FamiTracker rounds the
+	// product down, so on a sound that holds 12, volumes 5 and 6 both play 4), can leave a part half a dB or more off its
+	// place: such a part (a chord layer as one) tries each loudest volume around its own, and keeps the one heard nearest
 	std::string Balance;
 	if (Heard && Melody >= 0) {
-		Hearing After(S, pDraft.get());
-		HeardBalance B = HearBalance(S, After, Spans, Local, Melody, Voices, First, End);
-		bool Again = false;
-		for (size_t i = 0; i < Spans.size(); ++i)
-			if (ByEar[i] && Aims[i] > NO_LOUDNESS && B.Rel[i] > NO_LOUDNESS && std::fabs(Missed[i]) < 0.05 &&
-				std::fabs(B.Rel[i] - Aims[i]) >= 0.5) {
-				Shifts[i] += Aims[i] - B.Rel[i];
-				Again = true;
+		// The balance of a draft, or (null) of the mix as the shifts are now
+		auto BalanceOf = [&](Draft *pTry) {
+			std::unique_ptr<Draft> pOwn;
+			if (pTry == 0) {
+				pOwn.reset(new Draft(S));
+				pTry = pOwn.get();
+				int Lost = 0;
+				Scale(*pTry, 0);
+				if (Width >= 0.0)
+					ApplyPans(*pTry, 0, Lost);
+				WriteDac(*pTry);
 			}
-		if (Again) {
+			Hearing Ears(S, pTry);
+			return HearBalance(S, Ears, Spans, Local, Melody, Voices, First, End);
+		};
+		HeardBalance B = BalanceOf(pDraft.get());
+		const std::vector<double> MissedFirst = Missed;
+		std::vector<char> Tried(Spans.size(), 0);
+		bool Searched = false, Changed = false;
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (Tried[i] || !ByEar[i] || Aims[i] <= NO_LOUDNESS || B.Rel[i] <= NO_LOUDNESS || std::fabs(MissedFirst[i]) >= 0.05 ||
+				std::fabs(B.Rel[i] - Aims[i]) < 0.5)
+				continue;
+			std::vector<size_t> Unit;
+			for (size_t k = 0; k < Spans.size(); ++k)
+				if (k == i || (B.Layer[i] >= 0 && B.Layer[k] == B.Layer[i]))
+					Unit.push_back(k);
+			for (size_t u = 0; u < Unit.size(); ++u)
+				Tried[Unit[u]] = 1;
+			Searched = true;
+			const ChannelInfo &Info = S.Channel(Spans[i].Channel);
+			const int Highest = Own[i].Highest;
+			const double Was = Shifts[i];
+			double Best = Was, BestMiss = std::fabs(B.Rel[i] - Aims[i]);
+			for (int To = std::max(1, Highest - 7); To <= std::min(15, Highest + 7); ++To) {
+				const double Shift = LevelDb(Info, To) - LevelDb(Info, Highest);
+				if (std::fabs(Shift - Was) < 0.01)
+					continue;
+				for (size_t u = 0; u < Unit.size(); ++u)
+					Shifts[Unit[u]] = Shift;
+				const HeardBalance Tries = BalanceOf(0);
+				const double Miss = Tries.Rel[i] > NO_LOUDNESS ? std::fabs(Tries.Rel[i] - Aims[i]) : 1e9;
+				if (Miss < BestMiss - 0.05) {
+					Best = Shift;
+					BestMiss = Miss;
+				}
+			}
+			for (size_t u = 0; u < Unit.size(); ++u)
+				Shifts[Unit[u]] = Best;
+			Changed = Changed || Best != Was;
+		}
+		if (Searched) {
+			// The mix with the volumes found (and what Scale and WriteDac tell of it, which the tries changed)
 			Done.clear();
 			PansLost = 0;
 			pDraft.reset(new Draft(S));
@@ -8115,18 +8167,33 @@ std::string MixTool(Session &S, const Json &Args)
 			if (Width >= 0.0)
 				ApplyPans(*pDraft, &Done, PansLost);
 			WriteDac(*pDraft);
-			Hearing Again2(S, pDraft.get());
-			B = HearBalance(S, Again2, Spans, Local, Melody, Voices, First, End);
+			if (Changed)
+				B = BalanceOf(pDraft.get());
 		}
 		double Least, Most;
 		Balance = BalanceText(S, Spans, B, Melody, Least, Most);
-		std::string Short;
-		for (size_t i = 0; i < Spans.size(); ++i)
-			if (ByEar[i] && std::fabs(Missed[i]) >= 0.5)
-				Short += (Short.empty() ? "" : ", ") + Format("%s %.1f dB %s", LabelOf(Spans[i]).c_str(), std::fabs(Missed[i]),
-					Missed[i] > 0 ? "short at 15" : "over at 1");
-		if (!Short.empty())
-			Balance += " (off its place: " + Short + "; a fader in set_mixer moves it further)";
+		// What lands half a dB or more off its place (at 15 or 1, or between two volumes' steps), a chord layer as one:
+		// a fader moves it the rest of the way
+		std::string Off;
+		std::vector<char> Named(Spans.size(), 0);
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			if (!ByEar[i] || Named[i] || Aims[i] <= NO_LOUDNESS || B.Rel[i] <= NO_LOUDNESS)
+				continue;
+			const double By = B.Rel[i] - Aims[i];	// over its place (under it, negative)
+			if (std::fabs(By) < 0.5)
+				continue;
+			std::string Names;
+			for (size_t k = i; k < Spans.size(); ++k)
+				if (k == i || (B.Layer[i] >= 0 && B.Layer[k] == B.Layer[i] && !Named[k])) {
+					Named[k] = 1;
+					Names += (Names.empty() ? "" : " and ") + S.Channel(Spans[k].Channel).FullName();
+				}
+			Off += (Off.empty() ? "" : ", ") + Format("%s (%s) %.1f dB too %s%s", Names.c_str(), RoleName(Spans[i].Role),
+				std::fabs(By), By > 0 ? "loud" : "quiet", std::fabs(Missed[i]) >= 0.05 ? (Missed[i] > 0 ? " at 15" : " at 1") :
+				" (between volume steps)");
+		}
+		if (!Off.empty())
+			Balance += " (off their places: " + Off + "; set_mixer's faders move them the rest)";
 	}
 
 	std::vector<Change> Changes;
@@ -8989,8 +9056,9 @@ std::string PolishTool(Session &S, const Json &Args)
 	std::vector<Change> Changes;
 	int Start;
 	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
-		throw Problem("There was nothing to polish there: no notes for accents, no long melody notes for vibrato, no repeated "
-			"triangle notes and no notes that click.");
+		throw Problem(Calm ? "There was nothing to polish there: no long melody notes for vibrato (sounding when it would come "
+			"in, without a vibrato of their own), no repeated triangle notes and no notes that click." : "There was nothing to "
+			"polish there: no notes for accents, no long melody notes for vibrato, no repeated triangle notes and no notes that click.");
 	std::string Summary;
 	for (size_t i = 0; i < Done.size(); ++i)
 		Summary += (i == 0 ? "" : "; ") + Done[i];
@@ -17496,8 +17564,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"sets the stereo picture (wide: the echo opposite the lead, chord voices apart, the melody, bass and drums in the "
 			"middle). style calm (night and ambient tracks) and lively (stages that bounce without pressing) mix as heard instead: "
 			"each part's loudness as the stems measure it (notes, envelopes, faders, pans and Soft), where it plays with the "
-			"melody, whose loudest goes to 15: the chords 2.5 dB under it (lively 3.5), an echo 7, a second line 4 (3.5), the "
-			"bass 2.5 (3), drums 9 (6), the DPCM level placing the triangle; the reply gives the balance reached. A track named "
+			"melody, which keeps its level: the chords 2.5 dB under it (lively 3.5), an echo 7, a second line no louder than 3 "
+			"(2.5), the bass 2.5 (3), drums 9 (6), the DPCM level placing the triangle; the reply gives the balance reached. A track named "
 			"calm (\"Town (night)\") mixes calm unless given a style. Over some bars a part keeps its level from the rest of the "
 			"song; noise swells (wind, waves) and the 5B's envelope notes keep theirs. The reply says what each channel plays "
 			"(melody, echo, chords...) and what changed. Needs direct changes; undoable.",

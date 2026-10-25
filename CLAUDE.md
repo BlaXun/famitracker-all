@@ -498,8 +498,9 @@ the `HEARD_*` constants measured against FamiTracker's renders.
 `HearBalance` and `BalanceText` give each role against the melody where
 they play together, `PlacesFor` where calm and lively put them, and
 `MixTool`'s heard path sets the volumes (and the triangle's DPCM level)
-from them, measuring again once. `ShapeOf` and `HeldLeads` find a lead
-whose sound holds a high, steady level (`check_song`'s `FOUND_HELD`,
+from them; a part left half a dB or more off its place tries the volumes
+around its own (the envelope's rounding counted) and keeps the nearest.
+`ShapeOf` and `HeldLeads` find a lead whose sound holds a high, steady level (`check_song`'s `FOUND_HELD`,
 `PROBLEM_HELD` in `ProblemList.h`). `TestCalmChoice`, `TestHeardBalance`,
 `TestCalmMix`, `TestCalmPolish`, `TestHeldLead`, `TestMixFixes` and
 `TestReviewFixes` cover them.
