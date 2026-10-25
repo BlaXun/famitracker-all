@@ -101,8 +101,9 @@ const uint64_t MONO[CHIPS] = {
 #endif
 
 // Single notes instead of a chip's script: a VRC6 pulse (50%) held at 291 Hz, the 2A03's triangle at the
-// same pitch, and the pulse for 10 frames, then silence
-enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP };
+// same pitch, and the pulse for 10 frames, then silence; the DPCM level set to 0x50 as it starts ($4011, as a
+// Zxx on a song's first row writes it), alone or with the triangle
+enum tone_t { TONE_NONE, TONE_PULSE, TONE_TRIANGLE, TONE_BLIP, TONE_DAC, TONE_DAC_TRIANGLE };
 
 struct Run {
 	int Chip;
@@ -110,6 +111,7 @@ struct Run {
 	int Pan[VOICES];		// their pans: 0x00 left, 0x80 the middle, 0xFF right
 	int PanFrame;			// set before this frame's writes
 	double Gain[VOICES];	// the mixer window's levels (1 as they play), set with the pans
+	bool Silent[VOICES];	// left out of the sound (CMixer::SetChannelSilent, a 2A03 channel), set with the pans
 	// Depth, when Depth: the voices' Soft and Space and the space's room, echo (seconds) and repeats, set
 	// before DepthFrame's writes; Off: every voice's back to 0 before frame Off - 1 (0: never)
 	bool Depth;
@@ -126,6 +128,9 @@ struct Run {
 	// with ClearSpace the space silenced too, as a song starts
 	int ResetAt;
 	bool ClearSpace;
+	// The DPCM's output started at this level before the first frame, as CSoundGen starts a song whose first row
+	// sets it (CAPU::StartDAC; 0: not)
+	int StartDac;
 };
 
 Run Plain(int Chip, unsigned Mask)
@@ -395,7 +400,13 @@ void PlayS5B(Writer &w, unsigned Mask, int f)
 void PlayTone(Writer &w, int Tone, int f)
 {
 	// Period 383 on the VRC6 (16 cycles a step) and 191 on the triangle (32 a step): both 291.3 Hz
-	if (Tone == TONE_TRIANGLE) {
+	if (Tone == TONE_DAC || Tone == TONE_DAC_TRIANGLE) {
+		if (f == 0)
+			w.W(0x4011, 0x50);
+		w.Next();
+		if (Tone == TONE_DAC_TRIANGLE && f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
+	}
+	else if (Tone == TONE_TRIANGLE) {
 		if (f == 0) { w.W(0x4008, 0xFF); w.W(0x400A, 0xBF); w.W(0x400B, 0x00); }
 	}
 	else {
@@ -432,6 +443,10 @@ Sides RenderHere(const Run &R)
 	Apu.Write(0x4017, 0x00);
 	if (R.Chip == CHIP_MMC5)
 		Apu.ExternalWrite(0x5015, 0x03);
+#ifndef APU_REFERENCE
+	if (R.StartDac > 0)
+		Apu.StartDAC(static_cast<uint8>(R.StartDac));
+#endif
 
 	const uint32 Cycles = CAPU::BASE_FREQ_NTSC / CAPU::FRAME_RATE_NTSC;
 	const int Frames = R.Frames > 0 ? R.Frames : FRAMES;
@@ -459,6 +474,8 @@ Sides RenderHere(const Run &R)
 					Apu.SetChannelPan(CHANNELS_OF[R.Chip][v], R.Pan[v]);
 				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Gain[v] != 1.0)
 					Apu.SetChannelGain(CHANNELS_OF[R.Chip][v], R.Gain[v]);
+				if (CHANNELS_OF[R.Chip][v] >= 0 && R.Silent[v])
+					Apu.SetChannelSilent(CHANNELS_OF[R.Chip][v], true);
 			}
 		}
 		if (R.Tone != TONE_NONE) {
@@ -945,6 +962,95 @@ void TestSpace()
 	CHECK(Ratio > 0.45 && Ratio < 0.55);
 }
 
+void TestDacStart()
+{
+	// A song that sets the DPCM level on its first row: written as it starts, the DMC's output steps up from silence,
+	// a pop through the low cut; started at that level (CAPU::StartDAC, as CSoundGen starts such a song), the same
+	// write sounds nothing, and the triangle plays softened by it from the start, as it does after the pop
+	Run Written = Plain(CHIP_2A03, 0);
+	Written.Tone = TONE_DAC;
+	Run Started = Written;
+	Started.StartDac = 0x50;
+	const Sides Pop = Render(Written), Quiet = Render(Started);
+	CHECK(Peak(Pop.Left) > 1000 && Peak(Pop.Left, 10 * FRAME_SAMPLES) < 2);
+	CHECK(Peak(Quiet.Left) == 0 && Peak(Quiet.Right) == 0 && Quiet.Left.size() == Pop.Left.size());
+	Written.Tone = Started.Tone = TONE_DAC_TRIANGLE;
+	const Sides Stepped = Render(Written), Softened = Render(Started);
+	Run Alone = Plain(CHIP_2A03, 0);
+	Alone.Tone = TONE_TRIANGLE;
+	const Sides Full = Render(Alone);
+	const size_t After = 20 * FRAME_SAMPLES;
+	bool Close = Stepped.Left.size() == Softened.Left.size() && Same(Softened.Left, Softened.Right);
+	for (size_t i = After; Close && i < Stepped.Left.size(); ++i)
+		Close = std::abs(Stepped.Left[i] - Softened.Left[i]) <= 2;
+	CHECK(Close);
+	CHECK(Peak(Softened.Left, 0, 2 * FRAME_SAMPLES) < Peak(Stepped.Left, 0, 2 * FRAME_SAMPLES));
+	const double Share = RmsOf(Softened.Left, After, Softened.Left.size()) / RmsOf(Full.Left, After, Full.Left.size());
+	CHECK(Share > 0.5 && Share < 0.75);		// 0.4.6's mixer: the triangle at about 57% under Z50
+}
+
+// First less Second, sample for sample (as long as the shorter)
+std::vector<int16> Less(const std::vector<int16> &First, const std::vector<int16> &Second)
+{
+	std::vector<int16> Out;
+	for (size_t i = 0; i < First.size() && i < Second.size(); ++i)
+		Out.push_back(static_cast<int16>(First[i] - Second[i]));
+	return Out;
+}
+
+// Two renders the same but for the rounding of each one's steps (whole steps of the synth, about 40 a step at this
+// volume): what's between them under 3% of the first (30 dB under it), from sample From on
+bool Alike(const std::vector<int16> &First, const std::vector<int16> &Second, size_t From = 0)
+{
+	if (First.size() != Second.size() || From >= First.size())
+		return false;
+	const std::vector<int16> A(First.begin() + static_cast<std::ptrdiff_t>(From), First.end()),
+		B(Second.begin() + static_cast<std::ptrdiff_t>(From), Second.end());
+	return Rms(Less(A, B)) < Rms(A) * 0.03 + 1.0;
+}
+
+void TestSilentParts()
+{
+	// A render of some parts alone (measure_mix's stems): a 2A03 channel left out comes off its pin as the pin plays it
+	// alone, so what's left is the rest as it sounds in the mix, the compression in. Two pulses, the second left out:
+	// both less the second alone
+	Run Both = Plain(CHIP_2A03, 3), Second = Plain(CHIP_2A03, 2);
+	Run Without = Both;
+	Without.Silent[1] = true;
+	const Sides Mix = Render(Both), Alone = Render(Second), Left = Render(Without);
+	CHECK(Rms(Left.Left) > 500.0 && Alike(Left.Left, Less(Mix.Left, Alone.Left)) && Same(Left.Left, Left.Right));
+	// ...and both left out: silence
+	Without.Silent[0] = true;
+	CHECK(Peak(Render(Without).Left) == 0);
+	// The triangle under a DPCM level of 0x50, the DPCM left out: the mix less the DPCM alone, the triangle softened as
+	// it sounds there (at about 57%), where the DPCM's level of nothing (its share of the pin taken off, as a fader does)
+	// leaves it louder
+	Run Triangle = Plain(CHIP_2A03, 0);
+	Triangle.Tone = TONE_DAC_TRIANGLE;
+	Run Dac = Triangle;
+	Dac.Tone = TONE_DAC;
+	Run Stem = Triangle;
+	Stem.Silent[4] = true;
+	Run Shared = Triangle;
+	Shared.Gain[4] = 0.0;
+	Run Plain_ = Plain(CHIP_2A03, 0);
+	Plain_.Tone = TONE_TRIANGLE;
+	Run Started = Triangle;
+	Started.StartDac = 0x50;
+	const Sides WithDac = Render(Triangle), DacAlone = Render(Dac), Part = Render(Stem), Shares = Render(Shared), Full = Render(Plain_),
+		Softened = Render(Started);
+	CHECK(Alike(Part.Left, Less(WithDac.Left, DacAlone.Left)));
+	const size_t After = 20 * FRAME_SAMPLES;
+	CHECK(Alike(Part.Left, Softened.Left, After));	// once the DPCM's step has died away: as it sounds
+	const double Level = RmsOf(Part.Left, After, Part.Left.size()) / RmsOf(Full.Left, After, Full.Left.size()),
+		Louder = RmsOf(Shares.Left, After, Shares.Left.size()) / RmsOf(Full.Left, After, Full.Left.size());
+	std::printf("The triangle under Z50 alone: %.2f of it at Z00 (its share of the pin: %.2f)\n", Level, Louder);
+	CHECK(Level > 0.45 && Level < 0.62 && Louder > Level * 1.2);
+	// Left out from the start, the DPCM's level sounds nothing
+	Dac.Silent[4] = true;
+	CHECK(Peak(Render(Dac).Left) == 0);
+}
+
 #endif
 
 }	// namespace
@@ -969,6 +1075,8 @@ int main()
 	TestOwnBuffers();
 	TestSoft();
 	TestSpace();
+	TestDacStart();
+	TestSilentParts();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail == 0 ? 0 : 1;
 #endif
