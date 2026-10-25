@@ -213,6 +213,7 @@ CMainFrame::~CMainFrame()
 
 BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_CREATE()
+	ON_WM_ACTIVATE()
 	ON_WM_SIZE()
 	ON_WM_TIMER()
 	ON_WM_ERASEBKGND()
@@ -2049,7 +2050,7 @@ void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
 	const CString Part(pPart);
 	if (Part == _T("clips") && (m_pClipsBar == NULL || !m_pClipsBar->IsVisible()))
 		ShowClipsPanel(true);
-	else if (Part == _T("piano-roll") && (m_pPianoRoll == NULL || !m_pPianoRoll->IsVisible()))
+	else if (Part == _T("piano-roll") && (m_pPianoRoll == NULL || !m_pPianoRoll->IsOpen()))
 		ShowPianoRoll(true);
 	else if ((Part == _T("pattern") || Part == _T("channel")) && !m_bPatternShown)
 		ShowPatternEditor(true);	// a channel's column is in the pattern editor
@@ -2445,7 +2446,22 @@ void CMainFrame::OnViewPianoRoll()
 
 void CMainFrame::OnUpdateViewPianoRoll(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsVisible() ? 1 : 0);
+	// Its own open state: CControlBar::IsVisible could say no while it showed (seen under Wine with the pattern editor
+	// hidden and the drum grid closed), as "Pattern editor" never did with its flag
+	pCmdUI->SetCheck(m_pPianoRoll != NULL && m_pPianoRoll->IsOpen() ? 1 : 0);
+}
+
+void CMainFrame::OnActivate(UINT nState, CWnd *pWndOther, BOOL bMinimized)
+{
+	CFrameWnd::OnActivate(nState, pWndOther, bMinimized);
+	// Activated again (a dialog or a message box closed, or back from another program), the window gives the keys to
+	// the active view, the pattern editor: the piano roll gets them back when it had them as they left. Not when a
+	// click activated it, which puts them where it lands.
+	if (nState == WA_INACTIVE)
+		return;
+	CPianoRollWnd *pRoll = GetPianoRollWnd();
+	if (pRoll != NULL && pRoll->TakeKeysBack() && nState == WA_ACTIVE && !bMinimized)
+		pRoll->SetFocus();
 }
 
 void CMainFrame::ShowPianoRoll(bool Show)
@@ -2470,7 +2486,7 @@ void CMainFrame::ShowPatternEditor(bool Show)
 
 note_views_t CMainFrame::NoteViews() const
 {
-	return note_views_t(m_bPatternShown, m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsVisible());
+	return note_views_t(m_bPatternShown, m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsOpen());
 }
 
 // The pattern editor and the piano roll as Wanted has them (NoteViews.h). The
@@ -2582,7 +2598,7 @@ void CMainFrame::ShowDrumGrid(bool Show)
 
 CPianoRollWnd *CMainFrame::GetPianoRollWnd() const
 {
-	return m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsVisible() ? m_pPianoRoll->GetRoll() : NULL;
+	return m_pPianoRoll != NULL && m_pPianoRoll->GetSafeHwnd() != NULL && m_pPianoRoll->IsOpen() ? m_pPianoRoll->GetRoll() : NULL;
 }
 
 void CMainFrame::OnViewClipsPanel()

@@ -116,7 +116,7 @@ CString BpmText(double Bpm);	// "112.5", "150"
 // Message; otherwise Message says what was written.
 struct groove_choice_t {
 	CString Mood;			// a mood's name, as make_groove takes it ("town")
-	double Bpm;
+	double Bpm;				// 0 keeps the song's own speed and tempo (the piano roll's mood starters under notes)
 	int KeyTonic;			// 0-11 (C-B)
 	bool KeyMinor;
 	int Row;				// song row of the bar it starts at

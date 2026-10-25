@@ -310,6 +310,7 @@ public:
 	afx_msg void OnUpdatePrevSong(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewControlpanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewPianoRoll(CCmdUI *pCmdUI);
+	afx_msg void OnActivate(UINT nState, CWnd *pWndOther, BOOL bMinimized);	// the piano roll gets the keys back
 	afx_msg void OnUpdateViewPatternEditor(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditDrumGrid(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
