@@ -16961,8 +16961,8 @@ std::string SoftReferenceText(Session &S, const ReferenceSound &Sound, const std
 	}
 	const bool Bends = !Sound.Sequences[SEQUENCE_PITCH].Items.empty() || !Sound.Sequences[SEQUENCE_HIPITCH].Items.empty();
 	if (Sound.Chip == "FDS")
-		Out += " It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, its pitch sequence in the N163's coarser steps, "
-			"and its notes sound as written (on the FDS they sounded two octaves under).";
+		Out += std::string(" It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32, ") + (Bends ? "its pitch sequence in "
+			"the N163's coarser steps, " : "") + "and its notes sound as written (on the FDS they sounded two octaves under).";
 	else if (Sound.Triangle)
 		Out += " It was a triangle sound: the triangle sounds an octave under the notes written, the N163 as written, so write its "
 			"part an octave lower to keep its register.";

@@ -97,6 +97,21 @@ public:
 	void	ClearSpace();						// the space silent (ClearBuffer leaves it ringing), as a song starts
 	bool	IsOwn(int ChanID) const;			// mixed into buffers of its own (the VRC7 makes its samples itself)
 	void	MixOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
+	// Stems (this FamiTracker's own, measure_mix's parts alone in one pass): up to MAX_STEMS renders of some channels
+	// alone, made with the mix, each sample for sample as a render that leaves the other channels out has it (the
+	// 2A03's ones SetChannelSilent, the others' at a level of 0): a stem's 2A03 channels come off their pins as there,
+	// the other chips' channels sound as in the mix, each with its Soft, and its sends go to a space of the stem's own.
+	// StemOf[ChanID] is the stem a channel is heard in (-1: none; each channel in one at most); Count 0 for none. Set
+	// as a render starts, with nothing sounding.
+	static const int MAX_STEMS = 16;
+	void	SetStems(int Count, const int *pStemOf);
+	int		StemCount() const { return m_iStems; }
+	int		StemOf(int ChanID) const;
+	// A stem's samples, read after ReadBuffer has read the mix's: as many
+	int		ReadStem(int Stem, int Size, void *Buffer, bool Stereo);
+	// For the VRC7: a stem's samples for each side, and a channel in buffers of its own its samples there for its stem
+	void	MixStemSamples(int Stem, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
+	void	MixStemOwnSamples(int ChanID, blip_sample_t *pLeft, blip_sample_t *pRight, uint32 Count);
 
 	int32	GetChanOutput(uint8 Chan) const;
 	void	SetChipLevel(chip_level_t Chip, float Level);
