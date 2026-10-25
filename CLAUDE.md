@@ -910,9 +910,13 @@ headings folded by hand by `RowKey`, a kind's games folded while it has more
 than `FOLD_GAMES_OVER` reference sounds and no words are asked for).
 `SoundBrowserDlg.cpp` draws the headings by custom draw in its owner-data
 list (no list-view groups: owner-data lists have none, and Wine's comctl32
-draws them only in part), takes every click itself (`CSoundList`: a sound
-plays, the one picked too; a heading folds) and lays itself out as it's
-resized (`Layout`). `PreviewSteps` plays a phrase for each kind (`PHRASES`,
+draws them only in part; a heading is drawn as a row, then over it in
+`CDDS_ITEMPOSTPAINT`, since Wine puts the focus rectangle where it last drew
+the focused row itself), takes every click itself (`CSoundList`: a sound
+plays, the one picked too; a heading folds), lays itself out as it's resized
+(`Layout`) and stops the sound in `OnCancel`: under Wine without a window
+manager the UI thread waits a second or two after any modal dialog closes,
+before the dialog's `OnDestroy` runs. `PreviewSteps` plays a phrase for each kind (`PHRASES`,
 `DrumSteps`). `Source/SoundPreview.cpp` (`CSoundPreview`, timed by a
 message-only window) plays the previews and the note keys for the browser
 and for Instrument > Listen (`ID_INSTRUMENT_LISTEN`, the speaker button after

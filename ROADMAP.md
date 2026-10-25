@@ -105,7 +105,8 @@ Done:
   the song's own instruments. A click on a heading folds it or opens it
   again; a kind with more than 40 sounds from the library starts with its
   games folded, so the ready-made sounds and every game's name show at
-  once, and words in Find open everything they find. Every click on a
+  once, and words in Find open everything they find (and show every kind
+  when the kind picked has none of it). Every click on a
   sound plays it, the one already picked too, and each row has a play mark
   that turns green while it plays; the arrow keys play each sound they
   reach (held down, the one they stop on), Space plays it again. The

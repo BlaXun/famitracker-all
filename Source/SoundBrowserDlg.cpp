@@ -130,8 +130,8 @@ COLORREF Blend(COLORREF A, COLORREF B, int PercentA)
 }	// namespace
 
 // The sound list: a click on a row is the dialog's, every time (a sound plays, the one picked too; a heading
-// folds), and no drag starts. It's painted again after a key moves it: Wine draws the focus rectangle by XOR over
-// the rows, and a step that scrolls left pieces of it over the headings
+// folds), and no drag starts. It's painted again after a key moves it: Wine draws the focus rectangle by XOR, and a
+// step that scrolls leaves pieces of it over the headings
 class CSoundList : public CListCtrl
 {
 protected:
@@ -314,7 +314,6 @@ BOOL CSoundBrowserDlg::OnInitDialog()
 	m_cChannel.SubclassDlgItem(IDC_SB_CHANNEL, this);
 	m_cList.SubclassDlgItem(IDC_SB_LIST, this);
 	m_cList.SetExtendedStyle(m_cList.GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
-	m_cList.SendMessage(WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS), 0);	// the picked row's color shows it
 	MakeMarks();
 	m_cList.SetImageList(&m_Marks, LVSIL_SMALL);
 	LOGFONT Font;
@@ -933,19 +932,20 @@ void CSoundBrowserDlg::OnItemChanged(NMHDR *pNMHDR, LRESULT *pResult)
 		ListenTo(Sound);		// a step with the arrow keys plays it
 }
 
+// A heading is drawn as a row first, then over: the list keeps its focus where the row is (Wine draws the focus
+// rectangle where it last drew the focused row itself)
 void CSoundBrowserDlg::OnCustomDraw(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	NMLVCUSTOMDRAW *pDraw = reinterpret_cast<NMLVCUSTOMDRAW*>(pNMHDR);
 	*pResult = CDRF_DODEFAULT;
+	const int Row = static_cast<int>(pDraw->nmcd.dwItemSpec);
+	const bool Heading = Row >= 0 && static_cast<size_t>(Row) < m_Rows.size() && m_Rows[static_cast<size_t>(Row)].Type != ftapi::ROW_SOUND;
 	if (pDraw->nmcd.dwDrawStage == CDDS_PREPAINT)
 		*pResult = CDRF_NOTIFYITEMDRAW;
-	else if (pDraw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
-		const int Row = static_cast<int>(pDraw->nmcd.dwItemSpec);
-		if (Row >= 0 && static_cast<size_t>(Row) < m_Rows.size() && m_Rows[static_cast<size_t>(Row)].Type != ftapi::ROW_SOUND) {
-			DrawHeading(CDC::FromHandle(pDraw->nmcd.hdc), Row);
-			*pResult = CDRF_SKIPDEFAULT;
-		}
-	}
+	else if (pDraw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT && Heading)
+		*pResult = CDRF_NOTIFYPOSTPAINT;
+	else if (pDraw->nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT && Heading)
+		DrawHeading(CDC::FromHandle(pDraw->nmcd.hdc), Row);
 }
 
 // A heading: a band across the list with a fold mark, its name and how many sounds it has
