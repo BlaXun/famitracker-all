@@ -6731,14 +6731,15 @@ void TestDesignedSounds()
 	CHECK(!Halts);
 	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Wind\"]}")).Text, "- SFX Wind.ogg: 4 s");
 	CHECK_HAS(Tools.Call("export_for_game", Parse("{\"tracks\": [\"SFX Wind\"]}")).Text, "loops as a whole");
-	// ...unless asked to play once; a loop too long is shortened to the most a loop lasts
+	// ...unless asked to play once; a loop as long as asked (it plays as pieces, an instrument each, past 4.2 s)
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"loop\": false}")).Text, "halts (C00) once it has died away");
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"rain\", \"length_percent\": 200}"));
-	CHECK_HAS(Result.Text, "A sound can last at most 4.2 s as a loop, so it was made shorter to fit.");
-	CHECK_HAS(Result.Text, "4.17 s long");
-	CHECK_HAS(Result.Text, "104% of the length");
+	CHECK_LACKS(Result.Text, "made shorter to fit");
+	CHECK_HAS(Result.Text, "8.00 s long");
+	CHECK_HAS(Result.Text, "200% of the length");
+	CHECK_HAS(Result.Text, "with 2 instruments in turn (");
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"thunder\", \"length_percent\": 400}")).Text,
 		"A sound can last at most 4.2 s, so it was made shorter to fit.");
@@ -6767,8 +6768,10 @@ void TestDesignedSounds()
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\"}, {\"channel\": \"noise\"}]}")).Text,
 		"Two noise layers sound at once");
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": []}")).Text, "layers should be a list of layers");
-	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"loop\": true, \"layers\": [{\"channel\": \"noise\", \"seconds\": 4.2}]}")).Text,
-		"A layer can last at most 4.18 s in a sound that loops");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"loop\": true, \"layers\": [{\"channel\": \"noise\", \"seconds\": 600}]}")).Text,
+		"A layer can last at most 136.53 s in a sound that loops; layer 1 lasts 600 s.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"seconds\": 5}]}")).Text,
+		"A layer can last at most 4.2 s; layer 1 lasts 5 s.");
 }
 
 ChannelInfo MakeChannel(const char *Name, const char *Chip, int Kind)
@@ -7711,8 +7714,8 @@ void TestFdsReference()
 		CHECK(Back.Sounds.size() == 3u && Back.Sounds[0].FdsWave.empty() && Back.Sounds[0].ModSpeed == 0);
 	}
 
-	// As a 2A03 instrument: its volume counted 0-15, its pitch in the period's coarser steps turned around, and a duty
-	// as bright as its wave (a ramp's: 25%)
+	// As a 2A03 instrument: its volume counted 0-15 (its release, which ended at 28, faded out after it: FadedRelease),
+	// its pitch in the period's coarser steps turned around, and a duty as bright as its wave (a ramp's: 25%)
 	const Preset P = ReferencePreset(Lead, "Mirror lead");
 	std::vector<int> Volume, Pitch, Duty;
 	int PitchLoop = -2;
@@ -7727,7 +7730,7 @@ void TestFdsReference()
 		else if (q.Type == SEQUENCE_DUTY)
 			Duty = q.Items;
 	}
-	CHECK(Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	CHECK(Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK(Pitch == std::vector<int>({ 0, -1, 1, 1, -1 }) && PitchLoop == 1);
 	CHECK(Duty == std::vector<int>({ 1 }));
 	CHECK(FdsWaveBrightness(Lead.FdsWave) > 0.3 && FdsWaveBrightness(FdsWaveOfWord("sine")) < 0.01);
@@ -7748,12 +7751,13 @@ void TestFdsReference()
 		bool Envelope = false, Vibrato = false;
 		for (size_t i = 0; i < F.Sequences.size(); ++i) {
 			if (F.Sequences[i].Type == SEQUENCE_VOLUME)
-				Envelope = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_VOLUME].Items && F.Sequences[i].Release == 6;
+				Envelope = F.Sequences[i].Items == std::vector<int>({ 10, 15, 20, 26, 31, 32, 30, 28, 14, 7, 3, 1, 0 }) &&
+					F.Sequences[i].Release == 6;	// its own, the release faded out from 28
 			if (F.Sequences[i].Type == SEQUENCE_PITCH)
 				Vibrato = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_PITCH].Items && F.Sequences[i].Loop == 1;
 		}
 		CHECK(Envelope && Vibrato);
-		CHECK(Song.Info.Instruments[0].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		CHECK(Song.Info.Instruments[0].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	}
 	// With no channel in an FDS song, it's the FDS's too: the same instrument
 	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\"}");
@@ -7765,7 +7769,7 @@ void TestFdsReference()
 	CHECK_HAS(Result.Text, "a 2A03 instrument for 2A03 Pulse 1");
 	CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32");
 	CHECK(Song.Made.count(1) == 1u && Song.Info.Instruments.size() == 2u &&
-		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"01\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-5\", "
 		"\"beats\": 1}]}").Text, "Instrument 01 \"Mirror lead\" is a 2A03 instrument; FDS needs an FDS one.");
 	// A pulse sound on the FDS: its duty's pulse as the wave, its volume 0-31, its pitch four times finer, turned around
@@ -7804,7 +7808,7 @@ void TestFdsReference()
 	CHECK_HAS(Result.Text, "a 2A03 instrument");
 	CHECK_HAS(Result.Text, "It was an FDS sound");
 	CHECK(Plain.MadeFds.empty() && !Plain.Info.Instruments.empty() &&
-		Plain.Info.Instruments.back().Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		Plain.Info.Instruments.back().Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK_HAS(Run(Plain, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"FDS\"}").Text, "Unknown channel");
 	// The FDS channel is named once ("FDS", not "FDS FDS"), and found by either
 	CHECK_EQ(Song.Info.Channels[5].Name, std::string("FDS"));
@@ -16695,7 +16699,7 @@ void TestSoftReferenceWaves()
 	W = ReferenceWaveSound(R.Sounds[5], "Ripple disk", How);
 	CHECK(W.Waves.size() == 1u && W.Waves[0] == std::vector<int>({ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }));
 	CHECK_EQ(How, std::string("its FDS wave, resampled to the N163's 16 samples (without its modulator, which the N163 hasn't)"));
-	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }) &&
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }) &&
 		SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Release == 6);
 	CHECK(SequenceOf(W.Sequences, SEQUENCE_PITCH)->Items == std::vector<int>({ 0, 1, -1, -1, 1 }));
 	// One studied before the waves were kept: a round wave, and how to get its own
@@ -16866,7 +16870,7 @@ void TestSoftReferenceTool()
 		CHECK_LACKS(Result.Text, "pitch sequence");
 	}
 	CHECK(Other.MadeWaves.count(7) == 1u && SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME) != 0 &&
-		SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	Result = Run(Other, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 4, \"channel\": \"Soft 2\"}");
 	CHECK_HAS(Result.Text, "It plays a sawtooth wave, as its channel played it; its wave takes samples 80-95");
 	CHECK_HAS(Result.Text, "At volume 15 it holds about 5.9 dB under a 2A03 pulse at 15.");	// held at 12
@@ -19454,6 +19458,374 @@ void TestFinishSong()
 	}
 }
 
+// The next round of tool fixes (from feat-fixes-sounds), found by the composers of the soundtrack's rain loops, cues and
+// sound effects, each worked around by hand
+
+// The volume a channel plays on each row of the selected track, as FamiTracker plays a sound effect's (speed 1, a row a
+// tick): from each note on, its instrument's volume sequence an item a tick (the last held), nothing after a halt or a
+// release
+std::vector<int> TickVolumes(const FakeSong &Song, int Channel)
+{
+	const std::vector<Cell> &Cells = Song.Rows[static_cast<size_t>(Channel)];
+	std::vector<int> Out(Cells.size(), 0);
+	const InstrumentInfo *pPlaying = 0;
+	size_t From = 0;
+	for (size_t r = 0; r < Cells.size(); ++r) {
+		if (Cells[r].IsEnd())
+			pPlaying = 0;
+		else if (Cells[r].HasNote()) {
+			pPlaying = SongInstrument(Song, Cells[r].Instrument);
+			From = r;
+		}
+		if (pPlaying != 0 && !pPlaying->Volume.empty())
+			Out[r] = pPlaying->Volume[std::min(pPlaying->Volume.size() - 1, r - From)];
+	}
+	return Out;
+}
+
+// make_sound_effect's loops as long as asked: ambience (rain, wind, a crowd) wants loops of 30 seconds or more, where an
+// instrument's sequences hold 4.2 s. Each layer plays as pieces, an instrument each, with a note where each starts, so
+// the sound runs on across the pieces and from the last row (B00) into its start; within the module's limits
+void TestSfxLongLoops()
+{
+	FakeSong Song(2);
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"rain\", \"seconds\": 32}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"SFX Rain\": the rain sound");
+	CHECK_HAS(Result.Text, "32.00 s long");
+	CHECK(Song.Current == 1 && Song.Rows[0].size() == 1920u);
+	bool Jump = false;	// the jump back on the last row
+	for (size_t c = 0; c < Song.Rows.size(); ++c)
+		for (int k = 0; k < EFFECT_COLUMNS && Song.Rows[c].size() == 1920u; ++k)
+			Jump = Jump || Song.Rows[c][1919].Effect[k] == EFF_JUMP;
+	CHECK(Jump);
+	// The hiss on the noise sounds on every row, across the pieces; the drops on a pulse now and then
+	const std::vector<int> Hiss = TickVolumes(Song, 3);
+	int Silent = 0, Notes = 0;
+	for (size_t r = 0; r < Hiss.size(); ++r) {
+		Silent += Hiss[r] == 0 ? 1 : 0;
+		Notes += Song.Rows[3][r].HasNote() ? 1 : 0;
+	}
+	CHECK_EQ(Silent, 0);
+	CHECK(Notes >= 8 && Notes <= 9);	// a piece every 4 s or so
+	CHECK(Song.Rows[3][0].HasNote());
+	const std::vector<int> Drops = TickVolumes(Song, 0);
+	int Sounding = 0;
+	for (size_t r = 0; r < Drops.size(); ++r)
+		Sounding += Drops[r] > 0 ? 1 : 0;
+	CHECK(Sounding > 50 && Sounding < 960);
+	// Each piece's instrument fits FamiTracker's sequences
+	int Pieces = 0;
+	for (std::map<int, Preset>::const_iterator it = Song.Made.begin(); it != Song.Made.end(); ++it) {
+		if (it->second.Name.compare(0, 8, "SFX Rain") != 0)
+			continue;
+		++Pieces;
+		for (size_t s = 0; s < it->second.Sequences2A03.size(); ++s)
+			CHECK(it->second.Sequences2A03[s].Items.size() <= 252u);
+	}
+	CHECK(Pieces >= 9 && Pieces <= 18);
+
+	// Described in layers: half a minute of wind on the noise, gusting 20 times
+	Result = Tools.Call("make_sound_effect", Parse("{\"loop\": true, \"name\": \"SFX Gale\", \"layers\": [{\"channel\": \"noise\", "
+		"\"seconds\": 30, \"gusts\": 20, \"volume\": 10, \"pitch\": 6}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "30.00 s long");
+	CHECK(Song.Current == 2 && Song.Rows[3].size() >= 1800u);
+	const std::vector<int> Gale = TickVolumes(Song, 3);
+	int Quiet = 0;
+	for (size_t r = 0; r < 1800 && r < Gale.size(); ++r)
+		Quiet += Gale[r] == 0 ? 1 : 0;
+	CHECK_EQ(Quiet, 0);
+	bool GaleJump = false;
+	for (int k = 0; k < EFFECT_COLUMNS && Song.Rows[3].size() >= 1800u; ++k)
+		GaleJump = GaleJump || Song.Rows[3][1799].Effect[k] == EFF_JUMP;
+	CHECK(GaleJump);
+
+	// Longer than the instruments the song has room for: it says so, and adds nothing
+	FakeSong Full(2);
+	Full.Info.DirectChanges = true;
+	for (int i = 3; i < 60; ++i)
+		Full.AddInstrumentInfo(i, ("Spare " + std::to_string(i)).c_str(), "2A03", false);
+	const size_t Had = Full.Info.Instruments.size();
+	Result = Run(Full, "make_sound_effect", "{\"kind\": \"rain\", \"seconds\": 32}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "instruments");
+	CHECK(Full.Info.Instruments.size() == Had && Full.Tracks.size() == 1u);
+
+	// A loop of its own played over and over (a heartbeat, a second each): pieces of whole beats, alike, so one instrument
+	// for each of its channels however long it runs
+	int Period = 0;
+	const transcribe::SoundEffect Beats = LoopOfLength(*FindSoundEffect("heartbeat"), 30.0, SoundEffectChanges(), 8192, Period);
+	CHECK(Period == 60 && Beats.length() == 1800 && Beats.layers.size() == FindSoundEffect("heartbeat")->Make().layers.size());
+	for (size_t l = 0; l < Beats.layers.size(); ++l) {
+		const std::vector<transcribe::SfxLayer> Cut = SoundPieces(Beats.layers[l], Period);
+		CHECK(Cut.size() >= 8u && Cut.size() > 1u && Cut[1].start - Cut[0].start <= 251 && (Cut[1].start - Cut[0].start) % 60 == 0);
+		for (size_t p = 1; p < Cut.size(); ++p)
+			CHECK(Cut[p].start - Cut[p - 1].start == Cut[1].start - Cut[0].start && Cut[p].volume == Cut[0].volume);
+	}
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"heartbeat\", \"seconds\": 30}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "30.00 s long");
+	CHECK_LACKS(Result.Text, "instruments in turn");
+	// The pieces of a layer: equal ones of at most 251 ticks, a silent one left out; one that fits is itself
+	transcribe::SfxLayer Long;
+	Long.channel = transcribe::SfxChannel::Noise;
+	Long.start = 3;
+	Long.volume.assign(600, 5);
+	std::fill(Long.volume.begin() + 200, Long.volume.begin() + 400, 0);
+	const std::vector<transcribe::SfxLayer> Cut = SoundPieces(Long);
+	CHECK(Cut.size() == 2u && Cut[0].start == 3 && Cut[0].length() == 200 && Cut[1].start == 403 && Cut[1].length() == 200);
+	Long.volume.resize(251);
+	CHECK(SoundPieces(Long).size() == 1u && SoundPieces(Long)[0].length() == 251);
+	CHECK(MaxLoopTicks(128, 64) == 8192 && MaxLoopTicks(1, 64) == MaxSoundTicks(true));
+}
+
+// FamiTracker's song settings in the BPM layout: a song at speed 1 (a sound effect) showed 900 BPM and couldn't be set
+// to speed 1; it shows the frames a row lasts, and 1 or a BPM past the box's most sets speed 1
+void TestBpmLayoutFrames()
+{
+	CHECK(LayoutShowsFrames(1) && !LayoutShowsFrames(2) && !LayoutShowsFrames(6));
+	CHECK(LayoutFramesText(1, 150, 60) == "1 frame" && LayoutFramesText(1, 125, 50) == "1 frame");
+	CHECK(LayoutFramesText(1, 120, 60) == "1.25 frames" && LayoutFramesText(2, 150, 60) == "2 frames");
+	CHECK(LayoutWantsFrames(1) && LayoutWantsFrames(401) && LayoutWantsFrames(900));
+	CHECK(!LayoutWantsFrames(400) && !LayoutWantsFrames(120) && !LayoutWantsFrames(20) && !LayoutWantsFrames(2));
+	CHECK(LAYOUT_LEAST_BPM == 20 && LAYOUT_MOST_BPM == 400);
+	CHECK(BeatsPerMinute(1, DefaultTempo(60), 60, 4) == 900.0);	// what it showed
+}
+
+// design_instrument makes a 5B sound of the chip's noise at a chosen pitch (0-31, its mode sequence's low bits), from
+// noise_pitch or from words, as the 5B's own noise sounds hold theirs
+void TestS5BNoiseDesign()
+{
+	FakeSong Song(2);
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("set_expansion", Parse("{\"chips\": [\"5B\"]}")).IsError);
+	ToolResult Result = Tools.Call("design_instrument", Parse("{\"name\": \"Rain wash\", \"channel\": \"5B Square 1\", \"kind\": "
+		"\"swell\", \"noise_pitch\": 24}"));
+	CHECK(!Result.IsError);
+	const InstrumentInfo *pWash = SongInstrument(Song, InstrumentIndex(Song, "Rain wash"));
+	CHECK(pWash != 0 && pWash->Chip == "5B" && pWash->Mode.Items == std::vector<int>({ S5B_NOISE | 24 }) && !pWash->Volume.empty());
+	CHECK_HAS(Result.Text, "the 5B's noise at pitch 24");
+	// In words
+	Result = Tools.Call("design_instrument", Parse("{\"name\": \"Low wash\", \"channel\": \"5B Square 2\", \"words\": \"a soft noise "
+		"at pitch 8 that swells in\"}"));
+	CHECK(!Result.IsError);
+	const InstrumentInfo *pLow = SongInstrument(Song, InstrumentIndex(Song, "Low wash"));
+	CHECK(pLow != 0 && pLow->Mode.Items == std::vector<int>({ S5B_NOISE | 8 }));
+	// With the square under it, at a word's pitch
+	Result = Tools.Call("design_instrument", Parse("{\"name\": \"Snap\", \"channel\": \"5B Square 3\", \"kind\": \"pluck\", "
+		"\"noise\": \"with square\", \"noise_pitch\": \"bright\"}"));
+	CHECK(!Result.IsError);
+	const InstrumentInfo *pSnap = SongInstrument(Song, InstrumentIndex(Song, "Snap"));
+	CHECK(pSnap != 0 && pSnap->Mode.Items.size() == 1u && (pSnap->Mode.Items[0] & (S5B_NOISE | S5B_SQUARE)) == (S5B_NOISE | S5B_SQUARE));
+	// Out of range, and not a 5B channel
+	CHECK(Tools.Call("design_instrument", Parse("{\"name\": \"Far\", \"channel\": \"5B Square 1\", \"noise_pitch\": 40}")).IsError);
+	Result = Tools.Call("design_instrument", Parse("{\"name\": \"Not here\", \"channel\": \"Pulse 1\", \"noise_pitch\": 12}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "5B");
+}
+
+// check_song hears a 5B note that plays the chip's noise alone (its instrument's mode sequence, or V02 for one without)
+// as a drum or a texture, not a pitch: 56 Rain's wash on C-4 showed as notes outside the key and as clashes
+void TestS5BNoiseChecks()
+{
+	FakeSong Song(2);
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("set_expansion", Parse("{\"chips\": [\"5B\"]}")).IsError);
+	CHECK(Song.Info.Channels.size() == 8u && Song.Info.Channels[5].Kind == KIND_SQUARE);
+	std::string Error;
+	const int Crash = Song.AddInstrument(*Find5BSound("noise crash"), "5B", false, Error);
+	const int Square = Song.AddInstrument(*FindPreset("soft lead"), "5B", false, Error);
+	// A melody in C major on Pulse 1, two beats a note
+	const char *const SCALE[] = { "C-4", "D-4", "E-4", "F-4", "G-4", "A-4", "B-4", "C-5" };
+	for (int i = 0; i < 8; ++i)
+		Song.Put(0, i * 8, SCALE[i], 2, 12);
+	// The wash: C#4 on 5B Square 1, the noise alone by its instrument, held under the melody's D (a semitone)...
+	Song.Put(5, 0, "C#4", Crash, 6);
+	// ...and F#4 on 5B Square 2, a square sound turned to the noise alone by V02
+	Song.Put(6, 0, "F#4", Square, 5);
+	Song.Rows[6][0].Effect[0] = EFF_DUTY_CYCLE;
+	Song.Rows[6][0].Param[0] = 2;
+	ToolResult Result = Tools.Call("check_song", Parse("{}"));
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "5B Square 1");
+	CHECK_LACKS(Result.Text, "5B Square 2");
+	// A 5B note that plays its square still counts: G#4 on Square 3 is outside C major
+	Song.Put(7, 32, "G#4", Square, 8);
+	Result = Tools.Call("check_song", Parse("{\"key\": \"C major\"}"));
+	CHECK_HAS(Result.Text, "Outside C major: G#4 at 5B Square 3");
+	CHECK_LACKS(Result.Text, "5B Square 1");
+	CHECK_LACKS(Result.Text, "5B Square 2");
+}
+
+// measure_mix without a melody: ambience (rain, wind) has none, so it measures the whole and each part alone against
+// the whole, and says so. Drips now and then on a pulse aren't a melody: they sound a moment in each bar they're in
+void TestMeasureAmbience()
+{
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	Song.AddInstrumentInfo(3, "Drip", "2A03", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 12, 7, 3, 1, 0 };
+	Song.Put(3, 0, "C-4", 2, 8);	// the wash on the noise, all the way
+	const int DRIPS[] = { 6, 40, 70, 100, 150, 190, 230 };
+	for (int i = 0; i < 7; ++i) {
+		Song.Put(0, DRIPS[i], "C-6", 3, 12);
+		Song.End(0, DRIPS[i] + 2);
+	}
+	ToolResult R = Run(Song, "measure_mix", "{}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "No melody");
+	CHECK_HAS(R.Text, "against the whole");
+	CHECK_HAS(R.Text, "\n- Noise: ");
+	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1, bars 1, 3, 5, 7, 10, 12, 15: ");
+	CHECK_HAS(R.Text, "2A03 Pulse 1, the likeliest, plays a note now and then (1 a bar where it plays, heard ");
+	CHECK_LACKS(R.Text, "melody 2A03 Pulse 1");
+	CHECK(Song.Passes == 1);	// the mix and each part in one pass
+	R = Run(Song, "measure_mix", "{\"format\": \"short\"}");
+	CHECK_HAS(R.Text, "against the whole");
+	// check_song checks no key where no part plays a tune: drips at any pitch are outside none
+	R = Run(Song, "check_song", "{}");
+	CHECK_HAS(R.Text, " (no key: no part plays a tune, only notes now and then");
+	CHECK_HAS(R.Text, ": 0 outside the key");
+	CHECK_HAS(Run(Song, "check_song", "{\"key\": \"C major\"}").Text, "Checked bars 1-16 in C major");
+	// A melody named is measured against, as before
+	R = Run(Song, "measure_mix", "{\"melody_channel\": \"2A03 Pulse 1\"}");
+	CHECK_HAS(R.Text, "\n- melody 2A03 Pulse 1: ");
+	CHECK_LACKS(R.Text, "No melody");
+	// The wind alone, no melodic channel at all
+	FakeSong Wind(4);
+	Wind.Info.DirectChanges = true;
+	Wind.Put(3, 0, "C-4", 2, 9);
+	R = Run(Wind, "measure_mix", "{}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "No melody");
+	CHECK_HAS(R.Text, "\n- Noise: ");
+}
+
+// make_jingle right after make_sound_effect (which selects its effect's track): the jingle takes the music's sounds,
+// never an effect's ("SFX Coin" played a jingle's lead and its harmony)
+void TestJingleAfterEffect()
+{
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "C-5", "B-4", "G-4", "E-4", "D-4" };
+	for (int i = 0; i < 8; ++i)
+		Song.Put(0, i * 8, TUNE[i], 2, 12);	// "Square" on Pulse 1
+	Song.Put(2, 0, "C-3", 1);
+	Song.Put(2, 32, "G-2", 1);
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\"}"));
+	CHECK(!Result.IsError && Song.Current == 1);
+	std::set<int> Effects;
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+		if (Song.Info.Instruments[i].Name.compare(0, 4, "SFX ") == 0)
+			Effects.insert(Song.Info.Instruments[i].Index);
+	CHECK(!Effects.empty());
+	Result = Tools.Call("make_jingle", Parse("{\"kind\": \"level up\"}"));
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "SFX");
+	CHECK(Song.Current == 2);
+	bool Effect = false, Lead = false;
+	for (size_t c = 0; c < Song.Rows.size(); ++c)
+		for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+			if (Song.Rows[c][r].HasNote()) {
+				Effect = Effect || Effects.count(Song.Rows[c][r].Instrument) > 0;
+				Lead = Lead || (c == 0 && Song.Rows[c][r].Instrument == 2);
+			}
+	CHECK(!Effect);
+	CHECK(Lead);	// the music's lead sound on its channel
+}
+
+// A studied sound whose release ends above 0 (535 of the library's 823 sounds) droned on at that level after a release:
+// reference_sound gives it a release that fades to silence, and says so; one whose release ends in silence stays as it
+// was
+void TestReferenceReleaseEnds()
+{
+	Reference R;
+	R.Id = "drone-game-01";
+	R.Title = "Drone";
+	R.Game = "Drone Game";
+	R.Track = 1;
+	R.Study = "Drone\n  Tempo: 150 BPM.";
+	ReferenceSound Lead;
+	Lead.Channel = "Pulse 1";
+	Lead.Role = "the lead";
+	Lead.Chip = "2A03";
+	Lead.Share = 60;
+	Lead.Words = "12.5% duty; starts at 15, holds 10, fading over 4 frames when it's let go";
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 13, 10, 8, 6, 3, 3 };
+	Lead.Sequences[SEQUENCE_VOLUME].Release = 2;
+	Lead.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 0 };
+	R.Sounds.push_back(Lead);
+	ReferenceSound Clean = Lead;
+	Clean.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 15, 13, 10, 6, 3, 0 };
+	R.Sounds.push_back(Clean);
+	FakeSong Song(2);
+	Song.Info.DirectChanges = true;
+	Song.Library["drone-game-01.json"] = ReferenceFile(R);
+	ToolResult Result = Run(Song, "reference_sound", "{\"reference\": \"drone-game-01\", \"channel\": \"Pulse 1\", \"name\": "
+		"\"Drone lead\"}");
+	CHECK(!Result.IsError);
+	const InstrumentInfo *pDrone = SongInstrument(Song, InstrumentIndex(Song, "Drone lead"));
+	CHECK(pDrone != 0 && pDrone->VolumeRelease == 2 && pDrone->Volume.size() > 7u && pDrone->Volume.back() == 0);
+	if (pDrone != 0 && pDrone->Volume.size() > 7u) {
+		CHECK(std::vector<int>(pDrone->Volume.begin(), pDrone->Volume.begin() + 7) == Lead.Sequences[SEQUENCE_VOLUME].Items);
+		for (size_t k = 7; k < pDrone->Volume.size(); ++k)
+			CHECK(pDrone->Volume[k] < pDrone->Volume[k - 1] || pDrone->Volume[k] == 0);
+	}
+	CHECK_HAS(Result.Text, "fades out");
+	Result = Run(Song, "reference_sound", "{\"reference\": \"drone-game-01\", \"sound\": 2, \"channel\": \"Pulse 1\", \"name\": "
+		"\"Clean lead\"}");
+	CHECK(!Result.IsError);
+	const InstrumentInfo *pClean = SongInstrument(Song, InstrumentIndex(Song, "Clean lead"));
+	CHECK(pClean != 0 && pClean->Volume == Clean.Sequences[SEQUENCE_VOLUME].Items);
+	CHECK_LACKS(Result.Text, "fades out");
+}
+
+// design_instrument hears its words: "a plain 50% square that holds at full volume" gave a 25% pulse with a vibrato held
+// at 11 (the lead's defaults); plain, held, full volume and a duty win over the kind's, and an argument over the words
+void TestDesignWords()
+{
+	FakeSong Song(2);
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("design_instrument", Parse("{\"words\": \"a plain 50% square that holds at full volume\", "
+		"\"channel\": \"Pulse 1\", \"name\": \"Plain square\"}"));
+	CHECK(!Result.IsError);
+	const int Index = InstrumentIndex(Song, "Plain square");
+	CHECK(Index >= 0 && Song.Made.count(Index) == 1u);
+	if (Index >= 0 && Song.Made.count(Index) == 1u) {
+		const Preset &P = Song.Made[Index];
+		const PresetSequence *pVolume = SequenceOf(P, SEQUENCE_VOLUME), *pDuty = SequenceOf(P, SEQUENCE_DUTY);
+		const PresetSequence *pPitch = SequenceOf(P, SEQUENCE_PITCH);
+		CHECK(pDuty != 0 && pDuty->Items == std::vector<int>({ 2 }));
+		CHECK(pPitch == 0);
+		CHECK(pVolume != 0 && !pVolume->Items.empty());
+		if (pVolume != 0) {
+			const int Held = pVolume->Release >= 0 ? pVolume->Release + 1 : static_cast<int>(pVolume->Items.size());
+			for (int k = 0; k < Held && k < static_cast<int>(pVolume->Items.size()); ++k)
+				CHECK_EQ(pVolume->Items[static_cast<size_t>(k)], 15);
+		}
+	}
+	CHECK_HAS(Result.Text, "a 50% pulse");
+	CHECK_LACKS(Result.Text, "vibrato");
+	// An argument wins over the words: the duty given
+	Result = Tools.Call("design_instrument", Parse("{\"words\": \"plain 50% square\", \"duty\": \"25%\", \"channel\": \"Pulse 2\", "
+		"\"name\": \"Bright square\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a 25% pulse");
+	// The words a kind is in pick it ("a soft pad"), and words it doesn't know are said
+	Result = Tools.Call("design_instrument", Parse("{\"words\": \"a soft pad with a gentle vibrato, kind of glassy\", \"name\": "
+		"\"Glass pad\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "gentle vibrato");
+	CHECK_HAS(Result.Text, "glassy");
+}
+
 int main()
 {
 	TestJson();
@@ -19631,6 +20003,14 @@ int main()
 	TestWritingWarnings();
 	TestFinishSong();
 	TestWhatNextFinish();
+	TestSfxLongLoops();
+	TestS5BNoiseDesign();
+	TestS5BNoiseChecks();
+	TestMeasureAmbience();
+	TestJingleAfterEffect();
+	TestReferenceReleaseEnds();
+	TestDesignWords();
+	TestBpmLayoutFrames();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

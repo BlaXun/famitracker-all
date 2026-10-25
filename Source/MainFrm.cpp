@@ -1348,7 +1348,13 @@ void CMainFrame::OnDeltaposSpeedSpin(NMHDR *pNMHDR, LRESULT *pResult)
 void CMainFrame::OnDeltaposTempoSpin(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	if (m_bBPM) {
-		SetBPM(static_cast<int>(CurrentBPM() + 0.5) - ((NMUPDOWN*)pNMHDR)->iDelta);
+		const int Delta = ((NMUPDOWN*)pNMHDR)->iDelta;	// above 0: slower
+		if (BPMFrames() || CurrentBPM() > BPM_MOST + 0.5) {
+			// Past the fastest BPM is a row a frame (speed 1, a sound effect's); a step slower comes back to the fastest
+			SetBPM(Delta > 0 ? BPM_MOST : BPM_MOST + 1);
+			return;
+		}
+		SetBPM(static_cast<int>(CurrentBPM() + 0.5) - Delta);
 		return;
 	}
 	int NewTempo = CFamiTrackerDoc::GetDoc()->GetSongTempo(m_iTrack) - ((NMUPDOWN*)pNMHDR)->iDelta;
@@ -1775,7 +1781,7 @@ void CMainFrame::OnUpdateTempoEdit(CCmdUI *pCmdUI)
 				SetTempo(m_pLockedEditTempo->GetValue());
 		}
 		else if (m_bBPM)
-			pCmdUI->SetText(BPMText());
+			ShowBPMText();	// another track's speed and tempo
 		else {
 			pCmdUI->SetText(MakeIntString(static_cast<CFamiTrackerDoc*>(GetActiveDocument())->GetSongTempo(m_iTrack)));
 		}
@@ -1932,14 +1938,24 @@ void CMainFrame::LayoutSongSettings(bool BPM)
 			Rect.bottom -= Row;
 		else if (BPM && !Speed)
 			Rect.OffsetRect(0, -Row);
+		if (BPM && IDS[i] == IDC_TEMPO) {
+			// Room for "1 frame" (a song at speed 1, BPMFrames): the box starts just after its label's longest word
+			CClientDC Dc(&m_wndDialogBar);
+			CFont *pOld = Dc.SelectObject(m_wndDialogBar.GetDlgItem(IDC_TEMPO_LABEL)->GetFont());
+			const int Label = Dc.GetTextExtent(CString(_T("Speed "))).cx;
+			Dc.SelectObject(pOld);
+			Rect.left = std::min(Rect.left, std::max(m_rcSongSettings[4].left + Label, Rect.left - Rect.Width() / 2));
+		}
 		pWnd->MoveWindow(&Rect, FALSE);
 		pWnd->ShowWindow(BPM && Speed ? SW_HIDE : SW_SHOW);
 	}
-	m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, BPM ? CString(_T("BPM")) : m_strTempoLabel);
+	m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, BPM ? CString(BPMFrames() ? _T("Speed") : _T("BPM")) : m_strTempoLabel);
 	m_bBPM = BPM;
 	const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());	// none yet in OnCreate
-	if (pDoc != NULL)
-		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPM ? BPMText() : MakeIntString(pDoc->GetSongTempo(m_iTrack)));
+	if (pDoc != NULL && BPM)
+		ShowBPMText();
+	else if (pDoc != NULL)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, MakeIntString(pDoc->GetSongTempo(m_iTrack)));
 	m_wndDialogBar.RedrawWindow(NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
@@ -1953,8 +1969,43 @@ double CMainFrame::CurrentBPM() const
 		static_cast<int>(pDoc->GetFrameRate()), pDoc->GetFirstHighlight());
 }
 
+void CMainFrame::ShowBPMText()
+{
+	const CString Text = BPMText();
+	CString Now;
+	m_wndDialogBar.GetDlgItemText(IDC_TEMPO, Now);
+	if (Now != Text)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, Text);
+	CEdit *pEdit = static_cast<CEdit*>(m_wndDialogBar.GetDlgItem(IDC_TEMPO));
+	if (pEdit != NULL && (Now != Text || pEdit->PosFromChar(0).x < 0))
+		pEdit->SetSel(0, 0);	// from its start: "1 frame" only just fits, and the box scrolls
+	ShowBPMLabel();
+}
+
+void CMainFrame::ShowBPMLabel()
+{
+	CString Label;
+	m_wndDialogBar.GetDlgItemText(IDC_TEMPO_LABEL, Label);
+	const CString Wanted = BPMFrames() ? _T("Speed") : _T("BPM");
+	if (Label != Wanted)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, Wanted);
+}
+
+bool CMainFrame::BPMFrames() const
+{
+	const CFamiTrackerDoc *pDoc = static_cast<const CFamiTrackerDoc*>(const_cast<CMainFrame*>(this)->GetActiveDocument());
+	return pDoc != NULL && BPMShowsFrames(static_cast<int>(pDoc->GetSongSpeed(static_cast<unsigned int>(m_iTrack))));
+}
+
 CString CMainFrame::BPMText() const
 {
+	if (BPMFrames()) {
+		// A sound effect's speed 1 has no beat to count: the frames a row lasts
+		const CFamiTrackerDoc *pDoc = static_cast<const CFamiTrackerDoc*>(const_cast<CMainFrame*>(this)->GetActiveDocument());
+		const unsigned int Track = static_cast<unsigned int>(m_iTrack);
+		return BPMFramesText(static_cast<int>(pDoc->GetSongSpeed(Track)), static_cast<int>(pDoc->GetSongTempo(Track)),
+			static_cast<int>(pDoc->GetFrameRate()));
+	}
 	const double Bpm = CurrentBPM();
 	const int Whole = static_cast<int>(Bpm + 0.5);
 	CString Text;
@@ -1970,14 +2021,19 @@ void CMainFrame::SetBPM(int Bpm)
 	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
 	if (pDoc == NULL)
 		return;
-	Bpm = std::max(20, std::min(400, Bpm));
 	const unsigned int Track = static_cast<unsigned int>(m_iTrack);
 	int Speed = static_cast<int>(pDoc->GetSongSpeed(Track)), Tempo = static_cast<int>(pDoc->GetSongTempo(Track));
-	SpeedTempoForBPM(Bpm, pDoc->GetFirstHighlight(), static_cast<int>(pDoc->GetFrameRate()), Speed, pDoc->GetSpeedSplitPoint(),
-		Speed, Tempo);
+	if (BPMWantsFrames(Bpm)) {
+		// 1, or past the fastest: a row a frame, speed 1 at the default tempo, as sound effects play
+		Speed = 1;
+		Tempo = FrameTempo(static_cast<int>(pDoc->GetFrameRate()));
+	}
+	else	// a BPM leaves speed 1 (the chooser keeps the current speed when it can; from a row a frame it starts at 6)
+		SpeedTempoForBPM(std::max(BPM_LEAST, std::min(BPM_MOST, Bpm)), pDoc->GetFirstHighlight(), static_cast<int>(pDoc->GetFrameRate()),
+			BPMShowsFrames(Speed) ? 6 : Speed, pDoc->GetSpeedSplitPoint(), Speed, Tempo);
 	SetSpeed(Speed);
 	SetTempo(Tempo);
-	m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPMText());
+	ShowBPMText();
 	pDoc->SetModifiedFlag();
 }
 

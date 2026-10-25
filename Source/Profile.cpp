@@ -27,6 +27,7 @@
 #include <vector>
 #include "Api/Presets.h"
 #include "Api/Music.h"
+#include "Api/RecorderInput.h"
 #include "stdafx.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
@@ -204,6 +205,28 @@ double SongBPM(int Speed, int Tempo, int FrameRate, int RowsPerBeat)
 void SpeedTempoForBPM(int Bpm, int RowsPerBeat, int FrameRate, int CurrentSpeed, int SplitPoint, int &Speed, int &Tempo)
 {
 	ftapi::ChooseSpeedTempo(Bpm, RowsPerBeat > 0 ? RowsPerBeat : 4, FrameRate, CurrentSpeed, SplitPoint, Speed, Tempo);
+}
+
+static_assert(BPM_LEAST == ftapi::LAYOUT_LEAST_BPM && BPM_MOST == ftapi::LAYOUT_MOST_BPM, "the BPM box's range, as the Api has it");
+
+bool BPMShowsFrames(int Speed)
+{
+	return ftapi::LayoutShowsFrames(Speed);
+}
+
+CString BPMFramesText(int Speed, int Tempo, int FrameRate)
+{
+	return CString(ftapi::LayoutFramesText(Speed, Tempo, FrameRate).c_str());
+}
+
+bool BPMWantsFrames(int Bpm)
+{
+	return ftapi::LayoutWantsFrames(Bpm);
+}
+
+int FrameTempo(int FrameRate)
+{
+	return ftapi::DefaultTempo(FrameRate);
 }
 
 void ApplySongTemplate(CFamiTrackerDoc *pDoc)
