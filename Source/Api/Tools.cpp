@@ -8778,8 +8778,9 @@ std::string AddDrumsTool(Session &S, const Json &Args)
 				KickHigh = std::max(KickHigh, Volume);
 			}
 		}
+		auto Volumes = [](int Low, int High) { return Low == High ? Format("%d", Low) : Format("%d-%d", Low, High); };
 		if (HatHigh > 0)
-			What += Format(" (hi-hats at %d-%d", HatLow, HatHigh) + (KickHigh > 0 ? Format(", a soft kick at %d-%d", KickLow, KickHigh) :
+			What += " (hi-hats at " + Volumes(HatLow, HatHigh) + (KickHigh > 0 ? ", a soft kick at " + Volumes(KickLow, KickHigh) :
 				std::string()) + ", no snare)";
 		if (Dpcm >= 0)
 			Warnings.push_back("The sampled kick plays at the sample's own level: set_mixer's fader on " + S.Channel(Dpcm).FullName() +
