@@ -8833,6 +8833,9 @@ struct HeardBalance {
 	double ChordsRel;							// all the chord parts together against the melody, where they play with it
 	int ChordParts;								// the channels of those
 	double BandRel;								// every channel but the melody's together (the band) against it
+	double ChordsTop;							// the chord parts together in the part of the song where they play loudest...
+	int TopFirst, TopLast;						// ...its bars...
+	std::string TopName;						// ...and its section's name ("" for four bars)
 };
 
 HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spans,
@@ -8843,8 +8846,9 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 	B.Layer.assign(Spans.size(), -1);
 	B.Triangle = -1;
 	B.TriangleRel = NO_LOUDNESS;
-	B.ChordsRel = B.BandRel = NO_LOUDNESS;
+	B.ChordsRel = B.BandRel = B.ChordsTop = NO_LOUDNESS;
 	B.ChordParts = 0;
+	B.TopFirst = B.TopLast = -1;
 	if (Melody < 0)
 		return B;
 	std::vector<std::pair<int, int> > MelodyRows;
@@ -8942,6 +8946,40 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 	if (!ChordChannels.empty())
 		B.ChordsRel = Against(ChordChannels, Merged, 0);
 	B.ChordParts = static_cast<int>(ChordChannels.size());
+	// ...and part by part (each named section, else four bars at a time) where they play with the melody, the loudest: where
+	// a pad joins the chords at the climax, the chords there play well over the song's
+	if (!ChordChannels.empty()) {
+		struct Part {
+			int FirstBar, LastBar;
+			std::string Name;
+		};
+		std::vector<Part> Parts;
+		const int FromBar = S.Time.BarOf(First), ToBar = S.Time.BarOf(std::max(First, End - 1));
+		for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
+			const Part P = { std::max(FromBar, SectionFirstBar(S, S.Song.Sections[i])), std::min(ToBar, SectionLastBar(S,
+				S.Song.Sections[i])), S.Song.Sections[i].Name };
+			if (P.FirstBar <= P.LastBar)
+				Parts.push_back(P);
+		}
+		for (int Bar = FromBar; Bar <= ToBar && S.Song.Sections.empty(); Bar += 4) {
+			const Part P = { Bar, std::min(ToBar, Bar + 3), std::string() };
+			Parts.push_back(P);
+		}
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			const int A = S.Time.BarStart(Parts[p].FirstBar), Z = std::min(End, S.Time.BarEnd(Parts[p].LastBar));
+			std::vector<std::pair<int, int> > Rows, Bars;
+			for (size_t k = 0; k < Merged.size(); ++k)
+				if (Merged[k].first < Z && A < Merged[k].second)
+					Rows.push_back(std::make_pair(std::max(A, Merged[k].first), std::min(Z, Merged[k].second)));
+			const double Rel = Rows.empty() ? NO_LOUDNESS : Against(ChordChannels, Rows, &Bars);
+			if (!Bars.empty() && Rel > B.ChordsTop) {
+				B.ChordsTop = Rel;
+				B.TopFirst = Parts[p].FirstBar;
+				B.TopLast = Parts[p].LastBar;
+				B.TopName = Parts[p].Name;
+			}
+		}
+	}
 	for (int c = 0; c < S.ChannelCount(); ++c)
 		if (c != Melody && S.Channel(c).Kind != KIND_DPCM && HasNotesIn(S, c, First, End))
 			Band.push_back(c);
@@ -9049,6 +9087,11 @@ struct HeardPlaces {
 // volumes as they are unless another loudest volume lands this much nearer: a stage's parts sit lower than a calm track's
 // (the melody's loudest at 9), where a volume step is 2-3 dB, and a second mix would otherwise round them anew
 const double BAND_SLACK = 0.5;
+// ...and keeps the chords together this far under the melody in every part of the song at the least (a named section, or
+// four bars): a pad joining them at the climax would otherwise cover the melody there. (The soundtrack's first stages had
+// their chords from level with the melody to 3 dB under it by four bars; a later one, mixed to the chords' place over the
+// whole song, put its climax's pads 1 dB over its melody)
+const double LIVELY_CHORDS_TOP = 1.0;
 
 HeardPlaces PlacesFor(bool Calm)
 {
@@ -9515,6 +9558,7 @@ std::string MixTool(Session &S, const Json &Args)
 	std::vector<double> Shifts(Spans.size(), 0.0), Aims(Spans.size(), NO_LOUDNESS);
 	std::vector<char> ByEar(Spans.size(), 0);
 	std::vector<std::string> DrumsWhy(Spans.size());	// as heard: why the drums kept their volumes, or came down
+	std::string ChordsWhy;	// lively: where the chords together play loudest, when that keeps them under their place
 	double MelodyShift = 0.0;
 	int TriangleDac = -1, TriangleNow = 0;
 	if (Heard && Melody >= 0) {
@@ -9546,7 +9590,13 @@ std::string MixTool(Session &S, const Json &Args)
 		// no louder together than SOFT_LAYER_DB under the main one it plays with. A second mix finds them there and moves
 		// nothing
 		if (Places.Band && B.ChordsRel > NO_LOUDNESS) {
-			const double Miss = Places.Chords - B.ChordsRel;
+			double Miss = Places.Chords - B.ChordsRel;
+			if (B.ChordsTop > NO_LOUDNESS && B.ChordsTop + Miss > -LIVELY_CHORDS_TOP) {
+				Miss = -LIVELY_CHORDS_TOP - B.ChordsTop;
+				const std::string Where = RangeText(B.TopFirst, B.TopLast);
+				ChordsWhy = Format(" The chords together play loudest in %s, so they stay %.0f dB under the melody there and further "
+					"under it over the song.", (B.TopName.empty() ? Where : B.TopName + " (" + Where + ")").c_str(), LIVELY_CHORDS_TOP);
+			}
 			LayerShift.assign(B.Layers.size(), (std::fabs(Miss) < BAND_SLACK ? 0.0 : Miss) + MelodyShift);
 			for (size_t m = 0; m < B.Layers.size(); ++m) {
 				if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
@@ -9970,13 +10020,15 @@ std::string MixTool(Session &S, const Json &Args)
 			if (Spans[i].Role == ROLE_DRUMS && !DrumsWhy[i].empty() && Aims[i] <= NO_LOUDNESS)
 				Drums += " " + LabelOf(Spans[i]) + " keeps its volumes" + DrumsWhy[i] + ".";
 		return (Chosen.Note.empty() ? std::string() : Chosen.Note + " ") + (Balance.empty() ? "The song is mixed that way already: " +
-			What.substr(What.find(": ") + 2) + "." : "The song is mixed that way already, as heard: " + Balance + "." + Drums) + NoStyle;
+			What.substr(What.find(": ") + 2) + "." : "The song is mixed that way already, as heard: " + Balance + "." + Drums + ChordsWhy) +
+			NoStyle;
 	}
 	std::string Text = Commit(S, Changes, Start, false, "", What);
 	if (Heard)
 		Text += std::string(" As heard: as stems measure each part where it plays with the melody (envelopes, faders, pans and "
 			"Soft counted); ") + (Calm ? "style lively mixes a stage's band instead (the melody's loudest at 9, the bass about level "
 			"with it, the chords 3-4 dB under it, the band louder than it)." : "style calm puts it 2-3 dB over the chords instead.");
+	Text += ChordsWhy;
 	// A lively stage's lead has dynamics, which the mix keeps but doesn't make
 	if (Band && Melody >= 0) {
 		const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);

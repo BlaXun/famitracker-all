@@ -20305,6 +20305,44 @@ void TestMixWithoutStyle()
 	CHECK_HAS(Result.Text, "a lively mix");
 }
 
+// A lively mix keeps the chords together 1 dB under the melody in every part at the least: the later stage with its pads
+// at 15 in B (bars 13-16) and at 4 before, where the chords' place over the whole song would put B's pads over the melody
+// (as it put a later stage's climax pads 1 dB over its melody under Wine)
+void TestLivelyChordsTop()
+{
+	const std::string LATER = "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong Song(4);
+	LaterStageSong(Song, false);
+	const int PADS[3] = { 0, 1, 6 };
+	for (int v = 0; v < 3; ++v)
+		for (int Bar = 13; Bar <= 16; ++Bar)
+			Song.Rows[static_cast<size_t>(PADS[v])][static_cast<size_t>((Bar - 1) * 16)].Volume = 15;
+	ToolResult Result = Run(Song, "mix", LATER);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, " The chords together play loudest in B (bars 13-16), so they stay 1 dB under the melody there and further "
+		"under it over the song.");
+	const std::string Climax = Run(Song, "review_arrangement", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", "
+		"\"from_bar\": 13, \"to_bar\": 16}").Text;
+	const double There = MelodyOverChords(Climax, "VRC6 Pulse 1");
+	Check(There >= 0.5 && There <= 2.0, Climax.c_str(), __LINE__);	// 1, give or take a volume step's rounding
+	// The pads' step by section kept: B's louder than A's
+	Check(Song.Rows[0][0].Volume < NO_VOLUME && Song.Rows[0][192].Volume > Song.Rows[0][0].Volume, Result.Text.c_str(), __LINE__);
+	// A second mix leaves it, and says why the chords sit under their place
+	Result = Run(Song, "mix", LATER);
+	CHECK_HAS(Result.Text, "The song is mixed that way already");
+	CHECK_HAS(Result.Text, "The chords together play loudest in B (bars 13-16)");
+	// Chords as even as the song's other parts: nothing said (TestLivelyBand's later stage), nor in a calm mix
+	FakeSong Even(4);
+	LaterStageSong(Even, false);
+	CHECK_LACKS(Run(Even, "mix", LATER).Text, "play loudest in");
+	FakeSong Calm(4);
+	LaterStageSong(Calm, false);
+	for (int v = 0; v < 3; ++v)
+		for (int Bar = 13; Bar <= 16; ++Bar)
+			Calm.Rows[static_cast<size_t>(PADS[v])][static_cast<size_t>((Bar - 1) * 16)].Volume = 15;
+	CHECK_LACKS(Run(Calm, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text, "play loudest in");
+}
+
 int main()
 {
 	TestJson();
@@ -20496,6 +20534,7 @@ int main()
 	TestLivelyRecipes();
 	TestLivelyWhatNext();
 	TestMixWithoutStyle();
+	TestLivelyChordsTop();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

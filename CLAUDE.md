@@ -1119,7 +1119,9 @@ melody through the soft branch (`SOFT`'s 9, as on a pulse, scaled as
 written so accents and steps by section stay; `MelodyShift` follows it),
 every chord part moves by one shift so the chords together
 (`ChordsRel`) take `Places.Chords` (another layer is only brought down,
-to `SOFT_LAYER_DB` under the main one), a part within `BAND_SLACK` of its
+to `SOFT_LAYER_DB` under the main one), no nearer the melody than
+`LIVELY_CHORDS_TOP` in their loudest part (`HeardBalance::ChordsTop`, each
+named section or four bars; the reply's `ChordsWhy`), a part within `BAND_SLACK` of its
 place moves only with the melody and the search keeps a part's volumes
 unless another lands `BAND_SLACK` nearer (the parts sit low, where a step
 is 2-3 dB: without it a second mix rounded them anew and what_next asked
@@ -1151,8 +1153,9 @@ takes a lively mix as done while another would move no note more than 2 dB
 up to 2 dB.
 The `lively` groove's aliases no longer include stage words (`basic` has
 them). `TestLivelyBand`, `TestLivelyPolish`, `TestLivelyChecks`,
-`TestLivelyRecipes`, `TestLivelyWhatNext` and `TestMixWithoutStyle` cover
-them; calm's results are the old ones (its tests unchanged).
+`TestLivelyRecipes`, `TestLivelyWhatNext`, `TestMixWithoutStyle` and
+`TestLivelyChordsTop` cover them; calm's results are the old ones (its
+tests unchanged).
 
 ## What this repository is
 
