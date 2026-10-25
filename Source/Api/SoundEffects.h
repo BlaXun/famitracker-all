@@ -63,8 +63,11 @@ struct SoundEffectChanges {
 
 // A sound with the changes made: the pitch moved, stretched in time, louder
 // or softer. A variant moves the pitch and the length its own way, the same
-// each time, and every other one changes a pulse's duty.
-transcribe::SoundEffect ChangeSoundEffect(const transcribe::SoundEffect &Effect, const SoundEffectChanges &Changes);
+// each time, and every other one changes a pulse's duty. A layer longer than
+// Most ticks is cut there (an instrument's; a loop's layers play as pieces,
+// SoundPieces, so a loop passes its own most).
+transcribe::SoundEffect ChangeSoundEffect(const transcribe::SoundEffect &Effect, const SoundEffectChanges &Changes,
+	int Most = transcribe::SFX_MAX_TICKS);
 // Changes.LengthPercent made smaller when the changed sound would last more
 // than Most ticks, so it fits whole; true if it had to be
 bool FitSoundEffect(const transcribe::SoundEffect &Effect, int Most, SoundEffectChanges &Changes);

@@ -690,7 +690,7 @@ int SoundTrackRows(const SoundEffect &Effect, bool Loop)
 	return std::max(Effect.length(), Sounding + SFX_SILENT_TICKS) + 1;
 }
 
-SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChanges &Changes)
+SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChanges &Changes, int Most)
 {
 	int Semitones = Changes.Semitones;
 	double Stretch = Changes.LengthPercent / 100.0;
@@ -720,7 +720,9 @@ SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChange
 			const int Was = Layer.volume[t];
 			Layer.volume[t] = Was == 0 ? 0 : std::max(1, std::min(15, Round(Was * Changes.VolumePercent / 100.0)));
 		}
-		Out.layers.push_back(Layer);	// as long as it is: FitSoundEffect keeps a sound within what it may last
+		if (static_cast<int>(Layer.volume.size()) > Most)
+			Layer.volume.resize(static_cast<size_t>(std::max(1, Most)));
+		Out.layers.push_back(Layer);
 	}
 	return Out;
 }
@@ -812,12 +814,12 @@ SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const Soun
 	Period = 0;
 	if (Kind.MakeLong != 0) {
 		const double Made = std::min(Seconds, Most / 60.0) / Stretch;
-		SoundEffect Out = ChangeSoundEffect(Kind.MakeLong(Made), Changes);
+		SoundEffect Out = ChangeSoundEffect(Kind.MakeLong(Made), Changes, 1 << 20);
 		while (Out.length() > Most && Changes.Variant > 1)	// rounding: a tick or two over
-			Out = ChangeSoundEffect(Kind.MakeLong(Made - (Out.length() - Most + 1) / (60.0 * Stretch)), Changes);
+			Out = ChangeSoundEffect(Kind.MakeLong(Made - (Out.length() - Most + 1) / (60.0 * Stretch)), Changes, 1 << 20);
 		return Out;
 	}
-	const SoundEffect Base = ChangeSoundEffect(Kind.Make(), Changes);
+	const SoundEffect Base = ChangeSoundEffect(Kind.Make(), Changes, 1 << 20);
 	const int Length = Base.length();
 	if (Length <= 0)
 		return Base;

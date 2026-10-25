@@ -7714,8 +7714,8 @@ void TestFdsReference()
 		CHECK(Back.Sounds.size() == 3u && Back.Sounds[0].FdsWave.empty() && Back.Sounds[0].ModSpeed == 0);
 	}
 
-	// As a 2A03 instrument: its volume counted 0-15, its pitch in the period's coarser steps turned around, and a duty
-	// as bright as its wave (a ramp's: 25%)
+	// As a 2A03 instrument: its volume counted 0-15 (its release, which ended at 28, faded out after it: FadedRelease),
+	// its pitch in the period's coarser steps turned around, and a duty as bright as its wave (a ramp's: 25%)
 	const Preset P = ReferencePreset(Lead, "Mirror lead");
 	std::vector<int> Volume, Pitch, Duty;
 	int PitchLoop = -2;
@@ -7730,7 +7730,7 @@ void TestFdsReference()
 		else if (q.Type == SEQUENCE_DUTY)
 			Duty = q.Items;
 	}
-	CHECK(Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+	CHECK(Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK(Pitch == std::vector<int>({ 0, -1, 1, 1, -1 }) && PitchLoop == 1);
 	CHECK(Duty == std::vector<int>({ 1 }));
 	CHECK(FdsWaveBrightness(Lead.FdsWave) > 0.3 && FdsWaveBrightness(FdsWaveOfWord("sine")) < 0.01);
@@ -7751,12 +7751,13 @@ void TestFdsReference()
 		bool Envelope = false, Vibrato = false;
 		for (size_t i = 0; i < F.Sequences.size(); ++i) {
 			if (F.Sequences[i].Type == SEQUENCE_VOLUME)
-				Envelope = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_VOLUME].Items && F.Sequences[i].Release == 6;
+				Envelope = F.Sequences[i].Items == std::vector<int>({ 10, 15, 20, 26, 31, 32, 30, 28, 14, 7, 3, 1, 0 }) &&
+					F.Sequences[i].Release == 6;	// its own, the release faded out from 28
 			if (F.Sequences[i].Type == SEQUENCE_PITCH)
 				Vibrato = F.Sequences[i].Items == Lead.Sequences[SEQUENCE_PITCH].Items && F.Sequences[i].Loop == 1;
 		}
 		CHECK(Envelope && Vibrato);
-		CHECK(Song.Info.Instruments[0].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		CHECK(Song.Info.Instruments[0].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	}
 	// With no channel in an FDS song, it's the FDS's too: the same instrument
 	Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\"}");
@@ -7768,7 +7769,7 @@ void TestFdsReference()
 	CHECK_HAS(Result.Text, "a 2A03 instrument for 2A03 Pulse 1");
 	CHECK_HAS(Result.Text, "It was an FDS sound: its volume is counted 0-15 from the FDS's 0-32");
 	CHECK(Song.Made.count(1) == 1u && Song.Info.Instruments.size() == 2u &&
-		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		Song.Info.Instruments[1].Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"FDS\", \"instrument\": \"01\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-5\", "
 		"\"beats\": 1}]}").Text, "Instrument 01 \"Mirror lead\" is a 2A03 instrument; FDS needs an FDS one.");
 	// A pulse sound on the FDS: its duty's pulse as the wave, its volume 0-31, its pitch four times finer, turned around
@@ -7807,7 +7808,7 @@ void TestFdsReference()
 	CHECK_HAS(Result.Text, "a 2A03 instrument");
 	CHECK_HAS(Result.Text, "It was an FDS sound");
 	CHECK(Plain.MadeFds.empty() && !Plain.Info.Instruments.empty() &&
-		Plain.Info.Instruments.back().Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		Plain.Info.Instruments.back().Volume == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	CHECK_HAS(Run(Plain, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"FDS\"}").Text, "Unknown channel");
 	// The FDS channel is named once ("FDS", not "FDS FDS"), and found by either
 	CHECK_EQ(Song.Info.Channels[5].Name, std::string("FDS"));
@@ -16698,7 +16699,7 @@ void TestSoftReferenceWaves()
 	W = ReferenceWaveSound(R.Sounds[5], "Ripple disk", How);
 	CHECK(W.Waves.size() == 1u && W.Waves[0] == std::vector<int>({ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }));
 	CHECK_EQ(How, std::string("its FDS wave, resampled to the N163's 16 samples (without its modulator, which the N163 hasn't)"));
-	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }) &&
+	CHECK(SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }) &&
 		SequenceOf(W.Sequences, SEQUENCE_VOLUME)->Release == 6);
 	CHECK(SequenceOf(W.Sequences, SEQUENCE_PITCH)->Items == std::vector<int>({ 0, 1, -1, -1, 1 }));
 	// One studied before the waves were kept: a round wave, and how to get its own
@@ -16869,7 +16870,7 @@ void TestSoftReferenceTool()
 		CHECK_LACKS(Result.Text, "pitch sequence");
 	}
 	CHECK(Other.MadeWaves.count(7) == 1u && SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME) != 0 &&
-		SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14 }));
+		SequenceOf(Other.MadeWaves[7].Sequences, SEQUENCE_VOLUME)->Items == std::vector<int>({ 5, 7, 10, 13, 15, 15, 15, 14, 7, 3, 1, 1, 0 }));
 	Result = Run(Other, "reference_sound", "{\"reference\": \"soft-game-02\", \"sound\": 4, \"channel\": \"Soft 2\"}");
 	CHECK_HAS(Result.Text, "It plays a sawtooth wave, as its channel played it; its wave takes samples 80-95");
 	CHECK_HAS(Result.Text, "At volume 15 it holds about 5.9 dB under a 2A03 pulse at 15.");	// held at 12
@@ -19680,7 +19681,7 @@ void TestMeasureAmbience()
 	CHECK_HAS(R.Text, "No melody");
 	CHECK_HAS(R.Text, "against the whole");
 	CHECK_HAS(R.Text, "\n- Noise: ");
-	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1, bars 1, 3, 5, 7, 10, 12 and 15: ");
+	CHECK_HAS(R.Text, "\n- 2A03 Pulse 1, bars 1, 3, 5, 7, 10, 12, 15: ");
 	CHECK_HAS(R.Text, "2A03 Pulse 1, the likeliest, plays a note now and then (1 a bar where it plays, heard ");
 	CHECK_LACKS(R.Text, "melody 2A03 Pulse 1");
 	CHECK(Song.Passes == 1);	// the mix and each part in one pass

@@ -16017,7 +16017,7 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 		Most))
 		throw Problem(Error);
 	const bool Shortened = FitSoundEffect(Designed, Most, Changes);
-	transcribe::SoundEffect Effect = ChangeSoundEffect(Designed, Changes);
+	transcribe::SoundEffect Effect = ChangeSoundEffect(Designed, Changes, Most);
 	if (!Loop)
 		RingOut(Effect);
 
@@ -16095,7 +16095,7 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 			Changes.LengthPercent = std::max(25, std::min(400, static_cast<int>(std::floor(100.0 * Seconds * Rate /
 				std::max(1, Original.length()) + 0.5))));
 		Shortened = FitSoundEffect(Original, Most, Changes);
-		Effect = ChangeSoundEffect(Original, Changes);
+		Effect = ChangeSoundEffect(Original, Changes, Most);
 	}
 	if (!Loop)
 		RingOut(Effect);
