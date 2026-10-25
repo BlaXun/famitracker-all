@@ -690,7 +690,9 @@ after the mix (`IAudioCallback::FlushStem`, `CSoundGen::FlushStem`), and
 finds each stem the same as the render of its part alone, sample for
 sample, on every chip. `CMcpLink::RenderParts` renders 16 stems a pass and
 reads each file back as the tool takes it (`CRenderFiles`); FakeSong's
-counts `Passes`.
+counts `Passes`. Under Wine, a 40-bar VRC6 Plus track with nine parts
+took 6.4-6.9 s of FamiTracker's CPU in one pass against 13.3-16.5 s part
+by part (29-35 s against 62-75 s on a busy machine), with the same reply.
 
 ## What this repository is
 

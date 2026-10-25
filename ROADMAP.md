@@ -353,6 +353,14 @@ Plus).
   song holds at most 8 soft-layer sounds, 4 of them the starters, so the
   new ones come by name rather than with the starters. `reference_sound`
   still doesn't take its channels.
+- Done (25 October, on `feat-soft-references`): `reference_sound` takes
+  the soft channels. A studied sound becomes a wave sound there with the
+  original's envelopes: an N163 game's or module's sound with its own
+  waves (studies keep them now), another chip's with a wave from its
+  channel (its duty's pulse, a wave for each width of a duty click, the
+  triangle, the sawtooth, an FDS sound's wave). Each gets a wave place of
+  its own, and the sound browser and `find_sound` list the studied sounds
+  for the soft layer.
 
 ## 12. Ideas from Mario Paint
 
@@ -486,6 +494,9 @@ rules and fixing tool output by hand.
   which semitones rub (an echo F-4 over a pad's E-2 too); the breath check
   counts the spans the melody plays in and a held note in the span it
   starts in (a desert stage's draft paused in 3 of 16, its rewrite in 15).
+- Done (25 October, on `feat-soft-references`): `measure_mix` renders the
+  mix and every part alone in one pass, each part exactly as before, in
+  about half the time (a 40-bar track with nine parts).
 - On the backlog (the user's idea, 24 October): Claude Fable 5.1 for the
   knowledge work, the one-time work every later song reuses (what makes a
   track good, turned into the tools, the recipes and the guide), rather
