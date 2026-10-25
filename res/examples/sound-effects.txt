@@ -1,0 +1,105 @@
+; Help > Example songs: the walkthrough of sound-effects.ftm, which opens with it.
+; The format is in Source/TutorialScript.h.
+
+title: Sound effects
+about: Ten sound effects for a game on the NES's own chip: what each instrument does a frame at a time, how to make your own and how to get them into a game. About ten minutes.
+
+step
+show: song-settings
+play: bars 1-10
+text: This example is ten sound effects for a game, one in each bar; the frame list names them. It's opened as a new song, so change what you like: saving asks for a name.
+
+  A sound effect plays once and stops, and it changes every frame, 60 times a second. So this song plays at speed 1: each row lasts one frame (where the song settings show BPM instead of speed, it's the 900 there). Close the comments box in front, then press Play to hear all ten.
+wait: heard
+
+step
+show: instruments
+play: bar 1
+instrument: 00
+text: The menu blip in bar 1 is a single note, B-4, on Pulse 1. Its instrument, 00, makes it a blip: it's picked in the list, so double-click it to open it.
+
+  The Volume sequence is the sound's loudness a frame at a time: 12 10 7 4 2 1 0, gone in a tenth of a second. Duty / Noise sets the pulse's tone: 1 is thin and bright (0 thinner, 2 the roundest).
+
+  Try it: click Volume, replace the numbers in the box under the graph with 12 8 4 0 12 8 4 0, press Enter and play the bar: a double blip.
+
+step
+show: channel Pulse 1
+play: bar 2
+instrument: 01
+text: The coin, instrument 01, is one note too. Its Arpeggio sequence moves the note by semitones, a frame at a time: 0 0 0 0 7 plays the D-5 for four frames, then the A seven semitones above it, which rings while the Volume sequence dies away.
+
+  Its Duty / Noise sequence, 1 1 1 1 | 0 0 1 1, makes the ring shimmer: from the loop point, the |, it keeps switching between two tones until the sound is over.
+
+step
+show: channel Pulse 1
+play: bar 3
+instrument: 02
+text: The jump, instrument 02, starts on C-3 and slides up. Its Pitch sequence bends the note a little every frame, and the bends add up: on a pulse or the triangle, below zero bends it up and above zero down. The big steps come first, so it leaps, then floats as it fades.
+
+  Try it: click Pitch, replace its numbers with 0 -16 -14 -12 -10 -8 -6 -4 -2, press Enter and play the bar again: a smaller hop.
+
+step
+show: channel Pulse 1
+play: bar 4
+instrument: 03
+text: The laser plays C-6 and lets the NES drop it: the effect I13 next to the note starts the pulse channel's own sweep, which lowers the pitch by itself every frame. The 1 says how often it steps (0 the most often), the 3 how far (1 the furthest). H sweeps up the same way.
+
+  Try it: click the 3 of I13, switch editing on with the space bar (the row turns red), type 1 and play the bar: a zap. With a 5 it hardly falls.
+
+step
+show: channel Pulse 1
+play: bar 5
+instrument: 04
+text: The power-up plays four notes, C-4, F-4, G-4 and C-5, eight rows apart, and each runs up its chord: the Arpeggio sequence 0 0 4 4 7 7 12 adds 4, 7 and 12 semitones, two frames each. The volume holds for eight frames, so only the last note rings out.
+
+  Try it: with editing on, click one of the four notes and type another over it (the keys Z to M are C to B, and Q to U an octave higher), then play the bar.
+
+step
+show: channel Noise
+play: bar 6
+instrument: 05
+text: The footsteps are on the noise channel, which has 16 pitches instead of notes: 0-# is the lowest, F-# the highest. Each step is a short tap of instrument 05, whose Arpeggio sequence, 0 -1 -2, drops the noise's pitch a little as it fades.
+
+  Every other step is softer: the A in the volume column. F is the loudest, and the column scales the instrument's own Volume sequence.
+
+step
+show: channel Noise
+play: bar 7
+instrument: 06
+text: The switch clicks twice, a high C-# and a lower 9-#. Its instrument, 06, sets Duty / Noise to 1: on the noise channel that picks the other kind of noise, a metallic, ringing buzz instead of a hiss (0). Clanks, robots and bells are made of it.
+
+step
+show: channel Pulse 1
+play: bar 8
+instrument: 07
+text: The hit plays on two channels at once: a thin buzz on Pulse 1 (instrument 07) and a burst of noise (08). The buzz falls by a pattern effect: 218 slides its pitch down (2) at a speed of 18, every frame, until 200 turns the slide off. An effect goes on until it's turned off, into the channel's next sound too.
+
+  To hear one alone, click the other channel's name above the pattern: that mutes it. Click it again to bring it back.
+
+step
+show: channel Triangle
+play: bar 9
+instrument: 0A
+text: The explosion is a long rumble on the noise channel (instrument 09: its Arpeggio sequence jitters the pitch down while the volume dies slowly) over a thump on the triangle.
+
+  The triangle can't play softer, so its Volume sequence (instrument 0A) only switches it on, then off with the 0. Its Hi-pitch sequence drops it fast: Hi-pitch is the Pitch sequence times 16, for big bends.
+
+step
+show: channel Pulse 1
+play: bar 10
+instrument: 0B
+text: The 1-up is a little tune: quick notes on Pulse 1 (instrument 0B), and a second, softer voice under them on Pulse 2. While the last note rings, 443 adds a vibrato and A05 slides the volume down until it's gone.
+
+  On the last row, C00 halts the song. That's how a sound effect ends in a game, as the last step shows.
+
+step
+show: instruments
+text: To make your own, start from the sound that comes closest. Right-click its instrument and pick Deep clone instrument, a copy whose sequences are its own (Clone instrument would share them). Change the copy's sequences and click the keyboard at the bottom of the editor to hear it, on the channel the cursor is in. To copy a whole bar, right-click it in the frame list and pick Duplicate patterns.
+
+  Edit > Sound effect from your voice turns a "pew" or a "boing" you record into one, and Claude Code (File > Connect Claude Code) makes them on request with make_sound_effect.
+
+step
+show: menu File
+text: For a game, each sound needs a track of its own: add one in Module > Module properties, named after the sound, and pick it in the Songs box. Copy the sound's rows into it (select them, Ctrl+C, then Ctrl+V in the new track), put F01 on its first row for speed 1, and C00 a few rows after the sound has died away. make_sound_effect writes its sounds that way.
+
+  File > Export for games then saves every track as an OGG file named after it, and a track that halts as a sound that plays once, without loop points.

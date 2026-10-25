@@ -149,6 +149,7 @@ CSoundGen::CSoundGen() :
 	m_iRangeEnd(-1),
 	m_iRangeLast(-1),
 	m_bPlayRangeEnded(false),
+	m_iPlayStarts(0),
 	m_iPlayFrame(0),
 	m_iPlayRow(0),
 	m_iPlayTrack(0),
@@ -1024,6 +1025,7 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	}
 
 	m_bPlaying			= true;
+	++m_iPlayStarts;			// once it plays (a volatile write: the UI thread sees m_bPlaying set first)
 	m_bHaltRequest      = false;
 	m_iPlayTicks		= 0;
 	m_iFramesPlayed		= 0;

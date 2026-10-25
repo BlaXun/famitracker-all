@@ -67,4 +67,4 @@ step
 show: window
 text: That's the whole song. Now make it yours: switch editing on (space) and type new notes over the tune, or pick instrument 01 and play the keys. Ctrl+S saves your version under a name of your own.
 
-  Help > Example songs has three more: NES tricks, the VRC6, and soft sounds in stereo.
+  Help > Example songs has four more: NES tricks, the VRC6, soft sounds in stereo, and sound effects for a game.
