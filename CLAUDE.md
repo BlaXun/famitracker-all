@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 18 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 19 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -504,6 +504,16 @@ around its own (the envelope's rounding counted) and keeps the nearest.
 `PROBLEM_HELD` in `ProblemList.h`). `TestCalmChoice`, `TestHeardBalance`,
 `TestCalmMix`, `TestCalmPolish`, `TestHeldLead`, `TestMixFixes` and
 `TestReviewFixes` cover them.
+
+Recipes (from `feat-recipes`): `compose_track` takes `kind` (calm, lively
+or action) for `KindRecipe` in `Tools.cpp`, twelve steps written for that
+kind that end with the style guide's topic of its name (`StyleGuideTopic`
+in `StyleGuide.cpp`: `calm`, `lively`, `action`), the numbers a composer
+would otherwise look up; without a kind the general recipe points at them.
+`get_recipe` (`RecipeTool`) serves the same on every connection; asked
+through `/mcp/core` (`Caller::Core`, set in `Mcp.cpp`) it gives
+`CoreRecipe`'s steps, which name only the small set's tools. The tests
+check that every tool a recipe names exists, and on the small set is in it.
 
 ## What this repository is
 

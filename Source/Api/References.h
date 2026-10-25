@@ -141,5 +141,8 @@ std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound);
 // the sections matching words
 std::string StyleGuide(const std::string &Topic = std::string());
 std::vector<std::string> StyleGuideTopics();
+// One section by its topic's name ("calm"), its title then its text; empty
+// when there's none
+std::string StyleGuideTopic(const std::string &Name);
 
 }	// namespace ftapi

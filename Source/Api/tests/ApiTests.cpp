@@ -4489,8 +4489,21 @@ void TestProtocol()
 		std::string Text, Error;
 		Json Arguments = Json::MakeObject();
 		for (size_t a = 0; a < ToolSet::Prompts()[i].Arguments.size(); ++a)
-			Arguments.Set(ToolSet::Prompts()[i].Arguments[a].Name, "4");
+			Arguments.Set(ToolSet::Prompts()[i].Arguments[a].Name, ToolSet::Prompts()[i].Arguments[a].Name == "kind" ? "calm" : "4");
 		CHECK(ToolSet::PromptText(ToolSet::Prompts()[i].Name, Arguments, Text, Error) && !Text.empty());
+		if (ToolSet::Prompts()[i].Name == "compose_track") {
+			// Every kind's recipe, and the general one, are checked below too
+			std::string More;
+			for (const char *Kind : { "lively", "action" }) {
+				Arguments.Set("kind", Kind);
+				CHECK(ToolSet::PromptText("compose_track", Arguments, More, Error));
+				Text += "\n" + More;
+			}
+			Json General = Json::MakeObject();
+			General.Set("idea", "a town");
+			CHECK(ToolSet::PromptText("compose_track", General, More, Error));
+			Text += "\n" + More;
+		}
 		// Every tool a recipe names exists
 		size_t At = 0;
 		while ((At = Text.find('_', At)) != std::string::npos) {
@@ -4501,10 +4514,63 @@ void TestProtocol()
 				++To;
 			const std::string Word = Text.substr(From, To - From);
 			const bool Argument = Word == "as_clip" || Word == "clip_name" || Word == "from_bar" || Word == "to_bar" ||
-				Word == "chord_style" || Word == "bass_style";
+				Word == "chord_style" || Word == "bass_style" || Word == "arp_frames" || Word == "delay_beats" ||
+				Word == "bass_instrument" || Word == "melody_channel" || Word == "chord_instrument";
 			Check(Argument || Tools.Has(Word), ("the recipe's tool exists: " + Word).c_str(), __LINE__);
 			At = To;
 		}
+	}
+
+	// compose_track's kinds: each recipe names its own styles, then the guide's topic of its name in numbers
+	{
+		std::string Text, Error;
+		Json Arguments = Json::MakeObject();
+		Arguments.Set("idea", "a quiet night by the lake");
+		Arguments.Set("kind", "calm");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "Compose a calm track in FamiTracker for this: a quiet night by the lake.");
+		CHECK_HAS(Text, "the form for 40 bars");
+		CHECK_HAS(Text, "design_instrument kind breath, falling strike or music box");
+		CHECK_HAS(Text, "polish style calm, then mix style calm last");
+		CHECK_HAS(Text, "check_song style calm (0 clicking, 0 vanishing, no clashes you didn't mean, no held lead)");
+		CHECK_HAS(Text, "measure_mix style calm with melody_channel the lead (the melody 2-3 dB over the chords");
+		CHECK_HAS(Text, "measure_mix with loudness -22 and stems false");
+		CHECK_HAS(Text, "then export_for_game with that loudness");
+		CHECK_HAS(Text, "Calm songs (a place to rest, a night scene, a lullaby");
+		CHECK_LACKS(Text, "add_drums");
+		Arguments.Set("kind", "Lively");
+		Arguments.Set("bars", "24");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "Compose a lively track");
+		CHECK_HAS(Text, "the form for 24 bars");
+		CHECK_HAS(Text, "polish style lively (touches [\"vibrato\", \"separate\", \"clicks\", \"staccato\"] for a bass that bounces)");
+		CHECK_HAS(Text, "then mix style lively last (as heard: the melody 3-4 dB over the parts; no other mix after it)");
+		CHECK_HAS(Text, "measure_mix with loudness -20 and stems false");
+		CHECK_HAS(Text, "Lively stages (bouncy and driving, never harsh)");
+		CHECK_LACKS(Text, "style calm");
+		Arguments.Set("kind", "action");
+		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Text, "polish (its default touches; scoops and falls on chosen bars), then mix (style soft, the default, or full) last");
+		CHECK_HAS(Text, "measure_mix with loudness -19 and stems false");
+		CHECK_HAS(Text, "Action: battles, bosses and chases");
+		CHECK_LACKS(Text, "style calm");
+		CHECK_LACKS(Text, "style lively");
+		Arguments.Set("kind", "sleepy");
+		CHECK(!ToolSet::PromptText("compose_track", Arguments, Text, Error));
+		CHECK_HAS(Error, "kind should be calm, lively or action");
+		// The general recipe points at the kinds without choosing one
+		Json General = Json::MakeObject();
+		General.Set("idea", "a calm lake");
+		CHECK(ToolSet::PromptText("compose_track", General, Text, Error));
+		CHECK_HAS(Text, "follow that kind's recipe instead: references action guide topic calm, lively or action");
+		CHECK_LACKS(Text, "style calm");
+		// The guide's topics come up by the words a composer uses
+		CHECK_HAS(StyleGuide("peaceful"), "Calm songs (a place to rest");
+		CHECK_HAS(StyleGuide("boss fight"), "Action: battles, bosses and chases");
+		CHECK_HAS(StyleGuide("stage"), "Lively stages");
+		CHECK_HAS(StyleGuide(""), "- calm: Calm songs");
+		CHECK(StyleGuideTopic("lively").find("Lively stages") == 0 && StyleGuideTopic("lively").find("Calm songs") == std::string::npos);
+		CHECK(StyleGuideTopic("no such topic").empty());
 	}
 
 	// Per-request metadata (2026-07-28)
@@ -4787,7 +4853,7 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 18);
+	CHECK(Core.size() >= 15 && Core.size() <= 20);
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -4837,6 +4903,47 @@ void TestNetwork()
 			Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style",
 				("a core tool: " + Words[i]).c_str(), __LINE__);
 		CHECK(Words.size() >= 15);
+	}
+	{
+		// get_recipe on the small set: each kind's steps name only the set's own tools (2026-10-24)
+		const char *const KINDS[] = { "calm", "lively", "action", "" };
+		for (const char *Kind : KINDS) {
+			HttpRequest Ask = Post(std::string("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_recipe\","
+				"\"arguments\":{") + (*Kind ? std::string("\"kind\":\"") + Kind + "\"" : std::string()) + "}}}");
+			Ask.Target = "/mcp/core";
+			const Json Got = Body(HandleMcp(Ask, Config, Tools));
+			CHECK(Got.Get("result") != 0 && !Got.Get("result")->Get("isError")->Bool());
+			const std::string Text = Got.Get("result")->Get("content")->At(0).Get("text")->String();
+			const std::vector<std::string> Words = ToolWords(Text);
+			for (size_t i = 0; i < Words.size(); ++i)
+				Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style" ||
+					Words[i] == "arp_frames" || Words[i] == "delay_beats" || Words[i] == "bass_instrument" || Words[i] == "root_fifth",
+					("a core tool in the recipe: " + Words[i]).c_str(), __LINE__);
+			if (std::string(Kind) == "calm") {
+				CHECK_HAS(Text, "kind breath");
+				CHECK_HAS(Text, "mix with style calm");
+				CHECK_HAS(Text, "loudness -22");
+			}
+			else if (std::string(Kind) == "lively")
+				CHECK_HAS(Text, "mix with style lively");
+			else if (std::string(Kind) == "action")
+				CHECK_HAS(Text, "loudness -19");
+			else
+				CHECK_HAS(Text, "then ask get_recipe for it");
+		}
+		// On the full set, the compose_track recipe of that kind; a kind it doesn't know is refused
+		ToolResult Got = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\", \"idea\": \"a quiet pond\", \"bars\": 32}"));
+		CHECK(!Got.IsError);
+		CHECK_HAS(Got.Text, "Compose a calm track in FamiTracker for this: a quiet pond.");
+		CHECK_HAS(Got.Text, "the form for 32 bars");
+		CHECK_HAS(Got.Text, "Calm songs (a place to rest");
+		Got = Tools.Call("get_recipe", Json::MakeObject());
+		CHECK(!Got.IsError);
+		CHECK_HAS(Got.Text, "for this: the song the user asked for.");
+		CHECK_HAS(Got.Text, "follow that kind's recipe instead");
+		Got = Tools.Call("get_recipe", Parse("{\"kind\": \"sad\"}"));
+		CHECK(Got.IsError);
+		CHECK_HAS(Got.Text, "kind should be calm, lively or action");
 	}
 	// The full instructions tell of send_file, and name only tools there are
 	CHECK_HAS(ToolSet::Instructions(), "send_file puts your files");

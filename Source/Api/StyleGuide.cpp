@@ -329,13 +329,97 @@ const Section SECTIONS[] = {
 		"swell in, no drums (Castlevania III's Nightmare); make_version night does the rest.\n"
 		"- Wistful rather than tragic: modal mixture in a major key (bVI, the minor iv), the major and minor of one chord "
 		"alternating." },
-	{ "leads", "Lead sounds and articulations", "lead melody sound instrument envelope articulation duty click bloom vibrato",
+	{ "calm", "Calm songs (a place to rest, a night scene, a lullaby: when one is asked for)",
+		"calm peaceful relaxing relaxed rest resting lullaby sleep sleepy quiet gentle serene tranquil soothing still "
+		"peace restful",
+		"What makes a song calm rather than plain or pressing, from the calm pieces of Final Fantasy III, Castlevania III and "
+		"Punch-Out!!, modern FamiTracker music and a soundtrack whose listener loved the result. Only for songs asked to be "
+		"calm: lively stages and fights have topics of their own (lively, action).\n"
+		"- The melody's sound never holds a high, steady level: a level held from attack to release presses like an organ key "
+		"held down, however soft the parts around it. Give the lead one of three shapes and keep it for the song: a breath "
+		"(design_instrument kind breath: in from about 4 over 12 frames, settling to about 9, a faint vibrato after half a "
+		"beat; Final Fantasy III's towns), a falling strike (kind falling strike: struck at 15, falling to 5-7 over 12-16 "
+		"frames; its Time Remains) or a music box (kind music box: struck, fading to silence in about a beat; Punch-Out!!'s "
+		"calm lead falls 15 to 0 over 34 frames). On the VRC6, duty 37.5% softens it further (Castlevania III's night lead). The "
+		"reply gives the volume sequence and when it is down to half and silent.\n"
+		"- The melody only a little over the chords: 2-3 dB as heard. mix style calm sets it, counting how each sound's "
+		"envelope sounds over its notes; measure_mix style calm checks it on stems. The calm towns' leads play at 6-9.\n"
+		"- Few notes: 2-4 a bar, mostly quarters, halves and wholes; phrases of two bars, then a rest of a beat or more; "
+		"often a bar of two notes and a lot of air (x... .... .... x...). Steps and repeated notes (a third of Punch-Out!!'s "
+		"repeat the one before); a leap of a third or fourth at most once a phrase, never onto a strong beat as its loudest "
+		"note; one gentle high point a section, reached by step.\n"
+		"- No accents, scoops, falls or flicks: polish style calm (a faint vibrato that waits, separate, clicks); no pitch "
+		"slides on the lead (1xx 2xx 3xx Qxx Rxx). Laid back: a few chosen notes a frame or two late (Gxx 01-02), never early.\n"
+		"- Slow harmony with color: a chord a bar or two (m7, maj7, add9, sus2, a sus4 that resolves slowly); plagal turns "
+		"(iv-i, IV-I) and the minor iv in a major key instead of V-I pushes; the loop's last bar open (a sus2, a maj7). Lush "
+		"arpeggio chords at volume 4-6 (add_chords_and_bass chord_style lush, arp_frames 3-4 for a slow shimmer) or held "
+		"voices (chord_style voices, on the VRC6 Plus's soft layer), under the melody.\n"
+		"- No drums: at most, in one section, a soft tick on the noise (volume 2-4) or a slow low thump.\n"
+		"- A soft bass: the triangle can't be turned down, so few long notes with rests (a note a bar, or beats 1 and 3), "
+		"kept out of the intro and the break; or the sawtooth swelling in (4 to 15 in 5 frames, then falling to 5 over 90: "
+		"Castlevania III's Nightmare); or the VRC6 Plus's sub bass.\n"
+		"- Slow, even tempos: 64.3 BPM (speed 14), 69.2 (13), 75 (12), 81.8 (11) at tempo 150, 4 rows a beat; rows of 10-14 "
+		"frames give swells and fades room.\n"
+		"- Depth underneath, so calm isn't thin: an echo a beat behind at about 40%, a step out of tune, on the other side "
+		"(add_echo delay_beats 1, detune 1, pan opposite; on the VRC6 Plus onto a soft channel with the soft flute); an intro "
+		"of the chords alone; a break that drops the melody; a pad or choir under the chords (on the VRC6 Plus also the "
+		"pulsing pad, a slow breathing bed, or the quick pad for a chord every beat); the mixer's Soft and Space "
+		"(set_mixer room hall, small room or cathedral for the place; space 15-30 on pads, 30-50 on the lead in a big place, "
+		"more on glints and events; soft 20-50 on a pulse that should sound warm; the bass dry).\n"
+		"- Checks: review_arrangement style calm (its tips that the melody doesn't stand out or has few, long notes are "
+		"expected here), check_song style calm (no held lead, 0 clicking, 0 vanishing), measure_mix style calm with "
+		"melody_channel the lead (the melody 2-3 dB over the chords, the intro 6-10 dB under the main part, the sides within 2 "
+		"dB). export_for_game at -22 LUFS." },
+	{ "lively", "Lively stages (bouncy and driving, never harsh)",
+		"lively stage stages level levels platformer explore exploring bouncy bounce upbeat cheerful adventure jump run "
+		"forest meadow day playful",
+		"A stage to explore can bounce and drive, but its melody shouldn't press. What made earlier tracks sound aggressive "
+		"was a lead that held 11-15 from attack to release, 5-8 dB over the chords; Mega Man 2's Bubble Man cuts 78% of its "
+		"lead's notes short, with a stepped decay (15, then 13, then a fade over 8 frames). For a stage:\n"
+		"- Notes that fade: design_instrument kind stepped lead (holds, then drops a few levels at a time), falling strike, or "
+		"pluck with sustain half (settles to about 9); a duty click or a bloom so the notes speak. No sound that holds a high "
+		"level for the whole note.\n"
+		"- The melody 3-4 dB over the parts around it: mix style lively; measure_mix style lively checks it.\n"
+		"- A motif a player would hum: a recognizable rhythm, developed; phrases of 2 or 4 bars that end on a held note or a "
+		"rest; chord tones on strong beats; one high point a section; long and short notes mixed; mostly octave 3, reaching "
+		"into octave 4 at the high points.\n"
+		"- Harmony with color: sevenths, add9 and sus chords; bVI and bVII for a lift, the major IV in minor; a chord a bar, "
+		"other chords for the B part.\n"
+		"- Soft drums: noise hats at volume 4-7 (short closed hats, an open hat now and then), a soft sampled kick at most, "
+		"no hard backbeat; fills only where phrases end, counted from where the loop starts.\n"
+		"- A bass that bounces (polish touch staccato): root and fifth, walking, or an octave figure; or the sawtooth.\n"
+		"- polish touches vibrato, separate, clicks and staccato (no accents, scoops or falls on the lead).\n"
+		"- Depth: an echo a beat behind on the other side, a counter-melody or harmony only in the repeat, the VRC6 Plus's "
+		"soft layer for the B part, a little Space (15-30) on chords and the echo.\n"
+		"- Tempo 112-160 BPM, at an even one (150 is speed 6, 128.6 speed 7, 112.5 speed 8, at tempo 150), straight or a light "
+		"swing (set_swing with a percentage, 56-60).\n"
+		"- Checks: review_arrangement 8 or more (tips asking for a louder melody or accents go against this: leave them), "
+		"check_song 0 clicking and 0 vanishing, measure_mix style lively with melody_channel the lead. export_for_game at "
+		"-20 LUFS." },
+	{ "action", "Action: battles, bosses and chases (punchy and driving)",
+		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
+		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"
+		"- A lead with life that stands out: the singing lead, brass or strings presets, design_instrument kind bloom lead or "
+		"stepped lead, a duty click; scoops into long notes after leaps and falls at phrase ends where they fit (polish "
+		"touches scoops and falls, on chosen bars).\n"
+		"- Drums that drive: a sampled kick and snare under noise hats (add_drums with kit samples, or make_groove), fills "
+		"where phrases end, busier toward a climax.\n"
+		"- A bass that drives: octaves, a gallop, a thump bass (bass_instrument \"thump bass\").\n"
+		"- Harmony with tension: minor, phrygian or harmonic minor, bVI-bVII-i, a sus4 climbing a semitone a bar; the B part "
+		"higher or in another key. The guide's konami, capcom and castlevania topics have the classic figures.\n"
+		"- polish with its default touches (accents, vibrato, separate, clicks), then mix style soft (the default) or full, "
+		"last.\n"
+		"- Tempo 140-190 BPM, at an even one (150 is speed 6; speed 7 with tempo 191 gives even eighths at 163.7).\n"
+		"- Checks: review_arrangement 8 or more, check_song 0 clicking and 0 vanishing, measure_mix with melody_channel the "
+		"lead for the intro, the sections and the sides. export_for_game at -19 LUFS." },
+	{ "leads", "Lead sounds and articulations","lead melody sound instrument envelope articulation duty click bloom vibrato",
 		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
 		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "
 		"especially fast ones. design_instrument click.\n"
 		"- Bloom: start a third below full and reach it in 2 frames (10 13 15): softer than a hard attack, punchier than a "
 		"swell. attack bloom.\n"
-		"- Restrike: a held note dips 4-5 levels and rises every eighth, so long notes keep the beat. restrike_beats 0.5.\n"
+		"- Restrike: a held note dips over two frames to about half its level and is struck again, every eighth with "
+		"restrike_beats 0.5, so long notes keep the beat; a pluck or a music box is struck again from its peak.\n"
 		"- Stepped decay: hold, then drop 3 levels at a time: punchy and clear at fast tempos. decay_style steps.\n"
 		"- Echo tail: after the note fades, a soft repeat at a quarter of the volume. echo.\n"
 		"- Pitch flick: up and back in 3 frames on the attack. attack_pitch flick. Scoop: up into the note from below.\n"
@@ -344,6 +428,11 @@ const Section SECTIONS[] = {
 		"the period across a multiple of 256 restarts the wave, a click every time (A-3, period 253, with any vibrato): the "
 		"tools nudge such notes a few cents with Pxx as they write them.\n"
 		"- Swell: 8 to 15 over 6-30 frames for held, singing notes, with vibrato.\n"
+		"- Shapes that don't press, for calm songs and lively stages: a level held from attack to release presses like an "
+		"organ key held down. A breath (in from about 4 over 12 frames, settling to about 60% of its peak), a falling strike "
+		"(struck, falling to 5-7 over 12-16 frames) or a music box (struck, fading to silence in about a beat) doesn't: "
+		"design_instrument kinds breath, falling strike and music box. A faint vibrato (3-7 cents, after half a beat) is "
+		"vibrato faint.\n"
 		"- A sound that lasts: a tune's quick notes need an envelope that holds or settles to a level (15 down to 9). One "
 		"that's gone in 3-4 frames (15 10 5 2 1 0) turns them into blips, and beside held notes of the same line they sound "
 		"like missing notes. A staccato tune settles low (the click pluck holds at 2-3) rather than to silence; sounds that "
@@ -425,6 +514,12 @@ const Section SECTIONS[] = {
 		"- Keep it under the VRC6: the pulses and the sawtooth at 12-15, the soft layer's parts 3-6 dB lower (mix keeps them "
 		"there), a pad's voices at about 8-10. The starter pads swell in over 20-24 frames, which blurs quick changes: a chord "
 		"a bar or half a bar.\n"
+		"- Four more soft sounds come by name (add_instrument on a soft channel): breath (in over 11 frames, sinking to 10, a "
+		"faint vibrato: a soft lead or a doubling), quick pad (in within 7 frames, for a chord every beat), pulsing pad (struck "
+		"again every 12 frames, a soft echo after its release: a slow, breathing bed) and music box (a tine gone in 40 "
+		"frames: glints). At volume 15 against a 2A03 pulse at 15 they play: choir pad 8.3 dB under, string pad 7.3, sub bass "
+		"5.1, soft flute 5.3, breath 7.4, quick pad 7.7, pulsing pad 10.4, music box 4.8. A song holds at most 8 soft-layer "
+		"sounds. design_instrument works on a soft channel too: a built-in sound's waves with the envelope asked for.\n"
 		"- Use it for contrast: leave it out of a busy A part and bring the pad in for the B part, a bridge, a calm or night "
 		"version; the choir pad for a sacred or eerie place, the string pad for warmth, the sub bass under a boss or a cave.\n"
 		"- The four channels share the N163's one output, each heard a quarter of the time, which FamiTracker makes up; with "
@@ -450,8 +545,15 @@ const Section SECTIONS[] = {
 		"speed 7 with tempo 191 gives even eighths at 163.7 (a boss); in 6/8 (set_meter), speed 9 is a calm lilt of 66.7 "
 		"dotted quarters. Tracks that share a tempo should differ in feel.\n"
 		"- Loudness by place, so the tracks sit together in the game: export_for_game with loudness -22 LUFS for places to "
-		"rest, -19 for action and bosses, -20 for the rest. Every track opens with an intro of 2-4 bars that plays once, 4-9 dB "
-		"under the loop, and breathes before the loop comes round (a break of 2-4 bars).\n"
+		"rest, -19 for action and bosses, -20 for the rest. Every track opens with an intro of 2-4 bars that plays once, 6-10 dB "
+		"under the loop's main part (13 dB under reads as silence in a game), and breathes before the loop comes round (a break "
+		"of 2-4 bars). measure_mix checks it, with each section's loudness and the two sides (within 2 dB of each other).\n"
+		"- Three kinds of song, each with a recipe in this guide: calm (only when a song is asked to be calm: a place to rest, a "
+		"night scene), lively (a stage to explore) and action (fights, bosses, chases). The listener of a first set of 48 "
+		"tracks found every melody too direct: a lead held at one level, 5-8 dB over the chords. Calm songs and lively stages "
+		"answer that; action keeps its punch.\n"
+		"- What every track passed: no clicks and no notes that vanish (check_song), a clean loop seam (check_loop, then "
+		"fix_loop), the intro and the sides as above, the loudness by place.\n"
 		"- Forms that work: a town or a field as A A' B A'' (the climax) and a break; a dungeon whose B climbs (a step a bar, "
 		"or up in key) and falls back for the loop; a boss with a short, tense intro (set_meter bars_per_frame 2 makes 2-bar "
 		"frames, so a 2-bar intro loops cleanly) and a 6-bar climax; a final boss as two tracks, one per phase, the "
@@ -498,13 +600,21 @@ std::vector<std::string> StyleGuideTopics()
 	return Out;
 }
 
+std::string StyleGuideTopic(const std::string &Name)
+{
+	for (size_t i = 0; i < SECTION_COUNT; ++i)
+		if (Name == SECTIONS[i].Topic)
+			return std::string(SECTIONS[i].Title) + "\n" + SECTIONS[i].Text + "\n";
+	return std::string();
+}
+
 std::string StyleGuide(const std::string &Topic)
 {
 	const std::vector<std::string> Asked = SplitWords(Topic);
 	if (Asked.empty()) {
 		std::string Out = "The guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos), to dark "
 			"and melancholic music, and to the atmospheric sound of modern FamiTracker music, from studies of their "
-			"soundtracks. Topics (references action guide with a topic):\n";
+			"soundtracks, with recipes for calm songs, lively stages and action. Topics (references action guide with a topic):\n";
 		for (size_t i = 0; i < SECTION_COUNT; ++i)
 			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
 		return Out;

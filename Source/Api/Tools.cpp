@@ -18531,6 +18531,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Saves the song to its file, or a copy next to it (copy_name) so the user can compare versions.",
 		Schema().Add("copy_name", Prop("string", "File name for a copy, like \"Town theme darker\". Default: save the song itself.")),
 		false);
+
+	AddTool("get_recipe", "A recipe for composing",
+		"The steps for composing a kind of song with these tools, with the numbers that make it work: calm (only when the "
+		"song is asked to be calm: a place to rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never "
+		"harsh) or action (a fight, a boss, a chase: punchy). Without a kind, how to choose one. Read it before composing.",
+		Schema()
+			.Add("kind", EnumProp("calm, lively or action (default: how to choose).", std::vector<std::string>{ "calm", "lively",
+				"action" }))
+			.Add("idea", Prop("string", "What the song is for, like \"a river stage by day\", for the recipe to name."))
+			.Add("bars", Prop("integer", "How long, in bars (default 40).")),
+		true, false, true);
 }
 
 bool ToolSet::Has(const std::string &Name) const
@@ -18541,11 +18552,17 @@ bool ToolSet::Has(const std::string &Name) const
 	return false;
 }
 
+static std::string RecipeTool(const Json &Args, bool Core);
+
 ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
 	const Json Args = Arguments.IsObject() ? Arguments : Json::MakeObject();
 	try {
+		if (Name == "get_recipe") {	// needs no song
+			Result.Text = RecipeTool(Args, Who.Core);
+			return Result;
+		}
 		Session S(m_Host);
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
@@ -18744,7 +18761,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 {
 	static const char *const NAMES[] = { "get_song", "read_notes", "write_notes", "add_instrument", "design_instrument",
 		"set_instrument", "add_chords_and_bass", "add_drums", "add_echo", "set_tempo", "polish", "mix", "check_song",
-		"review_arrangement", "play", "stop", "save_song", "export_for_game" };
+		"review_arrangement", "play", "stop", "save_song", "export_for_game", "get_recipe" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -18784,6 +18801,9 @@ std::string ToolSet::CoreInstructions()
 		"- Sounds: add_instrument for presets (soft lead, singing lead, pluck, bell, warm pad, strings, brass, bass...), "
 		"design_instrument for a sound described in words, set_instrument to give a part another sound.\n"
 		"- Finish: polish (accents, a vibrato that comes in on long notes), then mix last (style soft).\n"
+		"- Kinds of song: get_recipe gives the steps for a calm song (only when one is asked for), a lively stage or an "
+		"action track. A calm song's lead comes from design_instrument kind breath, falling strike or music box, and polish, "
+		"mix, check_song and review_arrangement take style calm; a lively stage's mix takes style lively.\n"
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 "
 		"1 0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give "
@@ -18846,7 +18866,8 @@ std::string ToolSet::Instructions()
 		"choir holding the chords (add_chords_and_bass chord_style voices puts them there, the string pad by default, the choir "
 		"pad as chord_instrument), a soft echo of the melody (add_echo with to_channel Soft 1 and instrument soft flute, volume "
 		"4-6), a sub bass an octave under the sawtooth's bass (write_notes with the sub bass), or long held notes that swell. "
-		"Those four sounds come with it (find_sound lists them). mix keeps the soft layer a few dB under the VRC6. Leave it "
+		"Those four sounds come with it, and four more by name: breath, quick pad, pulsing pad and music box (find_sound "
+		"lists them all). mix keeps the soft layer a few dB under the VRC6. Leave it "
 		"empty and the song is plain VRC6; when the user asks for softer, warmer or deeper on a VRC6 song, offer it "
 		"(the guide's topic vrc6-plus has more).\n"
 		"- Depth and atmosphere, the warm and nostalgic sound of modern FamiTracker music: a soft mix (mix: the melody's "
@@ -18915,7 +18936,20 @@ std::string ToolSet::Instructions()
 		"- From another computer (FamiTracker lets the user's network connect): paths are the user's PC's, so send_file puts "
 		"your files (an NSF, a module, a WAV) into FamiTracker's Inbox and gives their paths, and export_for_game's reply links "
 		"to the files it saves.\n"
+		"- Three kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
+		"action guide topics calm, lively and action the numbers). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
+		"lullaby): a lead that swells in, falls low after its strike or fades away like a music box (design_instrument kind "
+		"breath, falling strike or music box), the melody only 2-3 dB over the chords (mix style calm), few long notes by "
+		"step, slow colored chords, no drums, polish, check_song, review_arrangement and measure_mix with style calm. A "
+		"lively stage: notes that fade (kind stepped lead, falling strike, a pluck that settles), the melody 3-4 dB over the "
+		"parts (mix style lively), soft drums, no accents on the lead (polish style lively). Action (fights, bosses, chases): "
+		"punchy as ever. The tools treat a song as calm or lively only when asked (style, or a track named \"(night)\"), "
+		"and say when one looks calm. mix style calm or lively mixes as heard, last: no other mix after it.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
+		"measure_mix renders the song and measures what the ear hears, changing nothing: each section's loudness, the intro "
+		"against the main part (6-10 dB under suits a game), the two sides, and each part alone against the melody (name "
+		"melody_channel: its guess can take busy bells or crickets for it). set_mixer with change moves a channel's fader by "
+		"the dB it names; stems false measures the mix alone, quickly. "
 		"For a song that loops, check_loop and then fix_loop: a fade, an echo or a held note at the loop's end carries into "
 		"its start on repeat. remove_unused_instruments lists the sounds nothing plays (removing them needs the user's OK). "
 		"When you're unsure between two ideas, offer both as clips (as_clip with a clip_name) and let the user pick. Keep what "
@@ -18965,8 +18999,12 @@ const std::vector<PromptInfo> &ToolSet::Prompts()
 		P.Description = "Compose a track for a game scene or a mood, step by step, with the depth of a real arrangement.";
 		PromptArgument Idea = { "idea", "What it's for: a place, a scene or a mood, like \"a snowy mountain village at night\".", true };
 		PromptArgument Bars = { "bars", "How long, in bars (default 32).", false };
+		PromptArgument Kind = { "kind", "The kind of song, for its recipe: calm (only when it's asked to be calm: a place to "
+			"rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never harsh) or action (a fight, a boss, a "
+			"chase: punchy). Default: the general recipe.", false };
 		P.Arguments.push_back(Idea);
 		P.Arguments.push_back(Bars);
+		P.Arguments.push_back(Kind);
 		PROMPTS.push_back(P);
 
 		P = PromptInfo();
@@ -18998,6 +19036,176 @@ const std::vector<PromptInfo> &ToolSet::Prompts()
 	return PROMPTS;
 }
 
+// compose_track's recipe for a kind of song (calm, lively or action): the
+// steps, with the guide's topic of that name after them in numbers
+static std::string KindRecipe(const std::string &Kind, const std::string &Idea, const std::string &Bars)
+{
+	const bool Calm = Kind == "calm", Lively = Kind == "lively";
+	const std::string Style = Calm ? " style calm" : (Lively ? " style lively" : "");
+	std::string T = "Compose a " + Kind + " track in FamiTracker for this: " + Idea + ". ";
+	T += Calm ? "It's a calm song: peaceful on the surface, with depth underneath, and its melody must never press. " :
+		Lively ? "It's a lively stage: it may bounce and drive, but its melody must not press. " :
+		"It's an action track: punchy and driving, the melody on top. ";
+	T += "Make it sound composed by a person. Work through these steps with the FamiTracker tools; the recipe after them "
+		"has the numbers.\n"
+		"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
+		"notes name a composer, a game or a reference, look it up in the reference library (references, action search, "
+		"then show) and lean on what the studies show (tempo and feel, form, chord colors, how the channels share the parts, "
+		"sounds and tricks); write your own melody and chords.\n"
+		"2. Decide, and tell me in a few lines: the key and mode, the tempo, the form for " + Bars + " bars (" +
+		(Calm ? "an intro of the chords alone, A, A', B, a break without the melody, A''" :
+		Lively ? "an intro that builds, A, A', B, a break without the melody or the drums, A''" :
+		"a short, tense intro, A, A', B as the climax, a break, A''") +
+		"), what each channel plays and where it sits (left, middle, right), and the lead's sound with its envelope.\n";
+	T += std::string("3. ") + (Calm ? "set_tempo at a slow, even tempo (64.3, 69.2, 75 or 81.8 BPM: speed 14, 13, 12 or 11 at "
+		"tempo 150). For softness and depth on the VRC6, set_expansion chips [\"VRC6 Plus\"] first: its soft layer holds pads, "
+		"a choir and a soft echo under the VRC6." :
+		Lively ? "set_tempo at an even tempo between 112 and 160 BPM (150, 128.6 or 112.5: speed 6, 7 or 8 at tempo 150); "
+		"set_swing with a percentage (56-60) for a light swing." :
+		"set_tempo at an even tempo between 140 and 190 BPM (150 is speed 6; speed 7 with tempo 191 gives even eighths at "
+		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key.\n";
+	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind breath, falling strike or music box, one "
+		"for the whole track" : Lively ? "notes that fade: design_instrument kind stepped lead, falling strike, or pluck "
+		"with sustain half" : "a lead with life that stands out (the singing lead, brass or strings presets, or "
+		"design_instrument kind bloom lead or stepped lead with a duty click)") + ". Read its volume sequence in the reply "
+		"before writing the tune.\n";
+	T += std::string("5. Chords and bass: add_chords_and_bass with chords you choose, ") + (Calm ? "slow and colored (a chord a "
+		"bar or two: m7, maj7, add9, sus2; plagal turns and the minor iv; the loop's last bar open), chord_style lush "
+		"(arp_frames 3-4; chord_instrument a pad you designed, which each chord copies) or voices on the soft layer, under "
+		"the melody, and a bass of few long notes kept out of the intro and the break" : Lively ? "colored (a chord a bar: sevenths, add9, sus; bVI and bVII for a lift), with a chord_style "
+		"and a bass_style that bounce (root and fifth, walking, octaves)" : "with tension (minor, phrygian or harmonic minor; "
+		"bVI-bVII-i), a driving chord_style and bass_style (octaves, a gallop; bass_instrument \"thump bass\" for punch)") +
+		". Other chords for the B part.\n";
+	T += std::string("6. The melody with write_notes, phrase by phrase: ") + (Calm ? "2-4 notes a bar, mostly by step and "
+		"repeated notes, two-bar phrases each ending with a rest of a beat or more, one gentle high point a section, a few "
+		"notes a frame or two late (Gxx 01-02)" : "a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
+		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 3") +
+		".\n";
+	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
+		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
+		"different (") + (Calm ? "an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
+		"rests), the soft layer, another register; never drums" : Lively ? "a counter-melody (add_counter_melody rests "
+		"answer) or harmony only the second time, busier drums, another voicing" : "a counter-melody or harmony only the "
+		"second time, busier drums, another voicing") + "), and a break before the loop "
+		"comes round.\n";
+	T += std::string("8. Depth: ") + (Calm ? "add_echo a beat behind (delay_beats 1, detune 1, pan opposite; on the VRC6 Plus "
+		"onto a soft channel with the soft flute), a pad or choir under the chords, and set_mixer's Soft and Space for the "
+		"place (a room; space on pads and the lead, the bass dry). No drums" : Lively ? "soft drums (add_drums with hats at "
+		"volume 4-7 and at most a soft sampled kick, fills where phrases end), add_echo a beat behind on the other side, "
+		"the VRC6 Plus's soft layer for the B part, a little Space" : "add_drums with kit samples (a sampled kick and snare "
+		"under noise hats) and fills where phrases end, add_echo where it leaves room, a counter-melody or harmony in the "
+		"repeats") + ".\n";
+	T += std::string("9. Finish: ") + (Calm ? "polish style calm" : Lively ? "polish style lively (touches [\"vibrato\", "
+		"\"separate\", \"clicks\", \"staccato\"] for a bass that bounces)" : "polish (its default touches; scoops and falls on "
+		"chosen bars)") + ", then mix" + (Calm || Lively ? Style : " (style soft, the default, or full)") + " last" + (Calm ?
+		" (it mixes as heard and its reply says how far each part sits under the melody; no other mix after it)" : Lively ?
+		" (as heard: the melody 3-4 dB over the parts; no other mix after it)" : "") + ".\n";
+	T += "10. Check: review_arrangement" + Style + " (8 or more; " + (Calm ? "its tips that the melody doesn't stand out or "
+		"has few, long notes are expected here" : Lively ? "tips that ask for a louder melody or accents go against this "
+		"kind" : "fix what it lists") + "), check_song" + Style + " (0 clicking, 0 vanishing, no clashes you didn't mean" +
+		(Calm ? ", no held lead" : "") + "), measure_mix" + Style + " with melody_channel the lead (" + (Calm ? "the melody 2-3 "
+		"dB over the chords, " : Lively ? "the melody 3-4 dB over the parts, " : "") + "the intro 6-10 dB under the main part, the "
+		"two sides within 2 dB); fix what they find (set_mixer with change moves the faders it names) and check again, "
+		"measure_mix with parts [\"chords\"] or stems false for a quick look, all the stems once at the end.\n"
+		"11. set_loop from the bar after the intro, then check_loop and fix_loop until the seam is clean; look_at_song on a "
+		"section or two.\n"
+		"12. save_song; measure_mix with loudness " + std::string(Calm ? "-22" : Lively ? "-20" : "-19") + " and stems false "
+		"shows each section as the file will have it; then export_for_game with that loudness. Play it for me and ask what "
+		"I'd change; keep what I like in soundtrack_notes.\n\n";
+	T += StyleGuideTopic(Kind);
+	return T;
+}
+
+// get_recipe's text for the small set (/mcp/core): a kind's steps naming only that set's tools
+static std::string CoreRecipe(const std::string &Kind)
+{
+	if (Kind == "calm")
+		return "A calm song (only when the user asked for calm: a place to rest, a night scene, a lullaby): peaceful on the "
+			"surface, with depth underneath, and its melody must never press. With this set's tools:\n"
+		"1. get_song. Plan in a few lines: the key, a slow tempo (set_tempo with bpm 75; 64-82 BPM), a form of 24-40 "
+		"bars (4 bars of the chords alone, then A, A' with an echo, B on other chords, A again) and what each channel "
+		"plays.\n"
+		"2. The lead's sound first: design_instrument on the melody's channel, kind breath (swells in, sinks a "
+		"little), falling strike (struck, then low) or music box (struck, gone within a beat). Read its volume "
+		"sequence in the reply.\n"
+		"3. add_chords_and_bass with chords you choose, a chord a bar or two, colored (m7, maj7, add9, sus2), iv-i or "
+		"IV-I rather than V-I, the last bar open (a sus2 or a maj7): chord_style lush with arp_frames 3 for a slow "
+		"shimmer, bass_style roots.\n"
+		"4. write_notes for the melody, two bars at a time: 2-4 notes a bar (quarters, halves, wholes), mostly by "
+		"step and repeated notes, each two-bar phrase ending with a rest of a beat or more, one gentle high point per "
+		"section, no slides.\n"
+		"5. add_echo a beat behind (delay_beats 1, detune 1, pan opposite, volume 5). No drums.\n"
+		"6. polish with style calm, then mix with style calm (the melody 2-3 dB over the chords).\n"
+		"7. check_song with style calm (0 clicking, 0 vanishing, no held lead) and review_arrangement with style calm "
+		"(8 or more; tips that the melody is quiet or has few, long notes are expected here). Fix what they find and "
+		"check again.\n"
+		"8. save_song, then export_for_game with loudness -22, and play it for the user.";
+	if (Kind == "lively")
+		return "A lively stage (a level to explore): it may bounce and drive, but its melody must not press: its notes fade, "
+			"and it sits 3-4 dB over the parts. With this set's tools:\n"
+		"1. get_song. Plan: the key, an even tempo between 112 and 160 BPM (set_tempo with bpm 150 or 128.6), a form "
+		"of 32-40 bars (a 4-bar intro, A, A', B on other chords, a short break without the melody, A again) and what "
+		"each channel plays.\n"
+		"2. The lead's sound first: design_instrument, kind stepped lead (holds, then drops in steps), falling "
+		"strike, or pluck with sustain half (settles to about 9). Read its volume sequence in the reply.\n"
+		"3. add_chords_and_bass with colored chords you choose (a chord a bar: sevenths, add9, sus; bVI and bVII for "
+		"a lift), chord_style broken or stabs, bass_style root_fifth or walking.\n"
+		"4. write_notes for the melody, phrase by phrase: a motif a player would hum, phrases of 2 or 4 bars ending "
+		"on a held note or a rest, chord tones on strong beats, one high point per section, mostly in octave 3.\n"
+		"5. add_drums softly (groove calm or shuffle, volume 7; no hard backbeat), and add_echo a beat behind on the "
+		"other side (delay_beats 1, pan opposite).\n"
+		"6. polish with touches [\"vibrato\", \"separate\", \"clicks\", \"staccato\"], then mix with style lively.\n"
+		"7. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more; tips that ask for a louder melody "
+		"or accents go against this kind). Fix what they find and check again.\n"
+		"8. save_song, then export_for_game with loudness -20, and play it for the user.";
+	if (Kind == "action")
+		return "An action track (a fight, a boss, a chase): punchy and driving, the melody on top. With this set's tools:\n"
+		"1. get_song. Plan: a minor, phrygian or harmonic minor key, an even tempo between 140 and 190 BPM (set_tempo "
+		"with bpm 150), a form of 32-40 bars (a short, tense intro, A, A', B as the climax, a break, A again) and "
+		"what each channel plays.\n"
+		"2. The lead's sound first: add_instrument with the singing lead or brass, or design_instrument kind bloom "
+		"lead or stepped lead with click true.\n"
+		"3. add_chords_and_bass with chords that build tension (i bVI bVII i; a sus4 climbing a semitone a bar), "
+		"chord_style stabs or arpeggio, bass_style octaves or driving (bass_instrument \"thump bass\" for punch).\n"
+		"4. write_notes for the melody: a motif with a rhythm you'd recognize, repeated and developed, phrases of 2 "
+		"or 4 bars, one high point per section, long and short notes mixed.\n"
+		"5. add_drums with groove driving and fills where phrases end; add_echo where the melody leaves room.\n"
+		"6. polish (its default touches: accents, vibrato, separate, clicks), then mix (style soft).\n"
+		"7. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more). Fix what they find and check again.\n"
+		"8. save_song, then export_for_game with loudness -19, and play it for the user.";
+	return "Choose the kind of song from the user's words, then ask get_recipe for it:\n"
+		"- calm: only when the user asks for calm, peaceful or relaxing music (a place to rest, a night scene, a "
+		"lullaby). The melody never presses: a lead that swells in or fades away, 2-3 dB over the chords, no drums.\n"
+		"- lively: a stage or a level to explore. Bouncy, but the melody's notes fade and it sits 3-4 dB over the "
+		"parts; soft drums.\n"
+		"- action: a fight, a boss, a chase. Punchy: the melody on top, drums that drive, accents.\n"
+		"Anything else (a town, a shop, a title screen) follows the craft in the instructions.";
+}
+
+// get_recipe: the recipe for a kind of song (calm, lively, action, or how to choose); the small set's names only its tools
+static std::string RecipeTool(const Json &Args, bool Core)
+{
+	const Json *pKind = Args.Get("kind");
+	const std::string Kind = pKind != 0 && pKind->IsString() ? Lowercase(Trim(pKind->String())) : std::string();
+	if (!Kind.empty() && Kind != "calm" && Kind != "lively" && Kind != "action" && Kind != "general")
+		throw Problem("kind should be calm, lively or action (or leave it out to see how to choose).");
+	if (Core)
+		return CoreRecipe(Kind);
+	const Json *pIdea = Args.Get("idea");
+	const std::string Idea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty() ? Trim(pIdea->String()) :
+		std::string("the song the user asked for");
+	const Json *pBars = Args.Get("bars");
+	const int Bars = pBars != 0 && pBars->IsNumber() ? std::max(4, std::min(256, static_cast<int>(pBars->Number()))) : 40;
+	if (Kind == "calm" || Kind == "lively" || Kind == "action")
+		return KindRecipe(Kind, Idea, std::to_string(Bars));
+	Json Prompt = Json::MakeObject();
+	Prompt.Set("idea", Idea);
+	Prompt.Set("bars", std::to_string(Bars));
+	std::string Text, Error;
+	ToolSet::PromptText("compose_track", Prompt, Text, Error);
+	return Text;
+}
+
 bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error)
 {
 	auto Value = [&](const char *Key, const std::string &Default) {
@@ -19012,6 +19220,15 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			Error = "compose_track needs the idea: what the track is for.";
 			return false;
 		}
+		const std::string Kind = Lowercase(Value("kind", ""));
+		if (!Kind.empty() && Kind != "calm" && Kind != "lively" && Kind != "action") {
+			Error = "kind should be calm, lively or action.";
+			return false;
+		}
+		if (!Kind.empty()) {
+			Text = KindRecipe(Kind, Idea, Value("bars", "40"));
+			return true;
+		}
 		Text = "Compose a track in FamiTracker for this: " + Idea + ". Make it sound composed by a person, with depth. "
 			"Work through these steps with the FamiTracker tools:\n"
 			"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
@@ -19019,7 +19236,10 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"then show) and lean on what the studies show: tempo and feel, form, chord colors, how the channels share the "
 			"parts, volumes, echoes, sounds (reference_sound brings one in) and tricks. Write your own melody and chords.\n"
 			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
-			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays.\n"
+			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays. When the idea asks "
+			"for a calm song (calm, peaceful, relaxing, a lullaby, a place to rest), or is a stage to explore or a fight, "
+			"follow that kind's recipe instead: references action guide topic calm, lively or action (this prompt takes it "
+			"as kind).\n"
 			"3. For a meter other than 4/4 (a waltz, a 6/8 lilt), set_meter before any notes. Set the tempo with set_tempo, at one "
 			"whose rows are all the same length (it says when they aren't and names even tempos nearby), so the hi-hats and "
 			"arpeggios stay steady. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you "
@@ -19046,7 +19266,9 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"7. Finish the sound: set_swing if the feel should swing, then mix (soft) last, so the triangle and the drums come "
 			"through and the pulses don't harshen; with width wide, for the game's stereo files: the echo opposite the melody, "
 			"chord voices apart, the melody, the bass and the drums in the middle.\n"
-			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it.\n"
+			"8. review_arrangement, and fix what it lists until it scores 8 or more; check_song for clashes; look_at_song to see it; "
+			"measure_mix with melody_channel the lead, for what the ear hears (the intro 6-10 dB under the main part, the two "
+			"sides within 2 dB).\n"
 			"9. set_loop where the loop starts, then check_loop and fix_loop, so the repeats start as the first time does (a "
 			"fade or an echo at the loop's end carries over otherwise). Then play it for me and ask what I'd change. Keep what "
 			"I like in soundtrack_notes.\n"

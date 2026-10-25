@@ -92,6 +92,8 @@ struct ToolResult {
 // write on this one, so export_for_game gives it links to fetch them
 struct Caller {
 	std::string FilesUrl;	// "http://192.168.1.10:46600/files/" as that client reached FamiTracker; empty for this computer
+	bool Core;				// asked through the small set (/mcp/core), whose replies name only its tools
+	Caller() : Core(false) {}
 };
 
 class ToolSet {
