@@ -7236,9 +7236,32 @@ std::vector<MixSpan> MixSpans(Session &S, int Melody, int First, int End, const 
 }
 
 // As heard, the chords are every part that plays the harmony together: voiced chords on several channels (Voices) and
-// broken chords in a steady run, besides arpeggios
-void HeardRoles(Session &S, const std::vector<int> &Voices, std::vector<MixSpan> &Spans)
+// broken chords in a steady run, besides arpeggios. Lines on two or more channels that start every note together (a
+// pad's voices holding one chord, strummed a frame or two apart) are voiced chords too, and join Voices
+void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans)
 {
+	std::vector<std::vector<int> > Starts(Spans.size());
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		if (Spans[i].Role != ROLE_LINE)
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Spans[i].Channel), Spans[i].First, Spans[i].End);
+		for (size_t n = 0; n < Notes.size(); ++n)
+			Starts[i].push_back(Notes[n].Row);
+	}
+	std::vector<char> Held(Spans.size(), 0);
+	for (size_t i = 0; i < Spans.size(); ++i)
+		for (size_t k = i + 1; k < Spans.size(); ++k) {
+			if (Starts[i].empty() || Starts[i].size() != Starts[k].size() || Spans[i].Channel == Spans[k].Channel)
+				continue;
+			bool Together = true;
+			for (size_t n = 0; n < Starts[i].size() && Together; ++n)
+				Together = std::abs(Starts[i][n] - Starts[k][n]) <= 1;
+			if (Together)
+				Held[i] = Held[k] = 1;
+		}
+	for (size_t i = 0; i < Spans.size(); ++i)
+		if (Held[i] && std::find(Voices.begin(), Voices.end(), Spans[i].Channel) == Voices.end())
+			Voices.push_back(Spans[i].Channel);
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
 		if (P.Role == ROLE_LINE && (std::find(Voices.begin(), Voices.end(), P.Channel) != Voices.end() ||
@@ -7594,8 +7617,10 @@ std::string MixTool(Session &S, const Json &Args)
 	if (Heard) {
 		Voices = ChordVoicesIn(S, First, End, Melody);
 		HeardRoles(S, Voices, Spans);
-		if (Range)
-			HeardRoles(S, ChordVoicesIn(S, 0, S.Time.TotalRows(), Melody), Whole);
+		if (Range) {
+			std::vector<int> WholeVoices = ChordVoicesIn(S, 0, S.Time.TotalRows(), Melody);
+			HeardRoles(S, WholeVoices, Whole);
+		}
 	}
 	std::vector<std::vector<std::pair<int, int> > > Refs(Spans.size());
 	for (size_t i = 0; i < Spans.size(); ++i) {
@@ -9903,7 +9928,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// them where they play together, the way mix sets them in those styles
 	if ((Calm || Lively) && S.Channel(Melody).Kind != KIND_TRIANGLE) {
 		std::vector<MixSpan> Spans = MixSpans(S, Melody, First, End, std::set<int>());
-		const std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
+		std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
 		HeardRoles(S, Voiced, Spans);
 		std::vector<std::vector<std::pair<int, int> > > Refs;
 		for (size_t i = 0; i < Spans.size(); ++i)

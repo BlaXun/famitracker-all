@@ -14062,6 +14062,18 @@ void TestCalmMix()
 	CHECK_HAS(Result.Text, "VRC6 Pulse 2 (chords) loudest 11 to 10");
 	CHECK_HAS(Result.Text, "style calm puts it 2-3 dB over the chords instead.");
 	CHECK(Song.Rows[6][0].Volume == 10);
+	// A pad holding one chord on three channels (a note each, started together) is the chords, one layer
+	FakeSong Pad;
+	Pad.Info.DirectChanges = true;
+	for (int i = 0; i < 8; ++i)
+		Pad.Put(5, i * 8, TUNE[i % 4], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 15 : -1);
+	const char *const VOICES[3] = { "C-3", "E-3", "G-3" };
+	const int PADS[3] = { 0, 1, 6 };
+	for (int v = 0; v < 3; ++v)
+		Pad.Put(PADS[v], 0, VOICES[v], 2, 15);
+	Result = Run(Pad, "mix", CALM);
+	CHECK_HAS(Result.Text, "as heard: the melody (VRC6 Pulse 1) 2.2 dB over the chords. Changes: 2A03 Pulse 1 (chords) loudest 15 to 6; "
+		"2A03 Pulse 2 (chords) loudest 15 to 6; VRC6 Pulse 1 (melody) stays at 15; VRC6 Pulse 2 (chords) loudest 15 to 6.");
 	// A melody at 12 goes to 15 with the rest
 	FakeSong Low;
 	CalmTestSong(Low, 15, 6);
