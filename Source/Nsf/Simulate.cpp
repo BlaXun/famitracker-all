@@ -181,13 +181,13 @@ public:
 	{
 		SampleMemory Memory;
 		m_pMemory = &Memory;
-		SoundData Data;
 		int Flags = 0;
 		if (m_M.Expansion & EXP_VRC6) Flags |= CHIP_VRC6;
 		if (m_M.Expansion & EXP_MMC5) Flags |= CHIP_MMC5;
-		Chips C(Flags, m_Pal, Memory, Data);
-		m_pChips = &C;
+		// The recording keeps the samples played, so a comparison knows them by their bytes
 		Out = Recording();
+		Chips C(Flags, m_Pal, Memory, Out.Sounds);
+		m_pChips = &C;
 		Out.Pal = m_Pal;
 		Out.ChipFlags = Flags;
 		Out.TickRate = m_Rate;

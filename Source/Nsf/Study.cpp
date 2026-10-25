@@ -872,6 +872,11 @@ std::string KeyOf(const std::vector<double> &Weights, const std::vector<std::str
 	}
 	if (Drifts)
 		return NoKey;
+	// A short piece that plays once and stops on a chord of neither mode
+	// never comes home: a fanfare that moves off a tritone away
+	if (!Loops && Bars.size() <= 8 && !InKey(Bars.back().Root, Bars.back().Shape, Tonic, false) &&
+		!InKey(Bars.back().Root, Bars.back().Shape, Tonic, true))
+		return NoKey;
 	// The mode: the notes' (the third, sixth and seventh they play), unless
 	// they fit both nearly as well; then the tonic chord's, or both when it
 	// comes both ways (a third of the time the other, or the other way round
@@ -2351,8 +2356,8 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 			std::vector<int> AtStep(Steps, 0);
 			for (size_t i = 0; i < k.Steps.size(); ++i)
 				++AtStep[k.Steps[i]];
-			std::string w = Format("%s: %s in the loop, about %.1f a bar", Name.c_str(), Count(k.Hits, "hit", "hits").c_str(),
-				double(k.Hits) / LoopBarCount);
+			std::string w = Format("%s: %s %s, about %.1f a bar", Name.c_str(), Count(k.Hits, "hit", "hits").c_str(),
+				LoopRow >= 0 ? "in the loop" : "in all", double(k.Hits) / LoopBarCount);
 			int Uses = 0;
 			const std::string Grid = Commonest(k.Grids, Uses);
 			int BarsPlayed = 0;

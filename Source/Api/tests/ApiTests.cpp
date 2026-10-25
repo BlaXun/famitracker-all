@@ -50,6 +50,8 @@
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
 #include "../Wavetables.h"
+#include "../../Nsf/Study.h"
+#include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
 
 #include <algorithm>
@@ -14533,6 +14535,7 @@ void TestStudyTagsAgain()
 	CHECK(Kept.Study.find("DPCM") == std::string::npos && !Has(Kept, "dpcm-drums"));
 	CHECK(Has(Kept, "bloom"));		// the new study's own
 	std::remove(Path.c_str());
+	std::remove("api_tests_tags_again.m3u");
 }
 
 int main()

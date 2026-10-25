@@ -766,6 +766,22 @@ void TestPassageRepeatedOnce()
 	CHECK(FindLoop(v, 8, 4, Start, Period, 40) && Start == 30 && Period == 20);
 }
 
+// A tune that loops whole, with a passage played four times inside it (Dr.
+// Mario's Chill): the old finder took the passage for the loop as soon as
+// it had repeated; the loop is the whole tune, from its start.
+void TestLoopAroundARepeat()
+{
+	std::vector<Frame> F(1152);
+	AddTune(F, 0, 12, 3);			// the opening, higher
+	for (int k = 0; k < 4; ++k)		// the passage, four times
+		AddTune(F, 192 + 192 * k, 12);
+	AddTune(F, 960, 12, -5);		// the ending, lower, then back to the start
+	Recording R;
+	NsfFile File;
+	CHECK(Record(F, 0, 120, R, File));
+	CHECK(R.LoopLength == 1152 && R.LoopStart >= 0 && R.LoopStart <= 2);
+}
+
 // A loop the old finder missed: the tune repeats every 144 frames, the
 // noise's hi-hats every 150, so the whole only repeats after a minute, too
 // long to hear twice. The tune's loop is the loop, the drums on a cycle of
@@ -807,9 +823,9 @@ void TestDrumsOnTheirOwn()
 // A module built here: a track of Bars bars of 16 rows, Pulse 1's tune (a
 // note a beat), Pulse 2's chord (its notes in turn, a beat each) and the
 // triangle's bass (a note a beat, Short: cut after two rows), looping to
-// its start
+// its start (Once: it stops at its end)
 Module KeyTrack(const std::vector<std::vector<int> > &Tune, const std::vector<std::vector<int> > &Chords, const std::vector<int> &Bass,
-	bool Short)
+	bool Short, bool Once = false)
 {
 	Module M;
 	Instrument I;
@@ -836,7 +852,7 @@ Module KeyTrack(const std::vector<std::vector<int> > &Tune, const std::vector<st
 		}
 		T.Frames.push_back(std::vector<int>(5, int(b)));
 	}
-	T.Patterns[4][Bass.size() - 1][15].AddEffect('B', 0);
+	T.Patterns[4][Bass.size() - 1][15].AddEffect(Once ? 'C' : 'B', 0);
 	M.Tracks.push_back(T);
 	return M;
 }
@@ -881,6 +897,16 @@ void TestKeys()
 	const std::vector<int> MajorBass = { 36, 41, 43, 36 };
 	S = StudyTrack(KeyTrack(MajorTune, MajorChords, MajorBass, false), 0, R);
 	CHECK(S.Key == "C major");
+	// Played once, it ends at home: still C major
+	S = StudyTrack(KeyTrack(MajorTune, MajorChords, MajorBass, false, true), 0, R);
+	CHECK(S.LoopBars == 0 && S.Key == "C major");
+	// A fanfare on G that stops on the chord a tritone away (C#) has no key,
+	// though its notes would make one of G: at most a home
+	const std::vector<std::vector<int> > FanfareTune = { { 67, 71, 74, 79 }, { 79, 74, 71, 74 }, { 73, 77, 80, 85 } };
+	const std::vector<std::vector<int> > FanfareChords = { { 55, 59, 62 }, { 55, 59, 62 }, { 61, 65, 68 } };
+	const std::vector<int> FanfareBass = { 43, 43, 37 };
+	S = StudyTrack(KeyTrack(FanfareTune, FanfareChords, FanfareBass, false, true), 0, R);
+	CHECK(S.LoopBars == 0 && S.Key == "no clear key (around G)");
 }
 
 }	// namespace
@@ -900,6 +926,7 @@ int main()
 	TestShortOfPlaylist();
 	TestQuietFirstPass();
 	TestPassageRepeatedOnce();
+	TestLoopAroundARepeat();
 	TestDrumsOnTheirOwn();
 	TestKeys();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
