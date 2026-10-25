@@ -40,13 +40,23 @@
 // gets a row of its own. So every button gets a place, however narrow the
 // window. Places gets each button's row and x; returns the number of rows, 1
 // at least.
+//
+// When the piano roll is too short for more than MaxRows rows (its notes
+// need the room), the buttons that don't fit in them go into a menu: their
+// Row is -1, and More is where the button that opens it goes, at the end of
+// the last row, which keeps MoreWidth (and a Gap) for it. More's Row is -1
+// when every button has a place of its own.
 struct roll_place_t {
 	int Row;
 	int X;
+	roll_place_t() : Row(0), X(0) {}
+	roll_place_t(int R, int Left) : Row(R), X(Left) {}
 };
 
 int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap,
 	int GroupGap, std::vector<roll_place_t> &Places);
+int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap,
+	int GroupGap, int MaxRows, int MoreWidth, std::vector<roll_place_t> &Places, roll_place_t &More);
 
 // What the status line along the piano roll's bottom says while the mouse
 // isn't over a note and nothing else is going on: what the mouse and the keys

@@ -151,7 +151,8 @@ again, as copies or linked.
   Notes are drawn, painted as a melody with the mouse, moved, copied, made
   longer or shorter and erased, kept in a key if one is picked; clips are
   placed with the mouse. Effects are shown on the notes and put on them from
-  a menu: vibrato, tremolo, chords, slides, glides, bends and fades. Every
+  a menu: vibrato, tremolo, chords, slides, glides, bends and fades. The
+  Groove button lays down a mood's drums, bass line and chords. Every
   change is undoable.
 - [x] Sound effects from your voice (`VoiceEffectDlg.cpp`; see below): Edit >
   Sound effect from your voice records "pew", "boing" or "kssh", stops by
@@ -422,9 +423,18 @@ The buttons along the top:
   instrument the channel already plays.
 - Effects: effects for the selected notes (see Effects below).
 - Chords: a chord on the channels that are free there (see Chords below).
+- Groove: drums, a bass line and chords for a mood (see Mood starters
+  below).
 - Clips: place a clip with the mouse (as a copy, or linked when "Place
   linked copies" is ticked), save the selected notes as a clip
   (Ctrl+Shift+C), or show the clips panel.
+
+On a narrow window the buttons go on two rows, or more, so none of them is
+lost; when the piano roll is too short for those rows and its notes, the
+buttons that don't fit go under More, at the end of the last row (a taller
+piano roll shows them again). A click that only closes a menu (a button's, or any other) does
+nothing else in the piano roll, and after a dialog or a message box the keys
+come back to the piano roll if it had them.
 
 Editing, in the bright channel:
 
@@ -461,9 +471,10 @@ Editing, in the bright channel:
 
 Effects:
 
-- The Effects button, the E key or a double-click on a note opens a menu of
-  effects for the selected notes (E and the double-click select the note
-  under the mouse when none is). Each item shows the effect it writes, so
+- The Effects button, the E key (while the pattern editor shows; in its
+  place E is a note) or a double-click on a note opens a menu of effects for
+  the selected notes (E and the double-click select the note under the
+  mouse when none is). Each item shows the effect it writes, so
   the pattern editor's effect column becomes familiar:
   - Vibrato, gentle (`452`), medium (`454`) or strong (`467`), starting just
     after the note does.
@@ -530,6 +541,31 @@ Chords:
 - The status line says what went where, and when the melody rubs a
   semitone against a chord's note. One Ctrl+Z takes the whole chord back
   (the instruments it made stay in the song).
+
+Mood starters:
+
+- The Groove button, or in an empty song the "Start from a groove" box in
+  the middle of the notes, opens a menu of moods: town, overworld, battle,
+  boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert
+  and nostalgic, each with what it's for. Pick one, and its drums, bass line
+  and chords come in, played the way that mood is usually arranged: the
+  same groove as Edit > Start from a groove (see Recording in FamiTracker).
+- Where: under the bars of a selection (rows dragged along the ruler with
+  the Select tool, the selected notes' bars, or the pattern editor's
+  selection), or from the bar the cursor is in for the length set in the
+  menu: 4, 8 or 16 bars.
+- The melody stays on the channel being edited (a pulse when that's the
+  bass or the drums); the chords go on another pulse, the bass on the
+  sawtooth or the triangle, the drums on the noise, and what those channels
+  played in those bars makes way. The menu says which channels.
+- The tempo: an empty song gets the mood's (each mood shows it); a song with
+  notes keeps its own, and the status line says when the mood suits another.
+  The key keeps to the notes the song already has, so a melody there fits;
+  an empty song starts on the white keys (C major, or A minor for the darker
+  moods).
+- More choices opens the groove dialog for another tempo (typed or tapped),
+  key or length. One Ctrl+Z takes the groove back, with the tempo and the
+  key it set (the instruments it made stay in the song).
 
 How edits keep the song sounding right:
 

@@ -23,8 +23,11 @@
 
 #include "PianoRollUi.h"
 
-int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap,
-	int GroupGap, std::vector<roll_place_t> &Places)
+namespace {
+
+// The flow, with the row LastRow (if any) Shorter narrower
+int Flow(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap, int GroupGap,
+	int LastRow, int Shorter, std::vector<roll_place_t> &Places)
 {
 	const size_t Count = Widths.size();
 	Places.assign(Count, roll_place_t());
@@ -32,7 +35,7 @@ int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Grou
 	const auto GroupOf = [&Groups](size_t i) { return i < Groups.size() ? Groups[i] : -1 - static_cast<int>(i); };
 	int Row = 0, X = 0;
 	bool Empty = true;		// nothing on the row yet
-	const auto RowWidth = [&]() { return Row == 0 ? FirstWidth : Width; };
+	const auto RowWidth = [&]() { return (Row == 0 ? FirstWidth : Width) - (Row == LastRow ? Shorter : 0); };
 	for (size_t First = 0; First < Count; ) {
 		size_t End = First;
 		int Long = 0;
@@ -60,6 +63,35 @@ int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Grou
 		First = End;
 	}
 	return Row + 1;
+}
+
+}	// namespace
+
+int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap,
+	int GroupGap, std::vector<roll_place_t> &Places)
+{
+	return Flow(Widths, Groups, FirstWidth, Width, Gap, GroupGap, -1, 0, Places);
+}
+
+int FlowRollButtons(const std::vector<int> &Widths, const std::vector<int> &Groups, int FirstWidth, int Width, int Gap,
+	int GroupGap, int MaxRows, int MoreWidth, std::vector<roll_place_t> &Places, roll_place_t &More)
+{
+	More = roll_place_t(-1, 0);
+	MaxRows = MaxRows < 1 ? 1 : MaxRows;
+	const int Rows = Flow(Widths, Groups, FirstWidth, Width, Gap, GroupGap, -1, 0, Places);
+	if (Rows <= MaxRows)
+		return Rows;
+	// The last row keeps room for More; what doesn't fit by then goes into its menu
+	const int Last = MaxRows - 1;
+	Flow(Widths, Groups, FirstWidth, Width, Gap, GroupGap, Last, MoreWidth + Gap, Places);
+	More = roll_place_t(Last, 0);
+	for (size_t i = 0; i < Places.size(); ++i) {
+		if (Places[i].Row > Last)
+			Places[i].Row = -1;
+		else if (Places[i].Row == Last)
+			More.X = Places[i].X + Widths[i] + Gap;
+	}
+	return MaxRows;
 }
 
 namespace {

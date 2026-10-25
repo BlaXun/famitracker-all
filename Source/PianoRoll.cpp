@@ -120,8 +120,10 @@ const int KEY_SCALE_COUNT = sizeof(KEY_SCALES) / sizeof(KEY_SCALES[0]);
 
 // The buttons along the top (and an empty song's "Start from a groove" in the middle)
 enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_SNAP, BUTTON_INSTRUMENT, BUTTON_EFFECTS,
-	BUTTON_CHORDS, BUTTON_GROOVE, BUTTON_CLIPS, BUTTON_CLOSE, BUTTON_GROOVE_HINT };
+	BUTTON_CHORDS, BUTTON_GROOVE, BUTTON_CLIPS, BUTTON_CLOSE, BUTTON_GROOVE_HINT, BUTTON_MORE };
 const int BUTTON_GAP = 4, GROUP_GAP = 12;	// between buttons, and between their groups
+const int MIN_GRID_HEIGHT = 48;			// the notes keep this much room: buttons past the rows that leave it go under More
+const TCHAR MORE_TEXT[] = _T("More");
 const int GROOVE_BAR_CHOICES[] = { 4, 8, 16 };	// a groove's length when no bars are selected
 const TCHAR GROOVE_SECTION[] = _T("Recorder");	// where Start from a groove keeps its mood and length (GrooveDlg.cpp)
 
@@ -150,6 +152,7 @@ const UINT MENU_CHORD_CANCEL = 5052;
 const UINT MENU_GROOVE = 6000;			// + mood (ftapi::GrooveMoods)
 const UINT MENU_GROOVE_BARS = 6100;		// + bars
 const UINT MENU_GROOVE_MORE = 6200;		// Start from a groove's dialog
+const UINT MENU_MORE = 7000;			// + button_t: a button with no room along the top
 
 struct RollNote {
 	int Start;			// rows from the start of the song
@@ -618,11 +621,14 @@ struct CPianoRollWnd::Impl {
 		COLORREF Swatch;	// a channel's colour, or CLR_INVALID
 	};
 	std::vector<Button> Buttons;
+	std::vector<Button> Overflow;		// in the More menu: no room for them in the rows the notes leave
 	int HeaderRows;
-	CString LaidOut;					// the width and the texts the buttons were measured for...
+	CString LaidOut;					// the texts the buttons were measured for...
 	std::vector<int> ButtonWidths;		// ...their widths...
-	std::vector<roll_place_t> Places;	// ...and their rows and places in them
-	CRect GrooveHint;					// "Start from a groove" in an empty song, empty when not shown
+	int MoreWidth;						// ...and More's
+	std::vector<roll_place_t> Places;	// their rows and places in them
+	CRect GrooveHint;					// "Start from a groove" in an empty song, empty when not shown...
+	int GrooveHintLines;				// ...in three lines, or one where the notes' grid is short
 
 	// Mood starters (the Groove button)
 	int GrooveBars;		// a groove's length without bars selected
@@ -647,7 +653,8 @@ struct CPianoRollWnd::Impl {
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
 		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), RangeKept(false), HasCopied(false), PlacingClip(-1),
 		PlaceRow(-1), PanelDrop(false), ChordVoices(0), AgainTrack(static_cast<unsigned int>(-1)), AgainRow(-1), AgainVoices(0),
-		AgainArpeggio(false), HeaderRows(1), GrooveBars(8), KeysAway(false), IgnoredClick(false), IgnoredTime(0), BackSize(0, 0)
+		AgainArpeggio(false), HeaderRows(1), MoreWidth(60), GrooveHintLines(3), GrooveBars(8), KeysAway(false), IgnoredClick(false),
+		IgnoredTime(0), BackSize(0, 0)
 	{
 	}
 
@@ -761,7 +768,9 @@ struct CPianoRollWnd::Impl {
 	}
 
 	// The buttons in rows, as many as the piano roll's width needs, so a narrow window keeps every one of them; the close
-	// button at the first row's right end. Measured again when a text or the width changes.
+	// button at the first row's right end. A piano roll too short for those rows and some notes keeps the rows that leave
+	// the notes MIN_GRID_HEIGHT, and the buttons with no room go under More, at the end of the last. Measured again when
+	// a text changes.
 	void LayOutButtons()
 	{
 		std::vector<Button> List;
@@ -769,9 +778,8 @@ struct CPianoRollWnd::Impl {
 		ListButtons(List, Groups);
 		const int Left = Client.left + SX(6), CloseLeft = Client.right - SX(26), RowHeight = SY(HEADER_HEIGHT);
 		CString Key;
-		Key.Format(_T("%d"), Client.Width());
 		for (size_t i = 0; i < List.size(); ++i)
-			Key += _T("\n") + List[i].Text;
+			Key += List[i].Text + _T("\n");
 		if (Key != LaidOut || ButtonWidths.size() != List.size()) {
 			ButtonWidths.clear();
 			if (pWnd->GetSafeHwnd() != NULL && !List.empty()) {
@@ -780,24 +788,39 @@ struct CPianoRollWnd::Impl {
 				for (size_t i = 0; i < List.size(); ++i)
 					ButtonWidths.push_back(dc.GetTextExtent(List[i].Text).cx + SX(16) + (List[i].Menu ? SX(12) : 0) +
 						(List[i].Swatch != CLR_INVALID ? SX(14) : 0));
+				MoreWidth = dc.GetTextExtent(MORE_TEXT).cx + SX(16) + SX(12);
 				dc.SelectObject(pOldFont);
 				LaidOut = Key;
 			}
 			else
 				LaidOut.Empty();
 			ButtonWidths.resize(List.size(), SX(60));
-			HeaderRows = FlowRollButtons(ButtonWidths, Groups, std::max(1, CloseLeft - SX(6) - Left),
-				std::max(1, static_cast<int>(Client.right) - SX(6) - Left), SX(BUTTON_GAP), SX(GROUP_GAP), Places);
 		}
+		const int Spare = Client.Height() - SY(RULER_HEIGHT) - SY(CHORDS_HEIGHT) - SY(STATUS_HEIGHT) - SY(MIN_GRID_HEIGHT);
+		roll_place_t More;
+		HeaderRows = FlowRollButtons(ButtonWidths, Groups, std::max(1, CloseLeft - SX(6) - Left),
+			std::max(1, static_cast<int>(Client.right) - SX(6) - Left), SX(BUTTON_GAP), SX(GROUP_GAP), std::max(1, Spare / RowHeight),
+			MoreWidth, Places, More);
 		Buttons.clear();
+		Overflow.clear();
 		const Button Closing = { BUTTON_CLOSE, CRect(CloseLeft, Client.top + SY(3), Client.right - SX(4), Client.top + RowHeight - SY(3)),
 			CString(), false, false, CLR_INVALID };
 		Buttons.push_back(Closing);
 		for (size_t i = 0; i < List.size() && i < Places.size(); ++i) {
+			if (Places[i].Row < 0) {
+				Overflow.push_back(List[i]);
+				continue;
+			}
 			Button Item = List[i];
 			const int Top = Client.top + Places[i].Row * RowHeight;
 			Item.Rect = CRect(Left + Places[i].X, Top + SY(3), Left + Places[i].X + ButtonWidths[i], Top + RowHeight - SY(3));
 			Buttons.push_back(Item);
+		}
+		if (More.Row >= 0 && !Overflow.empty()) {
+			const int Top = Client.top + More.Row * RowHeight;
+			const Button Opens = { BUTTON_MORE, CRect(Left + More.X, Top + SY(3), Left + More.X + MoreWidth, Top + RowHeight - SY(3)),
+				CString(MORE_TEXT), false, true, CLR_INVALID };
+			Buttons.push_back(Opens);
 		}
 	}
 
@@ -812,10 +835,12 @@ struct CPianoRollWnd::Impl {
 		return true;
 	}
 
-	// An empty song: "Start from a groove" in the middle of the notes' grid, until a note is drawn
+	// An empty song: "Start from a groove" in the middle of the notes' grid, until a note is drawn; Line -1 is all of it
+	// on one line, for a short grid
 	static const TCHAR *GrooveHintLine(int Line, int Tool)
 	{
 		switch (Line) {
+		case -1: return _T("Start from a groove: pick a mood, and drums, a bass line and chords come in");
 		case 0: return _T("Start from a groove");
 		case 1: return _T("Pick a mood, and drums, a bass line and chords come in.");
 		default:
@@ -827,8 +852,7 @@ struct CPianoRollWnd::Impl {
 	void LayOutGrooveHint()
 	{
 		GrooveHint.SetRectEmpty();
-		if (!SongEmpty() || Drag != DRAG_NONE || PlacingClip >= 0 || Grid.Width() < SX(160) || Grid.Height() < SY(56) ||
-			pWnd->GetSafeHwnd() == NULL)
+		if (!SongEmpty() || Drag != DRAG_NONE || PlacingClip >= 0 || Grid.Width() < SX(160) || pWnd->GetSafeHwnd() == NULL)
 			return;
 		CClientDC dc(pWnd);
 		CFont *pOldFont = static_cast<CFont*>(dc.SelectStockObject(DEFAULT_GUI_FONT));
@@ -838,8 +862,18 @@ struct CPianoRollWnd::Impl {
 			Wide = std::max(Wide, static_cast<int>(Size.cx));
 			Line = std::max(Line, static_cast<int>(Size.cy));
 		}
+		GrooveHintLines = 3;
+		int Height = Line * 3 + SY(28);
+		if (Height + SY(8) > Grid.Height()) {
+			// One line, where the grid has room for it
+			GrooveHintLines = 1;
+			Wide = dc.GetTextExtent(GrooveHintLine(-1, Tool)).cx;
+			Height = Line + SY(12);
+		}
 		dc.SelectObject(pOldFont);
-		const int Width = std::min(Wide + SX(32), Grid.Width() - SX(8)), Height = Line * 3 + SY(28);
+		if (Height + SY(4) > Grid.Height())
+			return;
+		const int Width = std::min(Wide + SX(32), Grid.Width() - SX(8));
 		const CPoint Middle = Grid.CenterPoint();
 		GrooveHint = CRect(Middle.x - Width / 2, Middle.y - Height / 2, Middle.x - Width / 2 + Width, Middle.y - Height / 2 + Height);
 		const Button Hint = { BUTTON_GROOVE_HINT, GrooveHint, CString(), false, true, CLR_INVALID };
@@ -3208,12 +3242,34 @@ struct CPianoRollWnd::Impl {
 	CPoint Below(int Id) const
 	{
 		CPoint Point(0, 0);
+		bool Found = false;
 		for (size_t i = 0; i < Buttons.size(); ++i) {
-			if (Buttons[i].Id == Id)
+			if (Buttons[i].Id == Id) {
+				Point = CPoint(Buttons[i].Rect.left, Buttons[i].Rect.bottom);
+				Found = true;
+			}
+		}
+		for (size_t i = 0; i < Buttons.size() && !Found; ++i) {
+			if (Buttons[i].Id == BUTTON_MORE)	// it's under More: its menu opens there
 				Point = CPoint(Buttons[i].Rect.left, Buttons[i].Rect.bottom);
 		}
 		pWnd->ClientToScreen(&Point);
 		return Point;
+	}
+
+	// The buttons with no room along the top (a short piano roll): a tool or Snap to key ticked while it's on; the others
+	// open their menus where More is
+	void MoreMenu()
+	{
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		for (size_t i = 0; i < Overflow.size(); ++i)
+			Menu.AppendMenu(MF_STRING | (Overflow[i].Pressed ? MF_CHECKED : 0), MENU_MORE + Overflow[i].Id, Overflow[i].Text);
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("A taller piano roll has room for them along its top"));
+		const int Choice = PopUp(Menu, BUTTON_MORE);
+		if (Choice >= static_cast<int>(MENU_MORE) && Choice < static_cast<int>(MENU_MORE) + BUTTON_MORE)
+			Press(Choice - static_cast<int>(MENU_MORE));
 	}
 
 	int PopUp(CMenu &Menu, int Id) const
@@ -3338,6 +3394,9 @@ struct CPianoRollWnd::Impl {
 		case BUTTON_GROOVE:
 		case BUTTON_GROOVE_HINT:
 			GrooveMenu(Below(Id));
+			break;
+		case BUTTON_MORE:
+			MoreMenu();
 			break;
 		case BUTTON_CLOSE:
 			Main()->PostMessage(WM_COMMAND, ID_VIEW_PIANOROLL);
@@ -3634,6 +3693,14 @@ struct CPianoRollWnd::Impl {
 		const COLORREF Cursor = pSettings->Appearance.iColCursor;
 		dc.FillSolidRect(&GrooveHint, Mix(Back_, TextColor, 0.16));
 		Outline(dc, GrooveHint, Mix(TextColor, Cursor, 0.4), std::max(1, SX(2)));
+		if (GrooveHintLines == 1) {
+			CRect Row(GrooveHint);
+			Row.DeflateRect(SX(12), 0);
+			dc.SetTextColor(Mix(TextColor, RGB(255, 255, 255), 0.35));
+			dc.DrawText(GrooveHintLine(-1, Tool), &Row, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+			Arrow(dc, GrooveHint.right - SX(14), GrooveHint.top + GrooveHint.Height() / 2 - 1, TextColor);
+			return;
+		}
 		CRect Line(GrooveHint);
 		Line.DeflateRect(SX(12), SY(10));
 		const int Step = Line.Height() / 3;

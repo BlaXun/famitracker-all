@@ -119,6 +119,59 @@ void TestFlow()
 	CHECK(FlowRollButtons(std::vector<int>(), std::vector<int>(), 100, 100, GAP, GROUP_GAP, P) == 1 && P.empty());
 }
 
+// A short piano roll: as many rows as leave its notes room, the rest of the buttons in the More menu
+void TestOverflow()
+{
+	const std::vector<int> W = Widths(), G = Groups();
+	std::vector<roll_place_t> P, Free;
+	roll_place_t More;
+	const int MORE = 60;
+
+	// Room enough: no menu, and the rows of the flow without a limit
+	CHECK(FlowRollButtons(W, G, 800 - CLOSE, 800, GAP, GROUP_GAP, 5, MORE, P, More) == 2);
+	CHECK(More.Row == -1);
+	FlowRollButtons(W, G, 800 - CLOSE, 800, GAP, GROUP_GAP, Free);
+	for (size_t i = 0; i < P.size(); ++i)
+		CHECK(P[i].Row == Free[i].Row && P[i].X == Free[i].X);
+
+	// The docked piano roll beside the clips panel (485 pixels) with room for one row: the channel and the tools, then More
+	CHECK(FlowRollButtons(W, G, 485 - CLOSE, 485, GAP, GROUP_GAP, 1, MORE, P, More) == 1);
+	CHECK(P[0].Row == 0 && P[3].Row == 0 && P[4].Row == -1 && P[11].Row == -1);
+	CHECK(More.Row == 0 && More.X == P[3].X + W[3] + GAP && More.X + MORE <= 485 - CLOSE);
+	// ...and with two, the grid, the key and snapping too
+	CHECK(FlowRollButtons(W, G, 485 - CLOSE, 485, GAP, GROUP_GAP, 2, MORE, P, More) == 2);
+	CHECK(P[6].Row == 1 && P[7].Row == -1 && More.Row == 1 && More.X + MORE <= 485);
+
+	// Any width and any limit: what has a place is tidy, the rest is the end of the list (in the menu), and More fits at the
+	// end of the last row (unless a lone button there is already wider than the row)
+	for (int Width = 100; Width <= 1600; Width += 7)
+		for (int MaxRows = 1; MaxRows <= 4; ++MaxRows) {
+			const int First = Width - CLOSE;
+			const int Rows = FlowRollButtons(W, G, First, Width, GAP, GROUP_GAP, MaxRows, MORE, P, More);
+			CHECK(Rows >= 1 && Rows <= MaxRows);
+			bool Hidden = false;
+			int LastOnRow = -1;
+			for (size_t i = 0; i < P.size(); ++i) {
+				if (P[i].Row < 0)
+					Hidden = true;
+				else {
+					CHECK(!Hidden && P[i].Row < Rows);
+					if (i > 0 && P[i - 1].Row >= 0)
+						CHECK(P[i].Row > P[i - 1].Row || P[i].X >= P[i - 1].X + W[i - 1] + GAP);
+					if (P[i].Row == Rows - 1)
+						LastOnRow = static_cast<int>(i);
+				}
+			}
+			CHECK(Hidden == (More.Row >= 0));
+			if (More.Row >= 0) {
+				const int Room = More.Row == 0 ? First : Width;
+				CHECK(More.Row == Rows - 1 && LastOnRow >= 0);
+				CHECK(More.X == P[static_cast<size_t>(LastOnRow)].X + W[static_cast<size_t>(LastOnRow)] + GAP);
+				CHECK(More.X + MORE <= Room || (P[static_cast<size_t>(LastOnRow)].X == 0 && W[static_cast<size_t>(LastOnRow)] + GAP + MORE > Room));
+			}
+		}
+}
+
 bool Has(const std::string &Text, const char *Part)
 {
 	return Text.find(Part) != std::string::npos;
@@ -209,6 +262,7 @@ void TestMenuClick()
 int main()
 {
 	TestFlow();
+	TestOverflow();
 	TestHints();
 	TestMenuClick();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
