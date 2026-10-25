@@ -1780,10 +1780,8 @@ void CMainFrame::OnUpdateTempoEdit(CCmdUI *pCmdUI)
 			else
 				SetTempo(m_pLockedEditTempo->GetValue());
 		}
-		else if (m_bBPM) {
-			pCmdUI->SetText(BPMText());
-			ShowBPMLabel();	// another track's speed
-		}
+		else if (m_bBPM)
+			ShowBPMText();	// another track's speed and tempo
 		else {
 			pCmdUI->SetText(MakeIntString(static_cast<CFamiTrackerDoc*>(GetActiveDocument())->GetSongTempo(m_iTrack)));
 		}
@@ -1954,8 +1952,10 @@ void CMainFrame::LayoutSongSettings(bool BPM)
 	m_wndDialogBar.SetDlgItemText(IDC_TEMPO_LABEL, BPM ? CString(BPMFrames() ? _T("Speed") : _T("BPM")) : m_strTempoLabel);
 	m_bBPM = BPM;
 	const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());	// none yet in OnCreate
-	if (pDoc != NULL)
-		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPM ? BPMText() : MakeIntString(pDoc->GetSongTempo(m_iTrack)));
+	if (pDoc != NULL && BPM)
+		ShowBPMText();
+	else if (pDoc != NULL)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, MakeIntString(pDoc->GetSongTempo(m_iTrack)));
 	m_wndDialogBar.RedrawWindow(NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
@@ -1967,6 +1967,19 @@ double CMainFrame::CurrentBPM() const
 	const unsigned int Track = static_cast<unsigned int>(m_iTrack);
 	return SongBPM(static_cast<int>(pDoc->GetSongSpeed(Track)), static_cast<int>(pDoc->GetSongTempo(Track)),
 		static_cast<int>(pDoc->GetFrameRate()), pDoc->GetFirstHighlight());
+}
+
+void CMainFrame::ShowBPMText()
+{
+	const CString Text = BPMText();
+	CString Now;
+	m_wndDialogBar.GetDlgItemText(IDC_TEMPO, Now);
+	if (Now != Text)
+		m_wndDialogBar.SetDlgItemText(IDC_TEMPO, Text);
+	CEdit *pEdit = static_cast<CEdit*>(m_wndDialogBar.GetDlgItem(IDC_TEMPO));
+	if (pEdit != NULL && (Now != Text || pEdit->PosFromChar(0).x < 0))
+		pEdit->SetSel(0, 0);	// from its start: "1 frame" only just fits, and the box scrolls
+	ShowBPMLabel();
 }
 
 void CMainFrame::ShowBPMLabel()
@@ -2020,8 +2033,7 @@ void CMainFrame::SetBPM(int Bpm)
 			BPMShowsFrames(Speed) ? 6 : Speed, pDoc->GetSpeedSplitPoint(), Speed, Tempo);
 	SetSpeed(Speed);
 	SetTempo(Tempo);
-	m_wndDialogBar.SetDlgItemText(IDC_TEMPO, BPMText());
-	ShowBPMLabel();
+	ShowBPMText();
 	pDoc->SetModifiedFlag();
 }
 
