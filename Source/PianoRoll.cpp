@@ -2269,13 +2269,18 @@ struct CPianoRollWnd::Impl {
 		return ftapi::Timing(static_cast<int>(Length), static_cast<int>(Frames), Beat, Bar);
 	}
 
-	// The rows the chords go on: the selected notes' bars (where they start, and the bar the last one ends in when it fills
-	// half of it), the rows dragged along the ruler with the Select tool, the pattern editor's selection, or the bar the
-	// cursor is in, after which chords for more bars go on (Grow)
+	// The rows the chords go on: the rows dragged along the ruler with the Select tool (whatever notes of the channel that
+	// selected), the selected notes' bars (where they start, and the bar the last one ends in when it fills half of it), the
+	// pattern editor's selection, or the bar the cursor is in, after which chords for more bars go on (Grow)
 	void ChordSpan(int &From, int &To, bool &Grow) const
 	{
 		Grow = false;
 		const ftapi::Timing T = SongTiming();
+		if (RangeKept) {
+			From = std::min(RangeFrom, RangeTo);
+			To = std::max(RangeFrom, RangeTo) + 1;
+			return;
+		}
 		if (!Selection.empty() && Channel < static_cast<int>(Notes.size())) {
 			int First = -1, LastStart = 0, LastEnd = 0;
 			for (size_t i = 0; i < Selection.size(); ++i) {
@@ -2295,11 +2300,6 @@ struct CPianoRollWnd::Impl {
 					To = T.BarStart(Tail);
 				return;
 			}
-		}
-		if (RangeKept) {
-			From = std::min(RangeFrom, RangeTo);
-			To = std::max(RangeFrom, RangeTo) + 1;
-			return;
 		}
 		CFamiTrackerView *pView = View();
 		if (pView != NULL && pView->GetPatternEditor()->IsSelecting()) {
@@ -3093,20 +3093,23 @@ struct CPianoRollWnd::Impl {
 			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
 		if (!Selection.empty()) {
 			Text.Format(_T("%s selected   |   Ctrl+Shift+C: save as a clip. Drag to move (Shift: copy), arrows to move, ")
-				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, H: chords on their bars, Esc: none"),
-				static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))));
+				_T("Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, E: effects, %s: chords on their bars, Esc: none"),
+				static_cast<LPCTSTR>(Plural(static_cast<int>(Selection.size()), _T("note"), _T("notes"))), TypesNotes() ? _T("Chords") : _T("H"));
 			return Text;
 		}
 		if (Tool == TOOL_PAINT)
 			return _T("Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.");
 		if (Tool == TOOL_SELECT)
-			return _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
+			return TypesNotes() ? _T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: ")
+				_T("more). Then Ctrl+Shift+C saves them as a clip, and Chords puts chords on their bars.") :
+				_T("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: more). ")
 				_T("Then Ctrl+Shift+C saves them as a clip, and H puts chords on their bars.");
 		if (SnapsToKey())
 			return _T("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Drag a note to move it ")
 				_T("(Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. E: effects. Ctrl+Z undoes.");
 		return _T("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change its ")
-			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. H: chords. Ctrl+Z undoes.");
+			_T("length. Right-click erases. Ctrl+drag selects. Double-click a note (or press E) for effects. ") +
+			CString(TypesNotes() ? _T("Chords: a chord on the free channels. ") : _T("H: chords. ")) + _T("Ctrl+Z undoes.");
 	}
 
 	CString NoteText(int Which, const RollNote &Note) const
