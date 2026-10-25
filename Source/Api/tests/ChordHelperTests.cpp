@@ -118,7 +118,7 @@ HelperSong MakeSong(int Frames, bool Plus = false)
 	S.Instruments.push_back(MakeInstrument(2, "Kick", "2A03"));
 	if (Plus) {
 		for (int i = 0; i < 4; ++i) {
-			char Name[16];
+			char Name[32];
 			std::snprintf(Name, sizeof(Name), "Soft %d", i + 1);
 			S.Channels.push_back(MakeChannel(Name, "N163", KIND_OTHER, Rows, true));
 		}
@@ -131,21 +131,42 @@ HelperSong MakeSong(int Frames, bool Plus = false)
 	return S;
 }
 
-void Put(HelperSong &S, int Channel, int Row, int Pitch, int Instrument, int Volume = NO_VOLUME)
+// The cell a test writes: a row outside the song fails (rather than writing past the cells)
+Cell *CellAt(HelperSong &S, int Channel, int Row, int Line)
 {
-	Cell &C = S.Channels[static_cast<size_t>(Channel)].Cells[static_cast<size_t>(Row)];
-	C.SetPitch(Pitch);
-	C.Instrument = static_cast<unsigned char>(Instrument);
-	C.Volume = static_cast<unsigned char>(Volume);
+	const bool Inside = Channel >= 0 && Channel < static_cast<int>(S.Channels.size()) && Row >= 0 &&
+		Row < static_cast<int>(S.Channels[static_cast<size_t>(Channel)].Cells.size());
+	Check(Inside, "the cell written is in the song", Line);
+	return Inside ? &S.Channels[static_cast<size_t>(Channel)].Cells[static_cast<size_t>(Row)] : 0;
 }
 
-void Stop(HelperSong &S, int Channel, int Row)
+void PutAt(HelperSong &S, int Channel, int Row, int Pitch, int Instrument, int Volume, int Line)
 {
-	S.Channels[static_cast<size_t>(Channel)].Cells[static_cast<size_t>(Row)].Note = NOTE_HALT;
+	Cell *pCell = CellAt(S, Channel, Row, Line);
+	if (pCell == 0)
+		return;
+	pCell->SetPitch(Pitch);
+	pCell->Instrument = static_cast<unsigned char>(Instrument);
+	pCell->Volume = static_cast<unsigned char>(Volume);
 }
+
+void PutAt(HelperSong &S, int Channel, int Row, int Pitch, int Instrument, int Line)
+{
+	PutAt(S, Channel, Row, Pitch, Instrument, NO_VOLUME, Line);
+}
+
+void StopAt(HelperSong &S, int Channel, int Row, int Line)
+{
+	Cell *pCell = CellAt(S, Channel, Row, Line);
+	if (pCell != 0)
+		pCell->Note = NOTE_HALT;
+}
+
+#define Put(...) PutAt(__VA_ARGS__, __LINE__)
+#define Stop(S, Channel, Row) StopAt(S, Channel, Row, __LINE__)
 
 // A melody on VRC6 Pulse 1 over bars 1-4 (A minor: E A C B | A E | F A C A | G B D B) and a bass on the triangle (A A F G,
-// written an octave up: it sounds an octave under what's written)
+// written an octave up: it sounds an octave under what's written), halted after them where the song goes on
 void AddMelodyAndBass(HelperSong &S, int Bars = 4)
 {
 	static const int MELODY[4][4] = { { 52, 57, 60, 59 }, { 57, 57, 52, 52 }, { 53, 57, 60, 57 }, { 55, 59, 62, 59 } };
@@ -156,8 +177,10 @@ void AddMelodyAndBass(HelperSong &S, int Bars = 4)
 				Put(S, V1, b * 16 + n * 4, MELODY[b % 4][n], 0, 15);
 		Put(S, TRI, b * 16, BASS[b % 4], 1);
 	}
-	Stop(S, V1, Bars * 16);
-	Stop(S, TRI, Bars * 16);
+	if (Bars * 16 < S.Rows()) {
+		Stop(S, V1, Bars * 16);
+		Stop(S, TRI, Bars * 16);
+	}
 }
 
 ChordRequest Asking(const char *pChords, int First, int End)
@@ -558,7 +581,7 @@ void TestFmVoices()
 	S.Channels.push_back(MakeChannel("Pulse 1", "2A03", KIND_PULSE, 64));
 	S.Channels.push_back(MakeChannel("Triangle", "2A03", KIND_TRIANGLE, 64));
 	for (int i = 0; i < 6; ++i) {
-		char Name[16];
+		char Name[32];
 		std::snprintf(Name, sizeof(Name), "FM %d", i + 1);
 		S.Channels.push_back(MakeChannel(Name, "VRC7", KIND_FM, 64));
 	}
@@ -579,6 +602,7 @@ void TestFmVoices()
 
 int main()
 {
+	std::setvbuf(stdout, 0, _IONBF, 0);	// every line out at once, so a test that dies still shows what it found
 	TestFreeChannels();
 	TestVoicesPlaced();
 	TestTooFewChannels();
