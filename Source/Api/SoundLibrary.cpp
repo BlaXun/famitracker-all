@@ -687,8 +687,8 @@ const PresetRow PRESET_ROWS[] = {
 	{ HOME_5B, "lead", "glide square", "a square lead that glides up into each note from a whole step below", "glide scoop slide",
 		"V:15,15,14,14,13,11,9,7,4,0/R4 A:-2,-1,0" },
 	{ HOME_5B, "bass", "deep square", "a full, held square bass", "round held", "V:15,15,14,14,12,9,0/R3" },
-	{ HOME_5B, "bass", "wooden square", "a square bass with a knock of noise on each note and a quiet hold", "woody knock plucky",
-		"V:15,13,12,11,11,11,9,6,0/R5 M:sn10,s" },
+	{ HOME_5B, "bass", "wooden square", "a square bass with a knock of noise on each note, then a quiet hold at once",
+		"woody knock plucky", "V:15,11,9,6,0/R1 M:sn10x2,s" },
 	{ HOME_5B, "bass", "thump square", "a square bass whose notes drop in from a fourth above", "thump punchy", "V:15,15,14,14,13,11,8,0/R4 "
 		"A:5,3,1,0" },
 	{ HOME_5B, "bass", "warble bass", "a square bass whose pitch wobbles quickly: a warble", "wobble warble", "V:15,15,14,12,8,0/R2 "
