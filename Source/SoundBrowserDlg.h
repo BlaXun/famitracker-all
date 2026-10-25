@@ -21,14 +21,20 @@
 
 #pragma once
 
-// Instrument > Sound browser (Ctrl+Shift+L): one list of every sound the song
-// can get (Api/SoundIndex.h, the same index find_sound searches): the
-// ready-made sounds for its chips, the sounds of the reference library and
-// the song's own instruments, found by words and filtered by kind, source and
-// channel. Picking one plays it on its channel, and the note keys (or a MIDI
-// keyboard) play it while the list has the focus: a sound not in the song is
-// tried as an instrument of its own, which goes out of the song again unless
-// Add to the song keeps it.
+// Instrument > Sound browser (Ctrl+Shift+L): every sound the song can get
+// (Api/SoundIndex.h, the same index find_sound searches): the ready-made sounds
+// for its chips, the sounds of the reference library and the song's own
+// instruments, found by words and filtered by source and channel, and shown in
+// groups: the kinds on the left with their counts, and in the list a heading
+// for each kind and inside it for the ready-made sounds, each game of the
+// reference library and the song's own, which fold (a kind's many games start
+// folded). Every click on a sound plays it on its channel (the one picked too,
+// and its play mark), as do the arrow keys (a key held down plays where it
+// stops), Space and Listen; the note keys (or a MIDI keyboard) play it while
+// the list has the focus. A sound not in the song is tried as an instrument of
+// its own, which goes out of the song again unless Add to the song keeps it.
+// The window can be resized; it remembers its place, kind and folds while
+// FamiTracker runs.
 
 class CMainFrame;
 

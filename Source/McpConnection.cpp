@@ -1732,9 +1732,10 @@ public:
 		return Done;
 	}
 
-	// Instrument > Sound browser: every sound the song can get (ToolSet::Sounds), and one made into an instrument as
-	// add_instrument or reference_sound makes it (ToolSet::MakeSound), while the browser's dialog is open
-	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error)
+	// Instrument > Sound browser: every sound the song can get (ToolSet::Sounds; without Library, the ready-made
+	// sounds and the song's own, for the main window's Listen), and one made into an instrument as add_instrument or
+	// reference_sound makes it (ToolSet::MakeSound), while the browser's dialog is open
+	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error, bool Library)
 	{
 		if (m_bBusy || m_pMain == NULL) {
 			Error = "FamiTracker is busy with Claude Code; try again in a moment.";
@@ -1744,7 +1745,7 @@ public:
 		m_bOwnDialog = true;
 		bool Done = false;
 		try {
-			Done = m_Tools.Sounds(Cursor, Out, Error);
+			Done = m_Tools.Sounds(Cursor, Out, Error, Library);
 		}
 		catch (...) {
 			Error = "The sounds couldn't be listed.";
@@ -2990,9 +2991,9 @@ bool CMcpConnection::Harmony(ftapi::TrackHarmony &Out)
 	return m_pImpl->Link.Harmony(Out);
 }
 
-bool CMcpConnection::Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error)
+bool CMcpConnection::Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error, bool Library)
 {
-	return m_pImpl->Link.Sounds(Cursor, Out, Error);
+	return m_pImpl->Link.Sounds(Cursor, Out, Error, Library);
 }
 
 int CMcpConnection::MakeSound(const ftapi::SoundEntry &Sound, std::string &Error)

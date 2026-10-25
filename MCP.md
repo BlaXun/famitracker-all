@@ -103,11 +103,12 @@ before.
 ### A small set of tools for local models
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
-and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 20
+and shorter instructions than the 50 or so at `/mcp`. `/mcp/core` serves 21
 of them, the composing essentials: `get_song`, `read_notes`, `write_notes`,
 `place_clip` (ideas hummed into the phone or the microphone are clips),
 `add_instrument`, `design_instrument`, `set_instrument`,
-`add_chords_and_bass`, `add_drums`, `add_echo`, `set_tempo`, `polish`,
+`add_chords_and_bass`, `grow_melody` (a hook grown into phrases, in
+versions to pick from), `add_drums`, `add_echo`, `set_tempo`, `polish`,
 `mix`, `check_song`, `review_arrangement`, `play`, `stop`, `save_song`,
 `export_for_game` and `get_recipe`. Its instructions are a page instead of four, but keep the
 craft (plan a key, tempo and form; a motif; chords and a bass in a style;
@@ -527,6 +528,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for stages that flow: soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line rests where the melody does and answers only in rests of two beats or more, briefly; `rests` (fill, the default, answer or leave) chooses that directly |
+| `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start (direct changes only; undoable) |
@@ -629,6 +631,50 @@ holds the note sounding into it, the last note of a line written before
 too (a tie from one call to the next), and a kept last note that rang on
 into the next bar goes on ringing, as before; a `.` at the line's end stops
 it there. The list of notes works as before.
+
+### Growing a melody from a hook
+
+A melody over many bars is easiest to grow from its hook. Write the hook
+in steps (4-7 notes, a bar or two) and `grow_melody` grows it over the
+song's chords (the ones the other parts play, or `chords` you give) for 8
+bars from `from_bar` (or from the bar number the hook's line starts with;
+`to_bar` or a `section` for others, up to 32 bars), in three versions:
+
+    grow_melody {"motif": "D4 G4 A4 B4 - A4 G4 -", "section": "A"}
+
+Each version is a line of steps that `write_notes` takes as it is, its
+bars numbered, with a sentence on its shape: "Question and answer: bars
+5-8 the hook, an answer, the hook a step higher and a half close on F#4;
+bars 9-12 the hook again, an answer, up to the high point E5 and a close
+on A4. Phrases of 4 bars, the high point E5 in bar 11; it breathes in 4 of
+4 two-bar spans." The forms are a question and its answer, the hook and
+its sequence, and two-bar calls. In every version:
+
+- the phrases are 2 and 4 bars long and breathe where they end (a rest of
+  a beat or more), and a 4-bar phrase holds a note two beats in its
+  middle, so `review_arrangement` hears the melody pause in nearly every
+  two-bar span;
+- the notes on the strong beats (beats 1 and 3) are the chord's, the ones
+  between them move mostly by step, none sits a semitone from what the
+  other parts play for half a beat (what `check_song` hears as a clash),
+  and all are the key's own (in a minor key the raised seventh over its
+  dominant);
+- each section reaches one high point, a chord tone above the hook's
+  highest note, and the line keeps around the hook's register;
+- the hook comes back as written where the chords let it, and moved up or
+  down the scale where they don't;
+- long and short notes mix, and notes tie over bar lines inside a phrase.
+
+`kind` shapes it: calm grows fewer, longer notes that move by step, in
+phrases of 2 bars that each end with a rest; lively (the default) more
+motion; action drive (eighths, repeated notes). Without `kind`, a track
+named calm (a night version) grows calm, and one named for a battle, a
+boss or a chase grows action. `variant` 2, 3... gives other versions, the
+same ones every time. `pick` with a version's number (and the same
+variant) writes it on the channel (`channel`, else the melody playing
+there, else a free pulse) as `write_notes` writes a line, a clip unless
+direct changes are allowed. Then shape it by hand: `read_notes` with
+`format` `steps`, change a note or a rhythm, and write it back.
 
 ### Meter
 
