@@ -407,7 +407,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
 | `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic. `ending` lands on the tonic, or over a chord without it (a turnaround's A7 in D major) on the chord's tone nearest the note. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more) |
-| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests or one that hardly pauses (a rest of a beat or more, or a note held two beats, as it sounds, in under 45% of the two-bar spans it plays in, 75% on a calm track: a held note counts in the span it starts in, and a break without the melody isn't counted; the bars that run on named, and a busy part taken for the melody left out), melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB) |
+| `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests or one that hardly pauses (a rest of a beat or more, or a note held two beats, as it sounds, in under 45% of the two-bar spans it plays in, 75% on a calm track: a held note counts in the span it starts in, and a break without the melody isn't counted; the bars that run on named, and a busy part taken for the melody left out), melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB). A cue or a jingle (a track that halts within half a minute) is judged as one: the tips for looping stages (the length, variety, fills and a sampled kit, a bass that moves, chord colors, a beat, a lead's steady level) are left out, those about notes that vanish, clashing parts and the balance stay; a sound effect gets a short check of its own, without a score. See [Measuring the mix](#measuring-the-mix) for how it tells an echo, a sparkle and a soft bass |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
@@ -433,7 +433,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes, pans or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a halt where a note from the loop's end (an echo's last note, a held chord) would hang over into a silence, and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
-| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
 | `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play; `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
@@ -766,6 +766,16 @@ file written (the exported OGG files stay as they are).
   and the reply says whether the loudest peak holds it back. Without it,
   the numbers are as FamiTracker renders (`export_for_game` with
   `normalize` false).
+- **Cues and sound effects:** a song that halts is measured to the bar it
+  halts in. A sound effect (speed 1, as `make_sound_effect` writes one) is
+  measured as a whole, a sound shorter than 400 ms over its whole length
+  as `export_for_game` measures it, with each channel alone.
+- **Roles:** a part is an echo only when it follows the melody's notes (one
+  delay, notes about as long as the ones it copies), so a pad holding a
+  note the melody touched isn't one; a quiet arpeggio over the melody (a
+  sparkle) is a line of its own, not the chords; and a low, held line on an
+  N163 voice (the soft layer's sub bass) is the bass. `mix` and
+  `review_arrangement` hear the parts the same way.
 
 Each part alone is a render of its own, from the song's start to the last
 bar it needs, without the space's tail after: a two-minute song with seven
@@ -1519,11 +1529,19 @@ selected track afterwards, Claude can change its notes like any other part.
 Ask for a sound effect ("a jump sound", "three coin sounds to choose from")
 and Claude adds it as a new track, made the NES's way: a pulse, the triangle
 or the noise channel moving its volume, pitch and duty 60 times a second. The
-track plays at speed 1, a row a tick, and halts at its end (`C00`), so the
-export for games saves it as a sound that plays once:
+track plays at speed 1, a row a tick, and halts (`C00`) once the sound has
+died away, so the export for games saves it as a sound that plays once:
 `audio_play_sound(snd_sfx_jump, 0, false)`. Each part is an instrument whose
 sequences shape the sound, named after the track ("SFX Jump"), so you can
 change it in the instrument editor.
+
+Every sound that plays once **rings out to silence**: a part that would stop
+while still loud dies away first (its volume halving a tick, down to 1; the
+triangle, which has no volume control on the NES, stops where it ends), and
+the track halts five ticks (0.08 s) after the last tick that sounds, so no
+sound is cut while it plays and the game's file of it ends quiet. The coin
+is a glint of our own (A, then the F# a sixth above ringing out with a
+shimmering duty), not a famous game's coin.
 
 | Kind | For |
 |---|---|
@@ -1573,6 +1591,16 @@ newest take).
 Keep sound effects in a module of their own ("Sound effects.ftm"), so your
 music file stays clean; Claude works on whichever module is open.
 
+**Short sounds at a loudness.** EBU R128 measures loudness in blocks of 400
+ms, which a sound shorter than that doesn't fill (a menu blip, a pickup, a
+whoosh), so `export_for_game` with `loudness` measures such a sound over its
+whole length instead, without the gating, and brings it to the loudness
+asked like any other; the reply says when it measured one that way.
+`measure_mix` on a sound effect measures it whole the same way, with each of
+its channels alone, and `review_arrangement` gives a sound effect a short
+check of its own (its layers, whether the halt cuts it while it sounds,
+notes that click) instead of a score.
+
 ## Music for your game: looping OGG files
 
 **File > Export for games (OGG)...** saves the selected track, or all of them
@@ -1598,6 +1626,12 @@ the loop, cut so it repeats without a seam:
   playback and in the files. The file still fades in over its first 40 ms,
   before its level is measured, and a song that loops as a whole still
   repeats from its second time through, so the fade stays out of the loop.
+- A song or a sound effect played or exported after another used to start
+  with a thump: the triangle holds the step its wave stopped on, and
+  FamiTracker counted that step again with the next song's first sound, as
+  loud under a soft noise at volume 1 as under one at 15. Each song now
+  starts from the levels the last one left, so its first sound plays at its
+  own level.
 
 GameMaker (2023.2 or newer) loops a sound between two points. The dialog and
 Claude's reply give the code, for example:

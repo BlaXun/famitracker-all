@@ -397,10 +397,6 @@ void CMixer::ClearBuffer()
 	BlipBuffer.clear();
 	BlipBufferRight.clear();
 
-	// The channels' levels stay as they are, as the mono mixer kept them
-	m_dSumSS[0] = m_dSumSS[1] = 0;
-	m_dSumTND[0] = m_dSumTND[1] = 0;
-
 	// Depth: the channels' own buffers empty as the sides; the space rings on (a song that stops or halts keeps
 	// its tail), until ClearSpace
 	for (int i = 0; i < CHANNELS; ++i) {
@@ -411,6 +407,17 @@ void CMixer::ClearBuffer()
 		m_iPinOwn[i][0] = m_iPinOwn[i][1] = 0;
 		m_SoftFilter[i].Clear();
 	}
+
+	// The 2A03's pins as a reset leaves them (CAPU::Reset clears the mixer, then the channels): the pulses, the noise and
+	// the DMC silent (no period, disabled, the counter loaded with 0; each one's next change sends its own level), the
+	// triangle holding the step it stopped on, as the chip's does. The pins take that as where they've always been,
+	// sending nothing, so the next change steps by itself alone. 0.4.6 started the pins from 0 here but kept the
+	// channels' levels, so the first change after a stop also stepped by the triangle's held level: a thump under the
+	// next song's first noise, as loud for a noise at volume 1 as at 15. A song's own first notes play as before.
+	m_iChannels[CHANID_SQUARE1] = m_iChannels[CHANID_SQUARE2] = 0;
+	m_iChannels[CHANID_NOISE] = m_iChannels[CHANID_DPCM] = 0;
+	m_dSumSS[0] = m_dSumSS[1] = 0;
+	MixInternal2(0, false);
 }
 
 void CMixer::ClearSpace()
