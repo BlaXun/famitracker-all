@@ -19702,7 +19702,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"repeated notes, two-bar phrases each ending with a rest of a beat or more, one gentle high point a section, a few "
 		"notes a frame or two late (Gxx 01-02)" : "a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
 		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 3") +
-		".\n";
+		". The melody must breathe: about 2 of every 3 two-bar spans end on a rest of a beat or more or a note held two "
+		"beats or more (review_arrangement counts them and names the bars that run on).\n";
 	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
 		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
 		"different (") + (Calm ? "an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
@@ -19712,8 +19713,9 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"comes round.\n";
 	T += std::string("8. Depth: ") + (Calm ? "add_echo a beat behind (delay_beats 1, detune 1, pan opposite; on the VRC6 Plus "
 		"onto a soft channel with the soft flute), a pad or choir under the chords, and set_mixer's Soft and Space for the "
-		"place (a room; space on pads and the lead, the bass dry). No drums" : Lively ? "soft drums (add_drums with hats at "
-		"volume 4-7 and at most a soft sampled kick, fills where phrases end), add_echo a beat behind on the other side, "
+		"place (a room; space on pads and the lead, the bass dry). No drums" : Lively ? "soft drums (add_drums groove lively: hats "
+		"on the eighths, a soft kick, no backbeat, fills where phrases end; kit samples for a sampled soft kick; the mix "
+		"never raises drums, so give a volume if they're too soft), add_echo a beat behind on the other side, "
 		"the VRC6 Plus's soft layer for the B part, a little Space" : "add_drums with kit samples (a sampled kick and snare "
 		"under noise hats) and fills where phrases end, add_echo where it leaves room, a counter-melody or harmony in the "
 		"repeats") + ".\n";
@@ -19774,7 +19776,7 @@ static std::string CoreRecipe(const std::string &Kind)
 		"a lift), chord_style broken or stabs, bass_style root_fifth or walking.\n"
 		"4. write_notes for the melody, phrase by phrase: a motif a player would hum, phrases of 2 or 4 bars ending "
 		"on a held note or a rest, chord tones on strong beats, one high point per section, mostly in octave 3.\n"
-		"5. add_drums softly (groove calm or shuffle, volume 7; no hard backbeat), and add_echo a beat behind on the "
+		"5. add_drums with groove lively (soft hats and kick, no hard backbeat), and add_echo a beat behind on the "
 		"other side (delay_beats 1, pan opposite).\n"
 		"6. polish with touches [\"vibrato\", \"separate\", \"clicks\", \"staccato\"], then mix with style lively.\n"
 		"7. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more; tips that ask for a louder melody "
