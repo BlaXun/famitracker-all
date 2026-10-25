@@ -188,13 +188,15 @@ const Section SECTIONS[] = {
 		"sliding down a semitone at a time, chords a major third apart, the major and minor of one chord alternating, the "
 		"Neapolitan in minor; for danger, chords a tritone or a semitone apart alternating." },
 	{ "sunsoft", "Sunsoft's sound (Journey to Silius)", "sunsoft silius raf world kodaka sampled bass dpcm bass sci fi",
-		"Feel: dark sci-fi drive; 112.5-200 BPM, mostly 150-200; 6 of 8 tracks minor, the other two chromatic; long tonic "
+		"Feel: dark sci-fi drive; 112.5-200 BPM, mostly 150-200; 6 of 8 tracks minor, the boss fight and the ending in major "
+		"(the boss so chromatic it can be heard around C as well); long tonic "
 		"stretches broken by bII and diminished chords, chords a major third or a tritone apart.\n"
 		"- The sampled bass: the bass line is on the DPCM channel, 1 KB bass samples played at rates 9-15 (12 keys in one "
 		"stage alone), so it growls like a real instrument and leaves the pulses and the triangle free. In FamiTracker "
 		"that's one sample on many keys at different pitches (an instrument's DPCM tab) or Wxx; the tools here make drum "
-		"samples only (add_sample_drums), so the user loads a bass sample. A study calls such samples low thumps: "
-		"import_nsf's DPCM keys tell.\n"
+		"samples only (add_sample_drums), so the user loads a bass sample. A study names such a part \"DPCM, bass\" (tag "
+		"dpcm-bass) with its range, and import_nsf puts each sample on the key of the note it plays: Silius's five bass "
+		"samples are one wave tuned from 2 semitones down to 2 up, so the DPCM's uneven rates still reach every note.\n"
 		"- The triangle as the kick: up to a third of its notes start 2 semitones up and drop in 2 frames, and a longer "
 		"drop of 8 semitones over 8 frames is the bass drum (design_instrument kind thump bass, or attack_pitch drop on "
 		"the triangle).\n"
