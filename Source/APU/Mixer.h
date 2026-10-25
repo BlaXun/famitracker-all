@@ -237,6 +237,7 @@ private:
 	CMixer		*m_pStem[MAX_STEMS];
 	bool		m_bStemSilent[MAX_STEMS][CHANNELS];	// each one's channels left out
 	int			m_iStemCount;
+	bool		m_bStem;					// a stem itself: no meters (the main mixer's are shown)
 	unsigned int m_iBufferLength;				// AllocateBuffer's, for a stem's buffers
 	uint8		m_iNrChannels;
 

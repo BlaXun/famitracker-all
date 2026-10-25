@@ -153,6 +153,7 @@ CMixer::CMixer()
 			m_bStemSilent[k][i] = false;
 	}
 	m_iStemCount = 0;
+	m_bStem = false;
 	m_iBufferLength = 0;
 	m_iNrChannels = 2;
 }
@@ -174,10 +175,10 @@ void CMixer::FreeDepth()
 	m_iDepthSize = 0;
 }
 
-// A channel's level on a side: exact in the middle, where the gain is 1
+// A channel's level on a side: exact in the middle, where the gain is 1 (and nothing at a gain of 0, as the rounding has it)
 static inline int32 SideLevel(int32 Level, double Gain)
 {
-	return Gain == 1.0 ? Level : static_cast<int32>(std::floor(Level * Gain + 0.5));
+	return Gain == 1.0 ? Level : Gain == 0.0 ? 0 : static_cast<int32>(std::floor(Level * Gain + 0.5));
 }
 
 inline double CMixer::CalcPin1(double Val1, double Val2)
@@ -469,15 +470,15 @@ int CMixer::FinishBuffer(int t)
 			m_OwnBuffer[i][1].end_frame(t);
 		}
 
-	// Get channel levels for VRC7
-	for (int i = 0; i < 6; ++i)
+	// Get channel levels for VRC7 (the meters are the main mixer's, not a stem's)
+	for (int i = 0; i < 6 && !m_bStem; ++i)
 		StoreChannelLevel(CHANID_VRC7_CH1 + i, OPLL_getchanvol(i));
 
 	// Get channel levels for Sunsoft
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 3 && !m_bStem; ++i)
 		StoreChannelLevel(CHANID_S5B_CH1 + i, PSG_getchanvol(i));
 
-	for (int i = 0; i < CHANNELS; ++i) {
+	for (int i = 0; i < CHANNELS && !m_bStem; ++i) {
 		if (m_iChanLevelFallOff[i] > 0)
 			m_iChanLevelFallOff[i]--;
 		else {
@@ -522,6 +523,11 @@ double CMixer::Pin2(double Triangle, double Noise, double Dpcm)
 
 void CMixer::MixInternal1(int Time)
 {
+	// Both pulses left out, with nothing on the sides of them (a stem of other channels): nothing to mix
+	if (m_bSilent[CHANID_SQUARE1] && m_bSilent[CHANID_SQUARE2] && m_dSumSS[0] == 0.0 && m_dSumSS[1] == 0.0 && !m_bOwn[CHANID_SQUARE1] &&
+		!m_bOwn[CHANID_SQUARE2] && m_iPinOwn[CHANID_SQUARE1][0] == 0 && m_iPinOwn[CHANID_SQUARE1][1] == 0 && m_iPinOwn[CHANID_SQUARE2][0] == 0 &&
+		m_iPinOwn[CHANID_SQUARE2][1] == 0)
+		return;
 	// Each side mixes its share of the pulses (a pulse in the middle has all of it on both)
 	for (int s = 0; s < 2; ++s) {
 #ifdef LINEAR_MIXING
@@ -545,13 +551,22 @@ void CMixer::MixInternal1(int Time)
 			const double Weighted[2] = { Quiet1 ? 0.0 : Pulse1 * m_dLevel[CHANID_SQUARE1], Quiet2 ? 0.0 : Pulse2 * m_dLevel[CHANID_SQUARE2] };
 			Step -= SplitPin(Synth2A03SS, CHANS, Weighted, 2, Sum, s, Time);
 		}
-		Synth2A03SS.offset(Time, Step, &Side(s));
+		if (Step != 0)
+			Synth2A03SS.offset(Time, Step, &Side(s));
 		m_dSumSS[s] = Sum;
 	}
 }
 
 void CMixer::MixInternal2(int Time, bool Send)
 {
+	// The three left out, as on the first pin
+	if (m_bSilent[CHANID_TRIANGLE] && m_bSilent[CHANID_NOISE] && m_bSilent[CHANID_DPCM] && m_dSumTND[0] == 0.0 && m_dSumTND[1] == 0.0) {
+		bool Own = false;
+		for (int c = CHANID_TRIANGLE; c <= CHANID_DPCM && !Own; ++c)
+			Own = m_bOwn[c] || m_iPinOwn[c][0] != 0 || m_iPinOwn[c][1] != 0;
+		if (!Own)
+			return;
+	}
 	for (int s = 0; s < 2; ++s) {
 #ifdef LINEAR_MIXING
 		SumL = ((0.00851 * m_iChannels[CHANID_TRIANGLE].Left + 0.00494 * m_iChannels[CHANID_NOISE].Left + 0.00335 * m_iChannels[CHANID_DPCM].Left)) * InternalVol;
@@ -575,7 +590,7 @@ void CMixer::MixInternal2(int Time, bool Send)
 				m_dLevel[CHANID_NOISE], QuietD ? 0.0 : Dpcm / 22638.0 * m_dLevel[CHANID_DPCM] };
 			Step -= SplitPin(Synth2A03TND, CHANS, Weighted, 3, Sum, s, Time, Send);
 		}
-		if (Send)
+		if (Send && Step != 0)
 			Synth2A03TND.offset(Time, Step, &Side(s));
 		m_dSumTND[s] = Sum;
 	}
@@ -650,6 +665,10 @@ void CMixer::MixN163Sides(int Time)
 {
 	// Depth: the DAC's level is in the buffers of the channel it plays (the sides, or the channel's own)
 	const int Dest = DestOf(m_iN163Chan);
+	// A channel at a level of nothing (left out of a stem), where nothing is sent: nothing to do
+	if (Dest == m_iN163Dest && m_dSide[m_iN163Chan][0] == 0.0 && m_dSide[m_iN163Chan][1] == 0.0 && m_iN163Sent[0] == 0 &&
+		m_iN163Sent[1] == 0)
+		return;
 	if (Dest != m_iN163Dest) {
 		for (int s = 0; s < 2; ++s) {
 			if (m_iN163Sent[s] != 0)
@@ -822,7 +841,8 @@ void CMixer::AddValue(int ChanID, int Chip, int Value, int AbsValue, int FrameCy
 		m_pStem[k]->AddValue(ChanID, Chip, Value, AbsValue, FrameCycles);
 
 	int Delta = Value - m_iChannels[ChanID];
-	StoreChannelLevel(ChanID, AbsValue);
+	if (!m_bStem)
+		StoreChannelLevel(ChanID, AbsValue);
 	m_iChannels[ChanID] = Value;
 
 	switch (Chip) {
@@ -1147,6 +1167,7 @@ void CMixer::SetStems(int Count, const bool (*pSilent)[CHANNELS], int Time)
 	Count = pSilent != NULL ? std::max(0, std::min(static_cast<int>(MAX_STEMS), Count)) : 0;
 	for (int k = 0; k < Count; ++k) {
 		CMixer *pStem = new CMixer();
+		pStem->m_bStem = true;
 		pStem->MakeStemOf(*this);
 		// Its channels left out as CSoundGen leaves them out of a render of some parts alone (ApplyChannelMix): one at
 		// a time, the 2A03's off their pins and the others' at a level of nothing
