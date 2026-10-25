@@ -844,6 +844,29 @@ call to the next; in one pass every part starts where its mix does, so
 builds before and after differ there by that much. The whole sound still
 moves by a few tenths of a dB from call to call.
 
+Melodies in steps (from `feat-step-notes`): `write_notes` takes `notes`
+as text, a token a step of a grid (`D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -`:
+a pitch starts a note, `-` holds it a step more, across `|` too, `.` rests),
+and `read_notes` with `format` `steps` gives a part back so, a bar a line.
+`Source/Api/StepNotes.cpp` (portable, tested by its own `step_notes_tests`)
+reads and writes the text (`ParseStepLine`, `FormatStepLine`: bars, bar
+numbers `5:` checked against where the bar falls, holds, rests, `B4v12`
+volumes, drums of two words). `WriteNotesInSteps` and `ReadNotesInSteps`
+(before `ReadChannel` in `Tools.cpp`) put it on the song's grid (`GridOf`:
+an eighth is half a beat, a third of one where a beat's rows divide by three,
+as `set_meter` makes 6/8), refuse a line whose bars don't each hold their
+steps (naming every such bar with its count), and keep a note at the same
+step and pitch as the song's as it was: its instrument, its effects (`Keep`),
+the release or halt it ended with, the sticky effects it played with
+(`KeepEffectsOn`) and their columns (`SameEffects`), so a line read and
+written back gives the same cells (`TestStepsRoundTrip`). A `-` at the
+line's start holds the note sounding into it (or ending at its first row, a
+tie onto a line written before), so the write starts at that note's row, and
+a kept last note that rang on past the line rings on (the write ends where it
+did). The list of notes takes the old path untouched. `TestStepsWrite`,
+`TestStepsRead`, `TestStepsMeters`, `TestStepsRoundTrip` and `TestStepsTaught`
+in `Source/Api/tests/ApiTests.cpp` cover the tools.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
