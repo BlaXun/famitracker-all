@@ -13158,6 +13158,456 @@ void TestSoftLevels()
 }
 // end of calm-sounds tests
 
+// Calm and lively tracks (2026-10-25). The melody on VRC6 Pulse 1 (C-4 E-4 G-4 E-4, half notes at 15), its chords as
+// 047 arpeggios on VRC6 Pulse 2 on the same notes at Chords; Speed 12 makes it 75 BPM
+void CalmTestSong(FakeSong &Song, int Chords, int Speed)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.Speed = Speed;
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4" };
+	for (int i = 0; i < 8; ++i) {
+		Song.Put(5, i * 8, TUNE[i % 4], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 15 : -1);
+		Song.Put(6, i * 8, TUNE[i % 4], i == 0 ? 2 : NO_INSTRUMENT, i == 0 ? Chords : -1);
+		Song.Rows[6][static_cast<size_t>(i * 8)].Effect[0] = EFF_ARPEGGIO;
+		Song.Rows[6][static_cast<size_t>(i * 8)].Param[0] = 0x47;
+	}
+}
+
+// mix, polish, check_song and review_arrangement are calm when asked, or when the track's name says so; a song that only
+// looks calm (slow, no drums) gets a line suggesting it, and nothing else changes
+void TestCalmChoice()
+{
+	const std::string MIX = "{\"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong Slow;
+	CalmTestSong(Slow, 15, 12);
+	ToolResult Result = Run(Slow, "mix", MIX);
+	CHECK_HAS(Result.Text, "a soft mix, bars 1-8: VRC6 Pulse 1 (melody) loudest 15 to 9; VRC6 Pulse 2 (chords) loudest 15 to 6");
+	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums): style calm gives the calm mix (the melody 2-3 dB over the chords, as heard).");
+	CHECK(Slow.Rows[5][0].Volume == 9 && Slow.Rows[6][0].Volume == 6);
+	Result = Run(Slow, "polish", "{\"channels\": [\"VRC6 Pulse 1\"]}");
+	CHECK_HAS(Result.Text, "Touches: accents");	// the default touches, accents and all
+	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums): style calm leaves out accents and waits longer with a shallower vibrato.");
+	CHECK_HAS(Run(Slow, "review_arrangement", MIX).Text, "This looks calm (75 BPM, no drums): style calm reviews it as a calm track.");
+	Result = Run(Slow, "check_song", "{}");
+	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums): style calm also warns about a lead whose sound holds a steady level.");
+	CHECK_LACKS(Result.Text, "Held lead");
+	// 90 BPM is slow; 100 isn't
+	FakeSong Ninety;
+	CalmTestSong(Ninety, 15, 10);
+	CHECK_HAS(Run(Ninety, "mix", MIX).Text, "This looks calm (90 BPM, no drums)");
+	FakeSong Hundred;
+	CalmTestSong(Hundred, 15, 9);
+	CHECK_LACKS(Run(Hundred, "mix", MIX).Text, "looks calm");
+	// A drum kit (a kick that dies away) makes it no calm song
+	FakeSong Drums;
+	CalmTestSong(Drums, 15, 12);
+	Drums.AddInstrumentInfo(3, "Kick", "2A03", false);
+	Drums.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 6, 3, 1, 0 };
+	for (int b = 0; b < 4; ++b)
+		Drums.Put(3, b * 16, "kick", 3, 15);
+	Result = Run(Drums, "mix", MIX);
+	CHECK_LACKS(Result.Text, "looks calm");
+	CHECK_HAS(Result.Text, "2A03 Noise (drums) loudest 15 to 10");
+	// A swell on the noise (wind) is no drum: the song still looks calm, and a mix leaves the swells as written (a swell
+	// peaking at 6 used to go to 15, to play as loud as drums)
+	FakeSong Wind;
+	CalmTestSong(Wind, 15, 12);
+	Wind.AddInstrumentInfo(3, "Wind", "2A03", false);
+	std::vector<int> Swell;
+	for (int i = 0; i < 40; ++i)
+		Swell.push_back(std::min(6, 1 + i / 6));
+	for (int i = 0; i < 20; ++i)
+		Swell.push_back(std::max(0, 6 - i / 3));
+	Wind.Info.Instruments.back().Volume = Swell;
+	Wind.Put(3, 0, "4-#", 3, 9);
+	Wind.Put(3, 64, "4-#", 3, 9);
+	Result = Run(Wind, "mix", MIX);
+	CHECK_HAS(Result.Text, "2A03 Noise (swells, not drums) stays as written");
+	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums)");
+	CHECK(Wind.Rows[3][0].Volume == 9 && Wind.Rows[3][64].Volume == 9);
+	CHECK_HAS(Run(Wind, "mix", "{\"style\": \"full\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text, "2A03 Noise (swells, not drums) stays as written");
+	CHECK(Wind.Rows[3][0].Volume == 9);
+	// Named calm: each tool takes it as calm and says why, unless given a style
+	FakeSong Night;
+	CalmTestSong(Night, 15, 6);
+	Night.Info.TrackName = "Town (night)";
+	Result = Run(Night, "mix", MIX);
+	CHECK_HAS(Result.Text, "a calm mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords.");
+	CHECK_HAS(Result.Text, "Calm: the track's name says so (style soft to change).");
+	Result = Run(Night, "check_song", "{}");
+	CHECK_HAS(Result.Text, "Calm: the track's name says so (style any to change).");
+	CHECK_HAS(Result.Text, "Held lead:");
+	CHECK_HAS(Run(Night, "review_arrangement", MIX).Text, "Calm: the track's name says so (style any to change).");
+	CHECK_HAS(Run(Night, "polish", "{\"channels\": [\"VRC6 Pulse 1\"]}").Text, "Calm: the track's name says so (style any to change).");
+	Result = Run(Night, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(Result.Text, "a soft mix");
+	CHECK_LACKS(Result.Text, "Calm:");
+	CHECK_LACKS(Run(Night, "check_song", "{\"style\": \"any\"}").Text, "Held lead");
+	// Fast, with no name for it: no word of calm
+	FakeSong Fast;
+	CalmTestSong(Fast, 15, 6);
+	Result = Run(Fast, "mix", MIX);
+	CHECK_LACKS(Result.Text, "looks calm");
+	CHECK_LACKS(Result.Text, "Calm:");
+	// The styles' words
+	CHECK_HAS(Run(Fast, "check_song", "{\"style\": \"funky\"}").Text, "style should be any or calm");
+	CHECK_HAS(Run(Fast, "polish", "{\"style\": \"funky\"}").Text, "style should be any or calm");
+	CHECK_HAS(Run(Fast, "mix", "{\"style\": \"funky\"}").Text, "lively (as heard, the melody 3-4 dB over the parts");
+	CHECK_HAS(Run(Fast, "mix", "{\"style\": \"ambient\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text, "a calm mix");
+}
+
+// The balance as heard, which the calm and lively styles go by: each part's loudness as the stems measure it where it
+// plays with the melody, its volume, envelope, width, fader and pan counted
+void TestHeardBalance()
+{
+	const std::string CALM = "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong Same;
+	CalmTestSong(Same, 15, 6);
+	ToolResult Result = Run(Same, "review_arrangement", CALM);
+	CHECK_HAS(Result.Text, "Balance as heard: the melody (VRC6 Pulse 1) level with the chords.");
+	CHECK_HAS(Result.Text, "The chords cover the melody as heard (it sits level with them; a calm track wants 2-3): mix with style calm "
+		"puts it at 2.5.");
+	// 8 against 15: 5.5 dB, which presses
+	FakeSong Half;
+	CalmTestSong(Half, 8, 6);
+	Result = Run(Half, "review_arrangement", CALM);
+	CHECK_HAS(Result.Text, "Balance as heard: the melody (VRC6 Pulse 1) 5.5 dB over the chords.");
+	CHECK_HAS(Result.Text, "The melody sits about 5.5 dB over the chords as heard (a calm track wants 2-3, or it presses): mix with "
+		"style calm puts it at 2.5.");
+	CHECK_HAS(Run(Half, "review_arrangement", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+		"(a lively stage wants 3-4, or it presses): mix with style lively puts it at 3.5.");
+	CHECK_LACKS(Run(Half, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "Balance as heard");
+	// Half left (840): the far speaker at half, 2 dB; the mixer's starting pan the same
+	FakeSong Panned;
+	CalmTestSong(Panned, 15, 6);
+	Panned.Rows[6][0].Effect[1] = EFF_PAN;
+	Panned.Rows[6][0].Param[1] = 0x40;
+	CHECK_HAS(Run(Panned, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.0 dB over the chords.");
+	FakeSong Mixer;
+	CalmTestSong(Mixer, 15, 6);
+	Mixer.Mix.Set(6, 0, 0x40);
+	CHECK_HAS(Run(Mixer, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.0 dB over the chords.");
+	// A fader 3 dB down
+	FakeSong Fader;
+	CalmTestSong(Fader, 15, 6);
+	Fader.Mix.Set(6, -30, 0x80);
+	CHECK_HAS(Run(Fader, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 3.0 dB over the chords.");
+	// A 50% pulse over a 12.5% one (V07 and V01 on the VRC6)
+	FakeSong Wide;
+	CalmTestSong(Wide, 15, 6);
+	Wide.Rows[5][0].Effect[1] = EFF_DUTY_CYCLE;
+	Wide.Rows[5][0].Param[1] = 7;
+	Wide.Rows[6][0].Effect[1] = EFF_DUTY_CYCLE;
+	Wide.Rows[6][0].Param[1] = 1;
+	CHECK_HAS(Run(Wide, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.3 dB over the chords.");
+	// The envelope: chords whose sound holds 8 play as volume 8 would
+	FakeSong Pad;
+	CalmTestSong(Pad, 15, 6);
+	Pad.AddInstrumentInfo(3, "Pad", "VRC6", true);
+	Pad.Info.Instruments.back().Volume = std::vector<int>{ 8 };
+	Pad.Rows[6][0].Instrument = 3;
+	CHECK_HAS(Run(Pad, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 5.5 dB over the chords.");
+	// The melody under the chords
+	FakeSong Under;
+	CalmTestSong(Under, 15, 6);
+	Under.Rows[5][0].Volume = 8;
+	CHECK_HAS(Run(Under, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 5.5 dB under the chords.");
+	// The triangle's fader counts, though it has no volume: 10 dB down, it plays 10 dB under
+	FakeSong Bass;
+	CalmTestSong(Bass, 7, 6);
+	Bass.Rows[5][0].Volume = 9;
+	for (int i = 0; i < 8; ++i)
+		Bass.Put(2, i * 8, i % 2 ? "G-2" : "C-2", i == 0 ? 1 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Bass, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.2 dB over the chords, the triangle 5.6 over.");
+	Bass.Mix.Set(2, -100, 0x80);
+	CHECK_HAS(Run(Bass, "review_arrangement", CALM).Text, "the melody (VRC6 Pulse 1) 2.2 dB over the chords, the triangle 4.4 under.");
+}
+
+// mix style calm and lively, as heard: the melody's loudest at 15, the chords 2.5 dB under it (lively 3.5), an echo 7,
+// the bass 2.5 (the triangle by the DPCM level); the reply gives the balance reached
+void TestCalmMix()
+{
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4" };
+	const std::string CALM = "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong Song;
+	CalmTestSong(Song, 15, 6);
+	ToolResult Result = Run(Song, "mix", CALM);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "a calm mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords. Changes: VRC6 Pulse 1 "
+		"(melody) stays at 15; VRC6 Pulse 2 (chords) loudest 15 to 11.");
+	CHECK_HAS(Result.Text, "style lively puts the melody 3-4 dB over the parts instead.");
+	CHECK_LACKS(Result.Text, "DPCM level");	// no triangle to place
+	CHECK(Song.Rows[6][0].Volume == 11 && Song.Rows[5][0].Volume == 15);
+	CHECK_HAS(Run(Song, "mix", CALM).Text, "The song is mixed that way already, as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords.");
+	Result = Run(Song, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK_HAS(Result.Text, "a lively mix, bars 1-8, as heard: the melody (VRC6 Pulse 1) 3.5 dB over the chords.");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 2 (chords) loudest 11 to 10");
+	CHECK_HAS(Result.Text, "style calm puts it 2-3 dB over the chords instead.");
+	CHECK(Song.Rows[6][0].Volume == 10);
+	// A melody at 12 goes to 15 with the rest
+	FakeSong Low;
+	CalmTestSong(Low, 15, 6);
+	Low.Rows[5][0].Volume = 12;
+	CHECK_HAS(Run(Low, "mix", CALM).Text, "VRC6 Pulse 1 (melody) loudest 12 to 15");
+	CHECK(Low.Rows[5][0].Volume == 15);
+
+	// An echo two rows behind on 2A03 Pulse 2 and a triangle bass: the echo about 7 dB under, the triangle 2.5 under by
+	// the DPCM level
+	FakeSong Full;
+	CalmTestSong(Full, 15, 6);
+	for (int i = 0; i < 8; ++i)
+		Full.Put(1, i * 8 + 2, TUNE[i % 4], i == 0 ? 2 : NO_INSTRUMENT, i == 0 ? 15 : -1);
+	Full.Put(2, 0, "C-3", 1);
+	Full.Put(2, 32, "G-2");
+	Result = Run(Full, "mix", CALM);
+	CHECK_HAS(Result.Text, "as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.6 under and the triangle 2.5 under.");
+	CHECK_HAS(Result.Text, "2A03 Pulse 2 (echo) loudest 15 to 5");
+	CHECK_HAS(Result.Text, "the DPCM level Z41 at bar 1 beat 1, so the triangle and the noise play at about 63%");
+	CHECK(Full.Rows[1][2].Volume == 5 && HasEffectAt(Full, 4, 0, EFF_DAC, 0x41));
+	CHECK_HAS(Run(Full, "review_arrangement", CALM).Text,
+		"Balance as heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.6 under and the triangle 2.5 under.");
+	// A dac given leaves the triangle where the level puts it
+	FakeSong Kept;
+	CalmTestSong(Kept, 15, 6);
+	Kept.Put(2, 0, "C-3", 1);
+	Kept.Put(2, 32, "G-2");
+	Result = Run(Kept, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}");
+	CHECK_LACKS(Result.Text, "DPCM level");
+	CHECK_HAS(Result.Text, "the triangle 1.6 over.");
+
+	// Over some bars the melody keeps its level from the rest of the song (at 10 in bars 3-4, under bars 1-2's 15), and
+	// the parts there are set against it (as near 2.5 dB under it as whole steps of volume go: 7 would be 3.1)
+	FakeSong Quiet;
+	CalmTestSong(Quiet, 15, 6);
+	Quiet.Rows[5][32].Volume = 10;
+	Quiet.Rows[6][32].Volume = 10;
+	Result = Run(Quiet, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 4}");
+	CHECK_HAS(Result.Text, "a calm mix, bars 3-4, as heard: the melody (VRC6 Pulse 1) 1.9 dB over the chords.");
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 (melody) stays at 10; VRC6 Pulse 2 (chords) loudest 10 to 8");
+	CHECK(Quiet.Rows[5][0].Volume == 15 && Quiet.Rows[5][32].Volume == 10 && Quiet.Rows[6][0].Volume == 15 && Quiet.Rows[6][32].Volume == 8);
+
+	// A soft mix over some bars scales them as the whole song's (its loudest, 15, to the melody's 9), so a quieter
+	// section stays quieter (each pass used to bring its own loudest to 9)
+	FakeSong Section;
+	CalmTestSong(Section, 15, 6);
+	Section.Rows[5][32].Volume = 10;
+	Section.Rows[6][32].Volume = 10;
+	Result = Run(Section, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 4, \"dac\": \"keep\"}");
+	CHECK_HAS(Result.Text, "a soft mix, bars 3-4: VRC6 Pulse 1 (melody) loudest 10 to 6, as the song's 15 to 9; VRC6 Pulse 2 (chords) "
+		"loudest 10 to 4, as the song's 15 to 6.");
+	CHECK(Section.Rows[5][0].Volume == 15 && Section.Rows[5][32].Volume == 6 && Section.Rows[6][32].Volume == 4);
+	CHECK(!Run(Section, "mix", "{\"style\": \"soft\", \"melody_channel\": \"VRC6 Pulse 1\", \"dac\": \"keep\"}").IsError);
+	CHECK(Section.Rows[5][0].Volume == 9 && Section.Rows[5][32].Volume == 4 && Section.Rows[6][0].Volume == 6);
+
+	// A DPCM level over some bars whose levels step (Z20, Z40 at bar 3): the steps move with it; bar 5's stays
+	FakeSong Steps;
+	CalmTestSong(Steps, 15, 6);
+	const int AT[3] = { 0, 32, 64 }, LEVEL[3] = { 0x20, 0x40, 0x10 };
+	for (int i = 0; i < 3; ++i) {
+		Steps.Rows[4][static_cast<size_t>(AT[i])].Effect[0] = EFF_DAC;
+		Steps.Rows[4][static_cast<size_t>(AT[i])].Param[0] = static_cast<unsigned char>(LEVEL[i]);
+	}
+	Result = Run(Steps, "mix", "{\"dac\": 48, \"from_bar\": 1, \"to_bar\": 4}");
+	CHECK_HAS(Result.Text, "the DPCM level Z30 at bar 1 beat 1, so the triangle and the noise play at about 70%, its later steps in these "
+		"bars moved with it (+16)");
+	CHECK(HasEffectAt(Steps, 4, 0, EFF_DAC, 0x30) && HasEffectAt(Steps, 4, 32, EFF_DAC, 0x50) && HasEffectAt(Steps, 4, 64, EFF_DAC, 0x10));
+}
+
+// polish style calm: vibrato, separate and clicks by default (no accents, scoops or falls), the shallowest vibrato (451)
+// about half a second into long notes still sounding then; accents asked for come with a word against them
+void TestCalmPolish()
+{
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4" };
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Info.Speed = 12;	// 12 frames a row
+	for (int i = 0; i < 8; ++i)
+		Song.Put(5, i * 16, TUNE[i % 4], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+	ToolResult Result = Run(Song, "polish", "{\"style\": \"calm\", \"channels\": [\"VRC6 Pulse 1\"]}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Touches: the shallowest vibrato (451) coming in 24 frames into 8 long notes of VRC6 Pulse 1.");
+	CHECK_LACKS(Result.Text, "accents");
+	CHECK(HasEffectAt(Song, 5, 2, EFF_VIBRATO, 0x51) && HasEffectAt(Song, 5, 18, EFF_VIBRATO, 0x51));
+	CHECK(Song.Rows[5][0].Volume == 12 && Song.Rows[5][16].Volume == NO_VOLUME);
+	Result = Run(Song, "polish", "{\"style\": \"calm\", \"channels\": [\"VRC6 Pulse 1\"], \"touches\": [\"accents\"]}");
+	CHECK_HAS(Result.Text, "Accents go against the calm style: they make a melody press, where a calm one swells in or fades by itself.");
+	// A pluck is gone before the vibrato would come in: none
+	FakeSong Pluck;
+	Pluck.Info.DirectChanges = true;
+	Pluck.Info.Speed = 12;
+	Pluck.AddInstrumentInfo(3, "Pluck", "VRC6", false);
+	Pluck.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 6, 3, 1, 0 };
+	for (int i = 0; i < 8; ++i)
+		Pluck.Put(5, i * 16, TUNE[i % 4], i == 0 ? 3 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+	Result = Run(Pluck, "polish", "{\"style\": \"calm\", \"channels\": [\"VRC6 Pulse 1\"]}");
+	CHECK_LACKS(Result.Text, "(451)");
+	CHECK(EffectAt(Pluck.Rows[5][2], EFF_VIBRATO) < 0);
+	// Without a style, polish adds its accents as ever
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	for (int i = 0; i < 8; ++i)
+		Plain.Put(5, i * 16, TUNE[i % 4], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+	Result = Run(Plain, "polish", "{\"channels\": [\"VRC6 Pulse 1\"]}");
+	CHECK_HAS(Result.Text, "Touches: accents");
+	CHECK_HAS(Result.Text, "a gentle vibrato that comes in after half a beat");
+	CHECK_LACKS(Result.Text, "calm");
+}
+
+// The held lead: on a calm track check_song and the review warn about a melody whose sound holds a high, steady level
+// from attack to release (it presses, however soft the parts around it); on a lively one, a tip; without a style, nothing
+void TestHeldLead()
+{
+	FakeSong Song;
+	CalmTestSong(Song, 15, 12);
+	ToolResult Result = Run(Song, "check_song", "{\"style\": \"calm\"}");
+	CHECK_HAS(Result.Text, "0 vanishing, 1 held lead.");
+	CHECK_HAS(Result.Text, "Held lead: \"Lead\" (00) on VRC6 Pulse 1 holds 15 (no volume sequence) (8 of 8 melody notes): a calm lead "
+		"shouldn't hold a high, steady level from attack to release. design_instrument kind breath (swells in), falling strike "
+		"(falls to 6) or music box (fades away), or a volume sequence that does.");
+	Json Found = Parse(Run(Song, "check_song", "{\"style\": \"calm\", \"format\": \"json\"}").Text);
+	CHECK_EQ(TextOf(&Found, "style"), std::string("calm"));
+	CHECK_EQ(IntegerOf(Found.Get("counts"), "held"), 1);
+	const Json *pHeld = FindingOf(Found, "held");
+	CHECK_EQ(TextOf(pHeld, "severity"), std::string("medium"));
+	CHECK_EQ(IntegerOf(pHeld, "channel"), 6);
+	CHECK_EQ(IntegerOf(pHeld, "row"), 0);
+	CHECK_EQ(IntegerOf(pHeld, "instrument"), 0);
+	CHECK_EQ(TextOf(pHeld, "instrument_name"), std::string("Lead"));
+	CHECK_EQ(IntegerOf(pHeld, "hold"), 15);
+	CHECK_EQ(IntegerOf(pHeld, "note_count"), 8);
+	CHECK_HAS(TextOf(pHeld, "summary"), "\"Lead\" (00) holds 15 (no volume sequence) from attack to release");
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"style\": \"calm\", \"format\": \"json\"}").Text, Error));
+	CHECK_EQ(List.Count(PROBLEM_HELD), 1);
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_HELD)), std::string("held"));
+	CHECK_EQ(ProblemSeverity(PROBLEM_HELD), 2);
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+		"The lead presses: \"Lead\" (00) on VRC6 Pulse 1 holds 15 (no volume sequence)");
+	// Lively: a tip, no finding
+	Result = Run(Song, "check_song", "{\"style\": \"lively\"}");
+	CHECK_LACKS(Result.Text, "held lead");
+	CHECK_HAS(Result.Text, "\nTip: \"Lead\" (00) on VRC6 Pulse 1 holds 15 (no volume sequence) from attack to release; a lively stage's "
+		"lead wants notes that fade (a stepped decay, or design_instrument kind falling strike).");
+	// No style: nothing new
+	Result = Run(Song, "check_song", "{}");
+	CHECK_LACKS(Result.Text, "held");
+	CHECK_LACKS(Result.Text, "Held");
+	CHECK_LACKS(Result.Text, "Tip:");
+	Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+	CHECK(IntegerOf(Found.Get("counts"), "held") <= 0 && FindingOf(Found, "held") == 0);
+	// The calm sounds don't press: a breath swells in, a falling strike falls to 6, a music box fades away
+	const char *const KINDS[] = { "breath", "falling strike", "music box" };
+	for (int k = 0; k < 3; ++k) {
+		FakeSong Calm;
+		CalmTestSong(Calm, 15, 12);
+		CHECK(!Run(Calm, "design_instrument", std::string("{\"kind\": \"") + KINDS[k] + "\", \"channel\": \"VRC6 Pulse 1\", "
+			"\"name\": \"Calm\"}").IsError);
+		Calm.Rows[5][0].Instrument = static_cast<unsigned char>(Calm.Info.Instruments.back().Index);
+		CHECK_HAS(Run(Calm, "check_song", "{\"style\": \"calm\"}").Text, "0 held leads");
+	}
+	// A strike that holds 12 presses; one that falls to 7 doesn't
+	Song.Info.Instruments[0].Volume = std::vector<int>{ 15, 14, 13, 12 };
+	CHECK_HAS(Run(Song, "check_song", "{\"style\": \"calm\"}").Text, "1 held lead.");
+	Song.Info.Instruments[0].Volume = std::vector<int>{ 15, 13, 11, 9, 7 };
+	CHECK_HAS(Run(Song, "check_song", "{\"style\": \"calm\"}").Text, "0 held leads");
+}
+
+// mix's fixes: the 5B's buzz keeps its volumes (its envelope plays at its own level), and the review counts it at that
+// level; levels counts the volume column as written, whatever the envelope
+void TestMixFixes()
+{
+	FakeSong Buzzy;
+	Buzzy.Info.DirectChanges = true;
+	CHECK(!Run(Buzzy, "set_expansion", "{\"chip\": \"5B\", \"confirm\": true}").IsError);
+	CHECK(!Run(Buzzy, "write_notes", "{\"channel\": \"5B Square 1\", \"instrument\": \"square lead\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": \"E-4\", \"beats\": 1}, "
+		"{\"bar\": 1, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 1}, {\"bar\": 1, \"beat\": 4, \"pitch\": \"A-4\", \"beats\": 1}, "
+		"{\"bar\": 2, \"pitch\": \"G-4\", \"beats\": 4}]}").IsError);
+	CHECK(!Run(Buzzy, "write_notes", "{\"channel\": \"5B Square 2\", \"instrument\": \"buzz\", \"notes\": ["
+		"{\"bar\": 1, \"pitch\": \"C-3\", \"beats\": 2}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"G-2\", \"beats\": 2}, "
+		"{\"bar\": 2, \"pitch\": \"C-3\", \"beats\": 4}]}").IsError);
+	Buzzy.Rows[6][0].Volume = 9;
+	ToolResult Result = Run(Buzzy, "mix", "{\"melody_channel\": \"5B Square 1\"}");
+	CHECK_HAS(Result.Text, "5B Square 2's 3 envelope notes (a buzz) play the envelope at its own level whatever their volume, so they "
+		"stay as written");
+	CHECK(Buzzy.Rows[6][0].Volume == 9);
+	Result = Run(Buzzy, "review_arrangement", "{\"melody_channel\": \"5B Square 1\"}");
+	CHECK_HAS(Result.Text, "Levels: the melody plays about 5 dB under 5B Square 2 (its buzz plays at full level whatever its volume).");
+	CHECK_HAS(Result.Text, "whose buzz plays the envelope at full level whatever its volume, so mix leaves it");
+	// A pad whose envelope swells to 11 and holds, at 8: levels 8 leaves it at 8 (it used to count the envelope and go
+	// to 13), 12 puts it at 12
+	FakeSong Pad;
+	CalmTestSong(Pad, 8, 6);
+	Pad.AddInstrumentInfo(3, "Pad", "VRC6", true);
+	std::vector<int> Swell;
+	for (int i = 0; i < 21; ++i)
+		Swell.push_back(1 + i / 2);
+	Pad.Info.Instruments.back().Volume = Swell;
+	Pad.Info.Instruments.back().VolumeRelease = 20;
+	Pad.Rows[6][0].Instrument = 3;
+	CHECK_HAS(Run(Pad, "mix", "{\"levels\": {\"VRC6 Pulse 2\": 8}}").Text, "The song is mixed that way already: VRC6 Pulse 2 (chords) stays at 8.");
+	CHECK_HAS(Run(Pad, "mix", "{\"levels\": {\"VRC6 Pulse 2\": 12}}").Text, "VRC6 Pulse 2 (chords) loudest 8 to 12.");
+	CHECK(Pad.Rows[6][0].Volume == 12);
+}
+
+// The review and get_song count the mixer's starting pans; the review tips an intro too quiet to hear, doesn't take a
+// lone triangle note for the bass, and counts the triangle's fader
+void TestReviewFixes()
+{
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4" };
+	const std::string REVIEW = "{\"melody_channel\": \"VRC6 Pulse 1\"}";
+	FakeSong Song;
+	CalmTestSong(Song, 15, 6);
+	Song.Mix.Set(6, 0, 0x40);
+	CHECK_HAS(Run(Song, "get_song", "{}").Text, "7 VRC6 Pulse 2: 8 notes in bars 1-4, C-4 to G-4, instruments \"Square\" (02), panned "
+		"50% left");
+	CHECK_HAS(Run(Song, "review_arrangement", REVIEW).Text, "Stereo: VRC6 Pulse 1 in the middle; VRC6 Pulse 2 panned 50% left.");
+
+	// An intro (bars 1-4) of the chords alone at 2 plays about 20 dB under the rest: tipped; at 8, not
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		FakeSong Intro(3);
+		Intro.Info.DirectChanges = true;
+		for (int i = 0; i < 24; ++i) {
+			if (i >= 8)
+				Intro.Put(5, i * 8, TUNE[i % 4], i == 8 ? 0 : NO_INSTRUMENT, i == 8 ? 15 : -1);
+			Intro.Put(6, i * 8, TUNE[i % 4], i == 0 ? 2 : NO_INSTRUMENT, i == 0 ? (Pass == 0 ? 2 : 8) : i == 8 ? 12 : -1);
+			Intro.Rows[6][static_cast<size_t>(i * 8)].Effect[0] = EFF_ARPEGGIO;
+			Intro.Rows[6][static_cast<size_t>(i * 8)].Param[0] = 0x47;
+		}
+		Intro.Info.Sections.push_back(Section("Intro", 0, 0));
+		Intro.Info.Sections.push_back(Section("A", 1, 2));
+		const std::string Text = Run(Intro, "review_arrangement", REVIEW).Text;
+		if (Pass == 0)
+			CHECK_HAS(Text, "The intro (bars 1-4) plays about 20 dB under the rest: more than 10 dB under reads as silence in a game "
+				"(6-10 dB under is the target), so bring a part in sooner or play it louder.");
+		else
+			CHECK_LACKS(Text, "The intro");
+	}
+
+	// One deep triangle note isn't a bass line; eight are
+	FakeSong Lone;
+	CalmTestSong(Lone, 15, 6);
+	Lone.Put(2, 48, "C-2", 1);
+	ToolResult Result = Run(Lone, "review_arrangement", REVIEW);
+	CHECK_HAS(Result.Text, "Parts: melody on VRC6 Pulse 1; chords on VRC6 Pulse 2. Free:");
+	CHECK_HAS(Result.Text, "No bass line");
+	for (int i = 0; i < 8; ++i)
+		Lone.Put(2, i * 8, i % 2 ? "G-2" : "C-2", i == 0 ? 1 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Lone, "review_arrangement", REVIEW).Text, "bass on 2A03 Triangle");
+
+	// A quiet melody (4) plays under the triangle at full; with the triangle's fader 10 dB down, it doesn't
+	FakeSong Bass;
+	CalmTestSong(Bass, 3, 6);
+	Bass.Rows[5][0].Volume = 4;
+	for (int i = 0; i < 8; ++i)
+		Bass.Put(2, i * 8, i % 2 ? "G-2" : "C-2", i == 0 ? 1 : NO_INSTRUMENT);
+	CHECK_HAS(Run(Bass, "review_arrangement", REVIEW).Text, "Levels: the melody plays about 10 dB under 2A03 Triangle.");
+	Bass.Mix.Set(2, -100, 0x80);
+	CHECK_LACKS(Run(Bass, "review_arrangement", REVIEW).Text, "Levels:");
+}
+// end of calm-defaults tests
+
 int main()
 {
 	TestJson();
@@ -13269,6 +13719,13 @@ int main()
 	TestVrc6DutiesAndStrikes();
 	TestSoftDesign();
 	TestSoftLevels();
+	TestCalmChoice();
+	TestHeardBalance();
+	TestCalmMix();
+	TestCalmPolish();
+	TestHeldLead();
+	TestMixFixes();
+	TestReviewFixes();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -7429,6 +7429,11 @@ std::string MixTool(Session &S, const Json &Args)
 		if (Refs[i].empty())
 			Refs[i].push_back(std::make_pair(Spans[i].First, Spans[i].End));
 	}
+	// As heard, the parts are set against the melody where they play with it in these bars (the melody keeping its own
+	// level from the rest of the song): a quiet intro's parts follow its quiet melody down
+	std::vector<std::vector<std::pair<int, int> > > Local(Spans.size());
+	for (size_t i = 0; i < Spans.size(); ++i)
+		Local[i].push_back(std::make_pair(Spans[i].First, Spans[i].End));
 	std::vector<int> SpanCount(static_cast<size_t>(S.ChannelCount()), 0);
 	for (size_t i = 0; i < Spans.size(); ++i)
 		++SpanCount[static_cast<size_t>(Spans[i].Channel)];
@@ -7549,9 +7554,13 @@ std::string MixTool(Session &S, const Json &Args)
 		}
 	}
 	const std::vector<int> Frames = RowFramesOf(S);
-	std::vector<PartPeak> Peaks;
-	for (size_t i = 0; i < Spans.size(); ++i)
-		Peaks.push_back(PeakOf(S, Spans[i].Channel, Refs[i], Frames, Buzz[static_cast<size_t>(Spans[i].Channel)]));
+	std::vector<PartPeak> Peaks, Own;	// each part's loudest where it plays its role in the song (Refs), and in these bars
+	for (size_t i = 0; i < Spans.size(); ++i) {
+		const std::vector<char> &Buzzing = Buzz[static_cast<size_t>(Spans[i].Channel)];
+		Peaks.push_back(PeakOf(S, Spans[i].Channel, Refs[i], Frames, Buzzing));
+		Own.push_back(Range ? PeakOf(S, Spans[i].Channel, std::vector<std::pair<int, int> >(1, std::make_pair(Spans[i].First,
+			Spans[i].End)), Frames, Buzzing) : Peaks.back());
+	}
 
 	auto LabelOf = [&](const MixSpan &P) {
 		const int c = P.Channel;
@@ -7635,7 +7644,7 @@ std::string MixTool(Session &S, const Json &Args)
 		if (Width >= 0.0)
 			ApplyPans(Panned, 0, Ignored);
 		Hearing H(S, &Panned);
-		const HeardBalance B = HearBalance(S, H, Spans, Refs, Melody, Voices, First, End);
+		const HeardBalance B = HearBalance(S, H, Spans, Local, Melody, Voices, First, End);
 		for (size_t i = 0; i < Spans.size(); ++i) {
 			if (Spans[i].Role != ROLE_MELODY || Peaks[i].Played <= 0)
 				continue;
@@ -7796,8 +7805,8 @@ std::string MixTool(Session &S, const Json &Args)
 			const bool Given = Leveled.count(c) > 0;
 			double Shift = ByEar[p] ? Shifts[p] : Given ? LevelDb(Info, Want) - LevelDb(Info, Peak.Highest) : LevelDb(Info, Want) - Peak.Db;
 			if (ByEar[p]) {
-				// Its highest volume can't pass 15, nor its softest go under 1
-				const double Room = LevelDb(Info, 15) - LevelDb(Info, Peak.Highest), Floor = LevelDb(Info, 1) - LevelDb(Info, Peak.Highest);
+				// Its highest volume here can't pass 15, nor its softest go under 1
+				const double Room = LevelDb(Info, 15) - LevelDb(Info, Own[p].Highest), Floor = LevelDb(Info, 1) - LevelDb(Info, Own[p].Highest);
 				Missed[p] = Shift > Room ? Shift - Room : Shift < Floor ? Shift - Floor : 0.0;
 				Shift = std::max(Floor, std::min(Room, Shift));
 			}
@@ -7811,9 +7820,17 @@ std::string MixTool(Session &S, const Json &Args)
 			Same = Same && Scaled(StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume) == StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;
 			if (ByEar[p] || Given || Peak.Hold > 0 ? Same : Peak.Played == Want) {
 				if (pDone != 0)
-					pDone->push_back(Format("%s stays at %d", Label.c_str(), ByEar[p] || Given || Peak.Hold > 0 ? Peak.Highest : Want));
+					pDone->push_back(Format("%s stays at %d", Label.c_str(), ByEar[p] || Given || Peak.Hold > 0 ? Own[p].Highest :
+						Own[p].Played));
 				continue;
 			}
+			// The change in words; over some bars without the part's loudest in the song, these bars' own loudest, then
+			// the song's
+			auto Told = [&](int From, int To) {
+				if (Own[p].Highest == Peak.Highest && Own[p].Played == Peak.Played)
+					return Format("%s loudest %d to %d", Label.c_str(), From, To);
+				return Format("%s loudest %d to %d, as the song's %d to %d", Label.c_str(), Own[p].Highest, Scaled(Own[p].Highest), From, To);
+			};
 			std::vector<Cell> &Cells = Into.Cells(c);
 			bool FirstNote = true;
 			const int Entering = StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;	// as the song has it, before any mixing
@@ -7844,19 +7861,19 @@ std::string MixTool(Session &S, const Json &Args)
 				Also += Format(" (%s stopped where %s climb past the part's level)", Plural(Slides.Stopped, "swell", "swells").c_str(),
 					Slides.Stopped == 1 ? "it would" : "they would");
 			if (ByEar[p] || Given) {
-				pDone->push_back(Format("%s loudest %d to %d%s", Label.c_str(), Peak.Highest, Scaled(Peak.Highest), Also.c_str()));
+				pDone->push_back(Format("%s loudest %d to %d%s", Label.c_str(), Own[p].Highest, Scaled(Own[p].Highest), Also.c_str()));
 				continue;
 			}
 			if (Peak.Hold > 0) {
-				pDone->push_back(Format("%s loudest %d to %d (its sound holds %d; on the 5B, 3 dB a step, that counts)%s", Label.c_str(),
-					Peak.Column, Scaled(Peak.Column), Peak.Hold, Also.c_str()));
+				pDone->push_back(Format("%s (its sound holds %d; on the 5B, 3 dB a step, that counts)%s", Told(Peak.Column,
+					Scaled(Peak.Column)).c_str(), Peak.Hold, Also.c_str()));
 				continue;
 			}
 			// An envelope that peaks under 15 can keep a part under its level, its volume at 15
 			if (LevelDb(Info, Peak.Column) + Shift > LevelDb(Info, 15) + 1.0)
 				Also += Format(" (its instrument's envelope peaks at %d of 15, so it plays at most %d)", Peak.Envelope,
 					PlayedVolume(Info, 15, Peak.Envelope));
-			pDone->push_back(Format("%s loudest %d to %d%s", Label.c_str(), Peak.Played, Want, Also.c_str()));
+			pDone->push_back(Told(Peak.Played, Want) + Also);
 		}
 		// What keeps its level
 		for (size_t p = 0; p < Spans.size() && pDone != 0; ++p)
@@ -7881,7 +7898,7 @@ std::string MixTool(Session &S, const Json &Args)
 	std::string Balance;
 	if (Heard && Melody >= 0) {
 		Hearing After(S, pDraft.get());
-		HeardBalance B = HearBalance(S, After, Spans, Refs, Melody, Voices, First, End);
+		HeardBalance B = HearBalance(S, After, Spans, Local, Melody, Voices, First, End);
 		bool Again = false;
 		for (size_t i = 0; i < Spans.size(); ++i)
 			if (ByEar[i] && Aims[i] > NO_LOUDNESS && B.Rel[i] > NO_LOUDNESS && std::fabs(Missed[i]) < 0.05 &&
@@ -7898,7 +7915,7 @@ std::string MixTool(Session &S, const Json &Args)
 				ApplyPans(*pDraft, &Done, PansLost);
 			WriteDac(*pDraft);
 			Hearing Again2(S, pDraft.get());
-			B = HearBalance(S, Again2, Spans, Refs, Melody, Voices, First, End);
+			B = HearBalance(S, Again2, Spans, Local, Melody, Voices, First, End);
 		}
 		double Least, Most;
 		Balance = BalanceText(S, Spans, B, Melody, Least, Most);
@@ -7930,8 +7947,8 @@ std::string MixTool(Session &S, const Json &Args)
 	if (!DacText.empty())
 		What += (Done.empty() ? "" : "; ") + DacText;
 	if (!pDraft->Collect(First, true, Changes, Start, Warnings, End))
-		return (Chosen.Note.empty() ? std::string() : Chosen.Note + " ") + "The song is mixed that way already: " +
-			What.substr(What.find(": ") + 2) + ".";
+		return (Chosen.Note.empty() ? std::string() : Chosen.Note + " ") + (Balance.empty() ? "The song is mixed that way already: " +
+			What.substr(What.find(": ") + 2) + "." : "The song is mixed that way already, as heard: " + Balance + ".");
 	std::string Text = Commit(S, Changes, Start, false, "", What);
 	if (Heard)
 		Text += std::string(" As heard: as stems measure each part where it plays with the melody (envelopes, faders, pans and "
@@ -8932,9 +8949,9 @@ std::vector<HeldLead> HeldLeads(Session &S, int Melody, int First, int End)
 // What check_song and the review say of one, and what to do
 std::string HeldLeadText(Session &S, int Melody, const HeldLead &H)
 {
-	return Format("%s on %s %s (%d of %d melody notes): a calm lead mustn't hold a high, steady level from attack to release. "
-		"design_instrument kind breath (swells in), falling strike (falls to 5-7) or music box (fades away), or a volume "
-		"sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
+	return Format("%s on %s %s (%d of %d melody notes): a calm lead shouldn't hold a high, steady level from attack to "
+		"release. design_instrument kind breath (swells in), falling strike (falls to 6) or music box (fades away), or a "
+		"volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
 		H.Shape.Words.c_str(), H.Notes, H.Of);
 }
 
@@ -9473,7 +9490,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
 			if (S.Song.Instruments[i].Vibrato)
 				Wobbly.insert(S.Song.Instruments[i].Index);
-		// On a calm track a vibrato waits about half a beat: a struck sound gone by then (a music box) wants none
+		// On a calm track a vibrato waits about half a beat: a struck sound gone by then (a pluck) wants none
 		const int Waits = Calm ? static_cast<int>(std::floor(CalmVibratoRows(S) * FramesPerRow(S) + 0.5)) + 6 : 0;
 		for (size_t i = 0; i < Tune.size(); ++i) {
 			const NoteInfo &N = Tune[i];
@@ -9643,12 +9660,25 @@ std::string ReviewTool(Session &S, const Json &Args)
 		}
 		if (Over >= 0) {
 			const double Under = Most + (S.Channel(Over).Kind == KIND_TRIANGLE ? 8.0 : 3.0);
-			Lines.push_back(Format("Levels: the melody plays about %d dB under %s.", static_cast<int>(std::floor(Under + 0.5)),
-				S.Channel(Over).FullName().c_str()));
-			Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
-				"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
-				StepVolume(S.Channel(Melody)) ? (" (the " + S.Channel(Melody).Chip + " counts its volume in steps of 3 dB: 9 is 18 dB "
-				"under 15)").c_str() : ""));
+			// A 5B buzz plays the envelope at its own full level, whatever the volume column: mix leaves it
+			bool Buzzing = false;
+			if (S.Channel(Over).Kind == KIND_SQUARE) {
+				const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Over), First, End);
+				const std::vector<int> Sticky = StickyAt(S.Cells(Over), Notes, S.Channel(Over).EffectColumns, EFF_DUTY_CYCLE);
+				for (size_t i = 0; i < Notes.size() && !Buzzing; ++i)
+					Buzzing = PlaysEnvelope(S, Notes[i], Sticky[i]);
+			}
+			Lines.push_back(Format("Levels: the melody plays about %d dB under %s%s.", static_cast<int>(std::floor(Under + 0.5)),
+				S.Channel(Over).FullName().c_str(), Buzzing ? " (its buzz plays at full level whatever its volume)" : ""));
+			if (Buzzing)
+				Tip(1.0, Format("The melody plays about %d dB under %s, whose buzz plays the envelope at full level whatever its "
+					"volume, so mix leaves it: a softer sound there (a square bass), or the melody on a louder channel.",
+					static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str()));
+			else
+				Tip(1.0, Format("The melody plays about %d dB under %s, so it hardly comes through: mix (style soft) sets each part's "
+					"level for its chip%s.", static_cast<int>(std::floor(Under + 0.5)), S.Channel(Over).FullName().c_str(),
+					StepVolume(S.Channel(Melody)) ? (" (the " + S.Channel(Melody).Chip + " counts its volume in steps of 3 dB: 9 is 18 dB "
+					"under 15)").c_str() : ""));
 		}
 	}
 
