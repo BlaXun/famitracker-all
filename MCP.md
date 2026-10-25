@@ -191,6 +191,33 @@ curl -H "Authorization: Bearer 1f3a..." -o Town.ogg http://192.168.1.10:46600/fi
 
 Only the OGG files next to the song can be fetched, by their names.
 
+### The phone page
+
+Edit > Record from your phone serves a page for recording ideas on a phone
+(see `RECORDER.md`, Ideas from your phone) at `/phone`, on the same port and
+with the same checks as the routes above. Its routes take a code of their own
+instead of the access code: `/phone?code=CODE` in the address the window's
+QR code carries, or `Authorization: Bearer CODE`. The code is worked out from
+the access code (the first 24 hex digits of its HMAC-SHA-256), so it opens
+only these routes: the access code doesn't open them, and their code doesn't
+reach `/mcp` or the files.
+
+- `GET /phone`: the page.
+- `GET /phone/takes`: the takes sent so far, newest first, as JSON: `takes`,
+  each with `idea`, `state` (`waiting`, `clip` or `failed`), `clip`,
+  `message`, `seconds`, `arrived` and `file`; and `waiting`.
+- `POST /phone/take?name=NAME`: a take, the request's body a WAV file of
+  16-bit PCM on one channel at 8000-48000 Hz, half a second to 3 minutes
+  (8 MB at most). The answer (202) has the take; it becomes a clip of the open
+  song a moment later, named after the idea, and `place_clip` takes it by
+  that name.
+
+A client with a shell sends a take itself:
+
+```
+curl -H "Authorization: Bearer CODE" -H "Content-Type: audio/wav" --data-binary @idea.wav "http://192.168.1.10:46600/phone/take?name=Town%20melody"
+```
+
 ### Over the network, safely
 
 - FamiTracker only answers addresses of home networks (10.x, 172.16-31.x,
@@ -198,9 +225,12 @@ Only the OGG files next to the song can be fetched, by their names.
   computer; any other address is closed off at once.
 - Every request needs the access code, files too. Web pages are turned away
   as before.
+- The phone page is the one web page FamiTracker answers, and only its own
+  requests, with its own code; other pages can't send it takes.
 - Never forward the port on your router: from outside, use Tailscale.
 - **New access code** in the dialog makes the old one stop working on the
-  other computer too: give it the new one.
+  other computer too: give it the new one. The phone page's code changes with
+  it: scan the QR code in Edit > Record from your phone again.
 
 ## Asking
 
@@ -1818,3 +1848,14 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
   differently gets its own), and `SelectExpansionChip` moving the channels
   that stay to their new columns. `Source/Tests` checks it against the
   stand-in document.
+- `Source/Api/PhoneTakes.cpp` and `QrCode.cpp`: the phone page's routes
+  (`PhoneTakes::Handle`, which `HandleMcp` calls after its peer and Host
+  checks; `PhoneCode`, the page's code, HMAC-SHA-256 of the access code;
+  `CheckPhoneWav` and `IsIdeaName`, the checks before anything is kept), the
+  takes waiting until the song can take them (`Process`, through the
+  `PhoneHost` interface), and the QR encoder (byte mode, versions 1 to 40,
+  levels L to H, the mask the penalty rules pick), which `tests/PhoneTests.cpp`
+  compares with a reference encoder's codes. On Windows `Source/PhoneLink.cpp`
+  is the host (the `Recordings` folder, `GuessRecording` and `InsertRecording`
+  with a clip name), `Source/PhoneDlg.cpp` the window with the QR code, and
+  `res/phone.html` the page, built in as RCDATA.

@@ -517,6 +517,11 @@ when ready.
     the NES would), and Claude Code's `make_sound_effect` (34 kinds with
     variants, ambience that loops, sounds described in words, or a
     recording).
+  - Ideas from the phone (October 2026, on `next`): Edit > Record from your
+    phone shows a QR code; the phone opens a page FamiTracker serves on the
+    home network, records a hummed idea (or takes the phone's own
+    recording) and sends it, and it becomes a clip of the open song, named
+    after the idea. See `RECORDER.md`, Ideas from your phone.
 
   Still to do, in this order, on a branch made from `beginner-friendly`
   again:
@@ -526,7 +531,8 @@ when ready.
      replaces only those rows); tap the tempo instead of setting speed and
      tempo.
   2. Chords by name ("C G Am F") or strummed on a guitar.
-  3. A small page on the phone that records ideas over Wi-Fi into the clips.
+  3. (Done: a small page on the phone that records ideas over Wi-Fi into the
+     clips, above.)
 - **`api` (merged into `recorder`, and with it into `beginner-friendly`;
   see `MCP.md`):**
   FamiTracker is the MCP server itself, speaking Streamable HTTP on

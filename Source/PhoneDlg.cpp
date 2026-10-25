@@ -76,8 +76,8 @@ CString FromUtf8(const std::string &Text)
 class CPhoneDlg : public CDialog
 {
 public:
-	explicit CPhoneDlg(CMainFrame *pMainFrame) : CDialog(IDD_PHONE, pMainFrame), m_pMainFrame(pMainFrame), m_bReachable(false),
-		m_bAllowed(false), m_iTicks(0) {}
+	explicit CPhoneDlg(CMainFrame *pMainFrame) : CDialog(IDD_PHONE, pMainFrame), m_pMainFrame(pMainFrame), m_iHome(0),
+		m_bReachable(false), m_bAllowed(false), m_iTicks(0) {}
 
 	static CPhoneDlg *s_pOpen;	// the window, while it shows
 
@@ -99,7 +99,8 @@ private:
 	void ShowTakes();
 
 	CMainFrame *m_pMainFrame;
-	std::vector<mcp_address_t> m_Addresses;
+	std::vector<mcp_address_t> m_Addresses;	// the home networks' addresses, then this PC's name
+	size_t m_iHome;							// how many are addresses
 	ftapi::QrSymbol m_Symbol;
 	bool m_bReachable;		// the code shows: FamiTracker listens on the home network
 	bool m_bAllowed;		// just now, by the button here
@@ -147,7 +148,19 @@ void CPhoneDlg::PostNcDestroy()
 
 bool CPhoneDlg::ReadAddresses()
 {
-	const std::vector<mcp_address_t> Found = HomeAddresses();
+	std::vector<mcp_address_t> Found = HomeAddresses();
+	const size_t Home = Found.size();
+	// Last, this PC's name, which a phone finds through Tailscale (MagicDNS) wherever it is, or where the router knows it
+	std::string Name = NetworkComputerName();
+	for (size_t i = 0; i < Name.size(); ++i)
+		Name[i] = static_cast<char>(Name[i] >= 'A' && Name[i] <= 'Z' ? Name[i] - 'A' + 'a' : Name[i]);
+	if (!Name.empty()) {
+		mcp_address_t ByName;
+		ByName.Address = Name;
+		ByName.Adapter = "This PC's name";
+		ByName.Gateway = false;
+		Found.push_back(ByName);
+	}
 	bool Same = Found.size() == m_Addresses.size();
 	for (size_t i = 0; Same && i < Found.size(); ++i)
 		Same = Found[i].Address == m_Addresses[i].Address && Found[i].Adapter == m_Addresses[i].Adapter;
@@ -158,6 +171,7 @@ bool CPhoneDlg::ReadAddresses()
 	const std::string Was = Picked >= 0 && Picked < static_cast<int>(m_Addresses.size()) ? m_Addresses[static_cast<size_t>(Picked)].Address :
 		std::string();
 	m_Addresses = Found;
+	m_iHome = Home;
 	pList->ResetContent();
 	int Keep = 0;
 	for (size_t i = 0; i < m_Addresses.size(); ++i) {
@@ -185,6 +199,7 @@ void CPhoneDlg::ShowAddress()
 		Url = ftapi::PhonePageUrl(m_Addresses[static_cast<size_t>(Picked)].Address, Port, Token);
 	const bool Reachable = Listening && Network && !Url.empty();
 
+	const bool ByName = Picked >= static_cast<int>(m_iHome);
 	CString Hint;
 	if (!Listening || !Network)
 		Hint = _T("Your phone can't reach FamiTracker yet: it only listens to this PC.");
@@ -193,6 +208,10 @@ void CPhoneDlg::ShowAddress()
 	else if (m_bAllowed)
 		Hint = _T("FamiTracker listens on your home network now. If Windows asks whether it may use the network, allow private ")
 			_T("networks.");
+	else if (ByName && m_iHome == 0)
+		Hint = _T("No home network address right now, so the code uses this PC's name, which a phone with Tailscale finds.");
+	else if (ByName)
+		Hint = _T("A phone finds this PC by its name with Tailscale (or where your router knows it); at home the address is surer.");
 	else
 		Hint = _T("Your phone and this PC must be on the same home network (Wi-Fi).");
 	CString Old;
