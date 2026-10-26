@@ -174,6 +174,8 @@ BEGIN
         MENUITEM "Move Frame Up",               ID_MODULE_MOVEFRAMEUP
         MENUITEM "Move Frame Down",             ID_MODULE_MOVEFRAMEDOWN
         MENUITEM SEPARATOR
+        MENUITEM "Song shape...",               ID_MODULE_SONGSHAPE
+        MENUITEM SEPARATOR
         MENUITEM "Comments",                    ID_MODULE_COMMENTS
         MENUITEM "Module Properties\tCtrl+P",   ID_MODULE_MODULEPROPERTIES
         MENUITEM "Channels",                    ID_MODULE_CHANNELS
@@ -333,6 +335,8 @@ BEGIN
         MENUITEM "Move section up",             ID_SECTION_MOVE_UP
         MENUITEM "Move section down",           ID_SECTION_MOVE_DOWN
         MENUITEM "Duplicate section",           ID_SECTION_DUPLICATE
+        MENUITEM SEPARATOR
+        MENUITEM "Song s&hape...",              ID_MODULE_SONGSHAPE
     END
 END
 
@@ -594,6 +598,7 @@ BEGIN
     ID_EDIT_RECORD          "Record from the microphone: whistle, hum or tap, and the notes go in at the cursor\nRecord from microphone"
     ID_EDIT_RECORDPHONE     "Record ideas on your phone over Wi-Fi: hum a tune and it arrives in the clips\nRecord from your phone"
     ID_EDIT_GROOVE          "Pick a mood, a tempo and a key, and get drums, a bass line and chords to sing a melody over\nStart from a groove"
+    ID_MODULE_SONGSHAPE     "Lay out a song's parts for its kind (a lively stage, a calm night, a town, a boss...), each named and with what it's for\nSong shape"
     ID_EDIT_VOICEEFFECT     "Make a sound effect for a game with your voice: say ""pew"" or ""boing"" into the microphone\nSound effect from your voice"
     ID_INSTRUMENT_LIBRARY   "Every sound the song can use, to find, hear and add: ready-made sounds, your reference library's and the song's own\nSound browser"
     ID_INSTRUMENT_LISTEN    "Hear the selected instrument: a short tune, a bass line, a beat or held notes on its channel\nListen to the instrument"
@@ -2243,6 +2248,19 @@ BEGIN
     LTEXT           "",IDC_BACK_PREVIEW,7,102,248,62
     DEFPUSHBUTTON   "Make the groove",IDOK,133,166,67,14
     PUSHBUTTON      "Cancel",IDCANCEL,205,166,50,14
+END
+
+IDD_SONG_SHAPE DIALOGEX 0, 0, 400, 214
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Song shape"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Pick the kind of song. Its parts are laid out as named sections, each with what it's for; point at a section in the frame editor or the piano roll to see it again.",IDC_STATIC,7,7,386,18
+    LISTBOX         IDC_SHAPE_LIST,7,30,112,124,LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_SHAPE_PARTS,125,30,268,124,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
+    LTEXT           "",IDC_SHAPE_NOTE,7,160,386,26
+    DEFPUSHBUTTON   "Lay it out",IDOK,289,193,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,343,193,50,14
 END
 
 IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230

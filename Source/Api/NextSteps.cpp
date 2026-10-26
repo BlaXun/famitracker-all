@@ -35,14 +35,15 @@ const char *const STAGE_TITLES[NEXT_STAGES] = { "The frame", "The parts", "The f
 	"The export" };
 
 // what_next's steps (as skip names them) and milestones (as its reply names them), each with its stage; keep them in
-// step with WhatNext in Tools.cpp (TestWhatNextJson checks that every one it gives has a stage)
+// step with WhatNext in Tools.cpp (TestWhatNextJson checks that every one it gives has a stage). An empty song's shape
+// (song_shape, its sections laid out) is part of the frame: it comes after the tempo and the key, before any part
 struct staged_t {
 	const char *Name;
 	int Stage;
 };
 
 const staged_t STEP_STAGES[] = {
-	{ "tempo", STAGE_FRAME }, { "key", STAGE_FRAME },
+	{ "tempo", STAGE_FRAME }, { "key", STAGE_FRAME }, { "shape", STAGE_FRAME },
 	{ "lead", STAGE_PARTS }, { "chords", STAGE_PARTS }, { "melody", STAGE_PARTS }, { "drums", STAGE_PARTS },
 	{ "sections", STAGE_FORM }, { "form", STAGE_FORM },
 	{ "second_line", STAGE_DEPTH }, { "variation", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },
@@ -52,7 +53,7 @@ const staged_t STEP_STAGES[] = {
 };
 
 const staged_t MILESTONE_STAGES[] = {
-	{ "tempo", STAGE_FRAME }, { "key", STAGE_FRAME },
+	{ "tempo", STAGE_FRAME }, { "key", STAGE_FRAME }, { "shape", STAGE_FRAME },
 	{ "the lead's sound", STAGE_PARTS }, { "chords and bass", STAGE_PARTS }, { "melody", STAGE_PARTS }, { "drums", STAGE_PARTS },
 	{ "sections", STAGE_FORM }, { "form", STAGE_FORM },
 	{ "second line", STAGE_DEPTH }, { "repeats varied", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },

@@ -37,6 +37,7 @@
 #include "Graphics.h"
 #include "Clipboard.h"
 #include "ClipsDlg.h"
+#include "SongShapeDlg.h"
 
 /*
  * CFrameEditor
@@ -223,6 +224,7 @@ BEGIN_MESSAGE_MAP(CFrameEditor, CWnd)
 	ON_COMMAND(ID_SECTION_MOVE_UP, OnSectionMoveUp)
 	ON_COMMAND(ID_SECTION_MOVE_DOWN, OnSectionMoveDown)
 	ON_COMMAND(ID_SECTION_DUPLICATE, OnSectionDuplicate)
+	ON_COMMAND(ID_MODULE_SONGSHAPE, OnModuleSongShape)
 END_MESSAGE_MAP()
 
 
@@ -250,6 +252,8 @@ int CFrameEditor::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	m_iDragThresholdX = ::GetSystemMetrics(SM_CXDRAG);
 	m_iDragThresholdY = ::GetSystemMetrics(SM_CYDRAG);
+
+	EnableToolTips(TRUE);	// what each section is for (OnToolHitTest)
 
 	return 0;
 }
@@ -1177,6 +1181,47 @@ void CFrameEditor::OnContextMenu(CWnd* /*pWnd*/, CPoint point)
 }
 
 // Sections (Api/Sections.h)
+
+void CFrameEditor::OnModuleSongShape()
+{
+	ShowSongShapes(m_pMainFrame);
+}
+
+INT_PTR CFrameEditor::OnToolHitTest(CPoint point, TOOLINFO *pTI) const
+{
+	// The section under the mouse in the sections' column, its band in view as the tool, its line as the text
+	if (pTI == NULL || m_pDocument == NULL || m_pView == NULL || !ShowsSections() || !m_pDocument->IsFileLoaded())
+		return -1;
+	const unsigned int Track = m_pMainFrame->GetSelectedTrack();
+	const int Frames = static_cast<int>(m_pDocument->GetFrameCount(Track));
+	const int Left = ROW_COLUMN_WIDTH + 4 + FRAME_ITEM_WIDTH * static_cast<int>(m_pDocument->GetAvailableChannels());
+	CPoint Logical(point);
+	ScaleMouse(Logical);
+	if (Logical.x < Left || Logical.y < TOP_OFFSET)
+		return -1;
+	const int Active = std::max(0, std::min(Frames - 1, static_cast<int>(m_pView->GetSelectedFrame())));
+	const int FirstVisible = Active - m_iMiddleRow;
+	const int Row = (Logical.y - TOP_OFFSET) / ROW_HEIGHT, Frame = FirstVisible + Row;
+	if (Row >= m_iRowsVisible || Frame < 0 || Frame >= Frames)
+		return -1;
+	const ftapi::SectionList &List = m_pDocument->GetSections()->Get(static_cast<int>(Track));
+	const int Index = ftapi::SectionAt(List, Frame);
+	if (Index < 0)
+		return -1;
+	const CString Text = SectionHoverLine(m_pDocument, Track, Index);
+	if (Text.IsEmpty())
+		return -1;
+	const ftapi::Section &Part = List[static_cast<size_t>(Index)];
+	const int Top = std::max(Part.First, std::max(0, FirstVisible)) - FirstVisible;
+	const int Bottom = std::min(Part.Last, std::min(Frames - 1, FirstVisible + m_iRowsVisible - 1)) - FirstVisible;
+	pTI->hwnd = m_hWnd;
+	pTI->uId = static_cast<UINT_PTR>(1 + Part.First * MAX_FRAMES + Part.Last);
+	pTI->uFlags = TTF_ALWAYSTIP;
+	pTI->rect = CRect(SX(Left), SY(Top * ROW_HEIGHT + TOP_OFFSET), std::max(SX(Left + SECTION_WIDTH), m_iWinWidth),
+		SY((Bottom + 1) * ROW_HEIGHT + TOP_OFFSET));
+	pTI->lpszText = _tcsdup(Text);	// MFC frees it
+	return static_cast<INT_PTR>(pTI->uId);
+}
 
 int CFrameEditor::MenuSection() const
 {

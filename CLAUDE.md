@@ -986,7 +986,7 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call, 35, not
+(`CoreTools`) is `what_next` and every tool its steps call, 36 (with `song_shape`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1351,38 +1351,74 @@ music" for that profile, where they start on: `ProfileIndex`).
 window. `TestHarmonyRoles` in `ApiTests.cpp` and `TestStrongNotesRow` in
 `PianoRollUiTests.cpp` cover the rest.
 
+Song shapes (from `feat-song-shapes`): `Source/Api/SongShapes.cpp`
+(portable) holds six shapes (`SongShapes`: stage, night, town, boss, small,
+jingle), each a list of parts with their bars and a line on what the part
+is for, the forms the recipes teach; `PartLine` gives a section's line from
+its name (a shape's own where it's one of its parts), `MatchSongShape` the
+shape a track's sections are (their names in order; `what_next` passes its
+kind's for a tie), `GuessSongShape` that or the track name's, and `LayOutShape` the
+layout: an empty track gets frames of its own length where every part is
+whole frames of it, else of the parts' greatest common divisor in bars; a
+track with notes keeps its frames (`Refitted`, `Cut`, `Missing`). The
+`song_shape` tool (`SongShapeTool` after `NameSectionTool` in `Tools.cpp`)
+writes it as one group: `SetMeter` for a new frame length, then one
+`WriteSong` (frames added or taken out at the end, the empty track's jumps,
+skips and halts replaced by the loop's `Bxx` or a jingle's `C00`, a song
+with notes' end jump moved to its new end) with `SetSections`. `what_next`'s
+`Frame` gives it after the key on an empty track without sections
+(milestone and skip word `shape`, `ShapeForKind`); `Parts` writes the empty
+song's A chords on the laid-out A (`FitProgression` fits a progression to
+a part's bars), the form is done once a matched shape's parts all have
+notes, and `GrowForm` fills a laid-out part after the body where it is.
+It's in `CoreTools`. FamiTracker's Module > Song shape (`ID_MODULE_SONGSHAPE`,
+also in `IDR_FRAME_POPUP`, routed by `CFrameEditor::OnModuleSongShape`, and
+the piano roll ruler's right-click) is `Source/SongShapeDlg.cpp`, which
+asks before adding bars to a song with notes and runs the tool through
+`CMcpConnection::RunTool`. `SectionHoverLine` gives a section's line for
+the frame editor's tooltip (`CFrameEditor::OnToolHitTest`, MFC's
+`EnableToolTips`) and the piano roll's status line (`HoverSection`).
+`SectionColor` gives "A'" and "A''" A's color. FakeSong's `SetMeter` is
+undoable now, as `CMcpMeterAction` is. `TestSongShapes`,
+`TestSongShapeTool` and `TestWhatNextShape` cover them, and
+`TestWhatNextLoop` follows the shape-first loop.
+
 What next panel and hearing the problems (from `feat-guide-panels`): View >
-What next (`ID_VIEW_WHATNEXT`, `Source/WhatNextPanel.cpp`, a bar docked along
-the bottom or the right as the problems panel is, after it in `ArrangeBars`)
-runs `what_next` with `format` `json` through `CMcpConnection::RunTool` a
-moment after `SongChanged` (not while the song or its own `CBarsPlayer`
-plays, a dialog is open, or the user typed within a second or twice the last
-ask's time; it polls `SongSettingsSignature`, shared with the problems panel,
-plus saving and the path) and shows the step in plain words with the
-recipe's stages as pills. The JSON is `WhatNext::JsonReply` (`Work` runs the
-stages for both replies; `StepWhat` says a step in plain words, `StepPlace`
-where it works; `Step(NextStep)` keeps a fix's `Calls` and `Severity`, and
-`MelodyPlace` the melody's bars and `Own`, a step offering notes to start
-from); each step id's and milestone's stage and the panel's reader are
-`Source/Api/NextSteps.cpp` (portable; `GrownVersions` reads `grow_melody`'s
-versions). Do it, Grow one (the version picked plays) and Play the fix make
-their call between `BeginActionGroup` and `EndActionGroup`, so it's one
-Ctrl+Z, labelled for Claude's undo, and a call that fails is undone (the
-action serial says whether anything can be undone; instruments added stay,
-as everywhere). A step's buttons wait while its answer is stale (the song
-changed since); skips and the kind chosen are kept per song and track while
-FamiTracker runs. The problems panel's lines get Play it and Play the fix
-(`line_button_t`; on a narrow panel the selected line takes a third line for
-them, `Heights`): `ProblemList::PlayOf` gives the bars (a bar before and after
-the line's note or finding, at most `PROBLEM_PLAY_BARS` of a long finding's
-own) and the channels to hear alone; `Source/BarsPlayer.cpp` plays song rows
-through `CSoundGen::SetNextPlayRange` with the other channels muted, then in
-the mix, telling the range's end (`PlayRangeEnded`) from a stop. Play the fix
-asks Keep or Take back in `CPlayFixDlg` (`IDD_PLAYFIX`), modal, so neither the
-user nor Claude Code (`CanChange`) changes the song meanwhile, and Take back
-undoes only the fix's own action. `TestWhatNextJson` (every state of
-`TestWhatNextLoop`'s walks, the JSON against the text) and `TestProblemPlay`
-cover them.
+What next (`ID_VIEW_WHATNEXT`, `Source/WhatNextPanel.cpp`, a bar docked
+along the bottom or the right as the problems panel is, after it in
+`ArrangeBars`) runs `what_next` with `format` `json` through
+`CMcpConnection::RunTool` a moment after `SongChanged` (not while the song
+or its own `CBarsPlayer` plays, a dialog is open, or the user typed within a
+second or twice the last ask's time; it polls `SongSettingsSignature`,
+shared with the problems panel, plus saving and the path) and shows the step
+in plain words with the recipe's stages as pills. The JSON is
+`WhatNext::JsonReply` (`Work` runs the stages for both replies; `StepWhat`
+says a step in plain words, naming bars that are a part by the part
+(`PartOf`) and an empty song's shape (`song_shape`, a step of the frame) by
+its title, `StepPlace` where it works; `Step(NextStep)` keeps a fix's
+`Calls` and `Severity`, and `MelodyPlace` the melody's bars and `Own`, a
+step offering notes to start from); each step id's and milestone's stage and
+the panel's reader are `Source/Api/NextSteps.cpp` (portable; `GrownVersions`
+reads `grow_melody`'s versions). Do it, Grow one (the version picked plays)
+and Play the fix make their call between `BeginActionGroup` and
+`EndActionGroup`, so it's one Ctrl+Z, labelled for Claude's undo, and a call
+that fails is undone (the action serial says whether anything can be undone;
+instruments added stay, as everywhere). A step's buttons wait while its
+answer is stale (the song changed since); skips and the kind chosen are kept
+per song and track while FamiTracker runs. The problems panel's lines get
+Play it and Play the fix (`line_button_t`; on a narrow panel the selected
+line takes a third line for them, `Heights`): `ProblemList::PlayOf` gives
+the bars (a bar before and after the line's note or finding, at most
+`PROBLEM_PLAY_BARS` of a long finding's own) and the channels to hear alone;
+`Source/BarsPlayer.cpp` plays song rows through
+`CSoundGen::SetNextPlayRange` with the other channels muted, then in the
+mix, telling the range's end (`PlayRangeEnded`) from a stop. Play the fix
+asks Keep or Take back in `CPlayFixDlg` (`IDD_PLAYFIX`), modal, so neither
+the user nor Claude Code (`CanChange`) changes the song meanwhile, and Take
+back undoes only the fix's own action. `TestWhatNextJson` (every state of
+`TestWhatNextLoop`'s walks, the JSON against the text, and each kind's
+shape: its title, one undo, then A's chords on the A it laid out) and
+`TestProblemPlay` cover them.
 
 ## What this repository is
 
