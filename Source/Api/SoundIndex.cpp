@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <map>
+#include <set>
 
 namespace ftapi {
 
@@ -318,6 +319,7 @@ public:
 			Studied S;
 			S.pSound = G.Sound;
 			S.Short = G.Name;
+			m_Taken.insert(Lowercase(G.Name));
 			S.Key = First.Id;
 			S.Number = First.Number;
 			S.Game = Names[G.Game].Name;
@@ -349,7 +351,7 @@ public:
 	{
 		for (size_t r = 0; r < Library.size(); ++r) {
 			const Reference &R = Library[r];
-			// Its sounds' names, numbered where two have the same ("Green Planet lead 2"), so each can be added
+			// Its sounds' names, numbered where another has the same, of this study or another (Unique)
 			std::vector<std::string> Names;
 			for (size_t s = 0; s < R.Sounds.size(); ++s)
 				Names.push_back(ReferenceSoundName(R, R.Sounds[s]));
@@ -360,8 +362,7 @@ public:
 				Studied S;
 				S.pSound = std::make_shared<ReferenceSound>(R.Sounds[s]);
 				const ReferenceSound &Sound = *S.pSound;
-				const int Same = static_cast<int>(std::count(Names.begin(), Names.begin() + static_cast<std::ptrdiff_t>(s), Names[s]));
-				S.Short = Same == 0 ? Names[s] : Names[s] + " " + std::to_string(Same + 1);
+				S.Short = Unique(Names[s]);
 				const std::string Track = R.Game.empty() ? R.Id : R.Game + (R.Track > 0 ? ", track " + std::to_string(R.Track) :
 					std::string());
 				S.Origin = (R.Title.empty() ? Track : R.Title + " (" + Track + ")") + ", sound " + std::to_string(s + 1) + ": " +
@@ -435,6 +436,18 @@ public:
 	bool m_Games = true;		// the built-in games' sounds are listed: the library's that are theirs are left out
 
 private:
+	// A studied sound's name, numbered when a sound listed before has it ("Green Planet lead 2"): a name is a title's
+	// start (ReferenceSoundName), which tracks share ("Boss" and "Boss (Simple)", "Lava Lake" and "Lava Lake ~Intro~"),
+	// and the song's instrument of a name is taken for the sound of that name
+	std::string Unique(const std::string &Name)
+	{
+		std::string Out = Name;
+		for (int n = 2; m_Taken.count(Lowercase(Out)) != 0; ++n)
+			Out = Name + " " + std::to_string(n);
+		m_Taken.insert(Lowercase(Out));
+		return Out;
+	}
+
 	// The presets and the library's 2A03 pulse sounds on a melodic kind of channel (Backing: another chip's, only those
 	// that make a backing: pads, plucks and keys), and the library's sounds made for that channel
 	void Melodic(int Target, bool Backing)
@@ -878,6 +891,7 @@ private:
 	std::vector<int> m_First;	// the song's first channel of each kind, -1 for none
 	int m_Cursor;				// the kind of channel the user is on, -1 for none
 	std::string m_Adding;		// listing the sounds of a chip the song doesn't have: that chip
+	std::set<std::string> m_Taken;	// the studied sounds' names listed, in lower case (Unique)
 	std::vector<SoundEntry> m_Out;
 };
 
@@ -1075,7 +1089,10 @@ std::string AddChipQuestion(const SongInfo &Song, const SoundEntry &Sound)
 			"will export to OGG and WAV files only (File > Export for games and File > Create WAV).";
 	if (Song.FrameRate == 50)
 		Text += " Expansion chips play at NTSC speed, so the song will play at 60 frames a second instead of 50.";
-	Text += "\n\nCtrl+Z can't take this back; Module > Module properties takes the chip off again.";
+	// Adding a chip clears the undo history (FamiTracker's views reset it on UPDATE_PROPERTIES), as Module properties does
+	Text += "\n\nThis can't be undone: adding a chip also clears the undo history, so Ctrl+Z won't take back this or any change "
+		"you made before it. Save the song first if you'd like a copy to go back to (Module > Module properties takes the chip "
+		"off again).";
 	return Text;
 }
 
@@ -1328,6 +1345,15 @@ std::vector<int> KindCounts(const std::vector<SoundEntry> &All, const std::vecto
 	return Counts;
 }
 
+std::vector<int> KindsListed(const std::vector<int> &Counts, int Picked)
+{
+	std::vector<int> Out;
+	for (size_t k = 0; k < Counts.size(); ++k)
+		if (Counts[k] > 0 || static_cast<int>(k) == Picked)
+			Out.push_back(static_cast<int>(k));
+	return Out;
+}
+
 std::string KindKey(const std::string &Kind)
 {
 	return "kind/" + Kind;
@@ -1422,6 +1448,49 @@ int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound)
 		if (Rows[r].Type == ROW_SOUND && Rows[r].Sound == Sound)
 			return static_cast<int>(r);
 	return -1;
+}
+
+int BestSound(const std::vector<SoundEntry> &All, const std::vector<SoundGroup> &Groups, const std::string &Words)
+{
+	// The groups hold the sounds shown (of the kind picked), in the list's order: kind by kind and source by source, so
+	// the best match can be anywhere in it (the song's own choir pad under the ready-made pads)
+	const bool Asked = !WordsOf(Words).empty();
+	int Best = -1, BestScore = 0;
+	bool BestPlays = false;
+	for (size_t g = 0; g < Groups.size(); ++g)
+		for (size_t s = 0; s < Groups[g].Sounds.size(); ++s) {
+			const size_t Sound = Groups[g].Sounds[s];
+			if (Sound >= All.size())
+				continue;
+			const int Score = Asked ? SoundMatch(All[Sound], Words, false) : 1;
+			const bool Plays = All[Sound].AddsChip.empty();
+			if (Best < 0 || Score > BestScore || (Score == BestScore && Plays && !BestPlays)) {
+				Best = static_cast<int>(Sound);
+				BestScore = Score;
+				BestPlays = Plays;
+			}
+		}
+	return Best;
+}
+
+bool OpenTo(const std::vector<SoundGroup> &Groups, SoundView &View, size_t Sound)
+{
+	for (size_t g = 0; g < Groups.size(); ++g) {
+		if (std::find(Groups[g].Sounds.begin(), Groups[g].Sounds.end(), Sound) == Groups[g].Sounds.end())
+			continue;
+		bool Opened = false;
+		const std::map<std::string, bool>::iterator Kind = View.Folds.find(KindKey(Groups[g].Kind));
+		if (View.EveryKind && Kind != View.Folds.end() && Kind->second) {
+			Kind->second = false;
+			Opened = true;
+		}
+		if (GroupFolded(Groups, g, View)) {
+			View.Folds[Groups[g].Key] = false;
+			Opened = true;
+		}
+		return Opened;
+	}
+	return false;
 }
 
 // Previews --------------------------------------------------------------------------------------------------------

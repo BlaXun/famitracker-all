@@ -103,6 +103,10 @@ public:
 	const std::vector<ToolInfo> &List() const { return m_Tools; }
 	bool Has(const std::string &Name) const;
 	ToolResult Call(const std::string &Name, const Json &Arguments, const Caller &Who = Caller());
+	// What a call with arguments the tool doesn't take is told (a local model's guess, like find_sound's "words" for its
+	// query): each one named, with the argument it likely meant, and the tool's own arguments; empty when the tool takes
+	// every one (or there's no such tool). Call refuses such a call with it, doing nothing
+	std::string UnknownArguments(const std::string &Name, const Json &Arguments) const;
 
 	// A file sent from another computer (send_file, PUT /inbox) into the Inbox folder next to FamiTracker.exe:
 	// the reply that names its path for the tools that read it, or false with the reason (a name that isn't

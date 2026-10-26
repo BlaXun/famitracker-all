@@ -1695,8 +1695,12 @@ void CSoundGen::StopRendering()
 	m_pAPU->SetStems(0, NULL);
 	InterlockedIncrement(&m_iRenderCount);
 
-	MakeSilent();
+	// Silent as a stop leaves it (HaltPlayer): the buffer cleared first, since its APU reset turns the 2A03's pulses,
+	// triangle and noise off ($4015), which the channels' reset in MakeSilent turns on again (CDPCMChan::ClearRegisters).
+	// 0.4.6 cleared the buffer last, so after a render (File > Create WAV, every export_for_game and measure_mix) the
+	// note keys, the sound browser's previews and Instrument > Listen were silent on them until a song played
 	ResetBuffer();
+	MakeSilent();
 }
 
 void CSoundGen::GetRenderStat(int &Frame, int &Time, bool &Done, int &FramesToRender, int &Row, int &RowCount) const

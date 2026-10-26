@@ -2237,7 +2237,8 @@ void TestDesign()
 		CHECK(*std::max_element(V.begin(), V.end()) == (Given ? 15 : 8));
 	}
 	// The sawtooth and the triangle have no duty (and the triangle no volume): said so
-	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"motion\": \"open\"}");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Saw lead\", \"channel\": \"Sawtooth\", \"kind\": \"lead\", \"duty_motion\": "
+		"\"sweep\"}");
 	CHECK_HAS(Result.Text, "a sawtooth that reaches");
 	CHECK_LACKS(Result.Text, "pulse");
 	CHECK_LACKS(Result.Text, "its tone opens");
@@ -11231,7 +11232,7 @@ void TestStereoTools()
 		SetPan(Keep, 5, 0, 0x30);
 		SetPan(Keep, 5, 16, 0xD0);
 		Keep.End(5, 48, NOTE_RELEASE);
-		CHECK(!Run(Keep, "transpose", "{\"channel\": \"VRC6 Pulse 1\", \"semitones\": 2}").IsError);
+		CHECK(!Run(Keep, "transpose", "{\"channels\": \"VRC6 Pulse 1\", \"semitones\": 2}").IsError);
 		CHECK(PanAt(Keep, 5, 0) == 0x30 && PanAt(Keep, 5, 12) == 0x30 && PanAt(Keep, 5, 16) == 0xD0 && PanAt(Keep, 5, 44) == 0xD0);
 		CHECK(!Run(Keep, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"octave_up\", \"from_bar\": 1, \"to_bar\": 3}").IsError);
 		CHECK(PanAt(Keep, 5, 0) == 0x30 && PanAt(Keep, 5, 12) == 0x30 && PanAt(Keep, 5, 16) == 0xD0 && PanAt(Keep, 5, 44) == 0xD0);
@@ -18982,7 +18983,7 @@ void TestGameSounds()
 	CHECK(!BuiltinReference("bucky-o-hare-08", R) && !BuiltinReference("mega-man-iii-02", R) && !BuiltinReference("castlevania-99", R));
 	// Named as the browser names a study's sounds; a track the NSF names only by its number by its game's name
 	CHECK(BuiltinReference("castlevania-02", R));
-	CHECK_EQ(ReferenceSoundName(R, R.Sounds[2]), std::string("Killer (Courtyard) lead"));
+	CHECK_EQ(ReferenceSoundName(R, R.Sounds[2]), std::string("Vampire Killer lead"));
 	Reference Zelda;
 	CHECK(BuiltinReference("the-legend-of-zelda-01", Zelda) && !Zelda.Sounds.empty());
 	if (!Zelda.Sounds.empty())
@@ -19182,7 +19183,8 @@ void TestOtherChips()
 	CHECK_HAS(Text, "Add the VRC6 to the song? It brings three more channels: two pulses with eight widths and a sawtooth, after the "
 		"song's own channels. Every note you've written stays where it is.");
 	CHECK_LACKS(Text, "NSF");
-	CHECK_HAS(Text, "Ctrl+Z can't take this back; Module > Module properties takes the chip off again.");
+	CHECK_HAS(Text, "This can't be undone: adding a chip also clears the undo history, so Ctrl+Z won't take back this or any "
+		"change you made before it.");
 	const SongInfo WithVrc6 = SongWithChips(std::vector<std::string>{ "VRC6" });
 	const std::vector<SoundEntry> OnVrc6 = ListSounds(WithVrc6, std::vector<Reference>(), std::vector<SoundUse>(), -1, Listing);
 	const SoundEntry *pHorn = FindEntry(OnVrc6, "Square horn", TARGET_FDS);
@@ -22197,6 +22199,412 @@ void TestCalmRecipeLeads()
 		Check(Guide.find(Wanted) != std::string::npos, Wanted, __LINE__);
 }
 
+// Every argument a text gives a tool that the tool doesn't take (ToolSet::UnknownArguments): in a call written as JSON,
+// "add_echo {\"channel\": 2, ...}", or named after the tool's name, "set_tempo with bpm 75" (a word that's an argument of
+// some tool), so the recipes, the instructions and the replies never teach a call the tools refuse
+std::vector<std::string> UnknownInText(const ToolSet &Tools, const std::string &Text)
+{
+	std::set<std::string> Every;
+	for (size_t t = 0; t < Tools.List().size(); ++t) {
+		const Json *pProperties = Tools.List()[t].InputSchema.Get("properties");
+		for (size_t p = 0; pProperties != 0 && p < pProperties->Members().size(); ++p)
+			Every.insert(pProperties->Members()[p].first);
+	}
+	auto InWord = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+	std::vector<std::string> Out;
+	for (size_t t = 0; t < Tools.List().size(); ++t) {
+		const std::string &Name = Tools.List()[t].Name;
+		const Json *pProperties = Tools.List()[t].InputSchema.Get("properties");
+		for (size_t At = Text.find(Name); At != std::string::npos; At = Text.find(Name, At + 1)) {
+			const size_t End = At + Name.size();
+			if ((At > 0 && InWord(Text[At - 1])) || (End < Text.size() && InWord(Text[End])))
+				continue;
+			if (Text.compare(End, 2, " {") == 0) {
+				// The call as JSON, up to its closing brace
+				int Depth = 0;
+				bool Quoted = false;
+				size_t Close = End + 1;
+				for (; Close < Text.size(); ++Close) {
+					const char c = Text[Close];
+					if (Quoted) {
+						if (c == '\\')
+							++Close;
+						else if (c == '"')
+							Quoted = false;
+					}
+					else if (c == '"')
+						Quoted = true;
+					else if (c == '{')
+						++Depth;
+					else if (c == '}' && --Depth == 0)
+						break;
+				}
+				Json Call;
+				if (Close < Text.size() && ParseJson(Text.substr(End + 1, Close - End), Call) && !Tools.UnknownArguments(Name, Call).empty())
+					Out.push_back(Name + " " + Text.substr(End + 1, Close - End));
+			}
+			if (Text.compare(End, 6, " with ") == 0) {
+				const size_t Word = End + 6;
+				size_t Stop = Word;
+				while (Stop < Text.size() && InWord(Text[Stop]))
+					++Stop;
+				const std::string Argument = Text.substr(Word, Stop - Word);
+				if (Every.count(Argument) != 0 && (pProperties == 0 || pProperties->Get(Argument) == 0))
+					Out.push_back(Name + " with " + Argument);
+			}
+		}
+	}
+	return Out;
+}
+
+// Every call in a finding's fix (its own and those in its then) that its tool would refuse
+void CheckFixCalls(const ToolSet &Tools, const Json &Checked, const char *What, int Line)
+{
+	const Json *pFindings = Checked.Get("findings");
+	int Calls = 0;
+	for (size_t f = 0; pFindings != 0 && f < pFindings->Size(); ++f) {
+		const Json *pFix = pFindings->At(f).Get("fix");
+		if (pFix == 0)
+			continue;
+		std::vector<const Json *> List(1, pFix);
+		const Json *pThen = pFix->Get("then");
+		for (size_t i = 0; pThen != 0 && i < pThen->Size(); ++i)
+			List.push_back(&pThen->At(i));
+		for (size_t c = 0; c < List.size(); ++c) {
+			const Json *pTool = List[c]->Get("tool"), *pArguments = List[c]->Get("arguments");
+			if (pTool == 0 || pArguments == 0)
+				continue;
+			++Calls;
+			const std::string Refused = Tools.UnknownArguments(pTool->String(), *pArguments);
+			Check(Refused.empty(), (std::string(What) + ": " + Refused).c_str(), Line);
+		}
+	}
+	Check(Calls > 0, (std::string(What) + ": fixes to check").c_str(), Line);
+}
+
+// A tool refuses an argument it doesn't take (find_sound with "words" listed all 2,129 sounds, as if asked for every one):
+// the call does nothing, and its answer names the argument, the one it likely meant and the tool's own, so a local model
+// corrects the call. Every call FamiTracker's own windows make, and every call the recipes, the instructions, the prompts,
+// the tools' descriptions, what_next and check_song's fixes give, has only the arguments its tool takes
+void TestUnknownArguments()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 0);
+	Song.Put(0, 8, "E-4");
+	Song.End(0, 16);
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("find_sound", Parse("{\"words\": \"warm bell\"}"));
+	CHECK(Result.IsError);
+	CHECK_EQ(Result.Text, std::string("find_sound has no argument \"words\" (did you mean \"query\"?), so nothing was done. Its "
+		"arguments: query, kind, from, channel, other_chips. Call find_sound again with those (its description says what each one "
+		"takes)."));
+	CHECK(!Tools.Call("find_sound", Parse("{\"query\": \"warm bell\"}")).IsError);
+	// The one meant: written another way, a letter off (a plural), a word of its name; none when several would do
+	CHECK_HAS(Tools.Call("transpose", Parse("{\"channel\": 1, \"semitones\": 2}")).Text, "\"channel\" (did you mean \"channels\"?)");
+	CHECK_HAS(Tools.Call("design_instrument", Parse("{\"motion\": \"sweep\"}")).Text, "\"motion\" (did you mean \"duty_motion\"?)");
+	CHECK_HAS(Tools.Call("set_tempo", Parse("{\"BPM\": 90}")).Text, "\"BPM\" (did you mean \"bpm\"?)");
+	CHECK_HAS(Tools.Call("read_notes", Parse("{\"bar\": 2}")).Text, "has no argument \"bar\", so nothing was done");
+	// A change refused changes nothing
+	const std::string Before = Notes(Song, 0);
+	Result = Tools.Call("write_notes", Parse("{\"channel\": 1, \"track\": 2, \"notes\": [{\"bar\": 1, \"pitch\": \"G-4\", "
+		"\"beats\": 4}]}"));
+	CHECK(Result.IsError && Notes(Song, 0) == Before);
+	CHECK_HAS(Result.Text, "write_notes has no argument \"track\"");
+	CHECK_HAS(Result.Text, "channel (required)");
+	// Several at once, and a tool that takes none
+	CHECK_HAS(Tools.Call("find_sound", Parse("{\"words\": \"bell\", \"limit\": 5}")).Text,
+		"find_sound has no arguments \"words\" (did you mean \"query\"?) or \"limit\", so nothing was done.");
+	CHECK_EQ(Tools.Call("undo", Parse("{\"steps\": 2}")).Text, std::string("undo has no argument \"steps\", so nothing was done. It "
+		"takes no arguments: call it with {}."));
+	CHECK_HAS(Tools.Call("send_file", Parse("{\"file\": \"a.nsf\"}")).Text, "Its arguments: name (required), data (required).");
+	CHECK(Tools.UnknownArguments("no_such_tool", Parse("{\"x\": 1}")).empty());
+	CHECK_EQ(Tools.Call("no_such_tool", Parse("{\"x\": 1}")).Text, std::string("Unknown tool: no_such_tool"));
+	// The small set (/mcp/core) refuses them as the full one does
+	Caller Core;
+	Core.Core = true;
+	CHECK(Tools.Call("find_sound", Parse("{\"words\": \"bell\"}"), Core).IsError);
+
+	// FamiTracker's own calls: Start from a groove, the mixer's Write into the notes, the problems panel, Sound effect from
+	// your voice, File > Export for games
+	const char *const OWN[][2] = {
+		{ "make_groove", "{\"mood\": \"calm\", \"key\": \"C major\", \"from_bar\": 1, \"bars\": 4, \"chord_channel\": 2, "
+			"\"bass_channel\": 3, \"drum_channel\": \"none\"}" },
+		{ "set_mixer", "{\"write_into_notes\": true}" },
+		{ "check_song", "{\"format\": \"json\"}" },
+		{ "make_sound_effect", "{\"recording\": \"take.wav\", \"name\": \"Boing\", \"octaves\": 1, \"noise\": true}" },
+		{ "export_for_game", "{\"tracks\": \"this\", \"quality\": 0.5, \"loudness\": -16}" },
+	};
+	for (size_t i = 0; i < sizeof(OWN) / sizeof(OWN[0]); ++i)
+		Check(Tools.UnknownArguments(OWN[i][0], Parse(OWN[i][1])).empty(), OWN[i][0], __LINE__);
+
+	// The recipes, the instructions, the prompts and the tools' descriptions
+	std::vector<std::pair<std::string, std::string> > Texts;
+	Texts.push_back(std::make_pair(std::string("instructions"), ToolSet::Instructions()));
+	Texts.push_back(std::make_pair(std::string("core instructions"), ToolSet::CoreInstructions()));
+	for (const char *Kind : { "", "calm", "lively", "action" }) {
+		Json Asked = Json::MakeObject();
+		if (*Kind)
+			Asked.Set("kind", Kind);
+		Texts.push_back(std::make_pair("recipe " + std::string(Kind), Tools.Call("get_recipe", Asked).Text));
+		Texts.push_back(std::make_pair("core recipe " + std::string(Kind), Tools.Call("get_recipe", Asked, Core).Text));
+	}
+	for (size_t p = 0; p < ToolSet::Prompts().size(); ++p) {
+		const PromptInfo &Prompt = ToolSet::Prompts()[p];
+		for (const char *Kind : { "calm", "lively", "action" }) {
+			Json Filled = Json::MakeObject();
+			for (size_t a = 0; a < Prompt.Arguments.size(); ++a) {
+				const std::string &Name = Prompt.Arguments[a].Name;
+				Filled.Set(Name, Name == "kind" ? Kind : Name == "bars" ? "16" : Name == "count" ? "3" : Name == "track" ? "1" :
+					"a river stage by day");
+			}
+			std::string Text, Error;
+			Check(ToolSet::PromptText(Prompt.Name, Filled, Text, Error), (Prompt.Name + ": " + Error).c_str(), __LINE__);
+			Texts.push_back(std::make_pair("prompt " + Prompt.Name, Text));
+		}
+	}
+	for (size_t t = 0; t < Tools.List().size(); ++t)
+		Texts.push_back(std::make_pair(Tools.List()[t].Name + "'s description", Tools.List()[t].Description));
+	for (size_t t = 0; t < Texts.size(); ++t) {
+		const std::vector<std::string> Bad = UnknownInText(Tools, Texts[t].second);
+		std::string Listed;
+		for (size_t b = 0; b < Bad.size(); ++b)
+			Listed += (b == 0 ? "" : "; ") + Bad[b];
+		Check(Bad.empty(), (Texts[t].first + ": " + Listed).c_str(), __LINE__);
+	}
+	// The scan finds what it's for
+	CHECK(UnknownInText(Tools, "Then find_sound {\"words\": \"bell\"}, or find_sound with words.").size() == 2u);
+
+	// check_song's fixes (the draft's every kind, a click's) and what_next's call on a draft and on an empty song
+	{
+		FakeSong Draft(8);
+		DraftSong(Draft);
+		ToolSet DraftTools(Draft);
+		CheckFixCalls(DraftTools, Parse(DraftTools.Call("check_song", Parse("{\"style\": \"lively\", \"format\": \"json\"}")).Text),
+			"draft", __LINE__);
+		const std::string Next = DraftTools.Call("what_next", Parse("{\"kind\": \"lively\"}")).Text;
+		CHECK(UnknownInText(DraftTools, Next).empty());
+		FakeSong Clicky;
+		Clicky.Info.DirectChanges = true;
+		ToolSet ClickTools(Clicky);
+		CHECK(!ClickTools.Call("add_instrument", Parse("{\"preset\": \"singing lead\", \"channel\": \"2A03 Pulse 1\"}")).IsError);
+		Clicky.Put(0, 0, "A-3", Clicky.Info.Instruments.back().Index);
+		Clicky.End(0, 56);
+		CheckFixCalls(ClickTools, Parse(ClickTools.Call("check_song", Parse("{\"format\": \"json\"}")).Text), "click", __LINE__);
+		FakeSong Empty;
+		ToolSet EmptyTools(Empty);
+		for (const char *Kind : { "calm", "lively", "action" }) {
+			const std::string First = EmptyTools.Call("what_next", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text;
+			Check(UnknownInText(EmptyTools, First).empty(), First.c_str(), __LINE__);
+		}
+	}
+}
+
+// The sound browser: Enter in Find picks the best match ("choir pad" in a VRC6 Plus song: the soft layer's, not the first
+// ready-made pad), opening the headings that hide it; the kinds list leaves out a kind with no sounds ("Other (0)"); each
+// sound previews at about the level of a 2A03 pulse at 15 (the VRC7 at 13, the FDS at 8), whatever its channel's fader;
+// the question before a sound's chip is added says that it clears the undo history
+void TestBrowserFixes()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"]}")).IsError);
+	std::vector<SoundEntry> All;
+	std::string Error;
+	CHECK(Tools.Sounds(-1, All, Error));
+	SoundQuery Query;
+	Query.Words = "choir pad";
+	const std::vector<size_t> Found = FindSounds(All, Query);
+	const std::vector<SoundGroup> Groups = GroupSounds(All, Found);
+	SoundView View;
+	View.Words = true;
+	const std::vector<SoundRow> Rows = SoundRows(Groups, View);
+	const int Best = BestSound(All, Groups, Query.Words);
+	CHECK(Best >= 0 && All[static_cast<size_t>(Best)].Name == "Choir pad" && All[static_cast<size_t>(Best)].Target == TARGET_SOFT &&
+		All[static_cast<size_t>(Best)].AddsChip.empty());
+	CHECK(SoundRowOf(Rows, static_cast<size_t>(Best)) >= 0);
+	// The best match after the first group of its kind: a song's own "Choir pad" (both words in its name) under the
+	// ready-made pads ("Warm pad": "choir" only among the kind's words), which Enter picked the first of
+	{
+		SongInfo Own = SongWithChips(std::vector<std::string>{ "VRC6" });
+		InstrumentInfo Choir;
+		Choir.Index = 0;
+		Choir.Name = "Choir pad";
+		Choir.Chip = "2A03";
+		Own.Instruments.push_back(Choir);
+		const std::vector<SoundEntry> Listed = ListSounds(Own, std::vector<Reference>(), std::vector<SoundUse>(64), -1);
+		const std::vector<size_t> Matched = FindSounds(Listed, Query);
+		const std::vector<SoundGroup> Grouped = GroupSounds(Listed, Matched);
+		const std::vector<SoundRow> Shown = SoundRows(Grouped, View);
+		const int Mine = BestSound(Listed, Grouped, Query.Words);
+		size_t FirstRow = 0;
+		while (FirstRow < Shown.size() && Shown[FirstRow].Type != ROW_SOUND)
+			++FirstRow;
+		CHECK(Mine >= 0 && Listed[static_cast<size_t>(Mine)].Source == SOURCE_SONG && Listed[static_cast<size_t>(Mine)].Name == "Choir pad");
+		CHECK(FirstRow < Shown.size() && static_cast<int>(Shown[FirstRow].Sound) != Mine &&
+			Listed[Shown[FirstRow].Sound].Source == SOURCE_PRESET && Listed[Shown[FirstRow].Sound].Kind == "pad");
+		CHECK(SoundRowOf(Shown, static_cast<size_t>(Mine)) > static_cast<int>(FirstRow));
+		// With the other chips' sounds listed: the song's own before their choir pads (as well matched, they don't play
+		// here); without it, the first of theirs in the list (the VRC6 Plus's soft layer's, over the N163's and the FDS's)
+		SoundListing Others;
+		Others.OtherChips = true;
+		const std::vector<SoundEntry> Wider = ListSounds(Own, std::vector<Reference>(), std::vector<SoundUse>(64), -1, Others);
+		const std::vector<SoundGroup> WiderGroups = GroupSounds(Wider, FindSounds(Wider, Query));
+		const int Here = BestSound(Wider, WiderGroups, Query.Words);
+		CHECK(Here >= 0 && Wider[static_cast<size_t>(Here)].Source == SOURCE_SONG);
+		Own.Instruments.clear();
+		const std::vector<SoundEntry> Without = ListSounds(Own, std::vector<Reference>(), std::vector<SoundUse>(64), -1, Others);
+		const std::vector<SoundGroup> WithoutGroups = GroupSounds(Without, FindSounds(Without, Query));
+		const int There = BestSound(Without, WithoutGroups, Query.Words);
+		CHECK(There >= 0 && Without[static_cast<size_t>(There)].Name == "Choir pad" && Without[static_cast<size_t>(There)].AddsChip == VRC6_PLUS);
+	}
+	// Folded by hand, its headings open again for it
+	if (Best >= 0) {
+		SoundView Folded = View;
+		Folded.EveryKind = true;
+		for (size_t g = 0; g < Groups.size(); ++g)
+			Folded.Folds[Groups[g].Key] = true;
+		Folded.Folds[KindKey(All[static_cast<size_t>(Best)].Kind)] = true;
+		CHECK(SoundRowOf(SoundRows(Groups, Folded), static_cast<size_t>(Best)) < 0);
+		CHECK(OpenTo(Groups, Folded, static_cast<size_t>(Best)));
+		CHECK(SoundRowOf(SoundRows(Groups, Folded), static_cast<size_t>(Best)) >= 0);
+		CHECK(!OpenTo(Groups, Folded, static_cast<size_t>(Best)));
+	}
+	CHECK(BestSound(All, std::vector<SoundGroup>(), Query.Words) == -1);
+	CHECK(BestSound(All, Groups, "") >= 0 && All[static_cast<size_t>(BestSound(All, Groups, ""))].AddsChip.empty());
+
+	// The kinds list: each kind with sounds among those found, the one picked even without (no sound here is of another kind)
+	const std::vector<SoundEntry> Plain = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6" }), std::vector<Reference>(),
+		std::vector<SoundUse>(64), -1);
+	const std::vector<int> Counts = KindCounts(Plain, FindSounds(Plain, SoundQuery()));
+	const std::vector<SoundKind> &Kinds = SoundKinds();
+	size_t Other = 0;
+	while (Other < Kinds.size() && Kinds[Other].Id != "other")
+		++Other;
+	CHECK(Other < Kinds.size() && Counts[Other] == 0);
+	const std::vector<int> Listed = KindsListed(Counts, -1);
+	CHECK(std::find(Listed.begin(), Listed.end(), static_cast<int>(Other)) == Listed.end() && !Listed.empty());
+	for (size_t i = 0; i < Listed.size(); ++i)
+		CHECK(Counts[static_cast<size_t>(Listed[i])] > 0);
+	const std::vector<int> Picked = KindsListed(Counts, static_cast<int>(Other));
+	CHECK(Picked.size() == Listed.size() + 1 && std::find(Picked.begin(), Picked.end(), static_cast<int>(Other)) != Picked.end());
+	CHECK(KindsListed(std::vector<int>({ 0, 3, 0, 1 }), -1) == std::vector<int>({ 1, 3 }));
+
+	// The previews' volume: the chip's level counted as VolumeForDb counts it, the fader left out
+	FakeSong Chips;
+	Chips.Info.DirectChanges = true;
+	ToolSet ChipTools(Chips);
+	CHECK(!ChipTools.Call("set_expansion", Parse("{\"chips\": [\"VRC6\", \"VRC7\", \"FDS\", \"MMC5\", \"N163\", \"5B\"]}")).IsError);
+	CHECK(!ChipTools.Call("set_mixer", Parse("{\"channels\": \"2A03 Pulse 1\", \"level\": -6}")).IsError);
+	CHECK_EQ(Chips.Mix.Level(0), -60);
+	std::vector<SoundEntry> Every;
+	CHECK(ChipTools.Sounds(-1, Every, Error));
+	std::map<int, std::set<int> > Volumes;
+	for (size_t i = 0; i < Every.size(); ++i)
+		if (Every[i].Channel >= 0)
+			Volumes[Every[i].Target].insert(Every[i].Volume);
+	CHECK(Volumes[TARGET_VRC7] == std::set<int>({ 13 }));
+	CHECK(Volumes[TARGET_FDS] == std::set<int>({ 8 }));
+	for (const int Target : { TARGET_PULSE, TARGET_TRIANGLE, TARGET_NOISE, TARGET_VRC6_PULSE, TARGET_SAWTOOTH, TARGET_MMC5,
+		TARGET_N163, TARGET_S5B })
+		Check(Volumes[Target] == std::set<int>({ 15 }), TargetName(Target).c_str(), __LINE__);
+	CHECK(SoundEntry().Volume == 15);
+
+	// The question before a sound's chip comes in
+	SoundEntry Tine;
+	Tine.Name = "Fm tine";
+	Tine.AddsChip = "VRC7";
+	const std::string Asked = AddChipQuestion(SongWithChips(std::vector<std::string>()), Tine);
+	CHECK_HAS(Asked, "\n\nThis can't be undone: adding a chip also clears the undo history, so Ctrl+Z won't take back this or any "
+		"change you made before it. Save the song first if you'd like a copy to go back to (Module > Module properties takes the "
+		"chip off again).");
+	CHECK_LACKS(Asked, "Ctrl+Z can't take this back");
+}
+
+// A studied sound's name begins with its track's title as ShortTitle keeps it: before a parenthesis ("Beginning bass",
+// "Vampire Killer lead"), from its start's words, never the long title's last words ("(Block-1) bass", "Killer (Courtyard)
+// lead"); names that come out alike in two studies are numbered in the list
+void TestStudiedNames()
+{
+	CHECK_EQ(ShortTitle("Beginning (Block-1)"), std::string("Beginning"));
+	CHECK_EQ(ShortTitle("Vampire Killer (Courtyard)"), std::string("Vampire Killer"));
+	CHECK_EQ(ShortTitle("Deja Vu (Vampire Killer) (Block-8)"), std::string("Deja Vu"));
+	CHECK_EQ(ShortTitle("Big Battle 1 (Dracula's 2nd Form)"), std::string("Big Battle 1"));
+	CHECK_EQ(ShortTitle("Lava Lake ~Intro~"), std::string("Lava Lake"));
+	CHECK_EQ(ShortTitle("Lava Lake [Night]"), std::string("Lava Lake"));
+	CHECK_EQ(ShortTitle("(Untitled)"), std::string("(Untitled)"));
+	CHECK_EQ(ShortTitle("Lava"), std::string("Lava"));
+	CHECK_EQ(ShortTitle("Kazakh Australia HQ Theme"), std::string("Kazakh Australia HQ"));
+	// A long one up to where its first clause ends, or its start's words, not ending on a word that leads on
+	CHECK_EQ(ShortTitle("Stage 4 - Mechanic Factory"), std::string("Stage 4"));
+	CHECK_EQ(ShortTitle("Inventory, Next Chapter Theme"), std::string("Inventory"));
+	CHECK_EQ(ShortTitle("Let Me Know the Truth (House of Doga and Une)"), std::string("Let Me Know"));
+	CHECK_EQ(ShortTitle("Supercalifragilisticexpialidocious"), std::string("Supercalifragilistic"));
+	// A number that ended the title stays
+	CHECK_EQ(ShortTitle("The Everlasting World (Ending Theme) -2-"), std::string("The Everlasting 2"));
+	CHECK_EQ(ShortTitle("Hazardous Short Music 1"), std::string("Hazardous Short 1"));
+	CHECK_EQ(ShortTitle("Iron Fortress Gate II"), std::string("Iron Fortress Gate II"));	// (21 letters: the number kept)
+	CHECK_EQ(ShortTitle("Mountain Fortress Climb 3"), std::string("Mountain Fortress 3"));
+	CHECK_EQ(ShortTitle("Theme (Part 2)"), std::string("Theme 2"));
+
+	// The built-in games' sounds: the brief's two
+	Reference Courtyard, Block;
+	CHECK(BuiltinReference("castlevania-02", Courtyard) && Courtyard.Sounds.size() > 2u);
+	if (Courtyard.Sounds.size() > 2u)
+		CHECK_EQ(ReferenceSoundName(Courtyard, Courtyard.Sounds[2]), std::string("Vampire Killer lead"));
+	CHECK(BuiltinReference("castlevania-3-01", Block) && Block.Title == "Beginning (Block-1)");
+	bool Bass = false;
+	for (size_t s = 0; s < Block.Sounds.size(); ++s)
+		if (Block.Sounds[s].Role.find("bass") != std::string::npos || Block.Sounds[s].Role == "a low part")
+			Bass = Bass || ReferenceSoundName(Block, Block.Sounds[s]).compare(0, 10, "Beginning ") == 0;
+	CHECK(Bass);
+	size_t Named = 0;
+	for (size_t g = 0; g < BuiltinGameSounds().size(); ++g) {
+		const std::string &Name = BuiltinGameSounds()[g].Name;
+		Named += Name.compare(0, 15, "Vampire Killer ") == 0 || Name.compare(0, 10, "Beginning ") == 0 ? 1 : 0;
+		Check(Name.find('(') == std::string::npos, Name.c_str(), __LINE__);
+	}
+	CHECK(Named >= 2u);
+
+	// Two studies whose sounds' names come out alike: the second numbered, in the list and in find_sound's call
+	ReferenceSound Lead;
+	Lead.Channel = "Pulse 1";
+	Lead.Role = "the lead";
+	Lead.Words = "a 50% pulse held at 12";
+	Lead.Chip = "2A03";
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 12 };
+	Reference First, Second;
+	First.Id = "lava-game-01";
+	First.Title = "Lava Lake";
+	First.Game = "Lava Game";
+	First.Track = 1;
+	First.Sounds.push_back(Lead);
+	Second = First;
+	Second.Id = "lava-game-02";
+	Second.Title = "Lava Lake ~Night~";
+	Second.Track = 2;
+	Second.Sounds[0].Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 9 };
+	const std::vector<SoundEntry> Listed = ListSounds(SongWithChips(std::vector<std::string>()),
+		std::vector<Reference>({ First, Second }), std::vector<SoundUse>(64), -1);
+	std::vector<std::string> Names;
+	for (size_t i = 0; i < Listed.size(); ++i)
+		if (Listed[i].Source == SOURCE_REFERENCE && !Listed[i].Builtin && Listed[i].Home)
+			Names.push_back(Listed[i].Name + " / " + Listed[i].Short);
+	CHECK(Names == std::vector<std::string>({ "Lava Lake lead / Lava Lake lead", "Lava Lake lead 2 / Lava Lake lead 2" }));
+}
+
+// The status bar at speed 1 (a sound effect, ambience), where it showed 900 BPM: the frames a row lasts, as the song settings
+// show them
+void TestStatusBarFrames()
+{
+	CHECK_EQ(StatusFramesText(1, 150, 60), std::string("1 frame a row"));
+	CHECK_EQ(StatusFramesText(1, 125, 50), std::string("1 frame a row"));
+	CHECK_EQ(StatusFramesText(1, 120, 60), std::string("1.25 frames a row"));
+	CHECK(StatusFramesText(1, 32, 60).size() <= std::string(STATUS_FRAMES_LONGEST).size());
+	CHECK(StatusFramesText(1, 33, 50).size() <= std::string(STATUS_FRAMES_LONGEST).size());
+}
+
 int main()
 {
 	TestJson();
@@ -22413,6 +22821,10 @@ int main()
 	TestUndoSaysWhat();
 	TestBloomHolds();
 	TestCalmRecipeLeads();
+	TestUnknownArguments();
+	TestBrowserFixes();
+	TestStudiedNames();
+	TestStatusBarFrames();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

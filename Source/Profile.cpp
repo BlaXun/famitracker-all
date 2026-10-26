@@ -224,6 +224,16 @@ bool BPMWantsFrames(int Bpm)
 	return ftapi::LayoutWantsFrames(Bpm);
 }
 
+CString BPMStatusText(int Speed, int Tempo, int FrameRate)
+{
+	return CString(ftapi::StatusFramesText(Speed, Tempo, FrameRate).c_str());
+}
+
+CString BPMStatusLongest()
+{
+	return CString(ftapi::STATUS_FRAMES_LONGEST);
+}
+
 int FrameTempo(int FrameRate)
 {
 	return ftapi::DefaultTempo(FrameRate);

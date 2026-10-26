@@ -39,7 +39,11 @@
 // (SoundEntry::AddsChip) are listed after the song's own, folded, and can't be
 // heard until their chip is in: Add to the song asks first
 // (SoundEntry::Question), then the chip comes in as Module > Module properties
-// puts it in (which can't be undone there either) and the sound with it.
+// puts it in (which can't be undone there either, and clears the undo history)
+// and the sound with it. Enter in Find picks the sound that matches best
+// (ftapi::BestSound), wherever its group is in the list; the kinds list shows
+// only the kinds with sounds found (ftapi::KindsListed); every sound is heard
+// at its SoundEntry::Volume, about as loud as a 2A03 pulse at 15.
 
 #include "stdafx.h"
 #include <algorithm>
@@ -76,9 +80,10 @@ const struct { LPCTSTR Name; int Percent; } LIST_COLUMNS[] = {
 };
 const int COLUMN_COUNT = sizeof(LIST_COLUMNS) / sizeof(LIST_COLUMNS[0]);
 
-// Kept while FamiTracker runs: where the browser was, the kind picked and the headings folded or opened by hand
+// Kept while FamiTracker runs: where the browser was, the kind picked (in ftapi::SoundKinds(), -1 for all) and the headings
+// folded or opened by hand
 CRect g_Place(0, 0, 0, 0);
-int g_Kind = 0;
+int g_Kind = -1;
 std::map<std::string, bool> g_Folds;
 
 // Text from the tools (UTF-8) as FamiTracker shows it (the Windows code page), and back
@@ -228,6 +233,7 @@ private:
 	void FillKinds(const std::vector<int> &Counts, int Total);
 	void ShowRows();
 	int FirstSoundRow() const;
+	void PickBest();
 	void SelectRow(int Row);
 	void ToggleFold(int Row);
 	bool ListKey(UINT Key);
@@ -259,6 +265,8 @@ private:
 	std::vector<ftapi::SoundRow> m_Rows;	// the list's rows
 	ftapi::SoundView m_View;
 	std::vector<int> m_Targets;				// the channel filter's kinds of channel, after "All channels"
+	int m_iKind;							// the kind picked on the left, in ftapi::SoundKinds(); -1 for every kind
+	std::vector<int> m_KindRows;			// the kinds list's kinds, after "All sounds" (ftapi::KindsListed)
 	bool m_bSome;							// no sound had every word: these have some
 	int m_iSelected;						// the sound picked, in m_All; -1 for none
 	std::string m_SelectedKey;				// or the heading picked, by its key
@@ -295,6 +303,7 @@ END_MESSAGE_MAP()
 CSoundBrowserDlg::CSoundBrowserDlg(CMainFrame *pMainFrame) :
 	CDialog(IDD_SOUND_BROWSER, pMainFrame),
 	m_pMainFrame(pMainFrame),
+	m_iKind(-1),
 	m_bSome(false),
 	m_iSelected(-1),
 	m_iTrial(-1),
@@ -440,23 +449,34 @@ void CSoundBrowserDlg::FillFilters()
 	}
 	m_cChannel.SetCurSel(0);
 
+	m_iKind = g_Kind >= 0 && static_cast<size_t>(g_Kind) < ftapi::SoundKinds().size() ? g_Kind : -1;
 	std::vector<int> None(ftapi::SoundKinds().size(), 0);
 	FillKinds(None, 0);
-	m_cKinds.SetCurSel(g_Kind >= 0 && g_Kind < m_cKinds.GetCount() ? g_Kind : 0);
 }
 
-// The kinds on the left, each with how many sounds it has of those found
+// The kinds on the left, each with how many sounds it has of those found: a kind with none isn't listed (but the one
+// picked), and the kind picked stays picked
 void CSoundBrowserDlg::FillKinds(const std::vector<int> &Counts, int Total)
 {
 	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
-	const int Picked = std::max(0, m_cKinds.GetCurSel()), Top = m_cKinds.GetTopIndex();
+	const int Top = m_cKinds.GetTopIndex();
+	const std::vector<int> Listed = ftapi::KindsListed(Counts, m_iKind);
+	m_KindRows.clear();
+	for (size_t i = 0; i < Listed.size(); ++i)
+		if (Listed[i] >= 0 && static_cast<size_t>(Listed[i]) < Kinds.size())
+			m_KindRows.push_back(Listed[i]);
 	m_cKinds.SetRedraw(FALSE);
 	m_cKinds.ResetContent();
 	m_cKinds.AddString(_T("All sounds (") + Thousands(Total) + _T(")"));
-	for (size_t k = 0; k < Kinds.size(); ++k)
+	int Picked = 0;
+	for (size_t r = 0; r < m_KindRows.size(); ++r) {
+		const size_t k = static_cast<size_t>(m_KindRows[r]);
 		m_cKinds.AddString(FromUtf8(Kinds[k].Label) + _T(" (") + Thousands(k < Counts.size() ? Counts[k] : 0) + _T(")"));
-	m_cKinds.SetCurSel(Picked < m_cKinds.GetCount() ? Picked : 0);
-	m_cKinds.SetTopIndex(Top >= 0 ? Top : 0);
+		if (m_KindRows[r] == m_iKind)
+			Picked = static_cast<int>(r) + 1;
+	}
+	m_cKinds.SetCurSel(Picked);
+	m_cKinds.SetTopIndex(Top >= 0 && Top < m_cKinds.GetCount() ? Top : 0);
 	m_cKinds.SetRedraw(TRUE);
 	m_cKinds.Invalidate();
 }
@@ -473,22 +493,21 @@ void CSoundBrowserDlg::Refilter()
 	Query.Target = Channel > 0 && static_cast<size_t>(Channel) <= m_Targets.size() ? m_Targets[static_cast<size_t>(Channel - 1)] : -1;
 	m_Found = ftapi::FindSounds(m_All, Query, &m_bSome);
 	const std::vector<int> Counts = ftapi::KindCounts(m_All, m_Found);
-	FillKinds(Counts, static_cast<int>(m_Found.size()));
 
 	// The kind picked on the left, or every kind under headings of their own: words that find nothing of the kind
 	// picked, but sounds of other kinds, show every kind
-	int Kind = m_cKinds.GetCurSel();
 	const std::vector<ftapi::SoundKind> &Kinds = ftapi::SoundKinds();
 	Words.Trim();
-	if (!Words.IsEmpty() && Kind > 0 && static_cast<size_t>(Kind) <= Counts.size() && Counts[static_cast<size_t>(Kind - 1)] == 0 &&
+	if (!Words.IsEmpty() && m_iKind >= 0 && static_cast<size_t>(m_iKind) < Counts.size() && Counts[static_cast<size_t>(m_iKind)] == 0 &&
 		!m_Found.empty()) {
-		Kind = 0;
-		g_Kind = 0;
-		m_cKinds.SetCurSel(0);
+		m_iKind = -1;
+		g_Kind = -1;
 	}
+	FillKinds(Counts, static_cast<int>(m_Found.size()));
+	const bool OneKind = m_iKind >= 0 && static_cast<size_t>(m_iKind) < Kinds.size();
 	std::vector<size_t> Shown;
-	if (Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size()) {
-		const std::string &Id = Kinds[static_cast<size_t>(Kind - 1)].Id;
+	if (OneKind) {
+		const std::string &Id = Kinds[static_cast<size_t>(m_iKind)].Id;
 		for (size_t f = 0; f < m_Found.size(); ++f)
 			if (m_All[m_Found[f]].Kind == Id)
 				Shown.push_back(m_Found[f]);
@@ -496,7 +515,7 @@ void CSoundBrowserDlg::Refilter()
 	else
 		Shown = m_Found;
 	m_Groups = ftapi::GroupSounds(m_All, Shown);
-	m_View.EveryKind = !(Kind > 0 && static_cast<size_t>(Kind) <= Kinds.size());
+	m_View.EveryKind = !OneKind;
 	m_View.Words = !Words.IsEmpty();
 	ShowRows();
 
@@ -543,6 +562,34 @@ int CSoundBrowserDlg::FirstSoundRow() const
 		if (m_Rows[r].Type == ftapi::ROW_SOUND)
 			return static_cast<int>(r);
 	return -1;
+}
+
+// Enter in Find: the sound that matches the words best (ftapi::BestSound: one that plays here before another chip's alike),
+// wherever its group is in the list, its headings opened if folded, picked, scrolled to and heard; the status says so
+void CSoundBrowserDlg::PickBest()
+{
+	CString Words;
+	m_cFind.GetWindowText(Words);
+	Words.Trim();
+	const int Best = ftapi::BestSound(m_All, m_Groups, ToUtf8(Words));
+	if (Best < 0) {
+		SelectRow(FirstSoundRow());
+		return;
+	}
+	if (ftapi::OpenTo(m_Groups, m_View, static_cast<size_t>(Best))) {
+		g_Folds = m_View.Folds;
+		ShowRows();
+	}
+	m_bClicking = true;		// it plays below, also when it was picked already
+	SelectRow(ftapi::SoundRowOf(m_Rows, static_cast<size_t>(Best)));
+	m_bClicking = false;
+	KillTimer(TMR_SETTLE);
+	ListenTo(Best);
+	if (!Words.IsEmpty() && m_iPlaying == Best) {	// (else the status says why it doesn't play)
+		const ftapi::SoundEntry &E = m_All[static_cast<size_t>(Best)];
+		SetStatus(_T("The best match for \"") + Words + _T("\" is picked: ") + FromUtf8(E.Name) + _T(" (") + FromUtf8(E.ChannelName) +
+			_T(", ") + FromUtf8(E.Origin) + _T("). Up and Down go through the others."));
+	}
 }
 
 // Picks a row as the user would (OnItemChanged sees it)
@@ -741,7 +788,7 @@ void CSoundBrowserDlg::ListenTo(int Sound)
 		return;
 	}
 	const ftapi::SoundEntry &E = m_All[static_cast<size_t>(Sound)];
-	if (Preview()->Play(E.Channel, Instrument, ftapi::PreviewSteps(E)))
+	if (Preview()->Play(E.Channel, Instrument, ftapi::PreviewSteps(E), E.Volume))
 		m_iPlaying = Sound;
 	UpdateMarks();
 }
@@ -770,7 +817,7 @@ void CSoundBrowserDlg::PlayKey(int Note, bool Down)
 		SetStatus(Error);
 		return;
 	}
-	if (Preview()->KeyDown(pSound->Channel, Instrument, Note))
+	if (Preview()->KeyDown(pSound->Channel, Instrument, Note, pSound->Volume))
 		m_iPlaying = m_iSelected;
 	UpdateMarks();
 }
@@ -794,12 +841,14 @@ BOOL CSoundBrowserDlg::PreTranslateMessage(MSG *pMsg)
 {
 	const bool Plain = ::GetKeyState(VK_CONTROL) >= 0 && ::GetKeyState(VK_MENU) >= 0;
 	if (pMsg->message == WM_KEYDOWN && pMsg->hwnd == m_cFind.GetSafeHwnd() && (pMsg->wParam == VK_RETURN || pMsg->wParam == VK_DOWN)) {
-		// Enter in Find: the first sound found is picked and heard; Down goes to the list
+		// Enter in Find: the best match is picked and heard (PickBest); Down goes to the list
 		KillTimer(TMR_FIND);
 		Refilter();
 		m_cList.SetFocus();
 		const int Row = m_cList.GetNextItem(-1, LVNI_SELECTED);
-		if (pMsg->wParam == VK_RETURN || Row < 0)
+		if (pMsg->wParam == VK_RETURN)
+			PickBest();
+		else if (Row < 0)
 			SelectRow(FirstSoundRow());
 		return TRUE;
 	}
@@ -889,7 +938,9 @@ void CSoundBrowserDlg::OnFindChanged()
 
 void CSoundBrowserDlg::OnFilterChanged()
 {
-	g_Kind = m_cKinds.GetCurSel();
+	const int Row = m_cKinds.GetCurSel();
+	m_iKind = Row > 0 && static_cast<size_t>(Row) <= m_KindRows.size() ? m_KindRows[static_cast<size_t>(Row - 1)] : -1;
+	g_Kind = m_iKind;
 	Refilter();
 }
 
@@ -1140,8 +1191,8 @@ void CSoundBrowserDlg::AddWithChip()
 	}
 	if (Instrument >= 0 || pDoc->GetExpansionChip() != ChipsBefore || pDoc->IsVrc6Plus() != PlusBefore)
 		++m_iKept;		// the song changed: closing the browser leaves it changed
-	// Every sound again, the filters kept where they still are
-	const int From = m_cFrom.GetCurSel(), Kind = m_cKinds.GetCurSel();
+	// Every sound again, the filters kept where they still are (the kind picked is kept by FillFilters)
+	const int From = m_cFrom.GetCurSel();
 	m_iSelected = -1;
 	m_SelectedKey.clear();
 	m_iPlaying = -1;
@@ -1149,7 +1200,6 @@ void CSoundBrowserDlg::AddWithChip()
 	if (LoadSounds()) {
 		FillFilters();
 		m_cFrom.SetCurSel(From >= 0 && From < m_cFrom.GetCount() ? From : 0);
-		m_cKinds.SetCurSel(Kind >= 0 && Kind < m_cKinds.GetCount() ? Kind : 0);
 		for (size_t i = 0; i < m_All.size() && Instrument >= 0; ++i)
 			if (m_All[i].Source == ftapi::SOURCE_SONG && m_All[i].Number == Instrument && m_All[i].Home)
 				m_iSelected = static_cast<int>(i);

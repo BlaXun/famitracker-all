@@ -124,9 +124,11 @@ struct SoundEntry {
 							// "VRC6 Plus", "MMC5", "N163", "FDS", "VRC7", "5B"); Channel is -1 then, and ChannelName the
 							// channel's it would play on ("VRC6 Pulse 1"); "" for the song's chips' sounds
 	std::string Question;	// AddsChip: what the browser asks before the chip comes in (AddChipQuestion)
+	int Volume;				// the volume its preview plays at (the browser's, its note keys', Instrument > Listen's): about as
+							// loud as a 2A03 pulse at 15, its chip's level counted (ToolSet::Sounds sets it; 15 until then)
 
 	SoundEntry() : Source(SOURCE_PRESET), Target(TARGET_PULSE), Channel(-1), Home(false), Low(false), Drum(false), InSong(-1),
-		Heard(60), Make(MAKE_NONE), Sawtooth(false), Number(0), Builtin(false), Brief(false) {}
+		Heard(60), Make(MAKE_NONE), Sawtooth(false), Number(0), Builtin(false), Brief(false), Volume(15) {}
 };
 
 // The kinds of sound, for the filter: id ("lead"), label ("Leads") and the words that mean it
@@ -179,8 +181,8 @@ const std::vector<std::string> &OtherChipNames();
 // when the song can't get it without a channel going (it has the N163 already, for the VRC6 Plus)
 std::vector<std::string> ChipsWith(const SongInfo &Song, const std::string &Chip);
 // What getting Chip does to the song, in plain words, for the question asked before a sound of it is made: the
-// channels it brings, that every note stays, what NSF export makes of the chips then, and that Ctrl+Z can't take it
-// back (Module > Module properties can)
+// channels it brings, that every note stays, what NSF export makes of the chips then, and that it can't be undone and
+// clears the undo history, so the changes before it can't be undone either (Module > Module properties takes it off)
 std::string AddChipQuestion(const SongInfo &Song, const SoundEntry &Sound);
 
 // What to look for
@@ -223,6 +225,9 @@ struct SoundGroup {
 std::vector<SoundGroup> GroupSounds(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
 // How many of the sounds found are of each kind, in SoundKinds()'s order
 std::vector<int> KindCounts(const std::vector<SoundEntry> &All, const std::vector<size_t> &Found);
+// The kinds the browser's kinds list shows (indices into SoundKinds()): each with sounds among those found (KindCounts),
+// and the one picked (-1 for every kind) even with none; a kind with no sounds isn't listed ("Other (0)")
+std::vector<int> KindsListed(const std::vector<int> &Counts, int Picked);
 // A kind's heading key ("kind/lead"), for SoundView::Folds
 std::string KindKey(const std::string &Kind);
 
@@ -263,6 +268,12 @@ std::string RowKey(const std::vector<SoundGroup> &Groups, const SoundRow &Row);
 int RowHeading(const std::vector<SoundRow> &Rows, int Row);
 // The row of a sound, -1 when it isn't shown
 int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound);
+// The sound Enter in the browser's Find picks: of the sounds in the groups (the list's), the one that matches the words
+// best (SoundMatch), wherever its group is; of matches alike, one that plays in the song before another chip's, then the
+// first in the list's order; -1 for none
+int BestSound(const std::vector<SoundEntry> &All, const std::vector<SoundGroup> &Groups, const std::string &Words);
+// Opens the headings that hide a sound (its kind's, folded by hand, and its group's); false when none did
+bool OpenTo(const std::vector<SoundGroup> &Groups, SoundView &View, size_t Sound);
 
 // The notes a preview plays: ms from its start, and FamiTracker's pitch (C-0 = 0; a noise pitch 0-15 on the
 // noise), PREVIEW_RELEASE or PREVIEW_HALT. A phrase for its kind: a short tune for a lead, a bass figure for a

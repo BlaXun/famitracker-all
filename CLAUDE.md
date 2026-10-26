@@ -1259,6 +1259,35 @@ own. `TestSwingReadsItsMiddle`, `TestCopyNamesApart`, `TestWriteNotesSounds`,
 `TestPolishTwice`, `TestMixDacRange`, `TestLoopReleasesPads`,
 `TestUndoSaysWhat`, `TestBloomHolds` and `TestCalmRecipeLeads` cover them.
 
+Browser and tool fixes (from `feat-fixes-browser`): `ToolSet::Call` refuses
+a call with an argument its tool's schema lacks, doing nothing
+(`ToolSet::UnknownArguments`, public so the tests check calls without
+running them: `NearestArgument` names the one likely meant); the tests'
+`UnknownInText` reads the instructions, recipes, prompts, descriptions and
+`what_next`'s replies for `tool {json}` and "tool with argument", and
+`CheckFixCalls` check_song's fixes, so keep every call written anywhere in
+step with the schemas. The browser's Enter picks `BestSound` (the shown
+sound `SoundMatch` scores best, one that plays here before another chip's,
+then list order; `GroupSounds` keeps a kind's ready-made sounds first, so
+the best can sit lower) after `OpenTo` opens its headings, the
+kinds list is `KindsListed` (the browser keeps the kind picked by its index,
+`m_iKind`, `g_Kind`, not by row), and every preview, note key and Listen
+plays at `SoundEntry::Volume` (`PreviewVolume` beside `ToolSet::Sounds`:
+`VolumeForDb` at 0 dB, the fader left out; `CSoundPreview` writes it in each
+note, which had none: the channel's own, full after a stop).
+`CSoundGen::StopRendering` clears the buffer before `MakeSilent`: 0.4.6 reset
+the APU after the channels' reset, which left `$4015` off, so the 2A03 was
+silent for previews and note keys after every render until a song played.
+`ShortTitle` in `References.cpp` makes a studied sound's name (before a
+parenthesis, bracket or tildes; a long one to its first clause or its
+start's words within 20 letters; an ending number kept), and the sound
+index's `Lister::Unique` numbers alike names across studies and the
+built-in games (`GameSoundsData.h` holds titles, not names). The status bar
+shows a song at speed 1 as `StatusFramesText` (`RecorderInput.cpp`,
+`CMainFrame::OnUpdateSBTempo` with `CSoundGen::GetPlayerSpeed`; the pane is
+widened for `STATUS_FRAMES_LONGEST`). `TestUnknownArguments`,
+`TestBrowserFixes`, `TestStudiedNames` and `TestStatusBarFrames` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

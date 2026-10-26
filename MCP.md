@@ -312,6 +312,23 @@ Each recipe ends with its numbers from the built-in guide (topics `calm`,
 up. Without a kind, the general recipe points at the three when your idea
 asks for one.
 
+### Arguments a tool doesn't take
+
+A call with an argument the tool doesn't take does nothing and says so,
+naming the argument it likely meant and the tool's own (the required ones
+marked), so a model corrects the call: `find_sound` with `words` answers
+*find_sound has no argument "words" (did you mean "query"?), so nothing was
+done. Its arguments: query, kind, from, channel, other_chips.* Such an
+argument used to be ignored, so `find_sound` listed every sound (2,129 for
+one song) and `transpose` given `channel` moved every channel. The argument meant is
+named when it's the same written another way (`BPM`, `fromBar`), a letter or
+two off (`channel` for `channels`), a word of its name (`motion` for
+`design_instrument`'s `duty_motion`) or the only one whose description starts
+with the word (`query`, "Words to look for"). Every call the recipes, the
+instructions, `what_next` and the checks' fixes give, and every call
+FamiTracker makes itself, uses only the tools' own arguments (the tests read
+them all).
+
 ### One step at a time: `what_next`
 
 `what_next` looks at the open track and answers with the one step that
@@ -677,7 +694,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. It also takes a track of the twelve soundtracks FamiTracker carries by its id (`castlevania-02`), with or without the library. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
-| `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips (the presets and FamiTracker's own sound library, some 230 more sounds of every kind for every chip's channels), the studied sounds of the twelve soundtracks FamiTracker carries (see [Sounds from twelve soundtracks](#sounds-from-twelve-soundtracks)), each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. A study's sounds of the same name are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With `other_chips`, the ready-made sounds of the chips the song doesn't have come too, after its own, each with the `set_expansion` call that adds its chip first (every note stays). With a channel, every sound that plays there |
+| `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips (the presets and FamiTracker's own sound library, some 230 more sounds of every kind for every chip's channels), the studied sounds of the twelve soundtracks FamiTracker carries (see [Sounds from twelve soundtracks](#sounds-from-twelve-soundtracks)), each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. Studied sounds of the same name, of one study or two, are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With `other_chips`, the ready-made sounds of the chips the song doesn't have come too, after its own, each with the `set_expansion` call that adds its chip first (every note stays). With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
@@ -1363,7 +1380,9 @@ brings (its channels come after the song's own), that every note stays and
 whether NSF export can still play the song, then adds the chip (the N163
 with 4 channels, the VRC6 Plus with its starter sounds) as Module > Module
 properties does, and the sound with it. As there, Ctrl+Z doesn't take a
-chip back; Module properties takes it off again. A chip that would change
+chip back, and adding one clears the undo history, so the changes made
+before it can't be undone either (the question says so); Module properties
+takes it off again. A chip that would change
 the song's channels (the VRC6 Plus on a song with the N163) isn't offered.
 
 The **VRC6** adds two pulses and a sawtooth, and the **MMC5** two more pulses
@@ -1898,8 +1917,11 @@ Final Fantasy 3, Journey to Silius, Nintendo World Cup, Partena no Kagami
 (Kid Icarus on the Famicom Disk System), Punch-Out!!, Robot Block, Strider
 Hiryu, Super C (Super Contra) and The Legend of Zelda: 615 sounds of 152
 tracks, each sound once with the tracks it plays in, named as the browser
-names a study's sounds (the track's title and the part, "Killer (Courtyard)
-lead"). Only the sounds come with FamiTracker (their envelopes, duties,
+names a study's sounds (the track's title as far as a parenthesis, or its
+first words when it's long, and the part: "Vampire Killer lead" for Vampire
+Killer (Courtyard), "Beginning bass" for Beginning (Block-1); a number that
+ends a title stays, "The Everlasting 2"). Only the sounds come with
+FamiTracker (their envelopes, duties,
 waves and modulators), none of the studies' other notes. The sound browser
 and `find_sound` list them game by game, and a sound of theirs that your
 library has too shows once, as theirs; `reference_sound` adds one by its

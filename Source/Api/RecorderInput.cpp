@@ -312,4 +312,9 @@ bool LayoutWantsFrames(int Bpm)
 	return Bpm == 1 || Bpm > LAYOUT_MOST_BPM;
 }
 
+std::string StatusFramesText(int Speed, int Tempo, int FrameRate)
+{
+	return LayoutFramesText(Speed, Tempo, FrameRate) + " a row";
+}
+
 }	// namespace ftapi

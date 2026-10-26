@@ -151,6 +151,8 @@ public:
 	void		 ResetState();
 	void		 ResetTempo();
 	float		 GetTempo() const;
+	int			 GetPlayerSpeed() const { return static_cast<int>(m_iSpeed); }	// the speed and tempo playing (with Fxx), read
+	int			 GetPlayerTempo() const { return static_cast<int>(m_iTempo); }	// without a lock, as GetTempo reads them
 	bool		 IsPlaying() const { return m_bPlaying; };
 
 	// Stats

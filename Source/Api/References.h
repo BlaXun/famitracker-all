@@ -155,8 +155,15 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 // steps, which move a frequency (a 2A03 or VRC6 sound's turned around, alike around A-3, 440 Hz, with four channels;
 // an FDS sound's four times coarser). How says in words what it plays.
 WaveSound ReferenceWaveSound(const ReferenceSound &Sound, const std::string &Name, std::string &How);
-// A short name for an instrument from a sound: "Magma Tanker lead"
+// A short name for an instrument from a sound: "Magma Tanker lead" (the title as ShortTitle keeps it, a track that has
+// only a number by its game's name, "Legend 1 lead", and the sound's role)
 std::string ReferenceSoundName(const Reference &R, const ReferenceSound &Sound);
+// A title as a sound's name keeps it: the title before its parenthesis, bracket or subtitle in tildes ("Beginning" for
+// "Beginning (Block-1)", "Vampire Killer" for "Vampire Killer (Courtyard)"); when that's long, up to where its first
+// clause ends ("Stage 4" for "Stage 4 - Mechanic Factory") or the words from its start that fit in 20 letters, never
+// ending on a word that leads on ("Let Me Know" for "Let Me Know the Truth"); and a number that ended the title, which
+// that left out, after it ("Hazardous Short 1", "The Everlasting 2" for "The Everlasting World (Ending Theme) -2-")
+std::string ShortTitle(const std::string &Title);
 
 // The built-in guide to the classic NES styles: what's in it, a section, or
 // the sections matching words

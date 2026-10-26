@@ -43,11 +43,13 @@ public:
 	virtual ~CSoundPreview();
 
 	// Plays the steps on the channel (the song's, by index) with the instrument: what played before stops, and the
-	// song if it plays. False when it can't (no song, no such channel or instrument).
-	bool Play(int Channel, int Instrument, const std::vector<ftapi::PreviewStep> &Steps);
+	// song if it plays. False when it can't (no song, no such channel or instrument). Volume is the volume column of
+	// its notes (0-15): the sound's SoundEntry::Volume, about as loud as a 2A03 pulse at 15 on every chip (the VRC7's
+	// 13)
+	bool Play(int Channel, int Instrument, const std::vector<ftapi::PreviewStep> &Steps, int Volume = 15);
 	// A note key (or a MIDI key) pressed while a sound is picked: the instrument plays the note (FamiTracker's
-	// pitch, C-0 = 0; a noise pitch on the noise) until it's let go, and is silent a moment after that
-	bool KeyDown(int Channel, int Instrument, int Note);
+	// pitch, C-0 = 0; a noise pitch on the noise) at the volume until it's let go, and is silent a moment after that
+	bool KeyDown(int Channel, int Instrument, int Note, int Volume = 15);
 	void KeyUp(int Note);
 	// Silent at once
 	void Stop();
@@ -68,7 +70,7 @@ private:
 		int Note;		// a pitch, PREVIEW_RELEASE or PREVIEW_HALT
 	};
 
-	bool Start(int Channel, int Instrument);
+	bool Start(int Channel, int Instrument, int Volume);
 	void Queue(int Note);
 	void Finish();
 
@@ -77,12 +79,13 @@ private:
 	DWORD m_dwStart;
 	int m_iChannel;			// -1 while nothing plays
 	int m_iInstrument;
+	int m_iVolume;			// the notes' volume column (0-15)
 	int m_iKeyNote;			// the note a key holds, -1 for none
 	bool m_bSongStopped;	// the song was seen stopped since this began: a song that starts now ends it
 	unsigned m_iSerial;
 };
 
 // Instrument > Listen and the instrument list's play button: the song's instrument plays the phrase of its kind
-// (Api/SoundIndex.h) on the channel the track plays it most, or where its chip's sounds go, as the sound browser
-// plays the song's own instruments; the status bar says what plays, or why it can't
+// (Api/SoundIndex.h) on the channel the track plays it most, or where its chip's sounds go, at its preview's volume, as
+// the sound browser plays the song's own instruments; the status bar says what plays, or why it can't
 void ListenToInstrument(CMainFrame *pMainFrame, int Instrument);

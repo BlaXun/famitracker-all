@@ -424,6 +424,24 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		TRACE0("Failed to create status bar\n");
 		return -1;      // fail to create
 	}
+	{
+		// The tempo's pane wide enough for a song at speed 1's frames (OnUpdateSBTempo) as well as "000.00 BPM"
+		const int Pane = m_wndStatusBar.CommandToIndex(ID_INDICATOR_TEMPO);
+		CFont *pFont = m_wndStatusBar.GetFont();
+		if (pFont == NULL)
+			pFont = CFont::FromHandle(static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT)));
+		if (Pane >= 0 && pFont != NULL) {
+			UINT Id = 0, Style = 0;
+			int Width = 0;
+			m_wndStatusBar.GetPaneInfo(Pane, Id, Style, Width);
+			CClientDC Dc(&m_wndStatusBar);
+			CFont *pOldFont = Dc.SelectObject(pFont);
+			const int Wanted = Dc.GetTextExtent(BPMStatusLongest()).cx;
+			Dc.SelectObject(pOldFont);
+			if (Wanted > Width)
+				m_wndStatusBar.SetPaneInfo(Pane, Id, Style, Wanted);
+		}
+	}
 
 	if (!CreateDialogPanels())
 		return -1;
@@ -1547,13 +1565,22 @@ void CMainFrame::OnUpdateSBTempo(CCmdUI *pCmdUI)
 		if (Highlight == 0)
 			Highlight = 4;
 		float BPM = (pSoundGen->GetTempo() * 4.0f) / float(Highlight);
+		int Speed = pSoundGen->GetPlayerSpeed(), Tempo = pSoundGen->GetPlayerTempo();
 		// Stopped, the song's own speed and tempo: the player's are the defaults
 		// until it first plays, whatever the song has (a template's 120 BPM)
 		const CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(GetActiveDocument());
-		if (!theApp.IsPlaying() && pDoc != NULL && pDoc->GetSongSpeed(m_iTrack) > 0)
-			BPM = (pDoc->GetSongTempo(m_iTrack) * 6.0f / pDoc->GetSongSpeed(m_iTrack)) * 4.0f / float(Highlight);
+		if (!theApp.IsPlaying() && pDoc != NULL && pDoc->GetSongSpeed(m_iTrack) > 0) {
+			Speed = static_cast<int>(pDoc->GetSongSpeed(m_iTrack));
+			Tempo = static_cast<int>(pDoc->GetSongTempo(m_iTrack));
+			BPM = (Tempo * 6.0f / Speed) * 4.0f / float(Highlight);
+		}
 		CString String;
-		String.Format(_T("%.2f BPM"), BPM);
+		// A song at speed 1 (a sound effect, ambience) has no beat to count: the frames a row lasts, as the song
+		// settings show it ("1 frame a row"), where it showed 900 BPM
+		if (pDoc != NULL && BPMShowsFrames(Speed))
+			String = BPMStatusText(Speed, Tempo, static_cast<int>(pDoc->GetFrameRate()));
+		else
+			String.Format(_T("%.2f BPM"), BPM);
 		pCmdUI->Enable();
 		pCmdUI->SetText(String);
 	}

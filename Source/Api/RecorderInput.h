@@ -96,5 +96,9 @@ const int LAYOUT_LEAST_BPM = 20, LAYOUT_MOST_BPM = 400;
 bool LayoutShowsFrames(int Speed);
 std::string LayoutFramesText(int Speed, int Tempo, int FrameRate);	// "1 frame", "1.25 frames"
 bool LayoutWantsFrames(int Bpm);
+// The status bar's tempo for such a song (LayoutShowsFrames), where it showed 900 BPM: "1 frame a row", "1.25 frames a
+// row"; the longest it can be, for the pane's width
+std::string StatusFramesText(int Speed, int Tempo, int FrameRate);
+const char *const STATUS_FRAMES_LONGEST = "8.88 frames a row";
 
 }	// namespace ftapi
