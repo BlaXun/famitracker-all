@@ -35,6 +35,7 @@
 #include "Picture.h"
 #include "Presets.h"
 #include "PulseClicks.h"
+#include "RecorderInput.h"
 #include "References.h"
 #include "Song.h"
 #include "SoundEffects.h"
@@ -2507,6 +2508,22 @@ MixerSettings CurrentMixer(const Session &S)
 	return M;
 }
 
+// A tempo in words, as FamiTracker's status bar shows it: "150 BPM" (Tenths: "128.6 BPM", else rounded to a whole BPM),
+// or for a song at speed 1 (a sound effect's pace or an ambience's, a row a frame at the default tempo: no beat to count,
+// and 900 BPM at four rows a beat) the frames a row lasts, "1 frame a row" (StatusFramesText)
+std::string PaceText(int Speed, int Tempo, int FrameRate, int RowsPerBeat, bool Tenths = true)
+{
+	if (LayoutShowsFrames(Speed))
+		return StatusFramesText(Speed, Tempo, FrameRate);
+	const double Bpm = BeatsPerMinute(Speed, Tempo, FrameRate, RowsPerBeat);
+	return FormatNumber(Tenths ? std::floor(Bpm * 10 + 0.5) / 10 : std::floor(Bpm + 0.5)) + " BPM";
+}
+
+std::string PaceText(const Session &S, bool Tenths = true)
+{
+	return PaceText(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat, Tenths);
+}
+
 std::string SongOverview(Session &S, const Json &Args)
 {
 	const SongInfo &Song = S.Song;
@@ -2528,9 +2545,9 @@ std::string SongOverview(Session &S, const Json &Args)
 				static_cast<int>(t) == Song.Track ? " (selected)" : "", t + 1 < Song.TrackNames.size() ? "," : "");
 		Text += "\n";
 	}
-	Text += Format("Tempo: %s BPM (speed %d, tempo %d, %s %d Hz); %d rows a beat, %d beats a bar (%d rows)\n",
-		FormatNumber(std::floor(BeatsPerMinute(Song.Speed, Song.Tempo, Song.FrameRate, T.RowsPerBeat) * 10 + 0.5) / 10).c_str(),
-		Song.Speed, Song.Tempo, Song.FrameRate == 50 ? "PAL" : (Song.FrameRate == 60 ? "NTSC" : "engine"), Song.FrameRate,
+	Text += Format("Tempo: %s (speed %d, tempo %d, %s %d Hz); %d rows a beat, %d beats a bar (%d rows)\n",
+		PaceText(Song.Speed, Song.Tempo, Song.FrameRate, T.RowsPerBeat).c_str(), Song.Speed, Song.Tempo,
+		Song.FrameRate == 50 ? "PAL" : (Song.FrameRate == 60 ? "NTSC" : "engine"), Song.FrameRate,
 		T.RowsPerBeat, T.RowsPerBar / T.RowsPerBeat, T.RowsPerBar);
 	Text += Format("Length: %s (%s of %d rows)\n", Plural(T.BarCount(), "bar", "bars").c_str(),
 		Plural(T.Frames, "frame", "frames").c_str(), T.PatternLength);
@@ -4246,7 +4263,7 @@ std::string BeatShare(double Beats)
 // An instrument's volume sequence a frame at a time, as FamiTracker reports it, and what it means in time at the song's
 // tempo (Bpm, FramesPerBeat): when it peaks, is down to half, holds or falls silent, is struck again, and how a release
 // fades it (design_instrument's answer, so the shape is known before a tune is written on it)
-std::string VolumeTimeline(const InstrumentInfo &Info, double FramesPerBeat, double Bpm)
+std::string VolumeTimeline(const InstrumentInfo &Info, double FramesPerBeat, const std::string &Pace)
 {
 	const std::vector<int> &V = Info.Volume;
 	const int Items = static_cast<int>(V.size());
@@ -4312,7 +4329,7 @@ std::string VolumeTimeline(const InstrumentInfo &Info, double FramesPerBeat, dou
 	Out += ".";
 	if (When.empty())
 		return Out;
-	Out += " At " + FormatNumber(std::floor(Bpm * 10 + 0.5) / 10) + " BPM it ";
+	Out += " At " + Pace + " it ";
 	for (size_t i = 0; i < When.size(); ++i)
 		Out += (i == 0 ? "" : i + 1 == When.size() ? " and " : ", ") + When[i];
 	return Out + ".";
@@ -5071,8 +5088,8 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		return "Added " + InstrumentLabel(S.Song, Index) + " (N163 instrument, the " + pBase->Name + "'s waves): " +
 			DescribeDesign(D, S.Song.FrameRate, "N163") + Unused + (Where.empty() ? std::string() : "; " + Where) + "." +
 			DesignWordsText(W) +
-			VolumeTimeline(SequencesInfo(Sound.Sequences, "N163"), FramesPerBeat, BeatsPerMinute(S.Song.Speed, S.Song.Tempo,
-			S.Song.FrameRate, S.Time.RowsPerBeat)) + WaveSoundLevel(S, Sound) + NoRestrike + RestrikeText(D, FramesPerBeat, false) +
+			VolumeTimeline(SequencesInfo(Sound.Sequences, "N163"), FramesPerBeat, PaceText(S)) + WaveSoundLevel(S, Sound) +
+			NoRestrike + RestrikeText(D, FramesPerBeat, false) +
 			VanishRemark(S.Song, Index) +
 			" Use it by name in write_notes, "
 			"set_instrument or a part tool's instrument; play a few notes so the user hears it.";
@@ -5141,8 +5158,7 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	const InstrumentInfo *pMade = FindInstrument(S.Song, Index);
 	std::string Timeline, Clicks;
 	if (pMade != 0 && !D.Drum && !Triangle && (Chip == "2A03" || Chip == "VRC6"))
-		Timeline = VolumeTimeline(*pMade, FramesPerBeat, BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate,
-			S.Time.RowsPerBeat));
+		Timeline = VolumeTimeline(*pMade, FramesPerBeat, PaceText(S));
 	if (pMade != 0 && Chip == "2A03" && !D.Drum && !Triangle && !Noise && D.Vibrato > 0) {
 		// On the 2A03's (and the MMC5's) pulses a vibrato that takes a held note's period across a multiple of 256 clicks
 		const std::vector<int> Pitches = VibratoClickPitches(*pMade);
@@ -5488,8 +5504,7 @@ void SpeedTempoFor(Session &S, double Bpm, int RowsPerBeat, int &Speed, int &Tem
 // "120 BPM (speed 6, tempo 120)"
 std::string TempoText(const Session &S, int Speed, int Tempo)
 {
-	const double Bpm = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
-	return Format("%s BPM (speed %d, tempo %d)", FormatNumber(std::floor(Bpm * 10 + 0.5) / 10).c_str(), Speed, Tempo);
+	return Format("%s (speed %d, tempo %d)", PaceText(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat).c_str(), Speed, Tempo);
 }
 
 // When rows don't all last the same number of ticks: how long they last, and
@@ -6581,7 +6596,10 @@ bool PlaysBassPart(Session &S, int Channel, int First, int End);
 // Voiced chords: two to four channels of one kind (FM, N163, 5B or pulses) beside
 // the melody, not an echo of it nor the bass (a soft layer's sub bass starts its
 // notes with the pads' voices, but holds the bass), whose notes there mostly start
-// together; empty if none
+// together, or a row apart (a chord broken "pah-pi" over two plucks, a strum a row
+// long, as HeardRoles hears a pad's voices: a song whose plucks started together in
+// some sections and a row apart in others was "another line" over the whole song and
+// the chords section by section); empty if none
 std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool Every = false)
 {
 	std::vector<int> All;	// Every: the voices of every kind of channel that voices chords there
@@ -6619,7 +6637,7 @@ std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool 
 					continue;
 				int Shared = 0;
 				for (std::set<int>::const_iterator it = Starts[a].begin(); it != Starts[a].end(); ++it)
-					Shared += Starts[b].count(*it) > 0 ? 1 : 0;
+					Shared += Starts[b].count(*it) > 0 || Starts[b].count(*it - 1) > 0 || Starts[b].count(*it + 1) > 0 ? 1 : 0;
 				Together = Shared * 10 >= static_cast<int>(Starts[a].size()) * 7;
 			}
 			if (Together && Voices.size() < 4)
@@ -7359,6 +7377,100 @@ int UsualLowOf(Session &S, int Channel)
 	return Pitches[Pitches.size() / 5];
 }
 
+// What chords fitted to a melody hear besides it: the lines that play on with them in [First, End) (a counter-line, a
+// second voice, chords or a bass left playing: every melodic channel but the melody, its echo and the channels the new
+// parts go on), at OTHER_LINES_WEIGHT of a melody note's weight, so the melody leads. Fitted to the melody alone, 58's A'
+// put Dm and C under its sawtooth counter-line's Bb and C# (the song's Gm7 and A7): 7 clashes in 4 bars
+const double OTHER_LINES_WEIGHT = 0.5;
+
+std::vector<transcribe::MelodyNote> OtherLines(Session &S, int First, int End, int Melody, int ChordChannel, int BassChannel,
+	const std::vector<int> &VoiceChannels)
+{
+	std::vector<transcribe::MelodyNote> Out;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const bool Voice = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) != VoiceChannels.end();
+		if (c == Melody || c == ChordChannel || c == BassChannel || Voice || !IsMelodic(S.Channel(c)) ||
+			(Melody >= 0 && EchoDelayOf(S, c, Melody, First, End) > 0))
+			continue;
+		std::vector<transcribe::MelodyNote> Line = MelodyOf(S.Notes(c), First, End);
+		for (size_t i = 0; i < Line.size(); ++i) {
+			Line[i].weight *= OTHER_LINES_WEIGHT;
+			Out.push_back(Line[i]);
+		}
+	}
+	return Out;
+}
+
+// A secondary dominant where the parts call for one: a span of chords fitted to a melody whose notes sound, for a beat or
+// more in the melody and the other lines together, the third of the major chord a fifth over the next span's (a note from
+// outside the key: 58's counter-line's C# before Dm, A), and which rubs a semitone against it, becomes that major chord
+// (ColorChords then gives it its seventh), unless one of the melody's notes there rubs against it; the spans before it
+// that sound that note so too (a bar's first half as well as its second; a chord held over a bar line is heard bar by
+// bar), merged with it. The key's own chords, which the fitting picks from, can't take such a note: every chord of F major
+// has a C or a D
+void SecondaryDominants(std::vector<ChordAt> &Chords, const std::vector<transcribe::MelodyNote> &Melody,
+	const std::vector<transcribe::MelodyNote> &Others, const Key &K, int RowsPerBeat, const std::vector<BarSpan> &Bars)
+{
+	const auto Mod12 = [](int Value) { return ((Value % 12) + 12) % 12; };
+	std::vector<ChordAt> Split;
+	for (size_t i = 0; i < Chords.size(); ++i) {
+		ChordAt A = Chords[i];
+		for (size_t b = 0; b < Bars.size(); ++b)
+			if (Bars[b].Row > A.Row && Bars[b].Row < A.Row + A.Rows) {
+				ChordAt Before = A;
+				Before.Rows = Bars[b].Row - A.Row;
+				Split.push_back(Before);
+				A.Rows -= Before.Rows;
+				A.Row = Bars[b].Row;
+			}
+		Split.push_back(A);
+	}
+	Chords = Split;
+	auto Overlap = [](const transcribe::MelodyNote &N, int First, int End) {
+		return std::max(0, std::min(End, N.row + N.length) - std::max(First, N.row));
+	};
+	std::vector<char> Made(Chords.size(), 0);
+	for (size_t i = Chords.size() - 1; i-- > 0; ) {
+		ChordAt &A = Chords[i];
+		const int End = A.Row + A.Rows;
+		if (Chords[i + 1].Row != End)
+			continue;
+		// The dominant of the next span's chord, or the next span's own where it's one made here
+		const int Root = Mod12(Chords[i + 1].C.Root + (Made[i + 1] ? 0 : 7)), Third = Mod12(Root + 4), Fifth = Mod12(Root + 7);
+		if (InKey(Third, K) || Root == Mod12(A.C.Root) ||
+			(!A.C.HasPitchClass(Mod12(Third + 1)) && !A.C.HasPitchClass(Mod12(Third - 1))))
+			continue;
+		int Heard = 0;
+		for (size_t n = 0; n < Melody.size(); ++n)
+			Heard += Mod12(Melody[n].midi) == Third ? Overlap(Melody[n], A.Row, End) : 0;
+		for (size_t n = 0; n < Others.size(); ++n)
+			Heard += Mod12(Others[n].midi) == Third ? Overlap(Others[n], A.Row, End) : 0;
+		if (Heard < RowsPerBeat)
+			continue;
+		bool Rubs = false;
+		for (size_t n = 0; n < Melody.size() && !Rubs; ++n) {
+			const int Class = Mod12(Melody[n].midi);
+			if (Overlap(Melody[n], A.Row, End) < std::max(1, RowsPerBeat / 2) || Class == Root || Class == Third || Class == Fifth)
+				continue;
+			for (int d = -1; d <= 1 && !Rubs; d += 2)
+				Rubs = Mod12(Class + d) == Root || Mod12(Class + d) == Third || Mod12(Class + d) == Fifth;
+		}
+		if (Rubs)
+			continue;
+		A.C = Chord(Root, std::vector<int>{ 0, 4, 7 });
+		Made[i] = 1;
+	}
+	// The same chord in a row, one span again, as the fitting gives them
+	std::vector<ChordAt> Joined;
+	for (size_t i = 0; i < Chords.size(); ++i) {
+		if (!Joined.empty() && Joined.back().C == Chords[i].C && Joined.back().Row + Joined.back().Rows == Chords[i].Row)
+			Joined.back().Rows += Chords[i].Rows;
+		else
+			Joined.push_back(Chords[i]);
+	}
+	Chords = Joined;
+}
+
 // A part playing over chords given for bars the song's melody rests in counts as their melody unless its notes sit this
 // many semitones or more under the melody's usual low notes
 const int BELOW_THE_TUNE = 3;
@@ -7591,9 +7703,14 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		Options.rowsPerBeat = R;
 		Options.halfBars = BoolArg(Args, "half_bars", true);
 		std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
-		Chords = ChordsOf(transcribe::ChooseChords(Line, Bars, HK, Options));
+		std::vector<transcribe::MelodyNote> Heard = Line;
+		const std::vector<transcribe::MelodyNote> Others = OtherLines(S, First, End, Melody, ChordChannel, BassChannel,
+			VoiceChannels);
+		Heard.insert(Heard.end(), Others.begin(), Others.end());
+		Chords = ChordsOf(transcribe::ChooseChords(Heard, Bars, HK, Options));
 		if (Chords.empty())
 			throw Problem("The melody is too short to fit chords to.");
+		SecondaryDominants(Chords, Line, Others, K, R, Spans);
 	}
 	chord_color Color;
 	if (!ParseColor(StringArg(Args, "color", Style == CHORDS_LUSH || Style == CHORDS_VOICES ? "rich" : "plain"), Color))
@@ -7648,6 +7765,19 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < BassO.Above.size(); ++i)
 			BassO.Above[i].Pitch += Written(S.Channel(BassChannel), 0);
 		BassNotes = BassPart(Chords, Spans, BassO);
+		if (!Given && BassStyle != BASS_PEDAL) {
+			// Where the chord fitted to the melody can't keep off another part's note (one from outside the key), the bass
+			// leaves the clash out
+			const std::vector<int> Moved = BassOffRubs(BassNotes, Chords, BassO);
+			std::vector<int> MovedBars;
+			for (size_t i = 0; i < Moved.size(); ++i)
+				if (std::find(MovedBars.begin(), MovedBars.end(), S.Time.BarOf(Moved[i])) == MovedBars.end())
+					MovedBars.push_back(S.Time.BarOf(Moved[i]));
+			if (!MovedBars.empty())
+				S.Remarks.push_back(Format("The bass plays another note of its chord in %s %s, where its root would rub a semitone "
+					"against another part's note (give chords to choose them yourself).", MovedBars.size() == 1 ? "bar" : "bars",
+					BarList(MovedBars).c_str()));
+		}
 	}
 	// The room the chords keep, as the parts sound: under the melody's notes and over the bass's while each chord sounds
 	// (ChordPartOptions::Above and Below), voiced under the melody's low notes where it rests a moment, in their own
@@ -9256,6 +9386,10 @@ struct HeardBalance {
 	};
 	std::vector<ChordPart> Parts;
 	std::vector<int> LayerBars;					// each layer's bars with the melody
+	// Each main layer with the layers it's the main of (Main), together against the melody where they play with it, as the
+	// stems hear chords in layers (a pad under broken chords); NO_LOUDNESS for the other layers and for a main layer alone
+	// (its LayerRel is that)
+	std::vector<double> GroupRel;
 };
 
 HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spans,
@@ -9339,6 +9473,34 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 				Main = static_cast<int>(m);
 		}
 		B.Main.push_back(Main);
+	}
+	B.GroupRel.assign(B.Layers.size(), NO_LOUDNESS);
+	for (size_t m = 0; m < B.Layers.size(); ++m) {
+		if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
+			continue;
+		std::vector<int> Channels;
+		std::vector<std::pair<int, int> > Rows;
+		int Count = 0;
+		for (size_t l = 0; l < B.Layers.size(); ++l) {
+			if (B.Main[l] != static_cast<int>(m) || B.LayerRel[l] <= NO_LOUDNESS)
+				continue;
+			++Count;
+			for (size_t k = 0; k < LayerChannels[l].size(); ++k)
+				if (std::find(Channels.begin(), Channels.end(), LayerChannels[l][k]) == Channels.end())
+					Channels.push_back(LayerChannels[l][k]);
+			Rows.insert(Rows.end(), LayerRows[l].begin(), LayerRows[l].end());
+		}
+		if (Count < 2)
+			continue;
+		std::sort(Rows.begin(), Rows.end());
+		std::vector<std::pair<int, int> > Joined;
+		for (size_t i = 0; i < Rows.size(); ++i) {
+			if (!Joined.empty() && Rows[i].first <= Joined.back().second)
+				Joined.back().second = std::max(Joined.back().second, Rows[i].second);
+			else
+				Joined.push_back(Rows[i]);
+		}
+		B.GroupRel[m] = Against(Channels, Joined, 0);
 	}
 	for (size_t i = 0; i < Spans.size(); ++i)
 		if (Spans[i].Role == ROLE_ECHO || Spans[i].Role == ROLE_LINE || Spans[i].Role == ROLE_BASS || Spans[i].Role == ROLE_DRUMS)
@@ -9657,6 +9819,30 @@ std::vector<double> LivelyChordShifts(const HeardBalance &B, const HeardPlaces &
 		Why += Format(" The chords together play loudest in %s, so they stay %.0f dB under the melody there and further under it "
 			"over the song.", Whole.c_str(), LIVELY_CHORDS_TOP);
 	return Own;
+}
+
+// A calm mix's chords in layers (main layer m and the layers it's the main of: HeardBalance::GroupRel) together against the
+// melody, as they'd play with the layers moved by Shift (dB each, the melody's own shift left out): as measured, moved as
+// their power moves part by part (HeardBalance::Parts, by their bars); as the main layer moves where no part tells
+double GroupTogetherShifted(const HeardBalance &B, size_t m, const std::vector<double> &Shift)
+{
+	auto Power = [&](bool Shifted) {
+		double Sum = 0.0, Bars = 0.0;
+		for (size_t p = 0; p < B.Parts.size(); ++p) {
+			double Part = 0.0;
+			for (size_t l = 0; l < B.Layers.size() && l < B.Parts[p].LayerRel.size(); ++l)
+				if (B.Main[l] == static_cast<int>(m) && B.Parts[p].LayerRel[l] > NO_LOUDNESS)
+					Part += std::pow(10.0, (B.Parts[p].LayerRel[l] + (Shifted ? Shift[l] : 0.0)) / 10.0);
+			if (Part <= 0.0)
+				continue;
+			const double Length = B.Parts[p].LastBar - B.Parts[p].FirstBar + 1;
+			Sum += Length * Part;
+			Bars += Length;
+		}
+		return Bars > 0.0 ? 10.0 * std::log10(Sum / Bars) : NO_LOUDNESS;
+	};
+	const double Before = Power(false), After = Power(true);
+	return Before > NO_LOUDNESS && After > NO_LOUDNESS ? B.GroupRel[m] + After - Before : B.GroupRel[m] + Shift[m];
 }
 
 // A lively stage's drums, as the soundtrack's first stages had them, heard here: the noise's hi-hats on their own (any
@@ -10223,6 +10409,18 @@ std::string MixTool(Session &S, const Json &Args)
 			const double Over = Others.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) - (Places.Chords - SOFT_LAYER_DB));
 			for (size_t o = 0; o < Others.size(); ++o)
 				LayerShift[Others[o]] = LayerShift[m] - Over;
+			// ...and the layers together at the chords' place, as the review and the stems hear them: the main layer at it with
+			// a pad 3 dB under left a night song's chords together within a dB of its melody, where the night songs had them
+			// 2-3 dB under it (a main layer alone stays where it is: a song with one layer mixes as before)
+			if (!Places.Band && B.GroupRel[m] > NO_LOUDNESS) {
+				std::vector<double> Own(B.Layers.size(), 0.0);
+				for (size_t l = 0; l < B.Layers.size(); ++l)
+					Own[l] = LayerShift[l] - MelodyShift;
+				const double Miss = Places.Chords - GroupTogetherShifted(B, m, Own);
+				LayerShift[m] += Miss;
+				for (size_t o = 0; o < Others.size(); ++o)
+					LayerShift[Others[o]] += Miss;
+			}
 		}
 		for (size_t i = 0; i < Spans.size(); ++i) {
 			const MixSpan &P = Spans[i];
@@ -12323,8 +12521,8 @@ std::vector<HeldLead> HeldLeads(Session &S, int Melody, int First, int End)
 std::string HeldLeadText(Session &S, int Melody, const HeldLead &H)
 {
 	return Format("%s on %s %s (%d of %d melody notes): a calm lead shouldn't hold a high, steady level from attack to "
-		"release. design_instrument kind breath (swells in), falling strike (falls to 6) or music box (fades away), or a "
-		"volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
+		"release. design_instrument kind music box (fades away; on a VRC6 pulse at duty 37.5%% with attack bloom, the night "
+		"songs' favourite), breath (swells in) or falling strike (falls to 6), or a volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
 		H.Shape.Words.c_str(), H.Notes, H.Of);
 }
 
@@ -14510,9 +14708,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// Length
 	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
 	const double Seconds = Bpm > 0 ? BarCount * (S.Time.RowsPerBar / static_cast<double>(R)) * 60.0 / Bpm : 0.0;
-	Lines.push_back(Format("Length: %d bars, %s at %s BPM.", BarCount, SecondsText(Seconds).c_str(), FormatNumber(std::floor(Bpm + 0.5)).c_str()));
-	Numbers.insert(Numbers.begin(), Format("%d bars, %s at %s BPM", BarCount, SecondsText(Seconds).c_str(),
-		FormatNumber(std::floor(Bpm + 0.5)).c_str()));
+	Lines.push_back(Format("Length: %d bars, %s at %s.", BarCount, SecondsText(Seconds).c_str(), PaceText(S, false).c_str()));
+	Numbers.insert(Numbers.begin(), Format("%d bars, %s at %s", BarCount, SecondsText(Seconds).c_str(),
+		PaceText(S, false).c_str()));
 	if (Seconds > 0 && Seconds < 30 && BarCount <= 16 && !LoopFound)
 		Tip(0.0, "Under half a minute before it loops: game music heard for minutes wants more material, an A part and "
 			"a B part (16 to 32 bars or more).");
@@ -14762,7 +14960,7 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
 	if (std::fabs(Now - M.Bpm) > 8)
 		Text += Format("\nThe mood suits about %d BPM; the song plays at %s (set_tempo with bpm %d changes it).", M.Bpm,
-			FormatNumber(std::floor(Now + 0.5)).c_str(), M.Bpm);
+			(LayoutShowsFrames(S.Song.Speed) ? PaceText(S) : FormatNumber(std::floor(Now + 0.5))).c_str(), M.Bpm);
 	// Where the melody can go
 	int Free = -1;
 	for (int c = 0; c < S.ChannelCount() && Free < 0; ++c)
@@ -16297,9 +16495,9 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 		int Commands = 0;
 		for (int c = 0; c < S.ChannelCount(); ++c)
 			Commands += ScaleTempoEffects(D.Cells(c), S.Channel(c).EffectColumns, S.Song.SplitPoint, Factor);
-		const double NewBpm = BeatsPerMinute(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
-		Done.insert(Done.begin(), Format("%s BPM instead of %s (speed %d, tempo %d%s)",
-			FormatNumber(std::floor(NewBpm * 10 + 0.5) / 10).c_str(), FormatNumber(std::floor(Now * 10 + 0.5) / 10).c_str(), Speed, Tempo,
+		Done.insert(Done.begin(), Format("%s instead of %s (speed %d, tempo %d%s)",
+			PaceText(Speed, Tempo, S.Song.FrameRate, S.Time.RowsPerBeat).c_str(), (LayoutShowsFrames(S.Song.Speed) ? PaceText(S) :
+			FormatNumber(std::floor(Now * 10 + 0.5) / 10)).c_str(), Speed, Tempo,
 			Commands > 0 ? Format("; %s in the patterns changed too", Plural(Commands, "tempo command", "tempo commands").c_str()).c_str() : ""));
 	}
 
@@ -23822,6 +24020,16 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 const char *const NEXT_MILESTONES[] = { "tempo", "key", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
 	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "saved", "exported" };
 
+// A calm lead's way, the night songs' best (KindRecipe's and the style guide's first choice): kind music box on a pulse
+// at 37.5% on the VRC6 (50% on the 2A03's and the MMC5's, which have no 37.5%), blooming in over two frames without a duty
+// click; design_instrument fits its ring to the song's beat (gone within about a beat), and it never holds a level
+void CalmLeadArgs(Json &A, const ChannelInfo &Lead)
+{
+	A.Set("attack", "bloom");
+	if (Lead.Kind == KIND_PULSE)
+		A.Set("duty", Lead.Chip == "VRC6" ? "37.5%" : "50%");
+}
+
 // The steps a stage of what_next finds, worked out from the song as it is
 class WhatNext {
 public:
@@ -24356,7 +24564,7 @@ void WhatNext::Frame()
 	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
 	const bool Even = EvenRows(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
 	const bool InRange = K.SlowestBpm <= 0.0 || (Bpm >= K.SlowestBpm - 0.05 && Bpm <= K.FastestBpm + 0.05);
-	if (!Milestone("tempo", (Even && InRange) || !Wanted("tempo"), Format("tempo %s BPM", FormatNumber(std::floor(Bpm * 10 + 0.5) / 10).c_str()))) {
+	if (!Milestone("tempo", (Even && InRange) || !Wanted("tempo"), "tempo " + PaceText(S))) {
 		// The kind's own tempo on a new song or out of its range; else the even one nearest the song's (at the default tempo,
 		// a speed a step)
 		double Want = K.Bpm;
@@ -24376,8 +24584,8 @@ void WhatNext::Frame()
 		Want = std::floor(Want * 10 + 0.5) / 10;
 		Json A = Json::MakeObject();
 		A.Set("bpm", Json::NumberText(FormatNumber(Want)));
-		Step("tempo", "set_tempo", A, !InRange ? Format("%s BPM is %s for a %s song (%s-%s BPM): %s BPM, at a speed and tempo whose rows "
-			"all last the same, so hi-hats and arpeggios stay steady.", FormatNumber(std::floor(Bpm + 0.5)).c_str(),
+		Step("tempo", "set_tempo", A, !InRange ? Format("%s is %s for a %s song (%s-%s BPM): %s BPM, at a speed and tempo whose "
+			"rows all last the same, so hi-hats and arpeggios stay steady.", PaceText(S, false).c_str(),
 			Bpm < K.SlowestBpm ? "slow" : "fast", K.Name, FormatNumber(K.SlowestBpm).c_str(), FormatNumber(K.FastestBpm).c_str(),
 			FormatNumber(Want).c_str()) : Format("At speed %d and tempo %d the rows aren't all the same length, so hi-hats and "
 			"arpeggios wobble: %s BPM is the nearest whose rows are even.", S.Song.Speed, S.Song.Tempo, FormatNumber(Want).c_str()));
@@ -24875,11 +25083,16 @@ void WhatNext::Parts()
 			A.Set("restrike_beats", 0);
 		if (m_KindId == NEXT_GENERAL)
 			A.Set("vibrato", "gentle");
+		if (Calm())
+			CalmLeadArgs(A, S.Channel(Lead));
 		Json Find = Json::MakeObject();
 		Find.Set("kind", "lead");
 		Find.Set("channel", ChannelName(Lead));
-		Step("lead", "design_instrument", A, std::string("The lead's sound comes first: ") + (Calm() ? "a calm song's lead swells in "
-			"(kind breath) and never presses." : m_KindId == NEXT_LIVELY ? "a lively stage's lead speaks with a duty click, blooms in, "
+		Step("lead", "design_instrument", A, std::string("The lead's sound comes first: ") + (Calm() ? "a calm song's lead "
+			"never presses. The night songs' best was a music box struck on a VRC6 pulse at 37.5% (50% on the 2A03), blooming "
+			"in over two frames without a duty click and ringing away to silence within about a beat, never holding a level "
+			"(kind breath, which swells in and sinks a little, is the other way)." :
+			m_KindId == NEXT_LIVELY ? "a lively stage's lead speaks with a duty click, blooms in, "
 			"settles to 12 and brings a vibrato in after 24 frames (kind bloom lead), as the soundtrack's first stages' leads did." :
 			m_KindId == NEXT_ACTION ? "an action lead that opens up on each note, with a duty "
 			"click so it speaks." : "a lead whose vibrato comes in on long notes.") + " Its reply shows its volume a frame at a time. "
@@ -25403,8 +25616,8 @@ bool WhatNext::TipStep(const std::string &Tip)
 	if (Has("Most of the melody's notes are gone within"))
 		return LeadSound("tips", Calm() ? "breath" : "pluck", Calm() ? std::string(K.LeadName) : std::string(K.LeadName) + " (lasting)",
 			"review_arrangement: " + Tip);
-	if (Has("The lead presses") && Calm())
-		return LeadSound("tips", "breath", K.LeadName, "review_arrangement: " + Tip);
+	if (Has("The lead presses") && Calm())	// the calm lead's way, which never holds a level
+		return LeadSound("tips", K.LeadKind, K.LeadName, "review_arrangement: " + Tip);
 	if (Has("The song doesn't build") && m_KindId == NEXT_LIVELY)
 		return Climax(Tip);
 	return false;
@@ -25447,6 +25660,8 @@ bool WhatNext::LeadSound(const std::string &Id, const std::string &KindWord, con
 		if (KindWord == "pluck")
 			A.Set("sustain", "half");
 		A.Set("channel", ChannelName(m_Melody));
+		if (KindWord == "music box")
+			CalmLeadArgs(A, S.Channel(m_Melody));
 		return Step(Id, "design_instrument", A, Why + " First the sound (then the melody takes it).");
 	}
 	const std::vector<NoteInfo> &Notes = S.Notes(m_Melody);
@@ -26370,7 +26585,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	} AddTool = { m_Tools };
 
 	AddTool("get_song", "Song overview",
-		"Overview of the song open in FamiTracker: title, tempo in BPM, bars and beats, each channel and what it plays (and "
+		"Overview of the song open in FamiTracker: title, tempo in BPM (at speed 1, a sound effect's pace, the frames a row "
+		"lasts), bars and beats, each channel and what it plays (and "
 		"where it pans, when the song uses stereo), instruments, clips, the track's key (chosen for it, or found from the notes) "
 		"with chords that fit the melody bar by bar and the chords the parts play, whether your changes go into the song or "
 		"arrive as clips, and the instrument presets. Start here.",
@@ -27945,8 +28161,10 @@ void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResul
 		if (m_Host.Undo(Message))
 			++Undone;
 	}
-	if (Undone > 0)
+	if (Undone > 0) {
+		m_Host.ForgetRedo();	// nor anything for Ctrl+Y to bring back
 		Result.Text += " What it had changed by then was taken back, so it left nothing to undo.";
+	}
 	m_FailedCall = Name;
 }
 
@@ -28237,8 +28455,8 @@ std::string ToolSet::CoreInstructions()
 		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, warm pad, "
 		"strings, bass...), find_sound to look for one (\"soft flute\", \"warm pad\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
-		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a lead that swells "
-		"in); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
+		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a music-box "
+		"lead); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
@@ -28271,7 +28489,11 @@ std::string ToolSet::Instructions()
 		"next. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
-		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them.\n"
+		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
+		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
+		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "
+		"(drums take an instrument for each kind of hit, as an object), and grows the song only for notes that start past "
+		"its end (insert_bars first).\n"
 		"Write music that sounds composed, not generated. Users notice plain tracks: one chord a bar held as an arpeggio, a bass "
 		"on roots, no drums, one note length, sections pasted unchanged.\n"
 		"- Plan first: the mood gives the key and mode (major or lydian bright; minor, dorian sad or mysterious; phrygian or "
@@ -28389,8 +28611,9 @@ std::string ToolSet::Instructions()
 		"to the files it saves.\n"
 		"- Three kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
 		"action guide topics calm, lively and action the numbers). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
-		"lullaby): a lead that swells in, falls low after its strike or fades away like a music box (design_instrument kind "
-		"breath, falling strike or music box), the melody only 2-3 dB over the chords (mix style calm), few long notes by "
+		"lullaby): a lead that fades away like a music box (the night songs' favourite: design_instrument kind music box on a "
+		"VRC6 pulse, duty 37.5%, attack bloom), swells in or falls low after its strike (kind breath or falling strike), "
+		"the melody only 2-3 dB over the chords (mix style calm), few long notes by "
 		"step, slow colored chords, no drums, polish, check_song, review_arrangement and measure_mix with style calm. A "
 		"lively stage, as the soundtrack's first stages were made (the user liked nearly all of them): a lead that blooms in "
 		"and settles (design_instrument kind bloom lead), a step louder on a bar's first note and a step or two louder at the "
@@ -28522,14 +28745,15 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"set_swing with a percentage (56-60) for a light swing." :
 		"set_tempo at an even tempo between 140 and 190 BPM (150 is speed 6; speed 7 with tempo 191 gives even eighths at "
 		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key.\n";
-	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind breath, falling strike or music box, one "
+	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind music box, breath or falling strike, one "
 		"for the whole track. Try first the lead the listener liked best of the night songs: kind music box on a VRC6 pulse, "
 		"duty 37.5% (50% on the 2A03) and attack bloom (it blooms in over two frames, without a duty click), struck and "
 		"ringing away to silence within about a beat for a tune in quarter notes, over 1.5-2 beats for one in halves (decay "
 		"in frames: the reply gives the song's beat), never holding a level" : Lively ? "the soundtrack's stage lead: design_instrument kind bloom lead with restrike_beats 0 "
 		"(a 25% pulse that speaks with a 12.5% duty click, blooms 10-12-15 in two frames, settles to 12 and brings a vibrato in "
 		"after 24 frames; 15-27 suit a stage), or the singing lead preset" : "a lead with life that stands out (the singing lead, brass or strings presets, or "
-		"design_instrument kind bloom lead or stepped lead with a duty click)") + ". Read its volume sequence in the reply "
+		"design_instrument kind bloom lead with restrike_beats 0.5, or stepped lead, with a duty click)") + ". Read its volume "
+		"sequence in the reply "
 		"before writing the tune.\n";
 	T += std::string("5. Chords and bass: add_chords_and_bass with chords you choose, ") + (Calm ? "slow and colored (a chord a "
 		"bar or two: m7, maj7, add9, sus2; plagal turns and the minor iv; the loop's last bar open). Under the lead, the night "
@@ -28610,8 +28834,10 @@ static std::string CoreRecipe(const std::string &Kind)
 		"what_next again, until it says done. It follows this plan, from the song as it is:\n"
 		"1. get_song. Plan in a few lines: the key, a slow tempo (set_tempo with bpm 75; 64-82 BPM), a form of 24-40 bars (4 "
 		"bars of the chords alone, then A, A' with an echo, B on other chords, A again) and what each channel plays.\n"
-		"2. The lead's sound first: design_instrument on the melody's channel, kind breath (swells in, sinks a little), "
-		"falling strike (struck, then low) or music box (struck, gone within a beat). Read its volume sequence in the reply.\n"
+		"2. The lead's sound first: design_instrument on the melody's channel, kind music box, the night songs' best: on a VRC6 "
+		"pulse duty 37.5% (50% on the 2A03) and attack bloom (it blooms in over two frames, without a duty click), struck and "
+		"gone within about a beat, never holding a level. Or kind breath (swells in, sinks a little) or falling strike (struck, "
+		"then low). Read its volume sequence in the reply.\n"
 		"3. add_chords_and_bass with chords you choose, a chord a bar or two, colored (m7, maj7, add9, sus2), iv-i or IV-I "
 		"rather than V-I, the last bar open (a sus2 or a maj7): chord_style lush with arp_frames 3 for a slow shimmer, "
 		"bass_style roots.\n"
@@ -28669,8 +28895,8 @@ static std::string CoreRecipe(const std::string &Kind)
 		"1. get_song. Plan: a minor, phrygian or harmonic minor key, an even tempo between 140 and 190 BPM (set_tempo with bpm "
 		"150), a form of 32-40 bars (a short, tense intro, A, A', B as the climax, a break, A again) and what each channel "
 		"plays.\n"
-		"2. The lead's sound first: add_instrument with the singing lead or brass, or design_instrument kind bloom lead or "
-		"stepped lead with click true.\n"
+		"2. The lead's sound first: add_instrument with the singing lead or brass, or design_instrument kind bloom lead with "
+		"restrike_beats 0.5 (struck again every eighth), or stepped lead with click true.\n"
 		"3. add_chords_and_bass with chords that build tension (i bVI bVII i; a sus4 climbing a semitone a bar), chord_style "
 		"stabs or arpeggio, bass_style octaves or driving (bass_instrument \"thump bass\" for punch).\n"
 		"4. The melody: write only the hook, a motif with a rhythm you'd recognize, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 "
