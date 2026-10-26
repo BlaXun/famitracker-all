@@ -1957,7 +1957,8 @@ rest the mouse on an effect to read what its numbers do ("447 Vibrato:
 the pitch wobbles, speed 4, depth 7"); the status bar says the same for
 the effect under the cursor, F1 opens its entry and Ctrl+Shift+H (Help >
 Hear the effect at the cursor) plays the note plain and then with the
-effect. The song settings' labels (Speed, Tempo or BPM, Rows, Frames,
+effect. A Vxx under an instrument with a duty sequence changes nothing,
+and its tip says so (Hear it then plays it on a plain sound). The song settings' labels (Speed, Tempo or BPM, Rows, Frames,
 Step, the row highlights, Octave) explain themselves the same way and open
 the glossary when clicked, and so do the instrument editor's sequence
 names, the mixer's Soft, Space and pan, and the piano roll's Key, Snap to

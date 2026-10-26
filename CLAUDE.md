@@ -1396,7 +1396,10 @@ status bar's line for the effect under the cursor. F1 (`ID_HELP`, now
 effect while the pattern editor has the keys, else FamiTracker's help, and
 Help > Hear the effect at the cursor (`ID_HELP_HEAREFFECT`, Ctrl+Shift+H)
 plays the tip's effect or the cursor's, plain and then with its numbers,
-with the note and instrument it plays there (`HearEffectAtCursor`).
+with the note and instrument it plays there (`HearEffectAtCursor`). An
+effect the note's instrument overrides (`Vxx` under a duty, wave or noise
+and mode sequence: `EffectOverriddenBy`) says so in its tip and is heard
+on a plain sound of the chip instead.
 
 Song shapes (from `feat-song-shapes`): `Source/Api/SongShapes.cpp`
 (portable) holds six shapes (`SongShapes`: stage, night, town, boss, small,
