@@ -1506,8 +1506,14 @@ a click on another channel's note there picks that channel: no answer's note
 may start in a beat where another channel holds its pitch (`LanesTaken`). A
 check step puts the cursor on its answer's channel, and the note scrolls the
 piano roll to the answer's lanes (`ShowAnswerLanes`,
-`CPianoRollWnd::ShowPitches`). To add an exercise: its
-checks in `Exercises.cpp`, its script and starter in `res/exercises`, the
+`CPianoRollWnd::ShowPitches`) as each step begins and when the piano roll
+changes its size; once a step's bars or Play it have played, the cursor goes
+back to their first row (the drum grid follows it). A note drawn, moved or
+pasted up to the song's last row no longer adds a frame: the piano roll
+leaves an end alone past the song's end unwritten (`CChannelNotes::OnlyEnds`
+in `Recompute` and `Commit`), which made the answers' songs 8 bars of which
+4 droned. To add an exercise: its checks in `Exercises.cpp`, its script
+and starter in `res/exercises` (each part in its lanes), the
 RCDATA lines and IDs, a row of `FILES` in `ExercisesDlg.cpp`, and its name
 in `TestExerciseScripts` (`tutorial_tests`). `exercises_tests` runs the
 checks on songs described by hand; `TestExerciseStarters` (every script and

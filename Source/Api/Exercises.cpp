@@ -954,8 +954,9 @@ void CheckHook(const ExerciseFacts &F, ExerciseVerdict &V)
 	}
 	V.Right.push_back("Bar 3 starts like the [[hook]], so it's heard again.");
 	if (SameNotes(Bar2, Bar4) && SameNotes(Bar1, Bar3)) {
-		V.Next = "Bars 3-4 repeat the hook note for note. Now give it a different ending: change the last note or two of bar 4. "
-			"Ending on " + NoteWord(Tonic(F), K) + ", the [[home note]], makes it sound like an answer.";
+		V.Next = "Bars 3-4 repeat the hook note for note. Now give it a different ending: change the last note or two of bar 4 "
+			"(press Esc first, so a drag moves only the note you drag, not all you pasted). Ending on " + NoteWord(Tonic(F), K) +
+			", the [[home note]], makes it sound like an answer.";
 		PlayBars(V, F, 1, 4, F.Target);
 		return;
 	}

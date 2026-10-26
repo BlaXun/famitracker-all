@@ -382,6 +382,7 @@ bool HearGoodAnswer(CMainFrame *pMainFrame, const tutorial_step_t &Step, const C
 
 	// The answer, as one undoable change
 	const long long Before = pMainFrame->GetActionSerial();
+	const BOOL WasModified = pDoc->IsModified();	// (undone, the song is as it was: saved, if it was)
 	bool Written = true;
 	std::string Reply;
 	pMainFrame->BeginWaitCursor();
@@ -403,6 +404,7 @@ bool HearGoodAnswer(CMainFrame *pMainFrame, const tutorial_step_t &Step, const C
 		if (Made) {		// what it wrote before it failed, and nothing to redo of it
 			pMainFrame->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
 			pMainFrame->ForgetRedo();
+			pDoc->SetModifiedFlag(WasModified);
 		}
 		pMainFrame->SetMessageText(_T("The good answer can't be played here: ") + CString(Reply.c_str()));
 		return false;
@@ -419,6 +421,7 @@ bool HearGoodAnswer(CMainFrame *pMainFrame, const tutorial_step_t &Step, const C
 	if (Made && pMainFrame->GetActionSerial() == After && pMainFrame->GetUndoAction() == pAnswer) {
 		pMainFrame->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
 		pMainFrame->ForgetRedo();
+		pDoc->SetModifiedFlag(WasModified);
 		pMainFrame->SetMessageText(_T("Your own notes are back. Now it's your turn."));
 	}
 	return true;
