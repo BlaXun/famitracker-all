@@ -1516,9 +1516,9 @@ keeps its folded kinds by name, "Folded kinds"). FamiTracker reports an FDS
 instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
 `ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
 sound them when `ChipPitches` is set. `TestListenTool` and
-`TestListenFdsWarble` cover the tool. Still to come: the problems panel's
-Listen button and `finish_song`'s listen (what_next's is below, Small fixes,
-second batch).
+`TestListenFdsWarble` cover the tool. what_next's listen is below (Small
+fixes, second batch), finish_song's and the problems panel's Listen in The
+listen's rest.
 
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
@@ -1724,15 +1724,53 @@ until check_song's fix took it out). The kind chosen in What next
 into the Ask panel's context (`AssistantFacts::Kind`): its what_next step is
 asked in that kind, and `AssistantContext` tells the model to give
 what_next, get_recipe and finish_song that `kind` (`TestAssistantContext`).
-`what_next` asks for one `listen` before `finish_song` once the parts are
-written (`WhatNext::Listened`, from `FinishStep`; milestone `listened`, skip
-word `listen`, stage polish in `NextSteps.cpp`): `ToolSet::Call` keeps a
+`what_next` asked for one `listen` before `finish_song` once the parts are
+written, which is now the finish's own (The listen's rest, below;
+`WhatNext::Listened`, milestone `listened`, skip word `listen`, stage
+polish in `NextSteps.cpp`): `ToolSet::Call` keeps a
 listen over the whole track with the host (`SongHost::KeepListen` and
 `LastListen`, its JSON with `SoundPrint`, while the host runs), the step is
 done while the print matches, and its high findings with a call are steps
 as check_song's are (`FindingFixStep`, shared with `Breakers`); with nothing
-left to finish no listen is asked. `listen` is in `CoreTools` (short there)
+left to finish or export no listen is asked. `listen` is in `CoreTools` (short there)
 and `CoreInstructions`' Finish line (`TestWhatNextListens`, and the walks).
+
+The listen's rest (from `feat-listen-rest`): the What next panel's Do it of a
+slow call (`listen`, `finish_song`, `export_for_game`: `WorkingWords` in
+`WhatNextPanel.cpp`) says what runs in the panel and the status bar before
+the UI thread waits for it (`ShowWorking` draws both at once), and the panel
+keeps the wait cursor while its call runs; a render (`RenderFiles` in
+`McpConnection.cpp`) puts the status bar's text back when it's done, where
+it cleared it, so the line stays through the listening after the render.
+`finish_song` listens after its polish, mix and seam (`skip` `listen` leaves
+it out; a cue or a sound effect isn't listened to): `listen` with `format`
+`json` on the melody it follows, kept with `SongHost::KeepListen` as
+`ToolSet::Call` keeps one (a kept listen whose print is the song's is used
+again, without a render), and `FinishListenLines` (before
+`FinishSongTool`) writes its lines: a count, each high finding with a fix as
+a `Heard:` line with its call (`FixText`), and the `export_for_game` call to
+make the file again once they're fixed; the export still follows.
+`what_next`'s finish step names the listen and passes `skip` `listen` when
+it's skipped, and with nothing left to finish, a kept listen of the song as
+it is still gives its high findings' fixes (`WhatNext::HeardFixes`, shared
+with `Listened`), so a fix the finish heard comes before the file is taken
+as done (`TestFinishSongListens`). Since finish_song listens, `FinishStep`
+asks no listen before it (a walk listens once): a kept listen of the song as
+it is (`KeptHeard`) counts and gives its fixes, else `listened` is left for
+the finish; a listen step comes only before an export alone (`Finish`, while
+the export is due and the song changed since it was heard, as after a fix),
+and `ListenWanted` says whether one is asked (`TestWhatNextListens`). The problems panel's Listen (the
+header's button, F6 and its menu) runs `listen` with `format` `json` through
+`CMcpConnection::RunTool` (so it's kept for what_next too) with the wait
+cursor and `LISTENING` in the header and the status bar, and keeps the reply
+(`Heard`, of a song by `GetSongSerial` and a track), which every check adds
+to check_song's (`ProblemList::Add`; `Read` is `Clear`, then `Add`). Its
+findings are kinds of their own by severity (`ProblemHeard`):
+`PROBLEM_HEARD` (high, after the warbles), `PROBLEM_HEARD_LOOK` (medium,
+after out of range) and `PROBLEM_HEARD_DETAIL` (low, the details to hear,
+last), with Play it (two parts that beat play both) and Fix for a fix of
+one call; after a change they stay listed as heard before it (`SongMoved`,
+`IsStale`: Explain only) until the next listen (`TestProblemListHeard`).
 
 ## What this repository is
 

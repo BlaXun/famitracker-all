@@ -1312,6 +1312,11 @@ public:
 		CWaitCursor Wait;
 		const BOOL Enabled = m_pMain->IsWindowEnabled();
 		m_pMain->EnableWindow(FALSE);	// nothing changes the song while it renders
+		// The status bar says how far it is, then what it said before (a panel's "Listening to the song..." while the listen
+		// goes on)
+		CString Said;
+		if (m_pMain->GetMessageBar() != NULL)
+			m_pMain->GetMessageBar()->GetWindowText(Said);
 
 		// A game gets the whole song: muted channels play too, and are muted
 		// again afterwards (the sound thread reads the mutes in PlayerGetNote)
@@ -1366,7 +1371,7 @@ public:
 			pView->RedrawWindow(pView->GetPatternEditor()->GetHeaderRect(), NULL, RDW_INVALIDATE);
 		}
 		m_pMain->EnableWindow(Enabled);
-		m_pMain->SetMessageText(_T(""));
+		m_pMain->SetMessageText(Said);
 
 		CArray<CSoundGen::render_mark_t> Raw;
 		pSound->GetRenderMarks(Raw);
