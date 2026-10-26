@@ -412,7 +412,7 @@ struct CWhatNextPanelWnd::Impl {
 					_T("three versions, each played as you pick it)") : _T("write a phrase on the chords to start from (Use this phrase)"));
 			return;
 		}
-		WhyText = FromUtf8(N.Why);
+		WhyText = FromUtf8(N.Calls > 1 ? N.Why : ftapi::PlainWhy(N.Why));	// (the calls of several are Claude Code's: given whole)
 		if (N.Calls > 1) {
 			CString More;
 			More.Format(_T("\nThis step takes %d calls, which Claude Code makes (File > Connect Claude Code): it can't be done ")

@@ -22,6 +22,7 @@
 #include "NextSteps.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include "Json.h"
 
@@ -212,6 +213,66 @@ bool ReadNextAnswer(const std::string &Text, NextAnswer &Out, std::string &Error
 		if (pNotes->At(i).IsString())
 			Out.Notes.push_back(pNotes->At(i).String());
 	return true;
+}
+
+namespace {
+
+// A piece of a why that speaks to a model: it names a call ({...}) or a tool (a word joined by _, like find_sound), or the
+// reply
+bool ForModel(const std::string &Text)
+{
+	if (Text.find('{') != std::string::npos || Text.find("reply") != std::string::npos || Text.find("what_next") != std::string::npos)
+		return true;
+	for (size_t i = 1; i + 1 < Text.size(); ++i)
+		if (Text[i] == '_' && std::islower(static_cast<unsigned char>(Text[i - 1])) && std::islower(static_cast<unsigned char>(Text[i + 1])))
+			return true;
+	return false;
+}
+
+}	// namespace
+
+std::string PlainWhy(const std::string &Why)
+{
+	std::string Text = Why;
+	static const char *const HEADS[] = { "check_song: ", "review_arrangement: " };
+	for (size_t h = 0; h < sizeof(HEADS) / sizeof(HEADS[0]); ++h)
+		if (Text.compare(0, std::strlen(HEADS[h]), HEADS[h]) == 0)
+			Text.erase(0, std::strlen(HEADS[h]));
+	// Brackets that speak to a model go (with the space before them)
+	for (size_t Open = Text.find('('); Open != std::string::npos; Open = Text.find('(', Open + 1)) {
+		int Depth = 0;
+		size_t Close = Open;
+		for (; Close < Text.size(); ++Close) {
+			Depth += Text[Close] == '(' ? 1 : Text[Close] == ')' ? -1 : 0;
+			if (Depth == 0)
+				break;
+		}
+		if (Close >= Text.size() || !ForModel(Text.substr(Open, Close - Open + 1)))
+			continue;
+		const size_t From = Open > 0 && Text[Open - 1] == ' ' ? Open - 1 : Open;
+		Text.erase(From, Close + 1 - From);
+		Open = From > 0 ? From - 1 : 0;
+		if (Text.empty())
+			break;
+	}
+	// Then the sentences that do (a sentence ends at ". " or the end)
+	std::string Out;
+	size_t Start = 0;
+	while (Start < Text.size()) {
+		size_t End = Text.find(". ", Start);
+		End = End == std::string::npos ? Text.size() : End + 1;
+		const std::string Sentence = Text.substr(Start, End - Start);
+		if (!ForModel(Sentence)) {
+			std::string Kept = Sentence;
+			while (!Kept.empty() && Kept[0] == ' ')
+				Kept.erase(0, 1);
+			Out += (Out.empty() ? "" : " ") + Kept;
+		}
+		Start = End;
+	}
+	while (!Out.empty() && Out[Out.size() - 1] == ' ')
+		Out.erase(Out.size() - 1);
+	return Out.empty() ? Why : Out;
 }
 
 std::vector<std::string> GrownVersions(const std::string &Reply)

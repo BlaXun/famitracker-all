@@ -22895,6 +22895,10 @@ void CheckNextJson(FakeSong &Song, const std::string &Asked, const std::string &
 	const std::string What = TextOf(pStep, "what");
 	Check(!What.empty() && What.find('{') == std::string::npos && What.find('_') == std::string::npos &&
 		What != "Fix what check_song found" && What != "Try the review's tip" && What != "Ask the user", (What + " for " + Call).c_str(), Line);
+	// The why as the panel shows it: plain words, no call or tool named
+	const std::string Plain = PlainWhy(TextOf(pStep, "why"));
+	Check(!Plain.empty() && Plain.find('{') == std::string::npos && Plain.find("check_song") == std::string::npos &&
+		Plain.find("reply") == std::string::npos, (Plain + " | " + TextOf(pStep, "why")).c_str(), Line);
 	// The stage: the step's by its id; none for check_song's fixes and the end
 	const std::string Id = TextOf(pStep, "id");
 	Ids.insert(Id);
@@ -23057,6 +23061,16 @@ void TestWhatNextJson()
 	CHECK(Run(Song, "what_next", "{\"format\": \"text\"}").Text == Run(Song, "what_next", "{}").Text);
 	CHECK(!ReadNextAnswer("{\"track\": 1}", A, Error) && !Error.empty());
 	CHECK(GrownVersions("No versions here.").empty());
+	// A why for people: the check's name, the brackets and sentences that name a call or a tool, and the reply's go
+	CHECK_EQ(PlainWhy("The lead's sound comes first: a lead whose vibrato comes in on long notes. Its reply shows its volume a frame at "
+		"a time. (For another, find_sound {\"kind\":\"lead\"} lists the leads that play there; reference_sound makes a study's.)"),
+		std::string("The lead's sound comes first: a lead whose vibrato comes in on long notes."));
+	CHECK_EQ(PlainWhy("check_song: A bass that plays roots alone. This call adds a bass line."), std::string("A bass that plays roots "
+		"alone. This call adds a bass line."));
+	CHECK_EQ(PlainWhy("Notes vanish (bars 3-4), so they take a sound that lasts."), std::string("Notes vanish (bars 3-4), so they take a "
+		"sound that lasts."));
+	CHECK_EQ(PlainWhy("The mix, last. finish_song does it, then the seam."), std::string("The mix, last."));
+	CHECK_EQ(PlainWhy("grow_melody {\"motif\": \"C4\"} grows it."), std::string("grow_melody {\"motif\": \"C4\"} grows it."));
 }
 
 // The problems panel's Play it (ProblemList::PlayOf): the bars around each kind of finding, a bar before and one after

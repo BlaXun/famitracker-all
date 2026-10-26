@@ -97,4 +97,9 @@ bool ReadNextAnswer(const std::string &Text, NextAnswer &Out, std::string &Error
 // lists none
 std::vector<std::string> GrownVersions(const std::string &Reply);
 
+// A step's why as the What next panel shows it, for people rather than a model: without the check's name in front
+// ("check_song: "), and without the sentences and brackets that name a call or a tool ("(For another, find_sound {...}
+// lists...)", "Then call ... again.") or speak of the reply; the why as it is when nothing would be left
+std::string PlainWhy(const std::string &Why);
+
 }	// namespace ftapi
