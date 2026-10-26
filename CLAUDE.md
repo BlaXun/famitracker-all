@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 37 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 38 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -1000,7 +1000,7 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 37 (with `song_shape`), not
+(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1052,8 +1052,8 @@ session hears the song so, `Session::Assume`), before `Commit`: the range
 that holds whose middle reaches `GUARD_LEAD_MIDDLE` and top `GUARD_LEAD_TOP`,
 notes outside the key (`PitchOutsideKey`, check_song's too) that no other
 part plays in that bar, that make no major or minor triad with the notes the
-others sound with them (`Chorded`: a borrowed chord's root in the bass under
-its other notes) and that aren't short chromatic steps (only a chosen key's,
+others sound with them (`ChordedOutsideKey`: a borrowed chord's root in the
+bass under its other notes) and that aren't short chromatic steps (only a chosen key's,
 or a third of the part outside a key found from the notes), a bass of
 lone short notes over four bars from its first note, and a sound the channel
 doesn't play as meant (`TRIANGLE_SOFT_PEAK`, another chip's, `OddDutyRemark`).
@@ -1517,7 +1517,8 @@ instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
 `ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
 sound them when `ChipPitches` is set. `TestListenTool` and
 `TestListenFdsWarble` cover the tool. Still to come: the problems panel's
-Listen button, `what_next`'s listen step and `finish_song`'s listen.
+Listen button and `finish_song`'s listen (what_next's is below, Small fixes,
+second batch).
 
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
@@ -1697,6 +1698,41 @@ sends the version agreed in `initialize` with the requests after it
 (`BridgeAgreedVersion`), as an HTTP client does. `TestNetwork` (ranges, the
 code in the address), `TestSaveIntoSongs`, `TestExportResources` and
 `TestBridgeResources` (over real sockets) cover them.
+
+Small fixes, second batch (from `feat-small-fixes-2`): `check_song`'s key
+check leaves out a borrowed chord's and a secondary dominant's notes, as
+`write_notes`' warnings do: `ChordedOutsideKey` (after `PitchOutsideKey` in
+`Tools.cpp`, which both ask) takes a note outside the key that makes a major
+or minor triad with two notes the other parts sound with it (their
+arpeggios and its own counted) that `RoleOfChord` accounts for in the key
+(borrowed, leading to another chord, the Neapolitan, a mode's tension; not a
+surprise), and the class's other notes in that bar with it. check_song
+does so only while under `KEY_COLOR_SHARE` of the notes fall outside the key,
+so a key chosen wrong keeps every finding (`TestKeyCheckChords`). Written back
+section by section, the soundtrack's 57 finished tracks and cues ask one key
+question with this rule, the same one as with write_notes' old rule (any major
+or minor triad with the other parts' notes left out).
+`what_next`'s count of steps done never falls along a walk (every
+`FollowWhatNext` checks it, `StepsDoneOf`): its melody milestone is the first
+part's (a later part's melody, after its chords, is the form's, which isn't
+done without it), `Depth` leaves the second line and the repeats varied
+undone while the form grows (`Growing`), and a repeat's line of its own is a
+part playing its bars otherwise than in the original, not `PartsBeside`'s
+voices (a draft's triangle doubling the bass was one in A and A2 alike,
+until check_song's fix took it out). The kind chosen in What next
+(`ChosenKinds` in `WhatNextPanel.cpp`, read by `WhatNextChosenKind`) goes
+into the Ask panel's context (`AssistantFacts::Kind`): its what_next step is
+asked in that kind, and `AssistantContext` tells the model to give
+what_next, get_recipe and finish_song that `kind` (`TestAssistantContext`).
+`what_next` asks for one `listen` before `finish_song` once the parts are
+written (`WhatNext::Listened`, from `FinishStep`; milestone `listened`, skip
+word `listen`, stage polish in `NextSteps.cpp`): `ToolSet::Call` keeps a
+listen over the whole track with the host (`SongHost::KeepListen` and
+`LastListen`, its JSON with `SoundPrint`, while the host runs), the step is
+done while the print matches, and its high findings with a call are steps
+as check_song's are (`FindingFixStep`, shared with `Breakers`); with nothing
+left to finish no listen is asked. `listen` is in `CoreTools` (short there)
+and `CoreInstructions`' Finish line (`TestWhatNextListens`, and the walks).
 
 ## What this repository is
 

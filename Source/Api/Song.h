@@ -466,6 +466,13 @@ public:
 		Files.clear();
 		return true;
 	}
+	// listen's last result over a whole track (its JSON, which carries the song's print, SoundPrint), for what_next's listen
+	// before the finish: kept by the host while it runs, not in the song
+	void KeepListen(const std::string &Text) { m_LastListen = Text; }
+	const std::string &LastListen() const { return m_LastListen; }
+
+private:
+	std::string m_LastListen;
 };
 
 }	// namespace ftapi

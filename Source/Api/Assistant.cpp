@@ -652,6 +652,12 @@ std::string AssistantContext(const AssistantFacts &Facts)
 	Text += Song.empty() ? std::string("(no song is open)") : Song;
 	if (!Trim(Facts.Next).empty())
 		Text += "\n\nWhat next (View > What next) says:\n" + Trim(Facts.Next);
+	if (!Facts.Kind.empty()) {
+		Text += "\n\nThey chose the kind of song in What next: " + Facts.Kind + ".";
+		if (Facts.WithTools)
+			Text += " Give what_next, get_recipe and finish_song \"kind\": \"" + Facts.Kind + "\", so their steps follow the " + Facts.Kind +
+				" recipe.";
+	}
 	if (!Facts.Exercise.empty()) {
 		Text += "\n\nThey're doing an exercise (Help > Exercises): \"" + Facts.Exercise + "\".";
 		if (!Trim(Facts.ExerciseStep).empty())

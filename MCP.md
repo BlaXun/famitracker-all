@@ -106,7 +106,7 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 37 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 38 of them:
 `what_next`, the tools its steps call and `explain`. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
@@ -115,8 +115,9 @@ microphone are clips); sounds: `add_instrument`, `design_instrument`,
 pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
 `vary_part`, `copy_bars`, `insert_bars`, `name_section`, `song_shape`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
-`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
-(the last of them in one call); and `play`, `stop`, `save_song`,
+`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `listen` (the
+song heard as FamiTracker plays it), `finish_song` (the last of them in one
+call); and `play`, `stop`, `save_song`,
 `export_for_game`, `get_recipe` and `explain` (the glossary's words for a
 term, to explain things to you in). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
@@ -319,9 +320,10 @@ or on the right (right-click it). Type a question and press Enter (Shift+Enter
 for a new line). The answer streams in as the model writes it; Stop ends it
 at once, and New question starts over. Each song keeps its own conversation
 while FamiTracker runs. With each question the model is told the song as it
-is: `get_song`'s overview, the step View > What next would take, the
-exercise you're doing (Help > Exercises), and the bar and channel the cursor
-is on.
+is: `get_song`'s overview, the step View > What next would take (for the
+kind of song you chose there, which the model is asked to keep: it gives
+`what_next`, `get_recipe` and `finish_song` that `kind`), the exercise you're
+doing (Help > Exercises), and the bar and channel the cursor is on.
 
 ### Ask first, or let it work
 
@@ -383,7 +385,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 37, with its short instructions and short
+  or the small set (`/mcp/core`'s 38, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
@@ -561,7 +563,10 @@ is the recipes':
    gets a harmony in its last part, the climax).
 6. An echo, last of the parts, since it copies the melody's notes as they
    are.
-7. The last steps: `polish` (on a lively stage with its accents), then the mix in the kind's style when another
+7. The last steps, once the parts are written: first one `listen` (the song
+   heard as FamiTracker plays it; it counts while the song stays as it was
+   heard, and its high findings' fixes come next, as `check_song`'s do; a
+   change since, a fix too, asks for it again), then `polish` (on a lively stage with its accents), then the mix in the kind's style when another
    mix would change the song, the loop's seam (`fix_loop`) and the file for
    the game at the kind's loudness (-20 LUFS; -22 calm, -19 action), as one
    `finish_song` call from the first of them that's due (see [The last steps
@@ -592,7 +597,9 @@ where a tune of the user's own is better), `calls` (more than 1 when calls
 follow it, given in the why), a fix's `severity`, and where it works:
 `from_bar`, `to_bar`, `channel` and `channel_name`; `steps` (every step
 found, with `all`); `done`, `done_count` and `total` (the milestones the
-text counts as "5 of 20 done"); `milestones` (each `name`, `stage`, `done`
+text counts as "5 of 20 done", a count that never falls as the steps are
+made: the melody is the first part's, a later part's melody is the form's,
+and depth waits for the form's repeats); `milestones` (each `name`, `stage`, `done`
 and what's done, `text`); `stages` (each `id`, `name`, and how many of its
 milestones are `done` `of` how many); `notes`; `kind` and `kind_note`; and
 `again`, the arguments to ask again with.
@@ -762,8 +769,10 @@ was done.
   meant and the key's notes a semitone away. A borrowed chord's notes are
   meant: a note that another part also plays in that bar isn't asked about,
   nor one that makes a major or minor chord with two notes the other parts
-  play there (a borrowed chord whose root only the bass plays, Db under F
-  and Ab in Eb major; a slip a semitone off a chord's note makes none), nor
+  play there, one the key accounts for: borrowed from the major or minor key
+  on its home note, or leading to another of its chords (a borrowed chord
+  whose root only the bass plays, Db under F and Ab in Eb major; an A7's C#
+  in F major; a slip a semitone off a chord's note makes none), nor
   a chromatic note of a beat or less stepping to or from its neighbour (an
   approach, a passing note). With a key found from the notes
   (major or minor, so a modal tune's own notes fall outside it), only a part
@@ -806,7 +815,7 @@ model's draft gets its triangle warnings.
   four parts nearest the melody, and up to three things off the style's
   targets, each with its `set_mixer` call.
 
-On the small set (`/mcp/core`) `review_arrangement` and `check_song` answer
+On the small set (`/mcp/core`) `review_arrangement`, `check_song` and `listen` answer
 short unless a `format` is asked for (`text`, the whole reply; `json`,
 `check_song`'s data). On the local
 model's stage the review came to 1.1 KB from 4.9 and the checks to 1.0 from
@@ -914,7 +923,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone from a note another part sounds with it, or a semitone and octaves (a minor ninth, an F-4 over a pad's E-2: what `check_song` finds a clash, by the same rule), is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong. A depth by word swings the notes as far as it swings a 2A03 pulse's, so on the FDS, the N163 and the VRC7, whose steps are finer or coarser, the effect's depth is another (the reply says the cents). `modulator` `off` on the FDS turns its modulator off where it plays (`H00` on each note, the `Hxx` that bring it in taken out) and brings the vibrato in where the modulator came in |
 | `change_mood` | Several changes for a mood at once: key or mode (a dominant's ninth kept natural, as `transpose` keeps it), parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
+| `check_song` | Notes outside the key (a slide that takes a note outside it too; not a borrowed chord's or a secondary dominant's, which it hears as `write_notes`' warnings do, while under a quarter of the notes fall outside the key), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds (the music's, never a sound effect's) |

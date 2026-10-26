@@ -20440,6 +20440,55 @@ int PitchOutsideKey(const NoteInfo &N, int RowsPerBeat, const Key &K)
 	return -1;
 }
 
+// Whether a note outside the key K is a chord's note (Pitch: the first pitch it sounds outside, PitchOutsideKey's): it makes
+// a major or minor triad that K accounts for with two notes the other parts (Channel's aside) sound from its start for two
+// beats or while it lasts, within its bar (a broken chord's notes come one after another; the whole bar's would make chance
+// triads with a melody's), the chords their instruments' looping arpeggios and 0xy sound counted, and its own. Accounted
+// for, as RoleOfChord names a chord: borrowed from the major or minor key on K's home note (Bb under D and F in C major),
+// leading to another of K's chords (a secondary dominant: an A7's C# in F major), the Neapolitan or a mode's own tension;
+// not a surprise. A slip a semitone off a chord's note makes a diminished or an augmented one, or none. write_notes'
+// warnings and check_song's key check both ask it, so the two agree
+bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, const Key &K)
+{
+	const int Bar = S.Time.BarOf(N.Row);
+	const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
+	std::vector<bool> With(12, false);	// the classes the other parts sound with it, and its own chord's
+	auto Sounds = [&](const NoteInfo &X) {
+		int Arpeggio = 0;
+		for (size_t e = 0; e < X.Effects.size() && Arpeggio == 0; ++e)
+			if (X.Effects[e].second.first == EFF_ARPEGGIO)
+				Arpeggio = X.Effects[e].second.second;
+		const std::vector<int> Above = ChordAbove(S, X, Arpeggio);
+		for (size_t k = 0; k < Above.size(); ++k)
+			With[static_cast<size_t>(((X.Pitch + Above[k]) % 12 + 12) % 12)] = true;
+	};
+	Sounds(N);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> &Theirs = S.Notes(c);
+		for (size_t j = 0; j < Theirs.size(); ++j) {
+			if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
+				continue;
+			With[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
+			Sounds(Theirs[j]);
+		}
+	}
+	// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them (major
+	// ones first, then minor)
+	static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
+	for (int t = 0; t < 6; ++t) {
+		const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
+		if (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)])
+			continue;
+		const bool Major = t % 2 == 0;
+		const ChordRoleInKey Role = RoleOfChord(Chord(Root, std::vector<int>({ 0, Major ? 4 : 3, 7 })), K);
+		if (Role.Role != CHORD_ROLE_COLOR || Role.Label != "color" || (Major && (Root - K.Tonic + 12) % 12 == 1))
+			return true;
+	}
+	return false;
+}
+
 // write_notes' warnings, in its reply as it writes a part, each with what to do: a local model's first song had a
 // sawtooth bass reaching low and a lone short note every other bar on the triangle, on a pulse's soft sound, and no
 // check said so until the song was done. They are: notes outside what the channel plays well (check_song's range), a
@@ -20628,41 +20677,15 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 			Have = Others && FindKey(View, 0, View.Time.TotalRows(), K);
 			Source = "found from the song's notes";
 		}
-		// The bars where a class outside the key is a chord's note: one of its notes makes a major or minor triad with two
-		// notes the other parts sound from its start for two beats or while it lasts, within the bar (a broken chord's notes
-		// come one after another; the whole bar's would make chance triads with a melody's), and so do its other notes there
-		// (a bass repeating its root under the chord)
+		// The bars where a class outside the key is a chord's note (ChordedOutsideKey), and so are its other notes there (a
+		// bass repeating its root under the chord)
 		std::set<int> Chorded;	// bar * 12 + class
 		for (size_t i = 0; i < Part.size() && Have; ++i) {
 			const NoteInfo &N = Part[i];
 			const int Pitch = PitchOutsideKey(N, S.Time.RowsPerBeat, K);
 			const int Bar = S.Time.BarOf(N.Row);
-			if (Pitch < 0 || Chorded.count(Bar * 12 + Pitch % 12) > 0)
-				continue;
-			const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
-			std::vector<bool> With(12, false);	// the classes the other parts sound with it
-			for (int c = 0; c < View.ChannelCount(); ++c) {
-				if (c == Channel || !IsMelodic(View.Channel(c)))
-					continue;
-				const std::vector<NoteInfo> &Theirs = View.Notes(c);
-				for (size_t j = 0; j < Theirs.size(); ++j) {
-					if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
-						continue;
-					With[Theirs[j].Pitch % 12] = true;
-					const std::vector<int> &Above = InstrumentChord(View, Theirs[j].Instrument);
-					for (size_t k = 0; k < Above.size(); ++k)
-						With[(Theirs[j].Pitch + Above[k]) % 12] = true;
-				}
-			}
-			// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them
-			static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
-			for (int t = 0; t < 6; ++t) {
-				const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
-				if (With[(Root + TRIADS[t][1]) % 12] && With[(Root + TRIADS[t][2]) % 12]) {
-					Chorded.insert(Bar * 12 + Pitch % 12);
-					break;
-				}
-			}
+			if (Pitch >= 0 && Chorded.count(Bar * 12 + Pitch % 12) == 0 && ChordedOutsideKey(View, Channel, N, Pitch, K))
+				Chorded.insert(Bar * 12 + Pitch % 12);
 		}
 		std::vector<size_t> Asked;
 		std::vector<int> Classes;	// the pitch classes asked about, in order
@@ -23257,6 +23280,11 @@ std::string ShortFinding(Session &S, const CheckFinding &F)
 	return Line + (F.Fix.IsNull() ? "." : ". " + FixText(F.Fix, false));
 }
 
+// check_song's key check leaves a borrowed chord's notes out while under this share of the notes falls outside the key:
+// the soundtrack's lively stage with a bVI, a bVII and an A7 had 4% of its notes outside F major, a song in C checked in
+// E major half of them
+const double KEY_COLOR_SHARE = 0.25;
+
 std::string CheckTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -23308,14 +23336,43 @@ std::string CheckTool(Session &S, const Json &Args)
 			SoundingRows(Pitched[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
-	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them)
+	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them).
+	// A borrowed chord's or a secondary dominant's notes are the music's, as write_notes' warnings hear them: in the bars
+	// where a class outside the key is such a chord's note (ChordedOutsideKey), so are its other notes there (a bass repeating
+	// its root under the chord), and a stray note outside the key still counts. Only while the notes fit the key, under
+	// KEY_COLOR_SHARE of them outside it: chords mostly from outside it aren't borrowed (a key chosen wrong, or a mode), and
+	// then every note outside counts
 	int OutOfKey = 0, OutOfRange = 0;
+	bool Colors = false;
+	if (Found) {
+		int Heard = 0, Outside = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (!IsMelodic(S.Channel(c)))
+				continue;
+			std::vector<NoteInfo> Kept;
+			const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Row >= First && Notes[i].Row < End) {
+					++Heard;
+					Outside += PitchOutsideKey(Notes[i], S.Time.RowsPerBeat, K) >= 0 ? 1 : 0;
+				}
+		}
+		Colors = Outside < Heard * KEY_COLOR_SHARE;
+	}
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
 		if (!IsMelodic(Info))
 			continue;
 		std::vector<NoteInfo> Kept;
 		const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);	// a 5B's noise alone is in no key or range
+		std::set<int> Chorded;	// bar * 12 + class
+		for (size_t i = 0; i < Notes.size() && Colors; ++i) {
+			const NoteInfo &N = Notes[i];
+			const int Pitch = N.Row >= First && N.Row < End ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			const int Bar = S.Time.BarOf(N.Row);
+			if (Pitch >= 0 && Chorded.count(Bar * 12 + Pitch % 12) == 0 && ChordedOutsideKey(S, c, N, Pitch, K))
+				Chorded.insert(Bar * 12 + Pitch % 12);
+		}
 		for (size_t i = 0; i < Notes.size(); ++i) {
 			const NoteInfo &N = Notes[i];
 			if (N.Row < First || N.Row >= End)
@@ -23324,7 +23381,9 @@ std::string CheckTool(Session &S, const Json &Args)
 			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
 			// Where it sounds: where a scoop lands, and where a slide later in the note takes it (a fall as it ends is a
 			// gesture, not a pitch), so a slide copied a semitone off its note shows
-			const int Outside = Found ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			int Outside = Found ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			if (Outside >= 0 && Chorded.count(S.Time.BarOf(N.Row) * 12 + Outside % 12) > 0)
+				Outside = -1;
 			if (Outside >= 0) {
 				++OutOfKey;
 				const bool Slides = Outside != LandedPitch(N);
@@ -25397,7 +25456,8 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 // what_next's milestones, in the order it works through them: each done, or left. The echo is depth's last step: it
 // copies the melody as it plays, so it waits for the variations and the review's tips that change the melody's notes
 const char *const NEXT_MILESTONES[] = { "tempo", "key", "shape", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
-	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "saved", "exported" };
+	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "listened", "polish", "mix", "seam", "saved",
+	"exported" };
 
 // A calm lead's way, the night songs' best (KindRecipe's and the style guide's first choice): kind music box on a pulse
 // at 37.5% on the VRC6 (50% on the 2A03's and the MMC5's, which have no 37.5%), blooming in over two frames without a duty
@@ -25483,6 +25543,7 @@ private:
 	bool MixDue();				// a mix in the kind's style would change the song (worked out once)
 	void LoopSeam();
 	bool FinishStep(const std::string &From, const std::string &Why);
+	bool Listened();
 	void Finish();
 	bool TipStep(const std::string &Tip);
 	bool Climax(const std::string &Tip);
@@ -25556,7 +25617,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
-		"variation", "break", "intro", "loop", "tips", "echo", "polish", "mix", "seam", "save", "export" };
+		"variation", "break", "intro", "loop", "tips", "echo", "listen", "polish", "mix", "seam", "save", "export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -25749,6 +25810,44 @@ bool WhatNext::Unnamed() const
 
 // Whether a fix check_song gives would change the song (a dry run, for the tools that can take one); a fix that changes
 // nothing would come back as the next step again
+// A finding with its fix (check_song's or listen's JSON) as a step of what_next: its call, the calls of its "then" in order,
+// said in the step's why after what the finding says (Source: the tool that found it). InSet: false when a call isn't in the
+// small set (Core)
+NextStep FindingFixStep(const Json &F, const std::string &Id, const char *Source, bool Core, bool &InSet)
+{
+	const Json &Fix = *F.Get("fix");
+	NextStep N;
+	N.Id = Id;
+	N.Tool = Fix.Get("tool") != 0 && Fix.Get("tool")->IsString() ? Fix.Get("tool")->String() : std::string();
+	if (Fix.Get("arguments") != 0 && Fix.Get("arguments")->IsObject())
+		N.Arguments = *Fix.Get("arguments");
+	N.Severity = F.Get("severity") != 0 && F.Get("severity")->IsString() ? F.Get("severity")->String() : std::string();
+	std::string Message = F.Get("message") != 0 && F.Get("message")->IsString() ? F.Get("message")->String() : std::string();
+	const size_t Cut = Message.find(" Fix: ");
+	if (Cut != std::string::npos)
+		Message.erase(Cut);	// the calls follow, each in full
+	if (!Message.empty() && Message[Message.size() - 1] != '.')
+		Message += ".";
+	const std::string Does = Fix.Get("does") != 0 && Fix.Get("does")->IsString() ? Fix.Get("does")->String() : std::string();
+	InSet = !Core || ToolSet::IsCoreTool(N.Tool);
+	std::string Then;
+	const Json *pThen = Fix.Get("then");
+	for (size_t t = 0; pThen != 0 && pThen->IsArray() && t < pThen->Size(); ++t) {
+		const Json &Next = pThen->At(t);
+		const std::string Tool = Next.Get("tool") != 0 && Next.Get("tool")->IsString() ? Next.Get("tool")->String() : std::string();
+		if (Tool.empty())
+			continue;
+		++N.Calls;
+		InSet = InSet && (!Core || ToolSet::IsCoreTool(Tool));
+		Then += "; then " + Tool + (Next.Get("arguments") != 0 && Next.Get("arguments")->IsObject() ? " " +
+			WriteJson(*Next.Get("arguments")) : std::string()) + (Next.Get("does") != 0 && Next.Get("does")->IsString() ? " (" +
+			Next.Get("does")->String() + ")" : std::string());
+	}
+	N.Why = std::string(Source) + ": " + Message + (Does.empty() ? std::string() : " This call " + Does) + (Then.empty() ?
+		std::string(".") : Then + ": make them in that order, then ask what_next again.");
+	return N;
+}
+
 bool WhatNext::Fixes(const NextStep &N)
 {
 	if (!Wanted(N.Id) || !Looking())
@@ -25885,36 +25984,8 @@ void WhatNext::Breakers()
 			// (said in the step's why). What breaks the sound (severity high) now, a part's (medium: the melody's phrases, the
 			// bass, a sound) before depth, the rest (the faders, a copied repeat, a short loop) with the review's tips; one of
 			// each kind at a time
-			const Json &Fix = *F.Get("fix");
-			NextStep N;
-			N.Id = Kind;
-			N.Tool = Fix.Get("tool") != 0 && Fix.Get("tool")->IsString() ? Fix.Get("tool")->String() : std::string();
-			if (Fix.Get("arguments") != 0 && Fix.Get("arguments")->IsObject())
-				N.Arguments = *Fix.Get("arguments");
-			N.Severity = F.Get("severity") != 0 && F.Get("severity")->IsString() ? F.Get("severity")->String() : std::string();
-			std::string Message = F.Get("message") != 0 && F.Get("message")->IsString() ? F.Get("message")->String() : std::string();
-			const size_t Cut = Message.find(" Fix: ");
-			if (Cut != std::string::npos)
-				Message.erase(Cut);	// the calls follow, each in full
-			if (!Message.empty() && Message[Message.size() - 1] != '.')
-				Message += ".";
-			const std::string Does = Fix.Get("does") != 0 && Fix.Get("does")->IsString() ? Fix.Get("does")->String() : std::string();
-			bool InSet = !m_Core || ToolSet::IsCoreTool(N.Tool);
-			std::string Then;
-			const Json *pThen = Fix.Get("then");
-			for (size_t t = 0; pThen != 0 && pThen->IsArray() && t < pThen->Size(); ++t) {
-				const Json &Next = pThen->At(t);
-				const std::string Tool = Next.Get("tool") != 0 && Next.Get("tool")->IsString() ? Next.Get("tool")->String() : std::string();
-				if (Tool.empty())
-					continue;
-				++N.Calls;
-				InSet = InSet && (!m_Core || ToolSet::IsCoreTool(Tool));
-				Then += "; then " + Tool + (Next.Get("arguments") != 0 && Next.Get("arguments")->IsObject() ? " " +
-					WriteJson(*Next.Get("arguments")) : std::string()) + (Next.Get("does") != 0 && Next.Get("does")->IsString() ? " (" +
-					Next.Get("does")->String() + ")" : std::string());
-			}
-			N.Why = "check_song: " + Message + (Does.empty() ? std::string() : " This call " + Does) + (Then.empty() ? std::string(".") :
-				Then + ": make them in that order, then ask what_next again.");
+			bool InSet = true;
+			const NextStep N = FindingFixStep(F, Kind, "check_song", m_Core, InSet);
 			bool Given = N.Tool.empty();
 			for (size_t s = 0; s < m_Steps.size() && !Given; ++s)
 				Given = m_Steps[s].Id == N.Id;
@@ -26583,26 +26654,34 @@ void WhatNext::Parts()
 	// ("sections" alone when none is named: skipped, or no part to name)
 	if (!Milestone("sections", !Unnamed || !Wanted("sections"), Names.empty() ? std::string() : "sections " + Names))
 		NameSections();
-	// The melody in every part of the body (a song with no part named yet: a melody at all)
+	// The melody in every part of the body (a song with no part named yet: a melody at all). The milestone is the first
+	// part's: a part the form grows later gets its melody after its chords as a step of the form, which isn't done without it
+	// (were the milestone every part's, the count of steps done would fall as each new part's chords come)
 	int BodyBars = 0;
 	const int Body = BodyParts(&BodyBars);
-	bool TuneMissing = Body == 0 && !m_HasMelody;
+	bool TuneMissing = Body == 0 && !m_HasMelody, FirstMissing = TuneMissing, First = true;
 	for (size_t i = 0; i < m_Form.size() && !TuneMissing; ++i) {
 		const FormPart &P = m_Form[i];
-		if (P.Named && !P.Free && !P.Empty)
-			for (int Bar = P.FirstBar; Bar <= P.LastBar && !TuneMissing; Bar += 2)
-				TuneMissing = !m_HasMelody || !NoteStartsIn(S, m_Melody, S.Time.BarStart(Bar),
-					std::min(S.Time.BarEnd(std::min(P.LastBar, Bar + 1)), S.Time.TotalRows()));
+		if (!P.Named || P.Free || P.Empty)
+			continue;
+		for (int Bar = P.FirstBar; Bar <= P.LastBar && !TuneMissing; Bar += 2)
+			TuneMissing = !m_HasMelody || !NoteStartsIn(S, m_Melody, S.Time.BarStart(Bar),
+				std::min(S.Time.BarEnd(std::min(P.LastBar, Bar + 1)), S.Time.TotalRows()));
+		if (First)
+			FirstMissing = TuneMissing;
+		First = false;
 	}
-	if (!Milestone("melody", !TuneMissing || !Wanted("melody"), "the melody"))
+	Milestone("melody", !FirstMissing || !Wanted("melody"), "the melody");
+	if (TuneMissing && Wanted("melody"))
 		MelodyStep();
 	// (a shape laid out, song_shape, is the form once each of its parts has its music)
 	bool ShapeFull = MatchSongShape(S.Song.Sections, S.Song.TrackName, BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate,
 		S.Time.RowsPerBeat)) != 0;
 	for (size_t i = 0; i < m_Form.size() && ShapeFull; ++i)
 		ShapeFull = !m_Form[i].Named || m_Form[i].Free || !m_Form[i].Empty;
-	if (!Milestone("form", Body >= 4 || BodyBars >= 32 || ShapeFull || !Wanted("form"), Format("the form (%s, %s)", Plural(Body, "part",
-		"parts").c_str(), Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing && !Unnamed)
+	if (!Milestone("form", ((Body >= 4 || BodyBars >= 32 || ShapeFull) && (!TuneMissing || !Wanted("melody"))) || !Wanted("form"),
+		Format("the form (%s, %s)", Plural(Body, "part", "parts").c_str(), Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing &&
+		!Unnamed)
 		GrowForm();
 	// Drums where the body plays (not in an intro or a break), unless the kind wants none
 	if (!Drums)
@@ -26660,11 +26739,15 @@ void WhatNext::Depth()
 			m_Unmet.insert(LATER[i]);
 		return;
 	}
+	// While the form grows, a part to put a second line in or a repeat to vary may come yet: neither is done for want of one
+	// (done then and left once the part came, the count of steps done fell)
+	const bool Growing = m_Unmet.count("form") > 0;
 	// A second line where the melody comes back (the repeat), else in the B part: a harmony, a third under the melody in
 	// the key (add_harmony keeps it off semitones against the other parts; a counter-melody of its own moves where the
 	// chords' notes are and rubs against them more often)
 	const int Target = FirstRepeat >= 0 ? FirstRepeat : B;
-	if (!Milestone("second line", !m_Parts.Voices.empty() || Target < 0 || !Wanted("second_line"), "a second line")) {
+	if (!Milestone("second line", !m_Parts.Voices.empty() || (Target < 0 && !Growing) || !Wanted("second_line"), "a second line") &&
+		Target >= 0) {
 		const FormPart &P = m_Form[static_cast<size_t>(Target)];
 		const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
 		const int Channel = FreeChannel(First, End, m_Melody, true);
@@ -26685,19 +26768,30 @@ void WhatNext::Depth()
 	}
 	// Each repeat different from its original: one that plays the original's melody note for note, without a line of its own
 	// there, gets a variation
-	bool Varied = true;
+	bool Varied = true, Repeats = false;
 	for (size_t i = 0; i < m_Form.size(); ++i) {
 		const FormPart &P = m_Form[i];
 		if (!P.Named || P.Free || P.Empty || P.Original < 0)
 			continue;
+		Repeats = true;
 		const FormPart &O = m_Form[static_cast<size_t>(P.Original)];
 		const int Length = std::min(P.LastBar - P.FirstBar, O.LastBar - O.FirstBar);
-		bool Same = true;
-		for (int b = 0; b <= Length && Same; ++b)
-			Same = BarPrint(S.Notes(m_Melody), S.Time.BarStart(P.FirstBar + b), S.Time.BarEnd(P.FirstBar + b)) ==
-				BarPrint(S.Notes(m_Melody), S.Time.BarStart(O.FirstBar + b), S.Time.BarEnd(O.FirstBar + b));
-		const NextParts Here = PartsBeside(S, m_Melody, S.Time.BarStart(P.FirstBar), std::min(S.Time.BarEnd(P.LastBar), Total));
-		if (!Same || !Here.Voices.empty())
+		auto Alike = [&](int Channel) {
+			bool Same = true;
+			for (int b = 0; b <= Length && Same; ++b)
+				Same = BarPrint(S.Notes(Channel), S.Time.BarStart(P.FirstBar + b), S.Time.BarEnd(P.FirstBar + b)) ==
+					BarPrint(S.Notes(Channel), S.Time.BarStart(O.FirstBar + b), S.Time.BarEnd(O.FirstBar + b));
+			return Same;
+		};
+		// A line of its own there: a part beside the melody playing otherwise than in the original (a harmony or a line only
+		// the repeat has). Not PartsBeside's voices: its roles move as the parts around change (a draft's triangle doubling the
+		// bass was a voice in a repeat and its original alike, so the repeat was varied until check_song's fix took the
+		// doubling out, and the count of steps done fell)
+		const bool Same = Alike(m_Melody);
+		bool Own = false;
+		for (int c = 0; c < S.ChannelCount() && Same && !Own; ++c)
+			Own = c != m_Melody && IsMelodic(S.Channel(c)) && !Alike(c);
+		if (!Same || Own)
 			continue;
 		Varied = false;
 		if (!Looking() || !Wanted("variation"))
@@ -26724,7 +26818,7 @@ void WhatNext::Depth()
 		}
 		break;
 	}
-	Milestone("repeats varied", Varied || !Wanted("variation"), "the repeats varied");
+	Milestone("repeats varied", (Varied && (Repeats || !Growing)) || !Wanted("variation"), "the repeats varied");
 
 	// A break without the melody and the drums before the last part of the body, once the body has three parts
 	int Bars = 0;
@@ -27276,6 +27370,7 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		return true;
 	if (!Looking() || (m_Core && !ToolSet::IsCoreTool("finish_song")))
 		return false;
+	Listened();		// first: a step while the song as it is hasn't been heard, then its high findings' fixes
 	const NextKind &K = Kind();
 	Json A = Json::MakeObject();
 	A.Set("kind", K.Name);
@@ -27305,6 +27400,43 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 	if (!Step(From, "finish_song", A, Why + " finish_song does it" + Then + ", in one call that one Ctrl+Z undoes."))
 		return false;
 	m_Finishing = true;
+	return true;
+}
+
+// The listen before the finish (FinishStep): done while listen's last result over the whole track (SongHost::LastListen)
+// is of the song as it is now (its print, SoundPrint), else listen is the step; its high findings with a call are then
+// steps as check_song's are, one at a time (the others are the user's to hear). True when the finish can come
+bool WhatNext::Listened()
+{
+	if (!Wanted("listen") || (m_Core && !ToolSet::IsCoreTool("listen"))) {
+		Milestone("listened", true, "listened");
+		return true;
+	}
+	Json Heard;
+	const Json *pPrint = 0;
+	if (!S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard))
+		pPrint = Heard.Get("print");
+	if (pPrint == 0 || !pPrint->IsString() || pPrint->String() != SoundPrint(S)) {
+		Milestone("listened", false);
+		Step("listen", "listen", Json::MakeObject(), "The parts are written: before the finish, listen hears the song as FamiTracker "
+			"plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, clicks, a sound "
+			"that drones on, a covered melody. It changes nothing.");
+		return false;
+	}
+	Milestone("listened", true, "listened");
+	const Json *pFindings = Heard.Get("findings");
+	for (size_t i = 0; pFindings != 0 && pFindings->IsArray() && i < pFindings->Size(); ++i) {
+		const Json &F = pFindings->At(i);
+		if (F.Get("severity") == 0 || !F.Get("severity")->IsString() || F.Get("severity")->String() != "high" || F.Get("fix") == 0 ||
+			!F.Get("fix")->IsObject())
+			continue;
+		bool InSet = true;
+		const NextStep N = FindingFixStep(F, "listen", "listen", m_Core, InSet);
+		if (!InSet)
+			m_Notes.push_back(N.Why + " (" + N.Tool + " or a call after it isn't in this small set)");
+		else if (Fixes(N) && Step(N))
+			return false;
+	}
 	return true;
 }
 
@@ -27388,6 +27520,9 @@ void WhatNext::Work()
 	}
 	if (Looking() && m_Music)
 		LoopSeam();
+	// The finish's stage looked at with nothing to finish: no listen before it (FinishStep's)
+	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0)
+		Milestone("listened", true, "listened");
 	if (Looking())
 		Finish();
 }
@@ -27663,6 +27798,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	}
 	if (Id == "echo")
 		return "Add an echo of the melody";
+	if (Id == "listen")
+		return N.Tool == "listen" ? "Listen to the song as FamiTracker plays it" : "Fix what listen heard";
 	if (Id == "polish")
 		return Calm() ? "Add finishing touches: a faint vibrato on long notes" : "Add finishing touches: accents, a vibrato on long notes";
 	if (Id == "mix")
@@ -29916,11 +30053,18 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		Session S(m_Host);
 		// On the small set the checks answer short, a local model's context being small, unless asked for the full reply
 		Json Checked = Args;
-		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix"))
+		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix" ||
+			Name == "listen"))
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core, Who.Client);
-		else if (Name == "listen") Result.Text = ListenTool(S, Args, 0);
+		else if (Name == "listen") {
+			// Over the whole track, what_next takes the song as listened to while it stays as it is (WhatNext::Listened)
+			std::string Heard;
+			Result.Text = ListenTool(S, Checked, &Heard);
+			if (Arg(Args, "from_bar") == 0 && Arg(Args, "to_bar") == 0 && Arg(Args, "section") == 0)
+				m_Host.KeepListen(Heard);
+		}
 		else if (Name == "check_exercise") Result.Text = CheckExerciseTool(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
@@ -30170,7 +30314,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain" };
+		"finish_song", "get_recipe", "explain", "listen" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -30211,8 +30355,10 @@ std::string ToolSet::CoreInstructions()
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
-		"- Finish: polish, then mix last, in the kind's style (it balances the parts in the notes: leave the faders at 0 dB); "
+		"- Finish: listen first (it hears what the notes can't show: a warble, clicks, notes out of tune), polish, then mix last, "
+		"in the kind's style (it balances the parts in the notes: leave the faders at 0 dB); "
 		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action). what_next gives each.\n"
+
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
 		"0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give a "
@@ -30236,7 +30382,8 @@ std::string ToolSet::Instructions()
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"what_next gives the one next step for the song as it is, with its call ready to send, when you wonder what comes "
 		"next (the user may have taken a step from FamiTracker's What next panel meanwhile: ask it again rather than "
-		"assume). An empty song starts from its shape: song_shape lays out its kind's form (stage, night, town, boss, a "
+		"assume); give it, get_recipe and finish_song the same kind every time, the one the user chose. An empty song "
+		"starts from its shape: song_shape lays out its kind's form (stage, night, town, boss, a "
 		"small loop, a jingle), each part a section named for what it does (a track named for a small place, a shop, a "
 		"menu or a house, gets the short loop, and one named for a town or a village the town's, \"Home village\" "
 		"too); then fill the parts in order. When a reply "
@@ -30253,7 +30400,8 @@ std::string ToolSet::Instructions()
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
 		"and medium findings with the call each gives, and play a low one's bars to the user (it has no call): change "
-		"them only if the user wants. Run check_song after writing, "
+		"them only if the user wants; what_next asks for one listen before finish_song, and another after a change. Run "
+		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
 		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
 		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "

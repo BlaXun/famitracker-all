@@ -56,6 +56,7 @@
 #include "McpSocket.h"
 #include "GlossaryDlg.h"
 #include "Tutorial.h"
+#include "WhatNextPanel.h"
 #include "TutorialScript.h"
 #include "AskPanel.h"
 
@@ -929,17 +930,20 @@ struct CAskPanelWnd::Impl {
 
 	// ---- Asking
 
-	// The song as the question is asked: get_song's overview, what_next's step, the exercise and the cursor
+	// The song as the question is asked: get_song's overview, what_next's step (for the kind chosen in What next, which the
+	// model is told to pass on), the exercise and the cursor
 	std::string Context(bool WithTools)
 	{
 		ftapi::AssistantFacts Facts;
 		Facts.Mode = Mode;
 		Facts.WithTools = WithTools;
+		Facts.Kind = WhatNextChosenKind();	// the kind chosen in What next for this track, which its step follows too
 		std::string Reply;
 		if (pTools != NULL) {
 			if (pTools->RunTool("get_song", "{}", Reply, false, Settings.SmallSet))
 				Facts.Song = Reply;
-			if (pTools->RunTool("what_next", "{}", Reply, false, Settings.SmallSet))
+			if (pTools->RunTool("what_next", Facts.Kind.empty() ? std::string("{}") : "{\"kind\": \"" + Facts.Kind + "\"}", Reply, false,
+				Settings.SmallSet))
 				Facts.Next = Reply;
 		}
 		ExerciseInProgress(Facts.Exercise, Facts.ExerciseStep, Facts.ExerciseCheck);
