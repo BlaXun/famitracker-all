@@ -1,0 +1,21 @@
+; Help > Exercises, First steps: up the stairs
+title: Up the stairs
+about: Five notes going up a step at a time on the lighter lanes, then back down.
+
+step
+show: piano-roll
+play: bars 1-3
+text: Some lanes are lighter than others. The lighter ones are the notes of the song's [[key]], C major: notes that sound good together. The C lanes are a little warmer: that's where the key feels at home.
+
+  Your first note is there already, a C at the start. Click a note on the next lighter lane above it, on the next beat line.
+wait: notes 1
+
+step
+show: piano-roll
+play: bars 1-3
+check: stairs
+text: Go on up the stairs, one lighter lane higher on each beat line, until five notes go up: C, D, E, F and G. Then come back down the same way, F, E, D and C, to where you started.
+
+  Going up and down the lighter lanes one at a time is a [[scale]]. Press Play bars 1-3, then Check.
+hint: Between most lighter lanes there's a darker one to step over, but between E and F there's none: go to the next lighter lane each time. Snap to key, at the top of the piano roll, keeps every click on a lighter lane.
+answer: Pulse 1, bar 1, Lead: C4 - D4 - E4 - F4 - | G4 - F4 - E4 - D4 - | C4 - - - - - - -

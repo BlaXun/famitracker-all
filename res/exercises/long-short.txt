@@ -1,0 +1,19 @@
+; Help > Exercises, First steps: long and short
+title: Long and short
+about: Drag a note's end to make it long, and make another one short.
+
+step
+show: piano-roll
+play: bars 1-2
+text: A note's [[length]] is how long it lasts. These two notes are the same length: two [[beats|beat]] each, two steps of the grid. Press Play bars 1-2 to hear them.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-2
+check: long-short
+text: Make the first note long. Point at its right edge, hold the mouse button down and drag to the right, until the note reaches the next bar line: the strong line where bar 2 starts.
+
+  Then make the second note short: drag its right edge to the left until it's as short as it goes. Press Play bars 1-2, then Check.
+hint: Grab the note right at its end, its last few pixels; if the whole note moves instead, Ctrl+Z puts it back. As you drag, the end jumps from one beat line to the next.
+answer: Pulse 1, bar 1: C4 - - - - - - - | G4 - . . . . . .

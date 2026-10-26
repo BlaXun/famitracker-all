@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: your first tiny tune
+title: Your first tiny tune
+about: Four notes up and four down, ending on the note it started on.
+
+step
+show: piano-roll
+text: Time for a [[tune|melody]] of your own: notes one after another that go somewhere and come back. Use the lighter lanes, the notes of the key.
+
+  Start with a note on the first beat line, on a warmer lane: C, the key's [[home|home-note]].
+wait: notes 1
+
+step
+show: piano-roll
+play: bars 1-2
+check: tiny-tune
+text: That note is the first of four going up: click three more, each on a higher lane, one on each beat line. Then four coming down in bar 2, the last one on the lane you started on.
+
+  Small steps or bigger ones, as you like. Press Play bars 1-2 to hear your tune, then Check.
+hint: For example C, D, E and G going up in bar 1, then G, E, D and C coming down in bar 2. The keys at the left are labelled C-4 and C-5 to find your way.
+answer: Pulse 1, bar 1, Lead: C4 - D4 - E4 - G4 - | G4 - E4 - D4 - C4 -

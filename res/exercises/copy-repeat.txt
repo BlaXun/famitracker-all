@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: copy and repeat
+title: Copy and repeat
+about: Copy a one-bar rhythm and paste it three times: four bars that repeat.
+
+step
+show: piano-roll
+play: bars 1-4
+text: Bar 1 has a little rhythm, and bars 2, 3 and 4 are empty. Music [[repeats|repetition-variation]] a lot, and a copy saves you drawing it again.
+
+  First copy bar 1. Click Select at the top of the piano roll. Then drag along the ruler, the numbered strip above the lanes, across bar 1: its notes light up. Press Ctrl+C.
+
+step
+show: piano-roll
+play: bars 1-4
+check: copy-repeat
+text: Now point the mouse at the start of bar 2, right on its bar line, and press Ctrl+V: the copy lands there. Do the same at bar 3 and at bar 4.
+
+  Press Play bars 1-4 to hear four bars that repeat, then press Check.
+hint: The copy starts on the beat line at the mouse, or the one to its left, so point just to the right of the bar line. A copy in the wrong place: Ctrl+Z, and paste it again.
+answer: Pulse 1, bar 2: C4 - - - E4 - G4 - | C4 - - - E4 - G4 - | C4 - - - E4 - G4 -

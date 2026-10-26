@@ -41,6 +41,7 @@ void ShowTutorials(CMainFrame *pMainFrame);	// the list; the one picked starts
 void OpenExampleSong(CMainFrame *pMainFrame, UINT nID);
 void TutorialCommand(UINT nID);				// CMainFrame::OnCommand: a menu item, button or shortcut was used
 bool TutorialRunning();
+bool ExerciseRunning();						// an exercise's note is open (the piano roll leaves an empty song's groove box out)
 
 // Help > Exercises (ExercisesDlg.cpp): an exercise's note over its song,
 // which has just opened. Its check steps (TutorialScript.h) have Hint, Hear
@@ -48,8 +49,9 @@ bool TutorialRunning();
 // says, the glossary's words in it linked to their entries and its bars to
 // play, and the exercise is done once its last check passes.
 void StartExerciseNote(CMainFrame *pMainFrame, const tutorial_t &Script, const std::string &Exercise);
-// A built-in text (RCDATA: a tutorial, a walkthrough, an exercise's script); false when there's none
-bool ReadBuiltInText(UINT Id, std::string &Text);
-// A built-in song (RCDATA) opened as a new song, named Title until it's saved (FamiTracker first asks whether to save
-// the song that's open); false when it didn't open
-bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT Song, LPCTSTR Title);
+// A built-in text (RCDATA: a tutorial, a walkthrough, an exercise's script), by its name or MAKEINTRESOURCE(its number);
+// false when there's none
+bool ReadBuiltInText(LPCTSTR Resource, std::string &Text);
+// A built-in song (RCDATA, by name or number) opened as a new song, named Title until it's saved (FamiTracker first asks
+// whether to save the song that's open); false when it didn't open
+bool OpenBuiltInSong(CMainFrame *pMainFrame, LPCTSTR Song, LPCTSTR Title);

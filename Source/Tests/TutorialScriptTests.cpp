@@ -757,8 +757,9 @@ void TestExerciseLines()
 // its answers)
 void TestExerciseScripts()
 {
-	const char *const Names[] = { "home-note", "four-bars", "strong-notes", "phrases", "bass", "beat", "minor", "hook", "song-shape",
-		"first-song" };
+	const char *const Names[] = { "first-note", "high-low", "long-short", "steady-beat", "loud-soft", "stairs", "rhythm",
+		"copy-repeat", "new-sound", "two-parts", "tiny-tune", "home-note", "four-bars", "strong-notes", "phrases", "bass", "beat",
+		"minor", "hook", "song-shape", "first-song" };
 	for (size_t i = 0; i < sizeof(Names) / sizeof(Names[0]); ++i) {
 		const std::string Text = ReadFile(std::string(EXERCISES_DIR) + "/" + Names[i] + ".txt");
 		CHECK(!Text.empty());

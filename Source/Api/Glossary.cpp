@@ -288,6 +288,15 @@ const RawEntry ENTRIES[] = {
 		"tense. A short one passing by adds spice; a long one usually sounds like a mistake. View > Problems lists the "
 		"clashes in a song.",
 		"semitone, tension-release, harmony", "clash", "" },
+	{ "length", "Length (long and short notes)", "note length, duration, long and short", GLOSSARY_MUSIC,
+		"A note's length is how long it lasts: a long note rings on, a short one stops quickly. In the piano roll a note reaches "
+		"as far to the right as it lasts, and dragging its right edge makes it longer or shorter. Long and short notes in a row "
+		"make a rhythm.",
+		"note, rhythm, beat, rest", "length", "" },
+	{ "part", "Part (one line of the music)", "parts, musical part, instrument part", GLOSSARY_MUSIC,
+		"A part is one line of the music, played by one voice: the tune is a part, the bass another, the drums a third. Parts "
+		"play at the same time, and on the NES each one has a channel of its own. A song is mostly written a part at a time.",
+		"melody, bass-line, channel, layers", "part", "" },
 	{ "layers", "Layers (texture)", "layer, layering, texture", GLOSSARY_MUSIC,
 		"Layers are the parts playing at once: melody, chords, bass, drums, an echo. Adding layers makes music fuller, and "
 		"taking some away for a while makes their return hit harder. Each NES channel plays one layer.",
@@ -511,6 +520,12 @@ const RawEntry ENTRIES[] = {
 		"A halt (---) stops a channel's note at once. A release (===) lets the note fade the way its instrument's release part "
 		"says, like letting go of a piano key. Either one ends a note, and the empty rows after it are a rest.",
 		"rest, envelope, sequence, effect-sxx", "", "" },
+	{ "lane", "Lane (the piano roll's rows)", "lanes, lighter lanes, darker lanes, warmer lane", GLOSSARY_TRACKER,
+		"A lane is one row across the piano roll: every note on it has the same pitch, which the key at its left end shows. With "
+		"a key, its notes' lanes are lighter, the others darker, and the home note's lane is warmer. A note on a lighter lane "
+		"fits the song.",
+		"piano-roll, key, pitch, home-note", "", "In the piano roll, click on one lane and then on the lane above it: each sounds a "
+		"little higher." },
 	{ "piano-roll", "Piano roll", "pianoroll, roll view, note view", GLOSSARY_TRACKER,
 		"The piano roll shows the notes as bars on a grid, higher notes higher up and longer notes longer, like the roll of a "
 		"player piano. You can draw, move and stretch notes there instead of typing them. The channel you edit is bright and "
@@ -1003,6 +1018,28 @@ bool MakeExample(const std::string &Id, HearExample &Out)
 			S.Halt(At + Ms[i] - 50, HEAR_PULSE1);
 			At += Ms[i];
 		}
+		S.Finish();
+	}
+	else if (Id == "length") {
+		Score S(Out, "length", "One note long, then short and short, then long again: only the lengths change.");
+		const int Ms[] = { 1200, 300, 300, 1200 };
+		int At = 0;
+		for (size_t i = 0; i < sizeof(Ms) / sizeof(Ms[0]); ++i) {
+			S.Note(At, HEAR_PULSE1, P("G-3"), 11);
+			S.Halt(At + Ms[i] - 60, HEAR_PULSE1);
+			At += Ms[i];
+		}
+		S.Finish();
+	}
+	else if (Id == "part") {
+		Score S(Out, "part", "A tune on a pulse channel alone, then again with a second part under it: a bass on the triangle.");
+		const std::vector<int> Tune = Notes("C-4 E-4 G-4 E-4 C-4 E-4 G-4 C-5");
+		const int Again = S.Line(0, HEAR_PULSE1, Tune, 300, 11, 260) + 200;
+		S.Line(Again, HEAR_PULSE1, Tune, 300, 11, 260);
+		S.Note(Again, HEAR_TRIANGLE, P("C-3"), 15);
+		S.Halt(Again + 1150, HEAR_TRIANGLE);
+		S.Note(Again + 1200, HEAR_TRIANGLE, P("G-2"), 15);
+		S.Halt(Again + 2350, HEAR_TRIANGLE);
 		S.Finish();
 	}
 	else if (Id == "beat") {
