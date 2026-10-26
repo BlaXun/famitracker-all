@@ -262,7 +262,7 @@ void CGlossaryDlg::OnSize(UINT nType, int cx, int cy)
 void CGlossaryDlg::OnGetMinMaxInfo(MINMAXINFO *pInfo)
 {
 	pInfo->ptMinTrackSize.x = SX(380);
-	pInfo->ptMinTrackSize.y = SY(280);
+	pInfo->ptMinTrackSize.y = SY(380);	// room for a few lines of the text over Hear it's five and the links
 	CDialog::OnGetMinMaxInfo(pInfo);
 }
 
