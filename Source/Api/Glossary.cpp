@@ -1995,14 +1995,14 @@ Built Build()
 		if (I.Example >= 0)
 			E.Hear = EFFECT_EXAMPLE + Form + (Chip.empty() ? std::string() : "-" + Lowercase(Chip));
 		else if (Id == EFF_DPCM_PITCH || Id == EFF_RETRIGGER || Id == EFF_SAMPLE_OFFSET || Id == EFF_DAC)
-			E.HearHow = "The DPCM channel needs a sample to play: put the effect on a note of the DPCM channel, then put the "
-				"cursor on it and use Help > Hear the effect at the cursor.";
+			E.HearHow = "Put it on a note of the DPCM channel, which plays samples, then use Help > Hear the effect at the "
+				"cursor there.";
 		else if (Chip == "FDS")
-			E.HearHow = "Put it on an FDS note whose instrument has a modulator (the FDS's sounds in Instrument > Sound browser "
-				"have one), then put the cursor on it and use Help > Hear the effect at the cursor.";
+			E.HearHow = "Put it on an FDS note whose instrument has a modulator (the Sound browser's FDS sounds do), then use "
+				"Help > Hear the effect at the cursor there.";
 		else if (Chip == "5B")
-			E.HearHow = "Put it on a 5B note with H set to x 0 (like H08), then put the cursor on it and use Help > Hear the "
-				"effect at the cursor.";
+			E.HearHow = "Put it on a 5B note with H set to x 0 (like H08), then use Help > Hear the effect at the cursor "
+				"there.";
 		else if (Id == EFF_VOLUME)
 			E.HearHow = "Give notes a volume in the volume column instead and play them: louder and softer are what it does.";
 		else
@@ -2335,11 +2335,10 @@ bool EffectHearExample(int Effect, int Param, const ChannelInfo &Channel, int Pi
 std::string HearChipHow(const std::string &Chip)
 {
 	if (Chip == "VRC6 Plus")
-		return "This song isn't a VRC6 Plus song, so it has no soft layer to play on. Module > Module properties turns VRC6 "
-			"Plus on, and Instrument > Sound browser lists its soft sounds (adding one asks before the chip comes in).";
-	return "This song has no " + Chip + ", so no channel here can play it. To hear the " + Chip + ", open Instrument > Sound "
-		"browser: the " + Chip + "'s sounds come after the song's own, and adding one asks before it adds the chip (as Module "
-		"> Module properties does).";
+		return "This song has no soft layer to play it on. Module > Module properties turns VRC6 Plus on, and Instrument > "
+			"Sound browser lists its sounds.";
+	return "This song has no " + Chip + " to play it on. Instrument > Sound browser lists the " + Chip + "'s sounds; adding one "
+		"adds the chip, after asking.";
 }
 
 }	// namespace ftapi

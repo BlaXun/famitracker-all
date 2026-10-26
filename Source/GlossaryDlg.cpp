@@ -241,12 +241,12 @@ void CGlossaryDlg::Layout()
 	const int BackTop = static_cast<int>(Client.bottom) - Margin - Line - 2;
 	const int LinksHeight = Line * 3;
 	const int LinksTop = BackTop - Gap - LinksHeight;
-	const int HearTop = LinksTop - Gap - Line * 2 - 2;
+	const int HearTop = LinksTop - Gap - Line * 3 - 2;	// the Hear it line: up to five lines of text
 	const int TextTop = Margin + TitleHeight + Line * 2 + Gap;
 	GetDlgItem(IDC_GLOSSARY_TEXT)->MoveWindow(x, TextTop, Width, std::max(Line, HearTop - Gap - TextTop));
 	const int Button = SX(64);
 	GetDlgItem(IDC_GLOSSARY_HEAR)->MoveWindow(x, HearTop, Button, Line + 4);
-	GetDlgItem(IDC_GLOSSARY_HEARTEXT)->MoveWindow(x + Button + Margin, HearTop, std::max(SX(40), Width - Button - Margin), Line * 2 + 2);
+	GetDlgItem(IDC_GLOSSARY_HEARTEXT)->MoveWindow(x + Button + Margin, HearTop, std::max(SX(40), Width - Button - Margin), Line * 3 + 2);
 	if (m_hLinks != NULL)
 		::MoveWindow(m_hLinks, x, LinksTop, Width, LinksHeight, TRUE);
 	GetDlgItem(IDC_GLOSSARY_BACK)->MoveWindow(x, BackTop, Button, Line + 2);
