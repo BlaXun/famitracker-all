@@ -731,7 +731,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `send_file` | For a client on another computer: puts a file (an NSF, a module, a MIDI file, a WAV recording) into the Inbox folder next to FamiTracker.exe and gives its path for the tools that read files. See [Files between the computers](#files-between-the-computers) |
 | `add_sample_drums` | Adds a kit of sampled drums for the DPCM channel, made for FamiTracker (a kick, a snare and two toms); `write_notes` then plays them there by name |
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone from a note another part sounds with it, or a semitone and octaves (a minor ninth, an F-4 over a pad's E-2: what `check_song` finds a clash, by the same rule), is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
-| `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong |
+| `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong. A depth by word swings the notes as far as it swings a 2A03 pulse's, so on the FDS, the N163 and the VRC7, whose steps are finer or coarser, the effect's depth is another (the reply says the cents). `modulator` `off` on the FDS turns its modulator off where it plays (`H00` on each note, the `Hxx` that bring it in taken out) and brings the vibrato in where the modulator came in |
 | `change_mood` | Several changes for a mood at once: key or mode (a dominant's ninth kept natural, as `transpose` keeps it), parts up or down, new sounds, vibrato, an echo and the tempo |
 | `check_song` | Notes outside the key (a slide that takes a note outside it too), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
@@ -1326,6 +1326,46 @@ as earlier versions did: a 40-bar song with nine parts takes about half
 the time. `stems` false measures the mix alone, and `parts` `["chords"]`
 checks the melody against the chords alone.
 
+### Listening to the song
+
+`listen` hears the selected track as FamiTracker plays it, which the notes
+alone don't say. FamiTracker renders the mix and each part alone in one
+pass (as `measure_mix` does, changing nothing), and the tool compares what
+each part sounds like with what its notes say it should:
+
+- **Warbles and deep vibratos:** a held note whose pitch shakes faster than
+  8 times a second and wider than 40 cents either way is a warble, heard as
+  a short right note and then a fluttering echo (the FDS's modulator at
+  speed 34 and depth 5 shakes a note about a semitone and a half either way
+  14.5 times a second); a slower vibrato wider than 60 cents either way
+  sounds out of tune rather than sung, a detail under a semitone.
+- **Out of tune:** held notes 20 cents or more from where they should sound,
+  counting each chip's octaves (the FDS two under the note written, the
+  triangle and the 5B one, an N163 wave by its cycle), the fine pitch (`Pxx`)
+  and the chip's own rounding (said so when that's the reason).
+- **Parts beating:** two parts on one pitch, or octaves apart, 12 cents or
+  more off each other, so together they waver (a chorus a few cents apart
+  passes).
+- **Clicks and pops:** clicks inside held notes on the 2A03's and MMC5's
+  pulses (whose wave restarts when a vibrato takes the period across a
+  multiple of 256), pops as notes start on a smooth wave, a pop at the
+  loop's seam.
+- **Sound that holds on** after a release or a halt, and **notes hardly
+  heard** in their own part.
+- In the mix: **clipping**, **jumps in loudness** where no section starts,
+  and **harsh** or **muddy** stretches (more of the sound from 2 kHz up, or
+  from 160 to 500 Hz, than 99 in 100 of the soundtrack's own bars).
+
+Each finding says in plain words what's heard, on which part and in which
+bars, how sure it is and how much a listener notices it (high, medium or
+low), with the call that fixes it where a tool has one (a warble's is
+`add_vibrato` with `modulator` `off`) or what to change. `from_bar` and
+`to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
+`short` (the three heard worst) or `json`. It takes a while, since
+FamiTracker renders the track first: a two-and-a-half-minute track with
+eight parts took about 40 seconds under Wine. Listen with the user too: it
+hears how the song sounds, not whether it's the music they want.
+
 ## Stereo
 
 This FamiTracker plays in stereo, which the NES never did: each channel can
@@ -1636,6 +1676,16 @@ for it allow for that.
   such sounds at a pitch (`noise_pitch`, see [Sounds in words](#sounds-in-words)).
 
 ### FDS sounds
+
+What a modulator does, `study_nsf`'s studies, `reference_sound` and
+`design_instrument` say in plain words, as FamiTracker's emulator bends the
+pitch: how many times a second and how far, and whether that's a vibrato or
+a warble (fast and deep: each note sounds like a short right note and then a
+fluttering echo). `check_song` warns from the notes alone when FDS notes are
+held where a warbling modulator plays (the instrument's own, or brought in by
+`Hxx`, `Ixx` and `Jxx`), with the `add_vibrato` call that replaces it with a
+gentle vibrato; a slow, gentle one (depth 1 at speed 7, three times a
+second) stays quiet.
 
 The **FDS** (the Famicom Disk System) adds one wavetable channel whose
 modulator bends its pitch, and Claude draws its sounds: soft flute, whistle,

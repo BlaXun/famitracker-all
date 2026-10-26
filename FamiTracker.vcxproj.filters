@@ -1314,6 +1314,9 @@
     <ClCompile Include="Source\Api\NextSteps.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Listen.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Png.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1438,6 +1441,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\NextSteps.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Listen.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Png.h">
@@ -1846,6 +1852,9 @@
     <ClCompile Include="Source\Nsf\FtmFile.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Nsf\FdsModulator.cpp">
+      <Filter>NSF importer</Filter>
+    </ClCompile>
     <ClCompile Include="Source\ImportNsfDlg.cpp">
       <Filter>NSF importer</Filter>
     </ClCompile>
@@ -1883,6 +1892,9 @@
       <Filter>NSF importer</Filter>
     </ClInclude>
     <ClInclude Include="Source\Nsf\FtmFile.h">
+      <Filter>NSF importer</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Nsf\FdsModulator.h">
       <Filter>NSF importer</Filter>
     </ClInclude>
     <ClInclude Include="Source\ImportNsfDlg.h">

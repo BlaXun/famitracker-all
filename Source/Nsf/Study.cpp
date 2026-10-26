@@ -20,6 +20,7 @@
 */
 
 #include "Study.h"
+#include "FdsModulator.h"
 #include "Import.h"
 #include "Player.h"
 
@@ -2490,7 +2491,8 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 					for (size_t k = 0; k < d.FdsMod.size(); ++k)
 						Mod += (k == 0 ? "" : " ") + std::to_string(d.FdsMod[k]);
 					s += "      FDS wave " + Wave + "; modulation " + (Mod.empty() ? std::string("none") : Mod) +
-						Format(", speed %d, depth %d, delay %d\n", d.ModRate, d.ModDepth, d.ModDelay);
+						Format(", speed %d, depth %d, delay %d", d.ModRate, d.ModDepth, d.ModDelay) + (FdsModulatorMotion(d.ModRate, d.ModDepth,
+						d.FdsMod).Moves ? ": " + FdsModulatorWords(d.ModRate, d.ModDepth, d.FdsMod, d.ModDelay, 60) : std::string()) + "\n";
 				}
 				for (size_t w = 0; w < d.N163Waves.size(); ++w) {
 					std::string Wave;

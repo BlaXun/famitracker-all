@@ -1470,6 +1470,35 @@ back undoes only the fix's own action. `TestWhatNextJson` (every state of
 shape: its title, one undo, then A's chords on the A it laid out) and
 `TestProblemPlay` cover them.
 
+Listening (from `feat-listen`): `listen` (`ListenTool` before `// Checks` in
+`Tools.cpp`, after `MeasureMixTool`) renders the selected track's mix and
+each part alone in one pass (`SongHost::RenderParts`), turns each part's
+notes into where they should sound (`HeardNotesOf`: the row marks, `Gxx`
+and `Sxx`, the sticky `Pxx` and `4xy`, the FDS's modulator from the
+instrument and `Hxx`-`Jxx`, slides and arpeggios left out) and hands that to
+`ListenToSong` in `Source/Api/Listen.cpp` (portable, its own `listen_tests`):
+each held note's pitch by YIN (`transcribe::TrackPitch`) with its wobble,
+rate and where it holds (`TrackNote`), clicks cycle by cycle
+(`InsideClicks`, on the 2A03's and MMC5's pulses, `ListenPart::Restarts`),
+pops, drones, notes hardly heard, beating pairs and, in the mix, clipping,
+loudness jumps (`SpansLoudness`), harsh and muddy bars and the melody
+covered, each with its measured thresholds. `ListenNoteTuning` gives a note's
+pitch by 0.4.6's tables (the chips' octaves, an N163 wave's cycle, `Pxx`
+steps), and `ListenVibratoCents` and `ListenVibratoDepth` what `4xy` swings,
+which `add_vibrato` uses to pick its depth by cents on every chip
+(`PulseDepthOn`); its `modulator` `off` puts `H00` on each FDS note and the
+vibrato where the modulator came in. `Source/Nsf/FdsModulator.cpp`
+(`FdsModulatorMotion`, `FdsModulatorWords`) works out what a modulator does
+as `APU/FDSSound.cpp` bends it, for the studies (`DescribeStudy`), the
+references (`ReferenceText`, `ReferenceFdsSound`), `design_instrument` and
+`check_song`'s warble (`FOUND_WARBLE`, `PROBLEM_WARBLE`; the problems panel
+keeps its folded kinds by name, "Folded kinds"). FamiTracker reports an FDS
+instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
+`ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
+sound them when `ChipPitches` is set. `TestListenTool` and
+`TestListenFdsWarble` cover the tool. Still to come: the problems panel's
+Listen button, `what_next`'s listen step and `finish_song`'s listen.
+
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
 (portable, ASCII: `Exercises()` in order, each with its checks;

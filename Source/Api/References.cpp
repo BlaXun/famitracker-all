@@ -24,6 +24,7 @@
 #include "Json.h"
 #include "Music.h"
 #include "Wavetables.h"
+#include "../Nsf/FdsModulator.h"
 #include "../Nsf/NsfFile.h"
 #include "../Nsf/Study.h"
 #include "../Nsf/Tracker.h"
@@ -782,7 +783,8 @@ std::string ReferenceText(const Reference &R)
 				for (size_t k = 0; k < s.FdsWave.size(); ++k)
 					Wave += (k == 0 ? "" : " ") + std::to_string(s.FdsWave[k]);
 				Out += "     FDS wave " + Wave + Format("; modulator speed %d, depth %d, delay %d", s.ModSpeed, s.ModDepth,
-					s.ModDelay) + "\n";
+					s.ModDelay) + (nsf::FdsModulatorMotion(s.ModSpeed, s.ModDepth, s.FdsMod).Moves ? ": " + nsf::FdsModulatorWords(s.ModSpeed,
+					s.ModDepth, s.FdsMod, s.ModDelay, 60) : std::string()) + "\n";
 			}
 			for (size_t w = 0; w < s.N163Waves.size(); ++w) {
 				std::string Wave;
@@ -960,6 +962,9 @@ FdsSound ReferenceFdsSound(const ReferenceSound &Sound, const std::string &Name,
 		F.ModDelay = std::max(0, std::min(255, Sound.ModDelay));
 		How = F.ModDepth > 0 && F.ModSpeed > 0 ? Format("its own wave and modulator (speed %d, depth %d%s)", F.ModSpeed, F.ModDepth,
 			F.ModDelay > 0 ? Format(", from %d frames in", F.ModDelay).c_str() : "") : "its own wave";
+		// What the modulator does, in plain words: a fast, deep one is a warble, which listeners hear as a fluttering echo
+		if (nsf::FdsModulatorMotion(F.ModSpeed, F.ModDepth, F.Modulation).Moves)
+			How += ": its modulator is " + nsf::FdsModulatorWords(F.ModSpeed, F.ModDepth, F.Modulation, F.ModDelay, 60);
 	}
 	else if (Fds) {
 		F.Wave = FdsWaveOfWord("round");

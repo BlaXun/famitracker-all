@@ -119,6 +119,7 @@ add_library(ftapi STATIC
 	Tools.cpp
 	WhatNext.cpp
 	NextSteps.cpp
+	Listen.cpp
 	${TRANSCRIBE}/WavReader.cpp
 	${TRANSCRIBE}/PitchTracker.cpp
 	${TRANSCRIBE}/Guess.cpp
@@ -143,6 +144,7 @@ add_library(ftapi STATIC
 	${NSF}/Tracker.cpp
 	${NSF}/MidiFile.cpp
 	${NSF}/FtmFile.cpp
+	${NSF}/FdsModulator.cpp
 )
 target_include_directories(ftapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ftapi PUBLIC ftbridge xiph)
@@ -188,6 +190,11 @@ add_test(NAME phone_tests COMMAND phone_tests)
 add_executable(glossary_tests tests/GlossaryTests.cpp)
 target_link_libraries(glossary_tests PRIVATE ftapi)
 add_test(NAME glossary_tests COMMAND glossary_tests)
+
+# Listening to a song as it sounds (Listen.h): warbles, tuning, beating, clicks, drones and the mix
+add_executable(listen_tests tests/ListenTests.cpp)
+target_link_libraries(listen_tests PRIVATE ftapi)
+add_test(NAME listen_tests COMMAND listen_tests)
 
 # Help > Exercises' checks (Exercises.h) on songs described by hand, their links and their answers as JSON
 add_executable(exercises_tests tests/ExercisesTests.cpp)
