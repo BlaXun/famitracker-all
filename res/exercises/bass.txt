@@ -12,6 +12,7 @@ step
 show: piano-roll
 play: bars 1-4
 check: bass-roots
+instrument: 02
 text: On each bar's first [[beat]], put its chord's [[root]] on the triangle: the note the chord is named after. The chords are C, Am, F and G.
 
   The piano roll shows the triangle now: click at the start of each bar on the root's lane, and drag to the end of the bar. Then press Check.
@@ -22,6 +23,7 @@ step
 show: piano-roll
 play: bars 1-4
 check: bass-two
+instrument: 02
 text: Now make the bass move: two notes a bar. Keep the root on beat 1, and add a second note on beat 3: the chord's [[fifth]], or the root again.
 hint: The fifths are G for C, E for Am, C for F and D for G. Drag the end of each root to the middle of its bar, then click the second note in on beat 3.
 answer: Triangle, bar 1, Bass: C3 - - - G2 - - - | A2 - - - E2 - - - | F2 - - - C3 - - - | G2 - - - D3 - - -

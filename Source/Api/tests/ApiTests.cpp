@@ -23948,6 +23948,10 @@ void TestExerciseStarters()
 			}
 			for (size_t i = 0; i < Named.size(); ++i)
 				Check(FindTutorialChannel(Named[i], Channels) >= 0, (Name + ": the song has no channel " + Named[i]).c_str(), __LINE__);
+			bool Picked = Step.Instrument < 0;	// the instrument a step picks (new notes play it) is the song's
+			for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+				Picked = Picked || Song.Info.Instruments[i].Index == Step.Instrument;
+			Check(Picked, (Name + ": a step picks an instrument the song hasn't").c_str(), __LINE__);
 			Check(Step.PlayLast <= Time.BarCount() && Step.Bar <= Time.BarCount(), (Name + ": a bar past the song's end").c_str(),
 				__LINE__);
 		}
