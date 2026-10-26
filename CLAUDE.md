@@ -1547,7 +1547,9 @@ group, plays its bars in `CExerciseHearDlg` (`CBarsPlayer`) and undoes them
 (`ForgetRedo`); Play it plays the verdict's bars, its channels alone first.
 The starters (2A03, one frame of four bars, two for the beat, the first
 example song's instruments, a `BF KEYS` block choosing C major except in
-minor's) were written from step parts by a script; keep each check failing
+minor's) are written from step parts by `tools/exercises/make_starters.py`
+(Python alone, from `res/examples/first-song.ftm`; its README says how to run
+it and the others, which write `res/exercises` byte for byte); keep each check failing
 on its starter and passing on its script's answers, clean as `check_song`
 hears them. Each part keeps lanes of its own in the piano roll (the tune
 from C-4 up, the chords under it, the triangle's bass from E-2 to D-3), so a
@@ -1648,7 +1650,8 @@ their next step in the piano roll's terms (lanes, beat lines, a note's
 right edge, Select, Instrument > Give the selected notes, Effects >
 Volume) and say what they taught in one sentence; `tiny-tune` leads into
 `home-note`. Their starters (1-4 bars, one part at most, C major chosen,
-written from step parts by a script as Next steps' were) and scripts are
+written from step parts by `tools/exercises/make_first_steps.py` as Next
+steps' are, their scripts by `first_steps_scripts.py`) and scripts are
 RCDATA named
 `FIRSTSTEPS_*_SONG` and `_SCRIPT` in `FamiTracker.rc`, without numbers in
 `resource.h` (`FILES` in `ExercisesDlg.cpp` holds the names;
