@@ -19637,11 +19637,11 @@ void NoteCall(FakeSong &Song, const std::string &Tool)
 int StepsDoneOf(const std::string &Line)
 {
 	const size_t Comma = Line.find(", ");
-	int Done = -1, Of = -1;
-	if (Line.compare(0, 6, "Next (") != 0 || Comma == std::string::npos || std::sscanf(Line.c_str() + Comma + 2, "%d of %d done)",
-		&Done, &Of) != 2)
+	if (Line.compare(0, 6, "Next (") != 0 || Comma == std::string::npos || Comma + 2 >= Line.size() ||
+		!std::isdigit(static_cast<unsigned char>(Line[Comma + 2])))
 		return -1;
-	return Done;
+	const size_t Of = Line.find(" of ", Comma), Close = Line.find(" done)", Comma);
+	return Of != std::string::npos && Close != std::string::npos && Of < Close ? std::atoi(Line.c_str() + Comma + 2) : -1;
 }
 
 // What an answer says is done and left, for a check's message
