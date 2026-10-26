@@ -364,6 +364,7 @@ private:
 	int					m_iTempoAccum;						// Used for speed calculation
 	int					m_iTempoFrames;						// Frames / row
 	unsigned int		m_iPlayTicks;
+	unsigned int		m_iClockTicks;						// the status bar's clock (GetPlayerTicks): what the song played, not a render
 	bool				m_bPlaying;							// True when tracker is playing back the module
 	bool				m_bHaltRequest;						// True when a halt is requested
 	bool				m_bPlayLooping;

@@ -1772,6 +1772,16 @@ last), with Play it (two parts that beat play both) and Fix for a fix of
 one call; after a change they stay listed as heard before it (`SongMoved`,
 `IsStale`: Explain only) until the next listen (`TestProblemListHeard`).
 
+Wine checks (from `feat-wine-checks`): the status bar's clock is
+`CSoundGen::m_iClockTicks` (`GetPlayerTicks`), which only a song that plays
+counts; `m_iPlayTicks`, which 0.4.6 showed, counts a render too (it ends the
+render, and File > Create WAV's dialog shows it), so after every listen,
+measure_mix or export the clock showed the render's length. A tool that
+renders still stops a song that plays, as File > Create WAV does. The Ask
+panel gives the keys back to its question box after its Settings dialog
+(`ShowSettings`), where MFC had given them to the pattern editor and a
+question typed next played notes, started editing and played the song.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

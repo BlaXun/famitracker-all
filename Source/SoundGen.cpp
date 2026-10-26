@@ -154,6 +154,7 @@ CSoundGen::CSoundGen() :
 	m_iPlayRow(0),
 	m_iPlayTrack(0),
 	m_iPlayTicks(0),
+	m_iClockTicks(0),
 	m_bBufferUnderrun(false),
 	m_bAudioClipping(false),
 	m_iClipCounter(0),
@@ -1028,6 +1029,8 @@ void CSoundGen::BeginPlayer(play_mode_t Mode, int Track)
 	++m_iPlayStarts;			// once it plays (a volatile write: the UI thread sees m_bPlaying set first)
 	m_bHaltRequest      = false;
 	m_iPlayTicks		= 0;
+	if (!m_bRendering)
+		m_iClockTicks	= 0;	// a render (File > Create WAV, the tools' renders) leaves the clock where the song stopped
 	m_iFramesPlayed		= 0;
 	m_iJumpToPattern	= -1;
 	m_iSkipToRow		= -1;
@@ -1201,6 +1204,8 @@ void CSoundGen::RunFrame()
 	if (IsPlaying()) {
 		
 		++m_iPlayTicks;
+		if (!m_bRendering)
+			++m_iClockTicks;
 
 		if (m_bRendering) {
 			if (m_iRenderEndWhen == SONG_TIME_LIMIT) {
@@ -2294,7 +2299,9 @@ int CSoundGen::GetPlayerTrack() const
 
 int CSoundGen::GetPlayerTicks() const
 {
-	return m_iPlayTicks;
+	// The clock in the status bar: 0.4.6 showed m_iPlayTicks, which a render counts too, so after every listen,
+	// measure_mix or export it showed the render's length (01:06 after a listen) though the song hadn't played
+	return m_iClockTicks;
 }
 
 void CSoundGen::MoveToFrame(int Frame)
