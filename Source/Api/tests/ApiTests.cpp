@@ -4701,7 +4701,7 @@ void TestProtocol()
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"nope\"}}"), Config, Tools);
 	CHECK_EQ(ErrorCode(Response), -32602);
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"resources/list\"}"), Config, Tools);
-	CHECK_EQ(ErrorCode(Response), -32601);
+	CHECK(Body(Response).Get("result") != 0 && Body(Response).Get("result")->Get("resources") != 0);	// export_for_game's files
 	CHECK_EQ(Response.Status, 200);
 	Response = HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}"), Config, Tools);
 	CHECK(Body(Response).Get("result")->IsObject());
@@ -4965,6 +4965,21 @@ std::vector<std::string> ToolWords(const std::string &Text)
 
 // Other computers on the user's network: who may connect, the Host they use,
 // the small set of tools, files sent in and fetched
+// A response's header ("" without it)
+std::string ResponseHeader(const HttpResponse &Response, const char *pName)
+{
+	for (size_t i = 0; i < Response.Headers.size(); ++i)
+		if (EqualsNoCase(Response.Headers[i].first, pName))
+			return Response.Headers[i].second;
+	return std::string();
+}
+
+HttpRequest WithHeader(HttpRequest Request, const char *pName, const std::string &Value)
+{
+	Request.Headers.push_back(std::make_pair(std::string(pName), Value));
+	return Request;
+}
+
 void TestNetwork()
 {
 	// Addresses
@@ -5284,7 +5299,57 @@ void TestNetwork()
 	Song.Files["Soundtrack notes.txt"] = "private";
 	Response = HandleMcp(FileRequest("GET", "/files/Town.ogg"), Config, Tools);
 	CHECK(Response.Status == 200 && Response.ContentType == "audio/ogg" && Response.Body == Song.Files["Town.ogg"]);
-	CHECK(Response.Headers.size() == 1 && Response.Headers[0].second == "attachment; filename=\"Town.ogg\"");
+	// To play where it opens, its ranges given as a phone's browser asks for them before it plays (iPhones' Safari plays
+	// nothing without)
+	CHECK_EQ(ResponseHeader(Response, "Content-Disposition"), std::string("inline; filename=\"Town.ogg\""));
+	CHECK_EQ(ResponseHeader(Response, "Accept-Ranges"), std::string("bytes"));
+	CHECK_EQ(ResponseHeader(Response, "Content-Range"), std::string());
+	Song.Files["Range.ogg"] = "OggS 012345678";	// 14 bytes
+	struct RangeCase {
+		const char *pRange;
+		int Status;
+		const char *pBody;
+		const char *pContentRange;
+	};
+	const RangeCase RANGES[] = {
+		{ "bytes=0-3", 206, "OggS", "bytes 0-3/14" },
+		{ "bytes=5-", 206, "012345678", "bytes 5-13/14" },
+		{ "bytes=-3", 206, "678", "bytes 11-13/14" },
+		{ "bytes=10-99", 206, "5678", "bytes 10-13/14" },
+		{ "bytes=0-0", 206, "O", "bytes 0-0/14" },
+		{ "bytes=-99", 206, "OggS 012345678", "bytes 0-13/14" },
+		{ " Bytes = 2 - 3 ", 206, "gS", "bytes 2-3/14" },
+		{ "bytes=0-99999999999999999999999", 206, "OggS 012345678", "bytes 0-13/14" },
+		{ "bytes=14-", 416, "", "bytes */14" },
+		{ "bytes=-0", 416, "", "bytes */14" },
+		{ "bytes=99-100", 416, "", "bytes */14" },
+		{ "bytes=0-1,4-5", 200, "OggS 012345678", "" },	// several ranges: the whole file
+		{ "bytes=5-2", 200, "OggS 012345678", "" },
+		{ "items=0-1", 200, "OggS 012345678", "" },
+		{ "bytes=a-b", 200, "OggS 012345678", "" },
+		{ "bytes=", 200, "OggS 012345678", "" },
+	};
+	for (size_t i = 0; i < sizeof(RANGES) / sizeof(RANGES[0]); ++i) {
+		Response = HandleMcp(WithHeader(FileRequest("GET", "/files/Range.ogg"), "Range", RANGES[i].pRange), Config, Tools);
+		Check(Response.Status == RANGES[i].Status && Response.Body == RANGES[i].pBody &&
+			ResponseHeader(Response, "Content-Range") == RANGES[i].pContentRange && (Response.Status == 416) == Response.ContentType.empty(),
+			RANGES[i].pRange, __LINE__);
+	}
+	// If-Range, which FamiTracker can't check: the whole file
+	Response = HandleMcp(WithHeader(WithHeader(FileRequest("GET", "/files/Range.ogg"), "Range", "bytes=0-1"), "If-Range", "\"x\""),
+		Config, Tools);
+	CHECK(Response.Status == 200 && Response.Body.size() == 14);
+	// HEAD: the headers and the length, no body
+	Response = HandleMcp(FileRequest("HEAD", "/files/Range.ogg"), Config, Tools);
+	CHECK_EQ(Response.Status, 200);
+	const std::string Head = FormatHttpResponse(Response, false, true);
+	CHECK_HAS(Head, "HTTP/1.1 200 OK\r\n");
+	CHECK_HAS(Head, "Content-Length: 14\r\n");
+	CHECK(Head.size() > 4 && Head.compare(Head.size() - 4, 4, "\r\n\r\n") == 0);
+	CHECK_HAS(FormatHttpResponse(HandleMcp(WithHeader(FileRequest("GET", "/files/Range.ogg"), "Range", "bytes=0-3"), Config, Tools),
+		false), "HTTP/1.1 206 Partial Content\r\n");
+	CHECK_HAS(FormatHttpResponse(HandleMcp(WithHeader(FileRequest("GET", "/files/Range.ogg"), "Range", "bytes=20-"), Config, Tools),
+		false), "HTTP/1.1 416 Range Not Satisfiable\r\n");
 	Response = HandleMcp(FileRequest("GET", "/files/Town%20%28night%29.ogg?x=1"), Config, Tools);
 	CHECK(Response.Status == 200 && Response.Body == "OggS night");
 	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Missing.ogg"), Config, Tools).Status, 404);
@@ -5298,7 +5363,7 @@ void TestNetwork()
 	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", ""), Config, Tools).Status, 403);
 	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg", "", "wrong"), Config, Tools).Status, 403);
 	Response = HandleMcp(FileRequest("POST", "/files/Town.ogg"), Config, Tools);
-	CHECK(Response.Status == 405 && Response.Headers[0].second == "GET");
+	CHECK(Response.Status == 405 && Response.Headers[0].second == "GET, HEAD");
 	{
 		// From outside a home network, or with the option off, nothing
 		HttpRequest Outside = FileRequest("GET", "/files/Town.ogg");
@@ -5313,6 +5378,52 @@ void TestNetwork()
 		CHECK_EQ(HandleMcp(Here, Off, Tools).Status, 200);
 	}
 
+	// A link's own code in the address, for a browser, which can't send the access code: it opens these files, nothing else
+	const std::string Code = FilesCode("secret");
+	CHECK(Code.size() == 24 && Code.find_first_not_of("0123456789abcdef") == std::string::npos);
+	CHECK(Code == FilesCode("secret") && Code != FilesCode("other") && Code != PhoneCode("secret"));
+	Response = HandleMcp(FileRequest("GET", "/files/Town.ogg?code=" + Code, "", ""), Config, Tools);
+	CHECK(Response.Status == 200 && Response.ContentType == "audio/ogg" && Response.Body == Song.Files["Town.ogg"]);
+	CHECK_EQ(ResponseHeader(Response, "Referrer-Policy"), std::string("no-referrer"));
+	Response = HandleMcp(WithHeader(FileRequest("GET", "/files/Range.ogg?code=" + Code, "", ""), "Range", "bytes=0-3"), Config, Tools);
+	CHECK(Response.Status == 206 && Response.Body == "OggS");
+	CHECK_EQ(HandleMcp(FileRequest("HEAD", "/files/Town%20%28night%29.ogg?x=1&code=" + Code, "", ""), Config, Tools).Status, 200);
+	const std::string WRONG[] = { "", "0", Code.substr(1), Code + "0", FilesCode("old secret"), PhoneCode("secret"), "secret%00",
+		"SECRET" };
+	for (size_t i = 0; i < sizeof(WRONG) / sizeof(WRONG[0]); ++i)
+		Check(HandleMcp(FileRequest("GET", "/files/Town.ogg?code=" + WRONG[i], "", ""), Config, Tools).Status == 403, WRONG[i].c_str(),
+			__LINE__);
+	// The access code never goes in an address (a browser keeps them), with the header or without
+	Response = HandleMcp(FileRequest("GET", "/files/Town.ogg?code=secret", "", ""), Config, Tools);
+	CHECK(Response.Status == 403 && Contains(Response.Body, "never goes in an address"));
+	CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg?code=secret"), Config, Tools).Status, 403);
+	// Only the OGG files, by plain names
+	Song.Fetched.clear();
+	for (size_t i = 0; i < sizeof(TRAVERSALS) / sizeof(TRAVERSALS[0]); ++i)
+		Check(HandleMcp(FileRequest("GET", std::string(TRAVERSALS[i]) + "?code=" + Code, "", ""), Config, Tools).Status == 400,
+			TRAVERSALS[i], __LINE__);
+	CHECK(Song.Fetched.empty());
+	// Nor the tools, the Inbox or another method
+	HttpRequest NoTools = FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", "192.168.1.20", "192.168.1.10:46600", "");
+	NoTools.Target = "/mcp?code=" + Code;
+	CHECK_EQ(HandleMcp(NoTools, Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("PUT", "/inbox/x.nsf?code=" + Code, "NESM", ""), Config, Tools).Status, 403);
+	CHECK_EQ(HandleMcp(FileRequest("POST", "/files/Town.ogg?code=" + Code, "", ""), Config, Tools).Status, 405);
+	// The peer, Host and Origin checks of every route
+	{
+		HttpRequest Outside = FileRequest("GET", "/files/Town.ogg?code=" + Code, "", "");
+		Outside.Peer = "8.8.8.8";
+		CHECK_EQ(HandleMcp(Outside, Config, Tools).Status, 403);
+		McpConfig Off = Config;
+		Off.Network = false;
+		CHECK_EQ(HandleMcp(FileRequest("GET", "/files/Town.ogg?code=" + Code, "", ""), Off, Tools).Status, 403);
+		HttpRequest Renamed = FileRequest("GET", "/files/Town.ogg?code=" + Code, "", "");
+		Renamed.Headers[0].second = "evil.example:46600";
+		CHECK_EQ(HandleMcp(Renamed, Config, Tools).Status, 403);
+		CHECK_EQ(HandleMcp(WithHeader(FileRequest("GET", "/files/Town.ogg?code=" + Code, "", ""), "Origin", "http://evil.example"), Config,
+			Tools).Status, 403);
+	}
+
 	// export_for_game links its files for a client on another computer, as it reached FamiTracker
 	{
 		FakeSong Exported;
@@ -5325,9 +5436,23 @@ void TestNetwork()
 		Export.Target = "/mcp/core";
 		std::string Text = Body(HandleMcp(Export, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
 		CHECK_HAS(Text, "Saved next to test.ftm:\n- Town.ogg");
-		CHECK_HAS(Text, "fetch the files from FamiTracker with the access code");
-		CHECK_HAS(Text, "\n- http://desktop-pc:46600/files/Town.ogg");
+		CHECK_HAS(Text, "give the person these links. They open in a browser with no header");
+		// Its own code in the address, and over Tailscale too for a phone away from home (this computer has 100.90.1.2)
+		CHECK(Contains(Text, ("\n- Town.ogg: http://desktop-pc:46600/files/Town.ogg?code=" + Code + " (away from home, over Tailscale: "
+			"http://100.90.1.2:46600/files/Town.ogg?code=" + Code + ")\n").c_str()));
+		CHECK_HAS(Text, "resources/read with its uri, like famitracker://files/Town.ogg");
 		CHECK(Exported.Files.count("Town.ogg") == 1);
+		// Reached over Tailscale already: the one link
+		HttpRequest Away = Export;
+		Away.Headers[0].second = "100.90.1.2:46600";
+		Text = Body(HandleMcp(Away, Config, ExportTools)).Get("result")->Get("content")->At(0).Get("text")->String();
+		CHECK(Contains(Text, ("\n- Town.ogg: http://100.90.1.2:46600/files/Town.ogg?code=" + Code + "\n").c_str()));
+		CHECK_LACKS(Text, "over Tailscale:");
+		// The link opens with no header, as a phone's browser opens it
+		HttpRequest Tapped = FileRequest("GET", "/files/Town.ogg?code=" + Code, "", "");
+		Tapped.Headers[0].second = "desktop-pc:46600";
+		Response = HandleMcp(Tapped, Config, ExportTools);
+		CHECK(Response.Status == 200 && Response.Body == Exported.Files["Town.ogg"]);
 		// The link works
 		HttpRequest Fetch = FileRequest("GET", "/files/Town.ogg");
 		Fetch.Headers[0].second = "desktop-pc:46600";
@@ -24644,6 +24769,327 @@ void TestFirstSongSmall()
 	CHECK(CheckOn(Song, "first-song", __LINE__).Passed);
 }
 
+// The tests of the export from another computer (from feat-remote-export)
+
+// TestExport's song: bars 1-4 an intro, bars 5-8 the loop, the bass's last note over the seam (19.2 s in the game's file)
+void PutExportSong(FakeSong &Song)
+{
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 64, "E-4");
+	Song.Put(5, 96, "G-4");
+	Song.Put(2, 0, "C-2", 1);
+	Song.Put(2, 112, "G-1");
+	Song.Rows[0][127].Effect[0] = EFF_JUMP;
+	Song.Rows[0][127].Param[0] = 1;
+}
+
+// A song whose exported files read back Pad bytes longer than they are (attach's cap)
+class PaddedExports : public FakeSong {
+public:
+	size_t Pad = 0;
+	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error) override
+	{
+		const bool Read = FakeSong::ReadExport(Name, Bytes, Error);
+		if (Read)
+			Bytes.append(Pad, '\0');
+		return Read;
+	}
+};
+
+// save_song and export_for_game for a client (Caller::Client), which can't use File > Save As: a song without a file goes
+// into FamiTracker's Songs folder, in a folder of its own, as CMcpLink::SaveNew saves it (FakeSong does the same)
+void TestSaveIntoSongs()
+{
+	Caller Client;
+	Client.Client = true;
+	FakeSong Song;
+	Song.Info.FileName.clear();
+	ToolSet Tools(Song);
+	// FamiTracker's own windows, without a name: File > Save As, as before
+	ToolResult R = Tools.Call("save_song", Parse("{}"));
+	CHECK(R.IsError && Contains(R.Text, "File > Save As") && Song.Info.FileName.empty());
+	// With a name: into the Songs folder; the song is that file then, and later saves go there
+	R = Tools.Call("save_song", Parse("{\"name\": \"Town theme\"}"), Client);
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Saved the song as C:\\Games\\FamiTracker\\Songs\\Town theme\\Town theme.ftm: it had no file yet");
+	CHECK_EQ(Song.Info.FileName, std::string("Town theme.ftm"));
+	CHECK(!Tools.Call("save_song", Parse("{}"), Client).IsError && Song.Saved == "Town theme.ftm");
+	// A name for a song that has a file: its own, or none
+	CHECK(!Tools.Call("save_song", Parse("{\"name\": \"town theme.FTM\"}"), Client).IsError);
+	R = Tools.Call("save_song", Parse("{\"name\": \"Castle\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "has a file already, Town theme.ftm"));
+	// A name taken is numbered, whatever its case: never over a file
+	FakeSong Second;
+	Second.Info.FileName.clear();
+	Second.SongFolders = Song.SongFolders;
+	ToolSet SecondTools(Second);
+	CHECK_HAS(SecondTools.Call("save_song", Parse("{\"name\": \"TOWN THEME.ftm\"}"), Client).Text,
+		"\\Songs\\TOWN THEME 2\\TOWN THEME 2.ftm");
+	// Names that can't be files
+	FakeSong Third;
+	Third.Info.FileName.clear();
+	ToolSet ThirdTools(Third);
+	const std::string BAD[] = { "a/b", "a\\\\b", "..", "NUL", "nul.txt", "C:x", "dot.", "x?", "<x>", "a|b", "\\u0001x", std::string(61, 'x') };
+	for (size_t i = 0; i < sizeof(BAD) / sizeof(BAD[0]); ++i)
+		Check(ThirdTools.Call("save_song", Parse("{\"name\": \"" + BAD[i] + "\"}"), Client).IsError && Third.Info.FileName.empty(),
+			BAD[i].c_str(), __LINE__);
+	CHECK(!ThirdTools.Call("save_song", Parse("{\"name\": \"" + std::string(60, 'x') + "\"}"), Client).IsError);
+	// No copy of a song without a file
+	FakeSong Fourth;
+	Fourth.Info.FileName.clear();
+	Fourth.Info.TrackName = "Forest";
+	ToolSet FourthTools(Fourth);
+	R = FourthTools.Call("save_song", Parse("{\"copy_name\": \"Darker\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "no file yet") && Fourth.Info.FileName.empty());
+	// Without a name: the track's; for FamiTracker's "New song" the module's title, else "Untitled", numbered
+	CHECK(!FourthTools.Call("save_song", Parse("{}"), Client).IsError && Fourth.Info.FileName == "Forest.ftm");
+	FakeSong Fifth;
+	Fifth.Info.FileName.clear();
+	Fifth.Info.TrackName = "New song";
+	ToolSet FifthTools(Fifth);
+	CHECK(!FifthTools.Call("save_song", Parse("{}"), Client).IsError && Fifth.Info.FileName == "Test song.ftm");
+	FakeSong Sixth;
+	Sixth.Info.FileName.clear();
+	Sixth.Info.TrackName = "New song";
+	Sixth.Info.Title.clear();
+	Sixth.SongFolders.insert("untitled");
+	ToolSet SixthTools(Sixth);
+	CHECK(!SixthTools.Call("save_song", Parse("{}"), Client).IsError && Sixth.Info.FileName == "Untitled 2.ftm");
+	// A track's name with what a file's name can't hold
+	FakeSong Seventh;
+	Seventh.Info.FileName.clear();
+	Seventh.Info.TrackName = "Boss: \"Final\" / phase 2";
+	ToolSet SeventhTools(Seventh);
+	CHECK(!SeventhTools.Call("save_song", Parse("{}"), Client).IsError && IsPlainFileName(Seventh.Info.FileName) &&
+		Seventh.Info.FileName.compare(0, 4, "Boss") == 0);
+	// While a dialog is open nothing is saved
+	FakeSong Busy;
+	Busy.Info.FileName.clear();
+	Busy.Busy = true;
+	ToolSet BusyTools(Busy);
+	R = BusyTools.Call("save_song", Parse("{\"name\": \"x\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "dialog") && Busy.Info.FileName.empty());
+
+	// export_for_game on a song without a file: FamiTracker's own window asks for File > Save As; a client's is saved first,
+	// named after its track, the file next to it
+	FakeSong Unsaved;
+	PutExportSong(Unsaved);
+	Unsaved.Info.FileName.clear();
+	ToolSet UnsavedTools(Unsaved);
+	CHECK_HAS(UnsavedTools.Call("export_for_game", Parse("{}")).Text, "hasn't been saved yet");
+	CHECK(Unsaved.Info.FileName.empty() && Unsaved.Files.empty());
+	R = UnsavedTools.Call("export_for_game", Parse("{}"), Client);
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "The song had no file yet, so FamiTracker saved it first, as C:\\Games\\FamiTracker\\Songs\\Town\\Town.ftm");
+	CHECK_HAS(R.Text, "\nSaved next to Town.ftm:\n- Town.ogg: 19.2 s");
+	CHECK(Unsaved.Info.FileName == "Town.ftm" && Unsaved.Files.count("Town.ogg") == 1);
+	CHECK_LACKS(UnsavedTools.Call("export_for_game", Parse("{}"), Client).Text, "had no file yet");
+	// finish_song likewise
+	FakeSong Finished = FinishTestSong();
+	Finished.Info.FileName.clear();
+	ToolSet FinishTools(Finished);
+	R = FinishTools.Call("finish_song", Parse("{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}"), Client);
+	CHECK_HAS(R.Text, "\n- Saved: the song had no file yet, so FamiTracker saved it first, as C:\\Games\\FamiTracker\\Songs\\");
+	CHECK_HAS(R.Text, "\n- Export: ");
+	CHECK(!Finished.Info.FileName.empty() && Finished.Files.size() == 1u && R.Files.size() == 1u);
+}
+
+// The files export_for_game saves as MCP resources, for a client that can't fetch them by HTTP: listed, read as blobs,
+// linked from the reply where the protocol has links (2025-06-18 on), and carried in it with attach, up to its cap
+void TestExportResources()
+{
+	FakeSong Song;
+	Song.Files["Town.ogg"] = std::string("OggS\0game", 9);
+	Song.Files["Town (night).ogg"] = "OggS night";
+	Song.Files["Soundtrack notes.txt"] = "private";
+	Song.FileTimes["Town.ogg"] = 1;
+	Song.FileTimes["Town (night).ogg"] = 2;
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	auto Request = [](const std::string &Method, const std::string &Params) {
+		return Post("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"" + Method + "\"" + (Params.empty() ? std::string() : ",\"params\":{" +
+			Params + "}") + "}");
+	};
+	// The handshake says there are resources
+	Json Message = Body(HandleMcp(Request("initialize", "\"protocolVersion\":\"2025-06-18\""), Config, Tools));
+	const Json *pResources = Message.Get("result")->Get("capabilities")->Get("resources");
+	CHECK(pResources != 0 && pResources->Get("listChanged") != 0 && !pResources->Get("listChanged")->Bool());
+	// resources/list: the OGG files next to the song, the newest first, and nothing else
+	Message = Body(HandleMcp(Request("resources/list", ""), Config, Tools));
+	const Json *pList = Message.Get("result")->Get("resources");
+	CHECK(pList != 0 && pList->Size() == 2u);
+	if (pList != 0 && pList->Size() == 2u) {
+		CHECK(pList->At(0).Get("uri")->String() == "famitracker://files/Town%20%28night%29.ogg" &&
+			pList->At(0).Get("name")->String() == "Town (night).ogg");
+		CHECK(pList->At(1).Get("uri")->String() == "famitracker://files/Town.ogg" && pList->At(1).Get("mimeType")->String() == "audio/ogg" &&
+			pList->At(1).Get("size")->Integer() == 9);
+	}
+	Message = Body(HandleMcp(Request("resources/templates/list", ""), Config, Tools));
+	CHECK(Message.Get("result")->Get("resourceTemplates")->At(0).Get("uriTemplate")->String() == "famitracker://files/{name}");
+	// resources/read: the file's bytes in base64, a blob
+	Message = Body(HandleMcp(Request("resources/read", "\"uri\":\"famitracker://files/Town.ogg\""), Config, Tools));
+	const Json Read = Message.Get("result")->Get("contents")->At(0);
+	std::string Bytes;
+	CHECK(Read.Get("uri")->String() == "famitracker://files/Town.ogg" && Read.Get("mimeType")->String() == "audio/ogg");
+	CHECK(Base64Decode(Read.Get("blob")->String(), Bytes) && Bytes == Song.Files["Town.ogg"]);
+	Message = Body(HandleMcp(Request("resources/read", "\"uri\":\"famitracker://files/Town%20%28night%29.ogg\""), Config, Tools));
+	CHECK(Base64Decode(Message.Get("result")->Get("contents")->At(0).Get("blob")->String(), Bytes) && Bytes == "OggS night");
+	// Only those files, by their names
+	Song.Fetched.clear();
+	const char *const NOT_THERE[] = { "famitracker://files/Soundtrack%20notes.txt", "famitracker://files/..%2Fsecret.ogg",
+		"famitracker://files/C%3A%5Csecret.ogg", "famitracker://files/", "famitracker://files/Town.ogg?x=1", "file:///C:/Music/Town.ogg",
+		"http://192.168.1.10:46600/files/Town.ogg", "famitracker://files/NUL.ogg", "famitracker://files/bad%2" };
+	for (size_t i = 0; i < sizeof(NOT_THERE) / sizeof(NOT_THERE[0]); ++i) {
+		const HttpResponse Response = HandleMcp(Request("resources/read", "\"uri\":\"" + std::string(NOT_THERE[i]) + "\""), Config, Tools);
+		const Json Answer = Body(Response);
+		const Json *pError = Answer.Get("error");
+		Check(ErrorCode(Response) == -32002 && pError != 0 && pError->Get("data") != 0 &&
+			pError->Get("data")->Get("uri")->String() == NOT_THERE[i], NOT_THERE[i], __LINE__);
+	}
+	CHECK(Song.Fetched.empty());
+	HttpResponse Response = HandleMcp(Request("resources/read", "\"uri\":\"famitracker://files/Missing.ogg\""), Config, Tools);
+	CHECK(ErrorCode(Response) == -32002 && Contains(Response.Body, "There's no Missing.ogg next to the song"));
+	CHECK_EQ(ErrorCode(HandleMcp(Request("resources/read", ""), Config, Tools)), -32602);
+	// The 2026-07-28 protocol: the uri in the Mcp-Name header too
+	Message = Body(HandleMcp(ModernPost("resources/read", "\"uri\":\"famitracker://files/Town.ogg\"", "famitracker://files/Town.ogg"),
+		Config, Tools));
+	CHECK(Message.Get("result") != 0 && Message.Get("result")->Get("resultType")->String() == "complete" &&
+		Base64Decode(Message.Get("result")->Get("contents")->At(0).Get("blob")->String(), Bytes) && Bytes == Song.Files["Town.ogg"]);
+	CHECK_EQ(ErrorCode(HandleMcp(ModernPost("resources/read", "\"uri\":\"famitracker://files/Town.ogg\"", "famitracker://files/Other.ogg"),
+		Config, Tools)), -32020);
+	Message = Body(HandleMcp(ModernPost("resources/list", ""), Config, Tools));
+	CHECK(Message.Get("result")->Get("resources")->Size() == 2u && Message.Get("result")->Get("ttlMs")->Integer() == 0);
+	// A song without a file has none
+	Song.Info.FileName.clear();
+	CHECK_EQ(Body(HandleMcp(Request("resources/list", ""), Config, Tools)).Get("result")->Get("resources")->Size(), 0u);
+	Song.Info.FileName = "test.ftm";
+
+	// export_for_game's reply links its files as resources where the protocol has links (2025-06-18 on)
+	FakeSong Exported;
+	PutExportSong(Exported);
+	ToolSet ExportTools(Exported);
+	const std::string Call = "\"name\":\"export_for_game\",\"arguments\":{}";
+	Message = Body(HandleMcp(WithHeader(Request("tools/call", Call), "MCP-Protocol-Version", "2025-06-18"), Config, ExportTools));
+	const Json *pContent = Message.Get("result")->Get("content");
+	CHECK(pContent->Size() == 2u && pContent->At(1).Get("type")->String() == "resource_link");
+	CHECK(pContent->At(1).Get("uri")->String() == "famitracker://files/Town.ogg" && pContent->At(1).Get("mimeType")->String() == "audio/ogg");
+	CHECK(pContent->At(1).Get("size")->Integer() == static_cast<long long>(Exported.Files["Town.ogg"].size()));
+	// Without the version header: the handshake's first era (2025-03-26), which has no links
+	CHECK_EQ(Body(HandleMcp(Request("tools/call", Call), Config, ExportTools)).Get("result")->Get("content")->Size(), 1u);
+	// The 2026-07-28 protocol has them
+	Message = Body(HandleMcp(ModernPost("tools/call", Call, "export_for_game"), Config, ExportTools));
+	CHECK(Message.Get("result")->Get("content")->Size() == 2u &&
+		Message.Get("result")->Get("content")->At(1).Get("type")->String() == "resource_link");
+	// attach: the file itself, in every era
+	Message = Body(HandleMcp(Request("tools/call", "\"name\":\"export_for_game\",\"arguments\":{\"attach\":true}"), Config,
+		ExportTools));
+	pContent = Message.Get("result")->Get("content");
+	CHECK(pContent->Size() == 2u && pContent->At(1).Get("type")->String() == "resource");
+	CHECK(Base64Decode(pContent->At(1).Get("resource")->Get("blob")->String(), Bytes) && Bytes == Exported.Files["Town.ogg"]);
+	CHECK(pContent->At(1).Get("resource")->Get("mimeType")->String() == "audio/ogg");
+	CHECK_HAS(pContent->At(0).Get("text")->String(), "\nAttached to this reply: Town.ogg (");
+	// At most 8 MB in all: a file that would take it past stays out, said with its size
+	PaddedExports Big;
+	PutExportSong(Big);
+	ToolSet BigTools(Big);
+	CHECK(!BigTools.Call("make_version", Parse("{\"version\": \"night\", \"echo\": false}")).IsError);
+	Big.Pad = 5u << 20;
+	ToolResult R = BigTools.Call("export_for_game", Parse("{\"tracks\": \"all\", \"attach\": true}"));
+	CHECK_HAS(R.Text, "\nAttached to this reply: Town.ogg (5.");
+	CHECK_HAS(R.Text, " MB); not Town (night).ogg (5.");
+	CHECK_HAS(R.Text, " MB), past the 8 MB a reply carries (fetch it by its link or resources/read).");
+	CHECK(R.Files.size() == 2u && R.Files[0].Bytes.size() > (5u << 20) && R.Files[1].Bytes.empty());
+	Big.Pad = 9u << 20;
+	R = BigTools.Call("export_for_game", Parse("{\"attach\": true}"));
+	CHECK_HAS(R.Text, "\nNothing is attached: Town (night).ogg (9.");
+	CHECK_HAS(R.Text, " MB) is more than the 8 MB a reply carries; fetch it by its link or resources/read.");
+	CHECK(R.Files.size() == 1u && R.Files[0].Bytes.empty());
+}
+
+// famitracker-mcp over real sockets: the version agreed in initialize sent with the requests after it (so a reply links
+// the files), the files as resources, and a link's own code in the address with a range, as a phone's browser asks
+void TestBridgeResources()
+{
+	BridgeMessage Message;
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", 46600, "t", Message, "", "/mcp", "2025-06-18"));
+	CHECK(Message.Method == "tools/list" && Message.Request.Header("MCP-Protocol-Version") != 0 &&
+		*Message.Request.Header("MCP-Protocol-Version") == "2025-06-18");
+	CHECK(BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}", 46600,
+		"t", Message, "", "/mcp", "2025-06-18"));
+	CHECK(Message.Request.Header("MCP-Protocol-Version") == 0);	// initialize agrees a version anew
+	HttpResponse Agreed;
+	Agreed.Body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\"}}";
+	CHECK_EQ(BridgeAgreedVersion(Message, Agreed), std::string("2025-11-25"));
+	BridgeRequest("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}", 46600, "t", Message);
+	CHECK_EQ(BridgeAgreedVersion(Message, Agreed), std::string());	// not an answer to initialize
+
+	FakeSong Song;
+	PutExportSong(Song);
+	ToolSet Tools(Song);
+	McpConfig Config;
+	Config.Token = "t";
+	TestEndpoint Endpoint(Tools, Config);
+	if (!Endpoint.Start()) {
+		Check(false, "the test endpoint couldn't start", __LINE__);
+		return;
+	}
+	const int Port = Endpoint.Port();
+	std::string Version;
+	auto Exchange = [&](const std::string &Line) -> std::string {
+		BridgeMessage Sent;
+		BridgeRequest(Line, Port, "t", Sent, std::string(), "/mcp", Version);
+		HttpResponse Answer;
+		std::string Error;
+		if (BridgeExchange(Port, FormatHttpRequest(Sent.Request), 5000, Answer, Error) != EXCHANGE_ANSWERED)
+			return "(" + Error + ")";
+		const std::string Now = BridgeAgreedVersion(Sent, Answer);
+		if (!Now.empty())
+			Version = Now;
+		return BridgeAnswer(Sent, Answer);
+	};
+	const std::string Export = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"export_for_game\","
+		"\"arguments\":{}}}";
+	CHECK_LACKS(Exchange(Export), "resource_link");	// before the handshake: the first era, which has no links
+	std::string Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}");
+	CHECK_EQ(Version, std::string("2025-11-25"));
+	CHECK_HAS(Out, "\"resources\":{");
+	Out = Exchange(Export);
+	CHECK_HAS(Out, "\"type\":\"resource_link\"");
+	CHECK_HAS(Out, "\"uri\":\"famitracker://files/Town.ogg\"");
+	CHECK_HAS(Exchange("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"resources/list\"}"), "\"uri\":\"famitracker://files/Town.ogg\"");
+	Out = Exchange("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"resources/read\",\"params\":{\"uri\":\"famitracker://files/Town.ogg\"}}");
+	Json Read;
+	std::string Bytes;
+	CHECK(OneLine(Out) && ParseJson(Out, Read) && Read.Get("result") != 0 &&
+		Base64Decode(Read.Get("result")->Get("contents")->At(0).Get("blob")->String(), Bytes) && Bytes == Song.Files["Town.ogg"]);
+	// The link's own code over a real socket, with no header: a range first, as a phone's browser asks
+	auto Get = [&](const std::string &Target, const std::string &Range, HttpResponse &Answer) {
+		HttpRequest Request;
+		Request.Method = "GET";
+		Request.Target = Target;
+		Request.Version = "HTTP/1.1";
+		Request.Headers.push_back(std::make_pair(std::string("Host"), "127.0.0.1:" + std::to_string(Port)));
+		if (!Range.empty())
+			Request.Headers.push_back(std::make_pair(std::string("Range"), Range));
+		Request.Headers.push_back(std::make_pair(std::string("Connection"), std::string("close")));
+		std::string Error;
+		return BridgeExchange(Port, FormatHttpRequest(Request), 5000, Answer, Error);
+	};
+	HttpResponse Answer;
+	CHECK_EQ(Get("/files/Town.ogg?code=" + FilesCode("t"), "bytes=0-3", Answer), EXCHANGE_ANSWERED);
+	CHECK(Answer.Status == 206 && Answer.Body == "OggS" && Answer.ContentType == "audio/ogg");
+	CHECK_EQ(Get("/files/Town.ogg?code=" + FilesCode("t"), "", Answer), EXCHANGE_ANSWERED);
+	CHECK(Answer.Status == 200 && Answer.Body == Song.Files["Town.ogg"]);
+	CHECK_EQ(Get("/files/Town.ogg?code=t", "", Answer), EXCHANGE_ANSWERED);
+	CHECK_EQ(Answer.Status, 403);
+	CHECK_EQ(Get("/files/Town.ogg?code=" + FilesCode("other"), "", Answer), EXCHANGE_ANSWERED);
+	CHECK_EQ(Answer.Status, 403);
+	Endpoint.Stop();
+}
+
 int main()
 {
 	TestJson();
@@ -24886,6 +25332,9 @@ int main()
 	TestExerciseListPeriods();
 	TestShapeByTrackName();
 	TestFirstSongSmall();
+	TestSaveIntoSongs();
+	TestExportResources();
+	TestBridgeResources();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

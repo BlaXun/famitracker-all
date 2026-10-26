@@ -79,7 +79,7 @@ const char *const EXPORT_URI_PREFIX = "famitracker://files/";
 // Tailscale gives its computers addresses in 100.64.0.0/10
 bool IsTailscaleIpv4(unsigned long Address);
 
-// A value of a request target's query ("/files/Town.mp3?code=1a2b"), %XX and
+// A value of a request target's query ("/files/Town.ogg?code=1a2b"), %XX and
 // '+' as forms send them decoded; false when it's missing or broken
 bool QueryParameter(const std::string &Target, const char *pKey, std::string &Value);
 

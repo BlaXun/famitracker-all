@@ -1588,6 +1588,33 @@ drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
 next to its end) cover them.
 
+Exporting from another computer (from `feat-remote-export`): a client of the
+connection can't use File > Save As, so `save_song` with `name` (or without,
+for a client: `Caller::Client`, which `HandleMcp` sets on every request) saves
+a song without a file into the Songs folder next to FamiTracker.exe
+(`SongsFolder` in `Source/AppFolders.cpp`), in a folder of its own, numbered
+when taken (`SongHost::SaveNew`, `NumberedSongName`; `CMcpLink::SaveNew` makes
+the folder with `CreateDirectory`, then `OnSaveDocument` and `SetPathName`),
+and a client's `export_for_game` and `finish_song` do that first
+(`SaveIntoSongs`, `NewSongName` in `Tools.cpp`). FamiTracker's own windows
+call the tools with a plain `Caller`, which still asks for File > Save As.
+Over the network the reply's links carry a code of their own in the address
+(`/files/<name>?code=`, `FilesCode` in `Mcp.cpp`: HMAC-SHA-256 of the access
+code, as `PhoneCode` is; the access code itself is refused there), with the
+Tailscale address too for a phone away from home (`Caller::AwayUrl`), and
+`FileRoute` serves the file inline with one byte range (`ParseByteRange` in
+`Network.cpp`: 206, 416, `Accept-Ranges`) and HEAD. The OGG files next to the
+song are MCP resources (`famitracker://files/<name>`, `ExportUri`;
+`resources/list` through `SongHost::ListExports`, `resources/templates/list`,
+`resources/read` as a blob up to 32 MB); a reply links its files
+(`ToolResult::Files`, `resource_link` only from 2025-06-18: `Endpoint::Version`,
+from `MCP-Protocol-Version` or `_meta`) and `attach` carries them (embedded
+resources, at most `MAX_ATTACHED` in all, `ReplyFiles`). `famitracker-mcp`
+sends the version agreed in `initialize` with the requests after it
+(`BridgeAgreedVersion`), as an HTTP client does. `TestNetwork` (ranges, the
+code in the address), `TestSaveIntoSongs`, `TestExportResources` and
+`TestBridgeResources` (over real sockets) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -2057,7 +2084,9 @@ NSF export still uses the 2A03 driver. Touch points:
   Every route needs the access code. The file routes take plain file names
   only (`IsPlainFileName`: no folders, drive letters, streams or device
   names), the Inbox only the kinds the tools read (`IsInboxFile`) and
-  `/files/` only `.ogg` (`IsExportFile`); never let them take paths. A tool
+  `/files/` only `.ogg` (`IsExportFile`); never let them take paths. The one
+  code besides the access code that opens a route is the export links' own
+  (`FilesCode`, `/files/` only), and the access code is refused in an address. A tool
   added later either joins `ToolSet::CoreTools` or not: the tests check that
   `CoreInstructions` names only tools of the set and stays short, so keep
   its rules (notes that vanish, clicks, 0.4.6's effects) in step with
