@@ -36,6 +36,7 @@ namespace ftapi {
 
 class SongHost;
 struct SoundEntry;
+struct SongFile;
 
 // The selected track's key and the chords its parts play, for FamiTracker's
 // piano roll (ToolSet::Harmony)
@@ -85,9 +86,21 @@ struct PromptInfo {
 	std::vector<PromptArgument> Arguments;
 };
 
+// A file a reply points to or carries (export_for_game's OGG files), as MCP gives it: a link to the resource a
+// client reads with resources/read, or the file itself when Bytes holds it (export_for_game's attach)
+struct ToolFile {
+	std::string Uri;		// "famitracker://files/Town.ogg" (ExportUri in Network.h)
+	std::string Name;		// "Town.ogg"
+	std::string MimeType;	// "audio/ogg"
+	size_t Size;			// bytes
+	std::string Bytes;		// the file itself when the reply carries it, else empty
+	ToolFile() : Size(0) {}
+};
+
 struct ToolResult {
 	std::string Text;
 	std::string Image;		// a PNG to go with the text (look_at_song), or empty
+	std::vector<ToolFile> Files;	// files to link as resources or carry (export_for_game), after the text
 	bool IsError;
 	ToolResult() : IsError(false) {}
 };
@@ -96,8 +109,17 @@ struct ToolResult {
 // write on this one, so export_for_game gives it links to fetch them
 struct Caller {
 	std::string FilesUrl;	// "http://192.168.1.10:46600/files/" as that client reached FamiTracker; empty for this computer
+	// The code a link to those files carries in its address (?code=, FilesCode in Mcp.h), so a browser opens it without
+	// the access code; it opens nothing else
+	std::string FilesCode;
+	// The same links over Tailscale ("http://100.101.102.103:46600/files/"), for a phone away from home, when this
+	// computer has a Tailscale address and the client reached it another way; else empty
+	std::string AwayUrl;
+	// A program connected over MCP (Claude Code, Hermes...), not FamiTracker's own windows: it can't use File > Save As,
+	// so save_song and export_for_game save a song without a file into FamiTracker's Songs folder
+	bool Client;
 	bool Core;				// asked through the small set (/mcp/core), whose replies name only its tools
-	Caller() : Core(false) {}
+	Caller() : Client(false), Core(false) {}
 };
 
 class ToolSet {
@@ -119,6 +141,9 @@ public:
 	// A file export_for_game saved next to the song, for a client on another computer (GET /files): false when
 	// the name isn't one of those files' (Error says so) or there's none (Error empty)
 	bool ReadExport(const std::string &Name, std::string &Bytes, std::string &Error);
+	// The files next to the song a client may fetch (MCP's resources/list): the OGG files there, the newest
+	// first, at most MAX_LISTED_EXPORTS (Song.h); false with the reason
+	bool ListExports(std::vector<SongFile> &Files, std::string &Error);
 	// For FamiTracker's piano roll: the selected track's key (chosen, or found from the notes as the tools find it)
 	// and the chords its parts play, as get_song hears them; false with the reason when there's no song
 	bool Harmony(TrackHarmony &Out, std::string &Error);

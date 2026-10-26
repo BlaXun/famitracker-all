@@ -43,6 +43,7 @@ struct BridgeMessage {
 	bool Readable;			// the line was a JSON-RPC message
 	bool WantsAnswer;		// a request: Claude Code waits for the answer with Id
 	Json Id;
+	std::string Method;		// the request's or notification's method ("initialize", "tools/call"...)
 
 	BridgeMessage() : Readable(false), WantsAnswer(false) {}
 };
@@ -50,9 +51,17 @@ struct BridgeMessage {
 // The line (without its line break) as the request to FamiTracker on
 // Host:Port (127.0.0.1 when Host is empty: an IPv4 address or a computer's
 // name) at Path (/mcp, or /mcp/core for the small set of tools) with the
-// access token. False for a blank line.
+// access token. Version: the protocol version the client agreed in initialize
+// (BridgeAgreedVersion), sent as MCP-Protocol-Version with the requests after
+// it, as an HTTP client sends it from 2025-06-18 on (FamiTracker then knows
+// what its replies may hold, a link to a resource say). False for a blank line.
 bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out,
-	const std::string &Host = std::string(), const std::string &Path = std::string("/mcp"));
+	const std::string &Host = std::string(), const std::string &Path = std::string("/mcp"),
+	const std::string &Version = std::string());
+
+// The protocol version FamiTracker agreed when Sent was an initialize request,
+// read from its answer; empty otherwise
+std::string BridgeAgreedVersion(const BridgeMessage &Sent, const HttpResponse &Answer);
 
 // What Claude Code gets back: a line ending in '\n', or nothing when no
 // answer is due (notifications, Claude Code's own answers)

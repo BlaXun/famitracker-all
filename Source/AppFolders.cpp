@@ -117,3 +117,8 @@ CString InboxFolder(bool Create)
 {
 	return FolderBeside(_T("Inbox"), NULL, 0, _T("FamiTracker inbox"), _T("*"), Create);
 }
+
+CString SongsFolder(bool Create)
+{
+	return FolderBeside(_T("Songs"), NULL, 0, _T("FamiTracker songs"), _T("*"), Create);
+}

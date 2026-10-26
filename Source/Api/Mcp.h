@@ -35,8 +35,11 @@
 // - POST /mcp/core: a small set of them for local models, which struggle
 //   with 50 tools and long instructions (ToolSet::CoreTools), with short
 //   instructions (ToolSet::CoreInstructions) and no recipes.
-// - GET /files/<name>: a file export_for_game saved next to the song, for a
-//   client on another computer, which gets the link in its reply.
+// - GET /files/<name>: an OGG file export_for_game saved next to the song, for
+//   a client on another computer, which gets the link in its reply. Those links carry a code of their own in the
+//   address (?code=, FilesCode), so a browser opens them without the access
+//   code, a phone's too; the code opens nothing else. Ranges are answered, as
+//   a phone's browser asks for them before it plays a sound.
 // - PUT /inbox/<name>: a file into the Inbox folder next to FamiTracker.exe
 //   (the request's body, as the send_file tool takes it in base64), for the
 //   tools that read files on this computer (study_nsf, study_module...).
@@ -71,6 +74,11 @@ const char *const MCP_MODERN_VERSION = "2026-07-28";
 const char *const MCP_LEGACY_VERSION = "2025-11-25";
 
 HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, ToolSet &Tools);
+
+// The code a link to an exported file carries in its address (?code=): 24 hex
+// digits worked out from the access code (HMAC-SHA-256, as the phone page's
+// code is), so a new access code changes it, and it opens only GET /files/
+std::string FilesCode(const std::string &Token);
 
 // What a client runs to connect: claude mcp add ...
 std::string ClaudeAddCommand(const McpConfig &Config);

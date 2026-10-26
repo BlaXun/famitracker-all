@@ -1248,9 +1248,13 @@ public:
 		return true;
 	}
 
+	std::map<std::string, long long> FileTimes;	// when each file next to the song was saved, by Clock (ListExports)
+	long long Clock = 0;
+
 	bool SaveFile(const std::string &FileName, const std::string &Bytes, std::string &Path, std::string &) override
 	{
 		Files[FileName] = Bytes;
+		FileTimes[FileName] = ++Clock;
 		Path = "C:\\Music\\" + FileName;
 		return true;
 	}
@@ -1279,6 +1283,61 @@ public:
 	{
 		Fetched.push_back(Name);
 		return ReadFile(Name, Bytes, Error);
+	}
+
+	// As CMcpLink lists them: the OGG files next to the song, the newest first
+	bool ListExports(std::vector<SongFile> &Out, std::string &) override
+	{
+		Out.clear();
+		if (Info.FileName.empty())
+			return true;
+		for (std::map<std::string, std::string>::const_iterator it = Files.begin(); it != Files.end(); ++it) {
+			if (!IsExportFile(it->first))
+				continue;
+			SongFile File;
+			File.Name = it->first;
+			File.Bytes = static_cast<long long>(it->second.size());
+			File.Modified = FileTimes.count(it->first) != 0 ? FileTimes[it->first] : 0;
+			Out.push_back(File);
+		}
+		std::sort(Out.begin(), Out.end(), [](const SongFile &a, const SongFile &b) {
+			return a.Modified != b.Modified ? a.Modified > b.Modified : a.Name < b.Name;
+		});
+		return true;
+	}
+
+	// The folders taken in FamiTracker's Songs folder (lower case), where CMcpLink::SaveNew finds them
+	std::set<std::string> SongFolders;
+	std::string NewPath;	// the path SaveNew gave
+
+	// As CMcpLink saves a song without a file: under the first name of Names this computer can make, in a folder of its own
+	// in the Songs folder, numbered when one of that name is there; the files next to the song are then the new folder's
+	bool SaveNew(const std::vector<std::string> &Names, std::string &Path, std::string &Message) override
+	{
+		if (!CanChange(Message))
+			return false;
+		if (!Info.FileName.empty()) {
+			Message = "The song has a file already.";
+			return false;
+		}
+		for (size_t i = 0; i < Names.size(); ++i) {
+			if (!IsPlainFileName(Names[i]))
+				continue;
+			for (int n = 1; n <= MAX_SONG_NUMBER; ++n) {
+				const std::string Name = NumberedSongName(Names[i], n);
+				if (!SongFolders.insert(Lowercase(Name)).second)
+					continue;	// taken: the next number
+				Info.FileName = Name + ".ftm";
+				Info.Modified = false;
+				Path = NewPath = "C:\\Games\\FamiTracker\\Songs\\" + Name + "\\" + Info.FileName;
+				Files.clear();
+				FileTimes.clear();
+				Saved = Info.FileName;
+				return true;
+			}
+		}
+		Message = "FamiTracker found no free name for the song.";
+		return false;
 	}
 
 	std::vector<std::string> Kits;	// the kits of samples added
@@ -1438,7 +1497,11 @@ public:
 
 	bool Save(const std::string &CopyName, std::string &Message) override
 	{
-		Saved = CopyName.empty() ? "test.ftm" : CopyName + ".ftm";
+		if (Info.FileName.empty()) {
+			Message = "The song hasn't been saved yet. Ask the user to save it (File > Save As) so it has a place.";	// as CMcpLink
+			return false;
+		}
+		Saved = CopyName.empty() ? Info.FileName : CopyName + ".ftm";
 		Message = "Saved " + Saved + ".";
 		return true;
 	}

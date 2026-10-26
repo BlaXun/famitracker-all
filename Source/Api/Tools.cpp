@@ -19970,12 +19970,27 @@ std::string TrackFileName(const Session &S, int Track, std::vector<std::string> 
 // A fingerprint of how the selected track sounds (what_next's, below), which the files keep
 std::string SoundPrint(Session &S);
 
+// A file export_for_game saved next to the song, with its size
+struct SavedFile {
+	std::string Name;
+	size_t Bytes;
+	SavedFile() : Bytes(0) {}
+};
+
+// A file's size as the replies say it: "980 KB", "2.4 MB"
+std::string FileSizeText(size_t Bytes)
+{
+	if (Bytes < 1000u * 1024u)
+		return Format("%d KB", static_cast<int>((Bytes + 1023) / 1024));
+	return Format("%.1f MB", static_cast<double>(Bytes) / (1024.0 * 1024.0));
+}
+
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
 // Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
-// Saved: the file's name is added once it's written; HeldBack counts the tracks a peak kept under that loudness
+// Saved: the file is added once it's written; HeldBack counts the tracks a peak kept under that loudness
 std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, double Loudness, std::vector<std::string> &Taken,
-	std::string &Code, std::vector<std::string> &Saved, int &HeldBack)
+	std::string &Code, std::vector<SavedFile> &Saved, int &HeldBack)
 {
 	const int PL = S.Time.PatternLength;
 	const SongFlow F = Flow(S);
@@ -20101,7 +20116,10 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	std::string Path;
 	if (!S.Host().SaveFile(File, Bytes, Path, Error))
 		throw Problem(Error);
-	Saved.push_back(File);
+	SavedFile Game;
+	Game.Name = File;
+	Game.Bytes = Bytes.size();
+	Saved.push_back(Game);
 
 	const double Seconds = static_cast<double>(Cut.Length()) / SampleRate;
 	std::string Text = Format("%s: %s, %d KB", File.c_str(), SecondsText(Seconds).c_str(), static_cast<int>((Bytes.size() + 1023) / 1024));
@@ -20143,12 +20161,140 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	return Text;
 }
 
-// FilesUrl: where a client on another computer fetches the files (Caller::FilesUrl), or empty
-std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl)
+// A song without a file yet, saved for a client that can't use File > Save As (save_song, export_for_game, finish_song),
+// goes into FamiTracker's Songs folder (SongHost::SaveNew) in a folder of its own: under the name given, else its track's
+// name unless that's FamiTracker's "New song", else the module's title, else "Untitled", at most MAX_SONG_NAME bytes
+const size_t MAX_SONG_NAME = 60;
+
+std::string NewSongName(const Session &S)
+{
+	std::string Name = Trim(S.Song.TrackName);
+	if (Name.empty() || Lowercase(Name) == "new song")
+		Name = Trim(S.Song.Title);
+	if (Name.empty())
+		return "Untitled";
+	Name = SafeFileName(Name);
+	if (Name.size() > MAX_SONG_NAME) {
+		size_t Cut = MAX_SONG_NAME;
+		while (Cut > 0 && (static_cast<unsigned char>(Name[Cut]) & 0xC0) == 0x80)
+			--Cut;	// not inside a letter
+		Name = SafeFileName(Name.substr(0, Cut));
+	}
+	return IsPlainFileName(Name) && IsPlainFileName(Name + ".ftm") ? Name : std::string("Untitled");
+}
+
+// The name save_song is given for a song without a file ("Town theme", ".ftm" at its end left out); throws why it can't be one
+std::string GivenSongName(const std::string &Given)
+{
+	std::string Name = Trim(Given);
+	if (Name.size() > 4 && Lowercase(Name.substr(Name.size() - 4)) == ".ftm")
+		Name = Trim(Name.substr(0, Name.size() - 4));
+	if (Name.empty() || Name.size() > MAX_SONG_NAME || !IsPlainFileName(Name) || !IsPlainFileName(Name + ".ftm"))
+		throw Problem(Format("name should be a plain file name of at most %d letters, like \"Town theme\": no folders, none of "
+			"\\ / : * ? \" < > |, and no dot or space at its end.", static_cast<int>(MAX_SONG_NAME)));
+	return Name;
+}
+
+// The song saved into the Songs folder under Name ("Untitled" where this computer can't make that name; numbered when
+// taken): the file's path; throws the reason
+std::string SaveIntoSongs(Session &S, const std::string &Name)
+{
+	std::vector<std::string> Names(1, Name);
+	if (Name != "Untitled")
+		Names.push_back("Untitled");
+	std::string Path, Message;
+	if (!S.Host().SaveNew(Names, Path, Message))
+		throw Problem(Message.empty() ? std::string("FamiTracker couldn't save the song.") : Message);
+	return Path;
+}
+
+// The file's name at the end of a path: "C:\Songs\Town\Town.ftm" -> "Town.ftm"
+std::string PathFileName(const std::string &Path)
+{
+	const size_t Slash = Path.find_last_of("\\/");
+	return Slash == std::string::npos ? Path : Path.substr(Slash + 1);
+}
+
+const size_t MAX_ATTACHED = 8u << 20;	// bytes of files a reply carries at most (attach); base64 makes them a third more
+
+// The files export_for_game saved, as its reply links them (MCP resources, ToolFile), and with Attach the files
+// themselves, read back, up to MAX_ATTACHED bytes in all: the reply's line on what it carries
+std::string ReplyFiles(Session &S, const std::vector<SavedFile> &Saved, bool Attach, std::vector<ToolFile> &Files)
+{
+	Files.clear();
+	std::string Carried, Left;
+	int LeftOut = 0;
+	size_t Total = 0;
+	for (size_t i = 0; i < Saved.size(); ++i) {
+		ToolFile File;
+		File.Uri = ExportUri(Saved[i].Name);
+		File.Name = Saved[i].Name;
+		File.MimeType = ExportMimeType(File.Name);
+		File.Size = Saved[i].Bytes;
+		if (Attach) {
+			std::string Bytes, Error;
+			const bool Read = S.Host().ReadExport(File.Name, Bytes, Error);
+			if (Read)
+				File.Size = Bytes.size();
+			const std::string Words = File.Name + " (" + FileSizeText(File.Size) + ")";
+			if (Read && Total + Bytes.size() <= MAX_ATTACHED) {
+				Total += Bytes.size();
+				File.Bytes.swap(Bytes);
+				Carried += (Carried.empty() ? "" : ", ") + Words;
+			}
+			else {
+				Left += (Left.empty() ? "" : ", ") + Words;
+				++LeftOut;
+			}
+		}
+		Files.push_back(File);
+	}
+	if (!Attach)
+		return std::string();
+	const std::string Fetch = LeftOut == 1 ? "fetch it by its link or resources/read" : "fetch them by their links or resources/read";
+	const std::string Cap = Format("%d MB", static_cast<int>(MAX_ATTACHED >> 20));
+	if (Carried.empty())
+		return Left.empty() ? std::string("Nothing is attached: no file was saved.") : "Nothing is attached: " + Left +
+			(LeftOut == 1 ? " is" : " are") + " more than the " + Cap + " a reply carries; " + Fetch + ".";
+	return "Attached to this reply: " + Carried + (Left.empty() ? std::string(".") : "; not " + Left + ", past the " + Cap +
+		" a reply carries (" + Fetch + ").");
+}
+
+// A file's link for a client on another computer, with the code that lets a browser open it with no header
+std::string FileLink(const std::string &Base, const Caller &Who, const std::string &Name)
+{
+	return Base + UrlEncode(Name) + (Who.FilesCode.empty() ? std::string() : "?code=" + Who.FilesCode);
+}
+
+// How a client on another computer gets the files to the person (export_for_game): a link to each that a browser opens
+// with no header (a phone's too, over Tailscale away from home), then how to fetch them itself
+std::string FetchText(const Caller &Who, const std::vector<SavedFile> &Saved, bool Attached)
+{
+	if (Saved.empty())
+		return std::string();
+	std::string Text = "\n\nGetting them to the person (you're on another computer): give the person these links. They open in a "
+		"browser with no header and play there, a phone's too (on the home network, or over Tailscale); the code in them opens only "
+		"the OGG files next to the song.";
+	for (size_t i = 0; i < Saved.size(); ++i) {
+		Text += "\n- " + Saved[i].Name + ": " + FileLink(Who.FilesUrl, Who, Saved[i].Name);
+		if (!Who.AwayUrl.empty())
+			Text += " (away from home, over Tailscale: " + FileLink(Who.AwayUrl, Who, Saved[i].Name) + ")";
+	}
+	Text += "\nTo fetch one yourself: curl -o <file> \"<its link>\", or without HTTP MCP's resources/read with its uri, like " +
+		ExportUri(Saved[0].Name) + ", which gives its bytes (this reply links each file as a resource)" +
+		(Attached ? std::string(".") : std::string("; export_for_game with attach true puts them in the reply itself."));
+	return Text;
+}
+
+// export_for_game. Who: who asks (Caller): a client over MCP gets a song without a file saved into the Songs folder first,
+// and one on another computer the files' links. Files: the files saved, as the reply links them as MCP resources (and
+// carries them, with attach)
+std::string ExportTool(Session &S, const Json &Args, const Caller &Who, std::vector<ToolFile> &Files)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	const bool Normalize = BoolArg(Args, "normalize", true);
 	const double Loudness = Arg(Args, "loudness") != 0 ? NumberArg(Args, "loudness", -20.0, -40.0, -6.0) : 0.0;
+	const bool Attach = BoolArg(Args, "attach", false);
 	std::vector<int> Tracks;
 	const Json *pTracks = Arg(Args, "tracks");
 	if (pTracks == 0 || (pTracks->IsString() && Lowercase(Trim(pTracks->String())) == "this"))
@@ -20169,15 +20315,23 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 			Tracks.push_back(TrackArg(S, One, "track"));
 		}
 	}
-	if (S.Song.FileName.empty())
-		throw Problem("The song hasn't been saved yet, and the files go next to it. Ask the user to save it (File > Save As).");
-	std::string Why;
+	std::string Why, SavedAs;
+	if (S.Song.FileName.empty()) {
+		// The files go next to the song: FamiTracker's own windows ask for File > Save As; a client can't, so the song goes
+		// into the Songs folder first
+		if (!Who.Client)
+			throw Problem("The song hasn't been saved yet, and the files go next to it. Ask the user to save it (File > Save As).");
+		if (!S.Host().CanChange(Why))
+			throw Problem(Why);
+		SavedAs = SaveIntoSongs(S, NewSongName(S));
+	}
 	if (!S.Host().CanChange(Why))
 		throw Problem(Why);
 
 	const int Selected = S.Song.Track;
 	int Current = Selected;
-	std::vector<std::string> Taken, Lines, Saved;
+	std::vector<std::string> Taken, Lines;
+	std::vector<SavedFile> Saved;
 	std::string Code;
 	std::string Error;
 	int HeldBack = 0;
@@ -20205,7 +20359,11 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	if (Current != Selected)
 		S.Host().SelectTrack(Selected, Error);
 
-	std::string Text = Format("Saved next to %s:", S.Song.FileName.c_str());
+	std::string Text;
+	if (!SavedAs.empty())
+		Text = "The song had no file yet, so FamiTracker saved it first, as " + SavedAs + " (a folder of its own in FamiTracker's "
+			"Songs folder); save_song saves it there from now on.\n";
+	Text += Format("Saved next to %s:", (SavedAs.empty() ? S.Song.FileName : PathFileName(SavedAs)).c_str());
 	for (size_t i = 0; i < Lines.size(); ++i)
 		Text += "\n- " + Lines[i];
 	if (HeldBack > 0)
@@ -20217,12 +20375,11 @@ std::string ExportTool(Session &S, const Json &Args, const std::string &FilesUrl
 	if (!Muted.empty())
 		Text += "\nEvery channel is in the files, the muted " + Muted + " too.";
 	Text += "\nThe files are stereo; where nothing pans, both sides are the same.";
-	if (!FilesUrl.empty() && !Saved.empty()) {
-		Text += "\n\nYou're on another computer: fetch the files from FamiTracker with the access code you connect with (the same "
-			"Authorization header), like curl -H \"Authorization: Bearer <code>\" -o <file> <link>:";
-		for (size_t i = 0; i < Saved.size(); ++i)
-			Text += "\n- " + FilesUrl + UrlEncode(Saved[i]);
-	}
+	const std::string Carried = ReplyFiles(S, Saved, Attach, Files);
+	if (!Carried.empty())
+		Text += "\n" + Carried;
+	if (!Who.FilesUrl.empty())
+		Text += FetchText(Who, Saved, Attach);
 	Text += "\n\nIn GameMaker (2023.2 or newer): add each file as a sound with the name below, then play it like this; the loop "
 		"points are in seconds.\n" + Code;
 	return Text;
@@ -20771,7 +20928,7 @@ std::string ReplyLine(const std::string &Text, const char *Label)
 	return Text.substr(From, To == std::string::npos ? std::string::npos : To - From);
 }
 
-std::string FinishSongTool(Session &S, const Json &Args, const std::string &FilesUrl)
+std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std::vector<ToolFile> &Files)
 {
 	// The kind: as given; else a sound effect or a cue as the track plays, calm when its name says so, the general recipe's
 	// otherwise
@@ -21006,14 +21163,32 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 
 	// export_for_game at the kind's loudness: the song as the steps left it (it changes nothing in it)
 	if (Exporting) {
-		Session Step(S.Host());
 		Json Call = Json::MakeObject();
 		Call.Set("loudness", Json::NumberText(FormatNumber(Loudness)));
-		if (Step.Song.FileName.empty())
-			Lines.push_back("Export: not made: the song hasn't been saved yet, and the file goes next to it. Ask the user to save it "
-				"(File > Save As), then " + GuardCall("export_for_game", Call) + ".");
+		// A song without a file: FamiTracker's own windows ask for File > Save As; a client can't, so it goes into the Songs
+		// folder first, as export_for_game does
+		std::string NotMade;
+		{
+			Session Before(S.Host());
+			if (Before.Song.FileName.empty() && !Who.Client)
+				NotMade = "Export: not made: the song hasn't been saved yet, and the file goes next to it. Ask the user to save it "
+					"(File > Save As), then " + GuardCall("export_for_game", Call) + ".";
+			else if (Before.Song.FileName.empty()) {
+				try {
+					Lines.push_back("Saved: the song had no file yet, so FamiTracker saved it first, as " + SaveIntoSongs(Before,
+						NewSongName(Before)) + " (a folder of its own in FamiTracker's Songs folder).");
+				}
+				catch (const Problem &P) {
+					NotMade = "Export: not made: " + P.Text;
+				}
+			}
+		}
+		Session Step(S.Host());
+		if (!NotMade.empty())
+			Lines.push_back(NotMade);
 		else {
-			std::vector<std::string> Taken, Saved;
+			std::vector<std::string> Taken;
+			std::vector<SavedFile> Saved;
 			std::string Code;
 			int HeldBack = 0;
 			try {
@@ -21027,9 +21202,11 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 				std::string OneLine = Code;
 				std::replace(OneLine.begin(), OneLine.end(), '\n', ' ');
 				Lines.push_back("GameMaker: " + OneLine);
-				if (!FilesUrl.empty() && !Saved.empty())
-					Lines.push_back("From another computer, fetch it with the access code you connect with (the Authorization header): " +
-						FilesUrl + UrlEncode(Saved[0]));
+				ReplyFiles(Step, Saved, false, Files);
+				if (!Who.FilesUrl.empty() && !Saved.empty())
+					Lines.push_back("From another computer: " + FileLink(Who.FilesUrl, Who, Saved[0].Name) + " opens in a browser with "
+						"no header, a phone's too (give the person that link)" + (Who.AwayUrl.empty() ? std::string() : "; away from "
+						"home, over Tailscale: " + FileLink(Who.AwayUrl, Who, Saved[0].Name)) + ".");
 			}
 			catch (const Problem &P) {
 				Lines.push_back("Export: not made: " + P.Text);
@@ -23806,11 +23983,32 @@ std::string UndoTool(Session &S, const Json &)
 	return Message.empty() ? "Undid the last change." : Message;
 }
 
-std::string SaveTool(Session &S, const Json &Args)
+// save_song. Who: a client over MCP (Caller::Client) can't use File > Save As, so a song without a file goes into the Songs
+// folder, under name or its track's name; FamiTracker's own windows keep asking for File > Save As
+std::string SaveTool(Session &S, const Json &Args, const Caller &Who)
 {
 	const std::string Copy = StringArg(Args, "copy_name");
 	if (!Copy.empty() && Copy.find_first_of("\\/:*?\"<>|") != std::string::npos)
 		throw Problem("copy_name should be a plain file name, without folders.");
+	const bool Named = !Trim(StringArg(Args, "name")).empty();
+	const std::string Name = Named ? GivenSongName(StringArg(Args, "name")) : std::string();
+	if (S.Song.FileName.empty() && (Named || Who.Client)) {
+		if (!Copy.empty())
+			throw Problem("The song has no file yet, so there's no folder for a copy: save_song without copy_name saves the song itself "
+				"first, into FamiTracker's Songs folder.");
+		std::string Why;
+		if (!S.Host().CanChange(Why))
+			throw Problem(Why);
+		return "Saved the song as " + SaveIntoSongs(S, Named ? Name : NewSongName(S)) + ": it had no file yet, so it went into a "
+			"folder of its own in FamiTracker's Songs folder (next to FamiTracker.exe). From now on save_song saves it there, and "
+			"export_for_game puts its files next to it.";
+	}
+	if (Named) {
+		const size_t Dot = S.Song.FileName.rfind('.');
+		if (Lowercase(Name) != Lowercase(S.Song.FileName.substr(0, Dot)))
+			throw Problem("The song has a file already, " + S.Song.FileName + ", and save_song saves it there (name is for a song "
+				"without a file); copy_name saves a copy next to it under another name.");
+	}
 	std::string Message;
 	if (!S.Host().Save(Copy, Message))
 		throw Problem(Message.empty() ? "The song couldn't be saved." : Message);
@@ -28949,7 +29147,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"the NES's level, well under full scale); normalize false keeps that level. A game's tracks sound equally loud "
 		"when each is brought to the same loudness instead: loudness -20 (LUFS, as EBU R128 measures the loop), a few "
 		"under for calm places. Each file is named after its track (name_song names the selected one). Run check_loop "
-		"first. Takes a while for long songs.",
+		"first. Takes a while for long songs. A song that has no file yet is saved first, as save_song saves it. For a client on "
+		"another computer the reply links each file with a code of its own in the address, so a browser opens and plays it "
+		"with no header (a phone's, on the home network or over Tailscale); the files are MCP resources too "
+		"(resources/read), and attach puts them in the reply.",
 		Schema()
 			.Add("tracks", ChannelListProp("\"this\" (default: the selected track), \"all\", or tracks by number or name."))
 			.Add("quality", Prop("number", "OGG quality from 0 (small) to 1 (best); default 0.6, which suits chiptunes."))
@@ -28957,7 +29158,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"FamiTracker's own level, as it plays."))
 			.Add("loudness", Prop("number", "Instead: the loop's loudness in LUFS, -40 to -6, like -20 (calm tracks -22 or -23). "
 				"The loudest peak still stays at -1 dBFS or under; a track it holds back says how loud it came out. A sound shorter "
-				"than the 400 ms blocks loudness is gated in is measured over its whole length.")),
+				"than the 400 ms blocks loudness is gated in is measured over its whole length."))
+			.Add("attach", Prop("boolean", "Put the files in the reply itself, at most 8 MB in all, for a client that saves "
+				"attachments (default false). The links and resources/read fetch them too.")),
 		false);
 
 	{
@@ -29386,8 +29589,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema(), false, true);
 
 	AddTool("save_song", "Save the song",
-		"Saves the song to its file, or a copy next to it (copy_name) so the user can compare versions.",
-		Schema().Add("copy_name", Prop("string", "File name for a copy, like \"Town theme darker\". Default: save the song itself.")),
+		"Saves the song to its file, or a copy next to it (copy_name) so the user can compare versions. A song that has no file "
+		"yet (never saved) goes into FamiTracker's Songs folder, in a folder of its own named after it (name, else the track's "
+		"name), numbered when the name is taken, never over a file; it then is that file, so later saves and export_for_game's "
+		"files go there.",
+		Schema()
+			.Add("copy_name", Prop("string", "File name for a copy, like \"Town theme darker\". Default: save the song itself."))
+			.Add("name", Prop("string", "For a song with no file yet: its name, like \"Town theme\" (default: the track's name, else "
+				"\"Untitled\").")),
 		false);
 
 	AddTool("get_recipe", "A recipe for composing",
@@ -29737,8 +29946,8 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "song_shape") Result.Text = SongShapeTool(S, Args);
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
-		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
-		else if (Name == "finish_song") Result.Text = FinishSongTool(S, Args, Who.FilesUrl);
+		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who, Result.Files);
+		else if (Name == "finish_song") Result.Text = FinishSongTool(S, Args, Who, Result.Files);
 		else if (Name == "measure_mix") Result.Text = MeasureMixTool(S, Checked);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
 		else if (Name == "play") Result.Text = PlayTool(S, Args);
@@ -29747,7 +29956,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 			Result.Text = "Stopped.";
 		}
 		else if (Name == "undo") Result.Text = UndoTool(S, Args);
-		else if (Name == "save_song") Result.Text = SaveTool(S, Args);
+		else if (Name == "save_song") Result.Text = SaveTool(S, Args, Who);
 		else {
 			Result.Text = "Unknown tool: " + Name;
 			Result.IsError = true;
@@ -29893,6 +30102,21 @@ bool ToolSet::ReadExport(const std::string &Name, std::string &Bytes, std::strin
 		return false;
 	}
 	return m_Host.ReadExport(Name, Bytes, Error);
+}
+
+bool ToolSet::ListExports(std::vector<SongFile> &Files, std::string &Error)
+{
+	Error.clear();
+	Files.clear();
+	if (!m_Host.ListExports(Files, Error))
+		return false;
+	// Only the files a client may fetch, whatever the host listed
+	std::vector<SongFile> Kept;
+	for (size_t i = 0; i < Files.size() && Kept.size() < MAX_LISTED_EXPORTS; ++i)
+		if (IsExportFile(Files[i].Name))
+			Kept.push_back(Files[i]);
+	Files.swap(Kept);
+	return true;
 }
 
 // The composing essentials, for local models that struggle with many tools: what_next and every tool its steps call

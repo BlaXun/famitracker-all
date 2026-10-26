@@ -2431,6 +2431,90 @@ public:
 		return true;
 	}
 
+	// save_song and export_for_game for a client, with a song that has no file yet: into a folder of its own in the Songs
+	// folder next to FamiTracker.exe, under the first name this computer's code page can make, numbered when a folder of
+	// that name is there (CreateDirectory makes it or says it's there: never over a file). The song then is that file, as
+	// File > Save As leaves it: later saves go there, and the window's title and the recent files name it
+	bool SaveNew(const std::vector<std::string> &Names, std::string &Path, std::string &Message)
+	{
+		if (!CanChange(Message))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		if (!pDoc->GetPathName().IsEmpty()) {
+			Message = "The song has a file already.";
+			return false;
+		}
+		const CString Songs = SongsFolder(true);
+		if (Songs.IsEmpty()) {
+			Message = "FamiTracker found no folder for its songs.";
+			return false;
+		}
+		for (size_t i = 0; i < Names.size(); ++i) {
+			if (!PlainName(Names[i]) || Utf8(Ansi(Names[i])) != Names[i])
+				continue;	// not a name this computer can make
+			for (int n = 1; n <= ftapi::MAX_SONG_NUMBER; ++n) {
+				const CString Name = Ansi(ftapi::NumberedSongName(Names[i], n));
+				const CString Folder = Songs + _T("\\") + Name;
+				const CString File = Folder + _T("\\") + Name + _T(".ftm");
+				if (File.GetLength() >= MAX_PATH) {
+					Message = "The song's name is too long for FamiTracker's Songs folder (" + Utf8(Songs) + "); give it a shorter one.";
+					return false;
+				}
+				if (!CreateDirectory(Folder, NULL)) {
+					if (GetLastError() == ERROR_ALREADY_EXISTS)
+						continue;	// taken: the next number
+					Message = "Couldn't make the folder " + Utf8(Folder) + ".";
+					return false;
+				}
+				if (!pDoc->OnSaveDocument(File)) {
+					DeleteFile(File);
+					RemoveDirectory(Folder);
+					Message = "The song couldn't be saved as " + Utf8(File) + ".";
+					return false;
+				}
+				pDoc->SetPathName(File);
+				Path = Utf8(File);
+				return true;
+			}
+		}
+		Message = "FamiTracker found no free name for the song in " + Utf8(Songs) + "; give it another name.";
+		return false;
+	}
+
+	// MCP's resources/list: the OGG files next to the song, the newest first
+	bool ListExports(std::vector<ftapi::SongFile> &Files, std::string &Error)
+	{
+		(void)Error;
+		Files.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL ? pDoc->GetPathName() : CString();
+		if (Song.IsEmpty())
+			return true;	// no folder yet, so no files
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = FindFirstFile(Song.Left(Song.ReverseFind(_T('\\')) + 1) + _T("*"), &Found);
+		if (hFind == INVALID_HANDLE_VALUE)
+			return true;
+		do {
+			const std::string Name = Utf8(Found.cFileName);
+			if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !ftapi::IsExportFile(Name) || Ansi(Name) != Found.cFileName)
+				continue;	// ReadExport couldn't open a name that doesn't come back the same
+			ftapi::SongFile File;
+			File.Name = Name;
+			File.Bytes = static_cast<long long>((static_cast<ULONGLONG>(Found.nFileSizeHigh) << 32) | Found.nFileSizeLow);
+			const ULONGLONG Ticks = (static_cast<ULONGLONG>(Found.ftLastWriteTime.dwHighDateTime) << 32) | Found.ftLastWriteTime.dwLowDateTime;
+			const ULONGLONG UNIX_START = 116444736000000000ULL;	// 1970 in FILETIME's 100 ns steps from 1601
+			File.Modified = Ticks > UNIX_START ? static_cast<long long>((Ticks - UNIX_START) / 10000000ULL) : 0;
+			Files.push_back(File);
+		} while (FindNextFile(hFind, &Found));
+		FindClose(hFind);
+		std::sort(Files.begin(), Files.end(), [](const ftapi::SongFile &a, const ftapi::SongFile &b) {
+			return a.Modified != b.Modified ? a.Modified > b.Modified : a.Name < b.Name;
+		});
+		if (Files.size() > ftapi::MAX_LISTED_EXPORTS)
+			Files.resize(ftapi::MAX_LISTED_EXPORTS);
+		return true;
+	}
+
 private:
 	CFamiTrackerDoc *Doc() const
 	{

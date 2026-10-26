@@ -65,9 +65,32 @@ bool IsInboxFile(const std::string &Name);
 const char *const INBOX_FILE_KINDS = ".nsf, .nsfe, .m3u, .mod, .s3m, .xm, .it, .mid, .midi, .rmi, .ftm or .wav";
 const size_t MAX_INBOX_FILE = 5u << 20;		// 5 MB
 
-// The files a client may fetch from the song's folder (GET /files): what
-// export_for_game saves
+// The files a client may fetch from the song's folder (GET /files, MCP's
+// resources): what export_for_game saves
 bool IsExportFile(const std::string &Name);
+// Such a file's type, as HTTP and MCP give it: "audio/ogg"
+const char *ExportMimeType(const std::string &Name);
+// Such a file as an MCP resource, "famitracker://files/Town%20theme.ogg", and
+// back (false for any other address)
+std::string ExportUri(const std::string &Name);
+bool ParseExportUri(const std::string &Uri, std::string &Name);
+const char *const EXPORT_URI_PREFIX = "famitracker://files/";
+
+// Tailscale gives its computers addresses in 100.64.0.0/10
+bool IsTailscaleIpv4(unsigned long Address);
+
+// A value of a request target's query ("/files/Town.mp3?code=1a2b"), %XX and
+// '+' as forms send them decoded; false when it's missing or broken
+bool QueryParameter(const std::string &Target, const char *pKey, std::string &Value);
+
+// A Range header ("bytes=0-1", "bytes=500-", "bytes=-500") for a file of Size
+// bytes, read as RFC 9110 reads one range: RANGE_WHOLE when there's none or
+// FamiTracker answers it with the whole file (several ranges, another unit, a
+// header it can't read), RANGE_PART for First to Last (both in the file),
+// RANGE_UNSATISFIABLE when it starts past the end. Phones' browsers ask for
+// ranges of a sound before they play it (an iPhone plays nothing without them).
+enum ByteRangeResult { RANGE_WHOLE, RANGE_PART, RANGE_UNSATISFIABLE };
+ByteRangeResult ParseByteRange(const std::string &Header, size_t Size, size_t &First, size_t &Last);
 
 // A name in a link, every byte but A-Z a-z 0-9 - . _ ~ as %XX; and a link's
 // path back (false for a broken %)

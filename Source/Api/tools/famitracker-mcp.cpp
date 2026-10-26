@@ -232,18 +232,23 @@ int main(int argc, char *argv[])
 	if (!First.Host.empty() && First.Token.empty())
 		std::fprintf(stderr, "famitracker-mcp: without --token, FamiTracker there refuses every request.\n");
 	std::string Line;
+	std::string Agreed;	// the protocol version agreed in initialize, which the requests after it say, as over HTTP
 	while (ReadLine(Line)) {
 		const Target Where = CurrentTarget();
 		BridgeMessage Message;
-		if (!BridgeRequest(Line, Where.Port, Where.Token, Message, Where.Host, g_sPath))
+		if (!BridgeRequest(Line, Where.Port, Where.Token, Message, Where.Host, g_sPath, Agreed))
 			continue;
 		HttpResponse Answer;
 		std::string Error;
 		const BridgeExchangeResult Result = BridgeExchange(Where.Host, Where.Port, FormatHttpRequest(Message.Request), TIMEOUT_MS, Answer,
 			Error);
 		std::string Out;
-		if (Result == EXCHANGE_ANSWERED)
+		if (Result == EXCHANGE_ANSWERED) {
 			Out = BridgeAnswer(Message, Answer);
+			const std::string Version = BridgeAgreedVersion(Message, Answer);
+			if (!Version.empty())
+				Agreed = Version;
+		}
 		else {
 			std::fprintf(stderr, "famitracker-mcp: %s\n", Error.c_str());
 			Out = BridgeFailure(Message, Explain(Result, Where, Error));

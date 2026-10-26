@@ -184,6 +184,116 @@ bool IsExportFile(const std::string &Name)
 	return Extension(Name) == "ogg" && Name.size() > 4 && IsPlainFileName(Name);
 }
 
+const char *ExportMimeType(const std::string &Name)
+{
+	(void)Name;
+	return "audio/ogg";
+}
+
+std::string ExportUri(const std::string &Name)
+{
+	return EXPORT_URI_PREFIX + UrlEncode(Name);
+}
+
+bool ParseExportUri(const std::string &Uri, std::string &Name)
+{
+	const std::string Prefix = EXPORT_URI_PREFIX;
+	Name.clear();
+	return Uri.size() > Prefix.size() && Lower(Uri.substr(0, Prefix.size())) == Prefix && Uri.find_first_of("?#") == std::string::npos &&
+		UrlDecode(Uri.substr(Prefix.size()), Name) && IsExportFile(Name);
+}
+
+bool IsTailscaleIpv4(unsigned long Address)
+{
+	return (Address & 0xFFC00000UL) == 0x64400000UL;
+}
+
+bool QueryParameter(const std::string &Target, const char *pKey, std::string &Value)
+{
+	Value.clear();
+	const size_t Mark = Target.find('?');
+	if (Mark == std::string::npos)
+		return false;
+	const std::string Query = Target.substr(Mark + 1, Target.find('#') == std::string::npos ? std::string::npos :
+		Target.find('#') - Mark - 1);
+	size_t At = 0;
+	while (At <= Query.size()) {
+		size_t End = Query.find('&', At);
+		if (End == std::string::npos)
+			End = Query.size();
+		const std::string Pair = Query.substr(At, End - At);
+		const size_t Equals = Pair.find('=');
+		if (Pair.substr(0, Equals) == pKey) {
+			std::string Raw = Equals == std::string::npos ? std::string() : Pair.substr(Equals + 1);
+			for (size_t i = 0; i < Raw.size(); ++i)
+				if (Raw[i] == '+')
+					Raw[i] = ' ';
+			return UrlDecode(Raw, Value);
+		}
+		At = End + 1;
+	}
+	return false;
+}
+
+namespace {
+
+// Digits as a number, as big as a size_t holds (more saturate); false without digits or with anything else
+bool RangeNumber(const std::string &Text, size_t &Value)
+{
+	Value = 0;
+	if (Text.empty())
+		return false;
+	const size_t Most = static_cast<size_t>(-1);
+	for (size_t i = 0; i < Text.size(); ++i) {
+		if (Text[i] < '0' || Text[i] > '9')
+			return false;
+		const size_t Digit = static_cast<size_t>(Text[i] - '0');
+		Value = Value > (Most - Digit) / 10 ? Most : Value * 10 + Digit;
+	}
+	return true;
+}
+
+std::string TrimSpaces(const std::string &Text)
+{
+	const size_t First = Text.find_first_not_of(" \t");
+	return First == std::string::npos ? std::string() : Text.substr(First, Text.find_last_not_of(" \t") - First + 1);
+}
+
+}	// namespace
+
+ByteRangeResult ParseByteRange(const std::string &Header, size_t Size, size_t &First, size_t &Last)
+{
+	First = 0;
+	Last = Size > 0 ? Size - 1 : 0;
+	const std::string Text = TrimSpaces(Header);
+	const size_t Equals = Text.find('=');
+	if (Equals == std::string::npos || Lower(TrimSpaces(Text.substr(0, Equals))) != "bytes")
+		return RANGE_WHOLE;
+	const std::string Spec = TrimSpaces(Text.substr(Equals + 1));
+	const size_t Dash = Spec.find('-');
+	if (Spec.find(',') != std::string::npos || Dash == std::string::npos)
+		return RANGE_WHOLE;
+	const std::string From = TrimSpaces(Spec.substr(0, Dash)), To = TrimSpaces(Spec.substr(Dash + 1));
+	size_t Start = 0, End = 0;
+	if (From.empty()) {
+		// The last bytes: "-500"
+		if (!RangeNumber(To, End))
+			return RANGE_WHOLE;
+		if (End == 0 || Size == 0)
+			return RANGE_UNSATISFIABLE;
+		First = End >= Size ? 0 : Size - End;
+		Last = Size - 1;
+		return RANGE_PART;
+	}
+	if (!RangeNumber(From, Start) || (!To.empty() && (!RangeNumber(To, End) || End < Start)))
+		return RANGE_WHOLE;
+	if (Start >= Size)
+		return RANGE_UNSATISFIABLE;
+	First = Start;
+	Last = To.empty() || End >= Size ? Size - 1 : End;
+	return RANGE_PART;
+}
+
 std::string UrlEncode(const std::string &Text)
 {
 	static const char HEX[] = "0123456789ABCDEF";
