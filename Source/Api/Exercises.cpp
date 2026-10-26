@@ -1008,8 +1008,8 @@ void CheckFirstSong(const ExerciseFacts &F, ExerciseVerdict &V)
 	const int TuneNotes = Melody >= 0 && Melody < static_cast<int>(F.Channels.size()) ?
 		static_cast<int>(Sounding(&F.Channels[static_cast<size_t>(Melody)]).size()) : 0;
 	if (Notes == 0) {
-		V.Next = "Your song is empty so far. Open View > What next and press Do it: each time, it makes the next step (the song's "
-			"shape, its key, its chords and bass, a tune...) and shows the one after.";
+		V.Next = "Your song is empty so far. In the What next panel (View > What next), press Do it: each time, it makes the next "
+			"step (the song's shape, its key, its chords and bass, a tune...) and shows the one after.";
 		return;
 	}
 	if (!F.Sections.empty())
@@ -1036,7 +1036,9 @@ void CheckFirstSong(const ExerciseFacts &F, ExerciseVerdict &V)
 	}
 	V.Passed = true;
 	V.Right.push_back("It goes round when it ends: a [[loop]], ready for a game.");
-	PlayBars(V, F, 1, std::min(8, SongBars(F)));
+	// Eight bars from where the tune comes in (after an intro, say)
+	const int From = F.Time().BarOf(Sounding(&F.Channels[static_cast<size_t>(Melody)]).front().Row);
+	PlayBars(V, F, From, std::min(From + 7, SongBars(F)));
 }
 
 }	// namespace

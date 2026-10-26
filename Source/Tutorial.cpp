@@ -1233,8 +1233,14 @@ void CTutorialBubble::Tick()
 			m_bPlayStarted = true;
 		if (!Playing && (m_bPlayStarted || ::GetTickCount() - m_dwPlayPressed > 2000)) {
 			m_bPlaying = false;
-			if (m_bPlayStarted && pSound != NULL && pSound->PlayRangeEnded())
+			if (m_bPlayStarted && pSound != NULL && pSound->PlayRangeEnded()) {
 				m_bHeard = true;
+				// An exercise's: the cursor back at the bars' start, where the song stopped past them (the drum grid
+				// shows the cursor's bar)
+				int First = 0, End = 0;
+				if (IsExercise() && BarRows(Step().PlayFirst, Step().PlayLast, First, End))
+					MoveCursor(First, -1);
+			}
 			Invalidate(FALSE);
 		}
 	}
@@ -1305,8 +1311,11 @@ void CTutorialBubble::Tick()
 	}
 
 	// Play it: on to the mix after the channels alone, and over once the bars are
-	if (m_PlayIt.IsPlaying() && m_PlayIt.Tick())
+	if (m_PlayIt.IsPlaying() && m_PlayIt.Tick()) {
+		if (!m_PlayIt.IsPlaying())
+			MoveCursor(m_PlayIt.First(), -1);	// over: the cursor back at the bars' start, as above
 		Invalidate(FALSE);
+	}
 
 	// Done: the frame turns green for a moment, then the next step (a check step stays, so what its check said can
 	// be read: its Next goes on)

@@ -628,7 +628,7 @@ void TestFirstSong()
 	ExerciseFacts F = Song(8, -1);
 	ExerciseVerdict V = Run("first-song", F);
 	CHECK(!V.Passed);
-	CHECK_HAS(V.Next, "Open View > What next and press Do it");
+	CHECK_HAS(V.Next, "In the What next panel (View > What next), press Do it");
 	// A tune alone: the chords and the bass come next
 	ExerciseFacts Alone = F;
 	Tune(Alone, 0, 1, "E3 - D3 - C3 - D3 - | E3 E3 E3 - - - - - | D3 D3 D3 - - - - -");
@@ -659,6 +659,11 @@ void TestFirstSong()
 	CHECK_HAS(All(V), "It goes round when it ends: a [[loop]], ready for a game.");
 	CHECK(V.NextExercise.empty() && V.PlayFirst == 1 && V.PlayLast == 8);
 	CHECK(LinksLead(V));
+	// Play it plays eight bars from where the tune comes in, as far as the song goes
+	F.Channels[0].Notes.clear();
+	Tune(F, 0, 3, "E3 - D3 - C3 - D3 - | E3 E3 E3 - - - - - | D3 D3 D3 - - - - -");
+	V = Run("first-song", F);
+	CHECK(V.Passed && V.PlayFirst == 3 && V.PlayLast == 8);
 }
 
 // The verdict as JSON for FamiTracker's note, read back; and as text for Claude
