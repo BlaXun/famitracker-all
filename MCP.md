@@ -563,19 +563,18 @@ is the recipes':
    gets a harmony in its last part, the climax).
 6. An echo, last of the parts, since it copies the melody's notes as they
    are.
-7. The last steps, once the parts are written: first one `listen` (the song
-   heard as FamiTracker plays it; it counts while the song stays as it was
-   heard, and its high findings' fixes come next, as `check_song`'s do; a
-   change since, a fix too, asks for it again), then `polish` (on a lively stage with its accents), then the mix in the kind's style when another
-   mix would change the song, the loop's seam (`fix_loop`), a listen and the
+7. The last steps, once the parts are written: `polish` (on a lively stage
+   with its accents), then the mix in the kind's style when another mix
+   would change the song, the loop's seam (`fix_loop`), a `listen` and the
    file for the game at the kind's loudness (-20 LUFS; -22 calm, -19 action),
    as one `finish_song` call from the first of them that's due (see [The last
    steps in one call](#the-last-steps-in-one-call)): polish isn't asked again
    once the song is mixed, nor the mix when only the seam is left. The
-   finish's own listen counts as the first one does, so its high findings'
-   fixes come next, then the file again. Then saving.
-   The file alone, older than the song or at another loudness, is
-   `export_for_game`.
+   finish's listen (the song heard as FamiTracker plays it) counts while the
+   song stays as it was heard, and its high findings' fixes come next, as
+   `check_song`'s do. Then saving. The file alone, older than the song or at
+   another loudness, is `export_for_game`, with a `listen` before it when
+   the song changed since it was heard (a fix too).
 
 It takes `kind` (calm, lively or action; without one, calm when the track's
 name says so, else the general recipe), `skip` (steps to leave out, like

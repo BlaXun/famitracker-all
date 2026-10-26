@@ -25629,6 +25629,8 @@ private:
 	void LoopSeam();
 	bool FinishStep(const std::string &From, const std::string &Why);
 	bool Listened();
+	bool ListenWanted() const;
+	bool KeptHeard(Json &Heard);
 	bool HeardFixes(const Json &Heard);
 	void Finish();
 	bool TipStep(const std::string &Tip);
@@ -27456,7 +27458,20 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		return true;
 	if (!Looking() || (m_Core && !ToolSet::IsCoreTool("finish_song")))
 		return false;
-	Listened();		// first: a step while the song as it is hasn't been heard, then its high findings' fixes
+	// finish_song listens after its steps, so no listen before it (a walk listens once): a listen kept of the song as it is
+	// still counts, its high findings' fixes first; without one the listen is the finish's own. Where the listen isn't
+	// wanted, finish_song skips it too
+	if (ListenWanted()) {
+		Json Heard;
+		if (KeptHeard(Heard)) {
+			Milestone("listened", true, "listened");
+			HeardFixes(Heard);
+		}
+		else
+			Milestone("listened", false);
+	}
+	else
+		Listened();
 	const NextKind &K = Kind();
 	Json A = Json::MakeObject();
 	A.Set("kind", K.Name);
@@ -27469,7 +27484,7 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		Skip.Push("mix");
 	if (!Wanted("seam"))
 		Skip.Push("loop");
-	if (!Wanted("listen"))
+	if (!ListenWanted())
 		Skip.Push("listen");
 	if (!Wanted("export"))
 		Skip.Push("export");
@@ -27480,7 +27495,7 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		After.push_back(std::string("the mix (") + K.MixStyle + ")");
 	if (From != "seam" && Wanted("seam"))
 		After.push_back("the loop's seam");
-	if (Wanted("listen"))
+	if (ListenWanted())
 		After.push_back("a listen");
 	if (Wanted("export"))
 		After.push_back("the game's file at " + FormatNumber(K.Loudness) + " LUFS");
@@ -27493,28 +27508,40 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 	return true;
 }
 
-// The listen before the finish (FinishStep): done while listen's last result over the whole track (SongHost::LastListen)
-// is of the song as it is now (its print, SoundPrint), else listen is the step; its high findings with a call are then
-// steps as check_song's are, one at a time (the others are the user's to hear). True when the finish can come
+// The listen before an export alone (Finish; finish_song listens itself, FinishStep): done while listen's last result over
+// the whole track (SongHost::LastListen) is of the song as it is now (its print, SoundPrint), else listen is the step; its
+// high findings with a call are then steps as check_song's are, one at a time (the others are the user's to hear). True
+// when the export can come
 bool WhatNext::Listened()
 {
-	if (!Wanted("listen") || (m_Core && !ToolSet::IsCoreTool("listen"))) {
+	if (!ListenWanted()) {
 		Milestone("listened", true, "listened");
 		return true;
 	}
 	Json Heard;
-	const Json *pPrint = 0;
-	if (!S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard))
-		pPrint = Heard.Get("print");
-	if (pPrint == 0 || !pPrint->IsString() || pPrint->String() != SoundPrint(S)) {
+	if (!KeptHeard(Heard)) {
 		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The parts are written: before the finish, listen hears the song as FamiTracker "
-			"plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, clicks, a sound "
-			"that drones on, a covered melody. It changes nothing.");
+		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen hears "
+			"it as FamiTracker plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, "
+			"clicks, a sound that drones on, a covered melody. It changes nothing.");
 		return false;
 	}
 	Milestone("listened", true, "listened");
 	return HeardFixes(Heard);
+}
+
+// Whether a listen is asked for (or finish_song's own made): not when skipped, nor on a small set without listen
+bool WhatNext::ListenWanted() const
+{
+	return Wanted("listen") && !(m_Core && !ToolSet::IsCoreTool("listen"));
+}
+
+// The listen kept with the song (a listen call's over the whole track, or finish_song's), into Heard: true when it's of
+// the song as it is now
+bool WhatNext::KeptHeard(Json &Heard)
+{
+	const Json *pPrint = !S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard) ? Heard.Get("print") : 0;
+	return pPrint != 0 && pPrint->IsString() && pPrint->String() == SoundPrint(S);
 }
 
 // A listen's high findings with a call (its JSON), as steps one at a time as check_song's are: true when none is a step
@@ -27578,6 +27605,14 @@ void WhatNext::Finish()
 		m_Unmet.insert("exported");	// finish_song makes it
 		return;
 	}
+	// The finish done otherwise (finish_song's steps done, or none wanted): after saving, a listen before the export alone
+	// while the song as it is hasn't been heard; with no export due, none is asked
+	if (m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0) {
+		if (Wanted("export") && !(Current && AtLoudness))
+			Listened();
+		else
+			Milestone("listened", true, "listened");
+	}
 	if (Milestone("exported", (Current && AtLoudness) || !Wanted("export"), "exported (" + File + ")"))
 		return;
 	Json A = Json::MakeObject();
@@ -27616,15 +27651,14 @@ void WhatNext::Work()
 	}
 	if (Looking() && m_Music)
 		LoopSeam();
-	// The finish's stage looked at with nothing to finish: no listen before it (FinishStep's); a listen kept of the song as
-	// it is (finish_song's own, after its steps) still gives its high findings' fixes
-	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0) {
-		Milestone("listened", true, "listened");
+	// Nothing left to finish: a listen kept of the song as it is (finish_song's own, after its steps) still gives its high
+	// findings' fixes; a listen before an export alone is Finish's to ask
+	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0 && ListenWanted()) {
 		Json Heard;
-		const Json *pPrint = !S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard) ? Heard.Get("print") : 0;
-		if (Wanted("listen") && !(m_Core && !ToolSet::IsCoreTool("listen")) && pPrint != 0 && pPrint->IsString() &&
-			pPrint->String() == SoundPrint(S))
+		if (KeptHeard(Heard)) {
+			Milestone("listened", true, "listened");
 			HeardFixes(Heard);
+		}
 	}
 	if (Looking())
 		Finish();
@@ -30459,9 +30493,10 @@ std::string ToolSet::CoreInstructions()
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
-		"- Finish: listen first (it hears what the notes can't show: a warble, clicks, notes out of tune), polish, then mix last, "
-		"in the kind's style (it balances the parts in the notes: leave the faders at 0 dB); "
-		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action). what_next gives each.\n"
+		"- Finish: polish, then mix last in the kind's style (it balances the parts in the notes: faders at 0 dB), "
+		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action); what_next gives each. finish_song "
+		"listens after its mix and lists what it heard: fix those (what_next gives them as steps), then export_for_game "
+		"again.\n"
 
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
@@ -30504,7 +30539,8 @@ std::string ToolSet::Instructions()
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
 		"and medium findings with the call each gives, and play a low one's bars to the user (it has no call): change "
-		"them only if the user wants; what_next asks for one listen before finish_song, and another after a change. Run "
+		"them only if the user wants. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
+		"them as steps), then export_for_game again. Run "
 		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
 		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "

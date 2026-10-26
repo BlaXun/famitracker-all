@@ -19786,10 +19786,11 @@ void TestWhatNextLoop()
 		Check(Finished, K.Asked, __LINE__);
 		// The frame and the song's shape (its sections laid out: song_shape, 26 October 2026), the lead's sound, chords and
 		// bass, the melody, the form filled part by part, depth (a harmony in the repeat, a variation where a repeat plays its
-		// original note for note, the intro and the break filled), the echo last of the parts, a listen, then finish_song (the polish, the
-		// mix, the seam and the file for the game in one call), saving
+		// original note for note, the intro and the break filled), the echo last of the parts, then finish_song (the polish, the
+		// mix, the seam, a listen and the file for the game in one call: no listen of its own before it), saving
 		const char *const ORDER[] = { "set_tempo", "set_key", "song_shape", "design_instrument", "add_chords_and_bass", "grow_melody",
-			"copy_bars", "add_harmony", "add_echo", "listen", "finish_song", "save_song" };
+			"copy_bars", "add_harmony", "add_echo", "finish_song", "save_song" };
+		Check(CallIndex(Made, "listen") < 0, K.Asked, __LINE__);
 		for (size_t i = 0; i + 1 < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
 			Check(CallIndex(Made, ORDER[i]) >= 0 && CallIndex(Made, ORDER[i]) < CallIndex(Made, ORDER[i + 1]),
 				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
@@ -19989,15 +19990,11 @@ void TestWhatNextStates()
 			if (Song.Rows[0][r].HasNote())
 				Song.Rows[0][r].Volume = 4;
 		FakeSong ByHand = Song;
-		// Changed since it was listened to: heard again before the finish
+		// Changed since it was heard: finish_song listens again itself, after its mix
 		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
-		const int Heard = StepsDoneOf(A.Line);
-		CHECK(Heard > 0 && !Run(Song, "listen", "{}").IsError);
-		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\"]}");
-		CHECK_EQ(StepsDoneOf(A.Line), Heard + 1);	// listened
+		CHECK_HAS(A.Text, "\nLeft: listened, mix, ");
 		CHECK_HAS(A.Text, "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, the chords 3-4 "
 			"dB under it and the band louder than the melody. finish_song does it, then the loop's seam, a listen and the game's file at -20 "
 			"LUFS, in one call that one Ctrl+Z undoes.");
@@ -20018,6 +20015,10 @@ void TestWhatNextStates()
 		CHECK_HAS(A.Text, "save it before the export");
 		CHECK(!Run(ByHand, "save_song", "{}").IsError);
 		ByHand.Info.Modified = false;
+		// The export alone, of a song changed since it was heard: a listen before it
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
+		CHECK(!Run(ByHand, "listen", "{}").IsError);
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "export_for_game" && WriteJson(A.Arguments) == "{\"loudness\":-20}");
 		CHECK_HAS(A.Text, "The game's file next to the song is older than the song");
@@ -20040,10 +20041,7 @@ void TestWhatNextStates()
 				Instrument = Song.Rows[6][r].Instrument;
 		}
 		Song.Put(6, Last, "C-4", Instrument, Volume);
-		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-		CHECK_EQ(A.Tool, std::string("listen"));
-		CHECK(!Run(Song, "listen", "{}").IsError);
-		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
 		CHECK_HAS(A.Text, "check_loop finds the loop starting otherwise on repeat");
@@ -25639,7 +25637,7 @@ void TestWhatNextSavesForClient()
 {
 	const std::string Asked = "{\"skip\": [\"tempo\", \"key\", \"shape\", \"lead\", \"chords\", \"sections\", \"melody\", "
 		"\"form\", \"drums\", \"second_line\", \"variation\", \"break\", \"intro\", \"loop\", \"tips\", \"echo\", \"polish\", "
-		"\"mix\", \"seam\"]}";
+		"\"mix\", \"seam\", \"listen\"]}";
 	FakeSong Song(1);
 	NewSong(Song);
 	Song.Info.FileName.clear();
@@ -25813,36 +25811,52 @@ void TestWhatNextListens()
 	FakeSong Song(1);
 	NewSong(Song);
 	bool Finished = false;
-	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "listen");
+	// finish_song listens after its steps (feat-listen-rest): no listen of what_next's own before it, so a walk listens once
+	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "finish_song");
 	WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-	CHECK(!Finished && A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
-	CHECK_HAS(A.Text, "before the finish, listen hears the song as FamiTracker plays it");
+	CHECK(!Finished && A.Tool == "finish_song" && A.Arguments.Get("skip") == 0);
+	CHECK_HAS(A.Text, ", a listen and the game's file at -20 LUFS");
 	CHECK_HAS(A.Text, "\nLeft: listened, polish, mix, ");
-	// Skipped: the finish at once; a listen over some bars isn't the song heard
-	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"listen\"]}").Tool, std::string("finish_song"));
-	CHECK(!Run(Song, "listen", "{\"from_bar\": 5, \"to_bar\": 8}").IsError);
-	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
-	// The melody's notes with a vibrato far too deep, heard as FamiTracker plays it: its fix after the listen
+	const Json Finish = A.Arguments;
+	// Skipped: none asked, and finish_song skips its own
+	A = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"listen\"]}");
+	CHECK(A.Tool == "finish_song" && A.Arguments.Get("skip") != 0 && WriteJson(*A.Arguments.Get("skip")) == "[\"listen\"]");
+	// The melody's notes with a vibrato far too deep, heard as FamiTracker plays it: finish_song's listen hears it, and its
+	// fix comes next, though nothing is left to finish
 	Song.ChipPitches = true;
 	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
 		if (Song.Rows[5][r].HasNote() && Song.Rows[5][r].Effect[0] == EFF_NONE) {
 			Song.Rows[5][r].Effect[0] = EFF_VIBRATO;
 			Song.Rows[5][r].Param[0] = 0x6F;
 		}
-	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
-	const Json Heard = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const ToolResult Done = Run(Song, "finish_song", WriteJson(Finish));
+	CHECK(!Done.IsError);
+	CHECK_HAS(Done.Text, "\n- Heard: ");
+	const Json Heard = Parse(Song.LastListen());
 	std::string Fix;
 	const Json *pFindings = Heard.Get("findings");
 	for (size_t i = 0; pFindings != 0 && i < pFindings->Size() && Fix.empty(); ++i)
 		if (TextOf(&pFindings->At(i), "severity") == "high" && pFindings->At(i).Get("fix") != 0)
 			Fix = TextOf(pFindings->At(i).Get("fix"), "tool");
-	Check(!Fix.empty(), WriteJson(Heard).substr(0, 600).c_str(), __LINE__);
+	Check(!Fix.empty(), Done.Text.c_str(), __LINE__);
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool == Fix && Contains(A.Text, "\nWhy: listen: "), A.Text.c_str(), __LINE__);
 	CHECK_LACKS(A.Text, "Left: listened");
-	// A change since: heard again
-	Song.Rows[5][0].Volume = 9;
-	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
+	// The fix made: saving first, then, the song changed since it was heard, a listen before the file made again (a listen
+	// over some bars isn't the song heard)
+	CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+	CHECK(!Run(Song, "listen", "{\"from_bar\": 5, \"to_bar\": 8}").IsError);
+	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(A.Tool, std::string("save_song"));
+	CHECK_HAS(A.Text, "\nLeft: listened, saved, exported.");
+	CHECK(!Run(Song, "save_song", "{}").IsError);
+	Song.Info.Modified = false;
+	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	Check(A.Tool == "listen" && WriteJson(A.Arguments) == "{}", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "before the game's file, listen hears it as FamiTracker plays it");
+	CHECK(!Run(Song, "listen", "{}").IsError);
+	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	Check(A.Tool != "listen" && A.Tool != Fix, A.Text.c_str(), __LINE__);
 }
 
 // finish_song listens after its polish, mix and seam (from feat-listen-rest): the song as it then sounds, kept as the listen
@@ -25874,32 +25888,6 @@ void TestFinishSongListens()
 	Check(Contains(R.Text, ("). Fix: " + Fix + " {").c_str()), R.Text.c_str(), __LINE__);
 	CHECK(R.Text.find("\n- Listen: ") < R.Text.find("\n- Export: Town.ogg: "));	// the file still made, after the listen
 	CHECK(Song.Files.size() == 1u);
-	// Kept: on a song whose parts are written (what_next's walk up to its listen), the finish's listen counts as heard and its
-	// fix comes next, though nothing is left to finish
-	{
-		FakeSong Walked(1);
-		NewSong(Walked);
-		bool Finished = false;
-		FollowWhatNext(Walked, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "listen");
-		Walked.ChipPitches = true;
-		for (size_t r = 0; r < Walked.Rows[5].size(); ++r)
-			if (Walked.Rows[5][r].HasNote() && Walked.Rows[5][r].Effect[0] == EFF_NONE) {
-				Walked.Rows[5][r].Effect[0] = EFF_VIBRATO;
-				Walked.Rows[5][r].Param[0] = 0x6F;
-			}
-		const ToolResult Done = Run(Walked, "finish_song", "{\"kind\": \"lively\"}");
-		CHECK(!Done.IsError);
-		const Json Kept = Parse(Walked.LastListen());
-		std::string Call;
-		const Json *pKept = Kept.Get("findings");
-		for (size_t i = 0; pKept != 0 && i < pKept->Size() && Call.empty(); ++i)
-			if (TextOf(&pKept->At(i), "severity") == "high" && pKept->At(i).Get("fix") != 0)
-				Call = TextOf(pKept->At(i).Get("fix"), "tool");
-		Check(!Call.empty(), Done.Text.c_str(), __LINE__);
-		const WhatNextAnswer A = AskWhatNext(Walked, "{\"kind\": \"lively\"}");
-		Check(A.Tool == Call && Contains(A.Text, "\nWhy: listen: "), A.Text.c_str(), __LINE__);
-		CHECK_LACKS(A.Text, "Left: listened");
-	}
 	// skip listen: none, and none kept
 	FakeSong Skipped = FinishTestSong();
 	const std::string Text = Run(Skipped, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"listen\"]}").Text;
