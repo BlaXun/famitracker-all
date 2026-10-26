@@ -24268,7 +24268,7 @@ std::string LanesTaken(const FakeSong &Song, const tutorial_step_t &Step, const 
 void TestExerciseStarters()
 {
 	const std::vector<ExerciseInfo> &List = Exercises();
-	CHECK_EQ(List.size(), static_cast<size_t>(10));
+	CHECK_EQ(List.size(), static_cast<size_t>(21));
 	for (size_t e = 0; e < List.size(); ++e) {
 		const ExerciseInfo &E = List[e];
 		const std::string Name = E.Id;
@@ -24301,7 +24301,23 @@ void TestExerciseStarters()
 		const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
 			Song.Info.FirstHighlight, Song.Info.SecondHighlight);
 		Check(E.NewSong || (Time.BarCount() >= 2 && Time.BarCount() <= 8 && Song.Info.Channels.size() == 5 &&
-			Song.Info.TrackName == E.Title), (Name + ": a starter of 2-8 bars on the 2A03, its track named for it").c_str(), __LINE__);
+			Song.Info.TrackName == E.Title) || (E.Group == EXERCISES_FIRST_STEPS && Time.BarCount() >= 1 && Time.BarCount() <= 4 &&
+			Song.Info.Channels.size() == 5 && Song.Info.TrackName == E.Title), (Name + ": a starter of 2-8 bars on the 2A03 (First "
+			"steps' 1-4), its track named for it").c_str(), __LINE__);
+		if (E.Group == EXERCISES_FIRST_STEPS) {
+			// Tiny: one part at most as it opens (the user adds the second of two parts), and the piano roll in sight at every check
+			int Parts = 0;
+			for (size_t c = 0; c < Song.Rows.size(); ++c) {
+				bool Any = false;
+				for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+					Any = Any || Song.Rows[c][r].HasNote();
+				Parts += Any ? 1 : 0;
+			}
+			Check(Parts <= 1, (Name + ": a starter of one part at most").c_str(), __LINE__);
+			for (size_t s = 0; s < T.Steps.size(); ++s)
+				Check(T.Steps[s].Check.empty() || T.Steps[s].Show == "piano-roll", (Name + ": its check shows the piano roll").c_str(),
+					__LINE__);
+		}
 		std::vector<tutorial_channel_t> Channels;
 		for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
 			Channels.push_back(tutorial_channel_t(Song.Info.Channels[c].Name, Song.Info.Channels[c].Chip));
@@ -24488,7 +24504,8 @@ void TestExerciseTool()
 			CHECK(Tools.List()[i].ReadOnly);
 	const ToolResult List = Tools.Call("check_exercise", Parse("{}"));
 	CHECK(!List.IsError);
-	CHECK_HAS(List.Text, "The exercises (Help > Exercises), in order: home-note (The home note): ");
+	CHECK_HAS(List.Text, "The exercises (Help > Exercises), in order, by group. First steps: first-note (Your first note): ");
+	CHECK_HAS(List.Text, "ending on the note it started on. Next steps: home-note (The home note): ");
 	CHECK_HAS(List.Text, "bass (A bass line, checks bass-roots, bass-two)");
 	const ToolResult Wrong = Tools.Call("check_exercise", Parse("{\"exercise\": \"scales\"}"));
 	CHECK(Wrong.IsError);
@@ -24500,6 +24517,123 @@ void TestExerciseTool()
 	CHECK_HAS(Empty.Text, "Not yet: A beat.");
 	CHECK_HAS(Empty.Text, "What to change next: Bar 1 has no kick on beat 1.");
 }
+
+// Help > Exercises' First steps on their starters, as the tools read them: what each check says of the typical mistakes
+// of someone who has never made music (a note too short, notes off the beat, a step that skips the scale...), then of
+// a good answer
+void TestFirstStepsMistakes()
+{
+	auto Open = [](const char *Id, FakeSong &Song) {
+		std::string Error;
+		const bool Opened = ExerciseSong(*FindExercise(Id), Song, Error);
+		Check(Opened, (std::string(Id) + ": " + Error).c_str(), __LINE__);
+		return Opened;
+	};
+	auto Steps = [](FakeSong &Song, const char *Channel, int Bar, const char *Notes, const char *Instrument = 0) {
+		const ToolResult Did = Run(Song, "write_notes", Printed("{\"channel\": \"%s\", \"from_bar\": %d, \"notes\": \"%s\"%s}", Channel,
+			Bar, Notes, Instrument != 0 ? (std::string(", \"instrument\": \"") + Instrument + "\"").c_str() : ""));
+		Check(!Did.IsError, Did.Text.c_str(), __LINE__);
+	};
+	auto Says = [](const ExerciseVerdict &V, const char *Part, int Line) {
+		const std::string All = V.Next + " | " + (V.Right.empty() ? std::string() : V.Right[0]);
+		Check(!V.Passed && Contains(All, Part), (std::string("\"") + Part + "\" in: " + All).c_str(), Line);
+	};
+	{
+		FakeSong Song(1);
+		if (Open("first-note", Song)) {
+			Says(CheckOn(Song, "first-note", __LINE__), "There's no note yet. Click once anywhere on the lanes", __LINE__);
+			Steps(Song, "Pulse 1", 1, "E4 - . . . . . .", "Lead");
+			CHECK(CheckOn(Song, "first-note", __LINE__).Passed);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("high-low", Song)) {
+			Steps(Song, "Pulse 1", 1, "C4 - - - D4 - - -", "Lead");
+			Says(CheckOn(Song, "high-low", __LINE__), "Your high note is only 2 lanes above the low one", __LINE__);
+		}
+	}
+	{
+		// A note too short
+		FakeSong Song(1);
+		if (Open("long-short", Song)) {
+			Says(CheckOn(Song, "long-short", __LINE__), "the longest, your first note (bar 1), lasts 2 beats. Make it long: drag its "
+				"right edge to the right until it reaches the next [[bar line|bar]].", __LINE__);
+			Steps(Song, "Pulse 1", 1, "C4 - - - - . . . | G4 - - - . . . .");
+			Says(CheckOn(Song, "long-short", __LINE__), "lasts 2 and a half beats", __LINE__);
+			Steps(Song, "Pulse 1", 1, "C4 - - - - - - - | G4 - - - . . . .");
+			Says(CheckOn(Song, "long-short", __LINE__), "drag the right edge of your second note (bar 2) to the left", __LINE__);
+		}
+	}
+	{
+		// Notes off the beat, and a beat with none
+		FakeSong Song(1);
+		if (Open("steady-beat", Song)) {
+			Steps(Song, "Pulse 1", 1, "C4 - C4 - . C4 - -", "Lead");
+			Says(CheckOn(Song, "steady-beat", __LINE__), "Your third note starts between beat lines 3 and 4, not on a line.", __LINE__);
+			Steps(Song, "Pulse 1", 1, "C4 - C4 - . . C4 -");
+			Says(CheckOn(Song, "steady-beat", __LINE__), "Beat 3 has no note yet.", __LINE__);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("loud-soft", Song)) {
+			Says(CheckOn(Song, "loud-soft", __LINE__), "Your notes all play at the same [[volume]], 15 of 15.", __LINE__);
+			Steps(Song, "Pulse 1", 1, "G4 - G4 - G4v14 - G4v15 -");
+			Says(CheckOn(Song, "loud-soft", __LINE__), "Your third note is only a little quieter (14 of 15, against 15)", __LINE__);
+		}
+	}
+	{
+		// A step that skips the scale
+		FakeSong Song(1);
+		if (Open("stairs", Song)) {
+			Says(CheckOn(Song, "stairs", __LINE__), "Your stairs start on C. Go on up", __LINE__);
+			Steps(Song, "Pulse 1", 1, "C4 - D4 - F4 - G4 - | A4 - . . . . . .");
+			Says(CheckOn(Song, "stairs", __LINE__), "From D your stairs skip up to F, over E", __LINE__);
+			Steps(Song, "Pulse 1", 1, "C4 - D4 - Eb4 - F4 - | G4 - . . . . . .");
+			Says(CheckOn(Song, "stairs", __LINE__), "Your third note (D#) is on a darker lane", __LINE__);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("rhythm", Song)) {
+			Steps(Song, "Pulse 1", 1, "G4 - G4 - G4 - G4 -", "Lead");
+			Says(CheckOn(Song, "rhythm", __LINE__), "Your notes are all the same length (1 beat each)", __LINE__);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("copy-repeat", Song)) {
+			Says(CheckOn(Song, "copy-repeat", __LINE__), "Bar 2 is still empty.", __LINE__);
+			Steps(Song, "Pulse 1", 2, "C4 - - - E4 - G4 - | . . C4 - - - E4 -");
+			Says(CheckOn(Song, "copy-repeat", __LINE__), "Bar 3's copy starts 1 beat late.", __LINE__);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("new-sound", Song))
+			Says(CheckOn(Song, "new-sound", __LINE__), "Your notes still play Lead, the sound they started with.", __LINE__);
+	}
+	{
+		FakeSong Song(1);
+		if (Open("two-parts", Song)) {
+			Says(CheckOn(Song, "two-parts", __LINE__), "The triangle has no note yet.", __LINE__);
+			Steps(Song, "Triangle", 1, "E4 - - - - - - -", "Bass");
+			Says(CheckOn(Song, "two-parts", __LINE__), "Your triangle note (E-4) is as high as the tune's notes or higher", __LINE__);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("tiny-tune", Song)) {
+			Steps(Song, "Pulse 1", 1, "C4 - D4 - E4 - G4 - | G4 - E4 - D4 - D4 -", "Lead");
+			Says(CheckOn(Song, "tiny-tune", __LINE__), "Your tune ends on D, but it started on C.", __LINE__);
+			Steps(Song, "Pulse 1", 2, "G4 - E4 - D4 - C4 -");
+			const ExerciseVerdict V = CheckOn(Song, "tiny-tune", __LINE__);
+			CHECK(V.Passed && V.NextExercise == "home-note");	// on into Next steps
+		}
+	}
+}
+
 // check_exercise's list of the exercises: each one's line without its full stop, and one at the end
 void TestExerciseListPeriods()
 {
@@ -24823,6 +24957,7 @@ int main()
 	TestExerciseListPeriods();
 	TestShapeByTrackName();
 	TestFirstSongSmall();
+	TestFirstStepsMistakes();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

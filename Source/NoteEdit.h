@@ -104,6 +104,7 @@ public:
 	// they sounded, and the notes they land on make way
 	void Move(const int *pStarts, int Count, int Rows, const int *pPitches, bool Copy);
 	void SetInstrument(const int *pStarts, int Count, int Instrument);	// the notes after them don't change
+	void SetVolume(const int *pStarts, int Count, int Volume);			// 0-15, written on them; the notes after them don't change
 
 	// Copying: Copy() keeps just these notes, from the first one's start on (as row 0), and how they
 	// sounded; Paste() puts Clip's notes in from Row on, Semitones higher. SelfContained() writes how

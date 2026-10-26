@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: a rhythm to clap
+title: A rhythm to clap
+about: One note in a pattern of long and short ones, like long, short-short.
+
+step
+show: piano-roll
+text: A [[rhythm]] is a pattern of long and short notes: the part of music you could clap. Let's make one on a single lane: long, short-short.
+
+  Click a note on the first beat line, and before you let go, drag to the right over the next beat line: a long note.
+wait: notes 1
+
+step
+show: piano-roll
+play: bar 1
+check: rhythm
+text: Now click two short notes on the same lane, one on the third beat line and one on the fourth.
+
+  Press Play bar 1 and clap along: long, short-short. Then press Check. Hear it plays one too.
+hint: A click makes a note one beat long, and dragging before you let go makes it longer. If your first note is short, drag its right edge to the right, over the next beat line.
+answer: Pulse 1, bar 1, Lead: G4 - - - G4 - G4 -

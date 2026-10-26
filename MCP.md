@@ -2044,9 +2044,23 @@ it's in the small set too.
 
 ## Exercises
 
-**Help > Exercises** has ten short exercises for people new to music, a
-few minutes each, from a tune's last note to a first small song: the home
-note, four bars over chords, strong notes on the beat, a phrase that
+**Help > Exercises** has its exercises for people new to music in groups.
+**First steps**, on top, are eleven of a minute or two each for someone
+who has never made music, each teaching one word in the piano roll with a
+sound at once: your first note (`first-note`), high and low (`high-low`),
+long and short (`long-short`), a steady beat (`steady-beat`), loud and
+soft (`loud-soft`, with the piano roll's Effects > Volume), up the stairs
+(`stairs`: five notes up the key's lighter lanes and back down), a rhythm
+to clap (`rhythm`), copy and repeat (`copy-repeat`), a different sound
+(`new-sound`, from the Sound browser), two parts at once (`two-parts`: a
+low note on the triangle under a tune) and your first tiny tune
+(`tiny-tune`: four notes up and four down, back to where it started),
+which leads into the next group. Each passes any reasonable answer and
+says what's off in the piano roll's own words ("Your notes are all short
+so far: the longest, your first note (bar 1), lasts 2 beats. Make it long:
+drag its right edge to the right until it reaches the next bar line").
+**Next steps** are ten, a few minutes each, from a tune's last note to a
+first small song: the home note, four bars over chords, strong notes on the beat, a phrase that
 breathes, a bass line (the chords' roots, then two notes a bar), a beat
 with the drum grid, major and minor, a hook that comes back, the song's
 shape, and a first small song made with the What next panel. Each opens a
@@ -2065,7 +2079,9 @@ selected track the same way, in the same words (`{"exercise":
 `bass-two`, and `bass` gives the first of them that doesn't pass yet).
 `format` `json` gives the verdict as data, the glossary's words marked as
 `[[words|id]]`. Without an exercise it lists them. It reads the song and
-changes nothing; it isn't in the small set.
+changes nothing; it isn't in the small set. Its list names each group
+with its exercises (Making it your own, a heading for exercises still to
+come, has none yet).
 
 ## References: learning from NES soundtracks
 

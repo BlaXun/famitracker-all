@@ -632,6 +632,28 @@ void TestSongParts()
 	CHECK_HAS(Entry("sections", __LINE__).Text, "Module > Song shape");
 }
 
+// The words Help > Exercises' First steps teach and link (Exercises.h), each where it belongs, with a sound to hear
+void TestFirstStepsTerms()
+{
+	const char *const MUSIC[] = { "note", "pitch", "high and low", "length", "note length", "long and short", "beat", "bar",
+		"volume", "loud", "scale", "key", "rhythm", "repeat", "part", "parts", "bass", "tune", "home" };
+	for (size_t i = 0; i < sizeof(MUSIC) / sizeof(MUSIC[0]); ++i)
+		Check(FindGlossaryEntry(MUSIC[i]) != 0, std::string("an entry for ") + MUSIC[i], __LINE__);
+	CHECK_EQ(Entry("length", __LINE__).Category, static_cast<int>(GLOSSARY_MUSIC));
+	CHECK_EQ(Entry("parts", __LINE__).Id, std::string("part"));
+	CHECK_EQ(Entry("lighter lanes", __LINE__).Id, std::string("lane"));
+	CHECK_EQ(Entry("lanes", __LINE__).Category, static_cast<int>(GLOSSARY_TRACKER));
+	CHECK_EQ(Entry("note lengths", __LINE__).Id, std::string("rhythm"));	// the old name stays the rhythm's
+	HearExample Example;
+	CHECK(GlossaryExample(Entry("length", __LINE__).Hear, Example) && Example.Chip.empty());
+	CHECK(GlossaryExample(Entry("part", __LINE__).Hear, Example) && Example.Chip.empty());
+	bool Triangle = false;
+	for (size_t i = 0; i < Example.Events.size(); ++i)
+		Triangle = Triangle || Example.Events[i].Voice == HEAR_TRIANGLE;
+	CHECK(Triangle);	// the second part
+	CHECK(!Entry("lane", __LINE__).HearHow.empty());
+}
+
 }	// namespace
 
 int main()
@@ -648,6 +670,7 @@ int main()
 	TestExplainText();
 	TestChordRoles();
 	TestSongParts();
+	TestFirstStepsTerms();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

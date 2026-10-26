@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: high and low
+title: High and low
+about: A low note, then a high one: hear the difference.
+
+step
+show: piano-roll
+text: How high or low a note sounds is its [[pitch]]. In the piano roll, a higher [[lane]] sounds higher.
+
+  Click a note low down, at the start of the bar: near the left edge of the lanes.
+wait: notes 1
+
+step
+show: piano-roll
+play: bar 1
+check: high-low
+text: Now click a second note to the right of it, much higher up: five lanes or more above the first one.
+
+  Press Play bar 1 to hear them, low and then high. Then press Check.
+hint: Each lane is one step of pitch. The keys at the left are labelled C-3, C-4, C-5: try a note on the C-4 lane and one on the C-5 lane, twelve lanes higher. That's the same note, an octave up.
+answer: Pulse 1, bar 1, Lead: C4 - - - C5 - - -

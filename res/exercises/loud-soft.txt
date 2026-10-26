@@ -1,0 +1,19 @@
+; Help > Exercises, First steps: loud and soft
+title: Loud and soft
+about: Make one note quieter than the others, and hear it.
+
+step
+show: piano-roll
+play: bar 1
+text: Music isn't loud all the time: [[loud and soft|dynamics]] notes side by side give it life. These four notes are all as loud as they go. Press Play bar 1 to hear them.
+wait: heard
+
+step
+show: piano-roll
+play: bar 1
+check: loud-soft
+text: Each note has a [[volume]], how loud it plays, from 15 (the loudest) down to 1. Make the third note quieter: double-click it, point at Volume in the menu that opens, and click Soft.
+
+  The note gets thinner. Press Play bar 1 to hear it step back, then press Check.
+hint: Double-click right on the third note from the left. If no menu opens, click the note once, then use the Effects button at the top of the piano roll. Pointing at a note shows its volume in the line at the bottom.
+answer: Pulse 1, bar 1: G4 - G4 - G4v6 - G4v15 -
