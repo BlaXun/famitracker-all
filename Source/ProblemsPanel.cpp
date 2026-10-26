@@ -1151,8 +1151,10 @@ struct CProblemsPanelWnd::Impl {
 		pWnd->EndWaitCursor();
 		const bool Made = pMain->GetActionSerial() != Before;
 		if (!Done) {
-			if (Made)	// what it changed before it failed
+			if (Made) {	// what it changed before it failed, and nothing to redo of it
 				pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+				pMain->ForgetRedo();
+			}
 			CString Text = FromUtf8(Reply);
 			Text.Replace(_T("\n"), _T("\r\n"));
 			AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);

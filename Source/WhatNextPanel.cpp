@@ -206,6 +206,7 @@ struct CWhatNextPanelWnd::Impl {
 	CRect LastRect;
 	std::vector<button_t> Buttons;
 	CString WhatText, WhyText;
+	CString ProgressText;			// how far the song has come, as short as the header's room needs
 	bool Narrow;					// the stages on a line of their own
 	int Scroll, Content;
 	int Hover;						// a button, HOVER_STAGE + a stage, -1 for none
@@ -488,12 +489,14 @@ struct CWhatNextPanelWnd::Impl {
 		return _T("Kind: ") + Name;
 	}
 
-	CString ProgressLabel() const
+	// How far the song has come: "A fix first. 3 of 20 done", shorter for less room (Form 0, 1, 2)
+	CString ProgressLabel(int Form = 0) const
 	{
 		CString Text;
-		if (Current() && Answer.Total > 0)
-			Text.Format(_T("%d of %d done"), Answer.DoneCount, Answer.Total);
-		if (Current() && !Answer.Done && Answer.Step.Stage < 0 && !Answer.Step.AskUser)
+		if (!Current() || Answer.Total <= 0)
+			return Text;
+		Text.Format(Form < 2 ? _T("%d of %d done") : _T("%d/%d"), Answer.DoneCount, Answer.Total);
+		if (Form == 0 && !Answer.Done && Answer.Step.Stage < 0 && !Answer.Step.AskUser)
 			Text = _T("A fix first. ") + Text;
 		return Text;
 	}
@@ -515,12 +518,19 @@ struct CWhatNextPanelWnd::Impl {
 		const CString Kind = KindLabel();
 		const int KindWidth = dc.GetTextExtent(Kind).cx + SX(34);
 		KindRect = CRect(MenuRect.left - SX(4) - KindWidth, MenuRect.top, MenuRect.left - SX(4), MenuRect.bottom);
-		const CString Progress = ProgressLabel();
-		const int ProgressWidth = Progress.IsEmpty() ? 0 : dc.GetTextExtent(Progress).cx;
-		ProgressRect = CRect(KindRect.left - SX(10) - ProgressWidth, Client.top, KindRect.left - SX(10), Client.top + SY(HEADER_HEIGHT));
-		// The stages after the title, or on a line of their own when they don't fit there
+		// The stages after the title, or on a line of their own when they don't fit there; the progress as long as there's
+		// room for it beside the title
 		dc.SelectObject(&BoldFont);
 		const int TitleRight = Client.left + Margin + dc.GetTextExtent(_T("What next")).cx + SX(14);
+		dc.SelectObject(&Font);
+		int ProgressWidth = 0;
+		for (int Form = 0; Form < 4; ++Form) {
+			ProgressText = Form < 3 ? ProgressLabel(Form) : CString();
+			ProgressWidth = ProgressText.IsEmpty() ? 0 : dc.GetTextExtent(ProgressText).cx;
+			if (KindRect.left - SX(10) - ProgressWidth >= TitleRight)
+				break;
+		}
+		ProgressRect = CRect(KindRect.left - SX(10) - ProgressWidth, Client.top, KindRect.left - SX(10), Client.top + SY(HEADER_HEIGHT));
 		dc.SelectObject(&SmallFont);
 		int Widths[ftapi::NEXT_STAGES], Total = 0;
 		for (int s = 0; s < ftapi::NEXT_STAGES; ++s) {
@@ -701,8 +711,10 @@ struct CWhatNextPanelWnd::Impl {
 		Undoable = pMain->GetActionSerial() != Before;
 		Added = std::max(0, static_cast<int>(pDoc->GetInstrumentCount()) - Instruments);
 		if (!Done) {
-			if (Undoable)	// what it changed before it failed
+			if (Undoable) {	// what it changed before it failed, and nothing to redo of it
 				pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+				pMain->ForgetRedo();
+			}
 			Undoable = false;
 			return false;
 		}
@@ -1099,7 +1111,7 @@ struct CWhatNextPanelWnd::Impl {
 		dc.SelectObject(&Font);
 		dc.SetTextColor(TEXT_DIM);
 		CRect Progress(ProgressRect);
-		dc.DrawText(ProgressLabel(), &Progress, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		dc.DrawText(ProgressText, &Progress, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		DrawButton(dc, KindRect, KindLabel(), HoverKind, false, true);
 		DrawButton(dc, MenuRect, _T(""), HoverMenu, false, false);
 		DownArrow(dc, MenuRect.CenterPoint().x - 3, MenuRect.CenterPoint().y - 1, TEXT_DARK);
