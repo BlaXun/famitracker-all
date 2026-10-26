@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include "ChordRoles.h"
 #include "Effects.h"
 #include "Music.h"
 #include "Song.h"
@@ -93,18 +94,18 @@ const RawEntry ENTRIES[] = {
 		"A song's key is its home note and the scale around it: in C major, C is home and the notes are the piano's white keys. "
 		"Melodies and chords that stay in the key fit together, and a note outside it stands out like a surprise. The piano "
 		"roll's Key button picks the key and shades the notes that fit.",
-		"home-note, scale, major-minor, chord, piano-roll", "home", "" },
+		"home-note, scale, major-minor, chord, chord-roles, piano-roll", "home", "" },
 	{ "major-minor", "Major and minor", "major, minor, major key, minor key, major chord, minor chord, happy and sad",
 		GLOSSARY_MUSIC,
 		"Major and minor are the two moods most music uses. Major sounds bright and settled, like a sunny day; minor sounds "
 		"darker, sad or mysterious. The difference is one note: in minor, the third note of the scale and of the home chord "
 		"is a semitone lower.",
 		"key, scale, third, chord", "major-minor", "" },
-	{ "home-note", "Home note (tonic)", "tonic, home, keynote, home chord, tonic chord, do", GLOSSARY_MUSIC,
+	{ "home-note", "Home note (tonic)", "tonic, home, keynote, do", GLOSSARY_MUSIC,
 		"The home note is the note a song in a key feels settled on, like coming home after a walk: C in C major, A in A "
 		"minor. Melodies sound finished when they end on it, and the chord built on it, the home chord, is where the music "
 		"rests.",
-		"key, tension-release, chord-progression", "home", "" },
+		"key, chord-home, tension-release, chord-progression", "home", "" },
 	{ "interval", "Interval", "intervals, distance between notes", GLOSSARY_MUSIC,
 		"An interval is the distance between two notes, counted in semitones or in steps of the scale. Small ones sound smooth "
 		"and close, big ones bold. Some have names: a third (three or four semitones), a fifth (seven) and an octave "
@@ -119,7 +120,7 @@ const RawEntry ENTRIES[] = {
 		"A chord is three or more notes played together, like a hand on the piano keys. Chords give a song its mood under the "
 		"melody, and the order they come in is the chord progression. On the NES a chord takes two or three channels, or one "
 		"channel playing it as a fast arpeggio.",
-		"triad, root, chord-progression, arpeggio, harmony", "chord", "" },
+		"triad, root, chord-progression, chord-roles, arpeggio, harmony", "chord", "" },
 	{ "triad", "Triad", "triads, three-note chord", GLOSSARY_MUSIC,
 		"A triad is the simplest chord: three notes, a root with the notes a third and a fifth above it. Major and minor "
 		"triads are the chords most songs are made of; C major is C, E and G.",
@@ -149,7 +150,7 @@ const RawEntry ENTRIES[] = {
 		GLOSSARY_MUSIC,
 		"A chord progression is a song's chords in order, often one or two a bar, repeating. Some are everywhere because they "
 		"just work, like C, G, A minor and F. The progression carries the mood, like a short journey away from home and back.",
-		"chord, home-note, tension-release, key", "progression", "" },
+		"chord, chord-roles, home-note, tension-release, key", "progression", "" },
 	{ "melody", "Melody (tune)", "tune, melodies, lead, lead line, main tune, top line", GLOSSARY_MUSIC,
 		"The melody is the tune you'd hum or whistle: one note at a time, the part people remember. In chip music it usually "
 		"plays on a pulse channel, on top of the chords and the bass and a little louder than them.",
@@ -313,7 +314,7 @@ const RawEntry ENTRIES[] = {
 		"Music builds tension, a feeling that something has to happen next, and then releases it by landing somewhere at "
 		"rest. A chord that leans toward home, like G7 in C major, is tension, and arriving home is the release. Songs move "
 		"between the two like breathing in and out.",
-		"home-note, seventh, chord-progression, clash", "tension", "" },
+		"home-note, chord-tension, seventh, chord-progression, clash", "tension", "" },
 	{ "clash", "Clash (dissonance)", "clashes, dissonance, dissonant, rub, sour note, wrong note", GLOSSARY_MUSIC,
 		"A clash is two notes that rub against each other when they sound together, like two a semitone apart: sour or "
 		"tense. A short one passing by adds spice; a long one usually sounds like a mistake. View > Problems lists the "
@@ -934,6 +935,22 @@ bool MakeExample(const std::string &Id, HearExample &Out)
 		Chord(S, 1250, 1100, "C-3", "E-3", "B-3");
 		Chord(S, 2500, 1100, "G-2", "F-3", "B-3");
 		Chord(S, 3750, 1400, "C-3", "E-3", "C-4");
+		S.Finish();
+	}
+	else if (Id == "roles") {
+		Score S(Out, "roles", "C (home), F (away), G7 (tension) and C again (home): a little trip away from home and back.");
+		Chord(S, 0, 1100, "C-3", "E-3", "G-3");
+		Chord(S, 1250, 1100, "F-2", "A-3", "C-4");
+		Chord(S, 2500, 1100, "G-2", "F-3", "B-3");
+		Chord(S, 3750, 1500, "C-3", "E-3", "C-4");
+		S.Finish();
+	}
+	else if (Id == "borrowed") {
+		Score S(Out, "borrowed", "C, F, then F minor, borrowed from C minor (a darker shade of the same chord), and home to C.");
+		Chord(S, 0, 1100, "C-3", "E-3", "G-3");
+		Chord(S, 1250, 1100, "F-2", "A-3", "C-4");
+		Chord(S, 2500, 1300, "F-2", "Ab3", "C-4");
+		Chord(S, 3950, 1500, "C-3", "E-3", "G-3");
 		S.Finish();
 	}
 	else if (Id == "progression") {
@@ -1796,6 +1813,65 @@ Built Build()
 		for (size_t n = 0; n < All[i].Names.size(); ++n)
 			Taken.insert(KeyOf(All[i].Names[n]));
 	}
+	// What chords do in a key, in the words of the piano roll's chord strip (ChordRoles.h)
+	{
+		struct RoleEntry {
+			chord_role_t Role;
+			const char *Id, *Term, *Names, *Examples, *Hear, *SeeAlso;
+		};
+		static const RoleEntry ROLES[] = {
+			{ CHORD_ROLE_HOME, "chord-home", "Home chord (tonic)", "home chord, tonic chord, I chord, one chord",
+				"In C major that's C, then Am and Em; in A minor Am, then C.", "home",
+				"chord-roles, home-note, chord-tension, key" },
+			{ CHORD_ROLE_AWAY, "chord-away", "Away chord (subdominant)", "away chord, away, subdominant, moving off, IV chord",
+				"In C major they're F and Dm; in A minor Dm, F and Bdim.", "roles",
+				"chord-roles, chord-home, chord-tension, chord-progression" },
+			{ CHORD_ROLE_TENSION, "chord-tension", "Tension chord (dominant)", "tension chord, dominant, dominant chord, "
+				"V chord, five chord", "In C major they're G, G7 and Bdim; in A minor E, E7 and G.", "tension",
+				"chord-roles, tension-release, seventh, chord-home" },
+			{ CHORD_ROLE_COLOR, "chord-color", "Color chord (borrowed chord)", "color chord, borrowed chord, borrowed, "
+				"borrowed from minor, borrowed from major, secondary dominant",
+				"In C major Fm and Bb are borrowed from C minor, and D7 before G is G's own tension.", "borrowed",
+				"chord-roles, major-minor, chord-progression, key" },
+		};
+		for (size_t i = 0; i < sizeof(ROLES) / sizeof(ROLES[0]); ++i) {
+			const RoleEntry &R = ROLES[i];
+			GlossaryEntry E;
+			E.Id = R.Id;
+			E.Term = R.Term;
+			E.Names = SplitList(R.Names);
+			E.Category = GLOSSARY_MUSIC;
+			E.Text = std::string(ChordRoleExplained(R.Role)) + " " + R.Examples + " The piano roll's chord strip marks them " +
+				ChordRoleName(R.Role) + ": " + ChordRoleMeaning(R.Role) + ".";
+			E.SeeAlso = SplitList(R.SeeAlso);
+			E.Hear = R.Hear;
+			All.push_back(E);
+		}
+		GlossaryEntry Roles;
+		Roles.Id = "chord-roles";
+		Roles.Term = "Chord roles (home, away, tension, color)";
+		Roles.Names = SplitList("chord role, roles, chord function, harmonic function, function of a chord");
+		Roles.Category = GLOSSARY_MUSIC;
+		Roles.Text = std::string("In a key, each chord has a job: home (") + ChordRoleMeaning(CHORD_ROLE_HOME) + "), away (" +
+			ChordRoleMeaning(CHORD_ROLE_AWAY) + "), tension (" + ChordRoleMeaning(CHORD_ROLE_TENSION) + ") or color (" +
+			ChordRoleMeaning(CHORD_ROLE_COLOR) + "). The piano roll's chord strip colors each chord by its job and names it "
+			"when the mouse rests on it. Many progressions make a little trip: home, away, tension and home again.";
+		Roles.SeeAlso = SplitList("chord-home, chord-away, chord-tension, chord-color, chord-progression, key");
+		Roles.Hear = "roles";
+		All.push_back(Roles);
+		std::stable_sort(All.begin(), All.end(), [](const GlossaryEntry &a, const GlossaryEntry &b) {
+			if (a.Category != b.Category)
+				return a.Category < b.Category;
+			return Lowercase(a.Term) < Lowercase(b.Term);
+		});
+		for (size_t i = 0; i < All.size(); ++i)
+			if (All[i].Category == GLOSSARY_MUSIC && All[i].Id.compare(0, 6, "chord-") == 0) {
+				Taken.insert(KeyOf(All[i].Id));
+				Taken.insert(KeyOf(All[i].Term));
+				for (size_t n = 0; n < All[i].Names.size(); ++n)
+					Taken.insert(KeyOf(All[i].Names[n]));
+			}
+	}
 	// The effects, from the effects tool's own table
 	std::vector<EffectInfo> Effects = EffectReference();
 	const std::vector<EffectInfo> &Song = SongEffectReference();
@@ -2092,20 +2168,20 @@ const std::vector<GlossaryLabel> &GlossaryLabels()
 {
 	static const std::vector<GlossaryLabel> All = {
 		// The song settings (and the BPM layout's words: its tempo box is BPM, or Speed for a song at speed 1)
-		{ "song settings", "Speed", "speed" }, { "song settings", "Tempo", "tempo-setting" }, { "song settings", "BPM", "tempo" },
-		{ "song settings", "Rows", "pattern-length" }, { "song settings", "Frames", "frame" }, { "song settings", "Step", "edit-step" },
-		{ "song settings", "Row highlight, 1st", "highlight" }, { "song settings", "2nd", "highlight" },
-		{ "song settings", "Octave", "octave" },
+		{ "song settings", "Speed", "speed", 0 }, { "song settings", "Tempo", "tempo-setting", 0 }, { "song settings", "BPM", "tempo", 0 },
+		{ "song settings", "Rows", "pattern-length", 0 }, { "song settings", "Frames", "frame", 0 }, { "song settings", "Step", "edit-step", 0 },
+		{ "song settings", "Row highlight, 1st", "highlight", 0 }, { "song settings", "2nd", "highlight", 0 },
+		{ "song settings", "Octave", "octave", 0 },
 		// The instrument editor's sequences, as each chip's editor names them
-		{ "instrument editor", "Volume", "volume-sequence" }, { "instrument editor", "Arpeggio", "arpeggio-sequence" },
-		{ "instrument editor", "Pitch", "pitch-sequence" }, { "instrument editor", "Hi-pitch", "hi-pitch-sequence" },
-		{ "instrument editor", "Duty / Noise", "duty-sequence" }, { "instrument editor", "Pulse Width", "duty-sequence" },
-		{ "instrument editor", "Wave", "wave-sequence" }, { "instrument editor", "Noise / mode", "mode-sequence-5b" },
+		{ "instrument editor", "Volume", "volume-sequence", 0 }, { "instrument editor", "Arpeggio", "arpeggio-sequence", 0 },
+		{ "instrument editor", "Pitch", "pitch-sequence", 0 }, { "instrument editor", "Hi-pitch", "hi-pitch-sequence", 0 },
+		{ "instrument editor", "Duty / Noise", "duty-sequence", 0 }, { "instrument editor", "Pulse Width", "duty-sequence", 0 },
+		{ "instrument editor", "Wave", "wave-sequence", 0 }, { "instrument editor", "Noise / mode", "mode-sequence-5b", 0 },
 		// The mixer's knobs and pan
-		{ "mixer", "Soft", "soft" }, { "mixer", "Space", "space" }, { "mixer", "Pan", "panning" },
+		{ "mixer", "Soft", "soft", 0 }, { "mixer", "Space", "space", 0 }, { "mixer", "Pan", "panning", 0 },
 		// The piano roll's buttons
-		{ "piano roll", "Key", "key" }, { "piano roll", "Chords", "chord" }, { "piano roll", "Snap to key", "key" },
-		{ "piano roll", "Groove", "groove" },
+		{ "piano roll", "Key", "key", "chord-roles" }, { "piano roll", "Chords", "chord", "chord-roles" },
+		{ "piano roll", "Snap to key", "key", 0 }, { "piano roll", "Groove", "groove", 0 },
 	};
 	return All;
 }
@@ -2117,6 +2193,16 @@ std::string GlossaryLabelId(const std::string &Where, const std::string &Label)
 	for (size_t i = 0; i < All.size(); ++i)
 		if (Where == All[i].Where && Asked == Lowercase(All[i].Label))
 			return All[i].Id;
+	return std::string();
+}
+
+std::string GlossaryLabelAlso(const std::string &Where, const std::string &Label)
+{
+	const std::vector<GlossaryLabel> &All = GlossaryLabels();
+	const std::string Asked = Trimmed(Label);
+	for (size_t i = 0; i < All.size(); ++i)
+		if (Where == All[i].Where && Asked == Lowercase(All[i].Label))
+			return All[i].Also != 0 ? All[i].Also : std::string();
 	return std::string();
 }
 

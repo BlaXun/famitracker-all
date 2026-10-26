@@ -1364,7 +1364,12 @@ value to hear (`Example`), the song's own effects a table of their own
 words. Hear it is a score (`HearExample`: events in ms on voices, a channel
 kind each, `HEAR_HERE` the hovered effect's channel; `MakeExample`, and
 `EffectHearExample` for an effect as written); `GlossaryLabels` names the
-entry of each label FamiTracker explains, so the tests check them.
+entry of each label FamiTracker explains, so the tests check them, and its
+`Also` the entry a tooltip names too (the piano roll's Key and Chords: the
+chords' roles). What chords do in a key (`chord-home`, `chord-away`,
+`chord-tension`, `chord-color` and the `chord-roles` they hang from) is said
+in `ChordRoles.h`'s own words (`ChordRoleExplained`, `ChordRoleMeaning`), as
+the piano roll's chord strip says it.
 `Source/GlossaryDlg.cpp` is Help > Glossary (`ID_HELP_GLOSSARY`, Ctrl+Shift+G,
 the toolbar's last button, the 26th image of both toolbar bitmaps), a
 modeless tool window shown with `SW_SHOWNOACTIVATE` so it never takes the

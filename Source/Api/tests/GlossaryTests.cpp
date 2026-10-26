@@ -27,11 +27,13 @@
 // every channel ending halted). The explain tool's side is in ApiTests.cpp.
 
 #include "../Glossary.h"
+#include "../ChordRoles.h"
 #include "../Effects.h"
 #include "../Music.h"
 #include "../Song.h"
 
 #include <cctype>
+#include <algorithm>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -537,6 +539,54 @@ void TestExplainText()
 	}
 }
 
+// What chords do in a key: the entries say it in the piano roll's chord strip's words (ChordRoles.h), and its Key and
+// Chords buttons' tooltips lead to them
+void TestChordRoles()
+{
+	const struct { chord_role_t Role; const char *Id; } ROLES[] = {
+		{ CHORD_ROLE_HOME, "chord-home" }, { CHORD_ROLE_AWAY, "chord-away" }, { CHORD_ROLE_TENSION, "chord-tension" },
+		{ CHORD_ROLE_COLOR, "chord-color" },
+	};
+	for (size_t i = 0; i < sizeof(ROLES) / sizeof(ROLES[0]); ++i) {
+		const GlossaryEntry E = Entry(ROLES[i].Id, __LINE__);
+		Check(E.Text.compare(0, std::string(ChordRoleExplained(ROLES[i].Role)).size(), ChordRoleExplained(ROLES[i].Role)) == 0,
+			E.Id + " says it as the chord strip does", __LINE__);
+		CHECK_HAS(E.Text, std::string(ChordRoleName(ROLES[i].Role)) + ": " + ChordRoleMeaning(ROLES[i].Role));
+		Check(E.Category == GLOSSARY_MUSIC && !E.Hear.empty(), E.Id + " is about making music, with an example", __LINE__);
+		CHECK_HAS(Entry("chord roles", __LINE__).Text, ChordRoleMeaning(ROLES[i].Role));
+	}
+	CHECK_EQ(Entry("tonic chord", __LINE__).Id, std::string("chord-home"));
+	CHECK_EQ(Entry("home chord", __LINE__).Id, std::string("chord-home"));
+	CHECK_EQ(Entry("tonic", __LINE__).Id, std::string("home-note"));
+	CHECK_EQ(Entry("dominant", __LINE__).Id, std::string("chord-tension"));
+	CHECK_EQ(Entry("subdominant", __LINE__).Id, std::string("chord-away"));
+	CHECK_EQ(Entry("borrowed chord", __LINE__).Id, std::string("chord-color"));
+	CHECK_EQ(Entry("borrowed from minor", __LINE__).Id, std::string("chord-color"));
+	CHECK_EQ(Entry("tension", __LINE__).Id, std::string("tension-release"));
+	CHECK_EQ(Entry("roles", __LINE__).Id, std::string("chord-roles"));
+	CHECK_EQ(Entry("chord-roles", __LINE__).Hear, std::string("roles"));
+	// The chord, the key, the progression and the home note lead there
+	const char *const LEADING[] = { "chord", "key", "chord progression" };
+	for (size_t i = 0; i < sizeof(LEADING) / sizeof(LEADING[0]); ++i) {
+		const std::vector<std::string> See = Entry(LEADING[i], __LINE__).SeeAlso;
+		Check(std::find(See.begin(), See.end(), "chord-roles") != See.end(), std::string(LEADING[i]) + " sees the roles", __LINE__);
+	}
+	// The piano roll's Key and Chords name the roles in their tooltips
+	CHECK_EQ(GlossaryLabelAlso("piano roll", "Key"), std::string("chord-roles"));
+	CHECK_EQ(GlossaryLabelAlso("piano roll", "Chords"), std::string("chord-roles"));
+	CHECK(GlossaryLabelAlso("piano roll", "Groove").empty() && GlossaryLabelAlso("mixer", "Soft").empty());
+	const std::vector<GlossaryLabel> &Labels = GlossaryLabels();
+	for (size_t i = 0; i < Labels.size(); ++i)
+		if (Labels[i].Also != 0) {
+			const GlossaryEntry *pAlso = FindGlossaryEntry(Labels[i].Also);
+			Check(pAlso != 0 && pAlso->Id == Labels[i].Also, std::string(Labels[i].Label) + " also names an entry", __LINE__);
+		}
+	// The examples: a trip home and back, and a borrowed chord
+	HearExample E;
+	CHECK(GlossaryExample("roles", E) && HasEvent(E, HEAR_TRIANGLE, Pitch("G-2")) && HasEvent(E, HEAR_PULSE1, Pitch("F-3")));
+	CHECK(GlossaryExample("borrowed", E) && HasEvent(E, HEAR_PULSE1, Pitch("Ab3")));
+}
+
 }	// namespace
 
 int main()
@@ -551,6 +601,7 @@ int main()
 	TestExamples();
 	TestEffectHearing();
 	TestExplainText();
+	TestChordRoles();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

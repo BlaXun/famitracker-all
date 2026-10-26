@@ -1871,8 +1871,10 @@ does nothing. On the FDS channel, `Hxx`, `Ixx` and `Jxx` are its modulator.
 FamiTracker has a glossary for people new to music (**Help > Glossary**,
 its toolbar button at the end of the toolbar, or Ctrl+Shift+G): about 150
 terms in plain words, in four groups. Making music: notes, octaves,
-scales, keys, chords, melody, phrases, rhythm, bars, tempo, swing, the
-drum kit, the song's parts (intro, A, B, bridge, climax, break, outro),
+scales, keys, chords and what they do in a key (home, away, tension and
+color, as the piano roll's chord strip shows them), melody, phrases,
+rhythm, bars, tempo, swing, the drum kit, the song's parts (intro, A, B,
+bridge, climax, break, outro),
 the loop, layers, echo, panning and the mix. Sounds: timbre, envelopes,
 vibrato, slides, the pulse width, each channel and each chip. The
 tracker: rows, patterns, frames, speed and tempo, instruments and their

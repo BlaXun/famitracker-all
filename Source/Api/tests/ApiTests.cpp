@@ -22901,7 +22901,7 @@ void TestExplainTool()
 	CHECK_HAS(Got.Text, "Home note (tonic) (also: tonic");
 	CHECK_HAS(Got.Text, "like coming home after a walk");
 	CHECK_HAS(Got.Text, "Hear it (FamiTracker's Help > Glossary plays it)");
-	CHECK_HAS(Got.Text, "See also: Key, Tension and release");
+	CHECK_HAS(Got.Text, "See also: Key, Home chord (tonic), Tension and release");
 	// Every entry, by every name it goes by
 	const std::vector<GlossaryEntry> &All = GlossaryEntries();
 	int Asked = 0;

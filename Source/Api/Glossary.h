@@ -87,10 +87,13 @@ struct GlossaryLabel {
 	const char *Where;
 	const char *Label;
 	const char *Id;
+	const char *Also;	// an entry its tooltip names too (the piano roll's Key and Chords: the chords' roles), or null
 };
 const std::vector<GlossaryLabel> &GlossaryLabels();
 // A label's entry there (its text as shown, case aside), "" for none
 std::string GlossaryLabelId(const std::string &Where, const std::string &Label);
+// The entry its tooltip names too, "" for none
+std::string GlossaryLabelAlso(const std::string &Where, const std::string &Label);
 
 // Hear it: short examples played on the song's channels, a note at a time as the note keys play them, each channel
 // with a plain instrument of its chip (no sequences: the volume column and the effects shape the notes)

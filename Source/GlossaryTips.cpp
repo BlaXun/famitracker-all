@@ -530,7 +530,13 @@ bool GlossaryLabelTip(const char *Where, LPCTSTR Label, int Key, glossary_tip_t 
 		return false;
 	Tip.Id = Id;
 	Tip.Key = Key;
-	Tip.Text = CString(ftapi::GlossaryFirstSentence(*pEntry).c_str()) + _T("\n") + MoreHint(Clickable, false);
+	Tip.Text = CString(ftapi::GlossaryFirstSentence(*pEntry).c_str());
+	// The entry it leads on to (the piano roll's Key and Chords: what the chords do in the key, as its chord strip shows)
+	const std::string Also = ftapi::GlossaryLabelAlso(Where, static_cast<LPCTSTR>(Plain));
+	const ftapi::GlossaryEntry *pAlso = Also.empty() ? NULL : ftapi::FindGlossaryEntry(Also);
+	if (pAlso != NULL)
+		Tip.Text += _T("\n") + CString(ftapi::GlossaryFirstSentence(*pAlso).c_str());
+	Tip.Text += _T("\n") + MoreHint(Clickable, false);
 	return true;
 }
 
