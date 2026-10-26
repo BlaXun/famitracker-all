@@ -110,6 +110,8 @@ public:
 	// action or group counts one; undoing takes none back), and the newest change there is to undo (NULL for none)
 	long long GetActionSerial() const { return m_iActionSerial; }
 	CAction *GetUndoAction() const;
+	// Forgets the actions undone last (nothing for Ctrl+Y to redo): Claude Code's take-back of a call that failed
+	void	ForgetRedo();
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	// View > Pattern editor and View > Piano roll: one of them always shows, and the piano roll fills the

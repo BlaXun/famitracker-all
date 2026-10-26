@@ -1288,6 +1288,33 @@ shows a song at speed 1 as `StatusFramesText` (`RecorderInput.cpp`,
 widened for `STATUS_FRAMES_LONGEST`). `TestUnknownArguments`,
 `TestBrowserFixes`, `TestStudiedNames` and `TestStatusBarFrames` cover them.
 
+Follow-up fixes (from `feat-fixes-followup`): `what_next`'s calm kind
+(`KINDS` in `WhatNext.cpp`) designs the night songs' music box (`CalmLeadArgs`:
+`attack` bloom, `duty` 37.5% on a VRC6 pulse, 50% on the 2A03's), as do its
+"presses" tip and `CoreRecipe`'s calm steps, the breath second. The sound
+library's bloom lead holds as `DesignOfKind`'s does (its soft vibrato kept,
+which the library's click test needs). `PaceText` before `SongOverview` says
+a tempo as the status bar does ("1 frame a row" at speed 1) for get_song,
+`TempoText`, `VolumeTimeline`, the review's length and what_next's tempo.
+`ToolSet::AfterCall`'s rollback calls `SongHost::ForgetRedo`
+(`CMainFrame::ForgetRedo`, `CActionHandler::ClearRedo`; FakeSong counts
+`Redoable`). `PlanCells` in `ChordHelper.cpp` ends a voice on the last row
+that plays (`SongFlow::EndRow`), where it ended a row too late when a jump
+left the last pattern early; it already released its voices at an ordinary
+song's end. A calm mix moves each layer group (`HeardBalance::GroupRel`,
+measured only for groups of two layers or more, `GroupTogetherShifted`) so
+the chords together take `Places.Chords`. `ChordVoicesIn` counts notes a
+row apart as starting together. `AddBackingTool`'s fitting hears
+`OtherLines` at `OTHER_LINES_WEIGHT`, `SecondaryDominants` (split at bar
+lines, then joined) makes a span whose heard note from outside the key is
+the third of the next chord's dominant that dominant (58's A7), and
+`BassOffRubs` in `Arrange.cpp` moves a fitted chord's bass note off another
+part's semitone where none of that helps (`RubsAgainstParts`, the part of
+`BassRubs` that hears the other parts). `TestCalmLeadFirst`, `TestBloomLeadAgrees`,
+`TestPaceAtSpeedOne`, `TestRollbackForgetsRedo`, `TestCalmLayersTogether`,
+`TestPlucksRowApart`, `TestFittedChordsHearLines` and `TestEndWhereItGoesBack`
+(in `chord_helper_tests`) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
