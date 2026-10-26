@@ -418,6 +418,9 @@ public:
 	// newest change, what the call that made it did
 	virtual long long UndoSerial() { return 0; }
 	virtual void LabelUndo(const std::string &Label) { (void)Label; }
+	// Forgets the changes undone last, so redo (Ctrl+Y) can't bring them back: what a call that failed had changed, taken
+	// back with Undo, would otherwise come back half-finished. Nothing for a host without a redo history
+	virtual void ForgetRedo() {}
 	// Saves the song, or a copy of it next to it (CopyName: a file name)
 	virtual bool Save(const std::string &CopyName, std::string &Message) = 0;
 };

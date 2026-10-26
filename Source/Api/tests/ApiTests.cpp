@@ -191,6 +191,7 @@ public:
 	};
 	std::vector<Snapshot> Undos;
 	long long UndoPushes = 0;	// the changes taken into the undo history so far (UndoSerial)
+	int Redoable = 0;			// the changes undone that redo (Ctrl+Y) would bring back, as CActionHandler counts them
 	MixStore Mix;			// the mixer window's settings, by channel ID, as CFamiTrackerDoc keeps them
 	int MixWrites = 0;
 	int GroupDepth = 0, Groups = 0;
@@ -567,9 +568,12 @@ public:
 		}
 		Undos.push_back(S);
 		++UndoPushes;
+		Redoable = 0;	// a new change ends what redo could bring back (CActionHandler::Push)
 	}
 
 	long long UndoSerial() override { return UndoPushes; }
+
+	void ForgetRedo() override { Redoable = 0; }
 
 	void LabelUndo(const std::string &Label) override
 	{
@@ -1320,6 +1324,7 @@ public:
 			return false;
 		const Snapshot S = Undos.back();
 		Undos.pop_back();
+		++Redoable;
 		if (S.Whole) {
 			Tracks = S.AllTracks;
 			Select(S.Selected);
@@ -4616,7 +4621,7 @@ void TestProtocol()
 		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
 		CHECK_HAS(Text, "Compose a calm track in FamiTracker for this: a quiet night by the lake.");
 		CHECK_HAS(Text, "the form for 40 bars");
-		CHECK_HAS(Text, "design_instrument kind breath, falling strike or music box");
+		CHECK_HAS(Text, "design_instrument kind music box, breath or falling strike");
 		CHECK_HAS(Text, "polish style calm, then mix style calm last");
 		CHECK_HAS(Text, "check_song style calm (0 clicking, 0 vanishing, no clashes you didn't mean, no held lead)");
 		CHECK_HAS(Text, "measure_mix style calm with melody_channel the lead (the melody 2-3 dB over the chords");
@@ -14845,8 +14850,9 @@ void TestHeldLead()
 	ToolResult Result = Run(Song, "check_song", "{\"style\": \"calm\"}");
 	CHECK_HAS(Result.Text, "0 vanishing, 1 held lead.");
 	CHECK_HAS(Result.Text, "Held lead: \"Lead\" (00) on VRC6 Pulse 1 holds 15 (no volume sequence) (8 of 8 melody notes): a calm lead "
-		"shouldn't hold a high, steady level from attack to release. design_instrument kind breath (swells in), falling strike "
-		"(falls to 6) or music box (fades away), or a volume sequence that does.");
+		"shouldn't hold a high, steady level from attack to release. design_instrument kind music box (fades away; on a VRC6 "
+		"pulse at duty 37.5% with attack bloom, the night songs' favourite), breath (swells in) or falling strike (falls to "
+		"6), or a volume sequence that does.");
 	Json Found = Parse(Run(Song, "check_song", "{\"style\": \"calm\", \"format\": \"json\"}").Text);
 	CHECK_EQ(TextOf(&Found, "style"), std::string("calm"));
 	CHECK_EQ(IntegerOf(Found.Get("counts"), "held"), 1);
@@ -22187,7 +22193,7 @@ void TestCalmRecipeLeads()
 	FakeSong Song;
 	ToolSet Tools(Song);
 	const std::string Recipe = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\"}")).Text, Guide = StyleGuideTopic("calm");
-	for (const char *Wanted : { "design_instrument kind breath, falling strike or music box, one for the whole track",
+	for (const char *Wanted : { "design_instrument kind music box, breath or falling strike, one for the whole track",
 		"kind music box on a VRC6 pulse, duty 37.5% (50% on the 2A03) and attack bloom", "within about a beat for a tune in quarter notes",
 		"never holding a level", "a soft broken chord in eighths", "held maj7 and m7 pads, strummed",
 		"a soft heartbeat on the triangle (the root on beats 1 and 3, each note a row long)", "add_echo a beat behind from the second A on",
@@ -22605,6 +22611,246 @@ void TestStatusBarFrames()
 	CHECK(StatusFramesText(1, 33, 50).size() <= std::string(STATUS_FRAMES_LONGEST).size());
 }
 
+// The calm lead wherever the tools pick one: what_next's calm kind and get_recipe's calm steps on the small set lead with
+// the night songs' best, as the calm recipe and the style guide's calm topic do (a music box struck on a VRC6 pulse at 37.5%,
+// 50% on the 2A03, blooming in over two frames without a duty click, gone within about a beat, never holding a level),
+// the breath second
+void TestCalmLeadFirst()
+{
+	// what_next on an empty calm song: the lead's step, ready to send
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"calm\"}", 8, Finished, __LINE__, false, "design_instrument");
+	const WhatNextAnswer Lead = AskWhatNext(Song, "{\"kind\": \"calm\"}");
+	CHECK(Lead.Tool == "design_instrument" && TextOf(&Lead.Arguments, "kind") == "music box" &&
+		TextOf(&Lead.Arguments, "channel") == "VRC6 Pulse 1" && TextOf(&Lead.Arguments, "duty") == "37.5%" &&
+		TextOf(&Lead.Arguments, "attack") == "bloom");
+	CHECK_HAS(Lead.Text, "The night songs' best was a music box struck on a VRC6 pulse at 37.5%");
+	CHECK_HAS(Lead.Text, "(kind breath, which swells in and sinks a little, is the other way)");
+	// ...which blooms in at 37.5% and rings away to silence, never holding a level
+	CHECK(!Run(Song, "design_instrument", WriteJson(Lead.Arguments)).IsError);
+	const PresetSequence *pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	const PresetSequence *pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+	CHECK(pVolume != 0 && pVolume->Items.size() > 3 && pVolume->Items[0] < pVolume->Items[2] && pVolume->Items[2] == 15 &&
+		pVolume->Items.back() == 0 && pVolume->Loop < 0);
+	CHECK(pDuty != 0 && !pDuty->Items.empty() && pDuty->Items[0] == 5);	// (5 + 1) / 16
+	// On the 2A03's pulses, which have no 37.5%: 50%
+	FakeSong Plain(1);
+	NewSong(Plain);
+	Plain.Info.Expansion.clear();
+	Plain.Info.Channels.resize(5);
+	Plain.Rows.resize(5);
+	FollowWhatNext(Plain, "{\"kind\": \"calm\"}", 8, Finished, __LINE__, false, "design_instrument");
+	const WhatNextAnswer PlainLead = AskWhatNext(Plain, "{\"kind\": \"calm\"}");
+	Check(PlainLead.Tool == "design_instrument" && TextOf(&PlainLead.Arguments, "kind") == "music box" &&
+		TextOf(&PlainLead.Arguments, "channel") == "2A03 Pulse 1" && TextOf(&PlainLead.Arguments, "duty") == "50%",
+		("the 2A03's lead: " + PlainLead.Line).c_str(), __LINE__);
+	// The small set's calm recipe: the same first choice, the breath second
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Core = true;
+	const std::string Recipe = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\"}"), Who).Text;
+	CHECK_HAS(Recipe, "2. The lead's sound first: design_instrument on the melody's channel, kind music box, the night songs' best: "
+		"on a VRC6 pulse duty 37.5% (50% on the 2A03) and attack bloom");
+	CHECK_HAS(Recipe, "Or kind breath (swells in, sinks a little)");
+}
+
+// The bloom lead is one sound wherever it's made: the sound library's (add_instrument, the Sound browser) blooms and holds as
+// design_instrument's does, the same volume a frame at a time (with the library's soft vibrato, which never clicks on the
+// 2A03's pulses), and the style guide's and the recipes' leads that speak strike it again every eighth
+void TestBloomLeadAgrees()
+{
+	FakeSong Song;
+	CHECK(!Run(Song, "design_instrument", "{\"name\": \"Designed\", \"kind\": \"bloom lead\", \"channel\": \"2A03 Pulse 1\"}").IsError);
+	const PresetSequence *pDesigned = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	const PresetSequence *pDesignedDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
+	const LibraryPreset *pLibrary = FindLibraryPreset("bloom lead");
+	CHECK(pLibrary != 0 && pDesigned != 0 && pDesignedDuty != 0 && FindPreset("bloom lead") == &pLibrary->Sound);
+	if (pLibrary != 0 && pDesigned != 0 && pDesignedDuty != 0) {
+		const PresetSequence *pVolume = 0, *pDuty = 0;
+		for (size_t s = 0; s < pLibrary->Sound.Sequences2A03.size(); ++s) {
+			const PresetSequence &Seq = pLibrary->Sound.Sequences2A03[s];
+			if (Seq.Type == SEQUENCE_VOLUME)
+				pVolume = &Seq;
+			if (Seq.Type == SEQUENCE_DUTY)
+				pDuty = &Seq;
+		}
+		CHECK(pVolume != 0 && pVolume->Items == pDesigned->Items && pVolume->Loop == pDesigned->Loop &&
+			pVolume->Release == pDesigned->Release);
+		CHECK(pDuty != 0 && pDuty->Items == pDesignedDuty->Items);
+		CHECK_LACKS(pLibrary->Sound.Description, "struck again as it holds");
+		CHECK_HAS(pLibrary->Sound.Description, "settles to 12 and holds");
+	}
+	// The style guide's leads that speak, and the action recipes', ask for the restrike the bloom lead no longer has
+	CHECK_HAS(StyleGuideTopic("action"), "design_instrument kind bloom lead with restrike_beats 0.5");
+	CHECK_HAS(StyleGuideTopic("konami"), "design_instrument kind \"bloom lead\" with restrike_beats 0.5");
+	ToolSet Tools(Song);
+	CHECK_HAS(Tools.Call("get_recipe", Parse("{\"kind\": \"action\"}")).Text, "design_instrument kind bloom lead with restrike_beats 0.5");
+	Caller Who;
+	Who.Core = true;
+	CHECK_HAS(Tools.Call("get_recipe", Parse("{\"kind\": \"action\"}"), Who).Text, "design_instrument kind bloom lead with "
+		"restrike_beats 0.5");
+}
+
+// A song at speed 1 (a sound effect's pace, a row a frame) has no beat to count: get_song and the other replies that gave
+// it 900 BPM give the frames a row lasts, as the status bar does ("1 frame a row"); other songs keep their BPM
+void TestPaceAtSpeedOne()
+{
+	FakeSong Song(1);
+	Song.Info.DirectChanges = true;
+	Song.Info.Speed = 1;
+	std::string Text = Run(Song, "get_song", "{}").Text;
+	CHECK_HAS(Text, "Tempo: 1 frame a row (speed 1, tempo 150, NTSC 60 Hz); 4 rows a beat");
+	CHECK_LACKS(Text, "900");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Glint\", \"kind\": \"music box\", \"channel\": \"VRC6 Pulse 1\"}").Text,
+		" At 1 frame a row it ");
+	// The review of a track that plays at speed 1 with the VRC6 (no sound effect, which the 2A03 plays alone)
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4", "D-4", "F-4", "A-4", "F-4" };
+	for (int i = 0; i < 8; ++i)
+		Song.Put(5, i * 8, TUNE[i], i == 0 ? 0 : NO_INSTRUMENT, i == 0 ? 12 : -1);
+	Text = Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+	CHECK_HAS(Text, " at 1 frame a row.");
+	CHECK_LACKS(Text, "900");
+	Text = Run(Song, "what_next", "{\"kind\": \"calm\"}").Text;
+	CHECK_HAS(Text, "1 frame a row is fast for a calm song (60-90 BPM)");
+	CHECK_LACKS(Text, "900");
+	Text = Run(Song, "set_tempo", "{\"bpm\": 75}").Text;
+	CHECK_HAS(Text, "; it was 1 frame a row (speed 1, tempo 150)");
+	CHECK_LACKS(Text, "900");
+	// Other songs as before
+	FakeSong Plain(1);
+	CHECK_HAS(Run(Plain, "get_song", "{}").Text, "Tempo: 150 BPM (speed 6, tempo 150, NTSC 60 Hz)");
+}
+
+// A call that fails after changing the song is taken back, leaving nothing for redo (Ctrl+Y) to bring back: the half-finished
+// change stayed on FamiTracker's redo history
+void TestRollbackForgetsRedo()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	Song.Put(5, 0, "C-4", 0);
+	Song.Mix.Set(5, -60, PAN_CENTER);
+	ToolResult Result = Tools.Call("mix", Parse("{\"faders\": \"reset\", \"dac\": \"wobbly\"}"));
+	CHECK(Result.IsError && Song.Undos.empty() && Song.Mix.Level(5) == -60);
+	CHECK_HAS(Result.Text, "What it had changed by then was taken back, so it left nothing to undo.");
+	CHECK(Song.Redoable == 0);
+	// undo as asked leaves its change for redo, as Ctrl+Z does, until the next change
+	CHECK(!Tools.Call("set_pan", Parse("{\"channel\": \"VRC6 Pulse 1\", \"pan\": \"left\"}")).IsError);
+	CHECK(!Tools.Call("undo", Json::MakeObject()).IsError && Song.Redoable == 1);
+	CHECK(!Tools.Call("set_pan", Parse("{\"channel\": \"VRC6 Pulse 1\", \"pan\": \"right\"}")).IsError && Song.Redoable == 0);
+}
+
+// The calm mix places chords in layers together (a choir's two voices beside an arpeggio): all of them 2-3 dB under the
+// melody, as the review and the stems hear them, where the main layer at its place with the choir 3 dB under it put them
+// within a dB of it. A song with one layer mixes as it did (the calm tests)
+void TestCalmLayersTogether()
+{
+	FakeSong Song;
+	CalmTestSong(Song, 6, 12);
+	const char *const LOW[] = { "C-3", "A-2", "F-2", "G-2" }, *const HIGH[] = { "G-3", "E-3", "C-3", "D-3" };
+	for (int Bar = 0; Bar < 4; ++Bar) {
+		Song.Put(0, Bar * 16, LOW[Bar], Bar == 0 ? 2 : NO_INSTRUMENT, Bar == 0 ? 8 : -1);
+		Song.Put(1, Bar * 16, HIGH[Bar], Bar == 0 ? 2 : NO_INSTRUMENT, Bar == 0 ? 8 : -1);
+	}
+	const char *const ASKED = "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	CHECK(!Run(Song, "mix", ASKED).IsError);
+	const std::string Review = Run(Song, "review_arrangement", ASKED).Text;
+	const size_t At = Review.find(" dB over all of them together)");
+	CHECK(At != std::string::npos);
+	if (At != std::string::npos) {
+		const double Together = std::atof(Review.c_str() + Review.rfind('(', At) + 1);
+		Check(Together >= 2.0 && Together <= 3.0, ("the chords together: " + std::to_string(Together)).c_str(), __LINE__);
+	}
+	CHECK_LACKS(Review, "or it presses");
+	CHECK_LACKS(Review, "The chords cover the melody");
+}
+
+// Two-note plucks on two pulses, together in some bars and a row apart in others ("pah-pi", as 57's in its A' parts), are
+// the chords to the whole song's review as to the review of each part (half of them starting together, they were "another
+// line" over the whole song); lines that answer a beat apart stay lines
+void TestPlucksRowApart()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const TUNE[] = { "C-4", "E-4", "G-4", "E-4" };
+	for (int Bar = 0; Bar < 8; ++Bar) {
+		for (int Beat = 0; Beat < 4; ++Beat)
+			Song.Put(0, Bar * 16 + Beat * 4, TUNE[(Bar + Beat) % 4], Bar == 0 && Beat == 0 ? 2 : NO_INSTRUMENT, Bar == 0 && Beat == 0 ? 12 : -1);
+		for (int Beat = 1; Beat < 4; Beat += 2) {
+			const int Row = Bar * 16 + Beat * 4, Late = Bar >= 4 ? 1 : 0;
+			Song.Put(5, Row + Late, "F-3", Bar == 0 && Beat == 1 ? 0 : NO_INSTRUMENT, Bar == 0 && Beat == 1 ? 8 : -1);
+			Song.Rows[5][static_cast<size_t>(Row + Late + 2)].Note = NOTE_HALT;
+			Song.Put(6, Row, "A-2", Bar == 0 && Beat == 1 ? 0 : NO_INSTRUMENT, Bar == 0 && Beat == 1 ? 8 : -1);
+			Song.Rows[6][static_cast<size_t>(Row + 2)].Note = NOTE_HALT;
+		}
+	}
+	const std::string Whole = Run(Song, "review_arrangement", "{\"melody_channel\": \"2A03 Pulse 1\"}").Text;
+	CHECK_HAS(Whole, "chords voiced on VRC6 Pulse 1, VRC6 Pulse 2");
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"2A03 Pulse 1\", \"from_bar\": 5, \"to_bar\": 8}").Text,
+		"chords voiced on VRC6 Pulse 1, VRC6 Pulse 2");
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"2A03 Pulse 1\", \"from_bar\": 1, \"to_bar\": 4}").Text,
+		"chords voiced on VRC6 Pulse 1, VRC6 Pulse 2");
+	// An answer a beat after the other line is no voice of a chord
+	FakeSong Answer;
+	Answer.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < 8; ++Bar) {
+		for (int Beat = 0; Beat < 4; ++Beat)
+			Answer.Put(0, Bar * 16 + Beat * 4, TUNE[(Bar + Beat) % 4], Bar == 0 && Beat == 0 ? 2 : NO_INSTRUMENT, Bar == 0 && Beat == 0 ? 12 : -1);
+		Answer.Put(5, Bar * 16 + 4, "F-3", Bar == 0 ? 0 : NO_INSTRUMENT, Bar == 0 ? 8 : -1);
+		Answer.Put(6, Bar * 16 + 8, "A-2", Bar == 0 ? 0 : NO_INSTRUMENT, Bar == 0 ? 8 : -1);
+	}
+	CHECK_LACKS(Run(Answer, "review_arrangement", "{\"melody_channel\": \"2A03 Pulse 1\"}").Text, "chords voiced on");
+}
+
+// Chords fitted to a melody hear the other lines that play on with them (a counter-line's held A makes a bar Am, not the C
+// before it), and where no chord of the key keeps off another line's note from outside it (a counter-line's G# under a
+// melody that outlines G) the bass leaves the clash out: 58's A7 C# rubbed against a fitted chord's root
+void TestFittedChordsHearLines()
+{
+	FakeSong Song(1);
+	Song.Info.DirectChanges = true;
+	// The melody: | C E G E | E | D B G B | C |, a counter-line on VRC6 Pulse 2 holding E, A, G# and C a bar each
+	const char *const TUNE[4][4] = { { "C-5", "E-5", "G-5", "E-5" }, { "E-5", "", "", "" }, { "D-5", "B-4", "G-4", "B-4" },
+		{ "C-5", "", "", "" } };
+	const char *const LINE[] = { "E-3", "A-3", "G#3", "C-4" };
+	for (int Bar = 0; Bar < 4; ++Bar) {
+		for (int Beat = 0; Beat < 4; ++Beat)
+			if (*TUNE[Bar][Beat] != 0)
+				Song.Put(0, Bar * 16 + Beat * 4, TUNE[Bar][Beat], Bar == 0 && Beat == 0 ? 2 : NO_INSTRUMENT, Bar == 0 && Beat == 0 ? 12 : -1);
+		Song.Put(6, Bar * 16, LINE[Bar], Bar == 0 ? 0 : NO_INSTRUMENT, Bar == 0 ? 9 : -1);
+	}
+	const ToolResult Result = Run(Song, "add_chords_and_bass", "{\"melody_channel\": \"2A03 Pulse 1\", \"key\": \"C major\", "
+		"\"chord_style\": \"arpeggio\", \"color\": \"plain\", \"bass_channel\": \"Triangle\", \"bass_style\": \"roots\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Chords: | C | Am | G | C |");
+	CHECK_HAS(Result.Text, "The bass plays another note of its chord in bar 3, where its root would rub a semitone against another "
+		"part's note");
+	const ToolResult Checked = Run(Song, "check_song", "{}");
+	CHECK(!Checked.IsError && Contains(Checked.Text, " clashes,"));
+	CHECK_LACKS(Checked.Text, "on 2A03 Triangle against");
+	CHECK_LACKS(Checked.Text, "on 2A03 Triangle at bar");
+	// A counter-line's G# held into a bar of Am: the chord before it is Am's dominant, E, where the key's chords would rub
+	FakeSong Lead(1);
+	Lead.Info.DirectChanges = true;
+	const char *const TUNE2[4][4] = { { "C-5", "E-5", "G-5", "E-5" }, { "E-5", "", "B-4", "" }, { "A-4", "C-5", "E-5", "C-5" },
+		{ "A-4", "", "", "" } };
+	const char *const LINE2[] = { "E-3", "G#3", "A-3", "A-3" };
+	for (int Bar = 0; Bar < 4; ++Bar) {
+		for (int Beat = 0; Beat < 4; ++Beat)
+			if (*TUNE2[Bar][Beat] != 0)
+				Lead.Put(0, Bar * 16 + Beat * 4, TUNE2[Bar][Beat], Bar == 0 && Beat == 0 ? 2 : NO_INSTRUMENT, Bar == 0 && Beat == 0 ? 12 : -1);
+		Lead.Put(6, Bar * 16, LINE2[Bar], Bar == 0 ? 0 : NO_INSTRUMENT, Bar == 0 ? 9 : -1);
+	}
+	const ToolResult Dominant = Run(Lead, "add_chords_and_bass", "{\"melody_channel\": \"2A03 Pulse 1\", \"key\": \"C major\", "
+		"\"chord_style\": \"arpeggio\", \"color\": \"plain\", \"bass_channel\": \"Triangle\", \"bass_style\": \"roots\"}");
+	CHECK(!Dominant.IsError);
+	CHECK_HAS(Dominant.Text, "Chords: | C | E | Am | Am |");
+	const ToolResult Clean = Run(Lead, "check_song", "{}");
+	CHECK(!Clean.IsError && Contains(Clean.Text, " 0 clashes,"));
+}
+
 // The piano roll's chords with roles (ChordRoles.h): what each chord the parts play does in the track's key, after the
 // chord right before it, and the chord tones under a row that its strong notes light
 void TestHarmonyRoles()
@@ -22861,6 +23107,13 @@ int main()
 	TestBrowserFixes();
 	TestStudiedNames();
 	TestStatusBarFrames();
+	TestCalmLeadFirst();
+	TestBloomLeadAgrees();
+	TestPaceAtSpeedOne();
+	TestRollbackForgetsRedo();
+	TestCalmLayersTogether();
+	TestPlucksRowApart();
+	TestFittedChordsHearLines();
 	TestHarmonyRoles();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;

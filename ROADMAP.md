@@ -226,7 +226,10 @@ selection. Each voice gets a quiet sound for its chip (on the VRC6 Plus's
 soft layer a string pad of its own, since two N163 channels can't share
 one). When fewer channels are free than the chord has notes, it says so and
 offers fewer voices or the chord as an arpeggio on one channel; Again puts
-the same chord on the next bar. One Ctrl+Z takes it back.
+the same chord on the next bar. One Ctrl+Z takes it back. A voice held to
+where the song goes back to its loop stops on the last row that plays
+(released, where its sound fades), also when a jump (Bxx) goes back before
+the last pattern's end, so it doesn't ring on into the loop.
 
 Mood starters (October 2026, on `feat-piano-polish`): the Groove button
 lays down drums, a bass line and chords for a mood, the moods of Start from

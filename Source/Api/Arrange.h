@@ -156,6 +156,11 @@ struct BassOptions {
 	BassOptions();
 };
 std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const BassOptions &Options);
+// A bass line's notes that rub a semitone (and octaves) against another part sounding with them (Options.Above, as
+// check_song hears a clash), each moved to the nearest note of its chord's triad that rubs with nothing, where one does:
+// chords fitted to a melody are the key's own, so a counter-line's note from outside the key (the C# of a song's A7) can
+// rub against the root of every one of them. Returns the rows of the notes moved
+std::vector<int> BassOffRubs(std::vector<PartNote> &Bass, const std::vector<ChordAt> &Chords, const BassOptions &Options);
 
 // Drums on the noise channel, or with their kick, snare and toms sampled on
 // the DPCM channel

@@ -327,13 +327,14 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 // The kinds of song, as the recipes (get_recipe, compose_track) and the style guide's topics have them: their tempos,
 // the lead's sound, how the chords, the bass and the drums play, the mix and the export's loudness. A lively stage's
 // are the soundtrack's first lively stages' (the user liked nearly all of them): a lead that blooms in and settles, fast
-// lush arpeggios, a sampled backbeat (the basic groove with kit samples)
+// lush arpeggios, a sampled backbeat (the basic groove with kit samples). A calm song's lead is the night songs' best (the
+// calm recipe's first choice): a music box on a VRC6 pulse at 37.5% that blooms in and rings away within a beat
 namespace {
 
 const NextKind KINDS[] = {
 	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "arpeggio", "arpeggio", "basic", "soft", "any",
 		-20.0, { "C major", "G major", "D major" } },
-	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "breath", "lush", "roots", "half", "", "calm", "calm", -22.0,
+	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "music box", "lush", "roots", "half", "", "calm", "calm", -22.0,
 		{ "F major", "D major", "G major" } },
 	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "bloom lead", "lush", "arpeggio", "arpeggio", "basic", "lively",
 		"lively", -20.0, { "G major", "D major", "A major" } },

@@ -570,6 +570,37 @@ void TestEndOfSong()
 			CHECK(!Cells[i].Cells[15].IsEnd());
 }
 
+// A song that goes back to its loop before its last pattern ends (a jump, Bxx, there): each voice held to where it goes back
+// stops on the last row that plays, released, rather than on a row that never plays (it rang on into the loop); and a
+// song whose last frame never plays (the jump at the end of the one before) the same
+void TestEndWhereItGoesBack()
+{
+	for (int Case = 0; Case < 2; ++Case) {
+		HelperSong S = MakeSong(2);
+		AddMelodyAndBass(S, Case == 0 ? 6 : 4);
+		const int Back = Case == 0 ? 96 : 64;	// the row after the last one played
+		Cell *pJump = CellAt(S, NOISE, Back - 1, __LINE__);
+		if (pJump != 0) {
+			pJump->Effect[0] = EFF_JUMP;
+			pJump->Param[0] = 0;
+		}
+		S.Instruments.push_back(MakeInstrument(7, "Soft chords", "2A03", true));
+		ChordPlan P;
+		CHECK(PlanChords(S, Asking("G", Back - 16, Back), P));
+		std::vector<int> Instruments(P.Voices.size(), 7);
+		std::vector<std::string> Warnings;
+		const std::vector<VoiceCells> Cells = PlanCells(S, P, Instruments, Warnings);
+		CHECK(!Cells.empty());
+		for (size_t i = 0; i < Cells.size(); ++i) {
+			CHECK(Cells[i].Row == Back - 16 && Cells[i].Cells.size() == 16);
+			if (Cells[i].Cells.size() >= 16) {
+				CHECK(Cells[i].Cells[0].HasNote());
+				CHECK_EQ(static_cast<int>(Cells[i].Cells[15].Note), NOTE_RELEASE);
+			}
+		}
+	}
+}
+
 void TestFmVoices()
 {
 	// The VRC7: its notes are written an octave over how they sound, and its volume steps are 3 dB each
@@ -683,6 +714,7 @@ int main()
 	TestEndOfSong();
 	TestFmVoices();
 	TestOtherChips();
+	TestEndWhereItGoesBack();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
