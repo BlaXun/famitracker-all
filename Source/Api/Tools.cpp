@@ -27706,6 +27706,7 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 		Out.Choice = Out.Chosen ? S.Song.ChosenKey : KeyChoice(Out.Found);
 		const Key &K = Out.Choice.K;
 		const std::vector<ChordAt> Heard = SongChords(S, 0, Total, K);
+		const std::vector<ChordRoleInKey> Roles = RolesOfChords(Heard, K);
 		for (size_t i = 0; i < Heard.size(); ++i) {
 			HeardChord C;
 			C.Row = Heard[i].Row;
@@ -27713,9 +27714,12 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 			C.Name = ChordName(Heard[i].C, K);
 			C.Degree = ChordDegree(Heard[i].C, K);
 			C.PitchClasses = Heard[i].C.PitchClasses();
+			C.Bass = Heard[i].C.Bass;
 			C.InKey = true;
 			for (size_t p = 0; p < C.PitchClasses.size(); ++p)
 				C.InKey = C.InKey && InKey(C.PitchClasses[p], K);
+			C.Role = Roles[i].Role;
+			C.RoleWords = Roles[i].Words();
 			Out.Chords.push_back(C);
 		}
 		return true;
