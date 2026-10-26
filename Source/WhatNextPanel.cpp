@@ -58,6 +58,7 @@ LPCTSTR SECTION = _T("What next panel");	// registry section: open, where, its s
 const int DEFAULT_HEIGHT = 150;			// along the bottom
 const int DEFAULT_WIDTH = 340;			// along the right
 const int MIN_HEIGHT = 70;
+const int ROW_LEAST = 150;				// beside the others along the bottom: its step's title, why and buttons
 const int MIN_WIDTH = 220;
 const int MIN_VIEW_WIDTH = 300;			// what the pattern editor keeps at least, beside the panel
 const int DIVIDER = 5;
@@ -1559,17 +1560,43 @@ int CWhatNextBar::Divider() const
 	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
 }
 
+int CWhatNextBar::LeastHeight(int Width) const
+{
+	// Its header and stages, the step's title, a few lines of why and its buttons (Do it), wrapped as narrow as it may be
+	return std::max(SY(MIN_HEIGHT), SY(ROW_LEAST));
+}
+
+int CWhatNextBar::RowWeight() const
+{
+	return SX(DEFAULT_WIDTH);	// beside the others in the row, as wide as along the right
+}
+
+void CWhatNextBar::SetBottomHeight(int Height)
+{
+	m_iHeight = std::max(SY(MIN_HEIGHT), Height);
+}
+
 int CWhatNextBar::MaxSize() const
 {
 	if (m_bRight)
 		return std::max(SX(MIN_WIDTH), m_iRoom - SX(MIN_VIEW_WIDTH));
+	// As tall as the note views and the other panels along the bottom leave it (CMainFrame::PlaceBottomPanel)
+	const CMainFrame *pMain = dynamic_cast<const CMainFrame*>(GetParentFrame());
+	if (pMain != NULL)
+		return std::max(SY(MIN_HEIGHT), pMain->BottomPanelMost(this));
 	return std::max(SY(MIN_HEIGHT), m_iRoom / 2);	// the pattern editor (and the piano roll) keep half
 }
 
 LRESULT CWhatNextBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
 {
-	const AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<const AFX_SIZEPARENTPARAMS*>(lParam);
+	AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
 	m_iRoom = m_bRight ? pLayout->rect.right - pLayout->rect.left : pLayout->rect.bottom - pLayout->rect.top;
+	// Along the bottom the main window places it, in a row with the other panels there
+	CMainFrame *pMain = dynamic_cast<CMainFrame*>(GetParentFrame());
+	if (!m_bRight && pMain != NULL && pMain->PlaceBottomPanel(this, pLayout)) {
+		RecalcDelayShow(pLayout);	// a show the layout was to make, made
+		return 0;
+	}
 	return CControlBar::OnSizeParent(wParam, lParam);
 }
 
@@ -1637,7 +1664,9 @@ void CWhatNextBar::OnLButtonDown(UINT nFlags, CPoint point)
 	CPoint Screen = point;
 	ClientToScreen(&Screen);
 	m_iDragFrom = static_cast<int>(m_bRight ? Screen.x : Screen.y);
-	m_iDragSize = Size();
+	CRect Shown;
+	GetWindowRect(&Shown);
+	m_iDragSize = m_bRight ? Size() : Shown.Height();	// along the bottom as it shows: its row's height, shorter while room is short
 	m_iDragMax = MaxSize();
 	SetCapture();
 }
@@ -1654,7 +1683,10 @@ void CWhatNextBar::OnMouseMove(UINT nFlags, CPoint point)
 	if (New != Size()) {
 		Size() = New;
 		CFrameWnd *pFrame = GetParentFrame();
-		if (pFrame != NULL)
+		CMainFrame *pMain = dynamic_cast<CMainFrame*>(pFrame);
+		if (!m_bRight && pMain != NULL)
+			pMain->BottomPanelDragged(this, New);	// the panels beside it in the row too
+		else if (pFrame != NULL)
 			pFrame->RecalcLayout();
 	}
 }

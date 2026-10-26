@@ -68,6 +68,7 @@ const int SMALL_BUTTON = 26;			// the < and > buttons
 const int TEXT_PAD = 4;
 const int LINE_GAP = 4;
 const int LANE_MOST = 30;				// a drum's line is this tall at most
+const int LANE_LEAST = 12;				// and at least, for the main window to keep it usable (HeightFor)
 const int STATUS_HEIGHT = 16;
 
 // A colour for each drum, and grey for other notes
@@ -171,6 +172,7 @@ public:
 	void PaintStep(int Step, int Lane, int Mode, bool Replace);
 	void Commit();
 	void Hint(LPCTSTR Text);
+	int HeightFor(int Width) const;		// the least it's usable at that wide (CDrumGridBar::LeastHeight)
 
 protected:
 	afx_msg void OnPaint();
@@ -985,6 +987,18 @@ void CDrumGridPanelWnd::Layout()
 	Invalidate(FALSE);
 }
 
+// Its buttons on as many lines as Layout flows them into at Width, a grid of short lanes and the news under it
+int CDrumGridPanelWnd::HeightFor(int Width) const
+{
+	const int Inner = std::max(1, Width - 2 * SX(MARGIN));
+	const std::vector<int> Widths(m_iWidths, m_iWidths + CONTROLS);
+	const std::vector<int> Groups(CONTROL_GROUPS, CONTROL_GROUPS + CONTROLS);
+	std::vector<drum_place_t> Places;
+	const int Lines = FlowDrumControls(Widths, Groups, Inner, SX(GAP), SX(GROUP_GAP), Places);
+	return SY(MARGIN) + Lines * (SY(BUTTON_HEIGHT) + SY(LINE_GAP)) + SY(LANE_LEAST) * (DRUM_LANES + 1) + SY(3) + SY(STATUS_HEIGHT) +
+		SY(MARGIN);
+}
+
 void CDrumGridPanelWnd::OnSize(UINT nType, int cx, int cy)
 {
 	CWnd::OnSize(nType, cx, cy);
@@ -1110,17 +1124,43 @@ int CDrumGridBar::Divider() const
 	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
 }
 
+int CDrumGridBar::LeastHeight(int Width) const
+{
+	// Its buttons on as many lines as that width takes, and short lanes
+	return std::max(SY(MIN_HEIGHT), Divider() + (m_pPanel != NULL ? m_pPanel->HeightFor(Width) : 0));
+}
+
+int CDrumGridBar::RowWeight() const
+{
+	return SX(DEFAULT_WIDTH);	// beside the others in the row, as wide as along the right
+}
+
+void CDrumGridBar::SetBottomHeight(int Height)
+{
+	m_iHeight = std::max(SY(MIN_HEIGHT), Height);
+}
+
 int CDrumGridBar::MaxSize() const
 {
 	if (m_bRight)
 		return std::max(SX(MIN_WIDTH), m_iRoom - SX(MIN_VIEW_WIDTH));
+	// As tall as the note views and the other panels along the bottom leave it (CMainFrame::PlaceBottomPanel)
+	const CMainFrame *pMain = dynamic_cast<const CMainFrame*>(GetParentFrame());
+	if (pMain != NULL)
+		return std::max(SY(MIN_HEIGHT), pMain->BottomPanelMost(this));
 	return std::max(SY(MIN_HEIGHT), m_iRoom / 2);	// the pattern editor (and the piano roll) keep half
 }
 
 LRESULT CDrumGridBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
 {
-	const AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<const AFX_SIZEPARENTPARAMS*>(lParam);
+	AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
 	m_iRoom = m_bRight ? pLayout->rect.right - pLayout->rect.left : pLayout->rect.bottom - pLayout->rect.top;
+	// Along the bottom the main window places it, in a row with the other panels there
+	CMainFrame *pMain = dynamic_cast<CMainFrame*>(GetParentFrame());
+	if (!m_bRight && pMain != NULL && pMain->PlaceBottomPanel(this, pLayout)) {
+		RecalcDelayShow(pLayout);	// a show the layout was to make, made
+		return 0;
+	}
 	return CControlBar::OnSizeParent(wParam, lParam);
 }
 
@@ -1190,7 +1230,9 @@ void CDrumGridBar::OnLButtonDown(UINT nFlags, CPoint point)
 	CPoint Screen = point;
 	ClientToScreen(&Screen);
 	m_iDragFrom = static_cast<int>(m_bRight ? Screen.x : Screen.y);
-	m_iDragSize = Size();
+	CRect Shown;
+	GetWindowRect(&Shown);
+	m_iDragSize = m_bRight ? Size() : Shown.Height();	// along the bottom as it shows: its row's height, shorter while room is short
 	m_iDragMax = MaxSize();
 	SetCapture();
 }
@@ -1207,7 +1249,10 @@ void CDrumGridBar::OnMouseMove(UINT nFlags, CPoint point)
 	if (New != Size()) {
 		Size() = New;
 		CFrameWnd *pFrame = GetParentFrame();
-		if (pFrame != NULL)
+		CMainFrame *pMain = dynamic_cast<CMainFrame*>(pFrame);
+		if (!m_bRight && pMain != NULL)
+			pMain->BottomPanelDragged(this, New);	// the panels beside it in the row too
+		else if (pFrame != NULL)
 			pFrame->RecalcLayout();
 	}
 }

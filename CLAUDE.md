@@ -336,7 +336,20 @@ pattern editor; the piano roll and the drum grid keep their own registry
 sections, as the other panels do. `CMainFrame::ArrangeBars` lays the docked
 panels out in one order (mixer, problems, drum grid, then the piano roll and
 the clips panel, swapped while the piano roll fills), and each panel's
-creation calls it. The drum grid is a panel, `CDrumGridBar`, docked along
+creation calls it. Those along the bottom the main window places itself, from
+each one's `WM_SIZEPARENT` (`CMainFrame::PlaceBottomPanel`, since
+`feat-newcomer-fixes`): the mixer along the edge, the problems panel, What
+next and the drum grid side by side in one row above it (`ShareRow`, a
+dragged line sets the whole row's height: `BottomPanelDragged`). The room
+goes first to the note views as far as enough lanes to play in, then to the
+row's and the mixer's least (`BottomPanelLeast`, at the panel's width: the
+drum grid's buttons take more lines when narrow, `HeightFor`), then to the
+note views as far as a third of the window (`NoteViewsKeep`), then to the
+bands as tall as they were made (`FitPanelBands` in `NoteViews.cpp`; with all
+four open the piano roll had one lane left on a window 1000 pixels high). The
+panels are listed as `CMainFrame::RecalcLayout` starts, since each one's show
+is made during the layout (`RecalcDelayShow`), which forgets it was to be
+made. The drum grid is a panel, `CDrumGridBar`, docked along
 the bottom or the right like the problems panel: it shows the bar the
 cursor is in (`FollowCursor` in `DrumGrid.cpp`; its < and > keep a bar until
 the cursor moves), flows its buttons into lines (`FlowDrumControls`), writes
@@ -1530,9 +1543,9 @@ example song's instruments, a `BF KEYS` block choosing C major except in
 minor's) were written from step parts by a script; keep each check failing
 on its starter and passing on its script's answers, clean as `check_song`
 hears them. Each part keeps lanes of its own in the piano roll (the tune
-from C-4 up, the chords under it, the triangle's bass from E-2 to D-3), since
-a click on another channel's note there picks that channel: no answer's note
-may start in a beat where another channel holds its pitch (`LanesTaken`). A
+from C-4 up, the chords under it, the triangle's bass from E-2 to D-3), so a
+note drawn there never hides another channel's: no answer's note may start
+in a beat where another channel holds its pitch (`LanesTaken`). A
 check step puts the cursor on its answer's channel, and the note scrolls the
 piano roll to the answer's lanes (`ShowAnswerLanes`,
 `CPianoRollWnd::ShowPitches`) as each step begins and when the piano roll
@@ -1550,6 +1563,30 @@ starter, read as FamiTracker opens it by `LoadStarter`; each check failing
 as it opens and passing on its answers, the first song by following
 `what_next`), `TestExerciseMistakes` and `TestExerciseTool` in `ApiTests.cpp`
 and `TestExerciseLines` in `tutorial_tests` cover the rest.
+
+Newcomer fixes (from `feat-newcomer-fixes`): a click on another channel's
+note in the piano roll (a faint one) does what a click on an empty spot does
+for the bright channel (Draw puts a note in, Paint paints, Select starts a
+box), so a click near one's own notes never switches parts; a double-click
+there edits that channel (`DoubleClick`), taking back what its first click
+did while that's still the last change (`Impl::FaintClick`, noted in
+`MouseDown` and `MouseUp`; `TakeBack` undoes it and forgets the redo). The
+status line over a faint note says so first (`FaintNoteHint` in
+`PianoRollUi.cpp`), as do `RollHint`, the clips tutorial, two exercises and
+the glossary's piano roll. The panels along the bottom share a row and keep
+the note views room (see the views above). A tutorial's note moves the
+glossary off the part a step shows and off the note, once as each step shows
+its part and as the glossary opens (`KeepGlossaryClear` in `Tutorial.cpp`, to
+where it covers the least of them), then places itself clear of it too
+(`Place`). The first small song's new song is named for the exercise
+(`StartExercise`), and `what_next` lays out the shape a track's name asks for
+where it's one of the kind's that loops (`ShapeForKind` with the track's name
+in `SongShapes.cpp`): "A first small song" or a "Shop" gets the short loop of
+14 bars rather than the general recipe's town of 40. `check_exercise`'s list
+drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
+`TestFaintHints` (`pianoroll_ui_tests`), `TestExerciseListPeriods`,
+`TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
+next to its end) cover them.
 
 ## What this repository is
 

@@ -23,6 +23,7 @@
 // there's always one view to place notes in
 
 #include <cstdio>
+#include <vector>
 #include "NoteViews.h"
 
 namespace {
@@ -85,11 +86,72 @@ void TestStarting()
 
 }	// namespace
 
+// The panels along the bottom: the mixer, then the problems panel, What next and the drum grid in one row. On a window
+// 1000 pixels high (697 between its top bars and the status bar, a client height of 947) and one 768 high (463 and 715),
+// all of them open: the note views keep enough lanes to play in, then the row, then the mixer get their least, then the
+// note views a third of the window and the panels the heights they were made
+void TestPanelBands()
+{
+	const panel_band_t MIXER(290, 250), ROW(200, 175);
+	std::vector<panel_band_t> Bands;
+	Bands.push_back(MIXER);
+	Bands.push_back(ROW);
+	// Room for both
+	const int Tall = NoteViewsKeep(1340, 240, 1100);
+	CHECK(Tall == 446);
+	std::vector<int> H = FitPanelBands(Bands, 1100, Tall, 240);
+	CHECK(H.size() == 2 && H[0] == 290 && H[1] == 200);
+	// 1000 pixels: both at their least, the note views the rest (more than enough to play in, less than a third)
+	const int Keep = NoteViewsKeep(947, 240, 697);
+	CHECK(Keep == 315);
+	H = FitPanelBands(Bands, 697, Keep, 240);
+	CHECK(H[0] == 250 && H[1] == 175);
+	// Dragging: neither can grow into the note views' share; shorter, the note views get the room
+	CHECK(PanelBandMost(H, 0, 697, Keep) == 250 && PanelBandMost(H, 1, 697, Keep) == 175);
+	Bands[1].Wanted = 150;
+	H = FitPanelBands(Bands, 697, Keep, 240);
+	CHECK(H[0] == 250 && H[1] == 150);
+	Bands[1].Wanted = 200;
+	// 768 pixels: the note views enough to play in, the row its least, the mixer what's left
+	const int Small = NoteViewsKeep(715, 240, 463);
+	CHECK(Small == 240);
+	H = FitPanelBands(Bands, 463, Small, 240);
+	CHECK(H[0] == 48 && H[1] == 175);
+	// A short window: the note views get their least, not a third, and never more than the room
+	CHECK(NoteViewsKeep(450, 220, 300) == 220);
+	CHECK(NoteViewsKeep(450, 220, 150) == 150);
+	// One band: what it was made, as far as the room goes
+	std::vector<panel_band_t> One(1, panel_band_t(150, 60));
+	CHECK(FitPanelBands(One, 710, 316, 240)[0] == 150);
+	CHECK(FitPanelBands(One, 300, 220, 220)[0] == 80);
+	CHECK(FitPanelBands(One, 200, 200, 220)[0] == 0);
+	// Made shorter than its least, it keeps that height
+	CHECK(FitPanelBands(std::vector<panel_band_t>(1, panel_band_t(100, 250)), 900, 300, 240)[0] == 100);
+	// Room to spare: a band can grow into it
+	std::vector<panel_band_t> Two;
+	Two.push_back(panel_band_t(150, 60));
+	Two.push_back(panel_band_t(150, 70));
+	H = FitPanelBands(Two, 710, 316, 240);
+	CHECK(H[0] == 150 && H[1] == 150);
+	CHECK(PanelBandMost(H, 0, 710, 316) == 244 && PanelBandMost(H, 1, 710, 316) == 244);
+	CHECK(PanelBandMost(H, 2, 710, 316) == 0);
+	// The row's widths: in proportion, adding up
+	std::vector<int> Weights;
+	Weights.push_back(340);
+	Weights.push_back(340);
+	Weights.push_back(430);
+	const std::vector<int> W = ShareRow(Weights, 1280);
+	CHECK(W.size() == 3 && W[0] == 392 && W[1] == 392 && W[0] + W[1] + W[2] == 1280);
+	CHECK(ShareRow(std::vector<int>(1, 430), 999)[0] == 999);
+	CHECK(ShareRow(std::vector<int>(), 999).empty());
+}
+
 int main()
 {
 	TestToggles();
 	TestShowing();
 	TestStarting();
+	TestPanelBands();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

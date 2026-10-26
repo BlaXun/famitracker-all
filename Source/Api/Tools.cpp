@@ -25770,8 +25770,10 @@ void WhatNext::Frame()
 			" suits a " + K.Name + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it.");
 	}
 	// Its shape (SongShapes.h): an empty song gets its kind's sections laid out (song_shape), so every part has its place and
-	// its job before the notes come; a song laid out so has it, one with notes or sections of its own has its own form
-	const SongShape Own = ShapeForKind(K.Name);
+	// its job before the notes come; a song laid out so has it, one with notes or sections of its own has its own form. (The
+	// shape its track's name asks for where that's one of the kind's: a shop's, or Help > Exercises' first small song's,
+	// short loop rather than the general recipe's town)
+	const SongShape Own = ShapeForKind(K.Name, S.Song.TrackName);
 	const SongShape *pLaid = MatchSongShape(S.Song.Sections, S.Song.TrackName, Bpm, &Own);
 	if (pLaid != 0)
 		Milestone("shape", true, "the shape (" + Lowercase(pLaid->Title) + ")");
@@ -25780,9 +25782,9 @@ void WhatNext::Frame()
 	else if (!Milestone("shape", !Wanted("shape"), "the shape")) {
 		Json A = Json::MakeObject();
 		A.Set("shape", Own.Id);
-		Step("shape", "song_shape", A, Format("A new song starts from its shape: a %s of %d bars (%s), each part a section named for what "
-			"it does, in frames, with the loop after the intro. The next steps fill the parts.", Lowercase(Own.Title).c_str(),
-			Own.Bars(), Own.PartsText().c_str()));
+		Step("shape", "song_shape", A, Format("A new song starts from its shape: a %s of %d bars (%s)%s, each part a section named "
+			"for what it does, in frames, with the loop after the intro. The next steps fill the parts.", Lowercase(Own.Title).c_str(),
+			Own.Bars(), Own.PartsText().c_str(), Own.Id != ShapeForKind(K.Name).Id ? ", as the track's name asks" : ""));
 	}
 }
 
@@ -27723,7 +27725,11 @@ std::string CheckExerciseTool(Session &S, const Json &Args)
 				for (size_t c = 0; c < List[i].Checks.size(); ++c)
 					Text += (c == 0 ? " " : ", ") + List[i].Checks[c];
 			}
-			Text += "): " + std::string(List[i].About);
+			// (its line without its full stop: the list goes on after it, and ends with one)
+			std::string About = List[i].About;
+			if (!About.empty() && About[About.size() - 1] == '.')
+				About.erase(About.size() - 1);
+			Text += "): " + About;
 		}
 		if (!Asked.empty())
 			throw Problem(Text + ".");
@@ -29969,7 +29975,8 @@ std::string ToolSet::Instructions()
 		"what_next gives the one next step for the song as it is, with its call ready to send, when you wonder what comes "
 		"next (the user may have taken a step from FamiTracker's What next panel meanwhile: ask it again rather than "
 		"assume). An empty song starts from its shape: song_shape lays out its kind's form (stage, night, town, boss, a "
-		"small loop, a jingle), each part a section named for what it does; then fill the parts in order. When a reply "
+		"small loop, a jingle), each part a section named for what it does (a track named for a small place, a shop, a "
+		"menu or a house, gets the short loop); then fill the parts in order. When a reply "
 		"uses a word the user may not know, or the user asks what one means, explain gives it in plain words: use them. "
 		"A user new to music can start with Help > Exercises (ten short tasks from a tune's home note to a first small song, "
 		"each with a starter song and a Check); check_exercise checks one as its Check button does, so you can teach "

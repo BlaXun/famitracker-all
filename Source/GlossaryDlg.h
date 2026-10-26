@@ -42,3 +42,5 @@ void ShowGlossaryAt(CMainFrame *pMainFrame, const std::string &Id);
 // Shown again when FamiTracker starts if it was open when it closed (StartGlossaryHelp)
 void RestoreGlossary(CMainFrame *pMainFrame);
 void CloseGlossary();		// the main window's OnDestroy
+// Its window while it shows, else NULL: a tutorial's note moves it off the part a step shows (Tutorial.cpp)
+CWnd *GlossaryWindow();

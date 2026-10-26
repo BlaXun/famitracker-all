@@ -24190,6 +24190,7 @@ bool ExerciseSong(const ExerciseInfo &E, FakeSong &Song, std::string &Error)
 	Song.Info.DirectChanges = true;
 	if (E.NewSong) {
 		NewSong(Song);
+		Song.Info.TrackName = Song.Tracks[0].Name = E.Title;	// named for the exercise, as StartExercise names it
 		return true;
 	}
 	return LoadStarter(ExerciseFile(std::string(E.Id) + ".ftm"), Song, Error);
@@ -24821,6 +24822,85 @@ void TestAssistantLoop()
 	const AssistantCall *pMeter = FindCall(Small, "c7");
 	CHECK(pMeter != 0 && pMeter->State == CALL_FAILED && Contains(pMeter->Result, "no tool called \"set_meter\""));
 	CHECK(CoreHere.Ran.empty());
+// check_exercise's list of the exercises: each one's line without its full stop, and one at the end
+void TestExerciseListPeriods()
+{
+	FakeSong Song(1);
+	ToolSet Tools(Song);
+	const ToolResult List = Tools.Call("check_exercise", Parse("{}"));
+	CHECK(!List.IsError);
+	CHECK_LACKS(List.Text, "..");
+	CHECK_LACKS(List.Text, ".;");
+	CHECK_HAS(List.Text, "a last note that sounds like the end; four-bars (Four bars over chords): ");
+	CHECK_HAS(List.Text, "a step at a time with the What next panel. Each opens a song to work on;");
+	const ToolResult Wrong = Tools.Call("check_exercise", Parse("{\"exercise\": \"scales\"}"));
+	CHECK(Wrong.IsError);
+	CHECK_LACKS(Wrong.Text, "..");
+	CHECK(Wrong.Text.size() > 1 && Wrong.Text.compare(Wrong.Text.size() - 6, 6, "panel.") == 0);
+}
+
+// The shape what_next lays out on an empty track: the one its name asks for where that's one of the kind's that loops (a
+// shop's short loop on the general recipe), else the kind's own
+void TestShapeByTrackName()
+{
+	CHECK_EQ(ShapeForKind("", "Shop").Id, std::string("small"));
+	CHECK_EQ(ShapeForKind("", "A first small song").Id, std::string("small"));
+	CHECK_EQ(ShapeForKind("", "Town").Id, std::string("town"));
+	CHECK_EQ(ShapeForKind("", "New song").Id, std::string("town"));
+	CHECK_EQ(ShapeForKind("", "Victory").Id, std::string("town"));		// a jingle stops: not a loop for the general recipe
+	CHECK_EQ(ShapeForKind("lively", "Shop").Id, std::string("stage"));	// another kind's shape: the kind's own
+	CHECK_EQ(ShapeForKind("action", "Boss fight").Id, std::string("boss"));
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Potion shop";
+	WhatNextAnswer A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(A.Tool == "song_shape" && TextOf(&A.Arguments, "shape") == "small", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "a short loop of 14 bars (Intro 2, A 4, A' 4, B 4), as the track's name asks, each part");
+	CHECK(!Run(Song, "song_shape", WriteJson(A.Arguments)).IsError);
+	A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(A.Tool == "design_instrument" && Contains(A.Text, ", the shape (short loop)"), A.Text.c_str(), __LINE__);
+	// The town's words keep the town
+	FakeSong Town(1);
+	NewSong(Town);
+	A = AskWhatNext(Town, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(TextOf(&A.Arguments, "shape") == "town" && !Contains(A.Text, "as the track's name asks"), A.Text.c_str(), __LINE__);
+}
+
+// Help > Exercises' first small song: a new song named for it, on which What next lays out the short loop (the general
+// recipe's town is 40 bars); the check passes once A has a tune, chords and a bass and the song loops, and What next
+// goes on from there to the song's end
+void TestFirstSongSmall()
+{
+	const ExerciseInfo *pE = FindExercise("first-song");
+	CHECK(pE != 0 && pE->NewSong);
+	if (pE == 0)
+		return;
+	FakeSong Song(2);
+	std::string Error;
+	CHECK(ExerciseSong(*pE, Song, Error));
+	CHECK_EQ(Song.Info.TrackName, std::string("A first small song"));
+	std::vector<std::string> Made;
+	bool Finished = false;
+	for (int Steps = 0; Steps < 24 && !CheckOn(Song, "first-song", __LINE__).Passed; ++Steps) {
+		const std::vector<std::string> One = FollowWhatNext(Song, "{}", 1, Finished, __LINE__);
+		if (One.empty())
+			break;
+		Made.insert(Made.end(), One.begin(), One.end());
+	}
+	CHECK(CheckOn(Song, "first-song", __LINE__).Passed);
+	const int Shape = CallIndex(Made, "song_shape");
+	Check(Shape >= 0 && Contains(Made[static_cast<size_t>(Shape)], "small"), "the short loop laid out", __LINE__);
+	const char *const PARTS[] = { "Intro", "A", "A'", "B" };
+	CHECK_EQ(Song.Info.Sections.size(), static_cast<size_t>(4));
+	for (size_t i = 0; i < Song.Info.Sections.size() && i < 4; ++i)
+		CHECK_EQ(Song.Info.Sections[i].Name, std::string(PARTS[i]));
+	const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
+		Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	CHECK_EQ(Time.BarCount(), 14);
+	// On to the end, as the What next panel's Do it goes on
+	FollowWhatNext(Song, "{}", 60, Finished, __LINE__);
+	CHECK(Finished);
+	CHECK(CheckOn(Song, "first-song", __LINE__).Passed);
 }
 
 int main()
@@ -25066,6 +25146,9 @@ int main()
 	TestAssistantFunctions();
 	TestAssistantContext();
 	TestAssistantLoop();
+	TestExerciseListPeriods();
+	TestShapeByTrackName();
+	TestFirstSongSmall();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

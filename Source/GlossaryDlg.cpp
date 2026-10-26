@@ -549,6 +549,11 @@ void RestoreGlossary(CMainFrame *pMainFrame)
 		pDialog->Appear(true);
 }
 
+CWnd *GlossaryWindow()
+{
+	return IsGlossaryOpen() ? CGlossaryDlg::s_pOpen : NULL;
+}
+
 void CloseGlossary()
 {
 	if (CGlossaryDlg::s_pOpen != NULL)

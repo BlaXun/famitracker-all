@@ -1073,15 +1073,30 @@ int CMixerBar::Divider() const
 	return std::max(4, SY(DIVIDER));
 }
 
+int CMixerBar::LeastHeight() const
+{
+	return SY(MIN_HEIGHT);
+}
+
 int CMixerBar::MaxHeight() const
 {
+	// As tall as the note views and the other panels along the bottom leave it (CMainFrame::PlaceBottomPanel)
+	const CMainFrame *pMain = dynamic_cast<const CMainFrame*>(GetParentFrame());
+	if (pMain != NULL)
+		return std::max(SY(MIN_HEIGHT), pMain->BottomPanelMost(this));
 	return std::max(SY(MIN_HEIGHT), m_iRoom / 2);	// the pattern editor keeps half
 }
 
 LRESULT CMixerBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
 {
-	const AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<const AFX_SIZEPARENTPARAMS*>(lParam);
+	AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
 	m_iRoom = pLayout->rect.bottom - pLayout->rect.top;
+	// The main window places it, along its bottom edge under the other panels there
+	CMainFrame *pMain = dynamic_cast<CMainFrame*>(GetParentFrame());
+	if (pMain != NULL && pMain->PlaceBottomPanel(this, pLayout)) {
+		RecalcDelayShow(pLayout);	// a show the layout was to make, made
+		return 0;
+	}
 	return CControlBar::OnSizeParent(wParam, lParam);
 }
 
@@ -1134,7 +1149,9 @@ void CMixerBar::OnLButtonDown(UINT nFlags, CPoint point)
 	CPoint Screen = point;
 	ClientToScreen(&Screen);
 	m_iDragFrom = static_cast<int>(Screen.y);
-	m_iDragHeight = m_iHeight;
+	CRect Shown;
+	GetWindowRect(&Shown);
+	m_iDragHeight = Shown.Height();		// as it shows: shorter than it was made while the room is short
 	m_iDragMax = MaxHeight();
 	SetCapture();
 }

@@ -292,6 +292,25 @@ void TestStrongNotesRow()
 	CHECK(StrongNotesRow(State) == -1);
 }
 
+// Another channel's notes are faint: a click there does what it does on an empty spot of the bright channel, and a
+// double-click edits that channel. Every hint over the notes says so, and the line over a faint note says what each does
+void TestFaintHints()
+{
+	for (int Typing = 0; Typing < 2; ++Typing)
+		for (int Tool = ROLL_TOOL_DRAW; Tool <= ROLL_TOOL_SELECT; ++Tool)
+			for (int Snaps = 0; Snaps < 2; ++Snaps) {
+				roll_hint_t S;
+				S.TypesNotes = Typing != 0;
+				S.Tool = Tool;
+				S.Snaps = Snaps != 0;
+				const std::string Hint = RollHint(S);
+				CHECK(Has(Hint, "ouble-click a faint note to edit its channel") || Has(Hint, "double-click a faint one to edit its channel"));
+			}
+	CHECK(Has(FaintNoteHint(ROLL_TOOL_DRAW, "Pulse 2", "Pulse 1"), "Double-click to edit Pulse 2 (a click adds a note to Pulse 1 here)"));
+	CHECK(Has(FaintNoteHint(ROLL_TOOL_PAINT, "Triangle", "Pulse 1"), "Double-click to edit Triangle (a drag paints Pulse 1's notes here)"));
+	CHECK(FaintNoteHint(ROLL_TOOL_SELECT, "Noise", "Pulse 1") == "Double-click to edit Noise");
+}
+
 int main()
 {
 	TestFlow();
@@ -299,6 +318,7 @@ int main()
 	TestHints();
 	TestMenuClick();
 	TestStrongNotesRow();
+	TestFaintHints();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }
