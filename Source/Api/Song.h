@@ -271,6 +271,27 @@ inline std::string NumberedSongName(const std::string &Name, int Number)
 const int MAX_SONG_NUMBER = 999;
 const size_t MAX_LISTED_EXPORTS = 200;	// the files SongHost::ListExports gives at most, the newest
 
+// A new song in place of the open one (new_song, SongHost::NewSong)
+struct NewSongSettings {
+	std::string Title;				// the module's title (at most 31 characters), UTF-8; empty: File > New's (none)
+	std::string Track;				// the first track's name; empty: File > New's ("New song")
+	bool SetChips;					// Chips in place of the template's: as SetExpansion takes them, "VRC6 Plus" too,
+	std::vector<std::string> Chips;	// none for the 2A03 alone, with Channels of the N163
+	int Channels;
+	NewSongSettings() : SetChips(false), Channels(4) {}
+};
+
+// A song open_song can open again (SongHost::ListSongs)
+struct SongPlace {
+	std::string Name;		// the file's name without ".ftm": "Town"
+	std::string Path;		// the file, as the tools are given paths
+	long long Modified;		// when it was saved, seconds since 1970, UTC; 0 when unknown
+	bool InSongs;			// in FamiTracker's Songs folder (else one of its recent files)
+	bool Open;				// the song open now
+	SongPlace() : Modified(0), InSongs(false), Open(false) {}
+};
+const size_t MAX_LISTED_SONGS = 30;	// the songs open_song lists at most, the newest
+
 class SongHost {
 public:
 	virtual ~SongHost() {}
@@ -465,6 +486,35 @@ public:
 		(void)Error;
 		Files.clear();
 		return true;
+	}
+	// Replaces the open song with a new one as File > New makes it (the profile's template: its chip, tempo and sounds),
+	// asking nobody anything, then New's chips (the template's sounds of a chip it leaves out go; a VRC6 Plus gets its soft
+	// layer's starter sounds) and names. The new song has no file, no changes to save and no undo history, as File > New
+	// leaves it. The tools first make sure the open song has no changes to lose; the host refuses one that has them too.
+	// False with the reason, the open song as it was
+	virtual bool NewSong(const NewSongSettings &New, std::string &Error)
+	{
+		(void)New;
+		Error = "This FamiTracker can't start a new song for the tools.";
+		return false;
+	}
+	// The songs open_song can open: the .ftm files in the Songs folder and its folders, FamiTracker's recent files (its File
+	// menu) still there and the song open now (Open), each once, in any order. False with the reason when they can't be read
+	virtual bool ListSongs(std::vector<SongPlace> &Songs, std::string &Error)
+	{
+		(void)Error;
+		Songs.clear();
+		return true;
+	}
+	// Replaces the open song with the module at Path (as the tools are given paths), as File > Open does: it joins the recent
+	// files. A file FamiTracker can't read is refused before it's opened, so no message box waits for the user. The tools
+	// first make sure the open song has no changes to lose; the host refuses one that has them too. False with the reason,
+	// the open song as it was
+	virtual bool OpenSong(const std::string &Path, std::string &Error)
+	{
+		(void)Path;
+		Error = "This FamiTracker can't open songs for the tools.";
+		return false;
 	}
 	// listen's last result over a whole track (its JSON, which carries the song's print, SoundPrint), for what_next's listen
 	// before the finish: kept by the host while it runs, not in the song

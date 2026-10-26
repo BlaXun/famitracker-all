@@ -262,6 +262,42 @@ So "export as OGG and give it to me" is one `export_for_game` call on any
 song, saved or not; then the link goes to the person, or the client fetches
 the file (the link with curl, or `resources/read`) and sends it on.
 
+### A new song, and back to an old one
+
+Every tool works on the song open in FamiTracker. `new_song` starts another
+in its place, as File > New does (with the game music profile, its
+template: the VRC6, 120 BPM and its sounds), without a dialog, so it works
+with nobody at the PC. `expansion` picks other chips, as `set_expansion`
+takes them (`["VRC6 Plus"]` with its soft layer's sounds, `["FDS"]`, `[]`
+for the 2A03 alone; the template's VRC6 sounds go when the VRC6 does), and
+`name` is the module's title (its first 31 letters) and its track's name.
+Asked over MCP, the new song is saved at once into the **Songs** folder
+under its name (`Songs\Town\Town.ftm`; `Town 2` when that's taken), so
+`save_song` and `export_for_game` work on it straight away; asked from
+FamiTracker's own Ask panel, it stays untitled, as File > New leaves it.
+
+`open_song` opens one again by name: the songs in the Songs folder and
+FamiTracker's recent files (File menu). `list` true (or no name) names them,
+the newest first, 30 at most; a word of a name does when only one song has
+it. From this computer, `path` opens any other `.ftm` file (a drive, folders
+and the file, nothing else); from another computer it takes names only.
+FamiTracker reads the file first, so one it can't open is refused with the
+reason rather than with a message box nobody may be there to close.
+
+Both refuse, changing nothing, while the open song has changes that aren't
+saved: `save_song` first (with `name` for a song that was never saved), or
+ask the person. The song that was open stays in its file as it was last
+saved; its Ctrl+Z history goes with it.
+
+From a phone (Hermes on `/mcp`: neither tool is in the small set), the
+whole round is:
+
+- "Start a new song called Town": `new_song` with `name` "Town" (and
+  `expansion` when asked), then `what_next` for the first step.
+- "Save it": `save_song`.
+- "Start another": `new_song` again, once the first is saved.
+- "Go back to Town": `open_song` with `name` "Town".
+
 ### The phone page
 
 Edit > Record from your phone serves a page for recording ideas on a phone
@@ -943,6 +979,8 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. See [Files between the computers](#files-between-the-computers) |
+| `new_song` | Starts a new song in place of the open one, as File > New does (the profile's template: its chip, tempo and sounds), with no dialog; `expansion` picks its chips as `set_expansion` takes them, and `name` is its title and its track's name. Asked over MCP, it's saved at once into the Songs folder under that name. Refuses, changing nothing, while the open song has changes that aren't saved. See [A new song, and back to an old one](#a-new-song-and-back-to-an-old-one) |
+| `open_song` | Opens another song by name: one in the Songs folder or among FamiTracker's recent files (`list` names them, the newest first); from this computer, `path` opens any `.ftm` file. Refuses while the open song has changes that aren't saved |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
 chords, lush chords, warm pad, bass, thump bass (an octave blip into each

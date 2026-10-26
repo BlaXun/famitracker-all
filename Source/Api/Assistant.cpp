@@ -129,7 +129,8 @@ const AssistantToolKind TOOL_KINDS[] = {
 	{ "keep_version", ASSISTANT_CHANGES }, { "set_expansion", ASSISTANT_CHANGES }, { "make_groove", ASSISTANT_CHANGES },
 	{ "copy_bars", ASSISTANT_CHANGES }, { "vary_part", ASSISTANT_CHANGES }, { "reference_sound", ASSISTANT_CHANGES },
 	{ "add_sample_drums", ASSISTANT_CHANGES }, { "import_nsf", ASSISTANT_CHANGES }, { "send_file", ASSISTANT_CHANGES },
-	{ "undo", ASSISTANT_CHANGES }, { "save_song", ASSISTANT_CHANGES },
+	{ "undo", ASSISTANT_CHANGES }, { "save_song", ASSISTANT_CHANGES }, { "new_song", ASSISTANT_CHANGES },
+	{ "open_song", ASSISTANT_CHANGES },
 };
 
 std::string ArgText(const Json &Arguments, const char *pKey)

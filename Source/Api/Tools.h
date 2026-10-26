@@ -119,7 +119,9 @@ struct Caller {
 	// so save_song and export_for_game save a song without a file into FamiTracker's Songs folder
 	bool Client;
 	bool Core;				// asked through the small set (/mcp/core), whose replies name only its tools
-	Caller() : Client(false), Core(false) {}
+	// Asked from another computer (HandleMcp: a peer that isn't this one), whose paths are never taken (open_song's path)
+	bool Remote;
+	Caller() : Client(false), Core(false), Remote(false) {}
 };
 
 class ToolSet {

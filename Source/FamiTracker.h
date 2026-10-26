@@ -117,6 +117,9 @@ public:
 	
 	CCustomExporters *GetCustomExporters() const;
 
+	// The recent files of the File menu, the newest first (the tools' open_song lists them)
+	void			GetRecentFiles(CStringArray &Files) const;
+
 #ifdef EXPORT_TEST
 	void			VerifyExport() const;
 	void			VerifyExport(LPCTSTR File) const;

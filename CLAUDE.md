@@ -1772,6 +1772,33 @@ last), with Play it (two parts that beat play both) and Fix for a fix of
 one call; after a change they stay listed as heard before it (`SongMoved`,
 `IsStale`: Explain only) until the next listen (`TestProblemListHeard`).
 
+New songs and opening another (from `feat-new-song`): `new_song`
+(`NewSongTool`, after `SaveTool` in `Tools.cpp`) puts a new song in place of
+the open one through `SongHost::NewSong` (`CMcpLink::NewSong` sends
+`ID_FILE_NEW` as Help > Exercises does, so `OnNewDocument` applies the
+profile's template, then `SwitchChips` with `NewSongSettings`' chips, which
+`NewSongChips` reads from `expansion` as `set_expansion` reads its chips;
+the template's VRC6 sounds go without the VRC6 and a VRC6 Plus gets
+`AddSoftLayerSounds`; then the title, `TitleOfName`'s whole words within 31
+characters, the track's name and `MakeUntitled`: no file, nothing to save,
+no undo history). A client's (`Caller::Client`) is saved at once with
+`SaveIntoSongs`. `open_song` (`OpenSongTool`) lists `SongHost::ListSongs`
+(`CMcpLink::ListSongs`: the `.ftm` files in the Songs folder and its
+folders, `CFamiTrackerApp::GetRecentFiles` and the open song, each once as
+a `SongPlace`) the newest first (`SongListText`, `MAX_LISTED_SONGS`), finds
+one by name (`FindSongToOpen`) and opens it with `SongHost::OpenSong`
+(`CMcpLink::OpenSong` reads it with `nsf::ReadFtmFile` first, so a file
+FamiTracker can't open is refused with the reason instead of a message box
+waiting for nobody, then `theApp.OpenDocumentFile`). It takes a `path` only
+from this computer (`Caller::Remote`, set in `HandleMcp`;
+`IsSimpleSongPath`: a drive, plain folder names and a `.ftm` file). Both
+refuse while the open song has changes not saved (`RefuseUnsavedSong`, and
+the hosts again) and stand with `import_nsf` in `AfterCall`'s `ASIDE`.
+FakeSong keeps what it saves (`Disk`, `RecentFiles` and `OpenPath`, kept by
+`SaveNew` and `Save` through `KeepOnDisk`) and replaces its song as
+`CMcpLink` does; `TestNewSongs` covers both tools, through `HandleMcp` from
+the network too.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
