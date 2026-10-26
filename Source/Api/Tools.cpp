@@ -28788,7 +28788,7 @@ std::string ToolSet::CoreInstructions()
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
 		"write your own there. Where check_song or review_arrangement gives a \"Fix:\", send its call as given, then the calls "
 		"after it in order. Read a part (read_notes) before you change it by hand. You can't hear: play the bars for the user, "
-		"ask how it sounds, and say what you changed and why.\n"
+		"ask how it sounds, and say what you changed and why. When the user asks what a word means, explain gives it plainly.\n"
 		"Write music that sounds composed, not generated:\n"
 		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
 		"G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests). grow_melody grows it over the chords, with the kind and "
@@ -28831,7 +28831,10 @@ std::string ToolSet::Instructions()
 		"Think in bars and beats (both count from 1) and note names with FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz. "
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"what_next gives the one next step for the song as it is, with its call ready to send, when you wonder what comes "
-		"next. "
+		"next (the user may have taken a step from FamiTracker's What next panel meanwhile: ask it again rather than "
+		"assume). An empty song starts from its shape: song_shape lays out its kind's form (stage, night, town, boss, a "
+		"small loop, a jingle), each part a section named for what it does; then fill the parts in order. When a reply "
+		"uses a word the user may not know, or the user asks what one means, explain gives it in plain words: use them. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
@@ -29080,8 +29083,9 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"sounds and tricks); write your own melody and chords.\n"
 		"2. Decide, and tell me in a few lines: the key and mode, the tempo, the form for " + Bars + " bars (" +
 		(Calm ? "an intro of the chords alone, A, A', B, a break without the melody, A''" :
-		Lively ? "an intro that builds, A, A', B, a break without the melody or the drums, A'' as the climax" :
-		"a short, tense intro, A, A', B as the climax, a break, A''") +
+		Lively ? "an intro that builds, A, A', B, a climax (the tune at its biggest, with a harmony), a break without the "
+		"melody or the drums before the loop comes round" :
+		"a short, tense intro, A, A', a climax, a short break before the loop") +
 		"), what each channel plays and where it sits (left, middle, right), and the lead's sound with its envelope.\n";
 	T += std::string("3. ") + (Calm ? "set_tempo at a slow, even tempo (64.3, 69.2, 75 or 81.8 BPM: speed 14, 13, 12 or 11 at "
 		"tempo 150). For softness and depth on the VRC6, set_expansion chips [\"VRC6 Plus\"] first: its soft layer holds pads, "
@@ -29089,7 +29093,9 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		Lively ? "set_tempo at an even tempo between 112 and 160 BPM (150, 128.6 or 112.5: speed 6, 7 or 8 at tempo 150); "
 		"set_swing with a percentage (56-60) for a light swing." :
 		"set_tempo at an even tempo between 140 and 190 BPM (150 is speed 6; speed 7 with tempo 191 gives even eighths at "
-		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key.\n";
+		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key. On an "
+		"empty song, song_shape lays that form out at once (shape " + std::string(Calm ? "night" : Lively ? "stage" : "boss") +
+		"): its frames, each part a section named for what it does, the loop after the intro.\n";
 	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind music box, breath or falling strike, one "
 		"for the whole track. Try first the lead the listener liked best of the night songs: kind music box on a VRC6 pulse, "
 		"duty 37.5% (50% on the 2A03) and attack bloom (it blooms in over two frames, without a duty click), struck and "
