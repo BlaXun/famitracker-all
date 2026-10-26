@@ -780,6 +780,25 @@ void TestHelp()
 	CHECK_HAS(AssistantHelpAnswer(std::vector<AssistantHelpItem>(), true), "couldn't be reached");
 }
 
+// The ? button's steps: the settings' words the servers need, a link to the settings, ASCII
+void TestSetupGuide()
+{
+	const std::string Guide = AssistantSetupGuide();
+	CHECK_HAS(Guide, "OLLAMA_CONTEXT_LENGTH=65536");
+	CHECK_HAS(Guide, "--jinja");
+	CHECK_HAS(Guide, ":11434/v1");
+	CHECK_HAS(Guide, "Test connection");
+	bool Settings = false, Ascii = true;
+	const std::vector<AssistantParagraph> P = AssistantRichText(Guide);
+	for (size_t p = 0; p < P.size(); ++p)
+		for (size_t r = 0; r < P[p].Runs.size(); ++r)
+			Settings = Settings || P[p].Runs[r].Link == "settings";
+	for (size_t i = 0; i < Guide.size(); ++i)
+		Ascii = Ascii && static_cast<unsigned char>(Guide[i]) < 0x80;
+	CHECK(Settings && Ascii);
+	CHECK(P.size() >= 8);
+}
+
 // ---- Over a real socket, with a scripted model
 
 class Heard : public AssistantStreamListener {
@@ -968,6 +987,7 @@ int main()
 	TestFitting();
 	TestPromptCut();
 	TestHelp();
+	TestSetupGuide();
 	TestExchange();
 	TestTakeReply();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);

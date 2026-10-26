@@ -65,6 +65,7 @@ protected:
 	afx_msg void OnStop();
 	afx_msg void OnNewQuestion();
 	afx_msg void OnSettings();
+	afx_msg void OnSetupHelp();
 	afx_msg void OnModeChange();
 	afx_msg LRESULT OnJobMessage(WPARAM wParam, LPARAM lParam);
 

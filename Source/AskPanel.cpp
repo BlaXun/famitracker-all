@@ -763,7 +763,7 @@ struct CAskPanelWnd::Impl {
 
 	// The controls and the conversation's view
 	CComboBox ModeBox;
-	CButton NewButton, SettingsButton, SendButton, StopButton;
+	CButton NewButton, SettingsButton, HelpButton, SendButton, StopButton;
 	CEdit QuestionBox;
 	CAskTalkWnd Talk;
 	CFont Fonts[F_COUNT];
@@ -1315,6 +1315,20 @@ struct CAskPanelWnd::Impl {
 		ShowGlossaryAt(pMain, Target);
 	}
 
+	// The ? button: how to connect a model, step by step, shown in the conversation and never sent (a note while a
+	// question is being answered, so that answer keeps its place)
+	void ShowSetupHelp()
+	{
+		if (pTalk == NULL)
+			return;
+		if (Phase == PHASE_IDLE)
+			pTalk->Chat.Offline("How do I connect my own AI model?", ftapi::AssistantSetupGuide());
+		else
+			pTalk->Chat.Note(ftapi::AssistantSetupGuide());
+		Follow = true;
+		Changed();
+	}
+
 	void ShowSettings()
 	{
 		const size_t All = ftapi::WriteJson(FunctionsFor(false)).size() + PromptFor(false).size();
@@ -1864,6 +1878,8 @@ struct CAskPanelWnd::Impl {
 		NewButton.MoveWindow(x, y, SX(96), Button);
 		x += SX(96) + M;
 		SettingsButton.MoveWindow(x, y, SX(76), Button);
+		x += SX(76) + M;
+		HelpButton.MoveWindow(x, y, SX(24), Button);
 		const int Side = SX(SIDE_BUTTON), Box = std::max(SX(40), cx - Side - 3 * M);
 		Talk.MoveWindow(0, Top, cx, std::max(0, cy - Top - Bottom));
 		QuestionBox.MoveWindow(M, cy - Bottom + M, Box, SY(QUESTION_HEIGHT));
@@ -2092,6 +2108,7 @@ BEGIN_MESSAGE_MAP(CAskPanelWnd, CWnd)
 	ON_BN_CLICKED(IDC_ASK_STOP, OnStop)
 	ON_BN_CLICKED(IDC_ASK_NEW, OnNewQuestion)
 	ON_BN_CLICKED(IDC_ASK_SETTINGS, OnSettings)
+	ON_BN_CLICKED(IDC_ASK_SETUPHELP, OnSetupHelp)
 	ON_CBN_SELCHANGE(IDC_ASK_MODE, OnModeChange)
 	ON_MESSAGE(WM_ASK_JOB, OnJobMessage)
 END_MESSAGE_MAP()
@@ -2121,12 +2138,14 @@ bool CAskPanelWnd::Create(CWnd *pParent, CMcpConnection *pTools)
 	I.ModeBox.SetCurSel(I.Mode == ftapi::ASSISTANT_LET_IT_WORK ? 1 : 0);
 	I.NewButton.Create(_T("New question"), Button, CRect(0, 0, 0, 0), this, IDC_ASK_NEW);
 	I.SettingsButton.Create(_T("Settings..."), Button, CRect(0, 0, 0, 0), this, IDC_ASK_SETTINGS);
+	I.HelpButton.Create(_T("?"), Button, CRect(0, 0, 0, 0), this, IDC_ASK_SETUPHELP);
 	I.Talk.Create(this, m_pImpl);
 	I.QuestionBox.CWnd::CreateEx(WS_EX_CLIENTEDGE, _T("EDIT"), _T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
 		ES_AUTOVSCROLL | ES_WANTRETURN, CRect(0, 0, 0, 0), this, IDC_ASK_QUESTION);
 	I.SendButton.Create(_T("Send"), Button | BS_DEFPUSHBUTTON, CRect(0, 0, 0, 0), this, IDC_ASK_SEND);
 	I.StopButton.Create(_T("Stop"), Button, CRect(0, 0, 0, 0), this, IDC_ASK_STOP);
-	CWnd *const CONTROLS[] = { &I.ModeBox, &I.NewButton, &I.SettingsButton, &I.QuestionBox, &I.SendButton, &I.StopButton };
+	CWnd *const CONTROLS[] = { &I.ModeBox, &I.NewButton, &I.SettingsButton, &I.HelpButton, &I.QuestionBox, &I.SendButton,
+		&I.StopButton };
 	for (size_t i = 0; i < sizeof(CONTROLS) / sizeof(CONTROLS[0]); ++i)
 		CONTROLS[i]->SetFont(&I.ControlFont);
 	I.QuestionBox.SetLimitText(8000);
@@ -2342,6 +2361,11 @@ void CAskPanelWnd::OnNewQuestion()
 void CAskPanelWnd::OnSettings()
 {
 	m_pImpl->ShowSettings();
+}
+
+void CAskPanelWnd::OnSetupHelp()
+{
+	m_pImpl->ShowSetupHelp();
 }
 
 void CAskPanelWnd::OnModeChange()

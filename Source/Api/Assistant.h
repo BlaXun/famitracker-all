@@ -435,5 +435,7 @@ std::vector<AssistantHelpItem> AssistantSearchHelp(const std::string &Question, 
 	size_t Most = 6);
 // The help found, as an answer with links (AssistantRichText); Configured: a model is set up but unreachable
 std::string AssistantHelpAnswer(const std::vector<AssistantHelpItem> &Items, bool Configured);
+// How to connect a model of one's own, step by step (the panel's ? button): shown, never sent
+std::string AssistantSetupGuide();
 
 }	// namespace ftapi

@@ -1901,4 +1901,32 @@ std::string AssistantHelpAnswer(const std::vector<AssistantHelpItem> &Items, boo
 	return Text;
 }
 
+std::string AssistantSetupGuide()
+{
+	return
+		"The Ask panel talks to an AI model of your own, on this PC or another computer at home, through a server that "
+		"speaks the OpenAI chat format. Your questions and your song's summary go only to that server.\n\n"
+		"**1. Start a server with a model that can use tools**\n"
+		"- **Ollama:** pull a model that can use tools (Qwen3 or later, gpt-oss, GLM 4.5 or later, Mistral Small 3.2) and "
+		"start it with `OLLAMA_CONTEXT_LENGTH=65536`: its default context is too small, and it cuts a longer question "
+		"without a word. Its address ends in `:11434/v1`.\n"
+		"- **llama.cpp:** start llama-server with `--jinja` (for tools), a big context and `--host 0.0.0.0`, like "
+		"`llama-server -m model.gguf --jinja -c 65536 --host 0.0.0.0 --port 8080`; `--cache-reuse 256` makes the next "
+		"questions quicker. Its address ends in `:8080/v1` (with llama-swap: its own port, and the model's name).\n"
+		"- **LM Studio:** load a model that can use tools and start its server. Its address ends in `:1234/v1`.\n\n"
+		"**2. Connect FamiTracker to it**\n"
+		"Open the [[settings|settings]] and give the server's address, like `http://192.168.1.50:11434/v1` (on this PC, "
+		"`http://127.0.0.1:11434/v1`), and the model's name (Ollama, LM Studio and llama-swap need it). Press Test "
+		"connection: it says whether the server answered, which models it has, how much context it gives and whether "
+		"tools work.\n\n"
+		"**3. Give it room**\n"
+		"All the tools with their instructions take about 45,000 tokens, so the model needs a context of 64K or more. "
+		"The small set (a choice in the settings, for smaller models) takes about 25,000, so 32K or more.\n\n"
+		"**4. Ask**\n"
+		"Type below and press Send. In Ask first, every change comes to you as a suggestion with Do it. In Let it work, "
+		"the model makes the changes itself, each one undoable, and Take back all undoes the whole run.\n\n"
+		"A server on another computer needs its port let through that computer's firewall, and FamiTracker needs its "
+		"address on your home network or Tailscale.";
+}
+
 }	// namespace ftapi

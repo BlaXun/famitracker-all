@@ -973,6 +973,7 @@
 #define IDC_ASK_SEND                    2534
 #define IDC_ASK_STOP                    2535
 #define IDC_ASK_TALK                    2536
+#define IDC_ASK_SETUPHELP               2537
 #define ID_VIEW_ASK                     38000
 
 // Next default values for new objects
