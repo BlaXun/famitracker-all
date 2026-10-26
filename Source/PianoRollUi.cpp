@@ -138,6 +138,16 @@ std::string RollHint(const roll_hint_t &State)
 		"H: chords. " : "Double-click a note for effects. Chords: a chord on the free channels. ") + "Ctrl+Z undoes.";
 }
 
+int StrongNotesRow(const roll_strong_t &State)
+{
+	if (State.Placing == ROLL_PLACING_NOTE)
+		return State.PlaceRow;
+	if (State.Placing == ROLL_PLACING_NONE && !State.PlacingClip && State.MouseRow >= 0 &&
+		(State.Tool == ROLL_TOOL_DRAW || State.Tool == ROLL_TOOL_PAINT))
+		return State.MouseRow;
+	return State.CursorRow;
+}
+
 bool ClosedAMenu(const roll_menu_click_t &MenuClick, std::uint32_t Time, long X, long Y)
 {
 	if (!MenuClick.Seen || X != MenuClick.X || Y != MenuClick.Y)

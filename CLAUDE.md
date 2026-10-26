@@ -1315,6 +1315,42 @@ part's semitone where none of that helps (`RubsAgainstParts`, the part of
 `TestPlucksRowApart`, `TestFittedChordsHearLines` and `TestEndWhereItGoesBack`
 (in `chord_helper_tests`) cover them.
 
+Chords with roles and strong notes on the beat (from `feat-roll-helpers`):
+`Source/Api/ChordRoles.cpp` (portable, its own `chord_roles_tests`) gives a
+chord's role in a key with `RoleOfChord`: home (the tonic and the chords
+sharing most of its notes), away, tension or color (borrowed from the
+major or minor key on the same tonic, the key's own notes added to it
+allowed: Dbmaj7 in Eb major; a chord leading to another of the key's; or
+a surprise), `chord_role_t`, with a label and a feel word
+(`ChordRoleInKey::Words`: "tension: leans toward home"). Every mode of
+`MODES` has its own table (`InKey`, by the root's semitones over the
+tonic; minor and harmonic minor share both sevenths), a major chord on
+the fifth and the leading tone's diminished one are tension in any mode,
+and a chord moving off over the fifth in the bass (F/G) is a soft tension.
+The chords right before and after decide "back home" (the tonic after
+tension), a surprise after the dominant (V vi, V VI in minor) and whether a
+chord both borrowed and leading on (A or D in A minor) leads on.
+`RolesOfChords` takes chords in time order, `ChordRoleName` and
+`ChordRoleMeaning` are the legend's words and `ChordRoleExplained` a
+sentence on each (the glossary's and the tools' to share), and
+`ChordIndexAtRow` and `StrongNoteAt` give the chord tones under a row.
+`ToolSet::Harmony` fills `HeardChord::Role`, `RoleWords` and `Bass`, so
+the roles are worked out with the chords, a moment after a change. The
+piano roll colors the chord strip by them (`ROLE_COLORS`, Okabe and Ito's
+colors, with `RoleMark`'s house, arrow, bolt and diamond so color isn't
+all), draws a legend at the status line's right (`DrawLegend`) and says the
+words when a chord is pointed at (`ChordText`); with strong notes on,
+`LitChord` lights the lanes and keys of the chord at `StrongRow`
+(`StrongNotesRow` in `PianoRollUi.cpp`: a note being placed, the mouse over
+the notes with Draw or Paint, else the cursor), a chord pointed at in the
+strip first. The two toggles end the Chords and Key menus
+(`AddHelperToggles`) and are kept for each profile in the "Piano roll"
+settings ("Chord roles" and "Strong notes" for Everything, with ", game
+music" for that profile, where they start on: `ProfileIndex`).
+`LetGoOfMouse` (the timer) puts out what the mouse lit once it leaves the
+window. `TestHarmonyRoles` in `ApiTests.cpp` and `TestStrongNotesRow` in
+`PianoRollUiTests.cpp` cover the rest.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

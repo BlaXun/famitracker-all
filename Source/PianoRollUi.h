@@ -80,6 +80,30 @@ struct roll_hint_t {
 
 std::string RollHint(const roll_hint_t &State);
 
+// Strong notes on the beat: the row whose chord's notes the piano roll lights.
+// Where a note is being placed (drawn, painted or moved, starting at
+// PlaceRow), or where the mouse is over the notes while Draw or Paint is
+// picked, ready to place one; else where the cursor is. While a clip is being
+// placed, or something else is dragged (a box, the ruler, erasing), the
+// cursor's. -1 for none.
+enum roll_placing_t {
+	ROLL_PLACING_NONE,
+	ROLL_PLACING_NOTE,		// a note drawn, painted or moved
+	ROLL_PLACING_OTHER,		// another drag
+};
+
+struct roll_strong_t {
+	int Tool;			// roll_tool_t
+	int Placing;		// roll_placing_t
+	int PlaceRow;		// where the note being placed starts
+	int MouseRow;		// the mouse's row over the notes, -1 when it isn't over them
+	int CursorRow;		// from the song's start, -1 for none
+	bool PlacingClip;
+	roll_strong_t() : Tool(ROLL_TOOL_DRAW), Placing(ROLL_PLACING_NONE), PlaceRow(-1), MouseRow(-1), CursorRow(-1), PlacingClip(false) {}
+};
+
+int StrongNotesRow(const roll_strong_t &State);
+
 // A click that only closed a menu. A mouse button pressed outside an open
 // menu closes it, and Windows (Wine always) passes that click on to the
 // window under the mouse, where it would draw a note or start a box. The
