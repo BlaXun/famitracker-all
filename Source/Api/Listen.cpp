@@ -1010,7 +1010,9 @@ void Ears::Wobbles()
 
 void Ears::Tuning()
 {
-	for (size_t p = 0; p < S.Parts.size(); ++p) {
+	// The sharp notes and the flat ones apart: a part with some of each isn't off one way
+	for (size_t p = 0; p < S.Parts.size(); ++p)
+	for (int Sign = 1; Sign >= -1; Sign -= 2) {
 		const ListenPart &P = S.Parts[p];
 		std::vector<int> Notes;
 		std::vector<double> Offs, Tracked;
@@ -1022,7 +1024,7 @@ void Ears::Tuning()
 			// Where it holds for a tenth of a second or more, or a gentle vibrato's middle once it has swung twice around it (a
 			// warble's middle is no pitch)
 			const bool Middle = Q.Wobbles && Q.Rate >= 3.0 && Q.Rate < WARBLE_RATE && Q.Swing < WARBLE_CENTS && Q.WobbleSeconds * Q.Rate >= 2.0;
-			if (!Q.Valid || (Q.HeldSeconds < 0.1 && !Middle) || std::fabs(Q.Steady) < TUNE_CENTS)
+			if (!Q.Valid || (Q.HeldSeconds < 0.1 && !Middle) || Q.Steady * Sign < TUNE_CENTS)
 				continue;
 			Notes.push_back(static_cast<int>(i));
 			Offs.push_back(Q.Steady);

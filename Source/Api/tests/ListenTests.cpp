@@ -308,6 +308,20 @@ void TestOutOfTune()
 		Close.push_back(N);
 	}
 	CHECK_EQ(CountKind(ListenToSong(SongOf(std::vector<ListenPart>(1, Part("FDS", Near, Close)))), LISTEN_TUNING), 0);
+	// Some notes sharp and some flat: each way said apart, not a middle of a few cents
+	Synth Both;
+	std::vector<ListenNote> Mixed;
+	for (int i = 0; i < 4; ++i) {
+		ListenNote N = Both.Note(0.8, 440.0 * std::pow(2.0, (i % 2 == 0 ? 25.0 : -25.0) / 1200.0), RAMP, 0.3);
+		N.Hz = 440.0;
+		Mixed.push_back(N);
+		Both.Rest(0.1);
+	}
+	Found = ListenToSong(SongOf(std::vector<ListenPart>(1, Part("FDS", Both, Mixed))));
+	CHECK_EQ(CountKind(Found, LISTEN_TUNING), 2);
+	for (size_t i = 0; i < Found.size(); ++i)
+		if (Found[i].Kind == LISTEN_TUNING)
+			CHECK(std::fabs(Found[i].Number("cents")) >= 22.0 && std::fabs(Found[i].Number("cents")) <= 28.0);
 }
 
 // Two parts at one pitch: 20 cents apart they beat; 7 apart (a chorus, 38's echo detuned with P81) they pass. The detune is
