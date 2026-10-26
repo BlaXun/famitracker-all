@@ -1139,16 +1139,17 @@ stages were (their numbers, measured as heard, are in the comment before
 `PlacesFor`). `HeardPlaces::Band` marks lively's places: `MixTool` lets the
 melody through the soft branch (`SOFT`'s 9, as on a pulse, scaled as
 written so accents and steps by section stay; `MelodyShift` follows it),
-every chord part moves by one shift so the chords together
-(`ChordsRel`) take `Places.Chords` (another layer is only brought down,
-to `SOFT_LAYER_DB` under the main one), no nearer the melody than
-`LIVELY_CHORDS_TOP` in their loudest part (`HeardBalance::ChordsTop`, each
+each chord layer moves on its own so the chords together
+(`ChordsRel`) take `Places.Chords` (`LivelyChordShifts`, see Arranging fixes
+for the later tracks below), no nearer the melody than
+`LIVELY_CHORDS_TOP` in any part of the song (`HeardBalance::Parts`, each
 named section or four bars; the reply's `ChordsWhy`), a part within `BAND_SLACK` of its
 place moves only with the melody and the search keeps a part's volumes
 unless another lands `BAND_SLACK` nearer (the parts sit low, where a step
 is 2-3 dB: without it a second mix rounded them anew and what_next asked
 for the mix again), and the drums move up as well as
-down (`Room`, the search's `Top`, the DPCM compensation; a triangle under
+down (`Room`, the search's `Top`, the DPCM compensation; placed by the
+noise's hi-hats since `feat-fixes-arrange`; a triangle under
 DPCM samples comes down no further than Z40, so it can stay a little over
 the melody, as the first stages' did). `HeardRoles` with `Band` keeps
 lines that move with the tune (`MovesWithTune`: a harmony voice, a double
@@ -1178,6 +1179,42 @@ them). `TestLivelyBand`, `TestLivelyPolish`, `TestLivelyChecks`,
 `TestLivelyRecipes`, `TestLivelyWhatNext`, `TestMixWithoutStyle` and
 `TestLivelyChordsTop` cover them; calm's results are the old ones (its
 tests unchanged).
+
+Arranging fixes for the later tracks (from `feat-fixes-arrange`):
+`add_harmony` over a chord from outside the key takes the scale that chord
+sounds in (`ChordScale`, `InChordScale`, `ChordScaleStep` and `OutsideKey`
+in `Chords.cpp`, used by `HarmonyPart`'s `Plain` and `HarmonyWithoutRubs`),
+and of the chords the other parts play keeps the notes outside the key only
+where a part plays them (`SoundingTones`: `HearChords` named an E bass under
+C and E an E augmented). `add_chords_and_bass` over a bar or two takes the
+song's melody and register (`AddBackingTool`'s `Tune`, `UsualLowOf`,
+`BELOW_THE_TUNE`), gives bars without the melody their own register
+(`ChordPartOptions::Open`, `RoomFor`), keeps lush chords' roots on a pulse
+over C-2 (`ChordRegister`, `RoomyPitch`'s `Least`), voices chords an octave
+under the tune (`VOICES_UNDER`) with the root at the bottom where no bass
+holds it (`VoicedChordParts`' `Rooted`), and keeps walking and syncopated
+basses' passing notes off the chords' and the melody's (`BassOptions::Above`,
+`BassRubs`, `CleanWalk`). `add_counter_melody` style calm holds a note a bar
+(`CounterOptions::Slow`) and says when there's no rest to answer in;
+`make_groove` makes its key the track's (`Commit`'s key) unless one is
+chosen or the notes say another. Roles: a triangle that thumps now and then
+isn't the bass beside a sawtooth's line (`TriangleCarriesBass`,
+`HeardRowsIn`), voiced chords are the chords beside a quiet arpeggio
+(`ChordVoicesIn`'s `Every`; a channel whose notes sound chords is no voice,
+nor an N163 bass), and `measure_mix` gives the chords together, the arpeggio
+and the voices. A calm balance in layers gives the chords together too, and
+its "presses" tip judges them together (`BalanceText`; Soft and Space moved
+the stems by tenths of a dB, the layers by 2.5). The lively mix's chord
+layers each move on their own (`LivelyChordShifts`), the review tips chords
+that cover the melody in one part, `LIFT_LEAST` is 1.5, and the drums are
+set by the noise's hi-hats alone (`HatsAgainst`, `IsHatSound`: `LIVELY_HATS`
+14 dB under, a noise without hats `LIVELY_DRUMS` 11.5, left as written
+within `DRUMS_SLACK`, the search reaching down to where the shift took
+them). `TestHarmonyChordScale`, `TestBackingRegisters`,
+`TestBassPassingNotes`, `TestLushFloor`, `TestCalmCounterRoom`,
+`TestGrooveTrackKey`, `TestPartRoles`, `TestWhatNextSectionsDone`,
+`TestLivelyChordLayers`, `TestLivelyLift`, `TestLivelyHats` and
+`TestCalmChordLayers` cover them.
 
 ## What this repository is
 

@@ -6313,20 +6313,33 @@ int UsualInstrument(const std::vector<NoteInfo> &Notes)
 	return Best;
 }
 
+bool PlaysBassPart(Session &S, int Channel, int First, int End);
+
 // Voiced chords: two to four channels of one kind (FM, N163, 5B or pulses) beside
-// the melody, not an echo of it, whose notes there mostly start together; empty if none
-std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody)
+// the melody, not an echo of it nor the bass (a soft layer's sub bass starts its
+// notes with the pads' voices, but holds the bass), whose notes there mostly start
+// together; empty if none
+std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool Every = false)
 {
+	std::vector<int> All;	// Every: the voices of every kind of channel that voices chords there
 	for (int Group = 0; Group < CHORD_GROUPS; ++Group) {
 		std::vector<int> Channels;
 		std::vector<std::set<int> > Starts;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			const ChannelInfo &Info = S.Channel(c);
 			const bool Fits = InChordGroup(Info, Group);
-			if (!Fits || c == Melody || (Melody >= 0 && EchoDelayOf(S, c, Melody, First, End) > 0))
+			if (!Fits || c == Melody || (Melody >= 0 && EchoDelayOf(S, c, Melody, First, End) > 0) ||
+				(Info.Chip == "N163" && PlaysBassPart(S, c, First, End)))
 				continue;
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
 			if (Notes.size() < 2)
+				continue;
+			// (a channel whose notes sound chords themselves, an arpeggio or a lush shimmer struck with the voices, is a chord
+			// part of its own: the review took a shimmer beside plucks on two pulses for a third voice)
+			int Arpeggios = 0;
+			for (size_t i = 0; i < Notes.size(); ++i)
+				Arpeggios += SoundsChord(S, Notes[i]) ? 1 : 0;
+			if (Arpeggios * 2 > static_cast<int>(Notes.size()))
 				continue;
 			std::set<int> Rows;
 			for (size_t i = 0; i < Notes.size(); ++i)
@@ -6349,10 +6362,12 @@ std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody)
 			if (Together && Voices.size() < 4)
 				Voices.push_back(Channels[a]);
 		}
-		if (Voices.size() >= 2)
+		if (Voices.size() >= 2 && !Every)
 			return Voices;
+		if (Voices.size() >= 2)
+			All.insert(All.end(), Voices.begin(), Voices.end());
 	}
-	return std::vector<int>();
+	return All;
 }
 
 // Arranging: chords in a style, bass lines, drums, harmony and counter-melodies
@@ -6449,9 +6464,9 @@ void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vect
 		Top -= O.Pattern == BROKEN_ROLLING ? 7 : 3;	// the arpeggio climbs an octave and more above its root
 	O.High = Written(Info, Top);
 	O.Low = O.High - 12;
-	// A pulse's (or the 5B's square's) broken chords stay over C-2, however low the room the melody leaves them: under it
-	// a ripple turns to mud
-	if (O.Style == CHORDS_BROKEN && (Info.Kind == KIND_PULSE || Info.Kind == KIND_SQUARE))
+	// A pulse's (or the 5B's square's) broken chords and lush chords stay over C-2, however low the room the melody leaves
+	// them: under it a ripple turns to mud (lush rolling chords, whose arpeggio spans two octaves, had their roots at Bb0)
+	if ((O.Style == CHORDS_BROKEN || O.Style == CHORDS_LUSH) && (Info.Kind == KIND_PULSE || Info.Kind == KIND_SQUARE))
 		O.Lowest = Written(Info, PULSE_BROKEN_FLOOR);
 }
 
@@ -7067,6 +7082,27 @@ std::vector<ChordAt> ChordsForMelody(Session &S, const Json &Args, int Melody, c
 	return Chords;
 }
 
+// The low notes a channel's melody often dips to, over the whole song, as they sound: a fifth of its notes are lower; -1
+// for none
+int UsualLowOf(Session &S, int Channel)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	std::vector<int> Pitches;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Pitches.push_back(LandedPitch(Notes[i]) - Written(S.Channel(Channel), 0));
+	if (Pitches.empty())
+		return -1;
+	std::sort(Pitches.begin(), Pitches.end());
+	return Pitches[Pitches.size() / 5];
+}
+
+// A part playing over chords given for bars the song's melody rests in counts as their melody unless its notes sit this
+// many semitones or more under the melody's usual low notes
+const int BELOW_THE_TUNE = 3;
+// Voiced chords' top voice: this far under the melody's middle and under its usual low notes (an octave under the tune, as
+// the soundtrack's night songs voice their choirs by hand)
+const int VOICES_UNDER = 12, VOICES_UNDER_LOW = 5;
+
 std::string AddBackingTool(Session &S, const Json &Args)
 {
 	const bool AsClip = BoolArg(Args, "as_clip", false);
@@ -7087,6 +7123,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			To = std::max(To, std::min(S.MaxBars(), From + static_cast<int>(Progression.size()) - 1));
 	}
 	int Melody = -1;
+	int Tune = -1;	// the song's melody, whose register the chords keep under in every range (-1: Melody's)
 	if (Arg(Args, "melody_channel") != 0) {
 		Melody = ChannelArg(S, Args, "melody_channel");
 		if (!IsMelodic(S.Channel(Melody)))
@@ -7095,6 +7132,19 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	else {
 		const int GuessFrom = Given && Range ? S.Time.BarStart(From) : 0, GuessEnd = Given && Range ? S.Time.BarEnd(To) : S.Time.TotalRows();
 		Melody = GuessMelodyChannel(S, GuessFrom, GuessEnd);
+		if (Given && Range) {
+			// A bar or two: the song's melody where it plays there, as over the whole song. Where it rests (an intro) another
+			// part on top there counts as one only from the melody's register up: chords kept under an effect's low slide or
+			// a low pluck came out an octave under the same chords written over sixteen bars
+			Tune = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+			if (Tune >= 0 && Tune != Melody) {
+				if (HasNotesIn(S, Tune, GuessFrom, GuessEnd))
+					Melody = Tune;
+				else if (Melody >= 0 && MiddleOf(NotesIn(S.Notes(Melody), GuessFrom, GuessEnd), 0) - Written(S.Channel(Melody), 0) <
+					UsualLowOf(S, Tune) - BELOW_THE_TUNE)
+					Melody = -1;
+			}
+		}
 		if (Given && Melody >= 0) {
 			// Only chords play there (a groove with no melody yet): they're what the new chords replace
 			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Melody), GuessFrom, GuessEnd);
@@ -7121,6 +7171,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	}
 	if (Melody < 0 && !Given)
 		throw Problem("There's no melody to fit chords to yet. Give chords (like \"| C | Am | F | G |\") to write a backing without one.");
+	if (Tune < 0)
+		Tune = Melody;
 
 	// The bars: as asked, the melody's, or the progression's from bar 1
 	std::vector<transcribe::MelodyNote> Line;
@@ -7287,6 +7339,23 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	if (Given && !MelodyNotes.empty())
 		RubWarnings(S, Chords, MelodyNotes, K, Warnings);
 
+	// The melody's notes sounding in those bars (one held into them too), as they sound: the room the chords keep, and the
+	// notes a bass's passing notes keep off
+	std::vector<NoteInfo> MelodySounds, BassSounds;
+	if (Melody >= 0) {
+		const std::vector<NoteInfo> &Played = S.Notes(Melody);
+		for (size_t i = 0; i < Played.size(); ++i) {
+			if (Played[i].Row >= End || Played[i].Row + Played[i].Rows <= First)
+				continue;
+			NoteInfo N = Played[i];
+			N.Pitch = LandedPitch(N) - Written(S.Channel(Melody), 0);
+			MelodySounds.push_back(N);
+		}
+	}
+	// The song's melody over the whole song, whose register the chords take however few of its notes these bars have
+	const std::vector<NoteInfo> TuneNotes = Tune >= 0 ? S.Notes(Tune) : std::vector<NoteInfo>();
+	const int TuneLift = Tune >= 0 ? Written(S.Channel(Tune), 0) : 0;
+
 	// The bass line first: the chords keep over it
 	BassOptions BassO;
 	std::vector<PartNote> BassNotes;
@@ -7296,16 +7365,14 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		BassO.K = K;
 		BassRegister(BassO, S.Channel(BassChannel));
 		BassO.Volume = 15;
+		BassO.Above = MelodySounds;
+		for (size_t i = 0; i < BassO.Above.size(); ++i)
+			BassO.Above[i].Pitch += Written(S.Channel(BassChannel), 0);
 		BassNotes = BassPart(Chords, Spans, BassO);
 	}
 	// The room the chords keep, as the parts sound: under the melody's notes and over the bass's while each chord sounds
-	// (ChordPartOptions::Above and Below), voiced under the melody's low notes where it doesn't play
-	std::vector<NoteInfo> MelodySounds, BassSounds;
-	for (size_t i = 0; i < MelodyNotes.size(); ++i) {
-		NoteInfo N = MelodyNotes[i];
-		N.Pitch = LandedPitch(N) - Written(S.Channel(Melody), 0);
-		MelodySounds.push_back(N);
-	}
+	// (ChordPartOptions::Above and Below), voiced under the melody's low notes where it rests a moment, in their own
+	// register in bars it doesn't play (an intro, a break: ChordPartOptions::Open)
 	for (size_t i = 0; i < BassNotes.size(); ++i) {
 		NoteInfo N = NoteInfo();
 		N.Row = BassNotes[i].Row;
@@ -7318,20 +7385,27 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		const bool Voice = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) != VoiceChannels.end();
 		if (c == Melody || c == ChordChannel || Voice || !IsBass(S.Channel(c)))
 			continue;
-		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		for (size_t i = 0; i < Notes.size(); ++i) {
+			if (Notes[i].Row >= End || Notes[i].Row + Notes[i].Rows <= First)
+				continue;
 			NoteInfo N = Notes[i];
 			N.Pitch -= Written(S.Channel(c), 0);
 			BassSounds.push_back(N);
 		}
 	}
-	int UsualLow = -1;	// the melody's low notes, the ones it often dips to (a fifth of its notes are lower)
-	if (!MelodySounds.empty()) {
-		std::vector<int> Pitches;
-		for (size_t i = 0; i < MelodySounds.size(); ++i)
-			Pitches.push_back(MelodySounds[i].Pitch);
-		std::sort(Pitches.begin(), Pitches.end());
-		UsualLow = Pitches[Pitches.size() / 5];
+	const int UsualLow = Tune >= 0 ? UsualLowOf(S, Tune) : -1;	// the melody's low notes, the ones it often dips to
+	std::vector<BarSpan> Open;	// the bars the melody doesn't play in
+	for (size_t b = 0; b < Spans.size(); ++b) {
+		bool Plays = false;
+		for (size_t i = 0; i < MelodySounds.size() && !Plays; ++i)
+			Plays = MelodySounds[i].Row < Spans[b].Row + Spans[b].Rows && MelodySounds[i].Row + MelodySounds[i].Rows > Spans[b].Row;
+		if (Plays)
+			continue;
+		if (!Open.empty() && Open.back().Row + Open.back().Rows == Spans[b].Row)
+			Open.back().Rows += Spans[b].Rows;
+		else
+			Open.push_back(Spans[b]);
 	}
 	// The room for a part written at Lift over its sound (Written(channel, 0))
 	auto KeepRoom = [&](ChordPartOptions &O, int Lift) {
@@ -7342,6 +7416,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < O.Below.size(); ++i)
 			O.Below[i].Pitch += Lift;
 		O.Ceiling = UsualLow >= 0 ? std::max(0, UsualLow - CHORD_ROOM + Lift) : -1;
+		O.Open = Open;
 	};
 
 	std::vector<Change> Changes;
@@ -7351,15 +7426,15 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Style = Style;
 		O.Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), -1);
 		O.RowsPerBeat = R;
-		// Under the melody, a voice to a channel: well under its middle, and under the low notes it often dips to,
-		// so the top voice doesn't blur it (as they sound: each voice is written for its channel below); each chord then
-		// keeps under the melody's lowest note while it sounds and over the bass (KeepRoom)
-		const int Lifted = Melody >= 0 ? Written(S.Channel(Melody), 0) : 0;
-		int Top = MelodyNotes.empty() ? 50 : MiddleOf(MelodyNotes, 57) - Lifted - 9;
+		// Under the melody, a voice to a channel: in the octave under it (the top voice an octave under its middle, and
+		// under the low notes it often dips to), so the voices don't crowd the tune (as they sound: each voice is written
+		// for its channel below); each chord then keeps under the melody's lowest note while it sounds and over the bass
+		// (KeepRoom). Where no bass holds a chord's root, the voices take it at the bottom (VoicedChordParts)
+		int Top = TuneNotes.empty() ? 50 : MiddleOf(TuneNotes, 57) - TuneLift - VOICES_UNDER;
 		if (UsualLow >= 0)
-			Top = std::min(Top, UsualLow - 4);
+			Top = std::min(Top, UsualLow - VOICES_UNDER_LOW);
 		Top = std::max(31, std::min(55, Top));
-		O.Low = Top - 10;
+		O.Low = Top - 12;
 		O.High = Top + 3;
 		KeepRoom(O, 0);
 		O.RootInBass = BassChannel >= 0;
@@ -7420,7 +7495,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		O.Pattern = StyleArg(Args, "pattern", BrokenPatterns(), BROKEN_UP);
 		O.StepRows = std::max(1, R / IntArg(Args, "notes_per_beat", 2, 1, 4));
 		O.RowsPerBeat = R;
-		ChordRegister(O, Info, MelodyNotes, Melody >= 0 ? Written(S.Channel(Melody), 0) : 0);
+		ChordRegister(O, Info, TuneNotes, TuneLift);
 		KeepRoom(O, Written(Info, 0));
 		O.RootInBass = BassChannel >= 0;
 		for (int c = 0; c < S.ChannelCount() && !O.RootInBass; ++c)
@@ -7886,17 +7961,65 @@ int EchoDelayOf(Session &S, int Channel, int Source, int First, int End)
 // AMBIENCE: a noise channel that only plays swells (wind, waves), not drums: it keeps its level
 enum mix_role { ROLE_NONE, ROLE_MELODY, ROLE_ECHO, ROLE_CHORDS, ROLE_LINE, ROLE_BASS, ROLE_DRUMS, ROLE_AMBIENCE };
 
+std::vector<int> RowFramesOf(Session &S);
+int NoteFrames(const NoteInfo &N, const std::vector<int> &RowFrames);
+
+// The rows a channel's notes starting in [First, End) are heard: each from its row until its sound stops (the triangle
+// until its envelope reaches 0, since it plays any other level at full; the others as HeardFrames hears them)
+int HeardRowsIn(Session &S, int Channel, int First, int End)
+{
+	const std::vector<int> RowFrames = RowFramesOf(S);
+	const bool Triangle = S.Channel(Channel).Kind == KIND_TRIANGLE;
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+	int Rows = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Rows <= 0 || (!Triangle && N.Volume <= 0))
+			continue;
+		const int Frames = NoteFrames(N, RowFrames);
+		int Heard = Frames;
+		if (Triangle) {
+			const std::vector<int> Envelope = HeldEnvelope(FindInstrument(S.Song, N.Instrument), Frames);
+			Heard = 0;
+			while (Heard < Frames && Envelope[static_cast<size_t>(Heard)] > 0)
+				++Heard;
+		}
+		else
+			Heard = HeardFrames(S.Song, N, Frames);
+		for (int r = N.Row, Counted = 0; r < N.Row + N.Rows && Counted < Heard; ++r, ++Rows)
+			Counted += r < static_cast<int>(RowFrames.size()) ? RowFrames[static_cast<size_t>(r)] : 1;
+	}
+	return Rows;
+}
+
+// A triangle carrying a bass line in [First, End): low (its notes sound under C-3, written an octave up) and heard for
+// at least half as long as Other's notes (a sawtooth's line beside it). Toks, an effect's blips or a thump now and then
+// beside a sawtooth bass aren't one: the review called them the bass and the sawtooth a second line
+bool TriangleCarriesBass(Session &S, int Triangle, int Other, int First, int End)
+{
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Triangle), First, End);
+	if (Notes.empty() || MiddleOf(Notes, 0) - Written(S.Channel(Triangle), 0) >= 36)
+		return false;
+	return HeardRowsIn(S, Triangle, First, End) * 2 >= HeardRowsIn(S, Other, First, End);
+}
+
 // Whether a channel that can play the bass plays it in [First, End): over a
 // triangle bass, a sawtooth (or an N163 voice, SoftBass) plays it only where
 // it doubles the triangle's notes (on others it's a second line or a pad's
-// voice, however low); with no triangle there, where it's low
+// voice, however low); with no triangle bass there (none, or one that only
+// plays high or now and then, TriangleCarriesBass), where it's low. The
+// triangle plays it where its notes sound low
 bool PlaysTheBass(Session &S, int Channel, int First, int End)
 {
+	if (S.Channel(Channel).Kind == KIND_TRIANGLE) {
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+		return Notes.empty() || MiddleOf(Notes, 0) - Written(S.Channel(Channel), 0) < 36;
+	}
 	if (S.Channel(Channel).Kind != KIND_SAWTOOTH && S.Channel(Channel).Chip != "N163")
 		return true;
 	const std::vector<NoteInfo> Mine = NotesIn(S.Notes(Channel), First, End);
 	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (S.Channel(c).Kind != KIND_TRIANGLE || !HasNotesIn(S, c, First, End))
+		if (S.Channel(c).Kind != KIND_TRIANGLE || !HasNotesIn(S, c, First, End) || !TriangleCarriesBass(S, c, Channel, First, End))
 			continue;
 		const std::vector<NoteInfo> Bass = NotesIn(S.Notes(c), First, End);
 		int Together = 0, Same = 0;
@@ -8758,7 +8881,9 @@ bool MovesWithTune(Session &S, const std::vector<NoteInfo> &Line, int Melody)
 }
 
 // (Band: a lively stage's, whose lines that move with the tune stay lines, however many start their notes together: a
-// second voice harmonizing the tune and the sawtooth doubling it at a climax aren't a pad)
+// second voice harmonizing the tune and the sawtooth doubling it at a climax aren't a pad; nor is a steady run of quick
+// notes there, a texture under the tune (53's ripple of broken chords in sixteenths, ten dB under its lead, beside its
+// B part's pads): the lively mix took it for the chords, brought the pads down for its sake and raised it)
 void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Spans, bool Band = false)
 {
 	int Melody = -1;	// a sparkle over it (IsSparkle) starts its notes with a pad's, but is no voice of its chords
@@ -8792,7 +8917,7 @@ void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Span
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
 		if (P.Role == ROLE_LINE && (std::find(Voices.begin(), Voices.end(), P.Channel) != Voices.end() ||
-			RunsSteadily(S, NotesIn(S.Notes(P.Channel), P.First, P.End))))
+			(!Band && RunsSteadily(S, NotesIn(S.Notes(P.Channel), P.First, P.End)))))
 			P.Role = ROLE_CHORDS;
 	}
 }
@@ -8838,6 +8963,16 @@ struct HeardBalance {
 	double ChordsTop;							// the chord parts together in the part of the song where they play loudest...
 	int TopFirst, TopLast;						// ...its bars...
 	std::string TopName;						// ...and its section's name ("" for four bars)
+	// The parts of the song the chords are heard in (each named section, else four bars at a time): their bars, names,
+	// the chords together there, and each layer there against the melody (NO_LOUDNESS where it doesn't play with it)
+	struct ChordPart {
+		int FirstBar, LastBar;
+		std::string Name;
+		double Together;
+		std::vector<double> LayerRel;
+	};
+	std::vector<ChordPart> Parts;
+	std::vector<int> LayerBars;					// each layer's bars with the melody
 };
 
 HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spans,
@@ -8867,7 +9002,8 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 		const double Lead = Bars.empty() ? LeadAlone : H.Loudness(std::vector<int>(1, Melody), Bars);
 		return Part <= NO_LOUDNESS || Lead <= NO_LOUDNESS ? NO_LOUDNESS : Part - Lead;
 	};
-	std::vector<std::vector<std::pair<int, int> > > LayerBars;
+	std::vector<std::vector<std::pair<int, int> > > LayerBars, LayerRows;
+	std::vector<std::vector<int> > LayerChannels;
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		if (Spans[i].Role != ROLE_CHORDS)
 			continue;
@@ -8898,6 +9034,13 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 		std::vector<std::pair<int, int> > Bars;
 		B.LayerRel.push_back(Against(Channels, Rows, &Bars));
 		LayerBars.push_back(Bars);
+		LayerRows.push_back(Rows);
+		LayerChannels.push_back(Channels);
+		std::set<int> Heard;	// (a voice's bars once for the layer)
+		for (size_t k = 0; k < Bars.size(); ++k)
+			for (int Bar = S.Time.BarOf(Bars[k].first); Bar <= S.Time.BarOf(Bars[k].second - 1); ++Bar)
+				Heard.insert(Bar);
+		B.LayerBars.push_back(static_cast<int>(Heard.size()));
 		for (size_t k = 0; k < B.Layers[l].size(); ++k)
 			B.Rel[B.Layers[l][k]] = B.LayerRel.back();
 	}
@@ -8980,6 +9123,22 @@ HeardBalance HearBalance(Session &S, Hearing &H, const std::vector<MixSpan> &Spa
 				B.TopLast = Parts[p].LastBar;
 				B.TopName = Parts[p].Name;
 			}
+			if (Bars.empty())
+				continue;
+			HeardBalance::ChordPart Heard;
+			Heard.FirstBar = Parts[p].FirstBar;
+			Heard.LastBar = Parts[p].LastBar;
+			Heard.Name = Parts[p].Name;
+			Heard.Together = Rel;
+			for (size_t l = 0; l < LayerRows.size(); ++l) {
+				std::vector<std::pair<int, int> > Own, Played;
+				for (size_t k = 0; k < LayerRows[l].size(); ++k)
+					if (LayerRows[l][k].first < Z && A < LayerRows[l][k].second)
+						Own.push_back(std::make_pair(std::max(A, LayerRows[l][k].first), std::min(Z, LayerRows[l][k].second)));
+				const double Layer = Own.empty() ? NO_LOUDNESS : Against(LayerChannels[l], Own, &Played);
+				Heard.LayerRel.push_back(Played.empty() ? NO_LOUDNESS : Layer);
+			}
+			B.Parts.push_back(Heard);
 		}
 	}
 	for (int c = 0; c < S.ChannelCount(); ++c)
@@ -9054,8 +9213,14 @@ std::string BalanceText(Session &S, const std::vector<MixSpan> &Spans, const Hea
 		Parts.push_back("the triangle " + GapText(-B.TriangleRel, -B.TriangleRel, false));
 	if (!Drums.empty())
 		Parts.push_back("the drums " + Drums);
+	// Calm, the chords in layers (a choir's voices beside lush chords): the main layer, and all of them together as the stems
+	// measure them (a night song's review said 4.7 dB over the chords where measure_mix put it 2.2 over all of them)
+	std::string Together;
+	if (!Band && Most > NO_LOUDNESS && B.ChordsRel > NO_LOUDNESS && B.Layers.size() > 1 && std::fabs(-B.ChordsRel - Most) >= 0.5)
+		Together = " (" + GapText(-B.ChordsRel, -B.ChordsRel, true) + " all of them together)";
 	std::string Text = "the melody (" + S.Channel(Melody).FullName() + ")" + (Chords.empty() ? std::string(" with no chords") :
-		" " + Chords + " the chords" + (Band && B.ChordParts > 1 ? " together" : ""));
+		" " + Chords + (Together.empty() ? " the chords" : " the chords' main layer" + Together) + (Band && B.ChordParts > 1 ?
+		" together" : ""));
 	for (size_t i = 0; i < Parts.size(); ++i)
 		Text += (i + 1 == Parts.size() && Parts.size() > 1 ? " and " : ", ") + Parts[i];
 	if (Band && B.BandRel > NO_LOUDNESS)
@@ -9095,11 +9260,177 @@ const double BAND_SLACK = 0.5;
 // the first stages' chords, mixed, ran 2-5 dB under theirs by four bars, which this leaves as they were)
 const double LIVELY_CHORDS_TOP = 2.0;
 
+// A lively mix's chord layers, each on its own (in dB, the melody's own shift left out). Every layer moves by one shift so
+// that the chords together reach their place over the song (Places.Chords, within BAND_SLACK left as they are); a layer
+// joining a longer one (pads over arpeggios heard throughout: one heard in fewer bars than a layer it shares a part of
+// the song with) plays no louder than SOFT_LAYER_DB under it, and where the chords together would play nearer the melody
+// than LIVELY_CHORDS_TOP in a part of the song (a named section, or four bars), the layers that join there come down,
+// then, where that isn't enough, every layer there; the shift over the song is then found again. One shift for every
+// layer, held back by the loudest part, left a song whose pads played only in B with its chords 5.7 dB under the melody
+// over the song, its arpeggios brought down for B's sake. Why says where the limit held them
+std::vector<double> LivelyChordShifts(const HeardBalance &B, const HeardPlaces &Places, std::string &Why)
+{
+	const size_t Count = B.Layers.size();
+	std::vector<double> Own(Count, 0.0);
+	auto Shares = [&](size_t a, size_t b) {
+		for (size_t p = 0; p < B.Parts.size(); ++p)
+			if (B.Parts[p].LayerRel[a] > NO_LOUDNESS && B.Parts[p].LayerRel[b] > NO_LOUDNESS)
+				return true;
+		return false;
+	};
+	auto Longer = [&](size_t a, size_t b) {	// a heard in more bars than b (then louder)
+		return B.LayerBars[a] != B.LayerBars[b] ? B.LayerBars[a] > B.LayerBars[b] : B.LayerRel[a] > B.LayerRel[b];
+	};
+	std::vector<size_t> Primary(Count);
+	for (size_t l = 0; l < Count; ++l) {
+		Primary[l] = l;
+		for (size_t m = 0; m < Count; ++m)
+			if (m != l && Shares(l, m) && Longer(m, Primary[l]))
+				Primary[l] = m;
+	}
+	for (int Pass = 0; Pass < 4; ++Pass)	// a layer beside one beside a longer one goes with the longest
+		for (size_t l = 0; l < Count; ++l)
+			Primary[l] = Primary[Primary[l]];
+	// The chords together part by part with the layers moved, and over the song (the parts' power, by their bars)
+	auto PartPower = [&](const HeardBalance::ChordPart &P, double *pMain, double *pJoins) {
+		double Main = 0.0, Joins = 0.0;
+		for (size_t l = 0; l < Count; ++l)
+			if (P.LayerRel[l] > NO_LOUDNESS)
+				(Primary[l] == l ? Main : Joins) += std::pow(10.0, (P.LayerRel[l] + Own[l]) / 10.0);
+		if (pMain != 0) {
+			*pMain = Main;
+			*pJoins = Joins;
+		}
+		return Main + Joins;
+	};
+	auto SongDb = [&]() {
+		double Power = 0.0, Bars = 0.0;
+		for (size_t p = 0; p < B.Parts.size(); ++p) {
+			const double Length = B.Parts[p].LastBar - B.Parts[p].FirstBar + 1;
+			Power += Length * PartPower(B.Parts[p], 0, 0);
+			Bars += Length;
+		}
+		return Power > 0.0 ? 10.0 * std::log10(Power / Bars) : NO_LOUDNESS;
+	};
+	const double Base = SongDb();	// as the song plays now
+	for (size_t m = 0; m < Count; ++m) {
+		if (Primary[m] != m || B.LayerRel[m] <= NO_LOUDNESS)
+			continue;
+		double Together = 0.0;
+		std::vector<size_t> Joined;
+		for (size_t l = 0; l < Count; ++l)
+			if (l != m && Primary[l] == m && B.LayerRel[l] > NO_LOUDNESS) {
+				Joined.push_back(l);
+				Together += std::pow(10.0, (B.LayerRel[l] - B.LayerRel[m]) / 10.0);
+			}
+		const double Over = Joined.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) + SOFT_LAYER_DB);
+		for (size_t j = 0; j < Joined.size(); ++j)
+			Own[Joined[j]] = -Over;
+	}
+	const double Limit = std::pow(10.0, (-LIVELY_CHORDS_TOP + 0.25) / 10.0);	// (within a volume step's rounding)
+	std::string Joining, Whole;
+	for (int Pass = 0; Pass < 6; ++Pass) {
+		// Every layer by one shift, the chords together over the song to their place
+		const double Now = Base > NO_LOUDNESS ? B.ChordsRel + SongDb() - Base : B.ChordsRel;
+		const double Miss = Places.Chords - Now;
+		if (Pass > 0 ? std::fabs(Miss) >= 0.05 : std::fabs(Miss) >= BAND_SLACK)
+			for (size_t l = 0; l < Count; ++l)
+				Own[l] += Miss;
+		// No part of the song with the chords together nearer the melody than LIVELY_CHORDS_TOP
+		bool Moved = false;
+		for (size_t p = 0; p < B.Parts.size(); ++p) {
+			const HeardBalance::ChordPart &P = B.Parts[p];
+			double Main = 0.0, Joins = 0.0;
+			if (PartPower(P, &Main, &Joins) <= Limit)
+				continue;
+			Moved = true;
+			const std::string Where = RangeText(P.FirstBar, P.LastBar), Name = P.Name.empty() ? Where : P.Name + " (" + Where + ")";
+			const double Aim = std::pow(10.0, -LIVELY_CHORDS_TOP / 10.0);
+			if (Joins > 0.0 && Main < Aim * 0.98) {
+				const double Down = 10.0 * std::log10((Aim - Main) / Joins);
+				for (size_t l = 0; l < Count; ++l)
+					if (P.LayerRel[l] > NO_LOUDNESS && Primary[l] != l)
+						Own[l] += Down;
+				if (Joining.find(Name) == std::string::npos)
+					Joining += (Joining.empty() ? "" : ", ") + Name;
+			}
+			else {
+				const double Down = 10.0 * std::log10(Aim / (Main + Joins));
+				for (size_t l = 0; l < Count; ++l)
+					if (P.LayerRel[l] > NO_LOUDNESS)
+						Own[l] += Down;
+				if (Whole.find(Name) == std::string::npos)
+					Whole += (Whole.empty() ? "" : ", ") + Name;
+			}
+		}
+		if (!Moved)
+			break;
+	}
+	Why.clear();
+	if (!Joining.empty())
+		Why += Format(" The chords that join the others in %s come down there, so the chords together stay %.0f dB under the "
+			"melody.", Joining.c_str(), LIVELY_CHORDS_TOP);
+	if (!Whole.empty())
+		Why += Format(" The chords together play loudest in %s, so they stay %.0f dB under the melody there and further under it "
+			"over the song.", Whole.c_str(), LIVELY_CHORDS_TOP);
+	return Own;
+}
+
+// A lively stage's drums, as the soundtrack's first stages had them, heard here: the noise's hi-hats on their own (any
+// other drum on it, a crash, a noise snare or kick, along with them at its level against them) about 14 dB under the
+// melody (their median 13.5), a noise channel without hats 11.5 under (its median 11.8), each left as it is within
+// DRUMS_SLACK. (The noise as a whole at 10 dB under, the first stages' 10.3 by the analysis's windows, which count its
+// busiest bars, put a later stage's hats at 8.1 under by them)
+const double LIVELY_DRUMS = -11.5, LIVELY_HATS = -14.0, DRUMS_SLACK = 1.5;
+
 HeardPlaces PlacesFor(bool Calm)
 {
-	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -11.0, -3.0, -10.0, false }, LIVELY = { -3.5, -7.0, -3.5, -1.0, -10.0, -2.5, -7.0,
-		true };
+	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -11.0, -3.0, -10.0, false }, LIVELY = { -3.5, -7.0, -3.5, -1.0, LIVELY_DRUMS, -2.5,
+		-7.0, true };
 	return Calm ? CALM : LIVELY;
+}
+
+// A hi-hat's sound (an open one, a soft one): by its instrument's name
+bool IsHatSound(const SongInfo &Song, int Instrument)
+{
+	const InstrumentInfo *pInfo = FindInstrument(Song, Instrument);
+	return pInfo != 0 && Lowercase(pInfo->Name).find("hat") != std::string::npos;
+}
+
+// The noise's hi-hats alone against the melody over some rows, as HearBalance hears a part (where they play together),
+// when the channel plays other drums there too (a kick, a snare, a crash): their notes silenced, as Hearing hears the rest;
+// NO_LOUDNESS when it plays only hats or none (Hats: whether it plays any)
+double HatsAgainst(Session &S, int Noise, int Melody, const std::vector<std::pair<int, int> > &Rows, bool &HasHats)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Noise);
+	Draft Hats(S);
+	int Kept = 0, Cut = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		bool In = false;
+		for (size_t r = 0; r < Rows.size() && !In; ++r)
+			In = N.Row >= Rows[r].first && N.Row < Rows[r].second;
+		if (!In)
+			continue;
+		if (IsHatSound(S.Song, N.Instrument)) {
+			++Kept;
+			continue;
+		}
+		Cell &C = Hats.Cells(Noise)[static_cast<size_t>(N.Row)];
+		C.Note = NOTE_HALT;	// silent, its volume kept for the hats after it
+		C.Octave = 0;
+		C.Instrument = NO_INSTRUMENT;
+		++Cut;
+	}
+	HasHats = Kept > 0;
+	if (Kept == 0 || Cut == 0)
+		return NO_LOUDNESS;
+	Hearing H(S, &Hats);
+	const std::vector<std::pair<int, int> > Bars = BarsWithMelody(S, std::vector<int>(1, Noise), Melody, Rows);
+	if (Bars.empty())
+		return NO_LOUDNESS;
+	const double Part = H.Loudness(std::vector<int>(1, Noise), Bars), Lead = H.Loudness(std::vector<int>(1, Melody), Bars);
+	return Part <= NO_LOUDNESS || Lead <= NO_LOUDNESS ? NO_LOUDNESS : Part - Lead;
 }
 
 // A 5B note that plays the chip's envelope (a buzz, or a sync buzz with the square), whose level the envelope sets
@@ -9587,33 +9918,13 @@ std::string MixTool(Session &S, const Json &Args)
 		// The chords' main layers at their place; the other layers playing with one keep their place under it, but
 		// together at least 3 dB under it (a soft layer's pad under the VRC6's chords)
 		std::vector<double> LayerShift(B.Layers.size(), 0.0);
-		// Lively: every chord part moves alike, so the chords together reach their place as they play beside each other
-		// (a pad joining the arpeggios at the climax keeps its place against them); another layer is only brought down, to
-		// no louder together than SOFT_LAYER_DB under the main one it plays with. A second mix finds them there and moves
-		// nothing
+		// Lively: each layer on its own (LivelyChordShifts): the one heard longest to the chords' place where it plays, one
+		// joining it (pads in the B part) only brought down, and the chords together no nearer the melody than
+		// LIVELY_CHORDS_TOP in any part of the song. A second mix finds them there and moves nothing
 		if (Places.Band && B.ChordsRel > NO_LOUDNESS) {
-			double Miss = Places.Chords - B.ChordsRel;
-			if (B.ChordsTop > NO_LOUDNESS && B.ChordsTop + Miss > -LIVELY_CHORDS_TOP) {
-				Miss = -LIVELY_CHORDS_TOP - B.ChordsTop;
-				const std::string Where = RangeText(B.TopFirst, B.TopLast);
-				ChordsWhy = Format(" The chords together play loudest in %s, so they stay %.0f dB under the melody there and further "
-					"under it over the song.", (B.TopName.empty() ? Where : B.TopName + " (" + Where + ")").c_str(), LIVELY_CHORDS_TOP);
-			}
-			LayerShift.assign(B.Layers.size(), (std::fabs(Miss) < BAND_SLACK ? 0.0 : Miss) + MelodyShift);
-			for (size_t m = 0; m < B.Layers.size(); ++m) {
-				if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
-					continue;
-				double Together = 0.0;
-				std::vector<size_t> Others;
-				for (size_t l = 0; l < B.Layers.size(); ++l)
-					if (l != m && B.Main[l] == static_cast<int>(m) && B.LayerRel[l] > NO_LOUDNESS) {
-						Others.push_back(l);
-						Together += std::pow(10.0, (B.LayerRel[l] - B.LayerRel[m]) / 10.0);
-					}
-				const double Over = Others.empty() ? 0.0 : std::max(0.0, 10.0 * std::log10(Together) + SOFT_LAYER_DB);
-				for (size_t o = 0; o < Others.size(); ++o)
-					LayerShift[Others[o]] -= Over;
-			}
+			LayerShift = LivelyChordShifts(B, Places, ChordsWhy);
+			for (size_t m = 0; m < LayerShift.size(); ++m)
+				LayerShift[m] += MelodyShift;
 		}
 		for (size_t m = 0; m < B.Layers.size() && !(Places.Band && B.ChordsRel > NO_LOUDNESS); ++m) {
 			if (B.Main[m] != static_cast<int>(m) || B.LayerRel[m] <= NO_LOUDNESS)
@@ -9655,11 +9966,26 @@ std::string MixTool(Session &S, const Json &Args)
 				const double Under = MelodyShift - B.Rel[i];
 				const char *const Kind = Calm ? "calm" : "lively";
 				if (Places.Band) {
-					DrumsWhy[i] = Format(" (from %.1f dB under the melody: a lively mix puts drums about %.0f dB under it)", Under,
-						-Places.Drums);
-					const double Own = Place - B.Rel[i];
-					Shifts[i] = (std::fabs(Own) < BAND_SLACK ? 0.0 : Own) + MelodyShift;
-					Aims[i] = Place;
+					// By the hi-hats where the noise plays them (its other drums along, at their level against the hats), else as
+					// a whole; left as they are within DRUMS_SLACK of their place
+					bool HasHats = false;
+					const double Hats = S.Channel(P.Channel).Kind == KIND_NOISE ? HatsAgainst(S, P.Channel, Melody, Local[i], HasHats) :
+						NO_LOUDNESS;
+					const double Heard = Hats > NO_LOUDNESS ? Hats : B.Rel[i];
+					const double Where = HasHats ? LIVELY_HATS : Places.Drums;
+					const double AsWritten = Heard - MelodyShift;	// their volumes as written, under the melody as it will play
+					DrumsWhy[i] = Format(" (%sfrom %.1f dB under the melody: a lively mix puts %s about %.0f dB under it, within %.1f)",
+						HasHats ? "its hi-hats " : "", -AsWritten, HasHats ? (Hats > NO_LOUDNESS ? "the hi-hats on their own, its "
+						"other drums along," : "hi-hats") : "drums", -Where, DRUMS_SLACK);
+					const double Own = Where - AsWritten;
+					if (std::fabs(Own) < DRUMS_SLACK) {
+						Shifts[i] = 0.0;
+						Aims[i] = B.Rel[i] - MelodyShift;
+					}
+					else {
+						Shifts[i] = Own;
+						Aims[i] = Where + B.Rel[i] - Heard;
+					}
 					continue;
 				}
 				if (B.Rel[i] - MelodyShift <= Places.DrumsTop) {
@@ -9808,7 +10134,13 @@ std::string MixTool(Session &S, const Json &Args)
 			for (int r = P.First; r < P.End && r < static_cast<int>(S.Cells(c).size()) && Same; ++r)
 				Same = S.Cells(c)[static_cast<size_t>(r)].Volume >= NO_VOLUME || Scaled(S.Cells(c)[static_cast<size_t>(r)].Volume) ==
 					S.Cells(c)[static_cast<size_t>(r)].Volume;
-			Same = Same && Scaled(StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume) == StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;
+			// (the volume it enters with counts where its first note there has none of its own, as below)
+			int Opening = -1;
+			for (int r = P.First; r < P.End && r < static_cast<int>(S.Cells(c).size()) && Opening < 0; ++r)
+				if (S.Cells(c)[static_cast<size_t>(r)].HasNote())
+					Opening = r;
+			if (Opening < 0 || S.Cells(c)[static_cast<size_t>(Opening)].Volume >= NO_VOLUME)
+				Same = Same && Scaled(StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume) == StateAt(S.Cells(c), P.First, Info.EffectColumns).Volume;
 			if (ByEar[p] || Given || Peak.Hold > 0 ? Same : Peak.Played == Want) {
 				if (pDone != 0)
 					pDone->push_back(Format("%s stays at %d", Label.c_str(), ByEar[p] || Given || Peak.Hold > 0 ? Own[p].Highest :
@@ -9925,7 +10257,12 @@ std::string MixTool(Session &S, const Json &Args)
 			const double Was = Shifts[i];
 			double Best = Was, BestMiss = std::fabs(B.Rel[i] - Aims[i]);
 			const int Top = Spans[i].Role == ROLE_DRUMS && !Band ? Highest : std::min(15, Highest + 7);	// calm's drums never up
-			for (int To = std::max(1, Highest - 7); To <= Top; ++To) {
+			// (a lively stage's drums around where their shift took them too: loud hi-hats come down more than 7 steps. Not a
+			// chord layer: one held under its place by a part of the song where it plays loudest would be taken further down
+			// there for the song's sake, where its quieter bars can't go under 1)
+			const int Landed = VolumeForDb(Info, LevelDb(Info, Highest) + Was);
+			const int Bottom = Band && Spans[i].Role == ROLE_DRUMS ? std::min(Highest - 7, Landed - 2) : Highest - 7;
+			for (int To = std::max(1, Bottom); To <= Top; ++To) {
 				const double Shift = LevelDb(Info, To) - LevelDb(Info, Highest);
 				if (std::fabs(Shift - Was) < 0.01)
 					continue;
@@ -10372,12 +10709,16 @@ std::vector<PartNote> HarmonyWithoutRubs(Session &S, int Target, int Melody, con
 		for (size_t c = 0; c < Chords.size(); ++c)
 			if (Chords[c].Row <= N.Row && N.Row < Chords[c].Row + Chords[c].Rows)
 				pChord = &Chords[c];
+		// Then one of the key, or over a chord from outside it one of the scale the chord sounds in (ChordScale)
+		const bool Borrowed = pChord != 0 && OutsideKey(pChord->C, K);
+		const std::vector<int> Scale = Borrowed ? ChordScale(K, pChord->C) : std::vector<int>();
 		int Best = -1;
 		for (int Pass = 0; Pass < 2 && Best < 0 && !Slides; ++Pass)
 			for (int d = 1; d <= 5 && Best < 0; ++d)
 				for (int w = 0; w < 2 && Best < 0; ++w) {
 					const int p = Sounds + ((w == 0) == Above ? d : -d);	// away from the melody first
-					const bool Fits = Pass == 0 ? pChord != 0 && pChord->C.HasPitchClass(((p % 12) + 12) % 12) : InKey(p, K);
+					const bool Fits = Pass == 0 ? pChord != 0 && pChord->C.HasPitchClass(((p % 12) + 12) % 12) :
+						Borrowed ? InChordScale(p, Scale) : InKey(p, K);
 					const bool Side = Over <= -1000 || (Above ? p > Over : p < Over);
 					if (Fits && Side && p + Lifted >= 0 && p + Lifted < PITCHES && !Rubs(p, N.Row, End))
 						Best = p;
@@ -10389,6 +10730,39 @@ std::vector<PartNote> HarmonyWithoutRubs(Session &S, int Target, int Melody, con
 		N.Pitch = Best + Lifted;
 		++Moved;
 		Out.push_back(N);
+	}
+	return Out;
+}
+
+// The chords the other parts play, as they sound: a note from outside the key that no part plays while its chord sounds is
+// left out of it. HearChords names a chord by the notes it hears and its likeliest shape, so an E bass under C and E is an
+// E augmented (its G# unplayed), B, D and A over D a Bm7/D (its F# unplayed); a harmony taking its notes from those wrote
+// G# and F# under a G mixolydian tune
+std::vector<ChordAt> SoundingTones(Session &S, const std::vector<ChordAt> &Chords, int Melody, int Target, const Key &K)
+{
+	std::vector<ChordAt> Out = Chords;
+	if (Chords.empty())
+		return Out;
+	const int First = Chords.front().Row, End = Chords.back().Row + Chords.back().Rows;
+	const std::vector<HeardNote> Heard = HeardNotes(S, Melody, First, End, Target);
+	for (size_t c = 0; c < Out.size(); ++c) {
+		Chord &C = Out[c].C;
+		const int From = Out[c].Row, To = Out[c].Row + Out[c].Rows;
+		double Weight[12] = { 0 }, Total = 0.0;
+		for (size_t n = 0; n < Heard.size(); ++n) {
+			const int Overlap = std::min(To, Heard[n].Row + Heard[n].Rows) - std::max(From, Heard[n].Row);
+			if (Overlap <= 0)
+				continue;
+			Weight[((Heard[n].PitchClass % 12) + 12) % 12] += Overlap * Heard[n].Weight;
+			Total += Overlap * Heard[n].Weight;
+		}
+		std::vector<int> Kept;
+		for (size_t t = 0; t < C.Tones.size(); ++t) {
+			const int Class = ((C.Root + C.Tones[t]) % 12 + 12) % 12;
+			if (C.Tones[t] == 0 || InKey(Class, K) || Weight[Class] >= 0.05 * Total)
+				Kept.push_back(C.Tones[t]);
+		}
+		C.Tones = Kept;
 	}
 	return Out;
 }
@@ -10412,7 +10786,9 @@ std::string AddHarmonyTool(Session &S, const Json &Args)
 	if (!Found)
 		K = Key(0, MODE_MAJOR);
 	std::string Source;
-	const std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, SongBarSpans(S, First, End), K, Source, Target);
+	std::vector<ChordAt> Chords = ChordsForMelody(S, Args, Melody, SongBarSpans(S, First, End), K, Source, Target);
+	if (Source == "the chords the other parts play")
+		Chords = SoundingTones(S, Chords, Melody, Target, K);
 
 	HarmonyOptions O;
 	O.Interval = StyleArg(Args, "interval", HarmonyIntervals(), HARMONY_THIRD_BELOW);
@@ -10539,6 +10915,7 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 	if (Style != "any" && Style != "calm" && Style != "ambient")
 		throw Problem("style should be any or calm.");
 	O.Rests = Style == "any" ? RESTS_FILL : RESTS_ANSWER;
+	O.Slow = Style != "any";	// calm: a note a bar, which a calm tune's long notes leave room for
 	if (Arg(Args, "rests") != 0) {
 		const std::string Rests = Squeezed(StringArg(Args, "rests"));
 		if (Rests == "fill" || Rests == "move" || Rests == "through")
@@ -10570,13 +10947,15 @@ std::string AddCounterMelodyTool(Session &S, const Json &Args)
 	std::vector<Change> Changes(1, C);
 	const std::string What = std::string("a counter-melody ") + (O.Above ? "above " : "below ") + S.Channel(Melody).FullName() + " on " +
 		S.Channel(Target).FullName() + ", " + RangeText(From, To);
-	std::string How = "it holds where the melody moves and moves, at least every bar, where it holds";
+	std::string How = O.Slow ? "it holds a note a bar, a calm line under the melody's long notes" :
+		"it holds where the melody moves and moves, at least every bar, where it holds";
 	if (O.Rests == RESTS_FILL)
-		How += " or rests";
+		How += O.Slow ? ", through its rests too" : " or rests";
 	else if (O.Rests == RESTS_LEAVE)
 		How += "; it rests where the melody does";
 	else if (Answers == 0)
-		How += "; it rests where the melody does (no rest of two beats or more to answer in)";
+		How += "; it rests where the melody does. The melody has no rest of two beats or more, so there was no room for an "
+			"answer: the line only plays under the melody's notes (a phrase that ends on two beats of silence leaves it room)";
 	else
 		How += Format("; it rests where the melody does, but for %s in rests of two beats or more", Plural(Answers, "short answer",
 			"short answers").c_str());
@@ -12731,7 +13110,10 @@ struct SongLift {
 									// "the loop's first four bars (bars 5-8)"
 	SongLift() : Found(false), Db(0.0) {}
 };
-const double LIFT_LEAST = 2.0;	// a lively stage's climax under this over its first A doesn't build
+// A lively stage's climax under this over its first A doesn't build: the later stages it's meant for lift 0.4-1.5 dB as
+// heard; the first stages, which the user liked, 2.6-4.5, one of them (08) 1.9 after its lively mix (2.1 before), where
+// 2.0 told it to build
+const double LIFT_LEAST = 1.5;
 
 std::string SectionBase(const std::string &Name);
 bool IsFreeSectionBase(const std::string &Base);
@@ -12933,6 +13315,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// The bass: of the channels that play it, the one heard longest (a triangle with a lone note every other bar beside a
 	// sawtooth line doubles that line's roots, it doesn't carry the bass)
 	const int MainBassChannel = MainBass(S, Melody, From, To, RowFramesOf(S));
+	// Voiced chords: channels that start their notes together (two-note plucks on two pulses, a pad's voices), the chords
+	// however quiet an arpeggio beside them (a lush shimmer was named the chords, the plucks another line)
+	const std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody, true);
+	std::vector<int> ChordVoices;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
 		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
@@ -12965,6 +13351,10 @@ std::string ReviewTool(Session &S, const Json &Args)
 				BassDoubles.push_back(c);	// on the bass's roots
 				continue;
 			}
+		}
+		if (std::find(Voiced.begin(), Voiced.end(), c) != Voiced.end()) {
+			ChordVoices.push_back(c);
+			continue;
 		}
 		int Arpeggios = 0;	// notes that sound chords (0xy, or arpeggio instruments)
 		for (size_t i = 0; i < Notes.size(); ++i)
@@ -13008,8 +13398,11 @@ std::string ReviewTool(Session &S, const Json &Args)
 		return Out;
 	};
 	std::string Parts = "Parts: melody on " + S.Channel(Melody).FullName();
-	if (!Chords.empty())
+	if (!ChordVoices.empty())
+		Parts += "; chords voiced on " + Names(ChordVoices) + (Chords.empty() ? std::string() : ", and as an arpeggio on " + Names(Chords));
+	else if (!Chords.empty())
 		Parts += "; chords on " + Names(Chords);
+	Chords.insert(Chords.end(), ChordVoices.begin(), ChordVoices.end());	// both are the harmony from here on
 	if (Bass >= 0)
 		Parts += "; bass on " + S.Channel(Bass).FullName() + (BassDoubles.empty() ? std::string() : " (its roots doubled on " +
 			Names(BassDoubles) + ")");
@@ -13556,14 +13949,26 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Numbers.push_back("as heard: " + (Most > NO_LOUDNESS ? "the melody " + GapText(Least, Most, true) + " the chords" :
 			std::string("no chords")) + (DrumsRel > NO_LOUDNESS ? ", the drums " + GapText(-DrumsRel, -DrumsRel, false) : std::string()));
 		const double Want = Calm ? 2.5 : 3.5, Top = 4.0, Bottom = Calm ? 1.0 : 2.0;
-		// (a lively stage's melody may sit further over its chords: the soundtrack's liked stages ran up to 6 over them)
-		if (Calm && Most > NO_LOUDNESS && Most > Top)
-			Tip(1.0, Format("The melody sits about %.1f dB over the chords as heard (a calm track wants 2-3, or it presses): mix with "
-				"style calm puts it at %.1f.", Most, Want));
+		// (a lively stage's melody may sit further over its chords: the soundtrack's liked stages ran up to 6 over them. A calm
+		// track's chords in layers: over all of them together, as the stems measure them, where that's nearer)
+		const double Over = Calm && Most > NO_LOUDNESS && B.ChordsRel > NO_LOUDNESS && B.Layers.size() > 1 ? std::min(Most, -B.ChordsRel) :
+			Most;
+		if (Calm && Most > NO_LOUDNESS && Over > Top)
+			Tip(1.0, Format("The melody sits about %.1f dB over the chords%s as heard (a calm track wants 2-3, or it presses): mix with "
+				"style calm puts it at %.1f.", Over, Over < Most - 0.05 ? " together" : "", Want));
 		else if (Least > NO_LOUDNESS && Least < Bottom)
 			Tip(1.0, Format("The chords cover the melody as heard (it sits %s them%s; %s): mix with style %s puts it at %.1f.",
 				GapText(Least, Least, true).c_str(), Lively && B.ChordParts > 1 ? " together" : "", Calm ? "a calm track wants 2-3" :
 				"a lively stage wants 3-4", Calm ? "calm" : "lively", Want));
+		// ...and part by part, as the lively mix keeps them (LIVELY_CHORDS_TOP, within the slack its volume steps leave):
+		// pads joining the chords at the climax cover the melody there however far under it the chords sit over the song
+		else if (Lively && B.ChordsTop > NO_LOUDNESS && -B.ChordsTop < LIVELY_CHORDS_TOP - BAND_SLACK) {
+			const std::string Where = RangeText(B.TopFirst, B.TopLast);
+			Tip(1.0, Format("The chords cover the melody in %s as heard (it sits %s them together there; a lively stage keeps them "
+				"%.0f dB under it in every part): mix with style lively brings down the chords that join there.",
+				(B.TopName.empty() ? Where : B.TopName + " (" + Where + ")").c_str(), GapText(-B.ChordsTop, -B.ChordsTop, true).c_str(),
+				LIVELY_CHORDS_TOP));
+		}
 		// A lively stage's band carries its tune: the soundtrack's liked stages had the melody about level with its bass (1.0
 		// dB under it) and the band together 3.3 dB louder than it; the later ones, 3.5 over the bass and level with the band
 		if (Lively) {
@@ -13954,8 +14359,16 @@ std::string MakeGrooveTool(Session &S, const Json &Args)
 	for (size_t i = 0; i < Parts.size(); ++i)
 		Summary += (i == 0 ? "" : i + 1 == Parts.size() ? " and " : ", ") + Parts[i];
 	std::sort(Changes.begin(), Changes.end(), [](const Change &a, const Change &b) { return a.Channel < b.Channel; });
-	const std::string What = std::string("a ") + M.Name + " groove: " + Summary + ", " + RangeText(From, To) + ", in " + KeyName(K);
-	std::string Text = Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What);
+	std::string What = std::string("a ") + M.Name + " groove: " + Summary + ", " + RangeText(From, To) + ", in " + KeyName(K);
+	// The groove's key becomes the track's (the piano roll's shading, the problems panel's and the tools' key), in the same
+	// change, as Start from a groove makes it: unless the track has one chosen, or notes in another key already. Found from
+	// the notes, G major's | G | F | C | G | was C major, and a melody grown on it after went by that
+	Key Heard;
+	const bool OwnKey = !S.Song.KeyChosen && (!FindKey(S, 0, S.Time.TotalRows(), Heard) || (Heard.Tonic == K.Tonic && Heard.Mode == K.Mode));
+	const KeyChoice Choice(K);
+	if (OwnKey && DirectChange)
+		What += " (now the track's key: set_key changes it)";
+	std::string Text = Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What, 0, OwnKey ? &Choice : 0);
 	Text += "\nChords: " + ProgressionText(Chords, Bars, K) + "\nAs degrees: " + ProgressionText(Chords, Bars, K, true);
 	const double Now = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
 	if (std::fabs(Now - M.Bpm) > 8)
@@ -20329,7 +20742,10 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 					if (ChordChannels.empty())
 						throw Problem("parts: no channel plays chords beside the melody there (arpeggio or lush instruments, or voiced chords); "
 							"name them with chords, or name the channels in parts.");
-					MixPart Part = GroupPart(ChordChannels, "chords");
+					std::vector<int> All = ChordChannels;	// every layer of them
+					All.insert(All.end(), Voices.begin(), Voices.end());
+					std::sort(All.begin(), All.end());
+					MixPart Part = GroupPart(All, "chords");
 					Part.Chords = true;
 					Parts.push_back(Part);
 					continue;
@@ -20359,12 +20775,25 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 			}
 		}
 		else {
-			if (!ChordChannels.empty()) {
+			if (!ChordChannels.empty() && !Voices.empty()) {
+				// The chords together (plucks voiced on two pulses and a quiet lush shimmer, a choir and lush chords), then
+				// each layer: the shimmer alone was taken for the chords, 9.6 dB under the melody where all of them played
+				// 1.5 over it
+				std::vector<int> All = ChordChannels;
+				All.insert(All.end(), Voices.begin(), Voices.end());
+				std::sort(All.begin(), All.end());
+				MixPart Part = GroupPart(All, "chords together");
+				Part.Chords = true;
+				Parts.push_back(Part);
+				Parts.push_back(GroupPart(ChordChannels, "an arpeggio of them"));
+				Parts.push_back(GroupPart(Voices, "chord voices"));
+			}
+			else if (!ChordChannels.empty()) {
 				MixPart Part = GroupPart(ChordChannels, "chords");
 				Part.Chords = true;
 				Parts.push_back(Part);
 			}
-			if (!Voices.empty())
+			else if (!Voices.empty())
 				Parts.push_back(GroupPart(Voices, "chord voices"));
 			for (int c = 0; c < S.ChannelCount(); ++c) {
 				if (c == Melody || std::find(ChordChannels.begin(), ChordChannels.end(), c) != ChordChannels.end() ||
@@ -24036,7 +24465,8 @@ void WhatNext::Parts()
 		if (m_Form[i].Named)
 			Names += (Names.empty() ? "" : ", ") + m_Form[i].Name;
 	const bool Unnamed = this->Unnamed();
-	if (!Milestone("sections", !Unnamed || !Wanted("sections"), "sections " + Names))
+	// ("sections" alone when none is named: skipped, or no part to name)
+	if (!Milestone("sections", !Unnamed || !Wanted("sections"), Names.empty() ? std::string() : "sections " + Names))
 		NameSections();
 	// The melody in every part of the body (a song with no part named yet: a melody at all)
 	int BodyBars = 0;

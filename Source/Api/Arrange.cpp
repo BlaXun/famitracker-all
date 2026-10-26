@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 
 namespace ftapi {
 
@@ -408,6 +409,10 @@ Room RoomFor(const ChordPartOptions &O, int Row, int End)
 			R.Bass = std::max(R.Bass, O.Below[i].Pitch);
 	if (Lowest < 1000)
 		R.Ceiling = Lowest - CHORD_ROOM;
+	else
+		for (size_t i = 0; i < O.Open.size(); ++i)
+			if (O.Open[i].Row <= Row && End <= O.Open[i].Row + O.Open[i].Rows)
+				R.Ceiling = 1000;	// bars the melody doesn't play in
 	if (R.Bass > -1000)
 		R.Floor = R.Bass + BASS_ROOM;
 	return R;
@@ -423,12 +428,12 @@ double RoomCost(const Room &R, int Bottom, int Top)
 }
 
 // The pitch of a chord's lowest note (PitchClass) whose notes, reaching Span above it, fit the room best, near Near and
-// in [Low, High] where they can
-int RoomyPitch(int PitchClass, int Span, int Near, int Low, int High, const Room &R)
+// in [Low, High] where they can; never under Least
+int RoomyPitch(int PitchClass, int Span, int Near, int Low, int High, const Room &R, int Least = 0)
 {
 	int Best = -1;
 	double BestCost = 1e18;
-	for (int p = std::max(0, Low - 36); p <= std::min(PITCHES - 1, High + 12); ++p) {
+	for (int p = std::max(std::max(0, Least), Low - 36); p <= std::min(PITCHES - 1, std::max(High, Least) + 12); ++p) {
 		if (Mod12(p - PitchClass) != 0)
 			continue;
 		const double Cost = 0.25 * std::abs(p - Near) + 0.5 * (std::max(0, Low - p) + std::max(0, p - High)) + RoomCost(R, p, p + Span);
@@ -754,12 +759,15 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 			if (s > 0 && Voiced[s - 1] && Segs[s - 1].pChord == pSeg->pChord)
 				Voicings[s] = Voicings[s - 1];
 			else if (Lush) {
-				// The arpeggio climbs from the root to the shape's top note: the whole of it in the room
+				// The arpeggio climbs from the root to the shape's top note: the whole of it in the room, the root no lower
+				// than Lowest (a rolling shape spans two octaves, and a room low under the melody put its roots at Bb0)
 				const std::vector<int> Shape = LushShape(pSeg->pChord->C, O.Pattern);
 				const int Span = Shape.empty() ? 0 : *std::max_element(Shape.begin(), Shape.end());
 				const int Near = HasPrevious ? Previous.Base : Middle;
-				Voicings[s].Base = Space.Set() ? RoomyPitch(pSeg->pChord->C.Root, Span, Near, Low, High, Space) :
+				Voicings[s].Base = Space.Set() ? RoomyPitch(pSeg->pChord->C.Root, Span, Near, Low, High, Space, O.Lowest) :
 					NearestPitch(pSeg->pChord->C.Root, Near, Low, High);
+				while (O.Lowest >= 0 && Voicings[s].Base < O.Lowest && Voicings[s].Base + 12 < PITCHES)
+					Voicings[s].Base += 12;
 			}
 			else
 				Voicings[s] = ArpeggioVoicing(pSeg->pChord->C, HasPrevious ? &Previous : 0, Middle, Low, High, O.RootInBass, Space.Floor,
@@ -795,8 +803,8 @@ std::vector<int> VoiceTones(const Chord &C, int Voices, bool RootInBass)
 		if (Tone >= 0 && std::find(Order.begin(), Order.end(), Tone) == Order.end())
 			Order.push_back(Tone);
 	};
-	if (!RootInBass && C.Tones.size() <= 3)
-		Add(0);		// a triad with no bass under it needs its root heard
+	if (!RootInBass)
+		Add(0);		// a chord with no bass under it needs its root heard
 	Add(Third);
 	Add(Seventh);
 	for (size_t i = 0; i < C.Tones.size(); ++i) {
@@ -854,12 +862,21 @@ std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> 
 		if (pPrevious == 0 || !(*pPrevious == pSeg->pChord->C)) {
 			const Chord &C = pSeg->pChord->C;
 			const int From = std::max(First, pSeg->pChord->Row), To = std::min(End, pSeg->pChord->Row + pSeg->pChord->Rows);
-			std::vector<int> Tones = VoiceTones(C, Voices, O.RootInBass);
+			// The bass holds the root where it sounds through most of the chord; where it doesn't (bars before it comes in,
+			// a heartbeat of short notes) the voices take the root, at the bottom
+			bool Rooted = O.RootInBass;
+			if (Rooted && !O.Below.empty()) {
+				int Covered = 0;
+				for (size_t i = 0; i < O.Below.size(); ++i)
+					Covered += std::max(0, std::min(To, O.Below[i].Row + O.Below[i].Rows) - std::max(From, O.Below[i].Row));
+				Rooted = Covered * 2 >= To - From;
+			}
+			std::vector<int> Tones = VoiceTones(C, Voices, Rooted);
 			if (!O.Above.empty()) {
 				// A tone a melody note held against it rubs a semitone from while the chord sounds (a maj7 under the tune's
 				// root) gives way to the chord's other tones; its third stays, which says what it is
 				std::vector<int> All, Clear, Rubbing;
-				const std::vector<int> Order = VoiceTones(C, static_cast<int>(C.Tones.size()) + 1, O.RootInBass);
+				const std::vector<int> Order = VoiceTones(C, static_cast<int>(C.Tones.size()) + 1, Rooted);
 				for (size_t i = 0; i < Order.size(); ++i)
 					if (std::find(All.begin(), All.end(), Order[i]) == All.end())
 						All.push_back(Order[i]);
@@ -905,8 +922,13 @@ std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> 
 					for (size_t v = 0; v < Perm.size(); ++v) {
 						const int PitchClass = Mod12(C.Root + Tones[static_cast<size_t>(Perm[v])]);
 						int Pitch;
-						if (Led)
+						if (Led) {
 							Pitch = NearestPitch(PitchClass, Previous[v], Lo - 2, Hi + 2);
+							// (over a chord no bass holds, a voice goes up an octave rather than cross the one under it, so the
+							// root can stay at the bottom: an Fmaj7's E over its F, not a semitone under it)
+							if (!Rooted && !Pitches.empty() && Pitch <= Pitches.back() && Pitch + 12 < PITCHES)
+								Pitch += 12;
+						}
 						else {
 							const int Start = Pitches.empty() ? Bottom : Pitches.back() + 1;
 							Pitch = Start + Mod12(PitchClass - Start);
@@ -925,6 +947,11 @@ std::vector<std::vector<PartNote> > VoicedChordParts(const std::vector<ChordAt> 
 						Pitches.push_back(Pitch);
 					}
 					Cost += 0.1 * (Pitches.back() - Pitches.front());	// close rather than spread
+					if (!Rooted && std::find(Tones.begin(), Tones.end(), 0) != Tones.end()) {
+						const size_t Lowest = static_cast<size_t>(std::min_element(Pitches.begin(), Pitches.end()) - Pitches.begin());
+						if (Tones[static_cast<size_t>(Perm[Lowest])] != 0)
+							Cost += 10.0;	// the root that no bass holds at the bottom (an Fmaj7 over its E rubs, a semitone under F)
+					}
 					if (Cost < BestCost) {
 						BestCost = Cost;
 						Best = Pitches;
@@ -1153,6 +1180,101 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 	return Line;
 }
 
+// Whether a bass note on [Row, Row + Rows) rubs: a semitone from one of the chord's notes, or a semitone under one even
+// where it's one itself (a ninth under the third, a major seventh under the root: the chords sound over the bass, as broken
+// chords and arpeggios play every note), or a semitone and octaves from a melody note sounding with it for half a beat or
+// its whole length (as check_song hears a clash)
+bool BassRubs(int Pitch, int Row, int Rows, const Chord &C, const BassOptions &O)
+{
+	if (ClashesWithChord(Pitch, C) || C.HasPitchClass(Mod12(Pitch + 1)))
+		return true;
+	const int Least = std::min(std::max(1, Rows), std::max(1, O.RowsPerBeat / 2));
+	for (size_t i = 0; i < O.Above.size(); ++i) {
+		const NoteInfo &M = O.Above[i];
+		const int Overlap = std::min(Row + Rows, M.Row + M.Rows) - std::max(Row, M.Row);
+		if (Overlap >= Least && std::abs(M.Pitch - Pitch) % 12 == 1)
+			return true;
+	}
+	return false;
+}
+
+// A walking line again where a note of it rubs (Bad(beat, pitch)): of the lines from Root whose other notes don't, each the
+// chord's, the key's or a chromatic step into the next, the one that walks smoothest into Target, keeping Old's notes where
+// it can. Lines of six notes or more change only their notes that rub, each to the nearest that doesn't, or the note before
+template <class Rubbing>
+std::vector<int> CleanWalk(const std::vector<int> &Old, int Target, const Chord &C, const Key &K, int Lowest, int Highest,
+	const Rubbing &Bad)
+{
+	bool Rubs = false;
+	for (size_t k = 1; k < Old.size(); ++k)
+		Rubs = Rubs || Bad(k, Old[k]);
+	if (!Rubs)
+		return Old;
+	const int Root = Old[0];
+	if (Old.size() > 5) {
+		std::vector<int> Out = Old;
+		for (size_t k = 1; k < Out.size(); ++k) {
+			if (!Bad(k, Out[k]))
+				continue;
+			int Best = Out[k - 1];
+			for (int d = 1; d <= 4 && Best == Out[k - 1]; ++d)
+				for (int s = -1; s <= 1; s += 2) {
+					const int p = Out[k] + s * d;
+					if (p >= Lowest && p <= Highest && !Bad(k, p) && (C.HasPitchClass(Mod12(p)) || InKey(p, K))) {
+						Best = p;
+						break;
+					}
+				}
+			Out[k] = Best;
+		}
+		return Out;
+	}
+	std::vector<std::vector<int> > Choices(Old.size());
+	for (size_t k = 1; k < Old.size(); ++k)
+		for (int p = std::max(Lowest, Root - 12); p <= std::min(Highest, Root + 12); ++p)
+			if (!Bad(k, p))
+				Choices[k].push_back(p);
+	std::vector<int> Line(Old.size(), Root), Best = Old;
+	double BestCost = 1e18;
+	// Each line, the cost of its notes: what they are, how they move and how the last goes into the target
+	std::function<void(size_t, double)> Walk = [&](size_t k, double Cost) {
+		if (Cost - 0.2 * static_cast<double>(Line.size() - k) >= BestCost)
+			return;	// (a note kept as it was takes off at most 0.2)
+		if (k == Line.size()) {
+			const int Into = std::abs(Target - Line.back());
+			Cost += Into == 1 || Into == 2 ? 0.0 : Into == 0 ? 1.5 : Into == 5 || Into == 7 ? 0.6 : Into <= 4 ? 0.8 :
+				1.5 + 0.2 * std::max(0, Into - 7);
+			for (size_t i = 1; i < Line.size(); ++i) {
+				// A chromatic note steps by a semitone into the next
+				const int Next = i + 1 < Line.size() ? Line[i + 1] : Target;
+				if (!C.HasPitchClass(Mod12(Line[i])) && !InKey(Line[i], K))
+					Cost += std::abs(Next - Line[i]) == 1 ? 1.0 : 2.5;
+			}
+			if (Cost < BestCost) {
+				BestCost = Cost;
+				Best = Line;
+			}
+			return;
+		}
+		for (size_t c = 0; c < Choices[k].size(); ++c) {
+			const int p = Choices[k][c];
+			const int Leap = std::abs(p - Line[k - 1]);
+			double Step = C.HasPitchClass(Mod12(p)) ? 0.0 : InKey(p, K) ? 0.6 : 0.0;
+			Step += Leap == 0 ? 1.5 : Leap <= 2 ? 0.0 : Leap <= 4 ? 0.5 : Leap <= 7 ? 1.0 : 2.0 + 0.2 * (Leap - 7);
+			if (k >= 2 && Line[k - 1] != Line[k - 2] && p != Line[k - 1] && (p > Line[k - 1]) != (Line[k - 1] > Line[k - 2]))
+				Step += 0.3;	// turning back
+			if (p == Old[k])
+				Step -= 0.2;	// the line as it was, where that doesn't rub
+			if (p == Target)
+				Step += 1.0;	// not there before its time
+			Line[k] = p;
+			Walk(k + 1, Cost + Step);
+		}
+	};
+	Walk(1, 0.0);
+	return Best;
+}
+
 }	// namespace
 
 std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const BassOptions &O)
@@ -1216,7 +1338,14 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 			int Target = Root;
 			if (pNext != 0)
 				Target = BassPitch(pNext->Bass, Root, Low, High);
-			const std::vector<int> Line = WalkLine(Root, Target, Beats, C, O.K, Low, High);
+			// Its passing notes off the chord's notes and the melody's, a semitone away (where the way the line takes into
+			// the target leaves no other, the notes before it change)
+			auto Bad = [&](size_t k, int Pitch) {
+				const int Row = S.Row + static_cast<int>(k) * R;
+				return Row < S.End && BassRubs(Pitch, Row, std::min(R, S.End - Row), C, O);
+			};
+			const std::vector<int> Line = CleanWalk(WalkLine(Root, Target, Beats, C, O.K, Low, High), Target, C, O.K,
+				std::max(0, Low - 5), High + 12, Bad);
 			for (size_t k = 0; k < Line.size(); ++k) {
 				const int Row = S.Row + static_cast<int>(k) * R;
 				const int To = k + 1 < Line.size() ? Row + R : S.End;
@@ -1238,8 +1367,18 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 				if (k == 2 && pNext != 0 && pNext->Bass != C.Bass && To - Row >= R) {
 					const int Target = BassPitch(pNext->Bass, Root, Low, High);
 					Add(Row, Half, Pitch);
-					Add(Row + Half, To - Row - Half, Target > Pitch ? Target - 1 : Target + 1);
-					Last = Target > Pitch ? Target - 1 : Target + 1;
+					// The approach: a semitone into the target, else a step of the scale or a whole tone into it, else the
+					// fifth held on; none a semitone from the chord's notes or the melody's sounding with it
+					const int Toward = Target > Pitch ? 1 : -1;
+					const int Ways[4] = { Target - Toward, ScaleStep(Target, -Toward, O.K), Target - 2 * Toward, Pitch };
+					int Approach = Pitch;
+					for (int w = 0; w < 4; ++w)
+						if (w == 3 || !BassRubs(Ways[w], Row + Half, To - Row - Half, C, O)) {
+							Approach = Ways[w];
+							break;
+						}
+					Add(Row + Half, To - Row - Half, Approach);
+					Last = Approach;
 					continue;
 				}
 				Add(Row, To - Row, Pitch);
@@ -1561,23 +1700,33 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 	int Previous = -1;
 	// The interval's own note for a melody note, in the key: its scale's steps, and for a note outside the scale (a
 	// chromatic passing note, a phrygian second's) the size of the interval that lands in the key (a sixth under D#
-	// in D minor is G, not the F a scale's steps would give, a seventh)
-	auto Plain = [&](int m) {
-		if (O.Interval != HARMONY_OCTAVE_BELOW && !InKey(m, O.K)) {
+	// in D minor is G, not the F a scale's steps would give, a seventh). Over a chord with notes from outside the key
+	// (pScale), the scale it sounds in instead (ChordScale): under a borrowed Ebadd9 in G major G aeolian's notes, not a
+	// G major third or the Db of an Eb7
+	auto Plain = [&](int m, const std::vector<int> *pScale) {
+		auto Fits = [&](int Pitch) { return pScale != 0 ? InChordScale(Pitch, *pScale) : InKey(Pitch, O.K); };
+		auto Steps = [&](int Pitch, int Degrees) {
+			if (pScale == 0)
+				return ScaleDegrees(Pitch, Degrees, O.K);
+			for (int d = 0; d < std::abs(Degrees); ++d)
+				Pitch = ChordScaleStep(Pitch, Degrees > 0 ? 1 : -1, *pScale);
+			return Pitch;
+		};
+		if (O.Interval != HARMONY_OCTAVE_BELOW && !Fits(m)) {
 			static const int THIRDS[] = { -3, -4 }, SIXTHS[] = { -8, -9 }, ABOVE[] = { 3, 4 }, FIFTHS[] = { -7, -8, -6 };
 			const int *pSizes = O.Interval == HARMONY_SIXTH_BELOW ? SIXTHS : O.Interval == HARMONY_THIRD_ABOVE ? ABOVE :
 				O.Interval == HARMONY_FIFTH_BELOW ? FIFTHS : THIRDS;
 			const int Count = O.Interval == HARMONY_FIFTH_BELOW ? 3 : 2;
 			for (int k = 0; k < Count; ++k)
-				if (InKey(m + pSizes[k], O.K))
+				if (Fits(m + pSizes[k]))
 					return m + pSizes[k];
 		}
 		switch (O.Interval) {
-		case HARMONY_SIXTH_BELOW: return ScaleDegrees(m, 2, O.K) - 12;
-		case HARMONY_THIRD_ABOVE: return ScaleDegrees(m, 2, O.K);
-		case HARMONY_FIFTH_BELOW: return ScaleDegrees(m, -4, O.K);
+		case HARMONY_SIXTH_BELOW: return Steps(m, 2) - 12;
+		case HARMONY_THIRD_ABOVE: return Steps(m, 2);
+		case HARMONY_FIFTH_BELOW: return Steps(m, -4);
 		case HARMONY_OCTAVE_BELOW: return m - 12;
-		default: return ScaleDegrees(m, -2, O.K);
+		default: return Steps(m, -2);
 		}
 	};
 	for (size_t i = 0; i < Melody.size(); ++i) {
@@ -1589,10 +1738,15 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 		for (size_t e = 0; e < N.Effects.size(); ++e)
 			if (N.Effects[e].first == 0)
 				p += SlideSemitones(N.Effects[e].second.first, N.Effects[e].second.second);
-		int h = Plain(p);
+		const ChordAt *pChord = ChordAtRow(Chords, N.Row);
+		std::vector<int> ChordNotes;
+		const bool Borrowed = pChord != 0 && OutsideKey(pChord->C, O.K);
+		if (Borrowed)
+			ChordNotes = ChordScale(O.K, pChord->C);
+		const std::vector<int> *pScale = Borrowed ? &ChordNotes : 0;
+		int h = Plain(p, pScale);
 		// On the chord's notes where the melody holds or lands on a beat: the
 		// interval's own sizes first, then the sweet ones (thirds and sixths)
-		const ChordAt *pChord = ChordAtRow(Chords, N.Row);
 		const bool Matters = N.Rows >= R || N.Row % R == 0;
 		if (O.Interval != HARMONY_OCTAVE_BELOW && pChord != 0 && Matters && !pChord->C.HasPitchClass(Mod12(h))) {
 			static const int THIRDS[] = { 3, 4, 8, 9 }, SIXTHS[] = { 8, 9, 3, 4 }, FIFTHS[] = { 7, 5, 8, 9 };
@@ -1612,17 +1766,23 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 			// chord's version of the degree (C# over A major, not the scale's C),
 			// a third or sixth from the melody where it can be. Over a chord of
 			// the key's own notes the line stays in the key (under a Dsus4 in D
-			// major, G rather than F)
-			const std::vector<int> Classes = pChord->C.PitchClasses();
-			bool Diatonic = true;
-			for (size_t k = 0; k < Classes.size(); ++k)
-				Diatonic = Diatonic && InKey(Classes[k], O.K);
+			// major, G rather than F), over one from outside it in the scale the
+			// chord sounds in, or on a sweet color of it (its sixth or ninth, a
+			// minor chord's eleventh): no Eb7's Db under an Ebadd9 in G major, but
+			// the F# of A6 under an A major chord in A minor
+			const bool Diatonic = !Borrowed;
+			auto Color = [&](int Pitch) {
+				const int Interval = Mod12(Pitch - pChord->C.Root), Third = pChord->C.Third();
+				return pChord->C.Has(Interval) || Interval == 2 || (Third == 4 && Interval == 9) || (Third == 3 && Interval == 5);
+			};
 			int Best = h, BestScore = -1;
 			for (int Step = -1; Step <= 1; Step += 2) {
 				const int Candidate = h + Step;
 				if (ClashesWithChord(Candidate, pChord->C) || Rubs(Candidate, p))
 					continue;
 				if (Diatonic && !InKey(Candidate, O.K) && !pChord->C.HasPitchClass(Mod12(Candidate)))
+					continue;
+				if (!Diatonic && !InChordScale(Candidate, ChordNotes) && !Color(Candidate))
 					continue;
 				const int Gap = Mod12(p - Candidate);
 				const int Score = (Gap == 3 || Gap == 4 || Gap == 8 || Gap == 9 ? 2 : 0) + (pChord->C.HasPitchClass(Mod12(Candidate)) ? 1 : 0);
@@ -1668,7 +1828,7 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 					continue;
 				if (N.Rows - N.Effects[e].first > std::max(1, R / 2)) {
 					// The voice moves as far in the key as the melody's own note does
-					const int Semitones = Plain(Melodic + Slide) - Plain(Melodic);
+					const int Semitones = Plain(Melodic + Slide, pScale) - Plain(Melodic, pScale);
 					Melodic += Slide;
 					if (Semitones == 0)
 						continue;
@@ -1690,7 +1850,7 @@ std::vector<PartNote> HarmonyPart(const std::vector<NoteInfo> &Melody, const std
 
 // Counter-melody
 
-CounterOptions::CounterOptions() : Above(false), RowsPerBeat(4), K(), Low(36), High(55), Volume(10), Rests(RESTS_FILL)
+CounterOptions::CounterOptions() : Above(false), RowsPerBeat(4), K(), Low(36), High(55), Volume(10), Rests(RESTS_FILL), Slow(false)
 {
 }
 
@@ -1965,12 +2125,12 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 	const int R = std::max(1, O.RowsPerBeat);
 	const int First = Bars.front().Row, End = Bars.back().Row + Bars.back().Rows;
 
-	// Windows of half a bar (a whole one when it's short)
+	// Windows of half a bar (a whole one when it's short, or for a slow line)
 	struct Window { int From, To; const BarSpan *pBar; };
 	std::vector<Window> Windows;
 	for (size_t b = 0; b < Bars.size(); ++b) {
 		const int Beats = Bars[b].Rows / R;
-		if (Beats >= 4) {
+		if (Beats >= 4 && !O.Slow) {
 			const int Middle = Bars[b].Row + Beats / 2 * R;
 			const Window A = { Bars[b].Row, Middle, &Bars[b] }, Z = { Middle, Bars[b].Row + Bars[b].Rows, &Bars[b] };
 			Windows.push_back(A);
@@ -2039,8 +2199,9 @@ std::vector<PartNote> CounterMelody(const std::vector<NoteInfo> &Melody, const s
 				Path.push_back(p);
 		}
 		// As many notes as there are beats (two while the melody moves some), the
-		// last ones moving, the first held: a pickup into the next chord
-		const size_t Most = static_cast<size_t>(Calm ? Beats : 2);
+		// last ones moving, the first held: a pickup into the next chord. A slow
+		// line holds its note
+		const size_t Most = static_cast<size_t>(O.Slow ? 1 : Calm ? Beats : 2);
 		if (Path.size() > Most) {
 			std::vector<int> Fewer(1, Target);
 			for (size_t k = 1; k < Most; ++k)
