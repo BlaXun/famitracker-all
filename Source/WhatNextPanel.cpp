@@ -197,6 +197,7 @@ struct CWhatNextPanelWnd::Impl {
 	std::map<std::pair<unsigned int, int>, std::vector<std::string> > Skips;	// ...and the steps skipped
 	CBarsPlayer Player;				// the bars a melody was grown in
 	CString PlayingWhat;
+	bool Doing;						// the panel's own call runs: the changes it makes are what Last says
 
 	// Laid out by Arrange
 	CRect Header, Body, MenuRect, KindRect, ProgressRect;
@@ -212,8 +213,8 @@ struct CWhatNextPanelWnd::Impl {
 	CFont Font, BoldFont, BigFont, SmallFont;
 
 	Impl(CWhatNextPanelWnd *p) : pWnd(p), pTools(NULL), Have(false), Stale(false), Waiting(false), Open(false), Focused(false),
-		Signature(0), AskedSong(0), AskedTrack(-1), AskTime(0), Narrow(false), Scroll(0), Content(0), Hover(-1), HoverKind(false),
-		HoverMenu(false)
+		Signature(0), AskedSong(0), AskedTrack(-1), AskTime(0), Doing(false), Narrow(false), Scroll(0), Content(0), Hover(-1),
+		HoverKind(false), HoverMenu(false)
 	{
 	}
 
@@ -492,6 +493,8 @@ struct CWhatNextPanelWnd::Impl {
 		CString Text;
 		if (Current() && Answer.Total > 0)
 			Text.Format(_T("%d of %d done"), Answer.DoneCount, Answer.Total);
+		if (Current() && !Answer.Done && Answer.Step.Stage < 0 && !Answer.Step.AskUser)
+			Text = _T("A fix first. ") + Text;
 		return Text;
 	}
 
@@ -510,7 +513,7 @@ struct CWhatNextPanelWnd::Impl {
 		// The header's right: the menu, the kind, the progress
 		MenuRect = CRect(Client.right - Margin - SX(28), Client.top + SY(3), Client.right - Margin, Client.top + SY(HEADER_HEIGHT) - SY(4));
 		const CString Kind = KindLabel();
-		const int KindWidth = dc.GetTextExtent(Kind).cx + SX(24);
+		const int KindWidth = dc.GetTextExtent(Kind).cx + SX(34);
 		KindRect = CRect(MenuRect.left - SX(4) - KindWidth, MenuRect.top, MenuRect.left - SX(4), MenuRect.bottom);
 		const CString Progress = ProgressLabel();
 		const int ProgressWidth = Progress.IsEmpty() ? 0 : dc.GetTextExtent(Progress).cx;
@@ -542,8 +545,9 @@ struct CWhatNextPanelWnd::Impl {
 		}
 		Body = CRect(Client.left, Header.bottom, Client.right, std::max(static_cast<int>(Header.bottom), static_cast<int>(Client.bottom)));
 
-		// The body, as if nothing were scrolled
-		const int Width = std::max(SX(60), Body.Width() - 2 * Margin);
+		// The body, as if nothing were scrolled (the text wraps a little short of the room: fonts measured and drawn apart
+		// can draw past it)
+		const int Width = std::max(SX(60), Body.Width() - 2 * Margin - SX(4));
 		int Top = SY(5);
 		WhatRect.SetRectEmpty();
 		if (!WhatText.IsEmpty()) {
@@ -688,9 +692,11 @@ struct CWhatNextPanelWnd::Impl {
 		const long long Before = pMain->GetActionSerial();
 		const int Instruments = static_cast<int>(pDoc->GetInstrumentCount());
 		pWnd->BeginWaitCursor();
+		Doing = true;
 		pMain->BeginActionGroup();
 		const bool Done = pTools->RunTool(Tool.c_str(), Arguments, Reply);
 		pMain->EndActionGroup();
+		Doing = false;
 		pWnd->EndWaitCursor();
 		Undoable = pMain->GetActionSerial() != Before;
 		Added = std::max(0, static_cast<int>(pDoc->GetInstrumentCount()) - Instruments);
@@ -714,13 +720,18 @@ struct CWhatNextPanelWnd::Impl {
 		AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
 	}
 
+	// What a click did, and what Ctrl+Z does about it: adding an instrument isn't undone (as anywhere in FamiTracker)
 	CString DoneWords(const CString &What, bool Undoable, int Added) const
 	{
 		CString Text = _T("Done: ") + What + _T(".");
-		if (Undoable)
+		const CString Stays = Added > 1 ? _T("the new instruments stay (Instrument > Remove instrument takes them out)") :
+			_T("the new instrument stays (Instrument > Remove instrument takes it out)");
+		if (Undoable && Added > 0)
+			Text += _T(" Ctrl+Z undoes it; ") + Stays + _T(".");
+		else if (Undoable)
 			Text += _T(" Ctrl+Z undoes it.");
-		if (Added > 0)
-			Text += Added == 1 ? _T(" The new instrument stays in the list when you undo.") : _T(" The new instruments stay in the list when you undo.");
+		else if (Added > 0)
+			Text += _T(" Ctrl+Z doesn't take an instrument out: ") + Stays + _T(".");
 		return Text;
 	}
 
@@ -813,7 +824,7 @@ struct CWhatNextPanelWnd::Impl {
 		}
 		CString Words;
 		Words.Format(_T("Version %d grown in %s"), Pick, static_cast<LPCTSTR>(Bars(N.FromBar, N.ToBar)));
-		Last = DoneWords(Words, Undoable, Added) + _T(" Grow one again for another version.");
+		Last = DoneWords(Words, Undoable, Added) + (Undoable ? _T(" (Then Grow one again picks another version.)") : _T(""));
 		Stale = true;
 		// Heard at once: its bars, in the mix
 		CFamiTrackerDoc *pDoc = Doc();
@@ -840,6 +851,7 @@ struct CWhatNextPanelWnd::Impl {
 	{
 		if (!IsMelodyStep())
 			return;
+		const ftapi::NextStepInfo N = Answer.Step;	// (the panel may ask again while the menu is open)
 		CMenu Popup;
 		if (!Popup.CreatePopupMenu())
 			return;
@@ -850,7 +862,6 @@ struct CWhatNextPanelWnd::Impl {
 		CMainFrame *pMain = Main();
 		if (pMain == NULL)
 			return;
-		const ftapi::NextStepInfo &N = Answer.Step;
 		if (Chosen == MENU_MIC) {
 			MoveCursor(N.FromBar, N.Channel);
 			Last.Format(_T("Record the melody for %s: the take goes in at the cursor, on the melody's channel."),
@@ -1047,7 +1058,7 @@ struct CWhatNextPanelWnd::Impl {
 		dc.SetTextColor(Ink);
 		CRect Inside(Rect);
 		if (Arrow)
-			Inside.right -= SX(12);
+			Inside.right -= SX(14);
 		dc.DrawText(Text, &Inside, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		if (Arrow)
 			DownArrow(dc, Rect.right - SX(16), Rect.CenterPoint().y - 1, Ink);
@@ -1066,7 +1077,7 @@ struct CWhatNextPanelWnd::Impl {
 		dc.SetTextColor(TEXT_DARK);
 		CRect Title(Header.left + SX(MARGIN), Header.top, Header.right, Header.top + SY(HEADER_HEIGHT));
 		dc.DrawText(_T("What next"), &Title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-		const int Now = Current() ? Answer.CurrentStage() : -1;
+		const int Now = Current() && !Answer.Done ? Answer.Step.Stage : -1;	// (a fix comes before the stages: none lit)
 		dc.SelectObject(&SmallFont);
 		for (int s = 0; s < ftapi::NEXT_STAGES; ++s) {
 			const CRect &R = StageRects[s];
@@ -1100,13 +1111,13 @@ struct CWhatNextPanelWnd::Impl {
 			dc.SelectObject(&BigFont);
 			dc.SetTextColor(Dim ? TEXT_DIM : TEXT_DARK);
 			CRect R = Shown(WhatRect);
-			dc.DrawText(WhatText, &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+			dc.DrawText(WhatText, &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX | DT_NOCLIP);
 		}
 		if (!WhyRect.IsRectEmpty()) {
 			dc.SelectObject(&Font);
 			dc.SetTextColor(Dim || !Current() ? TEXT_DIM : TEXT_DARK);
 			CRect R = Shown(WhyRect);
-			dc.DrawText(WhyText, &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+			dc.DrawText(WhyText, &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX | DT_NOCLIP);
 		}
 		for (size_t i = 0; i < Buttons.size(); ++i)
 			DrawButton(dc, Shown(Buttons[i].Rect), Buttons[i].Text, Hover == static_cast<int>(i), Buttons[i].Primary, Buttons[i].Menu);
@@ -1114,7 +1125,7 @@ struct CWhatNextPanelWnd::Impl {
 			dc.SelectObject(&SmallFont);
 			dc.SetTextColor(TEXT_DIM);
 			CRect R = Shown(LastRect);
-			dc.DrawText(LastText(), &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+			dc.DrawText(LastText(), &R, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX | DT_NOCLIP);
 		}
 		if (Focused && !Buttons.empty()) {
 			CRect R = Shown(Buttons[0].Rect);
@@ -1188,6 +1199,8 @@ void CWhatNextPanelWnd::SongChanged()
 {
 	if (!m_pImpl->Open || GetSafeHwnd() == NULL)
 		return;
+	if (!m_pImpl->Doing)
+		m_pImpl->Last.Empty();	// changed otherwise (Ctrl+Z, an edit, Claude Code): what the last click did is past
 	if (m_pImpl->Current() && !m_pImpl->Stale) {
 		m_pImpl->Stale = true;	// the step may not be the next any more: its buttons wait for the next answer
 		m_pImpl->Changed();
