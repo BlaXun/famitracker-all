@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: a steady beat
+title: A steady beat
+about: Four notes, one on each beat line: that's one bar.
+
+step
+show: piano-roll
+text: Music moves to a steady [[beat]], the pulse you tap your foot to. In the piano roll, the thin lines going up and down are the beats.
+
+  Click a note on the very first line, where the bar starts.
+wait: notes 1
+
+step
+show: piano-roll
+play: bar 1
+check: steady-beat
+text: Now click a note on each of the next three thin lines, at any height. Four beats like these make one [[bar]].
+
+  Press Play bar 1 to hear your steady beat, then press Check.
+hint: A click puts the note's start on the nearest line to its left, so click just to the right of each line. The notes can be on one lane or on several.
+answer: Pulse 1, bar 1, Lead: C4 - C4 - C4 - C4 -

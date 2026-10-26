@@ -1,0 +1,21 @@
+; Help > Exercises, First steps: a different sound
+title: A different sound
+about: The same notes with another instrument from the Sound browser.
+
+step
+show: menu Instrument
+play: bar 1
+text: Every note plays with an [[instrument]], the [[sound]] it makes. These notes play one called Lead. Let's give them another.
+
+  Open Instrument > Sound browser. Click sounds to hear them. When you like one, press Add to the song, then Close.
+wait: command instrument-library
+
+step
+show: piano-roll
+play: bar 1
+check: new-sound
+text: Now give your notes the new sound. Click Select at the top of the piano roll and drag a box around the four notes. Then click the Instrument button at the top, point at Give the selected notes, and click your new sound.
+
+  Press Play bar 1 to hear the same notes with another sound, then press Check.
+hint: The sound you added is the last one in the list. Any sound but Lead will do, even Pluck, which the song has already.
+answer: Pulse 1, bar 1, Pluck: C4 - E4 - G4 - E4 -

@@ -27715,11 +27715,16 @@ std::string CheckExerciseTool(Session &S, const Json &Args)
 	else if (FindExercise(Asked) != 0)
 		Checks = FindExercise(Asked)->Checks;
 	if (Checks.empty()) {
-		std::string Text = Asked.empty() ? "The exercises (Help > Exercises), in order: " : "exercise: \"" + Asked + "\" isn't one. "
-			"The exercises, in order: ";
+		std::string Text = Asked.empty() ? "The exercises (Help > Exercises), in order, by group." : "exercise: \"" + Asked + "\" "
+			"isn't one. The exercises, in order, by group.";
 		const std::vector<ExerciseInfo> &List = Exercises();
 		for (size_t i = 0; i < List.size(); ++i) {
-			Text += Format("%s%s (%s", i == 0 ? "" : "; ", List[i].Id, List[i].Title);
+			// Each group's title before its first exercise, and a full stop after its last one
+			const bool Starts = i == 0 || List[i - 1].Group != List[i].Group;
+			if (Starts && i > 0)
+				Text += ".";
+			Text += Starts ? Format(" %s: ", ExerciseGroups()[static_cast<size_t>(List[i].Group)].Title) : std::string("; ");
+			Text += Format("%s (%s", List[i].Id, List[i].Title);
 			if (List[i].Checks.size() > 1 || List[i].Checks.front() != List[i].Id) {
 				Text += ", checks";
 				for (size_t c = 0; c < List[i].Checks.size(); ++c)
@@ -29414,14 +29419,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("check_exercise", "Check an exercise",
-		"Checks one of FamiTracker's exercises for newcomers to music (Help > Exercises: short tasks from ending a tune on its "
-		"home note to a first small song, each with a starter song) on the selected track, as the exercise's Check button "
-		"does: what's right already, the one thing to change next in plain words, the bars that show it, and once it passes, "
-		"what it taught and the exercise after it. Use it when you teach the user with an exercise. Without an exercise, the "
-		"list.",
+		"Checks one of FamiTracker's exercises for newcomers to music (Help > Exercises: First steps, a minute or two each for "
+		"someone who has never made music, from a first note in the piano roll to a tiny tune; then Next steps, from ending a "
+		"tune on its home note to a first small song; each with a starter song) on the selected track, as the exercise's Check "
+		"button does: what's right already, the one thing to change next in plain words, the bars that show it, and once it "
+		"passes, what it taught and the exercise after it. Use it when you teach the user with an exercise. Without an "
+		"exercise, the list.",
 		Schema()
-			.Add("exercise", Prop("string", "The exercise (home-note, four-bars, strong-notes, phrases, bass, beat, minor, hook, "
-				"song-shape, first-song) or one of its checks (the bass's: bass-roots, then bass-two). Leave it out for the list."))
+			.Add("exercise", Prop("string", "The exercise (First steps: first-note, high-low, long-short, steady-beat, loud-soft, "
+				"stairs, rhythm, copy-repeat, new-sound, two-parts, tiny-tune; Next steps: home-note, four-bars, strong-notes, "
+				"phrases, bass, beat, minor, hook, song-shape, first-song) or one of its checks (the bass's: bass-roots, then "
+				"bass-two). Leave it out for the list."))
 			.Add("format", EnumProp("text (the default) or json (the verdict as data: right, next, learned, play, next_exercise; "
 				"terms linked to the glossary as [[words|id]]).", std::vector<std::string>{ "text", "json" })),
 		true, false, true);

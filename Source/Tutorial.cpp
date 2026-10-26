@@ -177,11 +177,11 @@ struct tutorial_entry_t {
 	CString Problem;			// why it can't be read
 };
 
-bool BuiltInText(UINT Id, std::string &Text)
+bool BuiltInText(LPCTSTR Resource, std::string &Text)
 {
 	// In FamiTracker.exe itself, whatever language.dll holds
 	HINSTANCE hInstance = AfxGetInstanceHandle();
-	HRSRC hResource = ::FindResource(hInstance, MAKEINTRESOURCE(Id), RT_RCDATA);
+	HRSRC hResource = ::FindResource(hInstance, Resource, RT_RCDATA);
 	if (hResource == NULL)
 		return false;
 	HGLOBAL hData = ::LoadResource(hInstance, hResource);
@@ -190,6 +190,11 @@ bool BuiltInText(UINT Id, std::string &Text)
 		return false;
 	Text.assign(static_cast<const char*>(pData), ::SizeofResource(hInstance, hResource));
 	return true;
+}
+
+bool BuiltInText(UINT Id, std::string &Text)
+{
+	return BuiltInText(MAKEINTRESOURCE(Id), Text);
 }
 
 CString TutorialFolder()
@@ -467,6 +472,7 @@ public:
 	bool Create();
 	void Command(UINT nID);
 	void Stop();
+	bool RunsExercise() const { return !m_sExercise.empty(); }
 
 protected:
 	afx_msg void OnPaint();
@@ -1951,15 +1957,15 @@ void ShowTutorials(CMainFrame *pMainFrame)
 	StartTutorial(pMainFrame, List[static_cast<size_t>(Dialog.Chosen())].Tutorial, false);
 }
 
-bool ReadBuiltInText(UINT Id, std::string &Text)
+bool ReadBuiltInText(LPCTSTR Resource, std::string &Text)
 {
-	return BuiltInText(Id, Text);
+	return BuiltInText(Resource, Text);
 }
 
-bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT SongId, LPCTSTR Title)
+bool OpenBuiltInSong(CMainFrame *pMainFrame, LPCTSTR SongResource, LPCTSTR Title)
 {
 	std::string Song;
-	if (!BuiltInText(SongId, Song)) {
+	if (!BuiltInText(SongResource, Song)) {
 		ASSERT(FALSE);
 		return false;
 	}
@@ -2009,7 +2015,7 @@ void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
 		ASSERT(FALSE);
 		return;
 	}
-	if (OpenBuiltInSong(pMainFrame, pExample->Song, pExample->Title))
+	if (OpenBuiltInSong(pMainFrame, MAKEINTRESOURCE(pExample->Song), pExample->Title))
 		StartTutorial(pMainFrame, Tutorial, true);
 }
 
@@ -2027,4 +2033,9 @@ void TutorialCommand(UINT nID)
 bool TutorialRunning()
 {
 	return g_pTutorial != NULL;
+}
+
+bool ExerciseRunning()
+{
+	return g_pTutorial != NULL && g_pTutorial->RunsExercise();
 }

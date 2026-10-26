@@ -60,6 +60,7 @@
 #include "PianoRollChords.h"
 #include "GlossaryTips.h"
 #include "SongShapeDlg.h"
+#include "Tutorial.h"
 
 namespace {
 
@@ -176,16 +177,17 @@ struct RollNote {
 	int Written;		// the pitch in the cell (a Qxy or Rxy slide starts there)
 	int Instrument;		// -1 when none was set yet
 	int Pan;			// 0x00 left, 0x80 the middle, 0xFF right (the 8xx effect: this FamiTracker's stereo)
+	int Volume;			// in effect, 0-15
 	bool Released;		// ends on a release (===)
 	std::vector<CChannelNotes::EffectSpan> Effects;	// what works while it sounds
 };
 
-// Effects the Effects menu puts on notes
-enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR, FX_PAN };
-enum effect_group_t { GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, GROUP_PAN, EFFECT_GROUPS,
-	GROUP_NONE = EFFECT_GROUPS };
+// Effects the Effects menu puts on notes, and the notes' volume (the volume column), which it sets too
+enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR, FX_PAN, FX_VOLUME };
+enum effect_group_t { GROUP_VOLUME, GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, GROUP_PAN,
+	EFFECT_GROUPS, GROUP_NONE = EFFECT_GROUPS };
 const TCHAR *const GROUP_NAMES[EFFECT_GROUPS] = {
-	_T("Vibrato"), _T("Tremolo (the volume wobbles)"), _T("Chord (arpeggio)"), _T("Slide into the note"), _T("Glide from the note before"),
+	_T("Volume"), _T("Vibrato"), _T("Tremolo (the volume wobbles)"), _T("Chord (arpeggio)"), _T("Slide into the note"), _T("Glide from the note before"),
 	_T("Bend at the end"), _T("Fade out"), _T("Pan (stereo)")
 };
 struct EffectChoice {
@@ -197,6 +199,11 @@ struct EffectChoice {
 	const TCHAR *Name;
 };
 const EffectChoice EFFECT_CHOICES[] = {
+	{ GROUP_VOLUME, FX_VOLUME, 0, 15, 0, _T("Loudest (15)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 12, 0, _T("Loud (12)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 9, 0, _T("Medium (9)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 6, 0, _T("Soft (6)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 3, 0, _T("Very soft (3)") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x52, 0, _T("Gentle") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x54, 0, _T("Medium") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x67, 0, _T("Strong") },
@@ -498,6 +505,7 @@ std::vector<RollNote> RollNotes(const CChannelNotes &Channel, int Rows)
 		Shown.Written = Note.Written;
 		Shown.Instrument = Note.Instrument;
 		Shown.Pan = Note.Pan;
+		Shown.Volume = Note.Volume;
 		Shown.Released = Note.Released;
 		Channel.GetEffects(i, Shown.Effects);
 		Out.push_back(Shown);
@@ -951,7 +959,9 @@ struct CPianoRollWnd::Impl {
 	void LayOutGrooveHint()
 	{
 		GrooveHint.SetRectEmpty();
-		if (!SongEmpty() || Drag != DRAG_NONE || PlacingClip >= 0 || Grid.Width() < SX(160) || pWnd->GetSafeHwnd() == NULL)
+		// (not while an exercise's note is open: its empty starter asks for a first note right there)
+		if (!SongEmpty() || Drag != DRAG_NONE || PlacingClip >= 0 || Grid.Width() < SX(160) || pWnd->GetSafeHwnd() == NULL ||
+			ExerciseRunning())
 			return;
 		CClientDC dc(pWnd);
 		CFont *pOldFont = static_cast<CFont*>(dc.SelectStockObject(DEFAULT_GUI_FONT));
@@ -1706,6 +1716,9 @@ struct CPianoRollWnd::Impl {
 			return Notes_.ClearEffects(&Selection[0], Count);
 		case FX_PAN:
 			return Notes_.SetPan(&Selection[0], Count, static_cast<unsigned char>(Choice.Value));
+		case FX_VOLUME:
+			Notes_.SetVolume(&Selection[0], Count, Choice.Value);
+			return true;
 		}
 		return true;
 	}
@@ -1721,10 +1734,17 @@ struct CPianoRollWnd::Impl {
 		if (IsDPCM(Channel))
 			return false;
 		if (IsNoise(Channel))
-			return Group == GROUP_TREMOLO || Group == GROUP_FADE || Group == GROUP_NONE;
+			return Group == GROUP_VOLUME || Group == GROUP_TREMOLO || Group == GROUP_FADE || Group == GROUP_NONE;
 		if (ChanIDs[static_cast<size_t>(Channel)] == CHANID_TRIANGLE)
-			return Group != GROUP_TREMOLO && Group != GROUP_FADE;
+			return Group != GROUP_VOLUME && Group != GROUP_TREMOLO && Group != GROUP_FADE;
 		return true;
+	}
+
+	// The channel plays its notes louder and softer (the triangle and the samples don't)
+	bool HasVolume(int Which) const
+	{
+		return Which >= 0 && Which < static_cast<int>(ChanIDs.size()) && ChanIDs[static_cast<size_t>(Which)] != CHANID_TRIANGLE &&
+			!IsDPCM(Which);
 	}
 
 	// The Effects menu, at Point (screen coordinates), for the selected notes
@@ -3973,6 +3993,11 @@ struct CPianoRollWnd::Impl {
 		const CString Effects = EffectsText(Note);
 		if (!Effects.IsEmpty())
 			Text += _T(", ") + Effects;
+		if (Note.Volume < MAX_VOLUME - 1 && HasVolume(Which)) {
+			CString Volume;
+			Volume.Format(_T(", volume %d of 15"), Note.Volume);
+			Text += Volume;
+		}
 		if (Note.Pan != PAN_CENTER) {
 			CString Pan;
 			Pan.Format(_T(", panned %s (%c%02X)"), static_cast<LPCTSTR>(PanText(Note.Pan)), EFF_CHAR[EF_PAN - 1], Note.Pan);
@@ -4411,6 +4436,12 @@ struct CPianoRollWnd::Impl {
 					if (Selected)
 						Inside = Mix(Inside, RGB(255, 255, 255), 0.35);
 					dc.FillSolidRect(&Rect, Inside);
+					// A quieter note thins from the top, a fifteenth of it for each step under the loudest (Effects > Volume)
+					if (Note.Volume < MAX_VOLUME - 1 && Rect.Height() >= 4 && HasVolume(static_cast<int>(c))) {
+						const int Covered = (MAX_VOLUME - 1 - Note.Volume) * (Rect.Height() - 2) / (MAX_VOLUME - 1);
+						if (Covered > 0)
+							dc.FillSolidRect(Rect.left + 1, Rect.top + 1, std::max(0, Rect.Width() - 2), Covered, Mix(Inside, Back_, 0.65));
+					}
 					Outline(dc, Rect, Edge);
 					if (Note.Written != Note.Pitch && Note.Written >= FirstPitch - 12 && Note.Written <= LastPitch + 12) {
 						// A slide: from where it starts to where it lands

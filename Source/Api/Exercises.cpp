@@ -46,8 +46,30 @@ std::string Format(const char *pFormat, ...)
 	return Buffer;
 }
 
-// The checks, in the exercises' order. Learned is said when one passes.
+// The checks, in the exercises' order. Learned is said when one passes (one sentence for First steps).
 const ExerciseCheckInfo CHECKS[] = {
+	// First steps
+	{ "first-note", EXERCISE_MELODY, "A [[note]] is one sound: the higher it sits in the piano roll, the higher it sounds, and the "
+		"further right, the later it plays." },
+	{ "high-low", EXERCISE_MELODY, "How high or low a note sounds is its [[pitch]], and each lane up the piano roll is a little "
+		"higher than the one under it." },
+	{ "long-short", EXERCISE_MELODY, "A note's [[length]] is how long it lasts, and dragging its right edge makes it ring longer or "
+		"stop sooner." },
+	{ "steady-beat", EXERCISE_MELODY, "The [[beat]] is the steady pulse you tap your foot to, and four beats make a [[bar]]." },
+	{ "loud-soft", EXERCISE_MELODY, "Each note has a [[volume]], and a quieter note beside louder ones gives the music light and "
+		"shade ([[dynamics]])." },
+	{ "stairs", EXERCISE_MELODY, "The lighter lanes are the notes of the [[key]], and climbing them one at a time is its "
+		"[[scale]]." },
+	{ "rhythm", EXERCISE_MELODY, "A pattern of long and short notes is a [[rhythm]], the part of music you can clap." },
+	{ "copy-repeat", EXERCISE_MELODY, "Music [[repeats|repetition-variation]] itself so the ear can follow it, and copy and paste "
+		"repeats a bar in a moment." },
+	{ "new-sound", EXERCISE_MELODY, "An [[instrument]] is the [[sound|timbre]] notes play with, so the same notes with another "
+		"one sound new." },
+	{ "two-parts", EXERCISE_BASS, "Music is often several [[parts|part]] at once, each on a [[channel]] of its own, like this "
+		"[[bass|bass-line]] on the triangle under the tune." },
+	{ "tiny-tune", EXERCISE_MELODY, "A [[tune|melody]] that comes back to the note it started on sounds finished, and the next "
+		"exercise, The home note, is all about that note." },
+	// Next steps
 	{ "home-note", EXERCISE_MELODY, "Every [[key]] has a [[home note]] (C in C major). A tune that ends there sounds "
 		"finished; one that ends on another note sounds like a question waiting for its answer." },
 	{ "four-bars", EXERCISE_MELODY, "A [[melody]] that moves mostly by [[step|step-leap]], to the next note up or down, is easy "
@@ -79,26 +101,49 @@ const std::vector<ExerciseInfo> &Exercises()
 {
 	static std::vector<ExerciseInfo> List;
 	if (List.empty()) {
-		struct Row { const char *Id, *Title, *About; int Minutes; bool NewSong; const char *Checks; };
+		struct Row { const char *Id, *Title, *About; int Minutes; bool NewSong; const char *Checks; int Group; };
+		const int FIRST = EXERCISES_FIRST_STEPS, NEXT = EXERCISES_NEXT_STEPS;
 		static const Row ROWS[] = {
+			// First steps: a minute or two each, a word at a time, for someone who has never made music
+			{ "first-note", "Your first note", "Click a note into the piano roll and hear it: up is higher, right is later.", 1,
+				false, "first-note", FIRST },
+			{ "high-low", "High and low", "A low note, then a high one: hear the difference.", 1, false, "high-low", FIRST },
+			{ "long-short", "Long and short", "Drag a note's end to make it long, and make another one short.", 2, false,
+				"long-short", FIRST },
+			{ "steady-beat", "A steady beat", "Four notes, one on each beat line: that's one bar.", 1, false, "steady-beat", FIRST },
+			{ "loud-soft", "Loud and soft", "Make one note quieter than the others, and hear it.", 2, false, "loud-soft", FIRST },
+			{ "stairs", "Up the stairs", "Five notes going up a step at a time on the lighter lanes, then back down.", 2, false,
+				"stairs", FIRST },
+			{ "rhythm", "A rhythm to clap", "One note in a pattern of long and short ones, like long, short-short.", 2, false,
+				"rhythm", FIRST },
+			{ "copy-repeat", "Copy and repeat", "Copy a one-bar rhythm and paste it three times: four bars that repeat.", 2, false,
+				"copy-repeat", FIRST },
+			{ "new-sound", "A different sound", "The same notes with another instrument from the Sound browser.", 2, false,
+				"new-sound", FIRST },
+			{ "two-parts", "Two parts at once", "A low note on the triangle under the tune: two parts playing together.", 2, false,
+				"two-parts", FIRST },
+			{ "tiny-tune", "Your first tiny tune", "Four notes up and four down, ending on the note it started on.", 2, false,
+				"tiny-tune", FIRST },
+			// Next steps: a few minutes each, from a tune's last note to a small song
 			{ "home-note", "The home note", "A short tune stops too soon: give it a last note that sounds like the end.", 3, false,
-				"home-note" },
+				"home-note", NEXT },
 			{ "four-bars", "Four bars over chords", "Write a tune of four bars over chords that are ready, mostly by step, and end "
-				"it at home.", 5, false, "four-bars" },
+				"it at home.", 5, false, "four-bars", NEXT },
 			{ "strong-notes", "Strong notes", "Make the notes on beats 1 and 3 notes of the chord, so the tune sits on its chords.",
-				4, false, "strong-notes" },
+				4, false, "strong-notes", NEXT },
 			{ "phrases", "A phrase that breathes", "Split a tune that never stops into two phrases, each ending with a rest or a "
-				"held note.", 4, false, "phrases" },
+				"held note.", 4, false, "phrases", NEXT },
 			{ "bass", "A bass line", "Put the chords' roots on the triangle, one on each bar's first beat, then two notes a bar.", 5,
-				false, "bass-roots bass-two" },
-			{ "beat", "A beat", "A kick, a snare on beats 2 and 4, and hi-hats in between, with the drum grid.", 4, false, "beat" },
+				false, "bass-roots bass-two", NEXT },
+			{ "beat", "A beat", "A kick, a snare on beats 2 and 4, and hi-hats in between, with the drum grid.", 4, false, "beat",
+				NEXT },
 			{ "minor", "Major and minor", "Make a happy tune sad by lowering one note, its third, and hear the difference.", 4,
-				false, "minor" },
-			{ "hook", "A hook that comes back", "Play a two-bar hook again, with a different ending.", 4, false, "hook" },
+				false, "minor", NEXT },
+			{ "hook", "A hook that comes back", "Play a two-bar hook again, with a different ending.", 4, false, "hook", NEXT },
 			{ "song-shape", "The song's shape", "Lay out a new song's parts with Module > Song shape, and read what each one is "
-				"for.", 3, true, "song-shape" },
+				"for.", 3, true, "song-shape", NEXT },
 			{ "first-song", "A first small song", "From an empty song to a loop that plays, a step at a time with the What next "
-				"panel.", 10, true, "first-song" },
+				"panel.", 10, true, "first-song", NEXT },
 		};
 		for (size_t i = 0; i < sizeof(ROWS) / sizeof(ROWS[0]); ++i) {
 			ExerciseInfo E;
@@ -107,6 +152,7 @@ const std::vector<ExerciseInfo> &Exercises()
 			E.About = ROWS[i].About;
 			E.Minutes = ROWS[i].Minutes;
 			E.NewSong = ROWS[i].NewSong;
+			E.Group = ROWS[i].Group;
 			std::string Word;
 			for (const char *p = ROWS[i].Checks; ; ++p) {
 				if (*p == ' ' || *p == 0) {
@@ -122,6 +168,19 @@ const std::vector<ExerciseInfo> &Exercises()
 			List.push_back(E);
 		}
 	}
+	return List;
+}
+
+const std::vector<ExerciseGroupInfo> &ExerciseGroups()
+{
+	static const ExerciseGroupInfo GROUPS[EXERCISE_GROUPS] = {
+		{ "first-steps", "First steps", "Never made music? Start here: a minute or two each, from your first note to a tiny tune.",
+			false },
+		{ "next-steps", "Next steps", "A few minutes each: a tune's home note, chords, a bass line, a beat and a first small song.",
+			false },
+		{ "your-own", "Making it your own", "Coming later: exercises on making a song your own.", true },
+	};
+	static const std::vector<ExerciseGroupInfo> List(GROUPS, GROUPS + EXERCISE_GROUPS);
 	return List;
 }
 
@@ -1042,6 +1101,639 @@ void CheckFirstSong(const ExerciseFacts &F, ExerciseVerdict &V)
 	PlayBars(V, F, From, std::min(From + 7, SongBars(F)));
 }
 
+// First steps, for someone who has never made music: each check looks at one thing in the tune on Pulse 1 (the triangle
+// under it for two parts), passes on any reasonable answer and says the one thing to do next in the piano roll's own
+// words: its lanes (a pitch each, the key's lighter, the home note's warmer), its beat lines and bar lines, a note's right
+// edge, its Select, Instrument and Effects buttons
+
+// "first", "second"...
+std::string Ordinal(int Number)
+{
+	static const char *const WORDS[] = { "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+		"tenth", "eleventh", "twelfth" };
+	return Number >= 1 && Number <= 12 ? std::string(WORDS[Number - 1]) : Format("%dth", Number);
+}
+
+// "third note", "first and third notes"
+std::string NotesNamed(const std::vector<int> &Numbers)
+{
+	std::string Text;
+	for (size_t i = 0; i < Numbers.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Numbers.size() ? " and " : ", ") + Ordinal(Numbers[i]);
+	return Text + (Numbers.size() == 1 ? " note" : " notes");
+}
+
+// A length in beats: "1 beat", "2 beats", "half a beat", "1 and a half beats"
+std::string BeatsLong(int Rows, int PerBeat)
+{
+	PerBeat = std::max(1, PerBeat);
+	const int Whole = Rows / PerBeat, Part = Rows % PerBeat;
+	if (Part == 0)
+		return Plural(Whole, "beat", "beats");
+	if (2 * Part == PerBeat)
+		return Whole == 0 ? std::string("half a beat") : Format("%d and a half beats", Whole);
+	return Whole == 0 ? std::string("less than a beat") : "a little over " + Plural(Whole, "beat", "beats");
+}
+
+// The note's Play button that plays the whole starter, as its check step names it
+std::string PlayButton(const ExerciseFacts &F)
+{
+	const int Bars = SongBars(F);
+	return Bars == 1 ? std::string("Play bar 1") : Format("Play bars 1-%d", Bars);
+}
+
+// "C, D, E, F and G"
+std::string NamesText(const std::vector<int> &Pitches, const Key &K)
+{
+	std::string Text;
+	for (size_t i = 0; i < Pitches.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Pitches.size() ? " and " : ", ") + NoteWord(Pitches[i], K);
+	return Text;
+}
+
+// A pitch's place on the key's scale, the key's notes counted from the lowest: the next note up the scale is one more
+int ScalePlace(int Pitch, const Key &K)
+{
+	int Place = 0;
+	for (int p = 0; p < Pitch; ++p)
+		Place += InKey(p, K) ? 1 : 0;
+	return Place;
+}
+
+// The key's next note above a pitch (Way 1) or under it (-1)
+int ScaleNeighbour(int Pitch, int Way, const Key &K)
+{
+	for (int p = Pitch + Way; p >= 0 && p < PITCHES; p += Way)
+		if (InKey(p, K))
+			return p;
+	return Pitch;
+}
+
+// What to say of the first note on a darker lane (outside the key), "" when they're all on lighter ones
+std::string OnDarkerLane(const std::vector<ExerciseNote> &Notes, const ExerciseFacts &F)
+{
+	if (!F.HasKey && !F.HasFound)
+		return std::string();
+	const Key K = KeyOf(F);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (!InKey(Notes[i].Pitch, K))
+			return Format("Your %s note (%s) is on a darker lane, outside the [[key]], so it sounds out of place. Drag it up or down "
+				"one lane, onto a lighter one.", Ordinal(static_cast<int>(i) + 1).c_str(), NoteWord(Notes[i].Pitch, K).c_str());
+	return std::string();
+}
+
+const ExerciseChannel *FirstPulse(const ExerciseFacts &F)
+{
+	for (size_t c = 0; c < F.Channels.size(); ++c)
+		if (F.Channels[c].Kind == KIND_PULSE)
+			return &F.Channels[c];
+	return 0;
+}
+
+// Your first note: any note at all
+void CheckFirstNote(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.empty()) {
+		V.Next = "There's no note yet. Click once anywhere on the lanes of the piano roll (the rows with a piano key at their left "
+			"end): a [[note]] appears where you click, and you hear it. Then press " + PlayButton(F) + ".";
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Notes.size() == 1 ? "There's your [[note]]: " + PlayButton(F) + " plays it again." :
+		Format("There are your %d notes: the higher ones sound higher, and they play from left to right.",
+		static_cast<int>(Notes.size())));
+}
+
+// High and low: two notes clearly apart, five lanes (semitones) or more
+const int HIGH_LOW_LANES = 5;
+
+void CheckHighLow(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const Key K = KeyOf(F);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.empty()) {
+		V.Next = "There are no notes yet. Click a note low down in the piano roll, at the start of the bar. Then click a second one "
+			"to its right, five lanes or more higher up.";
+		return;
+	}
+	if (Notes.size() == 1) {
+		V.Next = Format("There's one note so far, %s. Now click a second note to its right, five lanes or more higher up: the "
+			"higher the lane, the higher the [[pitch]].", NoteWord(Notes[0].Pitch, K).c_str());
+		return;
+	}
+	size_t Low = 0, High = 0;
+	for (size_t i = 1; i < Notes.size(); ++i) {
+		if (Notes[i].Pitch < Notes[Low].Pitch)
+			Low = i;
+		if (Notes[i].Pitch > Notes[High].Pitch)
+			High = i;
+	}
+	const int Apart = Notes[High].Pitch - Notes[Low].Pitch;
+	if (Apart == 0) {
+		V.Next = Format("Your notes are all on the same lane (%s), so they sound alike. Drag the second one up, five lanes or more: "
+			"the higher it sits, the higher it sounds.", NoteWord(Notes[0].Pitch, K).c_str());
+		return;
+	}
+	if (Apart < HIGH_LOW_LANES) {
+		V.Next = Format("Your high note is only %s above the low one, so they sound close. Drag the high one further up, five "
+			"lanes or more above the low one, to hear the difference clearly.", Plural(Apart, "lane", "lanes").c_str());
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your notes are %s apart, %s low and %s high%s.", Plural(Apart, "lane", "lanes").c_str(),
+		NoteWord(Notes[Low].Pitch, K).c_str(), NoteWord(Notes[High].Pitch, K).c_str(), Apart == 12 ?
+		": the same note an [[octave]] higher" : ""));
+	if (High < Low)
+		V.Right.push_back("They go from high to low, which shows it just as well.");
+}
+
+// Long and short: a note of three beats or more, and another of a beat or less (the starter's two last two beats each)
+const int LONG_BEATS = 3;
+const int SHORT_BEATS = 1;
+
+void CheckLongShort(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const Timing T = F.Time();
+	const int Beat = std::max(1, F.RowsPerBeat);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.size() < 2) {
+		V.Next = Notes.empty() ? NoTune(F) : "There's one note left, and this needs two: one long, one short. Ctrl+Z brings the "
+			"other one back, or click a new note in.";
+		return;
+	}
+	size_t Longest = 0;
+	for (size_t i = 1; i < Notes.size(); ++i)
+		if (Notes[i].Rows > Notes[Longest].Rows)
+			Longest = i;
+	const ExerciseNote &L = Notes[Longest];
+	const int LongBar = T.BarOf(L.Row);
+	if (L.Rows < LONG_BEATS * Beat) {
+		// To the next bar line where that makes it long enough
+		const bool ToBarLine = T.BarEnd(LongBar) - L.Row >= LONG_BEATS * Beat;
+		V.Next = Format("Your notes are all short so far: the longest, your %s note (bar %d), lasts %s. Make it long: drag its "
+			"right edge to the right %s.", Ordinal(static_cast<int>(Longest) + 1).c_str(), LongBar, BeatsLong(L.Rows, Beat).c_str(),
+			ToBarLine ? "until it reaches the next bar line" : "until it lasts three beats or more");
+		return;
+	}
+	V.Right.push_back(Format("Your %s note is long: it lasts %s.", Ordinal(static_cast<int>(Longest) + 1).c_str(),
+		BeatsLong(L.Rows, Beat).c_str()));
+	size_t Shortest = Longest == 0 ? 1 : 0;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (i != Longest && Notes[i].Rows < Notes[Shortest].Rows)
+			Shortest = i;
+	const ExerciseNote &S = Notes[Shortest];
+	if (S.Rows > SHORT_BEATS * Beat) {
+		V.Next = Format("Now make another note short: drag the right edge of your %s note (bar %d) to the left until it's as short "
+			"as it goes, one [[beat]]. It lasts %s now.", Ordinal(static_cast<int>(Shortest) + 1).c_str(), T.BarOf(S.Row),
+			BeatsLong(S.Rows, Beat).c_str());
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your %s note is short, %s: side by side, you hear the difference.",
+		Ordinal(static_cast<int>(Shortest) + 1).c_str(), BeatsLong(S.Rows, Beat).c_str()));
+}
+
+// A steady beat: a note starting on every beat line, and none between them
+void CheckSteadyBeat(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const Timing T = F.Time();
+	const int Beat = std::max(1, F.RowsPerBeat), Bars = SongBars(F);
+	PlayBars(V, F, 1, Bars);
+	if (Notes.empty()) {
+		V.Next = "There are no notes yet. Click a note on the first beat line, where the bar starts, then one on each of the next "
+			"three thin lines: a note on each [[beat]].";
+		return;
+	}
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Bar = T.BarOf(Notes[i].Row), Into = Notes[i].Row - T.BarStart(Bar);
+		if (Into % Beat == 0)
+			continue;
+		const int Before = Into / Beat + 1;
+		const std::string Between = Before < T.BeatsPerBar(Bar) ? Format("beat lines %d and %d", Before, Before + 1) :
+			Format("beat line %d and the next bar line", Before);
+		V.Next = Format("Your %s note starts between %s%s, not on a line. Drag it to the left until it starts right on beat line "
+			"%d: then it falls on the [[beat]].", Ordinal(static_cast<int>(i) + 1).c_str(), Between.c_str(),
+			Bars > 1 ? Format(" (bar %d)", Bar).c_str() : "", Before);
+		return;
+	}
+	int Have = 0, Total = 0, MissBar = 0, MissBeat = 0;
+	for (int Bar = 1; Bar <= Bars; ++Bar)
+		for (int b = 0; b < T.BeatsPerBar(Bar); ++b) {
+			const int Row = T.BarStart(Bar) + b * Beat;
+			bool On = false;
+			for (size_t i = 0; i < Notes.size() && !On; ++i)
+				On = Notes[i].Row == Row;
+			++Total;
+			if (On)
+				++Have;
+			else if (MissBeat == 0) {
+				MissBar = Bar;
+				MissBeat = b + 1;
+			}
+		}
+	if (MissBeat > 0) {
+		if (Have > 0)
+			V.Right.push_back(Format("%d of the %d beats have a note on their line.", Have, Total));
+		const int Row = T.BarStart(MissBar) + (MissBeat - 1) * Beat;
+		const std::string Where = Bars > 1 ? Format(" in bar %d", MissBar) : std::string();
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row < Row && Notes[i].Row + Notes[i].Rows > Row) {
+				V.Next = Format("Beat %d%s has no note of its own: your %s note is still sounding there. Drag its right edge back to "
+					"beat line %d, then click a new note on that line.", MissBeat, Where.c_str(), Ordinal(static_cast<int>(i) + 1).c_str(),
+					MissBeat);
+				return;
+			}
+		V.Next = Format("Beat %d%s has no note yet. Click on its line, the %s beat line of the bar, at any height.", MissBeat,
+			Where.c_str(), Ordinal(MissBeat).c_str());
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Each of the %d beats has a note right on its line: a steady [[beat]]%s.", Total, Bars == 1 ?
+		Format(", one [[bar]] of %d", T.BeatsPerBar(1)).c_str() : ""));
+}
+
+// Loud and soft: a note clearly quieter than the loudest, four volume steps or more
+const int SOFTER_BY = 4;
+
+void CheckLoudSoft(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const ExerciseChannel *pTune = TargetOf(F);
+	const std::vector<ExerciseNote> Notes = Sounding(pTune);
+	PlayBars(V, F, 1, SongBars(F));
+	if (pTune != 0) {
+		std::vector<ExerciseNote> All(pTune->Notes);
+		std::sort(All.begin(), All.end(), [](const ExerciseNote &a, const ExerciseNote &b) { return a.Row < b.Row; });
+		for (size_t i = 0; i < All.size(); ++i)
+			if (All[i].Volume == 0) {
+				V.Next = Format("Your %s note is at volume 0, so it's silent now. Give it Soft instead (double-click it, then Volume > "
+					"Soft): quieter, but still there.", Ordinal(static_cast<int>(i) + 1).c_str());
+				return;
+			}
+	}
+	if (Notes.size() < 2) {
+		V.Next = Notes.empty() ? NoTune(F) : "There's one note left, and a quieter note needs a louder one beside it. Ctrl+Z "
+			"brings the others back.";
+		return;
+	}
+	size_t Loud = 0, Quiet = 0;
+	for (size_t i = 1; i < Notes.size(); ++i) {
+		if (Notes[i].Volume > Notes[Loud].Volume)
+			Loud = i;
+		if (Notes[i].Volume < Notes[Quiet].Volume)
+			Quiet = i;
+	}
+	if (Notes[Loud].Volume == Notes[Quiet].Volume) {
+		V.Next = Format("Your notes all play at the same [[volume]], %d of 15. Double-click one of them, point at Volume in the "
+			"menu that opens and click Soft: it plays quieter than the others.", Notes[Loud].Volume);
+		return;
+	}
+	if (Notes[Loud].Volume - Notes[Quiet].Volume < SOFTER_BY) {
+		V.Next = Format("Your %s note is only a little quieter (%d of 15, against %d), which is hard to hear. Make it Soft or Very "
+			"soft: double-click it, then Volume.", Ordinal(static_cast<int>(Quiet) + 1).c_str(), Notes[Quiet].Volume,
+			Notes[Loud].Volume);
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your %s note plays at %d of 15 and the loudest at %d: you hear it step back.",
+		Ordinal(static_cast<int>(Quiet) + 1).c_str(), Notes[Quiet].Volume, Notes[Loud].Volume));
+}
+
+// Up the stairs: from the first note up the key's scale a note at a time (five notes or more), then down the same way to
+// where it started (or lower)
+const int STAIRS_UP = 5;
+
+void CheckStairs(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const Key K = KeyOf(F);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.empty()) {
+		V.Next = "There are no notes yet. Click a note at the start of bar 1 on the warmer lane (C), then go up from it one "
+			"lighter lane at a time.";
+		return;
+	}
+	const std::string Darker = OnDarkerLane(Notes, F);
+	if (!Darker.empty()) {
+		V.Next = Darker;
+		return;
+	}
+	std::vector<int> Places, Pitches;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Places.push_back(ScalePlace(Notes[i].Pitch, K));
+		Pitches.push_back(Notes[i].Pitch);
+	}
+	size_t Up = 1;
+	while (Up < Notes.size() && Places[Up] == Places[Up - 1] + 1)
+		++Up;
+	const std::vector<int> Climbed(Pitches.begin(), Pitches.begin() + static_cast<long>(Up));
+	if (Up < static_cast<size_t>(STAIRS_UP)) {
+		if (Up == Notes.size()) {
+			std::vector<int> Next;
+			for (int p = Pitches.back(), k = static_cast<int>(Up); k < STAIRS_UP; ++k)
+				Next.push_back(p = ScaleNeighbour(p, 1, K));
+			V.Next = (Up == 1 ? Format("Your stairs start on %s.", NoteWord(Pitches[0], K).c_str()) : Format("Your stairs climb %s "
+				"so far.", NamesText(Climbed, K).c_str())) + Format(" Go on up, one lighter lane higher on each beat line: %s.",
+				NamesText(Next, K).c_str());
+			return;
+		}
+		const int Move = Places[Up] - Places[Up - 1], Wanted = ScaleNeighbour(Pitches[Up - 1], 1, K);
+		const std::string Which = Ordinal(static_cast<int>(Up) + 1);
+		if (Move > 1) {
+			std::vector<int> Over;
+			for (int p = Wanted; ScalePlace(p, K) < Places[Up]; p = ScaleNeighbour(p, 1, K))
+				Over.push_back(p);
+			V.Next = Format("From %s your stairs skip up to %s, over %s: a [[scale]] climbs one lighter lane at a time. Drag your %s "
+				"note down to %s.", NoteWord(Pitches[Up - 1], K).c_str(), NoteWord(Pitches[Up], K).c_str(), NamesText(Over, K).c_str(),
+				Which.c_str(), NoteWord(Wanted, K).c_str());
+		}
+		else if (Move == 0)
+			V.Next = Format("Your %s and %s notes are on the same lane. On the stairs each note is one lighter lane higher: drag your "
+				"%s note up to %s.", Ordinal(static_cast<int>(Up)).c_str(), Which.c_str(), Which.c_str(), NoteWord(Wanted, K).c_str());
+		else
+			V.Next = Format("Your %s note goes down before the stairs reach the top. Go up five notes first: drag it up to %s, the next "
+				"lighter lane above your %s note.", Which.c_str(), NoteWord(Wanted, K).c_str(), Ordinal(static_cast<int>(Up)).c_str());
+		return;
+	}
+	// Down from the top (played twice, if you like), a note at a time
+	size_t At = Up;
+	if (At < Notes.size() && Places[At] == Places[Up - 1])
+		++At;
+	while (At < Notes.size() && Places[At] == Places[At - 1] - 1)
+		++At;
+	if (At < Notes.size()) {
+		const int Move = Places[At] - Places[At - 1], Wanted = ScaleNeighbour(Pitches[At - 1], -1, K);
+		const std::string Which = Ordinal(static_cast<int>(At) + 1);
+		if (Move < -1) {
+			std::vector<int> Over;
+			for (int p = Wanted; ScalePlace(p, K) > Places[At]; p = ScaleNeighbour(p, -1, K))
+				Over.push_back(p);
+			V.Next = Format("On the way down, from %s your notes skip to %s, over %s: come down one lighter lane at a time. Drag your "
+				"%s note up to %s.", NoteWord(Pitches[At - 1], K).c_str(), NoteWord(Pitches[At], K).c_str(), NamesText(Over, K).c_str(),
+				Which.c_str(), NoteWord(Wanted, K).c_str());
+		}
+		else if (Move == 0)
+			V.Next = Format("Your %s and %s notes are on the same lane. On the way down each note is one lighter lane lower: drag "
+				"your %s note down to %s.", Ordinal(static_cast<int>(At)).c_str(), Which.c_str(), Which.c_str(),
+				NoteWord(Wanted, K).c_str());
+		else
+			V.Next = Format("On the way down, your %s note goes up again. Drag it down to %s, one lighter lane under your %s note.",
+				Which.c_str(), NoteWord(Wanted, K).c_str(), Ordinal(static_cast<int>(At)).c_str());
+		return;
+	}
+	if (Places.back() > Places.front()) {
+		std::vector<int> Rest;
+		for (int p = Pitches.back(); ScalePlace(p, K) > Places.front(); )
+			Rest.push_back(p = ScaleNeighbour(p, -1, K));
+		V.Right.push_back(Format("Your stairs climb %s.", NamesText(Climbed, K).c_str()));
+		V.Next = Format("Now come back down, one lighter lane lower on each beat line: %s, where you started.",
+			NamesText(Rest, K).c_str());
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your notes climb %s and come back down to %s, one lighter lane at a time.",
+		NamesText(Climbed, K).c_str(), NoteWord(Pitches.back(), K).c_str()));
+}
+
+// A rhythm to clap: three notes or more, some long and some short
+const int RHYTHM_NOTES = 3;
+
+void CheckRhythm(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const int Beat = std::max(1, F.RowsPerBeat);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.size() < static_cast<size_t>(RHYTHM_NOTES)) {
+		V.Next = Notes.empty() ? std::string("There are no notes yet. Click a note on the first beat line and drag its right edge "
+			"over the next beat line: that's a long one. Then click two short ones on beats 3 and 4.") : Format("Your rhythm has %s "
+			"so far. Put at least three in: a long one, then two short ones (long, short-short).", Plural(static_cast<int>(Notes.size()),
+			"note", "notes").c_str());
+		return;
+	}
+	int Shortest = Notes[0].Rows, Longest = Notes[0].Rows;
+	for (size_t i = 1; i < Notes.size(); ++i) {
+		Shortest = std::min(Shortest, Notes[i].Rows);
+		Longest = std::max(Longest, Notes[i].Rows);
+	}
+	if (Longest == Shortest) {
+		const bool Room = Notes[1].Row - (Notes[0].Row + Notes[0].Rows) >= Beat;
+		V.Next = Format("Your notes are all the same length (%s each), so they tick evenly, like a clock. Make the first one long: "
+			"%s.", BeatsLong(Shortest, Beat).c_str(), Room ? "drag its right edge to the right, over the next beat line" :
+			"right-click your second note to take it away, then drag the first note's right edge over the beat line where it was");
+		return;
+	}
+	V.Passed = true;
+	std::string Pattern;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Pattern += (i == 0 ? "" : ", ") + std::string(2 * Notes[i].Rows > Longest + Shortest ? "long" : "short");
+	V.Right.push_back("Your notes go " + Pattern + ": a pattern you could clap.");
+}
+
+// Copy and repeat: bars 2 to the last play bar 1's notes again (where they start in the bar, and their pitches)
+void CheckCopyRepeat(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const int Bars = SongBars(F), Beat = std::max(1, F.RowsPerBeat);
+	PlayBars(V, F, 1, Bars);
+	const std::vector<BarNote> First = NotesInBar(F, Notes, 1);
+	if (First.empty()) {
+		V.Next = "Bar 1's rhythm is gone, so there's nothing to copy. Ctrl+Z brings it back, or Help > Exercises opens the exercise "
+			"again.";
+		return;
+	}
+	std::vector<int> Same;
+	for (int Bar = 2; Bar <= Bars; ++Bar) {
+		const std::vector<BarNote> Here = NotesInBar(F, Notes, Bar);
+		if (SameNotes(First, Here)) {
+			Same.push_back(Bar);
+			continue;
+		}
+		if (!Same.empty())
+			V.Right.push_back(Format("%s %s bar 1 again already.", Capital(BarsText(Same)).c_str(), Same.size() == 1 ? "plays" :
+				"play"));
+		// Pasted a little early or late: the same notes, all moved by as much
+		const int Shift = Here.empty() ? 0 : Here[0].Offset - First[0].Offset;
+		bool Moved = Shift != 0;
+		for (size_t i = 0; i < Here.size() && i < First.size() && Moved; ++i)
+			Moved = Here[i].Pitch == First[i].Pitch && Here[i].Offset - First[i].Offset == Shift;
+		if (Here.empty())
+			V.Next = Format("Bar %d is still empty. Point the mouse at the start of bar %d, right on its bar line, and press Ctrl+V to "
+				"paste the copy there. (Nothing comes? Copy bar 1 first: Select, drag along the ruler across bar 1, Ctrl+C.)", Bar,
+				Bar);
+		else if (Moved)
+			V.Next = Format("Bar %d's copy starts %s %s. Press Ctrl+Z, point the mouse right at bar %d's line and press Ctrl+V "
+				"again.", Bar, BeatsLong(std::abs(Shift), Beat).c_str(), Shift > 0 ? "late" : "early", Bar);
+		else
+			V.Next = Format("Bar %d doesn't play the same notes as bar 1. Select its notes and press Delete, then point the mouse at "
+				"its bar line and press Ctrl+V.", Bar);
+		PlayBars(V, F, 1, Bar);
+		return;
+	}
+	if (Same.empty()) {
+		V.Next = "The song has a single bar, so there's no room to repeat it. Help > Exercises opens the exercise again.";
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("%s %s bar 1 again, note for note: %d bars that repeat.", Capital(BarsText(Same)).c_str(),
+		Same.size() == 1 ? "plays" : "play", Bars));
+}
+
+// A different sound: the tune's notes on an instrument other than the one they started with
+const char *const STARTER_SOUND = "Lead";	// the First steps' tunes' (the first example song's lead)
+
+void CheckNewSound(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.empty()) {
+		V.Next = NoTune(F);
+		return;
+	}
+	std::vector<int> Old;
+	std::string New;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		if (Lowercase(Notes[i].Instrument) == Lowercase(STARTER_SOUND))
+			Old.push_back(static_cast<int>(i) + 1);
+		else if (New.empty())
+			New = Notes[i].Instrument;
+	}
+	if (New.empty())
+		New = "another instrument";
+	if (Old.size() == Notes.size()) {
+		V.Next = Format("Your notes still play %s, the sound they started with. Open Instrument > Sound browser, click sounds to "
+			"hear them, and press Add to the song on one you like. Then click Select at the top of the piano roll, drag a box "
+			"around the notes, click the Instrument button and pick Give the selected notes, then your new sound.", STARTER_SOUND);
+		return;
+	}
+	if (!Old.empty()) {
+		const int Changed = static_cast<int>(Notes.size() - Old.size());
+		V.Right.push_back(Format("%d of your notes %s %s now.", Changed, Changed == 1 ? "plays" : "play", New.c_str()));
+		V.Next = Format("Your %s still %s %s. Select %s too (Select, then drag a box around %s), click the Instrument button and "
+			"pick Give the selected notes, then %s.", NotesNamed(Old).c_str(), Old.size() == 1 ? "plays" : "play", STARTER_SOUND,
+			Old.size() == 1 ? "it" : "them", Old.size() == 1 ? "it" : "them", New.c_str());
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your notes play %s now: the same notes with another [[sound|timbre]].", New.c_str()));
+}
+
+// Two parts at once: the triangle under the tune, on the key's notes, sounding while it plays
+void CheckTwoParts(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Bass = Sounding(TargetOf(F)), Tune = Sounding(FirstPulse(F));
+	const Timing T = F.Time();
+	const Key K = KeyOf(F);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Tune.empty()) {
+		V.Next = "The tune on Pulse 1 is gone, so there's nothing to play under. Ctrl+Z brings it back, or Help > Exercises opens "
+			"the exercise again.";
+		return;
+	}
+	if (Bass.empty()) {
+		V.Next = "The triangle has no note yet. In the piano roll, click at the start of bar 1 on a lane well below the tune's "
+			"faint notes (C-3 is a good one), and drag the note's right edge to the end of the bar.";
+		return;
+	}
+	std::vector<int> Played;
+	for (size_t b = 0; b < Bass.size(); ++b) {
+		const ExerciseNote &N = Bass[b];
+		if ((F.HasKey || F.HasFound) && !InKey(N.Pitch, K)) {
+			V.Next = Format("Your triangle note (%s) is on a darker lane, outside the [[key]], so it rubs against the tune. Drag it up "
+				"or down one lane, onto a lighter one: C is a good one.", NoteWord(N.Pitch, K).c_str());
+			return;
+		}
+		int Lowest = -1;
+		for (size_t t = 0; t < Tune.size(); ++t)
+			if (Tune[t].Row < N.Row + N.Rows && N.Row < Tune[t].Row + Tune[t].Rows)
+				Lowest = Lowest < 0 ? Tune[t].Pitch : std::min(Lowest, Tune[t].Pitch);
+		if (Lowest < 0) {
+			V.Next = Format("Your triangle note plays in bar %d where the tune is silent, so the two never sound together. Drag it "
+				"under the tune's notes, to the start of bar 1.", T.BarOf(N.Row));
+			return;
+		}
+		if (N.Pitch >= Lowest) {
+			V.Next = Format("Your triangle note (%s) is as high as the tune's notes or higher, so it doesn't sound like a low part. "
+				"Drag it down, below the tune's faint notes: C-3 is a good one.", Written(N.Pitch).c_str());
+			return;
+		}
+		if (std::find(Played.begin(), Played.end(), N.Pitch % 12) == Played.end())
+			Played.push_back(N.Pitch % 12);
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("The triangle plays %s under the tune: two [[parts|part]] at once, a low one and a high one.",
+		NamesText(Played, K).c_str()));
+}
+
+// Your first tiny tune: six notes or more on the key's notes, climbing to a top and coming back down to the note it started on
+const int TUNE_NOTES = 6;		// four up and four down make eight
+const int TUNE_CLIMB = 2;		// notes after the first before the top at the least, and after the top
+
+void CheckTinyTune(const ExerciseFacts &F, ExerciseVerdict &V)
+{
+	const std::vector<ExerciseNote> Notes = Sounding(TargetOf(F));
+	const Key K = KeyOf(F);
+	PlayBars(V, F, 1, SongBars(F));
+	if (Notes.empty()) {
+		V.Next = "There are no notes yet. Click a note on the first beat line, on the warmer lane (C, the [[home note]] of the "
+			"key): your tune starts there, and ends there too.";
+		return;
+	}
+	const std::string Darker = OnDarkerLane(Notes, F);
+	if (!Darker.empty()) {
+		V.Next = Darker;
+		return;
+	}
+	if (Notes.size() < static_cast<size_t>(TUNE_NOTES)) {
+		V.Next = Format("Your tune has %s so far. It needs about eight: four going up, one on each beat line, then four coming down "
+			"to the lane you started on.", Plural(static_cast<int>(Notes.size()), "note", "notes").c_str());
+		return;
+	}
+	size_t Top = 0;
+	for (size_t i = 1; i < Notes.size(); ++i)
+		if (Notes[i].Pitch > Notes[Top].Pitch)
+			Top = i;
+	if (Top == 0) {
+		V.Next = "Your tune starts on its highest note and only comes down. Start low and climb: four notes going up, then four "
+			"coming down.";
+		return;
+	}
+	for (size_t i = 1; i <= Top; ++i)
+		if (Notes[i].Pitch < Notes[i - 1].Pitch) {
+			V.Next = Format("On the way up, your %s note goes down. Keep climbing to the top: drag it up, above your %s note.",
+				Ordinal(static_cast<int>(i) + 1).c_str(), Ordinal(static_cast<int>(i)).c_str());
+			return;
+		}
+	for (size_t i = Top + 1; i < Notes.size(); ++i)
+		if (Notes[i].Pitch > Notes[i - 1].Pitch) {
+			V.Next = Format("After the top, your %s note goes up again. Keep coming down to the end: drag it below your %s note.",
+				Ordinal(static_cast<int>(i) + 1).c_str(), Ordinal(static_cast<int>(i)).c_str());
+			return;
+		}
+	const std::string Start = NoteWord(Notes.front().Pitch, K);
+	if (Top < static_cast<size_t>(TUNE_CLIMB)) {
+		V.Next = "Your tune climbs a single step before it comes down. Climb more: about four notes going up, then four coming down.";
+		return;
+	}
+	if (Notes.size() - 1 - Top < static_cast<size_t>(TUNE_CLIMB)) {
+		V.Next = Format("Your tune climbs to %s but hardly comes back. Add notes going down after it, to %s where you started.",
+			NoteWord(Notes[Top].Pitch, K).c_str(), Start.c_str());
+		return;
+	}
+	if ((Notes.back().Pitch - Notes.front().Pitch) % 12 != 0) {
+		V.Next = Format("Your tune ends on %s, but it started on %s. End it where it started: drag the last note to the %s lane%s.",
+			NoteWord(Notes.back().Pitch, K).c_str(), Start.c_str(), Start.c_str(), Notes.front().Pitch % 12 == Tonic(F) ?
+			" (the warmer one)" : "");
+		return;
+	}
+	V.Passed = true;
+	V.Right.push_back(Format("Your tune climbs from %s to %s and comes back down to %s, where it started.", Start.c_str(),
+		NoteWord(Notes[Top].Pitch, K).c_str(), Start.c_str()));
+}
+
 }	// namespace
 
 bool CheckExercise(const std::string &Check, const ExerciseFacts &Facts, ExerciseVerdict &Out)
@@ -1051,7 +1743,29 @@ bool CheckExercise(const std::string &Check, const ExerciseFacts &Facts, Exercis
 		return false;
 	Out = ExerciseVerdict();
 	Out.Check = pCheck->Id;
-	if (Check == "home-note")
+	if (Check == "first-note")
+		CheckFirstNote(Facts, Out);
+	else if (Check == "high-low")
+		CheckHighLow(Facts, Out);
+	else if (Check == "long-short")
+		CheckLongShort(Facts, Out);
+	else if (Check == "steady-beat")
+		CheckSteadyBeat(Facts, Out);
+	else if (Check == "loud-soft")
+		CheckLoudSoft(Facts, Out);
+	else if (Check == "stairs")
+		CheckStairs(Facts, Out);
+	else if (Check == "rhythm")
+		CheckRhythm(Facts, Out);
+	else if (Check == "copy-repeat")
+		CheckCopyRepeat(Facts, Out);
+	else if (Check == "new-sound")
+		CheckNewSound(Facts, Out);
+	else if (Check == "two-parts")
+		CheckTwoParts(Facts, Out);
+	else if (Check == "tiny-tune")
+		CheckTinyTune(Facts, Out);
+	else if (Check == "home-note")
 		CheckHomeNote(Facts, Out);
 	else if (Check == "four-bars")
 		CheckFourBars(Facts, Out);

@@ -203,7 +203,7 @@ std::string All(const ExerciseVerdict &V)
 void TestList()
 {
 	const std::vector<ExerciseInfo> &List = Exercises();
-	CHECK(List.size() >= 8 && List.size() <= 10);
+	CHECK(List.size() >= 18 && List.size() <= 30);
 	std::vector<std::string> Seen;
 	for (size_t i = 0; i < List.size(); ++i) {
 		CHECK(FindExercise(List[i].Id) == &List[i]);
@@ -227,6 +227,7 @@ void TestList()
 	CHECK(Seen.size() == ExerciseChecks().size());	// every check belongs to one exercise
 	CHECK(FindExercise("nonsense") == 0 && FindExerciseCheck("bass") == 0 && FindExerciseCheck("bass-two") != 0);
 	CHECK(ExerciseAfter("first-song") == 0 && ExerciseAfter("home-note") == FindExercise("four-bars"));
+	CHECK(ExerciseAfter("tiny-tune") == FindExercise("home-note"));
 	CHECK(FindExercise("song-shape")->NewSong && FindExercise("first-song")->NewSong && !FindExercise("home-note")->NewSong);
 	ExerciseVerdict V;
 	CHECK(!CheckExercise("nonsense", Song(4), V));
@@ -705,6 +706,290 @@ void TestVerdictJson()
 
 }	// namespace
 
+
+// First steps (for someone who has never made music): the songs are a frame of 1-4 bars, the tune on Pulse 1
+
+ExerciseFacts Small(int Bars, int Target = 0)
+{
+	ExerciseFacts F = Song(4, Target);
+	F.PatternLength = 16 * Bars;
+	F.Frames = 1;
+	F.EndBar = Bars;
+	return F;
+}
+
+// What a verdict says has Part in it; the verdict's words when not
+void Says(const ExerciseVerdict &V, const char *Part, int Line)
+{
+	const bool Has = Contains(All(V), Part);
+	Check(Has, Part, Line);
+	if (!Has)
+		std::printf("  it said: %s\n", All(V).c_str());
+}
+
+void Passes(const ExerciseVerdict &V, int Line)
+{
+	Check(V.Passed && V.Next.empty() && !V.Learned.empty() && LinksLead(V), "passes, saying what it taught", Line);
+	if (!V.Passed)
+		std::printf("  it said: %s\n", All(V).c_str());
+}
+
+void Fails(const ExerciseVerdict &V, const char *Part, int Line)
+{
+	Check(!V.Passed && !V.Next.empty() && LinksLead(V), "fails, saying what to change", Line);
+	Says(V, Part, Line);
+}
+
+void TestFirstStepsList()
+{
+	const std::vector<ExerciseInfo> &List = Exercises();
+	const std::vector<ExerciseGroupInfo> &Groups = ExerciseGroups();
+	CHECK(Groups.size() == static_cast<size_t>(EXERCISE_GROUPS));
+	CHECK(std::string(Groups[EXERCISES_FIRST_STEPS].Title) == "First steps" && !Groups[EXERCISES_FIRST_STEPS].Later);
+	CHECK(std::string(Groups[EXERCISES_NEXT_STEPS].Title) == "Next steps" && !Groups[EXERCISES_NEXT_STEPS].Later);
+	CHECK(std::string(Groups[EXERCISES_YOUR_OWN].Title) == "Making it your own" && Groups[EXERCISES_YOUR_OWN].Later);
+	// First steps first, then Next steps, nothing in the group to come; eleven of a minute or two, ten after them
+	int Counts[EXERCISE_GROUPS] = { 0 };
+	int Last = 0;
+	for (size_t i = 0; i < List.size(); ++i) {
+		CHECK(List[i].Group >= Last && List[i].Group < EXERCISE_GROUPS);
+		Last = List[i].Group;
+		++Counts[List[i].Group];
+		if (List[i].Group == EXERCISES_FIRST_STEPS) {
+			CHECK(List[i].Minutes <= 2 && !List[i].NewSong && List[i].Checks.size() == 1);
+			// What it taught, in one sentence
+			const std::string Learned = UnmarkLinks(FindExerciseCheck(List[i].Checks[0])->Learned);
+			CHECK(!Learned.empty() && Learned.back() == '.' && Learned.find(". ") == std::string::npos);
+		}
+	}
+	CHECK(Counts[EXERCISES_FIRST_STEPS] == 11 && Counts[EXERCISES_NEXT_STEPS] == 10 && Counts[EXERCISES_YOUR_OWN] == 0);
+	CHECK(std::string(List[0].Id) == "first-note" && ExerciseAfter("tiny-tune") == FindExercise("home-note"));
+	CHECK(FindExerciseCheck("two-parts")->Role == EXERCISE_BASS && FindExerciseCheck("stairs")->Role == EXERCISE_MELODY);
+}
+
+void TestFirstNoteChecks()
+{
+	ExerciseFacts F = Small(1);
+	Fails(Run("first-note", F), "Click once anywhere on the lanes", __LINE__);
+	Says(Run("first-note", F), "Then press Play bar 1.", __LINE__);
+	Note(F, 0, 1, 2, 1, "E-4");
+	Passes(Run("first-note", F), __LINE__);
+
+	ExerciseFacts H = Small(1);
+	Fails(Run("high-low", H), "Click a note low down", __LINE__);
+	Note(H, 0, 1, 1, 2, "C-4");
+	Fails(Run("high-low", H), "There's one note so far, C.", __LINE__);
+	Note(H, 0, 1, 3, 2, "C-4");
+	Fails(Run("high-low", H), "on the same lane (C)", __LINE__);
+	H.Channels[0].Notes[1].Pitch = Pitch("D#4");
+	Fails(Run("high-low", H), "only 3 lanes above the low one", __LINE__);
+	H.Channels[0].Notes[1].Pitch = Pitch("C-5");
+	Passes(Run("high-low", H), __LINE__);
+	Says(Run("high-low", H), "12 lanes apart, C low and C high: the same note an [[octave]] higher", __LINE__);
+	H.Channels[0].Notes[0].Pitch = Pitch("G-5");	// high, then low: fine too
+	Passes(Run("high-low", H), __LINE__);
+	Says(Run("high-low", H), "from high to low", __LINE__);
+}
+
+void TestLongShortChecks()
+{
+	// The starter: two notes of two beats
+	ExerciseFacts F = Small(2);
+	Note(F, 0, 1, 1, 2, "C-4");
+	Note(F, 0, 2, 1, 2, "G-4");
+	ExerciseVerdict V = Run("long-short", F);
+	Fails(V, "the longest, your first note (bar 1), lasts 2 beats. Make it long: drag its right edge to the right until it reaches "
+		"the next bar line.", __LINE__);
+	CHECK(V.PlayFirst == 1 && V.PlayLast == 2);
+	// A note too short still
+	F.Channels[0].Notes[0].Rows = 10;
+	Fails(Run("long-short", F), "lasts 2 and a half beats", __LINE__);
+	F.Channels[0].Notes[0].Rows = 16;
+	V = Run("long-short", F);
+	Fails(V, "Your first note is long: it lasts 4 beats.", __LINE__);
+	Says(V, "drag the right edge of your second note (bar 2) to the left until it's as short as it goes, one [[beat]]. It lasts "
+		"2 beats now.", __LINE__);
+	F.Channels[0].Notes[1].Rows = 4;
+	Passes(Run("long-short", F), __LINE__);
+	Says(Run("long-short", F), "Your second note is short, 1 beat", __LINE__);
+	// The other way round passes too
+	ExerciseFacts G = Small(2);
+	Note(G, 0, 1, 1, 1, "C-4");
+	Note(G, 0, 2, 1, 4, "G-4");
+	Passes(Run("long-short", G), __LINE__);
+	// A note that starts late in its bar: three beats, not the bar line
+	ExerciseFacts L = Small(2);
+	Note(L, 0, 1, 3, 2, "C-4");
+	Note(L, 0, 2, 1, 2, "G-4");
+	Says(Run("long-short", L), "until it lasts three beats or more", __LINE__);
+}
+
+void TestSteadyBeatChecks()
+{
+	ExerciseFacts F = Small(1);
+	Fails(Run("steady-beat", F), "Click a note on the first beat line", __LINE__);
+	Note(F, 0, 1, 1, 1, "C-4");
+	Note(F, 0, 1, 2, 1, "C-4");
+	Fails(Run("steady-beat", F), "Beat 3 has no note yet. Click on its line, the third beat line of the bar", __LINE__);
+	Says(Run("steady-beat", F), "2 of the 4 beats have a note on their line.", __LINE__);
+	// Off the beat
+	Note(F, 0, 1, 3.5, 0.5, "C-4");
+	Fails(Run("steady-beat", F), "Your third note starts between beat lines 3 and 4, not on a line. Drag it to the left until it "
+		"starts right on beat line 3", __LINE__);
+	F.Channels[0].Notes.back().Row = 14;
+	Fails(Run("steady-beat", F), "between beat line 4 and the next bar line", __LINE__);
+	// A note held over the next beat line
+	ExerciseFacts H = Small(1);
+	Note(H, 0, 1, 1, 2, "C-4");
+	Note(H, 0, 1, 3, 1, "C-4");
+	Note(H, 0, 1, 4, 1, "C-4");
+	Fails(Run("steady-beat", H), "Beat 2 has no note of its own: your first note is still sounding there.", __LINE__);
+	H.Channels[0].Notes[0].Rows = 4;
+	Note(H, 0, 1, 2, 1, "E-4");
+	Passes(Run("steady-beat", H), __LINE__);
+	Says(Run("steady-beat", H), "Each of the 4 beats has a note right on its line: a steady [[beat]], one [[bar]] of 4.", __LINE__);
+}
+
+void TestLoudSoftChecks()
+{
+	ExerciseFacts F = Small(1);
+	for (int b = 1; b <= 4; ++b)
+		Note(F, 0, 1, b, 1, "G-4", 15);
+	Fails(Run("loud-soft", F), "Your notes all play at the same [[volume]], 15 of 15. Double-click one of them, point at Volume",
+		__LINE__);
+	F.Channels[0].Notes[2].Volume = 13;
+	Fails(Run("loud-soft", F), "Your third note is only a little quieter (13 of 15, against 15)", __LINE__);
+	F.Channels[0].Notes[2].Volume = 0;
+	Fails(Run("loud-soft", F), "Your third note is at volume 0, so it's silent now.", __LINE__);
+	F.Channels[0].Notes[2].Volume = 6;
+	Passes(Run("loud-soft", F), __LINE__);
+	Says(Run("loud-soft", F), "Your third note plays at 6 of 15 and the loudest at 15", __LINE__);
+}
+
+void TestStairsChecks()
+{
+	ExerciseFacts F = Small(3);
+	Note(F, 0, 1, 1, 1, "C-4");
+	Fails(Run("stairs", F), "Your stairs start on C. Go on up, one lighter lane higher on each beat line: D, E, F and G.", __LINE__);
+	// A step that skips the scale
+	Note(F, 0, 1, 2, 1, "D-4");
+	Note(F, 0, 1, 3, 1, "F-4");
+	Fails(Run("stairs", F), "From D your stairs skip up to F, over E: a [[scale]] climbs one lighter lane at a time. Drag your "
+		"third note down to E.", __LINE__);
+	// A darker lane
+	F.Channels[0].Notes[2].Pitch = Pitch("D#4");
+	Fails(Run("stairs", F), "Your third note (D#) is on a darker lane", __LINE__);
+	F.Channels[0].Notes[2].Pitch = Pitch("E-4");
+	Note(F, 0, 1, 4, 1, "F-4");
+	Note(F, 0, 2, 1, 1, "G-4");
+	Fails(Run("stairs", F), "Now come back down, one lighter lane lower on each beat line: F, E, D and C, where you started.",
+		__LINE__);
+	Note(F, 0, 2, 2, 1, "F-4");
+	Note(F, 0, 2, 3, 1, "D-4");
+	Fails(Run("stairs", F), "On the way down, from F your notes skip to D, over E", __LINE__);
+	F.Channels[0].Notes.back().Pitch = Pitch("E-4");
+	Note(F, 0, 2, 4, 1, "D-4");
+	Note(F, 0, 3, 1, 4, "C-4");
+	Passes(Run("stairs", F), __LINE__);
+	Says(Run("stairs", F), "Your notes climb C, D, E, F and G and come back down to C", __LINE__);
+	// Going the wrong way, and the same lane twice
+	ExerciseFacts W = Small(3);
+	Note(W, 0, 1, 1, 1, "C-4");
+	Note(W, 0, 1, 2, 1, "D-4");
+	Note(W, 0, 1, 3, 1, "C-4");
+	Fails(Run("stairs", W), "Your third note goes down before the stairs reach the top", __LINE__);
+	W.Channels[0].Notes[2].Pitch = Pitch("D-4");
+	Fails(Run("stairs", W), "Your second and third notes are on the same lane", __LINE__);
+}
+
+void TestRhythmChecks()
+{
+	ExerciseFacts F = Small(1);
+	Fails(Run("rhythm", F), "Click a note on the first beat line and drag its right edge over the next beat line", __LINE__);
+	for (int b = 1; b <= 4; ++b)
+		Note(F, 0, 1, b, 1, "G-4");
+	Fails(Run("rhythm", F), "all the same length (1 beat each), so they tick evenly, like a clock. Make the first one long: "
+		"right-click your second note", __LINE__);
+	F.Channels[0].Notes.erase(F.Channels[0].Notes.begin() + 1);
+	Fails(Run("rhythm", F), "Make the first one long: drag its right edge to the right, over the next beat line.", __LINE__);
+	F.Channels[0].Notes[0].Rows = 8;
+	Passes(Run("rhythm", F), __LINE__);
+	Says(Run("rhythm", F), "Your notes go long, short, short: a pattern you could clap.", __LINE__);
+}
+
+void TestCopyRepeatChecks()
+{
+	ExerciseFacts F = Small(4);
+	Tune(F, 0, 1, "C4 - - - E4 - G4 -");
+	ExerciseVerdict V = Run("copy-repeat", F);
+	Fails(V, "Bar 2 is still empty. Point the mouse at the start of bar 2, right on its bar line, and press Ctrl+V", __LINE__);
+	CHECK(V.PlayFirst == 1 && V.PlayLast == 2);
+	Tune(F, 0, 2, "C4 - - - E4 - G4 -");
+	Tune(F, 0, 3, ". . C4 - - - E4 -");		// pasted a beat late
+	Fails(Run("copy-repeat", F), "Bar 3's copy starts 1 beat late. Press Ctrl+Z", __LINE__);
+	Says(Run("copy-repeat", F), "Bar 2 plays bar 1 again already.", __LINE__);
+	F.Channels[0].Notes.resize(6);
+	Tune(F, 0, 3, "C4 - - - E4 - G4 -");
+	Tune(F, 0, 4, "C4 - - - E4 - A4 -");
+	Fails(Run("copy-repeat", F), "Bar 4 doesn't play the same notes as bar 1.", __LINE__);
+	F.Channels[0].Notes.back().Pitch = Pitch("G-4");
+	Passes(Run("copy-repeat", F), __LINE__);
+	Says(Run("copy-repeat", F), "Bars 2, 3 and 4 play bar 1 again, note for note: 4 bars that repeat.", __LINE__);
+}
+
+void TestNewSoundChecks()
+{
+	ExerciseFacts F = Small(1);
+	for (int b = 1; b <= 4; ++b)
+		Note(F, 0, 1, b, 1, "C-4");
+	Fails(Run("new-sound", F), "Your notes still play Lead, the sound they started with. Open Instrument > Sound browser", __LINE__);
+	F.Channels[0].Notes[0].Instrument = F.Channels[0].Notes[1].Instrument = "Music box";
+	ExerciseVerdict V = Run("new-sound", F);
+	Fails(V, "Your third and fourth notes still play Lead. Select them too", __LINE__);
+	Says(V, "2 of your notes play Music box now.", __LINE__);
+	F.Channels[0].Notes[2].Instrument = F.Channels[0].Notes[3].Instrument = "Music box";
+	Passes(Run("new-sound", F), __LINE__);
+	Says(Run("new-sound", F), "Your notes play Music box now", __LINE__);
+}
+
+void TestTwoPartsChecks()
+{
+	ExerciseFacts F = Small(1, 2);
+	Tune(F, 0, 1, "C4 - E4 - G4 - E4 -");
+	Fails(Run("two-parts", F), "The triangle has no note yet.", __LINE__);
+	Note(F, 2, 1, 1, 4, "E-4");
+	Fails(Run("two-parts", F), "Your triangle note (E-4) is as high as the tune's notes or higher", __LINE__);
+	F.Channels[2].Notes[0].Pitch = Pitch("C#3");
+	Fails(Run("two-parts", F), "Your triangle note (C#) is on a darker lane", __LINE__);
+	F.Channels[2].Notes[0].Pitch = Pitch("C-3");
+	Passes(Run("two-parts", F), __LINE__);
+	Says(Run("two-parts", F), "The triangle plays C under the tune", __LINE__);
+	F.Channels[0].Notes.clear();
+	Fails(Run("two-parts", F), "The tune on Pulse 1 is gone", __LINE__);
+}
+
+void TestTinyTuneChecks()
+{
+	ExerciseFacts F = Small(2);
+	Fails(Run("tiny-tune", F), "on the warmer lane (C, the [[home note]] of the key)", __LINE__);
+	Tune(F, 0, 1, "C4 - D4 - E4 - G4 - | G4 - E4 - D4 - D4 -");
+	Fails(Run("tiny-tune", F), "Your tune ends on D, but it started on C. End it where it started: drag the last note to the C lane "
+		"(the warmer one).", __LINE__);
+	F.Channels[0].Notes.back().Pitch = Pitch("C-4");
+	Passes(Run("tiny-tune", F), __LINE__);
+	Says(Run("tiny-tune", F), "Your tune climbs from C to G and comes back down to C, where it started.", __LINE__);
+	CHECK(Run("tiny-tune", F).NextExercise == "home-note");	// the first of Next steps
+	ExerciseFacts Up = Small(2);
+	Tune(Up, 0, 1, "C4 - D4 - E4 - D4 - | G4 - E4 - D4 - C4 -");
+	Fails(Run("tiny-tune", Up), "On the way up, your fourth note goes down.", __LINE__);
+	ExerciseFacts Few = Small(2);
+	Tune(Few, 0, 1, "C4 - E4 - G4 - E4 - | C4 - . . . . . .");
+	Fails(Run("tiny-tune", Few), "Your tune has 5 notes so far.", __LINE__);
+	ExerciseFacts Down = Small(2);
+	Tune(Down, 0, 1, "G4 - E4 - D4 - C4 - | D4 - E4 - D4 - C4 -");
+	Fails(Run("tiny-tune", Down), "Your tune starts on its highest note", __LINE__);
+}
+
 int main()
 {
 	TestList();
@@ -721,6 +1006,17 @@ int main()
 	TestSongShape();
 	TestFirstSong();
 	TestVerdictJson();
+	TestFirstStepsList();
+	TestFirstNoteChecks();
+	TestLongShortChecks();
+	TestSteadyBeatChecks();
+	TestLoudSoftChecks();
+	TestStairsChecks();
+	TestRhythmChecks();
+	TestCopyRepeatChecks();
+	TestNewSoundChecks();
+	TestTwoPartsChecks();
+	TestTinyTuneChecks();
 	std::printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

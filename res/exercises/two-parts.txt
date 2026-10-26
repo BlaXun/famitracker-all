@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: two parts at once
+title: Two parts at once
+about: A low note on the triangle under the tune: two parts playing together.
+
+step
+show: piano-roll
+play: bar 1
+text: Music is often several [[parts|part]] at once. Here's one part, a little tune on Pulse 1, one of the NES's voices. Press Play bar 1 to hear it.
+wait: heard
+
+step
+show: piano-roll
+play: bar 1
+check: two-parts
+instrument: 02
+text: Now a second part under it, on the [[triangle]], the NES's deep voice for the [[bass|bass-line]]. The piano roll draws the triangle's notes now, and the tune's are faint behind them.
+
+  Click at the start of the bar on the C-3 lane, well below the faint notes, and before you let go, drag to the right to the end of the bar. Press Play bar 1 to hear both parts, then Check.
+hint: The keys at the left are labelled C-3 and C-4. A click on a faint note adds a triangle note there too; only a double-click would switch back to the tune.
+answer: Triangle, bar 1, Bass: C3 - - - - - - -

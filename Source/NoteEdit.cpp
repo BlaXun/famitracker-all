@@ -1064,6 +1064,24 @@ void CChannelNotes::SetInstrument(const int *pStarts, int Count, int Instrument)
 	d.Keep(Before, Placed);
 }
 
+void CChannelNotes::SetVolume(const int *pStarts, int Count, int Volume)
+{
+	Impl &d = *m_pImpl;
+	if (Volume < 0 || Volume >= MAX_VOLUME)
+		return;
+	const Sounds Before = d.SoundsNow();
+	Sounds Placed;
+	for (int k = 0; k < Count; ++k) {
+		if (d.Find(pStarts[k]) < 0)
+			continue;
+		d.CellAt(pStarts[k]).Vol = static_cast<unsigned char>(Volume);
+		const Sound Now = { -1, Volume, -1 };
+		Placed[pStarts[k]] = Now;
+	}
+	d.Parsed = false;
+	d.Keep(Before, Placed);
+}
+
 void CChannelNotes::SelfContained()
 {
 	Impl &d = *m_pImpl;
