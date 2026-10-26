@@ -69,6 +69,7 @@
 #include "PianoRoll.h"
 #include "ClipsPanel.h"
 #include "ProblemsPanel.h"
+#include "WhatNextPanel.h"
 #include "MixerPanel.h"
 #include <vector>
 
@@ -178,6 +179,7 @@ CMainFrame::CMainFrame() :
 	m_pPianoRoll(NULL),
 	m_pClipsBar(NULL),
 	m_pProblemsBar(NULL),
+	m_pWhatNextBar(NULL),
 	m_pMixerBar(NULL),
 	m_pDrumGridBar(NULL),
 	m_bPatternShown(true),
@@ -214,6 +216,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pPianoRoll);	// its window went with this one, its parent
 	SAFE_RELEASE(m_pClipsBar);
 	SAFE_RELEASE(m_pProblemsBar);
+	SAFE_RELEASE(m_pWhatNextBar);
 	SAFE_RELEASE(m_pMixerBar);
 	SAFE_RELEASE(m_pDrumGridBar);
 	SAFE_RELEASE(m_pActionGroup);
@@ -304,6 +307,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_PATTERNEDITOR, OnViewPatternEditor)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
+	ON_COMMAND(ID_VIEW_WHATNEXT, OnViewWhatNext)
 	ON_COMMAND(ID_VIEW_MIXER, OnViewMixer)
 	ON_COMMAND(ID_HELP, OnHelpContext)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
@@ -380,6 +384,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PATTERNEDITOR, OnUpdateViewPatternEditor)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_WHATNEXT, OnUpdateViewWhatNext)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_MIXER, OnUpdateViewMixer)
 	ON_UPDATE_COMMAND_UI(ID_HELP_GLOSSARY, OnUpdateHelpGlossary)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
@@ -1756,6 +1761,8 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowClipsPanel(true);
 			if (CProblemsBar::WasOpen())
 				ShowProblemsPanel(true);
+			if (CWhatNextBar::WasOpen())
+				ShowWhatNext(true);
 			if (CMixerBar::WasOpen())
 				ShowMixer(true);
 			if (CDrumGridBar::WasOpen())
@@ -2708,15 +2715,16 @@ void CMainFrame::ShowNoteViews(const note_views_t &Wanted)
 }
 
 // The panels docked in the main window are laid out in this order, each along
-// the edge of the room the ones before it leave: the mixer, the problems panel
-// and the drum grid outermost, then the piano roll under the pattern editor
-// and the clips panel beside the pattern editor. While the piano roll fills
-// the pattern editor's place, the clips panel goes beside the piano roll.
+// the edge of the room the ones before it leave: the mixer, the problems panel,
+// the What next panel and the drum grid outermost, then the piano roll under
+// the pattern editor and the clips panel beside the pattern editor. While the
+// piano roll fills the pattern editor's place, the clips panel goes beside the
+// piano roll.
 void CMainFrame::ArrangeBars()
 {
 	const bool Fill = !m_bPatternShown;
 	CControlBar *const ORDER[] = {
-		m_pMixerBar, m_pProblemsBar, m_pDrumGridBar,
+		m_pMixerBar, m_pProblemsBar, m_pWhatNextBar, m_pDrumGridBar,
 		Fill ? static_cast<CControlBar*>(m_pClipsBar) : static_cast<CControlBar*>(m_pPianoRoll),
 		Fill ? static_cast<CControlBar*>(m_pPianoRoll) : static_cast<CControlBar*>(m_pClipsBar),
 	};
@@ -2815,6 +2823,36 @@ void CMainFrame::ShowProblemsPanel(bool Show)
 	m_pProblemsBar->Opened(Show);
 }
 
+void CMainFrame::OnViewWhatNext()
+{
+	ShowWhatNext(m_pWhatNextBar == NULL || !m_pWhatNextBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewWhatNext(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pWhatNextBar != NULL && m_pWhatNextBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowWhatNext(bool Show)
+{
+	// The song's next step from what_next, along the bottom of the main window or its right (see WhatNextPanel.h),
+	// made the first time
+	if (Show && m_pWhatNextBar == NULL) {
+		m_pWhatNextBar = new CWhatNextBar();
+		if (!m_pWhatNextBar->Create(this, m_pMcpConnection)) {
+			delete m_pWhatNextBar;
+			m_pWhatNextBar = NULL;
+			return;
+		}
+		// Laid out before the piano roll and the clips panel, so it's along the window's edge, outside them
+		ArrangeBars();
+	}
+	if (m_pWhatNextBar == NULL)
+		return;
+	ShowControlBar(m_pWhatNextBar, Show ? TRUE : FALSE, FALSE);
+	m_pWhatNextBar->Opened(Show);
+}
+
 void CMainFrame::OnViewMixer()
 {
 	ShowMixer(m_pMixerBar == NULL || !m_pMixerBar->IsVisible());
@@ -2854,6 +2892,8 @@ void CMainFrame::SongChanged()
 		m_pClipsBar->SongChanged();
 	if (m_pProblemsBar != NULL)
 		m_pProblemsBar->SongChanged();
+	if (m_pWhatNextBar != NULL)
+		m_pWhatNextBar->SongChanged();
 	if (m_pDrumGridBar != NULL)
 		m_pDrumGridBar->SongChanged();
 	// The frame editor shows the sections' column while the module has sections, and where the song loops

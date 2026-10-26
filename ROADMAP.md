@@ -663,12 +663,28 @@ each with the user's words:
   song settings' labels, the instrument editor's sequences, the mixer's
   Soft, Space and pan and the piano roll's Key and Chords explain
   themselves the same way.
-- **A What next panel** (yes): `what_next` in FamiTracker, docked like the
-  problems panel: the one next step in plain words, why, and a button that
-  does it.
-- **Hear the problem** (yes): the problems panel's findings get Play it
-  (the bars where it happens) and, where there's a fix, Play the fix (kept
-  or taken back).
+- **A What next panel** (yes; done in October 2026, on `feat-guide-panels`):
+  View > What next shows the song's one next step in plain words ("Add
+  chords and a bass line (bars 1-8)"), why, and how far the song has come:
+  the recipe's stages (the frame, the parts, the form, depth, polish, the
+  mix, the loop, the export) light up as they're done. **Do it** makes the
+  step, as one Ctrl+Z. For the melody it offers your own tune instead:
+  **Record it** (sing, hum or whistle into the microphone, or into your
+  phone), **Draw it** (the piano roll opens at those bars), or **Grow one**
+  (three versions grown from a hook over the chords; the one you pick plays
+  at once). **Skip** leaves a step out (the panel's menu brings it back),
+  and **Kind** says what the song is for (a calm night, a lively stage, an
+  action track), so the steps follow that recipe. It asks again a moment
+  after each change, not while the song plays or while you type. Docked
+  along the bottom, or on the right (right-click it); it comes back when
+  FamiTracker starts if it was open.
+- **Hear the problem** (yes; done in October 2026, on `feat-guide-panels`):
+  each finding in the problems panel has **Play it**: the bars where it
+  happens, with a bar before and one after, first with its channels alone
+  (both of a clash) and then in the mix (right-click for the one or the
+  other; P in the panel). Where its fix is one click, **Play the fix** makes
+  it, plays the same bars and asks: **Keep**, or **Take back** (as Ctrl+Z).
+  Nothing else changes the song while it asks.
 - **Chords with roles** ("yes ... but that should be a toggle maybe"): the
   piano roll's chord strip colors each chord by what it does (home, away,
   tension, back home) and gives it a feel word, switched on and off from

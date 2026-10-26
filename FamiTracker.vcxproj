@@ -568,6 +568,7 @@
     <ClCompile Include="Source\Api\GameSounds.cpp" />
     <ClCompile Include="Source\Api\Tools.cpp" />
     <ClCompile Include="Source\Api\WhatNext.cpp" />
+    <ClCompile Include="Source\Api\NextSteps.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -611,6 +612,7 @@
     <ClInclude Include="Source\Api\Song.h" />
     <ClInclude Include="Source\Api\Tools.h" />
     <ClInclude Include="Source\Api\WhatNext.h" />
+    <ClInclude Include="Source\Api\NextSteps.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />
@@ -664,6 +666,8 @@
     <ClCompile Include="Source\SoundPreview.cpp" />
     <ClCompile Include="Source\ClipsPanel.cpp" />
     <ClCompile Include="Source\ProblemsPanel.cpp" />
+    <ClCompile Include="Source\WhatNextPanel.cpp" />
+    <ClCompile Include="Source\BarsPlayer.cpp" />
     <ClCompile Include="Source\MixerPanel.cpp" />
     <ClCompile Include="Source\DrumGrid.cpp" />
     <ClInclude Include="Source\DrumGrid.h" />
@@ -679,6 +683,8 @@
     <ClInclude Include="Source\TutorialScript.h" />
     <ClInclude Include="Source\ClipsPanel.h" />
     <ClInclude Include="Source\ProblemsPanel.h" />
+    <ClInclude Include="Source\WhatNextPanel.h" />
+    <ClInclude Include="Source\BarsPlayer.h" />
     <ClInclude Include="Source\MixerPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
     <ClInclude Include="Source\SoundBrowserDlg.h" />

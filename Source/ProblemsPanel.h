@@ -29,11 +29,15 @@
 // piano roll mark where they are (ProblemMarkAt). Double-click a finding, or
 // press Enter, to go there; its button nudges a note that clicks (polish's
 // "clicks" touch, one undoable step), selects notes that vanish in the piano
-// roll, or explains the rest. The panel checks the track again a moment after
-// it changes (CMainFrame::SongChanged, and a look every second for changes
-// nothing tells it of: instruments, speed and tempo, the track), not while
-// the song plays; Check checks at once. It's docked along the bottom of the
-// main window, or along its right.
+// roll, or explains the rest. Play it plays the bars where a finding is (a
+// bar before and one after, Api/ProblemList.h's PlayOf), its channels alone
+// and then in the mix (BarsPlayer.h); Play the fix makes a fix of one call,
+// plays the same bars and asks whether to keep it or take it back, while
+// nothing else changes the song. The panel checks the track again a moment
+// after it changes (CMainFrame::SongChanged, and a look every second for
+// changes nothing tells it of: instruments, speed and tempo, the track), not
+// while the song plays; Check checks at once. It's docked along the bottom of
+// the main window, or along its right.
 
 class CMcpConnection;
 
@@ -45,6 +49,12 @@ class CMcpConnection;
 int ProblemMarkAt(int Track, int Channel, int Row);
 COLORREF ProblemMarkColor(int Mark);
 bool ProblemMarkSelected(int Mark);
+
+// The selected track's settings and instruments, cheaply: what changes without
+// a notice (an instrument's envelope, the speed, the track) changes it. The
+// panels that check the song (this one, the What next panel) look at it every
+// second.
+unsigned int SongSettingsSignature();
 
 class CProblemsPanelWnd : public CWnd
 {

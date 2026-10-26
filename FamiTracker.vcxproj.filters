@@ -1308,6 +1308,9 @@
     <ClCompile Include="Source\Api\WhatNext.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\NextSteps.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Png.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1426,6 +1429,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\WhatNext.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\NextSteps.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Png.h">
@@ -1608,6 +1614,18 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\ProblemsPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\WhatNextPanel.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\WhatNextPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\BarsPlayer.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\BarsPlayer.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\MixerPanel.cpp">

@@ -32,6 +32,8 @@
 
 namespace ftapi {
 
+struct Timing;	// Music.h
+
 // check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
 // holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
 // in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
@@ -79,6 +81,17 @@ struct ProblemLine {
 	ProblemLine() : Finding(0), Note(-1), Channel(-1), Row(0) {}
 };
 
+// What the panel's Play it plays for a line (ProblemList::PlayOf): the bars
+// where it happens with a bar before and one after, its channels alone first
+struct ProblemPlay {
+	int FirstBar, LastBar;		// from 1
+	int FirstRow, EndRow;		// song rows [FirstRow, EndRow): the first bar's start to the last one's end
+	std::vector<int> Channels;	// from 0: the finding's and its notes' (both of a clash); none for the mix alone (a silent bar)
+	ProblemPlay() : FirstBar(1), LastBar(1), FirstRow(0), EndRow(0) {}
+};
+
+const int PROBLEM_PLAY_BARS = 4;	// a finding over more bars (a melody in pieces, a bass) plays its first four
+
 class ProblemList {
 public:
 	ProblemList();
@@ -102,6 +115,10 @@ public:
 	// the finding has several ("D-4: "Fair pluck" (03) is gone within 3 frames, ...")
 	std::string LinePosition(const ProblemLine &Line) const;
 	std::string LineText(const ProblemLine &Line) const;
+	// The bars Play it plays for a line, on a track of that Timing: from the bar before the line's note that vanishes
+	// (or its finding, with its notes, up to PROBLEM_PLAY_BARS of its bars) to the bar after, as far as the song goes;
+	// false when it's past the song's end now
+	bool PlayOf(const ProblemLine &Line, const Timing &Time, ProblemPlay &Out) const;
 
 private:
 	int m_iTrack, m_iPatternLength;
