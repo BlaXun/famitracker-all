@@ -22962,6 +22962,16 @@ void TestWhatNextShape()
 		Check(A.Tool == "add_chords_and_bass" && IntegerOf(&A.Arguments, "from_bar") == 3 && IntegerOf(&A.Arguments, "to_bar") == 10,
 			A.Text.c_str(), __LINE__);
 	}
+	{
+		// A short loop laid out: its parts filled in order, no break put in (it has none), done
+		FakeSong Small(1);
+		NewSong(Small);
+		CHECK(!Run(Small, "song_shape", "{\"shape\": \"small\"}").IsError);
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Small, "{}", 40, Finished, __LINE__);
+		CHECK(Finished && CallIndex(Made, "insert_bars") < 0 && CallIndex(Made, "name_section") < 0 && CallIndex(Made, "song_shape") < 0);
+		CHECK(Small.Info.Sections.size() == 4u && Small.Rows[0].size() == 7u * 32u);
+	}
 	// Skipped; and a song with sections or notes of its own keeps its form
 	FakeSong Song(1);
 	NewSong(Song);

@@ -25308,7 +25308,14 @@ void WhatNext::Depth()
 	}
 	const int BPF = std::max(1, S.Time.BarsPerFrame());
 	const int Short = (4 + BPF - 1) / BPF * BPF;
-	if (!Milestone("break", Breaks > 0 || !Wanted("break"), "a break") && Count >= 3 && LastBody >= 0) {
+	// (a shape laid out without one, a short loop's, wants none: song_shape)
+	const SongShape *pLaid = MatchSongShape(S.Song.Sections, S.Song.TrackName, 0.0);
+	bool ShapeBreaks = pLaid == 0;
+	for (size_t i = 1; pLaid != 0 && i < pLaid->Parts.size(); ++i)
+		ShapeBreaks = ShapeBreaks || IsFreeSectionBase(SectionBase(pLaid->Parts[i].Name));
+	if (!ShapeBreaks)
+		m_Away.insert("break");
+	else if (!Milestone("break", Breaks > 0 || !Wanted("break"), "a break") && Count >= 3 && LastBody >= 0) {
 		const FormPart &Before = m_Form[static_cast<size_t>(LastBody)];
 		Json Put = Json::MakeObject();
 		Put.Set("at_bar", Before.FirstBar);

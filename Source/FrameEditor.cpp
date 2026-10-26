@@ -1199,7 +1199,7 @@ INT_PTR CFrameEditor::OnToolHitTest(CPoint point, TOOLINFO *pTI) const
 	ScaleMouse(Logical);
 	if (Logical.x < Left || Logical.y < TOP_OFFSET)
 		return -1;
-	const int Active = std::max(0, std::min(Frames - 1, m_pView->GetSelectedFrame()));
+	const int Active = std::max(0, std::min(Frames - 1, static_cast<int>(m_pView->GetSelectedFrame())));
 	const int FirstVisible = Active - m_iMiddleRow;
 	const int Row = (Logical.y - TOP_OFFSET) / ROW_HEIGHT, Frame = FirstVisible + Row;
 	if (Row >= m_iRowsVisible || Frame < 0 || Frame >= Frames)
