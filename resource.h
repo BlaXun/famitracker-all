@@ -853,6 +853,11 @@
 
 // View > Problems (ProblemsPanel.cpp)
 #define ID_VIEW_PROBLEMS                37250
+#define ID_VIEW_WHATNEXT                37800
+#define IDD_PLAYFIX                     680
+#define IDC_PLAYFIX_TEXT                2300
+#define IDC_PLAYFIX_STATUS              2301
+#define IDC_PLAYFIX_AGAIN               2302
 
 // View > Mixer (MixerPanel.cpp; its button is IDC 1904 there)
 #define ID_VIEW_MIXER                   37400

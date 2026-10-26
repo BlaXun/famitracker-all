@@ -58,6 +58,7 @@
 #include "../Vrc6Plus.h"
 #include "../Wavetables.h"
 #include "../WhatNext.h"
+#include "../NextSteps.h"
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
@@ -22605,6 +22606,312 @@ void TestStatusBarFrames()
 	CHECK(StatusFramesText(1, 33, 50).size() <= std::string(STATUS_FRAMES_LONGEST).size());
 }
 
+// what_next's JSON (format json) in one state, against its text reply: the same step and call, the why, the step in
+// plain words, its stage (a fix of check_song's comes before the stages), where it works (the melody's step: its bars
+// and channel, and whether it offers notes to start from), the milestones done and left as the text counts and lists
+// them, each with its stage, and the stages adding up to them; and FamiTracker's What next panel reads it back
+// (NextSteps.h). A melody step's grow_melody lists its versions as the panel's Grow one reads them. The steps' ids and
+// stages seen are gathered
+ToolResult AskNextAs(FakeSong &Song, const std::string &Asked, bool Core)
+{
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Core = Core;
+	return Tools.Call("what_next", Parse(Asked), Who);
+}
+
+void CheckNextJson(FakeSong &Song, const std::string &Asked, const std::string &Text, int Line, std::set<std::string> &Ids,
+	std::set<int> &Stages, bool Core)
+{
+	Json Ask = Parse(Asked);
+	Ask.Set("format", "json");
+	const ToolResult Data = AskNextAs(Song, WriteJson(Ask), Core);
+	Check(!Data.IsError, Data.Text.c_str(), Line);
+	if (Data.IsError)
+		return;
+	const Json J = Parse(Data.Text);
+	const WhatNextAnswer T = ReadWhatNext(Text);
+	const Json *pStep = J.Get("step");
+	Check(pStep != 0 && pStep->IsObject() && J.Get("steps") != 0 && J.Get("steps")->Size() == 1, Data.Text.c_str(), Line);
+	if (pStep == 0 || !pStep->IsObject())
+		return;
+	// The call, as the text gives it
+	const size_t Colon = T.Line.find("): ");
+	const std::string Call = Colon == std::string::npos ? std::string() : T.Line.substr(Colon + 3);
+	Check(TextOf(pStep, "call") == Call && !Call.empty(), (TextOf(pStep, "call") + " | " + Call).c_str(), Line);
+	Check(TextOf(pStep, "tool") == T.Tool, T.Line.c_str(), Line);
+	Check(pStep->Get("arguments") != 0 && WriteJson(*pStep->Get("arguments")) == WriteJson(T.Arguments), T.Line.c_str(), Line);
+	Check(J.Get("done") != 0 && J.Get("done")->IsBool() && J.Get("done")->Bool() == T.Done, T.Line.c_str(), Line);
+	Check(pStep->Get("ask_user") != 0 && pStep->Get("ask_user")->Bool() == T.AskUser, T.Line.c_str(), Line);
+	Check(Contains(Text, ("\nWhy: " + TextOf(pStep, "why") + "\n").c_str()) || Contains(Text, ("\nWhy: " + TextOf(pStep, "why")).c_str()),
+		TextOf(pStep, "why").c_str(), Line);
+	// What to do, in plain words: no call, no tool's name, nothing left generic
+	const std::string What = TextOf(pStep, "what");
+	Check(!What.empty() && What.find('{') == std::string::npos && What.find('_') == std::string::npos &&
+		What != "Fix what check_song found" && What != "Try the review's tip" && What != "Ask the user", (What + " for " + Call).c_str(), Line);
+	// The stage: the step's by its id; none for check_song's fixes and the end
+	const std::string Id = TextOf(pStep, "id");
+	Ids.insert(Id);
+	const int Stage = ParseNextStage(TextOf(pStep, "stage"));
+	Check(Stage == NextStageOfStep(Id), Id.c_str(), Line);
+	bool Finding = false;
+	for (int k = 0; k < PROBLEM_KINDS; ++k)
+		Finding = Finding || Id == ProblemKindId(k);
+	Check(Stage >= 0 || Finding || Id == "done" || Id == "direct", Id.c_str(), Line);
+	if (Stage >= 0)
+		Stages.insert(Stage);
+	// The milestones, as the text counts them ("5 of 18 done") and lists them (done by what it says, left by name)
+	const size_t LeftAt = Text.find("\nLeft: ");
+	const std::string Left = LeftAt == std::string::npos ? std::string() : Text.substr(LeftAt, Text.find('\n', LeftAt + 1) - LeftAt);
+	const Json *pMilestones = J.Get("milestones");
+	int Counted = 0, CountedDone = 0;
+	for (size_t i = 0; pMilestones != 0 && i < pMilestones->Size(); ++i) {
+		const Json &M = pMilestones->At(i);
+		const std::string Name = TextOf(&M, "name");
+		const bool Done = M.Get("done") != 0 && M.Get("done")->Bool();
+		Check(ParseNextStage(TextOf(&M, "stage")) >= 0 && ParseNextStage(TextOf(&M, "stage")) == NextStageOfMilestone(Name), Name.c_str(),
+			Line);
+		Check(Done ? !TextOf(&M, "text").empty() && Contains(Text, TextOf(&M, "text").c_str()) : Contains(Left, Name.c_str()), Name.c_str(),
+			Line);
+		++Counted;
+		CountedDone += Done ? 1 : 0;
+	}
+	Check(IntegerOf(&J, "done_count") == CountedDone && IntegerOf(&J, "total") == Counted, Data.Text.c_str(), Line);
+	if (!T.Done)
+		Check(Contains(T.Line, (", " + std::to_string(CountedDone) + " of " + std::to_string(Counted) + " done): ").c_str()), T.Line.c_str(), Line);
+	// The stages add up to the milestones
+	const Json *pStages = J.Get("stages");
+	Check(pStages != 0 && pStages->Size() == static_cast<size_t>(NEXT_STAGES), "the stages", Line);
+	int SumDone = 0, SumOf = 0;
+	for (size_t s = 0; pStages != 0 && s < pStages->Size(); ++s) {
+		const Json &G = pStages->At(s);
+		Check(TextOf(&G, "id") == NextStageId(static_cast<int>(s)) && TextOf(&G, "name") == NextStageTitle(static_cast<int>(s)) &&
+			IntegerOf(&G, "done") <= IntegerOf(&G, "of"), TextOf(&G, "id").c_str(), Line);
+		SumDone += static_cast<int>(IntegerOf(&G, "done"));
+		SumOf += static_cast<int>(IntegerOf(&G, "of"));
+	}
+	Check(SumDone == CountedDone && SumOf == Counted, "the stages add up", Line);
+	// Read back as the panel reads it
+	NextAnswer A;
+	std::string Error;
+	Check(ReadNextAnswer(Data.Text, A, Error), Error.c_str(), Line);
+	Check(A.Step.Call == Call && A.Step.Tool == T.Tool && A.Step.What == What && A.Step.Id == Id && A.Done == T.Done &&
+		A.DoneCount == CountedDone && A.Total == Counted && A.Step.Stage == Stage && A.Steps.size() == 1, Call.c_str(), Line);
+	Check(A.Step.Arguments == WriteJson(T.Arguments) && A.Step.AskUser == T.AskUser && A.Milestones.size() == static_cast<size_t>(Counted),
+		Call.c_str(), Line);
+	Check(A.Done ? A.CurrentStage() == -1 : (Stage < 0 || A.CurrentStage() == Stage), Call.c_str(), Line);
+	// Where it works: the melody's step its bars and channel; only a melody's step offers notes to start from
+	Check(A.Step.FromBar == 0 || (A.Step.FromBar >= 1 && A.Step.ToBar >= A.Step.FromBar), Call.c_str(), Line);
+	if (Id == "melody")
+		Check(A.Step.FromBar > 0 && A.Step.Channel >= 0 && A.Step.Channel < static_cast<int>(Song.Info.Channels.size()), Call.c_str(), Line);
+	if (A.Step.OwnNotes)
+		Check(Id == "melody" && (T.Tool == "grow_melody" || T.Tool == "write_notes"), Call.c_str(), Line);
+	if (T.Tool == "write_notes" && Id == "melody")
+		Check(A.Step.OwnNotes, Call.c_str(), Line);
+	// grow_melody's versions, as Grow one lists them
+	if (T.Tool == "grow_melody" && T.Arguments.Get("pick") == 0) {
+		const ToolResult Grown = Run(Song, "grow_melody", WriteJson(T.Arguments));
+		const std::vector<std::string> Versions = GrownVersions(Grown.Text);
+		Check(!Grown.IsError && Versions.size() >= 2 && Versions.size() <= 3 && !Versions[0].empty() && Versions[0].find('\n') ==
+			std::string::npos, Grown.Text.c_str(), Line);
+	}
+}
+
+// what_next's JSON in every state TestWhatNextLoop walks through, for each kind, on the small set and with skips: what
+// the What next panel shows and does is what the text gives (CheckNextJson), from an empty song to done
+void TestWhatNextJson()
+{
+	struct Walk {
+		const char *Asked;
+		bool Core;
+	};
+	const Walk WALKS[] = { { "{\"kind\": \"lively\"}", false }, { "{\"kind\": \"calm\"}", false }, { "{\"kind\": \"action\"}", false },
+		{ "{}", false }, { "{\"kind\": \"lively\"}", true }, { "{\"kind\": \"lively\", \"skip\": [\"drums\", \"echo\", \"lead\"]}", false } };
+	for (const Walk &W : WALKS) {
+		FakeSong Song(1);
+		NewSong(Song);
+		std::set<std::string> Ids;
+		std::set<int> Stages;
+		bool Finished = false;
+		int Steps = 0;
+		// As FollowWhatNext follows it (a call at a time, as given; a grown melody's first version picked; a melody in
+		// one-bar pieces held over its bar lines), each answer's JSON checked against its text
+		for (int i = 0; i < 60; ++i) {
+			const std::string Text = AskNextAs(Song, W.Asked, W.Core).Text;
+			CheckNextJson(Song, W.Asked, Text, __LINE__, Ids, Stages, W.Core);
+			const WhatNextAnswer N = ReadWhatNext(Text);
+			if (N.Done) {
+				Finished = true;
+				break;
+			}
+			if (N.AskUser || N.Tool.empty())
+				break;
+			ToolSet Tools(Song);
+			Caller Who;
+			Who.Core = W.Core;
+			const ToolResult Did = Tools.Call(N.Tool, N.Arguments, Who);
+			Check(!Did.IsError, (N.Tool + " -> " + Did.Text).c_str(), __LINE__);
+			if (Did.IsError)
+				break;
+			if (N.Tool == "grow_melody" && N.Arguments.Get("pick") == 0) {
+				Json Picked = N.Arguments;
+				Picked.Set("pick", 1);
+				Check(!Tools.Call(N.Tool, Picked, Who).IsError, "the pick works", __LINE__);
+			}
+			if (N.Tool == "read_notes" && Contains(N.Text, "; then write_notes")) {
+				const Json Asking = Parse(W.Asked);
+				const std::string Kind = Asking.Get("kind") != 0 ? Asking.Get("kind")->String() : std::string();
+				const Json Report = Parse(Tools.Call("check_song", Parse(std::string("{\"format\": \"json\"") + (Kind == "calm" ||
+					Kind == "lively" ? ", \"style\": \"" + Kind + "\"" : std::string()) + "}")).Text);
+				const std::vector<const Json *> Found = FindingsOf(Report, "phrases");
+				Check(!Found.empty() && HoldBarEnds(Song, *Found[0]), "the melody held over its bar lines", __LINE__);
+			}
+			NoteCall(Song, N.Tool);
+			++Steps;
+		}
+		Check(Finished && Steps >= 15, W.Asked, __LINE__);
+		Check(Ids.count("done") == 1 && Ids.count("tempo") == 1 && Ids.count("melody") == 1, W.Asked, __LINE__);
+		const int SEEN[] = { STAGE_FRAME, STAGE_PARTS, STAGE_FORM, STAGE_DEPTH, STAGE_EXPORT };
+		for (int Stage : SEEN)
+			Check(Stages.count(Stage) == 1, (std::string(W.Asked) + " " + NextStageId(Stage)).c_str(), __LINE__);
+		// The last steps in one call, from the first that's due
+		Check(Stages.count(STAGE_POLISH) + Stages.count(STAGE_MIX) + Stages.count(STAGE_LOOP) >= 1, W.Asked, __LINE__);
+	}
+
+	// A new song's first answer as the panel shows it: the tempo, in the frame, nothing done yet
+	FakeSong Song(1);
+	NewSong(Song);
+	NextAnswer A;
+	std::string Error;
+	CHECK(ReadNextAnswer(Run(Song, "what_next", "{\"kind\": \"lively\", \"format\": \"json\"}").Text, A, Error));
+	CHECK_EQ(A.Step.Id, std::string("tempo"));
+	CHECK_EQ(A.Step.Tool, std::string("set_tempo"));
+	CHECK_EQ(A.Step.What, std::string("Set the tempo to 128.6 BPM"));
+	CHECK_EQ(A.Step.Stage, static_cast<int>(STAGE_FRAME));
+	CHECK_EQ(A.CurrentStage(), static_cast<int>(STAGE_FRAME));
+	CHECK(!A.Done && !A.Step.AskUser && !A.Step.OwnNotes && A.Step.Calls == 1 && A.DoneCount == 0 && A.Total >= 18);
+	CHECK_EQ(A.Kind, std::string("lively"));
+	CHECK(A.KindNote.empty());
+	CHECK(A.StageCount[STAGE_FRAME] == 2 && A.StageDone[STAGE_FRAME] == 0 && A.StageCount[STAGE_EXPORT] == 2);
+	CHECK_EQ(std::string(NextStageTitle(STAGE_FRAME)), std::string("The frame"));
+	CHECK(ParseNextStage("mix") == STAGE_MIX && ParseNextStage("") == -1 && NextStageOfStep("vanishing") == -1 &&
+		NextStageOfStep("seam") == STAGE_LOOP && NextStageOfMilestone("chords and bass") == STAGE_PARTS);
+	// Without a kind: the general recipe, saying how it was chosen
+	CHECK(ReadNextAnswer(Run(Song, "what_next", "{\"format\": \"json\"}").Text, A, Error));
+	CHECK(A.Kind == "general" && !A.KindNote.empty());
+	// Every step found, with all
+	CHECK(ReadNextAnswer(Run(Song, "what_next", "{\"kind\": \"lively\", \"all\": true, \"format\": \"json\"}").Text, A, Error));
+	CHECK(A.Steps.size() >= 2 && A.Steps[0].Call == A.Step.Call && A.Steps[1].Id == "key");
+	// Direct changes off: the user first
+	FakeSong Off(1);
+	CHECK(ReadNextAnswer(Run(Off, "what_next", "{\"format\": \"json\"}").Text, A, Error));
+	CHECK(A.Step.AskUser && A.Step.Id == "direct" && A.Step.Tool.empty() && A.Step.Call == "ask the user" && A.Step.Stage == -1);
+	// Another format is refused, and the text stays the default
+	CHECK(Run(Song, "what_next", "{\"format\": \"xml\"}").IsError);
+	CHECK(Run(Song, "what_next", "{\"format\": \"text\"}").Text == Run(Song, "what_next", "{}").Text);
+	CHECK(!ReadNextAnswer("{\"track\": 1}", A, Error) && !Error.empty());
+	CHECK(GrownVersions("No versions here.").empty());
+}
+
+// The problems panel's Play it (ProblemList::PlayOf): the bars around each kind of finding, a bar before and one after
+// as far as the song goes, at most PROBLEM_PLAY_BARS of a long finding's own, with its channels to hear alone
+void TestProblemPlay()
+{
+	// TestProblemList's song: a clash in bar 1, a note out of range in bar 4, a silent bar 3, notes outside the key in
+	// bars 1 and 2 (8 bars of 16 rows)
+	FakeSong Song;
+	Song.Put(5, 0, "C-4", 0);
+	Song.Put(5, 4, "E-4");
+	Song.Put(5, 8, "G-4");
+	Song.Put(5, 12, "C-5");
+	Song.Put(5, 16, "F#4");
+	Song.End(5, 20);
+	Song.Put(6, 0, "C#4", 0);
+	Song.End(6, 4);
+	Song.Put(0, 48, "G-0", 2);
+	Song.End(0, 52);
+	const Timing Time(Song.Info.PatternLength, Song.Info.Frames, Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	CHECK_EQ(Time.BarCount(), 8);
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Run(Song, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+	ProblemPlay P;
+	// A clash: the bar it's in and the one after (none before bar 1), both channels alone
+	const std::vector<ProblemLine> &Clash = List.Lines(PROBLEM_CLASH);
+	CHECK(Clash.size() == 1 && List.PlayOf(Clash[0], Time, P));
+	CHECK(P.FirstBar == 1 && P.LastBar == 2 && P.FirstRow == 0 && P.EndRow == 32);
+	CHECK(P.Channels == std::vector<int>({ 5, 6 }));
+	// A note out of range in bar 4: bars 3-5 on its channel
+	const std::vector<ProblemLine> &Range = List.Lines(PROBLEM_RANGE);
+	CHECK(Range.size() == 1 && List.PlayOf(Range[0], Time, P));
+	CHECK(P.FirstBar == 3 && P.LastBar == 5 && P.FirstRow == 32 && P.EndRow == 80 && P.Channels == std::vector<int>({ 0 }));
+	// A silent bar: no channel to hear alone, only the mix
+	const std::vector<ProblemLine> &Silent = List.Lines(PROBLEM_SILENT);
+	CHECK(Silent.size() == 1 && List.PlayOf(Silent[0], Time, P));
+	CHECK(P.FirstBar == 2 && P.LastBar == 4 && P.FirstRow == 16 && P.EndRow == 64 && P.Channels.empty());
+	// Outside the key in bar 2: bars 1-3
+	const std::vector<ProblemLine> &Key = List.Lines(PROBLEM_KEY);
+	CHECK(Key.size() == 2 && List.PlayOf(Key[1], Time, P));
+	CHECK(P.FirstBar == 1 && P.LastBar == 3 && P.Channels == std::vector<int>({ 5 }));
+	// Past the song's end (the song got shorter since the check): nothing
+	const Timing Short(Song.Info.PatternLength, 1, Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	CHECK(List.PlayOf(Key[1], Short, P) && P.LastBar == 3);
+	const Timing Shorter(16, 1, Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	CHECK(!List.PlayOf(Range[0], Shorter, P));
+	ProblemLine Nowhere;
+	Nowhere.Finding = 99;
+	CHECK(!List.PlayOf(Nowhere, Time, P));
+
+	// Notes that vanish: each line its own note's bars, on its channel
+	{
+		FakeSong Plucks;
+		Plucks.AddInstrumentInfo(3, "Fair pluck", "VRC6", false);
+		Plucks.Info.Instruments.back().Volume = std::vector<int>{ 15, 10, 5, 2, 1, 0 };
+		Plucks.Put(5, 0, "C-4", 0);
+		Plucks.Put(5, 8, "D-4", 3);
+		Plucks.Put(5, 10, "E-4");
+		Plucks.Put(5, 12, "F-4", 0);
+		Plucks.Put(5, 16, "G-4", 3);
+		Plucks.Put(5, 18, "A-4", 0);
+		Plucks.End(5, 32);
+		ProblemList Gone;
+		CHECK(Gone.Read(Run(Plucks, "check_song", "{\"key\": \"C major\", \"format\": \"json\"}").Text, Error));
+		const std::vector<ProblemLine> &Lines = Gone.Lines(PROBLEM_VANISHING);
+		CHECK(Lines.size() == 3 && Gone.PlayOf(Lines[0], Time, P));
+		CHECK(P.FirstBar == 1 && P.LastBar == 2 && P.Channels == std::vector<int>({ 5 }));
+		CHECK(Lines.size() == 3 && Gone.PlayOf(Lines[2], Time, P));	// G-4 in bar 2
+		CHECK(P.FirstBar == 1 && P.LastBar == 3 && P.FirstRow == 0 && P.EndRow == 48);
+	}
+
+	// The arrangement's findings, over many bars: their first four with the bar before and the one after; the faders
+	// (no channel) in the mix alone
+	{
+		FakeSong Draft(8);
+		DraftSong(Draft);
+		ProblemList Found;
+		CHECK(Found.Read(Run(Draft, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text, Error));
+		const Timing DraftTime(Draft.Info.PatternLength, Draft.Info.Frames, Draft.Info.FirstHighlight, Draft.Info.SecondHighlight);
+		int Kinds = 0;
+		for (int k = PROBLEM_PHRASES; k < PROBLEM_KINDS; ++k)
+			for (size_t i = 0; i < Found.Lines(k).size(); ++i) {
+				const ProblemLine &L = Found.Lines(k)[i];
+				const ProblemFinding &F = Found.Findings()[static_cast<size_t>(L.Finding)];
+				CHECK(Found.PlayOf(L, DraftTime, P));
+				const int FromBar = DraftTime.BarOf(F.Row);
+				CHECK(P.FirstBar == std::max(1, FromBar - 1) && P.LastBar - P.FirstBar + 1 <= PROBLEM_PLAY_BARS + 2 &&
+					P.LastBar <= DraftTime.BarCount());
+				CHECK(F.Channel < 0 ? P.Channels.empty() || F.Notes.size() > 0 : std::find(P.Channels.begin(), P.Channels.end(), F.Channel) !=
+					P.Channels.end());
+				if (k == PROBLEM_SOUND)	// the triangle's notes in bars 5-27
+					CHECK(P.FirstBar == 4 && P.LastBar == 9 && P.Channels == std::vector<int>({ 2 }));
+				if (k == PROBLEM_FADERS)
+					CHECK(P.FirstBar == 1 && P.Channels.empty());
+				++Kinds;
+			}
+		CHECK_EQ(Kinds, 7);
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -22825,6 +23132,8 @@ int main()
 	TestBrowserFixes();
 	TestStudiedNames();
 	TestStatusBarFrames();
+	TestWhatNextJson();
+	TestProblemPlay();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

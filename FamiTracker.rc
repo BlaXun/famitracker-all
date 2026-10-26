@@ -233,6 +233,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Clips panel",                 ID_VIEW_CLIPSPANEL
         MENUITEM "Problems",                    ID_VIEW_PROBLEMS
+        MENUITEM "What next",                   ID_VIEW_WHATNEXT
         MENUITEM "Mixer",                       ID_VIEW_MIXER
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
@@ -610,6 +611,7 @@ BEGIN
     ID_EDIT_CLIPS           "The song's clips, in the panel beside the pattern editor: drag one into the song, or double-click it\nClips"
     ID_VIEW_CLIPSPANEL      "Show or hide the clips panel beside the pattern editor\nClips panel"
     ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
+    ID_VIEW_WHATNEXT        "The song's one next step in plain words, why, and a button that does it\nWhat next"
     ID_VIEW_MIXER           "Each channel's level and pan, with meters, mute and solo, saved with the song\nMixer"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_VIEW_PATTERNEDITOR   "Show or hide the pattern editor, the channel grid; while it's hidden, the piano roll takes its place\nPattern editor"
@@ -2058,6 +2060,18 @@ BEGIN
     LTEXT           "",IDC_TUTORIAL_FOLDER,7,142,266,26
     DEFPUSHBUTTON   "Start",IDOK,166,175,50,14
     PUSHBUTTON      "Close",IDCANCEL,223,175,50,14
+END
+
+IDD_PLAYFIX DIALOGEX 0, 0, 260, 96
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Play the fix"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_PLAYFIX_TEXT,7,7,246,34
+    LTEXT           "",IDC_PLAYFIX_STATUS,7,45,246,20
+    PUSHBUTTON      "Play again",IDC_PLAYFIX_AGAIN,7,75,60,14
+    DEFPUSHBUTTON   "Keep",IDOK,136,75,56,14
+    PUSHBUTTON      "Take back",IDCANCEL,197,75,56,14
 END
 
 IDD_PROFILE DIALOGEX 0, 0, 300, 200
