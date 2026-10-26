@@ -1878,7 +1878,8 @@ struct CPianoRollWnd::Impl {
 		After = Before;
 		Apply(After);
 		int First = 0, Last = 0, Rows = SongRows;
-		if (After.Compare(Before, First, Last) && Last >= SongRows) {
+		// (a note drawn up to the song's last row ends past it: the song needn't grow for that, the note rings to its end)
+		if (After.Compare(Before, First, Last) && Last >= SongRows && !After.OnlyEnds(SongRows, Last)) {
 			// The song grows: a note that sounded on to its old end still ends there
 			After = Before;
 			const int Open = After.NoteAt(SongRows - 1);
@@ -1924,6 +1925,10 @@ struct CPianoRollWnd::Impl {
 		EditKind = EDIT_NONE;
 		int First = 0, Last = 0;
 		if (!After.Compare(Before, First, Last))
+			return true;
+		if (Last >= SongRows && After.OnlyEnds(SongRows, Last))
+			Last = SongRows - 1;	// a note's end past the song's end alone: the song keeps its length (Recompute)
+		if (Last < First)
 			return true;
 		std::vector<stChanNote> Cells(static_cast<size_t>(Last - First + 1));
 		for (size_t i = 0; i < Cells.size(); ++i)
