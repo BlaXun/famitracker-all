@@ -239,7 +239,11 @@ void StartExercise(CMainFrame *pMainFrame, UINT nID)
 		pDoc = DocOf(pMainFrame);
 		if (pDoc == NULL || pDoc->GetSongSerial() == Before)
 			return;		// the song that was open stays
+		// Its track named for the exercise, as the starters' are: What next lays out the shape the name asks for (the first
+		// small song's short loop)
+		pDoc->SetTrackTitle(0, CString(E.Title));
 		pDoc->MakeUntitled(Title);
+		pMainFrame->UpdateTrackBox();
 	}
 	else if (!OpenBuiltInSong(pMainFrame, pFiles->Song, Title))
 		return;

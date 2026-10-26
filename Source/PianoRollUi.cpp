@@ -124,18 +124,30 @@ std::string RollHint(const roll_hint_t &State)
 		return Text;
 	}
 	if (State.Tool == ROLL_TOOL_PAINT)
-		return "Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases.";
+		return "Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases. "
+			"Double-click a faint note to edit its channel.";
 	if (State.Tool == ROLL_TOOL_SELECT)
 		return std::string("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: "
-			"more). Then Ctrl+Shift+C saves them as a clip, ") + (Keys ? "H" : "Chords") + " puts chords on their bars and Groove "
+			"more), double-click a faint one to edit its channel. Then Ctrl+Shift+C saves them as a clip, ") + (Keys ? "H" : "Chords") + " puts chords on their bars and Groove "
 			"a groove under them.";
 	if (State.Snaps)
-		return std::string("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Drag a note to "
-			"move it (Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. ") +
+		return std::string("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Double-click a "
+			"faint note to edit its channel. Drag a note to move it (Shift: copy), its end to change its length. Right-click "
+			"erases. Ctrl+drag selects. ") +
 			(Keys ? "E: effects." : "Double-click a note for effects.") + " Ctrl+Z undoes.";
-	return std::string("Click to add a note, drag to make it longer. Drag a note to move it (Shift: copy), its end to change "
-		"its length. Right-click erases. Ctrl+drag selects. ") + (Keys ? "Double-click a note (or press E) for effects. "
+	return std::string("Click to add a note, drag to make it longer. Double-click a faint note to edit its channel. Drag a "
+		"note to move it (Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. ") + (Keys ? "Double-click a note (or press E) for effects. "
 		"H: chords. " : "Double-click a note for effects. Chords: a chord on the free channels. ") + "Ctrl+Z undoes.";
+}
+
+std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string &Bright)
+{
+	std::string Text = "Double-click to edit " + Faint;
+	if (Tool == ROLL_TOOL_DRAW)
+		Text += " (a click adds a note to " + Bright + " here)";
+	else if (Tool == ROLL_TOOL_PAINT)
+		Text += " (a drag paints " + Bright + "'s notes here)";
+	return Text;
 }
 
 int StrongNotesRow(const roll_strong_t &State)

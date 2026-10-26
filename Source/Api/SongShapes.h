@@ -70,6 +70,9 @@ const SongShape *FindSongShape(const std::string &Words);
 std::string SongShapeIds();
 // The shape what_next lays out for one of its kinds ("lively", "calm", "action"; anything else is the general recipe's)
 const SongShape &ShapeForKind(const std::string &Kind);
+// The same for a track of that name: the shape its name asks for when that's one of the kind's that loops (a "Shop" or
+// "A first small song" gets the general recipe's short loop instead of its town), else the kind's own
+const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackName);
 
 // What a section is for, in plain words: its line in the shape when it's one
 // of its parts (pShape null: none), else what its name says (Intro, A, A',

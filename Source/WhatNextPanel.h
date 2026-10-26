@@ -92,6 +92,12 @@ public:
 	void Focus();							// the keyboard goes to the panel
 	static bool WasOpen();					// it was open when FamiTracker closed (closed the first time)
 	bool IsOnRight() const { return m_bRight; }
+	// Along the bottom (CMainFrame::PlaceBottomPanel): the height it was made, the least it's usable at, its share of
+	// the row it's in beside the other panels there, and the height the row takes when another one's line is dragged
+	int BottomHeight() const { return m_iHeight; }
+	int LeastHeight() const;
+	int RowWeight() const;
+	void SetBottomHeight(int Height);
 	void DockOnRight(bool Right);			// along the right of the main window, or along its bottom
 
 	virtual CSize CalcFixedLayout(BOOL bStretch, BOOL bHorz);

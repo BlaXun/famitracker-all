@@ -735,6 +735,13 @@ each with the user's words:
   kindly, with the glossary's words linked and Play it for the bars in
   question; passing says what it taught and offers the next one. Claude's
   `check_exercise` gives the same checks (see `MCP.md`, Exercises).
+  Three rough edges found doing them by hand, fixed (26 October 2026, on
+  `feat-newcomer-fixes`): a click on another part's faint note in the
+  piano roll puts a note in as anywhere else (a double-click switches to
+  that part); the mixer, Problems, What next and the drum grid open
+  together leave the notes about a third of the window (the last three
+  side by side in one row), and a tutorial's note moves the glossary off
+  what it points at; the first small song is a short loop of 14 bars.
 
 ## Feature branches
 

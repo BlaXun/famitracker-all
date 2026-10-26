@@ -31,9 +31,9 @@ wait: command piano-roll
 
 step
 show: piano-roll
-text: The piano roll shows the notes as bars: time from left to right, pitch from bottom to top, the keys on the left. The channel you're in is bright.
+text: The piano roll shows the notes as bars: time from left to right, pitch from bottom to top, the keys on the left. The channel you're in is bright; the other channels' notes are faint behind it, and double-clicking one of them edits that channel.
 
-  Click to put a note in, drag a note to move it, or drag its end to make it longer; right-clicking a note erases it. Double-click a note for effects like vibrato or a slide. Ctrl+Z undoes any change.
+  Click to put a note in (over a faint note too), drag a note to move it, or drag its end to make it longer; right-clicking a note erases it. Double-click a note for effects like vibrato or a slide. Ctrl+Z undoes any change.
 
 step
 show: window

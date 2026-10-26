@@ -137,6 +137,9 @@ public:
 	void Opened(bool Open);					// shown or hidden by the main frame
 	void SongChanged();
 	static bool WasOpen();					// it was open when FamiTracker closed (closed the first time)
+	// Along the bottom (CMainFrame::PlaceBottomPanel): the height it was made, and the least it's usable at
+	int BottomHeight() const { return m_iHeight; }
+	int LeastHeight() const;
 
 	virtual CSize CalcFixedLayout(BOOL bStretch, BOOL bHorz);
 	virtual void OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler);
