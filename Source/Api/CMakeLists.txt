@@ -120,6 +120,8 @@ add_library(ftapi STATIC
 	WhatNext.cpp
 	NextSteps.cpp
 	Listen.cpp
+	Assistant.cpp
+	AssistantSocket.cpp
 	${TRANSCRIBE}/WavReader.cpp
 	${TRANSCRIBE}/PitchTracker.cpp
 	${TRANSCRIBE}/Guess.cpp
@@ -200,3 +202,9 @@ add_test(NAME listen_tests COMMAND listen_tests)
 add_executable(exercises_tests tests/ExercisesTests.cpp)
 target_link_libraries(exercises_tests PRIVATE ftapi)
 add_test(NAME exercises_tests COMMAND exercises_tests)
+
+# The Ask panel's model (Assistant.h, AssistantSocket.h): requests, streamed replies, the conversation, and a scripted
+# model over a real socket (tests/FakeModel.h, which ApiTests.cpp uses too for the loop with the tools)
+add_executable(assistant_tests tests/AssistantTests.cpp)
+target_link_libraries(assistant_tests PRIVATE ftapi Threads::Threads)
+add_test(NAME assistant_tests COMMAND assistant_tests)

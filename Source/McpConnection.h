@@ -25,7 +25,7 @@
 #include <vector>
 
 class CMainFrame;
-namespace ftapi { struct TrackHarmony; struct SoundEntry; }
+namespace ftapi { struct TrackHarmony; struct SoundEntry; struct ToolInfo; }
 
 // File > Connect Claude Code: FamiTracker as an MCP server, so Claude Code on
 // the same computer can work on the open song in musical terms (the tools are
@@ -55,7 +55,10 @@ public:
 	// song as one undoable step, whatever the Claude Code setting says. False with the reason in Reply when the tool
 	// failed, or FamiTracker is busy answering Claude Code. FromDialog: for a dialog of FamiTracker's that's open
 	// (Edit > Start from a groove), which a change would otherwise wait for.
-	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog = false);
+	// Core: as the small set of tools answers (/mcp/core: short replies that name only its tools), for View > Ask
+	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog = false, bool Core = false);
+	// Every tool as /mcp lists them (Api/Tools.h), for View > Ask's model
+	void ToolList(std::vector<ftapi::ToolInfo> &Out) const;
 	bool IsBusy() const;				// answering Claude Code right now (RunTool would refuse)
 	// Edit > Record from your phone (PhoneDlg.cpp): whether FamiTracker listens, for other computers too, on which
 	// port and with which access code; and listening for other computers, as File > Connect Claude Code's two boxes

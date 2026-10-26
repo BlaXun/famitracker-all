@@ -64,12 +64,15 @@
 #include "../Listen.h"
 #include "../../Nsf/FdsModulator.h"
 #include "../Exercises.h"
+#include "../Assistant.h"
+#include "../AssistantSocket.h"
 #include "../../TutorialScript.h"
 #include "../../Nsf/FtmFile.h"
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
 #include "../../Nsf/Study.h"
+#include "FakeModel.h"
 
 #include <algorithm>
 #include <atomic>
@@ -24499,6 +24502,327 @@ void TestExerciseTool()
 	CHECK_HAS(Empty.Text, "Not yet: A beat.");
 	CHECK_HAS(Empty.Text, "What to change next: Bar 1 has no kick on beat 1.");
 }
+// ---- The Ask panel's model with FamiTracker's tools (Assistant.h)
+
+// Every tool is in the Ask panel's table once, the readers marked read-only and the others not, so Ask first runs
+// what only reads and proposes what changes
+void TestAssistantKinds()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	const std::vector<AssistantToolKind> &Kinds = AssistantToolKinds();
+	std::set<std::string> Named;
+	for (size_t i = 0; i < Kinds.size(); ++i) {
+		Check(Named.insert(Kinds[i].Name).second, (std::string("once in the table: ") + Kinds[i].Name).c_str(), __LINE__);
+		Check(Tools.Has(Kinds[i].Name), (std::string("a tool: ") + Kinds[i].Name).c_str(), __LINE__);
+	}
+	for (size_t i = 0; i < Tools.List().size(); ++i) {
+		const ToolInfo &Tool = Tools.List()[i];
+		int Kind = -1;
+		for (size_t k = 0; k < Kinds.size(); ++k)
+			if (Tool.Name == Kinds[k].Name)
+				Kind = Kinds[k].Kind;
+		Check(Kind >= 0, ("in the Ask panel's table (Assistant.cpp's TOOL_KINDS): " + Tool.Name).c_str(), __LINE__);
+		Check((Kind == ASSISTANT_READS) == Tool.ReadOnly, ("reads as its read-only hint says: " + Tool.Name).c_str(), __LINE__);
+		if (Kind == ASSISTANT_READS)
+			Check(!AssistantCallChanges(Tool.Name, Json::MakeObject()), ("runs at once: " + Tool.Name).c_str(), __LINE__);
+		if (Kind == ASSISTANT_CHANGES)
+			Check(AssistantCallChanges(Tool.Name, Json::MakeObject()), ("proposed: " + Tool.Name).c_str(), __LINE__);
+	}
+	CHECK_EQ(Named.size(), Tools.List().size());
+}
+
+// The functions made from the tools' own schemas (all of them, or the small set as /mcp/core serves it) and the
+// system prompts
+void TestAssistantFunctions()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	const Json All = AssistantFunctions(Tools.List(), false), Small = AssistantFunctions(Tools.List(), true);
+	size_t Given = 0, Core = 0;
+	for (size_t i = 0; i < Tools.List().size(); ++i)
+		if (!AssistantLeavesOut(Tools.List()[i].Name)) {
+			++Given;
+			Core += ToolSet::IsCoreTool(Tools.List()[i].Name) ? 1 : 0;
+		}
+	CHECK(Given + 2 == Tools.List().size());		// look_at_song and send_file
+	CHECK_EQ(All.Size(), Given);
+	CHECK_EQ(Small.Size(), Core);
+	CHECK_EQ(Core, ToolSet::CoreTools().size());	// every tool of the small set is given
+	for (size_t i = 0; i < All.Size(); ++i) {
+		const Json &Item = All.At(i);
+		const Json *pFunction = Item.Get("function");
+		CHECK(Item.Get("type") != 0 && Item.Get("type")->String() == "function" && pFunction != 0);
+		if (pFunction == 0)
+			continue;
+		const std::string Name = pFunction->Get("name") != 0 ? pFunction->Get("name")->String() : std::string();
+		const ToolInfo *pTool = 0;
+		for (size_t t = 0; t < Tools.List().size(); ++t)
+			if (Tools.List()[t].Name == Name)
+				pTool = &Tools.List()[t];
+		Check(pTool != 0 && pFunction->Get("description")->String() == pTool->Description &&
+			*pFunction->Get("parameters") == pTool->InputSchema && pTool->InputSchema.Get("type")->String() == "object",
+			("the function of " + Name).c_str(), __LINE__);
+	}
+	for (size_t i = 0; i < Small.Size(); ++i)
+		CHECK(ToolSet::IsCoreTool(Small.At(i).Get("function")->Get("name")->String()));
+
+	const std::string Full = AssistantSystemPrompt(false, true), Short = AssistantSystemPrompt(true, true),
+		Bare = AssistantSystemPrompt(false, false);
+	CHECK(Contains(Full, ToolSet::Instructions().c_str()) && !Contains(Full, ToolSet::CoreInstructions().c_str()));
+	CHECK(Contains(Short, ToolSet::CoreInstructions().c_str()) && !Contains(Short, ToolSet::Instructions().c_str()));
+	CHECK(!Contains(Bare, ToolSet::CoreInstructions().c_str()) && !Contains(Bare, ToolSet::Instructions().c_str()));
+	CHECK_HAS(Bare, "you have no tools");
+	const std::string *const PROMPTS[] = { &Full, &Short, &Bare };
+	for (size_t i = 0; i < 3; ++i) {
+		CHECK_HAS(*PROMPTS[i], "View > Ask");
+		CHECK_HAS(*PROMPTS[i], "One step at a time");
+		CHECK_HAS(*PROMPTS[i], "[[chord]]");
+		CHECK_HAS(*PROMPTS[i], "Help > Exercises");
+		CHECK(Contains(*PROMPTS[i], FindGlossaryEntry("home note")->Term.c_str()));		// the glossary's terms
+	}
+	CHECK_HAS(Full, "Ask first");
+	CHECK_HAS(Full, "Let it work");
+	// Every link the prompts' own words make leads somewhere, and every call the guide writes is a real one
+	const std::vector<AssistantParagraph> Rich = AssistantRichText(Full.substr(0, Full.find("The tools' own instructions")));
+	int Links = 0;
+	for (size_t p = 0; p < Rich.size(); ++p)
+		for (size_t r = 0; r < Rich[p].Runs.size(); ++r)
+			Links += Rich[p].Runs[r].Link.empty() ? 0 : 1;
+	CHECK(Links >= 3);
+
+	// A request with every tool, in a big context
+	AssistantSetup Setup;
+	Setup.SystemPrompt = Full;
+	Setup.Functions = All;
+	Setup.ContextTokens = 262144;
+	AssistantChat Chat;
+	Chat.SetTools(Tools.List(), false);
+	Chat.Ask("Hi", "The song now: ...", ASSISTANT_ASK_FIRST, 8);
+	std::string Body, Problem;
+	CHECK(Chat.Request(Setup, Body, Problem));
+	Json Sent;
+	CHECK(ParseJson(Body, Sent) && Sent.Get("tools") != 0 && Sent.Get("tools")->Size() == Given);
+	// ...and too many tools for a small one: the panel says what to do
+	Setup.ContextTokens = 8192;
+	CHECK(!Chat.Request(Setup, Body, Problem));
+	CHECK_HAS(Problem, "small set of tools");
+}
+
+// What the model is told with a question: the song as get_song and what_next say it, the exercise, the cursor
+void TestAssistantContext()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	AssistantFacts Facts;
+	Facts.Song = Tools.Call("get_song", Json::MakeObject()).Text;
+	Facts.Next = Tools.Call("what_next", Json::MakeObject()).Text;
+	Facts.Bar = 3;
+	Facts.Channel = "Pulse 1";
+	std::string Text = AssistantContext(Facts);
+	CHECK(Contains(Text, Facts.Song.substr(0, 80).c_str()) && Contains(Text, Facts.Next.substr(0, 40).c_str()));
+	CHECK_HAS(Text, "The cursor: bar 3, Pulse 1.");
+	CHECK_HAS(Text, "Mode: Ask first");
+	CHECK(!Contains(Text, "exercise"));
+	Facts.Exercise = "The home note";
+	Facts.ExerciseStep = "End the tune on its home note.";
+	Facts.ExerciseCheck = "home-note";
+	Facts.Mode = ASSISTANT_LET_IT_WORK;
+	Text = AssistantContext(Facts);
+	CHECK_HAS(Text, "\"The home note\". Its note asks: End the tune on its home note.");
+	CHECK_HAS(Text, "check_exercise {\"exercise\": \"home-note\"}");
+	CHECK_HAS(Text, "Mode: Let it work");
+	CHECK(Tools.UnknownArguments("check_exercise", Parse("{\"exercise\": \"home-note\"}")).empty());
+	CHECK(!Tools.Call("check_exercise", Parse("{\"exercise\": \"home-note\"}")).IsError);
+	// A long overview is cut at a line; without tools the context says so
+	Facts.Song = std::string(4000, 'a') + "\n" + std::string(4000, 'b');
+	Facts.WithTools = false;
+	Text = AssistantContext(Facts);
+	CHECK(Text.find(std::string(10, 'b')) == std::string::npos);
+	CHECK(Text.size() < 4000 + 1000);
+	CHECK_HAS(Text, "No tools here");
+	CHECK(!Contains(Text, "check_exercise"));
+}
+
+// FamiTracker's tools as the panel runs them, in-process (the panel's, through CMcpConnection::RunTool)
+class AssistantToolsHere : public AssistantTools {
+public:
+	AssistantToolsHere(ToolSet &Tools, bool Core) : m_Tools(Tools) { m_Who.Core = Core; }
+	bool RunTool(const std::string &Name, const std::string &Arguments, bool Changes, std::string &Reply)
+	{
+		Json Args;
+		if (!ParseJson(Arguments, Args) || !Args.IsObject())
+			Args = Json::MakeObject();
+		const ToolResult Result = m_Tools.Call(Name, Args, m_Who);
+		Reply = Result.Text;
+		Ran.push_back(Name + (Changes ? "!" : ""));
+		return !Result.IsError;
+	}
+	std::vector<std::string> Ran;
+
+private:
+	ToolSet &m_Tools;
+	Caller m_Who;
+};
+
+// The chat driven as the panel drives it, until it's the user's turn or it's done
+void DriveAssistant(AssistantChat &Chat, AssistantSetup &Setup, const AssistantEndpoint &Where, AssistantTools &Tools)
+{
+	AssistantTimeouts Times;
+	Times.FirstMs = Times.QuietMs = 10000;
+	for (int Guard = 0; Guard < 30 && Chat.State() == AssistantChat::MODEL; ++Guard) {
+		std::string Body, Problem;
+		if (!Chat.Request(Setup, Body, Problem))
+			return;
+		AssistantReply Reply;
+		std::string Error;
+		const assistant_net_t Net = AssistantChatExchange(Where, std::string(), Body, Times, 0, 0, Reply, Error);
+		if (AssistantTakeReply(Chat, Setup, false, Where, std::string(), Times, Net, Reply, Error))
+			continue;
+		Chat.RunReady(Tools);
+	}
+}
+
+const AssistantCall *FindCall(const AssistantChat &Chat, const std::string &Id)
+{
+	for (size_t m = 0; m < Chat.Messages().size(); ++m)
+		for (size_t c = 0; c < Chat.Messages()[m].Calls.size(); ++c)
+			if (Chat.Messages()[m].Calls[c].Id == Id)
+				return &Chat.Messages()[m].Calls[c];
+	return 0;
+}
+
+// The last message of a request the model got
+Json LastSent(const HttpRequest &Request)
+{
+	Json Body;
+	if (!ParseJson(Request.Body, Body) || Body.Get("messages") == 0 || Body.Get("messages")->Size() == 0)
+		return Json();
+	return Body.Get("messages")->At(Body.Get("messages")->Size() - 1);
+}
+
+// The loop with FamiTracker's tools and a scripted model over a real socket: a read runs at once, a change waits as a
+// proposal and Do it makes it, a broken call and a failing one are answered with their errors, Let it work changes at
+// once until its rounds are used, and a model without tools answers from the summary
+void TestAssistantLoop()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;		// FamiTracker's window runs the tools so (CMcpConnection::RunTool)
+	ToolSet Tools(Song);
+	fakemodel::Server Model;
+	CHECK(Model.Start());
+	AssistantEndpoint Where;
+	std::string Error;
+	CHECK(ParseAssistantEndpoint("http://127.0.0.1:" + std::to_string(Model.Port()) + "/v1", Where, Error));
+	AssistantSetup Setup;
+	Setup.SystemPrompt = AssistantSystemPrompt(false, true);
+	Setup.Functions = AssistantFunctions(Tools.List(), false);
+	Setup.ContextTokens = 262144;
+	AssistantChat Chat;
+	Chat.SetTools(Tools.List(), false);
+	AssistantToolsHere Here(Tools, false);
+
+	// Ask first: it reads the song, then proposes a part; Do it writes it, and the model hears how it went
+	Model.Add(fakemodel::Call("get_song", std::vector<std::string>(1, "{}"), "c1", "Let me look at the song."));
+	std::vector<std::string> Write;
+	Write.push_back("{\"channel\": \"Pulse 1\", \"from_bar\": 1, ");
+	Write.push_back("\"instrument\": \"Square\", \"notes\": \"C4 D4 E4 F4 G4 - - -\"}");
+	Model.Add(fakemodel::Call("write_notes", Write, "c2", "Shall I write a first phrase?"));
+	Model.Add(fakemodel::Text(std::vector<std::string>(1, "Done: press Play to hear it.")));
+	AssistantFacts Facts;
+	Facts.Song = Tools.Call("get_song", Json::MakeObject()).Text;
+	Chat.Ask("Can you start a tune?", AssistantContext(Facts), ASSISTANT_ASK_FIRST, ASSISTANT_ASK_ROUNDS);
+	DriveAssistant(Chat, Setup, Where, Here);
+	CHECK(Chat.State() == AssistantChat::USER);
+	CHECK(Here.Ran.size() == 1 && Here.Ran[0] == "get_song");
+	const AssistantCall *pWrite = FindCall(Chat, "c2");
+	CHECK(pWrite != 0 && pWrite->State == CALL_PROPOSED && pWrite->Changes && pWrite->Words ==
+		"Write a part: Pulse 1, from bar 1, instrument Square, notes C4 D4 E4 F4 G4 - - -");
+	CHECK(!Song.Rows[0][0].HasNote());
+	const long long Before = Song.UndoPushes;
+	CHECK(Chat.Decide(Chat.Messages().size() - 1, 0, true, Here));
+	CHECK(Song.UndoPushes > Before && Song.Rows[0][0].HasNote());
+	CHECK(Here.Ran.size() == 2 && Here.Ran[1] == "write_notes!");
+	DriveAssistant(Chat, Setup, Where, Here);
+	CHECK(Chat.State() == AssistantChat::IDLE && Chat.Answer() != 0 && Chat.Answer()->Text == "Done: press Play to hear it.");
+	std::vector<HttpRequest> Sent = Model.Requests();
+	CHECK_EQ(Sent.size(), static_cast<size_t>(3));
+	if (Sent.size() == 3) {
+		Json First;
+		CHECK(ParseJson(Sent[0].Body, First) && First.Get("tools") != 0 && First.Get("stream")->Bool());
+		CHECK(Sent[0].Path() == "/v1/chat/completions");
+		const Json Read = LastSent(Sent[1]), Wrote = LastSent(Sent[2]);
+		CHECK(Read.Get("role") != 0 && Read.Get("role")->String() == "tool" && Read.Get("tool_call_id")->String() == "c1" &&
+			Contains(Read.Get("content")->String(), "Test song"));
+		CHECK(Wrote.Get("role") != 0 && Wrote.Get("tool_call_id")->String() == "c2" && Wrote.Get("content")->String() == pWrite->Result);
+	}
+
+	// Errors: arguments that aren't JSON, then a call that fails; the model hears both and answers
+	Model.Add(fakemodel::Call("read_notes", std::vector<std::string>(1, "{\"channel\": "), "c3"));
+	Model.Add(fakemodel::Call("read_notes", std::vector<std::string>(1, "{\"channel\": \"Banjo 9\"}"), "c4"));
+	Model.Add(fakemodel::Text(std::vector<std::string>(1, "That channel isn't in the song.")));
+	Chat.Ask("Read the banjo", "C", ASSISTANT_ASK_FIRST, ASSISTANT_ASK_ROUNDS);
+	DriveAssistant(Chat, Setup, Where, Here);
+	CHECK(Chat.State() == AssistantChat::IDLE);
+	const AssistantCall *pBroken = FindCall(Chat, "c3"), *pFailed = FindCall(Chat, "c4");
+	CHECK(pBroken != 0 && pBroken->State == CALL_FAILED && Contains(pBroken->Result, "weren't a JSON object"));
+	CHECK(pFailed != 0 && pFailed->State == CALL_FAILED && !pFailed->Result.empty());
+	Sent = Model.Requests();
+	CHECK(Sent.size() == 6 && LastSent(Sent[4]).Get("tool_call_id")->String() == "c3" &&
+		LastSent(Sent[5]).Get("tool_call_id")->String() == "c4");
+
+	// Let it work: changes go in as they come, until the question's rounds are used
+	Model.Add(fakemodel::Call("set_tempo", std::vector<std::string>(1, "{\"bpm\": 120}"), "c5"));
+	Model.Add(fakemodel::Call("set_tempo", std::vector<std::string>(1, "{\"bpm\": 100}"), "c6"));
+	Chat.Ask("Slow it down, a step at a time", "C", ASSISTANT_LET_IT_WORK, 2);
+	DriveAssistant(Chat, Setup, Where, Here);
+	CHECK(Chat.State() == AssistantChat::IDLE);
+	CHECK(FindCall(Chat, "c5") != 0 && FindCall(Chat, "c5")->State == CALL_DONE && FindCall(Chat, "c6") != 0 &&
+		FindCall(Chat, "c6")->State == CALL_DONE);
+	CHECK(Here.Ran.size() >= 2 && Here.Ran[Here.Ran.size() - 1] == "set_tempo!" && Here.Ran[Here.Ran.size() - 2] == "set_tempo!");
+	CHECK_HAS(Tools.Call("get_song", Json::MakeObject()).Text, "100 BPM");
+	CHECK_HAS(Chat.Messages().back().Text, "2 rounds of tools");
+	CHECK_EQ(Model.Left(), static_cast<size_t>(0));
+
+	// A model without tools (llama-server without --jinja): refused, told, and answered from the summary
+	fakemodel::Server Plain;
+	CHECK(Plain.Start());
+	Plain.RefuseTools(fakemodel::Error(500, "tools param requires --jinja flag"));
+	Plain.Add(fakemodel::Text(std::vector<std::string>(1, "Use Edit > Add chords and bass line.")));
+	AssistantEndpoint PlainAt;
+	CHECK(ParseAssistantEndpoint("127.0.0.1:" + std::to_string(Plain.Port()), PlainAt, Error));
+	AssistantChat Bare;
+	Bare.SetTools(Tools.List(), false);
+	AssistantSetup BareSetup = Setup;
+	Bare.Ask("How do I add chords?", AssistantContext(Facts), ASSISTANT_ASK_FIRST, ASSISTANT_ASK_ROUNDS);
+	DriveAssistant(Bare, BareSetup, PlainAt, Here);
+	CHECK(Bare.State() == AssistantChat::IDLE && Bare.HasToolsOff() && BareSetup.Functions.Size() == 0);
+	CHECK(Bare.Answer() != 0 && Bare.Answer()->Text == "Use Edit > Add chords and bass line.");
+	const std::vector<HttpRequest> Asked = Plain.Requests();
+	CHECK(Asked.size() == 2 && Contains(Asked[0].Body, "\"tools\"") && !Contains(Asked[1].Body, "\"tools\"") &&
+		Contains(Asked[1].Body, "you have no tools"));
+	bool Told = false;
+	for (size_t m = 0; m < Bare.Messages().size(); ++m)
+		Told = Told || (Bare.Messages()[m].Role == ASSISTANT_NOTE && Contains(Bare.Messages()[m].Text, "--jinja"));
+	CHECK(Told);
+
+	// The small set: its tools alone, their replies short
+	AssistantChat Small;
+	Small.SetTools(Tools.List(), true);
+	AssistantSetup SmallSetup = Setup;
+	SmallSetup.SystemPrompt = AssistantSystemPrompt(true, true);
+	SmallSetup.Functions = AssistantFunctions(Tools.List(), true);
+	AssistantToolsHere CoreHere(Tools, true);
+	Model.Add(fakemodel::Call("set_meter", std::vector<std::string>(1, "{\"meter\": \"3/4\"}"), "c7"));
+	Model.Add(fakemodel::Text(std::vector<std::string>(1, "That tool isn't mine.")));
+	Small.Ask("Waltz?", "C", ASSISTANT_LET_IT_WORK, 8);
+	DriveAssistant(Small, SmallSetup, Where, CoreHere);
+	const AssistantCall *pMeter = FindCall(Small, "c7");
+	CHECK(pMeter != 0 && pMeter->State == CALL_FAILED && Contains(pMeter->Result, "no tool called \"set_meter\""));
+	CHECK(CoreHere.Ran.empty());
+}
+
 int main()
 {
 	TestJson();
@@ -24738,6 +25062,10 @@ int main()
 	TestExerciseStarters();
 	TestExerciseMistakes();
 	TestExerciseTool();
+	TestAssistantKinds();
+	TestAssistantFunctions();
+	TestAssistantContext();
+	TestAssistantLoop();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

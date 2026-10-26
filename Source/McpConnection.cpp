@@ -1789,7 +1789,7 @@ public:
 
 	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
 	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
-	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply, bool FromDialog)
+	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core = false)
 	{
 		if (m_bBusy) {
 			Reply = "FamiTracker is busy with Claude Code; try again in a moment.";
@@ -1805,8 +1805,10 @@ public:
 		const bool OwnDialog = m_bOwnDialog;
 		m_bOwnDialog = OwnDialog || FromDialog;	// the dialog asking may be open
 		ftapi::ToolResult Result;
+		ftapi::Caller Who;
+		Who.Core = Core;
 		try {
-			Result = m_Tools.Call(Name, Args);
+			Result = m_Tools.Call(Name, Args, Who);
 		}
 		catch (...) {
 			Result.Text = "FamiTracker couldn't do that.";
@@ -1818,6 +1820,8 @@ public:
 		Reply = Result.Text;
 		return !Result.IsError;
 	}
+
+	const std::vector<ftapi::ToolInfo> &ToolList() const { return m_Tools.List(); }
 
 	bool CanChange(std::string &Why)
 	{
@@ -3019,9 +3023,14 @@ void CMcpConnection::ShowVoiceEffect()
 	ShowVoiceEffectDialog(&m_pImpl->Link, AfxGetMainWnd());
 }
 
-bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog)
+bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core)
 {
-	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply, FromDialog);
+	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply, FromDialog, Core);
+}
+
+void CMcpConnection::ToolList(std::vector<ftapi::ToolInfo> &Out) const
+{
+	Out = m_pImpl->Link.ToolList();
 }
 
 bool CMcpConnection::Harmony(ftapi::TrackHarmony &Out)
