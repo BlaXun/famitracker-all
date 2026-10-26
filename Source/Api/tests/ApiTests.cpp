@@ -23924,6 +23924,10 @@ void TestExerciseStarters()
 				std::string Reply;
 				Check(WriteAnswer(Song, Step, Reply), (Name + ": the good answer is written: " + Reply).c_str(), __LINE__);
 				Check(Song.Info.Instruments.size() == Instruments, (Name + ": the answer plays the song's own sounds").c_str(), __LINE__);
+				// and is clean as check_song hears it: no clash, nothing outside the key
+				const ToolResult Heard = Run(Song, "check_song", "{}");
+				Check(Heard.Text.find(" 0 outside the key, 0 clashes") != std::string::npos, (Name + ": the good answer is clean: " +
+					Heard.Text).c_str(), __LINE__);
 			}
 			else if (Step.Check == "song-shape")
 				CHECK(!Run(Song, "song_shape", "{\"shape\": \"stage\"}").IsError);
