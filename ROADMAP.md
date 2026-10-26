@@ -624,6 +624,47 @@ rules and fixing tool output by hand.
     of the composers who made them as examples for the local model, a few
     in its prompt or as data for a LoRA on the user's EVO X3.
 
+## 16. Help for newcomers to music
+
+The user (26 October 2026), asking what else would help people new to music
+use this FamiTracker; their own idea was a glossary. Agreed the same day,
+each with the user's words:
+
+- **A glossary you can show and hide** ("a toggle to view it/hide it ... a
+  modal that is non-blocking"; the main window is busy enough): a window of
+  its own that stays open beside the song without blocking it, opened and
+  closed from the menu, a toolbar button and a key. It covers "some basic
+  music/composing terms so a newcomer can start making music and
+  understands the terms" (notes, octaves, scales, keys, chords, melody,
+  phrases, rhythm, bars, tempo, the song's parts), the NES's chips and
+  sounds, the tracker's own words (rows, patterns, frames, instruments,
+  sequences) and every effect, each in plain words with a Hear it button
+  that plays a short example. The same entries reach Claude and local
+  models, so they explain with the same words.
+- **Effects explained in place** ("absolutely!"): hovering an effect in the
+  pattern editor shows what it does with its own numbers ("vibrato: speed
+  4, depth 2"), and Hear it plays it.
+- **A What next panel** (yes): `what_next` in FamiTracker, docked like the
+  problems panel: the one next step in plain words, why, and a button that
+  does it.
+- **Hear the problem** (yes): the problems panel's findings get Play it
+  (the bars where it happens) and, where there's a fix, Play the fix (kept
+  or taken back).
+- **Chords with roles** ("yes ... but that should be a toggle maybe"): the
+  piano roll's chord strip colors each chord by what it does (home, away,
+  tension, back home) and gives it a feel word, switched on and off from
+  the piano roll.
+- **Strong notes on the beat** (yes): the piano roll lights the notes of
+  the chord sounding under the cursor, the safest notes on a beat.
+- **Song shapes in one click** ("yes!"): a command that lays out a song's
+  named sections for its kind (a lively stage, a calm night, a town, a boss,
+  a short loop), each with a line on what it's for.
+- **Small exercises with feedback** ("yes! A good way to ease in the new
+  composer!"): short tasks in the tutorial window (write four bars that end
+  on the home note, a bass on the roots, a beat, a phrase that breathes),
+  checked by the tools, with friendly feedback and the glossary's words.
+  After the glossary, the panels and the song shapes are in.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
