@@ -104,14 +104,14 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 35 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 36 of them:
 `what_next` and the tools its steps call. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
 `add_chords_and_bass`, `grow_melody` (a hook grown into phrases, in versions to
 pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
-`vary_part`, `copy_bars`, `insert_bars`, `name_section`, `set_loop`; the
+`vary_part`, `copy_bars`, `insert_bars`, `name_section`, `song_shape`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
 `check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
 (the last of them in one call); and `play`, `stop`, `save_song`,
@@ -349,11 +349,17 @@ is the recipes':
    steps, then write it back held over the bar lines) comes as its first
    call, with the calls after it, in order, in the why. Clashes are listed
    for you to hear.
-2. The frame: an even tempo in the kind's range, the key.
+2. The frame: an even tempo in the kind's range, the key, and on an empty
+   song its shape (`song_shape`: a lively stage for lively, a calm night for
+   calm, a boss fight for action, a town otherwise; see [Song
+   shapes](#song-shapes)), so every part has its place and its job first.
 3. The parts and the form: the lead's sound, an A part's chords and bass,
    its sections named, the melody, A again, a B part on other chords, A
    once more, and drums (none for calm; a sampled kick and snare under
-   noise hats otherwise). A lively stage's lead blooms in and settles
+   noise hats otherwise). On a song laid out from a shape the parts fill
+   its sections in order (A' takes A again, B chords of its own, the climax
+   or A'' A once more, a boss fight's climax chords of its own), so no bars
+   are put in or named afterwards. A lively stage's lead blooms in and settles
    (`bloom lead`, not struck again) and its chords are lush arpeggios of
    two frames a note. A calm song's lead is the night songs' best, as the
    calm recipe has it: a music box on a VRC6 pulse at 37.5% (50% on the
@@ -687,6 +693,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
+| `song_shape` | Lays out a kind of song's shape: its named sections, each with its bars and what it's for, in the frames (an empty song gets the frames, the sections and its loop; a song with notes keeps them all, and gets the bars a longer shape needs only with `add_bars`). Without `shape` it lists the shapes. See [Song shapes](#song-shapes) (direct changes only; undoable) |
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
@@ -873,6 +880,63 @@ the like in their names too), and `keep_version` and
 than a frame leave the sections where they were, and the reply says so.
 The names are saved in the module in a block of their own (`BF SECTIONS`)
 that other FamiTracker versions skip.
+
+### Song shapes
+
+A newcomer facing an empty frame list doesn't know how long a song is or
+what its parts are for. A song shape lays them out at once: the named
+sections a kind of song needs, each with its bars and a line on what it's
+for. In FamiTracker it's Module > Song shape (also at the bottom of the
+frame editor's right-click menu, and a right-click on the piano roll's
+ruler): pick a shape, read its parts, and Lay it out. Claude does the same
+with `song_shape`, and `what_next` starts an empty song with it.
+
+| Shape | Its parts (bars) | For |
+|---|---|---|
+| `stage` | Intro 4, A 8, A' 8, B 8, Climax 8, Break 4 (40) | a lively stage: it bounces, builds to a climax, breathes and loops |
+| `night` | Intro 4, A 8, A' 8, B 8, Break 4, A'' 8 (40) | a calm night or a place to rest |
+| `town` | Intro 4, A 8, A' 8, B 8, A'' 8, Break 4 (40) | a town, a village or a field: a tune that loops a long time |
+| `boss` | Intro 2, A 8, A' 8, Climax 6, Break 2 (26) | a boss fight or a chase |
+| `small` | Intro 2, A 4, A' 4, B 4 (14) | a small place: a shop, a house, a menu |
+| `jingle` | Phrase 2, Last chord 2 (4) | a jingle that plays once and stops |
+
+They're the forms the recipes teach: an intro that plays once, the tune
+(A), its repeat changed a little (A'), something different on other
+chords (B) so A sounds fresh when it comes back, a high point (the climax,
+or A'' at its fullest) and a break, a breath before the loop comes round (a
+calm night's comes before its last A, as the soundtrack's night songs had
+it).
+`song_shape` without `shape` lists every shape with each part's line ("A:
+The tune, the part people hum."; "B: Something different, on other
+chords, so A sounds fresh when it comes back."; "Break: A breath before
+the loop comes round: the tune and the drums rest.").
+
+- **On a song without notes** it makes the frames the bars need, at the
+  song's rows a bar: frames of the song's own length when every part is
+  whole frames of it, else of the most whole bars every part is (frames of
+  2 bars for a boss's 2-bar intro; 48 rows in 3/4, 96 in 6/8 at 24 rows a
+  bar). It names the sections and writes the loop: the intro plays once,
+  then the rest loops (a `Bxx` on the last row); a jingle stops at its end
+  (`C00`). The song's own jumps and halts go; its speed stays.
+- **On a song with notes** every note stays where it is. The sections go
+  over the bars it has (a part of bars that aren't whole frames of the
+  song's takes the frames nearest them, and the reply says so); a song
+  shorter than the shape gets the empty bars the rest needs at its end only
+  with `add_bars` (FamiTracker asks first), and its jump back moves to the
+  new end so they play. A longer song keeps its last bars without a
+  section. Its own sections give way to the shape's. FamiTracker's list
+  marks the shapes that fit in the bars such a song has.
+- Each is one Ctrl+Z, the frames' new length too.
+
+Where a section is named, FamiTracker says what it's for: pointing at its
+band in the frame editor shows its line as a tooltip, and at its name on
+the piano roll's ruler in the piano roll's status line ("A' (bars 13-20):
+The tune again, changed a little: a second line joins in and the drums get
+busier."). The line is worked out from the section's name and the shape
+the track's sections are (else the one the track's name says: "Boss",
+"Night"), so nothing new is saved and older songs' names get lines too (Intro, A, A2,
+A', B, Bridge, Verse, Chorus, Climax, Break, Outro). A part's repeats (A',
+A'', A 2) have its color in the frame editor and on the ruler.
 
 ### The key
 

@@ -1260,6 +1260,9 @@
     <ClCompile Include="Source\Api\Sections.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\SongShapes.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Keys.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1366,6 +1369,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Sections.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\SongShapes.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Keys.h">
@@ -1519,6 +1525,12 @@
     </ClCompile>
     <ClInclude Include="Source\GrooveDlg.h">
       <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\SongShapeDlg.cpp">
+      <Filter>Source Files\Frame Editor</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\SongShapeDlg.h">
+      <Filter>Source Files\Frame Editor</Filter>
     </ClInclude>
     <ClCompile Include="Source\TapButton.cpp">
       <Filter>Recorder</Filter>

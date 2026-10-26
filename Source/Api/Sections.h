@@ -117,7 +117,7 @@ int SectionMoveTarget(const SectionList &List, int Index, bool Up, int Frames);
 SectionList SectionsShiftRows(const SectionList &List, int PatternLength, int First, int Shift, int Frames, bool &Exact);
 
 // A section's color, 0 to SECTION_COLORS - 1: the same for "Chorus" and
-// "Chorus 2", so repeats look alike
+// "Chorus 2" (and "A", "A'" and "A''"), so repeats look alike
 int SectionColor(const std::string &Name);
 void SectionRgb(int Color, int &Red, int &Green, int &Blue);
 

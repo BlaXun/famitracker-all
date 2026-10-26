@@ -369,6 +369,7 @@ public:
 	afx_msg void OnModuleDuplicateFramePatterns();
 	afx_msg void OnModuleChannels();
 	afx_msg void OnModuleComments();
+	afx_msg void OnModuleSongShape();
 	afx_msg void OnModuleModuleproperties();
 	afx_msg void OnModuleMoveframedown();
 	afx_msg void OnModuleMoveframeup();

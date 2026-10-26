@@ -986,7 +986,7 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call, 35, not
+(`CoreTools`) is `what_next` and every tool its steps call, 36 (with `song_shape`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1350,6 +1350,38 @@ music" for that profile, where they start on: `ProfileIndex`).
 `LetGoOfMouse` (the timer) puts out what the mouse lit once it leaves the
 window. `TestHarmonyRoles` in `ApiTests.cpp` and `TestStrongNotesRow` in
 `PianoRollUiTests.cpp` cover the rest.
+
+Song shapes (from `feat-song-shapes`): `Source/Api/SongShapes.cpp`
+(portable) holds six shapes (`SongShapes`: stage, night, town, boss, small,
+jingle), each a list of parts with their bars and a line on what the part
+is for, the forms the recipes teach; `PartLine` gives a section's line from
+its name (a shape's own where it's one of its parts), `MatchSongShape` the
+shape a track's sections are (their names in order; `what_next` passes its
+kind's for a tie), `GuessSongShape` that or the track name's, and `LayOutShape` the
+layout: an empty track gets frames of its own length where every part is
+whole frames of it, else of the parts' greatest common divisor in bars; a
+track with notes keeps its frames (`Refitted`, `Cut`, `Missing`). The
+`song_shape` tool (`SongShapeTool` after `NameSectionTool` in `Tools.cpp`)
+writes it as one group: `SetMeter` for a new frame length, then one
+`WriteSong` (frames added or taken out at the end, the empty track's jumps,
+skips and halts replaced by the loop's `Bxx` or a jingle's `C00`, a song
+with notes' end jump moved to its new end) with `SetSections`. `what_next`'s
+`Frame` gives it after the key on an empty track without sections
+(milestone and skip word `shape`, `ShapeForKind`); `Parts` writes the empty
+song's A chords on the laid-out A (`FitProgression` fits a progression to
+a part's bars), the form is done once a matched shape's parts all have
+notes, and `GrowForm` fills a laid-out part after the body where it is.
+It's in `CoreTools`. FamiTracker's Module > Song shape (`ID_MODULE_SONGSHAPE`,
+also in `IDR_FRAME_POPUP`, routed by `CFrameEditor::OnModuleSongShape`, and
+the piano roll ruler's right-click) is `Source/SongShapeDlg.cpp`, which
+asks before adding bars to a song with notes and runs the tool through
+`CMcpConnection::RunTool`. `SectionHoverLine` gives a section's line for
+the frame editor's tooltip (`CFrameEditor::OnToolHitTest`, MFC's
+`EnableToolTips`) and the piano roll's status line (`HoverSection`).
+`SectionColor` gives "A'" and "A''" A's color. FakeSong's `SetMeter` is
+undoable now, as `CMcpMeterAction` is. `TestSongShapes`,
+`TestSongShapeTool` and `TestWhatNextShape` cover them, and
+`TestWhatNextLoop` follows the shape-first loop.
 
 ## What this repository is
 
