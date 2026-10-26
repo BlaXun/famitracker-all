@@ -187,7 +187,7 @@ const RawEntry ENTRIES[] = {
 		"The time signature says how beats are grouped in bars. In 4/4, most music, there are four beats a bar; 3/4 has "
 		"three, a waltz (ONE two three); 6/8 has two beats each split in three, for a rolling, galloping feel.",
 		"bar, beat, rhythm", "meter", "" },
-	{ "tempo", "Tempo (BPM)", "bpm, beats per minute, pace, how fast", GLOSSARY_MUSIC,
+	{ "tempo", "Tempo (BPM)", "BPM, beats per minute, pace, how fast", GLOSSARY_MUSIC,
 		"Tempo is how fast music goes, counted in beats per minute (BPM): 60 is a beat a second, a calm walk; 120 is brisk; "
 		"160 and up is a chase. FamiTracker sets it with the song's Speed and Tempo, which the game music layout shows as "
 		"one BPM box.",
@@ -318,7 +318,7 @@ const RawEntry ENTRIES[] = {
 		"comes from the wave each channel plays (pulse, triangle, noise) and from how the instrument shapes it over the "
 		"note.",
 		"pulse-width, envelope, waveform, instrument", "timbre", "" },
-	{ "envelope", "Envelope (attack, decay, sustain, release)", "envelopes, attack, decay, sustain, adsr, volume envelope, "
+	{ "envelope", "Envelope (attack, decay, sustain, release)", "envelopes, attack, decay, sustain, ADSR, volume envelope, "
 		"volume shape", GLOSSARY_SOUNDS,
 		"An envelope is how a sound's loudness changes over a note: the attack (how fast it starts), the decay (how it falls "
 		"after that), the sustain (the level it holds) and the release (how it fades once the note is let go). A pluck starts "
@@ -342,7 +342,7 @@ const RawEntry ENTRIES[] = {
 		"bright and full, 50% (a square) round and hollow, like a clarinet. The Vxx effect or an instrument's duty sequence "
 		"picks it, and the VRC6's pulses have eight widths.",
 		"pulse, effect-vxx, duty-sequence, timbre", "pulse-width", "" },
-	{ "pulse", "Pulse channel", "pulse, square, pulse 1, pulse 2, square channel, pulse wave, squares", GLOSSARY_SOUNDS,
+	{ "pulse", "Pulse channel", "pulse, square, Pulse 1, Pulse 2, square channel, pulse wave, squares", GLOSSARY_SOUNDS,
 		"The 2A03 has two pulse channels, which play a bright, buzzy wave at 16 volumes and four widths. They carry most "
 		"melodies and chords in NES music; the VRC6 and the MMC5 bring more of them.",
 		"pulse-width, triangle, noise, 2a03", "pulse", "" },
@@ -359,7 +359,7 @@ const RawEntry ENTRIES[] = {
 		"The VRC6's sawtooth plays a bright, buzzy wave full of overtones, like brass or a synth: great for a strong bass line "
 		"or a bold lead. It needs the VRC6 chip.",
 		"vrc6, pulse, bass-line", "sawtooth", "" },
-	{ "dpcm", "DPCM samples", "dpcm, samples, sample, sampled drums, dmc, delta modulation", GLOSSARY_SOUNDS,
+	{ "dpcm", "DPCM samples", "samples, sample, sampled drums, DMC, delta modulation", GLOSSARY_SOUNDS,
 		"The DPCM channel plays short recorded sounds, samples, in the NES's own rough format: drums with real punch, a "
 		"voice, a bass hit. Samples take a lot of a cartridge's memory, so they're short. Its level (the Zxx effect) also "
 		"makes the triangle and the noise quieter.",
@@ -379,35 +379,35 @@ const RawEntry ENTRIES[] = {
 		"A pluck is a sound that starts sharp and dies away quickly, like a plucked string or a music box. It suits arpeggios, "
 		"bouncy chords and gentle melodies.",
 		"envelope, pad, staccato-legato", "envelope", "" },
-	{ "2a03", "2A03 (the NES's own chip)", "rp2a03, apu, nes chip, nes sound chip, famicom chip", GLOSSARY_SOUNDS,
+	{ "2a03", "2A03 (the NES's own chip)", "RP2A03, APU, NES chip, NES sound chip, Famicom chip", GLOSSARY_SOUNDS,
 		"The 2A03 is the sound chip inside every NES and Famicom: two pulse channels, a triangle, the noise and the DPCM. "
 		"Every song has it, and the expansion chips add channels to it.",
 		"pulse, triangle, noise, dpcm, expansion-chip", "2a03", "" },
-	{ "vrc6", "VRC6", "konami vrc6", GLOSSARY_SOUNDS,
+	{ "vrc6", "VRC6", "Konami VRC6", GLOSSARY_SOUNDS,
 		"Konami's VRC6, from the Japanese Castlevania III, adds two more pulses with eight widths and a sawtooth: a fuller, "
 		"brighter sound, a favorite for rich chip music. The game music profile starts new songs with it.",
 		"sawtooth, pulse-width, vrc6-plus, expansion-chip", "vrc6", "" },
-	{ "vrc6-plus", "VRC6 Plus", "soft layer, soft 1, soft channels", GLOSSARY_SOUNDS,
+	{ "vrc6-plus", "VRC6 Plus", "soft layer, Soft 1, soft channels", GLOSSARY_SOUNDS,
 		"VRC6 Plus is this FamiTracker's own chip: the VRC6 with a soft layer under it, four wave channels (Soft 1 to Soft 4) "
 		"for pads, a soft echo or a deep bass. It's made for the game's sound files: no real cartridge has both chips.",
 		"vrc6, n163, pad", "vrc6-plus", "" },
-	{ "vrc7", "VRC7", "fm, fm synthesis, opll", GLOSSARY_SOUNDS,
+	{ "vrc7", "VRC7", "FM, FM synthesis, OPLL", GLOSSARY_SOUNDS,
 		"Konami's VRC7 adds six FM channels with a smoother sound than the other chips, like an electric piano, an organ or a "
 		"synth: 15 built-in sounds and one you design. Only one game used it, Lagrange Point.",
 		"expansion-chip, instrument", "vrc7", "" },
-	{ "fds", "FDS (Famicom Disk System)", "disk system, famicom disk system", GLOSSARY_SOUNDS,
+	{ "fds", "FDS (Famicom Disk System)", "disk system, Famicom Disk System", GLOSSARY_SOUNDS,
 		"The Famicom Disk System's chip adds one channel that plays a wave you draw, with a modulator that can bend its pitch. "
 		"Its tones are soft, haunting or bell-like, heard in many Famicom disk games.",
 		"waveform, expansion-chip, effect-hxx-fds", "fds", "" },
-	{ "n163", "N163 (Namco 163)", "namco, namco 163, n106, wave channels", GLOSSARY_SOUNDS,
+	{ "n163", "N163 (Namco 163)", "Namco, Namco 163, N106, wave channels", GLOSSARY_SOUNDS,
 		"Namco's N163 adds up to eight channels that play small waves you draw: organs, choirs, soft pads and glassy tones. "
 		"The more of its channels a song uses, the quieter and grainier each one gets, so four is common.",
 		"waveform, vrc6-plus, expansion-chip, wave-sequence", "n163", "" },
-	{ "mmc5", "MMC5", "nintendo mmc5", GLOSSARY_SOUNDS,
+	{ "mmc5", "MMC5", "Nintendo MMC5", GLOSSARY_SOUNDS,
 		"Nintendo's MMC5 adds two pulse channels just like the 2A03's, without the sweep. They give more room for chords and "
 		"harmonies with the familiar sound.",
 		"pulse, expansion-chip", "mmc5", "" },
-	{ "5b", "5B (Sunsoft 5B)", "sunsoft 5b, sunsoft, ym2149, ay", GLOSSARY_SOUNDS,
+	{ "5b", "5B (Sunsoft 5B)", "Sunsoft 5B, Sunsoft, YM2149, AY", GLOSSARY_SOUNDS,
 		"Sunsoft's 5B adds three square channels that can also play noise and a buzzing envelope, a sound all its own. NSF "
 		"files can't carry it here, but WAV files and the game's OGG files can.",
 		"expansion-chip, effect-hxy-5b, mode-sequence-5b", "5b", "" },
@@ -456,7 +456,7 @@ const RawEntry ENTRIES[] = {
 		"The pattern editor colors rows to show the beats and the bars: the first highlight every few rows (often 4, a beat), "
 		"the second every few more (often 16, a bar). They're a guide for your eyes, and the BPM counts the first as a beat.",
 		"beat, bar, row", "", "" },
-	{ "instrument", "Instrument", "instruments, patch, preset, presets, fti", GLOSSARY_TRACKER,
+	{ "instrument", "Instrument", "instruments, patch, preset, presets, .fti", GLOSSARY_TRACKER,
 		"An instrument is a sound you play notes with: which chip it's for, and the sequences that shape its volume, pitch and "
 		"tone over each note. Every note names its instrument, the two digits after the note. Instrument > Sound browser "
 		"offers ready-made ones.",
@@ -488,11 +488,11 @@ const RawEntry ENTRIES[] = {
 		"The duty sequence changes a pulse's width each tick, or the noise's mode, so a sound can start thin and turn round, or "
 		"flip between widths for a buzzing, talking tone. While it runs it overrides the Vxx effect.",
 		"pulse-width, sequence, effect-vxx", "pulse-width", "" },
-	{ "wave-sequence", "Wave sequence (N163)", "wave sequence, wave macro, n163 wave", GLOSSARY_TRACKER,
+	{ "wave-sequence", "Wave sequence (N163)", "wave sequence, wave macro, N163 wave", GLOSSARY_TRACKER,
 		"On the N163, an instrument's wave sequence picks which of its drawn waves plays each tick, so a sound can change its "
 		"tone as it goes, brightening or darkening. With one wave it isn't needed.",
 		"n163, waveform, sequence", "", "" },
-	{ "mode-sequence-5b", "Noise / mode sequence (5B)", "noise / mode, mode sequence, 5b mode, noise/mode", GLOSSARY_TRACKER,
+	{ "mode-sequence-5b", "Noise / mode sequence (5B)", "noise / mode, mode sequence, 5B mode, noise/mode", GLOSSARY_TRACKER,
 		"On the 5B, this sequence picks what each tick plays: the square, the noise, the envelope or a mix, and the noise's "
 		"pitch. With it one 5B channel can be a drum one moment and a tone the next.",
 		"5b, sequence, effect-hxy-5b", "", "" },
@@ -501,7 +501,7 @@ const RawEntry ENTRIES[] = {
 		"full) down to 1, and 0 for silence. It scales the instrument's own volume and lasts until another one is written. The "
 		"triangle ignores it, except 0.",
 		"dynamics, accent, volume-sequence, mix", "", "" },
-	{ "effect-column", "Effect columns", "effect, effects, effect column, fx", GLOSSARY_TRACKER,
+	{ "effect-column", "Effect columns", "effect, effects, effect column, FX", GLOSSARY_TRACKER,
 		"After the volume, each channel has up to four effect columns: a letter or digit and two more digits, like 447, that "
 		"change how the notes play (vibrato, slides, arpeggios, cuts). Most last until turned off with 00. Hover over an "
 		"effect in the pattern editor to read what it does.",
@@ -528,7 +528,7 @@ const RawEntry ENTRIES[] = {
 		"A module can hold several tracks, songs that share its instruments, each with its own frames, speed and tempo: a "
 		"stage's music, a boss theme and a jingle in one file. The Songs box picks the one you're working on.",
 		"module, frame", "", "" },
-	{ "module", "Module (.ftm file)", "ftm, ftm file, file", GLOSSARY_TRACKER,
+	{ "module", "Module (.ftm file)", ".ftm, .ftm file, file", GLOSSARY_TRACKER,
 		"A module is a FamiTracker file (.ftm): its tracks, instruments and samples together. File > Export for games turns "
 		"its tracks into sound files for a game.",
 		"track, instrument", "", "" },
@@ -1567,13 +1567,19 @@ std::string Trimmed(const std::string &Text)
 	return Lowercase(Text.substr(First, Last - First));
 }
 
+// A list of names or ids, each as written (its case kept: names show as written, and are found case aside)
 std::vector<std::string> SplitList(const char *List)
 {
 	std::vector<std::string> Out;
 	std::string Item;
 	for (const char *p = List; ; ++p) {
 		if (*p == ',' || *p == 0) {
-			const std::string Word = Trimmed(Item);
+			size_t First = 0, Last = Item.size();
+			while (First < Last && std::isspace(static_cast<unsigned char>(Item[First])))
+				++First;
+			while (Last > First && std::isspace(static_cast<unsigned char>(Item[Last - 1])))
+				--Last;
+			const std::string Word = Item.substr(First, Last - First);
 			if (!Word.empty())
 				Out.push_back(Word);
 			Item.clear();
@@ -1795,10 +1801,10 @@ void AddSongParts(std::vector<GlossaryEntry> &All)
 		{ "intro", "Intro", "introduction, opening", "The intro", "Intro", 0, 0,
 			"It's a few bars before the tune comes in, of the chords, the beat or a hint of the melody, often four in game "
 			"music.", "song-form, a-part, loop" },
-		{ "a-part", "A part (main theme)", "a, a section, main theme, a2, a', a prime", "The A part is", "A",
+		{ "a-part", "A part (main theme)", "A, A section, main theme, A2, A', A prime", "The A part is", "A",
 			"A' (A prime) or A2 is", "A'",
 			"A comes back more than any other part, so it's where the song feels at home.", "song-form, b-part, melody, hook" },
-		{ "b-part", "B part (contrast)", "b, b section, contrast", "The B part is", "B", 0, 0,
+		{ "b-part", "B part (contrast)", "B, B section, contrast", "The B part is", "B", 0, 0,
 			"It can have a tune of its own, higher or lower; a song without one can grow dull.", "song-form, a-part, bridge" },
 		{ "bridge", "Bridge", "bridges, middle eight", "A bridge is", "Bridge", 0, 0,
 			"It often comes just before the last A, with other chords or a change of feel, and builds a moment of suspense.",
@@ -1836,7 +1842,7 @@ void AddSongParts(std::vector<GlossaryEntry> &All)
 	GlossaryEntry Form;
 	Form.Id = "song-form";
 	Form.Term = "Song form (structure)";
-	Form.Names = SplitList("form, structure, song structure, aaba, song parts, song shape, song shapes");
+	Form.Names = SplitList("form, structure, song structure, AABA, song parts, song shape, song shapes");
 	Form.Category = GLOSSARY_MUSIC;
 	Form.Text = "A song's form is the order of its parts, often written with letters: A A B A is the tune twice, something "
 		"different, then the tune again. Game music often has an intro that plays once, then A, A again, B and a break, "
@@ -1949,19 +1955,20 @@ Built Build()
 		E.Category = GLOSSARY_EFFECTS;
 		E.Text = I.Plain;
 		const std::string Form = Lowercase(I.Form);
+		// Its other names as FamiTracker writes them: "4xy", "4xx", "4 effect", "FDS Hxx"
+		const std::string Written = I.Form;
 		std::vector<std::string> Names;
 		if (Chip.empty()) {
-			Names.push_back(Form);
-			const std::string Other = Form.substr(0, 1) + (Form.substr(1) == "xx" ? "xy" : "xx");
-			Names.push_back(Other);
-			Names.push_back(Form.substr(0, 1) + " effect");
+			Names.push_back(Written);
+			Names.push_back(Written.substr(0, 1) + (Form.substr(1) == "xx" ? "xy" : "xx"));
+			Names.push_back(Written.substr(0, 1) + " effect");
 		}
 		else {
-			Names.push_back(Lowercase(Chip) + " " + Form);
-			Names.push_back(Form + " " + Lowercase(Chip));
+			Names.push_back(Chip + " " + Written);
+			Names.push_back(Written + " " + Chip);
 		}
-		// (its name as a word to look for: "fds modulation speed high")
-		std::string Called = Lowercase(I.Name);
+		// (its name as a word to look for: "FDS modulation speed high")
+		std::string Called = I.Name;
 		for (size_t c = Called.find(", "); c != std::string::npos; c = Called.find(", "))
 			Called.erase(c, 1);
 		Names.push_back(Called);
