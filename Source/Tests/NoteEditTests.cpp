@@ -366,6 +366,28 @@ static void TestInstrument()
 	CHECK_EQ(Heard(ch), "2 15, 1 15, 3 15");
 }
 
+// A volume for some notes (the piano roll's Effects > Volume): written on them, and the notes after them, which took the
+// volume over, keep theirs
+static void TestVolume()
+{
+	CChannelNotes ch = Channel(16);
+	ch.SetCell(0, Cell(G, 4, 0, 15));
+	ch.SetCell(4, Cell(G, 4));
+	ch.SetCell(8, Cell(G, 4));
+	ch.SetCell(12, Cell(G, 4));
+	const int third[] = { 8 };
+	ch.SetVolume(third, 1, 6);
+	CHECK_EQ(Heard(ch), "0 15, 0 15, 0 6, 0 15");
+	CHECK(At(ch, 8).Vol == 6 && At(ch, 12).Vol == 15 && At(ch, 4).Vol == MAX_VOLUME);
+	const int two[] = { 0, 4 };
+	ch.SetVolume(two, 2, 3);
+	CHECK_EQ(Heard(ch), "0 3, 0 3, 0 6, 0 15");
+	const int none[] = { 5 };
+	ch.SetVolume(none, 1, 9);	// no note starts there
+	ch.SetVolume(third, 1, 16);	// not a volume
+	CHECK_EQ(Heard(ch), "0 3, 0 3, 0 6, 0 15");
+}
+
 // The pattern editor's letter for an effect
 static char Letter(int effect)
 {
@@ -926,6 +948,7 @@ int main()
 	TestColumns();
 	TestCopyPaste();
 	TestInstrument();
+	TestVolume();
 	TestEffectsShown();
 	TestSetLasting();
 	TestSlidesAndBends();

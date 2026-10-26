@@ -832,7 +832,8 @@
 #define ID_HELP_EXAMPLE_SOFT            37573
 #define ID_HELP_EXAMPLE_SFX             37574
 // Help > Exercises (ExercisesDlg.cpp, Tutorial.cpp): the list, Hear it's question, the starter songs and the scripts
-// (res/exercises, RCDATA); the song's shape and the first song start from File > New
+// (res/exercises, RCDATA; First steps' are named, FIRSTSTEPS_*, in FamiTracker.rc); the song's shape and the first song
+// start from File > New
 #define IDD_EXERCISES                   700
 #define IDD_EXERCISE_HEAR               701
 #define IDR_EXERCISE_HOME_SONG          702
@@ -861,8 +862,8 @@
 #define IDC_EXERCISE_HEAR_STATUS        2405
 #define IDC_EXERCISE_HEAR_AGAIN         2406
 #define ID_HELP_EXERCISES               37900
-#define ID_HELP_EXERCISE_FIRST          37901	// starts the first exercise; the others follow, up to ten
-#define ID_HELP_EXERCISE_LAST           37910
+#define ID_HELP_EXERCISE_FIRST          38050	// starts the first exercise; the others follow, up to fifty
+#define ID_HELP_EXERCISE_LAST           38099
 
 // File > Import NSF (ImportNsfDlg.cpp)
 #define IDD_IMPORT_NSF                  337

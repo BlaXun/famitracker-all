@@ -45,25 +45,41 @@ const LPCTSTR SECTION = _T("Exercises");
 const UINT_PTR TMR_HEAR = 1;
 const UINT HEAR_MS = 100;
 
-// Each exercise's starter song and script in FamiTracker.exe; no song for those that start from File > New
+// Each exercise's starter song and script in FamiTracker.exe (RCDATA): Next steps' by number (IDR_EXERCISE_*), First
+// steps' by name (FIRSTSTEPS_*_SONG and _SCRIPT in FamiTracker.rc, which keeps resource.h's numbers for others); no song
+// for those that start from File > New
 struct exercise_files_t {
 	const char *Id;
-	UINT Song;
-	UINT Script;
+	LPCTSTR Song;
+	LPCTSTR Script;
 };
 
 const exercise_files_t FILES[] = {
-	{ "home-note", IDR_EXERCISE_HOME_SONG, IDR_EXERCISE_HOME_SCRIPT },
-	{ "four-bars", IDR_EXERCISE_FOURBARS_SONG, IDR_EXERCISE_FOURBARS_SCRIPT },
-	{ "strong-notes", IDR_EXERCISE_STRONG_SONG, IDR_EXERCISE_STRONG_SCRIPT },
-	{ "phrases", IDR_EXERCISE_PHRASES_SONG, IDR_EXERCISE_PHRASES_SCRIPT },
-	{ "bass", IDR_EXERCISE_BASS_SONG, IDR_EXERCISE_BASS_SCRIPT },
-	{ "beat", IDR_EXERCISE_BEAT_SONG, IDR_EXERCISE_BEAT_SCRIPT },
-	{ "minor", IDR_EXERCISE_MINOR_SONG, IDR_EXERCISE_MINOR_SCRIPT },
-	{ "hook", IDR_EXERCISE_HOOK_SONG, IDR_EXERCISE_HOOK_SCRIPT },
-	{ "song-shape", 0, IDR_EXERCISE_SHAPE_SCRIPT },
-	{ "first-song", 0, IDR_EXERCISE_FIRSTSONG_SCRIPT },
+	{ "first-note", _T("FIRSTSTEPS_NOTE_SONG"), _T("FIRSTSTEPS_NOTE_SCRIPT") },
+	{ "high-low", _T("FIRSTSTEPS_HIGHLOW_SONG"), _T("FIRSTSTEPS_HIGHLOW_SCRIPT") },
+	{ "long-short", _T("FIRSTSTEPS_LONGSHORT_SONG"), _T("FIRSTSTEPS_LONGSHORT_SCRIPT") },
+	{ "steady-beat", _T("FIRSTSTEPS_BEAT_SONG"), _T("FIRSTSTEPS_BEAT_SCRIPT") },
+	{ "loud-soft", _T("FIRSTSTEPS_LOUDSOFT_SONG"), _T("FIRSTSTEPS_LOUDSOFT_SCRIPT") },
+	{ "stairs", _T("FIRSTSTEPS_STAIRS_SONG"), _T("FIRSTSTEPS_STAIRS_SCRIPT") },
+	{ "rhythm", _T("FIRSTSTEPS_RHYTHM_SONG"), _T("FIRSTSTEPS_RHYTHM_SCRIPT") },
+	{ "copy-repeat", _T("FIRSTSTEPS_COPY_SONG"), _T("FIRSTSTEPS_COPY_SCRIPT") },
+	{ "new-sound", _T("FIRSTSTEPS_SOUND_SONG"), _T("FIRSTSTEPS_SOUND_SCRIPT") },
+	{ "two-parts", _T("FIRSTSTEPS_PARTS_SONG"), _T("FIRSTSTEPS_PARTS_SCRIPT") },
+	{ "tiny-tune", _T("FIRSTSTEPS_TUNE_SONG"), _T("FIRSTSTEPS_TUNE_SCRIPT") },
+	{ "home-note", MAKEINTRESOURCE(IDR_EXERCISE_HOME_SONG), MAKEINTRESOURCE(IDR_EXERCISE_HOME_SCRIPT) },
+	{ "four-bars", MAKEINTRESOURCE(IDR_EXERCISE_FOURBARS_SONG), MAKEINTRESOURCE(IDR_EXERCISE_FOURBARS_SCRIPT) },
+	{ "strong-notes", MAKEINTRESOURCE(IDR_EXERCISE_STRONG_SONG), MAKEINTRESOURCE(IDR_EXERCISE_STRONG_SCRIPT) },
+	{ "phrases", MAKEINTRESOURCE(IDR_EXERCISE_PHRASES_SONG), MAKEINTRESOURCE(IDR_EXERCISE_PHRASES_SCRIPT) },
+	{ "bass", MAKEINTRESOURCE(IDR_EXERCISE_BASS_SONG), MAKEINTRESOURCE(IDR_EXERCISE_BASS_SCRIPT) },
+	{ "beat", MAKEINTRESOURCE(IDR_EXERCISE_BEAT_SONG), MAKEINTRESOURCE(IDR_EXERCISE_BEAT_SCRIPT) },
+	{ "minor", MAKEINTRESOURCE(IDR_EXERCISE_MINOR_SONG), MAKEINTRESOURCE(IDR_EXERCISE_MINOR_SCRIPT) },
+	{ "hook", MAKEINTRESOURCE(IDR_EXERCISE_HOOK_SONG), MAKEINTRESOURCE(IDR_EXERCISE_HOOK_SCRIPT) },
+	{ "song-shape", NULL, MAKEINTRESOURCE(IDR_EXERCISE_SHAPE_SCRIPT) },
+	{ "first-song", NULL, MAKEINTRESOURCE(IDR_EXERCISE_FIRSTSONG_SCRIPT) },
 };
+
+// The list's rows: a group's heading has this plus the group as its item data, an exercise its place in the list
+const DWORD_PTR GROUP_ROW = 0x10000;
 
 const exercise_files_t *FilesOf(const std::string &Id)
 {
@@ -78,17 +94,16 @@ CFamiTrackerDoc *DocOf(CMainFrame *pMainFrame)
 	return static_cast<CFamiTrackerDoc*>(pMainFrame->GetActiveDocument());
 }
 
-// "1. The home note (done)"
-CString ListLine(size_t Index, const ftapi::ExerciseInfo &E)
+// A group's exercises, and how many of them are done
+void GroupDone(int Group, int &Count, int &Done)
 {
-	CString Line;
-	Line.Format(_T("%d. %s"), static_cast<int>(Index + 1), static_cast<LPCTSTR>(CString(E.Title)));
-	const int State = GetExerciseState(E.Id);
-	if (State == EXERCISE_DONE)
-		Line += _T("   (done)");
-	else if (State == EXERCISE_STARTED)
-		Line += _T("   (started)");
-	return Line;
+	Count = Done = 0;
+	const std::vector<ftapi::ExerciseInfo> &List = ftapi::Exercises();
+	for (size_t i = 0; i < List.size(); ++i)
+		if (List[i].Group == Group) {
+			++Count;
+			Done += GetExerciseState(List[i].Id) == EXERCISE_DONE ? 1 : 0;
+		}
 }
 
 }	// namespace
@@ -115,7 +130,8 @@ UINT ExerciseCommand(const std::string &Id)
 	return 0;
 }
 
-// The list
+// The list: the groups' headings (bold, with how many of each are done), each followed by its exercises (numbered, done
+// or started at the right); a group still to come has its heading alone
 
 class CExercisesDlg : public CDialog
 {
@@ -128,49 +144,105 @@ protected:
 	virtual void OnOK();
 	afx_msg void OnSelChange();
 	afx_msg void OnForget();
+	afx_msg void OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct);
 
 	DECLARE_MESSAGE_MAP()
 
 private:
-	void Fill(int Select);
+	CListBox *List() const { return static_cast<CListBox*>(GetDlgItem(IDC_EXERCISE_LIST)); }
+	int ExerciseAt(int Row) const;		// the exercise a row shows (its place in ftapi::Exercises), -1 for a heading
+	int GroupAt(int Row) const;			// a heading's group, or the group of the exercise a row shows; -1 for none
+	void Fill(int Exercise);			// the list, with that exercise picked
 
 	int m_iChosen;
+	CFont m_Bold;
 };
 
 BEGIN_MESSAGE_MAP(CExercisesDlg, CDialog)
 	ON_LBN_SELCHANGE(IDC_EXERCISE_LIST, OnSelChange)
 	ON_LBN_DBLCLK(IDC_EXERCISE_LIST, OnOK)
 	ON_BN_CLICKED(IDC_EXERCISE_FORGET, OnForget)
+	ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
 BOOL CExercisesDlg::OnInitDialog()
 {
 	CDialog::OnInitDialog();
-	// The first one not done yet
-	const std::vector<ftapi::ExerciseInfo> &List = ftapi::Exercises();
+	// The headings in bold, and the rows a little apart (the list draws its own rows)
+	LOGFONT Font;
+	GetFont()->GetLogFont(&Font);
+	Font.lfWeight = FW_BOLD;
+	m_Bold.CreateFontIndirect(&Font);
+	{
+		CClientDC dc(List());
+		CFont *pOld = dc.SelectObject(&m_Bold);
+		TEXTMETRIC Metric;
+		dc.GetTextMetrics(&Metric);
+		dc.SelectObject(pOld);
+		List()->SetItemHeight(0, Metric.tmHeight + SY(6));
+	}
+	// The first one not done yet: for a newcomer, First steps' first
+	const std::vector<ftapi::ExerciseInfo> &Exercises = ftapi::Exercises();
 	int First = 0;
-	while (First + 1 < static_cast<int>(List.size()) && GetExerciseState(List[static_cast<size_t>(First)].Id) == EXERCISE_DONE)
+	while (First + 1 < static_cast<int>(Exercises.size()) && GetExerciseState(Exercises[static_cast<size_t>(First)].Id) == EXERCISE_DONE)
 		++First;
 	Fill(First);
 	return TRUE;
 }
 
-void CExercisesDlg::Fill(int Select)
+int CExercisesDlg::ExerciseAt(int Row) const
 {
-	CListBox *pList = static_cast<CListBox*>(GetDlgItem(IDC_EXERCISE_LIST));
+	if (Row < 0 || Row >= List()->GetCount())
+		return -1;
+	const DWORD_PTR Data = List()->GetItemData(Row);
+	return Data < GROUP_ROW && Data < ftapi::Exercises().size() ? static_cast<int>(Data) : -1;
+}
+
+int CExercisesDlg::GroupAt(int Row) const
+{
+	if (Row < 0 || Row >= List()->GetCount())
+		return -1;
+	const DWORD_PTR Data = List()->GetItemData(Row);
+	if (Data >= GROUP_ROW)
+		return Data - GROUP_ROW < ftapi::ExerciseGroups().size() ? static_cast<int>(Data - GROUP_ROW) : -1;
+	return Data < ftapi::Exercises().size() ? ftapi::Exercises()[static_cast<size_t>(Data)].Group : -1;
+}
+
+void CExercisesDlg::Fill(int Exercise)
+{
+	CListBox *pList = List();
 	pList->ResetContent();
-	const std::vector<ftapi::ExerciseInfo> &List = ftapi::Exercises();
-	int Done = 0;
-	for (size_t i = 0; i < List.size(); ++i) {
-		pList->AddString(ListLine(i, List[i]));
-		Done += GetExerciseState(List[i].Id) == EXERCISE_DONE ? 1 : 0;
+	const std::vector<ftapi::ExerciseInfo> &Exercises = ftapi::Exercises();
+	const std::vector<ftapi::ExerciseGroupInfo> &Groups = ftapi::ExerciseGroups();
+	int Select = -1, Done = 0;
+	CString Progress;
+	for (size_t g = 0; g < Groups.size(); ++g) {
+		const int Heading = pList->AddString(CString(Groups[g].Title));
+		pList->SetItemData(Heading, GROUP_ROW + g);
+		int Number = 0;
+		for (size_t i = 0; i < Exercises.size(); ++i) {
+			if (Exercises[i].Group != static_cast<int>(g))
+				continue;
+			CString Line;
+			Line.Format(_T("%d. %s"), ++Number, static_cast<LPCTSTR>(CString(Exercises[i].Title)));
+			const int Row = pList->AddString(Line);
+			pList->SetItemData(Row, static_cast<DWORD_PTR>(i));
+			if (static_cast<int>(i) == Exercise)
+				Select = Row;
+		}
+		int Count = 0, GroupDoneCount = 0;
+		GroupDone(static_cast<int>(g), Count, GroupDoneCount);
+		Done += GroupDoneCount;
+		if (Count > 0) {
+			CString Part;
+			Part.Format(_T("%s%s: %d of %d done."), Progress.IsEmpty() ? _T("") : _T("   "), static_cast<LPCTSTR>(CString(Groups[g].Title)),
+				GroupDoneCount, Count);
+			Progress += Part;
+		}
 	}
 	pList->SetCurSel(Select);
-	CString Progress;
-	if (Done == static_cast<int>(List.size()))
+	if (Done == static_cast<int>(Exercises.size()))
 		Progress = _T("All of them done: well done! Each one can be done again.");
-	else
-		Progress.Format(_T("%d of %d done."), Done, static_cast<int>(List.size()));
 	SetDlgItemText(IDC_EXERCISE_PROGRESS, Progress);
 	GetDlgItem(IDC_EXERCISE_FORGET)->EnableWindow(Done > 0 ? TRUE : FALSE);
 	OnSelChange();
@@ -178,17 +250,76 @@ void CExercisesDlg::Fill(int Select)
 
 void CExercisesDlg::OnSelChange()
 {
-	const int Index = static_cast<CListBox*>(GetDlgItem(IDC_EXERCISE_LIST))->GetCurSel();
-	const std::vector<ftapi::ExerciseInfo> &List = ftapi::Exercises();
-	if (Index < 0 || Index >= static_cast<int>(List.size())) {
-		SetDlgItemText(IDC_EXERCISE_ABOUT, _T(""));
+	const int Row = List()->GetCurSel(), Index = ExerciseAt(Row);
+	GetDlgItem(IDOK)->EnableWindow(Index >= 0 ? TRUE : FALSE);
+	if (Index < 0) {
+		// A heading: who the group is for
+		const int Group = GroupAt(Row);
+		SetDlgItemText(IDC_EXERCISE_ABOUT, Group >= 0 ? CString(ftapi::ExerciseGroups()[static_cast<size_t>(Group)].About) : CString());
 		return;
 	}
-	const ftapi::ExerciseInfo &E = List[static_cast<size_t>(Index)];
+	const ftapi::ExerciseInfo &E = ftapi::Exercises()[static_cast<size_t>(Index)];
+	CString Minutes;
+	if (E.Minutes == 1)
+		Minutes = _T("About a minute.");
+	else
+		Minutes.Format(_T("About %d minutes."), E.Minutes);
 	CString About;
-	About.Format(_T("%s About %d minutes. %s"), static_cast<LPCTSTR>(CString(E.About)), E.Minutes,
+	About.Format(_T("%s %s %s"), static_cast<LPCTSTR>(CString(E.About)), static_cast<LPCTSTR>(Minutes),
 		E.NewSong ? _T("It starts a new song, as File > New does.") : _T("It opens a short song made for it."));
 	SetDlgItemText(IDC_EXERCISE_ABOUT, About);
+}
+
+void CExercisesDlg::OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct)
+{
+	if (nIDCtl != IDC_EXERCISE_LIST || lpDrawItemStruct->CtlType != ODT_LISTBOX) {
+		CDialog::OnDrawItem(nIDCtl, lpDrawItemStruct);
+		return;
+	}
+	CDC *pDC = CDC::FromHandle(lpDrawItemStruct->hDC);
+	const CRect Box(lpDrawItemStruct->rcItem);
+	const int Row = static_cast<int>(lpDrawItemStruct->itemID);
+	const bool Focus = (lpDrawItemStruct->itemState & ODS_FOCUS) != 0;
+	if (Row < 0 || Row >= List()->GetCount()) {
+		if (Focus)
+			pDC->DrawFocusRect(&Box);
+		return;
+	}
+	const bool Selected = (lpDrawItemStruct->itemState & ODS_SELECTED) != 0;
+	const int Index = ExerciseAt(Row), Group = GroupAt(Row);
+	const bool Later = Index < 0 && Group >= 0 && ftapi::ExerciseGroups()[static_cast<size_t>(Group)].Later;
+	const COLORREF Text = ::GetSysColor(Selected ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
+	const COLORREF Quiet = Selected ? Text : ::GetSysColor(COLOR_GRAYTEXT);
+	pDC->FillSolidRect(&Box, ::GetSysColor(Selected ? COLOR_HIGHLIGHT : Index < 0 ? COLOR_BTNFACE : COLOR_WINDOW));
+	// At the right: an exercise's state, how much of a group is done, or that it's still to come
+	CString Right;
+	if (Index >= 0) {
+		const int State = GetExerciseState(ftapi::Exercises()[static_cast<size_t>(Index)].Id);
+		Right = State == EXERCISE_DONE ? _T("done") : State == EXERCISE_STARTED ? _T("started") : _T("");
+	}
+	else if (Later)
+		Right = _T("coming later");
+	else if (Group >= 0) {
+		int Count = 0, Done = 0;
+		GroupDone(Group, Count, Done);
+		Right.Format(_T("%d of %d done"), Done, Count);
+	}
+	CString Line;
+	List()->GetText(Row, Line);
+	CFont *pOld = pDC->SelectObject(Index < 0 ? &m_Bold : GetFont());
+	const int OldMode = pDC->SetBkMode(TRANSPARENT);
+	CRect Words(Box);
+	Words.DeflateRect(Index < 0 ? SX(4) : SX(18), 0, SX(6), 0);
+	pDC->SetTextColor(Quiet);
+	pDC->DrawText(Right, &Words, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+	if (!Right.IsEmpty())
+		Words.right -= pDC->GetTextExtent(Right).cx + SX(8);
+	pDC->SetTextColor(Later ? Quiet : Text);
+	pDC->DrawText(Line, &Words, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+	pDC->SetBkMode(OldMode);
+	pDC->SelectObject(pOld);
+	if (Focus)
+		pDC->DrawFocusRect(&Box);
 }
 
 void CExercisesDlg::OnForget()
@@ -203,9 +334,9 @@ void CExercisesDlg::OnForget()
 
 void CExercisesDlg::OnOK()
 {
-	const int Index = static_cast<CListBox*>(GetDlgItem(IDC_EXERCISE_LIST))->GetCurSel();
-	if (Index < 0 || Index >= static_cast<int>(ftapi::Exercises().size()))
-		return;
+	const int Index = ExerciseAt(List()->GetCurSel());
+	if (Index < 0)
+		return;		// a heading
 	m_iChosen = Index;
 	CDialog::OnOK();
 }
@@ -226,7 +357,7 @@ void StartExercise(CMainFrame *pMainFrame, UINT nID)
 	const exercise_files_t *pFiles = FilesOf(E.Id);
 	std::string Text, Error;
 	tutorial_t Script;
-	if (pFiles == NULL || !ReadBuiltInText(pFiles->Script, Text) || !ParseTutorial(Text, Script, Error)) {
+	if (pFiles == NULL || pFiles->Script == NULL || !ReadBuiltInText(pFiles->Script, Text) || !ParseTutorial(Text, Script, Error)) {
 		ASSERT(FALSE);
 		return;
 	}
@@ -245,7 +376,7 @@ void StartExercise(CMainFrame *pMainFrame, UINT nID)
 		pDoc->MakeUntitled(Title);
 		pMainFrame->UpdateTrackBox();
 	}
-	else if (!OpenBuiltInSong(pMainFrame, pFiles->Song, Title))
+	else if (pFiles->Song == NULL || !OpenBuiltInSong(pMainFrame, pFiles->Song, Title))
 		return;
 	SetExerciseState(E.Id, EXERCISE_STARTED);
 	StartExerciseNote(pMainFrame, Script, E.Id);

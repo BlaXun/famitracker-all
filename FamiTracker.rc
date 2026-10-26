@@ -613,7 +613,7 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
-    ID_HELP_EXERCISES       "Short exercises with feedback, from a tune's last note to a first small song: a song to work on and a note with the task\nExercises"
+    ID_HELP_EXERCISES       "Short exercises with feedback, from your very first note to a first small song: a song to work on and a note with the task\nExercises"
     ID_HELP_GLOSSARY        "The words of music, sounds and FamiTracker in plain words, with examples to hear, in a window beside the song\nGlossary"
     ID_HELP_HEAREFFECT      "Hear the effect at the cursor (or the one the mouse rests on): the note plain, then with the effect's own numbers\nHear the effect"
     ID_HELP_EXAMPLE_FIRST   "A short song on the 2A03 alone, opened as a new song, with a walkthrough of what to listen for\nFirst song"
@@ -1049,6 +1049,30 @@ IDR_EXERCISE_MINOR_SCRIPT RCDATA                "res\\exercises\\minor.txt"
 IDR_EXERCISE_HOOK_SCRIPT RCDATA                 "res\\exercises\\hook.txt"
 IDR_EXERCISE_SHAPE_SCRIPT RCDATA                "res\\exercises\\song-shape.txt"
 IDR_EXERCISE_FIRSTSONG_SCRIPT RCDATA            "res\\exercises\\first-song.txt"
+
+// First steps', by name (ExercisesDlg.cpp's FILES; resource.h's numbers are kept for others)
+FIRSTSTEPS_NOTE_SONG    RCDATA                  "res\\exercises\\first-note.ftm"
+FIRSTSTEPS_NOTE_SCRIPT  RCDATA                  "res\\exercises\\first-note.txt"
+FIRSTSTEPS_HIGHLOW_SONG RCDATA                  "res\\exercises\\high-low.ftm"
+FIRSTSTEPS_HIGHLOW_SCRIPT RCDATA                "res\\exercises\\high-low.txt"
+FIRSTSTEPS_LONGSHORT_SONG RCDATA                "res\\exercises\\long-short.ftm"
+FIRSTSTEPS_LONGSHORT_SCRIPT RCDATA              "res\\exercises\\long-short.txt"
+FIRSTSTEPS_BEAT_SONG    RCDATA                  "res\\exercises\\steady-beat.ftm"
+FIRSTSTEPS_BEAT_SCRIPT  RCDATA                  "res\\exercises\\steady-beat.txt"
+FIRSTSTEPS_LOUDSOFT_SONG RCDATA                 "res\\exercises\\loud-soft.ftm"
+FIRSTSTEPS_LOUDSOFT_SCRIPT RCDATA               "res\\exercises\\loud-soft.txt"
+FIRSTSTEPS_STAIRS_SONG  RCDATA                  "res\\exercises\\stairs.ftm"
+FIRSTSTEPS_STAIRS_SCRIPT RCDATA                 "res\\exercises\\stairs.txt"
+FIRSTSTEPS_RHYTHM_SONG  RCDATA                  "res\\exercises\\rhythm.ftm"
+FIRSTSTEPS_RHYTHM_SCRIPT RCDATA                 "res\\exercises\\rhythm.txt"
+FIRSTSTEPS_COPY_SONG    RCDATA                  "res\\exercises\\copy-repeat.ftm"
+FIRSTSTEPS_COPY_SCRIPT  RCDATA                  "res\\exercises\\copy-repeat.txt"
+FIRSTSTEPS_SOUND_SONG   RCDATA                  "res\\exercises\\new-sound.ftm"
+FIRSTSTEPS_SOUND_SCRIPT RCDATA                  "res\\exercises\\new-sound.txt"
+FIRSTSTEPS_PARTS_SONG   RCDATA                  "res\\exercises\\two-parts.ftm"
+FIRSTSTEPS_PARTS_SCRIPT RCDATA                  "res\\exercises\\two-parts.txt"
+FIRSTSTEPS_TUNE_SONG    RCDATA                  "res\\exercises\\tiny-tune.ftm"
+FIRSTSTEPS_TUNE_SCRIPT  RCDATA                  "res\\exercises\\tiny-tune.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -2101,18 +2125,18 @@ BEGIN
     PUSHBUTTON      "Close",IDCANCEL,223,175,50,14
 END
 
-IDD_EXERCISES DIALOGEX 0, 0, 300, 232
+IDD_EXERCISES DIALOGEX 0, 0, 300, 284
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Exercises"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Short exercises, a few minutes each, from a tune's last note to a first small song. Each one opens a song to work on, with a note beside it that gives the task. When you're done, press Check in the note: it says what's right and what to change next.",IDC_STATIC,7,7,286,34
-    LISTBOX         IDC_EXERCISE_LIST,7,44,286,104,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "",IDC_EXERCISE_ABOUT,7,153,286,28
-    LTEXT           "",IDC_EXERCISE_PROGRESS,7,185,286,10
-    PUSHBUTTON      "Forget what's done",IDC_EXERCISE_FORGET,7,211,84,14
-    DEFPUSHBUTTON   "Start",IDOK,186,211,50,14
-    PUSHBUTTON      "Close",IDCANCEL,243,211,50,14
+    LTEXT           "Short exercises, each with a song to work on and a note beside it that gives the task. Never made music? Start with First steps, a minute or two each. When you're done, press Check in the note: it says what's right and what to change next.",IDC_STATIC,7,7,286,34
+    LISTBOX         IDC_EXERCISE_LIST,7,44,286,160,LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_EXERCISE_ABOUT,7,209,286,28
+    LTEXT           "",IDC_EXERCISE_PROGRESS,7,241,286,10
+    PUSHBUTTON      "Forget what's done",IDC_EXERCISE_FORGET,7,263,84,14
+    DEFPUSHBUTTON   "Start",IDOK,186,263,50,14
+    PUSHBUTTON      "Close",IDCANCEL,243,263,50,14
 END
 
 IDD_EXERCISE_HEAR DIALOGEX 0, 0, 260, 86

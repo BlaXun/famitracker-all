@@ -21,8 +21,11 @@
 
 #pragma once
 
-// Help > Exercises: short tasks for someone new to music, a few minutes each,
-// from the first note to a small song. FamiTracker opens each one's starter
+// Help > Exercises: short tasks for someone new to music, in groups: First
+// steps (a minute or two each, one word at a time, for someone who has never
+// made music: a note, its pitch, its length, the beat...), Next steps (a few
+// minutes each, from a tune's last note to a small song) and Making it your
+// own (a heading for exercises to come). FamiTracker opens each one's starter
 // song with a note that gives the task (ExercisesDlg.cpp, Tutorial.cpp; the
 // scripts and starters are in res/exercises), and its Check button runs the
 // check_exercise tool (Tools.cpp), which reads the song as the tools do (the
@@ -48,6 +51,16 @@ class Json;
 // the drums (the noise channel) or the whole song
 enum exercise_role { EXERCISE_MELODY, EXERCISE_BASS, EXERCISE_DRUMS, EXERCISE_SONG };
 
+// The groups Help > Exercises shows the exercises in, in order
+enum exercise_group { EXERCISES_FIRST_STEPS, EXERCISES_NEXT_STEPS, EXERCISES_YOUR_OWN, EXERCISE_GROUPS };
+
+struct ExerciseGroupInfo {
+	const char *Id;			// "first-steps"
+	const char *Title;		// "First steps"
+	const char *About;		// who it's for, a line
+	bool Later;				// a heading for exercises still to come: none are in it yet
+};
+
 struct ExerciseCheckInfo {
 	const char *Id;			// "home-note": what check_exercise and the scripts' "check:" lines take
 	int Role;				// exercise_role
@@ -61,10 +74,13 @@ struct ExerciseInfo {
 	int Minutes;			// about how long it takes
 	bool NewSong;			// starts from a new song (File > New) rather than a starter song of its own
 	std::vector<std::string> Checks;	// its checks, in the order its steps ask for them; it's done when the last passes
+	int Group;				// exercise_group
 };
 
-// The exercises, in order: from the first note to a small song
+// The exercises, in order, group after group: from the first note to a small song
 const std::vector<ExerciseInfo> &Exercises();
+// The groups, in order (Making it your own last, a heading for later)
+const std::vector<ExerciseGroupInfo> &ExerciseGroups();
 const ExerciseInfo *FindExercise(const std::string &Id);
 // The exercise after Id; null after the last (or for none)
 const ExerciseInfo *ExerciseAfter(const std::string &Id);

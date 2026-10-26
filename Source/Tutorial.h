@@ -44,6 +44,7 @@ bool TutorialRunning();
 // The exercise whose note shows (Help > Exercises), for View > Ask's model: its title, what the step asks now (the
 // glossary's links as their words) and the step's check (check_exercise's, "" for none); false for none
 bool ExerciseInProgress(std::string &Title, std::string &Step, std::string &Check);
+bool ExerciseRunning();						// an exercise's note is open (the piano roll leaves an empty song's groove box out)
 
 // Help > Exercises (ExercisesDlg.cpp): an exercise's note over its song,
 // which has just opened. Its check steps (TutorialScript.h) have Hint, Hear
@@ -51,8 +52,9 @@ bool ExerciseInProgress(std::string &Title, std::string &Step, std::string &Chec
 // says, the glossary's words in it linked to their entries and its bars to
 // play, and the exercise is done once its last check passes.
 void StartExerciseNote(CMainFrame *pMainFrame, const tutorial_t &Script, const std::string &Exercise);
-// A built-in text (RCDATA: a tutorial, a walkthrough, an exercise's script); false when there's none
-bool ReadBuiltInText(UINT Id, std::string &Text);
-// A built-in song (RCDATA) opened as a new song, named Title until it's saved (FamiTracker first asks whether to save
-// the song that's open); false when it didn't open
-bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT Song, LPCTSTR Title);
+// A built-in text (RCDATA: a tutorial, a walkthrough, an exercise's script), by its name or MAKEINTRESOURCE(its number);
+// false when there's none
+bool ReadBuiltInText(LPCTSTR Resource, std::string &Text);
+// A built-in song (RCDATA, by name or number) opened as a new song, named Title until it's saved (FamiTracker first asks
+// whether to save the song that's open); false when it didn't open
+bool OpenBuiltInSong(CMainFrame *pMainFrame, LPCTSTR Song, LPCTSTR Title);

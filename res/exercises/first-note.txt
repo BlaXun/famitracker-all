@@ -1,0 +1,20 @@
+; Help > Exercises, First steps: your first note (Source/ExercisesDlg.cpp opens first-note.ftm with it)
+title: Your first note
+about: Click a note into the piano roll and hear it: up is higher, right is later.
+
+step
+show: piano-roll
+text: This is the [[piano roll]], where you draw music. Each row across it is a [[lane]], with a piano key at its left end.
+
+  Click once anywhere on the lanes. A [[note]] appears where you click, and you hear it.
+wait: notes 1
+
+step
+show: piano-roll
+play: bar 1
+check: first-note
+text: That's your first note! Press Play bar 1, here in this note, to hear it again.
+
+  A note higher up sounds higher, and a note further right plays later. Click a few more if you like, then press Check.
+hint: Click on the lanes themselves, not on the keys at the left or on the numbered strip at the top. A right-click on a note takes it away again.
+answer: Pulse 1, bar 1, Lead: C4 - . . . . . .

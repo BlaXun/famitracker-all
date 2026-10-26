@@ -177,11 +177,11 @@ struct tutorial_entry_t {
 	CString Problem;			// why it can't be read
 };
 
-bool BuiltInText(UINT Id, std::string &Text)
+bool BuiltInText(LPCTSTR Resource, std::string &Text)
 {
 	// In FamiTracker.exe itself, whatever language.dll holds
 	HINSTANCE hInstance = AfxGetInstanceHandle();
-	HRSRC hResource = ::FindResource(hInstance, MAKEINTRESOURCE(Id), RT_RCDATA);
+	HRSRC hResource = ::FindResource(hInstance, Resource, RT_RCDATA);
 	if (hResource == NULL)
 		return false;
 	HGLOBAL hData = ::LoadResource(hInstance, hResource);
@@ -190,6 +190,11 @@ bool BuiltInText(UINT Id, std::string &Text)
 		return false;
 	Text.assign(static_cast<const char*>(pData), ::SizeofResource(hInstance, hResource));
 	return true;
+}
+
+bool BuiltInText(UINT Id, std::string &Text)
+{
+	return BuiltInText(MAKEINTRESOURCE(Id), Text);
 }
 
 CString TutorialFolder()
@@ -469,6 +474,7 @@ public:
 	void Stop();
 	// The exercise it is: its title, what the step asks now and the step's check ("" for none); false for a tutorial
 	bool ExerciseNow(std::string &Title, std::string &Step, std::string &Check) const;
+	bool RunsExercise() const { return !m_sExercise.empty(); }
 
 protected:
 	afx_msg void OnPaint();
@@ -571,6 +577,7 @@ private:
 	bool m_bPassed;					// and it passed
 	bool m_bFinished;				// the exercise's last check passed
 	bool m_bLanesShown;				// the piano roll shows the step's answer's lanes, or needn't
+	bool m_bDrawPicked;				// an exercise's piano roll got Draw picked as it began (or needn't)
 	CBarsPlayer m_PlayIt;			// the bars the check pointed to (Play it)
 	CRect m_HintRect, m_FeedbackRect;	// where the hint and what the check said go (empty for none)
 	int m_iWaitTop;					// where the line under them says what the step waits for
@@ -629,6 +636,7 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_bPassed(false),
 	m_bFinished(false),
 	m_bLanesShown(true),
+	m_bDrawPicked(Exercise.empty()),
 	m_iWaitTop(0)
 {
 	const CFamiTrackerDoc *pDoc = Doc();
@@ -906,10 +914,13 @@ bool CTutorialBubble::ShowAnswerLanes()
 		return true;
 	const tutorial_answer_t &Answer = pAnswered->Answers.front();
 	const int Channel = FindTutorialChannel(Answer.Channel, SongChannels(pDoc));
-	ftapi::StepLine Line;
-	std::string Error;
 	int Low = 1 << 20, High = -1;
-	if (Channel >= 0 && ftapi::ParseStepLine(Answer.Notes, Answer.Bar, Line, Error)) {
+	// The lanes of every line of the answer (a bass with the tune it goes under, say), on the first one's channel
+	for (size_t a = 0; Channel >= 0 && a < pAnswered->Answers.size(); ++a) {
+		ftapi::StepLine Line;
+		std::string Error;
+		if (!ftapi::ParseStepLine(pAnswered->Answers[a].Notes, pAnswered->Answers[a].Bar, Line, Error))
+			continue;
 		for (size_t i = 0; i < Line.Notes.size(); ++i) {
 			int Pitch = 0;
 			if (ftapi::ParsePitch(Line.Notes[i].Pitch, Pitch)) {
@@ -1387,6 +1398,11 @@ void CTutorialBubble::Tick()
 			m_bLanesShown = false;
 		if (!m_bLanesShown)
 			m_bLanesShown = ShowAnswerLanes();
+		// An exercise begins with the piano roll's Draw picked (the tool picked last stays, Select after copying)
+		if (!m_bDrawPicked && m_pMainFrame->GetPianoRollWnd() != NULL) {
+			m_pMainFrame->GetPianoRollWnd()->PickDraw();
+			m_bDrawPicked = true;
+		}
 		CRect Note;
 		GetWindowRect(&Note);
 		if (HasSpot) {
@@ -1953,15 +1969,15 @@ void ShowTutorials(CMainFrame *pMainFrame)
 	StartTutorial(pMainFrame, List[static_cast<size_t>(Dialog.Chosen())].Tutorial, false);
 }
 
-bool ReadBuiltInText(UINT Id, std::string &Text)
+bool ReadBuiltInText(LPCTSTR Resource, std::string &Text)
 {
-	return BuiltInText(Id, Text);
+	return BuiltInText(Resource, Text);
 }
 
-bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT SongId, LPCTSTR Title)
+bool OpenBuiltInSong(CMainFrame *pMainFrame, LPCTSTR SongResource, LPCTSTR Title)
 {
 	std::string Song;
-	if (!BuiltInText(SongId, Song)) {
+	if (!BuiltInText(SongResource, Song)) {
 		ASSERT(FALSE);
 		return false;
 	}
@@ -2011,7 +2027,7 @@ void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
 		ASSERT(FALSE);
 		return;
 	}
-	if (OpenBuiltInSong(pMainFrame, pExample->Song, pExample->Title))
+	if (OpenBuiltInSong(pMainFrame, MAKEINTRESOURCE(pExample->Song), pExample->Title))
 		StartTutorial(pMainFrame, Tutorial, true);
 }
 
@@ -2048,4 +2064,9 @@ bool ExerciseInProgress(std::string &Title, std::string &Step, std::string &Chec
 	Step.clear();
 	Check.clear();
 	return g_pTutorial != NULL && g_pTutorial->ExerciseNow(Title, Step, Check);
+}
+
+bool ExerciseRunning()
+{
+	return g_pTutorial != NULL && g_pTutorial->RunsExercise();
 }

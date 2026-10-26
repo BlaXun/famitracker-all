@@ -742,6 +742,21 @@ each with the user's words:
   together leave the notes about a third of the window (the last three
   side by side in one row), and a tutorial's note moves the glossary off
   what it points at; the first small song is a short loop of 14 bars.
+  First steps (26 October 2026, on `feat-first-steps`), for someone who
+  has never made music ("exercises for ABSOLUTE beginners that didnt touch
+  music making ever before"): Help > Exercises shows its exercises in
+  groups, First steps on top with its first exercise picked, then Next
+  steps (the ten above) and Making it your own (a heading for a later set,
+  coming later). First steps are eleven tiny exercises, a minute or two
+  each, every one teaching one word (linked to the glossary) and making a
+  sound at once: your first note, high and low, long and short, a steady
+  beat, loud and soft, up the stairs, a rhythm to clap, copy and repeat, a
+  different sound, two parts at once and your first tiny tune, which leads
+  into the home note. Their songs are one to four bars with the piano roll
+  showing, the texts say exactly where to click, and Check passes any
+  reasonable answer and says the one thing to do next. For loud and soft
+  the piano roll's Effects menu has Volume (a quieter note is drawn
+  thinner), and the glossary has length, part and lane.
 
 ## 17. Ask your own model, inside FamiTracker
 
