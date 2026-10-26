@@ -12520,8 +12520,8 @@ std::vector<HeldLead> HeldLeads(Session &S, int Melody, int First, int End)
 std::string HeldLeadText(Session &S, int Melody, const HeldLead &H)
 {
 	return Format("%s on %s %s (%d of %d melody notes): a calm lead shouldn't hold a high, steady level from attack to "
-		"release. design_instrument kind breath (swells in), falling strike (falls to 6) or music box (fades away), or a "
-		"volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
+		"release. design_instrument kind music box (fades away; on a VRC6 pulse at duty 37.5%% with attack bloom, the night "
+		"songs' favourite), breath (swells in) or falling strike (falls to 6), or a volume sequence that does.", InstrumentLabel(S.Song, H.Instrument).c_str(), S.Channel(Melody).FullName().c_str(),
 		H.Shape.Words.c_str(), H.Notes, H.Of);
 }
 
@@ -28087,8 +28087,8 @@ std::string ToolSet::CoreInstructions()
 		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, warm pad, "
 		"strings, bass...), find_sound to look for one (\"soft flute\", \"warm pad\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
-		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a lead that swells "
-		"in); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
+		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a music-box "
+		"lead); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
@@ -28121,7 +28121,11 @@ std::string ToolSet::Instructions()
 		"next. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
 		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
-		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them.\n"
+		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
+		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
+		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "
+		"(drums take an instrument for each kind of hit, as an object), and grows the song only for notes that start past "
+		"its end (insert_bars first).\n"
 		"Write music that sounds composed, not generated. Users notice plain tracks: one chord a bar held as an arpeggio, a bass "
 		"on roots, no drums, one note length, sections pasted unchanged.\n"
 		"- Plan first: the mood gives the key and mode (major or lydian bright; minor, dorian sad or mysterious; phrygian or "
@@ -28239,8 +28243,9 @@ std::string ToolSet::Instructions()
 		"to the files it saves.\n"
 		"- Three kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
 		"action guide topics calm, lively and action the numbers). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
-		"lullaby): a lead that swells in, falls low after its strike or fades away like a music box (design_instrument kind "
-		"breath, falling strike or music box), the melody only 2-3 dB over the chords (mix style calm), few long notes by "
+		"lullaby): a lead that fades away like a music box (the night songs' favourite: design_instrument kind music box on a "
+		"VRC6 pulse, duty 37.5%, attack bloom), swells in or falls low after its strike (kind breath or falling strike), "
+		"the melody only 2-3 dB over the chords (mix style calm), few long notes by "
 		"step, slow colored chords, no drums, polish, check_song, review_arrangement and measure_mix with style calm. A "
 		"lively stage, as the soundtrack's first stages were made (the user liked nearly all of them): a lead that blooms in "
 		"and settles (design_instrument kind bloom lead), a step louder on a bar's first note and a step or two louder at the "
@@ -28372,7 +28377,7 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"set_swing with a percentage (56-60) for a light swing." :
 		"set_tempo at an even tempo between 140 and 190 BPM (150 is speed 6; speed 7 with tempo 191 gives even eighths at "
 		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key.\n";
-	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind breath, falling strike or music box, one "
+	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind music box, breath or falling strike, one "
 		"for the whole track. Try first the lead the listener liked best of the night songs: kind music box on a VRC6 pulse, "
 		"duty 37.5% (50% on the 2A03) and attack bloom (it blooms in over two frames, without a duty click), struck and "
 		"ringing away to silence within about a beat for a tune in quarter notes, over 1.5-2 beats for one in halves (decay "

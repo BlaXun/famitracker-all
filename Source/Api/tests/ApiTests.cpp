@@ -4621,7 +4621,7 @@ void TestProtocol()
 		CHECK(ToolSet::PromptText("compose_track", Arguments, Text, Error));
 		CHECK_HAS(Text, "Compose a calm track in FamiTracker for this: a quiet night by the lake.");
 		CHECK_HAS(Text, "the form for 40 bars");
-		CHECK_HAS(Text, "design_instrument kind breath, falling strike or music box");
+		CHECK_HAS(Text, "design_instrument kind music box, breath or falling strike");
 		CHECK_HAS(Text, "polish style calm, then mix style calm last");
 		CHECK_HAS(Text, "check_song style calm (0 clicking, 0 vanishing, no clashes you didn't mean, no held lead)");
 		CHECK_HAS(Text, "measure_mix style calm with melody_channel the lead (the melody 2-3 dB over the chords");
@@ -14850,8 +14850,9 @@ void TestHeldLead()
 	ToolResult Result = Run(Song, "check_song", "{\"style\": \"calm\"}");
 	CHECK_HAS(Result.Text, "0 vanishing, 1 held lead.");
 	CHECK_HAS(Result.Text, "Held lead: \"Lead\" (00) on VRC6 Pulse 1 holds 15 (no volume sequence) (8 of 8 melody notes): a calm lead "
-		"shouldn't hold a high, steady level from attack to release. design_instrument kind breath (swells in), falling strike "
-		"(falls to 6) or music box (fades away), or a volume sequence that does.");
+		"shouldn't hold a high, steady level from attack to release. design_instrument kind music box (fades away; on a VRC6 "
+		"pulse at duty 37.5% with attack bloom, the night songs' favourite), breath (swells in) or falling strike (falls to "
+		"6), or a volume sequence that does.");
 	Json Found = Parse(Run(Song, "check_song", "{\"style\": \"calm\", \"format\": \"json\"}").Text);
 	CHECK_EQ(TextOf(&Found, "style"), std::string("calm"));
 	CHECK_EQ(IntegerOf(Found.Get("counts"), "held"), 1);
@@ -22192,7 +22193,7 @@ void TestCalmRecipeLeads()
 	FakeSong Song;
 	ToolSet Tools(Song);
 	const std::string Recipe = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\"}")).Text, Guide = StyleGuideTopic("calm");
-	for (const char *Wanted : { "design_instrument kind breath, falling strike or music box, one for the whole track",
+	for (const char *Wanted : { "design_instrument kind music box, breath or falling strike, one for the whole track",
 		"kind music box on a VRC6 pulse, duty 37.5% (50% on the 2A03) and attack bloom", "within about a beat for a tune in quarter notes",
 		"never holding a level", "a soft broken chord in eighths", "held maj7 and m7 pads, strummed",
 		"a soft heartbeat on the triangle (the root on beats 1 and 3, each note a row long)", "add_echo a beat behind from the second A on",
