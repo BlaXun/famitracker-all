@@ -342,6 +342,7 @@ struct AssistantSetup {
 
 const size_t ASSISTANT_RESULT_MOST = 24000;		// bytes of a tool's reply the model gets at most
 const double ASSISTANT_BYTES_PER_TOKEN = 3.5;	// the first guess, until the server's count of a request says
+const double ASSISTANT_CUT_BYTES_PER_TOKEN = 5.0;	// more bytes a token than that: the server cut the request
 
 // The bytes a request may take in a context of that many tokens: the context less the room kept for the reply (its
 // thinking too: 6144 tokens, a fifth of a small context), at that many bytes a token

@@ -292,10 +292,13 @@ Start `llama-server` with `--jinja`: that's what lets the model call tools
 (the chat template's tool calling). Without it the server refuses tools
 ("tools param requires --jinja flag"), the panel says so, and the model
 answers from the song's summary alone, without reading or changing the song.
-Give it room: all of FamiTracker's tools and their instructions are about
-40,000-50,000 tokens, the small set about 25,000, so use `-c 65536` or more
-for all of them (`-c 49152` or more for the small set). `--host 0.0.0.0` lets this
-PC reach a server on another computer. For example, on the Linux PC:
+Give it room. Measured as the panel sends them, all of FamiTracker's tools
+and their instructions are 170 KB, about 45,000 tokens (3.5-4 bytes a token),
+and the small set 94 KB, about 25,000: give the model a context of 64K tokens
+or more for all of them (`-c 65536`, better `-c 131072`) and 32K or more for the
+small set. The panel learns the real count from the server's first reply.
+`--host 0.0.0.0` lets this PC reach a server on another computer. For example,
+on the Linux PC:
 
 ```
 llama-server -m Qwen3.6-35B-A3B-Q4_K_M.gguf --jinja -c 131072 --host 0.0.0.0 --port 8081
@@ -310,9 +313,15 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
   name in its config (Test connection lists them; empty picks the first it
   lists). Put `--jinja` and the `-c` in each model's `cmd`. The panel reads
   the context through `/upstream/<model>/props`.
-- **Ollama**: `http://<computer>:11434` and the model's name; pick a model
-  that can use tools, and set its `num_ctx` (Ollama starts models with a
-  small context, which the tools don't fit in).
+- **Ollama**: `http://<computer>:11434` (its OpenAI-compatible `/v1`) and
+  the model's name; pick a model that can use tools. Ollama has no `/props`,
+  so the panel counts on 32K tokens unless you give the context in the
+  settings. Raise Ollama's context: its default is small, and it cuts a
+  longer question without a word (the model then misses the tools and the
+  song; the panel says so when the server's count shows it). Start it with
+  `OLLAMA_CONTEXT_LENGTH=65536 ollama serve`, or use a model made with
+  `PARAMETER num_ctx 65536` (the `/v1` endpoint takes no `num_ctx` of its
+  own).
 - **LM Studio**: start its server (`http://<computer>:1234`) and load a model
   that can use tools.
 - **Tailscale**: the MagicDNS name or the `100.x` address works like a
@@ -325,6 +334,13 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
   older questions left out, before a conversation would overflow it.
+
+Each request starts with what never changes, byte for byte the same every
+time: the system prompt and the tool definitions (built once, in the tools'
+fixed order). The song's state comes after them, in your question's message.
+So the server keeps what it has read and reads only what's new on the next
+question or tool round: `llama-server` does by default (add `--cache-reuse
+256` to reuse more), Ollama while the model stays loaded (`OLLAMA_KEEP_ALIVE`).
 
 **Test connection** reaches the server, lists its models, reads its context
 and asks a word with one tool, so it says whether tools are on. The first

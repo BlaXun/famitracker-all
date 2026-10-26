@@ -554,9 +554,14 @@ BOOL CAskSettingsDlg::OnInitDialog()
 	SetDlgItemInt(IDC_ASK_CONTEXT, static_cast<UINT>(m_Settings.ContextTokens), FALSE);
 	SetDlgItemText(IDC_ASK_RESULT, _T(""));
 	// Set here: a dialog's text in the resource stops at 256 characters
-	SetDlgItemText(IDC_ASK_HELP, _T("For llama.cpp, start llama-server with --jinja (so the model can use the tools) and --host 0.0.0.0 (to ")
-		_T("reach it from this PC), like: llama-server -m model.gguf --jinja -c 65536 --host 0.0.0.0 --port 8080. Models that use ")
-		_T("tools well: Qwen3 and later, gpt-oss, GLM 4.5 and later, Mistral Small 3.2."));
+	SetDlgItemText(IDC_ASK_HELP, _T("Context: all the tools and their instructions take about 45,000 tokens (170 KB), the small set ")
+		_T("about 25,000 (94 KB): give the model 64K or more for all, 32K or more for the small set. llama.cpp: start llama-server ")
+		_T("with --jinja (tools) and --host 0.0.0.0, like: llama-server -m model.gguf --jinja -c 65536 --host 0.0.0.0 --port 8080. ")
+		_T("Ollama (http://<computer>:11434): its default context is small and it cuts a longer question without a word, so set ")
+		_T("OLLAMA_CONTEXT_LENGTH=65536 for ollama serve, or use a model with num_ctx; pick one that can use tools. The instructions ")
+		_T("and tools go first, the same every time, the song after them, so the server keeps what it read (llama-server: ")
+		_T("--cache-reuse 256; Ollama while the model stays loaded). Models that use tools well: Qwen3 and later, gpt-oss, GLM 4.5 ")
+		_T("and later, Mistral Small 3.2."));
 	return TRUE;
 }
 

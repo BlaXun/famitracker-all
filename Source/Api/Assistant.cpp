@@ -1555,7 +1555,10 @@ void AssistantChat::Replied(const AssistantReply &Reply, bool Stopped, const std
 {
 	Stopped = Stopped || !Problem.empty();
 	++m_iRounds;
-	if (Reply.PromptTokens > 0 && m_iSent > 0)
+	// A server that counted far fewer tokens than the request holds cut it to fit its context (Ollama does, without
+	// a word): the model didn't see all of the tools or the song
+	const bool Cut = Reply.PromptTokens > 0 && m_iSent > 0 && double(m_iSent) / Reply.PromptTokens > ASSISTANT_CUT_BYTES_PER_TOKEN;
+	if (Reply.PromptTokens > 0 && m_iSent > 0 && !Cut)
 		m_dBytesPerToken = std::max(1.5, std::min(8.0, double(m_iSent) / Reply.PromptTokens));
 	AssistantMessage M;
 	M.Role = ASSISTANT_MODEL;
@@ -1602,6 +1605,11 @@ void AssistantChat::Replied(const AssistantReply &Reply, bool Stopped, const std
 	const bool Empty = M.Text.empty() && M.Calls.empty();
 	if (!Empty || Stopped)
 		m_Messages.push_back(M);
+	if (Cut)
+		Note("Your model read only " + Number(Reply.PromptTokens) + " tokens of this question, far less than it holds: the "
+			"server seems to have cut it to fit its context, so the model didn't see all of FamiTracker's tools and the song. "
+			"Give it a bigger context (Ollama: OLLAMA_CONTEXT_LENGTH, or a model with num_ctx; llama-server: -c), or pick the "
+			"small set of tools in the settings.");
 	if (Stopped) {
 		Note(Problem.empty() ? std::string("Stopped.") : Problem);
 		m_State = IDLE;

@@ -721,6 +721,30 @@ void TestFitting()
 	CHECK(Chat.State() == AssistantChat::IDLE && Chat.Messages().back().Text == Problem);
 }
 
+// A server that cut the request to fit its context (Ollama does, without a word) is noticed by its count
+void TestPromptCut()
+{
+	AssistantChat Chat;
+	Chat.SetTools(TwoTools(), false);
+	AssistantSetup Setup;
+	Setup.SystemPrompt = std::string(20000, 's');
+	Chat.Ask("Hi", "C", ASSISTANT_ASK_FIRST, 8);
+	std::string Body, Problem;
+	CHECK(Chat.Request(Setup, Body, Problem));
+	AssistantReply Reply = TextReply("Hello");
+	Reply.PromptTokens = 2048;		// 20 KB read as 2048 tokens: about 10 bytes a token
+	Chat.Replied(Reply, false);
+	CHECK_HAS(Chat.Messages().back().Text, "cut it to fit its context");
+	CHECK_HAS(Chat.Messages().back().Text, "OLLAMA_CONTEXT_LENGTH");
+	CHECK_EQ(Chat.BytesPerToken(), ASSISTANT_BYTES_PER_TOKEN);		// not taken as a measure
+	Chat.Ask("Again", "C", ASSISTANT_ASK_FIRST, 8);
+	CHECK(Chat.Request(Setup, Body, Problem));
+	Reply.PromptTokens = static_cast<int>(Body.size() / 4);	// read whole
+	const size_t Notes = Chat.Messages().size();
+	Chat.Replied(Reply, false);
+	CHECK(Chat.Messages().size() == Notes + 1 && Chat.Messages().back().Role == ASSISTANT_MODEL);
+}
+
 // ---- Help without a model
 
 void TestHelp()
@@ -942,6 +966,7 @@ int main()
 	TestCallWords();
 	TestChat();
 	TestFitting();
+	TestPromptCut();
 	TestHelp();
 	TestExchange();
 	TestTakeReply();
