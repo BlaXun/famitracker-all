@@ -99,6 +99,7 @@ add_library(ftapi STATIC
 	ChannelMix.cpp
 	Vrc6Plus.cpp
 	Chords.cpp
+	ChordRoles.cpp
 	RecorderInput.cpp
 	Arrange.cpp
 	GrowMelody.cpp
@@ -160,6 +161,11 @@ add_test(NAME api_tests COMMAND api_tests)
 add_executable(chord_helper_tests tests/ChordHelperTests.cpp)
 target_link_libraries(chord_helper_tests PRIVATE ftapi)
 add_test(NAME chord_helper_tests COMMAND chord_helper_tests)
+
+# What chords do in a key, and the chord tones under a row (ChordRoles.h)
+add_executable(chord_roles_tests tests/ChordRolesTests.cpp)
+target_link_libraries(chord_roles_tests PRIVATE ftapi)
+add_test(NAME chord_roles_tests COMMAND chord_roles_tests)
 
 # Melodies written in steps (StepNotes.h)
 add_executable(step_notes_tests tests/StepNotesTests.cpp)

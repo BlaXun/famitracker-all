@@ -2377,6 +2377,13 @@ public:
 			pAction->SetLabel(Label);
 	}
 
+	// After a call that failed was taken back: Ctrl+Y would bring its half-finished change back
+	void ForgetRedo()
+	{
+		if (m_pMain != NULL)
+			m_pMain->ForgetRedo();
+	}
+
 	bool Save(const std::string &CopyName, std::string &Message)
 	{
 		if (!CanChange(Message))

@@ -361,7 +361,11 @@ is the recipes':
    or A'' A once more, a boss fight's climax chords of its own), so no bars
    are put in or named afterwards. A lively stage's lead blooms in and settles
    (`bloom lead`, not struck again) and its chords are lush arpeggios of
-   two frames a note. A part's melody is `grow_melody`
+   two frames a note. A calm song's lead is the night songs' best, as the
+   calm recipe has it: a music box on a VRC6 pulse at 37.5% (50% on the
+   2A03), blooming in over two frames without a duty click and gone within
+   about a beat, never holding a level (the breath is the other way, as
+   `get_recipe`'s calm steps say on the small set too). A part's melody is `grow_melody`
    with a hook: the song's own (its first notes in A) where it grows
    without a clash, else one offered on the chords there, which a composer
    replaces with a hook of its own; the model then picks the version whose
@@ -665,7 +669,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | Tool | What it does |
 |---|---|
 | `what_next` | The one next step for the song, its call ready to send, and why; what's done and what's left. See [One step at a time](#one-step-at-a-time-what_next) |
-| `get_song` | Title, tempo in BPM, bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
+| `get_song` | Title, tempo in BPM (at speed 1, a sound effect's pace, the frames a row lasts, "1 frame a row", as the status bar shows it and the other replies that give a tempo say it), bars, the named sections and their bars, each channel and what it plays, instruments, clips, the track's key (chosen for it, or found from the notes), the chords that fit the melody bar by bar and the chords the parts play, whether the soundtrack has notes, where each part plays between the speakers (see [Stereo](#stereo)), and the channels whose fader, pan, Soft or Space in FamiTracker's mixer is off its default, with the space they send to (see [The mixer](#the-mixer)) |
 | `read_notes` | One channel's notes: bar, beat, note, length in beats, instrument, volume, effects, and where a note plays when it isn't in the middle ("pan left (800)"). Up to 64 bars a call, or the whole bars of up to 600 notes (a ripple of sixteenths reads in two calls); when it reads fewer bars than asked, its first line says which and where the rest starts, so a part isn't rewritten from half of it. With `format` `steps`, the part as a line of steps, a bar to a line, as `write_notes` takes a melody (see [Melodies in steps](#melodies-in-steps)) |
 | `write_notes` | Writes a part on a channel, replacing its notes in those bars (drums by name on the noise channel: kick, snare, hihat; on the DPCM channel the sampled kick, snare, low tom and high tom, each playing out with no halt after it, since 0.4.6 resets the DPCM level as it cuts a sample). A note before a rest ends with a release, or on the triangle, which can't fade, with a halt. A note can carry effects on its first row, later in it (`later_effects`: a fade into its tail, a slide) and where it ends (`end_effects`: on its release or halt, or on the next note when that starts right there). Speed changes, jumps, skips and halts (`Fxx`, `Bxx`, `Dxx`, `Cxx`) stay, so the song still loops the same way. A note's `pan` places it between the speakers (left, right, center, "half left", "30% right", a number from -1 to 1, or the effect, 840); the notes after it keep that place until one sets another, and notes without one play where the channel did there (see [Stereo](#stereo)). A detune (`Pxx`) stays the same way: notes written over bars an echo detunes (`P81`) play as detuned as the ones they replace, and so does the volume: notes that give none play as loud as the notes they replace (a soft part rewritten stays soft; in bars that had no notes the part starts at full volume). It replaces the bars its notes cover: whole bars its notes leave empty between them keep the notes they have (an intro and a break written in one call leave the drums between alone), and the reply names them; `from_bar` and `to_bar` together replace every bar from one to the other. A note that names no instrument (and no `instrument` for the part) plays the one the channel plays at its place, so a part that changes sounds keeps them, and the reply says which it used ("`"Lead" (00)` in bars 1-4, `"Bell" (03)` in bars 5-8"). On the noise and DPCM channels `instrument` can name a sound for each kind of hit (`{"hihat": "Hat", "open hihat": "Open hat", "kick": 3}`; kinds it doesn't name play their own); one instrument for a whole noise line plays every hit but the open hi-hats, which keep the open hat's sound (only its length makes a hi-hat open) unless that instrument rings as long, and the reply says so. A note that runs on past the song's end ends with it rather than adding a frame (use `insert_bars` first for more bars); notes that start past the end grow the song, and the reply says how long it is now. `notes` can also be a melody in steps, as text: `"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -"` (see [Melodies in steps](#melodies-in-steps)). The reply warns at once of notes the channel doesn't play well, a bass too low to be heard or a melody an octave high, notes outside the key, a bass nearly silent and a sound the channel doesn't play as it's meant, each with what to do (see [Warnings as a part is written](#warnings-as-a-part-is-written)) |
 | `place_clip` | Places a clip at a bar, as a copy or linked (direct changes only) |
@@ -725,7 +729,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play, or against the whole when there's no melody (ambience); `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
-| `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back), so undo after it undoes the change before it, and says so (direct changes only) |
+| `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
@@ -1149,6 +1153,10 @@ stage ("the band together 2.1 dB over the melody"), and says when the
 melody plays at one volume throughout (polish's accents first).
 Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
 soft layer) keep their place under it, together at least 3 dB under it.
+On a calm track the layers then move together, so all of them sit at the
+chords' place, 2-3 dB under the melody, as the review and the stems hear
+them (the main layer at the place and a pad 3 dB under it put them within a
+dB of the melody); a song with one chord layer mixes as before.
 On a lively stage each chord layer moves on its own: together they take
 their place over the whole song, a layer that joins the one heard longest
 only in some parts (pads at the climax) comes down to stay under it, and
@@ -1277,7 +1285,11 @@ file written (the exported OGG files stay as they are).
   note the melody touched isn't one; a quiet arpeggio over the melody (a
   sparkle) is a line of its own, not the chords; and a low, held line on an
   N163 voice (the soft layer's sub bass) is the bass, not one of the pads'
-  voices even where it starts its notes with them. Voiced chords (plucks on
+  voices even where it starts its notes with them. Plucks that start a row
+  apart ("pah-pi", a chord broken over two plucks) are voices as plucks
+  struck together are, so a song whose plucks start together in some parts
+  and a row apart in others has them as the chords over the whole song as
+  section by section. Voiced chords (plucks on
   two pulses, a pad's voices) are the chords beside a quiet arpeggio too:
   `measure_mix` then gives the chords together, the arpeggio and the
   voices. A triangle that thumps now and then (short notes, heard for less
@@ -1679,7 +1691,15 @@ avoid that, and gives it tools for each layer:
 - **Chords** (`add_chords_and_bass`): by name ("| Am7 | Fmaj7 | C | G7sus4
   G7 |") or as degrees of the key ("I vi IV V", "V7/V"); "." holds a chord
   for a beat, "%" repeats a bar, and the progression repeats to fill the
-  bars. Or fitted to the melody, with `color` sevenths (Imaj7, ii7, V7...) or
+  bars. Or fitted to the melody, hearing the other lines that play on with
+  them (a counter-line, a second voice, chords or a bass left playing) at
+  half a melody note's weight. A note from outside the key that they sound
+  for a beat or more and that leads a fifth down into the next chord (a
+  counter-line's C# before Dm in F major) makes that bar's chord the
+  dominant it calls for (A, as the song's A7), unless the melody rubs
+  against it; where no chord fits such a note, the bass plays another note
+  of its chord there rather than rub against it, and the reply names those
+  bars. Fitted chords take `color` sevenths (Imaj7, ii7, V7...) or
   rich where the melody doesn't rub against them: colors that keep each
   chord's part, add9, maj7 or 6 on the tonic and the subdominant, m7 and m9
   on minor chords, add9 on the V (its own seventh where that fits better),
@@ -1875,7 +1895,12 @@ duty click (each note's first frame at another pulse width), a decay in
 steps, held notes struck again every so many beats, a soft echo after the
 note, a quick pitch flick, and a bass that thumps in from a fourth above.
 The kinds "bloom lead", "stepped lead", "click pluck", "echo pluck" and
-"thump bass" start from them. A held note struck again dips over two frames
+"thump bass" start from them. The bloom lead blooms and settles to 12, and
+the sound library's bloom lead (`add_instrument`, the Sound browser) is the
+same sound, a frame at a time, with the library's soft vibrato that never
+clicks on the 2A03's pulses; `restrike_beats` 0.5 strikes it again every
+eighth, as the classic action leads were (the built-in guide's action and
+Konami topics say so). A held note struck again dips over two frames
 to about half its level (at most 5 under) and strikes a little over it, on
 the beat's grid from the note's start; a sound that dies away (a pluck, a
 music box) is struck again from its peak until a release. Drums and the

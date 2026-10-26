@@ -1288,6 +1288,69 @@ shows a song at speed 1 as `StatusFramesText` (`RecorderInput.cpp`,
 widened for `STATUS_FRAMES_LONGEST`). `TestUnknownArguments`,
 `TestBrowserFixes`, `TestStudiedNames` and `TestStatusBarFrames` cover them.
 
+Follow-up fixes (from `feat-fixes-followup`): `what_next`'s calm kind
+(`KINDS` in `WhatNext.cpp`) designs the night songs' music box (`CalmLeadArgs`:
+`attack` bloom, `duty` 37.5% on a VRC6 pulse, 50% on the 2A03's), as do its
+"presses" tip and `CoreRecipe`'s calm steps, the breath second. The sound
+library's bloom lead holds as `DesignOfKind`'s does (its soft vibrato kept,
+which the library's click test needs). `PaceText` before `SongOverview` says
+a tempo as the status bar does ("1 frame a row" at speed 1) for get_song,
+`TempoText`, `VolumeTimeline`, the review's length and what_next's tempo.
+`ToolSet::AfterCall`'s rollback calls `SongHost::ForgetRedo`
+(`CMainFrame::ForgetRedo`, `CActionHandler::ClearRedo`; FakeSong counts
+`Redoable`). `PlanCells` in `ChordHelper.cpp` ends a voice on the last row
+that plays (`SongFlow::EndRow`), where it ended a row too late when a jump
+left the last pattern early; it already released its voices at an ordinary
+song's end. A calm mix moves each layer group (`HeardBalance::GroupRel`,
+measured only for groups of two layers or more, `GroupTogetherShifted`) so
+the chords together take `Places.Chords`. `ChordVoicesIn` counts notes a
+row apart as starting together. `AddBackingTool`'s fitting hears
+`OtherLines` at `OTHER_LINES_WEIGHT`, `SecondaryDominants` (split at bar
+lines, then joined) makes a span whose heard note from outside the key is
+the third of the next chord's dominant that dominant (58's A7), and
+`BassOffRubs` in `Arrange.cpp` moves a fitted chord's bass note off another
+part's semitone where none of that helps (`RubsAgainstParts`, the part of
+`BassRubs` that hears the other parts). `TestCalmLeadFirst`, `TestBloomLeadAgrees`,
+`TestPaceAtSpeedOne`, `TestRollbackForgetsRedo`, `TestCalmLayersTogether`,
+`TestPlucksRowApart`, `TestFittedChordsHearLines` and `TestEndWhereItGoesBack`
+(in `chord_helper_tests`) cover them.
+
+Chords with roles and strong notes on the beat (from `feat-roll-helpers`):
+`Source/Api/ChordRoles.cpp` (portable, its own `chord_roles_tests`) gives a
+chord's role in a key with `RoleOfChord`: home (the tonic and the chords
+sharing most of its notes), away, tension or color (borrowed from the
+major or minor key on the same tonic, the key's own notes added to it
+allowed: Dbmaj7 in Eb major; a chord leading to another of the key's; or
+a surprise), `chord_role_t`, with a label and a feel word
+(`ChordRoleInKey::Words`: "tension: leans toward home"). Every mode of
+`MODES` has its own table (`InKey`, by the root's semitones over the
+tonic; minor and harmonic minor share both sevenths), a major chord on
+the fifth and the leading tone's diminished one are tension in any mode,
+and a chord moving off over the fifth in the bass (F/G) is a soft tension.
+The chords right before and after decide "back home" (the tonic after
+tension), a surprise after the dominant (V vi, V VI in minor) and whether a
+chord both borrowed and leading on (A or D in A minor) leads on.
+`RolesOfChords` takes chords in time order, `ChordRoleName` and
+`ChordRoleMeaning` are the legend's words and `ChordRoleExplained` a
+sentence on each (the glossary's and the tools' to share), and
+`ChordIndexAtRow` and `StrongNoteAt` give the chord tones under a row.
+`ToolSet::Harmony` fills `HeardChord::Role`, `RoleWords` and `Bass`, so
+the roles are worked out with the chords, a moment after a change. The
+piano roll colors the chord strip by them (`ROLE_COLORS`, Okabe and Ito's
+colors, with `RoleMark`'s house, arrow, bolt and diamond so color isn't
+all), draws a legend at the status line's right (`DrawLegend`) and says the
+words when a chord is pointed at (`ChordText`); with strong notes on,
+`LitChord` lights the lanes and keys of the chord at `StrongRow`
+(`StrongNotesRow` in `PianoRollUi.cpp`: a note being placed, the mouse over
+the notes with Draw or Paint, else the cursor), a chord pointed at in the
+strip first. The two toggles end the Chords and Key menus
+(`AddHelperToggles`) and are kept for each profile in the "Piano roll"
+settings ("Chord roles" and "Strong notes" for Everything, with ", game
+music" for that profile, where they start on: `ProfileIndex`).
+`LetGoOfMouse` (the timer) puts out what the mouse lit once it leaves the
+window. `TestHarmonyRoles` in `ApiTests.cpp` and `TestStrongNotesRow` in
+`PianoRollUiTests.cpp` cover the rest.
+
 Song shapes (from `feat-song-shapes`): `Source/Api/SongShapes.cpp`
 (portable) holds six shapes (`SongShapes`: stage, night, town, boss, small,
 jingle), each a list of parts with their bars and a line on what the part

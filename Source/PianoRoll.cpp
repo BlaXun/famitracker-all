@@ -31,6 +31,7 @@
 #include "Transcribe/Transcribe.h"
 #include "Api/Sections.h"
 #include "Api/ChordHelper.h"
+#include "Api/ChordRoles.h"
 #include "PianoRollUi.h"
 #include "stdafx.h"
 #pragma push_macro("new")
@@ -45,6 +46,7 @@
 #include "SoundGen.h"
 #include "TrackerChannel.h"
 #include "Settings.h"
+#include "Profile.h"
 #include "Clips.h"
 #include "ClipsDlg.h"
 #include "InsertRecording.h"
@@ -154,6 +156,17 @@ const UINT MENU_GROOVE = 6000;			// + mood (ftapi::GrooveMoods)
 const UINT MENU_GROOVE_BARS = 6100;		// + bars
 const UINT MENU_GROOVE_MORE = 6200;		// Start from a groove's dialog
 const UINT MENU_MORE = 7000;			// + button_t: a button with no room along the top
+const UINT MENU_ROLES = 8000;			// chords with roles: on or off
+const UINT MENU_STRONG = 8001;			// strong notes on the beat: on or off
+
+// Chords with roles and strong notes on the beat (Api/ChordRoles.h), each a toggle kept for each profile (Profile.h): on at
+// first in the game music profile, off in Everything ([0] Everything's, [1] the game music profile's)
+const TCHAR *const ROLES_SETTING[2] = { _T("Chord roles"), _T("Chord roles, game music") };
+const TCHAR *const STRONG_SETTING[2] = { _T("Strong notes"), _T("Strong notes, game music") };
+// A colour for each role, from Okabe and Ito's colours, which colour-blind eyes tell apart too; each role has a mark of its
+// own as well (RoleMark), so the colour isn't all there is to tell them by
+const COLORREF ROLE_COLORS[ftapi::CHORD_ROLE_COUNT] = { RGB(0, 158, 115), RGB(86, 180, 233), RGB(230, 159, 0), RGB(204, 121, 167) };
+const COLORREF LIT_NOTES = RGB(96, 200, 255);	// a chord's notes lit in the lanes and on the keyboard
 
 struct RollNote {
 	int Start;			// rows from the start of the song
@@ -382,6 +395,64 @@ void ProblemDot(CDC &dc, const CRect &Note, int Mark)
 	dc.FillSolidRect(X, Y, Size, Size, Color);
 }
 
+// A chord role's mark (Api/ChordRoles.h), Size pixels square (an odd number) at X, Y: home a house, away an arrow moving
+// off, tension a bolt, color a diamond
+void RoleMark(CDC &dc, int Role, int X, int Y, int Size, COLORREF Color)
+{
+	const int Half = Size / 2;
+	switch (Role) {
+	case ftapi::CHORD_ROLE_HOME: {
+		const int Roof = Half + 1, Wall = std::max(1, Size / 6);
+		for (int r = 0; r < Roof; ++r)
+			dc.FillSolidRect(X + Half - r, Y + r, 1 + 2 * r, 1, Color);
+		dc.FillSolidRect(X + Wall, Y + Roof, Size - 2 * Wall, Size - Roof, Color);
+		break;
+	}
+	case ftapi::CHORD_ROLE_AWAY: {
+		const int Shaft = std::max(2, Size / 4);
+		dc.FillSolidRect(X, Y + Half - Shaft / 2, Size - Half, Shaft, Color);
+		for (int c = 0; c <= Half; ++c)
+			dc.FillSolidRect(X + Half + c, Y + c, 1, Size - 2 * c, Color);
+		break;
+	}
+	case ftapi::CHORD_ROLE_TENSION: {
+		POINT Bolt[6];
+		const int Xs[6] = { Size * 2 / 3, Size / 6, Size / 2, Size / 3, Size * 5 / 6, Size / 2 };
+		const int Ys[6] = { 0, Size * 5 / 9, Size * 5 / 9, Size - 1, Size * 4 / 9, Size * 4 / 9 };
+		for (int i = 0; i < 6; ++i) {
+			Bolt[i].x = X + Xs[i];
+			Bolt[i].y = Y + Ys[i];
+		}
+		CPen Pen(PS_SOLID, 1, Color);
+		CBrush Brush(Color);
+		CPen *pOldPen = dc.SelectObject(&Pen);
+		CBrush *pOldBrush = dc.SelectObject(&Brush);
+		dc.Polygon(Bolt, 6);
+		dc.SelectObject(pOldBrush);
+		dc.SelectObject(pOldPen);
+		break;
+	}
+	default:
+		for (int r = 0; r < Size; ++r) {
+			const int Reach = std::min(r, Size - 1 - r);
+			dc.FillSolidRect(X + Half - Reach, Y + r, 1 + 2 * Reach, 1, Color);
+		}
+		break;
+	}
+}
+
+// A role's colour for its mark and outline: deeper on a light background, a little lighter on a dark one
+COLORREF RoleInk(int Role, bool Light)
+{
+	const COLORREF Hue = ROLE_COLORS[Role >= 0 && Role < ftapi::CHORD_ROLE_COUNT ? Role : 0];
+	return Light ? Mix(Hue, RGB(0, 0, 0), 0.3) : Mix(Hue, RGB(255, 255, 255), 0.15);
+}
+
+int RoleMarkSize()
+{
+	return std::max(5, SY(9)) | 1;
+}
+
 // The first of a channel's notes still sounding after Row (notes don't
 // overlap, so their ends are in order too)
 size_t FirstEndingAfter(const std::vector<RollNote> &Notes, int Row)
@@ -525,6 +596,10 @@ struct CPianoRollWnd::Impl {
 	bool HarmonyStale;				// the song changed since: worked out again at HarmonyDue
 	DWORD HarmonyDue;
 	int HoverChord;					// into Harmony.Chords, under the mouse in the chord strip; -1 for none
+	bool RolesOn[2];				// chords with roles in the strip, [0] in Everything and [1] in the game music profile...
+	bool StrongOn[2];				// ...and strong notes on the beat: the lanes of the chord at the cursor lit
+	int MouseRow;					// the mouse's row over the notes, -1 when it isn't over them
+	bool GameMusicShown;			// the profile at the last look
 
 	// The view
 	int Zoom;			// into ROW_WIDTHS
@@ -646,7 +721,7 @@ struct CPianoRollWnd::Impl {
 
 	explicit Impl(CWnd *pWindow) :
 		pWnd(pWindow), Track(0), Frames(1), Length(64), Beat(4), Bar(16), Dirty(true), KeyChosen(false), HarmonyRead(false),
-		HarmonyTrack(static_cast<unsigned int>(-1)), HarmonyStale(true), HarmonyDue(0), HoverChord(-1),
+		HarmonyTrack(static_cast<unsigned int>(-1)), HarmonyStale(true), HarmonyDue(0), HoverChord(-1), MouseRow(-1), GameMusicShown(false),
 		Zoom(DEFAULT_ZOOM), ScrollX(0), ScrollY(0), Channel(0), Placed(false), Shown(false), Focused(false),
 		CursorFrame(-1), CursorRow(-1), CursorChannel(-1), Playing(false), PlayRow(-1),
 		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0),
@@ -659,6 +734,8 @@ struct CPianoRollWnd::Impl {
 		AgainArpeggio(false), HeaderRows(1), MoreWidth(60), GrooveHintLines(3), GrooveBars(8), KeysAway(false), IgnoredClick(false),
 		IgnoredTime(0), BackSize(0, 0)
 	{
+		RolesOn[0] = StrongOn[0] = false;
+		RolesOn[1] = StrongOn[1] = true;
 	}
 
 	static CFamiTrackerView *View() { return CFamiTrackerView::GetView(); }
@@ -685,6 +762,10 @@ struct CPianoRollWnd::Impl {
 		ChordVoices = static_cast<int>(theApp.GetProfileInt(SECTION, _T("Chord voices"), 0));
 		if (ChordVoices != 0 && (ChordVoices < 2 || ChordVoices > 4))
 			ChordVoices = 0;
+		for (int p = 0; p < 2; ++p) {
+			RolesOn[p] = theApp.GetProfileInt(SECTION, ROLES_SETTING[p], p) != 0;
+			StrongOn[p] = theApp.GetProfileInt(SECTION, STRONG_SETTING[p], p) != 0;
+		}
 		// As long as Start from a groove made them last (GrooveDlg.cpp)
 		const int Bars = static_cast<int>(theApp.GetProfileInt(GROOVE_SECTION, _T("Groove bars"), 8));
 		GrooveBars = 8;
@@ -701,6 +782,10 @@ struct CPianoRollWnd::Impl {
 		theApp.WriteProfileInt(SECTION, _T("Snap to key"), Snap ? 1 : 0);
 		theApp.WriteProfileInt(SECTION, _T("Linked clips"), LinkedClips ? 1 : 0);
 		theApp.WriteProfileInt(SECTION, _T("Chord voices"), ChordVoices);
+		for (int p = 0; p < 2; ++p) {
+			theApp.WriteProfileInt(SECTION, ROLES_SETTING[p], RolesOn[p] ? 1 : 0);
+			theApp.WriteProfileInt(SECTION, STRONG_SETTING[p], StrongOn[p] ? 1 : 0);
+		}
 	}
 
 	void Say(LPCTSTR Text, DWORD Ms = MESSAGE_MS)
@@ -1415,6 +1500,12 @@ struct CPianoRollWnd::Impl {
 			Message.Empty();
 			Changed = true;
 		}
+		// Another profile (View > Profile, View > Show everything): its chord roles and strong notes
+		const bool Game = ProfileIndex() == 1;
+		if (Game != GameMusicShown) {
+			GameMusicShown = Game;
+			Changed = true;
+		}
 		return Changed;
 	}
 
@@ -1973,6 +2064,12 @@ struct CPianoRollWnd::Impl {
 	void MouseMove(CPoint Point)
 	{
 		Layout();
+		// Where the mouse is over the notes, for strong notes on the beat: drawn again when that lights another chord
+		bool Strong = false;
+		const int LitBefore = LitChord(Strong);
+		MouseRow = Grid.PtInRect(Point) ? RowAt(Point.x) : -1;
+		if (Drag == DRAG_NONE && LitChord(Strong) != LitBefore)
+			pWnd->Invalidate(FALSE);
 		if (std::abs(Point.x - DragFrom.x) >= SX(DRAG_DISTANCE) || std::abs(Point.y - DragFrom.y) >= SY(DRAG_DISTANCE))
 			DragMoved = true;
 		switch (Drag) {
@@ -2717,9 +2814,12 @@ struct CPianoRollWnd::Impl {
 			Voices.AppendMenu(MF_STRING | (ChordVoices == n ? MF_CHECKED : 0), MENU_CHORD_VOICES + n, Item);
 		}
 		Menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(Voices.Detach()), _T("Voices"));
+		AddHelperToggles(Menu);
 
 		const int Choice = static_cast<int>(Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
 			Point.x, Point.y, pWnd));
+		if (HelperToggled(Choice))
+			return;
 		if (Choice == static_cast<int>(MENU_CHORD_HEARD))
 			PutChords(Heard, First, End, false, Point);
 		else if (Choice >= static_cast<int>(MENU_CHORD_KEY) && Choice < static_cast<int>(MENU_CHORD_KEY) + 7)
@@ -3493,6 +3593,127 @@ struct CPianoRollWnd::Impl {
 			_T("Notes you draw or move go on any note now (Snap to key is off)."));
 	}
 
+	// Chords with roles and strong notes on the beat (Api/ChordRoles.h): toggles kept for each profile, on at first in the
+	// game music profile and off in Everything
+
+	static int ProfileIndex() { return theApp.GetSettings()->Profile.iProfile == PROFILE_GAME_MUSIC ? 1 : 0; }
+	bool ShowsRoles() const { return RolesOn[ProfileIndex()]; }
+	bool ShowsStrong() const { return StrongOn[ProfileIndex()]; }
+
+	void ToggleRoles()
+	{
+		bool &On = RolesOn[ProfileIndex()];
+		On = !On;
+		Save();
+		Say(On ? _T("The chord strip shows what each chord does now: home (settled), away (moving off), tension (leans toward ")
+			_T("home) and color (from outside the key). Point at a chord for its words.") :
+			_T("The chord strip only names the chords now."), CHORD_MESSAGE_MS);
+	}
+
+	void ToggleStrong()
+	{
+		bool &On = StrongOn[ProfileIndex()];
+		On = !On;
+		Save();
+		Say(On ? _T("The notes of the chord at the cursor are lit now (where the mouse is while you place notes): they're the ")
+			_T("safest notes on a beat.") :
+			_T("The chord's notes aren't lit at the cursor any more; point at a chord in the strip to see them."), CHORD_MESSAGE_MS);
+	}
+
+	// The two toggles at the end of the Chords and Key menus, and what a choice of theirs does: true if it was one
+	void AddHelperToggles(CMenu &Menu) const
+	{
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | (ShowsRoles() ? MF_CHECKED : 0), MENU_ROLES, _T("Show what each chord does (home, away, tension, color)"));
+		Menu.AppendMenu(MF_STRING | (ShowsStrong() ? MF_CHECKED : 0), MENU_STRONG, _T("Light the chord's notes at the cursor (the safest on a beat)"));
+	}
+
+	bool HelperToggled(int Choice)
+	{
+		if (Choice == static_cast<int>(MENU_ROLES))
+			ToggleRoles();
+		else if (Choice == static_cast<int>(MENU_STRONG))
+			ToggleStrong();
+		else
+			return false;
+		pWnd->Invalidate(FALSE);
+		return true;
+	}
+
+	// The row whose chord's notes are lit (PianoRollUi.h): where a note is being placed, the mouse's over the notes with
+	// Draw or Paint, else the cursor's
+	int StrongRow() const
+	{
+		roll_strong_t State;
+		State.Tool = Tool == TOOL_PAINT ? ROLL_TOOL_PAINT : Tool == TOOL_SELECT ? ROLL_TOOL_SELECT : ROLL_TOOL_DRAW;
+		switch (Drag) {
+		case DRAG_NONE:
+			break;
+		case DRAG_DRAW:
+			State.Placing = ROLL_PLACING_NOTE;
+			State.PlaceRow = EditStart;
+			break;
+		case DRAG_MOVE:
+			State.Placing = ROLL_PLACING_NOTE;
+			State.PlaceRow = GrabStart + MoveRows;
+			break;
+		case DRAG_PAINT:
+			State.Placing = ROLL_PLACING_NOTE;
+			State.PlaceRow = MouseRow;
+			break;
+		default:
+			State.Placing = ROLL_PLACING_OTHER;
+			break;
+		}
+		State.MouseRow = MouseRow;
+		State.CursorRow = CursorFrame >= 0 && CursorRow >= 0 ? CursorFrame * static_cast<int>(Length) + CursorRow : -1;
+		State.PlacingClip = PlacingClip >= 0;
+		return StrongNotesRow(State);
+	}
+
+	// The chord whose notes the lanes and the keyboard light: the one under the mouse in the strip, else with strong notes
+	// the one at StrongRow; -1 for none, and on the noise and DPCM channels. Strong: lit as strong notes are, more strongly
+	// than the key's lanes
+	int LitChord(bool &Strong) const
+	{
+		Strong = ShowsStrong();
+		if (IsNoise(Channel) || IsDPCM(Channel))
+			return -1;
+		const std::vector<ftapi::HeardChord> &Chords = ShownChords();
+		if (HoverChord >= 0 && HoverChord < static_cast<int>(Chords.size()))
+			return HoverChord;
+		return Strong ? ftapi::ChordIndexAtRow(Chords, StrongRow()) : -1;
+	}
+
+	// The mouse left the window without a move in it: the notes it lit go dark (not while it drags, which captures it)
+	bool LetGoOfMouse()
+	{
+		// (and the line of the section it pointed at on the ruler goes from the status line: SongShapeDlg.h)
+		bool Left = false;
+		if (HoverSection != -1 && Drag == DRAG_NONE) {
+			CPoint Point;
+			::GetCursorPos(&Point);
+			const bool Here = ::WindowFromPoint(Point) == pWnd->GetSafeHwnd();
+			pWnd->ScreenToClient(&Point);
+			if (!Here || !Ruler.PtInRect(Point)) {
+				HoverSection = -1;
+				Left = true;
+			}
+		}
+		if (Drag != DRAG_NONE || (MouseRow < 0 && HoverChord < 0))
+			return Left;
+		CPoint Point;
+		::GetCursorPos(&Point);
+		if (::WindowFromPoint(Point) == pWnd->GetSafeHwnd()) {
+			pWnd->ScreenToClient(&Point);
+			if (Grid.PtInRect(Point) || ChordStrip.PtInRect(Point))
+				return false;
+		}
+		MouseRow = -1;
+		HoverChord = -1;
+		return true;
+	}
+
 	// The Key menu: Auto, or a tonic in a mode, and snapping
 	void KeyMenu(int Id)
 	{
@@ -3519,7 +3740,10 @@ struct CPianoRollWnd::Impl {
 		}
 		Menu.AppendMenu(MF_SEPARATOR);
 		Menu.AppendMenu(MF_STRING | (Snap ? MF_CHECKED : 0), MENU_KEY_SNAP, _T("Snap notes to the key (hold Alt for any note)"));
+		AddHelperToggles(Menu);
 		const int Choice = PopUp(Menu, Id);
+		if (HelperToggled(Choice))
+			return;
 		if (Choice == static_cast<int>(MENU_KEY_AUTO))
 			ChooseKey(false, ftapi::KeyChoice());
 		else if (Choice == static_cast<int>(MENU_KEY_SNAP))
@@ -3546,6 +3770,14 @@ struct CPianoRollWnd::Impl {
 				Where.Format(_T("Bars %d-%d: "), First, Last);
 			else
 				Where.Format(_T("Bar %d: "), First);
+		}
+		if (ShowsRoles() && !Chord.RoleWords.empty()) {
+			// What it does in the key, in plain words (Api/ChordRoles.h)
+			Text.Format(_T("%s%s (%s in %s) - %s. Its notes %s %s (the lit lanes). Right-click: chords on the free channels."),
+				static_cast<LPCTSTR>(Where), Chord.Name.c_str(), Chord.Degree.c_str(), ftapi::KeyName(K).c_str(), Chord.RoleWords.c_str(),
+				static_cast<LPCTSTR>(PitchClassList(Chord.PitchClasses, K)),
+				Chord.InKey ? _T("fit best while it sounds") : _T("fit while it sounds, some from outside the key"));
+			return Text;
 		}
 		Text.Format(_T("%s%s (%s in %s), the notes %s. "), static_cast<LPCTSTR>(Where), Chord.Name.c_str(), Chord.Degree.c_str(),
 			ftapi::KeyName(K).c_str(), static_cast<LPCTSTR>(PitchClassList(Chord.PitchClasses, K)));
@@ -3819,13 +4051,14 @@ struct CPianoRollWnd::Impl {
 
 	// The lanes: one per semitone. With a key, its notes' lanes are a little lighter than the others (whether the
 	// colours are dark or light), the tonic's warmer, and a chord under the mouse in the chord strip lights its notes'
-	// lanes while it sounds; without one, the piano's white keys' lanes lighter
+	// lanes while it sounds, as strong notes on the beat light the chord's at the cursor; without one, the piano's white
+	// keys' lanes lighter
 	void DrawLanes(CDC &dc, int FirstPitch, int LastPitch, COLORREF OctaveLine) const
 	{
 		const CSettings *pSettings = theApp.GetSettings();
 		const COLORREF Back_ = pSettings->Appearance.iColBackground, Text = pSettings->Appearance.iColPatternText;
 		const bool Light = Luma(Back_) > Luma(Text);
-		const COLORREF White = RGB(255, 255, 255), Black = RGB(0, 0, 0), Warm = RGB(255, 168, 64), Lit = RGB(96, 200, 255);
+		const COLORREF White = RGB(255, 255, 255), Black = RGB(0, 0, 0), Warm = RGB(255, 168, 64), Lit = LIT_NOTES;
 		const COLORREF InLane = Light ? Mix(Back_, White, 0.5) : Mix(Back_, Text, 0.09);
 		const COLORREF OutLane = Light ? Mix(Back_, Text, 0.075) : Mix(Back_, Black, 0.3);
 		const COLORREF TonicLane = Mix(InLane, Warm, Light ? 0.22 : 0.16);
@@ -3844,20 +4077,28 @@ struct CPianoRollWnd::Impl {
 			if (p % 12 == 0)
 				dc.FillSolidRect(Grid.left, Y + KeyH - 1, Grid.Width(), 1, OctaveLine);
 		}
-		// The notes of the chord under the mouse, while it sounds
-		if (HoverChord >= 0 && HoverChord < static_cast<int>(ShownChords().size()) && !IsNoise(Channel) && !IsDPCM(Channel)) {
-			const ftapi::HeardChord &Chord = ShownChords()[static_cast<size_t>(HoverChord)];
+		// The notes of the chord under the mouse in the strip, while it sounds; with strong notes on the beat, those of the
+		// chord at the cursor (or where a note is being placed), more strongly than the key's, its root the most
+		bool Strong = false;
+		const int LitIndex = LitChord(Strong);
+		if (LitIndex >= 0) {
+			const ftapi::HeardChord &Chord = ShownChords()[static_cast<size_t>(LitIndex)];
 			const int X1 = std::max(static_cast<int>(Grid.left), RowX(Chord.Row));
 			const int X2 = std::min(static_cast<int>(Grid.right), RowX(Chord.Row + Chord.Rows));
-			for (int p = FirstPitch; p <= LastPitch && X2 > X1; ++p)
-				if (std::find(Chord.PitchClasses.begin(), Chord.PitchClasses.end(), p % 12) != Chord.PitchClasses.end())
-					dc.FillSolidRect(X1, PitchTop(p), X2 - X1, KeyH, Mix(Light ? InLane : Back_, Lit, Light ? 0.30 : 0.22));
+			for (int p = FirstPitch; p <= LastPitch && X2 > X1; ++p) {
+				const int Kind = ftapi::StrongNoteAt(Chord.PitchClasses, Chord.Bass, p);
+				if (Kind == 0)
+					continue;
+				const double Amount = !Strong ? (Light ? 0.30 : 0.22) : Kind == 2 ? (Light ? 0.46 : 0.36) : (Light ? 0.36 : 0.27);
+				dc.FillSolidRect(X1, PitchTop(p), X2 - X1, KeyH, Mix(Light ? InLane : Back_, Lit, Amount));
+			}
 		}
 	}
 
 	// The chord strip under the ruler: the chord of each bar (or half bar, where it changes there) as the Claude Code
-	// tools hear the parts play it, named in the key's spelling; chords from outside the key in another colour, the one
-	// under the mouse and the one playing marked
+	// tools hear the parts play it, named in the key's spelling, the one under the mouse and the one playing marked. With
+	// chord roles on, each in its role's colour with its mark (Api/ChordRoles.h); else chords from outside the key in
+	// another colour.
 	void DrawChordStrip(CDC &dc, COLORREF Panel, int FirstRow, int LastRow) const
 	{
 		const CSettings *pSettings = theApp.GetSettings();
@@ -3865,6 +4106,9 @@ struct CPianoRollWnd::Impl {
 		const COLORREF Strip = Mix(Panel, Back_, 0.45), Line = Mix(Strip, Text, 0.25);
 		const COLORREF Outside = Mix(Text, RGB(255, 120, 200), 0.55);
 		const COLORREF Play = Mix(CPatternEditor::ROW_PLAY_COLOR, RGB(255, 255, 255), 0.55);
+		const bool Roles = ShowsRoles(), Light = Luma(Back_) > Luma(Text);
+		const COLORREF Named = Light ? RGB(20, 20, 24) : RGB(240, 240, 240);	// a name over a role's colour
+		const int Mark = RoleMarkSize();
 		dc.IntersectClipRect(&ChordStrip);
 		dc.FillSolidRect(&ChordStrip, Strip);
 		dc.FillSolidRect(ChordStrip.left, ChordStrip.bottom - 1, ChordStrip.Width(), 1, Line);
@@ -3875,14 +4119,30 @@ struct CPianoRollWnd::Impl {
 				continue;
 			const int X1 = RowX(Chord.Row), X2 = RowX(Chord.Row + Chord.Rows);
 			const bool Sounding = Playing && PlayRow >= Chord.Row && PlayRow < Chord.Row + Chord.Rows;
-			if (static_cast<int>(i) == HoverChord || Sounding)
+			const bool Hovered = static_cast<int>(i) == HoverChord;
+			int Left = std::max(X1, static_cast<int>(ChordStrip.left)) + SX(4);
+			if (Roles) {
+				// The role's colour, stronger under the mouse, and its mark where the chord has room
+				const int Role = Chord.Role >= 0 && Chord.Role < ftapi::CHORD_ROLE_COUNT ? Chord.Role : ftapi::CHORD_ROLE_HOME;
+				COLORREF Fill = Mix(Strip, ROLE_COLORS[Role], Hovered ? (Light ? 0.55 : 0.62) : (Light ? 0.30 : 0.38));
+				if (Sounding)
+					Fill = Mix(Fill, Play, 0.35);
+				dc.FillSolidRect(X1, ChordStrip.top, X2 - X1, ChordStrip.Height() - 1, Fill);
+				if (Hovered)
+					Outline(dc, CRect(X1, ChordStrip.top, X2, ChordStrip.bottom - 1), RoleInk(Role, Light));
+				if (X2 - SX(2) - Left >= Mark) {
+					RoleMark(dc, Role, Left, ChordStrip.top + (ChordStrip.Height() - 1 - Mark) / 2, Mark, RoleInk(Role, Light));
+					Left += Mark + SX(4);
+				}
+			}
+			else if (Hovered || Sounding)
 				dc.FillSolidRect(X1, ChordStrip.top, X2 - X1, ChordStrip.Height() - 1,
-					Mix(Strip, Sounding ? Play : Text, static_cast<int>(i) == HoverChord ? 0.22 : 0.14));
+					Mix(Strip, Sounding ? Play : Text, Hovered ? 0.22 : 0.14));
 			dc.FillSolidRect(X1, ChordStrip.top + SY(2), 1, ChordStrip.Height() - SY(4), Line);
 			const CString Name(Chord.Name.c_str());
-			CRect Label(std::max(X1, static_cast<int>(ChordStrip.left)) + SX(4), ChordStrip.top, X2 - SX(2), ChordStrip.bottom - 1);
+			CRect Label(Left, ChordStrip.top, X2 - SX(2), ChordStrip.bottom - 1);
 			if (Label.Width() >= dc.GetTextExtent(Name).cx) {
-				dc.SetTextColor(Chord.InKey ? Text : Outside);
+				dc.SetTextColor(Roles ? Named : Chord.InKey ? Text : Outside);
 				dc.DrawText(Name, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 			}
 		}
@@ -3919,6 +4179,56 @@ struct CPianoRollWnd::Impl {
 		dc.Polygon(Points, 3);
 		dc.SelectObject(pOldBrush);
 		dc.SelectObject(pOldPen);
+	}
+
+	// The legend at the right of the status line while the chord strip shows roles or the chords' notes are lit: each
+	// role's mark and name, and the lit lanes'. Left out while a message or a drag has the line, or it has too little
+	// room. Returns where the status text ends.
+	int DrawLegend(CDC &dc, const CRect &Line, COLORREF Panel) const
+	{
+		const bool Roles = ShowsRoles(), Strong = ShowsStrong() && !IsNoise(Channel) && !IsDPCM(Channel);
+		if ((!Roles && !Strong) || ShownChords().empty() || !Message.IsEmpty() || Drag != DRAG_NONE || PlacingClip >= 0)
+			return Line.right;
+		const CSettings *pSettings = theApp.GetSettings();
+		const COLORREF Back_ = pSettings->Appearance.iColBackground, Text = pSettings->Appearance.iColPatternText;
+		const bool Light = Luma(Back_) > Luma(Text);
+		const int Mark = RoleMarkSize(), Gap = SX(12), Space = SX(4);
+		struct Item {
+			int Role;			// -1: the lit lanes
+			CString Word;
+			int Width;
+		};
+		std::vector<Item> Items;
+		for (int r = 0; Roles && r < ftapi::CHORD_ROLE_COUNT; ++r) {
+			const Item One = { r, CString(ftapi::ChordRoleName(static_cast<ftapi::chord_role_t>(r))), 0 };
+			Items.push_back(One);
+		}
+		if (Strong) {
+			const Item Lit = { -1, CString(_T("the chord's notes")), 0 };
+			Items.push_back(Lit);
+		}
+		int Total = 0;
+		for (size_t i = 0; i < Items.size(); ++i) {
+			Items[i].Width = Mark + Space + dc.GetTextExtent(Items[i].Word).cx;
+			Total += Items[i].Width + (i > 0 ? Gap : 0);
+		}
+		if (Line.Width() < Total + SX(320))
+			return Line.right;
+		int X = Line.right - Total;
+		const int Top = Line.top + (Line.Height() - Mark) / 2;
+		dc.SetTextColor(Text);
+		for (size_t i = 0; i < Items.size(); ++i) {
+			if (Items[i].Role >= 0)
+				RoleMark(dc, Items[i].Role, X, Top, Mark, RoleInk(Items[i].Role, Light));
+			else {
+				dc.FillSolidRect(X, Top, Mark, Mark, Mix(Panel, LIT_NOTES, Light ? 0.5 : 0.45));
+				Outline(dc, CRect(X, Top, X + Mark, Top + Mark), Mix(Panel, LIT_NOTES, 0.8));
+			}
+			CRect Word(X + Mark + Space, Line.top, X + Items[i].Width, Line.bottom);
+			dc.DrawText(Items[i].Word, &Word, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			X += Items[i].Width + Gap;
+		}
+		return Line.right - Total - Gap;
 	}
 
 	void Draw(CDC &dc)
@@ -4130,12 +4440,21 @@ struct CPianoRollWnd::Impl {
 		const int SoundingPitch = Sounding >= 0 ? Notes[static_cast<size_t>(Channel)][static_cast<size_t>(Sounding)].Pitch : -1;
 		const COLORREF Lit = Channel < static_cast<int>(ChanIDs.size()) ?
 			ChannelColor(ChanIDs[static_cast<size_t>(Channel)], Channel) : RGB(0x80, 0xC0, 0xFF);
+		bool StrongKeys = false;		// the chord whose notes the lanes light, lit on the keys too
+		const int KeysChord = LitChord(StrongKeys);
+		const ftapi::HeardChord *pKeysChord = KeysChord >= 0 ? &ShownChords()[static_cast<size_t>(KeysChord)] : NULL;
 		for (int p = FirstPitch; p <= LastPitch; ++p) {
 			const int Y = PitchTop(p);
 			const bool Pressed = p == PreviewPitch || p == SoundingPitch;
 			dc.FillSolidRect(Keys.left, Y, Keys.Width(), KeyH, Pressed && !IsBlackKey(p) ? Lit : RGB(236, 236, 236));
 			if (IsBlackKey(p))
 				dc.FillSolidRect(Keys.left, Y, Keys.Width() * 62 / 100, KeyH, Pressed ? Mix(Lit, RGB(0, 0, 0), 0.3) : RGB(40, 40, 44));
+			const int ChordNote = (pKeysChord != NULL && !Pressed) ? ftapi::StrongNoteAt(pKeysChord->PitchClasses, pKeysChord->Bass, p) : 0;
+			if (ChordNote > 0) {
+				// Past a black key's end, where every key shows white
+				const int From = Keys.left + Keys.Width() * 62 / 100;
+				dc.FillSolidRect(From, Y + 1, Keys.right - 1 - From, KeyH - 1, Mix(RGB(236, 236, 236), LIT_NOTES, ChordNote == 2 ? 0.8 : 0.5));
+			}
 			if (p % 12 == 0 || p % 12 == 5)	// between B and C, and E and F
 				dc.FillSolidRect(Keys.left, Y + KeyH - 1, Keys.Width(), 1, RGB(150, 150, 150));
 			if (Keyed && InKey(p)) {
@@ -4159,9 +4478,10 @@ struct CPianoRollWnd::Impl {
 		dc.DrawText(_T("Chords"), &Corner, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		DrawHeader(dc, Panel);
 		dc.FillSolidRect(&Status, Panel);
-		dc.SetTextColor(Text);
 		CRect Line(Status);
 		Line.DeflateRect(SX(6), 0);
+		Line.right = DrawLegend(dc, Line, Panel);
+		dc.SetTextColor(Text);
 		dc.DrawText(StatusText(), &Line, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
 		dc.SelectObject(pOldFont);
@@ -4620,6 +4940,8 @@ void CPianoRollWnd::OnTimer(UINT_PTR nIDEvent)
 		Impl &d = *m_pImpl;
 		d.Layout();
 		bool Changed = d.Poll() || d.Dirty;
+		if (d.LetGoOfMouse())
+			Changed = true;
 		if (d.HarmonyDueNow()) {
 			d.UpdateHarmony();
 			Changed = true;
