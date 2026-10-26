@@ -41,6 +41,7 @@
 #include "SoundEffects.h"
 #include "SoundIndex.h"
 #include "SoundLibrary.h"
+#include "SongShapes.h"
 #include "StepNotes.h"
 #include "Effects.h"
 #include "FdsSounds.h"
@@ -19037,6 +19038,216 @@ std::string NameSectionTool(Session &S, const Json &Args)
 		(S.Song.Sections.empty() ? std::string("none") : SectionsText(S, S.Song.Sections)) + ".";
 }
 
+// Song shapes (SongShapes.h): a kind of song's sections laid out at once, each with what it's for
+
+bool TrackHasNotes(Session &S)
+{
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (!S.Notes(c).empty())
+			return true;
+	return false;
+}
+
+// song_shape without a shape: every shape with its parts and what each is for
+std::string SongShapesText(Session &S)
+{
+	std::string Text = "The song shapes (song_shape with shape lays one out: its frames, its sections named, the loop):";
+	const std::vector<SongShape> &All = SongShapes();
+	for (size_t s = 0; s < All.size(); ++s) {
+		const SongShape &Shape = All[s];
+		Text += Format("\n- %s (%s, %d bars%s): %s", Shape.Id.c_str(), Shape.Title.c_str(), Shape.Bars(), Shape.Loops ? "" :
+			", plays once", Shape.About.c_str());
+		for (size_t p = 0; p < Shape.Parts.size(); ++p)
+			Text += Format("\n  %s, %s: %s", Shape.Parts[p].Name.c_str(), Plural(Shape.Parts[p].Bars, "bar", "bars").c_str(),
+				Shape.Parts[p].Line.c_str());
+	}
+	if (TrackHasNotes(S))
+		Text += Format("\nThis track has notes (%s): a shape names its sections over the bars it has and keeps every note; the bars "
+			"a longer shape needs go in at the end with add_bars true.", Plural(S.Time.BarCount(), "bar", "bars").c_str());
+	else
+		Text += "\nThis track has no notes yet: a shape gives it the frames its bars need, its sections and its loop.";
+	return Text;
+}
+
+std::string SongShapeTool(Session &S, const Json &Args)
+{
+	const std::string Asked = Trim(StringArg(Args, "shape"));
+	if (Asked.empty()) {
+		if (Arg(Args, "add_bars") != 0)
+			throw Problem("Say which shape with shape (" + SongShapeIds() + "); without one, song_shape lists them.");
+		return SongShapesText(S);
+	}
+	const SongShape *pShape = FindSongShape(Asked);
+	if (pShape == 0)
+		throw Problem("shape: one of " + SongShapeIds() + " (or a word for the song: lively, calm, battle, shop, jingle); leave it out "
+			"to list them with their parts.");
+	const SongShape &Shape = *pShape;
+	if (!S.Song.DirectChanges)
+		throw Problem("Laying out a song's shape changes the song, which needs direct changes: the user can allow them in File > Connect "
+			"Claude Code, or choose Module > Song shape in FamiTracker.");
+	const bool Notes = TrackHasNotes(S);
+	const bool AddBars = BoolArg(Args, "add_bars", false);
+	ShapeLayout L;
+	std::string Error, Why;
+	if (!LayOutShape(Shape, !Notes, S.Time.RowsPerBar, S.Time.PatternLength, S.Time.Frames, S.Song.MaxFrames, AddBars, L, Error))
+		throw Problem(Error);
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const SectionList OldSections = S.Song.Sections;
+	const std::string OldText = OldSections.empty() ? std::string() : SectionsText(S, OldSections);
+	const int OldLength = S.Time.PatternLength, OldBars = S.Time.BarCount();
+
+	// The frame's new length (a track without notes), the frames, the cells and the sections: one Ctrl+Z
+	struct Grouped {
+		SongHost &Host;
+		explicit Grouped(SongHost &H) : Host(H) { Host.BeginGroup(); }
+		~Grouped() { Host.EndGroup(); }
+	} Group(S.Host());
+	if (L.RowsPerFrame != OldLength) {
+		if (!S.Host().SetMeter(S.Time.RowsPerBeat, S.Time.RowsPerBar, L.RowsPerFrame, Error))
+			throw Problem(Error.empty() ? "The frames' length couldn't be changed." : Error);
+		S.Load();
+	}
+	const int PL = S.Time.PatternLength, OldFrames = S.Time.Frames, Rows = L.Frames * PL;
+	SongWrite Write;
+	Write.MoveFrame = std::min(OldFrames, L.Frames);
+	Write.MoveBy = L.Frames - OldFrames;
+	Write.SetSections = true;
+	Write.Sections = L.Sections;
+	Write.Cursor = Notes ? OldFrames * PL : 0;	// the bars put in at the end, or the song's start
+	const SongFlow Before = Flow(S);
+	const int OldLast = Before.EndRow(PL) - 1;
+	std::vector<std::vector<Cell> > Base, Final;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Base.push_back(ShiftedRows(S.Cells(c), Write.MoveFrame * PL, Write.MoveBy * PL, Rows));
+		Final.push_back(Base.back());
+	}
+	const int EndRow = Rows - 1;
+	if (!Notes) {
+		// A track without notes: its own jumps, skips and halts go, and the shape's loop (or stop) ends it
+		for (size_t c = 0; c < Final.size(); ++c)
+			for (size_t r = 0; r < Final[c].size(); ++r)
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (Final[c][r].Effect[k] == EFF_JUMP || Final[c][r].Effect[k] == EFF_SKIP || Final[c][r].Effect[k] == EFF_HALT) {
+						Final[c][r].Effect[k] = EFF_NONE;
+						Final[c][r].Param[k] = 0;
+					}
+		bool Placed = L.LoopFrame == 0;	// back to the start: the song gets there by itself
+		for (int c = 0; c < S.ChannelCount() && !Placed && L.LoopFrame > 0; ++c)
+			Placed = AddEffect(Final[static_cast<size_t>(c)][static_cast<size_t>(EndRow)], EFF_JUMP, L.LoopFrame, S.Channel(c).EffectColumns);
+		for (int c = S.ChannelCount() - 1; c >= 0 && !Placed && L.LoopFrame < 0; --c)
+			Placed = AddEffect(Final[static_cast<size_t>(c)][static_cast<size_t>(EndRow)], EFF_HALT, 0, S.Channel(c).EffectColumns);
+		if (!Placed)
+			throw Problem("No channel has a free effect column on the song's last row for its loop.");
+	}
+	else if (Write.MoveBy > 0 && OldLast == OldFrames * PL - 1) {
+		// The jump back or the halt that ended the song moves to its new end, so the bars put in play before it
+		for (size_t c = 0; c < Final.size(); ++c) {
+			Cell &End = Final[c][static_cast<size_t>(OldLast)];
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				if (End.Effect[k] == EFF_JUMP || End.Effect[k] == EFF_HALT) {
+					AddEffect(Final[c][static_cast<size_t>(EndRow)], End.Effect[k], End.Param[k], EFFECT_COLUMNS);
+					End.Effect[k] = EFF_NONE;
+					End.Param[k] = 0;
+				}
+		}
+	}
+	// What the frame list leaves to write: the rows that differ
+	int Low = -1, High = -1;
+	for (size_t c = 0; c < Final.size(); ++c)
+		for (int r = 0; r < Rows; ++r)
+			if (Final[c][static_cast<size_t>(r)] != Base[c][static_cast<size_t>(r)]) {
+				Low = Low < 0 ? r : std::min(Low, r);
+				High = std::max(High, r);
+			}
+	std::vector<ChannelCells> Parts;
+	for (size_t c = 0; c < Final.size() && High >= 0; ++c) {
+		if (std::equal(Final[c].begin() + Low, Final[c].begin() + High + 1, Base[c].begin() + Low))
+			continue;
+		ChannelCells Part;
+		Part.Channel = static_cast<int>(c);
+		Part.Exact = true;
+		Part.Cells.assign(Final[c].begin() + Low, Final[c].begin() + High + 1);
+		Parts.push_back(Part);
+	}
+	bool Changed = true;
+	if (Parts.empty() && Write.MoveBy == 0) {
+		if (L.Sections == S.Song.Sections)
+			Changed = L.RowsPerFrame != OldLength;
+		else if (!S.Host().SetSections(L.Sections, Error))
+			throw Problem(Error.empty() ? "FamiTracker couldn't name the sections." : Error);
+	}
+	else {
+		Write.First = std::max(0, Low);
+		if (!S.Host().WriteSong(Parts, Write, Error))
+			throw Problem(Error.empty() ? "The song couldn't be changed." : Error);
+	}
+	S.Load();
+
+	// What it did, and each part with what it's for
+	std::string Text;
+	if (!Changed)
+		Text = Format("The song has the %s's shape already: %s.", Lowercase(Shape.Title).c_str(), SectionsText(S, S.Song.Sections).c_str());
+	else if (!Notes)
+		Text = Format("Changed the song: laid out a %s, %s in %s of %s. One Ctrl+Z in FamiTracker undoes it.",
+			Lowercase(Shape.Title).c_str(), Plural(Shape.Bars(), "bar", "bars").c_str(), Plural(L.Frames, "frame", "frames").c_str(),
+			Plural(L.BarsPerFrame, "bar", "bars").c_str());
+	else
+		Text = Format("Changed the song: named its sections as a %s's%s; every note stays where it was. One Ctrl+Z in FamiTracker undoes "
+			"it.", Lowercase(Shape.Title).c_str(), L.FrameChange > 0 ? Format(", with %s put in at its end",
+			Plural(L.FrameChange * L.BarsPerFrame, "empty bar", "empty bars").c_str()).c_str() : "");
+	Text += " " + Shape.About;
+	Text += "\nIts parts, each a section (FamiTracker's frame editor and piano roll give these lines where a section is named):";
+	for (size_t p = 0; p < Shape.Parts.size(); ++p) {
+		const int First = L.FirstBar(static_cast<int>(p));
+		if (First == 0)
+			continue;
+		Text += "\n- " + SectionHoverText(Shape.Parts[p].Name, First, First + L.PartBars[p] - 1, &Shape);
+	}
+	std::vector<std::string> Warnings;
+	if (L.RowsPerFrame != OldLength)
+		Warnings.push_back(Format("A frame is %d rows now (%s of %d rows; it was %d), so every part is whole frames.", L.RowsPerFrame,
+			Plural(L.BarsPerFrame, "bar", "bars").c_str(), S.Time.RowsPerBar, OldLength));
+	if (!L.Refitted.empty()) {
+		// A section is whole frames: each part on the frames nearest its bars
+		std::string Parts;
+		for (size_t i = 0; i < L.Refitted.size(); ++i) {
+			const size_t p = static_cast<size_t>(L.Refitted[i]);
+			if (L.PartBars[p] > 0)
+				Parts += (Parts.empty() ? "" : ", ") + Format("%s %s (the shape's %d)", Shape.Parts[p].Name.c_str(),
+					Plural(L.PartBars[p], "bar", "bars").c_str(), Shape.Parts[p].Bars);
+		}
+		if (!Parts.empty())
+			Warnings.push_back(Format("A frame here is %s and a section is whole frames: %s.", Plural(L.BarsPerFrame, "bar", "bars").c_str(),
+				Parts.c_str()));
+	}
+	if (L.Cut >= 0 || L.Missing > 0) {
+		std::string Left;
+		for (size_t p = 0; p < Shape.Parts.size(); ++p)
+			if (L.PartBars[p] == 0)
+				Left += (Left.empty() ? "" : ", ") + Shape.Parts[p].Name;
+		std::string What = L.Cut >= 0 ? Format("%s is cut short at its end", Shape.Parts[static_cast<size_t>(L.Cut)].Name.c_str()) :
+			std::string();
+		if (!Left.empty())
+			What += (What.empty() ? "" : ", and ") + Left + " didn't fit";
+		Warnings.push_back(Format("The song has %s and the %s takes %s: %s. add_bars true puts in the %s it needs at the end.",
+			Plural(OldBars, "bar", "bars").c_str(), Lowercase(Shape.Title).c_str(), Plural(L.NeededFrames * L.BarsPerFrame, "bar",
+			"bars").c_str(), What.c_str(), Plural((L.NeededFrames - L.Frames) * L.BarsPerFrame, "empty bar", "empty bars").c_str()));
+	}
+	else if (Notes && L.Frames > L.NeededFrames)
+		Warnings.push_back(Format("The song is longer than the %s: %s %s no section.", Lowercase(Shape.Title).c_str(),
+			RangeText(L.NeededFrames * L.BarsPerFrame + 1, S.Time.BarCount()).c_str(), L.Frames - L.NeededFrames == 1 &&
+			L.BarsPerFrame == 1 ? "has" : "have"));
+	if (!OldSections.empty() && OldSections != S.Song.Sections && Changed)
+		Warnings.push_back("Its sections before (" + OldText + ") gave way to the shape's.");
+	const SongFlow Now = Flow(S);
+	Text += "\nNow " + FlowText(S, Now) + ".";
+	if (!Notes)
+		Text += Format(" The parts are empty: fill %s first (its chords and bass, then the melody), then the others; what_next gives each "
+			"step.", Shape.Parts[static_cast<size_t>(std::min(Shape.LoopPart, static_cast<int>(Shape.Parts.size()) - 1))].Name.c_str());
+	return WithRemarks(S, Text, Warnings);
+}
+
 // The track's key, chosen (Keys.h)
 
 std::string SetKeyTool(Session &S, const Json &Args)
@@ -24013,7 +24224,7 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 }
 // what_next's milestones, in the order it works through them: each done, or left. The echo is depth's last step: it
 // copies the melody as it plays, so it waits for the variations and the review's tips that change the melody's notes
-const char *const NEXT_MILESTONES[] = { "tempo", "key", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
+const char *const NEXT_MILESTONES[] = { "tempo", "key", "shape", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
 	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "saved", "exported" };
 
 // A calm lead's way, the night songs' best (KindRecipe's and the style guide's first choice): kind music box on a pulse
@@ -24156,7 +24367,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core
 	else if (pSkip != 0)
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
-	static const char *const IDS[] = { "tempo", "key", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
+	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
 		"variation", "break", "intro", "loop", "tips", "echo", "polish", "mix", "seam", "save", "export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
@@ -24584,6 +24795,21 @@ void WhatNext::Frame()
 			"they fit, and choosing it keeps every tool (and FamiTracker's piano roll) in it." : "A new song starts from its key: " + Name +
 			" suits a " + K.Name + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it.");
 	}
+	// Its shape (SongShapes.h): an empty song gets its kind's sections laid out (song_shape), so every part has its place and
+	// its job before the notes come; a song laid out so has it, one with notes or sections of its own has its own form
+	const SongShape Own = ShapeForKind(K.Name);
+	const SongShape *pLaid = MatchSongShape(S.Song.Sections, S.Song.TrackName, Bpm, &Own);
+	if (pLaid != 0)
+		Milestone("shape", true, "the shape (" + Lowercase(pLaid->Title) + ")");
+	else if (m_HasNotes || !S.Song.Sections.empty())
+		m_Away.insert("shape");
+	else if (!Milestone("shape", !Wanted("shape"), "the shape")) {
+		Json A = Json::MakeObject();
+		A.Set("shape", Own.Id);
+		Step("shape", "song_shape", A, Format("A new song starts from its shape: a %s of %d bars (%s), each part a section named for what "
+			"it does, in frames, with the loop after the intro. The next steps fill the parts.", Lowercase(Own.Title).c_str(),
+			Own.Bars(), Own.PartsText().c_str()));
+	}
 }
 
 // Bars no section has, with notes: named, a block of about eight bars at a time, by what they play: a repeat of a part
@@ -24962,12 +25188,23 @@ void WhatNext::GrowForm()
 	const FormPart &First = m_Form[static_cast<size_t>(A)];
 	const FormPart &End = m_Form[static_cast<size_t>(Last)];
 	const int Length = First.LastBar - First.FirstBar + 1;
-	// Where it goes: right after the body's last part, on empty bars or past the song's end; else bars put in there first
-	const int At = End.LastBar + 1;
-	bool Room = At > S.Time.BarCount();
+	// Where it goes: right after the body's last part, on empty bars or past the song's end; else bars put in there first. A
+	// part a shape laid out after it (song_shape: named, empty, not an intro or a break; a calm night's break may come
+	// first) is filled where it is, at its length
+	int Laid = -1;
+	for (size_t i = static_cast<size_t>(Last) + 1; i < m_Form.size(); ++i) {
+		if (m_Form[i].Named && m_Form[i].Free)
+			continue;
+		if (m_Form[i].Named && m_Form[i].Empty)
+			Laid = static_cast<int>(i);
+		break;
+	}
+	const int At = Laid >= 0 ? m_Form[static_cast<size_t>(Laid)].FirstBar : End.LastBar + 1;
+	bool Room = Laid >= 0 || At > S.Time.BarCount();
 	for (size_t i = static_cast<size_t>(Last) + 1; i < m_Form.size() && !Room; ++i)
 		if (m_Form[i].FirstBar == At)
 			Room = !m_Form[i].Named && m_Form[i].Empty && m_Form[i].LastBar - m_Form[i].FirstBar + 1 >= Length;
+	const int LaidBars = Laid >= 0 ? m_Form[static_cast<size_t>(Laid)].LastBar - At + 1 : Length;
 	if (!Room) {
 		Json Put = Json::MakeObject();
 		Put.Set("at_bar", At);
@@ -24980,19 +25217,29 @@ void WhatNext::GrowForm()
 	}
 	if (!Repeat || Other) {
 		Json Copy = Json::MakeObject();
-		Copy.Set("section", First.Name);
+		if (LaidBars < Length) {
+			Copy.Set("from_bar", First.FirstBar);
+			Copy.Set("to_bar", First.FirstBar + LaidBars - 1);
+		}
+		else
+			Copy.Set("section", First.Name);
 		Copy.Set("at_bar", At);
-		Step("form", "copy_bars", Copy, Format("The form is short (%s): %s again after %s gives the song its repeat (it becomes \"%s\" by "
-			"itself), and a later step makes it different.", Plural(Bars, "bar", "bars").c_str(), First.Name.c_str(), End.Name.c_str(),
-			FreeSectionName(S.Song.Sections, First.Base).c_str()));
+		if (Laid >= 0)
+			Step("form", "copy_bars", Copy, Format("%s (%s) waits for its music: %s again there gives the song its repeat, and a later "
+				"step makes it different.", m_Form[static_cast<size_t>(Laid)].Name.c_str(), RangeText(At, At + LaidBars - 1).c_str(),
+				First.Name.c_str()));
+		else
+			Step("form", "copy_bars", Copy, Format("The form is short (%s): %s again after %s gives the song its repeat (it becomes \"%s\" "
+				"by itself), and a later step makes it different.", Plural(Bars, "bar", "bars").c_str(), First.Name.c_str(),
+				End.Name.c_str(), FreeSectionName(S.Song.Sections, First.Base).c_str()));
 		return;
 	}
 	// B: other chords, as long as A, played as A's are
 	const NextKind &K = Kind();
 	Json B = Json::MakeObject();
-	B.Set("chords", NextProgression(m_KindId, Minor(), true));
+	B.Set("chords", FitProgression(NextProgression(m_KindId, Minor(), true), LaidBars));
 	B.Set("from_bar", At);
-	B.Set("to_bar", At + Length - 1);
+	B.Set("to_bar", At + LaidBars - 1);
 	const NextParts Here = PartsBeside(S, m_HasMelody ? m_Melody : -1, S.Time.BarStart(First.FirstBar),
 		std::min(S.Time.BarEnd(First.LastBar), S.Time.TotalRows()));
 	if (Here.Chords.size() == 1)
@@ -25006,8 +25253,13 @@ void WhatNext::GrowForm()
 	B.Set("bass_style", K.BassStyle);
 	if (m_KindId == NEXT_ACTION)
 		B.Set("bass_instrument", "thump bass");
-	Step("form", "add_chords_and_bass", B, Format("After %s and its repeat, a B part on other chords gives the song somewhere to go: bars "
-		"%d-%d, played as %s's are.", First.Name.c_str(), At, At + Length - 1, First.Name.c_str()));
+	if (Laid >= 0)
+		Step("form", "add_chords_and_bass", B, Format("After %s and its repeat, %s (%s) gives the song somewhere to go: other chords there, "
+			"played as %s's are.", First.Name.c_str(), m_Form[static_cast<size_t>(Laid)].Name.c_str(), RangeText(At, At + LaidBars -
+			1).c_str(), First.Name.c_str()));
+	else
+		Step("form", "add_chords_and_bass", B, Format("After %s and its repeat, a B part on other chords gives the song somewhere to go: "
+			"bars %d-%d, played as %s's are.", First.Name.c_str(), At, At + Length - 1, First.Name.c_str()));
 }
 
 // The parts the kind wants, and the form: the lead's sound, an A part's chords and bass, sections, the melody, more
@@ -25064,14 +25316,22 @@ void WhatNext::Parts()
 		Json A = Json::MakeObject();
 		std::string Why;
 		if (!m_HasNotes) {
-			A.Set("chords", NextProgression(m_KindId, Minor(), false));
-			A.Set("from_bar", 1);
-			A.Set("to_bar", 8);
+			// On the A part a shape laid out (song_shape: its first part with a tune), else the song's first eight bars
+			int From = 1, To = 8;
+			for (size_t i = 0; i < m_Form.size(); ++i)
+				if (m_Form[i].Named && !m_Form[i].Free) {
+					From = m_Form[i].FirstBar;
+					To = m_Form[i].LastBar;
+					break;
+				}
+			A.Set("chords", FitProgression(NextProgression(m_KindId, Minor(), false), To - From + 1));
+			A.Set("from_bar", From);
+			A.Set("to_bar", To);
 			const int Chords = FreeChannel(0, S.MaxRows(), Lead, false);
 			if (Chords >= 0 && !(Calm() && S.Song.Vrc6Plus))
 				A.Set("chord_channel", ChannelName(Chords));
-			Why = "The A part starts from its chords and bass: eight bars in " + (m_HasKey ? KeyName(m_Key) : std::string("the key")) +
-				", for the melody to sing over.";
+			Why = "The A part starts from its chords and bass: " + (To - From + 1 == 8 ? std::string("eight bars") : Plural(To - From + 1,
+				"bar", "bars")) + " in " + (m_HasKey ? KeyName(m_Key) : std::string("the key")) + ", for the melody to sing over.";
 		}
 		else {
 			A.Set("melody_channel", ChannelName(Lead));
@@ -25123,8 +25383,13 @@ void WhatNext::Parts()
 	}
 	if (!Milestone("melody", !TuneMissing || !Wanted("melody"), "the melody"))
 		MelodyStep();
-	if (!Milestone("form", Body >= 4 || BodyBars >= 32 || !Wanted("form"), Format("the form (%s, %s)", Plural(Body, "part", "parts").c_str(),
-		Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing && !Unnamed)
+	// (a shape laid out, song_shape, is the form once each of its parts has its music)
+	bool ShapeFull = MatchSongShape(S.Song.Sections, S.Song.TrackName, BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate,
+		S.Time.RowsPerBeat)) != 0;
+	for (size_t i = 0; i < m_Form.size() && ShapeFull; ++i)
+		ShapeFull = !m_Form[i].Named || m_Form[i].Free || !m_Form[i].Empty;
+	if (!Milestone("form", Body >= 4 || BodyBars >= 32 || ShapeFull || !Wanted("form"), Format("the form (%s, %s)", Plural(Body, "part",
+		"parts").c_str(), Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing && !Unnamed)
 		GrowForm();
 	// Drums where the body plays (not in an intro or a break), unless the kind wants none
 	if (!Drums)
@@ -25260,7 +25525,14 @@ void WhatNext::Depth()
 	}
 	const int BPF = std::max(1, S.Time.BarsPerFrame());
 	const int Short = (4 + BPF - 1) / BPF * BPF;
-	if (!Milestone("break", Breaks > 0 || !Wanted("break"), "a break") && Count >= 3 && LastBody >= 0) {
+	// (a shape laid out without one, a short loop's, wants none: song_shape)
+	const SongShape *pLaid = MatchSongShape(S.Song.Sections, S.Song.TrackName, 0.0);
+	bool ShapeBreaks = pLaid == 0;
+	for (size_t i = 1; pLaid != 0 && i < pLaid->Parts.size(); ++i)
+		ShapeBreaks = ShapeBreaks || IsFreeSectionBase(SectionBase(pLaid->Parts[i].Name));
+	if (!ShapeBreaks)
+		m_Away.insert("break");
+	else if (!Milestone("break", Breaks > 0 || !Wanted("break"), "a break") && Count >= 3 && LastBody >= 0) {
 		const FormPart &Before = m_Form[static_cast<size_t>(LastBody)];
 		Json Put = Json::MakeObject();
 		Put.Set("at_bar", Before.FirstBar);
@@ -27090,6 +27362,23 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("clear", Prop("boolean", "Take the name away; the bars stay as they are.")),
 		false, false, true);
 
+	AddTool("song_shape", "Lay out a song's shape",
+		"Lays out a kind of song's shape: its named sections, each with its bars and what it's for, in FamiTracker's frames. "
+		"Shapes: stage (a lively stage: Intro 4, A 8, A' 8, B 8, Climax 8, Break 4), night (a calm night: Intro, A, A', B, Break, "
+		"A''), town (a town or a field: Intro, A, A', B, A'', Break), boss (Intro 2, A 8, A' 8, Climax 6, Break 2), small (a short loop "
+		"for a shop or a menu: Intro 2, A 4, A' 4, B 4) and jingle (Phrase 2, Last chord 2; it plays once). On a track without "
+		"notes it makes the frames the bars need (frames of whole bars that every part fills, at the song's rows a bar), names "
+		"the sections and sets the loop: the intro plays once, then the rest loops (a jingle stops at its end). On a track with "
+		"notes every note stays: the sections go over the bars it has, and the empty bars a longer shape needs go in at its end "
+		"only with add_bars. Its reply gives each part's line, as FamiTracker shows it where the section is named. Without "
+		"shape it lists the shapes and changes nothing. FamiTracker's Module > Song shape does the same. Needs direct changes; "
+		"one Ctrl+Z undoes it.",
+		Schema().Add("shape", Prop("string", "The shape: stage, night, town, boss, small or jingle (or a word for the song: lively, "
+			"calm, battle, shop). Leave it out to list them with their parts."))
+			.Add("add_bars", Prop("boolean", "On a track with notes shorter than the shape: put the empty bars it needs in at the end "
+				"(default false: only the bars the track has get sections).")),
+		false, false, true);
+
 	AddTool("set_key", "Choose the track's key",
 		"Chooses the selected track's key, as the user does with the Key button above FamiTracker's piano roll: the piano roll "
 		"shades the key's notes (and snaps the notes the user draws to them, with Snap to key on) and names the chords in its "
@@ -27902,6 +28191,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "compare_versions") Result.Text = CompareVersionsTool(S, Args);
 		else if (Name == "remove_bars") Result.Text = RemoveBarsTool(S, Args);
 		else if (Name == "name_section") Result.Text = NameSectionTool(S, Args);
+		else if (Name == "song_shape") Result.Text = SongShapeTool(S, Args);
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
 		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who.FilesUrl);
@@ -28073,7 +28363,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 {
 	static const char *const NAMES[] = { "get_song", "what_next", "read_notes", "write_notes", "place_clip", "add_instrument",
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
-		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key", "set_tempo", "set_swing", "polish", "mix",
+		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
 		"finish_song", "get_recipe", "explain" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));

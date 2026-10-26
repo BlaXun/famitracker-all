@@ -692,7 +692,17 @@ each with the user's words:
   remembers its own.
 - **Song shapes in one click** ("yes!"): a command that lays out a song's
   named sections for its kind (a lively stage, a calm night, a town, a boss,
-  a short loop), each with a line on what it's for.
+  a short loop), each with a line on what it's for. Done (26 October 2026,
+  `feat-song-shapes`): Module > Song shape (also in the frame editor's
+  right-click menu and on the piano roll's ruler) lists six shapes (a
+  lively stage, a calm night, a town, a boss fight, a short loop for a
+  small place, a jingle that plays once) with each part's bars and what
+  it's for, and lays the one picked out as one Ctrl+Z: an empty song gets
+  the frames, the named sections and its loop; a song with notes keeps
+  every note and gets the bars a longer shape needs only after asking.
+  Pointing at a section in the frame editor or on the piano roll's ruler
+  says what it's for. Claude's `song_shape` does the same, and `what_next`
+  starts an empty song with it (see `MCP.md`, Song shapes).
 - **Small exercises with feedback** ("yes! A good way to ease in the new
   composer!"): short tasks in the tutorial window (write four bars that end
   on the home note, a bass on the roots, a beat, a phrase that breathes),

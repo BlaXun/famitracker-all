@@ -95,6 +95,7 @@ add_library(ftapi STATIC
 	ProblemList.cpp
 	Music.cpp
 	Sections.cpp
+	SongShapes.cpp
 	Keys.cpp
 	ChannelMix.cpp
 	Vrc6Plus.cpp

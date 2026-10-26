@@ -461,7 +461,9 @@ SectionList SectionsShiftRows(const SectionList &List, int PatternLength, int Fi
 int SectionColor(const std::string &Name)
 {
 	int Number = 1;
-	const std::string Root = NumberedBase(TrimSectionName(Name), Number);
+	std::string Root = NumberedBase(TrimSectionName(Name), Number);
+	while (Root.size() > 1 && Root[Root.size() - 1] == '\'')
+		Root.erase(Root.size() - 1);	// "A'" and "A''" are A's repeats too (SongShapes.h)
 	unsigned int Hash = 2166136261u;
 	for (size_t i = 0; i < Root.size(); ++i) {
 		Hash ^= static_cast<unsigned char>(Lower(Root[i]));

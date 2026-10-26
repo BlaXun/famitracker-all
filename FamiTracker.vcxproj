@@ -552,6 +552,7 @@
     <ClCompile Include="Source\Api\Network.cpp" />
     <ClCompile Include="Source\Api\Music.cpp" />
     <ClCompile Include="Source\Api\Sections.cpp" />
+    <ClCompile Include="Source\Api\SongShapes.cpp" />
     <ClCompile Include="Source\Api\Keys.cpp" />
     <ClCompile Include="Source\Api\ChannelMix.cpp" />
     <ClCompile Include="Source\Api\Vrc6Plus.cpp" />
@@ -592,6 +593,7 @@
     <ClInclude Include="Source\Api\Network.h" />
     <ClInclude Include="Source\Api\Music.h" />
     <ClInclude Include="Source\Api\Sections.h" />
+    <ClInclude Include="Source\Api\SongShapes.h" />
     <ClInclude Include="Source\Api\Keys.h" />
     <ClInclude Include="Source\Api\ChannelMix.h" />
     <ClInclude Include="Source\Api\Vrc6Plus.h" />
@@ -647,6 +649,8 @@
     <ClInclude Include="Source\RecordDlg.h" />
     <ClCompile Include="Source\GrooveDlg.cpp" />
     <ClInclude Include="Source\GrooveDlg.h" />
+    <ClCompile Include="Source\SongShapeDlg.cpp" />
+    <ClInclude Include="Source\SongShapeDlg.h" />
     <ClCompile Include="Source\TapButton.cpp" />
     <ClInclude Include="Source\TapButton.h" />
     <ClCompile Include="Source\Transcribe\Tapping.cpp" />
