@@ -495,7 +495,7 @@ std::vector<ftapi::AssistantTutorial> BuiltInTutorials()
 	for (size_t i = 0; i < sizeof(TUTORIALS) / sizeof(TUTORIALS[0]); ++i) {
 		std::string Text, Error;
 		tutorial_t Tutorial;
-		if (!ReadBuiltInText(TUTORIALS[i], Text) || !ParseTutorial(Text, Tutorial, Error))
+		if (!ReadBuiltInText(MAKEINTRESOURCE(TUTORIALS[i]), Text) || !ParseTutorial(Text, Tutorial, Error))
 			continue;
 		ftapi::AssistantTutorial Entry;
 		Entry.Title = Tutorial.Title;
