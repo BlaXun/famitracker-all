@@ -31,10 +31,12 @@
 #include "../Effects.h"
 #include "../Music.h"
 #include "../Song.h"
+#include "../SongShapes.h"
 
 #include <cctype>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <set>
 #include <string>
@@ -587,6 +589,46 @@ void TestChordRoles()
 	CHECK(GlossaryExample("borrowed", E) && HasEvent(E, HEAR_PULSE1, Pitch("Ab3")));
 }
 
+// A song's parts say what Module > Song shape and the sections' hovers say of them (SongShapes.h's PartLine), and the
+// song's form names Module > Song shape and its shapes (26 October 2026)
+void TestSongParts()
+{
+	const struct { const char *Id, *Part; } PARTS[] = {
+		{ "intro", "Intro" }, { "a-part", "A" }, { "a-part", "A'" }, { "b-part", "B" }, { "bridge", "Bridge" },
+		{ "climax", "Climax" }, { "break", "Break" }, { "outro", "Outro" }, { "verse", "Verse" }, { "chorus", "Chorus" },
+	};
+	for (size_t i = 0; i < sizeof(PARTS) / sizeof(PARTS[0]); ++i) {
+		const GlossaryEntry E = Entry(PARTS[i].Id, __LINE__);
+		std::string Line = PartLine(PARTS[i].Part);
+		Check(Line.size() > 10, std::string(PARTS[i].Part) + " has a line", __LINE__);
+		// Inside the entry's sentence, its first letter in lower case unless it's the part's letter ("A again" for A')
+		const std::string Letter = std::string(PARTS[i].Part).substr(0, 1) + " ";
+		if (!(std::strlen(PARTS[i].Part) <= 2 && Line.compare(0, 2, Letter) == 0))
+			Line[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(Line[0])));
+		Check(E.Text.find(Line) != std::string::npos, E.Id + " says what Song shape says of " + PARTS[i].Part + ": " + Line,
+			__LINE__);
+		Check(E.Category == GLOSSARY_MUSIC, E.Id + " is about making music", __LINE__);
+	}
+	CHECK_HAS(Entry("break", __LINE__).Text, "A break is a breath");
+	CHECK_HAS(Entry("bridge", __LINE__).Text, "A bridge is a part");
+	CHECK_HAS(Entry("a-part", __LINE__).Text, "is A again");
+	CHECK_EQ(Entry("A'", __LINE__).Id, std::string("a-part"));
+	CHECK_EQ(Entry("verse", __LINE__).Id, std::string("verse"));
+	CHECK_EQ(Entry("refrain", __LINE__).Id, std::string("chorus"));
+	CHECK_EQ(Entry("song shape", __LINE__).Id, std::string("song-form"));
+	const GlossaryEntry Form = Entry("song form", __LINE__);
+	CHECK_HAS(Form.Text, "Module > Song shape");
+	const std::vector<SongShape> &Shapes = SongShapes();
+	CHECK(Shapes.size() >= 6);
+	for (size_t i = 0; i < Shapes.size(); ++i) {
+		std::string Title = Shapes[i].Title;
+		for (size_t c = 0; c < Title.size(); ++c)
+			Title[c] = static_cast<char>(std::tolower(static_cast<unsigned char>(Title[c])));
+		Check(Form.Text.find(Title) != std::string::npos, "the song's form names the shape " + Title, __LINE__);
+	}
+	CHECK_HAS(Entry("sections", __LINE__).Text, "Module > Song shape");
+}
+
 }	// namespace
 
 int main()
@@ -602,6 +644,7 @@ int main()
 	TestEffectHearing();
 	TestExplainText();
 	TestChordRoles();
+	TestSongParts();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

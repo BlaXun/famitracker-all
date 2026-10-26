@@ -1938,8 +1938,8 @@ terms in plain words, in four groups. Making music: notes, octaves,
 scales, keys, chords and what they do in a key (home, away, tension and
 color, as the piano roll's chord strip shows them), melody, phrases,
 rhythm, bars, tempo, swing, the drum kit, the song's parts (intro, A, B,
-bridge, climax, break, outro),
-the loop, layers, echo, panning and the mix. Sounds: timbre, envelopes,
+bridge, climax, break, outro, verse, chorus, in the words Module > Song
+shape and the sections use), the loop, layers, echo, panning and the mix. Sounds: timbre, envelopes,
 vibrato, slides, the pulse width, each channel and each chip. The
 tracker: rows, patterns, frames, speed and tempo, instruments and their
 sequences, the volume and effect columns, the piano roll, sections and

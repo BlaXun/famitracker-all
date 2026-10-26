@@ -32,6 +32,7 @@
 #include "Effects.h"
 #include "Music.h"
 #include "Song.h"
+#include "SongShapes.h"
 
 namespace ftapi {
 
@@ -266,40 +267,7 @@ const RawEntry ENTRIES[] = {
 		"A groove is the repeating pattern of drums and bass that makes you want to move, the feel of the rhythm more than its "
 		"notes. Edit > Start from a groove writes one for a mood, with a bass and chords to build on.",
 		"drum-kit, bass-line, swing, rhythm", "groove", "" },
-	{ "song-form", "Song form (structure)", "form, structure, song structure, aaba, song parts", GLOSSARY_MUSIC,
-		"A song's form is the order of its parts, often written with letters: A A B A is the tune twice, something different, "
-		"then the tune again. Game music often has an intro that plays once, then A, A again, B and a break, looping back to "
-		"the A. Named sections in FamiTracker show a song's form.",
-		"intro, a-part, b-part, bridge, break, sections, loop", "", "" },
-	{ "intro", "Intro", "introduction, opening", GLOSSARY_MUSIC,
-		"The intro is the start before the tune comes in: a few bars of the chords, the beat or a hint of the melody that set "
-		"the mood. In game music it's often four bars and plays only once, before the loop.",
-		"song-form, a-part, loop", "", "" },
-	{ "a-part", "A part (main theme)", "a, a section, verse, main theme, a2, a'", GLOSSARY_MUSIC,
-		"The A part is the song's main tune, the part people hum. It usually comes back, the same or a little changed (A', "
-		"A2), so it's where the song feels at home.",
-		"song-form, b-part, melody, hook", "", "" },
-	{ "b-part", "B part (contrast)", "b, b section, contrast", GLOSSARY_MUSIC,
-		"The B part is something different after A: another tune, other chords, maybe higher or lower, so that A sounds fresh "
-		"when it comes back. A song without one can grow dull.",
-		"song-form, a-part, bridge", "", "" },
-	{ "bridge", "Bridge", "bridges, middle eight, transition", GLOSSARY_MUSIC,
-		"A bridge is a passage that leads somewhere new, often just before the last A: other chords, a change of feel. It "
-		"builds a moment of suspense before the tune returns.",
-		"song-form, b-part, tension-release", "", "" },
-	{ "climax", "Climax", "peak, high point", GLOSSARY_MUSIC,
-		"The climax is the song's high point: its loudest, highest or fullest moment, usually late in the song. Everything "
-		"before it builds toward it, and the music often calms down after.",
-		"song-form, dynamics, layers, tension-release", "", "" },
-	{ "break", "Break", "breakdown, breather", GLOSSARY_MUSIC,
-		"A break is a few bars where most of the parts drop out, leaving the drums, the bass or near silence, before "
-		"everything comes back. In game music a short break often comes just before the loop starts again, so the return "
-		"sounds fresh.",
-		"song-form, layers, loop", "", "" },
-	{ "outro", "Outro (ending)", "ending, coda, end", GLOSSARY_MUSIC,
-		"The outro is the ending after the last part: slowing down, fading out or landing on the home chord. Looping game "
-		"music usually has none, and a jingle that plays once is almost all ending.",
-		"song-form, home-note, loop", "", "" },
+	// (A song's form and its parts, in Module > Song shape's words, are built with the chords' roles in Build)
 	{ "loop", "Loop", "looping, loop point, seamless loop", GLOSSARY_MUSIC,
 		"Game music loops: when the song reaches its end it goes back to a point near its start and plays on, for as long as "
 		"the level lasts. A good loop joins without a bump, so nobody hears where it starts again. In FamiTracker a jump "
@@ -365,10 +333,10 @@ const RawEntry ENTRIES[] = {
 		"A slide moves smoothly from one pitch to another instead of jumping: up into a note (a scoop), down at the end of a "
 		"phrase (a fall), or gliding between every note (portamento). The effects 1xx, 2xx, 3xx, Qxy and Rxy make them.",
 		"effect-qxy, effect-rxy, effect-3xx, vibrato", "slide", "" },
-	{ "detune", "Detune (chorus)", "detuned, chorus, chorus effect, beating, unison", GLOSSARY_SOUNDS,
+	{ "detune", "Detune (chorus effect)", "detuned, chorus effect, beating, unison", GLOSSARY_SOUNDS,
 		"Detuning plays two copies of a part a tiny bit apart in pitch, so they shimmer and beat against each other and "
 		"sound thicker than one. In FamiTracker, put the same notes on two channels with Pxx on one of them (P81 or P82).",
-		"effect-pxx, layers, echo", "detune", "" },
+		"effect-pxx, layers, echo, chorus", "detune", "" },
 	{ "pulse-width", "Pulse width (duty)", "duty, duty cycle, width, widths, 12.5%, 25%, 50%, 75%, square wave", GLOSSARY_SOUNDS,
 		"A pulse channel can change the shape of its wave, its width, and with it its tone: 12.5% is thin and nasal, 25% "
 		"bright and full, 50% (a square) round and hollow, like a clarinet. The Vxx effect or an instrument's duty sequence "
@@ -549,7 +517,8 @@ const RawEntry ENTRIES[] = {
 		"pattern, key, note", "", "" },
 	{ "sections", "Sections (named parts)", "section, named sections, song sections, section names", GLOSSARY_TRACKER,
 		"Sections name a song's parts (Intro, A, B, Break) over its frames, so you and the tools can talk about them. "
-		"Right-click the frame list to name one; the piano roll's ruler shows them.",
+		"Right-click the frame list to name one, or let Module > Song shape lay out a whole song's. The frame list and the "
+		"piano roll's ruler show them, and the mouse resting on one says what the part is for.",
 		"song-form, frame, a-part, piano-roll", "", "" },
 	{ "clips", "Clips", "clip, clips panel, ideas, saved ideas", GLOSSARY_TRACKER,
 		"A clip is a saved piece of music, a recorded idea, a riff or a bar of drums, kept beside the song in the clips panel. "
@@ -1783,6 +1752,96 @@ std::string KeyOf(const std::string &Name)
 	return Key.empty() ? "=" + Trimmed(Name) : Key;
 }
 
+// A part's line from SongShapes.h's PartLine inside a sentence: its first letter in lower case, unless the line starts
+// with the part's own name ("A again, changed a little..." for A')
+std::string InSentence(const std::string &Line, const std::string &Part)
+{
+	std::string Name = Part;
+	while (!Name.empty() && (Name[Name.size() - 1] == '\'' || std::isdigit(static_cast<unsigned char>(Name[Name.size() - 1]))))
+		Name.erase(Name.size() - 1);
+	if (Line.empty() || Line.compare(0, Name.size() + 1, Name + " ") == 0)
+		return Line;
+	return std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(Line[0])))) + Line.substr(1);
+}
+
+// The song shapes Module > Song shape lays out: "a lively stage, a calm night, ... or a jingle"
+std::string ShapeTitles()
+{
+	const std::vector<SongShape> &Shapes = SongShapes();
+	std::string Out;
+	for (size_t i = 0; i < Shapes.size(); ++i) {
+		const std::string Title = Lowercase(Shapes[i].Title);
+		const bool Vowel = !Title.empty() && std::string("aeiou").find(Title[0]) != std::string::npos;
+		Out += (i == 0 ? "" : i + 1 == Shapes.size() ? " or " : ", ") + std::string(Vowel ? "an " : "a ") + Title;
+	}
+	return Out;
+}
+
+// A song's form and its parts, in the words Module > Song shape and the sections' hovers use (PartLine), so the
+// glossary, the sections and the tools say the same of each part
+void AddSongParts(std::vector<GlossaryEntry> &All)
+{
+	struct PartEntry {
+		const char *Id, *Term, *Names;
+		const char *Lead, *Part;		// "The intro" + what PartLine says of an "Intro"
+		const char *Lead2, *Part2;		// a second part's line (A'), or null
+		const char *Then, *SeeAlso;
+	};
+	static const PartEntry PARTS[] = {
+		{ "intro", "Intro", "introduction, opening", "The intro", "Intro", 0, 0,
+			"It's a few bars before the tune comes in, of the chords, the beat or a hint of the melody, often four in game "
+			"music.", "song-form, a-part, loop" },
+		{ "a-part", "A part (main theme)", "a, a section, main theme, a2, a', a prime", "The A part is", "A",
+			"A' (A prime) or A2 is", "A'",
+			"A comes back more than any other part, so it's where the song feels at home.", "song-form, b-part, melody, hook" },
+		{ "b-part", "B part (contrast)", "b, b section, contrast", "The B part is", "B", 0, 0,
+			"It can have a tune of its own, higher or lower; a song without one can grow dull.", "song-form, a-part, bridge" },
+		{ "bridge", "Bridge", "bridges, middle eight", "A bridge is", "Bridge", 0, 0,
+			"It often comes just before the last A, with other chords or a change of feel, and builds a moment of suspense.",
+			"song-form, b-part, tension-release" },
+		{ "climax", "Climax", "peak, high point, finale", "The climax is", "Climax", 0, 0,
+			"It usually comes late in the song: everything before it builds toward it, and the music often calms down after.",
+			"song-form, dynamics, layers, tension-release" },
+		{ "break", "Break", "breakdown, breather", "A break is", "Break", 0, 0,
+			"In game music a short break often comes just before the loop starts again, so the return sounds fresh.",
+			"song-form, layers, loop" },
+		{ "outro", "Outro (ending)", "ending, coda, end", "The outro is", "Outro", 0, 0,
+			"Looping game music usually has none, and a jingle that plays once is almost all ending.",
+			"song-form, home-note, loop" },
+		{ "verse", "Verse", "verses", "The verse is", "Verse", 0, 0,
+			"In a song with words each verse has new words while the chorus keeps its own; game music more often calls its "
+			"parts A and B.", "chorus, song-form, a-part" },
+		{ "chorus", "Chorus", "choruses, refrain", "The chorus is", "Chorus", 0, 0,
+			"In a song with words it's the part everyone sings along to; in game music the A part often does its job. The "
+			"chorus effect, two copies of a sound a little out of tune, is something else: detune.", "verse, hook, song-form, detune" },
+	};
+	for (size_t i = 0; i < sizeof(PARTS) / sizeof(PARTS[0]); ++i) {
+		const PartEntry &P = PARTS[i];
+		GlossaryEntry E;
+		E.Id = P.Id;
+		E.Term = P.Term;
+		E.Names = SplitList(P.Names);
+		E.Category = GLOSSARY_MUSIC;
+		E.Text = std::string(P.Lead) + " " + InSentence(PartLine(P.Part), P.Part);
+		if (P.Lead2 != 0)
+			E.Text += std::string(" ") + P.Lead2 + " " + InSentence(PartLine(P.Part2), P.Part2);
+		E.Text += std::string(" ") + P.Then;
+		E.SeeAlso = SplitList(P.SeeAlso);
+		All.push_back(E);
+	}
+	GlossaryEntry Form;
+	Form.Id = "song-form";
+	Form.Term = "Song form (structure)";
+	Form.Names = SplitList("form, structure, song structure, aaba, song parts, song shape, song shapes");
+	Form.Category = GLOSSARY_MUSIC;
+	Form.Text = "A song's form is the order of its parts, often written with letters: A A B A is the tune twice, something "
+		"different, then the tune again. Game music often has an intro that plays once, then A, A again, B and a break, "
+		"looping back to the A. Named sections in FamiTracker show a song's form, and Module > Song shape lays one out in one "
+		"click for " + ShapeTitles() + ".";
+	Form.SeeAlso = SplitList("intro, a-part, b-part, bridge, climax, break, sections, loop");
+	All.push_back(Form);
+}
+
 Built Build()
 {
 	Built B;
@@ -1800,6 +1859,7 @@ Built Build()
 		E.HearHow = R.HearHow;
 		All.push_back(E);
 	}
+	AddSongParts(All);
 	// Each category in alphabetical order of its terms (the effects keep the table's order of letters)
 	std::stable_sort(All.begin(), All.end(), [](const GlossaryEntry &a, const GlossaryEntry &b) {
 		if (a.Category != b.Category)

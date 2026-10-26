@@ -1369,7 +1369,9 @@ entry of each label FamiTracker explains, so the tests check them, and its
 chords' roles). What chords do in a key (`chord-home`, `chord-away`,
 `chord-tension`, `chord-color` and the `chord-roles` they hang from) is said
 in `ChordRoles.h`'s own words (`ChordRoleExplained`, `ChordRoleMeaning`), as
-the piano roll's chord strip says it.
+the piano roll's chord strip says it, and the song's parts (intro, A and A',
+B, bridge, climax, break, outro, verse, chorus) in Song shapes' (`PartLine`,
+by `AddSongParts`); the song's form names Module > Song shape and its shapes.
 `Source/GlossaryDlg.cpp` is Help > Glossary (`ID_HELP_GLOSSARY`, Ctrl+Shift+G,
 the toolbar's last button, the 26th image of both toolbar bitmaps), a
 modeless tool window shown with `SW_SHOWNOACTIVATE` so it never takes the
