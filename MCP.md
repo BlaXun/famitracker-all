@@ -180,6 +180,13 @@ tools). It passes each message to FamiTracker over the network, like
 `famitracker-mcp.exe` does for WSL, and says what to check when FamiTracker
 doesn't answer.
 
+For "export as OGG and give it to me" from a phone, Hermes needs no more than
+the setup above (a `timeout` long enough for a render) and one of the ways in
+[Files between the computers](#files-between-the-computers): the link, when
+the phone reaches the PC (Tailscale on both, or the home Wi-Fi); otherwise its
+terminal fetches the file with curl from the link (no header needed), or it
+reads the resource, and it sends the file on through its chat.
+
 ### Files between the computers
 
 `study_nsf`, `import_nsf`, `study_module` and `make_sound_effect` (a voice
@@ -199,14 +206,58 @@ The Inbox takes NSF and NSFe files with their `.m3u` playlists, MOD, S3M,
 XM, IT and MIDI files, FamiTracker modules and WAV recordings, at most 5 MB
 each; a file of the same name is replaced. Its name can't hold folders.
 
-`export_for_game` saves its OGG files next to the song, on the PC. When it's
-asked over the network, its reply ends with a link to each file:
+`export_for_game` saves its OGG files next to the song, on the PC. A song
+that was never saved is saved first when a client asks, since it can't use
+File > Save As: into the **Songs** folder next to FamiTracker.exe
+(`Documents\FamiTracker songs` where FamiTracker's folder can't be written),
+in a folder of its own named after the track (`Songs\Town\Town.ftm`, else
+the module's title or `Untitled`; `Town 2` when the name is taken, never over
+a file). From then on the song is that file, and its OGG files go next to it.
+`save_song` does the same, with `name` for the song's name. FamiTracker's own
+File > Export for games still asks you to save first.
 
-```
-curl -H "Authorization: Bearer 1f3a..." -o Town.ogg http://192.168.1.10:46600/files/Town.ogg
-```
+Asked over the network, the reply says how to get each file to the person,
+three ways, for clients that can do different things:
 
-Only the OGG files next to the song can be fetched, by their names.
+- **A link that opens in a browser.** Each file's link carries a code of its
+  own in the address, so a browser opens and plays it with no header, a
+  phone's too, on the home network or over Tailscale: pass the link on as it
+  is. When the PC has a Tailscale address and the client reached it another
+  way, the reply gives that link too, for a phone away from home. The code is
+  worked out from the access code (as the phone page's is), opens only the
+  OGG files next to the song, and changes with a new access code. A browser
+  gets the range it asks for (206 Partial Content), as iPhones' Safari needs
+  to play a sound.
+
+  ```
+  http://192.168.1.10:46600/files/Town.ogg?code=8c41e0d2f7a9b3c5d6e7f801
+  curl -o Town.ogg "http://192.168.1.10:46600/files/Town.ogg?code=8c41e0d2f7a9b3c5d6e7f801"
+  ```
+
+  The access code itself never goes in an address: `?code=` refuses it. The
+  link without its code still works with the access code in the header, as
+  before.
+- **MCP resources**, for a client that fetches files without HTTP, through
+  `famitracker-mcp-linux` too: the OGG files next to the song are the
+  resources `famitracker://files/<name>`, listed by `resources/list`, and
+  `resources/read` gives a file's bytes in base64 (a `blob`, `audio/ogg`).
+  The reply links each file it saved as a resource (`resource_link`) for
+  clients of the protocol's 2025-06-18 version or later (those that send
+  `MCP-Protocol-Version`, as `famitracker-mcp` now does after the handshake);
+  2025-03-26 has no links, but its clients read the resources all the same.
+
+  ```json
+  {"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"famitracker://files/Town.ogg"}}
+  ```
+- **Attached to the reply**: `export_for_game` with `attach` true carries the
+  files themselves (embedded resources, `audio/ogg`), at most 8 MB in all, for
+  a client that saves what a reply carries; the reply names them with their
+  sizes, and those it left out. Not for a client that shows replies to its
+  model: the file in base64 would fill its context.
+
+So "export as OGG and give it to me" is one `export_for_game` call on any
+song, saved or not; then the link goes to the person, or the client fetches
+the file (the link with curl, or `resources/read`) and sends it on.
 
 ### The phone page
 
@@ -240,8 +291,9 @@ curl -H "Authorization: Bearer CODE" -H "Content-Type: audio/wav" --data-binary 
 - FamiTracker only answers addresses of home networks (10.x, 172.16-31.x,
   192.168.x, 169.254.x) and Tailscale's (100.64-127.x), besides this
   computer; any other address is closed off at once.
-- Every request needs the access code, files too. Web pages are turned away
-  as before.
+- Every request needs the access code, files too, except the links
+  `export_for_game` gives: their own code, in the address, opens only the OGG
+  files next to the song. Web pages are turned away as before.
 - The phone page is the one web page FamiTracker answers, and only its own
   requests, with its own code; other pages can't send it takes.
 - Never forward the port on your router: from outside, use Tailscale.
@@ -871,13 +923,13 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `check_loop` | How the song loops in a game: the intro that plays once, the part that repeats and how long each lasts, and the seam: notes hanging over it, effects, instruments, volumes, pans or tempo that differ the first time and on repeat, the chords and the melody's step across it |
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a release where a note from the loop's end on a sound that fades on one (a pad's held chord) would hang over into a silence, so it fades there, else a halt (an echo's last note), and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
-| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start |
+| `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start. A song never saved is saved first, for a client (as `save_song` saves it); over the network the reply links each file with a code of its own, which a browser opens with no header, and as an MCP resource, and `attach` puts the files in the reply. See [Files between the computers](#files-between-the-computers) |
 | `finish_song` | The last steps of a song in one call, for its kind: `polish` with the kind's touches, `mix` in the kind's style (its faders back at 0 dB first where they do the mix's work), `check_loop` and `fix_loop` where the seam needs it, and `export_for_game` at the kind's loudness; one Ctrl+Z undoes the song's changes, and the reply is a line a step and what to listen for. See [The last steps in one call](#the-last-steps-in-one-call) (direct changes only) |
 | `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play, or against the whole when there's no melody (ambience); `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
-| `save_song` | Saves the song, or a copy next to it to compare versions |
+| `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. See [Files between the computers](#files-between-the-computers) |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
 chords, lush chords, warm pad, bass, thump bass (an octave blip into each

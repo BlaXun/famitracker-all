@@ -23,6 +23,7 @@
 #include "Json.h"
 #include "Network.h"
 #include "PhoneTakes.h"
+#include "Song.h"
 #include "Tools.h"
 
 #include <cstdio>
@@ -37,6 +38,11 @@ const char *const SERVER_TITLE = "FamiTracker";
 const char *const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo";
 const char *const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const int CACHE_MS = 3600000;
+const char *const FIRST_VERSION = "2025-03-26";	// a request whose version isn't said is of this era, as the protocol has it
+const char *const FILES_CODE_PURPOSE = "FamiTracker exported files";
+const size_t FILES_CODE_DIGITS = 24;
+// The biggest file resources/read gives (base64 makes it a third more, within what famitracker-mcp reads)
+const size_t MAX_RESOURCE_BYTES = 32u << 20;
 
 // JSON-RPC error codes
 const int PARSE_ERROR = -32700;
@@ -44,6 +50,8 @@ const int INVALID_REQUEST = -32600;
 const int METHOD_NOT_FOUND = -32601;
 const int INVALID_PARAMS = -32602;
 const int ACCESS_DENIED = -32001;		// implementation-defined
+const int RESOURCE_NOT_FOUND = -32002;
+const int INTERNAL_ERROR = -32603;
 const int HEADER_MISMATCH = -32020;
 const int UNSUPPORTED_VERSION = -32022;
 
@@ -204,12 +212,32 @@ bool DecodeHeaderValue(const std::string &Value, std::string &Out)
 	return true;
 }
 
-// What the request asked for: all the tools (/mcp) or the small set (/mcp/core), and who asks
+// What the request asked for: all the tools (/mcp) or the small set (/mcp/core), who asks, and in which version of
+// the protocol
 struct Endpoint {
 	bool Core;
 	Caller Who;
+	std::string Version;
 	Endpoint() : Core(false) {}
 };
+
+// A reply may link a resource (resource_link) from 2025-06-18 on; every version may carry one (an embedded resource)
+bool LinksResources(const Endpoint &E)
+{
+	return E.Version != FIRST_VERSION;
+}
+
+std::string HexText(const std::string &Bytes)
+{
+	static const char DIGITS[] = "0123456789abcdef";
+	std::string Out;
+	for (size_t i = 0; i < Bytes.size(); ++i) {
+		const unsigned char c = static_cast<unsigned char>(Bytes[i]);
+		Out += DIGITS[c >> 4];
+		Out += DIGITS[c & 15];
+	}
+	return Out;
+}
 
 Json ServerInfo(const McpConfig &Config)
 {
@@ -290,9 +318,107 @@ bool CallTool(ToolSet &Tools, const Endpoint &E, const Json &Params, Json &Out, 
 		Image.Set("mimeType", "image/png");
 		Content.Push(Image);
 	}
+	for (size_t i = 0; i < Called.Files.size(); ++i) {
+		const ToolFile &File = Called.Files[i];
+		Json Item = Json::MakeObject();
+		if (!File.Bytes.empty()) {
+			// The file itself (export_for_game's attach), for a client that saves what a reply carries
+			Json Resource = Json::MakeObject();
+			Resource.Set("uri", File.Uri);
+			Resource.Set("mimeType", File.MimeType);
+			Resource.Set("blob", Base64Encode(File.Bytes));
+			Item.Set("type", "resource");
+			Item.Set("resource", Resource);
+		}
+		else if (LinksResources(E)) {
+			// A link to it, which the client reads with resources/read
+			Item.Set("type", "resource_link");
+			Item.Set("uri", File.Uri);
+			Item.Set("name", File.Name);
+			Item.Set("mimeType", File.MimeType);
+			Item.Set("size", static_cast<long long>(File.Size));
+		}
+		else
+			continue;
+		Content.Push(Item);
+	}
 	Out = Json::MakeObject();
 	Out.Set("content", Content);
 	Out.Set("isError", Called.IsError);
+	return true;
+}
+
+// The OGG files export_for_game saved next to the song, as MCP's resources (resources/list)
+Json ResourcesJson(ToolSet &Tools)
+{
+	std::vector<SongFile> Files;
+	std::string Error;
+	Json List = Json::MakeArray();
+	if (!Tools.ListExports(Files, Error))
+		return List;
+	for (size_t i = 0; i < Files.size(); ++i) {
+		Json Item = Json::MakeObject();
+		Item.Set("uri", ExportUri(Files[i].Name));
+		Item.Set("name", Files[i].Name);
+		Item.Set("title", Files[i].Name);
+		Item.Set("description", "An OGG file export_for_game saved next to the song");
+		Item.Set("mimeType", ExportMimeType(Files[i].Name));
+		Item.Set("size", Files[i].Bytes);
+		List.Push(Item);
+	}
+	return List;
+}
+
+// How the resources are named (resources/templates/list)
+Json TemplatesJson()
+{
+	Json Template = Json::MakeObject();
+	Template.Set("uriTemplate", std::string(EXPORT_URI_PREFIX) + "{name}");
+	Template.Set("name", "export");
+	Template.Set("title", "A file export_for_game saved");
+	Template.Set("description", "An OGG file export_for_game saved next to the song, by its file name (Town.ogg).");
+	Json List = Json::MakeArray();
+	List.Push(Template);
+	return List;
+}
+
+// resources/read: the file, its bytes in base64; false with the error's code, text and data
+bool ReadResource(ToolSet &Tools, const Json &Params, Json &Out, int &Code, std::string &Text, Json &Data)
+{
+	const Json *pUri = Params.Get("uri");
+	if (pUri == 0 || !pUri->IsString()) {
+		Code = INVALID_PARAMS;
+		Text = "resources/read needs the resource's uri.";
+		return false;
+	}
+	Data = Json::MakeObject();
+	Data.Set("uri", pUri->String());
+	std::string Name, Bytes, Error;
+	if (!ParseExportUri(pUri->String(), Name)) {
+		Code = RESOURCE_NOT_FOUND;
+		Text = "FamiTracker's resources are the OGG files export_for_game saved next to the song, as " +
+			std::string(EXPORT_URI_PREFIX) + "<file name> (resources/list lists them).";
+		return false;
+	}
+	if (!Tools.ReadExport(Name, Bytes, Error)) {
+		Code = Error.empty() ? RESOURCE_NOT_FOUND : INTERNAL_ERROR;
+		Text = Error.empty() ? "There's no " + Name + " next to the song (resources/list lists the files there); export_for_game saves "
+			"it." : Error;
+		return false;
+	}
+	if (Bytes.size() > MAX_RESOURCE_BYTES) {
+		Code = INTERNAL_ERROR;
+		Text = Name + " is too big for a reply (over 32 MB); a client on another computer fetches it by the link export_for_game gives.";
+		return false;
+	}
+	Json Content = Json::MakeObject();
+	Content.Set("uri", pUri->String());
+	Content.Set("mimeType", ExportMimeType(Name));
+	Content.Set("blob", Base64Encode(Bytes));
+	Json Contents = Json::MakeArray();
+	Contents.Push(Content);
+	Out = Json::MakeObject();
+	Out.Set("contents", Contents);
 	return true;
 }
 
@@ -303,6 +429,11 @@ Json Capabilities(const Endpoint &E)
 	Tools.Set("listChanged", false);
 	Json Capabilities = Json::MakeObject();
 	Capabilities.Set("tools", Tools);
+	// The files export_for_game saves, for a client that can't fetch them by HTTP
+	Json Resources = Json::MakeObject();
+	Resources.Set("subscribe", false);
+	Resources.Set("listChanged", false);
+	Capabilities.Set("resources", Resources);
 	if (!E.Core) {
 		Json Prompts = Json::MakeObject();
 		Prompts.Set("listChanged", false);
@@ -460,6 +591,26 @@ HttpResponse Modern(const HttpRequest &Request, const McpConfig &Config, ToolSet
 		Out.Set("ttlMs", CACHE_MS);
 		Out.Set("cacheScope", "private");
 	}
+	else if (Method == "resources/list" || Method == "resources/templates/list") {
+		// The files come and go as songs are exported: the list isn't kept
+		const bool Files = Method == "resources/list";
+		Out = Json::MakeObject();
+		Out.Set("resultType", "complete");
+		Out.Set(Files ? "resources" : "resourceTemplates", Files ? ResourcesJson(Tools) : TemplatesJson());
+		Out.Set("ttlMs", Files ? 0 : CACHE_MS);
+		Out.Set("cacheScope", "private");
+	}
+	else if (Method == "resources/read") {
+		int Code;
+		std::string Text;
+		Json Data;
+		if (!ReadResource(Tools, Params, Out, Code, Text, Data))
+			return Failure(200, Id, Code, Text, &Data);
+		Json Ordered = Json::MakeObject();
+		Ordered.Set("resultType", "complete");
+		Ordered.Set("contents", *Out.Get("contents"));
+		Out = Ordered;
+	}
 	else
 		return Failure(404, Id, METHOD_NOT_FOUND, "Method not found: " + Method);
 	Out.Set("_meta", ModernMeta(Config));
@@ -516,6 +667,22 @@ HttpResponse Legacy(const HttpRequest &Request, const McpConfig &Config, ToolSet
 			return Failure(200, Id, Code, Text);
 		return Result(Id, Out);
 	}
+	if (Method == "resources/list" || Method == "resources/templates/list") {
+		Json Out = Json::MakeObject();
+		if (Method == "resources/list")
+			Out.Set("resources", ResourcesJson(Tools));
+		else
+			Out.Set("resourceTemplates", TemplatesJson());
+		return Result(Id, Out);
+	}
+	if (Method == "resources/read") {
+		Json Out, Data;
+		int Code;
+		std::string Text;
+		if (!ReadResource(Tools, Params, Out, Code, Text, Data))
+			return Failure(200, Id, Code, Text, &Data);
+		return Result(Id, Out);
+	}
 	if (Method == "server/discover")
 		return Result(Id, DiscoverResult(Config, E));
 	return Failure(200, Id, METHOD_NOT_FOUND, "Method not found: " + Method);
@@ -537,8 +704,14 @@ HttpResponse WrongMethod(const char *pAllowed, const std::string &Text)
 	return Response;
 }
 
-// GET /files/<name>: a file export_for_game saved next to the song
-HttpResponse FileRoute(ToolSet &Tools, const std::string &Encoded)
+void AddHeader(HttpResponse &Response, const char *pName, const std::string &Value)
+{
+	Response.Headers.push_back(std::make_pair(std::string(pName), Value));
+}
+
+// GET or HEAD /files/<name>: an OGG file export_for_game saved next to the song, to play where it opens (inline), whole or
+// the range asked for: a phone's browser asks for ranges before it plays a sound (iPhones' Safari plays nothing without)
+HttpResponse FileRoute(const HttpRequest &Request, ToolSet &Tools, const std::string &Encoded)
 {
 	std::string Name, Bytes, Error;
 	if (!UrlDecode(Encoded, Name) || !IsExportFile(Name))
@@ -547,14 +720,58 @@ HttpResponse FileRoute(ToolSet &Tools, const std::string &Encoded)
 		return TextResponse(Error.empty() ? 404 : 500, Error.empty() ? "There's no " + Name + " next to the song; export_for_game "
 			"saves it there." : Error);
 	HttpResponse Response;
-	Response.ContentType = "audio/ogg";
-	Response.Body.swap(Bytes);
+	Response.ContentType = ExportMimeType(Name);
+	AddHeader(Response, "Accept-Ranges", "bytes");
 	bool Plain = true;
 	for (size_t i = 0; i < Name.size(); ++i)
 		Plain = Plain && static_cast<unsigned char>(Name[i]) < 0x80;
-	if (Plain)
-		Response.Headers.push_back(std::make_pair(std::string("Content-Disposition"), "attachment; filename=\"" + Name + "\""));
+	AddHeader(Response, "Content-Disposition", Plain ? "inline; filename=\"" + Name + "\"" : "inline; filename*=UTF-8''" + UrlEncode(Name));
+	AddHeader(Response, "Cache-Control", "no-cache");
+	AddHeader(Response, "X-Content-Type-Options", "nosniff");
+	AddHeader(Response, "Referrer-Policy", "no-referrer");
+	// One range, as browsers ask; anything else (several, If-Range, which FamiTracker can't check) gets the whole file
+	const std::string *pRange = Request.Header("Range");
+	size_t First = 0, Last = 0;
+	const ByteRangeResult Range = pRange != 0 && Request.Header("If-Range") == 0 ? ParseByteRange(*pRange, Bytes.size(), First, Last) :
+		RANGE_WHOLE;
+	char Text[96];
+	if (Range == RANGE_UNSATISFIABLE) {
+		Response.Status = 416;
+		Response.ContentType.clear();
+		std::snprintf(Text, sizeof(Text), "bytes */%lu", static_cast<unsigned long>(Bytes.size()));
+		AddHeader(Response, "Content-Range", Text);
+		return Response;
+	}
+	if (Range == RANGE_PART) {
+		Response.Status = 206;
+		std::snprintf(Text, sizeof(Text), "bytes %lu-%lu/%lu", static_cast<unsigned long>(First), static_cast<unsigned long>(Last),
+			static_cast<unsigned long>(Bytes.size()));
+		AddHeader(Response, "Content-Range", Text);
+		Response.Body = Bytes.substr(First, Last - First + 1);
+		return Response;
+	}
+	Response.Body.swap(Bytes);
 	return Response;
+}
+
+// The files' links over Tailscale, for a phone away from home: "http://100.101.102.103:46600/files/" when this computer
+// has a Tailscale address and the client reached it another way (a home network's address, or a name not Tailscale's)
+std::string AwayFilesUrl(const std::string *pHost, const McpConfig &Config)
+{
+	std::string Host = pHost != 0 ? Lower(*pHost) : std::string();
+	Host = Host.substr(0, Host.find(':'));
+	if (!Host.empty() && Host[Host.size() - 1] == '.')
+		Host.erase(Host.size() - 1);
+	unsigned long Address = 0;
+	if ((ParseIpv4(Host, Address) && IsTailscaleIpv4(Address)) || (Host.size() > 7 && Host.compare(Host.size() - 7, 7, ".ts.net") == 0))
+		return std::string();
+	for (size_t i = 0; i < Config.Addresses.size(); ++i)
+		if (ParseIpv4(Config.Addresses[i], Address) && IsTailscaleIpv4(Address)) {
+			char Port[16];
+			std::snprintf(Port, sizeof(Port), ":%d", Config.Port);
+			return "http://" + Config.Addresses[i] + Port + "/files/";
+		}
+	return std::string();
 }
 
 // PUT /inbox/<name>: the body as a file in the Inbox folder, as send_file does
@@ -621,31 +838,46 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 
 	if ((Route == ROUTE_MCP || Route == ROUTE_CORE) && Request.Method != "POST")
 		return WrongMethod("POST", "FamiTracker's MCP endpoint takes POST requests.");
-	if (Route == ROUTE_FILES && Request.Method != "GET")
-		return WrongMethod("GET", "FamiTracker's /files/ give the files export_for_game saved, by GET.");
+	if (Route == ROUTE_FILES && Request.Method != "GET" && Request.Method != "HEAD")
+		return WrongMethod("GET, HEAD", "FamiTracker's /files/ give the files export_for_game saved, by GET.");
 	if (Route == ROUTE_INBOX && Request.Method != "PUT" && Request.Method != "POST")
 		return WrongMethod("PUT", "FamiTracker's /inbox/ takes a file by PUT (curl -T).");
 	if (Config.Token.empty())
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker has no access token set, so it answers nothing.");
+	std::string Code;
+	if (Route == ROUTE_FILES && QueryParameter(Request.Target, "code", Code)) {
+		// A link export_for_game gave, with its own code for a browser, which can't send the access code; the access code
+		// itself never goes in an address (a browser keeps addresses, and may pass them on)
+		if (SameText(Code, Config.Token))
+			return TextResponse(403, "That's FamiTracker's access code, which never goes in an address: a browser keeps addresses, and "
+				"may pass them on. The links export_for_game gives carry a code of their own, which opens only these files.");
+		if (!SameText(Code, FilesCode(Config.Token)))
+			return TextResponse(403, "This link's code doesn't work (any more): FamiTracker's access code has changed since the link "
+				"was made. Export the song again for new links.");
+		return FileRoute(Request, Tools, Rest);
+	}
 	if (!TokenMatches(Request.Header("Authorization"), Config.Token))
 		return Failure(403, NoId, ACCESS_DENIED, "FamiTracker refused the request: the access token is missing or wrong. "
 			"File > Connect Claude Code in FamiTracker shows the command that connects with the right one.");
 	if (Route == ROUTE_FILES)
-		return FileRoute(Tools, Rest);
+		return FileRoute(Request, Tools, Rest);
 	if (Route == ROUTE_INBOX)
 		return InboxRoute(Request, Tools, Rest);
 
 	Endpoint E;
 	E.Core = Route == ROUTE_CORE;
 	E.Who.Core = E.Core;
+	E.Who.Client = true;	// not FamiTracker's own windows: no File > Save As
 	if (Remote) {
-		// Links to what export_for_game saves, as this client reached FamiTracker
+		// Links to what export_for_game saves, as this client reached FamiTracker, with their own code for a browser
 		char Port[16];
 		std::snprintf(Port, sizeof(Port), ":%d", Config.Port);
 		if (pHost != 0 && !pHost->empty())
 			E.Who.FilesUrl = "http://" + *pHost + (pHost->find(':') == std::string::npos ? Port : "") + "/files/";
 		else if (!Config.Addresses.empty())
 			E.Who.FilesUrl = "http://" + Config.Addresses[0] + Port + "/files/";
+		E.Who.FilesCode = FilesCode(Config.Token);
+		E.Who.AwayUrl = AwayFilesUrl(pHost, Config);
 	}
 	const std::string *pType = Request.Header("Content-Type");
 	if (pType == 0 || Lower(*pType).compare(0, 16, "application/json") != 0)
@@ -686,9 +918,19 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 
 	const Json *pMeta = Params.Get("_meta");
 	const Json *pVersion = (pMeta != 0 && pMeta->IsObject()) ? pMeta->Get(VERSION_KEY) : 0;
-	if (pVersion != 0)
+	if (pVersion != 0) {
+		E.Version = pVersion->IsString() ? pVersion->String() : std::string();
 		return Modern(Request, Config, Tools, E, *pId, pMethod->String(), Params, *pVersion);
+	}
+	// The handshake's era: the version the client agreed in its header, sent from 2025-06-18 on
+	const std::string *pAgreed = Request.Header("MCP-Protocol-Version");
+	E.Version = pAgreed != 0 ? *pAgreed : std::string(FIRST_VERSION);
 	return Legacy(Request, Config, Tools, E, *pId, pMethod->String(), Params);
+}
+
+std::string FilesCode(const std::string &Token)
+{
+	return HexText(HmacSha256(Token, FILES_CODE_PURPOSE)).substr(0, FILES_CODE_DIGITS);
 }
 
 std::string ClaudeAddCommand(const McpConfig &Config)

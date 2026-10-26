@@ -303,6 +303,7 @@ const char *HttpReason(int Status)
 	case 200: return "OK";
 	case 202: return "Accepted";
 	case 204: return "No Content";
+	case 206: return "Partial Content";
 	case 400: return "Bad Request";
 	case 401: return "Unauthorized";
 	case 403: return "Forbidden";
@@ -312,6 +313,7 @@ const char *HttpReason(int Status)
 	case 408: return "Request Timeout";
 	case 413: return "Content Too Large";
 	case 415: return "Unsupported Media Type";
+	case 416: return "Range Not Satisfiable";
 	case 431: return "Request Header Fields Too Large";
 	case 500: return "Internal Server Error";
 	case 501: return "Not Implemented";

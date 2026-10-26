@@ -254,6 +254,23 @@ struct PlayRequest {
 	PlayRequest() : Track(-1), First(0), Rows(0), Loop(false), ReturnTrack(-1) {}
 };
 
+// A file next to the song (SongHost::ListExports)
+struct SongFile {
+	std::string Name;		// "Town.ogg"
+	long long Bytes;
+	long long Modified;		// seconds since 1970, UTC; 0 when unknown
+
+	SongFile() : Bytes(0), Modified(0) {}
+};
+
+// The name SongHost::SaveNew tries the Number-th time (from 1): "Town", then "Town 2", "Town 3"... up to MAX_SONG_NUMBER
+inline std::string NumberedSongName(const std::string &Name, int Number)
+{
+	return Number <= 1 ? Name : Name + " " + std::to_string(Number);
+}
+const int MAX_SONG_NUMBER = 999;
+const size_t MAX_LISTED_EXPORTS = 200;	// the files SongHost::ListExports gives at most, the newest
+
 class SongHost {
 public:
 	virtual ~SongHost() {}
@@ -427,6 +444,28 @@ public:
 	virtual void ForgetRedo() {}
 	// Saves the song, or a copy of it next to it (CopyName: a file name)
 	virtual bool Save(const std::string &CopyName, std::string &Message) = 0;
+	// Saves a song that has no file yet (SongInfo::FileName empty), for a client that can't use File > Save As: into the
+	// Songs folder next to FamiTracker.exe (Documents\FamiTracker songs where FamiTracker's folder can't be written), in a
+	// folder of its own named as the file, under the first of Names this computer can make (each a plain file name without
+	// ".ftm", the last the plainest), as "Name 2", "Name 3"... (NumberedSongName) when a folder of that name is there:
+	// never over a file. The song then is that file, so later saves go there and export_for_game's files next to it. Path:
+	// the file, as the tools are given paths; false with the reason in Message
+	virtual bool SaveNew(const std::vector<std::string> &Names, std::string &Path, std::string &Message)
+	{
+		(void)Names;
+		(void)Path;
+		Message = "This FamiTracker can't save a song that has no file yet.";
+		return false;
+	}
+	// The files next to the song a client may fetch (IsExportFile in Network.h: the OGG files export_for_game saves), the
+	// newest first, at most MAX_LISTED_EXPORTS; none when the song has no file yet. False with the reason when
+	// the folder can't be read
+	virtual bool ListExports(std::vector<SongFile> &Files, std::string &Error)
+	{
+		(void)Error;
+		Files.clear();
+		return true;
+	}
 };
 
 }	// namespace ftapi

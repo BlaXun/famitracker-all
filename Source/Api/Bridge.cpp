@@ -104,7 +104,7 @@ std::string ErrorLine(const Json &Id, const std::string &Text)
 }	// namespace
 
 bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, BridgeMessage &Out, const std::string &Host,
-	const std::string &Path)
+	const std::string &Path, const std::string &Version)
 {
 	std::string Text = Line;
 	while (!Text.empty() && (Text[Text.size() - 1] == '\r' || Text[Text.size() - 1] == '\n'))
@@ -137,6 +137,7 @@ bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, 
 		return true;
 	}
 	Out.Readable = true;
+	Out.Method = pMethod->String();
 	const Json *pId = Message.Get("id");
 	if (pId != 0 && !pId->IsNull()) {
 		Out.WantsAnswer = true;
@@ -157,7 +158,20 @@ bool BridgeRequest(const std::string &Line, int Port, const std::string &Token, 
 		if (pName != 0 && pName->IsString())
 			AddHeader(Request, "Mcp-Name", HeaderValue(pName->String()));
 	}
+	else if (!Version.empty() && Out.Method != "initialize")
+		AddHeader(Request, "MCP-Protocol-Version", Version);
 	return true;
+}
+
+std::string BridgeAgreedVersion(const BridgeMessage &Sent, const HttpResponse &Answer)
+{
+	Json Message;
+	if (Sent.Method != "initialize" || !Sent.WantsAnswer || Answer.Status != 200 || !ParseJson(Answer.Body, Message) ||
+		!Message.IsObject())
+		return std::string();
+	const Json *pResult = Message.Get("result");
+	const Json *pVersion = (pResult != 0 && pResult->IsObject()) ? pResult->Get("protocolVersion") : 0;
+	return (pVersion != 0 && pVersion->IsString()) ? HeadText(pVersion->String()) : std::string();
 }
 
 std::string BridgeAnswer(const BridgeMessage &Sent, const HttpResponse &Answer)

@@ -33,6 +33,9 @@
 //   (where they were before) move into it.
 // - Inbox: files sent from another computer over the Claude Code connection
 //   (send_file), for the tools that read files (study_nsf, study_module...).
+// - Songs: songs a client of the Claude Code connection saved that had no
+//   file yet (save_song, export_for_game), each in a folder of its own with
+//   the files exported next to it, since a client can't use File > Save As.
 //
 // Files move to another drive too; one of the same name already there stays
 // where it was. Where FamiTracker's folder can't be written (Program Files),
@@ -46,3 +49,4 @@ CString ExeFolder();
 CString ReferencesFolder(bool Create);
 CString RecordingsFolder(bool Create);
 CString InboxFolder(bool Create);
+CString SongsFolder(bool Create);
