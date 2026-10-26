@@ -559,7 +559,8 @@ row counted, `SlideSemitones`) and slides to the voice's own notes. An
 echo note's volume is `EchoVolume` (each sound as `PlayedDb` plays it:
 the chip's level and the instrument's envelope, the fader left out); the
 echo's and the harmony's effects pass `CarriesEffect`
-(`ChannelPlaysEffect` in `Effects.cpp`), and `EchoWithoutRubs` counts only
+(`ChannelPlaysEffect` in `Effects.cpp`: an FDS lead's `Hxx`-`Jxx` stay off an
+echo on the N163 or a pulse, `TestEchoKeepsItsChipsEffects`), and `EchoWithoutRubs` counts only
 semitones and minor ninths, as the parts sound. `write_notes` keeps a
 channel's detune where it was (`PartOptions::KeepDetune` in `BuildPart`),
 `check_song`'s key check follows a note's slides (`SoundingRows`), and

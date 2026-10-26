@@ -25633,6 +25633,55 @@ void TestListenLowAsAdvice()
 	CHECK_HAS(Run(Song, "listen", "{\"format\": \"short\"}").Text, "A detail: hear it with the user before changing it.");
 }
 
+// add_echo from an FDS lead whose notes set its modulator (Hxx, Ixx and Jxx at notes' starts, Hxx inside one) onto other
+// chips' channels: each echo keeps only the effects its channel plays (an N163 echo got the FDS's modulator before
+// CarriesEffect; on a pulse H and I are the sweep), and the vibrato every channel plays comes along
+void TestEchoKeepsItsChipsEffects()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"N163\", \"FDS\"], \"n163_channels\": 4, \"confirm\": true}").IsError);
+	int Fds = -1, Namco = -1;
+	for (size_t c = 0; c < Song.Info.Channels.size(); ++c) {
+		if (Song.Info.Channels[c].Chip == "FDS" && Fds < 0)
+			Fds = static_cast<int>(c);
+		if (Song.Info.Channels[c].Chip == "N163" && Namco < 0)
+			Namco = static_cast<int>(c);
+	}
+	Check(Fds >= 0 && Namco >= 0, "an FDS and an N163 channel", __LINE__);
+	if (Fds < 0 || Namco < 0)
+		return;
+	static const char *const LINE[] = { "C-5", "E-5", "G-5", "E-5" };
+	for (int n = 0; n < 4; ++n)
+		Song.Put(Fds, n * 8, LINE[n], NO_INSTRUMENT, 15);
+	Song.End(Fds, 32, NOTE_RELEASE);
+	static const int EFFECTS[][3] = { { 0, EFF_FDS_MOD_DEPTH, 0x05 }, { 8, EFF_FDS_MOD_SPEED_HI, 0x01 },
+		{ 16, EFF_FDS_MOD_SPEED_LO, 0x80 }, { 20, EFF_FDS_MOD_DEPTH, 0x10 }, { 24, EFF_VIBRATO, 0x42 } };
+	for (const auto &E : EFFECTS) {
+		Song.Rows[static_cast<size_t>(Fds)][static_cast<size_t>(E[0])].Effect[0] = static_cast<unsigned char>(E[1]);
+		Song.Rows[static_cast<size_t>(Fds)][static_cast<size_t>(E[0])].Param[0] = static_cast<unsigned char>(E[2]);
+	}
+	const struct { int Channel; const char *Instrument; } TARGETS[] = { { Namco, "soft flute" }, { 1, "soft lead" } };
+	for (const auto &T : TARGETS) {
+		const ToolResult Result = Run(Song, "add_echo", "{\"channel\": " + std::to_string(Fds + 1) + ", \"to_channel\": " +
+			std::to_string(T.Channel + 1) + ", \"to_bar\": 2, \"delay_beats\": 1, \"instrument\": \"" + T.Instrument + "\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		const std::vector<Cell> &Rows = Song.Rows[static_cast<size_t>(T.Channel)];
+		bool Foreign = false;
+		int Notes = 0;
+		for (size_t r = 0; r < Rows.size(); ++r) {
+			Notes += Rows[r].HasNote() ? 1 : 0;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				const int E = Rows[r].Effect[k];
+				Foreign = Foreign || E == EFF_FDS_MOD_DEPTH || E == EFF_FDS_MOD_SPEED_HI || E == EFF_FDS_MOD_SPEED_LO || E == EFF_SWEEPUP ||
+					E == EFF_SWEEPDOWN || E == EFF_SUNSOFT_ENV_TYPE || E == EFF_SUNSOFT_ENV_HI || E == EFF_SUNSOFT_ENV_LO;
+			}
+		}
+		Check(!Foreign && Notes == 4, T.Instrument, __LINE__);
+		Check(Rows[4].HasNote() && HasEffectAt(Song, T.Channel, 28, EFF_VIBRATO, 0x42), T.Instrument, __LINE__);
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -25886,6 +25935,7 @@ int main()
 	TestShapeTownWords();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
+	TestEchoKeepsItsChipsEffects();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
