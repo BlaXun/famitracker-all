@@ -683,7 +683,7 @@ void TestFdsStudy()
 	const std::string Text = DescribeStudy(St, true);
 	CHECK(Has(Text, "      FDS wave 0 2 4 6 8"));
 	CHECK(Has(Text, "; modulation 0 1 2 3 4 5 6 7 0 1"));
-	CHECK(Has(Text, ", speed 34, depth 5, delay 2\n"));
+	CHECK(Has(Text, ", speed 34, depth 5, delay 2: a growl or shimmer in the sound, not a vibrato"));
 }
 
 // A study keeps an N163 sound's waves and its wave sequence too, so reference_sound can play them on N163 channels (the

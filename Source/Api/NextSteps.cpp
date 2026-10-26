@@ -48,7 +48,7 @@ const staged_t STEP_STAGES[] = {
 	{ "sections", STAGE_FORM }, { "form", STAGE_FORM },
 	{ "second_line", STAGE_DEPTH }, { "variation", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },
 	{ "tips", STAGE_DEPTH }, { "echo", STAGE_DEPTH },
-	{ "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP }, { "listen", STAGE_EXPORT },
+	{ "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP },
 	{ "save", STAGE_EXPORT }, { "export", STAGE_EXPORT },
 };
 
@@ -58,7 +58,7 @@ const staged_t MILESTONE_STAGES[] = {
 	{ "sections", STAGE_FORM }, { "form", STAGE_FORM },
 	{ "second line", STAGE_DEPTH }, { "repeats varied", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },
 	{ "review tips", STAGE_DEPTH }, { "echo", STAGE_DEPTH },
-	{ "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP }, { "listened", STAGE_EXPORT },
+	{ "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP },
 	{ "saved", STAGE_EXPORT }, { "exported", STAGE_EXPORT },
 };
 

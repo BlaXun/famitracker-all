@@ -11047,12 +11047,17 @@ std::string AddVibratoTool(Session &S, const Json &Args)
 				continue;
 			const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
 			const int Last = std::min(N.Row + N.Rows, static_cast<int>(Cells.size())) - 1;
-			bool Moves = pInfo != 0 && nsf::FdsModulatorMotion(pInfo->ModSpeed, pInfo->ModDepth, pInfo->ModTable).Moves;
-			int Comes = Moves && pInfo != 0 ? static_cast<int>(std::ceil(pInfo->ModDelay / std::max(1.0, RowFrames))) : -1;
+			// Where it comes in: the instrument's from its delay, unless the note's own row silences it (H00), else the first
+			// Hxx that brings it in
+			bool Hushed = false;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				Hushed = Hushed || (Cells[N.Row].Effect[k] == EFF_FDS_MOD_DEPTH && (Cells[N.Row].Param[k] & 0x3F) == 0);
+			bool Moves = !Hushed && pInfo != 0 && nsf::FdsModulatorMotion(pInfo->ModSpeed, pInfo->ModDepth, pInfo->ModTable).Moves;
+			int Comes = Moves ? static_cast<int>(std::ceil(pInfo->ModDelay / std::max(1.0, RowFrames))) : -1;
 			for (int r = N.Row; r <= Last; ++r)
 				for (int k = 0; k < EFFECT_COLUMNS; ++k)
 					if (Cells[r].Effect[k] == EFF_FDS_MOD_DEPTH && (Cells[r].Param[k] & 0x3F) != 0) {
-						if (Comes < 0 || r - N.Row < Comes || !Moves)
+						if (Comes < 0 || r - N.Row < Comes)
 							Comes = r - N.Row;
 						Moves = true;
 						Cells[r].Effect[k] = EFF_NONE;
@@ -20765,10 +20770,6 @@ std::string ReplyLine(const std::string &Text, const char *Label)
 	return Text.substr(From, To == std::string::npos ? std::string::npos : To - From);
 }
 
-std::string ListenTool(Session &S, const Json &Args, std::string *pJson = 0);
-void KeepHeard(const std::string &Reply);
-std::string HeardLine(const std::string &Reply);
-
 std::string FinishSongTool(Session &S, const Json &Args, const std::string &FilesUrl)
 {
 	// The kind: as given; else a sound effect or a cue as the track plays, calm when its name says so, the general recipe's
@@ -20841,7 +20842,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 			const std::string Word = Squeezed(Words[i]);
 			if (Word.empty())
 				continue;
-			if (Word == "polish" || Word == "mix" || Word == "faders" || Word == "export" || Word == "listen")
+			if (Word == "polish" || Word == "mix" || Word == "faders" || Word == "export")
 				Skip.insert(Word);
 			else if (Word == "loop" || Word == "seam" || Word == "checkloop" || Word == "fixloop")
 				Skip.insert("loop");
@@ -20999,23 +21000,6 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 					Line += "; at the seam: " + Left;
 				Lines.push_back(Line);
 			}
-		}
-	}
-
-	// listen (from feat-listen): the song as it sounds now, after its mix and seam, what's heard worst said; kept for what_next,
-	// which then has no listen to ask for (a cue or a sound effect isn't listened to)
-	if (Arranged && !Skip.count("listen")) {
-		Session Step(S.Host());
-		try {
-			std::string Heard;
-			Json A = Json::MakeObject();
-			A.Set("format", "json");
-			ListenTool(Step, A, &Heard);
-			KeepHeard(Heard);
-			Lines.push_back("Listen: " + HeardLine(Heard));
-		}
-		catch (const Problem &P) {
-			Lines.push_back("Listen: not done: " + P.Text);
 		}
 	}
 
@@ -22871,69 +22855,6 @@ Json ListenJson(Session &S, const ListenReport &R, const ListenFinding &F, const
 	else if (!Advice.empty())
 		Out.Set("advice", Advice);
 	return Out;
-}
-
-// The listens of whole tracks, by the song's print they heard (SoundPrint, which the JSON carries): what_next takes the one
-// of the song as it is rather than rendering it again (the newest few, while FamiTracker runs; a new connection reads them
-// too, since they're the song's, not the calls')
-std::vector<std::string> &HeardSongs()
-{
-	static std::vector<std::string> Kept;
-	return Kept;
-}
-
-void KeepHeard(const std::string &Reply)
-{
-	std::vector<std::string> &Kept = HeardSongs();
-	Kept.insert(Kept.begin(), Reply);
-	if (Kept.size() > 8)
-		Kept.resize(8);
-}
-
-// The listen of the song as it is (its print), parsed; false for none
-bool HeardSong(Session &S, Json &Out)
-{
-	const std::string Print = SoundPrint(S);
-	const std::vector<std::string> &Kept = HeardSongs();
-	for (size_t i = 0; i < Kept.size(); ++i) {
-		Json Heard;
-		if (ParseJson(Kept[i], Heard) && Heard.IsObject() && Heard.Get("print") != 0 && Heard.Get("print")->IsString() &&
-			Heard.Get("print")->String() == Print && Heard.Get("findings") != 0 && Heard.Get("findings")->IsArray()) {
-			Out = Heard;
-			return true;
-		}
-	}
-	return false;
-}
-
-// finish_song's line on a listen (its JSON): nothing heard, or how many things and the worst of them
-std::string HeardLine(const std::string &Reply)
-{
-	Json Heard;
-	if (!ParseJson(Reply, Heard) || Heard.Get("findings") == 0 || !Heard.Get("findings")->IsArray())
-		return "not heard.";
-	const Json &Findings = *Heard.Get("findings");
-	if (Findings.Size() == 0)
-		return "nothing sounds wrong (held notes in tune, no warble, clicks or drones, a clean mix).";
-	size_t Worst = 0;
-	int Most = 0;
-	for (size_t i = 0; i < Findings.Size(); ++i) {
-		const Json *pSeverity = Findings.At(i).Get("severity");
-		const std::string Severity = pSeverity != 0 && pSeverity->IsString() ? pSeverity->String() : std::string();
-		const int Rank = Severity == "high" ? 3 : Severity == "medium" ? 2 : 1;
-		if (Rank > Most) {
-			Most = Rank;
-			Worst = i;
-		}
-	}
-	const Json &F = Findings.At(Worst);
-	auto TextOf = [&](const char *Name) {
-		const Json *pValue = F.Get(Name);
-		return pValue != 0 && pValue->IsString() ? pValue->String() : std::string();
-	};
-	return Format("heard %s; the worst: %s (%s, %s; %s). listen lists them with their fixes.", Plural(static_cast<int>(Findings.Size()),
-		"thing", "things").c_str(), TextOf("summary").c_str(), TextOf("channel_name").empty() ? "the mix" : TextOf("channel_name").c_str(),
-		TextOf("position").c_str(), TextOf("severity").c_str());
 }
 
 std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
@@ -25257,8 +25178,7 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 // what_next's milestones, in the order it works through them: each done, or left. The echo is depth's last step: it
 // copies the melody as it plays, so it waits for the variations and the review's tips that change the melody's notes
 const char *const NEXT_MILESTONES[] = { "tempo", "key", "shape", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
-	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "listened", "saved",
-	"exported" };
+	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "saved", "exported" };
 
 // A calm lead's way, the night songs' best (KindRecipe's and the style guide's first choice): kind music box on a pulse
 // at 37.5% on the VRC6 (50% on the 2A03's and the MMC5's, which have no 37.5%), blooming in over two frames without a duty
@@ -25336,7 +25256,6 @@ private:
 	void Depth();
 	void Tips();
 	void Echo();
-	void Listen();
 	void Polish();
 	void Mix();
 	Json MixArgs() const;
@@ -25416,7 +25335,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
-		"variation", "break", "intro", "loop", "tips", "echo", "listen", "polish", "mix", "seam", "save", "export" };
+		"variation", "break", "intro", "loop", "tips", "echo", "polish", "mix", "seam", "save", "export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -27006,69 +26925,6 @@ void WhatNext::Echo()
 		(Calm() ? ", as a calm song wants" : "") + "; it comes last of the parts, since it copies the melody's notes as they are now.");
 }
 
-// Listening (listen, from feat-listen): once the parts are written, the song as FamiTracker plays it. finish_song listens
-// at its end, after its polish, mix and seam, so this comes after them: when finish_song is the step, it listens; when it
-// isn't (the song is finished, then changed), a listen is the step once the song has changed since the last one (the listens
-// are kept by the song's print they heard, HeardSongs). What it heard with a fix that a listener notices (severity high) is
-// the next step, the one heard worst first; the rest are notes to hear with the user
-void WhatNext::Listen()
-{
-	if (!m_HasMelody) {
-		m_Unmet.insert("listened");
-		return;
-	}
-	if (!Wanted("listen")) {
-		Milestone("listened", true, "listening (skipped)");
-		return;
-	}
-	Json Heard;
-	if (!HeardSong(S, Heard)) {
-		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The parts are written: listen to the song as FamiTracker plays it, which hears "
-			"what the notes alone can't (a warble, notes out of tune, parts that beat and sound sour, clicks, a sound that holds on, "
-			"a harsh or muddy mix) before the last steps. It renders the track, so it takes a while; it's asked again only when the "
-			"song has changed.");
-		return;
-	}
-	const Json &Findings = *Heard.Get("findings");
-	auto TextOf = [](const Json &Item, const char *Name) {
-		const Json *pValue = Item.Get(Name);
-		return pValue != 0 && pValue->IsString() ? pValue->String() : std::string();
-	};
-	int Noted = 0;
-	for (size_t i = 0; i < Findings.Size(); ++i) {
-		const Json &F = Findings.At(i);
-		std::string Message = TextOf(F, "message");
-		const size_t Cut = Message.find(" Fix: ");
-		if (Cut != std::string::npos)
-			Message.erase(Cut);	// the call follows, in full
-		const Json *pFix = F.Get("fix");
-		if (TextOf(F, "severity") == "high" && pFix != 0 && pFix->IsObject() && pFix->Get("tool") != 0 && pFix->Get("tool")->IsString()) {
-			NextStep N;
-			N.Id = "listen";
-			N.Tool = pFix->Get("tool")->String();
-			if (pFix->Get("arguments") != 0 && pFix->Get("arguments")->IsObject())
-				N.Arguments = *pFix->Get("arguments");
-			N.Severity = "high";
-			const std::string Does = TextOf(*pFix, "does");
-			N.Why = "listen heard: " + TextOf(F, "channel_name") + (TextOf(F, "channel_name").empty() ? "" : ", ") + TextOf(F, "position") +
-				": " + Message + (Does.empty() ? std::string() : " This call " + Does + ".") + " Listen again after it.";
-			if (Fixes(N) && Step(N))
-				return;
-			continue;
-		}
-		if (Noted < 3) {
-			const std::string Advice = TextOf(F, "advice");
-			m_Notes.push_back("listen heard (" + TextOf(F, "severity") + "): " + (TextOf(F, "channel_name").empty() ? std::string("the mix") :
-				TextOf(F, "channel_name")) + ", " + TextOf(F, "position") + ": " + TextOf(F, "summary") + "." + (Advice.empty() ? std::string() :
-				" " + Advice) + " Hear it with the user.");
-			++Noted;
-		}
-	}
-	Milestone("listened", true, Findings.Size() == 0 ? std::string("listened: it sounds right") : "listened (" +
-		Plural(static_cast<int>(Findings.Size()), "thing", "things") + " to hear with the user)");
-}
-
 // The parts the review hears at one volume, which polish's accents shape (8 notes or more; not the triangle, the
 // samples or the chords), by name
 Json WhatNext::FlatParts() const
@@ -27209,8 +27065,6 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		Skip.Push("mix");
 	if (!Wanted("seam"))
 		Skip.Push("loop");
-	if (!Wanted("listen"))
-		Skip.Push("listen");
 	if (!Wanted("export"))
 		Skip.Push("export");
 	if (Skip.Size() > 0)
@@ -27304,8 +27158,6 @@ void WhatNext::Work()
 	}
 	if (Looking() && m_Music)
 		LoopSeam();
-	if (Looking() && m_Music)
-		Listen();	// after finish_song's steps, which listen at their end
 	if (Looking())
 		Finish();
 }
@@ -27478,12 +27330,6 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 			List += (i == 0 ? "" : i + 1 == Last.size() ? " and " : ", ") + Last[i];
 		return "Finish the song: " + List;
 	}
-	// The listen check's: the listen, and a fix of what it heard
-	if (Id == "listen")
-		return Tool == "listen" ? std::string("Listen to the song as it sounds") : Tool == "add_vibrato" ? Where(Text("modulator") == "off" ?
-			"Replace the warble with a gentle vibrato" : "Make the vibrato gentle", true) : Tool == "polish" ? std::string("Nudge the "
-			"notes that click") : Tool == "fix_loop" ? std::string("Smooth the loop's seam") : Tool == "set_mixer" ?
-			std::string("Set the mixer as listening heard it") : std::string("Fix what listening heard");
 	// check_song's fixes
 	if (Id == "vanishing")
 		return Where(Tool == "design_instrument" ? "Make a sound that lasts, for notes that vanish" : "Give notes that vanish a sound that "
@@ -28953,11 +28799,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		false);
 
 	{
-		Json Skips = Prop("array", "Steps to leave out: polish, faders, mix, loop (check_loop and fix_loop), listen or export.");
+		Json Skips = Prop("array", "Steps to leave out: polish, faders, mix, loop (check_loop and fix_loop) or export.");
 		Json SkipItem = Json::MakeObject();
 		SkipItem.Set("type", "string");
 		Json SkipNames = Json::MakeArray();
-		for (const char *Step : { "polish", "faders", "mix", "loop", "listen", "export" })
+		for (const char *Step : { "polish", "faders", "mix", "loop", "export" })
 			SkipNames.Push(Step);
 		SkipItem.Set("enum", SkipNames);
 		Skips.Set("items", SkipItem);
@@ -28965,7 +28811,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"The last steps of a song in one call, as the recipes (and what_next) ask for them for its kind: polish with the "
 			"kind's touches, the mixer's faders back at 0 dB where they do the mix's work (as check_song's faders finding has it), "
 			"mix in the kind's style (calm, lively, or soft for action and the general recipe), check_loop and fix_loop where "
-			"the seam needs it, listen (what it hears worst, said), and export_for_game at the kind's loudness (-22 "
+			"the seam needs it, and export_for_game at the kind's loudness (-22 "
 			"LUFS calm, -20 lively and general, -19 action; a cue -20, a sound effect -18). Without a kind it's calm when the "
 			"track's name says so, else the general recipe's; a cue or a sound effect keeps its notes as written and gets its "
 			"file. The song's changes are one Ctrl+Z; the reply is a line a step, then what to listen for. Run it once the "
@@ -29648,18 +29494,11 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		Session S(m_Host);
 		// On the small set the checks answer short, a local model's context being small, unless asked for the full reply
 		Json Checked = Args;
-		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix" ||
-			Name == "listen"))
+		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix"))
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core);
-		else if (Name == "listen") {
-			// A whole track's listen is kept, by the song's print inside it, so what_next doesn't render it again for nothing
-			std::string Heard;
-			Result.Text = ListenTool(S, Checked, &Heard);
-			if (!RangeGiven(Args) && Arg(Args, "parts") == 0 && Arg(Args, "melody_channel") == 0)
-				KeepHeard(Heard);
-		}
+		else if (Name == "listen") Result.Text = ListenTool(S, Args, 0);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
 		else if (Name == "place_clip") Result.Text = PlaceClipTool(S, Args);
@@ -29893,7 +29732,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain", "listen" };
+		"finish_song", "get_recipe", "explain" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }

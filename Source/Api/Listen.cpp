@@ -98,6 +98,36 @@ double LoudestMeanSquare(const std::vector<float> &X, long long Begin, long long
 	return Most;
 }
 
+// The mean square about its middle, 10 ms at a time (a level held still, as a chip's step, isn't heard)
+double SwingSquare(const std::vector<float> &X, long long Begin, long long End, int Rate)
+{
+	Begin = std::max<long long>(0, Begin);
+	End = std::min(End, static_cast<long long>(X.size()));
+	const long long Block = std::max<long long>(1, Rate / 100);
+	double Sum = 0.0;
+	long long Count = 0;
+	for (long long At = Begin; At + Block <= End; At += Block) {
+		double Mean = 0.0, Square = 0.0;
+		for (long long n = At; n < At + Block; ++n) {
+			Mean += X[static_cast<size_t>(n)];
+			Square += X[static_cast<size_t>(n)] * X[static_cast<size_t>(n)];
+		}
+		Mean /= static_cast<double>(Block);
+		Sum += Square / static_cast<double>(Block) - Mean * Mean;
+		++Count;
+	}
+	return Count > 0 ? Sum / static_cast<double>(Count) : 0.0;
+}
+
+// The loudest Window of [Begin, End) about its middle
+double LoudestSwing(const std::vector<float> &X, long long Begin, long long End, long long Window, int Rate)
+{
+	double Most = 0.0;
+	for (long long At = Begin; At + Window <= End; At += std::max<long long>(1, Window / 2))
+		Most = std::max(Most, SwingSquare(X, At, At + Window, Rate));
+	return Most;
+}
+
 double Percentile(std::vector<double> Values, double Share)
 {
 	if (Values.empty())
@@ -748,16 +778,20 @@ const double TUNE_CENTS = 20.0, TUNE_BAD_CENTS = 35.0, CHIP_CENTS = 6.0;
 // the lead: a chorus, which passes
 const double BEAT_CENTS = 12.0, BEAT_BAD_CENTS = 20.0, BEAT_OVERLAP = 0.25, BEAT_LEVEL_DB = 15.0, BEAT_SLOWEST = 1.0, BEAT_FASTEST = 30.0;
 // A drone: after a note's release or halt, with nothing for DRONE_GAP seconds or more, its part still sounds within
-// DRONE_UNDER_DB of the note a quarter second on, and doesn't fade by DRONE_FADE_DB (a space's ring fades faster)
-const double DRONE_GAP = 0.6, DRONE_UNDER_DB = 18.0, DRONE_FADE_DB = 3.0, DRONE_FLOOR_DB = -60.0;
+// DRONE_UNDER_DB of the note a quarter second on, and doesn't fade by DRONE_FADE_DB (a space's ring fades faster); its
+// level about its own middle, so a step the chip holds (the triangle stops on one) fading through the mixer's filter
+// isn't a sound. A listener notices one that holds within DRONE_LOUD_DB of its note for DRONE_LONG seconds or more
+const double DRONE_GAP = 0.6, DRONE_UNDER_DB = 18.0, DRONE_FADE_DB = 3.0, DRONE_FLOOR_DB = -60.0, DRONE_LOUD_DB = 6.0, DRONE_LONG = 1.5;
 // Hardly heard: a note's loudest 10 ms UNHEARD_DB or more under its part's usual note
 const double UNHEARD_DB = 24.0, UNHEARD_FLOOR_DB = -80.0;
 // Clipping: samples at or past full scale
 const double CLIP_LEVEL = 0.999;
 // A jump: a bar JUMP_DB louder or quieter than the one before, where no section starts (both over JUMP_FLOOR LUFS)
 const double JUMP_DB = 8.0, JUMP_FLOOR = -45.0;
-// Harsh and muddy: a bar's share of power over these, beyond what the soundtrack's own tracks have (see the calibration)
-const double HARSH_DB = -6.0, MUDDY_DB = -3.0;
+// Harsh and muddy: a bar's share of power from 2 kHz up, and from 160 to 500 Hz, over these, two bars or more in a row.
+// Measured on the soundtrack's 67 versions (2586 bars): half its bars have 5% of their power from 2 kHz up and 34% from
+// 160 to 500 Hz; 99 in 100 under 29% (-5.4 dB) and 79% (-1 dB)
+const double HARSH_DB = -5.0, MUDDY_DB = -1.0;
 // Covered: in the melody's own band (from 0.7 to 2.8 times its notes' pitch), the other parts COVER_DB or more over it while
 // the melody holds its own over all
 const double COVER_DB = 3.0;
@@ -913,7 +947,8 @@ void Ears::Wobbles()
 				F.Summary = Text("its pitch warbles %s, %s", Range.c_str(), ListenTimesWords(Rate).c_str());
 			}
 			else {
-				F.Severity = Half >= 100.0 && Loud(static_cast<int>(p)) ? 3 : P.Melody ? 2 : 1;
+				// Under a semitone either way it's a wide vibrato, a sound's character (42's slow FDS flute swings 80 cents)
+				F.Severity = Half >= 120.0 ? (Loud(static_cast<int>(p)) ? 3 : 2) : Half >= 90.0 ? 2 : 1;
 				F.Heard = Start + " swings " + ListenCentsWords(Half) + " up and down (" + Range + "), " + ListenTimesWords(Rate) +
 					": a vibrato that wide sounds out of tune rather than sung (a gentle one swings about a quarter of a semitone).";
 				F.Summary = Text("its vibrato swings %s, too wide", Range.c_str());
@@ -1173,13 +1208,13 @@ void Ears::Drones()
 				Next = std::min(Next, S.Seam);
 			if (Next < 0 || Seconds(Next - N.End, S.Rate) < DRONE_GAP)
 				continue;
-			const double Note = Db(LoudestMeanSquare(P.Samples, std::max(N.Begin, N.End - SamplesOf(0.2, S.Rate)), N.End,
-				SamplesOf(0.02, S.Rate)));
+			const double Note = Db(LoudestSwing(P.Samples, std::max(N.Begin, N.End - SamplesOf(0.2, S.Rate)), N.End,
+				SamplesOf(0.02, S.Rate), S.Rate));
 			if (Note < -100.0)
 				continue;	// it had died away: nothing to hold on
 			const long long Until = std::min(Next, N.End + SamplesOf(2.0, S.Rate));
-			const double Early = Db(MeanSquare(P.Samples, N.End + SamplesOf(0.25, S.Rate), N.End + SamplesOf(0.5, S.Rate)));
-			const double Late = Db(MeanSquare(P.Samples, Until - SamplesOf(0.25, S.Rate), Until));
+			const double Early = Db(SwingSquare(P.Samples, N.End + SamplesOf(0.25, S.Rate), N.End + SamplesOf(0.5, S.Rate), S.Rate));
+			const double Late = Db(SwingSquare(P.Samples, Until - SamplesOf(0.25, S.Rate), Until, S.Rate));
 			const double Fade = P.Rings ? 1.0 : DRONE_FADE_DB;
 			// Louder than the note was is something else (another part's ring, the space)
 			if (Early >= Note - (N.Halted ? 30.0 : DRONE_UNDER_DB) && Late >= Early - Fade && Late >= DRONE_FLOOR_DB && Late <= Note + 1.0) {
@@ -1198,7 +1233,7 @@ void Ears::Drones()
 		F.Set("db_under", std::floor(Under * 10.0 + 0.5) / 10.0);
 		F.Set("seconds", std::floor(Lasting * 10.0 + 0.5) / 10.0);
 		F.Sure = 0.7;
-		F.Severity = Under <= 10.0 && Loud(static_cast<int>(p)) ? 3 : 2;
+		F.Severity = Under <= DRONE_LOUD_DB && Lasting >= DRONE_LONG && Loud(static_cast<int>(p)) ? 3 : Under > 20.0 ? 1 : 2;
 		F.Heard = Text("After %s ends (a release or a halt), its sound holds on, only %s dB softer, for %s s or more where nothing "
 			"is written: a drone the notes don't show.", Notes.size() == 1 ? "a note" : Text("%d notes", static_cast<int>(Notes.size())).c_str(),
 			Plain(Under, 0).c_str(), Plain(Lasting, 1).c_str());
@@ -1352,10 +1387,11 @@ void Ears::Balance()
 				F.Sure = 0.6;
 				F.Severity = 1;
 				const std::string Who = F.Other >= 0 ? S.Parts[static_cast<size_t>(F.Other)].Name : std::string("the mix");
-				F.Heard = Harsh ? Text("These bars are bright and edgy: %s dB of their sound is from 2 kHz up, more than the soundtrack's "
-					"own tracks have; most of it is %s.", Plain(F.Number("share_db"), 1).c_str(), Who.c_str()) :
-					Text("These bars are boomy and thick: %s dB of their sound is from 160 to 500 Hz, more than the soundtrack's own tracks "
-					"have; most of it is %s.", Plain(F.Number("share_db"), 1).c_str(), Who.c_str());
+				const int Share = static_cast<int>(std::floor(100.0 * std::pow(10.0, F.Number("share_db") / 10.0) + 0.5));
+				F.Heard = Harsh ? Text("These bars are bright and edgy: %d%% of their sound's power is from 2 kHz up, where the "
+					"soundtrack's own bars have 5%% on average and hardly ever pass 30%%; most of it is %s.", Share, Who.c_str()) :
+					Text("These bars are boomy and thick: %d%% of their sound's power is from 160 to 500 Hz, where the soundtrack's own "
+					"bars have about a third and hardly ever pass 80%%; most of it is %s.", Share, Who.c_str());
 				F.Summary = Harsh ? "bright and edgy" : "boomy and thick";
 			}
 			i = j + 1;

@@ -61,6 +61,8 @@
 #include "../Wavetables.h"
 #include "../WhatNext.h"
 #include "../NextSteps.h"
+#include "../Listen.h"
+#include "../../Nsf/FdsModulator.h"
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
@@ -179,6 +181,12 @@ public:
 	std::vector<Clip> Clips;
 	std::map<std::string, std::string> Files;	// saved next to the song
 	int RenderLatency;							// samples of silence before the song starts
+	// The listen tests' renders: each note at its pitch as its chip sounds it (ListenNoteTuning: the FDS two octaves under
+	// what's written, the triangle one), moved by its fine pitch (Pxx), its vibrato (4xy, as 0.4.6's table moves the
+	// register) and on the FDS its modulator (the instrument's, Hxx-Jxx over it, from its delay) as a swing as wide and as
+	// fast as the emulator's bends; SoundOffset puts a channel's sound off its notes (as a pitch sequence that ends off)
+	bool ChipPitches = false;
+	std::map<int, double> SoundOffset;	// channel -> cents
 	// What undo brings back: the selected track's rows, sections and key and the mixer before each change;
 	// for a group of changes (BeginGroup) every track as it was before the group, as one step
 	struct Snapshot {
@@ -728,6 +736,11 @@ public:
 		}
 		AddInstrumentInfo(Next, Sound.InstrumentName().c_str(), "FDS", Sound.Releases());
 		InstrumentInfo &I = Info.Instruments.back();
+		I.FdsWave = Sound.Wave;		// and its wave and modulator, as ReadSequences reports them
+		I.ModTable = Sound.Modulation;
+		I.ModSpeed = Sound.ModSpeed;
+		I.ModDepth = Sound.ModDepth;
+		I.ModDelay = Sound.ModDelay;
 		for (size_t s = 0; s < Sound.Sequences.size(); ++s) {
 			const PresetSequence &Seq = Sound.Sequences[s];
 			if (Seq.Items.empty())
@@ -1101,6 +1114,12 @@ public:
 		const long long Total = static_cast<long long>(Seconds * SampleRate) + RenderLatency;
 		std::vector<int> Pitch(Rows.size(), -1), Volume(Rows.size(), 15), Pan(Rows.size(), PAN_CENTER);
 		std::vector<double> Phase(Rows.size(), 0.0), Gain(Rows.size(), 1.0);
+		// ChipPitches: each channel's fine pitch, vibrato, modulator and instrument, and where its note started
+		std::vector<int> Detune(Rows.size(), 0x80), Vibrato(Rows.size(), 0), ModSpeed(Rows.size(), 0), ModDepth(Rows.size(), 0),
+			ModDelay(Rows.size(), 0), Instrument(Rows.size(), -1);
+		std::vector<long long> NoteStart(Rows.size(), 0);
+		std::vector<double> VibratoPhase(Rows.size(), 0.0), ModPhase(Rows.size(), 0.0), BaseHz(Rows.size(), 0.0), VibratoCents(Rows.size(), 0.0);
+		std::vector<nsf::FdsModMotion> Motion(Rows.size());
 		bool Sends = false;	// a channel heard sends to the space
 		for (size_t c = 0; c < Rows.size(); ++c) {
 			const bool Silent = c < Options.Silent.size() && Options.Silent[c];
@@ -1122,6 +1141,44 @@ public:
 				for (int k = 0; k < Info.Channels[c].EffectColumns; ++k)
 					if (C.Effect[k] == EFF_PAN)
 						Pan[c] = C.Param[k];
+				if (!ChipPitches)
+					continue;
+				const ChannelInfo &Ch = Info.Channels[c];
+				if (C.HasNote()) {
+					NoteStart[c] = static_cast<long long>(Samples.size());
+					VibratoPhase[c] = ModPhase[c] = 0.0;
+					if (C.Instrument != NO_INSTRUMENT)
+						Instrument[c] = C.Instrument;
+					// The FDS starts each note with its instrument's modulator
+					for (size_t n = 0; n < Info.Instruments.size(); ++n)
+						if (Info.Instruments[n].Index == Instrument[c] && Ch.Chip == "FDS") {
+							ModSpeed[c] = Info.Instruments[n].ModSpeed;
+							ModDepth[c] = Info.Instruments[n].ModDepth;
+							ModDelay[c] = Info.Instruments[n].ModDelay;
+						}
+				}
+				for (int k = 0; k < Ch.EffectColumns; ++k) {
+					if (C.Effect[k] == EFF_PITCH)
+						Detune[c] = C.Param[k];
+					else if (C.Effect[k] == EFF_VIBRATO)
+						Vibrato[c] = C.Param[k];
+					else if (C.Effect[k] == EFF_FDS_MOD_DEPTH && Ch.Chip == "FDS")
+						ModDepth[c] = C.Param[k] & 0x3F;
+					else if (C.Effect[k] == EFF_FDS_MOD_SPEED_HI && Ch.Chip == "FDS")
+						ModSpeed[c] = (ModSpeed[c] & 0xFF) | ((C.Param[k] & 0x0F) << 8);
+					else if (C.Effect[k] == EFF_FDS_MOD_SPEED_LO && Ch.Chip == "FDS")
+						ModSpeed[c] = (ModSpeed[c] & 0xF00) | C.Param[k];
+				}
+				if (Pitch[c] >= 0) {
+					BaseHz[c] = ListenNoteTuning(Ch.Chip, Ch.Kind, Pitch[c], Detune[c] - 0x80, Ch.ChipChannels, 16, Info.Pal).Hz;
+					VibratoCents[c] = (Vibrato[c] & 15) > 0 ? ListenVibratoCents(Ch.Chip, Ch.Kind, Pitch[c], Vibrato[c] & 15, Ch.ChipChannels,
+						Info.Pal) : 0.0;
+					std::vector<int> Table;
+					for (size_t n = 0; n < Info.Instruments.size(); ++n)
+						if (Info.Instruments[n].Index == Instrument[c])
+							Table = Info.Instruments[n].ModTable;
+					Motion[c] = Ch.Chip == "FDS" ? nsf::FdsModulatorMotion(ModSpeed[c], ModDepth[c], Table) : nsf::FdsModMotion();
+				}
 			}
 			const long long Until = RenderLatency + (i + 1 < Timed.size() ? Timed[i + 1].Tick : EndTick) * SampleRate / Info.FrameRate;
 			while (static_cast<long long>(Samples.size()) < std::min(Until, Total)) {
@@ -1135,9 +1192,31 @@ public:
 						Value = (Noise & 1u ? 0.05 : -0.05) * Volume[c] / 15.0;
 					}
 					else {
-						const double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
+						double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
+						if (ChipPitches && BaseHz[c] > 0.0) {
+							double Cents = SoundOffset.count(static_cast<int>(c)) != 0 ? SoundOffset[static_cast<int>(c)] : 0.0;
+							if (VibratoCents[c] > 0.0) {
+								Cents += VibratoCents[c] * std::sin(2.0 * 3.14159265358979 * VibratoPhase[c]);
+								VibratoPhase[c] += (Vibrato[c] >> 4) * Info.FrameRate / 64.0 / SampleRate;
+							}
+							const nsf::FdsModMotion &M = Motion[c];
+							if (M.Moves && !M.Audio && static_cast<long long>(Samples.size()) - NoteStart[c] >=
+								static_cast<long long>(ModDelay[c]) * SampleRate / Info.FrameRate) {
+								Cents += M.Mean + (M.High - M.Low) / 2.0 * std::sin(2.0 * 3.14159265358979 * ModPhase[c]);
+								ModPhase[c] += M.Rate / SampleRate;
+							}
+							Frequency = BaseHz[c] * std::pow(2.0, Cents / 1200.0);
+						}
 						Phase[c] = std::fmod(Phase[c] + Frequency / SampleRate, 1.0);
 						Value = (Phase[c] < 0.5 ? 0.05 : -0.05) * Volume[c] / 15.0;
+						if (ChipPitches) {
+							// A square of the harmonics under the render's Nyquist: no edges landing a sample early or late, which
+							// a pitch heard cycle by cycle would take for clicks
+							double Sum = 0.0;
+							for (int k = 1; k * Frequency < 0.45 * SampleRate; k += 2)
+								Sum += std::sin(2.0 * 3.14159265358979 * k * Phase[c]) / k;
+							Value = 0.05 * 4.0 / 3.14159265358979 * Sum * Volume[c] / 15.0;
+						}
 					}
 					double GainLeft, GainRight;
 					PanGains(Pan[c], GainLeft, GainRight);
@@ -7744,7 +7823,7 @@ void TestFdsReference()
 		Back.Sounds[0].ModDepth == 5 && Back.Sounds[0].ModDelay == 0);
 	CHECK(Back.Sounds[1].FdsWave.empty() && Back.Sounds[1].FdsMod.empty() && Back.Sounds[2].FdsWave.empty());
 	CHECK_HAS(ReferenceText(R), "\n     FDS wave 63 62 61 60 ");
-	CHECK_HAS(ReferenceText(R), " 2 1 0; modulator speed 34, depth 5, delay 0\n");
+	CHECK_HAS(ReferenceText(R), " 2 1 0; modulator speed 34, depth 5, delay 0: ");	// and what it does, in words
 	CHECK_HAS(ReferenceText(R), "  1. FDS, the lead (90% of its notes, an FDS instrument): ");
 	{
 		// A wave cut short isn't kept
@@ -7781,7 +7860,7 @@ void TestFdsReference()
 	ToolResult Result = Run(Song, "reference_sound", "{\"reference\": \"disk-game-01\", \"channel\": \"FDS\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "Added \"Mirror lead\" (00), an FDS instrument for FDS: sound 1 of disk-game-01 (FDS, the lead");
-	CHECK_HAS(Result.Text, "It plays its own wave and modulator (speed 34, depth 5).");
+	CHECK_HAS(Result.Text, "It plays its own wave and modulator (speed 34, depth 5): its modulator is ");
 	CHECK_HAS(Result.Text, "the FDS sounds two octaves under the note written");
 	CHECK_LACKS(Result.Text, "counted as the FDS counts it");
 	CHECK(Song.MadeFds.count(0) == 1u && Song.Info.Instruments.size() == 1u && Song.Info.Instruments[0].Chip == "FDS");
@@ -19698,10 +19777,6 @@ void TestWhatNextStates()
 		// song had them, which the game's file has already)
 		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"width\": \"wide\"}").IsError);
 		ByHand.Info.Modified = true;
-		// The song changed since finish_song heard it: a listen first (feat-listen), then saving
-		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
-		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
-		CHECK(!Run(ByHand, "listen", "{}").IsError);
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK_EQ(A.Tool, std::string("save_song"));
 		CHECK_HAS(A.Text, "save it before the export");
@@ -23570,9 +23645,8 @@ void TestWhatNextJson()
 	CHECK(!A.Done && !A.Step.AskUser && !A.Step.OwnNotes && A.Step.Calls == 1 && A.DoneCount == 0 && A.Total >= 18);
 	CHECK_EQ(A.Kind, std::string("lively"));
 	CHECK(A.KindNote.empty());
-	CHECK(A.StageCount[STAGE_FRAME] == 3 && A.StageDone[STAGE_FRAME] == 0 && A.StageCount[STAGE_EXPORT] == 3);	// the tempo, the key and
-	// the shape; listened, saved and exported
-	CHECK(NextStageOfStep("listen") == STAGE_EXPORT && NextStageOfMilestone("listened") == STAGE_EXPORT);
+	CHECK(A.StageCount[STAGE_FRAME] == 3 && A.StageDone[STAGE_FRAME] == 0 && A.StageCount[STAGE_EXPORT] == 2);	// the tempo, the key and
+	// the shape; saved and exported
 	CHECK_EQ(std::string(NextStageTitle(STAGE_FRAME)), std::string("The frame"));
 	CHECK(ParseNextStage("mix") == STAGE_MIX && ParseNextStage("") == -1 && NextStageOfStep("vanishing") == -1 &&
 		NextStageOfStep("seam") == STAGE_LOOP && NextStageOfMilestone("chords and bass") == STAGE_PARTS &&
@@ -23701,6 +23775,295 @@ void TestProblemPlay()
 			}
 		CHECK_EQ(Kinds, 7);
 	}
+}
+
+// The listen check (feat-listen): the listen tool hears a song FakeSong renders as its chips sound it (ChipPitches)
+
+// How many of a kind (and case) a listen's JSON has
+int ListenCount(const Json &Out, const char *Kind, const char *What = 0)
+{
+	int Count = 0;
+	const Json *pList = Out.Get("findings");
+	for (size_t i = 0; pList != 0 && i < pList->Size(); ++i) {
+		const Json &F = pList->At(i);
+		if (F.Get("kind") != 0 && F.Get("kind")->String() == Kind && (What == 0 || (F.Get("what") != 0 && F.Get("what")->String() == What)))
+			++Count;
+	}
+	return Count;
+}
+
+const Json *ListenFindingOf(const Json &Out, const char *Kind, const char *What = 0)
+{
+	const Json *pList = Out.Get("findings");
+	for (size_t i = 0; pList != 0 && i < pList->Size(); ++i) {
+		const Json &F = pList->At(i);
+		if (F.Get("kind") != 0 && F.Get("kind")->String() == Kind && (What == 0 || (F.Get("what") != 0 && F.Get("what")->String() == What)))
+			return &F;
+	}
+	return 0;
+}
+
+// A held line on a channel, a note a bar (16 rows, 1.6 s at speed 6), and the same on another an octave or a unison apart
+void PutHeldLine(FakeSong &Song, int Channel, int Instrument, int Transpose = 0)
+{
+	static const int LINE[] = { 48, 52, 55, 52, 50, 53, 57, 55 };	// C-4 E-4 G-4 E-4 D-4 F-4 A-4 G-4
+	for (int b = 0; b < 8; ++b) {
+		Cell &C = Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(b * 16)];
+		C.SetPitch(LINE[b] + Transpose);
+		C.Instrument = static_cast<unsigned char>(Instrument);
+	}
+}
+
+void TestListenTool()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.ChipPitches = true;
+	PutHeldLine(Song, 0, 2);
+	const ToolResult Plain = Run(Song, "listen", "{}");
+	CHECK(!Plain.IsError);
+	CHECK_HAS(Plain.Text, "Listened to bars 1-8");
+	CHECK_HAS(Plain.Text, "the mix and its one part alone");
+	CHECK(Song.Passes == 1);	// the mix and the part in one pass
+	Json Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	CHECK(Out.Get("check") != 0 && Out.Get("check")->String() == "listen");
+	CHECK(Out.Get("counts") != 0 && Out.Get("counts")->Get("wobble") != 0);
+	CHECK(ListenCount(Out, "wobble") == 0 && ListenCount(Out, "tuning") == 0 && ListenCount(Out, "click") == 0 &&
+		ListenCount(Out, "beating") == 0 && ListenCount(Out, "drone") == 0);
+
+	// Too deep a vibrato: 468 swings a C-4 on a pulse about a semitone either way, 5.6 times a second
+	for (int b = 0; b < 8; ++b) {
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Effect[0] = EFF_VIBRATO;
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Param[0] = 0x68;
+	}
+	Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pDeep = ListenFindingOf(Out, "wobble", "vibrato");
+	CHECK(pDeep != 0);
+	if (pDeep != 0) {
+		CHECK(pDeep->Get("fix") != 0 && pDeep->Get("fix")->Get("tool")->String() == "add_vibrato");
+		CHECK_HAS(pDeep->Get("message")->String(), "4");
+		CHECK(IntegerOf(pDeep, "channel") == 1);
+	}
+	ToolSet Tools(Song);
+	CheckFixCalls(Tools, Out, "listen's deep vibrato", __LINE__);
+	// Its fix: a gentle vibrato in its place, which listening passes
+	if (pDeep != 0) {
+		const ToolResult Fixed = Tools.Call("add_vibrato", *pDeep->Get("fix")->Get("arguments"));
+		CHECK(!Fixed.IsError);
+		Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+		CHECK(ListenCount(Out, "wobble") == 0);
+	}
+
+	// Two pulses on one line (held, without vibrato: a vibrato's notes don't beat steadily), the second two steps sharp
+	// (P82): they beat
+	Song = FakeSong();
+	Song.Info.DirectChanges = true;
+	Song.ChipPitches = true;
+	PutHeldLine(Song, 0, 2);
+	PutHeldLine(Song, 1, 2);
+	for (int b = 0; b < 8; ++b) {
+		Song.Rows[1][static_cast<size_t>(b * 16)].Effect[0] = EFF_PITCH;
+		Song.Rows[1][static_cast<size_t>(b * 16)].Param[0] = 0x82;
+	}
+	Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pBeat = ListenFindingOf(Out, "beating");
+	CHECK(pBeat != 0);
+	if (pBeat != 0) {
+		CHECK(IntegerOf(pBeat, "other_channel") == 1 || IntegerOf(pBeat, "channel") == 1);
+		CHECK_HAS(pBeat->Get("message")->String(), "beat");
+		CHECK(pBeat->Get("advice") != 0);	// Pxx, said in words
+	}
+	CHECK(ListenCount(Out, "tuning") == 0);	// written so: in tune with itself
+
+	// A sound off its notes (a pitch sequence that ends 30 cents up): out of tune, said so
+	for (int b = 0; b < 8; ++b)
+		Song.Rows[1][static_cast<size_t>(b * 16)] = Cell();
+	Song.SoundOffset[0] = 30.0;
+	Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pTune = ListenFindingOf(Out, "tuning");
+	CHECK(pTune != 0);
+	if (pTune != 0) {
+		CHECK(IntegerOf(pTune, "channel") == 1);
+		CHECK_HAS(pTune->Get("message")->String(), "sharp");
+	}
+	// The short reply: the counts and the worst three
+	const ToolResult Short = Run(Song, "listen", "{\"format\": \"short\"}");
+	CHECK(!Short.IsError);
+	CHECK_HAS(Short.Text, "Heard");
+	CHECK(Run(Song, "listen", "{\"format\": \"long\"}").IsError);
+	CHECK(Run(Song, "listen", "{\"from_bar\": 3, \"to_bar\": 4}").Text.find("bars 3-4") != std::string::npos);
+	// The parts named, only those
+	CHECK_HAS(Run(Song, "listen", "{\"parts\": [\"Pulse 1\"]}").Text, "its one part alone");
+}
+
+// 38's lead before its fix: the FDS's modulator at speed 34 and depth 5, a table that swings the bias between -16 and 16,
+// brought in by H05 four rows into each note (H00 on its first)
+std::vector<int> SwingingTable()
+{
+	std::vector<int> Table(32, 0);
+	Table[0] = Table[1] = 3;							// +16
+	Table[8] = Table[9] = Table[10] = Table[11] = 5;	// -16
+	Table[24] = Table[25] = 3;							// back to 0
+	return Table;
+}
+
+FdsSound FdsLead(int Speed, int Depth, int Delay)
+{
+	FdsSound F;
+	F.Name = Speed > 20 ? "warble lead" : "slow flute";
+	F.Wave = FdsWaveOfWord("round");
+	F.Modulation = SwingingTable();
+	F.ModSpeed = Speed;
+	F.ModDepth = Depth;
+	F.ModDelay = Delay;
+	PresetSequence Volume;
+	Volume.Type = SEQUENCE_VOLUME;
+	Volume.Items = std::vector<int>(1, 28);
+	Volume.Loop = -1;
+	Volume.Release = -1;
+	Volume.Setting = 0;
+	F.Sequences.push_back(Volume);
+	return F;
+}
+
+void TestListenFdsWarble()
+{
+	// The words, as the emulator bends it
+	const std::vector<int> Table = SwingingTable();
+	const nsf::FdsModMotion Warble = nsf::FdsModulatorMotion(34, 5, Table);
+	CHECK(Warble.Warble && !Warble.Deep && !Warble.Audio);
+	CHECK(Warble.Rate > 14.0 && Warble.Rate < 15.0);
+	CHECK(Warble.Low < -150.0 && Warble.High > 150.0);
+	const std::string Words = nsf::FdsModulatorWords(34, 5, Table, 0, 60);
+	CHECK_HAS(Words, "a warble, not a vibrato");
+	CHECK_HAS(Words, "14.5 times a second");
+	CHECK_HAS(Words, "fluttering echo");
+	// 42's flute: depth 1 at speed 7, waiting 30 frames: three times a second, from 55 cents down to 79 up
+	const nsf::FdsModMotion Slow = nsf::FdsModulatorMotion(7, 1, Table);
+	CHECK(!Slow.Warble && Slow.Rate > 2.9 && Slow.Rate < 3.1);
+	CHECK(std::fabs(Slow.Low + 55.0) < 2.0 && std::fabs(Slow.High - 79.0) < 2.0);
+	const std::string FluteWords = nsf::FdsModulatorWords(7, 1, Table, 30, 60);
+	CHECK(FluteWords.find("warble") == std::string::npos);
+	CHECK_HAS(FluteWords, "3 times a second");
+	CHECK_HAS(FluteWords, "from 30 frames (0.5 s) into each note");
+	CHECK_EQ(nsf::FdsModulatorWords(0, 5, Table, 0, 60), std::string("off (it doesn't move the pitch)"));
+	// A studied FDS sound made again says what its modulator does
+	ReferenceSound Studied;
+	Studied.Chip = "FDS";
+	Studied.FdsWave = FdsWaveOfWord("round");
+	Studied.FdsMod = Table;
+	Studied.ModSpeed = 34;
+	Studied.ModDepth = 5;
+	std::string How;
+	ReferenceFdsSound(Studied, "studied lead", How);
+	CHECK_HAS(How, "its modulator is a warble, not a vibrato");
+
+	FakeSong Song = FdsSong();
+	Song.ChipPitches = true;
+	std::string Error;
+	const int Lead = Song.AddFdsInstrument(FdsLead(34, 5, 0), Error);
+	CHECK(Lead >= 0);
+	static const int LINE[] = { 72, 76, 79, 76, 74, 77, 81, 79 };	// written two octaves up: they sound C-4 to A-4
+	for (int b = 0; b < 8; ++b) {
+		Cell &C = Song.Rows[5][static_cast<size_t>(b * 16)];
+		C.SetPitch(LINE[b]);
+		C.Instrument = static_cast<unsigned char>(Lead);
+		C.Effect[0] = EFF_FDS_MOD_DEPTH;
+		C.Param[0] = 0x00;
+		Song.Rows[5][static_cast<size_t>(b * 16 + 4)].Effect[0] = EFF_FDS_MOD_DEPTH;
+		Song.Rows[5][static_cast<size_t>(b * 16 + 4)].Param[0] = 0x05;
+	}
+
+	// check_song warns from the notes alone, with the call that fixes it
+	ToolSet Tools(Song);
+	const Json Checked = Parse(Tools.Call("check_song", Parse("{\"format\": \"json\"}")).Text);
+	const Json *pWarned = FindingOf(Checked, "warble");
+	CHECK(pWarned != 0);
+	if (pWarned != 0) {
+		CHECK(pWarned->Get("severity")->String() == "high");
+		CHECK(pWarned->Get("fix") != 0 && pWarned->Get("fix")->Get("tool")->String() == "add_vibrato");
+		CHECK(pWarned->Get("fix")->Get("arguments")->Get("modulator")->String() == "off");
+		CHECK(IntegerOf(pWarned, "speed") == 34 && IntegerOf(pWarned, "depth") == 5);
+	}
+	CheckFixCalls(Tools, Checked, "check_song's warble", __LINE__);
+	CHECK_HAS(Tools.Call("check_song", Json::MakeObject()).Text, "warble");
+	// The problems panel reads it as a kind of its own
+	ProblemList Problems;
+	std::string Unread;
+	CHECK(Problems.Read(WriteJson(Checked), Unread));
+	CHECK(Problems.Count(PROBLEM_WARBLE) == 8);
+	CHECK(Problems.Lines(PROBLEM_WARBLE).size() == 1u);
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_WARBLE)), std::string("warble"));
+	CHECK(ProblemSeverity(PROBLEM_WARBLE) == 3);
+
+	// listen hears it: a warble on the FDS, from where H05 brings it in, fixed by the same call
+	Json Heard = Parse(Tools.Call("listen", Parse("{\"format\": \"json\"}")).Text);
+	const Json *pWarble = ListenFindingOf(Heard, "wobble", "warble");
+	CHECK(pWarble != 0);
+	if (pWarble != 0) {
+		CHECK(pWarble->Get("severity")->String() == "high");
+		CHECK_HAS(pWarble->Get("message")->String(), "a warble, not a vibrato");
+		CHECK_HAS(pWarble->Get("message")->String(), "The FDS's modulator does it (speed 34, depth 5, brought in by Hxx/Ixx/Jxx 4 rows");
+		const Json *pFix = pWarble->Get("fix");
+		CHECK(pFix != 0 && pFix->Get("tool")->String() == "add_vibrato" && pFix->Get("arguments")->Get("modulator")->String() == "off");
+		CHECK(pFix != 0 && pFix->Get("arguments")->Get("channel")->String() == "FDS");
+		const Json *pNumbers = pWarble->Get("numbers");
+		CHECK(pNumbers != 0 && pNumbers->Get("rate") != 0 && pNumbers->Get("rate")->Number() > 12.0 && pNumbers->Get("rate")->Number() < 17.0);
+	}
+	CheckFixCalls(Tools, Heard, "listen's warble", __LINE__);
+	CHECK_HAS(Tools.Call("listen", Json::MakeObject()).Text, "Warbles and deep vibratos: FDS (the melody)");
+
+	// The fix: the modulator off where it plays (H00 on each note, its H05 gone) and a gentle vibrato where it came in, its
+	// depth by cents on the FDS
+	if (pWarble != 0) {
+		const ToolResult Fixed = Tools.Call("add_vibrato", *pWarble->Get("fix")->Get("arguments"));
+		CHECK(!Fixed.IsError);
+		CHECK_HAS(Fixed.Text, "the FDS's modulator off on 8 notes (H00)");
+		CHECK_HAS(Fixed.Text, "cents either way");
+		int Vibratos = 0, Brought = 0, Off = 0, Depth = 0;
+		for (int r = 0; r < 128; ++r)
+			for (int k = 0; k < 4; ++k) {
+				const Cell &C = Song.Rows[5][static_cast<size_t>(r)];
+				if (C.Effect[k] == EFF_VIBRATO && (C.Param[k] & 15) > 0) {
+					++Vibratos;
+					Depth = C.Param[k] & 15;
+					CHECK(r % 16 == 4);	// where the modulator came in
+				}
+				if (C.Effect[k] == EFF_FDS_MOD_DEPTH && C.Param[k] > 0)
+					++Brought;
+				if (C.Effect[k] == EFF_FDS_MOD_DEPTH && C.Param[k] == 0 && r % 16 == 0)
+					++Off;
+			}
+		CHECK(Vibratos == 8 && Brought == 0 && Off == 8);
+		CHECK(Depth > 2);	// the FDS's steps are finer than a pulse's: more of them for the same cents
+		const double Cents = ListenVibratoCents("FDS", Song.Info.Channels[5].Kind, 76, Depth, 0, false);
+		CHECK(Cents > 8.0 && Cents < 25.0);
+		// Heard again: no warble, and check_song is quiet
+		Heard = Parse(Tools.Call("listen", Parse("{\"format\": \"json\"}")).Text);
+		CHECK(ListenCount(Heard, "wobble") == 0);
+		CHECK(FindingOf(Parse(Tools.Call("check_song", Parse("{\"format\": \"json\"}")).Text), "warble") == 0);
+		CHECK(Tools.Call("add_vibrato", Parse("{\"channel\": \"Pulse 1\", \"modulator\": \"off\"}")).IsError);	// only the FDS has one
+	}
+
+	// A slow, gentle modulator (42's flute): no warning, no warble heard (at most a wide vibrato, a detail)
+	FakeSong Flute = FdsSong();
+	Flute.ChipPitches = true;
+	const int Soft = Flute.AddFdsInstrument(FdsLead(7, 1, 30), Error);
+	for (int b = 0; b < 8; ++b) {
+		Cell &C = Flute.Rows[5][static_cast<size_t>(b * 16)];
+		C.SetPitch(LINE[b]);
+		C.Instrument = static_cast<unsigned char>(Soft);
+	}
+	CHECK(FindingOf(Parse(Run(Flute, "check_song", "{\"format\": \"json\"}").Text), "warble") == 0);
+	const Json Gentle = Parse(Run(Flute, "listen", "{\"format\": \"json\"}").Text);
+	CHECK(ListenCount(Gentle, "wobble", "warble") == 0);
+	const Json *pWide = ListenFindingOf(Gentle, "wobble");
+	CHECK(pWide == 0 || pWide->Get("severity")->String() == "low");
+	// design_instrument says what its modulator does
+	FakeSong Design = FdsSong();
+	const ToolResult Made = Run(Design, "design_instrument", "{\"name\": \"shiver\", \"chip\": \"FDS\", \"modulation\": \"tremble\"}");
+	CHECK(!Made.IsError);
+	CHECK_HAS(Made.Text, "Its modulator: ");
 }
 
 int main()
@@ -23937,6 +24300,8 @@ int main()
 	TestWhatNextShape();
 	TestWhatNextJson();
 	TestProblemPlay();
+	TestListenTool();
+	TestListenFdsWarble();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

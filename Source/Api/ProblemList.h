@@ -37,24 +37,17 @@ struct Timing;	// Music.h
 // check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
 // holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
 // in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
-// repeats another note for note, a lively stage's short loop. WARBLE: FDS notes whose modulator is fast and deep, from the
-// notes alone. HEARD_*: the listen tool's (Listen.h, from its JSON), each among the kinds heard as badly: a warble heard,
-// clicks and pops, clipping; held notes out of tune, two parts beating, too deep a vibrato, a sound that holds on, the
-// melody covered, notes hardly heard; jumps in loudness, harsh and muddy stretches
+// repeats another note for note, a lively stage's short loop. WARBLE: FDS notes held where a fast, deep modulator comes
+// in, from the notes alone (heard as a short right note and then a fluttering echo)
 enum problem_kind {
-	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD_WARBLE, PROBLEM_HEARD_CLICK, PROBLEM_HEARD_CLIPPING,
-	PROBLEM_RANGE, PROBLEM_HEARD_TUNING, PROBLEM_HEARD_BEATING, PROBLEM_HEARD_VIBRATO, PROBLEM_HEARD_DRONE, PROBLEM_HEARD_COVERED,
-	PROBLEM_HEARD_UNHEARD,
-	PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
+	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
 	PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
-	PROBLEM_HEARD_JUMP, PROBLEM_HEARD_HARSH, PROBLEM_HEARD_MUDDY,
 	PROBLEM_KINDS
 };
 
-const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it ("heard_warble" for listen's)
+const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it
 const char *ProblemKindTitle(int Kind);	// "Notes that vanish", for people
 int ProblemSeverity(int Kind);			// 3: heard worst (notes that vanish, clicks, clashes), 2: out of range, 1: worth a look
-bool ProblemHeard(int Kind);			// one of the listen tool's: heard in its render, not found in the notes
 
 struct ProblemNote {
 	int Channel;		// from 0
@@ -77,9 +70,7 @@ struct ProblemFinding {
 	int FixCalls;				// the calls the fix takes: 1, or more where calls follow it (a model's to make), 0 for none
 	std::string Nudge;			// a click's nudge ("P81, 7 cents sharp"), empty when none stops it
 	int Boundary;				// the period a click's vibrato crosses (256), 0 for other kinds
-	int Severity;				// 3, 2 or 1 as its JSON says it (listen's are each their own), else its kind's
-	std::string Advice;			// what to do where no call fixes it (listen's), empty for none
-	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1), FixCalls(0), Boundary(0), Severity(1) {}
+	ProblemFinding() : Kind(PROBLEM_KEY), Channel(-1), Row(0), Rows(1), FixCalls(0), Boundary(0) {}
 };
 
 // A line of the panel: a finding, or one note of it (notes that vanish get a
@@ -107,11 +98,8 @@ public:
 	ProblemList();
 
 	// From check_song's JSON; false with the reason when it isn't that (and
-	// the list is empty). The listen tool's JSON reads the same way
+	// the list is empty)
 	bool Read(const std::string &Text, std::string &Error);
-	// Another check's findings added to these (the listen tool's to check_song's, as the panel shows both): false with
-	// the reason when it isn't one, the list as it was
-	bool Add(const std::string &Text, std::string &Error);
 	void Clear();
 
 	int Track() const { return m_iTrack; }		// from 0
