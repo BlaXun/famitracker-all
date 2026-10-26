@@ -194,6 +194,9 @@ shows; the songs themselves stay ordinary modules.
   work).
 - "Everything" is FamiTracker as it was, and View > Show everything switches
   between the two.
+- The piano roll's chords with roles and strong notes on the beat (16)
+  start on in "VRC6 game music" and off in "Everything"; each profile
+  remembers its own.
 
 Not done from the plan: hiding the DPCM channel (the pattern editor has no
 way to hide a channel) and choosing the starter instruments.
@@ -647,34 +650,49 @@ each with the user's words:
 - **Effects explained in place** ("absolutely!"): hovering an effect in the
   pattern editor shows what it does with its own numbers ("vibrato: speed
   4, depth 2"), and Hear it plays it.
-- **A What next panel** (yes; done in October 2026, on `next`): View >
-  What next shows the song's one next step in plain words ("Add chords and
-  a bass line (bars 1-8)"), why, and how far the song has come: the
-  recipe's stages (the frame, the parts, the form, depth, polish, the mix,
-  the loop, the export) light up as they're done. **Do it** makes the step,
-  as one Ctrl+Z. For the melody it offers your own tune instead: **Record
-  it** (sing, hum or whistle into the microphone, or into your phone),
-  **Draw it** (the piano roll opens at those bars), or **Grow one** (three
-  versions grown from a hook over the chords; the one you pick plays at
-  once). **Skip** leaves a step out (the panel's menu brings it back), and
-  **Kind** says what the song is for (a calm night, a lively stage, an
+- **A What next panel** (yes; done in October 2026, on `feat-guide-panels`):
+  View > What next shows the song's one next step in plain words ("Add
+  chords and a bass line (bars 1-8)"), why, and how far the song has come:
+  the recipe's stages (the frame, the parts, the form, depth, polish, the
+  mix, the loop, the export) light up as they're done. **Do it** makes the
+  step, as one Ctrl+Z. For the melody it offers your own tune instead:
+  **Record it** (sing, hum or whistle into the microphone, or into your
+  phone), **Draw it** (the piano roll opens at those bars), or **Grow one**
+  (three versions grown from a hook over the chords; the one you pick plays
+  at once). **Skip** leaves a step out (the panel's menu brings it back),
+  and **Kind** says what the song is for (a calm night, a lively stage, an
   action track), so the steps follow that recipe. It asks again a moment
   after each change, not while the song plays or while you type. Docked
   along the bottom, or on the right (right-click it); it comes back when
   FamiTracker starts if it was open.
-- **Hear the problem** (yes; done in October 2026, on `next`): each finding
-  in the problems panel has **Play it**: the bars where it happens, with a
-  bar before and one after, first with its channels alone (both of a
-  clash) and then in the mix (right-click for the one or the other; P in
-  the panel). Where its fix is one click, **Play the fix** makes it, plays
-  the same bars and asks: **Keep**, or **Take back** (as Ctrl+Z). Nothing
-  else changes the song while it asks.
+- **Hear the problem** (yes; done in October 2026, on `feat-guide-panels`):
+  each finding in the problems panel has **Play it**: the bars where it
+  happens, with a bar before and one after, first with its channels alone
+  (both of a clash) and then in the mix (right-click for the one or the
+  other; P in the panel). Where its fix is one click, **Play the fix** makes
+  it, plays the same bars and asks: **Keep**, or **Take back** (as Ctrl+Z).
+  Nothing else changes the song while it asks.
 - **Chords with roles** ("yes ... but that should be a toggle maybe"): the
   piano roll's chord strip colors each chord by what it does (home, away,
   tension, back home) and gives it a feel word, switched on and off from
-  the piano roll.
+  the piano roll. Done (October 2026, on `feat-roll-helpers`): each chord
+  in the strip has its role's color and a mark of its own (home a house,
+  away an arrow, tension a bolt, and color, a chord from outside the key, a
+  diamond), a legend sits at the right of the status line, and pointing at
+  a chord says what it does in the track's key ("tension: leans toward
+  home", "back home: the tension settles", "borrowed from minor:
+  bittersweet", "leads to G: a push on the way"), in every mode the Key
+  menu has. "Show what each chord does", at the end of the Chords and Key
+  menus, switches it.
 - **Strong notes on the beat** (yes): the piano roll lights the notes of
-  the chord sounding under the cursor, the safest notes on a beat.
+  the chord sounding under the cursor, the safest notes on a beat. Done
+  (on `feat-roll-helpers`): the lanes of the chord at the cursor are lit
+  while it sounds, more strongly than the key's and its root the most, and
+  so are its keys on the keyboard; while you place notes (Draw or Paint,
+  or a note dragged) it's the chord where the mouse is. "Light the chord's
+  notes at the cursor", beside the first toggle, switches it. Both start
+  on in the game music profile and off in Everything, and each profile
+  remembers its own.
 - **Song shapes in one click** ("yes!"): a command that lays out a song's
   named sections for its kind (a lively stage, a calm night, a town, a boss,
   a short loop), each with a line on what it's for.

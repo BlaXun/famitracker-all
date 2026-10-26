@@ -1281,6 +1281,9 @@
     <ClCompile Include="Source\Api\ChordHelper.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\ChordRoles.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\StepNotes.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1387,6 +1390,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\ChordHelper.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\ChordRoles.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\StepNotes.h">

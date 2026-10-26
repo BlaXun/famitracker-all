@@ -22852,6 +22852,42 @@ void TestFittedChordsHearLines()
 	CHECK(!Clean.IsError && Contains(Clean.Text, " 0 clashes,"));
 }
 
+// The piano roll's chords with roles (ChordRoles.h): what each chord the parts play does in the track's key, after the
+// chord right before it, and the chord tones under a row that its strong notes light
+void TestHarmonyRoles()
+{
+	FakeSong Song;
+	PutProgression(Song);
+	ToolSet Tools(Song);
+	TrackHarmony H;
+	std::string Error;
+	CHECK(Tools.Harmony(H, Error) && H.Chords.size() == 5u);
+	if (H.Chords.size() == 5u) {
+		CHECK(H.Chords[0].Role == CHORD_ROLE_HOME && H.Chords[0].RoleWords == "home: settled, at rest");
+		CHECK(H.Chords[1].Role == CHORD_ROLE_HOME && H.Chords[1].RoleWords == "near home: at rest, a little sad");
+		CHECK(H.Chords[2].Role == CHORD_ROLE_AWAY && H.Chords[2].RoleWords == "away: open, moving off");
+		CHECK(H.Chords[3].Role == CHORD_ROLE_TENSION && H.Chords[3].RoleWords == "tension: leans toward home");
+		CHECK(H.Chords[4].Role == CHORD_ROLE_HOME && H.Chords[4].RoleWords == "back home: the tension settles");
+		CHECK(H.Chords[1].Bass == 9 && H.Chords[2].Bass == 5);
+		// The strong notes at a row: Am's on row 20 (A the root, C and E its other notes), none after the chords
+		CHECK(ChordIndexAtRow(H.Chords, 20) == 1 && ChordIndexAtRow(H.Chords, 40) == 3 && ChordIndexAtRow(H.Chords, 64) == -1);
+		CHECK(StrongNoteAt(H.Chords[1].PitchClasses, H.Chords[1].Bass, 57) == 2);
+		CHECK(StrongNoteAt(H.Chords[1].PitchClasses, H.Chords[1].Bass, 48) == 1 && StrongNoteAt(H.Chords[1].PitchClasses, 9, 52) == 1);
+		CHECK(StrongNoteAt(H.Chords[1].PitchClasses, H.Chords[1].Bass, 55) == 0);
+	}
+	// The same chords in the key chosen for the track, A minor
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_key", "{\"key\": \"A minor\"}").IsError);
+	CHECK(Tools.Harmony(H, Error) && H.Chosen && H.Chords.size() == 5u);
+	if (H.Chords.size() == 5u) {
+		CHECK(H.Chords[0].RoleWords == "near home: at rest, a little brighter");
+		CHECK(H.Chords[1].Role == CHORD_ROLE_HOME && H.Chords[1].RoleWords == "home: settled, at rest");
+		CHECK(H.Chords[2].RoleWords == "away: warm, wide");
+		CHECK(H.Chords[3].Role == CHORD_ROLE_TENSION && H.Chords[3].RoleWords == "tension: bold, leads back home");
+		CHECK(H.Chords[4].RoleWords == "near home: at rest, a little brighter");
+	}
+}
+
 // what_next's JSON (format json) in one state, against its text reply: the same step and call, the why, the step in
 // plain words, its stage (a fix of check_song's comes before the stages), where it works (the melody's step: its bars
 // and channel, and whether it offers notes to start from), the milestones done and left as the text counts and lists
@@ -23399,6 +23435,7 @@ int main()
 	TestCalmLayersTogether();
 	TestPlucksRowApart();
 	TestFittedChordsHearLines();
+	TestHarmonyRoles();
 	TestWhatNextJson();
 	TestProblemPlay();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);

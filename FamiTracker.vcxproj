@@ -559,6 +559,7 @@
     <ClCompile Include="Source\Api\Arrange.cpp" />
     <ClCompile Include="Source\Api\GrowMelody.cpp" />
     <ClCompile Include="Source\Api\ChordHelper.cpp" />
+    <ClCompile Include="Source\Api\ChordRoles.cpp" />
     <ClCompile Include="Source\Api\StepNotes.cpp" />
     <ClCompile Include="Source\Api\Presets.cpp" />
     <ClCompile Include="Source\Api\SoundIndex.cpp" />
@@ -598,6 +599,7 @@
     <ClInclude Include="Source\Api\Arrange.h" />
     <ClInclude Include="Source\Api\GrowMelody.h" />
     <ClInclude Include="Source\Api\ChordHelper.h" />
+    <ClInclude Include="Source\Api\ChordRoles.h" />
     <ClInclude Include="Source\Api\StepNotes.h" />
     <ClInclude Include="Source\Api\Presets.h" />
     <ClInclude Include="Source\Api\SoundIndex.h" />

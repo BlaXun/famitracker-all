@@ -30,6 +30,7 @@
 #include <vector>
 #include "Json.h"
 #include "Keys.h"
+#include "ChordRoles.h"
 
 namespace ftapi {
 
@@ -43,8 +44,11 @@ struct HeardChord {
 	std::string Name;				// "Am", "G7", "C/E", spelled as the key spells them
 	std::string Degree;				// in the key: "vi", "V7", "bVII"
 	std::vector<int> PitchClasses;	// its notes, the root's first (0 = C)
+	int Bass;						// the bass's pitch class: the root, or another of its notes (C/E)
 	bool InKey;						// all of them the key's
-	HeardChord() : Row(0), Rows(0), InKey(true) {}
+	chord_role_t Role;				// what it does in the key (ChordRoles.h): home, away, tension or color...
+	std::string RoleWords;			// ...in plain words, after the chord right before it: "back home: the tension settles"
+	HeardChord() : Row(0), Rows(0), Bass(0), InKey(true), Role(CHORD_ROLE_HOME) {}
 };
 
 struct TrackHarmony {
