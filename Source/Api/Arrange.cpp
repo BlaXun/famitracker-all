@@ -1180,14 +1180,10 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 	return Line;
 }
 
-// Whether a bass note on [Row, Row + Rows) rubs: a semitone from one of the chord's notes, or a semitone under one even
-// where it's one itself (a ninth under the third, a major seventh under the root: the chords sound over the bass, as broken
-// chords and arpeggios play every note), or a semitone and octaves from a melody note sounding with it for half a beat or
-// its whole length (as check_song hears a clash)
-bool BassRubs(int Pitch, int Row, int Rows, const Chord &C, const BassOptions &O)
+// Whether a bass note on [Row, Row + Rows) rubs a semitone and octaves against another part's note sounding with it for half
+// a beat or its whole length (as check_song hears a clash)
+bool RubsAgainstParts(int Pitch, int Row, int Rows, const BassOptions &O)
 {
-	if (ClashesWithChord(Pitch, C) || C.HasPitchClass(Mod12(Pitch + 1)))
-		return true;
 	const int Least = std::min(std::max(1, Rows), std::max(1, O.RowsPerBeat / 2));
 	for (size_t i = 0; i < O.Above.size(); ++i) {
 		const NoteInfo &M = O.Above[i];
@@ -1196,6 +1192,14 @@ bool BassRubs(int Pitch, int Row, int Rows, const Chord &C, const BassOptions &O
 			return true;
 	}
 	return false;
+}
+
+// Whether a bass note on [Row, Row + Rows) rubs: a semitone from one of the chord's notes, or a semitone under one even
+// where it's one itself (a ninth under the third, a major seventh under the root: the chords sound over the bass, as broken
+// chords and arpeggios play every note), or a semitone and octaves from a melody note sounding with it (RubsAgainstParts)
+bool BassRubs(int Pitch, int Row, int Rows, const Chord &C, const BassOptions &O)
+{
+	return ClashesWithChord(Pitch, C) || C.HasPitchClass(Mod12(Pitch + 1)) || RubsAgainstParts(Pitch, Row, Rows, O);
 }
 
 // A walking line again where a note of it rubs (Bad(beat, pitch)): of the lines from Root whose other notes don't, each the
@@ -1409,6 +1413,40 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 	if (!Out.empty() && O.Volume >= 0)
 		Out.front().Volume = Clamp(O.Volume, 1, 15);
 	return Out;
+}
+
+std::vector<int> BassOffRubs(std::vector<PartNote> &Bass, const std::vector<ChordAt> &Chords, const BassOptions &O)
+{
+	std::vector<int> Moved;
+	const int Low = std::max(0, std::min(O.Low, O.High) - 5), High = std::max(O.Low, O.High) + 5;
+	for (size_t i = 0; i < Bass.size(); ++i) {
+		PartNote &N = Bass[i];
+		const ChordAt *pAt = 0;
+		for (size_t c = 0; c < Chords.size() && pAt == 0; ++c)
+			if (N.Row >= Chords[c].Row && N.Row < Chords[c].Row + Chords[c].Rows)
+				pAt = &Chords[c];
+		if (pAt == 0 || !RubsAgainstParts(N.Pitch, N.Row, N.Rows, O))
+			continue;
+		const Chord &C = pAt->C;
+		std::vector<int> Triad(1, Mod12(C.Root));
+		if (C.Third() >= 0)
+			Triad.push_back(Mod12(C.Root + C.Third()));
+		if (C.Fifth() >= 0)
+			Triad.push_back(Mod12(C.Root + C.Fifth()));
+		int Best = -1;
+		for (int d = 1; d <= 9 && Best < 0; ++d)
+			for (int s = -1; s <= 1 && Best < 0; s += 2) {
+				const int p = N.Pitch + s * d;
+				if (p >= Low && p <= High && std::find(Triad.begin(), Triad.end(), Mod12(p)) != Triad.end() &&
+					!BassRubs(p, N.Row, N.Rows, C, O))
+					Best = p;
+			}
+		if (Best >= 0) {
+			N.Pitch = Best;
+			Moved.push_back(N.Row);
+		}
+	}
+	return Moved;
 }
 
 // Drums

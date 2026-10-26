@@ -95,6 +95,9 @@ public:
 	// Returns true if there are redo objects available
 	bool CanRedo() const;
 
+	// Drop the redo objects (the actions undone last), so they can't be redone
+	void ClearRedo();
+
 public:
 	// Levels of undo in the editor. Higher value requires more memory
 	static const int MAX_LEVELS = 64;

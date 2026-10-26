@@ -3235,6 +3235,12 @@ CAction *CMainFrame::GetUndoAction() const
 	return m_pActionHandler != NULL ? m_pActionHandler->GetLastAction() : NULL;
 }
 
+void CMainFrame::ForgetRedo()
+{
+	if (m_pActionHandler != NULL)
+		m_pActionHandler->ClearRedo();
+}
+
 CAction *CMainFrame::GetLastAction(int Filter) const
 {
 	ASSERT(m_pActionHandler != NULL);
