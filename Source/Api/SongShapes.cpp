@@ -392,6 +392,13 @@ const SongShape &ShapeForKind(const std::string &Kind)
 	return pShape != 0 ? *pShape : SongShapes()[0];
 }
 
+const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackName)
+{
+	const SongShape &Own = ShapeForKind(Kind);
+	const SongShape *pNamed = FindSongShape(TrackName);
+	return pNamed != 0 && pNamed->Loops && pNamed->Kind == Own.Kind ? *pNamed : Own;
+}
+
 std::string PartLine(const std::string &Name, const SongShape *pShape)
 {
 	if (pShape != 0)

@@ -716,6 +716,16 @@ struct CPianoRollWnd::Impl {
 	bool KeysAway;		// the keys left the program's window while the piano roll had them (TakeKeysBack)
 	bool IgnoredClick;	// the last left click only closed a menu...
 	DWORD IgnoredTime;	// ...at this time, so a double-click right after is a click
+	// The last click, when it landed on another channel's note (one of the faint ones): it did what it does on an empty
+	// spot of the bright channel, and a double-click there edits that channel instead, taking back what the click did
+	struct FaintClick {
+		int Channel, Row;			// the note's channel and start (Channel -1: the last click wasn't on one)
+		long long Serial;			// the undo history's count of changes before the click, then after it...
+		const CAction *pAction;		// ...and the change the click made (NULL for none)
+		bool WasModified;			// the song's modified flag before it
+		FaintClick() : Channel(-1), Row(0), Serial(0), pAction(NULL), WasModified(false) {}
+	};
+	FaintClick Faint;
 
 	CBitmap Back;		// the picture is drawn here, then copied to the window
 	CSize BackSize;
@@ -1962,6 +1972,7 @@ struct CPianoRollWnd::Impl {
 		Layout();
 		if (Drag != DRAG_NONE)
 			return;
+		Faint = FaintClick();
 		if (Dirty)
 			Read();
 		const bool Ctrl = (Flags & MK_CONTROL) != 0, Shift = (Flags & MK_SHIFT) != 0;
@@ -2034,13 +2045,24 @@ struct CPianoRollWnd::Impl {
 		}
 		int HitChannel = -1, HitIndex = -1;
 		const bool OnNote = HitNote(Point, HitChannel, HitIndex);
-		if (Ctrl || (Tool == TOOL_SELECT && !OnNote)) {
+		const bool OnOwn = OnNote && HitChannel == Channel;
+		if (OnNote && !OnOwn) {
+			// Another channel's note: the click does what it does on an empty spot, so a click near the bright channel's
+			// notes never picks another part; a double-click picks it (DoubleClick)
+			CMainFrame *pMain = Main();
+			CFamiTrackerDoc *pDoc = Doc();
+			Faint.Channel = HitChannel;
+			Faint.Row = Notes[static_cast<size_t>(HitChannel)][static_cast<size_t>(HitIndex)].Start;
+			Faint.Serial = pMain != NULL ? pMain->GetActionSerial() : 0;
+			Faint.WasModified = pDoc != NULL && pDoc->IsModified();
+		}
+		if (Ctrl || (Tool == TOOL_SELECT && !OnOwn)) {
 			// A box around notes selects them (the Select tool needs no Ctrl)
 			Drag = DRAG_SELECT;
 			Band = CRect(Point, Point);
 			return;
 		}
-		if (OnNote && HitChannel == Channel) {
+		if (OnOwn) {
 			const RollNote Hit = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)];
 			if (OnEnd(Point, Hit)) {
 				BeginEdit(EDIT_RESIZE);
@@ -2067,13 +2089,8 @@ struct CPianoRollWnd::Impl {
 			Preview(Hit.Pitch, Hit.Instrument);
 			return;
 		}
-		if (OnNote && !Shift) {
-			// Another channel's note: that channel is edited from now on
-			GoTo(HitChannel, Notes[static_cast<size_t>(HitChannel)][static_cast<size_t>(HitIndex)].Start);
-			return;
-		}
 
-		// An empty spot: a new note, or a melody painted from here
+		// An empty spot (or another channel's note): a new note, or a melody painted from here
 		Selection.clear();
 		const int Row = RowAt(Point.x);
 		if (Tool == TOOL_PAINT) {
@@ -2278,15 +2295,34 @@ struct CPianoRollWnd::Impl {
 			CancelPatternSelection();
 		EditKind = EDIT_NONE;
 		Previewing = false;
+		// A click on another channel's note: the change it made, which a double-click there takes back (a drag is no click)
+		if (Faint.Channel >= 0) {
+			CMainFrame *pMain = Main();
+			if (DragMoved || pMain == NULL)
+				Faint = FaintClick();
+			else if (pMain->GetActionSerial() == Faint.Serial + 1) {
+				Faint.Serial = pMain->GetActionSerial();
+				Faint.pAction = pMain->GetUndoAction();
+			}
+		}
 	}
 
 	void DoubleClick(CPoint Point, UINT Flags)
 	{
-		// On another channel's note: that channel is edited from now on, even with Shift held. On one of
-		// the bright channel's notes: the Effects menu for it
+		// On another channel's note: that channel is edited from now on, even with Shift held, and what the first click
+		// did there (a note drawn or painted over it, as on an empty spot) is taken back. On one of the bright channel's
+		// notes: the Effects menu for it
 		int HitChannel = -1, HitIndex = -1;
 		Layout();
-		const bool Hit = Drag == DRAG_NONE && PlacingClip < 0 && HitNote(Point, HitChannel, HitIndex);
+		const bool Free = Drag == DRAG_NONE && PlacingClip < 0;
+		if (Free && Faint.Channel >= 0 && Faint.Channel < static_cast<int>(Notes.size())) {
+			const FaintClick Click = Faint;
+			Faint = FaintClick();
+			TakeBack(Click);
+			GoTo(Click.Channel, Click.Row);
+			return;
+		}
+		const bool Hit = Free && HitNote(Point, HitChannel, HitIndex);
 		if (Hit && HitChannel != Channel)
 			GoTo(HitChannel, Notes[static_cast<size_t>(HitChannel)][static_cast<size_t>(HitIndex)].Start);
 		else if (Hit && (Flags & (MK_CONTROL | MK_SHIFT)) == 0 && !OnEnd(Point, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)])) {
@@ -2301,6 +2337,23 @@ struct CPianoRollWnd::Impl {
 		}
 		else
 			MouseDown(Point, Flags, false);
+	}
+
+	// The change a double-click's first click made, taken back while it's still the last one: no trace of it is left,
+	// not even for Ctrl+Y
+	void TakeBack(const FaintClick &Click)
+	{
+		CMainFrame *pMain = Main();
+		CFamiTrackerDoc *pDoc = Doc();
+		if (Click.pAction == NULL || pMain == NULL || pMain->GetActionSerial() != Click.Serial || pMain->GetUndoAction() != Click.pAction)
+			return;
+		pMain->OnEditUndo();
+		pMain->ForgetRedo();
+		if (pDoc != NULL)
+			pDoc->SetModifiedFlag(Click.WasModified ? TRUE : FALSE);
+		Selection.clear();
+		if (Dirty)
+			Read();
 	}
 
 	void Hover(CPoint Point)
@@ -3880,8 +3933,16 @@ struct CPianoRollWnd::Impl {
 		if (HoverChord >= 0 && HoverChord < static_cast<int>(ShownChords().size()))
 			return ChordText(ShownChords()[static_cast<size_t>(HoverChord)]);
 		if (HoverChannel >= 0 && HoverChannel < static_cast<int>(Notes.size()) && HoverNote >= 0 &&
-			HoverNote < static_cast<int>(Visible(HoverChannel).size()))
-			return NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
+			HoverNote < static_cast<int>(Visible(HoverChannel).size())) {
+			const CString Note = NoteText(HoverChannel, Visible(HoverChannel)[static_cast<size_t>(HoverNote)]);
+			if (HoverChannel == Channel)
+				return Note;
+			// Another channel's: what a double-click and a click do there first (PianoRollUi.h)
+			const std::string Hint = FaintNoteHint(Tool == TOOL_PAINT ? ROLL_TOOL_PAINT : Tool == TOOL_SELECT ? ROLL_TOOL_SELECT :
+				ROLL_TOOL_DRAW, std::string(static_cast<LPCTSTR>(RecordingChannelName(pDoc, HoverChannel))),
+				std::string(static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel))));
+			return CString(Hint.c_str()) + _T("   |   ") + Note;
+		}
 		// What the mouse and the keys do now (PianoRollUi.h): in the pattern editor's place the letters type notes, so the
 		// hints name the buttons instead of E and H
 		roll_hint_t Hint;
@@ -4823,6 +4884,7 @@ BOOL CPianoRollWnd::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 
 void CPianoRollWnd::OnLButtonDown(UINT nFlags, CPoint point)
 {
+	m_pImpl->Faint = Impl::FaintClick();	// (MouseDown notes it again when this click lands on another channel's note)
 	// A click that only closed a menu does nothing more here (see ClickClosedMenu)
 	m_pImpl->IgnoredClick = ClickClosedMenu();
 	if (m_pImpl->IgnoredClick) {
@@ -4864,6 +4926,7 @@ void CPianoRollWnd::OnLButtonUp(UINT nFlags, CPoint point)
 
 void CPianoRollWnd::OnRButtonDown(UINT nFlags, CPoint point)
 {
+	m_pImpl->Faint = Impl::FaintClick();
 	if (ClickClosedMenu())
 		return;		// it only closed a menu: nothing is erased
 	SetFocus();

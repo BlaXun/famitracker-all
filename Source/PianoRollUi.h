@@ -80,6 +80,12 @@ struct roll_hint_t {
 
 std::string RollHint(const roll_hint_t &State);
 
+// The status line over another channel's note, one of the faint ones: a click
+// there does what it does on an empty spot of the bright channel (Draw adds a
+// note, Paint paints), so a click near one's own notes never lands on another
+// part; a double-click edits that channel (Faint, the bright one Bright)
+std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string &Bright);
+
 // Strong notes on the beat: the row whose chord's notes the piano roll lights.
 // Where a note is being placed (drawn, painted or moved, starting at
 // PlaceRow), or where the mouse is over the notes while Draw or Paint is

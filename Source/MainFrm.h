@@ -28,6 +28,8 @@
 #include "DialogReBar.h"
 #include "ControlPanelDlg.h"
 #include "CustomControls.h"
+#include "NoteViews.h"
+#include <vector>
 
 enum frame_edit_pos_t { 
 	FRAME_EDIT_POS_TOP, 
@@ -49,6 +51,7 @@ class CWhatNextBar;
 class CMixerBar;
 class CDrumGridBar;
 struct note_views_t;
+struct AFX_SIZEPARENTPARAMS;
 class CAction;
 class CActionGroup;
 class CActionHandler;
@@ -126,6 +129,14 @@ public:
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
 	void	ShowWhatNext(bool Show);		// along the bottom or the right (WhatNextPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
+	// The panels along the bottom, placed by the main window as their WM_SIZEPARENT comes (ArrangeBars): the mixer along
+	// its edge, the problems panel, What next and the drum grid side by side in one row above it, each band as tall as
+	// it was made while the note views keep about a third of the window, else shorter (NoteViews.h's FitPanelBands).
+	// False for a panel that isn't along the bottom and showing (it lays itself out)
+	bool	PlaceBottomPanel(CControlBar *pBar, AFX_SIZEPARENTPARAMS *pLayout);
+	virtual void RecalcLayout(BOOL bNotify = TRUE);		// (which panels are along the bottom, as the layout starts)
+	int		BottomPanelMost(const CControlBar *pBar) const;		// how tall dragging its line may make it
+	void	BottomPanelDragged(const CControlBar *pBar, int Height);	// its line was dragged: its row takes the height
 	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
 	CSoundPreview *GetSoundPreview();	// what plays a sound for the sound browser and Instrument > Listen (SoundPreview.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
@@ -247,6 +258,23 @@ private:  // control bar embedded members
 	CWhatNextBar		*m_pWhatNextBar;		// View > What next, along the bottom or the right; created when first shown
 	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
 	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, along the bottom or the right; created when first shown
+	// The panels along the bottom (PlaceBottomPanel), in ArrangeBars' order, and the layout under way: the bands'
+	// heights as they asked and as they got them, the room under the top bars and the note views' share of it, the
+	// band being placed and its panels' widths
+	struct bottom_panel_t {
+		CControlBar *pBar;
+		int Band;			// 0 the mixer's, along the edge; 1 the row above it
+		int Height;			// the height it was made (dragged to)
+		int Weight;			// its share of its row's width
+	};
+	std::vector<bottom_panel_t> BottomPanels() const;
+	int		BottomPanelLeast(const CControlBar *pBar, int Width) const;	// the least it's usable at, that wide
+	std::vector<bottom_panel_t> m_BottomLayout;		// those of the layout under way, taken as it starts...
+	bool				m_bBottomPlanned;		// ...and whether its first one has worked out the bands' heights
+	std::vector<int>	m_BottomHeights;
+	int					m_iBottomRoom, m_iBottomKeep;
+	CRect				m_rcBottomBand;
+	std::vector<int>	m_BottomWidths;
 	bool				m_bPatternShown;		// View > Pattern editor: the pattern editor shows (else the piano roll fills its place)
 	CActionGroup		*m_pActionGroup;		// the actions of a group being added (BeginActionGroup)
 	int					m_iActionGroupDepth;

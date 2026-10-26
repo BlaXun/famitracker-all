@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include <cstddef>
+#include <vector>
+
 // View > Pattern editor and View > Piano roll: the two views notes are typed
 // and drawn in. One of them always shows, so there's always somewhere to put
 // notes: hiding the one shown alone shows the other. While the pattern
@@ -57,3 +60,35 @@ note_views_t StartingNoteViews(bool Pattern, bool Roll);
 // The piano roll in the pattern editor's place: all the room it leaves, and
 // the note keys
 bool RollFillsPattern(const note_views_t &Views);
+
+// The panels along the bottom of the main window (CMainFrame::PlaceBottomPanel)
+// lie in bands, outermost first: the mixer along the window's edge, then the
+// problems panel, What next and the drum grid side by side in one row. Room,
+// the height between the window's top bars and its status bar, goes first to
+// the note views (the pattern editor, the piano roll) as far as KeepLeast,
+// enough to play in; then to each band as far as the least it's usable at
+// (the row before the mixer: the innermost first); then to the note views as
+// far as Keep, their share of the window; then to each band as far as the
+// height it was made (dragged to). What's left is the note views' too. A band
+// made shorter than its least keeps that height.
+struct panel_band_t {
+	int Wanted;		// the height it was made (dragged to)
+	int Least;		// the least it's usable at
+	panel_band_t(int WantedHeight = 0, int LeastHeight = 0) : Wanted(WantedHeight), Least(LeastHeight) {}
+};
+
+std::vector<int> FitPanelBands(const std::vector<panel_band_t> &Bands, int Room, int Keep, int KeepLeast);
+
+// How tall dragging band Which's line may make it, the bands at Heights (as
+// FitPanelBands gave them): as tall as it is and the room the note views have
+// past Keep
+int PanelBandMost(const std::vector<int> &Heights, std::size_t Which, int Room, int Keep);
+
+// The room the note views keep: about a third of the main window's client
+// height, at least Least (enough of the piano roll's lanes to play in), at
+// most Room
+int NoteViewsKeep(int ClientHeight, int Least, int Room);
+
+// Panels side by side in a row Width wide: their widths, in proportion to
+// Weights, adding up to Width
+std::vector<int> ShareRow(const std::vector<int> &Weights, int Width);

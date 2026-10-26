@@ -486,8 +486,8 @@ Showing the song:
 
 The buttons along the top:
 
-- The channel being edited (also: click a faint note, or move the pattern
-  editor's cursor to another channel).
+- The channel being edited (also: double-click a faint note, or move the
+  pattern editor's cursor to another channel).
 - Draw, Paint melody or Select (keys D, B and S).
 - Grid: what new notes snap to: a row, half a beat, a beat, two beats or a
   bar. Hold Alt for single rows.
@@ -521,8 +521,9 @@ Editing, in the bright channel:
 - Draw: click to add a note a grid step long, or drag to make it longer;
   dragging up and down changes its pitch while drawing. It ends with a
   release (`===`) when its instrument fades out on one, otherwise a halt
-  (`---`). Clicking another channel's note edits that channel instead;
-  hold Shift to draw over it.
+  (`---`). A click on another channel's note (a faint one) draws over it
+  the same way, so a click near your own notes never lands on another part;
+  double-click it to edit that channel instead.
 - Paint melody: drag, and a note goes on every grid step at the pitch under
   the mouse; steps of the same pitch join into a longer note. A way to sketch
   a melody's shape without singing in tune, kept in key when a key is set.
