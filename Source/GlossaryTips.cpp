@@ -582,6 +582,10 @@ bool GlossaryEffectLine(int Track, int Frame, int Row, int Channel, int Column, 
 	if (Said.empty())
 		return false;
 	Line.Format(_T("%c%02X  %s"), EFF_CHAR[Effect - 1], Cell.EffParam[Index], static_cast<LPCTSTR>(CString(Said.c_str())));
+	// An effect the note's instrument overrides (Vxx under a duty sequence) does nothing here, which the line says
+	const CString Overridden = EffectOverriddenBy(pDoc, Track, Frame, Row, Channel, Effect);
+	if (!Overridden.IsEmpty())
+		Line += _T(". It changes nothing here: ") + Overridden;
 	Id = ftapi::EffectGlossaryId(Effect, Info);
 	return true;
 }

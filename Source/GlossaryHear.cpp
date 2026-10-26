@@ -462,6 +462,45 @@ ftapi::ChannelInfo GlossaryChannelInfo(CFamiTrackerDoc *pDoc, int Channel)
 	return Info;
 }
 
+CString EffectOverriddenBy(CFamiTrackerDoc *pDoc, int Track, int Frame, int Row, int Channel, int Effect)
+{
+	if (pDoc == NULL || Effect != EF_DUTY_CYCLE)
+		return CString();
+	int Pitch = -1, Instrument = -1, Volume = -1;
+	NoteAtEffect(pDoc, Track, Frame, Row, Channel, Pitch, Instrument, Volume);
+	if (Instrument < 0 || Instrument >= MAX_INSTRUMENTS || !pDoc->IsInstrumentUsed(static_cast<unsigned int>(Instrument)))
+		return CString();
+	CInstrument *pInstrument = pDoc->GetInstrument(static_cast<unsigned int>(Instrument));	// retained
+	if (pInstrument == NULL)
+		return CString();
+	LPCTSTR Sequence = NULL;
+	switch (pInstrument->GetType()) {
+	case INST_2A03:
+		if (static_cast<CInstrument2A03*>(pInstrument)->GetSeqEnable(SEQ_DUTYCYCLE) != 0)
+			Sequence = pDoc->GetChannelType(Channel) == CHANID_NOISE ? _T("a noise-mode sequence") : _T("a duty sequence");
+		break;
+	case INST_VRC6:
+		if (static_cast<CInstrumentVRC6*>(pInstrument)->GetSeqEnable(SEQ_DUTYCYCLE) != 0)
+			Sequence = _T("a duty sequence");
+		break;
+	case INST_N163:
+		if (static_cast<CInstrumentN163*>(pInstrument)->GetSeqEnable(SEQ_DUTYCYCLE) != 0)
+			Sequence = _T("a wave sequence");
+		break;
+	case INST_S5B:
+		if (static_cast<CInstrumentS5B*>(pInstrument)->GetSeqEnable(SEQ_DUTYCYCLE) != 0)
+			Sequence = _T("a noise and mode sequence");
+		break;
+	default:
+		break;
+	}
+	CString Why;
+	if (Sequence != NULL)
+		Why.Format(_T("its instrument, %s, sets it with %s"), pInstrument->GetName(), Sequence);
+	pInstrument->Release();
+	return Why;
+}
+
 bool PlayGlossaryExample(CMainFrame *pMainFrame, const std::string &Id, CString &Why)
 {
 	ftapi::HearExample Example;
@@ -512,13 +551,18 @@ void HearEffectAtCursor(CMainFrame *pMainFrame)
 		pMainFrame->SetMessageText(CString(Why.c_str()));
 		return;
 	}
+	// An effect the note's instrument overrides is heard on a plain sound, and the line says why it does nothing in the song
+	const CString Overridden = EffectOverriddenBy(pDoc, Track, Frame, Row, Channel, Cell.EffNumber[Index]);
 	CString Error;
-	if (!Player().Play(pMainFrame, Example, Channel, Instrument, Error)) {
+	if (!Player().Play(pMainFrame, Example, Channel, Overridden.IsEmpty() ? Instrument : -1, Error)) {
 		pMainFrame->SetMessageText(Error);
 		return;
 	}
 	CString Text;
-	Text.Format(_T("Hearing on %s: %s"), pDoc->GetChannel(Channel)->GetChannelName(), static_cast<LPCTSTR>(CString(Example.Says.c_str())));
+	Text.Format(_T("Hearing on %s%s: %s"), pDoc->GetChannel(Channel)->GetChannelName(),
+		Overridden.IsEmpty() ? _T("") : _T(" with a plain sound"), static_cast<LPCTSTR>(CString(Example.Says.c_str())));
+	if (!Overridden.IsEmpty())
+		Text += _T(" In the song it changes nothing: ") + Overridden + _T(".");
 	pMainFrame->SetMessageText(Text);
 }
 

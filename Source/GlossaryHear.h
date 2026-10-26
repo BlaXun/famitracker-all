@@ -50,3 +50,8 @@ void CloseGlossaryPlayer();		// the main frame's OnDestroy
 
 // A channel of the song (a column) as the tools describe it: its kind, chip and name, for the effects' words
 ftapi::ChannelInfo GlossaryChannelInfo(CFamiTrackerDoc *pDoc, int Channel);
+
+// Why an effect changes nothing where it's written: the instrument of the note it plays on sets the same thing itself
+// every frame (Vxx under a duty sequence, the N163's wave sequence or the 5B's noise and mode sequence), as "its
+// instrument, Bright lead, sets it with a duty sequence"; "" when the effect is heard
+CString EffectOverriddenBy(CFamiTrackerDoc *pDoc, int Track, int Frame, int Row, int Channel, int Effect);
