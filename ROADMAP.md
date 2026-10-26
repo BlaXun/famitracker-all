@@ -194,6 +194,9 @@ shows; the songs themselves stay ordinary modules.
   work).
 - "Everything" is FamiTracker as it was, and View > Show everything switches
   between the two.
+- The piano roll's chords with roles and strong notes on the beat (16)
+  start on in "VRC6 game music" and off in "Everything"; each profile
+  remembers its own.
 
 Not done from the plan: hiding the DPCM channel (the pattern editor has no
 way to hide a channel) and choosing the starter instruments.
