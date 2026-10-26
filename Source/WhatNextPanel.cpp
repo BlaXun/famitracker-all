@@ -169,7 +169,25 @@ bool UserBusy(DWORD Within)
 	return ::GetLastInputInfo(&Input) && ::GetTickCount() - Input.dwTime < Within;
 }
 
+// The kind chosen for a song's track (CFamiTrackerDoc::GetSongSerial, the track), while FamiTracker runs
+std::map<std::pair<unsigned int, int>, std::string> &ChosenKinds()
+{
+	static std::map<std::pair<unsigned int, int>, std::string> Kinds;
+	return Kinds;
+}
+
 }	// namespace
+
+std::string WhatNextChosenKind()
+{
+	CMainFrame *pMain = static_cast<CMainFrame*>(theApp.m_pMainWnd);
+	CFamiTrackerDoc *pDoc = pMain != NULL ? static_cast<CFamiTrackerDoc*>(pMain->GetActiveDocument()) : NULL;
+	if (pDoc == NULL)
+		return std::string();
+	const std::map<std::pair<unsigned int, int>, std::string>::const_iterator it = ChosenKinds().find(std::pair<unsigned int, int>(
+		pDoc->GetSongSerial(), pMain->GetSelectedTrack()));
+	return it != ChosenKinds().end() ? it->second : std::string();
+}
 
 struct CWhatNextPanelWnd::Impl {
 	// A button of the body
@@ -194,8 +212,7 @@ struct CWhatNextPanelWnd::Impl {
 	unsigned int AskedSong;			// the song (CFamiTrackerDoc::GetSongSerial) and track it was asked for
 	int AskedTrack;
 	DWORD AskTime;					// how long the last ask took (ms)
-	std::map<std::pair<unsigned int, int>, std::string> Kinds;	// a song's track: the kind chosen for it
-	std::map<std::pair<unsigned int, int>, std::vector<std::string> > Skips;	// ...and the steps skipped
+	std::map<std::pair<unsigned int, int>, std::vector<std::string> > Skips;	// a song's track: the steps skipped (its kind: ChosenKinds)
 	CBarsPlayer Player;				// the bars a melody was grown in
 	CString PlayingWhat;
 	bool Doing;						// the panel's own call runs: the changes it makes are what Last says
@@ -262,8 +279,8 @@ struct CWhatNextPanelWnd::Impl {
 
 	std::string ChosenKind() const
 	{
-		const std::map<std::pair<unsigned int, int>, std::string>::const_iterator it = Kinds.find(SongKey());
-		return it != Kinds.end() ? it->second : std::string();
+		const std::map<std::pair<unsigned int, int>, std::string>::const_iterator it = ChosenKinds().find(SongKey());
+		return it != ChosenKinds().end() ? it->second : std::string();
 	}
 
 	std::vector<std::string> Skipped() const
@@ -1050,7 +1067,7 @@ struct CWhatNextPanelWnd::Impl {
 			Screen.y, pWnd));
 		if (Chosen < MENU_KIND || Chosen >= MENU_KIND + KIND_COUNT)
 			return;
-		Kinds[SongKey()] = KIND_IDS[Chosen - MENU_KIND];
+		ChosenKinds()[SongKey()] = KIND_IDS[Chosen - MENU_KIND];
 		Ask(true, true);
 	}
 

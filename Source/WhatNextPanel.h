@@ -36,7 +36,13 @@
 // not while the song plays or while the user types. It's docked along the
 // bottom of the main window, or along its right, in the problems panel's way.
 
+#include <string>
+
 class CMcpConnection;
+
+// The kind of song chosen in the panel for the open song's selected track (calm, lively or action; "" for what_next's own
+// choice), kept while FamiTracker runs: the Ask panel tells the model (ftapi::AssistantFacts::Kind)
+std::string WhatNextChosenKind();
 
 class CWhatNextPanelWnd : public CWnd
 {

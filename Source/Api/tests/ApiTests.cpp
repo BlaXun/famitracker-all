@@ -24865,6 +24865,18 @@ void TestAssistantContext()
 	CHECK_HAS(Text, "The cursor: bar 3, Pulse 1.");
 	CHECK_HAS(Text, "Mode: Ask first");
 	CHECK(!Contains(Text, "exercise"));
+	CHECK(!Contains(Text, "They chose the kind"));
+	// The kind chosen in What next: the model passes it on, in calls that work
+	Facts.Kind = "lively";
+	Facts.Next = Tools.Call("what_next", Parse("{\"kind\": \"lively\"}")).Text;
+	Text = AssistantContext(Facts);
+	CHECK_HAS(Text, "Next (lively, ");
+	CHECK_HAS(Text, "They chose the kind of song in What next: lively. Give what_next, get_recipe and finish_song \"kind\": \"lively\", "
+		"so their steps follow the lively recipe.");
+	for (const char *Tool : { "what_next", "get_recipe", "finish_song" })
+		Check(Tools.UnknownArguments(Tool, Parse("{\"kind\": \"lively\"}")).empty(), Tool, __LINE__);
+	CHECK(!Tools.Call("get_recipe", Parse("{\"kind\": \"lively\"}")).IsError);
+	Facts.Kind.clear();
 	Facts.Exercise = "The home note";
 	Facts.ExerciseStep = "End the tune on its home note.";
 	Facts.ExerciseCheck = "home-note";
@@ -24883,6 +24895,10 @@ void TestAssistantContext()
 	CHECK(Text.size() < 4000 + 1000);
 	CHECK_HAS(Text, "No tools here");
 	CHECK(!Contains(Text, "check_exercise"));
+	Facts.Kind = "calm";
+	Text = AssistantContext(Facts);
+	CHECK_HAS(Text, "They chose the kind of song in What next: calm.");
+	CHECK(!Contains(Text, "finish_song"));
 }
 
 // FamiTracker's tools as the panel runs them, in-process (the panel's, through CMcpConnection::RunTool)

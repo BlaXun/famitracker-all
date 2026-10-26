@@ -319,9 +319,10 @@ or on the right (right-click it). Type a question and press Enter (Shift+Enter
 for a new line). The answer streams in as the model writes it; Stop ends it
 at once, and New question starts over. Each song keeps its own conversation
 while FamiTracker runs. With each question the model is told the song as it
-is: `get_song`'s overview, the step View > What next would take, the
-exercise you're doing (Help > Exercises), and the bar and channel the cursor
-is on.
+is: `get_song`'s overview, the step View > What next would take (for the
+kind of song you chose there, which the model is asked to keep: it gives
+`what_next`, `get_recipe` and `finish_song` that `kind`), the exercise you're
+doing (Help > Exercises), and the bar and channel the cursor is on.
 
 ### Ask first, or let it work
 

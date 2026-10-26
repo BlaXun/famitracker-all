@@ -1715,7 +1715,11 @@ done without it), `Depth` leaves the second line and the repeats varied
 undone while the form grows (`Growing`), and a repeat's line of its own is a
 part playing its bars otherwise than in the original, not `PartsBeside`'s
 voices (a draft's triangle doubling the bass was one in A and A2 alike,
-until check_song's fix took it out).
+until check_song's fix took it out). The kind chosen in What next
+(`ChosenKinds` in `WhatNextPanel.cpp`, read by `WhatNextChosenKind`) goes
+into the Ask panel's context (`AssistantFacts::Kind`): its what_next step is
+asked in that kind, and `AssistantContext` tells the model to give
+what_next, get_recipe and finish_song that `kind` (`TestAssistantContext`).
 
 ## What this repository is
 
