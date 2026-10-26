@@ -30,7 +30,10 @@
 // The built-in tutorials are res/tutorials/*.txt, in FamiTracker.exe as
 // RCDATA; more are read from a Tutorials folder next to it.
 
+#include <string>
+
 class CMainFrame;
+struct tutorial_t;
 
 void ShowTutorials(CMainFrame *pMainFrame);	// the list; the one picked starts
 // Help > Example songs: the example of that menu item opens as a new song
@@ -38,3 +41,15 @@ void ShowTutorials(CMainFrame *pMainFrame);	// the list; the one picked starts
 void OpenExampleSong(CMainFrame *pMainFrame, UINT nID);
 void TutorialCommand(UINT nID);				// CMainFrame::OnCommand: a menu item, button or shortcut was used
 bool TutorialRunning();
+
+// Help > Exercises (ExercisesDlg.cpp): an exercise's note over its song,
+// which has just opened. Its check steps (TutorialScript.h) have Hint, Hear
+// it and Check buttons; Check runs the check_exercise tool and shows what it
+// says, the glossary's words in it linked to their entries and its bars to
+// play, and the exercise is done once its last check passes.
+void StartExerciseNote(CMainFrame *pMainFrame, const tutorial_t &Script, const std::string &Exercise);
+// A built-in text (RCDATA: a tutorial, a walkthrough, an exercise's script); false when there's none
+bool ReadBuiltInText(UINT Id, std::string &Text);
+// A built-in song (RCDATA) opened as a new song, named Title until it's saved (FamiTracker first asks whether to save
+// the song that's open); false when it didn't open
+bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT Song, LPCTSTR Title);

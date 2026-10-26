@@ -1263,6 +1263,9 @@
     <ClCompile Include="Source\Api\SongShapes.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Exercises.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Keys.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1378,6 +1381,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\SongShapes.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Exercises.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Keys.h">
@@ -1595,6 +1601,12 @@
     <ClCompile Include="Source\Tutorial.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\ExercisesDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\ExercisesDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Tutorial.h">
       <Filter>Recorder</Filter>
     </ClInclude>

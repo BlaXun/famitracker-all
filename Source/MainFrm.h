@@ -355,6 +355,8 @@ public:
 	afx_msg void OnUpdateInstrumentListen(CCmdUI *pCmdUI);
 	afx_msg void OnEditDrumGrid();
 	afx_msg void OnHelpTutorials();
+	afx_msg void OnHelpExercises();
+	afx_msg void OnHelpExercise(UINT nID);
 	afx_msg void OnHelpGlossary();
 	afx_msg void OnUpdateHelpGlossary(CCmdUI *pCmdUI);
 	afx_msg void OnHelpHearEffect();

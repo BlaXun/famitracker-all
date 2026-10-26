@@ -36,7 +36,13 @@
 #include "SoundGen.h"
 #include "TrackerChannel.h"
 #include "Clips.h"
+#include "McpConnection.h"
+#include "BarsPlayer.h"
+#include "GlossaryDlg.h"
+#include "ExercisesDlg.h"
 #include "Api/Music.h"
+#include "Api/Exercises.h"
+#include "Api/Json.h"
 #include "Tutorial.h"
 
 namespace {
@@ -69,6 +75,9 @@ const COLORREF BUTTON_FILL = RGB(255, 255, 255);	// (BUTTON_BACK is the Back but
 const COLORREF BUTTON_HOT = RGB(255, 233, 160);
 const COLORREF BUTTON_MAIN = RGB(240, 180, 40);
 const COLORREF BUTTON_BORDER = RGB(200, 170, 110);
+const COLORREF LINK_COLOUR = RGB(20, 90, 200);		// the glossary's words in an exercise's texts
+const COLORREF PASSED_COLOUR = RGB(40, 140, 50);
+const int EXERCISE_WIDTH = 380;						// an exercise's note, wider for what Check says
 
 // The commands a step can wait for or show the toolbar button of (the names
 // are TutorialScript.cpp's)
@@ -88,7 +97,8 @@ const command_id_t COMMAND_IDS[] = {
 	{ "insert-frame", ID_MODULE_INSERTFRAME }, { "duplicate-frame", ID_MODULE_DUPLICATEFRAME },
 	{ "remove-frame", ID_MODULE_REMOVEFRAME }, { "module-properties", ID_MODULE_MODULEPROPERTIES }, { "undo", ID_EDIT_UNDO },
 	{ "redo", ID_EDIT_REDO }, { "profile", ID_VIEW_PROFILE }, { "connect-claude", ID_FILE_CONNECTCLAUDE },
-	{ "pattern-editor", ID_VIEW_PATTERNEDITOR },
+	{ "pattern-editor", ID_VIEW_PATTERNEDITOR }, { "exercises", ID_HELP_EXERCISES }, { "glossary", ID_HELP_GLOSSARY },
+	{ "song-shape", ID_MODULE_SONGSHAPE }, { "what-next", ID_VIEW_WHATNEXT },
 };
 
 UINT CommandId(const std::string &Name)
@@ -242,6 +252,90 @@ CString Paragraphs(const std::string &Text)
 	return Out;
 }
 
+// An exercise's texts, the glossary's words in them linked ("[[home note]]", Api/Exercises.h): laid out in Width as
+// DrawText wraps words, a line between paragraphs, the links in their own colour and underlined. Draws them when Draw,
+// noting where each link went in Links; the height either way
+struct text_link_t {
+	CRect Rect;
+	std::string Id;		// the glossary entry it opens
+};
+
+int LayOutLinked(CDC &dc, const std::string &Marked, int Left, int Top, int Width, CFont *pFont, CFont *pLinkFont,
+	COLORREF Colour, bool Draw, std::vector<text_link_t> *pLinks)
+{
+	std::vector<ftapi::ExerciseLink> Links;
+	const std::string Plain = ftapi::UnmarkLinks(Marked, &Links);
+	std::vector<int> LinkOf(Plain.size(), -1);
+	for (size_t l = 0; l < Links.size(); ++l)
+		for (size_t i = Links[l].First; i < Links[l].First + Links[l].Length && i < Plain.size(); ++i)
+			LinkOf[i] = static_cast<int>(l);
+	CFont *pOld = dc.SelectObject(pFont);
+	const int LineHeight = dc.GetTextExtent(_T("Ag")).cy, Space = dc.GetTextExtent(_T(" ")).cx;
+	int y = Top;
+	size_t Start = 0;
+	while (Start <= Plain.size()) {
+		size_t End = Plain.find('\n', Start);
+		if (End == std::string::npos)
+			End = Plain.size();
+		if (Start > 0)
+			y += LineHeight;	// the line between paragraphs
+		int x = 0;
+		bool Empty = true;		// nothing on the line yet
+		for (size_t i = Start; i < End; ) {
+			if (Plain[i] == ' ') {
+				++i;
+				continue;
+			}
+			size_t WordEnd = i;
+			while (WordEnd < End && Plain[WordEnd] != ' ')
+				++WordEnd;
+			// The word's pieces, each a link's or none
+			struct piece_t { size_t First, Length; int Link, Width; };
+			std::vector<piece_t> Pieces;
+			int WordWidth = 0;
+			for (size_t p = i; p < WordEnd; ) {
+				size_t q = p;
+				while (q < WordEnd && LinkOf[q] == LinkOf[p])
+					++q;
+				piece_t Piece = { p, q - p, LinkOf[p], 0 };
+				dc.SelectObject(Piece.Link >= 0 ? pLinkFont : pFont);
+				Piece.Width = dc.GetTextExtent(CString(Plain.substr(p, q - p).c_str())).cx;
+				WordWidth += Piece.Width;
+				Pieces.push_back(Piece);
+				p = q;
+			}
+			if (!Empty && x + Space + WordWidth > Width) {
+				y += LineHeight;
+				x = 0;
+				Empty = true;
+			}
+			if (!Empty)
+				x += Space;
+			for (size_t k = 0; k < Pieces.size(); ++k) {
+				const piece_t &Piece = Pieces[k];
+				if (Draw) {
+					dc.SelectObject(Piece.Link >= 0 ? pLinkFont : pFont);
+					dc.SetTextColor(Piece.Link >= 0 ? LINK_COLOUR : Colour);
+					dc.TextOut(Left + x, y, CString(Plain.substr(Piece.First, Piece.Length).c_str()));
+					if (Piece.Link >= 0 && pLinks != NULL) {
+						text_link_t Link;
+						Link.Rect = CRect(Left + x, y, Left + x + Piece.Width, y + LineHeight);
+						Link.Id = Links[static_cast<size_t>(Piece.Link)].Id;
+						pLinks->push_back(Link);
+					}
+				}
+				x += Piece.Width;
+			}
+			Empty = false;
+			i = WordEnd;
+		}
+		y += LineHeight;
+		Start = End + 1;
+	}
+	dc.SelectObject(pOld);
+	return y - Top;
+}
+
 // The dimming: the window darker except for a hole where the part is, with a
 // bright frame around it. Layered with per-pixel alpha, and the mouse goes
 // through it.
@@ -357,8 +451,9 @@ void CTutorialOverlay::Hide()
 class CTutorialBubble : public CWnd
 {
 public:
-	// Example: a walkthrough of the example song that's open, which ends when another song comes
-	CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example);
+	// Example: a walkthrough of the example song that's open, which ends when another song comes; Exercise: the
+	// exercise (Help > Exercises) the tutorial is, "" for none
+	CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example, const std::string &Exercise = std::string());
 	bool Create();
 	void Command(UINT nID);
 	void Stop();
@@ -374,13 +469,16 @@ protected:
 	afx_msg void OnLButtonUp(UINT nFlags, CPoint point);
 	afx_msg LRESULT OnMouseLeave(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnExitSizeMove(WPARAM wParam, LPARAM lParam);
+	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
 	afx_msg void OnDestroy();
 	virtual void PostNcDestroy();
 
 	DECLARE_MESSAGE_MAP()
 
 private:
-	enum { BUTTON_BACK, BUTTON_NEXT, BUTTON_CLOSE, BUTTON_PLAY, BUTTONS };	// Play: the step's bars (play)
+	// Play: the step's bars (play). A check step's (an exercise's): Hint, Hear it and Check, and Play it for the bars its
+	// check pointed to
+	enum { BUTTON_BACK, BUTTON_NEXT, BUTTON_CLOSE, BUTTON_PLAY, BUTTON_HINT, BUTTON_HEAR, BUTTON_CHECK, BUTTON_PLAYIT, BUTTONS };
 
 	const tutorial_step_t &Step() const { return m_Tutorial.Steps[static_cast<size_t>(m_iStep)]; }
 	bool LastStep() const { return m_iStep + 1 >= static_cast<int>(m_Tutorial.Steps.size()); }
@@ -405,6 +503,17 @@ private:
 	void EndStepSound();
 	void RestoreMutes();
 	void PlayBars();
+	// Exercises: a check step's buttons and what its check said
+	bool IsExercise() const { return !m_sExercise.empty(); }
+	int BubbleWidth() const { return IsExercise() ? EXERCISE_WIDTH : BUBBLE_WIDTH; }
+	bool IsLastCheck() const;			// the step's check is its exercise's last
+	const ftapi::ExerciseInfo *NextExercise() const;	// the one Next exercise opens, once this one is done
+	std::string FeedbackText() const;
+	void RunCheck();
+	void HearIt();
+	void PlayIt();
+	void StopPlayIt();
+	int LinkAt(const CPoint &Point) const;
 
 	CMainFrame *m_pMainFrame;
 	tutorial_t m_Tutorial;
@@ -435,6 +544,20 @@ private:
 	unsigned int m_iPlayStarts;		// its count of starts when Play was pressed (CSoundGen::GetPlayStarts)
 	DWORD m_dwPlayPressed;
 	bool m_bHeard;					// they played to their end
+
+	// An exercise
+	std::string m_sExercise;		// its id (Api/Exercises.h), "" for a tutorial or a walkthrough
+	CFont m_LinkFont, m_SmallLinkFont;
+	std::vector<text_link_t> m_Links;	// where the links were drawn last
+	int m_iHotLink, m_iPressedLink;
+	bool m_bHintShown;
+	bool m_bChecked;				// the step's check ran: m_Verdict says what it found
+	ftapi::ExerciseVerdict m_Verdict;
+	bool m_bPassed;					// and it passed
+	bool m_bFinished;				// the exercise's last check passed
+	CBarsPlayer m_PlayIt;			// the bars the check pointed to (Play it)
+	CRect m_HintRect, m_FeedbackRect;	// where the hint and what the check said go (empty for none)
+	int m_iWaitTop;					// where the line under them says what the step waits for
 };
 
 namespace {
@@ -454,10 +577,11 @@ BEGIN_MESSAGE_MAP(CTutorialBubble, CWnd)
 	ON_WM_LBUTTONUP()
 	ON_MESSAGE(WM_MOUSELEAVE, OnMouseLeave)
 	ON_MESSAGE(WM_EXITSIZEMOVE, OnExitSizeMove)
+	ON_WM_SETCURSOR()
 	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
-CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example) :
+CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example, const std::string &Exercise) :
 	m_pMainFrame(pMainFrame),
 	m_Tutorial(Tutorial),
 	m_iStep(0),
@@ -479,7 +603,15 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_bPlayStarted(false),
 	m_iPlayStarts(0),
 	m_dwPlayPressed(0),
-	m_bHeard(false)
+	m_bHeard(false),
+	m_sExercise(Exercise),
+	m_iHotLink(-1),
+	m_iPressedLink(-1),
+	m_bHintShown(false),
+	m_bChecked(false),
+	m_bPassed(false),
+	m_bFinished(false),
+	m_iWaitTop(0)
 {
 	const CFamiTrackerDoc *pDoc = Doc();
 	if (pDoc != NULL)
@@ -502,9 +634,14 @@ bool CTutorialBubble::Create()
 	Log.lfWeight = FW_BOLD;
 	m_BoldFont.CreateFontIndirect(&Log);
 	Log.lfWeight = FW_NORMAL;
+	Log.lfUnderline = TRUE;
+	m_LinkFont.CreateFontIndirect(&Log);
+	Log.lfUnderline = FALSE;
 	Log.lfItalic = TRUE;
 	Log.lfHeight = -SY(12);
 	m_SmallFont.CreateFontIndirect(&Log);
+	Log.lfUnderline = TRUE;
+	m_SmallLinkFont.CreateFontIndirect(&Log);
 
 	const CString Class = AfxRegisterWndClass(CS_DROPSHADOW, ::LoadCursor(NULL, IDC_ARROW), NULL, NULL);
 	if (!CreateEx(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, Class, _T("Tutorial"), WS_POPUP, CRect(0, 0, 10, 10), m_pMainFrame, 0))
@@ -518,6 +655,7 @@ bool CTutorialBubble::Create()
 void CTutorialBubble::Stop()
 {
 	EndStepSound();		// the song plays on as the user has it
+	StopPlayIt();
 	KillTimer(TMR_STEP);
 	if (m_Overlay.GetSafeHwnd() != NULL)
 		m_Overlay.DestroyWindow();
@@ -526,6 +664,7 @@ void CTutorialBubble::Stop()
 
 void CTutorialBubble::OnDestroy()
 {
+	StopPlayIt();
 	KillTimer(TMR_STEP);
 	if (m_Overlay.GetSafeHwnd() != NULL)
 		m_Overlay.DestroyWindow();
@@ -585,12 +724,16 @@ void CTutorialBubble::Go(int Index)
 	if (Index < 0)
 		return;
 	if (Index >= static_cast<int>(m_Tutorial.Steps.size())) {
-		m_pMainFrame->SetMessageText(m_bExample ? _T("Walkthrough finished. Help > Example songs has the other examples.") :
-			_T("Tutorial finished. Help > Tutorials has the others."));
+		m_pMainFrame->SetMessageText(IsExercise() ? (m_bFinished ? _T("Exercise done. Help > Exercises has the others.") :
+			_T("Exercise closed. Help > Exercises opens it again.")) : m_bExample ?
+			_T("Walkthrough finished. Help > Example songs has the other examples.") : _T("Tutorial finished. Help > Tutorials has the others."));
 		Stop();
 		return;
 	}
 	EndStepSound();		// the step before: its bars stop, its channels come back
+	StopPlayIt();
+	m_bHintShown = m_bChecked = m_bPassed = false;
+	m_Verdict = ftapi::ExerciseVerdict();
 	m_iStep = Index;
 	m_bMoved = false;
 	m_Commands.clear();
@@ -646,6 +789,8 @@ bool CTutorialBubble::Done() const
 		return Seen(CommandId(Step().Command));
 	case WAIT_HEARD:
 		return m_bHeard;
+	case WAIT_CHECK:
+		return m_bPassed;
 	default:
 		return false;
 	}
@@ -655,7 +800,31 @@ CString CTutorialBubble::ButtonText(int Button) const
 {
 	switch (Button) {
 	case BUTTON_BACK: return _T("Back");
-	case BUTTON_NEXT: return LastStep() ? _T("Finish") : (Step().Wait == WAIT_NEXT ? _T("Next") : _T("Skip"));
+	case BUTTON_NEXT:
+		if (LastStep())
+			return NextExercise() != NULL ? _T("Next exercise") : _T("Finish");
+		return Step().Wait == WAIT_NEXT || (Step().Wait == WAIT_CHECK && m_bPassed) ? _T("Next") : _T("Skip");
+	case BUTTON_HINT: return m_bHintShown ? _T("Hide hint") : _T("Hint");
+	case BUTTON_HEAR: return _T("Hear it");
+	case BUTTON_CHECK: return m_bChecked ? _T("Check again") : _T("Check");
+	case BUTTON_PLAYIT: {
+		// "Play it: bars 3-4, Triangle alone first", or Stop while they play
+		if (m_PlayIt.IsPlaying())
+			return _T("Stop");
+		CString Text;
+		if (m_Verdict.PlayLast > m_Verdict.PlayFirst)
+			Text.Format(_T("Play it: bars %d-%d"), m_Verdict.PlayFirst, m_Verdict.PlayLast);
+		else
+			Text.Format(_T("Play it: bar %d"), m_Verdict.PlayFirst);
+		const CFamiTrackerDoc *pDoc = Doc();
+		std::vector<std::string> Alone;
+		for (size_t i = 0; pDoc != NULL && i < m_Verdict.PlayChannels.size(); ++i)
+			if (m_Verdict.PlayChannels[i] < static_cast<int>(pDoc->GetAvailableChannels()))
+				Alone.push_back(static_cast<LPCSTR>(CStringA(pDoc->GetChannel(m_Verdict.PlayChannels[i])->GetChannelName())));
+		if (!Alone.empty())
+			Text += _T(", ") + ChannelList(Alone) + _T(" alone first");
+		return Text;
+	}
 	case BUTTON_PLAY: {
 		// "Play bars 5-8: Triangle alone", or Stop while they play
 		if (m_bPlaying)
@@ -678,24 +847,141 @@ CString CTutorialBubble::ButtonText(int Button) const
 
 bool CTutorialBubble::HasButton(int Button) const
 {
-	if (Button == BUTTON_BACK)
-		return m_iStep > 0;
-	if (Button == BUTTON_PLAY)
-		return Step().PlayFirst > 0;
-	return true;
+	const bool Checks = Step().Wait == WAIT_CHECK;
+	switch (Button) {
+	case BUTTON_BACK: return m_iStep > 0;
+	case BUTTON_PLAY: return Step().PlayFirst > 0;
+	case BUTTON_HINT: return Checks && !Step().Hint.empty();
+	case BUTTON_HEAR: return Checks && !Step().Answers.empty();
+	case BUTTON_CHECK: return Checks;
+	case BUTTON_PLAYIT: return Checks && m_bChecked && m_Verdict.PlayFirst > 0;
+	default: return true;
+	}
+}
+
+// Exercises
+
+bool CTutorialBubble::IsLastCheck() const
+{
+	const ftapi::ExerciseInfo *pExercise = ftapi::FindExercise(m_sExercise);
+	return pExercise != NULL && !pExercise->Checks.empty() && pExercise->Checks.back() == Step().Check;
+}
+
+const ftapi::ExerciseInfo *CTutorialBubble::NextExercise() const
+{
+	return IsExercise() && m_bFinished ? ftapi::ExerciseAfter(m_sExercise) : NULL;
+}
+
+// What the check said: what's right already, then the one thing to change next, or what it taught once it passed
+std::string CTutorialBubble::FeedbackText() const
+{
+	std::string Text;
+	for (size_t i = 0; i < m_Verdict.Right.size(); ++i)
+		Text += (i == 0 ? "" : " ") + m_Verdict.Right[i];
+	const std::string &Last = m_Verdict.Passed ? m_Verdict.Learned : m_Verdict.Next;
+	if (!Last.empty())
+		Text += (Text.empty() ? "" : "\n") + std::string(m_Verdict.Passed ? "What you learned: " : "Next: ") + Last;
+	return Text;
+}
+
+// Check: the check_exercise tool on the song as it is, and what it said in the note
+void CTutorialBubble::RunCheck()
+{
+	CMcpConnection *pTools = m_pMainFrame->GetMcpConnection();
+	if (pTools == NULL || Step().Check.empty())
+		return;
+	ftapi::Json Args = ftapi::Json::MakeObject();
+	Args.Set("exercise", Step().Check);
+	Args.Set("format", "json");
+	std::string Reply, Error;
+	ftapi::ExerciseVerdict Verdict;
+	BeginWaitCursor();
+	const bool Ran = pTools->RunTool("check_exercise", ftapi::WriteJson(Args), Reply);
+	EndWaitCursor();
+	if (!Ran || !ftapi::ReadExerciseVerdict(Reply, Verdict, Error)) {
+		m_pMainFrame->SetMessageText(CString((Ran ? Error : Reply).c_str()));
+		return;
+	}
+	StopPlayIt();
+	m_Verdict = Verdict;
+	m_bChecked = true;
+	m_bPassed = Verdict.Passed;
+	m_dwDone = m_bPassed ? std::max<DWORD>(1, ::GetTickCount()) : 0;	// the frame green while it holds
+	if (m_bPassed && IsLastCheck()) {
+		m_bFinished = true;
+		SetExerciseState(m_sExercise, EXERCISE_DONE);
+	}
+	m_pMainFrame->SetMessageText(m_bPassed ? (NextExercise() != NULL ? _T("That's it! Next exercise opens the next one.") :
+		_T("That's it!")) : _T("Not yet: the note says what to change next."));
+	Layout();
+	m_LastSpot = CRect(-1, -1, -1, -1);		// placed again at its new size
+	Invalidate(FALSE);
+}
+
+// Hear it: a good answer in the song for a moment, while the step's bars play
+void CTutorialBubble::HearIt()
+{
+	if (m_bPlaying && theApp.IsPlaying())
+		theApp.StopPlayer();
+	m_bPlaying = m_bPlayStarted = false;
+	StopPlayIt();
+	CRect Note;
+	GetWindowRect(&Note);
+	HearGoodAnswer(m_pMainFrame, Step(), Note);		// (the song as it was afterwards: what the check said still holds)
+	Invalidate(FALSE);
+}
+
+// Play it: the bars the check pointed to, the channels it named alone first; Stop while they play
+void CTutorialBubble::PlayIt()
+{
+	if (m_PlayIt.IsPlaying()) {
+		StopPlayIt();
+		return;
+	}
+	m_bPlaying = m_bPlayStarted = false;	// the step's own bars give way (Play it stops what plays)
+	int First = 0, End = 0;
+	if (!BarRows(m_Verdict.PlayFirst, m_Verdict.PlayLast, First, End) ||
+		!m_PlayIt.Play(First, End, m_Verdict.PlayChannels, m_Verdict.PlayChannels.empty() ? CBarsPlayer::MIX : CBarsPlayer::ALONE_THEN_MIX)) {
+		m_pMainFrame->SetMessageText(_T("Those bars can't play now."));
+		return;
+	}
+	Invalidate(FALSE);
+}
+
+void CTutorialBubble::StopPlayIt()
+{
+	if (m_PlayIt.IsPlaying()) {
+		m_PlayIt.Stop();
+		if (GetSafeHwnd() != NULL)
+			Invalidate(FALSE);
+	}
+}
+
+int CTutorialBubble::LinkAt(const CPoint &Point) const
+{
+	for (size_t i = 0; i < m_Links.size(); ++i)
+		if (m_Links[i].Rect.PtInRect(Point))
+			return static_cast<int>(i);
+	return -1;
 }
 
 void CTutorialBubble::Layout()
 {
-	const int Width = SX(BUBBLE_WIDTH);
+	const int Width = SX(BubbleWidth());
 	const int Inner = Width - 2 * SX(MARGIN);
 	CClientDC dc(this);
 	CFont *pOld = dc.SelectObject(&m_BoldFont);
 	const int Header = dc.GetTextExtent(_T("Ag")).cy;
 	dc.SelectObject(&m_Font);
-	CRect Text(0, 0, Inner, 0);
-	dc.DrawText(Paragraphs(Step().Text), &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-	int Height = SY(MARGIN) + Header + SY(LINE_GAP) + Text.Height();
+	int TextHeight = 0;
+	if (IsExercise())
+		TextHeight = LayOutLinked(dc, Step().Text, 0, 0, Inner, &m_Font, &m_LinkFont, TEXT_COLOUR, false, NULL);
+	else {
+		CRect Text(0, 0, Inner, 0);
+		dc.DrawText(Paragraphs(Step().Text), &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+		TextHeight = Text.Height();
+	}
+	int Height = SY(MARGIN) + Header + SY(LINE_GAP) + TextHeight;
 	if (HasButton(BUTTON_PLAY)) {
 		// The step's Play button, the width of the text, under it
 		Height += SY(LINE_GAP);
@@ -704,19 +990,65 @@ void CTutorialBubble::Layout()
 	}
 	else
 		m_Buttons[BUTTON_PLAY].SetRectEmpty();
+
+	// A check step (an exercise's): Hint, Hear it and Check in a row, then the hint, what the check said and Play it
+	m_HintRect.SetRectEmpty();
+	m_FeedbackRect.SetRectEmpty();
+	for (int b = BUTTON_HINT; b <= BUTTON_PLAYIT; ++b)
+		m_Buttons[b].SetRectEmpty();
+	if (Step().Wait == WAIT_CHECK) {
+		Height += SY(LINE_GAP);
+		const int ROW[] = { BUTTON_HINT, BUTTON_HEAR, BUTTON_CHECK };
+		int Count = 0;
+		for (int k = 0; k < 3; ++k)
+			Count += HasButton(ROW[k]) ? 1 : 0;
+		const int Each = (Inner - (Count - 1) * SX(BUTTON_GAP)) / std::max(1, Count);
+		int x = SX(MARGIN);
+		for (int k = 0; k < 3; ++k) {
+			if (!HasButton(ROW[k]))
+				continue;
+			m_Buttons[ROW[k]] = CRect(x, Height, x + Each, Height + SY(BUTTON_HEIGHT));
+			x += Each + SX(BUTTON_GAP);
+		}
+		Height += SY(BUTTON_HEIGHT);
+		if (m_bHintShown && !Step().Hint.empty()) {
+			Height += SY(LINE_GAP);
+			const int Hint = LayOutLinked(dc, Step().Hint, 0, 0, Inner, &m_SmallFont, &m_SmallLinkFont, TEXT_DIM, false, NULL);
+			m_HintRect = CRect(SX(MARGIN), Height, Width - SX(MARGIN), Height + Hint);
+			Height += Hint;
+		}
+		if (m_bChecked) {
+			Height += SY(LINE_GAP);
+			dc.SelectObject(&m_BoldFont);
+			const int Title = dc.GetTextExtent(_T("Ag")).cy + SY(LINE_GAP) / 2;
+			const int Said = LayOutLinked(dc, FeedbackText(), 0, 0, Inner, &m_Font, &m_LinkFont, TEXT_COLOUR, false, NULL);
+			m_FeedbackRect = CRect(SX(MARGIN), Height, Width - SX(MARGIN), Height + Title + Said);
+			Height = m_FeedbackRect.bottom;
+			if (HasButton(BUTTON_PLAYIT)) {
+				Height += SY(LINE_GAP);
+				m_Buttons[BUTTON_PLAYIT] = CRect(SX(MARGIN), Height, Width - SX(MARGIN), Height + SY(BUTTON_HEIGHT));
+				Height += SY(BUTTON_HEIGHT);
+			}
+		}
+	}
+	m_iWaitTop = Height + SY(LINE_GAP);
 	if (Step().Wait != WAIT_NEXT) {
 		dc.SelectObject(&m_SmallFont);
 		Height += SY(LINE_GAP) + dc.GetTextExtent(_T("Ag")).cy;
 	}
+	// Next as wide as its words ("Next exercise")
+	dc.SelectObject(&m_Font);
+	const int ButtonWidth = SX(BUTTON_WIDTH);
+	const int NextWidth = std::max(ButtonWidth, static_cast<int>(dc.GetTextExtent(ButtonText(BUTTON_NEXT)).cx) + SX(16));
 	dc.SelectObject(pOld);
 	Height += SY(LINE_GAP) + SY(BUTTON_HEIGHT) + SY(MARGIN);
 	m_Size = CSize(Width, Height);
 
 	const int Top = Height - SY(MARGIN) - SY(BUTTON_HEIGHT);
-	const int ButtonWidth = SX(BUTTON_WIDTH);
 	m_Buttons[BUTTON_BACK] = CRect(SX(MARGIN), Top, SX(MARGIN) + ButtonWidth, Top + SY(BUTTON_HEIGHT));
 	m_Buttons[BUTTON_CLOSE] = CRect(Width - SX(MARGIN) - ButtonWidth, Top, Width - SX(MARGIN), Top + SY(BUTTON_HEIGHT));
-	m_Buttons[BUTTON_NEXT] = m_Buttons[BUTTON_CLOSE] - CPoint(ButtonWidth + SX(BUTTON_GAP), 0);
+	m_Buttons[BUTTON_NEXT] = CRect(m_Buttons[BUTTON_CLOSE].left - SX(BUTTON_GAP) - NextWidth, Top, m_Buttons[BUTTON_CLOSE].left -
+		SX(BUTTON_GAP), Top + SY(BUTTON_HEIGHT));
 	SetWindowPos(NULL, 0, 0, Width, Height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -844,7 +1176,8 @@ void CTutorialBubble::Tick()
 	if (m_bExample && (pDoc == NULL || pDoc->GetSongSerial() != m_iSong)) {
 		m_SavedMutes.clear();	// they were the example's channels
 		m_bPlaying = false;
-		m_pMainFrame->SetMessageText(_T("The walkthrough ended, since another song is open now. Help > Example songs opens the example again."));
+		m_pMainFrame->SetMessageText(IsExercise() ? _T("The exercise ended, since another song is open now. Help > Exercises opens it again.") :
+			_T("The walkthrough ended, since another song is open now. Help > Example songs opens the example again."));
 		Stop();
 		return;
 	}
@@ -930,8 +1263,15 @@ void CTutorialBubble::Tick()
 		}
 	}
 
-	// Done: the frame turns green for a moment, then the next step
+	// Play it: on to the mix after the channels alone, and over once the bars are
+	if (m_PlayIt.IsPlaying() && m_PlayIt.Tick())
+		Invalidate(FALSE);
+
+	// Done: the frame turns green for a moment, then the next step (a check step stays, so what its check said can
+	// be read: its Next goes on)
 	const DWORD Time = ::GetTickCount();
+	if (Step().Wait == WAIT_CHECK)
+		return;
 	if (m_dwDone != 0) {
 		if (Time - m_dwDone >= DONE_MS)
 			Go(m_iStep + 1);
@@ -986,20 +1326,43 @@ void CTutorialBubble::OnPaint()
 
 	Memory.SelectObject(&m_Font);
 	Memory.SetTextColor(TEXT_COLOUR);
-	CRect Text(SX(MARGIN), y, SX(MARGIN) + Width, y);
-	const CString Body = Paragraphs(Step().Text);
-	Memory.DrawText(Body, &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-	Memory.DrawText(Body, &Text, DT_WORDBREAK | DT_NOPREFIX);
-	y = Text.bottom + SY(LINE_GAP);
-	if (HasButton(BUTTON_PLAY))
-		y = m_Buttons[BUTTON_PLAY].bottom + SY(LINE_GAP);
+	m_Links.clear();
+	if (IsExercise())
+		LayOutLinked(Memory, Step().Text, SX(MARGIN), y, Width, &m_Font, &m_LinkFont, TEXT_COLOUR, true, &m_Links);
+	else {
+		CRect Text(SX(MARGIN), y, SX(MARGIN) + Width, y);
+		const CString Body = Paragraphs(Step().Text);
+		Memory.DrawText(Body, &Text, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+		Memory.DrawText(Body, &Text, DT_WORDBREAK | DT_NOPREFIX);
+	}
+
+	// A check step: the hint, and what the check said
+	if (!m_HintRect.IsRectEmpty())
+		LayOutLinked(Memory, Step().Hint, m_HintRect.left, m_HintRect.top, m_HintRect.Width(), &m_SmallFont, &m_SmallLinkFont, TEXT_DIM,
+			true, &m_Links);
+	if (!m_FeedbackRect.IsRectEmpty()) {
+		Memory.SelectObject(&m_BoldFont);
+		Memory.SetTextColor(m_bPassed ? PASSED_COLOUR : TEXT_COLOUR);
+		const CString Title = m_bPassed ? _T("That's it!") : m_Verdict.Right.empty() ? _T("Not yet") : _T("Good so far");
+		const int TitleHeight = Memory.GetTextExtent(_T("Ag")).cy + SY(LINE_GAP) / 2;
+		Memory.TextOut(m_FeedbackRect.left, m_FeedbackRect.top, Title);
+		LayOutLinked(Memory, FeedbackText(), m_FeedbackRect.left, m_FeedbackRect.top + TitleHeight, m_FeedbackRect.Width(), &m_Font,
+			&m_LinkFont, TEXT_COLOUR, true, &m_Links);
+	}
 
 	if (Step().Wait != WAIT_NEXT) {
 		Memory.SelectObject(&m_SmallFont);
 		Memory.SetTextColor(TEXT_DIM);
-		CRect Note(SX(MARGIN), y, SX(MARGIN) + Width, y + Memory.GetTextExtent(_T("Ag")).cy);
-		Memory.DrawText(Step().Wait == WAIT_HEARD ? _T("Press Play; it goes on by itself once they've played.") :
-			_T("Do it and the tutorial goes on by itself, or press Skip."), &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+		CRect Note(SX(MARGIN), m_iWaitTop, SX(MARGIN) + Width, m_iWaitTop + Memory.GetTextExtent(_T("Ag")).cy);
+		LPCTSTR Says = _T("Do it and the tutorial goes on by itself, or press Skip.");
+		if (Step().Wait == WAIT_HEARD)
+			Says = _T("Press Play; it goes on by itself once they've played.");
+		else if (Step().Wait == WAIT_CHECK && m_bPassed)
+			Says = NextExercise() != NULL && LastStep() ? _T("Next exercise opens the next one.") : LastStep() ?
+				_T("Finish closes the note: the exercise is done.") : _T("Next goes on.");
+		else if (Step().Wait == WAIT_CHECK)
+			Says = m_bChecked ? _T("Change it, then press Check again (or Skip).") : _T("Press Check when you're ready (or Skip).");
+		Memory.DrawText(Says, &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 	}
 
 	// The buttons
@@ -1007,8 +1370,9 @@ void CTutorialBubble::OnPaint()
 	for (int i = 0; i < BUTTONS; ++i) {
 		if (!HasButton(i))
 			continue;
-		const bool Main = (i == BUTTON_NEXT && (Step().Wait == WAIT_NEXT || LastStep())) ||
-			(i == BUTTON_PLAY && Step().Wait == WAIT_HEARD && !m_bPlaying);
+		const bool Checks = Step().Wait == WAIT_CHECK;
+		const bool Main = (i == BUTTON_NEXT && (Checks ? m_bPassed : Step().Wait == WAIT_NEXT || LastStep())) ||
+			(i == BUTTON_PLAY && Step().Wait == WAIT_HEARD && !m_bPlaying) || (i == BUTTON_CHECK && !m_bPassed);
 		COLORREF Back = Main ? BUTTON_MAIN : BUTTON_FILL;
 		if (i == m_iHot)
 			Back = Main ? RGB(250, 200, 70) : BUTTON_HOT;
@@ -1021,14 +1385,14 @@ void CTutorialBubble::OnPaint()
 		Memory.SelectObject(pOldPen);
 		Memory.SetTextColor(TEXT_COLOUR);
 		CRect Label = m_Buttons[i];
-		if (i == BUTTON_PLAY) {
+		if (i == BUTTON_PLAY || i == BUTTON_PLAYIT) {
 			// A play triangle, or a stop square while the bars play, then the label
 			const int Size = SY(8), Left = Label.left + SX(10), Middle = Label.CenterPoint().y;
 			CBrush Mark(TEXT_COLOUR);
 			CPen Edge(PS_SOLID, 1, TEXT_COLOUR);
 			CBrush *pBrush = Memory.SelectObject(&Mark);
 			CPen *pPen = Memory.SelectObject(&Edge);
-			if (m_bPlaying)
+			if (i == BUTTON_PLAY ? m_bPlaying : m_PlayIt.IsPlaying())
 				Memory.Rectangle(Left, Middle - Size / 2, Left + Size, Middle + Size / 2);
 			else {
 				const POINT Triangle[] = { { Left, Middle - Size / 2 }, { Left + Size, Middle }, { Left, Middle + Size / 2 } };
@@ -1067,10 +1431,10 @@ int CTutorialBubble::ButtonAt(const CPoint &Point) const
 
 LRESULT CTutorialBubble::OnNcHitTest(CPoint point)
 {
-	// Anywhere but the buttons drags it
+	// Anywhere but the buttons and the links drags it
 	CPoint Client = point;
 	ScreenToClient(&Client);
-	return ButtonAt(Client) >= 0 ? HTCLIENT : HTCAPTION;
+	return ButtonAt(Client) >= 0 || LinkAt(Client) >= 0 ? HTCLIENT : HTCAPTION;
 }
 
 int CTutorialBubble::OnMouseActivate(CWnd *pDesktopWnd, UINT nHitTest, UINT message)
@@ -1085,6 +1449,7 @@ void CTutorialBubble::OnMouseMove(UINT nFlags, CPoint point)
 		m_iHot = Hot;
 		Invalidate(FALSE);
 	}
+	m_iHotLink = LinkAt(point);	// (OnSetCursor shows a hand over it)
 	if (!m_bTracking) {
 		TRACKMOUSEEVENT Track;
 		memset(&Track, 0, sizeof(Track));
@@ -1098,6 +1463,7 @@ void CTutorialBubble::OnMouseMove(UINT nFlags, CPoint point)
 LRESULT CTutorialBubble::OnMouseLeave(WPARAM wParam, LPARAM lParam)
 {
 	m_bTracking = false;
+	m_iHotLink = -1;
 	if (m_iHot >= 0) {
 		m_iHot = -1;
 		Invalidate(FALSE);
@@ -1108,10 +1474,20 @@ LRESULT CTutorialBubble::OnMouseLeave(WPARAM wParam, LPARAM lParam)
 void CTutorialBubble::OnLButtonDown(UINT nFlags, CPoint point)
 {
 	m_iPressed = ButtonAt(point);
+	m_iPressedLink = LinkAt(point);
 }
 
 void CTutorialBubble::OnLButtonUp(UINT nFlags, CPoint point)
 {
+	// A link: its entry in the glossary, which shows beside the song without taking the keys
+	const int Link = LinkAt(point);
+	if (Link >= 0 && Link == m_iPressedLink) {
+		m_iPressedLink = -1;
+		const std::string Id = m_Links[static_cast<size_t>(Link)].Id;
+		ShowGlossaryAt(m_pMainFrame, Id);
+		return;
+	}
+	m_iPressedLink = -1;
 	const int Button = ButtonAt(point);
 	if (Button < 0 || Button != m_iPressed)
 		return;
@@ -1121,14 +1497,35 @@ void CTutorialBubble::OnLButtonUp(UINT nFlags, CPoint point)
 		Go(m_iStep - 1);
 		break;
 	case BUTTON_NEXT:
+		if (LastStep() && NextExercise() != NULL) {
+			// The next exercise (FamiTracker first asks whether to save this song); this note ends once its song opens
+			m_pMainFrame->PostMessage(WM_COMMAND, ExerciseCommand(NextExercise()->Id));
+			break;
+		}
 		Go(m_iStep + 1);
 		break;
 	case BUTTON_PLAY:
 		PlayBars();
 		break;
+	case BUTTON_HINT:
+		m_bHintShown = !m_bHintShown;
+		Layout();
+		m_LastSpot = CRect(-1, -1, -1, -1);		// placed again at its new size
+		Invalidate(FALSE);
+		break;
+	case BUTTON_HEAR:
+		HearIt();
+		m_LastSpot = CRect(-1, -1, -1, -1);
+		break;
+	case BUTTON_CHECK:
+		RunCheck();
+		break;
+	case BUTTON_PLAYIT:
+		PlayIt();
+		break;
 	default:
-		m_pMainFrame->SetMessageText(m_bExample ? _T("Walkthrough closed. Help > Example songs opens the example again.") :
-			_T("Tutorial closed. Help > Tutorials starts it again."));
+		m_pMainFrame->SetMessageText(IsExercise() ? _T("Exercise closed. Help > Exercises opens it again.") : m_bExample ?
+			_T("Walkthrough closed. Help > Example songs opens the example again.") : _T("Tutorial closed. Help > Tutorials starts it again."));
 		Stop();
 		break;
 	}
@@ -1138,6 +1535,15 @@ LRESULT CTutorialBubble::OnExitSizeMove(WPARAM wParam, LPARAM lParam)
 {
 	m_bMoved = true;		// dragged aside
 	return 0;
+}
+
+BOOL CTutorialBubble::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
+{
+	if (nHitTest == HTCLIENT && m_iHotLink >= 0) {
+		::SetCursor(::LoadCursor(NULL, IDC_HAND));
+		return TRUE;
+	}
+	return CWnd::OnSetCursor(pWnd, nHitTest, message);
 }
 
 // Walkthroughs of the example songs: bars, the cursor, channels alone
@@ -1276,6 +1682,7 @@ void CTutorialBubble::PlayBars()
 		Invalidate(FALSE);
 		return;
 	}
+	StopPlayIt();
 	int First = 0, End = 0;
 	if (!BarRows(Step().PlayFirst, Step().PlayLast, First, End)) {
 		m_pMainFrame->SetMessageText(_T("The song is shorter than that now."));
@@ -1364,11 +1771,11 @@ void CTutorialsDlg::OnOK()
 
 namespace {
 
-void StartTutorial(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example)
+void StartTutorial(CMainFrame *pMainFrame, const tutorial_t &Tutorial, bool Example, const std::string &Exercise = std::string())
 {
 	if (g_pTutorial != NULL)
 		g_pTutorial->Stop();
-	CTutorialBubble *pBubble = new CTutorialBubble(pMainFrame, Tutorial, Example);
+	CTutorialBubble *pBubble = new CTutorialBubble(pMainFrame, Tutorial, Example, Exercise);
 	g_pTutorial = pBubble;
 	if (!pBubble->Create()) {
 		g_pTutorial = NULL;
@@ -1389,26 +1796,25 @@ void ShowTutorials(CMainFrame *pMainFrame)
 	StartTutorial(pMainFrame, List[static_cast<size_t>(Dialog.Chosen())].Tutorial, false);
 }
 
-void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
+bool ReadBuiltInText(UINT Id, std::string &Text)
 {
-	const example_song_t *pExample = NULL;
-	for (size_t i = 0; i < sizeof(EXAMPLES) / sizeof(EXAMPLES[0]); ++i)
-		if (EXAMPLES[i].Command == nID)
-			pExample = &EXAMPLES[i];
-	std::string Walk, Song, Error;
-	tutorial_t Tutorial;
-	if (pExample == NULL || !BuiltInText(pExample->Walkthrough, Walk) || !ParseTutorial(Walk, Tutorial, Error) ||
-		!BuiltInText(pExample->Song, Song)) {
+	return BuiltInText(Id, Text);
+}
+
+bool OpenBuiltInSong(CMainFrame *pMainFrame, UINT SongId, LPCTSTR Title)
+{
+	std::string Song;
+	if (!BuiltInText(SongId, Song)) {
 		ASSERT(FALSE);
-		return;
+		return false;
 	}
 
 	// The song is opened from a file of its own, as any song is, and becomes a
 	// new one without a file: Save asks for a name, and the example stays
 	TCHAR Folder[MAX_PATH], Path[MAX_PATH];
 	if (::GetTempPath(MAX_PATH, Folder) == 0 || ::GetTempFileName(Folder, _T("ftx"), 0, Path) == 0) {
-		AfxMessageBox(_T("The example can't be opened: there's no room for it in the folder for temporary files."), MB_ICONEXCLAMATION);
-		return;
+		AfxMessageBox(_T("The song can't be opened: there's no room for it in the folder for temporary files."), MB_ICONEXCLAMATION);
+		return false;
 	}
 	bool Written = false;
 	try {
@@ -1422,8 +1828,8 @@ void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
 	}
 	if (!Written) {
 		::DeleteFile(Path);
-		AfxMessageBox(_T("The example can't be opened: it can't be written to the folder for temporary files."), MB_ICONEXCLAMATION);
-		return;
+		AfxMessageBox(_T("The song can't be opened: it can't be written to the folder for temporary files."), MB_ICONEXCLAMATION);
+		return false;
 	}
 	// Asks first whether to save the song that's open (a tutorial running goes on if the user keeps it), and not
 	// into the recent files
@@ -1431,9 +1837,30 @@ void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
 	::DeleteFile(Path);
 	CFamiTrackerDoc *pDoc = static_cast<CFamiTrackerDoc*>(pOpened);
 	if (pDoc == NULL)
-		return;		// the song that was open stays
-	pDoc->MakeUntitled(pExample->Title);
-	StartTutorial(pMainFrame, Tutorial, true);
+		return false;		// the song that was open stays
+	pDoc->MakeUntitled(Title);
+	return true;
+}
+
+void OpenExampleSong(CMainFrame *pMainFrame, UINT nID)
+{
+	const example_song_t *pExample = NULL;
+	for (size_t i = 0; i < sizeof(EXAMPLES) / sizeof(EXAMPLES[0]); ++i)
+		if (EXAMPLES[i].Command == nID)
+			pExample = &EXAMPLES[i];
+	std::string Walk, Error;
+	tutorial_t Tutorial;
+	if (pExample == NULL || !BuiltInText(pExample->Walkthrough, Walk) || !ParseTutorial(Walk, Tutorial, Error)) {
+		ASSERT(FALSE);
+		return;
+	}
+	if (OpenBuiltInSong(pMainFrame, pExample->Song, pExample->Title))
+		StartTutorial(pMainFrame, Tutorial, true);
+}
+
+void StartExerciseNote(CMainFrame *pMainFrame, const tutorial_t &Script, const std::string &Exercise)
+{
+	StartTutorial(pMainFrame, Script, true, Exercise);
 }
 
 void TutorialCommand(UINT nID)
