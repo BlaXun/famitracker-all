@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include "Json.h"
+#include "Music.h"
 
 namespace ftapi {
 
@@ -229,6 +230,42 @@ std::string ProblemList::LineText(const ProblemLine &Line) const
 	if (!Text.empty() && Text[0] >= 'a' && Text[0] <= 'z')
 		Text[0] = static_cast<char>(Text[0] - 'a' + 'A');
 	return Text;
+}
+
+bool ProblemList::PlayOf(const ProblemLine &Line, const Timing &Time, ProblemPlay &Out) const
+{
+	Out = ProblemPlay();
+	if (Line.Finding < 0 || Line.Finding >= static_cast<int>(m_Findings.size()))
+		return false;
+	const ProblemFinding &F = m_Findings[static_cast<size_t>(Line.Finding)];
+	const int Total = Time.TotalRows(), Bars = Time.BarCount();
+	// What it's about: a note that vanishes, on a line of its own, else the finding and its notes
+	const ProblemNote *pNote = F.Kind == PROBLEM_VANISHING && Line.Note >= 0 ? LineNote(Line) : 0;
+	int First = pNote != 0 ? pNote->Row : F.Row, End = pNote != 0 ? pNote->Row + std::max(1, pNote->Rows) : F.Row + std::max(1, F.Rows);
+	auto Hear = [&Out](int Channel) {
+		if (Channel >= 0 && std::find(Out.Channels.begin(), Out.Channels.end(), Channel) == Out.Channels.end())
+			Out.Channels.push_back(Channel);
+	};
+	if (pNote != 0)
+		Hear(pNote->Channel);
+	else {
+		Hear(F.Channel);
+		for (size_t n = 0; n < F.Notes.size(); ++n) {
+			First = std::min(First, F.Notes[n].Row);
+			End = std::max(End, F.Notes[n].Row + std::max(1, F.Notes[n].Rows));
+			Hear(F.Notes[n].Channel);
+		}
+	}
+	std::sort(Out.Channels.begin(), Out.Channels.end());
+	if (Total <= 0 || Bars <= 0 || First < 0 || First >= Total)
+		return false;
+	End = std::min(End, Total);
+	const int FromBar = Time.BarOf(First), ToBar = std::min(Time.BarOf(std::max(First, End - 1)), FromBar + PROBLEM_PLAY_BARS - 1);
+	Out.FirstBar = std::max(1, FromBar - 1);
+	Out.LastBar = std::min(Bars, ToBar + 1);
+	Out.FirstRow = Time.BarStart(Out.FirstBar);
+	Out.EndRow = std::min(Total, Time.BarEnd(Out.LastBar));
+	return Out.FirstRow < Out.EndRow;
 }
 
 ProblemMarks::ProblemMarks() : m_iTrack(-1), m_iChannels(0), m_iRows(0)

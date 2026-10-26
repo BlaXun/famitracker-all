@@ -1383,6 +1383,43 @@ undoable now, as `CMcpMeterAction` is. `TestSongShapes`,
 `TestSongShapeTool` and `TestWhatNextShape` cover them, and
 `TestWhatNextLoop` follows the shape-first loop.
 
+What next panel and hearing the problems (from `feat-guide-panels`): View >
+What next (`ID_VIEW_WHATNEXT`, `Source/WhatNextPanel.cpp`, a bar docked
+along the bottom or the right as the problems panel is, after it in
+`ArrangeBars`) runs `what_next` with `format` `json` through
+`CMcpConnection::RunTool` a moment after `SongChanged` (not while the song
+or its own `CBarsPlayer` plays, a dialog is open, or the user typed within a
+second or twice the last ask's time; it polls `SongSettingsSignature`,
+shared with the problems panel, plus saving and the path) and shows the step
+in plain words with the recipe's stages as pills. The JSON is
+`WhatNext::JsonReply` (`Work` runs the stages for both replies; `StepWhat`
+says a step in plain words, naming bars that are a part by the part
+(`PartOf`) and an empty song's shape (`song_shape`, a step of the frame) by
+its title, `StepPlace` where it works; `Step(NextStep)` keeps a fix's
+`Calls` and `Severity`, and `MelodyPlace` the melody's bars and `Own`, a
+step offering notes to start from); each step id's and milestone's stage and
+the panel's reader are `Source/Api/NextSteps.cpp` (portable; `GrownVersions`
+reads `grow_melody`'s versions). Do it, Grow one (the version picked plays)
+and Play the fix make their call between `BeginActionGroup` and
+`EndActionGroup`, so it's one Ctrl+Z, labelled for Claude's undo, and a call
+that fails is undone (the action serial says whether anything can be undone;
+instruments added stay, as everywhere). A step's buttons wait while its
+answer is stale (the song changed since); skips and the kind chosen are kept
+per song and track while FamiTracker runs. The problems panel's lines get
+Play it and Play the fix (`line_button_t`; on a narrow panel the selected
+line takes a third line for them, `Heights`): `ProblemList::PlayOf` gives
+the bars (a bar before and after the line's note or finding, at most
+`PROBLEM_PLAY_BARS` of a long finding's own) and the channels to hear alone;
+`Source/BarsPlayer.cpp` plays song rows through
+`CSoundGen::SetNextPlayRange` with the other channels muted, then in the
+mix, telling the range's end (`PlayRangeEnded`) from a stop. Play the fix
+asks Keep or Take back in `CPlayFixDlg` (`IDD_PLAYFIX`), modal, so neither
+the user nor Claude Code (`CanChange`) changes the song meanwhile, and Take
+back undoes only the fix's own action. `TestWhatNextJson` (every state of
+`TestWhatNextLoop`'s walks, the JSON against the text, and each kind's
+shape: its title, one undo, then A's chords on the A it laid out) and
+`TestProblemPlay` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

@@ -45,6 +45,7 @@ class CPianoRollBar;
 class CPianoRollWnd;
 class CClipsBar;
 class CProblemsBar;
+class CWhatNextBar;
 class CMixerBar;
 class CDrumGridBar;
 struct note_views_t;
@@ -123,6 +124,7 @@ public:
 	void	ShowDrumGrid(bool Show);		// along the bottom or the right (DrumGridPanel.h)
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
+	void	ShowWhatNext(bool Show);		// along the bottom or the right (WhatNextPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
 	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
 	CSoundPreview *GetSoundPreview();	// what plays a sound for the sound browser and Instrument > Listen (SoundPreview.h)
@@ -242,6 +244,7 @@ private:  // control bar embedded members
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
 	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
+	CWhatNextBar		*m_pWhatNextBar;		// View > What next, along the bottom or the right; created when first shown
 	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
 	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, along the bottom or the right; created when first shown
 	bool				m_bPatternShown;		// View > Pattern editor: the pattern editor shows (else the piano roll fills its place)
@@ -332,6 +335,7 @@ public:
 	afx_msg void OnUpdateEditDrumGrid(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewProblems(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewWhatNext(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewMixer(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
@@ -395,6 +399,7 @@ public:
 	afx_msg void OnViewPatternEditor();
 	afx_msg void OnViewClipsPanel();
 	afx_msg void OnViewProblems();
+	afx_msg void OnViewWhatNext();
 	afx_msg void OnViewMixer();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();

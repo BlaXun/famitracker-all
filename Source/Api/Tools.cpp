@@ -48,6 +48,7 @@
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "WhatNext.h"
+#include "NextSteps.h"
 #include "../Nsf/FtmFile.h"
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
@@ -23858,7 +23859,11 @@ struct NextStep {
 	Json Arguments;
 	std::string Why;		// a sentence
 	std::string Severity;	// a check_song finding's fix: its severity ("medium" before depth, "low" with the review's tips)
-	NextStep() : Arguments(Json::MakeObject()) {}
+	bool Own;				// it offers notes to start from (an offered hook, a phrase): the composer's own tune is better
+	int Calls;				// the calls it takes: 1, or more when calls follow it (Why gives them, in order)
+	int FromBar, ToBar;		// the bars it works on, for FamiTracker's What next panel (0 when the arguments say)
+	int Channel;			// the channel it writes, -1 when the arguments say
+	NextStep() : Arguments(Json::MakeObject()), Own(false), Calls(1), FromBar(0), ToBar(0), Channel(-1) {}
 };
 
 // A part of the song's form: a section of the track, or bars no section has (Named false)
@@ -24241,6 +24246,7 @@ class WhatNext {
 public:
 	WhatNext(Session &S, const Json &Args, bool Core);
 	std::string Reply();
+	std::string JsonReply();	// format json: the step as data, for FamiTracker's What next panel (NextSteps.h reads it)
 
 private:
 	Session &S;
@@ -24267,6 +24273,8 @@ private:
 	bool m_HasKey;
 	int m_MixDue;				// MixDue's answer: -1 not worked out yet
 	bool m_Finishing;			// finish_song is a step: the last steps after it are in it
+	bool m_Music;				// the track is music (not a cue or a sound effect): Work's
+	int m_Use;					// track_use: Work's
 
 	const NextKind &Kind() const { return NextKindInfo(m_KindId); }
 	bool Wanted(const std::string &Id) const { return m_Skip.count(Id) == 0; }
@@ -24279,6 +24287,7 @@ private:
 	std::string ChannelName(int Channel) const { return S.Channel(Channel).FullName(); }
 	// A step: kept when one is still wanted, it isn't skipped and its tool is in the set the caller has
 	bool Step(const std::string &Id, const std::string &Tool, const Json &Arguments, const std::string &Why);
+	bool Step(const NextStep &N);	// with all it says (a fix's calls and severity, where it works)
 	bool Ask(const std::string &Id, const std::string &Why) { return Step(Id, std::string(), Json::MakeObject(), Why); }
 	// A milestone of the recipe: done (Done says how), or left; true when done
 	bool Milestone(const char *Name, bool Met, const std::string &Done = std::string());
@@ -24319,11 +24328,21 @@ private:
 	std::string MelodySound() const;
 	std::string OfferedHook(int FirstBar, int Variant) const;
 	std::string SongHook(const FormPart &Part) const;
+	void MelodyPlace(int FromBar, int ToBar, bool Own);
+
+	// The replies' pieces
+	void Work();
+	std::vector<NextMilestone> MilestoneStates() const;
+	Json AgainArgs() const;
+	NextStep DoneStep() const;
+	std::string StepWhat(const NextStep &N) const;
+	void StepPlace(const NextStep &N, int &FromBar, int &ToBar, int &Channel) const;
+	Json StepJson(const NextStep &N) const;
 };
 
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core(Core), m_All(BoolArg(Args, "all", false)),
 	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
-	m_Finishing(false)
+	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC)
 {
 	const std::string Asked = StringArg(Args, "kind");
 	if (!Asked.empty()) {
@@ -24440,17 +24459,22 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core
 
 bool WhatNext::Step(const std::string &Id, const std::string &Tool, const Json &Arguments, const std::string &Why)
 {
-	if (!Wanted(Id) || !Looking())
-		return false;
-	if (m_Core && !Tool.empty() && !ToolSet::IsCoreTool(Tool)) {
-		m_Notes.push_back(Why + " (" + Tool + " does it, which this small set doesn't have)");
-		return false;
-	}
 	NextStep N;
 	N.Id = Id;
 	N.Tool = Tool;
 	N.Arguments = Arguments;
 	N.Why = Why;
+	return Step(N);
+}
+
+bool WhatNext::Step(const NextStep &N)
+{
+	if (!Wanted(N.Id) || !Looking())
+		return false;
+	if (m_Core && !N.Tool.empty() && !ToolSet::IsCoreTool(N.Tool)) {
+		m_Notes.push_back(N.Why + " (" + N.Tool + " does it, which this small set doesn't have)");
+		return false;
+	}
 	m_Steps.push_back(N);
 	return true;
 }
@@ -24713,6 +24737,7 @@ void WhatNext::Breakers()
 				const std::string Tool = Next.Get("tool") != 0 && Next.Get("tool")->IsString() ? Next.Get("tool")->String() : std::string();
 				if (Tool.empty())
 					continue;
+				++N.Calls;
 				InSet = InSet && (!m_Core || ToolSet::IsCoreTool(Tool));
 				Then += "; then " + Tool + (Next.Get("arguments") != 0 && Next.Get("arguments")->IsObject() ? " " +
 					WriteJson(*Next.Get("arguments")) : std::string()) + (Next.Get("does") != 0 && Next.Get("does")->IsString() ? " (" +
@@ -24732,7 +24757,7 @@ void WhatNext::Breakers()
 			else if (N.Severity != "high")
 				m_Later.push_back(N);
 			else if (Fixes(N))
-				Step(N.Id, N.Tool, N.Arguments, N.Why);
+				Step(N);
 		}
 	}
 	if (Clashes > 0)
@@ -25094,8 +25119,9 @@ void WhatNext::MelodyStep()
 				Json Channels = Json::MakeArray();
 				Channels.Push(ChannelName(m_Melody));
 				A.Set("channels", Channels);
-				Step("melody", "copy_bars", A, Format("%s repeats %s, which has its melody: the same tune comes back (the hook a player "
-					"remembers), and a later step makes the repeat different.", P.Name.c_str(), O.Name.c_str()));
+				if (Step("melody", "copy_bars", A, Format("%s repeats %s, which has its melody: the same tune comes back (the hook a player "
+					"remembers), and a later step makes the repeat different.", P.Name.c_str(), O.Name.c_str())))
+					MelodyPlace(P.FirstBar, P.LastBar, false);
 				return;
 			}
 		}
@@ -25142,24 +25168,40 @@ void WhatNext::MelodyStep()
 				int Added = 0;
 				if (TryWrite(S, "grow_melody", Pick, Missing, P.LastBar, m_Melody, Added) && Added <= 0) {
 					const std::string Bars = Format("bars %d-%d", Missing, P.LastBar);
-					Step("melody", "grow_melody", G, (Offered ? P.Name + " has no melody in " + Bars + " yet. Write a hook of your own in "
+					if (Step("melody", "grow_melody", G, (Offered ? P.Name + " has no melody in " + Bars + " yet. Write a hook of your own in "
 						"motif, 4-7 notes in steps, a bar or two (the one given is a start, on the chords there: a token an eighth, - holds "
 						"the note, . rests, | between bars); grow_melody grows it" : P.Name + " has no melody in " + Bars + " yet: "
 						"grow_melody grows the song's hook (its first notes in " + Source + ", so it comes back)") + " over the chords "
 						"into versions, each with a sentence on its shape. Then call grow_melody again with the same arguments and pick 1, "
 						"2 or 3, the version whose shape fits (variant 2 gives others); shape it by hand if you like (read_notes with "
 						"format steps, write_notes), and ask what_next again." + (m_Core ? " get_recipe shows a whole melody of 8 bars "
-						"in steps." : ""));
+						"in steps." : "")))
+						MelodyPlace(Missing, P.LastBar, Offered);
 					return;
 				}
 			}
 		}
 		// Else a phrase of four bars from there (two where the part ends sooner)
 		const int Bars = P.LastBar - Missing + 1 >= 4 ? 4 : 2;
-		const NextStep Tune = TuneStep(Missing, std::min(Bars, std::max(1, P.LastBar - Missing + 1)), Variant, P.Name);
-		Step("melody", Tune.Tool, Tune.Arguments, Tune.Why);
+		const int Count = std::min(Bars, std::max(1, P.LastBar - Missing + 1));
+		const NextStep Tune = TuneStep(Missing, Count, Variant, P.Name);
+		if (Step("melody", Tune.Tool, Tune.Arguments, Tune.Why))
+			MelodyPlace(Missing, Missing + Count - 1, true);
 		return;
 	}
+}
+
+// The melody's step just found works on bars [FromBar, ToBar] of the melody's channel; Own: it offers notes to start from
+// (a hook, a phrase), where the composer's own tune is better (FamiTracker's What next panel offers recording one)
+void WhatNext::MelodyPlace(int FromBar, int ToBar, bool Own)
+{
+	if (m_Steps.empty())
+		return;
+	NextStep &N = m_Steps.back();
+	N.FromBar = FromBar;
+	N.ToBar = std::max(FromBar, ToBar);
+	N.Channel = m_Melody;
+	N.Own = Own;
 }
 
 // The form grows to an A part, its repeat, a B part on other chords and A again, each added after the body's last part
@@ -25603,15 +25645,14 @@ void WhatNext::PartFixes()
 {
 	for (size_t i = 0; i < m_Later.size(); ++i)
 		if (m_Later[i].Severity == "medium" && Fixes(m_Later[i]))
-			Step(m_Later[i].Id, m_Later[i].Tool, m_Later[i].Arguments, m_Later[i].Why);
+			Step(m_Later[i]);
 }
 
 void WhatNext::Tips()
 {
 	bool Found = false;
 	for (size_t i = 0; i < m_Later.size(); ++i)
-		if (m_Later[i].Severity != "medium" && Wanted("tips") && Fixes(m_Later[i]) && Step(m_Later[i].Id, m_Later[i].Tool,
-			m_Later[i].Arguments, m_Later[i].Why))
+		if (m_Later[i].Severity != "medium" && Wanted("tips") && Fixes(m_Later[i]) && Step(m_Later[i]))
 			Found = true;
 	if (!m_HasMelody) {
 		Milestone("review tips", !Found, "the review's tips");
@@ -26140,16 +26181,19 @@ void WhatNext::Finish()
 		"the game's calm places" : m_KindId == NEXT_ACTION ? "its action tracks" : "most of a game's music"));
 }
 
-std::string WhatNext::Reply()
+// Works the steps out from the song as it is: what breaks the sound, then the recipe's stages in order, as far as the
+// first step (every step, with all)
+void WhatNext::Work()
 {
 	const TrackUse Use = UseOfTrack(S);
-	const bool Music = Use.Use == TRACK_MUSIC;	// a cue or a sound effect: what breaks its sound, then its file
+	m_Use = Use.Use;
+	m_Music = Use.Use == TRACK_MUSIC;	// a cue or a sound effect: what breaks its sound, then its file
 	// Each step works on the song as the one before left it, so changes must go into it, not arrive as clips
 	if (!S.Song.DirectChanges)
 		Ask("direct", "Direct changes are off, so every change would arrive as a clip for the user to place, and the song wouldn't "
 			"move on: ask the user to allow direct changes (File > Connect Claude Code), then ask what_next again.");
 	Breakers();
-	if (Music) {
+	if (m_Music) {
 		Frame();
 		Parts();
 		if (Looking())
@@ -26163,48 +26207,92 @@ std::string WhatNext::Reply()
 		if (Looking())
 			Mix();
 	}
-	if (Looking() && Music)
+	if (Looking() && m_Music)
 		LoopSeam();
 	if (Looking())
 		Finish();
+}
 
-	const NextKind &K = Kind();
-	// Done and left, in the recipe's order: what wasn't looked at yet is left
-	std::string Done, Left;
-	int DoneCount = 0, LeftCount = 0;
+// The milestones that count for this track, in the recipe's order, each done (with what to say of it) or left: what
+// wasn't looked at yet is left
+std::vector<NextMilestone> WhatNext::MilestoneStates() const
+{
+	std::vector<NextMilestone> Out;
 	for (size_t i = 0; i < sizeof(NEXT_MILESTONES) / sizeof(NEXT_MILESTONES[0]); ++i) {
 		const std::string Name = NEXT_MILESTONES[i];
-		if (m_Away.count(Name) || (!Music && Name != "saved" && Name != "exported"))
+		if (m_Away.count(Name) || (!m_Music && Name != "saved" && Name != "exported"))
 			continue;
-		std::map<std::string, std::string>::const_iterator it = m_Met.find(Name);
-		if (it != m_Met.end() && m_Unmet.count(Name) == 0) {
-			Done += (Done.empty() ? "" : ", ") + it->second;
-			++DoneCount;
-		}
-		else {
-			Left += (Left.empty() ? "" : ", ") + Name;
-			++LeftCount;
-		}
+		NextMilestone M;
+		M.Name = Name;
+		M.Stage = NextStageOfMilestone(Name);
+		const std::map<std::string, std::string>::const_iterator it = m_Met.find(Name);
+		M.Done = it != m_Met.end() && m_Unmet.count(Name) == 0;
+		if (M.Done)
+			M.Text = it->second;
+		Out.push_back(M);
 	}
-	// The call that asks again, with the kind and the skips as given
+	return Out;
+}
+
+// The call that asks again, with the kind and the skips as given
+Json WhatNext::AgainArgs() const
+{
 	Json Again = Json::MakeObject();
 	if (m_KindAsked || m_KindId == NEXT_CALM)
-		Again.Set("kind", K.Name);
+		Again.Set("kind", Kind().Name);
 	if (!m_SkipWords.empty()) {
 		Json Words = Json::MakeArray();
 		for (size_t i = 0; i < m_SkipWords.size(); ++i)
 			Words.Push(m_SkipWords[i]);
 		Again.Set("skip", Words);
 	}
+	return Again;
+}
+
+// A step's call as the reply gives it
+std::string NextCallText(const NextStep &N)
+{
+	return N.Tool.empty() ? std::string("ask the user") : N.Tool + " " + WriteJson(N.Arguments);
+}
+
+// The step once every step is done: play it for the user
+NextStep WhatNext::DoneStep() const
+{
+	NextStep N;
+	N.Id = "done";
+	N.Tool = "play";
+	N.Why = Format("Every step of the %s recipe is done%s: play it for the user, ask what they'd change, and keep what they like for "
+		"the next song.", Kind().Name, m_Music ? "" : m_Use == TRACK_CUE ? " for a cue (it plays once)" : " for a sound effect");
+	return N;
+}
+
+std::string WhatNext::Reply()
+{
+	Work();
+	const NextKind &K = Kind();
+	// Done and left, in the recipe's order
+	std::string Done, Left;
+	int DoneCount = 0, LeftCount = 0;
+	const std::vector<NextMilestone> States = MilestoneStates();
+	for (size_t i = 0; i < States.size(); ++i) {
+		if (States[i].Done) {
+			Done += (Done.empty() ? "" : ", ") + States[i].Text;
+			++DoneCount;
+		}
+		else {
+			Left += (Left.empty() ? "" : ", ") + States[i].Name;
+			++LeftCount;
+		}
+	}
+	const Json Again = AgainArgs();
 	std::string Text;
-	if (m_Steps.empty())
-		Text = Format("Next (%s, done): play {}\nWhy: Every step of the %s recipe is done%s: play it for the user, ask what they'd change, "
-			"and keep what they like for the next song.", K.Name, K.Name, Music ? "" : Use.Use == TRACK_CUE ? " for a cue (it plays once)" :
-			" for a sound effect");
+	if (m_Steps.empty()) {
+		const NextStep End = DoneStep();
+		Text = Format("Next (%s, done): ", K.Name) + NextCallText(End) + "\nWhy: " + End.Why;
+	}
 	else {
 		const NextStep &N = m_Steps[0];
-		Text = Format("Next (%s, %d of %d done): ", K.Name, DoneCount, DoneCount + LeftCount) + (N.Tool.empty() ? std::string("ask the user") :
-			N.Tool + " " + WriteJson(N.Arguments)) + "\nWhy: " + N.Why;
+		Text = Format("Next (%s, %d of %d done): ", K.Name, DoneCount, DoneCount + LeftCount) + NextCallText(N) + "\nWhy: " + N.Why;
 	}
 	if (!m_KindNote.empty())
 		Text += "\nKind: " + m_KindNote + ".";
@@ -26228,11 +26316,321 @@ std::string WhatNext::Reply()
 	return Text;
 }
 
+// A step in plain words, for FamiTracker's What next panel: what to do, in a line ("Set the tempo to 150 BPM"), with
+// where in brackets; the why says why
+std::string WhatNext::StepWhat(const NextStep &N) const
+{
+	const Json &A = N.Arguments;
+	auto Text = [&](const char *Name) {
+		const Json *pValue = A.Get(Name);
+		return pValue != 0 && pValue->IsString() ? pValue->String() : std::string();
+	};
+	auto Number = [&](const char *Name) {
+		const Json *pValue = A.Get(Name);
+		return pValue != 0 && pValue->IsNumber() ? pValue->Number() : 0.0;
+	};
+	// The named part (a section) that's exactly these bars, as a shape lays them out (song_shape); "" for none
+	auto PartOf = [&](int From, int To) {
+		std::string Name;
+		for (size_t i = 0; i < m_Form.size() && Name.empty(); ++i)
+			if (m_Form[i].Named && m_Form[i].FirstBar == From && m_Form[i].LastBar == To)
+				Name = m_Form[i].Name;
+		return Name;
+	};
+	// What with where it works in brackets: the channel (when asked), the bars (with the part's name when they're one's) or
+	// the section
+	auto Where = [&](const std::string &What, bool OnChannel) {
+		std::string Place;
+		const int From = static_cast<int>(Number("from_bar")), To = std::max(From, static_cast<int>(Number("to_bar")));
+		if (From > 0) {
+			Place = To > From ? Format("bars %d-%d", From, To) : Format("bar %d", From);
+			if (!PartOf(From, To).empty())
+				Place = PartOf(From, To) + ", " + Place;
+		}
+		else if (!Text("section").empty())
+			Place = Text("section");
+		if (OnChannel && !Text("channel").empty())
+			Place = Text("channel") + (Place.empty() ? std::string() : ", " + Place);
+		return Place.empty() ? What : What + " (" + Place + ")";
+	};
+	const std::string &Id = N.Id, &Tool = N.Tool;
+	const bool FromReview = N.Why.compare(0, 19, "review_arrangement:") == 0;
+	const int At = static_cast<int>(Number("at_bar")), Bars = static_cast<int>(Number("bars"));
+	if (Id == "done")
+		return "Play the song: every step is done";
+	if (Tool.empty())
+		return Id == "save" ? "Save the song (File > Save As)" : Id == "direct" ?
+			"Let the tools change the song (File > Connect Claude Code)" : "Ask the user";
+	if (Tool == "finish_song") {
+		std::set<std::string> Skipped;
+		const Json *pSkip = A.Get("skip");
+		for (size_t i = 0; pSkip != 0 && pSkip->IsArray() && i < pSkip->Size(); ++i)
+			if (pSkip->At(i).IsString())
+				Skipped.insert(pSkip->At(i).String());
+		std::vector<std::string> Last;
+		if (Skipped.count("polish") == 0)
+			Last.push_back("finishing touches");
+		if (Skipped.count("mix") == 0)
+			Last.push_back("the mix");
+		if (Skipped.count("loop") == 0)
+			Last.push_back("the loop's seam");
+		if (Skipped.count("export") == 0)
+			Last.push_back("the game's file");
+		std::string List;
+		for (size_t i = 0; i < Last.size(); ++i)
+			List += (i == 0 ? "" : i + 1 == Last.size() ? " and " : ", ") + Last[i];
+		return "Finish the song: " + List;
+	}
+	// check_song's fixes
+	if (Id == "vanishing")
+		return Where(Tool == "design_instrument" ? "Make a sound that lasts, for notes that vanish" : "Give notes that vanish a sound that "
+			"lasts", true);
+	if (Id == "click")
+		return "Nudge the notes that click";
+	if (Id == "range")
+		return Where(Text("variation") == "octave_up" ? "Move notes that sit too low up an octave" : "Move notes that sit too high down an "
+			"octave", true);
+	if (Id == "phrases")
+		return "Join the melody's one-bar pieces into phrases";
+	if (Id == "bass")
+		return Where(Tool == "add_chords_and_bass" ? "Give the song a fuller bass line" : "Clear the notes that double the bass", false);
+	if (Id == "sound")
+		return Where("Give the channel a sound it plays well", true);
+	if (Id == "faders")
+		return "Set the mixer's faders back to 0 dB, then mix";
+	if (Id == "repeat")
+		return Where("Make the repeat different", false);
+	if (Id == "short_loop")
+		return "Make the loop longer";
+	// The recipe's steps
+	if (Id == "tempo")
+		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
+	if (Id == "key")
+		return "Choose the key: " + Text("key");
+	if (Id == "shape") {
+		const SongShape *pShape = FindSongShape(Text("shape"));
+		return pShape != 0 ? Format("Lay out the song's shape: %s (%d bars)", pShape->Title.c_str(), pShape->Bars()) :
+			std::string("Lay out the song's shape");
+	}
+	if (Id == "lead")
+		return "Make the melody's sound: " + Text("name");
+	if (Id == "chords")
+		return Where(Text("bass_channel") == "none" ? "Add chords under the melody" : Text("chord_channel") == "none" ? "Add a bass line "
+			"under the chords" : "Add chords and a bass line", false);
+	if (Id == "sections")
+		return Where("Name this part of the song \"" + Text("name") + "\"", false);
+	if (Id == "melody")
+		return Tool == "copy_bars" ? Format("Copy %s's melody to bar %d", Text("section").c_str(), At) : Where("Write the melody", false);
+	if (Id == "form") {
+		if (Tool == "insert_bars")
+			return Format("Make room for the next part: %s at bar %d", Plural(Bars, "empty bar", "empty bars").c_str(), At);
+		const int From = static_cast<int>(Number("from_bar")), To = static_cast<int>(Number("to_bar"));
+		if (Tool == "copy_bars") {
+			// A part again: into the part a shape laid out there (song_shape), else onto the empty bars after the body
+			std::string Part = Text("section"), Into;
+			for (size_t i = 0; i < m_Form.size(); ++i) {
+				if (m_Form[i].Named && m_Form[i].FirstBar == At)
+					Into = m_Form[i].Name;
+				if (Part.empty() && m_Form[i].Named && m_Form[i].FirstBar <= From && From <= m_Form[i].LastBar)
+					Part = m_Form[i].Name;
+			}
+			if (Part.empty())
+				Part = To > From ? Format("bars %d-%d", From, To) : Format("bar %d", From);
+			return Into.empty() ? Format("Play %s again, from bar %d", Part.c_str(), At) : Format("Play %s again in %s (from bar %d)",
+				Part.c_str(), Into.c_str(), At);
+		}
+		// Other chords: in the part a shape laid out there, else a B part
+		const std::string Part = PartOf(From, To);
+		return Part.empty() ? Where("Add a B part on other chords", false) : Format("Give %s chords and a bass line of its own (bars "
+			"%d-%d)", Part.c_str(), From, To);
+	}
+	if (Id == "drums")
+		return Where(FromReview ? "Vary the drums, with fills" : "Add drums", false);
+	if (Id == "second_line")
+		return Where("Add a harmony to the melody", false);
+	if (Id == "variation") {
+		const std::string How = Text("variation");
+		return Where("Make the repeat different: " + std::string(How == "embellish" ? "passing notes" : How == "syncopate" ?
+			"syncopation" : How == "ending" ? "a new ending" : "a variation"), false);
+	}
+	if (Id == "break" || Id == "intro") {
+		const std::string Part = Id == "break" ? "a break" : "an intro";
+		if (Tool == "insert_bars")
+			return Format("Add %s of %s at bar %d", Part.c_str(), Plural(Bars, "bar", "bars").c_str(), At);
+		const Json *pChannels = A.Get("channels");
+		return Format("Fill the %s with %s", Id.c_str(), pChannels != 0 && pChannels->IsArray() && pChannels->Size() > 1 ?
+			"the chords and the bass" : "the chords");
+	}
+	if (Id == "loop")
+		return Format("Loop the song from bar %d to its end", static_cast<int>(Number("from_bar")));
+	if (Id == "tips") {
+		if (Tool == "polish") {
+			const Json *pTouches = A.Get("touches");
+			const bool Accents = pTouches != 0 && pTouches->IsArray() && pTouches->Size() > 0 && pTouches->At(0).IsString() &&
+				pTouches->At(0).String() == "accents";
+			return Accents ? "Accent the beats, so the parts sound played" : "Add a vibrato to the long notes";
+		}
+		if (Tool == "add_chords_and_bass")
+			return Where(Text("bass_channel") == "none" ? "Give the chords color" : "Give the bass line more movement", false);
+		if (Tool == "vary_part")
+			return "Move the bass up an octave, where small speakers hear it";
+		if (Tool == "design_instrument")
+			return "Make a sound that lasts, for the melody: " + Text("name");
+		if (Tool == "set_instrument")
+			return "Give the melody the sound " + Text("instrument");
+		if (Tool == "add_harmony")
+			return Where("Lift the last part with a harmony", false);
+		return "Try the review's tip";
+	}
+	if (Id == "echo")
+		return "Add an echo of the melody";
+	if (Id == "polish")
+		return Calm() ? "Add finishing touches: a faint vibrato on long notes" : "Add finishing touches: accents, a vibrato on long notes";
+	if (Id == "mix")
+		return "Mix the parts";
+	if (Id == "seam")
+		return "Smooth the loop's seam";
+	if (Id == "save")
+		return "Save the song";
+	if (Id == "export")
+		return "Make the file for the game";
+	return "Fix what check_song found";	// another kind of finding with a fix
+}
+
+// Where a step works: the bars (from its own place, else its arguments' bars, section or place to put bars in) and the
+// channel; 0 and -1 when it doesn't say
+void WhatNext::StepPlace(const NextStep &N, int &FromBar, int &ToBar, int &Channel) const
+{
+	FromBar = N.FromBar;
+	ToBar = N.ToBar;
+	Channel = N.Channel;
+	const Json &A = N.Arguments;
+	if (FromBar <= 0) {
+		const Json *pFrom = A.Get("from_bar"), *pTo = A.Get("to_bar"), *pSection = A.Get("section"), *pAt = A.Get("at_bar");
+		if (pFrom != 0 && pFrom->IsNumber()) {
+			FromBar = static_cast<int>(pFrom->Number());
+			ToBar = pTo != 0 && pTo->IsNumber() ? static_cast<int>(pTo->Number()) : FromBar;
+		}
+		else if (pSection != 0 && pSection->IsString()) {
+			for (size_t i = 0; i < m_Form.size() && FromBar <= 0; ++i)
+				if (m_Form[i].Named && Lowercase(m_Form[i].Name) == Lowercase(pSection->String())) {
+					FromBar = m_Form[i].FirstBar;
+					ToBar = m_Form[i].LastBar;
+				}
+		}
+		else if (pAt != 0 && pAt->IsNumber()) {
+			const Json *pBars = A.Get("bars");
+			FromBar = static_cast<int>(pAt->Number());
+			ToBar = FromBar + (pBars != 0 && pBars->IsNumber() ? std::max(1, static_cast<int>(pBars->Number())) : 1) - 1;
+		}
+	}
+	FromBar = std::max(0, FromBar);
+	ToBar = std::max(FromBar, ToBar);
+	if (Channel < 0 && A.Get("channel") != 0 && A.Get("channel")->IsString()) {
+		try {
+			Channel = ChannelArg(S, A, "channel");
+		}
+		catch (const Problem &) {
+			Channel = -1;
+		}
+	}
+}
+
+Json WhatNext::StepJson(const NextStep &N) const
+{
+	Json Out = Json::MakeObject();
+	Out.Set("id", N.Id);
+	Out.Set("what", StepWhat(N));
+	const int Stage = NextStageOfStep(N.Id);
+	Out.Set("stage", Stage >= 0 ? Json(NextStageId(Stage)) : Json());
+	Out.Set("tool", N.Tool);
+	Out.Set("arguments", N.Arguments);
+	Out.Set("call", NextCallText(N));
+	Out.Set("why", N.Why);
+	Out.Set("ask_user", N.Tool.empty());
+	Out.Set("own_notes", N.Own);
+	Out.Set("calls", N.Calls);
+	if (!N.Severity.empty())
+		Out.Set("severity", N.Severity);
+	int FromBar = 0, ToBar = 0, Channel = -1;
+	StepPlace(N, FromBar, ToBar, Channel);
+	if (FromBar > 0) {
+		Out.Set("from_bar", FromBar);
+		Out.Set("to_bar", ToBar);
+	}
+	if (Channel >= 0 && Channel < S.ChannelCount()) {
+		Out.Set("channel", Channel + 1);
+		Out.Set("channel_name", ChannelName(Channel));
+	}
+	return Out;
+}
+
+// The step as data (format json), for FamiTracker's What next panel (NextSteps.h reads it): the step with its call as
+// the text gives it, why, what in plain words, its stage and where it works; every step found, with all; the milestones
+// done and left, and the stages with how many of their milestones are done
+std::string WhatNext::JsonReply()
+{
+	Work();
+	const NextKind &K = Kind();
+	const std::vector<NextMilestone> States = MilestoneStates();
+	int DoneCount = 0, StageDone[NEXT_STAGES] = { 0 }, StageCount[NEXT_STAGES] = { 0 };
+	Json Milestones = Json::MakeArray();
+	for (size_t i = 0; i < States.size(); ++i) {
+		const NextMilestone &M = States[i];
+		DoneCount += M.Done ? 1 : 0;
+		if (M.Stage >= 0) {
+			++StageCount[M.Stage];
+			StageDone[M.Stage] += M.Done ? 1 : 0;
+		}
+		Json Item = Json::MakeObject();
+		Item.Set("name", M.Name);
+		Item.Set("stage", M.Stage >= 0 ? Json(NextStageId(M.Stage)) : Json());
+		Item.Set("done", M.Done);
+		Item.Set("text", M.Done ? Json(M.Text) : Json());
+		Milestones.Push(Item);
+	}
+	Json Steps = Json::MakeArray();
+	if (m_Steps.empty())
+		Steps.Push(StepJson(DoneStep()));
+	for (size_t i = 0; i < m_Steps.size(); ++i)
+		Steps.Push(StepJson(m_Steps[i]));
+	Json Stages = Json::MakeArray();
+	for (int s = 0; s < NEXT_STAGES; ++s) {
+		Json Item = Json::MakeObject();
+		Item.Set("id", NextStageId(s));
+		Item.Set("name", NextStageTitle(s));
+		Item.Set("done", StageDone[s]);
+		Item.Set("of", StageCount[s]);
+		Stages.Push(Item);
+	}
+	Json Notes = Json::MakeArray();
+	for (size_t i = 0; i < m_Notes.size(); ++i)
+		Notes.Push(m_Notes[i]);
+	Json Out = Json::MakeObject();
+	Out.Set("track", S.Song.Track + 1);
+	Out.Set("track_name", S.Song.TrackName);
+	Out.Set("kind", K.Name);
+	Out.Set("kind_note", m_KindNote.empty() ? Json() : Json(m_KindNote));
+	Out.Set("done", m_Steps.empty());
+	Out.Set("step", Steps.At(0));
+	Out.Set("steps", Steps);
+	Out.Set("done_count", DoneCount);
+	Out.Set("total", static_cast<int>(States.size()));
+	Out.Set("milestones", Milestones);
+	Out.Set("stages", Stages);
+	Out.Set("notes", Notes);
+	Out.Set("again", AgainArgs());
+	return WriteJson(Out);
+}
+
 // what_next: the tool (Core: asked through the small set, so its steps use only that set's tools)
 std::string WhatNextTool(Session &S, const Json &Args, bool Core)
 {
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json (the step as data, for programs).");
 	WhatNext Plan(S, Args, Core);
-	return Plan.Reply();
+	return Form == "json" ? Plan.JsonReply() : Plan.Reply();
 }
 
 }	// namespace
@@ -26516,7 +26914,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, echo, polish, mix, seam, save, export, "
 				"or a kind of check_song's finding (click, vanishing, range...)."))
 			.Add("melody_channel", ChannelProp("The melody (default: where the lead it designed plays, else the busiest line)."))
-			.Add("all", Prop("boolean", "Also list every step found now, in order, a line each (default false).")),
+			.Add("all", Prop("boolean", "Also list every step found now, in order, a line each (default false)."))
+			.Add("format", EnumProp("text (the default): the step to read; json: the step as data (its call, why, what it does in plain "
+				"words, its stage), the milestones and the recipe's stages done, for programs (FamiTracker's What next panel reads it).",
+				std::vector<std::string>{ "text", "json" })),
 		true, false, true);
 
 	AddTool("read_notes", "Read a channel's notes",

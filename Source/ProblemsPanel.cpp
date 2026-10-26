@@ -40,7 +40,11 @@
 #include "PatternEditor.h"
 #include "SoundGen.h"
 #include "PianoRoll.h"
+#include "Action.h"
+#include "InsertRecording.h"
 #include "McpConnection.h"
+#include "BarsPlayer.h"
+#include "Api/Music.h"
 #include "ProblemsPanel.h"
 
 namespace {
@@ -61,13 +65,17 @@ const int INDENT = 24;					// a finding, under its kind
 const int WHERE_WIDTH = 104;			// "bar 12 beat 3.5"
 const int CHANNEL_WIDTH = 104;			// "VRC6 Sawtooth"
 const int ACTION_WIDTH = 62;			// the button on the selected line
-const int NARROW_WIDTH = 470;			// narrower than this, a finding takes two lines
+const int PLAY_WIDTH = 58;				// its Play it button
+const int PLAY_FIX_WIDTH = 82;			// its Play the fix button
+const int NARROW_WIDTH = 470;			// narrower than this, a finding takes two lines (the selected one three, its buttons under it)
 
 const UINT_PTR TMR_CHECK = 1;			// checks a moment after the song changed
 const UINT CHECK_MS = 800;
 const UINT WAIT_MS = 500;				// tries again: the song plays, or Claude Code is being answered
 const UINT_PTR TMR_LOOK = 2;			// looks for changes nothing tells the panel of
 const UINT LOOK_MS = 1000;
+const UINT_PTR TMR_PLAY = 3;			// a finding's bars as they play
+const UINT PLAY_MS = 100;
 
 // Colours, as the clips panel's
 const COLORREF PANEL_BACK = RGB(232, 234, 238);
@@ -84,11 +92,15 @@ const COLORREF BUTTON_HOT = RGB(60, 120, 215);
 
 // The right-click menu
 enum {
-	MENU_GO = 1, MENU_ACTION, MENU_EXPLAIN, MENU_COPY, MENU_FOLD, MENU_CHECK, MENU_AUTO, MENU_DOCK, MENU_CLOSE
+	MENU_GO = 1, MENU_ACTION, MENU_EXPLAIN, MENU_COPY, MENU_FOLD, MENU_CHECK, MENU_AUTO, MENU_DOCK, MENU_CLOSE, MENU_PLAY,
+	MENU_PLAY_ALONE, MENU_PLAY_MIX, MENU_PLAY_FIX, MENU_STOP
 };
 
 // What a finding's button does
 enum action_t { ACTION_NONE, ACTION_NUDGE, ACTION_SHOW, ACTION_EXPLAIN, ACTION_FIX };
+
+// A finding's buttons, from the left: Play it, Play the fix (where its fix is one call), and its action
+enum line_button_t { BUTTON_NONE = -1, BUTTON_PLAY, BUTTON_PLAY_FIX, BUTTON_ACTION, LINE_BUTTONS };
 
 // What the pattern editor and the piano roll mark (ProblemMarkAt)
 ftapi::ProblemMarks g_Marks;
@@ -109,6 +121,23 @@ CString FromUtf8(const std::string &Text)
 	std::vector<char> Out(static_cast<size_t>(Bytes) + 1, 0);
 	::WideCharToMultiByte(CP_ACP, 0, &Buffer[0], Wide, &Out[0], Bytes, NULL, NULL);
 	return CString(&Out[0]);
+}
+
+std::string ToUtf8(const CString &Text)
+{
+	if (Text.IsEmpty())
+		return std::string();
+	const int Wide = ::MultiByteToWideChar(CP_ACP, 0, Text, Text.GetLength(), NULL, 0);
+	if (Wide <= 0)
+		return std::string(static_cast<LPCSTR>(Text));
+	std::vector<wchar_t> Buffer(static_cast<size_t>(Wide));
+	::MultiByteToWideChar(CP_ACP, 0, Text, Text.GetLength(), &Buffer[0], Wide);
+	const int Bytes = ::WideCharToMultiByte(CP_UTF8, 0, &Buffer[0], Wide, NULL, 0, NULL, NULL);
+	if (Bytes <= 0)
+		return std::string(static_cast<LPCSTR>(Text));
+	std::string Out(static_cast<size_t>(Bytes), '\0');
+	::WideCharToMultiByte(CP_UTF8, 0, &Buffer[0], Wide, &Out[0], Bytes, NULL, NULL);
+	return Out;
 }
 
 CString Plural(int Count, LPCTSTR One, LPCTSTR Many)
@@ -154,6 +183,214 @@ bool ProblemMarkSelected(int Mark)
 	return ftapi::ProblemMarks::IsSelected(Mark);
 }
 
+unsigned int SongSettingsSignature()
+{
+	CMainFrame *pMain = static_cast<CMainFrame*>(theApp.m_pMainWnd);
+	CFamiTrackerDoc *pDoc = pMain != NULL ? static_cast<CFamiTrackerDoc*>(pMain->GetActiveDocument()) : NULL;
+	if (pDoc == NULL || pMain == NULL || !pDoc->IsFileLoaded())
+		return 0;
+	unsigned int Hash = 2166136261u;
+	auto Add = [&Hash](unsigned int Value) {
+		Hash = (Hash ^ Value) * 16777619u;
+	};
+	const unsigned int Track = static_cast<unsigned int>(std::max(0, pMain->GetSelectedTrack()));
+	Add(Track);
+	if (Track >= pDoc->GetTrackCount())
+		return Hash;
+	Add(pDoc->GetFrameCount(Track));
+	Add(pDoc->GetPatternLength(Track));
+	Add(pDoc->GetSongSpeed(Track));
+	Add(pDoc->GetSongTempo(Track));
+	Add(static_cast<unsigned int>(pDoc->GetFirstHighlight()));
+	Add(static_cast<unsigned int>(pDoc->GetSecondHighlight()));
+	Add(pDoc->GetExpansionChip());
+	Add(pDoc->GetMachine());
+	Add(pDoc->GetNamcoChannels());
+	const unsigned int Channels = pDoc->GetAvailableChannels();
+	Add(Channels);
+	for (unsigned int c = 0; c < Channels; ++c)
+		Add(pDoc->GetEffColumns(Track, c));
+	for (unsigned int i = 0; i < MAX_INSTRUMENTS; ++i) {
+		if (!pDoc->IsInstrumentUsed(i))
+			continue;
+		Add(i);
+		CInstrument *pInstrument = pDoc->GetInstrument(i);	// retained
+		if (pInstrument == NULL)
+			continue;
+		const int Type = pInstrument->GetType();
+		Add(static_cast<unsigned int>(Type));
+		for (int s = 0; s < SEQ_COUNT; ++s) {
+			int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
+			if (Type == INST_2A03) {
+				const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
+				Enabled = p->GetSeqEnable(s);
+				Index = p->GetSeqIndex(s);
+			}
+			else if (Type == INST_VRC6) {
+				const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
+				Chip = SNDCHIP_VRC6;
+				Enabled = p->GetSeqEnable(s);
+				Index = p->GetSeqIndex(s);
+			}
+			else if (Type == INST_N163) {
+				const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+				Chip = SNDCHIP_N163;
+				Enabled = p->GetSeqEnable(s);
+				Index = p->GetSeqIndex(s);
+			}
+			Add(static_cast<unsigned int>(Enabled));
+			if (Enabled == 0)
+				continue;
+			Add(static_cast<unsigned int>(Index));
+			const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), s);
+			if (pSeq == NULL)
+				continue;
+			Add(pSeq->GetItemCount());
+			Add(pSeq->GetLoopPoint());
+			Add(pSeq->GetReleasePoint());
+			Add(pSeq->GetSetting());
+			for (unsigned int k = 0; k < pSeq->GetItemCount(); ++k)
+				Add(static_cast<unsigned int>(static_cast<unsigned char>(pSeq->GetItem(static_cast<int>(k)))));
+		}
+		if (Type == INST_N163) {
+			const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
+			Add(static_cast<unsigned int>(p->GetWaveSize()));
+		}
+		pInstrument->Release();
+	}
+	return Hash;
+}
+
+// Play the fix's question, once the fix is made: the same bars play with it, then keep it or take it back (an undo).
+// While it's open nothing else changes the song: the main window waits, and Claude Code's changes are refused
+class CPlayFixDlg : public CDialog
+{
+public:
+	CPlayFixDlg(CWnd *pParent, const CString &Does, const ftapi::ProblemPlay &Play, CBarsPlayer::order_t Order, const CString &Where,
+		const CString &Alone, const CRect &Near) :
+		CDialog(IDD_PLAYFIX, pParent), m_Does(Does), m_Where(Where), m_Alone(Alone), m_Play(Play), m_Order(Order), m_Near(Near),
+		m_iShown(-2) {}
+
+protected:
+	virtual BOOL OnInitDialog();
+	virtual void OnOK();		// Keep
+	virtual void OnCancel();	// Take back
+	afx_msg void OnAgain();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnDestroy();
+
+	DECLARE_MESSAGE_MAP()
+
+private:
+	void Start();
+	void ShowState();
+
+	CString m_Does, m_Where, m_Alone;
+	ftapi::ProblemPlay m_Play;
+	CBarsPlayer::order_t m_Order;
+	CBarsPlayer m_Player;
+	CRect m_Near;		// the panel, on the screen: the question stands beside it
+	int m_iShown;		// what the status says: -1 played, 0 the channels alone, 1 the mix
+};
+
+BEGIN_MESSAGE_MAP(CPlayFixDlg, CDialog)
+	ON_BN_CLICKED(IDC_PLAYFIX_AGAIN, OnAgain)
+	ON_WM_TIMER()
+	ON_WM_DESTROY()
+END_MESSAGE_MAP()
+
+BOOL CPlayFixDlg::OnInitDialog()
+{
+	CDialog::OnInitDialog();
+	CString Text;
+	Text.Format(_T("The fix is in: it %s.\r\nListen to %s with it, then keep it, or take it back (as Ctrl+Z would)."),
+		static_cast<LPCTSTR>(m_Does), static_cast<LPCTSTR>(m_Where));
+	SetDlgItemText(IDC_PLAYFIX_TEXT, Text);
+	// Beside the panel, so the pattern editor and the piano roll can be seen as the bars play
+	CRect Own;
+	GetWindowRect(&Own);
+	CRect Work;
+	::SystemParametersInfo(SPI_GETWORKAREA, 0, &Work, 0);
+	int X, Y;
+	if (m_Near.Width() >= m_Near.Height()) {	// along the bottom: over it, at its right
+		X = m_Near.right - Own.Width() - SX(24);
+		Y = m_Near.top - Own.Height() - SY(8);
+	}
+	else {										// along the right: left of it
+		X = m_Near.left - Own.Width() - SX(8);
+		Y = m_Near.top + SY(40);
+	}
+	X = std::max(static_cast<int>(Work.left), std::min(X, static_cast<int>(Work.right) - Own.Width()));
+	Y = std::max(static_cast<int>(Work.top), std::min(Y, static_cast<int>(Work.bottom) - Own.Height()));
+	SetWindowPos(NULL, X, Y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+	SetTimer(1, PLAY_MS, NULL);
+	Start();
+	return TRUE;
+}
+
+void CPlayFixDlg::Start()
+{
+	m_Player.Play(m_Play.FirstRow, m_Play.EndRow, m_Play.Channels, m_Order);
+	ShowState();
+}
+
+void CPlayFixDlg::ShowState()
+{
+	const int Now = m_Player.IsPlaying() ? (m_Player.PlaysAlone() ? 0 : 1) : -1;
+	if (Now == m_iShown)
+		return;
+	m_iShown = Now;
+	CString Text;
+	if (Now == 0)
+		Text.Format(_T("Playing %s with the fix: %s alone, then the whole song there."), static_cast<LPCTSTR>(m_Where),
+			static_cast<LPCTSTR>(m_Alone));
+	else if (Now == 1)
+		Text.Format(_T("Playing %s with the fix, in the mix."), static_cast<LPCTSTR>(m_Where));
+	else
+		Text = _T("Played. Keep the fix, or take it back? Play again plays the bars once more.");
+	SetDlgItemText(IDC_PLAYFIX_STATUS, Text);
+	SetDlgItemText(IDC_PLAYFIX_AGAIN, Now >= 0 ? _T("Stop") : _T("Play again"));
+}
+
+void CPlayFixDlg::OnAgain()
+{
+	if (m_Player.IsPlaying())
+		m_Player.Stop();
+	else
+		m_Player.Play(m_Play.FirstRow, m_Play.EndRow, m_Play.Channels, m_Order);
+	ShowState();
+}
+
+void CPlayFixDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1) {
+		m_Player.Tick();
+		ShowState();
+		return;
+	}
+	CDialog::OnTimer(nIDEvent);
+}
+
+void CPlayFixDlg::OnOK()
+{
+	m_Player.Stop();
+	CDialog::OnOK();
+}
+
+void CPlayFixDlg::OnCancel()
+{
+	m_Player.Stop();
+	CDialog::OnCancel();
+}
+
+void CPlayFixDlg::OnDestroy()
+{
+	KillTimer(1);
+	if (m_Player.IsPlaying())
+		m_Player.Stop();
+	CDialog::OnDestroy();
+}
+
 struct CProblemsPanelWnd::Impl {
 	CProblemsPanelWnd *pWnd;
 	CMcpConnection *pTools;
@@ -162,7 +399,7 @@ struct CProblemsPanelWnd::Impl {
 	bool Folded[ftapi::PROBLEM_KINDS];
 	int Selected;						// into Shown, -1 for none
 	int Hover;							// into Shown, -1 for none
-	bool HoverButton;
+	int HoverButton;					// line_button_t: the hovered line's button under the mouse
 	int Scroll;							// pixels the list is scrolled down
 	int Content;						// the list's height
 	bool Open;							// shown
@@ -176,14 +413,20 @@ struct CProblemsPanelWnd::Impl {
 	CRect Header, Body, CheckRect, MenuRect;
 	bool Narrow;
 	CFont Font, BoldFont, SmallFont;
+	CBarsPlayer Player;					// a finding's bars (Play it)
+	int PlayingFinding, PlayingNote;	// the line whose bars play (its finding and note), -1 for none
+	CBarsPlayer::order_t Order;			// Play it's: the channels alone then the mix, alone, or the mix
 
-	Impl(CProblemsPanelWnd *p) : pWnd(p), pTools(NULL), Selected(-1), Hover(-1), HoverButton(false), Scroll(0), Content(0), Open(false),
-		Checked(false), Waiting(false), Auto(true), Focused(false), CheckTime(0), Signature(0), Narrow(false)
+	Impl(CProblemsPanelWnd *p) : pWnd(p), pTools(NULL), Selected(-1), Hover(-1), HoverButton(BUTTON_NONE), Scroll(0), Content(0),
+		Open(false), Checked(false), Waiting(false), Auto(true), Focused(false), CheckTime(0), Signature(0), Narrow(false),
+		PlayingFinding(-1), PlayingNote(-1), Order(CBarsPlayer::ALONE_THEN_MIX)
 	{
 		const UINT Folds = theApp.GetProfileInt(SECTION, _T("Folded"), 0);
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
 			Folded[k] = (Folds & (1u << k)) != 0;
 		Auto = theApp.GetProfileInt(SECTION, _T("Check as you edit"), 1) != 0;
+		const UINT Saved = theApp.GetProfileInt(SECTION, _T("Play order"), CBarsPlayer::ALONE_THEN_MIX);
+		Order = Saved == CBarsPlayer::ALONE ? CBarsPlayer::ALONE : Saved == CBarsPlayer::MIX ? CBarsPlayer::MIX : CBarsPlayer::ALONE_THEN_MIX;
 	}
 
 	static CMainFrame *Main() { return static_cast<CMainFrame*>(theApp.m_pMainWnd); }
@@ -280,28 +523,38 @@ struct CProblemsPanelWnd::Impl {
 		MenuRect = CRect(Client.right - Margin - SX(28), Header.top + SY(3), Client.right - Margin, Header.bottom - SY(4));
 
 		Shown.clear();
-		int Top = 0;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
 			const std::vector<ftapi::ProblemLine> &Lines = List.Lines(k);
 			if (Lines.empty())
 				continue;
-			const shown_t Heading = { k, -1, Top, SY(LINE_HEIGHT) };
+			const shown_t Heading = { k, -1, 0, 0 };
 			Shown.push_back(Heading);
-			Top += Heading.Height;
 			if (Folded[k])
 				continue;
-			const int Height = Narrow ? SY(LINE_HEIGHT) * 2 - SY(2) : SY(LINE_HEIGHT);
 			for (size_t i = 0; i < Lines.size(); ++i) {
-				const shown_t Line = { k, static_cast<int>(i), Top, Height };
+				const shown_t Line = { k, static_cast<int>(i), 0, 0 };
 				Shown.push_back(Line);
-				Top += Height;
 			}
 		}
-		Content = Top + (Shown.empty() ? 0 : SY(4));
 		if (Selected >= static_cast<int>(Shown.size()))
 			Selected = static_cast<int>(Shown.size()) - 1;
 		if (Hover >= static_cast<int>(Shown.size()))
 			Hover = -1;
+		Heights();
+	}
+
+	// Where each line is: a finding takes two lines while the panel is narrow, and the selected one three, its
+	// buttons under it
+	void Heights()
+	{
+		int Top = 0;
+		for (size_t i = 0; i < Shown.size(); ++i) {
+			shown_t &S = Shown[i];
+			S.Top = Top;
+			S.Height = S.Line < 0 || !Narrow ? SY(LINE_HEIGHT) : SY(LINE_HEIGHT) * (static_cast<int>(i) == Selected ? 3 : 2) - SY(2);
+			Top += S.Height;
+		}
+		Content = Top + (Shown.empty() ? 0 : SY(4));
 		ScrollTo(Scroll, false);
 	}
 
@@ -311,27 +564,88 @@ struct CProblemsPanelWnd::Impl {
 		return CRect(Body.left, Body.top + S.Top - Scroll, Body.right, Body.top + S.Top - Scroll + S.Height);
 	}
 
-	CRect ButtonRect(int Index) const
+	// A finding's fix of one call, which Play the fix makes and plays
+	bool CanPlayFix(int Index) const
+	{
+		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
+		return pFinding != NULL && !pFinding->FixTool.empty() && pFinding->FixCalls <= 1;
+	}
+
+	bool HasButton(int Index, int Button) const
+	{
+		if (FindingOf(Index) == NULL)
+			return false;
+		return Button == BUTTON_PLAY_FIX ? CanPlayFix(Index) : Button == BUTTON_PLAY || Button == BUTTON_ACTION;
+	}
+
+	// A line shows its buttons when it's selected, or under the mouse while the panel is wide
+	bool ButtonsShown(int Index) const
+	{
+		return Index >= 0 && (Index == Selected || (!Narrow && Index == Hover));
+	}
+
+	// A line's buttons from the right: its action, Play the fix, Play it; along its first line, or under its two (the
+	// selected line of a narrow panel)
+	CRect ButtonRect(int Index, int Button = BUTTON_ACTION) const
 	{
 		const CRect Line = LineRect(Index);
 		const int Height = SY(LINE_HEIGHT);
-		return CRect(Line.right - SX(MARGIN) - SX(ACTION_WIDTH), Line.top + SY(2), Line.right - SX(MARGIN), Line.top + Height - SY(2));
+		const int Top = Narrow ? Line.top + 2 * Height - SY(2) : Line.top;
+		int Right = Line.right - SX(MARGIN);
+		for (int b = BUTTON_ACTION; b >= BUTTON_PLAY; --b) {
+			if (!HasButton(Index, b))
+				continue;
+			const int Width = SX(b == BUTTON_ACTION ? ACTION_WIDTH : b == BUTTON_PLAY_FIX ? PLAY_FIX_WIDTH : PLAY_WIDTH);
+			if (b == Button)
+				return CRect(Right - Width, Top + SY(2), Right, Top + Height - SY(2));
+			Right -= Width + SX(4);
+		}
+		return CRect(0, 0, 0, 0);
 	}
 
-	int LineAt(const CPoint &Point, bool *pOnButton) const
+	// How far the buttons reach in from the line's right
+	int ButtonsWidth(int Index) const
 	{
-		if (pOnButton != NULL)
-			*pOnButton = false;
+		int Width = 0;
+		for (int b = BUTTON_PLAY; b < LINE_BUTTONS; ++b)
+			if (HasButton(Index, b))
+				Width += SX(b == BUTTON_ACTION ? ACTION_WIDTH : b == BUTTON_PLAY_FIX ? PLAY_FIX_WIDTH : PLAY_WIDTH) + SX(4);
+		return Width;
+	}
+
+	int LineAt(const CPoint &Point, int *pButton) const
+	{
+		if (pButton != NULL)
+			*pButton = BUTTON_NONE;
 		if (!Body.PtInRect(Point))
 			return -1;
 		for (size_t i = 0; i < Shown.size(); ++i) {
 			if (!LineRect(static_cast<int>(i)).PtInRect(Point))
 				continue;
-			if (pOnButton != NULL && Shown[i].Line >= 0 && (static_cast<int>(i) == Selected || static_cast<int>(i) == Hover))
-				*pOnButton = ButtonRect(static_cast<int>(i)).PtInRect(Point) != FALSE;
+			if (pButton != NULL && Shown[i].Line >= 0 && ButtonsShown(static_cast<int>(i)))
+				for (int b = BUTTON_PLAY; b < LINE_BUTTONS; ++b)
+					if (HasButton(static_cast<int>(i), b) && ButtonRect(static_cast<int>(i), b).PtInRect(Point))
+						*pButton = b;
 			return static_cast<int>(i);
 		}
 		return -1;
+	}
+
+	// The line whose bars play now
+	bool IsPlayingLine(int Index) const
+	{
+		const ftapi::ProblemLine *pLine = LineOf(Index);
+		return pLine != NULL && Player.IsPlaying() && pLine->Finding == PlayingFinding && pLine->Note == PlayingNote;
+	}
+
+	LPCTSTR ButtonName(int Index, int Button) const
+	{
+		switch (Button) {
+		case BUTTON_PLAY: return IsPlayingLine(Index) ? _T("Stop") : _T("Play it");
+		case BUTTON_PLAY_FIX: return _T("Play the fix");
+		case BUTTON_ACTION: return ActionName(ActionOf(Index));
+		default: return _T("");
+		}
 	}
 
 	void ScrollTo(int Position, bool Redraw = true)
@@ -416,6 +730,7 @@ struct CProblemsPanelWnd::Impl {
 			Selected = Last;
 		else
 			Selected = Heading;
+		Heights();
 	}
 
 	// Checking
@@ -424,80 +739,7 @@ struct CProblemsPanelWnd::Impl {
 	// speed, the track) changes this
 	unsigned int MakeSignature() const
 	{
-		CFamiTrackerDoc *pDoc = Doc();
-		CMainFrame *pMain = Main();
-		if (pDoc == NULL || pMain == NULL || !pDoc->IsFileLoaded())
-			return 0;
-		unsigned int Hash = 2166136261u;
-		auto Add = [&Hash](unsigned int Value) {
-			Hash = (Hash ^ Value) * 16777619u;
-		};
-		const unsigned int Track = static_cast<unsigned int>(std::max(0, pMain->GetSelectedTrack()));
-		Add(Track);
-		if (Track >= pDoc->GetTrackCount())
-			return Hash;
-		Add(pDoc->GetFrameCount(Track));
-		Add(pDoc->GetPatternLength(Track));
-		Add(pDoc->GetSongSpeed(Track));
-		Add(pDoc->GetSongTempo(Track));
-		Add(static_cast<unsigned int>(pDoc->GetFirstHighlight()));
-		Add(static_cast<unsigned int>(pDoc->GetSecondHighlight()));
-		Add(pDoc->GetExpansionChip());
-		Add(pDoc->GetMachine());
-		Add(pDoc->GetNamcoChannels());
-		const unsigned int Channels = pDoc->GetAvailableChannels();
-		Add(Channels);
-		for (unsigned int c = 0; c < Channels; ++c)
-			Add(pDoc->GetEffColumns(Track, c));
-		for (unsigned int i = 0; i < MAX_INSTRUMENTS; ++i) {
-			if (!pDoc->IsInstrumentUsed(i))
-				continue;
-			Add(i);
-			CInstrument *pInstrument = pDoc->GetInstrument(i);	// retained
-			if (pInstrument == NULL)
-				continue;
-			const int Type = pInstrument->GetType();
-			Add(static_cast<unsigned int>(Type));
-			for (int s = 0; s < SEQ_COUNT; ++s) {
-				int Chip = SNDCHIP_NONE, Enabled = 0, Index = 0;
-				if (Type == INST_2A03) {
-					const CInstrument2A03 *p = static_cast<const CInstrument2A03 *>(pInstrument);
-					Enabled = p->GetSeqEnable(s);
-					Index = p->GetSeqIndex(s);
-				}
-				else if (Type == INST_VRC6) {
-					const CInstrumentVRC6 *p = static_cast<const CInstrumentVRC6 *>(pInstrument);
-					Chip = SNDCHIP_VRC6;
-					Enabled = p->GetSeqEnable(s);
-					Index = p->GetSeqIndex(s);
-				}
-				else if (Type == INST_N163) {
-					const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
-					Chip = SNDCHIP_N163;
-					Enabled = p->GetSeqEnable(s);
-					Index = p->GetSeqIndex(s);
-				}
-				Add(static_cast<unsigned int>(Enabled));
-				if (Enabled == 0)
-					continue;
-				Add(static_cast<unsigned int>(Index));
-				const CSequence *pSeq = pDoc->GetSequence(Chip, static_cast<unsigned int>(Index), s);
-				if (pSeq == NULL)
-					continue;
-				Add(pSeq->GetItemCount());
-				Add(pSeq->GetLoopPoint());
-				Add(pSeq->GetReleasePoint());
-				Add(pSeq->GetSetting());
-				for (unsigned int k = 0; k < pSeq->GetItemCount(); ++k)
-					Add(static_cast<unsigned int>(static_cast<unsigned char>(pSeq->GetItem(static_cast<int>(k)))));
-			}
-			if (Type == INST_N163) {
-				const CInstrumentN163 *p = static_cast<const CInstrumentN163 *>(pInstrument);
-				Add(static_cast<unsigned int>(p->GetWaveSize()));
-			}
-			pInstrument->Release();
-		}
-		return Hash;
+		return SongSettingsSignature();
 	}
 
 	// A check in a moment (After ms), or now
@@ -513,6 +755,10 @@ struct CProblemsPanelWnd::Impl {
 	void Check(bool Now, bool Wait = false)
 	{
 		pWnd->KillTimer(TMR_CHECK);
+		if (!Now && Player.IsPlaying()) {	// a finding's bars play: the lines stay as they are until they're over
+			CheckSoon(WAIT_MS);
+			return;
+		}
 		CFamiTrackerDoc *pDoc = Doc();
 		if (pTools == NULL || pDoc == NULL || !pDoc->IsFileLoaded()) {
 			Waiting = false;
@@ -601,6 +847,7 @@ struct CProblemsPanelWnd::Impl {
 		if (Index == Selected)
 			return;
 		Selected = Index;
+		Heights();
 		Reveal(Index);
 		Changed();
 		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
@@ -620,6 +867,7 @@ struct CProblemsPanelWnd::Impl {
 			for (size_t i = 0; i < Shown.size(); ++i)
 				if (Shown[i].Kind == Kind && Shown[i].Line < 0)
 					Selected = static_cast<int>(i);
+			Heights();
 		}
 		else
 			Reselect(Place);
@@ -769,6 +1017,183 @@ struct CProblemsPanelWnd::Impl {
 		AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
 	}
 
+	// Hearing it
+
+	// The bars Play it plays for a line of the selected track; false, saying why, when they can't play
+	bool PlayOf(const ftapi::ProblemLine &Line, ftapi::ProblemPlay &Play) const
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CMainFrame *pMain = Main();
+		if (pDoc == NULL || pMain == NULL || !pDoc->IsFileLoaded())
+			return false;
+		const unsigned int Track = static_cast<unsigned int>(std::max(0, pMain->GetSelectedTrack()));
+		if (List.Track() != static_cast<int>(Track)) {
+			Say(_T("That was found in another track: check this one first."));
+			return false;
+		}
+		const ftapi::Timing Time(static_cast<int>(pDoc->GetPatternLength(Track)), static_cast<int>(pDoc->GetFrameCount(Track)),
+			pDoc->GetFirstHighlight(), pDoc->GetSecondHighlight());
+		if (!List.PlayOf(Line, Time, Play)) {
+			Say(_T("That's past the song's end now; the panel checks again in a moment."));
+			return false;
+		}
+		return true;
+	}
+
+	static CString PlayWhere(const ftapi::ProblemPlay &Play)
+	{
+		CString Text;
+		if (Play.LastBar > Play.FirstBar)
+			Text.Format(_T("bars %d-%d"), Play.FirstBar, Play.LastBar);
+		else
+			Text.Format(_T("bar %d"), Play.FirstBar);
+		return Text;
+	}
+
+	// The channels a finding is heard on alone, by name: "VRC6 Pulse 1 and VRC6 Pulse 2"
+	static CString PlayAlone(const ftapi::ProblemPlay &Play)
+	{
+		const CFamiTrackerDoc *pDoc = Doc();
+		CString Text;
+		for (size_t i = 0; pDoc != NULL && i < Play.Channels.size(); ++i) {
+			if (Play.Channels[i] >= static_cast<int>(pDoc->GetAvailableChannels()))
+				continue;
+			if (!Text.IsEmpty())
+				Text += i + 1 == Play.Channels.size() ? _T(" and ") : _T(", ");
+			Text += RecordingChannelName(pDoc, Play.Channels[i]);
+		}
+		return Text;
+	}
+
+	static CString PlayWords(const ftapi::ProblemPlay &Play, CBarsPlayer::order_t Order)
+	{
+		const CString Alone = PlayAlone(Play), Where = PlayWhere(Play);
+		CString Text;
+		if (Alone.IsEmpty() || Order == CBarsPlayer::MIX)
+			Text.Format(_T("Playing %s in the mix."), static_cast<LPCTSTR>(Where));
+		else if (Order == CBarsPlayer::ALONE)
+			Text.Format(_T("Playing %s: %s alone."), static_cast<LPCTSTR>(Where), static_cast<LPCTSTR>(Alone));
+		else
+			Text.Format(_T("Playing %s: %s alone, then the whole song there."), static_cast<LPCTSTR>(Where), static_cast<LPCTSTR>(Alone));
+		return Text + _T(" P or Stop stops it.");
+	}
+
+	void StopPlaying()
+	{
+		if (Player.IsPlaying())
+			Player.Stop();
+		PlayingFinding = PlayingNote = -1;
+		pWnd->KillTimer(TMR_PLAY);
+		pWnd->Invalidate(FALSE);
+	}
+
+	// Play it: the bars where a line's finding is, a bar before and one after, its channels alone and then in the mix
+	// (or as Order says); again, it stops
+	void PlayIt(int Index, CBarsPlayer::order_t Play)
+	{
+		const ftapi::ProblemLine *pLine = LineOf(Index);
+		if (pLine == NULL)
+			return;
+		if (IsPlayingLine(Index)) {
+			StopPlaying();
+			Say(_T("Stopped."));
+			return;
+		}
+		ftapi::ProblemPlay Bars;
+		if (!PlayOf(*pLine, Bars))
+			return;
+		StopPlaying();
+		if (!Player.Play(Bars.FirstRow, Bars.EndRow, Bars.Channels, Play)) {
+			Say(_T("Those bars can't play now."));
+			return;
+		}
+		PlayingFinding = pLine->Finding;
+		PlayingNote = pLine->Note;
+		pWnd->SetTimer(TMR_PLAY, PLAY_MS, NULL);
+		Say(PlayWords(Bars, Play));
+		pWnd->Invalidate(FALSE);
+	}
+
+	void SetOrder(CBarsPlayer::order_t Play)
+	{
+		Order = Play;
+		theApp.WriteProfileInt(SECTION, _T("Play order"), static_cast<int>(Play));
+	}
+
+	// Play the fix: the fix check_song gives (one call) as one undoable step, then the same bars with it, and the
+	// question: keep it, or take it back (an undo); nothing else changes the song while it's asked
+	void PlayFix(int Index)
+	{
+		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
+		const ftapi::ProblemLine *pLine = LineOf(Index);
+		CMainFrame *pMain = Main();
+		if (pFinding == NULL || pLine == NULL || pMain == NULL || pTools == NULL || !CanPlayFix(Index))
+			return;
+		ftapi::ProblemPlay Bars;
+		if (!PlayOf(*pLine, Bars))
+			return;
+		if (pTools->IsBusy()) {
+			Say(_T("FamiTracker is busy with Claude Code; try again in a moment."));
+			return;
+		}
+		StopPlaying();
+		// What's needed after the fix (the list is checked anew once the song changes)
+		const std::string Tool = pFinding->FixTool, Arguments = pFinding->FixArguments;
+		const CString Does = pFinding->Kind == ftapi::PROBLEM_CLICK ? _T("moves the note ") + NudgeWords(*pFinding) : FromUtf8(pFinding->FixDoes);
+		const CString Where = PlayWhere(Bars), Alone = PlayAlone(Bars);
+		const CBarsPlayer::order_t Play = Alone.IsEmpty() ? CBarsPlayer::MIX : Order;
+		const long long Before = pMain->GetActionSerial();
+		std::string Reply;
+		pWnd->BeginWaitCursor();
+		pMain->BeginActionGroup();
+		const bool Done = pTools->RunTool(Tool.c_str(), Arguments, Reply);
+		pMain->EndActionGroup();
+		pWnd->EndWaitCursor();
+		const bool Made = pMain->GetActionSerial() != Before;
+		if (!Done) {
+			if (Made) {	// what it changed before it failed, and nothing to redo of it
+				pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+				pMain->ForgetRedo();
+			}
+			CString Text = FromUtf8(Reply);
+			Text.Replace(_T("\n"), _T("\r\n"));
+			AfxMessageBox(Text, MB_OK | MB_ICONINFORMATION);
+			Check(true, true);
+			return;
+		}
+		if (!Made) {
+			AfxMessageBox(_T("The fix changed nothing in the song."), MB_OK | MB_ICONINFORMATION);
+			Check(true, true);
+			return;
+		}
+		CAction *pFix = pMain->GetUndoAction();
+		const long long After = pMain->GetActionSerial();
+		if (pFix != NULL)
+			pFix->SetLabel(Tool + ": " + ToUtf8(Does) + " (the problems panel's Play the fix)");
+		CRect Near;
+		pWnd->GetParent()->GetWindowRect(&Near);
+		CPlayFixDlg Question(pMain, Does, Bars, Play, Where, Alone, Near);
+		if (Question.DoModal() == IDOK)
+			Say(_T("Kept: it ") + Does + _T(". Ctrl+Z still undoes it."));
+		else if (pMain->GetActionSerial() == After && pMain->GetUndoAction() == pFix) {
+			pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+			Say(_T("Taken back: the song is as it was before the fix."));
+		}
+		else
+			Say(_T("The song changed meanwhile, so the fix stays: Ctrl+Z undoes it."));
+		Check(true, true);
+	}
+
+	void Press(int Index, int Button)
+	{
+		switch (Button) {
+		case BUTTON_PLAY: PlayIt(Index, Order); break;
+		case BUTTON_PLAY_FIX: PlayFix(Index); break;
+		case BUTTON_ACTION: Act(Index); break;
+		default: break;
+		}
+	}
+
 	void Act(int Index)
 	{
 		switch (ActionOf(Index)) {
@@ -811,6 +1236,16 @@ struct CProblemsPanelWnd::Impl {
 		const action_t Action = ActionOf(Index);
 		if (pFinding != NULL) {
 			Popup.AppendMenu(MF_STRING, MENU_GO, _T("Go there\tEnter"));
+			if (IsPlayingLine(Index))
+				Popup.AppendMenu(MF_STRING, MENU_STOP, _T("Stop playing\tP"));
+			else {
+				Popup.AppendMenu(MF_STRING | (Order == CBarsPlayer::ALONE_THEN_MIX ? MF_CHECKED : MF_UNCHECKED), MENU_PLAY,
+					_T("Play it: alone, then in the mix\tP"));
+				Popup.AppendMenu(MF_STRING | (Order == CBarsPlayer::ALONE ? MF_CHECKED : MF_UNCHECKED), MENU_PLAY_ALONE, _T("Play it alone"));
+				Popup.AppendMenu(MF_STRING | (Order == CBarsPlayer::MIX ? MF_CHECKED : MF_UNCHECKED), MENU_PLAY_MIX, _T("Play it in the mix"));
+			}
+			if (CanPlayFix(Index))
+				Popup.AppendMenu(MF_STRING, MENU_PLAY_FIX, _T("Play the fix...\tShift+P"));
 			if (Action == ACTION_NUDGE)
 				Popup.AppendMenu(MF_STRING, MENU_ACTION, _T("Nudge it\tSpace"));
 			else if (Action == ACTION_FIX)
@@ -833,6 +1268,11 @@ struct CProblemsPanelWnd::Impl {
 		const UINT Chosen = Popup.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, Screen.x, Screen.y, pWnd);
 		switch (Chosen) {
 		case MENU_GO: GoTo(Index); break;
+		case MENU_PLAY: SetOrder(CBarsPlayer::ALONE_THEN_MIX); PlayIt(Index, Order); break;
+		case MENU_PLAY_ALONE: SetOrder(CBarsPlayer::ALONE); PlayIt(Index, Order); break;
+		case MENU_PLAY_MIX: SetOrder(CBarsPlayer::MIX); PlayIt(Index, Order); break;
+		case MENU_PLAY_FIX: PlayFix(Index); break;
+		case MENU_STOP: StopPlaying(); break;
 		case MENU_ACTION: Act(Index); break;
 		case MENU_EXPLAIN: Explain(Index); break;
 		case MENU_COPY: Copy(Index); break;
@@ -899,6 +1339,14 @@ struct CProblemsPanelWnd::Impl {
 			return true;
 		case VK_F5:
 			Check(true, true);
+			return true;
+		case 'P':
+			if (Ctrl || OnHeading || FindingOf(Selected) == NULL)
+				return false;
+			if (Shift)
+				PlayFix(Selected);
+			else
+				PlayIt(Selected, Order);
 			return true;
 		case VK_ESCAPE: {
 			CFamiTrackerView *pView = View();
@@ -1041,8 +1489,8 @@ struct CProblemsPanelWnd::Impl {
 			if (IsSelected || IsHover)
 				dc.FillSolidRect(&R, IsSelected ? (Focus ? LINE_SELECTED : LINE_SELECTED_DIM) : LINE_HOVER);
 			dc.FillSolidRect(R.left + SX(INDENT) - SX(9), R.top + SY(4), std::max(2, SX(3)), Line - SY(8), KindColor(S.Kind));
-			const bool Button = IsSelected || IsHover;
-			const int Right = R.right - SX(MARGIN) - (Button ? SX(ACTION_WIDTH) + SX(6) : 0);
+			const bool Button = ButtonsShown(static_cast<int>(i));
+			const int Right = R.right - SX(MARGIN) - (Button && !Narrow ? ButtonsWidth(static_cast<int>(i)) + SX(2) : 0);
 			dc.SelectObject(&Font);
 			const CString Where = FromUtf8(List.LinePosition(L)), Channel = FromUtf8(F.ChannelName), What = FromUtf8(List.LineText(L));
 			if (Narrow) {
@@ -1051,7 +1499,7 @@ struct CProblemsPanelWnd::Impl {
 				CRect Top(R.left + SX(INDENT), R.top, Right, R.top + Line);
 				dc.DrawText(Channel.IsEmpty() ? Where : Where + _T(", ") + Channel, &Top, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 				dc.SetTextColor(TEXT_DARK);
-				CRect Bottom(R.left + SX(INDENT), R.top + Line - SY(3), R.right - SX(MARGIN), R.bottom);
+				CRect Bottom(R.left + SX(INDENT), R.top + Line - SY(3), R.right - SX(MARGIN), R.top + 2 * Line - SY(2));
 				dc.DrawText(What, &Bottom, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 			}
 			else {
@@ -1064,8 +1512,9 @@ struct CProblemsPanelWnd::Impl {
 				CRect WhatRect(ChannelRect.right, R.top, std::max(static_cast<int>(ChannelRect.right), Right), R.bottom);
 				dc.DrawText(What, &WhatRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 			}
-			if (Button)
-				DrawButton(dc, ButtonRect(static_cast<int>(i)), ActionName(ActionOf(static_cast<int>(i))), IsHover && HoverButton, false);
+			for (int b = BUTTON_PLAY; Button && b < LINE_BUTTONS; ++b)
+				if (HasButton(static_cast<int>(i), b))
+					DrawButton(dc, ButtonRect(static_cast<int>(i), b), ButtonName(static_cast<int>(i), b), IsHover && HoverButton == b, false);
 		}
 
 		// Nothing to list: why, and what the panel does
@@ -1077,7 +1526,7 @@ struct CProblemsPanelWnd::Impl {
 			if (Checked)
 				Text = _T("Nothing stands out in this track. The panel checks it a moment after each change for notes that vanish, ")
 					_T("notes that click, clashes, notes out of range, silent and busy bars and notes outside the key, and marks ")
-					_T("what it finds in the pattern editor and the piano roll.");
+					_T("what it finds in the pattern editor and the piano roll. Play it plays the bars where something is.");
 			else if (!Trouble.IsEmpty())
 				Text = Trouble;
 			else
@@ -1142,6 +1591,7 @@ void CProblemsPanelWnd::Opened(bool Open)
 		m_pImpl->Check(true);
 	}
 	else {
+		m_pImpl->StopPlaying();
 		KillTimer(TMR_CHECK);
 		KillTimer(TMR_LOOK);
 		m_pImpl->Waiting = false;
@@ -1239,8 +1689,8 @@ void CProblemsPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
 		m_pImpl->Menu(-1, Screen);
 		return;
 	}
-	bool OnButton = false;
-	const int Index = m_pImpl->LineAt(point, &OnButton);
+	int Button = BUTTON_NONE;
+	const int Index = m_pImpl->LineAt(point, &Button);
 	if (Index < 0)
 		return;
 	const shown_t &S = m_pImpl->Shown[static_cast<size_t>(Index)];
@@ -1250,15 +1700,15 @@ void CProblemsPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
 		return;
 	}
 	m_pImpl->Select(Index);
-	if (OnButton)
-		m_pImpl->Act(Index);
+	if (Button != BUTTON_NONE)
+		m_pImpl->Press(Index, Button);
 }
 
 void CProblemsPanelWnd::OnLButtonDblClk(UINT nFlags, CPoint point)
 {
-	bool OnButton = false;
-	const int Index = m_pImpl->LineAt(point, &OnButton);
-	if (Index < 0 || OnButton)
+	int Button = BUTTON_NONE;
+	const int Index = m_pImpl->LineAt(point, &Button);
+	if (Index < 0 || Button != BUTTON_NONE)
 		return;
 	if (m_pImpl->Shown[static_cast<size_t>(Index)].Line < 0)
 		return;		// a kind's heading folds with one click
@@ -1279,9 +1729,9 @@ void CProblemsPanelWnd::OnRButtonUp(UINT nFlags, CPoint point)
 
 void CProblemsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 {
-	bool OnButton = false;
-	const int Index = m_pImpl->LineAt(point, &OnButton);
-	if (Index == m_pImpl->Hover && OnButton == m_pImpl->HoverButton)
+	int Button = BUTTON_NONE;
+	const int Index = m_pImpl->LineAt(point, &Button);
+	if (Index == m_pImpl->Hover && Button == m_pImpl->HoverButton)
 		return;
 	if (m_pImpl->Hover < 0 && Index >= 0) {
 		// Told when the mouse leaves, so nothing stays lit
@@ -1293,13 +1743,22 @@ void CProblemsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 		::TrackMouseEvent(&Track);
 	}
 	m_pImpl->Hover = Index;
-	m_pImpl->HoverButton = OnButton;
+	m_pImpl->HoverButton = Button;
 	Invalidate(FALSE);
 	const ftapi::ProblemFinding *pFinding = m_pImpl->FindingOf(Index);
 	if (pFinding == NULL)
 		return;
 	CString Text;
-	switch (OnButton ? m_pImpl->ActionOf(Index) : ACTION_NONE) {
+	if (Button == BUTTON_PLAY || Button == BUTTON_PLAY_FIX) {
+		if (Button == BUTTON_PLAY)
+			Text = m_pImpl->IsPlayingLine(Index) ? CString(_T("Stop playing")) : _T("Play it: the bars where it is, with a bar before and after, ")
+				_T("its channels alone and then in the mix (right-click for the one or the other)");
+		else
+			Text = _T("Play the fix: it ") + FromUtf8(pFinding->FixDoes) + _T(", then the same bars play, and you keep it or take it back");
+		m_pImpl->Say(Text);
+		return;
+	}
+	switch (Button == BUTTON_ACTION ? m_pImpl->ActionOf(Index) : ACTION_NONE) {
 	case ACTION_NUDGE:
 		Text = _T("Nudge: moves the note ") + Impl::NudgeWords(*pFinding) + _T(", as one Ctrl+Z");
 		break;
@@ -1323,7 +1782,7 @@ void CProblemsPanelWnd::OnMouseLeave()
 {
 	if (m_pImpl->Hover >= 0) {
 		m_pImpl->Hover = -1;
-		m_pImpl->HoverButton = false;
+		m_pImpl->HoverButton = BUTTON_NONE;
 		Invalidate(FALSE);
 	}
 	CWnd::OnMouseLeave();
@@ -1335,9 +1794,9 @@ BOOL CProblemsPanelWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 		CPoint Point;
 		::GetCursorPos(&Point);
 		ScreenToClient(&Point);
-		bool OnButton = false;
-		m_pImpl->LineAt(Point, &OnButton);
-		if (OnButton || m_pImpl->CheckRect.PtInRect(Point) || m_pImpl->MenuRect.PtInRect(Point)) {
+		int Button = BUTTON_NONE;
+		m_pImpl->LineAt(Point, &Button);
+		if (Button != BUTTON_NONE || m_pImpl->CheckRect.PtInRect(Point) || m_pImpl->MenuRect.PtInRect(Point)) {
 			::SetCursor(::LoadCursor(NULL, IDC_HAND));
 			return TRUE;
 		}
@@ -1373,6 +1832,17 @@ void CProblemsPanelWnd::OnTimer(UINT_PTR nIDEvent)
 		m_pImpl->Check(false);
 		return;
 	}
+	if (nIDEvent == TMR_PLAY) {
+		// A finding's bars: on to the mix after its channels alone, and over
+		if (m_pImpl->Player.Tick() && !m_pImpl->Player.IsPlaying()) {
+			m_pImpl->StopPlaying();
+			m_pImpl->Say(_T(""));
+		}
+		else if (!m_pImpl->Player.IsPlaying())
+			m_pImpl->StopPlaying();
+		Invalidate(FALSE);
+		return;
+	}
 	if (nIDEvent == TMR_LOOK) {
 		// The mouse went away without a word
 		if (m_pImpl->Hover >= 0) {
@@ -1397,6 +1867,9 @@ void CProblemsPanelWnd::OnDestroy()
 {
 	KillTimer(TMR_CHECK);
 	KillTimer(TMR_LOOK);
+	KillTimer(TMR_PLAY);
+	if (m_pImpl->Player.IsPlaying())
+		m_pImpl->Player.Stop();
 	g_Marks.Clear();
 	CWnd::OnDestroy();
 }

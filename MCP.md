@@ -397,6 +397,24 @@ step works on what the one before wrote. `export_for_game` (and
 loudness, as the `FAMITRACKER_PRINT` and `FAMITRACKER_LOUDNESS` comments), so
 `what_next` knows when the file is older than the song.
 
+With `format` `json` it answers with the step as data, for programs
+(FamiTracker's View > What next reads it): `step`, with its `id` (as `skip`
+names it; `done` once every step is), `what` (what to do in plain words,
+like "Set the tempo to 150 BPM"), `stage` (one of the recipe's: `frame` (the
+tempo, the key and an empty song's shape), `parts`, `form`, `depth`,
+`polish`, `mix`, `loop`, `export`; null for a fix of `check_song`'s, which
+comes before them, and for the end), `tool` and `arguments` with `call`
+exactly as the text gives it (or "ask the user", with `ask_user`), `why`,
+`own_notes` (a melody's step that offers a hook or a phrase to start from,
+where a tune of the user's own is better), `calls` (more than 1 when calls
+follow it, given in the why), a fix's `severity`, and where it works:
+`from_bar`, `to_bar`, `channel` and `channel_name`; `steps` (every step
+found, with `all`); `done`, `done_count` and `total` (the milestones the
+text counts as "5 of 20 done"); `milestones` (each `name`, `stage`, `done`
+and what's done, `text`); `stages` (each `id`, `name`, and how many of its
+milestones are `done` `of` how many); `notes`; `kind` and `kind_note`; and
+`again`, the arguments to ask again with.
+
 ## How changes arrive
 
 - **As clips (default).** Claude's ideas are saved as clips, named
