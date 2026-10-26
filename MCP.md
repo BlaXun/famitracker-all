@@ -1560,6 +1560,9 @@ they'd like it gone, and what would change it. `from_bar` and
 FamiTracker renders the track first: a two-and-a-half-minute track with
 eight parts took about 40 seconds under Wine. Listen with the user too: it
 hears how the song sounds, not whether it's the music they want.
+FamiTracker's **View > Problems** has a **Listen** button (F6 in the panel)
+that runs it and lists what it hears with `check_song`'s findings, each
+with Play it; `finish_song` listens too, after its mix.
 
 ## Stereo
 

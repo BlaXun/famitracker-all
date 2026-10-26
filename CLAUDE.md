@@ -1516,9 +1516,9 @@ keeps its folded kinds by name, "Folded kinds"). FamiTracker reports an FDS
 instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
 `ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
 sound them when `ChipPitches` is set. `TestListenTool` and
-`TestListenFdsWarble` cover the tool. Still to come: the problems panel's
-Listen button (what_next's listen is below, Small fixes, second batch, and
-finish_song's in The listen's rest).
+`TestListenFdsWarble` cover the tool. what_next's listen is below (Small
+fixes, second batch), finish_song's and the problems panel's Listen in The
+listen's rest.
 
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
@@ -1753,7 +1753,18 @@ make the file again once they're fixed; the export still follows.
 it's skipped, and with nothing left to finish, a kept listen of the song as
 it is still gives its high findings' fixes (`WhatNext::HeardFixes`, shared
 with `Listened`), so a fix the finish heard comes before the file is taken
-as done (`TestFinishSongListens`).
+as done (`TestFinishSongListens`). The problems panel's Listen (the
+header's button, F6 and its menu) runs `listen` with `format` `json` through
+`CMcpConnection::RunTool` (so it's kept for what_next too) with the wait
+cursor and `LISTENING` in the header and the status bar, and keeps the reply
+(`Heard`, of a song by `GetSongSerial` and a track), which every check adds
+to check_song's (`ProblemList::Add`; `Read` is `Clear`, then `Add`). Its
+findings are kinds of their own by severity (`ProblemHeard`):
+`PROBLEM_HEARD` (high, after the warbles), `PROBLEM_HEARD_LOOK` (medium,
+after out of range) and `PROBLEM_HEARD_DETAIL` (low, the details to hear,
+last), with Play it (two parts that beat play both) and Fix for a fix of
+one call; after a change they stay listed as heard before it (`SongMoved`,
+`IsStale`: Explain only) until the next listen (`TestProblemListHeard`).
 
 ## What this repository is
 

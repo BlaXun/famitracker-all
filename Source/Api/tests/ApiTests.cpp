@@ -25915,6 +25915,72 @@ void TestFinishSongListens()
 	CHECK(Again.Passes == Passes && Again.LastListen() == Kept && Again.Files.size() == 1u);
 }
 
+// The problems panel's Listen (from feat-listen-rest): the listen tool's JSON read into the list beside check_song's, its
+// findings in kinds of their own by how badly they're heard (high, medium worth a look, low details to hear), each with
+// Play it's bars and channels, and its fix where it has one
+void TestProblemListHeard()
+{
+	FakeSong Song = FinishTestSong();
+	Song.ChipPitches = true;
+	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
+		if (Song.Rows[5][r].HasNote() && Song.Rows[5][r].Effect[0] == EFF_NONE) {
+			Song.Rows[5][r].Effect[0] = EFF_VIBRATO;
+			Song.Rows[5][r].Param[0] = 0x6F;
+		}
+	const std::string Checked = Run(Song, "check_song", "{\"format\": \"json\"}").Text;
+	const std::string Heard = Run(Song, "listen", "{\"format\": \"json\"}").Text;
+	ProblemList List;
+	std::string Error;
+	CHECK(List.Read(Checked, Error));
+	const size_t Before = List.Findings().size();
+	const int Total = List.Total();
+	const std::string Key = List.Key();
+	CHECK(List.Add(Heard, Error));
+	const Json J = Parse(Heard);
+	const Json *pFindings = J.Get("findings");
+	CHECK(pFindings != 0 && pFindings->Size() > 0);
+	const size_t Count = pFindings != 0 ? pFindings->Size() : 0;
+	CHECK(List.Findings().size() == Before + Count && List.Total() == Total + static_cast<int>(Count));
+	CHECK(List.Key() == Key && List.Track() == 0);
+	// Each in its severity's kind, a line each
+	int Severities[3] = { 0, 0, 0 };
+	for (size_t i = 0; i < Count; ++i) {
+		const std::string Severity = TextOf(&pFindings->At(i), "severity");
+		++Severities[Severity == "high" ? 0 : Severity == "medium" ? 1 : 2];
+	}
+	const int KINDS[3] = { PROBLEM_HEARD, PROBLEM_HEARD_LOOK, PROBLEM_HEARD_DETAIL };
+	for (int k = 0; k < 3; ++k) {
+		CHECK_EQ(List.Count(KINDS[k]), Severities[k]);
+		CHECK_EQ(static_cast<int>(List.Lines(KINDS[k]).size()), Severities[k]);
+		CHECK(ProblemHeard(KINDS[k]));
+	}
+	CHECK(Severities[0] > 0);
+	// The deep vibrato on VRC6 Pulse 1: its fix of one call, and Play it plays its bars with the channel alone first
+	bool Found = false;
+	const Timing Time(Song.Info.PatternLength, Song.Info.Frames, Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	for (size_t i = 0; i < List.Lines(PROBLEM_HEARD).size(); ++i) {
+		const ProblemLine &L = List.Lines(PROBLEM_HEARD)[i];
+		const ProblemFinding &F = List.Findings()[static_cast<size_t>(L.Finding)];
+		if (F.Channel != 5 || F.FixTool.empty())
+			continue;
+		Found = true;
+		CHECK(F.FixCalls >= 1 && !F.Summary.empty() && !F.Message.empty() && !List.LineText(L).empty());
+		ProblemPlay P;
+		CHECK(List.PlayOf(L, Time, P) && P.Channels == std::vector<int>(1, 5) && P.FirstRow < P.EndRow);
+	}
+	CHECK(Found);
+	// The marks show them with check_song's
+	ProblemMarks Marks;
+	Marks.Set(List, static_cast<int>(Song.Rows.size()), Time.TotalRows(), -1);
+	CHECK(!Marks.IsEmpty());
+	// Something else: the list as it was; the listen's alone reads as a list of its own
+	CHECK(!List.Add("{\"track\": 1}", Error) && List.Findings().size() == Before + Count);
+	ProblemList Alone;
+	CHECK(Alone.Read(Heard, Error) && Alone.Findings().size() == Count && Alone.Key().empty());
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_HEARD_DETAIL)), std::string("heard_detail"));
+	CHECK(!ProblemHeard(PROBLEM_RANGE) && !ProblemHeard(PROBLEM_WARBLE));
+}
+
 int main()
 {
 	TestJson();
@@ -26173,6 +26239,7 @@ int main()
 	TestKeyCheckChords();
 	TestWhatNextListens();
 	TestFinishSongListens();
+	TestProblemListHeard();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -29,14 +29,15 @@ namespace ftapi {
 
 namespace {
 
-const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "warble", "range", "silent", "busy", "key", "held", "phrases",
-	"bass", "sound", "faders", "repeat", "short_loop" };
+// The listen tool's are named apart ("heard"): its JSON's kinds are its own, read by their severity
+const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "warble", "heard", "range", "heard_look", "silent", "busy",
+	"key", "held", "phrases", "bass", "sound", "faders", "repeat", "short_loop", "heard_detail" };
 const char *const KIND_TITLES[PROBLEM_KINDS] = {
-	"Notes that vanish", "Notes that click", "Clashes", "Warbles", "Out of range", "Silent bars", "Busy bars", "Outside the key",
-	"Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass", "Sounds the channel can't play",
-	"Faders doing the mix", "Repeats that copy", "A short loop"
+	"Notes that vanish", "Notes that click", "Clashes", "Warbles", "Heard when it plays", "Out of range", "Heard: worth a look",
+	"Silent bars", "Busy bars", "Outside the key", "Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass",
+	"Sounds the channel can't play", "Faders doing the mix", "Repeats that copy", "A short loop", "Heard: details, maybe meant"
 };
-const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1 };
+const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1 };
 
 int IntOf(const Json &Object, const char *Name, int Default)
 {
@@ -73,6 +74,11 @@ int ProblemSeverity(int Kind)
 	return Kind >= 0 && Kind < PROBLEM_KINDS ? SEVERITIES[Kind] : 1;
 }
 
+bool ProblemHeard(int Kind)
+{
+	return Kind == PROBLEM_HEARD || Kind == PROBLEM_HEARD_LOOK || Kind == PROBLEM_HEARD_DETAIL;
+}
+
 ProblemList::ProblemList()
 {
 	Clear();
@@ -93,20 +99,37 @@ void ProblemList::Clear()
 bool ProblemList::Read(const std::string &Text, std::string &Error)
 {
 	Clear();
+	if (!Add(Text, Error)) {
+		Clear();
+		return false;
+	}
+	return true;
+}
+
+bool ProblemList::Add(const std::string &Text, std::string &Error)
+{
 	Json Root;
 	if (!ParseJson(Text, Root, &Error) || !Root.IsObject() || Root.Get("findings") == 0 || !Root.Get("findings")->IsArray()) {
 		if (Error.empty())
 			Error = "check_song didn't answer with its findings.";
 		return false;
 	}
-	m_iTrack = std::max(0, IntOf(Root, "track", 1) - 1);
-	m_iPatternLength = std::max(1, IntOf(Root, "pattern_length", 64));
-	m_sKey = TextOf(Root, "key");
-	const Json *pCounts = Root.Get("counts");
-	for (int k = 0; k < PROBLEM_KINDS; ++k)
-		m_iCounts[k] = pCounts != 0 && pCounts->IsObject() ? std::max(0, IntOf(*pCounts, KIND_IDS[k], 0)) : 0;
+	// The listen tool's findings go by their severity (its kinds are its own); check_song's by their kind, counted as it
+	// counts them (notes that vanish by the note)
+	const bool Heard = TextOf(Root, "check") == "listen";
+	if (m_Findings.empty()) {
+		m_iTrack = std::max(0, IntOf(Root, "track", 1) - 1);
+		m_iPatternLength = std::max(1, IntOf(Root, "pattern_length", 64));
+	}
+	if (!Heard) {
+		m_sKey = TextOf(Root, "key");
+		const Json *pCounts = Root.Get("counts");
+		for (int k = 0; k < PROBLEM_KINDS; ++k)
+			m_iCounts[k] += pCounts != 0 && pCounts->IsObject() ? std::max(0, IntOf(*pCounts, KIND_IDS[k], 0)) : 0;
+	}
 
 	const Json &List = *Root.Get("findings");
+	const size_t Before = m_Findings.size();
 	for (size_t i = 0; i < List.Size(); ++i) {
 		const Json &Item = List.At(i);
 		if (!Item.IsObject())
@@ -114,9 +137,15 @@ bool ProblemList::Read(const std::string &Text, std::string &Error)
 		const std::string Id = TextOf(Item, "kind");
 		ProblemFinding F;
 		F.Kind = -1;
-		for (int k = 0; k < PROBLEM_KINDS; ++k)
-			if (Id == KIND_IDS[k])
-				F.Kind = k;
+		if (Heard) {
+			const std::string Severity = TextOf(Item, "severity");
+			F.Kind = Severity == "high" ? PROBLEM_HEARD : Severity == "medium" ? PROBLEM_HEARD_LOOK : PROBLEM_HEARD_DETAIL;
+			++m_iCounts[F.Kind];
+		}
+		else
+			for (int k = 0; k < PROBLEM_KINDS; ++k)
+				if (Id == KIND_IDS[k] && !ProblemHeard(k))
+					F.Kind = k;
 		if (F.Kind < 0)
 			continue;	// a kind of a later version
 		F.Channel = IntOf(Item, "channel", 0) - 1;
@@ -142,6 +171,14 @@ bool ProblemList::Read(const std::string &Text, std::string &Error)
 			if (N.Channel >= 0)
 				F.Notes.push_back(N);
 		}
+		// Two parts that beat: Play it plays both alone
+		const int Other = IntOf(Item, "other_channel", 0) - 1;
+		if (Heard && Other >= 0 && !F.Notes.empty()) {
+			ProblemNote N = F.Notes.front();
+			N.Channel = Other;
+			N.Name.clear();
+			F.Notes.push_back(N);
+		}
 		const Json *pFix = Item.Get("fix");
 		if (pFix != 0 && pFix->IsObject() && !TextOf(*pFix, "tool").empty() && pFix->Get("arguments") != 0) {
 			F.FixTool = TextOf(*pFix, "tool");
@@ -154,7 +191,7 @@ bool ProblemList::Read(const std::string &Text, std::string &Error)
 	}
 
 	// The lines: a finding each, or a note each of notes that vanish, in the song's order
-	for (size_t i = 0; i < m_Findings.size(); ++i) {
+	for (size_t i = Before; i < m_Findings.size(); ++i) {
 		const ProblemFinding &F = m_Findings[i];
 		ProblemLine Line;
 		Line.Finding = static_cast<int>(i);

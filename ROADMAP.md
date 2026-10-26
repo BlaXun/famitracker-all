@@ -325,6 +325,14 @@ starts if it was open.
   key) and what helps, and for a fix of several calls (a melody joined
   into phrases, a longer loop) gives the calls, for Claude to make.
   Nothing changes without a click.
+- **Listen** (F6 in the panel) plays the track to FamiTracker itself, the
+  whole and each part alone, and lists what it hears with the rest: what
+  sounds wrong (a warble or too deep a vibrato, notes out of tune, parts
+  beating, clicks, a sound that holds on, clipping) first, then what's
+  worth a look, and last the details that may be meant, each with **Play
+  it** and, where one call fixes it, **Fix**. The header says it's
+  listening while it does (a few seconds, longer for a long song). After a
+  change they stay listed as heard before it until you Listen again.
 
 The panel's keys: the arrows, Page Up and Down, Home and End to move, Enter
 to go there, Space for the button, Left and Right to fold, Ctrl+C to copy
@@ -1005,10 +1013,10 @@ when ready.
   stretches, each in plain words with its fix), `add_vibrato`'s `modulator`
   `off` and depths by cents on every chip, the FDS modulator said in plain
   words in studies, references and `design_instrument`, and `check_song`'s
-  warble from the notes alone. Still to come: a Listen button in the
-  problems panel whose findings join its list, `what_next`'s listen step
-  and `finish_song` listening after its mix, and the thresholds set on the
-  whole soundtrack.
+  warble from the notes alone. Done since: `what_next`'s listen step,
+  `finish_song` listening after its mix, and a Listen button in the
+  problems panel whose findings join its list. Still to come: the
+  thresholds set on the whole soundtrack.
 
 ## Open questions
 

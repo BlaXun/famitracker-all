@@ -38,16 +38,20 @@ struct Timing;	// Music.h
 // holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
 // in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
 // repeats another note for note, a lively stage's short loop. WARBLE: FDS notes held where a fast, deep modulator comes
-// in, from the notes alone (heard as a short right note and then a fluttering echo)
+// in, from the notes alone (heard as a short right note and then a fluttering echo). HEARD, HEARD_LOOK and HEARD_DETAIL:
+// the listen tool's findings (its JSON, "check" "listen"; from feat-listen-rest) by how badly they're heard: high (what
+// sounds wrong), medium (worth a look) and low (details that may be meant, to hear with the user)
 enum problem_kind {
-	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
-	PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
+	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD, PROBLEM_RANGE, PROBLEM_HEARD_LOOK, PROBLEM_SILENT,
+	PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD, PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
+	PROBLEM_HEARD_DETAIL,
 	PROBLEM_KINDS
 };
 
-const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it
+const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it ("heard" for the listen tool's)
 const char *ProblemKindTitle(int Kind);	// "Notes that vanish", for people
 int ProblemSeverity(int Kind);			// 3: heard worst (notes that vanish, clicks, clashes), 2: out of range, 1: worth a look
+bool ProblemHeard(int Kind);			// one of the listen tool's: heard in its render, not found in the notes
 
 struct ProblemNote {
 	int Channel;		// from 0
@@ -98,8 +102,11 @@ public:
 	ProblemList();
 
 	// From check_song's JSON; false with the reason when it isn't that (and
-	// the list is empty)
+	// the list is empty). The listen tool's JSON reads the same way
 	bool Read(const std::string &Text, std::string &Error);
+	// Another check's findings added to these, of the same track (the listen tool's to check_song's, as the panel shows
+	// both): false with the reason when it isn't one, the list as it was
+	bool Add(const std::string &Text, std::string &Error);
 	void Clear();
 
 	int Track() const { return m_iTrack; }		// from 0
