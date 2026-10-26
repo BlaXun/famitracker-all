@@ -1337,11 +1337,178 @@ public:
 				Files.clear();
 				FileTimes.clear();
 				Saved = Info.FileName;
+				OpenPath = Path;
+				KeepOnDisk();
 				return true;
 			}
 		}
 		Message = "FamiTracker found no free name for the song.";
 		return false;
+	}
+
+	// The songs in their files, by path (SaveNew and Save keep them, open_song brings one back as FamiTracker opens it), and
+	// FamiTracker's recent files, the newest first; the files next to a song aren't kept with it
+	struct SavedSong {
+		SongInfo Info;
+		std::vector<std::vector<Cell> > Rows;
+		std::vector<StoredTrack> Tracks;
+		int Current = 0;
+		std::vector<Clip> Clips;
+		MixStore Mix;
+		long long Saved = 0;	// by Clock
+	};
+	std::map<std::string, SavedSong> Disk;
+	std::vector<std::string> RecentFiles;
+	std::string OpenPath;		// the open song's file, "" when it has none here
+	int NewSongs = 0, OpenedSongs = 0;
+
+	void Remember(const std::string &Path)
+	{
+		RecentFiles.erase(std::remove(RecentFiles.begin(), RecentFiles.end(), Path), RecentFiles.end());
+		RecentFiles.insert(RecentFiles.begin(), Path);
+		if (RecentFiles.size() > 8u)	// as many as FamiTracker's File menu keeps (LoadStdProfileSettings)
+			RecentFiles.resize(8u);
+	}
+
+	void KeepOnDisk()
+	{
+		if (OpenPath.empty())
+			return;
+		Switch(Current);	// the selected track's cells into Tracks
+		SavedSong &File = Disk[OpenPath];
+		File.Info = Info;
+		File.Info.Modified = false;
+		File.Rows = Rows;
+		File.Tracks = Tracks;
+		File.Current = Current;
+		File.Clips = Clips;
+		File.Mix = Mix;
+		File.Saved = ++Clock;
+		Remember(OpenPath);
+	}
+
+	// As CMcpLink starts one: File > New with the game music template (one frame on the 2A03 and the VRC6 at 120 BPM, speed
+	// 6 and tempo 120, and its eight sounds: Profile.cpp), then the chips asked (the VRC6's sounds go without it, the VRC6
+	// Plus's starter sounds come as AddSoftLayerSounds adds them) and the names: no file, no changes, no undo history
+	bool NewSong(const NewSongSettings &New, std::string &Error) override
+	{
+		if (!CanChange(Error))
+			return false;
+		if (Info.Modified) {
+			Error = "The open song has changes that aren't saved.";
+			return false;
+		}
+		++NewSongs;
+		const FakeSong Fresh(1);
+		const bool Direct = Info.DirectChanges;
+		Info = Fresh.Info;
+		Info.DirectChanges = Direct;
+		Info.Title.clear();
+		Info.TrackName = "New song";
+		Info.FileName.clear();
+		Info.Speed = 6;
+		Info.Tempo = 120;
+		Info.Instruments.clear();
+		const char *const SOUNDS[][2] = { { "bright lead", "2A03" }, { "soft chords", "2A03" }, { "bass", "2A03" },
+			{ "kick", "2A03" }, { "snare", "2A03" }, { "hi-hat", "2A03" }, { "warm pad", "VRC6" }, { "bass", "VRC6" } };
+		for (int i = 0; i < 8; ++i)
+			AddInstrumentInfo(i, SOUNDS[i][0], SOUNDS[i][1], true);
+		Rows = Fresh.Rows;
+		Tracks.assign(1, StoredTrack());
+		Tracks[0].Name = Info.TrackName;
+		Tracks[0].Speed = Info.Speed;
+		Tracks[0].Tempo = Info.Tempo;
+		Tracks[0].Rows = Rows;
+		Current = 0;
+		Clips.clear();
+		Files.clear();
+		FileTimes.clear();
+		Mix = MixStore();
+		Undos.clear();
+		Redoable = 0;
+		OpenPath.clear();
+		if (New.SetChips) {
+			int Moved = 0, Lost = 0;
+			SetExpansion(New.Chips, New.Channels, Moved, Lost, Error);
+			if (!Has("VRC6"))
+				Info.Instruments.erase(std::remove_if(Info.Instruments.begin(), Info.Instruments.end(),
+					[](const InstrumentInfo &I) { return I.Chip == "VRC6"; }), Info.Instruments.end());
+			if (Info.Vrc6Plus) {
+				const std::vector<std::pair<const WaveSound *, int> > Missing = MissingSoftSounds(Info.Instruments);
+				for (size_t i = 0; i < Missing.size(); ++i)
+					AddN163Instrument(*Missing[i].first, Missing[i].second, Error);
+			}
+		}
+		if (!New.Title.empty())
+			Info.Title = New.Title;
+		if (!New.Track.empty())
+			Info.TrackName = Tracks[0].Name = New.Track;
+		Info.Modified = false;
+		Error.clear();
+		return true;
+	}
+
+	// As CMcpLink lists them: the songs in the Songs folder, the recent files still there and the song open now, each once
+	bool ListSongs(std::vector<SongPlace> &Out, std::string &) override
+	{
+		static const std::string SONGS = "C:\\Games\\FamiTracker\\Songs\\";
+		Out.clear();
+		std::set<std::string> Listed;
+		auto Add = [&](const std::string &Path) {
+			if ((Disk.count(Path) == 0 && Path != OpenPath) || !Listed.insert(Lowercase(Path)).second)
+				return;
+			SongPlace Place;
+			const size_t Slash = Path.rfind('\\');
+			Place.Name = Path.substr(Slash + 1, Path.size() - Slash - 5);
+			Place.Path = Path;
+			Place.Modified = Disk.count(Path) != 0 ? Disk[Path].Saved : 0;
+			Place.InSongs = Path.compare(0, SONGS.size(), SONGS) == 0;
+			Place.Open = Path == OpenPath;
+			Out.push_back(Place);
+		};
+		for (std::map<std::string, SavedSong>::const_iterator it = Disk.begin(); it != Disk.end(); ++it)
+			if (it->first.compare(0, SONGS.size(), SONGS) == 0)
+				Add(it->first);
+		for (size_t i = 0; i < RecentFiles.size(); ++i)
+			Add(RecentFiles[i]);
+		if (!OpenPath.empty())
+			Add(OpenPath);
+		return true;
+	}
+
+	// As CMcpLink opens one (File > Open): the song as its file keeps it, which joins the recent files
+	bool OpenSong(const std::string &Path, std::string &Error) override
+	{
+		if (!CanChange(Error))
+			return false;
+		if (Info.Modified) {
+			Error = "The open song has changes that aren't saved.";
+			return false;
+		}
+		if (Path == OpenPath)
+			return true;
+		const std::map<std::string, SavedSong>::const_iterator it = Disk.find(Path);
+		if (it == Disk.end()) {
+			Error = "There's no song at " + Path + ".";
+			return false;
+		}
+		++OpenedSongs;
+		const bool Direct = Info.DirectChanges;
+		Info = it->second.Info;
+		Info.DirectChanges = Direct;
+		Info.Modified = false;
+		Rows = it->second.Rows;
+		Tracks = it->second.Tracks;
+		Current = it->second.Current;
+		Clips = it->second.Clips;
+		Mix = it->second.Mix;
+		Files.clear();
+		FileTimes.clear();
+		Undos.clear();
+		Redoable = 0;
+		OpenPath = Path;
+		Remember(Path);
+		return true;
 	}
 
 	std::vector<std::string> Kits;	// the kits of samples added
@@ -1506,6 +1673,10 @@ public:
 			return false;
 		}
 		Saved = CopyName.empty() ? Info.FileName : CopyName + ".ftm";
+		if (CopyName.empty()) {
+			Info.Modified = false;	// as FamiTracker leaves the song it saved
+			KeepOnDisk();
+		}
 		Message = "Saved " + Saved + ".";
 		return true;
 	}
@@ -25969,6 +26140,174 @@ void TestProblemListHeard()
 	CHECK(!ProblemHeard(PROBLEM_RANGE) && !ProblemHeard(PROBLEM_WARBLE));
 }
 
+// new_song and open_song (from feat-new-song): a song of its own each time, from a phone too ("create a song, save it, then
+// create a new one"). FakeSong replaces its song as CMcpLink does: File > New with the template, then the chips and names
+// asked; File > Open of a file it saved
+void TestNewSongs()
+{
+	Caller Client;
+	Client.Client = true;
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 0);
+	ToolSet Tools(Song);
+	CHECK(Tools.Has("new_song") && Tools.Has("open_song") && !ToolSet::IsCoreTool("new_song") && !ToolSet::IsCoreTool("open_song"));
+
+	// Never over changes that aren't saved, nor while a dialog is open, nor with arguments it can't take: nothing changes
+	Song.Info.Modified = true;
+	ToolResult R = Tools.Call("new_song", Parse("{\"name\": \"Test A\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "has changes that aren't saved") && Contains(R.Text, "Save it first with save_song,"));
+	CHECK(Song.NewSongs == 0 && Song.Info.FileName == "test.ftm" && Song.Rows[0][0].Note != 0 && Song.Info.Modified);
+	Song.Info.FileName.clear();
+	CHECK_HAS(Tools.Call("new_song", Parse("{}"), Client).Text, "save_song with name, like {\"name\": \"Town theme\"}");
+	Song.Info.FileName = "test.ftm";
+	Song.Info.Modified = false;
+	Song.Busy = true;
+	R = Tools.Call("new_song", Parse("{\"name\": \"Test A\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "dialog") && Song.NewSongs == 0);
+	Song.Busy = false;
+	CHECK(Tools.Call("new_song", Parse("{\"name\": \"a/b\"}"), Client).IsError);
+	CHECK_HAS(Tools.Call("new_song", Parse("{\"expansion\": [\"SNES\"]}"), Client).Text, "\"SNES\" isn't an expansion chip");
+	CHECK_HAS(Tools.Call("new_song", Parse("{\"expansion\": 5}"), Client).Text, "expansion: the chips the new song has");
+	CHECK_HAS(Tools.Call("new_song", Parse("{\"title\": \"x\"}"), Client).Text, "title");
+	CHECK(Song.NewSongs == 0 && Song.Rows[0][0].Note != 0);
+
+	// A client's: File > New's song with the chips asked, saved at once into the Songs folder under its name
+	R = Tools.Call("new_song", Parse("{\"name\": \"Test A\", \"expansion\": [\"VRC6\"]}"), Client);
+	CHECK(!R.IsError && Song.Stopped && Song.NewSongs == 1);
+	CHECK_HAS(R.Text, "Started a new song \"Test A\" in place of \"Test song\" (test.ftm), as File > New starts one: the VRC6 "
+		"(8 channels), track 1 \"Test A\" of 4 bars at 120 BPM, no notes yet, with 8 sounds: \"bright lead\" (00)");
+	CHECK_HAS(R.Text, "Saved it as C:\\Games\\FamiTracker\\Songs\\Test A\\Test A.ftm, in a folder of its own");
+	CHECK_HAS(R.Text, "open_song with name \"Test A\" opens it again");
+	CHECK_HAS(R.Text, "The old song's Ctrl+Z history went with it; its file stays as it was saved (open_song with name \"test\"");
+	CHECK_HAS(R.Text, "Next: what_next gives the steps one at a time");
+	CHECK(Song.Info.Title == "Test A" && Song.Info.TrackName == "Test A" && Song.Info.FileName == "Test A.ftm" && !Song.Info.Modified);
+	CHECK(Song.Rows[0][0].Note == NOTE_NONE && Song.Undos.empty() && Song.Info.Instruments.size() == 8u);
+	// what_next takes it from there, the shape first
+	const WhatNextAnswer Next = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(Next.Tool == "song_shape", Next.Text.c_str(), __LINE__);
+
+	// A bar written and saved; another new song after it, which the first's file doesn't follow
+	R = Tools.Call("write_notes", Parse("{\"channel\": \"Pulse 1\", \"from_bar\": 1, \"instrument\": \"bright lead\", \"notes\": "
+		"\"C4 E4 G4 C5 - - - -\"}"), Client);
+	Check(!R.IsError, R.Text.c_str(), __LINE__);
+	Song.Info.Modified = true;	// as FamiTracker marks it
+	CHECK(Tools.Call("new_song", Parse("{\"name\": \"Test B\"}"), Client).IsError && Song.Info.FileName == "Test A.ftm");
+	CHECK(!Tools.Call("save_song", Parse("{}"), Client).IsError && !Song.Info.Modified);
+	R = Tools.Call("new_song", Parse("{\"name\": \"Test B\"}"), Client);
+	CHECK(!R.IsError && Song.Info.FileName == "Test B.ftm" && Song.Rows[0][0].Note == NOTE_NONE && Song.Info.Expansion == "VRC6");
+	CHECK_HAS(R.Text, "in place of \"Test A\" (Test A.ftm)");
+	CHECK_HAS(R.Text, "(open_song with name \"Test A\" opens it again)");
+
+	// The list: the newest first, the one open now marked; without a name too
+	const std::string A = "C:\\Games\\FamiTracker\\Songs\\Test A\\Test A.ftm";
+	Song.Disk["C:\\Music\\Boss.ftm"] = Song.Disk[A];
+	Song.Disk["C:\\Music\\Boss.ftm"].Saved = 0;
+	Song.RecentFiles.push_back("C:\\Music\\Boss.ftm");
+	Song.RecentFiles.push_back("C:\\Music\\Gone.ftm");	// moved away since
+	R = Tools.Call("open_song", Parse("{\"list\": true}"), Client);
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "The songs open_song opens by name, the newest first:\n- Test B (in the Songs folder, saved ");
+	CHECK_HAS(R.Text, ", open now)\n- Test A (in the Songs folder, saved ");
+	CHECK_HAS(R.Text, "\n- Boss (a recent file, C:\\Music\\Boss.ftm)");
+	CHECK_HAS(R.Text, "From this computer, path opens another .ftm file.");
+	CHECK_LACKS(R.Text, "Gone");
+	CHECK_EQ(Tools.Call("open_song", Parse("{}"), Client).Text, R.Text);
+
+	// Back to Test A by name, any case: its notes as saved
+	R = Tools.Call("open_song", Parse("{\"name\": \"test a\"}"), Client);
+	CHECK(!R.IsError && Song.OpenedSongs == 1 && Song.Info.FileName == "Test A.ftm" && Song.Rows[0][0].Note != NOTE_NONE);
+	CHECK_HAS(R.Text, "Opened \"Test A\" (Test A.ftm) in place of \"Test B\" (Test B.ftm): the VRC6 (8 channels), track 1 \"Test A\" "
+		"of 4 bars at 120 BPM, 4 notes on 2A03 Pulse 1");
+	CHECK_HAS(R.Text, "The old song's Ctrl+Z history went with it; its file stays as it was saved.");
+	CHECK_HAS(Tools.Call("open_song", Parse("{\"name\": \"Test A.ftm\"}"), Client).Text, "\"Test A\" is the song open now.");
+	CHECK(Song.OpenedSongs == 1);
+	// A word of a name, when only one has it; several, or none
+	CHECK(!Tools.Call("open_song", Parse("{\"name\": \"boss\"}"), Client).IsError && Song.Info.FileName == "Test A.ftm" &&
+		Song.OpenPath == "C:\\Music\\Boss.ftm");
+	CHECK_HAS(Tools.Call("open_song", Parse("{\"name\": \"Test\"}"), Client).Text, "Several songs have \"Test\" in their names: ");
+	R = Tools.Call("open_song", Parse("{\"name\": \"Castle\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "There's no song called \"Castle\"") && Contains(R.Text, "\n- Test A ("));
+	// Not over changes that aren't saved
+	Song.Info.Modified = true;
+	R = Tools.Call("open_song", Parse("{\"name\": \"Test B\"}"), Client);
+	CHECK(R.IsError && Contains(R.Text, "has changes that aren't saved") && Song.OpenPath == "C:\\Music\\Boss.ftm");
+	Song.Info.Modified = false;
+
+	// A name that's taken is numbered, the first's file as it was; the VRC6 Plus comes with its soft layer's sounds
+	R = Tools.Call("new_song", Parse("{\"name\": \"Test A\", \"expansion\": \"VRC6 Plus\"}"), Client);
+	CHECK(!R.IsError && Song.Info.FileName == "Test A 2.ftm" && Song.Info.Vrc6Plus && Song.Info.Title == "Test A");
+	CHECK_HAS(R.Text, "Saved it as C:\\Games\\FamiTracker\\Songs\\Test A 2\\Test A 2.ftm, in a folder of its own in FamiTracker's Songs "
+		"folder (a song called Test A is there already)");
+	CHECK_HAS(R.Text, "the VRC6 Plus (12 channels)");
+	CHECK_HAS(R.Text, "hoir pad");
+	CHECK(Song.Disk[A].Rows[0][0].Note != NOTE_NONE);
+	// No expansion chip: the template's VRC6 sounds go
+	R = Tools.Call("new_song", Parse("{\"name\": \"Plain\", \"expansion\": []}"), Client);
+	CHECK(!R.IsError && Song.Info.Expansion.empty() && Song.Info.Channels.size() == 5u && Song.Info.Instruments.size() == 6u);
+	CHECK_HAS(R.Text, "the 2A03 alone (5 channels)");
+	CHECK(!Tools.Call("new_song", Parse("{\"expansion\": \"none\"}"), Client).IsError && Song.Info.FileName == "Untitled.ftm");
+	// A name longer than a title: its first words are the title, the track has it all
+	R = Tools.Call("new_song", Parse("{\"name\": \"The long road home through the quiet valley\"}"), Client);
+	CHECK(!R.IsError && Song.Info.Title == "The long road home through the" && Song.Info.TrackName ==
+		"The long road home through the quiet valley");
+	CHECK_HAS(R.Text, "Its title is \"The long road home through the\", as much as FamiTracker keeps");
+
+	// FamiTracker's own windows (the Ask panel): untitled, as File > New leaves it
+	R = Tools.Call("new_song", Parse("{\"name\": \"Sketch\"}"));
+	CHECK(!R.IsError && Song.Info.FileName.empty() && Song.Info.Title == "Sketch" && !Song.Info.Modified && Song.OpenPath.empty());
+	CHECK_HAS(R.Text, "It has no file yet, as File > New leaves it: save_song with name saves it");
+	R = Tools.Call("open_song", Parse("{\"name\": \"Plain\"}"));
+	CHECK(!R.IsError && Song.Info.FileName == "Plain.ftm");
+	CHECK_HAS(R.Text, "in place of the untitled song \"Sketch\": the 2A03 alone (5 channels)");
+
+	// A path from this computer: a simple one, slashes either way; from the network never
+	Caller Away = Client;
+	Away.Remote = true;
+	R = Tools.Call("open_song", Parse("{\"path\": \"C:\\\\Games\\\\FamiTracker\\\\Songs\\\\Test B\\\\Test B.ftm\"}"), Away);
+	CHECK(R.IsError && Contains(R.Text, "takes no path from another computer") && Song.Info.FileName == "Plain.ftm");
+	const char *const BAD[] = { "\\\\\\\\server\\\\share\\\\x.ftm", "C:\\\\a\\\\..\\\\x.ftm", "C:x.ftm", "C:\\\\x.txt",
+		"C:\\\\NUL\\\\x.ftm", "C:\\\\a\\\\x.ftm:y", "relative\\\\x.ftm", "C:\\\\a\\\\ \\\\x.ftm" };
+	for (const char *pBad : BAD)
+		Check(Contains(Tools.Call("open_song", Parse(std::string("{\"path\": \"") + pBad + "\"}"), Client).Text,
+			"path: a FamiTracker module on this computer"), pBad, __LINE__);
+	R = Tools.Call("open_song", Parse("{\"path\": \"C:/Games/FamiTracker/Songs/Test B/Test B.ftm\"}"), Client);
+	CHECK(!R.IsError && Song.Info.FileName == "Test B.ftm");
+	CHECK_HAS(Tools.Call("open_song", Parse("{\"path\": \"/mnt/c/Games/FamiTracker/Songs/Test B/Test B.ftm\"}"), Client).Text,
+		"That's the song open now");
+	CHECK(Tools.Call("open_song", Parse("{\"path\": \"C:\\\\Music\\\\Nothing.ftm\"}"), Client).IsError);
+	CHECK(Tools.Call("open_song", Parse("{\"name\": \"x\", \"path\": \"C:\\\\x.ftm\"}"), Client).IsError);
+	const std::string Listed = Tools.Call("open_song", Parse("{}"), Away).Text;
+	CHECK_HAS(Listed, "\n- Boss (a recent file)");
+	CHECK_LACKS(Listed, "C:\\");
+	CHECK_LACKS(Listed, "path opens");
+
+	// Through HandleMcp from a phone on the home network: a client, so its new song is saved at once, and no path is taken
+	FakeSong Phone;
+	Phone.Info.DirectChanges = true;
+	ToolSet PhoneTools(Phone);
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	Config.Network = true;
+	Config.Addresses.push_back("192.168.1.10");
+	auto Call = [&](const std::string &Tool, const std::string &Arguments) {
+		const HttpResponse Response = HandleMcp(FromNetwork("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":"
+			"\"" + Tool + "\",\"arguments\":" + Arguments + "}}", "192.168.1.20"), Config, PhoneTools);
+		const Json Reply = Body(Response);
+		const Json *pResult = Reply.Get("result");
+		const Json *pContent = pResult != 0 ? pResult->Get("content") : 0;
+		const Json *pText = pContent != 0 && pContent->IsArray() && pContent->Size() > 0 ? pContent->At(0).Get("text") : 0;
+		return pText != 0 ? pText->String() : Response.Body;
+	};
+	CHECK_HAS(Call("new_song", "{\"name\": \"Phone song\", \"expansion\": [\"VRC6\"]}"),
+		"Saved it as C:\\Games\\FamiTracker\\Songs\\Phone song\\Phone song.ftm");
+	CHECK(Phone.Info.FileName == "Phone song.ftm" && Phone.NewSongs == 1);
+	CHECK_HAS(Call("open_song", "{\"path\": \"C:\\\\Games\\\\x.ftm\"}"), "takes no path from another computer");
+	CHECK_HAS(Call("open_song", "{\"list\": true}"), "\n- Phone song (in the Songs folder, saved ");
+	CHECK(Phone.Info.FileName == "Phone song.ftm" && Phone.OpenedSongs == 0);
+}
+
 int main()
 {
 	TestJson();
@@ -26228,6 +26567,7 @@ int main()
 	TestWhatNextListens();
 	TestFinishSongListens();
 	TestProblemListHeard();
+	TestNewSongs();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

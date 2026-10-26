@@ -24179,6 +24179,302 @@ std::string SaveTool(Session &S, const Json &Args, const Caller &Who)
 	return Message;
 }
 
+// new_song and open_song: another song in place of the open one, which has no changes to lose
+
+// The open song as the user knows it, for the replies: "\"Town theme\" (Town theme.ftm)", or the untitled song
+std::string SongNameText(const SongInfo &Song)
+{
+	std::string Name = Trim(Song.Title);
+	if (Name.empty() && Lowercase(Trim(Song.TrackName)) != "new song")
+		Name = Trim(Song.TrackName);
+	if (Song.FileName.empty())
+		return Name.empty() ? std::string("the untitled song") : "the untitled song \"" + Name + "\"";
+	return Name.empty() ? Song.FileName : "\"" + Name + "\" (" + Song.FileName + ")";
+}
+
+// A file's name without its ".ftm": "Town theme.ftm" -> "Town theme"
+std::string SongFileBase(const std::string &File)
+{
+	return File.size() > 4 && Lowercase(File.substr(File.size() - 4)) == ".ftm" ? File.substr(0, File.size() - 4) : File;
+}
+
+// Refused while the open song has changes that aren't saved, which Tool would drop: how to keep them
+void RefuseUnsavedSong(const Session &S, const std::string &Tool)
+{
+	if (!S.Song.Modified)
+		return;
+	throw Problem("The open song, " + SongNameText(S.Song) + ", has changes that aren't saved, and " + Tool + " puts another song "
+		"in its place, so nothing was changed. Save it first with save_song" + (S.Song.FileName.empty() ? " with name, like "
+		"{\"name\": \"Town theme\"} (a song that was never saved goes into FamiTracker's Songs folder under that name)" :
+		std::string()) + ", or ask the user whether to keep the changes; then call " + Tool + " again.");
+}
+
+// The title a new song's name gives the module: the name, else as many of its first words as FamiTracker keeps
+const size_t MAX_SONG_TITLE = 31;
+
+std::string TitleOfName(const std::string &Name)
+{
+	if (Characters(Name) <= MAX_SONG_TITLE)
+		return Name;
+	size_t Cut = 0;
+	for (size_t Count = 0; Cut < Name.size() && Count < MAX_SONG_TITLE; ++Count) {
+		++Cut;
+		while (Cut < Name.size() && (static_cast<unsigned char>(Name[Cut]) & 0xC0) == 0x80)
+			++Cut;	// the rest of a letter
+	}
+	std::string Title = Name.substr(0, Cut);
+	const size_t Space = Title.rfind(' ');
+	if (Cut < Name.size() && Name[Cut] != ' ' && Space != std::string::npos && Space >= MAX_SONG_TITLE / 2)
+		Title = Title.substr(0, Space);	// whole words
+	return Trim(Title);
+}
+
+// The chips new_song is asked for: expansion as set_expansion takes its chips (a list, or words: "VRC6 and 5B", "VRC6
+// Plus"), [] or "none" for the 2A03 alone
+std::vector<std::string> NewSongChips(const Json &Expansion)
+{
+	if (Expansion.IsArray() && Expansion.Size() == 0)
+		return std::vector<std::string>();
+	Json Args = Json::MakeObject();
+	Args.Set("chips", Expansion);
+	try {
+		return ExpansionArg(Args);
+	}
+	catch (const Problem &P) {
+		if (P.Text.find("isn't an expansion chip") != std::string::npos || P.Text.find("goes alone") != std::string::npos)
+			throw;
+		throw Problem("expansion: the chips the new song has, like \"VRC6\", \"VRC6 Plus\" or [\"VRC6\", \"N163\"], or \"none\" for "
+			"the 2A03's five channels alone (default: as File > New starts a song).");
+	}
+}
+
+// What the song open now has, for the replies: its chips, its tracks and the selected one's notes
+std::string SongContentsText(Session &S)
+{
+	const std::vector<std::string> Chips = ShownChips(S.Song);
+	std::string Text = Format("%s (%d channels)", Chips.empty() ? "the 2A03 alone" : ChipText(Chips).c_str(), S.ChannelCount());
+	if (S.Song.Tracks > 1)
+		Text += Format(", %d tracks", S.Song.Tracks);
+	std::string Parts;
+	int Notes = 0, With = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const int Count = static_cast<int>(S.Notes(c).size());
+		if (Count == 0)
+			continue;
+		Parts += (With == 0 ? "" : ", ") + S.Channel(c).FullName();
+		Notes += Count;
+		++With;
+	}
+	Text += Format(", track %d \"%s\" of %s at %s, ", S.Song.Track + 1, S.Song.TrackName.c_str(),
+		Plural(S.Time.BarCount(), "bar", "bars").c_str(), PaceText(S).c_str());
+	Text += Notes == 0 ? std::string("no notes yet") : Plural(Notes, "note", "notes") + " on " + Parts;
+	if (S.Song.Instruments.empty())
+		return Text + ", and no sounds yet";
+	Text += ", with " + Plural(static_cast<int>(S.Song.Instruments.size()), "sound", "sounds") + ": ";
+	for (size_t i = 0; i < S.Song.Instruments.size() && i < 12; ++i)
+		Text += (i == 0 ? "" : ", ") + InstrumentLabel(S.Song, S.Song.Instruments[i].Index);
+	return Text + (S.Song.Instruments.size() > 12 ? "..." : "");
+}
+
+// new_song: a new song in place of the open one, as File > New starts one. Who: a client (Caller::Client) can't use File >
+// Save As, so its new song is saved at once into the Songs folder under its name; FamiTracker's own windows leave it
+// untitled, as File > New does
+std::string NewSongTool(Session &S, const Json &Args, const Caller &Who)
+{
+	// Every argument first, so a mistake changes nothing
+	const bool Named = !Trim(StringArg(Args, "name")).empty();
+	const std::string Name = Named ? GivenSongName(StringArg(Args, "name")) : std::string();
+	NewSongSettings New;
+	if (Named) {
+		New.Title = TitleOfName(Name);
+		New.Track = Name;
+	}
+	const Json *pExpansion = Arg(Args, "expansion");
+	if (pExpansion != 0) {
+		New.SetChips = true;
+		New.Chips = NewSongChips(*pExpansion);
+	}
+	RefuseUnsavedSong(S, "new_song");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const SongInfo Closed = S.Song;
+	S.Host().Stop();
+	std::string Error;
+	if (!S.Host().NewSong(New, Error))
+		throw Problem((Error.empty() ? std::string("FamiTracker didn't start a new song.") : Error) + " The open song stays as it was.");
+	S.Load();
+	std::string Text = "Started a new song" + (Named ? " \"" + Name + "\"" : std::string()) + " in place of " + SongNameText(Closed) +
+		", as File > New starts one: " + SongContentsText(S) + ".";
+	if (Named && S.Song.Title != Name)
+		Text += " Its title is \"" + S.Song.Title + "\", as much as FamiTracker keeps; its track has the whole name.";
+	if (Who.Client) {
+		try {
+			const std::string Path = SaveIntoSongs(S, Named ? Name : NewSongName(S));
+			S.Load();
+			const std::string Saved = SongFileBase(PathFileName(Path)), Asked = Lowercase(Name);
+			const std::string Why = !Named || Lowercase(Saved) == Asked ? std::string() : Lowercase(Saved).compare(0, Asked.size(),
+				Asked) == 0 ? " (a song called " + Name + " is there already)" : " (this computer can't make a file of that name)";
+			Text += " Saved it as " + Path + ", in a folder of its own in FamiTracker's Songs folder" + Why + ": save_song saves it "
+				"there from now on, export_for_game puts its files next to it, and open_song with name \"" + Saved + "\" opens it "
+				"again.";
+		}
+		catch (const Problem &P) {
+			Text += " It couldn't be saved yet: " + P.Text + " save_song with name saves it.";
+		}
+	}
+	else
+		Text += " It has no file yet, as File > New leaves it: save_song with name saves it into FamiTracker's Songs folder (File > "
+			"Save As anywhere).";
+	Text += " The old song's Ctrl+Z history went with it" + (Closed.FileName.empty() ? std::string(".") : "; its file stays as it "
+		"was saved (open_song with name \"" + SongFileBase(Closed.FileName) + "\" opens it again).");
+	return Text + " Next: what_next gives the steps one at a time (a new song's tempo, key and shape first), or get_recipe with a "
+		"kind (calm, lively or action) the whole recipe.";
+}
+
+// open_song's songs: the songs in the Songs folder and the recent files, the newest first
+std::vector<SongPlace> SongsToOpen(Session &S)
+{
+	std::vector<SongPlace> Songs;
+	std::string Error;
+	if (!S.Host().ListSongs(Songs, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker couldn't list its songs.") : Error);
+	std::stable_sort(Songs.begin(), Songs.end(), [](const SongPlace &a, const SongPlace &b) {
+		return a.Modified != b.Modified ? a.Modified > b.Modified : Lowercase(a.Name) < Lowercase(b.Name);
+	});
+	return Songs;
+}
+
+// When a song was saved, in this computer's time: "2026-10-26 14:02"; "" when unknown
+std::string SavedWhen(long long Seconds)
+{
+	if (Seconds <= 0)
+		return std::string();
+	const std::time_t Time = static_cast<std::time_t>(Seconds);
+	std::tm Local;
+#ifdef _MSC_VER
+	if (localtime_s(&Local, &Time) != 0)
+		return std::string();
+#else
+	if (localtime_r(&Time, &Local) == 0)
+		return std::string();
+#endif
+	char Buffer[32];
+	std::strftime(Buffer, sizeof(Buffer), "%Y-%m-%d %H:%M", &Local);
+	return Buffer;
+}
+
+// open_song's list, at most MAX_LISTED_SONGS; Remote: the recent files without their paths
+std::string SongListText(const std::vector<SongPlace> &Songs, bool Remote)
+{
+	if (Songs.empty())
+		return "There's no song to open yet: FamiTracker's Songs folder is empty and it has no recent files. new_song starts one.";
+	std::string Text = "The songs open_song opens by name, the newest first" + (Songs.size() > MAX_LISTED_SONGS ?
+		Format(" (the %d newest of %d)", static_cast<int>(MAX_LISTED_SONGS), static_cast<int>(Songs.size())) : std::string()) + ":";
+	for (size_t i = 0; i < Songs.size() && i < MAX_LISTED_SONGS; ++i) {
+		const SongPlace &P = Songs[i];
+		std::string About = P.InSongs ? "in the Songs folder" : Remote ? "a recent file" : "a recent file, " + P.Path;
+		const std::string When = SavedWhen(P.Modified);
+		if (!When.empty())
+			About += ", saved " + When;
+		if (P.Open)
+			About += ", open now";
+		Text += "\n- " + P.Name + " (" + About + ")";
+	}
+	return Text + (Remote ? std::string() : std::string("\nFrom this computer, path opens another .ftm file."));
+}
+
+// The song open_song is asked for by name: the file's name (".ftm" left out), else the one whose name holds it; throws
+// what there is when none or several fit
+const SongPlace &FindSongToOpen(const std::vector<SongPlace> &Songs, const std::string &Asked, bool Remote)
+{
+	const std::string Name = SongFileBase(Trim(Asked)), Key = Lowercase(Trim(SongFileBase(Trim(Asked))));
+	for (size_t i = 0; i < Songs.size(); ++i)	// the newest first, so the newest of that name
+		if (Lowercase(Songs[i].Name) == Key)
+			return Songs[i];
+	std::vector<size_t> Near;
+	for (size_t i = 0; i < Songs.size(); ++i)
+		if (!Key.empty() && Lowercase(Songs[i].Name).find(Key) != std::string::npos)
+			Near.push_back(i);
+	if (Near.size() == 1)
+		return Songs[Near[0]];
+	if (Near.size() > 1) {
+		std::string Names;
+		for (size_t k = 0; k < Near.size() && k < 10; ++k)
+			Names += (k == 0 ? "\"" : ", \"") + Songs[Near[k]].Name + "\"";
+		throw Problem("Several songs have \"" + Name + "\" in their names: " + Names + ". Give open_song the whole name.");
+	}
+	throw Problem("There's no song called \"" + Name + "\" in FamiTracker's Songs folder or its recent files. " +
+		SongListText(Songs, Remote));
+}
+
+// A path open_song takes from this computer: a drive, folders and a .ftm file, each part a plain name (no network folders,
+// devices or streams), shorter than Windows' MAX_PATH
+bool IsSimpleSongPath(const std::string &Path)
+{
+	if (Path.size() < 8 || Path.size() >= 260 || !std::isalpha(static_cast<unsigned char>(Path[0])) || Path[1] != ':' ||
+		Path[2] != '\\' || Lowercase(Path.substr(Path.size() - 4)) != ".ftm")
+		return false;
+	for (size_t From = 3; From < Path.size();) {
+		size_t Slash = Path.find('\\', From);
+		if (Slash == std::string::npos)
+			Slash = Path.size();
+		if (!IsPlainFileName(Path.substr(From, Slash - From)))
+			return false;
+		From = Slash + 1;
+	}
+	return true;
+}
+
+// open_song: one of the songs in the Songs folder or the recent files by name, in place of the open one; without a name (or
+// with list) the list. A path only from this computer (Caller::Remote: never from the network)
+std::string OpenSongTool(Session &S, const Json &Args, const Caller &Who)
+{
+	const std::string Asked = Trim(StringArg(Args, "name")), Given = Trim(StringArg(Args, "path"));
+	if (!Asked.empty() && !Given.empty())
+		throw Problem("Give open_song a name or a path, not both.");
+	if (!Given.empty() && Who.Remote)
+		throw Problem("open_song takes no path from another computer, only a song's name: the songs in FamiTracker's Songs folder and "
+			"its recent files (open_song with list true names them).");
+	const std::vector<SongPlace> Songs = SongsToOpen(S);
+	if (BoolArg(Args, "list", false) || (Asked.empty() && Given.empty()))
+		return SongListText(Songs, Who.Remote);
+	std::string Path;
+	if (!Given.empty()) {
+		Path = WindowsPath(Given);
+		std::replace(Path.begin(), Path.end(), '/', '\\');
+		if (!IsSimpleSongPath(Path))
+			throw Problem("path: a FamiTracker module on this computer by its whole path, like C:\\Users\\you\\Music\\Town.ftm: a "
+				"drive, folders and a .ftm file, nothing else (no network folders).");
+		for (size_t i = 0; i < Songs.size(); ++i)
+			if (Songs[i].Open && Lowercase(Songs[i].Path) == Lowercase(Path))
+				return "That's the song open now, " + SongNameText(S.Song) + ".";
+	}
+	else {
+		const SongPlace &Found = FindSongToOpen(Songs, Asked, Who.Remote);
+		if (Found.Open)
+			return "\"" + Found.Name + "\" is the song open now" + (S.Song.Modified ? ", with changes that aren't saved yet (save_song "
+				"keeps them)" : "") + ".";
+		Path = Found.Path;
+	}
+	RefuseUnsavedSong(S, "open_song");
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	const SongInfo Closed = S.Song;
+	S.Host().Stop();
+	std::string Error;
+	if (!S.Host().OpenSong(Path, Error))
+		throw Problem((Error.empty() ? "FamiTracker couldn't open " + Path + "." : Error) + " The open song stays as it was.");
+	S.Load();
+	std::string Text = "Opened " + SongNameText(S.Song) + " in place of " + SongNameText(Closed) + ": " + SongContentsText(S) +
+		". The old song's Ctrl+Z history went with it" + (Closed.FileName.empty() ? std::string(".") : "; its file stays as it was "
+		"saved.");
+	if (S.Song.Tracks > 1)
+		Text += " select_track picks another of its tracks.";
+	return Text + " save_song saves it where it was opened from; what_next gives its next step.";
+}
+
 // The reference library: tracks studied from the user's NSF files, to lean on
 
 const int MAX_STUDIED = 24;			// tracks a study_nsf call studies; each takes a moment
@@ -29909,6 +30205,38 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"\"Untitled\").")),
 		false);
 
+	{
+		Json Chips = Prop("array", "The expansion chips, as set_expansion takes them: like [\"VRC6\"], [\"VRC6 Plus\"] or "
+			"[\"VRC6\", \"N163\"]; [] for the 2A03 alone (default: as File > New starts a song, the game music profile's template "
+			"the VRC6).");
+		Chips.Set("items", EnumProp("A chip.", std::vector<std::string>{ "VRC6", "VRC6 Plus", "VRC7", "FDS", "MMC5", "N163", "5B" }));
+		AddTool("new_song", "Start a new song",
+			"Starts a new song in place of the open one, as File > New does (the profile's template: its chip, tempo and sounds), "
+			"with nobody asked anything. It refuses while the open song has changes that aren't saved: save_song first (a song "
+			"never saved goes into FamiTracker's Songs folder under a name), or ask the user. name is the module's title and its "
+			"track's name; asked over MCP, the new song is saved at once into the Songs folder under it (in a folder of its own, "
+			"numbered when the name is taken), so save_song and export_for_game work on it at once. The old song's file stays as "
+			"it was saved (open_song opens it again); its Ctrl+Z history goes. Then what_next gives the first step.",
+			Schema()
+				.Add("name", Prop("string", "The song's name, like \"Town theme\": a plain file name, no folders (default: none, and "
+					"the file \"Untitled\")."))
+				.Add("expansion", Chips),
+			false, true);
+	}
+
+	AddTool("open_song", "Open another song",
+		"Opens another song in place of the open one, to go back to it: one of the songs in FamiTracker's Songs folder (where "
+		"new_song and save_song put them) or its recent files, by name. Without a name, or with list true, lists them, the "
+		"newest first. It refuses while the open song has changes that aren't saved: save_song first, or ask the user. The "
+		"old song's file stays as it was saved; its Ctrl+Z history goes.",
+		Schema()
+			.Add("name", Prop("string", "The song's name, its file's without .ftm, like \"Town theme\" (or a word of it, when only one "
+				"song has it)."))
+			.Add("list", Prop("boolean", "True: list the songs there are, opening none."))
+			.Add("path", Prop("string", "From this computer only, never over the network: a .ftm file by its whole path, like "
+				"C:\\Users\\you\\Music\\Town.ftm.")),
+		false, true);
+
 	AddTool("get_recipe", "A recipe for composing",
 		"The steps for composing a kind of song with these tools, with the numbers that make it work: calm (only when the "
 		"song is asked to be calm: a place to rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never "
@@ -30135,7 +30463,7 @@ void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResul
 	}
 	// The calls that change the song's notes, its sounds or its form (not files, studies or the track worked on)
 	static const char *const ASIDE[] = { "export_for_game", "save_song", "soundtrack_notes", "study_nsf", "study_module",
-		"references", "send_file", "import_nsf", "select_track", "keep_version" };
+		"references", "send_file", "import_nsf", "select_track", "keep_version", "new_song", "open_song" };
 	bool ReadOnly = false;
 	for (size_t i = 0; i < m_Tools.size(); ++i)
 		if (m_Tools[i].Name == Name)
@@ -30277,6 +30605,8 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		}
 		else if (Name == "undo") Result.Text = UndoTool(S, Args);
 		else if (Name == "save_song") Result.Text = SaveTool(S, Args, Who);
+		else if (Name == "new_song") Result.Text = NewSongTool(S, Args, Who);
+		else if (Name == "open_song") Result.Text = OpenSongTool(S, Args, Who);
 		else {
 			Result.Text = "Unknown tool: " + Name;
 			Result.IsError = true;
@@ -30668,7 +30998,10 @@ std::string ToolSet::Instructions()
 		"name: check it with the user first), and the reply's link plays in a phone's "
 		"browser as it is (away from home, its Tailscale link): give it to the person, or fetch it (it needs no header) or "
 		"resources/read its uri to send the file itself. attach puts the files in the reply, only for a client that saves "
-		"attachments; never put the access code in an address.\n"
+		"attachments; never put the access code in an address. A song of its own each time: \"start a new song called Town\" "
+		"is new_song with name (over MCP it's saved into the Songs folder at once), \"save it\" save_song, \"start another\" "
+		"new_song again once it's saved (it refuses over changes that aren't saved), and \"go back to Town\" open_song with name "
+		"(open_song with list true names the songs).\n"
 		"- Three kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
 		"action guide topics calm, lively and action the numbers). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
 		"lullaby): a lead that fades away like a music box (the night songs' favourite: design_instrument kind music box on a "

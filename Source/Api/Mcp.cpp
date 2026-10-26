@@ -868,6 +868,7 @@ HttpResponse HandleMcp(const HttpRequest &Request, const McpConfig &Config, Tool
 	E.Core = Route == ROUTE_CORE;
 	E.Who.Core = E.Core;
 	E.Who.Client = true;	// not FamiTracker's own windows: no File > Save As
+	E.Who.Remote = Remote;	// open_song takes no path from it
 	if (Remote) {
 		// Links to what export_for_game saves, as this client reached FamiTracker, with their own code for a browser
 		char Port[16];

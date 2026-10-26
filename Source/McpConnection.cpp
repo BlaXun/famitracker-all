@@ -48,6 +48,7 @@
 #include "Api/SoundIndex.h"
 #include "Api/Tools.h"
 #include "Api/Vrc6Plus.h"
+#include "Nsf/FtmFile.h"
 #include "Transcribe/Transcribe.h"
 #include "stdafx.h"
 #include <shlobj.h>
@@ -2521,6 +2522,190 @@ public:
 		});
 		if (Files.size() > ftapi::MAX_LISTED_EXPORTS)
 			Files.resize(ftapi::MAX_LISTED_EXPORTS);
+		return true;
+	}
+
+	// new_song: a new song in place of the open one as File > New makes it (as Help > Exercises starts the first song),
+	// asking nothing, since the open song has no changes to lose (MFC asks only about those); then the chips and names
+	// asked, with no file, no changes and no undo history, as File > New leaves it
+	bool NewSong(const ftapi::NewSongSettings &New, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || !pDoc->IsFileLoaded()) {
+			Error = "No song is open in FamiTracker.";
+			return false;
+		}
+		if (!m_bOwnDialog && !m_pMain->IsWindowEnabled()) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		if (pDoc->IsModified()) {
+			Error = "The open song has changes that aren't saved.";
+			return false;
+		}
+		unsigned char Flags = SNDCHIP_NONE;
+		bool Plus = false;
+		if (New.SetChips && !ChipFlags(New.Chips, Flags, &Plus)) {
+			Error = "FamiTracker can't make a song with those chips.";
+			return false;
+		}
+		const CString Title = Ansi(New.Title), Name = Ansi(New.Track);
+		if (Title.GetLength() > 31) {
+			Error = "FamiTracker keeps at most 31 characters for the title.";
+			return false;
+		}
+		Stop();
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();
+		const unsigned int Before = pDoc->GetSongSerial();
+		m_pMain->SendMessage(WM_COMMAND, ID_FILE_NEW);
+		pDoc = Doc();
+		if (pDoc == NULL || pDoc->GetSongSerial() == Before || !pDoc->IsFileLoaded()) {
+			Error = "FamiTracker didn't start a new song.";
+			return false;
+		}
+		if (New.SetChips && (pDoc->GetExpansionChip() != Flags || Plus)) {
+			int Moved = 0;
+			SwitchChips(pDoc, Flags, Plus ? static_cast<unsigned int>(ftapi::VRC6_PLUS_SOFT_CHANNELS) :
+				static_cast<unsigned int>(std::max(1, std::min(8, New.Channels))), Moved);
+			pDoc->SetVrc6Plus(Plus);
+			if (Plus)
+				AddSoftLayerSounds(pDoc);	// its soft layer's sounds: choir pad, string pad, soft flute, sub bass
+			if ((Flags & SNDCHIP_VRC6) == 0) {
+				for (unsigned int i = 0; i < MAX_INSTRUMENTS; ++i)	// the template's sounds for a chip the song hasn't
+					if (pDoc->IsInstrumentUsed(i) && pDoc->GetInstrumentType(i) == INST_VRC6)
+						RemoveInstrumentAndSequences(pDoc, i);
+			}
+			pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+			pDoc->UpdateAllViews(NULL, UPDATE_INSTRUMENT);
+			m_pMain->UpdateControls();
+			theApp.GetSoundGenerator()->DocumentPropertiesChanged(pDoc);
+		}
+		if (!Title.IsEmpty()) {
+			pDoc->SetSongName(Title);
+			m_pMain->SetSongInfo(pDoc->GetSongName(), pDoc->GetSongArtist(), pDoc->GetSongCopyright());
+		}
+		if (!Name.IsEmpty()) {
+			pDoc->SetTrackTitle(0, Name);
+			m_pMain->UpdateTrackBox();
+		}
+		const CString Caption = Name.IsEmpty() ? pDoc->GetTitle() : Name;
+		pDoc->MakeUntitled(Caption);	// nothing to save yet; the window named after it
+		return true;
+	}
+
+	// open_song: the .ftm files in the Songs folder (and in its folders), the recent files and the song open now, each once
+	bool ListSongs(std::vector<ftapi::SongPlace> &Songs, std::string &Error)
+	{
+		(void)Error;
+		Songs.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Open = pDoc != NULL ? pDoc->GetPathName() : CString();
+		std::vector<CString> Seen;	// lower case
+		auto Add = [&](const CString &Path, bool InSongs) {
+			CString Key = Path;
+			Key.MakeLower();
+			const int Slash = Path.ReverseFind(_T('\\'));
+			const CString File = Path.Mid(Slash + 1);
+			if (Slash < 0 || File.GetLength() <= 4 || File.Right(4).CompareNoCase(_T(".ftm")) != 0 ||
+				std::find(Seen.begin(), Seen.end(), Key) != Seen.end())
+				return;
+			WIN32_FILE_ATTRIBUTE_DATA Data;
+			if (!GetFileAttributesEx(Path, GetFileExInfoStandard, &Data) || (Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+				return;		// gone, as a recent file moved away
+			const std::string Utf = Utf8(Path);
+			if (Ansi(Utf) != Path)
+				return;		// a name OpenSong couldn't give back
+			Seen.push_back(Key);
+			ftapi::SongPlace Place;
+			Place.Name = Utf8(File.Left(File.GetLength() - 4));
+			Place.Path = Utf;
+			const ULONGLONG Ticks = (static_cast<ULONGLONG>(Data.ftLastWriteTime.dwHighDateTime) << 32) | Data.ftLastWriteTime.dwLowDateTime;
+			const ULONGLONG UNIX_START = 116444736000000000ULL;	// 1970 in FILETIME's 100 ns steps from 1601
+			Place.Modified = Ticks > UNIX_START ? static_cast<long long>((Ticks - UNIX_START) / 10000000ULL) : 0;
+			Place.InSongs = InSongs;
+			Place.Open = !Open.IsEmpty() && Path.CompareNoCase(Open) == 0;
+			Songs.push_back(Place);
+		};
+		auto AddFolder = [&](const CString &Folder) {
+			WIN32_FIND_DATA Found;
+			HANDLE hFind = FindFirstFile(Folder + _T("\\*.ftm"), &Found);
+			if (hFind == INVALID_HANDLE_VALUE)
+				return;
+			do {
+				if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+					Add(Folder + _T("\\") + Found.cFileName, true);
+			} while (FindNextFile(hFind, &Found));
+			FindClose(hFind);
+		};
+		const CString Folder = SongsFolder(false);
+		if (!Folder.IsEmpty()) {
+			AddFolder(Folder);
+			WIN32_FIND_DATA Found;
+			HANDLE hFind = FindFirstFile(Folder + _T("\\*"), &Found);
+			if (hFind != INVALID_HANDLE_VALUE) {
+				do {
+					const CString Sub = Found.cFileName;
+					if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && Sub != _T(".") && Sub != _T(".."))
+						AddFolder(Folder + _T("\\") + Sub);		// a song's own folder, as save_song makes it
+				} while (FindNextFile(hFind, &Found));
+				FindClose(hFind);
+			}
+		}
+		CStringArray Recent;
+		theApp.GetRecentFiles(Recent);
+		for (INT_PTR i = 0; i < Recent.GetSize(); ++i)
+			Add(Recent[i], false);
+		if (!Open.IsEmpty())
+			Add(Open, false);
+		return true;
+	}
+
+	// open_song: as File > Open opens a song (it joins the recent files), once the portable reader has read it as FamiTracker
+	// will, since for a file it can't open FamiTracker shows a message box that nobody may be there to close
+	bool OpenSong(const std::string &Path, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL) {
+			Error = "No song is open in FamiTracker.";
+			return false;
+		}
+		if (!m_bOwnDialog && !m_pMain->IsWindowEnabled()) {
+			Error = "A dialog is open in FamiTracker; ask the user to close it, then try again.";
+			return false;
+		}
+		if (pDoc->IsModified()) {
+			Error = "The open song has changes that aren't saved.";
+			return false;
+		}
+		const CString File = Ansi(Path);
+		if (File.IsEmpty() || Utf8(File) != Path) {
+			Error = "FamiTracker can't open a file of that name on this computer.";
+			return false;
+		}
+		const DWORD Attributes = GetFileAttributes(File);
+		if (Attributes == INVALID_FILE_ATTRIBUTES || (Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+			Error = "There's no song at " + Path + ".";
+			return false;
+		}
+		if (pDoc->IsFileLoaded() && pDoc->GetPathName().CompareNoCase(File) == 0)
+			return true;	// the song open now
+		nsf::Module Module;
+		nsf::FtmInfo Info;
+		std::string Why;
+		if (!nsf::ReadFtmFile(std::string(File.GetString()), Module, Info, Why)) {
+			Error = "FamiTracker can't open " + Path + ": " + Why + ".";
+			return false;
+		}
+		Stop();
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();
+		CDocument *pOpened = theApp.OpenDocumentFile(File);
+		pDoc = Doc();
+		if (pOpened == NULL || pDoc == NULL || !pDoc->IsFileLoaded() || pDoc->GetPathName().CompareNoCase(File) != 0) {
+			Error = "FamiTracker couldn't open " + Path + ".";
+			return false;
+		}
 		return true;
 	}
 

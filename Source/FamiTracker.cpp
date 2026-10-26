@@ -19,6 +19,7 @@
 */
 
 #include "stdafx.h"
+#include <afxadv.h>			// CRecentFileList (GetRecentFiles)
 #include <VersionHelpers.h>
 #include "Exception.h"
 #include "FamiTracker.h"
@@ -703,7 +704,19 @@ void CFamiTrackerApp::ResetPlayer()
 
 // File load/save
 
-void CFamiTrackerApp::OnFileOpen() 
+void CFamiTrackerApp::GetRecentFiles(CStringArray &Files) const
+{
+	Files.RemoveAll();
+	if (m_pRecentFileList == NULL)
+		return;
+	for (int i = 0; i < m_pRecentFileList->GetSize(); ++i) {
+		const CString File = (*m_pRecentFileList)[i];
+		if (!File.IsEmpty())
+			Files.Add(File);
+	}
+}
+
+void CFamiTrackerApp::OnFileOpen()
 {
 	// Overloaded in order to save the file path
 	CString newName, path;
