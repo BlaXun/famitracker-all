@@ -1470,6 +1470,45 @@ back undoes only the fix's own action. `TestWhatNextJson` (every state of
 shape: its title, one undo, then A's chords on the A it laid out) and
 `TestProblemPlay` cover them.
 
+Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
+`Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
+(portable, ASCII: `Exercises()` in order, each with its checks;
+`ExerciseChecks()` with what each teaches) and keeps each one's state in the
+"Exercises" registry section (0 not tried, 1 started, 2 done). Starting one
+(`StartExercise`, also `ID_HELP_EXERCISE_FIRST` + its place, which the
+note's Next exercise posts) opens its starter (`res/exercises/<id>.ftm`,
+RCDATA, through `OpenBuiltInSong` as the example songs open) or, for the
+song's shape and the first song, a new song (`ID_FILE_NEW`), then its
+script (`res/exercises/<id>.txt`) in the tutorial note (`StartExerciseNote`).
+Scripts are tutorials with check steps: `check:` (`WAIT_CHECK`, no `wait`),
+`hint:` and `answer: <channel>, bar N[, instrument]: <steps>` lines; their
+texts mark glossary links as `[[words]]` or `[[words|id]]` (`UnmarkLinks`),
+which exercise notes draw with `LayOutLinked` in `Tutorial.cpp`. Check runs
+the `check_exercise` tool (`CheckExerciseTool` after `WhatNextTool` in
+`Tools.cpp`, format json: `ExerciseVerdictJson`, read back by
+`ReadExerciseVerdict`); `ExerciseFactsOf` reads the song as the tools do
+(the target channel: the 2A03's Pulse 1, the triangle or the noise; the key;
+the chords the other parts play, `HearChords` on `HeardNotes` without the
+target; `BreathsOf`'s spans; the drums' kinds, `ExerciseDrumKind`; the
+sections with their `PartLine`; the flow; the melody as `what_next` guesses
+it) and `CheckExercise` judges it. A check step that passes stays (no
+auto-advance), and the exercise is done when its last check passes. Hear it
+(`HearGoodAnswer`) writes the answer lines with `write_notes` as one action
+group, plays its bars in `CExerciseHearDlg` (`CBarsPlayer`) and undoes them
+(`ForgetRedo`); Play it plays the verdict's bars, its channels alone first.
+The starters (2A03, one frame of four bars, two for the beat, the first
+example song's instruments, a `BF KEYS` block choosing C major except in
+minor's) were written from step parts by a script; keep each check failing
+on its starter and passing on its script's answers. To add an exercise: its
+checks in `Exercises.cpp`, its script and starter in `res/exercises`, the
+RCDATA lines and IDs, a row of `FILES` in `ExercisesDlg.cpp`, and its name
+in `TestExerciseScripts` (`tutorial_tests`). `exercises_tests` runs the
+checks on songs described by hand; `TestExerciseStarters` (every script and
+starter, read as FamiTracker opens it by `LoadStarter`; each check failing
+as it opens and passing on its answers, the first song by following
+`what_next`), `TestExerciseMistakes` and `TestExerciseTool` in `ApiTests.cpp`
+and `TestExerciseLines` in `tutorial_tests` cover the rest.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

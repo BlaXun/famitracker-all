@@ -654,9 +654,8 @@ bool RootsOnBeatOne(const ExerciseFacts &F, const std::vector<ExerciseNote> &Bas
 		const std::string Suggested = Written(BassPitch(B.pChord->Root, Bass));
 		if (pFirst == 0) {
 			V.Next = Format("Bar %d has no bass note on its first [[beat]]. The chord there is %s, built on %s, its [[root]]: put "
-				"%s %s on %s at the start of bar %d (%s).", B.Bar, B.pChord->Name.c_str(), Root.c_str(),
-				Root[0] == 'A' || Root[0] == 'E' || Root[0] == 'F' ? "an" : "a", Root.c_str(), TargetName(F).c_str(), B.Bar,
-				Suggested.c_str());
+				"%s %s on the triangle at the start of bar %d (%s).", B.Bar, B.pChord->Name.c_str(), Root.c_str(),
+				Root[0] == 'A' || Root[0] == 'E' || Root[0] == 'F' ? "an" : "a", Root.c_str(), B.Bar, Suggested.c_str());
 			PlayBars(V, F, B.Bar, B.Bar, F.Target);
 			return false;
 		}
@@ -876,9 +875,9 @@ void CheckMinor(const ExerciseFacts &F, ExerciseVerdict &V)
 		V.Right.push_back(Format("%s %s %s already (%s).", Plural(Sad, "note", "notes").c_str(), Sad == 1 ? "is" : "are",
 			Lowered.c_str(), BarsText(SadBars).c_str()));
 	V.Next = Format("Your tune still plays %s in %s: %s is the [[third]] above %s that makes it sound bright and happy ([[major "
-		"and minor|major-minor]]). Lower each %s one semitone, to %s: in the piano roll, drag it one lane down (in the pattern "
-		"editor, type it again a key lower).", Third.c_str(), BarsText(HappyBars).c_str(), Third.c_str(), HomeName.c_str(),
-		Third.c_str(), Lowered.c_str());
+		"and minor|major-minor]]). Lower each %s one semitone, to %s: in the piano roll, hold Alt and drag it one lane down (Alt "
+		"lets a note leave the key; with %s minor picked in the Key menu, it lands there by itself).", Third.c_str(),
+		BarsText(HappyBars).c_str(), Third.c_str(), HomeName.c_str(), Third.c_str(), Lowered.c_str(), HomeName.c_str());
 	PlayBars(V, F, HappyBars.front(), HappyBars.front(), -1);
 }
 
@@ -941,8 +940,8 @@ void CheckHook(const ExerciseFacts &F, ExerciseVerdict &V)
 			NoteWord(Bar1[i].Pitch, K);
 	if (Bar3.size() + Bar4.size() < 3) {
 		V.Right.push_back("Your [[hook]] is in bars 1-2: it starts " + First + ".");
-		V.Next = "Bars 3-4 have no tune yet: play your [[hook]] again there. In the piano roll, select the notes of bars 1-2, copy "
-			"them (Ctrl+C), click at the start of bar 3 and paste (Ctrl+V).";
+		V.Next = "Bars 3-4 have no tune yet: play your [[hook]] again there. In the piano roll, hold Ctrl and drag around the notes "
+			"of bars 1-2 to select them, copy them (Ctrl+C), point at the start of bar 3 and paste (Ctrl+V).";
 		PlayBars(V, F, 1, 2, F.Target);
 		return;
 	}

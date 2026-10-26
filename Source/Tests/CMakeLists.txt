@@ -3,7 +3,8 @@
 # switching the expansion chip (Source/ChipSwitch.cpp), the drum grid
 # (Source/DrumGrid.cpp), reading tutorials (Source/TutorialScript.cpp,
 # with the built-in ones in res/tutorials, the example songs' walkthroughs
-# in res/examples and the exercises' scripts in res/exercises), the views shown (Source/NoteViews.cpp), the piano roll's
+# in res/examples and the exercises' scripts in res/exercises), the views
+# shown (Source/NoteViews.cpp), the piano roll's
 # toolbar rows, hints and menu clicks (Source/PianoRollUi.cpp) and the sound
 # chips' emulation
 # with its stereo mixer (Source/APU), against working

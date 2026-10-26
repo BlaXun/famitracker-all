@@ -426,7 +426,7 @@ void TestBass()
 	ExerciseVerdict V = Run("bass-roots", F);
 	CHECK(!V.Passed);
 	CHECK_HAS(V.Next, "Bar 1 has no bass note on its first [[beat]]. The chord there is C, built on C, its [[root]]: put a C on "
-		"Triangle at the start of bar 1 (C-3).");
+		"the triangle at the start of bar 1 (C-3).");
 	CHECK(V.PlayChannels.size() == 1 && V.PlayChannels[0] == 2);
 	Note(F, 2, 1, 1, 4, "C-3");
 	Note(F, 2, 2, 1, 4, "A-2");
