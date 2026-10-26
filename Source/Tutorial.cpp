@@ -1285,6 +1285,9 @@ void CTutorialBubble::Tick()
 			Spot.SetRectEmpty();
 		if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
 			Place(Spot);
+		// The answer's lanes in sight, again when the part shown changes its size (a panel beside it opened or closed)
+		if (IsExercise() && Spot != m_LastSpot)
+			m_bLanesShown = false;
 		if (!m_bLanesShown)
 			m_bLanesShown = ShowAnswerLanes();
 		CRect Note;
