@@ -455,29 +455,10 @@ Plus).
 
 ## 12. Ideas from Mario Paint
 
-On the backlog, the stamp mode first (the user's idea, 24 October 2026:
-Mario Paint's music composer felt very intuitive). It has 15 sounds as pictures stamped on a
-staff, at most three notes on a beat, quarter notes only, no sharps or
-flats (C major and A minor), and songs of up to 24 bars. Much of its ease
-comes from those limits and from never meeting a channel. What could carry
-over:
-
-- **Pick a sound, then click.** A stamp mode for the piano roll: the song's
-  sounds as a palette of small pictures or colors; a click places a note of
-  the chosen sound, and FamiTracker puts it on a free channel that can play
-  it (a melody sound on a pulse, the bass on the triangle or sawtooth, a
-  drum on the noise). Each note shows its sound's color, and the palette
-  says when a sound has no channel left at that spot. The channels stay
-  underneath for later.
-- **Limits as a first mode.** A simple mode that bundles them: notes on a
-  beat grid, one length per click, Snap to key locked on, a dozen chosen
-  sounds, short songs. Switched off, everything else is there.
-- **Fun to watch.** Every stamp already sounds as it's placed; playback
-  could be fun to watch too, with a small character hopping onto the notes
-  as they play.
-- **Fun sounds beside the instruments.** Mario Paint puts a dog, a cat and
-  a pig next to its piano and trumpet. A few novelty stamps, made like the
-  sound effects from the voice, would fit.
+Dropped (the user, 26 October 2026: "Let's remove the mario paint idea. The
+Piano Roll is fine as it is"). It was a stamp mode for the piano roll after
+Mario Paint's music composer: pick a sound, click to place it, FamiTracker
+finds the channel.
 
 ## 13. Views you can switch on and off
 
@@ -503,8 +484,6 @@ way of placing notes has a check mark in the View menu.
   FamiTracker starts.
 - The tutorials show a part a step is about if it's hidden (the pattern
   editor too), and point at the drum grid's panel.
-
-Still open: the stamp mode (12) would be one more view.
 
 ## 14. Calm and lively tracks (Claude Code)
 
@@ -647,6 +626,47 @@ rules and fixing tool output by hand.
   - Learning from the good songs: the soundtrack's tracks and the tool calls
     of the composers who made them as examples for the local model, a few
     in its prompt or as data for a LoRA on the user's EVO X3.
+
+## 16. Help for newcomers to music
+
+The user (26 October 2026), asking what else would help people new to music
+use this FamiTracker; their own idea was a glossary. Agreed the same day,
+each with the user's words:
+
+- **A glossary you can show and hide** ("a toggle to view it/hide it ... a
+  modal that is non-blocking"; the main window is busy enough): a window of
+  its own that stays open beside the song without blocking it, opened and
+  closed from the menu, a toolbar button and a key. It covers "some basic
+  music/composing terms so a newcomer can start making music and
+  understands the terms" (notes, octaves, scales, keys, chords, melody,
+  phrases, rhythm, bars, tempo, the song's parts), the NES's chips and
+  sounds, the tracker's own words (rows, patterns, frames, instruments,
+  sequences) and every effect, each in plain words with a Hear it button
+  that plays a short example. The same entries reach Claude and local
+  models, so they explain with the same words.
+- **Effects explained in place** ("absolutely!"): hovering an effect in the
+  pattern editor shows what it does with its own numbers ("vibrato: speed
+  4, depth 2"), and Hear it plays it.
+- **A What next panel** (yes): `what_next` in FamiTracker, docked like the
+  problems panel: the one next step in plain words, why, and a button that
+  does it.
+- **Hear the problem** (yes): the problems panel's findings get Play it
+  (the bars where it happens) and, where there's a fix, Play the fix (kept
+  or taken back).
+- **Chords with roles** ("yes ... but that should be a toggle maybe"): the
+  piano roll's chord strip colors each chord by what it does (home, away,
+  tension, back home) and gives it a feel word, switched on and off from
+  the piano roll.
+- **Strong notes on the beat** (yes): the piano roll lights the notes of
+  the chord sounding under the cursor, the safest notes on a beat.
+- **Song shapes in one click** ("yes!"): a command that lays out a song's
+  named sections for its kind (a lively stage, a calm night, a town, a boss,
+  a short loop), each with a line on what it's for.
+- **Small exercises with feedback** ("yes! A good way to ease in the new
+  composer!"): short tasks in the tutorial window (write four bars that end
+  on the home note, a bass on the roots, a beat, a phrase that breathes),
+  checked by the tools, with friendly feedback and the glossary's words.
+  After the glossary, the panels and the song shapes are in.
 
 ## Feature branches
 
