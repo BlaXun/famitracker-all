@@ -222,13 +222,13 @@ void CGlossaryDlg::Layout()
 	GetDlgItem(IDC_GLOSSARY_SEARCH)->MoveWindow(Margin + Find, Margin, Left - Find, Line);
 	GetDlgItem(IDC_GLOSSARY_CATEGORY)->MoveWindow(Margin, Margin + Line + Gap, Left, Line * 10);
 	const int ListTop = Margin + 2 * (Line + Gap);
-	GetDlgItem(IDC_GLOSSARY_LIST)->MoveWindow(Margin, ListTop, Left, std::max(Line, Client.bottom - Margin - ListTop));
+	GetDlgItem(IDC_GLOSSARY_LIST)->MoveWindow(Margin, ListTop, Left, std::max(Line, static_cast<int>(Client.bottom) - Margin - ListTop));
 	// The entry on the right: the term, its other names, the text, Hear it, see also, Back
 	const int x = Margin * 2 + Left, Width = std::max(SX(80), Client.Width() - x - Margin);
 	const int TitleHeight = Line + 4;
 	GetDlgItem(IDC_GLOSSARY_TERM)->MoveWindow(x, Margin, Width, TitleHeight);
 	GetDlgItem(IDC_GLOSSARY_NAMES)->MoveWindow(x, Margin + TitleHeight, Width, Line * 2);
-	const int BackTop = Client.bottom - Margin - Line - 2;
+	const int BackTop = static_cast<int>(Client.bottom) - Margin - Line - 2;
 	const int LinksHeight = Line * 3;
 	const int LinksTop = BackTop - Gap - LinksHeight;
 	const int HearTop = LinksTop - Gap - Line * 2 - 2;

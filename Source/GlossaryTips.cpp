@@ -113,7 +113,8 @@ class CGlossaryTips : public CWnd
 {
 public:
 	CGlossaryTips() : m_pMainFrame(NULL), m_iStill(0), m_bShown(false), m_hShownWnd(NULL), m_bCell(false), m_iCellFrame(0),
-		m_iCellRow(0), m_iCellChannel(0), m_iCellColumn(0), m_iStatusKey(-1), m_bRestored(false) {}
+		m_iCellRow(0), m_iCellChannel(0), m_iCellColumn(0), m_iStatusKey(-1), m_bRestored(false), m_bQuiet(false),
+		m_iShownCursor(-1) {}
 
 	bool Start(CMainFrame *pMainFrame);
 	void Stop();
@@ -148,6 +149,8 @@ private:
 	long long m_iStatusKey;		// the cursor's effect the status bar says, -1 for none
 	CString m_strStatus;
 	bool m_bRestored;			// the glossary shown again if it was open, once the main window shows
+	bool m_bQuiet;				// typing moved the cursor while a tip showed: none until the mouse moves
+	long long m_iShownCursor;	// where the pattern editor's cursor was as the tip showed
 };
 
 BEGIN_MESSAGE_MAP(CGlossaryTips, CWnd)
@@ -337,15 +340,26 @@ void CGlossaryTips::Show(const glossary_tip_t &Tip, CPoint Screen)
 	Monitor.cbSize = sizeof(Monitor);
 	if (::GetMonitorInfo(::MonitorFromPoint(Screen, MONITOR_DEFAULTTONEAREST), &Monitor))
 		Screens = Monitor.rcWork;
-	int x = Screen.x + SX(12), y = Screen.y + SY(22);
+	int x = static_cast<int>(Screen.x) + SX(12), y = static_cast<int>(Screen.y) + SY(22);
 	if (x + Width > Screens.right)
 		x = std::max(static_cast<int>(Screens.left), static_cast<int>(Screens.right) - Width);
 	if (y + Height > Screens.bottom)
-		y = std::max(static_cast<int>(Screens.top), Screen.y - SY(8) - Height);
+		y = std::max(static_cast<int>(Screens.top), static_cast<int>(Screen.y) - SY(8) - Height);
 	m_Tip.SendMessage(TTM_TRACKPOSITION, 0, MAKELPARAM(x, y));
 	m_Tip.SendMessage(TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&Info));
 	m_bShown = true;
 	m_Shown = Tip;
+}
+
+// Where the pattern editor's cursor is, as one number (-1 without one)
+long long CursorPlace()
+{
+	CFamiTrackerView *pView = CFamiTrackerView::GetView();
+	if (pView == NULL || pView->GetPatternEditor() == NULL)
+		return -1;
+	const CPatternEditor *pEditor = pView->GetPatternEditor();
+	return ((static_cast<long long>(pEditor->GetFrame()) * 256 + pEditor->GetRow()) * 64 + pEditor->GetChannel()) * 16 +
+		pEditor->GetColumn();
 }
 
 void CGlossaryTips::Hide()
@@ -429,6 +443,15 @@ void CGlossaryTips::OnTimer(UINT_PTR nIDEvent)
 	const bool Moved = Mouse != m_Mouse;
 	m_Mouse = Mouse;
 	m_iStill = Moved ? 0 : m_iStill + 1;
+	// Typing moves the cursor: the tip makes way, and the next waits for the mouse
+	if (Moved)
+		m_bQuiet = false;
+	if (m_bShown && CursorPlace() != m_iShownCursor) {
+		Hide();
+		m_bQuiet = true;
+		m_iStill = 0;
+		return;
+	}
 	if (m_bShown) {
 		// It stays while the mouse is on the same part; its words follow an edit there
 		HWND hWnd = NULL;
@@ -453,7 +476,7 @@ void CGlossaryTips::OnTimer(UINT_PTR nIDEvent)
 		}
 		return;
 	}
-	if (m_iStill != REST_TICKS)
+	if (m_iStill != REST_TICKS || m_bQuiet)
 		return;
 	HWND hWnd = NULL;
 	glossary_tip_t Tip;
@@ -462,6 +485,7 @@ void CGlossaryTips::OnTimer(UINT_PTR nIDEvent)
 		Show(Tip, Mouse);
 		m_hShownWnd = hWnd;
 		m_bCell = Cell;
+		m_iShownCursor = CursorPlace();
 	}
 }
 

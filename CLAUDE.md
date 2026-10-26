@@ -1288,6 +1288,47 @@ shows a song at speed 1 as `StatusFramesText` (`RecorderInput.cpp`,
 widened for `STATUS_FRAMES_LONGEST`). `TestUnknownArguments`,
 `TestBrowserFixes`, `TestStudiedNames` and `TestStatusBarFrames` cover them.
 
+The glossary (from `feat-glossary`): `Source/Api/Glossary.cpp` (portable,
+ASCII, tested by its own `glossary_tests`, `tests/GlossaryTests.cpp`) holds
+the entries (`GlossaryEntries`: an id, a term, its other names, a category,
+two to four sentences, see-also ids, a Hear it example's id or `HearHow`),
+finds one by any name (`FindGlossaryEntry`: an effect as written, `447`, too),
+searches them (`SearchGlossary`) and writes the `explain` tool's text
+(`GlossaryText`; `ExplainTool` after `RecipeTool` in `Tools.cpp`, needing no
+song, in `CoreTools`). The effects' entries are built from `Effects.cpp`'s
+table, which gives each effect a newcomer's text (`EffectInfo::Plain`) and a
+value to hear (`Example`), the song's own effects a table of their own
+(`SongEffectReference`), and `DescribeEffect` says an effect's own numbers in
+words. Hear it is a score (`HearExample`: events in ms on voices, a channel
+kind each, `HEAR_HERE` the hovered effect's channel; `MakeExample`, and
+`EffectHearExample` for an effect as written); `GlossaryLabels` names the
+entry of each label FamiTracker explains, so the tests check them.
+`Source/GlossaryDlg.cpp` is Help > Glossary (`ID_HELP_GLOSSARY`, Ctrl+Shift+G,
+the toolbar's last button, the 26th image of both toolbar bitmaps), a
+modeless tool window shown with `SW_SHOWNOACTIVATE` so it never takes the
+note keys, its place and whether it's open in the "Glossary" registry
+section (`RestoreGlossary` from the tips' first tick once the main window
+shows). `Source/GlossaryHear.cpp` plays an example as the note keys play
+notes (`QueueNote`, at most one event per channel per frame), each channel
+on a plain instrument of its chip: the song's own one without sequences, or
+one added quietly for the example (no instrument-list update, the modified
+flag put back right after the add and the remove) and removed with
+`RemoveInstrumentAndSequences` when it ends, only in the same song
+(`GetSongSerial`); `SilentAll` then resets the channels unless the song
+plays. `Source/GlossaryTips.cpp` is one tracking tooltip polled every 100 ms:
+the pattern editor's effects (`CPatternEditor::GetCellAtPoint`), the song
+settings' labels (subclassed with `SS_NOTIFY` as `CGlossaryLabel`, a click
+opens the glossary there), the instrument editor's `IDC_INSTSETTINGS` list,
+and windows that draw their own parts through `AddGlossaryTipArea` (the
+mixer's Soft, Space and pan in `CMixerPanelWnd::Create`, the piano roll's Key,
+Snap to key, Chords and Groove in `CPianoRollWnd::Create`); it writes the
+status bar's line for the effect under the cursor. F1 (`ID_HELP`, now
+`CMainFrame::OnHelpContext`) opens the entry a tip shows, or the cursor's
+effect while the pattern editor has the keys, else FamiTracker's help, and
+Help > Hear the effect at the cursor (`ID_HELP_HEAREFFECT`, Ctrl+Shift+H)
+plays the tip's effect or the cursor's, plain and then with its numbers,
+with the note and instrument it plays there (`HearEffectAtCursor`).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

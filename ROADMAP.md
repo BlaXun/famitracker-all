@@ -640,10 +640,23 @@ each with the user's words:
   sounds, the tracker's own words (rows, patterns, frames, instruments,
   sequences) and every effect, each in plain words with a Hear it button
   that plays a short example. The same entries reach Claude and local
-  models, so they explain with the same words.
+  models, so they explain with the same words. Done (26 October, on
+  `feat-glossary`): Help > Glossary (a check mark, the toolbar's last
+  button, Ctrl+Shift+G), about 150 entries in four groups (making music,
+  sounds, the tracker, effects), a search over their other names, see-also
+  links and Hear it examples on the song's channels; a chip the song
+  doesn't have says how to hear it. The window remembers whether it was
+  open, its place and its size. Claude's `explain` tool gives the same
+  words, in the small set too.
 - **Effects explained in place** ("absolutely!"): hovering an effect in the
   pattern editor shows what it does with its own numbers ("vibrato: speed
-  4, depth 2"), and Hear it plays it.
+  4, depth 2"), and Hear it plays it. Done (26 October, on
+  `feat-glossary`): a tooltip on the effect the mouse rests on, the same
+  line in the status bar for the effect at the cursor, F1 for its entry
+  and Ctrl+Shift+H to hear the note plain and then with the effect. The
+  song settings' labels, the instrument editor's sequences, the mixer's
+  Soft, Space and pan and the piano roll's Key and Chords explain
+  themselves the same way.
 - **A What next panel** (yes): `what_next` in FamiTracker, docked like the
   problems panel: the one next step in plain words, why, and a button that
   does it.
