@@ -1087,9 +1087,10 @@ bool DesignOfKind(const std::string &Kind, SoundDesign &D)
 		D.Attack = 30; D.Peak = 12; D.Decay = 0; D.Sustain = 12; D.Release = 40; D.Duty = 0;
 	}
 	// The articulations of the classic NES soundtracks (references action guide)
-	else if (K == "bloomlead") {		// blooms in, a duty click, struck again while held, a vibrato that waits
+	else if (K == "bloomlead") {		// blooms in, a duty click, settles and holds, a vibrato that waits (struck again while
+										// held only when asked: restrike_beats, or design_instrument's words)
 		D.Attack = 2; D.AttackFrom = 10; D.Peak = 15; D.Decay = 6; D.Sustain = 12; D.Release = 6; D.Duty = 1; D.Click = true;
-		D.Restrike = 12; D.Vibrato = 1; D.VibratoDelay = 24;
+		D.Vibrato = 1; D.VibratoDelay = 24;
 	}
 	else if (K == "steppedlead") {	// holds, then steps down; the lead of fast action tracks
 		D.Attack = 0; D.Peak = 15; D.Decay = 36; D.DecayStyle = DECAY_STEPS; D.Sustain = 9; D.Release = 7; D.Duty = 2;

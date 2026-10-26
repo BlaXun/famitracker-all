@@ -138,8 +138,13 @@ public:
 	static bool PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error);
 
 private:
+	// After a call, so undo says what it undoes and a call that failed leaves nothing of its own to undo: the change a
+	// call made gets its label (SongHost::LabelUndo), what a call that failed had changed is taken back
+	void AfterCall(const std::string &Name, long long UndoBefore, ToolResult &Result);
+
 	SongHost &m_Host;
 	std::vector<ToolInfo> m_Tools;
+	std::string m_FailedCall;	// the call that changes the song and failed last, while no change came after it ("" for none)
 };
 
 }	// namespace ftapi

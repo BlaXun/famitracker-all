@@ -187,8 +187,10 @@ public:
 		bool Whole = false;
 		std::vector<StoredTrack> AllTracks;
 		int Selected = 0;
+		std::string Label;	// what the tools said the change was (LabelUndo)
 	};
 	std::vector<Snapshot> Undos;
+	long long UndoPushes = 0;	// the changes taken into the undo history so far (UndoSerial)
 	MixStore Mix;			// the mixer window's settings, by channel ID, as CFamiTrackerDoc keeps them
 	int MixWrites = 0;
 	int GroupDepth = 0, Groups = 0;
@@ -564,6 +566,15 @@ public:
 			GroupRemembered = true;
 		}
 		Undos.push_back(S);
+		++UndoPushes;
+	}
+
+	long long UndoSerial() override { return UndoPushes; }
+
+	void LabelUndo(const std::string &Label) override
+	{
+		if (!Undos.empty())
+			Undos.back().Label = Label;
 	}
 
 	static bool HasSame(const Cell &C, int Effect, int Param)
@@ -1320,7 +1331,7 @@ public:
 			Info.ChosenKey = S.Key;
 		}
 		Mix = S.Mix;
-		Message = "Undid it.";
+		Message = S.Label.empty() ? "Undid it." : "Undid the last change, " + S.Label + ".";
 		return true;
 	}
 
@@ -2234,9 +2245,11 @@ void TestDesign()
 	CHECK_HAS(Result.Text, "a triangle");
 	CHECK_LACKS(Result.Text, "pulse");
 
-	// The classic articulations: a bloom, a duty click, held notes struck again
+	// The classic articulations: a bloom, a duty click, held notes struck again (asked for: the bloom lead holds by itself)
 	SoundDesign Bloom;
 	CHECK(DesignOfKind("bloom lead", Bloom));
+	CHECK(Bloom.Restrike == 0);
+	Bloom.Restrike = 12;
 	Preset BP = DesignPreset(Bloom);
 	const PresetSequence &BV = BP.Sequences2A03[0];
 	CHECK(BV.Items[0] == 10 && BV.Items[1] == 12 && BV.Items[2] == 15);
@@ -2274,7 +2287,7 @@ void TestDesign()
 		if (Flick.Sequences2A03[i].Type == SEQUENCE_PITCH)
 			CHECK(Flick.Sequences2A03[i].Items[0] == -4 && Flick.Sequences2A03[i].Items[1] == 3 && Flick.Sequences2A03[i].Items[2] == 1);
 	}
-	Result = Run(Song, "design_instrument", "{\"name\": \"Konami lead\", \"kind\": \"bloom lead\", \"channel\": 1}");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Konami lead\", \"kind\": \"bloom lead\", \"channel\": 1, \"restrike_beats\": 0.5}");
 	CHECK_HAS(Result.Text, "a 25% pulse that blooms from 10 to 15 2 frames in after a 12.5% duty click on the first frame");
 	CHECK_HAS(Result.Text, "struck again every 12 frames while it holds");
 	// A 75% note clicks at 50% (12.5% would be the same thin sound as 75%, a pulse's mirror image)
@@ -4264,7 +4277,7 @@ void TestMood()
 	CHECK_EQ(Notes(Song, 5, 0, 33), std::string("0:C-4 4:D-4 8:D#4 12:F-4 16:G-4 20:G#4 24:A#4 28:C-5 32:=== "));
 	CHECK(Song.Rows[2][0].Pitch() == 24 && Song.Rows[6][3].Pitch() == 48 && Song.Rows[6][35].Note == NOTE_RELEASE);
 	CHECK_EQ(Song.Clips.size(), static_cast<size_t>(1));
-	CHECK(Run(Song, "undo", "{}").Text == "Undid it.");
+	CHECK_HAS(Run(Song, "undo", "{}").Text, "Undid the last change, change_mood: from C major to C minor");
 	CHECK(Song.Rows == Before);	// one Ctrl+Z takes all of the notes back
 
 	// Mistakes change nothing, not even the instruments
@@ -14394,8 +14407,8 @@ void TestVrc6DutiesAndStrikes()
 		CHECK(*std::min_element(pV->Items.begin() + 26, pV->Items.begin() + 54) == 3);	// never near silence
 	}
 	CHECK_HAS(Result.Text, "is struck again every 28 frames (half a beat)");
-	// The bloom lead's, every 12 frames at 150 BPM: from 12 down to 7 and up to 14
-	Run(Song, "design_instrument", "{\"name\": \"Konami 2\", \"kind\": \"bloom lead\"}");
+	// The bloom lead's when asked, every 12 frames at 150 BPM: from 12 down to 7 and up to 14
+	Run(Song, "design_instrument", "{\"name\": \"Konami 2\", \"kind\": \"bloom lead\", \"restrike_beats\": 0.5}");
 	pV = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
 	CHECK(pV != 0 && pV->Loop == 10 && pV->Items[10] == 9 && pV->Items[11] == 7 && pV->Items[12] == 14 && pV->Items[13] == 13 &&
 		pV->Release == 21);
@@ -21242,6 +21255,423 @@ void TestLivelyChordsTop()
 	CHECK_LACKS(Run(Calm, "mix", "{\"style\": \"calm\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text, "play loudest in");
 }
 
+// printf into a string, for the tests' expected texts
+std::string Printed(const char *Pattern, int A, int B = 0, int C = 0, int D = 0, int E = 0)
+{
+	char Buffer[512];
+	std::snprintf(Buffer, sizeof(Buffer), Pattern, A, B, C, D, E);
+	return Buffer;
+}
+
+// The same, for Contains, which takes a C string (each call its own buffer, kept until the next)
+const char *PrintedC(const char *Pattern, int A, int B = 0, int C = 0, int D = 0, int E = 0)
+{
+	static std::string Kept;
+	Kept = Printed(Pattern, A, B, C, D, E);
+	return Kept.c_str();
+}
+
+// A swing written by hand on the last channel over Rows rows: A on each beat's first half, B on its second (eighths)
+void SwingByHand(FakeSong &Song, int A, int B, int Rows)
+{
+	for (int r = 0; r < Rows; r += 2) {
+		Song.Rows[7][static_cast<size_t>(r)].Effect[0] = EFF_SPEED;
+		Song.Rows[7][static_cast<size_t>(r)].Param[0] = static_cast<unsigned char>(r % 4 == 0 ? A : B);
+	}
+}
+
+// Whether any channel has a speed command (Fxx under the split point) on a row
+bool SpeedCommandAt(const FakeSong &Song, int Row)
+{
+	for (size_t c = 0; c < Song.Rows.size(); ++c)
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			if (Song.Rows[c][static_cast<size_t>(Row)].Effect[k] == EFF_SPEED && Song.Rows[c][static_cast<size_t>(Row)].Param[k] < 32)
+				return true;
+	return false;
+}
+
+// set_swing reads a swing's middle where the rows before play its short unit's speed (the soundtrack's composers, 25
+// October: on a range it wrote 7 and 5 at speed 7; after insert_bars it read speed 5 and wrote F06/F04, 112.8 BPM where the
+// song was 80.6; "none" left an F05 behind), and bars put in after a swing swing too
+void TestSwingReadsItsMiddle()
+{
+	// Speed 7, bars 1-4 swung 9 then 5 and nothing after: bars 5-8 play at 5, the swing's short unit's speed
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Info.Speed = 7;
+		for (int r = 0; r < 128; r += 4)
+			Song.Put(5, r, "C-4", 0);
+		SwingByHand(Song, 9, 5, 64);
+		const ToolResult Result = Run(Song, "set_swing", "{\"amount\": \"light\", \"from_bar\": 5, \"to_bar\": 8}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "speed 8 then 6 (F08, F06) in turn, which averages the speed it had (7)");
+		CHECK(Song.Rows[7][64].Param[0] == 8 && Song.Rows[7][66].Param[0] == 6);
+	}
+	{
+		// "none" on the swung bars: straight at 7, and nothing left behind where they end
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Info.Speed = 7;
+		for (int r = 0; r < 128; r += 4)
+			Song.Put(5, r, "C-4", 0);
+		SwingByHand(Song, 9, 5, 64);
+		const ToolResult Result = Run(Song, "set_swing", "{\"amount\": \"none\", \"from_bar\": 1, \"to_bar\": 4}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "swing taken off, bars 1-4: straight at speed 7");
+		bool Any = false;
+		for (int r = 0; r < 128; ++r)
+			Any = Any || SpeedCommandAt(Song, r);
+		CHECK(!Any);
+	}
+	// A song swung all through by set_swing, at speed 7 and at 10: bars put in at bar 5 swing as bars 1-4 do, and set_swing on
+	// them swings around the song's speed
+	const int SPEEDS[] = { 7, 10 }, LONG[] = { 9, 13 }, SHORT[] = { 5, 7 }, LIGHT_LONG[] = { 8, 11 }, LIGHT_SHORT[] = { 6, 9 };
+	for (int i = 0; i < 2; ++i) {
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.Info.Speed = SPEEDS[i];
+		for (int r = 0; r < 128; r += 4)
+			Song.Put(5, r, "C-4", 0);
+		CHECK(!Run(Song, "set_swing", "{\"amount\": \"hard\"}").IsError);
+		CHECK(Song.Rows[7][0].Param[0] == LONG[i] && Song.Rows[7][2].Param[0] == SHORT[i]);
+		ToolResult Result = Run(Song, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}");
+		CHECK(!Result.IsError);
+		Check(Contains(Result.Text, PrintedC("The new bars swing as the bars before them do: speed %d then %d", LONG[i], SHORT[i])),
+			Result.Text.c_str(), __LINE__);
+		CHECK(Song.Rows[0].size() == 192u);
+		CHECK(Song.Rows[7][64].Effect[0] == EFF_SPEED && Song.Rows[7][64].Param[0] == LONG[i] && Song.Rows[7][66].Param[0] == SHORT[i] &&
+			Song.Rows[7][126].Param[0] == SHORT[i] && Song.Rows[7][128].Param[0] == LONG[i]);
+		Result = Run(Song, "set_swing", "{\"amount\": \"light\", \"from_bar\": 5, \"to_bar\": 8}");
+		CHECK(!Result.IsError);
+		Check(Contains(Result.Text, PrintedC("speed %d then %d (F%02X, F%02X) in turn, which averages the speed it had (%d)", LIGHT_LONG[i],
+			LIGHT_SHORT[i], LIGHT_LONG[i], LIGHT_SHORT[i], SPEEDS[i])), Result.Text.c_str(), __LINE__);
+		// and back to straight: the speed it had, and the bars after it swing on as they did
+		Result = Run(Song, "set_swing", "{\"amount\": \"none\", \"from_bar\": 5, \"to_bar\": 8}");
+		Check(Contains(Result.Text, PrintedC("straight at speed %d", SPEEDS[i])), Result.Text.c_str(), __LINE__);
+		CHECK(Song.Rows[7][128].Param[0] == LONG[i] && Song.Rows[7][130].Param[0] == SHORT[i]);
+	}
+	// A straight song gets no swing in the bars put in
+	FakeSong Straight;
+	Straight.Info.DirectChanges = true;
+	Straight.Put(5, 0, "C-4", 0);
+	const ToolResult Put = Run(Straight, "insert_bars", "{\"at_bar\": 5, \"bars\": 4}");
+	CHECK(!Put.IsError);
+	CHECK_LACKS(Put.Text, "swing");
+	bool Any = false;
+	for (int r = 0; r < 192; ++r)
+		Any = Any || SpeedCommandAt(Straight, r);
+	CHECK(!Any);
+}
+
+// A copy of a section is named so it doesn't read as another's name: "A3" beside "A2", never "A 2"
+void TestCopyNamesApart()
+{
+	SectionList List;
+	List.push_back(Section("A", 0, 0));
+	List.push_back(Section("A2", 1, 1));
+	CHECK_EQ(FreeSectionName(List, "A"), std::string("A3"));
+	CHECK_EQ(FreeSectionName(List, "A2"), std::string("A3"));
+	CHECK_EQ(FreeSectionName(List, "a 2"), std::string("a 3"));
+	List.push_back(Section("B 2", 2, 2));
+	CHECK_EQ(FreeSectionName(List, "B"), std::string("B"));
+	CHECK_EQ(FreeSectionName(List, "B2"), std::string("B3"));
+	List.push_back(Section("B", 3, 3));
+	CHECK_EQ(FreeSectionName(List, "B"), std::string("B 3"));
+	SectionList Plain;
+	Plain.push_back(Section("Chorus", 0, 0));
+	CHECK_EQ(FreeSectionName(Plain, "Chorus"), std::string("Chorus 2"));
+	// copy_bars beside a section "A2": the copy of A is "A3"
+	FakeSong Song(4);
+	Song.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 8)
+		Song.Put(5, r, r < 64 ? "C-4" : "E-4", 0);
+	Song.Info.Sections.push_back(Section("A", 0, 0));
+	Song.Info.Sections.push_back(Section("A2", 1, 1));
+	const ToolResult Result = Run(Song, "copy_bars", "{\"section\": \"A\", \"at_bar\": 9}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "the original's repeat: \"A3\" (bars 9-12)");
+	CHECK(FindSection(Song.Info.Sections, "A3") == 2 && Song.Info.Sections.size() == 3u);
+}
+
+// write_notes over a part that changes sounds keeps them and says which its notes play; a note running past the song's last
+// bar line ends with the song (the soundtrack's 59: the song grew to 44 bars, unsaid); a drum line names a sound for each kind
+// of hit, and an open hi-hat keeps its own beside one instrument named for the line
+void TestWriteNotesSounds()
+{
+	// VRC6 Pulse 1 plays Lead in bars 1-4, then Bell in bars 5-8
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.AddInstrumentInfo(3, "Bell", "VRC6", true);
+	for (int r = 0; r < 128; r += 16)
+		Song.Put(5, r, "C-4", r == 0 ? 0 : r == 64 ? 3 : NO_INSTRUMENT);
+	std::string List = "[";
+	for (int Bar = 1; Bar <= 8; ++Bar)
+		List += std::string(Bar > 1 ? ", " : "") + "{\"bar\": " + std::to_string(Bar) + ", \"beat\": 1, \"pitch\": \"E-4\", \"beats\": 2}";
+	List += "]";
+	ToolResult Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": " + List + "}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[5][0].Instrument == 0 && Song.Rows[5][16].Instrument == NO_INSTRUMENT && Song.Rows[5][64].Instrument == 3 &&
+		Song.Rows[5][80].Instrument == NO_INSTRUMENT);
+	CHECK_HAS(Result.Text, "The notes that name no instrument play the channel's own where they fall, as its sound changes: \"Lead\" "
+		"(00) in bars 1-4, \"Bell\" (03) in bars 5-8");
+	// The part's instrument plays them all, and nothing is said of the channel's
+	Result = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": " + List + "}");
+	CHECK(!Result.IsError && Song.Rows[5][64].Instrument == 0);
+	CHECK_LACKS(Result.Text, "name no instrument");
+	// In steps the same: new notes play the channel's at their place
+	FakeSong Steps;
+	Steps.Info.DirectChanges = true;
+	Steps.AddInstrumentInfo(3, "Bell", "VRC6", true);
+	for (int r = 0; r < 128; r += 16)
+		Steps.Put(5, r, "C-4", r == 0 ? 0 : r == 64 ? 3 : NO_INSTRUMENT);
+	Result = Run(Steps, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 4, \"notes\": \"E4 - - - - - - - | G4 - - - - - - -\"}");
+	CHECK(!Result.IsError);
+	CHECK(Steps.Rows[5][48].Instrument == 0 && Steps.Rows[5][64].Instrument == 3);
+	CHECK_HAS(Result.Text, "\"Bell\" (03) in bar 5");
+
+	// A note past the last bar line ends with the song: an 8-bar song stays 8 bars
+	FakeSong End;
+	End.Info.DirectChanges = true;
+	End.Put(5, 0, "C-4", 0);
+	Result = Run(End, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 8, \"beat\": 3, \"pitch\": \"G-4\", \"beats\": 4}]}");
+	CHECK(!Result.IsError);
+	CHECK(End.Rows[0].size() == 128u && End.Rows[5][120].HasNote());
+	CHECK_HAS(Result.Text, "The note at bar 8 beat 3 ran on past the song's end (bar 8), so it ends with it rather than adding bars");
+	CHECK_LACKS(Result.Text, "bars long now");
+	// Notes that start past the end grow it, and the reply says how far
+	Result = Run(End, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 9, \"beat\": 1, \"pitch\": \"G-4\", \"beats\": 4}]}");
+	CHECK(!Result.IsError);
+	CHECK(End.Rows[0].size() == 192u);
+	CHECK_HAS(Result.Text, "The song is 12 bars long now (it had 8): the notes run past its end, and FamiTracker adds whole frames (4 bars each).");
+
+	// A noise line of hi-hats with an open one, one instrument named for it: the open hit keeps the open hat's sound
+	FakeSong Drums;
+	Drums.Info.DirectChanges = true;
+	const std::string Hits = "[{\"bar\": 1, \"beat\": 1, \"pitch\": \"hihat\", \"beats\": 1}, {\"bar\": 1, \"beat\": 2, \"pitch\": "
+		"\"open hihat\", \"beats\": 1}, {\"bar\": 1, \"beat\": 3, \"pitch\": \"hihat\", \"beats\": 1}]";
+	Result = Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"instrument\": \"hi-hat\", \"notes\": " + Hits + "}");
+	CHECK(!Result.IsError);
+	const int Hat = Drums.Rows[3][0].Instrument, Open = Drums.Rows[3][4].Instrument;
+	CHECK(Hat != NO_INSTRUMENT && Open != NO_INSTRUMENT && Hat != Open && Drums.Rows[3][8].Instrument != Open);
+	auto NameOf = [&Drums](int Index) {
+		for (size_t i = 0; i < Drums.Info.Instruments.size(); ++i)
+			if (Drums.Info.Instruments[i].Index == Index)
+				return Lowercase(Drums.Info.Instruments[i].Name);
+		return std::string();
+	};
+	CHECK(NameOf(Open).find("open") != std::string::npos);
+	CHECK_HAS(Result.Text, "The open hi-hats play the open hat's own sound");
+	// A sound for each kind of hit, by name
+	Result = Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"instrument\": {\"hihat\": \"hi-hat\", \"open hihat\": \"crash\"}, "
+		"\"notes\": " + Hits + "}");
+	CHECK(!Result.IsError);
+	CHECK(Drums.Rows[3][0].Instrument == Hat && NameOf(Drums.Rows[3][4].Instrument).find("crash") != std::string::npos);
+	CHECK_LACKS(Result.Text, "open hat's own sound");
+	// In steps too
+	Result = Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"from_bar\": 2, \"instrument\": \"hi-hat\", \"notes\": \"hihat . "
+		"open hihat . hihat . open hihat .\"}");
+	CHECK(!Result.IsError && Drums.Rows[3][16].Instrument == Hat && Drums.Rows[3][20].Instrument == Open);
+	// Only drum channels take one for each kind
+	CHECK_HAS(Run(Drums, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": {\"kick\": \"Square\"}, \"notes\": [{\"bar\": 1, "
+		"\"beat\": 1, \"pitch\": \"C-4\", \"beats\": 1}]}").Text, "instrument as an object names an instrument for each kind of drum hit");
+	CHECK_HAS(Run(Drums, "write_notes", "{\"channel\": \"Noise\", \"instrument\": {\"cowbell\": \"hi-hat\"}, \"notes\": " + Hits + "}").Text,
+		"\"cowbell\" isn't a kind of hit");
+}
+
+// polish twice changes nothing the second time (its accents took a part left at two volumes a step softer every run), and
+// its staccato is for a bass: not a sawtooth counter-melody over a triangle bass, a break's notes or a note held longer
+void TestPolishTwice()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	for (int r = 0; r < 64; r += 4)
+		Song.Put(5, r, r % 8 == 0 ? "C-4" : "E-4", 0, 12);
+	ToolResult Result = Run(Song, "polish", "{\"touches\": [\"accents\"], \"from_bar\": 1, \"to_bar\": 4}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[5][0].Volume == 12 && Song.Rows[5][4].Volume == 11 && Song.Rows[5][16].Volume == 12 && Song.Rows[5][20].Volume == 11);
+	Result = Run(Song, "polish", "{\"touches\": [\"accents\"], \"from_bar\": 1, \"to_bar\": 4}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "VRC6 Pulse 1 has its accents already");
+	CHECK(Song.Rows[5][4].Volume == 11 && Song.Rows[5][20].Volume == 11);
+
+	// The melody in bars 1-4 and 7-8, a break in bars 5-6; the triangle's roots in half notes, a whole note in bar 8; the
+	// sawtooth's counter-melody over them in bars 1-4
+	FakeSong Bass;
+	Bass.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 4)
+		if (r < 64 || r >= 96)
+			Bass.Put(5, r, "C-4", 0);
+	Bass.End(5, 64);
+	for (int r = 0; r < 112; r += 8)
+		Bass.Put(2, r, "C-2", 1);
+	Bass.Put(2, 112, "C-2", 1);
+	static const char *const LINE[] = { "E-4", "G-4", "A-4", "D-4" };
+	for (int r = 0; r < 64; r += 4)
+		Bass.Put(7, r, LINE[(r / 4) % 4], 0);
+	const std::string Line = Notes(Bass, 7);
+	Result = Run(Bass, "polish", "{\"touches\": [\"staccato\"], \"melody_channel\": \"VRC6 Pulse 1\"}");
+	CHECK(!Result.IsError);
+	CHECK(Bass.Rows[2][2].Note == NOTE_HALT && Bass.Rows[2][58].Note == NOTE_HALT && Bass.Rows[2][98].Note == NOTE_HALT);
+	CHECK(Bass.Rows[2][66].Note == NOTE_NONE && Bass.Rows[2][90].Note == NOTE_NONE);	// the break
+	CHECK(Bass.Rows[2][114].Note == NOTE_HALT);	// a whole note where the melody plays
+	CHECK_EQ(Notes(Bass, 7), Line);
+	CHECK_HAS(Result.Text, "cut short after half a beat (staccato)");
+	CHECK_HAS(Result.Text, "4 notes on 2A03 Triangle in bars without the melody (a break, an intro) kept their length");
+	CHECK_HAS(Result.Text, "VRC6 Sawtooth plays a line there rather than the bass, so its notes there kept their length");
+	// Again: nothing more to cut
+	CHECK(Run(Bass, "polish", "{\"touches\": [\"staccato\"], \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+}
+
+// mix with a DPCM level over some bars changes only them: the levels a song steps by section keep their steps after them
+void TestMixDacRange()
+{
+	auto Stepped = [](FakeSong &Song) {
+		Song.Info.DirectChanges = true;
+		Song.Put(2, 0, "C-3", 1);
+		const int ROWS[] = { 0, 64, 192 }, LEVELS[] = { 0x20, 0x40, 0x20 };
+		for (int i = 0; i < 3; ++i) {
+			Song.Rows[4][static_cast<size_t>(ROWS[i])].Effect[0] = EFF_DAC;
+			Song.Rows[4][static_cast<size_t>(ROWS[i])].Param[0] = static_cast<unsigned char>(LEVELS[i]);
+		}
+	};
+	// Bars 5-8 of B (bars 5-12, Z40): Z30 there, Z40 again from bar 9
+	FakeSong Song(4);
+	Stepped(Song);
+	ToolResult Result = Run(Song, "mix", "{\"dac\": 48, \"from_bar\": 5, \"to_bar\": 8}");
+	CHECK(!Result.IsError);
+	CHECK(HasEffectAt(Song, 4, 64, EFF_DAC, 0x30) && HasEffectAt(Song, 4, 128, EFF_DAC, 0x40) && HasEffectAt(Song, 4, 192, EFF_DAC, 0x20));
+	CHECK(HasEffectAt(Song, 4, 0, EFF_DAC, 0x20));
+	CHECK_HAS(Result.Text, "and Z40 again at bar 9 beat 1, the level the bars after them had");
+	// Bars 1-8, across a step: both move by as much, and bar 9 has its own again
+	FakeSong Across(4);
+	Stepped(Across);
+	Result = Run(Across, "mix", "{\"dac\": 48, \"from_bar\": 1, \"to_bar\": 8}");
+	CHECK(!Result.IsError);
+	CHECK(HasEffectAt(Across, 4, 0, EFF_DAC, 0x30) && HasEffectAt(Across, 4, 64, EFF_DAC, 0x50) && HasEffectAt(Across, 4, 128, EFF_DAC, 0x40));
+	// Where the next row sets its own level, nothing is added
+	FakeSong Own(4);
+	Stepped(Own);
+	Result = Run(Own, "mix", "{\"dac\": 48, \"from_bar\": 9, \"to_bar\": 12}");
+	CHECK(!Result.IsError && HasEffectAt(Own, 4, 128, EFF_DAC, 0x30) && HasEffectAt(Own, 4, 192, EFF_DAC, 0x20));
+	CHECK_LACKS(Result.Text, "again at");
+}
+
+// fix_loop releases a pad hanging on into the loop's start rather than halting it (a sound that doesn't fade on a release
+// is still halted), and voiced chords release their last chord on the song's last row, so nothing hangs on
+void TestLoopReleasesPads()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0);
+	Song.End(5, 8);
+	Song.Put(6, 96, "E-4", 0);	// a pad's last chord, held to the end ("Lead" fades on a release)
+	Song.Put(0, 112, "G-3", 2);	// a pulse note held to the end on "Square", which doesn't fade
+	ToolResult Result = Run(Song, "fix_loop", "{}");
+	CHECK(!Result.IsError);
+	CHECK(Song.Rows[6][0].Note == NOTE_RELEASE && Song.Rows[0][0].Note == NOTE_HALT);
+	CHECK_HAS(Result.Text, "a release (===) on VRC6 Pulse 2 at bar 1 beat 1, where E-4 from the loop's end hung over (it fades there");
+	CHECK_HAS(Result.Text, "a halt (---) on 2A03 Pulse 1 at bar 1 beat 1");
+	CHECK_HAS(Result.Text, "The seam is clean now");
+
+	FakeSong Voiced;
+	Voiced.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 8)
+		Voiced.Put(5, r, "E-4", 0);
+	Result = Run(Voiced, "add_chords_and_bass", "{\"chords\": \"C F G C C F G C\", \"key\": \"C major\", \"chord_style\": \"voices\", "
+		"\"chord_channels\": [\"Pulse 1\", \"Pulse 2\"], \"bass_channel\": \"none\"}");
+	CHECK(!Result.IsError);
+	CHECK(Voiced.Rows[0][127].Note == NOTE_RELEASE && Voiced.Rows[1][127].Note == NOTE_RELEASE);
+	CHECK(Voiced.Rows[0][112].HasNote() && Voiced.Rows[0][126].Note == NOTE_NONE);
+	CHECK_LACKS(Run(Voiced, "check_loop", "{}").Text, "keeps sounding into");
+}
+
+// undo says what it undoes, and a call that failed leaves nothing of its own to undo (the soundtrack's 60: undo after an
+// errored call reverted the change before it, unsaid)
+void TestUndoSaysWhat()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Lead\", \"notes\": [{\"bar\": "
+		"1, \"beat\": 1, \"pitch\": \"C-4\", \"beats\": 2}]}"));
+	CHECK(!Result.IsError);
+	CHECK(Song.Undos.size() == 1u && Song.Undos.back().Label == "write_notes: 1 note on VRC6 Pulse 1, bar 1");
+	// A call that fails changes nothing; the undo after it says it went back to the change before it, and which that was
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Pulse 1\", \"notes\": [{\"bar\": 1, \"beat\": 1, \"pitch\": \"Q-9\", "
+		"\"beats\": 2}]}"));
+	CHECK(Result.IsError && Song.Undos.size() == 1u);
+	Result = Tools.Call("undo", Json::MakeObject());
+	CHECK(!Result.IsError && Song.Undos.empty() && !Song.Rows[5][0].HasNote());
+	CHECK_HAS(Result.Text, "The last call that would have changed the song (write_notes) failed and changed nothing, so this undid the "
+		"change before it. Undid the last change, write_notes: 1 note on VRC6 Pulse 1, bar 1.");
+	CHECK(Tools.Call("undo", Json::MakeObject()).IsError);	// nothing left to undo
+	// A call that fails after changing the song takes it back: mix's faders reset, then a mix that fails
+	Song.Put(5, 0, "C-4", 0);
+	Song.Mix.Set(5, -60, PAN_CENTER);
+	Result = Tools.Call("mix", Parse("{\"faders\": \"reset\", \"dac\": \"wobbly\"}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "What it had changed by then was taken back, so it left nothing to undo.");
+	CHECK(Song.Undos.empty() && Song.Mix.Level(5) == -60);
+	// A change of the tools' own, then undo: what it was
+	CHECK(!Tools.Call("set_pan", Parse("{\"channel\": \"VRC6 Pulse 1\", \"pan\": \"left\"}")).IsError);
+	Result = Tools.Call("undo", Json::MakeObject());
+	CHECK_HAS(Result.Text, "Undid the last change, set_pan: VRC6 Pulse 1 panned left");
+	CHECK_LACKS(Result.Text, "failed");
+}
+
+// design_instrument's bloom lead blooms and settles: struck again only when asked (restrike_beats, or words that ask for
+// it), and its reply says when a sound restrikes (a lively stage's lead at 150 BPM restruck its held notes every 12 frames)
+void TestBloomHolds()
+{
+	FakeSong Song;
+	ToolResult Result = Run(Song, "design_instrument", "{\"name\": \"Stage\", \"kind\": \"bloom lead\"}");
+	CHECK(!Result.IsError);
+	const PresetSequence *pV = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
+	CHECK(pV != 0 && pV->Items.size() > 8 && pV->Items[0] == 10 && pV->Items[2] == 15);
+	if (pV != 0 && pV->Release > 0)
+		CHECK(pV->Items[static_cast<size_t>(pV->Release)] == 12 && (pV->Loop < 0 || pV->Loop == pV->Release));
+	CHECK_LACKS(Result.Text, "struck again");
+	CHECK_LACKS(Result.Text, "It restrikes");
+	// The words ask for it: every half beat, said
+	Result = Run(Song, "design_instrument", "{\"name\": \"Stage 2\", \"kind\": \"bloom lead\", \"words\": \"a lead that restrikes\"}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "It restrikes: a held note is struck again every 12 frames (0.5 of a beat here), a dip and a rise; "
+		"restrike_beats 0 makes it hold instead.");
+	CHECK_HAS(Result.Text, "struck again while held");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Stage 3\", \"words\": \"a pluck struck again\"}");
+	CHECK_HAS(Result.Text, "It restrikes");
+	Result = Run(Song, "design_instrument", "{\"name\": \"Stage 4\", \"words\": \"a bloom lead struck at once\"}");
+	CHECK_LACKS(Result.Text, "It restrikes");
+	// restrike_beats as the lively recipe and what_next give it, and as the action guide does
+	CHECK_LACKS(Run(Song, "design_instrument", "{\"name\": \"Stage 5\", \"kind\": \"bloom lead\", \"restrike_beats\": 0}").Text,
+		"restrikes");
+	CHECK_HAS(Run(Song, "design_instrument", "{\"name\": \"Stage 6\", \"kind\": \"bloom lead\", \"restrike_beats\": 0.5}").Text,
+		"It restrikes: a held note is struck again every 12 frames");
+}
+
+// The calm recipe leads with the night songs' best: the music box's shape, its texture, an echo from the second A, an event
+// in the break, and a tune of its own; in numbers, without the soundtrack's names
+void TestCalmRecipeLeads()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	const std::string Recipe = Tools.Call("get_recipe", Parse("{\"kind\": \"calm\"}")).Text, Guide = StyleGuideTopic("calm");
+	for (const char *Wanted : { "design_instrument kind breath, falling strike or music box, one for the whole track",
+		"kind music box on a VRC6 pulse, duty 37.5% (50% on the 2A03) and attack bloom", "within about a beat for a tune in quarter notes",
+		"never holding a level", "a soft broken chord in eighths", "held maj7 and m7 pads, strummed",
+		"a soft heartbeat on the triangle (the root on beats 1 and 3, each note a row long)", "add_echo a beat behind from the second A on",
+		"one small event in the break", "not quarter notes by step every time", "polish style calm, then mix style calm last" })
+		Check(Recipe.find(Wanted) != std::string::npos, Wanted, __LINE__);
+	for (const char *Wanted : { "First the one the listener liked best of the night songs: a music box", "duty 37.5% with no duty click",
+		"a soft broken chord in eighths", "held maj7 and m7 pads, strummed", "a soft heartbeat on the triangle", "from the second A on",
+		"one small event in the break", "Take the sound and the texture, not the tune", "Or a breath (design_instrument kind breath" })
+		Check(Guide.find(Wanted) != std::string::npos, Wanted, __LINE__);
+	for (const std::string *pText : { &Recipe, &Guide })
+		for (const char *Name : { "Lamplighter", "Moon bell", "Blossom", "Kettle", "Hearthfrost", "Deep Woods" })
+			Check(pText->find(Name) == std::string::npos, Name, __LINE__);
+}
+
 int main()
 {
 	TestJson();
@@ -21437,6 +21867,15 @@ int main()
 	TestLivelyWhatNext();
 	TestMixWithoutStyle();
 	TestLivelyChordsTop();
+	TestSwingReadsItsMiddle();
+	TestCopyNamesApart();
+	TestWriteNotesSounds();
+	TestPolishTwice();
+	TestMixDacRange();
+	TestLoopReleasesPads();
+	TestUndoSaysWhat();
+	TestBloomHolds();
+	TestCalmRecipeLeads();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

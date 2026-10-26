@@ -179,6 +179,7 @@ CMainFrame::CMainFrame() :
 	m_bPatternShown(true),
 	m_pActionGroup(NULL),
 	m_iActionGroupDepth(0),
+	m_iActionSerial(0),
 	m_bFewerMenus(false),
 	m_bBPM(false),
 	m_bSongRectsKept(false),
@@ -3170,8 +3171,10 @@ bool CMainFrame::AddAction(CAction *pAction)
 
 	if (m_pActionGroup != NULL)
 		m_pActionGroup->Add(pAction);	// undone with the rest of its group
-	else
+	else {
 		m_pActionHandler->Push(pAction);
+		++m_iActionSerial;
+	}
 	SyncClips();
 	SongChanged();
 
@@ -3192,10 +3195,17 @@ void CMainFrame::EndActionGroup()
 		return;
 	CActionGroup *pGroup = m_pActionGroup;
 	m_pActionGroup = NULL;
-	if (pGroup != NULL && !pGroup->Empty())
+	if (pGroup != NULL && !pGroup->Empty()) {
 		m_pActionHandler->Push(pGroup);
+		++m_iActionSerial;
+	}
 	else
 		SAFE_RELEASE(pGroup);
+}
+
+CAction *CMainFrame::GetUndoAction() const
+{
+	return m_pActionHandler != NULL ? m_pActionHandler->GetLastAction() : NULL;
 }
 
 CAction *CMainFrame::GetLastAction(int Filter) const
