@@ -1540,7 +1540,10 @@ each part sounds like with what its notes say it should:
 Each finding says in plain words what's heard, on which part and in which
 bars, how sure it is and how much a listener notices it (high, medium or
 low), with the call that fixes it where a tool has one (a warble's is
-`add_vibrato` with `modulator` `off`) or what to change. `from_bar` and
+`add_vibrato` with `modulator` `off`) or what to change. A low one is a detail
+that may be meant (a slow vibrato a flute was given on purpose), so it carries
+no call: it says to play those bars with the user and change them only if
+they'd like it gone, and what would change it. `from_bar` and
 `to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
 `short` (the three heard worst) or `json`. It takes a while, since
 FamiTracker renders the track first: a two-and-a-half-minute track with

@@ -1495,7 +1495,11 @@ rate and where it holds (`TrackNote`), clicks cycle by cycle
 (`InsideClicks`, on the 2A03's and MMC5's pulses, `ListenPart::Restarts`),
 pops, drones, notes hardly heard, beating pairs and, in the mix, clipping,
 loudness jumps (`SpansLoudness`), harsh and muddy bars and the melody
-covered, each with its measured thresholds. `ListenNoteTuning` gives a note's
+covered, each with its measured thresholds. A low finding (a detail that may
+be meant, as 42's slow flute vibrato) carries no call: `ListenFixOf` makes the
+call `ListenCallOf` gives advice to hear it with the user first (and the short
+reply says so), while high and medium keep theirs (`TestListenLowAsAdvice`).
+`ListenNoteTuning` gives a note's
 pitch by 0.4.6's tables (the chips' octaves, an N163 wave's cycle, `Pxx`
 steps), and `ListenVibratoCents` and `ListenVibratoDepth` what `4xy` swings,
 which `add_vibrato` uses to pick its depth by cents on every chip

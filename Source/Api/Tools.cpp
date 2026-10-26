@@ -22847,7 +22847,7 @@ std::string WobbleSource(Session &S, const ListenReport &R, const ListenFinding 
 }
 
 // The call that fixes a finding, where the tools have one (null otherwise), and what to do otherwise (Advice)
-Json ListenFixOf(Session &S, const ListenReport &R, const ListenFinding &F, std::string &Advice)
+Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std::string &Advice)
 {
 	Advice.clear();
 	int FromBar, ToBar, Row, Rows;
@@ -22946,6 +22946,25 @@ Json ListenFixOf(Session &S, const ListenReport &R, const ListenFinding &F, std:
 	return Json();
 }
 
+// A finding's fix as listen gives it. A low one is a detail that may be meant (a slow vibrato a flute was given on purpose,
+// as in 42), so it carries no call, only what to hear with the user and what would change it if they'd like it gone; high
+// and medium keep their calls
+Json ListenFixOf(Session &S, const ListenReport &R, const ListenFinding &F, std::string &Advice)
+{
+	const Json Call = ListenCallOf(S, R, F, Advice);
+	if (F.Severity >= 2)
+		return Call;
+	int FromBar, ToBar, Row, Rows;
+	ListenBars(S, R, F, FromBar, ToBar, Row, Rows);
+	std::string Change = Advice;
+	const Json *pTool = Call.IsObject() ? Call.Get("tool") : 0, *pDoes = Call.IsObject() ? Call.Get("does") : 0;
+	if (pTool != 0 && pTool->IsString() && pDoes != 0 && pDoes->IsString())
+		Change = "the tools can change it: " + pTool->String() + " " + pDoes->String() + ".";
+	Advice = "A detail, and it may be meant: play " + RangeText(FromBar, ToBar) + " with the user, ask whether they hear it, and "
+		"change nothing unless they'd like it gone." + (Change.empty() ? std::string() : " If they would, " + Change);
+	return Json();
+}
+
 const char *SureWords(double Sure)
 {
 	return Sure >= 0.8 ? "sure" : Sure >= 0.6 ? "fairly sure" : "not sure";
@@ -22971,7 +22990,8 @@ std::string ListenLine(Session &S, const ListenReport &R, const ListenFinding &F
 		std::string Line = F.Summary;
 		if (!Line.empty())
 			Line[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Line[0])));
-		return Line + " (" + Where + ")" + (Fix.IsNull() ? "." : ". " + FixText(Fix, false));
+		return Line + " (" + Where + ")" + (!Fix.IsNull() ? ". " + FixText(Fix, false) : F.Severity <= 1 ? ". A detail: hear it with "
+			"the user before changing it." : ".");
 	}
 	std::string Line = std::string(ListenKindTitle(F.Kind)) + ": " + Where + ". " + F.Heard;
 	if (F.Kind == LISTEN_WOBBLE)

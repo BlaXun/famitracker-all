@@ -24254,7 +24254,7 @@ void TestListenFdsWarble()
 	const Json Gentle = Parse(Run(Flute, "listen", "{\"format\": \"json\"}").Text);
 	CHECK(ListenCount(Gentle, "wobble", "warble") == 0);
 	const Json *pWide = ListenFindingOf(Gentle, "wobble");
-	CHECK(pWide == 0 || pWide->Get("severity")->String() == "low");
+	CHECK(pWide == 0 || (pWide->Get("severity")->String() == "low" && pWide->Get("fix") == 0 && pWide->Get("advice") != 0));
 	// design_instrument says what its modulator does
 	FakeSong Design = FdsSong();
 	const ToolResult Made = Run(Design, "design_instrument", "{\"name\": \"shiver\", \"chip\": \"FDS\", \"modulation\": \"tremble\"}");
@@ -25598,6 +25598,41 @@ void TestWhatNextSavesForClient()
 	Check(A.Tool == "export_for_game", A.Text.c_str(), __LINE__);
 }
 
+// listen's low findings are details that may be meant (a slow vibrato a sound was given on purpose, as 42's flute): no
+// fix call, only what to hear with the user and what would change it if they'd like it gone; a medium one keeps its call
+// (TestListenTool's deep vibrato)
+void TestListenLowAsAdvice()
+{
+	// A vibrato a little too wide: 465 swings the line's notes 49-84 cents either way (C-4 to A-4), its notes past the 60 that
+	// sound out of tune but under the 90 that make it worth a listen: low
+	const int Depth = 5;
+	CHECK(ListenVibratoCents("2A03", KIND_PULSE, 52, Depth, 0, false) > 60.0 && ListenVibratoCents("2A03", KIND_PULSE, 57, Depth, 0,
+		false) < 90.0);
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.ChipPitches = true;
+	PutHeldLine(Song, 0, 2);
+	for (int b = 0; b < 8; ++b) {
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Effect[0] = EFF_VIBRATO;
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Param[0] = static_cast<unsigned char>(0x60 | Depth);
+	}
+	const Json Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pWide = ListenFindingOf(Out, "wobble", "vibrato");
+	Check(pWide != 0 && pWide->Get("severity")->String() == "low", WriteJson(Out).c_str(), __LINE__);
+	if (pWide != 0) {
+		CHECK(pWide->Get("fix") == 0);
+		const std::string Advice = pWide->Get("advice") != 0 ? pWide->Get("advice")->String() : std::string();
+		CHECK_HAS(Advice, "A detail, and it may be meant: play bars ");
+		CHECK_HAS(Advice, " with the user, ask whether they hear it, and change nothing unless they'd like it gone.");
+		CHECK_HAS(Advice, "If they would, the tools can change it: add_vibrato puts a gentle vibrato");
+		CHECK_LACKS(pWide->Get("message")->String(), "Fix:");
+	}
+	const std::string Text = Run(Song, "listen", "{}").Text;
+	CHECK_HAS(Text, "severity low.) A detail, and it may be meant");
+	CHECK_LACKS(Text, "Fix: add_vibrato");
+	CHECK_HAS(Run(Song, "listen", "{\"format\": \"short\"}").Text, "A detail: hear it with the user before changing it.");
+}
+
 int main()
 {
 	TestJson();
@@ -25850,6 +25885,7 @@ int main()
 	TestBridgeResources();
 	TestShapeTownWords();
 	TestWhatNextSavesForClient();
+	TestListenLowAsAdvice();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
