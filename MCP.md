@@ -12,7 +12,9 @@ Code in WSL connects through `famitracker-mcp.exe`, which comes in the same
 zip (see [Claude Code in WSL](#claude-code-in-wsl)). Other MCP clients on
 another computer of your home network, such as an AI assistant on a Linux
 PC, can connect too once you allow it (see
-[Connecting from another computer](#connecting-from-another-computer)).
+[Connecting from another computer](#connecting-from-another-computer)). Your own model can be asked from
+FamiTracker itself, with the same tools, in View > Ask (see
+[Your own model inside FamiTracker](#your-own-model-inside-famitracker-view--ask)).
 
 ## Connecting, once
 
@@ -246,6 +248,112 @@ curl -H "Authorization: Bearer CODE" -H "Content-Type: audio/wav" --data-binary 
 - **New access code** in the dialog makes the old one stop working on the
   other computer too: give it the new one. The phone page's code changes with
   it: scan the QR code in Edit > Record from your phone again.
+
+## Your own model inside FamiTracker: View > Ask
+
+View > Ask is a question box in FamiTracker itself, for your own model:
+any server that speaks OpenAI's chat API on this PC or your home network,
+such as llama.cpp's `llama-server`, llama-swap, Ollama or LM Studio. Nothing
+proprietary is built in or needed, and nothing is sent until you press
+Send. The model gets the same tools Claude Code gets here (all of them, or
+the small set for smaller models), runs them inside FamiTracker, and
+answers in plain words, with the glossary's words as links ("a
+[[chord]]" opens Help > Glossary at Chord).
+
+The panel docks along the bottom, beside What next and the problems panel,
+or on the right (right-click it). Type a question and press Enter (Shift+Enter
+for a new line). The answer streams in as the model writes it; Stop ends it
+at once, and New question starts over. Each song keeps its own conversation
+while FamiTracker runs. With each question the model is told the song as it
+is: `get_song`'s overview, the step View > What next would take, the
+exercise you're doing (Help > Exercises), and the bar and channel the cursor
+is on.
+
+### Ask first, or let it work
+
+- **Ask first** (the usual mode): what only reads the song (`get_song`,
+  `read_notes`, `check_song`, `play`...) runs at once. A call that would
+  change the song shows as a proposal, in words with the call under it:
+  **Do it** makes it (one Ctrl+Z, as What next's Do it), **Skip** tells the
+  model you'd rather not. A question may take 8 rounds of tools.
+- **Let it work**: for "compose a calm night song in D minor" or "add drums
+  to bars 5-12". The changes go in as the model makes them, each one its own
+  Ctrl+Z, and the panel lists what each step did. **Take back all** undoes
+  the whole run (as long as nothing was changed after it), and you can listen
+  while it works. A question may take 300 rounds (a whole song is dozens of
+  calls, `what_next`'s loop).
+
+Both limits are in the settings. Which tools only read is a list kept in
+step with the tools (`AssistantToolKinds` in `Source/Api/Assistant.cpp`).
+
+### Setting it up with llama.cpp
+
+Start `llama-server` with `--jinja`: that's what lets the model call tools
+(the chat template's tool calling). Without it the server refuses tools
+("tools param requires --jinja flag"), the panel says so, and the model
+answers from the song's summary alone, without reading or changing the song.
+Give it room: all of FamiTracker's tools and their instructions are about
+40,000-50,000 tokens, the small set about 25,000, so use `-c 65536` or more
+for all of them (`-c 32768` for the small set). `--host 0.0.0.0` lets this
+PC reach a server on another computer. For example, on the Linux PC:
+
+```
+llama-server -m Qwen3.6-35B-A3B-Q4_K_M.gguf --jinja -c 131072 --host 0.0.0.0 --port 8081
+llama-server -m gpt-oss-120b-mxfp4.gguf --jinja -c 131072 --host 0.0.0.0 --port 8080
+```
+
+In the panel's **Settings...**, the address is the server's, like
+`http://192.168.1.50:8081` or `http://strix:8081` (the `/v1` is added; plain
+http, as on your home network). Leave **Model** empty for `llama-server`.
+
+- **llama-swap**: the address is llama-swap's port, and **Model** is the
+  name in its config (Test connection lists them; empty picks the first it
+  lists). Put `--jinja` and the `-c` in each model's `cmd`. The panel reads
+  the context through `/upstream/<model>/props`.
+- **Ollama**: `http://<computer>:11434` and the model's name; pick a model
+  that can use tools, and set its `num_ctx` (Ollama starts models with a
+  small context, which the tools don't fit in).
+- **LM Studio**: start its server (`http://<computer>:1234`) and load a model
+  that can use tools.
+- **Tailscale**: the MagicDNS name or the `100.x` address works like a
+  home address.
+- **Key**: only if the server wants one (`llama-server --api-key`); it's
+  kept encrypted for your Windows account (DPAPI), never as plain text.
+- **Tools**: all of them (the default, for big models with a big context)
+  or the small set (`/mcp/core`'s 37, with its short instructions and short
+  replies) for smaller models.
+- **Context**: 0 takes what `llama-server` reports (`/props`); give a number
+  for a server that doesn't say. Older tool replies are shortened, then
+  older questions left out, before a conversation would overflow it.
+
+**Test connection** reaches the server, lists its models, reads its context
+and asks a word with one tool, so it says whether tools are on. The first
+question to a big model takes a while: the model reads all the tools once
+(llama-swap may load the model first); after that the server reuses what it
+read, and the panel counts the seconds meanwhile.
+
+Models that use tools well: the Qwen3 family and later (Qwen3-30B-A3B,
+Qwen3.6-35B-A3B), gpt-oss-20b and gpt-oss-120b, GLM 4.5 Air and later,
+Mistral Small 3.2. Small models (under about 8B) often call tools badly:
+give them the small set and keep to Ask first.
+
+### Privacy, and when something goes wrong
+
+The questions, the song's summary and the tools' replies go to the address
+in the settings, and nowhere else. When that address isn't this PC or on
+your home network (the ranges FamiTracker's own network connection allows:
+10/8, 172.16/12, 192.168/16, 169.254/16 and Tailscale's 100.64/10), the
+panel says so above the conversation.
+
+A server that's off, slow or answering badly gets a plain message with what
+to check, never a hang: nothing listening at the port ("is the server
+running, is that its port, does it listen on the network?"), a computer
+that doesn't answer (on? a firewall?), no model of that name, no chat at
+that address, a conversation longer than the context, or a model silent for
+five minutes. Stop always works.
+
+With no model set up, the panel searches FamiTracker's own help instead:
+the glossary, the exercises and the tutorials, each a link.
 
 ## Asking
 

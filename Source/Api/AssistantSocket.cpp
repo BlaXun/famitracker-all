@@ -22,6 +22,7 @@
 // The Ask panel's connection to the model's server (see AssistantSocket.h)
 
 #include "AssistantSocket.h"
+#include "Network.h"
 
 #include <algorithm>
 #include <chrono>
@@ -210,12 +211,10 @@ bool AssistantResolve(const std::string &Host, std::string &Address)
 	addrinfo *pFound = 0;
 	if (getaddrinfo(Host.c_str(), 0, &Hints, &pFound) != 0 || pFound == 0)
 		return false;
-	char Text[INET_ADDRSTRLEN] = "";
-	const bool Done = inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(pFound->ai_addr)->sin_addr, Text, sizeof(Text)) != 0;
+	// As text without inet_ntop, which Windows XP's headers lack
+	Address = Ipv4Text(static_cast<unsigned long>(ntohl(reinterpret_cast<const sockaddr_in*>(pFound->ai_addr)->sin_addr.s_addr)));
 	freeaddrinfo(pFound);
-	if (Done)
-		Address = Text;
-	return Done;
+	return true;
 }
 
 assistant_net_t AssistantExchange(const std::string &Host, int PortNumber, const std::string &Request, const AssistantTimeouts &Times,
@@ -235,8 +234,10 @@ assistant_net_t AssistantExchange(const std::string &Host, int PortNumber, const
 	std::memset(&To, 0, sizeof(To));
 	To.sin_family = AF_INET;
 	To.sin_port = htons(static_cast<unsigned short>(PortNumber));
-	if (inet_pton(AF_INET, Address.c_str(), &To.sin_addr) != 1)
+	unsigned long Value = 0;
+	if (!ParseIpv4(Address, Value))
 		return NET_NOT_FOUND;
+	To.sin_addr.s_addr = htonl(static_cast<u_long>(Value));
 	const socket_t Socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (Socket == NO_SOCKET) {
 		std::snprintf(Text, sizeof(Text), "A network socket couldn't be opened (error %d).", LastError());

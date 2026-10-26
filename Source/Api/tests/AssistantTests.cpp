@@ -36,6 +36,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -561,7 +562,7 @@ void TestChat()
 	Reply.Calls.push_back(Missing);
 	Reply.PromptTokens = static_cast<int>(Body.size() / 4);
 	Chat.Replied(Reply, false);
-	CHECK_EQ(Chat.BytesPerToken(), 4.0);
+	CHECK(std::fabs(Chat.BytesPerToken() - double(Body.size()) / Reply.PromptTokens) < 1e-9);
 	CHECK(!Chat.Request(Setup, Body, Problem));		// RunReady first
 	Chat.RunReady(Run);
 	CHECK(Chat.State() == AssistantChat::USER);
@@ -650,6 +651,13 @@ void TestChat()
 	CHECK(Chat.Request(Setup, Body, Problem));
 	CHECK(ParseJson(Body, Sent) && Sent.Get("tools") == 0);
 	CHECK(!Contains(Body, "\"tool_calls\"") && !Contains(Body, "\"role\":\"tool\"") && Contains(Body, "(Write a part: Done: write_notes.)"));
+	// Answered without a model: shown, never sent
+	const size_t Before = Chat.Messages().size();
+	Chat.Offline("What's a chord?", "[[Chord|chord]]: notes together.");
+	CHECK(Chat.Messages().size() == Before + 2 && Chat.Messages().back().LeftOut && Chat.State() == AssistantChat::IDLE);
+	Chat.Ask("Next", "C", ASSISTANT_ASK_FIRST, 8);
+	CHECK(Chat.Request(Setup, Body, Problem));
+	CHECK(!Contains(Body, "What's a chord?") && !Contains(Body, "notes together"));
 	Chat.Clear();
 	CHECK(Chat.Messages().empty() && Chat.State() == AssistantChat::IDLE && !Chat.HasToolsOff());
 }
@@ -660,7 +668,10 @@ void TestFitting()
 	AssistantSetup Setup;
 	Setup.SystemPrompt = "You help.";
 	Setup.Functions = AssistantFunctions(Tools, false);
-	Setup.ContextTokens = 12000;		// 9000 tokens of room, 27000 bytes at 3 a token
+	Setup.ContextTokens = 9643;		// about 27000 bytes of room at the first guess of bytes a token
+	CHECK(std::fabs(AssistantRequestRoom(9643, ASSISTANT_BYTES_PER_TOKEN) - 27000) < 10);
+	CHECK_EQ(AssistantRequestRoom(65536, 3.5), (65536 - 6144) * 3.5);		// a big context keeps 6144 tokens for the reply
+	CHECK_EQ(AssistantRequestRoom(100, 3.5), (2048 - 2048 / 5.0) * 3.5);	// a context of 2048 at least
 	AssistantChat Chat;
 	Chat.SetTools(Tools, false);
 	FixedTools Run;
@@ -695,11 +706,11 @@ void TestFitting()
 	CHECK(Body.size() <= 27000 && Problem.empty());
 	CHECK(Contains(Chat.Answer()->Calls[0].Result, "Cut here"));
 	// Older questions left out altogether when that's what it takes
-	Setup.ContextTokens = 4000;		// 3000 tokens, 9000 bytes
+	Setup.ContextTokens = 4000;
 	Chat.Replied(TextReply("Answer 3"), false);
 	Chat.Ask("Question 4", "c", ASSISTANT_ASK_FIRST, 8);
 	CHECK(Chat.Request(Setup, Body, Problem));
-	CHECK(Body.size() <= 9000);
+	CHECK(double(Body.size()) <= AssistantRequestRoom(4000, Chat.BytesPerToken()));
 	CHECK(Chat.Messages()[0].LeftOut);
 	// Tools too big for the context: said so, with the small set and a bigger context to try
 	Setup.SystemPrompt = std::string(30000, 'p');

@@ -951,6 +951,29 @@
 #define IDC_SHAPE_PARTS                 2351
 #define IDC_SHAPE_NOTE                  2352
 
+// View > Ask (AskPanel.cpp): the user's own model asked from FamiTracker, its settings dialog and the panel's
+// controls: resources 740-749, controls 2500-2549, commands 38000-38049
+#define IDD_ASK_SETTINGS                740
+#define IDC_ASK_ENDPOINT                2500
+#define IDC_ASK_MODEL                   2501
+#define IDC_ASK_KEY                     2502
+#define IDC_ASK_ALLTOOLS                2503
+#define IDC_ASK_SMALLSET                2504
+#define IDC_ASK_ASKROUNDS               2505
+#define IDC_ASK_WORKROUNDS              2506
+#define IDC_ASK_CONTEXT                 2507
+#define IDC_ASK_TEST                    2508
+#define IDC_ASK_RESULT                  2509
+#define IDC_ASK_HELP                    2510
+#define IDC_ASK_MODE                    2530
+#define IDC_ASK_NEW                     2531
+#define IDC_ASK_SETTINGS                2532
+#define IDC_ASK_QUESTION                2533
+#define IDC_ASK_SEND                    2534
+#define IDC_ASK_STOP                    2535
+#define IDC_ASK_TALK                    2536
+#define ID_VIEW_ASK                     38000
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

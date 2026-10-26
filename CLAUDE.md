@@ -1588,6 +1588,41 @@ drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
 next to its end) cover them.
 
+Asking your own model (from `feat-ask-panel`): View > Ask (`ID_VIEW_ASK`,
+`Source/AskPanel.cpp`, a bar in `PlaceBottomPanel`'s row or on the right,
+after What next in `ArrangeBars`) asks the user's own model, any
+OpenAI-compatible chat server (llama-server, llama-swap, Ollama, LM
+Studio). The portable part is `Source/Api/Assistant.cpp` (the settings and
+the address, `AssistantFunctions` from `ToolSet::List()`'s schemas, the
+system prompt: a newcomer's guide, then `ToolSet::Instructions` or
+`CoreInstructions`; `AssistantContext`; the streamed reply:
+`HttpStreamReader`, `SseReader`, `AssistantStream`; and `AssistantChat`,
+the conversation and its rounds: reads run at once, a change is
+`CALL_PROPOSED` in Ask first or runs in Let it work, and `Fits` shortens
+older tool replies, then leaves older questions out, to stay in the
+context) and `Source/Api/AssistantSocket.cpp` (an exchange per request,
+Stop heard every 200 ms, bounded waits, and `AssistantTakeReply`, shared by
+the panel and the tests: a refusal of tools, llama-server without
+`--jinja`, turns the conversation's tools off). `AssistantToolKinds` lists
+every tool as reading, changing or depending on its arguments;
+`TestAssistantKinds` keeps it in step with `ToolSet::List()` and the
+read-only hints, so a new tool goes there too. The panel runs each request
+on a thread of its own (`ask_job_t`, its events posted with a serial) and
+the tools on the UI thread between the replies through
+`CMcpConnection::RunTool` (`Core` for the small set's caller; `ToolList`
+gives the tools), a change between `BeginActionGroup` and `EndActionGroup`
+labelled "(the Ask panel)" (Take back all undoes the run's while they're on
+top of the history), and keeps a conversation per song (`talk_t`, by path,
+or serial while untitled). Its settings are the "Ask" registry section (the
+key through DPAPI, `CryptProtectData`), the bar's the "Ask panel" one;
+`CAskSettingsDlg` (`IDD_ASK_SETTINGS`) runs Test connection on a thread.
+The exercise in progress comes from `ExerciseInProgress` in `Tutorial.cpp`;
+without a model, `AssistantSearchHelp` searches the glossary, the exercises
+and the built-in tutorials. `assistant_tests` (`tests/AssistantTests.cpp`,
+with `tests/FakeModel.h`, a scripted model over a real socket) and
+`TestAssistantKinds`, `TestAssistantFunctions`, `TestAssistantContext` and
+`TestAssistantLoop` in `ApiTests.cpp` cover it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

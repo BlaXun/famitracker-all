@@ -341,6 +341,11 @@ struct AssistantSetup {
 };
 
 const size_t ASSISTANT_RESULT_MOST = 24000;		// bytes of a tool's reply the model gets at most
+const double ASSISTANT_BYTES_PER_TOKEN = 3.5;	// the first guess, until the server's count of a request says
+
+// The bytes a request may take in a context of that many tokens: the context less the room kept for the reply (its
+// thinking too: 6144 tokens, a fifth of a small context), at that many bytes a token
+double AssistantRequestRoom(int ContextTokens, double BytesPerToken);
 const size_t ASSISTANT_SHORT_RESULT = 600;		// an older reply shortened to save room
 
 // A conversation about one song, and the question being worked on: the model's turn (a request is due), the user's
@@ -379,6 +384,8 @@ public:
 	void Stop();
 	// A line for the user, never sent
 	void Note(const std::string &Text);
+	// A question answered without a model (FamiTracker's own help, AssistantHelpAnswer): shown, never sent
+	void Offline(const std::string &Question, const std::string &Answer);
 	// The question's last answer, the one being written (NULL for none)
 	const AssistantMessage *Answer() const;
 	// The server takes no tools: the conversation goes on without them, the calls made so far told as text

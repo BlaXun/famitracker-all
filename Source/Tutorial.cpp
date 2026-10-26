@@ -467,6 +467,8 @@ public:
 	bool Create();
 	void Command(UINT nID);
 	void Stop();
+	// The exercise it is: its title, what the step asks now and the step's check ("" for none); false for a tutorial
+	bool ExerciseNow(std::string &Title, std::string &Step, std::string &Check) const;
 
 protected:
 	afx_msg void OnPaint();
@@ -2027,4 +2029,23 @@ void TutorialCommand(UINT nID)
 bool TutorialRunning()
 {
 	return g_pTutorial != NULL;
+}
+
+bool CTutorialBubble::ExerciseNow(std::string &Title, std::string &Step, std::string &Check) const
+{
+	const ftapi::ExerciseInfo *pExercise = IsExercise() ? ftapi::FindExercise(m_sExercise) : NULL;
+	if (pExercise == NULL || m_iStep < 0 || m_iStep >= static_cast<int>(m_Tutorial.Steps.size()))
+		return false;
+	Title = pExercise->Title;
+	Step = ftapi::UnmarkLinks(this->Step().Text);
+	Check = this->Step().Check;
+	return true;
+}
+
+bool ExerciseInProgress(std::string &Title, std::string &Step, std::string &Check)
+{
+	Title.clear();
+	Step.clear();
+	Check.clear();
+	return g_pTutorial != NULL && g_pTutorial->ExerciseNow(Title, Step, Check);
 }

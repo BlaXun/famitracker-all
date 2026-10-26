@@ -41,6 +41,9 @@ void ShowTutorials(CMainFrame *pMainFrame);	// the list; the one picked starts
 void OpenExampleSong(CMainFrame *pMainFrame, UINT nID);
 void TutorialCommand(UINT nID);				// CMainFrame::OnCommand: a menu item, button or shortcut was used
 bool TutorialRunning();
+// The exercise whose note shows (Help > Exercises), for View > Ask's model: its title, what the step asks now (the
+// glossary's links as their words) and the step's check (check_exercise's, "" for none); false for none
+bool ExerciseInProgress(std::string &Title, std::string &Step, std::string &Check);
 
 // Help > Exercises (ExercisesDlg.cpp): an exercise's note over its song,
 // which has just opened. Its check steps (TutorialScript.h) have Hint, Hear

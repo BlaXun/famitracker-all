@@ -307,7 +307,6 @@ size_t ListMark(const std::string &Line, std::string &Bullet)
 
 // ---- Fitting the conversation into the model's context
 
-const size_t REPLY_ROOM_MOST = 8192;	// tokens kept for the reply (its thinking too)
 
 std::string Shortened(const std::string &Result)
 {
@@ -1270,6 +1269,12 @@ std::string AssistantHttpProblem(const AssistantEndpoint &Where, const std::stri
 
 // ---- Requests
 
+double AssistantRequestRoom(int ContextTokens, double BytesPerToken)
+{
+	const double Context = double(std::max(ASSISTANT_LEAST_CONTEXT, ContextTokens));
+	return (Context - std::min(6144.0, Context / 5)) * BytesPerToken;
+}
+
 std::string AssistantHttpRequest(const AssistantEndpoint &Where, const std::string &Path, const std::string &Key,
 	const std::string &Body, bool Stream)
 {
@@ -1318,7 +1323,7 @@ std::string AssistantProbeBody(const std::string &Model)
 // ---- The conversation
 
 AssistantChat::AssistantChat() : m_State(IDLE), m_iQuestion(0), m_iMode(ASSISTANT_ASK_FIRST), m_iRounds(0),
-	m_iMostRounds(ASSISTANT_ASK_ROUNDS), m_iCalls(0), m_bToolsOff(false), m_dBytesPerToken(3.0), m_iSent(0)
+	m_iMostRounds(ASSISTANT_ASK_ROUNDS), m_iCalls(0), m_bToolsOff(false), m_dBytesPerToken(ASSISTANT_BYTES_PER_TOKEN), m_iSent(0)
 {
 }
 
@@ -1405,7 +1410,7 @@ std::string AssistantChat::Build(const AssistantSetup &Setup) const
 		}
 		std::string Text = M.Text + Told;
 		if (Text.empty() && Calls.Size() == 0)
-			Text = M.Stopped ? "(stopped by the user before answering)" : "(no answer)";
+			Text = M.Stopped ? "(the answer was cut short before it began)" : "(no answer)";
 		Message.Set("content", Text);
 		if (Calls.Size() > 0)
 			Message.Set("tool_calls", Calls);
@@ -1434,20 +1439,18 @@ std::string AssistantChat::Build(const AssistantSetup &Setup) const
 
 bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 {
-	const double Context = std::max(ASSISTANT_LEAST_CONTEXT, Setup.ContextTokens);
-	const double Room = Context - std::min<double>(REPLY_ROOM_MOST, Context / 4);
-	const double Most = Room * m_dBytesPerToken;		// bytes the request may take
+	const double Most = AssistantRequestRoom(Setup.ContextTokens, m_dBytesPerToken);	// bytes the request may take
 	Body = Build(Setup);
-	if (Body.size() <= Most)
+	if (double(Body.size()) <= Most)
 		return true;
 	// Older questions' songs, then older tool replies, then whole older questions, then the question's own replies but
 	// the last, then what's left cut to fit: each a step until it fits
 	for (int Step = 0; Step < 5; ++Step) {
 		bool Changed = true;
-		while (Changed && Body.size() > Most) {
+		while (Changed && double(Body.size()) > Most) {
 			Changed = false;
 			double Saved = 0;
-			const double Excess = Body.size() - Most;
+			const double Excess = double(Body.size()) - Most;
 			for (size_t m = 0; m < m_Messages.size() && Saved < Excess; ++m) {
 				AssistantMessage &M = m_Messages[m];
 				const bool Older = M.Question < m_iQuestion;
@@ -1455,7 +1458,7 @@ bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 					continue;
 				if (Step == 0 && Older && M.Role == ASSISTANT_USER && !M.ContextLeftOut && !M.Context.empty()) {
 					M.ContextLeftOut = true;
-					Saved += M.Context.size();
+					Saved += double(M.Context.size());
 					Changed = true;
 				}
 				if ((Step == 1 && Older) || Step == 3)
@@ -1475,7 +1478,7 @@ bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 						const size_t Before = Call.Result.size();
 						Call.Result = Shortened(Call.Result);
 						Call.Shortened = true;
-						Saved += Before - Call.Result.size();
+						Saved += double(Before - Call.Result.size());
 						Changed = true;
 					}
 				if (Step == 4)
@@ -1489,7 +1492,7 @@ bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 							"\n(Cut here to fit in your context; ask for less, like fewer bars.)";
 						Call.Shortened = true;
 						if (Call.Result.size() < Before) {
-							Saved += Before - Call.Result.size();
+							Saved += double(Before - Call.Result.size());
 							Changed = true;
 						}
 					}
@@ -1499,9 +1502,9 @@ bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 					for (size_t n = m; n < m_Messages.size() && m_Messages[n].Question == Question; ++n)
 						if (!m_Messages[n].LeftOut) {
 							m_Messages[n].LeftOut = true;
-							Saved += m_Messages[n].Text.size() + m_Messages[n].Context.size();
+							Saved += double(m_Messages[n].Text.size() + m_Messages[n].Context.size());
 							for (size_t d = 0; d < m_Messages[n].Calls.size(); ++d)
-								Saved += m_Messages[n].Calls[d].Result.size() + m_Messages[n].Calls[d].Arguments.size();
+								Saved += double(m_Messages[n].Calls[d].Result.size() + m_Messages[n].Calls[d].Arguments.size());
 						}
 					Changed = true;
 				}
@@ -1509,7 +1512,7 @@ bool AssistantChat::Fits(const AssistantSetup &Setup, std::string &Body)
 			if (Changed)
 				Body = Build(Setup);
 		}
-		if (Body.size() <= Most)
+		if (double(Body.size()) <= Most)
 			return true;
 	}
 	return false;
@@ -1526,13 +1529,13 @@ bool AssistantChat::Request(const AssistantSetup &Setup, std::string &Body, std:
 				return false;		// RunReady first
 	if (!Fits(Setup, Body)) {
 		AssistantSetup Bare = Setup;
-		const double Context = std::max(ASSISTANT_LEAST_CONTEXT, Setup.ContextTokens);
+		const int Context = std::max(ASSISTANT_LEAST_CONTEXT, Setup.ContextTokens);
 		std::vector<AssistantMessage> Kept;
 		Kept.swap(m_Messages);
-		const size_t Alone = Build(Bare).size();
+		const double Alone = double(Build(Bare).size());
 		Kept.swap(m_Messages);
 		const long long Tokens = static_cast<long long>(Alone / m_dBytesPerToken);
-		if (Alone / m_dBytesPerToken > Context - std::min<double>(REPLY_ROOM_MOST, Context / 4))
+		if (Alone > AssistantRequestRoom(Context, m_dBytesPerToken))
 			Problem = "The model's context (" + Number(static_cast<long long>(Context)) + " tokens) is too small for "
 				"FamiTracker's tools: they and their instructions take about " + Number(Tokens) + " tokens. Pick the small set of "
 				"tools in the Ask panel's settings, or give the model a bigger context (llama-server's -c, like -c 65536).";
@@ -1738,6 +1741,24 @@ void AssistantChat::Stop()
 		}
 	if (Waited)
 		Note("Stopped: the proposals weren't done.");
+	m_State = IDLE;
+}
+
+void AssistantChat::Offline(const std::string &Question, const std::string &Answer)
+{
+	++m_iQuestion;
+	AssistantMessage Asked;
+	Asked.Role = ASSISTANT_USER;
+	Asked.Text = Trim(Question);
+	Asked.Question = m_iQuestion;
+	Asked.LeftOut = true;
+	m_Messages.push_back(Asked);
+	AssistantMessage Answered;
+	Answered.Role = ASSISTANT_MODEL;
+	Answered.Text = Answer;
+	Answered.Question = m_iQuestion;
+	Answered.LeftOut = true;
+	m_Messages.push_back(Answered);
 	m_State = IDLE;
 }
 

@@ -72,6 +72,7 @@
 #include "ClipsPanel.h"
 #include "ProblemsPanel.h"
 #include "WhatNextPanel.h"
+#include "AskPanel.h"
 #include "MixerPanel.h"
 #include <vector>
 
@@ -188,6 +189,7 @@ CMainFrame::CMainFrame() :
 	m_pClipsBar(NULL),
 	m_pProblemsBar(NULL),
 	m_pWhatNextBar(NULL),
+	m_pAskBar(NULL),
 	m_pMixerBar(NULL),
 	m_pDrumGridBar(NULL),
 	m_bBottomPlanned(false),
@@ -228,6 +230,7 @@ CMainFrame::~CMainFrame()
 	SAFE_RELEASE(m_pClipsBar);
 	SAFE_RELEASE(m_pProblemsBar);
 	SAFE_RELEASE(m_pWhatNextBar);
+	SAFE_RELEASE(m_pAskBar);
 	SAFE_RELEASE(m_pMixerBar);
 	SAFE_RELEASE(m_pDrumGridBar);
 	SAFE_RELEASE(m_pActionGroup);
@@ -321,6 +324,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
 	ON_COMMAND(ID_VIEW_WHATNEXT, OnViewWhatNext)
+	ON_COMMAND(ID_VIEW_ASK, OnViewAsk)
 	ON_COMMAND(ID_VIEW_MIXER, OnViewMixer)
 	ON_COMMAND(ID_HELP, OnHelpContext)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
@@ -398,6 +402,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_WHATNEXT, OnUpdateViewWhatNext)
+	ON_UPDATE_COMMAND_UI(ID_VIEW_ASK, OnUpdateViewAsk)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_MIXER, OnUpdateViewMixer)
 	ON_UPDATE_COMMAND_UI(ID_HELP_GLOSSARY, OnUpdateHelpGlossary)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
@@ -1776,6 +1781,8 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowProblemsPanel(true);
 			if (CWhatNextBar::WasOpen())
 				ShowWhatNext(true);
+			if (CAskBar::WasOpen())
+				ShowAsk(true);
 			if (CMixerBar::WasOpen())
 				ShowMixer(true);
 			if (CDrumGridBar::WasOpen())
@@ -2760,7 +2767,7 @@ void CMainFrame::ArrangeBars()
 {
 	const bool Fill = !m_bPatternShown;
 	CControlBar *const ORDER[] = {
-		m_pMixerBar, m_pProblemsBar, m_pWhatNextBar, m_pDrumGridBar,
+		m_pMixerBar, m_pProblemsBar, m_pWhatNextBar, m_pAskBar, m_pDrumGridBar,
 		Fill ? static_cast<CControlBar*>(m_pClipsBar) : static_cast<CControlBar*>(m_pPianoRoll),
 		Fill ? static_cast<CControlBar*>(m_pPianoRoll) : static_cast<CControlBar*>(m_pClipsBar),
 	};
@@ -2787,6 +2794,8 @@ std::vector<CMainFrame::bottom_panel_t> CMainFrame::BottomPanels() const
 		Add(m_pProblemsBar, 1, m_pProblemsBar->BottomHeight(), m_pProblemsBar->RowWeight());
 	if (m_pWhatNextBar != NULL && !m_pWhatNextBar->IsOnRight())
 		Add(m_pWhatNextBar, 1, m_pWhatNextBar->BottomHeight(), m_pWhatNextBar->RowWeight());
+	if (m_pAskBar != NULL && !m_pAskBar->IsOnRight())
+		Add(m_pAskBar, 1, m_pAskBar->BottomHeight(), m_pAskBar->RowWeight());
 	if (m_pDrumGridBar != NULL && !m_pDrumGridBar->IsOnRight())
 		Add(m_pDrumGridBar, 1, m_pDrumGridBar->BottomHeight(), m_pDrumGridBar->RowWeight());
 	return Panels;
@@ -2800,6 +2809,8 @@ int CMainFrame::BottomPanelLeast(const CControlBar *pBar, int Width) const
 		return m_pProblemsBar->LeastHeight(Width);
 	if (pBar != NULL && pBar == m_pWhatNextBar)
 		return m_pWhatNextBar->LeastHeight(Width);
+	if (pBar != NULL && pBar == m_pAskBar)
+		return m_pAskBar->LeastHeight(Width);
 	if (pBar != NULL && pBar == m_pDrumGridBar)
 		return m_pDrumGridBar->LeastHeight(Width);
 	return 0;
@@ -2904,6 +2915,8 @@ void CMainFrame::BottomPanelDragged(const CControlBar *pBar, int Height)
 			m_pProblemsBar->SetBottomHeight(Height);
 		else if (Panels[i].pBar == m_pWhatNextBar)
 			m_pWhatNextBar->SetBottomHeight(Height);
+		else if (Panels[i].pBar == m_pAskBar)
+			m_pAskBar->SetBottomHeight(Height);
 		else if (Panels[i].pBar == m_pDrumGridBar)
 			m_pDrumGridBar->SetBottomHeight(Height);
 	}
@@ -3029,6 +3042,37 @@ void CMainFrame::ShowWhatNext(bool Show)
 	m_pWhatNextBar->Opened(Show);
 }
 
+void CMainFrame::OnViewAsk()
+{
+	ShowAsk(m_pAskBar == NULL || !m_pAskBar->IsVisible());
+}
+
+void CMainFrame::OnUpdateViewAsk(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(m_pAskBar != NULL && m_pAskBar->IsVisible() ? 1 : 0);
+}
+
+void CMainFrame::ShowAsk(bool Show)
+{
+	// The user's own model asked from FamiTracker, along the bottom of the main window or its right (see AskPanel.h),
+	// made the first time; the keys go to its question box as it opens
+	if (Show && m_pAskBar == NULL) {
+		m_pAskBar = new CAskBar();
+		if (!m_pAskBar->Create(this, m_pMcpConnection)) {
+			delete m_pAskBar;
+			m_pAskBar = NULL;
+			return;
+		}
+		ArrangeBars();
+	}
+	if (m_pAskBar == NULL)
+		return;
+	ShowControlBar(m_pAskBar, Show ? TRUE : FALSE, FALSE);
+	m_pAskBar->Opened(Show);
+	if (Show)
+		m_pAskBar->Focus();
+}
+
 void CMainFrame::OnViewMixer()
 {
 	ShowMixer(m_pMixerBar == NULL || !m_pMixerBar->IsVisible());
@@ -3070,6 +3114,8 @@ void CMainFrame::SongChanged()
 		m_pProblemsBar->SongChanged();
 	if (m_pWhatNextBar != NULL)
 		m_pWhatNextBar->SongChanged();
+	if (m_pAskBar != NULL)
+		m_pAskBar->SongChanged();
 	if (m_pDrumGridBar != NULL)
 		m_pDrumGridBar->SongChanged();
 	// The frame editor shows the sections' column while the module has sections, and where the song loops

@@ -743,6 +743,45 @@ each with the user's words:
   side by side in one row), and a tutorial's note moves the glossary off
   what it points at; the first small song is a short loop of 14 bars.
 
+## 17. Ask your own model, inside FamiTracker
+
+The user (26 October 2026), new to making music: "would it be possible to
+have a text input field within famitracker where the user can ask the AI
+(using the MCP) bout guidance and how to do stuff?" Of the three ways
+offered (their own local model, Claude through Claude Code, Claude's API):
+"1. seems like the only good solution... dont want to have that fixated on
+a proprietary solution." And: "will that also allow for telling the AI to
+compose a specific song? ... so its not just a 'ask things' but also
+'command stuff' window".
+
+- **View > Ask** (done 26 October 2026, on `feat-ask-panel`): a panel with
+  a question box, docked along the bottom beside What next or on the right,
+  for any server that speaks OpenAI's chat API on this PC or the home
+  network (llama.cpp's llama-server, llama-swap, Ollama, LM Studio). The
+  answer streams in, the glossary's words linked; each song keeps its
+  conversation while FamiTracker runs, and New question starts over. The
+  model gets FamiTracker's tools (all of them, or the small set for smaller
+  models) and, with each question, the song as it is: its overview, What
+  next's step, the exercise in progress and the cursor's bar and channel.
+- **Asking and commanding**: in **Ask first** (the default) reading runs at
+  once and a change is a proposal with Do it (one Ctrl+Z) and Skip; in
+  **Let it work** the model makes the changes itself ("compose a calm night
+  song in D minor"), each undoable, listed as it goes, with Stop at any
+  moment and Take back all for the run. Rounds per question are capped (8
+  and 300, both settable), and the conversation is kept inside the model's
+  context, older tool replies shortened first.
+- **Its settings**: the address, the model's name (for llama-swap and
+  Ollama), a key kept with DPAPI, the tools, the rounds and the context,
+  with Test connection (reached, models, context, tools on or off). The
+  panel says what to switch on (`llama-server --jinja`) when the server
+  takes no tools, and answers from the song's summary meanwhile.
+- **Privacy and failures**: nothing is sent until you ask; a note shows when
+  the address isn't this PC or on the home network; a server that's off,
+  slow or answering badly gets a plain message with what to check, and
+  Stop always works. With no model set up, the panel searches the glossary,
+  the exercises and the tutorials. See `MCP.md`, Your own model inside
+  FamiTracker.
+
 ## Feature branches
 
 Larger ideas get their own branch made from `beginner-friendly` and merge back
