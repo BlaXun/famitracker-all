@@ -890,7 +890,7 @@ with `song_shape`, and `what_next` starts an empty song with it.
 | Shape | Its parts (bars) | For |
 |---|---|---|
 | `stage` | Intro 4, A 8, A' 8, B 8, Climax 8, Break 4 (40) | a lively stage: it bounces, builds to a climax, breathes and loops |
-| `night` | Intro 4, A 8, A' 8, B 8, A'' 8, Break 4 (40) | a calm night or a place to rest |
+| `night` | Intro 4, A 8, A' 8, B 8, Break 4, A'' 8 (40) | a calm night or a place to rest |
 | `town` | Intro 4, A 8, A' 8, B 8, A'' 8, Break 4 (40) | a town, a village or a field: a tune that loops a long time |
 | `boss` | Intro 2, A 8, A' 8, Climax 6, Break 2 (26) | a boss fight or a chase |
 | `small` | Intro 2, A 4, A' 4, B 4 (14) | a small place: a shop, a house, a menu |
@@ -899,7 +899,9 @@ with `song_shape`, and `what_next` starts an empty song with it.
 They're the forms the recipes teach: an intro that plays once, the tune
 (A), its repeat changed a little (A'), something different on other
 chords (B) so A sounds fresh when it comes back, a high point (the climax,
-or A'' at its fullest) and a break, a breath before the loop comes round.
+or A'' at its fullest) and a break, a breath before the loop comes round (a
+calm night's comes before its last A, as the soundtrack's night songs had
+it).
 `song_shape` without `shape` lists every shape with each part's line ("A:
 The tune, the part people hum."; "B: Something different, on other
 chords, so A sounds fresh when it comes back."; "Break: A breath before
@@ -918,7 +920,8 @@ the loop comes round: the tune and the drums rest.").
   shorter than the shape gets the empty bars the rest needs at its end only
   with `add_bars` (FamiTracker asks first), and its jump back moves to the
   new end so they play. A longer song keeps its last bars without a
-  section. Its own sections give way to the shape's.
+  section. Its own sections give way to the shape's. FamiTracker's list
+  marks the shapes that fit in the bars such a song has.
 - Each is one Ctrl+Z, the frames' new length too.
 
 Where a section is named, FamiTracker says what it's for: pointing at its
@@ -926,9 +929,8 @@ band in the frame editor shows its line as a tooltip, and at its name on
 the piano roll's ruler in the piano roll's status line ("A' (bars 13-20):
 The tune again, changed a little: a second line joins in and the drums get
 busier."). The line is worked out from the section's name and the shape
-the track's sections are (the town and the calm night share their names:
-a calm word in the track's name, or 90 BPM or under, says night), so
-nothing new is saved and older songs' names get lines too (Intro, A, A2,
+the track's sections are (else the one the track's name says: "Boss",
+"Night"), so nothing new is saved and older songs' names get lines too (Intro, A, A2,
 A', B, Bridge, Verse, Chorus, Climax, Break, Outro). A part's repeats (A',
 A'', A 2) have its color in the frame editor and on the ruler.
 

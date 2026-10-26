@@ -24980,18 +24980,21 @@ void WhatNext::GrowForm()
 	const FormPart &End = m_Form[static_cast<size_t>(Last)];
 	const int Length = First.LastBar - First.FirstBar + 1;
 	// Where it goes: right after the body's last part, on empty bars or past the song's end; else bars put in there first. A
-	// part a shape laid out there (song_shape: named, empty, not an intro or a break) is filled where it is, at its length
-	const int At = End.LastBar + 1;
-	bool Room = At > S.Time.BarCount();
+	// part a shape laid out after it (song_shape: named, empty, not an intro or a break; a calm night's break may come
+	// first) is filled where it is, at its length
 	int Laid = -1;
+	for (size_t i = static_cast<size_t>(Last) + 1; i < m_Form.size(); ++i) {
+		if (m_Form[i].Named && m_Form[i].Free)
+			continue;
+		if (m_Form[i].Named && m_Form[i].Empty)
+			Laid = static_cast<int>(i);
+		break;
+	}
+	const int At = Laid >= 0 ? m_Form[static_cast<size_t>(Laid)].FirstBar : End.LastBar + 1;
+	bool Room = Laid >= 0 || At > S.Time.BarCount();
 	for (size_t i = static_cast<size_t>(Last) + 1; i < m_Form.size() && !Room; ++i)
-		if (m_Form[i].FirstBar == At) {
+		if (m_Form[i].FirstBar == At)
 			Room = !m_Form[i].Named && m_Form[i].Empty && m_Form[i].LastBar - m_Form[i].FirstBar + 1 >= Length;
-			if (m_Form[i].Named && !m_Form[i].Free && m_Form[i].Empty) {
-				Room = true;
-				Laid = static_cast<int>(i);
-			}
-		}
 	const int LaidBars = Laid >= 0 ? m_Form[static_cast<size_t>(Laid)].LastBar - At + 1 : Length;
 	if (!Room) {
 		Json Put = Json::MakeObject();
@@ -27144,8 +27147,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("song_shape", "Lay out a song's shape",
 		"Lays out a kind of song's shape: its named sections, each with its bars and what it's for, in FamiTracker's frames. "
-		"Shapes: stage (a lively stage: Intro 4, A 8, A' 8, B 8, Climax 8, Break 4), night (a calm night: Intro, A, A', B, A'', "
-		"Break), town (the same parts for a town or a field), boss (Intro 2, A 8, A' 8, Climax 6, Break 2), small (a short loop "
+		"Shapes: stage (a lively stage: Intro 4, A 8, A' 8, B 8, Climax 8, Break 4), night (a calm night: Intro, A, A', B, Break, "
+		"A''), town (a town or a field: Intro, A, A', B, A'', Break), boss (Intro 2, A 8, A' 8, Climax 6, Break 2), small (a short loop "
 		"for a shop or a menu: Intro 2, A 4, A' 4, B 4) and jingle (Phrase 2, Last chord 2; it plays once). On a track without "
 		"notes it makes the frames the bars need (frames of whole bars that every part fills, at the song's rows a bar), names "
 		"the sections and sets the loop: the intro plays once, then the rest loops (a jingle stops at its end). On a track with "

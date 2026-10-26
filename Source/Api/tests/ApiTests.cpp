@@ -22638,7 +22638,7 @@ void TestSongShapes()
 		int FrameBars;
 	};
 	const Want WANT[] = { { "stage", "Intro 4, A 8, A' 8, B 8, Climax 8, Break 4", 40, true, 4 },
-		{ "night", "Intro 4, A 8, A' 8, B 8, A'' 8, Break 4", 40, true, 4 }, { "town", "Intro 4, A 8, A' 8, B 8, A'' 8, Break 4", 40, true, 4 },
+		{ "night", "Intro 4, A 8, A' 8, B 8, Break 4, A'' 8", 40, true, 4 }, { "town", "Intro 4, A 8, A' 8, B 8, A'' 8, Break 4", 40, true, 4 },
 		{ "boss", "Intro 2, A 8, A' 8, Climax 6, Break 2", 26, true, 2 }, { "small", "Intro 2, A 4, A' 4, B 4", 14, true, 2 },
 		{ "jingle", "Phrase 2, Last chord 2", 4, false, 2 } };
 	for (size_t i = 0; i < All.size() && i < sizeof(WANT) / sizeof(WANT[0]); ++i) {
@@ -22695,15 +22695,15 @@ void TestSongShapes()
 	CHECK_EQ(SectionHoverText("A'", 13, 20, &Stage), "A' (bars 13-20): " + Stage.Parts[2].Line);
 	CHECK_EQ(SectionHoverText("Gerald", 3, 3, 0), std::string("Gerald (bar 3)"));
 
-	// The shape a track's sections are: theirs, in order; the town and the night told apart by the track's name or tempo
+	// The shape a track's sections are: theirs, in order (the night's break comes before its last A, the town's after it)
 	ShapeLayout L;
 	std::string Error;
 	CHECK(LayOutShape(Stage, true, 16, 64, 1, 128, false, L, Error));
 	CHECK(MatchSongShape(L.Sections, "Forest", 150.0) == &All[0] && GuessSongShape(L.Sections, "Forest", 150.0) == &All[0]);
-	ShapeLayout T;
-	CHECK(LayOutShape(All[2], true, 16, 64, 1, 128, false, T, Error));
-	CHECK(MatchSongShape(T.Sections, "Market", 128.6)->Id == "town" && MatchSongShape(T.Sections, "Market", 75.0)->Id == "night" &&
-		MatchSongShape(T.Sections, "Night market", 128.6)->Id == "night");
+	ShapeLayout T, N;
+	CHECK(LayOutShape(All[2], true, 16, 64, 1, 128, false, T, Error) && LayOutShape(All[1], true, 16, 64, 1, 128, false, N, Error));
+	CHECK(MatchSongShape(T.Sections, "Night market", 75.0)->Id == "town" && MatchSongShape(N.Sections, "Market", 150.0)->Id == "night");
+	CHECK(GuessSongShape(N.Sections, "Boss", 150.0)->Id == "night");
 	SectionList Own = T.Sections;
 	Own.pop_back();
 	CHECK(MatchSongShape(Own, "Town", 128.6) == 0 && GuessSongShape(Own, "Town", 128.6) == &All[2] && GuessSongShape(Own, "New song", 128.6) == 0);

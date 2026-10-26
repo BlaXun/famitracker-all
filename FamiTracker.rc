@@ -2236,17 +2236,17 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,205,166,50,14
 END
 
-IDD_SONG_SHAPE DIALOGEX 0, 0, 340, 210
+IDD_SONG_SHAPE DIALOGEX 0, 0, 400, 214
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Song shape"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Pick the kind of song. Its parts are laid out as named sections, each with what it's for; point at a section in the frame editor or the piano roll to see it again.",IDC_STATIC,7,7,326,18
-    LISTBOX         IDC_SHAPE_LIST,7,30,104,120,LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP
-    EDITTEXT        IDC_SHAPE_PARTS,117,30,216,120,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
-    LTEXT           "",IDC_SHAPE_NOTE,7,156,326,26
-    DEFPUSHBUTTON   "Lay it out",IDOK,229,189,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,283,189,50,14
+    LTEXT           "Pick the kind of song. Its parts are laid out as named sections, each with what it's for; point at a section in the frame editor or the piano roll to see it again.",IDC_STATIC,7,7,386,18
+    LISTBOX         IDC_SHAPE_LIST,7,30,112,124,LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_SHAPE_PARTS,125,30,268,124,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
+    LTEXT           "",IDC_SHAPE_NOTE,7,160,386,26
+    DEFPUSHBUTTON   "Lay it out",IDOK,289,193,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,343,193,50,14
 END
 
 IDD_CLIP_EDIT DIALOGEX 0, 0, 320, 230

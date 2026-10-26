@@ -46,10 +46,11 @@ struct ShapeRow {
 	PartRow Parts[8];		// ended by a part without a name
 };
 
-// The forms the tools teach. A lively stage, a town and a calm night as the
-// recipes and the soundtrack make them: an intro of 4 bars that plays once,
-// a loop of 36 (A, A', B, the climax or A'', 8 bars each) and a break of 4
-// before the loop comes round. A boss with a short, tense intro and a 6-bar
+// The forms the tools teach. A lively stage and a town as the recipes and
+// the soundtrack make them: an intro of 4 bars that plays once, a loop of 36
+// (A, A', B, the climax or A'', 8 bars each) and a break of 4 before the loop
+// comes round; a calm night as the soundtrack's night songs were, its break
+// between B and the last A (the calm recipe's). A boss with a short, tense intro and a 6-bar
 // climax (the style guide's soundtrack topic: B as the climax, frames of 2
 // bars so the 2-bar intro loops cleanly); a small place's short loop, a
 // jingle that stops. Plain words: the user reads no notation.
@@ -69,8 +70,8 @@ const ShapeRow SHAPES[] = {
 		{ "A", 8, "The tune: few, slow notes, with rests between its phrases." },
 		{ "A'", 8, "The tune again, deeper: an echo a beat behind it, or a second voice." },
 		{ "B", 8, "Other chords, a little higher or darker: somewhere new before coming home." },
-		{ "A''", 8, "The tune once more, at its fullest, then settling down." },
-		{ "Break", 4, "The tune rests while one small sound plays (a far-off clock, a sigh), then the loop comes round." },
+		{ "Break", 4, "The tune rests while one small sound plays (a far-off clock, a sigh) before it comes back." },
+		{ "A''", 8, "The tune once more, softly answered, ending without coming to rest so the loop flows on." },
 		{ 0, 0, 0 } } },
 	{ "town", "Town", "A town, a village or a field: a friendly tune that can loop for a long time without tiring.", "general", true, 1,
 		"town towns village city field fields map overworld general",
@@ -415,7 +416,7 @@ const SongShape *MatchSongShape(const SectionList &Sections, const std::string &
 			Same = SameName(Sections[i].Name, Shape.Parts[i].Name);
 		if (!Same)
 			continue;
-		// The town and the calm night share their parts' names
+		// Two shapes sharing their parts' names (none do now)
 		if (pPrefer != 0 && Shape.Id == pPrefer->Id)
 			return &Shape;
 		if (pFound == 0 || (Calm && Shape.Id == "night") || (!Calm && pFound->Id == "night"))

@@ -1293,9 +1293,8 @@ Song shapes (from `feat-song-shapes`): `Source/Api/SongShapes.cpp`
 jingle), each a list of parts with their bars and a line on what the part
 is for, the forms the recipes teach; `PartLine` gives a section's line from
 its name (a shape's own where it's one of its parts), `MatchSongShape` the
-shape a track's sections are (the town and the night share their names: a
-calm track name or 90 BPM and under says night; `what_next` passes its
-kind's), `GuessSongShape` that or the track name's, and `LayOutShape` the
+shape a track's sections are (their names in order; `what_next` passes its
+kind's for a tie), `GuessSongShape` that or the track name's, and `LayOutShape` the
 layout: an empty track gets frames of its own length where every part is
 whole frames of it, else of the parts' greatest common divisor in bars; a
 track with notes keeps its frames (`Refitted`, `Cut`, `Missing`). The

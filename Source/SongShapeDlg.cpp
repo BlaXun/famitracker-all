@@ -137,19 +137,28 @@ BOOL CSongShapeDlg::OnInitDialog()
 	m_cList.SubclassDlgItem(IDC_SHAPE_LIST, this);
 	m_bNotes = TrackHasNotes(m_pDocument, m_iTrack);
 
-	// The shapes, the one the track's sections are (or its name says) picked
+	// The shapes, the one the track's sections are (or its name says) picked; on a song with notes, those that fit in the
+	// bars it has say so, and the longest of them is picked when nothing else says which
 	const std::vector<ftapi::SongShape> &All = ftapi::SongShapes();
 	const ftapi::Timing Time = TrackTiming(m_pDocument, m_iTrack);
 	const ftapi::SongShape *pGuess = ftapi::GuessSongShape(m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack)),
 		std::string(static_cast<LPCTSTR>(m_pDocument->GetTrackTitle(m_iTrack))), TrackBpm(m_pDocument, m_iTrack, Time.RowsPerBeat));
-	int Picked = 0;
+	int Picked = 0, Fitting = -1, FittingBars = 0;
 	for (size_t i = 0; i < All.size(); ++i) {
+		ftapi::ShapeLayout Laid;
+		const bool Fits = m_bNotes && Plan(All[i], true, Laid) && Laid.NeededFrames <= Time.Frames;
 		CString Item;
-		Item.Format(_T("%s (%s)"), All[i].Title.c_str(), static_cast<LPCTSTR>(Bars(All[i].Bars())));
+		Item.Format(_T("%s (%s%s)"), All[i].Title.c_str(), static_cast<LPCTSTR>(Bars(All[i].Bars())), Fits ? _T("; fits") : _T(""));
 		m_cList.AddString(Item);
 		if (pGuess == &All[i])
 			Picked = static_cast<int>(i);
+		if (Fits && Laid.NeededFrames * Laid.BarsPerFrame > FittingBars) {
+			Fitting = static_cast<int>(i);
+			FittingBars = Laid.NeededFrames * Laid.BarsPerFrame;
+		}
 	}
+	if (pGuess == NULL && Fitting >= 0)
+		Picked = Fitting;
 	m_cList.SetCurSel(Picked);
 	ShowShape();
 	m_cList.SetFocus();
@@ -200,7 +209,10 @@ void CSongShapeDlg::ShowShape()
 			Note += Frame;
 		}
 	}
-	if (!m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack)).empty())
+	const ftapi::SectionList &Own = m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack));
+	if (ftapi::MatchSongShape(Own, std::string(), 0.0, &Shape) == &Shape)
+		Note = _T("The song is laid out in this shape already.");
+	else if (!Own.empty())
 		Note += _T(" The song's own section names give way to the shape's.");
 	SetDlgItemText(IDC_SHAPE_NOTE, Note);
 }

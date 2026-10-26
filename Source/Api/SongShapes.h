@@ -77,9 +77,9 @@ const SongShape &ShapeForKind(const std::string &Kind);
 // says nothing of it
 std::string PartLine(const std::string &Name, const SongShape *pShape = 0);
 // The shape a track's sections were laid out in: their names, in order, are
-// its parts' (the town and the calm night share theirs: pPrefer when it's one
-// of them, else a calm word in the track's name, or a tempo of 90 BPM or
-// under, says night); null for none
+// its parts' (should two shapes share their names, pPrefer when it's one of
+// them, else a calm word in the track's name or a tempo of 90 BPM or under
+// picks the calm night); null for none
 const SongShape *MatchSongShape(const SectionList &Sections, const std::string &TrackName, double Bpm,
 	const SongShape *pPrefer = 0);
 // That shape, else the one the track's name says ("Boss", "Night", "Shop"):
