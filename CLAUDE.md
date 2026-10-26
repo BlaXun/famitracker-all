@@ -1331,7 +1331,8 @@ The chords right before and after decide "back home" (the tonic after
 tension), a surprise after the dominant (V vi, V VI in minor) and whether a
 chord both borrowed and leading on (A or D in A minor) leads on.
 `RolesOfChords` takes chords in time order, `ChordRoleName` and
-`ChordRoleMeaning` are the legend's words (the glossary's to share), and
+`ChordRoleMeaning` are the legend's words and `ChordRoleExplained` a
+sentence on each (the glossary's and the tools' to share), and
 `ChordIndexAtRow` and `StrongNoteAt` give the chord tones under a row.
 `ToolSet::Harmony` fills `HeardChord::Role`, `RoleWords` and `Bass`, so
 the roles are worked out with the chords, a moment after a change. The

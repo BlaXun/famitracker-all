@@ -35,6 +35,15 @@ const char *const ROLE_NAMES[CHORD_ROLE_COUNT] = { "home", "away", "tension", "c
 const char *const ROLE_MEANINGS[CHORD_ROLE_COUNT] = {
 	"settled, at rest", "moving off", "leans toward home", "from outside the key"
 };
+const char *const ROLE_EXPLAINED[CHORD_ROLE_COUNT] = {
+	"Home is the key's own chord, built on its home note, and the chords that share most of its notes: the music is at "
+	"rest there, and songs often start and end on it.",
+	"Away chords move off from home: the music sets out, open, ready to go somewhere before it comes back.",
+	"Tension chords lean back toward home: after one, home sounds like arriving. The chord on the key's fifth note is "
+	"the strongest.",
+	"Color chords bring notes from outside the key: borrowed from the major or minor key on the same home note (a darker "
+	"or brighter shade), or another chord's own tension leading into it.",
+};
 
 int Wrap(int Value)
 {
@@ -325,6 +334,11 @@ const char *ChordRoleName(chord_role_t Role)
 const char *ChordRoleMeaning(chord_role_t Role)
 {
 	return Role >= 0 && Role < CHORD_ROLE_COUNT ? ROLE_MEANINGS[Role] : "";
+}
+
+const char *ChordRoleExplained(chord_role_t Role)
+{
+	return Role >= 0 && Role < CHORD_ROLE_COUNT ? ROLE_EXPLAINED[Role] : "";
 }
 
 ChordRoleInKey RoleOfChord(const Chord &C, const Key &K, const Chord *pBefore, const Chord *pAfter)

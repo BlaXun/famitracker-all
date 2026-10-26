@@ -58,6 +58,8 @@ enum chord_role_t {
 const char *ChordRoleName(chord_role_t Role);
 // What each one does, for a legend: "settled, at rest", "moving off", "leans toward home", "from outside the key"
 const char *ChordRoleMeaning(chord_role_t Role);
+// The same in a sentence or two, for the glossary and the tools: "Home is the key's own chord..."
+const char *ChordRoleExplained(chord_role_t Role);
 
 struct ChordRoleInKey {
 	chord_role_t Role;

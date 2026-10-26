@@ -135,6 +135,7 @@ void TestNames()
 	for (int r = 0; r < CHORD_ROLE_COUNT; ++r) {
 		CHECK(Ascii(ChordRoleName(static_cast<chord_role_t>(r))) && *ChordRoleName(static_cast<chord_role_t>(r)) != 0);
 		CHECK(Ascii(ChordRoleMeaning(static_cast<chord_role_t>(r))) && *ChordRoleMeaning(static_cast<chord_role_t>(r)) != 0);
+		CHECK(Ascii(ChordRoleExplained(static_cast<chord_role_t>(r))) && std::string(ChordRoleExplained(static_cast<chord_role_t>(r))).size() > 40);
 	}
 	CHECK(*ChordRoleName(CHORD_ROLE_COUNT) == 0 && *ChordRoleMeaning(static_cast<chord_role_t>(-1)) == 0);
 }
