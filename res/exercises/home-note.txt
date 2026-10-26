@@ -1,0 +1,21 @@
+; Help > Exercises: the home note (Source/ExercisesDlg.cpp opens home-note.ftm with it)
+title: The home note
+about: A short tune stops too soon. Give it a last note that sounds like the end.
+
+step
+show: piano-roll
+play: bars 1-4
+text: Here's a short tune on Pulse 1, with chords under it. Press Play and listen to how it ends.
+
+  It stops on a note that leaves you waiting, like a sentence with its last word missing.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-4
+check: home-note
+text: Give the tune a last note that sounds like the end: the [[home note]] of its [[key]].
+
+  In the piano roll, click at the start of bar 4 to add a note and drag to the right to make it last. Play lets you hear it, and Check says how it went.
+hint: The tune is in C major, so its home note is C. Put a C on the first beat of bar 4, on the lane just under the tune's last note (D), and let it ring for the whole bar.
+answer: Pulse 1, bar 4: C4 - - - - - - -

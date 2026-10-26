@@ -21,6 +21,7 @@
 
 // Tutorials as text (see TutorialScript.h)
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -32,14 +33,15 @@ namespace {
 
 const char *const PARTS[] = {
 	"window", "pattern", "frames", "instruments", "song-settings", "song-info", "octave", "toolbar", "status-bar", "clips",
-	"piano-roll", "drum-grid", "mixer", "button", "menu", "channel",
+	"piano-roll", "drum-grid", "mixer", "button", "menu", "channel", "what-next", "problems",
 };
 
 const char *const COMMANDS[] = {
 	"play", "play-from-start", "stop", "edit-mode", "new", "open", "save", "save-as", "export-for-games", "create-wav",
 	"new-instrument", "instrument-library", "edit-instrument", "drum-grid", "save-clip", "clips", "piano-roll",
 	"clips-panel", "record", "insert-recording", "add-backing", "voice-effect", "insert-frame", "duplicate-frame",
-	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude", "pattern-editor",
+	"remove-frame", "module-properties", "undo", "redo", "profile", "connect-claude", "pattern-editor", "exercises", "glossary",
+	"song-shape", "what-next",
 };
 
 // The channels a song can have, as FamiTracker names them (lower case), and
@@ -176,6 +178,10 @@ bool ParseWait(const std::string &Value, tutorial_step_t &Step, std::string &Pro
 {
 	std::string Word, Rest;
 	SplitWord(Value, Word, Rest);
+	if (!Step.Check.empty()) {
+		Problem = "a step with a check goes on once its check passes; it takes no \"wait\".";
+		return false;
+	}
 	Step.Count = 1;
 	if (Word == "next")
 		Step.Wait = WAIT_NEXT;
@@ -225,6 +231,58 @@ bool ParseWait(const std::string &Value, tutorial_step_t &Step, std::string &Pro
 		Problem = "\"" + Word + "\" takes nothing after it.";
 		return false;
 	}
+	return true;
+}
+
+// "home-note": a check's name, lower case letters, digits and hyphens
+bool ParseCheck(const std::string &Value, tutorial_step_t &Step, std::string &Problem)
+{
+	bool Good = !Value.empty();
+	for (size_t i = 0; i < Value.size(); ++i)
+		Good = Good && (std::islower(static_cast<unsigned char>(Value[i])) || std::isdigit(static_cast<unsigned char>(Value[i])) ||
+			Value[i] == '-');
+	if (!Good) {
+		Problem = "\"check\" takes the check's name, as in \"check: home-note\".";
+		return false;
+	}
+	if (Step.Wait != WAIT_NEXT) {
+		Problem = "a step with a check goes on once its check passes; it takes no \"wait\".";
+		return false;
+	}
+	Step.Check = Value;
+	Step.Wait = WAIT_CHECK;
+	return true;
+}
+
+// "Pulse 1, bar 4: C4 - - -", "Pulse 1, bar 1, Lead: E3 - D3 -"
+bool ParseAnswer(const std::string &Value, tutorial_step_t &Step, std::string &Problem)
+{
+	const size_t Colon = Value.find(':'), Comma = Value.find(',');
+	const size_t Second = Comma == std::string::npos ? std::string::npos : Value.find(',', Comma + 1);
+	const size_t BarEnd = Second != std::string::npos && Second < Colon ? Second : Colon;
+	tutorial_answer_t Answer;
+	std::string Word, Rest;
+	if (Colon != std::string::npos && Comma != std::string::npos && Comma < Colon)
+		SplitWord(Trim(Value.substr(Comma + 1, BarEnd - Comma - 1)), Word, Rest);
+	if (Colon == std::string::npos || Comma == std::string::npos || Comma > Colon || Word != "bar" ||
+		!ReadNumber(Rest, 1, MAX_BAR, Answer.Bar) || (BarEnd != Colon && Trim(Value.substr(BarEnd + 1, Colon - BarEnd - 1)).empty())) {
+		Problem = "\"answer\" takes a channel, the bar its notes start in (and the instrument they play, if the channel has none "
+			"there) and the notes in steps, as in \"answer: Pulse 1, bar 4: C4 - - -\".";
+		return false;
+	}
+	Answer.Channel = Trim(Value.substr(0, Comma));
+	if (BarEnd != Colon)
+		Answer.Instrument = Trim(Value.substr(BarEnd + 1, Colon - BarEnd - 1));
+	Answer.Notes = Trim(Value.substr(Colon + 1));
+	if (!IsTutorialChannel(Answer.Channel)) {
+		Problem = "there's no channel called \"" + Answer.Channel + "\".";
+		return false;
+	}
+	if (Answer.Notes.empty()) {
+		Problem = "\"answer\" takes the notes in steps after the bar, as in \"answer: Pulse 1, bar 4: C4 - - -\".";
+		return false;
+	}
+	Step.Answers.push_back(Answer);
 	return true;
 }
 
@@ -291,6 +349,25 @@ bool IsTutorialChannel(const std::string &Name)
 	return false;
 }
 
+int tutorial_answer_t::LastBar() const
+{
+	int Last = Bar;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Last += Notes[i] == '|' ? 1 : 0;
+	return Last;
+}
+
+bool tutorial_step_t::HearBars(int &First, int &Last) const
+{
+	First = PlayFirst;
+	Last = PlayLast;
+	for (size_t i = 0; i < Answers.size() && PlayFirst == 0; ++i) {
+		First = i == 0 ? Answers[i].Bar : std::min(First, Answers[i].Bar);
+		Last = i == 0 ? Answers[i].LastBar() : std::max(Last, Answers[i].LastBar());
+	}
+	return First > 0 && Last >= First;
+}
+
 int FindTutorialChannel(const std::string &Name, const std::vector<tutorial_channel_t> &Channels)
 {
 	std::string Chip, Channel;
@@ -350,7 +427,7 @@ bool ParseTutorial(const std::string &Text, tutorial_t &Tutorial, std::string &E
 			}
 		}
 		else if (Name == "show" || Name == "text" || Name == "wait" || Name == "bar" || Name == "play" || Name == "solo" ||
-			Name == "mute" || Name == "instrument") {
+			Name == "mute" || Name == "instrument" || Name == "check" || Name == "hint" || Name == "answer") {
 			if (pStep == 0)
 				Problem = "\"" + Name + "\" belongs to a step: put \"step\" on a line before it.";
 			else if (Name == "show")
@@ -373,11 +450,21 @@ bool ParseTutorial(const std::string &Text, tutorial_t &Tutorial, std::string &E
 					Problem = "\"instrument\" takes the instrument's number as the list shows it, 00 to 3F.";
 				}
 			}
+			else if (Name == "check")
+				ParseCheck(Value, *pStep, Problem);
+			else if (Name == "hint") {
+				pStep->Hint = Value;
+				pCarry = &pStep->Hint;
+			}
+			else if (Name == "answer") {
+				if (ParseAnswer(Value, *pStep, Problem))
+					pCarry = &pStep->Answers.back().Notes;
+			}
 			else {
 				pStep->Text = Value;
 				pCarry = &pStep->Text;
 			}
-			if (Name != "text")
+			if (Name != "text" && Name != "hint" && Name != "answer")
 				pCarry = 0;
 		}
 		else if (pCarry != 0) {
@@ -413,6 +500,8 @@ bool ParseTutorial(const std::string &Text, tutorial_t &Tutorial, std::string &E
 			std::snprintf(Buffer, sizeof(Buffer), "Step %d waits for its bars to be heard, but has no \"play\" line.", static_cast<int>(i + 1));
 		else if (!Step.Solo.empty() && !Step.Mute.empty())
 			std::snprintf(Buffer, sizeof(Buffer), "Step %d both solos and mutes channels; one of the two says it.", static_cast<int>(i + 1));
+		else if (!Step.Answers.empty() && Step.Check.empty())
+			std::snprintf(Buffer, sizeof(Buffer), "Step %d has an answer but no check (\"check: ...\") to hear it for.", static_cast<int>(i + 1));
 		if (Buffer[0] != 0) {
 			Error = Buffer;
 			return false;

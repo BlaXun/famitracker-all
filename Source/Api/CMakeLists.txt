@@ -96,6 +96,7 @@ add_library(ftapi STATIC
 	Music.cpp
 	Sections.cpp
 	SongShapes.cpp
+	Exercises.cpp
 	Keys.cpp
 	ChannelMix.cpp
 	Vrc6Plus.cpp
@@ -155,8 +156,11 @@ target_link_libraries(famitracker-mcp PRIVATE ftbridge)
 # The tests run FamiTracker's endpoint on a thread to try the bridge over sockets
 find_package(Threads REQUIRED)
 enable_testing()
-add_executable(api_tests tests/ApiTests.cpp)
+# with the tutorials' reader (Source/TutorialScript.cpp, plain C++) for the exercises' scripts and starter songs in
+# res/exercises
+add_executable(api_tests tests/ApiTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../TutorialScript.cpp)
 target_link_libraries(api_tests PRIVATE ftapi Threads::Threads)
+target_compile_definitions(api_tests PRIVATE EXERCISES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/exercises")
 add_test(NAME api_tests COMMAND api_tests)
 
 # The piano roll's chord helper (ChordHelper.h)
@@ -184,3 +188,8 @@ add_test(NAME phone_tests COMMAND phone_tests)
 add_executable(glossary_tests tests/GlossaryTests.cpp)
 target_link_libraries(glossary_tests PRIVATE ftapi)
 add_test(NAME glossary_tests COMMAND glossary_tests)
+
+# Help > Exercises' checks (Exercises.h) on songs described by hand, their links and their answers as JSON
+add_executable(exercises_tests tests/ExercisesTests.cpp)
+target_link_libraries(exercises_tests PRIVATE ftapi)
+add_test(NAME exercises_tests COMMAND exercises_tests)

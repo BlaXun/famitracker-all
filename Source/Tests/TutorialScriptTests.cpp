@@ -22,7 +22,8 @@
 // Tests for reading tutorials (TutorialScript.cpp), and the built-in ones
 // in res/tutorials (TUTORIALS_DIR) all read; the example songs' walkthroughs
 // in res/examples (EXAMPLES_DIR) too, with the bars and channels they name
-// found in their songs
+// found in their songs; and Help > Exercises' scripts in res/exercises
+// (EXERCISES_DIR), whose checks and starter songs Source/Api's tests run
 
 #include <cstdio>
 #include <cstring>
@@ -673,6 +674,119 @@ void TestExamples()
 	CHECK(CarriedIn(Made, 16).empty());
 }
 
+// Help > Exercises' check steps: check, hint and answer
+void TestExerciseLines()
+{
+	const std::string Text =
+		"title: The home note\r\n"
+		"about: End a tune at home.\r\n"
+		"step\r\n"
+		"show: piano-roll\r\n"
+		"play: bars 1-4\r\n"
+		"check: home-note\r\n"
+		"text: End it on the [[home note]].\r\n"
+		"hint: The tune is in C major,\r\n"
+		"  so its home note is C.\r\n"
+		"answer: Pulse 1, bar 3: E3 - D3 - | C3 - - -\r\n"
+		"  - - - -\r\n"
+		"answer: Triangle, bar 4, Bass: C3 - - - - - - -\r\n"
+		"step\r\n"
+		"show: what-next\r\n"
+		"check: first-song\r\n"
+		"text: Make a song.\r\n"
+		"step\r\n"
+		"show: problems\r\n"
+		"text: Done.\r\n"
+		"wait: command exercises\r\n";
+	tutorial_t T;
+	std::string Error;
+	CHECK(ParseTutorial(Text, T, Error));
+	CHECK(Error.empty());
+	CHECK(T.Steps.size() == 3);
+	if (T.Steps.size() != 3)
+		return;
+	const tutorial_step_t &A = T.Steps[0], &B = T.Steps[1], &C = T.Steps[2];
+	CHECK(A.Check == "home-note" && A.Wait == WAIT_CHECK);
+	CHECK(A.Text == "End it on the [[home note]].");
+	CHECK(A.Hint == "The tune is in C major, so its home note is C.");
+	CHECK(A.Answers.size() == 2);
+	if (A.Answers.size() == 2) {
+		CHECK(A.Answers[0].Channel == "Pulse 1" && A.Answers[0].Bar == 3 && A.Answers[0].Notes == "E3 - D3 - | C3 - - - - - - -");
+		CHECK(A.Answers[0].LastBar() == 4);
+		CHECK(A.Answers[0].Instrument.empty());
+		CHECK(A.Answers[1].Channel == "Triangle" && A.Answers[1].Bar == 4 && A.Answers[1].LastBar() == 4);
+		CHECK(A.Answers[1].Instrument == "Bass" && A.Answers[1].Notes == "C3 - - - - - - -");
+	}
+	int First = 0, Last = 0;
+	CHECK(A.HearBars(First, Last) && First == 1 && Last == 4);	// the step's own bars
+	CHECK(B.Check == "first-song" && B.Wait == WAIT_CHECK && B.Show == "what-next" && B.Hint.empty() && B.Answers.empty());
+	CHECK(!B.HearBars(First, Last));
+	CHECK(C.Check.empty() && C.Show == "problems" && C.Wait == WAIT_COMMAND && C.Command == "exercises");
+	// Without a play line, Hear it plays the answer's bars
+	CHECK(ParseTutorial("title: T\nstep\ncheck: hook\ntext: x\nanswer: Pulse 1, bar 3: E3 - | D3 - | C3 -\nanswer: Pulse 2, "
+		"bar 2: C3\n", T, Error));
+	CHECK(T.Steps.size() == 1 && T.Steps[0].HearBars(First, Last) && First == 2 && Last == 5);
+	CHECK(IsTutorialPart("what-next") && IsTutorialPart("problems"));
+
+	struct { const char *Text; const char *Error; } Cases[] = {
+		{ "title: T\nstep\ntext: x\ncheck:\n", "Line 4: \"check\" takes the check's name" },
+		{ "title: T\nstep\ntext: x\ncheck: Home Note\n", "Line 4: \"check\" takes the check's name" },
+		{ "title: T\nstep\ntext: x\nwait: play\ncheck: home-note\n", "Line 5: a step with a check goes on once its check passes" },
+		{ "title: T\nstep\ntext: x\ncheck: home-note\nwait: play\n", "Line 5: a step with a check goes on once its check passes" },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Pulse 1: C3\n", "Line 5: \"answer\" takes a channel, the bar" },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Pulse 1, bar: C3\n", "Line 5: \"answer\" takes a channel, the bar" },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Pulse 1, beat 3: C3\n", "Line 5: \"answer\" takes a channel, the bar" },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Kazoo, bar 3: C3\n", "Line 5: there's no channel called \"Kazoo\"." },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Pulse 1, bar 3, : C3\n", "Line 5: \"answer\" takes a channel, the bar" },
+		{ "title: T\nstep\ntext: x\ncheck: hook\nanswer: Pulse 1, bar 3:\n", "Line 5: \"answer\" takes the notes in steps" },
+		{ "title: T\nstep\ntext: x\nanswer: Pulse 1, bar 3: C3\n", "Step 1 has an answer but no check" },
+		{ "title: T\nhint: x\n", "Line 2: \"hint\" belongs to a step" },
+	};
+	for (size_t i = 0; i < sizeof(Cases) / sizeof(Cases[0]); ++i) {
+		const bool Read = ParseTutorial(Cases[i].Text, T, Error);
+		CHECK(!Read);
+		const bool Same = Error.compare(0, std::string(Cases[i].Error).size(), Cases[i].Error) == 0;
+		CHECK(Same);
+		if (Read || !Same)
+			std::printf("  exercise case %d: \"%s\"\n", static_cast<int>(i), Error.c_str());
+	}
+}
+
+// Help > Exercises' scripts: each read, plain ASCII, a handful of steps with one check or more, every channel and bar
+// they name a channel FamiTracker has and a bar from 1 (Source/Api's tests run each check on its starter song, and on
+// its answers)
+void TestExerciseScripts()
+{
+	const char *const Names[] = { "home-note", "four-bars", "strong-notes", "phrases", "bass", "beat", "minor", "hook", "song-shape",
+		"first-song" };
+	for (size_t i = 0; i < sizeof(Names) / sizeof(Names[0]); ++i) {
+		const std::string Text = ReadFile(std::string(EXERCISES_DIR) + "/" + Names[i] + ".txt");
+		CHECK(!Text.empty());
+		tutorial_t T;
+		std::string Error;
+		const bool Read = ParseTutorial(Text, T, Error);
+		CHECK(Read);
+		if (!Read)
+			std::printf("  %s.txt: %s\n", Names[i], Error.c_str());
+		CHECK(T.Steps.size() >= 2 && T.Steps.size() <= 8 && !T.About.empty());
+		bool Ascii = true;
+		for (size_t k = 0; k < Text.size(); ++k)
+			if (static_cast<unsigned char>(Text[k]) > 126)
+				Ascii = false;
+		CHECK(Ascii);
+		int Checks = 0;
+		for (size_t s = 0; s < T.Steps.size(); ++s) {
+			const tutorial_step_t &Step = T.Steps[s];
+			Checks += Step.Check.empty() ? 0 : 1;
+			// A check step lets the user hear something: their own bars (play), a good answer, or the song as it grows
+			CHECK(Step.Check.empty() || Step.PlayFirst > 0 || !Step.Answers.empty() || std::string(Names[i]) == "song-shape" ||
+				std::string(Names[i]) == "first-song");
+			CHECK(Step.Check.empty() || !Step.Hint.empty());	// and every check step has a hint
+		}
+		CHECK(Checks >= 1);
+	}
+}
+
 }	// namespace
 
 int main()
@@ -685,6 +799,8 @@ int main()
 	TestWalkthroughErrors();
 	TestChannels();
 	TestExamples();
+	TestExerciseLines();
+	TestExerciseScripts();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

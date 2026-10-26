@@ -61,6 +61,9 @@
 #include "../Wavetables.h"
 #include "../WhatNext.h"
 #include "../NextSteps.h"
+#include "../Exercises.h"
+#include "../../TutorialScript.h"
+#include "../../Nsf/FtmFile.h"
 #include "../../Nsf/Study.h"
 #include "../../Nsf/Tracker.h"
 #include "../../Nsf/tests/TestNsf.h"
@@ -71,10 +74,12 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -23698,6 +23703,435 @@ void TestProblemPlay()
 	}
 }
 
+
+// Help > Exercises (Exercises.h): each exercise's script read and its starter song opened as FamiTracker opens it (the
+// 2A03's channels, the instruments with their volume sequences, the patterns, the speed and tempo, the row highlights
+// and the key chosen for it in its BF KEYS block); a new song for those that start from File > New
+
+std::string Printed(const char *pFormat, ...)
+{
+	char Buffer[512];
+	va_list Args;
+	va_start(Args, pFormat);
+	std::vsnprintf(Buffer, sizeof(Buffer), pFormat, Args);
+	va_end(Args);
+	return Buffer;
+}
+
+std::string ExerciseFile(const std::string &Name)
+{
+	std::ifstream In((std::string(EXERCISES_DIR) + "/" + Name).c_str(), std::ios::binary);
+	std::string Bytes((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
+	return Bytes;
+}
+
+bool LoadStarter(const std::string &Bytes, FakeSong &Song, std::string &Error)
+{
+	nsf::Module M;
+	nsf::FtmInfo Info;
+	if (!nsf::ParseFtm(std::vector<uint8_t>(Bytes.begin(), Bytes.end()), M, Info, Error))
+		return false;
+	if (M.Expansion != nsf::EXP_NONE || M.Tracks.size() != 1) {
+		Error = "A starter is a 2A03 song of one track.";
+		return false;
+	}
+	const nsf::Track &T = M.Tracks[0];
+	const int Frames = static_cast<int>(T.Frames.size()), Length = T.PatternLength;
+	Song.Info.Expansion.clear();
+	Song.Info.Channels.resize(5);
+	Song.Info.PatternLength = Length;
+	Song.Info.Frames = Frames;
+	Song.Info.FirstHighlight = Info.FirstHighlight;
+	Song.Info.SecondHighlight = Info.SecondHighlight;
+	Song.Info.Speed = T.Speed;
+	Song.Info.Tempo = T.Tempo;
+	Song.Info.TrackName = Song.Tracks[0].Name = T.Name;
+	Song.Info.Title = M.Title;
+	Song.Info.Instruments.clear();
+	for (size_t i = 0; i < M.Instruments.size(); ++i) {
+		const nsf::Instrument &Inst = M.Instruments[i];
+		if (Inst.Unused)
+			continue;
+		Song.AddInstrumentInfo(static_cast<int>(i), Inst.Name.c_str(), "2A03", Inst.Macros[nsf::SEQ_VOLUME].Release >= 0);
+		InstrumentInfo &Made = Song.Info.Instruments.back();
+		Made.Volume = Inst.Macros[nsf::SEQ_VOLUME].Items;
+		Made.VolumeLoop = Inst.Macros[nsf::SEQ_VOLUME].Loop;
+		Made.VolumeRelease = Inst.Macros[nsf::SEQ_VOLUME].Release;
+		Made.Duty.Items = Inst.Macros[nsf::SEQ_DUTY].Items;
+		Made.Steps.Items = Inst.Macros[nsf::SEQ_ARPEGGIO].Items;
+		Made.Steps.Setting = Inst.Macros[nsf::SEQ_ARPEGGIO].Setting;
+	}
+	Song.Rows.assign(5, std::vector<Cell>(static_cast<size_t>(Frames * Length)));
+	for (int c = 0; c < 5; ++c) {
+		Song.Info.Channels[static_cast<size_t>(c)].EffectColumns = T.Columns[static_cast<size_t>(c)];
+		for (int f = 0; f < Frames; ++f) {
+			const std::vector<nsf::Cell> &Pattern = T.Patterns[static_cast<size_t>(c)][static_cast<size_t>(T.Frames[static_cast<size_t>(f)][static_cast<size_t>(c)])];
+			for (int r = 0; r < Length && r < static_cast<int>(Pattern.size()); ++r) {
+				const nsf::Cell &From = Pattern[static_cast<size_t>(r)];
+				Cell &To = Song.Rows[static_cast<size_t>(c)][static_cast<size_t>(f * Length + r)];
+				if (From.Note >= 0)
+					To.SetPitch(From.Note);
+				else if (From.Note == nsf::NOTE_HALT)
+					To.Note = NOTE_HALT;
+				else if (From.Note == nsf::NOTE_RELEASE)
+					To.Note = NOTE_RELEASE;
+				if (From.Instrument >= 0)
+					To.Instrument = static_cast<unsigned char>(From.Instrument);
+				if (From.Volume >= 0)
+					To.Volume = static_cast<unsigned char>(From.Volume);
+				for (int e = 0; e < nsf::MAX_EFFECTS && e < EFFECT_COLUMNS; ++e) {
+					int Effect = 0, Param = 0;
+					char Text[8];
+					std::snprintf(Text, sizeof(Text), "%c%02X", From.Effects[e].Letter, From.Effects[e].Param & 0xFF);
+					if (From.Effects[e].Letter != 0 && ParseEffect(Text, Effect, Param)) {
+						To.Effect[e] = static_cast<unsigned char>(Effect);
+						To.Param[e] = static_cast<unsigned char>(Param);
+					}
+				}
+			}
+		}
+	}
+	// The key chosen for it (Keys.h's block, which a module of 0.4.6 skips): count, then track, tonic, mode, flags
+	Song.Info.KeyChosen = false;
+	for (size_t At = 22; At + 24 <= Bytes.size(); ) {
+		const std::string Id = Bytes.substr(At, 16).c_str();
+		const int Size = static_cast<int>(static_cast<unsigned char>(Bytes[At + 20]) | (static_cast<unsigned char>(Bytes[At + 21]) << 8) |
+			(static_cast<unsigned char>(Bytes[At + 22]) << 16) | (static_cast<unsigned char>(Bytes[At + 23]) << 24));
+		if (Id == "BF KEYS" && Size >= 20) {
+			int Values[5];
+			for (int k = 0; k < 5; ++k)
+				Values[k] = static_cast<unsigned char>(Bytes[At + 24 + 4 * static_cast<size_t>(k)]);
+			Song.Info.KeyChosen = Values[0] == 1 && Values[1] == 0;
+			Song.Info.ChosenKey = KeyChoice(Key(Values[2], Values[3]), Values[4] != 0);
+		}
+		if (Id.empty() || Id == "END" || Size < 0)
+			break;
+		At += 24 + static_cast<size_t>(Size);
+	}
+	Song.Tracks[0].KeyChosen = Song.Info.KeyChosen;
+	Song.Tracks[0].Key = Song.Info.ChosenKey;
+	return true;
+}
+
+// An exercise's song as it opens: its starter, or a new song as FamiTracker's File > New makes one (the 2A03 and the VRC6
+// here, as the game music profile's template has them), changes allowed (FamiTracker's own windows make them directly)
+bool ExerciseSong(const ExerciseInfo &E, FakeSong &Song, std::string &Error)
+{
+	Song.Info.DirectChanges = true;
+	if (E.NewSong) {
+		NewSong(Song);
+		return true;
+	}
+	return LoadStarter(ExerciseFile(std::string(E.Id) + ".ftm"), Song, Error);
+}
+
+ExerciseVerdict CheckOn(FakeSong &Song, const std::string &Id, int Line)
+{
+	const ToolResult Reply = Run(Song, "check_exercise", "{\"exercise\": \"" + Id + "\", \"format\": \"json\"}");
+	ExerciseVerdict Out;
+	std::string Error;
+	Check(!Reply.IsError && ReadExerciseVerdict(Reply.Text, Out, Error), ("check_exercise " + Id + ": " + Reply.Text).c_str(), Line);
+	return Out;
+}
+
+// A step's good answer written as Hear it writes it (write_notes in steps); false with the reply when it fails
+bool WriteAnswer(FakeSong &Song, const tutorial_step_t &Step, std::string &Reply)
+{
+	for (size_t i = 0; i < Step.Answers.size(); ++i) {
+		const tutorial_answer_t &A = Step.Answers[i];
+		Json Args = Json::MakeObject();
+		Args.Set("channel", A.Channel);
+		Args.Set("from_bar", A.Bar);
+		Args.Set("notes", A.Notes);
+		if (!A.Instrument.empty())
+			Args.Set("instrument", A.Instrument);
+		const ToolResult Did = Run(Song, "write_notes", WriteJson(Args));
+		Reply = Did.Text;
+		if (Did.IsError)
+			return false;
+	}
+	return true;
+}
+
+// The answer's notes that start on another channel's note: on its lane anywhere in the note's beat (its eighth when it
+// starts off the beat), where a click in the piano roll picks that channel instead of putting the note in; "" for none
+std::string LanesTaken(const FakeSong &Song, const tutorial_step_t &Step, const std::vector<tutorial_channel_t> &Channels)
+{
+	const int Beat = std::max(1, Song.Info.FirstHighlight), Eighth = std::max(1, Beat / 2);
+	const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
+		Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	std::string Out;
+	for (size_t i = 0; i < Step.Answers.size(); ++i) {
+		const tutorial_answer_t &A = Step.Answers[i];
+		const int Channel = FindTutorialChannel(A.Channel, Channels);
+		StepLine Line;
+		std::string Error;
+		if (Channel < 0 || !ParseStepLine(A.Notes, A.Bar, Line, Error))
+			return "unread: " + A.Notes;
+		for (size_t n = 0; n < Line.Notes.size(); ++n) {
+			int Pitch = 0;
+			if (!ParsePitch(Line.Notes[n].Pitch, Pitch))
+				continue;	// a drum, which the drum grid puts in
+			const int Row = Time.BarStart(A.Bar) + Line.Notes[n].Step * Eighth;
+			const int End = Row + (Row % Beat == 0 ? Beat : Eighth);
+			for (size_t c = 0; c < Song.Rows.size(); ++c) {
+				int Sounding = -1;
+				for (int r = 0; static_cast<int>(c) != Channel && r < End && r < static_cast<int>(Song.Rows[c].size()); ++r) {
+					const Cell &C = Song.Rows[c][static_cast<size_t>(r)];
+					if (C.HasNote())
+						Sounding = C.Pitch();
+					else if (C.Note == NOTE_RELEASE || C.Note == NOTE_HALT)
+						Sounding = -1;
+					if (r >= Row && Sounding == Pitch) {
+						Out += Printed("%s in bar %d under channel %d; ", Line.Notes[n].Pitch.c_str(), Time.BarOf(Row), static_cast<int>(c));
+						break;
+					}
+				}
+			}
+		}
+	}
+	return Out;
+}
+
+// Every exercise: its script (the exercise's title, its check steps the exercise's checks in order, every link of its
+// texts leading to a glossary entry, every channel and bar it names in its song), its starter (a small 2A03 module of a
+// few bars that the check fails as given) and each check passing once its good answer is in: written as Hear it writes
+// it (write_notes, no instrument added), song_shape for the song's shape, and what_next's steps for the first song
+void TestExerciseStarters()
+{
+	const std::vector<ExerciseInfo> &List = Exercises();
+	CHECK_EQ(List.size(), static_cast<size_t>(10));
+	for (size_t e = 0; e < List.size(); ++e) {
+		const ExerciseInfo &E = List[e];
+		const std::string Name = E.Id;
+		tutorial_t T;
+		std::string Error;
+		const bool Read = ParseTutorial(ExerciseFile(Name + ".txt"), T, Error);
+		Check(Read, (Name + ".txt: " + Error).c_str(), __LINE__);
+		Check(T.Title == E.Title, (Name + ": the script's title is the exercise's").c_str(), __LINE__);
+		std::vector<std::string> Checks;
+		for (size_t s = 0; s < T.Steps.size(); ++s) {
+			const tutorial_step_t &Step = T.Steps[s];
+			if (!Step.Check.empty())
+				Checks.push_back(Step.Check);
+			const std::string Texts[] = { Step.Text, Step.Hint };
+			for (size_t k = 0; k < 2; ++k) {
+				const std::vector<std::string> Ids = MarkedLinks(Texts[k]);
+				for (size_t i = 0; i < Ids.size(); ++i)
+					Check(!Ids[i].empty(), (Name + ": a link leads nowhere in \"" + Texts[k] + "\"").c_str(), __LINE__);
+			}
+		}
+		Check(Checks == E.Checks, (Name + ": its check steps are the exercise's checks").c_str(), __LINE__);
+
+		FakeSong Song(2);
+		const std::string Starter = E.NewSong ? std::string() : ExerciseFile(Name + ".ftm");
+		Check(E.NewSong || (!Starter.empty() && Starter.size() <= 8 * 1024), (Name + ".ftm: a small module").c_str(), __LINE__);
+		const bool Opened = ExerciseSong(E, Song, Error);
+		Check(Opened, (Name + ": its song opens: " + Error).c_str(), __LINE__);
+		if (!Opened)
+			continue;
+		const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
+			Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+		Check(E.NewSong || (Time.BarCount() >= 2 && Time.BarCount() <= 8 && Song.Info.Channels.size() == 5 &&
+			Song.Info.TrackName == E.Title), (Name + ": a starter of 2-8 bars on the 2A03, its track named for it").c_str(), __LINE__);
+		std::vector<tutorial_channel_t> Channels;
+		for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+			Channels.push_back(tutorial_channel_t(Song.Info.Channels[c].Name, Song.Info.Channels[c].Chip));
+		for (size_t s = 0; s < T.Steps.size(); ++s) {
+			const tutorial_step_t &Step = T.Steps[s];
+			std::vector<std::string> Named;
+			if (Step.Show == "channel")
+				Named.push_back(Step.ShowName);
+			for (size_t i = 0; i < Step.Answers.size(); ++i) {
+				Named.push_back(Step.Answers[i].Channel);
+				Check(Step.Answers[i].LastBar() <= Time.BarCount(), (Name + ": an answer past the song's end").c_str(), __LINE__);
+			}
+			for (size_t i = 0; i < Named.size(); ++i)
+				Check(FindTutorialChannel(Named[i], Channels) >= 0, (Name + ": the song has no channel " + Named[i]).c_str(), __LINE__);
+			bool Picked = Step.Instrument < 0;	// the instrument a step picks (new notes play it) is the song's
+			for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+				Picked = Picked || Song.Info.Instruments[i].Index == Step.Instrument;
+			Check(Picked, (Name + ": a step picks an instrument the song hasn't").c_str(), __LINE__);
+			Check(Step.PlayLast <= Time.BarCount() && Step.Bar <= Time.BarCount(), (Name + ": a bar past the song's end").c_str(),
+				__LINE__);
+		}
+
+		// Each check fails as the exercise opens (or where the step before left it), and passes on its good answer
+		for (size_t s = 0; s < T.Steps.size(); ++s) {
+			const tutorial_step_t &Step = T.Steps[s];
+			if (Step.Check.empty())
+				continue;
+			const ExerciseVerdict Before = CheckOn(Song, Step.Check, __LINE__);
+			Check(!Before.Passed && !Before.Next.empty(), (Name + ": " + Step.Check + " fails as it starts").c_str(), __LINE__);
+			const size_t Instruments = Song.Info.Instruments.size();
+			if (!Step.Answers.empty()) {
+				const std::string Taken = LanesTaken(Song, Step, Channels);
+				Check(Taken.empty(), (Name + ": a click on the answer's lane picks another channel: " + Taken).c_str(), __LINE__);
+				std::string Reply;
+				Check(WriteAnswer(Song, Step, Reply), (Name + ": the good answer is written: " + Reply).c_str(), __LINE__);
+				Check(Song.Info.Instruments.size() == Instruments, (Name + ": the answer plays the song's own sounds").c_str(), __LINE__);
+				// and is clean as check_song hears it: no clash, nothing outside the key
+				const ToolResult Heard = Run(Song, "check_song", "{}");
+				Check(Heard.Text.find(" 0 outside the key, 0 clashes") != std::string::npos, (Name + ": the good answer is clean: " +
+					Heard.Text).c_str(), __LINE__);
+			}
+			else if (Step.Check == "song-shape")
+				CHECK(!Run(Song, "song_shape", "{\"shape\": \"stage\"}").IsError);
+			else if (Step.Check == "first-song") {
+				// The What next panel's Do it, step after step, until the check passes
+				int Steps = 0;
+				bool Finished = false;
+				while (Steps < 24 && !CheckOn(Song, Step.Check, __LINE__).Passed) {
+					const std::vector<std::string> Made = FollowWhatNext(Song, "{}", 1, Finished, __LINE__);
+					++Steps;
+					if (Made.empty())
+						break;
+				}
+				Check(Steps >= 3 && Steps < 24, (Name + Printed(": the first song after %d of what_next's steps", Steps)).c_str(), __LINE__);
+			}
+			const ExerciseVerdict After = CheckOn(Song, Step.Check, __LINE__);
+			Check(After.Passed, (Name + ": " + Step.Check + " passes on the good answer: " + After.Next).c_str(), __LINE__);
+			Check(!After.Learned.empty() && After.Next.empty(), (Name + ": passing says what it taught").c_str(), __LINE__);
+			const bool Last = Step.Check == E.Checks.back();
+			const ExerciseInfo *pAfter = ExerciseAfter(E.Id);
+			Check(After.NextExercise == (Last && pAfter != 0 ? std::string(pAfter->Id) : std::string()),
+				(Name + ": the next exercise is offered once its last check passes").c_str(), __LINE__);
+		}
+	}
+}
+
+// Typical mistakes on the starters, and what each check says of them as the tools read the song: the key chosen, the
+// chords the other parts play, the melody's phrases, the drums' kinds
+void TestExerciseMistakes()
+{
+	auto Open = [](const char *Id, FakeSong &Song) {
+		std::string Error;
+		const bool Opened = ExerciseSong(*FindExercise(Id), Song, Error);
+		Check(Opened, (std::string(Id) + ": " + Error).c_str(), __LINE__);
+		return Opened;
+	};
+	// (an empty channel's first notes name the instrument, as the user picks one in the list before clicking them in)
+	auto Steps = [](FakeSong &Song, const char *Channel, int Bar, const char *Notes, const char *Instrument = 0) {
+		const ToolResult Did = Run(Song, "write_notes", Printed("{\"channel\": \"%s\", \"from_bar\": %d, \"notes\": \"%s\"%s}", Channel,
+			Bar, Notes, Instrument != 0 ? (std::string(", \"instrument\": \"") + Instrument + "\"").c_str() : ""));
+		Check(!Did.IsError, Did.Text.c_str(), __LINE__);
+	};
+	{
+		FakeSong Song(1);
+		if (Open("home-note", Song)) {
+			ExerciseVerdict V = CheckOn(Song, "home-note", __LINE__);
+			CHECK_HAS(V.Next, "Your tune ends on D (bar 3), which leaves it hanging");
+			CHECK_HAS(V.Next, "give bar 4 a C on its first beat");
+			CHECK(V.PlayFirst == 2 && V.PlayLast == 4);
+			Steps(Song, "Pulse 1", 4, "G4 - - - - - - -");
+			V = CheckOn(Song, "home-note", __LINE__);
+			CHECK_HAS(V.Next, "Your tune ends on G (bar 4)");
+			CHECK_HAS(V.Next, "change that last note to C");
+			Steps(Song, "Pulse 1", 4, "C5 - - - - - - -");	// an octave up passes too
+			CHECK(CheckOn(Song, "home-note", __LINE__).Passed);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("four-bars", Song)) {
+			ExerciseVerdict V = CheckOn(Song, "four-bars", __LINE__);
+			CHECK_HAS(V.Next, "Write a tune on Pulse 1, 4 bars long");
+			CHECK_HAS(V.Right[0], "C, Am, F, G, C");	// the chords the other parts play
+			Steps(Song, "Pulse 1", 1, "C4 - G4 - C5 - G4 - | A4 - E4 - C5 - E4 - | F4 - C5 - G4 - D5 - | G4 - C5 - - - - -", "Lead");
+			V = CheckOn(Song, "four-bars", __LINE__);
+			CHECK_HAS(V.Next, "Your tune jumps a lot");
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("strong-notes", Song)) {
+			const ExerciseVerdict V = CheckOn(Song, "strong-notes", __LINE__);
+			CHECK_HAS(V.Next, "Bar 1, beat 3: the tune plays D over C");
+			CHECK_HAS(V.Next, "3 more like it");
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("phrases", Song)) {
+			ExerciseVerdict V = CheckOn(Song, "phrases", __LINE__);
+			CHECK_HAS(V.Next, "Bars 1-2 run on without a breath");
+			Steps(Song, "Pulse 1", 2, "D4 E4 F4 D4 B3 - - -");
+			V = CheckOn(Song, "phrases", __LINE__);
+			CHECK_HAS(V.Next, "Bars 3-4 run on without a breath");
+			CHECK(!V.Right.empty() && Contains(V.Right[0], "Bars 1-2 breathe"));
+			Steps(Song, "Pulse 1", 4, "F4 G4 A4 F4 C5 . . .");	// a rest at the end breathes as well
+			CHECK(CheckOn(Song, "phrases", __LINE__).Passed);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("bass", Song)) {
+			Steps(Song, "Triangle", 1, "C3 - - - - - - - | A2 - - - - - - - | D3 - - - - - - - | G2 - - - - - - -", "Bass");
+			ExerciseVerdict V = CheckOn(Song, "bass-roots", __LINE__);
+			CHECK_HAS(V.Next, "Bar 3's bass plays D on its first beat, but the chord there is F.");
+			CHECK(V.PlayChannels.size() == 1 && V.PlayChannels[0] == 2);
+			// The whole exercise: its first check that doesn't pass yet
+			const ToolResult Whole = Run(Song, "check_exercise", "{\"exercise\": \"bass\"}");
+			CHECK(!Whole.IsError);
+			CHECK_HAS(Whole.Text, "Not yet: A bass line.");
+			CHECK_HAS(Whole.Text, "What to change next: Bar 3's bass plays D");
+			CHECK(Whole.Text.find("[[") == std::string::npos);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("beat", Song)) {
+			Steps(Song, "Noise", 1, "kick hihat kick hihat kick hihat kick hihat | kick hihat kick hihat kick hihat kick hihat");
+			ExerciseVerdict V = CheckOn(Song, "beat", __LINE__);
+			CHECK_HAS(V.Next, "Bar 1 has no [[snare]] on beat 2 (step 5 in the drum grid)");
+			CHECK(V.PlayChannels.size() == 1 && V.PlayChannels[0] == 3);
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("minor", Song)) {
+			CHECK(!Song.Info.KeyChosen);	// the notes say the key, so lowering the thirds turns it minor
+			ExerciseVerdict V = CheckOn(Song, "minor", __LINE__);
+			CHECK_HAS(V.Next, "Your tune still plays E in bars 1, 2, 3 and 4");
+			Steps(Song, "Pulse 1", 1, "C4 - Eb4 - G4 - Eb4 - | F4 - Eb4 D4 C4 - - -");
+			V = CheckOn(Song, "minor", __LINE__);
+			CHECK_HAS(V.Next, "Your tune still plays E in bars 3 and 4");
+			CHECK_HAS(V.Right[0], "3 notes are Eb already (bars 1 and 2).");
+		}
+	}
+	{
+		FakeSong Song(1);
+		if (Open("hook", Song)) {
+			Steps(Song, "Pulse 1", 3, "E4 - G4 E4 C4 - D4 E4 | D4 - B3 - D4 - - -");
+			const ExerciseVerdict V = CheckOn(Song, "hook", __LINE__);
+			CHECK_HAS(V.Next, "Bars 3-4 repeat the hook note for note");
+		}
+	}
+}
+
+// check_exercise itself: the list without an exercise, a refusal for one that isn't, the text for Claude
+void TestExerciseTool()
+{
+	FakeSong Song(1);
+	ToolSet Tools(Song);
+	CHECK(Tools.Has("check_exercise") && !ToolSet::IsCoreTool("check_exercise"));
+	for (size_t i = 0; i < Tools.List().size(); ++i)
+		if (Tools.List()[i].Name == "check_exercise")
+			CHECK(Tools.List()[i].ReadOnly);
+	const ToolResult List = Tools.Call("check_exercise", Parse("{}"));
+	CHECK(!List.IsError);
+	CHECK_HAS(List.Text, "The exercises (Help > Exercises), in order: home-note (The home note): ");
+	CHECK_HAS(List.Text, "bass (A bass line, checks bass-roots, bass-two)");
+	const ToolResult Wrong = Tools.Call("check_exercise", Parse("{\"exercise\": \"scales\"}"));
+	CHECK(Wrong.IsError);
+	CHECK_HAS(Wrong.Text, "exercise: \"scales\" isn't one.");
+	CHECK(Tools.Call("check_exercise", Parse("{\"exercise\": \"beat\", \"format\": \"xml\"}")).IsError);
+	CHECK(Tools.Call("check_exercise", Parse("{\"exercize\": \"beat\"}")).IsError);	// refused, with the argument meant
+	const ToolResult Empty = Tools.Call("check_exercise", Parse("{\"exercise\": \"beat\"}"));
+	CHECK(!Empty.IsError);
+	CHECK_HAS(Empty.Text, "Not yet: A beat.");
+	CHECK_HAS(Empty.Text, "What to change next: Bar 1 has no kick on beat 1.");
+}
 int main()
 {
 	TestJson();
@@ -23932,6 +24366,9 @@ int main()
 	TestWhatNextShape();
 	TestWhatNextJson();
 	TestProblemPlay();
+	TestExerciseStarters();
+	TestExerciseMistakes();
+	TestExerciseTool();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

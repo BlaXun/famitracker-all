@@ -73,6 +73,26 @@
 // have a channel of that name ("VRC6 Pulse 1"; without it, the first one,
 // which is the 2A03's).
 //
+// Help > Exercises' scripts (res/exercises) are tutorials with check steps:
+//
+//   step
+//   show: piano-roll
+//   play: bars 1-4
+//   check: home-note
+//   text: End the tune on the [[home note]].
+//   hint: The tune is in C major: its home note is C.
+//   answer: Pulse 1, bar 4: C4 - - - - - - -
+//
+// "check" names a check of Api/Exercises.h: the step gets a Check button
+// that runs it and shows what it says, and goes on once it passes (a check
+// step takes no "wait"). "hint" gives it a Hint button. Each "answer" is a
+// part of a good answer: a channel, the bar it starts in, the instrument it
+// plays when the channel has none there yet ("answer: Pulse 1, bar 1, Lead:
+// ..."), and notes in steps as write_notes takes them (a line that starts with
+// no name carries them on). Its Hear it button writes them into the song for
+// a moment while the step's "play" bars (else the answer's own) play. In every text, "[[words]]" links to the glossary's entry the
+// words name, and "[[words|id]]" to that entry.
+//
 // This is plain C++ that the tests build on Linux (Source/Tests).
 
 #include <string>
@@ -90,6 +110,17 @@ enum tutorial_wait_t {
 	WAIT_SAVED,				// the song saved to a file
 	WAIT_COMMAND,			// the command Name (a menu item, toolbar button or shortcut key)
 	WAIT_HEARD,				// the step's bars (play) played to their end
+	WAIT_CHECK,				// the step's check (Help > Exercises) passing
+};
+
+// A part of a check step's good answer
+struct tutorial_answer_t {
+	std::string Channel;	// as the pattern editor names it ("Pulse 1", "Triangle")
+	int Bar;				// where its notes start, from 1
+	std::string Instrument;	// the instrument it plays, by its name in the song; "" for the channel's own there
+	std::string Notes;		// in steps, as write_notes takes them: "C4 - - - | E4 D4 C4 -"
+	tutorial_answer_t() : Bar(1) {}
+	int LastBar() const;	// the bar its notes end in (a bar more for each "|")
 };
 
 struct tutorial_step_t {
@@ -105,9 +136,14 @@ struct tutorial_step_t {
 	std::vector<std::string> Solo;	// the channels heard alone while the step lasts
 	std::vector<std::string> Mute;	// the channels silent while it lasts
 	int Instrument;			// picked as the step begins, -1 for none
+	std::string Check;		// WAIT_CHECK: the check its Check button runs ("home-note"), "" for none
+	std::string Hint;		// what its Hint button shows, "" for none
+	std::vector<tutorial_answer_t> Answers;	// a good answer, which its Hear it button lets the user hear
 
 	tutorial_step_t() : Wait(WAIT_NEXT), Count(1), Bar(0), PlayFirst(0), PlayLast(0), Instrument(-1) {}
 	int CursorBar() const { return Bar > 0 ? Bar : PlayFirst; }	// where the step puts the cursor, 0 for nowhere
+	// The bars Hear it plays: the step's own (play), else from the answer's first bar to its last; false for none
+	bool HearBars(int &First, int &Last) const;
 };
 
 struct tutorial_t {
