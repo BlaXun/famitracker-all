@@ -16,5 +16,5 @@ text: Give it two [[phrases|phrase]] of two bars each, bars 1-2 and bars 3-4, an
 
   In the piano roll, drag the end of a note to make it longer (the notes after it make way), or right-click notes to take them away. Then press Check.
 hint: The phrases end at the ends of bars 2 and 4. In bar 2, let its fifth note (B) last to the end of the bar; in bar 4, hold its fifth note (C) the same way.
-answer: Pulse 1, bar 2: D3 E3 F3 D3 B2 - - -
-answer: Pulse 1, bar 4: F3 G3 A3 F3 C4 - - -
+answer: Pulse 1, bar 2: D4 E4 F4 D4 B3 - - -
+answer: Pulse 1, bar 4: F4 G4 A4 F4 C5 - - -

@@ -18,4 +18,4 @@ text: Give the tune a last note that sounds like the end: the [[home note]] of i
 
   In the piano roll, click at the start of bar 4 to add a note and drag to the right to make it last. Play lets you hear it, and Check says how it went.
 hint: The tune is in C major, so its home note is C. Put a C on the first beat of bar 4, on the lane just under the tune's last note (D), and let it ring for the whole bar.
-answer: Pulse 1, bar 4: C3 - - - - - - -
+answer: Pulse 1, bar 4: C4 - - - - - - -

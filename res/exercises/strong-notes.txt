@@ -16,4 +16,4 @@ text: Make every note that starts on beat 1 or beat 3 a note of the [[chord]] pl
 
   The chord strip under the piano roll's ruler names each chord. With "Light the chord's notes at the cursor" on (the end of the Chords menu), the chord's lanes light up where the mouse is. Drag a note up or down to move it, then press Check.
 hint: Beats 1 and 3 are the start of each bar and its middle. Check names one note that misses at a time: move it to the nearest lit lane, and check again.
-answer: Pulse 1, bar 1: E3 - D3 E3 C3 - D3 - | A3 - C4 B3 A3 - - - | A3 - G3 A3 B3 - D4 - | C4 - - - - - - -
+answer: Pulse 1, bar 1: E4 - D4 E4 C4 - D4 - | A4 - C5 B4 A4 - - - | A4 - G4 A4 B4 - D5 - | C5 - - - - - - -

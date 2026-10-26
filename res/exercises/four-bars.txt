@@ -15,5 +15,5 @@ check: four-bars
 text: Write a tune of four bars on Pulse 1: click notes into the piano roll over the chords.
 
   Move mostly by [[step|step-leap]], to the next note up or down (a leap now and then is fine), and end on the [[home note]], C, in bar 4. Press Check when you like it.
-hint: Start on E (E-3, just above middle C) and walk up and down: E, D, E, F, G. Let each bar lean on its chord, and in bar 4 land on C and hold it. The lighter lanes are the key's notes.
-answer: Pulse 1, bar 1, Lead: E3 - D3 - E3 F3 G3 - | A3 - G3 - E3 - - - | F3 - A3 - G3 - B3 - | C4 - - - - - - -
+hint: Start on E-4, above the chords, and walk up and down: E, D, E, F, G. Let each bar lean on its chord, and in bar 4 land on C and hold it. The lighter lanes are the key's notes.
+answer: Pulse 1, bar 1, Lead: E4 - D4 - E4 F4 G4 - | A4 - G4 - E4 - - - | F4 - A4 - G4 - B4 - | C5 - - - - - - -

@@ -32,6 +32,7 @@
 #include "FamiTrackerDoc.h"
 #include "FamiTrackerView.h"
 #include "MainFrm.h"
+#include "PianoRoll.h"
 #include "PatternEditor.h"
 #include "SoundGen.h"
 #include "TrackerChannel.h"
@@ -41,6 +42,7 @@
 #include "GlossaryDlg.h"
 #include "ExercisesDlg.h"
 #include "Api/Music.h"
+#include "Api/StepNotes.h"
 #include "Api/Exercises.h"
 #include "Api/Json.h"
 #include "Tutorial.h"
@@ -514,6 +516,7 @@ private:
 	void PlayIt();
 	void StopPlayIt();
 	int LinkAt(const CPoint &Point) const;
+	bool ShowAnswerLanes();
 
 	CMainFrame *m_pMainFrame;
 	tutorial_t m_Tutorial;
@@ -555,6 +558,7 @@ private:
 	ftapi::ExerciseVerdict m_Verdict;
 	bool m_bPassed;					// and it passed
 	bool m_bFinished;				// the exercise's last check passed
+	bool m_bLanesShown;				// the piano roll shows the step's answer's lanes, or needn't
 	CBarsPlayer m_PlayIt;			// the bars the check pointed to (Play it)
 	CRect m_HintRect, m_FeedbackRect;	// where the hint and what the check said go (empty for none)
 	int m_iWaitTop;					// where the line under them says what the step waits for
@@ -611,6 +615,7 @@ CTutorialBubble::CTutorialBubble(CMainFrame *pMainFrame, const tutorial_t &Tutor
 	m_bChecked(false),
 	m_bPassed(false),
 	m_bFinished(false),
+	m_bLanesShown(true),
 	m_iWaitTop(0)
 {
 	const CFamiTrackerDoc *pDoc = Doc();
@@ -733,6 +738,7 @@ void CTutorialBubble::Go(int Index)
 	EndStepSound();		// the step before: its bars stop, its channels come back
 	StopPlayIt();
 	m_bHintShown = m_bChecked = m_bPassed = false;
+	m_bLanesShown = !IsExercise();
 	m_Verdict = ftapi::ExerciseVerdict();
 	m_iStep = Index;
 	m_bMoved = false;
@@ -855,6 +861,7 @@ bool CTutorialBubble::HasButton(int Button) const
 	case BUTTON_HEAR: return Checks && !Step().Answers.empty();
 	case BUTTON_CHECK: return Checks;
 	case BUTTON_PLAYIT: return Checks && m_bChecked && m_Verdict.PlayFirst > 0;
+	case BUTTON_NEXT: return !(Checks && LastStep() && !m_bPassed);	// the last check's Finish once it passes (Close leaves)
 	default: return true;
 	}
 }
@@ -870,6 +877,38 @@ bool CTutorialBubble::IsLastCheck() const
 const ftapi::ExerciseInfo *CTutorialBubble::NextExercise() const
 {
 	return IsExercise() && m_bFinished ? ftapi::ExerciseAfter(m_sExercise) : NULL;
+}
+
+// The piano roll's lanes where the step's answer goes (this step's, else the next one's that has one), with the
+// channel's own notes: the song that just opened, or the user, may have left it scrolled elsewhere. True once done, or
+// when there's nothing to show (no answer, drums); false while the piano roll isn't shown
+bool CTutorialBubble::ShowAnswerLanes()
+{
+	const tutorial_step_t *pAnswered = NULL;
+	for (size_t s = static_cast<size_t>(m_iStep); s < m_Tutorial.Steps.size() && pAnswered == NULL; ++s)
+		if (!m_Tutorial.Steps[s].Answers.empty())
+			pAnswered = &m_Tutorial.Steps[s];
+	const CFamiTrackerDoc *pDoc = Doc();
+	if (pAnswered == NULL || pDoc == NULL)
+		return true;
+	const tutorial_answer_t &Answer = pAnswered->Answers.front();
+	const int Channel = FindTutorialChannel(Answer.Channel, SongChannels(pDoc));
+	ftapi::StepLine Line;
+	std::string Error;
+	int Low = 1 << 20, High = -1;
+	if (Channel >= 0 && ftapi::ParseStepLine(Answer.Notes, Answer.Bar, Line, Error)) {
+		for (size_t i = 0; i < Line.Notes.size(); ++i) {
+			int Pitch = 0;
+			if (ftapi::ParsePitch(Line.Notes[i].Pitch, Pitch)) {
+				Low = std::min(Low, Pitch);
+				High = std::max(High, Pitch);
+			}
+		}
+	}
+	if (High < 0)
+		return true;	// drums, which the drum grid puts in
+	CPianoRollWnd *pRoll = m_pMainFrame->GetPianoRollWnd();
+	return pRoll != NULL && pRoll->ShowPitches(Channel, Low, High);
 }
 
 // What the check said: what's right already, then the one thing to change next, or what it taught once it passed
@@ -1240,6 +1279,8 @@ void CTutorialBubble::Tick()
 			Spot.SetRectEmpty();
 		if (!m_bMoved && (Spot != m_LastSpot || Window != m_LastWindow))
 			Place(Spot);
+		if (!m_bLanesShown)
+			m_bLanesShown = ShowAnswerLanes();
 		CRect Note;
 		GetWindowRect(&Note);
 		if (HasSpot) {
@@ -1360,6 +1401,8 @@ void CTutorialBubble::OnPaint()
 		else if (Step().Wait == WAIT_CHECK && m_bPassed)
 			Says = NextExercise() != NULL && LastStep() ? _T("Next exercise opens the next one.") : LastStep() ?
 				_T("Finish closes the note: the exercise is done.") : _T("Next goes on.");
+		else if (Step().Wait == WAIT_CHECK && LastStep())
+			Says = m_bChecked ? _T("Change it, then press Check again.") : _T("Press Check when you're ready.");
 		else if (Step().Wait == WAIT_CHECK)
 			Says = m_bChecked ? _T("Change it, then press Check again (or Skip).") : _T("Press Check when you're ready (or Skip).");
 		Memory.DrawText(Says, &Note, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
@@ -1602,7 +1645,9 @@ void CTutorialBubble::BeginStepSound()
 		return;
 	const tutorial_step_t &Now = Step();
 	const std::vector<tutorial_channel_t> Channels = SongChannels(pDoc);
-	const int Channel = Now.Show == "channel" ? FindTutorialChannel(Now.ShowName, Channels) : -1;
+	int Channel = Now.Show == "channel" ? FindTutorialChannel(Now.ShowName, Channels) : -1;
+	if (Channel < 0 && !Now.Answers.empty())
+		Channel = FindTutorialChannel(Now.Answers.front().Channel, Channels);	// an exercise's: the piano roll shows it
 	int Row = 0, End = 0;
 	if (Now.CursorBar() > 0 && BarRows(Now.CursorBar(), Now.CursorBar(), Row, End)) {
 		if (theApp.IsPlaying())

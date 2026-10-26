@@ -16,4 +16,4 @@ text: Play the hook again in bars 3-4, but end it another way. Hearing it again 
 
   In the piano roll, hold Ctrl and drag a box around the hook's notes to select them, copy them (Ctrl+C), then point the mouse at the start of bar 3 and paste (Ctrl+V). Then change the last note or two of bar 4, and press Check.
 hint: The hook ends on D, which sounds like a question. End the second time on C, the [[home note]], and it sounds like the answer.
-answer: Pulse 1, bar 3: E3 - G3 E3 C3 - D3 E3 | D3 - B2 - C3 - - -
+answer: Pulse 1, bar 3: E4 - G4 E4 C4 - D4 E4 | D4 - B3 - C4 - - -

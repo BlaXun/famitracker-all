@@ -16,4 +16,4 @@ text: Make it sad: lower every E one semitone, to Eb. That one note, the [[third
 
   In the piano roll, pick C minor in the Key menu first: each E then sits in a darker lane, and dragging it one lane down puts it on Eb. Press Check when every E is an Eb, and Play to hear the difference.
 hint: There are six E's: two in bar 1, one in bar 2, two in bar 3 and one in bar 4. Holding Alt as you drag puts a note on any lane, whatever the key.
-answer: Pulse 1, bar 1: C3 - Eb3 - G3 - Eb3 - | F3 - Eb3 D3 C3 - - - | D3 - Eb3 F3 G3 - F3 Eb3 | Eb3 D3 C3 - - - - -
+answer: Pulse 1, bar 1: C4 - Eb4 - G4 - Eb4 - | F4 - Eb4 D4 C4 - - - | D4 - Eb4 F4 G4 - F4 Eb4 | Eb4 D4 C4 - - - - -

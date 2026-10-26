@@ -1379,6 +1379,35 @@ struct CPianoRollWnd::Impl {
 		pWnd->Invalidate(FALSE);
 	}
 
+	// An exercise's lanes in sight (CPianoRollWnd::ShowPitches)
+	bool ShowPitches(int ToChannel, int Low, int High)
+	{
+		Layout();
+		if (Grid.Height() <= 0)
+			return false;
+		if (Dirty)
+			Read();
+		int From = Low, To = High;
+		if (ToChannel >= 0 && ToChannel < static_cast<int>(Notes.size())) {
+			const std::vector<RollNote> &List = Notes[static_cast<size_t>(ToChannel)];
+			for (size_t i = 0; i < List.size(); ++i) {
+				From = std::min(From, List[i].Pitch);
+				To = std::max(To, List[i].Pitch);
+			}
+		}
+		if ((To - From + 1) * KeyHeight() > Grid.Height()) {	// not all in sight at once: the lanes asked for
+			From = Low;
+			To = High;
+		}
+		if (From < PitchAt(Grid.bottom - 1) || To > PitchAt(Grid.top)) {
+			ScrollY = (PITCHES - 1 - (From + To) / 2) * KeyHeight() - Grid.Height() / 2;
+			UpdateScrollBars();
+			pWnd->Invalidate(FALSE);
+		}
+		Placed = true;		// (not scrolled to the notes again when it's laid out)
+		return true;
+	}
+
 	// The instrument list follows the note clicked
 	void PickInstrument(int Start)
 	{
@@ -4590,6 +4619,11 @@ void CPianoRollWnd::ShowNotes(int Channel, const int *pStarts, int Count, bool S
 {
 	if (GetSafeHwnd() != NULL && m_pImpl->Shown)
 		m_pImpl->ShowNotes(Channel, pStarts, Count, Select);
+}
+
+bool CPianoRollWnd::ShowPitches(int Channel, int Low, int High)
+{
+	return GetSafeHwnd() != NULL && m_pImpl->Shown && m_pImpl->ShowPitches(Channel, Low, High);
 }
 
 bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row)

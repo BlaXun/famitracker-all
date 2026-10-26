@@ -91,6 +91,10 @@ public:
 	// the bright one from then on; with Select they're the selection
 	void ShowNotes(int Channel, const int *pStarts, int Count, bool Select);
 
+	// An exercise's lanes in sight (Tutorial.cpp): the roll scrolls up or down to pitches Low to High, with Channel's
+	// own notes when they all fit, unless they show already; false while it can't (hidden, or not laid out yet)
+	bool ShowPitches(int Channel, int Low, int High);
+
 	// Edit > Cut, Copy, Paste, Delete and Select all while the piano roll has
 	// the keys: as Ctrl+X, Ctrl+C, Ctrl+V, Delete and Ctrl+A do in it
 	bool EditCommand(UINT nID);

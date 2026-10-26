@@ -1499,7 +1499,14 @@ group, plays its bars in `CExerciseHearDlg` (`CBarsPlayer`) and undoes them
 The starters (2A03, one frame of four bars, two for the beat, the first
 example song's instruments, a `BF KEYS` block choosing C major except in
 minor's) were written from step parts by a script; keep each check failing
-on its starter and passing on its script's answers. To add an exercise: its
+on its starter and passing on its script's answers, clean as `check_song`
+hears them. Each part keeps lanes of its own in the piano roll (the tune
+from C-4 up, the chords under it, the triangle's bass from E-2 to D-3), since
+a click on another channel's note there picks that channel: no answer's note
+may start in a beat where another channel holds its pitch (`LanesTaken`). A
+check step puts the cursor on its answer's channel, and the note scrolls the
+piano roll to the answer's lanes (`ShowAnswerLanes`,
+`CPianoRollWnd::ShowPitches`). To add an exercise: its
 checks in `Exercises.cpp`, its script and starter in `res/exercises`, the
 RCDATA lines and IDs, a row of `FILES` in `ExercisesDlg.cpp`, and its name
 in `TestExerciseScripts` (`tutorial_tests`). `exercises_tests` runs the

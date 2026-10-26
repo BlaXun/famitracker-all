@@ -23853,6 +23853,46 @@ bool WriteAnswer(FakeSong &Song, const tutorial_step_t &Step, std::string &Reply
 	return true;
 }
 
+// The answer's notes that start on another channel's note: on its lane anywhere in the note's beat (its eighth when it
+// starts off the beat), where a click in the piano roll picks that channel instead of putting the note in; "" for none
+std::string LanesTaken(const FakeSong &Song, const tutorial_step_t &Step, const std::vector<tutorial_channel_t> &Channels)
+{
+	const int Beat = std::max(1, Song.Info.FirstHighlight), Eighth = std::max(1, Beat / 2);
+	const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
+		Song.Info.FirstHighlight, Song.Info.SecondHighlight);
+	std::string Out;
+	for (size_t i = 0; i < Step.Answers.size(); ++i) {
+		const tutorial_answer_t &A = Step.Answers[i];
+		const int Channel = FindTutorialChannel(A.Channel, Channels);
+		StepLine Line;
+		std::string Error;
+		if (Channel < 0 || !ParseStepLine(A.Notes, A.Bar, Line, Error))
+			return "unread: " + A.Notes;
+		for (size_t n = 0; n < Line.Notes.size(); ++n) {
+			int Pitch = 0;
+			if (!ParsePitch(Line.Notes[n].Pitch, Pitch))
+				continue;	// a drum, which the drum grid puts in
+			const int Row = Time.BarStart(A.Bar) + Line.Notes[n].Step * Eighth;
+			const int End = Row + (Row % Beat == 0 ? Beat : Eighth);
+			for (size_t c = 0; c < Song.Rows.size(); ++c) {
+				int Sounding = -1;
+				for (int r = 0; static_cast<int>(c) != Channel && r < End && r < static_cast<int>(Song.Rows[c].size()); ++r) {
+					const Cell &C = Song.Rows[c][static_cast<size_t>(r)];
+					if (C.HasNote())
+						Sounding = C.Pitch();
+					else if (C.Note == NOTE_RELEASE || C.Note == NOTE_HALT)
+						Sounding = -1;
+					if (r >= Row && Sounding == Pitch) {
+						Out += Printed("%s in bar %d under channel %d; ", Line.Notes[n].Pitch.c_str(), Time.BarOf(Row), static_cast<int>(c));
+						break;
+					}
+				}
+			}
+		}
+	}
+	return Out;
+}
+
 // Every exercise: its script (the exercise's title, its check steps the exercise's checks in order, every link of its
 // texts leading to a glossary entry, every channel and bar it names in its song), its starter (a small 2A03 module of a
 // few bars that the check fails as given) and each check passing once its good answer is in: written as Hear it writes
@@ -23921,6 +23961,8 @@ void TestExerciseStarters()
 			Check(!Before.Passed && !Before.Next.empty(), (Name + ": " + Step.Check + " fails as it starts").c_str(), __LINE__);
 			const size_t Instruments = Song.Info.Instruments.size();
 			if (!Step.Answers.empty()) {
+				const std::string Taken = LanesTaken(Song, Step, Channels);
+				Check(Taken.empty(), (Name + ": a click on the answer's lane picks another channel: " + Taken).c_str(), __LINE__);
 				std::string Reply;
 				Check(WriteAnswer(Song, Step, Reply), (Name + ": the good answer is written: " + Reply).c_str(), __LINE__);
 				Check(Song.Info.Instruments.size() == Instruments, (Name + ": the answer plays the song's own sounds").c_str(), __LINE__);
@@ -23977,11 +24019,11 @@ void TestExerciseMistakes()
 			CHECK_HAS(V.Next, "Your tune ends on D (bar 3), which leaves it hanging");
 			CHECK_HAS(V.Next, "give bar 4 a C on its first beat");
 			CHECK(V.PlayFirst == 2 && V.PlayLast == 4);
-			Steps(Song, "Pulse 1", 4, "G3 - - - - - - -");
+			Steps(Song, "Pulse 1", 4, "G4 - - - - - - -");
 			V = CheckOn(Song, "home-note", __LINE__);
 			CHECK_HAS(V.Next, "Your tune ends on G (bar 4)");
 			CHECK_HAS(V.Next, "change that last note to C");
-			Steps(Song, "Pulse 1", 4, "C4 - - - - - - -");	// an octave up passes too
+			Steps(Song, "Pulse 1", 4, "C5 - - - - - - -");	// an octave up passes too
 			CHECK(CheckOn(Song, "home-note", __LINE__).Passed);
 		}
 	}
@@ -23991,7 +24033,7 @@ void TestExerciseMistakes()
 			ExerciseVerdict V = CheckOn(Song, "four-bars", __LINE__);
 			CHECK_HAS(V.Next, "Write a tune on Pulse 1, 4 bars long");
 			CHECK_HAS(V.Right[0], "C, Am, F, G, C");	// the chords the other parts play
-			Steps(Song, "Pulse 1", 1, "C3 - G3 - C4 - G3 - | A3 - E3 - C4 - E3 - | F3 - C4 - G3 - D4 - | G3 - C4 - - - - -", "Lead");
+			Steps(Song, "Pulse 1", 1, "C4 - G4 - C5 - G4 - | A4 - E4 - C5 - E4 - | F4 - C5 - G4 - D5 - | G4 - C5 - - - - -", "Lead");
 			V = CheckOn(Song, "four-bars", __LINE__);
 			CHECK_HAS(V.Next, "Your tune jumps a lot");
 		}
@@ -24009,11 +24051,11 @@ void TestExerciseMistakes()
 		if (Open("phrases", Song)) {
 			ExerciseVerdict V = CheckOn(Song, "phrases", __LINE__);
 			CHECK_HAS(V.Next, "Bars 1-2 run on without a breath");
-			Steps(Song, "Pulse 1", 2, "D3 E3 F3 D3 B2 - - -");
+			Steps(Song, "Pulse 1", 2, "D4 E4 F4 D4 B3 - - -");
 			V = CheckOn(Song, "phrases", __LINE__);
 			CHECK_HAS(V.Next, "Bars 3-4 run on without a breath");
 			CHECK(!V.Right.empty() && Contains(V.Right[0], "Bars 1-2 breathe"));
-			Steps(Song, "Pulse 1", 4, "F3 G3 A3 F3 C4 . . .");	// a rest at the end breathes as well
+			Steps(Song, "Pulse 1", 4, "F4 G4 A4 F4 C5 . . .");	// a rest at the end breathes as well
 			CHECK(CheckOn(Song, "phrases", __LINE__).Passed);
 		}
 	}
@@ -24047,7 +24089,7 @@ void TestExerciseMistakes()
 			CHECK(!Song.Info.KeyChosen);	// the notes say the key, so lowering the thirds turns it minor
 			ExerciseVerdict V = CheckOn(Song, "minor", __LINE__);
 			CHECK_HAS(V.Next, "Your tune still plays E in bars 1, 2, 3 and 4");
-			Steps(Song, "Pulse 1", 1, "C3 - Eb3 - G3 - Eb3 - | F3 - Eb3 D3 C3 - - -");
+			Steps(Song, "Pulse 1", 1, "C4 - Eb4 - G4 - Eb4 - | F4 - Eb4 D4 C4 - - -");
 			V = CheckOn(Song, "minor", __LINE__);
 			CHECK_HAS(V.Next, "Your tune still plays E in bars 3 and 4");
 			CHECK_HAS(V.Right[0], "3 notes are Eb already (bars 1 and 2).");
@@ -24056,7 +24098,7 @@ void TestExerciseMistakes()
 	{
 		FakeSong Song(1);
 		if (Open("hook", Song)) {
-			Steps(Song, "Pulse 1", 3, "E3 - G3 E3 C3 - D3 E3 | D3 - B2 - D3 - - -");
+			Steps(Song, "Pulse 1", 3, "E4 - G4 E4 C4 - D4 E4 | D4 - B3 - D4 - - -");
 			const ExerciseVerdict V = CheckOn(Song, "hook", __LINE__);
 			CHECK_HAS(V.Next, "Bars 3-4 repeat the hook note for note");
 		}
