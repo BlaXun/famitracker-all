@@ -3651,19 +3651,17 @@ struct CPianoRollWnd::Impl {
 	}
 
 	// The chord whose notes the lanes and the keyboard light: the one under the mouse in the strip, else with strong notes
-	// the one at StrongRow (Strong set); -1 for none, and on the noise and DPCM channels
+	// the one at StrongRow; -1 for none, and on the noise and DPCM channels. Strong: lit as strong notes are, more strongly
+	// than the key's lanes
 	int LitChord(bool &Strong) const
 	{
-		Strong = false;
+		Strong = ShowsStrong();
 		if (IsNoise(Channel) || IsDPCM(Channel))
 			return -1;
 		const std::vector<ftapi::HeardChord> &Chords = ShownChords();
 		if (HoverChord >= 0 && HoverChord < static_cast<int>(Chords.size()))
 			return HoverChord;
-		if (!ShowsStrong())
-			return -1;
-		Strong = true;
-		return ftapi::ChordIndexAtRow(Chords, StrongRow());
+		return Strong ? ftapi::ChordIndexAtRow(Chords, StrongRow()) : -1;
 	}
 
 	// The mouse left the window without a move in it: the notes it lit go dark (not while it drags, which captures it)

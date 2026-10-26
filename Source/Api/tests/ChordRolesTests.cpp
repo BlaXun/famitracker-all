@@ -209,6 +209,15 @@ void TestColors()
 	CHECK(One("Dm7b5", "C major").Words() == "borrowed from minor: a darker shade of away");
 	CHECK(One("Bb7", "C major").Words() == "borrowed from minor: bold, heroic");
 	CHECK(One("Fm", "C major").Role == CHORD_ROLE_COLOR && One("Fm", "C major").Target == -1);
+	CHECK(One("Fm7", "C major").Words() == "borrowed from minor: bittersweet");
+	CHECK(One("Fm6", "C major").Words() == "borrowed from minor: bittersweet");
+	CHECK(One("Bbadd9", "C major").Words() == "borrowed from minor: bold, heroic");
+	// A major seventh softens them; and a chord borrowed with the key's own seventh added is borrowed all the same
+	CHECK(One("Abmaj7", "C major").Words() == "borrowed from minor: dreamy, wistful");
+	CHECK(One("Bbmaj7", "C major").Words() == "borrowed from minor: dreamy, wistful");
+	CHECK(One("Dbmaj7", "Eb major").Words() == "borrowed from minor: dreamy, wistful");
+	CHECK(One("Amaj7", "A minor").Words() == "borrowed from major: home made bright");
+	CHECK(One("Fm(maj7)", "C major").Role == CHORD_ROLE_COLOR);
 	// From the major key, in a minor key
 	CHECK(One("A", "A minor").Words() == "borrowed from major: home made bright");
 	CHECK(One("D", "A minor").Words() == "borrowed from major: bright, hopeful");

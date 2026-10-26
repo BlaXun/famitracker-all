@@ -237,11 +237,14 @@ const char *Shade(const Chord &C, const Key &K, int Mode, borrowed_t From)
 	return FromMinor ? "a darker color" : "a brighter color";
 }
 
-// How the best-known borrowed chords feel, else darker or brighter
+// How the best-known borrowed chords feel, else darker or brighter. A major seventh softens the big ones (Abmaj7 and
+// Bbmaj7 in C major, as calm songs have them).
 const char *BorrowedFeel(const Chord &C, const Key &K, int Mode, int Offset, quality_t Quality, borrowed_t From)
 {
 	const bool FromMinor = From == BORROWED_MINOR;
 	if (FromMinor && Mode == MODE_MAJOR) {
+		if (Quality == QUALITY_MAJOR && C.Has(11) && (Offset == 3 || Offset == 8 || Offset == 10))
+			return "dreamy, wistful";
 		switch (Offset) {
 		case 0: if (Quality == QUALITY_MINOR) return "home turned dark"; break;
 		case 2: if (Quality == QUALITY_DIMINISHED) return "a darker shade of away"; break;
@@ -291,9 +294,22 @@ ChordRoleInKey OutsideKey(const Chord &C, const Key &K, int Mode, int Offset, qu
 		return Made(CHORD_ROLE_COLOR, "leads to " + ChordName(Goal, K),
 			Quality == QUALITY_DIMINISHED ? "restless, a push on the way" : "a push on the way", Target);
 	}
-	if (From != BORROWED_NONE)
-		return Made(CHORD_ROLE_COLOR, From == BORROWED_MINOR ? "borrowed from minor" : "borrowed from major",
-			BorrowedFeel(C, K, Mode, Offset, Quality, From));
+	// Borrowed whole, or its chord borrowed with the key's own notes added (Dbmaj7 in Eb major: Db, F and Ab are Eb
+	// minor's, C the key's)
+	borrowed_t Whose = From;
+	if (Whose == BORROWED_NONE) {
+		Chord Plain(C.Root, std::vector<int>({ 0 }));
+		if (C.Third() >= 0)
+			Plain = Chord(C.Root, std::vector<int>({ 0, C.Third(), C.Fifth() >= 0 ? C.Fifth() : 0 }));
+		else if (C.Fifth() >= 0)
+			Plain = Chord(C.Root, std::vector<int>({ 0, C.Fifth() }));
+		const unsigned Added = NoteBits(C, K.Tonic) & ~NoteBits(Plain, K.Tonic);
+		if (Within(Added, ScaleBits(Mode)))
+			Whose = BorrowedFrom(NoteBits(Plain, K.Tonic), Mode);
+	}
+	if (Whose != BORROWED_NONE)
+		return Made(CHORD_ROLE_COLOR, Whose == BORROWED_MINOR ? "borrowed from minor" : "borrowed from major",
+			BorrowedFeel(C, K, Mode, Offset, Quality, Whose));
 	if (Offset == 1 && Quality == QUALITY_MAJOR)	// a semitone over home (the Neapolitan)
 		return Made(CHORD_ROLE_COLOR, "color", "dark and dramatic");
 	return Made(CHORD_ROLE_COLOR, "color", "a surprise from outside the key");
