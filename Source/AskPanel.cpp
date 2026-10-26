@@ -1338,7 +1338,12 @@ struct CAskPanelWnd::Impl {
 		const size_t All = ftapi::WriteJson(FunctionsFor(false)).size() + PromptFor(false).size();
 		const size_t Small = ftapi::WriteJson(FunctionsFor(true)).size() + PromptFor(true).size();
 		CAskSettingsDlg Dialog(pWnd, Settings, All, Small);
-		if (Dialog.DoModal() != IDOK)
+		const INT_PTR Answer = Dialog.DoModal();
+		// MFC gives the keys to the pattern editor as the window comes back from the dialog, where a question typed
+		// next played notes, Space started editing and Enter played the song: they go back to the question
+		if (QuestionBox.GetSafeHwnd() != NULL)
+			QuestionBox.SetFocus();
+		if (Answer != IDOK)
 			return;
 		const bool KeyKept = WriteSettings(Dialog.Settings());
 		ApplySettings(Dialog.Settings());
