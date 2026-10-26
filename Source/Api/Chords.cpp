@@ -971,6 +971,106 @@ const ChordAt *ChordAtRow(const std::vector<ChordAt> &Chords, int Row)
 	return 0;
 }
 
+bool OutsideKey(const Chord &C, const Key &K)
+{
+	for (size_t i = 0; i < C.Tones.size(); ++i)
+		if (!InKey(C.Root + C.Tones[i], K))
+			return true;
+	return false;
+}
+
+namespace {
+
+// How many letters over its root a chord's tone is written: the third two, the fifth four, a ninth one, a sharp ninth (a
+// minor third over a major one) one, a sharp eleventh three, a flat thirteenth five, a diminished seventh six
+int LetterSteps(const Chord &C, int Interval)
+{
+	switch (Mod12(Interval)) {
+	case 0: return 0;
+	case 1: case 2: return 1;
+	case 3: return C.Has(4) ? 1 : 2;
+	case 4: return 2;
+	case 5: return 3;
+	case 6: return C.Has(7) ? 3 : 4;
+	case 7: return 4;
+	case 8: return C.Has(7) ? 5 : 4;
+	case 9: return C.Has(3) && C.Has(6) && !C.Has(10) && !C.Has(11) ? 6 : 5;
+	default: return 6;
+	}
+}
+
+}	// namespace
+
+std::vector<int> ChordScale(const Key &K, const Chord &C)
+{
+	const int *pSteps = ModeSteps(K.Mode);
+	std::vector<int> Scale(7);
+	for (int d = 0; d < 7; ++d)
+		Scale[static_cast<size_t>(d)] = Mod12(K.Tonic + pSteps[d]);
+	// The root's letter: the key's where it has the root, else the letter under it (the root a sharp) or over it (a flat),
+	// as the chord was written; either, when it wasn't, the one that spells the chord's notes on letters of their own
+	std::vector<int> Letters;
+	for (int d = 0; d < 7; ++d)
+		if (Scale[static_cast<size_t>(d)] == Mod12(C.Root))
+			Letters.push_back(d);
+	if (Letters.empty()) {
+		for (int d = 0; d < 7; ++d) {
+			if (C.RootSpelling <= 0 && Mod12(Scale[static_cast<size_t>(d)] - 1) == Mod12(C.Root))
+				Letters.insert(Letters.begin(), d);	// a flat first: the borrowed chords are on the flat side
+			if (C.RootSpelling >= 0 && Mod12(Scale[static_cast<size_t>(d)] + 1) == Mod12(C.Root))
+				Letters.push_back(d);
+		}
+	}
+	// Its notes in the order they tell of it (the root, the third, the fifth, the seventh, then the others); one on a letter
+	// another took is left out of the scale
+	std::vector<int> Order;
+	const int Telling[] = { 0, C.Third(), C.Fifth(), C.Seventh() };
+	for (int t = 0; t < 4; ++t)
+		if (Telling[t] >= 0 && C.Has(Telling[t]))
+			Order.push_back(Telling[t]);
+	for (size_t i = 0; i < C.Tones.size(); ++i)
+		if (std::find(Order.begin(), Order.end(), Mod12(C.Tones[i])) == Order.end())
+			Order.push_back(Mod12(C.Tones[i]));
+	std::vector<int> Best;
+	int BestChanges = 8;
+	for (size_t l = 0; l < Letters.size(); ++l) {
+		std::vector<int> Out = Scale;
+		std::vector<bool> Set(7, false);
+		for (size_t i = 0; i < Order.size(); ++i) {
+			const size_t d = static_cast<size_t>((Letters[l] + LetterSteps(C, Order[i])) % 7);
+			if (Set[d])
+				continue;
+			Out[d] = Mod12(C.Root + Order[i]);
+			Set[d] = true;
+		}
+		std::vector<int> Sorted = Out;
+		std::sort(Sorted.begin(), Sorted.end());
+		if (std::unique(Sorted.begin(), Sorted.end()) != Sorted.end())
+			continue;	// two letters on one note: not a spelling of it
+		int Changes = 0;
+		for (size_t d = 0; d < 7; ++d)
+			Changes += Out[d] != Scale[d] ? 1 : 0;
+		if (Changes < BestChanges) {
+			BestChanges = Changes;
+			Best = Out;
+		}
+	}
+	return Best.empty() ? Scale : Best;
+}
+
+bool InChordScale(int Pitch, const std::vector<int> &Scale)
+{
+	return std::find(Scale.begin(), Scale.end(), Mod12(Pitch)) != Scale.end();
+}
+
+int ChordScaleStep(int Pitch, int Direction, const std::vector<int> &Scale)
+{
+	for (int Step = 1; Step <= 11; ++Step)
+		if (InChordScale(Pitch + Direction * Step, Scale))
+			return Pitch + Direction * Step;
+	return Pitch + Direction;
+}
+
 namespace {
 
 const double RUB_LIMIT = 0.75;	// beats of a melody note a semitone from a color tone

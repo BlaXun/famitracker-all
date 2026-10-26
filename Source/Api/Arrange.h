@@ -86,6 +86,9 @@ struct ChordPartOptions {
 	// Empty and -1, the chords go by Low and High alone.
 	std::vector<NoteInfo> Above, Below;
 	int Ceiling, Floor;
+	// The bars the melody doesn't play in (an intro, a break): a chord there keeps no Ceiling, its notes in their register
+	// (the melody's usual low notes put an intro's chords an octave under the same chords later)
+	std::vector<BarSpan> Open;
 	// Broken chords: no note under this (as the part writes it; -1 for none), whatever the room, an octave up
 	// where one would be: a pulse's ripple low under the bass turns to mud
 	int Lowest;
@@ -146,6 +149,10 @@ struct BassOptions {
 	int Low, High;		// its register
 	Key K;				// for the pedal, and walking between chords
 	int Volume;			// on the first note; -1 to leave the column alone
+	// The melody's notes and the other parts' as they sound, in the bass's own pitches (as it writes them): a walking or
+	// syncopated bass's passing notes keep off a semitone (and octaves) from one sounding with them, as check_song hears a
+	// clash, as they keep off one under the chord's notes. Empty for none
+	std::vector<NoteInfo> Above;
 	BassOptions();
 };
 std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::vector<BarSpan> &Bars, const BassOptions &Options);
@@ -208,6 +215,9 @@ struct CounterOptions {
 	int Low, High;
 	int Volume;
 	int Rests;			// counter_rests
+	// A calm line: a note a bar (or held longer), never steps between the beats under a melody that holds; a calm tune of
+	// long notes left no rest to answer in, and a line moving in quarter notes under every one of them crowded it
+	bool Slow;
 	CounterOptions();
 };
 // The melody's rests: where none of its notes sound for half a beat or more, inside [First, End)

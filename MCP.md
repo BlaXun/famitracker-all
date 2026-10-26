@@ -657,10 +657,10 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `mix` | Balances the parts, keeping each one's dynamics (`faders` `reset` first sets FamiTracker's mixer's faders back to 0 dB, pans, Soft and Space kept, so the notes carry the balance as NSF files play it; calm keeps the melody as loud as its fader played it; one Ctrl+Z undoes both): style soft (the default) mixes like atmospheric NES tracks, the melody's loudest at 9, an echo at 4, chords at 6, a second line at 7, drums at 10, and the DPCM level at Z30 so the triangle and the noise soften too; full puts them near full volume; or levels per channel (each one's loudest volume as written) and the DPCM level (dac) alone (direct changes only; undoable). style calm (night and ambient tracks) and lively (stages) mix as heard: calm keeps the melody's level with the chords 2.5 dB under it; lively mixes a stage's band, the melody's loudest at 9 (its accents and steps kept), the bass about level with it, the chords together 3.5 dB under it and the band louder than it; the reply gives the balance reached; see [Calm and lively tracks](#calm-and-lively-tracks). A channel that echoes the melody in some frames and plays a line of its own in others is mixed as each, there. A part's loudest counts its notes as they play: an instrument whose envelope peaks at 10 plays 10 at volume 15, and a volume slide that swells it counts as high as it goes. Volume slides (`Axy`) move with the volumes, and a swell too slow to scale stops where it would climb past the part's level, the volume column following it a step at a time. With `width` (mono, narrow, wide, full) it sets the stereo picture: the melody, the bass and the drums in the middle, an echo on the other side, chords and second lines out to the sides. See [Mixing](#mixing) and [Stereo](#stereo) |
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
-| `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes |
+| `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes. Its key becomes the track's key in the same change (as Start from a groove makes it), unless the track has one chosen or notes in another key already, so a melody grown on it after goes by that key |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for a gentle place, not too upbeat (a stage's beat is `basic` with `kit` samples): soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
-| `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one |
-| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line rests where the melody does and answers only in rests of two beats or more, briefly; `rests` (fill, the default, answer or leave) chooses that directly |
+| `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
+| `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
 | `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it |
@@ -1044,12 +1044,15 @@ stay (`levels` sets it in either):
 | an echo of the melody | 7 under | 7 under |
 | a second line or an answering voice | no louder than 3 under (to 4) | no louder than 2.5 under (to 3.5) |
 | the bass | 2.5 under | 1 under |
-| the drums | 10-12 under, never raised | 10 under, up or down |
+| the drums | 10-12 under, never raised | the noise's hi-hats on their own 14 under (its kick and snare along), a noise without hats 11.5 under, up or down, left as written within 1.5 |
 
 The lively places are the first lively stages', measured as heard: the
 melody about level with its bass (1 dB under it), about 3 dB over all its
-chord parts together, the echo 6.5 under and the noise hats 10.4 under, so
-the band together played 3.3 dB louder than the melody. The later stages,
+chord parts together, the echo 6.5 under and the noise's hi-hats on their
+own 13.5 under (the noise as a whole about 10 under by a meter's windows,
+its crashes and open hats along), so the band together played 3.3 dB
+louder than the melody. Placing the noise as a whole put a later stage's
+hats 8 dB under its lead. The later stages,
 mixed with the melody kept at 15, the bass 3 under and the drums never
 raised, had their lead 3.5 dB over the bass and as loud as the rest
 together, over sections within a dB of each other. A calm track's drums
@@ -1060,17 +1063,18 @@ stage ("the band together 2.1 dB over the melody"), and says when the
 melody plays at one volume throughout (polish's accents first).
 Other chord layers playing with the loudest one (a pad, the VRC6 Plus's
 soft layer) keep their place under it, together at least 3 dB under it.
-On a lively stage every chord part moves alike, so the chords together
-take their place as they play beside each other (a pad that joins the
-arpeggios at the climax keeps its place against them), and a second voice
-or a double that moves with the tune is a line, not a pad's voice; a part
-already within half a dB of its place stays as it is, so a second lively
-mix leaves a mixed song alone. The chords together stay at least 2 dB
-under the melody in every part of the song (each named section, or four
-bars at a time; nearer, the review hears them cover it): where a pad
-joins them at the climax, their place over the whole song would put them
-over the melody there, so they stay further under it over the song, and
-the reply says where they play loudest.
+On a lively stage each chord layer moves on its own: together they take
+their place over the whole song, a layer that joins the one heard longest
+only in some parts (pads at the climax) comes down to stay under it, and
+the chords together stay at least 2 dB under the melody in every part of
+the song (each named section, or four bars at a time; nearer, the review
+hears them cover it there), the layers that join coming down first, then
+all of them; the reply says where that held them. (One shift for every
+layer, held back by a climax's pads, left a song's chords 5.7 dB under its
+melody.) A second voice or a double that moves with the tune, or a steady
+run of quick notes under it (a ripple of broken chords), is a line, not a
+pad's voice; a part already within half a dB of its place stays as it is,
+so a second lively mix leaves a mixed song alone.
 The triangle, which has no volume, gets its place from the DPCM level,
 unless `dac` is given (the noise moves with it, and the drums make up for
 it). With samples on the DPCM channel the level goes no higher than Z40,
@@ -1086,11 +1090,13 @@ heard: the melody (VRC6 Pulse 1) 2.7 dB over the chords, the echo 6.6
 under and the triangle 2.5 under") and names a part still half a dB or
 more off, between two steps or at 15 or 1, with how far: a fader in
 `set_mixer` moves it the rest. `review_arrangement` with the style hears the same balance: on a
-calm track it tips a melody more than 4 dB over the chords or under 1 dB;
+calm track it tips a melody more than 4 dB over the chords (over all of
+them together where they're in layers, as the stems measure them: the
+balance gives the main layer and the chords together then) or under 1 dB;
 on a lively stage, chords that cover the melody (under 2 dB under it), a
 melody that stands over its band (the band together quieter than it, or
 the bass more than 3 dB under it), a lead at one volume throughout, and a
-song that doesn't build (its loudest section under 2 dB over the first A,
+song that doesn't build (its loudest section under 1.5 dB over the first A,
 as heard; the first stages built 3.2 dB, the later ones 0.95). No lively
 tip asks for a softer melody or fewer accents. `measure_mix` renders the
 stems themselves.
@@ -1184,8 +1190,13 @@ file written (the exported OGG files stay as they are).
   delay, notes about as long as the ones it copies), so a pad holding a
   note the melody touched isn't one; a quiet arpeggio over the melody (a
   sparkle) is a line of its own, not the chords; and a low, held line on an
-  N163 voice (the soft layer's sub bass) is the bass. `mix` and
-  `review_arrangement` hear the parts the same way.
+  N163 voice (the soft layer's sub bass) is the bass, not one of the pads'
+  voices even where it starts its notes with them. Voiced chords (plucks on
+  two pulses, a pad's voices) are the chords beside a quiet arpeggio too:
+  `measure_mix` then gives the chords together, the arpeggio and the
+  voices. A triangle that thumps now and then (short notes, heard for less
+  than half as long as the sawtooth's line) beside a sawtooth's bass isn't
+  the bass. `mix` and `review_arrangement` hear the parts the same way.
 
 FamiTracker renders the mix and every part alone together, in one pass
 through the song without the space's tail after, and each part comes out
@@ -1623,7 +1634,15 @@ avoid that, and gives it tools for each layer:
   whole step where the chord's shape fits no lower, never a semitone) and
   over the bass's highest note, never in the bass's octave; broken chords
   on a pulse stay over C-2 however little room the melody leaves them
-  (lower, a ripple turns to mud). Voiced chords
+  (lower, a ripple turns to mud), and so do lush chords' roots (a rolling
+  arpeggio spans two octaves from them). Chords asked for over a bar or two
+  keep to the register the whole song gives them: it follows the song's
+  melody (in bars where it rests, a low part playing alone there isn't
+  taken for it, and the melody's few notes there don't move it), and
+  bars the melody doesn't play in (an intro, a break) keep the chords' own
+  register rather than one under the low notes the melody dips to. Voiced
+  chords sit in the octave under the tune, and where no bass holds a chord's
+  root (bars before the bass comes in) the lowest voice takes it. Voiced chords
   sit where they sound on the VRC7 too (it plays an octave under its
   notes), a voice gives way where the melody passes through it, and no two
   voices sit a semitone or a minor ninth apart where another voicing has
@@ -1636,7 +1655,11 @@ avoid that, and gives it tools for each layer:
 - **Bass** (`bass_style`): root_fifth, roots, half, octaves, walking (with
   approach notes into each chord, none grinding a semitone against the
   chord it walks under, a held V at a half cadence too), syncopated,
-  arpeggio, driving, pedal. On
+  arpeggio, driving, pedal. The walking and syncopated lines' passing notes
+  keep off a semitone from the chord's notes (and a semitone under one,
+  since broken chords and arpeggios play every note over the bass) and from
+  the other parts' notes sounding with them (the melody's, a counter-line's),
+  as `check_song` hears a clash. On
   the triangle it sits where it sounds like a bass (the triangle plays an
   octave below what's written).
 - **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,

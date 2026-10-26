@@ -130,6 +130,19 @@ double MelodyRub(const std::vector<NoteInfo> &Melody, int Row, int End, int Pitc
 // The chord at Row, 0 for none
 const ChordAt *ChordAtRow(const std::vector<ChordAt> &Chords, int Row);
 
+// Whether a chord has a note outside the key (a borrowed bVI, a secondary dominant's leading tone)
+bool OutsideKey(const Chord &C, const Key &K);
+
+// The scale a chord sounds in over a key: the key's seven notes with each of the chord's own in place of the key's note of
+// its letter, spelled from the chord's root (the third two letters over it, the fifth four, a ninth one): over Ebadd9 in
+// G major G A Bb C D Eb F (G aeolian's), over F in G major G mixolydian's, over E major in A minor A harmonic minor's.
+// The pitch classes by degree from the key's tonic; the key's own scale for a chord that can't be spelled so (two of its
+// notes on one letter).
+std::vector<int> ChordScale(const Key &K, const Chord &C);
+bool InChordScale(int Pitch, const std::vector<int> &Scale);
+// The next pitch of such a scale above (Direction 1) or below (-1) Pitch
+int ChordScaleStep(int Pitch, int Direction, const std::vector<int> &Scale);
+
 // The chords heard in some parts' notes: each slot (a bar, or with HalfBars
 // each half of a bar of two beats or more) gets the chord whose tones explain
 // most of what sounds there, a seventh or a suspension only when all of its
