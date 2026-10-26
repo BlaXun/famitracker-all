@@ -47,6 +47,7 @@
 #include "stdafx.h"
 #include <algorithm>
 #include "Api/Sections.h"
+#include "Api/FramePatterns.h"
 #include "Api/Keys.h"
 #include "Api/ChannelMix.h"
 #include "Api/Vrc6Plus.h"
@@ -4061,9 +4062,17 @@ bool CFamiTrackerDoc::InsertFrame(unsigned int Track, unsigned int Frame)
 		}
 	}
 
-	// Select free patterns 
+	// Select free patterns: the first that no other frame plays and that holds nothing (Api/FramePatterns.h). The new
+	// frame's own place doesn't count, since it may still name the pattern of a frame taken out or undone, which gave
+	// frames put in at the end one after another their patterns in swapped pairs
 	for (int i = 0; i < Channels; ++i) {
-		SetPatternAtFrame(Track, Frame, i, GetFirstFreePattern(Track, i));
+		std::vector<int> Frames;
+		for (int f = 0; f <= FrameCount; ++f)
+			Frames.push_back(static_cast<int>(GetPatternAtFrame(Track, f, i)));
+		const int Free = ftapi::FreePatternForFrame(Frames, static_cast<int>(Frame), MAX_PATTERN, [this, Track, i](int p) {
+			return IsPatternEmpty(Track, i, static_cast<unsigned int>(p));
+		});
+		SetPatternAtFrame(Track, Frame, i, Free >= 0 ? static_cast<unsigned int>(Free) : 0);
 	}
 
 	// Between two frames of a section, it's part of it

@@ -213,8 +213,10 @@ File > Save As: into the **Songs** folder next to FamiTracker.exe
 in a folder of its own named after the track (`Songs\Town\Town.ftm`, else
 the module's title or `Untitled`; `Town 2` when the name is taken, never over
 a file). From then on the song is that file, and its OGG files go next to it.
-`save_song` does the same, with `name` for the song's name. FamiTracker's own
-File > Export for games still asks you to save first.
+`save_song` does the same, with `name` for the song's name, and `what_next`
+gives a client that call (with the track's name) where it would otherwise ask
+you to save. FamiTracker's own File > Export for games and its What next panel
+still ask you to save first.
 
 Asked over the network, the reply says how to get each file to the person,
 three ways, for clients that can do different things:
@@ -530,7 +532,8 @@ is the recipes':
    song its shape (`song_shape`: a lively stage for lively, a calm night for
    calm, a boss fight for action, a town otherwise, or the short loop when
    the track's name asks for one, like "Shop" or Help > Exercises' "A first
-   small song"; see [Song shapes](#song-shapes)), so every part has its
+   small song", while a town's or a village's name keeps the town, "Home
+   village" too; see [Song shapes](#song-shapes)), so every part has its
    place and its job first.
 3. The parts and the form: the lead's sound, an A part's chords and bass,
    its sections named, the melody, A again, a B part on other chords, A
@@ -1537,7 +1540,10 @@ each part sounds like with what its notes say it should:
 Each finding says in plain words what's heard, on which part and in which
 bars, how sure it is and how much a listener notices it (high, medium or
 low), with the call that fixes it where a tool has one (a warble's is
-`add_vibrato` with `modulator` `off`) or what to change. `from_bar` and
+`add_vibrato` with `modulator` `off`) or what to change. A low one is a detail
+that may be meant (a slow vibrato a flute was given on purpose), so it carries
+no call: it says to play those bars with the user and change them only if
+they'd like it gone, and what would change it. `from_bar` and
 `to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
 `short` (the three heard worst) or `json`. It takes a while, since
 FamiTracker renders the track first: a two-and-a-half-minute track with

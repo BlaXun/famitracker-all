@@ -74,7 +74,8 @@ const ShapeRow SHAPES[] = {
 		{ "A''", 8, "The tune once more, softly answered, ending without coming to rest so the loop flows on." },
 		{ 0, 0, 0 } } },
 	{ "town", "Town", "A town, a village or a field: a friendly tune that can loop for a long time without tiring.", "general", true, 1,
-		"town towns village city field fields map overworld general",
+		"town towns village villages city cities square squares market markets harbor harbors harbour port ports field fields "
+		"map overworld general",
 		{ { "Intro", 4, "Plays once as you arrive: the chords and a hint of the tune." },
 		{ "A", 8, "The town's tune, easy to hum." },
 		{ "A'", 8, "The tune again with something new: a second line, other drums." },
@@ -104,8 +105,9 @@ const ShapeRow SHAPES[] = {
 		{ 0, 0, 0 } } },
 };
 
-// When words ask for more than one (a "night town"), the first of these
-const char *const PRIORITY[] = { "jingle", "boss", "night", "small", "stage", "town" };
+// When words ask for more than one (a "night town"), the first of these. A small place's words come last: "home" or
+// "small" says less than a place's own word, so a "Home village" is a town and a "Small town" too
+const char *const PRIORITY[] = { "jingle", "boss", "night", "stage", "town", "small" };
 
 std::string Lower(const std::string &Text)
 {

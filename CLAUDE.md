@@ -559,7 +559,8 @@ row counted, `SlideSemitones`) and slides to the voice's own notes. An
 echo note's volume is `EchoVolume` (each sound as `PlayedDb` plays it:
 the chip's level and the instrument's envelope, the fader left out); the
 echo's and the harmony's effects pass `CarriesEffect`
-(`ChannelPlaysEffect` in `Effects.cpp`), and `EchoWithoutRubs` counts only
+(`ChannelPlaysEffect` in `Effects.cpp`: an FDS lead's `Hxx`-`Jxx` stay off an
+echo on the N163 or a pulse, `TestEchoKeepsItsChipsEffects`), and `EchoWithoutRubs` counts only
 semitones and minor ninths, as the parts sound. `write_notes` keeps a
 channel's detune where it was (`PartOptions::KeepDetune` in `BuildPart`),
 `check_song`'s key check follows a note's slides (`SoundingRows`), and
@@ -1428,7 +1429,9 @@ track with notes keeps its frames (`Refitted`, `Cut`, `Missing`). The
 writes it as one group: `SetMeter` for a new frame length, then one
 `WriteSong` (frames added or taken out at the end, the empty track's jumps,
 skips and halts replaced by the loop's `Bxx` or a jingle's `C00`, a song
-with notes' end jump moved to its new end) with `SetSections`. `what_next`'s
+with notes' end jump moved to its new end) with `SetSections`; the frames
+put in play patterns in frame order (`FreePatternForFrame`, see Known
+pre-existing bugs, `TestFramePatternsInOrder`). `what_next`'s
 `Frame` gives it after the key on an empty track without sections
 (milestone and skip word `shape`, `ShapeForKind`); `Parts` writes the empty
 song's A chords on the laid-out A (`FitProgression` fits a progression to
@@ -1495,7 +1498,11 @@ rate and where it holds (`TrackNote`), clicks cycle by cycle
 (`InsideClicks`, on the 2A03's and MMC5's pulses, `ListenPart::Restarts`),
 pops, drones, notes hardly heard, beating pairs and, in the mix, clipping,
 loudness jumps (`SpansLoudness`), harsh and muddy bars and the melody
-covered, each with its measured thresholds. `ListenNoteTuning` gives a note's
+covered, each with its measured thresholds. A low finding (a detail that may
+be meant, as 42's slow flute vibrato) carries no call: `ListenFixOf` makes the
+call `ListenCallOf` gives advice to hear it with the user first (and the short
+reply says so), while high and medium keep theirs (`TestListenLowAsAdvice`).
+`ListenNoteTuning` gives a note's
 pitch by 0.4.6's tables (the chips' octaves, an N163 wave's cycle, `Pxx`
 steps), and `ListenVibratoCents` and `ListenVibratoDepth` what `4xy` swings,
 which `add_vibrato` uses to pick its depth by cents on every chip
@@ -1540,7 +1547,9 @@ group, plays its bars in `CExerciseHearDlg` (`CBarsPlayer`) and undoes them
 (`ForgetRedo`); Play it plays the verdict's bars, its channels alone first.
 The starters (2A03, one frame of four bars, two for the beat, the first
 example song's instruments, a `BF KEYS` block choosing C major except in
-minor's) were written from step parts by a script; keep each check failing
+minor's) are written from step parts by `tools/exercises/make_starters.py`
+(Python alone, from `res/examples/first-song.ftm`; its README says how to run
+it and the others, which write `res/exercises` byte for byte); keep each check failing
 on its starter and passing on its script's answers, clean as `check_song`
 hears them. Each part keeps lanes of its own in the piano roll (the tune
 from C-4 up, the chords under it, the triangle's bass from E-2 to D-3), so a
@@ -1582,7 +1591,10 @@ where it covers the least of them), then places itself clear of it too
 (`StartExercise`), and `what_next` lays out the shape a track's name asks for
 where it's one of the kind's that loops (`ShapeForKind` with the track's name
 in `SongShapes.cpp`): "A first small song" or a "Shop" gets the short loop of
-14 bars rather than the general recipe's town of 40. `check_exercise`'s list
+14 bars rather than the general recipe's town of 40. A town's words (town,
+village, city, square, market, harbor, port) ask for the town and come before
+a small place's (`PRIORITY`, where the small shape is last: a "Home village"
+is a town; `TestShapeTownWords`). `check_exercise`'s list
 drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestFaintHints` (`pianoroll_ui_tests`), `TestExerciseListPeriods`,
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
@@ -1638,7 +1650,8 @@ their next step in the piano roll's terms (lanes, beat lines, a note's
 right edge, Select, Instrument > Give the selected notes, Effects >
 Volume) and say what they taught in one sentence; `tiny-tune` leads into
 `home-note`. Their starters (1-4 bars, one part at most, C major chosen,
-written from step parts by a script as Next steps' were) and scripts are
+written from step parts by `tools/exercises/make_first_steps.py` as Next
+steps' are, their scripts by `first_steps_scripts.py`) and scripts are
 RCDATA named
 `FIRSTSTEPS_*_SONG` and `_SCRIPT` in `FamiTracker.rc`, without numbers in
 `resource.h` (`FILES` in `ExercisesDlg.cpp` holds the names;
@@ -1664,7 +1677,9 @@ a song without a file into the Songs folder next to FamiTracker.exe
 when taken (`SongHost::SaveNew`, `NumberedSongName`; `CMcpLink::SaveNew` makes
 the folder with `CreateDirectory`, then `OnSaveDocument` and `SetPathName`),
 and a client's `export_for_game` and `finish_song` do that first
-(`SaveIntoSongs`, `NewSongName` in `Tools.cpp`). FamiTracker's own windows
+(`SaveIntoSongs`, `NewSongName` in `Tools.cpp`), and `what_next`'s save step
+gives a client `save_song` with that name (`WhatNext`'s `m_Client`,
+`TestWhatNextSavesForClient`). FamiTracker's own windows
 call the tools with a plain `Caller`, which still asks for File > Save As.
 Over the network the reply's links carry a code of their own in the address
 (`/files/<name>?code=`, `FilesCode` in `Mcp.cpp`: HMAC-SHA-256 of the access
@@ -2278,6 +2293,13 @@ Point these out rather than silently fixing them inside archive commits.
   and 5B `Jxx` becomes the FDS modulation-speed effect (FDS `Jxx` survives).
   Such modules don't round-trip through `.txt`. (Fixed on this branch:
   `TextExporter.cpp` reads H, I and J by the channel's chip.)
+- **Frames put in at the end:** `InsertFrame` raises the frame count before
+  it picks the new frame's patterns, and `GetFirstFreePattern` counts that
+  frame's own place, which can still name the pattern of a frame taken out
+  (`RemoveFrame` leaves the last place as it was) or undone, so frames added
+  at the end one after another got patterns in swapped pairs (02, 01, 04,
+  03). (Fixed on this branch: `InsertFrame` picks with `FreePatternForFrame`
+  in `Source/Api/FramePatterns.h`, which leaves that place out.)
 - **No bounds checks on load:** `CDocumentFile::GetBlockInt`, `GetBlockChar`,
   `GetBlock` and `ReadString` don't check the block size, so a corrupt `.ftm`
   can read past the buffer.

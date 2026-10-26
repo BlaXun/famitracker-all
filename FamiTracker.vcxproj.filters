@@ -1386,6 +1386,9 @@
     <ClInclude Include="Source\Api\Music.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Api\FramePatterns.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Api\Sections.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>

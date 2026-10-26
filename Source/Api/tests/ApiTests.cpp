@@ -55,6 +55,7 @@
 #include "../SoundIndex.h"
 #include "../SoundLibrary.h"
 #include "../SongShapes.h"
+#include "../FramePatterns.h"
 #include "../StepNotes.h"
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
@@ -24254,7 +24255,7 @@ void TestListenFdsWarble()
 	const Json Gentle = Parse(Run(Flute, "listen", "{\"format\": \"json\"}").Text);
 	CHECK(ListenCount(Gentle, "wobble", "warble") == 0);
 	const Json *pWide = ListenFindingOf(Gentle, "wobble");
-	CHECK(pWide == 0 || pWide->Get("severity")->String() == "low");
+	CHECK(pWide == 0 || (pWide->Get("severity")->String() == "low" && pWide->Get("fix") == 0 && pWide->Get("advice") != 0));
 	// design_instrument says what its modulator does
 	FakeSong Design = FdsSong();
 	const ToolResult Made = Run(Design, "design_instrument", "{\"name\": \"shiver\", \"chip\": \"FDS\", \"modulation\": \"tremble\"}");
@@ -25548,6 +25549,171 @@ void TestBridgeResources()
 	Endpoint.Stop();
 }
 
+// A track named for a town or a village gets the town, a small place's word in its name or not ("Home village" took the
+// short loop for its "home"); a mood's words and a stage's still come before the town's
+void TestShapeTownWords()
+{
+	const char *const TOWNS[] = { "Home village", "Village", "Harbor", "Market square", "Port of call", "City streets",
+		"Small town", "Village shop", "Harbour" };
+	for (size_t i = 0; i < sizeof(TOWNS) / sizeof(TOWNS[0]); ++i) {
+		const SongShape *pNamed = FindSongShape(TOWNS[i]);
+		Check(pNamed != 0 && pNamed->Id == "town" && ShapeForKind("", TOWNS[i]).Id == "town", TOWNS[i], __LINE__);
+	}
+	CHECK_EQ(ShapeForKind("", "Home").Id, std::string("small"));		// a small place's words alone keep the short loop
+	CHECK_EQ(ShapeForKind("", "Cozy room").Id, std::string("small"));
+	CHECK_EQ(ShapeForKind("", "Shop").Id, std::string("small"));
+	CHECK_EQ(FindSongShape("Night village")->Id, std::string("night"));
+	CHECK_EQ(FindSongShape("Harbor stage")->Id, std::string("stage"));
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Home village";
+	const WhatNextAnswer A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(A.Tool == "song_shape" && TextOf(&A.Arguments, "shape") == "town", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "a town of 40 bars");
+}
+
+// what_next's save step on a song without a file: a client of the connection (Caller::Client), which can't use File >
+// Save As, gets save_song with a name, which saves the song into the Songs folder; FamiTracker's own panels still ask the
+// user to save it
+void TestWhatNextSavesForClient()
+{
+	const std::string Asked = "{\"skip\": [\"tempo\", \"key\", \"shape\", \"lead\", \"chords\", \"sections\", \"melody\", "
+		"\"form\", \"drums\", \"second_line\", \"variation\", \"break\", \"intro\", \"loop\", \"tips\", \"echo\", \"polish\", "
+		"\"mix\", \"seam\"]}";
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.FileName.clear();
+	Song.Info.TrackName = Song.Tracks[0].Name = "Harbor town";
+	WhatNextAnswer A = AskWhatNext(Song, Asked);
+	Check(A.AskUser && Contains(A.Text, "File > Save As"), A.Text.c_str(), __LINE__);
+	Caller Client;
+	Client.Client = true;
+	ToolSet Tools(Song);
+	A = ReadWhatNext(Tools.Call("what_next", Parse(Asked), Client).Text);
+	Check(A.Tool == "save_song" && WriteJson(A.Arguments) == "{\"name\":\"Harbor town\"}", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "FamiTracker's Songs folder");
+	CHECK_LACKS(A.Text, "Save As");
+	CHECK(Tools.UnknownArguments(A.Tool, A.Arguments).empty());
+	CHECK(!Tools.Call(A.Tool, A.Arguments, Client).IsError && Song.Info.FileName == "Harbor town.ftm");
+	A = ReadWhatNext(Tools.Call("what_next", Parse(Asked), Client).Text);
+	Check(A.Tool == "export_for_game", A.Text.c_str(), __LINE__);
+}
+
+// listen's low findings are details that may be meant (a slow vibrato a sound was given on purpose, as 42's flute): no
+// fix call, only what to hear with the user and what would change it if they'd like it gone; a medium one keeps its call
+// (TestListenTool's deep vibrato)
+void TestListenLowAsAdvice()
+{
+	// A vibrato a little too wide: 465 swings the line's notes 49-84 cents either way (C-4 to A-4), its notes past the 60 that
+	// sound out of tune but under the 90 that make it worth a listen: low
+	const int Depth = 5;
+	CHECK(ListenVibratoCents("2A03", KIND_PULSE, 52, Depth, 0, false) > 60.0 && ListenVibratoCents("2A03", KIND_PULSE, 57, Depth, 0,
+		false) < 90.0);
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.ChipPitches = true;
+	PutHeldLine(Song, 0, 2);
+	for (int b = 0; b < 8; ++b) {
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Effect[0] = EFF_VIBRATO;
+		Song.Rows[0][static_cast<size_t>(b * 16 + 4)].Param[0] = static_cast<unsigned char>(0x60 | Depth);
+	}
+	const Json Out = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pWide = ListenFindingOf(Out, "wobble", "vibrato");
+	Check(pWide != 0 && pWide->Get("severity")->String() == "low", WriteJson(Out).c_str(), __LINE__);
+	if (pWide != 0) {
+		CHECK(pWide->Get("fix") == 0);
+		const std::string Advice = pWide->Get("advice") != 0 ? pWide->Get("advice")->String() : std::string();
+		CHECK_HAS(Advice, "A detail, and it may be meant: play bars ");
+		CHECK_HAS(Advice, " with the user, ask whether they hear it, and change nothing unless they'd like it gone.");
+		CHECK_HAS(Advice, "If they would, the tools can change it: add_vibrato puts a gentle vibrato");
+		CHECK_LACKS(pWide->Get("message")->String(), "Fix:");
+	}
+	const std::string Text = Run(Song, "listen", "{}").Text;
+	CHECK_HAS(Text, "severity low.) A detail, and it may be meant");
+	CHECK_LACKS(Text, "Fix: add_vibrato");
+	CHECK_HAS(Run(Song, "listen", "{\"format\": \"short\"}").Text, "A detail: hear it with the user before changing it.");
+}
+
+// add_echo from an FDS lead whose notes set its modulator (Hxx, Ixx and Jxx at notes' starts, Hxx inside one) onto other
+// chips' channels: each echo keeps only the effects its channel plays (an N163 echo got the FDS's modulator before
+// CarriesEffect; on a pulse H and I are the sweep), and the vibrato every channel plays comes along
+void TestEchoKeepsItsChipsEffects()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"N163\", \"FDS\"], \"n163_channels\": 4, \"confirm\": true}").IsError);
+	int Fds = -1, Namco = -1;
+	for (size_t c = 0; c < Song.Info.Channels.size(); ++c) {
+		if (Song.Info.Channels[c].Chip == "FDS" && Fds < 0)
+			Fds = static_cast<int>(c);
+		if (Song.Info.Channels[c].Chip == "N163" && Namco < 0)
+			Namco = static_cast<int>(c);
+	}
+	Check(Fds >= 0 && Namco >= 0, "an FDS and an N163 channel", __LINE__);
+	if (Fds < 0 || Namco < 0)
+		return;
+	static const char *const LINE[] = { "C-5", "E-5", "G-5", "E-5" };
+	for (int n = 0; n < 4; ++n)
+		Song.Put(Fds, n * 8, LINE[n], NO_INSTRUMENT, 15);
+	Song.End(Fds, 32, NOTE_RELEASE);
+	static const int EFFECTS[][3] = { { 0, EFF_FDS_MOD_DEPTH, 0x05 }, { 8, EFF_FDS_MOD_SPEED_HI, 0x01 },
+		{ 16, EFF_FDS_MOD_SPEED_LO, 0x80 }, { 20, EFF_FDS_MOD_DEPTH, 0x10 }, { 24, EFF_VIBRATO, 0x42 } };
+	for (const auto &E : EFFECTS) {
+		Song.Rows[static_cast<size_t>(Fds)][static_cast<size_t>(E[0])].Effect[0] = static_cast<unsigned char>(E[1]);
+		Song.Rows[static_cast<size_t>(Fds)][static_cast<size_t>(E[0])].Param[0] = static_cast<unsigned char>(E[2]);
+	}
+	const struct { int Channel; const char *Instrument; } TARGETS[] = { { Namco, "soft flute" }, { 1, "soft lead" } };
+	for (const auto &T : TARGETS) {
+		const ToolResult Result = Run(Song, "add_echo", "{\"channel\": " + std::to_string(Fds + 1) + ", \"to_channel\": " +
+			std::to_string(T.Channel + 1) + ", \"to_bar\": 2, \"delay_beats\": 1, \"instrument\": \"" + T.Instrument + "\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		const std::vector<Cell> &Rows = Song.Rows[static_cast<size_t>(T.Channel)];
+		bool Foreign = false;
+		int Notes = 0;
+		for (size_t r = 0; r < Rows.size(); ++r) {
+			Notes += Rows[r].HasNote() ? 1 : 0;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k) {
+				const int E = Rows[r].Effect[k];
+				Foreign = Foreign || E == EFF_FDS_MOD_DEPTH || E == EFF_FDS_MOD_SPEED_HI || E == EFF_FDS_MOD_SPEED_LO || E == EFF_SWEEPUP ||
+					E == EFF_SWEEPDOWN || E == EFF_SUNSOFT_ENV_TYPE || E == EFF_SUNSOFT_ENV_HI || E == EFF_SUNSOFT_ENV_LO;
+			}
+		}
+		Check(!Foreign && Notes == 4, T.Instrument, __LINE__);
+		Check(Rows[4].HasNote() && HasEffectAt(Song, T.Channel, 28, EFF_VIBRATO, 0x42), T.Instrument, __LINE__);
+	}
+}
+
+// The patterns of frames put in (FramePatterns.h, as CFamiTrackerDoc::InsertFrame picks them), as song_shape's boss lays out
+// an empty song: twelve frames put in at its end one after another get patterns 01 to 0C in frame order, even where the
+// frame list's places past its end still name the patterns of frames taken out before (a shape undone), which gave them
+// in swapped pairs (frame 1 on 02, frame 2 on 01)
+void TestFramePatternsInOrder()
+{
+	const int PATTERNS = 128;	// FamiTracker's MAX_PATTERN
+	const auto Empty = [](int) { return true; };
+	for (int Undone = 0; Undone < 2; ++Undone) {
+		// One channel's frame list as CPatternData keeps it: every place, the frame count apart
+		std::vector<int> Places(32, 0);
+		for (int f = 1; f <= 12 && Undone == 1; ++f)
+			Places[static_cast<size_t>(f)] = f;
+		int Count = 1;
+		for (int n = 0; n < 12; ++n) {
+			// InsertFrame at the end: the count goes up first, then the new frame's pattern is picked
+			const int Frame = Count++;
+			const std::vector<int> Frames(Places.begin(), Places.begin() + Count);
+			Places[static_cast<size_t>(Frame)] = FreePatternForFrame(Frames, Frame, PATTERNS, Empty);
+		}
+		for (int f = 0; f < Count; ++f)
+			Check(Places[static_cast<size_t>(f)] == f, ("frame " + std::to_string(f) + (Undone == 1 ? ", after an undo" : "")).c_str(),
+				__LINE__);
+	}
+	// Put in between two frames: the frame moved on keeps playing the pattern still named at the new one's place
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 1, 1, 2 }, 1, PATTERNS, Empty) == 3);
+	// A pattern that holds notes stays out, and with none free it's -1
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 0 }, 1, PATTERNS, [](int p) { return p != 1; }) == 2);
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 1, 7 }, 2, 2, Empty) == -1);
+}
+
 int main()
 {
 	TestJson();
@@ -25798,6 +25964,11 @@ int main()
 	TestSaveIntoSongs();
 	TestExportResources();
 	TestBridgeResources();
+	TestShapeTownWords();
+	TestWhatNextSavesForClient();
+	TestListenLowAsAdvice();
+	TestEchoKeepsItsChipsEffects();
+	TestFramePatternsInOrder();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
