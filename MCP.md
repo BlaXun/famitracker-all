@@ -592,7 +592,9 @@ where a tune of the user's own is better), `calls` (more than 1 when calls
 follow it, given in the why), a fix's `severity`, and where it works:
 `from_bar`, `to_bar`, `channel` and `channel_name`; `steps` (every step
 found, with `all`); `done`, `done_count` and `total` (the milestones the
-text counts as "5 of 20 done"); `milestones` (each `name`, `stage`, `done`
+text counts as "5 of 20 done", a count that never falls as the steps are
+made: the melody is the first part's, a later part's melody is the form's,
+and depth waits for the form's repeats); `milestones` (each `name`, `stage`, `done`
 and what's done, `text`); `stages` (each `id`, `name`, and how many of its
 milestones are `done` `of` how many); `notes`; `kind` and `kind_note`; and
 `again`, the arguments to ask again with.

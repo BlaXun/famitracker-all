@@ -1708,6 +1708,14 @@ arpeggios and its own counted) that `RoleOfChord` accounts for in the key
 surprise), and the class's other notes in that bar with it. check_song
 does so only while under `KEY_COLOR_SHARE` of the notes fall outside the key,
 so a key chosen wrong keeps every finding (`TestKeyCheckChords`).
+`what_next`'s count of steps done never falls along a walk (every
+`FollowWhatNext` checks it, `StepsDoneOf`): its melody milestone is the first
+part's (a later part's melody, after its chords, is the form's, which isn't
+done without it), `Depth` leaves the second line and the repeats varied
+undone while the form grows (`Growing`), and a repeat's line of its own is a
+part playing its bars otherwise than in the original, not `PartsBeside`'s
+voices (a draft's triangle doubling the bass was one in A and A2 alike,
+until check_song's fix took it out).
 
 ## What this repository is
 

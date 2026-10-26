@@ -19633,9 +19633,33 @@ void NoteCall(FakeSong &Song, const std::string &Tool)
 	Song.Info.Modified = true;
 }
 
+// The steps done that what_next's answer counts ("Next (lively, 3 of 21 done): ..."); -1 for none (done, or asking)
+int StepsDoneOf(const std::string &Line)
+{
+	const size_t Comma = Line.find(", ");
+	int Done = -1, Of = -1;
+	if (Line.compare(0, 6, "Next (") != 0 || Comma == std::string::npos || std::sscanf(Line.c_str() + Comma + 2, "%d of %d done)",
+		&Done, &Of) != 2)
+		return -1;
+	return Done;
+}
+
+// What an answer says is done and left, for a check's message
+std::string DoneAndLeft(const std::string &Text)
+{
+	std::string Out;
+	for (const char *Head : { "\nDone: ", "\nLeft: " }) {
+		const size_t At = Text.find(Head);
+		if (At != std::string::npos)
+			Out += Text.substr(At, Text.find('\n', At + 1) - At);
+	}
+	return Out;
+}
+
 // A small model following what_next on a song: ask, make the call it gives as given, ask again, until it's done (or asks
 // for the user, or gives StopAt's tool, which is left uncalled). Every answer must be a call that works (on the small set,
-// with its tools), and every answer must move on from the ones before. The calls made, a line each
+// with its tools), and every answer must move on from the ones before, its count of steps done never falling. The calls
+// made, a line each
 std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked, int Most, bool &Finished, int Line,
 	bool Core = false, const char *StopAt = 0)
 {
@@ -19644,6 +19668,8 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 	Who.Core = Core;
 	std::vector<std::string> Made;
 	std::set<std::string> Seen;
+	int DoneBefore = -1;
+	std::string Before;
 	const bool Show = !Environment("WHAT_NEXT_SHOW").empty();	// to see each step
 	Finished = false;
 	for (int i = 0; i < Most; ++i) {
@@ -19654,6 +19680,13 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		const WhatNextAnswer N = ReadWhatNext(Next.Text);
 		if (Show)
 			std::printf("--- %s\n", Next.Text.c_str());
+		const int DoneNow = StepsDoneOf(N.Line);
+		Check(DoneNow < 0 || DoneNow >= DoneBefore, (Asked + ": the steps done fall, after " + (Made.empty() ? std::string("none") :
+			Made.back()) + "\nbefore:" + DoneAndLeft(Before) + "\nnow:" + DoneAndLeft(Next.Text)).c_str(), Line);
+		if (DoneNow >= 0) {
+			DoneBefore = DoneNow;
+			Before = Next.Text;
+		}
 		if (N.Done) {
 			Finished = true;
 			break;

@@ -23281,7 +23281,7 @@ std::string ShortFinding(Session &S, const CheckFinding &F)
 }
 
 // check_song's key check leaves a borrowed chord's notes out while under this share of the notes falls outside the key:
-// the soundtrack's lively stage with a bVI, a bVII and an A7 had 3% of its notes outside F major, a song in C checked in
+// the soundtrack's lively stage with a bVI, a bVII and an A7 had 4% of its notes outside F major, a song in C checked in
 // E major half of them
 const double KEY_COLOR_SHARE = 0.25;
 
@@ -26642,26 +26642,34 @@ void WhatNext::Parts()
 	// ("sections" alone when none is named: skipped, or no part to name)
 	if (!Milestone("sections", !Unnamed || !Wanted("sections"), Names.empty() ? std::string() : "sections " + Names))
 		NameSections();
-	// The melody in every part of the body (a song with no part named yet: a melody at all)
+	// The melody in every part of the body (a song with no part named yet: a melody at all). The milestone is the first
+	// part's: a part the form grows later gets its melody after its chords as a step of the form, which isn't done without it
+	// (were the milestone every part's, the count of steps done would fall as each new part's chords come)
 	int BodyBars = 0;
 	const int Body = BodyParts(&BodyBars);
-	bool TuneMissing = Body == 0 && !m_HasMelody;
+	bool TuneMissing = Body == 0 && !m_HasMelody, FirstMissing = TuneMissing, First = true;
 	for (size_t i = 0; i < m_Form.size() && !TuneMissing; ++i) {
 		const FormPart &P = m_Form[i];
-		if (P.Named && !P.Free && !P.Empty)
-			for (int Bar = P.FirstBar; Bar <= P.LastBar && !TuneMissing; Bar += 2)
-				TuneMissing = !m_HasMelody || !NoteStartsIn(S, m_Melody, S.Time.BarStart(Bar),
-					std::min(S.Time.BarEnd(std::min(P.LastBar, Bar + 1)), S.Time.TotalRows()));
+		if (!P.Named || P.Free || P.Empty)
+			continue;
+		for (int Bar = P.FirstBar; Bar <= P.LastBar && !TuneMissing; Bar += 2)
+			TuneMissing = !m_HasMelody || !NoteStartsIn(S, m_Melody, S.Time.BarStart(Bar),
+				std::min(S.Time.BarEnd(std::min(P.LastBar, Bar + 1)), S.Time.TotalRows()));
+		if (First)
+			FirstMissing = TuneMissing;
+		First = false;
 	}
-	if (!Milestone("melody", !TuneMissing || !Wanted("melody"), "the melody"))
+	Milestone("melody", !FirstMissing || !Wanted("melody"), "the melody");
+	if (TuneMissing && Wanted("melody"))
 		MelodyStep();
 	// (a shape laid out, song_shape, is the form once each of its parts has its music)
 	bool ShapeFull = MatchSongShape(S.Song.Sections, S.Song.TrackName, BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate,
 		S.Time.RowsPerBeat)) != 0;
 	for (size_t i = 0; i < m_Form.size() && ShapeFull; ++i)
 		ShapeFull = !m_Form[i].Named || m_Form[i].Free || !m_Form[i].Empty;
-	if (!Milestone("form", Body >= 4 || BodyBars >= 32 || ShapeFull || !Wanted("form"), Format("the form (%s, %s)", Plural(Body, "part",
-		"parts").c_str(), Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing && !Unnamed)
+	if (!Milestone("form", ((Body >= 4 || BodyBars >= 32 || ShapeFull) && (!TuneMissing || !Wanted("melody"))) || !Wanted("form"),
+		Format("the form (%s, %s)", Plural(Body, "part", "parts").c_str(), Plural(BodyBars, "bar", "bars").c_str())) && !TuneMissing &&
+		!Unnamed)
 		GrowForm();
 	// Drums where the body plays (not in an intro or a break), unless the kind wants none
 	if (!Drums)
@@ -26719,11 +26727,15 @@ void WhatNext::Depth()
 			m_Unmet.insert(LATER[i]);
 		return;
 	}
+	// While the form grows, a part to put a second line in or a repeat to vary may come yet: neither is done for want of one
+	// (done then and left once the part came, the count of steps done fell)
+	const bool Growing = m_Unmet.count("form") > 0;
 	// A second line where the melody comes back (the repeat), else in the B part: a harmony, a third under the melody in
 	// the key (add_harmony keeps it off semitones against the other parts; a counter-melody of its own moves where the
 	// chords' notes are and rubs against them more often)
 	const int Target = FirstRepeat >= 0 ? FirstRepeat : B;
-	if (!Milestone("second line", !m_Parts.Voices.empty() || Target < 0 || !Wanted("second_line"), "a second line")) {
+	if (!Milestone("second line", !m_Parts.Voices.empty() || (Target < 0 && !Growing) || !Wanted("second_line"), "a second line") &&
+		Target >= 0) {
 		const FormPart &P = m_Form[static_cast<size_t>(Target)];
 		const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
 		const int Channel = FreeChannel(First, End, m_Melody, true);
@@ -26744,19 +26756,30 @@ void WhatNext::Depth()
 	}
 	// Each repeat different from its original: one that plays the original's melody note for note, without a line of its own
 	// there, gets a variation
-	bool Varied = true;
+	bool Varied = true, Repeats = false;
 	for (size_t i = 0; i < m_Form.size(); ++i) {
 		const FormPart &P = m_Form[i];
 		if (!P.Named || P.Free || P.Empty || P.Original < 0)
 			continue;
+		Repeats = true;
 		const FormPart &O = m_Form[static_cast<size_t>(P.Original)];
 		const int Length = std::min(P.LastBar - P.FirstBar, O.LastBar - O.FirstBar);
-		bool Same = true;
-		for (int b = 0; b <= Length && Same; ++b)
-			Same = BarPrint(S.Notes(m_Melody), S.Time.BarStart(P.FirstBar + b), S.Time.BarEnd(P.FirstBar + b)) ==
-				BarPrint(S.Notes(m_Melody), S.Time.BarStart(O.FirstBar + b), S.Time.BarEnd(O.FirstBar + b));
-		const NextParts Here = PartsBeside(S, m_Melody, S.Time.BarStart(P.FirstBar), std::min(S.Time.BarEnd(P.LastBar), Total));
-		if (!Same || !Here.Voices.empty())
+		auto Alike = [&](int Channel) {
+			bool Same = true;
+			for (int b = 0; b <= Length && Same; ++b)
+				Same = BarPrint(S.Notes(Channel), S.Time.BarStart(P.FirstBar + b), S.Time.BarEnd(P.FirstBar + b)) ==
+					BarPrint(S.Notes(Channel), S.Time.BarStart(O.FirstBar + b), S.Time.BarEnd(O.FirstBar + b));
+			return Same;
+		};
+		// A line of its own there: a part beside the melody playing otherwise than in the original (a harmony or a line only
+		// the repeat has). Not PartsBeside's voices: its roles move as the parts around change (a draft's triangle doubling the
+		// bass was a voice in a repeat and its original alike, so the repeat was varied until check_song's fix took the
+		// doubling out, and the count of steps done fell)
+		const bool Same = Alike(m_Melody);
+		bool Own = false;
+		for (int c = 0; c < S.ChannelCount() && Same && !Own; ++c)
+			Own = c != m_Melody && IsMelodic(S.Channel(c)) && !Alike(c);
+		if (!Same || Own)
 			continue;
 		Varied = false;
 		if (!Looking() || !Wanted("variation"))
@@ -26783,7 +26806,7 @@ void WhatNext::Depth()
 		}
 		break;
 	}
-	Milestone("repeats varied", Varied || !Wanted("variation"), "the repeats varied");
+	Milestone("repeats varied", (Varied && (Repeats || !Growing)) || !Wanted("variation"), "the repeats varied");
 
 	// A break without the melody and the drums before the last part of the body, once the body has three parts
 	int Bars = 0;
