@@ -743,7 +743,9 @@ eighth is a third of a beat wherever a beat has 3, 6, 9 or 12 rows, as
 fewer steps is refused, every such bar named with its count, and nothing is
 written. A pitch may carry its volume, `B4v12` (0-15), which the notes after
 it keep; on the noise channel the drums go by name (`kick . hihat . snare .
-open hihat .`). A line that rests before most of its bar lines gets a note
+open hihat .`), a name of two words one step (`open hihat`, `low tom`,
+`snare drum`) and hits in a row each a step of their own (`hihat hihat`).
+A line that rests before most of its bar lines gets a note
 in the reply about phrases.
 
 `read_notes` with `format` `steps` gives a part back the same way, a bar to

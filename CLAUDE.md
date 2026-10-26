@@ -1195,7 +1195,10 @@ noise and DPCM channels `instrument` can be an object of kinds
 (`DrumSoundsArg`, `DrumHitInstrument`; one instrument for a noise line leaves
 the open hi-hats their own unless it rings as long, `RingsLikeOpenHat`); a
 note running past the song's end ends with it unless notes start past it or
-`to_bar` asks for more, and growth is said (`GrowthText`). `polish`'s
+`to_bar` asks for more, and growth is said (`GrowthText`). A line of steps
+joins two words into one drum only where they make one's name (`DrumPair` in
+`StepNotes.cpp`), so hits in a row ("hihat hihat") stay steps of their own
+(`TestDrumRuns` in `step_notes_tests`). `polish`'s
 `Accents` returns -2 for a part accented already (each bar's notes the steps
 under its loudest), so polishing again changes nothing; `StaccatoBass` cuts
 only where `PlaysBassPart` hears the bass (section by section, `PolishSpans`)

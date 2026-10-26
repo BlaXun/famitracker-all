@@ -11539,7 +11539,7 @@ std::string PolishTool(Session &S, const Json &Args)
 	int Melody = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
 
 	Draft D(S);
-	std::vector<std::string> Done, Warnings, Accented;	// Accented: the parts that had their accents already
+	std::vector<std::string> Done, Warnings, Accented;	// Accented: what touches left as it was on purpose, said if nothing changed
 	if (What.count("accents")) {
 		std::string List, Fm;
 		for (size_t i = 0; i < Channels.size(); ++i) {
@@ -11641,12 +11641,16 @@ std::string PolishTool(Session &S, const Json &Args)
 			if (Count > 0)
 				Done.push_back(Format("%s on %s cut short after half a beat (staccato)", Plural(Count, "bass note", "bass notes").c_str(),
 					S.Channel(c).FullName().c_str()));
-			if (Rested > 0)
-				Warnings.push_back(Format("%s on %s in bars without the melody (a break, an intro) kept their length: the bass holds "
+			if (Rested > 0) {
+				Accented.push_back(Format("%s on %s in bars without the melody (a break, an intro) kept their length: the bass holds "
 					"those bars up.", Plural(Rested, "note", "notes").c_str(), S.Channel(c).FullName().c_str()));
-			if (Line > 0)
-				Warnings.push_back(S.Channel(c).FullName() + (Count > 0 ? " plays a line rather than the bass in some of those bars" :
+				Warnings.push_back(Accented.back());
+			}
+			if (Line > 0) {
+				Accented.push_back(S.Channel(c).FullName() + (Count > 0 ? " plays a line rather than the bass in some of those bars" :
 					" plays a line there rather than the bass") + ", so its notes there kept their length (staccato is for the bass).");
+				Warnings.push_back(Accented.back());
+			}
 		}
 	}
 	if (What.count("separate")) {
@@ -11710,10 +11714,12 @@ std::string PolishTool(Session &S, const Json &Args)
 		std::string Already;
 		for (size_t i = 0; i < Accented.size(); ++i)
 			Already += " " + Accented[i];
+		if (!Already.empty())	// polished before: what it left as it was, and why
+			throw Problem("There was nothing to polish there:" + Already + " Nothing else changes either (long melody notes for "
+				"vibrato, repeated triangle notes, notes that click).");
 		throw Problem(Calm ? "There was nothing to polish there: no long melody notes for vibrato (sounding when it would come "
-			"in, without a vibrato of their own), no repeated triangle notes and no notes that click." + Already : "There was nothing to "
-			"polish there: no notes for accents, no long melody notes for vibrato, no repeated triangle notes and no notes that click." +
-			Already);
+			"in, without a vibrato of their own), no repeated triangle notes and no notes that click." : "There was nothing to "
+			"polish there: no notes for accents, no long melody notes for vibrato, no repeated triangle notes and no notes that click.");
 	}
 	std::string Summary;
 	for (size_t i = 0; i < Done.size(); ++i)
@@ -26964,10 +26970,15 @@ void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResul
 		m_FailedCall.clear();
 		return;
 	}
+	// The calls that change the song's notes, its sounds or its form (not files, studies or the track worked on)
+	static const char *const ASIDE[] = { "export_for_game", "save_song", "soundtrack_notes", "study_nsf", "study_module",
+		"references", "send_file", "import_nsf", "select_track", "keep_version" };
 	bool ReadOnly = false;
 	for (size_t i = 0; i < m_Tools.size(); ++i)
 		if (m_Tools[i].Name == Name)
 			ReadOnly = m_Tools[i].ReadOnly;
+	for (size_t i = 0; i < sizeof(ASIDE) / sizeof(ASIDE[0]); ++i)
+		ReadOnly = ReadOnly || Name == ASIDE[i];
 	if (UndoAfter == UndoBefore) {
 		if (Result.IsError && !ReadOnly)
 			m_FailedCall = Name;

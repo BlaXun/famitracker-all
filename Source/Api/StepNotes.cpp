@@ -29,13 +29,29 @@ namespace ftapi {
 
 namespace {
 
-// The second word of a drum's name ("open hihat", "low tom", "kick drum"): joined to the word before it
-bool SecondDrumWord(const std::string &Word)
+std::string LowerWord(const std::string &Word)
 {
 	std::string Lower;
 	for (size_t i = 0; i < Word.size(); ++i)
 		Lower += static_cast<char>(std::tolower(static_cast<unsigned char>(Word[i])));
-	return Lower == "drum" || Lower == "hihat" || Lower == "hi-hat" || Lower == "hat" || Lower == "cymbal" || Lower == "tom";
+	return Lower;
+}
+
+// Two words that make one drum's name ("open hihat", "low tom", "kick drum"), joined as one step. Only those pairs: hits
+// in a row stay steps of their own ("hihat hihat", "kick hihat"), which joining every word before a second word of a
+// name ("hihat") ran together
+bool DrumPair(const std::string &First, const std::string &Second)
+{
+	const std::string A = LowerWord(First), B = LowerWord(Second);
+	if (B == "drum")
+		return A == "bass" || A == "kick" || A == "snare";
+	if (B == "hihat" || B == "hi-hat" || B == "hat")
+		return A == "open" || A == "closed";
+	if (B == "cymbal")
+		return A == "crash";
+	if (B == "tom")
+		return A == "high" || A == "hi" || A == "mid" || A == "middle" || A == "low" || A == "floor";
+	return false;
 }
 
 bool AllOf(const std::string &Word, char c)
@@ -105,7 +121,7 @@ std::vector<Piece> Pieces(const std::string &Text)
 	for (size_t i = 0; i < Out.size(); ++i) {
 		if (Out[i].Kind == Piece::WORD && i + 1 < Out.size() && Out[i + 1].Kind == Piece::WORD && !AllOf(Out[i].Word, '-') &&
 			!AllOf(Out[i].Word, '.') && Out[i].Word.back() != ':' &&
-			(SecondDrumWord(Out[i + 1].Word) || ((Out[i].Word == "noise" || Out[i].Word == "Noise") && AllDigits(Out[i + 1].Word)))) {
+			(DrumPair(Out[i].Word, Out[i + 1].Word) || ((Out[i].Word == "noise" || Out[i].Word == "Noise") && AllDigits(Out[i + 1].Word)))) {
 			Piece P = Out[i];
 			P.Word += " " + Out[i + 1].Word;
 			Joined.push_back(P);
