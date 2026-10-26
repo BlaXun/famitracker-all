@@ -2277,7 +2277,7 @@ public:
 			m_pMain->UpdateTrackBox();
 			static_cast<CFrameWnd*>(m_pMain)->OnUpdateFrameTitle(TRUE);	// the caption shows the track's name
 		}
-		pDoc->UpdateAllViews(NULL, UPDATE_PROPERTIES);
+		// Not UPDATE_PROPERTIES, whose view update resets the undo history (and the cursor): a name changes no notes
 		return true;
 	}
 

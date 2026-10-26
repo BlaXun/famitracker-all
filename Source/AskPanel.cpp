@@ -226,15 +226,18 @@ ftapi::AssistantSettings ReadSettings()
 	return ftapi::SaneAssistantSettings(S);
 }
 
-void WriteSettings(const ftapi::AssistantSettings &S)
+// False when there's a key Windows couldn't keep encrypted: it isn't saved (never as plain text)
+bool WriteSettings(const ftapi::AssistantSettings &S)
 {
+	const std::string Kept = ProtectKey(S.Key);
 	theApp.WriteProfileString(SETTINGS, _T("Address"), FromUtf8(S.Endpoint));
 	theApp.WriteProfileString(SETTINGS, _T("Model"), FromUtf8(S.Model));
-	theApp.WriteProfileString(SETTINGS, _T("Key"), CString(ProtectKey(S.Key).c_str()));
+	theApp.WriteProfileString(SETTINGS, _T("Key"), CString(Kept.c_str()));
 	theApp.WriteProfileInt(SETTINGS, _T("Small set"), S.SmallSet ? 1 : 0);
 	theApp.WriteProfileInt(SETTINGS, _T("Ask first rounds"), S.AskRounds);
 	theApp.WriteProfileInt(SETTINGS, _T("Let it work rounds"), S.WorkRounds);
 	theApp.WriteProfileInt(SETTINGS, _T("Context"), S.ContextTokens);
+	return S.Key.empty() || !Kept.empty();
 }
 
 // ---- Jobs: the model's server is asked on threads of their own, which tell the window by messages
@@ -392,7 +395,8 @@ std::string TestConnection(ask_job_t &Job)
 	const int Context = FetchContext(J);
 	if (Context > 0) {
 		Report += "\r\nIt reads " + Number(Context) + " tokens at once (its context).";
-		const long long All = static_cast<long long>(J.ToolsBytes[0] / 3.6), Small = static_cast<long long>(J.ToolsBytes[1] / 3.6);
+		const long long All = static_cast<long long>(double(J.ToolsBytes[0]) / ftapi::ASSISTANT_BYTES_PER_TOKEN),
+			Small = static_cast<long long>(double(J.ToolsBytes[1]) / ftapi::ASSISTANT_BYTES_PER_TOKEN);
 		if (All > Context * 3 / 4)
 			Report += " All of FamiTracker's tools take about " + Number(All) + " of them: pick the small set (about " + Number(Small) +
 				"), or start the server with a bigger context (-c 65536 or more).";
@@ -549,6 +553,10 @@ BOOL CAskSettingsDlg::OnInitDialog()
 	SetDlgItemInt(IDC_ASK_WORKROUNDS, static_cast<UINT>(m_Settings.WorkRounds), FALSE);
 	SetDlgItemInt(IDC_ASK_CONTEXT, static_cast<UINT>(m_Settings.ContextTokens), FALSE);
 	SetDlgItemText(IDC_ASK_RESULT, _T(""));
+	// Set here: a dialog's text in the resource stops at 256 characters
+	SetDlgItemText(IDC_ASK_HELP, _T("For llama.cpp, start llama-server with --jinja (so the model can use the tools) and --host 0.0.0.0 (to ")
+		_T("reach it from this PC), like: llama-server -m model.gguf --jinja -c 65536 --host 0.0.0.0 --port 8080. Models that use ")
+		_T("tools well: Qwen3 and later, gpt-oss, GLM 4.5 and later, Mistral Small 3.2."));
 	return TRUE;
 }
 
@@ -678,6 +686,7 @@ protected:
 	afx_msg void OnMouseLeave();
 	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
 	afx_msg void OnContextMenu(CWnd *pWnd, CPoint point);
+	afx_msg void OnRButtonUp(UINT nFlags, CPoint point);
 	afx_msg UINT OnGetDlgCode();
 	DECLARE_MESSAGE_MAP()
 
@@ -1256,7 +1265,8 @@ struct CAskPanelWnd::Impl {
 			pTalk->Chat.Note("Took back all " + Number(static_cast<long long>(Made)) + (Made == 1 ? " change" : " changes") +
 				" of the run (Edit > Redo brings them back one at a time).");
 		else if (Undone == 0)
-			pTalk->Chat.Note("Nothing was taken back: the song was changed after the run. Use Edit > Undo to go back a step at a time.");
+			pTalk->Chat.Note("Nothing was taken back: the run's changes aren't the last in Edit > Undo's history any more (the song "
+				"was changed since, or the history was cleared). Use Edit > Undo to go back a step at a time.");
 		else
 			pTalk->Chat.Note("Took back " + Number(static_cast<long long>(Undone)) + " of the run's " + Number(static_cast<long long>(Made)) +
 				" changes; the song was changed after the others. Use Edit > Undo for the rest.");
@@ -1307,8 +1317,13 @@ struct CAskPanelWnd::Impl {
 		CAskSettingsDlg Dialog(pWnd, Settings, All, Small);
 		if (Dialog.DoModal() != IDOK)
 			return;
-		WriteSettings(Dialog.Settings());
+		const bool KeyKept = WriteSettings(Dialog.Settings());
 		ApplySettings(Dialog.Settings());
+		if (!KeyKept && pTalk != NULL) {
+			pTalk->Chat.Note("Your key is used until FamiTracker closes: Windows couldn't keep it encrypted (DPAPI), and it's "
+				"never saved as plain text.");
+			Changed();
+		}
 	}
 
 	// ---- Showing it
@@ -1377,6 +1392,20 @@ struct CAskPanelWnd::Impl {
 			const int Room = std::max(SX(40), Width - Indent);
 			int x = 0;
 			bool Empty = true;
+			// The words of a line in one style go out as one piece
+			std::wstring Piece;
+			int PieceX = 0, PieceY = y, PieceFont = F_TEXT;
+			COLORREF PieceInk = Colour;
+			std::string PieceLink;
+			const auto Flush = [&]() {
+				if (Piece.empty())
+					return;
+				const CRect Rect(Left + Indent + PieceX, PieceY, Left + Indent + x, PieceY + Line);
+				Put(Rect, Piece, PieceFont, PieceInk);
+				if (!PieceLink.empty())
+					AddHit(Rect, ACT_LINK, PieceLink);
+				Piece.clear();
+			};
 			for (size_t r = 0; r < P.Runs.size(); ++r) {
 				const ftapi::AssistantRun &R = P.Runs[r];
 				const bool Linked = !R.Link.empty(), Bold = R.Bold || P.Heading;
@@ -1385,11 +1414,16 @@ struct CAskPanelWnd::Impl {
 				const COLORREF Ink = Linked ? LINK_COLOUR : Colour;
 				const std::wstring W = Wide(R.Text);
 				const int Space = Measure(dc, Font, L" ");
+				if (!Piece.empty() && (PieceFont != Font || PieceInk != Ink || PieceLink != R.Link))
+					Flush();
 				size_t i = 0;
 				while (i < W.size()) {
 					if (W[i] == L' ' || W[i] == L'\t') {
-						if (!Empty)
+						if (!Empty) {
 							x += Space;
+							if (!Piece.empty())
+								Piece += L' ';
+						}
 						++i;
 						continue;
 					}
@@ -1400,18 +1434,21 @@ struct CAskPanelWnd::Impl {
 					i = j;
 					int w = Measure(dc, Font, Word);
 					if (!Empty && x + w > Room) {
+						Flush();
 						y += Line;
 						x = 0;
 						Empty = true;
 					}
 					// A word wider than the line goes on in pieces
+					if (w > Room && Word.size() > 1)
+						Flush();
 					while (w > Room && Word.size() > 1) {
 						size_t Fit = Word.size() - 1;
 						while (Fit > 1 && Measure(dc, Font, Word.substr(0, Fit)) > Room - x)
 							--Fit;
-						const std::wstring Piece = Word.substr(0, Fit);
-						const CRect Rect(Left + Indent + x, y, Left + Indent + x + Measure(dc, Font, Piece), y + Line);
-						Put(Rect, Piece, Font, Ink);
+						const std::wstring Part = Word.substr(0, Fit);
+						const CRect Rect(Left + Indent + x, y, Left + Indent + x + Measure(dc, Font, Part), y + Line);
+						Put(Rect, Part, Font, Ink);
 						if (Linked)
 							AddHit(Rect, ACT_LINK, R.Link);
 						Word = Word.substr(Fit);
@@ -1419,14 +1456,19 @@ struct CAskPanelWnd::Impl {
 						y += Line;
 						x = 0;
 					}
-					const CRect Rect(Left + Indent + x, y, Left + Indent + x + w, y + Line);
-					Put(Rect, Word, Font, Ink);
-					if (Linked)
-						AddHit(Rect, ACT_LINK, R.Link);
+					if (Piece.empty()) {
+						PieceX = x;
+						PieceY = y;
+						PieceFont = Font;
+						PieceInk = Ink;
+						PieceLink = R.Link;
+					}
+					Piece += Word;
 					x += w;
 					Empty = false;
 				}
 			}
+			Flush();
 			y += Line;
 		}
 	}
@@ -1497,11 +1539,8 @@ struct CAskPanelWnd::Impl {
 		P[0].Runs.push_back(Rest);
 		const size_t First = Texts.size();
 		Flow(dc, P, Left, Width, y, TEXT_DARK, true);
-		size_t MarkWords = 1;
-		for (const char *p = pMark; *p != 0; ++p)
-			MarkWords += *p == ' ' ? 1 : 0;
-		for (size_t t = First; t < Texts.size() && t < First + MarkWords; ++t)
-			Texts[t].Colour = MarkColour;
+		if (First < Texts.size())
+			Texts[First].Colour = MarkColour;		// the mark: bold, a piece of its own
 	}
 
 	// Everything laid out for Width
@@ -1842,6 +1881,7 @@ BEGIN_MESSAGE_MAP(CAskTalkWnd, CWnd)
 	ON_WM_MOUSELEAVE()
 	ON_WM_SETCURSOR()
 	ON_WM_CONTEXTMENU()
+	ON_WM_RBUTTONUP()
 	ON_WM_GETDLGCODE()
 END_MESSAGE_MAP()
 
@@ -2019,6 +2059,15 @@ void CAskTalkWnd::OnContextMenu(CWnd *pWnd, CPoint point)
 	m_pImpl->Menu(point);
 }
 
+void CAskTalkWnd::OnRButtonUp(UINT nFlags, CPoint point)
+{
+	// The menu here, not through WM_CONTEXTMENU (which Wine doesn't send a child window for a right-click)
+	if (m_pImpl == NULL)
+		return;
+	ClientToScreen(&point);
+	m_pImpl->Menu(point);
+}
+
 UINT CAskTalkWnd::OnGetDlgCode()
 {
 	return DLGC_WANTARROWS;
@@ -2033,6 +2082,7 @@ BEGIN_MESSAGE_MAP(CAskPanelWnd, CWnd)
 	ON_WM_TIMER()
 	ON_WM_DESTROY()
 	ON_WM_CONTEXTMENU()
+	ON_WM_RBUTTONUP()
 	ON_BN_CLICKED(IDC_ASK_SEND, OnSend)
 	ON_BN_CLICKED(IDC_ASK_STOP, OnStop)
 	ON_BN_CLICKED(IDC_ASK_NEW, OnNewQuestion)
@@ -2160,26 +2210,38 @@ BOOL CAskPanelWnd::PreTranslateMessage(MSG *pMsg)
 			return TRUE;
 		}
 	}
-	if (pMsg->hwnd == I.Talk.GetSafeHwnd() && Down) {
-		switch (Code) {
-		case VK_UP: I.ScrollTo(I.Scroll - SY(LINE)); return TRUE;
-		case VK_DOWN: I.ScrollTo(I.Scroll + SY(LINE)); return TRUE;
-		case VK_PRIOR: I.ScrollTo(I.Scroll - SY(LINE) * 8); return TRUE;
-		case VK_NEXT: I.ScrollTo(I.Scroll + SY(LINE) * 8); return TRUE;
-		case VK_HOME: I.ScrollTo(0); return TRUE;
-		case VK_END: I.ScrollTo(I.Content); return TRUE;
-		default:
-			if (Control && Code == 'C') {
-				I.Copy(false);
-				return TRUE;
+	if (pMsg->hwnd == I.Talk.GetSafeHwnd()) {
+		// The conversation scrolls and copies; FamiTracker's shortcuts work there (Ctrl+Z after Do it)
+		if (Down) {
+			switch (Code) {
+			case VK_UP: I.ScrollTo(I.Scroll - SY(LINE)); return TRUE;
+			case VK_DOWN: I.ScrollTo(I.Scroll + SY(LINE)); return TRUE;
+			case VK_PRIOR: I.ScrollTo(I.Scroll - SY(LINE) * 8); return TRUE;
+			case VK_NEXT: I.ScrollTo(I.Scroll + SY(LINE) * 8); return TRUE;
+			case VK_HOME: I.ScrollTo(0); return TRUE;
+			case VK_END: I.ScrollTo(I.Content); return TRUE;
+			default:
+				if (Control && Code == 'C') {
+					I.Copy(false);
+					return TRUE;
+				}
+				break;
 			}
-			break;
 		}
+		return CWnd::PreTranslateMessage(pMsg);
 	}
-	// Straight to the control, past the shortcuts
-	::TranslateMessage(pMsg);
-	::DispatchMessage(pMsg);
-	return TRUE;
+	const bool Typing = pMsg->hwnd == I.QuestionBox.GetSafeHwnd() || pMsg->hwnd == I.ModeBox.GetSafeHwnd() ||
+		::IsChild(I.ModeBox.GetSafeHwnd(), pMsg->hwnd);
+	const bool Pressing = Code == VK_SPACE || Code == VK_RETURN;	// a button's own keys
+	if (!Typing && !Pressing)
+		return CWnd::PreTranslateMessage(pMsg);		// a button has the keys: the shortcuts work
+	if (!Typing || !Control || Code == VK_CONTROL || pMsg->hwnd == I.QuestionBox.GetSafeHwnd()) {
+		// Straight to the control, past the shortcuts (Space is one, and the note keys' letters)
+		::TranslateMessage(pMsg);
+		::DispatchMessage(pMsg);
+		return TRUE;
+	}
+	return CWnd::PreTranslateMessage(pMsg);		// Ctrl with the mode box: the shortcuts
 }
 
 void CAskPanelWnd::OnPaint()
@@ -2248,6 +2310,12 @@ void CAskPanelWnd::OnContextMenu(CWnd *pWnd, CPoint point)
 		point = CPoint(SX(20), SY(20));
 		ClientToScreen(&point);
 	}
+	m_pImpl->Menu(point);
+}
+
+void CAskPanelWnd::OnRButtonUp(UINT nFlags, CPoint point)
+{
+	ClientToScreen(&point);
 	m_pImpl->Menu(point);
 }
 

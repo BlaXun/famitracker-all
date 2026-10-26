@@ -294,7 +294,7 @@ Start `llama-server` with `--jinja`: that's what lets the model call tools
 answers from the song's summary alone, without reading or changing the song.
 Give it room: all of FamiTracker's tools and their instructions are about
 40,000-50,000 tokens, the small set about 25,000, so use `-c 65536` or more
-for all of them (`-c 32768` for the small set). `--host 0.0.0.0` lets this
+for all of them (`-c 49152` or more for the small set). `--host 0.0.0.0` lets this
 PC reach a server on another computer. For example, on the Linux PC:
 
 ```
@@ -321,7 +321,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
   or the small set (`/mcp/core`'s 37, with its short instructions and short
-  replies) for smaller models.
+  replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
   older questions left out, before a conversation would overflow it.

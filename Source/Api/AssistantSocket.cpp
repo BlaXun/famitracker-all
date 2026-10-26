@@ -451,7 +451,8 @@ bool AssistantTakeReply(AssistantChat &Chat, AssistantSetup &Setup, bool SmallSe
 			Setup.SystemPrompt = AssistantSystemPrompt(SmallSet, false);
 			Chat.Note("The server didn't take FamiTracker's tools (it said: " + Said + "). For llama.cpp, start llama-server "
 				"with --jinja (llama-swap: in the model's cmd); with Ollama or LM Studio, pick a model that can use tools. Until "
-				"then your model answers from the song's summary alone, without reading or changing the song.");
+				"then your model answers from the song's summary alone, without reading or changing the song; New question tries the "
+				"tools again.");
 			return true;
 		}
 		Chat.Replied(Reply, true, AssistantHttpProblem(Where, Model, Reply.Status, Said));

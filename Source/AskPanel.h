@@ -60,6 +60,7 @@ protected:
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
 	afx_msg void OnContextMenu(CWnd *pWnd, CPoint point);
+	afx_msg void OnRButtonUp(UINT nFlags, CPoint point);
 	afx_msg void OnSend();
 	afx_msg void OnStop();
 	afx_msg void OnNewQuestion();
