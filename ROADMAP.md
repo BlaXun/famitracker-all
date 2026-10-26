@@ -934,6 +934,21 @@ when ready.
   come: studying `.ftm` modules for the reference library, and moving lush
   chords into another mode (their instruments keep their shapes for now).
 
+- **`feat-listen` (first part done):** the tools hear the song as it
+  sounds. A user heard 38's FDS lead as "weird echoing notes": its
+  modulator, brought in four rows into each note, shook the pitch about a
+  semitone and a half either way 14.5 times a second. Done: the `listen`
+  tool (the mix and each part alone rendered in one pass, then warbles and
+  deep vibratos, notes out of tune, parts beating, clicks, sounds that hold
+  on, notes hardly heard, clipping, jumps in loudness, harsh and muddy
+  stretches, each in plain words with its fix), `add_vibrato`'s `modulator`
+  `off` and depths by cents on every chip, the FDS modulator said in plain
+  words in studies, references and `design_instrument`, and `check_song`'s
+  warble from the notes alone. Still to come: a Listen button in the
+  problems panel whose findings join its list, `what_next`'s listen step
+  and `finish_song` listening after its mix, and the thresholds set on the
+  whole soundtrack.
+
 ## Open questions
 
 - Some recordings "don't sound correct" (maybe background noise). Waiting
