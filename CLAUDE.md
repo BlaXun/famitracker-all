@@ -1588,6 +1588,39 @@ drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
 next to its end) cover them.
 
+First steps (from `feat-first-steps`): Help > Exercises shows the exercises
+in groups (`ExerciseGroups()` in `Exercises.h`: First steps, Next steps and
+Making it your own, a heading with `Later` set and no exercises yet;
+`ExerciseInfo::Group`), its list owner-drawn (`CExercisesDlg::OnDrawItem`:
+bold headings with how many are done, item data `GROUP_ROW` + group for a
+heading, else the exercise's place); the first not done is picked, so a
+newcomer gets First steps' first. Its eleven exercises (`first-note`,
+`high-low`, `long-short`, `steady-beat`, `loud-soft`, `stairs`, `rhythm`,
+`copy-repeat`, `new-sound`, `two-parts`, `tiny-tune`, each one check of
+its id, after `CheckFirstSong` in `Exercises.cpp`) look at Pulse 1 (the
+triangle under it for `two-parts`), pass any reasonable answer, word
+their next step in the piano roll's terms (lanes, beat lines, a note's
+right edge, Select, Instrument > Give the selected notes, Effects >
+Volume) and say what they taught in one sentence; `tiny-tune` leads into
+`home-note`. Their starters (1-4 bars, one part at most, C major chosen,
+written from step parts by a script as Next steps' were) and scripts are
+RCDATA named
+`FIRSTSTEPS_*_SONG` and `_SCRIPT` in `FamiTracker.rc`, without numbers in
+`resource.h` (`FILES` in `ExercisesDlg.cpp` holds the names;
+`ReadBuiltInText` and `OpenBuiltInSong` take a resource's name or
+`MAKEINTRESOURCE`), and `ID_HELP_EXERCISE_FIRST`/`LAST` are 38050-38099.
+The piano roll's Effects menu has Volume (`GROUP_VOLUME`, `FX_VOLUME`:
+`CChannelNotes::SetVolume`, which writes the notes after them their old
+volume as `SetInstrument` does instruments), a quieter note is drawn
+thinner from the top and says its volume when pointed at (`HasVolume`:
+not the triangle or the samples), and an empty song's groove box stays
+out while an exercise's note is open (`ExerciseRunning` in `Tutorial.cpp`).
+The glossary has `length`, `part` (both with Hear it) and `lane`.
+`TestFirstStepsList` and the `Test...Checks` of `exercises_tests`,
+`TestFirstStepsMistakes` beside `TestExerciseStarters` in `ApiTests.cpp`,
+`TestFirstStepsTerms` (`glossary_tests`) and `TestVolume`
+(`noteedit_tests`) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

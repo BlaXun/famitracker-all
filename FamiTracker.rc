@@ -2128,7 +2128,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTI
 CAPTION "Exercises"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Short exercises, each with a song to work on and a note beside it that gives the task. Never made music? Start with First steps: a minute or two each, one thing at a time. When you're done, press Check in the note: it says what's right and what to change next.",IDC_STATIC,7,7,286,34
+    LTEXT           "Short exercises, each with a song to work on and a note beside it that gives the task. Never made music? Start with First steps, a minute or two each. When you're done, press Check in the note: it says what's right and what to change next.",IDC_STATIC,7,7,286,34
     LISTBOX         IDC_EXERCISE_LIST,7,44,286,160,LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
     LTEXT           "",IDC_EXERCISE_ABOUT,7,209,286,28
     LTEXT           "",IDC_EXERCISE_PROGRESS,7,241,286,10
