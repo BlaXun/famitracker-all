@@ -1582,7 +1582,10 @@ where it covers the least of them), then places itself clear of it too
 (`StartExercise`), and `what_next` lays out the shape a track's name asks for
 where it's one of the kind's that loops (`ShapeForKind` with the track's name
 in `SongShapes.cpp`): "A first small song" or a "Shop" gets the short loop of
-14 bars rather than the general recipe's town of 40. `check_exercise`'s list
+14 bars rather than the general recipe's town of 40. A town's words (town,
+village, city, square, market, harbor, port) ask for the town and come before
+a small place's (`PRIORITY`, where the small shape is last: a "Home village"
+is a town; `TestShapeTownWords`). `check_exercise`'s list
 drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestFaintHints` (`pianoroll_ui_tests`), `TestExerciseListPeriods`,
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What

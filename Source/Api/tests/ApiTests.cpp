@@ -25548,6 +25548,29 @@ void TestBridgeResources()
 	Endpoint.Stop();
 }
 
+// A track named for a town or a village gets the town, a small place's word in its name or not ("Home village" took the
+// short loop for its "home"); a mood's words and a stage's still come before the town's
+void TestShapeTownWords()
+{
+	const char *const TOWNS[] = { "Home village", "Village", "Harbor", "Market square", "Port of call", "City streets",
+		"Small town", "Village shop", "Harbour" };
+	for (size_t i = 0; i < sizeof(TOWNS) / sizeof(TOWNS[0]); ++i) {
+		const SongShape *pNamed = FindSongShape(TOWNS[i]);
+		Check(pNamed != 0 && pNamed->Id == "town" && ShapeForKind("", TOWNS[i]).Id == "town", TOWNS[i], __LINE__);
+	}
+	CHECK_EQ(ShapeForKind("", "Home").Id, std::string("small"));		// a small place's words alone keep the short loop
+	CHECK_EQ(ShapeForKind("", "Cozy room").Id, std::string("small"));
+	CHECK_EQ(ShapeForKind("", "Shop").Id, std::string("small"));
+	CHECK_EQ(FindSongShape("Night village")->Id, std::string("night"));
+	CHECK_EQ(FindSongShape("Harbor stage")->Id, std::string("stage"));
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Home village";
+	const WhatNextAnswer A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
+	Check(A.Tool == "song_shape" && TextOf(&A.Arguments, "shape") == "town", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "a town of 40 bars");
+}
+
 int main()
 {
 	TestJson();
@@ -25798,6 +25821,7 @@ int main()
 	TestSaveIntoSongs();
 	TestExportResources();
 	TestBridgeResources();
+	TestShapeTownWords();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

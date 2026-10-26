@@ -530,7 +530,8 @@ is the recipes':
    song its shape (`song_shape`: a lively stage for lively, a calm night for
    calm, a boss fight for action, a town otherwise, or the short loop when
    the track's name asks for one, like "Shop" or Help > Exercises' "A first
-   small song"; see [Song shapes](#song-shapes)), so every part has its
+   small song", while a town's or a village's name keeps the town, "Home
+   village" too; see [Song shapes](#song-shapes)), so every part has its
    place and its job first.
 3. The parts and the form: the lead's sound, an A part's chords and bass,
    its sections named, the melody, A again, a B part on other chords, A
