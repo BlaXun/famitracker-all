@@ -1317,6 +1317,12 @@
     <ClCompile Include="Source\Api\Listen.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Assistant.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Api\AssistantSocket.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Png.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1444,6 +1450,12 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Listen.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Assistant.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\AssistantSocket.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Png.h">
@@ -1638,6 +1650,12 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\WhatNextPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\AskPanel.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\AskPanel.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\BarsPlayer.cpp">

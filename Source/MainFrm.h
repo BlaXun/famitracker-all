@@ -48,6 +48,7 @@ class CPianoRollWnd;
 class CClipsBar;
 class CProblemsBar;
 class CWhatNextBar;
+class CAskBar;
 class CMixerBar;
 class CDrumGridBar;
 struct note_views_t;
@@ -128,6 +129,7 @@ public:
 	void	ShowClipsPanel(bool Show, bool Focus = false);	// beside the pattern editor (ClipsPanel.h)
 	void	ShowProblemsPanel(bool Show);	// along the bottom or the right (ProblemsPanel.h)
 	void	ShowWhatNext(bool Show);		// along the bottom or the right (WhatNextPanel.h)
+	void	ShowAsk(bool Show);				// View > Ask, along the bottom or the right (AskPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
 	// The panels along the bottom, placed by the main window as their WM_SIZEPARENT comes (ArrangeBars): the mixer along
 	// its edge, the problems panel, What next and the drum grid side by side in one row above it, each band as tall as
@@ -256,6 +258,7 @@ private:  // control bar embedded members
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
 	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
 	CWhatNextBar		*m_pWhatNextBar;		// View > What next, along the bottom or the right; created when first shown
+	CAskBar				*m_pAskBar;				// View > Ask, along the bottom or the right; created when first shown
 	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
 	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, along the bottom or the right; created when first shown
 	// The panels along the bottom (PlaceBottomPanel), in ArrangeBars' order, and the layout under way: the bands'
@@ -364,6 +367,7 @@ public:
 	afx_msg void OnUpdateViewClipsPanel(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewProblems(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewWhatNext(CCmdUI *pCmdUI);
+	afx_msg void OnUpdateViewAsk(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateViewMixer(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateHighlight(CCmdUI *pCmdUI);
 	afx_msg void OnUpdateEditCut(CCmdUI *pCmdUI);
@@ -434,6 +438,7 @@ public:
 	afx_msg void OnViewClipsPanel();
 	afx_msg void OnViewProblems();
 	afx_msg void OnViewWhatNext();
+	afx_msg void OnViewAsk();
 	afx_msg void OnViewMixer();
 	afx_msg void OnTrackerDPCM();
 	afx_msg void OnTrackerDisplayRegisterState();
