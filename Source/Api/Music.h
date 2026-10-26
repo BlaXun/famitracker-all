@@ -280,7 +280,11 @@ struct PartOptions {
 										// over an echo's P81 play as out of tune as the ones they replace (write_notes)
 	bool KeepVolume;					// the same for the volume: notes that give none play as loud as the channel did
 										// on their rows, so a soft part rewritten stays soft (write_notes)
-	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false), KeepDetune(false), KeepVolume(false) {}
+	bool EndWithSong;					// a note that lasts to the song's end on a sound that fades on a release is released
+										// on the song's last row, so a pad's last chord fades where the song loops rather
+										// than hanging on into the loop's start (voiced chords)
+	PartOptions() : EffectColumns(1), KeepFollowing(true), StopAtEnd(false), RingOut(false), KeepDetune(false), KeepVolume(false),
+		EndWithSong(false) {}
 };
 
 // A channel's new cells for rows [First, End), its notes replaced by Notes,

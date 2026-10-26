@@ -106,6 +106,10 @@ public:
 	// together, as one Ctrl+Z (the mixer's Write into the notes, in every track)
 	void	BeginActionGroup();
 	void	EndActionGroup();
+	// The undo history for Claude Code's undo (McpConnection.cpp): how many changes have gone into it so far (each
+	// action or group counts one; undoing takes none back), and the newest change there is to undo (NULL for none)
+	long long GetActionSerial() const { return m_iActionSerial; }
+	CAction *GetUndoAction() const;
 	void	SyncClips();	// after an edit: linked copies of a clip follow (Clips.h)
 	void	SongChanged();	// the song's notes changed: the piano roll reads them again
 	// View > Pattern editor and View > Piano roll: one of them always shows, and the piano roll fills the
@@ -241,6 +245,7 @@ private:  // control bar embedded members
 	bool				m_bPatternShown;		// View > Pattern editor: the pattern editor shows (else the piano roll fills its place)
 	CActionGroup		*m_pActionGroup;		// the actions of a group being added (BeginActionGroup)
 	int					m_iActionGroupDepth;
+	long long			m_iActionSerial;		// actions and groups pushed onto the undo history (GetActionSerial)
 
 	// The profile as shown (Profile.h)
 	bool				m_bFewerMenus;

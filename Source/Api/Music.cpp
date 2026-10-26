@@ -1104,8 +1104,14 @@ void BuildPart(const std::vector<Cell> &Old, int First, int End, const std::vect
 		Cell *pEnd = 0;
 		if (EndRow < End)
 			pEnd = &Out[EndRow - First];
-		else if (EndRow >= SongRows)
-			continue;	// lasts to the end of the song
+		else if (EndRow >= SongRows) {
+			// Lasts to the end of the song: it rings on as the song goes round, or with EndWithSong a sound that fades is
+			// released on the last row
+			if (!Options.EndWithSong || EndNote != NOTE_RELEASE || EndRow - 1 <= N.Row || Options.RingOut ||
+				Out[EndRow - 1 - First].Note != NOTE_NONE)
+				continue;
+			pEnd = &Out[EndRow - 1 - First];
+		}
 		else if (Old[EndRow].HasNote() || Old[EndRow].IsEnd()) {
 			// Lasts to the end of the range, and something follows anyway: the end effects go on that row (below)
 			EndAfter = N.EndEffects;

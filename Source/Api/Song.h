@@ -409,7 +409,15 @@ public:
 
 	virtual bool Play(const PlayRequest &Request, std::string &Error) = 0;
 	virtual void Stop() = 0;
+	// Undoes the newest change in the song's undo history (Ctrl+Z), Message saying what it undid: the label the tools gave
+	// it (LabelUndo), or that it was an edit made in FamiTracker; false with the reason when there's none
 	virtual bool Undo(std::string &Message) = 0;
+	// The undo history as the tools see it, so undo can say what it undoes and a call that failed leaves nothing of its
+	// own to undo: a count of the changes taken into it so far, which only grows (each change, or each group of them
+	// from BeginGroup to EndGroup, counts one; undoing takes none back), 0 for a host without one; and a label for the
+	// newest change, what the call that made it did
+	virtual long long UndoSerial() { return 0; }
+	virtual void LabelUndo(const std::string &Label) { (void)Label; }
 	// Saves the song, or a copy of it next to it (CopyName: a file name)
 	virtual bool Save(const std::string &CopyName, std::string &Message) = 0;
 };

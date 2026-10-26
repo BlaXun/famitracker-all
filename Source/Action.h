@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <string>
 
 // Undo / redo helper class
 
@@ -46,8 +47,14 @@ public:
 	// Get the action type
 	int GetAction() const;
 
+	// What the change was, for Claude Code's undo to say what it undoes: set by the tools after the call that made it
+	// (UTF-8), empty for an edit made in FamiTracker
+	void SetLabel(const std::string &Label) { m_Label = Label; }
+	const std::string &GetLabel() const { return m_Label; }
+
 protected:
 	int m_iAction;
+	std::string m_Label;
 };
 
 class CPatternEditor;

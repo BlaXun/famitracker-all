@@ -140,6 +140,19 @@ void TestPitchesAndVolumes()
 	CHECK(HasNote(Line, 2, 2, "A4") && Line.Steps() == 4);
 }
 
+// Hits in a row are steps of their own: only the words of one drum's name join ("hihat hihat" ran together as one step,
+// "kick hihat" too, which made a bar of hi-hats too short)
+void TestDrumRuns()
+{
+	StepLine Line = Parsed("hihat hihat hihat open hihat - hihat kick hihat | snare snare drum hi-hat open hat closed hihat low tom tom");
+	CHECK(Line.Bars.size() == 2u && Line.Bars[0].Steps == 8 && Line.Bars[1].Steps == 7);
+	CHECK(HasNote(Line, 0, 1, "hihat") && HasNote(Line, 1, 1, "hihat") && HasNote(Line, 2, 1, "hihat"));
+	CHECK(HasNote(Line, 3, 2, "open hihat") && HasNote(Line, 5, 1, "hihat") && HasNote(Line, 6, 1, "kick") && HasNote(Line, 7, 1, "hihat"));
+	CHECK(HasNote(Line, 8, 1, "snare") && HasNote(Line, 9, 1, "snare drum") && HasNote(Line, 10, 1, "hi-hat") &&
+		HasNote(Line, 11, 1, "open hat") && HasNote(Line, 12, 1, "closed hihat") && HasNote(Line, 13, 1, "low tom") &&
+		HasNote(Line, 14, 1, "tom"));
+}
+
 // | ends a bar, as a new line does; | at a line's start or end, a double bar line and blank lines end no other
 void TestBarLines()
 {
@@ -230,6 +243,7 @@ int main()
 	TestBarLines();
 	TestBarNumbers();
 	TestFormat();
+	TestDrumRuns();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

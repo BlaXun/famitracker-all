@@ -1216,6 +1216,49 @@ them). `TestHarmonyChordScale`, `TestBackingRegisters`,
 `TestLivelyChordLayers`, `TestLivelyLift`, `TestLivelyHats` and
 `TestCalmChordLayers` cover them.
 
+Editing fixes (from `feat-fixes-edit`): `set_swing` reads a swing's middle
+where the rows before play its short unit's speed (`SwingBefore` and
+`MeantSpeedBefore` before `SetSwingTool`: speed commands on every half or
+quarter beat alternating between two speeds), for the speed a range swings
+around and the one the rows after it play at, so "none" leaves no `F05`
+behind; `ShiftSong` (insert_bars) swings the bars it puts in after a swing
+(`SwingNewRows`). `FreeSectionName` in `Sections.cpp` numbers a copy the way
+the song numbers that name (`NumberedRoot`: "A3" beside "A2") and never
+takes one that reads as another's (`SectionNameTaken`: "A 2" beside "A2").
+`write_notes`, both paths, gives a note that names no instrument the one the
+channel plays at its place (`InstrumentAtRow`), written where it changes and
+on each piece's first note, and says which (`ChosenInstrumentsText`); on the
+noise and DPCM channels `instrument` can be an object of kinds
+(`DrumSoundsArg`, `DrumHitInstrument`; one instrument for a noise line leaves
+the open hi-hats their own unless it rings as long, `RingsLikeOpenHat`); a
+note running past the song's end ends with it unless notes start past it or
+`to_bar` asks for more, and growth is said (`GrowthText`). A line of steps
+joins two words into one drum only where they make one's name (`DrumPair` in
+`StepNotes.cpp`), so hits in a row ("hihat hihat") stay steps of their own
+(`TestDrumRuns` in `step_notes_tests`). `polish`'s
+`Accents` returns -2 for a part accented already (each bar's notes the steps
+under its loudest), so polishing again changes nothing; `StaccatoBass` cuts
+only where `PlaysBassPart` hears the bass (section by section, `PolishSpans`)
+and not in bars without the melody. `mix`'s `WriteDac` over a range sets the
+old level back on the row after it. `FindSeams` gives a sound that fades on a
+release `SEAM_RELEASE` (fix_loop writes `===`), and voiced chords release
+their last chord on the song's last row (`PartOptions::EndWithSong` in
+`BuildPart`). Undo says what it undoes: `SongHost::UndoSerial` (the pushes,
+`CMainFrame::GetActionSerial`) and `LabelUndo` (`CAction::SetLabel` on
+`CMainFrame::GetUndoAction`); `ToolSet::AfterCall` labels each call's change
+(`ChangeLabel`), takes back what a call that failed had changed, and prefixes
+undo's reply after a failed call (`m_FailedCall`); the hosts' `Undo` name the
+label, or an edit made in FamiTracker. The bloom lead holds by itself
+(`DesignOfKind`), words that ask restrike every half beat
+(`DesignWords::Restrike`), `RestrikeText` says when a sound restrikes, and
+`what_next`'s action lead passes `restrike_beats` 0.5 to keep its sound. The
+calm recipe (`KindRecipe`) and the style guide's `calm` topic lead with the
+night songs' best: the music box's shape on a VRC6 pulse at 37.5%, its
+texture, an echo from the second A, an event in the break and a tune of its
+own. `TestSwingReadsItsMiddle`, `TestCopyNamesApart`, `TestWriteNotesSounds`,
+`TestPolishTwice`, `TestMixDacRange`, `TestLoopReleasesPads`,
+`TestUndoSaysWhat`, `TestBloomHolds` and `TestCalmRecipeLeads` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

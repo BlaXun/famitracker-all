@@ -182,18 +182,73 @@ std::string SectionNameProblem(const std::string &Name)
 	return std::string();
 }
 
+// A name and the number at its end, with or without a space before it: "A2" and "A 2" are both A's second (Spaced
+// says which way it's written); a name without a number at its end is itself and 1
+static std::string NumberedRoot(const std::string &Name, int &Number, bool &Spaced)
+{
+	Number = 1;
+	Spaced = false;
+	size_t Digits = Name.size();
+	while (Digits > 0 && Name[Digits - 1] >= '0' && Name[Digits - 1] <= '9')
+		--Digits;
+	if (Digits == Name.size() || Digits == 0 || Name.size() - Digits > 3)
+		return Name;
+	size_t Root = Digits;
+	if (Name[Root - 1] == ' ') {
+		if (Root < 2)
+			return Name;
+		Spaced = true;
+		--Root;
+	}
+	Number = std::atoi(Name.c_str() + Digits);
+	return Name.substr(0, Root);
+}
+
+// Whether a section's name is Name or reads as it: "A 2" beside a section "A2" would look like the same name
+static bool SectionNameTaken(const SectionList &List, const std::string &Name)
+{
+	if (FindSection(List, Name) >= 0)
+		return true;
+	int Number = 1;
+	bool Spaced = false;
+	const std::string Root = NumberedRoot(Name, Number, Spaced);
+	if (Root == Name)
+		return false;
+	for (size_t i = 0; i < List.size(); ++i) {
+		int Other = 1;
+		const std::string Its = NumberedRoot(TrimSectionName(List[i].Name), Other, Spaced);
+		if (Its != TrimSectionName(List[i].Name) && Other == Number && SameSectionName(Its, Root))
+			return true;
+	}
+	return false;
+}
+
 std::string FreeSectionName(const SectionList &List, const std::string &Base)
 {
 	const std::string Name = TrimSectionName(Base);
-	if (FindSection(List, Name) < 0)
+	if (!SectionNameTaken(List, Name))
 		return Name;
 	int Number = 1;
-	const std::string Root = NumberedBase(Name, Number);
+	bool Spaced = false;
+	const std::string Root = NumberedRoot(Name, Number, Spaced);
+	if (Root == Name) {
+		// A name without a number: numbered the way the song numbers that name already ("A2", or "A 2")
+		bool Plain = false, WithSpace = false;
+		for (size_t i = 0; i < List.size(); ++i) {
+			int Its = 1;
+			bool Space = false;
+			const std::string Other = TrimSectionName(List[i].Name);
+			const std::string OtherRoot = NumberedRoot(Other, Its, Space);
+			if (OtherRoot != Other && SameSectionName(OtherRoot, Root))
+				(Space ? WithSpace : Plain) = true;
+		}
+		Spaced = WithSpace || !Plain;
+	}
 	for (int n = std::max(2, Number + 1); n < 1000; ++n) {
 		char Suffix[16];
-		std::snprintf(Suffix, sizeof(Suffix), " %d", n);
+		std::snprintf(Suffix, sizeof(Suffix), Spaced ? " %d" : "%d", n);
 		std::string Candidate = Root.substr(0, static_cast<size_t>(MAX_SECTION_NAME) - std::string(Suffix).size()) + Suffix;
-		if (FindSection(List, Candidate) < 0)
+		if (!SectionNameTaken(List, Candidate))
 			return Candidate;
 	}
 	return Name;

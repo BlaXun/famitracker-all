@@ -2347,13 +2347,34 @@ public:
 		EndPlayback();
 	}
 
+	// What it undoes, by the label the tools gave the change (ToolSet::Call), or as an edit made in FamiTracker
 	bool Undo(std::string &Message)
 	{
 		if (!CanChange(Message))
 			return false;
+		const CAction *pAction = m_pMain->GetUndoAction();
+		if (pAction == NULL) {
+			Message = "There's nothing to undo in the song.";
+			return false;
+		}
+		const std::string Label = pAction->GetLabel();
 		m_pMain->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
-		Message = "Undid the last change in the song (like Ctrl+Z); Ctrl+Y in FamiTracker brings it back.";
+		Message = Label.empty() ? "Undid the last change in the song, an edit made in FamiTracker itself rather than one of these "
+			"tools' calls (like Ctrl+Z); Ctrl+Y in FamiTracker brings it back." : "Undid the last change, " + Label + " (like Ctrl+Z); "
+			"Ctrl+Y in FamiTracker brings it back.";
 		return true;
+	}
+
+	long long UndoSerial()
+	{
+		return m_pMain != NULL ? m_pMain->GetActionSerial() : 0;
+	}
+
+	void LabelUndo(const std::string &Label)
+	{
+		CAction *pAction = m_pMain != NULL ? m_pMain->GetUndoAction() : NULL;
+		if (pAction != NULL)
+			pAction->SetLabel(Label);
 	}
 
 	bool Save(const std::string &CopyName, std::string &Message)
