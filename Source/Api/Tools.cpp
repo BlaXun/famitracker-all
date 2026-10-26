@@ -20951,6 +20951,61 @@ std::string ReplyLine(const std::string &Text, const char *Label)
 	return Text.substr(From, To == std::string::npos ? std::string::npos : To - From);
 }
 
+std::string ListenTool(Session &S, const Json &Args, std::string *pJson);
+
+// finish_song's lines on its listen (listen's JSON, kept for what_next): what it heard, then each high finding with a fix
+// on a line of its own, as what_next gives them as steps; the others are listen's to list, for the user's ears. Again:
+// the call that makes the file again once they're fixed, empty when finish_song makes none
+void FinishListenLines(const std::string &Heard, const std::string &Again, std::vector<std::string> &Lines)
+{
+	Json Root;
+	const Json *pFindings = ParseJson(Heard, Root) ? Root.Get("findings") : 0;
+	if (pFindings == 0 || !pFindings->IsArray()) {
+		Lines.push_back("Listen: not done: its reply couldn't be read.");
+		return;
+	}
+	auto Text = [](const Json &Object, const char *Name) {
+		const Json *pValue = Object.Get(Name);
+		return pValue != 0 && pValue->IsString() ? pValue->String() : std::string();
+	};
+	auto Number = [](const Json &Object, const char *Name) {
+		const Json *pValue = Object.Get(Name);
+		return pValue != 0 && pValue->IsNumber() ? static_cast<int>(pValue->Number()) : 0;
+	};
+	const int Count = static_cast<int>(pFindings->Size());
+	if (Count == 0) {
+		Lines.push_back("Listen: nothing sounds wrong as FamiTracker plays it (the held notes in tune, no warble, clicks or drones, "
+			"a clean mix).");
+		return;
+	}
+	std::vector<std::string> High;
+	for (size_t i = 0; i < pFindings->Size(); ++i) {
+		const Json &F = pFindings->At(i);
+		const Json *pFix = F.Get("fix");
+		if (Text(F, "severity") != "high" || pFix == 0 || !pFix->IsObject())
+			continue;
+		std::string Line = Text(F, "summary");
+		if (!Line.empty())
+			Line[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Line[0])));
+		const std::string Kind = Text(F, "kind"), Channel = Text(F, "channel_name");
+		const bool Mix = Channel.empty() || Kind == "clipping" || Kind == "jump" || Kind == "harsh" || Kind == "muddy";
+		High.push_back("Heard: " + Line + " (" + (Mix ? std::string("the mix") : Channel) + ", " + RangeText(Number(F, "from_bar"),
+			Number(F, "to_bar")) + "). " + FixText(*pFix, false));
+	}
+	const int Others = Count - static_cast<int>(High.size());
+	std::string Line = "Listen: heard " + Plural(Count, "thing", "things") + " as FamiTracker plays it";
+	if (High.empty())
+		Line += ", none to fix at once: details to hear with the user (listen lists them).";
+	else {
+		Line += High.size() == 1 ? std::string("; fix this one") : Format("; fix these %d", static_cast<int>(High.size()));
+		if (!Again.empty())
+			Line += ", then " + Again + " makes the file again";
+		Line += Others > 0 ? Format(" (listen lists the other %d, to hear with the user):", Others) : std::string(":");
+	}
+	Lines.push_back(Line);
+	Lines.insert(Lines.end(), High.begin(), High.end());
+}
+
 std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std::vector<ToolFile> &Files)
 {
 	// The kind: as given; else a sound effect or a cue as the track plays, calm when its name says so, the general recipe's
@@ -21023,7 +21078,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 			const std::string Word = Squeezed(Words[i]);
 			if (Word.empty())
 				continue;
-			if (Word == "polish" || Word == "mix" || Word == "faders" || Word == "export")
+			if (Word == "polish" || Word == "mix" || Word == "faders" || Word == "listen" || Word == "export")
 				Skip.insert(Word);
 			else if (Word == "loop" || Word == "seam" || Word == "checkloop" || Word == "fixloop")
 				Skip.insert("loop");
@@ -21043,7 +21098,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
 	if (!S.Song.DirectChanges && (Polishing || Mixing || Looping))
 		throw Problem("finish_song changes the song (polish, the mix, the loop's seam), which needs direct changes: the user can allow "
-			"them in File > Connect Claude Code. With skip [\"polish\", \"mix\", \"loop\"] it only exports.");
+			"them in File > Connect Claude Code. With skip [\"polish\", \"mix\", \"loop\"] it changes nothing: it listens and exports.");
 	std::string Busy;
 	if (!S.Host().CanChange(Busy))
 		throw Problem(Busy);
@@ -21181,6 +21236,36 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 					Line += "; at the seam: " + Left;
 				Lines.push_back(Line);
 			}
+		}
+	}
+
+	// listen: the song as it sounds now, after the steps, kept on the host as the listen tool keeps one, so what_next takes the
+	// song as heard (and gives the high findings' fixes as steps); a listen of the song as it is already (the steps changed
+	// nothing since) isn't made again. A cue or a sound effect isn't listened to, as its notes stay as written
+	if (Arranged && !Skip.count("listen")) {
+		Session Step(S.Host());
+		std::string Heard;
+		Json Kept;
+		const Json *pPrint = !S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Kept) ? Kept.Get("print") : 0;
+		if (pPrint != 0 && pPrint->IsString() && pPrint->String() == SoundPrint(Step))
+			Heard = S.Host().LastListen();
+		else {
+			Json A = Json::MakeObject();
+			A.Set("format", "json");
+			WithMelody(A);
+			try {
+				ListenTool(Step, A, &Heard);
+				S.Host().KeepListen(Heard);
+			}
+			catch (const Problem &P) {
+				Heard.clear();
+				Lines.push_back("Listen: not done: " + P.Text);
+			}
+		}
+		if (!Heard.empty()) {
+			Json Call = Json::MakeObject();
+			Call.Set("loudness", Json::NumberText(FormatNumber(Loudness)));
+			FinishListenLines(Heard, Exporting ? GuardCall("export_for_game", Call) : std::string(), Lines);
 		}
 	}
 
@@ -25544,6 +25629,7 @@ private:
 	void LoopSeam();
 	bool FinishStep(const std::string &From, const std::string &Why);
 	bool Listened();
+	bool HeardFixes(const Json &Heard);
 	void Finish();
 	bool TipStep(const std::string &Tip);
 	bool Climax(const std::string &Tip);
@@ -27383,6 +27469,8 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		Skip.Push("mix");
 	if (!Wanted("seam"))
 		Skip.Push("loop");
+	if (!Wanted("listen"))
+		Skip.Push("listen");
 	if (!Wanted("export"))
 		Skip.Push("export");
 	if (Skip.Size() > 0)
@@ -27392,6 +27480,8 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		After.push_back(std::string("the mix (") + K.MixStyle + ")");
 	if (From != "seam" && Wanted("seam"))
 		After.push_back("the loop's seam");
+	if (Wanted("listen"))
+		After.push_back("a listen");
 	if (Wanted("export"))
 		After.push_back("the game's file at " + FormatNumber(K.Loudness) + " LUFS");
 	std::string Then;
@@ -27424,6 +27514,12 @@ bool WhatNext::Listened()
 		return false;
 	}
 	Milestone("listened", true, "listened");
+	return HeardFixes(Heard);
+}
+
+// A listen's high findings with a call (its JSON), as steps one at a time as check_song's are: true when none is a step
+bool WhatNext::HeardFixes(const Json &Heard)
+{
 	const Json *pFindings = Heard.Get("findings");
 	for (size_t i = 0; pFindings != 0 && pFindings->IsArray() && i < pFindings->Size(); ++i) {
 		const Json &F = pFindings->At(i);
@@ -27520,9 +27616,16 @@ void WhatNext::Work()
 	}
 	if (Looking() && m_Music)
 		LoopSeam();
-	// The finish's stage looked at with nothing to finish: no listen before it (FinishStep's)
-	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0)
+	// The finish's stage looked at with nothing to finish: no listen before it (FinishStep's); a listen kept of the song as
+	// it is (finish_song's own, after its steps) still gives its high findings' fixes
+	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0) {
 		Milestone("listened", true, "listened");
+		Json Heard;
+		const Json *pPrint = !S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard) ? Heard.Get("print") : 0;
+		if (Wanted("listen") && !(m_Core && !ToolSet::IsCoreTool("listen")) && pPrint != 0 && pPrint->IsString() &&
+			pPrint->String() == SoundPrint(S))
+			HeardFixes(Heard);
+	}
 	if (Looking())
 		Finish();
 }
@@ -29336,11 +29439,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		false);
 
 	{
-		Json Skips = Prop("array", "Steps to leave out: polish, faders, mix, loop (check_loop and fix_loop) or export.");
+		Json Skips = Prop("array", "Steps to leave out: polish, faders, mix, loop (check_loop and fix_loop), listen or export.");
 		Json SkipItem = Json::MakeObject();
 		SkipItem.Set("type", "string");
 		Json SkipNames = Json::MakeArray();
-		for (const char *Step : { "polish", "faders", "mix", "loop", "export" })
+		for (const char *Step : { "polish", "faders", "mix", "loop", "listen", "export" })
 			SkipNames.Push(Step);
 		SkipItem.Set("enum", SkipNames);
 		Skips.Set("items", SkipItem);
@@ -29348,7 +29451,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"The last steps of a song in one call, as the recipes (and what_next) ask for them for its kind: polish with the "
 			"kind's touches, the mixer's faders back at 0 dB where they do the mix's work (as check_song's faders finding has it), "
 			"mix in the kind's style (calm, lively, or soft for action and the general recipe), check_loop and fix_loop where "
-			"the seam needs it, and export_for_game at the kind's loudness (-22 "
+			"the seam needs it, listen to the song as it then sounds (kept, so what_next takes it as heard; the reply lists its "
+			"high findings with their fixes), and export_for_game at the kind's loudness (-22 "
 			"LUFS calm, -20 lively and general, -19 action; a cue -20, a sound effect -18). Without a kind it's calm when the "
 			"track's name says so, else the general recipe's; a cue or a sound effect keeps its notes as written and gets its "
 			"file. The song's changes are one Ctrl+Z; the reply is a line a step, then what to listen for. Run it once the "

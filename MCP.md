@@ -567,11 +567,13 @@ is the recipes':
    heard as FamiTracker plays it; it counts while the song stays as it was
    heard, and its high findings' fixes come next, as `check_song`'s do; a
    change since, a fix too, asks for it again), then `polish` (on a lively stage with its accents), then the mix in the kind's style when another
-   mix would change the song, the loop's seam (`fix_loop`) and the file for
-   the game at the kind's loudness (-20 LUFS; -22 calm, -19 action), as one
-   `finish_song` call from the first of them that's due (see [The last steps
-   in one call](#the-last-steps-in-one-call)): polish isn't asked again once
-   the song is mixed, nor the mix when only the seam is left. Then saving.
+   mix would change the song, the loop's seam (`fix_loop`), a listen and the
+   file for the game at the kind's loudness (-20 LUFS; -22 calm, -19 action),
+   as one `finish_song` call from the first of them that's due (see [The last
+   steps in one call](#the-last-steps-in-one-call)): polish isn't asked again
+   once the song is mixed, nor the mix when only the seam is left. The
+   finish's own listen counts as the first one does, so its high findings'
+   fixes come next, then the file again. Then saving.
    The file alone, older than the song or at another loudness, is
    `export_for_game`.
 
@@ -936,7 +938,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `fix_loop` | Writes what `check_loop` finds at the seam, so the repeats start as the first time does: a release where a note from the loop's end on a sound that fades on one (a pad's held chord) would hang over into a silence, so it fades there, else a halt (an echo's last note), and at the loop's start the instrument, volume, effects (a fade's volume slide, a vibrato), pan and speed and tempo the first time has. Only what changes nothing the first time (direct changes only; undoable) |
 | `set_loop` | Sets where the loop starts (an intro before it) and ends, with a jump (`Bxx`), or with `stop` makes the song play once and stop (a halt, `Cxx`, after `to_bar` or at `stop_beat` in it); other jumps and halts go. The reply says so if the song still loops elsewhere, as when a skip (`Dxx`) ends the last frame early (direct changes only; undoable) |
 | `export_for_game` | Saves tracks as looping OGG files next to the song, with the GameMaker code that plays them (the same as File > Export for games); each is brought up so its loudest peak is at -1 dBFS, since FamiTracker renders well under full scale (`normalize` false keeps its level). With `loudness` (LUFS, like -20) each track's loop is brought to that loudness instead, as EBU R128 measures it (`IntegratedLoudness` in `GameAudio.cpp`, over both channels; a sound shorter than its 400 ms blocks over its whole length, `SoundLoudness`), so a game's tracks sound equally loud; the peak still stops at -1 dBFS. The files are stereo: a song that doesn't pan has the same on both sides. FamiTracker's mixer (its faders, starting pans, Soft and Space, see [The mixer](#the-mixer)) plays in them; with Space on, the loop is the song's second time through, so the tail of its end is in the loop's start. A song never saved is saved first, for a client (as `save_song` saves it); over the network the reply links each file with a code of its own, which a browser opens with no header, and as an MCP resource, and `attach` puts the files in the reply. See [Files between the computers](#files-between-the-computers) |
-| `finish_song` | The last steps of a song in one call, for its kind: `polish` with the kind's touches, `mix` in the kind's style (its faders back at 0 dB first where they do the mix's work), `check_loop` and `fix_loop` where the seam needs it, and `export_for_game` at the kind's loudness; one Ctrl+Z undoes the song's changes, and the reply is a line a step and what to listen for. See [The last steps in one call](#the-last-steps-in-one-call) (direct changes only) |
+| `finish_song` | The last steps of a song in one call, for its kind: `polish` with the kind's touches, `mix` in the kind's style (its faders back at 0 dB first where they do the mix's work), `check_loop` and `fix_loop` where the seam needs it, a `listen` to the song as it then sounds (kept, so `what_next` takes it as heard; the reply lists its high findings with their fixes), and `export_for_game` at the kind's loudness; one Ctrl+Z undoes the song's changes, and the reply is a line a step and what to listen for. See [The last steps in one call](#the-last-steps-in-one-call) (direct changes only) |
 | `measure_mix` | Measures the selected track as `export_for_game` renders it, changing nothing: the loudness and peak of each section (or every 4 bars) and of the loop, the intro against the loop, the two sides, and each part alone (the melody, the chords together, each other channel) against the melody where both play, or against the whole when there's no melody (ambience); `style` calm or lively checks the soundtrack's targets. See [Measuring the mix](#measuring-the-mix) |
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
@@ -2682,7 +2684,13 @@ song as the one before left it:
    them, and `reset` sets every one back. Trims of a few dB stay, counted in
    the mix.
 3. `check_loop`, and `fix_loop` where the seam needs it.
-4. `export_for_game` at the kind's loudness: -22 LUFS calm, -20 lively and
+4. `listen`: the song as it now sounds, the mix and each part alone. It's
+   kept as a `listen` call's is, so `what_next` takes the song as heard and
+   gives its high findings' fixes as its next steps; the reply lists them
+   with their calls (`Heard:` lines), and says to export again once they're
+   fixed. A listen of the song as it is already (the steps changed nothing
+   since one) isn't made again. A cue and a sound effect aren't listened to.
+5. `export_for_game` at the kind's loudness: -22 LUFS calm, -20 lively and
    the general recipe, -19 action; a cue -20, a sound effect -18.
 
 The kind is `kind` (calm, lively, action or general), or calm when the
@@ -2691,9 +2699,9 @@ track that halts within half a minute) and a sound effect (a row a tick)
 keep their notes as written and only get their file. The melody is the one
 `melody_channel` names, or guessed once before the steps (so a step's
 changes can't move the guess), and the reply names it. `skip` leaves steps
-out (`polish`, `faders`, `mix`, `loop`, `export`), and `loudness` and
+out (`polish`, `faders`, `mix`, `loop`, `listen`, `export`), and `loudness` and
 `quality` go to the export. It needs direct changes (with `skip` `polish`,
-`mix` and `loop` it only exports), and the export a saved song: until then
+`mix` and `loop` it changes nothing: it listens and exports), and the export a saved song: until then
 the reply gives the `export_for_game` call to make once it's saved.
 
 The song's changes are one Ctrl+Z, and the reply is short, a line a step and
@@ -2705,6 +2713,7 @@ Finished "Town" as a lively stage, the melody on VRC6 Pulse 1 (guessed; melody_c
 - Faders: back to 0 dB (2A03 Noise +6.0 dB, VRC6 Pulse 1 -4.5 dB), which did the mix's work: ...
 - Mix (lively): as heard, the melody (VRC6 Pulse 1) 3.0 dB over the chords, the bass 1.0 under and the drums 9.6 under; the band together 1.4 dB over the melody.
 - Loop: bars 5-16 (19.2 s), after an intro of 6.4 s; fix_loop wrote 400 on VRC6 Pulse 1 at bar 5 beat 1.
+- Listen: nothing sounds wrong as FamiTracker plays it (the held notes in tune, no warble, clicks or drones, a clean mix).
 - Export: Town.ogg: 25.6 s, 123 KB, its loop at -20.0 LUFS (...), the first 6.4 s once, then the loop from 6.4 s to the end.
 - GameMaker: audio_sound_loop_start(snd_town, 6.398000); audio_sound_loop_end(snd_town, 25.598000); ...
 One Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).
@@ -2713,7 +2722,7 @@ going round (play {"from_bar":15} plays the end into the loop; stop ends it).
 ```
 
 The result is what the calls one after the other would give (`polish`, `mix`
-with the same melody, `fix_loop`, `export_for_game`): the same notes, mixer
+with the same melody, `fix_loop`, `listen`, `export_for_game`): the same notes, mixer
 and file, with the print of the song `what_next` reads. The numbers are the
 tools' own (polish's and mix's styles), so a change to a style reaches the
 finish too. `what_next` gives it

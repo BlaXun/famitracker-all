@@ -19999,8 +19999,8 @@ void TestWhatNextStates()
 			"[\"polish\"]}");
 		CHECK_EQ(StepsDoneOf(A.Line), Heard + 1);	// listened
 		CHECK_HAS(A.Text, "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, the chords 3-4 "
-			"dB under it and the band louder than the melody. finish_song does it, then the loop's seam and the game's file at -20 LUFS, "
-			"in one call that one Ctrl+Z undoes.");
+			"dB under it and the band louder than the melody. finish_song does it, then the loop's seam, a listen and the game's file at -20 "
+			"LUFS, in one call that one Ctrl+Z undoes.");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 		Song.Info.Modified = true;
 		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
@@ -20047,7 +20047,7 @@ void TestWhatNextStates()
 		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
 		CHECK_HAS(A.Text, "check_loop finds the loop starting otherwise on repeat");
-		CHECK_HAS(A.Text, "finish_song does it, then the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
+		CHECK_HAS(A.Text, "finish_song does it, then a listen and the game's file at -20 LUFS, in one call that one Ctrl+Z undoes.");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 		const std::string After = AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool;
 		CHECK(After != "fix_loop" && After != "finish_song");
@@ -20271,8 +20271,8 @@ void TestWhatNextFinish()
 	CHECK_EQ(First.Tool, std::string("finish_song"));
 	CHECK(TextOf(&First.Arguments, "kind") == "lively" && TextOf(&First.Arguments, "melody_channel") == "VRC6 Pulse 1");
 	CHECK(First.Arguments.Get("skip") == 0);	// the polish due, the mix after it
-	CHECK_HAS(First.Text, "finish_song does it, then the mix (lively), the loop's seam and the game's file at -20 LUFS, in one call "
-		"that one Ctrl+Z undoes.");
+	CHECK_HAS(First.Text, "finish_song does it, then the mix (lively), the loop's seam, a listen and the game's file at -20 LUFS, in "
+		"one call that one Ctrl+Z undoes.");
 	// Every step at once: finish_song once, and none of the steps it does after it
 	const std::string All = Run(Song, "what_next", "{\"kind\": \"lively\", \"all\": true}").Text;
 	CHECK_HAS(All, ". finish_song {");
@@ -20283,7 +20283,7 @@ void TestWhatNextFinish()
 	const WhatNextAnswer Skipped = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"seam\", \"export\"]}");
 	CHECK(Skipped.Tool == "finish_song" && Skipped.Arguments.Get("skip") != 0 && WriteJson(*Skipped.Arguments.Get("skip")) ==
 		"[\"loop\",\"export\"]");
-	CHECK_HAS(Skipped.Text, "finish_song does it, then the mix (lively), in one call that one Ctrl+Z undoes.");
+	CHECK_HAS(Skipped.Text, "finish_song does it, then the mix (lively) and a listen, in one call that one Ctrl+Z undoes.");
 	// On the small set: one of its tools, and it runs there
 	{
 		FakeSong Small = Song;
@@ -20657,6 +20657,8 @@ void TestFinishSong()
 		CHECK_HAS(R.Text, "its loop at -20.0 LUFS");
 		CHECK_HAS(R.Text, "\n- GameMaker: audio_sound_loop_start(snd_town, ");
 		CHECK_HAS(R.Text, "\nOne Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).");
+		CHECK_HAS(R.Text, "\n- Listen: ");
+		CHECK(!Song.LastListen().empty());	// kept for what_next
 		CHECK_HAS(R.Text, "\nListen for: the band carrying the tune, the lead's accents on the beats, and the climax lifting; the seam "
 			"going round (play "
 			"{\"from_bar\":15} plays the end into the loop; stop ends it).");
@@ -25843,6 +25845,76 @@ void TestWhatNextListens()
 	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
 }
 
+// finish_song listens after its polish, mix and seam (from feat-listen-rest): the song as it then sounds, kept as the listen
+// tool keeps one, so what_next takes it as heard and gives its high findings' fixes as steps; its reply lists them with
+// their calls, and the file is still made
+void TestFinishSongListens()
+{
+	// The melody's notes with a vibrato far too deep, heard as FamiTracker plays it
+	FakeSong Song = FinishTestSong();
+	Song.ChipPitches = true;
+	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
+		if (Song.Rows[5][r].HasNote() && Song.Rows[5][r].Effect[0] == EFF_NONE) {
+			Song.Rows[5][r].Effect[0] = EFF_VIBRATO;
+			Song.Rows[5][r].Param[0] = 0x6F;
+		}
+	const ToolResult R = Run(Song, "finish_song", "{\"kind\": \"lively\"}");
+	CHECK(!R.IsError);
+	const Json Heard = Parse(Song.LastListen());
+	std::string Fix;
+	const Json *pFindings = Heard.Get("findings");
+	for (size_t i = 0; pFindings != 0 && i < pFindings->Size() && Fix.empty(); ++i)
+		if (TextOf(&pFindings->At(i), "severity") == "high" && pFindings->At(i).Get("fix") != 0)
+			Fix = TextOf(pFindings->At(i).Get("fix"), "tool");
+	Check(!Fix.empty(), R.Text.c_str(), __LINE__);
+	CHECK_HAS(R.Text, "\n- Listen: heard ");
+	CHECK_HAS(R.Text, "makes the file again");
+	CHECK_HAS(R.Text, "\n- Heard: ");
+	CHECK_HAS(R.Text, "(VRC6 Pulse 1, bars ");
+	Check(Contains(R.Text, ("). Fix: " + Fix + " {").c_str()), R.Text.c_str(), __LINE__);
+	CHECK(R.Text.find("\n- Listen: ") < R.Text.find("\n- Export: Town.ogg: "));	// the file still made, after the listen
+	CHECK(Song.Files.size() == 1u);
+	// Kept: on a song whose parts are written (what_next's walk up to its listen), the finish's listen counts as heard and its
+	// fix comes next, though nothing is left to finish
+	{
+		FakeSong Walked(1);
+		NewSong(Walked);
+		bool Finished = false;
+		FollowWhatNext(Walked, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "listen");
+		Walked.ChipPitches = true;
+		for (size_t r = 0; r < Walked.Rows[5].size(); ++r)
+			if (Walked.Rows[5][r].HasNote() && Walked.Rows[5][r].Effect[0] == EFF_NONE) {
+				Walked.Rows[5][r].Effect[0] = EFF_VIBRATO;
+				Walked.Rows[5][r].Param[0] = 0x6F;
+			}
+		const ToolResult Done = Run(Walked, "finish_song", "{\"kind\": \"lively\"}");
+		CHECK(!Done.IsError);
+		const Json Kept = Parse(Walked.LastListen());
+		std::string Call;
+		const Json *pKept = Kept.Get("findings");
+		for (size_t i = 0; pKept != 0 && i < pKept->Size() && Call.empty(); ++i)
+			if (TextOf(&pKept->At(i), "severity") == "high" && pKept->At(i).Get("fix") != 0)
+				Call = TextOf(pKept->At(i).Get("fix"), "tool");
+		Check(!Call.empty(), Done.Text.c_str(), __LINE__);
+		const WhatNextAnswer A = AskWhatNext(Walked, "{\"kind\": \"lively\"}");
+		Check(A.Tool == Call && Contains(A.Text, "\nWhy: listen: "), A.Text.c_str(), __LINE__);
+		CHECK_LACKS(A.Text, "Left: listened");
+	}
+	// skip listen: none, and none kept
+	FakeSong Skipped = FinishTestSong();
+	const std::string Text = Run(Skipped, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"listen\"]}").Text;
+	CHECK_LACKS(Text, "\n- Listen:");
+	CHECK(Skipped.LastListen().empty() && Skipped.Files.size() == 1u);
+	// A listen of the song as it is already isn't made again: only the file renders
+	FakeSong Again = FinishTestSong();
+	CHECK(!Run(Again, "listen", "{}").IsError);
+	const std::string Kept = Again.LastListen();
+	const int Passes = Again.Passes;
+	const std::string Exported = Run(Again, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}").Text;
+	CHECK_HAS(Exported, "\n- Listen: ");
+	CHECK(Again.Passes == Passes && Again.LastListen() == Kept && Again.Files.size() == 1u);
+}
+
 int main()
 {
 	TestJson();
@@ -26100,6 +26172,7 @@ int main()
 	TestFramePatternsInOrder();
 	TestKeyCheckChords();
 	TestWhatNextListens();
+	TestFinishSongListens();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

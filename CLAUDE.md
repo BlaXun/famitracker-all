@@ -1517,8 +1517,8 @@ instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
 `ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
 sound them when `ChipPitches` is set. `TestListenTool` and
 `TestListenFdsWarble` cover the tool. Still to come: the problems panel's
-Listen button and `finish_song`'s listen (what_next's is below, Small fixes,
-second batch).
+Listen button (what_next's listen is below, Small fixes, second batch, and
+finish_song's in The listen's rest).
 
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
@@ -1741,6 +1741,19 @@ the UI thread waits for it (`ShowWorking` draws both at once), and the panel
 keeps the wait cursor while its call runs; a render (`RenderFiles` in
 `McpConnection.cpp`) puts the status bar's text back when it's done, where
 it cleared it, so the line stays through the listening after the render.
+`finish_song` listens after its polish, mix and seam (`skip` `listen` leaves
+it out; a cue or a sound effect isn't listened to): `listen` with `format`
+`json` on the melody it follows, kept with `SongHost::KeepListen` as
+`ToolSet::Call` keeps one (a kept listen whose print is the song's is used
+again, without a render), and `FinishListenLines` (before
+`FinishSongTool`) writes its lines: a count, each high finding with a fix as
+a `Heard:` line with its call (`FixText`), and the `export_for_game` call to
+make the file again once they're fixed; the export still follows.
+`what_next`'s finish step names the listen and passes `skip` `listen` when
+it's skipped, and with nothing left to finish, a kept listen of the song as
+it is still gives its high findings' fixes (`WhatNext::HeardFixes`, shared
+with `Listened`), so a fix the finish heard comes before the file is taken
+as done (`TestFinishSongListens`).
 
 ## What this repository is
 
