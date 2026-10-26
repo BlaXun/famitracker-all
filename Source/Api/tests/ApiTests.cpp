@@ -55,6 +55,7 @@
 #include "../SoundIndex.h"
 #include "../SoundLibrary.h"
 #include "../SongShapes.h"
+#include "../FramePatterns.h"
 #include "../StepNotes.h"
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
@@ -25682,6 +25683,37 @@ void TestEchoKeepsItsChipsEffects()
 	}
 }
 
+// The patterns of frames put in (FramePatterns.h, as CFamiTrackerDoc::InsertFrame picks them), as song_shape's boss lays out
+// an empty song: twelve frames put in at its end one after another get patterns 01 to 0C in frame order, even where the
+// frame list's places past its end still name the patterns of frames taken out before (a shape undone), which gave them
+// in swapped pairs (frame 1 on 02, frame 2 on 01)
+void TestFramePatternsInOrder()
+{
+	const int PATTERNS = 128;	// FamiTracker's MAX_PATTERN
+	const auto Empty = [](int) { return true; };
+	for (int Undone = 0; Undone < 2; ++Undone) {
+		// One channel's frame list as CPatternData keeps it: every place, the frame count apart
+		std::vector<int> Places(32, 0);
+		for (int f = 1; f <= 12 && Undone == 1; ++f)
+			Places[static_cast<size_t>(f)] = f;
+		int Count = 1;
+		for (int n = 0; n < 12; ++n) {
+			// InsertFrame at the end: the count goes up first, then the new frame's pattern is picked
+			const int Frame = Count++;
+			const std::vector<int> Frames(Places.begin(), Places.begin() + Count);
+			Places[static_cast<size_t>(Frame)] = FreePatternForFrame(Frames, Frame, PATTERNS, Empty);
+		}
+		for (int f = 0; f < Count; ++f)
+			Check(Places[static_cast<size_t>(f)] == f, ("frame " + std::to_string(f) + (Undone == 1 ? ", after an undo" : "")).c_str(),
+				__LINE__);
+	}
+	// Put in between two frames: the frame moved on keeps playing the pattern still named at the new one's place
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 1, 1, 2 }, 1, PATTERNS, Empty) == 3);
+	// A pattern that holds notes stays out, and with none free it's -1
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 0 }, 1, PATTERNS, [](int p) { return p != 1; }) == 2);
+	CHECK(FreePatternForFrame(std::vector<int>{ 0, 1, 7 }, 2, 2, Empty) == -1);
+}
+
 int main()
 {
 	TestJson();
@@ -25936,6 +25968,7 @@ int main()
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();
+	TestFramePatternsInOrder();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

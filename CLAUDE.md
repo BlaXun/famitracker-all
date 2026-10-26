@@ -1429,7 +1429,9 @@ track with notes keeps its frames (`Refitted`, `Cut`, `Missing`). The
 writes it as one group: `SetMeter` for a new frame length, then one
 `WriteSong` (frames added or taken out at the end, the empty track's jumps,
 skips and halts replaced by the loop's `Bxx` or a jingle's `C00`, a song
-with notes' end jump moved to its new end) with `SetSections`. `what_next`'s
+with notes' end jump moved to its new end) with `SetSections`; the frames
+put in play patterns in frame order (`FreePatternForFrame`, see Known
+pre-existing bugs, `TestFramePatternsInOrder`). `what_next`'s
 `Frame` gives it after the key on an empty track without sections
 (milestone and skip word `shape`, `ShapeForKind`); `Parts` writes the empty
 song's A chords on the laid-out A (`FitProgression` fits a progression to
@@ -2288,6 +2290,13 @@ Point these out rather than silently fixing them inside archive commits.
   and 5B `Jxx` becomes the FDS modulation-speed effect (FDS `Jxx` survives).
   Such modules don't round-trip through `.txt`. (Fixed on this branch:
   `TextExporter.cpp` reads H, I and J by the channel's chip.)
+- **Frames put in at the end:** `InsertFrame` raises the frame count before
+  it picks the new frame's patterns, and `GetFirstFreePattern` counts that
+  frame's own place, which can still name the pattern of a frame taken out
+  (`RemoveFrame` leaves the last place as it was) or undone, so frames added
+  at the end one after another got patterns in swapped pairs (02, 01, 04,
+  03). (Fixed on this branch: `InsertFrame` picks with `FreePatternForFrame`
+  in `Source/Api/FramePatterns.h`, which leaves that place out.)
 - **No bounds checks on load:** `CDocumentFile::GetBlockInt`, `GetBlockChar`,
   `GetBlock` and `ReadString` don't check the block size, so a corrupt `.ftm`
   can read past the buffer.

@@ -597,6 +597,7 @@
     <ClInclude Include="Source\Api\Mcp.h" />
     <ClInclude Include="Source\Api\Network.h" />
     <ClInclude Include="Source\Api\Music.h" />
+    <ClInclude Include="Source\Api\FramePatterns.h" />
     <ClInclude Include="Source\Api\Sections.h" />
     <ClInclude Include="Source\Api\SongShapes.h" />
     <ClInclude Include="Source\Api\Exercises.h" />
