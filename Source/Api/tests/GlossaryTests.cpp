@@ -577,6 +577,9 @@ void TestChordRoles()
 	CHECK_EQ(GlossaryLabelAlso("piano roll", "Key"), std::string("chord-roles"));
 	CHECK_EQ(GlossaryLabelAlso("piano roll", "Chords"), std::string("chord-roles"));
 	CHECK(GlossaryLabelAlso("piano roll", "Groove").empty() && GlossaryLabelAlso("mixer", "Soft").empty());
+	// The toolbar's Octave box says what it does, then what an octave is
+	CHECK_EQ(GlossaryLabelId("song settings", "Octave"), std::string("octave-box"));
+	CHECK_EQ(GlossaryLabelAlso("song settings", "Octave"), std::string("octave"));
 	const std::vector<GlossaryLabel> &Labels = GlossaryLabels();
 	for (size_t i = 0; i < Labels.size(); ++i)
 		if (Labels[i].Also != 0) {

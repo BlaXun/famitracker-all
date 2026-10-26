@@ -536,6 +536,10 @@ const RawEntry ENTRIES[] = {
 		"The Step box sets how many rows the cursor jumps after you type a note: 1 moves to the next row, 4 to the next beat "
 		"when four rows make one. 0 keeps it where it is.",
 		"row, highlight", "", "" },
+	{ "octave-box", "Octave (the box)", "octave box, edit octave, keyboard octave", GLOSSARY_TRACKER,
+		"The Octave box picks the octave your keyboard's note keys type in: the Z row types notes from it and the Q row from "
+		"the octave above. At 3 the Z key types C-3, middle C. Change it to reach higher or lower notes.",
+		"octave, note, edit-step", "", "" },
 	{ "mixer", "Mixer", "fader, faders, solo, mute", GLOSSARY_TRACKER,
 		"View > Mixer gives every channel a strip: a fader for its level, its pan, mute and solo, and the Soft and Space knobs. "
 		"Its settings are saved with the song and heard in FamiTracker, WAV files and the game's sound files, not in NSF "
@@ -2231,7 +2235,7 @@ const std::vector<GlossaryLabel> &GlossaryLabels()
 		{ "song settings", "Speed", "speed", 0 }, { "song settings", "Tempo", "tempo-setting", 0 }, { "song settings", "BPM", "tempo", 0 },
 		{ "song settings", "Rows", "pattern-length", 0 }, { "song settings", "Frames", "frame", 0 }, { "song settings", "Step", "edit-step", 0 },
 		{ "song settings", "Row highlight, 1st", "highlight", 0 }, { "song settings", "2nd", "highlight", 0 },
-		{ "song settings", "Octave", "octave", 0 },
+		{ "song settings", "Octave", "octave-box", "octave" },
 		// The instrument editor's sequences, as each chip's editor names them
 		{ "instrument editor", "Volume", "volume-sequence", 0 }, { "instrument editor", "Arpeggio", "arpeggio-sequence", 0 },
 		{ "instrument editor", "Pitch", "pitch-sequence", 0 }, { "instrument editor", "Hi-pitch", "hi-pitch-sequence", 0 },
