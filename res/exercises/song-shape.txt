@@ -1,0 +1,15 @@
+; Help > Exercises: the song's shape (a new song, as File > New makes it)
+title: The song's shape
+about: Lay out a new song's parts with Module > Song shape, and read what each one is for.
+
+step
+show: menu Module
+check: song-shape
+text: A song is made of parts, each a few bars: an [[intro]], the main tune (the [[A part|a-part]]), a change (the [[B part|b-part]]) and so on, going round as a [[loop]].
+
+  Open Module > Song shape, pick a shape for a song (a lively stage, a calm night, a town...) and press OK. Each part becomes a named [[section|sections]]. Then press Check.
+hint: Module is on the menu bar at the top of the window. Once the parts are laid out, the frame list at the top left shows their names.
+
+step
+show: frames
+text: Point at a part's name in the frame list: a tip says what it's for, and the piano roll's ruler names the parts too. The What next panel fills a song's parts a step at a time: that's the last exercise.

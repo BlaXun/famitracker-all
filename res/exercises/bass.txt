@@ -1,0 +1,27 @@
+; Help > Exercises: a bass line
+title: A bass line
+about: Put the chords' roots on the triangle, one on each bar's first beat, then two notes a bar.
+
+step
+show: channel Triangle
+play: bars 1-4
+text: A tune and chords, but no bass yet, so the music floats. The [[bass line]] goes on the triangle, the NES's low voice: this column.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-4
+check: bass-roots
+text: On each bar's first [[beat]], put its chord's [[root]] on the triangle: the note the chord is named after. The chords are C, Am, F and G.
+
+  The piano roll shows the triangle now: click at the start of each bar on the root's lane, and drag to the end of the bar. Then press Check.
+hint: The roots are C, A, F and G. Notes around C-3 suit the triangle (it plays an octave under the note written): C-3, A-2, F-2 and G-2 sound good.
+answer: Triangle, bar 1, Bass: C3 - - - - - - - | A2 - - - - - - - | F2 - - - - - - - | G2 - - - - - - -
+
+step
+show: piano-roll
+play: bars 1-4
+check: bass-two
+text: Now make the bass move: two notes a bar. Keep the root on beat 1, and add a second note on beat 3: the chord's [[fifth]], or the root again.
+hint: The fifths are G for C, E for Am, C for F and D for G. Drag the end of each root to the middle of its bar, then click the second note in on beat 3.
+answer: Triangle, bar 1, Bass: C3 - - - G2 - - - | A2 - - - E2 - - - | F2 - - - C3 - - - | G2 - - - D3 - - -

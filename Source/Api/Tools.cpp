@@ -43,6 +43,7 @@
 #include "SoundLibrary.h"
 #include "SongShapes.h"
 #include "StepNotes.h"
+#include "Exercises.h"
 #include "Effects.h"
 #include "FdsSounds.h"
 #include "Glossary.h"
@@ -26634,6 +26635,161 @@ std::string WhatNextTool(Session &S, const Json &Args, bool Core)
 	return Form == "json" ? Plan.JsonReply() : Plan.Reply();
 }
 
+// Help > Exercises (Exercises.h): the song as the exercises' checks read it, and the check_exercise tool
+
+// The channel a check is about: the tune's (the 2A03's Pulse 1, where the starters keep it), the triangle or the noise;
+// -1 for the whole song
+int ExerciseTarget(Session &S, int Role)
+{
+	const int Wanted = Role == EXERCISE_MELODY ? KIND_PULSE : Role == EXERCISE_BASS ? KIND_TRIANGLE : Role == EXERCISE_DRUMS ?
+		KIND_NOISE : -1;
+	for (int c = 0; c < S.ChannelCount() && Wanted >= 0; ++c)
+		if (S.Channel(c).Kind == Wanted && S.Channel(c).Chip == "2A03")
+			return c;
+	return -1;
+}
+
+// A channel as the pattern editor's header names it: "Pulse 1", with its chip in front where another has that name
+std::string ExerciseChannelName(Session &S, int Channel)
+{
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (c != Channel && S.Channel(c).Name == S.Channel(Channel).Name)
+			return S.Channel(Channel).FullName();
+	return S.Channel(Channel).Name;
+}
+
+ExerciseFacts ExerciseFactsOf(Session &S, const ExerciseCheckInfo &Check)
+{
+	ExerciseFacts F;
+	F.PatternLength = S.Time.PatternLength;
+	F.Frames = S.Time.Frames;
+	F.RowsPerBeat = S.Time.RowsPerBeat;
+	F.RowsPerBar = S.Time.RowsPerBar;
+	const int Total = S.Time.TotalRows();
+	const std::vector<int> RowFrames = RowFramesOf(S);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		ExerciseChannel C;
+		C.Name = ExerciseChannelName(S, c);
+		C.Kind = S.Channel(c).Kind;
+		const bool Drums = C.Kind == KIND_NOISE || C.Kind == KIND_DPCM;
+		std::vector<NoteInfo> Kept;
+		const std::vector<NoteInfo> &Notes = Drums ? S.Notes(c) : PitchedNotes(S, c, Kept);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			ExerciseNote E;
+			E.Row = N.Row;
+			E.Rows = std::max(1, N.Rows);
+			E.Pitch = N.Pitch;
+			E.Volume = N.Volume;
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+			E.Instrument = pInfo != 0 ? pInfo->Name : std::string();
+			// Heard until its sound fades away, as the review hears a melody's pauses (BreathsOf)
+			const int Frames = HeardFrames(S.Song, N, NoteFrames(N, RowFrames));
+			int Stop = N.Row, Counted = 0;
+			while (Stop < N.Row + E.Rows && Counted < Frames) {
+				Counted += Stop < static_cast<int>(RowFrames.size()) ? RowFrames[static_cast<size_t>(Stop)] : 1;
+				++Stop;
+			}
+			E.Heard = std::max(1, Stop - N.Row);
+			C.Notes.push_back(E);
+			if (Drums)
+				C.Hits.push_back(ExerciseDrumKind(E.Instrument, N.Pitch, C.Kind == KIND_NOISE));
+		}
+		F.Channels.push_back(C);
+	}
+	F.Target = ExerciseTarget(S, Check.Role);
+	// The melody as what_next hears it: the busiest line, but not a bass, chords or a steady run of broken chords
+	F.Melody = GuessMelodyChannel(S, 0, Total);
+	if (F.Melody >= 0) {
+		const std::vector<NoteInfo> &Notes = S.Notes(F.Melody);
+		int Chordal = 0;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Chordal += SoundsChord(S, Notes[i]) ? 1 : 0;
+		if (IsBass(S.Channel(F.Melody)) || Chordal * 3 >= static_cast<int>(Notes.size()) || RunsSteadily(S, Notes))
+			F.Melody = -1;
+	}
+	F.KeyChosen = S.Song.KeyChosen;
+	F.HasFound = FindKey(S, 0, Total, F.Found);
+	F.HasKey = TrackKey(S, 0, Total, F.K);
+	// The chords the other parts play: the target left out (what its notes do over them is the question), or for the
+	// whole song as the piano roll's chord strip hears them
+	if (F.HasKey) {
+		const std::vector<ChordAt> Heard = F.Target >= 0 ? HearChords(HeardNotes(S, F.Target, 0, Total), SongBarSpans(S, 0, Total),
+			S.Time.RowsPerBeat, F.K, true) : SongChords(S, 0, Total, F.K);
+		for (size_t i = 0; i < Heard.size(); ++i) {
+			ExerciseChord C;
+			C.Row = Heard[i].Row;
+			C.Rows = Heard[i].Rows;
+			C.Name = ChordName(Heard[i].C, F.K);
+			C.Root = Heard[i].C.Root;
+			C.Notes = Heard[i].C.PitchClasses();
+			F.Chords.push_back(C);
+		}
+	}
+	if (F.Target >= 0 && IsMelodic(S.Channel(F.Target))) {
+		const MelodyBreaths B = BreathsOf(S, F.Target, 1, S.Time.BarCount() + 1);
+		F.Spans = B.Spans;
+		F.Breaths = B.Breaths;
+		F.RunOn = B.RunOn;
+	}
+	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
+	const SongShape *pShape = MatchSongShape(S.Song.Sections, S.Song.TrackName, Bpm);
+	F.Shape = pShape != 0 ? pShape->Title : std::string();
+	const SongShape *pLines = GuessSongShape(S.Song.Sections, S.Song.TrackName, Bpm);
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
+		const Section &Part = S.Song.Sections[i];
+		ExerciseSection E;
+		E.Name = Part.Name;
+		E.FirstBar = S.Time.BarOf(std::min(Total - 1, Part.First * S.Time.PatternLength));
+		E.LastBar = S.Time.BarOf(std::min(Total - 1, (Part.Last + 1) * S.Time.PatternLength - 1));
+		E.Line = PartLine(Part.Name, pLines);
+		F.Sections.push_back(E);
+	}
+	const SongFlow Played = Flow(S);
+	F.Halts = Played.Halts();
+	F.EndBar = S.Time.BarOf(std::max(0, std::min(Total, Played.EndRow(S.Time.PatternLength)) - 1));
+	return F;
+}
+
+// check_exercise: one of Help > Exercises' checks on the selected track. An exercise of several checks gives the first
+// that doesn't pass yet (the last when all do)
+std::string CheckExerciseTool(Session &S, const Json &Args)
+{
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json (the verdict as data, for programs).");
+	const std::string Asked = Trim(StringArg(Args, "exercise"));
+	std::vector<std::string> Checks;
+	if (FindExerciseCheck(Asked) != 0)
+		Checks.push_back(Asked);
+	else if (FindExercise(Asked) != 0)
+		Checks = FindExercise(Asked)->Checks;
+	if (Checks.empty()) {
+		std::string Text = Asked.empty() ? "The exercises (Help > Exercises), in order: " : "exercise: \"" + Asked + "\" isn't one. "
+			"The exercises, in order: ";
+		const std::vector<ExerciseInfo> &List = Exercises();
+		for (size_t i = 0; i < List.size(); ++i) {
+			Text += Format("%s%s (%s", i == 0 ? "" : "; ", List[i].Id, List[i].Title);
+			if (List[i].Checks.size() > 1 || List[i].Checks.front() != List[i].Id) {
+				Text += ", checks";
+				for (size_t c = 0; c < List[i].Checks.size(); ++c)
+					Text += (c == 0 ? " " : ", ") + List[i].Checks[c];
+			}
+			Text += "): " + std::string(List[i].About);
+		}
+		if (!Asked.empty())
+			throw Problem(Text + ".");
+		return Text + ". Each opens a song to work on; check_exercise with the exercise's id says what's right and what to change.";
+	}
+	ExerciseVerdict Verdict;
+	for (size_t i = 0; i < Checks.size(); ++i) {
+		CheckExercise(Checks[i], ExerciseFactsOf(S, *FindExerciseCheck(Checks[i])), Verdict);
+		if (!Verdict.Passed)
+			break;
+	}
+	return Form == "json" ? WriteJson(ExerciseVerdictJson(Verdict)) : ExerciseVerdictText(Verdict);
+}
+
 }	// namespace
 
 // Grooves to start from (Grooves.h), from make_groove's moods
@@ -28285,6 +28441,19 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("category", EnumProp("Without a term: list one category's terms only.", std::vector<std::string>{ "music",
 				"sounds", "tracker", "effects" })),
 		true, false, true);
+
+	AddTool("check_exercise", "Check an exercise",
+		"Checks one of FamiTracker's exercises for newcomers to music (Help > Exercises: short tasks from ending a tune on its "
+		"home note to a first small song, each with a starter song) on the selected track, as the exercise's Check button "
+		"does: what's right already, the one thing to change next in plain words, the bars that show it, and once it passes, "
+		"what it taught and the exercise after it. Use it when you teach the user with an exercise. Without an exercise, the "
+		"list.",
+		Schema()
+			.Add("exercise", Prop("string", "The exercise (home-note, four-bars, strong-notes, phrases, bass, beat, minor, hook, "
+				"song-shape, first-song) or one of its checks (the bass's: bass-roots, then bass-two). Leave it out for the list."))
+			.Add("format", EnumProp("text (the default) or json (the verdict as data: right, next, learned, play, next_exercise; "
+				"terms linked to the glossary as [[words|id]]).", std::vector<std::string>{ "text", "json" })),
+		true, false, true);
 }
 
 bool ToolSet::Has(const std::string &Name) const
@@ -28533,6 +28702,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core);
+		else if (Name == "check_exercise") Result.Text = CheckExerciseTool(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
 		else if (Name == "place_clip") Result.Text = PlaceClipTool(S, Args);

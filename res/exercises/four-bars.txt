@@ -1,0 +1,19 @@
+; Help > Exercises: four bars over chords
+title: Four bars over chords
+about: Write a tune of four bars over chords that are ready, mostly by step, and end it at home.
+
+step
+show: piano-roll
+play: bars 1-4
+text: The [[chords|chord]] and the bass are ready: C, Am, F and G, then C again. Listen to them first. Your tune goes on top, on Pulse 1.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-4
+check: four-bars
+text: Write a tune of four bars on Pulse 1: click notes into the piano roll over the chords.
+
+  Move mostly by [[step|step-leap]], to the next note up or down (a leap now and then is fine), and end on the [[home note]], C, in bar 4. Press Check when you like it.
+hint: Start on E (E-3, just above middle C) and walk up and down: E, D, E, F, G. Let each bar lean on its chord, and in bar 4 land on C and hold it. The lighter lanes are the key's notes.
+answer: Pulse 1, bar 1, Lead: E3 - D3 - E3 F3 G3 - | A3 - G3 - E3 - - - | F3 - A3 - G3 - B3 - | C4 - - - - - - -

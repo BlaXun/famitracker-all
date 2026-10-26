@@ -2,8 +2,8 @@
 # (Source/Clips.cpp), the piano roll's note editing (Source/NoteEdit.cpp),
 # switching the expansion chip (Source/ChipSwitch.cpp), the drum grid
 # (Source/DrumGrid.cpp), reading tutorials (Source/TutorialScript.cpp,
-# with the built-in ones in res/tutorials and the example songs' walkthroughs
-# in res/examples), the views shown (Source/NoteViews.cpp), the piano roll's
+# with the built-in ones in res/tutorials, the example songs' walkthroughs
+# in res/examples and the exercises' scripts in res/exercises), the views shown (Source/NoteViews.cpp), the piano roll's
 # toolbar rows, hints and menu clicks (Source/PianoRollUi.cpp) and the sound
 # chips' emulation
 # with its stereo mixer (Source/APU), against working
@@ -111,7 +111,7 @@ add_test(NAME apu_tests COMMAND apu_tests)
 add_executable(tutorial_tests TutorialScriptTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../TutorialScript.cpp)
 target_include_directories(tutorial_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_definitions(tutorial_tests PRIVATE TUTORIALS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/tutorials"
-	EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/examples")
+	EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/examples" EXERCISES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../res/exercises")
 add_test(NAME tutorial_tests COMMAND tutorial_tests)
 
 add_executable(noteviews_tests NoteViewsTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../NoteViews.cpp)
