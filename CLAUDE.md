@@ -1667,7 +1667,9 @@ a song without a file into the Songs folder next to FamiTracker.exe
 when taken (`SongHost::SaveNew`, `NumberedSongName`; `CMcpLink::SaveNew` makes
 the folder with `CreateDirectory`, then `OnSaveDocument` and `SetPathName`),
 and a client's `export_for_game` and `finish_song` do that first
-(`SaveIntoSongs`, `NewSongName` in `Tools.cpp`). FamiTracker's own windows
+(`SaveIntoSongs`, `NewSongName` in `Tools.cpp`), and `what_next`'s save step
+gives a client `save_song` with that name (`WhatNext`'s `m_Client`,
+`TestWhatNextSavesForClient`). FamiTracker's own windows
 call the tools with a plain `Caller`, which still asks for File > Save As.
 Over the network the reply's links carry a code of their own in the address
 (`/files/<name>?code=`, `FilesCode` in `Mcp.cpp`: HMAC-SHA-256 of the access

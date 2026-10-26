@@ -25571,6 +25571,33 @@ void TestShapeTownWords()
 	CHECK_HAS(A.Text, "a town of 40 bars");
 }
 
+// what_next's save step on a song without a file: a client of the connection (Caller::Client), which can't use File >
+// Save As, gets save_song with a name, which saves the song into the Songs folder; FamiTracker's own panels still ask the
+// user to save it
+void TestWhatNextSavesForClient()
+{
+	const std::string Asked = "{\"skip\": [\"tempo\", \"key\", \"shape\", \"lead\", \"chords\", \"sections\", \"melody\", "
+		"\"form\", \"drums\", \"second_line\", \"variation\", \"break\", \"intro\", \"loop\", \"tips\", \"echo\", \"polish\", "
+		"\"mix\", \"seam\"]}";
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.FileName.clear();
+	Song.Info.TrackName = Song.Tracks[0].Name = "Harbor town";
+	WhatNextAnswer A = AskWhatNext(Song, Asked);
+	Check(A.AskUser && Contains(A.Text, "File > Save As"), A.Text.c_str(), __LINE__);
+	Caller Client;
+	Client.Client = true;
+	ToolSet Tools(Song);
+	A = ReadWhatNext(Tools.Call("what_next", Parse(Asked), Client).Text);
+	Check(A.Tool == "save_song" && WriteJson(A.Arguments) == "{\"name\":\"Harbor town\"}", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Text, "FamiTracker's Songs folder");
+	CHECK_LACKS(A.Text, "Save As");
+	CHECK(Tools.UnknownArguments(A.Tool, A.Arguments).empty());
+	CHECK(!Tools.Call(A.Tool, A.Arguments, Client).IsError && Song.Info.FileName == "Harbor town.ftm");
+	A = ReadWhatNext(Tools.Call("what_next", Parse(Asked), Client).Text);
+	Check(A.Tool == "export_for_game", A.Text.c_str(), __LINE__);
+}
+
 int main()
 {
 	TestJson();
@@ -25822,6 +25849,7 @@ int main()
 	TestExportResources();
 	TestBridgeResources();
 	TestShapeTownWords();
+	TestWhatNextSavesForClient();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

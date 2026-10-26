@@ -25392,13 +25392,14 @@ void CalmLeadArgs(Json &A, const ChannelInfo &Lead)
 // The steps a stage of what_next finds, worked out from the song as it is
 class WhatNext {
 public:
-	WhatNext(Session &S, const Json &Args, bool Core);
+	// Client: a program connected over MCP (Caller::Client), which can't use File > Save As
+	WhatNext(Session &S, const Json &Args, bool Core, bool Client = false);
 	std::string Reply();
 	std::string JsonReply();	// format json: the step as data, for FamiTracker's What next panel (NextSteps.h reads it)
 
 private:
 	Session &S;
-	bool m_Core, m_All;
+	bool m_Core, m_All, m_Client;
 	int m_KindId;
 	bool m_KindAsked;			// the call gave the kind
 	std::string m_KindNote;		// how the kind was chosen, when it wasn't given
@@ -25488,7 +25489,8 @@ private:
 	Json StepJson(const NextStep &N) const;
 };
 
-WhatNext::WhatNext(Session &Song, const Json &Args, bool Core) : S(Song), m_Core(Core), m_All(BoolArg(Args, "all", false)),
+WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(Song), m_Core(Core),
+	m_All(BoolArg(Args, "all", false)), m_Client(Client),
 	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
 	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC)
 {
@@ -27306,7 +27308,14 @@ void WhatNext::Finish()
 	const bool Current = !Print.empty() && Print == SoundPrint(S);
 	const bool AtLoudness = !Loudness.empty() && std::fabs(std::atof(Loudness.c_str()) - K.Loudness) < 0.05;
 	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
-		if (S.Song.FileName.empty())
+		if (S.Song.FileName.empty() && m_Client) {
+			// A client can't use File > Save As: save_song saves the song into the Songs folder, under the name it's given
+			Json A = Json::MakeObject();
+			A.Set("name", NewSongName(S));
+			Step("save", "save_song", A, "The song hasn't been saved yet, and the game's file goes next to it: save it into a folder of "
+				"its own in FamiTracker's Songs folder (next to FamiTracker.exe), under this name or another the user likes.");
+		}
+		else if (S.Song.FileName.empty())
 			Ask("save", "The song hasn't been saved yet, and the game's file goes next to it: ask the user to save it (File > Save As), "
 				"then ask what_next again.");
 		else
@@ -27773,13 +27782,14 @@ std::string WhatNext::JsonReply()
 	return WriteJson(Out);
 }
 
-// what_next: the tool (Core: asked through the small set, so its steps use only that set's tools)
-std::string WhatNextTool(Session &S, const Json &Args, bool Core)
+// what_next: the tool (Core: asked through the small set, so its steps use only that set's tools; Client: a program
+// connected over MCP, which saves a song without a file with save_song's name rather than File > Save As)
+std::string WhatNextTool(Session &S, const Json &Args, bool Core, bool Client)
 {
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "json")
 		throw Problem("format: text (the default) or json (the step as data, for programs).");
-	WhatNext Plan(S, Args, Core);
+	WhatNext Plan(S, Args, Core, Client);
 	return Form == "json" ? Plan.JsonReply() : Plan.Reply();
 }
 
@@ -29889,7 +29899,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix"))
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
-		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core);
+		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core, Who.Client);
 		else if (Name == "listen") Result.Text = ListenTool(S, Args, 0);
 		else if (Name == "check_exercise") Result.Text = CheckExerciseTool(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);

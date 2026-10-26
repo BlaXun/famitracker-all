@@ -213,8 +213,10 @@ File > Save As: into the **Songs** folder next to FamiTracker.exe
 in a folder of its own named after the track (`Songs\Town\Town.ftm`, else
 the module's title or `Untitled`; `Town 2` when the name is taken, never over
 a file). From then on the song is that file, and its OGG files go next to it.
-`save_song` does the same, with `name` for the song's name. FamiTracker's own
-File > Export for games still asks you to save first.
+`save_song` does the same, with `name` for the song's name, and `what_next`
+gives a client that call (with the track's name) where it would otherwise ask
+you to save. FamiTracker's own File > Export for games and its What next panel
+still ask you to save first.
 
 Asked over the network, the reply says how to get each file to the person,
 three ways, for clients that can do different things:
