@@ -51,26 +51,25 @@ CString Text(const std::string &Ascii)
 	return CString(Ascii.c_str());
 }
 
-// The markup of the see-also links: "<a id="triad">Triad</a>, ..."
-CString SeeAlsoMarkup(const ftapi::GlossaryEntry &Entry)
+// The see-also line: as links' markup ("See also: <a id="triad">Triad</a>, ..."), or the terms alone. ASCII
+std::string SeeAlsoLine(const ftapi::GlossaryEntry &Entry, bool Markup)
 {
-	CString Markup;
+	std::string Line;
 	for (size_t i = 0; i < Entry.SeeAlso.size(); ++i) {
 		const ftapi::GlossaryEntry *pOther = ftapi::FindGlossaryEntry(Entry.SeeAlso[i]);
 		if (pOther == NULL)
 			continue;
-		CString Link;
-		Link.Format(_T("<a id=\"%s\">%s</a>"), static_cast<LPCTSTR>(Text(pOther->Id)), static_cast<LPCTSTR>(Text(pOther->Term)));
-		Markup += (Markup.IsEmpty() ? _T("See also: ") : _T(", ")) + Link;
+		Line += Line.empty() ? "See also: " : ", ";
+		Line += Markup ? "<a id=\"" + pOther->Id + "\">" + pOther->Term + "</a>" : pOther->Term;
 	}
-	return Markup;
+	return Line;
 }
 
 class CGlossaryDlg : public CDialog
 {
 public:
 	explicit CGlossaryDlg(CMainFrame *pMainFrame) : CDialog(IDD_GLOSSARY, pMainFrame), m_pMainFrame(pMainFrame),
-		m_bPlaying(false), m_bPlaced(false) {}
+		m_hLinks(NULL), m_bLinkControl(false), m_bPlaying(false), m_bPlaced(false) {}
 
 	static CGlossaryDlg *s_pOpen;	// the window, while it's there (shown or hidden)
 
@@ -104,9 +103,13 @@ private:
 	void Place();				// where it was, else beside the song
 	void SavePlace();
 	void ShowHearing();			// the Hear it button and its line, as the example plays or not
+	void ShowSeeAlso(const ftapi::GlossaryEntry *pEntry);
 
 	CMainFrame *m_pMainFrame;
-	CLinkCtrl m_Links;
+	// The see-also links: a SysLink, a Unicode-only control that the MBCS build's CLinkCtrl::Create never makes (it
+	// returns FALSE), so it's made with CreateWindowExW; where it can't be, a plain line names the terms
+	HWND m_hLinks;
+	bool m_bLinkControl;
 	CFont m_TitleFont;
 	std::string m_Shown;					// the entry shown ("" for the introduction)
 	std::vector<std::string> m_Back;		// the ones shown before it
@@ -140,8 +143,15 @@ BOOL CGlossaryDlg::OnInitDialog()
 	Controls.dwSize = sizeof(Controls);
 	Controls.dwICC = ICC_LINK_CLASS;
 	::InitCommonControlsEx(&Controls);
-	m_Links.Create(_T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP, CRect(0, 0, 10, 10), this, IDC_GLOSSARY_SEEALSO);
-	m_Links.SetFont(GetFont());
+	HMENU Id = reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_GLOSSARY_SEEALSO));
+	m_hLinks = ::CreateWindowExW(0, L"SysLink", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 10, 10, m_hWnd, Id,
+		AfxGetInstanceHandle(), NULL);
+	m_bLinkControl = m_hLinks != NULL;
+	if (m_hLinks == NULL)
+		m_hLinks = ::CreateWindowEx(0, _T("STATIC"), _T(""), WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 10, 10, m_hWnd, Id,
+			AfxGetInstanceHandle(), NULL);
+	if (m_hLinks != NULL)
+		::SendMessage(m_hLinks, WM_SETFONT, reinterpret_cast<WPARAM>(GetFont()->GetSafeHandle()), FALSE);
 	// The term in bold, a little larger
 	LOGFONT Font;
 	GetFont()->GetLogFont(&Font);
@@ -237,8 +247,8 @@ void CGlossaryDlg::Layout()
 	const int Button = SX(64);
 	GetDlgItem(IDC_GLOSSARY_HEAR)->MoveWindow(x, HearTop, Button, Line + 4);
 	GetDlgItem(IDC_GLOSSARY_HEARTEXT)->MoveWindow(x + Button + Margin, HearTop, std::max(SX(40), Width - Button - Margin), Line * 2 + 2);
-	if (m_Links.m_hWnd != NULL)
-		m_Links.MoveWindow(x, LinksTop, Width, LinksHeight);
+	if (m_hLinks != NULL)
+		::MoveWindow(m_hLinks, x, LinksTop, Width, LinksHeight, TRUE);
 	GetDlgItem(IDC_GLOSSARY_BACK)->MoveWindow(x, BackTop, Button, Line + 2);
 	Invalidate();
 }
@@ -290,7 +300,7 @@ void CGlossaryDlg::ShowEntry(const std::string &Id, bool Remember)
 		SetDlgItemText(IDC_GLOSSARY_TERM, _T("Glossary"));
 		SetDlgItemText(IDC_GLOSSARY_NAMES, _T(""));
 		SetDlgItemText(IDC_GLOSSARY_TEXT, INTRO);
-		m_Links.SetWindowText(_T(""));
+		ShowSeeAlso(NULL);
 		m_strHeard.Empty();
 		ShowHearing();
 		return;
@@ -304,7 +314,7 @@ void CGlossaryDlg::ShowEntry(const std::string &Id, bool Remember)
 	}
 	SetDlgItemText(IDC_GLOSSARY_NAMES, Names + _T("."));
 	SetDlgItemText(IDC_GLOSSARY_TEXT, Text(pEntry->Text));
-	m_Links.SetWindowText(SeeAlsoMarkup(*pEntry));
+	ShowSeeAlso(pEntry);
 	// What Hear it plays, or how to hear it where it plays nothing
 	ftapi::HearExample Example;
 	if (!pEntry->Hear.empty() && ftapi::GlossaryExample(pEntry->Hear, Example))
@@ -322,6 +332,17 @@ void CGlossaryDlg::ShowEntry(const std::string &Id, bool Remember)
 			Picked = i;
 	}
 	pList->SetCurSel(Picked);
+}
+
+void CGlossaryDlg::ShowSeeAlso(const ftapi::GlossaryEntry *pEntry)
+{
+	if (m_hLinks == NULL)
+		return;
+	const std::string Line = pEntry != NULL ? SeeAlsoLine(*pEntry, m_bLinkControl) : std::string();
+	if (m_bLinkControl)
+		::SetWindowTextW(m_hLinks, std::wstring(Line.begin(), Line.end()).c_str());	// ASCII
+	else
+		::SetWindowText(m_hLinks, Text(Line));
 }
 
 void CGlossaryDlg::ShowHearing()
