@@ -1984,6 +1984,40 @@ int CPatternEditor::GetColumnAtPoint(int PointX) const
 	return GetChannelColumns(Channel);
 }
 
+bool CPatternEditor::GetCellAtPoint(const CPoint &point, int &Frame, int &Row, int &Channel, int &Column) const
+{
+	// (the glossary's hover over effects, GlossaryTips.cpp)
+	if (!IsOverPattern(point) || IsInsideRowColumn(point) || !IsInsidePattern(point) || m_iRowHeight <= 0)
+		return false;
+	const int ChannelCount = GetChannelCount();
+	Channel = GetChannelAtPoint(point.x);
+	if (Channel < m_iFirstChannel || Channel >= ChannelCount || Channel >= m_iFirstChannel + m_iChannelsVisible)
+		return false;
+	Column = GetColumnAtPoint(point.x);
+	if (Column < 0 || Column >= GetChannelColumns(Channel))
+		return false;
+	const int At = GetRowAtPoint(point.y);
+	Frame = m_iCurrentFrame;
+	if (At >= 0 && At < m_iPatternLength) {
+		Row = At;
+		return true;
+	}
+	if (!theApp.GetSettings()->General.bFramePreview)
+		return false;
+	const int FrameCount = m_pDocument->GetFrameCount(GetSelectedTrack());
+	if (At >= m_iPatternLength && Frame < FrameCount - 1 && At - m_iPatternLength < m_iNextPatternLength) {
+		++Frame;
+		Row = At - m_iPatternLength;
+		return true;
+	}
+	if (At < 0 && Frame > 0 && m_iPrevPatternLength + At >= 0) {
+		--Frame;
+		Row = m_iPrevPatternLength + At;
+		return true;
+	}
+	return false;
+}
+
 CCursorPos CPatternEditor::GetCursorAtPoint(const CPoint &point) const
 {
 	return CCursorPos(GetRowAtPoint(point.y), GetChannelAtPoint(point.x), GetColumnAtPoint(point.x));

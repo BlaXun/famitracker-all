@@ -69,6 +69,8 @@ BEGIN
     BUTTON      ID_FILE_GENERALSETTINGS
     SEPARATOR
     BUTTON      ID_FILE_CREATE_NSF
+    SEPARATOR
+    BUTTON      ID_HELP_GLOSSARY
 END
 
 IDR_INSTRUMENT_TOOLBAR TOOLBAR  16, 15
@@ -247,6 +249,8 @@ BEGIN
     POPUP "&Help"
     BEGIN
         MENUITEM "&Tutorials...",               ID_HELP_TUTORIALS
+        MENUITEM "&Glossary",                   ID_HELP_GLOSSARY
+        MENUITEM "&Hear the effect at the cursor", ID_HELP_HEAREFFECT
         POPUP "&Example songs"
         BEGIN
             MENUITEM "&First song: a tune, a bass and drums on the NES's own chip", ID_HELP_EXAMPLE_FIRST
@@ -601,6 +605,8 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
+    ID_HELP_GLOSSARY        "The words of music, sounds and FamiTracker in plain words, with examples to hear, in a window beside the song\nGlossary"
+    ID_HELP_HEAREFFECT      "Hear the effect at the cursor (or the one the mouse rests on): the note plain, then with the effect's own numbers\nHear the effect"
     ID_HELP_EXAMPLE_FIRST   "A short song on the 2A03 alone, opened as a new song, with a walkthrough of what to listen for\nFirst song"
     ID_HELP_EXAMPLE_TRICKS  "A short song of the NES's classic tricks, opened as a new song, with a walkthrough of what to listen for\nNES tricks"
     ID_HELP_EXAMPLE_VRC6    "A short song for the VRC6 chip, opened as a new song, with a walkthrough of what to listen for\nThe VRC6"
@@ -2163,6 +2169,24 @@ BEGIN
     PUSHBUTTON      "From a WAV file...",IDC_REC_FROMFILE,7,309,76,14
     DEFPUSHBUTTON   "Record",IDC_REC_RECORD,150,309,50,14
     PUSHBUTTON      "Close",IDCANCEL,205,309,50,14
+END
+
+IDD_GLOSSARY DIALOGEX 0, 0, 330, 250
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+EXSTYLE WS_EX_TOOLWINDOW
+CAPTION "Glossary"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Find:",IDC_GLOSSARY_FINDLABEL,7,9,20,8
+    EDITTEXT        IDC_GLOSSARY_SEARCH,29,7,85,13,ES_AUTOHSCROLL
+    COMBOBOX        IDC_GLOSSARY_CATEGORY,7,24,107,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LISTBOX         IDC_GLOSSARY_LIST,7,41,107,202,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Glossary",IDC_GLOSSARY_TERM,122,7,201,12,SS_NOPREFIX
+    LTEXT           "",IDC_GLOSSARY_NAMES,122,20,201,16,SS_NOPREFIX
+    EDITTEXT        IDC_GLOSSARY_TEXT,122,38,201,120,ES_MULTILINE | ES_READONLY | WS_VSCROLL | NOT WS_TABSTOP
+    PUSHBUTTON      "Hear it",IDC_GLOSSARY_HEAR,122,164,44,14
+    LTEXT           "",IDC_GLOSSARY_HEARTEXT,170,164,153,24,SS_NOPREFIX
+    PUSHBUTTON      "< Back",IDC_GLOSSARY_BACK,122,229,44,14
 END
 
 IDD_PHONE DIALOGEX 0, 0, 262, 298

@@ -56,6 +56,7 @@
 #include "GrooveDlg.h"
 #include "PianoRoll.h"
 #include "PianoRollChords.h"
+#include "GlossaryTips.h"
 
 namespace {
 
@@ -4185,8 +4186,23 @@ bool CPianoRollWnd::Create(CWnd *pParent)
 	if (g_hMenuHook == NULL)
 		g_hMenuHook = ::SetWindowsHookEx(WH_MSGFILTER, MenuClickHook, NULL, ::GetCurrentThreadId());
 	const CString Class = AfxRegisterWndClass(CS_DBLCLKS, ::LoadCursor(NULL, IDC_ARROW), NULL, NULL);
-	return CreateEx(0, Class, _T("Piano roll"), WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL | WS_CLIPSIBLINGS,
-		CRect(0, 0, 0, 0), pParent, 1) != FALSE;
+	if (!CreateEx(0, Class, _T("Piano roll"), WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL | WS_CLIPSIBLINGS,
+		CRect(0, 0, 0, 0), pParent, 1))
+		return false;
+	// The Key, Snap to key, Chords and Groove buttons explain themselves with the glossary (GlossaryTips.h)
+	const Impl *pImpl = m_pImpl;
+	AddGlossaryTipArea(this, [pImpl](CPoint Point, glossary_tip_t &Tip) {
+		for (size_t i = 0; i < pImpl->Buttons.size(); ++i) {
+			if (!pImpl->Buttons[i].Rect.PtInRect(Point))
+				continue;
+			const int Id = pImpl->Buttons[i].Id;
+			LPCTSTR Label = Id == BUTTON_KEY ? _T("Key") : Id == BUTTON_SNAP ? _T("Snap to key") : Id == BUTTON_CHORDS ? _T("Chords") :
+				Id == BUTTON_GROOVE ? _T("Groove") : NULL;
+			return Label != NULL && GlossaryLabelTip("piano roll", Label, Id, Tip);
+		}
+		return false;
+	});
+	return true;
 }
 
 void CPianoRollWnd::Activate(bool Shown)

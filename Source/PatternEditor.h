@@ -133,6 +133,9 @@ public:
 	// Where a channel's column is in the view, its header too, cut to the window's width; false when it's
 	// scrolled out of sight (Help > Tutorials points at it)
 	bool GetChannelRect(int Channel, CRect &Rect) const;
+	// The cell drawn under a point of the view: its frame and row (the frames before and after where they show), its
+	// channel and its column (COLUMN_NOTE...); false off the cells (the header, the row numbers, past the channels)
+	bool GetCellAtPoint(const CPoint &point, int &Frame, int &Row, int &Channel, int &Column) const;
 	// A clip dragged in from the clips panel (ClipsPanel.cpp, through CFamiTrackerView::ShowClipDrop):
 	// the cells it would cover, Channels wide and Rows long from the cell under the point, are shaded
 	// as in a drag and drop, and the cursor stays where it is. With Scroll, a point close to an edge

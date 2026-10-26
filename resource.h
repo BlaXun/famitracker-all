@@ -889,6 +889,23 @@
 #define IDC_BACK_CHORDTEXT              2098
 #define IDC_BACK_STRUM                  2099
 
+// Help > Glossary (GlossaryDlg.cpp), its toolbar button and keys, and Help > Hear the effect at the cursor
+// (GlossaryHear.cpp): the glossary's resources 650-669, controls 2200-2249, commands 37700-37749
+#define IDD_GLOSSARY                    650
+#define IDC_GLOSSARY_FINDLABEL          2200
+#define IDC_GLOSSARY_SEARCH             2201
+#define IDC_GLOSSARY_CATEGORY           2202
+#define IDC_GLOSSARY_LIST               2203
+#define IDC_GLOSSARY_TERM               2204
+#define IDC_GLOSSARY_NAMES              2205
+#define IDC_GLOSSARY_TEXT               2206
+#define IDC_GLOSSARY_HEAR               2207
+#define IDC_GLOSSARY_HEARTEXT           2208
+#define IDC_GLOSSARY_SEEALSO            2209
+#define IDC_GLOSSARY_BACK               2210
+#define ID_HELP_GLOSSARY                37700
+#define ID_HELP_HEAREFFECT              37701
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

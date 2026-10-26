@@ -704,6 +704,12 @@
     <ClInclude Include="Source\PhoneLink.h" />
     <ClCompile Include="Source\PhoneDlg.cpp" />
     <ClInclude Include="Source\PhoneDlg.h" />
+    <ClCompile Include="Source\GlossaryDlg.cpp" />
+    <ClInclude Include="Source\GlossaryDlg.h" />
+    <ClCompile Include="Source\GlossaryHear.cpp" />
+    <ClInclude Include="Source\GlossaryHear.h" />
+    <ClCompile Include="Source\GlossaryTips.cpp" />
+    <ClInclude Include="Source\GlossaryTips.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Nsf\Cpu6502.cpp" />

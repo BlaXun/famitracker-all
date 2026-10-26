@@ -1866,5 +1866,23 @@
     <ClInclude Include="Source\PhoneDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\GlossaryDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\GlossaryHear.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryHear.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\GlossaryTips.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryTips.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

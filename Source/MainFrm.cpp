@@ -55,6 +55,9 @@
 #include "SoundPreview.h"
 #include "PhoneDlg.h"
 #include "PhoneLink.h"
+#include "GlossaryDlg.h"
+#include "GlossaryHear.h"
+#include "GlossaryTips.h"
 #include "DrumGridPanel.h"
 #include "NoteViews.h"
 #include "Profile.h"
@@ -235,6 +238,8 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_DRUMGRID, OnUpdateEditDrumGrid)
 	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
+	ON_COMMAND(ID_HELP_GLOSSARY, OnHelpGlossary)
+	ON_COMMAND(ID_HELP_HEAREFFECT, OnHelpHearEffect)
 	ON_COMMAND_RANGE(ID_HELP_EXAMPLE_FIRST, ID_HELP_EXAMPLE_SFX, OnHelpExample)
 	ON_COMMAND(ID_VIEW_PROFILE, OnViewProfile)
 	ON_COMMAND(ID_VIEW_SHOWEVERYTHING, OnViewShowEverything)
@@ -298,7 +303,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_VIEW_CLIPSPANEL, OnViewClipsPanel)
 	ON_COMMAND(ID_VIEW_PROBLEMS, OnViewProblems)
 	ON_COMMAND(ID_VIEW_MIXER, OnViewMixer)
-	ON_COMMAND(ID_HELP, CFrameWnd::OnHelp)
+	ON_COMMAND(ID_HELP, OnHelpContext)
 	ON_COMMAND(ID_HELP_FINDER, CFrameWnd::OnHelpFinder)
 	ON_COMMAND(ID_HELP_PERFORMANCE, OnHelpPerformance)
 	ON_COMMAND(ID_HELP_EFFECTTABLE, &CMainFrame::OnHelpEffecttable)
@@ -374,6 +379,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_CLIPSPANEL, OnUpdateViewClipsPanel)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_PROBLEMS, OnUpdateViewProblems)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_MIXER, OnUpdateViewMixer)
+	ON_UPDATE_COMMAND_UI(ID_HELP_GLOSSARY, OnUpdateHelpGlossary)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT1, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(IDC_HIGHLIGHT2, OnUpdateHighlight)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_EXPANDPATTERNS, OnUpdateSelectionEnabled)
@@ -504,6 +510,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_pMcpConnection = new CMcpConnection();
 	m_pMcpConnection->Start(this);
 
+	// The glossary's explanations in place, and the glossary itself again if it was open (GlossaryTips.h)
+	StartGlossaryHelp(this);
+
 	return 0;
 }
 
@@ -534,7 +543,7 @@ bool CMainFrame::CreateToolbars()
 	rbi1.fMask		= RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_SIZE;
 	rbi1.fStyle		= RBBS_NOGRIPPER;
 	rbi1.hwndChild	= m_wndToolBar;
-	rbi1.cxMinChild	= SX(623);	// 554, plus 23 each for the microphone, clips and piano roll buttons
+	rbi1.cxMinChild	= SX(654);	// 554, plus 23 each for the microphone, clips and piano roll buttons, 31 for the glossary's and its separator
 	rbi1.cyMinChild	= SY(22);
 	rbi1.cx			= SX(496);
 
@@ -2065,6 +2074,30 @@ void CMainFrame::SetBPM(int Bpm)
 	pDoc->SetModifiedFlag();
 }
 
+// Help > Glossary: a window beside the song, shown and hidden (GlossaryDlg.h)
+void CMainFrame::OnHelpGlossary()
+{
+	ToggleGlossary(this);
+}
+
+void CMainFrame::OnUpdateHelpGlossary(CCmdUI *pCmdUI)
+{
+	pCmdUI->SetCheck(IsGlossaryOpen() ? 1 : 0);
+}
+
+// Help > Hear the effect at the cursor (GlossaryHear.h)
+void CMainFrame::OnHelpHearEffect()
+{
+	HearEffectAtCursor(this);
+}
+
+// F1: the glossary at what a glossary tooltip shows, or at the effect at the cursor; else FamiTracker's help
+void CMainFrame::OnHelpContext()
+{
+	if (!GlossaryHelpKey(this))
+		CFrameWnd::OnHelp();
+}
+
 // Help > Tutorials (Tutorial.h)
 
 void CMainFrame::OnHelpTutorials()
@@ -2974,6 +3007,7 @@ void CMainFrame::OnDestroy()
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->Stop();	// no more requests from Claude Code
 	ClosePhoneTakes();				// nor from the phone page (PhoneLink.h)
+	StopGlossaryHelp();				// the glossary keeps its place, its example stops (GlossaryTips.h)
 	if (m_pSoundPreview != NULL)
 		m_pSoundPreview->Close();	// a sound playing stops
 
