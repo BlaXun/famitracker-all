@@ -43,10 +43,21 @@ struct EffectInfo {
 	const char *Channels;	// which channels play it
 	const char *Lasts;		// until turned off, or this row only
 	const char *Uses;		// what it's good for, with values
+	// For a newcomer, in plain words, two to four sentences (FamiTracker's glossary, Help > Glossary, and Glossary.h)
+	const char *Plain;
+	int Example;			// a value that shows it off for the glossary's Hear it; -1 for none (the DPCM's, the song's)
 };
 
 // The effects a note can carry, in FamiTracker's order of letters
 const std::vector<EffectInfo> &EffectReference();
+// The effects that steer the whole song from any channel (Fxx, Bxx, Dxx, Cxx) and 0.4.6's old volume (Exx), for the
+// glossary (the effects tool tells Claude to use set_tempo and set_loop for them)
+const std::vector<EffectInfo> &SongEffectReference();
+
+// An effect as the pattern editor shows it (an effect_id with its parameter, on a channel of the chip and kind), in
+// plain words with its own numbers, for its hover and the status bar: "Vibrato: the pitch wobbles, speed 4, depth 7".
+// SpeedSplit is the module's speed and tempo split point (Fxx under it sets the speed); "" for no effect
+std::string DescribeEffect(int Effect, int Param, const ChannelInfo &Channel, int SpeedSplit = 0x20);
 
 struct Technique {
 	const char *Name;		// "delayed vibrato"

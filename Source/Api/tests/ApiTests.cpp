@@ -33,6 +33,7 @@
 #include "../FdsSounds.h"
 #include "../GameAudio.h"
 #include "../GameSounds.h"
+#include "../Glossary.h"
 #include "../Grooves.h"
 #include "../GrowMelody.h"
 #include "../Http.h"
@@ -4940,7 +4941,8 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 36);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25)
+	CHECK(Core.size() >= 15 && Core.size() <= 38);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25),
+		// 36 with explain (2026-10-26)
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -22605,6 +22607,71 @@ void TestStatusBarFrames()
 	CHECK(StatusFramesText(1, 33, 50).size() <= std::string(STATUS_FRAMES_LONGEST).size());
 }
 
+// explain: the glossary's words (Glossary.h) for Claude and local models, the entry found by any of its names, an effect
+// as written with what its numbers do, the nearest entry for other words, the terms by category (2026-10-26)
+void TestExplainTool()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	CHECK(Tools.Has("explain") && ToolSet::IsCoreTool("explain"));
+	ToolResult Got = Tools.Call("explain", Parse("{\"term\": \"home note\"}"));
+	CHECK(!Got.IsError);
+	CHECK_HAS(Got.Text, "Home note (tonic) (also: tonic");
+	CHECK_HAS(Got.Text, "like coming home after a walk");
+	CHECK_HAS(Got.Text, "Hear it (FamiTracker's Help > Glossary plays it)");
+	CHECK_HAS(Got.Text, "See also: Key, Tension and release");
+	// Every entry, by every name it goes by
+	const std::vector<GlossaryEntry> &All = GlossaryEntries();
+	int Asked = 0;
+	for (size_t i = 0; i < All.size(); ++i) {
+		std::vector<std::string> Names = All[i].Names;
+		Names.push_back(All[i].Term);
+		Names.push_back(All[i].Id);
+		for (size_t n = 0; n < Names.size(); ++n) {
+			Json Arguments = Json::MakeObject();
+			Arguments.Set("term", Names[n]);
+			const ToolResult Reply = Tools.Call("explain", Arguments);
+			Check(!Reply.IsError && Reply.Text.compare(0, All[i].Term.size(), All[i].Term) == 0 &&
+				Reply.Text.find(All[i].Text) != std::string::npos, (Names[n] + " explains " + All[i].Id).c_str(), __LINE__);
+			++Asked;
+		}
+	}
+	CHECK(Asked > 500);
+	// An effect as written: its numbers too
+	Got = Tools.Call("explain", Parse("{\"term\": \"447\"}"));
+	CHECK_HAS(Got.Text, "Vibrato (4xy)");
+	CHECK_HAS(Got.Text, "447: Vibrato: the pitch wobbles, speed 4, depth 7.");
+	Got = Tools.Call("explain", Parse("{\"term\": \"q31\"}"));
+	CHECK_HAS(Got.Text, "Q31: Note slide up: 1 semitone up, speed 3.");
+	// Other words: the nearest entry, and the others that mention them
+	Got = Tools.Call("explain", Parse("{\"term\": \"siren\"}"));
+	CHECK(!Got.IsError);
+	CHECK_HAS(Got.Text, "No entry is called \"siren\"; the nearest is");
+	Got = Tools.Call("explain", Parse("{\"term\": \"zzzqqq\"}"));
+	CHECK(Got.IsError);
+	CHECK_HAS(Got.Text, "explain without a term lists its terms");
+	// The terms, all of them or a category's
+	Got = Tools.Call("explain", Json::MakeObject());
+	CHECK_HAS(Got.Text, "Making music: ");
+	CHECK_HAS(Got.Text, "The tracker: ");
+	CHECK_HAS(Got.Text, "Effects: Arpeggio (0xy), Slide up (1xx)");
+	Got = Tools.Call("explain", Parse("{\"category\": \"sounds\"}"));
+	CHECK_HAS(Got.Text, "Sounds: 2A03 (the NES's own chip)");
+	CHECK_LACKS(Got.Text, "Making music");
+	Got = Tools.Call("explain", Parse("{\"category\": \"recipes\"}"));
+	CHECK(Got.IsError);
+	// On the small set too; an argument it doesn't take is refused
+	Caller Core;
+	Core.Core = true;
+	Got = Tools.Call("explain", Parse("{\"term\": \"chord\"}"), Core);
+	CHECK(!Got.IsError && Got.Text.compare(0, 5, "Chord") == 0);
+	Got = Tools.Call("explain", Parse("{\"word\": \"chord\"}"));
+	CHECK(Got.IsError);
+	CHECK_HAS(Got.Text, "term");
+	// It needs no song, and changes nothing
+	CHECK(Song.Writes == 0 && Song.UndoPushes == 0);
+}
+
 int main()
 {
 	TestJson();
@@ -22825,6 +22892,7 @@ int main()
 	TestBrowserFixes();
 	TestStudiedNames();
 	TestStatusBarFrames();
+	TestExplainTool();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

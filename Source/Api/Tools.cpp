@@ -43,6 +43,7 @@
 #include "StepNotes.h"
 #include "Effects.h"
 #include "FdsSounds.h"
+#include "Glossary.h"
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "WhatNext.h"
@@ -27366,6 +27367,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("idea", Prop("string", "What the song is for, like \"a river stage by day\", for the recipe to name."))
 			.Add("bars", Prop("integer", "How long, in bars (default 40).")),
 		true, false, true);
+
+	AddTool("explain", "Explain a term",
+		"A music, sound or tracker term in plain words, as FamiTracker's glossary (Help > Glossary) explains it to the user: "
+		"what it is, an everyday comparison, where it is in FamiTracker, what its Hear it example plays and the terms to see "
+		"too. Use these words when you explain something to the user (a chord, swing, the home note, the pulse width, a "
+		"frame, an effect like 4xy or 447). With no term, the terms by category.",
+		Schema()
+			.Add("term", Prop("string", "The term or one of its other names, like \"chord\", \"home note\", \"duty\", \"4xy\" or "
+				"\"447\" (an effect as written)."))
+			.Add("category", EnumProp("Without a term: list one category's terms only.", std::vector<std::string>{ "music",
+				"sounds", "tracker", "effects" })),
+		true, false, true);
 }
 
 bool ToolSet::Has(const std::string &Name) const
@@ -27512,6 +27525,7 @@ std::string ToolSet::UnknownArguments(const std::string &Name, const Json &Argum
 }
 
 static std::string RecipeTool(const Json &Args, bool Core);
+static std::string ExplainTool(const Json &Args);
 
 // The label of the change a call made, for undo to say what it undoes: the tool, and what its reply says it changed
 // ("write_notes: 12 notes on 2A03 Pulse 1, bars 1-4"), a line at most
@@ -27598,6 +27612,10 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 	try {
 		if (Name == "get_recipe") {	// needs no song
 			Result.Text = RecipeTool(Args, Who.Core);
+			return Result;
+		}
+		if (Name == "explain") {	// needs no song either
+			Result.Text = ExplainTool(Args);
 			return Result;
 		}
 		Session S(m_Host);
@@ -27835,7 +27853,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe" };
+		"finish_song", "get_recipe", "explain" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -28359,6 +28377,61 @@ static std::string RecipeTool(const Json &Args, bool Core)
 	std::string Text, Error;
 	ToolSet::PromptText("compose_track", Prompt, Text, Error);
 	return Text;
+}
+
+// explain: a term in plain words, as FamiTracker's glossary (Help > Glossary, Glossary.h) shows it, by any of its names; an
+// effect as written gets what its numbers do too. Without a term, the terms of a category or all of them
+static std::string ExplainTool(const Json &Args)
+{
+	const std::string Term = Trim(StringArg(Args, "term"));
+	if (Term.empty()) {
+		const std::string Asked = Lowercase(Trim(StringArg(Args, "category")));
+		static const char *const KEYS[GLOSSARY_CATEGORIES] = { "music", "sounds", "tracker", "effects" };
+		std::string Out = "The glossary's terms (FamiTracker's Help > Glossary shows each one, most with an example to hear):";
+		bool Any = false;
+		for (int c = 0; c < GLOSSARY_CATEGORIES; ++c) {
+			if (!Asked.empty() && Asked != KEYS[c] && Lowercase(GlossaryCategoryName(c)).find(Asked) == std::string::npos)
+				continue;
+			const std::vector<const GlossaryEntry *> All = SearchGlossary("", c);
+			Out += std::string("\n") + GlossaryCategoryName(c) + ": ";
+			for (size_t i = 0; i < All.size(); ++i)
+				Out += (i == 0 ? "" : ", ") + All[i]->Term;
+			Out += ".";
+			Any = true;
+		}
+		if (!Any)
+			throw Problem("category is music, sounds, tracker or effects.");
+		return Out + "\nAsk for one with term, like \"swing\" or \"4xy\", and explain it to the user in its words.";
+	}
+	const GlossaryEntry *pEntry = FindGlossaryEntry(Term);
+	if (pEntry == 0) {
+		const std::vector<const GlossaryEntry *> Near = SearchGlossary(Term);
+		if (Near.empty())
+			throw Problem("The glossary has no entry for \"" + Term + "\". explain without a term lists its terms.");
+		std::string Out = "No entry is called \"" + Term + "\"; the nearest is " + Near[0]->Term + ":\n" + GlossaryText(*Near[0]);
+		if (Near.size() > 1) {
+			Out += "\nOthers that mention it: ";
+			for (size_t i = 1; i < Near.size() && i < 6; ++i)
+				Out += (i == 1 ? "" : ", ") + Near[i]->Term;
+			Out += ".";
+		}
+		return Out;
+	}
+	std::string Out = GlossaryText(*pEntry);
+	// An effect as written: its own numbers too (on a 2A03 pulse; the FDS's and the 5B's H, I and J are in see also)
+	int Effect = EFF_NONE, Param = 0;
+	std::string Written;
+	for (size_t i = 0; i < Term.size(); ++i)
+		if (!std::isspace(static_cast<unsigned char>(Term[i])))
+			Written += static_cast<char>(std::toupper(static_cast<unsigned char>(Term[i])));
+	if (pEntry->Category == GLOSSARY_EFFECTS && Written.size() == 3 && std::isxdigit(static_cast<unsigned char>(Written[1])) &&
+		std::isxdigit(static_cast<unsigned char>(Written[2])) && ParseEffect(Written, Effect, Param)) {
+		ChannelInfo Pulse;
+		Pulse.Kind = KIND_PULSE;
+		Pulse.Chip = "2A03";
+		Out += "\n" + Written + ": " + DescribeEffect(Effect, Param, Pulse) + ".";
+	}
+	return Out;
 }
 
 bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error)
