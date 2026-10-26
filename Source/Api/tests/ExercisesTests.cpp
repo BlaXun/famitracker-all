@@ -799,7 +799,7 @@ void TestLongShortChecks()
 	Note(F, 0, 2, 1, 2, "G-4");
 	ExerciseVerdict V = Run("long-short", F);
 	Fails(V, "the longest, your first note (bar 1), lasts 2 beats. Make it long: drag its right edge to the right until it reaches "
-		"the next bar line.", __LINE__);
+		"the next [[bar line|bar]].", __LINE__);
 	CHECK(V.PlayFirst == 1 && V.PlayLast == 2);
 	// A note too short still
 	F.Channels[0].Notes[0].Rows = 10;
@@ -821,7 +821,7 @@ void TestLongShortChecks()
 	ExerciseFacts L = Small(2);
 	Note(L, 0, 1, 3, 2, "C-4");
 	Note(L, 0, 2, 1, 2, "G-4");
-	Says(Run("long-short", L), "until it lasts three beats or more", __LINE__);
+	Says(Run("long-short", L), "until it lasts three [[beats|beat]] or more", __LINE__);
 }
 
 void TestSteadyBeatChecks()
@@ -882,7 +882,7 @@ void TestStairsChecks()
 	F.Channels[0].Notes[2].Pitch = Pitch("E-4");
 	Note(F, 0, 1, 4, 1, "F-4");
 	Note(F, 0, 2, 1, 1, "G-4");
-	Fails(Run("stairs", F), "Now come back down, one lighter lane lower on each beat line: F, E, D and C, where you started.",
+	Fails(Run("stairs", F), "Come back down, one lighter lane lower on each beat line: F, E, D and C, where you started.",
 		__LINE__);
 	Note(F, 0, 2, 2, 1, "F-4");
 	Note(F, 0, 2, 3, 1, "D-4");

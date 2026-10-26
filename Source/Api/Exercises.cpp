@@ -1201,7 +1201,7 @@ void CheckFirstNote(const ExerciseFacts &F, ExerciseVerdict &V)
 		return;
 	}
 	V.Passed = true;
-	V.Right.push_back(Notes.size() == 1 ? "There's your [[note]]: " + PlayButton(F) + " plays it again." :
+	V.Right.push_back(Notes.size() == 1 ? std::string("There's your [[note]], on the lane you clicked.") :
 		Format("There are your %d notes: the higher ones sound higher, and they play from left to right.",
 		static_cast<int>(Notes.size())));
 }
@@ -1276,7 +1276,7 @@ void CheckLongShort(const ExerciseFacts &F, ExerciseVerdict &V)
 		const bool ToBarLine = T.BarEnd(LongBar) - L.Row >= LONG_BEATS * Beat;
 		V.Next = Format("Your notes are all short so far: the longest, your %s note (bar %d), lasts %s. Make it long: drag its "
 			"right edge to the right %s.", Ordinal(static_cast<int>(Longest) + 1).c_str(), LongBar, BeatsLong(L.Rows, Beat).c_str(),
-			ToBarLine ? "until it reaches the next bar line" : "until it lasts three beats or more");
+			ToBarLine ? "until it reaches the next [[bar line|bar]]" : "until it lasts three [[beats|beat]] or more");
 		return;
 	}
 	V.Right.push_back(Format("Your %s note is long: it lasts %s.", Ordinal(static_cast<int>(Longest) + 1).c_str(),
@@ -1287,7 +1287,7 @@ void CheckLongShort(const ExerciseFacts &F, ExerciseVerdict &V)
 			Shortest = i;
 	const ExerciseNote &S = Notes[Shortest];
 	if (S.Rows > SHORT_BEATS * Beat) {
-		V.Next = Format("Now make another note short: drag the right edge of your %s note (bar %d) to the left until it's as short "
+		V.Next = Format("Make another note short: drag the right edge of your %s note (bar %d) to the left until it's as short "
 			"as it goes, one [[beat]]. It lasts %s now.", Ordinal(static_cast<int>(Shortest) + 1).c_str(), T.BarOf(S.Row),
 			BeatsLong(S.Rows, Beat).c_str());
 		return;
@@ -1490,7 +1490,7 @@ void CheckStairs(const ExerciseFacts &F, ExerciseVerdict &V)
 		for (int p = Pitches.back(); ScalePlace(p, K) > Places.front(); )
 			Rest.push_back(p = ScaleNeighbour(p, -1, K));
 		V.Right.push_back(Format("Your stairs climb %s.", NamesText(Climbed, K).c_str()));
-		V.Next = Format("Now come back down, one lighter lane lower on each beat line: %s, where you started.",
+		V.Next = Format("Come back down, one lighter lane lower on each beat line: %s, where you started.",
 			NamesText(Rest, K).c_str());
 		return;
 	}

@@ -18,3 +18,4 @@ text: Now a second part under it, on the [[triangle]], the NES's deep voice for 
   Click at the start of the bar on the C-3 lane, well below the faint notes, and before you let go, drag to the right to the end of the bar. Press Play bar 1 to hear both parts, then Check.
 hint: The keys at the left are labelled C-3 and C-4. A click on a faint note adds a triangle note there too; only a double-click would switch back to the tune.
 answer: Triangle, bar 1, Bass: C3 - - - - - - -
+answer: Pulse 1, bar 1: E3 - G3 - C4 - G3 -

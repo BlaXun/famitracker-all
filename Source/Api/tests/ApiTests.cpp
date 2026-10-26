@@ -24558,7 +24558,7 @@ void TestFirstStepsMistakes()
 		FakeSong Song(1);
 		if (Open("long-short", Song)) {
 			Says(CheckOn(Song, "long-short", __LINE__), "the longest, your first note (bar 1), lasts 2 beats. Make it long: drag its "
-				"right edge to the right until it reaches the next bar line.", __LINE__);
+				"right edge to the right until it reaches the next [[bar line|bar]].", __LINE__);
 			Steps(Song, "Pulse 1", 1, "C4 - - - - . . . | G4 - - - . . . .");
 			Says(CheckOn(Song, "long-short", __LINE__), "lasts 2 and a half beats", __LINE__);
 			Steps(Song, "Pulse 1", 1, "C4 - - - - - - - | G4 - - - . . . .");

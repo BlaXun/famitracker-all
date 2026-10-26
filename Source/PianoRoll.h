@@ -94,6 +94,9 @@ public:
 	// An exercise's lanes in sight (Tutorial.cpp): the roll scrolls up or down to pitches Low to High, with Channel's
 	// own notes when they all fit, unless they show already; false while it can't (hidden, or not laid out yet)
 	bool ShowPitches(int Channel, int Low, int High);
+	// Draw picked, as its button picks it: an exercise starts with it (Tutorial.cpp), since its steps ask for clicks that
+	// add notes and the tool picked last stays
+	void PickDraw();
 
 	// Edit > Cut, Copy, Paste, Delete and Select all while the piano roll has
 	// the keys: as Ctrl+X, Ctrl+C, Ctrl+V, Delete and Ctrl+A do in it

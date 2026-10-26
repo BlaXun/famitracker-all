@@ -4723,6 +4723,15 @@ bool CPianoRollWnd::ShowPitches(int Channel, int Low, int High)
 	return GetSafeHwnd() != NULL && m_pImpl->Shown && m_pImpl->ShowPitches(Channel, Low, High);
 }
 
+void CPianoRollWnd::PickDraw()
+{
+	if (m_pImpl->Tool == TOOL_DRAW)
+		return;
+	m_pImpl->SetTool(TOOL_DRAW);
+	if (GetSafeHwnd() != NULL)
+		Invalidate(FALSE);
+}
+
 bool CPianoRollWnd::ShowClipDrop(const CPoint &ScreenPoint, int Index, bool Scroll, int &Channel, int &Frame, int &Row)
 {
 	Impl &d = *m_pImpl;
