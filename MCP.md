@@ -104,8 +104,8 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 36 of them:
-`what_next` and the tools its steps call. Reading and writing: `get_song`,
+clear step better than a list of eight tips. `/mcp/core` serves 37 of them:
+`what_next`, the tools its steps call and `explain`. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
@@ -115,7 +115,8 @@ pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
 `check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
 (the last of them in one call); and `play`, `stop`, `save_song`,
-`export_for_game` and `get_recipe`. Not `set_mixer`:
+`export_for_game`, `get_recipe` and `explain` (the glossary's words for a
+term, to explain things to you in). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -722,6 +723,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
+| `explain` | A music, sound or tracker term in plain words, as FamiTracker's glossary (**Help > Glossary**) explains it to you: what it is, an everyday comparison, where it is in FamiTracker, what its Hear it example plays and the terms to see too; an effect as written (`447`) with what its numbers do. Without a term, the terms by category. See [The glossary](#the-glossary) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. It also takes a track of the twelve soundtracks FamiTracker carries by its id (`castlevania-02`), with or without the library. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
 | `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips (the presets and FamiTracker's own sound library, some 230 more sounds of every kind for every chip's channels), the studied sounds of the twelve soundtracks FamiTracker carries (see [Sounds from twelve soundtracks](#sounds-from-twelve-soundtracks)), each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. Studied sounds of the same name, of one study or two, are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With `other_chips`, the ready-made sounds of the chips the song doesn't have come too, after its own, each with the `set_expansion` call that adds its chip first (every note stays). With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
@@ -1945,6 +1947,47 @@ like from MOD and XM) or one the channel can't play (a sweep on a VRC6
 pulse, tremolo on the triangle, `Vxx` beyond what a channel takes, `Gxx`
 longer than a row) is refused with what to use instead, so nothing silently
 does nothing. On the FDS channel, `Hxx`, `Ixx` and `Jxx` are its modulator.
+
+## The glossary
+
+FamiTracker has a glossary for people new to music (**Help > Glossary**,
+its toolbar button at the end of the toolbar, or Ctrl+Shift+G): about 150
+terms in plain words, in four groups. Making music: notes, octaves,
+scales, keys, chords and what they do in a key (home, away, tension and
+color, as the piano roll's chord strip shows them), melody, phrases,
+rhythm, bars, tempo, swing, the drum kit, the song's parts (intro, A, B,
+bridge, climax, break, outro, verse, chorus, in the words Module > Song
+shape and the sections use), the loop, layers, echo, panning and the mix. Sounds: timbre, envelopes,
+vibrato, slides, the pulse width, each channel and each chip. The
+tracker: rows, patterns, frames, speed and tempo, instruments and their
+sequences, the volume and effect columns, the piano roll, sections and
+clips. And every effect. Each entry has its other names (search finds
+them), two to four sentences, the terms to see too, and most a **Hear
+it** button that plays a short example on the song's channels: a major
+chord then a minor one, straight eighths then swung ones, each pulse
+width, a vibrato coming in. An example for a chip the song doesn't have
+says how to hear that chip instead.
+
+The window stays open beside the song without taking the keys: notes go
+on typing in the pattern editor or the piano roll until you click it.
+Esc closes it, and it opens again where it was. In the pattern editor,
+rest the mouse on an effect to read what its numbers do ("447 Vibrato:
+the pitch wobbles, speed 4, depth 7"); the status bar says the same for
+the effect under the cursor, F1 opens its entry and Ctrl+Shift+H (Help >
+Hear the effect at the cursor) plays the note plain and then with the
+effect. A Vxx under an instrument with a duty sequence changes nothing,
+and its tip says so (Hear it then plays it on a plain sound). The song settings' labels (Speed, Tempo or BPM, Rows, Frames,
+Step, the row highlights, Octave) explain themselves the same way and open
+the glossary when clicked, and so do the instrument editor's sequence
+names, the mixer's Soft, Space and pan, and the piano roll's Key, Snap to
+key, Chords and Groove (F1 opens their entries).
+
+Claude and local models get the same words with `explain`: ask for a term
+by any of its names (`{"term": "home note"}`, `"duty"`, `"4xy"`, or an
+effect as written, `"447"`, which adds what its numbers do), or for the
+list (`{"category": "effects"}`). Other words get the nearest entry and
+the others that mention them. It reads no song and changes nothing, and
+it's in the small set too.
 
 ## References: learning from NES soundtracks
 

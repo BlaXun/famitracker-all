@@ -88,6 +88,7 @@ add_library(ftapi STATIC
 	Jingles.cpp
 	SoundEffects.cpp
 	Effects.cpp
+	Glossary.cpp
 	FdsSounds.cpp
 	Wavetables.cpp
 	PulseClicks.cpp
@@ -178,3 +179,8 @@ add_executable(phone_tests tests/PhoneTests.cpp)
 target_link_libraries(phone_tests PRIVATE ftapi)
 target_compile_definitions(phone_tests PRIVATE PHONE_PAGE="${CMAKE_CURRENT_SOURCE_DIR}/../../res/phone.html")
 add_test(NAME phone_tests COMMAND phone_tests)
+
+# The glossary (Glossary.h): its entries, links, searches and Hear it examples
+add_executable(glossary_tests tests/GlossaryTests.cpp)
+target_link_libraries(glossary_tests PRIVATE ftapi)
+add_test(NAME glossary_tests COMMAND glossary_tests)

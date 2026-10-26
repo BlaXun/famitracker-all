@@ -40,6 +40,7 @@
 #include "McpConnection.h"
 #include "InsertRecording.h"
 #include "MixerPanel.h"
+#include "GlossaryTips.h"
 
 namespace {
 
@@ -243,6 +244,13 @@ bool CMixerPanelWnd::Create(CWnd *pParent, CMainFrame *pMain)
 	}
 	ShowSpace();
 	UpdateScroll();
+	// Soft, Space and the pan explain themselves with the glossary (GlossaryTips.h)
+	AddGlossaryTipArea(this, [this](CPoint Point, glossary_tip_t &Tip) {
+		int Channel = -1;
+		const part_t Part = HitTest(Point, Channel);
+		LPCTSTR Label = Part == PART_SOFT ? _T("Soft") : Part == PART_SPACE ? _T("Space") : Part == PART_PAN ? _T("Pan") : NULL;
+		return Label != NULL && GlossaryLabelTip("mixer", Label, Channel * 8 + Part, Tip);
+	});
 	return true;
 }
 

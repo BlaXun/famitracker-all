@@ -51,24 +51,36 @@ std::vector<EffectInfo> MakeReference()
 		"Plays the note, then x semitones above it, then y above it, a tick each, over and over: a chord on one channel.",
 		"every channel with a pitch (not the DPCM's)", "until 000",
 		"037 a minor chord, 047 major, 057 a sus4, 0C0 octaves; so fast it sounds like a chord rather than a run, the classic chip "
-		"chord. Turn it off (000) before a note that shouldn't arpeggiate." });
+		"chord. Turn it off (000) before a note that shouldn't arpeggiate.",
+		"Turns one note into a quick chord: the channel jumps between the note and the notes x and y semitones above "
+		"it, so fast that the ear hears a chord. 047 is a major chord, 037 a minor one and 0C0 the note with its "
+		"octave. 000 turns it off.", 0x47 });
 	All.push_back({ "1xx", "slide up",
 		"Slides the pitch up, xx pitch units every tick, without end.", "every channel with a pitch", "until 100, or another slide",
-		"risers, sirens and sound effects; 101-104 climb slowly. With a halt after it, a note that flies off." });
+		"risers, sirens and sound effects; 101-104 climb slowly. With a halt after it, a note that flies off.",
+		"Slides the pitch up and keeps going, like a siren or a rocket taking off; the bigger the number, the faster. "
+		"100 stops it.", 0x03 });
 	All.push_back({ "2xx", "slide down",
 		"Slides the pitch down, xx pitch units every tick, without end.", "every channel with a pitch", "until 200, or another slide",
-		"falls, bombs dropping, a dive at the end of a phrase (with a halt a row or two later)." });
+		"falls, bombs dropping, a dive at the end of a phrase (with a halt a row or two later).",
+		"Slides the pitch down and keeps going, like a bomb falling; the bigger the number, the faster. 200 stops it.", 0x03 });
 	All.push_back({ "3xx", "portamento",
 		"Each new note glides from the pitch before to its own, xx pitch units a tick.", "every channel with a pitch",
 		"until 300: every note glides while it's on",
-		"legato leads and bass glides: 304-310 smooth, 320 and up quick. Turn it off (300) before notes that should jump." });
+		"legato leads and bass glides: 304-310 smooth, 320 and up quick. Turn it off (300) before notes that should jump.",
+		"Makes each new note glide from the one before instead of jumping, like a singer sliding between notes; the "
+		"number is how fast. It stays on for every note until 300 turns it off.", 0x08 });
 	All.push_back({ "4xy", "vibrato",
 		"Wobbles the pitch: x is how fast, y how deep (1-F each).", "every channel with a pitch", "until 400",
 		"443-454 a singing lead, 4A2 a fast shimmer, 486 a wide wobble. Bring it in a beat after a long note starts, not on "
-		"every short note (see the technique \"delayed vibrato\")." });
+		"every short note (see the technique \"delayed vibrato\").",
+		"Makes the note wobble up and down in pitch, like a singer holding a long note: x is how fast, y how deep. A "
+		"gentle one brought in after a long note starts sounds the most natural. 400 turns it off.", 0x45 });
 	All.push_back({ "7xy", "tremolo",
 		"Wobbles the volume: x is how fast, y how deep.", "channels with a volume (not the triangle or the DPCM)", "until 700",
-		"744 a gentle shimmer on pads and organs, 7A8 a fast throb." });
+		"744 a gentle shimmer on pads and organs, 7A8 a fast throb.",
+		"Makes the volume wobble, a shimmer or a throb, like waving a hand in front of a speaker: x is how fast, y how "
+		"deep. 700 turns it off. The triangle can't, since it has no volume.", 0x64 });
 	All.push_back({ "8xx", "pan",
 		"Sets where the channel sounds from, between the speakers: 00 hard left, 80 the middle (where every channel starts), FF "
 		"hard right, and the places between (40 halfway left, C0 halfway right; the far side fades, the near one keeps all of "
@@ -77,65 +89,101 @@ std::vector<EffectInfo> MakeReference()
 		"every channel", "until the next 8xx, over notes, releases and halts",
 		"width: an echo on the other side of its lead (add_echo with side), chord voices apart (840 and 8C0), arpeggios or "
 		"hi-hats alternating left and right (set_pan). Keep the bass, the kick, the snare and the lead in the middle (880): they "
-		"carry the song, and many players hear it from one speaker." });
+		"carry the song, and many players hear it from one speaker.",
+		"Places the channel between the left and right speakers: 00 hard left, 80 the middle, FF hard right. It stays "
+		"until the next 8xx. It's this FamiTracker's own stereo, for its playback and the game's sound files; the NES "
+		"and NSF files are mono.", 0x20 });
 	All.push_back({ "Axy", "volume slide",
 		"Slides the volume: A0y down, Ax0 up, by y or x eighths of a step a tick (one of them, the other 0).",
 		"channels with a volume (not the triangle or the DPCM)", "until A00",
 		"A01-A04 fade a held note out (give the next note its volume, since the slide leaves the channel quieter), A10-A40 "
-		"swell one in (start it soft, at volume 3 or so); a fade at the end of a song." });
+		"swell one in (start it soft, at volume 3 or so); a fade at the end of a song.",
+		"Fades the volume while the note plays: A0y down, Ax0 up, the number how fast. It fades a long note out or "
+		"swells one in. A00 stops it.", 0x02 });
 	All.push_back({ "Gxx", "note delay",
 		"Holds this row's note back xx ticks, less than the speed (the ticks a row lasts).", "every channel", "this row only",
 		"a swing for one part (G02 or G03 on its off-beats at speed 6; set_swing swings the whole song), flams and rolls on "
-		"drums, an echo that lags, a less mechanical feel." });
+		"drums, an echo that lags, a less mechanical feel.",
+		"Starts this row's note a few ticks late (a tick is a sixtieth of a second): a laid-back feel, a swing on some "
+		"notes, or a quick double hit on a drum. It acts on its own row only.", 0x03 });
 	All.push_back({ "Hxy", "hardware sweep up",
 		"Starts the 2A03 pulse's own sweep: the pitch rises by itself, x how often (0 fastest to 7 slowest), y how much each "
 		"time (1 the most to 7 the least).", "the 2A03 pulses only", "until the next note",
-		"a rising zap or \"boing\", laser shots from a high note, quick glissandi. A sweep that runs off the top falls silent." });
+		"a rising zap or \"boing\", laser shots from a high note, quick glissandi. A sweep that runs off the top falls silent.",
+		"Starts the 2A03 pulse's own sweep, which bends the pitch up all by itself: a rising zap or a boing. x is how "
+		"often it moves (0 the fastest), y how far each time (1 the most). The next note ends it.", 0x71 });
 	All.push_back({ "Ixy", "hardware sweep down",
 		"Starts the 2A03 pulse's own sweep downward: the pitch falls by itself, x how often (0 fastest), y how much (1 the most).",
 		"the 2A03 pulses only", "until the next note",
-		"I12 a quick drop: a kick drum on a pulse (a low note, halted a row or two later); I71 a slow fall; dives." });
+		"I12 a quick drop: a kick drum on a pulse (a low note, halted a row or two later); I71 a slow fall; dives.",
+		"Starts the 2A03 pulse's own sweep downward: the pitch falls by itself, for laser shots, dives and a punchy "
+		"kick drum on a pulse. x is how often it moves (0 the fastest), y how far each time (1 the most).", 0x12 });
 	All.push_back({ "Pxx", "fine pitch",
 		"Tunes the channel a little: P80 is in tune, P81-P8F a little higher, P7F-P70 a little lower (a period step each).",
 		"every channel with a pitch", "until changed",
-		"a chorus: double a part on two channels with P81 or P82 on one; fine tuning one chip against another." });
+		"a chorus: double a part on two channels with P81 or P82 on one; fine tuning one chip against another.",
+		"Tunes the channel a tiny bit higher or lower: P80 is in tune, above it a little higher, below it a little "
+		"lower. A part doubled on two channels with P81 or P82 on one of them shimmers like a chorus.", 0x84 });
 	All.push_back({ "Qxy", "note slide up",
 		"Slides from the note up y semitones (1-F), at speed x (0-F, faster as it rises), and stays there.",
 		"every channel with a pitch", "this row only",
 		"bends and scoops: to land on a note, write the one y semitones below it with Qxy. Q31 a quick lift of a semitone, Q72 a "
-		"fast whole-step bend, Q1C a slow rise of an octave." });
+		"fast whole-step bend, Q1C a slow rise of an octave.",
+		"Slides the note up y semitones and stays there, quickly or slowly (x is the speed): a bend or a scoop into a "
+		"note, like a guitarist bending a string. It acts on its own row only.", 0x72 });
 	All.push_back({ "Rxy", "note slide down",
 		"Slides from the note down y semitones (1-F), at speed x, and stays there.", "every channel with a pitch", "this row only",
-		"falls at the end of a phrase (R5C, an octave down quickly), sighs (R22), sound effects." });
+		"falls at the end of a phrase (R5C, an octave down quickly), sighs (R22), sound effects.",
+		"Slides the note down y semitones and stays there (x is the speed): a fall at the end of a phrase, a sigh, a "
+		"dive. It acts on its own row only.", 0x5C });
 	All.push_back({ "Sxx", "note cut",
 		"Cuts the note off after xx ticks.", "every channel", "this row only",
-		"staccato: S02-S04 make short, plucky notes; gated chords with 0xy; short drum hits on melodic channels." });
+		"staccato: S02-S04 make short, plucky notes; gated chords with 0xy; short drum hits on melodic channels.",
+		"Stops the note after xx ticks, so it's short and bouncy: staccato notes, plucked sounds, short drum hits. It "
+		"acts on its own row only.", 0x03 });
 	All.push_back({ "Vxx", "timbre",
 		"Changes the tone: a pulse's duty (2A03 and MMC5 pulses 00 12.5% thin, 01 25%, 02 50% round, 03 75%; VRC6 pulses "
 		"00-07, 1/16 to 8/16), the noise's mode (00 hiss, 01 metallic), an N163 channel's wave (00-0F), what a 5B channel "
 		"plays (01 its square, 02 the noise, 04 the envelope, added up: 03 square and noise).",
 		"pulses, the noise, the N163 and the 5B channels", "until changed; an instrument's duty sequence takes over while it runs",
-		"a brighter or thinner lead for a section, duties alternating for a \"talking\" lead, metallic noise for hats and zaps." });
+		"a brighter or thinner lead for a section, duties alternating for a \"talking\" lead, metallic noise for hats and zaps.",
+		"Changes the channel's tone: on a pulse its width (00 thin and nasal, 01 bright, 02 round and hollow), on the "
+		"noise its mode (00 hiss, 01 metallic), on the N163 its wave, on the 5B what it plays. It lasts until changed, "
+		"though an instrument with its own duty sequence takes over while that runs.", 0x02 });
 	All.push_back({ "Wxx", "DPCM pitch",
 		"Plays the sample at rate xx (00-0F) instead of the instrument's.", "the DPCM channel", "this note",
-		"the same drum sample higher or lower: toms from one sample, a tighter snare." });
+		"the same drum sample higher or lower: toms from one sample, a tighter snare.",
+		"Plays the drum sample faster and higher, or slower and lower (00 to 0F): toms from one sample, a tighter "
+		"snare. Only the DPCM channel has it.", -1 });
 	All.push_back({ "Xxx", "DPCM retrigger",
-		"Plays the sample again every xx+1 ticks.", "the DPCM channel", "until the next note", "drum rolls and stutters (X03-X06)." });
+		"Plays the sample again every xx+1 ticks.", "the DPCM channel", "until the next note", "drum rolls and stutters (X03-X06).",
+		"Plays the sample again and again, every few ticks: drum rolls and stutters. Only the DPCM channel has it.", -1 });
 	All.push_back({ "Yxx", "DPCM sample offset",
 		"Starts the sample xx times 64 bytes in.", "the DPCM channel", "this note",
-		"a punchier kick from a longer sample; one long sample cut into slices." });
+		"a punchier kick from a longer sample; one long sample cut into slices.",
+		"Starts the sample partway in (xx times 64 bytes), skipping its start: a punchier hit, or one long sample used "
+		"as several. Only the DPCM channel has it.", -1 });
 	All.push_back({ "Zxx", "DPCM delta counter",
 		"Sets the DPCM channel's output level (00-7F) directly. The NES mixes the triangle, the noise and the DPCM together, so a "
 		"high level makes the triangle and the noise quieter.", "the DPCM channel", "until changed",
 		"Z00 at the song's start keeps the triangle and the noise at full volume; a jump in level pops, which some games use as a "
-		"kick." });
+		"kick.",
+		"Sets the DPCM channel's output level directly (00 to 7F). On the NES a higher level also makes the triangle "
+		"and the noise quieter, so a level set at the song's start evens out a soft mix. A sudden jump pops, like a "
+		"kick.", -1 });
 	All.push_back({ "Hxx", "FDS modulation depth",
 		"How deep the FDS's frequency modulator wobbles the tone (00-3F).", "the FDS channel", "until changed",
-		"bell and vibrato tones on the FDS, with Ixx and Jxx for the speed." });
+		"bell and vibrato tones on the FDS, with Ixx and Jxx for the speed.",
+		"How strongly the FDS's modulator bends its tone (00 to 3F): a little is a gentle wobble or a bell-like ring, a "
+		"lot a warbling, metallic sound. Only the FDS channel has it.", -1 });
 	All.push_back({ "Ixx", "FDS modulation speed, high",
-		"The high part (00-0F) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Jxx, how fast the FDS tone wobbles." });
+		"The high part (00-0F) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Jxx, how fast the FDS tone wobbles.",
+		"With Jxx, how fast the FDS's modulator wobbles its tone: Ixx is the coarse part (00 to 0F). Only the FDS "
+		"channel has it.", -1 });
 	All.push_back({ "Jxx", "FDS modulation speed, low",
-		"The low part (00-FF) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Ixx, how fast the FDS tone wobbles." });
+		"The low part (00-FF) of the FDS modulator's speed.", "the FDS channel", "until changed", "with Ixx, how fast the FDS tone wobbles.",
+		"With Ixx, how fast the FDS's modulator wobbles its tone: Jxx is the fine part (00 to FF). Only the FDS channel "
+		"has it.", -1 });
 	All.push_back({ "Hxy", "5B envelope",
 		"Starts the Sunsoft 5B's envelope, which a note plays when its instrument's noise / mode sequence (or V04-V07) turns it "
 		"on: y is its shape (8 a falling saw over and over, C a rising one, A and E triangles, 0 one fall to silence, D one rise "
@@ -143,13 +191,19 @@ std::vector<EffectInfo> MakeReference()
 		"over, or 0 for the speed Ixx and Jxx set. The envelope sets the level (the volume column only silences it, at 0), and "
 		"the three 5B channels share the one envelope.", "the 5B channels", "until changed",
 		"the buzz bass (HC8, the 5B's envelope until a song sets one), a hard sync-like lead with the square on too (V05), slow "
-		"swells and tremolos (HxA or HxE with x 0 and a long period)." });
+		"swells and tremolos (HxA or HxE with x 0 and a long period).",
+		"Starts the 5B's envelope, a shape that sets its level over and over: falling or rising saws, triangles, or one "
+		"fall to silence (y). With x at C it follows the note's own pitch, a buzz; with x at 0, Ixx and Jxx set its "
+		"speed. The 5B's three channels share it, on notes whose instrument (or V04) turns it on.", 0xC8 });
 	All.push_back({ "Ixx", "5B envelope period, high",
 		"The high byte (00-FF) of the 5B envelope's period, for Hxy with x 0: a saw shape repeats about 3500 / period times a "
 		"second (I08 J00: 1.7 times), a triangle half as often.", "the 5B channels", "until changed",
-		"with Jxx, a slow envelope for swells and tremolos." });
+		"with Jxx, a slow envelope for swells and tremolos.",
+		"With Jxx, how slowly the 5B's envelope moves when it doesn't follow the note: Ixx is the coarse part, and "
+		"bigger is slower. Only the 5B channels have it.", -1 });
 	All.push_back({ "Jxx", "5B envelope period, low",
-		"The low byte (00-FF) of the 5B envelope's period.", "the 5B channels", "until changed", "with Ixx, the envelope's speed." });
+		"The low byte (00-FF) of the 5B envelope's period.", "the 5B channels", "until changed", "with Ixx, the envelope's speed.",
+		"With Ixx, how slowly the 5B's envelope moves: Jxx is the fine part. Only the 5B channels have it.", -1 });
 	return All;
 }
 
@@ -414,6 +468,241 @@ const std::vector<Technique> &Techniques()
 {
 	static const std::vector<Technique> All = MakeTechniques();
 	return All;
+}
+
+const std::vector<EffectInfo> &SongEffectReference()
+{
+	static const std::vector<EffectInfo> All = {
+		{ "Fxx", "speed or tempo",
+			"Sets the song's speed (under the split point, 20 unless the module sets another: the ticks a row lasts) or its "
+			"tempo (from there up), from this row on.", "any channel: it steers the whole song", "until the next Fxx",
+			"a slower or faster part; a swing, speeds alternating every half beat.",
+			"Changes how fast the whole song plays from this row on: a number under 20 sets the speed, how many ticks each row "
+			"lasts (so a bigger one is slower), and 20 and up sets the tempo. It can go on any channel.", -1 },
+		{ "Bxx", "jump",
+			"After this row, the song goes on at frame xx.", "any channel: it steers the whole song", "this row",
+			"the loop: on the last frame, B and the frame the loop starts at.",
+			"Jumps to frame xx after this row, so the song goes on from there. On the song's last frame it makes the loop: the "
+			"music comes back round to that frame and plays on.", -1 },
+		{ "Dxx", "skip",
+			"Ends this frame after this row; the next frame starts at its row xx.", "any channel: it steers the whole song",
+			"this row", "a frame shorter than its patterns; starting the next one partway in.",
+			"Ends this frame early: after this row the next frame starts, at its row xx (D00 at its top). It shortens a frame "
+			"without changing its patterns.", -1 },
+		{ "Cxx", "halt",
+			"Stops the song after this row.", "any channel: it steers the whole song", "this row",
+			"jingles and endings that don't loop.",
+			"Stops the song at this row, for a jingle or an ending that doesn't loop. Without it, or a jump, a song starts over "
+			"from its first frame when it ends.", -1 },
+		{ "Exx", "old volume",
+			"Sets the channel's volume; FamiTracker 0.4.6 keeps it only for old songs.", "channels with a volume", "until changed",
+			"nothing new: give notes a volume in the volume column instead.",
+			"An old way to set a channel's volume, kept so that old songs still play the same. Use the volume column instead.",
+			-1 },
+	};
+	return All;
+}
+
+namespace {
+
+// "a major chord" for the arpeggio's two steps above the note, "" when they make none with a name
+std::string ArpeggioChord(int x, int y)
+{
+	struct Named { int x, y; const char *Name; };
+	static const Named NAMES[] = {
+		{ 4, 7, "a major chord" }, { 3, 7, "a minor chord" }, { 5, 7, "a sus4 chord" }, { 2, 7, "a sus2 chord" },
+		{ 3, 6, "a diminished chord" }, { 4, 8, "an augmented chord" }, { 7, 12, "the fifth and the octave" },
+		{ 4, 9, "a major sixth chord" }, { 3, 8, "a major chord with its third at the bottom" },
+		{ 5, 9, "a major chord with its fifth at the bottom" }, { 12, 0, "octaves" }, { 7, 0, "a fifth, a power chord" },
+		{ 12, 7, "the octave and the fifth" }, { 4, 0, "a major third" }, { 3, 0, "a minor third" },
+	};
+	for (size_t i = 0; i < sizeof(NAMES) / sizeof(NAMES[0]); ++i)
+		if (NAMES[i].x == x && NAMES[i].y == y)
+			return NAMES[i].Name;
+	return std::string();
+}
+
+std::string Number(int Value)
+{
+	char Text[16];
+	std::snprintf(Text, sizeof(Text), "%d", Value);
+	return Text;
+}
+
+std::string Hex(int Value)
+{
+	char Text[8];
+	std::snprintf(Text, sizeof(Text), "%02X", Value & 0xFF);
+	return Text;
+}
+
+// The 5B envelope's shapes (y of Hxy), as the YM2149 plays them
+const char *EnvelopeShape(int y)
+{
+	if (y < 4 || y == 9)
+		return "one fall to silence";
+	if (y < 8 || y == 15)
+		return "one rise, then silence";
+	switch (y) {
+	case 8: return "a falling saw, over and over";
+	case 10: return "a triangle, down first, over and over";
+	case 11: return "one fall, then held at the top";
+	case 12: return "a rising saw, over and over";
+	case 13: return "one rise, then held at the top";
+	default: return "a triangle, up first, over and over";
+	}
+}
+
+}	// namespace
+
+std::string DescribeEffect(int Effect, int Param, const ChannelInfo &Channel, int SpeedSplit)
+{
+	const int x = (Param >> 4) & 15, y = Param & 15, P = Param & 0xFF;
+	const bool Fds = Channel.Chip == "FDS", S5B = Channel.Chip == "5B";
+	// H, I and J are the FDS's and the 5B's own on their channels (ParseChannelEffect)
+	if (Fds && (Effect == EFF_SWEEPUP || Effect == EFF_SWEEPDOWN))
+		Effect = Effect == EFF_SWEEPUP ? EFF_FDS_MOD_DEPTH : EFF_FDS_MOD_SPEED_HI;
+	else if (S5B && (Effect == EFF_SWEEPUP || Effect == EFF_SWEEPDOWN || Effect == EFF_FDS_MOD_SPEED_LO))
+		Effect = Effect == EFF_SWEEPUP ? EFF_SUNSOFT_ENV_TYPE : Effect == EFF_SWEEPDOWN ? EFF_SUNSOFT_ENV_HI : EFF_SUNSOFT_ENV_LO;
+	switch (Effect) {
+	case EFF_ARPEGGIO: {
+		if (P == 0)
+			return "Arpeggio off: the note plays alone again";
+		const std::string Chord = ArpeggioChord(x, y);
+		std::string Text = y == 0 ? "Arpeggio: the note and the one " + Number(x) + " semitones up, in turn" :
+			x == 0 ? "Arpeggio: the note and the one " + Number(y) + " semitones up, in turn" :
+			"Arpeggio: the note and the notes " + Number(x) + " and " + Number(y) + " semitones up, in turn";
+		return Chord.empty() ? Text + ", a quick chord" : Text + ": " + Chord;
+	}
+	case EFF_PORTA_UP:
+		return P == 0 ? "Slide up off" : "Slide up: the pitch keeps climbing, speed " + Number(P);
+	case EFF_PORTA_DOWN:
+		return P == 0 ? "Slide down off" : "Slide down: the pitch keeps falling, speed " + Number(P);
+	case EFF_PORTAMENTO:
+		return P == 0 ? "Portamento off: notes jump to their pitch again" :
+			"Portamento: each new note glides from the one before, speed " + Number(P);
+	case EFF_VIBRATO:
+		if (y == 0)
+			return "Vibrato off";
+		return "Vibrato: the pitch wobbles, speed " + Number(x) + (x == 0 ? " (it doesn't move)" : "") + ", depth " + Number(y);
+	case EFF_TREMOLO:
+		if (y == 0)
+			return "Tremolo off";
+		return "Tremolo: the volume wobbles, speed " + Number(x) + ", depth " + Number(y);
+	case EFF_PAN:
+		if (P == 0x80)
+			return "Pan: the middle";
+		if (P == 0x00)
+			return "Pan: hard left";
+		if (P == 0xFF)
+			return "Pan: hard right";
+		if (P < 0x80)
+			return "Pan: to the left, " + Number((0x80 - P) * 100 / 128) + "% of the way";
+		return "Pan: to the right, " + Number((P - 0x80) * 100 / 127) + "% of the way";
+	case EFF_VOLUME_SLIDE:
+		if (P == 0)
+			return "Volume slide off";
+		if (x == 0)
+			return "Volume slide: fading down, speed " + Number(y);
+		if (y == 0)
+			return "Volume slide: swelling up, speed " + Number(x);
+		return "Volume slide: up by " + Number(x) + " and down by " + Number(y) + " at once (use one of them)";
+	case EFF_DELAY:
+		return P == 0 ? "Note delay of 0 ticks: the note starts on time" :
+			"Note delay: this row's note starts " + Number(P) + (P == 1 ? " tick" : " ticks") + " late";
+	case EFF_SWEEPUP:
+	case EFF_SWEEPDOWN: {
+		std::string Text = Effect == EFF_SWEEPUP ? "Sweep up: the pulse's pitch rises by itself" : "Sweep down: the pulse's pitch falls by itself";
+		static const char *const HOW_OFTEN[] = { "very often", "very often", "often", "often", "now and then", "now and then",
+			"slowly", "slowly" };
+		static const char *const HOW_FAR[] = { "not at all", "in big steps", "in large steps", "in large steps", "in small steps",
+			"in small steps", "in tiny steps", "in tiny steps" };
+		Text += ", " + std::string(HOW_OFTEN[x & 7]) + " (x " + Number(x) + ") " + HOW_FAR[y & 7] + " (y " + Number(y) + ")";
+		if (x > 7 || y == 0)
+			Text += "; x goes 0-7 and y 1-7";
+		if (!Is2A03Pulse(Channel) && !Channel.Chip.empty())
+			Text += " (only the 2A03's pulses sweep)";
+		return Text;
+	}
+	case EFF_PITCH:
+		if (P == 0x80)
+			return "Fine pitch: in tune";
+		return "Fine pitch: a little " + std::string(P > 0x80 ? "higher" : "lower") + ", " + Number(P > 0x80 ? P - 0x80 : 0x80 - P) +
+			(std::abs(P - 0x80) == 1 ? " step" : " steps");
+	case EFF_SLIDE_UP:
+	case EFF_SLIDE_DOWN:
+		if (y == 0)
+			return std::string(Effect == EFF_SLIDE_UP ? "Note slide up" : "Note slide down") + " of 0 semitones: nothing moves";
+		return std::string(Effect == EFF_SLIDE_UP ? "Note slide up: " : "Note slide down: ") + Number(y) + (y == 1 ? " semitone" : " semitones") +
+			(Effect == EFF_SLIDE_UP ? " up" : " down") + ", speed " + Number(x);
+	case EFF_NOTE_CUT:
+		return "Note cut: the note stops after " + Number(P) + (P == 1 ? " tick" : " ticks");
+	case EFF_DUTY_CYCLE:
+		if (Channel.Kind == KIND_PULSE && Channel.Chip == "VRC6") {
+			const int Sixteenths = (P & 7) + 1;
+			return "Pulse width: " + Number(Sixteenths) + "/16" + (Sixteenths == 8 ? ", a square: round and hollow" :
+				Sixteenths <= 2 ? ": thin and nasal" : Sixteenths <= 4 ? ": bright" : ": full");
+		}
+		if (Channel.Kind == KIND_PULSE) {
+			static const char *const WIDTHS[] = { "12.5%: thin and nasal", "25%: bright", "50%, a square: round and hollow",
+				"75%: bright, like 25%" };
+			return std::string("Pulse width: ") + WIDTHS[P & 3];
+		}
+		if (Channel.Kind == KIND_NOISE)
+			return (P & 1) != 0 ? "Noise mode: metallic, a buzzing tone" : "Noise mode: hiss";
+		if (Channel.Chip == "N163")
+			return "Wave: the instrument's wave " + Number(P);
+		if (S5B) {
+			std::string Plays;
+			if (P & 1)
+				Plays = "the square";
+			if (P & 2)
+				Plays += std::string(Plays.empty() ? "" : " and ") + "the noise";
+			if (P & 4)
+				Plays += std::string(Plays.empty() ? "" : " and ") + "the envelope";
+			return "Plays: " + (Plays.empty() ? std::string("nothing") : Plays);
+		}
+		return "Timbre: " + Hex(P) + " (this channel has no widths or modes)";
+	case EFF_DPCM_PITCH:
+		return "DPCM pitch: rate " + Number(P & 15) + " of 15, higher is faster";
+	case EFF_RETRIGGER:
+		return "DPCM retrigger: the sample starts again every " + Number(P + 1) + " ticks";
+	case EFF_SAMPLE_OFFSET:
+		return "Sample offset: the sample starts " + Number(P * 64) + " bytes in";
+	case EFF_DAC:
+		return "DPCM level: " + Number(P & 0x7F) + " of 127" + (P == 0 ? " (the triangle and the noise at full volume)" :
+			", the triangle and the noise a little quieter");
+	case EFF_FDS_MOD_DEPTH:
+		return "FDS modulation depth: " + Number(P & 0x3F) + " of 63";
+	case EFF_FDS_MOD_SPEED_HI:
+		return "FDS modulation speed, coarse: " + Number(P & 15);
+	case EFF_FDS_MOD_SPEED_LO:
+		return Fds || Channel.Chip.empty() ? "FDS modulation speed, fine: " + Number(P) :
+			"Jxx: the FDS's modulation speed, or the 5B's envelope; this channel has neither";
+	case EFF_SUNSOFT_ENV_TYPE:
+		return "5B envelope: " + std::string(EnvelopeShape(y)) + (x == 0 ? ", at the speed Ixx and Jxx set" : x == 12 ?
+			", following the note at its own pitch (a buzz)" : x == 11 ? ", following the note an octave under it" :
+			x == 13 ? ", following the note an octave over it" : ", following the note");
+	case EFF_SUNSOFT_ENV_HI:
+		return "5B envelope speed, coarse part: " + Number(P) + " (bigger is slower)";
+	case EFF_SUNSOFT_ENV_LO:
+		return "5B envelope speed, fine part: " + Number(P);
+	case EFF_SPEED:
+		if (P == 0)
+			return "Speed: F00 does nothing";
+		return P < SpeedSplit ? "Speed " + Number(P) + ": each row lasts " + Number(P) + (P == 1 ? " tick" : " ticks") :
+			"Tempo " + Number(P);
+	case EFF_JUMP:
+		return "Jump: after this row the song goes on at frame " + Hex(P);
+	case EFF_SKIP:
+		return "Skip: after this row the next frame starts, at its row " + Hex(P);
+	case EFF_HALT:
+		return "Halt: the song stops after this row";
+	case EFF_VOLUME:
+		return "Volume (an old effect): " + Number(P) + "; the volume column does this now";
+	default:
+		return std::string();
+	}
 }
 
 bool EffectsText(const std::string &Effect, const std::string &Technique, const ChannelInfo *pChannel, std::string &Text)

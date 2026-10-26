@@ -1332,6 +1332,9 @@
     <ClCompile Include="Source\Api\Effects.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Glossary.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\FdsSounds.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1450,6 +1453,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Effects.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Glossary.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\FdsSounds.h">
@@ -1894,6 +1900,24 @@
       <Filter>Recorder</Filter>
     </ClCompile>
     <ClInclude Include="Source\PhoneDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\GlossaryDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryDlg.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\GlossaryHear.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryHear.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\GlossaryTips.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\GlossaryTips.h">
       <Filter>Recorder</Filter>
     </ClInclude>
   </ItemGroup>
