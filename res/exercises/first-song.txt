@@ -1,0 +1,15 @@
+; Help > Exercises: a first small song (a new song, as File > New makes it)
+title: A first small song
+about: From an empty song to a loop that plays, a step at a time with the What next panel.
+
+step
+show: what-next
+text: This is the What next panel. It gives your song's one next step, says why, and makes it when you press Do it. The pills along it are the song's stages, and they light up as they're done.
+
+step
+show: what-next
+check: first-song
+text: Make a small song with it: press Do it, listen (the song's Play button, or the space bar), and press Do it again. It lays out the song's shape, picks a key, writes [[chords|chord]] and a [[bass line]], then offers a [[melody]]: Grow one gives you versions to pick from.
+
+  Press Check when the song has a tune, chords and a bass, and goes round as a [[loop]].
+hint: Each Do it is one Ctrl+Z, so nothing is lost by trying. Skip leaves out a step you don't want. Grow one plays each version as you pick it.

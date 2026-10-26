@@ -785,6 +785,20 @@ static void TestCompare()
 	b.SetRows(40);
 	b.Add(36, 38, P(C, 4), 0);
 	CHECK(a.Compare(b, first, last) && first == 6 && last == 38);
+
+	// A note drawn up to a song's last row (32, read with a frame more to write into) ends past it: nothing but that end
+	// lies there, so the song keeps its length; a note past it makes it longer
+	CChannelNotes song = Channel(48);
+	song.SetCell(16, Cell(D, 4, 0));
+	song.SetCell(24, Cell(RELEASE));
+	song.Add(24, 32, P(C, 4), 0);
+	CHECK_EQ(Notes(song), "D-4 16-24> C-4 24-32-");
+	CHECK(song.OnlyEnds(32, 47) && song.OnlyEnds(32, 32) && !song.OnlyEnds(24, 47));
+	song.Add(36, 40, P(E, 4), 0);
+	CHECK(!song.OnlyEnds(32, 47) && song.OnlyEnds(32, 35));
+	CChannelNotes loud = Channel(48);
+	loud.SetCell(32, Cell(RELEASE, 0, MAX_INSTRUMENTS, 4));	// a volume with it counts later on
+	CHECK(!loud.OnlyEnds(32, 47) && loud.OnlyEnds(33, 47));
 }
 
 // A take over a selection (the recorder's "re-sing just a selection"): its rows replaced and nothing else

@@ -1,0 +1,19 @@
+; Help > Exercises: a hook that comes back
+title: A hook that comes back
+about: Play a two-bar hook again, with a different ending.
+
+step
+show: piano-roll
+play: bars 1-2
+text: Bars 1-2 have a [[hook]]: a short tune that's easy to remember. Bars 3-4 have only the chords. Listen to the hook.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-4
+check: hook
+text: Play the hook again in bars 3-4, but end it another way. Hearing it again makes it stick; a new ending makes it go somewhere.
+
+  In the piano roll, hold Ctrl and drag a box around the hook's notes to select them, copy them (Ctrl+C), then point the mouse at the start of bar 3 and paste (Ctrl+V). Then press Esc (a drag moves one note again, not all you pasted), change the last note or two of bar 4, and press Check.
+hint: The hook ends on D, which sounds like a question. End the second time on C, the [[home note]], and it sounds like the answer.
+answer: Pulse 1, bar 3: E4 - G4 E4 C4 - D4 E4 | D4 - B3 - C4 - - -

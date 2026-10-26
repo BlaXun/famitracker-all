@@ -724,6 +724,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `explain` | A music, sound or tracker term in plain words, as FamiTracker's glossary (**Help > Glossary**) explains it to you: what it is, an everyday comparison, where it is in FamiTracker, what its Hear it example plays and the terms to see too; an effect as written (`447`) with what its numbers do. Without a term, the terms by category. See [The glossary](#the-glossary) |
+| `check_exercise` | One of FamiTracker's exercises for newcomers (**Help > Exercises**) checked on the selected track as its Check button checks it: what's right already, the one thing to change next in plain words, the bars that show it, and once it passes, what it taught and the exercise after it (`format` `json`: the same as data). Without an exercise, the list. See [Exercises](#exercises) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. It also takes a track of the twelve soundtracks FamiTracker carries by its id (`castlevania-02`), with or without the library. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
 | `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips (the presets and FamiTracker's own sound library, some 230 more sounds of every kind for every chip's channels), the studied sounds of the twelve soundtracks FamiTracker carries (see [Sounds from twelve soundtracks](#sounds-from-twelve-soundtracks)), each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. Studied sounds of the same name, of one study or two, are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With `other_chips`, the ready-made sounds of the chips the song doesn't have come too, after its own, each with the `set_expansion` call that adds its chip first (every note stays). With a channel, every sound that plays there |
 | `import_nsf` | Opens tracks of an NSF file as a new module (the same as File > Import NSF), to look at or play them |
@@ -1988,6 +1989,31 @@ effect as written, `"447"`, which adds what its numbers do), or for the
 list (`{"category": "effects"}`). Other words get the nearest entry and
 the others that mention them. It reads no song and changes nothing, and
 it's in the small set too.
+
+## Exercises
+
+**Help > Exercises** has ten short exercises for people new to music, a
+few minutes each, from a tune's last note to a first small song: the home
+note, four bars over chords, strong notes on the beat, a phrase that
+breathes, a bass line (the chords' roots, then two notes a bar), a beat
+with the drum grid, major and minor, a hook that comes back, the song's
+shape, and a first small song made with the What next panel. Each opens a
+short song made for it (the last two a new song) with a note that gives
+the task, a **Hint**, **Hear it** (a good answer in the song for a moment
+while its bars play, then your own notes back) and **Check**. Check says
+what's right already and the one thing to change next ("Your tune ends on
+D (bar 3), which leaves it hanging, as if it wants to go on. End it on C,
+the home note"), with the glossary's words in it linked to their entries
+and **Play it** for the bars in question. Passing says what it taught and
+offers the next exercise, and FamiTracker remembers which are done.
+
+Claude can teach with them too: `check_exercise` checks one on the
+selected track the same way, in the same words (`{"exercise":
+"home-note"}`; the bass line's two checks are `bass-roots` and
+`bass-two`, and `bass` gives the first of them that doesn't pass yet).
+`format` `json` gives the verdict as data, the glossary's words marked as
+`[[words|id]]`. Without an exercise it lists them. It reads the song and
+changes nothing; it isn't in the small set.
 
 ## References: learning from NES soundtracks
 

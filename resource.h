@@ -831,6 +831,38 @@
 #define ID_HELP_EXAMPLE_VRC6            37572
 #define ID_HELP_EXAMPLE_SOFT            37573
 #define ID_HELP_EXAMPLE_SFX             37574
+// Help > Exercises (ExercisesDlg.cpp, Tutorial.cpp): the list, Hear it's question, the starter songs and the scripts
+// (res/exercises, RCDATA); the song's shape and the first song start from File > New
+#define IDD_EXERCISES                   700
+#define IDD_EXERCISE_HEAR               701
+#define IDR_EXERCISE_HOME_SONG          702
+#define IDR_EXERCISE_FOURBARS_SONG      703
+#define IDR_EXERCISE_STRONG_SONG        704
+#define IDR_EXERCISE_PHRASES_SONG       705
+#define IDR_EXERCISE_BASS_SONG          706
+#define IDR_EXERCISE_BEAT_SONG          707
+#define IDR_EXERCISE_MINOR_SONG         708
+#define IDR_EXERCISE_HOOK_SONG          709
+#define IDR_EXERCISE_HOME_SCRIPT        710
+#define IDR_EXERCISE_FOURBARS_SCRIPT    711
+#define IDR_EXERCISE_STRONG_SCRIPT      712
+#define IDR_EXERCISE_PHRASES_SCRIPT     713
+#define IDR_EXERCISE_BASS_SCRIPT        714
+#define IDR_EXERCISE_BEAT_SCRIPT        715
+#define IDR_EXERCISE_MINOR_SCRIPT       716
+#define IDR_EXERCISE_HOOK_SCRIPT        717
+#define IDR_EXERCISE_SHAPE_SCRIPT       718
+#define IDR_EXERCISE_FIRSTSONG_SCRIPT   719
+#define IDC_EXERCISE_LIST               2400
+#define IDC_EXERCISE_ABOUT              2401
+#define IDC_EXERCISE_PROGRESS           2402
+#define IDC_EXERCISE_FORGET             2403
+#define IDC_EXERCISE_HEAR_TEXT          2404
+#define IDC_EXERCISE_HEAR_STATUS        2405
+#define IDC_EXERCISE_HEAR_AGAIN         2406
+#define ID_HELP_EXERCISES               37900
+#define ID_HELP_EXERCISE_FIRST          37901	// starts the first exercise; the others follow, up to ten
+#define ID_HELP_EXERCISE_LAST           37910
 
 // File > Import NSF (ImportNsfDlg.cpp)
 #define IDD_IMPORT_NSF                  337

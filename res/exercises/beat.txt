@@ -1,0 +1,21 @@
+; Help > Exercises: a beat
+title: A beat
+about: A kick, a snare on beats 2 and 4, and hi-hats in between, with the drum grid.
+
+step
+show: drum-grid
+bar: 1
+play: bars 1-2
+text: Two bars of bass and chords, waiting for drums. This is the drum grid: a row for each drum, and a step for each sixteenth of the bar. Listen first.
+wait: heard
+
+step
+show: drum-grid
+bar: 1
+play: bars 1-2
+check: beat
+text: Make a [[beat]] in both bars: a [[kick]] on beat 1 (step 1), a [[snare]] on beats 2 and 4 (steps 5 and 13), and [[hi-hats|hi-hat]] in between.
+
+  Click a step to put a drum on it, and again to take it off. The grid shows the bar the cursor is in, and its > button goes to bar 2. Then press Check.
+hint: The grid's Basic button makes this beat in one click for the bar it shows: press it in bar 1, then > and Basic again for bar 2. Or click the steps yourself: Kick on 1 and 9, Snare on 5 and 13, Hi-hat on 3, 7, 11 and 15.
+answer: Noise, bar 1: kick hihat snare hihat kick hihat snare hihat | kick hihat snare hihat kick hihat snare hihat

@@ -252,6 +252,7 @@ BEGIN
     POPUP "&Help"
     BEGIN
         MENUITEM "&Tutorials...",               ID_HELP_TUTORIALS
+        MENUITEM "E&xercises...",               ID_HELP_EXERCISES
         MENUITEM "&Glossary",                   ID_HELP_GLOSSARY
         MENUITEM "&Hear the effect at the cursor", ID_HELP_HEAREFFECT
         POPUP "&Example songs"
@@ -611,6 +612,7 @@ BEGIN
     ID_VIEW_PROFILE         "Choose how much of FamiTracker shows: a simpler profile for game music, or everything\nProfile"
     ID_VIEW_SHOWEVERYTHING  "All of FamiTracker, or only what the game music profile keeps (View > Profile)\nShow everything"
     ID_HELP_TUTORIALS       "Short tours of FamiTracker that point at each part and go on when you've done what they say\nTutorials"
+    ID_HELP_EXERCISES       "Short exercises with feedback, from a tune's last note to a first small song: a song to work on and a note with the task\nExercises"
     ID_HELP_GLOSSARY        "The words of music, sounds and FamiTracker in plain words, with examples to hear, in a window beside the song\nGlossary"
     ID_HELP_HEAREFFECT      "Hear the effect at the cursor (or the one the mouse rests on): the note plain, then with the effect's own numbers\nHear the effect"
     ID_HELP_EXAMPLE_FIRST   "A short song on the 2A03 alone, opened as a new song, with a walkthrough of what to listen for\nFirst song"
@@ -1021,6 +1023,30 @@ IDR_EXAMPLE_TRICKS_WALK RCDATA                  "res\\examples\\nes-tricks.txt"
 IDR_EXAMPLE_VRC6_WALK   RCDATA                  "res\\examples\\vrc6.txt"
 IDR_EXAMPLE_SOFT_WALK   RCDATA                  "res\\examples\\soft-and-wide.txt"
 IDR_EXAMPLE_SFX_WALK    RCDATA                  "res\\examples\\sound-effects.txt"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RCDATA: the exercises' starter songs and scripts (ExercisesDlg.cpp, Help > Exercises)
+//
+
+IDR_EXERCISE_HOME_SONG  RCDATA                  "res\\exercises\\home-note.ftm"
+IDR_EXERCISE_FOURBARS_SONG RCDATA               "res\\exercises\\four-bars.ftm"
+IDR_EXERCISE_STRONG_SONG RCDATA                 "res\\exercises\\strong-notes.ftm"
+IDR_EXERCISE_PHRASES_SONG RCDATA                "res\\exercises\\phrases.ftm"
+IDR_EXERCISE_BASS_SONG  RCDATA                  "res\\exercises\\bass.ftm"
+IDR_EXERCISE_BEAT_SONG  RCDATA                  "res\\exercises\\beat.ftm"
+IDR_EXERCISE_MINOR_SONG RCDATA                  "res\\exercises\\minor.ftm"
+IDR_EXERCISE_HOOK_SONG  RCDATA                  "res\\exercises\\hook.ftm"
+IDR_EXERCISE_HOME_SCRIPT RCDATA                 "res\\exercises\\home-note.txt"
+IDR_EXERCISE_FOURBARS_SCRIPT RCDATA             "res\\exercises\\four-bars.txt"
+IDR_EXERCISE_STRONG_SCRIPT RCDATA               "res\\exercises\\strong-notes.txt"
+IDR_EXERCISE_PHRASES_SCRIPT RCDATA              "res\\exercises\\phrases.txt"
+IDR_EXERCISE_BASS_SCRIPT RCDATA                 "res\\exercises\\bass.txt"
+IDR_EXERCISE_BEAT_SCRIPT RCDATA                 "res\\exercises\\beat.txt"
+IDR_EXERCISE_MINOR_SCRIPT RCDATA                "res\\exercises\\minor.txt"
+IDR_EXERCISE_HOOK_SCRIPT RCDATA                 "res\\exercises\\hook.txt"
+IDR_EXERCISE_SHAPE_SCRIPT RCDATA                "res\\exercises\\song-shape.txt"
+IDR_EXERCISE_FIRSTSONG_SCRIPT RCDATA            "res\\exercises\\first-song.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -2071,6 +2097,31 @@ BEGIN
     LTEXT           "",IDC_TUTORIAL_FOLDER,7,142,266,26
     DEFPUSHBUTTON   "Start",IDOK,166,175,50,14
     PUSHBUTTON      "Close",IDCANCEL,223,175,50,14
+END
+
+IDD_EXERCISES DIALOGEX 0, 0, 300, 232
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Exercises"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Short exercises, a few minutes each, from a tune's last note to a first small song. Each one opens a song to work on, with a note beside it that gives the task. When you're done, press Check in the note: it says what's right and what to change next.",IDC_STATIC,7,7,286,34
+    LISTBOX         IDC_EXERCISE_LIST,7,44,286,104,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "",IDC_EXERCISE_ABOUT,7,153,286,28
+    LTEXT           "",IDC_EXERCISE_PROGRESS,7,185,286,10
+    PUSHBUTTON      "Forget what's done",IDC_EXERCISE_FORGET,7,211,84,14
+    DEFPUSHBUTTON   "Start",IDOK,186,211,50,14
+    PUSHBUTTON      "Close",IDCANCEL,243,211,50,14
+END
+
+IDD_EXERCISE_HEAR DIALOGEX 0, 0, 260, 86
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Hear a good answer"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_EXERCISE_HEAR_TEXT,7,7,246,34
+    LTEXT           "",IDC_EXERCISE_HEAR_STATUS,7,45,246,18
+    PUSHBUTTON      "Stop",IDC_EXERCISE_HEAR_AGAIN,7,65,60,14
+    DEFPUSHBUTTON   "Done",IDCANCEL,193,65,60,14
 END
 
 IDD_PLAYFIX DIALOGEX 0, 0, 260, 96

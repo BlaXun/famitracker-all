@@ -64,6 +64,7 @@
 #include "Profile.h"
 #include "ImportNsfDlg.h"
 #include "Tutorial.h"
+#include "ExercisesDlg.h"
 #include "APU/APU.h"
 #include "Clips.h"
 #include "PianoRoll.h"
@@ -242,6 +243,8 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_EDIT_DRUMGRID, OnEditDrumGrid)
 	ON_UPDATE_COMMAND_UI(ID_EDIT_DRUMGRID, OnUpdateEditDrumGrid)
 	ON_COMMAND(ID_HELP_TUTORIALS, OnHelpTutorials)
+	ON_COMMAND(ID_HELP_EXERCISES, OnHelpExercises)
+	ON_COMMAND_RANGE(ID_HELP_EXERCISE_FIRST, ID_HELP_EXERCISE_LAST, OnHelpExercise)
 	ON_COMMAND(ID_HELP_GLOSSARY, OnHelpGlossary)
 	ON_COMMAND(ID_HELP_HEAREFFECT, OnHelpHearEffect)
 	ON_COMMAND_RANGE(ID_HELP_EXAMPLE_FIRST, ID_HELP_EXAMPLE_SFX, OnHelpExample)
@@ -2114,6 +2117,17 @@ void CMainFrame::OnHelpTutorials()
 	ShowTutorials(this);
 }
 
+// Help > Exercises: the list; and one of them started (its song and its note), as the note's Next exercise asks
+void CMainFrame::OnHelpExercises()
+{
+	ShowExercises(this);
+}
+
+void CMainFrame::OnHelpExercise(UINT nID)
+{
+	StartExercise(this, nID);
+}
+
 // Help > Example songs: a song that opens as a new one, with its walkthrough
 void CMainFrame::OnHelpExample(UINT nID)
 {
@@ -2156,6 +2170,10 @@ bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRe
 		pWnd = m_pDrumGridBar;
 	else if (Part == _T("mixer"))
 		pWnd = m_pMixerBar;
+	else if (Part == _T("what-next"))
+		pWnd = m_pWhatNextBar;
+	else if (Part == _T("problems"))
+		pWnd = m_pProblemsBar;
 	else if (Part == _T("song-info")) {
 		// The title, author and copyright boxes together
 		static const UINT BOXES[] = { IDC_SONG_NAME, IDC_SONG_ARTIST, IDC_SONG_COPYRIGHT };
@@ -2215,6 +2233,10 @@ void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
 		ShowDrumGrid(true);
 	else if (Part == _T("mixer") && (m_pMixerBar == NULL || !m_pMixerBar->IsVisible()))
 		ShowMixer(true);
+	else if (Part == _T("what-next") && (m_pWhatNextBar == NULL || !m_pWhatNextBar->IsVisible()))
+		ShowWhatNext(true);
+	else if (Part == _T("problems") && (m_pProblemsBar == NULL || !m_pProblemsBar->IsVisible()))
+		ShowProblemsPanel(true);
 }
 
 void CMainFrame::OnViewProfile()

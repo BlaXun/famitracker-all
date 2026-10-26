@@ -1283,6 +1283,21 @@ bool CChannelNotes::Compare(const CChannelNotes &Other, int &First, int &Last) c
 	return First >= 0;
 }
 
+bool CChannelNotes::OnlyEnds(int First, int Last) const
+{
+	const Impl &d = *m_pImpl;
+	for (int r = std::max(0, First); r <= Last && r < d.Rows(); ++r) {
+		stChanNote Cell = d.Cells[static_cast<size_t>(r)];
+		if (IsEnd(Cell)) {
+			Cell.Note = NONE;
+			Cell.Octave = 0;
+		}
+		if (!SameCell(Cell, EmptyCell()))
+			return false;
+	}
+	return true;
+}
+
 void CChannelNotes::GetEffects(int Index, std::vector<EffectSpan> &Out) const
 {
 	const Impl &d = *m_pImpl;

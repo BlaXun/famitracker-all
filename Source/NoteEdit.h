@@ -167,6 +167,9 @@ public:
 
 	// The first and last rows that differ from Other; false if none do
 	bool Compare(const CChannelNotes &Other, int &First, int &Last) const;
+	// Nothing but notes' ends from First to Last (a release or halt alone, or an empty row): what a note that sounds
+	// up to the song's last row writes past it, which needn't make the song longer
+	bool OnlyEnds(int First, int Last) const;
 
 private:
 	struct Impl;

@@ -1,0 +1,19 @@
+; Help > Exercises: major and minor
+title: Major and minor
+about: Make a happy tune sad by lowering one note, its third, and hear the difference.
+
+step
+show: piano-roll
+play: bars 1-4
+text: A bright, happy tune in C major over a bass. Listen to it once more before you change it.
+wait: heard
+
+step
+show: piano-roll
+play: bars 1-4
+check: minor
+text: Make it sad: lower every E one semitone, to Eb. That one note, the [[third]] above the home note C, is what makes a tune [[major or minor|major-minor]].
+
+  In the piano roll, pick C minor in the Key menu first: each E then sits in a darker lane, and dragging it one lane down puts it on Eb. Press Check when every E is an Eb, and Play to hear the difference.
+hint: There are six E's: two in bar 1, one in bar 2, two in bar 3 and one in bar 4. Holding Alt as you drag puts a note on any lane, whatever the key.
+answer: Pulse 1, bar 1: C4 - Eb4 - G4 - Eb4 - | F4 - Eb4 D4 C4 - - - | D4 - Eb4 F4 G4 - F4 Eb4 | Eb4 D4 C4 - - - - -

@@ -723,7 +723,18 @@ each with the user's words:
   composer!"): short tasks in the tutorial window (write four bars that end
   on the home note, a bass on the roots, a beat, a phrase that breathes),
   checked by the tools, with friendly feedback and the glossary's words.
-  After the glossary, the panels and the song shapes are in.
+  Done (26 October 2026, on `feat-exercises`): Help > Exercises lists ten,
+  a few minutes each, in order: the home note, four bars over chords,
+  strong notes on the beat, a phrase that breathes, a bass line (the roots,
+  then two notes a bar), a beat with the drum grid, major and minor, a hook
+  that comes back, the song's shape and a first small song with the What
+  next panel, each marked done once it's passed. Each opens a short song
+  made for it (the last two a new song) with a note: the task, a Hint,
+  Hear it (a good answer in the song for a moment, then your notes back)
+  and Check, which says what's right and the one thing to change next,
+  kindly, with the glossary's words linked and Play it for the bars in
+  question; passing says what it taught and offers the next one. Claude's
+  `check_exercise` gives the same checks (see `MCP.md`, Exercises).
 
 ## Feature branches
 
