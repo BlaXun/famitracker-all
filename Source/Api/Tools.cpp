@@ -20440,6 +20440,55 @@ int PitchOutsideKey(const NoteInfo &N, int RowsPerBeat, const Key &K)
 	return -1;
 }
 
+// Whether a note outside the key K is a chord's note (Pitch: the first pitch it sounds outside, PitchOutsideKey's): it makes
+// a major or minor triad that K accounts for with two notes the other parts (Channel's aside) sound from its start for two
+// beats or while it lasts, within its bar (a broken chord's notes come one after another; the whole bar's would make chance
+// triads with a melody's), the chords their instruments' looping arpeggios and 0xy sound counted, and its own. Accounted
+// for, as RoleOfChord names a chord: borrowed from the major or minor key on K's home note (Bb under D and F in C major),
+// leading to another of K's chords (a secondary dominant: an A7's C# in F major), the Neapolitan or a mode's own tension;
+// not a surprise. A slip a semitone off a chord's note makes a diminished or an augmented one, or none. write_notes'
+// warnings and check_song's key check both ask it, so the two agree
+bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, const Key &K)
+{
+	const int Bar = S.Time.BarOf(N.Row);
+	const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
+	std::vector<bool> With(12, false);	// the classes the other parts sound with it, and its own chord's
+	auto Sounds = [&](const NoteInfo &X) {
+		int Arpeggio = 0;
+		for (size_t e = 0; e < X.Effects.size() && Arpeggio == 0; ++e)
+			if (X.Effects[e].second.first == EFF_ARPEGGIO)
+				Arpeggio = X.Effects[e].second.second;
+		const std::vector<int> Above = ChordAbove(S, X, Arpeggio);
+		for (size_t k = 0; k < Above.size(); ++k)
+			With[static_cast<size_t>(((X.Pitch + Above[k]) % 12 + 12) % 12)] = true;
+	};
+	Sounds(N);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> &Theirs = S.Notes(c);
+		for (size_t j = 0; j < Theirs.size(); ++j) {
+			if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
+				continue;
+			With[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
+			Sounds(Theirs[j]);
+		}
+	}
+	// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them (major
+	// ones first, then minor)
+	static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
+	for (int t = 0; t < 6; ++t) {
+		const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
+		if (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)])
+			continue;
+		const bool Major = t % 2 == 0;
+		const ChordRoleInKey Role = RoleOfChord(Chord(Root, std::vector<int>({ 0, Major ? 4 : 3, 7 })), K);
+		if (Role.Role != CHORD_ROLE_COLOR || Role.Label != "color" || (Major && (Root - K.Tonic + 12) % 12 == 1))
+			return true;
+	}
+	return false;
+}
+
 // write_notes' warnings, in its reply as it writes a part, each with what to do: a local model's first song had a
 // sawtooth bass reaching low and a lone short note every other bar on the triangle, on a pulse's soft sound, and no
 // check said so until the song was done. They are: notes outside what the channel plays well (check_song's range), a
@@ -20628,41 +20677,15 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 			Have = Others && FindKey(View, 0, View.Time.TotalRows(), K);
 			Source = "found from the song's notes";
 		}
-		// The bars where a class outside the key is a chord's note: one of its notes makes a major or minor triad with two
-		// notes the other parts sound from its start for two beats or while it lasts, within the bar (a broken chord's notes
-		// come one after another; the whole bar's would make chance triads with a melody's), and so do its other notes there
-		// (a bass repeating its root under the chord)
+		// The bars where a class outside the key is a chord's note (ChordedOutsideKey), and so are its other notes there (a
+		// bass repeating its root under the chord)
 		std::set<int> Chorded;	// bar * 12 + class
 		for (size_t i = 0; i < Part.size() && Have; ++i) {
 			const NoteInfo &N = Part[i];
 			const int Pitch = PitchOutsideKey(N, S.Time.RowsPerBeat, K);
 			const int Bar = S.Time.BarOf(N.Row);
-			if (Pitch < 0 || Chorded.count(Bar * 12 + Pitch % 12) > 0)
-				continue;
-			const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
-			std::vector<bool> With(12, false);	// the classes the other parts sound with it
-			for (int c = 0; c < View.ChannelCount(); ++c) {
-				if (c == Channel || !IsMelodic(View.Channel(c)))
-					continue;
-				const std::vector<NoteInfo> &Theirs = View.Notes(c);
-				for (size_t j = 0; j < Theirs.size(); ++j) {
-					if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
-						continue;
-					With[Theirs[j].Pitch % 12] = true;
-					const std::vector<int> &Above = InstrumentChord(View, Theirs[j].Instrument);
-					for (size_t k = 0; k < Above.size(); ++k)
-						With[(Theirs[j].Pitch + Above[k]) % 12] = true;
-				}
-			}
-			// The triads with the note as root, third or fifth: their roots' steps under it and the other two notes' over them
-			static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
-			for (int t = 0; t < 6; ++t) {
-				const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
-				if (With[(Root + TRIADS[t][1]) % 12] && With[(Root + TRIADS[t][2]) % 12]) {
-					Chorded.insert(Bar * 12 + Pitch % 12);
-					break;
-				}
-			}
+			if (Pitch >= 0 && Chorded.count(Bar * 12 + Pitch % 12) == 0 && ChordedOutsideKey(View, Channel, N, Pitch, K))
+				Chorded.insert(Bar * 12 + Pitch % 12);
 		}
 		std::vector<size_t> Asked;
 		std::vector<int> Classes;	// the pitch classes asked about, in order
@@ -23257,6 +23280,11 @@ std::string ShortFinding(Session &S, const CheckFinding &F)
 	return Line + (F.Fix.IsNull() ? "." : ". " + FixText(F.Fix, false));
 }
 
+// check_song's key check leaves a borrowed chord's notes out while under this share of the notes falls outside the key:
+// the soundtrack's lively stage with a bVI, a bVII and an A7 had 3% of its notes outside F major, a song in C checked in
+// E major half of them
+const double KEY_COLOR_SHARE = 0.25;
+
 std::string CheckTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -23308,14 +23336,43 @@ std::string CheckTool(Session &S, const Json &Args)
 			SoundingRows(Pitched[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
-	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them)
+	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them).
+	// A borrowed chord's or a secondary dominant's notes are the music's, as write_notes' warnings hear them: in the bars
+	// where a class outside the key is such a chord's note (ChordedOutsideKey), so are its other notes there (a bass repeating
+	// its root under the chord), and a stray note outside the key still counts. Only while the notes fit the key, under
+	// KEY_COLOR_SHARE of them outside it: chords mostly from outside it aren't borrowed (a key chosen wrong, or a mode), and
+	// then every note outside counts
 	int OutOfKey = 0, OutOfRange = 0;
+	bool Colors = false;
+	if (Found) {
+		int Heard = 0, Outside = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (!IsMelodic(S.Channel(c)))
+				continue;
+			std::vector<NoteInfo> Kept;
+			const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Row >= First && Notes[i].Row < End) {
+					++Heard;
+					Outside += PitchOutsideKey(Notes[i], S.Time.RowsPerBeat, K) >= 0 ? 1 : 0;
+				}
+		}
+		Colors = Outside < Heard * KEY_COLOR_SHARE;
+	}
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const ChannelInfo &Info = S.Channel(c);
 		if (!IsMelodic(Info))
 			continue;
 		std::vector<NoteInfo> Kept;
 		const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);	// a 5B's noise alone is in no key or range
+		std::set<int> Chorded;	// bar * 12 + class
+		for (size_t i = 0; i < Notes.size() && Colors; ++i) {
+			const NoteInfo &N = Notes[i];
+			const int Pitch = N.Row >= First && N.Row < End ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			const int Bar = S.Time.BarOf(N.Row);
+			if (Pitch >= 0 && Chorded.count(Bar * 12 + Pitch % 12) == 0 && ChordedOutsideKey(S, c, N, Pitch, K))
+				Chorded.insert(Bar * 12 + Pitch % 12);
+		}
 		for (size_t i = 0; i < Notes.size(); ++i) {
 			const NoteInfo &N = Notes[i];
 			if (N.Row < First || N.Row >= End)
@@ -23324,7 +23381,9 @@ std::string CheckTool(Session &S, const Json &Args)
 			const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
 			// Where it sounds: where a scoop lands, and where a slide later in the note takes it (a fall as it ends is a
 			// gesture, not a pitch), so a slide copied a semitone off its note shows
-			const int Outside = Found ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			int Outside = Found ? PitchOutsideKey(N, S.Time.RowsPerBeat, K) : -1;
+			if (Outside >= 0 && Chorded.count(S.Time.BarOf(N.Row) * 12 + Outside % 12) > 0)
+				Outside = -1;
 			if (Outside >= 0) {
 				++OutOfKey;
 				const bool Slides = Outside != LandedPitch(N);

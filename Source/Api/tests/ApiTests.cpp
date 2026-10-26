@@ -25714,6 +25714,38 @@ void TestFramePatternsInOrder()
 	CHECK(FreePatternForFrame(std::vector<int>{ 0, 1, 7 }, 2, 2, Empty) == -1);
 }
 
+// check_song's key check hears a borrowed chord's and a secondary dominant's notes as the music's, as write_notes' warnings
+// do (ChordedOutsideKey): in C major a bVII (Bb under D and F) and a V/V (D F# A) pass on every channel that plays them, and
+// a stray G#4 over C still counts, in both
+void TestKeyCheckChords()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_key", "{\"key\": \"C major\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"C3 - - - - - - - | "
+		"A#2 - - - - - - - | D3 - - - - - - - | C3 - - - - - - -\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": \"E3 - - - "
+		"- - - - | D3 - - - - - - - | F#3 - - - - - - - | E3 - - - - - - -\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 2\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": \"G3 - - - "
+		"- - - - | F3 - - - - - - - | A3 - - - - - - - | G3 - - - - - - -\"}").IsError);
+	const ToolResult Melody = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, "
+		"\"notes\": \"C4 - - - E4 - G4 - | D4 - - - F4 - A#4 - | F#4 - - - A4 - D4 - | E4 - - - G#4 - - -\"}");
+	CHECK(!Melody.IsError);
+	CHECK_HAS(Melody.Text, "\nWarning: Outside C major (the track's key, chosen for it): G#4 at bar 4 beat 3 on VRC6 Pulse 1. Meant?");
+	CHECK_LACKS(Melody.Text, "A#4 at");
+	CHECK_LACKS(Melody.Text, "F#4 at");
+	const std::string Text = Run(Song, "check_song", "{}").Text;
+	CHECK_HAS(Text, ": 1 outside the key,");
+	CHECK_HAS(Text, "Outside C major: G#4 at VRC6 Pulse 1 bar 4 beat 3");
+	// The bVII's Bb left alone in the bass under an A minor chord: no chord the key accounts for, so it counts
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 2, \"notes\": \"A3 - - - - - - -\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 2\", \"from_bar\": 2, \"notes\": \"C4 - - - - - - -\"}").IsError);
+	CHECK(!Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 2, \"notes\": \"E4 - - - A4 - - -\"}").IsError);
+	const std::string Alone = Run(Song, "check_song", "{}").Text;
+	CHECK_HAS(Alone, ": 2 outside the key,");
+	CHECK_HAS(Alone, "Outside C major: A#2 at 2A03 Triangle bar 2 beat 1");
+}
+
 int main()
 {
 	TestJson();
@@ -25969,6 +26001,7 @@ int main()
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();
 	TestFramePatternsInOrder();
+	TestKeyCheckChords();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

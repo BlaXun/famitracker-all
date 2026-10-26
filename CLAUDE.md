@@ -1052,8 +1052,8 @@ session hears the song so, `Session::Assume`), before `Commit`: the range
 that holds whose middle reaches `GUARD_LEAD_MIDDLE` and top `GUARD_LEAD_TOP`,
 notes outside the key (`PitchOutsideKey`, check_song's too) that no other
 part plays in that bar, that make no major or minor triad with the notes the
-others sound with them (`Chorded`: a borrowed chord's root in the bass under
-its other notes) and that aren't short chromatic steps (only a chosen key's,
+others sound with them (`ChordedOutsideKey`: a borrowed chord's root in the
+bass under its other notes) and that aren't short chromatic steps (only a chosen key's,
 or a third of the part outside a key found from the notes), a bass of
 lone short notes over four bars from its first note, and a sound the channel
 doesn't play as meant (`TRIANGLE_SOFT_PEAK`, another chip's, `OddDutyRemark`).
@@ -1697,6 +1697,17 @@ sends the version agreed in `initialize` with the requests after it
 (`BridgeAgreedVersion`), as an HTTP client does. `TestNetwork` (ranges, the
 code in the address), `TestSaveIntoSongs`, `TestExportResources` and
 `TestBridgeResources` (over real sockets) cover them.
+
+Small fixes, second batch (from `feat-small-fixes-2`): `check_song`'s key
+check leaves out a borrowed chord's and a secondary dominant's notes, as
+`write_notes`' warnings do: `ChordedOutsideKey` (after `PitchOutsideKey` in
+`Tools.cpp`, which both ask) takes a note outside the key that makes a major
+or minor triad with two notes the other parts sound with it (their
+arpeggios and its own counted) that `RoleOfChord` accounts for in the key
+(borrowed, leading to another chord, the Neapolitan, a mode's tension; not a
+surprise), and the class's other notes in that bar with it. check_song
+does so only while under `KEY_COLOR_SHARE` of the notes fall outside the key,
+so a key chosen wrong keeps every finding (`TestKeyCheckChords`).
 
 ## What this repository is
 
