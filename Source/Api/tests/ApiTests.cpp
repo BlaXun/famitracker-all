@@ -19698,6 +19698,10 @@ void TestWhatNextStates()
 		// song had them, which the game's file has already)
 		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"width\": \"wide\"}").IsError);
 		ByHand.Info.Modified = true;
+		// The song changed since finish_song heard it: a listen first (feat-listen), then saving
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
+		CHECK(!Run(ByHand, "listen", "{}").IsError);
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK_EQ(A.Tool, std::string("save_song"));
 		CHECK_HAS(A.Text, "save it before the export");
@@ -23566,8 +23570,9 @@ void TestWhatNextJson()
 	CHECK(!A.Done && !A.Step.AskUser && !A.Step.OwnNotes && A.Step.Calls == 1 && A.DoneCount == 0 && A.Total >= 18);
 	CHECK_EQ(A.Kind, std::string("lively"));
 	CHECK(A.KindNote.empty());
-	CHECK(A.StageCount[STAGE_FRAME] == 3 && A.StageDone[STAGE_FRAME] == 0 && A.StageCount[STAGE_EXPORT] == 2);	// the tempo, the key and
-	// the shape; saved and exported
+	CHECK(A.StageCount[STAGE_FRAME] == 3 && A.StageDone[STAGE_FRAME] == 0 && A.StageCount[STAGE_EXPORT] == 3);	// the tempo, the key and
+	// the shape; listened, saved and exported
+	CHECK(NextStageOfStep("listen") == STAGE_EXPORT && NextStageOfMilestone("listened") == STAGE_EXPORT);
 	CHECK_EQ(std::string(NextStageTitle(STAGE_FRAME)), std::string("The frame"));
 	CHECK(ParseNextStage("mix") == STAGE_MIX && ParseNextStage("") == -1 && NextStageOfStep("vanishing") == -1 &&
 		NextStageOfStep("seam") == STAGE_LOOP && NextStageOfMilestone("chords and bass") == STAGE_PARTS &&

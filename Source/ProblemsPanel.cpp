@@ -51,6 +51,10 @@ namespace {
 
 LPCTSTR SECTION = _T("Problems panel");	// registry section: open, where, its size, checking as you edit, kinds folded
 
+// The kinds as they were numbered before the listen tool's joined them, which the registry's "Folded" bits count
+const char *const OLD_KINDS[] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass", "sound",
+	"faders", "repeat", "short_loop" };
+
 // Sizes at 96 DPI (scaled with SX and SY)
 const int DEFAULT_HEIGHT = 150;			// along the bottom
 const int DEFAULT_WIDTH = 340;			// along the right
@@ -65,6 +69,7 @@ const int INDENT = 24;					// a finding, under its kind
 const int WHERE_WIDTH = 104;			// "bar 12 beat 3.5"
 const int CHANNEL_WIDTH = 104;			// "VRC6 Sawtooth"
 const int ACTION_WIDTH = 62;			// the button on the selected line
+const int LISTEN_WIDTH = 62;			// the header's Listen button
 const int PLAY_WIDTH = 58;				// its Play it button
 const int PLAY_FIX_WIDTH = 82;			// its Play the fix button
 const int NARROW_WIDTH = 470;			// narrower than this, a finding takes two lines (the selected one three, its buttons under it)
@@ -93,7 +98,7 @@ const COLORREF BUTTON_HOT = RGB(60, 120, 215);
 // The right-click menu
 enum {
 	MENU_GO = 1, MENU_ACTION, MENU_EXPLAIN, MENU_COPY, MENU_FOLD, MENU_CHECK, MENU_AUTO, MENU_DOCK, MENU_CLOSE, MENU_PLAY,
-	MENU_PLAY_ALONE, MENU_PLAY_MIX, MENU_PLAY_FIX, MENU_STOP
+	MENU_PLAY_ALONE, MENU_PLAY_MIX, MENU_PLAY_FIX, MENU_STOP, MENU_LISTEN
 };
 
 // What a finding's button does
@@ -410,7 +415,15 @@ struct CProblemsPanelWnd::Impl {
 	CString Trouble;					// why the last check didn't go through
 	DWORD CheckTime;					// how long the last check took (ms)
 	unsigned int Signature;				// the song's settings and instruments at the last check
-	CRect Header, Body, CheckRect, MenuRect;
+	// Listen: the listen tool's findings (its JSON), added to each check's of their track until the next listen; stale once
+	// the song changes after it (they stay listed, saying so, without their fixes)
+	std::string Heard;
+	int HeardTrack;						// the track they were heard in, -1 for none
+	bool HeardStale;
+	bool Listening;						// the listen tool runs
+	DWORD ListenTime;					// how long it took (ms)
+	int SeenTrack;						// the track selected at the last change: another one is a switch, not a change
+	CRect Header, Body, CheckRect, MenuRect, ListenRect;
 	bool Narrow;
 	CFont Font, BoldFont, SmallFont;
 	CBarsPlayer Player;					// a finding's bars (Play it)
@@ -418,12 +431,24 @@ struct CProblemsPanelWnd::Impl {
 	CBarsPlayer::order_t Order;			// Play it's: the channels alone then the mix, alone, or the mix
 
 	Impl(CProblemsPanelWnd *p) : pWnd(p), pTools(NULL), Selected(-1), Hover(-1), HoverButton(BUTTON_NONE), Scroll(0), Content(0),
-		Open(false), Checked(false), Waiting(false), Auto(true), Focused(false), CheckTime(0), Signature(0), Narrow(false),
-		PlayingFinding(-1), PlayingNote(-1), Order(CBarsPlayer::ALONE_THEN_MIX)
+		Open(false), Checked(false), Waiting(false), Auto(true), Focused(false), CheckTime(0), Signature(0), HeardTrack(-1),
+		HeardStale(false), Listening(false), ListenTime(0), SeenTrack(-1), Narrow(false), PlayingFinding(-1), PlayingNote(-1),
+		Order(CBarsPlayer::ALONE_THEN_MIX)
 	{
-		const UINT Folds = theApp.GetProfileInt(SECTION, _T("Folded"), 0);
+		// The kinds folded, by their names ("click,range"), or as bits of the old numbering
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
-			Folded[k] = (Folds & (1u << k)) != 0;
+			Folded[k] = false;
+		const CString Names = theApp.GetProfileString(SECTION, _T("Folded kinds"), _T("?"));
+		if (Names == _T("?")) {
+			const UINT Folds = theApp.GetProfileInt(SECTION, _T("Folded"), 0);
+			for (int Old = 0; Old < static_cast<int>(sizeof(OLD_KINDS) / sizeof(OLD_KINDS[0])); ++Old)
+				for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
+					if ((Folds & (1u << Old)) != 0 && std::string(OLD_KINDS[Old]) == ftapi::ProblemKindId(k))
+						Folded[k] = true;
+		}
+		else
+			for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
+				Folded[k] = (_T(",") + Names + _T(",")).Find(_T(",") + CString(ftapi::ProblemKindId(k)) + _T(",")) >= 0;
 		Auto = theApp.GetProfileInt(SECTION, _T("Check as you edit"), 1) != 0;
 		const UINT Saved = theApp.GetProfileInt(SECTION, _T("Play order"), CBarsPlayer::ALONE_THEN_MIX);
 		Order = Saved == CBarsPlayer::ALONE ? CBarsPlayer::ALONE : Saved == CBarsPlayer::MIX ? CBarsPlayer::MIX : CBarsPlayer::ALONE_THEN_MIX;
@@ -461,11 +486,11 @@ struct CProblemsPanelWnd::Impl {
 
 	void SaveFolds() const
 	{
-		UINT Folds = 0;
+		CString Names;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
 			if (Folded[k])
-				Folds |= 1u << k;
-		theApp.WriteProfileInt(SECTION, _T("Folded"), Folds);
+				Names += (Names.IsEmpty() ? _T("") : _T(",")) + CString(ftapi::ProblemKindId(k));
+		theApp.WriteProfileString(SECTION, _T("Folded kinds"), Names);
 	}
 
 	// The lines
@@ -484,11 +509,19 @@ struct CProblemsPanelWnd::Impl {
 		return pLine != NULL ? &List.Findings()[static_cast<size_t>(pLine->Finding)] : NULL;
 	}
 
+	// Heard by a listen before the song's last change
+	bool IsStale(const ftapi::ProblemFinding *pFinding) const
+	{
+		return pFinding != NULL && HeardStale && ftapi::ProblemHeard(pFinding->Kind);
+	}
+
 	action_t ActionOf(int Index) const
 	{
 		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
 		if (pFinding == NULL)
 			return ACTION_NONE;
+		if (IsStale(pFinding))
+			return ACTION_EXPLAIN;	// its fix was worked out for the song as it was
 		// A fix of one call the panel makes itself (a click's nudge, the arrangement's sound, faders, cleared double...);
 		// one of several calls (read a melody in steps, then write it back) is Claude's to make
 		if (!pFinding->FixTool.empty() && pFinding->FixCalls <= 1)
@@ -521,6 +554,7 @@ struct CProblemsPanelWnd::Impl {
 		CheckRect = CRect(Client.right - Margin - SX(28) - SX(4) - SX(62), Header.top + SY(3), Client.right - Margin - SX(28) - SX(4),
 			Header.bottom - SY(4));
 		MenuRect = CRect(Client.right - Margin - SX(28), Header.top + SY(3), Client.right - Margin, Header.bottom - SY(4));
+		ListenRect = CRect(CheckRect.left - SX(4) - SX(LISTEN_WIDTH), CheckRect.top, CheckRect.left - SX(4), CheckRect.bottom);
 
 		Shown.clear();
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
@@ -568,7 +602,7 @@ struct CProblemsPanelWnd::Impl {
 	bool CanPlayFix(int Index) const
 	{
 		const ftapi::ProblemFinding *pFinding = FindingOf(Index);
-		return pFinding != NULL && !pFinding->FixTool.empty() && pFinding->FixCalls <= 1;
+		return pFinding != NULL && !pFinding->FixTool.empty() && pFinding->FixCalls <= 1 && !IsStale(pFinding);
 	}
 
 	bool HasButton(int Index, int Button) const
@@ -797,10 +831,67 @@ struct CProblemsPanelWnd::Impl {
 		else {
 			Checked = true;
 			Trouble.Empty();
+			std::string Unread;
+			if (!Heard.empty() && HeardTrack == List.Track() && !List.Add(Heard, Unread))
+				Heard.clear();
 		}
 		Arrange();
 		Reselect(Place);
 		Changed();
+	}
+
+	// The song changed (or the track did): what was heard before a change is stale
+	void SongMoved()
+	{
+		CMainFrame *pMain = Main();
+		const int Track = pMain != NULL ? pMain->GetSelectedTrack() : -1;
+		if (Track == SeenTrack && !Heard.empty() && Track == HeardTrack)
+			HeardStale = true;
+		SeenTrack = Track;
+	}
+
+	// Listen: the listen tool on the selected track, its findings in the list beside check_song's. FamiTracker renders the
+	// track and each part alone (the status bar says how far), then the tool listens (a few seconds more)
+	void Listen()
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		CMainFrame *pMain = Main();
+		if (pTools == NULL || pDoc == NULL || pMain == NULL || !pDoc->IsFileLoaded() || Listening)
+			return;
+		if (pTools->IsBusy()) {
+			Say(_T("FamiTracker is busy with Claude Code; try again in a moment."));
+			return;
+		}
+		StopPlaying();
+		Listening = true;
+		pWnd->RedrawWindow();
+		const DWORD Start = ::GetTickCount();
+		std::string Reply;
+		const bool Done = pTools->RunTool("listen", "{\"format\":\"json\"}", Reply);
+		ListenTime = ::GetTickCount() - Start;
+		Listening = false;
+		ftapi::ProblemList Trial;
+		std::string Error;
+		if (!Done || !Trial.Read(Reply, Error)) {
+			pWnd->Invalidate(FALSE);
+			CString Text = FromUtf8(Done ? Error : Reply);
+			Text.Replace(_T("\n"), _T("\r\n"));
+			AfxMessageBox(_T("Listening didn't go through: ") + Text, MB_OK | MB_ICONINFORMATION);
+			return;
+		}
+		Heard = Reply;
+		HeardTrack = Trial.Track();
+		HeardStale = false;
+		SeenTrack = pMain->GetSelectedTrack();
+		Check(true, true);
+		CString Text;
+		const int Count = static_cast<int>(Trial.Findings().size());
+		if (Count == 0)
+			Text.Format(_T("Listened (%.1f s): nothing sounds wrong."), ListenTime / 1000.0);
+		else
+			Text.Format(_T("Listened (%.1f s): heard %s; they're in the list with the rest. Play it plays each."), ListenTime / 1000.0,
+				static_cast<LPCTSTR>(Plural(Count, _T("thing"), _T("things"))));
+		Say(Text);
 	}
 
 	// The list changed, or the selection did: the marks follow, and everything is drawn again
@@ -1007,6 +1098,8 @@ struct CProblemsPanelWnd::Impl {
 		if (pFinding == NULL)
 			return;
 		CString Text = FromUtf8(pFinding->Message);
+		if (IsStale(pFinding))
+			Text += _T("\r\n\r\nThis was heard before the song's last change: Listen hears it as it is now.");
 		const action_t Action = ActionOf(Index);
 		if (Action == ACTION_NUDGE)
 			Text += _T("\r\n\r\nThe panel's Nudge button moves it ") + NudgeWords(*pFinding) + _T(", as one Ctrl+Z.");
@@ -1261,6 +1354,7 @@ struct CProblemsPanelWnd::Impl {
 			Popup.AppendMenu(MF_SEPARATOR);
 		}
 		Popup.AppendMenu(MF_STRING, MENU_CHECK, _T("Check now\tF5"));
+		Popup.AppendMenu(MF_STRING, MENU_LISTEN, _T("Listen to the track\tF6"));
 		Popup.AppendMenu(MF_STRING | (Auto ? MF_CHECKED : MF_UNCHECKED), MENU_AUTO, _T("Check as you edit"));
 		CProblemsBar *pBar = static_cast<CProblemsBar*>(pWnd->GetParent());
 		Popup.AppendMenu(MF_STRING, MENU_DOCK, pBar->IsOnRight() ? _T("Dock at the bottom") : _T("Dock on the right"));
@@ -1281,6 +1375,7 @@ struct CProblemsPanelWnd::Impl {
 				Fold(Shown[static_cast<size_t>(Index)].Kind, !Folded[Shown[static_cast<size_t>(Index)].Kind]);
 			break;
 		case MENU_CHECK: Check(true, true); break;
+		case MENU_LISTEN: Listen(); break;
 		case MENU_AUTO:
 			Auto = !Auto;
 			theApp.WriteProfileInt(SECTION, _T("Check as you edit"), Auto ? 1 : 0);
@@ -1339,6 +1434,9 @@ struct CProblemsPanelWnd::Impl {
 			return true;
 		case VK_F5:
 			Check(true, true);
+			return true;
+		case VK_F6:
+			Listen();
 			return true;
 		case 'P':
 			if (Ctrl || OnHeading || FindingOf(Selected) == NULL)
@@ -1404,11 +1502,18 @@ struct CProblemsPanelWnd::Impl {
 	{
 		static const LPCTSTR WORDS[ftapi::PROBLEM_KINDS][2] = {
 			{ _T("note vanishes"), _T("notes vanish") }, { _T("note clicks"), _T("notes click") }, { _T("clash"), _T("clashes") },
-			{ _T("out of range"), _T("out of range") }, { _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
+			{ _T("warble"), _T("warbles") }, { _T("warble heard"), _T("warbles heard") }, { _T("click heard"), _T("clicks heard") },
+			{ _T("clipping"), _T("clippings") }, { _T("out of range"), _T("out of range") },
+			{ _T("heard out of tune"), _T("heard out of tune") }, { _T("pair beating"), _T("pairs beating") },
+			{ _T("vibrato too deep"), _T("vibratos too deep") }, { _T("sound holding on"), _T("sounds holding on") },
+			{ _T("melody covered"), _T("melodies covered") }, { _T("part hardly heard"), _T("parts hardly heard") },
+			{ _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
 			{ _T("outside the key"), _T("outside the key") }, { _T("lead holds steady"), _T("leads hold steady") },
 			{ _T("melody in pieces"), _T("melodies in pieces") }, { _T("bass to fix"), _T("bass parts to fix") },
 			{ _T("sound unsuited"), _T("sounds unsuited") }, { _T("fader doing the mix"), _T("faders doing the mix") },
-			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") }
+			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") },
+			{ _T("jump in loudness"), _T("jumps in loudness") }, { _T("harsh stretch"), _T("harsh stretches") },
+			{ _T("muddy stretch"), _T("muddy stretches") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
@@ -1438,7 +1543,9 @@ struct CProblemsPanelWnd::Impl {
 		dc.SelectObject(&Font);
 		dc.SetTextColor(TEXT_DIM);
 		CString State;
-		if (!Trouble.IsEmpty())
+		if (Listening)
+			State = _T("Listening: FamiTracker renders the track and each part alone (the status bar says how far), then listens");
+		else if (!Trouble.IsEmpty())
 			State = Trouble;
 		else if (!Checked)
 			State = Waiting ? _T("Checks when the song stops playing") : _T("Not checked yet");
@@ -1448,8 +1555,9 @@ struct CProblemsPanelWnd::Impl {
 			State = Summary();
 		if (Checked && Waiting && Trouble.IsEmpty())
 			State += theApp.IsPlaying() ? _T(" (checks again when the song stops)") : _T(" (checking soon)");
-		CRect StateRect(Title.left + TitleWidth + SX(10), Header.top, CheckRect.left - SX(MARGIN), Header.bottom);
+		CRect StateRect(Title.left + TitleWidth + SX(10), Header.top, ListenRect.left - SX(MARGIN), Header.bottom);
 		dc.DrawText(State, &StateRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		DrawButton(dc, ListenRect, _T("Listen"), false, Listening);
 		DrawButton(dc, CheckRect, _T("Check"), false, false);
 		DrawButton(dc, MenuRect, _T(""), false, false);
 		Triangle(dc, MenuRect.CenterPoint().x - 3, MenuRect.CenterPoint().y - 1, true, TEXT_DARK);
@@ -1480,7 +1588,9 @@ struct CProblemsPanelWnd::Impl {
 				dc.SetTextColor(TEXT_DIM);
 				CString Count;
 				Count.Format(_T("%d"), static_cast<int>(List.Lines(S.Kind).size()));
-				dc.DrawText(Count, &NameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+				if (HeardStale && ftapi::ProblemHeard(S.Kind))
+					Count += _T("  (heard before your last change: Listen again)");
+				dc.DrawText(Count, &NameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 				continue;
 			}
 			// A finding: its mark, where, on which channel, what's wrong, and its button
@@ -1526,7 +1636,8 @@ struct CProblemsPanelWnd::Impl {
 			if (Checked)
 				Text = _T("Nothing stands out in this track. The panel checks it a moment after each change for notes that vanish, ")
 					_T("notes that click, clashes, notes out of range, silent and busy bars and notes outside the key, and marks ")
-					_T("what it finds in the pattern editor and the piano roll. Play it plays the bars where something is.");
+					_T("what it finds in the pattern editor and the piano roll. Play it plays the bars where something is. ")
+					_T("Listen hears the track as FamiTracker plays it: warbles, notes out of tune, clicks, sounds that hold on.");
 			else if (!Trouble.IsEmpty())
 				Text = Trouble;
 			else
@@ -1603,6 +1714,7 @@ void CProblemsPanelWnd::SongChanged()
 {
 	if (!m_pImpl->Open || GetSafeHwnd() == NULL)
 		return;
+	m_pImpl->SongMoved();
 	if (m_pImpl->Auto)
 		m_pImpl->CheckSoon(CHECK_MS);
 	else if (m_pImpl->Checked && m_pImpl->List.Track() != static_cast<CMainFrame*>(theApp.m_pMainWnd)->GetSelectedTrack())
@@ -1683,6 +1795,10 @@ void CProblemsPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
 		m_pImpl->Check(true, true);
 		return;
 	}
+	if (m_pImpl->ListenRect.PtInRect(point)) {
+		m_pImpl->Listen();
+		return;
+	}
 	if (m_pImpl->MenuRect.PtInRect(point)) {
 		CPoint Screen(m_pImpl->MenuRect.left, m_pImpl->MenuRect.bottom);
 		ClientToScreen(&Screen);
@@ -1731,6 +1847,9 @@ void CProblemsPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 {
 	int Button = BUTTON_NONE;
 	const int Index = m_pImpl->LineAt(point, &Button);
+	if (m_pImpl->ListenRect.PtInRect(point) && m_pImpl->Hover < 0)
+		m_pImpl->Say(_T("Listen: FamiTracker plays the track to itself, the whole and each part alone, and lists what sounds wrong ")
+			_T("(warbles, notes out of tune, parts beating, clicks, sounds that hold on, clipping) with Play it and the fixes. F6"));
 	if (Index == m_pImpl->Hover && Button == m_pImpl->HoverButton)
 		return;
 	if (m_pImpl->Hover < 0 && Index >= 0) {
@@ -1796,7 +1915,8 @@ BOOL CProblemsPanelWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 		ScreenToClient(&Point);
 		int Button = BUTTON_NONE;
 		m_pImpl->LineAt(Point, &Button);
-		if (Button != BUTTON_NONE || m_pImpl->CheckRect.PtInRect(Point) || m_pImpl->MenuRect.PtInRect(Point)) {
+		if (Button != BUTTON_NONE || m_pImpl->CheckRect.PtInRect(Point) || m_pImpl->MenuRect.PtInRect(Point) ||
+			m_pImpl->ListenRect.PtInRect(Point)) {
 			::SetCursor(::LoadCursor(NULL, IDC_HAND));
 			return TRUE;
 		}
@@ -1856,8 +1976,13 @@ void CProblemsPanelWnd::OnTimer(UINT_PTR nIDEvent)
 			}
 		}
 		// Changes nothing tells the panel of: an instrument's envelope, the speed and tempo, the track
-		if (m_pImpl->Open && m_pImpl->Auto && !m_pImpl->Waiting && m_pImpl->MakeSignature() != m_pImpl->Signature)
-			m_pImpl->CheckSoon(CHECK_MS);
+		if (m_pImpl->Open && !m_pImpl->Waiting && m_pImpl->MakeSignature() != m_pImpl->Signature) {
+			m_pImpl->SongMoved();
+			if (m_pImpl->Auto)
+				m_pImpl->CheckSoon(CHECK_MS);
+			else
+				m_pImpl->Signature = m_pImpl->MakeSignature();
+		}
 		return;
 	}
 	CWnd::OnTimer(nIDEvent);

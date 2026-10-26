@@ -569,6 +569,7 @@
     <ClCompile Include="Source\Api\Tools.cpp" />
     <ClCompile Include="Source\Api\WhatNext.cpp" />
     <ClCompile Include="Source\Api\NextSteps.cpp" />
+    <ClCompile Include="Source\Api\Listen.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -613,6 +614,7 @@
     <ClInclude Include="Source\Api\Tools.h" />
     <ClInclude Include="Source\Api\WhatNext.h" />
     <ClInclude Include="Source\Api\NextSteps.h" />
+    <ClInclude Include="Source\Api\Listen.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />
@@ -736,6 +738,7 @@
     <ClCompile Include="Source\Nsf\Tracker.cpp" />
     <ClCompile Include="Source\Nsf\MidiFile.cpp" />
     <ClCompile Include="Source\Nsf\FtmFile.cpp" />
+    <ClCompile Include="Source\Nsf\FdsModulator.cpp" />
     <ClCompile Include="Source\ImportNsfDlg.cpp" />
     <ClInclude Include="Source\Nsf\Cpu6502.h" />
     <ClInclude Include="Source\Nsf\NsfFile.h" />
@@ -749,6 +752,7 @@
     <ClInclude Include="Source\Nsf\Tracker.h" />
     <ClInclude Include="Source\Nsf\MidiFile.h" />
     <ClInclude Include="Source\Nsf\FtmFile.h" />
+    <ClInclude Include="Source\Nsf\FdsModulator.h" />
     <ClInclude Include="Source\ImportNsfDlg.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

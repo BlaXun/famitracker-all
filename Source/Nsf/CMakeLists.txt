@@ -34,6 +34,7 @@ add_library(nsf STATIC
 	Tracker.cpp
 	MidiFile.cpp
 	FtmFile.cpp
+	FdsModulator.cpp
 )
 target_include_directories(nsf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
