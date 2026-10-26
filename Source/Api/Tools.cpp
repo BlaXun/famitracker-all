@@ -25456,7 +25456,8 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 // what_next's milestones, in the order it works through them: each done, or left. The echo is depth's last step: it
 // copies the melody as it plays, so it waits for the variations and the review's tips that change the melody's notes
 const char *const NEXT_MILESTONES[] = { "tempo", "key", "shape", "the lead's sound", "chords and bass", "sections", "melody", "form", "drums",
-	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "polish", "mix", "seam", "saved", "exported" };
+	"second line", "repeats varied", "break", "intro", "loop", "review tips", "echo", "listened", "polish", "mix", "seam", "saved",
+	"exported" };
 
 // A calm lead's way, the night songs' best (KindRecipe's and the style guide's first choice): kind music box on a pulse
 // at 37.5% on the VRC6 (50% on the 2A03's and the MMC5's, which have no 37.5%), blooming in over two frames without a duty
@@ -25542,6 +25543,7 @@ private:
 	bool MixDue();				// a mix in the kind's style would change the song (worked out once)
 	void LoopSeam();
 	bool FinishStep(const std::string &From, const std::string &Why);
+	bool Listened();
 	void Finish();
 	bool TipStep(const std::string &Tip);
 	bool Climax(const std::string &Tip);
@@ -25615,7 +25617,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
-		"variation", "break", "intro", "loop", "tips", "echo", "polish", "mix", "seam", "save", "export" };
+		"variation", "break", "intro", "loop", "tips", "echo", "listen", "polish", "mix", "seam", "save", "export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -25808,6 +25810,44 @@ bool WhatNext::Unnamed() const
 
 // Whether a fix check_song gives would change the song (a dry run, for the tools that can take one); a fix that changes
 // nothing would come back as the next step again
+// A finding with its fix (check_song's or listen's JSON) as a step of what_next: its call, the calls of its "then" in order,
+// said in the step's why after what the finding says (Source: the tool that found it). InSet: false when a call isn't in the
+// small set (Core)
+NextStep FindingFixStep(const Json &F, const std::string &Id, const char *Source, bool Core, bool &InSet)
+{
+	const Json &Fix = *F.Get("fix");
+	NextStep N;
+	N.Id = Id;
+	N.Tool = Fix.Get("tool") != 0 && Fix.Get("tool")->IsString() ? Fix.Get("tool")->String() : std::string();
+	if (Fix.Get("arguments") != 0 && Fix.Get("arguments")->IsObject())
+		N.Arguments = *Fix.Get("arguments");
+	N.Severity = F.Get("severity") != 0 && F.Get("severity")->IsString() ? F.Get("severity")->String() : std::string();
+	std::string Message = F.Get("message") != 0 && F.Get("message")->IsString() ? F.Get("message")->String() : std::string();
+	const size_t Cut = Message.find(" Fix: ");
+	if (Cut != std::string::npos)
+		Message.erase(Cut);	// the calls follow, each in full
+	if (!Message.empty() && Message[Message.size() - 1] != '.')
+		Message += ".";
+	const std::string Does = Fix.Get("does") != 0 && Fix.Get("does")->IsString() ? Fix.Get("does")->String() : std::string();
+	InSet = !Core || ToolSet::IsCoreTool(N.Tool);
+	std::string Then;
+	const Json *pThen = Fix.Get("then");
+	for (size_t t = 0; pThen != 0 && pThen->IsArray() && t < pThen->Size(); ++t) {
+		const Json &Next = pThen->At(t);
+		const std::string Tool = Next.Get("tool") != 0 && Next.Get("tool")->IsString() ? Next.Get("tool")->String() : std::string();
+		if (Tool.empty())
+			continue;
+		++N.Calls;
+		InSet = InSet && (!Core || ToolSet::IsCoreTool(Tool));
+		Then += "; then " + Tool + (Next.Get("arguments") != 0 && Next.Get("arguments")->IsObject() ? " " +
+			WriteJson(*Next.Get("arguments")) : std::string()) + (Next.Get("does") != 0 && Next.Get("does")->IsString() ? " (" +
+			Next.Get("does")->String() + ")" : std::string());
+	}
+	N.Why = std::string(Source) + ": " + Message + (Does.empty() ? std::string() : " This call " + Does) + (Then.empty() ?
+		std::string(".") : Then + ": make them in that order, then ask what_next again.");
+	return N;
+}
+
 bool WhatNext::Fixes(const NextStep &N)
 {
 	if (!Wanted(N.Id) || !Looking())
@@ -25944,36 +25984,8 @@ void WhatNext::Breakers()
 			// (said in the step's why). What breaks the sound (severity high) now, a part's (medium: the melody's phrases, the
 			// bass, a sound) before depth, the rest (the faders, a copied repeat, a short loop) with the review's tips; one of
 			// each kind at a time
-			const Json &Fix = *F.Get("fix");
-			NextStep N;
-			N.Id = Kind;
-			N.Tool = Fix.Get("tool") != 0 && Fix.Get("tool")->IsString() ? Fix.Get("tool")->String() : std::string();
-			if (Fix.Get("arguments") != 0 && Fix.Get("arguments")->IsObject())
-				N.Arguments = *Fix.Get("arguments");
-			N.Severity = F.Get("severity") != 0 && F.Get("severity")->IsString() ? F.Get("severity")->String() : std::string();
-			std::string Message = F.Get("message") != 0 && F.Get("message")->IsString() ? F.Get("message")->String() : std::string();
-			const size_t Cut = Message.find(" Fix: ");
-			if (Cut != std::string::npos)
-				Message.erase(Cut);	// the calls follow, each in full
-			if (!Message.empty() && Message[Message.size() - 1] != '.')
-				Message += ".";
-			const std::string Does = Fix.Get("does") != 0 && Fix.Get("does")->IsString() ? Fix.Get("does")->String() : std::string();
-			bool InSet = !m_Core || ToolSet::IsCoreTool(N.Tool);
-			std::string Then;
-			const Json *pThen = Fix.Get("then");
-			for (size_t t = 0; pThen != 0 && pThen->IsArray() && t < pThen->Size(); ++t) {
-				const Json &Next = pThen->At(t);
-				const std::string Tool = Next.Get("tool") != 0 && Next.Get("tool")->IsString() ? Next.Get("tool")->String() : std::string();
-				if (Tool.empty())
-					continue;
-				++N.Calls;
-				InSet = InSet && (!m_Core || ToolSet::IsCoreTool(Tool));
-				Then += "; then " + Tool + (Next.Get("arguments") != 0 && Next.Get("arguments")->IsObject() ? " " +
-					WriteJson(*Next.Get("arguments")) : std::string()) + (Next.Get("does") != 0 && Next.Get("does")->IsString() ? " (" +
-					Next.Get("does")->String() + ")" : std::string());
-			}
-			N.Why = "check_song: " + Message + (Does.empty() ? std::string() : " This call " + Does) + (Then.empty() ? std::string(".") :
-				Then + ": make them in that order, then ask what_next again.");
+			bool InSet = true;
+			const NextStep N = FindingFixStep(F, Kind, "check_song", m_Core, InSet);
 			bool Given = N.Tool.empty();
 			for (size_t s = 0; s < m_Steps.size() && !Given; ++s)
 				Given = m_Steps[s].Id == N.Id;
@@ -27358,6 +27370,7 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 		return true;
 	if (!Looking() || (m_Core && !ToolSet::IsCoreTool("finish_song")))
 		return false;
+	Listened();		// first: a step while the song as it is hasn't been heard, then its high findings' fixes
 	const NextKind &K = Kind();
 	Json A = Json::MakeObject();
 	A.Set("kind", K.Name);
@@ -27387,6 +27400,43 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 	if (!Step(From, "finish_song", A, Why + " finish_song does it" + Then + ", in one call that one Ctrl+Z undoes."))
 		return false;
 	m_Finishing = true;
+	return true;
+}
+
+// The listen before the finish (FinishStep): done while listen's last result over the whole track (SongHost::LastListen)
+// is of the song as it is now (its print, SoundPrint), else listen is the step; its high findings with a call are then
+// steps as check_song's are, one at a time (the others are the user's to hear). True when the finish can come
+bool WhatNext::Listened()
+{
+	if (!Wanted("listen") || (m_Core && !ToolSet::IsCoreTool("listen"))) {
+		Milestone("listened", true, "listened");
+		return true;
+	}
+	Json Heard;
+	const Json *pPrint = 0;
+	if (!S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Heard))
+		pPrint = Heard.Get("print");
+	if (pPrint == 0 || !pPrint->IsString() || pPrint->String() != SoundPrint(S)) {
+		Milestone("listened", false);
+		Step("listen", "listen", Json::MakeObject(), "The parts are written: before the finish, listen hears the song as FamiTracker "
+			"plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, clicks, a sound "
+			"that drones on, a covered melody. It changes nothing.");
+		return false;
+	}
+	Milestone("listened", true, "listened");
+	const Json *pFindings = Heard.Get("findings");
+	for (size_t i = 0; pFindings != 0 && pFindings->IsArray() && i < pFindings->Size(); ++i) {
+		const Json &F = pFindings->At(i);
+		if (F.Get("severity") == 0 || !F.Get("severity")->IsString() || F.Get("severity")->String() != "high" || F.Get("fix") == 0 ||
+			!F.Get("fix")->IsObject())
+			continue;
+		bool InSet = true;
+		const NextStep N = FindingFixStep(F, "listen", "listen", m_Core, InSet);
+		if (!InSet)
+			m_Notes.push_back(N.Why + " (" + N.Tool + " or a call after it isn't in this small set)");
+		else if (Fixes(N) && Step(N))
+			return false;
+	}
 	return true;
 }
 
@@ -27470,6 +27520,9 @@ void WhatNext::Work()
 	}
 	if (Looking() && m_Music)
 		LoopSeam();
+	// The finish's stage looked at with nothing to finish: no listen before it (FinishStep's)
+	if (Looking() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0)
+		Milestone("listened", true, "listened");
 	if (Looking())
 		Finish();
 }
@@ -27745,6 +27798,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	}
 	if (Id == "echo")
 		return "Add an echo of the melody";
+	if (Id == "listen")
+		return N.Tool == "listen" ? "Listen to the song as FamiTracker plays it" : "Fix what listen heard";
 	if (Id == "polish")
 		return Calm() ? "Add finishing touches: a faint vibrato on long notes" : "Add finishing touches: accents, a vibrato on long notes";
 	if (Id == "mix")
@@ -29998,11 +30053,18 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		Session S(m_Host);
 		// On the small set the checks answer short, a local model's context being small, unless asked for the full reply
 		Json Checked = Args;
-		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix"))
+		if (Who.Core && Arg(Args, "format") == 0 && (Name == "review_arrangement" || Name == "check_song" || Name == "measure_mix" ||
+			Name == "listen"))
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core, Who.Client);
-		else if (Name == "listen") Result.Text = ListenTool(S, Args, 0);
+		else if (Name == "listen") {
+			// Over the whole track, what_next takes the song as listened to while it stays as it is (WhatNext::Listened)
+			std::string Heard;
+			Result.Text = ListenTool(S, Checked, &Heard);
+			if (Arg(Args, "from_bar") == 0 && Arg(Args, "to_bar") == 0 && Arg(Args, "section") == 0)
+				m_Host.KeepListen(Heard);
+		}
 		else if (Name == "check_exercise") Result.Text = CheckExerciseTool(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
@@ -30252,7 +30314,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain" };
+		"finish_song", "get_recipe", "explain", "listen" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -30293,8 +30355,10 @@ std::string ToolSet::CoreInstructions()
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
-		"- Finish: polish, then mix last, in the kind's style (it balances the parts in the notes: leave the faders at 0 dB); "
+		"- Finish: listen first (it hears what the notes can't show: a warble, clicks, notes out of tune), polish, then mix last, "
+		"in the kind's style (it balances the parts in the notes: leave the faders at 0 dB); "
 		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action). what_next gives each.\n"
+
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
 		"0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give a "

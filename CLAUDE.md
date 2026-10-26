@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 37 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 38 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -1000,7 +1000,7 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 37 (with `song_shape`), not
+(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1517,7 +1517,8 @@ instrument's wave and modulator (`InstrumentInfo::FdsWave`, `ModTable`,
 `ModSpeed`, `ModDepth`, `ModDelay`); FakeSong renders notes as their chips
 sound them when `ChipPitches` is set. `TestListenTool` and
 `TestListenFdsWarble` cover the tool. Still to come: the problems panel's
-Listen button, `what_next`'s listen step and `finish_song`'s listen.
+Listen button and `finish_song`'s listen (what_next's is below, Small fixes,
+second batch).
 
 Exercises (from `feat-exercises`): Help > Exercises (`ID_HELP_EXERCISES`,
 `Source/ExercisesDlg.cpp`) lists the ten of `Source/Api/Exercises.cpp`
@@ -1720,6 +1721,15 @@ until check_song's fix took it out). The kind chosen in What next
 into the Ask panel's context (`AssistantFacts::Kind`): its what_next step is
 asked in that kind, and `AssistantContext` tells the model to give
 what_next, get_recipe and finish_song that `kind` (`TestAssistantContext`).
+`what_next` asks for one `listen` before `finish_song` once the parts are
+written (`WhatNext::Listened`, from `FinishStep`; milestone `listened`, skip
+word `listen`, stage polish in `NextSteps.cpp`): `ToolSet::Call` keeps a
+listen over the whole track with the host (`SongHost::KeepListen` and
+`LastListen`, its JSON with `SoundPrint`, while the host runs), the step is
+done while the print matches, and its high findings with a call are steps
+as check_song's are (`FindingFixStep`, shared with `Breakers`); with nothing
+left to finish no listen is asked. `listen` is in `CoreTools` (short there)
+and `CoreInstructions`' Finish line (`TestWhatNextListens`, and the walks).
 
 ## What this repository is
 

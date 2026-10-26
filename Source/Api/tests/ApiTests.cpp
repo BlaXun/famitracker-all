@@ -19622,7 +19622,7 @@ WhatNextAnswer AskWhatNext(FakeSong &Song, const std::string &Asked)
 void NoteCall(FakeSong &Song, const std::string &Tool)
 {
 	static const char *const READING[] = { "get_song", "what_next", "read_notes", "check_song", "review_arrangement", "check_loop",
-		"find_sound", "get_recipe", "play", "stop", "export_for_game", "measure_mix", "look_at_song" };
+		"find_sound", "get_recipe", "play", "stop", "export_for_game", "measure_mix", "look_at_song", "listen" };
 	if (Tool == "save_song") {
 		Song.Info.Modified = false;
 		return;
@@ -19786,10 +19786,10 @@ void TestWhatNextLoop()
 		Check(Finished, K.Asked, __LINE__);
 		// The frame and the song's shape (its sections laid out: song_shape, 26 October 2026), the lead's sound, chords and
 		// bass, the melody, the form filled part by part, depth (a harmony in the repeat, a variation where a repeat plays its
-		// original note for note, the intro and the break filled), the echo last of the parts, then finish_song (the polish, the
+		// original note for note, the intro and the break filled), the echo last of the parts, a listen, then finish_song (the polish, the
 		// mix, the seam and the file for the game in one call), saving
 		const char *const ORDER[] = { "set_tempo", "set_key", "song_shape", "design_instrument", "add_chords_and_bass", "grow_melody",
-			"copy_bars", "add_harmony", "add_echo", "finish_song", "save_song" };
+			"copy_bars", "add_harmony", "add_echo", "listen", "finish_song", "save_song" };
 		for (size_t i = 0; i + 1 < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
 			Check(CallIndex(Made, ORDER[i]) >= 0 && CallIndex(Made, ORDER[i]) < CallIndex(Made, ORDER[i + 1]),
 				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
@@ -19989,9 +19989,15 @@ void TestWhatNextStates()
 			if (Song.Rows[0][r].HasNote())
 				Song.Rows[0][r].Volume = 4;
 		FakeSong ByHand = Song;
+		// Changed since it was listened to: heard again before the finish
 		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
+		const int Heard = StepsDoneOf(A.Line);
+		CHECK(Heard > 0 && !Run(Song, "listen", "{}").IsError);
+		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\"]}");
+		CHECK_EQ(StepsDoneOf(A.Line), Heard + 1);	// listened
 		CHECK_HAS(A.Text, "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, the chords 3-4 "
 			"dB under it and the band louder than the melody. finish_song does it, then the loop's seam and the game's file at -20 LUFS, "
 			"in one call that one Ctrl+Z undoes.");
@@ -20034,7 +20040,10 @@ void TestWhatNextStates()
 				Instrument = Song.Rows[6][r].Instrument;
 		}
 		Song.Put(6, Last, "C-4", Instrument, Volume);
-		const WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+		CHECK_EQ(A.Tool, std::string("listen"));
+		CHECK(!Run(Song, "listen", "{}").IsError);
+		A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 		Check(A.Tool == "finish_song" && WriteJson(A.Arguments) == "{\"kind\":\"lively\",\"melody_channel\":\"VRC6 Pulse 1\",\"skip\":"
 			"[\"polish\",\"mix\"]}", A.Text.c_str(), __LINE__);
 		CHECK_HAS(A.Text, "check_loop finds the loop starting otherwise on repeat");
@@ -25795,6 +25804,45 @@ void TestKeyCheckChords()
 	CHECK_HAS(Alone, "Outside C major: A#2 at 2A03 Triangle bar 2 beat 1");
 }
 
+// what_next listens once the parts are written, before the finish: listen's last result over the whole track counts while the
+// song stays as it was heard (its print), and a high finding's fix is the next step, as check_song's are
+void TestWhatNextListens()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, false, "listen");
+	WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK(!Finished && A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
+	CHECK_HAS(A.Text, "before the finish, listen hears the song as FamiTracker plays it");
+	CHECK_HAS(A.Text, "\nLeft: listened, polish, mix, ");
+	// Skipped: the finish at once; a listen over some bars isn't the song heard
+	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"listen\"]}").Tool, std::string("finish_song"));
+	CHECK(!Run(Song, "listen", "{\"from_bar\": 5, \"to_bar\": 8}").IsError);
+	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
+	// The melody's notes with a vibrato far too deep, heard as FamiTracker plays it: its fix after the listen
+	Song.ChipPitches = true;
+	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
+		if (Song.Rows[5][r].HasNote() && Song.Rows[5][r].Effect[0] == EFF_NONE) {
+			Song.Rows[5][r].Effect[0] = EFF_VIBRATO;
+			Song.Rows[5][r].Param[0] = 0x6F;
+		}
+	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
+	const Json Heard = Parse(Run(Song, "listen", "{\"format\": \"json\"}").Text);
+	std::string Fix;
+	const Json *pFindings = Heard.Get("findings");
+	for (size_t i = 0; pFindings != 0 && i < pFindings->Size() && Fix.empty(); ++i)
+		if (TextOf(&pFindings->At(i), "severity") == "high" && pFindings->At(i).Get("fix") != 0)
+			Fix = TextOf(pFindings->At(i).Get("fix"), "tool");
+	Check(!Fix.empty(), WriteJson(Heard).substr(0, 600).c_str(), __LINE__);
+	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	Check(A.Tool == Fix && Contains(A.Text, "\nWhy: listen: "), A.Text.c_str(), __LINE__);
+	CHECK_LACKS(A.Text, "Left: listened");
+	// A change since: heard again
+	Song.Rows[5][0].Volume = 9;
+	CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, std::string("listen"));
+}
+
 int main()
 {
 	TestJson();
@@ -26051,6 +26099,7 @@ int main()
 	TestEchoKeepsItsChipsEffects();
 	TestFramePatternsInOrder();
 	TestKeyCheckChords();
+	TestWhatNextListens();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

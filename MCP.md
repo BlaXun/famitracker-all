@@ -106,7 +106,7 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 37 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 38 of them:
 `what_next`, the tools its steps call and `explain`. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
@@ -115,8 +115,9 @@ microphone are clips); sounds: `add_instrument`, `design_instrument`,
 pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
 `vary_part`, `copy_bars`, `insert_bars`, `name_section`, `song_shape`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
-`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `finish_song`
-(the last of them in one call); and `play`, `stop`, `save_song`,
+`check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `listen` (the
+song heard as FamiTracker plays it), `finish_song` (the last of them in one
+call); and `play`, `stop`, `save_song`,
 `export_for_game`, `get_recipe` and `explain` (the glossary's words for a
 term, to explain things to you in). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
@@ -384,7 +385,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 37, with its short instructions and short
+  or the small set (`/mcp/core`'s 38, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
@@ -562,7 +563,10 @@ is the recipes':
    gets a harmony in its last part, the climax).
 6. An echo, last of the parts, since it copies the melody's notes as they
    are.
-7. The last steps: `polish` (on a lively stage with its accents), then the mix in the kind's style when another
+7. The last steps, once the parts are written: first one `listen` (the song
+   heard as FamiTracker plays it; it counts while the song stays as it was
+   heard, and its high findings' fixes come next, as `check_song`'s do; a
+   change since, a fix too, asks for it again), then `polish` (on a lively stage with its accents), then the mix in the kind's style when another
    mix would change the song, the loop's seam (`fix_loop`) and the file for
    the game at the kind's loudness (-20 LUFS; -22 calm, -19 action), as one
    `finish_song` call from the first of them that's due (see [The last steps
@@ -811,7 +815,7 @@ model's draft gets its triangle warnings.
   four parts nearest the melody, and up to three things off the style's
   targets, each with its `set_mixer` call.
 
-On the small set (`/mcp/core`) `review_arrangement` and `check_song` answer
+On the small set (`/mcp/core`) `review_arrangement`, `check_song` and `listen` answer
 short unless a `format` is asked for (`text`, the whole reply; `json`,
 `check_song`'s data). On the local
 model's stage the review came to 1.1 KB from 4.9 and the checks to 1.0 from
