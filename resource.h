@@ -889,6 +889,14 @@
 #define IDC_BACK_CHORDTEXT              2098
 #define IDC_BACK_STRUM                  2099
 
+// Module > Song shape (SongShapeDlg.cpp; the shapes are Api/SongShapes.cpp), also in the frame
+// editor's right-click menu and on the piano roll's ruler
+#define IDD_SONG_SHAPE                  690
+#define ID_MODULE_SONGSHAPE             37850
+#define IDC_SHAPE_LIST                  2350
+#define IDC_SHAPE_PARTS                 2351
+#define IDC_SHAPE_NOTE                  2352
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

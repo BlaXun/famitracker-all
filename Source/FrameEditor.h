@@ -270,6 +270,9 @@ public:
 	afx_msg void OnSectionMoveUp();
 	afx_msg void OnSectionMoveDown();
 	afx_msg void OnSectionDuplicate();
+	afx_msg void OnModuleSongShape();
+	// A section's band: what the part is for, as a tooltip (SongShapeDlg.h)
+	virtual INT_PTR OnToolHitTest(CPoint point, TOOLINFO *pTI) const;
 	afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
 	afx_msg void OnContextMenu(CWnd* /*pWnd*/, CPoint /*point*/);
 	afx_msg void OnSize(UINT nType, int cx, int cy);

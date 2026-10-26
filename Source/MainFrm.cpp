@@ -54,6 +54,7 @@
 #include "SoundBrowserDlg.h"
 #include "SoundPreview.h"
 #include "PhoneDlg.h"
+#include "SongShapeDlg.h"
 #include "PhoneLink.h"
 #include "DrumGridPanel.h"
 #include "NoteViews.h"
@@ -276,6 +277,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_MODULE_MODULEPROPERTIES, OnModuleModuleproperties)
 	ON_COMMAND(ID_MODULE_CHANNELS, OnModuleChannels)
 	ON_COMMAND(ID_MODULE_COMMENTS, OnModuleComments)
+	ON_COMMAND(ID_MODULE_SONGSHAPE, OnModuleSongShape)
 	ON_COMMAND(ID_MODULE_INSERTFRAME, OnModuleInsertFrame)
 	ON_COMMAND(ID_MODULE_REMOVEFRAME, OnModuleRemoveFrame)
 	ON_COMMAND(ID_MODULE_DUPLICATEFRAME, OnModuleDuplicateFrame)
@@ -2435,6 +2437,11 @@ void CMainFrame::OnModuleComments()
 {
 	CCommentsDlg commentsDlg;
 	commentsDlg.DoModal();
+}
+
+void CMainFrame::OnModuleSongShape()
+{
+	ShowSongShapes(this);	// SongShapeDlg.h
 }
 
 void CMainFrame::UpdateTrackBox()

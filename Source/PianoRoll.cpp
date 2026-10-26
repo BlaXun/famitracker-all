@@ -56,6 +56,7 @@
 #include "GrooveDlg.h"
 #include "PianoRoll.h"
 #include "PianoRollChords.h"
+#include "SongShapeDlg.h"
 
 namespace {
 
@@ -513,6 +514,8 @@ struct CPianoRollWnd::Impl {
 	unsigned int Length;
 	int Beat, Bar;		// rows, from the row highlight (0: none)
 	ftapi::SectionList Sections;	// the track's (Api/Sections.h), named on the ruler
+	int HoverSection = -1;			// into Sections, under the mouse on the ruler (what it's for, SongShapeDlg.h); -2 the ruler
+									// of a track without sections
 	bool Dirty;
 	bool KeyChosen;					// the track's key, chosen in the Key menu (Api/Keys.h)...
 	ftapi::KeyChoice ChosenKey;
@@ -1857,6 +1860,18 @@ struct CPianoRollWnd::Impl {
 			ChordsMenu(Screen, std::max(0, std::min(RowAt(Point.x), EditRows() - 1)));
 			return;
 		}
+		if (Right && Ruler.PtInRect(Point) && PlacingClip < 0) {
+			// The song's shape: a kind of song's parts laid out as sections (SongShapeDlg.h)
+			CMenu Menu;
+			Menu.CreatePopupMenu();
+			Menu.AppendMenu(MF_STRING, ID_MODULE_SONGSHAPE, _T("Song shape..."));
+			CPoint Screen = Point;
+			pWnd->ClientToScreen(&Screen);
+			if (Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, Screen.x, Screen.y,
+				pWnd) == ID_MODULE_SONGSHAPE)
+				ShowSongShapes(Main());
+			return;
+		}
 		RangeKept = false;
 		if (PlacingClip >= 0) {
 			if (Right)
@@ -2168,6 +2183,12 @@ struct CPianoRollWnd::Impl {
 		if (HoverCh != HoverChannel || Note != HoverNote) {
 			HoverChannel = HoverCh;
 			HoverNote = Note;
+			pWnd->Invalidate(FALSE);
+		}
+		const int Section = !Ruler.PtInRect(Point) ? -1 : Sections.empty() ? -2 :
+			ftapi::SectionAt(Sections, std::max(0, RowAt(Point.x)) / static_cast<int>(std::max(1U, Length)));
+		if (Section != HoverSection) {
+			HoverSection = Section;
 			pWnd->Invalidate(FALSE);
 		}
 	}
@@ -3585,6 +3606,10 @@ struct CPianoRollWnd::Impl {
 		default:
 			break;
 		}
+		if (HoverSection >= 0 && HoverSection < static_cast<int>(Sections.size()))
+			return SectionHoverLine(pDoc, Track, HoverSection);
+		if (HoverSection == -2)
+			return _T("Right-click the ruler for a song shape: the parts of a kind of song, laid out and named.");
 		if (HoverChord >= 0 && HoverChord < static_cast<int>(ShownChords().size()))
 			return ChordText(ShownChords()[static_cast<size_t>(HoverChord)]);
 		if (HoverChannel >= 0 && HoverChannel < static_cast<int>(Notes.size()) && HoverNote >= 0 &&
