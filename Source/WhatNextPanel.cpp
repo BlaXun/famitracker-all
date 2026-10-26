@@ -765,6 +765,36 @@ struct CWhatNextPanelWnd::Impl {
 		return Text;
 	}
 
+	// What a slow call says while it runs, empty for a quick one: the listen renders the song and each part alone and then
+	// listens, the finish polishes, mixes, listens and renders the file, all on the UI thread
+	static CString WorkingWords(const std::string &Tool)
+	{
+		if (Tool == "listen")
+			return _T("Listening to the song: FamiTracker plays it to itself, the mix and each part alone, then listens. This ")
+				_T("takes a few seconds, longer for a long song...");
+		if (Tool == "finish_song")
+			return _T("Finishing the song: polish, the mix, the loop's seam, a listen and the game's file. This takes a few ")
+				_T("seconds, longer for a long song...");
+		if (Tool == "export_for_game")
+			return _T("Making the game's file: FamiTracker plays the song into it. This takes a few seconds...");
+		return CString();
+	}
+
+	// Says what runs, in the panel and the status bar, drawn at once: the call keeps the UI thread until it's done (a
+	// render lets the windows draw, then puts the status bar's text back)
+	void ShowWorking(const CString &Text)
+	{
+		Last = Text;
+		Say(Last);
+		Changed();
+		if (pWnd->GetSafeHwnd() != NULL)
+			pWnd->UpdateWindow();
+		CMainFrame *pMain = Main();
+		CWnd *pBar = pMain != NULL ? pMain->GetMessageBar() : NULL;
+		if (pBar != NULL)
+			pBar->UpdateWindow();
+	}
+
 	// Do it: the step's call, one Ctrl+Z
 	void DoIt()
 	{
@@ -777,10 +807,18 @@ struct CWhatNextPanelWnd::Impl {
 			Say(_T("FamiTracker is busy with Claude Code; try again in a moment."));
 			return;
 		}
+		const CString Working = WorkingWords(N.Tool);
+		if (!Working.IsEmpty())
+			ShowWorking(Working);
 		std::string Reply;
 		bool Undoable = false;
 		int Added = 0;
 		if (!RunAsOne(N.Tool, N.Arguments, N.What, Reply, Undoable, Added)) {
+			if (!Working.IsEmpty()) {
+				Last.Empty();
+				Say(_T(""));
+				Changed();
+			}
 			ShowReply(Reply);
 			AskSoon(WAIT_MS);
 			return;
@@ -1411,6 +1449,10 @@ void CWhatNextPanelWnd::OnMouseLeave()
 
 BOOL CWhatNextPanelWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 {
+	if (m_pImpl->Doing) {	// its call runs (a render lets the windows go on meanwhile)
+		::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+		return TRUE;
+	}
 	if (nHitTest == HTCLIENT) {
 		CPoint Point;
 		::GetCursorPos(&Point);

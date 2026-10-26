@@ -1734,6 +1734,14 @@ as check_song's are (`FindingFixStep`, shared with `Breakers`); with nothing
 left to finish no listen is asked. `listen` is in `CoreTools` (short there)
 and `CoreInstructions`' Finish line (`TestWhatNextListens`, and the walks).
 
+The listen's rest (from `feat-listen-rest`): the What next panel's Do it of a
+slow call (`listen`, `finish_song`, `export_for_game`: `WorkingWords` in
+`WhatNextPanel.cpp`) says what runs in the panel and the status bar before
+the UI thread waits for it (`ShowWorking` draws both at once), and the panel
+keeps the wait cursor while its call runs; a render (`RenderFiles` in
+`McpConnection.cpp`) puts the status bar's text back when it's done, where
+it cleared it, so the line stays through the listening after the render.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
