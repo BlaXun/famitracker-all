@@ -147,8 +147,8 @@ Done:
   left leave out a kind with no sounds ("Other (0)"). Every sound plays at
   about the level of a 2A03 pulse at 15, from a click, the note keys or
   Listen (a VRC7 sound at volume 13, an FDS sound at 8), so browsing
-  doesn't jump in loudness, and never at a volume the song left on its
-  channel. After File > Create WAV or an export for the game, the 2A03's
+  doesn't jump in loudness (a channel's fader in the mixer still counts).
+  After File > Create WAV or an export for the game, the 2A03's
   sounds are heard at once (they stayed silent until a song played, as in
   0.4.6). A studied sound's name starts with its track's title before a
   parenthesis ("Vampire Killer lead", "Beginning bass", where it was

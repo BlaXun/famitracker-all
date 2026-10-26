@@ -21465,8 +21465,9 @@ void TestBrowserFixes()
 	SoundView View;
 	View.Words = true;
 	const std::vector<SoundRow> Rows = SoundRows(Groups, View);
-	const int Best = BestSound(Groups, Found);
-	CHECK(Best >= 0 && All[static_cast<size_t>(Best)].Name == "Choir pad" && All[static_cast<size_t>(Best)].Target == TARGET_SOFT);
+	const int Best = BestSound(All, Groups, Query.Words);
+	CHECK(Best >= 0 && All[static_cast<size_t>(Best)].Name == "Choir pad" && All[static_cast<size_t>(Best)].Target == TARGET_SOFT &&
+		All[static_cast<size_t>(Best)].AddsChip.empty());
 	CHECK(SoundRowOf(Rows, static_cast<size_t>(Best)) >= 0);
 	// The best match after the first group of its kind: a song's own "Choir pad" (both words in its name) under the
 	// ready-made pads ("Warm pad": "choir" only among the kind's words), which Enter picked the first of
@@ -21481,7 +21482,7 @@ void TestBrowserFixes()
 		const std::vector<size_t> Matched = FindSounds(Listed, Query);
 		const std::vector<SoundGroup> Grouped = GroupSounds(Listed, Matched);
 		const std::vector<SoundRow> Shown = SoundRows(Grouped, View);
-		const int Mine = BestSound(Grouped, Matched);
+		const int Mine = BestSound(Listed, Grouped, Query.Words);
 		size_t FirstRow = 0;
 		while (FirstRow < Shown.size() && Shown[FirstRow].Type != ROW_SOUND)
 			++FirstRow;
@@ -21489,6 +21490,19 @@ void TestBrowserFixes()
 		CHECK(FirstRow < Shown.size() && static_cast<int>(Shown[FirstRow].Sound) != Mine &&
 			Listed[Shown[FirstRow].Sound].Source == SOURCE_PRESET && Listed[Shown[FirstRow].Sound].Kind == "pad");
 		CHECK(SoundRowOf(Shown, static_cast<size_t>(Mine)) > static_cast<int>(FirstRow));
+		// With the other chips' sounds listed: the song's own before their choir pads (as well matched, they don't play
+		// here); without it, the first of theirs in the list (the VRC6 Plus's soft layer's, over the N163's and the FDS's)
+		SoundListing Others;
+		Others.OtherChips = true;
+		const std::vector<SoundEntry> Wider = ListSounds(Own, std::vector<Reference>(), std::vector<SoundUse>(64), -1, Others);
+		const std::vector<SoundGroup> WiderGroups = GroupSounds(Wider, FindSounds(Wider, Query));
+		const int Here = BestSound(Wider, WiderGroups, Query.Words);
+		CHECK(Here >= 0 && Wider[static_cast<size_t>(Here)].Source == SOURCE_SONG);
+		Own.Instruments.clear();
+		const std::vector<SoundEntry> Without = ListSounds(Own, std::vector<Reference>(), std::vector<SoundUse>(64), -1, Others);
+		const std::vector<SoundGroup> WithoutGroups = GroupSounds(Without, FindSounds(Without, Query));
+		const int There = BestSound(Without, WithoutGroups, Query.Words);
+		CHECK(There >= 0 && Without[static_cast<size_t>(There)].Name == "Choir pad" && Without[static_cast<size_t>(There)].AddsChip == VRC6_PLUS);
 	}
 	// Folded by hand, its headings open again for it
 	if (Best >= 0) {
@@ -21502,7 +21516,8 @@ void TestBrowserFixes()
 		CHECK(SoundRowOf(SoundRows(Groups, Folded), static_cast<size_t>(Best)) >= 0);
 		CHECK(!OpenTo(Groups, Folded, static_cast<size_t>(Best)));
 	}
-	CHECK(BestSound(Groups, std::vector<size_t>()) == -1 && BestSound(std::vector<SoundGroup>(), Found) == -1);
+	CHECK(BestSound(All, std::vector<SoundGroup>(), Query.Words) == -1);
+	CHECK(BestSound(All, Groups, "") >= 0 && All[static_cast<size_t>(BestSound(All, Groups, ""))].AddsChip.empty());
 
 	// The kinds list: each kind with sounds among those found, the one picked even without (no sound here is of another kind)
 	const std::vector<SoundEntry> Plain = ListSounds(SongWithChips(std::vector<std::string>{ "VRC6" }), std::vector<Reference>(),

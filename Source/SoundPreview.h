@@ -45,7 +45,7 @@ public:
 	// Plays the steps on the channel (the song's, by index) with the instrument: what played before stops, and the
 	// song if it plays. False when it can't (no song, no such channel or instrument). Volume is the volume column of
 	// its notes (0-15): the sound's SoundEntry::Volume, about as loud as a 2A03 pulse at 15 on every chip (the VRC7's
-	// 13), and never the volume the song happened to leave its channel at
+	// 13)
 	bool Play(int Channel, int Instrument, const std::vector<ftapi::PreviewStep> &Steps, int Volume = 15);
 	// A note key (or a MIDI key) pressed while a sound is picked: the instrument plays the note (FamiTracker's
 	// pitch, C-0 = 0; a noise pitch on the noise) at the volume until it's let go, and is silent a moment after that

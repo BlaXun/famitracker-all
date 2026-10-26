@@ -564,11 +564,14 @@ int CSoundBrowserDlg::FirstSoundRow() const
 	return -1;
 }
 
-// Enter in Find: the sound that matches the words best (FindSounds' first that shows), wherever its group is in the list,
-// its headings opened if folded, picked, scrolled to and heard; the status says it's the best match
+// Enter in Find: the sound that matches the words best (ftapi::BestSound: one that plays here before another chip's alike),
+// wherever its group is in the list, its headings opened if folded, picked, scrolled to and heard; the status says so
 void CSoundBrowserDlg::PickBest()
 {
-	const int Best = ftapi::BestSound(m_Groups, m_Found);
+	CString Words;
+	m_cFind.GetWindowText(Words);
+	Words.Trim();
+	const int Best = ftapi::BestSound(m_All, m_Groups, ToUtf8(Words));
 	if (Best < 0) {
 		SelectRow(FirstSoundRow());
 		return;
@@ -582,9 +585,6 @@ void CSoundBrowserDlg::PickBest()
 	m_bClicking = false;
 	KillTimer(TMR_SETTLE);
 	ListenTo(Best);
-	CString Words;
-	m_cFind.GetWindowText(Words);
-	Words.Trim();
 	if (!Words.IsEmpty() && m_iPlaying == Best) {	// (else the status says why it doesn't play)
 		const ftapi::SoundEntry &E = m_All[static_cast<size_t>(Best)];
 		SetStatus(_T("The best match for \"") + Words + _T("\" is picked: ") + FromUtf8(E.Name) + _T(" (") + FromUtf8(E.ChannelName) +

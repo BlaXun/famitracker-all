@@ -1450,18 +1450,27 @@ int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound)
 	return -1;
 }
 
-int BestSound(const std::vector<SoundGroup> &Groups, const std::vector<size_t> &Found)
+int BestSound(const std::vector<SoundEntry> &All, const std::vector<SoundGroup> &Groups, const std::string &Words)
 {
-	// The groups hold the sounds shown (of the kind picked), each in the order it was found; the list shows them kind by
-	// kind and source by source, so the best match can be anywhere in it (the song's own choir pad under the ready-made
-	// pads)
-	std::set<size_t> Shown;
+	// The groups hold the sounds shown (of the kind picked), in the list's order: kind by kind and source by source, so
+	// the best match can be anywhere in it (the song's own choir pad under the ready-made pads)
+	const bool Asked = !WordsOf(Words).empty();
+	int Best = -1, BestScore = 0;
+	bool BestPlays = false;
 	for (size_t g = 0; g < Groups.size(); ++g)
-		Shown.insert(Groups[g].Sounds.begin(), Groups[g].Sounds.end());
-	for (size_t f = 0; f < Found.size(); ++f)
-		if (Shown.count(Found[f]) != 0)
-			return static_cast<int>(Found[f]);
-	return -1;
+		for (size_t s = 0; s < Groups[g].Sounds.size(); ++s) {
+			const size_t Sound = Groups[g].Sounds[s];
+			if (Sound >= All.size())
+				continue;
+			const int Score = Asked ? SoundMatch(All[Sound], Words, false) : 1;
+			const bool Plays = All[Sound].AddsChip.empty();
+			if (Best < 0 || Score > BestScore || (Score == BestScore && Plays && !BestPlays)) {
+				Best = static_cast<int>(Sound);
+				BestScore = Score;
+				BestPlays = Plays;
+			}
+		}
+	return Best;
 }
 
 bool OpenTo(const std::vector<SoundGroup> &Groups, SoundView &View, size_t Sound)

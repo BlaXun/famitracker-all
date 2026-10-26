@@ -181,8 +181,8 @@ void CSoundPreview::Queue(int Note)
 		Cell.Note = static_cast<unsigned char>(Note % NOTE_RANGE + 1);
 		Cell.Octave = static_cast<unsigned char>(Note / NOTE_RANGE);
 	}
-	// A note at the preview's volume (a release or a halt leaves it); without one it played at whatever volume the song
-	// left the channel at
+	// A note at the preview's volume (a release or a halt leaves it); a note without one plays at the channel's own,
+	// full since the song stopped
 	Cell.Vol = static_cast<unsigned char>(Note >= 0 ? m_iVolume : MAX_VOLUME);
 	Cell.Instrument = static_cast<unsigned char>(Note == ftapi::PREVIEW_HALT ? MAX_INSTRUMENTS : m_iInstrument);
 	theApp.GetSoundGenerator()->QueueNote(m_iChannel, Cell, NOTE_PRIO_2);

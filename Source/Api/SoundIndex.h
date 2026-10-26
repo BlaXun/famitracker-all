@@ -268,9 +268,10 @@ std::string RowKey(const std::vector<SoundGroup> &Groups, const SoundRow &Row);
 int RowHeading(const std::vector<SoundRow> &Rows, int Row);
 // The row of a sound, -1 when it isn't shown
 int SoundRowOf(const std::vector<SoundRow> &Rows, size_t Sound);
-// The sound Enter in the browser's Find picks: the one that matches the words best among the groups' (Found is
-// FindSounds' order, best first), wherever its group is in the list; -1 for none
-int BestSound(const std::vector<SoundGroup> &Groups, const std::vector<size_t> &Found);
+// The sound Enter in the browser's Find picks: of the sounds in the groups (the list's), the one that matches the words
+// best (SoundMatch), wherever its group is; of matches alike, one that plays in the song before another chip's, then the
+// first in the list's order; -1 for none
+int BestSound(const std::vector<SoundEntry> &All, const std::vector<SoundGroup> &Groups, const std::string &Words);
 // Opens the headings that hide a sound (its kind's, folded by hand, and its group's); false when none did
 bool OpenTo(const std::vector<SoundGroup> &Groups, SoundView &View, size_t Sound);
 

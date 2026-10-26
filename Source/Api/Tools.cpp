@@ -26776,8 +26776,8 @@ bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 // as a 2A03 pulse at 15, its chip's level counted as the tools count it (VolumeForDb: the VRC7 at 13, which plays about
 // 5 dB over a pulse at 15 and counts 3 dB a step; the FDS at 8; the others at 15), the mixer window's fader left out (the
 // channel plays it after). Measured under Wine (October 2026), the VRC7's ready-made sounds at 15 played from 0.6 to 8 dB
-// over a pulse at 15, a jump from sound to sound while browsing; a preview note without a volume also played at whatever
-// volume the song had left its channel at
+// over a pulse at 15, a jump from sound to sound while browsing (a channel's fader still counts: a pulse faded by mix
+// previews that much softer)
 static int PreviewVolume(Session &S, const SoundEntry &Sound)
 {
 	if (Sound.Channel < 0 || Sound.Channel >= S.ChannelCount())

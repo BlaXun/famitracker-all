@@ -1186,14 +1186,15 @@ running them: `NearestArgument` names the one likely meant); the tests'
 `UnknownInText` reads the instructions, recipes, prompts, descriptions and
 `what_next`'s replies for `tool {json}` and "tool with argument", and
 `CheckFixCalls` check_song's fixes, so keep every call written anywhere in
-step with the schemas. The browser's Enter picks `BestSound` (FindSounds'
-best among the groups shown; `GroupSounds` keeps a kind's ready-made sounds
-first, so the best can sit lower) after `OpenTo` opens its headings, the
+step with the schemas. The browser's Enter picks `BestSound` (the shown
+sound `SoundMatch` scores best, one that plays here before another chip's,
+then list order; `GroupSounds` keeps a kind's ready-made sounds first, so
+the best can sit lower) after `OpenTo` opens its headings, the
 kinds list is `KindsListed` (the browser keeps the kind picked by its index,
 `m_iKind`, `g_Kind`, not by row), and every preview, note key and Listen
 plays at `SoundEntry::Volume` (`PreviewVolume` beside `ToolSet::Sounds`:
 `VolumeForDb` at 0 dB, the fader left out; `CSoundPreview` writes it in each
-note, which had no volume and played at what the song left on the channel).
+note, which had none: the channel's own, full after a stop).
 `CSoundGen::StopRendering` clears the buffer before `MakeSilent`: 0.4.6 reset
 the APU after the channels' reset, which left `$4015` off, so the 2A03 was
 silent for previews and note keys after every render until a song played.
