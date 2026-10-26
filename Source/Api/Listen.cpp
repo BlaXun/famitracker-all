@@ -178,6 +178,45 @@ struct Track {
 	Track() : Begin(0), Loudest(0.0) {}
 };
 
+// A held pitch's period measured over the whole stretch at once (up to a second), near Period: the lag where the wave
+// matches itself best, between whole samples by a parabola, 0 when it doesn't match well. Frame by frame a wave of a few
+// big steps measures a few cents off now and then (the N163's, whose steps land on its own update clock): two N163 parts
+// an octave apart came out 13 cents apart, as if they beat, and over the stretch within a cent of their notes
+double HeldPeriod(const std::vector<float> &X, long long Begin, long long End, double Period, int Rate)
+{
+	const int Low = static_cast<int>(std::floor(Period * 0.97)) - 1, High = static_cast<int>(std::ceil(Period * 1.03)) + 1;
+	const long long Span = std::min<long long>(End - Begin - High, Rate);
+	if (Low < 2 || Span < 4LL * High || Begin < 0 || End > static_cast<long long>(X.size()))
+		return 0.0;
+	std::vector<double> Match(static_cast<size_t>(High - Low + 1), 0.0);
+	double First = 0.0;
+	for (long long n = 0; n < Span; ++n)
+		First += static_cast<double>(X[static_cast<size_t>(Begin + n)]) * X[static_cast<size_t>(Begin + n)];
+	for (int Lag = Low; Lag <= High; ++Lag) {
+		double Both = 0.0, Second = 0.0;
+		for (long long n = 0; n < Span; ++n) {
+			const double a = X[static_cast<size_t>(Begin + n)], b = X[static_cast<size_t>(Begin + n + Lag)];
+			Both += a * b;
+			Second += b * b;
+		}
+		Match[static_cast<size_t>(Lag - Low)] = First > 0.0 && Second > 0.0 ? Both / std::sqrt(First * Second) : 0.0;
+	}
+	size_t Best = 1;
+	for (size_t i = 1; i + 1 < Match.size(); ++i)
+		if (Match[i] > Match[Best])
+			Best = i;
+	if (Match[Best] < 0.8 || Match[Best] < Match[Best - 1] || Match[Best] < Match[Best + 1])
+		return 0.0;
+	const double a = Match[Best - 1], b = Match[Best], c = Match[Best + 1], Den = a - 2.0 * b + c;
+	double Lag = static_cast<double>(Low) + static_cast<double>(Best);
+	if (std::fabs(Den) > 1e-12) {
+		const double Shift = 0.5 * (a - c) / Den;
+		if (Shift > -1.0 && Shift < 1.0)
+			Lag += Shift;
+	}
+	return Lag;
+}
+
 Track TrackNote(const std::vector<float> &Samples, int Rate, long long Begin, long long End, double Hz)
 {
 	Track Out;
@@ -194,7 +233,9 @@ Track TrackNote(const std::vector<float> &Samples, int Rate, long long Begin, lo
 	Options.maxFrequency = std::min(Rate / 3.0, Hz * PITCH_RANGE);
 	if (Options.maxFrequency <= Options.minFrequency * 1.5)
 		return Out;		// too high to measure at this rate
-	Options.threshold = 0.2;
+	// Within the narrow range around the note no octave is in doubt, so the deepest dip is the period: YIN's usual rule (the
+	// first dip under 0.2) took an N163 wave with a run of zeros a step short (44's organ, 6 channels: about a semitone sharp)
+	Options.threshold = 0.02;
 	Options.windowSeconds = PITCH_WINDOW;
 	Options.hopSeconds = PITCH_HOP;
 	transcribe::Audio Audio;
@@ -364,6 +405,16 @@ Track TrackNote(const std::vector<float> &Samples, int Rate, long long Begin, lo
 	else {
 		P.Steady = Median(Cents);
 		P.HeldSeconds = P.Seconds;
+	}
+	// Where it holds, measured over the stretch it holds in (the whole note without a wobble, else before it)
+	const long long Held = P.Wobbles ? B + SamplesOf(P.HeldSeconds, Rate) : E;
+	if (!P.Wobbles || P.HeldSeconds >= 0.15) {
+		const double Period = HeldPeriod(Samples, B, Held, Rate / (Hz * std::pow(2.0, P.Steady / 1200.0)), Rate);
+		if (Period > 0.0) {
+			const double Cents = 1200.0 * std::log2(Rate / Period / Hz);
+			if (std::fabs(Cents - P.Steady) < 30.0)
+				P.Steady = Cents;
+		}
 	}
 	return Out;
 }

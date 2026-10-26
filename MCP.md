@@ -1361,9 +1361,10 @@ bars, how sure it is and how much a listener notices it (high, medium or
 low), with the call that fixes it where a tool has one (a warble's is
 `add_vibrato` with `modulator` `off`) or what to change. `from_bar` and
 `to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
-`short` (the three heard worst) or `json`. It takes a few seconds for a
-long track. Listen with the user too: it hears how the song sounds, not
-whether it's the music they want.
+`short` (the three heard worst) or `json`. It takes a while, since
+FamiTracker renders the track first: a two-and-a-half-minute track with
+eight parts took about 40 seconds under Wine. Listen with the user too: it
+hears how the song sounds, not whether it's the music they want.
 
 ## Stereo
 
