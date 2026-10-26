@@ -437,8 +437,8 @@ public:
 
 private:
 	// A studied sound's name, numbered when a sound listed before has it ("Green Planet lead 2"): a name is a title's
-	// start (ReferenceSoundName), which tracks share ("Boss" and "Boss (Simple)", "Green Fields ~Intro~"), and the song's
-	// instrument of a name is taken for the sound of that name
+	// start (ReferenceSoundName), which tracks share ("Boss" and "Boss (Simple)", "Lava Lake" and "Lava Lake ~Intro~"),
+	// and the song's instrument of a name is taken for the sound of that name
 	std::string Unique(const std::string &Name)
 	{
 		std::string Out = Name;

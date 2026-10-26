@@ -21589,7 +21589,7 @@ void TestStudiedNames()
 	// A number that ended the title stays
 	CHECK_EQ(ShortTitle("The Everlasting World (Ending Theme) -2-"), std::string("The Everlasting 2"));
 	CHECK_EQ(ShortTitle("Hazardous Short Music 1"), std::string("Hazardous Short 1"));
-	CHECK_EQ(ShortTitle("Dr. Cossack Fortress II"), std::string("Dr. Cossack Fortress II"));
+	CHECK_EQ(ShortTitle("Iron Fortress Gate II"), std::string("Iron Fortress Gate II"));	// (21 letters: the number kept)
 	CHECK_EQ(ShortTitle("Mountain Fortress Climb 3"), std::string("Mountain Fortress 3"));
 	CHECK_EQ(ShortTitle("Theme (Part 2)"), std::string("Theme 2"));
 
