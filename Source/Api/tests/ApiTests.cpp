@@ -24822,6 +24822,8 @@ void TestAssistantLoop()
 	const AssistantCall *pMeter = FindCall(Small, "c7");
 	CHECK(pMeter != 0 && pMeter->State == CALL_FAILED && Contains(pMeter->Result, "no tool called \"set_meter\""));
 	CHECK(CoreHere.Ran.empty());
+}
+
 // check_exercise's list of the exercises: each one's line without its full stop, and one at the end
 void TestExerciseListPeriods()
 {
