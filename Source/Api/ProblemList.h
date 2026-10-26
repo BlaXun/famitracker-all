@@ -37,9 +37,10 @@ struct Timing;	// Music.h
 // check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
 // holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
 // in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
-// repeats another note for note, a lively stage's short loop
+// repeats another note for note, a lively stage's short loop. WARBLE: FDS notes held where a fast, deep modulator comes
+// in, from the notes alone (heard as a short right note and then a fluttering echo)
 enum problem_kind {
-	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
+	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_RANGE, PROBLEM_SILENT, PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD,
 	PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
 	PROBLEM_KINDS
 };

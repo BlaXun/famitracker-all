@@ -341,9 +341,19 @@ void ReadSequences(CFamiTrackerDoc *pDoc, CInstrument *pInstrument, ftapi::Instr
 {
 	int Setting = 0;
 	ReadSequence(pDoc, pInstrument, SEQ_VOLUME, Info.Volume, Info.VolumeLoop, Info.VolumeRelease, Setting);
-	if (pInstrument->GetType() == INST_FDS)
+	if (pInstrument->GetType() == INST_FDS) {
 		for (size_t i = 0; i < Info.Volume.size(); ++i)
 			Info.Volume[i] = ftapi::FdsVolumeAs15(Info.Volume[i]);
+		// Its wave and modulator, which the listen check and check_song say what they do with (FdsModulator.h)
+		const CInstrumentFDS *pFds = static_cast<const CInstrumentFDS *>(pInstrument);
+		Info.FdsWave.clear();
+		for (int i = 0; i < 64; ++i)
+			Info.FdsWave.push_back(pFds->GetSample(i));
+		Info.ModTable = FdsModulation(pFds);
+		Info.ModSpeed = pFds->GetModulationSpeed();
+		Info.ModDepth = pFds->GetModulationDepth();
+		Info.ModDelay = pFds->GetModulationDelay();
+	}
 	ftapi::SequenceInfo *const INTO[] = { &Info.Steps, &Info.Pitch, &Info.HiPitch };
 	const int TYPES[] = { SEQ_ARPEGGIO, SEQ_PITCH, SEQ_HIPITCH };
 	for (int i = 0; i < 3; ++i)

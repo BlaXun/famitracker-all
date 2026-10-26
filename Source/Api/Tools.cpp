@@ -47,10 +47,12 @@
 #include "Effects.h"
 #include "FdsSounds.h"
 #include "Glossary.h"
+#include "Listen.h"
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "WhatNext.h"
 #include "NextSteps.h"
+#include "../Nsf/FdsModulator.h"
 #include "../Nsf/FtmFile.h"
 #include "../Nsf/Import.h"
 #include "../Nsf/NsfFile.h"
@@ -59,6 +61,7 @@
 #include "../Transcribe/Transcribe.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cctype>
@@ -5066,7 +5069,11 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 					S.Song.Instruments[i].Name.c_str()));
 		bool Added = false;
 		const int Index = AddFdsSound(S, F, Added);
-		return "Added " + InstrumentLabel(S.Song, Index) + " (FDS instrument): " + F.Description + "." + DesignWordsText(W) +
+		// What its modulator does, in this emulator's bends (a warble said as one)
+		const nsf::FdsModMotion Motion = nsf::FdsModulatorMotion(F.ModSpeed, F.ModDepth, F.Modulation);
+		const std::string Modulator = Motion.Moves ? " Its modulator: " + nsf::FdsModulatorWords(F.ModSpeed, F.ModDepth, F.Modulation,
+			F.ModDelay, S.Song.FrameRate) + "." : std::string();
+		return "Added " + InstrumentLabel(S.Song, Index) + " (FDS instrument): " + F.Description + "." + Modulator + DesignWordsText(W) +
 			RestrikeText(D, FramesPerBeat, false) + VanishRemark(S.Song, Index) +
 			" Use it by name in write_notes, set_instrument or a part tool's instrument; the FDS sounds two octaves under the note "
 			"written. Play a few notes so the user hears it.";
@@ -10921,6 +10928,9 @@ int LevelArg(const Json &Args, const char *Name, int Default, const char *const 
 // The vibrato settings from an object (add_vibrato's arguments, or change_mood's vibrato)
 struct VibratoPlan {
 	int Channel, Speed, Depth, MinRows, Delay;
+	// Depth is a 2A03 pulse's at the notes' pitch (a word's, the tools' own), so on another chip it's the depth that swings
+	// the notes as many cents (feat-listen: 452 swings an FDS note 3 cents, a pulse's 14); false: 4xy's own digit, as given
+	bool Pulse = true;
 };
 
 VibratoPlan VibratoArgs(Session &S, const Json &Args)
@@ -10935,6 +10945,7 @@ VibratoPlan VibratoArgs(Session &S, const Json &Args)
 		throw Problem("Vibrato is for melodic channels.");
 	Plan.Speed = std::max(1, LevelArg(Args, "speed", 5, SPEEDS, SPEED_VALUES, 3));
 	Plan.Depth = LevelArg(Args, "depth", 2, DEPTHS, DEPTH_VALUES, 5);
+	Plan.Pulse = Arg(Args, "depth") == 0 || Arg(Args, "depth")->IsString();
 	bool Exact;
 	Plan.MinRows = S.Time.BeatsToRows(NumberArg(Args, "min_beats", 1.0, 0.01, 64.0), Exact);
 	Plan.Delay = S.Time.BeatsToRows(NumberArg(Args, "delay_beats", 0.25, 0.01, 16.0), Exact);
@@ -10955,12 +10966,36 @@ int CalmVibratoRows(const Session &S)
 
 // Vibrato in the draft; how many notes it changed. HeardFor: only on notes whose sound is still heard that many frames
 // in (0: any), so a struck sound that has faded by then gets none
+// The 4xy depth that swings a channel's notes in [First, End) as far as Depth swings a 2A03 pulse's at the same pitch (their
+// middle pitch), by cents (Listen.h's ListenVibratoCents): the same on the 2A03's, the MMC5's and the VRC6's pulses; 6 for
+// a gentle 2 on the FDS around A-3, where its register's steps are about 1.7 cents
+int PulseDepthOn(Session &S, int Channel, const std::vector<NoteInfo> &Notes, int First, int End, int Depth)
+{
+	const ChannelInfo &Info = S.Channel(Channel);
+	if (Depth <= 0 || (Info.Kind == KIND_PULSE && Info.Chip != "N163"))
+		return Depth;
+	std::vector<int> Pitches;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row >= First && Notes[i].Row < End && Notes[i].Pitch >= 0)
+			Pitches.push_back(Notes[i].Pitch);
+	if (Pitches.empty())
+		return Depth;
+	std::sort(Pitches.begin(), Pitches.end());
+	const int Pitch = Pitches[Pitches.size() / 2];
+	const int Sounding = std::max(0, std::min(PITCHES - 1, Pitch - Written(Info, 0)));
+	const double Cents = ListenVibratoCents("2A03", KIND_PULSE, Sounding, Depth, 0, S.Song.Pal);
+	return ListenVibratoDepth(Info.Chip, Info.Kind, Pitch, Cents, Info.ChipChannels, S.Song.Pal);
+}
+
 int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int End, bool &Lost, bool SkipBuiltIn = false,
-	int HeardFor = 0)
+	int HeardFor = 0, int *pDepth = 0)
 {
 	const int Columns = S.Channel(Plan.Channel).EffectColumns;
 	std::vector<Cell> &Cells = D.Cells(Plan.Channel);
 	std::vector<NoteInfo> Notes = D.Notes(Plan.Channel);
+	const int Depth = Plan.Pulse ? PulseDepthOn(S, Plan.Channel, Notes, First, End, Plan.Depth) : Plan.Depth;
+	if (pDepth != 0)
+		*pDepth = Depth;
 	if (SkipBuiltIn || HeardFor > 0) {
 		// Notes whose instrument has a vibrato of its own keep just that one
 		std::vector<NoteInfo> Plain;
@@ -10971,7 +11006,7 @@ int MakeVibrato(Session &S, Draft &D, const VibratoPlan &Plan, int First, int En
 		}
 		Notes = Plain;
 	}
-	const int Count = ApplyVibrato(Cells, Notes, First, End, Plan.Speed, Plan.Depth, Plan.MinRows, Plan.Delay, Columns, Lost);
+	const int Count = ApplyVibrato(Cells, Notes, First, End, Plan.Speed, Depth, Plan.MinRows, Plan.Delay, Columns, Lost);
 	if (Plan.Depth == 0 && First < static_cast<int>(Cells.size())) {
 		// A vibrato still on from before the bars stops too
 		const ChannelState State = StateAt(Cells, First, Columns);
@@ -10988,23 +11023,99 @@ std::string AddVibratoTool(Session &S, const Json &Args)
 	BarRange(S, Args, From, To);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const bool AsClip = BoolArg(Args, "as_clip", false);
+	// The FDS's modulator off where it plays (feat-listen: a modulator fast and deep warbles, and the listen check hears it)
+	const std::string Modulator = Lowercase(Trim(StringArg(Args, "modulator", "keep")));
+	if (Modulator != "keep" && Modulator != "off")
+		throw Problem("modulator: off (the FDS's modulator off where it plays, the vibrato coming in where it did) or keep (the "
+			"default).");
+	if (Modulator == "off" && S.Channel(Plan.Channel).Chip != "FDS")
+		throw Problem("modulator: only the FDS has one; " + S.Channel(Plan.Channel).FullName() + " doesn't.");
 	bool Lost = false;
 	Draft D(S);
-	const int Count = MakeVibrato(S, D, Plan, First, End, Lost);
+	int Depth = Plan.Depth, Silenced = 0;
+	int Count = 0;
+	if (Modulator == "off") {
+		// Each note whose modulator moves its pitch: H00 on its first row, its own Hxx that bring it in taken out, and the
+		// vibrato where the modulator came in (its Hxx's row, or the instrument's delay), else the usual delay
+		const int Columns = S.Channel(Plan.Channel).EffectColumns;
+		std::vector<Cell> &Cells = D.Cells(Plan.Channel);
+		const std::vector<NoteInfo> Notes = D.Notes(Plan.Channel);
+		Depth = Plan.Pulse ? PulseDepthOn(S, Plan.Channel, Notes, First, End, Plan.Depth) : Plan.Depth;
+		const double RowFrames = FramesPerRow(S);
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			if (N.Row < First || N.Row >= End)
+				continue;
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+			const int Last = std::min(N.Row + N.Rows, static_cast<int>(Cells.size())) - 1;
+			// Where it comes in: the instrument's from its delay, unless the note's own row silences it (H00), else the first
+			// Hxx that brings it in
+			bool Hushed = false;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				Hushed = Hushed || (Cells[N.Row].Effect[k] == EFF_FDS_MOD_DEPTH && (Cells[N.Row].Param[k] & 0x3F) == 0);
+			bool Moves = !Hushed && pInfo != 0 && nsf::FdsModulatorMotion(pInfo->ModSpeed, pInfo->ModDepth, pInfo->ModTable).Moves;
+			int Comes = Moves ? static_cast<int>(std::ceil(pInfo->ModDelay / std::max(1.0, RowFrames))) : -1;
+			for (int r = N.Row; r <= Last; ++r)
+				for (int k = 0; k < EFFECT_COLUMNS; ++k)
+					if (Cells[r].Effect[k] == EFF_FDS_MOD_DEPTH && (Cells[r].Param[k] & 0x3F) != 0) {
+						if (Comes < 0 || r - N.Row < Comes)
+							Comes = r - N.Row;
+						Moves = true;
+						Cells[r].Effect[k] = EFF_NONE;
+						Cells[r].Param[k] = 0;
+					}
+			if (!Moves)
+				continue;
+			++Silenced;
+			bool Has = false;
+			for (int k = 0; k < EFFECT_COLUMNS; ++k)
+				if (Cells[N.Row].Effect[k] == EFF_FDS_MOD_DEPTH) {
+					Cells[N.Row].Param[k] = 0;
+					Has = true;
+				}
+			if (!Has && !AddEffect(Cells[N.Row], EFF_FDS_MOD_DEPTH, 0, Columns))
+				Lost = true;
+			if (Depth > 0) {
+				std::vector<NoteInfo> One(1, N);
+				Count += ApplyVibrato(Cells, One, First, End, Plan.Speed, Depth, Plan.MinRows, Comes >= 1 ? Comes : Plan.Delay, Columns, Lost);
+			}
+		}
+		if (Silenced == 0)
+			throw Problem("The modulator doesn't move the pitch of any note of " + S.Channel(Plan.Channel).FullName() + " there.");
+	}
+	else
+		Count = MakeVibrato(S, D, Plan, First, End, Lost, false, 0, &Depth);
 	std::vector<std::string> Warnings;
 	if (Lost)
 		Warnings.push_back("Some notes had no free effect column for the vibrato (all four were full).");
 	std::vector<Change> Changes;
 	int Start;
-	if (Count == 0 || !D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
+	if ((Count == 0 && Silenced == 0) || !D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings))
 		throw Problem(Plan.Depth == 0 ? "There's no vibrato to take off there." :
 			Format("No notes there are long enough for vibrato (at least %s).", S.Time.Length(Plan.MinRows).c_str()));
-	const std::string What = Plan.Depth == 0 ?
-		Format("vibrato taken off %s, %s", S.Channel(Plan.Channel).FullName().c_str(), RangeText(From, To).c_str()) :
-		Format("vibrato 4%X%X on the longer notes of %s, %s", Plan.Speed, Plan.Depth, S.Channel(Plan.Channel).FullName().c_str(),
-			RangeText(From, To).c_str());
+	const ChannelInfo &Info = S.Channel(Plan.Channel);
+	std::string What = Plan.Depth == 0 ?
+		Format("vibrato taken off %s, %s", Info.FullName().c_str(), RangeText(From, To).c_str()) :
+		Format("vibrato 4%X%X on the longer notes of %s, %s", Plan.Speed, Depth, Info.FullName().c_str(), RangeText(From, To).c_str());
+	if (Silenced > 0)
+		What = Format("the FDS's modulator off on %s (H00), ", Plural(Silenced, "note", "notes").c_str()) + What;
+	std::string Note;
+	if (Depth != Plan.Depth && Plan.Depth > 0) {
+		// Said in cents, as heard
+		std::vector<int> Pitches;
+		const std::vector<NoteInfo> &Notes = S.Notes(Plan.Channel);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row >= First && Notes[i].Row < End)
+				Pitches.push_back(Notes[i].Pitch);
+		std::sort(Pitches.begin(), Pitches.end());
+		const int Pitch = Pitches.empty() ? 45 : Pitches[Pitches.size() / 2];
+		Note = Format(" The depth is %X, not %X: %s's steps move its notes %s than a pulse's, so 4%X%X swings them about %s cents either "
+			"way, as 4%X%X swings a pulse's.", Depth, Plan.Depth, AChip(Info.Chip).c_str(), Depth > Plan.Depth ? "less" : "more", Plan.Speed,
+			Depth, FormatNumber(std::floor(ListenVibratoCents(Info.Chip, Info.Kind, Pitch, Depth, Info.ChipChannels, S.Song.Pal) + 0.5)).c_str(),
+			Plan.Speed, Plan.Depth);
+	}
 	return WithRemarks(S, Commit(S, Changes, Start, AsClip, StringArg(Args, "clip_name"), What) +
-		Format(" (%s)", Plural(Count, "note", "notes").c_str()), Warnings);
+		Format(" (%s)", Plural(Count, "note", "notes").c_str()) + Note, Warnings);
 }
 
 // Drums, harmony, counter-melodies and finishing touches
@@ -20739,7 +20850,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const std::string &File
 			else if (Word == "exportforgame" || Word == "file" || Word == "ogg")
 				Skip.insert("export");
 			else
-				throw Problem("skip: polish, faders, mix, loop or export.");
+				throw Problem("skip: polish, faders, mix, loop, listen or export.");
 		}
 	}
 	const std::string Faders = Squeezed(StringArg(Args, "faders", "auto"));
@@ -22075,6 +22186,754 @@ std::string MeasureMixTool(Session &S, const Json &Args)
 	return Text;
 }
 
+void PutPlace(const Session &S, int Row, Json &Out);
+
+// Listening (listen, from feat-listen): the track rendered as FamiTracker plays it, the mix and each part alone in one pass
+// (RenderParts, as measure_mix renders them), and Listen.h's ears on them: what each part sounds like against what its
+// notes say it should. Each finding says in plain words what is heard, with the call that fixes it where the tools have one.
+
+// The FDS modulator a note plays with as the 0.4.6 handler runs it (CChannelHandlerFDS): its instrument's speed, depth and
+// delay at each note, then Hxx (depth), Ixx (speed's high bits) and Jxx (its low byte) from their rows on until the next note
+struct ListenModulator {
+	int Speed, Depth, Delay;	// as it plays from Row on (Delay: frames from the note's start, the instrument's)
+	int Row;					// the note's row offset an effect brought it in on, 0 from the start
+	bool ByEffect;				// Hxx, Ixx or Jxx brought it in (the instrument's own is off, or another)
+	nsf::FdsModMotion Motion;
+	ListenModulator() : Speed(0), Depth(0), Delay(0), Row(0), ByEffect(false) {}
+};
+
+// A note of a part as the listen tool hears it: the ears' note, and what the tool needs to say what does it and fix it
+struct HeardNote {
+	ListenNote Note;
+	int Instrument;			// playing, NO_INSTRUMENT for none
+	int Pitch;				// written, -1 for none
+	int Volume;				// the volume column in effect
+	int Vibrato;			// 4xy in effect (0 for none)
+	int Detune;				// Pxx's steps from P80
+	ListenModulator Mod;	// the FDS's, when it moves the pitch
+	HeardNote() : Instrument(NO_INSTRUMENT), Pitch(-1), Volume(15), Vibrato(0), Detune(0) {}
+};
+
+// A pitch sequence that goes up and down in its loop: a vibrato built into the instrument
+bool PitchLoops(const SequenceInfo &Seq)
+{
+	if (Seq.Items.empty() || Seq.Loop < 0 || Seq.Loop >= static_cast<int>(Seq.Items.size()))
+		return false;
+	bool Up = false, Down = false;
+	for (size_t i = static_cast<size_t>(Seq.Loop); i < Seq.Items.size(); ++i) {
+		Up = Up || Seq.Items[i] > 0;
+		Down = Down || Seq.Items[i] < 0;
+	}
+	return Up && Down;
+}
+
+bool AnyNonZero(const SequenceInfo &Seq)
+{
+	for (size_t i = 0; i < Seq.Items.size(); ++i)
+		if (Seq.Items[i] != 0)
+			return true;
+	return false;
+}
+
+// A wave has no jumps of its own: its biggest step between neighbouring samples is under a third of its height (the
+// triangle's, the N163's rounder waves, an FDS sine); a ramp or a pulse jumps, so its notes may start with a step
+bool WaveIsSmooth(const std::vector<int> &Wave)
+{
+	if (Wave.size() < 4)
+		return false;
+	const int Low = *std::min_element(Wave.begin(), Wave.end()), High = *std::max_element(Wave.begin(), Wave.end());
+	if (High <= Low)
+		return false;
+	int Step = 0;
+	for (size_t i = 0; i < Wave.size(); ++i)
+		Step = std::max(Step, std::abs(Wave[i] - Wave[(i + 1) % Wave.size()]));
+	return Step * 3 < High - Low;
+}
+
+// The notes of a channel in the order the render plays them (Marks, up to the mark at Stop: the seam's, so the loop isn't
+// heard twice), each from where its row starts (and its Gxx delay) to the next note, release or halt (or a note cut, Sxx),
+// with what moves its pitch and where it should sound
+std::vector<HeardNote> HeardNotesOf(Session &S, int Channel, const std::vector<std::pair<int, long long> > &Marks, size_t Stop,
+	int Rate, long long Length)
+{
+	// A note still sounding where the loop goes round ends there: what follows is the loop's start again
+	const long long Until = Stop < Marks.size() ? std::min(Length, Marks[Stop].second) : Length;
+	std::vector<HeardNote> Out;
+	const ChannelInfo &Info = S.Channel(Channel);
+	const std::vector<Cell> &Cells = S.Cells(Channel);
+	const int Columns = std::max(1, std::min(EFFECT_COLUMNS, S.Shown(Channel)));
+	const double Tick = static_cast<double>(Rate) / std::max(1, S.Song.FrameRate);
+	int Instrument = NO_INSTRUMENT, Volume = 15;
+	int Sticky[EFF_COUNT] = { 0 };
+	Sticky[EFF_PITCH] = 0x80;
+	int ModSpeed = -1, ModDepth = -1;	// Ixx/Jxx and Hxx since the note, -1 for the instrument's
+	bool Open = false, Moving = false;	// a note sounds; something moves its pitch
+	auto Close = [&](long long At, bool Released, bool Halted) {
+		if (!Open)
+			return;
+		HeardNote &N = Out.back();
+		N.Note.End = std::max(N.Note.Begin + 1, std::min(Until, At));
+		N.Note.Released = Released;
+		N.Note.Halted = Halted;
+		Open = false;
+	};
+	for (size_t i = 0; i < Marks.size() && i < Stop; ++i) {
+		const int Row = Marks[i].first;
+		if (Row < 0 || Row >= static_cast<int>(Cells.size()))
+			continue;
+		const Cell &C = Cells[static_cast<size_t>(Row)];
+		const long long At = Marks[i].second;
+		int Delay = 0, Cut = -1;
+		bool ModChanged = false, Slides = false;
+		for (int k = 0; k < Columns; ++k) {
+			const int Effect = C.Effect[k], Param = C.Param[k];
+			if (Effect == EFF_NONE)
+				continue;
+			if (Effect == EFF_DELAY)
+				Delay = Param;
+			else if (Effect == EFF_NOTE_CUT)
+				Cut = Param;
+			else if (Effect == EFF_FDS_MOD_DEPTH) {
+				ModDepth = Param & 0x3F;
+				ModChanged = true;
+			}
+			else if (Effect == EFF_FDS_MOD_SPEED_HI) {
+				ModSpeed = (std::max(0, ModSpeed) & 0xFF) | ((Param & 0x0F) << 8);
+				ModChanged = true;
+			}
+			else if (Effect == EFF_FDS_MOD_SPEED_LO) {
+				ModSpeed = (std::max(0, ModSpeed) & 0xF00) | Param;
+				ModChanged = true;
+			}
+			else if (Effect < EFF_COUNT)
+				Sticky[Effect] = Param;
+			// A slide (Qxy, Rxy) moves it, and so does the 2A03 pulses' sweep (Hxy, Ixy there)
+			if (Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || ((Effect == EFF_SWEEPUP || Effect == EFF_SWEEPDOWN) && Param != 0))
+				Slides = true;
+		}
+		if (C.Volume != NO_VOLUME)
+			Volume = C.Volume;
+		if (C.Instrument != NO_INSTRUMENT)
+			Instrument = C.Instrument;
+		const long long Start = At + static_cast<long long>(Delay * Tick);
+		if (C.IsEnd())
+			Close(Start, C.Note == NOTE_RELEASE, C.Note == NOTE_HALT);
+		if (C.HasNote()) {
+			Close(Start, false, false);
+			HeardNote N;
+			N.Note.Row = Row;
+			N.Note.Begin = std::min(Length, Start);
+			N.Pitch = C.Pitch();
+			N.Instrument = Instrument;
+			N.Volume = Volume;
+			ModSpeed = -1;
+			ModDepth = -1;
+			// Effects on its own row that came before the note's trigger in the handler count as the note's
+			for (int k = 0; k < Columns; ++k) {
+				if (C.Effect[k] == EFF_FDS_MOD_DEPTH)
+					ModDepth = C.Param[k] & 0x3F;
+				else if (C.Effect[k] == EFF_FDS_MOD_SPEED_HI)
+					ModSpeed = (std::max(0, ModSpeed) & 0xFF) | ((C.Param[k] & 0x0F) << 8);
+				else if (C.Effect[k] == EFF_FDS_MOD_SPEED_LO)
+					ModSpeed = (std::max(0, ModSpeed) & 0xF00) | C.Param[k];
+			}
+			ModChanged = true;
+			Moving = false;
+			Out.push_back(N);
+			Open = true;
+		}
+		if (!Open)
+			continue;
+		HeardNote &N = Out.back();
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+		// What moves its pitch on this row: slides and portamento, an arpeggio (0xy, or its instrument's), a pitch sequence
+		// that bends (one that loops up and down is a vibrato), a hardware sweep; 4xy and the FDS's modulator are wobbles
+		if (Slides || Sticky[EFF_ARPEGGIO] != 0 || Sticky[EFF_PORTA_UP] != 0 || Sticky[EFF_PORTA_DOWN] != 0 ||
+			(Sticky[EFF_PORTAMENTO] != 0 && N.Note.Row == Row && Out.size() > 1))
+			Moving = true;
+		if (pInfo != 0 && (AnyNonZero(pInfo->Steps) || AnyNonZero(pInfo->HiPitch) || (AnyNonZero(pInfo->Pitch) && !PitchLoops(pInfo->Pitch))))
+			Moving = true;
+		if (Moving)
+			N.Note.Steady = false;
+		if (Sticky[EFF_VIBRATO] & 0x0F) {
+			N.Vibrato = Sticky[EFF_VIBRATO];
+			if (N.Note.Motion == LISTEN_STILL)
+				N.Note.Motion = LISTEN_VIBRATO_EFFECT;
+		}
+		if (pInfo != 0 && PitchLoops(pInfo->Pitch) && N.Note.Motion == LISTEN_STILL)
+			N.Note.Motion = LISTEN_VIBRATO_SEQUENCE;
+		if (N.Note.Row == Row)
+			N.Detune = Sticky[EFF_PITCH] - 0x80;
+		if (Info.Chip == "FDS" && pInfo != 0 && ModChanged) {
+			ListenModulator M;
+			M.Speed = ModSpeed >= 0 ? ModSpeed : pInfo->ModSpeed;
+			M.Depth = ModDepth >= 0 ? ModDepth : pInfo->ModDepth;
+			M.Delay = pInfo->ModDelay;
+			M.Row = Row - N.Note.Row;
+			M.ByEffect = ModSpeed >= 0 || ModDepth >= 0;
+			M.Motion = nsf::FdsModulatorMotion(M.Speed, M.Depth, pInfo->ModTable);
+			// The one that moves it most is the one heard
+			const double Now = M.Motion.Moves ? (M.Motion.High - M.Motion.Low) * std::min(30.0, M.Motion.Rate) : 0.0;
+			const double Was = N.Mod.Motion.Moves ? (N.Mod.Motion.High - N.Mod.Motion.Low) * std::min(30.0, N.Mod.Motion.Rate) : 0.0;
+			if (Now > Was) {
+				N.Mod = M;
+				if (!M.Motion.Audio)
+					N.Note.Motion = LISTEN_MODULATOR;
+			}
+		}
+		if (Cut >= 0)
+			Close(At + static_cast<long long>(Cut * Tick), false, true);
+	}
+	Close(Until, false, false);
+	// Where each should sound, and the rows it lasts
+	for (size_t n = 0; n < Out.size(); ++n) {
+		HeardNote &N = Out[n];
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+		N.Note.Rows = 1;
+		for (size_t i = 0; i < Marks.size(); ++i)
+			if (Marks[i].second > N.Note.Begin && Marks[i].second < N.Note.End)
+				++N.Note.Rows;
+		std::vector<NoteInfo> One(1);
+		One[0].Row = N.Note.Row;
+		One[0].Rows = N.Note.Rows;
+		One[0].Pitch = N.Pitch;
+		One[0].Instrument = N.Instrument;
+		One[0].Volume = N.Volume;
+		const bool Unpitched = !IsMelodic(Info) || PlaysNoiseOnly(S.Song, Info, One[0], StateAt(Cells, N.Note.Row + 1, Columns).Sticky[EFF_DUTY_CYCLE]);
+		if (Unpitched || N.Pitch < 0) {
+			N.Note.Hz = 0.0;
+			N.Note.Steady = false;
+			continue;
+		}
+		int Cycle = 16;
+		if (Info.Chip == "N163" && pInfo != 0 && !pInfo->Waves.empty()) {
+			const int Wave = !pInfo->Duty.Items.empty() ? std::max(0, std::min(static_cast<int>(pInfo->Waves.size()) - 1,
+				pInfo->Duty.Items[0])) : 0;
+			Cycle = std::max(4, N163CycleLength(pInfo->Waves[static_cast<size_t>(Wave)]));
+		}
+		const ListenTuning T = ListenNoteTuning(Info.Chip, Info.Kind, N.Pitch, N.Detune, Info.ChipChannels, Cycle, S.Song.Pal);
+		N.Note.Hz = T.Hz;
+		N.Note.ChipHz = T.ChipHz;
+		if (N.Volume == 0)
+			N.Note.Steady = false;
+	}
+	return Out;
+}
+
+// A song's listen, as the tool, what_next and FamiTracker's problems panel take it
+struct ListenReport {
+	ListenSong Song;
+	std::vector<std::vector<HeardNote> > Heard;	// per part
+	std::vector<int> BarNumbers;				// the bar of each of Song.Bars but the last
+	std::vector<std::pair<int, long long> > Marks;
+	std::vector<ListenFinding> Findings;
+	ListenStats Stats;
+	int Melody;
+	int From, To;
+	double RenderSeconds, ListenSeconds;		// how long the rendering and the listening took (the reply says the whole)
+	ListenReport() : Melody(-1), From(1), To(1), RenderSeconds(0.0), ListenSeconds(0.0) {}
+};
+
+// The song row a sample of the render sounds in (the last mark at or before it), -1 for none
+int RowAtSample(const std::vector<std::pair<int, long long> > &Marks, long long Sample)
+{
+	int Row = -1;
+	for (size_t i = 0; i < Marks.size() && Marks[i].second <= Sample; ++i)
+		Row = Marks[i].first;
+	return Row;
+}
+
+ListenReport ListenToTrack(Session &S, const Json &Args)
+{
+	ListenReport R;
+	std::string Why;
+	if (!S.Host().CanChange(Why))
+		throw Problem(Why);
+	int From = 1, To = S.Time.BarCount();
+	if (RangeGiven(Args))
+		BarRange(S, Args, From, To);
+	else if (Flow(S).Halts())
+		To = std::max(From, std::min(To, HaltBar(S)));
+	R.From = From;
+	R.To = To;
+	const int Total = S.Time.TotalRows();
+	const int First = S.Time.BarStart(From), End = std::min(Total, S.Time.BarEnd(To));
+	if (End <= First)
+		throw Problem("Those bars are past the song's end.");
+	// The parts: the channels named, or each one with notes there
+	std::vector<int> Channels;
+	if (Arg(Args, "parts") != 0)
+		Channels = ChannelsArg(S, Args, "parts");
+	else
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			if (HasNotesIn(S, c, First, End))
+				Channels.push_back(c);
+	if (Channels.empty())
+		throw Problem("Nothing plays in those bars to listen to.");
+	if (Arg(Args, "melody_channel") != 0) {
+		const Json *pNamed = Arg(Args, "melody_channel");
+		R.Melody = pNamed->IsString() && Lowercase(Trim(pNamed->String())) == "none" ? -1 : ChannelArg(S, Args, "melody_channel");
+	}
+	else {
+		R.Melody = GuessMelodyChannel(S, First, End);
+		if (R.Melody >= 0 && !CarriesTune(S, From, To))
+			R.Melody = -1;
+	}
+	// How long to render: the bars, and two seconds on for what rings after them (the loop's start again, past the seam)
+	std::vector<std::vector<Cell> > Cells;
+	std::vector<int> Columns;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		Cells.push_back(S.Cells(c));
+		Columns.push_back(S.Channel(c).EffectColumns);
+	}
+	const SongFlow F = Flow(S);
+	int EndTick = 0;
+	const std::vector<TimedRow> Timed = TimeRows(Cells, Columns, F, S.Time.PatternLength, S.Song.Speed, S.Song.Tempo, S.Song.SplitPoint,
+		S.Song.FrameRate, 1, EndTick);
+	if (Timed.empty())
+		throw Problem("The track has no rows.");
+	int Until = 0;
+	for (size_t i = 0; i < Timed.size(); ++i)
+		if (Timed[i].Row >= First && Timed[i].Row < End)
+			Until = std::max(Until, i + 1 < Timed.size() ? Timed[i + 1].Tick : EndTick);
+	const double Seconds = Until / static_cast<double>(std::max(1, S.Song.FrameRate)) + 2.0;
+	std::vector<RenderOptions> Renders(1, MixOptions(std::vector<bool>(), "listening: the mix"));
+	for (size_t p = 0; p < Channels.size(); ++p) {
+		std::vector<bool> Silent(static_cast<size_t>(S.ChannelCount()), true);
+		Silent[static_cast<size_t>(Channels[p])] = false;
+		Renders.push_back(MixOptions(Silent, ShortChannelName(S, Channels[p]) + " alone"));
+	}
+	const std::chrono::steady_clock::time_point Started = std::chrono::steady_clock::now();
+	std::string RenderError;
+	const std::unique_ptr<RenderSet> Made = S.Host().RenderParts(S.Song.Track, Seconds, Renders, RenderError);
+	if (!Made)
+		throw Problem("The track couldn't be rendered: " + RenderError);
+	ListenSong &L = R.Song;
+	std::string Error;
+	if (!Made->Take(0, L.Left, L.Right, L.Rate, R.Marks, Error))
+		throw Problem("The track couldn't be rendered: " + Error);
+	L.Right.resize(L.Left.size());
+	R.RenderSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - Started).count();
+	const long long Length = static_cast<long long>(L.Left.size());
+	// The seam: where the loop's first row plays again
+	const int LoopRow = F.Halts() ? -1 : F.LoopRow(S.Time.PatternLength);
+	size_t Stop = R.Marks.size();
+	bool Seen = false;
+	for (size_t i = 0; i < R.Marks.size(); ++i) {
+		if (R.Marks[i].first != LoopRow)
+			continue;
+		if (!Seen) {
+			L.LoopStart = R.Marks[i].second;
+			Seen = true;
+		}
+		else {
+			L.Seam = R.Marks[i].second;
+			Stop = i;
+			break;
+		}
+	}
+	if (L.Seam < 0)
+		L.LoopStart = -1;
+	// The bars listened to, the first time through, in the order they play
+	std::vector<bool> Listed(static_cast<size_t>(S.Time.BarCount() + 2), false);
+	long long LastEnd = -1;
+	for (size_t i = 0; i < Stop; ++i) {
+		const int Row = R.Marks[i].first;
+		if (Row < First || Row >= End)
+			continue;
+		const int Bar = S.Time.BarOf(Row);
+		LastEnd = i + 1 < R.Marks.size() ? R.Marks[i + 1].second : Length;
+		if (Row == S.Time.BarStart(Bar) && !Listed[static_cast<size_t>(Bar)]) {
+			Listed[static_cast<size_t>(Bar)] = true;
+			L.Bars.push_back(R.Marks[i].second);
+			R.BarNumbers.push_back(Bar);
+		}
+	}
+	if (L.Bars.empty())
+		throw Problem("Those bars don't play the first time through.");
+	L.Bars.push_back(std::min(Length, LastEnd));
+	// Where sections start (else blocks of four bars from the loop's start, or the song's)
+	const int LoopBar = LoopRow >= 0 ? S.Time.BarOf(LoopRow) : 1;
+	for (size_t b = 0; b < R.BarNumbers.size(); ++b) {
+		const int Bar = R.BarNumbers[b];
+		bool Starts = b == 0 || Bar == LoopBar;
+		if (!S.Song.Sections.empty()) {
+			for (size_t k = 0; k < S.Song.Sections.size(); ++k)
+				Starts = Starts || S.Time.BarOf(S.Song.Sections[k].First * S.Time.PatternLength) == Bar;
+		}
+		else
+			Starts = Starts || ((Bar - LoopBar) % 4 + 4) % 4 == 0;
+		L.SectionStarts.push_back(Starts);
+	}
+	L.SectionStarts.push_back(false);
+	// Each part alone
+	for (size_t p = 0; p < Channels.size(); ++p) {
+		const int c = Channels[p];
+		std::vector<float> Left, Right;
+		std::vector<std::pair<int, long long> > Marks;
+		int Rate = 0;
+		if (!Made->Take(p + 1, Left, Right, Rate, Marks, Error))
+			throw Problem("The track couldn't be rendered: " + Error);
+		ListenPart Part;
+		Part.Name = ShortChannelName(S, c);
+		Part.Channel = c;
+		Part.Pitched = IsMelodic(S.Channel(c));
+		Part.Rings = S.Channel(c).MixSpace > 0;
+		Part.Restarts = (S.Channel(c).Chip == "2A03" || S.Channel(c).Chip == "MMC5") && S.Channel(c).Kind == KIND_PULSE;
+		Part.Melody = c == R.Melody;
+		Part.Samples.resize(Left.size());
+		for (size_t n = 0; n < Left.size(); ++n)
+			Part.Samples[n] = 0.5f * (Left[n] + (n < Right.size() ? Right[n] : Left[n]));
+		std::vector<HeardNote> Heard = HeardNotesOf(S, c, R.Marks, Stop, L.Rate, static_cast<long long>(Part.Samples.size()));
+		// Only the notes in the bars listened to
+		std::vector<HeardNote> Kept;
+		for (size_t i = 0; i < Heard.size(); ++i)
+			if (Heard[i].Note.Row >= First && Heard[i].Note.Row < End)
+				Kept.push_back(Heard[i]);
+		// Smooth: the triangle, or every wave its instruments play rounded (the N163's, the FDS's)
+		const ChannelInfo &Info = S.Channel(c);
+		bool Smooth = Info.Kind == KIND_TRIANGLE;
+		if (Info.Chip == "N163" || Info.Chip == "FDS") {
+			Smooth = !Kept.empty();
+			for (size_t i = 0; i < Kept.size() && Smooth; ++i) {
+				const InstrumentInfo *pInfo = FindInstrument(S.Song, Kept[i].Instrument);
+				if (pInfo == 0)
+					continue;
+				if (Info.Chip == "FDS")
+					Smooth = WaveIsSmooth(pInfo->FdsWave);
+				else
+					for (size_t w = 0; w < pInfo->Waves.size() && Smooth; ++w)
+						Smooth = WaveIsSmooth(pInfo->Waves[w]);
+			}
+		}
+		Part.Smooth = Smooth;
+		for (size_t i = 0; i < Kept.size(); ++i)
+			Part.Notes.push_back(Kept[i].Note);
+		L.Parts.push_back(Part);
+		R.Heard.push_back(Kept);
+	}
+	const std::chrono::steady_clock::time_point Listening = std::chrono::steady_clock::now();
+	R.Findings = ListenToSong(L, &R.Stats);
+	R.ListenSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - Listening).count();
+	return R;
+}
+
+// The bars a finding is in: from the bar its first sample sounds in to its last's
+void ListenBars(const Session &S, const ListenReport &R, const ListenFinding &F, int &FromBar, int &ToBar, int &Row, int &Rows)
+{
+	const int A = RowAtSample(R.Marks, F.Begin), Z = RowAtSample(R.Marks, std::max(F.Begin, F.End - 1));
+	Row = std::max(0, A);
+	const int Last = std::max(Row, Z);
+	FromBar = S.Time.BarOf(Row);
+	ToBar = std::max(FromBar, S.Time.BarOf(Last));
+	Rows = std::max(1, Last - Row + 1);
+}
+
+// What makes a wobble, in words, and the instrument that has it
+std::string WobbleSource(Session &S, const ListenReport &R, const ListenFinding &F, std::string *pInstrument = 0)
+{
+	if (F.Part < 0)
+		return std::string();
+	const std::vector<HeardNote> &Heard = R.Heard[static_cast<size_t>(F.Part)];
+	const int Motion = static_cast<int>(F.Number("motion"));
+	std::map<int, int> Uses;
+	bool ByEffect = false;
+	int Vibrato = 0;
+	const HeardNote *pModded = 0;
+	for (size_t i = 0; i < F.Notes.size(); ++i) {
+		const HeardNote &N = Heard[static_cast<size_t>(F.Notes[i])];
+		++Uses[N.Instrument];
+		ByEffect = ByEffect || N.Mod.ByEffect;
+		if (N.Vibrato != 0)
+			Vibrato = N.Vibrato;
+		if (pModded == 0 && N.Mod.Motion.Moves)
+			pModded = &N;
+	}
+	int Most = NO_INSTRUMENT, Count = 0;
+	for (std::map<int, int>::const_iterator it = Uses.begin(); it != Uses.end(); ++it)
+		if (it->second > Count) {
+			Most = it->first;
+			Count = it->second;
+		}
+	if (pInstrument != 0)
+		*pInstrument = Most != NO_INSTRUMENT ? InstrumentLabel(S.Song, Most) : std::string();
+	if (Motion == LISTEN_MODULATOR && pModded != 0)
+		return Format("The FDS's modulator does it (speed %d, depth %d%s).", pModded->Mod.Speed, pModded->Mod.Depth, ByEffect ?
+			Format(", brought in by Hxx/Ixx/Jxx %s into the notes", pModded->Mod.Row > 0 ? Format("%d rows", pModded->Mod.Row).c_str() :
+			"from the start").c_str() : (", " + InstrumentLabel(S.Song, pModded->Instrument) + "'s own").c_str());
+	if (Motion == LISTEN_VIBRATO_EFFECT && Vibrato != 0)
+		return Format("The notes' vibrato does it (4%X%X).", Vibrato >> 4, Vibrato & 15);
+	if (Motion == LISTEN_VIBRATO_SEQUENCE)
+		return "Its instrument's pitch sequence does it (" + (Most != NO_INSTRUMENT ? InstrumentLabel(S.Song, Most) : std::string("the "
+			"instrument")) + "), a vibrato built into the sound.";
+	return "Nothing written asks for it: the sound itself does it.";
+}
+
+// The call that fixes a finding, where the tools have one (null otherwise), and what to do otherwise (Advice)
+Json ListenFixOf(Session &S, const ListenReport &R, const ListenFinding &F, std::string &Advice)
+{
+	Advice.clear();
+	int FromBar, ToBar, Row, Rows;
+	ListenBars(S, R, F, FromBar, ToBar, Row, Rows);
+	const ListenPart *pPart = F.Part >= 0 ? &R.Song.Parts[static_cast<size_t>(F.Part)] : 0;
+	const std::string Name = pPart != 0 ? S.Channel(pPart->Channel).FullName() : std::string();
+	Json A = Json::MakeObject();
+	switch (F.Kind) {
+	case LISTEN_WOBBLE: {
+		const int Motion = static_cast<int>(F.Number("motion"));
+		if (Motion == LISTEN_MODULATOR) {
+			A.Set("channel", Name);
+			A.Set("from_bar", FromBar);
+			A.Set("to_bar", ToBar);
+			A.Set("depth", "gentle");
+			A.Set("modulator", "off");
+			return ToolCall("add_vibrato", A, "turns the FDS's modulator off where it plays and gives the long notes a gentle vibrato "
+				"(about 15 cents either way, about 5 times a second) where it came in");
+		}
+		if (Motion == LISTEN_VIBRATO_EFFECT) {
+			A.Set("channel", Name);
+			A.Set("from_bar", FromBar);
+			A.Set("to_bar", ToBar);
+			A.Set("depth", "gentle");
+			return ToolCall("add_vibrato", A, "puts a gentle vibrato (about 15 cents either way) on the long notes in place of this one");
+		}
+		Advice = Motion == LISTEN_VIBRATO_SEQUENCE ? "An instrument without that pitch sequence (or with a gentler one), or 4xy on a "
+			"plain sound, stops it." : "Another sound for these notes stops it.";
+		return Json();
+	}
+	case LISTEN_TUNING:
+		Advice = F.What == "chip" ? "An octave lower plays them in tune (vary_part octave_down), or the chip of another channel." :
+			"Its sound puts it off its notes (a pitch sequence that ends off its pitch, a wave's cycle): another sound, or a fine "
+			"pitch (Pxx) the other way, puts it back.";
+		return Json();
+	case LISTEN_BEATING:
+		Advice = "A fine pitch (Pxx) on one of them makes it: P80 there puts them in tune, or a chorus a few cents apart (P81-P82) "
+			"beats slowly enough to sound wide rather than sour.";
+		return Json();
+	case LISTEN_CLICK:
+		if (F.What == "inside" && pPart != 0 && (S.Channel(pPart->Channel).Chip == "2A03" || S.Channel(pPart->Channel).Chip == "MMC5") &&
+			S.Channel(pPart->Channel).Kind == KIND_PULSE) {
+			Json Touches = Json::MakeArray(), Which = Json::MakeArray();
+			Touches.Push("clicks");
+			Which.Push(pPart->Channel + 1);
+			A.Set("touches", Touches);
+			A.Set("channels", Which);
+			A.Set("from_bar", FromBar);
+			A.Set("to_bar", ToBar);
+			return ToolCall("polish", A, "nudges the notes that click a hair (Pxx), so their vibrato stays clear of where the pulse "
+				"restarts its wave");
+		}
+		if (F.What == "seam")
+			return ToolCall("fix_loop", Json::MakeObject(), "writes what makes the loop's repeats start as its first time does");
+		Advice = F.What == "start" ? "A sound whose volume starts a step or two lower for a frame (a softer attack) rounds the pop off." :
+			"A gentler vibrato, or the notes on another channel, stops it.";
+		return Json();
+	case LISTEN_COVERED:
+		if (F.Other >= 0) {
+			const ListenPart &O = R.Song.Parts[static_cast<size_t>(F.Other)];
+			return MixerChange(S, std::vector<int>(1, O.Channel), -std::max(2.0, std::floor(F.Number("db_over") + 0.5)));
+		}
+		return Json();
+	case LISTEN_HARSH:
+		if (F.Other >= 0) {
+			const ListenPart &O = R.Song.Parts[static_cast<size_t>(F.Other)];
+			if (S.Channel(O.Channel).MixSoft < 40) {
+				Json List = Json::MakeArray();
+				List.Push(S.Channel(O.Channel).FullName());
+				A.Set("channels", List);
+				A.Set("soft", 40);
+				return ToolCall("set_mixer", A, "rounds its edges with the mixer's Soft (a gentle low-pass)");
+			}
+		}
+		Advice = "A wider duty or a rounder sound for its brightest part softens it.";
+		return Json();
+	case LISTEN_CLIPPING: {
+		std::vector<int> All;
+		for (int c = 0; c < S.ChannelCount(); ++c)
+			All.push_back(c);
+		return MixerChange(S, All, -3.0);
+	}
+	case LISTEN_DRONE:
+		Advice = "Its instrument's release ends above silence: a halt (---) where it should stop, or a release that fades to 0, ends it.";
+		return Json();
+	case LISTEN_UNHEARD:
+		Advice = "Louder notes there (their volume), or a sound that lasts, makes them heard.";
+		return Json();
+	case LISTEN_JUMP:
+		Advice = "A section starting there (name_section) makes it the music's; otherwise a volume step in between smooths it.";
+		return Json();
+	case LISTEN_MUDDY:
+		Advice = "An octave up for the chords, or the bass alone down there, clears it.";
+		return Json();
+	}
+	return Json();
+}
+
+const char *SureWords(double Sure)
+{
+	return Sure >= 0.8 ? "sure" : Sure >= 0.6 ? "fairly sure" : "not sure";
+}
+
+const char *SeverityWord(int Severity)
+{
+	return Severity >= 3 ? "high" : Severity == 2 ? "medium" : "low";
+}
+
+// A finding's line: where, what's heard, what does it, how sure, and the fix
+std::string ListenLine(Session &S, const ListenReport &R, const ListenFinding &F, const Json &Fix, const std::string &Advice, bool Short)
+{
+	int FromBar, ToBar, Row, Rows;
+	ListenBars(S, R, F, FromBar, ToBar, Row, Rows);
+	std::string Where = F.Part >= 0 ? R.Song.Parts[static_cast<size_t>(F.Part)].Name : std::string("The mix");
+	if (F.Part >= 0 && R.Song.Parts[static_cast<size_t>(F.Part)].Melody)
+		Where += " (the melody)";
+	if (F.Kind == LISTEN_HARSH || F.Kind == LISTEN_MUDDY || F.Kind == LISTEN_JUMP || F.Kind == LISTEN_CLIPPING)
+		Where = "The mix";
+	Where += ", " + RangeText(FromBar, ToBar);
+	if (Short) {
+		std::string Line = F.Summary;
+		if (!Line.empty())
+			Line[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Line[0])));
+		return Line + " (" + Where + ")" + (Fix.IsNull() ? "." : ". " + FixText(Fix, false));
+	}
+	std::string Line = std::string(ListenKindTitle(F.Kind)) + ": " + Where + ". " + F.Heard;
+	if (F.Kind == LISTEN_WOBBLE)
+		Line += " " + WobbleSource(S, R, F);
+	Line += Format(" (%s, severity %s.)", SureWords(F.Sure), SeverityWord(F.Severity));
+	if (!Fix.IsNull())
+		Line += " " + FixText(Fix, true);
+	else if (!Advice.empty())
+		Line += " " + Advice;
+	return Line;
+}
+
+Json ListenJson(Session &S, const ListenReport &R, const ListenFinding &F, const Json &Fix, const std::string &Advice)
+{
+	int FromBar, ToBar, Row, Rows;
+	ListenBars(S, R, F, FromBar, ToBar, Row, Rows);
+	Json Out = Json::MakeObject();
+	Out.Set("kind", ListenKindId(F.Kind));
+	Out.Set("what", F.What);
+	Out.Set("severity", SeverityWord(F.Severity));
+	Out.Set("sure", Json::NumberText(FormatNumber(std::floor(F.Sure * 100.0 + 0.5) / 100.0)));
+	const ListenPart *pPart = F.Part >= 0 ? &R.Song.Parts[static_cast<size_t>(F.Part)] : 0;
+	Out.Set("channel", pPart != 0 ? Json(pPart->Channel + 1) : Json());
+	Out.Set("channel_name", pPart != 0 ? Json(S.Channel(pPart->Channel).FullName()) : Json());
+	if (F.Other >= 0) {
+		const ListenPart &O = R.Song.Parts[static_cast<size_t>(F.Other)];
+		Out.Set("other_channel", O.Channel + 1);
+		Out.Set("other_channel_name", S.Channel(O.Channel).FullName());
+	}
+	PutPlace(S, Row, Out);
+	Out.Set("position", S.Time.Position(Row));
+	Out.Set("rows", Rows);
+	Out.Set("from_bar", FromBar);
+	Out.Set("to_bar", ToBar);
+	Json Notes = Json::MakeArray();
+	for (size_t i = 0; pPart != 0 && i < F.Notes.size(); ++i) {
+		const HeardNote &N = R.Heard[static_cast<size_t>(F.Part)][static_cast<size_t>(F.Notes[i])];
+		Json Note = Json::MakeObject();
+		Note.Set("channel", pPart->Channel + 1);
+		PutPlace(S, N.Note.Row, Note);
+		Note.Set("position", S.Time.Position(N.Note.Row));
+		Note.Set("note", N.Pitch >= 0 ? Json(PitchName(N.Pitch)) : Json());
+		Note.Set("rows", N.Note.Rows);
+		Notes.Push(Note);
+	}
+	Out.Set("notes", Notes);
+	Out.Set("summary", F.Summary);
+	std::string Message = F.Heard;
+	if (F.Kind == LISTEN_WOBBLE)
+		Message += " " + WobbleSource(S, R, F);
+	Out.Set("message", Message + (Fix.IsNull() ? (Advice.empty() ? std::string() : " " + Advice) : " " + FixText(Fix, true)));
+	Json Numbers = Json::MakeObject();
+	for (size_t i = 0; i < F.Numbers.size(); ++i)
+		if (F.Numbers[i].first != "bar_index")
+			Numbers.Set(F.Numbers[i].first, Json::NumberText(FormatNumber(F.Numbers[i].second)));
+	Out.Set("numbers", Numbers);
+	if (!Fix.IsNull())
+		Out.Set("fix", Fix);
+	else if (!Advice.empty())
+		Out.Set("advice", Advice);
+	return Out;
+}
+
+std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
+{
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "short" && Form != "json")
+		throw Problem("format: text (the default: every finding with what's heard and its fix), short (the counts and the three "
+			"findings heard worst, with their calls) or json.");
+	const ListenReport R = ListenToTrack(S, Args);
+	std::vector<Json> Fixes;
+	std::vector<std::string> Advices;
+	int Counts[LISTEN_KINDS] = { 0 };
+	for (size_t i = 0; i < R.Findings.size(); ++i) {
+		std::string Advice;
+		Fixes.push_back(ListenFixOf(S, R, R.Findings[i], Advice));
+		Advices.push_back(Advice);
+		++Counts[R.Findings[i].Kind];
+	}
+	// The JSON, for the problems panel and what_next (kept by the song's print)
+	Json Out = Json::MakeObject();
+	Out.Set("check", "listen");
+	Out.Set("track", S.Song.Track + 1);
+	Out.Set("track_name", S.Song.TrackName);
+	Out.Set("from_bar", R.From);
+	Out.Set("to_bar", R.To);
+	Out.Set("pattern_length", S.Time.PatternLength);
+	Out.Set("rows_per_beat", S.Time.RowsPerBeat);
+	Out.Set("rows_per_bar", S.Time.RowsPerBar);
+	Out.Set("seconds", Json::NumberText(FormatNumber(std::floor(R.Stats.Seconds * 10.0 + 0.5) / 10.0)));
+	Out.Set("melody_channel", R.Melody >= 0 ? Json(R.Melody + 1) : Json());
+	Json PartList = Json::MakeArray();
+	for (size_t p = 0; p < R.Song.Parts.size(); ++p)
+		PartList.Push(S.Channel(R.Song.Parts[p].Channel).FullName());
+	Out.Set("parts", PartList);
+	Json CountList = Json::MakeObject();
+	for (int k = 0; k < LISTEN_KINDS; ++k)
+		CountList.Set(ListenKindId(k), Counts[k]);
+	Out.Set("counts", CountList);
+	Json List = Json::MakeArray();
+	for (size_t i = 0; i < R.Findings.size(); ++i)
+		List.Push(ListenJson(S, R, R.Findings[i], Fixes[i], Advices[i]));
+	Out.Set("findings", List);
+	Out.Set("print", SoundPrint(S));
+	if (pJson != 0)
+		*pJson = WriteJson(Out);
+	if (Form == "json")
+		return WriteJson(Out);
+
+	std::string Text = Format("Listened to %s of \"%s\" as FamiTracker plays it: the mix and %s alone (%s of music, %s measured; "
+		"%s s in all).", RangeText(R.From, R.To).c_str(), S.Song.TrackName.c_str(), R.Song.Parts.size() == 1 ? "its one part" :
+		Format("each of its %d parts", static_cast<int>(R.Song.Parts.size())).c_str(), (FormatNumber(std::floor(R.Stats.Seconds * 10.0 +
+		0.5) / 10.0) + " s").c_str(), Plural(R.Stats.NotesMeasured, "held note", "held notes").c_str(),
+		FormatNumber(std::floor((R.RenderSeconds + R.ListenSeconds) * 10.0 + 0.5) / 10.0).c_str());
+	if (R.Melody >= 0)
+		Text += " The melody: " + S.Channel(R.Melody).FullName() + ".";
+	if (R.Findings.empty())
+		return Text + "\nNothing sounds wrong: the held notes hold their pitch (or a gentle vibrato), the parts that play together "
+			"are in tune with each other, nothing clicks or drones, and the mix is clean. Listen with the user too: this hears "
+			"how it sounds, not whether it's the music they want.";
+	if (Form == "short") {
+		std::vector<size_t> Ranked;
+		for (int Severity = 3; Severity >= 1; --Severity)
+			for (size_t i = 0; i < R.Findings.size(); ++i)
+				if (R.Findings[i].Severity == Severity)
+					Ranked.push_back(i);
+		const size_t Listed = std::min<size_t>(3, Ranked.size());
+		Text += Format("\nHeard %s%s:", Plural(static_cast<int>(R.Findings.size()), "thing", "things").c_str(), Ranked.size() > Listed ?
+			Format(" (the %d heard worst; format text lists them all)", static_cast<int>(Listed)).c_str() : "");
+		for (size_t i = 0; i < Listed; ++i)
+			Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[Ranked[i]], Fixes[Ranked[i]], Advices[Ranked[i]], true);
+		return Text;
+	}
+	Text += Format("\nHeard %s, the worst first:", Plural(static_cast<int>(R.Findings.size()), "thing", "things").c_str());
+	for (size_t i = 0; i < R.Findings.size(); ++i)
+		Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[i], Fixes[i], Advices[i], false);
+	return Text;
+}
+
 // Checks
 
 // The pitch a note sounds on each of its rows in [First, End), into Sound
@@ -22104,12 +22963,13 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // HELD: on a calm track, the melody's sound holding a high, steady level from attack to release (HeldLeads). Then the
 // arrangement's findings (ArrangeFindings, in arrange_kind's order): the melody in one-bar pieces, a thin or doubled
 // bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop
+// WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
-	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_KINDS };
+	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_WARBLE, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop" };
+	"sound", "faders", "repeat", "short_loop", "warble" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low" };
+	"medium", "low", "low", "low", "high" };
 
 // A note a finding is about
 struct CheckNote {
@@ -22476,6 +23336,91 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
+	// Warbles from the notes alone (feat-listen): FDS notes held a quarter second or more past where their modulator comes in
+	// (the instrument's own, or Hxx, Ixx and Jxx on their rows, as CChannelHandlerFDS runs them) when it moves the pitch
+	// faster than 8 times a second and wider than 40 cents either way (FdsModulatorMotion: 38's lead at speed 34 and depth 5
+	// went 14.5 times a second from 170 cents down to 180 up, heard as a short right note and then a fluttering echo, with
+	// every check clean). A slow, gentle one is a vibrato and stays quiet: 42's flute, depth 1 at speed 7, moves 3 times a
+	// second, from 55 cents down to 79 up
+	int Warbling = 0;
+	{
+		const double RowFrames = FramesPerRow(S), Rate = std::max(1, S.Song.FrameRate);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (S.Channel(c).Chip != "FDS")
+				continue;
+			std::vector<CheckNote> Notes;
+			nsf::FdsModMotion Worst;
+			int WorstSpeed = 0, WorstDepth = 0;
+			for (const NoteInfo &N : S.Notes(c)) {
+				if (N.Row < First || N.Row >= End || N.Pitch < 0)
+					continue;
+				const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+				if (pInfo == 0)
+					continue;
+				// The modulator from each row it changes on: the note's own first (the instrument's, its own row's effects over it)
+				int Speed = pInfo->ModSpeed, Depth = pInfo->ModDepth;
+				for (int Offset = 0; Offset < N.Rows; ++Offset) {
+					bool Changed = Offset == 0;
+					for (size_t e = 0; e < N.Effects.size(); ++e) {
+						if (N.Effects[e].first != Offset)
+							continue;
+						const int Effect = N.Effects[e].second.first, Param = N.Effects[e].second.second;
+						if (Effect == EFF_FDS_MOD_DEPTH)
+							Depth = Param & 0x3F;
+						else if (Effect == EFF_FDS_MOD_SPEED_HI)
+							Speed = (Speed & 0xFF) | ((Param & 0x0F) << 8);
+						else if (Effect == EFF_FDS_MOD_SPEED_LO)
+							Speed = (Speed & 0xF00) | Param;
+						else
+							continue;
+						Changed = true;
+					}
+					if (!Changed)
+						continue;
+					const nsf::FdsModMotion M = nsf::FdsModulatorMotion(Speed, Depth, pInfo->ModTable);
+					const double Comes = Offset * RowFrames + (Offset == 0 ? pInfo->ModDelay : 0);
+					if (!M.Warble || (N.Rows * RowFrames - Comes) / Rate < 0.25)
+						continue;
+					const CheckNote Note = { c, N.Row, N.Rows, N.Pitch };
+					Notes.push_back(Note);
+					if (!Worst.Warble || M.High - M.Low > Worst.High - Worst.Low) {
+						Worst = M;
+						WorstSpeed = Speed;
+						WorstDepth = Depth;
+					}
+					break;
+				}
+			}
+			if (Notes.empty())
+				continue;
+			Warbling += static_cast<int>(Notes.size());
+			const int A = S.Time.BarOf(Notes.front().Row), Z = S.Time.BarOf(Notes.back().Row);
+			const std::string Moves = Format("it shakes their pitch %s, from %d cents down to %d up", nsf::TimesInWords(Worst.Rate).c_str(),
+				static_cast<int>(std::floor(-Worst.Low + 0.5)), static_cast<int>(std::floor(Worst.High + 0.5)));
+			CheckFinding &F = Report(FOUND_WARBLE, c, Notes.front().Row, std::max(1, Notes.back().Row + Notes.back().Rows - Notes.front().Row),
+				Format("Warble: %s held on %s (%s): the FDS's modulator (speed %d, depth %d) %s, so each sounds like a short "
+				"right note and then a fluttering echo. That's a warble, not a vibrato (a vibrato moves about 5 times a second, a "
+				"quarter of a semitone either way); listen hears it.", Plural(static_cast<int>(Notes.size()), "note", "notes").c_str(),
+				S.Channel(c).FullName().c_str(), RangeText(A, Z).c_str(), WorstSpeed, WorstDepth, Moves.c_str()),
+				Format("the FDS's modulator warbles (%s)", nsf::TimesInWords(Worst.Rate).c_str()));
+			F.Notes = Notes;
+			F.Details.Set("speed", WorstSpeed);
+			F.Details.Set("depth", WorstDepth);
+			F.Details.Set("rate", Json::NumberText(FormatNumber(std::floor(Worst.Rate * 10.0 + 0.5) / 10.0)));
+			F.Details.Set("cents_low", static_cast<int>(std::floor(Worst.Low + 0.5)));
+			F.Details.Set("cents_high", static_cast<int>(std::floor(Worst.High + 0.5)));
+			Json Arguments = Json::MakeObject();
+			Arguments.Set("channel", S.Channel(c).FullName());
+			Arguments.Set("from_bar", A);
+			Arguments.Set("to_bar", Z);
+			Arguments.Set("depth", "gentle");
+			Arguments.Set("modulator", "off");
+			F.Fix = ToolCall("add_vibrato", Arguments, "turns the modulator off where it plays and gives the long notes a gentle "
+				"vibrato (about 15 cents either way, about 5 times a second) where it came in");
+			F.Line += " " + FixText(F.Fix, true);
+		}
+	}
+
 	// Held leads: the melody's sounds holding a high, steady level from attack to release, a finding on a calm track. A
 	// lively stage's lead may settle to a level: the soundtrack's liked stages bloomed in and settled to 9-12
 	int Held = 0;
@@ -22522,7 +23467,8 @@ std::string CheckTool(Session &S, const Json &Args)
 			Unused.push_back(S.Channel(c).FullName());
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
-		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP] };
+		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
+		Warbling };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -22559,6 +23505,8 @@ std::string CheckTool(Session &S, const Json &Args)
 	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing%s.", OutOfKey,
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished, Chosen.Style == STYLE_CALM ? (", " + Plural(Held, "held lead",
 		"held leads")).c_str() : "");
+	if (Warbling > 0)
+		Text += Format(" %s on the FDS warble: its modulator shakes them.", Plural(Warbling, "note", "notes").c_str());
 	if (ArrangedAll > 0)
 		Text += Format(" In the arrangement: %s, each with the call that fixes it.", Plural(ArrangedAll, "finding", "findings").c_str());
 	if (!Chosen.Note.empty())
@@ -22589,7 +23537,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind. The arrangement's few findings are all listed, after the rest
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "" };
+		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = FOUND_PHRASES; k < FOUND_KINDS; ++k) {
@@ -27621,13 +28569,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("add_vibrato", "Add vibrato",
 		"Adds vibrato (FamiTracker's 4xy) to a channel's longer notes, starting just after each note begins and stopping at its "
-		"end. Gentle sounds expressive; slow and strong sounds wobbly, dreamy or underwater. depth \"none\" takes vibrato off.",
+		"end. Gentle sounds expressive; slow and strong sounds wobbly, dreamy or underwater. depth \"none\" takes vibrato off. "
+		"A depth word swings the notes as far on every chip as on a pulse (on the FDS gentle is 456, about 15 cents either way, "
+		"where 452 would be 3).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("speed", LevelProp("slow, medium, fast, or 1-15 (default medium)."))
 			.Add("depth", LevelProp("none, faint (4x1, the shallowest), gentle, medium, strong, or 0-15 (default gentle)."))
 			.Add("min_beats", Prop("number", "Only notes at least this long, in beats (default 1)."))
 			.Add("delay_beats", Prop("number", "Start this long after the note begins (default 0.25 beat)."))
+			.Add("modulator", EnumProp("On the FDS: off turns its modulator off where it plays (H00) and brings the vibrato in where "
+				"the modulator did; keep (the default) leaves it.", std::vector<std::string>{ "keep", "off" }))
 			.Range().ClipChoice(),
 		false, true);
 
@@ -28065,6 +29017,19 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("format", EnumProp("text (the default: every section and part) or short: the loop, the intro, the sides and the "
 				"parts nearest the melody in a few lines, and what's off its target with the call for it.",
 				std::vector<std::string>{ "text", "short" })),
+		true, false, true);
+
+	AddTool("listen", "Listen to the song",
+		"Listens to the selected track as FamiTracker plays it (the mix and each part alone, rendered), changing nothing, and "
+		"says in plain words what the notes alone can't show: a warble or too deep a vibrato, notes out of tune, parts a few "
+		"cents apart that beat, clicks and pops, a sound that holds on after its notes, notes hardly heard, and in the mix "
+		"clipping, jumps, harsh or muddy stretches and a covered melody; each with its part, bars, how sure, and the call that "
+		"fixes it. Slower than check_song: once the parts are written, and again after a fix.",
+		Schema().Range()
+			.Add("parts", ChannelListProp("Channels to hear alone (default: each with notes there)."))
+			.Add("melody_channel", ChannelProp("The melody (default: guessed), or \"none\"."))
+			.Add("format", EnumProp("text (the default), short (the three heard worst) or json.",
+				std::vector<std::string>{ "text", "short", "json" })),
 		true, false, true);
 
 	AddTool("select_track", "Switch tracks",
@@ -28708,6 +29673,7 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 			Checked.Set("format", "short");
 		if (Name == "get_song") Result.Text = SongOverview(S, Args);
 		else if (Name == "what_next") Result.Text = WhatNextTool(S, Args, Who.Core);
+		else if (Name == "listen") Result.Text = ListenTool(S, Args, 0);
 		else if (Name == "check_exercise") Result.Text = CheckExerciseTool(S, Args);
 		else if (Name == "read_notes") Result.Text = ReadChannel(S, Args);
 		else if (Name == "write_notes") Result.Text = WriteNotes(S, Args, Who.Core);
@@ -29015,7 +29981,11 @@ std::string ToolSet::Instructions()
 		"each with a starter song and a Check); check_exercise checks one as its Check button does, so you can teach "
 		"with it. "
 		"By default your changes arrive as clips the user listens to and places from the clips panel; if the user allowed direct "
-		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear: run check_song after writing, "
+		"changes, they go into the song and each one is undone with Ctrl+Z. You can't hear the song, but listen renders it "
+		"and measures what an ear notices (notes that warble or sit out of tune, parts that beat against each other, "
+		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
+		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
+		"findings with the call it gives and play the low ones to the user. Run check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
 		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
 		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "
@@ -29058,7 +30028,9 @@ std::string ToolSet::Instructions()
 		"spread over several channels, each voice its own note. With the FDS, one wavetable channel whose modulator bends "
 		"the pitch plays sounds drawn for it (a soft flute, a whistle, an eerie lead that trembles, a glass bell, a warm organ, "
 		"a nasal reed, strings and a choir that swell, a round or a growling bass, an underwater wobble, a cave drone) for a "
-		"dark, atmospheric lead or bass; it sounds two octaves under the note written.\n"
+		"dark, atmospheric lead or bass; it sounds two octaves under the note written. Its modulator is no vibrato for a lead: "
+		"faster than about 8 times a second and wider than about 40 cents it warbles, which a user heard as weird echoing "
+		"notes; add_vibrato gives a gentle one, and with modulator off it replaces a warble.\n"
 		"- VRC6 Plus (set_expansion chips [\"VRC6 Plus\"]; get_song names it): the VRC6 with a soft layer of four N163 wave "
 		"channels, Soft 1 to Soft 4, for when the user wants the VRC6 softer, warmer or deeper. The VRC6 carries the music: the "
 		"melody on its pulses, the sawtooth's bass and bite. The soft layer sits underneath, optional and quieter: a pad or a "

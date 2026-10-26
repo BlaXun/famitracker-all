@@ -100,9 +100,13 @@ struct InstrumentInfo {
 	SequenceInfo Duty;		// its duty sequence (2A03 and VRC6 instruments: the pulse's width, 0-3 and 0-7) or, on an N163
 							// instrument, the wave it plays (its index in Waves); empty when it has none
 	std::vector<std::vector<int> > Waves;	// an N163 instrument's waves, 0-15 a sample; empty for the other chips
+	// An FDS instrument's own wave (64 samples, 0-63) and modulator: its table (32 steps, 0-7), speed (0-4095), depth (0-63)
+	// and the frames it waits into a note (FdsModulator.h says what it does); empty and 0 for the other chips
+	std::vector<int> FdsWave, ModTable;
+	int ModSpeed, ModDepth, ModDelay;
 
 	InstrumentInfo() : Index(0), Releases(false), Vibrato(false), WavePos(-1), WaveSize(-1), OddDuty(false), VolumeLoop(-1),
-		VolumeRelease(-1) {}
+		VolumeRelease(-1), ModSpeed(0), ModDepth(0), ModDelay(0) {}
 };
 
 struct ClipInfo {

@@ -51,6 +51,11 @@ namespace {
 
 LPCTSTR SECTION = _T("Problems panel");	// registry section: open, where, its size, checking as you edit, kinds folded
 
+// The kinds as they were numbered before warbles joined them, which the registry's "Folded" bits count (the kinds folded
+// are kept by name now, "Folded kinds", so kinds can join in their place)
+const char *const OLD_KINDS[] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass", "sound",
+	"faders", "repeat", "short_loop" };
+
 // Sizes at 96 DPI (scaled with SX and SY)
 const int DEFAULT_HEIGHT = 150;			// along the bottom
 const int DEFAULT_WIDTH = 340;			// along the right
@@ -421,9 +426,20 @@ struct CProblemsPanelWnd::Impl {
 		Open(false), Checked(false), Waiting(false), Auto(true), Focused(false), CheckTime(0), Signature(0), Narrow(false),
 		PlayingFinding(-1), PlayingNote(-1), Order(CBarsPlayer::ALONE_THEN_MIX)
 	{
-		const UINT Folds = theApp.GetProfileInt(SECTION, _T("Folded"), 0);
+		// The kinds folded, by their names ("click,range"), or as bits of the old numbering
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
-			Folded[k] = (Folds & (1u << k)) != 0;
+			Folded[k] = false;
+		const CString Names = theApp.GetProfileString(SECTION, _T("Folded kinds"), _T("?"));
+		if (Names == _T("?")) {
+			const UINT Folds = theApp.GetProfileInt(SECTION, _T("Folded"), 0);
+			for (int Old = 0; Old < static_cast<int>(sizeof(OLD_KINDS) / sizeof(OLD_KINDS[0])); ++Old)
+				for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
+					if ((Folds & (1u << Old)) != 0 && std::string(OLD_KINDS[Old]) == ftapi::ProblemKindId(k))
+						Folded[k] = true;
+		}
+		else
+			for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
+				Folded[k] = (_T(",") + Names + _T(",")).Find(_T(",") + CString(ftapi::ProblemKindId(k)) + _T(",")) >= 0;
 		Auto = theApp.GetProfileInt(SECTION, _T("Check as you edit"), 1) != 0;
 		const UINT Saved = theApp.GetProfileInt(SECTION, _T("Play order"), CBarsPlayer::ALONE_THEN_MIX);
 		Order = Saved == CBarsPlayer::ALONE ? CBarsPlayer::ALONE : Saved == CBarsPlayer::MIX ? CBarsPlayer::MIX : CBarsPlayer::ALONE_THEN_MIX;
@@ -461,11 +477,11 @@ struct CProblemsPanelWnd::Impl {
 
 	void SaveFolds() const
 	{
-		UINT Folds = 0;
+		CString Names;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k)
 			if (Folded[k])
-				Folds |= 1u << k;
-		theApp.WriteProfileInt(SECTION, _T("Folded"), Folds);
+				Names += (Names.IsEmpty() ? _T("") : _T(",")) + CString(ftapi::ProblemKindId(k));
+		theApp.WriteProfileString(SECTION, _T("Folded kinds"), Names);
 	}
 
 	// The lines
@@ -1404,7 +1420,7 @@ struct CProblemsPanelWnd::Impl {
 	{
 		static const LPCTSTR WORDS[ftapi::PROBLEM_KINDS][2] = {
 			{ _T("note vanishes"), _T("notes vanish") }, { _T("note clicks"), _T("notes click") }, { _T("clash"), _T("clashes") },
-			{ _T("out of range"), _T("out of range") }, { _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
+			{ _T("warble"), _T("warbles") }, { _T("out of range"), _T("out of range") }, { _T("silent bar"), _T("silent bars") }, { _T("busy bar"), _T("busy bars") },
 			{ _T("outside the key"), _T("outside the key") }, { _T("lead holds steady"), _T("leads hold steady") },
 			{ _T("melody in pieces"), _T("melodies in pieces") }, { _T("bass to fix"), _T("bass parts to fix") },
 			{ _T("sound unsuited"), _T("sounds unsuited") }, { _T("fader doing the mix"), _T("faders doing the mix") },
