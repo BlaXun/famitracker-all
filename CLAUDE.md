@@ -1708,7 +1708,10 @@ arpeggios and its own counted) that `RoleOfChord` accounts for in the key
 (borrowed, leading to another chord, the Neapolitan, a mode's tension; not a
 surprise), and the class's other notes in that bar with it. check_song
 does so only while under `KEY_COLOR_SHARE` of the notes fall outside the key,
-so a key chosen wrong keeps every finding (`TestKeyCheckChords`).
+so a key chosen wrong keeps every finding (`TestKeyCheckChords`). Written back
+section by section, the soundtrack's 57 finished tracks and cues ask one key
+question with this rule, the same one as with write_notes' old rule (any major
+or minor triad with the other parts' notes left out).
 `what_next`'s count of steps done never falls along a walk (every
 `FollowWhatNext` checks it, `StepsDoneOf`): its melody milestone is the first
 part's (a later part's melody, after its chords, is the form's, which isn't
