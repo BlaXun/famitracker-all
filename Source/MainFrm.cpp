@@ -134,8 +134,8 @@ const int REPEAT_DELAY = 20;
 const int REPEAT_TIME = 200;
 
 // The panels along the bottom (CMainFrame::PlaceBottomPanel): the bands they lie in, and the least the note views keep
-// besides a third of the window: the piano roll's buttons, ruler, chord strip and status line, and about an octave and
-// a half of its lanes
+// before the panels get theirs (then a third of the window): the piano roll's buttons, ruler, chord strip and status
+// line, and an octave and a half of its lanes
 const int BOTTOM_BANDS = 2;				// the mixer's along the window's edge, then the row of the others
 const int NOTE_VIEWS_LEAST = 240;
 
@@ -2775,21 +2775,34 @@ std::vector<CMainFrame::bottom_panel_t> CMainFrame::BottomPanels() const
 	// Those that show (or are about to: CControlBar::IsVisible counts a show the layout is to make), in ArrangeBars'
 	// order, as their WM_SIZEPARENT comes
 	std::vector<bottom_panel_t> Panels;
-	const auto Add = [&Panels](CControlBar *pBar, int Band, int Height, int Least, int Weight) {
+	const auto Add = [&Panels](CControlBar *pBar, int Band, int Height, int Weight) {
 		if (pBar != NULL && pBar->GetSafeHwnd() != NULL && pBar->IsVisible()) {
-			const bottom_panel_t Panel = { pBar, Band, Height, Least, Weight };
+			const bottom_panel_t Panel = { pBar, Band, Height, Weight };
 			Panels.push_back(Panel);
 		}
 	};
 	if (m_pMixerBar != NULL)
-		Add(m_pMixerBar, 0, m_pMixerBar->BottomHeight(), m_pMixerBar->LeastHeight(), 1);
+		Add(m_pMixerBar, 0, m_pMixerBar->BottomHeight(), 1);
 	if (m_pProblemsBar != NULL && !m_pProblemsBar->IsOnRight())
-		Add(m_pProblemsBar, 1, m_pProblemsBar->BottomHeight(), m_pProblemsBar->LeastHeight(), m_pProblemsBar->RowWeight());
+		Add(m_pProblemsBar, 1, m_pProblemsBar->BottomHeight(), m_pProblemsBar->RowWeight());
 	if (m_pWhatNextBar != NULL && !m_pWhatNextBar->IsOnRight())
-		Add(m_pWhatNextBar, 1, m_pWhatNextBar->BottomHeight(), m_pWhatNextBar->LeastHeight(), m_pWhatNextBar->RowWeight());
+		Add(m_pWhatNextBar, 1, m_pWhatNextBar->BottomHeight(), m_pWhatNextBar->RowWeight());
 	if (m_pDrumGridBar != NULL && !m_pDrumGridBar->IsOnRight())
-		Add(m_pDrumGridBar, 1, m_pDrumGridBar->BottomHeight(), m_pDrumGridBar->LeastHeight(), m_pDrumGridBar->RowWeight());
+		Add(m_pDrumGridBar, 1, m_pDrumGridBar->BottomHeight(), m_pDrumGridBar->RowWeight());
 	return Panels;
+}
+
+int CMainFrame::BottomPanelLeast(const CControlBar *pBar, int Width) const
+{
+	if (pBar != NULL && pBar == m_pMixerBar)
+		return m_pMixerBar->LeastHeight();
+	if (pBar != NULL && pBar == m_pProblemsBar)
+		return m_pProblemsBar->LeastHeight(Width);
+	if (pBar != NULL && pBar == m_pWhatNextBar)
+		return m_pWhatNextBar->LeastHeight(Width);
+	if (pBar != NULL && pBar == m_pDrumGridBar)
+		return m_pDrumGridBar->LeastHeight(Width);
+	return 0;
 }
 
 void CMainFrame::RecalcLayout(BOOL bNotify)
@@ -2815,19 +2828,27 @@ bool CMainFrame::PlaceBottomPanel(CControlBar *pBar, AFX_SIZEPARENTPARAMS *pLayo
 	const CRect Room(pLayout->rect);
 	if (!m_bBottomPlanned || m_BottomHeights.size() != static_cast<size_t>(BOTTOM_BANDS)) {
 		m_bBottomPlanned = true;
-		// The first of them in this layout: every band's height, the note views keeping their share of the room
+		// The first of them in this layout: every band's height, the note views keeping their share of the room. The
+		// least a panel is usable at depends on its width (the drum grid's buttons go on more lines), so the widths first
 		std::vector<panel_band_t> Bands(static_cast<size_t>(BOTTOM_BANDS));
-		for (size_t i = 0; i < Panels.size(); ++i) {
-			panel_band_t &Band = Bands[static_cast<size_t>(Panels[i].Band)];
-			Band.Wanted = std::max(Band.Wanted, Panels[i].Height);
-			Band.Least = std::max(Band.Least, Panels[i].Least);
+		for (int b = 0; b < BOTTOM_BANDS; ++b) {
+			std::vector<int> Weights;
+			for (size_t i = 0; i < Panels.size(); ++i)
+				if (Panels[i].Band == b)
+					Weights.push_back(Panels[i].Weight);
+			const std::vector<int> Widths = ShareRow(Weights, Room.Width());
+			panel_band_t &Band = Bands[static_cast<size_t>(b)];
+			for (size_t i = 0, k = 0; i < Panels.size(); ++i)
+				if (Panels[i].Band == b) {
+					Band.Wanted = std::max(Band.Wanted, Panels[i].Height);
+					Band.Least = std::max(Band.Least, BottomPanelLeast(Panels[i].pBar, Widths[k++]));
+				}
 		}
 		CRect Client;
 		GetClientRect(&Client);
 		m_iBottomRoom = Room.Height();
 		m_iBottomKeep = NoteViewsKeep(Client.Height(), SY(NOTE_VIEWS_LEAST), m_iBottomRoom);
-		m_BottomBands = Bands;
-		m_BottomHeights = FitPanelBands(Bands, m_iBottomRoom, m_iBottomKeep);
+		m_BottomHeights = FitPanelBands(Bands, m_iBottomRoom, m_iBottomKeep, SY(NOTE_VIEWS_LEAST));
 	}
 	const int Band = Panels[Me].Band;
 	bool First = true;
@@ -2863,8 +2884,8 @@ int CMainFrame::BottomPanelMost(const CControlBar *pBar) const
 {
 	const std::vector<bottom_panel_t> Panels = BottomPanels();
 	for (size_t i = 0; i < Panels.size(); ++i)
-		if (Panels[i].pBar == pBar && m_BottomHeights.size() == m_BottomBands.size())
-			return PanelBandMost(m_BottomBands, m_BottomHeights, static_cast<size_t>(Panels[i].Band), m_iBottomRoom, m_iBottomKeep);
+		if (Panels[i].pBar == pBar)
+			return PanelBandMost(m_BottomHeights, static_cast<size_t>(Panels[i].Band), m_iBottomRoom, m_iBottomKeep);
 	return 0;
 }
 

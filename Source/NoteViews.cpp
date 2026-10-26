@@ -57,51 +57,33 @@ bool RollFillsPattern(const note_views_t &Views)
 	return Views.Roll && !Views.Pattern;
 }
 
-std::vector<int> FitPanelBands(const std::vector<panel_band_t> &Bands, int Room, int Keep)
+std::vector<int> FitPanelBands(const std::vector<panel_band_t> &Bands, int Room, int Keep, int KeepLeast)
 {
-	const int Budget = std::max(0, Room - std::max(0, Keep));
-	std::vector<int> Heights(Bands.size());
-	int Total = 0, Least = 0;
-	for (size_t i = 0; i < Bands.size(); ++i) {
-		const int Low = std::max(0, Bands[i].Least);
-		Heights[i] = std::max(Low, Bands[i].Wanted);
-		Total += Heights[i];
-		Least += Low;
-	}
-	// Short of room: the later bands give way first, each down to its least
-	for (size_t i = Bands.size(); i-- > 0 && Total > Budget; ) {
-		const int Give = std::min(Total - Budget, Heights[i] - std::max(0, Bands[i].Least));
-		if (Give > 0) {
-			Heights[i] -= Give;
-			Total -= Give;
-		}
-	}
-	// Still short: every band under its least, in proportion to it (what rounding leaves to the first)
-	if (Total > Budget) {
-		int Left = Budget;
-		for (size_t i = 0; i < Bands.size(); ++i) {
-			Heights[i] = Least > 0 ? static_cast<int>(static_cast<long long>(std::max(0, Bands[i].Least)) * Budget / Least) :
-				Budget / static_cast<int>(Bands.size());
-			Left -= Heights[i];
-		}
-		if (!Heights.empty())
-			Heights[0] += std::max(0, Left);
-	}
+	std::vector<int> Heights(Bands.size(), 0);
+	int Left = std::max(0, Room);
+	const auto Take = [&Left](int Want) {
+		const int Got = std::max(0, std::min(Left, Want));
+		Left -= Got;
+		return Got;
+	};
+	const int Views = std::max(0, Keep), ViewsLeast = std::max(0, std::min(KeepLeast, Views));
+	Take(ViewsLeast);
+	for (size_t i = Bands.size(); i-- > 0; )
+		Heights[i] = Take(std::min(Bands[i].Least, Bands[i].Wanted));
+	Take(Views - ViewsLeast);
+	for (size_t i = Bands.size(); i-- > 0; )
+		Heights[i] += Take(Bands[i].Wanted - Heights[i]);
 	return Heights;
 }
 
-int PanelBandMost(const std::vector<panel_band_t> &Bands, const std::vector<int> &Heights, std::size_t Which, int Room, int Keep)
+int PanelBandMost(const std::vector<int> &Heights, std::size_t Which, int Room, int Keep)
 {
-	if (Which >= Bands.size() || Which >= Heights.size())
+	if (Which >= Heights.size())
 		return 0;
-	const int Budget = std::max(0, Room - std::max(0, Keep));
-	int Used = 0;
+	int Used = std::max(0, Keep);
 	for (size_t i = 0; i < Heights.size(); ++i)
 		Used += Heights[i];
-	int Most = Heights[Which] + std::max(0, Budget - Used);
-	for (size_t i = Which + 1; i < Bands.size() && i < Heights.size(); ++i)
-		Most += std::max(0, Heights[i] - std::max(0, Bands[i].Least));
-	return std::max(Most, Heights[Which]);
+	return Heights[Which] + std::max(0, Room - Used);
 }
 
 int NoteViewsKeep(int ClientHeight, int Least, int Room)

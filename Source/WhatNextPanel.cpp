@@ -58,6 +58,7 @@ LPCTSTR SECTION = _T("What next panel");	// registry section: open, where, its s
 const int DEFAULT_HEIGHT = 150;			// along the bottom
 const int DEFAULT_WIDTH = 340;			// along the right
 const int MIN_HEIGHT = 70;
+const int ROW_LEAST = 150;				// beside the others along the bottom: its step's title, why and buttons
 const int MIN_WIDTH = 220;
 const int MIN_VIEW_WIDTH = 300;			// what the pattern editor keeps at least, beside the panel
 const int DIVIDER = 5;
@@ -1559,9 +1560,10 @@ int CWhatNextBar::Divider() const
 	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
 }
 
-int CWhatNextBar::LeastHeight() const
+int CWhatNextBar::LeastHeight(int Width) const
 {
-	return SY(MIN_HEIGHT);
+	// Its header and stages, the step's title, a few lines of why and its buttons (Do it), wrapped as narrow as it may be
+	return std::max(SY(MIN_HEIGHT), SY(ROW_LEAST));
 }
 
 int CWhatNextBar::RowWeight() const

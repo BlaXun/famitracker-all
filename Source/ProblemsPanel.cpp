@@ -1956,9 +1956,10 @@ int CProblemsBar::Divider() const
 	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
 }
 
-int CProblemsBar::LeastHeight() const
+int CProblemsBar::LeastHeight(int Width) const
 {
-	return SY(MIN_HEIGHT);
+	// Its header and two lines
+	return std::max(SY(MIN_HEIGHT), Divider() + SY(HEADER_HEIGHT) + 2 * SY(LINE_HEIGHT));
 }
 
 int CProblemsBar::RowWeight() const

@@ -347,13 +347,14 @@ class CTutorialOverlay : public CWnd
 public:
 	CTutorialOverlay() : m_Colour(RING_COLOUR) {}
 	bool Create(CWnd *pOwner);
-	// Screen coordinates; Keep is the note, left clear whatever the windows'
-	// order (some systems put a layered window over the others). True if it changed.
-	bool Show(const CRect &Window, const CRect &Spot, const CRect &Keep, COLORREF Colour, CWnd *pBelow);
+	// Screen coordinates; Keep is the note and Keep2 the glossary (empty for
+	// none), left clear whatever the windows' order (some systems put a layered
+	// window over the others). True if it changed.
+	bool Show(const CRect &Window, const CRect &Spot, const CRect &Keep, const CRect &Keep2, COLORREF Colour, CWnd *pBelow);
 	void Hide();
 
 private:
-	CRect m_Window, m_Spot, m_Keep;
+	CRect m_Window, m_Spot, m_Keep, m_Keep2;
 	COLORREF m_Colour;
 };
 
@@ -364,15 +365,16 @@ bool CTutorialOverlay::Create(CWnd *pOwner)
 		CRect(0, 0, 1, 1), pOwner, 0) != FALSE;
 }
 
-bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, const CRect &Keep, COLORREF Colour, CWnd *pBelow)
+bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, const CRect &Keep, const CRect &Keep2, COLORREF Colour, CWnd *pBelow)
 {
 	if (GetSafeHwnd() == NULL || Window.IsRectEmpty())
 		return false;
-	if (Window == m_Window && Spot == m_Spot && Keep == m_Keep && Colour == m_Colour && IsWindowVisible())
+	if (Window == m_Window && Spot == m_Spot && Keep == m_Keep && Keep2 == m_Keep2 && Colour == m_Colour && IsWindowVisible())
 		return false;
 	m_Window = Window;
 	m_Spot = Spot;
 	m_Keep = Keep;
+	m_Keep2 = Keep2;
 	m_Colour = Colour;
 
 	const int Width = Window.Width(), Height = Window.Height();
@@ -404,6 +406,7 @@ bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, const CRect 
 	const DWORD Ring = 0xFF000000u | (static_cast<DWORD>(GetRValue(Colour)) << 16) | (static_cast<DWORD>(GetGValue(Colour)) << 8) |
 		GetBValue(Colour);
 	const CRect Clear = Keep.IsRectEmpty() ? CRect() : Keep - Window.TopLeft();
+	const CRect Clear2 = Keep2.IsRectEmpty() ? CRect() : Keep2 - Window.TopLeft();
 	DWORD *pPixels = static_cast<DWORD*>(pBits);
 	for (int y = 0; y < Height; ++y) {
 		DWORD *pRow = pPixels + static_cast<size_t>(y) * static_cast<size_t>(Width);
@@ -416,6 +419,11 @@ bool CTutorialOverlay::Show(const CRect &Window, const CRect &Spot, const CRect 
 		}
 		if (y >= Clear.top && y < Clear.bottom) {
 			const int Left = std::max(0, static_cast<int>(Clear.left)), Right = std::min(Width, static_cast<int>(Clear.right));
+			for (int x = Left; x < Right; ++x)
+				pRow[x] = 0;
+		}
+		if (y >= Clear2.top && y < Clear2.bottom) {
+			const int Left = std::max(0, static_cast<int>(Clear2.left)), Right = std::min(Width, static_cast<int>(Clear2.right));
 			for (int x = Left; x < Right; ++x)
 				pRow[x] = 0;
 		}
@@ -1204,8 +1212,27 @@ void CTutorialBubble::KeepGlossaryClear(const CRect &Spot)
 			Best = Try;
 		}
 	}
+	// No place clear at its size (a big part on a full screen): smaller, in the room below, above, right or left of the
+	// part, at the far end from the note (as small as the glossary goes, GlossaryDlg.cpp's Place)
+	const CRect Rooms[] = {
+		CRect(Work.left, Around.bottom + Gap, Work.right, Work.bottom), CRect(Work.left, Work.top, Work.right, Around.top - Gap),
+		CRect(Around.right + Gap, Work.top, Work.right, Work.bottom), CRect(Work.left, Work.top, Around.left - Gap, Work.bottom),
+	};
+	for (size_t i = 0; i < sizeof(Rooms) / sizeof(Rooms[0]) && Least > 0; ++i) {
+		const CRect &Free = Rooms[i];
+		if (Free.Width() < SX(300) || Free.Height() < SY(240))
+			continue;
+		const CSize Fits(std::min(static_cast<int>(Size.cx), static_cast<int>(Free.Width())), std::min(static_cast<int>(Size.cy),
+			static_cast<int>(Free.Height())));
+		const bool Right = Note.IsRectEmpty() || Note.CenterPoint().x < Free.CenterPoint().x;
+		const CRect Try(CPoint(Right ? Free.right - Fits.cx : Free.left, Free.top), Fits);
+		if (Covers(Try) == 0) {
+			Least = 0;
+			Best = Try;
+		}
+	}
 	if (Best != Glossary)
-		pGlossary->SetWindowPos(NULL, Best.left, Best.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		pGlossary->SetWindowPos(NULL, Best.left, Best.top, Best.Width(), Best.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 // The dialog or message box FamiTracker has open in front of its window,
@@ -1361,7 +1388,10 @@ void CTutorialBubble::Tick()
 		CRect Note;
 		GetWindowRect(&Note);
 		if (HasSpot) {
-			if (m_Overlay.Show(Window, Spot, Note, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, Front ? NULL : this))
+			CRect Glossary;		// not dimmed: it's open to be read
+			if (GlossaryWindow() != NULL)
+				GlossaryWindow()->GetWindowRect(&Glossary);
+			if (m_Overlay.Show(Window, Spot, Note, Glossary, m_dwDone != 0 ? DONE_COLOUR : RING_COLOUR, Front ? NULL : this))
 				Raise = true;
 		}
 		else

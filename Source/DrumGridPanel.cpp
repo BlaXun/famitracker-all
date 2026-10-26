@@ -68,6 +68,7 @@ const int SMALL_BUTTON = 26;			// the < and > buttons
 const int TEXT_PAD = 4;
 const int LINE_GAP = 4;
 const int LANE_MOST = 30;				// a drum's line is this tall at most
+const int LANE_LEAST = 12;				// and at least, for the main window to keep it usable (HeightFor)
 const int STATUS_HEIGHT = 16;
 
 // A colour for each drum, and grey for other notes
@@ -171,6 +172,7 @@ public:
 	void PaintStep(int Step, int Lane, int Mode, bool Replace);
 	void Commit();
 	void Hint(LPCTSTR Text);
+	int HeightFor(int Width) const;		// the least it's usable at that wide (CDrumGridBar::LeastHeight)
 
 protected:
 	afx_msg void OnPaint();
@@ -985,6 +987,18 @@ void CDrumGridPanelWnd::Layout()
 	Invalidate(FALSE);
 }
 
+// Its buttons on as many lines as Layout flows them into at Width, a grid of short lanes and the news under it
+int CDrumGridPanelWnd::HeightFor(int Width) const
+{
+	const int Inner = std::max(1, Width - 2 * SX(MARGIN));
+	const std::vector<int> Widths(m_iWidths, m_iWidths + CONTROLS);
+	const std::vector<int> Groups(CONTROL_GROUPS, CONTROL_GROUPS + CONTROLS);
+	std::vector<drum_place_t> Places;
+	const int Lines = FlowDrumControls(Widths, Groups, Inner, SX(GAP), SX(GROUP_GAP), Places);
+	return SY(MARGIN) + Lines * (SY(BUTTON_HEIGHT) + SY(LINE_GAP)) + SY(LANE_LEAST) * (DRUM_LANES + 1) + SY(3) + SY(STATUS_HEIGHT) +
+		SY(MARGIN);
+}
+
 void CDrumGridPanelWnd::OnSize(UINT nType, int cx, int cy)
 {
 	CWnd::OnSize(nType, cx, cy);
@@ -1110,9 +1124,10 @@ int CDrumGridBar::Divider() const
 	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
 }
 
-int CDrumGridBar::LeastHeight() const
+int CDrumGridBar::LeastHeight(int Width) const
 {
-	return SY(MIN_HEIGHT);
+	// Its buttons on as many lines as that width takes, and short lanes
+	return std::max(SY(MIN_HEIGHT), Divider() + (m_pPanel != NULL ? m_pPanel->HeightFor(Width) : 0));
 }
 
 int CDrumGridBar::RowWeight() const

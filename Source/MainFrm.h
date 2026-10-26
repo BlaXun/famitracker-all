@@ -264,13 +264,13 @@ private:  // control bar embedded members
 	struct bottom_panel_t {
 		CControlBar *pBar;
 		int Band;			// 0 the mixer's, along the edge; 1 the row above it
-		int Height, Least;	// the height it was made (dragged to), the least it's usable at
+		int Height;			// the height it was made (dragged to)
 		int Weight;			// its share of its row's width
 	};
 	std::vector<bottom_panel_t> BottomPanels() const;
+	int		BottomPanelLeast(const CControlBar *pBar, int Width) const;	// the least it's usable at, that wide
 	std::vector<bottom_panel_t> m_BottomLayout;		// those of the layout under way, taken as it starts...
 	bool				m_bBottomPlanned;		// ...and whether its first one has worked out the bands' heights
-	std::vector<panel_band_t> m_BottomBands;
 	std::vector<int>	m_BottomHeights;
 	int					m_iBottomRoom, m_iBottomKeep;
 	CRect				m_rcBottomBand;

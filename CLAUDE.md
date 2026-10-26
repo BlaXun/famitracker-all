@@ -340,13 +340,16 @@ creation calls it. Those along the bottom the main window places itself, from
 each one's `WM_SIZEPARENT` (`CMainFrame::PlaceBottomPanel`, since
 `feat-newcomer-fixes`): the mixer along the edge, the problems panel, What
 next and the drum grid side by side in one row above it (`ShareRow`, a
-dragged line sets the whole row's height: `BottomPanelDragged`), each band as
-tall as it was made while the note views keep about a third of the window
-(`NoteViewsKeep`), else the row gives way first, then the mixer, then both
-under their least (`FitPanelBands` in `NoteViews.cpp`; with all four open the
-piano roll had one lane left on a window 1000 pixels high). The panels are
-listed as `CMainFrame::RecalcLayout` starts, since each one's show is made
-during the layout (`RecalcDelayShow`), which forgets it was to be made. The drum grid is a panel, `CDrumGridBar`, docked along
+dragged line sets the whole row's height: `BottomPanelDragged`). The room
+goes first to the note views as far as enough lanes to play in, then to the
+row's and the mixer's least (`BottomPanelLeast`, at the panel's width: the
+drum grid's buttons take more lines when narrow, `HeightFor`), then to the
+note views as far as a third of the window (`NoteViewsKeep`), then to the
+bands as tall as they were made (`FitPanelBands` in `NoteViews.cpp`; with all
+four open the piano roll had one lane left on a window 1000 pixels high). The
+panels are listed as `CMainFrame::RecalcLayout` starts, since each one's show
+is made during the layout (`RecalcDelayShow`), which forgets it was to be
+made. The drum grid is a panel, `CDrumGridBar`, docked along
 the bottom or the right like the problems panel: it shows the bar the
 cursor is in (`FollowCursor` in `DrumGrid.cpp`; its < and > keep a bar until
 the cursor moves), flows its buttons into lines (`FlowDrumControls`), writes
