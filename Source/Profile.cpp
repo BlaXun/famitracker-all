@@ -300,7 +300,9 @@ bool AskForProfile(CWnd *pParent)
 	Text.Format(_T("Would you like FamiTracker made simpler for writing game music?\n\n")
 		_T("- New songs start with the VRC6 chip, %d BPM and instruments ready to play.\n")
 		_T("- The tempo shows as BPM instead of speed and tempo.\n")
-		_T("- Rarely used menu items are hidden.\n\n")
+		_T("- Rarely used menu items are hidden.\n")
+		_T("- The piano roll shows what each chord does and lights the safest notes on a beat (both can be switched off ")
+		_T("in its Chords menu).\n\n")
 		_T("Songs stay ordinary FamiTracker songs either way. View > Profile changes this at any time, ")
 		_T("and View > Show everything brings back all of FamiTracker."), TEMPLATE_BPM);
 	const bool Yes = pParent->MessageBox(Text, _T("FamiTracker"), MB_YESNO | MB_ICONQUESTION) == IDYES;

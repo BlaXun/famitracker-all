@@ -134,3 +134,10 @@ bool CActionHandler::CanRedo() const
 {
 	return m_iRedoLevel > 0;
 }
+
+void CActionHandler::ClearRedo()
+{
+	for (int i = m_iUndoLevel; i < m_iUndoLevel + m_iRedoLevel && i <= MAX_LEVELS; ++i)
+		SAFE_RELEASE(m_pActionStack[i]);
+	m_iRedoLevel = 0;
+}

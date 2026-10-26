@@ -161,8 +161,9 @@ struct VoiceCells {
 
 // The cells the plan writes into its voices' channels, voice v playing the song's instrument Instruments[v] (Song's
 // instruments say which end their notes with a release), as the tools write parts (BuildPart): what follows each voice
-// plays on as before, and a voice held to the end of a song that loops stops on the last row, rather than ringing on
-// into the loop on a channel that has nothing there
+// plays on as before, and a voice held to the end of a song that loops stops on the last row it plays (released when its
+// sound fades on a release), rather than ringing on into the loop on a channel that has nothing there: the song's last
+// row, or the one a jump (Bxx) or a skip (Dxx) goes back from
 std::vector<VoiceCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan, const std::vector<int> &Instruments,
 	std::vector<std::string> &Warnings);
 

@@ -259,12 +259,46 @@ void TestMenuClick()
 
 }	// namespace
 
+// Strong notes on the beat follow the cursor, the mouse over the notes with Draw or Paint, and a note being placed
+void TestStrongNotesRow()
+{
+	roll_strong_t State;
+	State.CursorRow = 40;
+	CHECK(StrongNotesRow(State) == 40);			// the mouse isn't over the notes
+	State.MouseRow = 70;
+	CHECK(StrongNotesRow(State) == 70);			// Draw: where a click would add a note
+	State.Tool = ROLL_TOOL_PAINT;
+	CHECK(StrongNotesRow(State) == 70);
+	State.Tool = ROLL_TOOL_SELECT;
+	CHECK(StrongNotesRow(State) == 40);			// selecting places nothing: the cursor's
+	State.Tool = ROLL_TOOL_DRAW;
+	State.PlacingClip = true;
+	CHECK(StrongNotesRow(State) == 40);			// a clip brings its own chords
+	State.PlacingClip = false;
+	State.Placing = ROLL_PLACING_NOTE;
+	State.PlaceRow = 64;
+	CHECK(StrongNotesRow(State) == 64);			// a note being drawn or moved: where it starts, wherever the mouse is
+	State.MouseRow = -1;
+	CHECK(StrongNotesRow(State) == 64);
+	State.Tool = ROLL_TOOL_SELECT;
+	CHECK(StrongNotesRow(State) == 64);			// moving a note with the Select tool too
+	State.Placing = ROLL_PLACING_OTHER;
+	State.MouseRow = 70;
+	State.Tool = ROLL_TOOL_DRAW;
+	CHECK(StrongNotesRow(State) == 40);			// a box, the ruler, erasing: the cursor's
+	State.Placing = ROLL_PLACING_NONE;
+	State.MouseRow = -1;
+	State.CursorRow = -1;
+	CHECK(StrongNotesRow(State) == -1);
+}
+
 int main()
 {
 	TestFlow();
 	TestOverflow();
 	TestHints();
 	TestMenuClick();
+	TestStrongNotesRow();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

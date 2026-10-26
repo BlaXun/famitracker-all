@@ -194,6 +194,9 @@ shows; the songs themselves stay ordinary modules.
   work).
 - "Everything" is FamiTracker as it was, and View > Show everything switches
   between the two.
+- The piano roll's chords with roles and strong notes on the beat (16)
+  start on in "VRC6 game music" and off in "Everything"; each profile
+  remembers its own.
 
 Not done from the plan: hiding the DPCM channel (the pattern editor has no
 way to hide a channel) and choosing the starter instruments.
@@ -226,7 +229,10 @@ selection. Each voice gets a quiet sound for its chip (on the VRC6 Plus's
 soft layer a string pad of its own, since two N163 channels can't share
 one). When fewer channels are free than the chord has notes, it says so and
 offers fewer voices or the chord as an arpeggio on one channel; Again puts
-the same chord on the next bar. One Ctrl+Z takes it back.
+the same chord on the next bar. One Ctrl+Z takes it back. A voice held to
+where the song goes back to its loop stops on the last row that plays
+(released, where its sound fades), also when a jump (Bxx) goes back before
+the last pattern's end, so it doesn't ring on into the loop.
 
 Mood starters (October 2026, on `feat-piano-polish`): the Groove button
 lays down drums, a bass line and chords for a mood, the moods of Start from
@@ -666,9 +672,24 @@ each with the user's words:
 - **Chords with roles** ("yes ... but that should be a toggle maybe"): the
   piano roll's chord strip colors each chord by what it does (home, away,
   tension, back home) and gives it a feel word, switched on and off from
-  the piano roll.
+  the piano roll. Done (October 2026, on `feat-roll-helpers`): each chord
+  in the strip has its role's color and a mark of its own (home a house,
+  away an arrow, tension a bolt, and color, a chord from outside the key, a
+  diamond), a legend sits at the right of the status line, and pointing at
+  a chord says what it does in the track's key ("tension: leans toward
+  home", "back home: the tension settles", "borrowed from minor:
+  bittersweet", "leads to G: a push on the way"), in every mode the Key
+  menu has. "Show what each chord does", at the end of the Chords and Key
+  menus, switches it.
 - **Strong notes on the beat** (yes): the piano roll lights the notes of
-  the chord sounding under the cursor, the safest notes on a beat.
+  the chord sounding under the cursor, the safest notes on a beat. Done
+  (on `feat-roll-helpers`): the lanes of the chord at the cursor are lit
+  while it sounds, more strongly than the key's and its root the most, and
+  so are its keys on the keyboard; while you place notes (Draw or Paint,
+  or a note dragged) it's the chord where the mouse is. "Light the chord's
+  notes at the cursor", beside the first toggle, switches it. Both start
+  on in the game music profile and off in Everything, and each profile
+  remembers its own.
 - **Song shapes in one click** ("yes!"): a command that lays out a song's
   named sections for its kind (a lively stage, a calm night, a town, a boss,
   a short loop), each with a line on what it's for.

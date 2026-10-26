@@ -59,8 +59,8 @@ const Section SECTIONS[] = {
 		"Attacks bloom (9 or 11 to 15 in 2-3 frames), the first "
 		"frame clicks at another duty (12.5% before a 25% or 50% body), long notes are struck again inside the envelope (a dip "
 		"of 4-5 levels and a rise, every eighth), quick pitch flicks on the attack, decays in steps, and an echo built into "
-		"the envelope (the note fades to 1-2, then comes back at 3-4 and fades). design_instrument kind \"bloom lead\" or "
-		"attack bloom, click, restrike_beats 0.5, echo, attack_pitch flick.\n"
+		"the envelope (the note fades to 1-2, then comes back at 3-4 and fades). design_instrument kind \"bloom lead\" with "
+		"restrike_beats 0.5 (it holds without it), or attack bloom, click, restrike_beats 0.5, echo, attack_pitch flick.\n"
 		"- The pulses play quietly (volume column 6-9 of 15) and close together: an echo of the lead a row behind (5 of 14 "
 		"Bucky tracks), the two in rhythm on different notes (chords between them), or doubling in unison with different "
 		"duties and volumes (12.5% at 9 with 75% at 5: thick, like a chorus).\n"
@@ -426,8 +426,9 @@ const Section SECTIONS[] = {
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"
-		"- A lead with life that stands out: the singing lead, brass or strings presets, design_instrument kind bloom lead or "
-		"stepped lead, a duty click; scoops into long notes after leaps and falls at phrase ends where they fit (polish "
+		"- A lead with life that stands out: the singing lead, brass or strings presets, design_instrument kind bloom lead with "
+		"restrike_beats 0.5 (struck again every eighth, as the classic action leads were) or stepped lead, a duty click; "
+		"scoops into long notes after leaps and falls at phrase ends where they fit (polish "
 		"touches scoops and falls, on chosen bars).\n"
 		"- Drums that drive: a sampled kick and snare under noise hats (add_drums with kit samples, or make_groove), fills "
 		"where phrases end, busier toward a climax.\n"

@@ -748,6 +748,9 @@ std::vector<VoiceCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan,
 	}
 	const SongFlow Flow = FollowSong(Cells, Columns, Song.PatternLength, Song.Frames);
 	const int LoopRow = Flow.LoopRow(Song.PatternLength);
+	// ...and where it goes back there: after its last row, or where a jump (Bxx) or a skip (Dxx) leaves its last frame early,
+	// so the rows after it never play (a release written there would leave the voice ringing on into the loop)
+	const int SongEnd = LoopRow >= 0 ? std::min(Song.Rows(), Flow.EndRow(Song.PatternLength)) : Song.Rows();
 	std::vector<bool> Releases(static_cast<size_t>(NO_INSTRUMENT), false);
 	for (size_t i = 0; i < Song.Instruments.size(); ++i)
 		if (Song.Instruments[i].Index >= 0 && Song.Instruments[i].Index < NO_INSTRUMENT)
@@ -764,11 +767,15 @@ std::vector<VoiceCells> PlanCells(const HelperSong &Song, const ChordPlan &Plan,
 		std::vector<PartNote> Notes = Voice.Notes;
 		for (size_t i = 0; i < Notes.size(); ++i)
 			Notes[i].Instrument = Instrument;
-		if (!Notes.empty() && Plan.End >= Song.Rows() && LoopRow >= 0) {
-			PartNote &Last = Notes.back();
+		if (!Notes.empty() && Plan.End >= SongEnd && Plan.First < SongEnd && LoopRow >= 0) {
+			// The note sounding on the song's last row (any after it never play), held on past it
+			size_t Last = Notes.size();
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Row < SongEnd - 1)
+					Last = i;
 			const Cell AtLoop = LoopRow < static_cast<int>(Channel.Cells.size()) ? Channel.Cells[static_cast<size_t>(LoopRow)] : Cell();
-			if (Last.Row + Last.Rows >= Plan.End && Last.Rows > 1 && !AtLoop.HasNote() && !AtLoop.IsEnd())
-				Last.Rows = Plan.End - 1 - Last.Row;
+			if (Last < Notes.size() && Notes[Last].Row + Notes[Last].Rows >= SongEnd && !AtLoop.HasNote() && !AtLoop.IsEnd())
+				Notes[Last].Rows = SongEnd - 1 - Notes[Last].Row;
 		}
 		Options.EffectColumns = Channel.EffectColumns;
 		VoiceCells Written;

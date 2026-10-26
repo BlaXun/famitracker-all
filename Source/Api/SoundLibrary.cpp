@@ -410,9 +410,9 @@ LibraryPreset MakePreset(const PresetRow &Row)
 // words FindPreset, Find5BSound or FindVrc7Patch take for another sound
 const PresetRow PRESET_ROWS[] = {
 	// The 2A03's pulses: leads
-	{ HOME_PULSE, "lead", "bloom lead", "blooms in with a duty click, struck again as it holds, a soft vibrato that waits: a "
-		"lead that speaks on every note, for action stages", "bloom click restrike vibrato action", "a2 f10 p15 d6 s12 r6 u1 k x12 "
-		"vibsoft@24/12" },
+	{ HOME_PULSE, "lead", "bloom lead", "blooms in with a duty click, settles to 12 and holds, a soft vibrato that waits: a "
+		"lead that speaks on every note, as design_instrument's bloom lead (struck again with restrike_beats there)", "bloom click "
+		"settle vibrato stage action", "a2 f10 p15 d6 s12 r6 u1 k vibsoft@24/12" },
 	{ HOME_PULSE, "lead", "stepped lead", "holds full a moment, then steps down a few levels at a time: a punchy lead for fast "
 		"tunes", "stepped decay action fast", "p15 d36 steps s9 r7 u2" },
 	{ HOME_PULSE, "lead", "clipped lead", "a bright 25% lead that speaks with a click and steps down to a quiet hold: clipped and "
