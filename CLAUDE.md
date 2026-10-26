@@ -1193,7 +1193,7 @@ song's melody and register (`AddBackingTool`'s `Tune`, `UsualLowOf`,
 over C-2 (`ChordRegister`, `RoomyPitch`'s `Least`), voices chords an octave
 under the tune (`VOICES_UNDER`) with the root at the bottom where no bass
 holds it (`VoicedChordParts`' `Rooted`), and keeps walking and syncopated
-basses' passing notes off the chords' and the melody's (`BassOptions::Above`,
+basses' passing notes off the chords' and the other parts' (`BassOptions::Above`,
 `BassRubs`, `CleanWalk`). `add_counter_melody` style calm holds a note a bar
 (`CounterOptions::Slow`) and says when there's no rest to answer in;
 `make_groove` makes its key the track's (`Commit`'s key) unless one is

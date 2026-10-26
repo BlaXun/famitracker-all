@@ -1364,16 +1364,21 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 					break;
 				const int To = k < 2 ? std::min(S.End, S.Row + Rows[k + 1]) : S.End;
 				int Pitch = k == 2 ? Fifth : Root;
+				// (the fifth gives way to the root where another part rubs a semitone against it: a counter-line arriving
+				// early on the next chord's root)
+				if (k == 2 && BassRubs(Pitch, Row, To - Row, C, O) && !BassRubs(Root, Row, To - Row, C, O))
+					Pitch = Root;
 				if (k == 2 && pNext != 0 && pNext->Bass != C.Bass && To - Row >= R) {
 					const int Target = BassPitch(pNext->Bass, Root, Low, High);
 					Add(Row, Half, Pitch);
 					// The approach: a semitone into the target, else a step of the scale or a whole tone into it, else the
-					// fifth held on; none a semitone from the chord's notes or the melody's sounding with it
+					// fifth held on, else the root; none a semitone from the chord's notes or the other parts' sounding with
+					// it (the fifth held on where every one does)
 					const int Toward = Target > Pitch ? 1 : -1;
-					const int Ways[4] = { Target - Toward, ScaleStep(Target, -Toward, O.K), Target - 2 * Toward, Pitch };
+					const int Ways[5] = { Target - Toward, ScaleStep(Target, -Toward, O.K), Target - 2 * Toward, Pitch, Root };
 					int Approach = Pitch;
-					for (int w = 0; w < 4; ++w)
-						if (w == 3 || !BassRubs(Ways[w], Row + Half, To - Row - Half, C, O)) {
+					for (int w = 0; w < 5; ++w)
+						if (!BassRubs(Ways[w], Row + Half, To - Row - Half, C, O)) {
 							Approach = Ways[w];
 							break;
 						}

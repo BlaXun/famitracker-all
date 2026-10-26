@@ -21400,8 +21400,9 @@ void TestBackingRegisters()
 }
 
 // add_chords_and_bass's walking and syncopated basses under broken chords (fixes-arrange): their passing notes keep off a
-// semitone from the chords' notes (and a semitone under one, which broken chords play over the bass) and from the
-// melody's sounding with them, as check_song hears a clash: 5 to 10 clashes in 16 bars on the soundtrack's tracks, none now
+// semitone from the chords' notes (and a semitone under one, which broken chords play over the bass) and from the other
+// parts' sounding with them (the melody, a counter-line on the sawtooth holding the next chord's root), as check_song hears
+// a clash: 5 to 10 clashes in 16 bars on the soundtrack's tracks, none of the bass's now
 void TestBassPassingNotes()
 {
 	const char *const STYLES[] = { "walking", "syncopated" };
@@ -21415,12 +21416,27 @@ void TestBassPassingNotes()
 			for (int b = 0; b < 4; ++b)
 				Song.Put(5, Bar * 16 + b * 4, TUNE[Bar % 8][b], Bar == 0 && b == 0 ? 0 : NO_INSTRUMENT, Bar == 0 && b == 0 ? 12 : -1);
 		Song.End(5, 255, NOTE_RELEASE);
+		// A counter-line on the sawtooth: each chord's third, then the next chord's root a beat and a half early
+		const char *const LINE[8][2] = { { "E-4", "A-3" }, { "C-4", "F-3" }, { "A-3", "G-3" }, { "B-3", "E-3" }, { "G-3", "A-3" },
+			{ "C-4", "D-4" }, { "F-4", "G-3" }, { "B-3", "C-4" } };
+		for (int Bar = 0; Bar < 16; ++Bar) {
+			Song.Put(7, Bar * 16, LINE[Bar % 8][0], Bar == 0 ? 0 : NO_INSTRUMENT, Bar == 0 ? 8 : -1);
+			Song.Put(7, Bar * 16 + 10, LINE[Bar % 8][1]);
+		}
+		Song.End(7, 255, NOTE_RELEASE);
 		ToolResult Result = Run(Song, "add_chords_and_bass", std::string("{\"chords\": \"| C | Am | F | G7 | Em | Am | Dm7 | G | C | Am | "
 			"F | G7 | Em | Am | Dm7 | G |\", \"chord_style\": \"broken\", \"bass_style\": \"") + STYLES[s] + "\", \"key\": \"C major\", "
-			"\"melody_channel\": \"VRC6 Pulse 1\"}");
+			"\"melody_channel\": \"VRC6 Pulse 1\", \"bass_channel\": \"2A03 Triangle\"}");
 		CHECK(!Result.IsError);
-		const Json Out = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
-		Check(IntegerOf(Out.Get("counts"), "clash") == 0, Run(Song, "check_song", "{}").Text.c_str(), __LINE__);
+		CHECK_HAS(Result.Text, " bass line on 2A03 Triangle");
+		const std::string Checked = Run(Song, "check_song", "{}").Text;
+		int Mine = 0;	// the clashes the bass is in
+		for (size_t At = Checked.find("Clash: "); At != std::string::npos; At = Checked.find("Clash: ", At + 1)) {
+			const size_t Stop = Checked.find('\n', At);
+			Mine += Checked.substr(At, Stop == std::string::npos ? std::string::npos : Stop - At).find("2A03 Triangle") != std::string::npos ?
+				1 : 0;
+		}
+		Check(Mine == 0, Checked.c_str(), __LINE__);
 	}
 }
 

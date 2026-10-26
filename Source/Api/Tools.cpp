@@ -7365,7 +7365,23 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		BassO.K = K;
 		BassRegister(BassO, S.Channel(BassChannel));
 		BassO.Volume = 15;
+		// ...and the other parts' that play on with it (a counter-line on the sawtooth: a walking bass under a song's broken
+		// chords grated against one 5 times in 16 bars)
 		BassO.Above = MelodySounds;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const ChannelInfo &Info = S.Channel(c);
+			const bool Voice = std::find(VoiceChannels.begin(), VoiceChannels.end(), c) != VoiceChannels.end();
+			if (c == Melody || c == BassChannel || c == ChordChannel || Voice || !IsMelodic(Info))
+				continue;
+			const std::vector<NoteInfo> &Notes = S.Notes(c);
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				if (Notes[i].Row >= End || Notes[i].Row + Notes[i].Rows <= First)
+					continue;
+				NoteInfo N = Notes[i];
+				N.Pitch = LandedPitch(N) - Written(Info, 0);
+				BassO.Above.push_back(N);
+			}
+		}
 		for (size_t i = 0; i < BassO.Above.size(); ++i)
 			BassO.Above[i].Pitch += Written(S.Channel(BassChannel), 0);
 		BassNotes = BassPart(Chords, Spans, BassO);

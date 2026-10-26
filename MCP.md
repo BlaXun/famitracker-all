@@ -1658,7 +1658,8 @@ avoid that, and gives it tools for each layer:
   arpeggio, driving, pedal. The walking and syncopated lines' passing notes
   keep off a semitone from the chord's notes (and a semitone under one,
   since broken chords and arpeggios play every note over the bass) and from
-  the melody's notes sounding with them, as `check_song` hears a clash. On
+  the other parts' notes sounding with them (the melody's, a counter-line's),
+  as `check_song` hears a clash. On
   the triangle it sits where it sounds like a bass (the triangle plays an
   octave below what's written).
 - **Drums** (`add_drums`): basic, four_on_floor, half_time, shuffle, march,

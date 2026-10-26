@@ -149,9 +149,9 @@ struct BassOptions {
 	int Low, High;		// its register
 	Key K;				// for the pedal, and walking between chords
 	int Volume;			// on the first note; -1 to leave the column alone
-	// The melody's notes as they sound, in the bass's own pitches (as it writes them): a walking or syncopated bass's
-	// passing notes keep off a semitone (and octaves) from one sounding with them, as check_song hears a clash, as they
-	// keep off one under the chord's notes. Empty for none
+	// The melody's notes and the other parts' as they sound, in the bass's own pitches (as it writes them): a walking or
+	// syncopated bass's passing notes keep off a semitone (and octaves) from one sounding with them, as check_song hears a
+	// clash, as they keep off one under the chord's notes. Empty for none
 	std::vector<NoteInfo> Above;
 	BassOptions();
 };
