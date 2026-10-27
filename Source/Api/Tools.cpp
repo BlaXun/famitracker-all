@@ -12528,16 +12528,46 @@ bool ChordOthersSound(Session &S, int Except, int Also, int Row, const Key &K, C
 }
 
 // The chords the parts play in the bars of the rows [First, End), as get_song and the piano roll's chord strip name them
-// (SongChords), with where each lies: by name, or (Names false) by their roots and thirds alone (Gmaj7 and G alike)
-std::string ChordNamesIn(Session &S, int First, int End, const Key &K, int Melody, bool Names)
+// (SongChords)
+std::vector<ChordAt> ChordsPlayedIn(Session &S, int First, int End, const Key &K, int Melody)
 {
 	const int A = S.Time.BarStart(S.Time.BarOf(First)), Z = std::min(S.Time.TotalRows(), S.Time.BarEnd(S.Time.BarOf(std::max(First, End - 1))));
-	const std::vector<ChordAt> Heard = SongChords(S, A, Z, K, Melody);
-	std::string Out;
-	for (size_t i = 0; i < Heard.size(); ++i)
-		Out += Format("%d+%d ", Heard[i].Row, Heard[i].Rows) + (Names ? ChordName(Heard[i].C, K) : Format("%d %d", Heard[i].C.Root,
-			Heard[i].C.Third())) + "|";
-	return Out;
+	return SongChords(S, A, Z, K, Melody);
+}
+
+// Whether the chords the parts play stay the same where a note moved to the pitch class Moved, row by row (a half bar
+// may come out on a chord of its own): by name (Names), or keeping each chord's root and third without the moved note
+// adding a tone, so a color the note made may go (a held maj7 under the tune's root: Gmaj7 becomes G, never Gadd9 by an A)
+bool KeepsChords(const std::vector<ChordAt> &Before, const std::vector<ChordAt> &After, const Key &K, bool Names, int Moved)
+{
+	auto At = [](const std::vector<ChordAt> &Chords, int Row) -> const ChordAt * {
+		for (size_t i = 0; i < Chords.size(); ++i)
+			if (Chords[i].Row <= Row && Row < Chords[i].Row + Chords[i].Rows)
+				return &Chords[i];
+		return 0;
+	};
+	int First = 0, End = 0;
+	for (size_t i = 0; i < Before.size(); ++i) {
+		First = i == 0 ? Before[i].Row : std::min(First, Before[i].Row);
+		End = std::max(End, Before[i].Row + Before[i].Rows);
+	}
+	for (size_t i = 0; i < After.size(); ++i) {
+		First = i == 0 && Before.empty() ? After[i].Row : std::min(First, After[i].Row);
+		End = std::max(End, After[i].Row + After[i].Rows);
+	}
+	for (int Row = First; Row < End; ++Row) {
+		const ChordAt *pWas = At(Before, Row), *pNow = At(After, Row);
+		if (pWas == 0 || pNow == 0) {
+			if (pWas != pNow)
+				return false;
+			continue;
+		}
+		const Chord &Was = pWas->C, &Now = pNow->C;
+		if (Names ? ChordName(Was, K) != ChordName(Now, K) : Was.Root != Now.Root || Was.Third() != Now.Third() ||
+			(Now.HasPitchClass(Moved) && !Was.HasPitchClass(Moved)))
+			return false;
+	}
+	return true;
 }
 
 // A note polish's clashes touch moved
@@ -12561,11 +12591,11 @@ struct ClashLeft {
 // sound first (a pluck's C# under pads and a tune on D), else a chord voice rather than a line (ClashRole); the bass only
 // where its note is the one that disagrees, and never its root. A held note (a beat or more) moves for its whole length only if the chord keeps its third (it
 // isn't the third, or another part sounds it too; for a passing note's clash, a detail, a held third stays whatever
-// sounds it: the pads would hollow a bar for an eighth's rub). The chords the parts play (SongChords) keep their names where a
-// detail moves (a passing note's clash: ClashKind), their roots and thirds where a clash worth fixing does (a held maj7
-// under the tune's root may go, Gmaj7 becoming G). Only notes on Channels that start in [First, End) move. It goes over
-// the clashes again until nothing moves, so a second polish changes nothing. Moves: what moved; Left: the clashes on
-// Channels that stay there, each with why
+// sounds it: the pads would hollow a bar for an eighth's rub). The chords the parts play (SongChords) keep their names
+// where a detail moves (a passing note's clash: ClashKind), and where a clash worth fixing does their roots and thirds,
+// gaining no tone (KeepsChords: a held maj7 under the tune's root may go, Gmaj7 becoming G, never Gadd9). Only notes on
+// Channels that start in [First, End) move. It goes over the clashes again until nothing moves, so a second polish
+// changes nothing. Moves: what moved; Left: the clashes on Channels that stay there, each with why
 void FixClashes(Session &S, Draft &D, int First, int End, int Melody, const std::vector<int> &Channels, const Key &K,
 	std::vector<ClashMove> &Moves, std::vector<ClashLeft> &Left)
 {
@@ -12617,7 +12647,7 @@ void FixClashes(Session &S, Draft &D, int First, int End, int Melody, const std:
 			Why = "the other parts sound no chord there";
 			return false;
 		}
-		const std::string Before = ChordNamesIn(View, N.Row, N.Row + N.Rows, K, Melody, Detail);
+		const std::vector<ChordAt> Before = ChordsPlayedIn(View, N.Row, N.Row + N.Rows, K, Melody);
 		// A held note takes another part's held pitch (a second pad in unison, a voice of the chord gone) only where nothing
 		// else fits
 		auto Doubles = [&](int Pitch) {
@@ -12645,7 +12675,7 @@ void FixClashes(Session &S, Draft &D, int First, int End, int Melody, const std:
 					std::vector<Cell> Cells = D.View(Channel);
 					Cells[static_cast<size_t>(N.Row)].SetPitch(Pitch);
 					View.Assume(Channel, Cells);
-					if (ChordNamesIn(View, N.Row, N.Row + N.Rows, K, Melody, Detail) != Before) {
+					if (!KeepsChords(Before, ChordsPlayedIn(View, N.Row, N.Row + N.Rows, K, Melody), K, Detail, ClassOf(Pitch))) {
 						View.Assume(Channel, D.View(Channel));
 						Renamed = true;
 						continue;
@@ -21363,9 +21393,9 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 			}
 			if (Worth.size() > static_cast<size_t>(GUARD_LISTED))
 				List += Format(" and %d more", static_cast<int>(Worth.size()) - GUARD_LISTED);
-			std::string Text = Format("%s on %s a semitone (or a semitone and octaves) from another part, held or on a strong beat, "
-				"as check_song hears a clash: %s.", Worth.size() == 1 ? "a note" : Format("%d notes", static_cast<int>(Worth.size())).c_str(),
-				Name.c_str(), List.c_str());
+			std::string Text = Format("%s rubs a semitone (or a semitone and octaves) against another part %s, held or on a strong "
+				"beat, as check_song hears a clash: %s.", Name.c_str(), Plural(static_cast<int>(Worth.size()), "time", "times").c_str(),
+				List.c_str());
 			Key CK;
 			const bool Keyed = TrackKey(View, 0, View.Time.TotalRows(), CK);
 			const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());

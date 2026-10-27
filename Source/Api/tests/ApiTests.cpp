@@ -26308,6 +26308,221 @@ void TestNewSongs()
 	CHECK(Phone.Info.FileName == "Phone song.ftm" && Phone.OpenedSongs == 0);
 }
 
+// Clashes and their fix (from feat-clash-fix). A line of steps (eighths of 2 rows: a pitch starts a note, - holds it, .
+// rests) put on a channel from a bar, each note with Instrument
+void PutClashSteps(FakeSong &Song, int Channel, int Bar, const std::string &Steps, int Instrument)
+{
+	int Row = (Bar - 1) * 16;
+	bool Sounding = false;
+	size_t At = 0;
+	while (At < Steps.size()) {
+		const size_t Stop = Steps.find(' ', At);
+		const std::string Token = Steps.substr(At, Stop == std::string::npos ? std::string::npos : Stop - At);
+		At = Stop == std::string::npos ? Steps.size() : Stop + 1;
+		if (Token.empty() || Token == "|")
+			continue;
+		if (Token == ".") {
+			if (Sounding)
+				Song.End(Channel, Row);
+			Sounding = false;
+		}
+		else if (Token != "-") {
+			Song.Put(Channel, Row, Token.c_str(), Instrument);
+			Sounding = true;
+		}
+		Row += 2;
+	}
+}
+
+// Autumn Woods' three kinds of clashes in eight bars of D major on the VRC6 Plus (a local model's song had 46): the tune
+// (VRC6 Plus Pulse 1) steps F#-G-A over a pluck's Gmaj7 arpeggio and a pad's held F# (bar 3: passing notes, details),
+// the pluck plays A major's C# under pads and a tune on D (bar 4: chord parts that disagree), a counter line on the
+// 2A03's Pulse 1 holds F#3 three beats against a pad's G3 and the tune's G4 (bar 5), and the tune holds D4 over the pad's
+// C#3, the third of A that no other part plays (bar 6: it stays)
+void PutClashSong(FakeSong &Song)
+{
+	Song.Info.DirectChanges = true;
+	ToolSet Tools(Song);
+	CHECK(!Tools.Call("set_expansion", Parse("{\"chips\": [\"VRC6 Plus\"]}")).IsError);
+	CHECK(!Tools.Call("set_key", Parse("{\"key\": \"D major\"}")).IsError);
+	PutClashSteps(Song, 5, 1, "D4 . F#4 G4 A4 - - - | B4 - - . . . . . | F#4 . A4 G4 F#4 - E4 - | D4 - - - . . . . | "
+		"B4 - . A4 G4 - - - | D4 - - - . . . . | F#4 - - - E4 - - - | D4 - - - - - - -", 0);
+	PutClashSteps(Song, 6, 1, "D2 A2 F#3 A3 F#3 A2 D2 A2 | B2 F#3 D4 F#4 D4 F#3 B2 F#3 | D2 G2 B2 F#3 B2 F#3 D2 G2 | "
+		"A2 C#3 E3 B3 E3 C#3 A2 C#3 | .", 0);
+	PutClashSteps(Song, 8, 1, "D3 - - - - - - - | D3 - - - - - - - | B2 - - - - - - - | D3 - - - - - - - | G3 - - - - - - - | "
+		"A2 - - - - - - - | D3 - - - - - - - | D3 - - - - - - -", 4);
+	PutClashSteps(Song, 9, 1, "A3 - - - - - - - | F#3 - - - - - - - | F#3 - - - - - - - | E3 - - - - - - - | B3 - - - - - - - | "
+		"C#3 - - - - - - - | A3 - - - - - - - | F#3 - - - - - - -", 4);
+	PutClashSteps(Song, 7, 1, "D2 - - - - - - - | B1 - - - - - - - | G1 - - - - - - - | A1 - - - - - - - | G1 - - - - - - - | "
+		"A1 - - - - - - - | D2 - - - - - - - | D2 - - - - - - -", 0);
+	PutClashSteps(Song, 0, 5, "A3 . F#3 - - - - - | .", 2);
+}
+
+// get_song's line of the chords the parts play
+std::string PlayedChordsLine(const std::string &Song)
+{
+	const size_t At = Song.find("Chords the parts play: ");
+	return At == std::string::npos ? std::string() : Song.substr(At, Song.find('\n', At) - At);
+}
+
+// The clash findings of check_song's JSON, by their bar
+std::vector<const Json *> ClashesInBar(const Json &Checked, int Bar)
+{
+	std::vector<const Json *> Out;
+	const Json *pFindings = Checked.Get("findings");
+	for (size_t i = 0; pFindings != 0 && i < pFindings->Size(); ++i)
+		if (TextOf(&pFindings->At(i), "kind") == "clash" && IntegerOf(&pFindings->At(i), "bar") == Bar)
+			Out.push_back(&pFindings->At(i));
+	return Out;
+}
+
+void TestClashFix()
+{
+	FakeSong Song;
+	PutClashSong(Song);
+	ToolSet Tools(Song);
+	const std::string Melody = "\"melody_channel\": \"VRC6 Plus Pulse 1\"";
+
+	// check_song: each clash worth fixing at once or a detail, and the call that clears it where polish can
+	const Json Before = Parse(Tools.Call("check_song", Parse("{\"format\": \"json\", " + Melody + "}")).Text);
+	CheckFixCalls(Tools, Before, "clash", __LINE__);
+	const std::vector<const Json *> Passing = ClashesInBar(Before, 3), Disagree = ClashesInBar(Before, 4),
+		Held = ClashesInBar(Before, 5), Third = ClashesInBar(Before, 6);
+	CHECK(Passing.size() == 2u && Disagree.size() == 4u && Held.size() == 2u && Third.size() == 1u);
+	for (const Json *pClash : Passing) {
+		CHECK_EQ(TextOf(pClash, "severity"), std::string("low"));
+		CHECK_EQ(TextOf(pClash, "detail"), std::string("passing"));
+		CHECK_HAS(TextOf(pClash, "message"), "A passing note shorter than a beat against a chord's tone: a detail that may be meant.");
+	}
+	for (const Json *pClash : Disagree) {
+		CHECK_EQ(TextOf(pClash, "severity"), std::string("high"));
+		const Json *pFix = pClash->Get("fix");
+		CHECK(pFix != 0 && TextOf(pFix, "tool") == "polish" && IntegerOf(pFix->Get("arguments"), "from_bar") == 4 &&
+			IntegerOf(pFix->Get("arguments"), "melody_channel") == 6);
+		CHECK_HAS(TextOf(pFix, "does"), "on VRC6 Plus Pulse 2 at bar 4");
+		CHECK_HAS(TextOf(pFix, "does"), "to D-3, a note of the Asus4 the other parts play there");
+		CHECK_HAS(TextOf(pClash, "message"), " Fix: polish {\"touches\":[\"clashes\"],\"channels\":[");
+	}
+	for (const Json *pClash : Held) {
+		CHECK_EQ(TextOf(pClash, "severity"), std::string("high"));
+		CHECK(pClash->Get("fix") != 0);
+	}
+	CHECK(Third.size() == 1u && TextOf(Third[0], "severity") == "high" && Third[0]->Get("fix") == 0);
+	const std::string Text = Tools.Call("check_song", Parse("{" + Melody + "}")).Text;
+	CHECK_HAS(Text, "2 of the clashes are details that may be meant (a passing note shorter than a beat");
+	CHECK_HAS(Text, "clashes have a fix: polish with touches [\"clashes\"] moves the accompaniment's note");
+	// The short form ranks the details after the clashes worth fixing
+	CHECK_LACKS(Tools.Call("check_song", Parse("{\"format\": \"short\", " + Melody + "}")).Text, "bar 3 beat 2.5");
+
+	// The problems panel keeps the details apart, each line with its Fix where it has one
+	ProblemList Found;
+	std::string Error;
+	CHECK(Found.Read(WriteJson(Before), Error));
+	CHECK_EQ(Found.Count(PROBLEM_CLASH_DETAIL), 2);
+	CHECK_EQ(Found.Count(PROBLEM_CLASH) + Found.Count(PROBLEM_CLASH_DETAIL), IntegerOf(Before.Get("counts"), "clash"));
+	CHECK_EQ(std::string(ProblemKindId(PROBLEM_CLASH_DETAIL)), std::string("clash_detail"));
+	CHECK(ProblemSeverity(PROBLEM_CLASH_DETAIL) == 1 && ProblemSeverity(PROBLEM_CLASH) == 3);
+	int Fixes = 0;
+	for (size_t i = 0; i < Found.Findings().size(); ++i)
+		if (Found.Findings()[i].Kind == PROBLEM_CLASH && Found.Findings()[i].FixTool == "polish" && Found.Findings()[i].FixCalls == 1)
+			++Fixes;
+	CHECK_EQ(Fixes, 6);
+
+	// The panel's Fix on one line: only that clash's bar and channels change, as one undo
+	{
+		FakeSong One;
+		PutClashSong(One);
+		ToolSet OneTools(One);
+		const Json *pFix = Disagree[0]->Get("fix");
+		const std::vector<std::vector<Cell> > Was = One.Rows;
+		CHECK(!OneTools.Call(TextOf(pFix, "tool"), *pFix->Get("arguments")).IsError);
+		for (size_t c = 0; c < One.Rows.size(); ++c)
+			for (size_t r = 0; r < One.Rows[c].size(); ++r)
+				if (One.Rows[c][r] != Was[c][r])
+					Check(r >= 48 && r < 64, "the fix stays in bar 4", __LINE__);
+		const Json Checked = Parse(OneTools.Call("check_song", Parse("{\"format\": \"json\", " + Melody + "}")).Text);
+		CHECK(ClashesInBar(Checked, 3).size() == 2u && ClashesInBar(Checked, 5).size() == 2u);
+		CHECK(ClashesInBar(Checked, 4).size() < 4u);
+		CHECK(!OneTools.Call("undo", Parse("{}")).IsError);
+		CHECK(One.Rows == Was);
+	}
+
+	// what_next gives one polish for every clash, before the steps after it
+	const std::string Next = Tools.Call("what_next", Parse("{" + Melody + "}")).Text;
+	CHECK_HAS(Next, "Next (");
+	CHECK_HAS(Next, "): polish {\"touches\":[\"clashes\"],\"melody_channel\":\"VRC6 Plus Pulse 1\"}");
+	CHECK_HAS(Next, "check_song hears 6 clashes worth fixing");
+	CHECK_HAS(Next, "check_song hears 1 clash worth fixing that no accompaniment's note can clear (bar 6)");
+	const Json NextJson = Parse(Tools.Call("what_next", Parse("{\"format\": \"json\", " + Melody + "}")).Text);
+	CHECK_EQ(TextOf(NextJson.Get("step"), "id"), std::string("clash"));
+
+	// The fix: the tune as written, the accompaniment's notes on the chord the others play, the chords' names kept but
+	// where the clash made a color (the counter line's held F# under the tune's G: Gmaj7, now G with its 9th in the first
+	// half, where the counter line starts on A)
+	const std::vector<Cell> Tune = Song.Rows[5];
+	CHECK_EQ(PlayedChordsLine(Tools.Call("get_song", Parse("{}")).Text), std::string("Chords the parts play: | D | Bm | Gmaj7 | "
+		"Asus4 | Gmaj7 | A | D | D |"));
+	const ToolResult Fixed = Tools.Call("polish", Parse("{\"touches\": [\"clashes\"], " + Melody + "}"));
+	CHECK(!Fixed.IsError);
+	CHECK_HAS(Fixed.Text, "C#3 to D-3 on VRC6 Plus Pulse 2 at bar 4 beat 1.5 (the Asus4 the other parts play)");
+	CHECK_HAS(Fixed.Text, "F#3 to D-3 on VRC6 Plus Pulse 2 at bar 3 beat 2.5 (the Gmaj7 the other parts play)");
+	CHECK_HAS(Fixed.Text, "2 clashes stay (G-4 against F#3 at bar 3 beat 2.5: moving F#3 on VRC6 Plus Soft 2 would change the chord "
+		"the parts play; D-4 against C#3 at bar 6 beat 1: C#3 on VRC6 Plus Soft 2, held, is the third of A, which no other part plays)");
+	CHECK(Song.Rows[5] == Tune);
+	CHECK_EQ(PlayedChordsLine(Tools.Call("get_song", Parse("{}")).Text), std::string("Chords the parts play: | D | Bm | Gmaj7 | "
+		"Asus4 | Gadd9 G | A | D | D |"));
+	// The pluck's C#s are D (the pads' and the tune's), its F# under the tune's G a D, the arpeggio otherwise as it was,
+	// and the counter line's held F# a chord tone that rubs against nothing (D, not the pad's G in unison); the pad's held
+	// F#, the passing G's detail, stays where moving it would rename the Gmaj7
+	CHECK(Song.Rows[6][50].Pitch() == 38 && Song.Rows[6][58].Pitch() == 38 && Song.Rows[6][62].Pitch() == 38);
+	CHECK(Song.Rows[6][38].Pitch() == 38 && Song.Rows[6][42].Pitch() == 42 && Song.Rows[6][48].Pitch() == 33);
+	CHECK(Song.Rows[0][68].Pitch() == 38 && Song.Rows[0][68].Instrument == 2);
+	const Json After = Parse(Tools.Call("check_song", Parse("{\"format\": \"json\", " + Melody + "}")).Text);
+	CHECK(ClashesInBar(After, 3).size() == 1u && ClashesInBar(After, 4).empty() && ClashesInBar(After, 5).empty() &&
+		ClashesInBar(After, 6).size() == 1u);
+	const Json *pLeft = After.Get("findings");
+	for (size_t i = 0; pLeft != 0 && i < pLeft->Size(); ++i)
+		CHECK(TextOf(&pLeft->At(i), "kind") != "clash" || pLeft->At(i).Get("fix") == 0);
+	// Polish again changes nothing, and says why the clash stays
+	const ToolResult Again = Tools.Call("polish", Parse("{\"touches\": [\"clashes\"], " + Melody + "}"));
+	CHECK(Again.IsError);
+	CHECK_HAS(Again.Text, "No clash there could move: 2 clashes stay");
+	// what_next moves on, saying what stays
+	const std::string Then = Tools.Call("what_next", Parse("{" + Melody + "}")).Text;
+	CHECK_LACKS(Then, "\"touches\":[\"clashes\"]");
+	CHECK_HAS(Then, "no accompaniment's note can clear (bar 6)");
+
+	// write_notes names the clashes a part makes, with the call that clears them
+	const ToolResult Written = Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Plus Pulse 2\", \"from_bar\": 4, \"notes\": "
+		"\"A2 C#3 E3 B3 E3 C#3 A2 C#3\"}"));
+	CHECK(!Written.IsError);
+	CHECK_HAS(Written.Text, "Warning: VRC6 Plus Pulse 2 rubs a semitone (or a semitone and octaves) against another part 4 times, "
+		"held or on a strong beat, as check_song hears a clash: C#3 at bar 4 beat 1.5 against D-4 on VRC6 Plus Pulse 1");
+	CHECK_HAS(Written.Text, "Fix: polish {\"touches\":[\"clashes\"],\"from_bar\":4,\"to_bar\":4,\"melody_channel\":\"VRC6 Plus Pulse 1\"} "
+		"(moves 3 notes of the accompaniment onto the chord the other parts play, the melody as written).");
+	CHECK_LACKS(Tools.Call("write_notes", Parse("{\"channel\": \"VRC6 Plus Pulse 2\", \"from_bar\": 4, \"notes\": "
+		"\"A2 D3 E3 B3 E3 D3 A2 D3\"}")).Text, "semitone");
+
+	// A tone of an arpeggio instrument's chord against the tune is that chord's color: a detail, with no call
+	{
+		FakeSong Lush;
+		Lush.Info.DirectChanges = true;
+		Lush.AddInstrumentInfo(3, "Lush major", "VRC6", false);
+		Lush.Info.Instruments.back().Arpeggio = std::vector<int>({ 4, 7 });
+		PutClashSteps(Lush, 6, 1, "C3 - - - - - - - | C3 - - - - - - -", 3);
+		PutClashSteps(Lush, 5, 1, "C4 - E4 - F4 - - - | G4 - - - - - - -", 0);
+		PutClashSteps(Lush, 7, 1, "C2 - - - - - - - | C2 - - - - - - -", 0);
+		ToolSet LushTools(Lush);
+		const Json Checked = Parse(LushTools.Call("check_song", Parse("{\"format\": \"json\", \"melody_channel\": 6}")).Text);
+		const std::vector<const Json *> Color = ClashesInBar(Checked, 1);
+		CHECK(Color.size() == 1u && TextOf(Color[0], "severity") == "low" && TextOf(Color[0], "detail") == "color" &&
+			Color[0]->Get("fix") == 0);
+		CHECK_HAS(LushTools.Call("polish", Parse("{\"touches\": [\"clashes\"], \"melody_channel\": 6}")).Text, "is a tone of its "
+			"arpeggio's chord, a color");
+		CHECK_LACKS(LushTools.Call("what_next", Parse("{\"melody_channel\": 6}")).Text, "\"touches\":[\"clashes\"]");
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -26568,6 +26783,7 @@ int main()
 	TestFinishSongListens();
 	TestProblemListHeard();
 	TestNewSongs();
+	TestClashFix();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
