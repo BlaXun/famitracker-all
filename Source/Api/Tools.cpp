@@ -21366,9 +21366,10 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 	}
 
 	// Clashes the part makes against the other parts, as check_song hears them: the ones worth fixing at once (held a beat or
-	// more, on a strong beat, chord parts that disagree; ClashKind: a passing note or a chord's color is a detail), with
-	// polish's clashes touch over the part's bars as the fix where it moves an accompaniment's note off them (the melody,
-	// the song's, as written). Not for a sound effect
+	// more, on a strong beat, chord parts that disagree; ClashKind: a passing note or a chord's color is a detail) that
+	// polish's clashes touch over the part's bars clears, with that call (the melody, the song's, as written). Those it
+	// can't clear (a finished stage's scoop onto Eb over a tenor's D, a forge's lush Eb over its bass's chromatic D, written
+	// back section by section) check_song lists and what_next notes. Not for a sound effect
 	if (UseOfTrack(S).Use != TRACK_SOUND) {
 		Session View(S);
 		View.Assume(Channel, Cells);
@@ -21382,33 +21383,41 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 			if (In && (Run.A == Channel || Run.B == Channel) && ClashKind(View, Run) == CLASH_WORTH)
 				Worth.push_back(Run);
 		}
-		if (!Worth.empty()) {
-			std::string List;
-			for (size_t k = 0; k < Worth.size() && k < static_cast<size_t>(GUARD_LISTED); ++k) {
-				const ClashRun &Run = Worth[k];
-				const bool Mine = Run.A == Channel;
-				List += Format("%s%s at %s against %s on %s", k == 0 ? "" : ", ", PitchName(Mine ? Run.PitchA : Run.PitchB).c_str(),
-					S.Time.Position(Run.Row).c_str(), PitchName(Mine ? Run.PitchB : Run.PitchA).c_str(),
-					S.Channel(Mine ? Run.B : Run.A).FullName().c_str());
-			}
-			if (Worth.size() > static_cast<size_t>(GUARD_LISTED))
-				List += Format(" and %d more", static_cast<int>(Worth.size()) - GUARD_LISTED);
-			std::string Text = Format("%s rubs a semitone (or a semitone and octaves) against another part %s, held or on a strong "
-				"beat, as check_song hears a clash: %s.", Name.c_str(), Plural(static_cast<int>(Worth.size()), "time", "times").c_str(),
-				List.c_str());
-			Key CK;
-			const bool Keyed = TrackKey(View, 0, View.Time.TotalRows(), CK);
-			const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());
+		Key CK;
+		const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());
+		std::vector<ClashMove> Moves;
+		std::vector<ClashRun> Cleared;
+		if (!Worth.empty() && TrackKey(View, 0, View.Time.TotalRows(), CK)) {
 			std::vector<int> Every;
 			for (int c = 0; c < View.ChannelCount(); ++c)
 				if (IsMelodic(View.Channel(c)))
 					Every.push_back(c);
 			Draft Plan(View);
-			std::vector<ClashMove> Moves;
 			std::vector<ClashLeft> Left;
-			if (Direct && Keyed)
-				FixClashes(View, Plan, First, End, Lead, Every, CK, Moves, Left);
-			if (!Moves.empty()) {
+			FixClashes(View, Plan, First, End, Lead, Every, CK, Moves, Left);
+			Session After(View);
+			for (int c = 0; c < View.ChannelCount(); ++c)
+				After.Assume(c, Plan.View(c));
+			const SoundGrid Grid = HearGrid(After, 0, After.Time.TotalRows());
+			for (size_t i = 0; i < Worth.size(); ++i)
+				if (!StillRubs(After, Grid, Worth[i].A, Worth[i].B, Worth[i].Row))
+					Cleared.push_back(Worth[i]);
+		}
+		if (!Cleared.empty()) {
+			std::string List;
+			for (size_t k = 0; k < Cleared.size() && k < static_cast<size_t>(GUARD_LISTED); ++k) {
+				const ClashRun &Run = Cleared[k];
+				const bool Mine = Run.A == Channel;
+				List += Format("%s%s at %s against %s on %s", k == 0 ? "" : ", ", PitchName(Mine ? Run.PitchA : Run.PitchB).c_str(),
+					S.Time.Position(Run.Row).c_str(), PitchName(Mine ? Run.PitchB : Run.PitchA).c_str(),
+					S.Channel(Mine ? Run.B : Run.A).FullName().c_str());
+			}
+			if (Cleared.size() > static_cast<size_t>(GUARD_LISTED))
+				List += Format(" and %d more", static_cast<int>(Cleared.size()) - GUARD_LISTED);
+			std::string Text = Format("%s rubs a semitone (or a semitone and octaves) against another part %s, held or on a strong "
+				"beat, as check_song hears a clash: %s.", Name.c_str(), Plural(static_cast<int>(Cleared.size()), "time", "times").c_str(),
+				List.c_str());
+			if (Direct) {
 				Json A = Json::MakeObject(), Touches = Json::MakeArray();
 				Touches.Push("clashes");
 				A.Set("touches", Touches);
@@ -21419,8 +21428,8 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 					"play, the melody as written).", Plural(static_cast<int>(Moves.size()), "note", "notes").c_str());
 			}
 			else
-				Text += Lead == Channel ? " Another note in the tune there, or another chord under it, clears one." :
-					" Another note there, a step away onto the chord the other parts play, clears one.";
+				Text += " Once it's in the song, polish with touches [\"clashes\"] over these bars moves the accompaniment's notes off "
+					"them.";
 			Out.push_back(Text);
 		}
 	}
