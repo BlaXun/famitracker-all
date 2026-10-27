@@ -1809,6 +1809,32 @@ FakeSong keeps what it saves (`Disk`, `RecentFiles` and `OpenPath`, kept by
 `CMcpLink` does; `TestNewSongs` covers both tools, through `HandleMcp` from
 the network too.
 
+Clashes and their fix (from `feat-clash-fix`): `check_song`'s clash detection
+is `HearGrid` and `ClashRuns` (before `PolishTool` in `Tools.cpp`, beside the
+touch that fixes them), and `ClashKind` tells a clash worth fixing at once
+(held a beat or more, `OnStrongBeat`, chord parts that disagree) from a
+detail that may be meant (`CheckFinding::Severity` low, `detail` `passing`
+for a passing note shorter than a beat, `IsPassingNote`, or `color` for a
+tone of an arpeggio's chord: 239 of the finished soundtrack's 243). `polish`'s
+touch `clashes` is `FixClashes`: the note no other part sounds over the half
+bar goes first (`Support`), the other only where that's the melody's and
+it's a chord voice (`ClashRole`: never the melody, a line or a note that
+slides; the bass only where its own note disagrees, never its root), to the
+nearest note of the chord the others sound that rubs against nothing
+(`RubsAgainstOthers`; a held note keeps out of another's unison when it can,
+`Doubles`); a held third stays for a detail or where no other part plays it,
+and `KeepsChords` compares the chords the parts play row by row (names for a
+detail; root, third and no tone the move adds for the rest). It goes over the
+song until nothing moves. Each clash it clears carries that call over its
+bars and two channels as its `fix` (planned per finding, `Plans`), `what_next`'s
+`Breakers` gives one `clash` step for the song when a clash worth fixing has
+one, `WritingWarnings` warns with the call, and `ProblemList` reads a low
+clash as `PROBLEM_CLASH_DETAIL` (appended, `clash_detail`). Measured: no note
+of the finished soundtrack moves and `what_next` asks no new step on its 79
+tracks; a local model's calm song went from 46 clashes to 14 (2 worth fixing,
+a held third under the tune, and 12 passing notes over the pads' thirds) in
+one call. `TestClashFix` covers it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
