@@ -27052,10 +27052,10 @@ void WhatNext::Breakers()
 		if (m_HasMelody)
 			A.Set("melody_channel", ChannelName(m_Melody));
 		if (!Wanted("clash") || !Looking() || WouldChange(S, "polish", A))
-			Step("clash", "polish", A, Format("check_song hears %s worth fixing (two parts a semitone apart, held or on a strong beat, "
-				"or chord parts that disagree): polish with touches clashes moves the accompaniment's note onto the chord the other "
-				"parts play, in every bar, the melody as written; the details that may be meant (a passing note) go too where a "
-				"note can move.", Plural(ClashSteps, "clash", "clashes").c_str()));
+			Step("clash", "polish", A, Format("check_song: %s worth fixing: two parts a semitone apart, held or on a strong beat, or "
+				"chord parts that disagree. The fix moves the accompaniment's note onto the chord the other parts play, in every bar, "
+				"the melody as written; the details that may be meant (a passing note) go too where a note can move.",
+				Plural(ClashSteps, "clash is", "clashes are").c_str()));
 		else
 			ClashStay += ClashSteps;
 	}

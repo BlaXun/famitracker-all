@@ -26451,10 +26451,13 @@ void TestClashFix()
 	const std::string Next = Tools.Call("what_next", Parse("{" + Melody + "}")).Text;
 	CHECK_HAS(Next, "Next (");
 	CHECK_HAS(Next, "): polish {\"touches\":[\"clashes\"],\"melody_channel\":\"VRC6 Plus Pulse 1\"}");
-	CHECK_HAS(Next, "check_song hears 6 clashes worth fixing");
+	CHECK_HAS(Next, "check_song: 6 clashes are worth fixing: two parts a semitone apart");
 	CHECK_HAS(Next, "check_song hears 1 clash worth fixing that no accompaniment's note can clear (bar 6)");
 	const Json NextJson = Parse(Tools.Call("what_next", Parse("{\"format\": \"json\", " + Melody + "}")).Text);
 	CHECK_EQ(TextOf(NextJson.Get("step"), "id"), std::string("clash"));
+	CHECK_EQ(PlainWhy(TextOf(NextJson.Get("step"), "why")), std::string("6 clashes are worth fixing: two parts a semitone apart, held or "
+		"on a strong beat, or chord parts that disagree. The fix moves the accompaniment's note onto the chord the other parts play, "
+		"in every bar, the melody as written; the details that may be meant (a passing note) go too where a note can move."));
 
 	// The fix: the tune as written, the accompaniment's notes on the chord the others play, the chords' names kept but
 	// where the clash made a color (the counter line's held F# under the tune's G: Gmaj7, now G with its 9th in the first
