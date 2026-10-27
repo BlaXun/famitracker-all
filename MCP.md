@@ -558,7 +558,9 @@ ask again, until it says the song is done and to play it for you. Its order
 is the recipes':
 
 1. What breaks the sound: `check_song`'s findings that come with a fix
-   (notes that click, notes that vanish, notes out of range). Its other
+   (notes that click, notes that vanish, notes out of range, and clashes
+   worth fixing: one `polish` with the touch `clashes` for the whole song,
+   see [Clashes](#clashes)). Its other
    findings with a fix come later: the melody in one-bar pieces, a thin or
    doubled bass and a sound its channel can't play once the parts are
    there, before depth; faders doing the mix, a copied repeat and a short
@@ -715,6 +717,44 @@ a click pluck that holds low.
   and a melody whose notes mostly vanish too.
 - `design_instrument` and `reference_sound` say so when the sound they add
   is gone within four frames.
+
+### Clashes
+
+`check_song` hears a clash where two parts sound a semitone apart (or a
+semitone and octaves) for half a beat or more. It's either worth fixing at
+once (`severity` `high`: held a beat or more, on a strong beat, or two chord
+parts that disagree, a pluck's C# under pads and a tune on D) or a detail
+that may be meant (`low`, with `detail` `passing`: a passing note shorter
+than a beat against a chord's tone; or `color`: a tone of a chord's
+arpeggio, as lush chords color a tune). It's harmony: `listen` judges how
+the song sounds, not that, so it doesn't hear them.
+
+- `polish` with the touch `clashes` moves the accompaniment's note onto the
+  chord the other parts play there: the nearest of its notes that rubs
+  against nothing, with the note's instrument, volume, effects and length
+  (an arpeggio keeps its shape). The melody never moves, nor does a note
+  that slides, a lush chord's tone or the bass's root; the bass moves only
+  where its own note disagrees. The note no other part plays goes first;
+  where that's the melody's, the chord voice under it. A held note moves for
+  its whole length only while the chord keeps its third (it isn't the third,
+  or another part plays it too; for a passing note's clash a held third
+  stays), and the chords the parts play keep their names, but for the color
+  a clash worth fixing made (a held F# under the tune's G turns Gmaj7 into
+  G). It goes over the song again until nothing moves, so polishing again
+  changes nothing, and it says which clashes stay and why.
+- Each clash it can clear carries that call as its `fix` (over the bars of
+  its two notes, on its two channels, with `melody_channel`): the problems
+  panel's **Fix** makes it, and lists the details apart ("Clashes: details,
+  maybe meant"). `what_next` gives one `polish` with `touches`
+  `["clashes"]` for the whole song once a clash worth fixing has a fix;
+  details alone are no step. `write_notes` warns as it writes a part that
+  clashes with the others held or on a strong beat where that touch would
+  clear it, with the call over the part's bars.
+- A local model's calm song had 46 clashes; one call left 14: 2 worth
+  fixing (the tune held on D over a pad's C#, the third of A no other part
+  plays) and 12 passing notes over the pads' held thirds. The finished
+  soundtrack's 243 clashes are tones of lush arpeggios but 4, and the touch
+  moves none of its notes.
 
 ### What drafts miss
 
@@ -875,7 +915,7 @@ arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
 and `findings`, heard worst first as in the text. Each finding has:
 
 - `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
-  clicks and clashes, `medium` out of range, for a held lead, a melody in
+  clicks and clashes (`low` for a clash that's a detail), `medium` out of range, for a held lead, a melody in
   pieces, the bass and a sound its channel can't play, `low` for the rest;
 - `channel` (numbered from 1, as the tools take them; `null` for a silent
   bar) and `channel_name`;
@@ -887,7 +927,8 @@ and `findings`, heard worst first as in the text. Each finding has:
   that vanishes on a channel is one finding with all its notes;
 - `summary` (a few words) and `message` (the line the text gives);
 - by kind: `other_channel`, `other_channel_name` and `pitches` (as they
-  sound) for a clash; `clicks`, `boundary` and `nudge` for a click;
+  sound) for a clash, and `detail` (`passing` or `color`) for one that's a
+  detail; `clicks`, `boundary` and `nudge` for a click;
   `instrument`, `instrument_name`, `heard_frames` and `held_instrument`
   for notes that vanish; `reason` out of range; `note_count` for a busy
   bar; `instrument`, `instrument_name`, `attack_frames`, `hold` and
@@ -901,9 +942,10 @@ and `findings`, heard worst first as in the text. Each finding has:
   `nearest` for the faders; `section`, `repeats`, `melody_alike` and
   `parts_alike` for a repeat; `loop_seconds`, `loop_from_bar` and
   `loop_to_bar` for a short loop;
-- `fix`, for a click that can be nudged and for every finding of the
-  arrangement: the call that does it, `tool` (`polish` for a click: the
-  touch `clicks` on the note's channel and bar), `arguments` and `does`, in
+- `fix`, for a click that can be nudged, a clash `polish` can clear and
+  every finding of the arrangement: the call that does it, `tool` (`polish`
+  for a click: the touch `clicks` on the note's channel and bar; for a
+  clash: the touch `clashes` on its two channels and bars), `arguments` and `does`, in
   words, and `then`, the calls to make after it, each the same way (a
   melody's `write_notes` after its `read_notes`). A call alone is one
   Ctrl+Z, and the problems panel's **Fix** button makes it (**Nudge** for a
@@ -935,7 +977,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
 | `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
-| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |

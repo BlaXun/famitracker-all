@@ -31,13 +31,14 @@ namespace {
 
 // The listen tool's are named apart ("heard"): its JSON's kinds are its own, read by their severity
 const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "warble", "heard", "range", "heard_look", "silent", "busy",
-	"key", "held", "phrases", "bass", "sound", "faders", "repeat", "short_loop", "heard_detail" };
+	"key", "held", "phrases", "bass", "sound", "faders", "repeat", "short_loop", "heard_detail", "clash_detail" };
 const char *const KIND_TITLES[PROBLEM_KINDS] = {
 	"Notes that vanish", "Notes that click", "Clashes", "Warbles", "Heard when it plays", "Out of range", "Heard: worth a look",
 	"Silent bars", "Busy bars", "Outside the key", "Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass",
-	"Sounds the channel can't play", "Faders doing the mix", "Repeats that copy", "A short loop", "Heard: details, maybe meant"
+	"Sounds the channel can't play", "Faders doing the mix", "Repeats that copy", "A short loop", "Heard: details, maybe meant",
+	"Clashes: details, maybe meant"
 };
-const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1 };
+const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 1 };
 
 int IntOf(const Json &Object, const char *Name, int Default)
 {
@@ -142,9 +143,15 @@ bool ProblemList::Add(const std::string &Text, std::string &Error)
 			F.Kind = Severity == "high" ? PROBLEM_HEARD : Severity == "medium" ? PROBLEM_HEARD_LOOK : PROBLEM_HEARD_DETAIL;
 			++m_iCounts[F.Kind];
 		}
+		else if (Id == KIND_IDS[PROBLEM_CLASH] && TextOf(Item, "severity") == "low") {
+			// A clash that may be meant (a passing note, a chord's color) is a detail of its own, counted apart
+			F.Kind = PROBLEM_CLASH_DETAIL;
+			m_iCounts[PROBLEM_CLASH] = std::max(0, m_iCounts[PROBLEM_CLASH] - 1);
+			++m_iCounts[PROBLEM_CLASH_DETAIL];
+		}
 		else
 			for (int k = 0; k < PROBLEM_KINDS; ++k)
-				if (Id == KIND_IDS[k] && !ProblemHeard(k))
+				if (Id == KIND_IDS[k] && !ProblemHeard(k) && k != PROBLEM_CLASH_DETAIL)
 					F.Kind = k;
 		if (F.Kind < 0)
 			continue;	// a kind of a later version
