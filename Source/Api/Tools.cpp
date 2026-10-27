@@ -12409,6 +12409,25 @@ bool OthersSound(const Session &S, const SoundGrid &G, int Channel, int PitchCla
 	return false;
 }
 
+// The rows on which the parts other than A and B sound PitchClass in [From, To), each row of each part once
+int Support(const Session &S, const SoundGrid &G, int A, int B, int PitchClass, int From, int To)
+{
+	int Rows = 0;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == A || c == B)
+			continue;
+		for (int r = std::max(From, G.First); r < To && r < G.End; ++r) {
+			const std::vector<int> Theirs = G.Pitches(c, r);
+			for (size_t k = 0; k < Theirs.size(); ++k)
+				if (ClassOf(Theirs[k]) == PitchClass) {
+					++Rows;
+					break;
+				}
+		}
+	}
+	return Rows;
+}
+
 // The note sounding on Row (the last one starting there or before that still plays), -1 for none
 int NoteIndexAt(const std::vector<NoteInfo> &Notes, int Row)
 {
@@ -12670,20 +12689,23 @@ void FixClashes(Session &S, Draft &D, int First, int End, int Melody, const std:
 				Left.push_back(L);
 				continue;
 			}
-			// The note that disagrees with the chord the others sound first, then the other if it's a chord voice; with
-			// neither (or both), the chord voices, the quicker note first. The bass moves only where its note is the one that
-			// disagrees (a finished stage's bass stepping D-C# under a scoop onto Eb, a forge's chromatic bass under a lush Eb,
-			// stay as written)
+			// The note that disagrees with the others first: its pitch class sounds in no other part over the half bar the clash
+			// starts in while the other note's does (a pluck's C# under pads and a tune on D). Then, where that's the melody's,
+			// the other if it's a chord voice; with neither (or both), the chord voices, the quicker note first. So an
+			// accompaniment's note that can't move keeps the clash (a finished stage's scoop onto Eb over its tenor's D, a
+			// forge's lush Eb over its bass's chromatic D stay as written), and the bass moves only where its own note disagrees
 			const int Roles[2] = { ClashRole(View, Run.A, Melody, Run.Row), ClashRole(View, Run.B, Melody, Run.Row) };
 			const int Channel[2] = { Run.A, Run.B }, Pitch[2] = { Run.PitchA, Run.PitchB };
-			Chord Others;
-			const bool Known = ChordOthersSound(View, Run.A, Run.B, Run.Row, K, Others);
-			const bool In[2] = { Known && Others.HasPitchClass(ClassOf(Run.PitchA)), Known && Others.HasPitchClass(ClassOf(Run.PitchB)) };
+			const int Bar = S.Time.BarOf(Run.Row), BarFirst = S.Time.BarStart(Bar), Half = std::max(1, S.Time.BarLength(Bar) / 2);
+			const int HalfFirst = Run.Row - BarFirst < Half ? BarFirst : BarFirst + Half;
+			const int HalfEnd = Run.Row - BarFirst < Half ? BarFirst + Half : S.Time.BarEnd(Bar);
+			const bool In[2] = { Support(View, G, Run.A, Run.B, ClassOf(Run.PitchA), HalfFirst, HalfEnd) > 0,
+				Support(View, G, Run.A, Run.B, ClassOf(Run.PitchB), HalfFirst, HalfEnd) > 0 };
 			std::vector<int> Order;	// 0 or 1
-			if (Known && In[0] != In[1]) {
+			if (In[0] != In[1]) {
 				const int Odd = In[0] ? 1 : 0;
 				Order.push_back(Odd);
-				if (Roles[1 - Odd] == CLASH_VOICE)
+				if (Roles[Odd] == CLASH_MELODY && Roles[1 - Odd] == CLASH_VOICE)
 					Order.push_back(1 - Odd);
 			}
 			else {
