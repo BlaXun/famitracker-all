@@ -12205,6 +12205,549 @@ int StaccatoBass(Session &S, Draft &D, int Channel, int First, int End, int Melo
 	return Count;
 }
 
+// Clashes (from feat-clash-fix): two parts a semitone apart as check_song hears them, and polish's clashes touch, which
+// moves an accompaniment's note off one
+
+void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::vector<int> &Sound);
+std::string NoteRangeReason(const Session &S, const ChannelInfo &Info, int Pitch, int Instrument);
+
+// A pitch's class: 0 for C ... 11 for B
+int ClassOf(int Pitch)
+{
+	return ((Pitch % 12) + 12) % 12;
+}
+
+// What each melodic channel sounds on the song's rows [First, End): its note's pitch as written (where a scoop lands and a
+// slide later in it goes, SoundingRows; -1 for none) and the semitones over it that its chord sounds (an arpeggio
+// instrument's or an 0xy's, ChordAbove)
+struct SoundGrid {
+	int First, End;
+	std::vector<std::vector<int> > Sound;					// per channel, per row from First; empty for the drums
+	std::vector<std::vector<int> > ChordIndex;				// per channel, per row from First: into Chords, -1 for none
+	std::vector<std::vector<std::vector<int> > > Chords;	// per channel
+
+	SoundGrid() : First(0), End(0) {}
+
+	bool Sounds(int Channel, int Row) const
+	{
+		const std::vector<int> &Line = Sound[static_cast<size_t>(Channel)];
+		return !Line.empty() && Row >= First && Row < End && Line[static_cast<size_t>(Row - First)] >= 0;
+	}
+
+	// Every pitch a channel sounds on a song row, as it writes them: its note's first, then its chord's
+	std::vector<int> Pitches(int Channel, int Row) const
+	{
+		std::vector<int> Out;
+		if (!Sounds(Channel, Row))
+			return Out;
+		const size_t c = static_cast<size_t>(Channel), r = static_cast<size_t>(Row - First);
+		Out.push_back(Sound[c][r]);
+		const int Index = ChordIndex[c][r];
+		if (Index >= 0)
+			for (size_t k = 0; k < Chords[c][static_cast<size_t>(Index)].size(); ++k)
+				Out.push_back(Sound[c][r] + Chords[c][static_cast<size_t>(Index)][k]);
+		return Out;
+	}
+};
+
+SoundGrid HearGrid(Session &S, int First, int End)
+{
+	SoundGrid G;
+	G.First = First;
+	G.End = std::max(First, End);
+	const size_t Count = static_cast<size_t>(S.ChannelCount()), Rows = static_cast<size_t>(G.End - First);
+	G.Sound.resize(Count);
+	G.ChordIndex.resize(Count);
+	G.Chords.resize(Count);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (!IsMelodic(S.Channel(c)))
+			continue;
+		std::vector<int> &Sound = G.Sound[static_cast<size_t>(c)];
+		std::vector<int> &Index = G.ChordIndex[static_cast<size_t>(c)];
+		std::vector<std::vector<int> > &Chords = G.Chords[static_cast<size_t>(c)];
+		Sound.assign(Rows, -1);
+		Index.assign(Rows, -1);
+		std::vector<NoteInfo> Kept;
+		const std::vector<NoteInfo> &Pitched = PitchedNotes(S, c, Kept);	// a 5B's noise alone sounds no pitch to clash
+		for (size_t i = 0; i < Pitched.size(); ++i)
+			SoundingRows(Pitched[i], S.Time.RowsPerBeat, First, G.End, Sound);
+		// The notes a channel's chords sound above each row's note: a lush maj7 keeps its seventh on top, where a melody note
+		// a semitone over it rubs
+		const std::vector<int> Arps = StickyAt(S.Cells(c), Pitched, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+		for (size_t i = 0; i < Pitched.size(); ++i) {
+			const NoteInfo &N = Pitched[i];
+			const std::vector<int> Above = ChordAbove(S, N, Arps[i]);
+			if (Above.empty() || N.Row + N.Rows <= First || N.Row >= G.End)
+				continue;
+			Chords.push_back(Above);
+			for (int r = std::max(First, N.Row); r < N.Row + N.Rows && r < G.End; ++r)
+				Index[static_cast<size_t>(r - First)] = static_cast<int>(Chords.size()) - 1;
+		}
+	}
+	return G;
+}
+
+// A clash as check_song hears it: two channels a semitone (or a semitone and octaves, SemitoneRub) apart for half a beat
+// or more, as they sound (the triangle and the VRC7 an octave under their written notes, so it's a major seventh where one
+// is written a semitone over a pulse), a tone of a chord's arpeggio counted too. It goes on while both hold what they sound
+struct ClashRun {
+	int A, B;				// the channels, A before B
+	int Row, Rows;			// on the song's rows
+	int PitchA, PitchB;		// the pitches that rub, as each channel writes them
+	bool ArpA, ArpB;		// a tone of the note's chord (its arpeggio) rather than the note
+	ClashRun() : A(-1), B(-1), Row(0), Rows(0), PitchA(-1), PitchB(-1), ArpA(false), ArpB(false) {}
+};
+
+std::vector<ClashRun> ClashRuns(const Session &S, const SoundGrid &G)
+{
+	std::vector<ClashRun> Out;
+	const int MinClash = std::max(1, S.Time.RowsPerBeat / 2), Rows = G.End - G.First;
+	for (int a = 0; a < S.ChannelCount(); ++a) {
+		for (int b = a + 1; b < S.ChannelCount(); ++b) {
+			const std::vector<int> &SA = G.Sound[static_cast<size_t>(a)], &SB = G.Sound[static_cast<size_t>(b)];
+			if (SA.empty() || SB.empty())
+				continue;
+			const std::vector<int> &IA = G.ChordIndex[static_cast<size_t>(a)], &IB = G.ChordIndex[static_cast<size_t>(b)];
+			const int Apart = Written(S.Channel(b), 0) - Written(S.Channel(a), 0);
+			int Run = 0, RunA = -1, RunB = -1;
+			bool ArpA = false, ArpB = false;
+			for (int r = 0; r <= Rows; ++r) {
+				bool Clash = false, InA = false, InB = false;
+				int PitchA = -1, PitchB = -1;
+				if (r < Rows && SA[static_cast<size_t>(r)] >= 0 && SB[static_cast<size_t>(r)] >= 0) {
+					const std::vector<int> PA = G.Pitches(a, G.First + r), PB = G.Pitches(b, G.First + r);
+					for (size_t i = 0; i < PA.size() && !Clash; ++i)
+						for (size_t j = 0; j < PB.size() && !Clash; ++j)
+							if (SemitoneRub(PA[i] + Apart, PB[j])) {
+								Clash = true;
+								PitchA = PA[i];
+								PitchB = PB[j];
+								InA = i > 0;
+								InB = j > 0;
+							}
+				}
+				const size_t Here = static_cast<size_t>(r), Before = static_cast<size_t>(std::max(0, r - 1));
+				const bool Same = Clash && Run > 0 && SA[Here] == SA[Before] && SB[Here] == SB[Before] && IA[Here] == IA[Before] &&
+					IB[Here] == IB[Before];
+				if (Clash && (Run == 0 || Same)) {
+					if (Run == 0) {
+						RunA = PitchA;
+						RunB = PitchB;
+						ArpA = InA;
+						ArpB = InB;
+					}
+					++Run;
+					continue;
+				}
+				if (Run >= MinClash) {
+					ClashRun C;
+					C.A = a;
+					C.B = b;
+					C.Row = G.First + r - Run;
+					C.Rows = Run;
+					C.PitchA = RunA;
+					C.PitchB = RunB;
+					C.ArpA = ArpA;
+					C.ArpB = ArpB;
+					Out.push_back(C);
+				}
+				Run = Clash ? 1 : 0;
+				RunA = PitchA;
+				RunB = PitchB;
+				ArpA = InA;
+				ArpB = InB;
+			}
+		}
+	}
+	return Out;
+}
+
+// Whether two channels still rub on Row, as they sound there now
+bool StillRubs(const Session &S, const SoundGrid &G, int A, int B, int Row)
+{
+	const std::vector<int> PA = G.Pitches(A, Row), PB = G.Pitches(B, Row);
+	const int Apart = Written(S.Channel(B), 0) - Written(S.Channel(A), 0);
+	for (size_t i = 0; i < PA.size(); ++i)
+		for (size_t j = 0; j < PB.size(); ++j)
+			if (SemitoneRub(PA[i] + Apart, PB[j]))
+				return true;
+	return false;
+}
+
+// Whether Pitch, as Channel writes it, would rub against what any other part sounds on the rows [From, To), each as it
+// sounds (SemitoneRub, as check_song hears a clash)
+bool RubsAgainstOthers(const Session &S, const SoundGrid &G, int Channel, int Pitch, int From, int To)
+{
+	const int Sounds = Pitch - Written(S.Channel(Channel), 0);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel || G.Sound[static_cast<size_t>(c)].empty())
+			continue;
+		const int Lift = Written(S.Channel(c), 0);
+		for (int r = std::max(From, G.First); r < To && r < G.End; ++r) {
+			const std::vector<int> Theirs = G.Pitches(c, r);
+			for (size_t k = 0; k < Theirs.size(); ++k)
+				if (SemitoneRub(Sounds, Theirs[k] - Lift))
+					return true;
+		}
+	}
+	return false;
+}
+
+// Whether a part other than Channel sounds PitchClass on any row of [From, To)
+bool OthersSound(const Session &S, const SoundGrid &G, int Channel, int PitchClass, int From, int To)
+{
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel)
+			continue;
+		for (int r = std::max(From, G.First); r < To && r < G.End; ++r) {
+			const std::vector<int> Theirs = G.Pitches(c, r);
+			for (size_t k = 0; k < Theirs.size(); ++k)
+				if (ClassOf(Theirs[k]) == PitchClass)
+					return true;
+		}
+	}
+	return false;
+}
+
+// The note sounding on Row (the last one starting there or before that still plays), -1 for none
+int NoteIndexAt(const std::vector<NoteInfo> &Notes, int Row)
+{
+	for (size_t i = Notes.size(); i-- > 0; )
+		if (Notes[i].Row <= Row)
+			return Row < Notes[i].Row + std::max(1, Notes[i].Rows) ? static_cast<int>(i) : -1;
+	return -1;
+}
+
+// Whether a note is a passing note: shorter than a beat, and a step (a semitone or a whole tone) from the note of its
+// channel just before or just after it (half a beat's gap at most), as a tune steps F#-G-A over a chord
+bool IsPassingNote(Session &S, int Channel, int Row)
+{
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	const int i = NoteIndexAt(Notes, Row), R = std::max(1, S.Time.RowsPerBeat);
+	if (i < 0 || Notes[static_cast<size_t>(i)].Rows >= R)
+		return false;
+	const NoteInfo &N = Notes[static_cast<size_t>(i)];
+	auto Steps = [&](const NoteInfo &O) {
+		const int Move = std::abs(O.Pitch - N.Pitch);
+		return Move >= 1 && Move <= 2;
+	};
+	const bool Before = i > 0 && Notes[static_cast<size_t>(i - 1)].Row + Notes[static_cast<size_t>(i - 1)].Rows + R / 2 >= N.Row &&
+		Steps(Notes[static_cast<size_t>(i - 1)]);
+	const bool After = static_cast<size_t>(i + 1) < Notes.size() && Notes[static_cast<size_t>(i + 1)].Row <= N.Row + N.Rows + R / 2 &&
+		Steps(Notes[static_cast<size_t>(i + 1)]);
+	return Before || After;
+}
+
+// Whether a row is a strong beat: a bar's first, or the middle of a bar of four beats (or six, eight...)
+bool OnStrongBeat(const Session &S, int Row)
+{
+	const int R = std::max(1, S.Time.RowsPerBeat), Bar = S.Time.BarOf(Row), Into = Row - S.Time.BarStart(Bar);
+	if (Into % R != 0)
+		return false;
+	const int Beat = Into / R, Beats = S.Time.BeatsPerBar(Bar);
+	return Beat == 0 || (Beats >= 4 && Beats % 2 == 0 && Beat == Beats / 2);
+}
+
+// What a clash is: CLASH_WORTH fixing at once (held a beat or more, on a strong beat, or two chord parts that disagree, a
+// pluck's C# under pads on D), or a detail that may be meant: CLASH_COLOR, a tone of a chord's arpeggio (the soundtrack's
+// lush chords color the melody so: 239 of its 243 clashes), or CLASH_PASSING, a passing note shorter than a beat off the
+// strong beats against a chord's tone
+enum clash_kind { CLASH_WORTH, CLASH_COLOR, CLASH_PASSING };
+
+int ClashKind(Session &S, const ClashRun &Run)
+{
+	if (Run.ArpA || Run.ArpB)
+		return CLASH_COLOR;
+	if (Run.Rows < S.Time.RowsPerBeat && !OnStrongBeat(S, Run.Row) && (IsPassingNote(S, Run.A, Run.Row) || IsPassingNote(S, Run.B, Run.Row)))
+		return CLASH_PASSING;
+	return CLASH_WORTH;
+}
+
+// A part's role at a clash, for which note moves: the melody never; a line (an echo of the melody, a counter-melody moving
+// mostly by steps) only where its note is the one that disagrees with the others; a chord voice (a pad holding its notes,
+// an arpeggio's quick notes leaping through the chord) first; the bass, except on the chord's root. Heard over the bar
+// before and after
+enum clash_role { CLASH_MELODY, CLASH_LINE, CLASH_VOICE, CLASH_BASS };
+
+int ClashRole(Session &S, int Channel, int Melody, int Row)
+{
+	if (Channel == Melody)
+		return CLASH_MELODY;
+	const int Bar = S.Time.BarOf(Row);
+	const int First = S.Time.BarStart(std::max(1, Bar - 1)), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(Bar + 1));
+	if (PlaysBassPart(S, Channel, First, End))
+		return CLASH_BASS;
+	if (Melody >= 0 && FollowDelay(S, Channel, Melody, First, End) > 0)
+		return CLASH_LINE;	// an echo
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+	int Held = 0, Steps = 0, Leaps = 0;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Held += Notes[i].Rows >= S.Time.RowsPerBeat ? 1 : 0;
+		if (i == 0 || Notes[i - 1].Row + Notes[i - 1].Rows < Notes[i].Row)
+			continue;	// after a rest
+		const int Move = std::abs(Notes[i].Pitch - Notes[i - 1].Pitch);
+		Steps += Move >= 1 && Move <= 2 ? 1 : 0;
+		Leaps += Move >= 3 ? 1 : 0;
+	}
+	if (Notes.empty() || Held * 2 >= static_cast<int>(Notes.size()))
+		return CLASH_VOICE;	// a pad
+	return Leaps > Steps ? CLASH_VOICE : CLASH_LINE;
+}
+
+// The chord the parts other than Except and Also sound at Row, as the tools hear chords (in half bars); false for none
+bool ChordOthersSound(Session &S, int Except, int Also, int Row, const Key &K, Chord &Out)
+{
+	const int Bar = S.Time.BarOf(Row), First = S.Time.BarStart(Bar), End = std::min(S.Time.BarEnd(Bar), S.Time.TotalRows());
+	const std::vector<ChordAt> Heard = HearChords(HeardNotes(S, Except, First, End, Also), SongBarSpans(S, First, End),
+		S.Time.RowsPerBeat, K, true);
+	for (size_t i = 0; i < Heard.size(); ++i)
+		if (Heard[i].Row <= Row && Row < Heard[i].Row + Heard[i].Rows) {
+			Out = Heard[i].C;
+			return true;
+		}
+	return false;
+}
+
+// The chords the parts play in the bars of the rows [First, End), as get_song and the piano roll's chord strip name them
+// (SongChords), with where each lies: by name, or (Names false) by their roots and thirds alone (Gmaj7 and G alike)
+std::string ChordNamesIn(Session &S, int First, int End, const Key &K, int Melody, bool Names)
+{
+	const int A = S.Time.BarStart(S.Time.BarOf(First)), Z = std::min(S.Time.TotalRows(), S.Time.BarEnd(S.Time.BarOf(std::max(First, End - 1))));
+	const std::vector<ChordAt> Heard = SongChords(S, A, Z, K, Melody);
+	std::string Out;
+	for (size_t i = 0; i < Heard.size(); ++i)
+		Out += Format("%d+%d ", Heard[i].Row, Heard[i].Rows) + (Names ? ChordName(Heard[i].C, K) : Format("%d %d", Heard[i].C.Root,
+			Heard[i].C.Third())) + "|";
+	return Out;
+}
+
+// A note polish's clashes touch moved
+struct ClashMove {
+	int Channel, Row;		// the note's
+	int From, To;			// its pitch as written, before and after
+	std::string Chord;		// the chord the other parts sound there
+};
+
+// A clash the touch left, and why
+struct ClashLeft {
+	ClashRun Run;
+	std::string Why;
+};
+
+// polish's clashes touch over the rows [First, End): where two parts rub a semitone (or a semitone and octaves) apart, as
+// check_song hears a clash, one note moves to the nearest note of the chord the other parts sound there (as the tools hear
+// chords) that rubs against nothing while it plays, keeping its instrument, volume, effects and length: an arpeggio's
+// note is swapped for that tone and the figure keeps its shape. Which note: never the melody's (Melody), one with a slide
+// or a chord of its own, nor a tone of an arpeggio's chord (a color); the note that disagrees with the chord the others
+// sound first (a pluck's C# under pads and a tune on D), else a chord voice rather than a line (ClashRole); the bass only
+// where its note is the one that disagrees, and never its root. A held note (a beat or more) moves for its whole length only if the chord keeps its third (it
+// isn't the third, or another part sounds it too; for a passing note's clash, a detail, a held third stays whatever
+// sounds it: the pads would hollow a bar for an eighth's rub). The chords the parts play (SongChords) keep their names where a
+// detail moves (a passing note's clash: ClashKind), their roots and thirds where a clash worth fixing does (a held maj7
+// under the tune's root may go, Gmaj7 becoming G). Only notes on Channels that start in [First, End) move. It goes over
+// the clashes again until nothing moves, so a second polish changes nothing. Moves: what moved; Left: the clashes on
+// Channels that stay there, each with why
+void FixClashes(Session &S, Draft &D, int First, int End, int Melody, const std::vector<int> &Channels, const Key &K,
+	std::vector<ClashMove> &Moves, std::vector<ClashLeft> &Left)
+{
+	const int R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	Session View(S);	// the song as the draft has it
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		View.Assume(c, D.View(c));
+	auto Name = [&](int Channel, int Pitch) { return PitchName(Pitch) + " on " + S.Channel(Channel).FullName(); };
+	// Moves one note off a clash, or says why it can't
+	auto TryMove = [&](const SoundGrid &G, int Channel, int Role, int Row, bool Detail, std::string &Why) -> bool {
+		const std::vector<NoteInfo> &Notes = View.Notes(Channel);
+		const int Index = NoteIndexAt(Notes, Row);
+		if (Index < 0)
+			return false;
+		const NoteInfo N = Notes[static_cast<size_t>(Index)];
+		const ChannelInfo &Info = S.Channel(Channel);
+		if (Role == CLASH_MELODY) {
+			Why = "the melody's note stays as written";
+			return false;
+		}
+		if (std::find(Channels.begin(), Channels.end(), Channel) == Channels.end() || N.Row < First || N.Row >= End || N.Volume <= 0) {
+			Why = Name(Channel, N.Pitch) + (N.Row < First ? " starts before the bars asked" : " is outside what was asked");
+			return false;
+		}
+		bool Slides = false;
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first;
+			Slides = Slides || Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || Effect == EFF_PORTAMENTO || Effect == EFF_PORTA_UP ||
+				Effect == EFF_PORTA_DOWN || (Effect == EFF_ARPEGGIO && N.Effects[e].second.second != 0);
+		}
+		if (Slides || !InstrumentChord(View, N.Instrument).empty() || G.Pitches(Channel, Row).empty() || G.Pitches(Channel, Row)[0] != N.Pitch) {
+			Why = Name(Channel, N.Pitch) + " slides or sounds a chord of its own";
+			return false;
+		}
+		Chord Played;
+		const bool HasPlayed = ChordOthersSound(View, Melody, -1, Row, K, Played);	// the chord the parts play there
+		if (Role == CLASH_BASS && HasPlayed && ClassOf(N.Pitch) == Played.Root) {
+			Why = Name(Channel, N.Pitch) + " is the bass's root";
+			return false;
+		}
+		if (N.Rows >= R && HasPlayed && Played.Third() >= 0 && ClassOf(N.Pitch) == ClassOf(Played.Root + Played.Third()) &&
+			(Detail || !OthersSound(View, G, Channel, ClassOf(N.Pitch), N.Row, N.Row + N.Rows))) {
+			Why = Name(Channel, N.Pitch) + ", held, is the third of " + ChordName(Played, K) + (Detail ? ", which a passing note leaves "
+				"as it is" : ", which no other part plays");
+			return false;
+		}
+		Chord Target;
+		if (!ChordOthersSound(View, Channel, -1, Row, K, Target)) {
+			Why = "the other parts sound no chord there";
+			return false;
+		}
+		const std::string Before = ChordNamesIn(View, N.Row, N.Row + N.Rows, K, Melody, Detail);
+		// A held note takes another part's held pitch (a second pad in unison, a voice of the chord gone) only where nothing
+		// else fits
+		auto Doubles = [&](int Pitch) {
+			const int Sounds = Pitch - Written(Info, 0);
+			for (int c = 0; c < S.ChannelCount(); ++c) {
+				if (c == Channel || G.Sound[static_cast<size_t>(c)].empty())
+					continue;
+				bool All = true;
+				for (int r = N.Row; r < N.Row + N.Rows && r < G.End && All; ++r)
+					All = G.Sounds(c, r) && G.Pitches(c, r)[0] - Written(S.Channel(c), 0) == Sounds;
+				if (All)
+					return true;
+			}
+			return false;
+		};
+		bool Renamed = false;
+		for (int Pass = N.Rows >= R ? 0 : 1; Pass < 2; ++Pass) {
+			for (int Distance = 1; Distance <= 7; ++Distance)
+				for (int Way = 1; Way >= -1; Way -= 2) {
+					const int Pitch = N.Pitch + Way * Distance;
+					if (Pitch < 0 || Pitch >= PITCHES || !Target.HasPitchClass(ClassOf(Pitch)) || !NoteRangeReason(View, Info, Pitch,
+						N.Instrument).empty() || RubsAgainstOthers(View, G, Channel, Pitch, N.Row, N.Row + N.Rows) ||
+						(Pass == 0 && Doubles(Pitch)))
+						continue;
+					std::vector<Cell> Cells = D.View(Channel);
+					Cells[static_cast<size_t>(N.Row)].SetPitch(Pitch);
+					View.Assume(Channel, Cells);
+					if (ChordNamesIn(View, N.Row, N.Row + N.Rows, K, Melody, Detail) != Before) {
+						View.Assume(Channel, D.View(Channel));
+						Renamed = true;
+						continue;
+					}
+					D.Cells(Channel)[static_cast<size_t>(N.Row)].SetPitch(Pitch);
+					ClashMove M;
+					M.Channel = Channel;
+					M.Row = N.Row;
+					M.From = N.Pitch;
+					M.To = Pitch;
+					M.Chord = ChordName(Target, K);
+					Moves.push_back(M);
+					return true;
+				}
+		}
+		Why = Renamed ? "moving " + Name(Channel, N.Pitch) + " would change the chord the parts play" : "no note of " +
+			ChordName(Target, K) + " near " + Name(Channel, N.Pitch) + " is clear of the other parts";
+		return false;
+	};
+	for (int Pass = 0; Pass < 4; ++Pass) {
+		SoundGrid G = HearGrid(View, 0, Total);
+		std::vector<ClashRun> Runs;
+		{
+			const std::vector<ClashRun> All = ClashRuns(View, G);
+			for (size_t i = 0; i < All.size(); ++i)
+				if (All[i].Row < End && All[i].Row + All[i].Rows > First)
+					Runs.push_back(All[i]);
+			std::stable_sort(Runs.begin(), Runs.end(), [](const ClashRun &x, const ClashRun &y) { return x.Row < y.Row; });
+		}
+		Left.clear();
+		bool Moved = false;
+		for (size_t i = 0; i < Runs.size(); ++i) {
+			const ClashRun &Run = Runs[i];
+			if (!StillRubs(View, G, Run.A, Run.B, Run.Row) || (std::find(Channels.begin(), Channels.end(), Run.A) == Channels.end() &&
+				std::find(Channels.begin(), Channels.end(), Run.B) == Channels.end()))
+				continue;	// a move before cleared it, or none of its notes was asked about
+			ClashLeft L;
+			L.Run = Run;
+			if (Run.ArpA || Run.ArpB) {
+				L.Why = Name(Run.ArpA ? Run.A : Run.B, Run.ArpA ? Run.PitchA : Run.PitchB) + " is a tone of its arpeggio's chord, a color";
+				Left.push_back(L);
+				continue;
+			}
+			// The note that disagrees with the chord the others sound first, then the other if it's a chord voice; with
+			// neither (or both), the chord voices, the quicker note first. The bass moves only where its note is the one that
+			// disagrees (a finished stage's bass stepping D-C# under a scoop onto Eb, a forge's chromatic bass under a lush Eb,
+			// stay as written)
+			const int Roles[2] = { ClashRole(View, Run.A, Melody, Run.Row), ClashRole(View, Run.B, Melody, Run.Row) };
+			const int Channel[2] = { Run.A, Run.B }, Pitch[2] = { Run.PitchA, Run.PitchB };
+			Chord Others;
+			const bool Known = ChordOthersSound(View, Run.A, Run.B, Run.Row, K, Others);
+			const bool In[2] = { Known && Others.HasPitchClass(ClassOf(Run.PitchA)), Known && Others.HasPitchClass(ClassOf(Run.PitchB)) };
+			std::vector<int> Order;	// 0 or 1
+			if (Known && In[0] != In[1]) {
+				const int Odd = In[0] ? 1 : 0;
+				Order.push_back(Odd);
+				if (Roles[1 - Odd] == CLASH_VOICE)
+					Order.push_back(1 - Odd);
+			}
+			else {
+				const std::vector<NoteInfo> &NA = View.Notes(Run.A), &NB = View.Notes(Run.B);
+				const int IA = NoteIndexAt(NA, Run.Row), IB = NoteIndexAt(NB, Run.Row);
+				const int LA = IA >= 0 ? NA[static_cast<size_t>(IA)].Rows : 0, LB = IB >= 0 ? NB[static_cast<size_t>(IB)].Rows : 0;
+				const bool BFirst = LB < LA;
+				for (int k = 0; k < 2; ++k) {
+					const int Which = BFirst ? 1 - k : k;
+					if (Roles[Which] == CLASH_VOICE)
+						Order.push_back(Which);
+				}
+			}
+			bool Done = false;
+			const bool Detail = ClashKind(View, Run) != CLASH_WORTH;
+			for (size_t o = 0; o < Order.size() && !Done; ++o) {
+				std::string Why;
+				Done = TryMove(G, Channel[Order[o]], Roles[Order[o]], Run.Row, Detail, Why);
+				if (!Why.empty() && (L.Why.empty() || Roles[Order[o]] != CLASH_MELODY))
+					L.Why = Why;	// the accompaniment's reason over the melody's
+			}
+			if (Done) {
+				Moved = true;
+				for (int c = 0; c < S.ChannelCount(); ++c)
+					View.Assume(c, D.View(c));
+				G = HearGrid(View, 0, Total);
+				continue;
+			}
+			if (L.Why.empty())
+				L.Why = Roles[0] == CLASH_MELODY || Roles[1] == CLASH_MELODY ? Name(Channel[Roles[0] == CLASH_MELODY ? 1 : 0],
+					Pitch[Roles[0] == CLASH_MELODY ? 1 : 0]) + " is a line beside the melody" : "both are lines";
+			Left.push_back(L);
+		}
+		if (!Moved)
+			break;
+	}
+}
+
+// The clashes touch's moves and what stays, for polish's reply and the error when nothing moved
+std::string ClashMovesText(const Session &S, const std::vector<ClashMove> &Moves)
+{
+	std::string List;
+	for (size_t i = 0; i < Moves.size() && i < 4; ++i)
+		List += Format("%s%s to %s on %s at %s (the %s the other parts play)", i == 0 ? "" : ", ", PitchName(Moves[i].From).c_str(),
+			PitchName(Moves[i].To).c_str(), S.Channel(Moves[i].Channel).FullName().c_str(), S.Time.Position(Moves[i].Row).c_str(),
+			Moves[i].Chord.c_str());
+	if (Moves.size() > 4)
+		List += Format(" and %d more", static_cast<int>(Moves.size()) - 4);
+	return Format("%s moved off clashes onto the chord the other parts sound (%s)", Plural(static_cast<int>(Moves.size()), "note",
+		"notes").c_str(), List.c_str());
+}
+
+std::string ClashesLeftText(const Session &S, const std::vector<ClashLeft> &Left)
+{
+	std::string List;
+	for (size_t i = 0; i < Left.size() && i < 3; ++i)
+		List += Format("%s%s against %s at %s: %s", i == 0 ? "" : "; ", PitchName(Left[i].Run.PitchA).c_str(),
+			PitchName(Left[i].Run.PitchB).c_str(), S.Time.Position(Left[i].Run.Row).c_str(), Left[i].Why.c_str());
+	if (Left.size() > 3)
+		List += Format("; and %d more", static_cast<int>(Left.size()) - 3);
+	return Format("%s %s (%s). Another note in the tune or the chord there clears %s.", Plural(static_cast<int>(Left.size()), "clash",
+		"clashes").c_str(), Left.size() == 1 ? "stays" : "stay", List.c_str(), Left.size() == 1 ? "it" : "them");
+}
+
 std::string PolishTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -12238,8 +12781,8 @@ std::string PolishTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
-				Word != "staccato" && Word != "falls" && Word != "clicks")
-				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato or clicks.");
+				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato, clicks or clashes.");
 			What.insert(Word);
 		}
 	}
@@ -12372,6 +12915,20 @@ std::string PolishTool(Session &S, const Json &Args)
 					S.Channel(c).FullName().c_str()));
 		}
 	}
+	// Clashes: an accompaniment's note a semitone from another part's moves onto the chord the others sound (FixClashes), the
+	// melody kept as written (the one given, else the song's: a bar or two alone can look like another's tune)
+	std::vector<ClashLeft> ClashesLeft;
+	if (What.count("clashes")) {
+		std::vector<ClashMove> Moves;
+		bool KeyFound = false;
+		const Key K = KeyArg(S, Args, "key", 0, S.Time.TotalRows(), KeyFound);
+		const int Lead = Arg(Args, "melody_channel") != 0 ? Melody : GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		FixClashes(S, D, First, End, Lead, Channels, K, Moves, ClashesLeft);
+		if (!Moves.empty())
+			Done.push_back(ClashMovesText(S, Moves));
+		if (!ClashesLeft.empty())
+			Warnings.push_back(ClashesLeftText(S, ClashesLeft));
+	}
 	if (What.count("clicks")) {
 		// Last, so it hears the other touches too: notes on the 2A03's and MMC5's pulses whose vibrato clicks, nudged
 		std::vector<std::vector<Cell> > All;
@@ -12419,6 +12976,9 @@ std::string PolishTool(Session &S, const Json &Args)
 	std::vector<Change> Changes;
 	int Start;
 	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings)) {
+		if (What.size() == 1 && What.count("clashes"))
+			throw Problem(ClashesLeft.empty() ? "There was no clash there: no two parts a semitone apart for half a beat or more, as "
+				"check_song hears one." : "No clash there could move: " + ClashesLeftText(S, ClashesLeft));
 		std::string Already;
 		for (size_t i = 0; i < Accented.size(); ++i)
 			Already += " " + Accented[i];
@@ -20753,6 +21313,66 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 		}
 	}
 
+	// Clashes the part makes against the other parts, as check_song hears them: the ones worth fixing at once (held a beat or
+	// more, on a strong beat, chord parts that disagree; ClashKind: a passing note or a chord's color is a detail), with
+	// polish's clashes touch over the part's bars as the fix where it moves an accompaniment's note off them (the melody,
+	// the song's, as written). Not for a sound effect
+	if (UseOfTrack(S).Use != TRACK_SOUND) {
+		Session View(S);
+		View.Assume(Channel, Cells);
+		const std::vector<ClashRun> Runs = ClashRuns(View, HearGrid(View, 0, View.Time.TotalRows()));
+		std::vector<ClashRun> Worth;
+		for (size_t i = 0; i < Runs.size(); ++i) {
+			const ClashRun &Run = Runs[i];
+			bool In = false;
+			for (size_t s = 0; s < Spans.size() && !In; ++s)
+				In = Run.Row < Spans[s].second && Run.Row + Run.Rows > Spans[s].first;
+			if (In && (Run.A == Channel || Run.B == Channel) && ClashKind(View, Run) == CLASH_WORTH)
+				Worth.push_back(Run);
+		}
+		if (!Worth.empty()) {
+			std::string List;
+			for (size_t k = 0; k < Worth.size() && k < static_cast<size_t>(GUARD_LISTED); ++k) {
+				const ClashRun &Run = Worth[k];
+				const bool Mine = Run.A == Channel;
+				List += Format("%s%s at %s against %s on %s", k == 0 ? "" : ", ", PitchName(Mine ? Run.PitchA : Run.PitchB).c_str(),
+					S.Time.Position(Run.Row).c_str(), PitchName(Mine ? Run.PitchB : Run.PitchA).c_str(),
+					S.Channel(Mine ? Run.B : Run.A).FullName().c_str());
+			}
+			if (Worth.size() > static_cast<size_t>(GUARD_LISTED))
+				List += Format(" and %d more", static_cast<int>(Worth.size()) - GUARD_LISTED);
+			std::string Text = Format("%s on %s a semitone (or a semitone and octaves) from another part, held or on a strong beat, "
+				"as check_song hears a clash: %s.", Worth.size() == 1 ? "a note" : Format("%d notes", static_cast<int>(Worth.size())).c_str(),
+				Name.c_str(), List.c_str());
+			Key CK;
+			const bool Keyed = TrackKey(View, 0, View.Time.TotalRows(), CK);
+			const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());
+			std::vector<int> Every;
+			for (int c = 0; c < View.ChannelCount(); ++c)
+				if (IsMelodic(View.Channel(c)))
+					Every.push_back(c);
+			Draft Plan(View);
+			std::vector<ClashMove> Moves;
+			std::vector<ClashLeft> Left;
+			if (Direct && Keyed)
+				FixClashes(View, Plan, First, End, Lead, Every, CK, Moves, Left);
+			if (!Moves.empty()) {
+				Json A = Json::MakeObject(), Touches = Json::MakeArray();
+				Touches.Push("clashes");
+				A.Set("touches", Touches);
+				Bars(A);
+				if (Lead >= 0)
+					A.Set("melody_channel", View.Channel(Lead).FullName());
+				Text += " Fix: " + GuardCall("polish", A) + Format(" (moves %s of the accompaniment onto the chord the other parts "
+					"play, the melody as written).", Plural(static_cast<int>(Moves.size()), "note", "notes").c_str());
+			}
+			else
+				Text += Lead == Channel ? " Another note in the tune there, or another chord under it, clears one." :
+					" Another note there, a step away onto the chord the other parts play, clears one.";
+			Out.push_back(Text);
+		}
+	}
+
 	// A bass nearly silent: a lone short note now and then, from its first note's bar to its last's, four bars or more (a
 	// bass that joins at an intro's end isn't; drips and sparkles on other channels are meant so, and so are bubbles on a
 	// bass channel over another part playing in most of those bars, every one above its notes there). What a sound plays:
@@ -23290,9 +23910,15 @@ struct CheckFinding {
 	std::vector<CheckNote> Notes;
 	Json Details;			// more about it, by kind
 	Json Fix;				// the tool call that fixes it (polish nudging a click), or null
+	std::string Severity;	// where it isn't its kind's: a clash that's a detail ("low")
 
 	CheckFinding() : Kind(0), Channel(-1), Row(0), Rows(0), Details(Json::MakeObject()) {}
 };
+
+std::string SeverityOf(const CheckFinding &F)
+{
+	return F.Severity.empty() ? std::string(CHECK_SEVERITY[F.Kind]) : F.Severity;
+}
 
 // The note of a channel sounding on Row (the last one starting there or before)
 CheckNote SoundingNote(Session &S, int Channel, int Row)
@@ -23323,7 +23949,7 @@ Json CheckJson(Session &S, const CheckFinding &F)
 {
 	Json Out = Json::MakeObject();
 	Out.Set("kind", CHECK_KIND[F.Kind]);
-	Out.Set("severity", CHECK_SEVERITY[F.Kind]);
+	Out.Set("severity", SeverityOf(F));
 	Out.Set("channel", F.Channel >= 0 ? Json(F.Channel + 1) : Json());
 	Out.Set("channel_name", F.Channel >= 0 ? Json(S.Channel(F.Channel).FullName()) : Json());
 	PutPlace(S, F.Row, Out);
@@ -23402,8 +24028,7 @@ std::string CheckTool(Session &S, const Json &Args)
 		return Findings[Kind].back();
 	};
 
-	// What sounds on each row, per melodic channel
-	std::vector<std::vector<int> > Sound(S.ChannelCount());
+	// Where the song's notes start and end
 	int SongFirst = -1, SongLast = -1;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
@@ -23412,13 +24037,6 @@ std::string CheckTool(Session &S, const Json &Args)
 				SongFirst = Notes[i].Row;
 			SongLast = std::max(SongLast, Notes[i].Row + Notes[i].Rows);
 		}
-		if (!IsMelodic(S.Channel(c)))
-			continue;
-		Sound[c].assign(static_cast<size_t>(std::max(0, End - First)), -1);
-		std::vector<NoteInfo> Kept;
-		const std::vector<NoteInfo> &Pitched = PitchedNotes(S, c, Kept);	// a 5B's noise alone sounds no pitch to clash
-		for (size_t i = 0; i < Pitched.size(); ++i)
-			SoundingRows(Pitched[i], S.Time.RowsPerBeat, First, End, Sound[c]);
 	}
 
 	// Outside the key, and outside the channel's range (PitchOutsideKey and NoteRangeReason, as write_notes warns of them).
@@ -23488,99 +24106,73 @@ std::string CheckTool(Session &S, const Json &Args)
 		}
 	}
 
-	// The notes a channel's chords sound above each row's note (an instrument's looping arpeggio, a 0xy effect): a
-	// lush maj7 keeps its seventh on top, where a melody note a semitone over it rubs
-	std::vector<std::vector<int> > ChordIndex(static_cast<size_t>(S.ChannelCount()));	// per row, into Chords; -1 for none
-	std::vector<std::vector<std::vector<int> > > Chords(static_cast<size_t>(S.ChannelCount()));
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (Sound[c].empty())
-			continue;
-		ChordIndex[c].assign(Sound[c].size(), -1);
-		std::vector<NoteInfo> Kept;
-		const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);
-		const std::vector<int> Arps = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
-		for (size_t i = 0; i < Notes.size(); ++i) {
-			const std::vector<int> Above = ChordAbove(S, Notes[i], Arps[i]);
-			if (Above.empty() || Notes[i].Row + Notes[i].Rows <= First || Notes[i].Row >= End)
-				continue;
-			Chords[c].push_back(Above);
-			for (int r = std::max(First, Notes[i].Row); r < Notes[i].Row + Notes[i].Rows && r < End; ++r)
-				ChordIndex[c][static_cast<size_t>(r - First)] = static_cast<int>(Chords[c].size()) - 1;
-		}
-	}
-
-	// Clashes: two channels a semitone (or a semitone plus octaves) apart for a while, as they sound (the
-	// triangle and the VRC7 an octave under their written notes, so it's a major seventh where one is written a
-	// semitone over a pulse), a note of a chord's arpeggio counted too
-	int Clashes = 0;
-	const int MinClash = std::max(1, S.Time.RowsPerBeat / 2);
-	for (int a = 0; a < S.ChannelCount(); ++a) {
-		for (int b = a + 1; b < S.ChannelCount(); ++b) {
-			if (Sound[a].empty() || Sound[b].empty())
-				continue;
-			const int Apart = Written(S.Channel(b), 0) - Written(S.Channel(a), 0);
-			// Every pitch a channel sounds on a row: its note, and its chord's
-			auto Pitches = [&](int c, int r) {
-				std::vector<int> Out(1, Sound[c][r]);
-				const int Index = ChordIndex[c][static_cast<size_t>(r)];
-				if (Index >= 0)
-					for (size_t k = 0; k < Chords[c][static_cast<size_t>(Index)].size(); ++k)
-						Out.push_back(Sound[c][r] + Chords[c][static_cast<size_t>(Index)][k]);
-				return Out;
-			};
-			int Run = 0, RunA = -1, RunB = -1;
-			bool ArpA = false, ArpB = false;
-			for (int r = 0; r <= End - First; ++r) {
-				bool Clash = false, InA = false, InB = false;
-				int PitchA = -1, PitchB = -1;
-				if (r < End - First && Sound[a][r] >= 0 && Sound[b][r] >= 0) {
-					const std::vector<int> PA = Pitches(a, r), PB = Pitches(b, r);
-					for (size_t i = 0; i < PA.size() && !Clash; ++i)
-						for (size_t j = 0; j < PB.size() && !Clash; ++j)
-							if (SemitoneRub(PA[i] + Apart, PB[j])) {
-								Clash = true;
-								PitchA = PA[i];
-								PitchB = PB[j];
-								InA = i > 0;
-								InB = j > 0;
-							}
-				}
-				const bool Same = Clash && Run > 0 && Sound[a][r] == Sound[a][r - 1] && Sound[b][r] == Sound[b][r - 1] &&
-					ChordIndex[a][static_cast<size_t>(r)] == ChordIndex[a][static_cast<size_t>(r - 1)] &&
-					ChordIndex[b][static_cast<size_t>(r)] == ChordIndex[b][static_cast<size_t>(r - 1)];
-				if (Clash && (Run == 0 || Same)) {
-					if (Run == 0) {
-						RunA = PitchA;
-						RunB = PitchB;
-						ArpA = InA;
-						ArpB = InB;
-					}
-					++Run;
-					continue;
-				}
-				if (Run >= MinClash) {
-					const int Row = First + r - Run;
-					++Clashes;
-					CheckFinding &F = Report(FOUND_CLASH, a, Row, Run, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.",
-						PitchName(RunA).c_str(), ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(),
-						PitchName(RunB).c_str(), ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(),
-						S.Time.Position(Row).c_str(), S.Time.Length(Run).c_str()), Format("%s against %s on %s for %s",
-						PitchName(RunA).c_str(), PitchName(RunB).c_str(), S.Channel(b).FullName().c_str(), S.Time.Length(Run).c_str()));
-					F.Notes.push_back(SoundingNote(S, a, Row));
-					F.Notes.push_back(SoundingNote(S, b, Row));
-					F.Details.Set("other_channel", b + 1);
-					F.Details.Set("other_channel_name", S.Channel(b).FullName());
-					Json Heard = Json::MakeArray();
-					Heard.Push(PitchName(RunA));
-					Heard.Push(PitchName(RunB));
-					F.Details.Set("pitches", Heard);
-				}
-				Run = Clash ? 1 : 0;
-				RunA = PitchA;
-				RunB = PitchB;
-				ArpA = InA;
-				ArpB = InB;
+	// Clashes (ClashRuns): two channels a semitone (or a semitone plus octaves) apart for half a beat or more, as they
+	// sound, a note of a chord's arpeggio counted too. ClashKind tells the ones worth fixing at once from the details that
+	// may be meant (severity low), and where polish's clashes touch moves a note off one (over the bars its two notes play
+	// in, on its two channels, the melody kept as written), that call is its fix
+	int Clashes = 0, ClashDetails = 0, ClashFixes = 0;
+	{
+		const SoundGrid Grid = HearGrid(S, First, End);
+		const std::vector<ClashRun> Runs = ClashRuns(S, Grid);
+		const int Lead = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+		std::map<std::string, std::vector<ClashMove> > Plans;	// what the touch moves, by bars and channels
+		for (size_t i = 0; i < Runs.size(); ++i) {
+			const ClashRun &Run = Runs[i];
+			const int a = Run.A, b = Run.B, Row = Run.Row;
+			++Clashes;
+			CheckFinding &F = Report(FOUND_CLASH, a, Row, Run.Rows, Format("Clash: %s%s on %s against %s%s on %s at %s for %s.",
+				PitchName(Run.PitchA).c_str(), Run.ArpA ? " (in its chord's arpeggio)" : "", S.Channel(a).FullName().c_str(),
+				PitchName(Run.PitchB).c_str(), Run.ArpB ? " (in its chord's arpeggio)" : "", S.Channel(b).FullName().c_str(),
+				S.Time.Position(Row).c_str(), S.Time.Length(Run.Rows).c_str()), Format("%s against %s on %s for %s",
+				PitchName(Run.PitchA).c_str(), PitchName(Run.PitchB).c_str(), S.Channel(b).FullName().c_str(), S.Time.Length(Run.Rows).c_str()));
+			F.Notes.push_back(SoundingNote(S, a, Row));
+			F.Notes.push_back(SoundingNote(S, b, Row));
+			F.Details.Set("other_channel", b + 1);
+			F.Details.Set("other_channel_name", S.Channel(b).FullName());
+			Json Heard = Json::MakeArray();
+			Heard.Push(PitchName(Run.PitchA));
+			Heard.Push(PitchName(Run.PitchB));
+			F.Details.Set("pitches", Heard);
+			const int Kind = ClashKind(S, Run);
+			if (Kind != CLASH_WORTH) {
+				++ClashDetails;
+				F.Severity = "low";
+				F.Details.Set("detail", Kind == CLASH_COLOR ? "color" : "passing");
+				F.Line += Kind == CLASH_COLOR ? " A tone of a chord's arpeggio, the chord's color: a detail that may be meant." :
+					" A passing note shorter than a beat against a chord's tone: a detail that may be meant.";
 			}
+			if (Kind == CLASH_COLOR)
+				continue;	// the touch leaves an arpeggio's chord as it is
+			const int FromBar = S.Time.BarOf(std::min(F.Notes[0].Row, F.Notes[1].Row)), ToBar = S.Time.BarOf(Row + Run.Rows - 1);
+			const std::string Where = Format("%d %d %d %d", FromBar, ToBar, a, b);
+			if (Plans.count(Where) == 0) {
+				Draft Plan(S);
+				std::vector<ClashLeft> Left;
+				FixClashes(S, Plan, S.Time.BarStart(FromBar), std::min(S.Time.TotalRows(), S.Time.BarEnd(ToBar)), Lead,
+					std::vector<int>{ a, b }, K, Plans[Where], Left);
+			}
+			const std::vector<ClashMove> &Moves = Plans[Where];
+			const ClashMove *pMove = 0;
+			for (size_t m = 0; m < Moves.size() && pMove == 0; ++m)
+				if ((Moves[m].Channel == a && Moves[m].Row == F.Notes[0].Row) || (Moves[m].Channel == b && Moves[m].Row == F.Notes[1].Row))
+					pMove = &Moves[m];
+			if (pMove == 0)
+				continue;
+			++ClashFixes;
+			Json Touches = Json::MakeArray(), Channels = Json::MakeArray(), Arguments = Json::MakeObject();
+			Touches.Push("clashes");
+			Channels.Push(a + 1);
+			Channels.Push(b + 1);
+			Arguments.Set("touches", Touches);
+			Arguments.Set("channels", Channels);
+			Arguments.Set("from_bar", FromBar);
+			Arguments.Set("to_bar", ToBar);
+			if (Lead >= 0)
+				Arguments.Set("melody_channel", Lead + 1);
+			F.Fix = ToolCall("polish", Arguments, Format("moves %s on %s at %s to %s, a note of the %s the other parts play there",
+				PitchName(pMove->From).c_str(), S.Channel(pMove->Channel).FullName().c_str(), S.Time.Position(pMove->Row).c_str(),
+				PitchName(pMove->To).c_str(), pMove->Chord.c_str()));
+			F.Line += " " + FixText(F.Fix, true);
 		}
 	}
 
@@ -23846,6 +24438,12 @@ std::string CheckTool(Session &S, const Json &Args)
 	Text += Format(": %d outside the key, %d clashes, %d out of range, %d busy, %d silent, %d clicking, %d vanishing%s.", OutOfKey,
 		Clashes, OutOfRange, Busy, Silent, Clicking, Vanished, Chosen.Style == STYLE_CALM ? (", " + Plural(Held, "held lead",
 		"held leads")).c_str() : "");
+	if (ClashDetails > 0)
+		Text += Format(" %d of the clashes %s that may be meant (a passing note shorter than a beat, a tone of a chord's "
+			"arpeggio).", ClashDetails, ClashDetails == 1 ? "is a detail" : "are details");
+	if (ClashFixes > 0)
+		Text += Format(" %d %s a fix: polish with touches [\"clashes\"] moves the accompaniment's note onto the chord the other parts "
+			"play (what_next gives one call for the song).", ClashFixes, ClashFixes == 1 ? "clash has" : "clashes have");
 	if (Warbling > 0)
 		Text += Format(" %s on the FDS warble: its modulator shakes them.", Plural(Warbling, "note", "notes").c_str());
 	if (ArrangedAll > 0)
@@ -23858,8 +24456,9 @@ std::string CheckTool(Session &S, const Json &Args)
 		std::vector<const CheckFinding *> Ranked;
 		for (size_t r = 0; r < sizeof(RANKS) / sizeof(RANKS[0]); ++r)
 			for (int k = 0; k < FOUND_KINDS; ++k)
-				for (size_t i = 0; i < Findings[k].size() && std::string(CHECK_SEVERITY[k]) == RANKS[r]; ++i)
-					Ranked.push_back(&Findings[k][i]);
+				for (size_t i = 0; i < Findings[k].size(); ++i)
+					if (SeverityOf(Findings[k][i]) == RANKS[r])
+						Ranked.push_back(&Findings[k][i]);
 		if (Ranked.empty())
 			return Text + "\nNothing stands out.";
 		const size_t Listed = std::min<size_t>(3, Ranked.size());
@@ -26241,8 +26840,8 @@ bool WhatNext::Fixes(const NextStep &N)
 	return true;
 }
 
-// What breaks the sound, from check_song's findings: notes that vanish, clicks, notes out of range (clashes are the
-// composer's to hear: listed, not changed)
+// What breaks the sound, from check_song's findings: notes that vanish, clicks, notes out of range, clashes worth fixing at
+// once (one polish for them all; the details that may be meant, a passing note or a chord's color, are no step)
 void WhatNext::Breakers()
 {
 	if (!m_HasNotes)
@@ -26257,8 +26856,8 @@ void WhatNext::Breakers()
 	if (!ParseJson(CheckTool(S, Asked), Report) || Report.Get("findings") == 0)
 		return;
 	const Json &Findings = *Report.Get("findings");
-	int Clashes = 0, Stuck = 0;
-	std::string ClashBars;
+	int Clashes = 0, Stuck = 0, ClashSteps = 0, ClashDetails = 0, ClashStay = 0;
+	std::set<int> ClashBars;	// of the clashes worth fixing that have no fix
 	bool Clicks = false;
 	for (size_t i = 0; i < Findings.Size(); ++i) {
 		const Json &F = Findings.At(i);
@@ -26359,9 +26958,17 @@ void WhatNext::Breakers()
 				ChannelName(Channel).c_str(), Up ? "too low" : "too high", Bar, To, Reason.c_str(), Up ? "up" : "down"));
 		}
 		else if (Kind == "clash") {
+			// Worth fixing at once (severity high: held a beat or more, on a strong beat, chord parts that disagree) with a
+			// fix: one polish moves the accompaniment's notes off every clash it can, in every bar
 			++Clashes;
-			if (ClashBars.size() < 40)
-				ClashBars += (ClashBars.empty() ? "" : ", ") + Format("%d", Bar);
+			const bool Fixed = F.Get("fix") != 0 && F.Get("fix")->IsObject();
+			const bool Worth = F.Get("severity") != 0 && F.Get("severity")->IsString() && F.Get("severity")->String() == "high";
+			ClashSteps += Fixed && Worth ? 1 : 0;
+			ClashDetails += Worth ? 0 : 1;
+			if (Worth && !Fixed) {
+				++ClashStay;
+				ClashBars.insert(Bar);
+			}
 		}
 		else if (F.Get("fix") != 0 && F.Get("fix")->IsObject()) {
 			// Any other kind of finding with its fix, as check_song gives it: its call, then the calls of its "then" in order
@@ -26385,9 +26992,34 @@ void WhatNext::Breakers()
 				Step(N);
 		}
 	}
-	if (Clashes > 0)
-		m_Notes.push_back(Format("check_song hears %s (bars %s): two parts a semitone apart. Listen with the user; moving one note a "
-			"step (write_notes) or a chord's color clears one.", Plural(Clashes, "clash", "clashes").c_str(), ClashBars.c_str()));
+	if (ClashSteps > 0) {
+		Json A = Json::MakeObject();
+		Json Touches = Json::MakeArray();
+		Touches.Push("clashes");
+		A.Set("touches", Touches);
+		if (m_HasMelody)
+			A.Set("melody_channel", ChannelName(m_Melody));
+		if (!Wanted("clash") || !Looking() || WouldChange(S, "polish", A))
+			Step("clash", "polish", A, Format("check_song hears %s worth fixing (two parts a semitone apart, held or on a strong beat, "
+				"or chord parts that disagree): polish with touches clashes moves the accompaniment's note onto the chord the other "
+				"parts play, in every bar, the melody as written; the details that may be meant (a passing note) go too where a "
+				"note can move.", Plural(ClashSteps, "clash", "clashes").c_str()));
+		else
+			ClashStay += ClashSteps;
+	}
+	if (ClashStay > 0) {
+		std::string Bars;
+		for (std::set<int>::const_iterator it = ClashBars.begin(); it != ClashBars.end() && Bars.size() < 40; ++it)
+			Bars += (Bars.empty() ? "" : ", ") + Format("%d", *it);
+		m_Notes.push_back(Format("check_song hears %s worth fixing that no accompaniment's note can clear (%s %s): the melody's "
+			"note against a chord's third that no other part plays, or two lines. Listen with the user; another note in the tune or "
+			"the chord there clears one.", Plural(ClashStay, "clash", "clashes").c_str(), ClashBars.size() == 1 ? "bar" : "bars",
+			Bars.c_str()));
+	}
+	else if (ClashDetails > 0 && ClashSteps == 0 && Clashes > 0)
+		m_Notes.push_back(Format("check_song hears %s that may be meant (a passing note shorter than a beat, a tone of a chord's "
+			"arpeggio): no step; polish with touches clashes over their bars moves an accompaniment's note where the user wants "
+			"one gone.", Plural(ClashDetails, "detail", "details").c_str()));
 	if (Stuck > 0)
 		m_Notes.push_back(Format("%s still %s with too deep a vibrato to nudge clear: a gentler one stops it.", Plural(Stuck, "note",
 			"notes").c_str(), Stuck == 1 ? "clicks" : "click"));
@@ -29299,8 +29931,12 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"bars), falls (the melody's last note before a rest of a beat or more drops two semitones as it ends, a sigh, at "
 			"most one every two bars) and staccato (the bass's notes of a beat or more cut after half a beat, so it bounces "
 			"rather than booms; only where the channel plays the bass, not a counter-melody, and not in bars the melody rests "
-			"in, a break's long notes). Default: accents, vibrato, separate and clicks. Polish again changes nothing it did: "
-			"a part accented already keeps its volumes.");
+			"in, a break's long notes) and clashes (where two parts rub a semitone apart, as check_song hears a clash, the "
+			"accompaniment's note moves to the nearest note of the chord the other parts sound that rubs against nothing: an "
+			"arpeggio keeps its shape, the melody never moves, a held note only while the chord keeps its third, and the "
+			"chords keep their names; a tone of an arpeggio instrument's chord is its color and stays; check_song's clash "
+			"findings give it over their bars, what_next over the song). Default: accents, vibrato, separate and clicks. "
+			"Polish again changes nothing it did: a part accented already keeps its volumes.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
 		Json TouchNames = Json::MakeArray();
@@ -29312,6 +29948,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("falls");
 		TouchNames.Push("staccato");
 		TouchNames.Push("clicks");
+		TouchNames.Push("clashes");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
@@ -29326,7 +29963,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					"default touches, accents and all (a stage's lead is a step louder on a bar's first note). Default: calm when the "
 					"track's name says so.", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
-				.Add("melody_channel", ChannelProp("The melody, for the vibrato. Default: the busiest channel."))
+				.Add("melody_channel", ChannelProp("The melody, for the vibrato, and the part clashes leaves as written. Default: "
+					"the busiest channel (for clashes, the song's)."))
 				.Range().ClipChoice(),
 			false, true);
 	}
@@ -30873,6 +31511,9 @@ std::string ToolSet::Instructions()
 		"them as steps), then export_for_game again. Run "
 		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
+		"check_song's clashes (two parts a semitone apart) are harmony, which listen doesn't judge: make the fix a clash gives "
+		"(polish with touches [\"clashes\"], which moves the accompaniment's note onto the chord the other parts play), or "
+		"what_next's step, one call for the song; the details it calls maybe meant (a passing note) are the user's to keep. "
 		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
 		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "
 		"(drums take an instrument for each kind of hit, as an object), and grows the song only for notes that start past "

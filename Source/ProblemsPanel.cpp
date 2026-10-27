@@ -1116,7 +1116,7 @@ struct CProblemsPanelWnd::Impl {
 		CString Text = FromUtf8(pFinding->Message);
 		if (IsStale(pFinding))
 			Text += _T("\r\n\r\nThis was heard before the song's last change: Listen hears it as it is now.");
-		else if (pFinding->Kind == ftapi::PROBLEM_HEARD_DETAIL)
+		else if (pFinding->Kind == ftapi::PROBLEM_HEARD_DETAIL || pFinding->Kind == ftapi::PROBLEM_CLASH_DETAIL)
 			Text += _T("\r\n\r\nA detail that may be meant: Play it, and change it only if it doesn't sound as you want.");
 		const action_t Action = ActionOf(Index);
 		if (Action == ACTION_NUDGE)
@@ -1526,7 +1526,7 @@ struct CProblemsPanelWnd::Impl {
 			{ _T("melody in pieces"), _T("melodies in pieces") }, { _T("bass to fix"), _T("bass parts to fix") },
 			{ _T("sound unsuited"), _T("sounds unsuited") }, { _T("fader doing the mix"), _T("faders doing the mix") },
 			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") },
-			{ _T("detail to hear"), _T("details to hear") }
+			{ _T("detail to hear"), _T("details to hear") }, { _T("clash maybe meant"), _T("clashes maybe meant") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
