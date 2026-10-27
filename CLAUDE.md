@@ -1828,7 +1828,9 @@ detail; root, third and no tone the move adds for the rest). It goes over the
 song until nothing moves. Each clash it clears carries that call over its
 bars and two channels as its `fix` (planned per finding, `Plans`), `what_next`'s
 `Breakers` gives one `clash` step for the song when a clash worth fixing has
-one, `WritingWarnings` warns with the call, and `ProblemList` reads a low
+one, `WritingWarnings` warns of the clashes it would clear with the call
+(written back section by section, the finished soundtrack gets none), and
+`ProblemList` reads a low
 clash as `PROBLEM_CLASH_DETAIL` (appended, `clash_detail`). Measured: no note
 of the finished soundtrack moves and `what_next` asks no new step on its 79
 tracks; a local model's calm song went from 46 clashes to 14 (2 worth fixing,

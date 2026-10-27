@@ -748,7 +748,8 @@ the song sounds, not that, so it doesn't hear them.
   maybe meant"). `what_next` gives one `polish` with `touches`
   `["clashes"]` for the whole song once a clash worth fixing has a fix;
   details alone are no step. `write_notes` warns as it writes a part that
-  clashes with the others held or on a strong beat, with the same call.
+  clashes with the others held or on a strong beat where that touch would
+  clear it, with the call over the part's bars.
 - A local model's calm song had 46 clashes; one call left 14: 2 worth
   fixing (the tune held on D over a pad's C#, the third of A no other part
   plays) and 12 passing notes over the pads' held thirds. The finished
