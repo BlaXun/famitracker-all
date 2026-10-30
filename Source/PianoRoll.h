@@ -45,7 +45,10 @@
 // or from the cursor's bar on, as Edit > Start from a groove does (MakeGroove
 // in InsertRecording.h), one Ctrl+Z. The buttons along the top go on as many
 // rows as the width needs (FlowRollButtons in PianoRollUi.h), and a click
-// that only closed a menu does nothing here (ClosedAMenu).
+// that only closed a menu does nothing here (ClosedAMenu). A button per
+// channel goes beside the channel's name: its name edits the channel, its
+// light mutes it (the pattern editor's mutes), a right-click hides its faint
+// notes; Tab, Shift+Tab and the wheel over them go through the channels.
 //
 // A note lasts until the next note, release or halt in its channel, the way
 // it plays. The main frame tells the piano roll when the song changes

@@ -201,6 +201,9 @@ void TestNewcomerTerms()
 	CHECK(FindGlossaryEntry("") == 0 && FindGlossaryEntry("xyzzy") == 0);
 	// The piano roll says how to move around in it (CPianoRollWnd::OnMButtonDown)
 	CHECK(Entry("piano roll", __LINE__).Text.find("middle mouse button") != std::string::npos);
+	// ...and how to go to another channel and mute one (the channel buttons, feat-roll-channels)
+	CHECK(Entry("piano roll", __LINE__).Text.find("channel buttons") != std::string::npos);
+	CHECK(Entry("piano roll", __LINE__).Text.find("mutes") != std::string::npos);
 }
 
 void TestEffects()

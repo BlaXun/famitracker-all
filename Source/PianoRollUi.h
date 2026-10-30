@@ -92,6 +92,37 @@ std::string VolumeStepText(int Steps, int Count, int Low, int High, bool Changed
 // part; a double-click edits that channel (Faint, the bright one Bright)
 std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string &Bright);
 
+// The channel buttons along the piano roll's top, one per channel in the colour its notes are drawn in. A click on a
+// button's name edits that channel; its light (the coloured square at its left) turns the channel off and on while the
+// song plays, the pattern editor's channel mutes (a double-click there: that channel alone); a right-click offers those
+// and hiding the channel's faint notes in the piano roll. Tab and Shift+Tab, and the wheel over the buttons or the
+// channel's name, go to the next and the previous channel.
+//
+// A button's text: a channel's name, short ("Pulse 1" P1, "Triangle" Tri, "FM Channel 3" FM3, "DPCM" DPCM)
+std::string ShortChannelName(const std::string &Name);
+
+// The channel Step channels on from Channel, of Count, round from the last to the first and back
+int StepRollChannel(int Channel, int Count, int Step);
+
+// Channel is the only one heard (Muted holds every channel's mute), as the pattern editor's double-click makes it
+bool HeardAlone(const std::vector<bool> &Muted, int Channel);
+
+// The status line over a channel's button: OnLight over its light, else over its name
+struct roll_channel_button_t {
+	std::string Name;	// in full
+	bool Edited;		// the bright one
+	bool Muted;
+	bool Alone;			// the only channel heard
+	bool Hidden;		// its faint notes are hidden in the piano roll
+	bool OnLight;
+	roll_channel_button_t() : Edited(false), Muted(false), Alone(false), Hidden(false), OnLight(false) {}
+};
+
+std::string ChannelButtonHint(const roll_channel_button_t &Button);
+
+// The status line just after Tab, Shift+Tab or the wheel went to Name (Muted: it isn't heard)
+std::string ChannelSwitchText(const std::string &Name, bool Muted);
+
 // Strong notes on the beat: the row whose chord's notes the piano roll lights.
 // Where a note is being placed (drawn, painted or moved, starting at
 // PlaceRow), or where the mouse is over the notes while Draw or Paint is

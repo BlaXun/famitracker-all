@@ -101,8 +101,9 @@ std::string Notes(int Count)
 	return std::to_string(Count) + (Count == 1 ? " note" : " notes");
 }
 
-// How the view moves, after each tool's hint (CPianoRollWnd::OnMButtonDown pans, OnMouseWheel scrolls)
-const char PAN_HINT[] = " Middle-drag moves the view, Shift+wheel scrolls sideways.";
+// How the view moves, after each tool's hint (CPianoRollWnd::OnMButtonDown pans, OnMouseWheel scrolls), and how to go
+// to another channel (the channel buttons along the top, Tab)
+const char PAN_HINT[] = " Middle-drag moves the view, Shift+wheel scrolls sideways. Tab / Shift+Tab: next / previous channel.";
 
 }	// namespace
 
@@ -170,6 +171,87 @@ std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string 
 	else if (Tool == ROLL_TOOL_PAINT)
 		Text += " (a drag paints " + Bright + "'s notes here)";
 	return Text;
+}
+
+std::string ShortChannelName(const std::string &Name)
+{
+	// Its words
+	std::vector<std::string> Words;
+	std::string Word;
+	for (size_t i = 0; i <= Name.size(); ++i) {
+		if (i == Name.size() || Name[i] == ' ') {
+			if (!Word.empty())
+				Words.push_back(Word);
+			Word.clear();
+		}
+		else
+			Word += Name[i];
+	}
+	if (Words.empty())
+		return Name;
+	const auto Capitals = [](const std::string &Text) {
+		for (size_t i = 0; i < Text.size(); ++i)
+			if (Text[i] >= 'a' && Text[i] <= 'z')
+				return false;
+		return true;
+	};
+	const auto Number = [](const std::string &Text) {
+		for (size_t i = 0; i < Text.size(); ++i)
+			if (Text[i] < '0' || Text[i] > '9')
+				return false;
+		return true;
+	};
+	// A numbered channel: its first word's capitals or first letter, and the number ("Pulse 1" P1, "FM Channel 3" FM3)
+	if (Words.size() > 1 && Number(Words.back()))
+		return (Capitals(Words.front()) ? Words.front() : Words.front().substr(0, 1)) + Words.back();
+	// One word: a name in capitals or of five letters at most as it is, a longer one's first three letters
+	if (Capitals(Words.front()) || Words.front().size() <= 5)
+		return Words.front();
+	return Words.front().substr(0, 3);
+}
+
+int StepRollChannel(int Channel, int Count, int Step)
+{
+	if (Count <= 0)
+		return 0;
+	const int To = (Channel + Step) % Count;
+	return To < 0 ? To + Count : To;
+}
+
+bool HeardAlone(const std::vector<bool> &Muted, int Channel)
+{
+	if (Channel < 0 || static_cast<size_t>(Channel) >= Muted.size() || Muted.size() < 2 || Muted[static_cast<size_t>(Channel)])
+		return false;
+	for (size_t c = 0; c < Muted.size(); ++c)
+		if (static_cast<int>(c) != Channel && !Muted[c])
+			return false;
+	return true;
+}
+
+std::string ChannelButtonHint(const roll_channel_button_t &Button)
+{
+	const std::string &Name = Button.Name;
+	if (Button.OnLight) {
+		std::string Text;
+		if (Button.Alone)
+			Text = Name + " plays alone: click to mute it too, double-click to hear every channel again.";
+		else if (Button.Muted)
+			Text = Name + " is muted: click to hear it again, double-click to hear it alone.";
+		else
+			Text = "Click to mute " + Name + " and hear the song without it, double-click to hear it alone.";
+		return Text + " Right-click for more.";
+	}
+	std::string Text = Button.Edited ? "Editing " + Name + "." : "Click to edit " + Name + ".";
+	if (Button.Muted)
+		Text += " It's muted (the light on the left turns it on).";
+	if (Button.Hidden && !Button.Edited)
+		Text += " Its notes are hidden here.";
+	return Text + " Tab / Shift+Tab or the wheel here: next / previous channel. Right-click: mute, solo, hide its notes.";
+}
+
+std::string ChannelSwitchText(const std::string &Name, bool Muted)
+{
+	return "Editing " + Name + (Muted ? " (muted: you won't hear it)" : "") + ". Tab / Shift+Tab: next / previous channel.";
 }
 
 int StrongNotesRow(const roll_strong_t &State)
