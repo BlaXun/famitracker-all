@@ -807,6 +807,16 @@ JSON as `fix`.
   section (or its first bars) after its end, as many times as it takes,
   then `set_loop` to the copy's end. Battles, chases and calm tracks often
   loop sooner by design, so other styles leave it alone.
+- **A part too busy for the NES** (`too_busy`): the melody, or a line of
+  its own (not an echo, a harmony in the tune's rhythm, chords, a steady
+  arpeggio or the bass), plays many notes a bar with a rhythm it hasn't
+  played before in almost every bar (its notes a bar times the share of
+  such bars 6.3 or more, over 8 bars or more), so the ear never gets a
+  pattern to hold on to. Fix: `vary_part` with `simplify` over its bars;
+  better, a few short rhythms that come back. A local model's cave song
+  scored 7.6 (8 notes a bar, 31 of 33 bars new); none of the 43 songs the
+  user keeps reaches 5.2, and `review_arrangement` then leaves out its tips
+  that would add to the part.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -910,13 +920,15 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, see [What drafts miss](#what-drafts-miss)), `style`
+`short_loop`, see [What drafts miss](#what-drafts-miss), `warble`, and
+`too_busy`), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
 - `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
   clicks and clashes (`low` for a clash that's a detail), `medium` out of range, for a held lead, a melody in
-  pieces, the bass and a sound its channel can't play, `low` for the rest;
+  pieces, the bass, a sound its channel can't play and a part too busy
+  for the NES, `low` for the rest;
 - `channel` (numbered from 1, as the tools take them; `null` for a silent
   bar) and `channel_name`;
 - where it starts: `frame` and `row` (from 0, as the pattern editor shows

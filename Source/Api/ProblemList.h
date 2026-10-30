@@ -41,11 +41,12 @@ struct Timing;	// Music.h
 // in, from the notes alone (heard as a short right note and then a fluttering echo). HEARD, HEARD_LOOK and HEARD_DETAIL:
 // the listen tool's findings (its JSON, "check" "listen"; from feat-listen-rest) by how badly they're heard: high (what
 // sounds wrong), medium (worth a look) and low (details that may be meant, to hear with the user). CLASH_DETAIL: check_song's
-// clashes of severity low (from feat-clash-fix): a passing note against a chord's tone, a tone of a chord's arpeggio
+// clashes of severity low (from feat-clash-fix): a passing note against a chord's tone, a tone of a chord's arpeggio.
+// TOO_BUSY (from feat-busy-check): a part too busy for the NES, a line that never settles into a rhythm
 enum problem_kind {
 	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD, PROBLEM_RANGE, PROBLEM_HEARD_LOOK, PROBLEM_SILENT,
 	PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD, PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
-	PROBLEM_HEARD_DETAIL, PROBLEM_CLASH_DETAIL,
+	PROBLEM_HEARD_DETAIL, PROBLEM_CLASH_DETAIL, PROBLEM_TOO_BUSY,
 	PROBLEM_KINDS
 };
 
