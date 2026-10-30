@@ -20,7 +20,9 @@
 */
 
 #include "Tools.h"
+#include "AgentLog.h"
 #include "Arrange.h"
+#include "Assistant.h"
 #include "Grooves.h"
 #include "ChannelMix.h"
 #include "Chords.h"
@@ -30959,6 +30961,27 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"sounds", "tracker", "effects" })),
 		true, false, true);
 
+	AddTool("write_log", "Write in the agent log",
+		"Writes a line into FamiTracker's agent log (View > Agent log), where the user follows what you do and why: "
+		"FamiTracker stamps the time and marks the line with its category's color and name. Log each decision briefly as "
+		"you go, in a sentence or two: a plan, an idea, what research found, a fix and its reason, a check's result, an error "
+		"you hit. The changes the tools make are logged by themselves, so say why rather than what. It changes nothing in "
+		"the song. What the user writes back comes with read_user_notes.",
+		Schema()
+			.Add("text", Prop("string", "What you did or decided and why, for the user to read, like \"Chose D dorian for the "
+				"cave: dark but not sad.\""), true)
+			.Add("category", EnumProp("idea, plan, research, fix, check, note (the default) or error.", std::vector<std::string>{
+				"idea", "plan", "research", "fix", "check", "note", "error" })),
+		true);
+
+	AddTool("read_user_notes", "Read the user's notes",
+		"Reads the notes the user wrote to you in FamiTracker's agent log (the note box under View > Agent log) since you last "
+		"read them, each with its time, and marks them read there. Call it between steps and follow what they say; while "
+		"notes wait unread, the replies to your other calls end by saying so. It changes nothing in the song.",
+		Schema()
+			.Add("all", Prop("boolean", "True: every note the user wrote, read or not (default false: the new ones only).")),
+		true);
+
 	AddTool("check_exercise", "Check an exercise",
 		"Checks one of FamiTracker's exercises for newcomers to music (Help > Exercises: First steps, a minute or two each for "
 		"someone who has never made music, from a first note in the piano roll to a tiny tune; then Next steps, from ending a "
@@ -31149,10 +31172,21 @@ static std::string ChangeLabel(const std::string &Tool, const std::string &Reply
 	return Tool + (Text.empty() ? std::string() : ": " + Text);
 }
 
-void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResult &Result)
+// The first line of a reply, for the agent log's error lines
+static std::string FirstLine(const std::string &Text)
+{
+	const size_t End = Text.find('\n');
+	return End == std::string::npos ? Text : Text.substr(0, End);
+}
+
+void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long UndoBefore, ToolResult &Result, const Caller &Who)
 {
 	const long long UndoAfter = m_Host.UndoSerial();
 	if (Name == "undo") {
+		if (!Result.IsError)
+			m_Host.Log().Add(LOG_CHANGE, ChangeLabel(Name, Result.Text), LogTimeNow());
+		else if (Who.Client)
+			m_Host.Log().Add(LOG_ERROR, Name + ": " + FirstLine(Result.Text), LogTimeNow());
 		// Undo right after a call that failed: that call changed nothing, so what's undone is the change before it
 		if (!Result.IsError && !m_FailedCall.empty())
 			Result.Text = "The last call that would have changed the song (" + m_FailedCall + ") failed and changed nothing, so this "
@@ -31167,8 +31201,23 @@ void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResul
 	for (size_t i = 0; i < m_Tools.size(); ++i)
 		if (m_Tools[i].Name == Name)
 			ReadOnly = m_Tools[i].ReadOnly;
+	const bool Reads = ReadOnly;	// the tool's read-only hint
 	for (size_t i = 0; i < sizeof(ASIDE) / sizeof(ASIDE[0]); ++i)
 		ReadOnly = ReadOnly || Name == ASIDE[i];
+	// The agent log (AgentLog.h): a call that failed, from a client or one that would have changed something (not
+	// FamiTracker's own windows asking again and again), and every change: what undo takes back, and what it doesn't (a
+	// clip, sounds added, the chips, a track, files)
+	static const char *const BESIDE_UNDO[] = { "add_instrument", "design_instrument", "reference_sound", "add_sample_drums",
+		"remove_unused_instruments", "set_expansion", "make_jingle", "make_sound_effect", "make_version", "keep_version",
+		"select_track", "save_song", "new_song", "open_song", "import_nsf", "export_for_game", "soundtrack_notes", "study_nsf",
+		"study_module", "references", "send_file" };
+	bool Beside = Result.Text.find("Saved as the clip \"") != std::string::npos;
+	for (size_t i = 0; i < sizeof(BESIDE_UNDO) / sizeof(BESIDE_UNDO[0]); ++i)
+		Beside = Beside || Name == BESIDE_UNDO[i];
+	if (Result.IsError && (Who.Client || !Reads))
+		m_Host.Log().Add(LOG_ERROR, Name + ": " + FirstLine(Result.Text), LogTimeNow());
+	else if (!Result.IsError && (UndoAfter != UndoBefore || (Beside && !Reads && AssistantCallChanges(Name, Args))))
+		m_Host.Log().Add(LOG_CHANGE, ChangeLabel(Name, Result.Text), LogTimeNow());
 	if (UndoAfter == UndoBefore) {
 		if (Result.IsError && !ReadOnly)
 			m_FailedCall = Name;
@@ -31193,6 +31242,59 @@ void ToolSet::AfterCall(const std::string &Name, long long UndoBefore, ToolResul
 	m_FailedCall = Name;
 }
 
+// write_log: a line in the song's agent log, stamped with this computer's time
+static std::string WriteLogTool(AgentLog &Log, const Json &Args)
+{
+	int Category = LOG_DEFAULT;
+	const std::string Asked = Trim(StringArg(Args, "category"));
+	if (!Asked.empty() && !ParseLogCategory(Asked, Category))
+		throw Problem("write_log has no category \"" + ValidUtf8(Asked) + "\", so nothing was logged. Its categories: " +
+			LogCategoryList() + " (note when none is given).");
+	bool Cut = false;
+	const std::string Text = CleanLogText(ValidUtf8(StringArg(Args, "text")), &Cut);
+	if (Text.empty())
+		throw Problem("write_log needs the text to log, like {\"text\": \"Chose D dorian for the cave: dark but not sad.\", "
+			"\"category\": \"plan\"}.");
+	const LogTime Now = LogTimeNow();
+	Log.Add(Category, Text, Now);
+	return "Logged at " + LogClockText(Now) + " as " + LogCategoryLabel(Category) + (Cut ? Format(" (cut to its first %d "
+		"characters: keep entries short)", static_cast<int>(MAX_LOG_TEXT)) : std::string()) + ".";
+}
+
+// read_user_notes: the notes the user wrote to the agents in the agent log, marked read
+static std::string ReadUserNotesTool(AgentLog &Log, const Json &Args)
+{
+	const Json *pAll = Arg(Args, "all");
+	const bool All = pAll != 0 && pAll->IsBool() && pAll->Bool();
+	const std::vector<LogEntry> Notes = Log.TakeNotes(All);
+	if (Notes.empty())
+		return All ? "The user hasn't written any notes to you yet." : "No new notes from the user.";
+	std::string Text = All ? Format("Every note the user wrote to you (%d), oldest first:", static_cast<int>(Notes.size())) :
+		Notes.size() == 1 ? std::string("A new note from the user:") :
+		Format("%d new notes from the user, oldest first:", static_cast<int>(Notes.size()));
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		std::string Note = Notes[i].Text;
+		for (size_t c = Note.find('\n'); c != std::string::npos; c = Note.find('\n', c + 3))
+			Note.replace(c, 1, "\n  ");
+		Text += "\n" + LogTimeText(Notes[i].Time) + "  " + Note;
+	}
+	return Text + "\nFollow them where you can; say in the log (write_log) or your reply what you did about them.";
+}
+
+// After every call: the agent log written next to the song when it changed, and a client told when the user has written
+// it notes it hasn't read (not in a reply of JSON, which a program reads)
+void ToolSet::AfterLog(const std::string &Name, const Json &Args, ToolResult &Result, const Caller &Who)
+{
+	std::string Error;
+	m_Host.SaveLog(Error);	// a log that can't be written stays in memory, unsaved, and is tried again after the next call
+	if (!Who.Client || Name == "read_user_notes" || StringArg(Args, "format") == "json")
+		return;
+	const int Unread = m_Host.Log().UnreadNotes();
+	if (Unread > 0)
+		Result.Text += Format("\n\nThe user wrote you %s in FamiTracker's agent log: read %s with read_user_notes.",
+			Unread == 1 ? "a new note" : Format("%d new notes", Unread).c_str(), Unread == 1 ? "it" : "them");
+}
+
 ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
@@ -31203,7 +31305,20 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 	if (!Unknown.empty()) {
 		Result.Text = Unknown;
 		Result.IsError = true;
-		AfterCall(Name, UndoBefore, Result);
+		AfterCall(Name, Args, UndoBefore, Result, Who);
+		AfterLog(Name, Args, Result, Who);
+		return Result;
+	}
+	if (Name == "write_log" || Name == "read_user_notes") {	// the log needs no song, and leaves it as it is
+		try {
+			Result.Text = Name == "write_log" ? WriteLogTool(m_Host.Log(), Args) : ReadUserNotesTool(m_Host.Log(), Args);
+		}
+		catch (const Problem &P) {
+			Result.Text = P.Text;
+			Result.IsError = true;
+		}
+		AfterCall(Name, Args, UndoBefore, Result, Who);
+		AfterLog(Name, Args, Result, Who);
 		return Result;
 	}
 	try {
@@ -31315,7 +31430,8 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		Result.Text = P.Text;
 		Result.IsError = true;
 	}
-	AfterCall(Name, UndoBefore, Result);
+	AfterCall(Name, Args, UndoBefore, Result, Who);
+	AfterLog(Name, Args, Result, Who);
 	return Result;
 }
 
@@ -31473,7 +31589,8 @@ bool ToolSet::ListExports(std::vector<SongFile> &Files, std::string &Error)
 // drums; its form: bars put in and copied; depth: a harmony (cleaner beside the chords than a counter-melody),
 // variations, an echo; the loop; polish, mix, the checks, saving, export, and finish_song for the last of them in one
 // call), the sounds a part can find and take
-// (find_sound, reference_sound), the swing a local model reached for, playback, and the recipes. Not set_mixer: mix sets
+// (find_sound, reference_sound), the swing a local model reached for, playback, the recipes, and the agent log (write_log,
+// read_user_notes: a local model says why it does what it does, and hears the user's notes). Not set_mixer: mix sets
 // the volumes in the notes.
 const std::vector<std::string> &ToolSet::CoreTools()
 {
@@ -31481,7 +31598,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain", "listen" };
+		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -31503,7 +31620,8 @@ std::string ToolSet::CoreInstructions()
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
 		"write your own there. Where check_song or review_arrangement gives a \"Fix:\", send its call as given, then the calls "
 		"after it in order. Read a part (read_notes) before you change it by hand. You can't hear: play the bars for the user, "
-		"ask how it sounds, and say what you changed and why. When the user asks what a word means, explain gives it plainly.\n"
+		"ask how it sounds, and say what you changed and why. explain says a word plainly when the user asks. Log each decision "
+		"briefly (write_log with a category); between steps, read_user_notes.\n"
 		"Write music that sounds composed, not generated:\n"
 		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
 		"G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests). grow_melody grows it over the chords, with the kind and "
@@ -31536,10 +31654,10 @@ std::string ToolSet::CoreInstructions()
 		"a click several times a second (A-3 even with a gentle vibrato, F-1 with any). The tools nudge such notes a few cents "
 		"with Pxx and say so; check_song lists any left, and polish with touches [\"clicks\"] nudges them.\n"
 		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
-		"Unless the user allowed direct changes, each change arrives as a clip the user plays and places (what_next asks for "
-		"direct changes first).\n"
-		"This is FamiTracker's small set of tools (/mcp/core). Replies sometimes name tools it doesn't have (/mcp has them "
-		"all): skip those steps, or tell the user.";
+		"Without direct changes, each change arrives as a clip the user plays and places (what_next asks for them "
+		"first).\n"
+		"This is the small set (/mcp/core; /mcp has every tool): skip steps naming tools it lacks, or tell the "
+		"user.";
 }
 
 std::string ToolSet::Instructions()
@@ -31576,7 +31694,10 @@ std::string ToolSet::Instructions()
 		"(polish with touches [\"clashes\"], which moves the accompaniment's note onto the chord the other parts play), or "
 		"what_next's step, one call for the song; the details it calls maybe meant (a passing note) are the user's to keep. "
 		"A call that fails or is refused changes nothing and says why (an argument a tool doesn't take: the one meant): send "
-		"it again as the reply says; undo names what it takes back. write_notes keeps each note's sound where it names none "
+		"it again as the reply says; undo names what it takes back. Keep the user posted in FamiTracker's agent log (View > "
+		"Agent log): write_log with a category (idea, plan, research, fix, check, note, error) gives each decision and its "
+		"reason in a sentence as you go (the changes are logged by themselves), and read_user_notes between steps brings the "
+		"notes the user wrote to you there: follow them. write_notes keeps each note's sound where it names none "
 		"(drums take an instrument for each kind of hit, as an object), and grows the song only for notes that start past "
 		"its end (insert_bars first).\n"
 		"Write music that sounds composed, not generated. Users notice plain tracks: one chord a bar held as an arpeggio, a bass "

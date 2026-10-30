@@ -122,6 +122,7 @@ add_library(ftapi STATIC
 	Listen.cpp
 	Assistant.cpp
 	AssistantSocket.cpp
+	AgentLog.cpp
 	${TRANSCRIBE}/WavReader.cpp
 	${TRANSCRIBE}/PitchTracker.cpp
 	${TRANSCRIBE}/Guess.cpp

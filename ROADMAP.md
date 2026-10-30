@@ -1018,6 +1018,23 @@ when ready.
   problems panel whose findings join its list. Still to come: the
   thresholds set on the whole soundtrack.
 
+## 18. The agent log (GitHub issue #5)
+
+The issue: "It would be nice if the mcp had a tool to be able to write log /
+reasoning into the famitracker UI ... Within famitracker I could then see
+what the agent did in a human-readable way", with categories as color-coded
+rectangles and a filter. The user wanted both, and a box for notes to the
+agent.
+
+- Done (30 October 2026, on `feat-agent-log`): **View > Agent log**, docked
+  along the bottom beside the other panels or on the right: `write_log`'s
+  lines by category (idea, plan, research, fix, check, note, error) with
+  FamiTracker's time, a grey line for every change a tool makes and an error
+  line for a call that failed; toggles per category and for the change
+  lines, Clear; a note box whose notes agents read with `read_user_notes`
+  (marked read in the log). Kept per song in `<song> agent log.md` next to
+  it. Both tools are in the small set. See `MCP.md`, The agent log.
+
 ## Open questions
 
 - Some recordings "don't sound correct" (maybe background noise). Waiting

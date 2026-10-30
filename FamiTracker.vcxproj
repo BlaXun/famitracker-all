@@ -573,6 +573,7 @@
     <ClCompile Include="Source\Api\Listen.cpp" />
     <ClCompile Include="Source\Api\Assistant.cpp" />
     <ClCompile Include="Source\Api\AssistantSocket.cpp" />
+    <ClCompile Include="Source\Api\AgentLog.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -622,6 +623,7 @@
     <ClInclude Include="Source\Api\Listen.h" />
     <ClInclude Include="Source\Api\Assistant.h" />
     <ClInclude Include="Source\Api\AssistantSocket.h" />
+    <ClInclude Include="Source\Api\AgentLog.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />
@@ -677,6 +679,7 @@
     <ClCompile Include="Source\ProblemsPanel.cpp" />
     <ClCompile Include="Source\WhatNextPanel.cpp" />
     <ClCompile Include="Source\AskPanel.cpp" />
+    <ClCompile Include="Source\AgentLogPanel.cpp" />
     <ClCompile Include="Source\BarsPlayer.cpp" />
     <ClCompile Include="Source\MixerPanel.cpp" />
     <ClCompile Include="Source\DrumGrid.cpp" />
@@ -697,6 +700,7 @@
     <ClInclude Include="Source\ProblemsPanel.h" />
     <ClInclude Include="Source\WhatNextPanel.h" />
     <ClInclude Include="Source\AskPanel.h" />
+    <ClInclude Include="Source\AgentLogPanel.h" />
     <ClInclude Include="Source\BarsPlayer.h" />
     <ClInclude Include="Source\MixerPanel.h" />
     <ClInclude Include="Source\InstrumentLibrary.h" />
